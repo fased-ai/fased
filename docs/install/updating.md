@@ -13,9 +13,9 @@ Current public installs are repo-backed.
 
 That means the current update paths are:
 
-- update your checkout, then re-run `./install.sh`
-- use `fased update`
-- use the Control UI `Update & Restart` action
+- use `fased update` for normal running systems
+- use the Control UI `Update & Restart` action when the gateway is healthy
+- rerun `./install.sh` for repair/reinstall behavior
 
 The update path should not require committing generated files. Native signer
 artifacts, build outputs, and service state are install artifacts; keep source
@@ -27,12 +27,16 @@ the primary version-update command.
 ## Recommended path
 
 ```bash
-cd ~/fased
-git pull --rebase
-./install.sh --no-onboard
+fased update status
+fased update
 ```
 
-Use plain `./install.sh` if you want onboarding to run again.
+On a VPS where you SSH in as `root`:
+
+```bash
+sudo -iu app fased update status
+sudo -iu app fased update
+```
 
 ## CLI update
 
@@ -57,6 +61,26 @@ Use it when:
 - the repo checkout is the live runtime
 - you want the restart report in the UI
 
+## Installer rerun
+
+Rerun `./install.sh` when you want repair/reinstall behavior. Current installers
+try a clean fast-forward update from Git before dependency install and build. If
+the installer itself changes, it restarts once and continues with the updated
+script.
+
+```bash
+cd ~/fased
+./install.sh --no-onboard
+```
+
+On hosted installs that live under `/home/app/agent`, run it as the app user:
+
+```bash
+sudo -iu app bash -lc 'cd /home/app/agent && ./install.sh --no-onboard'
+```
+
+Use `./install.sh --no-git-update` only when testing local changes.
+
 ## What onboard does versus what update does
 
 `fased onboard --install-daemon`:
@@ -65,27 +89,32 @@ Use it when:
 - installs or refreshes the service
 - writes runtime env such as SAT ids into the installed runtime
 
-`fased update` or `./install.sh`:
+`fased update`:
 
 - updates code
 - rebuilds
 - refreshes the installed runtime
 - restarts when needed
 
+`./install.sh`:
+
+- installs or repairs dependencies
+- rebuilds
+- refreshes the CLI/runtime
+- runs onboarding unless `--no-onboard` is set
+
 ## Update sequence
 
-1. update the checkout
-2. rebuild or rerun installer
+1. check update status
+2. run update
 3. run `fased doctor`
-4. restart if needed
-5. verify dashboard, wallet, Fased Network, and other critical surfaces
+4. verify dashboard, wallet, Fased Network, and other critical surfaces
 
 Example:
 
 ```bash
-cd ~/fased
-git pull --rebase
-./install.sh --no-onboard
+fased update status
+fased update
 fased doctor
 fased status
 fased dashboard

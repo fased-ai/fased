@@ -77,8 +77,10 @@ all the time.
     ./install.sh --hosting
     ```
 
-    If the installer shows an old version, run `git pull --ff-only origin main`
-    in the checkout and then rerun `./install.sh --hosting`.
+    Current installers try a clean fast-forward update from Git before building.
+    If you already started from an older installer and it stopped, run
+    `git pull --ff-only origin main` once in the checkout and rerun
+    `./install.sh --hosting`.
 
     If you start as `root`, the installer creates a non-root `app` user,
     prepares `/home/app/agent`, and re-runs itself there.
@@ -126,6 +128,21 @@ To install the CLI/runtime without onboarding:
 ```
 
 For flags and automation details, see [Installer Reference](/install/installer).
+
+## Updating after install
+
+Use `fased update` for normal updates. On a VPS where you SSH in as `root`, run
+it as the app user:
+
+```bash
+sudo -iu app fased update status
+sudo -iu app fased update
+```
+
+The browser Control UI can also run **Update & Restart** when the gateway is
+healthy. Rerun `./install.sh` for repair/reinstall behavior; the current
+installer fast-forwards a clean Git checkout before building unless
+`--no-git-update` is set.
 
 ## What onboarding does
 

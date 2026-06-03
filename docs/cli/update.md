@@ -30,6 +30,13 @@ fased update --yes
 fased --update
 ```
 
+On hosted VPS installs where you SSH in as `root`, run update as the app user:
+
+```bash
+sudo -iu app fased update status
+sudo -iu app fased update
+```
+
 ## Options
 
 - `--no-restart`

@@ -54,8 +54,9 @@ cd fased
 ./install.sh --hosting
 ```
 
-If you cloned before a hotfix or the installer reports an old version, update
-the checkout and rerun:
+Current installers try a clean fast-forward update from Git before building. If
+you already started from an older installer and it stopped before updating,
+update the checkout once and rerun:
 
 ```bash
 cd ~/fased
@@ -84,6 +85,27 @@ sudo -iu app fased status
 
 `install.sh` runs onboarding by default. Use `./install.sh --no-onboard` only
 when you want to install first and run onboarding later.
+
+## Update
+
+For a running install, use the CLI update path:
+
+```bash
+fased update status
+fased update
+```
+
+On a VPS where you are SSHed in as `root`, run it as the app user:
+
+```bash
+sudo -iu app fased update status
+sudo -iu app fased update
+```
+
+If the browser Control UI is healthy, you can also use **Update & Restart** from
+the system/debug update area. Rerun `./install.sh` when you want
+repair/reinstall behavior; it fast-forwards a clean Git checkout before
+building. Use `./install.sh --no-git-update` only when testing local changes.
 
 After install, open the dashboard, configure **Agent > Models**, send a first
 browser chat, then add channels, skills, services, wallets, mining, and tasks

@@ -28,8 +28,9 @@ cd fased
 ./install.sh --hosting
 ```
 
-If you cloned before a hotfix or the installer prints an old version, update the
-checkout and rerun:
+Current installers try a clean fast-forward update from Git before building. If
+you already started from an older installer and it stopped, update the checkout
+once and rerun:
 
 ```bash
 cd ~/fased
@@ -53,6 +54,19 @@ sudo -iu app fased status
 ```
 
 Keep the raw Gateway port closed to the public internet.
+
+## Update later
+
+From a later root SSH session:
+
+```bash
+sudo -iu app fased update status
+sudo -iu app fased update
+```
+
+If the browser Control UI is reachable, **Update & Restart** uses the same
+gateway update path. Rerun `./install.sh --hosting` only for repair/reinstall
+behavior; current installers fast-forward a clean Git checkout before building.
 
 <Note>
 You do not need a Tailscale API key for the normal manual VPS flow. The

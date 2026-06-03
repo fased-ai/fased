@@ -19,6 +19,7 @@ REQUESTED_SWAP_GB=""
 TEMP_SUDOERS=""
 FASED_CLI_PATH=""
 
+ORIGINAL_INSTALL_ARGS=("$@")
 pass_args=()
 
 if [[ -f "$SAT_RUNTIME_ENV_FILE" ]]; then
@@ -293,6 +294,95 @@ resolve_fased_dir_from_base() {
 
 shell_quote() {
   printf "%q" "$1"
+}
+
+ensure_checkout_origin_remote() {
+  local repo_dir="$1"
+  local origin_url=""
+
+  if [[ ! -d "$repo_dir/.git" ]]; then
+    return 0
+  fi
+
+  origin_url="$(git -C "$repo_dir" remote get-url origin 2>/dev/null || true)"
+  if [[ -z "$origin_url" ]]; then
+    git -C "$repo_dir" remote add origin "$INSTALL_REPO_URL"
+    return 0
+  fi
+
+  case "$origin_url" in
+    /*|file://*)
+      git -C "$repo_dir" remote set-url origin "$INSTALL_REPO_URL"
+      ;;
+  esac
+}
+
+refresh_checkout_from_origin() {
+  local repo_dir="$1"
+  local label="${2:-Installer}"
+  local branch=""
+  local remote_ref=""
+  local before=""
+  local after=""
+
+  if [[ "$INSTALL_GIT_UPDATE" == "0" || ! -d "$repo_dir/.git" ]] || ! need_cmd git; then
+    return 0
+  fi
+
+  ensure_checkout_origin_remote "$repo_dir"
+
+  branch="$(git -C "$repo_dir" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+  if [[ -z "$branch" ]]; then
+    echo "== $label: detached checkout detected, skipping git update =="
+    return 0
+  fi
+
+  if ! git -C "$repo_dir" diff --quiet --ignore-submodules -- || ! git -C "$repo_dir" diff --cached --quiet --ignore-submodules --; then
+    echo "== $label: local checkout has changes, skipping git update =="
+    return 0
+  fi
+
+  remote_ref="origin/$branch"
+  git -C "$repo_dir" fetch --quiet origin "$branch" || {
+    echo "== $label: could not fetch $remote_ref, continuing with local checkout =="
+    return 0
+  }
+
+  if ! git -C "$repo_dir" merge-base --is-ancestor HEAD "$remote_ref" >/dev/null 2>&1; then
+    echo "== $label: $repo_dir is not a fast-forward from $remote_ref, skipping git update =="
+    return 0
+  fi
+
+  before="$(git -C "$repo_dir" rev-parse --short HEAD 2>/dev/null || true)"
+  after="$(git -C "$repo_dir" rev-parse --short "$remote_ref" 2>/dev/null || true)"
+  if [[ -n "$before" && -n "$after" && "$before" != "$after" ]]; then
+    echo "== $label: updating $repo_dir from $remote_ref ($before -> $after) =="
+    git -C "$repo_dir" merge --ff-only "$remote_ref"
+  fi
+}
+
+refresh_current_checkout_and_reexec_if_needed() {
+  local repo_dir=""
+  local before=""
+  local after=""
+
+  if [[ "$INSTALL_GIT_UPDATE" == "0" || "${FASED_INSTALL_REEXECED_AFTER_UPDATE:-0}" == "1" ]] || ! need_cmd git; then
+    return 0
+  fi
+  if ! is_fased_repo_dir "$FASED_DIR" || [[ ! -d "$FASED_DIR/.git" ]]; then
+    return 0
+  fi
+
+  repo_dir="$(cd "$FASED_DIR" && pwd)"
+  before="$(git -C "$repo_dir" rev-parse HEAD 2>/dev/null || true)"
+  refresh_checkout_from_origin "$repo_dir" "Installer"
+  after="$(git -C "$repo_dir" rev-parse HEAD 2>/dev/null || true)"
+
+  if [[ -n "$before" && -n "$after" && "$before" != "$after" ]]; then
+    echo "== Installer: restarting after source update =="
+    cd "$repo_dir"
+    FASED_INSTALL_REEXECED_AFTER_UPDATE=1 exec ./install.sh "${ORIGINAL_INSTALL_ARGS[@]}"
+  fi
 }
 
 install_user_cli_path_snippet() {
@@ -905,73 +995,9 @@ bootstrap_repo_for_target_user() {
   local target_install_dir="$2"
   local source_repo=""
 
-  ensure_checkout_origin_remote() {
-    local repo_dir="$1"
-    local origin_url=""
-
-    if [[ ! -d "$repo_dir/.git" ]]; then
-      return 0
-    fi
-
-    origin_url="$(git -C "$repo_dir" remote get-url origin 2>/dev/null || true)"
-    if [[ -z "$origin_url" ]]; then
-      git -C "$repo_dir" remote add origin "$INSTALL_REPO_URL"
-      return 0
-    fi
-
-    case "$origin_url" in
-      /*|file://*)
-        git -C "$repo_dir" remote set-url origin "$INSTALL_REPO_URL"
-        ;;
-    esac
-  }
-
-  refresh_checkout_from_origin() {
-    local repo_dir="$1"
-    local branch=""
-    local remote_ref=""
-    local before=""
-    local after=""
-
-    if [[ "$INSTALL_GIT_UPDATE" == "0" || ! -d "$repo_dir/.git" ]]; then
-      return 0
-    fi
-
-    ensure_checkout_origin_remote "$repo_dir"
-
-    branch="$(git -C "$repo_dir" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
-    if [[ -z "$branch" ]]; then
-      echo "== Root bootstrap: detached checkout detected, skipping git update =="
-      return 0
-    fi
-
-    if ! git -C "$repo_dir" diff --quiet --ignore-submodules -- || ! git -C "$repo_dir" diff --cached --quiet --ignore-submodules --; then
-      echo "== Root bootstrap: local checkout has changes, skipping git update =="
-      return 0
-    fi
-
-    remote_ref="origin/$branch"
-    git -C "$repo_dir" fetch --quiet origin "$branch" || {
-      echo "== Root bootstrap: could not fetch $remote_ref, continuing with local checkout =="
-      return 0
-    }
-
-    if ! git -C "$repo_dir" merge-base --is-ancestor HEAD "$remote_ref" >/dev/null 2>&1; then
-      echo "== Root bootstrap: $repo_dir is not a fast-forward from $remote_ref, skipping git update =="
-      return 0
-    fi
-
-    before="$(git -C "$repo_dir" rev-parse --short HEAD 2>/dev/null || true)"
-    after="$(git -C "$repo_dir" rev-parse --short "$remote_ref" 2>/dev/null || true)"
-    if [[ -n "$before" && -n "$after" && "$before" != "$after" ]]; then
-      echo "== Root bootstrap: updating $repo_dir from $remote_ref ($before -> $after) =="
-      git -C "$repo_dir" merge --ff-only "$remote_ref"
-    fi
-  }
-
   if is_fased_repo_dir "$FASED_DIR"; then
     source_repo="$(cd "$FASED_DIR" && pwd)"
-    refresh_checkout_from_origin "$source_repo"
+    refresh_checkout_from_origin "$source_repo" "Root bootstrap"
   fi
 
   mkdir -p "$(dirname "$target_install_dir")"
@@ -1015,7 +1041,7 @@ bootstrap_repo_for_target_user() {
   local target_repo_dir=""
   target_repo_dir="$(resolve_fased_dir_from_base "$target_install_dir" || true)"
   if [[ -n "$target_repo_dir" ]]; then
-    refresh_checkout_from_origin "$target_repo_dir"
+    refresh_checkout_from_origin "$target_repo_dir" "Root bootstrap"
   fi
 
   chown -R "$target_user:$target_user" "$target_install_dir" 2>/dev/null || true
@@ -1096,6 +1122,8 @@ fi
 if [[ "$(id -u)" -ne 0 ]] && ! pass_args_contains "--host-security-capable" && is_app_service_session; then
   pass_args+=(--host-maintenance-session)
 fi
+
+refresh_current_checkout_and_reexec_if_needed
 
 REPO_ROOT="$(resolve_repo_root)"
 assert_marker_matches_repo "$REPO_ROOT"
@@ -1186,8 +1214,7 @@ if [[ -n "${FASED_SAT_PROGRAM_ID:-}" && -n "${FASED_SAT_BOND_PROGRAM_ID:-}" && -
   persist_managed_env_var "FASED_SAT_MINT_ADDRESS" "$FASED_SAT_MINT_ADDRESS"
   persist_managed_env_var "FASED_SAT_MINT_PROGRAM_ID" "$FASED_SAT_MINT_PROGRAM_ID"
 else
-  step_skip "SAT runtime IDs"
-  echo "  Pre-launch install: SAT runtime IDs are empty. Use Mining > Sync after official mainnet launch proof."
+  :
 fi
 export FASED_SAT_BOND_LAYOUT_PATH="${FASED_SAT_BOND_LAYOUT_PATH:-$FASED_DIR/token/sat/bond-api/bond-position-layout.json}"
 export FASED_SAT_BOND_POLICY_LAYOUT_PATH="${FASED_SAT_BOND_POLICY_LAYOUT_PATH:-$FASED_DIR/token/sat/bond-api/bond-tier-policy-layout.json}"
