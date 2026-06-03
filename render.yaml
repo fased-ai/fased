@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: fased
+    runtime: docker
+    plan: starter
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: "8080"
+      - key: FASED_STATE_DIR
+        value: /data/.fased
+      - key: FASED_GATEWAY_TOKEN
+        generateValue: true
+    disk:
+      name: fased-data
+      mountPath: /data
+      sizeGB: 1

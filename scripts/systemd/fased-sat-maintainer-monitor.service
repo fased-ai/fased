@@ -1,0 +1,27 @@
+[Unit]
+Description=SAT protocol maintainer health monitor
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.fased/scripts/sat-maintainer-monitor.sh
+# Environment=FASED_CONFIG_PATH=%h/.fased/fased.json
+# Environment=FASED_GATEWAY_TOKEN=
+# Environment=FASED_SAT_MAINTAIN_LOG_FILE=%h/.fased/sat-maintainer.jsonl
+# Environment=FASED_SAT_MAINTAIN_MAX_SUCCESS_AGE_SECONDS=900
+# Environment=FASED_SAT_MAINTAIN_MAX_FAILURE_STREAK=3
+# Environment=FASED_SAT_MAINTAIN_LOW_PAYER_LAMPORTS=200000000
+# Environment=FASED_SAT_MAINTAIN_RESERVE_MIN_LAMPORTS=1000000000
+# Environment=FASED_SAT_MAINTAIN_PENDING_SOL_LAMPORTS=1000000
+# Environment=FASED_SAT_MAINTAIN_PENDING_SAT_RAW=100000000000
+# Environment=FASED_SAT_MAINTAIN_PENDING_CYCLE_LIMIT=3
+# Environment=FASED_SAT_MAINTAIN_CLEANUP_ERROR_STREAK_LIMIT=3
+# Environment=FASED_NOTIFY_CHANNEL=telegram
+# Environment=FASED_NOTIFY_TARGET=@ops_room
+# Environment=FASED_NOTIFY_ACCOUNT=
+# Environment=FASED_NOTIFY_THREAD_ID=
+# Environment=NOTIFY_NTFY=
+# Environment=NOTIFY_PHONE=
+
+[Install]
+WantedBy=default.target

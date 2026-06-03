@@ -1,0 +1,24 @@
+{
+  "programId": "D1ySMMiJmvJRhJJKwYnc171w3g2JDPQnkgD8kGhaG4Vq",
+  "accountName": "BondStakingDistributorState",
+  "accountHeaderSize": 8,
+  "bodySize": 224,
+  "accountSize": 232,
+  "discriminator": 142,
+  "pdaSeed": "sat_bond_staking_distributor",
+  "rewardIndexScale": "1000000000000000000",
+  "offsets": {
+    "version": 0,
+    "bump": 1,
+    "status": 2,
+    "policyVersion": 8,
+    "rewardMint": 16,
+    "rewardVault": 48,
+    "updateAuthority": 80,
+    "minStakeRaw": 112,
+    "totalActiveStakeRaw": 120,
+    "rewardIndexFp": 128,
+    "observedRewardVaultRaw": 144,
+    "lastSyncedSlot": 152
+  }
+}

@@ -1,0 +1,460 @@
+import fs from "node:fs";
+import path from "node:path";
+import JSON5 from "json5";
+import { openBoundaryFileSync } from "../infra/boundary-file-read.js";
+import { MANIFEST_KEY } from "../project.js";
+import { isRecord } from "../utils.js";
+import type { PluginConfigUiHint, PluginKind } from "./types.js";
+
+export const PLUGIN_MANIFEST_FILENAME = "fased.plugin.json";
+export const PLUGIN_MANIFEST_FILENAMES = [PLUGIN_MANIFEST_FILENAME] as const;
+
+export type PluginManifestChannelConfig = {
+  schema: Record<string, unknown>;
+  uiHints?: Record<string, PluginConfigUiHint>;
+  label?: string;
+  description?: string;
+  preferOver?: string[];
+};
+
+export type PluginManifestModelSupport = {
+  modelPrefixes?: string[];
+  modelPatterns?: string[];
+};
+
+export type PluginManifestContracts = {
+  memoryEmbeddingProviders?: string[];
+  speechProviders?: string[];
+  realtimeTranscriptionProviders?: string[];
+  realtimeVoiceProviders?: string[];
+  mediaUnderstandingProviders?: string[];
+  imageGenerationProviders?: string[];
+  videoGenerationProviders?: string[];
+  musicGenerationProviders?: string[];
+  webFetchProviders?: string[];
+  webSearchProviders?: string[];
+  tools?: string[];
+};
+
+export type PluginManifestProviderAuthChoice = {
+  provider: string;
+  method: string;
+  choiceId: string;
+  choiceLabel?: string;
+  choiceHint?: string;
+  assistantPriority?: number;
+  assistantVisibility?: "visible" | "manual-only";
+  deprecatedChoiceIds?: string[];
+  groupId?: string;
+  groupLabel?: string;
+  groupHint?: string;
+  optionKey?: string;
+  cliFlag?: string;
+  cliOption?: string;
+  cliDescription?: string;
+  onboardingScopes?: Array<"text-inference" | "image-generation">;
+};
+
+export type PluginManifest = {
+  id: string;
+  configSchema: Record<string, unknown>;
+  enabledByDefault?: boolean;
+  legacyPluginIds?: string[];
+  autoEnableWhenConfiguredProviders?: string[];
+  kind?: PluginKind;
+  channels?: string[];
+  providers?: string[];
+  modelSupport?: PluginManifestModelSupport;
+  providerAuthEnvVars?: Record<string, string[]>;
+  providerAuthAliases?: Record<string, string>;
+  providerAuthChoices?: PluginManifestProviderAuthChoice[];
+  skills?: string[];
+  name?: string;
+  description?: string;
+  version?: string;
+  uiHints?: Record<string, PluginConfigUiHint>;
+  contracts?: PluginManifestContracts;
+  channelConfigs?: Record<string, PluginManifestChannelConfig>;
+};
+
+export type PluginManifestLoadResult =
+  | { ok: true; manifest: PluginManifest; manifestPath: string }
+  | { ok: false; error: string; manifestPath: string };
+
+function normalizeStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.map((entry) => (typeof entry === "string" ? entry.trim() : "")).filter(Boolean);
+}
+
+function normalizeStringListRecord(value: unknown): Record<string, string[]> | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const normalized: Record<string, string[]> = {};
+  for (const [key, rawValues] of Object.entries(value)) {
+    const providerId = key.trim();
+    if (!providerId) {
+      continue;
+    }
+    const values = normalizeStringList(rawValues);
+    if (values.length === 0) {
+      continue;
+    }
+    normalized[providerId] = values;
+  }
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+function normalizeStringRecord(value: unknown): Record<string, string> | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const normalized: Record<string, string> = {};
+  for (const [rawKey, rawValue] of Object.entries(value)) {
+    const key = typeof rawKey === "string" ? rawKey.trim() : "";
+    const value = typeof rawValue === "string" ? rawValue.trim() : "";
+    if (!key || !value) {
+      continue;
+    }
+    normalized[key] = value;
+  }
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+function normalizeManifestContracts(value: unknown): PluginManifestContracts | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const memoryEmbeddingProviders = normalizeStringList(value.memoryEmbeddingProviders);
+  const speechProviders = normalizeStringList(value.speechProviders);
+  const realtimeTranscriptionProviders = normalizeStringList(value.realtimeTranscriptionProviders);
+  const realtimeVoiceProviders = normalizeStringList(value.realtimeVoiceProviders);
+  const mediaUnderstandingProviders = normalizeStringList(value.mediaUnderstandingProviders);
+  const imageGenerationProviders = normalizeStringList(value.imageGenerationProviders);
+  const videoGenerationProviders = normalizeStringList(value.videoGenerationProviders);
+  const musicGenerationProviders = normalizeStringList(value.musicGenerationProviders);
+  const webFetchProviders = normalizeStringList(value.webFetchProviders);
+  const webSearchProviders = normalizeStringList(value.webSearchProviders);
+  const tools = normalizeStringList(value.tools);
+
+  const contracts = {
+    ...(memoryEmbeddingProviders.length > 0 ? { memoryEmbeddingProviders } : {}),
+    ...(speechProviders.length > 0 ? { speechProviders } : {}),
+    ...(realtimeTranscriptionProviders.length > 0 ? { realtimeTranscriptionProviders } : {}),
+    ...(realtimeVoiceProviders.length > 0 ? { realtimeVoiceProviders } : {}),
+    ...(mediaUnderstandingProviders.length > 0 ? { mediaUnderstandingProviders } : {}),
+    ...(imageGenerationProviders.length > 0 ? { imageGenerationProviders } : {}),
+    ...(videoGenerationProviders.length > 0 ? { videoGenerationProviders } : {}),
+    ...(musicGenerationProviders.length > 0 ? { musicGenerationProviders } : {}),
+    ...(webFetchProviders.length > 0 ? { webFetchProviders } : {}),
+    ...(webSearchProviders.length > 0 ? { webSearchProviders } : {}),
+    ...(tools.length > 0 ? { tools } : {}),
+  } satisfies PluginManifestContracts;
+
+  return Object.keys(contracts).length > 0 ? contracts : undefined;
+}
+
+function normalizeManifestModelSupport(value: unknown): PluginManifestModelSupport | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const modelPrefixes = normalizeStringList(value.modelPrefixes);
+  const modelPatterns = normalizeStringList(value.modelPatterns);
+  const modelSupport = {
+    ...(modelPrefixes.length > 0 ? { modelPrefixes } : {}),
+    ...(modelPatterns.length > 0 ? { modelPatterns } : {}),
+  } satisfies PluginManifestModelSupport;
+  return Object.keys(modelSupport).length > 0 ? modelSupport : undefined;
+}
+
+function normalizeProviderAuthChoices(
+  value: unknown,
+): PluginManifestProviderAuthChoice[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const normalized: PluginManifestProviderAuthChoice[] = [];
+  for (const entry of value) {
+    if (!isRecord(entry)) {
+      continue;
+    }
+    const provider = typeof entry.provider === "string" ? entry.provider.trim() : "";
+    const method = typeof entry.method === "string" ? entry.method.trim() : "";
+    const choiceId = typeof entry.choiceId === "string" ? entry.choiceId.trim() : "";
+    if (!provider || !method || !choiceId) {
+      continue;
+    }
+    const choiceLabel = typeof entry.choiceLabel === "string" ? entry.choiceLabel.trim() : "";
+    const choiceHint = typeof entry.choiceHint === "string" ? entry.choiceHint.trim() : "";
+    const assistantPriority =
+      typeof entry.assistantPriority === "number" && Number.isFinite(entry.assistantPriority)
+        ? entry.assistantPriority
+        : undefined;
+    const assistantVisibility =
+      entry.assistantVisibility === "manual-only" || entry.assistantVisibility === "visible"
+        ? entry.assistantVisibility
+        : undefined;
+    const deprecatedChoiceIds = normalizeStringList(entry.deprecatedChoiceIds);
+    const groupId = typeof entry.groupId === "string" ? entry.groupId.trim() : "";
+    const groupLabel = typeof entry.groupLabel === "string" ? entry.groupLabel.trim() : "";
+    const groupHint = typeof entry.groupHint === "string" ? entry.groupHint.trim() : "";
+    const optionKey = typeof entry.optionKey === "string" ? entry.optionKey.trim() : "";
+    const cliFlag = typeof entry.cliFlag === "string" ? entry.cliFlag.trim() : "";
+    const cliOption = typeof entry.cliOption === "string" ? entry.cliOption.trim() : "";
+    const cliDescription =
+      typeof entry.cliDescription === "string" ? entry.cliDescription.trim() : "";
+    const onboardingScopes = normalizeStringList(entry.onboardingScopes).filter(
+      (scope): scope is "text-inference" | "image-generation" =>
+        scope === "text-inference" || scope === "image-generation",
+    );
+    normalized.push({
+      provider,
+      method,
+      choiceId,
+      ...(choiceLabel ? { choiceLabel } : {}),
+      ...(choiceHint ? { choiceHint } : {}),
+      ...(assistantPriority !== undefined ? { assistantPriority } : {}),
+      ...(assistantVisibility ? { assistantVisibility } : {}),
+      ...(deprecatedChoiceIds.length > 0 ? { deprecatedChoiceIds } : {}),
+      ...(groupId ? { groupId } : {}),
+      ...(groupLabel ? { groupLabel } : {}),
+      ...(groupHint ? { groupHint } : {}),
+      ...(optionKey ? { optionKey } : {}),
+      ...(cliFlag ? { cliFlag } : {}),
+      ...(cliOption ? { cliOption } : {}),
+      ...(cliDescription ? { cliDescription } : {}),
+      ...(onboardingScopes.length > 0 ? { onboardingScopes } : {}),
+    });
+  }
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function normalizeChannelConfigs(
+  value: unknown,
+): Record<string, PluginManifestChannelConfig> | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const normalized: Record<string, PluginManifestChannelConfig> = {};
+  for (const [key, rawEntry] of Object.entries(value)) {
+    const channelId = key.trim();
+    if (!channelId || !isRecord(rawEntry)) {
+      continue;
+    }
+    const schema = isRecord(rawEntry.schema) ? rawEntry.schema : null;
+    if (!schema) {
+      continue;
+    }
+    const uiHints = isRecord(rawEntry.uiHints)
+      ? (rawEntry.uiHints as Record<string, PluginConfigUiHint>)
+      : undefined;
+    const label = typeof rawEntry.label === "string" ? rawEntry.label.trim() : "";
+    const description = typeof rawEntry.description === "string" ? rawEntry.description.trim() : "";
+    const preferOver = normalizeStringList(rawEntry.preferOver);
+    normalized[channelId] = {
+      schema,
+      ...(uiHints ? { uiHints } : {}),
+      ...(label ? { label } : {}),
+      ...(description ? { description } : {}),
+      ...(preferOver.length > 0 ? { preferOver } : {}),
+    };
+  }
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+export function resolvePluginManifestPath(rootDir: string): string {
+  for (const filename of PLUGIN_MANIFEST_FILENAMES) {
+    const candidate = path.join(rootDir, filename);
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return path.join(rootDir, PLUGIN_MANIFEST_FILENAME);
+}
+
+export function loadPluginManifest(rootDir: string): PluginManifestLoadResult {
+  const manifestPath = resolvePluginManifestPath(rootDir);
+  const opened = openBoundaryFileSync({
+    absolutePath: manifestPath,
+    rootPath: rootDir,
+    boundaryLabel: "plugin root",
+  });
+  if (!opened.ok) {
+    if (opened.reason === "path") {
+      return { ok: false, error: `plugin manifest not found: ${manifestPath}`, manifestPath };
+    }
+    return {
+      ok: false,
+      error: `unsafe plugin manifest path: ${manifestPath} (${opened.reason})`,
+      manifestPath,
+    };
+  }
+  let raw: unknown;
+  try {
+    raw = JSON5.parse(fs.readFileSync(opened.fd, "utf-8"));
+  } catch (err) {
+    return {
+      ok: false,
+      error: `failed to parse plugin manifest: ${String(err)}`,
+      manifestPath,
+    };
+  } finally {
+    fs.closeSync(opened.fd);
+  }
+  if (!isRecord(raw)) {
+    return { ok: false, error: "plugin manifest must be an object", manifestPath };
+  }
+  const id = typeof raw.id === "string" ? raw.id.trim() : "";
+  if (!id) {
+    return { ok: false, error: "plugin manifest requires id", manifestPath };
+  }
+  const configSchema = isRecord(raw.configSchema) ? raw.configSchema : null;
+  if (!configSchema) {
+    return { ok: false, error: "plugin manifest requires configSchema", manifestPath };
+  }
+
+  const enabledByDefault = raw.enabledByDefault === true;
+  const legacyPluginIds = normalizeStringList(raw.legacyPluginIds);
+  const autoEnableWhenConfiguredProviders = normalizeStringList(
+    raw.autoEnableWhenConfiguredProviders,
+  );
+  const kind = typeof raw.kind === "string" ? (raw.kind as PluginKind) : undefined;
+  const name = typeof raw.name === "string" ? raw.name.trim() : undefined;
+  const description = typeof raw.description === "string" ? raw.description.trim() : undefined;
+  const version = typeof raw.version === "string" ? raw.version.trim() : undefined;
+  const channels = normalizeStringList(raw.channels);
+  const providers = normalizeStringList(raw.providers);
+  const modelSupport = normalizeManifestModelSupport(raw.modelSupport);
+  const providerAuthEnvVars = normalizeStringListRecord(raw.providerAuthEnvVars);
+  const providerAuthAliases = normalizeStringRecord(raw.providerAuthAliases);
+  const providerAuthChoices = normalizeProviderAuthChoices(raw.providerAuthChoices);
+  const skills = normalizeStringList(raw.skills);
+  const contracts = normalizeManifestContracts(raw.contracts);
+  const channelConfigs = normalizeChannelConfigs(raw.channelConfigs);
+
+  let uiHints: Record<string, PluginConfigUiHint> | undefined;
+  if (isRecord(raw.uiHints)) {
+    uiHints = raw.uiHints as Record<string, PluginConfigUiHint>;
+  }
+
+  return {
+    ok: true,
+    manifest: {
+      id,
+      configSchema,
+      ...(enabledByDefault ? { enabledByDefault } : {}),
+      ...(legacyPluginIds.length > 0 ? { legacyPluginIds } : {}),
+      ...(autoEnableWhenConfiguredProviders.length > 0
+        ? { autoEnableWhenConfiguredProviders }
+        : {}),
+      kind,
+      channels,
+      providers,
+      modelSupport,
+      providerAuthEnvVars,
+      providerAuthAliases,
+      providerAuthChoices,
+      skills,
+      name,
+      description,
+      version,
+      uiHints,
+      contracts,
+      channelConfigs,
+    },
+    manifestPath,
+  };
+}
+
+// package.json "fased" metadata (used for onboarding/catalog)
+export type PluginPackageChannel = {
+  id?: string;
+  label?: string;
+  selectionLabel?: string;
+  detailLabel?: string;
+  docsPath?: string;
+  docsLabel?: string;
+  blurb?: string;
+  order?: number;
+  aliases?: string[];
+  preferOver?: string[];
+  systemImage?: string;
+  selectionDocsPrefix?: string;
+  selectionDocsOmitLabel?: boolean;
+  selectionExtras?: string[];
+  showConfigured?: boolean;
+  quickstartAllowFrom?: boolean;
+  forceAccountBinding?: boolean;
+  preferSessionLookupForAnnounceTarget?: boolean;
+};
+
+export type PluginPackageInstall = {
+  npmSpec?: string;
+  localPath?: string;
+  defaultChoice?: "npm" | "local";
+  expectedIntegrity?: string;
+  minHostVersion?: string;
+  allowInvalidConfigRecovery?: boolean;
+};
+
+export type PluginPackageStartup = {
+  deferConfiguredChannelFullLoadUntilAfterListen?: boolean;
+};
+
+export type FasedAgentPackageManifest = {
+  extensions?: string[];
+  channel?: PluginPackageChannel;
+  install?: PluginPackageInstall;
+  startup?: PluginPackageStartup;
+};
+
+export const DEFAULT_PLUGIN_ENTRY_CANDIDATES = [
+  "index.ts",
+  "index.js",
+  "index.mjs",
+  "index.cjs",
+] as const;
+
+export type PackageExtensionResolution =
+  | { status: "ok"; entries: string[] }
+  | { status: "missing"; entries: [] }
+  | { status: "empty"; entries: [] };
+
+export type ManifestKey = typeof MANIFEST_KEY;
+
+export type PackageManifest = {
+  name?: string;
+  version?: string;
+  description?: string;
+  main?: string;
+  module?: string;
+} & Partial<Record<ManifestKey, FasedAgentPackageManifest>>;
+
+export function getPackageManifestMetadata(
+  manifest: PackageManifest | undefined,
+): FasedAgentPackageManifest | undefined {
+  if (!manifest) {
+    return undefined;
+  }
+  return manifest[MANIFEST_KEY];
+}
+
+export function resolvePackageExtensionEntries(
+  manifest: PackageManifest | undefined,
+): PackageExtensionResolution {
+  const raw = getPackageManifestMetadata(manifest)?.extensions;
+  if (!Array.isArray(raw)) {
+    return { status: "missing", entries: [] };
+  }
+  const entries = raw
+    .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+    .filter(Boolean);
+  if (entries.length === 0) {
+    return { status: "empty", entries: [] };
+  }
+  return { status: "ok", entries };
+}

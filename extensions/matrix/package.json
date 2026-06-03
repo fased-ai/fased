@@ -1,0 +1,33 @@
+{
+  "name": "@fased/matrix",
+  "version": "0.1.1",
+  "description": "FasedAgent Matrix channel plugin",
+  "type": "module",
+  "dependencies": {
+    "@matrix-org/matrix-sdk-crypto-nodejs": "^0.4.0",
+    "@vector-im/matrix-bot-sdk": "0.8.0-element.3",
+    "markdown-it": "14.1.1",
+    "music-metadata": "^11.12.1",
+    "zod": "^4.3.6"
+  },
+  "fased": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "channel": {
+      "id": "matrix",
+      "label": "Matrix",
+      "selectionLabel": "Matrix (plugin)",
+      "docsPath": "/channels/matrix",
+      "docsLabel": "matrix",
+      "blurb": "open protocol; configure a homeserver + access token.",
+      "order": 70,
+      "quickstartAllowFrom": true
+    },
+    "install": {
+      "npmSpec": "@fased/matrix",
+      "localPath": "extensions/matrix",
+      "defaultChoice": "local"
+    }
+  }
+}

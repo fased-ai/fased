@@ -1,0 +1,13 @@
+[Unit]
+Description=Fased Agent SAT protocol maintainer standby pass
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/fasedbot/agent/fased
+EnvironmentFile=-%h/.fased/sat-maintainer.env
+ExecStart=%h/fasedbot/agent/fased/scripts/run-sat-maintainer-standby-agent.sh
+
+[Install]
+WantedBy=default.target

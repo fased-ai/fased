@@ -1,0 +1,12 @@
+{
+  "name": "@fased/signal",
+  "version": "0.1.1",
+  "private": true,
+  "description": "FasedAgent Signal channel plugin",
+  "type": "module",
+  "fased": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

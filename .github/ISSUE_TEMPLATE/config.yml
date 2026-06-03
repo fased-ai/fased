@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Getting Started
+    url: https://docs.fased.ai/start/getting-started
+    about: "Start with the install and onboarding docs before filing an issue."
+  - name: Docs and FAQ
+    url: https://docs.fased.ai/help/faq
+    about: "Check the FAQ and product docs for known setup, wallet, federation, and mining guidance."
+  - name: Support
+    url: https://docs.fased.ai
+    about: "Use the public docs while community links are finalized."

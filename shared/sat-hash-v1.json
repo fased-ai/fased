@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "domains": {
+    "roundSeed": "sat-round-seed-v1",
+    "bucketHash": "sat-bucket-hash-v1",
+    "allocation": "sat-allocation-v1",
+    "difficulty": "sat-difficulty-v1",
+    "coordination": "sat-coordination-v1",
+    "trace": "sat-trace-v1",
+    "commit": "sat-commit-v1"
+  },
+  "scoreFp": 1000000,
+  "bucketCount": 25,
+  "activeBucketThresholdFp": 40000
+}

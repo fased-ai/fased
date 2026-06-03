@@ -1,0 +1,25 @@
+{
+  "programId": "D1ySMMiJmvJRhJJKwYnc171w3g2JDPQnkgD8kGhaG4Vq",
+  "accountName": "BondTierPolicyState",
+  "accountHeaderSize": 8,
+  "bodySize": 136,
+  "accountSize": 144,
+  "discriminator": 141,
+  "pdaSeed": "sat_bond_tier_policy",
+  "defaults": {
+    "basicMinRaw": "100000000000",
+    "operatorMinRaw": "100000000000000",
+    "unlockDelaySlots": "17280"
+  },
+  "offsets": {
+    "version": 0,
+    "bump": 1,
+    "policyVersion": 8,
+    "basicMinRaw": 16,
+    "operatorMinRaw": 24,
+    "unlockDelaySlots": 32,
+    "scheduledEffectiveSlot": 40,
+    "lastUpdatedSlot": 48,
+    "updateAuthority": 56
+  }
+}

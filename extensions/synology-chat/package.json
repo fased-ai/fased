@@ -1,0 +1,28 @@
+{
+  "name": "@fased/synology-chat",
+  "version": "0.1.1",
+  "description": "Synology Chat channel plugin for FasedAgent",
+  "type": "module",
+  "dependencies": {
+    "zod": "^4.3.6"
+  },
+  "fased": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "channel": {
+      "id": "synology-chat",
+      "label": "Synology Chat",
+      "selectionLabel": "Synology Chat (Webhook)",
+      "docsPath": "/channels/synology-chat",
+      "docsLabel": "synology-chat",
+      "blurb": "Connect your Synology NAS Chat to FasedAgent with full agent capabilities.",
+      "order": 90
+    },
+    "install": {
+      "npmSpec": "@fased/synology-chat",
+      "localPath": "extensions/synology-chat",
+      "defaultChoice": "local"
+    }
+  }
+}

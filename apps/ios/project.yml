@@ -1,0 +1,241 @@
+name: FasedAgent
+options:
+  bundleIdPrefix: ai.fased
+  deploymentTarget:
+    iOS: "18.0"
+  xcodeVersion: "16.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+
+packages:
+  FasedAgentKit:
+    path: ../shared/FasedAgentKit
+  Swabble:
+    path: ../../Swabble
+
+schemes:
+  FasedAgent:
+    shared: true
+    build:
+      targets:
+        FasedAgent: all
+    test:
+      targets:
+        - FasedAgentTests
+
+targets:
+  FasedAgent:
+    type: application
+    platform: iOS
+    configFiles:
+      Debug: Signing.xcconfig
+      Release: Signing.xcconfig
+    sources:
+      - path: Sources
+    dependencies:
+      - target: FasedAgentShareExtension
+        embed: true
+      - target: FasedAgentWatchApp
+      - package: FasedAgentKit
+      - package: FasedAgentKit
+        product: FasedAgentChatUI
+      - package: FasedAgentKit
+        product: FasedAgentProtocol
+      - package: Swabble
+        product: SwabbleKit
+      - sdk: AppIntents.framework
+    preBuildScripts:
+      - name: SwiftFormat (lint)
+        basedOnDependencyAnalysis: false
+        inputFileLists:
+          - $(SRCROOT)/SwiftSources.input.xcfilelist
+        script: |
+          set -euo pipefail
+          export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+          if ! command -v swiftformat >/dev/null 2>&1; then
+            echo "error: swiftformat not found (brew install swiftformat)" >&2
+            exit 1
+          fi
+          swiftformat --lint --config "$SRCROOT/../../.swiftformat" \
+            --filelist "$SRCROOT/SwiftSources.input.xcfilelist"
+      - name: SwiftLint
+        basedOnDependencyAnalysis: false
+        inputFileLists:
+          - $(SRCROOT)/SwiftSources.input.xcfilelist
+        script: |
+          set -euo pipefail
+          export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+          if ! command -v swiftlint >/dev/null 2>&1; then
+            echo "error: swiftlint not found (brew install swiftlint)" >&2
+            exit 1
+          fi
+          swiftlint lint --config "$SRCROOT/.swiftlint.yml" --use-script-input-file-lists
+    settings:
+      base:
+        CODE_SIGN_IDENTITY: "Apple Development"
+        CODE_SIGN_ENTITLEMENTS: Sources/FasedAgent.entitlements
+        CODE_SIGN_STYLE: "$(FASED_CODE_SIGN_STYLE)"
+        DEVELOPMENT_TEAM: "$(FASED_DEVELOPMENT_TEAM)"
+        PRODUCT_BUNDLE_IDENTIFIER: "$(FASED_APP_BUNDLE_ID)"
+        PROVISIONING_PROFILE_SPECIFIER: "$(FASED_APP_PROFILE)"
+        SWIFT_VERSION: "6.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        ENABLE_APPINTENTS_METADATA: NO
+    info:
+      path: Sources/Info.plist
+      properties:
+        CFBundleDisplayName: FasedAgent
+        CFBundleIconName: AppIcon
+        CFBundleURLTypes:
+          - CFBundleURLName: ai.fased.ios
+            CFBundleURLSchemes:
+              - fased
+        CFBundleShortVersionString: "2026.2.27"
+        CFBundleVersion: "20260227"
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UIBackgroundModes:
+          - audio
+          - remote-notification
+        BGTaskSchedulerPermittedIdentifiers:
+          - ai.fased.ios.bgrefresh
+        NSLocalNetworkUsageDescription: FasedAgent discovers and connects to your FasedAgent gateway on the local network.
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoadsInWebContent: true
+        NSBonjourServices:
+          - _fased-gw._tcp
+        NSCameraUsageDescription: FasedAgent can capture photos or short video clips when requested via the gateway.
+        NSLocationWhenInUseUsageDescription: FasedAgent uses your location when you allow location sharing.
+        NSLocationAlwaysAndWhenInUseUsageDescription: FasedAgent can share your location in the background when you enable Always.
+        NSMicrophoneUsageDescription: FasedAgent needs microphone access for voice wake.
+        NSSpeechRecognitionUsageDescription: FasedAgent uses on-device speech recognition for voice wake.
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+
+  FasedAgentShareExtension:
+    type: app-extension
+    platform: iOS
+    configFiles:
+      Debug: Signing.xcconfig
+      Release: Signing.xcconfig
+    sources:
+      - path: ShareExtension
+    dependencies:
+      - package: FasedAgentKit
+      - sdk: AppIntents.framework
+    settings:
+      base:
+        CODE_SIGN_IDENTITY: "Apple Development"
+        CODE_SIGN_STYLE: "$(FASED_CODE_SIGN_STYLE)"
+        DEVELOPMENT_TEAM: "$(FASED_DEVELOPMENT_TEAM)"
+        ENABLE_APPINTENTS_METADATA: NO
+        PRODUCT_BUNDLE_IDENTIFIER: "$(FASED_SHARE_BUNDLE_ID)"
+        PROVISIONING_PROFILE_SPECIFIER: "$(FASED_SHARE_PROFILE)"
+        SWIFT_VERSION: "6.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+    info:
+      path: ShareExtension/Info.plist
+      properties:
+        CFBundleDisplayName: FasedAgent Share
+        CFBundleShortVersionString: "2026.2.27"
+        CFBundleVersion: "20260227"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.share-services
+          NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).ShareViewController"
+          NSExtensionAttributes:
+            NSExtensionActivationRule:
+              NSExtensionActivationSupportsText: true
+              NSExtensionActivationSupportsWebURLWithMaxCount: 1
+              NSExtensionActivationSupportsImageWithMaxCount: 10
+              NSExtensionActivationSupportsMovieWithMaxCount: 1
+
+  FasedAgentWatchApp:
+    type: application.watchapp2
+    platform: watchOS
+    deploymentTarget: "11.0"
+    sources:
+      - path: WatchApp
+    dependencies:
+      - target: FasedAgentWatchExtension
+    configFiles:
+      Debug: Config/Signing.xcconfig
+      Release: Config/Signing.xcconfig
+    settings:
+      base:
+        ENABLE_APPINTENTS_METADATA: NO
+        PRODUCT_BUNDLE_IDENTIFIER: "$(FASED_WATCH_APP_BUNDLE_ID)"
+    info:
+      path: WatchApp/Info.plist
+      properties:
+        CFBundleDisplayName: FasedAgent
+        CFBundleShortVersionString: "2026.2.27"
+        CFBundleVersion: "20260227"
+        WKCompanionAppBundleIdentifier: "$(FASED_APP_BUNDLE_ID)"
+        WKWatchKitApp: true
+
+  FasedAgentWatchExtension:
+    type: watchkit2-extension
+    platform: watchOS
+    deploymentTarget: "11.0"
+    sources:
+      - path: WatchExtension/Sources
+    dependencies:
+      - sdk: WatchConnectivity.framework
+      - sdk: UserNotifications.framework
+    configFiles:
+      Debug: Config/Signing.xcconfig
+      Release: Config/Signing.xcconfig
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: "$(FASED_WATCH_EXTENSION_BUNDLE_ID)"
+    info:
+      path: WatchExtension/Info.plist
+      properties:
+        CFBundleDisplayName: FasedAgent
+        CFBundleShortVersionString: "2026.2.27"
+        CFBundleVersion: "20260227"
+        NSExtension:
+          NSExtensionAttributes:
+            WKAppBundleIdentifier: "$(FASED_WATCH_APP_BUNDLE_ID)"
+          NSExtensionPointIdentifier: com.apple.watchkit
+
+  FasedAgentTests:
+    type: bundle.unit-test
+    platform: iOS
+    configFiles:
+      Debug: Signing.xcconfig
+      Release: Signing.xcconfig
+    sources:
+      - path: Tests
+    dependencies:
+      - target: FasedAgent
+      - package: Swabble
+        product: SwabbleKit
+      - sdk: AppIntents.framework
+    settings:
+      base:
+        CODE_SIGN_IDENTITY: "Apple Development"
+        CODE_SIGN_STYLE: "$(FASED_CODE_SIGN_STYLE)"
+        DEVELOPMENT_TEAM: "$(FASED_DEVELOPMENT_TEAM)"
+        PRODUCT_BUNDLE_IDENTIFIER: ai.fased.ios.tests
+        SWIFT_VERSION: "6.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/FasedAgent.app/FasedAgent"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+    info:
+      path: Tests/Info.plist
+      properties:
+        CFBundleDisplayName: FasedAgentTests
+        CFBundleShortVersionString: "2026.2.27"
+        CFBundleVersion: "20260227"

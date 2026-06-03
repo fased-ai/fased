@@ -1,0 +1,1530 @@
+import type { FasedAgentConfig } from "../config/config.js";
+import type { ModelDefinitionConfig } from "../config/types.models.js";
+import { coerceSecretRef } from "../config/types.secrets.js";
+import { createSubsystemLogger } from "../logging/subsystem.js";
+import {
+  DEFAULT_COPILOT_API_BASE_URL,
+  resolveCopilotApiToken,
+} from "../providers/github-copilot-token.js";
+import {
+  buildXiaomiModelDefinition,
+  XIAOMI_BASE_URL as XIAOMI_SHARED_BASE_URL,
+  XIAOMI_DEFAULT_MODEL_ID as XIAOMI_SHARED_DEFAULT_MODEL_ID,
+  XIAOMI_MODEL_IDS,
+} from "../providers/xiaomi-models.js";
+import { normalizeOptionalSecretInput } from "../utils/normalize-secret-input.js";
+import { isPrivateNetworkBaseUrl } from "../utils/private-network-url.js";
+import { ensureAuthProfileStore, listProfilesForProvider } from "./auth-profiles.js";
+import {
+  buildBytePlusModelDefinition,
+  BYTEPLUS_BASE_URL,
+  BYTEPLUS_MODEL_CATALOG,
+  BYTEPLUS_CODING_BASE_URL,
+  BYTEPLUS_CODING_MODEL_CATALOG,
+} from "./byteplus-models.js";
+import {
+  buildCloudflareAiGatewayModelDefinition,
+  CLOUDFLARE_AI_GATEWAY_MODEL_CATALOG,
+  resolveCloudflareAiGatewayBaseUrl,
+} from "./cloudflare-ai-gateway.js";
+import { cloneCurrentModelProvider } from "./current-model-catalog.js";
+import {
+  buildDoubaoModelDefinition,
+  DOUBAO_BASE_URL,
+  DOUBAO_MODEL_CATALOG,
+  DOUBAO_CODING_BASE_URL,
+  DOUBAO_CODING_MODEL_CATALOG,
+} from "./doubao-models.js";
+import {
+  discoverHuggingfaceModels,
+  HUGGINGFACE_BASE_URL,
+  HUGGINGFACE_MODEL_CATALOG,
+  buildHuggingfaceModelDefinition,
+} from "./huggingface-models.js";
+import { resolveEnvApiKey } from "./model-auth.js";
+import {
+  buildSyntheticModelDefinition,
+  SYNTHETIC_BASE_URL,
+  SYNTHETIC_MODEL_CATALOG,
+} from "./synthetic-models.js";
+import {
+  TOGETHER_BASE_URL,
+  TOGETHER_MODEL_CATALOG,
+  buildTogetherModelDefinition,
+} from "./together-models.js";
+import { discoverVeniceModels, VENICE_BASE_URL } from "./venice-models.js";
+
+type ModelsConfig = NonNullable<FasedAgentConfig["models"]>;
+export type ProviderConfig = NonNullable<ModelsConfig["providers"]>[string];
+
+const MINIMAX_PORTAL_BASE_URL = "https://api.minimax.io/anthropic";
+const MINIMAX_DEFAULT_MODEL_ID = "MiniMax-M2.7";
+const MINIMAX_HIGHSPEED_MODEL_ID = "MiniMax-M2.7-highspeed";
+const MINIMAX_DEFAULT_VISION_MODEL_ID = "MiniMax-VL-01";
+const MINIMAX_DEFAULT_CONTEXT_WINDOW = 204800;
+const MINIMAX_DEFAULT_MAX_TOKENS = 131072;
+const MINIMAX_OAUTH_PLACEHOLDER = "minimax-oauth";
+// Pricing per 1M tokens (USD) — https://platform.minimaxi.com/document/Price
+const MINIMAX_API_COST = {
+  input: 0.3,
+  output: 1.2,
+  cacheRead: 0.03,
+  cacheWrite: 0.12,
+};
+
+type ProviderModelConfig = NonNullable<ProviderConfig["models"]>[number];
+
+function buildMinimaxModel(params: {
+  id: string;
+  name: string;
+  reasoning: boolean;
+  input: ProviderModelConfig["input"];
+}): ProviderModelConfig {
+  return {
+    id: params.id,
+    name: params.name,
+    reasoning: params.reasoning,
+    input: params.input,
+    cost: MINIMAX_API_COST,
+    contextWindow: MINIMAX_DEFAULT_CONTEXT_WINDOW,
+    maxTokens: MINIMAX_DEFAULT_MAX_TOKENS,
+  };
+}
+
+function buildMinimaxTextModel(params: {
+  id: string;
+  name: string;
+  reasoning: boolean;
+}): ProviderModelConfig {
+  return buildMinimaxModel({ ...params, input: ["text"] });
+}
+
+export const XIAOMI_BASE_URL = XIAOMI_SHARED_BASE_URL;
+export const XIAOMI_DEFAULT_MODEL_ID = XIAOMI_SHARED_DEFAULT_MODEL_ID;
+
+const XIAOMI_MODEL_CATALOG: ProviderModelConfig[] = XIAOMI_MODEL_IDS.map((modelId) =>
+  buildXiaomiModelDefinition(modelId),
+);
+
+const MOONSHOT_BASE_URL = "https://api.moonshot.ai/v1";
+const MOONSHOT_DEFAULT_MODEL_ID = "kimi-k2.6";
+const MOONSHOT_DEFAULT_CONTEXT_WINDOW = 262144;
+const MOONSHOT_DEFAULT_MAX_TOKENS = 32768;
+const MOONSHOT_DEFAULT_COST = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+};
+
+const KIMI_CODING_BASE_URL = "https://api.kimi.com/coding/";
+const KIMI_CODING_DEFAULT_MODEL_ID = "kimi-for-coding";
+const KIMI_CODING_DEFAULT_CONTEXT_WINDOW = 262144;
+const KIMI_CODING_DEFAULT_MAX_TOKENS = 32768;
+const KIMI_CODING_DEFAULT_COST = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+};
+
+export const QWEN_DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1";
+export const QWEN_CODING_PLAN_BASE_URL = "https://coding.dashscope.aliyuncs.com/v1";
+export const QWEN_DEFAULT_MODEL_ID = "qwen3.6-plus";
+export const QWEN_DEFAULT_MODEL_REF = `qwen/${QWEN_DEFAULT_MODEL_ID}`;
+export const QWEN_CODING_PLAN_DEFAULT_MODEL_REF = `qwen-coding-plan/${QWEN_DEFAULT_MODEL_ID}`;
+const QWEN_DEFAULT_CONTEXT_WINDOW = 1_000_000;
+const QWEN_DEFAULT_MAX_TOKENS = 65_536;
+const QWEN_DEFAULT_COST = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+};
+
+const QWEN_DASHSCOPE_MODEL_CATALOG: ProviderModelConfig[] = [
+  {
+    id: "qwen3.6-plus",
+    name: "Qwen3.6 Plus",
+    reasoning: true,
+    input: ["text", "image"],
+    cost: QWEN_DEFAULT_COST,
+    contextWindow: QWEN_DEFAULT_CONTEXT_WINDOW,
+    maxTokens: QWEN_DEFAULT_MAX_TOKENS,
+  },
+  {
+    id: "qwen3.6-flash",
+    name: "Qwen3.6 Flash",
+    reasoning: true,
+    input: ["text", "image"],
+    cost: QWEN_DEFAULT_COST,
+    contextWindow: QWEN_DEFAULT_CONTEXT_WINDOW,
+    maxTokens: QWEN_DEFAULT_MAX_TOKENS,
+  },
+  {
+    id: "qwen3.6-max-preview",
+    name: "Qwen3.6 Max Preview",
+    reasoning: true,
+    input: ["text"],
+    cost: QWEN_DEFAULT_COST,
+    contextWindow: 262_144,
+    maxTokens: QWEN_DEFAULT_MAX_TOKENS,
+  },
+  {
+    id: "qwen3-coder-plus",
+    name: "Qwen3 Coder Plus",
+    reasoning: false,
+    input: ["text"],
+    cost: QWEN_DEFAULT_COST,
+    contextWindow: 1_000_000,
+    maxTokens: QWEN_DEFAULT_MAX_TOKENS,
+  },
+  {
+    id: "qwen3-coder-flash",
+    name: "Qwen3 Coder Flash",
+    reasoning: false,
+    input: ["text"],
+    cost: QWEN_DEFAULT_COST,
+    contextWindow: 1_000_000,
+    maxTokens: QWEN_DEFAULT_MAX_TOKENS,
+  },
+  {
+    id: "qwen3-coder-next",
+    name: "Qwen3 Coder Next",
+    reasoning: false,
+    input: ["text"],
+    cost: QWEN_DEFAULT_COST,
+    contextWindow: 262_144,
+    maxTokens: QWEN_DEFAULT_MAX_TOKENS,
+  },
+  {
+    id: "qwen3.5-plus",
+    name: "Qwen3.5 Plus",
+    reasoning: true,
+    input: ["text", "image"],
+    cost: QWEN_DEFAULT_COST,
+    contextWindow: QWEN_DEFAULT_CONTEXT_WINDOW,
+    maxTokens: QWEN_DEFAULT_MAX_TOKENS,
+  },
+  {
+    id: "qwen3.5-flash",
+    name: "Qwen3.5 Flash",
+    reasoning: true,
+    input: ["text"],
+    cost: QWEN_DEFAULT_COST,
+    contextWindow: QWEN_DEFAULT_CONTEXT_WINDOW,
+    maxTokens: QWEN_DEFAULT_MAX_TOKENS,
+  },
+];
+
+const QWEN_CODING_PLAN_MODEL_CATALOG: ProviderModelConfig[] = [
+  QWEN_DASHSCOPE_MODEL_CATALOG[0],
+  QWEN_DASHSCOPE_MODEL_CATALOG[6],
+  {
+    id: "qwen3-max-2026-01-23",
+    name: "Qwen3 Max 2026-01-23",
+    reasoning: true,
+    input: ["text", "image"],
+    cost: QWEN_DEFAULT_COST,
+    contextWindow: 262_144,
+    maxTokens: QWEN_DEFAULT_MAX_TOKENS,
+  },
+  QWEN_DASHSCOPE_MODEL_CATALOG[3],
+  QWEN_DASHSCOPE_MODEL_CATALOG[5],
+  {
+    id: "kimi-k2.5",
+    name: "Kimi K2.5",
+    reasoning: true,
+    input: ["text", "image"],
+    cost: QWEN_DEFAULT_COST,
+    contextWindow: 262_144,
+    maxTokens: 98_304,
+  },
+  {
+    id: "glm-5",
+    name: "GLM-5",
+    reasoning: true,
+    input: ["text"],
+    cost: QWEN_DEFAULT_COST,
+    contextWindow: 202_752,
+    maxTokens: 16_384,
+  },
+  {
+    id: "glm-4.7",
+    name: "GLM-4.7",
+    reasoning: true,
+    input: ["text"],
+    cost: QWEN_DEFAULT_COST,
+    contextWindow: 202_752,
+    maxTokens: 16_384,
+  },
+  {
+    id: "MiniMax-M2.5",
+    name: "MiniMax M2.5",
+    reasoning: true,
+    input: ["text"],
+    cost: QWEN_DEFAULT_COST,
+    contextWindow: 196_608,
+    maxTokens: 32_768,
+  },
+];
+
+const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+const OPENROUTER_DEFAULT_MODEL_ID = "auto";
+const OPENROUTER_DEFAULT_CONTEXT_WINDOW = 200000;
+const OPENROUTER_DEFAULT_MAX_TOKENS = 8192;
+const OPENROUTER_DEFAULT_COST = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+};
+const OPENROUTER_KIMI_K2_6_COST = {
+  input: 1,
+  output: 3,
+  cacheRead: 0.2,
+  cacheWrite: 0,
+};
+const OPENROUTER_KIMI_K2_5_COST = {
+  input: 0.44,
+  output: 2,
+  cacheRead: 0.22,
+  cacheWrite: 0,
+};
+
+const VLLM_BASE_URL = "http://127.0.0.1:8000/v1";
+const VLLM_DEFAULT_CONTEXT_WINDOW = 128000;
+const VLLM_DEFAULT_MAX_TOKENS = 8192;
+const VLLM_DEFAULT_COST = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+};
+
+export const QIANFAN_BASE_URL = "https://qianfan.baidubce.com/v2";
+export const QIANFAN_DEFAULT_MODEL_ID = "ernie-5.1";
+const QIANFAN_DEFAULT_CONTEXT_WINDOW = 128000;
+const QIANFAN_DEFAULT_MAX_TOKENS = 65536;
+const QIANFAN_DEFAULT_COST = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+};
+
+const log = createSubsystemLogger("agents/model-providers");
+
+type VllmModelsResponse = {
+  data?: Array<{
+    id?: string;
+  }>;
+};
+
+type OllamaTagsResponse = {
+  models?: Array<{
+    name?: string;
+    model?: string;
+  }>;
+};
+
+type LmStudioModelsResponse = {
+  data?: Array<{
+    id?: string;
+    key?: string;
+    name?: string;
+    type?: string;
+    max_context_length?: number;
+  }>;
+  models?: Array<{
+    id?: string;
+    key?: string;
+    name?: string;
+    type?: string;
+    max_context_length?: number;
+  }>;
+};
+
+export const OLLAMA_DEFAULT_BASE_URL = "http://127.0.0.1:11434";
+export const OLLAMA_DEFAULT_CONTEXT_WINDOW = 128000;
+export const OLLAMA_DEFAULT_MAX_TOKENS = 8192;
+const OLLAMA_DEFAULT_COST = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+};
+
+export const LMSTUDIO_DEFAULT_BASE_URL = "http://127.0.0.1:1234/v1";
+export const LMSTUDIO_DEFAULT_CONTEXT_WINDOW = 128000;
+export const LMSTUDIO_DEFAULT_MAX_TOKENS = 8192;
+const LMSTUDIO_DEFAULT_COST = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+};
+
+export function resolveOllamaApiBase(value?: string): string {
+  const trimmed = (value?.trim() || OLLAMA_DEFAULT_BASE_URL).replace(/\/+$/, "");
+  return trimmed.replace(/\/v1$/i, "");
+}
+
+export function resolveLmStudioApiBase(value?: string): string {
+  const trimmed = (value?.trim() || LMSTUDIO_DEFAULT_BASE_URL).replace(/\/+$/, "");
+  return /\/v1$/i.test(trimmed) ? trimmed : `${trimmed}/v1`;
+}
+
+function resolveLmStudioCatalogUrl(baseUrl: string): string {
+  const normalized = resolveLmStudioApiBase(baseUrl).replace(/\/v1$/i, "");
+  return `${normalized}/api/v1/models`;
+}
+
+function buildZeroCostLocalModel(params: {
+  id: string;
+  name?: string;
+  reasoning?: boolean;
+  contextWindow?: number;
+  maxTokens?: number;
+  input?: Array<"text" | "image">;
+  cost?: ModelDefinitionConfig["cost"];
+}): ModelDefinitionConfig {
+  return {
+    id: params.id,
+    name: params.name?.trim() || params.id,
+    reasoning: params.reasoning ?? false,
+    input: params.input ?? ["text"],
+    cost: params.cost ?? OLLAMA_DEFAULT_COST,
+    contextWindow: params.contextWindow ?? OLLAMA_DEFAULT_CONTEXT_WINDOW,
+    maxTokens: params.maxTokens ?? OLLAMA_DEFAULT_MAX_TOKENS,
+  };
+}
+
+async function discoverVllmModels(
+  baseUrl: string,
+  apiKey?: string,
+): Promise<ModelDefinitionConfig[]> {
+  // Skip vLLM discovery in test environments
+  if (
+    (process.env.VITEST || process.env.NODE_ENV === "test") &&
+    process.env.FASED_TEST_LOCAL_PROVIDER_DISCOVERY !== "1"
+  ) {
+    return [];
+  }
+
+  const trimmedBaseUrl = baseUrl.trim().replace(/\/+$/, "");
+  const url = `${trimmedBaseUrl}/models`;
+
+  try {
+    const trimmedApiKey = apiKey?.trim();
+    const response = await fetch(url, {
+      headers: trimmedApiKey ? { Authorization: `Bearer ${trimmedApiKey}` } : undefined,
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) {
+      log.warn(`Failed to discover vLLM models: ${response.status}`);
+      return [];
+    }
+    const data = (await response.json()) as VllmModelsResponse;
+    const models = data.data ?? [];
+    if (models.length === 0) {
+      log.warn("No vLLM models found on local instance");
+      return [];
+    }
+
+    return models
+      .map((m) => ({ id: typeof m.id === "string" ? m.id.trim() : "" }))
+      .filter((m) => Boolean(m.id))
+      .map((m) => {
+        const modelId = m.id;
+        return {
+          id: modelId,
+          name: modelId,
+          reasoning: false,
+          input: ["text"],
+          cost: VLLM_DEFAULT_COST,
+          contextWindow: VLLM_DEFAULT_CONTEXT_WINDOW,
+          maxTokens: VLLM_DEFAULT_MAX_TOKENS,
+        } satisfies ModelDefinitionConfig;
+      });
+  } catch (error) {
+    log.warn(`Failed to discover vLLM models: ${String(error)}`);
+    return [];
+  }
+}
+
+async function discoverOllamaModels(
+  baseUrl: string,
+  options: { warnOnFailure?: boolean; force?: boolean } = {},
+): Promise<ModelDefinitionConfig[]> {
+  if (
+    !options.force &&
+    (process.env.VITEST || process.env.NODE_ENV === "test") &&
+    process.env.FASED_TEST_LOCAL_PROVIDER_DISCOVERY !== "1"
+  ) {
+    return [];
+  }
+
+  const nativeBaseUrl = resolveOllamaApiBase(baseUrl);
+  const url = `${nativeBaseUrl}/api/tags`;
+
+  try {
+    const response = await globalThis.fetch(url, { signal: AbortSignal.timeout(2500) });
+    if (!response.ok) {
+      if (options.warnOnFailure) {
+        console.warn(`Ollama model discovery failed: ${response.status}`);
+      }
+      return [];
+    }
+    const data = (await response.json()) as OllamaTagsResponse;
+    return (data.models ?? [])
+      .map((entry) => (entry.name ?? entry.model ?? "").trim())
+      .filter(Boolean)
+      .map((id) =>
+        buildZeroCostLocalModel({
+          id,
+          name: id,
+        }),
+      );
+  } catch (error) {
+    if (options.warnOnFailure) {
+      console.warn(`Ollama model discovery failed: ${String(error)}`);
+    }
+    return [];
+  }
+}
+
+async function discoverLmStudioModels(
+  baseUrl: string,
+  apiKey?: string,
+  options: { warnOnFailure?: boolean; force?: boolean } = {},
+): Promise<ModelDefinitionConfig[]> {
+  if (
+    !options.force &&
+    (process.env.VITEST || process.env.NODE_ENV === "test") &&
+    process.env.FASED_TEST_LOCAL_PROVIDER_DISCOVERY !== "1"
+  ) {
+    return [];
+  }
+
+  const url = resolveLmStudioCatalogUrl(baseUrl);
+  const token = apiKey?.trim();
+  try {
+    const response = await globalThis.fetch(url, {
+      headers:
+        token && token !== "lmstudio-local" ? { Authorization: `Bearer ${token}` } : undefined,
+      signal: AbortSignal.timeout(2500),
+    });
+    if (!response.ok) {
+      if (options.warnOnFailure) {
+        console.warn(`LM Studio model discovery failed: ${response.status}`);
+      }
+      return [];
+    }
+    const data = (await response.json()) as LmStudioModelsResponse;
+    const entries = data.data ?? data.models ?? [];
+    return entries
+      .map((entry) => {
+        const id = (entry.key ?? entry.id ?? "").trim();
+        if (!id) {
+          return undefined;
+        }
+        const contextWindow =
+          typeof entry.max_context_length === "number" && entry.max_context_length > 0
+            ? entry.max_context_length
+            : LMSTUDIO_DEFAULT_CONTEXT_WINDOW;
+        return buildZeroCostLocalModel({
+          id,
+          name: entry.name ?? id,
+          contextWindow,
+          maxTokens: LMSTUDIO_DEFAULT_MAX_TOKENS,
+          cost: LMSTUDIO_DEFAULT_COST,
+        });
+      })
+      .filter((entry): entry is ModelDefinitionConfig => Boolean(entry));
+  } catch (error) {
+    if (options.warnOnFailure) {
+      console.warn(`LM Studio model discovery failed: ${String(error)}`);
+    }
+    return [];
+  }
+}
+
+function normalizeApiKeyConfig(value: string): string {
+  const trimmed = value.trim();
+  const match = /^\$\{([A-Z0-9_]+)\}$/.exec(trimmed);
+  return match?.[1] ?? trimmed;
+}
+
+function resolveEnvApiKeyVarName(provider: string): string | undefined {
+  const resolved = resolveEnvApiKey(provider);
+  if (!resolved) {
+    return undefined;
+  }
+  const match = /^(?:env: |shell env: )([A-Z0-9_]+)$/.exec(resolved.source);
+  return match ? match[1] : undefined;
+}
+
+function resolveApiKeyFromProfiles(params: {
+  provider: string;
+  store: ReturnType<typeof ensureAuthProfileStore>;
+}): string | undefined {
+  const ids = listProfilesForProvider(params.store, params.provider);
+  for (const id of ids) {
+    const cred = params.store.profiles[id];
+    if (!cred) {
+      continue;
+    }
+    if (cred.type === "api_key") {
+      if (cred.key?.trim()) {
+        return cred.key;
+      }
+      const keyRef = coerceSecretRef(cred.keyRef);
+      if (keyRef?.source === "env" && keyRef.id.trim()) {
+        return keyRef.id.trim();
+      }
+      continue;
+    }
+    if (cred.type === "token") {
+      if (cred.token?.trim()) {
+        return cred.token;
+      }
+      const tokenRef = coerceSecretRef(cred.tokenRef);
+      if (tokenRef?.source === "env" && tokenRef.id.trim()) {
+        return tokenRef.id.trim();
+      }
+      continue;
+    }
+  }
+  return undefined;
+}
+
+function resolveDiscoveryApiKey(apiKey?: string): string | undefined {
+  const trimmed = apiKey?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  if (/^[A-Z][A-Z0-9_]*$/.test(trimmed)) {
+    return process.env[trimmed]?.trim() || trimmed;
+  }
+  return trimmed;
+}
+
+export function normalizeGoogleModelId(id: string): string {
+  if (id === "gemini-3-pro" || id === "gemini-3-pro-preview" || id === "gemini-3.1-pro") {
+    return "gemini-3.1-pro-preview";
+  }
+  if (id === "gemini-3-flash" || id === "gemini-3.1-flash" || id === "gemini-3.1-flash-preview") {
+    return "gemini-3-flash-preview";
+  }
+  if (id === "gemini-3.1-flash-lite" || id === "gemini-3.1-flash-lite-preview") {
+    return "gemini-3.1-flash-lite";
+  }
+  return id;
+}
+
+function normalizeProviderModels(
+  provider: ProviderConfig,
+  normalizeId: (id: string) => string,
+): ProviderConfig {
+  let mutated = false;
+  const models = provider.models.map((model) => {
+    const nextId = normalizeId(model.id);
+    if (nextId === model.id) {
+      return model;
+    }
+    mutated = true;
+    return { ...model, id: nextId };
+  });
+  return mutated ? { ...provider, models } : provider;
+}
+
+function normalizeGoogleProvider(provider: ProviderConfig): ProviderConfig {
+  return normalizeProviderModels(provider, normalizeGoogleModelId);
+}
+
+export function normalizeProviders(params: {
+  providers: ModelsConfig["providers"];
+  agentDir: string;
+}): ModelsConfig["providers"] {
+  const { providers } = params;
+  if (!providers) {
+    return providers;
+  }
+  const authStore = ensureAuthProfileStore(params.agentDir, {
+    allowKeychainPrompt: false,
+  });
+  let mutated = false;
+  const next: Record<string, ProviderConfig> = {};
+
+  for (const [key, provider] of Object.entries(providers)) {
+    const normalizedKey = key.trim();
+    let normalizedProvider = provider;
+    const configuredApiKey = normalizedProvider.apiKey;
+
+    // Fix common misconfig: apiKey set to "${ENV_VAR}" instead of "ENV_VAR".
+    if (
+      typeof configuredApiKey === "string" &&
+      normalizeApiKeyConfig(configuredApiKey) !== configuredApiKey
+    ) {
+      mutated = true;
+      normalizedProvider = {
+        ...normalizedProvider,
+        apiKey: normalizeApiKeyConfig(configuredApiKey),
+      };
+    }
+
+    // If a provider defines models, pi's ModelRegistry requires apiKey to be set.
+    // Fill it from the environment or auth profiles when possible.
+    const hasModels =
+      Array.isArray(normalizedProvider.models) && normalizedProvider.models.length > 0;
+    const normalizedApiKey = normalizeOptionalSecretInput(normalizedProvider.apiKey);
+    const hasConfiguredApiKey = Boolean(normalizedApiKey || normalizedProvider.apiKey);
+    if (hasModels && !hasConfiguredApiKey) {
+      const fromEnv = resolveEnvApiKeyVarName(normalizedKey);
+      const fromProfiles = resolveApiKeyFromProfiles({
+        provider: normalizedKey,
+        store: authStore,
+      });
+      const apiKey = fromEnv ?? fromProfiles;
+      if (apiKey?.trim()) {
+        mutated = true;
+        normalizedProvider = { ...normalizedProvider, apiKey };
+      }
+    }
+
+    if (normalizedKey === "google") {
+      const googleNormalized = normalizeGoogleProvider(normalizedProvider);
+      if (googleNormalized !== normalizedProvider) {
+        mutated = true;
+      }
+      normalizedProvider = googleNormalized;
+    }
+
+    next[key] = normalizedProvider;
+  }
+
+  return mutated ? next : providers;
+}
+
+function buildMinimaxProvider(): ProviderConfig {
+  return {
+    baseUrl: MINIMAX_PORTAL_BASE_URL,
+    api: "anthropic-messages",
+    authHeader: true,
+    models: [
+      buildMinimaxTextModel({
+        id: MINIMAX_DEFAULT_MODEL_ID,
+        name: "MiniMax M2.7",
+        reasoning: true,
+      }),
+      buildMinimaxTextModel({
+        id: MINIMAX_HIGHSPEED_MODEL_ID,
+        name: "MiniMax M2.7 Highspeed",
+        reasoning: true,
+      }),
+      buildMinimaxModel({
+        id: MINIMAX_DEFAULT_VISION_MODEL_ID,
+        name: "MiniMax VL 01",
+        reasoning: false,
+        input: ["text", "image"],
+      }),
+      buildMinimaxTextModel({
+        id: "MiniMax-M2.5",
+        name: "MiniMax M2.5",
+        reasoning: true,
+      }),
+      buildMinimaxTextModel({
+        id: "MiniMax-M2.5-highspeed",
+        name: "MiniMax M2.5 Highspeed",
+        reasoning: true,
+      }),
+    ],
+  };
+}
+
+function buildMinimaxPortalProvider(): ProviderConfig {
+  return {
+    baseUrl: MINIMAX_PORTAL_BASE_URL,
+    api: "anthropic-messages",
+    authHeader: true,
+    models: [
+      buildMinimaxTextModel({
+        id: MINIMAX_DEFAULT_MODEL_ID,
+        name: "MiniMax M2.7",
+        reasoning: true,
+      }),
+      buildMinimaxTextModel({
+        id: MINIMAX_HIGHSPEED_MODEL_ID,
+        name: "MiniMax M2.7 Highspeed",
+        reasoning: true,
+      }),
+      buildMinimaxTextModel({
+        id: "MiniMax-M2.5",
+        name: "MiniMax M2.5",
+        reasoning: true,
+      }),
+      buildMinimaxTextModel({
+        id: "MiniMax-M2.5-highspeed",
+        name: "MiniMax M2.5 Highspeed",
+        reasoning: true,
+      }),
+    ],
+  };
+}
+
+function buildMoonshotProvider(): ProviderConfig {
+  return {
+    baseUrl: MOONSHOT_BASE_URL,
+    api: "openai-completions",
+    models: [
+      {
+        id: MOONSHOT_DEFAULT_MODEL_ID,
+        name: "Kimi K2.6",
+        reasoning: true,
+        input: ["text", "image"],
+        cost: MOONSHOT_DEFAULT_COST,
+        contextWindow: MOONSHOT_DEFAULT_CONTEXT_WINDOW,
+        maxTokens: MOONSHOT_DEFAULT_MAX_TOKENS,
+      },
+      {
+        id: "kimi-k2.5",
+        name: "Kimi K2.5",
+        reasoning: true,
+        input: ["text", "image"],
+        cost: MOONSHOT_DEFAULT_COST,
+        contextWindow: 256000,
+        maxTokens: 8192,
+      },
+    ],
+  };
+}
+
+export function buildKimiCodingProvider(): ProviderConfig {
+  return {
+    baseUrl: KIMI_CODING_BASE_URL,
+    api: "anthropic-messages",
+    models: [
+      {
+        id: KIMI_CODING_DEFAULT_MODEL_ID,
+        name: "Kimi for Coding",
+        reasoning: true,
+        input: ["text", "image"],
+        cost: KIMI_CODING_DEFAULT_COST,
+        contextWindow: KIMI_CODING_DEFAULT_CONTEXT_WINDOW,
+        maxTokens: KIMI_CODING_DEFAULT_MAX_TOKENS,
+      },
+    ],
+  };
+}
+
+export function buildQwenProvider(baseUrl = QWEN_DASHSCOPE_BASE_URL): ProviderConfig {
+  const models =
+    baseUrl === QWEN_CODING_PLAN_BASE_URL
+      ? QWEN_CODING_PLAN_MODEL_CATALOG
+      : QWEN_DASHSCOPE_MODEL_CATALOG;
+  return {
+    baseUrl,
+    api: "openai-completions",
+    models,
+  };
+}
+
+function buildSyntheticProvider(): ProviderConfig {
+  return {
+    baseUrl: SYNTHETIC_BASE_URL,
+    api: "anthropic-messages",
+    models: SYNTHETIC_MODEL_CATALOG.map(buildSyntheticModelDefinition),
+  };
+}
+
+function buildDoubaoProvider(): ProviderConfig {
+  return {
+    baseUrl: DOUBAO_BASE_URL,
+    api: "openai-completions",
+    models: DOUBAO_MODEL_CATALOG.map(buildDoubaoModelDefinition),
+  };
+}
+
+function buildDoubaoCodingProvider(): ProviderConfig {
+  return {
+    baseUrl: DOUBAO_CODING_BASE_URL,
+    api: "openai-completions",
+    models: DOUBAO_CODING_MODEL_CATALOG.map(buildDoubaoModelDefinition),
+  };
+}
+
+function buildBytePlusProvider(): ProviderConfig {
+  return {
+    baseUrl: BYTEPLUS_BASE_URL,
+    api: "openai-completions",
+    models: BYTEPLUS_MODEL_CATALOG.map(buildBytePlusModelDefinition),
+  };
+}
+
+function buildBytePlusCodingProvider(): ProviderConfig {
+  return {
+    baseUrl: BYTEPLUS_CODING_BASE_URL,
+    api: "openai-completions",
+    models: BYTEPLUS_CODING_MODEL_CATALOG.map(buildBytePlusModelDefinition),
+  };
+}
+
+export function buildXiaomiProvider(): ProviderConfig {
+  return {
+    baseUrl: XIAOMI_BASE_URL,
+    api: "openai-completions",
+    models: XIAOMI_MODEL_CATALOG,
+  };
+}
+
+async function buildVeniceProvider(): Promise<ProviderConfig> {
+  const models = await discoverVeniceModels();
+  return {
+    baseUrl: VENICE_BASE_URL,
+    api: "openai-completions",
+    models,
+  };
+}
+
+async function buildHuggingfaceProvider(apiKey?: string): Promise<ProviderConfig> {
+  // Resolve env var name to value for discovery (GET /v1/models requires Bearer token).
+  const resolvedSecret =
+    apiKey?.trim() !== ""
+      ? /^[A-Z][A-Z0-9_]*$/.test(apiKey!.trim())
+        ? (process.env[apiKey!.trim()] ?? "").trim()
+        : apiKey!.trim()
+      : "";
+  const models =
+    resolvedSecret !== ""
+      ? await discoverHuggingfaceModels(resolvedSecret)
+      : HUGGINGFACE_MODEL_CATALOG.map(buildHuggingfaceModelDefinition);
+  return {
+    baseUrl: HUGGINGFACE_BASE_URL,
+    api: "openai-completions",
+    models,
+  };
+}
+
+function buildTogetherProvider(): ProviderConfig {
+  return {
+    baseUrl: TOGETHER_BASE_URL,
+    api: "openai-completions",
+    models: TOGETHER_MODEL_CATALOG.map(buildTogetherModelDefinition),
+  };
+}
+
+export function buildNvidiaProvider(): ProviderConfig {
+  const cost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  const buildModel = (id: string, name: string): ProviderModelConfig => ({
+    id,
+    name,
+    reasoning: false,
+    input: ["text"],
+    cost,
+    contextWindow: 128_000,
+    maxTokens: 8_192,
+  });
+  return {
+    baseUrl: "https://integrate.api.nvidia.com/v1",
+    api: "openai-completions",
+    models: [
+      buildModel("nvidia/llama-3.1-nemotron-70b-instruct", "Llama 3.1 Nemotron 70B Instruct"),
+      buildModel("meta/llama-3.3-70b-instruct", "Llama 3.3 70B Instruct"),
+      buildModel(
+        "nvidia/mistral-nemo-minitron-8b-8k-instruct",
+        "Mistral NeMo Minitron 8B 8K Instruct",
+      ),
+    ],
+  };
+}
+
+function buildOpenrouterProvider(): ProviderConfig {
+  return {
+    baseUrl: OPENROUTER_BASE_URL,
+    api: "openai-completions",
+    models: [
+      {
+        id: OPENROUTER_DEFAULT_MODEL_ID,
+        name: "OpenRouter Auto",
+        // reasoning: false here is a catalog default only; it does NOT cause
+        // `reasoning.effort: "none"` to be sent for the "auto" routing model.
+        // applyExtraParamsToAgent skips the reasoning effort injection for
+        // model id "auto" because it dynamically routes to any OpenRouter model
+        // (including ones where reasoning is mandatory and cannot be disabled).
+        // See: fased/fased#24851
+        reasoning: false,
+        input: ["text", "image"],
+        cost: OPENROUTER_DEFAULT_COST,
+        contextWindow: OPENROUTER_DEFAULT_CONTEXT_WINDOW,
+        maxTokens: OPENROUTER_DEFAULT_MAX_TOKENS,
+      },
+      {
+        id: "moonshotai/kimi-k2.6",
+        name: "MoonshotAI: Kimi K2.6",
+        reasoning: true,
+        input: ["text", "image"],
+        cost: OPENROUTER_KIMI_K2_6_COST,
+        contextWindow: 262144,
+        maxTokens: 262144,
+      },
+      {
+        id: "moonshotai/kimi-k2.5",
+        name: "MoonshotAI: Kimi K2.5",
+        reasoning: true,
+        input: ["text", "image"],
+        cost: OPENROUTER_KIMI_K2_5_COST,
+        contextWindow: 262144,
+        maxTokens: 262144,
+      },
+    ],
+  };
+}
+
+async function buildVllmProvider(params?: {
+  baseUrl?: string;
+  apiKey?: string;
+}): Promise<ProviderConfig> {
+  const baseUrl = (params?.baseUrl?.trim() || VLLM_BASE_URL).replace(/\/+$/, "");
+  const models = await discoverVllmModels(baseUrl, params?.apiKey);
+  return {
+    baseUrl,
+    api: "openai-completions",
+    ...(isPrivateNetworkBaseUrl(baseUrl) ? { request: { allowPrivateNetwork: true } } : {}),
+    models,
+  };
+}
+
+async function buildOllamaProvider(params?: {
+  baseUrl?: string;
+  apiKey?: string;
+  warnOnFailure?: boolean;
+  forceDiscovery?: boolean;
+}): Promise<ProviderConfig> {
+  const baseUrl = resolveOllamaApiBase(params?.baseUrl);
+  const models = await discoverOllamaModels(baseUrl, {
+    warnOnFailure: params?.warnOnFailure,
+    force: params?.forceDiscovery,
+  });
+  return {
+    baseUrl,
+    api: "ollama",
+    ...(params?.apiKey?.trim() ? { apiKey: params.apiKey.trim() } : {}),
+    request: { allowPrivateNetwork: true },
+    models,
+  };
+}
+
+async function buildLmStudioProvider(params?: {
+  baseUrl?: string;
+  apiKey?: string;
+  warnOnFailure?: boolean;
+  forceDiscovery?: boolean;
+}): Promise<ProviderConfig> {
+  const baseUrl = resolveLmStudioApiBase(params?.baseUrl);
+  const models = await discoverLmStudioModels(baseUrl, params?.apiKey, {
+    warnOnFailure: params?.warnOnFailure,
+    force: params?.forceDiscovery,
+  });
+  return {
+    baseUrl,
+    api: "openai-completions",
+    apiKey: params?.apiKey?.trim() || "lmstudio-local",
+    ...(isPrivateNetworkBaseUrl(baseUrl) ? { request: { allowPrivateNetwork: true } } : {}),
+    models,
+  };
+}
+
+export function buildQianfanProvider(): ProviderConfig {
+  return {
+    baseUrl: QIANFAN_BASE_URL,
+    api: "openai-completions",
+    models: [
+      {
+        id: QIANFAN_DEFAULT_MODEL_ID,
+        name: "ERNIE 5.1",
+        reasoning: true,
+        input: ["text", "image"],
+        cost: QIANFAN_DEFAULT_COST,
+        contextWindow: QIANFAN_DEFAULT_CONTEXT_WINDOW,
+        maxTokens: QIANFAN_DEFAULT_MAX_TOKENS,
+      },
+      {
+        id: "ernie-5.0",
+        name: "ERNIE 5.0",
+        reasoning: true,
+        input: ["text", "image"],
+        cost: QIANFAN_DEFAULT_COST,
+        contextWindow: 128000,
+        maxTokens: 65536,
+      },
+      {
+        id: "ernie-5.0-thinking-latest",
+        name: "ERNIE 5.0 Thinking Latest",
+        reasoning: true,
+        input: ["text", "image"],
+        cost: QIANFAN_DEFAULT_COST,
+        contextWindow: 128000,
+        maxTokens: 65536,
+      },
+      {
+        id: "ernie-5.0-thinking-preview",
+        name: "ERNIE-5.0-Thinking-Preview",
+        reasoning: true,
+        input: ["text", "image"],
+        cost: QIANFAN_DEFAULT_COST,
+        contextWindow: 119000,
+        maxTokens: 64000,
+      },
+      {
+        id: "ernie-x1.1-preview",
+        name: "ERNIE X1.1 Preview",
+        reasoning: true,
+        input: ["text"],
+        cost: QIANFAN_DEFAULT_COST,
+        contextWindow: 64000,
+        maxTokens: 65536,
+      },
+      {
+        id: "ernie-x1.1",
+        name: "ERNIE X1.1",
+        reasoning: true,
+        input: ["text"],
+        cost: QIANFAN_DEFAULT_COST,
+        contextWindow: 64000,
+        maxTokens: 65536,
+      },
+      {
+        id: "ernie-x1-turbo-32k",
+        name: "ERNIE X1 Turbo 32K",
+        reasoning: true,
+        input: ["text"],
+        cost: QIANFAN_DEFAULT_COST,
+        contextWindow: 32000,
+        maxTokens: 28160,
+      },
+      {
+        id: "deepseek-v4-pro",
+        name: "DeepSeek V4 Pro",
+        reasoning: true,
+        input: ["text"],
+        cost: QIANFAN_DEFAULT_COST,
+        contextWindow: 1000000,
+        maxTokens: 131072,
+      },
+      {
+        id: "deepseek-v4-flash",
+        name: "DeepSeek V4 Flash",
+        reasoning: true,
+        input: ["text"],
+        cost: QIANFAN_DEFAULT_COST,
+        contextWindow: 1000000,
+        maxTokens: 131072,
+      },
+      {
+        id: "deepseek-v3.2-think",
+        name: "DeepSeek V3.2 Think",
+        reasoning: true,
+        input: ["text"],
+        cost: QIANFAN_DEFAULT_COST,
+        contextWindow: 128000,
+        maxTokens: 32768,
+      },
+      {
+        id: "deepseek-v3.2",
+        name: "DeepSeek V3.2",
+        reasoning: true,
+        input: ["text"],
+        cost: QIANFAN_DEFAULT_COST,
+        contextWindow: 128000,
+        maxTokens: 32768,
+      },
+    ],
+  };
+}
+
+export async function resolveImplicitProviders(params: {
+  agentDir: string;
+  explicitProviders?: Record<string, ProviderConfig> | null;
+  allowLocalDiscovery?: boolean;
+}): Promise<ModelsConfig["providers"]> {
+  const providers: Record<string, ProviderConfig> = {};
+  const authStore = ensureAuthProfileStore(params.agentDir, {
+    allowKeychainPrompt: false,
+  });
+
+  const minimaxKey =
+    resolveEnvApiKeyVarName("minimax") ??
+    resolveApiKeyFromProfiles({ provider: "minimax", store: authStore });
+  if (minimaxKey) {
+    providers.minimax = { ...buildMinimaxProvider(), apiKey: minimaxKey };
+  }
+
+  const minimaxOauthProfile = listProfilesForProvider(authStore, "minimax-portal");
+  if (minimaxOauthProfile.length > 0) {
+    providers["minimax-portal"] = {
+      ...buildMinimaxPortalProvider(),
+      apiKey: MINIMAX_OAUTH_PLACEHOLDER,
+    };
+  }
+
+  const moonshotKey =
+    resolveEnvApiKeyVarName("moonshot") ??
+    resolveApiKeyFromProfiles({ provider: "moonshot", store: authStore });
+  if (moonshotKey) {
+    providers.moonshot = { ...buildMoonshotProvider(), apiKey: moonshotKey };
+  }
+
+  const kimiCodingKey =
+    resolveEnvApiKeyVarName("kimi-coding") ??
+    resolveApiKeyFromProfiles({ provider: "kimi-coding", store: authStore });
+  if (kimiCodingKey) {
+    providers["kimi-coding"] = { ...buildKimiCodingProvider(), apiKey: kimiCodingKey };
+  }
+
+  const syntheticKey =
+    resolveEnvApiKeyVarName("synthetic") ??
+    resolveApiKeyFromProfiles({ provider: "synthetic", store: authStore });
+  if (syntheticKey) {
+    providers.synthetic = { ...buildSyntheticProvider(), apiKey: syntheticKey };
+  }
+
+  const veniceKey =
+    resolveEnvApiKeyVarName("venice") ??
+    resolveApiKeyFromProfiles({ provider: "venice", store: authStore });
+  if (veniceKey) {
+    providers.venice = { ...(await buildVeniceProvider()), apiKey: veniceKey };
+  }
+
+  const qwenKey =
+    resolveEnvApiKeyVarName("qwen") ??
+    resolveApiKeyFromProfiles({ provider: "qwen", store: authStore });
+  if (qwenKey) {
+    providers.qwen = { ...buildQwenProvider(), apiKey: qwenKey };
+  }
+
+  const qwenCodingPlanKey =
+    resolveEnvApiKeyVarName("qwen-coding-plan") ??
+    resolveApiKeyFromProfiles({ provider: "qwen-coding-plan", store: authStore });
+  if (qwenCodingPlanKey) {
+    providers["qwen-coding-plan"] = {
+      ...buildQwenProvider(QWEN_CODING_PLAN_BASE_URL),
+      apiKey: qwenCodingPlanKey,
+    };
+  }
+
+  const volcengineKey =
+    resolveEnvApiKeyVarName("volcengine") ??
+    resolveApiKeyFromProfiles({ provider: "volcengine", store: authStore });
+  if (volcengineKey) {
+    providers.volcengine = { ...buildDoubaoProvider(), apiKey: volcengineKey };
+    providers["volcengine-coding"] = {
+      ...buildDoubaoCodingProvider(),
+      apiKey: volcengineKey,
+    };
+    providers["volcengine-plan"] = {
+      ...buildDoubaoCodingProvider(),
+      apiKey: volcengineKey,
+    };
+  }
+
+  const byteplusKey =
+    resolveEnvApiKeyVarName("byteplus") ??
+    resolveApiKeyFromProfiles({ provider: "byteplus", store: authStore });
+  if (byteplusKey) {
+    providers.byteplus = { ...buildBytePlusProvider(), apiKey: byteplusKey };
+    providers["byteplus-coding"] = {
+      ...buildBytePlusCodingProvider(),
+      apiKey: byteplusKey,
+    };
+    providers["byteplus-plan"] = {
+      ...buildBytePlusCodingProvider(),
+      apiKey: byteplusKey,
+    };
+  }
+
+  const xiaomiKey =
+    resolveEnvApiKeyVarName("xiaomi") ??
+    resolveApiKeyFromProfiles({ provider: "xiaomi", store: authStore });
+  if (xiaomiKey) {
+    providers.xiaomi = { ...buildXiaomiProvider(), apiKey: xiaomiKey };
+  }
+
+  const cloudflareProfiles = listProfilesForProvider(authStore, "cloudflare-ai-gateway");
+  for (const profileId of cloudflareProfiles) {
+    const cred = authStore.profiles[profileId];
+    if (cred?.type !== "api_key") {
+      continue;
+    }
+    const accountId = cred.metadata?.accountId?.trim();
+    const gatewayId = cred.metadata?.gatewayId?.trim();
+    if (!accountId || !gatewayId) {
+      continue;
+    }
+    const baseUrl = resolveCloudflareAiGatewayBaseUrl({ accountId, gatewayId });
+    if (!baseUrl) {
+      continue;
+    }
+    const apiKey = resolveEnvApiKeyVarName("cloudflare-ai-gateway") ?? cred.key?.trim() ?? "";
+    if (!apiKey) {
+      continue;
+    }
+    providers["cloudflare-ai-gateway"] = {
+      baseUrl,
+      api: "anthropic-messages",
+      apiKey,
+      models: CLOUDFLARE_AI_GATEWAY_MODEL_CATALOG.map((entry) =>
+        buildCloudflareAiGatewayModelDefinition({ id: entry.id }),
+      ),
+    };
+    break;
+  }
+
+  // vLLM provider - OpenAI-compatible local server (opt-in via env/profile).
+  // If explicitly configured, keep user-defined models/settings as-is.
+  if (!params.explicitProviders?.vllm) {
+    const vllmEnvVar = resolveEnvApiKeyVarName("vllm");
+    const vllmProfileKey = resolveApiKeyFromProfiles({ provider: "vllm", store: authStore });
+    const vllmKey = vllmEnvVar ?? vllmProfileKey;
+    if (vllmKey) {
+      const discoveryApiKey = vllmEnvVar
+        ? (process.env[vllmEnvVar]?.trim() ?? "")
+        : (vllmProfileKey ?? "");
+      providers.vllm = {
+        ...(await buildVllmProvider({ apiKey: discoveryApiKey || undefined })),
+        apiKey: vllmKey,
+      };
+    }
+  }
+
+  const explicitOllama = params.explicitProviders?.ollama;
+  if (explicitOllama) {
+    const ollamaEnvVar = resolveEnvApiKeyVarName("ollama");
+    const ollamaProfileKey = resolveApiKeyFromProfiles({ provider: "ollama", store: authStore });
+    const explicitApiKey = normalizeOptionalSecretInput(explicitOllama.apiKey);
+    const ollamaKey = ollamaEnvVar ?? ollamaProfileKey ?? explicitApiKey ?? "ollama-local";
+    providers.ollama = {
+      ...(await buildOllamaProvider({
+        baseUrl: explicitOllama.baseUrl,
+        apiKey: ollamaKey,
+        warnOnFailure: true,
+        forceDiscovery: params.allowLocalDiscovery,
+      })),
+      apiKey: ollamaKey,
+    };
+  } else {
+    const ollamaEnvVar = resolveEnvApiKeyVarName("ollama");
+    const ollamaProfileKey = resolveApiKeyFromProfiles({ provider: "ollama", store: authStore });
+    const ollamaKey = ollamaEnvVar ?? ollamaProfileKey;
+    const ollamaBaseUrl = process.env.OLLAMA_BASE_URL?.trim();
+    const provider = await buildOllamaProvider({
+      ...(ollamaBaseUrl ? { baseUrl: ollamaBaseUrl } : {}),
+      ...(ollamaKey ? { apiKey: ollamaKey } : {}),
+      warnOnFailure: Boolean(ollamaKey || ollamaBaseUrl),
+      forceDiscovery: params.allowLocalDiscovery,
+    });
+    if (ollamaKey || provider.models.length > 0) {
+      providers.ollama = {
+        ...provider,
+        apiKey: ollamaKey ?? "ollama-local",
+      };
+    }
+  }
+
+  const explicitLmStudio = params.explicitProviders?.lmstudio;
+  if (explicitLmStudio) {
+    const lmStudioEnvVar = resolveEnvApiKeyVarName("lmstudio");
+    const lmStudioProfileKey = resolveApiKeyFromProfiles({
+      provider: "lmstudio",
+      store: authStore,
+    });
+    const explicitApiKey = normalizeOptionalSecretInput(explicitLmStudio.apiKey);
+    const lmStudioKey = lmStudioEnvVar ?? lmStudioProfileKey ?? explicitApiKey ?? "lmstudio-local";
+    providers.lmstudio = {
+      ...(await buildLmStudioProvider({
+        baseUrl: explicitLmStudio.baseUrl,
+        apiKey: resolveDiscoveryApiKey(lmStudioKey),
+        warnOnFailure: true,
+        forceDiscovery: params.allowLocalDiscovery,
+      })),
+      apiKey: lmStudioKey,
+    };
+  } else {
+    const lmStudioEnvVar = resolveEnvApiKeyVarName("lmstudio");
+    const lmStudioProfileKey = resolveApiKeyFromProfiles({
+      provider: "lmstudio",
+      store: authStore,
+    });
+    const lmStudioKey = lmStudioEnvVar ?? lmStudioProfileKey;
+    const lmStudioBaseUrl =
+      process.env.LMSTUDIO_BASE_URL?.trim() || process.env.LM_STUDIO_BASE_URL?.trim();
+    const provider = await buildLmStudioProvider({
+      ...(lmStudioBaseUrl ? { baseUrl: lmStudioBaseUrl } : {}),
+      ...(lmStudioKey ? { apiKey: resolveDiscoveryApiKey(lmStudioKey) } : {}),
+      warnOnFailure: Boolean(lmStudioKey || lmStudioBaseUrl),
+      forceDiscovery: params.allowLocalDiscovery,
+    });
+    if (lmStudioKey || provider.models.length > 0) {
+      providers.lmstudio = {
+        ...provider,
+        apiKey: lmStudioKey ?? "lmstudio-local",
+      };
+    }
+  }
+
+  const togetherKey =
+    resolveEnvApiKeyVarName("together") ??
+    resolveApiKeyFromProfiles({ provider: "together", store: authStore });
+  if (togetherKey) {
+    providers.together = {
+      ...buildTogetherProvider(),
+      apiKey: togetherKey,
+    };
+  }
+
+  const nvidiaKey =
+    resolveEnvApiKeyVarName("nvidia") ??
+    resolveApiKeyFromProfiles({ provider: "nvidia", store: authStore });
+  if (nvidiaKey) {
+    providers.nvidia = {
+      ...buildNvidiaProvider(),
+      apiKey: nvidiaKey,
+    };
+  }
+
+  const huggingfaceKey =
+    resolveEnvApiKeyVarName("huggingface") ??
+    resolveApiKeyFromProfiles({ provider: "huggingface", store: authStore });
+  if (huggingfaceKey) {
+    const hfProvider = await buildHuggingfaceProvider(huggingfaceKey);
+    providers.huggingface = {
+      ...hfProvider,
+      apiKey: huggingfaceKey,
+    };
+  }
+
+  const qianfanKey =
+    resolveEnvApiKeyVarName("qianfan") ??
+    resolveApiKeyFromProfiles({ provider: "qianfan", store: authStore });
+  if (qianfanKey) {
+    providers.qianfan = { ...buildQianfanProvider(), apiKey: qianfanKey };
+  }
+
+  const openrouterKey =
+    resolveEnvApiKeyVarName("openrouter") ??
+    resolveApiKeyFromProfiles({ provider: "openrouter", store: authStore });
+  if (openrouterKey) {
+    providers.openrouter = { ...buildOpenrouterProvider(), apiKey: openrouterKey };
+  }
+
+  const addCurrentCatalogProvider = (provider: string, apiKey?: string) => {
+    const key = apiKey?.trim();
+    if (!key) {
+      return;
+    }
+    const overlay = cloneCurrentModelProvider(provider);
+    if (!overlay) {
+      return;
+    }
+    providers[provider] = { ...overlay, apiKey: key };
+  };
+
+  addCurrentCatalogProvider(
+    "chutes",
+    resolveEnvApiKeyVarName("chutes") ??
+      resolveApiKeyFromProfiles({ provider: "chutes", store: authStore }),
+  );
+  addCurrentCatalogProvider(
+    "openai",
+    resolveEnvApiKeyVarName("openai") ??
+      resolveApiKeyFromProfiles({ provider: "openai", store: authStore }),
+  );
+  addCurrentCatalogProvider(
+    "openai-codex",
+    resolveApiKeyFromProfiles({ provider: "openai-codex", store: authStore }),
+  );
+  addCurrentCatalogProvider(
+    "anthropic",
+    resolveEnvApiKeyVarName("anthropic") ??
+      resolveApiKeyFromProfiles({ provider: "anthropic", store: authStore }),
+  );
+  addCurrentCatalogProvider(
+    "google",
+    resolveEnvApiKeyVarName("google") ??
+      resolveApiKeyFromProfiles({ provider: "google", store: authStore }),
+  );
+  addCurrentCatalogProvider(
+    "openrouter",
+    resolveEnvApiKeyVarName("openrouter") ??
+      resolveApiKeyFromProfiles({ provider: "openrouter", store: authStore }),
+  );
+  addCurrentCatalogProvider(
+    "xai",
+    resolveEnvApiKeyVarName("xai") ??
+      resolveApiKeyFromProfiles({ provider: "xai", store: authStore }),
+  );
+  addCurrentCatalogProvider(
+    "zai",
+    resolveEnvApiKeyVarName("zai") ??
+      resolveApiKeyFromProfiles({ provider: "zai", store: authStore }),
+  );
+  return providers;
+}
+
+export async function resolveImplicitCopilotProvider(params: {
+  agentDir: string;
+  env?: NodeJS.ProcessEnv;
+}): Promise<ProviderConfig | null> {
+  const env = params.env ?? process.env;
+  const authStore = ensureAuthProfileStore(params.agentDir, {
+    allowKeychainPrompt: false,
+  });
+  const hasProfile = listProfilesForProvider(authStore, "github-copilot").length > 0;
+  const envToken = env.COPILOT_GITHUB_TOKEN ?? env.GH_TOKEN ?? env.GITHUB_TOKEN;
+  const githubToken = (envToken ?? "").trim();
+
+  if (!hasProfile && !githubToken) {
+    return null;
+  }
+
+  let selectedGithubToken = githubToken;
+  if (!selectedGithubToken && hasProfile) {
+    // Use the first available profile as a default for discovery (it will be
+    // re-resolved per-run by the embedded runner).
+    const profileId = listProfilesForProvider(authStore, "github-copilot")[0];
+    const profile = profileId ? authStore.profiles[profileId] : undefined;
+    if (profile && profile.type === "token") {
+      selectedGithubToken = profile.token?.trim() ?? "";
+      if (!selectedGithubToken) {
+        const tokenRef = coerceSecretRef(profile.tokenRef);
+        if (tokenRef?.source === "env" && tokenRef.id.trim()) {
+          selectedGithubToken = (env[tokenRef.id] ?? process.env[tokenRef.id] ?? "").trim();
+        }
+      }
+    }
+  }
+
+  let baseUrl = DEFAULT_COPILOT_API_BASE_URL;
+  if (selectedGithubToken) {
+    try {
+      const token = await resolveCopilotApiToken({
+        githubToken: selectedGithubToken,
+        env,
+      });
+      baseUrl = token.baseUrl;
+    } catch {
+      baseUrl = DEFAULT_COPILOT_API_BASE_URL;
+    }
+  }
+
+  // We deliberately do not write pi-coding-agent auth.json here.
+  // FasedAgent keeps auth in auth-profiles and resolves runtime availability from that store.
+
+  // We intentionally do NOT define custom models for Copilot in models.json.
+  // pi-coding-agent treats providers with models as replacements requiring apiKey.
+  // We only override baseUrl; the model list comes from pi-ai built-ins.
+  return {
+    baseUrl,
+    models: [],
+  } satisfies ProviderConfig;
+}

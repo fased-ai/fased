@@ -1,0 +1,14 @@
+// Copy to LocalSigning.xcconfig for personal local signing overrides.
+// This file is only an example and should stay committed.
+
+FASED_CODE_SIGN_STYLE = Automatic
+FASED_DEVELOPMENT_TEAM = P5Z8X89DJL
+
+FASED_APP_BUNDLE_ID = ai.fased.ios.test.mariano
+FASED_SHARE_BUNDLE_ID = ai.fased.ios.test.mariano.share
+FASED_WATCH_APP_BUNDLE_ID = ai.fased.ios.test.mariano.watchkitapp
+FASED_WATCH_EXTENSION_BUNDLE_ID = ai.fased.ios.test.mariano.watchkitapp.extension
+
+// Leave empty with automatic signing.
+FASED_APP_PROFILE =
+FASED_SHARE_PROFILE =

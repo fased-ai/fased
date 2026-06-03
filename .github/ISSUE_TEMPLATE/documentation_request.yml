@@ -1,0 +1,46 @@
+name: Documentation request
+description: Report missing, outdated, or unclear documentation.
+title: "[Docs]: "
+labels:
+  - documentation
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for documentation drift, missing guides, or unclear operator instructions.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: One-line statement of what is wrong or missing.
+      placeholder: The mining onboarding docs still describe an older wallet flow.
+    validations:
+      required: true
+  - type: textarea
+    id: location
+    attributes:
+      label: Affected page or area
+      description: Link the file, page, or section if you know it.
+      placeholder: docs.fased.ai/start/getting-started or agent/fased/docs/start/getting-started.md
+    validations:
+      required: true
+  - type: textarea
+    id: issue
+    attributes:
+      label: What is wrong
+      description: Explain the mismatch, omission, or confusing part.
+      placeholder: The page still refers to an old hosting profile name and does not mention the current local/hosting split.
+    validations:
+      required: true
+  - type: textarea
+    id: proposed_fix
+    attributes:
+      label: Suggested correction
+      description: If you know the right wording or flow, include it here.
+      placeholder: Update the page to describe the current `local` and `hosting` profiles and link to the wallet guide.
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Logs, screenshots, command output, or code links that show the docs are out of date.
+      placeholder: Link to the command output or relevant code path showing the current behavior.

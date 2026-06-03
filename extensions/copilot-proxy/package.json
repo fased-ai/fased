@@ -1,0 +1,12 @@
+{
+  "name": "@fased/copilot-proxy",
+  "version": "0.1.1",
+  "private": true,
+  "description": "FasedAgent Copilot Proxy provider plugin",
+  "type": "module",
+  "fased": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

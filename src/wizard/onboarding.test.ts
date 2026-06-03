@@ -1,0 +1,1963 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DEFAULT_BOOTSTRAP_FILENAME } from "../agents/workspace.js";
+import type { RuntimeEnv } from "../runtime.js";
+import { runOnboardingWizard } from "./onboarding.js";
+import type { WizardPrompter } from "./prompts.js";
+
+const healthCommand = vi.hoisted(() => vi.fn(async () => {}));
+const ensureWorkspaceAndSessions = vi.hoisted(() => vi.fn(async () => {}));
+const handleOnboardingRepair = vi.hoisted(() => vi.fn(async () => {}));
+const writeConfigFile = vi.hoisted(() => vi.fn(async () => {}));
+const readConfigFileSnapshot = vi.hoisted(() =>
+  vi.fn(async () => ({ exists: false, valid: true, config: {} })),
+);
+const ensureSystemdUserLingerInteractive = vi.hoisted(() => vi.fn(async () => {}));
+const isSystemdUserServiceAvailable = vi.hoisted(() => vi.fn(async () => true));
+const ensureControlUiAssetsBuilt = vi.hoisted(() => vi.fn(async () => ({ ok: true })));
+const runTui = vi.hoisted(() => vi.fn(async () => {}));
+const configureGatewayForOnboarding = vi.hoisted(() =>
+  vi.fn(async ({ hostProfile, nextConfig, localPort }) => ({
+    nextConfig: {
+      ...nextConfig,
+      gateway: {
+        ...nextConfig.gateway,
+        port: localPort,
+      },
+    },
+    settings: {
+      port: localPort,
+      tailscaleMode: hostProfile === "hosting" ? "serve" : "off",
+    },
+  })),
+);
+const configureFederationForOnboarding = vi.hoisted(() =>
+  vi.fn<() => Promise<unknown>>(async () => ({
+    enabled: false,
+    baseUrl: undefined,
+    handle: undefined,
+  })),
+);
+const applyHostingSecurity = vi.hoisted(() =>
+  vi.fn(async ({ opts }) => ({ profile: opts.hostProfile ?? "local", checks: [] })),
+);
+const walletSetupCommand = vi.hoisted(() => vi.fn(async () => {}));
+const collectWalletSignerDoctorReport = vi.hoisted(() =>
+  vi.fn(async () => ({
+    checks: [
+      { check: "socket.exists", ok: true },
+      { check: "socket.health", ok: true },
+    ],
+  })),
+);
+const readWalletProviderRegistry = vi.hoisted(() =>
+  vi.fn<() => unknown>(() => ({
+    version: 1,
+    providers: {
+      "embedded-keystore": { enabled: true, updatedAt: "2026-03-15T00:00:00.000Z" },
+      "local-socket-signer": { enabled: true, updatedAt: "2026-03-15T00:00:00.000Z" },
+      alchemy: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
+      turnkey: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
+      privy: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
+    },
+    wallets: [],
+    assignments: {},
+    updatedAt: "2026-03-15T00:00:00.000Z",
+  })),
+);
+const upsertNamedWallet = vi.hoisted(() => vi.fn(() => ({ id: "wallet-1" })));
+const deleteNamedWallet = vi.hoisted(() => vi.fn());
+const checkNamedWalletDeletionSafety = vi.hoisted(() => vi.fn(() => ({ ok: true, details: null })));
+const setDefaultWallet = vi.hoisted(() => vi.fn());
+const setNamedWalletRole = vi.hoisted(() => vi.fn());
+const resolveWalletUserRole = vi.hoisted(() => vi.fn<() => unknown>(() => undefined));
+const restartLocalSocketSigner = vi.hoisted(() => vi.fn(async () => {}));
+const configureWalletForOnboarding = vi.hoisted(() =>
+  vi.fn(async ({ nextConfig }) => ({
+    ...nextConfig,
+    wallet: {
+      ...nextConfig.wallet,
+      provider: { ...nextConfig.wallet?.provider, id: "local-socket-signer" },
+      runtime: { ...nextConfig.wallet?.runtime, enabled: true },
+    },
+  })),
+);
+const promptAuthChoiceGrouped = vi.hoisted(() => vi.fn(async () => "skip"));
+const applyAuthChoice = vi.hoisted(() => vi.fn(async ({ config }) => ({ config })));
+const resolvePreferredProviderForAuthChoice = vi.hoisted(() =>
+  vi.fn<() => unknown>(() => undefined),
+);
+const warnIfModelConfigLooksOff = vi.hoisted(() => vi.fn(async () => {}));
+const promptDefaultModel = vi.hoisted(() => vi.fn(async () => ({})));
+const setupChannels = vi.hoisted(() => vi.fn(async (config) => config));
+const setupSkills = vi.hoisted(() => vi.fn(async (config) => config));
+const setupInternalHooks = vi.hoisted(() => vi.fn(async (config) => config));
+const readManagedFederationTokenSummary = vi.hoisted(() =>
+  vi.fn(() => ({
+    path: "/tmp/federation/access-token.json",
+    exists: false,
+    hasZrokToken: false,
+  })),
+);
+const readManagedReservationSummaries = vi.hoisted(() => vi.fn(() => []));
+const loadPersistedFederationToken = vi.hoisted(() =>
+  vi.fn<() => Promise<unknown>>(async () => null),
+);
+const readWalletStatusSnapshot = vi.hoisted(() =>
+  vi.fn(async () => ({
+    approvalAuth: {
+      mode: "none",
+      ready: false,
+      passkeyCount: 0,
+    },
+  })),
+);
+
+vi.mock("../commands/health.js", () => ({
+  healthCommand,
+}));
+
+vi.mock("../config/config.js", async (importActual) => {
+  const actual = await importActual<typeof import("../config/config.js")>();
+  return {
+    ...actual,
+    readConfigFileSnapshot,
+    writeConfigFile,
+  };
+});
+
+vi.mock("../commands/wallet.js", () => ({
+  walletSetupCommand,
+  collectWalletSignerDoctorReport,
+}));
+
+vi.mock("../wallet/wallet-provider-registry.js", () => ({
+  checkNamedWalletDeletionSafety,
+  readWalletProviderRegistry,
+  upsertNamedWallet,
+  deleteNamedWallet,
+  setDefaultWallet,
+  setNamedWalletRole,
+  resolveWalletUserRole,
+}));
+
+vi.mock("./onboarding.wallet.js", () => ({
+  configureWalletForOnboarding,
+  restartLocalSocketSigner,
+}));
+
+vi.mock("../commands/onboard-helpers.js", async (importActual) => {
+  const actual = await importActual<typeof import("../commands/onboard-helpers.js")>();
+  return {
+    ...actual,
+    ensureWorkspaceAndSessions,
+    handleOnboardingRepair,
+    detectBrowserOpenSupport: vi.fn(async () => ({ ok: false })),
+    openUrl: vi.fn(async () => true),
+    printWizardHeader: vi.fn(),
+    probeGatewayReachable: vi.fn(async () => ({ ok: true })),
+    waitForGatewayReachable: vi.fn(async () => ({ ok: true })),
+    resolveControlUiLinks: vi.fn(() => ({
+      httpUrl: "http://localhost:18789",
+      wsUrl: "ws://127.0.0.1:18789",
+    })),
+  };
+});
+
+vi.mock("../commands/auth-choice-prompt.js", () => ({
+  promptAuthChoiceGrouped,
+}));
+
+vi.mock("../commands/auth-choice.js", () => ({
+  applyAuthChoice,
+  resolvePreferredProviderForAuthChoice,
+  warnIfModelConfigLooksOff,
+}));
+
+vi.mock("../commands/onboard-channels.js", () => ({
+  setupChannels,
+}));
+
+vi.mock("../commands/onboard-skills.js", () => ({
+  setupSkills,
+}));
+
+vi.mock("../commands/onboard-hooks.js", () => ({
+  setupInternalHooks,
+}));
+
+vi.mock("../commands/model-picker.js", async (importActual) => {
+  const actual = await importActual<typeof import("../commands/model-picker.js")>();
+  return {
+    ...actual,
+    promptDefaultModel,
+  };
+});
+
+vi.mock("../managed/federation.js", async (importActual) => {
+  const actual = await importActual<typeof import("../managed/federation.js")>();
+  return {
+    ...actual,
+    readManagedFederationTokenSummary,
+  };
+});
+
+vi.mock("../managed/tunnel.js", async (importActual) => {
+  const actual = await importActual<typeof import("../managed/tunnel.js")>();
+  return {
+    ...actual,
+    readManagedReservationSummaries,
+  };
+});
+
+vi.mock("../federation/access-token.js", async (importActual) => {
+  const actual = await importActual<typeof import("../federation/access-token.js")>();
+  return {
+    ...actual,
+    loadPersistedFederationToken,
+  };
+});
+
+vi.mock("../wallet/wallet-status.js", async (importActual) => {
+  const actual = await importActual<typeof import("../wallet/wallet-status.js")>();
+  return {
+    ...actual,
+    readWalletStatusSnapshot,
+  };
+});
+
+vi.mock("../commands/systemd-linger.js", () => ({
+  ensureSystemdUserLingerInteractive,
+}));
+
+vi.mock("../daemon/systemd.js", () => ({
+  isSystemdUserServiceAvailable,
+}));
+
+vi.mock("../infra/control-ui-assets.js", () => ({
+  ensureControlUiAssetsBuilt,
+}));
+
+vi.mock("../tui/tui.js", () => ({
+  runTui,
+}));
+
+vi.mock("./onboarding.gateway-config.js", () => ({
+  configureGatewayForOnboarding,
+}));
+
+vi.mock("./onboarding.federation.js", () => ({
+  configureFederationForOnboarding,
+}));
+
+vi.mock("./onboarding.host-security.js", () => ({
+  applyHostingSecurity,
+}));
+
+function createWizardPrompter(overrides?: Partial<WizardPrompter>): WizardPrompter {
+  return {
+    intro: vi.fn(async () => {}),
+    outro: vi.fn(async () => {}),
+    note: vi.fn(async () => {}),
+    select: vi.fn(async (opts: unknown) => {
+      const rawMessage = (opts as { message?: unknown })?.message;
+      const message = typeof rawMessage === "string" ? rawMessage : "";
+      if (message === "Wallet setup action") {
+        return "skip";
+      }
+      return "quickstart";
+    }) as unknown as WizardPrompter["select"],
+    multiselect: vi.fn(async () => []),
+    text: vi.fn(async () => ""),
+    confirm: vi.fn(async () => false),
+    progress: vi.fn(() => ({ update: vi.fn(), stop: vi.fn() })),
+    ...overrides,
+  };
+}
+
+function createRuntime(opts?: { throwsOnExit?: boolean }): RuntimeEnv {
+  if (opts?.throwsOnExit) {
+    return {
+      log: vi.fn(),
+      error: vi.fn(),
+      exit: vi.fn((code: number) => {
+        throw new Error(`exit:${code}`);
+      }),
+    };
+  }
+
+  return {
+    log: vi.fn(),
+    error: vi.fn(),
+    exit: vi.fn(),
+  };
+}
+
+describe("runOnboardingWizard", () => {
+  beforeEach(() => {
+    vi.stubEnv("FASED_SKIP_NATIVE_SIGNER_BUILD", "1");
+    promptAuthChoiceGrouped.mockReset();
+    promptAuthChoiceGrouped.mockResolvedValue("skip");
+    applyAuthChoice.mockReset();
+    applyAuthChoice.mockImplementation(async ({ config }) => ({ config }));
+    resolvePreferredProviderForAuthChoice.mockReset();
+    resolvePreferredProviderForAuthChoice.mockReturnValue(undefined);
+    warnIfModelConfigLooksOff.mockReset();
+    setupChannels.mockReset();
+    setupChannels.mockImplementation(async (config) => config);
+    setupSkills.mockReset();
+    setupSkills.mockImplementation(async (config) => config);
+    setupInternalHooks.mockReset();
+    setupInternalHooks.mockImplementation(async (config) => config);
+    promptDefaultModel.mockReset();
+    promptDefaultModel.mockResolvedValue({});
+    readManagedFederationTokenSummary.mockReset();
+    readManagedFederationTokenSummary.mockReturnValue({
+      path: "/tmp/federation/access-token.json",
+      exists: false,
+      hasZrokToken: false,
+    });
+    readManagedReservationSummaries.mockReset();
+    readManagedReservationSummaries.mockReturnValue([]);
+    loadPersistedFederationToken.mockReset();
+    loadPersistedFederationToken.mockResolvedValue(null);
+    readWalletStatusSnapshot.mockReset();
+    readWalletStatusSnapshot.mockResolvedValue({
+      approvalAuth: {
+        mode: "none",
+        ready: false,
+        passkeyCount: 0,
+      },
+    });
+    configureGatewayForOnboarding.mockClear();
+    configureFederationForOnboarding.mockClear();
+    configureWalletForOnboarding.mockClear();
+    handleOnboardingRepair.mockClear();
+    writeConfigFile.mockClear();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    delete process.env.FASED_WALLET_SOLANA_RPC_URL__WALLET_1;
+    delete process.env.FASED_WALLET_SOLANA_KEYSTORE_PATH__WALLET_1;
+  });
+
+  it("does not open model selection when interactive model/auth setup is skipped", async () => {
+    promptAuthChoiceGrouped.mockResolvedValue("skip");
+    const prompter = createWizardPrompter();
+
+    await runOnboardingWizard(
+      {
+        acceptRisk: true,
+        flow: "quickstart",
+        installDaemon: false,
+        skipProviders: true,
+        skipSkills: true,
+        skipHealth: true,
+        skipUi: true,
+      },
+      createRuntime({ throwsOnExit: true }),
+      prompter,
+    );
+
+    expect(promptDefaultModel).not.toHaveBeenCalled();
+    expect(resolvePreferredProviderForAuthChoice).not.toHaveBeenCalled();
+  });
+
+  it("explains setup profiles and moves product setup to Control UI", async () => {
+    const select = vi.fn(async (opts: unknown) => {
+      const message =
+        typeof (opts as { message?: unknown })?.message === "string"
+          ? String((opts as { message?: unknown }).message)
+          : "";
+      if (message === "Host setup profile") {
+        return "local";
+      }
+      if (message === "What do you want to set up?") {
+        return "local";
+      }
+      if (message === "Wallet setup action") {
+        return "skip";
+      }
+      if (message === "How do you want to hatch your bot?") {
+        return "skip";
+      }
+      return "advanced";
+    }) as unknown as WizardPrompter["select"];
+    const prompter = createWizardPrompter({ select });
+
+    await runOnboardingWizard(
+      {
+        acceptRisk: true,
+        flow: "advanced",
+        authChoice: "skip",
+        installDaemon: false,
+        skipProviders: true,
+        skipSkills: true,
+        skipHealth: true,
+        skipUi: true,
+      },
+      createRuntime({ throwsOnExit: true }),
+      prompter,
+    );
+
+    expect(prompter.note).toHaveBeenCalledWith(
+      expect.stringContaining("Local on a VPS means no SSH/firewall hardening."),
+      "Setup map",
+    );
+    expect(prompter.note).toHaveBeenCalledWith(
+      expect.stringContaining("Hosting on personal Linux changes SSH/firewall behavior."),
+      "Setup map",
+    );
+    expect(prompter.note).not.toHaveBeenCalledWith(
+      expect.stringContaining("Remote Gateway is a later connection mode"),
+      expect.anything(),
+    );
+    expect(prompter.note).not.toHaveBeenCalledWith(
+      expect.stringContaining("Onboarding now handles machine/security setup only."),
+      expect.anything(),
+    );
+    expect(select).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: "Host setup profile",
+        options: expect.arrayContaining([
+          expect.objectContaining({
+            value: "local",
+            hint: expect.stringContaining("no VPS hardening"),
+          }),
+          expect.objectContaining({
+            value: "hosting",
+            hint: expect.stringContaining("Tailscale required"),
+          }),
+        ]),
+      }),
+    );
+  });
+
+  it("does not run model, channel, skill, or hook setup in the default onboarding path", async () => {
+    const selectMock = vi.fn(async (opts: unknown) => {
+      const message =
+        typeof (opts as { message?: unknown })?.message === "string"
+          ? String((opts as { message?: unknown }).message)
+          : "";
+      if (message === "Host setup profile") {
+        return "local";
+      }
+      if (message === "What do you want to set up?") {
+        return "local";
+      }
+      if (message === "Wallet setup action") {
+        return "skip";
+      }
+      return "advanced";
+    });
+    const select = selectMock as unknown as WizardPrompter["select"];
+    const prompter = createWizardPrompter({ select });
+
+    await runOnboardingWizard(
+      {
+        acceptRisk: true,
+        flow: "advanced",
+        installDaemon: false,
+        skipHealth: true,
+        skipUi: true,
+      },
+      createRuntime({ throwsOnExit: true }),
+      prompter,
+    );
+
+    expect(promptAuthChoiceGrouped).not.toHaveBeenCalled();
+    expect(applyAuthChoice).not.toHaveBeenCalled();
+    expect(promptDefaultModel).not.toHaveBeenCalled();
+    expect(setupChannels).not.toHaveBeenCalled();
+    expect(setupSkills).not.toHaveBeenCalled();
+    expect(setupInternalHooks).not.toHaveBeenCalled();
+    const setupChoice = selectMock.mock.calls.find(([params]) => {
+      const message = (params as { message?: unknown })?.message;
+      return typeof message === "string" && message === "What do you want to set up?";
+    })?.[0] as { options?: Array<{ value?: unknown }> } | undefined;
+    expect((setupChoice?.options ?? []).map((option) => option.value)).toEqual(["local"]);
+    expect(prompter.confirm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: "Set up model providers?",
+        initialValue: false,
+      }),
+    );
+    expect(prompter.confirm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: "Set up chat channels?",
+        initialValue: false,
+      }),
+    );
+    expect(prompter.confirm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: "Set up skills?",
+        initialValue: false,
+      }),
+    );
+    expect(prompter.confirm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: "Set up hooks?",
+        initialValue: false,
+      }),
+    );
+    expect(prompter.multiselect).not.toHaveBeenCalledWith(
+      expect.objectContaining({ message: "Enable hooks?" }),
+    );
+    expect(select).not.toHaveBeenCalledWith(
+      expect.objectContaining({ message: "Select channel (QuickStart)" }),
+    );
+    expect(select).not.toHaveBeenCalledWith(
+      expect.objectContaining({ message: "Configure skills now? (recommended)" }),
+    );
+    expect(prompter.note).not.toHaveBeenCalledWith(
+      expect.stringContaining("Skipped model/provider setup in onboarding."),
+      expect.anything(),
+    );
+    expect(prompter.note).not.toHaveBeenCalledWith(
+      expect.stringContaining("Skipped chat app channel setup in onboarding."),
+      expect.anything(),
+    );
+    expect(prompter.note).not.toHaveBeenCalledWith(
+      expect.stringContaining("Skipped skills setup in onboarding."),
+      expect.anything(),
+    );
+    expect(prompter.note).not.toHaveBeenCalledWith(
+      expect.stringContaining("Skipped hook setup in onboarding."),
+      expect.anything(),
+    );
+  });
+
+  it("runs UI-owned setup sections only after explicit advanced onboarding opt-in", async () => {
+    promptAuthChoiceGrouped.mockResolvedValue("openai-codex");
+    const select = vi.fn(async (opts: unknown) => {
+      const message =
+        typeof (opts as { message?: unknown })?.message === "string"
+          ? String((opts as { message?: unknown }).message)
+          : "";
+      if (message === "Host setup profile") {
+        return "local";
+      }
+      if (message === "What do you want to set up?") {
+        return "local";
+      }
+      if (message === "Wallet setup action") {
+        return "skip";
+      }
+      return "advanced";
+    }) as unknown as WizardPrompter["select"];
+    const confirm = vi.fn(async (opts: unknown) => {
+      const message =
+        typeof (opts as { message?: unknown })?.message === "string"
+          ? String((opts as { message?: unknown }).message)
+          : "";
+      return [
+        "Set up model providers?",
+        "Set up chat channels?",
+        "Set up skills?",
+        "Set up hooks?",
+      ].includes(message);
+    }) as unknown as WizardPrompter["confirm"];
+    const prompter = createWizardPrompter({ select, confirm });
+
+    await runOnboardingWizard(
+      {
+        acceptRisk: true,
+        flow: "advanced",
+        installDaemon: false,
+        skipHealth: true,
+        skipUi: true,
+      },
+      createRuntime({ throwsOnExit: true }),
+      prompter,
+    );
+
+    expect(promptAuthChoiceGrouped).toHaveBeenCalled();
+    expect(applyAuthChoice).toHaveBeenCalledWith(
+      expect.objectContaining({
+        authChoice: "openai-codex",
+        setDefaultModel: true,
+      }),
+    );
+    expect(setupChannels).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      prompter,
+      expect.objectContaining({
+        allowDisable: true,
+        allowSignalInstall: true,
+        skipConfirm: true,
+        skipPrimerNote: true,
+        skipStatusNote: true,
+      }),
+    );
+    expect(setupSkills).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.any(String),
+      expect.anything(),
+      prompter,
+      expect.objectContaining({ skipConfirm: true }),
+    );
+    expect(setupInternalHooks).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      prompter,
+      expect.objectContaining({ skipIntroNote: true }),
+    );
+  });
+
+  it("keeps QuickStart self-hosted wallet naming fully non-interactive", async () => {
+    walletSetupCommand.mockClear();
+    upsertNamedWallet.mockClear();
+    setNamedWalletRole.mockClear();
+    resolveWalletUserRole.mockReset();
+    resolveWalletUserRole.mockReturnValue(undefined);
+    writeConfigFile.mockClear();
+    readWalletProviderRegistry.mockReturnValue({
+      providers: {
+        "embedded-keystore": { enabled: true, updatedAt: "2026-03-15T00:00:00.000Z" },
+        "local-socket-signer": { enabled: true, updatedAt: "2026-03-15T00:00:00.000Z" },
+        alchemy: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
+        turnkey: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
+        privy: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
+      },
+      wallets: [],
+      assignments: {},
+      updatedAt: "2026-03-15T00:00:00.000Z",
+    });
+    const select = vi.fn(async (opts: unknown) => {
+      const message =
+        typeof (opts as { message?: unknown })?.message === "string"
+          ? String((opts as { message?: unknown }).message)
+          : "";
+      if (message === "Wallet setup action") {
+        return "self-hosted";
+      }
+      if (message === "Wallet chain") {
+        return "solana";
+      }
+      if (message === "Wallet action") {
+        return "create";
+      }
+      if (message === "How do you want to hatch your bot?") {
+        return "skip";
+      }
+      return "quickstart";
+    }) as unknown as WizardPrompter["select"];
+    const text = vi.fn(async (opts: unknown) => {
+      const message =
+        typeof (opts as { message?: unknown })?.message === "string"
+          ? String((opts as { message?: unknown }).message)
+          : "";
+      if (message.includes("RPC URL")) {
+        return "https://api.devnet.solana.com";
+      }
+      return "";
+    }) as unknown as WizardPrompter["text"];
+    const confirm = vi.fn(async (opts: unknown) => {
+      const message =
+        typeof (opts as { message?: unknown })?.message === "string"
+          ? String((opts as { message?: unknown }).message)
+          : "";
+      if (message === "Run another wallet setup action?") {
+        return false;
+      }
+      return false;
+    }) as unknown as WizardPrompter["confirm"];
+    const prompter = createWizardPrompter({ select, text, confirm });
+
+    await runOnboardingWizard(
+      {
+        acceptRisk: true,
+        flow: "quickstart",
+        authChoice: "skip",
+        installDaemon: false,
+        skipProviders: true,
+        skipSkills: true,
+        skipHealth: true,
+        skipUi: true,
+      },
+      createRuntime({ throwsOnExit: true }),
+      prompter,
+    );
+
+    expect(text).not.toHaveBeenCalledWith(
+      expect.objectContaining({ message: "Wallet name (used in UI + skill/plugin selection)" }),
+    );
+    expect(text).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: "Wallet ID (stable key for routing; letters/numbers/-/_)",
+      }),
+    );
+    expect(walletSetupCommand).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        mode: "local-signer-create",
+        walletName: "Agent",
+        walletId: "agent",
+      }),
+    );
+    expect(upsertNamedWallet).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Agent", walletId: "agent" }),
+    );
+    expect(writeConfigFile).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        wallet: expect.objectContaining({
+          provider: expect.objectContaining({ id: "local-socket-signer" }),
+          runtime: expect.objectContaining({ enabled: true }),
+        }),
+      }),
+    );
+  });
+
+  it("uses the interactive yes answer as private-key print confirmation", async () => {
+    walletSetupCommand.mockClear();
+    readWalletProviderRegistry.mockReturnValue({
+      version: 1,
+      providers: {
+        "embedded-keystore": { enabled: true, updatedAt: "2026-03-15T00:00:00.000Z" },
+        "local-socket-signer": { enabled: true, updatedAt: "2026-03-15T00:00:00.000Z" },
+        alchemy: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
+        turnkey: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
+        privy: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
+      },
+      wallets: [],
+      assignments: {},
+      updatedAt: "2026-03-15T00:00:00.000Z",
+    });
+    const select = vi.fn(async (opts: unknown) => {
+      const message =
+        typeof (opts as { message?: unknown })?.message === "string"
+          ? String((opts as { message?: unknown }).message)
+          : "";
+      if (message === "Wallet setup action") {
+        return "self-hosted";
+      }
+      if (message === "Wallet chain") {
+        return "solana";
+      }
+      if (message === "Wallet action") {
+        return "create";
+      }
+      if (message === "How do you want to hatch your bot?") {
+        return "skip";
+      }
+      return "quickstart";
+    }) as unknown as WizardPrompter["select"];
+    const text = vi.fn(async (opts: unknown) => {
+      const message =
+        typeof (opts as { message?: unknown })?.message === "string"
+          ? String((opts as { message?: unknown }).message)
+          : "";
+      if (message.includes("RPC URL")) {
+        return "https://api.devnet.solana.com";
+      }
+      return "";
+    }) as unknown as WizardPrompter["text"];
+    const confirm = vi.fn(async (opts: unknown) => {
+      const message =
+        typeof (opts as { message?: unknown })?.message === "string"
+          ? String((opts as { message?: unknown }).message)
+          : "";
+      if (message === "Show generated private key once for offline backup?") {
+        return true;
+      }
+      if (message === "Run another wallet setup action?") {
+        return false;
+      }
+      return false;
+    }) as unknown as WizardPrompter["confirm"];
+    const prompter = createWizardPrompter({ select, text, confirm });
+
+    await runOnboardingWizard(
+      {
+        acceptRisk: true,
+        flow: "quickstart",
+        authChoice: "skip",
+        installDaemon: false,
+        skipProviders: true,
+        skipSkills: true,
+        skipHealth: true,
+        skipUi: true,
+      },
+      createRuntime({ throwsOnExit: true }),
+      prompter,
+    );
+
+    expect(text).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining("SHOW PRIVATE KEY"),
+      }),
+    );
+    expect(walletSetupCommand).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        mode: "local-signer-create",
+        showPrivateKeyOnce: true,
+        confirmPrivateKeyPrint: "SHOW PRIVATE KEY",
+      }),
+    );
+  });
+
+  it("keeps onboarding wallet id role-based when display name is edited", async () => {
+    walletSetupCommand.mockClear();
+    upsertNamedWallet.mockClear();
+    setNamedWalletRole.mockClear();
+    setDefaultWallet.mockClear();
+    readWalletProviderRegistry.mockReturnValue({
+      providers: {
+        "embedded-keystore": { enabled: true, updatedAt: "2026-03-15T00:00:00.000Z" },
+        "local-socket-signer": { enabled: true, updatedAt: "2026-03-15T00:00:00.000Z" },
+        alchemy: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
+        turnkey: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
+        privy: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
+      },
+      wallets: [
+        {
+          id: "agent",
+          name: "Agent",
+          providerId: "local-socket-signer",
+          addresses: { solana: "agent-sol-1" },
+          metadata: { selfHosted: true, role: "agent" },
+        },
+      ],
+      assignments: {},
+      defaultWalletId: "agent",
+      updatedAt: "2026-03-15T00:00:00.000Z",
+    });
+    const select = vi.fn(async (opts: unknown) => {
+      const message =
+        typeof (opts as { message?: unknown })?.message === "string"
+          ? String((opts as { message?: unknown }).message)
+          : "";
+      if (message === "Wallet setup action") {
+        return "self-hosted";
+      }
+      if (message === "Wallet action") {
+        return "create";
+      }
+      if (message === "Wallet purpose") {
+        return "agent";
+      }
+      if (message === "How do you want to hatch your bot?") {
+        return "skip";
+      }
+      return "advanced";
+    }) as unknown as WizardPrompter["select"];
+    const text = vi.fn(async (opts: unknown) => {
+      const message =
+        typeof (opts as { message?: unknown })?.message === "string"
+          ? String((opts as { message?: unknown }).message)
+          : "";
+      if (message.startsWith("Wallet name")) {
+        return "Trading";
+      }
+      if (message.includes("RPC URL")) {
+        return "https://api.devnet.solana.com";
+      }
+      return "";
+    }) as unknown as WizardPrompter["text"];
+    const confirm = vi.fn(async (opts: unknown) => {
+      const message =
+        typeof (opts as { message?: unknown })?.message === "string"
+          ? String((opts as { message?: unknown }).message)
+          : "";
+      if (message === "Run another wallet setup action?") {
+        return false;
+      }
+      return false;
+    }) as unknown as WizardPrompter["confirm"];
+    const prompter = createWizardPrompter({ select, text, confirm });
+
+    await runOnboardingWizard(
+      {
+        acceptRisk: true,
+        flow: "advanced",
+        authChoice: "skip",
+        installDaemon: false,
+        skipProviders: true,
+        skipSkills: true,
+        skipHealth: true,
+        skipUi: true,
+      },
+      createRuntime({ throwsOnExit: true }),
+      prompter,
+    );
+
+    expect(walletSetupCommand).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        mode: "local-signer-create",
+        walletName: "Trading",
+        walletId: "agent-2",
+      }),
+    );
+    expect(upsertNamedWallet).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Trading", walletId: "agent-2" }),
+    );
+  });
+
+  it("still honors explicit provider setup while skipping interactive provider prompts", async () => {
+    applyAuthChoice.mockResolvedValue({
+      config: {
+        models: {
+          providers: {
+            "acme-cloud": {
+              baseUrl: "https://api.acme.example/v1",
+              api: "openai-completions",
+              models: [{ id: "acme-pro", name: "Acme Pro" }],
+            },
+          },
+        },
+      },
+    });
+    resolvePreferredProviderForAuthChoice.mockReturnValue("acme-cloud");
+    const prompter = createWizardPrompter();
+
+    await runOnboardingWizard(
+      {
+        acceptRisk: true,
+        flow: "quickstart",
+        authChoice: "acme-cloud-oauth",
+        installDaemon: false,
+        skipSkills: true,
+        skipHealth: true,
+        skipUi: true,
+      },
+      createRuntime({ throwsOnExit: true }),
+      prompter,
+    );
+
+    expect(promptAuthChoiceGrouped).not.toHaveBeenCalled();
+    expect(applyAuthChoice).toHaveBeenCalledWith(
+      expect.objectContaining({
+        authChoice: "acme-cloud-oauth",
+        setDefaultModel: true,
+      }),
+    );
+    expect(resolvePreferredProviderForAuthChoice).not.toHaveBeenCalled();
+    expect(promptDefaultModel).not.toHaveBeenCalled();
+  });
+
+  it("does not offer SAT mining attach or switch for an existing self-hosted Solana wallet", async () => {
+    writeConfigFile.mockClear();
+    readConfigFileSnapshot.mockResolvedValueOnce({
+      exists: true,
+      valid: true,
+      config: {
+        env: {
+          vars: {
+            FASED_WALLET_SOLANA_RPC_URL__WALLET_1: "https://api.devnet.solana.com",
+          },
+        },
+        plugins: {
+          entries: {
+            "sat-mining": {
+              enabled: true,
+              config: {
+                enabled: true,
+                network: "devnet",
+                riskMode: "balanced",
+              },
+            },
+          },
+        },
+      },
+    });
+    readWalletProviderRegistry.mockReturnValue({
+      providers: {
+        "embedded-keystore": { enabled: true, updatedAt: "2026-03-15T00:00:00.000Z" },
+        "local-socket-signer": { enabled: true, updatedAt: "2026-03-15T00:00:00.000Z" },
+        alchemy: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
+        turnkey: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
+        privy: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
+      },
+      wallets: [
+        {
+          id: "wallet-1",
+          name: "Wallet 1",
+          providerId: "local-socket-signer",
+          addresses: { solana: "miner-sol-1" },
+          metadata: { selfHosted: true },
+        },
+      ],
+      assignments: {},
+      updatedAt: "2026-03-15T00:00:00.000Z",
+    });
+    const select = vi.fn(async (opts: unknown) => {
+      const message =
+        typeof (opts as { message?: unknown })?.message === "string"
+          ? String((opts as { message?: unknown }).message)
+          : "";
+      if (message === "Wallet setup action") {
+        return "manage-self-hosted";
+      }
+      if (message === "Select wallet to manage") {
+        return "wallet-1";
+      }
+      if (message === "Wallet action") {
+        const actionOptions = Array.isArray((opts as { options?: unknown[] }).options)
+          ? ((opts as { options?: Array<{ value?: unknown }> }).options ?? []).flatMap((option) =>
+              typeof option.value === "string" && option.value.length > 0 ? [option.value] : [],
+            )
+          : [];
+        expect(actionOptions).toContain("configure-solana-rpc");
+        expect(actionOptions).not.toContain("attach-sat-mining");
+        expect(actionOptions).not.toContain("detach-sat-mining");
+        return "cancel";
+      }
+      if (message === "How do you want to hatch your bot?") {
+        return "skip";
+      }
+      return "quickstart";
+    }) as unknown as WizardPrompter["select"];
+    const confirm = vi.fn(async (opts: unknown) => {
+      const message =
+        typeof (opts as { message?: unknown })?.message === "string"
+          ? String((opts as { message?: unknown }).message)
+          : "";
+      if (message === "Run another wallet setup action?") {
+        return false;
+      }
+      return false;
+    }) as unknown as WizardPrompter["confirm"];
+    const prompter = createWizardPrompter({ select, confirm });
+
+    await runOnboardingWizard(
+      {
+        acceptRisk: true,
+        flow: "quickstart",
+        authChoice: "skip",
+        installDaemon: false,
+        skipProviders: true,
+        skipSkills: true,
+        skipHealth: true,
+        skipUi: true,
+      },
+      createRuntime({ throwsOnExit: true }),
+      prompter,
+    );
+
+    expect(writeConfigFile).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        plugins: {
+          entries: {
+            "sat-mining": expect.objectContaining({
+              config: expect.not.objectContaining({
+                walletId: "wallet-1",
+              }),
+            }),
+          },
+        },
+      }),
+    );
+  });
+
+  it("warns before deleting the singleton Mining wallet", async () => {
+    deleteNamedWallet.mockClear();
+    restartLocalSocketSigner.mockClear();
+    resolveWalletUserRole.mockReset();
+    resolveWalletUserRole.mockReturnValue("mining");
+    readConfigFileSnapshot.mockResolvedValueOnce({
+      exists: true,
+      valid: true,
+      config: {
+        env: {
+          vars: {
+            FASED_WALLET_SOLANA_RPC_URL__MINING: "https://api.devnet.solana.com",
+            FASED_WALLET_SOLANA_KEYSTORE_PATH__MINING: "/tmp/fased-test-mining-wallet.enc",
+          },
+        },
+        plugins: {
+          entries: {
+            "sat-mining": {
+              enabled: true,
+              config: {
+                enabled: true,
+                walletId: "mining",
+                network: "devnet",
+                riskMode: "balanced",
+              },
+            },
+          },
+        },
+      },
+    });
+    readWalletProviderRegistry.mockReturnValue({
+      providers: {
+        "embedded-keystore": { enabled: true, updatedAt: "2026-03-15T00:00:00.000Z" },
+        "local-socket-signer": { enabled: true, updatedAt: "2026-03-15T00:00:00.000Z" },
+        alchemy: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
+        turnkey: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
+        privy: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
+      },
+      wallets: [
+        {
+          id: "mining",
+          name: "Mining",
+          providerId: "local-socket-signer",
+          addresses: { solana: "mining-sol-1" },
+          metadata: { selfHosted: true, role: "mining" },
+        },
+      ],
+      assignments: {},
+      updatedAt: "2026-03-15T00:00:00.000Z",
+    });
+    const select = vi.fn(async (opts: unknown) => {
+      const message =
+        typeof (opts as { message?: unknown })?.message === "string"
+          ? String((opts as { message?: unknown }).message)
+          : "";
+      if (message === "Wallet setup action") {
+        return "manage-self-hosted";
+      }
+      if (message === "Select wallet to manage") {
+        return "mining";
+      }
+      if (message === "Wallet action") {
+        return "delete";
+      }
+      if (message === "How do you want to hatch your bot?") {
+        return "skip";
+      }
+      return "quickstart";
+    }) as unknown as WizardPrompter["select"];
+    const text = vi.fn(async (opts: unknown) => {
+      const message =
+        typeof (opts as { message?: unknown })?.message === "string"
+          ? String((opts as { message?: unknown }).message)
+          : "";
+      if (message === 'Type wallet id "mining" to delete this wallet') {
+        return "mining";
+      }
+      return "";
+    }) as unknown as WizardPrompter["text"];
+    const confirm = vi.fn(async (opts: unknown) => {
+      const message =
+        typeof (opts as { message?: unknown })?.message === "string"
+          ? String((opts as { message?: unknown }).message)
+          : "";
+      if (message === "Run another wallet setup action?") {
+        return false;
+      }
+      return false;
+    }) as unknown as WizardPrompter["confirm"];
+    const prompter = createWizardPrompter({ select, text, confirm });
+
+    await runOnboardingWizard(
+      {
+        acceptRisk: true,
+        flow: "quickstart",
+        authChoice: "skip",
+        installDaemon: false,
+        skipProviders: true,
+        skipSkills: true,
+        skipHealth: true,
+        skipUi: true,
+      },
+      createRuntime({ throwsOnExit: true }),
+      prompter,
+    );
+
+    expect(prompter.note).toHaveBeenCalledWith(
+      expect.stringContaining("For @wallet:mining, stop mining first"),
+      "Delete wallet",
+    );
+    expect(prompter.note).toHaveBeenCalledWith(
+      expect.stringContaining("balance as unknown"),
+      "Delete wallet",
+    );
+    expect(deleteNamedWallet).toHaveBeenCalledWith(expect.objectContaining({ walletId: "mining" }));
+    resolveWalletUserRole.mockReset();
+    resolveWalletUserRole.mockReturnValue(undefined);
+  });
+
+  it("offers only Solana RPC repair for an existing self-hosted Solana wallet without RPC", async () => {
+    writeConfigFile.mockClear();
+    restartLocalSocketSigner.mockClear();
+    readConfigFileSnapshot.mockResolvedValueOnce({
+      exists: true,
+      valid: true,
+      config: {
+        plugins: {
+          entries: {
+            "sat-mining": {
+              enabled: true,
+              config: {
+                enabled: true,
+                network: "devnet",
+                riskMode: "balanced",
+              },
+            },
+          },
+        },
+      },
+    });
+    readWalletProviderRegistry.mockReturnValue({
+      providers: {
+        "embedded-keystore": { enabled: true, updatedAt: "2026-03-15T00:00:00.000Z" },
+        "local-socket-signer": { enabled: true, updatedAt: "2026-03-15T00:00:00.000Z" },
+        alchemy: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
+        turnkey: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
+        privy: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
+      },
+      wallets: [
+        {
+          id: "wallet-1",
+          name: "Wallet 1",
+          providerId: "local-socket-signer",
+          addresses: { solana: "miner-sol-1" },
+          metadata: { selfHosted: true },
+        },
+      ],
+      assignments: {},
+      updatedAt: "2026-03-15T00:00:00.000Z",
+    });
+    let actionOptions: string[] = [];
+    const select = vi.fn(async (opts: unknown) => {
+      const message =
+        typeof (opts as { message?: unknown })?.message === "string"
+          ? String((opts as { message?: unknown }).message)
+          : "";
+      if (message === "Wallet setup action") {
+        return "manage-self-hosted";
+      }
+      if (message === "Select wallet to manage") {
+        return "wallet-1";
+      }
+      if (message === "Wallet action") {
+        actionOptions = Array.isArray((opts as { options?: unknown[] }).options)
+          ? ((opts as { options?: Array<{ value?: unknown }> }).options ?? []).flatMap((option) =>
+              typeof option.value === "string" && option.value.length > 0 ? [option.value] : [],
+            )
+          : [];
+        return "cancel";
+      }
+      if (message === "How do you want to hatch your bot?") {
+        return "skip";
+      }
+      return "quickstart";
+    }) as unknown as WizardPrompter["select"];
+    const confirm = vi.fn(async (opts: unknown) => {
+      const message =
+        typeof (opts as { message?: unknown })?.message === "string"
+          ? String((opts as { message?: unknown }).message)
+          : "";
+      if (message === "Run another wallet setup action?") {
+        return false;
+      }
+      return false;
+    }) as unknown as WizardPrompter["confirm"];
+    const prompter = createWizardPrompter({ select, confirm });
+
+    await runOnboardingWizard(
+      {
+        acceptRisk: true,
+        flow: "quickstart",
+        authChoice: "skip",
+        installDaemon: false,
+        skipProviders: true,
+        skipSkills: true,
+        skipHealth: true,
+        skipUi: true,
+      },
+      createRuntime({ throwsOnExit: true }),
+      prompter,
+    );
+
+    expect(actionOptions).toContain("configure-solana-rpc");
+    expect(actionOptions).not.toContain("attach-sat-mining");
+    expect(writeConfigFile).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        plugins: {
+          entries: {
+            "sat-mining": expect.objectContaining({
+              config: expect.not.objectContaining({
+                walletId: expect.anything(),
+              }),
+            }),
+          },
+        },
+      }),
+    );
+    expect(restartLocalSocketSigner).not.toHaveBeenCalled();
+  });
+
+  it("does not offer SAT mining attachment for an existing self-hosted Solana wallet during onboarding", async () => {
+    writeConfigFile.mockClear();
+    readConfigFileSnapshot.mockResolvedValueOnce({
+      exists: true,
+      valid: true,
+      config: {
+        plugins: {
+          entries: {
+            "sat-mining": {
+              enabled: true,
+              config: {
+                enabled: true,
+                network: "devnet",
+                riskMode: "balanced",
+              },
+            },
+          },
+        },
+      },
+    });
+    readWalletProviderRegistry.mockReturnValue({
+      providers: {
+        "embedded-keystore": { enabled: true, updatedAt: "2026-03-15T00:00:00.000Z" },
+        "local-socket-signer": { enabled: true, updatedAt: "2026-03-15T00:00:00.000Z" },
+        alchemy: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
+        turnkey: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
+        privy: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
+      },
+      wallets: [
+        {
+          id: "solana-1",
+          name: "Solana 1",
+          providerId: "local-socket-signer",
+          addresses: { solana: "So11111111111111111111111111111111111111112" },
+          metadata: { selfHosted: true },
+        },
+      ],
+      assignments: {},
+      updatedAt: "2026-03-15T00:00:00.000Z",
+    });
+    let actionOptions: string[] = [];
+    const select = vi.fn(async (opts: unknown) => {
+      const message =
+        typeof (opts as { message?: unknown })?.message === "string"
+          ? String((opts as { message?: unknown }).message)
+          : "";
+      if (message === "Wallet setup action") {
+        return "manage-self-hosted";
+      }
+      if (message === "Select wallet to manage") {
+        return "solana-1";
+      }
+      if (message === "Wallet action") {
+        actionOptions = Array.isArray((opts as { options?: unknown[] }).options)
+          ? ((opts as { options?: Array<{ value?: unknown }> }).options ?? []).flatMap((option) =>
+              typeof option.value === "string" && option.value.length > 0 ? [option.value] : [],
+            )
+          : [];
+        return "cancel";
+      }
+      if (message === "How do you want to hatch your bot?") {
+        return "skip";
+      }
+      return "quickstart";
+    }) as unknown as WizardPrompter["select"];
+    const confirm = vi.fn(async (opts: unknown) => {
+      const message =
+        typeof (opts as { message?: unknown })?.message === "string"
+          ? String((opts as { message?: unknown }).message)
+          : "";
+      if (message === "Run another wallet setup action?") {
+        return false;
+      }
+      return false;
+    }) as unknown as WizardPrompter["confirm"];
+    const prompter = createWizardPrompter({ select, confirm });
+
+    await runOnboardingWizard(
+      {
+        acceptRisk: true,
+        flow: "quickstart",
+        authChoice: "skip",
+        installDaemon: false,
+        skipProviders: true,
+        skipSkills: true,
+        skipHealth: true,
+        skipUi: true,
+      },
+      createRuntime({ throwsOnExit: true }),
+      prompter,
+    );
+
+    expect(actionOptions).toContain("configure-solana-rpc");
+    expect(actionOptions).not.toContain("attach-sat-mining");
+    expect(actionOptions).not.toContain("detach-sat-mining");
+  });
+
+  it("can update Solana RPC for an existing self-hosted wallet during onboarding management", async () => {
+    writeConfigFile.mockClear();
+    restartLocalSocketSigner.mockClear();
+    readConfigFileSnapshot.mockResolvedValueOnce({
+      exists: true,
+      valid: true,
+      config: {
+        env: {
+          vars: {
+            FASED_WALLET_SOLANA_RPC_URL__WALLET_1: "https://old-rpc.example",
+          },
+        },
+      },
+    });
+    readWalletProviderRegistry.mockReturnValue({
+      providers: {
+        "embedded-keystore": { enabled: true, updatedAt: "2026-03-15T00:00:00.000Z" },
+        "local-socket-signer": { enabled: true, updatedAt: "2026-03-15T00:00:00.000Z" },
+        alchemy: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
+        turnkey: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
+        privy: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
+      },
+      wallets: [
+        {
+          id: "wallet-1",
+          name: "Wallet 1",
+          providerId: "local-socket-signer",
+          addresses: { solana: "miner-sol-1" },
+          metadata: { selfHosted: true },
+        },
+      ],
+      assignments: {},
+      updatedAt: "2026-03-15T00:00:00.000Z",
+    });
+    const select = vi.fn(async (opts: unknown) => {
+      const message =
+        typeof (opts as { message?: unknown })?.message === "string"
+          ? String((opts as { message?: unknown }).message)
+          : "";
+      if (message === "Wallet setup action") {
+        return "manage-self-hosted";
+      }
+      if (message === "Select wallet to manage") {
+        return "wallet-1";
+      }
+      if (message === "Wallet action") {
+        return "configure-solana-rpc";
+      }
+      if (message === "How do you want to hatch your bot?") {
+        return "skip";
+      }
+      return "quickstart";
+    }) as unknown as WizardPrompter["select"];
+    const text = vi.fn(async (opts: unknown) => {
+      const message =
+        typeof (opts as { message?: unknown })?.message === "string"
+          ? String((opts as { message?: unknown }).message)
+          : "";
+      if (message.includes("SOLANA RPC URL for Wallet 1 (wallet-1)")) {
+        return "https://new-rpc.example";
+      }
+      return "";
+    }) as unknown as WizardPrompter["text"];
+    const confirm = vi.fn(async (opts: unknown) => {
+      const message =
+        typeof (opts as { message?: unknown })?.message === "string"
+          ? String((opts as { message?: unknown }).message)
+          : "";
+      if (message === "Run another wallet setup action?") {
+        return false;
+      }
+      return false;
+    }) as unknown as WizardPrompter["confirm"];
+    const prompter = createWizardPrompter({ select, text, confirm });
+
+    await runOnboardingWizard(
+      {
+        acceptRisk: true,
+        flow: "quickstart",
+        authChoice: "skip",
+        installDaemon: false,
+        skipProviders: true,
+        skipSkills: true,
+        skipHealth: true,
+        skipUi: true,
+      },
+      createRuntime({ throwsOnExit: true }),
+      prompter,
+    );
+
+    expect(writeConfigFile).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        env: expect.objectContaining({
+          vars: expect.objectContaining({
+            FASED_WALLET_SOLANA_RPC_URL__WALLET_1: "https://new-rpc.example",
+          }),
+        }),
+      }),
+    );
+    expect(restartLocalSocketSigner).toHaveBeenCalled();
+    expect(prompter.note).toHaveBeenCalledWith(
+      "Updated Solana RPC for Wallet 1 (wallet-1): https://new-rpc.example",
+      "Wallet setup",
+    );
+  });
+
+  it("does not offer SAT mining detach from onboarding manage-self-hosted flow", async () => {
+    writeConfigFile.mockClear();
+    readConfigFileSnapshot.mockResolvedValueOnce({
+      exists: true,
+      valid: true,
+      config: {
+        plugins: {
+          entries: {
+            "sat-mining": {
+              enabled: true,
+              config: {
+                enabled: true,
+                network: "devnet",
+                riskMode: "balanced",
+                walletId: "wallet-1",
+              },
+            },
+          },
+        },
+      },
+    });
+    readWalletProviderRegistry.mockReturnValue({
+      providers: {
+        "embedded-keystore": { enabled: true, updatedAt: "2026-03-15T00:00:00.000Z" },
+        "local-socket-signer": { enabled: true, updatedAt: "2026-03-15T00:00:00.000Z" },
+        alchemy: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
+        turnkey: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
+        privy: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
+      },
+      wallets: [
+        {
+          id: "wallet-1",
+          name: "Wallet 1",
+          providerId: "local-socket-signer",
+          addresses: { solana: "miner-sol-1" },
+          metadata: { selfHosted: true },
+        },
+      ],
+      assignments: {},
+      updatedAt: "2026-03-15T00:00:00.000Z",
+    });
+    let actionOptions: string[] = [];
+    const select = vi.fn(async (opts: unknown) => {
+      const message =
+        typeof (opts as { message?: unknown })?.message === "string"
+          ? String((opts as { message?: unknown }).message)
+          : "";
+      if (message === "Wallet setup action") {
+        return "manage-self-hosted";
+      }
+      if (message === "Select wallet to manage") {
+        return "wallet-1";
+      }
+      if (message === "Wallet action") {
+        actionOptions = Array.isArray((opts as { options?: unknown[] }).options)
+          ? ((opts as { options?: Array<{ value?: unknown }> }).options ?? []).flatMap((option) =>
+              typeof option.value === "string" && option.value.length > 0 ? [option.value] : [],
+            )
+          : [];
+        return "cancel";
+      }
+      if (message === "How do you want to hatch your bot?") {
+        return "skip";
+      }
+      return "quickstart";
+    }) as unknown as WizardPrompter["select"];
+    const confirm = vi.fn(async (opts: unknown) => {
+      const message =
+        typeof (opts as { message?: unknown })?.message === "string"
+          ? String((opts as { message?: unknown }).message)
+          : "";
+      if (message === "Run another wallet setup action?") {
+        return false;
+      }
+      return false;
+    }) as unknown as WizardPrompter["confirm"];
+    const prompter = createWizardPrompter({ select, confirm });
+
+    await runOnboardingWizard(
+      {
+        acceptRisk: true,
+        flow: "quickstart",
+        authChoice: "skip",
+        installDaemon: false,
+        skipProviders: true,
+        skipSkills: true,
+        skipHealth: true,
+        skipUi: true,
+      },
+      createRuntime({ throwsOnExit: true }),
+      prompter,
+    );
+
+    expect(writeConfigFile).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        plugins: {
+          entries: {
+            "sat-mining": expect.objectContaining({
+              config: expect.objectContaining({
+                walletId: "wallet-1",
+              }),
+            }),
+          },
+        },
+      }),
+    );
+    expect(actionOptions).toContain("configure-solana-rpc");
+    expect(actionOptions).not.toContain("attach-sat-mining");
+    expect(actionOptions).not.toContain("detach-sat-mining");
+  });
+
+  it("exits when config is invalid", async () => {
+    (
+      readConfigFileSnapshot as unknown as { mockResolvedValueOnce: (v: unknown) => void }
+    ).mockResolvedValueOnce({
+      path: "/tmp/.fased/fased.json",
+      exists: true,
+      raw: "{}",
+      parsed: {},
+      valid: false,
+      config: {},
+      issues: [{ path: "routing.allowFrom", message: "Legacy key" }],
+      legacyIssues: [{ path: "routing.allowFrom", message: "Legacy key" }],
+    });
+
+    const select = vi.fn(async () => "quickstart") as unknown as WizardPrompter["select"];
+    const prompter = createWizardPrompter({ select });
+    const runtime = createRuntime({ throwsOnExit: true });
+
+    await expect(
+      runOnboardingWizard(
+        {
+          acceptRisk: true,
+          flow: "quickstart",
+          authChoice: "skip",
+          installDaemon: false,
+          skipProviders: true,
+          skipSkills: true,
+          skipHealth: true,
+          skipUi: true,
+        },
+        runtime,
+        prompter,
+      ),
+    ).rejects.toThrow("exit:1");
+
+    expect(prompter.outro).toHaveBeenCalled();
+  });
+
+  it("persists managed gateway mode when local onboarding enables federation", async () => {
+    configureFederationForOnboarding.mockResolvedValueOnce({
+      enabled: true,
+      baseUrl: "https://ff1.fased.app",
+      handle: "@ready-node@ff1.fased.app",
+    });
+
+    const select = vi.fn(async (opts: unknown) => {
+      const rawMessage = (opts as { message?: unknown })?.message;
+      const message = typeof rawMessage === "string" ? rawMessage : "";
+      if (message === "Wallet setup action") {
+        return "skip";
+      }
+      return "quickstart";
+    }) as unknown as WizardPrompter["select"];
+    const prompter = createWizardPrompter({ select });
+    const runtime = createRuntime({ throwsOnExit: true });
+
+    await runOnboardingWizard(
+      {
+        acceptRisk: true,
+        allowInsecure: true,
+        flow: "quickstart",
+        mode: "local",
+        hostProfile: "local",
+        authChoice: "skip",
+        installDaemon: false,
+        skipProviders: true,
+        skipSkills: true,
+        skipHealth: true,
+        skipUi: true,
+      },
+      runtime,
+      prompter,
+    );
+
+    expect(writeConfigFile).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        env: expect.objectContaining({
+          vars: expect.objectContaining({
+            FASED_FEDERATION_AUTO_CONNECT: "1",
+            FASED_GATEWAY_MODE: "managed",
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("skips prompts and setup steps when flags are set", async () => {
+    const select = vi.fn(async (opts: unknown) => {
+      const rawMessage = (opts as { message?: unknown })?.message;
+      const message = typeof rawMessage === "string" ? rawMessage : "";
+      if (message === "Wallet setup action") {
+        return "skip";
+      }
+      return "quickstart";
+    }) as unknown as WizardPrompter["select"];
+    const multiselect = vi.fn(async () => []) as unknown as WizardPrompter["multiselect"];
+    const prompter = createWizardPrompter({ select, multiselect });
+    const runtime = createRuntime({ throwsOnExit: true });
+
+    await runOnboardingWizard(
+      {
+        acceptRisk: true,
+        flow: "quickstart",
+        authChoice: "skip",
+        installDaemon: false,
+        skipProviders: true,
+        skipSkills: true,
+        skipHealth: true,
+        skipUi: true,
+      },
+      runtime,
+      prompter,
+    );
+
+    expect(healthCommand).not.toHaveBeenCalled();
+    expect(runTui).not.toHaveBeenCalled();
+  });
+
+  it("allows hosted profile selection in app maintenance sessions", async () => {
+    const tempHome = await fs.mkdtemp(path.join(os.tmpdir(), "fased-app-home-"));
+    vi.stubEnv("USER", "app");
+    vi.stubEnv("HOME", tempHome);
+
+    try {
+      configureGatewayForOnboarding.mockImplementationOnce(async () => {
+        throw new Error("gateway-config-reached");
+      });
+      const select = vi.fn(async (opts: unknown) => {
+        const rawMessage = (opts as { message?: unknown })?.message;
+        const message = typeof rawMessage === "string" ? rawMessage : "";
+        if (message === "Host setup profile") {
+          return "hosting";
+        }
+        if (message === "Wallet setup action") {
+          return "skip";
+        }
+        if (message === "How do you want to hatch your bot?") {
+          return "skip";
+        }
+        return "quickstart";
+      }) as unknown as WizardPrompter["select"];
+      const prompter = createWizardPrompter({ select });
+      const runtime = createRuntime({ throwsOnExit: true });
+
+      await expect(
+        runOnboardingWizard(
+          {
+            acceptRisk: true,
+            flow: "quickstart",
+            authChoice: "skip",
+            installDaemon: false,
+            skipProviders: true,
+            skipSkills: true,
+            skipHealth: true,
+            skipUi: true,
+          },
+          runtime,
+          prompter,
+        ),
+      ).rejects.toThrow("gateway-config-reached");
+
+      expect(select).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: "Host setup profile",
+        }),
+      );
+      expect(prompter.note).not.toHaveBeenCalledWith(
+        expect.stringContaining("This session cannot run hosting security setup."),
+        expect.any(String),
+      );
+      expect(runtime.exit).not.toHaveBeenCalled();
+    } finally {
+      await fs.rm(tempHome, { recursive: true, force: true });
+    }
+  });
+
+  it("shows the operator readiness summary at onboarding completion", async () => {
+    configureFederationForOnboarding.mockResolvedValueOnce({
+      enabled: true,
+      baseUrl: "https://ff1.fased.app",
+      handle: "@ready-node",
+    });
+    readWalletProviderRegistry.mockReturnValue({
+      providers: {
+        "embedded-keystore": { enabled: true, updatedAt: "2026-03-15T00:00:00.000Z" },
+        "local-socket-signer": { enabled: true, updatedAt: "2026-03-15T00:00:00.000Z" },
+      },
+      wallets: [
+        {
+          id: "wallet-agent",
+          name: "Agent Wallet",
+          providerId: "embedded-keystore",
+        },
+        {
+          id: "wallet-1",
+          name: "Wallet 1",
+          providerId: "local-socket-signer",
+        },
+      ],
+      assignments: {},
+      defaultWalletId: "wallet-agent",
+      updatedAt: "2026-03-15T00:00:00.000Z",
+    });
+    readWalletStatusSnapshot.mockResolvedValue({
+      approvalAuth: {
+        mode: "webauthn",
+        ready: true,
+        passkeyCount: 1,
+      },
+    });
+    loadPersistedFederationToken.mockResolvedValue({
+      tokenId: "fed-token-1",
+      nodeId: "node-1",
+      handle: "@ready-node",
+      issuedAt: "2026-04-08T00:00:00.000Z",
+      expiresAt: "2027-04-08T00:00:00.000Z",
+      scopes: ["tasks.create"],
+      signature: "sig",
+      trustState: "verified",
+      hostedState: "ready",
+      publicUrl: "https://ready.example.com",
+    });
+    const select = vi.fn(async (opts: unknown) => {
+      const message =
+        typeof (opts as { message?: unknown })?.message === "string"
+          ? String((opts as { message?: unknown }).message)
+          : "";
+      if (message === "Wallet setup action") {
+        return "self-hosted";
+      }
+      if (message === "Wallet chain") {
+        return "solana";
+      }
+      if (message === "Wallet action") {
+        return "create";
+      }
+      if (message === "How do you want to hatch your bot?") {
+        return "skip";
+      }
+      return "quickstart";
+    }) as unknown as WizardPrompter["select"];
+    const text = vi.fn(async (opts: unknown) => {
+      const message =
+        typeof (opts as { message?: unknown })?.message === "string"
+          ? String((opts as { message?: unknown }).message)
+          : "";
+      if (message.includes("RPC URL")) {
+        return "https://api.devnet.solana.com";
+      }
+      return "";
+    }) as unknown as WizardPrompter["text"];
+    const confirm = vi.fn(async (opts: unknown) => {
+      const message =
+        typeof (opts as { message?: unknown })?.message === "string"
+          ? String((opts as { message?: unknown }).message)
+          : "";
+      if (message === "Use Wallet 1 (wallet-1) as the Agent wallet?") {
+        return false;
+      }
+      if (message === "Attach Wallet 1 (wallet-1) as the SAT Mining wallet now?") {
+        return true;
+      }
+      return false;
+    }) as unknown as WizardPrompter["confirm"];
+    const prompter = createWizardPrompter({ select, text, confirm });
+
+    await runOnboardingWizard(
+      {
+        acceptRisk: true,
+        flow: "quickstart",
+        authChoice: "skip",
+        installDaemon: false,
+        skipProviders: true,
+        skipSkills: true,
+        skipHealth: true,
+        skipUi: true,
+      },
+      createRuntime({ throwsOnExit: true }),
+      prompter,
+    );
+
+    expect(prompter.note).toHaveBeenCalledWith(
+      expect.stringContaining("Operator readiness summary:"),
+      "Operator readiness",
+    );
+    expect(prompter.note).toHaveBeenCalledWith(
+      expect.stringContaining("Wallet Control Passkey ready: Passkey approval ready (1)"),
+      "Operator readiness",
+    );
+    expect(prompter.note).toHaveBeenCalledWith(
+      expect.stringContaining("Agent wallet set: Agent Wallet"),
+      "Operator readiness",
+    );
+    expect(prompter.note).toHaveBeenCalledWith(
+      expect.stringContaining("Mining wallet separate:"),
+      "Operator readiness",
+    );
+    expect(prompter.note).toHaveBeenCalledWith(
+      expect.stringContaining("Fased Network joined / trusted: Verified"),
+      "Operator readiness",
+    );
+    expect(prompter.note).toHaveBeenCalledWith(
+      expect.stringContaining("Fased Network reachability state: Ready"),
+      "Operator readiness",
+    );
+  });
+
+  async function runDefaultHatchTest(params: { writeBootstrapFile: boolean }) {
+    runTui.mockClear();
+
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-onboard-"));
+    try {
+      if (params.writeBootstrapFile) {
+        await fs.writeFile(path.join(workspaceDir, DEFAULT_BOOTSTRAP_FILENAME), "{}");
+      }
+
+      const select = vi.fn(async (opts: unknown) => {
+        const rawMessage = (opts as { message?: unknown })?.message;
+        const message = typeof rawMessage === "string" ? rawMessage : "";
+        if (message === "Wallet setup action") {
+          return "skip";
+        }
+        if (message === "Host setup profile") {
+          return "local";
+        }
+        return "quickstart";
+      }) as unknown as WizardPrompter["select"];
+
+      const prompter = createWizardPrompter({ select });
+      const runtime = createRuntime({ throwsOnExit: true });
+
+      await runOnboardingWizard(
+        {
+          acceptRisk: true,
+          flow: "quickstart",
+          mode: "local",
+          hostProfile: "local",
+          workspace: workspaceDir,
+          authChoice: "skip",
+          skipProviders: true,
+          skipSkills: true,
+          skipHealth: true,
+          installDaemon: false,
+        },
+        runtime,
+        prompter,
+      );
+
+      expect(runTui).not.toHaveBeenCalled();
+    } finally {
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
+  }
+
+  it("defaults local onboarding to the Web UI without launching TUI", async () => {
+    await runDefaultHatchTest({ writeBootstrapFile: true });
+  });
+
+  it("does not require BOOTSTRAP.md for the default Web UI hatch path", async () => {
+    await runDefaultHatchTest({ writeBootstrapFile: false });
+  });
+});

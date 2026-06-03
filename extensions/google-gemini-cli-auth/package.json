@@ -1,0 +1,12 @@
+{
+  "name": "@fased/google-gemini-cli-auth",
+  "version": "0.1.1",
+  "private": true,
+  "description": "FasedAgent Gemini CLI OAuth provider plugin",
+  "type": "module",
+  "fased": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

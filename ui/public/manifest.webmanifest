@@ -1,0 +1,28 @@
+{
+  "name": "Fased Control",
+  "short_name": "Fased",
+  "description": "Control UI for wallets, federation, mining, and agent runtime operations.",
+  "display": "standalone",
+  "start_url": "./",
+  "scope": "./",
+  "background_color": "#06090f",
+  "theme_color": "#06090f",
+  "icons": [
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    },
+    {
+      "src": "/favicon-32.png",
+      "sizes": "32x32",
+      "type": "image/png"
+    },
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

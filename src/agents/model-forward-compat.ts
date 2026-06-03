@@ -1,0 +1,437 @@
+import type { Api, Model } from "@mariozechner/pi-ai";
+import type { ModelRegistry } from "@mariozechner/pi-coding-agent";
+import { DEFAULT_CONTEXT_TOKENS } from "./defaults.js";
+import { normalizeModelCompat } from "./model-compat.js";
+import { normalizeProviderId } from "./model-selection.js";
+
+const OPENAI_GPT_55_MODEL_ID = "gpt-5.5";
+const OPENAI_GPT_55_PRO_MODEL_ID = "gpt-5.5-pro";
+const OPENAI_GPT_54_MODEL_ID = "gpt-5.4";
+const OPENAI_GPT_54_PRO_MODEL_ID = "gpt-5.4-pro";
+const OPENAI_GPT_54_MINI_MODEL_ID = "gpt-5.4-mini";
+const OPENAI_GPT_54_NANO_MODEL_ID = "gpt-5.4-nano";
+const OPENAI_GPT_5_CODEX_MODEL_ID = "gpt-5-codex";
+const OPENAI_GPT_55_CONTEXT_TOKENS = 272_000;
+const OPENAI_GPT_55_PRO_CONTEXT_TOKENS = 1_000_000;
+const OPENAI_GPT_54_CONTEXT_TOKENS = 1_050_000;
+const OPENAI_GPT_54_MINI_CONTEXT_TOKENS = 400_000;
+const OPENAI_GPT_54_MAX_TOKENS = 128_000;
+const OPENAI_GPT_5_CODEX_CONTEXT_TOKENS = 400_000;
+const OPENAI_GPT_55_TEMPLATE_MODEL_IDS = ["gpt-5.4", "gpt-5.2"] as const;
+const OPENAI_GPT_55_PRO_TEMPLATE_MODEL_IDS = [
+  "gpt-5.4-pro",
+  "gpt-5.4",
+  "gpt-5.2-pro",
+  "gpt-5.2",
+] as const;
+const OPENAI_GPT_54_TEMPLATE_MODEL_IDS = ["gpt-5.2"] as const;
+const OPENAI_GPT_54_PRO_TEMPLATE_MODEL_IDS = ["gpt-5.2-pro", "gpt-5.2"] as const;
+const OPENAI_GPT_54_MINI_TEMPLATE_MODEL_IDS = ["gpt-5-mini"] as const;
+const OPENAI_GPT_54_NANO_TEMPLATE_MODEL_IDS = ["gpt-5-nano", "gpt-5-mini"] as const;
+const OPENAI_GPT_5_CODEX_TEMPLATE_MODEL_IDS = ["gpt-5.4", "gpt-5.2"] as const;
+
+const OPENAI_CODEX_GPT_55_MODEL_ID = "gpt-5.5";
+const OPENAI_CODEX_GPT_54_MODEL_ID = "gpt-5.4";
+const OPENAI_CODEX_GPT_54_MINI_MODEL_ID = "gpt-5.4-mini";
+const OPENAI_CODEX_GPT_55_CONTEXT_TOKENS = 400_000;
+const OPENAI_CODEX_GPT_54_CONTEXT_TOKENS = 1_050_000;
+const OPENAI_CODEX_GPT_54_MINI_CONTEXT_TOKENS = 400_000;
+const OPENAI_CODEX_GPT_53_CONTEXT_TOKENS = 272_000;
+const OPENAI_CODEX_GPT_54_MAX_TOKENS = 128_000;
+const OPENAI_CODEX_GPT_54_TEMPLATE_MODEL_IDS = ["gpt-5.3-codex"] as const;
+const OPENAI_CODEX_GPT_55_TEMPLATE_MODEL_IDS = [
+  "gpt-5.4",
+  ...OPENAI_CODEX_GPT_54_TEMPLATE_MODEL_IDS,
+] as const;
+const OPENAI_CODEX_GPT_53_MODEL_ID = "gpt-5.3-codex";
+const OPENAI_CODEX_TEMPLATE_MODEL_IDS = [] as const;
+
+const ANTHROPIC_OPUS_46_MODEL_ID = "claude-opus-4-6";
+const ANTHROPIC_OPUS_46_DOT_MODEL_ID = "claude-opus-4.6";
+const ANTHROPIC_OPUS_TEMPLATE_MODEL_IDS = ["claude-opus-4-5", "claude-opus-4.5"] as const;
+const ANTHROPIC_SONNET_46_MODEL_ID = "claude-sonnet-4-6";
+const ANTHROPIC_SONNET_46_DOT_MODEL_ID = "claude-sonnet-4.6";
+const ANTHROPIC_SONNET_TEMPLATE_MODEL_IDS = ["claude-sonnet-4-5", "claude-sonnet-4.5"] as const;
+
+const ZAI_GLM5_MODEL_ID = "glm-5";
+const ZAI_GLM5_TEMPLATE_MODEL_IDS = ["glm-4.7"] as const;
+
+// gemini-3.1-pro-preview / gemini-3.1-flash-preview are not yet in pi-ai's built-in
+// google-gemini-cli catalog. Clone the gemini-3-pro/flash-preview template so users
+// don't get "Unknown model" errors when Google releases a new minor version.
+const GEMINI_3_1_PRO_PREFIX = "gemini-3.1-pro";
+const GEMINI_3_1_FLASH_PREFIX = "gemini-3.1-flash";
+const GEMINI_3_1_PRO_TEMPLATE_IDS = ["gemini-3-pro-preview"] as const;
+const GEMINI_3_1_FLASH_TEMPLATE_IDS = ["gemini-3-flash-preview"] as const;
+
+function cloneFirstTemplateModel(params: {
+  normalizedProvider: string;
+  trimmedModelId: string;
+  templateIds: string[];
+  modelRegistry: ModelRegistry;
+  patch?: Partial<Model<Api>>;
+}): Model<Api> | undefined {
+  const { normalizedProvider, trimmedModelId, templateIds, modelRegistry } = params;
+  for (const templateId of [...new Set(templateIds)].filter(Boolean)) {
+    const template = modelRegistry.find(normalizedProvider, templateId) as Model<Api> | null;
+    if (!template) {
+      continue;
+    }
+    return normalizeModelCompat({
+      ...template,
+      id: trimmedModelId,
+      name: trimmedModelId,
+      ...params.patch,
+    } as Model<Api>);
+  }
+  return undefined;
+}
+
+function buildOpenAIResponsesPatch(params: {
+  contextWindow: number;
+  maxTokens: number;
+  cost?: Model<Api>["cost"];
+}): Partial<Model<Api>> {
+  return {
+    api: "openai-responses",
+    provider: "openai",
+    baseUrl: "https://api.openai.com/v1",
+    reasoning: true,
+    input: ["text", "image"],
+    cost: params.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: params.contextWindow,
+    maxTokens: params.maxTokens,
+  };
+}
+
+function resolveOpenAIGptForwardCompatModel(
+  provider: string,
+  modelId: string,
+  modelRegistry: ModelRegistry,
+): Model<Api> | undefined {
+  const normalizedProvider = normalizeProviderId(provider);
+  if (normalizedProvider !== "openai") {
+    return undefined;
+  }
+  const trimmedModelId = modelId.trim();
+  const lower = trimmedModelId.toLowerCase();
+  let templateIds: readonly string[];
+  let patch: Partial<Model<Api>>;
+  if (lower === OPENAI_GPT_55_MODEL_ID) {
+    templateIds = OPENAI_GPT_55_TEMPLATE_MODEL_IDS;
+    patch = buildOpenAIResponsesPatch({
+      contextWindow: OPENAI_GPT_55_CONTEXT_TOKENS,
+      maxTokens: OPENAI_GPT_54_MAX_TOKENS,
+      cost: { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 0 },
+    });
+  } else if (lower === OPENAI_GPT_55_PRO_MODEL_ID) {
+    templateIds = OPENAI_GPT_55_PRO_TEMPLATE_MODEL_IDS;
+    patch = buildOpenAIResponsesPatch({
+      contextWindow: OPENAI_GPT_55_PRO_CONTEXT_TOKENS,
+      maxTokens: OPENAI_GPT_54_MAX_TOKENS,
+      cost: { input: 30, output: 180, cacheRead: 0, cacheWrite: 0 },
+    });
+  } else if (lower === OPENAI_GPT_54_MODEL_ID) {
+    templateIds = OPENAI_GPT_54_TEMPLATE_MODEL_IDS;
+    patch = buildOpenAIResponsesPatch({
+      contextWindow: OPENAI_GPT_54_CONTEXT_TOKENS,
+      maxTokens: OPENAI_GPT_54_MAX_TOKENS,
+      cost: { input: 2.5, output: 15, cacheRead: 0.25, cacheWrite: 0 },
+    });
+  } else if (lower === OPENAI_GPT_54_PRO_MODEL_ID) {
+    templateIds = OPENAI_GPT_54_PRO_TEMPLATE_MODEL_IDS;
+    patch = buildOpenAIResponsesPatch({
+      contextWindow: OPENAI_GPT_54_CONTEXT_TOKENS,
+      maxTokens: OPENAI_GPT_54_MAX_TOKENS,
+      cost: { input: 30, output: 180, cacheRead: 0, cacheWrite: 0 },
+    });
+  } else if (lower === OPENAI_GPT_54_MINI_MODEL_ID) {
+    templateIds = OPENAI_GPT_54_MINI_TEMPLATE_MODEL_IDS;
+    patch = buildOpenAIResponsesPatch({
+      contextWindow: OPENAI_GPT_54_MINI_CONTEXT_TOKENS,
+      maxTokens: OPENAI_GPT_54_MAX_TOKENS,
+      cost: { input: 0.75, output: 4.5, cacheRead: 0.075, cacheWrite: 0 },
+    });
+  } else if (lower === OPENAI_GPT_54_NANO_MODEL_ID) {
+    templateIds = OPENAI_GPT_54_NANO_TEMPLATE_MODEL_IDS;
+    patch = buildOpenAIResponsesPatch({
+      contextWindow: OPENAI_GPT_54_MINI_CONTEXT_TOKENS,
+      maxTokens: OPENAI_GPT_54_MAX_TOKENS,
+      cost: { input: 0.2, output: 1.25, cacheRead: 0.02, cacheWrite: 0 },
+    });
+  } else if (lower === OPENAI_GPT_5_CODEX_MODEL_ID) {
+    templateIds = OPENAI_GPT_5_CODEX_TEMPLATE_MODEL_IDS;
+    patch = buildOpenAIResponsesPatch({
+      contextWindow: OPENAI_GPT_5_CODEX_CONTEXT_TOKENS,
+      maxTokens: OPENAI_GPT_54_MAX_TOKENS,
+      cost: { input: 1.25, output: 10, cacheRead: 0.125, cacheWrite: 0 },
+    });
+  } else {
+    return undefined;
+  }
+
+  return (
+    cloneFirstTemplateModel({
+      normalizedProvider,
+      trimmedModelId,
+      templateIds: [...templateIds],
+      modelRegistry,
+      patch,
+    }) ??
+    normalizeModelCompat({
+      id: trimmedModelId,
+      name: trimmedModelId,
+      ...patch,
+    } as Model<Api>)
+  );
+}
+
+const CODEX_GPT54_ELIGIBLE_PROVIDERS = new Set(["openai-codex"]);
+const CODEX_GPT53_ELIGIBLE_PROVIDERS = new Set(["openai-codex", "github-copilot"]);
+
+function resolveOpenAICodexForwardCompatModel(
+  provider: string,
+  modelId: string,
+  modelRegistry: ModelRegistry,
+): Model<Api> | undefined {
+  const normalizedProvider = normalizeProviderId(provider);
+  const trimmedModelId = modelId.trim();
+  const lower = trimmedModelId.toLowerCase();
+
+  let canonicalModelId = trimmedModelId;
+  let templateIds: readonly string[];
+  let eligibleProviders: Set<string>;
+  let patch: Partial<Model<Api>> | undefined;
+  if (lower === OPENAI_CODEX_GPT_55_MODEL_ID) {
+    templateIds = OPENAI_CODEX_GPT_55_TEMPLATE_MODEL_IDS;
+    eligibleProviders = CODEX_GPT54_ELIGIBLE_PROVIDERS;
+    patch = {
+      contextWindow: OPENAI_CODEX_GPT_55_CONTEXT_TOKENS,
+      maxTokens: OPENAI_CODEX_GPT_54_MAX_TOKENS,
+    };
+  } else if (lower === OPENAI_CODEX_GPT_54_MODEL_ID) {
+    canonicalModelId = OPENAI_CODEX_GPT_54_MODEL_ID;
+    templateIds = OPENAI_CODEX_GPT_54_TEMPLATE_MODEL_IDS;
+    eligibleProviders = CODEX_GPT54_ELIGIBLE_PROVIDERS;
+    patch = {
+      contextWindow: OPENAI_CODEX_GPT_54_CONTEXT_TOKENS,
+      maxTokens: OPENAI_CODEX_GPT_54_MAX_TOKENS,
+      cost: { input: 2.5, output: 15, cacheRead: 0.25, cacheWrite: 0 },
+    };
+  } else if (lower === OPENAI_CODEX_GPT_54_MINI_MODEL_ID) {
+    templateIds = [OPENAI_CODEX_GPT_54_MODEL_ID, ...OPENAI_CODEX_GPT_54_TEMPLATE_MODEL_IDS];
+    eligibleProviders = CODEX_GPT54_ELIGIBLE_PROVIDERS;
+    patch = {
+      contextWindow: OPENAI_CODEX_GPT_54_MINI_CONTEXT_TOKENS,
+      maxTokens: OPENAI_CODEX_GPT_54_MAX_TOKENS,
+      cost: { input: 0.75, output: 4.5, cacheRead: 0.075, cacheWrite: 0 },
+    };
+  } else if (lower === OPENAI_CODEX_GPT_53_MODEL_ID) {
+    templateIds = OPENAI_CODEX_TEMPLATE_MODEL_IDS;
+    eligibleProviders = CODEX_GPT53_ELIGIBLE_PROVIDERS;
+    patch = {
+      contextWindow: OPENAI_CODEX_GPT_53_CONTEXT_TOKENS,
+      maxTokens: OPENAI_CODEX_GPT_54_MAX_TOKENS,
+    };
+  } else {
+    return undefined;
+  }
+
+  if (!eligibleProviders.has(normalizedProvider)) {
+    return undefined;
+  }
+
+  for (const templateId of templateIds) {
+    const template = modelRegistry.find(normalizedProvider, templateId) as Model<Api> | null;
+    if (!template) {
+      continue;
+    }
+    return normalizeModelCompat({
+      ...template,
+      id: canonicalModelId,
+      name: canonicalModelId,
+      ...patch,
+    } as Model<Api>);
+  }
+
+  return normalizeModelCompat({
+    id: canonicalModelId,
+    name: canonicalModelId,
+    api: "openai-codex-responses",
+    provider: normalizedProvider,
+    baseUrl: "https://chatgpt.com/backend-api",
+    reasoning: true,
+    input: ["text", "image"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: patch?.contextWindow ?? DEFAULT_CONTEXT_TOKENS,
+    maxTokens: patch?.maxTokens ?? DEFAULT_CONTEXT_TOKENS,
+    ...(patch?.cost ? { cost: patch.cost } : {}),
+  } as Model<Api>);
+}
+
+function resolveAnthropic46ForwardCompatModel(params: {
+  provider: string;
+  modelId: string;
+  modelRegistry: ModelRegistry;
+  dashModelId: string;
+  dotModelId: string;
+  dashTemplateId: string;
+  dotTemplateId: string;
+  fallbackTemplateIds: readonly string[];
+}): Model<Api> | undefined {
+  const { provider, modelId, modelRegistry, dashModelId, dotModelId } = params;
+  const normalizedProvider = normalizeProviderId(provider);
+  if (normalizedProvider !== "anthropic") {
+    return undefined;
+  }
+
+  const trimmedModelId = modelId.trim();
+  const lower = trimmedModelId.toLowerCase();
+  const is46Model =
+    lower === dashModelId ||
+    lower === dotModelId ||
+    lower.startsWith(`${dashModelId}-`) ||
+    lower.startsWith(`${dotModelId}-`);
+  if (!is46Model) {
+    return undefined;
+  }
+
+  const templateIds: string[] = [];
+  if (lower.startsWith(dashModelId)) {
+    templateIds.push(lower.replace(dashModelId, params.dashTemplateId));
+  }
+  if (lower.startsWith(dotModelId)) {
+    templateIds.push(lower.replace(dotModelId, params.dotTemplateId));
+  }
+  templateIds.push(...params.fallbackTemplateIds);
+
+  return cloneFirstTemplateModel({
+    normalizedProvider,
+    trimmedModelId,
+    templateIds,
+    modelRegistry,
+  });
+}
+
+function resolveAnthropicOpus46ForwardCompatModel(
+  provider: string,
+  modelId: string,
+  modelRegistry: ModelRegistry,
+): Model<Api> | undefined {
+  return resolveAnthropic46ForwardCompatModel({
+    provider,
+    modelId,
+    modelRegistry,
+    dashModelId: ANTHROPIC_OPUS_46_MODEL_ID,
+    dotModelId: ANTHROPIC_OPUS_46_DOT_MODEL_ID,
+    dashTemplateId: "claude-opus-4-5",
+    dotTemplateId: "claude-opus-4.5",
+    fallbackTemplateIds: ANTHROPIC_OPUS_TEMPLATE_MODEL_IDS,
+  });
+}
+
+function resolveAnthropicSonnet46ForwardCompatModel(
+  provider: string,
+  modelId: string,
+  modelRegistry: ModelRegistry,
+): Model<Api> | undefined {
+  return resolveAnthropic46ForwardCompatModel({
+    provider,
+    modelId,
+    modelRegistry,
+    dashModelId: ANTHROPIC_SONNET_46_MODEL_ID,
+    dotModelId: ANTHROPIC_SONNET_46_DOT_MODEL_ID,
+    dashTemplateId: "claude-sonnet-4-5",
+    dotTemplateId: "claude-sonnet-4.5",
+    fallbackTemplateIds: ANTHROPIC_SONNET_TEMPLATE_MODEL_IDS,
+  });
+}
+
+// gemini-3.1-pro-preview / gemini-3.1-flash-preview are not present in pi-ai's built-in
+// google-gemini-cli catalog yet. Clone the nearest gemini-3 template so users don't get
+// "Unknown model" errors when Google Gemini CLI gains new minor-version models.
+function resolveGoogleGeminiCli31ForwardCompatModel(
+  provider: string,
+  modelId: string,
+  modelRegistry: ModelRegistry,
+): Model<Api> | undefined {
+  if (normalizeProviderId(provider) !== "google-gemini-cli") {
+    return undefined;
+  }
+  const trimmed = modelId.trim();
+  const lower = trimmed.toLowerCase();
+
+  let templateIds: readonly string[];
+  if (lower.startsWith(GEMINI_3_1_PRO_PREFIX)) {
+    templateIds = GEMINI_3_1_PRO_TEMPLATE_IDS;
+  } else if (lower.startsWith(GEMINI_3_1_FLASH_PREFIX)) {
+    templateIds = GEMINI_3_1_FLASH_TEMPLATE_IDS;
+  } else {
+    return undefined;
+  }
+
+  return cloneFirstTemplateModel({
+    normalizedProvider: "google-gemini-cli",
+    trimmedModelId: trimmed,
+    templateIds: [...templateIds],
+    modelRegistry,
+    patch: { reasoning: true },
+  });
+}
+
+// Z.ai's GLM-5 may not be present in pi-ai's built-in model catalog yet.
+// When a user configures zai/glm-5 without a models.json entry, clone glm-4.7 as a forward-compat fallback.
+function resolveZaiGlm5ForwardCompatModel(
+  provider: string,
+  modelId: string,
+  modelRegistry: ModelRegistry,
+): Model<Api> | undefined {
+  if (normalizeProviderId(provider) !== "zai") {
+    return undefined;
+  }
+  const trimmed = modelId.trim();
+  const lower = trimmed.toLowerCase();
+  if (lower !== ZAI_GLM5_MODEL_ID && !lower.startsWith(`${ZAI_GLM5_MODEL_ID}-`)) {
+    return undefined;
+  }
+
+  for (const templateId of ZAI_GLM5_TEMPLATE_MODEL_IDS) {
+    const template = modelRegistry.find("zai", templateId) as Model<Api> | null;
+    if (!template) {
+      continue;
+    }
+    return normalizeModelCompat({
+      ...template,
+      id: trimmed,
+      name: trimmed,
+      reasoning: true,
+    } as Model<Api>);
+  }
+
+  return normalizeModelCompat({
+    id: trimmed,
+    name: trimmed,
+    api: "openai-completions",
+    provider: "zai",
+    reasoning: true,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: DEFAULT_CONTEXT_TOKENS,
+    maxTokens: DEFAULT_CONTEXT_TOKENS,
+  } as Model<Api>);
+}
+
+export function resolveForwardCompatModel(
+  provider: string,
+  modelId: string,
+  modelRegistry: ModelRegistry,
+): Model<Api> | undefined {
+  return (
+    resolveOpenAIGptForwardCompatModel(provider, modelId, modelRegistry) ??
+    resolveOpenAICodexForwardCompatModel(provider, modelId, modelRegistry) ??
+    resolveAnthropicOpus46ForwardCompatModel(provider, modelId, modelRegistry) ??
+    resolveAnthropicSonnet46ForwardCompatModel(provider, modelId, modelRegistry) ??
+    resolveZaiGlm5ForwardCompatModel(provider, modelId, modelRegistry) ??
+    resolveGoogleGeminiCli31ForwardCompatModel(provider, modelId, modelRegistry)
+  );
+}

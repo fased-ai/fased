@@ -1,0 +1,177 @@
+---
+title: 在 Render 上部署
+x-i18n:
+  generated_at: "2026-02-01T21:38:27Z"
+  model: claude-opus-4-5
+  provider: pi
+  source_hash: 03f0f277145daf6012ce33a9e8447d2eaaf346dfdb0df57a61ebf90b18b67c65
+  source_path: render.mdx
+  workflow: 15
+---
+
+使用基础设施即代码方式在 Render 上部署 Fased。内置的 `render.yaml` Blueprint
+从本仓库文件定义服务、磁盘和环境变量，让托管部署可以和本地运行的代码一起审查和版本管理。
+
+<Note>
+  Render 会保留在文档中，是因为本仓库包含 `render.yaml`。Fased
+  不记录仓库外部的托管预设，因为无法从代码库验证或维护。默认托管安全姿态仍然优先推荐干净 VPS +
+  Tailscale 私有访问。
+</Note>
+
+## 前提条件
+
+- 一个 [Render 账户](https://render.com)（提供免费套餐）
+- 你稍后计划在 **Agent > Models** 中添加的模型提供商凭据
+
+## 使用 Render Blueprint 部署
+
+<a
+  href="https://render.com/deploy?repo=https://github.com/fased-ai/agent"
+  target="_blank"
+  rel="noreferrer"
+>
+  部署到 Render
+</a>
+
+点击此链接将会：
+
+1. 根据本仓库根目录下的 `render.yaml` Blueprint 创建一个新的 Render 服务。
+2. 为 Control UI 生成 Gateway token
+3. 构建 Docker 镜像并部署
+
+部署完成后，你的服务 URL 格式为 `https://<service-name>.onrender.com`。
+
+## 了解 Blueprint
+
+Render Blueprint 是定义基础设施的 YAML 文件。本仓库中的 `render.yaml` 配置了运行 Fased 所需的一切：
+
+```yaml
+services:
+  - type: web
+    name: fased
+    runtime: docker
+    plan: starter
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: "8080"
+      - key: FASED_STATE_DIR
+        value: /data/.fased
+      - key: FASED_GATEWAY_TOKEN
+        generateValue: true # auto-generates a secure token
+    disk:
+      name: fased-data
+      mountPath: /data
+      sizeGB: 1
+```
+
+使用的关键 Blueprint 功能：
+
+| 功能                  | 用途                                     |
+| --------------------- | ---------------------------------------- |
+| `runtime: docker`     | 从仓库的 Dockerfile 进行构建             |
+| `healthCheckPath`     | Render 监控 `/health` 并重启不健康的实例 |
+| `generateValue: true` | 自动生成加密安全的值                     |
+| `disk`                | 持久化存储，在重新部署后数据仍然保留     |
+
+`FASED_STATE_DIR` 控制配置和状态路径。Agent 工作区文件由
+`agents.defaults.workspace` 或单个 Agent 的 `workspace` 设置控制。
+`FASED_WORKSPACE_DIR` 只由 Docker/Podman 辅助脚本使用，不要依赖它来配置普通托管运行时。在 Agent 设置中将默认 Agent 工作区设为 `/data/workspace`，或在 Shell 中运行：
+
+```bash
+node dist/index.js config set agents.defaults.workspace /data/workspace
+```
+
+修改配置后重启服务。
+
+## 选择套餐
+
+| 套餐      | 休眠机制           | 磁盘   | 适用场景         |
+| --------- | ------------------ | ------ | ---------------- |
+| Free      | 空闲 15 分钟后休眠 | 不可用 | 测试、演示       |
+| Starter   | 永不休眠           | 1GB+   | 个人使用、小团队 |
+| Standard+ | 永不休眠           | 1GB+   | 常驻、多渠道     |
+
+Blueprint 默认使用 `starter`。如需使用免费套餐，请在你 fork 的 `render.yaml` 中将 `plan: free`（但请注意：没有持久化磁盘意味着每次部署后配置都会重置）。
+
+## 部署完成后
+
+### 完成设置
+
+1. 访问 `https://<your-service>.onrender.com/`
+2. 如果提示，输入 Gateway token
+3. 使用 **Agent > Models** 配置模型认证和模型角色
+4. 在 **Chat** 中测试一条消息
+5. 只在需要时添加 **Agent > Channels**、**Services**、**Skills**、**Memory** 和 **Tasks**
+
+### 访问控制面板
+
+Web 管理面板位于 `https://<your-service>.onrender.com/`。
+
+## Render 仪表盘功能
+
+### 日志
+
+在 **Dashboard → 你的服务 → Logs** 中查看实时日志。可按以下类型筛选：
+
+- 构建日志（Docker 镜像创建）
+- 部署日志（服务启动）
+- 运行时日志（应用输出）
+
+### Shell 访问
+
+如需调试，可通过 **Dashboard → 你的服务 → Shell** 打开 shell 会话。持久化磁盘挂载在 `/data`。
+
+### 环境变量
+
+在 **Dashboard → 你的服务 → Environment** 中修改变量。更改会触发自动重新部署。
+
+### 自动部署
+
+如果你使用的是原始 Fased 仓库，Render 不会自动部署你的 Fased。要更新它，请在仪表盘中手动执行 Blueprint 同步。
+
+## 自定义域名
+
+1. 前往 **Dashboard → 你的服务 → Settings → Custom Domains**
+2. 添加你的域名
+3. 按照指引配置 DNS（CNAME 指向 `*.onrender.com`）
+4. Render 会自动配置 TLS 证书
+
+## 扩展
+
+Render 支持水平和垂直扩展：
+
+- **垂直扩展**：更改套餐以获取更多 CPU/内存
+- **水平扩展**：增加实例数量（Standard 套餐及以上）
+
+对于 Fased，垂直扩展通常就足够了。水平扩展需要粘性会话或外部状态管理。
+
+## 备份与迁移
+
+迁移主机前，请备份 Render 持久化磁盘，或复制已配置的状态目录和已配置的 Agent 工作区。
+请把 `FASED_GATEWAY_TOKEN`、模型认证、渠道凭据和钱包文件都视为密钥。
+
+## 故障排除
+
+### 服务无法启动
+
+在 Render 仪表盘中检查部署日志。常见问题：
+
+- 旧 Blueprint 提示 — 如果 Render 要求填写当前 `render.yaml`
+  中不存在的变量，请先同步 fork 后再部署
+- 端口不匹配 — 确保 `PORT=8080` 与 Dockerfile 暴露的端口一致
+
+### 冷启动缓慢
+
+部分 Render 计划会在无活动后休眠。休眠后的首次请求需要几秒钟等待容器启动。需要连续访问时，请使用常驻计划。
+
+### 重新部署后数据丢失
+
+这发生在没有持久化磁盘支持的计划上。使用持久化存储，或定期备份已配置的状态目录和已配置的 Agent 工作区。
+
+### 健康检查失败
+
+Render 期望在 30 秒内从 `/health` 获得 200 响应。如果构建成功但部署失败，可能是服务启动耗时过长。请检查：
+
+- 构建日志中是否有错误
+- 容器是否能通过 `docker build && docker run` 在本地正常运行

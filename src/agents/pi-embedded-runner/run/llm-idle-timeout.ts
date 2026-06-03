@@ -1,0 +1,120 @@
+import type { StreamFn } from "@mariozechner/pi-agent-core";
+import { streamSimple } from "@mariozechner/pi-ai";
+import type { FasedAgentConfig } from "../../../config/config.js";
+import type { EmbeddedRunTrigger } from "./params.js";
+
+export const DEFAULT_LLM_IDLE_TIMEOUT_MS = 60_000;
+
+const MAX_SAFE_TIMEOUT_MS = 2_147_000_000;
+
+type LlmTimeoutConfig = {
+  agents?: {
+    defaults?: {
+      llm?: {
+        idleTimeoutSeconds?: number;
+      };
+      timeoutSeconds?: number;
+    };
+  };
+};
+
+export function resolveLlmIdleTimeoutMs(params?: {
+  cfg?: FasedAgentConfig;
+  trigger?: EmbeddedRunTrigger;
+}): number {
+  const cfg = params?.cfg as LlmTimeoutConfig | undefined;
+  const raw = cfg?.agents?.defaults?.llm?.idleTimeoutSeconds;
+  if (raw === 0) {
+    return 0;
+  }
+  if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) {
+    return Math.min(Math.floor(raw) * 1000, MAX_SAFE_TIMEOUT_MS);
+  }
+
+  const agentTimeoutSeconds = cfg?.agents?.defaults?.timeoutSeconds;
+  if (
+    typeof agentTimeoutSeconds === "number" &&
+    Number.isFinite(agentTimeoutSeconds) &&
+    agentTimeoutSeconds > 0
+  ) {
+    return Math.min(Math.floor(agentTimeoutSeconds) * 1000, MAX_SAFE_TIMEOUT_MS);
+  }
+
+  if (params?.trigger === "cron") {
+    return 0;
+  }
+
+  return DEFAULT_LLM_IDLE_TIMEOUT_MS;
+}
+
+export function streamWithIdleTimeout(
+  baseFn: StreamFn,
+  timeoutMs: number,
+  onIdleTimeout?: (error: Error) => void,
+): StreamFn {
+  return (model, context, options) => {
+    const maybeStream = baseFn(model, context, options);
+
+    const wrapStream = (stream: ReturnType<typeof streamSimple>) => {
+      const originalAsyncIterator = stream[Symbol.asyncIterator].bind(stream);
+      (stream as { [Symbol.asyncIterator]: typeof originalAsyncIterator })[Symbol.asyncIterator] =
+        function () {
+          const iterator = originalAsyncIterator();
+          let idleTimer: NodeJS.Timeout | null = null;
+
+          const createTimeoutPromise = (): Promise<never> =>
+            new Promise((_, reject) => {
+              idleTimer = setTimeout(() => {
+                const error = new Error(
+                  `LLM idle timeout (${Math.floor(timeoutMs / 1000)}s): no response from model`,
+                );
+                onIdleTimeout?.(error);
+                reject(error);
+              }, timeoutMs);
+            });
+
+          const clearTimer = () => {
+            if (idleTimer) {
+              clearTimeout(idleTimer);
+              idleTimer = null;
+            }
+          };
+
+          return {
+            async next() {
+              clearTimer();
+              try {
+                const result = await Promise.race([iterator.next(), createTimeoutPromise()]);
+                if (result.done) {
+                  clearTimer();
+                  return result;
+                }
+                clearTimer();
+                return result;
+              } catch (error) {
+                clearTimer();
+                throw error;
+              }
+            },
+
+            return() {
+              clearTimer();
+              return iterator.return?.() ?? Promise.resolve({ done: true, value: undefined });
+            },
+
+            throw(error?: unknown) {
+              clearTimer();
+              return iterator.throw?.(error) ?? Promise.reject(error);
+            },
+          };
+        };
+
+      return stream;
+    };
+
+    if (maybeStream && typeof maybeStream === "object" && "then" in maybeStream) {
+      return Promise.resolve(maybeStream).then(wrapStream);
+    }
+    return wrapStream(maybeStream);
+  };
+}

@@ -1,0 +1,457 @@
+/* ===========================================
+   Mobile Layout
+   =========================================== */
+
+/* Tablet: Horizontal nav */
+@media (max-width: 1100px) {
+  .nav {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    gap: 4px;
+    padding: 10px 14px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .nav-group {
+    display: contents;
+  }
+
+  .nav-brand {
+    display: none;
+  }
+
+  .nav-list {
+    display: contents;
+  }
+
+  .nav-group__items {
+    display: contents;
+  }
+
+  .nav-label {
+    display: none;
+  }
+
+  .nav-group--collapsed .nav-group__items {
+    display: contents;
+  }
+
+  .nav-item {
+    padding: 8px 14px;
+    font-size: 13px;
+    border-radius: var(--radius-md);
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+}
+
+/* Mobile-specific styles */
+@media (max-width: 600px) {
+  .shell {
+    --shell-pad: 8px;
+    --shell-gap: 8px;
+  }
+
+  /* Topbar */
+  .topbar {
+    height: var(--shell-topbar-height);
+    padding: 10px 12px;
+    gap: 8px;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .brand {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .brand-title {
+    font-size: 14px;
+  }
+
+  .brand-sub {
+    display: none;
+  }
+
+  .topbar-status {
+    gap: 6px;
+    width: auto;
+    flex-wrap: nowrap;
+    flex: 0 0 auto;
+    padding-left: 0;
+    border-left: none;
+  }
+
+  .shell--chat .topbar-page-title {
+    display: none;
+  }
+
+  .topbar-mining-sync {
+    min-width: 66px;
+    height: 28px;
+    padding: 0 9px;
+    gap: 6px;
+  }
+
+  .topbar-chat-controls {
+    flex: 1 1 auto;
+    max-width: min(44vw, 240px);
+  }
+
+  .topbar-chat-controls .chat-controls {
+    gap: 4px;
+  }
+
+  .topbar-chat-controls .btn--icon {
+    height: 28px;
+    min-width: 28px;
+    width: 28px;
+  }
+
+  .chat-topbar-panels {
+    gap: 2px;
+  }
+
+  .chat-topbar-panel__panel {
+    min-width: min(360px, calc(100vw - 20px));
+    right: -42px;
+  }
+
+  .topbar-health {
+    height: 30px;
+    width: 20px;
+  }
+
+  .topbar-icon-link,
+  .topbar-menu__button {
+    height: 30px;
+    width: 30px;
+  }
+
+  .topbar-menu__panel {
+    min-width: min(220px, calc(100vw - 24px));
+    right: 0;
+  }
+
+  .topbar-menu .theme-toggle {
+    --theme-item: 28px;
+  }
+
+  /* Nav */
+  .nav {
+    padding: 8px 10px;
+    gap: 4px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .nav-group {
+    display: contents;
+  }
+
+  .nav-list {
+    display: contents;
+  }
+
+  .nav-label {
+    display: none;
+  }
+
+  .nav-item {
+    padding: 6px 10px;
+    font-size: 12px;
+    border-radius: var(--radius-md);
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  /* Content */
+  .content-header {
+    display: none;
+  }
+
+  .content {
+    padding: 4px 4px 16px;
+    gap: 12px;
+  }
+
+  /* Cards */
+  .card {
+    padding: 12px;
+    border-radius: var(--radius-md);
+  }
+
+  .card-title {
+    font-size: 13px;
+  }
+
+  .wallet-sticky-bar {
+    top: 6px;
+    padding: 8px 10px;
+  }
+
+  .wallet-sticky-bar__row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+  }
+
+  .wallet-sticky-bar__actions {
+    width: 100%;
+  }
+
+  .wallet-sticky-bar__actions .btn {
+    flex: 1;
+  }
+
+  /* Stats */
+  .stat-grid {
+    gap: 8px;
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .stat {
+    padding: 10px;
+    border-radius: var(--radius-md);
+  }
+
+  .stat-label {
+    font-size: 11px;
+  }
+
+  .stat-value {
+    font-size: 18px;
+  }
+
+  /* Notes */
+  .note-grid {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  /* Forms */
+  .form-grid {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .field input,
+  .field textarea,
+  .field select {
+    padding: 8px 10px;
+    border-radius: var(--radius-md);
+    font-size: 14px;
+  }
+
+  /* Buttons */
+  .btn {
+    padding: 8px 12px;
+    font-size: 12px;
+  }
+
+  /* Pills */
+  .pill {
+    padding: 4px 10px;
+    font-size: 12px;
+  }
+
+  /* Chat */
+  .chat-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .chat-header__left {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .chat-header__right {
+    justify-content: space-between;
+  }
+
+  .chat-session {
+    min-width: unset;
+    width: 100%;
+  }
+
+  .chat-thread {
+    margin-top: 8px;
+    padding: 12px 8px;
+  }
+
+  .chat-msg {
+    max-width: 90%;
+  }
+
+  .chat-bubble {
+    padding: 8px 12px;
+    border-radius: var(--radius-md);
+  }
+
+  .chat-compose {
+    gap: 8px;
+  }
+
+  .chat-compose__field textarea {
+    min-height: 60px;
+    padding: 8px 10px;
+    border-radius: var(--radius-md);
+    font-size: 14px;
+  }
+
+  /* Log stream */
+  .log-stream {
+    border-radius: var(--radius-md);
+    max-height: 380px;
+  }
+
+  .log-row {
+    grid-template-columns: 1fr;
+    gap: 4px;
+    padding: 8px;
+  }
+
+  .log-time {
+    font-size: 10px;
+  }
+
+  .log-level {
+    font-size: 9px;
+  }
+
+  .log-subsystem {
+    font-size: 11px;
+  }
+
+  .log-message {
+    font-size: 12px;
+  }
+
+  /* Lists */
+  .list-item {
+    padding: 10px;
+    border-radius: var(--radius-md);
+  }
+
+  .list-title {
+    font-size: 13px;
+  }
+
+  .list-sub {
+    font-size: 11px;
+  }
+
+  /* Code blocks */
+  .code-block {
+    padding: 8px;
+    border-radius: var(--radius-md);
+    font-size: 11px;
+  }
+
+  /* Theme toggle */
+  .theme-toggle {
+    --theme-item: 24px;
+    --theme-gap: 2px;
+    --theme-pad: 3px;
+  }
+
+  .theme-icon {
+    width: 12px;
+    height: 12px;
+  }
+}
+
+/* Small mobile */
+@media (max-width: 400px) {
+  .shell {
+    --shell-pad: 4px;
+  }
+
+  .topbar {
+    padding: 8px 10px;
+  }
+
+  .brand-title {
+    font-size: 13px;
+  }
+
+  .nav {
+    padding: 6px 8px;
+  }
+
+  .nav-item {
+    padding: 6px 8px;
+    font-size: 11px;
+  }
+
+  .content {
+    padding: 4px 4px 12px;
+    gap: 10px;
+  }
+
+  .card {
+    padding: 10px;
+  }
+
+  .stat {
+    padding: 8px;
+  }
+
+  .stat-value {
+    font-size: 16px;
+  }
+
+  .chat-bubble {
+    padding: 8px 10px;
+  }
+
+  .chat-compose__field textarea {
+    min-height: 52px;
+    padding: 8px 10px;
+    font-size: 13px;
+  }
+
+  .btn {
+    padding: 6px 10px;
+    font-size: 11px;
+  }
+
+  .topbar-icon-link,
+  .topbar-menu__button {
+    height: 28px;
+    width: 28px;
+  }
+
+  .topbar-chat-controls .btn--icon {
+    height: 26px;
+    min-width: 26px;
+    width: 26px;
+  }
+
+  .topbar-menu .theme-toggle {
+    --theme-item: 22px;
+    --theme-gap: 2px;
+    --theme-pad: 2px;
+  }
+
+  .topbar-menu .theme-icon {
+    width: 11px;
+    height: 11px;
+  }
+}

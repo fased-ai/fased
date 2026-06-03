@@ -1,0 +1,29 @@
+{
+  "name": "@fased/tlon",
+  "version": "0.1.1",
+  "description": "FasedAgent Tlon/Urbit channel plugin",
+  "type": "module",
+  "dependencies": {
+    "@urbit/aura": "^3.0.0"
+  },
+  "fased": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "channel": {
+      "id": "tlon",
+      "label": "Tlon",
+      "selectionLabel": "Tlon (Urbit)",
+      "docsPath": "/channels/tlon",
+      "docsLabel": "tlon",
+      "blurb": "decentralized messaging on Urbit; configure a ship URL and login code.",
+      "order": 90,
+      "quickstartAllowFrom": true
+    },
+    "install": {
+      "npmSpec": "@fased/tlon",
+      "localPath": "extensions/tlon",
+      "defaultChoice": "local"
+    }
+  }
+}

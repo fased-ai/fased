@@ -1,0 +1,36 @@
+{
+  "accountName": "SatBondPositionState",
+  "accountHeaderSize": 8,
+  "bodySize": 184,
+  "accountSize": 192,
+  "discriminator": 139,
+  "pdaSeed": "sat_bond_position",
+  "thresholds": {
+    "basicMinRaw": "100000000000",
+    "operatorMinRaw": "100000000000000"
+  },
+  "status": {
+    "inactive": 0,
+    "active": 1,
+    "unlocking": 2,
+    "unlocked": 3
+  },
+  "tier": {
+    "none": 0,
+    "basic": 1,
+    "operator": 2
+  },
+  "offsets": {
+    "version": 0,
+    "status": 1,
+    "tier": 2,
+    "authority": 8,
+    "bondMint": 40,
+    "bondVault": 72,
+    "amountRaw": 104,
+    "createdAtSlot": 112,
+    "updatedAtSlot": 120,
+    "unlockRequestedAtSlot": 128,
+    "unlockAvailableAtSlot": 136
+  }
+}

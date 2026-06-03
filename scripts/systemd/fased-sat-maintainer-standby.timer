@@ -1,0 +1,10 @@
+[Unit]
+Description=Run SAT protocol maintainer standby every 5 minutes
+
+[Timer]
+OnBootSec=4min
+OnUnitActiveSec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

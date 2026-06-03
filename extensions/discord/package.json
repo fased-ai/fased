@@ -1,0 +1,11 @@
+{
+  "name": "@fased/discord",
+  "version": "0.1.1",
+  "description": "FasedAgent Discord channel plugin",
+  "type": "module",
+  "fased": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

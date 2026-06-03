@@ -1,0 +1,1700 @@
+import { describe, expect, it } from "vitest";
+import {
+  describeAdminControlShortcut,
+  describeWalletAutomationPolicySummary,
+  describeWalletSendFlow,
+  describeAgentDefaultAction,
+  describeWalletRoleBadges,
+  orderWalletsForDisplay,
+  renderWallet,
+  resolveOperatorWalletRoles,
+  type WalletViewProps,
+} from "./wallet.ts";
+
+const namedWallets = [
+  {
+    id: "wallet-agent",
+    name: "Agent Wallet",
+    providerId: "embedded-keystore" as const,
+    addresses: { solana: "So11111111111111111111111111111111111111112" },
+    balances: { solana: "2" },
+    metadata: { role: "agent" },
+    readiness: { keystore: true, rpc: true },
+  },
+  {
+    id: "wallet-mining",
+    name: "Mining Wallet",
+    providerId: "embedded-keystore" as const,
+    addresses: { solana: "So11111111111111111111111111111111111111113" },
+    balances: { solana: "3" },
+    readiness: { keystore: true, rpc: true },
+  },
+  {
+    id: "wallet-vault",
+    name: "Vault Wallet",
+    providerId: "embedded-keystore" as const,
+    addresses: { solana: "So11111111111111111111111111111111111111114" },
+    balances: { solana: "4" },
+    metadata: { role: "vault" },
+    readiness: { keystore: true, rpc: true },
+  },
+];
+
+type LitTemplateLike = {
+  strings?: ArrayLike<string>;
+  values?: unknown[];
+};
+
+function flattenTemplateText(value: unknown): string {
+  if (typeof value === "string" || typeof value === "number" || typeof value === "bigint") {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => flattenTemplateText(entry))
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+  if (value && typeof value === "object") {
+    const template = value as LitTemplateLike;
+    if (template.strings && Array.isArray(template.values)) {
+      const parts: string[] = [];
+      const strings = Array.from(template.strings);
+      for (let index = 0; index < strings.length; index += 1) {
+        parts.push(strings[index] ?? "");
+        if (index < template.values.length) {
+          parts.push(flattenTemplateText(template.values[index]));
+        }
+      }
+      return parts
+        .join(" ")
+        .replace(/<style[\s\S]*?<\/style>/gi, " ")
+        .replace(/<svg[\s\S]*?<\/svg>/gi, " ")
+        .replace(/<[^>]*>/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    }
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return "";
+    }
+  }
+  if (typeof value === "function" || value == null || typeof value === "boolean") {
+    return "";
+  }
+  return "";
+}
+
+function renderWalletForTest(overrides: Partial<WalletViewProps>) {
+  return renderWallet({
+    loading: false,
+    error: null,
+    status: null,
+    namedWallets,
+    balancesLoading: false,
+    balancesError: null,
+    balances: null,
+    defaultWalletId: "wallet-agent",
+    settingsBusy: false,
+    settingsError: null,
+    settingsMessage: null,
+    settings: null,
+    skillGrantsLoading: false,
+    skillGrantsError: null,
+    skillGrantsMessage: null,
+    skillGrantsWorkspace: "/tmp/workspace",
+    skillGrantRows: [],
+    skillGrantDraft: {
+      skillId: "",
+      actions: ["quote"],
+      walletIds: "",
+      chain: "solana",
+      registry: "https://clawhub.com",
+      inputMints: "",
+      outputMints: "",
+      maxAmount: "",
+      maxSlippageBps: "",
+      autonomous: false,
+      cron: false,
+    },
+    skillGrantBusy: false,
+    rpcChain: "solana",
+    policySolMaxPerTx: "",
+    policySolMaxDaily: "",
+    policySolanaTokenCaps: {},
+    policyTokenCapMint: "",
+    policyTokenCapDecimals: "",
+    policyTokenCapMaxPerTx: "",
+    policyTokenCapMaxDaily: "",
+    policyTokenSearchQuery: "",
+    policyTokenSearchLoading: false,
+    policyTokenSearchError: null,
+    policyTokenSearchResults: [],
+    recurringTransferEnabled: false,
+    recurringTransferDestination: "",
+    recurringTransferMint: "",
+    recurringTransferAmountMode: "fixed",
+    recurringTransferAmount: "",
+    recurringTransferPercentage: "",
+    recurringTransferMinAmount: "",
+    recurringTransferKeepAmount: "",
+    recurringTransferDecimals: "",
+    recurringTransferCron: "",
+    recurringTransferTz: "UTC",
+    recurringTransferName: "",
+    actionMessage: null,
+    passkeyBusy: false,
+    passkeyError: null,
+    passkeyLabel: "",
+    auditEntries: [],
+    activityPage: 1,
+    sendModalVisible: false,
+    onSendModalOpen: () => undefined,
+    onSendModalClose: () => undefined,
+    sendCreateBusy: false,
+    sendCreateError: null,
+    sendCreateForm: {
+      chain: "solana",
+      walletId: "wallet-agent",
+      to: "",
+      amount: "",
+      program: "",
+      memo: "",
+    },
+    walletDetailsWalletId: "wallet-agent",
+    approvalsLoading: false,
+    approvalsBusyId: null,
+    approvalsError: null,
+    approvalsFilter: "pending",
+    approvals: [],
+    onSendCreatePatch: () => undefined,
+    onWalletDetailsWalletChange: () => undefined,
+    onApprovalsFilterChange: () => undefined,
+    onApproveRequest: () => undefined,
+    onRejectRequest: () => undefined,
+    onSetDefaultWallet: () => undefined,
+    onPasskeyLabelChange: () => undefined,
+    onEnablePasskeyApproval: () => undefined,
+    onEnrollPasskey: () => undefined,
+    onPatchSettings: () => undefined,
+    onActivityPageChange: () => undefined,
+    onRpcChainChange: () => undefined,
+    onPolicyDraftChange: () => undefined,
+    onTokenSearchQueryChange: () => undefined,
+    onTokenSearch: () => undefined,
+    onTokenSearchSelect: () => undefined,
+    onSavePolicy: () => undefined,
+    onRefresh: () => undefined,
+    onSkillGrantSelect: () => undefined,
+    onSkillGrantDraftPatch: () => undefined,
+    onSkillGrantActionToggle: () => undefined,
+    onSkillGrantSave: () => undefined,
+    onSkillGrantClear: () => undefined,
+    onCreateSendRequest: () => undefined,
+    miningProfile: null,
+    miningReadiness: null,
+    miningStatus: null,
+    ...overrides,
+  });
+}
+
+describe("resolveOperatorWalletRoles", () => {
+  it("separates admin, Agent, and mining roles when distinct wallets are configured", () => {
+    const roles = resolveOperatorWalletRoles({
+      status: {
+        approvalAuth: {
+          mode: "webauthn",
+          ready: true,
+          passkeyCount: 2,
+          notes: [],
+          passkeys: [],
+          statePath: "/tmp/passkeys.json",
+        },
+      } as never,
+      namedWallets,
+      defaultWalletId: "wallet-agent",
+      federationBond: {
+        walletId: "wallet-vault",
+        status: "active",
+        tier: "operator-bond",
+        quotaBand: "operator",
+      } as never,
+      miningProfile: { walletId: "wallet-mining" } as never,
+      miningReadiness: null,
+      miningStatus: null,
+    });
+
+    expect(roles.admin.summary).toBe("Ready");
+    expect(roles.agent.summary).toBe("Agent Wallet");
+    expect(roles.agent.detail).toContain(
+      "If no @wallet:<id> is specified, approved wallet actions use this default Agent wallet.",
+    );
+    expect(roles.agent.walletId).toBe("wallet-agent");
+    expect(roles.mining.summary).toBe("Mining Wallet");
+    expect(roles.mining.detail).toContain("singleton @wallet:mining wallet");
+    expect(roles.mining.detail).not.toContain("attached wallet");
+    expect(roles.mining.walletId).toBe("wallet-mining");
+    expect(roles.bond.summary).toBe("Vault Wallet");
+    expect(roles.bond.walletId).toBe("wallet-vault");
+    expect(roles.sharedWalletWarning).toBeNull();
+  });
+
+  it("warns when Agent and mining share the same wallet", () => {
+    const roles = resolveOperatorWalletRoles({
+      status: {
+        approvalAuth: {
+          mode: "none",
+          ready: false,
+          passkeyCount: 0,
+          notes: [],
+          passkeys: [],
+          statePath: "/tmp/passkeys.json",
+        },
+      } as never,
+      namedWallets,
+      defaultWalletId: "wallet-agent",
+      federationBond: null,
+      miningProfile: { walletId: "wallet-agent" } as never,
+      miningReadiness: null,
+      miningStatus: null,
+    });
+
+    expect(roles.sharedWalletWarning).toContain("must stay separate");
+    expect(roles.sharedWalletWarning).not.toContain("detach");
+    expect(roles.sharedWalletWarning).not.toContain("switch");
+    expect(roles.agent.walletId).toBe("wallet-agent");
+    expect(roles.mining.walletId).toBe("wallet-agent");
+  });
+
+  it("warns when no Agent wallet is configured", () => {
+    const roles = resolveOperatorWalletRoles({
+      status: null,
+      namedWallets,
+      defaultWalletId: null,
+      federationBond: null,
+      miningProfile: null,
+      miningReadiness: null,
+      miningStatus: null,
+    });
+
+    expect(roles.agent.summary).toBe("1 set · no primary");
+    expect(roles.agent.tone).toBe("warn");
+    expect(roles.mining.summary).toBe("Not configured");
+    expect(roles.mining.detail).toContain("Create or import @wallet:mining");
+    expect(roles.mining.detail).not.toContain("Attach");
+  });
+});
+
+describe("describeWalletRoleBadges", () => {
+  it("keeps wallet cards free of duplicate text role chips", () => {
+    expect(
+      describeWalletRoleBadges("wallet-agent", {
+        defaultWalletId: "wallet-agent",
+        federationBond: null,
+        namedWallets,
+        miningProfile: { walletId: "wallet-mining" } as never,
+        miningReadiness: null,
+        miningStatus: null,
+      }),
+    ).toEqual([]);
+
+    expect(
+      describeWalletRoleBadges("wallet-mining", {
+        defaultWalletId: "wallet-agent",
+        federationBond: {
+          walletId: "wallet-mining",
+          status: "active",
+        } as never,
+        namedWallets,
+        miningProfile: { walletId: "wallet-mining" } as never,
+        miningReadiness: null,
+        miningStatus: null,
+      }),
+    ).toEqual([]);
+
+    expect(
+      describeWalletRoleBadges("wallet-vault", {
+        defaultWalletId: "wallet-agent",
+        federationBond: null,
+        namedWallets,
+        miningProfile: { walletId: "wallet-mining" } as never,
+        miningReadiness: null,
+        miningStatus: null,
+      }),
+    ).toEqual([]);
+  });
+
+  it("blocks setting the Agent default to the SAT mining wallet", () => {
+    expect(
+      describeAgentDefaultAction("wallet-mining", {
+        defaultWalletId: "wallet-agent",
+        settingsBusy: false,
+        namedWallets,
+        miningProfile: { walletId: "wallet-mining" } as never,
+        miningReadiness: null,
+        miningStatus: null,
+      }),
+    ).toMatchObject({
+      label: "Primary",
+      disabled: true,
+    });
+
+    expect(
+      describeAgentDefaultAction("wallet-agent", {
+        defaultWalletId: "wallet-agent",
+        settingsBusy: false,
+        namedWallets,
+        miningProfile: { walletId: "wallet-agent" } as never,
+        miningReadiness: null,
+        miningStatus: null,
+      }),
+    ).toMatchObject({
+      label: "Clear",
+      disabled: false,
+    });
+  });
+});
+
+describe("describeAdminControlShortcut", () => {
+  it("offers enable action when approval auth is still session-based", () => {
+    expect(
+      describeAdminControlShortcut({
+        status: {
+          approvalAuth: {
+            mode: "none",
+            ready: false,
+            passkeyCount: 0,
+            notes: [],
+            passkeys: [],
+            statePath: "/tmp/passkeys.json",
+          },
+        } as never,
+        settingsBusy: false,
+        passkeyBusy: false,
+      }),
+    ).toMatchObject({
+      summary: "Not ready",
+      detail: expect.stringContaining("wallet security setup"),
+      enableVisible: true,
+      enableLabel: "Enable passkey approval",
+      enrollVisible: false,
+    });
+  });
+
+  it("offers enrollment after webauthn is enabled but before a passkey exists", () => {
+    expect(
+      describeAdminControlShortcut({
+        status: {
+          approvalAuth: {
+            mode: "webauthn",
+            ready: false,
+            passkeyCount: 0,
+            notes: [],
+            passkeys: [],
+            statePath: "/tmp/passkeys.json",
+          },
+        } as never,
+        settingsBusy: false,
+        passkeyBusy: false,
+      }),
+    ).toMatchObject({
+      summary: "Not ready",
+      detail: expect.stringContaining("wallet security setup"),
+      enableVisible: false,
+      enrollVisible: true,
+      enrollLabel: "Enroll passkey",
+    });
+  });
+
+  it("does not offer another passkey on the primary wallet page when approval is ready", () => {
+    expect(
+      describeAdminControlShortcut({
+        status: {
+          approvalAuth: {
+            mode: "webauthn",
+            ready: true,
+            passkeyCount: 1,
+            notes: [],
+            passkeys: [],
+            statePath: "/tmp/passkeys.json",
+          },
+        } as never,
+        settingsBusy: false,
+        passkeyBusy: false,
+      }),
+    ).toMatchObject({
+      summary: "Ready",
+      detail: expect.stringContaining("wallet security setup"),
+      enableVisible: false,
+      enrollVisible: false,
+    });
+  });
+});
+
+describe("describeWalletSendFlow", () => {
+  it("explains that direct user send creates an approval request", () => {
+    expect(
+      describeWalletSendFlow({
+        policy: { executionMode: "manual" },
+        approvalAuth: { passkeyCount: 1 },
+        custody: { mode: "single-key" },
+      } as never),
+    ).toMatchObject({
+      mode: "manual",
+      submitLabel: "Create Approval Request",
+    });
+  });
+
+  it("keeps direct user send reviewed even when automation policy is autonomous", () => {
+    expect(
+      describeWalletSendFlow({
+        policy: { executionMode: "autonomous" },
+        approvalAuth: { passkeyCount: 1 },
+        custody: { mode: "single-key" },
+      } as never),
+    ).toMatchObject({
+      mode: "manual",
+      submitLabel: "Create Approval Request",
+    });
+  });
+});
+
+describe("describeWalletAutomationPolicySummary", () => {
+  it("explains when task/payment automation is disabled", () => {
+    expect(
+      describeWalletAutomationPolicySummary({
+        policy: { directSigning: false },
+      } as never),
+    ).toMatchObject({
+      label: "Automation off",
+    });
+    expect(
+      describeWalletAutomationPolicySummary({
+        policy: { directSigning: false },
+      } as never).operatorDetail,
+    ).toContain("not SAT mining cycle limits");
+  });
+
+  it("explains when task/payment automation is enabled", () => {
+    expect(
+      describeWalletAutomationPolicySummary({
+        policy: { directSigning: true },
+      } as never),
+    ).toMatchObject({
+      label: "Automation on",
+    });
+    expect(
+      describeWalletAutomationPolicySummary({
+        policy: { directSigning: true },
+      } as never).detail,
+    ).toContain("background actions");
+  });
+});
+
+describe("orderWalletsForDisplay", () => {
+  it("orders Mining first, then Vault, then Agent wallets", () => {
+    expect(
+      orderWalletsForDisplay([...namedWallets].toReversed(), {
+        namedWallets,
+        defaultWalletId: "wallet-agent",
+        miningProfile: { walletId: "wallet-mining" } as never,
+        miningReadiness: null,
+        miningStatus: null,
+      }).map((wallet) => wallet.id),
+    ).toEqual(["wallet-mining", "wallet-vault", "wallet-agent"]);
+  });
+});
+
+describe("renderWallet", () => {
+  it("renders approval and activity amounts in human chain units", () => {
+    const text = flattenTemplateText(
+      renderWalletForTest({
+        loading: false,
+        error: null,
+        status: {
+          capabilities: { canSend: true, canEditPolicy: true },
+          policy: { executionMode: "manual", directSigning: false },
+          approvalAuth: {
+            mode: "webauthn",
+            ready: true,
+            passkeyCount: 1,
+            notes: [],
+            passkeys: [],
+            statePath: "/tmp/passkeys.json",
+          },
+          custody: {
+            mode: "single-key",
+            target: {
+              walletId: "wallet-mining",
+              role: "mining",
+            },
+            unlock: {
+              active: false,
+            },
+            phase2: {
+              complete: true,
+              splitKeyEnabled: false,
+              passkeyCeremonyEnabled: true,
+              ephemeralReconstructionEnabled: true,
+              notes: [],
+            },
+          },
+        } as never,
+        namedWallets,
+        balancesLoading: false,
+        balancesError: null,
+        balances: {
+          ok: true,
+          chain: "all",
+          provider: "embedded-keystore",
+          walletId: "wallet-agent",
+          walletName: "Primary Agent",
+          balances: {
+            solana: {
+              ok: true,
+              chain: "solana",
+              balance: "3000000000",
+              unit: "lamports",
+            },
+          },
+          assets: {
+            solana: [
+              {
+                id: "solana:spl-token:SatMint111111111111111111111111111111111",
+                chain: "solana",
+                kind: "spl-token",
+                symbol: "SAT",
+                name: "SAT",
+                amountRaw: "31798000000000",
+                amountDisplay: "317.98",
+                decimals: 11,
+                unit: "raw",
+                isNative: false,
+                address: "SatAta111111111111111111111111111111111111",
+                program: "SatMint111111111111111111111111111111111",
+                tokenProgramId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+              },
+            ],
+          },
+          checkedAt: "2026-04-09T12:00:00.000Z",
+        },
+        defaultWalletId: "wallet-agent",
+        settingsBusy: false,
+        settingsError: null,
+        settingsMessage: null,
+        settings: null,
+        rpcChain: "solana",
+        policySolMaxPerTx: "",
+        policySolMaxDaily: "",
+        actionMessage: null,
+        passkeyBusy: false,
+        passkeyError: null,
+        passkeyLabel: "",
+        auditEntries: [
+          {
+            id: "audit-0",
+            at: "2026-04-09T11:59:00.000Z",
+            action: "send_requested",
+            details: {
+              chain: "solana",
+              amount: "100000000",
+              to: "So11111111111111111111111111111111111111119",
+            },
+          },
+          {
+            id: "audit-1",
+            at: "2026-04-09T12:00:00.000Z",
+            action: "send_executed",
+            details: {
+              chain: "solana",
+              amount: "100000000",
+              to: "So11111111111111111111111111111111111111119",
+              txHash: "solana-tx-1",
+            },
+          },
+          {
+            id: "audit-2",
+            at: "2026-04-09T12:01:00.000Z",
+            action: "send_requested",
+            details: {
+              chain: "solana",
+              amount: "3041914712993",
+              program: "SatMint111111111111111111111111111111111",
+              to: "Vault11111111111111111111111111111111111111",
+            },
+          },
+          {
+            id: "audit-3",
+            at: "2026-04-09T12:02:00.000Z",
+            action: "send_executed",
+            details: {
+              chain: "solana",
+              amount: "1234500",
+              program: "MintNoLongerInBalance111111111111111111111",
+              assetSymbol: "USDC",
+              assetName: "USD Coin",
+              assetDecimals: 6,
+              to: "Vault11111111111111111111111111111111111111",
+              txHash: "spl-tx-1",
+            },
+          },
+        ] as never,
+        activityPage: 1,
+        sendModalVisible: false,
+        onSendModalOpen: () => undefined,
+        onSendModalClose: () => undefined,
+        sendCreateBusy: false,
+        sendCreateError: null,
+        sendCreateForm: {
+          chain: "solana",
+          walletId: "wallet-agent",
+          to: "",
+          amount: "",
+          program: "",
+          memo: "",
+        },
+        walletDetailsWalletId: "",
+        approvalsLoading: false,
+        approvalsBusyId: null,
+        approvalsError: null,
+        approvalsFilter: "pending",
+        approvals: [
+          {
+            id: "approval-1",
+            createdAt: "2026-04-09T12:00:00.000Z",
+            state: "pending",
+            payload: {
+              chain: "solana",
+              amount: "100000000",
+              to: "So11111111111111111111111111111111111111119",
+            },
+          },
+        ] as never,
+        onSendCreatePatch: () => undefined,
+        onWalletDetailsWalletChange: () => undefined,
+        onApprovalsFilterChange: () => undefined,
+        onApproveRequest: () => undefined,
+        onRejectRequest: () => undefined,
+        onSetDefaultWallet: () => undefined,
+        onPasskeyLabelChange: () => undefined,
+        onEnablePasskeyApproval: () => undefined,
+        onEnrollPasskey: () => undefined,
+        onPatchSettings: () => undefined,
+        onActivityPageChange: () => undefined,
+        onRpcChainChange: () => undefined,
+        onPolicyDraftChange: () => undefined,
+        onSavePolicy: () => undefined,
+        onRefresh: () => undefined,
+        onCreateSendRequest: () => undefined,
+        miningProfile: null,
+        miningReadiness: null,
+        miningStatus: null,
+      }),
+    );
+
+    expect(text).toContain("Wallet Activity");
+    expect(text).toContain("Recent send requests and outcomes.");
+    expect(text).toContain("0.1 SOL");
+    expect(text).toContain("30.42 SAT");
+    expect(text).toContain("1.23 USDC");
+    expect(text).toContain("Mint");
+    expect(text).not.toContain("SOL 30.74 SAT");
+    expect(text).not.toContain("3041.914712993 SOL");
+    expect(text).toContain("Request created");
+    expect(text).toContain("Executed");
+    expect(text).toContain("Page");
+    expect(text).toContain("Prev");
+    expect(text).toContain("Next");
+    expect(text).not.toContain("Operator Wallet Roles");
+    expect(text).not.toContain("Global limits for both chains. Save to apply.");
+    expect(text).not.toContain("Set Agent default");
+    expect(text).not.toContain("Clear Agent default");
+  });
+
+  it("renders compact wallet cards with icon-only roles and a native balance pill", () => {
+    const text = flattenTemplateText(
+      renderWalletForTest({
+        loading: false,
+        error: null,
+        status: {
+          capabilities: { canSend: true, canEditPolicy: true },
+          policy: { executionMode: "manual", directSigning: false },
+          approvalAuth: {
+            mode: "webauthn",
+            ready: true,
+            passkeyCount: 1,
+            notes: [],
+            passkeys: [],
+            statePath: "/tmp/passkeys.json",
+          },
+          custody: {
+            mode: "single-key",
+            target: {
+              walletId: "wallet-mining",
+              role: "mining",
+            },
+            unlock: {
+              active: false,
+            },
+            phase2: {
+              complete: true,
+              splitKeyEnabled: false,
+              passkeyCeremonyEnabled: true,
+              ephemeralReconstructionEnabled: true,
+              notes: [],
+            },
+          },
+        } as never,
+        namedWallets,
+        balancesLoading: false,
+        balancesError: null,
+        balances: null,
+        defaultWalletId: "wallet-agent",
+        settingsBusy: false,
+        settingsError: null,
+        settingsMessage: null,
+        settings: null,
+        rpcChain: "solana",
+        policySolMaxPerTx: "",
+        policySolMaxDaily: "",
+        actionMessage: null,
+        passkeyBusy: false,
+        passkeyError: null,
+        passkeyLabel: "",
+        clientSecuritySupport: {
+          secureContext: true,
+          webauthn: true,
+          webCrypto: true,
+          localStorage: true,
+          platformAuthenticator: "supported",
+          conditionalMediation: "supported",
+          prf: "supported",
+          storageMode: "encrypted-browser-storage",
+          nativeHelper: {
+            status: "unreachable",
+          },
+          notes: [],
+        },
+        auditEntries: [],
+        activityPage: 1,
+        sendModalVisible: false,
+        onSendModalOpen: () => undefined,
+        onSendModalClose: () => undefined,
+        sendCreateBusy: false,
+        sendCreateError: null,
+        sendCreateForm: {
+          chain: "solana",
+          walletId: "wallet-agent",
+          to: "",
+          amount: "",
+          program: "",
+          memo: "",
+        },
+        walletDetailsWalletId: "wallet-mining",
+        expandedWalletId: "wallet-mining",
+        expandedPanel: "security",
+        approvalsLoading: false,
+        approvalsBusyId: null,
+        approvalsError: null,
+        approvalsFilter: "pending",
+        approvals: [],
+        onSendCreatePatch: () => undefined,
+        onWalletDetailsWalletChange: () => undefined,
+        onApprovalsFilterChange: () => undefined,
+        onApproveRequest: () => undefined,
+        onRejectRequest: () => undefined,
+        onSetDefaultWallet: () => undefined,
+        onPasskeyLabelChange: () => undefined,
+        onEnablePasskeyApproval: () => undefined,
+        onEnrollPasskey: () => undefined,
+        onPatchSettings: () => undefined,
+        onActivityPageChange: () => undefined,
+        onRpcChainChange: () => undefined,
+        onPolicyDraftChange: () => undefined,
+        onSavePolicy: () => undefined,
+        onRefresh: () => undefined,
+        onCreateSendRequest: () => undefined,
+        miningProfile: { walletId: "wallet-mining" } as never,
+        miningReadiness: {
+          selectedWalletId: "wallet-mining",
+          balances: {
+            solBalanceDisplay: "4.321 SOL",
+            satBalanceDisplay: "30.87 SAT",
+          },
+        } as never,
+        miningStatus: null,
+      }),
+    );
+
+    expect(text).toContain("Agent");
+    expect(text).toContain("Mining");
+    expect(text).toContain("Policy");
+    expect(text).toContain("SAT");
+    expect(text).toContain("Mining Wallet");
+    expect(text).toContain("Sweep");
+    expect(text).not.toContain("After each successful claim");
+    expect(text).not.toContain("Browser storage");
+    expect(text).not.toContain("Manual recovery, device shares, and compatibility");
+    expect(text).not.toContain("Optional local helper");
+    expect(text).not.toContain("Wallet Guide");
+    expect(text).not.toContain("Legacy");
+    expect(text).not.toContain("Interactive-only");
+    expect(text).not.toContain("RPC ready");
+    expect(text).not.toContain("Balances and RPC");
+    expect(text).not.toContain("Primary Agent");
+    expect(text).not.toContain("Bond active");
+  });
+
+  it("renders wallet skill grants without granting mining or vault wallet access", () => {
+    const text = flattenTemplateText(
+      renderWalletForTest({
+        mainPanel: "skill-grants",
+        skillGrantRows: [
+          {
+            skillId: "daily-dca",
+            source: "clawhub",
+            registry: "https://clawhub.com",
+            version: "1.0.0",
+            requestedWalletActions: {
+              actions: ["quote", "swap"],
+              roles: ["agent"],
+              chains: ["solana"],
+              autonomous: true,
+            },
+            grantedWalletActions: null,
+            requestedPermissionRisky: true,
+            autonomousRequested: true,
+            autonomousGranted: false,
+            cronRequested: false,
+            cronGranted: false,
+          },
+        ],
+        skillGrantDraft: {
+          skillId: "daily-dca",
+          actions: ["quote", "swap"],
+          walletIds: "wallet-agent",
+          chain: "solana",
+          registry: "https://clawhub.com",
+          inputMints: "",
+          outputMints: "",
+          maxAmount: "1000000",
+          maxSlippageBps: "50",
+          autonomous: true,
+          cron: false,
+        },
+      }),
+    );
+
+    expect(text).toContain("Skill Grants");
+    expect(text).toContain("daily-dca");
+    expect(text).toContain("Agent wallet ids");
+    expect(text).toContain("quote, swap");
+  });
+
+  it("renders wallet security onboarding guidance and role-template policy help", () => {
+    const text = flattenTemplateText(
+      renderWalletForTest({
+        loading: false,
+        error: null,
+        status: {
+          capabilities: { canSend: true, canEditPolicy: true },
+          policy: {
+            executionMode: "manual",
+            directSigning: true,
+            toolAccessMode: "owner-only",
+            allowAgents: [],
+            solana: {
+              allowPrograms: [],
+              maxPerTx: "1000000000",
+              maxDaily: "5000000000",
+            },
+          },
+          approvalAuth: {
+            mode: "webauthn",
+            ready: true,
+            passkeyCount: 1,
+            notes: [],
+            passkeys: [],
+            statePath: "/tmp/passkeys.json",
+          },
+          custody: {
+            mode: "single-key",
+            target: {
+              walletId: "wallet-agent",
+              role: "agent",
+            },
+            unlock: { active: false },
+            phase2: {
+              complete: true,
+              splitKeyEnabled: false,
+              passkeyCeremonyEnabled: true,
+              ephemeralReconstructionEnabled: true,
+              notes: [],
+            },
+          },
+        } as never,
+        namedWallets,
+        balancesLoading: false,
+        balancesError: null,
+        balances: null,
+        defaultWalletId: "wallet-agent",
+        settingsBusy: false,
+        settingsError: null,
+        settingsMessage: null,
+        settings: {
+          providerId: "local-socket-signer",
+          execution: { mode: "manual" },
+          approvalAuth: { mode: "webauthn", challengeTtlSeconds: 300, grantTtlSeconds: 900 },
+          policy: {
+            directSigning: true,
+            solana: { allowPrograms: [], maxPerTx: "1000000000", maxDaily: "5000000000" },
+          },
+          toolAccess: { mode: "owner-only", allowAgents: [] },
+          providerCredentials: {
+            configured: false,
+            providerId: "local-socket-signer",
+            fields: [],
+            path: "/tmp/none",
+            source: "none",
+          },
+          rpc: {
+            configured: true,
+            providerId: "local-socket-signer",
+            chain: "solana",
+            provider: "custom",
+            path: "/tmp/rpc",
+          },
+          checkedAt: new Date().toISOString(),
+        } as never,
+        rpcChain: "solana",
+        policySolMaxPerTx: "1",
+        policySolMaxDaily: "5",
+        policySolanaAllowPrograms: "",
+        securitySetupWalletId: "wallet-agent",
+        securitySetupRole: "agent",
+        actionMessage: null,
+        passkeyBusy: false,
+        passkeyError: null,
+        passkeyLabel: "",
+        clientSecuritySupport: {
+          secureContext: true,
+          webauthn: true,
+          webCrypto: true,
+          localStorage: true,
+          platformAuthenticator: "supported",
+          conditionalMediation: "supported",
+          prf: "supported",
+          storageMode: "encrypted-browser-storage",
+          nativeHelper: { status: "unreachable" },
+          notes: [],
+        },
+        custodyDeviceShare: "",
+        custodyRecoveryShare: "",
+        custodyRecoveryInput: "",
+        custodyEnrollLabel: "",
+        custodyEnrolledDeviceShare: "",
+        custodyRememberDeviceShare: false,
+        custodyDeviceShareStored: false,
+        auditEntries: [],
+        activityPage: 1,
+        sendModalVisible: false,
+        onSendModalOpen: () => undefined,
+        onSendModalClose: () => undefined,
+        sendCreateBusy: false,
+        sendCreateError: null,
+        sendCreateForm: {
+          chain: "solana",
+          walletId: "wallet-agent",
+          to: "",
+          amount: "",
+          program: "",
+          memo: "",
+        },
+        walletDetailsWalletId: "wallet-agent",
+        expandedWalletId: "wallet-agent",
+        expandedPanel: "security",
+        approvalsLoading: false,
+        approvalsBusyId: null,
+        approvalsError: null,
+        approvalsFilter: "pending",
+        approvals: [],
+        onSendCreatePatch: () => undefined,
+        onWalletDetailsWalletChange: () => undefined,
+        onApprovalsFilterChange: () => undefined,
+        onApproveRequest: () => undefined,
+        onRejectRequest: () => undefined,
+        onSetDefaultWallet: () => undefined,
+        onPasskeyLabelChange: () => undefined,
+        onEnablePasskeyApproval: () => undefined,
+        onEnrollPasskey: () => undefined,
+        onCustodyDeviceShareChange: () => undefined,
+        onCustodyRecoveryInputChange: () => undefined,
+        onCustodyEnrollLabelChange: () => undefined,
+        onCustodyRememberChange: () => undefined,
+        onInitializeCustody: () => undefined,
+        onEnrollCustodyDevice: () => undefined,
+        onRevokeCustodyDevice: () => undefined,
+        onRecoverCustody: () => undefined,
+        onUnlockCustody: () => undefined,
+        onLockCustody: () => undefined,
+        onForgetCustodyDeviceShare: () => undefined,
+        onDownloadDeviceShare: () => undefined,
+        onDownloadEnrolledDeviceShare: () => undefined,
+        onDownloadRecoveryKit: () => undefined,
+        onPrintRecoveryKit: () => undefined,
+        onPrintEnrolledDeviceShare: () => undefined,
+        onApplyRecommendedPolicy: () => undefined,
+        onPatchSettings: () => undefined,
+        onActivityPageChange: () => undefined,
+        onRpcChainChange: () => undefined,
+        onPolicyDraftChange: () => undefined,
+        onSavePolicy: () => undefined,
+        onRefresh: () => undefined,
+        onCreateSendRequest: () => undefined,
+        miningProfile: null,
+        miningReadiness: null,
+        miningStatus: null,
+      }),
+    );
+
+    expect(text).toContain("Caps");
+    expect(text).toContain("Off");
+    expect(text).toContain("SOL");
+    expect(text).toContain("Preset");
+    expect(text).toContain("Send");
+    expect(text).toContain("Auto");
+    expect(text).toContain("Save");
+    expect(text).not.toContain("Caps are normal display amounts");
+    expect(text).not.toContain("Add asset cap");
+    expect(text).not.toContain("Enable security");
+    expect(text).toContain("Tx");
+    expect(text).toContain("Small Agent spend");
+    expect(text).not.toContain("Selected Wallet Policy");
+    expect(text).not.toContain("Advanced spend caps");
+    expect(text).not.toContain("Apply recommended Agent template");
+    expect(text).not.toContain("Solana program allowlist");
+    expect(text).not.toContain("Manual recovery, device shares, and compatibility");
+    expect(text).not.toContain("Recovery and device transfer (advanced)");
+    expect(text).not.toContain(
+      "Browser-held encrypted storage is the primary off-host path on this device.",
+    );
+    expect(text).not.toContain("Wallet Guide");
+  });
+
+  it("renders token approvals with token amount instead of native chain amount", () => {
+    const text = flattenTemplateText(
+      renderWalletForTest({
+        loading: false,
+        error: null,
+        status: {
+          capabilities: { canSend: true, canEditPolicy: true },
+          policy: { executionMode: "manual", directSigning: false },
+          approvalAuth: {
+            mode: "webauthn",
+            ready: true,
+            passkeyCount: 1,
+            notes: [],
+            passkeys: [],
+            statePath: "/tmp/passkeys.json",
+          },
+          custody: { mode: "single-key" },
+        } as never,
+        namedWallets,
+        balancesLoading: false,
+        balancesError: null,
+        balances: null,
+        defaultWalletId: "wallet-agent",
+        settingsBusy: false,
+        settingsError: null,
+        settingsMessage: null,
+        settings: null,
+        rpcChain: "solana",
+        policySolMaxPerTx: "",
+        policySolMaxDaily: "",
+        actionMessage: null,
+        passkeyBusy: false,
+        passkeyError: null,
+        passkeyLabel: "",
+        auditEntries: [],
+        activityPage: 1,
+        sendModalVisible: false,
+        onSendModalOpen: () => undefined,
+        onSendModalClose: () => undefined,
+        sendCreateBusy: false,
+        sendCreateError: null,
+        sendCreateForm: {
+          chain: "solana",
+          walletId: "wallet-mining",
+          assetId: "solana:spl-token:SatMint",
+          to: "",
+          amount: "",
+          program: "SatMint",
+          memo: "",
+        },
+        walletDetailsWalletId: "wallet-mining",
+        approvalsLoading: false,
+        approvalsBusyId: null,
+        approvalsError: null,
+        approvalsFilter: "pending",
+        approvals: [
+          {
+            id: "approval-sat-1",
+            createdAt: "2026-04-13T22:38:39.000Z",
+            expiresAt: "2026-04-13T22:53:39.000Z",
+            status: "pending",
+            requestedBy: "control-ui",
+            payload: {
+              chain: "solana",
+              amount: "100000000000",
+              amountDisplay: "1",
+              assetSymbol: "SAT",
+              assetName: "SAT Token",
+              assetId: "solana:spl-token:SatMint",
+              walletId: "wallet-mining",
+              walletName: "Mining Wallet",
+              program: "SatMint",
+              to: "DSUtCCvUFakeRecipientRgmE4b",
+            },
+            approvalDiff: {
+              fromWalletId: "wallet-mining",
+              fromWalletName: "Mining Wallet",
+              fromRole: "mining",
+              to: "DSUtCCvUFakeRecipientRgmE4b",
+              chain: "solana",
+              token: "SAT",
+              mint: "SatMint",
+              amount: "100000000000",
+              amountDisplay: "1",
+              source: "control-ui",
+            },
+          },
+        ],
+        onSendCreatePatch: () => undefined,
+        onWalletDetailsWalletChange: () => undefined,
+        onApprovalsFilterChange: () => undefined,
+        onApproveRequest: () => undefined,
+        onRejectRequest: () => undefined,
+        onSetDefaultWallet: () => undefined,
+        onPasskeyLabelChange: () => undefined,
+        onEnablePasskeyApproval: () => undefined,
+        onEnrollPasskey: () => undefined,
+        onPatchSettings: () => undefined,
+        onActivityPageChange: () => undefined,
+        onRpcChainChange: () => undefined,
+        onPolicyDraftChange: () => undefined,
+        onSavePolicy: () => undefined,
+        onRefresh: () => undefined,
+        onCreateSendRequest: () => undefined,
+        miningProfile: null,
+        miningReadiness: null,
+        miningStatus: null,
+      }),
+    );
+
+    expect(text).toContain("1");
+    expect(text).toContain("SAT Token");
+    expect(text).toContain("From");
+    expect(text).toContain("So111111...111113");
+    expect(text).toContain("To");
+    expect(text).toContain("Spend 1 SAT");
+    expect(text).toContain("triggered by control-ui");
+    expect(text).toContain("Approve");
+    expect(text).toContain("Reject");
+    expect(text).not.toContain("100 SOL");
+  });
+
+  it("renders legacy token approvals from wallet asset metadata instead of native sol amount", () => {
+    const text = flattenTemplateText(
+      renderWalletForTest({
+        loading: false,
+        error: null,
+        status: {
+          capabilities: { canSend: true, canEditPolicy: true },
+          policy: { executionMode: "manual", directSigning: false },
+          approvalAuth: {
+            mode: "webauthn",
+            ready: true,
+            passkeyCount: 1,
+            notes: [],
+            passkeys: [],
+            statePath: "/tmp/passkeys.json",
+          },
+          custody: { mode: "single-key" },
+        } as never,
+        namedWallets,
+        balancesLoading: false,
+        balancesError: null,
+        balances: {
+          ok: true,
+          chain: "all",
+          provider: "embedded-keystore",
+          walletId: "wallet-mining",
+          walletName: "Mining Wallet",
+          balances: {
+            solana: {
+              ok: true,
+              chain: "solana",
+              balance: "3000000000",
+              unit: "lamports",
+            },
+          },
+          assets: {
+            solana: [
+              {
+                id: "solana:native",
+                chain: "solana",
+                kind: "native",
+                symbol: "SOL",
+                name: "Solana",
+                amountRaw: "3000000000",
+                amountDisplay: "3",
+                decimals: 9,
+                unit: "lamports",
+                isNative: true,
+                address: "So11111111111111111111111111111111111111113",
+              },
+              {
+                id: "solana:spl-token:SatMint",
+                chain: "solana",
+                kind: "spl-token",
+                symbol: "SAT",
+                name: "SAT Token",
+                amountRaw: "100000000000",
+                amountDisplay: "1",
+                decimals: 11,
+                unit: "raw",
+                isNative: false,
+                address: "Ata1111111111111111111111111111111111111111",
+                program: "SatMint",
+                tokenProgramId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+              },
+            ],
+          },
+          checkedAt: "2026-04-13T22:38:39.000Z",
+        },
+        defaultWalletId: "wallet-agent",
+        settingsBusy: false,
+        settingsError: null,
+        settingsMessage: null,
+        settings: null,
+        rpcChain: "solana",
+        policySolMaxPerTx: "",
+        policySolMaxDaily: "",
+        actionMessage: null,
+        passkeyBusy: false,
+        passkeyError: null,
+        passkeyLabel: "",
+        auditEntries: [],
+        activityPage: 1,
+        sendModalVisible: false,
+        onSendModalOpen: () => undefined,
+        onSendModalClose: () => undefined,
+        sendCreateBusy: false,
+        sendCreateError: null,
+        sendCreateForm: {
+          chain: "solana",
+          walletId: "wallet-mining",
+          assetId: "solana:spl-token:SatMint",
+          to: "",
+          amount: "",
+          program: "SatMint",
+          memo: "",
+        },
+        walletDetailsWalletId: "wallet-mining",
+        approvalsLoading: false,
+        approvalsBusyId: null,
+        approvalsError: null,
+        approvalsFilter: "pending",
+        approvals: [
+          {
+            id: "approval-sat-legacy-1",
+            createdAt: "2026-04-13T22:38:39.000Z",
+            expiresAt: "2026-04-13T22:53:39.000Z",
+            status: "pending",
+            requestedBy: "control-ui",
+            payload: {
+              chain: "solana",
+              amount: "100000000000",
+              walletId: "wallet-mining",
+              walletName: "Mining Wallet",
+              program: "SatMint",
+              to: "DSUtCCvUFakeRecipientRgmE4b",
+            },
+          },
+        ],
+        onSendCreatePatch: () => undefined,
+        onWalletDetailsWalletChange: () => undefined,
+        onApprovalsFilterChange: () => undefined,
+        onApproveRequest: () => undefined,
+        onRejectRequest: () => undefined,
+        onSetDefaultWallet: () => undefined,
+        onPasskeyLabelChange: () => undefined,
+        onEnablePasskeyApproval: () => undefined,
+        onEnrollPasskey: () => undefined,
+        onPatchSettings: () => undefined,
+        onActivityPageChange: () => undefined,
+        onRpcChainChange: () => undefined,
+        onPolicyDraftChange: () => undefined,
+        onSavePolicy: () => undefined,
+        onRefresh: () => undefined,
+        onCreateSendRequest: () => undefined,
+        miningProfile: null,
+        miningReadiness: null,
+        miningStatus: null,
+      }),
+    );
+
+    expect(text).toContain("1");
+    expect(text).toContain("SAT Token");
+    expect(text).toContain("From");
+    expect(text).toContain("So111111...111113");
+    expect(text).toContain("To");
+    expect(text).not.toContain("100 SOL");
+  });
+
+  it("shows source wallet name and source address in the send modal", () => {
+    const text = flattenTemplateText(
+      renderWalletForTest({
+        loading: false,
+        error: null,
+        status: {
+          capabilities: { canSend: true, canEditPolicy: true },
+          policy: { executionMode: "manual", directSigning: false },
+          approvalAuth: {
+            mode: "webauthn",
+            ready: true,
+            passkeyCount: 1,
+            notes: [],
+            passkeys: [],
+            statePath: "/tmp/passkeys.json",
+          },
+          custody: { mode: "single-key" },
+        } as never,
+        namedWallets,
+        balancesLoading: false,
+        balancesError: null,
+        balances: null,
+        defaultWalletId: "wallet-agent",
+        settingsBusy: false,
+        settingsError: null,
+        settingsMessage: null,
+        settings: null,
+        rpcChain: "solana",
+        policySolMaxPerTx: "",
+        policySolMaxDaily: "",
+        actionMessage: null,
+        passkeyBusy: false,
+        passkeyError: null,
+        passkeyLabel: "",
+        auditEntries: [],
+        activityPage: 1,
+        sendModalVisible: true,
+        onSendModalOpen: () => undefined,
+        onSendModalClose: () => undefined,
+        sendCreateBusy: false,
+        sendCreateError: null,
+        sendCreateForm: {
+          chain: "solana",
+          walletId: "wallet-mining",
+          walletName: "Mining Wallet",
+          to: "",
+          amount: "",
+          program: "",
+          memo: "",
+        },
+        walletDetailsWalletId: "wallet-mining",
+        approvalsLoading: false,
+        approvalsBusyId: null,
+        approvalsError: null,
+        approvalsFilter: "pending",
+        approvals: [],
+        onSendCreatePatch: () => undefined,
+        onWalletDetailsWalletChange: () => undefined,
+        onApprovalsFilterChange: () => undefined,
+        onApproveRequest: () => undefined,
+        onRejectRequest: () => undefined,
+        onSetDefaultWallet: () => undefined,
+        onPasskeyLabelChange: () => undefined,
+        onEnablePasskeyApproval: () => undefined,
+        onEnrollPasskey: () => undefined,
+        onPatchSettings: () => undefined,
+        onActivityPageChange: () => undefined,
+        onRpcChainChange: () => undefined,
+        onPolicyDraftChange: () => undefined,
+        onSavePolicy: () => undefined,
+        onRefresh: () => undefined,
+        onCreateSendRequest: () => undefined,
+        miningProfile: { walletId: "wallet-mining" } as never,
+        miningReadiness: null,
+        miningStatus: null,
+      }),
+    );
+
+    expect(text).toContain("Send Asset");
+    expect(text).toContain("From");
+    expect(text).toContain("Mining Wallet");
+    expect(text).toContain("wallet-mining");
+    expect(text).toContain("So11...1113");
+    expect(text).toContain("Destination");
+    expect(text).not.toContain("Source Wallet");
+  });
+
+  it("renders card balance expansion and token-aware send labels for Solana wallets", () => {
+    const text = flattenTemplateText(
+      renderWalletForTest({
+        loading: false,
+        error: null,
+        status: {
+          capabilities: { canSend: true, canEditPolicy: true },
+          policy: { executionMode: "manual", directSigning: false },
+          approvalAuth: {
+            mode: "webauthn",
+            ready: true,
+            passkeyCount: 1,
+            notes: [],
+            passkeys: [],
+            statePath: "/tmp/passkeys.json",
+          },
+          custody: { mode: "single-key" },
+        } as never,
+        namedWallets,
+        balancesLoading: false,
+        balancesError: null,
+        balances: {
+          ok: true,
+          chain: "all",
+          provider: "embedded-keystore",
+          walletId: "wallet-mining",
+          walletName: "Mining Wallet",
+          balances: {
+            solana: {
+              ok: true,
+              chain: "solana",
+              balance: "3000000000",
+              unit: "lamports",
+            },
+          },
+          assets: {
+            solana: [
+              {
+                id: "solana:native",
+                chain: "solana",
+                kind: "native",
+                symbol: "SOL",
+                name: "Solana",
+                amountRaw: "3000000000",
+                amountDisplay: "3",
+                decimals: 9,
+                unit: "lamports",
+                isNative: true,
+                address: "So11111111111111111111111111111111111111113",
+              },
+              {
+                id: "solana:spl-token:mint-usdc",
+                chain: "solana",
+                kind: "spl-token",
+                symbol: "USDC",
+                name: "USD Coin",
+                amountRaw: "1234500",
+                amountDisplay: "1.2345",
+                decimals: 6,
+                unit: "raw",
+                isNative: false,
+                address: "Ata1111111111111111111111111111111111111111",
+                program: "mint-usdc",
+                tokenProgramId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                logoUri: "https://img.example/usdc.png",
+                verificationStatus: "verified",
+                verificationSource: "jupiter",
+                priceUsd: 1,
+                valueUsd: 1.2345,
+                tags: ["verified"],
+              },
+            ],
+          },
+          checkedAt: "2026-04-09T12:00:00.000Z",
+        },
+        defaultWalletId: "wallet-agent",
+        settingsBusy: false,
+        settingsError: null,
+        settingsMessage: null,
+        settings: null,
+        rpcChain: "solana",
+        policySolMaxPerTx: "",
+        policySolMaxDaily: "",
+        actionMessage: null,
+        passkeyBusy: false,
+        passkeyError: null,
+        passkeyLabel: "",
+        auditEntries: [],
+        activityPage: 1,
+        sendModalVisible: true,
+        onSendModalOpen: () => undefined,
+        onSendModalClose: () => undefined,
+        sendCreateBusy: false,
+        sendCreateError: null,
+        sendCreateForm: {
+          chain: "solana",
+          walletId: "wallet-mining",
+          walletName: "Mining Wallet",
+          assetId: "solana:spl-token:mint-usdc",
+          to: "",
+          amount: "",
+          program: "mint-usdc",
+          memo: "",
+        },
+        walletDetailsWalletId: "wallet-mining",
+        approvalsLoading: false,
+        approvalsBusyId: null,
+        approvalsError: null,
+        approvalsFilter: "pending",
+        approvals: [],
+        onSendCreatePatch: () => undefined,
+        onWalletDetailsWalletChange: () => undefined,
+        onApprovalsFilterChange: () => undefined,
+        onApproveRequest: () => undefined,
+        onRejectRequest: () => undefined,
+        onSetDefaultWallet: () => undefined,
+        onPasskeyLabelChange: () => undefined,
+        onEnablePasskeyApproval: () => undefined,
+        onEnrollPasskey: () => undefined,
+        onPatchSettings: () => undefined,
+        onActivityPageChange: () => undefined,
+        onRpcChainChange: () => undefined,
+        onPolicyDraftChange: () => undefined,
+        onSavePolicy: () => undefined,
+        onRefresh: () => undefined,
+        onCreateSendRequest: () => undefined,
+        miningProfile: { walletId: "wallet-mining" } as never,
+        miningReadiness: null,
+        miningStatus: null,
+      }),
+    );
+
+    expect(text).not.toContain("Asset Inventory");
+    expect(text).toContain("Balance");
+    expect(text).toContain("USDC");
+    expect(text).toContain("USD Coin");
+    expect(text).toContain("1.2");
+  });
+
+  it("collapses fallback mint-derived token identity in the send summary", () => {
+    const text = flattenTemplateText(
+      renderWalletForTest({
+        loading: false,
+        error: null,
+        status: {
+          capabilities: { canSend: true, canEditPolicy: true },
+          policy: { executionMode: "manual", directSigning: false },
+          approvalAuth: {
+            mode: "webauthn",
+            ready: true,
+            passkeyCount: 1,
+            notes: [],
+            passkeys: [],
+            statePath: "/tmp/passkeys.json",
+          },
+          custody: { mode: "single-key" },
+        } as never,
+        namedWallets,
+        balancesLoading: false,
+        balancesError: null,
+        balances: {
+          ok: true,
+          chain: "all",
+          provider: "embedded-keystore",
+          walletId: "wallet-mining",
+          walletName: "Mining Wallet",
+          balances: {
+            solana: {
+              ok: true,
+              chain: "solana",
+              balance: "3000000000",
+              unit: "lamports",
+            },
+          },
+          assets: {
+            solana: [
+              {
+                id: "solana:spl-token:unknown",
+                chain: "solana",
+                kind: "spl-token",
+                symbol: "2QWA…VFP7",
+                name: "Token 2QWA…VFP7",
+                amountRaw: "1445983921855608",
+                amountDisplay: "14459.83921855608",
+                decimals: 11,
+                unit: "raw",
+                isNative: false,
+                address: "Ata1111111111111111111111111111111111111111",
+                program: "2qwAVnGm1234567890123456789kg1jVfP7",
+                tokenProgramId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+              },
+            ],
+          },
+          checkedAt: "2026-04-09T12:00:00.000Z",
+        },
+        defaultWalletId: "wallet-agent",
+        settingsBusy: false,
+        settingsError: null,
+        settingsMessage: null,
+        settings: null,
+        rpcChain: "solana",
+        policySolMaxPerTx: "",
+        policySolMaxDaily: "",
+        actionMessage: null,
+        passkeyBusy: false,
+        passkeyError: null,
+        passkeyLabel: "",
+        auditEntries: [],
+        activityPage: 1,
+        sendModalVisible: true,
+        onSendModalOpen: () => undefined,
+        onSendModalClose: () => undefined,
+        sendCreateBusy: false,
+        sendCreateError: null,
+        sendCreateForm: {
+          chain: "solana",
+          walletId: "wallet-mining",
+          walletName: "Mining Wallet",
+          assetId: "solana:spl-token:unknown",
+          to: "",
+          amount: "",
+          program: "2qwAVnGm1234567890123456789kg1jVfP7",
+          memo: "",
+        },
+        walletDetailsWalletId: "wallet-mining",
+        approvalsLoading: false,
+        approvalsBusyId: null,
+        approvalsError: null,
+        approvalsFilter: "pending",
+        approvals: [],
+        onSendCreatePatch: () => undefined,
+        onWalletDetailsWalletChange: () => undefined,
+        onApprovalsFilterChange: () => undefined,
+        onApproveRequest: () => undefined,
+        onRejectRequest: () => undefined,
+        onSetDefaultWallet: () => undefined,
+        onPasskeyLabelChange: () => undefined,
+        onEnablePasskeyApproval: () => undefined,
+        onEnrollPasskey: () => undefined,
+        onPatchSettings: () => undefined,
+        onActivityPageChange: () => undefined,
+        onRpcChainChange: () => undefined,
+        onPolicyDraftChange: () => undefined,
+        onSavePolicy: () => undefined,
+        onRefresh: () => undefined,
+        onCreateSendRequest: () => undefined,
+        miningProfile: { walletId: "wallet-mining" } as never,
+        miningReadiness: null,
+        miningStatus: null,
+      }),
+    );
+
+    expect(text).toContain("2QWA…VFP7");
+    expect(text).toContain("14,459.8");
+    expect(text).not.toContain("SPL Mint (optional)");
+  });
+});

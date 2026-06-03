@@ -1,0 +1,136 @@
+#!/bin/bash
+# Setup FasedAgent Auth Management System
+# Run this once to set up:
+# 1. Long-lived Claude Code token
+# 2. Auth monitoring with notifications
+# 3. Instructions for Termux widgets
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+echo "=== FasedAgent Auth System Setup ==="
+echo ""
+
+# Step 1: Check current auth status
+echo "Step 1: Checking current auth status..."
+"$SCRIPT_DIR/claude-auth-status.sh" full || true
+echo ""
+
+# Step 2: Set up long-lived token
+echo "Step 2: Long-lived token setup"
+echo ""
+echo "Option A: Use 'claude setup-token' (recommended)"
+echo "  - Creates a long-lived API token"
+echo "  - No daily re-auth needed"
+echo "  - Run: claude setup-token"
+echo ""
+echo "Would you like to set up a long-lived token now? [y/N]"
+read -r SETUP_TOKEN
+
+if [[ "$SETUP_TOKEN" =~ ^[Yy] ]]; then
+    echo ""
+    echo "Opening https://console.anthropic.com/settings/api-keys"
+    echo "Create a new key or copy existing one, then paste below."
+    echo ""
+    claude setup-token
+fi
+
+echo ""
+
+# Step 3: Set up auth monitoring
+echo "Step 3: Auth monitoring setup"
+echo ""
+echo "The auth monitor checks expiry every 30 minutes and notifies you."
+echo ""
+echo "Configure notification channels:"
+echo ""
+
+# Check for ntfy
+echo "  ntfy.sh: Free push notifications to your phone"
+echo "  1. Install ntfy app on your phone"
+echo "  2. Subscribe to a topic (e.g., 'fased-alerts')"
+echo ""
+echo "Enter ntfy.sh topic (or leave blank to skip):"
+read -r NTFY_TOPIC
+
+# Phone notification
+echo ""
+echo "  FasedAgent message: Send warning via FasedAgent itself"
+echo "Enter your phone number for alerts (or leave blank to skip):"
+read -r PHONE_NUMBER
+
+systemd_env_value() {
+    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+# Install systemd units
+echo ""
+echo "Installing systemd timer..."
+mkdir -p ~/.config/systemd/user
+SERVICE_TARGET="$HOME/.config/systemd/user/fased-auth-monitor.service"
+TIMER_TARGET="$HOME/.config/systemd/user/fased-auth-monitor.timer"
+cat >"$SERVICE_TARGET" <<SERVICE
+[Unit]
+Description=FasedAgent Auth Expiry Monitor
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=$SCRIPT_DIR/auth-monitor.sh
+Environment=WARN_HOURS=2
+SERVICE
+if [ -n "$NTFY_TOPIC" ]; then
+    printf 'Environment=NOTIFY_NTFY="%s"\n' "$(systemd_env_value "$NTFY_TOPIC")" >>"$SERVICE_TARGET"
+fi
+if [ -n "$PHONE_NUMBER" ]; then
+    printf 'Environment=NOTIFY_PHONE="%s"\n' "$(systemd_env_value "$PHONE_NUMBER")" >>"$SERVICE_TARGET"
+fi
+cat >>"$SERVICE_TARGET" <<'SERVICE'
+
+[Install]
+WantedBy=default.target
+SERVICE
+cp "$SCRIPT_DIR/systemd/fased-auth-monitor.timer" ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now fased-auth-monitor.timer
+
+echo "Auth monitor installed and running."
+echo ""
+
+# Step 4: Termux widget setup
+echo "Step 4: Termux widget setup (for phone)"
+echo ""
+echo "To set up quick auth from your phone:"
+echo ""
+echo "1. Install Termux and Termux:Widget from F-Droid"
+echo "2. Create ~/.shortcuts/ directory in Termux:"
+echo "   mkdir -p ~/.shortcuts"
+echo ""
+echo "3. Copy the widget scripts:"
+echo "   scp $SCRIPT_DIR/termux-quick-auth.sh phone:~/.shortcuts/FasedAuth"
+echo "   scp $SCRIPT_DIR/termux-auth-widget.sh phone:~/.shortcuts/FasedAuth-Full"
+echo ""
+echo "4. Make them executable on phone:"
+echo "   ssh phone 'chmod +x ~/.shortcuts/FasedAuth*'"
+echo ""
+echo "5. Add Termux:Widget to your home screen"
+echo "6. Tap the widget to see your auth scripts"
+echo ""
+echo "The quick widget (FasedAuth) shows status and opens auth URL if needed."
+echo "The full widget (FasedAuth-Full) provides guided re-auth flow."
+echo ""
+
+# Summary
+echo "=== Setup Complete ==="
+echo ""
+echo "What's configured:"
+echo "  - Auth status: $SCRIPT_DIR/claude-auth-status.sh"
+echo "  - Mobile re-auth: $SCRIPT_DIR/mobile-reauth.sh"
+echo "  - Auth monitor: systemctl --user status fased-auth-monitor.timer"
+echo ""
+echo "Quick commands:"
+echo "  Check auth:  $SCRIPT_DIR/claude-auth-status.sh"
+echo "  Re-auth:     $SCRIPT_DIR/mobile-reauth.sh"
+echo "  Test monitor: $SCRIPT_DIR/auth-monitor.sh"
+echo ""

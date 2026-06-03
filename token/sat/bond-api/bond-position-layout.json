@@ -1,0 +1,35 @@
+{
+  "programId": "D1ySMMiJmvJRhJJKwYnc171w3g2JDPQnkgD8kGhaG4Vq",
+  "accountName": "BondPositionState",
+  "accountHeaderSize": 8,
+  "bodySize": 184,
+  "accountSize": 192,
+  "discriminator": 140,
+  "pdaSeed": "sat_bond_position",
+  "offsets": {
+    "version": 0,
+    "status": 1,
+    "tier": 2,
+    "bump": 3,
+    "policyVersion": 4,
+    "authority": 8,
+    "bondMint": 40,
+    "bondVault": 72,
+    "amountRaw": 104,
+    "createdAtSlot": 112,
+    "updatedAtSlot": 120,
+    "unlockRequestedAtSlot": 128,
+    "unlockAvailableAtSlot": 136
+  },
+  "status": {
+    "inactive": 0,
+    "active": 1,
+    "unlocking": 2,
+    "unlocked": 3
+  },
+  "tier": {
+    "none": 0,
+    "basic": 1,
+    "operator": 2
+  }
+}

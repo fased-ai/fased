@@ -1,0 +1,215 @@
+---
+summary: "CLI onboarding wizard for host/security, workspace, gateway, wallet, and mining setup."
+read_when:
+  - Running or configuring the onboarding wizard
+  - Setting up a new machine
+title: "Onboarding Wizard (CLI)"
+sidebarTitle: "Onboarding: CLI"
+---
+
+# Onboarding Wizard (CLI)
+
+The onboarding wizard is the **recommended** way to set up Fased on macOS,
+Linux, or Windows (via WSL2; strongly recommended).
+It configures the machine/runtime first: host profile, workspace, Gateway,
+local signer wallet state, optional singleton Mining wallet setup, and hosting
+security. Model providers, skills, extensions, channels, services, hooks,
+memory activation, tasks, and Agent assembly continue in the Control UI.
+Before choosing Local or Hosting, read the
+[First-run Setup Matrix](/start/setup-matrix).
+
+```bash
+fased onboard
+```
+
+<Info>
+Fastest first chat: open the Control UI (no channel setup needed). Run
+`fased dashboard` and chat in the browser. Docs: [Dashboard](/web/dashboard).
+</Info>
+
+<Tip>
+VPS setup: create the server, join it to Tailscale, then run `./install.sh --hosting`.
+Manual VPS setup does not require a Tailscale API key; use one only for
+non-interactive automation.
+</Tip>
+
+<Note>
+Hosting is not a remote-control option for a laptop session. Run the hosted
+installer on the VPS itself. If a normal `fased onboard` session cannot apply
+host security, it stops with “Hosted setup unavailable” instead of changing only
+part of the setup.
+</Note>
+
+To reconfigure later:
+
+```bash
+fased configure
+fased agents add <name>
+```
+
+<Note>
+`--json` does not imply non-interactive mode. For scripts, use `--non-interactive`.
+</Note>
+
+<Tip>
+Recommended: set up a Brave Search API key so the agent can use `web_search`
+(`web_fetch` works without a key). Easiest path: `Agent > Services`; CLI
+automation can use `fased configure --section web`, which stores
+`tools.web.search.apiKey`. Docs: [Web tools](/tools/web).
+</Tip>
+
+## QuickStart vs Advanced
+
+The wizard starts with **QuickStart** (defaults) vs **Advanced** (full control).
+
+<Tabs>
+  <Tab title="QuickStart (defaults)">
+    - Local gateway (loopback)
+    - Workspace default (or existing workspace)
+    - Gateway port **18789**
+    - Gateway auth **Token** (auto‑generated, even on loopback)
+    - DM isolation default: local onboarding writes `session.dmScope: "per-channel-peer"` when unset. Details: [CLI Onboarding Reference](/start/wizard-cli-reference#outputs-and-internals)
+    - Tailscale exposure **Off**
+    - Chat app channels are connected later from `Agent > Channels`
+  </Tab>
+  <Tab title="Advanced (full control)">
+    - Exposes profile, mode, workspace, gateway, Fased Network,
+      signer/wallet, daemon, health, and UI choices.
+    - Product setup continues in the Control UI after the Gateway is online.
+  </Tab>
+</Tabs>
+
+## What the wizard configures
+
+**Local mode (default)** walks you through these steps in this order:
+
+1. **QuickStart or Manual** — choose defaults or full control.
+2. **Setup profile** — choose Local or Hosting. Local is for this machine and
+   does not harden a VPS. Hosting is for a VPS or always-on server and requires
+   Tailscale.
+3. **Existing config** — update settings or repair auth/sessions if this
+   machine was already configured.
+4. **Workspace** — location for agent files (default `~/.fased/workspace`) and
+   bootstrap files.
+5. **Gateway** — how the Control UI, CLI, WebChat, and channels connect. Choose
+   port, bind address, and auth mode. Local setup keeps Tailscale out of the
+   basic path; Hosting requires Tailscale through host security.
+6. **Fased Network** — optional federation/managed routing setup.
+7. **Signer and Wallet** — policy-bound sends, receipts, mining, Marketplace,
+   and reviewed wallet-connected workflows. Wallet setup is not required for
+   normal chat.
+8. **Workspace bootstrap** — writes config and creates workspace/session state.
+9. **Hosting security** — applied only for the Hosting profile.
+10. **Daemon, health, and Control UI** — service startup, health checks, and
+    final dashboard/TUI choice.
+
+For Hosting, the wizard checks Tailscale before it applies SSH/firewall
+hardening. If Tailscale is missing, it tries to install it. If the host is not
+logged in, it can use `--ts-authkey` for unattended setup or show a browser
+login URL for normal manual setup. If Tailscale cannot provide a tailnet IP,
+Hosting refuses to continue because the remote dashboard and admin path depend
+on Tailscale.
+
+Model/API setup has moved to `Agent > Models` for normal users. Existing
+non-interactive provider flags still work for scripted installs, but first-run
+interactive onboarding does not ask you to choose every provider anymore.
+
+<Note>
+Re-running the wizard does **not** wipe durable instance setup.
+If an existing config is present, choose **Update settings** or **Repair auth/sessions**.
+Update settings starts from the existing config and keeps wallets, Tailscale account/device access, gateway port assumptions, and firewall state unless you explicitly edit those sections.
+Repair auth/sessions clears only the selected model/OAuth credential state and/or chat/session history. It keeps `fased.json`, gateway token/password, gateway settings, wallet assignments, SAT mining, Fased Network, plugins, Tailscale, and firewall state.
+CLI `fased onboard --reset` uses the same scoped repair flow and defaults to `auth+sessions`; use `--reset-scope sessions|auth|auth+sessions`.
+Use the explicit admin command `fased reset --scope ...` only when you intentionally want destructive config/state reset.
+If the config is invalid or contains legacy keys, the wizard asks you to run `fased doctor` first.
+</Note>
+
+**Remote mode** only configures the local client to connect to a Gateway elsewhere.
+It does **not** install or change anything on the remote host.
+Remote only connects to an existing gateway. Run Local or Hosting onboarding on
+the host first if the Gateway does not already exist.
+
+## What it does not do
+
+Onboarding gets the runtime online. It is not the whole operator path.
+
+After onboarding, you usually continue into one of these:
+
+- `/agents` in the Control UI for the Agent Setup checklist
+- `Agent > Models` to add a model API key or sign in and choose model refs
+- `Agent > Skills` to create, review, configure, edit, and allow abilities
+- `Agent > Channels` to connect Telegram, Discord, WhatsApp, and other app messages
+- `Agent > Services` to connect web/search, Gmail, Calendar, GitHub, browser/media, and APIs
+- `Agent > Memory` and `Agent > Tasks` to archive sessions and schedule work
+- [Dashboard](/web/dashboard) for normal day-to-day use
+- [Build with Fased](/start/fased) for the sovereign runtime path
+- [Wallet](/plugins/crypto/wallet-page) for wallet policy and wallet runtime
+- [Mining](/plugins/crypto/mining-page) for SAT operator setup
+
+## Wallet roles during onboarding
+
+The wallet setup path can assign wallet purpose directly during onboarding.
+
+The practical split is:
+
+- `agent` purpose for user-facing Agent wallets
+- one primary Agent wallet for fallback when no handle is supplied
+- `mining` purpose for SAT participation
+- `vault` purpose for manual-first storage or warm reserve
+- Fased Network bond uses a selected Vault wallet
+
+Chain type is separate from the name/id. Use `Agent` / `agent`, not `Agent SOL`; Wallet shows Solana separately.
+
+When you create a wallet, the wizard lets you pick Agent, Mining, or Vault, then edit the wallet display name once before creation. The permanent `walletId` is generated from the selected purpose, not from the display name.
+
+Only Agent and Vault can have multiple wallets:
+
+- second Agent wallet: default id `agent-2`; display name can be `Agent 2`, `Receipts`, `Operations`, or another user label
+- second Vault wallet: default id `vault-2`; display name can be `Vault 2`, `Cold`, `Archive`, or another user label
+
+Mining is one active configured wallet. To replace it, stop mining, clear
+pending work and funds, delete the old Mining wallet through guarded wallet
+management if needed, then create the new one.
+
+Wallets are persistent machine state. Wizard repair never deletes them. Delete a wallet only from wallet management, one wallet at a time, after saving recovery material and typing the exact wallet id. Tailscale is also persistent machine access; repair does not remove it, so log out or remove the device in Tailscale only when you intentionally want to cut access.
+
+Important distinction:
+
+- mining wallet is the active SAT working wallet
+- a Vault wallet can be assigned on Fased Network as the SAT lock-and-proof wallet
+- Agent wallets are for reviewed sends, receipts, and explicitly granted wallet-connected workflows
+- multiple Agent wallets are allowed, but risky actions should use explicit handles like `@wallet:agent`
+- display name is only a label; handle is always `@wallet:<walletId>`
+- wallet purpose is treated as permanent after creation; if you want a different purpose, create a new wallet instead of repurposing the old one
+
+Only a Vault wallet should be selected for Fased Network bond. Agent and Mining wallets are rejected for bond authority.
+
+## Add another agent
+
+Use Control UI > Agents for the normal Agent creation path. The CLI
+still supports `fased agents add <name>` for power users and automation.
+
+What it sets:
+
+- `agents.list[].name`
+- `agents.list[].workspace`
+- `agents.list[].agentDir`
+
+Notes:
+
+- Default workspaces follow `~/.fased/workspace-<agentId>`.
+- Add channel or task bindings from Control UI > Agents.
+- Non-interactive flags: `--model`, `--agent-dir`, `--bind`, `--non-interactive`.
+
+## Full reference
+
+For detailed step-by-step breakdowns, non-interactive scripting, Signal setup,
+RPC API, and a full list of config fields the wizard writes, see the
+[Wizard Reference](/reference/wizard).
+
+## Related docs
+
+- CLI command reference: [`fased onboard`](/cli/onboard)
+- First-run setup matrix: [Setup Matrix](/start/setup-matrix)
+- macOS app onboarding: [Onboarding](/start/onboarding)
+- Agent first-run ritual: [Agent Bootstrapping](/start/bootstrapping)

@@ -1,0 +1,1171 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FASED_DIR="$SCRIPT_DIR"
+SAT_RUNTIME_ENV_FILE="${FASED_SAT_RUNTIME_ENV_FILE:-$FASED_DIR/config/sat-runtime.env}"
+INSTALL_REPO_URL="${FASED_INSTALL_REPO:-https://github.com/fased-ai/agent.git}"
+INSTALL_BASE_DIR="${FASED_INSTALL_DIR:-$HOME/agent}"
+FASED_CONFIG_DIR="${FASED_CONFIG_DIR:-$HOME/.fased}"
+INSTALL_MARKER_PATH="$FASED_CONFIG_DIR/install-complete.json"
+INSTALL_CACHE_DIR="$FASED_CONFIG_DIR/install-cache"
+INSTALL_LOG_DIR="$FASED_CONFIG_DIR/logs"
+INSTALL_VERBOSE="${FASED_INSTALL_VERBOSE:-0}"
+AUTO_INSTALL=1
+RUN_ONBOARD=1
+HOSTING_REQUESTED=0
+REQUESTED_SWAP_GB=""
+TEMP_SUDOERS=""
+FASED_CLI_PATH=""
+
+pass_args=()
+
+if [[ -f "$SAT_RUNTIME_ENV_FILE" ]]; then
+  set -a
+  # shellcheck source=/dev/null
+  . "$SAT_RUNTIME_ENV_FILE"
+  set +a
+fi
+
+usage() {
+  cat <<'USAGE'
+Fased installer (single path): install.sh -> fased onboard --install-daemon
+
+Usage: ./install.sh [options] [-- <extra onboard args>]
+
+Options:
+  --auto-install   Linux only: install missing deps with apt (default)
+  --no-auto-install  Disable automatic dependency installation
+  --install-dir <path>  Checkout/install directory (default: $HOME/agent)
+  --hosting       VPS/always-on server profile. Requires Tailscale; applies hosted
+                  onboarding defaults and may change SSH/firewall behavior.
+  --local         Laptop/dev-box profile. Tailscale is optional; on a VPS this does
+                  not apply hosting SSH/firewall hardening.
+  --swap-gb <n>   Swap size to configure on very small Linux hosts (default: 2)
+  --no-onboard     Skip running onboard (install deps only)
+  --verbose       Show build/install command output instead of logging it
+  -h, --help       Show this help
+
+All other args are forwarded to:
+  fased onboard --install-daemon ...
+
+Remote client mode only connects to an existing Gateway. To use it, install
+the CLI and run or pass: fased onboard --mode remote
+USAGE
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --auto-install)
+      AUTO_INSTALL=1
+      ;;
+    --no-auto-install)
+      AUTO_INSTALL=0
+      ;;
+    --install-dir)
+      shift
+      if [[ $# -eq 0 ]]; then
+        echo "Missing value for --install-dir" >&2
+        exit 1
+      fi
+      INSTALL_BASE_DIR="$1"
+      ;;
+    --hosting)
+      HOSTING_REQUESTED=1
+      pass_args+=(--mode local --host-profile hosting --gateway-bind loopback --tailscale serve)
+      ;;
+    --local)
+      pass_args+=(--mode local --host-profile local --tailscale off)
+      ;;
+    --swap-gb)
+      shift
+      if [[ $# -eq 0 ]]; then
+        echo "Missing value for --swap-gb" >&2
+        exit 1
+      fi
+      REQUESTED_SWAP_GB="$1"
+      pass_args+=(--swap-gb "$1")
+      ;;
+    --no-onboard)
+      RUN_ONBOARD=0
+      ;;
+    --verbose)
+      INSTALL_VERBOSE=1
+      ;;
+    --host-security-capable)
+      pass_args+=(--host-security-capable)
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      while [[ $# -gt 0 ]]; do
+        pass_args+=("$1")
+        shift
+      done
+      break
+      ;;
+    *)
+      pass_args+=("$1")
+      ;;
+  esac
+  shift
+done
+
+resolve_requested_swap_gb() {
+  if [[ -n "$REQUESTED_SWAP_GB" ]]; then
+    printf '%s\n' "$REQUESTED_SWAP_GB"
+    return 0
+  fi
+  printf '2\n'
+}
+
+need_cmd() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+node_runtime_ok_for() {
+  local node_bin="$1"
+  [[ -n "$node_bin" && -x "$node_bin" ]] || return 1
+  "$node_bin" -e 'const [major, minor] = process.versions.node.split(".").map(Number); if (major < 22 || (major === 22 && minor < 14)) process.exit(2); try { require("node:sqlite"); } catch { process.exit(3); }' >/dev/null 2>&1
+}
+
+node_runtime_ok() {
+  need_cmd node || return 1
+  node_runtime_ok_for "$(command -v node)"
+}
+
+node_runtime_is_user_managed() {
+  need_cmd node || return 1
+  local node_bin
+  node_bin="$(command -v node)"
+  case "$node_bin" in
+    "$HOME"/.nvm/*|"$HOME"/.fnm/*|"$HOME"/.volta/*|"$HOME"/.asdf/*|"$HOME"/.local/share/mise/*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+node_runtime_issue() {
+  if ! need_cmd node; then
+    printf 'node is not installed'
+    return 0
+  fi
+  local node_bin
+  node_bin="$(command -v node)"
+  local version
+  version="$(node -v 2>/dev/null || printf 'unknown')"
+  if ! node -e 'const [major, minor] = process.versions.node.split(".").map(Number); process.exit(major > 22 || (major === 22 && minor >= 14) ? 0 : 1);' >/dev/null 2>&1; then
+    printf 'node %s at %s is too old; need Node 24 recommended or Node >=22.14.0 with node:sqlite' "$version" "$node_bin"
+    return 0
+  fi
+  if ! node -e 'require("node:sqlite")' >/dev/null 2>&1; then
+    printf 'node %s at %s was built without node:sqlite' "$version" "$node_bin"
+    return 0
+  fi
+  printf 'node runtime is compatible'
+}
+
+print_node_runtime_help() {
+  cat >&2 <<EOF_NODE
+Node runtime is incompatible: $(node_runtime_issue)
+
+Fased needs Node 24 recommended, or Node >=22.14.0, with the built-in node:sqlite module for full memory support.
+EOF_NODE
+  if node_runtime_is_user_managed; then
+    cat >&2 <<'EOF_NODE'
+Your active node appears to be managed by a user-level version manager, so install.sh will not replace it with sudo/apt automatically.
+
+For nvm:
+  nvm install 24
+  nvm use 24
+  corepack enable
+EOF_NODE
+  else
+    cat >&2 <<'EOF_NODE'
+Install the official NodeSource/Node.js 24 package or fix PATH so install.sh uses a compatible node.
+EOF_NODE
+  fi
+  cat >&2 <<'EOF_NODE'
+
+Quick check:
+  node -e 'require("node:sqlite"); console.log("node:sqlite ok")'
+EOF_NODE
+}
+
+prefer_compatible_user_node_if_available() {
+  local candidate
+  for candidate in \
+    "$HOME"/.nvm/versions/node/*/bin/node \
+    "$HOME"/.fnm/node-versions/*/installation/bin/node \
+    "$HOME"/.volta/bin/node \
+    "$HOME"/.asdf/shims/node \
+    "$HOME"/.local/share/mise/shims/node; do
+    [[ -e "$candidate" ]] || continue
+    if node_runtime_ok_for "$candidate"; then
+      export PATH="$(dirname "$candidate"):$PATH"
+      hash -r 2>/dev/null || true
+      return 0
+    fi
+  done
+  return 1
+}
+
+prefer_compatible_system_node_if_available() {
+  local candidate
+  for candidate in /usr/bin/node /usr/local/bin/node; do
+    if node_runtime_ok_for "$candidate"; then
+      export PATH="$(dirname "$candidate"):$PATH"
+      hash -r 2>/dev/null || true
+      return 0
+    fi
+  done
+  return 1
+}
+
+root_has_active_time_sync_service() {
+  if [[ "$(uname -s)" != "Linux" || "$(id -u)" -ne 0 ]] || ! need_cmd systemctl; then
+    return 1
+  fi
+  systemctl is-active --quiet systemd-timesyncd || \
+    systemctl is-active --quiet chronyd || \
+    systemctl is-active --quiet chrony
+}
+
+best_effort_enable_root_host_time_sync() {
+  if [[ "$(uname -s)" != "Linux" || "$(id -u)" -ne 0 ]]; then
+    return 0
+  fi
+
+  echo "== Ensure host clock sync for managed public runtime =="
+  if need_cmd timedatectl; then
+    timedatectl set-ntp true >/dev/null 2>&1 || true
+  fi
+
+  if need_cmd systemctl; then
+    systemctl enable --now systemd-timesyncd >/dev/null 2>&1 || \
+      systemctl restart systemd-timesyncd >/dev/null 2>&1 || true
+  fi
+
+  if root_has_active_time_sync_service; then
+    return 0
+  fi
+
+  if need_cmd apt-get; then
+    apt-get install -y chrony >/dev/null 2>&1 || true
+  fi
+  if need_cmd systemctl; then
+    systemctl enable --now chrony >/dev/null 2>&1 || \
+      systemctl enable --now chronyd >/dev/null 2>&1 || \
+      systemctl restart chrony >/dev/null 2>&1 || \
+      systemctl restart chronyd >/dev/null 2>&1 || true
+  fi
+  if need_cmd chronyc; then
+    chronyc -a makestep >/dev/null 2>&1 || true
+  fi
+}
+
+is_fased_repo_dir() {
+  local dir="$1"
+  [[ -f "$dir/package.json" && -d "$dir/src" ]]
+}
+
+resolve_fased_dir_from_base() {
+  local base="$1"
+  if is_fased_repo_dir "$base"; then
+    printf '%s\n' "$base"
+    return 0
+  fi
+  if is_fased_repo_dir "$base/agent/fased"; then
+    printf '%s\n' "$base/agent/fased"
+    return 0
+  fi
+  return 1
+}
+
+shell_quote() {
+  printf "%q" "$1"
+}
+
+install_user_cli_path_snippet() {
+  local bin_dir="$1"
+  local file="$2"
+  [[ -n "$bin_dir" && -n "$file" ]] || return 0
+  if [[ -f "$file" ]] && grep -F "$bin_dir" "$file" >/dev/null 2>&1; then
+    return 0
+  fi
+  if [[ -e "$file" && ! -w "$file" ]]; then
+    return 0
+  fi
+  {
+    printf '\n# Fased CLI\n'
+    printf 'case ":$PATH:" in\n'
+    printf '  *":%s:"*) ;;\n' "$bin_dir"
+    printf '  *) export PATH="%s:$PATH" ;;\n' "$bin_dir"
+    printf 'esac\n'
+  } >>"$file"
+}
+
+install_fased_cli_launcher() {
+  local launcher="$FASED_DIR/fased.mjs"
+  local bin_dir="${FASED_CLI_BIN_DIR:-$HOME/.local/bin}"
+  local target="$bin_dir/fased"
+
+  if [[ ! -f "$launcher" ]]; then
+    echo "CLI launcher missing: $launcher" >&2
+    exit 1
+  fi
+
+  mkdir -p "$bin_dir"
+  chmod 755 "$launcher" 2>/dev/null || true
+
+  if ! ln -sfn "$launcher" "$target" 2>/dev/null; then
+    {
+      printf '#!/usr/bin/env bash\n'
+      printf 'exec %s "$@"\n' "$(shell_quote "$launcher")"
+    } >"$target"
+    chmod 755 "$target"
+  fi
+
+  export PATH="$bin_dir:$PATH"
+  hash -r 2>/dev/null || true
+  FASED_CLI_PATH="$target"
+
+  install_user_cli_path_snippet "$bin_dir" "$HOME/.profile"
+  install_user_cli_path_snippet "$bin_dir" "$HOME/.bashrc"
+  install_user_cli_path_snippet "$bin_dir" "$HOME/.zshrc"
+
+  if ! "$FASED_CLI_PATH" --version >/dev/null 2>&1; then
+    echo "Installed CLI did not start correctly: $FASED_CLI_PATH" >&2
+    echo "Check $INSTALL_LOG_DIR and rerun ./install.sh --verbose." >&2
+    exit 1
+  fi
+
+  step_done "CLI installed"
+}
+
+pass_args_contains() {
+  local needle="$1"
+  local arg
+  for arg in "${pass_args[@]}"; do
+    if [[ "$arg" == "$needle" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+is_app_service_session() {
+  local current_user="${USER:-${LOGNAME:-}}"
+  local install_user="${FASED_INSTALL_USER:-app}"
+  [[ -n "$current_user" && "$current_user" == "$install_user" ]]
+}
+
+resolve_repo_root() {
+  if is_fased_repo_dir "$FASED_DIR"; then
+    (cd "$FASED_DIR" && pwd)
+    return 0
+  fi
+  (cd "$FASED_DIR/../.." && pwd)
+}
+
+json_escape() {
+  printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
+}
+
+read_marker_repo_path() {
+  if [[ ! -f "$INSTALL_MARKER_PATH" ]]; then
+    return 0
+  fi
+  if need_cmd node; then
+    node -e 'const fs=require("fs");try{const p=process.argv[1];const o=JSON.parse(fs.readFileSync(p,"utf8"));if(typeof o.repoPath==="string")process.stdout.write(o.repoPath);}catch{}' "$INSTALL_MARKER_PATH"
+    return 0
+  fi
+  sed -n 's/.*"repoPath"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$INSTALL_MARKER_PATH" | head -n 1
+}
+
+assert_marker_matches_repo() {
+  local repo_root="$1"
+  local marker_repo
+  marker_repo="$(read_marker_repo_path || true)"
+  if [[ -n "$marker_repo" && "$marker_repo" != "$repo_root" ]]; then
+    echo "Install marker mismatch." >&2
+    echo "Marker repoPath: $marker_repo" >&2
+    echo "Current repoPath: $repo_root" >&2
+    echo "Use the canonical repo path from marker, or remove $INSTALL_MARKER_PATH if you are intentionally moving installs." >&2
+    exit 1
+  fi
+}
+
+write_install_marker() {
+  local repo_root="$1"
+  local onboarding_completed="$2"
+  local escaped_repo
+  escaped_repo="$(json_escape "$repo_root")"
+  mkdir -p "$FASED_CONFIG_DIR"
+  chmod 700 "$FASED_CONFIG_DIR" 2>/dev/null || true
+  cat >"$INSTALL_MARKER_PATH" <<EOF
+{
+  "repoPath": "$escaped_repo",
+  "fasedDir": "$escaped_repo",
+  "onboardingCompleted": $onboarding_completed,
+  "updatedAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+EOF
+  chmod 600 "$INSTALL_MARKER_PATH" 2>/dev/null || true
+}
+
+upsert_env_var() {
+  local file="$1"
+  local key="$2"
+  local value="$3"
+  local tmp
+  tmp="$(mktemp)"
+  if [[ -f "$file" ]]; then
+    awk -v k="$key" -v v="$value" '
+      BEGIN { found = 0 }
+      $0 ~ ("^" k "=") { print k "=" v; found = 1; next }
+      { print }
+      END { if (!found) print k "=" v }
+    ' "$file" >"$tmp"
+  else
+    printf '%s=%s\n' "$key" "$value" >"$tmp"
+  fi
+  mv "$tmp" "$file"
+  chmod 600 "$file" 2>/dev/null || true
+}
+
+persist_managed_env_var() {
+  local key="$1"
+  local value="$2"
+  local env_file="$FASED_CONFIG_DIR/.env"
+  mkdir -p "$FASED_CONFIG_DIR"
+  chmod 700 "$FASED_CONFIG_DIR" 2>/dev/null || true
+  upsert_env_var "$env_file" "$key" "$value"
+}
+
+install_log_path() {
+  local label="$1"
+  local slug
+  slug="$(printf '%s' "$label" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g')"
+  mkdir -p "$INSTALL_LOG_DIR"
+  printf '%s/install-%s-%s.log\n' "$INSTALL_LOG_DIR" "$(date -u +%Y%m%dT%H%M%SZ)" "${slug:-step}"
+}
+
+step_start() {
+  local label="$1"
+  printf '• %s...\n' "$label"
+}
+
+step_done() {
+  local label="$1"
+  printf '✓ %s\n' "$label"
+}
+
+step_skip() {
+  local label="$1"
+  printf '✓ %s unchanged\n' "$label"
+}
+
+SPINNER_PID=""
+
+spinner_start() {
+  local label="$1"
+  if [[ "$INSTALL_VERBOSE" == "1" || ! -t 1 ]]; then
+    step_start "$label"
+    return 0
+  fi
+  (
+    local frame
+    while true; do
+      for frame in '-' '\' '|' '/'; do
+        printf '\r• %s %s' "$label" "$frame"
+        sleep 0.12
+      done
+    done
+  ) &
+  SPINNER_PID="$!"
+}
+
+spinner_clear() {
+  if [[ -n "${SPINNER_PID:-}" ]]; then
+    kill "$SPINNER_PID" >/dev/null 2>&1 || true
+    wait "$SPINNER_PID" 2>/dev/null || true
+    SPINNER_PID=""
+    if [[ -t 1 ]]; then
+      printf '\r\033[K'
+    fi
+  fi
+}
+
+spinner_done() {
+  local label="$1"
+  spinner_clear
+  step_done "$label"
+}
+
+spinner_failed() {
+  local label="$1"
+  spinner_clear
+  printf '✕ %s\n' "$label" >&2
+}
+
+run_logged_in() {
+  local dir="$1"
+  local label="$2"
+  shift 2
+  local log_path
+  log_path="$(install_log_path "$label")"
+  spinner_start "$label"
+  if [[ "$INSTALL_VERBOSE" == "1" ]]; then
+    (cd "$dir" && "$@")
+    local verbose_status=$?
+    if [[ "$verbose_status" -eq 0 ]]; then
+      spinner_done "$label"
+    else
+      spinner_failed "$label"
+    fi
+    return "$verbose_status"
+  fi
+  if (cd "$dir" && "$@") >"$log_path" 2>&1; then
+    spinner_done "$label"
+    return 0
+  fi
+  spinner_failed "$label"
+  echo "Failed: $label" >&2
+  echo "Log: $log_path" >&2
+  tail -n 80 "$log_path" >&2 || true
+  return 1
+}
+
+fingerprint_targets() {
+  local root="$1"
+  shift
+  local tmp
+  tmp="$(mktemp)"
+  local rel
+  for rel in "$@"; do
+    if [[ -d "$root/$rel" ]]; then
+      find "$root/$rel" \
+        -type f \
+        ! -path '*/node_modules/*' \
+        ! -path '*/dist/*' \
+        ! -path '*/.turbo/*' \
+        ! -path '*/.vite/*' \
+        -print >>"$tmp"
+    elif [[ -f "$root/$rel" ]]; then
+      printf '%s\n' "$root/$rel" >>"$tmp"
+    fi
+  done
+  if [[ ! -s "$tmp" ]]; then
+    rm -f "$tmp"
+    printf 'empty\n'
+    return 0
+  fi
+  sort -u "$tmp" | while IFS= read -r file; do
+    if need_cmd sha256sum; then
+      sha256sum "$file"
+    elif need_cmd shasum; then
+      shasum -a 256 "$file"
+    else
+      cksum "$file"
+    fi
+  done | if need_cmd sha256sum; then
+    sha256sum
+  elif need_cmd shasum; then
+    shasum -a 256
+  else
+    cksum
+  fi | awk '{print $1}'
+  rm -f "$tmp"
+}
+
+cache_file_for() {
+  local name="$1"
+  mkdir -p "$INSTALL_CACHE_DIR"
+  printf '%s/%s.sha256\n' "$INSTALL_CACHE_DIR" "$name"
+}
+
+cache_matches() {
+  local name="$1"
+  local fingerprint="$2"
+  local cache_file
+  cache_file="$(cache_file_for "$name")"
+  [[ -f "$cache_file" && "$(cat "$cache_file" 2>/dev/null)" == "$fingerprint" ]]
+}
+
+write_cache() {
+  local name="$1"
+  local fingerprint="$2"
+  local cache_file
+  cache_file="$(cache_file_for "$name")"
+  printf '%s\n' "$fingerprint" >"$cache_file"
+}
+
+reexec_as_app_user() {
+  local target_user="${FASED_INSTALL_USER:-app}"
+  local target_home
+  if ! id -u "$target_user" >/dev/null 2>&1; then
+    echo "== Root bootstrap: creating non-root user '$target_user' =="
+    if need_cmd useradd; then
+      useradd -m -s /bin/bash "$target_user"
+    else
+      adduser --disabled-password --gecos "" --shell /bin/bash "$target_user"
+    fi
+    usermod -aG sudo "$target_user" 2>/dev/null || true
+  fi
+
+  target_home="$(getent passwd "$target_user" | cut -d: -f6)"
+  if [[ -z "$target_home" ]]; then
+    target_home="/home/$target_user"
+  fi
+  local target_install_dir="${FASED_INSTALL_DIR:-$INSTALL_BASE_DIR}"
+  if [[ -z "${FASED_INSTALL_DIR:-}" && "$target_install_dir" == "$HOME/agent" && "$target_home" != "$HOME" ]]; then
+    target_install_dir="$target_home/agent"
+  fi
+  local target_repo_dir=""
+
+  echo "== Root bootstrap: preparing repo for '$target_user' at $target_install_dir =="
+  bootstrap_repo_for_target_user "$target_user" "$target_install_dir"
+
+  target_repo_dir="$(resolve_fased_dir_from_base "$target_install_dir" || true)"
+  if [[ -z "$target_repo_dir" ]]; then
+    echo "Install bootstrap failed: could not find Fased repo under $target_install_dir" >&2
+    echo "Expected either a standalone repo checkout or a nested agent/fased checkout." >&2
+    exit 1
+  fi
+
+  local cmd="cd $(shell_quote "$target_repo_dir") && ./install.sh"
+  cmd+=" --host-security-capable"
+  for arg in "${pass_args[@]}"; do
+    cmd+=" $(shell_quote "$arg")"
+  done
+
+  if [[ "$RUN_ONBOARD" -eq 1 ]]; then
+    TEMP_SUDOERS="/etc/sudoers.d/fased-install-${target_user}"
+    echo "== Root bootstrap: granting temporary passwordless sudo to '$target_user' for onboarding =="
+    printf '%s ALL=(ALL) NOPASSWD:ALL\n' "$target_user" >"$TEMP_SUDOERS"
+    chmod 440 "$TEMP_SUDOERS"
+  fi
+
+  cleanup_temp_sudoers() {
+    if [[ -n "${TEMP_SUDOERS:-}" && -f "$TEMP_SUDOERS" ]]; then
+      rm -f "$TEMP_SUDOERS"
+    fi
+  }
+  trap cleanup_temp_sudoers EXIT
+
+  echo "== Root bootstrap: re-executing installer as '$target_user' =="
+  if need_cmd sudo; then
+    sudo -u "$target_user" -H bash -lc "$cmd"
+    exit $?
+  fi
+  runuser -u "$target_user" -- bash -lc "$cmd"
+  exit $?
+}
+
+go_modern_enough() {
+  local gocmd=""
+  if [[ -x /usr/local/go/bin/go ]]; then
+    gocmd="/usr/local/go/bin/go"
+  elif need_cmd go; then
+    gocmd="$(command -v go)"
+  else
+    return 1
+  fi
+  local v
+  v="$("$gocmd" version 2>/dev/null | awk '{print $3}' | sed 's/^go//')"
+  local major minor
+  major="$(echo "$v" | cut -d. -f1)"
+  minor="$(echo "$v" | cut -d. -f2)"
+  [[ "${major:-0}" -gt 1 ]] || ([[ "${major:-0}" -eq 1 ]] && [[ "${minor:-0}" -ge 21 ]])
+}
+
+detect_total_mem_mb() {
+  if [[ -r /proc/meminfo ]]; then
+    awk '/^MemTotal:/ { printf "%d\n", $2 / 1024; exit }' /proc/meminfo
+    return 0
+  fi
+  if need_cmd getconf; then
+    local pages page_size
+    pages="$(getconf _PHYS_PAGES 2>/dev/null || true)"
+    page_size="$(getconf PAGE_SIZE 2>/dev/null || true)"
+    if [[ -n "$pages" && -n "$page_size" ]]; then
+      printf '%d\n' "$((pages * page_size / 1024 / 1024))"
+      return 0
+    fi
+  fi
+  printf '0\n'
+}
+
+has_active_swap() {
+  if ! need_cmd swapon; then
+    return 1
+  fi
+  swapon --show 2>/dev/null | tail -n +2 | grep -q .
+}
+
+ensure_low_memory_swap_if_possible() {
+  if [[ "$(uname -s)" != "Linux" ]]; then
+    return 0
+  fi
+
+  local total_mem_mb
+  total_mem_mb="$(detect_total_mem_mb)"
+  if [[ -z "$total_mem_mb" || "$total_mem_mb" -eq 0 || "$total_mem_mb" -gt 1536 ]]; then
+    return 0
+  fi
+  if has_active_swap; then
+    return 0
+  fi
+  local swap_gb
+  swap_gb="$(resolve_requested_swap_gb)"
+  if [[ -z "$swap_gb" || "$swap_gb" == "0" ]]; then
+    return 0
+  fi
+
+  local runner=()
+  if [[ "$(id -u)" -eq 0 ]]; then
+    runner=()
+  elif need_cmd sudo && sudo -n true >/dev/null 2>&1; then
+    runner=(sudo -n)
+  else
+    echo "== Low-memory host detected (${total_mem_mb} MiB RAM) but no swap is active =="
+    echo "== Continuing without automatic swap because passwordless sudo is unavailable =="
+    return 0
+  fi
+
+  echo "== Low-memory host detected (${total_mem_mb} MiB RAM); configuring ${swap_gb}G swap for install stability =="
+  "${runner[@]}" fallocate -l "${swap_gb}G" /swapfile || \
+    "${runner[@]}" dd if=/dev/zero of=/swapfile bs=1M count=$((swap_gb * 1024)) status=none
+  "${runner[@]}" chmod 600 /swapfile
+  "${runner[@]}" mkswap /swapfile >/dev/null
+  "${runner[@]}" swapon /swapfile
+  if [[ "${runner[*]}" == sudo\ -n ]]; then
+    sudo -n grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' | sudo -n tee -a /etc/fstab >/dev/null
+  else
+    grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  fi
+}
+
+pnpm_install_with_adaptive_profile() {
+  local total_mem_mb
+  total_mem_mb="$(detect_total_mem_mb)"
+  local child_concurrency=2
+  local network_concurrency=8
+  local retry_child_concurrency=1
+  local retry_network_concurrency=2
+  local node_opts="${NODE_OPTIONS:-}"
+
+  if [[ -n "$total_mem_mb" && "$total_mem_mb" -gt 0 ]]; then
+    if [[ "$total_mem_mb" -le 1536 ]]; then
+      child_concurrency=1
+      network_concurrency=2
+      retry_network_concurrency=1
+      node_opts="${node_opts}${node_opts:+ }--max-old-space-size=512"
+    elif [[ "$total_mem_mb" -le 2304 ]]; then
+      child_concurrency=1
+      network_concurrency=4
+      node_opts="${node_opts}${node_opts:+ }--max-old-space-size=768"
+    fi
+  fi
+
+  spinner_start "Installing dependencies"
+  local install_log
+  install_log="$(install_log_path "pnpm install")"
+  if [[ "$INSTALL_VERBOSE" == "1" ]]; then
+    env NODE_OPTIONS="$node_opts" pnpm --dir "$FASED_DIR" install --child-concurrency="$child_concurrency" --network-concurrency="$network_concurrency"
+    local verbose_status=$?
+    if [[ "$verbose_status" -eq 0 ]]; then
+      spinner_done "Dependencies ready"
+    else
+      spinner_failed "Installing dependencies"
+    fi
+    return "$verbose_status"
+  fi
+  if env NODE_OPTIONS="$node_opts" pnpm --dir "$FASED_DIR" install --child-concurrency="$child_concurrency" --network-concurrency="$network_concurrency" >"$install_log" 2>&1; then
+    spinner_done "Dependencies ready"
+    return 0
+  fi
+
+  spinner_clear
+  echo "Dependency install needed a slower retry."
+  ensure_low_memory_swap_if_possible || true
+  local retry_log
+  retry_log="$(install_log_path "pnpm install retry")"
+  spinner_start "Retrying dependencies"
+  env NODE_OPTIONS="${node_opts}${node_opts:+ }--max-old-space-size=512" \
+    pnpm --dir "$FASED_DIR" install --child-concurrency="$retry_child_concurrency" --network-concurrency="$retry_network_concurrency" >"$retry_log" 2>&1 || {
+      spinner_failed "Retrying dependencies"
+      echo "Failed: dependency install" >&2
+      echo "Log: $install_log" >&2
+      echo "Retry log: $retry_log" >&2
+      tail -n 80 "$retry_log" >&2 || true
+      return 1
+    }
+  spinner_done "Dependencies ready"
+}
+
+install_modern_go_linux() {
+  local arch
+  arch="$(dpkg --print-architecture 2>/dev/null || uname -m)"
+  case "$arch" in
+    amd64|x86_64) arch="amd64" ;;
+    arm64|aarch64) arch="arm64" ;;
+    *) echo "Unsupported CPU arch for Go auto-install: $arch" >&2; return 1 ;;
+  esac
+  local goversion="${FASED_GO_VERSION:-1.23.6}"
+  local url="https://go.dev/dl/go${goversion}.linux-${arch}.tar.gz"
+  local tmp
+  tmp="$(mktemp)"
+  curl -fsSL "$url" -o "$tmp"
+  sudo rm -rf /usr/local/go
+  sudo tar -C /usr/local -xzf "$tmp"
+  rm -f "$tmp"
+  sudo ln -sf /usr/local/go/bin/go /usr/local/bin/go
+}
+
+ensure_early_swap_for_hosting() {
+  if [[ "$HOSTING_REQUESTED" -ne 1 || "$(uname -s)" != "Linux" || "$(id -u)" -ne 0 ]]; then
+    return 0
+  fi
+
+  local swap_gb
+  swap_gb="$(resolve_requested_swap_gb)"
+  if [[ -z "$swap_gb" || "$swap_gb" == "0" ]]; then
+    return 0
+  fi
+
+  if swapon --show | tail -n +2 | grep -q .; then
+    return 0
+  fi
+
+  echo "== Root bootstrap: configuring ${swap_gb}G swap before dependency install =="
+  fallocate -l "${swap_gb}G" /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=$((swap_gb * 1024)) status=none
+  chmod 600 /swapfile
+  mkswap /swapfile >/dev/null
+  swapon /swapfile
+  grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+}
+
+install_missing_deps_as_root_if_needed() {
+  if [[ "$AUTO_INSTALL" -ne 1 || "$(uname -s)" != "Linux" || "$(id -u)" -ne 0 ]]; then
+    return 0
+  fi
+
+  local missing=()
+  for cmd in git curl pnpm go; do
+    need_cmd "$cmd" || missing+=("$cmd")
+  done
+  if ! need_cmd node; then
+    missing+=("node")
+  fi
+
+  if [[ ${#missing[@]} -eq 0 ]] && node_runtime_ok && go_modern_enough; then
+    return 0
+  fi
+
+  echo "== Root bootstrap: installing missing system dependencies =="
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    echo "Missing dependencies: ${missing[*]}"
+  fi
+  if ! node_runtime_ok; then
+    echo "Node runtime is incompatible: $(node_runtime_issue)"
+  fi
+  if ! go_modern_enough; then
+    echo "Go toolchain is missing or too old (need Go >= 1.21 for native signer)."
+  fi
+
+  apt-get update
+  apt-get install -y git curl ca-certificates
+  if ! node_runtime_ok; then
+    curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
+    apt-get install -y nodejs
+    prefer_compatible_system_node_if_available || true
+  fi
+  if ! need_cmd pnpm; then
+    corepack enable || true
+    corepack prepare pnpm@latest --activate || npm install -g pnpm
+  fi
+  if ! go_modern_enough; then
+    install_modern_go_linux
+  fi
+}
+
+bootstrap_repo_for_target_user() {
+  local target_user="$1"
+  local target_install_dir="$2"
+  local source_repo=""
+
+  ensure_checkout_origin_remote() {
+    local repo_dir="$1"
+    local origin_url=""
+
+    if [[ ! -d "$repo_dir/.git" ]]; then
+      return 0
+    fi
+
+    origin_url="$(git -C "$repo_dir" remote get-url origin 2>/dev/null || true)"
+    if [[ -z "$origin_url" ]]; then
+      git -C "$repo_dir" remote add origin "$INSTALL_REPO_URL"
+      return 0
+    fi
+
+    case "$origin_url" in
+      /*|file://*)
+        git -C "$repo_dir" remote set-url origin "$INSTALL_REPO_URL"
+        ;;
+    esac
+  }
+
+  if is_fased_repo_dir "$FASED_DIR"; then
+    source_repo="$(cd "$FASED_DIR" && pwd)"
+  fi
+
+  mkdir -p "$(dirname "$target_install_dir")"
+  if [[ ! -e "$target_install_dir" ]]; then
+    if [[ -n "$source_repo" && -d "$source_repo/.git" ]]; then
+      echo "== Root bootstrap: copying current checkout into $target_install_dir =="
+      git clone --local --no-hardlinks "$source_repo" "$target_install_dir"
+      ensure_checkout_origin_remote "$target_install_dir"
+    else
+      echo "== Root bootstrap: cloning repository into $target_install_dir =="
+      git clone "$INSTALL_REPO_URL" "$target_install_dir"
+    fi
+  elif [[ -d "$target_install_dir/.git" || -d "$target_install_dir/agent/fased" ]]; then
+    if [[ -n "$source_repo" && -d "$source_repo/.git" ]]; then
+      local source_head=""
+      local target_head=""
+      source_head="$(git -C "$source_repo" rev-parse HEAD 2>/dev/null || true)"
+      target_head="$(git -C "$target_install_dir" rev-parse HEAD 2>/dev/null || true)"
+      if [[ -n "$source_head" && "$source_head" != "$target_head" ]]; then
+        local temp_clone="${target_install_dir}.refresh.$$"
+        rm -rf "$temp_clone"
+        echo "== Root bootstrap: refreshing $target_install_dir from current checkout =="
+        git clone --local --no-hardlinks "$source_repo" "$temp_clone"
+        ensure_checkout_origin_remote "$temp_clone"
+        rm -rf "$target_install_dir"
+        mv "$temp_clone" "$target_install_dir"
+      else
+        echo "== Root bootstrap: existing repository detected, reusing $target_install_dir =="
+      fi
+    else
+      echo "== Root bootstrap: existing repository detected, reusing $target_install_dir =="
+    fi
+  else
+    echo "Refusing to overwrite existing path: $target_install_dir" >&2
+    echo "That path exists but is not a recognized fased repository checkout." >&2
+    echo "Set FASED_INSTALL_DIR to a new directory or clean the existing one, then rerun." >&2
+    exit 1
+  fi
+
+  ensure_checkout_origin_remote "$target_install_dir"
+
+  chown -R "$target_user:$target_user" "$target_install_dir" 2>/dev/null || true
+}
+
+install_host_maintenance_sudoers() {
+  local target_user="$1"
+  local sudoers_path="/etc/sudoers.d/fased-host-maintenance-${target_user}"
+  cat >"$sudoers_path" <<EOF
+${target_user} ALL=(root) NOPASSWD: /usr/bin/tailscale *
+${target_user} ALL=(root) NOPASSWD: /usr/sbin/ufw *
+${target_user} ALL=(root) NOPASSWD: /usr/bin/timedatectl set-ntp true
+${target_user} ALL=(root) NOPASSWD: /usr/bin/timedatectl status
+${target_user} ALL=(root) NOPASSWD: /usr/bin/timedatectl timesync-status
+${target_user} ALL=(root) NOPASSWD: /usr/bin/chronyc -a makestep
+${target_user} ALL=(root) NOPASSWD: /usr/bin/apt-get update
+${target_user} ALL=(root) NOPASSWD: /usr/bin/apt-get install -y ufw
+${target_user} ALL=(root) NOPASSWD: /usr/bin/apt-get install -y fail2ban
+${target_user} ALL=(root) NOPASSWD: /usr/bin/apt-get install -y chrony
+${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl daemon-reload
+${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now systemd-timesyncd
+${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl restart systemd-timesyncd
+${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now chrony
+${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now chronyd
+${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl restart chrony
+${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl restart chronyd
+${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now fail2ban
+${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl restart ssh
+${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl restart sshd
+${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl restart fased-gateway.service
+${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl restart --no-block fased-gateway.service
+${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl start --no-block fased-gateway.service
+${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now fased-gateway.service
+${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl status fased-gateway.service
+${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl is-active fased-gateway.service
+${target_user} ALL=(root) NOPASSWD: /usr/bin/sed -i * /etc/ssh/sshd_config
+EOF
+  chmod 440 "$sudoers_path"
+  if need_cmd visudo; then
+    visudo -cf "$sudoers_path" >/dev/null
+  fi
+}
+
+if [[ "$(id -u)" -eq 0 ]]; then
+  install_host_maintenance_sudoers "${FASED_INSTALL_USER:-app}"
+  ensure_early_swap_for_hosting
+  install_missing_deps_as_root_if_needed
+  best_effort_enable_root_host_time_sync
+  reexec_as_app_user
+fi
+
+if [[ ! -f "$FASED_DIR/package.json" || ! -d "$FASED_DIR/src" ]]; then
+  echo "== Bootstrap repository =="
+  if ! need_cmd git; then
+    echo "git is required to bootstrap the repository checkout." >&2
+    exit 1
+  fi
+  if [[ ! -e "$INSTALL_BASE_DIR" ]]; then
+    mkdir -p "$(dirname "$INSTALL_BASE_DIR")"
+    git clone "$INSTALL_REPO_URL" "$INSTALL_BASE_DIR"
+  elif [[ -d "$INSTALL_BASE_DIR/.git" || -d "$INSTALL_BASE_DIR/agent/fased" ]]; then
+    :
+  else
+    echo "Refusing to overwrite existing path: $INSTALL_BASE_DIR" >&2
+    echo "That path exists but is not a recognized fased repository checkout." >&2
+    echo "Set --install-dir to a new directory or clean the existing one, then rerun." >&2
+    exit 1
+  fi
+  BOOTSTRAP_REPO_DIR="$(resolve_fased_dir_from_base "$INSTALL_BASE_DIR" || true)"
+  if [[ -z "$BOOTSTRAP_REPO_DIR" ]]; then
+    echo "Bootstrap failed: could not find install.sh under $INSTALL_BASE_DIR" >&2
+    echo "Expected either a standalone repo checkout or a nested agent/fased checkout." >&2
+    exit 1
+  fi
+  exec "$BOOTSTRAP_REPO_DIR/install.sh" "${pass_args[@]}"
+fi
+
+if [[ "$(id -u)" -ne 0 ]] && ! pass_args_contains "--host-security-capable" && is_app_service_session; then
+  pass_args+=(--host-maintenance-session)
+fi
+
+REPO_ROOT="$(resolve_repo_root)"
+assert_marker_matches_repo "$REPO_ROOT"
+prefer_compatible_user_node_if_available || prefer_compatible_system_node_if_available || true
+export COREPACK_HOME="${COREPACK_HOME:-$INSTALL_CACHE_DIR/corepack}"
+export COREPACK_ENABLE_DOWNLOAD_PROMPT="${COREPACK_ENABLE_DOWNLOAD_PROMPT:-0}"
+export npm_config_cache="${npm_config_cache:-$INSTALL_CACHE_DIR/npm-cache}"
+mkdir -p "$COREPACK_HOME" "$npm_config_cache"
+
+missing=()
+for cmd in git curl pnpm go; do
+  need_cmd "$cmd" || missing+=("$cmd")
+done
+if ! need_cmd node; then
+  missing+=("node")
+fi
+
+if [[ ${#missing[@]} -gt 0 || ! node_runtime_ok || ! go_modern_enough ]]; then
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    echo "Missing dependencies: ${missing[*]}"
+  fi
+  if ! node_runtime_ok && node_runtime_is_user_managed; then
+    print_node_runtime_help
+    exit 1
+  fi
+  if ! node_runtime_ok; then
+    echo "Node runtime is incompatible: $(node_runtime_issue)"
+  fi
+  if ! go_modern_enough; then
+    echo "Go toolchain is missing or too old (need Go >= 1.21 for native signer)."
+  fi
+  if [[ "$AUTO_INSTALL" -eq 1 && "$(uname -s)" == "Linux" ]]; then
+    if ! need_cmd sudo; then
+      echo "sudo is required for --auto-install" >&2
+      exit 1
+    fi
+    sudo apt-get update
+    sudo apt-get install -y git curl ca-certificates
+    if ! node_runtime_ok; then
+      curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
+      sudo apt-get install -y nodejs
+      prefer_compatible_system_node_if_available || true
+    fi
+    if ! need_cmd pnpm; then
+      sudo corepack enable || true
+      corepack enable || true
+      corepack prepare pnpm@latest --activate || npm install -g pnpm
+    fi
+    if ! go_modern_enough; then
+      install_modern_go_linux
+    fi
+  else
+    cat <<'EOF_HELP'
+Install missing tools, then rerun install.sh:
+  - git
+  - curl
+  - node (Node 24 recommended, or v22.14+ with node:sqlite)
+  - pnpm
+  - go >= 1.21 (required for native signer build/install)
+
+Linux auto install:
+  ./install.sh --auto-install
+
+Disable auto install:
+  ./install.sh --no-auto-install
+EOF_HELP
+    exit 1
+  fi
+fi
+
+if ! node_runtime_ok; then
+  print_node_runtime_help
+  exit 1
+fi
+
+FASED_INSTALL_VERSION="$(node -e 'const fs=require("fs");try{const p=process.argv[1];const o=JSON.parse(fs.readFileSync(p,"utf8"));process.stdout.write(o.version||"0.0.0")}catch{process.stdout.write("0.0.0")}' "$FASED_DIR/package.json" 2>/dev/null || printf '0.0.0')"
+printf '\nFased Agent v%s\n' "$FASED_INSTALL_VERSION"
+printf 'Setup\n\n'
+
+export CI="${CI:-1}"
+export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+ensure_low_memory_swap_if_possible
+pnpm_install_with_adaptive_profile
+
+if [[ -z "${FASED_SAT_PROGRAM_ID:-}" || -z "${FASED_SAT_BOND_PROGRAM_ID:-}" || -z "${FASED_SAT_MINT_ADDRESS:-}" || -z "${FASED_SAT_MINT_PROGRAM_ID:-}" ]]; then
+  echo "Missing SAT runtime ids. Expected all ids in $SAT_RUNTIME_ENV_FILE or the environment." >&2
+  exit 1
+fi
+persist_managed_env_var "FASED_SAT_PROGRAM_ID" "$FASED_SAT_PROGRAM_ID"
+persist_managed_env_var "FASED_SAT_BOND_PROGRAM_ID" "$FASED_SAT_BOND_PROGRAM_ID"
+persist_managed_env_var "FASED_SAT_MINT_ADDRESS" "$FASED_SAT_MINT_ADDRESS"
+persist_managed_env_var "FASED_SAT_MINT_PROGRAM_ID" "$FASED_SAT_MINT_PROGRAM_ID"
+export FASED_SAT_BOND_LAYOUT_PATH="${FASED_SAT_BOND_LAYOUT_PATH:-$FASED_DIR/token/sat/bond-api/bond-position-layout.json}"
+export FASED_SAT_BOND_POLICY_LAYOUT_PATH="${FASED_SAT_BOND_POLICY_LAYOUT_PATH:-$FASED_DIR/token/sat/bond-api/bond-tier-policy-layout.json}"
+
+core_fingerprint="$(fingerprint_targets "$FASED_DIR" package.json pnpm-lock.yaml tsconfig.json tsdown.config.ts src scripts extensions config tools/fased-signerd)"
+if [[ -f "$FASED_DIR/dist/entry.js" && -f "$FASED_DIR/dist/index.js" ]] && cache_matches "core-build" "$core_fingerprint"; then
+  step_skip "Core build"
+else
+  rm -rf "$FASED_DIR/dist"
+  run_logged_in "$FASED_DIR" "Build core" pnpm --silent run build:fast
+  write_cache "core-build" "$core_fingerprint"
+fi
+
+ui_fingerprint="$(fingerprint_targets "$FASED_DIR" package.json pnpm-lock.yaml ui/package.json ui/vite.config.ts ui/tsconfig.json ui/index.html ui/src)"
+if [[ -f "$FASED_DIR/dist/control-ui/index.html" ]] && cache_matches "control-ui-build" "$ui_fingerprint"; then
+  step_skip "Control UI"
+else
+  run_logged_in "$FASED_DIR" "Build Control UI" pnpm --silent run ui:build
+  write_cache "control-ui-build" "$ui_fingerprint"
+fi
+
+install_fased_cli_launcher
+
+if [[ "$RUN_ONBOARD" -eq 0 ]]; then
+  write_install_marker "$REPO_ROOT" "false"
+  echo "Onboarding skipped (--no-onboard)."
+  echo "Run when ready: fased onboard --install-daemon"
+  exit 0
+fi
+
+step_start "Opening onboarding"
+(cd "$FASED_DIR" && FASED_INSTALLER_ONBOARD=1 "$FASED_CLI_PATH" onboard --install-daemon "${pass_args[@]}")
+write_install_marker "$REPO_ROOT" "true"
+
+echo
+step_done "Setup complete"

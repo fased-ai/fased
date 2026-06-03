@@ -1,0 +1,815 @@
+import { createHash } from "node:crypto";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import os from "node:os";
+import path from "node:path";
+import { PassThrough } from "node:stream";
+import { describe, expect, test, vi } from "vitest";
+import { initializeWalletCustodyCeremony } from "../wallet/wallet-custody.js";
+import type { ResolvedGatewayAuth } from "./auth.js";
+import { createGatewayHttpServer } from "./server-http.js";
+
+vi.mock("https-proxy-agent", () => ({
+  HttpsProxyAgent: class {},
+}));
+
+async function withTempConfig(params: { cfg: unknown; run: () => Promise<void> }): Promise<void> {
+  const prevConfigPath = process.env.FASED_CONFIG_PATH;
+  const prevDisableCache = process.env.FASED_DISABLE_CONFIG_CACHE;
+  const dir = await mkdtemp(path.join(os.tmpdir(), "fased-wallet-auth-http-test-"));
+  const configPath = path.join(dir, "fased.json");
+  process.env.FASED_CONFIG_PATH = configPath;
+  process.env.FASED_DISABLE_CONFIG_CACHE = "1";
+  try {
+    await writeFile(configPath, JSON.stringify(params.cfg, null, 2), "utf-8");
+    await params.run();
+  } finally {
+    if (prevConfigPath === undefined) {
+      delete process.env.FASED_CONFIG_PATH;
+    } else {
+      process.env.FASED_CONFIG_PATH = prevConfigPath;
+    }
+    if (prevDisableCache === undefined) {
+      delete process.env.FASED_DISABLE_CONFIG_CACHE;
+    } else {
+      process.env.FASED_DISABLE_CONFIG_CACHE = prevDisableCache;
+    }
+    await rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 10 });
+  }
+}
+
+function createRequest(params: {
+  method?: string;
+  path: string;
+  host?: string;
+  authorization?: string;
+  headers?: Record<string, string>;
+  body?: unknown;
+}): IncomingMessage {
+  const req = new PassThrough() as unknown as IncomingMessage;
+  req.method = params.method ?? "POST";
+  req.url = params.path;
+  req.headers = {
+    host: params.host ?? "fasedagent7f1b9b93ccfdb.agents.fased.app",
+    ...(params.authorization ? { authorization: params.authorization } : {}),
+    ...params.headers,
+  };
+  (req as unknown as { socket: { remoteAddress: string } }).socket = {
+    remoteAddress: "127.0.0.1",
+  };
+  queueMicrotask(() => {
+    const writableReq = req as IncomingMessage & {
+      write: (chunk: string) => void;
+      end: () => void;
+    };
+    if (params.body != null) {
+      writableReq.write(JSON.stringify(params.body));
+    }
+    writableReq.end();
+  });
+  return req;
+}
+
+function createResponse(): {
+  res: ServerResponse;
+  setHeader: ReturnType<typeof vi.fn>;
+  getBody: () => string;
+} {
+  const setHeader = vi.fn();
+  let body = "";
+  const end = vi.fn((chunk?: unknown) => {
+    if (typeof chunk === "string") {
+      body = chunk;
+      return;
+    }
+    if (chunk instanceof Uint8Array) {
+      body = Buffer.from(chunk).toString("utf8");
+      return;
+    }
+    body = "";
+  });
+  const res = {
+    statusCode: 200,
+    headersSent: false,
+    setHeader,
+    end,
+  } as unknown as ServerResponse;
+  return { res, setHeader, getBody: () => body };
+}
+
+function parseBody(body: string): Record<string, unknown> {
+  try {
+    return JSON.parse(body) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+async function dispatch(
+  server: ReturnType<typeof createGatewayHttpServer>,
+  req: IncomingMessage,
+  res: ServerResponse,
+) {
+  server.emit("request", req, res);
+  for (let i = 0; i < 50; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const endMock = (res.end as unknown as { mock?: { calls?: unknown[] } }).mock;
+    if ((endMock?.calls?.length ?? 0) > 0) {
+      break;
+    }
+  }
+}
+
+describe("wallet approval-auth HTTP", () => {
+  const resolvedAuth: ResolvedGatewayAuth = {
+    mode: "token",
+    token: "root-token",
+    allowTailscale: false,
+  };
+
+  const cfg = {
+    gateway: { trustedProxies: [] },
+    wallet: {
+      runtime: {
+        enabled: true,
+        runtime: "external-docker",
+        mode: "external",
+        service: { host: "127.0.0.1", port: 19444 },
+      },
+      execution: { mode: "autonomous" },
+      approvalAuth: { mode: "webauthn" },
+    },
+  };
+
+  const manualSocketSignerCfg = {
+    gateway: { trustedProxies: [] },
+    wallet: {
+      provider: { id: "local-socket-signer" },
+      runtime: {
+        enabled: true,
+        runtime: "external-custom",
+        mode: "external",
+        chains: ["solana"],
+        service: { host: "127.0.0.1", port: 19444 },
+        policy: { directSigning: true },
+      },
+      execution: { mode: "manual" },
+      approvalAuth: { mode: "none" },
+    },
+  };
+
+  test("accepts wallet.send as a valid passkey operation", async () => {
+    await withTempConfig({
+      cfg,
+      run: async () => {
+        const server = createGatewayHttpServer({
+          canvasHost: null,
+          clients: new Set(),
+          controlUiEnabled: false,
+          controlUiBasePath: "/ui",
+          openAiChatCompletionsEnabled: false,
+          openResponsesEnabled: false,
+          handleHooksRequest: async () => false,
+          resolvedAuth,
+        });
+        const response = createResponse();
+        await dispatch(
+          server,
+          createRequest({
+            path: "/api/wallet/approval-auth/assert/options",
+            authorization: "Bearer root-token",
+            body: { operation: "wallet.send" },
+          }),
+          response.res,
+        );
+        expect(response.res.statusCode).toBe(400);
+        expect(response.getBody()).toContain("webauthn_not_ready");
+        expect(response.getBody()).not.toContain("invalid_operation");
+      },
+    });
+  });
+
+  test("accepts wallet.custody-unlock as a valid passkey assertion operation", async () => {
+    await withTempConfig({
+      cfg,
+      run: async () => {
+        const server = createGatewayHttpServer({
+          canvasHost: null,
+          clients: new Set(),
+          controlUiEnabled: false,
+          controlUiBasePath: "/ui",
+          openAiChatCompletionsEnabled: false,
+          openResponsesEnabled: false,
+          handleHooksRequest: async () => false,
+          resolvedAuth,
+        });
+        const response = createResponse();
+        await dispatch(
+          server,
+          createRequest({
+            path: "/api/wallet/approval-auth/assert/options",
+            authorization: "Bearer root-token",
+            body: { operation: "wallet.custody-unlock" },
+          }),
+          response.res,
+        );
+        expect(response.res.statusCode).toBe(400);
+        expect(response.getBody()).toContain("webauthn_not_ready");
+        expect(response.getBody()).not.toContain("invalid_operation");
+      },
+    });
+  });
+
+  test("accepts mining.capital as a valid passkey assertion operation", async () => {
+    await withTempConfig({
+      cfg,
+      run: async () => {
+        const server = createGatewayHttpServer({
+          canvasHost: null,
+          clients: new Set(),
+          controlUiEnabled: false,
+          controlUiBasePath: "/ui",
+          openAiChatCompletionsEnabled: false,
+          openResponsesEnabled: false,
+          handleHooksRequest: async () => false,
+          resolvedAuth,
+        });
+        const response = createResponse();
+        await dispatch(
+          server,
+          createRequest({
+            path: "/api/wallet/approval-auth/assert/options",
+            authorization: "Bearer root-token",
+            body: { operation: "mining.capital" },
+          }),
+          response.res,
+        );
+        expect(response.res.statusCode).toBe(400);
+        expect(response.getBody()).toContain("webauthn_not_ready");
+        expect(response.getBody()).not.toContain("invalid_operation");
+      },
+    });
+  });
+
+  test("accepts mining.policy as a valid passkey assertion operation", async () => {
+    await withTempConfig({
+      cfg,
+      run: async () => {
+        const server = createGatewayHttpServer({
+          canvasHost: null,
+          clients: new Set(),
+          controlUiEnabled: false,
+          controlUiBasePath: "/ui",
+          openAiChatCompletionsEnabled: false,
+          openResponsesEnabled: false,
+          handleHooksRequest: async () => false,
+          resolvedAuth,
+        });
+        const response = createResponse();
+        await dispatch(
+          server,
+          createRequest({
+            path: "/api/wallet/approval-auth/assert/options",
+            authorization: "Bearer root-token",
+            body: { operation: "mining.policy" },
+          }),
+          response.res,
+        );
+        expect(response.res.statusCode).toBe(400);
+        expect(response.getBody()).toContain("webauthn_not_ready");
+        expect(response.getBody()).not.toContain("invalid_operation");
+      },
+    });
+  });
+
+  test("creates a reviewed manual request for direct control-ui sends", async () => {
+    await withTempConfig({
+      cfg,
+      run: async () => {
+        const server = createGatewayHttpServer({
+          canvasHost: null,
+          clients: new Set(),
+          controlUiEnabled: false,
+          controlUiBasePath: "/ui",
+          openAiChatCompletionsEnabled: false,
+          openResponsesEnabled: false,
+          handleHooksRequest: async () => false,
+          resolvedAuth,
+        });
+        const response = createResponse();
+        await dispatch(
+          server,
+          createRequest({
+            path: "/api/wallet/approvals/create",
+            authorization: "Bearer root-token",
+            body: {
+              chain: "solana",
+              to: "So11111111111111111111111111111111111111112",
+              amount: "1",
+            },
+          }),
+          response.res,
+        );
+        expect(response.res.statusCode, response.getBody()).toBe(200);
+        const parsed = parseBody(response.getBody());
+        expect(parsed.ok).toBe(true);
+        expect(parsed.mode).toBe("manual");
+      },
+    });
+  });
+
+  test("resolves Solana destination wallet handles for reviewed sends", async () => {
+    const stateDir = await mkdtemp(path.join(os.tmpdir(), "fased-wallet-handle-send-test-"));
+    const previousStateDir = process.env.FASED_STATE_DIR;
+    try {
+      process.env.FASED_STATE_DIR = stateDir;
+      const walletDir = path.join(stateDir, "wallet");
+      await mkdir(walletDir, { recursive: true });
+      await writeFile(
+        path.join(walletDir, "provider-registry.v1.json"),
+        `${JSON.stringify(
+          {
+            version: 1,
+            providers: {
+              "embedded-keystore": {
+                enabled: true,
+                updatedAt: "2026-05-26T00:00:00.000Z",
+                label: "Self-hosted",
+              },
+              "local-socket-signer": {
+                enabled: true,
+                updatedAt: "2026-05-26T00:00:00.000Z",
+                label: "Local signer",
+              },
+              alchemy: { enabled: false, updatedAt: "2026-05-26T00:00:00.000Z" },
+              turnkey: { enabled: false, updatedAt: "2026-05-26T00:00:00.000Z" },
+              privy: { enabled: false, updatedAt: "2026-05-26T00:00:00.000Z" },
+            },
+            wallets: [
+              {
+                id: "vault-1",
+                name: "Vault",
+                providerId: "local-socket-signer",
+                addresses: { solana: "So11111111111111111111111111111111111111112" },
+                metadata: { role: "vault" },
+                createdAt: "2026-05-26T00:00:00.000Z",
+                updatedAt: "2026-05-26T00:00:00.000Z",
+              },
+            ],
+            assignments: {},
+            updatedAt: "2026-05-26T00:00:00.000Z",
+          },
+          null,
+          2,
+        )}\n`,
+      );
+      await withTempConfig({
+        cfg,
+        run: async () => {
+          const server = createGatewayHttpServer({
+            canvasHost: null,
+            clients: new Set(),
+            controlUiEnabled: false,
+            controlUiBasePath: "/ui",
+            openAiChatCompletionsEnabled: false,
+            openResponsesEnabled: false,
+            handleHooksRequest: async () => false,
+            resolvedAuth,
+          });
+          const response = createResponse();
+          await dispatch(
+            server,
+            createRequest({
+              path: "/api/wallet/approvals/create",
+              authorization: "Bearer root-token",
+              body: {
+                chain: "solana",
+                to: "@wallet:vault",
+                amount: "1",
+              },
+            }),
+            response.res,
+          );
+          expect(response.res.statusCode, response.getBody()).toBe(200);
+          const parsed = parseBody(response.getBody());
+          expect(parsed.ok).toBe(true);
+          const request = (parsed.request ?? {}) as Record<string, unknown>;
+          const payload = (request.payload ?? {}) as Record<string, unknown>;
+          expect(payload.to).toBe("So11111111111111111111111111111111111111112");
+        },
+      });
+    } finally {
+      if (previousStateDir === undefined) {
+        delete process.env.FASED_STATE_DIR;
+      } else {
+        process.env.FASED_STATE_DIR = previousStateDir;
+      }
+      await rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  test("blocks custody unlock when passkey mode is enabled but no passkey is enrolled", async () => {
+    await withTempConfig({
+      cfg,
+      run: async () => {
+        const server = createGatewayHttpServer({
+          canvasHost: null,
+          clients: new Set(),
+          controlUiEnabled: false,
+          controlUiBasePath: "/ui",
+          openAiChatCompletionsEnabled: false,
+          openResponsesEnabled: false,
+          handleHooksRequest: async () => false,
+          resolvedAuth,
+        });
+        const response = createResponse();
+        await dispatch(
+          server,
+          createRequest({
+            path: "/api/wallet/custody/unlock",
+            authorization: "Bearer root-token",
+            body: {},
+          }),
+          response.res,
+        );
+        expect(response.res.statusCode).toBe(401);
+        expect(response.getBody()).toContain("wallet_control_passkey_not_ready");
+      },
+    });
+  });
+
+  test("blocks normal approval actions when passkey mode is enabled but no passkey is enrolled", async () => {
+    await withTempConfig({
+      cfg,
+      run: async () => {
+        const server = createGatewayHttpServer({
+          canvasHost: null,
+          clients: new Set(),
+          controlUiEnabled: false,
+          controlUiBasePath: "/ui",
+          openAiChatCompletionsEnabled: false,
+          openResponsesEnabled: false,
+          handleHooksRequest: async () => false,
+          resolvedAuth,
+        });
+        const response = createResponse();
+        await dispatch(
+          server,
+          createRequest({
+            path: "/api/wallet/approvals/missing-request/approve",
+            authorization: "Bearer root-token",
+            body: {},
+          }),
+          response.res,
+        );
+        expect(response.res.statusCode).toBe(401);
+        expect(response.getBody()).toContain("wallet_control_passkey_not_ready");
+      },
+    });
+  });
+
+  test("blocks removing the last passkey while any wallet still has split-key security", async () => {
+    const stateDir = await mkdtemp(path.join(os.tmpdir(), "fased-wallet-auth-splitkey-test-"));
+    const previousEnv = {
+      FASED_STATE_DIR: process.env.FASED_STATE_DIR,
+      FASED_WALLET_CUSTODY_MODE: process.env.FASED_WALLET_CUSTODY_MODE,
+      FASED_WALLET_CUSTODY_PHASE2_COMPLETE: process.env.FASED_WALLET_CUSTODY_PHASE2_COMPLETE,
+      FASED_WALLET_CUSTODY_PASSKEY_CEREMONY: process.env.FASED_WALLET_CUSTODY_PASSKEY_CEREMONY,
+      FASED_WALLET_CUSTODY_EPHEMERAL_RECONSTRUCTION:
+        process.env.FASED_WALLET_CUSTODY_EPHEMERAL_RECONSTRUCTION,
+      FASED_WALLET_APPROVAL_AUTH: process.env.FASED_WALLET_APPROVAL_AUTH,
+    };
+    try {
+      process.env.FASED_STATE_DIR = stateDir;
+      process.env.FASED_WALLET_CUSTODY_MODE = "split-key";
+      process.env.FASED_WALLET_CUSTODY_PHASE2_COMPLETE = "1";
+      process.env.FASED_WALLET_CUSTODY_PASSKEY_CEREMONY = "1";
+      process.env.FASED_WALLET_CUSTODY_EPHEMERAL_RECONSTRUCTION = "1";
+      process.env.FASED_WALLET_APPROVAL_AUTH = "none";
+      const walletDir = path.join(stateDir, "wallet");
+      await mkdir(walletDir, { recursive: true });
+      const approvalToken = "remove-last-passkey";
+      await writeFile(
+        path.join(walletDir, "wallet-approval-auth.json"),
+        `${JSON.stringify(
+          {
+            version: 2,
+            passkeys: [
+              {
+                id: "credential-1",
+                label: "fc",
+                createdAt: "2026-04-08T12:30:08.000Z",
+                publicKeySpki: "pub",
+                publicKeyAlgorithm: -7,
+                signCount: 0,
+              },
+            ],
+            challenges: [],
+            grants: [
+              {
+                tokenHash: createHash("sha256").update(approvalToken).digest("hex"),
+                host: "fasedagent7f1b9b93ccfdb.agents.fased.app",
+                operation: "wallet.passkey-remove",
+                createdAt: new Date().toISOString(),
+                expiresAt: new Date(Date.now() + 60_000).toISOString(),
+              },
+            ],
+          },
+          null,
+          2,
+        )}\n`,
+      );
+      const custody = initializeWalletCustodyCeremony({
+        walletId: "payment-wallet",
+        env: process.env,
+      });
+      expect(custody.ok).toBe(true);
+
+      await withTempConfig({
+        cfg,
+        run: async () => {
+          const server = createGatewayHttpServer({
+            canvasHost: null,
+            clients: new Set(),
+            controlUiEnabled: false,
+            controlUiBasePath: "/ui",
+            openAiChatCompletionsEnabled: false,
+            openResponsesEnabled: false,
+            handleHooksRequest: async () => false,
+            resolvedAuth,
+          });
+          const response = createResponse();
+          await dispatch(
+            server,
+            createRequest({
+              method: "DELETE",
+              path: "/api/wallet/approval-auth/passkeys/credential-1",
+              authorization: "Bearer root-token",
+              headers: { "x-wallet-approval-token": approvalToken },
+            }),
+            response.res,
+          );
+
+          expect(response.res.statusCode).toBe(409);
+          expect(response.getBody()).toContain("wallet_passkey_required_by_split_key");
+        },
+      });
+    } finally {
+      for (const [key, value] of Object.entries(previousEnv)) {
+        if (value === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
+        }
+      }
+      await rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  test("allows removing the last passkey when only stale legacy split-key folders remain", async () => {
+    const stateDir = await mkdtemp(path.join(os.tmpdir(), "fased-wallet-auth-stale-splitkey-"));
+    const previousEnv = {
+      FASED_STATE_DIR: process.env.FASED_STATE_DIR,
+      FASED_WALLET_CUSTODY_MODE: process.env.FASED_WALLET_CUSTODY_MODE,
+      FASED_WALLET_CUSTODY_PHASE2_COMPLETE: process.env.FASED_WALLET_CUSTODY_PHASE2_COMPLETE,
+      FASED_WALLET_CUSTODY_PASSKEY_CEREMONY: process.env.FASED_WALLET_CUSTODY_PASSKEY_CEREMONY,
+      FASED_WALLET_CUSTODY_EPHEMERAL_RECONSTRUCTION:
+        process.env.FASED_WALLET_CUSTODY_EPHEMERAL_RECONSTRUCTION,
+      FASED_WALLET_APPROVAL_AUTH: process.env.FASED_WALLET_APPROVAL_AUTH,
+    };
+    try {
+      process.env.FASED_STATE_DIR = stateDir;
+      process.env.FASED_WALLET_CUSTODY_MODE = "split-key";
+      process.env.FASED_WALLET_CUSTODY_PHASE2_COMPLETE = "1";
+      process.env.FASED_WALLET_CUSTODY_PASSKEY_CEREMONY = "1";
+      process.env.FASED_WALLET_CUSTODY_EPHEMERAL_RECONSTRUCTION = "1";
+      process.env.FASED_WALLET_APPROVAL_AUTH = "none";
+      const walletDir = path.join(stateDir, "wallet");
+      await mkdir(walletDir, { recursive: true });
+      const approvalToken = "remove-stale-splitkey-passkey";
+      await writeFile(
+        path.join(walletDir, "wallet-approval-auth.json"),
+        `${JSON.stringify(
+          {
+            version: 2,
+            passkeys: [
+              {
+                id: "credential-1",
+                label: "fc",
+                createdAt: "2026-04-08T12:30:08.000Z",
+                publicKeySpki: "pub",
+                publicKeyAlgorithm: -7,
+                signCount: 0,
+              },
+            ],
+            challenges: [],
+            grants: [
+              {
+                tokenHash: createHash("sha256").update(approvalToken).digest("hex"),
+                host: "fasedagent7f1b9b93ccfdb.agents.fased.app",
+                operation: "wallet.passkey-remove",
+                createdAt: new Date().toISOString(),
+                expiresAt: new Date(Date.now() + 60_000).toISOString(),
+              },
+            ],
+          },
+          null,
+          2,
+        )}\n`,
+      );
+      const custody = initializeWalletCustodyCeremony({
+        walletId: "solana-2",
+        env: process.env,
+      });
+      expect(custody.ok).toBe(true);
+      const sharePath = path.join(walletDir, "custody", "solana-2", "shares.v1.json");
+      const staleShare = JSON.parse(await readFile(sharePath, "utf8")) as Record<string, unknown>;
+      staleShare.role = "payment";
+      await writeFile(sharePath, `${JSON.stringify(staleShare, null, 2)}\n`);
+
+      await withTempConfig({
+        cfg,
+        run: async () => {
+          const server = createGatewayHttpServer({
+            canvasHost: null,
+            clients: new Set(),
+            controlUiEnabled: false,
+            controlUiBasePath: "/ui",
+            openAiChatCompletionsEnabled: false,
+            openResponsesEnabled: false,
+            handleHooksRequest: async () => false,
+            resolvedAuth,
+          });
+          const response = createResponse();
+          await dispatch(
+            server,
+            createRequest({
+              method: "DELETE",
+              path: "/api/wallet/approval-auth/passkeys/credential-1",
+              authorization: "Bearer root-token",
+              headers: { "x-wallet-approval-token": approvalToken },
+            }),
+            response.res,
+          );
+
+          expect(response.res.statusCode).toBe(200);
+          const body = parseBody(response.getBody());
+          expect(body).toMatchObject({
+            ok: true,
+            snapshot: { mode: "none", passkeyCount: 0, ready: true },
+          });
+          expect(response.getBody()).not.toContain("wallet_passkey_required_by_split_key");
+        },
+      });
+    } finally {
+      for (const [key, value] of Object.entries(previousEnv)) {
+        if (value === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
+        }
+      }
+      await rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  test("converts Solana human amountFormat for /api/wallet/approvals/create", async () => {
+    const prevSocket = process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET;
+    process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET = "/tmp/fased-test.sock";
+    try {
+      await withTempConfig({
+        cfg: manualSocketSignerCfg,
+        run: async () => {
+          const server = createGatewayHttpServer({
+            canvasHost: null,
+            clients: new Set(),
+            controlUiEnabled: false,
+            controlUiBasePath: "/ui",
+            openAiChatCompletionsEnabled: false,
+            openResponsesEnabled: false,
+            handleHooksRequest: async () => false,
+            resolvedAuth,
+          });
+          const response = createResponse();
+          await dispatch(
+            server,
+            createRequest({
+              path: "/api/wallet/approvals/create",
+              authorization: "Bearer root-token",
+              body: {
+                chain: "solana",
+                to: "So11111111111111111111111111111111111111112",
+                amount: "0.5",
+                amountFormat: "human",
+              },
+            }),
+            response.res,
+          );
+          expect(response.res.statusCode).toBe(200);
+          const parsed = parseBody(response.getBody());
+          expect(parsed.ok).toBe(true);
+          expect(parsed.mode).toBe("manual");
+          const request = (parsed.request ?? {}) as Record<string, unknown>;
+          const payload = (request.payload ?? {}) as Record<string, unknown>;
+          expect(payload.amount).toBe("500000000");
+        },
+      });
+    } finally {
+      if (prevSocket === undefined) {
+        delete process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET;
+      } else {
+        process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET = prevSocket;
+      }
+    }
+  });
+
+  test("rejects invalid human amount precision on /api/wallet/approvals/create", async () => {
+    const prevSocket = process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET;
+    process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET = "/tmp/fased-test.sock";
+    try {
+      await withTempConfig({
+        cfg: manualSocketSignerCfg,
+        run: async () => {
+          const server = createGatewayHttpServer({
+            canvasHost: null,
+            clients: new Set(),
+            controlUiEnabled: false,
+            controlUiBasePath: "/ui",
+            openAiChatCompletionsEnabled: false,
+            openResponsesEnabled: false,
+            handleHooksRequest: async () => false,
+            resolvedAuth,
+          });
+          const response = createResponse();
+          await dispatch(
+            server,
+            createRequest({
+              path: "/api/wallet/approvals/create",
+              authorization: "Bearer root-token",
+              body: {
+                chain: "solana",
+                to: "So11111111111111111111111111111111111111112",
+                amount: "1.1234567891",
+                amountFormat: "human",
+              },
+            }),
+            response.res,
+          );
+          expect(response.res.statusCode).toBe(400);
+          expect(response.getBody()).toContain("supports at most 9 decimals");
+        },
+      });
+    } finally {
+      if (prevSocket === undefined) {
+        delete process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET;
+      } else {
+        process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET = prevSocket;
+      }
+    }
+  });
+
+  test("rejects malformed Solana destination address on /api/wallet/approvals/create", async () => {
+    const prevSocket = process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET;
+    process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET = "/tmp/fased-test.sock";
+    try {
+      await withTempConfig({
+        cfg: manualSocketSignerCfg,
+        run: async () => {
+          const server = createGatewayHttpServer({
+            canvasHost: null,
+            clients: new Set(),
+            controlUiEnabled: false,
+            controlUiBasePath: "/ui",
+            openAiChatCompletionsEnabled: false,
+            openResponsesEnabled: false,
+            handleHooksRequest: async () => false,
+            resolvedAuth,
+          });
+          const response = createResponse();
+          await dispatch(
+            server,
+            createRequest({
+              path: "/api/wallet/approvals/create",
+              authorization: "Bearer root-token",
+              body: {
+                chain: "solana",
+                to: "not-a-solana-address",
+                amount: "0.1",
+                amountFormat: "human",
+              },
+            }),
+            response.res,
+          );
+          expect(response.res.statusCode).toBe(400);
+          expect(response.getBody()).toContain("invalid_solana_address");
+        },
+      });
+    } finally {
+      if (prevSocket === undefined) {
+        delete process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET;
+      } else {
+        process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET = prevSocket;
+      }
+    }
+  });
+});

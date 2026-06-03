@@ -1,0 +1,21 @@
+{
+  "programId": "D1ySMMiJmvJRhJJKwYnc171w3g2JDPQnkgD8kGhaG4Vq",
+  "accountName": "BondStakingPositionState",
+  "accountHeaderSize": 8,
+  "bodySize": 192,
+  "accountSize": 200,
+  "discriminator": 143,
+  "pdaSeed": "sat_bond_staking_position",
+  "offsets": {
+    "version": 0,
+    "status": 1,
+    "bump": 2,
+    "policyVersion": 8,
+    "authority": 16,
+    "bondPosition": 48,
+    "activeStakeRaw": 80,
+    "claimableRewardRaw": 88,
+    "rewardDebtFp": 96,
+    "lastSyncedSlot": 112
+  }
+}

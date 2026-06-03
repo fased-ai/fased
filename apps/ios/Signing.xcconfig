@@ -1,0 +1,17 @@
+// Default signing values for shared/repo builds.
+// Auto-selected local team overrides live in .local-signing.xcconfig (git-ignored).
+// Manual local overrides can go in LocalSigning.xcconfig (git-ignored).
+
+FASED_CODE_SIGN_STYLE = Manual
+FASED_DEVELOPMENT_TEAM = Y5PE65HELJ
+
+FASED_APP_BUNDLE_ID = ai.fased.ios
+FASED_SHARE_BUNDLE_ID = ai.fased.ios.share
+
+FASED_APP_PROFILE = ai.fased.ios Development
+FASED_SHARE_PROFILE = ai.fased.ios.share Development
+
+// Keep local includes after defaults: xcconfig is evaluated top-to-bottom,
+// so later assignments in local files override the defaults above.
+#include? ".local-signing.xcconfig"
+#include? "LocalSigning.xcconfig"

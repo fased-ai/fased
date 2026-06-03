@@ -1,0 +1,151 @@
+{
+  "id": "sat-mining",
+  "name": "SAT Mining",
+  "description": "SAT mining scaffold for round orchestration, wallet mining, and federation coordination.",
+  "skills": ["./skills"],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": {
+        "type": "boolean"
+      },
+      "drainOnly": {
+        "type": "boolean"
+      },
+      "network": {
+        "type": "string",
+        "enum": ["local", "devnet", "mainnet-beta"]
+      },
+      "riskMode": {
+        "type": "string",
+        "enum": ["conservative", "balanced", "aggressive", "swarm"]
+      },
+      "strategyPreset": {
+        "type": "string",
+        "enum": [
+          "spread",
+          "balanced",
+          "conviction",
+          "swarm",
+          "top_k",
+          "ranked",
+          "adaptive",
+          "crowd_aware",
+          "safe_fallback"
+        ]
+      },
+      "strategyExecution": {
+        "type": "string",
+        "enum": ["deterministic", "auto"]
+      },
+      "strategyMode": {
+        "type": "string",
+        "enum": ["base", "skill"]
+      },
+      "commitLamports": {
+        "type": "number"
+      },
+      "minSolBalanceLamports": {
+        "type": "number"
+      },
+      "walletId": {
+        "type": "string"
+      },
+      "role": {
+        "type": "string",
+        "enum": ["miner", "validator", "admin"]
+      },
+      "claimMode": {
+        "type": "string",
+        "enum": ["auto", "prompt", "manual"]
+      },
+      "payout": {
+        "type": "boolean"
+      },
+      "skillConfig": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "useAgentDefaultModel": { "type": "boolean" },
+          "preferredSkillId": { "type": "string" },
+          "preferredModelId": { "type": "string" },
+          "fallbackToBaseOnFailure": { "type": "boolean" },
+          "maxDecisionLatencyMs": { "type": "number", "minimum": 1 }
+        }
+      },
+      "automation": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "autoFinalizeEpoch": { "type": "boolean" },
+          "autoClaim": { "type": "boolean" },
+          "claimBatchCycles": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 16
+          },
+          "satSweep": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": { "type": "boolean" },
+              "destinationWalletId": { "type": "string" },
+              "destinationAddress": { "type": "string" },
+              "mode": {
+                "type": "string",
+                "enum": ["all", "percentage"]
+              },
+              "percentage": { "type": "number" },
+              "minRaw": { "type": "string" },
+              "keepRaw": { "type": "string" }
+            }
+          }
+        }
+      },
+      "tokenConfig": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "programId": { "type": "string" },
+          "bondProgramId": { "type": "string" },
+          "mintAddress": { "type": "string" },
+          "mintProgramId": { "type": "string" }
+        }
+      },
+      "plannerConfig": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "policyMode": {
+            "type": "string",
+            "enum": ["ucb", "thompson"]
+          },
+          "explorationRatePpm": {
+            "type": "number"
+          },
+          "minContextSamples": {
+            "type": "number"
+          },
+          "priorSamples": {
+            "type": "number"
+          },
+          "enableCapitalTierPolicies": {
+            "type": "boolean"
+          }
+        }
+      },
+      "federationHandle": {
+        "type": "string"
+      },
+      "federationPeers": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "coordinationGroup": {
+        "type": "string"
+      }
+    }
+  }
+}

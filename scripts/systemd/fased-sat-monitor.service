@@ -1,0 +1,19 @@
+[Unit]
+Description=SAT mining health monitor
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.fased/scripts/sat-mining-monitor.sh
+# Environment=FASED_CONFIG_PATH=%h/.fased/fased.json
+# Environment=FASED_GATEWAY_TOKEN=
+# Environment=FASED_NOTIFY_CHANNEL=telegram
+# Environment=FASED_NOTIFY_TARGET=@ops_room
+# Environment=FASED_NOTIFY_ACCOUNT=
+# Environment=FASED_NOTIFY_THREAD_ID=
+# Environment=NOTIFY_NTFY=
+# Environment=NOTIFY_PHONE=
+# Environment=FASED_SAT_MAX_ACTION_AGE_SECONDS=900
+
+[Install]
+WantedBy=default.target

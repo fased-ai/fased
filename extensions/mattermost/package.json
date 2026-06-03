@@ -1,0 +1,25 @@
+{
+  "name": "@fased/mattermost",
+  "version": "0.1.1",
+  "description": "FasedAgent Mattermost channel plugin",
+  "type": "module",
+  "fased": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "channel": {
+      "id": "mattermost",
+      "label": "Mattermost",
+      "selectionLabel": "Mattermost (plugin)",
+      "docsPath": "/channels/mattermost",
+      "docsLabel": "mattermost",
+      "blurb": "self-hosted Slack-style chat; configure a bot token and server URL.",
+      "order": 65
+    },
+    "install": {
+      "npmSpec": "@fased/mattermost",
+      "localPath": "extensions/mattermost",
+      "defaultChoice": "local"
+    }
+  }
+}
