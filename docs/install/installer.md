@@ -42,6 +42,10 @@ On Windows, use [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install), t
   </Step>
   <Step title="Prepare the repo-backed runtime">
     Uses the checkout and install flow this repository actually supports for public use.
+
+    If the install starts as `root` on a hosted server, the installer creates a
+    non-root `app` user, prepares `/home/app/agent`, and re-runs itself there.
+    The runtime and CLI are then owned by `app`.
   </Step>
   <Step title="Install the CLI launcher">
     Installs the repo-backed `fased` command into the user command path and
@@ -59,7 +63,11 @@ On Windows, use [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install), t
     1. create or sign into your **Tailscale** account
     2. join the host to your tailnet
     3. run onboarding with the **hosting** profile
-    4. keep admin access private through Tailscale instead of opening the gateway directly
+    4. save the printed gateway token and Tailscale dashboard URL
+    5. keep admin access private through Tailscale instead of opening the gateway directly
+
+    From a later root SSH session, use `sudo -iu app fased dashboard` or
+    `sudo -iu app fased status`.
 
   </Step>
   <Step title="Leave SAT IDs for Sync">

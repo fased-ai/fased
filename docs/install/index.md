@@ -77,10 +77,16 @@ all the time.
     ./install.sh --hosting
     ```
 
+    If you start as `root`, the installer creates a non-root `app` user,
+    prepares `/home/app/agent`, and re-runs itself there.
+
     Hosting requires the VPS to be in your Tailscale tailnet before the
     Gateway is treated as remotely reachable. The hosted profile keeps the
     raw Gateway port closed and routes operator access through Tailscale or a
     deliberate private tunnel.
+
+    Save the gateway token printed at the end. From a later root SSH session,
+    run CLI commands as `app`, for example `sudo -iu app fased dashboard`.
 
   </Tab>
 </Tabs>

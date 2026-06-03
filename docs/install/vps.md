@@ -28,10 +28,22 @@ cd fased
 ./install.sh --hosting
 ```
 
+If you SSH into a fresh VPS as `root`, the installer creates a non-root `app`
+user, prepares `/home/app/agent`, and re-runs the installer as `app`. That is
+expected. Do not move the repo back to `/root`.
+
 When `sudo tailscale up --ssh` prints a login URL in the SSH terminal, copy that
 URL into your local computer's browser. The VPS does not need a desktop browser.
-After Tailscale login completes, use `fased dashboard` on the VPS for the private
-Control UI link. Keep the raw Gateway port closed to the public internet.
+After onboarding completes, save the printed gateway token and use the Tailscale
+dashboard URL shown by the installer. From a later root SSH session, run CLI
+commands as the app user:
+
+```bash
+sudo -iu app fased dashboard
+sudo -iu app fased status
+```
+
+Keep the raw Gateway port closed to the public internet.
 
 <Note>
 You do not need a Tailscale API key for the normal manual VPS flow. The
@@ -62,6 +74,8 @@ them from this repo.
 ## How cloud setups work
 
 - The **runtime and gateway run on the VPS** and own state + workspace.
+- Root installs are bootstrapped into `/home/app/agent` and run as the `app`
+  user.
 - Treat the VPS as the source of truth and **back up** the state + workspace.
 - Create or sign into **Tailscale before onboarding** that host. If you skip
   this, Hosting onboarding will stop to install/login Tailscale before it locks

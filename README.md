@@ -52,13 +52,26 @@ sudo tailscale up --ssh
 git clone https://github.com/fased-ai/fased.git fased
 cd fased
 ./install.sh --hosting
-fased dashboard
 ```
+
+If you SSH into a fresh VPS as `root`, the installer creates a non-root `app`
+user, copies/clones the repo to `/home/app/agent`, and continues there. During
+Tailscale setup, copy the login URL printed in SSH and open it in your local
+computer's browser.
 
 Hosting requires the VPS to be in your Tailscale tailnet before onboarding can
 finish safely. When `sudo tailscale up --ssh` prints a login URL in the SSH
 terminal, open that URL in your local computer's browser. The VPS does not need
 a desktop browser. A Tailscale auth key is only needed for unattended automation.
+
+At the end, onboarding prints the private dashboard URL and gateway token. Save
+the gateway token. Later, from a root SSH session, run CLI commands as the app
+user:
+
+```bash
+sudo -iu app fased dashboard
+sudo -iu app fased status
+```
 
 `install.sh` runs onboarding by default. Use `./install.sh --no-onboard` only
 when you want to install first and run onboarding later.

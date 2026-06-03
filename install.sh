@@ -1126,14 +1126,15 @@ export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 ensure_low_memory_swap_if_possible
 pnpm_install_with_adaptive_profile
 
-if [[ -z "${FASED_SAT_PROGRAM_ID:-}" || -z "${FASED_SAT_BOND_PROGRAM_ID:-}" || -z "${FASED_SAT_MINT_ADDRESS:-}" || -z "${FASED_SAT_MINT_PROGRAM_ID:-}" ]]; then
-  echo "Missing SAT runtime ids. Expected all ids in $SAT_RUNTIME_ENV_FILE or the environment." >&2
-  exit 1
+if [[ -n "${FASED_SAT_PROGRAM_ID:-}" && -n "${FASED_SAT_BOND_PROGRAM_ID:-}" && -n "${FASED_SAT_MINT_ADDRESS:-}" && -n "${FASED_SAT_MINT_PROGRAM_ID:-}" ]]; then
+  persist_managed_env_var "FASED_SAT_PROGRAM_ID" "$FASED_SAT_PROGRAM_ID"
+  persist_managed_env_var "FASED_SAT_BOND_PROGRAM_ID" "$FASED_SAT_BOND_PROGRAM_ID"
+  persist_managed_env_var "FASED_SAT_MINT_ADDRESS" "$FASED_SAT_MINT_ADDRESS"
+  persist_managed_env_var "FASED_SAT_MINT_PROGRAM_ID" "$FASED_SAT_MINT_PROGRAM_ID"
+else
+  step_skip "SAT runtime IDs"
+  echo "  Pre-launch install: SAT runtime IDs are empty. Use Mining > Sync after official mainnet launch proof."
 fi
-persist_managed_env_var "FASED_SAT_PROGRAM_ID" "$FASED_SAT_PROGRAM_ID"
-persist_managed_env_var "FASED_SAT_BOND_PROGRAM_ID" "$FASED_SAT_BOND_PROGRAM_ID"
-persist_managed_env_var "FASED_SAT_MINT_ADDRESS" "$FASED_SAT_MINT_ADDRESS"
-persist_managed_env_var "FASED_SAT_MINT_PROGRAM_ID" "$FASED_SAT_MINT_PROGRAM_ID"
 export FASED_SAT_BOND_LAYOUT_PATH="${FASED_SAT_BOND_LAYOUT_PATH:-$FASED_DIR/token/sat/bond-api/bond-position-layout.json}"
 export FASED_SAT_BOND_POLICY_LAYOUT_PATH="${FASED_SAT_BOND_POLICY_LAYOUT_PATH:-$FASED_DIR/token/sat/bond-api/bond-tier-policy-layout.json}"
 

@@ -30,7 +30,8 @@ Fastest first chat: open the Control UI (no channel setup needed). Run
 <Tip>
 VPS setup: create the server, join it to Tailscale, then run `./install.sh --hosting`.
 Manual VPS setup does not require a Tailscale API key; use one only for
-non-interactive automation.
+non-interactive automation. If you start as `root`, the installer bootstraps
+Fased into `/home/app/agent` and continues as the `app` user.
 </Tip>
 
 <Note>
@@ -110,6 +111,10 @@ in SSH for normal manual setup. Open that URL in your local computer's browser,
 then return to the SSH session. If Tailscale cannot provide a tailnet IP,
 Hosting refuses to continue because the remote dashboard and admin path depend
 on Tailscale.
+
+At the end of hosted onboarding, save the printed Tailscale dashboard URL and
+gateway token. From a later root SSH session, use `sudo -iu app fased dashboard`
+or `sudo -iu app fased status`.
 
 Model/API setup has moved to `Agent > Models` for normal users. Existing
 non-interactive provider flags still work for scripted installs, but first-run
