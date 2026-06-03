@@ -55,7 +55,8 @@ guides for the detailed host steps.
 <Tip>
 Simple VPS order: create server → `sudo tailscale up --ssh` → `./install.sh --hosting`.
 If the wizard asks for a Tailscale auth key, choose no unless you are doing
-scripted provisioning; the CLI will show a browser login URL instead.
+scripted provisioning. The Tailscale CLI can show a login URL in SSH; open that
+URL in your local computer's browser, then return to the SSH session.
 </Tip>
 
 ## Actual Interactive Wizard Order

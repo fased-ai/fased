@@ -28,13 +28,15 @@ cd fased
 ./install.sh --hosting
 ```
 
-After Tailscale login completes, use `fased dashboard` on the VPS for the
-private Control UI link. Keep the raw Gateway port closed to the public internet.
+When `sudo tailscale up --ssh` prints a login URL in the SSH terminal, copy that
+URL into your local computer's browser. The VPS does not need a desktop browser.
+After Tailscale login completes, use `fased dashboard` on the VPS for the private
+Control UI link. Keep the raw Gateway port closed to the public internet.
 
 <Note>
 You do not need a Tailscale API key for the normal manual VPS flow. The
-Tailscale CLI prints a browser login URL. Use a Tailscale auth key only for
-non-interactive automation, cloud-init, Terraform, or scripted installs.
+Tailscale CLI prints a URL you open from your own computer. Use a Tailscale auth
+key only for non-interactive automation, cloud-init, Terraform, or scripted installs.
 </Note>
 
 <Warning>

@@ -151,9 +151,10 @@ For a hosted or VPS runtime:
 4. keep admin access private through Tailscale or an SSH tunnel
 5. avoid exposing the raw Gateway port publicly
 
-Normal manual setup does **not** need a Tailscale API key. If the host is not
-logged in, Tailscale prints a browser login URL. Use `--ts-authkey` only for
-non-interactive provisioning.
+Normal manual setup does **not** need a Tailscale API key. If the VPS is not
+logged in, Tailscale prints a login URL in the SSH terminal. Open that URL in
+your local computer's browser, then return to the SSH session. Use
+`--ts-authkey` only for non-interactive provisioning.
 
 If Tailscale is missing or not logged in, Hosting onboarding tries to install or
 start it. If it cannot get a valid tailnet IP, it refuses to apply the SSH/UFW

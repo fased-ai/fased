@@ -100,7 +100,8 @@ cd fased
 Hosting note:
 
 - do Tailscale setup **before** onboarding
-- use normal browser sign-in for manual hosts, or an auth key only for unattended automation
+- when Tailscale prints a login URL in SSH, open it in your local browser
+- use an auth key only for unattended automation
 - use the **hosting** profile in the wizard
 - keep access tailnet-only unless you later make a deliberate, separately-audited exposure choice
 

@@ -91,8 +91,9 @@ For the full decision table, read [Setup Matrix](/start/setup-matrix).
         ./install.sh --hosting
         ```
 
-        Run this **on the VPS itself**. Normal manual setup needs a Tailscale
-        account/browser login, not a Tailscale API key.
+        Run this **on the VPS itself**. If Tailscale prints a login URL in SSH,
+        open that URL in your local computer's browser. Normal manual setup does
+        not need a Tailscale API key.
 
       </Tab>
       <Tab title="Windows">

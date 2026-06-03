@@ -121,14 +121,13 @@ The Gateway is the single source of truth for sessions, routing, channels, and o
     ./install.sh
     ```
   </Step>
-  <Step title="Onboard and install the service">
-    ```bash
-    fased onboard --install-daemon
-    ```
-  </Step>
-  <Step title="Open the Control UI and confirm the runtime">
+  <Step title="Open the Control UI">
     ```bash
     fased dashboard
+    ```
+  </Step>
+  <Step title="Confirm the runtime">
+    ```bash
     fased status
     ```
   </Step>

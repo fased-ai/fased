@@ -123,9 +123,10 @@ tailscale up
 From this point forward, treat Tailscale as the normal operator access path.
 Do not plan around public gateway exposure.
 
-For a manual VPS, browser sign-in from `tailscale up` is enough. Use a
-Tailscale auth key only when you need unattended provisioning, cloud-init,
-Terraform, or another non-interactive install path.
+For a manual VPS, `tailscale up` prints a login URL in SSH. Open that URL in
+your local computer's browser, then return to the SSH session. Use a Tailscale
+auth key only when you need unattended provisioning, cloud-init, Terraform, or
+another non-interactive install path.
 
 ---
 

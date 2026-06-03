@@ -105,8 +105,9 @@ The wizard starts with **QuickStart** (defaults) vs **Advanced** (full control).
 
 For Hosting, the wizard checks Tailscale before it applies SSH/firewall
 hardening. If Tailscale is missing, it tries to install it. If the host is not
-logged in, it can use `--ts-authkey` for unattended setup or show a browser
-login URL for normal manual setup. If Tailscale cannot provide a tailnet IP,
+logged in, it can use `--ts-authkey` for unattended setup or show a login URL
+in SSH for normal manual setup. Open that URL in your local computer's browser,
+then return to the SSH session. If Tailscale cannot provide a tailnet IP,
 Hosting refuses to continue because the remote dashboard and admin path depend
 on Tailscale.
 

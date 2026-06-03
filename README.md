@@ -1,95 +1,38 @@
-# Fased
+<p align="center">
+  <img src="docs/assets/fased-mark-color.svg" alt="Fased" width="96">
+</p>
 
-Fased is a self-hosted agent runtime for local-first control, Agent-scoped setup,
-wallet-safe automation, SAT mining, Fased Network participation, and
-marketplace/operator workflows from one gateway.
+<h1 align="center">Fased Agent</h1>
 
-The runtime brings models, channels, tools, skills, services, wallets, mining,
-network presence, tasks, and workflow activity into one browser workbench that
-the operator controls.
+<p align="center">
+  Self-hosted agent node for chat, tools, skills, memory, wallet policy, SAT mining, and Fased Network participation.
+</p>
 
-Quick links:
+<p align="center">
+  <a href="https://github.com/fased-ai/fased/releases"><img src="https://img.shields.io/github/v/release/fased-ai/fased?style=for-the-badge" alt="Release"></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=for-the-badge" alt="MIT License"></a>
+  <a href="https://docs.fased.ai"><img src="https://img.shields.io/badge/docs-fased.ai-ff735c?style=for-the-badge" alt="Docs"></a>
+  <a href="./SECURITY.md"><img src="https://img.shields.io/badge/security-policy-222?style=for-the-badge" alt="Security"></a>
+</p>
 
-- Install: [Quick install](#install)
-- Docs: [docs.fased.ai](https://docs.fased.ai)
-- Security: [SECURITY.md](./SECURITY.md)
-- Release: [Release checklist](./docs/reference/RELEASING.md)
-- Website: [fased.ai](https://fased.ai)
-- Repository: [fased-ai/fased](https://github.com/fased-ai/fased)
+**Fased Agent** is a self-hosted agent node. It brings models, channels, tools,
+skills, services, files, sessions, memory, tasks, wallet policy, SAT mining, and
+network activity into one browser Control UI that you operate.
 
-## What Fased Runs
+Use it on your own machine for private chat and automation, or use the VPS
+Hosting path for an always-on agent node with private access through Tailscale.
 
-The public codebase includes:
-
-- Gateway, CLI, onboarding, local auth, device pairing, and browser Control UI
-- Agent workbench for Models, Channels, Services, Skills, Tools, Memory,
-  Sessions, Files, Tasks, Coordination, and Programs
-- Task ledger and workflow layer for scheduled work, webhooks, channel work,
-  media jobs, wallet approvals, marketplace actions, mining events, ACP/subagent
-  runs, and CLI/system activity
-- Wallet UI, local signer integration, role-separated wallet policy, approval
-  diff/simulation, and spend caps
-- SAT mining page/runtime path, mining wallet separation, capital state, cycle
-  history, and mining event ledger records
-- Fased Network, node presence, operator/bond surfaces, and marketplace offers
-- Skill Library and ClawHub review/install flow with per-Agent skill access
-- Services for web/search, GitHub, Google Workspace, browser/media, and
-  plugin-reported connectors
-- Extensions, plugin SDK, paired nodes, mobile/macOS app code, and public docs
-
-## Product Model
-
-Fased is Agent-first. Most normal setup starts from **Agents**:
-
-- **Setup** summarizes the selected Agent.
-- **Models** connects provider accounts and assigns primary, fallback, and task
-  model roles.
-- **Channels** connects message surfaces and routes them to the Agent.
-- **Services** connects credentials and API surfaces.
-- **Skills** installs, edits, configures, and allows skills per Agent.
-- **Tools** grants or blocks runtime tools per Agent.
-- **Tasks** defines scheduled tasks, webhook triggers, workflows, graph
-  workflows, templates, and Programs, then shows one correlated activity ledger.
-- **Sessions** manages conversation and task contexts.
-- **Memory** manages archive/QMD state and diagnostics for the Agent.
-- **Files** shows the Agent workspace without exposing arbitrary host paths.
-
-Domain pages keep authority. **Wallets**, **Mining**, **Marketplace**,
-**Channels**, and **Services** own the actions that can spend, broadcast, mine,
-deliver, or change external state. **Agent > Tasks** is the audit/work surface
-that links those events together.
-
-## Current Status
-
-Ready in this repo:
-
-- repo-backed install and onboarding
-- local dashboard auth and localhost auto-open flow
-- browser Control UI with Agent-first setup
-- provider/model setup including OpenAI, Anthropic, Google, OpenRouter, xAI,
-  Ollama, LM Studio, and Custom/vLLM-compatible local endpoints
-- channel setup grouped by major, enterprise, self-hosted/protocol, and plugin
-  channels
-- per-Agent tools/skills/services access
-- task ledger, webhook triggers, workflows, graph editor, templates, Programs,
-  source-specific actions, and activity correlation
-- wallet policy, local signer flow, caps, approval review, and role-separated
-  wallet surfaces
-- SAT mining UI/runtime path and mining event records
-- Fased Network, marketplace, usage ledger, notifications, logs, debug, nodes,
-  and Advanced operator surfaces
-
-Still guarded or intentionally staged:
-
-- trading and market/news workflows remain behind explicit plugin/risk gates
-- richer visual workflow polish can continue on top of the existing graph JSON
-  runtime
-- public package distribution can come after the repo install path remains
-  consistently stable
+**Links:** [Install](#install) · [Docs](https://docs.fased.ai) ·
+[Security](./SECURITY.md) · [Release checklist](./docs/reference/RELEASING.md) ·
+[Website](https://fased.ai) · [Repository](https://github.com/fased-ai/fased)
 
 ## Install
 
 Public install is repo-backed:
+
+### Local install
+
+Use this on a laptop, desktop, dev box, or WSL2:
 
 ```bash
 git clone https://github.com/fased-ai/fased.git fased
@@ -98,28 +41,68 @@ cd fased
 fased dashboard
 ```
 
-`install.sh` runs onboarding by default. Use `./install.sh --no-onboard` only
-when you want to install first and run onboarding later:
+### VPS Hosting install
+
+Use this on the VPS that will run Fased all the time:
 
 ```bash
-fased onboard --install-daemon
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up --ssh
+
+git clone https://github.com/fased-ai/fased.git fased
+cd fased
+./install.sh --hosting
+fased dashboard
 ```
 
-Recommended first run:
+Hosting requires the VPS to be in your Tailscale tailnet before onboarding can
+finish safely. When `sudo tailscale up --ssh` prints a login URL in the SSH
+terminal, open that URL in your local computer's browser. The VPS does not need
+a desktop browser. A Tailscale auth key is only needed for unattended automation.
 
-1. Open the dashboard with `fased dashboard`.
-2. Select or create an Agent.
-3. Configure **Agent > Models**.
-4. Send a browser chat in **Chat**.
-5. Add channels, skills, services, wallets, mining, and tasks only as needed.
+`install.sh` runs onboarding by default. Use `./install.sh --no-onboard` only
+when you want to install first and run onboarding later.
+
+After install, open the dashboard, configure **Agent > Models**, send a first
+browser chat, then add channels, skills, services, wallets, mining, and tasks
+only as needed.
 
 Read next:
 
 - [Getting Started](https://docs.fased.ai/start/getting-started)
 - [Install](https://docs.fased.ai/install)
+- [VPS Hosting](https://docs.fased.ai/install/vps)
 - [Onboarding Wizard](https://docs.fased.ai/start/wizard)
 - [Control UI](https://docs.fased.ai/web/control-ui)
 - [Dashboard](https://docs.fased.ai/web/dashboard)
+
+## What Fased Runs
+
+- Gateway, CLI, onboarding, local auth, device pairing, and browser Control UI
+- Agent workbench for models, channels, services, skills, tools, memory,
+  sessions, files, tasks, coordination, and programs
+- Task ledger for scheduled work, webhooks, workflows, wallet approvals,
+  marketplace records, mining events, ACP/subagent runs, and CLI/system activity
+- Wallet UI with local signer integration, role-separated policy, approval
+  review, and spend caps
+- SAT mining runtime path with mining wallet separation, cycle history, and
+  mining event records
+- Fased Network, node presence, operator/bond surfaces, marketplace offers,
+  plugin SDK, bundled skills, extensions, mobile/macOS app code, and public docs
+
+## Product Model
+
+Fased is Agent-first. Most normal setup starts from **Agents**:
+
+- **Models** connects provider accounts and assigns primary, fallback, and task
+  model roles.
+- **Channels** connects message surfaces and routes them to the Agent.
+- **Services** connects credentials and API surfaces.
+- **Skills** and **Tools** decide what the selected Agent may use.
+- **Tasks** defines schedules, webhook triggers, workflows, templates, and
+  Programs, then shows one correlated activity ledger.
+- **Wallets**, **Mining**, and **Marketplace** keep their own authority pages
+  for actions that can spend, broadcast, mine, deliver, or change external state.
 
 ## Security Defaults
 
@@ -288,19 +271,3 @@ operator features, read:
 Fased software is not financial, investment, tax, legal, or operational advice.
 Wallets, crypto, mining, federation, trading, marketplace, and news/market
 workflows carry real risk.
-
-## Roadmap
-
-Near-term work:
-
-- keep hardening task ledger and workflow UX
-- expand Agent Programs and controlled standing-order review
-- improve workflow graph polish on top of the shared ledger-backed runtime
-- harden SAT mining, marketplace, federation, and operator evidence flows
-- keep local provider, channel, skill, service, and wallet setup beginner-clear
-- keep release gates, docs screenshots, and optional package publication aligned
-  with the repo install path
-
-Roadmap docs:
-
-- [Roadmap](https://docs.fased.ai/reference/roadmap)
