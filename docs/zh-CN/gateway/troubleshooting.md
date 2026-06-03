@@ -544,7 +544,7 @@ fased gateway restart
 切换**到 git 安装**：
 
 ```bash
-git clone https://github.com/fased-ai/agent.git fased
+git clone https://github.com/fased-ai/fased.git fased
 cd fased
 ./install.sh --no-onboard
 ```
@@ -633,7 +633,7 @@ tccutil reset All ai.fased.mac.debug
 ```
 
 **修复 2：强制使用新的 Bundle ID**
-如果重置不起作用，在 [`scripts/package-mac-app.sh`](https://github.com/fased-ai/agent/blob/main/scripts/package-mac-app.sh) 中更改 `BUNDLE_ID`（例如，添加 `.test` 后缀）并重新构建。这会强制 macOS 将其视为新应用。
+如果重置不起作用，在 [`scripts/package-mac-app.sh`](https://github.com/fased-ai/fased/blob/main/scripts/package-mac-app.sh) 中更改 `BUNDLE_ID`（例如，添加 `.test` 后缀）并重新构建。这会强制 macOS 将其视为新应用。
 
 ### Gateway 网关卡在"Starting..."
 
@@ -667,7 +667,7 @@ kill -9 <PID> # 最后手段
 
 ```bash
 fased --version
-git clone https://github.com/fased-ai/agent.git fased
+git clone https://github.com/fased-ai/fased.git fased
 cd fased
 ./install.sh --no-onboard
 ```

@@ -132,7 +132,7 @@ Terraform, or another non-interactive install path.
 ## 3) Clone the Fased repository
 
 ```bash
-git clone https://github.com/fased-ai/agent.git fased
+git clone https://github.com/fased-ai/fased.git fased
 cd fased
 ```
 

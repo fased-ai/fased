@@ -34,7 +34,7 @@ If `pnpm test` flakes on a loaded host, rerun once before treating it as a regre
 
 ## Model latency bench (local keys)
 
-Script: [`scripts/bench-model.ts`](https://github.com/fased-ai/agent/blob/main/scripts/bench-model.ts)
+Script: [`scripts/bench-model.ts`](https://github.com/fased-ai/fased/blob/main/scripts/bench-model.ts)
 
 Usage:
 

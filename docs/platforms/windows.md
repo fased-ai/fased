@@ -146,7 +146,7 @@ systemctl --user status
 Use the same repo-backed install flow you would use on Linux:
 
 ```bash
-git clone https://github.com/fased-ai/agent.git fased
+git clone https://github.com/fased-ai/fased.git fased
 cd fased
 ./install.sh
 ```

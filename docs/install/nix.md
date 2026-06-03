@@ -19,7 +19,7 @@ If you want a Nix-based install, the practical order is:
 
 ```text
 1. Install Determinate Nix or your preferred Nix distribution
-2. Clone the main repo: github.com/fased-ai/agent
+2. Clone the main repo: github.com/fased-ai/fased
 3. Pin Node, pnpm, and Swift (if you need the macOS app) in your flake or devShell
 4. Point FASED_STATE_DIR and FASED_CONFIG_PATH at writable locations
 5. Install the CLI with ./install.sh --no-onboard or your own wrapper
@@ -81,12 +81,12 @@ The macOS packaging flow expects a stable Info.plist template at:
 apps/macos/Sources/FasedAgent/Resources/Info.plist
 ```
 
-[`scripts/package-mac-app.sh`](https://github.com/fased-ai/agent/blob/main/scripts/package-mac-app.sh) copies this template into the app bundle and patches dynamic fields
+[`scripts/package-mac-app.sh`](https://github.com/fased-ai/fased/blob/main/scripts/package-mac-app.sh) copies this template into the app bundle and patches dynamic fields
 (bundle ID, version/build, Git SHA, Sparkle keys). This keeps the plist deterministic for SwiftPM
 packaging and Nix builds (which do not rely on a full Xcode toolchain).
 
 ## Related
 
-- [Main repository](https://github.com/fased-ai/agent)
+- [Main repository](https://github.com/fased-ai/fased)
 - [Wizard](/start/wizard) — non-Nix CLI setup
 - [Docker](/install/docker) — containerized setup

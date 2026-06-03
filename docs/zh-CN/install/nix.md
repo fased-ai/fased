@@ -18,7 +18,7 @@ x-i18n:
 
 目前没有单独公开的 `nix-fased` 仓库。本页记录的是：如果你已经在使用
 Nix、NixOS 或 Home Manager，如何基于主仓库
-[`fased-ai/agent`](https://github.com/fased-ai/agent)
+[`fased-ai/fased`](https://github.com/fased-ai/fased)
 对 Fased 做可复现封装。
 
 ## 快速开始
@@ -27,7 +27,7 @@ Nix、NixOS 或 Home Manager，如何基于主仓库
 
 ```text
 1. 安装 Determinate Nix 或你自己的 Nix 发行版
-2. 克隆主仓库：github.com/fased-ai/agent
+2. 克隆主仓库：github.com/fased-ai/fased
 3. 在 flake / devShell 中固定 Node、pnpm、Swift（如果需要 macOS app）
 4. 将 FASED_STATE_DIR 和 FASED_CONFIG_PATH 指向可写位置
 5. 通过 `./install.sh --no-onboard` 或你自己的封装脚本安装 CLI
@@ -85,10 +85,10 @@ macOS 打包流程期望在以下位置有一个稳定的 Info.plist 模板：
 apps/macos/Sources/FasedAgent/Resources/Info.plist
 ```
 
-[`scripts/package-mac-app.sh`](https://github.com/fased-ai/agent/blob/main/scripts/package-mac-app.sh) 将此模板复制到应用包中并修补动态字段（bundle ID、版本/构建号、Git SHA、Sparkle 密钥）。这使 plist 对于 SwiftPM 打包和 Nix 构建保持确定性（它们不依赖完整的 Xcode 工具链）。
+[`scripts/package-mac-app.sh`](https://github.com/fased-ai/fased/blob/main/scripts/package-mac-app.sh) 将此模板复制到应用包中并修补动态字段（bundle ID、版本/构建号、Git SHA、Sparkle 密钥）。这使 plist 对于 SwiftPM 打包和 Nix 构建保持确定性（它们不依赖完整的 Xcode 工具链）。
 
 ## 相关内容
 
-- [主仓库](https://github.com/fased-ai/agent)
+- [主仓库](https://github.com/fased-ai/fased)
 - [向导](/start/wizard) — 非 Nix CLI 设置
 - [Docker](/install/docker) — 容器化设置

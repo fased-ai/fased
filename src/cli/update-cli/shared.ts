@@ -51,7 +51,7 @@ export function parseTimeoutMsOrExit(timeout?: string): number | undefined | nul
   return timeoutMs;
 }
 
-const FASED_REPO_URL = "https://github.com/fased-ai/agent.git";
+const FASED_REPO_URL = "https://github.com/fased-ai/fased.git";
 const MAX_LOG_CHARS = 8000;
 
 export const DEFAULT_PACKAGE_NAME = "fased";

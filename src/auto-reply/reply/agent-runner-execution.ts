@@ -397,7 +397,7 @@ export async function runAgentTurnWithFallback(params: {
                   // Serialize tool result delivery to preserve message ordering.
                   // Without this, concurrent tool callbacks race through typing signals
                   // and message sends, causing out-of-order delivery to the user.
-                  // See: https://github.com/fased-ai/agent/issues/11044
+                  // See: https://github.com/fased-ai/fased/issues/11044
                   let toolResultChain: Promise<void> = Promise.resolve();
                   return (payload: ReplyPayload) => {
                     toolResultChain = toolResultChain

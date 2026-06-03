@@ -10,13 +10,13 @@ Use GitHub as the reporting surface.
 Use the GitHub issue tracker for most security bugs, hardening issues, and threat
 model corrections:
 
-- https://github.com/fased-ai/agent/issues
+- https://github.com/fased-ai/fased/issues
 
 If the report contains secret material, private infrastructure details, or
 exploit steps that should not be posted publicly:
 
 1. use GitHub private vulnerability reporting if it is enabled:
-   https://github.com/fased-ai/agent/security/advisories/new
+   https://github.com/fased-ai/fased/security/advisories/new
 2. otherwise open a minimal GitHub issue without the sensitive details and ask
    for a private handoff
 3. do not paste credentials, private keys, tokens, seed phrases, or live exploit

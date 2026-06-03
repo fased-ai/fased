@@ -104,7 +104,7 @@ docker compose version
 ## 3) 克隆 Fased 仓库
 
 ```bash
-git clone https://github.com/fased-ai/agent.git fased
+git clone https://github.com/fased-ai/fased.git fased
 cd fased
 ```
 

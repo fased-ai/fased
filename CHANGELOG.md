@@ -19,7 +19,7 @@ third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 - Keep the release gate clean for this slice with `pnpm test:fast`,
   `pnpm ui:build`, `pnpm exec tsc --noEmit`, `pnpm check:docs`, and the
   Control UI workflow browser smoke.
-- Prepare the public Fased Agent repository under `fased-ai/agent`.
+- Prepare the public Fased Agent repository under `fased-ai/fased`.
 - Align public source links, install docs, and repository metadata.
 - Keep Fased-specific wallet, Fased Network, SAT mining, operator records, and
   onboarding work in the public source tree.

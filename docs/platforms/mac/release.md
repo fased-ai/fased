@@ -69,18 +69,18 @@ ditto -c -k --keepParent apps/macos/.build/release/FasedAgent.app.dSYM dist/Fase
 Use the release note generator so Sparkle renders formatted HTML notes:
 
 ```bash
-SPARKLE_PRIVATE_KEY_FILE=/path/to/ed25519-private-key scripts/make_appcast.sh dist/FasedAgent-2026.2.27.zip https://raw.githubusercontent.com/fased-ai/agent/main/appcast.xml
+SPARKLE_PRIVATE_KEY_FILE=/path/to/ed25519-private-key scripts/make_appcast.sh dist/FasedAgent-2026.2.27.zip https://raw.githubusercontent.com/fased-ai/fased/main/appcast.xml
 ```
 
-Generates HTML release notes from `CHANGELOG.md` (via [`scripts/changelog-to-html.sh`](https://github.com/fased-ai/agent/blob/main/scripts/changelog-to-html.sh)) and embeds them in the appcast entry.
+Generates HTML release notes from `CHANGELOG.md` (via [`scripts/changelog-to-html.sh`](https://github.com/fased-ai/fased/blob/main/scripts/changelog-to-html.sh)) and embeds them in the appcast entry.
 Commit the updated `appcast.xml` alongside the release assets (zip + dSYM) when publishing.
 
 ## Publish & verify
 
 - Upload `FasedAgent-2026.2.27.zip` (and `FasedAgent-2026.2.27.dSYM.zip`) to the GitHub release for tag `v2026.2.27`.
-- Ensure the raw appcast URL matches the baked feed: `https://raw.githubusercontent.com/fased-ai/agent/main/appcast.xml`.
+- Ensure the raw appcast URL matches the baked feed: `https://raw.githubusercontent.com/fased-ai/fased/main/appcast.xml`.
 - Sanity checks:
-  - `curl -I https://raw.githubusercontent.com/fased-ai/agent/main/appcast.xml` returns 200.
+  - `curl -I https://raw.githubusercontent.com/fased-ai/fased/main/appcast.xml` returns 200.
   - `curl -I <enclosure url>` returns 200 after assets upload.
   - On a previous public build, run “Check for Updates…” from the About tab and verify Sparkle installs the new build cleanly.
 

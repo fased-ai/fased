@@ -1,6 +1,6 @@
 # Contributing to Fased
 
-Thanks for contributing to `fased-ai/agent`.
+Thanks for contributing to `fased-ai/fased`.
 
 This repository is the public codebase for the Fased product surface:
 

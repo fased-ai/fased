@@ -120,7 +120,7 @@ sudo sysctl -p
 ### 选项 A：标准安装（推荐）
 
 ```bash
-git clone https://github.com/fased-ai/agent.git fased
+git clone https://github.com/fased-ai/fased.git fased
 cd fased
 ./install.sh --no-onboard
 ```
@@ -128,7 +128,7 @@ cd fased
 ### 选项 B：可修改安装（用于调试）
 
 ```bash
-git clone https://github.com/fased-ai/agent.git fased
+git clone https://github.com/fased-ai/fased.git fased
 cd fased
 pnpm install
 pnpm build

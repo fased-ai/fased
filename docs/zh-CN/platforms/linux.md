@@ -22,7 +22,7 @@ Gateway 网关在 Linux 上完全支持。**Node 是推荐的运行时**。
 
 ## 新手快速路径（VPS）
 
-1. `git clone https://github.com/fased-ai/agent.git fased`
+1. `git clone https://github.com/fased-ai/fased.git fased`
 2. `cd fased`
 3. 如果这是远程主机，先加入 Tailscale
 4. `./install.sh --hosting`

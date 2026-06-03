@@ -113,7 +113,7 @@ sudo sysctl -p
 ### Option A: Standard Install (Recommended)
 
 ```bash
-git clone https://github.com/fased-ai/agent.git fased
+git clone https://github.com/fased-ai/fased.git fased
 cd fased
 ./install.sh --no-onboard
 ```
@@ -121,7 +121,7 @@ cd fased
 ### Option B: Hackable Install (For tinkering)
 
 ```bash
-git clone https://github.com/fased-ai/agent.git fased
+git clone https://github.com/fased-ai/fased.git fased
 cd fased
 pnpm install
 pnpm build

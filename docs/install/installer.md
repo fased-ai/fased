@@ -12,12 +12,12 @@ sidebarTitle: "Installer Reference"
 
 This docs set only documents the installer that exists in this repo:
 
-- [`install.sh`](https://github.com/fased-ai/agent/blob/main/install.sh)
+- [`install.sh`](https://github.com/fased-ai/fased/blob/main/install.sh)
 
 If you are starting from zero, the normal path is:
 
 ```bash
-git clone https://github.com/fased-ai/agent.git fased
+git clone https://github.com/fased-ai/fased.git fased
 cd fased
 ./install.sh
 ```
@@ -92,7 +92,7 @@ From the repo root:
 Fresh machine, one copy-paste block:
 
 ```bash
-git clone https://github.com/fased-ai/agent.git fased
+git clone https://github.com/fased-ai/fased.git fased
 cd fased
 ./install.sh
 ```
@@ -177,7 +177,7 @@ current surface, run `./install.sh --help` from the repo root.
 Headless repo-backed install:
 
 ```bash
-git clone https://github.com/fased-ai/agent.git fased
+git clone https://github.com/fased-ai/fased.git fased
 cd fased
 ./install.sh --no-onboard
 ```
@@ -192,7 +192,7 @@ If you automate a hosted install, keep the same security order:
 Use a controlled install directory in CI or on a managed host:
 
 ```bash
-git clone https://github.com/fased-ai/agent.git fased
+git clone https://github.com/fased-ai/fased.git fased
 cd fased
 ./install.sh --install-dir "$HOME/agent" --no-onboard
 ```

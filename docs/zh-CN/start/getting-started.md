@@ -19,7 +19,7 @@ x-i18n:
 
 <Warning>
 如果你准备使用钱包、SAT Mining、Fased Network、运营者经济或后续交易/新闻功能，请先阅读仓库风险边界：
-[`DISCLAIMER.md`](https://github.com/fased-ai/agent/blob/main/DISCLAIMER.md)。
+[`DISCLAIMER.md`](https://github.com/fased-ai/fased/blob/main/DISCLAIMER.md)。
 </Warning>
 
 <Info>
@@ -49,7 +49,7 @@ Windows：使用 **WSL2**（推荐 Ubuntu）。强烈推荐 WSL2；原生 Window
 ## 1) 安装 CLI（推荐）
 
 ```bash
-git clone https://github.com/fased-ai/agent.git fased
+git clone https://github.com/fased-ai/fased.git fased
 cd fased
 ./install.sh
 ```
@@ -180,7 +180,7 @@ fased pairing approve whatsapp <code>
 如果你正在开发 Fased 本身，从源代码运行：
 
 ```bash
-git clone https://github.com/fased-ai/agent.git fased
+git clone https://github.com/fased-ai/fased.git fased
 cd fased
 pnpm install
 pnpm ui:build # 首次运行时自动安装 UI 依赖

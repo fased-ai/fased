@@ -75,7 +75,7 @@ apt install -y nodejs
 node -e 'require("node:sqlite"); console.log("node:sqlite ok")'
 
 # Install Fased
-git clone https://github.com/fased-ai/agent.git fased
+git clone https://github.com/fased-ai/fased.git fased
 cd fased
 ./install.sh --no-onboard
 

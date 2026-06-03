@@ -13,7 +13,7 @@ Thanks for helping make Fased more secure. This threat model is a living documen
 ### Add a Threat
 
 Spotted an attack vector or risk we haven't covered? Open an issue on
-[fased-ai/agent](https://github.com/fased-ai/agent/issues) and
+[fased-ai/fased](https://github.com/fased-ai/fased/issues) and
 describe it in your own words. You don't need to know any frameworks or fill in
 every field - just describe the scenario.
 
@@ -27,7 +27,7 @@ every field - just describe the scenario.
 We'll handle the ATLAS mapping, threat IDs, and risk assessment during review. If you want to include those details, great - but it's not expected.
 
 > **This is for adding to the threat model, not reporting live vulnerabilities.**
-> If you found an exploitable vulnerability, use [`SECURITY.md`](https://github.com/fased-ai/agent/blob/main/SECURITY.md).
+> If you found an exploitable vulnerability, use [`SECURITY.md`](https://github.com/fased-ai/fased/blob/main/SECURITY.md).
 
 ### Suggest a Mitigation
 
@@ -93,8 +93,8 @@ If you're unsure about the risk level, just describe the impact and we'll assess
 
 ## Contact
 
-- **Security vulnerabilities:** use [`SECURITY.md`](https://github.com/fased-ai/agent/blob/main/SECURITY.md)
-- **Threat model questions:** open an issue on [fased-ai/agent](https://github.com/fased-ai/agent/issues)
+- **Security vulnerabilities:** use [`SECURITY.md`](https://github.com/fased-ai/fased/blob/main/SECURITY.md)
+- **Threat model questions:** open an issue on [fased-ai/fased](https://github.com/fased-ai/fased/issues)
 - **General discussion:** use the normal repo issue/discussion flow
 
 ## Recognition

@@ -56,7 +56,7 @@ all the time.
     Use this on your own machine:
 
     ```bash
-    git clone https://github.com/fased-ai/agent.git fased
+    git clone https://github.com/fased-ai/fased.git fased
     cd fased
     ./install.sh
     ```
@@ -72,7 +72,7 @@ all the time.
     curl -fsSL https://tailscale.com/install.sh | sh
     sudo tailscale up --ssh
 
-    git clone https://github.com/fased-ai/agent.git fased
+    git clone https://github.com/fased-ai/fased.git fased
     cd fased
     ./install.sh --hosting
     ```
@@ -85,7 +85,7 @@ all the time.
   </Tab>
 </Tabs>
 
-The installer is repo-backed from `fased-ai/agent`.
+The installer is repo-backed from `fased-ai/fased`.
 
 <Note>
 Do not use normal local `fased onboard` on a laptop to configure a remote VPS.
@@ -97,7 +97,7 @@ unavailable” instead of creating an incomplete hosted setup.
 ## Basic installer command
 
 ```bash
-git clone https://github.com/fased-ai/agent.git fased
+git clone https://github.com/fased-ai/fased.git fased
 cd fased
 ./install.sh
 ```

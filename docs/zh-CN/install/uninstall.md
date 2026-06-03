@@ -123,7 +123,7 @@ Remove-Item -Force "$env:USERPROFILE\.fased\gateway.cmd"
 当前公开文档推荐的路径是：
 
 ```bash
-git clone https://github.com/fased-ai/agent.git fased
+git clone https://github.com/fased-ai/fased.git fased
 cd fased
 ./install.sh
 ```

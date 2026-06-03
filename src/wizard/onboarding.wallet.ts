@@ -177,7 +177,7 @@ function installSignerdBinary(binPath: string): void {
     throw new Error(
       `install-fased-signerd.sh not found. Cannot install fased-signerd.\n` +
         `Expected at one of: ${INSTALL_SCRIPT_RELPATHS.join(", ")}\n` +
-        `Download manually from https://github.com/fased-ai/agent/releases`,
+        `Download manually from https://github.com/fased-ai/fased/releases`,
     );
   }
   const runAsUser = resolveLocalSignerRunAsUser(process.env);

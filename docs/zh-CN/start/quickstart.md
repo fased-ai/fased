@@ -21,7 +21,7 @@ Fased 推荐 Node 24，最低需要带 `node:sqlite` 的 Node 22.14+。
 <Tabs>
   <Tab title="仓库安装（推荐）">
     ```bash
-    git clone https://github.com/fased-ai/agent.git fased
+    git clone https://github.com/fased-ai/fased.git fased
     cd fased
     ./install.sh
     ```
@@ -60,7 +60,7 @@ Fased 推荐 Node 24，最低需要带 `node:sqlite` 的 Node 22.14+。
 ## 从源码安装（开发）
 
 ```bash
-git clone https://github.com/fased-ai/agent.git fased
+git clone https://github.com/fased-ai/fased.git fased
 cd fased
 pnpm install
 pnpm ui:build # 首次运行时会自动安装 UI 依赖

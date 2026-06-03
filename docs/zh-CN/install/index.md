@@ -48,10 +48,10 @@ Windows 上建议使用 [WSL2](https://learn.microsoft.com/en-us/windows/wsl/ins
 
 ## 推荐路径
 
-使用 `fased-ai/agent` 的仓库安装器：
+使用 `fased-ai/fased` 的仓库安装器：
 
 ```bash
-git clone https://github.com/fased-ai/agent.git fased
+git clone https://github.com/fased-ai/fased.git fased
 cd fased
 ./install.sh
 ```

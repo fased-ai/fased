@@ -22,7 +22,7 @@ x-i18n:
 
 <Warning>
 ウォレット、Mining、Fased Networkなどのオペレーターモジュールを有効化する前に、リポジトリのリスク境界を読んでください：
-[`DISCLAIMER.md`](https://github.com/fased-ai/agent/blob/main/DISCLAIMER.md)。
+[`DISCLAIMER.md`](https://github.com/fased-ai/fased/blob/main/DISCLAIMER.md)。
 </Warning>
 
 ## 前提条件
@@ -43,7 +43,7 @@ node -e 'require("node:sqlite"); console.log("node:sqlite ok")'
 <Steps>
   <Step title="インストール">
     ```bash
-    git clone https://github.com/fased-ai/agent.git fased
+    git clone https://github.com/fased-ai/fased.git fased
     cd fased
     ./install.sh
     ```

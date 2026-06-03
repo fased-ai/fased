@@ -26,7 +26,7 @@ BIN_PATH="${INSTALL_DIR}/fased-signerd"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-BASE_URL="${FASED_LOCAL_SIGNER_BASE_URL:-https://github.com/fased-ai/agent/releases/download}"
+BASE_URL="${FASED_LOCAL_SIGNER_BASE_URL:-https://github.com/fased-ai/fased/releases/download}"
 if [[ "$VERSION" == "latest" ]]; then
   VERSION_TAG="${FASED_LOCAL_SIGNER_LATEST_TAG-latest}"
 else

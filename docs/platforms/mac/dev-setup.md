@@ -38,7 +38,7 @@ If you don't have an Apple signing identity, the script fails by default. Set
 not need to persist.
 
 For dev run modes, signing flags, and Team ID troubleshooting, see the macOS app README:
-[https://github.com/fased-ai/agent/blob/main/apps/macos/README.md](https://github.com/fased-ai/agent/blob/main/apps/macos/README.md)
+[https://github.com/fased-ai/fased/blob/main/apps/macos/README.md](https://github.com/fased-ai/fased/blob/main/apps/macos/README.md)
 
 > **Note**: Ad-hoc signed apps may trigger security prompts. If the app crashes immediately with "Abort trap 6", see the [Troubleshooting](#troubleshooting) section.
 
@@ -55,7 +55,7 @@ The macOS app expects a global `fased` CLI install to manage background tasks.
 Alternatively, install it manually:
 
 ```bash
-git clone https://github.com/fased-ai/agent.git fased
+git clone https://github.com/fased-ai/fased.git fased
 cd fased
 ./install.sh --no-onboard
 ```
@@ -92,7 +92,7 @@ If the app crashes when you try to allow **Speech Recognition** or **Microphone*
    tccutil reset All ai.fased.mac.debug
    ```
 
-2. If that fails, change the `BUNDLE_ID` temporarily in [`scripts/package-mac-app.sh`](https://github.com/fased-ai/agent/blob/main/scripts/package-mac-app.sh) to force a "clean slate" from macOS.
+2. If that fails, change the `BUNDLE_ID` temporarily in [`scripts/package-mac-app.sh`](https://github.com/fased-ai/fased/blob/main/scripts/package-mac-app.sh) to force a "clean slate" from macOS.
 
 ### Gateway "Starting..." indefinitely
 

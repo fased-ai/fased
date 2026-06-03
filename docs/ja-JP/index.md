@@ -62,7 +62,7 @@ flowchart LR
 6. 必要な機能だけ追加する。
 
 ```bash
-git clone https://github.com/fased-ai/agent.git fased
+git clone https://github.com/fased-ai/fased.git fased
 cd fased
 ./install.sh
 fased dashboard

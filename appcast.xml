@@ -2,7 +2,7 @@
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
   <channel>
     <title>Fased Agent Updates</title>
-    <link>https://raw.githubusercontent.com/fased-ai/agent/main/appcast.xml</link>
+    <link>https://raw.githubusercontent.com/fased-ai/fased/main/appcast.xml</link>
     <description>Fased Agent macOS update feed.</description>
     <language>en</language>
   </channel>

@@ -14,7 +14,7 @@ Goal: go from zero to a first working chat with minimal setup.
 If you plan to use wallet, mining, Fased Network, Marketplace, or other
 wallet-connected features, read the repo risk boundary before moving funds or
 enabling public participation:
-[`DISCLAIMER.md`](https://github.com/fased-ai/agent/blob/main/DISCLAIMER.md).
+[`DISCLAIMER.md`](https://github.com/fased-ai/fased/blob/main/DISCLAIMER.md).
 </Warning>
 
 <Info>
@@ -73,7 +73,7 @@ For the full decision table, read [Setup Matrix](/start/setup-matrix).
     <Tabs>
       <Tab title="Local">
         ```bash
-        git clone https://github.com/fased-ai/agent.git fased
+        git clone https://github.com/fased-ai/fased.git fased
         cd fased
         ./install.sh
         ```
@@ -86,7 +86,7 @@ For the full decision table, read [Setup Matrix](/start/setup-matrix).
         curl -fsSL https://tailscale.com/install.sh | sh
         sudo tailscale up --ssh
 
-        git clone https://github.com/fased-ai/agent.git fased
+        git clone https://github.com/fased-ai/fased.git fased
         cd fased
         ./install.sh --hosting
         ```
@@ -99,7 +99,7 @@ For the full decision table, read [Setup Matrix](/start/setup-matrix).
         Use [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install), then run the same installer inside Ubuntu:
 
         ```bash
-        git clone https://github.com/fased-ai/agent.git fased
+        git clone https://github.com/fased-ai/fased.git fased
         cd fased
         ./install.sh
         ```

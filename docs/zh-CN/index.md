@@ -75,7 +75,7 @@ Gateway 是会话、路由、工具访问、渠道连接和运行时状态的事
 <Steps>
   <Step title="安装 Fased">
     ```bash
-    git clone https://github.com/fased-ai/agent.git
+    git clone https://github.com/fased-ai/fased.git
     cd fased
     ./install.sh
     ```

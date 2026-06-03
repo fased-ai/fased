@@ -16,7 +16,7 @@ Native Linux companion apps are planned. Contributions are welcome if you want t
 
 ## Beginner quick path (VPS)
 
-1. `git clone https://github.com/fased-ai/agent.git fased`
+1. `git clone https://github.com/fased-ai/fased.git fased`
 2. `cd fased`
 3. Join Tailscale on the host if this is a remote machine
 4. `./install.sh --hosting`

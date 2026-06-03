@@ -106,7 +106,7 @@ tailscale status
 ## 5) 安装 Fased
 
 ```bash
-git clone https://github.com/fased-ai/agent.git fased
+git clone https://github.com/fased-ai/fased.git fased
 cd fased
 ./install.sh --no-onboard
 ```

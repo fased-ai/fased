@@ -79,7 +79,7 @@ export function resolveSessionDeliveryTarget(params: {
    * Callers should set this to the channel that originated the current
    * agent turn so the reply always routes back to the correct channel.
    *
-   * @see https://github.com/fased-ai/agent/issues/24152
+   * @see https://github.com/fased-ai/fased/issues/24152
    */
   turnSourceChannel?: DeliverableMessageChannel;
   /** Turn-source `to` — paired with `turnSourceChannel`. */

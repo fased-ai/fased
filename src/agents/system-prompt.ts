@@ -187,7 +187,7 @@ function buildDocsSection(params: { docsPath?: string; isMinimal: boolean; readT
     "## Documentation",
     `FasedAgent docs: ${docsPath}`,
     "Mirror: https://docs.fased.ai",
-    "Source: https://github.com/fased-ai/agent",
+    "Source: https://github.com/fased-ai/fased",
     "Support: https://docs.fased.ai/help",
     "Find new skills: https://clawhub.com",
     "For FasedAgent behavior, commands, config, or architecture: consult local docs first.",

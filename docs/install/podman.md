@@ -7,7 +7,7 @@ title: "Podman"
 
 # Podman
 
-Run the Fased gateway in a **rootless** Podman container. Uses the same image as Docker (build from the repo [Dockerfile](https://github.com/fased-ai/agent/blob/main/Dockerfile)).
+Run the Fased gateway in a **rootless** Podman container. Uses the same image as Docker (build from the repo [Dockerfile](https://github.com/fased-ai/fased/blob/main/Dockerfile)).
 
 ## Requirements
 

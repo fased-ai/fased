@@ -5,7 +5,7 @@ This folder holds threat-model and security reference material for the public re
 ## Start here
 
 - [Security overview](/security)
-- [Security policy](https://github.com/fased-ai/agent/blob/main/SECURITY.md)
+- [Security policy](https://github.com/fased-ai/fased/blob/main/SECURITY.md)
 - [Gateway security guide](/gateway/security)
 - [Remote access](/gateway/remote)
 - [Tailscale](/gateway/tailscale)

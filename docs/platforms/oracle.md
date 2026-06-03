@@ -89,7 +89,7 @@ tailscale status
 ## 5) Install Fased with the hosting profile
 
 ```bash
-git clone https://github.com/fased-ai/agent.git fased
+git clone https://github.com/fased-ai/fased.git fased
 cd fased
 ./install.sh --hosting
 ```

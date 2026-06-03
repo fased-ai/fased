@@ -44,7 +44,7 @@ pnpm install
 `ALLOW_ADHOC_SIGNING=1`。
 
 有关开发运行模式、签名标志和 Team ID 故障排除，请参阅 macOS 应用 README：
-https://github.com/fased-ai/agent/blob/main/apps/macos/README.md
+https://github.com/fased-ai/fased/blob/main/apps/macos/README.md
 
 > **注意**：Ad-hoc 签名的应用可能会触发安全提示。如果应用立即崩溃并显示"Abort trap 6"，请参阅[故障排除](#troubleshooting)部分。
 
@@ -61,7 +61,7 @@ macOS 应用期望已安装 `fased` CLI 来管理后台任务。
 或者，手动安装：
 
 ```bash
-git clone https://github.com/fased-ai/agent.git fased
+git clone https://github.com/fased-ai/fased.git fased
 cd fased
 ./install.sh --no-onboard
 ```
@@ -96,7 +96,7 @@ xcrun swift --version
    ```bash
    tccutil reset All ai.fased.mac.debug
    ```
-2. 如果这不起作用，在 [`scripts/package-mac-app.sh`](https://github.com/fased-ai/agent/blob/main/scripts/package-mac-app.sh) 中临时更改 `BUNDLE_ID` 以强制 macOS 从"全新状态"开始。
+2. 如果这不起作用，在 [`scripts/package-mac-app.sh`](https://github.com/fased-ai/fased/blob/main/scripts/package-mac-app.sh) 中临时更改 `BUNDLE_ID` 以强制 macOS 从"全新状态"开始。
 
 ### Gateway 网关无限期"Starting..."
 

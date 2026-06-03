@@ -144,7 +144,7 @@ ssh youruser@192.168.64.X
 在 VM 内：
 
 ```bash
-git clone https://github.com/fased-ai/agent.git fased
+git clone https://github.com/fased-ai/fased.git fased
 cd fased
 ./install.sh
 ```

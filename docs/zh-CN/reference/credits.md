@@ -36,8 +36,8 @@ Fased 是这个仓库当前的产品方向。
 
 参见：
 
-- [`LICENSE`](https://github.com/fased-ai/agent/blob/main/LICENSE)
-- [`THIRD_PARTY_NOTICES.md`](https://github.com/fased-ai/agent/blob/main/THIRD_PARTY_NOTICES.md)
+- [`LICENSE`](https://github.com/fased-ai/fased/blob/main/LICENSE)
+- [`THIRD_PARTY_NOTICES.md`](https://github.com/fased-ai/fased/blob/main/THIRD_PARTY_NOTICES.md)
 
 ## 当前维护面
 
@@ -58,8 +58,8 @@ Fased 不再把首页式贡献者墙作为主要真相来源。
 
 ## 相关文件
 
-- [`LICENSE`](https://github.com/fased-ai/agent/blob/main/LICENSE)
-- [`THIRD_PARTY_NOTICES.md`](https://github.com/fased-ai/agent/blob/main/THIRD_PARTY_NOTICES.md)
-- [`DISCLAIMER.md`](https://github.com/fased-ai/agent/blob/main/DISCLAIMER.md)
-- [`CONTRIBUTING.md`](https://github.com/fased-ai/agent/blob/main/CONTRIBUTING.md)
-- [`PLUGIN_LICENSE_POLICY.md`](https://github.com/fased-ai/agent/blob/main/PLUGIN_LICENSE_POLICY.md)
+- [`LICENSE`](https://github.com/fased-ai/fased/blob/main/LICENSE)
+- [`THIRD_PARTY_NOTICES.md`](https://github.com/fased-ai/fased/blob/main/THIRD_PARTY_NOTICES.md)
+- [`DISCLAIMER.md`](https://github.com/fased-ai/fased/blob/main/DISCLAIMER.md)
+- [`CONTRIBUTING.md`](https://github.com/fased-ai/fased/blob/main/CONTRIBUTING.md)
+- [`PLUGIN_LICENSE_POLICY.md`](https://github.com/fased-ai/fased/blob/main/PLUGIN_LICENSE_POLICY.md)

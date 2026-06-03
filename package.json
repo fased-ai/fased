@@ -9,15 +9,15 @@
     "messaging",
     "plugins"
   ],
-  "homepage": "https://github.com/fased-ai/agent#readme",
+  "homepage": "https://github.com/fased-ai/fased#readme",
   "bugs": {
-    "url": "https://github.com/fased-ai/agent/issues"
+    "url": "https://github.com/fased-ai/fased/issues"
   },
   "license": "MIT",
   "author": "",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/fased-ai/agent.git"
+    "url": "git+https://github.com/fased-ai/fased.git"
   },
   "bin": {
     "fased": "fased.mjs"

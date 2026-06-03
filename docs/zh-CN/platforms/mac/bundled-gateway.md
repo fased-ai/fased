@@ -24,7 +24,7 @@ FasedAgent.app 不再捆绑 Node/Bun 或 Gateway 网关运行时。macOS 应用�
 然后通过主仓库 checkout 安装 `fased`：
 
 ```bash
-git clone https://github.com/fased-ai/agent.git fased
+git clone https://github.com/fased-ai/fased.git fased
 cd fased
 ./install.sh --no-onboard
 ```

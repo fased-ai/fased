@@ -24,7 +24,7 @@ x-i18n:
 
 ## 模型延迟基准测试（本地密钥）
 
-脚本：[`scripts/bench-model.ts`](https://github.com/fased-ai/agent/blob/main/scripts/bench-model.ts)
+脚本：[`scripts/bench-model.ts`](https://github.com/fased-ai/fased/blob/main/scripts/bench-model.ts)
 
 用法：
 

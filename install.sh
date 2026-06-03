@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FASED_DIR="$SCRIPT_DIR"
 SAT_RUNTIME_ENV_FILE="${FASED_SAT_RUNTIME_ENV_FILE:-$FASED_DIR/config/sat-runtime.env}"
-INSTALL_REPO_URL="${FASED_INSTALL_REPO:-https://github.com/fased-ai/agent.git}"
+INSTALL_REPO_URL="${FASED_INSTALL_REPO:-https://github.com/fased-ai/fased.git}"
 INSTALL_BASE_DIR="${FASED_INSTALL_DIR:-$HOME/agent}"
 FASED_CONFIG_DIR="${FASED_CONFIG_DIR:-$HOME/.fased}"
 INSTALL_MARKER_PATH="$FASED_CONFIG_DIR/install-complete.json"

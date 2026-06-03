@@ -16,12 +16,12 @@ x-i18n:
 
 当前这套文档只记录仓库里真实存在的安装器：
 
-- [`install.sh`](https://github.com/fased-ai/agent/blob/main/install.sh)
+- [`install.sh`](https://github.com/fased-ai/fased/blob/main/install.sh)
 
 从零开始的真实路径是：
 
 ```bash
-git clone https://github.com/fased-ai/agent.git fased
+git clone https://github.com/fased-ai/fased.git fased
 cd fased
 ./install.sh
 ```
@@ -141,7 +141,7 @@ Windows 请先安装
 无头安装：
 
 ```bash
-git clone https://github.com/fased-ai/agent.git fased
+git clone https://github.com/fased-ai/fased.git fased
 cd fased
 ./install.sh --no-onboard
 ```
@@ -149,7 +149,7 @@ cd fased
 在 CI 或受控主机上指定安装目录：
 
 ```bash
-git clone https://github.com/fased-ai/agent.git fased
+git clone https://github.com/fased-ai/fased.git fased
 cd fased
 ./install.sh --install-dir "$HOME/agent" --no-onboard
 ```

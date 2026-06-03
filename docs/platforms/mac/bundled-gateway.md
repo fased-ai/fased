@@ -20,7 +20,7 @@ You need Node 24 recommended, or Node 22.14+ with `node:sqlite`, on the Mac.
 Then install `fased` from the public repo checkout:
 
 ```bash
-git clone https://github.com/fased-ai/agent.git fased
+git clone https://github.com/fased-ai/fased.git fased
 cd fased
 ./install.sh --no-onboard
 ```

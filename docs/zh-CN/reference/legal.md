@@ -12,12 +12,12 @@ title: "Legal and Risk"
 
 ## Core files
 
-- [`LICENSE`](https://github.com/fased-ai/agent/blob/main/LICENSE)
-- [`SECURITY.md`](https://github.com/fased-ai/agent/blob/main/SECURITY.md)
-- [`THIRD_PARTY_NOTICES.md`](https://github.com/fased-ai/agent/blob/main/THIRD_PARTY_NOTICES.md)
-- [`DISCLAIMER.md`](https://github.com/fased-ai/agent/blob/main/DISCLAIMER.md)
-- [`CONTRIBUTING.md`](https://github.com/fased-ai/agent/blob/main/CONTRIBUTING.md)
-- [`PLUGIN_LICENSE_POLICY.md`](https://github.com/fased-ai/agent/blob/main/PLUGIN_LICENSE_POLICY.md)
+- [`LICENSE`](https://github.com/fased-ai/fased/blob/main/LICENSE)
+- [`SECURITY.md`](https://github.com/fased-ai/fased/blob/main/SECURITY.md)
+- [`THIRD_PARTY_NOTICES.md`](https://github.com/fased-ai/fased/blob/main/THIRD_PARTY_NOTICES.md)
+- [`DISCLAIMER.md`](https://github.com/fased-ai/fased/blob/main/DISCLAIMER.md)
+- [`CONTRIBUTING.md`](https://github.com/fased-ai/fased/blob/main/CONTRIBUTING.md)
+- [`PLUGIN_LICENSE_POLICY.md`](https://github.com/fased-ai/fased/blob/main/PLUGIN_LICENSE_POLICY.md)
 
 ## 文件用途
 

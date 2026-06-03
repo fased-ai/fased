@@ -30,7 +30,7 @@ Remote mode supports two transports:
 1. Install Node + pnpm and install the repo-backed Fased CLI:
 
    ```bash
-   git clone https://github.com/fased-ai/agent.git fased
+   git clone https://github.com/fased-ai/fased.git fased
    cd fased
    ./install.sh --no-onboard
    ```

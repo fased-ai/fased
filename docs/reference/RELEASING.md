@@ -56,7 +56,7 @@ Changing one of these does not automatically update the others.
 - [ ] keep it curated and human-readable
 - [ ] use current Fased naming in new entries
 - [ ] preserve older historical names in older entries instead of rewriting history
-- [ ] draft the GitHub release body from [RELEASE_NOTES_TEMPLATE.md](https://github.com/fased-ai/agent/blob/main/RELEASE_NOTES_TEMPLATE.md)
+- [ ] draft the GitHub release body from [RELEASE_NOTES_TEMPLATE.md](https://github.com/fased-ai/fased/blob/main/RELEASE_NOTES_TEMPLATE.md)
 
 Important:
 
@@ -91,6 +91,14 @@ git push origin vX.Y.Z
 - [ ] paste the curated release notes into the release body
 - [ ] do not claim package-manager install paths that are not actually supportable yet
 
+## Post-public repository hardening
+
+- [ ] enable `main` branch protection once the repository is public or the
+  organization plan supports private-repo protection
+- [ ] block force pushes and branch deletion
+- [ ] add required status checks after CI is stable for the public repo
+- [ ] keep emergency admin bypass limited to maintainers who cut releases
+
 ## Optional: macOS app + appcast
 
 If you are shipping a signed macOS desktop build:
@@ -99,7 +107,7 @@ If you are shipping a signed macOS desktop build:
 - [ ] zip the app for distribution
 - [ ] generate `appcast.xml`
 - [ ] make sure the feed URL is the real raw repo path:
-  - `https://raw.githubusercontent.com/fased-ai/agent/main/appcast.xml`
+  - `https://raw.githubusercontent.com/fased-ai/fased/main/appcast.xml`
 - [ ] publish the release assets that the appcast points to
 
 See [macOS release](/platforms/mac/release) for the exact commands.
@@ -115,6 +123,6 @@ These are separate maintainer actions:
 
 ## Related files
 
-- [`CHANGELOG.md`](https://github.com/fased-ai/agent/blob/main/CHANGELOG.md)
-- [`RELEASE_NOTES_TEMPLATE.md`](https://github.com/fased-ai/agent/blob/main/RELEASE_NOTES_TEMPLATE.md)
-- [`RELEASING.md`](https://github.com/fased-ai/agent/blob/main/RELEASING.md)
+- [`CHANGELOG.md`](https://github.com/fased-ai/fased/blob/main/CHANGELOG.md)
+- [`RELEASE_NOTES_TEMPLATE.md`](https://github.com/fased-ai/fased/blob/main/RELEASE_NOTES_TEMPLATE.md)
+- [`RELEASING.md`](https://github.com/fased-ai/fased/blob/main/RELEASING.md)

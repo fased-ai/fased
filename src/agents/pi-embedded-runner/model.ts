@@ -226,7 +226,7 @@ export function resolveModelWithRegistry(params: {
  * Local providers like vLLM need a dummy API key to be registered. This detects
  * known providers that require opt-in auth and adds a hint.
  *
- * See: https://github.com/fased-ai/agent/issues/17328
+ * See: https://github.com/fased-ai/fased/issues/17328
  */
 const LOCAL_PROVIDER_HINTS: Record<string, string> = {
   ollama:

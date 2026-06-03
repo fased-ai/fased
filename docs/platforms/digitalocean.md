@@ -69,7 +69,7 @@ For hosted deployments, run the hosting installer on the VPS itself.
 
 ```bash
 apt install -y git
-git clone https://github.com/fased-ai/agent.git fased
+git clone https://github.com/fased-ai/fased.git fased
 cd fased
 ./install.sh --hosting
 ```

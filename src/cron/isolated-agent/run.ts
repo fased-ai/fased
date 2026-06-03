@@ -1059,7 +1059,7 @@ export type RunCronAgentTurnResult = {
    * channel (via outbound payloads, the subagent announce flow, or a matching
    * messaging-tool send). Callers should skip posting a summary to the main
    * session to avoid duplicate
-   * messages.  See: https://github.com/fased-ai/agent
+   * messages.  See: https://github.com/fased-ai/fased
    */
   delivered?: boolean;
   /**

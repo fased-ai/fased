@@ -23,7 +23,7 @@ For most users, the hosted path is:
 curl -fsSL https://tailscale.com/install.sh | sh
 sudo tailscale up --ssh
 
-git clone https://github.com/fased-ai/agent.git fased
+git clone https://github.com/fased-ai/fased.git fased
 cd fased
 ./install.sh --hosting
 ```

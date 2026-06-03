@@ -90,7 +90,7 @@ export type CronServiceDeps = {
       /**
        * `true` when the isolated run already delivered its output to the target
        * channel (including matching messaging-tool sends). See:
-       * https://github.com/fased-ai/agent/issues/15692
+       * https://github.com/fased-ai/fased/issues/15692
        */
       delivered?: boolean;
       /**

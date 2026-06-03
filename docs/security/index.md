@@ -146,6 +146,6 @@ Related docs:
 
 Use the repository security policy:
 
-- [SECURITY.md](https://github.com/fased-ai/agent/blob/main/SECURITY.md)
+- [SECURITY.md](https://github.com/fased-ai/fased/blob/main/SECURITY.md)
 
 Do not post secrets, private infrastructure details, or live exploit material in public issues.

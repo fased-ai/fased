@@ -245,7 +245,7 @@ Plugins 和动态 skills 是可信代码：
 
 使用仓库安全策略：
 
-- [`SECURITY.md`](https://github.com/fased-ai/agent/blob/main/SECURITY.md)
+- [`SECURITY.md`](https://github.com/fased-ai/fased/blob/main/SECURITY.md)
 
 不要在公开 issue 中发布 secrets、私有基础设施细节或实时 exploit 材料。
 

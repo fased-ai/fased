@@ -12,7 +12,7 @@ Links:
 
 - Website: [fased.ai](https://fased.ai)
 - Docs: [docs.fased.ai](https://docs.fased.ai)
-- Repository: [fased-ai/agent](https://github.com/fased-ai/agent)
+- Repository: [fased-ai/fased](https://github.com/fased-ai/fased)
 
 ## What Fased Runs
 
@@ -89,7 +89,7 @@ Still guarded or intentionally staged:
 Public install is repo-backed:
 
 ```bash
-git clone https://github.com/fased-ai/agent.git fased
+git clone https://github.com/fased-ai/fased.git fased
 cd fased
 ./install.sh
 fased dashboard
