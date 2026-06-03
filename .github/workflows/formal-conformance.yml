@@ -20,12 +20,12 @@ jobs:
 
     steps:
       - name: Checkout fased (PR)
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.0.2
         with:
           path: fased
 
       - name: Checkout formal models
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.0.2
         with:
           repository: vignesh07/fased-formal-models
           ref: main
