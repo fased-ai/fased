@@ -24,7 +24,7 @@ x-i18n:
 - **Hetzner（Docker）**：[Hetzner](/install/hetzner)
 - **GCP（Compute Engine）**：[GCP](/install/gcp)
 
-Fased 文档只列出由本仓库文件支持的托管安装方式，例如 `fly.toml`、`render.yaml`、Docker
+Fased 文档只列出由本仓库文件支持的托管安装方式，例如 `deploy/hosting/fly.toml`、`deploy/hosting/render.yaml`、Docker
 或仓库安装器。外部托管预设不在这里列出，因为无法从本仓库验证或维护。
 
 ## 云设置的工作原理

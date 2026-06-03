@@ -405,7 +405,7 @@ knobs, use [Sandboxing](/gateway/sandboxing) and
 scripts/sandbox-setup.sh
 ```
 
-This builds `fased-sandbox:bookworm-slim` using `Dockerfile.sandbox`.
+This builds `fased-sandbox:bookworm-slim` using `deploy/containers/Dockerfile.sandbox`.
 
 ### Optional sandbox images
 
@@ -438,7 +438,7 @@ scripts/sandbox-browser-setup.sh
 Build your own image and point config to it:
 
 ```bash
-docker build -t my-fased-sbx -f Dockerfile.sandbox .
+docker build -t my-fased-sbx -f deploy/containers/Dockerfile.sandbox .
 ```
 
 ```json5

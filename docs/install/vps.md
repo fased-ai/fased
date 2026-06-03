@@ -53,7 +53,7 @@ before it closes public management paths.
   the same hosting/onboarding and Tailscale guidance.
 
 Fased docs only list hosted install methods backed by files in this repository,
-for example `fly.toml`, `render.yaml`, Docker, or the repo installer. External
+for example `deploy/hosting/fly.toml`, `deploy/hosting/render.yaml`, Docker, or the repo installer. External
 hosted presets are intentionally not listed because we cannot verify or maintain
 them from this repo.
 

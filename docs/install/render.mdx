@@ -2,13 +2,13 @@
 title: Deploy on Render
 ---
 
-Deploy Fased on Render using Infrastructure as Code. The included `render.yaml`
+Deploy Fased on Render using Infrastructure as Code. The included `deploy/hosting/render.yaml`
 Blueprint defines the service, disk, and environment variables from files in
 this repository, so the hosted deployment can be reviewed and versioned with the
 same code you run locally.
 
 <Note>
-  Render is listed because this repository includes `render.yaml`. Fased does not document hosted
+  Render is listed because this repository includes `deploy/hosting/render.yaml`. Fased does not document hosted
   presets that live outside this repo because they cannot be verified or maintained from the
   codebase. For the default hosted security posture, a clean VPS with Tailscale private access is
   still preferred.
@@ -21,11 +21,13 @@ same code you run locally.
 
 ## Deploy with a Render Blueprint
 
-[Deploy to Render](https://render.com/deploy?repo=https://github.com/fased-ai/fased)
+Use `deploy/hosting/render.yaml` as the reviewed Blueprint for this repository.
+If your Render workflow expects a root `render.yaml`, copy this file to the root
+of your fork before creating the Blueprint.
 
-Clicking this link will:
+The Blueprint will:
 
-1. Create a new Render service from the `render.yaml` Blueprint at the root of this repo.
+1. Create a new Render service from the reviewed `deploy/hosting/render.yaml`.
 2. Generate a gateway token for the Control UI
 3. Build the Docker image and deploy
 
@@ -33,7 +35,7 @@ Once deployed, your service URL follows the pattern `https://<service-name>.onre
 
 ## Understanding the Blueprint
 
-Render Blueprints are YAML files that define your infrastructure. The `render.yaml` in this
+Render Blueprints are YAML files that define your infrastructure. The `deploy/hosting/render.yaml` in this
 repository configures everything needed to run Fased:
 
 ```yaml
@@ -86,7 +88,7 @@ Restart the service after changing config.
 | Standard+ | Never             | 1GB+          | Always-on, multiple channels |
 
 The Blueprint defaults to `starter`. To use free tier, change `plan: free` in your fork's
-`render.yaml` (but note: no persistent disk means config resets on each deploy).
+`deploy/hosting/render.yaml` (but note: no persistent disk means config resets on each deploy).
 
 ## After deployment
 
@@ -154,7 +156,7 @@ model auth, channel credentials, and wallet files as secrets.
 Check the deploy logs in the Render Dashboard. Common issues:
 
 - Stale Blueprint prompts — if Render asks for variables that are not shown in
-  the current `render.yaml`, sync your fork before deploying
+  the current `deploy/hosting/render.yaml`, sync your fork before deploying
 - Port mismatch — ensure `PORT=8080` matches the Dockerfile's exposed port
 
 ### Slow cold starts

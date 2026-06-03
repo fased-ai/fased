@@ -30,9 +30,9 @@ Use Fly only when you intentionally want an internet-facing deployment or a Fly-
 
 ## Beginner quick path
 
-1. Clone repo → customize `fly.toml`
+1. Clone repo → customize `deploy/hosting/fly.toml`
 2. Create app + volume → set secrets
-3. Deploy with `fly deploy`
+3. Deploy with `fly deploy -c deploy/hosting/fly.toml`
 4. Use `fly proxy` for Control UI
 5. Finish setup from the Agent tabs
 
@@ -54,7 +54,7 @@ fly volumes create fased_data --size 1 --region iad
 
 ## 2) Configure fly.toml
 
-Edit `fly.toml` to match your app name and requirements.
+Edit `deploy/hosting/fly.toml` to match your app name and requirements.
 
 **Security note:** The default Fly path exposes a public URL. That is not the standard Fased operator posture. If you need private operator access, prefer a VPS with Tailscale instead of Fly.
 
@@ -134,7 +134,7 @@ fly secrets set FASED_GATEWAY_TOKEN=$(openssl rand -hex 32)
 ## 4) Deploy
 
 ```bash
-fly deploy
+fly deploy -c deploy/hosting/fly.toml
 ```
 
 First deploy builds the Docker image (~2-3 minutes). Subsequent deploys are faster.
@@ -207,7 +207,7 @@ fly ssh console
 
 The gateway is binding to `127.0.0.1` instead of `0.0.0.0`.
 
-**Fix:** Add `--bind lan` to your process command in `fly.toml`.
+**Fix:** Add `--bind lan` to your process command in `deploy/hosting/fly.toml`.
 
 ### Health checks failing / connection refused
 
@@ -219,7 +219,7 @@ Fly can't reach the gateway on the configured port.
 
 Container keeps restarting or getting killed. Signs: `SIGABRT`, `v8::internal::Runtime_AllocateInYoungGeneration`, or silent restarts.
 
-**Fix:** Increase memory in `fly.toml`:
+**Fix:** Increase memory in `deploy/hosting/fly.toml`:
 
 ```toml
 [[vm]]
@@ -282,7 +282,7 @@ fly ssh console --command "rm /data/fased.json"
 
 If you lose credentials or sessions after a restart, the state dir is writing to the container filesystem.
 
-**Fix:** Ensure `FASED_STATE_DIR=/data` is set in `fly.toml` and redeploy.
+**Fix:** Ensure `FASED_STATE_DIR=/data` is set in `deploy/hosting/fly.toml` and redeploy.
 
 ## Updates
 
@@ -291,7 +291,7 @@ If you lose credentials or sessions after a restart, the state dir is writing to
 git pull
 
 # Redeploy
-fly deploy
+fly deploy -c deploy/hosting/fly.toml
 
 # Check health
 fly status
@@ -313,14 +313,14 @@ fly machine update <machine-id> --command "node dist/index.js gateway --port 300
 fly machine update <machine-id> --vm-memory 2048 --command "node dist/index.js gateway --port 3000 --bind lan" -y
 ```
 
-**Note:** After `fly deploy`, the machine command may reset to what's in `fly.toml`. If you made manual changes, re-apply them after deploy.
+**Note:** After `fly deploy`, the machine command may reset to what's in `deploy/hosting/fly.toml`. If you made manual changes, re-apply them after deploy.
 
 ## Private Deployment (Hardened)
 
 By default, Fly allocates public IPs, making your gateway accessible at `https://your-app.fly.dev`. This is convenient but means your deployment is discoverable by internet scanners.
 
 For a hardened deployment with **no public exposure**, use the repo-backed
-private config, `fly.private.toml`.
+private config, `deploy/hosting/fly.private.toml`.
 
 ### When to use private deployment
 
@@ -331,11 +331,11 @@ private config, `fly.private.toml`.
 
 ### Setup
 
-Use `fly.private.toml` instead of the standard config:
+Use `deploy/hosting/fly.private.toml` instead of the standard config:
 
 ```bash
 # Deploy with private config
-fly deploy -c fly.private.toml
+fly deploy -c deploy/hosting/fly.private.toml
 ```
 
 Or convert an existing deployment:
@@ -350,7 +350,7 @@ fly ips release <public-ipv6> -a my-fased
 
 # Switch to private config so future deploys don't re-allocate public IPs
 # (remove [http_service] or deploy with fly.private.toml)
-fly deploy -c fly.private.toml
+fly deploy -c deploy/hosting/fly.private.toml
 
 # Allocate private-only IPv6
 fly ips allocate-v6 --private -a my-fased

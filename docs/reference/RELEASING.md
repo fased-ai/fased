@@ -56,7 +56,7 @@ Changing one of these does not automatically update the others.
 - [ ] keep it curated and human-readable
 - [ ] use current Fased naming in new entries
 - [ ] preserve older historical names in older entries instead of rewriting history
-- [ ] draft the GitHub release body from [RELEASE_NOTES_TEMPLATE.md](https://github.com/fased-ai/fased/blob/main/RELEASE_NOTES_TEMPLATE.md)
+- [ ] draft the GitHub release body from [release-notes-template.md](https://github.com/fased-ai/fased/blob/main/docs/reference/release-notes-template.md)
 
 Important:
 
@@ -124,5 +124,5 @@ These are separate maintainer actions:
 ## Related files
 
 - [`CHANGELOG.md`](https://github.com/fased-ai/fased/blob/main/CHANGELOG.md)
-- [`RELEASE_NOTES_TEMPLATE.md`](https://github.com/fased-ai/fased/blob/main/RELEASE_NOTES_TEMPLATE.md)
-- [`RELEASING.md`](https://github.com/fased-ai/fased/blob/main/RELEASING.md)
+- [`docs/reference/release-notes-template.md`](https://github.com/fased-ai/fased/blob/main/docs/reference/release-notes-template.md)
+- [`docs/reference/RELEASING.md`](https://github.com/fased-ai/fased/blob/main/docs/reference/RELEASING.md)

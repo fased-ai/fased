@@ -109,8 +109,8 @@ x-i18n:
 ## 相关文件
 
 - [`CHANGELOG.md`](https://github.com/fased-ai/fased/blob/main/CHANGELOG.md)
-- [`RELEASE_NOTES_TEMPLATE.md`](https://github.com/fased-ai/fased/blob/main/RELEASE_NOTES_TEMPLATE.md)
-- [`RELEASING.md`](https://github.com/fased-ai/fased/blob/main/RELEASING.md)
+- [`docs/reference/release-notes-template.md`](https://github.com/fased-ai/fased/blob/main/docs/reference/release-notes-template.md)
+- [`docs/reference/RELEASING.md`](https://github.com/fased-ai/fased/blob/main/docs/reference/RELEASING.md)
 
 - @fased/bluebubbles
 - @fased/diagnostics-otel

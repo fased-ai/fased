@@ -22,7 +22,7 @@ x-i18n:
 
 <Warning>
 ウォレット、Mining、Fased Networkなどのオペレーターモジュールを有効化する前に、リポジトリのリスク境界を読んでください：
-[`DISCLAIMER.md`](https://github.com/fased-ai/fased/blob/main/DISCLAIMER.md)。
+[`docs/legal/disclaimer.md`](https://github.com/fased-ai/fased/blob/main/docs/legal/disclaimer.md)。
 </Warning>
 
 ## 前提条件

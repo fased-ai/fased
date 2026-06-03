@@ -19,7 +19,7 @@ x-i18n:
 
 <Warning>
 如果你准备使用钱包、SAT Mining、Fased Network、运营者经济或后续交易/新闻功能，请先阅读仓库风险边界：
-[`DISCLAIMER.md`](https://github.com/fased-ai/fased/blob/main/DISCLAIMER.md)。
+[`docs/legal/disclaimer.md`](https://github.com/fased-ai/fased/blob/main/docs/legal/disclaimer.md)。
 </Warning>
 
 <Info>

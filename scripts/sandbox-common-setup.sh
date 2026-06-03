@@ -21,7 +21,7 @@ echo "Building ${TARGET_IMAGE} with: ${PACKAGES}"
 
 docker build \
   -t "${TARGET_IMAGE}" \
-  -f Dockerfile.sandbox-common \
+  -f deploy/containers/Dockerfile.sandbox-common \
   --build-arg BASE_IMAGE="${BASE_IMAGE}" \
   --build-arg PACKAGES="${PACKAGES}" \
   --build-arg INSTALL_PNPM="${INSTALL_PNPM}" \

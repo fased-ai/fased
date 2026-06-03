@@ -1,3 +1,11 @@
+---
+title: "Fased Vision"
+summary: "Current product direction, safety posture, and module boundaries."
+read_when:
+  - You need the product direction
+  - You are planning roadmap or positioning changes
+---
+
 ## Fased Vision
 
 Fased is a self-hosted agent runtime for operators who want real control over:
@@ -8,9 +16,9 @@ Fased is a self-hosted agent runtime for operators who want real control over:
 - optional Fased Network and SAT modules
 - plugins, channels, offers, and reviewed operator workflows
 
-Project overview: [`README.md`](README.md)  
-Contribution policy: [`CONTRIBUTING.md`](CONTRIBUTING.md)  
-Security policy: [`SECURITY.md`](SECURITY.md)
+Project overview: [`README.md`](https://github.com/fased-ai/fased/blob/main/README.md)
+Contribution policy: [`CONTRIBUTING.md`](https://github.com/fased-ai/fased/blob/main/CONTRIBUTING.md)
+Security policy: [`SECURITY.md`](https://github.com/fased-ai/fased/blob/main/SECURITY.md)
 
 ## Product direction
 

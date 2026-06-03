@@ -14,8 +14,8 @@ Related public-release/legal files:
 
 - [LICENSE](LICENSE)
 - [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
-- [DISCLAIMER.md](DISCLAIMER.md)
-- [PLUGIN_LICENSE_POLICY.md](PLUGIN_LICENSE_POLICY.md)
+- [disclaimer](docs/legal/disclaimer.md)
+- [plugin license policy](docs/reference/plugin-license-policy.md)
 
 ## Before You Start
 
@@ -209,13 +209,13 @@ the Fased core and preserve any copied-code obligations.
 
 See:
 
-- [PLUGIN_LICENSE_POLICY.md](PLUGIN_LICENSE_POLICY.md)
+- [plugin license policy](docs/reference/plugin-license-policy.md)
 
 ## Release Surfaces
 
 Maintainer-facing release docs:
 
-- [RELEASING.md](RELEASING.md)
-- [RELEASE_NOTES_TEMPLATE.md](RELEASE_NOTES_TEMPLATE.md)
+- [release checklist](docs/reference/RELEASING.md)
+- [release notes template](docs/reference/release-notes-template.md)
 
 Use those when a PR changes anything release-sensitive.

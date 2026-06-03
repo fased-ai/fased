@@ -60,6 +60,6 @@ Fased 不再把首页式贡献者墙作为主要真相来源。
 
 - [`LICENSE`](https://github.com/fased-ai/fased/blob/main/LICENSE)
 - [`THIRD_PARTY_NOTICES.md`](https://github.com/fased-ai/fased/blob/main/THIRD_PARTY_NOTICES.md)
-- [`DISCLAIMER.md`](https://github.com/fased-ai/fased/blob/main/DISCLAIMER.md)
+- [`docs/legal/disclaimer.md`](https://github.com/fased-ai/fased/blob/main/docs/legal/disclaimer.md)
 - [`CONTRIBUTING.md`](https://github.com/fased-ai/fased/blob/main/CONTRIBUTING.md)
-- [`PLUGIN_LICENSE_POLICY.md`](https://github.com/fased-ai/fased/blob/main/PLUGIN_LICENSE_POLICY.md)
+- [`docs/reference/plugin-license-policy.md`](https://github.com/fased-ai/fased/blob/main/docs/reference/plugin-license-policy.md)

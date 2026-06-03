@@ -303,6 +303,22 @@
       "destination": "/reference/RELEASING"
     },
     {
+      "source": "/RELEASE_NOTES_TEMPLATE",
+      "destination": "/reference/release-notes-template"
+    },
+    {
+      "source": "/DISCLAIMER",
+      "destination": "/legal/disclaimer"
+    },
+    {
+      "source": "/PLUGIN_LICENSE_POLICY",
+      "destination": "/reference/plugin-license-policy"
+    },
+    {
+      "source": "/VISION",
+      "destination": "/reference/vision"
+    },
+    {
       "source": "/agent",
       "destination": "/concepts/agent"
     },

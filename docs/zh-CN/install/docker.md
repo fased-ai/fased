@@ -376,7 +376,7 @@ pnpm test:docker:qr
 scripts/sandbox-setup.sh
 ```
 
-这使用 `Dockerfile.sandbox` 构建 `fased-sandbox:bookworm-slim`。
+这使用 `deploy/containers/Dockerfile.sandbox` 构建 `fased-sandbox:bookworm-slim`。
 
 ### 可选沙箱镜像
 
@@ -409,7 +409,7 @@ scripts/sandbox-browser-setup.sh
 构建你自己的镜像并将配置指向它：
 
 ```bash
-docker build -t my-fased-sbx -f Dockerfile.sandbox .
+docker build -t my-fased-sbx -f deploy/containers/Dockerfile.sandbox .
 ```
 
 ```json5

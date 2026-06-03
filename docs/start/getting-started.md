@@ -14,7 +14,7 @@ Goal: go from zero to a first working chat with minimal setup.
 If you plan to use wallet, mining, Fased Network, Marketplace, or other
 wallet-connected features, read the repo risk boundary before moving funds or
 enabling public participation:
-[`DISCLAIMER.md`](https://github.com/fased-ai/fased/blob/main/DISCLAIMER.md).
+[`docs/legal/disclaimer.md`](https://github.com/fased-ai/fased/blob/main/docs/legal/disclaimer.md).
 </Warning>
 
 <Info>

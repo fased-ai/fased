@@ -3,5 +3,5 @@ set -euo pipefail
 
 IMAGE_NAME="fased-sandbox:bookworm-slim"
 
-docker build -t "${IMAGE_NAME}" -f Dockerfile.sandbox .
+docker build -t "${IMAGE_NAME}" -f deploy/containers/Dockerfile.sandbox .
 echo "Built ${IMAGE_NAME}"

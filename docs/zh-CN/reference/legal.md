@@ -15,9 +15,9 @@ title: "Legal and Risk"
 - [`LICENSE`](https://github.com/fased-ai/fased/blob/main/LICENSE)
 - [`SECURITY.md`](https://github.com/fased-ai/fased/blob/main/SECURITY.md)
 - [`THIRD_PARTY_NOTICES.md`](https://github.com/fased-ai/fased/blob/main/THIRD_PARTY_NOTICES.md)
-- [`DISCLAIMER.md`](https://github.com/fased-ai/fased/blob/main/DISCLAIMER.md)
+- [`docs/legal/disclaimer.md`](https://github.com/fased-ai/fased/blob/main/docs/legal/disclaimer.md)
 - [`CONTRIBUTING.md`](https://github.com/fased-ai/fased/blob/main/CONTRIBUTING.md)
-- [`PLUGIN_LICENSE_POLICY.md`](https://github.com/fased-ai/fased/blob/main/PLUGIN_LICENSE_POLICY.md)
+- [`docs/reference/plugin-license-policy.md`](https://github.com/fased-ai/fased/blob/main/docs/reference/plugin-license-policy.md)
 
 ## 文件用途
 
@@ -33,7 +33,7 @@ title: "Legal and Risk"
 
 公开安全报告政策，以及当前 self-hosted runtime model 的 trust-boundary summary。
 
-### `DISCLAIMER.md`
+### `docs/legal/disclaimer.md`
 
 产品风险说明，覆盖 wallets、crypto、mining、Fased Network、operator roles、reviewed wallet actions、news/market-intelligence features。这里放 “not financial advice”，不要放进 repository license。
 
@@ -41,7 +41,7 @@ title: "Legal and Risk"
 
 贡献规则、maintainer expectations、attribution expectations，以及改变用户/operator 行为的 PR 必须更新什么。
 
-### `PLUGIN_LICENSE_POLICY.md`
+### `docs/reference/plugin-license-policy.md`
 
 Standalone plugins 可以使用自己 license 的规则，以及 plugin 复制或 vendored third-party code 时的处理方式。
 

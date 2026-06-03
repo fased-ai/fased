@@ -1,3 +1,11 @@
+---
+title: "Release Notes Template"
+summary: "Maintainer template for drafting GitHub release notes."
+read_when:
+  - You are preparing a GitHub release
+  - You need the release-note structure
+---
+
 # Release Notes Template
 
 Use this template when drafting a GitHub release for `fased X.Y.Z`.

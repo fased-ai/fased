@@ -125,3 +125,16 @@ updates:
         patterns:
           - "*"
     open-pull-requests-limit: 5
+
+  # Sandbox Docker base images
+  - package-ecosystem: docker
+    directory: /deploy/containers
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 2
+    groups:
+      docker-images:
+        patterns:
+          - "*"
+    open-pull-requests-limit: 5

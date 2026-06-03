@@ -1,3 +1,11 @@
+---
+title: "ACP Bridge"
+summary: "How the Fased Agent Client Protocol bridge maps ACP clients to gateway sessions."
+read_when:
+  - You are connecting an IDE through ACP
+  - You need ACP session mapping details
+---
+
 # FasedAgent ACP Bridge
 
 This document describes how the FasedAgent ACP (Agent Client Protocol) bridge works,

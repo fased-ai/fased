@@ -15,9 +15,9 @@ This page is the short map for the Fased legal, notice, and risk-disclosure surf
 - [`LICENSE`](https://github.com/fased-ai/fased/blob/main/LICENSE)
 - [`SECURITY.md`](https://github.com/fased-ai/fased/blob/main/SECURITY.md)
 - [`THIRD_PARTY_NOTICES.md`](https://github.com/fased-ai/fased/blob/main/THIRD_PARTY_NOTICES.md)
-- [`DISCLAIMER.md`](https://github.com/fased-ai/fased/blob/main/DISCLAIMER.md)
+- [`docs/legal/disclaimer.md`](https://github.com/fased-ai/fased/blob/main/docs/legal/disclaimer.md)
 - [`CONTRIBUTING.md`](https://github.com/fased-ai/fased/blob/main/CONTRIBUTING.md)
-- [`PLUGIN_LICENSE_POLICY.md`](https://github.com/fased-ai/fased/blob/main/PLUGIN_LICENSE_POLICY.md)
+- [`docs/reference/plugin-license-policy.md`](https://github.com/fased-ai/fased/blob/main/docs/reference/plugin-license-policy.md)
 
 ## What each file is for
 
@@ -38,7 +38,7 @@ must stay preserved when the repo is published or redistributed.
 Public repository security-reporting policy and trust-boundary summary for the
 current self-hosted runtime model.
 
-### `DISCLAIMER.md`
+### `docs/legal/disclaimer.md`
 
 Product-specific risk clarification for:
 
@@ -57,7 +57,7 @@ This is where "not financial advice" belongs, not inside the repository license.
 Contribution rules, maintainer expectations, attribution expectations, and what a PR
 must update when it changes user or operator behavior.
 
-### `PLUGIN_LICENSE_POLICY.md`
+### `docs/reference/plugin-license-policy.md`
 
 Rules for when standalone plugins may carry their own license and what happens when a
 plugin copies or vendors third-party code.

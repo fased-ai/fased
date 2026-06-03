@@ -1,3 +1,11 @@
+---
+title: "Plugin License Policy"
+summary: "Rules for plugin licensing, copied-code notices, and plugin risk boundaries."
+read_when:
+  - You are building or publishing a Fased plugin
+  - You need plugin license and notice requirements
+---
+
 # Plugin License Policy
 
 This repository contains the MIT-licensed Fased core plus plugin and extension

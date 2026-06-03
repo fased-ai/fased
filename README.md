@@ -8,10 +8,13 @@ The runtime brings models, channels, tools, skills, services, wallets, mining,
 network presence, tasks, and workflow activity into one browser workbench that
 the operator controls.
 
-Links:
+Quick links:
 
-- Website: [fased.ai](https://fased.ai)
+- Install: [Quick install](#install)
 - Docs: [docs.fased.ai](https://docs.fased.ai)
+- Security: [SECURITY.md](./SECURITY.md)
+- Release: [Release checklist](./docs/reference/RELEASING.md)
+- Website: [fased.ai](https://fased.ai)
 - Repository: [fased-ai/fased](https://github.com/fased-ai/fased)
 
 ## What Fased Runs
@@ -232,9 +235,9 @@ pnpm fased gateway
 Useful docs:
 
 - [Contributing](./CONTRIBUTING.md)
-- [Releasing](./RELEASING.md)
+- [Releasing](./docs/reference/RELEASING.md)
 - [Security](./SECURITY.md)
-- [Plugin license policy](./PLUGIN_LICENSE_POLICY.md)
+- [Plugin license policy](./docs/reference/plugin-license-policy.md)
 - [Third-party notices](./THIRD_PARTY_NOTICES.md)
 
 ## Root Layout
@@ -248,15 +251,15 @@ The root intentionally contains both product code and build/deploy control files
 - `apps/`: macOS, iOS, Android, and shared app surfaces
 - `extensions/`: bundled extensions and extension runtime code
 - `skills/`: bundled skills and skill metadata
-- `packages/`: shared packages and plugin SDK outputs
 - `scripts/`: build, install, docs, release, and test scripts
 - `tools/`: repo tooling and operator helpers
 - `vendor/`: vendored third-party code that must keep its own notices
 - `config/`: runtime and channel/provider configuration helpers
 - `test/`: test fixtures and integration helpers
 - `token/`: SAT/token technical materials
-- `Dockerfile*`, `docker-compose.yml`, `podman`, `fly`, and `render` files:
-  supported deployment/build entrypoints
+- `Dockerfile`, `docker-compose.yml`, `docker-setup.sh`, and
+  `setup-podman.sh`: primary container entrypoints
+- `deploy/`: secondary container, Fly, Render, and hosting configuration files
 
 Root config files should stay at repository root unless the owning toolchain,
 docs publisher, installer, and CI path are updated together.
@@ -278,9 +281,9 @@ operator features, read:
 - [LICENSE](./LICENSE)
 - [SECURITY.md](./SECURITY.md)
 - [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)
-- [DISCLAIMER.md](./DISCLAIMER.md)
+- [Disclaimer](./docs/legal/disclaimer.md)
 - [CONTRIBUTING.md](./CONTRIBUTING.md)
-- [PLUGIN_LICENSE_POLICY.md](./PLUGIN_LICENSE_POLICY.md)
+- [Plugin license policy](./docs/reference/plugin-license-policy.md)
 
 Fased software is not financial, investment, tax, legal, or operational advice.
 Wallets, crypto, mining, federation, trading, marketplace, and news/market

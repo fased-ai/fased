@@ -1,3 +1,11 @@
+---
+title: "Disclaimer"
+summary: "Product-specific risk clarification for Fased wallet, mining, network, marketplace, trading, and plugin surfaces."
+read_when:
+  - You are using wallet, mining, network, marketplace, or trading-related features
+  - You need the product risk disclaimer
+---
+
 # Disclaimer
 
 Fased is software infrastructure.

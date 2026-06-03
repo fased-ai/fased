@@ -8,8 +8,8 @@ const repoRoot = resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
 
 const DIGEST_PINNED_DOCKERFILES = [
   "Dockerfile",
-  "Dockerfile.sandbox",
-  "Dockerfile.sandbox-browser",
+  "deploy/containers/Dockerfile.sandbox",
+  "deploy/containers/Dockerfile.sandbox-browser",
   "scripts/docker/cleanup-smoke/Dockerfile",
   "scripts/docker/install-sh-e2e/Dockerfile",
   "scripts/docker/install-sh-nonroot/Dockerfile",
@@ -47,15 +47,28 @@ describe("docker base image pinning", () => {
     }
   });
 
-  it("keeps Dependabot Docker updates enabled for root Dockerfiles", async () => {
+  it("keeps Dependabot Docker updates enabled for root and deploy Dockerfiles", async () => {
     const raw = await readFile(resolve(repoRoot, ".github/dependabot.yml"), "utf8");
     const config = parse(raw) as DependabotConfig;
+    const dockerDirectories = new Set(
+      config.updates
+        ?.filter((update) => update["package-ecosystem"] === "docker")
+        .map((update) => update.directory),
+    );
     const dockerUpdate = config.updates?.find(
       (update) => update["package-ecosystem"] === "docker" && update.directory === "/",
     );
+    const sandboxDockerUpdate = config.updates?.find(
+      (update) =>
+        update["package-ecosystem"] === "docker" && update.directory === "/deploy/containers",
+    );
 
+    expect(dockerDirectories).toContain("/");
+    expect(dockerDirectories).toContain("/deploy/containers");
     expect(dockerUpdate).toBeDefined();
     expect(dockerUpdate?.schedule?.interval).toBe("weekly");
     expect(dockerUpdate?.groups?.["docker-images"]?.patterns).toContain("*");
+    expect(sandboxDockerUpdate?.schedule?.interval).toBe("weekly");
+    expect(sandboxDockerUpdate?.groups?.["docker-images"]?.patterns).toContain("*");
   });
 });

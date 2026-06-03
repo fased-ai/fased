@@ -9,11 +9,11 @@ x-i18n:
   workflow: 15
 ---
 
-使用基础设施即代码方式在 Render 上部署 Fased。内置的 `render.yaml` Blueprint
+使用基础设施即代码方式在 Render 上部署 Fased。内置的 `deploy/hosting/render.yaml` Blueprint
 从本仓库文件定义服务、磁盘和环境变量，让托管部署可以和本地运行的代码一起审查和版本管理。
 
 <Note>
-  Render 会保留在文档中，是因为本仓库包含 `render.yaml`。Fased
+  Render 会保留在文档中，是因为本仓库包含 `deploy/hosting/render.yaml`。Fased
   不记录仓库外部的托管预设，因为无法从代码库验证或维护。默认托管安全姿态仍然优先推荐干净 VPS +
   Tailscale 私有访问。
 </Note>
@@ -25,17 +25,12 @@ x-i18n:
 
 ## 使用 Render Blueprint 部署
 
-<a
-  href="https://render.com/deploy?repo=https://github.com/fased-ai/fased"
-  target="_blank"
-  rel="noreferrer"
->
-  部署到 Render
-</a>
+使用 `deploy/hosting/render.yaml` 作为本仓库已审查的 Blueprint。如果你的
+Render 流程要求根目录 `render.yaml`，先把这个文件复制到 fork 的根目录。
 
-点击此链接将会：
+Blueprint 将会：
 
-1. 根据本仓库根目录下的 `render.yaml` Blueprint 创建一个新的 Render 服务。
+1. 根据已审查的 `deploy/hosting/render.yaml` 创建一个新的 Render 服务。
 2. 为 Control UI 生成 Gateway token
 3. 构建 Docker 镜像并部署
 
@@ -43,7 +38,7 @@ x-i18n:
 
 ## 了解 Blueprint
 
-Render Blueprint 是定义基础设施的 YAML 文件。本仓库中的 `render.yaml` 配置了运行 Fased 所需的一切：
+Render Blueprint 是定义基础设施的 YAML 文件。本仓库中的 `deploy/hosting/render.yaml` 配置了运行 Fased 所需的一切：
 
 ```yaml
 services:
@@ -92,7 +87,7 @@ node dist/index.js config set agents.defaults.workspace /data/workspace
 | Starter   | 永不休眠           | 1GB+   | 个人使用、小团队 |
 | Standard+ | 永不休眠           | 1GB+   | 常驻、多渠道     |
 
-Blueprint 默认使用 `starter`。如需使用免费套餐，请在你 fork 的 `render.yaml` 中将 `plan: free`（但请注意：没有持久化磁盘意味着每次部署后配置都会重置）。
+Blueprint 默认使用 `starter`。如需使用免费套餐，请在你 fork 的 `deploy/hosting/render.yaml` 中将 `plan: free`（但请注意：没有持久化磁盘意味着每次部署后配置都会重置）。
 
 ## 部署完成后
 
@@ -157,7 +152,7 @@ Render 支持水平和垂直扩展：
 
 在 Render 仪表盘中检查部署日志。常见问题：
 
-- 旧 Blueprint 提示 — 如果 Render 要求填写当前 `render.yaml`
+- 旧 Blueprint 提示 — 如果 Render 要求填写当前 `deploy/hosting/render.yaml`
   中不存在的变量，请先同步 fork 后再部署
 - 端口不匹配 — 确保 `PORT=8080` 与 Dockerfile 暴露的端口一致
 

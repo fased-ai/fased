@@ -23,9 +23,9 @@ x-i18n:
 
 ## 初学者快速路径
 
-1. 克隆仓库 → 自定义 `fly.toml`
+1. 克隆仓库 → 自定义 `deploy/hosting/fly.toml`
 2. 创建应用 + 卷 → 设置密钥
-3. 使用 `fly deploy` 部署
+3. 使用 `fly deploy -c deploy/hosting/fly.toml` 部署
 4. SSH 进入创建配置或使用 Control UI
 
 ## 1）创建 Fly 应用
@@ -46,9 +46,9 @@ fly volumes create fased_data --size 1 --region iad
 
 ## 2）配置 fly.toml
 
-编辑 `fly.toml` 以匹配你的应用名称和需求。
+编辑 `deploy/hosting/fly.toml` 以匹配你的应用名称和需求。
 
-**安全注意事项：** 默认配置暴露公共 URL。对于没有公共 IP 的加固部署，参见[私有部署](#私有部署加固)或使用 `fly.private.toml`。
+**安全注意事项：** 默认配置暴露公共 URL。对于没有公共 IP 的加固部署，参见[私有部署](#私有部署加固)或使用 `deploy/hosting/fly.private.toml`。
 
 ```toml
 app = "my-fased"  # Your app name
@@ -119,7 +119,7 @@ fly secrets set DISCORD_BOT_TOKEN=MTQ...
 ## 4）部署
 
 ```bash
-fly deploy
+fly deploy -c deploy/hosting/fly.toml
 ```
 
 首次部署构建 Docker 镜像（约 2-3 分钟）。后续部署更快。
@@ -251,7 +251,7 @@ fly ssh console
 
 Gateway 网关绑定到 `127.0.0.1` 而不是 `0.0.0.0`。
 
-**修复：** 在 `fly.toml` 中的进程命令添加 `--bind lan`。
+**修复：** 在 `deploy/hosting/fly.toml` 中的进程命令添加 `--bind lan`。
 
 ### 健康检查失败 / 连接被拒绝
 
@@ -263,7 +263,7 @@ Fly 无法在配置的端口上访问 Gateway 网关。
 
 容器持续重启或被终止。迹象：`SIGABRT`、`v8::internal::Runtime_AllocateInYoungGeneration` 或静默重启。
 
-**修复：** 在 `fly.toml` 中增加内存：
+**修复：** 在 `deploy/hosting/fly.toml` 中增加内存：
 
 ```toml
 [[vm]]
@@ -326,7 +326,7 @@ fly ssh console --command "rm /data/fased.json"
 
 如果重启后丢失凭证或会话，状态目录正在写入容器文件系统。
 
-**修复：** 确保 `fly.toml` 中设置了 `FASED_STATE_DIR=/data` 并重新部署。
+**修复：** 确保 `deploy/hosting/fly.toml` 中设置了 `FASED_STATE_DIR=/data` 并重新部署。
 
 ## 更新
 
@@ -335,7 +335,7 @@ fly ssh console --command "rm /data/fased.json"
 git pull
 
 # Redeploy
-fly deploy
+fly deploy -c deploy/hosting/fly.toml
 
 # Check health
 fly status
@@ -357,7 +357,7 @@ fly machine update <machine-id> --command "node dist/index.js gateway --port 300
 fly machine update <machine-id> --vm-memory 2048 --command "node dist/index.js gateway --port 3000 --bind lan" -y
 ```
 
-**注意：** `fly deploy` 后，机器命令可能会重置为 `fly.toml` 中的内容。如果你进行了手动更改，请在部署后重新应用它们。
+**注意：** `fly deploy` 后，机器命令可能会重置为 `deploy/hosting/fly.toml` 中的内容。如果你进行了手动更改，请在部署后重新应用它们。
 
 ## 私有部署（加固）
 
@@ -374,11 +374,11 @@ fly machine update <machine-id> --vm-memory 2048 --command "node dist/index.js g
 
 ### 设置
 
-使用 `fly.private.toml` 替代标准配置：
+使用 `deploy/hosting/fly.private.toml` 替代标准配置：
 
 ```bash
 # Deploy with private config
-fly deploy -c fly.private.toml
+fly deploy -c deploy/hosting/fly.private.toml
 ```
 
 或转换现有部署：
@@ -393,7 +393,7 @@ fly ips release <public-ipv6> -a my-fased
 
 # Switch to private config so future deploys don't re-allocate public IPs
 # (remove [http_service] or deploy with fly.private.toml)
-fly deploy -c fly.private.toml
+fly deploy -c deploy/hosting/fly.private.toml
 
 # Allocate private-only IPv6
 fly ips allocate-v6 --private -a my-fased
