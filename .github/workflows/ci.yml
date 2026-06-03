@@ -169,7 +169,7 @@ jobs:
           install-bun: "false"
 
       - name: Download dist artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: dist-build
           path: dist/
@@ -550,7 +550,7 @@ jobs:
 
       - name: Download dist artifact (lint lane)
         if: matrix.task == 'lint'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: dist-build
           path: dist/
