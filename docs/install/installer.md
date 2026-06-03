@@ -60,6 +60,9 @@ On Windows, use [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install), t
   </Step>
   <Step title="Run onboarding when appropriate">
     If onboarding is enabled, the installer hands off to `fased onboard --install-daemon`.
+    On low-memory Linux hosts, onboarding runs with a larger V8 heap limit after
+    the installer has created swap when possible. Override with
+    `FASED_ONBOARD_MAX_OLD_SPACE_MB` only for troubleshooting.
 
     For a hosted or VPS runtime, the intended sequence is:
 

@@ -55,6 +55,12 @@ sudo -iu app fased status
 
 Keep the raw Gateway port closed to the public internet.
 
+<Note>
+Small VPS installs create swap when possible and run onboarding with a larger
+Node heap. If an older checkout already failed with `JavaScript heap out of
+memory`, update the checkout and rerun `./install.sh --hosting`.
+</Note>
+
 ## Update later
 
 From a later root SSH session:

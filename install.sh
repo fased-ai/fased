@@ -796,6 +796,35 @@ detect_total_mem_mb() {
   printf '0\n'
 }
 
+node_options_with_old_space() {
+  local base="$1"
+  local old_space_mb="$2"
+  if [[ "$base" == *"--max-old-space-size="* || -z "$old_space_mb" ]]; then
+    printf '%s\n' "$base"
+    return 0
+  fi
+  printf '%s%s--max-old-space-size=%s\n' "$base" "${base:+ }" "$old_space_mb"
+}
+
+recommended_onboard_old_space_mb() {
+  if [[ -n "${FASED_ONBOARD_MAX_OLD_SPACE_MB:-}" ]]; then
+    printf '%s\n' "$FASED_ONBOARD_MAX_OLD_SPACE_MB"
+    return 0
+  fi
+
+  local total_mem_mb
+  total_mem_mb="$(detect_total_mem_mb || true)"
+  if [[ -n "$total_mem_mb" && "$total_mem_mb" -gt 0 && "$total_mem_mb" -le 1536 ]]; then
+    printf '1024\n'
+    return 0
+  fi
+  if [[ -n "$total_mem_mb" && "$total_mem_mb" -gt 0 && "$total_mem_mb" -le 2304 ]]; then
+    printf '1280\n'
+    return 0
+  fi
+  printf '1536\n'
+}
+
 has_active_swap() {
   if ! need_cmd swapon; then
     return 1
@@ -1246,7 +1275,9 @@ if [[ "$RUN_ONBOARD" -eq 0 ]]; then
 fi
 
 step_start "Opening onboarding"
-(cd "$FASED_DIR" && FASED_INSTALLER_ONBOARD=1 "$FASED_CLI_PATH" onboard --install-daemon "${pass_args[@]}")
+onboard_old_space_mb="$(recommended_onboard_old_space_mb)"
+onboard_node_options="$(node_options_with_old_space "${NODE_OPTIONS:-}" "$onboard_old_space_mb")"
+(cd "$FASED_DIR" && env NODE_OPTIONS="$onboard_node_options" FASED_INSTALLER_ONBOARD=1 "$FASED_CLI_PATH" onboard --install-daemon "${pass_args[@]}")
 write_install_marker "$REPO_ROOT" "true"
 
 echo
