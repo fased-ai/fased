@@ -11,7 +11,7 @@
 <p align="center">
   <a href="https://github.com/fased-ai/fased/releases"><img src="https://img.shields.io/github/v/release/fased-ai/fased?style=for-the-badge" alt="Release"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=for-the-badge" alt="MIT License"></a>
-  <a href="https://docs.fased.ai"><img src="https://img.shields.io/badge/docs-fased.ai-ff735c?style=for-the-badge" alt="Docs"></a>
+  <a href="https://docs.fased.ai"><img src="https://img.shields.io/badge/docs-open-ff735c?style=for-the-badge" alt="Docs"></a>
   <a href="./SECURITY.md"><img src="https://img.shields.io/badge/security-policy-222?style=for-the-badge" alt="Security"></a>
 </p>
 
@@ -24,7 +24,7 @@ Hosting path for an always-on agent node with private access through Tailscale.
 
 **Links:** [Install](#install) · [Docs](https://docs.fased.ai) ·
 [Security](./SECURITY.md) · [Release checklist](./docs/reference/RELEASING.md) ·
-[Website](https://fased.ai) · [Repository](https://github.com/fased-ai/fased)
+[Repository](https://github.com/fased-ai/fased)
 
 ## Install
 
