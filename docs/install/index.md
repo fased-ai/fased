@@ -77,6 +77,9 @@ all the time.
     ./install.sh --hosting
     ```
 
+    If the installer shows an old version, run `git pull --ff-only origin main`
+    in the checkout and then rerun `./install.sh --hosting`.
+
     If you start as `root`, the installer creates a non-root `app` user,
     prepares `/home/app/agent`, and re-runs itself there.
 

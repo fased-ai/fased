@@ -11,6 +11,7 @@ INSTALL_MARKER_PATH="$FASED_CONFIG_DIR/install-complete.json"
 INSTALL_CACHE_DIR="$FASED_CONFIG_DIR/install-cache"
 INSTALL_LOG_DIR="$FASED_CONFIG_DIR/logs"
 INSTALL_VERBOSE="${FASED_INSTALL_VERBOSE:-0}"
+INSTALL_GIT_UPDATE="${FASED_INSTALL_GIT_UPDATE:-1}"
 AUTO_INSTALL=1
 RUN_ONBOARD=1
 HOSTING_REQUESTED=0
@@ -42,6 +43,7 @@ Options:
   --local         Laptop/dev-box profile. Tailscale is optional; on a VPS this does
                   not apply hosting SSH/firewall hardening.
   --swap-gb <n>   Swap size to configure on very small Linux hosts (default: 2)
+  --no-git-update  Do not fast-forward the checkout from origin before install
   --no-onboard     Skip running onboard (install deps only)
   --verbose       Show build/install command output instead of logging it
   -h, --help       Show this help
@@ -85,6 +87,9 @@ while [[ $# -gt 0 ]]; do
       fi
       REQUESTED_SWAP_GB="$1"
       pass_args+=(--swap-gb "$1")
+      ;;
+    --no-git-update)
+      INSTALL_GIT_UPDATE=0
       ;;
     --no-onboard)
       RUN_ONBOARD=0
@@ -921,8 +926,52 @@ bootstrap_repo_for_target_user() {
     esac
   }
 
+  refresh_checkout_from_origin() {
+    local repo_dir="$1"
+    local branch=""
+    local remote_ref=""
+    local before=""
+    local after=""
+
+    if [[ "$INSTALL_GIT_UPDATE" == "0" || ! -d "$repo_dir/.git" ]]; then
+      return 0
+    fi
+
+    ensure_checkout_origin_remote "$repo_dir"
+
+    branch="$(git -C "$repo_dir" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+    if [[ -z "$branch" ]]; then
+      echo "== Root bootstrap: detached checkout detected, skipping git update =="
+      return 0
+    fi
+
+    if ! git -C "$repo_dir" diff --quiet --ignore-submodules -- || ! git -C "$repo_dir" diff --cached --quiet --ignore-submodules --; then
+      echo "== Root bootstrap: local checkout has changes, skipping git update =="
+      return 0
+    fi
+
+    remote_ref="origin/$branch"
+    git -C "$repo_dir" fetch --quiet origin "$branch" || {
+      echo "== Root bootstrap: could not fetch $remote_ref, continuing with local checkout =="
+      return 0
+    }
+
+    if ! git -C "$repo_dir" merge-base --is-ancestor HEAD "$remote_ref" >/dev/null 2>&1; then
+      echo "== Root bootstrap: $repo_dir is not a fast-forward from $remote_ref, skipping git update =="
+      return 0
+    fi
+
+    before="$(git -C "$repo_dir" rev-parse --short HEAD 2>/dev/null || true)"
+    after="$(git -C "$repo_dir" rev-parse --short "$remote_ref" 2>/dev/null || true)"
+    if [[ -n "$before" && -n "$after" && "$before" != "$after" ]]; then
+      echo "== Root bootstrap: updating $repo_dir from $remote_ref ($before -> $after) =="
+      git -C "$repo_dir" merge --ff-only "$remote_ref"
+    fi
+  }
+
   if is_fased_repo_dir "$FASED_DIR"; then
     source_repo="$(cd "$FASED_DIR" && pwd)"
+    refresh_checkout_from_origin "$source_repo"
   fi
 
   mkdir -p "$(dirname "$target_install_dir")"
@@ -963,6 +1012,11 @@ bootstrap_repo_for_target_user() {
   fi
 
   ensure_checkout_origin_remote "$target_install_dir"
+  local target_repo_dir=""
+  target_repo_dir="$(resolve_fased_dir_from_base "$target_install_dir" || true)"
+  if [[ -n "$target_repo_dir" ]]; then
+    refresh_checkout_from_origin "$target_repo_dir"
+  fi
 
   chown -R "$target_user:$target_user" "$target_install_dir" 2>/dev/null || true
 }

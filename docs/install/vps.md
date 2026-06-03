@@ -28,6 +28,15 @@ cd fased
 ./install.sh --hosting
 ```
 
+If you cloned before a hotfix or the installer prints an old version, update the
+checkout and rerun:
+
+```bash
+cd ~/fased
+git pull --ff-only origin main
+./install.sh --hosting
+```
+
 If you SSH into a fresh VPS as `root`, the installer creates a non-root `app`
 user, prepares `/home/app/agent`, and re-runs the installer as `app`. That is
 expected. Do not move the repo back to `/root`.

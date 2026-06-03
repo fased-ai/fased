@@ -42,6 +42,8 @@ On Windows, use [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install), t
   </Step>
   <Step title="Prepare the repo-backed runtime">
     Uses the checkout and install flow this repository actually supports for public use.
+    Before root bootstrap copies a checkout into `/home/app/agent`, the
+    installer attempts a fast-forward-only update from `origin`.
 
     If the install starts as `root` on a hosted server, the installer creates a
     non-root `app` user, prepares `/home/app/agent`, and re-runs itself there.

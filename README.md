@@ -54,6 +54,15 @@ cd fased
 ./install.sh --hosting
 ```
 
+If you cloned before a hotfix or the installer reports an old version, update
+the checkout and rerun:
+
+```bash
+cd ~/fased
+git pull --ff-only origin main
+./install.sh --hosting
+```
+
 If you SSH into a fresh VPS as `root`, the installer creates a non-root `app`
 user, copies/clones the repo to `/home/app/agent`, and continues there. During
 Tailscale setup, copy the login URL printed in SSH and open it in your local
