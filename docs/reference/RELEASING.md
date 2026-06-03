@@ -12,15 +12,28 @@ read_when:
 Use `pnpm` (Node 22+) from the repo root. Keep the working tree clean before
 tagging or publishing anything.
 
+This page is the maintainer source of truth for Fased Agent releases. Follow it
+in order. Do not create a tag or GitHub release until the commit is the exact
+installable snapshot users should receive.
+
 ## Current public release model
 
 Today the public release model is:
 
 - repo-backed install
-- Git tag + GitHub release when artifacts are ready
+- annotated Git tag + GitHub release for user-installable snapshots
 - optional macOS Sparkle/appcast if a signed desktop build is being shipped
 
 Public npm publication is not the default release surface yet.
+
+For now, do **not** publish package-manager releases. The public install path is
+the Git repository:
+
+```bash
+git clone https://github.com/fased-ai/fased.git fased
+cd fased
+./install.sh
+```
 
 ## Version vs tag vs release vs appcast
 
@@ -32,12 +45,57 @@ Public npm publication is not the default release surface yet.
 
 Changing one of these does not automatically update the others.
 
+Normal releases should be sparse. Do not create a release for every small README
+or docs cleanup. Use a new patch release only when `main` contains a user-facing
+installer/runtime/docs fix that should become the current public snapshot.
+
+The early `v0.1.1`, `v0.1.2`, and `v0.1.3` releases happened during initial
+public-repo setup and installer hotfixing. Going forward, cut one release per
+deliberate public snapshot.
+
+## Remote and author check
+
+Before a release, confirm you are pushing to the correct repository and with the
+intended maintainer identity:
+
+```bash
+git remote -v
+git config user.name
+git config user.email
+```
+
+Expected repository:
+
+```text
+fased-ai/fased
+```
+
+Use a clean SSH or HTTPS remote. Do not store a GitHub token in the remote URL.
+Examples:
+
+```bash
+git remote set-url origin git@github.com:fased-ai/fased.git
+# or, if your machine uses an SSH host alias:
+git remote set-url origin git@github-fased:fased-ai/fased.git
+```
+
+Expected release author identity for official maintainer pushes is the
+maintainer account used by `fcode-ai`.
+
 ## Preflight
 
 1. **Version**
 
 - [ ] bump `package.json` version
-- [ ] make sure version-sensitive UI/app strings match when needed
+- [ ] bump `src/brand.ts` `FASED_PRODUCT_VERSION`
+- [ ] confirm no other release-version string needs changing:
+
+```bash
+rg -n '"version":|FASED_PRODUCT_VERSION|vX\.Y\.Z|X\.Y\.Z' package.json src docs README.md
+```
+
+Do not edit `pnpm-lock.yaml` only to change the root package version unless the
+package manager changed it as part of a real dependency/install update.
 
 2. **Build**
 
@@ -68,7 +126,8 @@ Important:
 - [ ] merge approved work into `main`
 - [ ] make sure the worktree is clean
 - [ ] commit the version/changelog/docs updates
-- [ ] create the tag
+- [ ] push `main`
+- [ ] create an annotated tag on the pushed release commit
 - [ ] push the branch and tag
 
 Typical shape:
@@ -79,10 +138,19 @@ git pull --rebase
 pnpm build
 git add .
 git commit -m "chore(release): cut vX.Y.Z"
-git tag vX.Y.Z
 git push origin main
+git tag -a vX.Y.Z -m "Fased Agent vX.Y.Z"
 git push origin vX.Y.Z
 ```
+
+Verify the tag points at the release commit:
+
+```bash
+git rev-parse HEAD
+git rev-list -n 1 vX.Y.Z
+```
+
+Those two commit SHAs should match.
 
 ## GitHub release
 
@@ -90,6 +158,60 @@ git push origin vX.Y.Z
 - [ ] attach real artifacts only
 - [ ] paste the curated release notes into the release body
 - [ ] do not claim package-manager install paths that are not actually supportable yet
+
+CLI shape:
+
+```bash
+gh release create vX.Y.Z \
+  --repo fased-ai/fased \
+  --title "Fased Agent vX.Y.Z" \
+  --notes-file /tmp/fased-release-notes.md
+```
+
+For a short hotfix release, inline notes are acceptable:
+
+```bash
+gh release create vX.Y.Z \
+  --repo fased-ai/fased \
+  --title "Fased Agent vX.Y.Z" \
+  --notes "Installer hotfix for ..."
+```
+
+Verify:
+
+```bash
+gh release view vX.Y.Z --repo fased-ai/fased --web
+```
+
+## Hotfix and mistake policy
+
+- If a tag was created but no GitHub release exists yet, create the GitHub
+  release for that tag.
+- If a GitHub release is already public, do not move or rewrite its tag.
+- If the released commit is missing an installer/runtime fix, make a new commit
+  and cut the next patch version.
+- If only docs/README changed after a release, normally leave `main` ahead of
+  the latest release and wait for the next real release.
+- Never force-push `main` or retag a published release unless the repository is
+  still private, nobody has pulled it, and maintainers explicitly agree.
+
+Example: if `v0.1.2` is public and the installer still has a prelaunch blocker,
+fix it on `main`, bump to `v0.1.3`, tag `v0.1.3`, and create the `v0.1.3`
+release. Do not move `v0.1.2`.
+
+## Package publication status
+
+`package.json` version is still the application/repo version, even before npm
+publication. Keep it in sync with release tags.
+
+Do not run `npm publish`, `pnpm publish`, or set npm dist-tags until package
+publication is deliberately enabled. When that happens, update this page with:
+
+- package name
+- registry
+- required npm account/org
+- `latest`, `beta`, and `dev` dist-tag policy
+- package smoke-test command after install
 
 ## Post-public repository hardening
 
