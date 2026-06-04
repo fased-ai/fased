@@ -96,6 +96,30 @@ describe("onboarding host security", () => {
     expect(result.detail).toContain("/home/app/.ssh/authorized_keys");
   });
 
+  it("prepares tailnet-only SSH ingress before the external SSH check", () => {
+    const commands: string[] = [];
+    const result = __testing.ensureTailnetSshIngressForVerification({
+      runner: (command) => {
+        commands.push(command);
+        return { ok: true };
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(commands).toHaveLength(1);
+    expect(commands[0]).toContain("ufw insert 1 allow in on tailscale0 to any port 22");
+    expect(commands[0]).not.toContain("ufw allow 22/tcp");
+  });
+
+  it("fails verification setup when tailnet SSH ingress cannot be prepared", () => {
+    const result = __testing.ensureTailnetSshIngressForVerification({
+      runner: () => ({ ok: false, detail: "sudo refused" }),
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain("sudo refused");
+  });
+
   it("uses Tailscale DNS for the SSH verification target", () => {
     const target = __testing.resolveTailnetSshTarget({
       user: "app",

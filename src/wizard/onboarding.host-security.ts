@@ -239,6 +239,29 @@ function verifyTailnetSshServerPrerequisites(params: {
   return { ok: true, detail: checks.join("\n") };
 }
 
+function ensureTailnetSshIngressForVerification(params: {
+  logPath?: string;
+  runner?: HostSecurityCommandRunner;
+}): { ok: boolean; detail?: string } {
+  const runner = params.runner ?? run;
+  const command = [
+    "if ! command -v ufw >/dev/null 2>&1; then exit 0; fi",
+    "if sudo -n ufw status | grep -qi '^Status: active'; then",
+    "sudo -n ufw insert 1 allow in on tailscale0 to any port 22 proto tcp || sudo -n ufw allow in on tailscale0 to any port 22 proto tcp",
+    "else",
+    "sudo -n ufw allow in on tailscale0 to any port 22 proto tcp >/dev/null 2>&1 || true",
+    "fi",
+  ].join("; ");
+  const result = runner(command, params.logPath);
+  if (!result.ok) {
+    return {
+      ok: false,
+      detail: result.detail ?? "could not prepare tailnet SSH firewall rule before verification",
+    };
+  }
+  return { ok: true, detail: result.detail ?? "tailnet SSH firewall rule ready" };
+}
+
 function hasExplicitTailnetSshConfirmation(env: NodeJS.ProcessEnv = process.env): boolean {
   const raw = String(env.FASED_HOSTING_TAILNET_SSH_CONFIRMED ?? "")
     .trim()
@@ -284,6 +307,18 @@ async function confirmTailnetSshBeforeLockdown(params: {
     return false;
   }
   appendHostSecurityLog(logPath, "tailnet ssh server prerequisites", serverPrereqs.detail);
+  const ingress = ensureTailnetSshIngressForVerification({ logPath });
+  if (!ingress.ok) {
+    runtime.error("Hosting setup stopped before SSH/firewall lock-down.");
+    runtime.error(
+      "Could not prepare the tailnet-only SSH firewall rule required for verification.",
+    );
+    runtime.error(ingress.detail ?? "unknown firewall error");
+    runtime.error(`Host hardening log: ${logPath}`);
+    runtime.exit(1);
+    return false;
+  }
+  appendHostSecurityLog(logPath, "tailnet ssh ingress prepared for verification", ingress.detail);
   await prompter.note(formatTailnetSshVerificationNote(target), "Verify SSH over Tailscale");
   const confirmed = await prompter.confirm({
     message: `Did SSH over Tailscale connect as ${target.user} and open ${target.repoDir}?`,
@@ -796,5 +831,6 @@ export const __testing = {
   readTailscaleIp,
   resolveTailnetSshTarget,
   sanitizeHostSecurityLogText,
+  ensureTailnetSshIngressForVerification,
   verifyTailnetSshServerPrerequisites,
 };
