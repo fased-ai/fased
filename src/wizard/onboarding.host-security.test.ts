@@ -45,9 +45,10 @@ describe("onboarding host security", () => {
 
     expect(note).toContain("Hosted setup uses two machines");
     expect(note).toContain("This VPS runs Fased Agent");
-    expect(note).toContain("Your own device must also have Tailscale installed");
-    expect(note).toContain("Windows Tailscale app running");
-    expect(note).toContain("WSL/Linux terminal users");
+    expect(note).toContain("Your own computer must have Tailscale installed");
+    expect(note).toContain("Windows: use PowerShell");
+    expect(note).toContain("macOS: use Terminal");
+    expect(note).toContain("WSL: advanced only");
   });
 
   it("formats the pre-lockdown SSH over Tailscale check", () => {

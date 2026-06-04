@@ -49,6 +49,10 @@ After local setup:
 Successful install output is intentionally short. If a step fails, the installer
 prints the full log path under `~/.fased/logs/`.
 
+On Windows, local install means WSL2/Ubuntu. Hosted VPS management is different:
+use PowerShell or Windows Terminal with the Windows Tailscale app online unless
+you intentionally installed and logged into Tailscale inside WSL too.
+
 ### VPS Hosting install
 
 Use this on the VPS that will run Fased all the time. A 1 vCPU / 1 GB RAM VPS
@@ -56,10 +60,35 @@ can work as a minimum test node, but expect slow install/onboarding. For a
 smoother public node, use at least 2 GB RAM; 2 vCPU / 4 GB RAM is more
 comfortable.
 
-Before you start on the VPS, install/sign into Tailscale on the device you will
-use to manage it. If that device is Windows, keep the Windows Tailscale app
-online and run checks from PowerShell/Windows Terminal. If you run checks from
-WSL/Linux, Tailscale must be running inside that environment too.
+Hosted setup uses two machines:
+
+- **Your own computer:** opens the dashboard and runs SSH checks.
+- **The VPS:** runs Fased Agent.
+
+Start on your own computer:
+
+| Your computer | Use this terminal              | Tailscale requirement                                                                                                                         |
+| ------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Windows       | PowerShell or Windows Terminal | Install/sign into the Windows Tailscale app. PowerShell can SSH into the Linux VPS.                                                           |
+| macOS         | Terminal                       | Install/sign into the macOS Tailscale app.                                                                                                    |
+| Linux         | Terminal                       | Install/start Tailscale on that Linux machine.                                                                                                |
+| WSL           | Advanced only                  | Either use PowerShell instead, or install/start Tailscale inside WSL too. Windows Tailscale does not automatically make WSL a Tailscale node. |
+
+Installing Tailscale from PowerShell is fine, but it still installs the Windows
+Tailscale app/service. PowerShell uses that Windows Tailscale connection.
+
+Do not paste the Linux install commands into PowerShell unless PowerShell is
+already connected to the VPS over SSH. The commands below run **inside the VPS
+SSH session**.
+
+First SSH into the fresh VPS using the login your VPS provider gives you, often
+`root@YOUR_PUBLIC_VPS_IP`:
+
+```bash
+ssh root@YOUR_PUBLIC_VPS_IP
+```
+
+Then run this on the VPS:
 
 ```bash
 curl -fsSL https://tailscale.com/install.sh | sh
@@ -85,13 +114,6 @@ user, copies/clones the repo to `/home/app/fased`, and continues there. The
 temporary root checkout is removed after successful hosted onboarding. During
 Tailscale setup, copy the login URL printed in SSH and open it in your local
 computer's browser.
-
-Hosted setup uses two machines: the VPS that runs Fased Agent, and your own
-device that opens the dashboard and runs SSH checks. Install and sign into
-Tailscale on your own device before you start the hosted lock-down checks.
-Windows users can use PowerShell/Windows Terminal with the Windows Tailscale app
-running. WSL/Linux terminal users need Tailscale running inside that Linux
-environment, or should run the SSH check from PowerShell instead.
 
 The VPS must also join the same Tailscale tailnet before onboarding can finish
 safely. When `sudo tailscale up --ssh` prints a login URL in the SSH terminal,
@@ -126,7 +148,7 @@ At the end, onboarding prints two things you will normally use:
   Tailscale network.
 
 After hosted onboarding completes, stop treating the original `root@...:~/fased`
-shell as the operating shell. Use:
+shell as the operating shell. Open a new terminal on your own computer and use:
 
 ```bash
 ssh app@YOUR_VPS_TAILSCALE_NAME
@@ -134,7 +156,8 @@ fased status
 fased dashboard
 ```
 
-The `app` shell is configured to start in `/home/app/fased`.
+The `app` shell is a full Linux shell on the VPS and is configured to start in
+`/home/app/fased`.
 
 `http://localhost:18789` is only the advanced SSH tunnel fallback. It works on
 your local computer after you start the tunnel shown by onboarding and leave

@@ -116,12 +116,19 @@ then return to the SSH session. If Tailscale cannot provide a tailnet IP,
 Hosting refuses to continue because the remote dashboard and admin path depend
 on Tailscale.
 
-Hosted setup uses two machines: the VPS that runs Fased Agent, and your own
-device that opens the dashboard and runs SSH checks. Install and sign into
-Tailscale on your own device before you start the hosted lock-down checks.
-Windows users can use PowerShell/Windows Terminal with the Windows Tailscale app
-running. WSL/Linux terminal users need Tailscale running inside that Linux
-environment, or should run the SSH check from PowerShell instead.
+Hosted setup uses two machines:
+
+- **Your own computer:** opens the dashboard and runs SSH checks.
+- **The VPS:** runs Fased Agent.
+
+Use the terminal that has Tailscale access:
+
+| Your computer | Use this terminal              | Tailscale requirement                                                                                                                         |
+| ------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Windows       | PowerShell or Windows Terminal | Install/sign into the Windows Tailscale app. PowerShell can SSH into the Linux VPS.                                                           |
+| macOS         | Terminal                       | Install/sign into the macOS Tailscale app.                                                                                                    |
+| Linux         | Terminal                       | Install/start Tailscale on that Linux machine.                                                                                                |
+| WSL           | Advanced only                  | Either use PowerShell instead, or install/start Tailscale inside WSL too. Windows Tailscale does not automatically make WSL a Tailscale node. |
 
 Before lock-down, the wizard asks you to test `tailscale ping
 YOUR_VPS_TAILSCALE_NAME`, then `ssh app@YOUR_VPS_TAILSCALE_NAME` from your own

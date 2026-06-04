@@ -41,9 +41,15 @@ flowchart LR
 - `pnpm` only when building from source
 
 <Note>
-On Windows, use [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install)
-and run Fased inside Ubuntu.
-</Note>
+Windows has two different paths:
+
+- **Local install on your Windows PC:** use
+  [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) and run Fased
+  inside Ubuntu.
+- **Managing a hosted VPS from Windows:** use PowerShell or Windows Terminal
+  with the Windows Tailscale app online. Do not use WSL for hosted SSH checks
+  unless Tailscale is also installed and logged in inside WSL.
+  </Note>
 
 ## Pick local or VPS hosting
 
@@ -79,11 +85,36 @@ all the time.
     minimum test node, but expect slow install/onboarding. For a smoother public
     node, use at least 2 GB RAM; 2 vCPU / 4 GB RAM is more comfortable.
 
-    Before you start on the VPS, install/sign into Tailscale on the device you
-    will use to manage it. If that device is Windows, keep the Windows
-    Tailscale app online and run checks from PowerShell/Windows Terminal. If you
-    run checks from WSL/Linux, Tailscale must be running inside that environment
-    too.
+    Hosted setup uses two machines:
+
+    - **Your own computer:** opens the dashboard and runs SSH checks.
+    - **The VPS:** runs Fased Agent.
+
+    Start on your own computer:
+
+    | Your computer | Use this terminal | Tailscale requirement |
+    | --- | --- | --- |
+    | Windows | PowerShell or Windows Terminal | Install/sign into the Windows Tailscale app. PowerShell can SSH into the Linux VPS. |
+    | macOS | Terminal | Install/sign into the macOS Tailscale app. |
+    | Linux | Terminal | Install/start Tailscale on that Linux machine. |
+    | WSL | Advanced only | Either use PowerShell instead, or install/start Tailscale inside WSL too. Windows Tailscale does not automatically make WSL a Tailscale node. |
+
+    Installing Tailscale from PowerShell is fine, but it still installs the
+    Windows Tailscale app/service. PowerShell uses that Windows Tailscale
+    connection.
+
+    Do not paste the Linux install commands into PowerShell unless PowerShell is
+    already connected to the VPS over SSH. The commands below run **inside the
+    VPS SSH session**.
+
+    First SSH into the fresh VPS using the login your VPS provider gives you,
+    often `root@YOUR_PUBLIC_VPS_IP`:
+
+    ```bash
+    ssh root@YOUR_PUBLIC_VPS_IP
+    ```
+
+    Then run this on the VPS:
 
     ```bash
     curl -fsSL https://tailscale.com/install.sh | sh
@@ -102,14 +133,6 @@ all the time.
     If you start as `root`, the installer creates a non-root `app` user,
     prepares `/home/app/fased`, re-runs itself there, and removes the temporary
     root checkout after successful hosted onboarding.
-
-    Hosted setup uses two machines: the VPS that runs Fased Agent, and your own
-    device that opens the dashboard and runs SSH checks. Install and sign into
-    Tailscale on your own device before you start the hosted lock-down checks.
-    Windows users can use PowerShell/Windows Terminal with the Windows
-    Tailscale app running. WSL/Linux terminal users need Tailscale running
-    inside that Linux environment, or should run the SSH check from PowerShell
-    instead.
 
     The VPS must also join the same Tailscale tailnet before setup can finish.
     The hosted profile keeps the raw Gateway port closed.
@@ -143,7 +166,7 @@ all the time.
       Tailscale network.
 
     After hosted onboarding completes, leave the original root bootstrap shell
-    and reconnect over Tailscale as the `app` user:
+    and reconnect over Tailscale as the `app` user from your own computer:
 
     ```bash
     ssh app@YOUR_VPS_TAILSCALE_NAME
@@ -151,7 +174,8 @@ all the time.
     fased dashboard
     ```
 
-    The `app` shell is configured to start in `/home/app/fased`.
+    The `app` shell is a full Linux shell on the VPS and is configured to start
+    in `/home/app/fased`.
 
     Root SSH is for initial bootstrap or emergency repair, not normal
     operation. `http://localhost:18789` is only the advanced SSH tunnel fallback:

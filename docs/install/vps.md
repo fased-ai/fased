@@ -15,13 +15,39 @@ hosted Fased posture at a high level.
 
 For most users, the hosted path is:
 
-1. On your own device, install/sign into Tailscale and keep it online.
-2. Create a VPS, SSH into it, then join the VPS to the same tailnet.
-3. Install Fased and choose the **Hosting** profile.
+1. On your own computer, install/sign into Tailscale and keep it online.
+2. SSH into the fresh VPS using the login your VPS provider gives you.
+3. Join the VPS to the same tailnet, install Fased, and choose the
+   **Hosting** profile.
 
-If your own device is Windows, run checks from PowerShell/Windows Terminal with
-the Windows Tailscale app online. If you run checks from WSL/Linux, Tailscale
-must be running inside that environment too.
+Hosted setup uses two machines:
+
+- **Your own computer:** opens the dashboard and runs SSH checks.
+- **The VPS:** runs Fased Agent.
+
+Start on your own computer:
+
+| Your computer | Use this terminal              | Tailscale requirement                                                                                                                         |
+| ------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Windows       | PowerShell or Windows Terminal | Install/sign into the Windows Tailscale app. PowerShell can SSH into the Linux VPS.                                                           |
+| macOS         | Terminal                       | Install/sign into the macOS Tailscale app.                                                                                                    |
+| Linux         | Terminal                       | Install/start Tailscale on that Linux machine.                                                                                                |
+| WSL           | Advanced only                  | Either use PowerShell instead, or install/start Tailscale inside WSL too. Windows Tailscale does not automatically make WSL a Tailscale node. |
+
+Installing Tailscale from PowerShell is fine, but it still installs the Windows
+Tailscale app/service. PowerShell uses that Windows Tailscale connection.
+
+Do not paste the Linux install commands into PowerShell unless PowerShell is
+already connected to the VPS over SSH. The commands below run **inside the VPS
+SSH session**.
+
+First SSH into the fresh VPS, often as `root`:
+
+```bash
+ssh root@YOUR_PUBLIC_VPS_IP
+```
+
+Then run this on the VPS:
 
 ```bash
 curl -fsSL https://tailscale.com/install.sh | sh
@@ -61,13 +87,6 @@ user, prepares `/home/app/fased`, and re-runs the installer as `app`. That is
 expected. After successful hosted onboarding, the temporary root checkout is
 removed. Do not move the repo back to `/root`.
 
-Hosted setup uses two machines: the VPS that runs Fased Agent, and your own
-device that opens the dashboard and runs SSH checks. Install and sign into
-Tailscale on your own device before you start the hosted lock-down checks.
-Windows users can use PowerShell/Windows Terminal with the Windows Tailscale app
-running. WSL/Linux terminal users need Tailscale running inside that Linux
-environment, or should run the SSH check from PowerShell instead.
-
 When `sudo tailscale up --ssh` prints a login URL in the SSH terminal, copy that
 URL into your own device's browser. The VPS does not need a desktop browser.
 
@@ -99,7 +118,7 @@ After onboarding completes, use both access paths:
   Tailscale network.
 
 Then leave the original `root@...:~/fased` bootstrap shell. Normal operation
-uses the `app` user over Tailscale:
+uses the `app` user over Tailscale from your own computer:
 
 ```bash
 ssh app@YOUR_VPS_TAILSCALE_NAME
@@ -107,7 +126,8 @@ fased status
 fased dashboard
 ```
 
-The `app` shell is configured to start in `/home/app/fased`.
+The `app` shell is a full Linux shell on the VPS and is configured to start in
+`/home/app/fased`.
 
 Root SSH is only for first bootstrap or emergency repair after the hosting
 profile hardens SSH/UFW. Keep the raw Gateway port closed to the public

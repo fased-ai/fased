@@ -183,15 +183,17 @@ function resolveTailnetSshTarget(params: {
 
 function formatLocalDeviceTailnetRequirementNote(): string {
   return [
-    "Hosted setup uses two machines:",
+    "Hosted setup uses two machines. Keep both online:",
     "",
     "1. This VPS runs Fased Agent.",
-    "2. Your own computer or mobile device opens the dashboard and runs SSH checks.",
+    "2. Your own computer opens the dashboard and runs the final SSH check.",
     "",
-    "Your own device must also have Tailscale installed, running, and signed into the same tailnet before the dashboard or SSH can work.",
+    "Your own computer must have Tailscale installed, running, and signed into the same tailnet before the dashboard or SSH can work.",
     "",
-    "Windows users: use PowerShell/Windows Terminal with the Windows Tailscale app running.",
-    "WSL/Linux terminal users: either install/start Tailscale inside that Linux environment, or run the SSH check from PowerShell instead.",
+    "Windows: use PowerShell or Windows Terminal with the Windows Tailscale app running.",
+    "macOS: use Terminal with the macOS Tailscale app running.",
+    "Linux: use a terminal on the same Linux system where Tailscale is running.",
+    "WSL: advanced only. Windows Tailscale does not automatically make WSL a Tailscale node. Use PowerShell, or install/start Tailscale inside WSL.",
     "",
     "Keep this VPS installer terminal open while you test from your own device.",
   ].join("\n");
