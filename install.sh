@@ -676,8 +676,9 @@ run_logged_in() {
   fi
   spinner_failed "$label"
   echo "Failed: $label" >&2
-  echo "Log: $log_path" >&2
-  tail -n 80 "$log_path" >&2 || true
+  echo "Full log: $log_path" >&2
+  echo "Last lines:" >&2
+  tail -n 30 "$log_path" >&2 || true
   return 1
 }
 
@@ -1472,7 +1473,7 @@ if [[ "$RUN_ONBOARD" -eq 0 ]]; then
   exit 0
 fi
 
-step_start "Opening onboarding"
+step_start "Start setup"
 onboard_old_space_mb="$(recommended_onboard_old_space_mb)"
 onboard_node_options="$(node_options_with_old_space "${NODE_OPTIONS:-}" "$onboard_old_space_mb")"
 (cd "$FASED_DIR" && env NODE_OPTIONS="$onboard_node_options" FASED_INSTALLER_ONBOARD=1 "$FASED_CLI_PATH" onboard --install-daemon "${pass_args[@]}")

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildGatewayWsUrlFromHttpUrl,
   buildOnboardingDashboardUrl,
+  formatLocalDashboardReady,
   formatStrictRemoteAccessDetails,
 } from "./onboarding.finalize.js";
 
@@ -68,5 +69,22 @@ describe("buildGatewayWsUrlFromHttpUrl", () => {
         httpUrl: "https://fased-vps.tailnet.ts.net/",
       }),
     ).toBe("wss://fased-vps.tailnet.ts.net");
+  });
+});
+
+describe("formatLocalDashboardReady", () => {
+  it("prints local setup as a short 1-2-3 checklist", () => {
+    const text = formatLocalDashboardReady({
+      dashboardUrl: "http://localhost:18789/#token=abc123",
+      gatewayToken: "abc123",
+      opened: true,
+    });
+
+    expect(text).toContain("1. Dashboard");
+    expect(text).toContain("2. First setup");
+    expect(text).toContain("3. First chat");
+    expect(text).toContain("Agent > Models");
+    expect(text).toContain("Token backup");
+    expect(text).not.toContain("Gateway WS");
   });
 });

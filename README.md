@@ -38,8 +38,16 @@ Use this on a laptop, desktop, dev box, or WSL2:
 git clone https://github.com/fased-ai/fased.git fased
 cd fased
 ./install.sh
-fased dashboard
 ```
+
+After local setup:
+
+1. Keep the dashboard tab that opens, or run `fased dashboard`.
+2. Go to **Agent > Models** and connect a model provider.
+3. Open **Chat** and send a test message.
+
+Successful install output is intentionally short. If a step fails, the installer
+prints the full log path under `~/.fased/logs/`.
 
 ### VPS Hosting install
 

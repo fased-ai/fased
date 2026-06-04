@@ -64,6 +64,15 @@ all the time.
     Local setup keeps the Gateway on this machine and does not apply VPS SSH or
     firewall hardening. Tailscale is optional for Local.
 
+    After local setup:
+
+    1. Keep the dashboard tab that opens, or run `fased dashboard`.
+    2. Go to **Agent > Models** and connect a model provider.
+    3. Open **Chat** and send a test message.
+
+    Successful install output is intentionally short. If a step fails, the
+    installer prints the full log path under `~/.fased/logs/`.
+
   </Tab>
   <Tab title="VPS Hosting install">
     Use this on a clean Linux VPS. A 1 vCPU / 1 GB RAM VPS can work as a

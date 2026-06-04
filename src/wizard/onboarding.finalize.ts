@@ -135,6 +135,35 @@ export function formatStrictRemoteAccessDetails(params: {
   ].join("\n");
 }
 
+export function formatLocalDashboardReady(params: {
+  dashboardUrl: string;
+  gatewayToken?: string;
+  opened: boolean;
+  fallbackHint?: string;
+}): string {
+  return [
+    "1. Dashboard",
+    params.opened
+      ? "   Opened in your browser. Keep that tab open."
+      : "   Open this URL in a browser on this machine:",
+    params.opened ? `   Backup link: ${params.dashboardUrl}` : `   ${params.dashboardUrl}`,
+    "",
+    "2. First setup",
+    "   In the dashboard, go to Agent > Models and connect a model provider.",
+    "",
+    "3. First chat",
+    "   Open Chat and send a test message.",
+    params.gatewayToken ? "" : undefined,
+    params.gatewayToken ? "Token backup" : undefined,
+    params.gatewayToken ? `   ${params.gatewayToken}` : undefined,
+    params.fallbackHint ? "" : undefined,
+    params.fallbackHint ? "Remote browser fallback" : undefined,
+    params.fallbackHint,
+  ]
+    .filter((line): line is string => line !== undefined)
+    .join("\n");
+}
+
 export function buildGatewayWsUrlFromHttpUrl(params: {
   httpUrl: string;
   basePath?: string;
@@ -2231,16 +2260,16 @@ export async function finalizeOnboardingWizard(
   } else if (flow !== "quickstart") {
     await prompter.note(
       [
-        `Dashboard: ${links.httpUrl}`,
+        "Local dashboard:",
+        `  ${links.httpUrl}`,
         settings.authMode === "token" && gatewayTokenForUi
-          ? `Gateway token: ${gatewayTokenForUi}`
+          ? `Token backup: ${gatewayTokenForUi}`
           : undefined,
-        `Gateway WS: ${links.wsUrl}`,
         gatewayStatusLine,
       ]
         .filter(Boolean)
         .join("\n"),
-      "Remote Access Details",
+      "Dashboard access",
     );
   }
 
@@ -2482,17 +2511,12 @@ export async function finalizeOnboardingWizard(
           })
         : authedUrl;
       await prompter.note(
-        [
-          `Dashboard: ${strictDashboardUrl}`,
-          settings.authMode === "token" && gatewayTokenForUi
-            ? `Gateway token: ${gatewayTokenForUi}`
-            : undefined,
-          controlUiOpened
-            ? "Opened in your browser. Keep that tab to control Fased Agent."
-            : "Copy/paste this URL in a browser on this machine to control Fased Agent.",
-        ]
-          .filter(Boolean)
-          .join("\n"),
+        formatLocalDashboardReady({
+          dashboardUrl: strictDashboardUrl,
+          gatewayToken:
+            settings.authMode === "token" && gatewayTokenForUi ? gatewayTokenForUi : undefined,
+          opened: controlUiOpened,
+        }),
         "Dashboard ready",
       );
     } else {
@@ -2535,30 +2559,26 @@ export async function finalizeOnboardingWizard(
         })
       : authedUrl;
     await prompter.note(
-      [
-        `Dashboard: ${strictVps || (opts.hostProfile === "local" && settings.tailscaleMode !== "off") ? strictDashboardUrl : authedUrl}`,
-        settings.authMode === "token" && gatewayTokenForUi
-          ? `Gateway token: ${gatewayTokenForUi}`
-          : undefined,
-        controlUiOpened
-          ? "Opened in your browser. Keep that tab to control Fased Agent."
-          : strictVps
-            ? "Open from a Tailscale-connected device/browser."
-            : "Copy/paste this URL in a browser on this machine to control Fased Agent.",
-        !strictVps ? controlUiOpenHint : undefined,
-      ]
-        .filter(Boolean)
-        .join("\n"),
+      formatLocalDashboardReady({
+        dashboardUrl:
+          strictVps || (opts.hostProfile === "local" && settings.tailscaleMode !== "off")
+            ? strictDashboardUrl
+            : authedUrl,
+        gatewayToken:
+          settings.authMode === "token" && gatewayTokenForUi ? gatewayTokenForUi : undefined,
+        opened: controlUiOpened,
+        fallbackHint: !strictVps ? controlUiOpenHint : undefined,
+      }),
       "Dashboard ready",
     );
   }
 
   await prompter.outro(
     controlUiOpened
-      ? "Onboarding complete. Dashboard opened; keep that tab to control Fased Agent."
+      ? "Setup complete. Next: Agent > Models, then Chat."
       : seededInBackground
-        ? "Onboarding complete. Web UI seeded in the background; open it anytime with the dashboard link above."
-        : "Onboarding complete. Use the dashboard link above to control Fased Agent.",
+        ? "Setup complete. Open the dashboard link above, then use Agent > Models and Chat."
+        : "Setup complete. Use the dashboard link above, then use Agent > Models and Chat.",
   );
 
   return { launchedTui };

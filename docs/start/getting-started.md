@@ -80,6 +80,12 @@ For the full decision table, read [Setup Matrix](/start/setup-matrix).
 
         Use this for your laptop, desktop, dev box, or WSL2.
 
+        After local setup:
+
+        1. Keep the dashboard tab that opens, or run `fased dashboard`.
+        2. Go to **Agent > Models** and connect a model provider.
+        3. Open **Chat** and send a test message.
+
       </Tab>
       <Tab title="VPS Hosting">
         ```bash

@@ -216,14 +216,13 @@ export function formatControlUiSshHint(params: {
   const localUrl = `http://localhost:${params.port}${uiPath}`;
   const sshTarget = resolveSshTargetHint();
   return [
-    "No GUI detected. Open from your computer:",
+    "No local browser was detected.",
+    "To open the dashboard from another computer, run this there and leave it open:",
     `ssh -N -L ${params.port}:127.0.0.1:${params.port} ${sshTarget}`,
     "Then open:",
     localUrl,
-    params.token ? `Gateway token: ${params.token}` : undefined,
-    "Docs:",
-    "https://docs.fased.ai/gateway/remote",
-    "https://docs.fased.ai/web/control-ui",
+    params.token ? "Token backup:" : undefined,
+    params.token,
   ]
     .filter(Boolean)
     .join("\n");
