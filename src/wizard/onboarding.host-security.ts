@@ -298,8 +298,13 @@ async function confirmTailnetSshBeforeLockdown(params: {
   prompter?: WizardPrompter;
   logPath: string;
   target: TailnetSshTarget;
+  runner?: HostSecurityCommandRunner;
+  interactiveRunner?: HostSecurityCommandRunner;
 }): Promise<boolean> {
-  const { opts, runtime, prompter, logPath, target } = params;
+  const { opts, runtime, prompter, logPath } = params;
+  const runner = params.runner ?? run;
+  const interactiveRunner = params.interactiveRunner ?? runInteractive;
+  let target = params.target;
   if (hasExplicitTailnetSshConfirmation()) {
     appendHostSecurityLog(logPath, "tailnet ssh confirmation", "confirmed by env");
     return true;
@@ -308,38 +313,85 @@ async function confirmTailnetSshBeforeLockdown(params: {
     failTailnetSshConfirmation({ runtime, logPath, target });
     return false;
   }
-  const serverPrereqs = verifyTailnetSshServerPrerequisites({ target, logPath });
-  if (!serverPrereqs.ok) {
-    runtime.error("Hosting setup stopped before SSH/firewall lock-down.");
-    runtime.error(serverPrereqs.detail);
-    runtime.error(`Host hardening log: ${logPath}`);
-    runtime.exit(1);
-    return false;
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const serverPrereqs = verifyTailnetSshServerPrerequisites({ target, logPath, runner });
+    if (!serverPrereqs.ok) {
+      runtime.error("Hosting setup stopped before SSH/firewall lock-down.");
+      runtime.error(serverPrereqs.detail);
+      runtime.error(`Host hardening log: ${logPath}`);
+      runtime.exit(1);
+      return false;
+    }
+    appendHostSecurityLog(logPath, "tailnet ssh server prerequisites", serverPrereqs.detail);
+    const ingress = ensureTailnetSshIngressForVerification({ logPath, runner });
+    if (!ingress.ok) {
+      runtime.error("Hosting setup stopped before SSH/firewall lock-down.");
+      runtime.error(
+        "Could not prepare the tailnet-only SSH firewall rule required for verification.",
+      );
+      runtime.error(ingress.detail ?? "unknown firewall error");
+      runtime.error(`Host hardening log: ${logPath}`);
+      runtime.exit(1);
+      return false;
+    }
+    appendHostSecurityLog(logPath, "tailnet ssh ingress prepared for verification", ingress.detail);
+    await prompter.note(formatTailnetSshVerificationNote(target), "Verify SSH over Tailscale");
+    const pingConfirmed = await prompter.confirm({
+      message: "Did tailscale ping find this VPS from your own computer?",
+      initialValue: false,
+    });
+    if (!pingConfirmed) {
+      const reauth = await prompter.confirm({
+        message: "Re-authenticate Tailscale on this VPS now?",
+        initialValue: true,
+      });
+      if (!reauth) {
+        failTailnetSshConfirmation({ runtime, logPath, target });
+        return false;
+      }
+      await prompter.note(
+        [
+          "Tailscale will print a login URL in this terminal.",
+          "Open it from the same computer/account you want to use for the dashboard and SSH.",
+          "Leave this command running until it finishes.",
+        ].join("\n"),
+        "Tailscale login",
+      );
+      const tsReset = interactiveRunner(
+        "sudo -n tailscale logout && sudo -n tailscale up --ssh --accept-routes --reset",
+        logPath,
+      );
+      if (!tsReset.ok || !hasTailscaleIp(logPath, runner)) {
+        runtime.error("Hosting setup stopped before SSH/firewall lock-down.");
+        runtime.error(tsReset.detail ?? "tailscale re-authentication failed");
+        runtime.error(`Host hardening log: ${logPath}`);
+        runtime.exit(1);
+        return false;
+      }
+      target = resolveTailnetSshTarget({
+        user: target.user,
+        repoDir: target.repoDir,
+        logPath,
+        runner,
+      });
+      continue;
+    }
+
+    const confirmed = await prompter.confirm({
+      message: `Did SSH over Tailscale connect as ${target.user} and open ${target.repoDir}?`,
+      initialValue: false,
+    });
+    if (!confirmed) {
+      failTailnetSshConfirmation({ runtime, logPath, target });
+      return false;
+    }
+    appendHostSecurityLog(logPath, "tailnet ssh confirmation", "confirmed interactively");
+    return true;
   }
-  appendHostSecurityLog(logPath, "tailnet ssh server prerequisites", serverPrereqs.detail);
-  const ingress = ensureTailnetSshIngressForVerification({ logPath });
-  if (!ingress.ok) {
-    runtime.error("Hosting setup stopped before SSH/firewall lock-down.");
-    runtime.error(
-      "Could not prepare the tailnet-only SSH firewall rule required for verification.",
-    );
-    runtime.error(ingress.detail ?? "unknown firewall error");
-    runtime.error(`Host hardening log: ${logPath}`);
-    runtime.exit(1);
-    return false;
-  }
-  appendHostSecurityLog(logPath, "tailnet ssh ingress prepared for verification", ingress.detail);
-  await prompter.note(formatTailnetSshVerificationNote(target), "Verify SSH over Tailscale");
-  const confirmed = await prompter.confirm({
-    message: `Did SSH over Tailscale connect as ${target.user} and open ${target.repoDir}?`,
-    initialValue: false,
-  });
-  if (!confirmed) {
-    failTailnetSshConfirmation({ runtime, logPath, target });
-    return false;
-  }
-  appendHostSecurityLog(logPath, "tailnet ssh confirmation", "confirmed interactively");
-  return true;
+
+  failTailnetSshConfirmation({ runtime, logPath, target });
+  return false;
 }
 
 function ensureTailscaleServe(port: number, logPath?: string): { ok: boolean; detail?: string } {
@@ -841,6 +893,7 @@ export const __testing = {
   readTailscaleIp,
   resolveTailnetSshTarget,
   sanitizeHostSecurityLogText,
+  confirmTailnetSshBeforeLockdown,
   ensureTailnetSshIngressForVerification,
   verifyTailnetSshServerPrerequisites,
 };

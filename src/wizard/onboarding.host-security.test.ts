@@ -133,6 +133,81 @@ describe("onboarding host security", () => {
     expect(result.detail).toContain("sudo refused");
   });
 
+  it("offers VPS Tailscale re-auth when local tailnet ping does not see the VPS", async () => {
+    const confirms = [false, true, true, true];
+    const notes: string[] = [];
+    const commands: string[] = [];
+    const interactiveCommands: string[] = [];
+    const prompter = {
+      intro: async () => {},
+      outro: async () => {},
+      note: async (message: string) => {
+        notes.push(message);
+      },
+      select: async () => "",
+      multiselect: async () => [],
+      text: async () => "",
+      confirm: async () => {
+        const next = confirms.shift();
+        if (next === undefined) {
+          throw new Error("unexpected confirm");
+        }
+        return next;
+      },
+      progress: () => ({
+        update: () => {},
+        stop: () => {},
+      }),
+    };
+    const result = await __testing.confirmTailnetSshBeforeLockdown({
+      opts: { hostProfile: "hosting" } as never,
+      runtime: {
+        error: (message: string) => {
+          throw new Error(message);
+        },
+        exit: (code?: number) => {
+          throw new Error(`exit ${code ?? 0}`);
+        },
+      } as never,
+      prompter: prompter as never,
+      logPath: `/tmp/fased-host-security-test-${process.pid}.log`,
+      target: {
+        user: "app",
+        host: "old.tailnet.ts.net",
+        ipv4: "100.64.1.2",
+        repoDir: "/home/app/fased",
+      },
+      runner: (command) => {
+        commands.push(command);
+        if (command === "tailscale status --json") {
+          return {
+            ok: true,
+            detail: JSON.stringify({
+              Self: {
+                DNSName: "new.tailnet.ts.net.",
+                TailscaleIPs: ["100.64.1.9"],
+              },
+            }),
+          };
+        }
+        return { ok: true, detail: "ok" };
+      },
+      interactiveRunner: (command) => {
+        interactiveCommands.push(command);
+        return { ok: true, detail: "reauth ok" };
+      },
+    });
+
+    expect(result).toBe(true);
+    expect(interactiveCommands).toEqual([
+      "sudo -n tailscale logout && sudo -n tailscale up --ssh --accept-routes --reset",
+    ]);
+    expect(notes.some((note) => note.includes("old.tailnet.ts.net"))).toBe(true);
+    expect(notes.some((note) => note.includes("new.tailnet.ts.net"))).toBe(true);
+    expect(commands).toContain("tailscale status --json");
+    expect(confirms).toEqual([]);
+  });
+
   it("uses Tailscale DNS for the SSH verification target", () => {
     const target = __testing.resolveTailnetSshTarget({
       user: "app",
