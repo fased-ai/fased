@@ -4,7 +4,11 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     testTimeout: 120_000,
-    include: ["src/**/*.node.test.ts", "src/ui/controllers/skills.test.ts"],
+    include: [
+      "src/**/*.node.test.ts",
+      "src/ui/app-settings.test.ts",
+      "src/ui/controllers/skills.test.ts",
+    ],
     environment: "node",
     setupFiles: ["test/setup-node.ts"],
   },

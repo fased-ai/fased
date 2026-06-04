@@ -73,6 +73,7 @@ export function buildOnboardingDashboardUrl(params: {
   baseUrl: string;
   basePath?: string;
   token?: string;
+  gatewayUrl?: string;
   walletSecurityFocus?: {
     walletId: string;
     role: "agent" | "vault";
@@ -89,6 +90,10 @@ export function buildOnboardingDashboardUrl(params: {
   const token = params.token?.trim();
   if (token) {
     hashParams.set("token", token);
+  }
+  const gatewayUrl = params.gatewayUrl?.trim();
+  if (gatewayUrl) {
+    hashParams.set("gatewayUrl", gatewayUrl);
   }
   const walletSecurityFocus = params.walletSecurityFocus;
   if (walletSecurityFocus?.walletId) {
@@ -236,7 +241,15 @@ async function installRootServiceMaintenanceAccess(params: {
     `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl restart ${safeServiceName}.service`,
     `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl restart --no-block ${safeServiceName}.service`,
     `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl status ${safeServiceName}.service`,
+    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl status ${safeServiceName}.service *`,
+    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl status ${safeServiceName} *`,
     `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl is-active ${safeServiceName}.service`,
+    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl is-active ${safeServiceName}.service *`,
+    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl is-active ${safeServiceName} *`,
+    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl show ${safeServiceName}.service *`,
+    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl show ${safeServiceName} *`,
+    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/journalctl -u ${safeServiceName}.service *`,
+    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/journalctl -u ${safeServiceName} *`,
   ].join("\n");
   const b64 = Buffer.from(`${sudoers}\n`, "utf8").toString("base64");
   const installCommand = [
@@ -2236,6 +2249,10 @@ export async function finalizeOnboardingWizard(
           baseUrl: tailscaleAdminUrl,
           basePath: controlUiBasePath,
           token: settings.authMode === "token" ? gatewayTokenForUi || undefined : undefined,
+          gatewayUrl: buildGatewayWsUrlFromHttpUrl({
+            httpUrl: tailscaleAdminUrl,
+            basePath: controlUiBasePath,
+          }),
           walletSecurityFocus: options.walletSecurityFocus ?? null,
         })
       : authedUrl;
@@ -2243,6 +2260,10 @@ export async function finalizeOnboardingWizard(
       baseUrl: `http://localhost:${settings.port}/`,
       basePath: controlUiBasePath,
       token: settings.authMode === "token" ? gatewayTokenForUi || undefined : undefined,
+      gatewayUrl: buildGatewayWsUrlFromHttpUrl({
+        httpUrl: `http://localhost:${settings.port}/`,
+        basePath: controlUiBasePath,
+      }),
       walletSecurityFocus: options.walletSecurityFocus ?? null,
     });
     await prompter.note(
@@ -2507,6 +2528,10 @@ export async function finalizeOnboardingWizard(
             baseUrl: tailscaleAdminUrl,
             basePath: controlUiBasePath,
             token: settings.authMode === "token" ? gatewayTokenForUi || undefined : undefined,
+            gatewayUrl: buildGatewayWsUrlFromHttpUrl({
+              httpUrl: tailscaleAdminUrl,
+              basePath: controlUiBasePath,
+            }),
             walletSecurityFocus: options.walletSecurityFocus ?? null,
           })
         : authedUrl;
@@ -2555,6 +2580,10 @@ export async function finalizeOnboardingWizard(
           baseUrl: tailscaleAdminUrl,
           basePath: controlUiBasePath,
           token: settings.authMode === "token" ? gatewayTokenForUi || undefined : undefined,
+          gatewayUrl: buildGatewayWsUrlFromHttpUrl({
+            httpUrl: tailscaleAdminUrl,
+            basePath: controlUiBasePath,
+          }),
           walletSecurityFocus: options.walletSecurityFocus ?? null,
         })
       : authedUrl;

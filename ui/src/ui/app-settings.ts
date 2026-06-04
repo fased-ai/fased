@@ -118,6 +118,19 @@ type SettingsHost = {
   connect?: () => void;
 };
 
+function isSameOriginGatewayUrl(rawGatewayUrl: string): boolean {
+  try {
+    const gatewayUrl = new URL(rawGatewayUrl);
+    const pageProtocol = window.location.protocol;
+    const protocolMatches =
+      (pageProtocol === "https:" && gatewayUrl.protocol === "wss:") ||
+      (pageProtocol === "http:" && gatewayUrl.protocol === "ws:");
+    return protocolMatches && gatewayUrl.host === window.location.host;
+  } catch {
+    return false;
+  }
+}
+
 function isUsableModelAuthStatus(status: string | null | undefined) {
   return status === "ok" || status === "static" || status === "expiring";
 }
@@ -227,7 +240,11 @@ export async function applySettingsFromUrl(host?: SettingsHost) {
   const current = host?.settings ?? loadSettings();
   const gatewayUrl = gatewayUrlRaw?.trim() ?? "";
   const currentGatewayUrl = current.gatewayUrl?.trim() ?? "";
-  const gatewayUrlChanged = !!gatewayUrl && !!currentGatewayUrl && gatewayUrl !== currentGatewayUrl;
+  const gatewayUrlChanged =
+    !!gatewayUrl &&
+    !!currentGatewayUrl &&
+    gatewayUrl !== currentGatewayUrl &&
+    !isSameOriginGatewayUrl(gatewayUrl);
 
   if (gatewayUrlRaw != null) {
     params.delete("gatewayUrl");

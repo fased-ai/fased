@@ -1337,7 +1337,15 @@ ${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl restart --no-block fased-
 ${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl start --no-block fased-gateway.service
 ${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now fased-gateway.service
 ${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl status fased-gateway.service
+${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl status fased-gateway.service *
+${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl status fased-gateway *
 ${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl is-active fased-gateway.service
+${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl is-active fased-gateway.service *
+${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl is-active fased-gateway *
+${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl show fased-gateway.service *
+${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl show fased-gateway *
+${target_user} ALL=(root) NOPASSWD: /usr/bin/journalctl -u fased-gateway.service *
+${target_user} ALL=(root) NOPASSWD: /usr/bin/journalctl -u fased-gateway *
 ${target_user} ALL=(root) NOPASSWD: /usr/bin/sed -i * /etc/ssh/sshd_config
 EOF
   chmod 440 "$sudoers_path"
