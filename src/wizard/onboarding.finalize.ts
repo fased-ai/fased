@@ -928,7 +928,7 @@ export async function finalizeOnboardingWizard(
     fallbackMb: 1024,
   });
   const totalMemMb = Math.floor(os.totalmem() / (1024 * 1024));
-  const lowRamMode = totalMemMb <= 1200;
+  const lowRamMode = totalMemMb <= 2300;
   process.env.FASED_GATEWAY_MAX_OLD_SPACE_MB = String(recommendedGatewayMaxOldSpaceMb);
   process.env.NODE_OPTIONS = (() => {
     const existing = String(process.env.NODE_OPTIONS ?? "").trim();
@@ -1662,7 +1662,17 @@ export async function finalizeOnboardingWizard(
         }
         const listenerAfterRestart = await waitForGatewayHttpListener({
           wsUrl: probeLinks.wsUrl,
-          deadlineMs: fastHealth ? (strictVps ? 30_000 : 20_000) : strictVps ? 45_000 : 45_000,
+          deadlineMs: fastHealth
+            ? strictVps
+              ? lowRamMode
+                ? 120_000
+                : 60_000
+              : 20_000
+            : strictVps
+              ? lowRamMode
+                ? 120_000
+                : 60_000
+              : 45_000,
         });
         if (!listenerAfterRestart.ok && strictVps && !opts.allowInsecure) {
           const rootBusy = await isSystemdServiceRunningOrStarting({

@@ -51,6 +51,28 @@ describe("gateway startup trace", () => {
     });
   });
 
+  it("can log live phase progress before startup completes", async () => {
+    let current = 0;
+    const info = vi.fn();
+    const trace = createGatewayStartupTrace({
+      now: () => current,
+      live: true,
+      liveLogger: { info },
+    });
+
+    trace.measureSync("config.load", () => {
+      current += 3;
+    });
+    await trace.measure("runtime.config", async () => {
+      current += 8;
+    });
+
+    expect(info).toHaveBeenCalledWith("gateway startup: config.load start");
+    expect(info).toHaveBeenCalledWith("gateway startup: config.load done (3ms)");
+    expect(info).toHaveBeenCalledWith("gateway startup: runtime.config start");
+    expect(info).toHaveBeenCalledWith("gateway startup: runtime.config done (8ms)");
+  });
+
   it("does not log an empty trace", () => {
     resetLastGatewayStartupTraceSnapshotForTest();
     const info = vi.fn();

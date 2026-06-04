@@ -228,7 +228,10 @@ export async function startGatewayServer(
     key: "FASED_RAW_STREAM_PATH",
     description: "raw stream log path override",
   });
-  const startupTrace = createGatewayStartupTrace();
+  const startupTrace = createGatewayStartupTrace({
+    live: process.env.FASED_GATEWAY_STARTUP_TRACE === "1",
+    liveLogger: log,
+  });
 
   let configSnapshot = await startupTrace.measure("config.read", () => readConfigFileSnapshot());
   if (configSnapshot.legacyIssues.length > 0) {
@@ -397,15 +400,19 @@ export async function startGatewayServer(
         cwd: process.cwd(),
       });
       if (!resolvedRoot) {
-        const ensureResult = await ensureControlUiAssetsBuilt(gatewayRuntime);
-        if (!ensureResult.ok && ensureResult.message) {
-          log.warn(`gateway: ${ensureResult.message}`);
+        if (process.env.FASED_DISABLE_CONTROL_UI_AUTOBUILD === "1") {
+          log.warn("gateway: Control UI assets missing; skipping gateway-side UI auto-build.");
+        } else {
+          const ensureResult = await ensureControlUiAssetsBuilt(gatewayRuntime);
+          if (!ensureResult.ok && ensureResult.message) {
+            log.warn(`gateway: ${ensureResult.message}`);
+          }
+          resolvedRoot = resolveControlUiRootSync({
+            moduleUrl: import.meta.url,
+            argv1: process.argv[1],
+            cwd: process.cwd(),
+          });
         }
-        resolvedRoot = resolveControlUiRootSync({
-          moduleUrl: import.meta.url,
-          argv1: process.argv[1],
-          cwd: process.cwd(),
-        });
       }
       controlUiRootState = resolvedRoot
         ? { kind: "resolved", path: resolvedRoot }

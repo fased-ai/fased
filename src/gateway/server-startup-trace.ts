@@ -16,6 +16,8 @@ type StartupTraceLogger = {
 
 type GatewayStartupTraceOptions = {
   now?: () => number;
+  live?: boolean;
+  liveLogger?: StartupTraceLogger | null;
 };
 
 function formatDuration(ms: number): string {
@@ -42,6 +44,8 @@ export function createGatewayStartupTrace(opts: GatewayStartupTraceOptions = {})
   const now = opts.now ?? (() => Date.now());
   const startedAt = now();
   const entries: GatewayStartupTraceEntry[] = [];
+  const live = opts.live === true;
+  const liveLogger = opts.liveLogger ?? null;
 
   const record = (name: string, started: number) => {
     entries.push({
@@ -53,19 +57,31 @@ export function createGatewayStartupTrace(opts: GatewayStartupTraceOptions = {})
   return {
     measureSync<T>(name: string, run: () => T): T {
       const started = now();
+      if (live && liveLogger) {
+        liveLogger.info(`gateway startup: ${name} start`);
+      }
       try {
         return run();
       } finally {
         record(name, started);
+        if (live && liveLogger) {
+          liveLogger.info(`gateway startup: ${name} done (${formatDuration(now() - started)})`);
+        }
       }
     },
 
     async measure<T>(name: string, run: () => Promise<T> | T): Promise<T> {
       const started = now();
+      if (live && liveLogger) {
+        liveLogger.info(`gateway startup: ${name} start`);
+      }
       try {
         return await run();
       } finally {
         record(name, started);
+        if (live && liveLogger) {
+          liveLogger.info(`gateway startup: ${name} done (${formatDuration(now() - started)})`);
+        }
       }
     },
 

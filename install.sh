@@ -1337,6 +1337,11 @@ if [[ -f "$FASED_DIR/dist/control-ui/index.html" ]] && cache_matches "control-ui
   step_skip "Control UI"
 else
   run_logged_in "$FASED_DIR" "Build Control UI" pnpm --silent run ui:build
+  if [[ ! -f "$FASED_DIR/dist/control-ui/index.html" ]]; then
+    spinner_failed "Build Control UI"
+    echo "Control UI build completed but dist/control-ui/index.html is missing." >&2
+    exit 1
+  fi
   write_cache "control-ui-build" "$ui_fingerprint"
 fi
 
