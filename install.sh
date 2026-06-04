@@ -453,6 +453,29 @@ pass_args_contains() {
   return 1
 }
 
+pass_args_value_after() {
+  local needle="$1"
+  local i
+  for ((i = 0; i < ${#pass_args[@]}; i++)); do
+    if [[ "${pass_args[$i]}" == "$needle" ]]; then
+      printf '%s\n' "${pass_args[$((i + 1))]:-}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+resolved_host_profile() {
+  if [[ "$HOSTING_REQUESTED" -eq 1 ]]; then
+    printf 'hosting\n'
+    return 0
+  fi
+
+  local profile
+  profile="$(pass_args_value_after "--host-profile" || true)"
+  printf '%s\n' "$profile"
+}
+
 is_app_service_session() {
   local current_user="${USER:-${LOGNAME:-}}"
   local install_user="${FASED_INSTALL_USER:-app}"
@@ -833,6 +856,29 @@ recommended_onboard_old_space_mb() {
     return 0
   fi
   printf '1536\n'
+}
+
+resolved_core_build_profile() {
+  if [[ -n "${FASED_BUILD_PROFILE:-}" ]]; then
+    printf '%s\n' "$FASED_BUILD_PROFILE"
+    return 0
+  fi
+
+  local profile
+  profile="$(resolved_host_profile)"
+  if [[ "$profile" == "hosting" ]]; then
+    printf 'vps\n'
+    return 0
+  fi
+
+  local total_mem_mb
+  total_mem_mb="$(detect_total_mem_mb || true)"
+  if [[ -n "$total_mem_mb" && "$total_mem_mb" -gt 0 && "$total_mem_mb" -le 1536 ]]; then
+    printf 'vps\n'
+    return 0
+  fi
+
+  printf '\n'
 }
 
 has_active_swap() {
@@ -1258,13 +1304,19 @@ fi
 export FASED_SAT_BOND_LAYOUT_PATH="${FASED_SAT_BOND_LAYOUT_PATH:-$FASED_DIR/token/sat/bond-api/bond-position-layout.json}"
 export FASED_SAT_BOND_POLICY_LAYOUT_PATH="${FASED_SAT_BOND_POLICY_LAYOUT_PATH:-$FASED_DIR/token/sat/bond-api/bond-tier-policy-layout.json}"
 
+core_build_profile="$(resolved_core_build_profile)"
+core_cache_name="core-build-${core_build_profile:-default}"
 core_fingerprint="$(fingerprint_targets "$FASED_DIR" package.json pnpm-lock.yaml tsconfig.json tsdown.config.ts src scripts extensions config tools/fased-signerd)"
-if [[ -f "$FASED_DIR/dist/entry.js" && -f "$FASED_DIR/dist/index.js" ]] && cache_matches "core-build" "$core_fingerprint"; then
+if [[ -f "$FASED_DIR/dist/entry.js" && -f "$FASED_DIR/dist/index.js" ]] && cache_matches "$core_cache_name" "$core_fingerprint"; then
   step_skip "Core build"
 else
   rm -rf "$FASED_DIR/dist"
-  run_logged_in "$FASED_DIR" "Build core" pnpm --silent run build:fast
-  write_cache "core-build" "$core_fingerprint"
+  if [[ -n "$core_build_profile" ]]; then
+    run_logged_in "$FASED_DIR" "Build core" env FASED_BUILD_PROFILE="$core_build_profile" pnpm --silent run build:fast
+  else
+    run_logged_in "$FASED_DIR" "Build core" pnpm --silent run build:fast
+  fi
+  write_cache "$core_cache_name" "$core_fingerprint"
 fi
 
 runtime_assets_fingerprint="$(fingerprint_targets "$FASED_DIR" package.json pnpm-lock.yaml scripts/bundle-a2ui.sh scripts/canvas-a2ui-copy.ts scripts/copy-export-html-templates.ts scripts/copy-hook-metadata.ts scripts/write-build-info.ts scripts/write-cli-compat.ts src/canvas-host/a2ui apps/shared/FasedAgentKit/Tools/CanvasA2UI vendor/a2ui/renderers/lit src/auto-reply/reply/export-html src/hooks/bundled src/cli/daemon-cli-compat.ts)"
