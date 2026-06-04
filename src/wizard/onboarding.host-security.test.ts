@@ -50,7 +50,12 @@ describe("onboarding host security", () => {
     });
 
     expect(note).toContain("Before Fased locks down public SSH/root/password access");
+    expect(note).toContain("tailscale ping fased-vps.tailnet.ts.net");
+    expect(note).toContain("tailscale ping 100.64.1.2");
+    expect(note).toContain('"no matching peer"');
+    expect(note).toContain("not in the same tailnet");
     expect(note).toContain("ssh app@fased-vps.tailnet.ts.net");
+    expect(note).toContain("ssh app@100.64.1.2");
     expect(note).not.toContain("tailscale ssh");
     expect(note).toContain("/home/app/fased");
   });

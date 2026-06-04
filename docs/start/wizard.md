@@ -116,10 +116,12 @@ then return to the SSH session. If Tailscale cannot provide a tailnet IP,
 Hosting refuses to continue because the remote dashboard and admin path depend
 on Tailscale.
 
-Before lock-down, the wizard asks you to test `ssh app@YOUR_VPS_TAILSCALE_NAME`
-from your own computer. Confirm only after it connects through Tailscale and
-opens `/home/app/fased`. If it does not connect, setup stops before disabling
-root or password SSH.
+Before lock-down, the wizard asks you to test `tailscale ping
+YOUR_VPS_TAILSCALE_NAME`, then `ssh app@YOUR_VPS_TAILSCALE_NAME` from your own
+computer. If `tailscale ping` says `no matching peer`, your computer and the VPS
+are not in the same Tailscale network. Confirm only after SSH connects through
+Tailscale and opens `/home/app/fased`. If it does not connect, setup stops
+before disabling root or password SSH.
 If the original VPS login was password-only and no SSH public key is available,
 setup stops before hardening; add your public key and rerun.
 

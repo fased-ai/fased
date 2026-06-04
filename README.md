@@ -90,8 +90,13 @@ Before SSH/firewall lock-down, setup pauses and asks you to test terminal access
 from your own computer:
 
 ```bash
+tailscale ping YOUR_VPS_TAILSCALE_NAME
 ssh app@YOUR_VPS_TAILSCALE_NAME
 ```
+
+If `tailscale ping` says `no matching peer`, your computer and the VPS are not
+in the same Tailscale network. Sign your computer into the same Tailscale
+account, or re-authenticate Tailscale on the VPS, then rerun the check.
 
 Only confirm after that command connects through Tailscale and opens
 `/home/app/fased`. If it does not connect, setup stops before disabling root or

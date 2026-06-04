@@ -182,16 +182,26 @@ function resolveTailnetSshTarget(params: {
 }
 
 function formatTailnetSshVerificationNote(target: TailnetSshTarget): string {
+  const pingTargets = [
+    target.host,
+    target.ipv4 && target.ipv4 !== target.host ? target.ipv4 : undefined,
+  ].filter((value): value is string => Boolean(value));
+  const sshTargets = pingTargets;
   return [
     "Before Fased locks down public SSH/root/password access, prove the private terminal path works.",
     "",
-    "On your own computer, open a second terminal and run:",
-    `ssh ${target.user}@${target.host}`,
+    "On your own computer, open a second terminal and first check that this VPS is visible in Tailscale:",
+    ...pingTargets.map((host) => `tailscale ping ${host}`),
+    "",
+    'If Tailscale says "no matching peer", this computer and the VPS are not in the same tailnet. Sign this computer into the same Tailscale account, or re-authenticate Tailscale on the VPS, then rerun this check.',
+    "",
+    "After Tailscale ping works, connect over the tailnet:",
+    ...sshTargets.map((host) => `ssh ${target.user}@${host}`),
     "",
     `It must connect over your Tailscale network as ${target.user} and open in ${target.repoDir}.`,
     "Keep this installer running while you test.",
     "",
-    "Do not continue until that exact SSH command works from your own computer.",
+    "Do not continue until one of those SSH commands works from your own computer.",
   ].join("\n");
 }
 
