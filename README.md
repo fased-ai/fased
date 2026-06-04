@@ -89,9 +89,10 @@ Start on your own computer:
 Installing Tailscale from PowerShell is fine, but it still installs the Windows
 Tailscale app/service. PowerShell uses that Windows Tailscale connection.
 
-Other private-access systems can work, such as WireGuard, Headscale, ZeroTier,
-a cloud bastion, or a manually managed SSH tunnel, but the built-in hosted
-profile is designed and tested around Tailscale Serve plus Tailscale SSH.
+Other private-access systems are custom deployments. The standard hosted
+installer does not configure or verify WireGuard, Headscale, ZeroTier, bastion
+hosts, or manual SSH tunnels. If you replace Tailscale, you own dashboard
+exposure, SSH policy, TLS, firewall rules, and recovery.
 
 Do not paste the Linux install commands into PowerShell unless PowerShell is
 already connected to the VPS over SSH. The commands below run **inside the VPS
