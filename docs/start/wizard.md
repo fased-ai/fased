@@ -123,12 +123,16 @@ Hosted setup uses two machines:
 
 Use the terminal that has Tailscale access:
 
-| Your computer | Use this terminal              | Tailscale requirement                                                                                                                         |
-| ------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| Windows       | PowerShell or Windows Terminal | Install/sign into the Windows Tailscale app. PowerShell can SSH into the Linux VPS.                                                           |
-| macOS         | Terminal                       | Install/sign into the macOS Tailscale app.                                                                                                    |
-| Linux         | Terminal                       | Install/start Tailscale on that Linux machine.                                                                                                |
-| WSL           | Advanced only                  | Either use PowerShell instead, or install/start Tailscale inside WSL too. Windows Tailscale does not automatically make WSL a Tailscale node. |
+| Your computer | Use this terminal              | Tailscale requirement                                                                                                                             |
+| ------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Windows       | PowerShell or Windows Terminal | Install/sign into the Windows Tailscale app from [tailscale.com/download](https://tailscale.com/download). PowerShell can SSH into the Linux VPS. |
+| macOS         | Terminal                       | Install/sign into the macOS Tailscale app.                                                                                                        |
+| Linux         | Terminal                       | Install/start Tailscale on that Linux machine.                                                                                                    |
+| WSL           | Advanced only                  | Either use PowerShell instead, or install/start Tailscale inside WSL too. Windows Tailscale does not automatically make WSL a Tailscale node.     |
+
+If you lose access to the Tailscale account used for a hosted VPS, normal
+dashboard and SSH access can be lost. Recovery then depends on the VPS
+provider's web console/rescue mode/rebuild tools.
 
 Before lock-down, the wizard asks you to test `tailscale ping
 YOUR_VPS_TAILSCALE_NAME`, then `ssh app@YOUR_VPS_TAILSCALE_NAME` from your own
