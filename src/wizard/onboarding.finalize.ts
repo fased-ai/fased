@@ -101,6 +101,41 @@ export function buildOnboardingDashboardUrl(params: {
   return url.toString();
 }
 
+export function formatStrictRemoteAccessDetails(params: {
+  tailscaleSshUser: string;
+  tailscaleNodeName?: string;
+  tailscaleIpv4?: string;
+  dashboardUrl: string;
+  tunnelUrl: string;
+  port: number;
+  gatewayToken?: string;
+}): string {
+  const sshTarget = params.tailscaleNodeName || params.tailscaleIpv4 || "(tailscale-node)";
+  return [
+    "REMOTE TERMINAL ACCESS",
+    `   tailscale ssh ${params.tailscaleSshUser}@${sshTarget}`,
+    "",
+    "BEFORE YOU OPEN THE DASHBOARD",
+    "   Use a browser on a device signed into the same Tailscale account.",
+    "   Download Tailscale if needed: https://tailscale.com/download",
+    "",
+    "WEB DASHBOARD ACCESS",
+    "   METHOD A: Tailscale dashboard URL",
+    "      Open this URL in your browser:",
+    `      ${params.dashboardUrl}`,
+    "",
+    "   METHOD B: SSH tunnel fallback",
+    "      1. Run this on your local computer and leave it open:",
+    `         ssh -N -L ${params.port}:127.0.0.1:${params.port} ${params.tailscaleSshUser}@${sshTarget}`,
+    "      2. Then open this local URL in your browser:",
+    `         ${params.tunnelUrl}`,
+    "",
+    "GATEWAY TOKEN BACKUP",
+    "   Only paste this if the browser asks for a token:",
+    `   ${params.gatewayToken || "(token not available)"}`,
+  ].join("\n");
+}
+
 export function shouldContinueAfterTailscaleDashboardWarmupFailure(params: {
   detail?: string;
   gatewayAcceptedWarmup: boolean;
@@ -2128,29 +2163,30 @@ export async function finalizeOnboardingWizard(
   }
   const isStrict = strictVps || (opts.hostProfile === "local" && settings.tailscaleMode !== "off");
   if (isStrict) {
+    const strictDashboardUrl = tailscaleAdminUrl
+      ? buildOnboardingDashboardUrl({
+          baseUrl: tailscaleAdminUrl,
+          basePath: controlUiBasePath,
+          token: settings.authMode === "token" ? gatewayTokenForUi || undefined : undefined,
+          walletSecurityFocus: options.walletSecurityFocus ?? null,
+        })
+      : authedUrl;
+    const tunnelDashboardUrl = buildOnboardingDashboardUrl({
+      baseUrl: `http://localhost:${settings.port}/`,
+      basePath: controlUiBasePath,
+      token: settings.authMode === "token" ? gatewayTokenForUi || undefined : undefined,
+      walletSecurityFocus: options.walletSecurityFocus ?? null,
+    });
     await prompter.note(
-      [
-        "🚀 REMOTE TERMINAL ACCESS (TAILSCALE SSH)",
-        `   tailscale ssh ${tailscaleSshUser}@${tailscaleNodeName || tailscaleIpv4 || "(node-name)"}`,
-        "",
-        "📡 PREREQUISITE: TAILSCALE APP",
-        "   To access the Magic Link or the secure network, you MUST have the",
-        "   Tailscale app installed and active on YOUR device:",
-        "   Download: https://tailscale.com/download",
-        "",
-        "🌐 WEB DASHBOARD ACCESS (BROWSER)",
-        "   METHOD A: Direct Magic Link",
-        `      URL: ${tailscaleAdminUrl || `https://${tailscaleNodeName}.ts.net/`}`,
-        "",
-        "   METHOD B: SSH Tunnel (Fallback)",
-        "      1. RUN THIS IN YOUR LOCAL TERMINAL:",
-        `         ssh -N -L ${settings.port}:127.0.0.1:${settings.port} ${tailscaleSshUser}@${tailscaleNodeName || tailscaleIpv4}`,
-        "      2. OPEN THIS IN YOUR BROWSER:",
-        `         URL: http://localhost:${settings.port}${controlUiBasePath || "/"}`,
-        "",
-        "🔑 YOUR GATEWAY TOKEN (Use this to sign in in your browser):",
-        `   ${gatewayTokenForUi || "(token not available)"}`,
-      ].join("\n"),
+      formatStrictRemoteAccessDetails({
+        tailscaleSshUser,
+        tailscaleNodeName,
+        tailscaleIpv4,
+        dashboardUrl: strictDashboardUrl,
+        tunnelUrl: tunnelDashboardUrl,
+        port: settings.port,
+        gatewayToken: gatewayTokenForUi || undefined,
+      }),
       "Remote Access Details",
     );
   } else if (flow !== "quickstart") {

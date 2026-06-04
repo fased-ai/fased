@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildOnboardingDashboardUrl,
+  formatStrictRemoteAccessDetails,
   shouldContinueAfterTailscaleDashboardWarmupFailure,
 } from "./onboarding.finalize.js";
 
@@ -27,6 +28,25 @@ describe("buildOnboardingDashboardUrl", () => {
     expect(hash.get("wallet")).toBe("wallet-agent");
     expect(hash.get("wallet_role")).toBe("agent");
     expect(hash.get("wallet_security")).toBe("1");
+  });
+});
+
+describe("formatStrictRemoteAccessDetails", () => {
+  it("prints tokenized direct and tunnel dashboard URLs", () => {
+    const text = formatStrictRemoteAccessDetails({
+      tailscaleSshUser: "app",
+      tailscaleNodeName: "fased-vps.tailnet.ts.net",
+      dashboardUrl: "https://fased-vps.tailnet.ts.net/#token=abc123",
+      tunnelUrl: "http://localhost:18789/#token=abc123",
+      port: 18789,
+      gatewayToken: "abc123",
+    });
+
+    expect(text).toContain("Open this URL in your browser:");
+    expect(text).toContain("https://fased-vps.tailnet.ts.net/#token=abc123");
+    expect(text).toContain("ssh -N -L 18789:127.0.0.1:18789 app@fased-vps.tailnet.ts.net");
+    expect(text).toContain("http://localhost:18789/#token=abc123");
+    expect(text).toContain("Only paste this if the browser asks for a token:");
   });
 });
 
