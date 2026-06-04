@@ -298,17 +298,23 @@ export async function startGatewayServer(
   const defaultWorkspaceDir = resolveAgentWorkspaceDir(cfgAtStart, defaultAgentId);
   const baseMethods = listGatewayMethods();
   const emptyPluginRegistry: PluginRegistry = createEmptyPluginRegistry();
-  const { pluginRegistry, gatewayMethods: baseGatewayMethods } = minimalTestGateway
-    ? { pluginRegistry: emptyPluginRegistry, gatewayMethods: baseMethods }
-    : startupTrace.measureSync("plugins.load", () =>
-        loadGatewayPlugins({
-          cfg: cfgAtStart,
-          workspaceDir: defaultWorkspaceDir,
-          log,
-          coreGatewayHandlers,
-          baseMethods,
-        }),
-      );
+  const managedFastStart =
+    process.env.FASED_GATEWAY_MODE === "managed" && process.env.FASED_GATEWAY_FAST_START === "1";
+  const { pluginRegistry, gatewayMethods: baseGatewayMethods } =
+    minimalTestGateway || managedFastStart
+      ? { pluginRegistry: emptyPluginRegistry, gatewayMethods: baseMethods }
+      : startupTrace.measureSync("plugins.load", () =>
+          loadGatewayPlugins({
+            cfg: cfgAtStart,
+            workspaceDir: defaultWorkspaceDir,
+            log,
+            coreGatewayHandlers,
+            baseMethods,
+          }),
+        );
+  if (managedFastStart && !minimalTestGateway) {
+    log.info("gateway: managed fast start enabled; skipping optional plugin imports before bind");
+  }
   const channelLogs = Object.fromEntries(
     listChannelPlugins().map((plugin) => [plugin.id, logChannels.child(plugin.id)]),
   ) as Record<ChannelId, ReturnType<typeof createSubsystemLogger>>;
