@@ -13,6 +13,26 @@ type DashboardOptions = {
   noOpen?: boolean;
 };
 
+function buildDashboardUrl(params: {
+  httpUrl: string;
+  token?: string;
+  gatewayUrl?: string;
+}): string {
+  const url = new URL(params.httpUrl);
+  const hashParams = new URLSearchParams();
+  const token = params.token?.trim();
+  if (token) {
+    hashParams.set("token", token);
+  }
+  const gatewayUrl = params.gatewayUrl?.trim();
+  if (gatewayUrl) {
+    hashParams.set("gatewayUrl", gatewayUrl);
+  }
+  const hash = hashParams.toString();
+  url.hash = hash ? `#${hash}` : "";
+  return url.toString();
+}
+
 export async function dashboardCommand(
   runtime: RuntimeEnv = defaultRuntime,
   options: DashboardOptions = {},
@@ -34,9 +54,11 @@ export async function dashboardCommand(
     basePath,
   });
   // Prefer URL fragment to avoid leaking auth tokens via query params.
-  const dashboardUrl = token
-    ? `${links.httpUrl}#token=${encodeURIComponent(token)}`
-    : links.httpUrl;
+  const dashboardUrl = buildDashboardUrl({
+    httpUrl: links.httpUrl,
+    token,
+    gatewayUrl: links.wsUrl,
+  });
 
   runtime.log(`Dashboard URL: ${dashboardUrl}`);
 
