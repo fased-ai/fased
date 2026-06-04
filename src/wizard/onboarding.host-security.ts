@@ -251,7 +251,7 @@ function ensureTailnetSshIngressForVerification(params: {
     "else",
     "sudo -n ufw allow in on tailscale0 to any port 22 proto tcp >/dev/null 2>&1 || true",
     "fi",
-  ].join("; ");
+  ].join("\n");
   const result = runner(command, params.logPath);
   if (!result.ok) {
     return {

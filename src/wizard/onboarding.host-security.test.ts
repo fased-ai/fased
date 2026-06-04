@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import { __testing } from "./onboarding.host-security.js";
 
@@ -109,6 +110,13 @@ describe("onboarding host security", () => {
     expect(commands).toHaveLength(1);
     expect(commands[0]).toContain("ufw insert 1 allow in on tailscale0 to any port 22");
     expect(commands[0]).not.toContain("ufw allow 22/tcp");
+    expect(commands[0]).not.toContain("then;");
+    expect(commands[0]).not.toContain("else;");
+    const syntax = spawnSync("bash", ["-n"], {
+      input: commands[0],
+      encoding: "utf8",
+    });
+    expect(syntax.status, syntax.stderr).toBe(0);
   });
 
   it("fails verification setup when tailnet SSH ingress cannot be prepared", () => {
