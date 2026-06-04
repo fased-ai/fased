@@ -39,6 +39,47 @@ const DEFAULT_MEMORY_CONTENT = "# Memory\n\n";
 const workspaceTemplateCache = new Map<string, Promise<string>>();
 let gitAvailabilityPromise: Promise<boolean> | null = null;
 const MAX_WORKSPACE_BOOTSTRAP_FILE_BYTES = 2 * 1024 * 1024;
+const BUILTIN_WORKSPACE_TEMPLATES: Readonly<Record<string, string>> = {
+  [DEFAULT_AGENTS_FILENAME]: `# AGENTS.md
+
+This workspace belongs to a Fased Agent. Keep durable operating notes here.
+`,
+  [DEFAULT_SOUL_FILENAME]: `# SOUL.md
+
+Use this file for durable tone and behavior preferences. Do not store secrets.
+`,
+  [DEFAULT_TOOLS_FILENAME]: `# TOOLS.md
+
+Use this file for workspace-specific tool notes, limits, and preferences. Do not store secrets.
+`,
+  [DEFAULT_IDENTITY_FILENAME]: `# IDENTITY.md - Agent Identity
+
+- **Name:**
+- **Theme:**
+- **Emoji:**
+- **Avatar:**
+`,
+  [DEFAULT_USER_FILENAME]: `# USER.md - User Profile
+
+- **Name:**
+- **Preferred address:**
+- **Pronouns:** _(optional)_
+- **Timezone:**
+- **Notes:**
+
+## Preferences
+
+Add durable preferences here. Do not store secrets.
+`,
+  [DEFAULT_HEARTBEAT_FILENAME]: `# HEARTBEAT.md
+
+# Keep this file empty, or with comments only, to skip heartbeat work.
+`,
+  [DEFAULT_BOOTSTRAP_FILENAME]: `# BOOTSTRAP.md - First Run
+
+Use this file while the workspace is new. Ask what to call the user, what to call the agent, and what tone the user wants. Update IDENTITY.md, USER.md, and SOUL.md, then delete BOOTSTRAP.md.
+`,
+};
 
 // File content cache keyed by stable file identity to avoid stale reads.
 const workspaceFileCache = new Map<string, { content: string; identity: string }>();
@@ -115,6 +156,10 @@ async function loadTemplate(name: string): Promise<string> {
       const content = await fs.readFile(templatePath, "utf-8");
       return stripFrontMatter(content);
     } catch {
+      const fallback = BUILTIN_WORKSPACE_TEMPLATES[name];
+      if (fallback) {
+        return fallback;
+      }
       throw new Error(
         `Missing workspace template: ${name} (${templatePath}). Ensure docs/reference/templates are packaged.`,
       );

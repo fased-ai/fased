@@ -28,6 +28,25 @@ cd fased
 ./install.sh --hosting
 ```
 
+## Recommended VPS size
+
+Fased can install on a 1 vCPU / 1 GB RAM VPS, but that is the minimum floor and
+onboarding will be slow. For a smoother first install, use at least:
+
+| VPS size | Use it for | Expectation |
+| --- | --- | --- |
+| 1 vCPU / 1 GB RAM | Cheapest test node | Works with swap, but install/onboarding can take a long time. |
+| 1-2 vCPU / 2 GB RAM | Recommended minimum | Much better first install and normal hosted operation. |
+| 2 vCPU / 4 GB RAM | Comfortable public node | Faster builds, smoother Control UI, and more room for channels/tasks. |
+
+Use a 25 GB disk or larger. Keep the raw Gateway port private; use Tailscale for
+operator access.
+
+For the fastest first setup, start with the base agent and add optional modules
+after the dashboard is running. On very small VPS nodes, skipping optional
+Fased Network, wallet, mining, skills, and channel setup during first onboarding
+can save time; you can enable them later from the Control UI.
+
 Current installers try a clean fast-forward update from Git before building. If
 you already started from an older installer and it stopped, update the checkout
 once and rerun:

@@ -66,7 +66,9 @@ all the time.
 
   </Tab>
   <Tab title="VPS Hosting install">
-    Use this on a clean Linux VPS:
+    Use this on a clean Linux VPS. A 1 vCPU / 1 GB RAM VPS can work as a
+    minimum test node, but expect slow install/onboarding. For a smoother public
+    node, use at least 2 GB RAM; 2 vCPU / 4 GB RAM is more comfortable.
 
     ```bash
     curl -fsSL https://tailscale.com/install.sh | sh
