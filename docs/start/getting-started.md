@@ -95,7 +95,13 @@ For the full decision table, read [Setup Matrix](/start/setup-matrix).
         open that URL in your local computer's browser. Normal manual setup does
         not need a Tailscale API key. If you start as `root`, Fased bootstraps
         into `/home/app/agent` and continues as the `app` user. Save the gateway
-        token printed at the end.
+        token printed at the end, then reconnect as `app` through Tailscale:
+
+        ```bash
+        tailscale ssh app@YOUR_VPS_TAILSCALE_NAME
+        cd /home/app/agent
+        fased dashboard
+        ```
 
       </Tab>
       <Tab title="Windows">

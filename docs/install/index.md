@@ -92,8 +92,21 @@ all the time.
     raw Gateway port closed and routes operator access through Tailscale or a
     deliberate private tunnel.
 
-    Save the gateway token printed at the end. From a later root SSH session,
-    run CLI commands as `app`, for example `sudo -iu app fased dashboard`.
+    Save the gateway token printed at the end. After hosted onboarding
+    completes, leave the original root bootstrap shell and reconnect through
+    Tailscale SSH as the `app` user:
+
+    ```bash
+    tailscale ssh app@YOUR_VPS_TAILSCALE_NAME
+    cd /home/app/agent
+    fased status
+    fased dashboard
+    ```
+
+    Root SSH is for initial bootstrap or emergency repair, not normal
+    operation. The raw Gateway port remains closed to the public internet.
+    `http://localhost:18789` only works on your local computer after you start
+    the SSH tunnel shown by onboarding and leave it running.
 
   </Tab>
 </Tabs>
@@ -133,12 +146,14 @@ For flags and automation details, see [Installer Reference](/install/installer).
 
 ## Updating after install
 
-Use `fased update` for normal updates. On a VPS where you SSH in as `root`, run
-it as the app user:
+Use `fased update` for normal updates. On a hosted VPS, log in as the `app`
+user through Tailscale first:
 
 ```bash
-sudo -iu app fased update status
-sudo -iu app fased update
+tailscale ssh app@YOUR_VPS_TAILSCALE_NAME
+cd /home/app/agent
+fased update status
+fased update
 ```
 
 The browser Control UI can also run **Update & Restart** when the gateway is
@@ -176,7 +191,7 @@ For a hosted or VPS runtime:
 1. start from a clean Linux VPS
 2. create/sign into Tailscale and join the VPS to your tailnet with `sudo tailscale up --ssh`
 3. run `./install.sh --hosting` or choose **Hosting** during onboarding
-4. keep admin access private through Tailscale or an SSH tunnel
+4. after onboarding, reconnect as `app` through Tailscale SSH
 5. avoid exposing the raw Gateway port publicly
 
 Normal manual setup does **not** need a Tailscale API key. If the VPS is not

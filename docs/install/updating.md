@@ -31,11 +31,13 @@ fased update status
 fased update
 ```
 
-On a VPS where you SSH in as `root`:
+On a hosted VPS, use the `app` user through Tailscale:
 
 ```bash
-sudo -iu app fased update status
-sudo -iu app fased update
+tailscale ssh app@YOUR_VPS_TAILSCALE_NAME
+cd /home/app/agent
+fased update status
+fased update
 ```
 
 ## CLI update
@@ -76,7 +78,9 @@ cd ~/fased
 On hosted installs that live under `/home/app/agent`, run it as the app user:
 
 ```bash
-sudo -iu app bash -lc 'cd /home/app/agent && ./install.sh --no-onboard'
+tailscale ssh app@YOUR_VPS_TAILSCALE_NAME
+cd /home/app/agent
+./install.sh --no-onboard
 ```
 
 Use `./install.sh --no-git-update` only when testing local changes.

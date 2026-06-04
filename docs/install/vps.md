@@ -33,11 +33,11 @@ cd fased
 Fased can install on a 1 vCPU / 1 GB RAM VPS, but that is the minimum floor and
 onboarding will be slow. For a smoother first install, use at least:
 
-| VPS size | Use it for | Expectation |
-| --- | --- | --- |
-| 1 vCPU / 1 GB RAM | Cheapest test node | Works with swap, but install/onboarding can take a long time. |
-| 1-2 vCPU / 2 GB RAM | Recommended minimum | Much better first install and normal hosted operation. |
-| 2 vCPU / 4 GB RAM | Comfortable public node | Faster builds, smoother Control UI, and more room for channels/tasks. |
+| VPS size            | Use it for              | Expectation                                                           |
+| ------------------- | ----------------------- | --------------------------------------------------------------------- |
+| 1 vCPU / 1 GB RAM   | Cheapest test node      | Works with swap, but install/onboarding can take a long time.         |
+| 1-2 vCPU / 2 GB RAM | Recommended minimum     | Much better first install and normal hosted operation.                |
+| 2 vCPU / 4 GB RAM   | Comfortable public node | Faster builds, smoother Control UI, and more room for channels/tasks. |
 
 Use a 25 GB disk or larger. Keep the raw Gateway port private; use Tailscale for
 operator access.
@@ -58,16 +58,23 @@ expected. Do not move the repo back to `/root`.
 
 When `sudo tailscale up --ssh` prints a login URL in the SSH terminal, copy that
 URL into your local computer's browser. The VPS does not need a desktop browser.
-After onboarding completes, save the printed gateway token and use the Tailscale
-dashboard URL shown by the installer. From a later root SSH session, run CLI
-commands as the app user:
+After onboarding completes, save the printed gateway token and use the
+Tailscale dashboard URL shown by the installer.
+
+Then leave the original `root@...:~/fased` bootstrap shell. Normal operation
+uses the `app` user through Tailscale SSH:
 
 ```bash
-sudo -iu app fased dashboard
-sudo -iu app fased status
+tailscale ssh app@YOUR_VPS_TAILSCALE_NAME
+cd /home/app/agent
+fased status
+fased dashboard
 ```
 
-Keep the raw Gateway port closed to the public internet.
+Root SSH is only for first bootstrap or emergency repair after the hosting
+profile hardens SSH/UFW. Keep the raw Gateway port closed to the public
+internet. `http://localhost:18789` only works on your local computer after you
+start the SSH tunnel shown by onboarding and leave that tunnel running.
 
 <Note>
 Small VPS installs create swap when possible and run onboarding with a larger
@@ -77,11 +84,13 @@ memory`, update the checkout and rerun `./install.sh --hosting`.
 
 ## Update later
 
-From a later root SSH session:
+For normal updates, log in as `app` through Tailscale:
 
 ```bash
-sudo -iu app fased update status
-sudo -iu app fased update
+tailscale ssh app@YOUR_VPS_TAILSCALE_NAME
+cd /home/app/agent
+fased update status
+fased update
 ```
 
 If the browser Control UI is reachable, **Update & Restart** uses the same

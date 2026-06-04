@@ -78,13 +78,22 @@ terminal, open that URL in your local computer's browser. The VPS does not need
 a desktop browser. A Tailscale auth key is only needed for unattended automation.
 
 At the end, onboarding prints the private dashboard URL and gateway token. Save
-the gateway token. Later, from a root SSH session, run CLI commands as the app
-user:
+the gateway token.
+
+After hosted onboarding completes, stop treating the original `root@...:~/fased`
+shell as the operating shell. The steady-state login is the `app` user through
+Tailscale SSH:
 
 ```bash
-sudo -iu app fased dashboard
-sudo -iu app fased status
+tailscale ssh app@YOUR_VPS_TAILSCALE_NAME
+cd /home/app/agent
+fased status
+fased dashboard
 ```
+
+`http://localhost:18789` only works on your local computer after you start the
+SSH tunnel shown by onboarding and leave that tunnel running. The raw gateway
+port stays closed to the public internet.
 
 `install.sh` runs onboarding by default. Use `./install.sh --no-onboard` only
 when you want to install first and run onboarding later.
@@ -98,11 +107,13 @@ fased update status
 fased update
 ```
 
-On a VPS where you are SSHed in as `root`, run it as the app user:
+On a hosted VPS, log in as the app user through Tailscale first:
 
 ```bash
-sudo -iu app fased update status
-sudo -iu app fased update
+tailscale ssh app@YOUR_VPS_TAILSCALE_NAME
+cd /home/app/agent
+fased update status
+fased update
 ```
 
 If the browser Control UI is healthy, you can also use **Update & Restart** from

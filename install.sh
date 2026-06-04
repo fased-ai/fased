@@ -805,12 +805,47 @@ reexec_as_app_user() {
   trap cleanup_temp_sudoers EXIT
 
   echo "== Root bootstrap: re-executing installer as '$target_user' =="
+  local child_status=0
   if need_cmd sudo; then
-    sudo -u "$target_user" -H bash -lc "$cmd"
-    exit $?
+    if sudo -u "$target_user" -H bash -lc "$cmd"; then
+      child_status=0
+    else
+      child_status=$?
+    fi
+  else
+    if runuser -u "$target_user" -- bash -lc "$cmd"; then
+      child_status=0
+    else
+      child_status=$?
+    fi
   fi
-  runuser -u "$target_user" -- bash -lc "$cmd"
-  exit $?
+
+  if [[ "$child_status" -eq 0 && "$HOSTING_REQUESTED" -eq 1 && "$RUN_ONBOARD" -eq 1 ]]; then
+    local tailscale_dns=""
+    if need_cmd tailscale; then
+      tailscale_dns="$(tailscale status --json 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>{try{const o=JSON.parse(s);process.stdout.write(String(o?.Self?.DNSName||"").replace(/\.$/,""));}catch{}})' 2>/dev/null || true)"
+    fi
+    echo ""
+    echo "== Hosted handoff =="
+    echo "Initial root bootstrap is complete."
+    echo "Steady-state Fased commands should run as '$target_user' from $target_repo_dir."
+    if [[ -n "$tailscale_dns" ]]; then
+      echo "Reconnect from your local machine with:"
+      echo "  tailscale ssh ${target_user}@${tailscale_dns}"
+      echo "Then:"
+      echo "  cd $target_repo_dir"
+      echo "  fased status"
+      echo "  fased dashboard"
+    else
+      echo "Reconnect through Tailscale SSH as '$target_user', then run:"
+      echo "  cd $target_repo_dir"
+      echo "  fased status"
+      echo "  fased dashboard"
+    fi
+    echo "Do not use the root checkout for normal operation after hosted hardening."
+  fi
+
+  exit "$child_status"
 }
 
 go_modern_enough() {

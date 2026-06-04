@@ -113,8 +113,19 @@ Hosting refuses to continue because the remote dashboard and admin path depend
 on Tailscale.
 
 At the end of hosted onboarding, save the printed Tailscale dashboard URL and
-gateway token. From a later root SSH session, use `sudo -iu app fased dashboard`
-or `sudo -iu app fased status`.
+gateway token. Then leave the original root bootstrap shell and reconnect as
+`app` through Tailscale SSH:
+
+```bash
+tailscale ssh app@YOUR_VPS_TAILSCALE_NAME
+cd /home/app/agent
+fased status
+fased dashboard
+```
+
+The raw Gateway port remains closed. `http://localhost:18789` only works on
+your local computer after you start the SSH tunnel shown by onboarding and keep
+that tunnel running.
 
 Model/API setup has moved to `Agent > Models` for normal users. Existing
 non-interactive provider flags still work for scripted installs, but first-run
