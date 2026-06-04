@@ -34,7 +34,7 @@ fased update
 On a hosted VPS, use the `app` user through Tailscale:
 
 ```bash
-tailscale ssh app@YOUR_VPS_TAILSCALE_NAME
+ssh app@YOUR_VPS_TAILSCALE_NAME
 fased update status
 fased update
 ```
@@ -77,7 +77,7 @@ cd ~/fased
 On hosted installs that live under `/home/app/fased`, run it as the app user:
 
 ```bash
-tailscale ssh app@YOUR_VPS_TAILSCALE_NAME
+ssh app@YOUR_VPS_TAILSCALE_NAME
 ./install.sh --no-onboard
 ```
 

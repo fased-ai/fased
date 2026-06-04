@@ -47,6 +47,8 @@ describe("formatStrictRemoteAccessDetails", () => {
     expect(text).toContain("2. SSH TERMINAL");
     expect(text).toContain("Open this on your own computer");
     expect(text).toContain("https://fased-vps.tailnet.ts.net/#token=abc123");
+    expect(text).toContain("ssh app@fased-vps.tailnet.ts.net");
+    expect(text).toContain("tailscale ssh app@fased-vps.tailnet.ts.net");
     expect(text).toContain("ssh -N -L 18789:127.0.0.1:18789 app@fased-vps.tailnet.ts.net");
     expect(text).toContain("http://localhost:18789/#token=abc123");
     expect(text).toContain("Only paste this if the browser asks for a token:");

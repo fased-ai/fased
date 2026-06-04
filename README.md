@@ -91,14 +91,14 @@ At the end, onboarding prints two things you will normally use:
 - **Web dashboard:** open the printed `https://...ts.net/` URL in a browser on
   your own computer. That computer must be signed into the same Tailscale
   account. Save the gateway token in case the browser asks for it.
-- **SSH terminal:** use Tailscale SSH as `app` for CLI commands, updates, logs,
-  and repairs.
+- **SSH terminal:** use regular SSH over Tailscale as `app` for CLI commands,
+  updates, logs, and repairs. Tailscale SSH also works if your tailnet enables it.
 
 After hosted onboarding completes, stop treating the original `root@...:~/fased`
 shell as the operating shell. Use:
 
 ```bash
-tailscale ssh app@YOUR_VPS_TAILSCALE_NAME
+ssh app@YOUR_VPS_TAILSCALE_NAME
 fased status
 fased dashboard
 ```
@@ -124,7 +124,7 @@ fased update
 On a hosted VPS, log in as the app user through Tailscale first:
 
 ```bash
-tailscale ssh app@YOUR_VPS_TAILSCALE_NAME
+ssh app@YOUR_VPS_TAILSCALE_NAME
 fased update status
 fased update
 ```

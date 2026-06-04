@@ -510,8 +510,8 @@ export async function applyHostingSecurity(params: {
   const ufwRes = runApt(
     "command -v ufw >/dev/null 2>&1 || (sudo -n apt-get update && sudo -n apt-get install -y ufw); " +
       "sudo -n ufw default deny incoming; sudo -n ufw default allow outgoing; " +
-      "sudo -n ufw allow in on tailscale0 to any port 22 proto tcp; " +
-      "sudo -n ufw allow in on tailscale0 to any port 443 proto tcp; " +
+      "sudo -n ufw insert 1 allow in on tailscale0 to any port 22 proto tcp || sudo -n ufw allow in on tailscale0 to any port 22 proto tcp; " +
+      "sudo -n ufw insert 2 allow in on tailscale0 to any port 443 proto tcp || sudo -n ufw allow in on tailscale0 to any port 443 proto tcp; " +
       "sudo -n ufw deny 22/tcp || true; sudo -n ufw --force enable",
   );
   if (!ufwRes.ok) {

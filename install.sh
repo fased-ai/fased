@@ -791,6 +791,43 @@ EOF
   chown "$target_user:$target_user" "$target_home/.bashrc" "$target_home/.profile" 2>/dev/null || true
 }
 
+copy_bootstrap_ssh_keys_for_target_user() {
+  local target_user="$1"
+  local target_home="$2"
+  local source_keys=""
+  local candidate
+  for candidate in "$HOME/.ssh/authorized_keys" "/root/.ssh/authorized_keys"; do
+    if [[ -s "$candidate" ]]; then
+      source_keys="$candidate"
+      break
+    fi
+  done
+  if [[ -z "$source_keys" ]]; then
+    return 0
+  fi
+
+  mkdir -p "$target_home/.ssh"
+  touch "$target_home/.ssh/authorized_keys"
+  local tmp
+  tmp="$(mktemp)"
+  {
+    cat "$target_home/.ssh/authorized_keys" 2>/dev/null || true
+    cat "$source_keys"
+  } | awk 'NF { print }' | sort -u >"$tmp"
+
+  if need_cmd install; then
+    install -m 600 -o "$target_user" -g "$target_user" "$tmp" "$target_home/.ssh/authorized_keys"
+  else
+    cp "$tmp" "$target_home/.ssh/authorized_keys"
+    chmod 600 "$target_home/.ssh/authorized_keys"
+    chown "$target_user:$target_user" "$target_home/.ssh/authorized_keys" 2>/dev/null || true
+  fi
+  rm -f "$tmp"
+  chmod 700 "$target_home/.ssh"
+  chown "$target_user:$target_user" "$target_home/.ssh" 2>/dev/null || true
+  echo "== Root bootstrap: copied SSH authorized_keys to '$target_user' for tailnet SSH =="
+}
+
 remove_root_bootstrap_checkout_after_success() {
   local source_dir="$1"
   local target_repo_dir="$2"
@@ -858,6 +895,7 @@ reexec_as_app_user() {
     exit 1
   fi
   configure_target_user_fased_shell_dir "$target_user" "$target_home" "$target_repo_dir"
+  copy_bootstrap_ssh_keys_for_target_user "$target_user" "$target_home"
 
   local cmd="cd $(shell_quote "$target_repo_dir") && ./install.sh"
   cmd+=" --host-security-capable"
@@ -905,14 +943,16 @@ reexec_as_app_user() {
     echo "Initial root bootstrap is complete."
     echo "Steady-state Fased commands should run as '$target_user'."
     if [[ -n "$tailscale_dns" ]]; then
-      echo "Reconnect from your local machine with:"
-      echo "  tailscale ssh ${target_user}@${tailscale_dns}"
+      echo "Reconnect from your local machine over Tailscale with:"
+      echo "  ssh ${target_user}@${tailscale_dns}"
       echo "Your shell starts in $target_repo_dir."
+      echo "If your tailnet enables Tailscale SSH, this also works:"
+      echo "  tailscale ssh ${target_user}@${tailscale_dns}"
       echo "Then run:"
       echo "  fased status"
       echo "  fased dashboard"
     else
-      echo "Reconnect through Tailscale SSH as '$target_user', then run:"
+      echo "Reconnect over your Tailscale network as '$target_user', then run:"
       echo "  fased status"
       echo "  fased dashboard"
       echo "The '$target_user' shell is configured to start in $target_repo_dir."

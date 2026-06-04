@@ -53,8 +53,8 @@ fased onboard \
 Bootstrap note:
 
 - initial SSH/root access is only for first install and host prep
-- after onboarding, day-to-day admin access should move to Tailscale SSH and the
-  private dashboard URL
+- after onboarding, day-to-day admin access should move to SSH over the
+  Tailscale network and the private dashboard URL
 - do not leave the raw gateway port exposed just because initial setup used SSH
 
 ## 3. Profile and mode model

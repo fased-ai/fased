@@ -72,14 +72,14 @@ On Windows, use [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install), t
     3. run onboarding with the **hosting** profile
     4. open the printed Tailscale dashboard URL in your local browser
     5. save the gateway token in case the browser asks for it
-    6. reconnect as the non-root `app` user through Tailscale SSH for CLI work
+    6. reconnect as the non-root `app` user over the Tailscale network for CLI work
     7. keep admin access private through Tailscale instead of opening the gateway directly
 
     Root is the bootstrap/emergency shell. After hosted onboarding completes,
     normal commands run as `app`; the shell starts in `/home/app/fased`:
 
     ```bash
-    tailscale ssh app@YOUR_VPS_TAILSCALE_NAME
+    ssh app@YOUR_VPS_TAILSCALE_NAME
     fased status
     fased dashboard
     ```

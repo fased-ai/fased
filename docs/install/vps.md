@@ -64,14 +64,14 @@ After onboarding completes, use both access paths:
 - **Web dashboard:** open the printed `https://...ts.net/` URL in a browser on
   your own computer. That computer must be signed into the same Tailscale
   account. Save the gateway token in case the browser asks for it.
-- **SSH terminal:** use Tailscale SSH as `app` for CLI commands, updates, logs,
-  and repairs.
+- **SSH terminal:** use regular SSH over Tailscale as `app` for CLI commands,
+  updates, logs, and repairs. Tailscale SSH also works if your tailnet enables it.
 
 Then leave the original `root@...:~/fased` bootstrap shell. Normal operation
-uses the `app` user through Tailscale SSH:
+uses the `app` user over Tailscale:
 
 ```bash
-tailscale ssh app@YOUR_VPS_TAILSCALE_NAME
+ssh app@YOUR_VPS_TAILSCALE_NAME
 fased status
 fased dashboard
 ```
@@ -95,7 +95,7 @@ memory`, update the checkout and rerun `./install.sh --hosting`.
 For normal updates, log in as `app` through Tailscale:
 
 ```bash
-tailscale ssh app@YOUR_VPS_TAILSCALE_NAME
+ssh app@YOUR_VPS_TAILSCALE_NAME
 fased update status
 fased update
 ```
@@ -140,8 +140,8 @@ them from this repo.
   this, Hosting onboarding will stop to install/login Tailscale before it locks
   down SSH/firewall rules.
 - Use `fased onboard --host-profile hosting` for the hosted path.
-- Keep the gateway on loopback and access it via Tailscale SSH or the private
-  Tailscale HTTPS dashboard URL.
+- Keep the gateway on loopback and access it via the private Tailscale HTTPS
+  dashboard URL or SSH over the Tailscale network.
 - Do **not** expose the raw gateway port publicly just to reach the dashboard or WS.
 - If you bind to `lan`/`tailnet`, require `gateway.auth.token` or `gateway.auth.password`.
 

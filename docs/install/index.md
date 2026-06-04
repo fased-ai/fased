@@ -105,14 +105,14 @@ all the time.
     - **Web dashboard:** open the printed `https://...ts.net/` URL in a browser
       on your own computer. That computer must be signed into the same
       Tailscale account. Save the gateway token in case the browser asks for it.
-    - **SSH terminal:** use Tailscale SSH as `app` for CLI commands, updates,
-      logs, and repairs.
+    - **SSH terminal:** use regular SSH over Tailscale as `app` for CLI commands,
+      updates, logs, and repairs. Tailscale SSH also works if your tailnet enables it.
 
     After hosted onboarding completes, leave the original root bootstrap shell
-    and reconnect through Tailscale SSH as the `app` user:
+    and reconnect over Tailscale as the `app` user:
 
     ```bash
-    tailscale ssh app@YOUR_VPS_TAILSCALE_NAME
+    ssh app@YOUR_VPS_TAILSCALE_NAME
     fased status
     fased dashboard
     ```
@@ -166,7 +166,7 @@ Use `fased update` for normal updates. On a hosted VPS, log in as the `app`
 user through Tailscale first:
 
 ```bash
-tailscale ssh app@YOUR_VPS_TAILSCALE_NAME
+ssh app@YOUR_VPS_TAILSCALE_NAME
 fased update status
 fased update
 ```
@@ -206,7 +206,7 @@ For a hosted or VPS runtime:
 1. start from a clean Linux VPS
 2. create/sign into Tailscale and join the VPS to your tailnet with `sudo tailscale up --ssh`
 3. run `./install.sh --hosting` or choose **Hosting** during onboarding
-4. after onboarding, reconnect as `app` through Tailscale SSH
+4. after onboarding, reconnect as `app` over the Tailscale network
 5. avoid exposing the raw Gateway port publicly
 
 Normal manual setup does **not** need a Tailscale API key. If the VPS is not
