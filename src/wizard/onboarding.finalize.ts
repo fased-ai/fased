@@ -480,32 +480,53 @@ async function formatStrictListenerFailureDiagnostics(reason: string): Promise<s
     isSystemdServiceActive({ name: "fased-gateway", scope: "root" }),
     isSystemdServiceActive({ name: "fased-gateway", scope: "user" }),
   ]);
-  const gatewayBootLog = (() => {
-    const uid = typeof process.getuid === "function" ? String(process.getuid()) : "1000";
-    return path.join("/tmp", `fased-${uid}`, "start-managed-gateway.log");
-  })();
-  let gatewayLogTail: string | undefined;
-  try {
-    const logText = await fs.readFile(gatewayBootLog, "utf8");
-    const lines = logText
-      .split(/\r?\n/)
-      .map((line) => line.trimEnd())
-      .filter(Boolean);
-    if (lines.length > 0) {
-      gatewayLogTail = lines.slice(-20).join("\n");
-    }
-  } catch {
-    gatewayLogTail = undefined;
-  }
+  const gatewayLogTails = await collectManagedGatewayBootLogTails();
   return [
     reason,
     `systemd root is-active: ${rootState.detail ?? (rootState.ok ? "active" : "unknown")}`,
     `systemd user is-active: ${userState.detail ?? (userState.ok ? "active" : "unknown")}`,
-    ...(gatewayLogTail ? [`Gateway boot log tail (${gatewayBootLog}):`, gatewayLogTail] : []),
+    ...gatewayLogTails.flatMap(({ file, tail }) => [`Gateway boot log tail (${file}):`, tail]),
     "Debug commands:",
     "  sudo systemctl status fased-gateway --no-pager",
     "  sudo journalctl -u fased-gateway -n 120 --no-pager",
   ].join("\n");
+}
+
+async function collectManagedGatewayBootLogTails(): Promise<Array<{ file: string; tail: string }>> {
+  const candidates = new Set<string>();
+  const uid = typeof process.getuid === "function" ? String(process.getuid()) : "1000";
+  candidates.add(path.join("/tmp", `fased-${uid}`, "start-managed-gateway.log"));
+  try {
+    const entries = await fs.readdir("/tmp", { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory() || !/^fased-\d+$/.test(entry.name)) {
+        continue;
+      }
+      candidates.add(path.join("/tmp", entry.name, "start-managed-gateway.log"));
+    }
+  } catch {
+    // Keep the UID-specific fallback only.
+  }
+
+  const tails: Array<{ file: string; tail: string }> = [];
+  for (const file of candidates) {
+    try {
+      const logText = await fs.readFile(file, "utf8");
+      const lines = logText
+        .split(/\r?\n/)
+        .map((line) => line.trimEnd())
+        .filter(Boolean);
+      if (lines.length > 0) {
+        tails.push({ file, tail: lines.slice(-20).join("\n") });
+      }
+    } catch {
+      // Missing or unreadable boot logs are expected during early startup.
+    }
+    if (tails.length >= 3) {
+      break;
+    }
+  }
+  return tails;
 }
 
 async function restartGatewayServiceOnce(
@@ -1691,7 +1712,7 @@ export async function finalizeOnboardingWizard(
           name: "fased-gateway",
           scope: "root",
         });
-        const serviceActive = userSvcActive || rootSvcActive;
+        const serviceActive = userSvcActive.ok || rootSvcActive.ok;
         await prompter.note(
           serviceActive
             ? strictVps
@@ -1743,6 +1764,36 @@ export async function finalizeOnboardingWizard(
                 wsUrl: probeLinks.wsUrl,
                 deadlineMs: lowRamMode ? 120_000 : 60_000,
               });
+            }
+          }
+          if (!strictFastListener.ok) {
+            const [rootState, userState] = await Promise.all([
+              isSystemdServiceActive({ name: "fased-gateway", scope: "root" }),
+              isSystemdServiceActive({ name: "fased-gateway", scope: "user" }),
+            ]);
+            const serviceStillRunning =
+              rootState.ok ||
+              userState.ok ||
+              (await isSystemdServiceRunningOrStarting({
+                name: "fased-gateway",
+                scope: "root",
+              })) ||
+              (await isSystemdServiceRunningOrStarting({
+                name: "fased-gateway",
+                scope: "user",
+              }));
+            if (fastHealth && serviceStillRunning) {
+              await prompter.note(
+                [
+                  "Gateway service is running, but the listener is still warming.",
+                  "Continuing setup. Check status after a minute if the dashboard does not open.",
+                  "  sudo systemctl status fased-gateway --no-pager",
+                  "  sudo journalctl -u fased-gateway -n 120 --no-pager",
+                ].join("\n"),
+                "Health check",
+              );
+              progress.update("Service active; listener still warming.");
+              return;
             }
           }
           if (!strictFastListener.ok && !opts.allowInsecure) {
@@ -1838,7 +1889,7 @@ export async function finalizeOnboardingWizard(
             name: "fased-gateway",
             scope: "root",
           });
-          const serviceActive = userSvcActive || rootSvcActive;
+          const serviceActive = userSvcActive.ok || rootSvcActive.ok;
           if (fastHealth && serviceActive) {
             await prompter.note(
               [
@@ -1862,7 +1913,7 @@ export async function finalizeOnboardingWizard(
             name: "fased-gateway",
             scope: "root",
           });
-          const serviceActive = userSvcActive || rootSvcActive;
+          const serviceActive = userSvcActive.ok || rootSvcActive.ok;
           if (fastHealth && serviceActive) {
             runtime.error(
               `Gateway probe warning (continuing due fast health + active service): ${strictProbe.detail ?? "unknown error"}`,
