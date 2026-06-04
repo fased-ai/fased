@@ -1216,7 +1216,7 @@ export async function configureWalletForOnboarding(params: {
       },
       approvalAuth: {
         ...nextConfig.wallet?.approvalAuth,
-        mode: nextConfig.wallet?.approvalAuth?.mode ?? "webauthn",
+        mode: nextConfig.wallet?.approvalAuth?.mode ?? "none",
       },
     },
   };

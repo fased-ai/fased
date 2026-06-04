@@ -154,7 +154,10 @@ describe("registerPreActionHooks", () => {
       processArgv: ["node", "fased", "onboard"],
     });
 
-    expect(ensureConfigReadyMock).not.toHaveBeenCalled();
+    expect(ensureConfigReadyMock).toHaveBeenCalledWith({
+      runtime: runtimeMock,
+      commandPath: ["onboard"],
+    });
     expect(ensurePluginRegistryLoadedMock).toHaveBeenCalledTimes(1);
   });
 
@@ -179,7 +182,7 @@ describe("registerPreActionHooks", () => {
     expect(ensurePluginRegistryLoadedMock).not.toHaveBeenCalled();
   });
 
-  it("skips config guard for doctor, completion, onboard, and secrets commands", async () => {
+  it("skips config guard for doctor, completion, and secrets commands", async () => {
     await runCommand({
       parseArgv: ["doctor"],
       processArgv: ["node", "fased", "doctor"],
@@ -187,10 +190,6 @@ describe("registerPreActionHooks", () => {
     await runCommand({
       parseArgv: ["completion"],
       processArgv: ["node", "fased", "completion"],
-    });
-    await runCommand({
-      parseArgv: ["onboard"],
-      processArgv: ["node", "fased", "onboard"],
     });
     await runCommand({
       parseArgv: ["secrets"],
@@ -230,7 +229,7 @@ describe("registerPreActionHooks", () => {
     });
 
     expect(emitCliBannerMock).not.toHaveBeenCalled();
-    expect(ensureConfigReadyMock).not.toHaveBeenCalled();
+    expect(ensureConfigReadyMock).toHaveBeenCalledTimes(1);
     expect(ensurePluginRegistryLoadedMock).toHaveBeenCalledTimes(1);
   });
 });

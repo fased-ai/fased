@@ -417,12 +417,30 @@ install_fased_cli_launcher() {
   mkdir -p "$bin_dir"
   chmod 755 "$launcher" 2>/dev/null || true
 
-  if ! ln -sfn "$launcher" "$target" 2>/dev/null; then
-    {
-      printf '#!/usr/bin/env bash\n'
-      printf 'exec %s "$@"\n' "$(shell_quote "$launcher")"
-    } >"$target"
-    chmod 755 "$target"
+  local launcher_real=""
+  local target_real=""
+  launcher_real="$(readlink -f "$launcher" 2>/dev/null || true)"
+  if [[ -e "$target" || -L "$target" ]]; then
+    target_real="$(readlink -f "$target" 2>/dev/null || true)"
+  fi
+
+  if [[ -n "$launcher_real" && "$target_real" == "$launcher_real" ]]; then
+    :
+  elif ! ln -sfn "$launcher" "$target" 2>/dev/null; then
+    target_real=""
+    if [[ -e "$target" || -L "$target" ]]; then
+      target_real="$(readlink -f "$target" 2>/dev/null || true)"
+    fi
+    if [[ -n "$launcher_real" && "$target_real" == "$launcher_real" ]]; then
+      :
+    else
+      rm -f "$target"
+      {
+        printf '#!/usr/bin/env bash\n'
+        printf 'exec %s "$@"\n' "$(shell_quote "$launcher")"
+      } >"$target"
+      chmod 755 "$target"
+    fi
   fi
 
   export PATH="$bin_dir:$PATH"
