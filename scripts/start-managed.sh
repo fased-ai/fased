@@ -322,6 +322,65 @@ force_stop_local_gateway() {
   pkill -f "fased-gateway" >/dev/null 2>&1 || true
 }
 
+wait_for_gateway_listener() {
+  local retries="$1"
+  local count=0
+  echo "==> Waiting for local gateway listener on 127.0.0.1:${FASED_GATEWAY_PORT} (max ${retries}s)..."
+  while true; do
+    if is_gateway_listener_ready; then
+      return 0
+    fi
+    if ! kill -0 "$AGENT_PID" 2>/dev/null; then
+      echo "[gateway] ERROR: Gateway process exited before listener became ready."
+      if [[ "$VERBOSE_STARTUP" != "1" ]]; then
+        echo "[debug] Last gateway startup logs:"
+        tail -n 80 "$GATEWAY_BOOT_LOG" || true
+      fi
+      return 1
+    fi
+    sleep 1
+    count=$((count + 1))
+    if [[ $count -ge $retries ]]; then
+      echo "[gateway] ERROR: Timed out waiting for local listener on port ${FASED_GATEWAY_PORT}."
+      if [[ "$VERBOSE_STARTUP" != "1" ]]; then
+        echo "[debug] Last gateway startup logs:"
+        tail -n 80 "$GATEWAY_BOOT_LOG" || true
+      fi
+      return 1
+    fi
+  done
+}
+
+start_gateway_if_needed() {
+  if [[ -n "${AGENT_PID:-}" ]] && kill -0 "$AGENT_PID" 2>/dev/null; then
+    if is_gateway_listener_ready; then
+      return 0
+    fi
+  fi
+
+  echo "==> Starting FasedAgent Gateway..."
+  # Capture pre-existing token fingerprint so we can detect a real refresh.
+  if [[ -f "$TOKEN_PATH" ]]; then
+    INITIAL_TOKEN_SIG=$(sha256sum "$TOKEN_PATH" | awk '{print $1}')
+  fi
+  GATEWAY_ENTRY="$(resolve_gateway_cli_entry || true)"
+  if [[ -z "$GATEWAY_ENTRY" ]]; then
+    echo "[gateway] ERROR: Unable to resolve built gateway entry under $FASED_ROOT/dist"
+    exit 1
+  fi
+  if [[ "$VERBOSE_STARTUP" == "1" ]]; then
+    FASED_SKIP_BUILD=1 "$NODE_BIN" "$GATEWAY_ENTRY" gateway --allow-unconfigured --force --port "$FASED_GATEWAY_PORT" &
+  else
+    : > "$GATEWAY_BOOT_LOG"
+    FASED_SKIP_BUILD=1 "$NODE_BIN" "$GATEWAY_ENTRY" gateway --allow-unconfigured --force --port "$FASED_GATEWAY_PORT" >>"$GATEWAY_BOOT_LOG" 2>&1 &
+  fi
+  AGENT_PID=$!
+
+  if ! wait_for_gateway_listener "$GATEWAY_READY_TIMEOUT"; then
+    exit 1
+  fi
+}
+
 # Ensure Gateway Token exists
 mkdir -p "$FASED_CONFIG_DIR"
 mkdir -p "$LOG_DIR"
@@ -343,6 +402,10 @@ if [[ "${FASED_MANAGED_INTERNAL:-0}" != "1" ]]; then
 fi
 force_stop_local_gateway
 
+# Start the dashboard backend before slower hosted setup. Signer, wallet,
+# federation, and tunnel work must not prevent the owner from opening the UI.
+start_gateway_if_needed
+
 # 0a. Start local key signer daemon (fased-signerd) if available
 SIGNERD_BIN="${FASED_CONFIG_DIR}/bin/fased-signerd"
 SIGNERD_SOCKET="${FASED_CONFIG_DIR}/wallet/local-signer.sock"
@@ -356,6 +419,15 @@ CONFIG_JSON="${FASED_CONFIG_DIR}/fased.json"
 SIGNERD_ENV_FILE="${FASED_CONFIG_DIR}/wallet/signer.env"
 WALLET_REGISTRY_JSON="${FASED_CONFIG_DIR}/wallet/provider-registry.v1.json"
 export FASED_WALLET_LOCAL_SIGNER_SOCKET="$SIGNERD_SOCKET"
+SIGNERD_STARTUP_MODE="healthy"
+SIGNERD_ERROR=""
+
+mark_signerd_degraded() {
+  SIGNERD_STARTUP_MODE="degraded"
+  SIGNERD_ERROR="$1"
+  echo "[signerd] WARNING: $1"
+  echo "[signerd]          Dashboard stays online; wallet actions remain degraded until signer is fixed."
+}
 
 load_wallet_signer_env_from_config() {
   if [[ ! -f "$CONFIG_JSON" ]]; then
@@ -647,36 +719,30 @@ if [[ -f "$SIGNERD_BIN" ]]; then
   if wait_for_signerd_ready "$SIGNERD_READY_TIMEOUT_SECONDS"; then
     echo "==> fased-signerd started (PID=$SIGNERD_PID, socket: $SIGNERD_BACKEND_SOCKET)"
   else
-    echo "[signerd] ERROR: fased-signerd did not create socket. Check $SIGNERD_LOG"
-    exit 1
+    mark_signerd_degraded "fased-signerd did not create socket. Check $SIGNERD_LOG"
   fi
 else
   echo "==> fased-signerd not found at $SIGNERD_BIN — installing from GitHub releases..."
   INSTALL_SCRIPT="$FASED_ROOT/scripts/install-fased-signerd.sh"
   if [[ ! -f "$INSTALL_SCRIPT" ]]; then
-    echo "[signerd] ERROR: install-fased-signerd.sh not found at $INSTALL_SCRIPT"
-    exit 1
-  fi
-  if ! bash "$INSTALL_SCRIPT"; then
-    echo "[signerd] ERROR: install-fased-signerd.sh failed. Cannot start without Go key signer."
-    exit 1
-  fi
-  if [[ ! -f "$SIGNERD_BIN" ]]; then
-    echo "[signerd] ERROR: install completed but binary still not found at $SIGNERD_BIN"
-    exit 1
-  fi
-  echo "==> fased-signerd installed. Starting daemon..."
-  stop_existing_signerd
-  "$SIGNERD_BIN" \
-    -socket "$SIGNERD_BACKEND_SOCKET" \
-    -pid-file "$(resolve_local_signer_sidecar_path "$SIGNERD_BACKEND_SOCKET" "pid")" \
-    -audit-log "$(resolve_local_signer_sidecar_path "$SIGNERD_BACKEND_SOCKET" "audit")" \
-    >>"$SIGNERD_LOG" 2>&1 &
-  if wait_for_signerd_ready "$SIGNERD_READY_TIMEOUT_SECONDS"; then
-    echo "==> fased-signerd started (socket: $SIGNERD_BACKEND_SOCKET)"
+    mark_signerd_degraded "install-fased-signerd.sh not found at $INSTALL_SCRIPT"
+  elif ! bash "$INSTALL_SCRIPT"; then
+    mark_signerd_degraded "install-fased-signerd.sh failed. Check release asset access and network."
+  elif [[ ! -f "$SIGNERD_BIN" ]]; then
+    mark_signerd_degraded "install completed but binary still not found at $SIGNERD_BIN"
   else
-    echo "[signerd] ERROR: fased-signerd did not start after install. Check $SIGNERD_LOG"
-    exit 1
+    echo "==> fased-signerd installed. Starting daemon..."
+    stop_existing_signerd
+    "$SIGNERD_BIN" \
+      -socket "$SIGNERD_BACKEND_SOCKET" \
+      -pid-file "$(resolve_local_signer_sidecar_path "$SIGNERD_BACKEND_SOCKET" "pid")" \
+      -audit-log "$(resolve_local_signer_sidecar_path "$SIGNERD_BACKEND_SOCKET" "audit")" \
+      >>"$SIGNERD_LOG" 2>&1 &
+    if wait_for_signerd_ready "$SIGNERD_READY_TIMEOUT_SECONDS"; then
+      echo "==> fased-signerd started (socket: $SIGNERD_BACKEND_SOCKET)"
+    else
+      mark_signerd_degraded "fased-signerd did not start after install. Check $SIGNERD_LOG"
+    fi
   fi
 fi
 if [[ -f "$ZROK_MONITOR_PID_FILE" ]]; then
@@ -740,61 +806,9 @@ start_health_monitor() {
   done
 }
 
-wait_for_gateway_listener() {
-  local retries="$1"
-  local count=0
-  echo "==> Waiting for local gateway listener on 127.0.0.1:${FASED_GATEWAY_PORT} (max ${retries}s)..."
-  while true; do
-    if is_gateway_listener_ready; then
-      return 0
-    fi
-    if ! kill -0 "$AGENT_PID" 2>/dev/null; then
-      echo "[gateway] ERROR: Gateway process exited before listener became ready."
-      if [[ "$VERBOSE_STARTUP" != "1" ]]; then
-        echo "[debug] Last gateway startup logs:"
-        tail -n 80 "$GATEWAY_BOOT_LOG" || true
-      fi
-      return 1
-    fi
-    sleep 1
-    count=$((count + 1))
-    if [[ $count -ge $retries ]]; then
-      echo "[gateway] ERROR: Timed out waiting for local listener on port ${FASED_GATEWAY_PORT}."
-      if [[ "$VERBOSE_STARTUP" != "1" ]]; then
-        echo "[debug] Last gateway startup logs:"
-        tail -n 80 "$GATEWAY_BOOT_LOG" || true
-      fi
-      return 1
-    fi
-  done
-}
-
 # === Execution Flow ===
 
-# 1. Start the Agent Gateway in the background
-echo "==> Starting FasedAgent Gateway..."
-# Capture pre-existing token fingerprint so we can detect a real refresh.
-if [[ -f "$TOKEN_PATH" ]]; then
-  INITIAL_TOKEN_SIG=$(sha256sum "$TOKEN_PATH" | awk '{print $1}')
-fi
-GATEWAY_ENTRY="$(resolve_gateway_cli_entry || true)"
-if [[ -z "$GATEWAY_ENTRY" ]]; then
-  echo "[gateway] ERROR: Unable to resolve built gateway entry under $FASED_ROOT/dist"
-  exit 1
-fi
-if [[ "$VERBOSE_STARTUP" == "1" ]]; then
-  FASED_SKIP_BUILD=1 "$NODE_BIN" "$GATEWAY_ENTRY" gateway --allow-unconfigured --force --port "$FASED_GATEWAY_PORT" &
-else
-  : > "$GATEWAY_BOOT_LOG"
-  FASED_SKIP_BUILD=1 "$NODE_BIN" "$GATEWAY_ENTRY" gateway --allow-unconfigured --force --port "$FASED_GATEWAY_PORT" >>"$GATEWAY_BOOT_LOG" 2>&1 &
-fi
-AGENT_PID=$!
-
-if ! wait_for_gateway_listener "$GATEWAY_READY_TIMEOUT"; then
-  exit 1
-fi
-
-# 2. Wait for the agent to enroll/refresh access token.
+# 1. Wait for the agent to enroll/refresh access token.
 # We do not treat a stale pre-existing token as ready if it has no zrok metadata.
 echo "==> Waiting for agent enrollment/token refresh (max 60s)..."
 MAX_RETRIES=60
@@ -1216,6 +1230,11 @@ if [[ "$WALLET_STARTUP_MODE" == "degraded" ]]; then
   if [[ -n "$WALLET_ERROR" ]]; then
     echo "  Last Error:          $WALLET_ERROR"
   fi
+fi
+echo "Signer"
+echo "  Startup Mode:        $SIGNERD_STARTUP_MODE"
+if [[ -n "$SIGNERD_ERROR" ]]; then
+  echo "  Last Error:          $SIGNERD_ERROR"
 fi
 echo "Admin Access (Tailscale)"
 echo "  Admin URL:           $TAILSCALE_ADMIN_URL"
