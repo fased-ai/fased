@@ -52,6 +52,11 @@ function hasCommand(name: string): boolean {
   return probe.status === 0;
 }
 
+type HostSecurityCommandRunner = (
+  command: string,
+  logPath?: string,
+) => { ok: boolean; detail?: string };
+
 function run(command: string, logPath?: string): { ok: boolean; detail?: string } {
   const proc = spawnSync("bash", ["-lc", command], {
     stdio: ["ignore", "pipe", "pipe"],
@@ -65,6 +70,20 @@ function run(command: string, logPath?: string): { ok: boolean; detail?: string 
     return { ok: true, detail: detail || undefined };
   }
   return { ok: false, detail: detail || `${command} (exit=${proc.status ?? "unknown"})` };
+}
+
+function isTailscaleLoggedIn(logPath?: string, runner: HostSecurityCommandRunner = run): boolean {
+  return (
+    runner("tailscale status >/dev/null 2>&1", logPath).ok ||
+    runner("sudo -n tailscale status >/dev/null 2>&1", logPath).ok
+  );
+}
+
+function hasTailscaleIp(logPath?: string, runner: HostSecurityCommandRunner = run): boolean {
+  return (
+    runner("tailscale ip -4 >/dev/null 2>&1", logPath).ok ||
+    runner("sudo -n tailscale ip -4 >/dev/null 2>&1", logPath).ok
+  );
 }
 
 function ensureTailscaleServe(port: number, logPath?: string): { ok: boolean; detail?: string } {
@@ -294,7 +313,7 @@ export async function applyHostingSecurity(params: {
     }
   }
 
-  let tsHealthy = run("tailscale status >/dev/null 2>&1", logPath).ok;
+  let tsHealthy = isTailscaleLoggedIn(logPath);
   if (tsHealthy && prompter && opts.nonInteractive !== true) {
     const switchAccount = await prompter.confirm({
       message: "Switch or re-authenticate Tailscale account on this VPS now?",
@@ -324,7 +343,7 @@ export async function applyHostingSecurity(params: {
         ok: true,
         detail: "tailscale re-authenticated via account switch/reset",
       });
-      tsHealthy = run("tailscale status >/dev/null 2>&1", logPath).ok;
+      tsHealthy = isTailscaleLoggedIn(logPath);
     }
   }
 
@@ -404,8 +423,7 @@ export async function applyHostingSecurity(params: {
     checks.push({ name: "tailscale", ok: true, detail: "tailscale already healthy" });
   }
 
-  const tsReady = run("tailscale ip -4 >/dev/null 2>&1", logPath);
-  if (!tsReady.ok) {
+  if (!hasTailscaleIp(logPath)) {
     checks.push({
       name: "tailscale",
       ok: false,
@@ -415,7 +433,6 @@ export async function applyHostingSecurity(params: {
       opts,
       runtime,
       step: "tailscale not ready; refusing to apply ssh/ufw lock-down",
-      detail: tsReady.detail,
     });
     return { profile, checks, enforced: false, logPath };
   }
@@ -525,5 +542,7 @@ export async function applyHostingSecurity(params: {
 }
 
 export const __testing = {
+  hasTailscaleIp,
+  isTailscaleLoggedIn,
   sanitizeHostSecurityLogText,
 };
