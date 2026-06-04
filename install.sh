@@ -1055,14 +1055,14 @@ install_missing_deps_as_root_if_needed() {
   fi
 
   local missing=()
-  for cmd in git curl pnpm go; do
+  for cmd in git curl pnpm; do
     need_cmd "$cmd" || missing+=("$cmd")
   done
   if ! need_cmd node; then
     missing+=("node")
   fi
 
-  if [[ ${#missing[@]} -eq 0 ]] && node_runtime_ok && go_modern_enough; then
+  if [[ ${#missing[@]} -eq 0 ]] && node_runtime_ok; then
     return 0
   fi
 
@@ -1072,9 +1072,6 @@ install_missing_deps_as_root_if_needed() {
   fi
   if ! node_runtime_ok; then
     echo "Node runtime is incompatible: $(node_runtime_issue)"
-  fi
-  if ! go_modern_enough; then
-    echo "Go toolchain is missing or too old (need Go >= 1.21 for native signer)."
   fi
 
   apt-get update
@@ -1087,9 +1084,6 @@ install_missing_deps_as_root_if_needed() {
   if ! need_cmd pnpm; then
     corepack enable || true
     corepack prepare pnpm@latest --activate || npm install -g pnpm
-  fi
-  if ! go_modern_enough; then
-    install_modern_go_linux
   fi
 }
 
@@ -1237,14 +1231,14 @@ export npm_config_cache="${npm_config_cache:-$INSTALL_CACHE_DIR/npm-cache}"
 mkdir -p "$COREPACK_HOME" "$npm_config_cache"
 
 missing=()
-for cmd in git curl pnpm go; do
+for cmd in git curl pnpm; do
   need_cmd "$cmd" || missing+=("$cmd")
 done
 if ! need_cmd node; then
   missing+=("node")
 fi
 
-if [[ ${#missing[@]} -gt 0 || ! node_runtime_ok || ! go_modern_enough ]]; then
+if [[ ${#missing[@]} -gt 0 || ! node_runtime_ok ]]; then
   if [[ ${#missing[@]} -gt 0 ]]; then
     echo "Missing dependencies: ${missing[*]}"
   fi
@@ -1254,9 +1248,6 @@ if [[ ${#missing[@]} -gt 0 || ! node_runtime_ok || ! go_modern_enough ]]; then
   fi
   if ! node_runtime_ok; then
     echo "Node runtime is incompatible: $(node_runtime_issue)"
-  fi
-  if ! go_modern_enough; then
-    echo "Go toolchain is missing or too old (need Go >= 1.21 for native signer)."
   fi
   if [[ "$AUTO_INSTALL" -eq 1 && "$(uname -s)" == "Linux" ]]; then
     if ! need_cmd sudo; then
@@ -1275,9 +1266,6 @@ if [[ ${#missing[@]} -gt 0 || ! node_runtime_ok || ! go_modern_enough ]]; then
       corepack enable || true
       corepack prepare pnpm@latest --activate || npm install -g pnpm
     fi
-    if ! go_modern_enough; then
-      install_modern_go_linux
-    fi
   else
     cat <<'EOF_HELP'
 Install missing tools, then rerun install.sh:
@@ -1285,7 +1273,6 @@ Install missing tools, then rerun install.sh:
   - curl
   - node (Node 24 recommended, or v22.14+ with node:sqlite)
   - pnpm
-  - go >= 1.21 (required for native signer build/install)
 
 Linux auto install:
   ./install.sh --auto-install

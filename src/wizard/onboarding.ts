@@ -1165,16 +1165,11 @@ export async function runOnboardingWizard(
   }
 
   const hostingMode = hostProfile === "hosting";
-  const installNativeSigner =
-    hostingMode ||
-    flow === "quickstart" ||
-    (await prompter.confirm({
-      message: "Build + install native signer (fased-signerd) now?",
-      initialValue: true,
-    }));
+  const buildNativeSignerFromSource =
+    String(process.env.FASED_BUILD_NATIVE_SIGNER_FROM_SOURCE ?? "").trim() === "1";
   const skipNativeSignerBuild =
     String(process.env.FASED_SKIP_NATIVE_SIGNER_BUILD ?? "").trim() === "1";
-  if (installNativeSigner) {
+  if (buildNativeSignerFromSource) {
     if (skipNativeSignerBuild) {
       if (flow !== "quickstart") {
         await prompter.note(
@@ -1189,7 +1184,9 @@ export async function runOnboardingWizard(
     } else if (!(await maybeInstallGoForOnboarding())) {
       const detail = "Go >=1.21 is required for native signer build/install.";
       if (hostingMode && !opts.allowInsecure) {
-        throw new Error(`${detail} Install Go and rerun onboarding.`);
+        throw new Error(
+          `${detail} Install Go and rerun onboarding, or unset FASED_BUILD_NATIVE_SIGNER_FROM_SOURCE.`,
+        );
       }
       await prompter.note(`${detail} Skipping signer build/install.`, "Native signer");
     } else {
