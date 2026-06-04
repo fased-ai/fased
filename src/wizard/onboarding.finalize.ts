@@ -505,6 +505,9 @@ async function formatStrictListenerFailureDiagnostics(reason: string): Promise<s
 
 async function collectManagedGatewayBootLogTails(): Promise<Array<{ file: string; tail: string }>> {
   const candidates = new Set<string>();
+  const configDir = process.env.FASED_CONFIG_DIR?.trim() || resolveUserPath("~/.fased");
+  candidates.add(path.join(configDir, "logs", "start-managed-gateway.log"));
+  candidates.add(path.join(configDir, "logs", "start-managed.log"));
   const uid = typeof process.getuid === "function" ? String(process.getuid()) : "1000";
   candidates.add(path.join("/tmp", `fased-${uid}`, "start-managed-gateway.log"));
   try {

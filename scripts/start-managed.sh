@@ -81,7 +81,7 @@ fi
 TOKEN_PATH="$FASED_CONFIG_DIR/federation/access-token.json"
 GW_TOKEN_PATH="$FASED_CONFIG_DIR/gateway-secret"
 INITIAL_TOKEN_SIG=""
-LOG_DIR="/tmp/fased-${UID:-1000}"
+LOG_DIR="${FASED_LOG_DIR:-$FASED_CONFIG_DIR/logs}"
 GATEWAY_BOOT_LOG="$LOG_DIR/start-managed-gateway.log"
 ZROK_RUNTIME_LOG="$LOG_DIR/start-managed-zrok.log"
 WALLET_SETUP_LOG="$LOG_DIR/start-managed-wallet.log"
@@ -369,10 +369,10 @@ start_gateway_if_needed() {
     exit 1
   fi
   if [[ "$VERBOSE_STARTUP" == "1" ]]; then
-    FASED_SKIP_BUILD=1 "$NODE_BIN" "$GATEWAY_ENTRY" gateway --allow-unconfigured --force --port "$FASED_GATEWAY_PORT" &
+    FASED_SKIP_BUILD=1 "$NODE_BIN" "$GATEWAY_ENTRY" gateway --allow-unconfigured --force --bind loopback --port "$FASED_GATEWAY_PORT" &
   else
     : > "$GATEWAY_BOOT_LOG"
-    FASED_SKIP_BUILD=1 "$NODE_BIN" "$GATEWAY_ENTRY" gateway --allow-unconfigured --force --port "$FASED_GATEWAY_PORT" >>"$GATEWAY_BOOT_LOG" 2>&1 &
+    FASED_SKIP_BUILD=1 "$NODE_BIN" "$GATEWAY_ENTRY" gateway --allow-unconfigured --force --bind loopback --port "$FASED_GATEWAY_PORT" >>"$GATEWAY_BOOT_LOG" 2>&1 &
   fi
   AGENT_PID=$!
 
@@ -386,12 +386,15 @@ mkdir -p "$FASED_CONFIG_DIR"
 mkdir -p "$LOG_DIR"
 : > "$ZROK_RUNTIME_LOG"
 : > "$WALLET_SETUP_LOG"
+SERVICE_GATEWAY_TOKEN="${FASED_GATEWAY_TOKEN:-}"
 if [ ! -f "$GW_TOKEN_PATH" ]; then
+  if [[ -n "$SERVICE_GATEWAY_TOKEN" ]]; then
+    printf '%s\n' "$SERVICE_GATEWAY_TOKEN" > "$GW_TOKEN_PATH"
+  else
     openssl rand -hex 32 > "$GW_TOKEN_PATH"
+  fi
 fi
-export FASED_GATEWAY_TOKEN=$(cat "$GW_TOKEN_PATH")
-
-mkdir -p "$FASED_CONFIG_DIR"
+export FASED_GATEWAY_TOKEN="$(tr -d '\n' < "$GW_TOKEN_PATH")"
 
 # 0. Clean up stale state
 # rm -f "$TOKEN_PATH" # (Disabled: Preserve identity for stable Zrok tunnels)
@@ -1259,7 +1262,6 @@ echo "==========================================================="
 
 echo ""
 echo "Stream gateway logs: tail -f $GATEWAY_BOOT_LOG"
-echo "Stream app logs:     tail -f /tmp/fased-1000/fased-*.log"
 echo "Stream zrok logs:    tail -f $ZROK_RUNTIME_LOG"
 
 cleanup_managed_runtime() {
