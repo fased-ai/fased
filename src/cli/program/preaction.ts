@@ -30,7 +30,7 @@ const PLUGIN_REQUIRED_COMMANDS = new Set([
   "configure",
   "onboard",
 ]);
-const CONFIG_GUARD_BYPASS_COMMANDS = new Set(["doctor", "completion", "secrets"]);
+const CONFIG_GUARD_BYPASS_COMMANDS = new Set(["doctor", "completion", "onboard", "secrets"]);
 
 function getRootCommand(command: Command): Command {
   let current = command;
@@ -89,11 +89,10 @@ export function registerPreActionHooks(program: Command, programVersion: string)
     if (!verbose) {
       process.env.NODE_NO_WARNINGS ??= "1";
     }
-    if (CONFIG_GUARD_BYPASS_COMMANDS.has(commandPath[0])) {
-      return;
+    if (!CONFIG_GUARD_BYPASS_COMMANDS.has(commandPath[0])) {
+      const { ensureConfigReady } = await import("./config-guard.js");
+      await ensureConfigReady({ runtime: defaultRuntime, commandPath });
     }
-    const { ensureConfigReady } = await import("./config-guard.js");
-    await ensureConfigReady({ runtime: defaultRuntime, commandPath });
     // Load plugins for commands that need channel access
     if (PLUGIN_REQUIRED_COMMANDS.has(commandPath[0])) {
       const { ensurePluginRegistryLoaded } = await import("../plugin-registry.js");
