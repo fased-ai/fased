@@ -814,6 +814,17 @@ start_health_monitor() {
 
 # === Execution Flow ===
 
+MANAGED_TUNNEL_DISABLED=0
+TUNNEL_ERROR=""
+disable_managed_tunnel() {
+  MANAGED_TUNNEL_DISABLED=1
+  TUNNEL_STARTED=0
+  FINAL_URL="N/A"
+  TUNNEL_ERROR="$1"
+  echo "[tunnel] WARNING: $1"
+  echo "[tunnel]          Dashboard gateway stays online; Fased Network tunnel remains degraded until repaired."
+}
+
 # 1. Wait for the agent to enroll/refresh access token.
 # We do not treat a stale pre-existing token as ready if it has no zrok metadata.
 echo "==> Waiting for agent enrollment/token refresh (max 60s)..."
@@ -845,21 +856,26 @@ while true; do
       echo "[tunnel] WARNING: Token refresh did not complete in time; continuing with current token."
       break
     fi
-    echo "[tunnel] ERROR: Agent enrollment/token refresh did not complete in time and no token is available."
+    disable_managed_tunnel "Agent enrollment/token refresh did not complete in time and no token is available."
     if [[ "$VERBOSE_STARTUP" != "1" ]]; then
       echo "[debug] Last gateway startup logs:"
       tail -n 40 "$GATEWAY_BOOT_LOG" || true
     fi
-    exit 1
+    break
   fi
 done
 
 # === Tunneling (zrok) ===
 
 FINAL_URL="N/A"
+TUNNEL_STARTED=0
+SLUG="N/A"
+RES_TOKEN=""
 
 ZROK_VDIR="$HOME/.zrok"
 ZROK_BIN="$ZROK_VDIR/bin/zrok"
+
+if [[ "$MANAGED_TUNNEL_DISABLED" != "1" ]]; then
 
 # Check if zrok is installed; if not, install it
 if [[ ! -f "$ZROK_BIN" ]]; then
@@ -895,21 +911,24 @@ if [[ ! -f "$ZROK_BIN" ]]; then
              echo "[tunnel] Extracted but 'zrok' binary not found."
              ls -R "$TMP_ZROK_DIR"
              rm -rf "$TMP_ZROK_DIR"
-             exit 1
+             disable_managed_tunnel "zrok manual download extracted without a zrok binary."
         fi
     else
         echo "[tunnel] Download failed (curl)."
         rm -rf "$TMP_ZROK_DIR"
-        exit 1
+        disable_managed_tunnel "zrok manual download failed."
     fi
     rm -rf "$TMP_ZROK_DIR" /tmp/zrok-install.log
   fi
 fi
 
-if [[ ! -f "$ZROK_BIN" ]]; then
-  echo "[tunnel] ERROR: zrok binary not found at $ZROK_BIN after install."
-  exit 1
+if [[ "$MANAGED_TUNNEL_DISABLED" != "1" && ! -f "$ZROK_BIN" ]]; then
+  disable_managed_tunnel "zrok binary not found at $ZROK_BIN after install."
 fi
+
+fi
+
+if [[ "$MANAGED_TUNNEL_DISABLED" != "1" ]]; then
 
 chmod +x "$ZROK_BIN"
 echo "[tunnel] zrok version: $($ZROK_BIN version)"
@@ -918,9 +937,12 @@ echo "==> Consuming server-issued zrok credentials..."
 
 # Read zrok token from the enrolled agent's access token
 if [[ ! -f "$TOKEN_PATH" ]]; then
-  echo "[tunnel] ERROR: Agent failed to enroll in time. Tunnel cannot start."
-  exit 1
+  disable_managed_tunnel "Agent enrollment token is unavailable. Tunnel cannot start yet."
 fi
+
+fi
+
+if [[ "$MANAGED_TUNNEL_DISABLED" != "1" ]]; then
 
 ZROK_TOKEN=$(jq -r .zrokToken "$TOKEN_PATH")
 SERVER_SLUG=$(jq -r '.agentSlug // empty' "$TOKEN_PATH")
@@ -935,10 +957,12 @@ else
 fi
 
 if [[ -z "$SLUG" ]]; then
-  echo "[tunnel] ERROR: Unable to resolve tunnel slug from enrollment token."
-  echo "[tunnel]        Verify federation enrollment returned 'handle' and/or 'agentSlug'."
-  exit 1
+  disable_managed_tunnel "Unable to resolve tunnel slug from enrollment token."
 fi
+
+fi
+
+if [[ "$MANAGED_TUNNEL_DISABLED" != "1" ]]; then
 
 echo "[tunnel] Target Slug: $SLUG"
 
@@ -990,9 +1014,11 @@ if [[ "$ZROK_TOKEN" == "null" || -z "$ZROK_TOKEN" ]]; then
     echo "[tunnel]          1) Check server logs: journalctl -u fased -n 100 --no-pager | grep 'zrok:'"
     echo "[tunnel]          2) Ensure enroll returns zrokToken/agentSlug"
     echo "[tunnel]          3) Re-enroll only after server provisioning is healthy"
-    exit 1
+    disable_managed_tunnel "No zrok credentials or cached reservation are available yet."
   fi
-else
+fi
+
+if [[ "$MANAGED_TUNNEL_DISABLED" != "1" && "$ZROK_TOKEN" != "null" && -n "$ZROK_TOKEN" ]]; then
   echo "[tunnel] Enabling zrok environment..."
   export ZROK_API_ENDPOINT="${ZROK_API_ENDPOINT:-https://zrok.fased.app}"
   ensure_managed_clock_sync || true
@@ -1035,14 +1061,16 @@ else
       
       if [[ -z "$RES_TOKEN" ]]; then
           echo "[tunnel] Reservation failed or already reserved. Output: $OUT"
-          echo "[tunnel] ERROR: Could not establish reserved tunnel for '$SLUG'."
-          exit 1
+          disable_managed_tunnel "Could not establish reserved tunnel for '$SLUG'."
       else
           echo "$RES_TOKEN" > "$RES_FILE"
           echo "[tunnel] Reserved: $RES_TOKEN"
       fi
   fi
   
+fi
+
+if [[ "$MANAGED_TUNNEL_DISABLED" != "1" ]]; then
   FINAL_URL="https://${SLUG}.agents.fased.app"
   TUNNEL_STARTED=1
 fi
@@ -1062,6 +1090,8 @@ if [[ "$TUNNEL_STARTED" -eq 1 ]]; then
   start_health_monitor "$SLUG" "$RES_TOKEN" &
   ZROK_MONITOR_PID=$!
   echo "$ZROK_MONITOR_PID" > "$ZROK_MONITOR_PID_FILE"
+fi
+
 fi
 
 WALLET_JSON=""
@@ -1217,6 +1247,10 @@ echo "  Slug:                ${SLUG:-N/A}"
 echo "  Reservation token:   $RES_TOKEN_MASKED"
 echo "  Public URL (A2A):    $FINAL_URL"
 echo "  Runtime log:         $ZROK_RUNTIME_LOG"
+if [[ "$MANAGED_TUNNEL_DISABLED" == "1" ]]; then
+  echo "  Startup Mode:        degraded"
+  echo "  Warning:             ${TUNNEL_ERROR:-Fased Network tunnel unavailable; dashboard gateway kept online}"
+fi
 echo "Wallet"
   echo "  Healthy:             $WALLET_HEALTHY"
 echo "  Startup Mode:        $WALLET_STARTUP_MODE"

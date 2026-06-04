@@ -818,6 +818,41 @@ async function waitForStableGatewayHttpListener(params: {
   return { ok: false, detail: lastDetail };
 }
 
+async function verifyStrictHostedGatewayReady(params: {
+  wsUrl: string;
+  token?: string;
+  password?: string;
+  lowRamMode: boolean;
+}): Promise<{ ok: boolean; detail?: string }> {
+  const listener = await waitForStableGatewayHttpListener({
+    wsUrl: params.wsUrl,
+    deadlineMs: params.lowRamMode ? 180_000 : 90_000,
+    stableMs: 8_000,
+    pollMs: 750,
+  });
+  if (!listener.ok) {
+    return {
+      ok: false,
+      detail: `listener not stable: ${listener.detail ?? "not reachable"}`,
+    };
+  }
+  const probe = await waitForGatewayReachable({
+    url: params.wsUrl,
+    token: params.token,
+    password: params.password,
+    deadlineMs: params.lowRamMode ? 60_000 : 30_000,
+    probeTimeoutMs: 5_000,
+    pollMs: 750,
+  });
+  if (!probe.ok) {
+    return {
+      ok: false,
+      detail: `gateway health failed: ${probe.detail ?? "not reachable"}`,
+    };
+  }
+  return { ok: true };
+}
+
 async function waitForHttpUrlReachable(params: {
   url: string;
   deadlineMs: number;
@@ -2055,7 +2090,7 @@ export async function finalizeOnboardingWizard(
     token: settings.authMode === "token" ? gatewayTokenForUi || undefined : undefined,
     walletSecurityFocus: options.walletSecurityFocus ?? null,
   });
-  const gatewayProbe = await probeGatewayReachable({
+  let gatewayProbe = await probeGatewayReachable({
     url: links.wsUrl,
     token: settings.authMode === "token" ? gatewayTokenForUi || undefined : undefined,
     password: settings.authMode === "password" ? nextConfig.gateway?.auth?.password : "",
@@ -2313,6 +2348,30 @@ export async function finalizeOnboardingWizard(
     publicUrl: federation.enabled ? (persistedFederationToken?.publicUrl ?? null) : null,
   });
   await prompter.note(formatOperatorReadinessSummary(operatorReadiness), "Operator readiness");
+
+  if (strictVps && !opts.allowInsecure) {
+    await withWizardProgress(
+      "Final dashboard check",
+      { doneMessage: undefined },
+      async (progress) => {
+        progress.update("Confirming gateway stays reachable before completing setup…");
+        const finalGateway = await verifyStrictHostedGatewayReady({
+          wsUrl: links.wsUrl,
+          token: settings.authMode === "token" ? gatewayTokenForUi || undefined : undefined,
+          password: settings.authMode === "password" ? nextConfig.gateway?.auth?.password : "",
+          lowRamMode,
+        });
+        if (!finalGateway.ok) {
+          throw new Error(
+            await formatStrictListenerFailureDiagnostics(
+              `Hosting dashboard is not ready at completion (${finalGateway.detail ?? "gateway not reachable"})`,
+            ),
+          );
+        }
+        gatewayProbe = { ok: true };
+      },
+    );
+  }
 
   let controlUiOpened = false;
   let controlUiOpenHint: string | undefined;
