@@ -112,23 +112,22 @@ export function formatStrictRemoteAccessDetails(params: {
 }): string {
   const sshTarget = params.tailscaleNodeName || params.tailscaleIpv4 || "(tailscale-node)";
   return [
-    "REMOTE TERMINAL ACCESS",
+    "Use both access paths after hosted setup:",
+    "",
+    "1. WEB DASHBOARD",
+    "   Open this on your own computer after signing into the same Tailscale account:",
+    `   ${params.dashboardUrl}`,
+    "",
+    "2. SSH TERMINAL",
+    "   Use this for CLI commands, updates, logs, and repairs:",
     `   tailscale ssh ${params.tailscaleSshUser}@${sshTarget}`,
+    "   The app user shell opens in the Fased repo directory.",
     "",
-    "BEFORE YOU OPEN THE DASHBOARD",
-    "   Use a browser on a device signed into the same Tailscale account.",
-    "   Download Tailscale if needed: https://tailscale.com/download",
-    "",
-    "WEB DASHBOARD ACCESS",
-    "   METHOD A: Tailscale dashboard URL",
-    "      Open this URL in your browser:",
-    `      ${params.dashboardUrl}`,
-    "",
-    "   METHOD B: SSH tunnel fallback",
-    "      1. Run this on your local computer and leave it open:",
-    `         ssh -N -L ${params.port}:127.0.0.1:${params.port} ${params.tailscaleSshUser}@${sshTarget}`,
-    "      2. Then open this local URL in your browser:",
-    `         ${params.tunnelUrl}`,
+    "ADVANCED FALLBACK",
+    "   If the Tailscale web URL is unavailable, run this on your local computer and leave it open:",
+    `   ssh -N -L ${params.port}:127.0.0.1:${params.port} ${params.tailscaleSshUser}@${sshTarget}`,
+    "   Then open:",
+    `   ${params.tunnelUrl}`,
     "",
     "GATEWAY TOKEN BACKUP",
     "   Only paste this if the browser asks for a token:",
@@ -136,15 +135,14 @@ export function formatStrictRemoteAccessDetails(params: {
   ].join("\n");
 }
 
-export function shouldContinueAfterTailscaleDashboardWarmupFailure(params: {
-  detail?: string;
-  gatewayAcceptedWarmup: boolean;
-}): boolean {
-  if (!params.gatewayAcceptedWarmup) {
-    return false;
-  }
-  const detail = String(params.detail ?? "").toLowerCase();
-  return detail.includes("http status 502") || detail.includes("bad gateway");
+export function buildGatewayWsUrlFromHttpUrl(params: {
+  httpUrl: string;
+  basePath?: string;
+}): string {
+  const url = new URL(params.httpUrl);
+  const protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  const basePath = normalizeControlUiBasePath(params.basePath);
+  return `${protocol}//${url.host}${basePath}`;
 }
 
 async function runShell(
@@ -1605,14 +1603,13 @@ export async function finalizeOnboardingWizard(
     if (strictVps) {
       await prompter.note(
         [
-          "🔒 SECURITY BASELINE: Hosting binds to localhost (127.0.0.1).",
-          "   - Public management ports (22, 18789) are BLOCKED by UFW.",
-          "   - Isolation: Agent runs as a dedicated 'app' system user.",
-          "   - You MUST have a Tailscale account configured on this VPS and your local device.",
-          "   - Management access (SSH & Web UI) is ONLY possible via Tailscale.",
-          "   - Public Fased Network/A2A traffic uses an OUTBOUND tunnel (no public ports needed).",
+          "Hosted runtime is private by default.",
+          "",
+          "Web dashboard: Tailscale HTTPS URL.",
+          "SSH terminal: tailscale ssh app@YOUR_VPS_TAILSCALE_NAME.",
+          "Public SSH and Gateway ports remain blocked.",
         ].join("\n"),
-        "Security Context",
+        "Hosting access",
       );
     }
     const requirePersistentRuntime = strictVps || expectedGatewayStartupMode === "managed-up";
@@ -1652,7 +1649,6 @@ export async function finalizeOnboardingWizard(
     );
   }
 
-  let gatewayAcceptedWarmup = false;
   if (!opts.skipHealth) {
     const probeLinks = resolveControlUiLinks({
       bind: nextConfig.gateway?.bind ?? "loopback",
@@ -1813,10 +1809,10 @@ export async function finalizeOnboardingWizard(
         await prompter.note(
           serviceActive
             ? strictVps
-              ? "Fast health mode: service is active; verifying listener readiness."
-              : "Fast health mode: service is active; skipping extended startup probes."
-            : "Fast health mode: startup probe not ready yet; continuing without blocking.",
-          "Health check",
+              ? "Gateway service is active; verifying listener readiness."
+              : "Gateway service is active."
+            : "Gateway startup is still warming; setup will keep checking before completion.",
+          serviceActive ? "Health check" : "Gateway startup",
         );
         fastHealthSatisfied = true;
       }
@@ -1880,15 +1876,12 @@ export async function finalizeOnboardingWizard(
                 scope: "user",
               }));
             if (fastHealth && serviceStillRunning && allowGatewayWarmupComplete) {
-              gatewayAcceptedWarmup = true;
               await prompter.note(
                 [
-                  "Gateway service is running, but the listener is still warming.",
-                  "Continuing setup. Check status after a minute if the dashboard does not open.",
-                  "  sudo systemctl status fased-gateway --no-pager",
-                  "  sudo journalctl -u fased-gateway -n 120 --no-pager",
+                  "Gateway service is still starting.",
+                  "Setup will keep checking the Tailscale dashboard before it completes.",
                 ].join("\n"),
-                "Health check",
+                "Gateway startup",
               );
               progress.update("Service active; listener still warming.");
               return;
@@ -1989,13 +1982,12 @@ export async function finalizeOnboardingWizard(
           });
           const serviceActive = userSvcActive.ok || rootSvcActive.ok;
           if (fastHealth && serviceActive && allowGatewayWarmupComplete) {
-            gatewayAcceptedWarmup = true;
             await prompter.note(
               [
-                "Fast health mode: probe still unstable, but runtime service is active.",
-                "Continuing without blocking on extended strict verification.",
+                "Gateway service is active but still warming.",
+                "Setup will keep checking the Tailscale dashboard before it completes.",
               ].join("\n"),
-              "Health check",
+              "Gateway startup",
             );
           } else if (!opts.allowInsecure) {
             throw new Error(
@@ -2014,10 +2006,7 @@ export async function finalizeOnboardingWizard(
           });
           const serviceActive = userSvcActive.ok || rootSvcActive.ok;
           if (fastHealth && serviceActive && allowGatewayWarmupComplete) {
-            gatewayAcceptedWarmup = true;
-            runtime.error(
-              `Gateway probe warning (continuing due fast health + active service): ${strictProbe.detail ?? "unknown error"}`,
-            );
+            runtime.error(`Gateway probe still warming: ${strictProbe.detail ?? "unknown error"}`);
           } else if (!opts.allowInsecure) {
             throw new Error(
               `Hosting gateway probe failed for ${probeLinks.wsUrl} (${strictProbe.detail ?? "unknown error"})`,
@@ -2152,6 +2141,10 @@ export async function finalizeOnboardingWizard(
       throw new Error("Hosting requires a Tailscale HTTPS dashboard URL before completion.");
     }
     if (tailscaleAdminUrl) {
+      const tailscaleGatewayWsUrl = buildGatewayWsUrlFromHttpUrl({
+        httpUrl: tailscaleAdminUrl,
+        basePath: controlUiBasePath,
+      });
       await withWizardProgress(
         "Tailscale dashboard warmup",
         { doneMessage: undefined },
@@ -2168,29 +2161,40 @@ export async function finalizeOnboardingWizard(
           });
           if (!warmup.ok) {
             const detail = warmup.detail ?? "not reachable yet";
-            if (
-              shouldContinueAfterTailscaleDashboardWarmupFailure({
-                detail,
-                gatewayAcceptedWarmup,
-              })
-            ) {
-              await prompter.note(
-                [
-                  "Tailscale HTTPS is routed, but the gateway backend is still warming.",
-                  "Continuing setup. Open the dashboard again in about a minute if it returns 502.",
-                  "  sudo systemctl status fased-gateway --no-pager",
-                  "  sudo journalctl -u fased-gateway -n 120 --no-pager",
-                ].join("\n"),
-                "Tailscale dashboard",
-              );
-              return;
-            }
             if (!opts.allowInsecure) {
               throw new Error(
                 `Hosting requires reachable Tailscale dashboard URL before completion (${detail})`,
               );
             }
             runtime.error(`Tailscale dashboard URL still warming: ${detail}`);
+          }
+          progress.update("Confirming dashboard gateway connection…");
+          const wsWarmup = await waitForGatewayReachable({
+            url: tailscaleGatewayWsUrl,
+            token: settings.authMode === "token" ? gatewayTokenForUi || undefined : undefined,
+            password:
+              settings.authMode === "password" ? nextConfig.gateway?.auth?.password : undefined,
+            deadlineMs: lowRamMode ? 180_000 : 90_000,
+            probeTimeoutMs: 8_000,
+            pollMs: 1_500,
+          });
+          if (!wsWarmup.ok) {
+            if (!opts.allowInsecure) {
+              throw new Error(
+                [
+                  "Tailscale dashboard page is reachable, but the Gateway is not online through that URL.",
+                  `Gateway URL: ${tailscaleGatewayWsUrl}`,
+                  `Detail: ${wsWarmup.detail ?? "gateway websocket not reachable"}`,
+                  "Check from the app user terminal:",
+                  "  systemctl status --user fased-gateway --no-pager",
+                  "  sudo systemctl status fased-gateway --no-pager",
+                  "  tail -n 120 ~/.fased/logs/start-managed-gateway.log",
+                ].join("\n"),
+              );
+            }
+            runtime.error(
+              `Tailscale dashboard Gateway still warming: ${wsWarmup.detail ?? "websocket not reachable"}`,
+            );
           }
         },
       );

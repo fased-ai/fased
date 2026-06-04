@@ -70,9 +70,10 @@ On Windows, use [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install), t
     1. create or sign into your **Tailscale** account
     2. join the host to your tailnet
     3. run onboarding with the **hosting** profile
-    4. save the printed gateway token and Tailscale dashboard URL
-    5. reconnect as the non-root `app` user through Tailscale SSH
-    6. keep admin access private through Tailscale instead of opening the gateway directly
+    4. open the printed Tailscale dashboard URL in your local browser
+    5. save the gateway token in case the browser asks for it
+    6. reconnect as the non-root `app` user through Tailscale SSH for CLI work
+    7. keep admin access private through Tailscale instead of opening the gateway directly
 
     Root is the bootstrap/emergency shell. After hosted onboarding completes,
     normal commands run as `app`; the shell starts in `/home/app/fased`:

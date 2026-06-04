@@ -113,9 +113,16 @@ then return to the SSH session. If Tailscale cannot provide a tailnet IP,
 Hosting refuses to continue because the remote dashboard and admin path depend
 on Tailscale.
 
-At the end of hosted onboarding, save the printed Tailscale dashboard URL and
-gateway token. Then leave the original root bootstrap shell and reconnect as
-`app` through Tailscale SSH:
+At the end of hosted onboarding, use both access paths:
+
+- **Web dashboard:** open the printed `https://...ts.net/` URL in a browser on
+  your own computer. That computer must be signed into the same Tailscale
+  account. Save the gateway token in case the browser asks for it.
+- **SSH terminal:** use Tailscale SSH as `app` for CLI commands, updates, logs,
+  and repairs.
+
+Then leave the original root bootstrap shell and reconnect as `app` through
+Tailscale SSH:
 
 ```bash
 tailscale ssh app@YOUR_VPS_TAILSCALE_NAME
@@ -125,9 +132,9 @@ fased dashboard
 
 The `app` shell starts in `/home/app/fased`.
 
-The raw Gateway port remains closed. `http://localhost:18789` only works on
-your local computer after you start the SSH tunnel shown by onboarding and keep
-that tunnel running.
+The raw Gateway port remains closed. `http://localhost:18789` is only the
+advanced SSH tunnel fallback: it works on your local computer after you start
+the tunnel shown by onboarding and keep that tunnel running.
 
 Model/API setup has moved to `Agent > Models` for normal users. Existing
 non-interactive provider flags still work for scripted installs, but first-run

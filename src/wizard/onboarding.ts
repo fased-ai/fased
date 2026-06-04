@@ -827,14 +827,14 @@ export async function runOnboardingWizard(
   if (hostProfile === "hosting") {
     await prompter.note(
       [
-        "🔒 SECURITY BASELINE: Hosting binds to localhost (127.0.0.1).",
-        "   - Public management ports (22, 18789) are BLOCKED by UFW.",
-        "   - Isolation: Agent runs as a dedicated 'app' system user.",
-        "   - You MUST have a Tailscale account configured on this VPS and your local device.",
-        "   - Management access (SSH & Web UI) is ONLY possible via Tailscale.",
-        "   - Public Fased Network/A2A traffic uses an OUTBOUND tunnel (no public ports needed).",
+        "Hosting uses private access through Tailscale.",
+        "",
+        "Web dashboard: open the Tailscale HTTPS URL printed at the end.",
+        "SSH terminal: use tailscale ssh app@YOUR_VPS_TAILSCALE_NAME for CLI commands.",
+        "",
+        "Public SSH and Gateway ports stay blocked. Root is only for first bootstrap or emergency repair.",
       ].join("\n"),
-      "Security Context",
+      "Hosting access",
     );
   }
 
@@ -982,11 +982,10 @@ export async function runOnboardingWizard(
     const quickstartLines = quickstartGateway.hasExisting
       ? hostProfile === "hosting"
         ? [
-            "Hosting quickstart defaults:",
-            "Gateway bind: Loopback (127.0.0.1)",
-            "Gateway auth: Token",
-            "Tailscale exposure: Serve",
-            "Fased Network server: ff1.fased.app",
+            "Hosting quickstart:",
+            "Private web dashboard through Tailscale.",
+            "Private SSH terminal through Tailscale.",
+            "Gateway uses token auth and stays behind localhost.",
           ]
         : [
             "Keeping your current gateway settings:",
@@ -1001,11 +1000,10 @@ export async function runOnboardingWizard(
           ]
       : hostProfile === "hosting"
         ? [
-            "Hosting quickstart defaults:",
-            "Gateway bind: Loopback (127.0.0.1)",
-            "Gateway auth: Token",
-            "Tailscale exposure: Serve",
-            "Fased Network server: ff1.fased.app",
+            "Hosting quickstart:",
+            "Private web dashboard through Tailscale.",
+            "Private SSH terminal through Tailscale.",
+            "Gateway uses token auth and stays behind localhost.",
           ]
         : [
             `Gateway port: ${DEFAULT_GATEWAY_PORT}`,
@@ -1015,7 +1013,7 @@ export async function runOnboardingWizard(
             "Connect chat apps later in Control UI > Channels.",
           ];
     if (hostProfile === "hosting") {
-      quickstartLines.push("Hosting profile: apply UFW tailscale-only admin ingress baseline.");
+      quickstartLines.push("Installer applies the Tailscale-only admin access baseline.");
     }
     await prompter.note(quickstartLines.join("\n"), "QuickStart");
   }

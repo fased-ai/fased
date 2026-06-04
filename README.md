@@ -78,12 +78,16 @@ finish safely. When `sudo tailscale up --ssh` prints a login URL in the SSH
 terminal, open that URL in your local computer's browser. The VPS does not need
 a desktop browser. A Tailscale auth key is only needed for unattended automation.
 
-At the end, onboarding prints the private dashboard URL and gateway token. Save
-the gateway token.
+At the end, onboarding prints two things you will normally use:
+
+- **Web dashboard:** open the printed `https://...ts.net/` URL in a browser on
+  your own computer. That computer must be signed into the same Tailscale
+  account. Save the gateway token in case the browser asks for it.
+- **SSH terminal:** use Tailscale SSH as `app` for CLI commands, updates, logs,
+  and repairs.
 
 After hosted onboarding completes, stop treating the original `root@...:~/fased`
-shell as the operating shell. The steady-state login is the `app` user through
-Tailscale SSH:
+shell as the operating shell. Use:
 
 ```bash
 tailscale ssh app@YOUR_VPS_TAILSCALE_NAME
@@ -93,9 +97,9 @@ fased dashboard
 
 The `app` shell is configured to start in `/home/app/fased`.
 
-`http://localhost:18789` only works on your local computer after you start the
-SSH tunnel shown by onboarding and leave that tunnel running. The raw gateway
-port stays closed to the public internet.
+`http://localhost:18789` is only the advanced SSH tunnel fallback. It works on
+your local computer after you start the tunnel shown by onboarding and leave
+that tunnel running. The raw gateway port stays closed to the public internet.
 
 `install.sh` runs onboarding by default. Use `./install.sh --no-onboard` only
 when you want to install first and run onboarding later.

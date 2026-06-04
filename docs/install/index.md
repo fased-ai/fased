@@ -88,14 +88,19 @@ all the time.
     prepares `/home/app/fased`, re-runs itself there, and removes the temporary
     root checkout after successful hosted onboarding.
 
-    Hosting requires the VPS to be in your Tailscale tailnet before the
-    Gateway is treated as remotely reachable. The hosted profile keeps the
-    raw Gateway port closed and routes operator access through Tailscale or a
-    deliberate private tunnel.
+    Hosting requires the VPS to be in your Tailscale tailnet before setup can
+    finish. The hosted profile keeps the raw Gateway port closed.
 
-    Save the gateway token printed at the end. After hosted onboarding
-    completes, leave the original root bootstrap shell and reconnect through
-    Tailscale SSH as the `app` user:
+    At the end, onboarding prints two access paths:
+
+    - **Web dashboard:** open the printed `https://...ts.net/` URL in a browser
+      on your own computer. That computer must be signed into the same
+      Tailscale account. Save the gateway token in case the browser asks for it.
+    - **SSH terminal:** use Tailscale SSH as `app` for CLI commands, updates,
+      logs, and repairs.
+
+    After hosted onboarding completes, leave the original root bootstrap shell
+    and reconnect through Tailscale SSH as the `app` user:
 
     ```bash
     tailscale ssh app@YOUR_VPS_TAILSCALE_NAME
@@ -106,9 +111,9 @@ all the time.
     The `app` shell is configured to start in `/home/app/fased`.
 
     Root SSH is for initial bootstrap or emergency repair, not normal
-    operation. The raw Gateway port remains closed to the public internet.
-    `http://localhost:18789` only works on your local computer after you start
-    the SSH tunnel shown by onboarding and leave it running.
+    operation. `http://localhost:18789` is only the advanced SSH tunnel fallback:
+    it works on your local computer after you start the tunnel shown by
+    onboarding and leave it running.
 
   </Tab>
 </Tabs>

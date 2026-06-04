@@ -59,8 +59,13 @@ removed. Do not move the repo back to `/root`.
 
 When `sudo tailscale up --ssh` prints a login URL in the SSH terminal, copy that
 URL into your local computer's browser. The VPS does not need a desktop browser.
-After onboarding completes, save the printed gateway token and use the
-Tailscale dashboard URL shown by the installer.
+After onboarding completes, use both access paths:
+
+- **Web dashboard:** open the printed `https://...ts.net/` URL in a browser on
+  your own computer. That computer must be signed into the same Tailscale
+  account. Save the gateway token in case the browser asks for it.
+- **SSH terminal:** use Tailscale SSH as `app` for CLI commands, updates, logs,
+  and repairs.
 
 Then leave the original `root@...:~/fased` bootstrap shell. Normal operation
 uses the `app` user through Tailscale SSH:
@@ -75,8 +80,9 @@ The `app` shell is configured to start in `/home/app/fased`.
 
 Root SSH is only for first bootstrap or emergency repair after the hosting
 profile hardens SSH/UFW. Keep the raw Gateway port closed to the public
-internet. `http://localhost:18789` only works on your local computer after you
-start the SSH tunnel shown by onboarding and leave that tunnel running.
+internet. `http://localhost:18789` is only the advanced SSH tunnel fallback: it
+works on your local computer after you start the tunnel shown by onboarding and
+leave that tunnel running.
 
 <Note>
 Small VPS installs create swap when possible and run onboarding with a larger

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildGatewayWsUrlFromHttpUrl,
   buildOnboardingDashboardUrl,
   formatStrictRemoteAccessDetails,
-  shouldContinueAfterTailscaleDashboardWarmupFailure,
 } from "./onboarding.finalize.js";
 
 describe("buildOnboardingDashboardUrl", () => {
@@ -42,7 +42,9 @@ describe("formatStrictRemoteAccessDetails", () => {
       gatewayToken: "abc123",
     });
 
-    expect(text).toContain("Open this URL in your browser:");
+    expect(text).toContain("1. WEB DASHBOARD");
+    expect(text).toContain("2. SSH TERMINAL");
+    expect(text).toContain("Open this on your own computer");
     expect(text).toContain("https://fased-vps.tailnet.ts.net/#token=abc123");
     expect(text).toContain("ssh -N -L 18789:127.0.0.1:18789 app@fased-vps.tailnet.ts.net");
     expect(text).toContain("http://localhost:18789/#token=abc123");
@@ -50,31 +52,21 @@ describe("formatStrictRemoteAccessDetails", () => {
   });
 });
 
-describe("shouldContinueAfterTailscaleDashboardWarmupFailure", () => {
-  it("continues for Tailscale 502 when gateway warmup was already accepted", () => {
+describe("buildGatewayWsUrlFromHttpUrl", () => {
+  it("maps a Tailscale dashboard URL to the same-origin websocket URL", () => {
     expect(
-      shouldContinueAfterTailscaleDashboardWarmupFailure({
-        detail: "http status 502",
-        gatewayAcceptedWarmup: true,
+      buildGatewayWsUrlFromHttpUrl({
+        httpUrl: "https://fased-vps.tailnet.ts.net/control/?x=1#token=abc",
+        basePath: "/control",
       }),
-    ).toBe(true);
+    ).toBe("wss://fased-vps.tailnet.ts.net/control");
   });
 
-  it("does not continue for Tailscale 502 before gateway warmup is accepted", () => {
+  it("uses root websocket path when the Control UI has no base path", () => {
     expect(
-      shouldContinueAfterTailscaleDashboardWarmupFailure({
-        detail: "http status 502",
-        gatewayAcceptedWarmup: false,
+      buildGatewayWsUrlFromHttpUrl({
+        httpUrl: "https://fased-vps.tailnet.ts.net/",
       }),
-    ).toBe(false);
-  });
-
-  it("does not continue for unrelated Tailscale readiness failures", () => {
-    expect(
-      shouldContinueAfterTailscaleDashboardWarmupFailure({
-        detail: "tailscale status unavailable",
-        gatewayAcceptedWarmup: true,
-      }),
-    ).toBe(false);
+    ).toBe("wss://fased-vps.tailnet.ts.net");
   });
 });
