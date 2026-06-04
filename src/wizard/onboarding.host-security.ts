@@ -72,6 +72,27 @@ function run(command: string, logPath?: string): { ok: boolean; detail?: string 
   return { ok: false, detail: detail || `${command} (exit=${proc.status ?? "unknown"})` };
 }
 
+function runInteractive(command: string, logPath?: string): { ok: boolean; detail?: string } {
+  if (logPath) {
+    appendHostSecurityLog(
+      logPath,
+      command,
+      "interactive command started; output shown in terminal",
+    );
+  }
+  const proc = spawnSync("bash", ["-lc", command], {
+    stdio: ["ignore", "inherit", "inherit"],
+  });
+  const detail = `${command} (exit=${proc.status ?? "unknown"})`;
+  if (logPath) {
+    appendHostSecurityLog(logPath, command, detail);
+  }
+  if (proc.status === 0) {
+    return { ok: true, detail };
+  }
+  return { ok: false, detail };
+}
+
 function isTailscaleLoggedIn(logPath?: string, runner: HostSecurityCommandRunner = run): boolean {
   return (
     runner("tailscale status >/dev/null 2>&1", logPath).ok ||
@@ -195,8 +216,8 @@ export async function applyHostingSecurity(params: {
     let tsAuthkey = opts.tsAuthkey?.trim() ?? "";
     if (!tsAuthkey) {
       const useAuthkey = await prompter.confirm({
-        message: "Use Tailscale auth key for automatic re-authentication? (recommended)",
-        initialValue: true,
+        message: "Use a Tailscale auth key instead of browser login? (advanced)",
+        initialValue: false,
       });
       if (useAuthkey) {
         const keyValue =
@@ -212,7 +233,11 @@ export async function applyHostingSecurity(params: {
         tsAuthkey = keyValue.trim();
       } else {
         await prompter.note(
-          "No auth key provided. Tailscale will print a login URL during re-authentication.",
+          [
+            "Tailscale will print a login URL in this terminal.",
+            "Open it, approve this VPS, then return here.",
+            "Leave this command running until it finishes.",
+          ].join("\n"),
           "Tailscale login",
         );
       }
@@ -221,7 +246,7 @@ export async function applyHostingSecurity(params: {
     const resetCommand = tsAuthkey
       ? `sudo -n tailscale logout && sudo -n tailscale up --ssh --accept-routes --reset --authkey ${JSON.stringify(tsAuthkey)}`
       : "sudo -n tailscale logout && sudo -n tailscale up --ssh --accept-routes --reset";
-    const tsReset = run(resetCommand, logPath);
+    const tsReset = tsAuthkey ? run(resetCommand, logPath) : runInteractive(resetCommand, logPath);
     if (!tsReset.ok) {
       return {
         ok: false,
@@ -320,7 +345,17 @@ export async function applyHostingSecurity(params: {
       initialValue: false,
     });
     if (switchAccount) {
-      const tsReset = run(
+      if (prompter) {
+        await prompter.note(
+          [
+            "Tailscale will print a login URL in this terminal.",
+            "Open it, approve this VPS, then return here.",
+            "Leave this command running until it finishes.",
+          ].join("\n"),
+          "Tailscale login",
+        );
+      }
+      const tsReset = runInteractive(
         "sudo -n tailscale logout && sudo -n tailscale up --ssh --accept-routes --reset",
         logPath,
       );
@@ -351,8 +386,8 @@ export async function applyHostingSecurity(params: {
     let tsAuthkey = opts.tsAuthkey?.trim() ?? "";
     if (!tsAuthkey && opts.nonInteractive !== true && prompter) {
       const useAuthkey = await prompter.confirm({
-        message: "Use Tailscale auth key for automatic setup? (recommended)",
-        initialValue: true,
+        message: "Use a Tailscale auth key instead of browser login? (advanced)",
+        initialValue: false,
       });
       if (useAuthkey) {
         const keyValue =
@@ -405,13 +440,14 @@ export async function applyHostingSecurity(params: {
       if (prompter) {
         await prompter.note(
           [
-            "No auth key provided. On next step Tailscale will print a login URL.",
-            "Complete login in browser, then onboarding will continue automatically.",
+            "Tailscale will print a login URL in this terminal.",
+            "Open it, approve this VPS, then return here.",
+            "Leave this command running until it finishes.",
           ].join("\n"),
           "Tailscale login",
         );
       }
-      const tsUp = run("sudo -n tailscale up --ssh", logPath);
+      const tsUp = runInteractive("sudo -n tailscale up --ssh", logPath);
       if (!tsUp.ok) {
         checks.push({ name: "tailscale", ok: false, detail: tsUp.detail ?? "tailscale up failed" });
         failOrContinue({ opts, runtime, step: "tailscale up failed", detail: tsUp.detail });
