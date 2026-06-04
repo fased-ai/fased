@@ -101,6 +101,17 @@ export function buildOnboardingDashboardUrl(params: {
   return url.toString();
 }
 
+export function shouldContinueAfterTailscaleDashboardWarmupFailure(params: {
+  detail?: string;
+  gatewayAcceptedWarmup: boolean;
+}): boolean {
+  if (!params.gatewayAcceptedWarmup) {
+    return false;
+  }
+  const detail = String(params.detail ?? "").toLowerCase();
+  return detail.includes("http status 502") || detail.includes("bad gateway");
+}
+
 async function runShell(
   command: string,
   options?: { timeoutMs?: number },
@@ -1568,6 +1579,7 @@ export async function finalizeOnboardingWizard(
     );
   }
 
+  let gatewayAcceptedWarmup = false;
   if (!opts.skipHealth) {
     const probeLinks = resolveControlUiLinks({
       bind: nextConfig.gateway?.bind ?? "loopback",
@@ -1783,6 +1795,7 @@ export async function finalizeOnboardingWizard(
                 scope: "user",
               }));
             if (fastHealth && serviceStillRunning) {
+              gatewayAcceptedWarmup = true;
               await prompter.note(
                 [
                   "Gateway service is running, but the listener is still warming.",
@@ -1891,6 +1904,7 @@ export async function finalizeOnboardingWizard(
           });
           const serviceActive = userSvcActive.ok || rootSvcActive.ok;
           if (fastHealth && serviceActive) {
+            gatewayAcceptedWarmup = true;
             await prompter.note(
               [
                 "Fast health mode: probe still unstable, but runtime service is active.",
@@ -1915,6 +1929,7 @@ export async function finalizeOnboardingWizard(
           });
           const serviceActive = userSvcActive.ok || rootSvcActive.ok;
           if (fastHealth && serviceActive) {
+            gatewayAcceptedWarmup = true;
             runtime.error(
               `Gateway probe warning (continuing due fast health + active service): ${strictProbe.detail ?? "unknown error"}`,
             );
@@ -2068,6 +2083,23 @@ export async function finalizeOnboardingWizard(
           });
           if (!warmup.ok) {
             const detail = warmup.detail ?? "not reachable yet";
+            if (
+              shouldContinueAfterTailscaleDashboardWarmupFailure({
+                detail,
+                gatewayAcceptedWarmup,
+              })
+            ) {
+              await prompter.note(
+                [
+                  "Tailscale HTTPS is routed, but the gateway backend is still warming.",
+                  "Continuing setup. Open the dashboard again in about a minute if it returns 502.",
+                  "  sudo systemctl status fased-gateway --no-pager",
+                  "  sudo journalctl -u fased-gateway -n 120 --no-pager",
+                ].join("\n"),
+                "Tailscale dashboard",
+              );
+              return;
+            }
             if (!opts.allowInsecure) {
               throw new Error(
                 `Hosting requires reachable Tailscale dashboard URL before completion (${detail})`,
