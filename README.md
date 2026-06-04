@@ -86,6 +86,17 @@ finish safely. When `sudo tailscale up --ssh` prints a login URL in the SSH
 terminal, open that URL in your local computer's browser. The VPS does not need
 a desktop browser. A Tailscale auth key is only needed for unattended automation.
 
+Before SSH/firewall lock-down, setup pauses and asks you to test terminal access
+from your own computer:
+
+```bash
+ssh app@YOUR_VPS_TAILSCALE_NAME
+```
+
+Only confirm after that command connects through Tailscale and opens
+`/home/app/fased`. If it does not connect, setup stops before disabling root or
+password SSH.
+
 At the end, onboarding prints two things you will normally use:
 
 - **Web dashboard:** open the printed `https://...ts.net/` URL in a browser on

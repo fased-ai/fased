@@ -100,15 +100,18 @@ For the full decision table, read [Setup Matrix](/start/setup-matrix).
         Run this **on the VPS itself**. If Tailscale prints a login URL in SSH,
         open that URL in your local computer's browser. Normal manual setup does
         not need a Tailscale API key. If you start as `root`, Fased bootstraps
-        into `/home/app/fased` and continues as the `app` user. At the end,
-        open the printed Tailscale dashboard URL in your local browser and save
-        the gateway token in case the browser asks for it. Use regular SSH over
-        Tailscale as `app` for CLI commands, updates, logs, and repairs:
+        into `/home/app/fased` and continues as the `app` user. Before
+        SSH/firewall lock-down, setup asks you to test this from your own
+        computer:
 
         ```bash
         ssh app@YOUR_VPS_TAILSCALE_NAME
-        fased dashboard
         ```
+
+        Confirm only after it connects through Tailscale and opens
+        `/home/app/fased`. At the end, open the printed Tailscale dashboard URL
+        in your local browser and save the gateway token in case the browser
+        asks for it.
 
         The `app` shell starts in `/home/app/fased`.
 

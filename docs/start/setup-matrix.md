@@ -57,6 +57,9 @@ Simple VPS order: create server → `sudo tailscale up --ssh` → `./install.sh 
 If the wizard offers a Tailscale auth key, use it only for scripted provisioning.
 For normal setup, use browser login: the Tailscale CLI shows a login URL in SSH;
 open that URL in your local computer's browser, then return to the SSH session.
+Before SSH/firewall lock-down, the wizard asks you to test
+`ssh app@YOUR_VPS_TAILSCALE_NAME` from your own computer and only continue after
+that terminal reaches `/home/app/fased`.
 </Tip>
 
 ## Actual Interactive Wizard Order

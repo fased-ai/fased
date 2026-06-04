@@ -57,6 +57,14 @@ type HostSecurityCommandRunner = (
   logPath?: string,
 ) => { ok: boolean; detail?: string };
 
+type TailnetSshTarget = {
+  user: string;
+  host: string;
+  dns?: string;
+  ipv4?: string;
+  repoDir: string;
+};
+
 function run(command: string, logPath?: string): { ok: boolean; detail?: string } {
   const proc = spawnSync("bash", ["-lc", command], {
     stdio: ["ignore", "pipe", "pipe"],
@@ -105,6 +113,129 @@ function hasTailscaleIp(logPath?: string, runner: HostSecurityCommandRunner = ru
     runner("tailscale ip -4 >/dev/null 2>&1", logPath).ok ||
     runner("sudo -n tailscale ip -4 >/dev/null 2>&1", logPath).ok
   );
+}
+
+function readTailscaleIp(
+  logPath?: string,
+  runner: HostSecurityCommandRunner = run,
+): string | undefined {
+  const probe = runner("tailscale ip -4", logPath);
+  const sudoProbe = probe.ok ? probe : runner("sudo -n tailscale ip -4", logPath);
+  if (!sudoProbe.ok || !sudoProbe.detail) {
+    return undefined;
+  }
+  return sudoProbe.detail.match(/\b\d{1,3}(?:\.\d{1,3}){3}\b/)?.[0];
+}
+
+function readTailscaleSelf(
+  logPath?: string,
+  runner: HostSecurityCommandRunner = run,
+): { dns?: string; ipv4?: string } {
+  const probe = runner("tailscale status --json", logPath);
+  const sudoProbe = probe.ok ? probe : runner("sudo -n tailscale status --json", logPath);
+  if (!sudoProbe.ok || !sudoProbe.detail) {
+    return { ipv4: readTailscaleIp(logPath, runner) };
+  }
+  try {
+    const parsed = JSON.parse(sudoProbe.detail) as {
+      Self?: { DNSName?: string; TailscaleIPs?: string[] };
+    };
+    const dns = String(parsed.Self?.DNSName ?? "")
+      .trim()
+      .replace(/\.$/, "");
+    const ipv4 =
+      parsed.Self?.TailscaleIPs?.find((ip) => typeof ip === "string" && ip.includes(".")) ??
+      undefined;
+    return {
+      dns: dns || undefined,
+      ipv4: ipv4 ?? readTailscaleIp(logPath, runner),
+    };
+  } catch {
+    return { ipv4: readTailscaleIp(logPath, runner) };
+  }
+}
+
+function resolveTailnetSshTarget(params: {
+  user?: string;
+  repoDir?: string;
+  logPath?: string;
+  runner?: HostSecurityCommandRunner;
+}): TailnetSshTarget {
+  const self = readTailscaleSelf(params.logPath, params.runner ?? run);
+  const user = params.user?.trim() || "app";
+  return {
+    user,
+    dns: self.dns,
+    ipv4: self.ipv4,
+    host: self.dns || self.ipv4 || "YOUR_VPS_TAILSCALE_NAME",
+    repoDir: params.repoDir?.trim() || `/home/${user}/fased`,
+  };
+}
+
+function formatTailnetSshVerificationNote(target: TailnetSshTarget): string {
+  return [
+    "Before Fased locks down public SSH/root/password access, prove the private terminal path works.",
+    "",
+    "On your own computer, open a second terminal and run:",
+    `ssh ${target.user}@${target.host}`,
+    "",
+    `It must connect through Tailscale as ${target.user} and open in ${target.repoDir}.`,
+    "Keep this installer running while you test.",
+    "",
+    "If your tailnet explicitly enables Tailscale SSH, this is also acceptable:",
+    `tailscale ssh ${target.user}@${target.host}`,
+    "",
+    "Do not continue until one of those commands works from your own computer.",
+  ].join("\n");
+}
+
+function hasExplicitTailnetSshConfirmation(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = String(env.FASED_HOSTING_TAILNET_SSH_CONFIRMED ?? "")
+    .trim()
+    .toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes";
+}
+
+function failTailnetSshConfirmation(params: {
+  runtime: RuntimeEnv;
+  logPath: string;
+  target: TailnetSshTarget;
+}) {
+  const { runtime, logPath, target } = params;
+  runtime.error("Hosting setup stopped before SSH/firewall lock-down.");
+  runtime.error(`Confirm SSH over Tailscale first: ssh ${target.user}@${target.host}`);
+  runtime.error(`Expected app repo directory after login: ${target.repoDir}`);
+  runtime.error(`Host hardening log: ${logPath}`);
+  runtime.exit(1);
+}
+
+async function confirmTailnetSshBeforeLockdown(params: {
+  opts: OnboardOptions;
+  runtime: RuntimeEnv;
+  prompter?: WizardPrompter;
+  logPath: string;
+  target: TailnetSshTarget;
+}): Promise<boolean> {
+  const { opts, runtime, prompter, logPath, target } = params;
+  if (hasExplicitTailnetSshConfirmation()) {
+    appendHostSecurityLog(logPath, "tailnet ssh confirmation", "confirmed by env");
+    return true;
+  }
+  if (!prompter || opts.nonInteractive === true) {
+    failTailnetSshConfirmation({ runtime, logPath, target });
+    return false;
+  }
+  await prompter.note(formatTailnetSshVerificationNote(target), "Verify SSH over Tailscale");
+  const confirmed = await prompter.confirm({
+    message: `Did SSH over Tailscale connect as ${target.user} and open ${target.repoDir}?`,
+    initialValue: false,
+  });
+  if (!confirmed) {
+    failTailnetSshConfirmation({ runtime, logPath, target });
+    return false;
+  }
+  appendHostSecurityLog(logPath, "tailnet ssh confirmation", "confirmed interactively");
+  return true;
 }
 
 function ensureTailscaleServe(port: number, logPath?: string): { ok: boolean; detail?: string } {
@@ -475,7 +606,7 @@ export async function applyHostingSecurity(params: {
   checks.push({
     name: "tailscale",
     ok: true,
-    detail: "tailnet IP present; safe to harden SSH/UFW",
+    detail: "tailnet IP present; verifying app SSH before lock-down",
   });
 
   const operatorUser = run("id -u app >/dev/null 2>&1", logPath).ok
@@ -484,6 +615,27 @@ export async function applyHostingSecurity(params: {
   if (operatorUser) {
     run(`sudo -n tailscale set --operator='${operatorUser}' >/dev/null 2>&1 || true`, logPath);
   }
+
+  const tailnetSshTarget = resolveTailnetSshTarget({
+    user: operatorUser || "app",
+    repoDir: operatorUser ? `/home/${operatorUser}/fased` : "/home/app/fased",
+    logPath,
+  });
+  const tailnetSshConfirmed = await confirmTailnetSshBeforeLockdown({
+    opts,
+    runtime,
+    prompter,
+    logPath,
+    target: tailnetSshTarget,
+  });
+  if (!tailnetSshConfirmed) {
+    return { profile, checks, enforced: false, logPath };
+  }
+  checks.push({
+    name: "ssh",
+    ok: true,
+    detail: "operator confirmed app SSH over Tailscale before lock-down",
+  });
 
   const servePort = Math.max(1, opts.gatewayPort ?? 18789);
   const serveRes = ensureTailscaleServe(servePort, logPath);
@@ -578,7 +730,11 @@ export async function applyHostingSecurity(params: {
 }
 
 export const __testing = {
+  formatTailnetSshVerificationNote,
   hasTailscaleIp,
+  hasExplicitTailnetSshConfirmation,
   isTailscaleLoggedIn,
+  readTailscaleIp,
+  resolveTailnetSshTarget,
   sanitizeHostSecurityLogText,
 };

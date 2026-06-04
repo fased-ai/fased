@@ -116,6 +116,11 @@ then return to the SSH session. If Tailscale cannot provide a tailnet IP,
 Hosting refuses to continue because the remote dashboard and admin path depend
 on Tailscale.
 
+Before lock-down, the wizard asks you to test `ssh app@YOUR_VPS_TAILSCALE_NAME`
+from your own computer. Confirm only after it connects through Tailscale and
+opens `/home/app/fased`. If it does not connect, setup stops before disabling
+root or password SSH.
+
 At the end of hosted onboarding, use both access paths:
 
 - **Web dashboard:** open the printed `https://...ts.net/` URL in a browser on

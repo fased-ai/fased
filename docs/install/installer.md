@@ -70,10 +70,12 @@ On Windows, use [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install), t
     1. create or sign into your **Tailscale** account
     2. join the host to your tailnet
     3. run onboarding with the **hosting** profile
-    4. open the printed Tailscale dashboard URL in your local browser
-    5. save the gateway token in case the browser asks for it
-    6. reconnect as the non-root `app` user over the Tailscale network for CLI work
-    7. keep admin access private through Tailscale instead of opening the gateway directly
+    4. when prompted, test `ssh app@YOUR_VPS_TAILSCALE_NAME` from your own computer
+    5. confirm only after SSH reaches `/home/app/fased`
+    6. open the printed Tailscale dashboard URL in your local browser
+    7. save the gateway token in case the browser asks for it
+    8. reconnect as the non-root `app` user over the Tailscale network for CLI work
+    9. keep admin access private through Tailscale instead of opening the gateway directly
 
     Root is the bootstrap/emergency shell. After hosted onboarding completes,
     normal commands run as `app`; the shell starts in `/home/app/fased`:
@@ -83,6 +85,11 @@ On Windows, use [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install), t
     fased status
     fased dashboard
     ```
+
+    Non-interactive automation must only set
+    `FASED_HOSTING_TAILNET_SSH_CONFIRMED=1` after an out-of-band check proves the
+    `app` SSH path over Tailscale works. Without that explicit confirmation,
+    hosting setup stops before SSH/firewall lock-down.
 
   </Step>
   <Step title="Leave SAT IDs for Sync">

@@ -38,4 +38,71 @@ describe("onboarding host security", () => {
       "sudo -n tailscale ip -4 >/dev/null 2>&1",
     ]);
   });
+
+  it("formats the pre-lockdown SSH over Tailscale check", () => {
+    const note = __testing.formatTailnetSshVerificationNote({
+      user: "app",
+      host: "fased-vps.tailnet.ts.net",
+      dns: "fased-vps.tailnet.ts.net",
+      ipv4: "100.64.1.2",
+      repoDir: "/home/app/fased",
+    });
+
+    expect(note).toContain("Before Fased locks down public SSH/root/password access");
+    expect(note).toContain("ssh app@fased-vps.tailnet.ts.net");
+    expect(note).toContain("tailscale ssh app@fased-vps.tailnet.ts.net");
+    expect(note).toContain("/home/app/fased");
+  });
+
+  it("uses Tailscale DNS for the SSH verification target", () => {
+    const target = __testing.resolveTailnetSshTarget({
+      user: "app",
+      repoDir: "/home/app/fased",
+      runner: (command) => {
+        if (command === "tailscale status --json") {
+          return {
+            ok: true,
+            detail: JSON.stringify({
+              Self: {
+                DNSName: "fased-vps.tailnet.ts.net.",
+                TailscaleIPs: ["100.64.1.2"],
+              },
+            }),
+          };
+        }
+        return { ok: false };
+      },
+    });
+
+    expect(target.host).toBe("fased-vps.tailnet.ts.net");
+    expect(target.ipv4).toBe("100.64.1.2");
+    expect(target.repoDir).toBe("/home/app/fased");
+  });
+
+  it("falls back to the Tailscale IPv4 when status JSON is unavailable", () => {
+    const target = __testing.resolveTailnetSshTarget({
+      user: "app",
+      runner: (command) => {
+        if (command === "tailscale ip -4") {
+          return { ok: true, detail: "100.64.1.9\n" };
+        }
+        return { ok: false };
+      },
+    });
+
+    expect(target.host).toBe("100.64.1.9");
+  });
+
+  it("allows explicit non-interactive SSH confirmation by env", () => {
+    expect(
+      __testing.hasExplicitTailnetSshConfirmation({
+        FASED_HOSTING_TAILNET_SSH_CONFIRMED: "yes",
+      } as NodeJS.ProcessEnv),
+    ).toBe(true);
+    expect(
+      __testing.hasExplicitTailnetSshConfirmation({
+        FASED_HOSTING_TAILNET_SSH_CONFIRMED: "",
+      } as NodeJS.ProcessEnv),
+    ).toBe(false);
+  });
 });

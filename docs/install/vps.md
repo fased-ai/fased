@@ -59,6 +59,18 @@ removed. Do not move the repo back to `/root`.
 
 When `sudo tailscale up --ssh` prints a login URL in the SSH terminal, copy that
 URL into your local computer's browser. The VPS does not need a desktop browser.
+
+Before SSH/firewall lock-down, setup pauses and asks you to test terminal access
+from your own computer:
+
+```bash
+ssh app@YOUR_VPS_TAILSCALE_NAME
+```
+
+Only confirm after that command connects through Tailscale and opens
+`/home/app/fased`. If it does not connect, setup stops before disabling root or
+password SSH.
+
 After onboarding completes, use both access paths:
 
 - **Web dashboard:** open the printed `https://...ts.net/` URL in a browser on
