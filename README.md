@@ -46,9 +46,7 @@ fased dashboard
 Use this on the VPS that will run Fased all the time. A 1 vCPU / 1 GB RAM VPS
 can work as a minimum test node, but expect slow install/onboarding. For a
 smoother public node, use at least 2 GB RAM; 2 vCPU / 4 GB RAM is more
-comfortable. For the fastest first setup, install the base agent first and add
-optional Fased Network, wallet, mining, skills, and channels later from the
-Control UI.
+comfortable.
 
 ```bash
 curl -fsSL https://tailscale.com/install.sh | sh

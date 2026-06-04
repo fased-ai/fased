@@ -42,11 +42,6 @@ onboarding will be slow. For a smoother first install, use at least:
 Use a 25 GB disk or larger. Keep the raw Gateway port private; use Tailscale for
 operator access.
 
-For the fastest first setup, start with the base agent and add optional modules
-after the dashboard is running. On very small VPS nodes, skipping optional
-Fased Network, wallet, mining, skills, and channel setup during first onboarding
-can save time; you can enable them later from the Control UI.
-
 Current installers try a clean fast-forward update from Git before building. If
 you already started from an older installer and it stopped, update the checkout
 once and rerun:
