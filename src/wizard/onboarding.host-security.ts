@@ -65,6 +65,11 @@ type TailnetSshTarget = {
   repoDir: string;
 };
 
+type TailnetSshPrerequisites = {
+  ok: boolean;
+  detail: string;
+};
+
 function run(command: string, logPath?: string): { ok: boolean; detail?: string } {
   const proc = spawnSync("bash", ["-lc", command], {
     stdio: ["ignore", "pipe", "pipe"],
@@ -99,6 +104,10 @@ function runInteractive(command: string, logPath?: string): { ok: boolean; detai
     return { ok: true, detail };
   }
   return { ok: false, detail };
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 function isTailscaleLoggedIn(logPath?: string, runner: HostSecurityCommandRunner = run): boolean {
@@ -179,14 +188,55 @@ function formatTailnetSshVerificationNote(target: TailnetSshTarget): string {
     "On your own computer, open a second terminal and run:",
     `ssh ${target.user}@${target.host}`,
     "",
-    `It must connect through Tailscale as ${target.user} and open in ${target.repoDir}.`,
+    `It must connect over your Tailscale network as ${target.user} and open in ${target.repoDir}.`,
     "Keep this installer running while you test.",
     "",
-    "If your tailnet explicitly enables Tailscale SSH, this is also acceptable:",
-    `tailscale ssh ${target.user}@${target.host}`,
-    "",
-    "Do not continue until one of those commands works from your own computer.",
+    "Do not continue until that exact SSH command works from your own computer.",
   ].join("\n");
+}
+
+function verifyTailnetSshServerPrerequisites(params: {
+  target: TailnetSshTarget;
+  logPath?: string;
+  runner?: HostSecurityCommandRunner;
+}): TailnetSshPrerequisites {
+  const runner = params.runner ?? run;
+  const target = params.target;
+  const checks: string[] = [];
+  const failures: string[] = [];
+  const repo = runner(`test -d ${shellQuote(target.repoDir)}`, params.logPath);
+  if (repo.ok) {
+    checks.push(`repo directory ready: ${target.repoDir}`);
+  } else {
+    failures.push(`missing app repo directory: ${target.repoDir}`);
+  }
+
+  const authorizedKeys = `/home/${target.user}/.ssh/authorized_keys`;
+  const keys = runner(`test -s ${shellQuote(authorizedKeys)}`, params.logPath);
+  if (keys.ok) {
+    checks.push(`SSH keys ready: ${authorizedKeys}`);
+  } else {
+    failures.push(
+      `missing SSH public keys for ${target.user}: ${authorizedKeys}. ` +
+        "The root bootstrap should copy your current authorized_keys; if you used password-only SSH, add a public key before hosting lock-down.",
+    );
+  }
+
+  const sshService = runner(
+    "systemctl is-active --quiet ssh || systemctl is-active --quiet sshd || " +
+      "sudo -n systemctl is-active --quiet ssh || sudo -n systemctl is-active --quiet sshd",
+    params.logPath,
+  );
+  if (sshService.ok) {
+    checks.push("OS SSH service active");
+  } else {
+    failures.push("OS SSH service is not active");
+  }
+
+  if (failures.length > 0) {
+    return { ok: false, detail: failures.join("\n") };
+  }
+  return { ok: true, detail: checks.join("\n") };
 }
 
 function hasExplicitTailnetSshConfirmation(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -225,6 +275,15 @@ async function confirmTailnetSshBeforeLockdown(params: {
     failTailnetSshConfirmation({ runtime, logPath, target });
     return false;
   }
+  const serverPrereqs = verifyTailnetSshServerPrerequisites({ target, logPath });
+  if (!serverPrereqs.ok) {
+    runtime.error("Hosting setup stopped before SSH/firewall lock-down.");
+    runtime.error(serverPrereqs.detail);
+    runtime.error(`Host hardening log: ${logPath}`);
+    runtime.exit(1);
+    return false;
+  }
+  appendHostSecurityLog(logPath, "tailnet ssh server prerequisites", serverPrereqs.detail);
   await prompter.note(formatTailnetSshVerificationNote(target), "Verify SSH over Tailscale");
   const confirmed = await prompter.confirm({
     message: `Did SSH over Tailscale connect as ${target.user} and open ${target.repoDir}?`,
@@ -737,4 +796,5 @@ export const __testing = {
   readTailscaleIp,
   resolveTailnetSshTarget,
   sanitizeHostSecurityLogText,
+  verifyTailnetSshServerPrerequisites,
 };

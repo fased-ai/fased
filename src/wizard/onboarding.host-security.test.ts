@@ -50,8 +50,50 @@ describe("onboarding host security", () => {
 
     expect(note).toContain("Before Fased locks down public SSH/root/password access");
     expect(note).toContain("ssh app@fased-vps.tailnet.ts.net");
-    expect(note).toContain("tailscale ssh app@fased-vps.tailnet.ts.net");
+    expect(note).not.toContain("tailscale ssh");
     expect(note).toContain("/home/app/fased");
+  });
+
+  it("checks app SSH prerequisites before hosted lock-down", () => {
+    const commands: string[] = [];
+    const result = __testing.verifyTailnetSshServerPrerequisites({
+      target: {
+        user: "app",
+        host: "fased-vps.tailnet.ts.net",
+        repoDir: "/home/app/fased",
+      },
+      runner: (command) => {
+        commands.push(command);
+        return { ok: true };
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.detail).toContain("repo directory ready: /home/app/fased");
+    expect(result.detail).toContain("SSH keys ready: /home/app/.ssh/authorized_keys");
+    expect(result.detail).toContain("OS SSH service active");
+    expect(commands).toContain("test -d '/home/app/fased'");
+    expect(commands).toContain("test -s '/home/app/.ssh/authorized_keys'");
+  });
+
+  it("stops hosted lock-down when app SSH keys are missing", () => {
+    const result = __testing.verifyTailnetSshServerPrerequisites({
+      target: {
+        user: "app",
+        host: "fased-vps.tailnet.ts.net",
+        repoDir: "/home/app/fased",
+      },
+      runner: (command) => {
+        if (command.includes("authorized_keys")) {
+          return { ok: false };
+        }
+        return { ok: true };
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain("missing SSH public keys for app");
+    expect(result.detail).toContain("/home/app/.ssh/authorized_keys");
   });
 
   it("uses Tailscale DNS for the SSH verification target", () => {

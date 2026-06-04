@@ -120,6 +120,8 @@ Before lock-down, the wizard asks you to test `ssh app@YOUR_VPS_TAILSCALE_NAME`
 from your own computer. Confirm only after it connects through Tailscale and
 opens `/home/app/fased`. If it does not connect, setup stops before disabling
 root or password SSH.
+If the original VPS login was password-only and no SSH public key is available,
+setup stops before hardening; add your public key and rerun.
 
 At the end of hosted onboarding, use both access paths:
 
@@ -127,7 +129,8 @@ At the end of hosted onboarding, use both access paths:
   your own computer. That computer must be signed into the same Tailscale
   account. Save the gateway token in case the browser asks for it.
 - **SSH terminal:** use regular SSH over Tailscale as `app` for CLI commands,
-  updates, logs, and repairs. Tailscale SSH also works if your tailnet enables it.
+  updates, logs, and repairs. Run it from a computer signed into the same
+  Tailscale network.
 
 Then leave the original root bootstrap shell and reconnect as `app` over the
 Tailscale network:

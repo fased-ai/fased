@@ -122,8 +122,6 @@ export function formatStrictRemoteAccessDetails(params: {
     "   Use this for CLI commands, updates, logs, and repairs over Tailscale:",
     `   ssh ${params.tailscaleSshUser}@${sshTarget}`,
     "   The app user shell opens in the Fased repo directory.",
-    "   Optional, only if Tailscale SSH is enabled in your tailnet:",
-    `   tailscale ssh ${params.tailscaleSshUser}@${sshTarget}`,
     "",
     "ADVANCED FALLBACK",
     "   If the Tailscale web URL is unavailable, run this on your local computer and leave it open:",

@@ -96,6 +96,8 @@ ssh app@YOUR_VPS_TAILSCALE_NAME
 Only confirm after that command connects through Tailscale and opens
 `/home/app/fased`. If it does not connect, setup stops before disabling root or
 password SSH.
+If the original VPS login was password-only and no SSH public key is available,
+setup stops before hardening; add your public key and rerun.
 
 At the end, onboarding prints two things you will normally use:
 
@@ -103,7 +105,8 @@ At the end, onboarding prints two things you will normally use:
   your own computer. That computer must be signed into the same Tailscale
   account. Save the gateway token in case the browser asks for it.
 - **SSH terminal:** use regular SSH over Tailscale as `app` for CLI commands,
-  updates, logs, and repairs. Tailscale SSH also works if your tailnet enables it.
+  updates, logs, and repairs. Run it from a computer signed into the same
+  Tailscale network.
 
 After hosted onboarding completes, stop treating the original `root@...:~/fased`
 shell as the operating shell. Use:
