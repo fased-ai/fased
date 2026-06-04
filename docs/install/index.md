@@ -79,6 +79,12 @@ all the time.
     minimum test node, but expect slow install/onboarding. For a smoother public
     node, use at least 2 GB RAM; 2 vCPU / 4 GB RAM is more comfortable.
 
+    Before you start on the VPS, install/sign into Tailscale on the device you
+    will use to manage it. If that device is Windows, keep the Windows
+    Tailscale app online and run checks from PowerShell/Windows Terminal. If you
+    run checks from WSL/Linux, Tailscale must be running inside that environment
+    too.
+
     ```bash
     curl -fsSL https://tailscale.com/install.sh | sh
     sudo tailscale up --ssh
@@ -97,8 +103,16 @@ all the time.
     prepares `/home/app/fased`, re-runs itself there, and removes the temporary
     root checkout after successful hosted onboarding.
 
-    Hosting requires the VPS to be in your Tailscale tailnet before setup can
-    finish. The hosted profile keeps the raw Gateway port closed.
+    Hosted setup uses two machines: the VPS that runs Fased Agent, and your own
+    device that opens the dashboard and runs SSH checks. Install and sign into
+    Tailscale on your own device before you start the hosted lock-down checks.
+    Windows users can use PowerShell/Windows Terminal with the Windows
+    Tailscale app running. WSL/Linux terminal users need Tailscale running
+    inside that Linux environment, or should run the SSH check from PowerShell
+    instead.
+
+    The VPS must also join the same Tailscale tailnet before setup can finish.
+    The hosted profile keeps the raw Gateway port closed.
 
     Before SSH/firewall lock-down, setup pauses and asks you to test terminal
     access from your own computer:

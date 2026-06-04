@@ -181,6 +181,22 @@ function resolveTailnetSshTarget(params: {
   };
 }
 
+function formatLocalDeviceTailnetRequirementNote(): string {
+  return [
+    "Hosted setup uses two machines:",
+    "",
+    "1. This VPS runs Fased Agent.",
+    "2. Your own computer or mobile device opens the dashboard and runs SSH checks.",
+    "",
+    "Your own device must also have Tailscale installed, running, and signed into the same tailnet before the dashboard or SSH can work.",
+    "",
+    "Windows users: use PowerShell/Windows Terminal with the Windows Tailscale app running.",
+    "WSL/Linux terminal users: either install/start Tailscale inside that Linux environment, or run the SSH check from PowerShell instead.",
+    "",
+    "Keep this VPS installer terminal open while you test from your own device.",
+  ].join("\n");
+}
+
 function formatTailnetSshVerificationNote(target: TailnetSshTarget): string {
   const pingTargets = [
     target.host,
@@ -625,6 +641,10 @@ export async function applyHostingSecurity(params: {
     }
   }
 
+  if (prompter && opts.nonInteractive !== true) {
+    await prompter.note(formatLocalDeviceTailnetRequirementNote(), "Local device requirement");
+  }
+
   let tsHealthy = isTailscaleLoggedIn(logPath);
   if (tsHealthy && prompter && opts.nonInteractive !== true) {
     const switchAccount = await prompter.confirm({
@@ -886,6 +906,7 @@ export async function applyHostingSecurity(params: {
 }
 
 export const __testing = {
+  formatLocalDeviceTailnetRequirementNote,
   formatTailnetSshVerificationNote,
   hasTailscaleIp,
   hasExplicitTailnetSshConfirmation,

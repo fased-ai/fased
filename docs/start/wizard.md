@@ -116,6 +116,13 @@ then return to the SSH session. If Tailscale cannot provide a tailnet IP,
 Hosting refuses to continue because the remote dashboard and admin path depend
 on Tailscale.
 
+Hosted setup uses two machines: the VPS that runs Fased Agent, and your own
+device that opens the dashboard and runs SSH checks. Install and sign into
+Tailscale on your own device before you start the hosted lock-down checks.
+Windows users can use PowerShell/Windows Terminal with the Windows Tailscale app
+running. WSL/Linux terminal users need Tailscale running inside that Linux
+environment, or should run the SSH check from PowerShell instead.
+
 Before lock-down, the wizard asks you to test `tailscale ping
 YOUR_VPS_TAILSCALE_NAME`, then `ssh app@YOUR_VPS_TAILSCALE_NAME` from your own
 computer. If `tailscale ping` says `no matching peer`, your computer and the VPS

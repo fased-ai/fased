@@ -40,6 +40,16 @@ describe("onboarding host security", () => {
     ]);
   });
 
+  it("explains the local device Tailscale requirement before hosted verification", () => {
+    const note = __testing.formatLocalDeviceTailnetRequirementNote();
+
+    expect(note).toContain("Hosted setup uses two machines");
+    expect(note).toContain("This VPS runs Fased Agent");
+    expect(note).toContain("Your own device must also have Tailscale installed");
+    expect(note).toContain("Windows Tailscale app running");
+    expect(note).toContain("WSL/Linux terminal users");
+  });
+
   it("formats the pre-lockdown SSH over Tailscale check", () => {
     const note = __testing.formatTailnetSshVerificationNote({
       user: "app",

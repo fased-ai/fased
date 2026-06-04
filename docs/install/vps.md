@@ -15,9 +15,13 @@ hosted Fased posture at a high level.
 
 For most users, the hosted path is:
 
-1. Create a VPS and SSH into it.
-2. Create or sign into a Tailscale account, then join the VPS to your tailnet.
+1. On your own device, install/sign into Tailscale and keep it online.
+2. Create a VPS, SSH into it, then join the VPS to the same tailnet.
 3. Install Fased and choose the **Hosting** profile.
+
+If your own device is Windows, run checks from PowerShell/Windows Terminal with
+the Windows Tailscale app online. If you run checks from WSL/Linux, Tailscale
+must be running inside that environment too.
 
 ```bash
 curl -fsSL https://tailscale.com/install.sh | sh
@@ -57,8 +61,15 @@ user, prepares `/home/app/fased`, and re-runs the installer as `app`. That is
 expected. After successful hosted onboarding, the temporary root checkout is
 removed. Do not move the repo back to `/root`.
 
+Hosted setup uses two machines: the VPS that runs Fased Agent, and your own
+device that opens the dashboard and runs SSH checks. Install and sign into
+Tailscale on your own device before you start the hosted lock-down checks.
+Windows users can use PowerShell/Windows Terminal with the Windows Tailscale app
+running. WSL/Linux terminal users need Tailscale running inside that Linux
+environment, or should run the SSH check from PowerShell instead.
+
 When `sudo tailscale up --ssh` prints a login URL in the SSH terminal, copy that
-URL into your local computer's browser. The VPS does not need a desktop browser.
+URL into your own device's browser. The VPS does not need a desktop browser.
 
 Before SSH/firewall lock-down, setup pauses and asks you to test terminal access
 from your own computer:
