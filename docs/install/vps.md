@@ -53,8 +53,9 @@ git pull --ff-only origin main
 ```
 
 If you SSH into a fresh VPS as `root`, the installer creates a non-root `app`
-user, prepares `/home/app/agent`, and re-runs the installer as `app`. That is
-expected. Do not move the repo back to `/root`.
+user, prepares `/home/app/fased`, and re-runs the installer as `app`. That is
+expected. After successful hosted onboarding, the temporary root checkout is
+removed. Do not move the repo back to `/root`.
 
 When `sudo tailscale up --ssh` prints a login URL in the SSH terminal, copy that
 URL into your local computer's browser. The VPS does not need a desktop browser.
@@ -66,10 +67,11 @@ uses the `app` user through Tailscale SSH:
 
 ```bash
 tailscale ssh app@YOUR_VPS_TAILSCALE_NAME
-cd /home/app/agent
 fased status
 fased dashboard
 ```
+
+The `app` shell is configured to start in `/home/app/fased`.
 
 Root SSH is only for first bootstrap or emergency repair after the hosting
 profile hardens SSH/UFW. Keep the raw Gateway port closed to the public
@@ -88,7 +90,6 @@ For normal updates, log in as `app` through Tailscale:
 
 ```bash
 tailscale ssh app@YOUR_VPS_TAILSCALE_NAME
-cd /home/app/agent
 fased update status
 fased update
 ```
@@ -126,8 +127,8 @@ them from this repo.
 ## How cloud setups work
 
 - The **runtime and gateway run on the VPS** and own state + workspace.
-- Root installs are bootstrapped into `/home/app/agent` and run as the `app`
-  user.
+- Root installs are bootstrapped into `/home/app/fased` and run as the `app`
+  user. The root checkout is temporary bootstrap state.
 - Treat the VPS as the source of truth and **back up** the state + workspace.
 - Create or sign into **Tailscale before onboarding** that host. If you skip
   this, Hosting onboarding will stop to install/login Tailscale before it locks

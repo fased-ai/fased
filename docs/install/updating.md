@@ -35,7 +35,6 @@ On a hosted VPS, use the `app` user through Tailscale:
 
 ```bash
 tailscale ssh app@YOUR_VPS_TAILSCALE_NAME
-cd /home/app/agent
 fased update status
 fased update
 ```
@@ -75,13 +74,14 @@ cd ~/fased
 ./install.sh --no-onboard
 ```
 
-On hosted installs that live under `/home/app/agent`, run it as the app user:
+On hosted installs that live under `/home/app/fased`, run it as the app user:
 
 ```bash
 tailscale ssh app@YOUR_VPS_TAILSCALE_NAME
-cd /home/app/agent
 ./install.sh --no-onboard
 ```
+
+The `app` shell starts in `/home/app/fased`.
 
 Use `./install.sh --no-git-update` only when testing local changes.
 

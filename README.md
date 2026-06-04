@@ -68,7 +68,8 @@ git pull --ff-only origin main
 ```
 
 If you SSH into a fresh VPS as `root`, the installer creates a non-root `app`
-user, copies/clones the repo to `/home/app/agent`, and continues there. During
+user, copies/clones the repo to `/home/app/fased`, and continues there. The
+temporary root checkout is removed after successful hosted onboarding. During
 Tailscale setup, copy the login URL printed in SSH and open it in your local
 computer's browser.
 
@@ -86,10 +87,11 @@ Tailscale SSH:
 
 ```bash
 tailscale ssh app@YOUR_VPS_TAILSCALE_NAME
-cd /home/app/agent
 fased status
 fased dashboard
 ```
+
+The `app` shell is configured to start in `/home/app/fased`.
 
 `http://localhost:18789` only works on your local computer after you start the
 SSH tunnel shown by onboarding and leave that tunnel running. The raw gateway
@@ -111,7 +113,6 @@ On a hosted VPS, log in as the app user through Tailscale first:
 
 ```bash
 tailscale ssh app@YOUR_VPS_TAILSCALE_NAME
-cd /home/app/agent
 fased update status
 fased update
 ```

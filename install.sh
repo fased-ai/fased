@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FASED_DIR="$SCRIPT_DIR"
 SAT_RUNTIME_ENV_FILE="${FASED_SAT_RUNTIME_ENV_FILE:-$FASED_DIR/config/sat-runtime.env}"
 INSTALL_REPO_URL="${FASED_INSTALL_REPO:-https://github.com/fased-ai/fased.git}"
-INSTALL_BASE_DIR="${FASED_INSTALL_DIR:-$HOME/agent}"
+INSTALL_BASE_DIR="${FASED_INSTALL_DIR:-$HOME/fased}"
 FASED_CONFIG_DIR="${FASED_CONFIG_DIR:-$HOME/.fased}"
 INSTALL_MARKER_PATH="$FASED_CONFIG_DIR/install-complete.json"
 INSTALL_CACHE_DIR="$FASED_CONFIG_DIR/install-cache"
@@ -38,7 +38,7 @@ Usage: ./install.sh [options] [-- <extra onboard args>]
 Options:
   --auto-install   Linux only: install missing deps with apt (default)
   --no-auto-install  Disable automatic dependency installation
-  --install-dir <path>  Checkout/install directory (default: $HOME/agent)
+  --install-dir <path>  Checkout/install directory (default: $HOME/fased)
   --hosting       VPS/always-on server profile. Requires Tailscale; applies hosted
                   onboarding defaults and may change SSH/firewall behavior.
   --local         Laptop/dev-box profile. Tailscale is optional; on a VPS this does
@@ -528,6 +528,10 @@ assert_marker_matches_repo() {
   local marker_repo
   marker_repo="$(read_marker_repo_path || true)"
   if [[ -n "$marker_repo" && "$marker_repo" != "$repo_root" ]]; then
+    if [[ "$(basename "$marker_repo")" == "agent" && "$(basename "$repo_root")" == "fased" && "$(dirname "$marker_repo")" == "$(dirname "$repo_root")" ]]; then
+      echo "Install marker uses old hosted path ($marker_repo); continuing with $repo_root."
+      return 0
+    fi
     echo "Install marker mismatch." >&2
     echo "Marker repoPath: $marker_repo" >&2
     echo "Current repoPath: $repo_root" >&2
@@ -741,6 +745,74 @@ write_cache() {
   printf '%s\n' "$fingerprint" >"$cache_file"
 }
 
+upsert_managed_block() {
+  local file="$1"
+  local start_marker="$2"
+  local end_marker="$3"
+  local block="$4"
+  local tmp
+  mkdir -p "$(dirname "$file")"
+  tmp="$(mktemp)"
+  if [[ -f "$file" ]]; then
+    awk -v start="$start_marker" -v end="$end_marker" '
+      $0 == start { skipping = 1; next }
+      $0 == end { skipping = 0; next }
+      skipping != 1 { print }
+    ' "$file" >"$tmp"
+  else
+    : >"$tmp"
+  fi
+  {
+    printf '\n%s\n' "$start_marker"
+    printf '%s\n' "$block"
+    printf '%s\n' "$end_marker"
+  } >>"$tmp"
+  mv "$tmp" "$file"
+}
+
+configure_target_user_fased_shell_dir() {
+  local target_user="$1"
+  local target_home="$2"
+  local target_repo_dir="$3"
+  local start_marker="# >>> fased hosted shell directory >>>"
+  local end_marker="# <<< fased hosted shell directory <<<"
+  local block
+  block=$(cat <<EOF
+if [ -z "\${FASED_NO_AUTO_CD:-}" ] && [ -d "$target_repo_dir" ]; then
+  case "\$-" in
+    *i*) cd "$target_repo_dir" ;;
+  esac
+fi
+EOF
+)
+  upsert_managed_block "$target_home/.bashrc" "$start_marker" "$end_marker" "$block"
+  upsert_managed_block "$target_home/.profile" "$start_marker" "$end_marker" "$block"
+  chown "$target_user:$target_user" "$target_home/.bashrc" "$target_home/.profile" 2>/dev/null || true
+}
+
+remove_root_bootstrap_checkout_after_success() {
+  local source_dir="$1"
+  local target_repo_dir="$2"
+  if [[ "${FASED_KEEP_BOOTSTRAP_CHECKOUT:-0}" == "1" ]]; then
+    return 0
+  fi
+  if [[ "$(id -u)" -ne 0 || "$HOSTING_REQUESTED" -ne 1 || "$RUN_ONBOARD" -ne 1 ]]; then
+    return 0
+  fi
+  if [[ -z "$source_dir" || -z "$target_repo_dir" || "$source_dir" == "$target_repo_dir" ]]; then
+    return 0
+  fi
+  if [[ "$source_dir" != "$HOME"/* || "$source_dir" == "$HOME" || "$source_dir" == "/" ]]; then
+    return 0
+  fi
+  if [[ ! -f "$source_dir/install.sh" || ! -f "$source_dir/package.json" || ! -d "$source_dir/src" ]]; then
+    return 0
+  fi
+  echo "== Root bootstrap: removing temporary checkout $source_dir =="
+  cd /
+  rm -rf "$source_dir"
+}
+
 runtime_assets_ready() {
   [[ -f "$FASED_DIR/src/canvas-host/a2ui/a2ui.bundle.js" ]] || return 1
   [[ -f "$FASED_DIR/dist/canvas-host/a2ui/a2ui.bundle.js" ]] || return 1
@@ -763,14 +835,15 @@ reexec_as_app_user() {
     fi
     usermod -aG sudo "$target_user" 2>/dev/null || true
   fi
+  usermod -s /bin/bash "$target_user" 2>/dev/null || true
 
   target_home="$(getent passwd "$target_user" | cut -d: -f6)"
   if [[ -z "$target_home" ]]; then
     target_home="/home/$target_user"
   fi
   local target_install_dir="${FASED_INSTALL_DIR:-$INSTALL_BASE_DIR}"
-  if [[ -z "${FASED_INSTALL_DIR:-}" && "$target_install_dir" == "$HOME/agent" && "$target_home" != "$HOME" ]]; then
-    target_install_dir="$target_home/agent"
+  if [[ -z "${FASED_INSTALL_DIR:-}" && "$target_install_dir" == "$HOME/fased" && "$target_home" != "$HOME" ]]; then
+    target_install_dir="$target_home/fased"
   fi
   local target_repo_dir=""
 
@@ -783,6 +856,7 @@ reexec_as_app_user() {
     echo "Expected either a standalone repo checkout or a nested agent/fased checkout." >&2
     exit 1
   fi
+  configure_target_user_fased_shell_dir "$target_user" "$target_home" "$target_repo_dir"
 
   local cmd="cd $(shell_quote "$target_repo_dir") && ./install.sh"
   cmd+=" --host-security-capable"
@@ -828,21 +902,22 @@ reexec_as_app_user() {
     echo ""
     echo "== Hosted handoff =="
     echo "Initial root bootstrap is complete."
-    echo "Steady-state Fased commands should run as '$target_user' from $target_repo_dir."
+    echo "Steady-state Fased commands should run as '$target_user'."
     if [[ -n "$tailscale_dns" ]]; then
       echo "Reconnect from your local machine with:"
       echo "  tailscale ssh ${target_user}@${tailscale_dns}"
-      echo "Then:"
-      echo "  cd $target_repo_dir"
+      echo "Your shell starts in $target_repo_dir."
+      echo "Then run:"
       echo "  fased status"
       echo "  fased dashboard"
     else
       echo "Reconnect through Tailscale SSH as '$target_user', then run:"
-      echo "  cd $target_repo_dir"
       echo "  fased status"
       echo "  fased dashboard"
+      echo "The '$target_user' shell is configured to start in $target_repo_dir."
     fi
     echo "Do not use the root checkout for normal operation after hosted hardening."
+    remove_root_bootstrap_checkout_after_success "$FASED_DIR" "$target_repo_dir"
   fi
 
   exit "$child_status"
@@ -1133,6 +1208,14 @@ bootstrap_repo_for_target_user() {
   fi
 
   mkdir -p "$(dirname "$target_install_dir")"
+  if [[ ! -e "$target_install_dir" && "$(basename "$target_install_dir")" == "fased" ]]; then
+    local old_default_dir
+    old_default_dir="$(dirname "$target_install_dir")/agent"
+    if [[ -d "$old_default_dir/.git" || -d "$old_default_dir/agent/fased" ]]; then
+      echo "== Root bootstrap: migrating old app checkout $old_default_dir to $target_install_dir =="
+      mv "$old_default_dir" "$target_install_dir"
+    fi
+  fi
   if [[ ! -e "$target_install_dir" ]]; then
     if [[ -n "$source_repo" && -d "$source_repo/.git" ]]; then
       echo "== Root bootstrap: copying current checkout into $target_install_dir =="

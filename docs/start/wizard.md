@@ -31,7 +31,8 @@ Fastest first chat: open the Control UI (no channel setup needed). Run
 VPS setup: create the server, join it to Tailscale, then run `./install.sh --hosting`.
 Manual VPS setup does not require a Tailscale API key; use one only for
 non-interactive automation. If you start as `root`, the installer bootstraps
-Fased into `/home/app/agent` and continues as the `app` user.
+Fased into `/home/app/fased`, continues as the `app` user, and removes the
+temporary root checkout after successful hosted onboarding.
 </Tip>
 
 <Note>
@@ -118,10 +119,11 @@ gateway token. Then leave the original root bootstrap shell and reconnect as
 
 ```bash
 tailscale ssh app@YOUR_VPS_TAILSCALE_NAME
-cd /home/app/agent
 fased status
 fased dashboard
 ```
+
+The `app` shell starts in `/home/app/fased`.
 
 The raw Gateway port remains closed. `http://localhost:18789` only works on
 your local computer after you start the SSH tunnel shown by onboarding and keep

@@ -47,7 +47,7 @@ On Windows, use [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install), t
     installer restarts once so the new installer code runs.
 
     If the install starts as `root` on a hosted server, the installer creates a
-    non-root `app` user, prepares `/home/app/agent`, and re-runs itself there.
+    non-root `app` user, prepares `/home/app/fased`, and re-runs itself there.
     The runtime and CLI are then owned by `app`.
 
   </Step>
@@ -75,11 +75,10 @@ On Windows, use [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install), t
     6. keep admin access private through Tailscale instead of opening the gateway directly
 
     Root is the bootstrap/emergency shell. After hosted onboarding completes,
-    normal commands run as `app` from `/home/app/agent`:
+    normal commands run as `app`; the shell starts in `/home/app/fased`:
 
     ```bash
     tailscale ssh app@YOUR_VPS_TAILSCALE_NAME
-    cd /home/app/agent
     fased status
     fased dashboard
     ```

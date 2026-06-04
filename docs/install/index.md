@@ -85,7 +85,8 @@ all the time.
     `./install.sh --hosting`.
 
     If you start as `root`, the installer creates a non-root `app` user,
-    prepares `/home/app/agent`, and re-runs itself there.
+    prepares `/home/app/fased`, re-runs itself there, and removes the temporary
+    root checkout after successful hosted onboarding.
 
     Hosting requires the VPS to be in your Tailscale tailnet before the
     Gateway is treated as remotely reachable. The hosted profile keeps the
@@ -98,10 +99,11 @@ all the time.
 
     ```bash
     tailscale ssh app@YOUR_VPS_TAILSCALE_NAME
-    cd /home/app/agent
     fased status
     fased dashboard
     ```
+
+    The `app` shell is configured to start in `/home/app/fased`.
 
     Root SSH is for initial bootstrap or emergency repair, not normal
     operation. The raw Gateway port remains closed to the public internet.
@@ -151,7 +153,6 @@ user through Tailscale first:
 
 ```bash
 tailscale ssh app@YOUR_VPS_TAILSCALE_NAME
-cd /home/app/agent
 fased update status
 fased update
 ```
