@@ -1593,6 +1593,8 @@ export async function finalizeOnboardingWizard(
       settings.authMode === "password" ? nextConfig.gateway?.auth?.password || "" : "";
     // Default behavior is fast, non-blocking health unless explicitly disabled.
     const fastHealth = opts.fastHealth !== false;
+    const allowGatewayWarmupComplete =
+      String(process.env.FASED_ALLOW_GATEWAY_WARMUP_COMPLETE ?? "").trim() === "1";
     const fastProbeTimeoutMs = strictVps ? 2_500 : 1_500;
     let fastHealthSatisfied = false;
     let restartAttemptedInHealth = false;
@@ -1668,7 +1670,7 @@ export async function finalizeOnboardingWizard(
             name: "fased-gateway",
             scope: "user",
           });
-          if (fastHealth && (rootBusy || userBusy)) {
+          if (fastHealth && (rootBusy || userBusy) && allowGatewayWarmupComplete) {
             // (log removed per user request)
           } else {
             throw new Error(
@@ -1794,7 +1796,7 @@ export async function finalizeOnboardingWizard(
                 name: "fased-gateway",
                 scope: "user",
               }));
-            if (fastHealth && serviceStillRunning) {
+            if (fastHealth && serviceStillRunning && allowGatewayWarmupComplete) {
               gatewayAcceptedWarmup = true;
               await prompter.note(
                 [
@@ -1903,7 +1905,7 @@ export async function finalizeOnboardingWizard(
             scope: "root",
           });
           const serviceActive = userSvcActive.ok || rootSvcActive.ok;
-          if (fastHealth && serviceActive) {
+          if (fastHealth && serviceActive && allowGatewayWarmupComplete) {
             gatewayAcceptedWarmup = true;
             await prompter.note(
               [
@@ -1928,7 +1930,7 @@ export async function finalizeOnboardingWizard(
             scope: "root",
           });
           const serviceActive = userSvcActive.ok || rootSvcActive.ok;
-          if (fastHealth && serviceActive) {
+          if (fastHealth && serviceActive && allowGatewayWarmupComplete) {
             gatewayAcceptedWarmup = true;
             runtime.error(
               `Gateway probe warning (continuing due fast health + active service): ${strictProbe.detail ?? "unknown error"}`,
