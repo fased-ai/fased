@@ -700,6 +700,16 @@ write_cache() {
   printf '%s\n' "$fingerprint" >"$cache_file"
 }
 
+runtime_assets_ready() {
+  [[ -f "$FASED_DIR/src/canvas-host/a2ui/a2ui.bundle.js" ]] || return 1
+  [[ -f "$FASED_DIR/dist/canvas-host/a2ui/a2ui.bundle.js" ]] || return 1
+  [[ -f "$FASED_DIR/dist/export-html/template.html" ]] || return 1
+  [[ -f "$FASED_DIR/dist/export-html/vendor/marked.min.js" ]] || return 1
+  [[ -f "$FASED_DIR/dist/bundled/boot-md/HOOK.md" ]] || return 1
+  [[ -f "$FASED_DIR/dist/build-info.json" ]] || return 1
+  [[ -f "$FASED_DIR/dist/cli/daemon-cli.js" ]] || return 1
+}
+
 reexec_as_app_user() {
   local target_user="${FASED_INSTALL_USER:-app}"
   local target_home
@@ -1255,6 +1265,14 @@ else
   rm -rf "$FASED_DIR/dist"
   run_logged_in "$FASED_DIR" "Build core" pnpm --silent run build:fast
   write_cache "core-build" "$core_fingerprint"
+fi
+
+runtime_assets_fingerprint="$(fingerprint_targets "$FASED_DIR" package.json pnpm-lock.yaml scripts/bundle-a2ui.sh scripts/canvas-a2ui-copy.ts scripts/copy-export-html-templates.ts scripts/copy-hook-metadata.ts scripts/write-build-info.ts scripts/write-cli-compat.ts src/canvas-host/a2ui apps/shared/FasedAgentKit/Tools/CanvasA2UI vendor/a2ui/renderers/lit src/auto-reply/reply/export-html src/hooks/bundled src/cli/daemon-cli-compat.ts)"
+if runtime_assets_ready && cache_matches "runtime-assets" "$runtime_assets_fingerprint"; then
+  step_skip "Runtime assets"
+else
+  run_logged_in "$FASED_DIR" "Prepare runtime assets" pnpm --silent run build:runtime-assets
+  write_cache "runtime-assets" "$runtime_assets_fingerprint"
 fi
 
 ui_fingerprint="$(fingerprint_targets "$FASED_DIR" package.json pnpm-lock.yaml ui/package.json ui/vite.config.ts ui/tsconfig.json ui/index.html ui/src)"
