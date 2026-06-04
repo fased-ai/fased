@@ -26,7 +26,8 @@ BIN_PATH="${INSTALL_DIR}/fased-signerd"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-BASE_URL="${FASED_LOCAL_SIGNER_BASE_URL:-https://github.com/fased-ai/fased/releases/download}"
+DEFAULT_RELEASE_DOWNLOAD_BASE="https://github.com/fased-ai/fased/releases/download"
+BASE_URL="${FASED_LOCAL_SIGNER_BASE_URL:-$DEFAULT_RELEASE_DOWNLOAD_BASE}"
 if [[ "$VERSION" == "latest" ]]; then
   VERSION_TAG="${FASED_LOCAL_SIGNER_LATEST_TAG-latest}"
 else
@@ -34,7 +35,11 @@ else
 fi
 
 ASSET="fased-signerd-${OS}-${ARCH}"
-if [[ -n "${VERSION_TAG}" ]]; then
+if [[ "${VERSION_TAG}" == "latest" && "$BASE_URL" == */releases/download ]]; then
+  RELEASES_ROOT="${BASE_URL%/download}"
+  URL="${RELEASES_ROOT}/latest/download/${ASSET}"
+  SUMS_URL="${RELEASES_ROOT}/latest/download/fased-signerd-checksums.txt"
+elif [[ -n "${VERSION_TAG}" ]]; then
   URL="${BASE_URL}/${VERSION_TAG}/${ASSET}"
   SUMS_URL="${BASE_URL}/${VERSION_TAG}/fased-signerd-checksums.txt"
 else
@@ -44,7 +49,7 @@ fi
 
 download() {
   if command -v curl >/dev/null 2>&1; then
-    curl -fL "$URL" -o "${TMP}/fased-signerd"
+    curl -fsSL "$URL" -o "${TMP}/fased-signerd"
     return
   fi
   if command -v wget >/dev/null 2>&1; then
@@ -59,7 +64,7 @@ download_to() {
   local src="$1"
   local dst="$2"
   if command -v curl >/dev/null 2>&1; then
-    curl -fL "$src" -o "$dst"
+    curl -fsSL "$src" -o "$dst"
     return
   fi
   if command -v wget >/dev/null 2>&1; then
