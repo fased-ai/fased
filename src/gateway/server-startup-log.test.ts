@@ -2,6 +2,50 @@ import { describe, expect, it, vi } from "vitest";
 import { logGatewayStartup } from "./server-startup-log.js";
 
 describe("gateway startup log", () => {
+  it("does not log the fallback model as configured when provider setup was skipped", () => {
+    const info = vi.fn();
+    const warn = vi.fn();
+
+    logGatewayStartup({
+      cfg: {},
+      bindHost: "127.0.0.1",
+      port: 18789,
+      log: { info, warn },
+      isNixMode: false,
+    });
+
+    expect(info).toHaveBeenCalledWith("agent model: not configured (provider setup skipped)", {
+      consoleMessage: expect.stringContaining("not configured"),
+    });
+    expect(info).not.toHaveBeenCalledWith(
+      expect.stringContaining("agent model: openai/gpt-5.5"),
+      expect.anything(),
+    );
+  });
+
+  it("logs an explicitly configured primary model", () => {
+    const info = vi.fn();
+    const warn = vi.fn();
+
+    logGatewayStartup({
+      cfg: {
+        agents: {
+          defaults: {
+            model: { primary: "openai/gpt-5.5" },
+          },
+        },
+      },
+      bindHost: "127.0.0.1",
+      port: 18789,
+      log: { info, warn },
+      isNixMode: false,
+    });
+
+    expect(info).toHaveBeenCalledWith("agent model: openai/gpt-5.5", {
+      consoleMessage: expect.stringContaining("openai/gpt-5.5"),
+    });
+  });
+
   it("warns when dangerous config flags are enabled", () => {
     const info = vi.fn();
     const warn = vi.fn();

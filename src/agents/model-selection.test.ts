@@ -10,6 +10,7 @@ import {
   normalizeProviderId,
   resolveAllowedModelRef,
   resolveConfiguredModelRef,
+  resolveExplicitConfiguredModelRef,
   resolveModelRefFromString,
   resolvePersistedModelRef,
 } from "./model-selection.js";
@@ -707,6 +708,32 @@ describe("model-selection", () => {
         defaultModel: "gpt-4",
       });
       expect(result).toEqual({ provider: "openai", model: "gpt-4" });
+    });
+  });
+
+  describe("resolveExplicitConfiguredModelRef", () => {
+    it("returns null if no primary model is configured", () => {
+      const cfg: Partial<FasedAgentConfig> = {};
+      const result = resolveExplicitConfiguredModelRef({
+        cfg,
+        defaultProvider: "openai",
+      });
+      expect(result).toBeNull();
+    });
+
+    it("resolves an explicitly configured primary model", () => {
+      const cfg: Partial<FasedAgentConfig> = {
+        agents: {
+          defaults: {
+            model: { primary: "openai/gpt-5.5" },
+          },
+        },
+      };
+      const result = resolveExplicitConfiguredModelRef({
+        cfg,
+        defaultProvider: "openai",
+      });
+      expect(result).toEqual({ provider: "openai", model: "gpt-5.5" });
     });
   });
 });

@@ -1,6 +1,6 @@
 import chalk from "chalk";
-import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "../agents/defaults.js";
-import { resolveConfiguredModelRef } from "../agents/model-selection.js";
+import { DEFAULT_PROVIDER } from "../agents/defaults.js";
+import { resolveExplicitConfiguredModelRef } from "../agents/model-selection.js";
 import type { loadConfig } from "../config/config.js";
 import { getResolvedLoggerSettings } from "../logging.js";
 import { collectEnabledInsecureOrDangerousFlags } from "../security/dangerous-config-flags.js";
@@ -14,15 +14,21 @@ export function logGatewayStartup(params: {
   log: { info: (msg: string, meta?: Record<string, unknown>) => void; warn: (msg: string) => void };
   isNixMode: boolean;
 }) {
-  const { provider: agentProvider, model: agentModel } = resolveConfiguredModelRef({
+  const configuredModel = resolveExplicitConfiguredModelRef({
     cfg: params.cfg,
     defaultProvider: DEFAULT_PROVIDER,
-    defaultModel: DEFAULT_MODEL,
   });
-  const modelRef = `${agentProvider}/${agentModel}`;
-  params.log.info(`agent model: ${modelRef}`, {
-    consoleMessage: `agent model: ${chalk.whiteBright(modelRef)}`,
-  });
+  if (configuredModel) {
+    const modelRef = `${configuredModel.provider}/${configuredModel.model}`;
+    params.log.info(`agent model: ${modelRef}`, {
+      consoleMessage: `agent model: ${chalk.whiteBright(modelRef)}`,
+    });
+  } else {
+    const message = "agent model: not configured (provider setup skipped)";
+    params.log.info(message, {
+      consoleMessage: `agent model: ${chalk.yellow("not configured")} ${chalk.gray("(provider setup skipped)")}`,
+    });
+  }
   const scheme = params.tlsEnabled ? "wss" : "ws";
   const formatHost = (host: string) => (host.includes(":") ? `[${host}]` : host);
   const hosts =

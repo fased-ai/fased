@@ -372,6 +372,17 @@ export function resolveConfiguredModelRef(params: {
   defaultProvider: string;
   defaultModel: string;
 }): ModelRef {
+  const explicit = resolveExplicitConfiguredModelRef(params);
+  if (explicit) {
+    return explicit;
+  }
+  return { provider: params.defaultProvider, model: params.defaultModel };
+}
+
+export function resolveExplicitConfiguredModelRef(params: {
+  cfg: FasedAgentConfig;
+  defaultProvider: string;
+}): ModelRef | null {
   const rawModel = resolveAgentModelPrimaryValue(params.cfg.agents?.defaults?.model) ?? "";
   if (rawModel) {
     const trimmed = rawModel.trim();
@@ -402,7 +413,7 @@ export function resolveConfiguredModelRef(params: {
       return resolved.ref;
     }
   }
-  return { provider: params.defaultProvider, model: params.defaultModel };
+  return null;
 }
 
 export function resolveDefaultModelForAgent(params: {
