@@ -5,9 +5,9 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-WorkingDirectory=%h/fasedbot/agent/fased
+WorkingDirectory=%h/fasedbot/fased
 EnvironmentFile=-%h/.fased/sat-maintainer.env
-ExecStart=%h/fasedbot/agent/fased/scripts/run-sat-maintainer-standby-agent.sh
+ExecStart=%h/fasedbot/fased/scripts/run-sat-maintainer-standby-agent.sh
 
 [Install]
 WantedBy=default.target
