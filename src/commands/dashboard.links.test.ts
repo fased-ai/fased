@@ -130,6 +130,12 @@ describe("dashboardCommand", () => {
 
     await dashboardCommand(runtime);
 
+    expect(callGatewayMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "health",
+        timeoutMs: 5000,
+      }),
+    );
     expect(resolveControlUiLinksMock).toHaveBeenCalledWith({
       port: 18789,
       bind: "loopback",
@@ -151,6 +157,12 @@ describe("dashboardCommand", () => {
 
     await dashboardCommand(runtime, { noOpen: true });
 
+    expect(callGatewayMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "health",
+        timeoutMs: 20_000,
+      }),
+    );
     expect(copyToClipboardMock).not.toHaveBeenCalled();
     expect(runtime.log).toHaveBeenCalledWith("Dashboard browser path: online via Tailscale (57ms)");
     expect(runtime.log).toHaveBeenCalledWith("Dashboard boot check: ok via tailscale");
@@ -177,7 +189,7 @@ describe("dashboardCommand", () => {
     expect(probeHostedDashboardBrowserPathMock).toHaveBeenCalledWith({
       httpUrl: "https://fased-vps.tailnet.ts.net/dash/",
       token: "abc123",
-      timeoutMs: 6000,
+      timeoutMs: 15_000,
     });
     expect(runtime.log).toHaveBeenCalledWith(
       "Dashboard URL: https://fased-vps.tailnet.ts.net/dash/#token=abc123",

@@ -58,11 +58,12 @@ async function resolveHostedDashboardHttpUrl(params: {
 
 async function probeDashboardGateway(
   cfg: FasedAgentConfig,
+  timeoutMs = 5000,
 ): Promise<{ ok: true; durationMs: number | null } | { ok: false; message: string }> {
   try {
     const summary = await callGateway<DashboardHealthSummary>({
       method: "health",
-      timeoutMs: 5000,
+      timeoutMs,
       config: cfg,
     });
     return {
@@ -137,13 +138,14 @@ export async function dashboardCommand(
       tailscaleMode: cfg.gateway?.tailscale?.mode ?? "off",
       basePath,
     })) ?? links.httpUrl;
+  const hostedDashboard = isHostedDashboardUrl(hostedHttpUrl, links.httpUrl);
   // Prefer URL fragment to avoid leaking auth tokens via query params.
   const dashboardUrl = buildDashboardUrl({
     httpUrl: hostedHttpUrl,
     token,
   });
 
-  const gatewayProbe = await probeDashboardGateway(cfg);
+  const gatewayProbe = await probeDashboardGateway(cfg, hostedDashboard ? 20_000 : 5000);
   if (gatewayProbe.ok) {
     const suffix =
       gatewayProbe.durationMs != null
@@ -158,12 +160,12 @@ export async function dashboardCommand(
     runtime.log("Run: fased health");
   }
 
-  if (isHostedDashboardUrl(hostedHttpUrl, links.httpUrl)) {
+  if (hostedDashboard) {
     if (token.trim()) {
       const hostedProbe = await probeHostedDashboardBrowserPath({
         httpUrl: hostedHttpUrl,
         token,
-        timeoutMs: 6000,
+        timeoutMs: 15_000,
       });
       if (hostedProbe.ok) {
         runtime.log(

@@ -70,9 +70,10 @@ export function startGatewayMaintenanceTimers(params: {
       .catch((err) => params.logHealth.error(`refresh failed: ${formatError(err)}`));
   }, HEALTH_REFRESH_INTERVAL_MS);
 
-  // Prime cache so first client gets a snapshot without waiting.
+  // Prime a cheap cache first so the UI can connect immediately on low-memory
+  // hosts. The periodic refresh below performs deeper provider/channel probes.
   void params
-    .refreshGatewayHealthSnapshot({ probe: true })
+    .refreshGatewayHealthSnapshot({ probe: false })
     .catch((err) => params.logHealth.error(`initial refresh failed: ${formatError(err)}`));
 
   // dedupe cache cleanup

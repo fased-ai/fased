@@ -2376,6 +2376,7 @@ export async function finalizeOnboardingWizard(
       },
     );
   }
+  let hostedDashboardBrowserVerified = false;
   if (strictVps && settings.tailscaleMode !== "off") {
     if (!tailscaleAdminUrl && !opts.allowInsecure) {
       throw new Error("Hosting requires a Tailscale HTTPS dashboard URL before completion.");
@@ -2454,6 +2455,8 @@ export async function finalizeOnboardingWizard(
                   : (wsWarmup.detail ?? "websocket not reachable")
               }`,
             );
+          } else {
+            hostedDashboardBrowserVerified = true;
           }
         },
       );
@@ -2625,6 +2628,22 @@ export async function finalizeOnboardingWizard(
           lowRamMode,
         });
         if (!finalGateway.ok) {
+          if (hostedDashboardBrowserVerified) {
+            gatewayProbe = {
+              ok: false,
+              detail: finalGateway.detail ?? "final gateway recheck timed out",
+            };
+            await prompter.note(
+              [
+                "The hosted browser dashboard passed its full check earlier.",
+                `A final local listener recheck timed out (${finalGateway.detail ?? "gateway not reachable"}).`,
+                "Setup will finish and leave the active gateway service running.",
+                "Run: fased dashboard --no-open",
+              ].join("\n"),
+              "Final dashboard check",
+            );
+            return;
+          }
           throw new Error(
             await formatStrictListenerFailureDiagnostics(
               `Hosting dashboard is not ready at completion (${finalGateway.detail ?? "gateway not reachable"})`,
