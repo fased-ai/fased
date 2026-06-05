@@ -22,6 +22,8 @@ import {
   type HeartbeatSummary,
   resolveHeartbeatSummaryForAgent,
 } from "../infra/heartbeat-runner.js";
+import { getTailnetHostname, getTailscaleBinary } from "../infra/tailscale.js";
+import { runExec } from "../process/exec.js";
 import { buildChannelAccountBindings, resolvePreferredAccountId } from "../routing/bindings.js";
 import { normalizeAgentId } from "../routing/session-key.js";
 import type { RuntimeEnv } from "../runtime.js";
@@ -82,6 +84,13 @@ export type HealthSummary = {
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 
+type HostedDashboardRouteStatus = {
+  mode: "serve" | "funnel";
+  ok: boolean;
+  url?: string;
+  detail: string;
+};
+
 const debugHealth = (...args: unknown[]) => {
   if (isTruthyEnvValue(process.env.FASED_DEBUG_HEALTH)) {
     console.warn("[health:debug]", ...args);
@@ -119,6 +128,71 @@ const formatDurationParts = (ms: number): string => {
 
 const resolveHeartbeatSummary = (cfg: ReturnType<typeof loadConfig>, agentId: string) =>
   resolveHeartbeatSummaryForAgent(cfg, agentId);
+
+async function runTailscaleServeStatus(): Promise<
+  { ok: true; stdout: string } | { ok: false; detail: string }
+> {
+  const tailscaleBin = await getTailscaleBinary();
+  try {
+    const { stdout } = await runExec(tailscaleBin, ["serve", "status"], {
+      timeoutMs: 3000,
+      maxBuffer: 200_000,
+    });
+    return { ok: true, stdout };
+  } catch (err) {
+    try {
+      const { stdout } = await runExec("sudo", ["-n", tailscaleBin, "serve", "status"], {
+        timeoutMs: 3000,
+        maxBuffer: 200_000,
+      });
+      return { ok: true, stdout };
+    } catch (sudoErr) {
+      const detail =
+        sudoErr instanceof Error
+          ? sudoErr.message
+          : err instanceof Error
+            ? err.message
+            : String(sudoErr || err);
+      return { ok: false, detail };
+    }
+  }
+}
+
+async function resolveHostedDashboardRouteStatus(
+  cfg: FasedAgentConfig,
+): Promise<HostedDashboardRouteStatus | null> {
+  const mode = cfg.gateway?.tailscale?.mode;
+  if (mode !== "serve" && mode !== "funnel") {
+    return null;
+  }
+  const port = cfg.gateway?.port ?? 18789;
+  const [status, host] = await Promise.all([
+    runTailscaleServeStatus(),
+    getTailnetHostname((cmd, args, opts) => runExec(cmd, args, opts)).catch(() => ""),
+  ]);
+  const url = host ? `https://${host}` : undefined;
+  if (!status.ok) {
+    return {
+      mode,
+      ok: false,
+      url,
+      detail: `tailscale serve status unavailable (${status.detail})`,
+    };
+  }
+  const stdout = status.stdout;
+  const ready =
+    stdout.includes(`127.0.0.1:${port}`) ||
+    stdout.includes(`localhost:${port}`) ||
+    stdout.includes(`:${port}`);
+  return {
+    mode,
+    ok: ready,
+    url,
+    detail: ready
+      ? `tailscale ${mode} routes to 127.0.0.1:${port}`
+      : `tailscale ${mode} is not routing to 127.0.0.1:${port}`,
+  };
+}
 
 const resolveAgentOrder = (cfg: ReturnType<typeof loadConfig>) => {
   const defaultAgentId = resolveDefaultAgentId(cfg);
@@ -580,6 +654,17 @@ export async function healthCommand(
     const rich = isRich();
     runtime.log(info(`Gateway: online (${Math.max(0, Math.round(summary.durationMs ?? 0))}ms)`));
     runtime.log(info(`Dashboard: ${formatCliCommand("fased dashboard")}`));
+    const hostedRouteStatus = await resolveHostedDashboardRouteStatus(cfg);
+    if (hostedRouteStatus) {
+      const routeLabel = hostedRouteStatus.url ? ` ${hostedRouteStatus.url}` : "";
+      runtime.log(
+        info(
+          hostedRouteStatus.ok
+            ? `Dashboard route: online via Tailscale ${hostedRouteStatus.mode}${routeLabel}`
+            : `Dashboard route: not verified via Tailscale ${hostedRouteStatus.mode} (${hostedRouteStatus.detail})`,
+        ),
+      );
+    }
     if (opts.verbose) {
       const details = buildGatewayConnectionDetails({ config: cfg });
       runtime.log(info("Gateway connection:"));

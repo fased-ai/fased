@@ -91,17 +91,10 @@ recovery options and VPS provider console access working.
     Successful install output is intentionally short. If a step fails, the
     installer prints the full log path under `~/.fased/logs/`.
 
-    If `~/.fased` already exists, the installer asks what to do before it
-    touches local state:
-
-    - **Keep existing data:** best for a normal upgrade of the same install.
-      It preserves current sessions, wallets, credentials, gateway token,
-      config, and any old warnings.
-    - **Reset local config only:** best when moving checkouts or clearing stale
-      channel settings. It backs up `fased.json` and the install marker, but
-      keeps wallets/secrets.
-    - **Use a separate state directory:** best for a clean test install with
-      its own `FASED_STATE_DIR` and config.
+    If `~/.fased` already exists, the installer keeps it. Normal upgrades
+    preserve sessions, wallets, provider keys, channel settings, mining/bond
+    state, and gateway tokens. Advanced reset/test installs use
+    `FASED_EXISTING_DATA_ACTION` from the installer reference.
 
     If old channel credentials create warnings, run `fased doctor --fix`; it
     can disable stale channel entries without deleting wallets or provider

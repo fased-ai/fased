@@ -207,7 +207,7 @@ current surface, run `./install.sh --help` from the repo root.
 | `FASED_CLI_BIN_DIR=<path>`          | Directory where `install.sh` writes the `fased` command.                                                                        |
 | `FASED_INSTALL_VERBOSE=1`           | Show install command output instead of only log paths.                                                                          |
 | `FASED_INSTALL_USER=<name>`         | Non-root app user used by root bootstrap installs.                                                                              |
-| `FASED_EXISTING_DATA_ACTION=<mode>` | Noninteractive local state choice: `keep`, `reset-config`, or `separate-state`.                                                 |
+| `FASED_EXISTING_DATA_ACTION=<mode>` | Advanced local state override: `keep`, `reset-config`, or `separate-state`. Normal installs keep existing state automatically.  |
 | `FASED_EXISTING_DATA_DIR=<path>`    | State directory used with `FASED_EXISTING_DATA_ACTION=separate-state`.                                                          |
 | `FASED_SAT_RUNTIME_ENV_FILE=<path>` | Optional SAT runtime ID env file for explicit test networks or verified manual recovery. Normal mainnet setup uses Mining Sync. |
 

@@ -49,10 +49,10 @@ It does not install or modify anything on the remote host.
     - Hosting on personal Linux changes SSH/firewall behavior.
   </Step>
   <Step title="Existing config detection">
-    - If `~/.fased/fased.json` exists, choose Update settings or Repair auth/sessions.
-    - Update settings starts from the existing config and updates explicit setup sections while preserving wallet keystores, Tailscale account/device access, gateway port assumptions, and firewall state unless you edit those sections.
+    - If `~/.fased/fased.json` exists, choose Review settings or Repair sign-in.
+    - Review settings starts from the existing config and updates explicit setup sections while preserving wallet keystores, Tailscale account/device access, gateway port assumptions, mining/bond state, and firewall state unless you edit those sections.
     - Re-running the wizard does not wipe durable instance setup.
-    - Repair auth/sessions clears only the selected model/OAuth credential state and/or chat/session history.
+    - Repair sign-in clears only selected auth/session state.
     - Repair keeps `fased.json`, gateway token/password, gateway settings, wallet assignments, SAT mining, Fased Network, plugins, Tailscale, and firewall state.
     - CLI `fased onboard --reset` defaults to `auth+sessions`; use `--reset-scope sessions|auth|auth+sessions`.
     - If config is invalid or contains legacy keys, the wizard stops and asks you to run `fased doctor` before continuing.

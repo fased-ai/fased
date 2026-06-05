@@ -185,33 +185,7 @@ handle_existing_local_state() {
   fi
 
   if [[ -z "$action" ]]; then
-    echo ""
-    echo "Existing Fased data found at $FASED_CONFIG_DIR"
-    echo "This can include sessions, wallets, provider keys, channel settings, and gateway tokens."
-    echo "Wallets and secrets are kept unless you delete them yourself."
-    echo ""
-    echo "Choose how this install should use local state:"
-    echo "  1) Keep existing data (normal upgrade; preserves old settings and warnings)"
-    echo "  2) Reset local config only (clean setup; keeps wallets/secrets, backs up config and install marker)"
-    echo "  3) Use a separate state directory for this checkout (clean test install)"
-    printf "Choice [1]: "
-    local choice
-    read -r choice || choice=""
-    case "${choice:-1}" in
-      1|keep|Keep)
-        action="keep"
-        ;;
-      2|reset|reset-config|Reset)
-        action="reset-config"
-        ;;
-      3|separate|separate-state|Separate)
-        action="separate-state"
-        ;;
-      *)
-        echo "Unknown choice; keeping existing data."
-        action="keep"
-        ;;
-    esac
+    action="keep"
   fi
 
   case "$action" in
@@ -779,6 +753,22 @@ NODE
   if [[ "$output" == *changed* ]]; then
     step_done "Hosted dashboard config repaired"
   fi
+}
+
+is_tailscale_serve_gateway_config() {
+  local config_path="${FASED_CONFIG_PATH:-$FASED_CONFIG_DIR/fased.json}"
+  if [[ ! -f "$config_path" ]] || ! need_cmd node; then
+    return 1
+  fi
+  CONFIG_PATH="$config_path" node <<'NODE'
+const fs = require("fs");
+try {
+  const cfg = JSON.parse(fs.readFileSync(process.env.CONFIG_PATH, "utf8"));
+  process.exit(cfg?.gateway?.tailscale?.mode === "serve" ? 0 : 1);
+} catch {
+  process.exit(1);
+}
+NODE
 }
 
 has_system_gateway_service() {
@@ -1811,7 +1801,12 @@ if [[ "$RUN_ONBOARD" -eq 0 ]]; then
       echo "Check: fased health"
     fi
   else
-    echo "No existing Gateway service was found to restart."
+    if is_tailscale_serve_gateway_config; then
+      echo "Hosted Gateway service is not installed yet."
+      echo "Finish hosted service setup: ./install.sh --hosting"
+    else
+      echo "No existing Gateway service was found to restart."
+    fi
   fi
   echo "Onboarding skipped (--no-onboard)."
   if has_system_gateway_service || has_user_gateway_service; then

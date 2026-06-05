@@ -17,8 +17,8 @@ For a high-level overview, see [Onboarding Wizard](/start/wizard).
 
 <Steps>
   <Step title="Existing config detection">
-    - If `~/.fased/fased.json` exists, choose **Update settings** or **Repair auth/sessions**.
-    - **Update settings** starts from the existing config and updates explicit setup sections while preserving existing wallet keystores, Tailscale account/device access, gateway port assumptions, and firewall state unless you edit those sections.
+    - If `~/.fased/fased.json` exists, choose **Review settings** or **Repair sign-in**.
+    - **Review settings** starts from the existing config and updates explicit setup sections while preserving existing wallet keystores, Tailscale account/device access, gateway port assumptions, mining/bond state, and firewall state unless you edit those sections.
     - Re-running the wizard does **not** wipe durable instance setup.
     - CLI `fased onboard --reset` defaults to `auth+sessions`; use `--reset-scope sessions|auth|auth+sessions`.
     - Repair never changes `fased.json`, gateway token/password, gateway settings, wallet assignments, SAT mining, Fased Network, plugins, Tailscale, firewall state, or wallet keystores under `~/.fased/wallet`.

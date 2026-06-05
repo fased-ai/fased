@@ -86,14 +86,21 @@ describe("tailscale helpers", () => {
     expect(exec).toHaveBeenNthCalledWith(
       1,
       tailscaleBin,
-      expect.arrayContaining(["serve", "--bg", "--yes", "3000"]),
+      expect.arrayContaining(["serve", "--bg", "--yes", "http://127.0.0.1:3000"]),
       expect.any(Object),
     );
 
     expect(exec).toHaveBeenNthCalledWith(
       2,
       "sudo",
-      expect.arrayContaining(["-n", tailscaleBin, "serve", "--bg", "--yes", "3000"]),
+      expect.arrayContaining([
+        "-n",
+        tailscaleBin,
+        "serve",
+        "--bg",
+        "--yes",
+        "http://127.0.0.1:3000",
+      ]),
       expect.any(Object),
     );
   });
@@ -106,7 +113,7 @@ describe("tailscale helpers", () => {
     expect(exec).toHaveBeenCalledTimes(1);
     expect(exec).toHaveBeenCalledWith(
       tailscaleBin,
-      expect.arrayContaining(["serve", "--bg", "--yes", "3000"]),
+      expect.arrayContaining(["serve", "--bg", "--yes", "http://127.0.0.1:3000"]),
       expect.any(Object),
     );
   });

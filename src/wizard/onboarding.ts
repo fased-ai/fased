@@ -843,17 +843,17 @@ export async function runOnboardingWizard(
     await prompter.note(summarizeExistingConfig(baseConfig), "Existing config detected");
 
     const action = await prompter.select<"modify" | "repair">({
-      message: "Config handling",
+      message: "Existing setup",
       options: [
         {
           value: "modify",
-          label: "Update settings",
-          hint: "Edit setup values.",
+          label: "Review settings",
+          hint: "Keeps wallets, secrets, sessions, bonds, and mining data.",
         },
         {
           value: "repair",
-          label: "Repair auth/sessions",
-          hint: "Clear auth/session state only.",
+          label: "Repair sign-in",
+          hint: "Clears dashboard auth/session state only; keeps wallets and secrets.",
         },
       ],
     });
@@ -861,7 +861,7 @@ export async function runOnboardingWizard(
     if (action === "repair") {
       const repairAllowed = await confirmOnboardingRepair({ prompter });
       if (!repairAllowed) {
-        await prompter.note("Continuing with current config values.", "Update settings");
+        await prompter.note("Continuing with current config values.", "Review settings");
       } else {
         const repairScope = (await prompter.select({
           message: "Repair scope",

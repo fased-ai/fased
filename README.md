@@ -61,12 +61,10 @@ After local setup:
 Successful install output is intentionally short. If a step fails, the installer
 prints the full log path under `~/.fased/logs/`.
 
-If `~/.fased` already exists, the installer asks how to use that state:
-
-- Keep existing data for a normal upgrade of the same install.
-- Reset local config only when moving checkouts or clearing stale channel
-  settings. Wallets/secrets are kept and config metadata is backed up.
-- Use a separate state directory for a clean test install.
+If `~/.fased` already exists, the installer keeps it. Normal upgrades preserve
+sessions, wallets, provider keys, channel settings, mining/bond state, and
+gateway tokens. Advanced reset/test installs use explicit environment variables
+documented in the installer reference.
 
 If old channel credentials create warnings, run `fased doctor --fix`; it can
 disable stale channel entries without deleting wallets or provider secrets.

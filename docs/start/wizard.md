@@ -173,9 +173,9 @@ interactive onboarding does not ask you to choose every provider anymore.
 
 <Note>
 Re-running the wizard does **not** wipe durable instance setup.
-If an existing config is present, choose **Update settings** or **Repair auth/sessions**.
-Update settings starts from the existing config and keeps wallets, Tailscale account/device access, gateway port assumptions, and firewall state unless you explicitly edit those sections.
-Repair auth/sessions clears only the selected model/OAuth credential state and/or chat/session history. It keeps `fased.json`, gateway token/password, gateway settings, wallet assignments, SAT mining, Fased Network, plugins, Tailscale, and firewall state.
+If an existing config is present, choose **Review settings** or **Repair sign-in**.
+Review settings starts from the existing config and keeps wallets, Tailscale account/device access, gateway port assumptions, mining/bond state, and firewall state unless you explicitly edit those sections.
+Repair sign-in clears only selected auth/session state. It keeps `fased.json`, gateway token/password, gateway settings, wallet assignments, SAT mining, Fased Network, plugins, Tailscale, firewall state, and wallet data.
 CLI `fased onboard --reset` uses the same scoped repair flow and defaults to `auth+sessions`; use `--reset-scope sessions|auth|auth+sessions`.
 Use the explicit admin command `fased reset --scope ...` only when you intentionally want destructive config/state reset.
 If the config is invalid or contains legacy keys, the wizard asks you to run `fased doctor` first.
