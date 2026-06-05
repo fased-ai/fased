@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   formatControlUiSshHint: vi.fn(),
   copyToClipboard: vi.fn(),
   getTailnetHostname: vi.fn(),
+  callGateway: vi.fn(),
 }));
 
 vi.mock("../config/config.js", () => ({
@@ -30,6 +31,10 @@ vi.mock("../infra/clipboard.js", () => ({
 
 vi.mock("../infra/tailscale.js", () => ({
   getTailnetHostname: mocks.getTailnetHostname,
+}));
+
+vi.mock("../gateway/call.js", () => ({
+  callGateway: mocks.callGateway,
 }));
 
 vi.mock("../process/exec.js", () => ({
@@ -77,6 +82,8 @@ describe("dashboardCommand", () => {
     mocks.formatControlUiSshHint.mockReset();
     mocks.copyToClipboard.mockReset();
     mocks.getTailnetHostname.mockReset();
+    mocks.callGateway.mockReset();
+    mocks.callGateway.mockResolvedValue({ durationMs: 11 });
   });
 
   it("opens and copies the dashboard link by default", async () => {
@@ -121,6 +128,7 @@ describe("dashboardCommand", () => {
 
     await dashboardCommand(runtime, { noOpen: true });
 
+    expect(mocks.copyToClipboard).not.toHaveBeenCalled();
     expect(mocks.detectBrowserOpenSupport).not.toHaveBeenCalled();
     expect(mocks.openUrl).not.toHaveBeenCalled();
     expect(runtime.log).toHaveBeenCalledWith(

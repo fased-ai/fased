@@ -1,4 +1,6 @@
 import { readConfigFileSnapshot, resolveGatewayPort } from "../config/config.js";
+import type { FasedAgentConfig } from "../config/config.js";
+import { callGateway } from "../gateway/call.js";
 import { normalizeControlUiBasePath } from "../gateway/control-ui-shared.js";
 import { copyToClipboard } from "../infra/clipboard.js";
 import { getTailnetHostname } from "../infra/tailscale.js";
@@ -14,6 +16,10 @@ import {
 
 type DashboardOptions = {
   noOpen?: boolean;
+};
+
+type DashboardHealthSummary = {
+  durationMs?: number;
 };
 
 function buildDashboardUrl(params: { httpUrl: string; token?: string }): string {
@@ -43,6 +49,25 @@ async function resolveHostedDashboardHttpUrl(params: {
   }
   const basePath = normalizeControlUiBasePath(params.basePath);
   return `https://${dns}${basePath || "/"}`;
+}
+
+async function probeDashboardGateway(
+  cfg: FasedAgentConfig,
+): Promise<{ ok: true; durationMs: number | null } | { ok: false; message: string }> {
+  try {
+    const summary = await callGateway<DashboardHealthSummary>({
+      method: "health",
+      timeoutMs: 5000,
+      config: cfg,
+    });
+    return {
+      ok: true,
+      durationMs: typeof summary.durationMs === "number" ? summary.durationMs : null,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, message: message.split("\n")[0] ?? message };
+  }
 }
 
 export async function dashboardCommand(
@@ -76,10 +101,27 @@ export async function dashboardCommand(
     token,
   });
 
+  const gatewayProbe = await probeDashboardGateway(cfg);
+  if (gatewayProbe.ok) {
+    const suffix =
+      gatewayProbe.durationMs != null
+        ? ` (${Math.max(0, Math.round(gatewayProbe.durationMs))}ms)`
+        : "";
+    runtime.log(`Gateway: online${suffix}`);
+  } else {
+    runtime.log(`Gateway: offline (${gatewayProbe.message})`);
+    runtime.log(
+      "The dashboard page may load, but it will stay offline until the Gateway is healthy.",
+    );
+    runtime.log("Run: fased health");
+  }
+
   runtime.log(`Dashboard URL: ${dashboardUrl}`);
 
-  const copied = await copyToClipboard(dashboardUrl).catch(() => false);
-  runtime.log(copied ? "Copied to clipboard." : "Copy to clipboard unavailable.");
+  if (!options.noOpen) {
+    const copied = await copyToClipboard(dashboardUrl).catch(() => false);
+    runtime.log(copied ? "Copied to clipboard." : "Copy to clipboard unavailable.");
+  }
 
   let opened = false;
   let hint: string | undefined;

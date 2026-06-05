@@ -9,6 +9,7 @@ const openUrlMock = vi.hoisted(() => vi.fn());
 const formatControlUiSshHintMock = vi.hoisted(() => vi.fn());
 const copyToClipboardMock = vi.hoisted(() => vi.fn());
 const getTailnetHostnameMock = vi.hoisted(() => vi.fn());
+const callGatewayMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../config/config.js", () => ({
   readConfigFileSnapshot: readConfigFileSnapshotMock,
@@ -17,6 +18,10 @@ vi.mock("../config/config.js", () => ({
 
 vi.mock("../infra/tailscale.js", () => ({
   getTailnetHostname: getTailnetHostnameMock,
+}));
+
+vi.mock("../gateway/call.js", () => ({
+  callGateway: callGatewayMock,
 }));
 
 vi.mock("../process/exec.js", () => ({
@@ -75,6 +80,8 @@ describe("dashboardCommand", () => {
     formatControlUiSshHintMock.mockClear();
     copyToClipboardMock.mockClear();
     getTailnetHostnameMock.mockReset();
+    callGatewayMock.mockReset();
+    callGatewayMock.mockResolvedValue({ durationMs: 42 });
   });
 
   it("opens and copies the dashboard link by default", async () => {
@@ -93,6 +100,7 @@ describe("dashboardCommand", () => {
     });
     expect(copyToClipboardMock).toHaveBeenCalledWith("http://localhost:18789/#token=abc123");
     expect(openUrlMock).toHaveBeenCalledWith("http://localhost:18789/#token=abc123");
+    expect(runtime.log).toHaveBeenCalledWith("Gateway: online (42ms)");
     expect(runtime.log).toHaveBeenCalledWith(
       "Opened in your browser. Keep that tab to control Fased Agent.",
     );
@@ -105,9 +113,27 @@ describe("dashboardCommand", () => {
 
     await dashboardCommand(runtime, { noOpen: true });
 
-    expect(copyToClipboardMock).toHaveBeenCalledWith(
-      "https://fased-vps.tailnet.ts.net/#token=abc123",
+    expect(copyToClipboardMock).not.toHaveBeenCalled();
+    expect(runtime.log).toHaveBeenCalledWith(
+      "Dashboard URL: https://fased-vps.tailnet.ts.net/#token=abc123",
     );
+  });
+
+  it("warns when the dashboard page can load but gateway RPC is offline", async () => {
+    mockSnapshot("abc123", { tailscale: { mode: "serve" } });
+    getTailnetHostnameMock.mockResolvedValue("fased-vps.tailnet.ts.net");
+    copyToClipboardMock.mockResolvedValue(true);
+    callGatewayMock.mockRejectedValue(new Error("connect ECONNREFUSED 127.0.0.1:18789"));
+
+    await dashboardCommand(runtime, { noOpen: true });
+
+    expect(runtime.log).toHaveBeenCalledWith(
+      "Gateway: offline (connect ECONNREFUSED 127.0.0.1:18789)",
+    );
+    expect(runtime.log).toHaveBeenCalledWith(
+      "The dashboard page may load, but it will stay offline until the Gateway is healthy.",
+    );
+    expect(runtime.log).toHaveBeenCalledWith("Run: fased health");
     expect(runtime.log).toHaveBeenCalledWith(
       "Dashboard URL: https://fased-vps.tailnet.ts.net/#token=abc123",
     );
@@ -134,6 +160,7 @@ describe("dashboardCommand", () => {
 
     await dashboardCommand(runtime, { noOpen: true });
 
+    expect(copyToClipboardMock).not.toHaveBeenCalled();
     expect(detectBrowserOpenSupportMock).not.toHaveBeenCalled();
     expect(openUrlMock).not.toHaveBeenCalled();
     expect(runtime.log).toHaveBeenCalledWith(

@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   resolveControlUiLinks: vi.fn(),
   copyToClipboard: vi.fn(),
   getTailnetHostname: vi.fn(),
+  callGateway: vi.fn(),
 }));
 
 vi.mock("../config/config.js", () => ({
@@ -28,6 +29,10 @@ vi.mock("../infra/clipboard.js", () => ({
 
 vi.mock("../infra/tailscale.js", () => ({
   getTailnetHostname: mocks.getTailnetHostname,
+}));
+
+vi.mock("../gateway/call.js", () => ({
+  callGateway: mocks.callGateway,
 }));
 
 vi.mock("../process/exec.js", () => ({
@@ -77,6 +82,8 @@ describe("dashboardCommand bind selection", () => {
     mocks.resolveControlUiLinks.mockClear();
     mocks.copyToClipboard.mockClear();
     mocks.getTailnetHostname.mockReset();
+    mocks.callGateway.mockReset();
+    mocks.callGateway.mockResolvedValue({ durationMs: 9 });
     runtime.log.mockClear();
     runtime.error.mockClear();
     runtime.exit.mockClear();
@@ -90,6 +97,7 @@ describe("dashboardCommand bind selection", () => {
 
     await dashboardCommand(runtime, { noOpen: true });
 
+    expect(mocks.copyToClipboard).not.toHaveBeenCalled();
     expect(mocks.resolveControlUiLinks).toHaveBeenCalledWith({
       port: 18789,
       bind: "loopback",
@@ -103,6 +111,7 @@ describe("dashboardCommand bind selection", () => {
 
     await dashboardCommand(runtime, { noOpen: true });
 
+    expect(mocks.copyToClipboard).not.toHaveBeenCalled();
     expect(mocks.resolveControlUiLinks).toHaveBeenCalledWith({
       port: 18789,
       bind: "custom",
@@ -116,6 +125,7 @@ describe("dashboardCommand bind selection", () => {
 
     await dashboardCommand(runtime, { noOpen: true });
 
+    expect(mocks.copyToClipboard).not.toHaveBeenCalled();
     expect(mocks.resolveControlUiLinks).toHaveBeenCalledWith({
       port: 18789,
       bind: "tailnet",
