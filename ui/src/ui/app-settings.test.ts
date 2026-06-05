@@ -108,6 +108,7 @@ type SettingsHost = {
   walletDetailsWalletId?: string;
   walletSecuritySetupWalletId?: string;
   walletSecuritySetupRole?: "agent" | "vault" | null;
+  connect?: () => void;
   dreamingStatusLoading: boolean;
   dreamingStatusError: string | null;
   dreamingStatus: null;
@@ -371,6 +372,20 @@ describe("applySettingsFromUrl", () => {
     expect(host.pendingGatewayUrl).toBeNull();
     expect(host.pendingGatewayToken).toBeNull();
     expect(window.location.hash).toBe("");
+  });
+
+  it("repairs stale localhost gateway settings on hosted clean URLs", async () => {
+    setTestWindowUrl("https://fased-vps.tailnet.ts.net/dash");
+    const host = createHost("overview");
+    host.settings.gatewayUrl = "ws://127.0.0.1:18789";
+    host.connect = vi.fn();
+
+    await applySettingsFromUrl(asAppSettingsHost(host));
+
+    expect(host.settings.gatewayUrl).toBe("wss://fased-vps.tailnet.ts.net");
+    expect(host.pendingGatewayUrl).toBeNull();
+    expect(host.pendingGatewayToken).toBeNull();
+    expect(host.connect).toHaveBeenCalledTimes(1);
   });
 
   it("prefers fragment tokens over legacy query tokens when both are present", async () => {

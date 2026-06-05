@@ -131,6 +131,48 @@ function isSameOriginGatewayUrl(rawGatewayUrl: string): boolean {
   }
 }
 
+function isLoopbackHostname(hostname: string | null | undefined): boolean {
+  const normalized = hostname?.toLowerCase() ?? "";
+  if (!normalized) {
+    return false;
+  }
+  return (
+    normalized === "localhost" ||
+    normalized === "127.0.0.1" ||
+    normalized === "::1" ||
+    normalized === "[::1]"
+  );
+}
+
+function isLoopbackGatewayUrl(rawGatewayUrl: string): boolean {
+  try {
+    const gatewayUrl = new URL(rawGatewayUrl);
+    return (
+      (gatewayUrl.protocol === "ws:" || gatewayUrl.protocol === "wss:") &&
+      isLoopbackHostname(gatewayUrl.hostname)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function shouldInferSameOriginGatewayUrl(params: {
+  explicitGatewayUrl: string;
+  tokenLikeUrl: boolean;
+  currentGatewayUrl: string;
+}): boolean {
+  if (params.explicitGatewayUrl) {
+    return false;
+  }
+  if (params.tokenLikeUrl) {
+    return true;
+  }
+  if (window.location.protocol !== "https:" || isLoopbackHostname(window.location.hostname)) {
+    return false;
+  }
+  return !params.currentGatewayUrl || isLoopbackGatewayUrl(params.currentGatewayUrl);
+}
+
 function buildSameOriginGatewayUrl(basePath?: string | null): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   const normalizedBasePath = normalizeBasePath(basePath ?? "");
@@ -226,9 +268,6 @@ export function setLastActiveSessionKey(host: SettingsHost, next: string) {
 }
 
 export async function applySettingsFromUrl(host?: SettingsHost) {
-  if (!window.location.search && !window.location.hash) {
-    return;
-  }
   const url = new URL(window.location.href);
   const params = new URLSearchParams(url.search);
   const hashParams = new URLSearchParams(url.hash.startsWith("#") ? url.hash.slice(1) : url.hash);
@@ -246,10 +285,15 @@ export async function applySettingsFromUrl(host?: SettingsHost) {
   const current = host?.settings ?? loadSettings();
   const explicitGatewayUrl = gatewayUrlRaw?.trim() ?? "";
   const tokenLikeUrl = tokenRaw != null || loginRaw != null || sessionRaw != null;
-  const inferredGatewayUrl =
-    !explicitGatewayUrl && tokenLikeUrl ? buildSameOriginGatewayUrl(host?.basePath) : "";
-  const gatewayUrl = explicitGatewayUrl || inferredGatewayUrl;
   const currentGatewayUrl = current.gatewayUrl?.trim() ?? "";
+  const inferredGatewayUrl = shouldInferSameOriginGatewayUrl({
+    explicitGatewayUrl,
+    tokenLikeUrl,
+    currentGatewayUrl,
+  })
+    ? buildSameOriginGatewayUrl(host?.basePath)
+    : "";
+  const gatewayUrl = explicitGatewayUrl || inferredGatewayUrl;
   const gatewayUrlChanged =
     !!gatewayUrl &&
     !!currentGatewayUrl &&
@@ -274,6 +318,7 @@ export async function applySettingsFromUrl(host?: SettingsHost) {
     shouldCleanUrl = true;
   }
 
+  let repairedGatewayUrl = false;
   if (!gatewayUrlChanged && gatewayUrl && gatewayUrl !== currentGatewayUrl) {
     const next = { ...current, gatewayUrl };
     if (host) {
@@ -281,6 +326,7 @@ export async function applySettingsFromUrl(host?: SettingsHost) {
     } else {
       saveSettings(next);
     }
+    repairedGatewayUrl = true;
   }
 
   if (passwordRaw != null) {
@@ -369,6 +415,8 @@ export async function applySettingsFromUrl(host?: SettingsHost) {
     } else {
       saveSettings(next);
     }
+  } else if (repairedGatewayUrl && host && !host.connected) {
+    host.connect?.();
   } else if (!gatewayUrlChanged && sessionRaw != null && host) {
     const explicitSession = sessionRaw.trim();
     if (explicitSession) {
