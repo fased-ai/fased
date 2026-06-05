@@ -29,6 +29,7 @@ import { normalizeAgentId } from "../routing/session-key.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { styleHealthChannelLine } from "../terminal/health-style.js";
 import { isRich } from "../terminal/theme.js";
+import { probeHostedDashboardBrowserPath } from "./hosted-dashboard-probe.js";
 
 export type ChannelAccountHealthSummary = {
   accountId: string;
@@ -664,6 +665,26 @@ export async function healthCommand(
             : `Dashboard route: not verified via Tailscale ${hostedRouteStatus.mode} (${hostedRouteStatus.detail})`,
         ),
       );
+      const token = cfg.gateway?.auth?.token ?? process.env.FASED_GATEWAY_TOKEN ?? "";
+      if (hostedRouteStatus.ok && hostedRouteStatus.url && token.trim()) {
+        const hostedProbe = await probeHostedDashboardBrowserPath({
+          httpUrl: hostedRouteStatus.url,
+          token,
+          timeoutMs: opts.timeoutMs ?? 6000,
+        });
+        runtime.log(
+          info(
+            hostedProbe.ok
+              ? `Dashboard browser path: online via Tailscale (${Math.max(
+                  0,
+                  Math.round(hostedProbe.durationMs),
+                )}ms)`
+              : `Dashboard browser path: offline via Tailscale (${hostedProbe.stage}: ${hostedProbe.message})`,
+          ),
+        );
+      } else if (hostedRouteStatus.ok && hostedRouteStatus.url) {
+        runtime.log(info("Dashboard browser path: not checked (missing gateway token)"));
+      }
     }
     if (opts.verbose) {
       const details = buildGatewayConnectionDetails({ config: cfg });

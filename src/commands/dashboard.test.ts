@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   copyToClipboard: vi.fn(),
   getTailnetHostname: vi.fn(),
   callGateway: vi.fn(),
+  probeHostedDashboardBrowserPath: vi.fn(),
 }));
 
 vi.mock("../config/config.js", () => ({
@@ -33,6 +34,10 @@ vi.mock("../infra/tailscale.js", () => ({
 
 vi.mock("../gateway/call.js", () => ({
   callGateway: mocks.callGateway,
+}));
+
+vi.mock("./hosted-dashboard-probe.js", () => ({
+  probeHostedDashboardBrowserPath: mocks.probeHostedDashboardBrowserPath,
 }));
 
 vi.mock("../process/exec.js", () => ({
@@ -84,6 +89,12 @@ describe("dashboardCommand bind selection", () => {
     mocks.getTailnetHostname.mockReset();
     mocks.callGateway.mockReset();
     mocks.callGateway.mockResolvedValue({ durationMs: 9 });
+    mocks.probeHostedDashboardBrowserPath.mockReset();
+    mocks.probeHostedDashboardBrowserPath.mockResolvedValue({
+      ok: true,
+      durationMs: 41,
+      wsUrl: "wss://example.test/",
+    });
     runtime.log.mockClear();
     runtime.error.mockClear();
     runtime.exit.mockClear();

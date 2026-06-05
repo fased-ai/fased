@@ -10,6 +10,7 @@ const formatControlUiSshHintMock = vi.hoisted(() => vi.fn());
 const copyToClipboardMock = vi.hoisted(() => vi.fn());
 const getTailnetHostnameMock = vi.hoisted(() => vi.fn());
 const callGatewayMock = vi.hoisted(() => vi.fn());
+const probeHostedDashboardBrowserPathMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../config/config.js", () => ({
   readConfigFileSnapshot: readConfigFileSnapshotMock,
@@ -22,6 +23,10 @@ vi.mock("../infra/tailscale.js", () => ({
 
 vi.mock("../gateway/call.js", () => ({
   callGateway: callGatewayMock,
+}));
+
+vi.mock("./hosted-dashboard-probe.js", () => ({
+  probeHostedDashboardBrowserPath: probeHostedDashboardBrowserPathMock,
 }));
 
 vi.mock("../process/exec.js", () => ({
@@ -82,6 +87,12 @@ describe("dashboardCommand", () => {
     getTailnetHostnameMock.mockReset();
     callGatewayMock.mockReset();
     callGatewayMock.mockResolvedValue({ durationMs: 42 });
+    probeHostedDashboardBrowserPathMock.mockReset();
+    probeHostedDashboardBrowserPathMock.mockResolvedValue({
+      ok: true,
+      durationMs: 57,
+      wsUrl: "wss://fased-vps.tailnet.ts.net/",
+    });
   });
 
   it("opens and copies the dashboard link by default", async () => {
@@ -114,8 +125,30 @@ describe("dashboardCommand", () => {
     await dashboardCommand(runtime, { noOpen: true });
 
     expect(copyToClipboardMock).not.toHaveBeenCalled();
+    expect(runtime.log).toHaveBeenCalledWith("Dashboard browser path: online via Tailscale (57ms)");
     expect(runtime.log).toHaveBeenCalledWith(
       "Dashboard URL: https://fased-vps.tailnet.ts.net/#token=abc123",
+    );
+  });
+
+  it("prints hosted browser path failure details when the Tailscale websocket fails", async () => {
+    mockSnapshot("abc123", { tailscale: { mode: "serve" } });
+    getTailnetHostnameMock.mockResolvedValue("fased-vps.tailnet.ts.net");
+    probeHostedDashboardBrowserPathMock.mockResolvedValue({
+      ok: false,
+      durationMs: 120,
+      stage: "websocket",
+      message: "INVALID_REQUEST: origin not allowed",
+      wsUrl: "wss://fased-vps.tailnet.ts.net/",
+    });
+
+    await dashboardCommand(runtime, { noOpen: true });
+
+    expect(runtime.log).toHaveBeenCalledWith(
+      "Dashboard browser path: offline via Tailscale (websocket: INVALID_REQUEST: origin not allowed)",
+    );
+    expect(runtime.log).toHaveBeenCalledWith(
+      "Dashboard websocket: wss://fased-vps.tailnet.ts.net/",
     );
   });
 

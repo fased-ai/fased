@@ -7,6 +7,7 @@ import { getTailnetHostname } from "../infra/tailscale.js";
 import { runExec } from "../process/exec.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { defaultRuntime } from "../runtime.js";
+import { probeHostedDashboardBrowserPath } from "./hosted-dashboard-probe.js";
 import {
   detectBrowserOpenSupport,
   formatControlUiSshHint,
@@ -70,6 +71,16 @@ async function probeDashboardGateway(
   }
 }
 
+function isHostedDashboardUrl(httpUrl: string, localHttpUrl: string): boolean {
+  try {
+    const hosted = new URL(httpUrl);
+    const local = new URL(localHttpUrl);
+    return hosted.origin !== local.origin && hosted.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 export async function dashboardCommand(
   runtime: RuntimeEnv = defaultRuntime,
   options: DashboardOptions = {},
@@ -114,6 +125,33 @@ export async function dashboardCommand(
       "The dashboard page may load, but it will stay offline until the Gateway is healthy.",
     );
     runtime.log("Run: fased health");
+  }
+
+  if (isHostedDashboardUrl(hostedHttpUrl, links.httpUrl)) {
+    if (token.trim()) {
+      const hostedProbe = await probeHostedDashboardBrowserPath({
+        httpUrl: hostedHttpUrl,
+        token,
+        timeoutMs: 6000,
+      });
+      if (hostedProbe.ok) {
+        runtime.log(
+          `Dashboard browser path: online via Tailscale (${Math.max(
+            0,
+            Math.round(hostedProbe.durationMs),
+          )}ms)`,
+        );
+      } else {
+        runtime.log(
+          `Dashboard browser path: offline via Tailscale (${hostedProbe.stage}: ${hostedProbe.message})`,
+        );
+        if (hostedProbe.wsUrl) {
+          runtime.log(`Dashboard websocket: ${hostedProbe.wsUrl}`);
+        }
+      }
+    } else {
+      runtime.log("Dashboard browser path: not checked (missing gateway token)");
+    }
   }
 
   runtime.log(`Dashboard URL: ${dashboardUrl}`);

@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   copyToClipboard: vi.fn(),
   getTailnetHostname: vi.fn(),
   callGateway: vi.fn(),
+  probeHostedDashboardBrowserPath: vi.fn(),
 }));
 
 vi.mock("../config/config.js", () => ({
@@ -35,6 +36,10 @@ vi.mock("../infra/tailscale.js", () => ({
 
 vi.mock("../gateway/call.js", () => ({
   callGateway: mocks.callGateway,
+}));
+
+vi.mock("./hosted-dashboard-probe.js", () => ({
+  probeHostedDashboardBrowserPath: mocks.probeHostedDashboardBrowserPath,
 }));
 
 vi.mock("../process/exec.js", () => ({
@@ -84,6 +89,12 @@ describe("dashboardCommand", () => {
     mocks.getTailnetHostname.mockReset();
     mocks.callGateway.mockReset();
     mocks.callGateway.mockResolvedValue({ durationMs: 11 });
+    mocks.probeHostedDashboardBrowserPath.mockReset();
+    mocks.probeHostedDashboardBrowserPath.mockResolvedValue({
+      ok: true,
+      durationMs: 43,
+      wsUrl: "wss://example.test/",
+    });
   });
 
   it("opens and copies the dashboard link by default", async () => {
