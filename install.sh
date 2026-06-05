@@ -21,6 +21,9 @@ HOSTING_REQUESTED=0
 REQUESTED_SWAP_GB=""
 TEMP_SUDOERS=""
 FASED_CLI_PATH=""
+LOW_MEMORY_SWAP_THRESHOLD_MB=2304
+LOW_MEMORY_SWAP_GB=4
+HOSTING_SWAP_GB=2
 
 ORIGINAL_INSTALL_ARGS=("$@")
 pass_args=()
@@ -46,7 +49,7 @@ Options:
                   onboarding defaults and may change SSH/firewall behavior.
   --local         Laptop/dev-box profile. Tailscale is optional; on a VPS this does
                   not apply hosting SSH/firewall hardening.
-  --swap-gb <n>   Swap size to configure on very small Linux hosts (default: 2)
+  --swap-gb <n>   Override automatic install-time swap size on small Linux hosts
   --no-git-update  Do not fast-forward the checkout from origin before install
   --no-onboard     Skip running onboard (install deps only)
   --verbose       Show build/install command output instead of logging it
@@ -233,7 +236,27 @@ resolve_requested_swap_gb() {
     printf '%s\n' "$REQUESTED_SWAP_GB"
     return 0
   fi
-  printf '2\n'
+
+  local profile
+  profile="$(resolved_host_profile || true)"
+  local total_mem_mb
+  total_mem_mb="$(detect_total_mem_mb || true)"
+
+  if [[ "$profile" == "hosting" ]]; then
+    if [[ -z "$total_mem_mb" || "$total_mem_mb" -eq 0 || "$total_mem_mb" -le "$LOW_MEMORY_SWAP_THRESHOLD_MB" ]]; then
+      printf '%s\n' "$LOW_MEMORY_SWAP_GB"
+      return 0
+    fi
+    printf '%s\n' "$HOSTING_SWAP_GB"
+    return 0
+  fi
+
+  if [[ -n "$total_mem_mb" && "$total_mem_mb" -gt 0 && "$total_mem_mb" -le "$LOW_MEMORY_SWAP_THRESHOLD_MB" ]]; then
+    printf '%s\n' "$LOW_MEMORY_SWAP_GB"
+    return 0
+  fi
+
+  printf '0\n'
 }
 
 need_cmd() {
@@ -1335,7 +1358,7 @@ ensure_low_memory_swap_if_possible() {
 
   local total_mem_mb
   total_mem_mb="$(detect_total_mem_mb)"
-  if [[ -z "$total_mem_mb" || "$total_mem_mb" -eq 0 || "$total_mem_mb" -gt 1536 ]]; then
+  if [[ -z "$total_mem_mb" || "$total_mem_mb" -eq 0 || "$total_mem_mb" -gt "$LOW_MEMORY_SWAP_THRESHOLD_MB" ]]; then
     return 0
   fi
   if has_active_swap; then

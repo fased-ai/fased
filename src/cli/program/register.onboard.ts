@@ -122,7 +122,7 @@ export function registerOnboardCommand(program: Command) {
     )
     .option("--ts-authkey <key>", "Tailscale auth key for hosting setup")
     .option("--allow-insecure", "Allow continuing when hosting security setup fails")
-    .option("--swap-gb <n>", "Swap size in GB for hosting setup (default: 2)")
+    .option("--swap-gb <n>", "Override automatic swap size in GB for hosting setup")
     .option("--auth-choice <choice>", `Auth: ${AUTH_CHOICE_HELP}`)
     .option(
       "--token-provider <id>",

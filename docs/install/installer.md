@@ -65,8 +65,8 @@ On Windows, use [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install), t
   </Step>
   <Step title="Run onboarding when appropriate">
     If onboarding is enabled, the installer hands off to `fased onboard --install-daemon`.
-    On low-memory Linux hosts, onboarding runs with a larger V8 heap limit after
-    the installer has created swap when possible. Override with
+    On low-memory Linux hosts, the installer creates swap automatically when
+    possible and onboarding runs with a larger V8 heap limit. Override with
     `FASED_ONBOARD_MAX_OLD_SPACE_MB` only for troubleshooting.
 
     For a hosted or VPS runtime, the intended sequence is:
@@ -176,17 +176,17 @@ Hosting note:
 
 These are the flags that matter for the current public repo-backed flow.
 
-| Flag                   | Description                                                    |
-| ---------------------- | -------------------------------------------------------------- |
-| `--auto-install`       | Install missing Linux dependencies with `apt` where supported. |
-| `--no-auto-install`    | Do not install missing dependencies automatically.             |
-| `--install-dir <path>` | Bootstrap or resolve the checkout under a specific directory.  |
-| `--hosting`            | Use hosted/VPS onboarding defaults.                            |
-| `--local`              | Use local-machine onboarding defaults.                         |
-| `--swap-gb <n>`        | Configure install-time swap on very small Linux hosts.         |
-| `--no-onboard`         | Build/install and skip onboarding.                             |
-| `--verbose`            | Show install command output instead of only log paths.         |
-| `--help`               | Show usage (`-h`).                                             |
+| Flag                   | Description                                                       |
+| ---------------------- | ----------------------------------------------------------------- |
+| `--auto-install`       | Install missing Linux dependencies with `apt` where supported.    |
+| `--no-auto-install`    | Do not install missing dependencies automatically.                |
+| `--install-dir <path>` | Bootstrap or resolve the checkout under a specific directory.     |
+| `--hosting`            | Use hosted/VPS onboarding defaults.                               |
+| `--local`              | Use local-machine onboarding defaults.                            |
+| `--swap-gb <n>`        | Override automatic install-time swap sizing on small Linux hosts. |
+| `--no-onboard`         | Build/install and skip onboarding.                                |
+| `--verbose`            | Show install command output instead of only log paths.            |
+| `--help`               | Show usage (`-h`).                                                |
 
 Extra arguments after `--` are forwarded to `fased onboard --install-daemon`.
 

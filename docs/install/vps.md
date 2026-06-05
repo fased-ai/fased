@@ -165,9 +165,10 @@ works on your local computer after you start the tunnel shown by onboarding and
 leave that tunnel running.
 
 <Note>
-Small VPS installs create swap when possible and run onboarding with a larger
-Node heap. If an older checkout already failed with `JavaScript heap out of
-memory`, update the checkout and rerun `./install.sh --hosting`.
+Small VPS installs size swap automatically when possible and run onboarding
+with a larger Node heap. If an older checkout already failed with
+`JavaScript heap out of memory`, update the checkout and rerun
+`./install.sh --hosting`.
 </Note>
 
 ## Update later

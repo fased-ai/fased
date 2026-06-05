@@ -70,6 +70,39 @@ type TailnetSshPrerequisites = {
   detail: string;
 };
 
+const LOW_MEMORY_SWAP_THRESHOLD_MB = 2304;
+const LOW_MEMORY_HOSTING_SWAP_GB = 4;
+const HOSTING_SWAP_GB = 2;
+
+function detectTotalMemoryMb(): number {
+  if (process.platform === "linux") {
+    try {
+      const meminfo = fs.readFileSync("/proc/meminfo", "utf8");
+      const match = meminfo.match(/^MemTotal:\s+(\d+)\s+kB/m);
+      if (match?.[1]) {
+        return Math.floor(Number.parseInt(match[1], 10) / 1024);
+      }
+    } catch {
+      // Fall back to Node's platform memory probe below.
+    }
+  }
+  return Math.floor(os.totalmem() / 1024 / 1024);
+}
+
+function resolveHostingSwapGb(explicitSwapGb?: number, totalMemMb = detectTotalMemoryMb()): number {
+  if (typeof explicitSwapGb === "number" && Number.isFinite(explicitSwapGb)) {
+    return Math.max(0, explicitSwapGb);
+  }
+  if (
+    !Number.isFinite(totalMemMb) ||
+    totalMemMb <= 0 ||
+    totalMemMb <= LOW_MEMORY_SWAP_THRESHOLD_MB
+  ) {
+    return LOW_MEMORY_HOSTING_SWAP_GB;
+  }
+  return HOSTING_SWAP_GB;
+}
+
 function run(command: string, logPath?: string): { ok: boolean; detail?: string } {
   const proc = spawnSync("bash", ["-lc", command], {
     stdio: ["ignore", "pipe", "pipe"],
@@ -604,7 +637,7 @@ export async function applyHostingSecurity(params: {
 
   // Hosting is fail-closed and always enforces hardening.
 
-  const swapGb = Math.max(0, opts.swapGb ?? 2);
+  const swapGb = resolveHostingSwapGb(opts.swapGb);
   if (swapGb > 0) {
     const hasSwap = run("swapon --show | tail -n +2 | grep -q .", logPath).ok;
     if (!hasSwap) {
@@ -914,6 +947,7 @@ export const __testing = {
   hasExplicitTailnetSshConfirmation,
   isTailscaleLoggedIn,
   readTailscaleIp,
+  resolveHostingSwapGb,
   resolveTailnetSshTarget,
   sanitizeHostSecurityLogText,
   confirmTailnetSshBeforeLockdown,

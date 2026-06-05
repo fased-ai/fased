@@ -40,6 +40,19 @@ describe("onboarding host security", () => {
     ]);
   });
 
+  it("defaults hosted swap to 4G on 2 GB VPS nodes", () => {
+    expect(__testing.resolveHostingSwapGb(undefined, 2048)).toBe(4);
+  });
+
+  it("keeps explicit hosted swap overrides", () => {
+    expect(__testing.resolveHostingSwapGb(0, 2048)).toBe(0);
+    expect(__testing.resolveHostingSwapGb(6, 2048)).toBe(6);
+  });
+
+  it("uses the smaller hosted swap default when memory is not constrained", () => {
+    expect(__testing.resolveHostingSwapGb(undefined, 4096)).toBe(2);
+  });
+
   it("explains the local device Tailscale requirement before hosted verification", () => {
     const note = __testing.formatLocalDeviceTailnetRequirementNote();
 
