@@ -1,5 +1,8 @@
 import { readConfigFileSnapshot, resolveGatewayPort } from "../config/config.js";
+import { normalizeControlUiBasePath } from "../gateway/control-ui-shared.js";
 import { copyToClipboard } from "../infra/clipboard.js";
+import { getTailnetHostname } from "../infra/tailscale.js";
+import { runExec } from "../process/exec.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { defaultRuntime } from "../runtime.js";
 import {
@@ -25,6 +28,23 @@ function buildDashboardUrl(params: { httpUrl: string; token?: string }): string 
   return url.toString();
 }
 
+async function resolveHostedDashboardHttpUrl(params: {
+  tailscaleMode?: "off" | "serve" | "funnel";
+  basePath?: string;
+}): Promise<string | null> {
+  if (!params.tailscaleMode || params.tailscaleMode === "off") {
+    return null;
+  }
+  const dns = await getTailnetHostname((cmd, args) =>
+    runExec(cmd, args, { timeoutMs: 1200, maxBuffer: 200_000 }),
+  ).catch(() => null);
+  if (!dns) {
+    return null;
+  }
+  const basePath = normalizeControlUiBasePath(params.basePath);
+  return `https://${dns}${basePath || "/"}`;
+}
+
 export async function dashboardCommand(
   runtime: RuntimeEnv = defaultRuntime,
   options: DashboardOptions = {},
@@ -45,9 +65,14 @@ export async function dashboardCommand(
     customBindHost,
     basePath,
   });
+  const hostedHttpUrl =
+    (await resolveHostedDashboardHttpUrl({
+      tailscaleMode: cfg.gateway?.tailscale?.mode ?? "off",
+      basePath,
+    })) ?? links.httpUrl;
   // Prefer URL fragment to avoid leaking auth tokens via query params.
   const dashboardUrl = buildDashboardUrl({
-    httpUrl: links.httpUrl,
+    httpUrl: hostedHttpUrl,
     token,
   });
 

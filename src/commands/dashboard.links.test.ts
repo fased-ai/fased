@@ -8,10 +8,19 @@ const detectBrowserOpenSupportMock = vi.hoisted(() => vi.fn());
 const openUrlMock = vi.hoisted(() => vi.fn());
 const formatControlUiSshHintMock = vi.hoisted(() => vi.fn());
 const copyToClipboardMock = vi.hoisted(() => vi.fn());
+const getTailnetHostnameMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../config/config.js", () => ({
   readConfigFileSnapshot: readConfigFileSnapshotMock,
   resolveGatewayPort: resolveGatewayPortMock,
+}));
+
+vi.mock("../infra/tailscale.js", () => ({
+  getTailnetHostname: getTailnetHostnameMock,
+}));
+
+vi.mock("../process/exec.js", () => ({
+  runExec: vi.fn(),
 }));
 
 vi.mock("./onboard-helpers.js", () => ({
@@ -37,14 +46,14 @@ function resetRuntime() {
   runtime.exit.mockClear();
 }
 
-function mockSnapshot(token = "abc") {
+function mockSnapshot(token = "abc", gateway: Record<string, unknown> = {}) {
   readConfigFileSnapshotMock.mockResolvedValue({
     path: "/tmp/fased.json",
     exists: true,
     raw: "{}",
     parsed: {},
     valid: true,
-    config: { gateway: { auth: { token } } },
+    config: { gateway: { auth: { token }, ...gateway } },
     issues: [],
     legacyIssues: [],
   });
@@ -65,6 +74,7 @@ describe("dashboardCommand", () => {
     openUrlMock.mockClear();
     formatControlUiSshHintMock.mockClear();
     copyToClipboardMock.mockClear();
+    getTailnetHostnameMock.mockReset();
   });
 
   it("opens and copies the dashboard link by default", async () => {
@@ -85,6 +95,21 @@ describe("dashboardCommand", () => {
     expect(openUrlMock).toHaveBeenCalledWith("http://localhost:18789/#token=abc123");
     expect(runtime.log).toHaveBeenCalledWith(
       "Opened in your browser. Keep that tab to control Fased Agent.",
+    );
+  });
+
+  it("prints the Tailscale HTTPS dashboard URL when hosted serve is configured", async () => {
+    mockSnapshot("abc123", { tailscale: { mode: "serve" } });
+    getTailnetHostnameMock.mockResolvedValue("fased-vps.tailnet.ts.net");
+    copyToClipboardMock.mockResolvedValue(true);
+
+    await dashboardCommand(runtime, { noOpen: true });
+
+    expect(copyToClipboardMock).toHaveBeenCalledWith(
+      "https://fased-vps.tailnet.ts.net/#token=abc123",
+    );
+    expect(runtime.log).toHaveBeenCalledWith(
+      "Dashboard URL: https://fased-vps.tailnet.ts.net/#token=abc123",
     );
   });
 

@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   openUrl: vi.fn(),
   formatControlUiSshHint: vi.fn(),
   copyToClipboard: vi.fn(),
+  getTailnetHostname: vi.fn(),
 }));
 
 vi.mock("../config/config.js", () => ({
@@ -25,6 +26,14 @@ vi.mock("./onboard-helpers.js", () => ({
 
 vi.mock("../infra/clipboard.js", () => ({
   copyToClipboard: mocks.copyToClipboard,
+}));
+
+vi.mock("../infra/tailscale.js", () => ({
+  getTailnetHostname: mocks.getTailnetHostname,
+}));
+
+vi.mock("../process/exec.js", () => ({
+  runExec: vi.fn(),
 }));
 
 const runtime = {
@@ -67,6 +76,7 @@ describe("dashboardCommand", () => {
     mocks.openUrl.mockReset();
     mocks.formatControlUiSshHint.mockReset();
     mocks.copyToClipboard.mockReset();
+    mocks.getTailnetHostname.mockReset();
   });
 
   it("opens and copies the dashboard link by default", async () => {
