@@ -174,6 +174,10 @@ handle_existing_local_state() {
     set_installer_state_dir "$FASED_CONFIG_DIR"
     return 0
   fi
+  if [[ "$RUN_ONBOARD" -eq 0 ]]; then
+    set_installer_state_dir "$FASED_CONFIG_DIR"
+    return 0
+  fi
 
   local action="${FASED_EXISTING_DATA_ACTION:-}"
   if [[ -z "$action" && ( ! -t 0 || ! -t 1 ) ]]; then
@@ -184,6 +188,7 @@ handle_existing_local_state() {
     echo ""
     echo "Existing Fased data found at $FASED_CONFIG_DIR"
     echo "This can include sessions, wallets, provider keys, channel settings, and gateway tokens."
+    echo "Wallets and secrets are kept unless you delete them yourself."
     echo ""
     echo "Choose how this install should use local state:"
     echo "  1) Keep existing data (normal upgrade; preserves old settings and warnings)"

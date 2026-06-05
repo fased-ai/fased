@@ -9,7 +9,7 @@ const STORAGE_KEY = "fased.device.auth.v1";
 
 function readStore(): DeviceAuthStore | null {
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw = globalThis.localStorage?.getItem(STORAGE_KEY);
     if (!raw) {
       return null;
     }
@@ -31,7 +31,7 @@ function readStore(): DeviceAuthStore | null {
 
 function writeStore(store: DeviceAuthStore) {
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
+    globalThis.localStorage?.setItem(STORAGE_KEY, JSON.stringify(store));
   } catch {
     // best-effort
   }
@@ -92,4 +92,12 @@ export function clearDeviceAuthToken(params: { deviceId: string; role: string })
   const next = { ...store, tokens: { ...store.tokens } };
   delete next.tokens[role];
   writeStore(next);
+}
+
+export function clearAllDeviceAuthTokens() {
+  try {
+    globalThis.localStorage?.removeItem(STORAGE_KEY);
+  } catch {
+    // best-effort
+  }
 }

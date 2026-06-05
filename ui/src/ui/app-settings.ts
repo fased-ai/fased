@@ -44,6 +44,7 @@ import { loadSkills } from "./controllers/skills.ts";
 import { loadUsage } from "./controllers/usage.ts";
 import { loadWallet } from "./controllers/wallet.ts";
 import { loadWebhookTriggers } from "./controllers/webhook-triggers.ts";
+import { clearAllDeviceAuthTokens } from "./device-auth.ts";
 import {
   inferBasePathFromPathname,
   normalizeBasePath,
@@ -292,6 +293,7 @@ export async function applySettingsFromUrl(host?: SettingsHost) {
   const current = host?.settings ?? loadSettings();
   const explicitGatewayUrl = gatewayUrlRaw?.trim() ?? "";
   const tokenLikeUrl = tokenRaw != null || loginRaw != null || sessionRaw != null;
+  const hasAuthCredentialInUrl = Boolean(tokenRaw?.trim() || loginRaw?.trim());
   const currentGatewayUrl = current.gatewayUrl?.trim() ?? "";
   const sameOriginGatewayUrl = buildSameOriginGatewayUrl(host?.basePath);
   const inferredGatewayUrl = shouldInferSameOriginGatewayUrl({
@@ -325,6 +327,10 @@ export async function applySettingsFromUrl(host?: SettingsHost) {
     params.delete("login");
     hashParams.delete("login");
     shouldCleanUrl = true;
+  }
+
+  if (!gatewayUrlChanged && hasAuthCredentialInUrl) {
+    clearAllDeviceAuthTokens();
   }
 
   let repairedGatewayUrl = false;

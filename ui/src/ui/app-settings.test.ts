@@ -374,6 +374,51 @@ describe("applySettingsFromUrl", () => {
     expect(window.location.hash).toBe("");
   });
 
+  it("clears stale browser device auth when a hosted dashboard token is supplied", async () => {
+    setTestWindowUrl("https://fased-vps.tailnet.ts.net/#token=abc123");
+    localStorage.setItem(
+      "fased.device.auth.v1",
+      JSON.stringify({
+        version: 1,
+        deviceId: "old-device",
+        tokens: {
+          operator: {
+            token: "old-device-token",
+            role: "operator",
+            scopes: ["operator.admin"],
+            updatedAtMs: 1,
+          },
+        },
+      }),
+    );
+    const host = createHost("overview");
+    host.settings.gatewayUrl = "ws://127.0.0.1:18789";
+
+    await applySettingsFromUrl(asAppSettingsHost(host));
+
+    expect(localStorage.getItem("fased.device.auth.v1")).toBeNull();
+    expect(host.settings.gatewayUrl).toBe("wss://fased-vps.tailnet.ts.net");
+    expect(host.settings.token).toBe("abc123");
+  });
+
+  it("keeps browser device auth on tokenless hosted clean URLs", async () => {
+    setTestWindowUrl("https://fased-vps.tailnet.ts.net/dash");
+    localStorage.setItem(
+      "fased.device.auth.v1",
+      JSON.stringify({
+        version: 1,
+        deviceId: "device-1",
+        tokens: {},
+      }),
+    );
+    const host = createHost("overview");
+    host.settings.gatewayUrl = "ws://127.0.0.1:18789";
+
+    await applySettingsFromUrl(asAppSettingsHost(host));
+
+    expect(localStorage.getItem("fased.device.auth.v1")).not.toBeNull();
+  });
+
   it("repairs stale localhost gateway settings on hosted clean URLs", async () => {
     setTestWindowUrl("https://fased-vps.tailnet.ts.net/dash");
     const host = createHost("overview");
