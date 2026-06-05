@@ -4,7 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { CONTROL_UI_BOOTSTRAP_CONFIG_PATH } from "./control-ui-contract.js";
-import { handleControlUiAvatarRequest, handleControlUiHttpRequest } from "./control-ui.js";
+import {
+  handleControlUiAvatarRequest,
+  handleControlUiHttpRequest,
+  isControlUiStaticAssetPath,
+} from "./control-ui.js";
 import { makeMockHttpResponse } from "./test-http-response.js";
 
 describe("handleControlUiHttpRequest", () => {
@@ -166,6 +170,20 @@ describe("handleControlUiHttpRequest", () => {
         expect(chunk.setHeader).toHaveBeenCalledWith("Cache-Control", "no-store");
       },
     });
+  });
+
+  it("identifies only static dashboard asset paths for unauthenticated serving", () => {
+    expect(isControlUiStaticAssetPath("/assets/index-abc.js")).toBe(true);
+    expect(isControlUiStaticAssetPath("/assets/index-abc.css")).toBe(true);
+    expect(isControlUiStaticAssetPath("/manifest.webmanifest")).toBe(true);
+    expect(isControlUiStaticAssetPath("/favicon.svg")).toBe(true);
+    expect(isControlUiStaticAssetPath("/dash/assets/index-abc.js", "/dash")).toBe(true);
+
+    expect(isControlUiStaticAssetPath("/")).toBe(false);
+    expect(isControlUiStaticAssetPath("/index.html")).toBe(false);
+    expect(isControlUiStaticAssetPath("/api/control-ui/login/token")).toBe(false);
+    expect(isControlUiStaticAssetPath("/dash", "/dash")).toBe(false);
+    expect(isControlUiStaticAssetPath("/other/assets/index-abc.js", "/dash")).toBe(false);
   });
 
   it("serves bootstrap config JSON", async () => {

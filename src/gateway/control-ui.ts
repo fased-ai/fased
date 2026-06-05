@@ -77,6 +77,7 @@ const STATIC_ASSET_EXTENSIONS = new Set([
   ".css",
   ".json",
   ".map",
+  ".webmanifest",
   ".svg",
   ".png",
   ".jpg",
@@ -85,7 +86,38 @@ const STATIC_ASSET_EXTENSIONS = new Set([
   ".webp",
   ".ico",
   ".txt",
+  ".woff",
+  ".woff2",
 ]);
+
+export function isControlUiStaticAssetPath(pathname: string, basePath?: string): boolean {
+  const base = normalizeControlUiBasePath(basePath);
+  let uiPath = pathname;
+  if (base) {
+    if (pathname === base || !pathname.startsWith(`${base}/`)) {
+      return false;
+    }
+    uiPath = pathname.slice(base.length) || ROOT_PREFIX;
+  }
+  if (!uiPath.startsWith(ROOT_PREFIX)) {
+    return false;
+  }
+  if (uiPath === ROOT_PREFIX || uiPath.endsWith("/")) {
+    return false;
+  }
+  if (uiPath.includes("\0")) {
+    return false;
+  }
+  const ext = path.extname(uiPath).toLowerCase();
+  if (!STATIC_ASSET_EXTENSIONS.has(ext)) {
+    return false;
+  }
+  if (uiPath.startsWith("/assets/")) {
+    return true;
+  }
+  const rel = uiPath.slice(1);
+  return Boolean(rel) && !rel.includes("/");
+}
 
 export type ControlUiAvatarResolution =
   | { kind: "none"; reason: string }

@@ -182,6 +182,7 @@ import {
 import {
   handleControlUiAvatarRequest,
   handleControlUiHttpRequest,
+  isControlUiStaticAssetPath,
   type ControlUiRootState,
 } from "./control-ui.js";
 import { handleFederationHttpRequest } from "./federation-http.js";
@@ -10101,6 +10102,18 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
         const isControlUiRequest =
           (req.method === "GET" || req.method === "HEAD") &&
           isControlUiCandidatePath(requestPath, controlUiBasePath);
+        if (
+          isControlUiRequest &&
+          isRemoteHost &&
+          isControlUiStaticAssetPath(requestPath, controlUiBasePath) &&
+          handleControlUiHttpRequest(req, res, {
+            basePath: controlUiBasePath,
+            config: configSnapshot,
+            root: controlUiRoot,
+          })
+        ) {
+          return;
+        }
         if (isControlUiRequest && controlUiLogin && isRemoteHost) {
           const sessionToken = resolveControlUiSessionCookie(req);
           if (!sessionToken) {
