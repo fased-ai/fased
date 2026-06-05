@@ -85,7 +85,7 @@ async function loadSolanaWeb3(): Promise<SolanaModuleLike> {
       throw new WalletProviderError({
         code: "wallet_provider_invalid_config",
         message:
-          "embedded-keystore Solana support requires optional '@solana/web3.js'. Run 'pnpm install' in agent/fased to enable Solana.",
+          "embedded-keystore Solana support requires optional '@solana/web3.js'. Run 'pnpm install' in the Fased repository to enable Solana.",
       });
     }
   })();

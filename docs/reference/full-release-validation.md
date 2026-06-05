@@ -18,7 +18,7 @@ are available.
 
 ## Required Local Gate
 
-Start from `agent/fased`:
+Start from the Fased repository root:
 
 ```bash
 pnpm exec tsc --noEmit

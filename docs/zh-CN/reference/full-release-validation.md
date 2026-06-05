@@ -15,7 +15,7 @@ read_when:
 
 ## Required local gate
 
-从 `agent/fased` 开始：
+从 Fased 仓库根目录开始：
 
 ```bash
 pnpm check

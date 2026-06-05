@@ -45,7 +45,6 @@ import { applyMergePatch } from "./merge-patch.js";
 import { normalizeExecSafeBinProfilesInConfig } from "./normalize-exec-safe-bin.js";
 import { normalizeConfigPaths } from "./normalize-paths.js";
 import { resolveConfigPath, resolveDefaultConfigCandidates, resolveStateDir } from "./paths.js";
-import { repairMovedRepoPluginPaths } from "./plugin-path-migration.js";
 import { repairInstalledPluginAllowlist } from "./plugins-allowlist.js";
 import { isBlockedObjectKey } from "./prototype-keys.js";
 import { applyConfigOverrides } from "./runtime-overrides.js";
@@ -735,11 +734,8 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
         throw new DuplicateAgentDirError(preValidationDuplicates);
       }
       const prunedLegacyPlugins = pruneLegacyRemovedPlugins(resolvedConfig as FasedAgentConfig);
-      const movedRepoPathRepair = repairMovedRepoPluginPaths(prunedLegacyPlugins.config, {
-        pathExists: (candidate) => deps.fs.existsSync(candidate),
-      });
       const preValidationAllowlistRepair = repairInstalledPluginAllowlist(
-        movedRepoPathRepair.config,
+        prunedLegacyPlugins.config,
       );
       const validated = validateConfigObjectWithPlugins(preValidationAllowlistRepair.config);
       if (!validated.ok) {
@@ -818,17 +814,6 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
             .catch(() => {})
             .finally(() => {
               AUTO_LEGACY_REMOVED_PLUGIN_PERSIST_IN_FLIGHT.delete(key);
-            });
-        }
-      }
-      if (movedRepoPathRepair.changed) {
-        const key = `${configPath}:moved-repo-plugin-paths`;
-        if (!AUTO_MOVED_REPO_PLUGIN_PATH_REPAIR_PERSIST_IN_FLIGHT.has(key)) {
-          AUTO_MOVED_REPO_PLUGIN_PATH_REPAIR_PERSIST_IN_FLIGHT.add(key);
-          void writeConfigFile(cfgWithOwnerDisplaySecret, { expectedConfigPath: configPath })
-            .catch(() => {})
-            .finally(() => {
-              AUTO_MOVED_REPO_PLUGIN_PATH_REPAIR_PERSIST_IN_FLIGHT.delete(key);
             });
         }
       }
@@ -1004,10 +989,7 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
       const prunedLegacyPlugins = pruneLegacyRemovedPlugins(
         readResolution.resolvedConfigRaw as FasedAgentConfig,
       );
-      const movedRepoPathRepair = repairMovedRepoPluginPaths(prunedLegacyPlugins.config, {
-        pathExists: (candidate) => deps.fs.existsSync(candidate),
-      });
-      const resolvedConfigRaw = movedRepoPathRepair.config;
+      const resolvedConfigRaw = prunedLegacyPlugins.config;
       const legacyIssues = findLegacyConfigIssues(resolvedConfigRaw);
       const preValidationAllowlistRepair = repairInstalledPluginAllowlist(resolvedConfigRaw);
 
@@ -1060,17 +1042,6 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
             .catch(() => {})
             .finally(() => {
               AUTO_LEGACY_REMOVED_PLUGIN_PERSIST_IN_FLIGHT.delete(key);
-            });
-        }
-      }
-      if (movedRepoPathRepair.changed) {
-        const key = `${configPath}:moved-repo-plugin-paths`;
-        if (!AUTO_MOVED_REPO_PLUGIN_PATH_REPAIR_PERSIST_IN_FLIGHT.has(key)) {
-          AUTO_MOVED_REPO_PLUGIN_PATH_REPAIR_PERSIST_IN_FLIGHT.add(key);
-          void writeConfigFile(repairedSnapshotConfig, { expectedConfigPath: configPath })
-            .catch(() => {})
-            .finally(() => {
-              AUTO_MOVED_REPO_PLUGIN_PATH_REPAIR_PERSIST_IN_FLIGHT.delete(key);
             });
         }
       }
@@ -1427,7 +1398,6 @@ const AUTO_OWNER_DISPLAY_SECRET_PERSIST_IN_FLIGHT = new Set<string>();
 const AUTO_OWNER_DISPLAY_SECRET_PERSIST_WARNED = new Set<string>();
 const AUTO_LEGACY_REMOVED_PLUGIN_PERSIST_IN_FLIGHT = new Set<string>();
 const AUTO_INSTALLED_PLUGIN_ALLOWLIST_REPAIR_PERSIST_IN_FLIGHT = new Set<string>();
-const AUTO_MOVED_REPO_PLUGIN_PATH_REPAIR_PERSIST_IN_FLIGHT = new Set<string>();
 let configCache: {
   configPath: string;
   expiresAt: number;

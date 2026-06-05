@@ -91,13 +91,13 @@ Install targets mean:
 Skills have a **source** and a separate **readiness state**. Do not treat those
 as the same thing.
 
-| Source          | What it means                                             | Where it lives                             |
-| --------------- | --------------------------------------------------------- | ------------------------------------------ |
-| Bundled         | Shipped with Fased. Read-only until copied.               | `agent/fased/skills/...` or the app bundle |
-| Shared library  | Installed or created once for all Agents on this machine. | `~/.fased/skills/...`                      |
-| Agent workspace | Editable skill owned by one Agent workspace.              | `<agent workspace>/skills/...`             |
-| Plugin catalog  | Downloaded after review from the skills registry.         | Shared library or an Agent workspace       |
-| Plugin skill    | Supplied by an enabled extension.                         | The extension's skill directory            |
+| Source          | What it means                                             | Where it lives                        |
+| --------------- | --------------------------------------------------------- | ------------------------------------- |
+| Bundled         | Shipped with Fased. Read-only until copied.               | `<repo>/skills/...` or the app bundle |
+| Shared library  | Installed or created once for all Agents on this machine. | `~/.fased/skills/...`                 |
+| Agent workspace | Editable skill owned by one Agent workspace.              | `<agent workspace>/skills/...`        |
+| Plugin catalog  | Downloaded after review from the skills registry.         | Shared library or an Agent workspace  |
+| Plugin skill    | Supplied by an enabled extension.                         | The extension's skill directory       |
 
 Readiness blockers tell the operator what still needs setup:
 

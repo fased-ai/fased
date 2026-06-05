@@ -18,7 +18,6 @@ HOSTING_REQUESTED=0
 REQUESTED_SWAP_GB=""
 TEMP_SUDOERS=""
 FASED_CLI_PATH=""
-MARKER_REPO_PATH_MIGRATED=0
 
 ORIGINAL_INSTALL_ARGS=("$@")
 pass_args=()
@@ -286,10 +285,6 @@ resolve_fased_dir_from_base() {
     printf '%s\n' "$base"
     return 0
   fi
-  if is_fased_repo_dir "$base/agent/fased"; then
-    printf '%s\n' "$base/agent/fased"
-    return 0
-  fi
   return 1
 }
 
@@ -529,23 +524,6 @@ assert_marker_matches_repo() {
   local marker_repo
   marker_repo="$(read_marker_repo_path || true)"
   if [[ -n "$marker_repo" && "$marker_repo" != "$repo_root" ]]; then
-    if [[ "$(basename "$marker_repo")" == "agent" && "$(basename "$repo_root")" == "fased" && "$(dirname "$marker_repo")" == "$(dirname "$repo_root")" ]]; then
-      MARKER_REPO_PATH_MIGRATED=1
-      if [[ "$INSTALL_VERBOSE" == "1" ]]; then
-        echo "Install marker uses old hosted path ($marker_repo); continuing with $repo_root."
-      fi
-      return 0
-    fi
-    if [[ "$(basename "$marker_repo")" == "fased" \
-      && "$(basename "$repo_root")" == "fased" \
-      && "$(basename "$(dirname "$marker_repo")")" == "agent" \
-      && "$(dirname "$(dirname "$marker_repo")")" == "$(dirname "$repo_root")" ]]; then
-      MARKER_REPO_PATH_MIGRATED=1
-      if [[ "$INSTALL_VERBOSE" == "1" ]]; then
-        echo "Install marker uses old repo path ($marker_repo); continuing with $repo_root."
-      fi
-      return 0
-    fi
     echo "Install marker mismatch." >&2
     echo "Marker repoPath: $marker_repo" >&2
     echo "Current repoPath: $repo_root" >&2
@@ -905,7 +883,7 @@ reexec_as_app_user() {
   target_repo_dir="$(resolve_fased_dir_from_base "$target_install_dir" || true)"
   if [[ -z "$target_repo_dir" ]]; then
     echo "Install bootstrap failed: could not find Fased repo under $target_install_dir" >&2
-    echo "Expected either a standalone repo checkout or a nested agent/fased checkout." >&2
+    echo "Expected a standalone fased repository checkout." >&2
     exit 1
   fi
   configure_target_user_fased_shell_dir "$target_user" "$target_home" "$target_repo_dir"
@@ -1263,14 +1241,6 @@ bootstrap_repo_for_target_user() {
   fi
 
   mkdir -p "$(dirname "$target_install_dir")"
-  if [[ ! -e "$target_install_dir" && "$(basename "$target_install_dir")" == "fased" ]]; then
-    local old_default_dir
-    old_default_dir="$(dirname "$target_install_dir")/agent"
-    if [[ -d "$old_default_dir/.git" || -d "$old_default_dir/agent/fased" ]]; then
-      echo "== Root bootstrap: migrating old app checkout $old_default_dir to $target_install_dir =="
-      mv "$old_default_dir" "$target_install_dir"
-    fi
-  fi
   if [[ ! -e "$target_install_dir" ]]; then
     if [[ -n "$source_repo" && -d "$source_repo/.git" ]]; then
       echo "== Root bootstrap: copying current checkout into $target_install_dir =="
@@ -1280,7 +1250,7 @@ bootstrap_repo_for_target_user() {
       echo "== Root bootstrap: cloning repository into $target_install_dir =="
       git clone "$INSTALL_REPO_URL" "$target_install_dir"
     fi
-  elif [[ -d "$target_install_dir/.git" || -d "$target_install_dir/agent/fased" ]]; then
+  elif [[ -d "$target_install_dir/.git" ]]; then
     if [[ -n "$source_repo" && -d "$source_repo/.git" ]]; then
       local source_head=""
       local target_head=""
@@ -1385,7 +1355,7 @@ if [[ ! -f "$FASED_DIR/package.json" || ! -d "$FASED_DIR/src" ]]; then
   if [[ ! -e "$INSTALL_BASE_DIR" ]]; then
     mkdir -p "$(dirname "$INSTALL_BASE_DIR")"
     git clone "$INSTALL_REPO_URL" "$INSTALL_BASE_DIR"
-  elif [[ -d "$INSTALL_BASE_DIR/.git" || -d "$INSTALL_BASE_DIR/agent/fased" ]]; then
+  elif [[ -d "$INSTALL_BASE_DIR/.git" ]]; then
     :
   else
     echo "Refusing to overwrite existing path: $INSTALL_BASE_DIR" >&2
@@ -1396,7 +1366,7 @@ if [[ ! -f "$FASED_DIR/package.json" || ! -d "$FASED_DIR/src" ]]; then
   BOOTSTRAP_REPO_DIR="$(resolve_fased_dir_from_base "$INSTALL_BASE_DIR" || true)"
   if [[ -z "$BOOTSTRAP_REPO_DIR" ]]; then
     echo "Bootstrap failed: could not find install.sh under $INSTALL_BASE_DIR" >&2
-    echo "Expected either a standalone repo checkout or a nested agent/fased checkout." >&2
+    echo "Expected a standalone fased repository checkout." >&2
     exit 1
   fi
   exec "$BOOTSTRAP_REPO_DIR/install.sh" "${pass_args[@]}"
@@ -1410,9 +1380,6 @@ refresh_current_checkout_and_reexec_if_needed
 
 REPO_ROOT="$(resolve_repo_root)"
 assert_marker_matches_repo "$REPO_ROOT"
-if [[ "$MARKER_REPO_PATH_MIGRATED" -eq 1 ]]; then
-  write_install_marker "$REPO_ROOT" "false"
-fi
 prefer_compatible_user_node_if_available || prefer_compatible_system_node_if_available || true
 export COREPACK_HOME="${COREPACK_HOME:-$INSTALL_CACHE_DIR/corepack}"
 export COREPACK_ENABLE_DOWNLOAD_PROMPT="${COREPACK_ENABLE_DOWNLOAD_PROMPT:-0}"
