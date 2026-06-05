@@ -127,16 +127,16 @@ function resolveForwardedOriginHost(
   return hasTailscaleProxyHeaders ? forwardedHost : undefined;
 }
 
-function isTrustedHttpsControlUiProxyContext(
+function resolveTrustedHttpsControlUiProxyOriginHost(
   req: IncomingMessage,
   params: {
     remoteAddr?: string;
     requestOrigin?: string;
     trustedProxies?: string[];
   },
-): boolean {
+): string | undefined {
   if (!params.remoteAddr || !isTrustedProxyAddress(params.remoteAddr, params.trustedProxies)) {
-    return false;
+    return undefined;
   }
   const forwardedProto = firstForwardedHeaderValue(req.headers["x-forwarded-proto"])
     ?.toLowerCase()
@@ -144,14 +144,23 @@ function isTrustedHttpsControlUiProxyContext(
   const forwardedHost = firstForwardedHeaderValue(req.headers["x-forwarded-host"])
     ?.toLowerCase()
     .trim();
-  if (forwardedProto !== "https" || !forwardedHost || !params.requestOrigin) {
-    return false;
+  if (forwardedProto !== "https" || !params.requestOrigin) {
+    return undefined;
   }
   try {
     const origin = new URL(params.requestOrigin);
-    return origin.protocol === "https:" && origin.host.toLowerCase() === forwardedHost;
+    if (origin.protocol !== "https:") {
+      return undefined;
+    }
+    const originHost = origin.host.toLowerCase();
+    if (forwardedHost) {
+      return originHost === forwardedHost ? forwardedHost : undefined;
+    }
+    const hasTailscaleIdentity = Boolean(firstHeaderValue(req.headers["tailscale-user-login"]));
+    const hasForwardedClient = Boolean(firstForwardedHeaderValue(req.headers["x-forwarded-for"]));
+    return hasTailscaleIdentity && hasForwardedClient ? originHost : undefined;
   } catch {
-    return false;
+    return undefined;
   }
 }
 
@@ -369,17 +378,21 @@ export function attachGatewayWsMessageHandler(params: {
   const isLocalClient =
     isLocalDirectRequest(upgradeReq, trustedProxies, allowRealIpFallback) &&
     !hasLoopbackNonLocalHost;
+  const trustedTailscaleServeControlUiHost =
+    configSnapshot.gateway?.tailscale?.mode === "serve"
+      ? resolveTrustedHttpsControlUiProxyOriginHost(upgradeReq, {
+          remoteAddr,
+          requestOrigin,
+          trustedProxies,
+        })
+      : undefined;
+  const trustedTailscaleServeControlUiContext = Boolean(trustedTailscaleServeControlUiHost);
   const originRequestHost =
     !isLocalClient && isLoopbackAddress(remoteAddr)
-      ? (resolveForwardedOriginHost(upgradeReq, { remoteAddr, trustedProxies }) ?? requestHost)
+      ? (trustedTailscaleServeControlUiHost ??
+        resolveForwardedOriginHost(upgradeReq, { remoteAddr, trustedProxies }) ??
+        requestHost)
       : requestHost;
-  const trustedTailscaleServeControlUiContext =
-    configSnapshot.gateway?.tailscale?.mode === "serve" &&
-    isTrustedHttpsControlUiProxyContext(upgradeReq, {
-      remoteAddr,
-      requestOrigin,
-      trustedProxies,
-    });
   const reportedClientIp =
     isLocalClient || hasUntrustedProxyHeaders
       ? undefined
