@@ -45,6 +45,16 @@ async function settleUntil(
 }
 
 describe("app task model inheritance", () => {
+  it("keeps a visible dashboard error screen for browser runtime failures", async () => {
+    const app = mountApp("/");
+
+    window.dispatchEvent(new ErrorEvent("error", { message: "hosted dashboard smoke failure" }));
+    await settleApp(app);
+
+    expect(app.textContent).toContain("Dashboard could not finish opening");
+    expect(app.textContent).toContain("hosted dashboard smoke failure");
+  });
+
   it("renders the memory route as a normal SPA page", async () => {
     const app = mountApp("/memory");
     app.applySettings({ ...app.settings, token: "owner-token-for-memory-route" });

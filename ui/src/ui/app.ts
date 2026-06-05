@@ -1,4 +1,4 @@
-import { LitElement } from "lit";
+import { html, LitElement } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import {
   handleChannelInstall as handleChannelInstallInternal,
@@ -1123,6 +1123,7 @@ export class FasedAgentApp extends LitElement {
   @state() hello: GatewayHelloOk | null = null;
   @state() lastError: string | null = null;
   @state() lastErrorCode: string | null = null;
+  @state() uiRuntimeError: string | null = null;
   @state() eventLog: EventLogEntry[] = [];
   private eventLogBuffer: EventLogEntry[] = [];
   private toolStreamSyncTimer: number | null = null;
@@ -2033,6 +2034,23 @@ export class FasedAgentApp extends LitElement {
   private hashChangeHandler = () => {
     void applySettingsFromUrlInternal();
   };
+  private runtimeErrorHandler = (event: ErrorEvent) => {
+    const message =
+      event.error instanceof Error
+        ? (event.error.stack ?? event.error.message)
+        : event.message || "Unknown browser runtime error.";
+    this.reportUiRuntimeError(message);
+  };
+  private runtimeRejectionHandler = (event: PromiseRejectionEvent) => {
+    const reason = event.reason;
+    const message =
+      reason instanceof Error
+        ? (reason.stack ?? reason.message)
+        : typeof reason === "string"
+          ? reason
+          : "Unhandled browser promise rejection.";
+    this.reportUiRuntimeError(message);
+  };
   private themeMedia: MediaQueryList | null = null;
   private themeMediaHandler: ((event: MediaQueryListEvent) => void) | null = null;
   private topbarObserver: ResizeObserver | null = null;
@@ -2048,6 +2066,8 @@ export class FasedAgentApp extends LitElement {
 
   connectedCallback() {
     super.connectedCallback();
+    window.addEventListener("error", this.runtimeErrorHandler);
+    window.addEventListener("unhandledrejection", this.runtimeRejectionHandler);
     handleConnected(this as unknown as Parameters<typeof handleConnected>[0]);
   }
 
@@ -2075,6 +2095,8 @@ export class FasedAgentApp extends LitElement {
     }
     this.selectEnhancerCleanup?.();
     this.selectEnhancerCleanup = null;
+    window.removeEventListener("error", this.runtimeErrorHandler);
+    window.removeEventListener("unhandledrejection", this.runtimeRejectionHandler);
     handleDisconnected(this as unknown as Parameters<typeof handleDisconnected>[0]);
     super.disconnectedCallback();
   }
@@ -2119,7 +2141,117 @@ export class FasedAgentApp extends LitElement {
   }
 
   connect() {
+    this.uiRuntimeError = null;
     connectGatewayInternal(this as unknown as Parameters<typeof connectGatewayInternal>[0]);
+  }
+
+  private reportUiRuntimeError(message: string) {
+    const cleaned = message.trim() || "Unknown browser runtime error.";
+    if (this.uiRuntimeError !== cleaned) {
+      this.uiRuntimeError = cleaned;
+    }
+    console.error("[control-ui] runtime error", cleaned);
+  }
+
+  private resetBrowserSessionAndReload() {
+    try {
+      window.localStorage.removeItem("fased.control.settings.v1");
+      window.localStorage.removeItem("fased.control.token.local.v1");
+      window.sessionStorage.removeItem("fased.control.token.session.v1");
+      for (const key of Object.keys(window.sessionStorage)) {
+        if (key.startsWith("fased-control-ui:lazy-tab-reload:")) {
+          window.sessionStorage.removeItem(key);
+        }
+      }
+    } catch {
+      // Reload anyway; storage can be blocked by browser privacy settings.
+    }
+    window.location.reload();
+  }
+
+  private renderUiRuntimeError(message: string) {
+    return html`
+      <style>
+        .fatal-page {
+          min-height: 100vh;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: #080e1a;
+          color: #e2e8f0;
+          font-family: system-ui, -apple-system, sans-serif;
+          padding: 24px;
+          box-sizing: border-box;
+        }
+        .fatal-card {
+          width: 100%;
+          max-width: 560px;
+          background: #0f1929;
+          border: 1px solid rgba(248, 113, 113, 0.28);
+          border-radius: 16px;
+          padding: 32px;
+          box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+        }
+        .fatal-title {
+          margin: 0 0 8px;
+          font-size: 22px;
+          font-weight: 700;
+          color: #f0f4ff;
+        }
+        .fatal-desc {
+          margin: 0 0 18px;
+          color: #9aa5bf;
+          line-height: 1.6;
+        }
+        .fatal-error {
+          max-height: 180px;
+          overflow: auto;
+          white-space: pre-wrap;
+          word-break: break-word;
+          background: #060d1a;
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          border-radius: 10px;
+          padding: 12px;
+          color: #fca5a5;
+          font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+          font-size: 12px;
+        }
+        .fatal-actions {
+          display: flex;
+          gap: 10px;
+          flex-wrap: wrap;
+          margin-top: 20px;
+        }
+        .fatal-btn {
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          border-radius: 10px;
+          background: #1d4ed8;
+          color: white;
+          padding: 10px 14px;
+          font-weight: 650;
+          cursor: pointer;
+        }
+        .fatal-btn.secondary {
+          background: #111827;
+        }
+      </style>
+      <div class="fatal-page">
+        <section class="fatal-card">
+          <h1 class="fatal-title">Dashboard could not finish opening</h1>
+          <p class="fatal-desc">
+            The gateway is reachable, but the browser app hit a runtime error. Reload first. If it
+            keeps happening after an update, reset only this browser session and sign in again.
+          </p>
+          <div class="fatal-error">${message}</div>
+          <div class="fatal-actions">
+            <button class="fatal-btn" @click=${() => window.location.reload()}>Reload</button>
+            <button class="fatal-btn secondary" @click=${() => this.resetBrowserSessionAndReload()}>
+              Reset browser session
+            </button>
+          </div>
+        </section>
+      </div>
+    `;
   }
 
   async exchangeLoginGrant(grant?: string) {
@@ -7128,6 +7260,15 @@ export class FasedAgentApp extends LitElement {
   }
 
   render() {
-    return renderApp(this as unknown as AppViewState);
+    if (this.uiRuntimeError) {
+      return this.renderUiRuntimeError(this.uiRuntimeError);
+    }
+    try {
+      return renderApp(this as unknown as AppViewState);
+    } catch (error) {
+      const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
+      queueMicrotask(() => this.reportUiRuntimeError(message));
+      return this.renderUiRuntimeError(message);
+    }
   }
 }

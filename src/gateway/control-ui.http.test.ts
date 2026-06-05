@@ -46,7 +46,7 @@ describe("handleControlUiHttpRequest", () => {
     rootPath: string;
     basePath?: string;
   }) {
-    const { res, end } = makeMockHttpResponse();
+    const { res, end, setHeader } = makeMockHttpResponse();
     const handled = handleControlUiHttpRequest(
       { url: params.url, method: params.method } as IncomingMessage,
       res,
@@ -55,7 +55,7 @@ describe("handleControlUiHttpRequest", () => {
         root: { kind: "resolved", path: params.rootPath },
       },
     );
-    return { res, end, handled };
+    return { res, end, setHeader, handled };
   }
 
   function runAvatarRequest(params: {
@@ -142,6 +142,28 @@ describe("handleControlUiHttpRequest", () => {
         );
         expect(handled).toBe(true);
         expect(end).toHaveBeenCalledWith(html);
+      },
+    });
+  });
+
+  it("serves dashboard shell and chunks without browser caching", async () => {
+    await withControlUiRoot({
+      fn: async (tmp) => {
+        await writeAssetFile(tmp, "app.js", "console.log('fased');\n");
+
+        const shell = runControlUiRequest({ url: "/", method: "GET", rootPath: tmp });
+        expect(shell.handled).toBe(true);
+        expect(shell.res.statusCode).toBe(200);
+        expect(shell.setHeader).toHaveBeenCalledWith("Cache-Control", "no-store");
+
+        const chunk = runControlUiRequest({
+          url: "/assets/app.js",
+          method: "GET",
+          rootPath: tmp,
+        });
+        expect(chunk.handled).toBe(true);
+        expect(chunk.res.statusCode).toBe(200);
+        expect(chunk.setHeader).toHaveBeenCalledWith("Cache-Control", "no-store");
       },
     });
   });
