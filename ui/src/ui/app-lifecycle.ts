@@ -49,16 +49,19 @@ type LifecycleHost = {
 export function handleConnected(host: LifecycleHost) {
   host.basePath = inferBasePath();
   void loadControlUiBootstrapConfig(host);
-  void applySettingsFromUrl(host as unknown as Parameters<typeof applySettingsFromUrl>[0]);
   syncTabWithLocation(host as unknown as Parameters<typeof syncTabWithLocation>[0], true);
   syncThemeWithSettings(host as unknown as Parameters<typeof syncThemeWithSettings>[0]);
   attachThemeListener(host as unknown as Parameters<typeof attachThemeListener>[0]);
   window.addEventListener("popstate", host.popStateHandler);
   // Only connect if we already have a saved token — otherwise the login page
   // is shown and the user will call connect() after signing in.
-  if (host.settings.token.trim()) {
-    connectGateway(host as unknown as Parameters<typeof connectGateway>[0]);
-  }
+  void applySettingsFromUrl(host as unknown as Parameters<typeof applySettingsFromUrl>[0]).then(
+    () => {
+      if (host.settings.token.trim() && !host.client) {
+        connectGateway(host as unknown as Parameters<typeof connectGateway>[0]);
+      }
+    },
+  );
   startNodesPolling(host as unknown as Parameters<typeof startNodesPolling>[0]);
   if (host.tab === "logs") {
     startLogsPolling(host as unknown as Parameters<typeof startLogsPolling>[0]);

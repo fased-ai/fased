@@ -73,11 +73,12 @@ function createHost() {
 describe("handleConnected", () => {
   beforeEach(() => {
     applySettingsFromUrlMock.mockReset();
+    applySettingsFromUrlMock.mockResolvedValue(undefined);
     connectGatewayMock.mockReset();
     loadBootstrapMock.mockReset();
   });
 
-  it("starts gateway connect while bootstrap loading continues", async () => {
+  it("starts gateway connect after URL settings are applied while bootstrap loading continues", async () => {
     let resolveBootstrap!: () => void;
     loadBootstrapMock.mockReturnValueOnce(
       new Promise<void>((resolve) => {
@@ -88,6 +89,8 @@ describe("handleConnected", () => {
     const host = createHost();
 
     handleConnected(host as never);
+    expect(connectGatewayMock).not.toHaveBeenCalled();
+    await Promise.resolve();
     expect(connectGatewayMock).toHaveBeenCalledTimes(1);
 
     resolveBootstrap();
@@ -107,6 +110,7 @@ describe("handleConnected", () => {
     host.settings.token = "";
 
     handleConnected(host as never);
+    await Promise.resolve();
     expect(connectGatewayMock).not.toHaveBeenCalled();
 
     resolveBootstrap();
@@ -126,5 +130,17 @@ describe("handleConnected", () => {
     expect(loadBootstrapMock.mock.invocationCallOrder[0]).toBeLessThan(
       applySettingsFromUrlMock.mock.invocationCallOrder[0],
     );
+  });
+
+  it("does not start a duplicate connect when URL settings already started one", async () => {
+    const host = createHost();
+    applySettingsFromUrlMock.mockImplementationOnce(async () => {
+      (host as { client: { stop: () => void } | null }).client = { stop: vi.fn() };
+    });
+
+    handleConnected(host as never);
+    await Promise.resolve();
+
+    expect(connectGatewayMock).not.toHaveBeenCalled();
   });
 });
