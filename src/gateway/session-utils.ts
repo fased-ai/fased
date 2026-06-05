@@ -8,6 +8,7 @@ import {
   parseModelRef,
   resolveConfiguredModelRef,
   resolveDefaultModelForAgent,
+  resolveExplicitConfiguredModelRef,
 } from "../agents/model-selection.js";
 import { isCacheEnabled, resolveCacheTtlMs } from "../config/cache-utils.js";
 import { type FasedAgentConfig, loadConfig } from "../config/config.js";
@@ -797,11 +798,17 @@ export function loadCombinedSessionStoreForGateway(
 }
 
 export function getSessionDefaults(cfg: FasedAgentConfig): GatewaySessionsDefaults {
-  const resolved = resolveConfiguredModelRef({
+  const resolved = resolveExplicitConfiguredModelRef({
     cfg,
     defaultProvider: DEFAULT_PROVIDER,
-    defaultModel: DEFAULT_MODEL,
   });
+  if (!resolved) {
+    return {
+      modelProvider: null,
+      model: null,
+      contextTokens: cfg.agents?.defaults?.contextTokens ?? null,
+    };
+  }
   const contextTokens =
     cfg.agents?.defaults?.contextTokens ??
     lookupContextTokens(resolved.model) ??

@@ -9,6 +9,7 @@ import {
   classifySessionKey,
   clearCombinedSessionStoreCacheForTest,
   deriveSessionTitle,
+  getSessionDefaults,
   listAgentsForGateway,
   listSessionsFromStore,
   loadCombinedSessionStoreForGateway,
@@ -512,6 +513,37 @@ describe("resolveSessionModelRef", () => {
     });
 
     expect(resolved).toEqual({ provider: "anthropic", model: "claude-sonnet-4-6" });
+  });
+});
+
+describe("getSessionDefaults", () => {
+  test("does not report fallback provider/model when no primary model is configured", () => {
+    const cfg = {
+      agents: {
+        defaults: {},
+      },
+    } as FasedAgentConfig;
+
+    expect(getSessionDefaults(cfg)).toEqual({
+      modelProvider: null,
+      model: null,
+      contextTokens: null,
+    });
+  });
+
+  test("reports explicitly configured provider/model defaults", () => {
+    const cfg = {
+      agents: {
+        defaults: {
+          model: { primary: "openai/gpt-5.5" },
+        },
+      },
+    } as FasedAgentConfig;
+
+    expect(getSessionDefaults(cfg)).toMatchObject({
+      modelProvider: "openai",
+      model: "gpt-5.5",
+    });
   });
 });
 
