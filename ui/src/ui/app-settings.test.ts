@@ -388,6 +388,20 @@ describe("applySettingsFromUrl", () => {
     expect(host.connect).toHaveBeenCalledTimes(1);
   });
 
+  it("repairs stale same-origin gateway paths on hosted clean URLs", async () => {
+    setTestWindowUrl("https://fased-vps.tailnet.ts.net/dash");
+    const host = createHost("overview");
+    host.settings.gatewayUrl = "wss://fased-vps.tailnet.ts.net/dash";
+    host.connect = vi.fn();
+
+    await applySettingsFromUrl(asAppSettingsHost(host));
+
+    expect(host.settings.gatewayUrl).toBe("wss://fased-vps.tailnet.ts.net");
+    expect(host.pendingGatewayUrl).toBeNull();
+    expect(host.pendingGatewayToken).toBeNull();
+    expect(host.connect).toHaveBeenCalledTimes(1);
+  });
+
   it("prefers fragment tokens over legacy query tokens when both are present", async () => {
     setTestWindowUrl("https://control.example/ui/overview?token=query-token#token=hash-token");
     const host = createHost("overview");

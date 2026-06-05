@@ -160,6 +160,7 @@ function shouldInferSameOriginGatewayUrl(params: {
   explicitGatewayUrl: string;
   tokenLikeUrl: boolean;
   currentGatewayUrl: string;
+  sameOriginGatewayUrl: string;
 }): boolean {
   if (params.explicitGatewayUrl) {
     return false;
@@ -170,7 +171,13 @@ function shouldInferSameOriginGatewayUrl(params: {
   if (window.location.protocol !== "https:" || isLoopbackHostname(window.location.hostname)) {
     return false;
   }
-  return !params.currentGatewayUrl || isLoopbackGatewayUrl(params.currentGatewayUrl);
+  if (!params.currentGatewayUrl || isLoopbackGatewayUrl(params.currentGatewayUrl)) {
+    return true;
+  }
+  return (
+    isSameOriginGatewayUrl(params.currentGatewayUrl) &&
+    params.currentGatewayUrl !== params.sameOriginGatewayUrl
+  );
 }
 
 function buildSameOriginGatewayUrl(basePath?: string | null): string {
@@ -286,12 +293,14 @@ export async function applySettingsFromUrl(host?: SettingsHost) {
   const explicitGatewayUrl = gatewayUrlRaw?.trim() ?? "";
   const tokenLikeUrl = tokenRaw != null || loginRaw != null || sessionRaw != null;
   const currentGatewayUrl = current.gatewayUrl?.trim() ?? "";
+  const sameOriginGatewayUrl = buildSameOriginGatewayUrl(host?.basePath);
   const inferredGatewayUrl = shouldInferSameOriginGatewayUrl({
     explicitGatewayUrl,
     tokenLikeUrl,
     currentGatewayUrl,
+    sameOriginGatewayUrl,
   })
-    ? buildSameOriginGatewayUrl(host?.basePath)
+    ? sameOriginGatewayUrl
     : "";
   const gatewayUrl = explicitGatewayUrl || inferredGatewayUrl;
   const gatewayUrlChanged =

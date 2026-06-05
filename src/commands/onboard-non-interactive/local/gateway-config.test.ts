@@ -24,5 +24,6 @@ describe("non-interactive gateway config", () => {
     expect(result?.bind).toBe("loopback");
     expect(result?.tailscaleMode).toBe("serve");
     expect(result?.nextConfig.gateway?.trustedProxies).toEqual(["127.0.0.1/32", "::1/128"]);
+    expect(result?.nextConfig.gateway?.controlUi?.allowInsecureAuth).toBe(true);
   });
 });

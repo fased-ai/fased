@@ -275,6 +275,13 @@ export async function configureGatewayForOnboarding(
               ]),
             )
           : nextConfig.gateway?.trustedProxies,
+      controlUi:
+        strictHosting && tailscaleMode === "serve"
+          ? {
+              ...nextConfig.gateway?.controlUi,
+              allowInsecureAuth: true,
+            }
+          : nextConfig.gateway?.controlUi,
       ...(bind === "custom" && customBindHost ? { customBindHost } : {}),
       tailscale: {
         ...nextConfig.gateway?.tailscale,

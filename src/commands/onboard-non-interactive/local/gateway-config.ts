@@ -108,6 +108,13 @@ export function applyNonInteractiveGatewayConfig(params: {
               ]),
             )
           : nextConfig.gateway?.trustedProxies,
+      controlUi:
+        hostingProfile && tailscaleMode === "serve"
+          ? {
+              ...nextConfig.gateway?.controlUi,
+              allowInsecureAuth: true,
+            }
+          : nextConfig.gateway?.controlUi,
       tailscale: {
         ...nextConfig.gateway?.tailscale,
         mode: tailscaleMode,

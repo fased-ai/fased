@@ -203,6 +203,7 @@ describe("configureGatewayForOnboarding", () => {
     expect(result.settings.tailscaleMode).toBe("serve");
     expect(result.settings.gatewayToken).toBe("strict-token");
     expect(result.nextConfig.gateway?.trustedProxies).toEqual(["127.0.0.1/32", "::1/128"]);
+    expect(result.nextConfig.gateway?.controlUi?.allowInsecureAuth).toBe(true);
     expect(prompter.note).not.toHaveBeenCalledWith(
       expect.stringContaining("Tailscale binary not found"),
       "Tailscale Warning",
