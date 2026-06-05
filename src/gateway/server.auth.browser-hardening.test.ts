@@ -339,6 +339,69 @@ describe("gateway auth browser hardening", () => {
     );
   });
 
+  test("accepts hosted dashboard signed device when Serve omits forwarded headers", async () => {
+    testState.gatewayAuth = { mode: "token", token: "secret" };
+    const { writeConfigFile } = await import("../config/config.js");
+    await writeConfigFile({
+      gateway: {
+        trustedProxies: ["127.0.0.1/32", "::1/128"],
+        tailscale: { mode: "serve" },
+      },
+      // oxlint-disable-next-line typescript/no-explicit-any
+    } as any);
+
+    await withGatewayServer(
+      async ({ port }) => {
+        const loginResponse = await fetch(`http://127.0.0.1:${port}/api/control-ui/login/token`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            origin: "https://fased-vps.tailnet.ts.net",
+          },
+          body: JSON.stringify({ token: "secret" }),
+        });
+        const login = (await loginResponse.json()) as { ok?: boolean; sessionToken?: string };
+        expect(loginResponse.ok).toBe(true);
+        expect(login.ok).toBe(true);
+        expect(login.sessionToken).toEqual(expect.any(String));
+
+        const ws = await openWs(port, {
+          origin: "https://fased-vps.tailnet.ts.net",
+        });
+        try {
+          const nonce = await readConnectChallengeNonce(ws);
+          const scopes = ["operator.admin", "operator.read", "operator.write"];
+          const { device } = await createSignedDevice({
+            token: login.sessionToken ?? "",
+            scopes,
+            clientId: GATEWAY_CLIENT_NAMES.CONTROL_UI,
+            clientMode: GATEWAY_CLIENT_MODES.UI,
+            identityPath: path.join(
+              os.tmpdir(),
+              `fased-hosted-session-device-${randomUUID()}.json`,
+            ),
+            nonce: String(nonce ?? ""),
+          });
+          const res = await connectReq(ws, {
+            token: login.sessionToken,
+            scopes,
+            device,
+            client: {
+              id: GATEWAY_CLIENT_NAMES.CONTROL_UI,
+              version: "1.0.0",
+              platform: "web",
+              mode: GATEWAY_CLIENT_MODES.UI,
+            },
+          });
+          expect(res).toMatchObject({ ok: true });
+        } finally {
+          ws.close();
+        }
+      },
+      { serverOptions: { controlUiEnabled: true } },
+    );
+  });
+
   test("accepts hosted Tailscale dashboard device identity through trusted loopback proxy", async () => {
     testState.gatewayAuth = { mode: "token", token: "secret" };
     const { writeConfigFile } = await import("../config/config.js");

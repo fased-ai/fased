@@ -849,10 +849,19 @@ export function attachGatewayWsMessageHandler(params: {
           authOk,
           authMethod,
         });
+        const hostedControlUiOwnerAuthOk =
+          isControlUi &&
+          trustedTailscaleServeControlUiContext &&
+          authOk &&
+          (authMethod === "session-token" ||
+            authMethod === "token" ||
+            authMethod === "password" ||
+            authMethod === "trusted-proxy" ||
+            authMethod === "tailscale");
         const skipPairing = shouldSkipControlUiPairing(
           controlUiAuthPolicy,
-          sharedAuthOk,
-          trustedProxyAuthOk,
+          sharedAuthOk || hostedControlUiOwnerAuthOk,
+          trustedProxyAuthOk || hostedControlUiOwnerAuthOk,
           isControlUi && trustedTailscaleServeControlUiContext,
         );
         if (device && devicePublicKey && !skipPairing) {
