@@ -174,7 +174,11 @@ import {
 } from "./auth.js";
 import { callGatewayScoped } from "./call.js";
 import { normalizeCanvasScopedUrl } from "./canvas-capability.js";
-import { normalizePublicHost, type LoginGrantExchangeResult } from "./control-ui-login.js";
+import {
+  normalizePublicHost,
+  resolveControlUiPublicHost,
+  type LoginGrantExchangeResult,
+} from "./control-ui-login.js";
 import {
   handleControlUiAvatarRequest,
   handleControlUiHttpRequest,
@@ -348,23 +352,6 @@ function applyLoopbackCorsIfAllowed(
   res.setHeader("Access-Control-Max-Age", "600");
   appendVaryHeader(res, "Origin");
   return true;
-}
-
-function firstForwardedHeaderValue(value: string | string[] | undefined): string {
-  const raw = Array.isArray(value) ? value[0] : value;
-  return raw?.split(",")[0]?.trim() ?? "";
-}
-
-function resolveControlUiPublicHost(req: IncomingMessage, trustedProxies: string[]): string {
-  const remoteAddr = req.socket?.remoteAddress;
-  const forwardedHost = firstForwardedHeaderValue(req.headers["x-forwarded-host"]);
-  if (forwardedHost && isTrustedProxyAddress(remoteAddr, trustedProxies)) {
-    const normalizedForwardedHost = normalizePublicHost(forwardedHost);
-    if (normalizedForwardedHost) {
-      return normalizedForwardedHost;
-    }
-  }
-  return normalizePublicHost(req.headers.host ?? "");
 }
 
 function parseHostForControlUiRedirect(host: string): { hostname: string; port: string } | null {

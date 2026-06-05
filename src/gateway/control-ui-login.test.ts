@@ -6,6 +6,7 @@ import {
   CONTROL_UI_LOGIN_DEFAULT_GRANT_TTL_MS,
   ControlUiLoginService,
   createLoginGrant,
+  resolveControlUiPublicHost,
   verifyLoginGrant,
 } from "./control-ui-login.js";
 
@@ -42,6 +43,49 @@ describe("control-ui-login grants", () => {
       nowMs: now + 500,
     });
     expect(verified).toEqual({ ok: false, code: "host_mismatch" });
+  });
+});
+
+describe("control-ui public host resolution", () => {
+  it("uses trusted forwarded host when present", () => {
+    const req = {
+      socket: { remoteAddress: "127.0.0.1" },
+      headers: {
+        host: "127.0.0.1:18789",
+        "x-forwarded-host": "fased-vps.tailnet.ts.net",
+      },
+    } as unknown as import("node:http").IncomingMessage;
+
+    expect(resolveControlUiPublicHost(req, ["127.0.0.1/32"])).toBe("fased-vps.tailnet.ts.net");
+  });
+
+  it("uses trusted Tailscale Serve origin when forwarded host is omitted", () => {
+    const req = {
+      socket: { remoteAddress: "127.0.0.1" },
+      headers: {
+        host: "127.0.0.1:18789",
+        origin: "https://fased-vps.tailnet.ts.net",
+        "x-forwarded-for": "100.64.1.20",
+        "x-forwarded-proto": "https",
+        "tailscale-user-login": "operator@example.com",
+      },
+    } as unknown as import("node:http").IncomingMessage;
+
+    expect(resolveControlUiPublicHost(req, ["127.0.0.1/32"])).toBe("fased-vps.tailnet.ts.net");
+  });
+
+  it("falls back to request host when Tailscale Serve origin is not trusted", () => {
+    const req = {
+      socket: { remoteAddress: "127.0.0.1" },
+      headers: {
+        host: "127.0.0.1:18789",
+        origin: "https://attacker.example",
+        "x-forwarded-for": "100.64.1.20",
+        "x-forwarded-proto": "https",
+      },
+    } as unknown as import("node:http").IncomingMessage;
+
+    expect(resolveControlUiPublicHost(req, ["127.0.0.1/32"])).toBe("127.0.0.1:18789");
   });
 });
 

@@ -184,6 +184,62 @@ describe("gateway auth browser hardening", () => {
     });
   });
 
+  test("accepts hosted Tailscale dashboard session token when websocket upgrade omits forwarded host", async () => {
+    testState.gatewayAuth = { mode: "token", token: "secret" };
+    testState.gatewayControlUi = { allowInsecureAuth: true };
+    const { writeConfigFile } = await import("../config/config.js");
+    await writeConfigFile({
+      gateway: {
+        trustedProxies: ["127.0.0.1/32", "::1/128"],
+        tailscale: { mode: "serve" },
+      },
+      // oxlint-disable-next-line typescript/no-explicit-any
+    } as any);
+
+    await withGatewayServer(
+      async ({ port }) => {
+        const loginResponse = await fetch(`http://127.0.0.1:${port}/api/control-ui/login/token`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            origin: "https://fased-vps.tailnet.ts.net",
+            "x-forwarded-for": "100.64.1.20",
+            "x-forwarded-proto": "https",
+            "tailscale-user-login": "operator@example.com",
+          },
+          body: JSON.stringify({ token: "secret" }),
+        });
+        const login = (await loginResponse.json()) as { ok?: boolean; sessionToken?: string };
+        expect(loginResponse.ok).toBe(true);
+        expect(login.ok).toBe(true);
+        expect(login.sessionToken).toEqual(expect.any(String));
+
+        const ws = await openWs(port, {
+          origin: "https://fased-vps.tailnet.ts.net",
+          "x-forwarded-for": "100.64.1.20",
+          "x-forwarded-proto": "https",
+          "tailscale-user-login": "operator@example.com",
+        });
+        try {
+          const res = await connectReq(ws, {
+            token: login.sessionToken,
+            device: null,
+            client: {
+              id: GATEWAY_CLIENT_NAMES.CONTROL_UI,
+              version: "1.0.0",
+              platform: "web",
+              mode: GATEWAY_CLIENT_MODES.WEBCHAT,
+            },
+          });
+          expect(res).toMatchObject({ ok: true });
+        } finally {
+          ws.close();
+        }
+      },
+      { serverOptions: { controlUiEnabled: true } },
+    );
+  });
+
   test("accepts hosted Tailscale dashboard device identity through trusted loopback proxy", async () => {
     testState.gatewayAuth = { mode: "token", token: "secret" };
     const { writeConfigFile } = await import("../config/config.js");

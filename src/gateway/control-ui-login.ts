@@ -1,8 +1,10 @@
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import fs from "node:fs";
+import type { IncomingMessage } from "node:http";
 import path from "node:path";
 import { resolveStateDir } from "../config/paths.js";
 import { safeEqualSecret } from "../security/secret-equal.js";
+import { isTrustedProxyAddress } from "./net.js";
 
 const STORE_VERSION = 1;
 const GRANT_PURPOSE = "control-ui-login";
@@ -143,6 +145,65 @@ export function normalizePublicHost(raw: string): string {
     return parsed.hostname;
   }
   return `${parsed.hostname}:${parsed.port}`;
+}
+
+function firstForwardedHeaderValue(value: string | string[] | undefined): string {
+  const raw = Array.isArray(value) ? value[0] : value;
+  return raw?.split(",")[0]?.trim() ?? "";
+}
+
+function originHostFromTrustedTailscaleServe(
+  req: IncomingMessage,
+  trustedProxies: string[],
+): string {
+  if (!isTrustedProxyAddress(req.socket?.remoteAddress, trustedProxies)) {
+    return "";
+  }
+  const forwardedProto = firstForwardedHeaderValue(req.headers["x-forwarded-proto"])
+    .toLowerCase()
+    .trim();
+  if (forwardedProto !== "https") {
+    return "";
+  }
+  const hasForwardedClient = Boolean(firstForwardedHeaderValue(req.headers["x-forwarded-for"]));
+  const hasTailscaleIdentity = Boolean(
+    firstForwardedHeaderValue(req.headers["tailscale-user-login"]),
+  );
+  if (!hasForwardedClient || !hasTailscaleIdentity) {
+    return "";
+  }
+  const origin = firstForwardedHeaderValue(req.headers.origin);
+  if (!origin) {
+    return "";
+  }
+  try {
+    const parsed = new URL(origin);
+    return parsed.protocol === "https:" ? normalizePublicHost(parsed.host) : "";
+  } catch {
+    return "";
+  }
+}
+
+export function resolveControlUiPublicHost(
+  req: IncomingMessage | undefined,
+  trustedProxies: string[] = [],
+): string {
+  if (!req) {
+    return "";
+  }
+  const remoteAddr = req.socket?.remoteAddress;
+  const forwardedHost = firstForwardedHeaderValue(req.headers["x-forwarded-host"]);
+  if (forwardedHost && isTrustedProxyAddress(remoteAddr, trustedProxies)) {
+    const normalizedForwardedHost = normalizePublicHost(forwardedHost);
+    if (normalizedForwardedHost) {
+      return normalizedForwardedHost;
+    }
+  }
+  const originHost = originHostFromTrustedTailscaleServe(req, trustedProxies);
+  if (originHost) {
+    return originHost;
+  }
+  return normalizePublicHost(req.headers.host ?? "");
 }
 
 function deriveSigningKey(gatewayToken: string): Buffer {

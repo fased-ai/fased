@@ -57,7 +57,7 @@ import { resolveWalletRuntimeConfig } from "../wallet/wallet-runtime-config.js";
 import { runOnboardingWizard } from "../wizard/onboarding.js";
 import { createAuthRateLimiter, type AuthRateLimiter } from "./auth-rate-limit.js";
 import { startGatewayConfigReloader } from "./config-reload.js";
-import { ControlUiLoginService, normalizePublicHost } from "./control-ui-login.js";
+import { ControlUiLoginService, resolveControlUiPublicHost } from "./control-ui-login.js";
 import type { ControlUiRootState } from "./control-ui.js";
 import { ExecApprovalManager } from "./exec-approval-manager.js";
 import { NodeRegistry } from "./node-registry.js";
@@ -366,7 +366,7 @@ export async function startGatewayServer(
           req?: import("node:http").IncomingMessage;
           trustedProxies?: string[];
         }) => {
-          const host = normalizePublicHost(params.req?.headers?.host ?? "");
+          const host = resolveControlUiPublicHost(params.req, params.trustedProxies ?? []);
           if (!host) {
             return { ok: false } as const;
           }
