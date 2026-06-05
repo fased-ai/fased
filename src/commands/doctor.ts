@@ -290,7 +290,7 @@ export async function doctorCommand(
     if (fs.existsSync(backupPath)) {
       runtime.log(`Backup: ${shortenHomePath(backupPath)}`);
     }
-  } else {
+  } else if (configResult.hasPendingChanges) {
     runtime.log(`Run "${formatCliCommand("fased doctor --fix")}" to apply changes.`);
   }
 

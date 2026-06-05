@@ -186,9 +186,9 @@ handle_existing_local_state() {
     echo "This can include sessions, wallets, provider keys, channel settings, and gateway tokens."
     echo ""
     echo "Choose how this install should use local state:"
-    echo "  1) Keep existing data (recommended)"
-    echo "  2) Reset local config only (keeps wallets/secrets, backs up config and install marker)"
-    echo "  3) Use a separate state directory for this checkout"
+    echo "  1) Keep existing data (normal upgrade; preserves old settings and warnings)"
+    echo "  2) Reset local config only (clean setup; keeps wallets/secrets, backs up config and install marker)"
+    echo "  3) Use a separate state directory for this checkout (clean test install)"
     printf "Choice [1]: "
     local choice
     read -r choice || choice=""

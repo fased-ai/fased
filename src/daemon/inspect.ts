@@ -196,10 +196,10 @@ async function scanLaunchdDir(params: {
     if (!marker) {
       continue;
     }
-    if (isIgnoredLaunchdLabel(label)) {
+    if (marker === "fased" && !isFasedAgentGatewayLaunchdService(label, contents)) {
       continue;
     }
-    if (marker === "fased" && isFasedAgentGatewayLaunchdService(label, contents)) {
+    if (isIgnoredLaunchdLabel(label)) {
       continue;
     }
     results.push({
@@ -232,11 +232,7 @@ async function scanSystemdDir(params: {
     if (!marker) {
       continue;
     }
-    if (
-      !params.includeManagedFased &&
-      marker === "fased" &&
-      isFasedAgentGatewaySystemdService(name, contents)
-    ) {
+    if (marker === "fased" && !isFasedAgentGatewaySystemdService(name, contents)) {
       continue;
     }
     results.push({
@@ -425,6 +421,9 @@ export async function findExtraGatewayServices(
         }
       }
       if (!marker) {
+        continue;
+      }
+      if (!lowerName.includes("gateway") && !lowerCommand.includes("gateway")) {
         continue;
       }
       push({

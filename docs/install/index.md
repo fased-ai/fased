@@ -94,12 +94,18 @@ recovery options and VPS provider console access working.
     If `~/.fased` already exists, the installer asks what to do before it
     touches local state:
 
-    - **Keep existing data:** use current sessions, wallets, credentials,
-      gateway token, and config.
-    - **Reset local config only:** back up `fased.json` and the install marker,
-      but keep wallets/secrets.
-    - **Use a separate state directory:** run this checkout with its own
-      `FASED_STATE_DIR` and config.
+    - **Keep existing data:** best for a normal upgrade of the same install.
+      It preserves current sessions, wallets, credentials, gateway token,
+      config, and any old warnings.
+    - **Reset local config only:** best when moving checkouts or clearing stale
+      channel settings. It backs up `fased.json` and the install marker, but
+      keeps wallets/secrets.
+    - **Use a separate state directory:** best for a clean test install with
+      its own `FASED_STATE_DIR` and config.
+
+    If old channel credentials create warnings, run `fased doctor --fix`; it
+    can disable stale channel entries without deleting wallets or provider
+    secrets.
 
     Local setup finishes with a health check for the service path, gateway
     token, dashboard HTTP 200, and gateway online state. Later, run

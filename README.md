@@ -61,8 +61,15 @@ After local setup:
 Successful install output is intentionally short. If a step fails, the installer
 prints the full log path under `~/.fased/logs/`.
 
-If `~/.fased` already exists, the installer asks whether to keep existing data,
-reset local config only, or use a separate state directory for this checkout.
+If `~/.fased` already exists, the installer asks how to use that state:
+
+- Keep existing data for a normal upgrade of the same install.
+- Reset local config only when moving checkouts or clearing stale channel
+  settings. Wallets/secrets are kept and config metadata is backed up.
+- Use a separate state directory for a clean test install.
+
+If old channel credentials create warnings, run `fased doctor --fix`; it can
+disable stale channel entries without deleting wallets or provider secrets.
 Local setup finishes with a health check for service path, token match,
 dashboard HTTP 200, and gateway online state. Later, run `fased health` for a
 one-command gateway check.
