@@ -1,7 +1,9 @@
 import "./styles.css";
+import { markControlUiBootStage } from "./ui/boot-state.ts";
 
 function renderBootFailure(error: unknown) {
   const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
+  markControlUiBootStage("boot-failed", message || "Unknown dashboard boot error.");
   const host = document.querySelector("fased-app");
   if (!host) {
     return;
@@ -90,4 +92,8 @@ function renderBootFailure(error: unknown) {
   host.append(style, page);
 }
 
-void import("./ui/app.ts").catch(renderBootFailure);
+markControlUiBootStage("entry-loaded");
+markControlUiBootStage("app-import-start");
+void import("./ui/app.ts")
+  .then(() => markControlUiBootStage("app-imported"))
+  .catch(renderBootFailure);

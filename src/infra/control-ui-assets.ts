@@ -240,7 +240,7 @@ export async function ensureControlUiAssetsBuilt(
     return {
       ok: false,
       built: false,
-      message: `${hint}. Build them with \`pnpm ui:build\` (auto-installs UI deps).`,
+      message: `${hint}. Rerun \`./install.sh\` from the Fased checkout, or run \`fased doctor --fix\` if Fased is already installed.`,
     };
   }
 

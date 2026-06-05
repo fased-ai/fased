@@ -79,6 +79,15 @@ const STATIC_ASSET_EXTENSIONS = new Set([
   ".woff2",
 ]);
 
+function controlUiAssetsMissingMessage(pathname?: string): string {
+  const location = pathname ? ` at ${pathname}` : "";
+  return [
+    `Control UI assets not found${location}.`,
+    "Rerun `./install.sh` from the Fased checkout to rebuild and reinstall the dashboard assets.",
+    "If Fased is already installed, run `fased doctor --fix` for guided repair.",
+  ].join(" ");
+}
+
 export function isControlUiStaticAssetPath(pathname: string, basePath?: string): boolean {
   const base = normalizeControlUiBasePath(basePath);
   let uiPath = pathname;
@@ -364,17 +373,13 @@ export function handleControlUiHttpRequest(
   if (rootState?.kind === "invalid") {
     res.statusCode = 503;
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
-    res.end(
-      `Control UI assets not found at ${rootState.path}. Build them with \`pnpm ui:build\` (auto-installs UI deps), or update gateway.controlUi.root.`,
-    );
+    res.end(controlUiAssetsMissingMessage(rootState.path));
     return true;
   }
   if (rootState?.kind === "missing") {
     res.statusCode = 503;
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
-    res.end(
-      "Control UI assets not found. Build them with `pnpm ui:build` (auto-installs UI deps), or run `pnpm ui:dev` during development.",
-    );
+    res.end(controlUiAssetsMissingMessage());
     return true;
   }
 
@@ -389,9 +394,7 @@ export function handleControlUiHttpRequest(
   if (!root) {
     res.statusCode = 503;
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
-    res.end(
-      "Control UI assets not found. Build them with `pnpm ui:build` (auto-installs UI deps), or run `pnpm ui:dev` during development.",
-    );
+    res.end(controlUiAssetsMissingMessage());
     return true;
   }
 
@@ -408,9 +411,7 @@ export function handleControlUiHttpRequest(
   if (!rootReal) {
     res.statusCode = 503;
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
-    res.end(
-      "Control UI assets not found. Build them with `pnpm ui:build` (auto-installs UI deps), or run `pnpm ui:dev` during development.",
-    );
+    res.end(controlUiAssetsMissingMessage());
     return true;
   }
 

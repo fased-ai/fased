@@ -133,7 +133,7 @@ describe("dashboardCommand", () => {
     expect(callGatewayMock).toHaveBeenCalledWith(
       expect.objectContaining({
         method: "health",
-        timeoutMs: 5000,
+        timeoutMs: 30_000,
       }),
     );
     expect(resolveControlUiLinksMock).toHaveBeenCalledWith({
@@ -261,6 +261,7 @@ describe("dashboardCommand", () => {
     expect(copyToClipboardMock).not.toHaveBeenCalled();
     expect(detectBrowserOpenSupportMock).not.toHaveBeenCalled();
     expect(openUrlMock).not.toHaveBeenCalled();
+    expect(runtime.log).toHaveBeenCalledWith("Dashboard websocket: ws://127.0.0.1:18789");
     expect(runtime.log).toHaveBeenCalledWith(
       "Browser launch disabled (--no-open). Use the URL above.",
     );

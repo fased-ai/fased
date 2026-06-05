@@ -60,6 +60,7 @@ import {
 } from "./app-tool-stream.ts";
 import type { AppViewState } from "./app-view-state.ts";
 import { resolveInjectedAssistantIdentity } from "./assistant-identity.ts";
+import { markControlUiBootStage } from "./boot-state.ts";
 import type { ChatModelOverride } from "./chat-model-ref.ts";
 import {
   exchangeControlUiGatewayToken,
@@ -498,6 +499,8 @@ function defaultGraphNodeLabel(type: TaskWorkflowGraphNodeType): string {
       return "Task";
   }
 }
+
+markControlUiBootStage("custom-element-defined");
 
 function createTaskWorkflowGraphDraft(params?: {
   id?: string;
@@ -2064,14 +2067,25 @@ export class FasedAgentApp extends LitElement {
     return this;
   }
 
+  private removeStaticBootShell() {
+    for (const child of Array.from(this.children)) {
+      if (child.hasAttribute("data-fased-boot-shell")) {
+        child.remove();
+      }
+    }
+  }
+
   connectedCallback() {
     super.connectedCallback();
+    this.removeStaticBootShell();
+    markControlUiBootStage("connected");
     window.addEventListener("error", this.runtimeErrorHandler);
     window.addEventListener("unhandledrejection", this.runtimeRejectionHandler);
     handleConnected(this as unknown as Parameters<typeof handleConnected>[0]);
   }
 
   protected firstUpdated() {
+    markControlUiBootStage("first-updated");
     this.selectEnhancerCleanup = installGlobalSelectEnhancer(this);
     handleFirstUpdated(this as unknown as Parameters<typeof handleFirstUpdated>[0]);
   }
@@ -2102,6 +2116,9 @@ export class FasedAgentApp extends LitElement {
   }
 
   protected updated(changed: Map<PropertyKey, unknown>) {
+    if (changed.size === 0) {
+      markControlUiBootStage("rendered");
+    }
     handleUpdated(this as unknown as Parameters<typeof handleUpdated>[0], changed);
     if (changed.has("tab") || changed.has("agentsPanel")) {
       this.syncTaskRefreshTimer();

@@ -3,12 +3,14 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  buildGatewayServiceRestartAttempts,
   buildGatewayWsUrlFromHttpUrl,
   buildOnboardingDashboardUrl,
   ensureGatewaySecretMatchesToken,
   formatLocalDashboardReady,
   formatStrictRemoteAccessDetails,
   gatewayServiceMatchesCurrentInstall,
+  validateLocalDashboardBootCheck,
 } from "./onboarding.finalize.js";
 
 describe("buildOnboardingDashboardUrl", () => {
@@ -94,6 +96,74 @@ describe("formatLocalDashboardReady", () => {
     expect(text).toContain("Agent > Models");
     expect(text).toContain("Token backup");
     expect(text).not.toContain("Gateway WS");
+  });
+});
+
+describe("buildGatewayServiceRestartAttempts", () => {
+  it("uses user service first for local profile restarts", () => {
+    const labels = buildGatewayServiceRestartAttempts("fased-gateway", "local").map(
+      (attempt) => attempt.label,
+    );
+
+    expect(labels.slice(0, 2)).toEqual(["user restart", "user start"]);
+    expect(labels).toContain("root restart");
+  });
+
+  it("uses root-managed service first for hosting profile restarts", () => {
+    const labels = buildGatewayServiceRestartAttempts("fased-gateway", "hosting").map(
+      (attempt) => attempt.label,
+    );
+
+    expect(labels.slice(0, 3)).toEqual(["root restart", "root start", "root enable+start"]);
+    expect(labels).toContain("user restart");
+  });
+});
+
+describe("validateLocalDashboardBootCheck", () => {
+  const okIndex = {
+    url: "http://localhost:18789/",
+    ok: true,
+    status: 200,
+    contentType: "text/html; charset=utf-8",
+  };
+  const okEntry = {
+    url: "http://localhost:18789/assets/index.js",
+    ok: true,
+    status: 200,
+    contentType: "application/javascript; charset=utf-8",
+  };
+  const okApp = {
+    url: "http://localhost:18789/assets/app.js",
+    ok: true,
+    status: 200,
+    contentType: "application/javascript; charset=utf-8",
+  };
+
+  it("requires the app JS bundle before local onboarding can print Dashboard ready", () => {
+    const result = validateLocalDashboardBootCheck({
+      index: "ok",
+      indexResponse: okIndex,
+      entryJs: okEntry,
+      appJs: null,
+      serve: "direct",
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.detail).toContain("app JS is not referenced");
+    }
+  });
+
+  it("accepts index, entry JS, and app JS when all assets are valid", () => {
+    expect(
+      validateLocalDashboardBootCheck({
+        index: "ok",
+        indexResponse: okIndex,
+        entryJs: okEntry,
+        appJs: okApp,
+        serve: "direct",
+      }),
+    ).toEqual({ ok: true });
   });
 });
 

@@ -108,7 +108,7 @@ It does not install or modify anything on the remote host.
 
 <Note>
 If no GUI is detected, the wizard prints SSH port-forward instructions for the Control UI instead of opening a browser.
-If Control UI assets are missing, the wizard attempts to build them; fallback is `pnpm ui:build` (auto-installs UI deps).
+If Control UI assets are missing, rerun `./install.sh` from the Fased checkout; if Fased is already installed, run `fased doctor --fix` for guided repair.
 Save the printed Gateway token. It is the recovery token for a new browser,
 another machine in your tailnet, or a future `fased dashboard --no-open` link.
 </Note>

@@ -87,8 +87,13 @@ function resolveAssetUrl(src: string, baseUrl: string): string | null {
 
 function extractHtmlScriptAssetUrls(html: string, baseUrl: string): string[] {
   const urls = new Set<string>();
-  for (const match of html.matchAll(/<script\b[^>]*\bsrc=["']([^"']+)["']/gi)) {
-    const resolved = resolveAssetUrl(match[1] ?? "", baseUrl);
+  for (const match of html.matchAll(/<script\b[^>]*>/gi)) {
+    const tag = match[0] ?? "";
+    if (/\bdata-fased-boot-watchdog\b/i.test(tag)) {
+      continue;
+    }
+    const src = tag.match(/\bsrc=["']([^"']+)["']/i)?.[1] ?? "";
+    const resolved = resolveAssetUrl(src, baseUrl);
     if (resolved && /\.js(?:[?#].*)?$/i.test(resolved)) {
       urls.add(resolved);
     }

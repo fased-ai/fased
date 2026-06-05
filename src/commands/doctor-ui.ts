@@ -38,7 +38,14 @@ export async function maybeRepairUiProtocolFreshness(
     ]);
 
     if (schemaStats && !uiStats) {
-      note(["- Control UI assets are missing.", "- Run: pnpm ui:build"].join("\n"), "UI");
+      note(
+        [
+          "- Control UI assets are missing.",
+          "- Public repair: rerun ./install.sh from the Fased checkout.",
+          "- Guided repair: fased doctor --fix",
+        ].join("\n"),
+        "UI",
+      );
 
       // In slim/docker environments we may not have the UI source tree. Trying
       // to build would fail (and spam logs), so skip the interactive repair.

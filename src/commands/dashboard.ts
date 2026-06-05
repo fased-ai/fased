@@ -1,6 +1,11 @@
 import { readConfigFileSnapshot, resolveGatewayPort } from "../config/config.js";
 import type { FasedAgentConfig } from "../config/config.js";
 import { callGateway } from "../gateway/call.js";
+import {
+  resolveControlUiBootCheck,
+  type ControlUiBootCheck,
+  type ControlUiBootCheckAsset,
+} from "../gateway/control-ui-boot-check.js";
 import { normalizeControlUiBasePath } from "../gateway/control-ui-shared.js";
 import { copyToClipboard } from "../infra/clipboard.js";
 import { getTailnetHostname } from "../infra/tailscale.js";
@@ -27,6 +32,8 @@ type DashboardHealthSummary = {
   durationMs?: number;
 };
 
+const LOCAL_DASHBOARD_GATEWAY_TIMEOUT_MS = 30_000;
+const HOSTED_DASHBOARD_GATEWAY_TIMEOUT_MS = 20_000;
 function buildDashboardUrl(params: { httpUrl: string; token?: string }): string {
   const url = new URL(params.httpUrl);
   const hashParams = new URLSearchParams();
@@ -86,7 +93,10 @@ function isHostedDashboardUrl(httpUrl: string, localHttpUrl: string): boolean {
   }
 }
 
-function formatBootAssetLine(label: string, asset: HostedDashboardBootAssetCheck | undefined) {
+function formatBootAssetLine(
+  label: string,
+  asset: HostedDashboardBootAssetCheck | ControlUiBootCheckAsset | null | undefined,
+) {
   if (!asset) {
     return `Dashboard ${label}: not referenced`;
   }
@@ -97,6 +107,41 @@ function formatBootAssetLine(label: string, asset: HostedDashboardBootAssetCheck
 }
 
 function logHostedDashboardBootCheck(runtime: RuntimeEnv, bootCheck: HostedDashboardBootCheck) {
+  const indexStatus =
+    typeof bootCheck.indexResponse.status === "number"
+      ? String(bootCheck.indexResponse.status)
+      : "fetch failed";
+  const indexType = bootCheck.indexResponse.contentType?.trim() || "missing content-type";
+  const indexSuffix = bootCheck.indexResponse.ok
+    ? ""
+    : ` (${bootCheck.indexResponse.message ?? "failed"})`;
+  runtime.log(`Dashboard boot check: ${bootCheck.index} via ${bootCheck.serve}`);
+  runtime.log(
+    `Dashboard index: ${bootCheck.indexResponse.url} [${indexStatus}, ${indexType}]${indexSuffix}`,
+  );
+  runtime.log(formatBootAssetLine("entry JS", bootCheck.entryJs));
+  runtime.log(formatBootAssetLine("app JS", bootCheck.appJs));
+}
+
+function resolveLocalDashboardBootCheck(params: {
+  httpUrl: string;
+  basePath?: string;
+}): ControlUiBootCheck {
+  const origin = (() => {
+    try {
+      return new URL(params.httpUrl).origin;
+    } catch {
+      return "http://localhost";
+    }
+  })();
+  return resolveControlUiBootCheck({
+    basePath: params.basePath,
+    origin,
+    serve: "direct",
+  });
+}
+
+function logLocalDashboardBootCheck(runtime: RuntimeEnv, bootCheck: ControlUiBootCheck) {
   const indexStatus =
     typeof bootCheck.indexResponse.status === "number"
       ? String(bootCheck.indexResponse.status)
@@ -145,7 +190,10 @@ export async function dashboardCommand(
     token,
   });
 
-  const gatewayProbe = await probeDashboardGateway(cfg, hostedDashboard ? 20_000 : 5000);
+  const gatewayProbe = await probeDashboardGateway(
+    cfg,
+    hostedDashboard ? HOSTED_DASHBOARD_GATEWAY_TIMEOUT_MS : LOCAL_DASHBOARD_GATEWAY_TIMEOUT_MS,
+  );
   if (gatewayProbe.ok) {
     const suffix =
       gatewayProbe.durationMs != null
@@ -191,6 +239,13 @@ export async function dashboardCommand(
     } else {
       runtime.log("Dashboard browser path: not checked (missing gateway token)");
     }
+  } else if (options.noOpen) {
+    const localBootCheck = resolveLocalDashboardBootCheck({
+      httpUrl: links.httpUrl,
+      basePath,
+    });
+    logLocalDashboardBootCheck(runtime, localBootCheck);
+    runtime.log(`Dashboard websocket: ${links.wsUrl}`);
   }
 
   runtime.log(`Dashboard URL: ${dashboardUrl}`);

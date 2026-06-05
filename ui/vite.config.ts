@@ -1,6 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -18,6 +18,27 @@ function normalizeBase(input: string): string {
   return `${trimmed}/`;
 }
 
+function fasedBootWatchdogPlugin(): Plugin {
+  const watchdogTag =
+    '    <script data-fased-boot-watchdog src="./boot-watchdog.js" defer></script>';
+  return {
+    name: "fased-boot-watchdog",
+    apply: "build",
+    transformIndexHtml: {
+      order: "post",
+      handler(html) {
+        if (html.includes("data-fased-boot-watchdog")) {
+          return html;
+        }
+        if (html.includes('<script type="module"')) {
+          return html.replace(/(\s*<script type="module"[^>]*><\/script>)/, `\n${watchdogTag}$1`);
+        }
+        return html.replace("</head>", `${watchdogTag}\n  </head>`);
+      },
+    },
+  };
+}
+
 export default defineConfig(() => {
   const envBase = process.env.FASED_CONTROL_UI_BASE_PATH?.trim();
   const base = envBase ? normalizeBase(envBase) : "./";
@@ -27,6 +48,7 @@ export default defineConfig(() => {
     optimizeDeps: {
       include: ["lit/directives/repeat.js"],
     },
+    plugins: [fasedBootWatchdogPlugin()],
     build: {
       outDir: path.resolve(here, "../dist/control-ui"),
       emptyOutDir: true,

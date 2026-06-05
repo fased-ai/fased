@@ -815,6 +815,19 @@ has_user_gateway_service() {
 }
 
 restart_existing_gateway_service_after_install() {
+  local profile
+  profile="$(resolved_host_profile)"
+
+  if [[ "$profile" != "hosting" ]] && has_user_gateway_service; then
+    systemctl --user daemon-reload >/dev/null 2>&1 || true
+    if systemctl --user restart fased-gateway.service >/dev/null 2>&1; then
+      return 0
+    fi
+    if systemctl --user start fased-gateway.service >/dev/null 2>&1; then
+      return 0
+    fi
+  fi
+
   if has_system_gateway_service; then
     sudo -n systemctl daemon-reload >/dev/null 2>&1 || true
     if sudo -n systemctl restart --no-block fased-gateway.service >/dev/null 2>&1; then
@@ -825,7 +838,7 @@ restart_existing_gateway_service_after_install() {
     fi
   fi
 
-  if has_user_gateway_service; then
+  if [[ "$profile" == "hosting" ]] && has_user_gateway_service; then
     systemctl --user daemon-reload >/dev/null 2>&1 || true
     if systemctl --user restart fased-gateway.service >/dev/null 2>&1; then
       return 0
@@ -1351,11 +1364,57 @@ has_active_swap() {
   swapon --show 2>/dev/null | tail -n +2 | grep -q .
 }
 
+configure_swapfile() {
+  local swap_gb="$1"
+  shift
+  local runner=("$@")
+  if [[ ! "$swap_gb" =~ ^[0-9]+$ || "$swap_gb" -le 0 ]]; then
+    echo "Invalid swap size: ${swap_gb}G" >&2
+    return 1
+  fi
+
+  if ! "${runner[@]}" fallocate -l "${swap_gb}G" /swapfile 2>/dev/null; then
+    if ! "${runner[@]}" dd if=/dev/zero of=/swapfile bs=1M count=$((swap_gb * 1024)) status=none; then
+      echo "Could not allocate /swapfile (${swap_gb}G)." >&2
+      return 1
+    fi
+  fi
+  if ! "${runner[@]}" chmod 600 /swapfile; then
+    echo "Could not secure /swapfile permissions." >&2
+    return 1
+  fi
+  if ! "${runner[@]}" mkswap /swapfile >/dev/null; then
+    echo "Could not initialize /swapfile as swap." >&2
+    return 1
+  fi
+  if ! "${runner[@]}" swapon /swapfile; then
+    echo "Could not enable /swapfile swap." >&2
+    return 1
+  fi
+  if [[ "${runner[*]}" == sudo\ -n ]]; then
+    if ! sudo -n grep -q '^/swapfile ' /etc/fstab; then
+      if ! echo '/swapfile none swap sw 0 0' | sudo -n tee -a /etc/fstab >/dev/null; then
+        echo "Could not persist /swapfile in /etc/fstab." >&2
+        return 1
+      fi
+    fi
+  else
+    if ! grep -q '^/swapfile ' /etc/fstab; then
+      if ! echo '/swapfile none swap sw 0 0' >> /etc/fstab; then
+        echo "Could not persist /swapfile in /etc/fstab." >&2
+        return 1
+      fi
+    fi
+  fi
+}
+
 ensure_low_memory_swap_if_possible() {
   if [[ "$(uname -s)" != "Linux" ]]; then
     return 0
   fi
 
+  local profile
+  profile="$(resolved_host_profile || true)"
   local total_mem_mb
   total_mem_mb="$(detect_total_mem_mb)"
   if [[ -z "$total_mem_mb" || "$total_mem_mb" -eq 0 || "$total_mem_mb" -gt "$LOW_MEMORY_SWAP_THRESHOLD_MB" ]]; then
@@ -1377,20 +1436,23 @@ ensure_low_memory_swap_if_possible() {
     runner=(sudo -n)
   else
     echo "== Low-memory host detected (${total_mem_mb} MiB RAM) but no swap is active =="
+    if [[ "$profile" == "hosting" ]]; then
+      echo "Hosting install cannot continue safely without ${swap_gb}G swap." >&2
+      echo "Rerun the first hosted install as root with: ./install.sh --hosting" >&2
+      return 1
+    fi
     echo "== Continuing without automatic swap because passwordless sudo is unavailable =="
     return 0
   fi
 
   echo "== Low-memory host detected (${total_mem_mb} MiB RAM); configuring ${swap_gb}G swap for install stability =="
-  "${runner[@]}" fallocate -l "${swap_gb}G" /swapfile || \
-    "${runner[@]}" dd if=/dev/zero of=/swapfile bs=1M count=$((swap_gb * 1024)) status=none
-  "${runner[@]}" chmod 600 /swapfile
-  "${runner[@]}" mkswap /swapfile >/dev/null
-  "${runner[@]}" swapon /swapfile
-  if [[ "${runner[*]}" == sudo\ -n ]]; then
-    sudo -n grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' | sudo -n tee -a /etc/fstab >/dev/null
-  else
-    grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  if ! configure_swapfile "$swap_gb" "${runner[@]}"; then
+    if [[ "$profile" == "hosting" ]]; then
+      echo "Hosting install cannot continue safely because swap setup failed." >&2
+      return 1
+    fi
+    echo "== Automatic swap setup failed; continuing because this is not the hosting profile =="
+    return 0
   fi
 }
 
@@ -1487,11 +1549,10 @@ ensure_early_swap_for_hosting() {
   fi
 
   echo "== Root bootstrap: configuring ${swap_gb}G swap before dependency install =="
-  fallocate -l "${swap_gb}G" /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=$((swap_gb * 1024)) status=none
-  chmod 600 /swapfile
-  mkswap /swapfile >/dev/null
-  swapon /swapfile
-  grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  if ! configure_swapfile "$swap_gb"; then
+    echo "Root hosting bootstrap cannot continue safely because swap setup failed." >&2
+    exit 1
+  fi
 }
 
 install_missing_deps_as_root_if_needed() {
@@ -1757,6 +1818,8 @@ export CI="${CI:-1}"
 export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 ensure_low_memory_swap_if_possible
 pnpm_install_with_adaptive_profile
+build_old_space_mb="$(recommended_onboard_old_space_mb)"
+build_node_options="$(node_options_with_old_space "${NODE_OPTIONS:-}" "$build_old_space_mb")"
 
 if [[ -n "${FASED_SAT_PROGRAM_ID:-}" && -n "${FASED_SAT_BOND_PROGRAM_ID:-}" && -n "${FASED_SAT_MINT_ADDRESS:-}" && -n "${FASED_SAT_MINT_PROGRAM_ID:-}" ]]; then
   persist_managed_env_var "FASED_SAT_PROGRAM_ID" "$FASED_SAT_PROGRAM_ID"
@@ -1777,9 +1840,9 @@ if [[ -f "$FASED_DIR/dist/entry.js" && -f "$FASED_DIR/dist/index.js" ]] && cache
 else
   rm -rf "$FASED_DIR/dist"
   if [[ -n "$core_build_profile" ]]; then
-    run_logged_in "$FASED_DIR" "Build core" env FASED_BUILD_PROFILE="$core_build_profile" pnpm --silent run build:fast
+    run_logged_in "$FASED_DIR" "Build core" env NODE_OPTIONS="$build_node_options" FASED_BUILD_PROFILE="$core_build_profile" pnpm --silent run build:fast
   else
-    run_logged_in "$FASED_DIR" "Build core" pnpm --silent run build:fast
+    run_logged_in "$FASED_DIR" "Build core" env NODE_OPTIONS="$build_node_options" pnpm --silent run build:fast
   fi
   write_cache "$core_cache_name" "$core_fingerprint"
 fi
@@ -1788,7 +1851,7 @@ runtime_assets_fingerprint="$(fingerprint_targets "$FASED_DIR" package.json pnpm
 if runtime_assets_ready && cache_matches "runtime-assets" "$runtime_assets_fingerprint"; then
   step_skip "Runtime assets"
 else
-  run_logged_in "$FASED_DIR" "Prepare runtime assets" pnpm --silent run build:runtime-assets
+  run_logged_in "$FASED_DIR" "Prepare runtime assets" env NODE_OPTIONS="$build_node_options" pnpm --silent run build:runtime-assets
   write_cache "runtime-assets" "$runtime_assets_fingerprint"
 fi
 
@@ -1796,7 +1859,7 @@ ui_fingerprint="$(fingerprint_targets "$FASED_DIR" package.json pnpm-lock.yaml u
 if [[ -f "$FASED_DIR/dist/control-ui/index.html" ]] && cache_matches "control-ui-build" "$ui_fingerprint"; then
   step_skip "Control UI"
 else
-  run_logged_in "$FASED_DIR" "Build Control UI" pnpm --silent run ui:build
+  run_logged_in "$FASED_DIR" "Build Control UI" env NODE_OPTIONS="$build_node_options" pnpm --silent run ui:build
   if [[ ! -f "$FASED_DIR/dist/control-ui/index.html" ]]; then
     spinner_failed "Build Control UI"
     echo "Control UI build completed but dist/control-ui/index.html is missing." >&2

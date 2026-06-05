@@ -16,12 +16,15 @@
   </head>
   <body>
     <fased-app>
-      <style>
+      <style data-fased-boot-shell>
         body {
           margin: 0;
           background: #080e1a;
           color: #e2e8f0;
-          font-family: system-ui, -apple-system, sans-serif;
+          font-family:
+            system-ui,
+            -apple-system,
+            sans-serif;
         }
         .boot-page {
           min-height: 100vh;
@@ -52,7 +55,7 @@
           line-height: 1.6;
         }
       </style>
-      <div class="boot-page">
+      <div class="boot-page" data-fased-boot-shell>
         <section class="boot-card">
           <h1 class="boot-title">Opening Fased Agent</h1>
           <p class="boot-desc">Loading the private dashboard…</p>

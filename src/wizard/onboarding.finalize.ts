@@ -14,8 +14,6 @@ import {
   DEFAULT_GATEWAY_DAEMON_RUNTIME,
   GATEWAY_DAEMON_RUNTIME_OPTIONS,
 } from "../commands/daemon-runtime.js";
-import { formatHealthCheckFailure } from "../commands/health-format.js";
-import { healthCommand } from "../commands/health.js";
 import { waitForHostedDashboardBrowserPath } from "../commands/hosted-dashboard-probe.js";
 import {
   detectBrowserOpenSupport,
@@ -35,6 +33,11 @@ import { resolveGatewayService } from "../daemon/service.js";
 import { buildSystemdUnit } from "../daemon/systemd-unit.js";
 import { isSystemdUserServiceAvailable } from "../daemon/systemd.js";
 import { loadPersistedFederationToken } from "../federation/access-token.js";
+import {
+  CONTROL_UI_BOOT_CHECK_PATH,
+  type ControlUiBootCheck,
+  type ControlUiBootCheckAsset,
+} from "../gateway/control-ui-boot-check.js";
 import { normalizeControlUiBasePath } from "../gateway/control-ui-shared.js";
 import { clearDeviceAuthStore } from "../infra/device-auth-store.js";
 import { enableTailscaleFunnel, enableTailscaleServe } from "../infra/tailscale.js";
@@ -601,15 +604,34 @@ async function collectManagedGatewayBootLogTails(): Promise<Array<{ file: string
   return tails;
 }
 
-async function restartGatewayServiceOnce(
+export type GatewayServiceRestartProfile = "local" | "hosting";
+
+export type GatewayServiceRestartAttempt = {
+  label: string;
+  command: string;
+  timeoutMs?: number;
+  timeoutIsProgress?: boolean;
+};
+
+export function buildGatewayServiceRestartAttempts(
   serviceName = "fased-gateway",
-): Promise<{ ok: boolean; detail?: string }> {
-  const attempts: Array<{
-    label: string;
-    command: string;
-    timeoutMs?: number;
-    timeoutIsProgress?: boolean;
-  }> = [
+  profile: GatewayServiceRestartProfile = "local",
+): GatewayServiceRestartAttempt[] {
+  const userAttempts = [
+    {
+      label: "user restart",
+      command: `systemctl --user restart --no-block ${serviceName}.service >/dev/null 2>&1`,
+      timeoutMs: 8_000,
+      timeoutIsProgress: true,
+    },
+    {
+      label: "user start",
+      command: `systemctl --user start --no-block ${serviceName}.service >/dev/null 2>&1`,
+      timeoutMs: 8_000,
+      timeoutIsProgress: true,
+    },
+  ];
+  const rootAttempts = [
     {
       label: "root restart",
       command: `sudo -n systemctl restart --no-block ${serviceName}.service >/dev/null 2>&1`,
@@ -628,20 +650,18 @@ async function restartGatewayServiceOnce(
       timeoutMs: 12_000,
       timeoutIsProgress: true,
     },
-    {
-      label: "user restart",
-      command: `systemctl --user restart --no-block ${serviceName}.service >/dev/null 2>&1`,
-      timeoutMs: 8_000,
-      timeoutIsProgress: true,
-    },
-    {
-      label: "user start",
-      command: `systemctl --user start --no-block ${serviceName}.service >/dev/null 2>&1`,
-      timeoutMs: 8_000,
-      timeoutIsProgress: true,
-    },
   ];
+  return [
+    ...(profile === "hosting" ? rootAttempts : userAttempts),
+    ...(profile === "hosting" ? userAttempts : rootAttempts),
+  ];
+}
 
+async function restartGatewayServiceOnce(
+  serviceName = "fased-gateway",
+  profile: GatewayServiceRestartProfile = "local",
+): Promise<{ ok: boolean; detail?: string }> {
+  const attempts = buildGatewayServiceRestartAttempts(serviceName, profile);
   const failures: string[] = [];
   for (const attempt of attempts) {
     const result = await runShell(attempt.command, { timeoutMs: attempt.timeoutMs });
@@ -787,6 +807,112 @@ async function checkHttpStatusOk(url: string): Promise<{ ok: boolean; detail: st
       detail: err instanceof Error ? err.message : String(err),
     };
   }
+}
+
+function describeBootAsset(asset: ControlUiBootCheckAsset | null, label: string): string | null {
+  if (!asset) {
+    return `${label} is not referenced`;
+  }
+  if (!asset.ok) {
+    const status = Number.isFinite(asset.status) ? `HTTP ${asset.status}` : "fetch failed";
+    return `${label} failed (${status}; ${asset.contentType || "missing content-type"}; ${asset.message ?? "unknown error"})`;
+  }
+  return null;
+}
+
+export function validateLocalDashboardBootCheck(
+  bootCheck: ControlUiBootCheck,
+): { ok: true } | { ok: false; detail: string } {
+  if (bootCheck.index !== "ok" || !bootCheck.indexResponse.ok) {
+    return {
+      ok: false,
+      detail:
+        bootCheck.indexResponse.message ??
+        `dashboard index failed with HTTP ${bootCheck.indexResponse.status}`,
+    };
+  }
+  const entryFailure = describeBootAsset(bootCheck.entryJs, "entry JS");
+  if (entryFailure) {
+    return { ok: false, detail: entryFailure };
+  }
+  const appFailure = describeBootAsset(bootCheck.appJs, "app JS");
+  if (appFailure) {
+    return { ok: false, detail: appFailure };
+  }
+  return { ok: true };
+}
+
+async function fetchLocalDashboardBootCheck(params: {
+  httpUrl: string;
+  timeoutMs?: number;
+}): Promise<{ ok: true; bootCheck: ControlUiBootCheck } | { ok: false; detail: string }> {
+  const url = new URL(CONTROL_UI_BOOT_CHECK_PATH, params.httpUrl);
+  try {
+    const res = await fetch(url, {
+      method: "GET",
+      redirect: "manual",
+      cache: "no-store",
+      signal: AbortSignal.timeout(Math.max(500, params.timeoutMs ?? 4_000)),
+    });
+    const contentType = res.headers.get("content-type") ?? "";
+    if (!contentType.toLowerCase().includes("application/json")) {
+      return {
+        ok: false,
+        detail: `boot-check returned ${res.status} ${contentType || "missing content-type"}`,
+      };
+    }
+    const bootCheck = (await res.json()) as ControlUiBootCheck;
+    const valid = validateLocalDashboardBootCheck(bootCheck);
+    if (!valid.ok) {
+      return { ok: false, detail: valid.detail };
+    }
+    return { ok: true, bootCheck };
+  } catch (err) {
+    return { ok: false, detail: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+async function waitForLocalDashboardReady(params: {
+  links: { httpUrl: string; wsUrl: string };
+  token?: string;
+  password?: string;
+  deadlineMs: number;
+  pollMs?: number;
+}): Promise<{ ok: boolean; detail?: string }> {
+  const deadlineAt = Date.now() + Math.max(1_000, params.deadlineMs);
+  const pollMs = Math.max(250, params.pollMs ?? 750);
+  let lastDetail = "dashboard not ready";
+  while (Date.now() < deadlineAt) {
+    const index = await checkHttpStatusOk(params.links.httpUrl);
+    if (!index.ok) {
+      lastDetail = `dashboard HTTP ${index.detail}`;
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
+      continue;
+    }
+
+    const bootCheck = await fetchLocalDashboardBootCheck({
+      httpUrl: params.links.httpUrl,
+      timeoutMs: 4_000,
+    });
+    if (!bootCheck.ok) {
+      lastDetail = bootCheck.detail;
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
+      continue;
+    }
+
+    const gateway = await probeGatewayReachable({
+      url: params.links.wsUrl,
+      token: params.token,
+      password: params.password,
+      timeoutMs: 5_000,
+    });
+    if (gateway.ok) {
+      return { ok: true };
+    }
+    lastDetail = gateway.detail ?? "gateway websocket not reachable";
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+  return { ok: false, detail: lastDetail };
 }
 
 async function collectLocalGatewayHealthCheck(params: {
@@ -1548,7 +1674,10 @@ export async function finalizeOnboardingWizard(
             async (progress) => {
               progress.update("Restarting Gateway service…");
               if (flow === "quickstart" && process.platform === "linux") {
-                const restarted = await restartGatewayServiceOnce("fased-gateway");
+                const restarted = await restartGatewayServiceOnce(
+                  "fased-gateway",
+                  strictVps ? "hosting" : "local",
+                );
                 if (!restarted.ok) {
                   throw new Error(
                     `gateway service restart unavailable: ${restarted.detail ?? "unknown error"}`,
@@ -1769,7 +1898,10 @@ export async function finalizeOnboardingWizard(
       !autoStartEnabled &&
       (lastDetail === "deactivating" || lastDetail === "activating")
     ) {
-      const restarted = await restartGatewayServiceOnce("fased-gateway");
+      const restarted = await restartGatewayServiceOnce(
+        "fased-gateway",
+        strictVps ? "hosting" : "local",
+      );
       if (restarted.ok) {
         const settleDeadline = Date.now() + (lowRamMode ? 45_000 : 20_000);
         while (Date.now() < settleDeadline) {
@@ -1868,19 +2000,20 @@ export async function finalizeOnboardingWizard(
     const fastProbeTimeoutMs = strictVps ? 2_500 : 1_500;
     let fastHealthSatisfied = false;
     let restartAttemptedInHealth = false;
+    const localFastReadinessDeadlineMs = lowRamMode ? 120_000 : 30_000;
     const warmupDeadlineMs = strictVps
       ? fastHealth
         ? 3_000
         : 90_000
       : fastHealth
-        ? 3_000
+        ? localFastReadinessDeadlineMs
         : 60_000;
     const listenerDeadlineMs = strictVps
       ? fastHealth
         ? 3_000
         : 90_000
       : fastHealth
-        ? 3_000
+        ? localFastReadinessDeadlineMs
         : 60_000;
     const strictProbeTimeoutMs = fastHealth ? 5_000 : 15_000;
 
@@ -1915,7 +2048,10 @@ export async function finalizeOnboardingWizard(
         }
         if (!skippedRestartForWarmup) {
           restartAttemptedInHealth = true;
-          const restarted = await restartGatewayServiceOnce("fased-gateway");
+          const restarted = await restartGatewayServiceOnce(
+            "fased-gateway",
+            strictVps ? "hosting" : "local",
+          );
           if (restarted.ok) {
             await prompter.note(
               "Gateway listener was not ready; restarted runtime service once.",
@@ -2011,11 +2147,11 @@ export async function finalizeOnboardingWizard(
           serviceActive
             ? strictVps
               ? "Gateway service is active; verifying listener readiness."
-              : "Gateway service is active."
+              : "Gateway service is active; verifying dashboard readiness."
             : "Gateway startup is still warming; setup will keep checking before completion.",
           serviceActive ? "Health check" : "Gateway startup",
         );
-        fastHealthSatisfied = true;
+        fastHealthSatisfied = strictVps && serviceActive;
       }
     }
 
@@ -2041,7 +2177,10 @@ export async function finalizeOnboardingWizard(
             // Don't restart while the service is already starting; let warmup continue.
             if (!rootBusy && !userBusy && !restartAttemptedInHealth) {
               restartAttemptedInHealth = true;
-              const restarted = await restartGatewayServiceOnce("fased-gateway");
+              const restarted = await restartGatewayServiceOnce(
+                "fased-gateway",
+                strictVps ? "hosting" : "local",
+              );
               if (restarted.ok) {
                 progress.update(
                   "Listener not ready yet; restarted service once and waiting again…",
@@ -2140,14 +2279,19 @@ export async function finalizeOnboardingWizard(
     if (!fastHealthSatisfied) {
       // Daemon install/restart can briefly flap the WS; wait a bit so health check doesn't false-fail.
       let wsWarmupError: unknown = null;
+      let wsWarmupProbe: { ok: boolean; detail?: string } | null = null;
       try {
-        await waitForGatewayReachable({
+        wsWarmupProbe = await waitForGatewayReachable({
           url: probeLinks.wsUrl,
           token: healthProbeToken,
           password: healthProbePassword,
           deadlineMs: warmupDeadlineMs,
           probeTimeoutMs: strictVps ? 12_000 : 5_000,
+          pollMs: 750,
         });
+        if (!wsWarmupProbe.ok) {
+          wsWarmupError = new Error(wsWarmupProbe.detail ?? "gateway not reachable");
+        }
       } catch (err) {
         wsWarmupError = err;
         runtime.error(
@@ -2234,49 +2378,49 @@ export async function finalizeOnboardingWizard(
           }
         }
       } else {
-        const localHttpReady = await waitForGatewayHttpListener({
-          wsUrl: probeLinks.wsUrl,
-          deadlineMs: listenerDeadlineMs,
-        });
-        if (!localHttpReady.ok) {
-          runtime.error(
-            `Gateway listener warmup warning for ${probeLinks.wsUrl}: ${localHttpReady.detail ?? "listener not reachable yet"}`,
+        let localGatewayReady = wsWarmupProbe ?? {
+          ok: false,
+          detail:
+            wsWarmupError instanceof Error
+              ? wsWarmupError.message
+              : typeof wsWarmupError === "string" && wsWarmupError
+                ? wsWarmupError
+                : "gateway not reachable",
+        };
+        if (
+          !localGatewayReady.ok &&
+          String(localGatewayReady.detail ?? "")
+            .toLowerCase()
+            .includes("device token mismatch")
+        ) {
+          const cleared = clearDeviceAuthStore(process.env);
+          await prompter.note(
+            [
+              "Detected stale local device auth token cache.",
+              cleared
+                ? "Cleared local cached device auth and retrying gateway readiness once."
+                : "Device auth cache was already empty; retrying gateway readiness once.",
+            ].join("\n"),
+            "Gateway auth recovery",
           );
+          localGatewayReady = await waitForGatewayReachable({
+            url: probeLinks.wsUrl,
+            token: healthProbeToken,
+            password: healthProbePassword,
+            deadlineMs: warmupDeadlineMs,
+            probeTimeoutMs: 5_000,
+            pollMs: 750,
+          });
         }
-        try {
-          await healthCommand({ json: false, timeoutMs: 10_000 }, runtime);
-        } catch (err) {
-          let finalError = err;
-          const rawError = String(err).toLowerCase();
-          if (rawError.includes("device token mismatch")) {
-            const cleared = clearDeviceAuthStore(process.env);
-            await prompter.note(
-              [
-                "Detected stale local device auth token cache.",
-                cleared
-                  ? "Cleared local cached device auth and retrying health check once."
-                  : "Device auth cache was already empty; retrying health check once.",
-              ].join("\n"),
-              "Gateway auth recovery",
-            );
-            try {
-              await healthCommand({ json: false, timeoutMs: 10_000 }, runtime);
-              finalError = null;
-            } catch (retryErr) {
-              finalError = retryErr;
-            }
-          }
-          if (finalError) {
-            runtime.error(formatHealthCheckFailure(finalError));
-            await prompter.note(
-              [
-                "Docs:",
-                "https://docs.fased.ai/gateway/health",
-                "https://docs.fased.ai/gateway/troubleshooting",
-              ].join("\n"),
-              "Health check help",
-            );
-          }
+        if (!localGatewayReady.ok) {
+          await prompter.note(
+            [
+              "Gateway is still warming after the service restart.",
+              "Setup will keep checking dashboard HTTP/assets/WebSocket readiness before it prints a dashboard link.",
+              `Detail: ${localGatewayReady.detail ?? "gateway not reachable yet"}`,
+            ].join("\n"),
+            "Gateway startup",
+          );
         }
       }
     }
@@ -2303,11 +2447,24 @@ export async function finalizeOnboardingWizard(
     password: settings.authMode === "password" ? nextConfig.gateway?.auth?.password : "",
   });
   if (!strictVps && opts.mode !== "remote" && !opts.skipUi && !gatewayProbe.ok) {
+    const warmup = await waitForGatewayReachable({
+      url: links.wsUrl,
+      token: settings.authMode === "token" ? gatewayTokenForUi || undefined : undefined,
+      password: settings.authMode === "password" ? nextConfig.gateway?.auth?.password : "",
+      deadlineMs: lowRamMode ? 120_000 : 30_000,
+      probeTimeoutMs: 5_000,
+      pollMs: 750,
+    });
+    if (warmup.ok) {
+      gatewayProbe = warmup;
+    }
+  }
+  if (!strictVps && opts.mode !== "remote" && !opts.skipUi && !gatewayProbe.ok) {
     await prompter.note(
       "Gateway is not reachable yet; restarting the service once before showing the dashboard link.",
       "Gateway startup",
     );
-    await restartGatewayServiceOnce("fased-gateway");
+    await restartGatewayServiceOnce("fased-gateway", strictVps ? "hosting" : "local");
     const ready = await waitForGatewayReachable({
       url: links.wsUrl,
       token: settings.authMode === "token" ? gatewayTokenForUi || undefined : undefined,
@@ -2331,11 +2488,49 @@ export async function finalizeOnboardingWizard(
     }
     gatewayProbe = { ok: true };
   }
+  if (!strictVps && opts.mode !== "remote" && !opts.skipUi) {
+    let localDashboardReady = await waitForLocalDashboardReady({
+      links,
+      token: settings.authMode === "token" ? gatewayTokenForUi || undefined : undefined,
+      password: settings.authMode === "password" ? nextConfig.gateway?.auth?.password : "",
+      deadlineMs: lowRamMode ? 120_000 : 60_000,
+      pollMs: 750,
+    });
+    if (!localDashboardReady.ok) {
+      await prompter.note(
+        "Dashboard HTTP/assets/WebSocket readiness did not pass; restarting the local gateway service once.",
+        "Dashboard readiness",
+      );
+      await restartGatewayServiceOnce("fased-gateway", "local");
+      localDashboardReady = await waitForLocalDashboardReady({
+        links,
+        token: settings.authMode === "token" ? gatewayTokenForUi || undefined : undefined,
+        password: settings.authMode === "password" ? nextConfig.gateway?.auth?.password : "",
+        deadlineMs: lowRamMode ? 120_000 : 60_000,
+        pollMs: 750,
+      });
+    }
+    if (!localDashboardReady.ok) {
+      throw new Error(
+        [
+          "Local dashboard is not ready, so setup will not print a ready dashboard link.",
+          `Detail: ${localDashboardReady.detail ?? "dashboard readiness failed"}`,
+          "Debug commands:",
+          "  systemctl --user status fased-gateway --no-pager",
+          "  journalctl --user -u fased-gateway -n 120 --no-pager",
+          "  fased dashboard --no-open",
+          "Repair command:",
+          "  ./install.sh",
+        ].join("\n"),
+      );
+    }
+    gatewayProbe = { ok: true };
+  }
   const gatewayStatusLine = gatewayProbe.ok
     ? "Gateway: reachable"
     : `Gateway: not detected${gatewayProbe.detail ? ` (${gatewayProbe.detail})` : ""}`;
   const localHealthCheck =
-    !strictVps && opts.mode !== "remote"
+    !strictVps && opts.mode !== "remote" && !opts.skipHealth && !opts.skipUi
       ? await collectLocalGatewayHealthCheck({
           links,
           token: settings.authMode === "token" ? gatewayTokenForUi || undefined : undefined,
@@ -2707,7 +2902,10 @@ export async function finalizeOnboardingWizard(
         pollMs: 750,
       });
       if (!tuiReady.ok) {
-        const restarted = await restartGatewayServiceOnce("fased-gateway");
+        const restarted = await restartGatewayServiceOnce(
+          "fased-gateway",
+          strictVps ? "hosting" : "local",
+        );
         if (restarted.ok) {
           const listenerReady = await waitForGatewayHttpListener({
             wsUrl: links.wsUrl,
