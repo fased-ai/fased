@@ -178,6 +178,38 @@ describe("noteMemorySearchHealth", () => {
     expect(message).toContain("fased configure --section model");
     expect(message).not.toContain("fased auth add --provider");
   });
+
+  it("stays quiet in auto mode when optional memory search is not part of a deep check", async () => {
+    resolveMemorySearchConfig.mockReturnValue({
+      provider: "auto",
+      local: {},
+      remote: {},
+    });
+
+    await noteMemorySearchHealth(cfg, { quietOptional: true });
+
+    expect(note).not.toHaveBeenCalled();
+  });
+
+  it("still reports gateway memory probe failures in quiet mode", async () => {
+    resolveMemorySearchConfig.mockReturnValue({
+      provider: "auto",
+      local: {},
+      remote: {},
+    });
+
+    await noteMemorySearchHealth(cfg, {
+      quietOptional: true,
+      gatewayMemoryProbe: {
+        checked: true,
+        ready: false,
+        error: "gateway memory probe unavailable: timeout",
+      },
+    });
+
+    const message = String(note.mock.calls[0]?.[0] ?? "");
+    expect(message).toContain("gateway memory probe unavailable: timeout");
+  });
 });
 
 describe("detectLegacyWorkspaceDirs", () => {

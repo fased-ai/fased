@@ -3,6 +3,7 @@ import { projectSafeChannelAccountSnapshotFields } from "../channels/account-sna
 import { resolveChannelDefaultAccountId } from "../channels/plugins/helpers.js";
 import { getChannelPlugin, listChannelPlugins } from "../channels/plugins/index.js";
 import type { ChannelAccountSnapshot } from "../channels/plugins/types.js";
+import { formatCliCommand } from "../cli/command-format.js";
 import { withProgress } from "../cli/progress.js";
 import type { FasedAgentConfig } from "../config/config.js";
 import { loadConfig } from "../config/config.js";
@@ -262,12 +263,14 @@ export const formatHealthChannelLines = (
   opts: {
     accountMode?: "default" | "all";
     accountIdsByChannel?: Record<string, string[] | undefined>;
+    includeInactive?: boolean;
   } = {},
 ): string[] => {
   const channels = summary.channels ?? {};
   const channelOrder =
     summary.channelOrder?.length > 0 ? summary.channelOrder : Object.keys(channels);
   const accountMode = opts.accountMode ?? "default";
+  const includeInactive = opts.includeInactive ?? true;
 
   const lines: string[] = [];
   for (const channelId of channelOrder) {
@@ -306,7 +309,7 @@ export const formatHealthChannelLines = (
         const authAgeMs = typeof baseSummary.authAgeMs === "number" ? baseSummary.authAgeMs : null;
         const authLabel = authAgeMs != null ? ` (auth age ${Math.round(authAgeMs / 60000)}m)` : "";
         lines.push(`${label}: linked${authLabel}`);
-      } else {
+      } else if (includeInactive) {
         lines.push(`${label}: not linked`);
       }
       continue;
@@ -314,7 +317,9 @@ export const formatHealthChannelLines = (
 
     const configured = typeof baseSummary.configured === "boolean" ? baseSummary.configured : null;
     if (configured === false) {
-      lines.push(`${label}: not configured`);
+      if (includeInactive) {
+        lines.push(`${label}: not configured`);
+      }
       continue;
     }
 
@@ -348,7 +353,9 @@ export const formatHealthChannelLines = (
       lines.push(`${label}: configured`);
       continue;
     }
-    lines.push(`${label}: unknown`);
+    if (includeInactive) {
+      lines.push(`${label}: unknown`);
+    }
   }
   return lines;
 };
@@ -571,6 +578,8 @@ export async function healthCommand(
   } else {
     const debugEnabled = isTruthyEnvValue(process.env.FASED_DEBUG_HEALTH);
     const rich = isRich();
+    runtime.log(info(`Gateway: online (${Math.max(0, Math.round(summary.durationMs ?? 0))}ms)`));
+    runtime.log(info(`Dashboard: ${formatCliCommand("fased dashboard")}`));
     if (opts.verbose) {
       const details = buildGatewayConnectionDetails({ config: cfg });
       runtime.log(info("Gateway connection:"));
@@ -685,12 +694,18 @@ export async function healthCommand(
         ? formatHealthChannelLines(summary, {
             accountMode: opts.verbose ? "all" : "default",
             accountIdsByChannel,
+            includeInactive: Boolean(opts.verbose),
           })
         : formatHealthChannelLines(summary, {
             accountMode: opts.verbose ? "all" : "default",
+            includeInactive: Boolean(opts.verbose),
           });
-    for (const line of channelLines) {
-      runtime.log(styleHealthChannelLine(line, rich));
+    if (channelLines.length > 0) {
+      for (const line of channelLines) {
+        runtime.log(styleHealthChannelLine(line, rich));
+      }
+    } else if (!opts.verbose) {
+      runtime.log(info("Channels: none connected yet (optional)."));
     }
     for (const plugin of listChannelPlugins()) {
       const channelSummary = summary.channels?.[plugin.id];

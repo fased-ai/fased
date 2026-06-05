@@ -141,12 +141,22 @@ uses the `app` user over Tailscale from your own computer:
 
 ```bash
 ssh app@YOUR_VPS_TAILSCALE_NAME
+fased health
 fased status
 fased dashboard
 ```
 
 The `app` shell is a full Linux shell on the VPS and is configured to start in
 `/home/app/fased`.
+
+Use `fased health` as the single pass/fail check after hosting install. It
+should start with `Gateway: online`. Use `fased health --verbose` only when you
+want optional channel details. If health fails, inspect the service:
+
+```bash
+sudo systemctl status fased-gateway --no-pager
+sudo journalctl -u fased-gateway -n 120 --no-pager
+```
 
 Root SSH is only for first bootstrap or emergency repair after the hosting
 profile hardens SSH/UFW. Keep the raw Gateway port closed to the public

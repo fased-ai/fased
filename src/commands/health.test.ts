@@ -53,6 +53,7 @@ const createHealthSummary = (params: {
 
 const callGatewayMock = vi.fn();
 vi.mock("../gateway/call.js", () => ({
+  buildGatewayConnectionDetails: () => ({ message: "Gateway target: ws://127.0.0.1:18789" }),
   callGateway: (...args: unknown[]) => callGatewayMock(...args),
 }));
 
@@ -118,6 +119,34 @@ describe("healthCommand", () => {
 
     expect(runtime.exit).not.toHaveBeenCalled();
     expect(runtime.log).toHaveBeenCalled();
+    const output = stripAnsi(runtime.log.mock.calls.map((call) => String(call[0])).join("\n"));
+    expect(output).toContain("Gateway: online");
+    expect(output).toContain("Dashboard: fased dashboard");
+    expect(output).toContain("Channels: none connected yet (optional).");
+    expect(output).not.toContain("WhatsApp: not linked");
+    expect(output).not.toContain("Telegram: not configured");
+  });
+
+  it("shows inactive optional channels in verbose text summary", async () => {
+    callGatewayMock.mockResolvedValueOnce(
+      createHealthSummary({
+        channels: {
+          whatsapp: { accountId: "default", linked: false, authAgeMs: null },
+          telegram: { accountId: "default", configured: false },
+        },
+        channelOrder: ["whatsapp", "telegram"],
+        channelLabels: {
+          whatsapp: "WhatsApp",
+          telegram: "Telegram",
+        },
+      }),
+    );
+
+    await healthCommand({ json: false, verbose: true }, runtime as never);
+
+    const output = stripAnsi(runtime.log.mock.calls.map((call) => String(call[0])).join("\n"));
+    expect(output).toContain("WhatsApp: not linked");
+    expect(output).toContain("Telegram: not configured");
   });
 
   it("formats per-account probe timings", () => {

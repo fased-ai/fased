@@ -108,8 +108,9 @@ recovery options and VPS provider console access working.
     secrets.
 
     Local setup finishes with a health check for the service path, gateway
-    token, dashboard HTTP 200, and gateway online state. Later, run
-    `fased health` for a one-command gateway check.
+    token, dashboard HTTP 200, and gateway online state. Later, use
+    `fased health` as the single pass/fail check for the running Gateway. Use
+    `fased health --verbose` only when you want optional channel details.
 
   </Tab>
   <Tab title="VPS Hosting install">

@@ -17,6 +17,7 @@ export async function checkGatewayHealth(params: {
   runtime: RuntimeEnv;
   cfg: FasedAgentConfig;
   timeoutMs?: number;
+  includeChannelWarnings?: boolean;
 }) {
   const gatewayDetails = buildGatewayConnectionDetails({ config: params.cfg });
   const timeoutMs =
@@ -35,7 +36,7 @@ export async function checkGatewayHealth(params: {
     }
   }
 
-  if (healthOk) {
+  if (healthOk && params.includeChannelWarnings === true) {
     try {
       const status = await callGateway({
         method: "channels.status",

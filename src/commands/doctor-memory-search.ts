@@ -20,6 +20,7 @@ export async function noteMemorySearchHealth(
       ready: boolean;
       error?: string;
     };
+    quietOptional?: boolean;
   },
 ): Promise<void> {
   const agentId = resolveDefaultAgentId(cfg);
@@ -28,6 +29,9 @@ export async function noteMemorySearchHealth(
   const hasRemoteApiKey = Boolean(resolved?.remote?.apiKey?.trim());
 
   if (!resolved) {
+    if (opts?.quietOptional) {
+      return;
+    }
     note("Memory search is explicitly disabled (enabled: false).", "Memory search");
     return;
   }
@@ -119,6 +123,9 @@ export async function noteMemorySearchHealth(
     return;
   }
   const gatewayProbeWarning = buildGatewayProbeWarning(opts?.gatewayMemoryProbe);
+  if (opts?.quietOptional && !gatewayProbeWarning) {
+    return;
+  }
 
   note(
     [

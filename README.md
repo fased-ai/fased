@@ -71,8 +71,9 @@ If `~/.fased` already exists, the installer asks how to use that state:
 If old channel credentials create warnings, run `fased doctor --fix`; it can
 disable stale channel entries without deleting wallets or provider secrets.
 Local setup finishes with a health check for service path, token match,
-dashboard HTTP 200, and gateway online state. Later, run `fased health` for a
-one-command gateway check.
+dashboard HTTP 200, and gateway online state. Later, use `fased health` as the
+single pass/fail check for the running Gateway. Use `fased health --verbose`
+only when you want optional channel details.
 
 On Windows, local install means WSL2/Ubuntu. Hosted VPS management is different:
 use PowerShell or Windows Terminal with the Windows Tailscale app online unless
