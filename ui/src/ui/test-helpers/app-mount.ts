@@ -22,10 +22,12 @@ class MockWebSocket {
 }
 
 export function mountApp(pathname: string) {
-  getSafeLocalStorage()?.setItem("fased.control.token.local.v1", "owner-token-for-browser-harness");
+  const token = "owner-token-for-browser-harness";
+  getSafeLocalStorage()?.setItem("fased.control.token.local.v1", token);
   window.history.replaceState({}, "", pathname);
   const app = document.createElement("fased-app") as FasedAgentApp;
   document.body.append(app);
+  app.applySettings({ ...app.settings, token });
   app.connected = true;
   app.requestUpdate();
   return app;

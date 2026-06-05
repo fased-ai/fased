@@ -12,6 +12,7 @@ describe("sidebar connection status", () => {
       ok: true,
       server: { version: "1.2.3" },
     } as never;
+    app.connected = true;
     app.requestUpdate();
     await app.updateComplete;
 
