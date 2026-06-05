@@ -46,6 +46,10 @@ On Windows, use [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install), t
     dependency install and build. If source changes during that update, the
     installer restarts once so the new installer code runs.
 
+    Local installs check for existing `~/.fased` data before onboarding. If
+    state already exists, the installer asks whether to keep it, reset local
+    config metadata, or use a separate state directory for this checkout.
+
     If the install starts as `root` on a hosted server, the installer creates a
     non-root `app` user, prepares `/home/app/fased`, and re-runs itself there.
     The runtime and CLI are then owned by `app`.
@@ -197,10 +201,14 @@ current surface, run `./install.sh --help` from the repo root.
 | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
 | `FASED_INSTALL_REPO=<url>`          | Repo URL used by bootstrap installs.                                                                                            |
 | `FASED_INSTALL_DIR=<path>`          | Checkout/install directory.                                                                                                     |
-| `FASED_CONFIG_DIR=<path>`           | Config, install marker, cache, and logs directory.                                                                              |
+| `FASED_STATE_DIR=<path>`            | Runtime state directory for config, sessions, credentials, logs, wallets, and caches.                                           |
+| `FASED_CONFIG_PATH=<path>`          | Explicit config file path. Defaults to `$FASED_STATE_DIR/fased.json`.                                                           |
+| `FASED_CONFIG_DIR=<path>`           | Installer compatibility alias for state, install marker, cache, and logs directory. Prefer `FASED_STATE_DIR` for new installs.  |
 | `FASED_CLI_BIN_DIR=<path>`          | Directory where `install.sh` writes the `fased` command.                                                                        |
 | `FASED_INSTALL_VERBOSE=1`           | Show install command output instead of only log paths.                                                                          |
 | `FASED_INSTALL_USER=<name>`         | Non-root app user used by root bootstrap installs.                                                                              |
+| `FASED_EXISTING_DATA_ACTION=<mode>` | Noninteractive local state choice: `keep`, `reset-config`, or `separate-state`.                                                 |
+| `FASED_EXISTING_DATA_DIR=<path>`    | State directory used with `FASED_EXISTING_DATA_ACTION=separate-state`.                                                          |
 | `FASED_SAT_RUNTIME_ENV_FILE=<path>` | Optional SAT runtime ID env file for explicit test networks or verified manual recovery. Normal mainnet setup uses Mining Sync. |
 
 ## Automation

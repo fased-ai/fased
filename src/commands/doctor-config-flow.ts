@@ -71,6 +71,109 @@ function maybeRepairUnenrolledWalletApprovalAuth(cfg: FasedAgentConfig): {
   };
 }
 
+type NoisyChannelCredentialHit = {
+  path: string;
+  reason: string;
+};
+
+function credentialLooksPlaceholder(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  return (
+    normalized.includes("placeholder") ||
+    normalized.includes("changeme") ||
+    normalized.includes("replace-me") ||
+    normalized.includes("your-") ||
+    normalized.includes("example") ||
+    /^x+$/.test(normalized) ||
+    /^test[-_]/.test(normalized)
+  );
+}
+
+function looksLikeFeishuCredentialPairLocal(params: {
+  appId?: string;
+  appSecret?: string;
+}): boolean {
+  const appId = params.appId?.trim() ?? "";
+  const appSecret = params.appSecret?.trim() ?? "";
+  if (!appId || !appSecret) {
+    return false;
+  }
+  if (appId.length < 8 || appSecret.length < 16) {
+    return false;
+  }
+  return !/\s/.test(appId) && !/\s/.test(appSecret);
+}
+
+function collectNoisyChannelCredentialHits(cfg: FasedAgentConfig): NoisyChannelCredentialHit[] {
+  const hits: NoisyChannelCredentialHit[] = [];
+  const feishu = asObjectRecord(cfg.channels?.feishu);
+  if (!feishu) {
+    return hits;
+  }
+
+  const inspectFeishuScope = (scope: Record<string, unknown>, pathLabel: string) => {
+    if (scope.enabled === false) {
+      return;
+    }
+    const appId = typeof scope.appId === "string" ? scope.appId.trim() : "";
+    const appSecret = typeof scope.appSecret === "string" ? scope.appSecret.trim() : "";
+    if (!appId && !appSecret) {
+      return;
+    }
+    const placeholder = credentialLooksPlaceholder(appId) || credentialLooksPlaceholder(appSecret);
+    if (placeholder) {
+      hits.push({ path: pathLabel, reason: "placeholder credentials" });
+      return;
+    }
+    if (!appId || !appSecret) {
+      hits.push({ path: pathLabel, reason: "incomplete credentials" });
+      return;
+    }
+    if (!looksLikeFeishuCredentialPairLocal({ appId, appSecret })) {
+      hits.push({ path: pathLabel, reason: "malformed credentials" });
+    }
+  };
+
+  const accounts = asObjectRecord(feishu.accounts);
+  if (!accounts || Object.keys(accounts).length === 0) {
+    inspectFeishuScope(feishu, "channels.feishu");
+    return hits;
+  }
+
+  for (const [accountId, rawAccount] of Object.entries(accounts)) {
+    const account = asObjectRecord(rawAccount);
+    if (!account) {
+      continue;
+    }
+    inspectFeishuScope(account, `channels.feishu.accounts.${accountId}`);
+  }
+  return hits;
+}
+
+function maybeRepairNoisyChannelCredentials(cfg: FasedAgentConfig): {
+  config: FasedAgentConfig;
+  changes: string[];
+} {
+  const hits = collectNoisyChannelCredentialHits(cfg);
+  if (hits.length === 0) {
+    return { config: cfg, changes: [] };
+  }
+  const next = structuredClone(cfg);
+  for (const hit of hits) {
+    const target = asObjectRecord(resolvePathTarget(next, hit.path.split(".")));
+    if (target) {
+      target.enabled = false;
+    }
+  }
+  return {
+    config: next,
+    changes: hits.map((hit) => `- Disabled ${hit.path} because it has ${hit.reason}.`),
+  };
+}
+
 function normalizeIssuePath(path: PropertyKey[]): Array<string | number> {
   return path.filter((part): part is string | number => typeof part !== "symbol");
 }
@@ -1764,6 +1867,14 @@ export async function loadAndMaybeMigrateDoctorConfig(params: {
   }
 
   if (shouldRepair) {
+    const noisyChannelRepair = maybeRepairNoisyChannelCredentials(candidate);
+    if (noisyChannelRepair.changes.length > 0) {
+      note(noisyChannelRepair.changes.join("\n"), "Doctor changes");
+      candidate = noisyChannelRepair.config;
+      pendingChanges = true;
+      cfg = noisyChannelRepair.config;
+    }
+
     const repair = await maybeRepairTelegramAllowFromUsernames(candidate);
     if (repair.changes.length > 0) {
       note(repair.changes.join("\n"), "Doctor changes");
@@ -1826,6 +1937,17 @@ export async function loadAndMaybeMigrateDoctorConfig(params: {
         [
           `- Telegram allowFrom contains ${hits.length} non-numeric entries (e.g. ${hits[0]?.entry ?? "@"}); Telegram authorization requires numeric sender IDs.`,
           `- Run "${formatCliCommand("fased doctor --fix")}" to auto-resolve @username entries to numeric IDs (requires a Telegram bot token).`,
+        ].join("\n"),
+        "Doctor warnings",
+      );
+    }
+
+    const noisyChannelHits = collectNoisyChannelCredentialHits(candidate);
+    if (noisyChannelHits.length > 0) {
+      note(
+        [
+          ...noisyChannelHits.map((hit) => `- ${hit.path} has ${hit.reason}.`),
+          `- Run "${formatCliCommand("fased doctor --fix")}" to disable these stale channel entries.`,
         ].join("\n"),
         "Doctor warnings",
       );

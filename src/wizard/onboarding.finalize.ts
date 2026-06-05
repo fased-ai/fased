@@ -140,6 +140,7 @@ export function formatLocalDashboardReady(params: {
   gatewayToken?: string;
   opened: boolean;
   fallbackHint?: string;
+  healthCheck?: string;
 }): string {
   return [
     "1. Dashboard",
@@ -156,6 +157,8 @@ export function formatLocalDashboardReady(params: {
     params.gatewayToken ? "" : undefined,
     params.gatewayToken ? "Token backup" : undefined,
     params.gatewayToken ? `   ${params.gatewayToken}` : undefined,
+    params.healthCheck ? "" : undefined,
+    params.healthCheck,
     params.fallbackHint ? "" : undefined,
     params.fallbackHint ? "Remote browser fallback" : undefined,
     params.fallbackHint,
@@ -709,7 +712,7 @@ export async function ensureGatewaySecretMatchesToken(token: string): Promise<bo
   if (!normalizedToken) {
     return false;
   }
-  const tokenPath = resolveUserPath("~/.fased/gateway-secret");
+  const tokenPath = resolveGatewaySecretPathForEnv(process.env);
   const existing = await fs.readFile(tokenPath, "utf8").catch(() => "");
   if (existing.trim() === normalizedToken) {
     return false;
@@ -773,6 +776,71 @@ function wsToHttpUrl(wsUrl: string): string {
   const parsed = new URL(wsUrl);
   parsed.protocol = parsed.protocol === "wss:" ? "https:" : "http:";
   return parsed.toString();
+}
+
+function resolveGatewaySecretPathForEnv(env: NodeJS.ProcessEnv = process.env): string {
+  const stateDir = env.FASED_STATE_DIR?.trim()
+    ? resolveUserPath(env.FASED_STATE_DIR.trim())
+    : resolveUserPath("~/.fased");
+  return path.join(stateDir, "gateway-secret");
+}
+
+async function checkHttpStatusOk(url: string): Promise<{ ok: boolean; detail: string }> {
+  try {
+    const res = await fetch(url, {
+      method: "GET",
+      redirect: "manual",
+      signal: AbortSignal.timeout(2_000),
+    });
+    return {
+      ok: res.status === 200,
+      detail: `HTTP ${res.status}`,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      detail: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+async function collectLocalGatewayHealthCheck(params: {
+  links: { httpUrl: string; wsUrl: string };
+  token?: string;
+  password?: string;
+  gatewayProbe: { ok: boolean; detail?: string };
+}): Promise<string> {
+  const service = resolveGatewayService();
+  const command = await service.readCommand(process.env).catch(() => null);
+  const serviceMatch = gatewayServiceMatchesCurrentInstall({
+    command,
+    repoRoot: process.cwd(),
+  });
+  const secretPath = resolveGatewaySecretPathForEnv(process.env);
+  const secret = await fs.readFile(secretPath, "utf8").catch(() => "");
+  const token = params.token?.trim() ?? "";
+  const tokenMatches = token ? secret.trim() === token : true;
+  const http = await checkHttpStatusOk(params.links.httpUrl);
+  const gateway = params.gatewayProbe.ok
+    ? params.gatewayProbe
+    : await probeGatewayReachable({
+        url: params.links.wsUrl,
+        token: params.token,
+        password: params.password,
+        timeoutMs: 3_000,
+      });
+
+  const line = (ok: boolean, label: string, detail: string) =>
+    `${ok ? "✓" : "!"} ${label}: ${detail}`;
+  return [
+    "Local health check",
+    `   ${line(serviceMatch.ok, "Service path", serviceMatch.ok ? "current checkout" : (serviceMatch.detail ?? "not installed"))}`,
+    `   ${line(tokenMatches, "Gateway token", token ? "matches service secret" : "not required")}`,
+    `   ${line(http.ok, "Dashboard HTTP", http.detail)}`,
+    `   ${line(gateway.ok, "Gateway", gateway.ok ? "online" : (gateway.detail ?? "not reachable"))}`,
+    "   Local security: loopback bind (127.0.0.1) with token auth.",
+    "   Run anytime: fased health",
+  ].join("\n");
 }
 
 async function waitForGatewayHttpListener(params: {
@@ -1124,7 +1192,7 @@ export async function finalizeOnboardingWizard(
       ? (nextConfig.gateway?.auth?.mode === "token"
           ? nextConfig.gateway.auth.token
           : (await fs
-              .readFile(resolveUserPath("~/.fased/gateway-secret"), "utf8")
+              .readFile(resolveGatewaySecretPathForEnv(process.env), "utf8")
               .then((value) => value.trim())
               .catch(() => "")) ||
             settings.gatewayToken ||
@@ -2264,6 +2332,16 @@ export async function finalizeOnboardingWizard(
   const gatewayStatusLine = gatewayProbe.ok
     ? "Gateway: reachable"
     : `Gateway: not detected${gatewayProbe.detail ? ` (${gatewayProbe.detail})` : ""}`;
+  const localHealthCheck =
+    !strictVps && opts.mode !== "remote"
+      ? await collectLocalGatewayHealthCheck({
+          links,
+          token: settings.authMode === "token" ? gatewayTokenForUi || undefined : undefined,
+          password:
+            settings.authMode === "password" ? nextConfig.gateway?.auth?.password : undefined,
+          gatewayProbe,
+        })
+      : undefined;
   const tailscaleSshUser = process.env.USER?.trim() || "app";
   let tailscaleAdminUrl: string | undefined;
   let tailscaleNodeName = "";
@@ -2664,6 +2742,7 @@ export async function finalizeOnboardingWizard(
           gatewayToken:
             settings.authMode === "token" && gatewayTokenForUi ? gatewayTokenForUi : undefined,
           opened: controlUiOpened,
+          healthCheck: localHealthCheck,
         }),
         "Dashboard ready",
       );
@@ -2715,6 +2794,7 @@ export async function finalizeOnboardingWizard(
         gatewayToken:
           settings.authMode === "token" && gatewayTokenForUi ? gatewayTokenForUi : undefined,
         opened: controlUiOpened,
+        healthCheck: localHealthCheck,
         fallbackHint: !strictVps ? controlUiOpenHint : undefined,
       }),
       "Dashboard ready",

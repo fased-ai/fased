@@ -6,7 +6,10 @@ FASED_DIR="$SCRIPT_DIR"
 SAT_RUNTIME_ENV_FILE="${FASED_SAT_RUNTIME_ENV_FILE:-$FASED_DIR/config/sat-runtime.env}"
 INSTALL_REPO_URL="${FASED_INSTALL_REPO:-https://github.com/fased-ai/fased.git}"
 INSTALL_BASE_DIR="${FASED_INSTALL_DIR:-$HOME/fased}"
-FASED_CONFIG_DIR="${FASED_CONFIG_DIR:-$HOME/.fased}"
+FASED_STATE_DIR_EXPLICIT="${FASED_STATE_DIR+x}"
+FASED_CONFIG_DIR_EXPLICIT="${FASED_CONFIG_DIR+x}"
+FASED_CONFIG_PATH_EXPLICIT="${FASED_CONFIG_PATH+x}"
+FASED_CONFIG_DIR="${FASED_CONFIG_DIR:-${FASED_STATE_DIR:-$HOME/.fased}}"
 INSTALL_MARKER_PATH="$FASED_CONFIG_DIR/install-complete.json"
 INSTALL_CACHE_DIR="$FASED_CONFIG_DIR/install-cache"
 INSTALL_LOG_DIR="$FASED_CONFIG_DIR/logs"
@@ -119,6 +122,132 @@ while [[ $# -gt 0 ]]; do
   esac
   shift
 done
+
+set_installer_state_dir() {
+  local state_dir="$1"
+  case "$state_dir" in
+    "~")
+      state_dir="$HOME"
+      ;;
+    "~/"*)
+      state_dir="$HOME/${state_dir#"~/"}"
+      ;;
+  esac
+  FASED_CONFIG_DIR="$state_dir"
+  FASED_STATE_DIR="$state_dir"
+  export FASED_CONFIG_DIR FASED_STATE_DIR
+  if [[ -z "${FASED_CONFIG_PATH_EXPLICIT:-}" ]]; then
+    FASED_CONFIG_PATH="$state_dir/fased.json"
+    export FASED_CONFIG_PATH
+  fi
+  INSTALL_MARKER_PATH="$FASED_CONFIG_DIR/install-complete.json"
+  INSTALL_CACHE_DIR="$FASED_CONFIG_DIR/install-cache"
+  INSTALL_LOG_DIR="$FASED_CONFIG_DIR/logs"
+}
+
+backup_existing_local_file() {
+  local file="$1"
+  local suffix="$2"
+  if [[ ! -e "$file" ]]; then
+    return 0
+  fi
+  local backup="${file}.bak-${suffix}"
+  local index=1
+  while [[ -e "$backup" ]]; do
+    backup="${file}.bak-${suffix}-${index}"
+    index=$((index + 1))
+  done
+  mv "$file" "$backup"
+  printf '%s\n' "$backup"
+}
+
+handle_existing_local_state() {
+  if [[ "$HOSTING_REQUESTED" -eq 1 ]]; then
+    set_installer_state_dir "$FASED_CONFIG_DIR"
+    return 0
+  fi
+  if [[ -n "${FASED_STATE_DIR_EXPLICIT:-}" || -n "${FASED_CONFIG_DIR_EXPLICIT:-}" ]]; then
+    set_installer_state_dir "$FASED_CONFIG_DIR"
+    return 0
+  fi
+  if [[ ! -d "$FASED_CONFIG_DIR" ]]; then
+    set_installer_state_dir "$FASED_CONFIG_DIR"
+    return 0
+  fi
+
+  local action="${FASED_EXISTING_DATA_ACTION:-}"
+  if [[ -z "$action" && ( ! -t 0 || ! -t 1 ) ]]; then
+    action="keep"
+  fi
+
+  if [[ -z "$action" ]]; then
+    echo ""
+    echo "Existing Fased data found at $FASED_CONFIG_DIR"
+    echo "This can include sessions, wallets, provider keys, channel settings, and gateway tokens."
+    echo ""
+    echo "Choose how this install should use local state:"
+    echo "  1) Keep existing data (recommended)"
+    echo "  2) Reset local config only (keeps wallets/secrets, backs up config and install marker)"
+    echo "  3) Use a separate state directory for this checkout"
+    printf "Choice [1]: "
+    local choice
+    read -r choice || choice=""
+    case "${choice:-1}" in
+      1|keep|Keep)
+        action="keep"
+        ;;
+      2|reset|reset-config|Reset)
+        action="reset-config"
+        ;;
+      3|separate|separate-state|Separate)
+        action="separate-state"
+        ;;
+      *)
+        echo "Unknown choice; keeping existing data."
+        action="keep"
+        ;;
+    esac
+  fi
+
+  case "$action" in
+    keep)
+      set_installer_state_dir "$FASED_CONFIG_DIR"
+      ;;
+    reset-config)
+      local suffix
+      suffix="$(date -u +%Y%m%dT%H%M%SZ)"
+      local backed_up=()
+      local backup
+      backup="$(backup_existing_local_file "$FASED_CONFIG_DIR/fased.json" "local-reset-$suffix" || true)"
+      [[ -n "$backup" ]] && backed_up+=("$backup")
+      backup="$(backup_existing_local_file "$INSTALL_MARKER_PATH" "local-reset-$suffix" || true)"
+      [[ -n "$backup" ]] && backed_up+=("$backup")
+      set_installer_state_dir "$FASED_CONFIG_DIR"
+      if [[ ${#backed_up[@]} -gt 0 ]]; then
+        echo "Backed up local config metadata:"
+        printf '  %s\n' "${backed_up[@]}"
+      else
+        echo "No local config file or install marker needed backup."
+      fi
+      ;;
+    separate-state)
+      local separate_dir="${FASED_EXISTING_DATA_DIR:-}"
+      if [[ -z "$separate_dir" && -t 0 && -t 1 ]]; then
+        printf "State directory [$HOME/.fased-local]: "
+        read -r separate_dir || separate_dir=""
+      fi
+      separate_dir="${separate_dir:-$HOME/.fased-local}"
+      set_installer_state_dir "$separate_dir"
+      mkdir -p "$FASED_CONFIG_DIR"
+      chmod 700 "$FASED_CONFIG_DIR" 2>/dev/null || true
+      echo "Using separate Fased state directory: $FASED_CONFIG_DIR"
+      ;;
+    *)
+      echo "Unknown FASED_EXISTING_DATA_ACTION=$action; expected keep, reset-config, or separate-state." >&2
+      exit 1
+      ;;
+  esac
+}
 
 resolve_requested_swap_gb() {
   if [[ -n "$REQUESTED_SWAP_GB" ]]; then
@@ -524,6 +653,11 @@ assert_marker_matches_repo() {
   local marker_repo
   marker_repo="$(read_marker_repo_path || true)"
   if [[ -n "$marker_repo" && "$marker_repo" != "$repo_root" ]]; then
+    if [[ "$HOSTING_REQUESTED" -ne 1 ]]; then
+      echo "Existing local install marker points at another checkout; continuing with this checkout."
+      echo "The Gateway service will be checked and reinstalled if it is stale."
+      return 0
+    fi
     echo "Install marker mismatch." >&2
     echo "Marker repoPath: $marker_repo" >&2
     echo "Current repoPath: $repo_root" >&2
@@ -1377,6 +1511,8 @@ if [[ "$(id -u)" -ne 0 ]] && ! pass_args_contains "--host-security-capable" && i
 fi
 
 refresh_current_checkout_and_reexec_if_needed
+
+handle_existing_local_state
 
 REPO_ROOT="$(resolve_repo_root)"
 assert_marker_matches_repo "$REPO_ROOT"

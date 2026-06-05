@@ -98,8 +98,8 @@ export function resolveFeishuCredentials(cfg?: FeishuConfig): {
   verificationToken?: string;
   domain: FeishuDomain;
 } | null {
-  const appId = cfg?.appId?.trim();
-  const appSecret = cfg?.appSecret?.trim();
+  const appId = cfg?.appId?.trim() ?? "";
+  const appSecret = cfg?.appSecret?.trim() ?? "";
   if (!looksLikeFeishuCredentialPair({ appId, appSecret })) {
     return null;
   }

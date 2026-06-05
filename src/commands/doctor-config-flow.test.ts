@@ -154,6 +154,43 @@ describe("doctor config flow", () => {
     });
   });
 
+  it("disables stale Feishu account credentials without disabling valid accounts", async () => {
+    const result = await runDoctorConfigWithInput({
+      repair: true,
+      config: {
+        channels: {
+          feishu: {
+            accounts: {
+              stale: {
+                enabled: true,
+                appId: "your-app-id",
+                appSecret: "replace-me-with-real-secret",
+              },
+              work: {
+                enabled: true,
+                appId: "cli_1234567890",
+                appSecret: "0123456789abcdef0123456789abcdef",
+              },
+            },
+          },
+        },
+      },
+      run: loadAndMaybeMigrateDoctorConfig,
+    });
+
+    const cfg = result.cfg as {
+      channels: {
+        feishu: {
+          enabled?: boolean;
+          accounts: Record<string, { enabled?: boolean }>;
+        };
+      };
+    };
+    expect(cfg.channels.feishu.enabled).toBeUndefined();
+    expect(cfg.channels.feishu.accounts.stale.enabled).toBe(false);
+    expect(cfg.channels.feishu.accounts.work.enabled).toBe(true);
+  });
+
   it("preserves discord streaming intent while stripping unsupported keys on repair", async () => {
     const result = await runDoctorConfigWithInput({
       repair: true,

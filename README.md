@@ -61,6 +61,12 @@ After local setup:
 Successful install output is intentionally short. If a step fails, the installer
 prints the full log path under `~/.fased/logs/`.
 
+If `~/.fased` already exists, the installer asks whether to keep existing data,
+reset local config only, or use a separate state directory for this checkout.
+Local setup finishes with a health check for service path, token match,
+dashboard HTTP 200, and gateway online state. Later, run `fased health` for a
+one-command gateway check.
+
 On Windows, local install means WSL2/Ubuntu. Hosted VPS management is different:
 use PowerShell or Windows Terminal with the Windows Tailscale app online unless
 you intentionally installed and logged into Tailscale inside WSL too.
