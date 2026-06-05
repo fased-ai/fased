@@ -115,15 +115,6 @@ function recordWebhookStatus(
   }
 }
 
-async function fetchBotOpenId(account: ResolvedFeishuAccount): Promise<string | undefined> {
-  try {
-    const result = await probeFeishu(account);
-    return result.ok ? result.botOpenId : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 /**
  * Register common event handlers on an EventDispatcher.
  * When fireAndForget is true (webhook mode), message handling is not awaited
@@ -203,10 +194,13 @@ async function monitorSingleAccount(params: MonitorAccountParams): Promise<void>
   const { accountId } = account;
   const log = runtime?.log ?? console.log;
 
-  // Fetch bot open_id
-  const botOpenId = await fetchBotOpenId(account);
-  botOpenIds.set(accountId, botOpenId ?? "");
-  log(`feishu[${accountId}]: bot open_id resolved: ${botOpenId ?? "unknown"}`);
+  const probe = await probeFeishu(account);
+  if (!probe.ok) {
+    log(`feishu[${accountId}]: not started; credential check failed: ${probe.error}`);
+    return;
+  }
+  botOpenIds.set(accountId, probe.botOpenId ?? "");
+  log(`feishu[${accountId}]: bot open_id resolved: ${probe.botOpenId ?? "unknown"}`);
 
   const connectionMode = account.config.connectionMode ?? "websocket";
   if (connectionMode === "webhook" && !account.verificationToken?.trim()) {

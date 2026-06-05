@@ -76,6 +76,21 @@ function mergeFeishuAccountConfig(cfg: FasedAgentConfig, accountId: string): Fei
 /**
  * Resolve Feishu credentials from a config.
  */
+export function looksLikeFeishuCredentialPair(params: {
+  appId?: string;
+  appSecret?: string;
+}): boolean {
+  const appId = params.appId?.trim() ?? "";
+  const appSecret = params.appSecret?.trim() ?? "";
+  if (!appId || !appSecret) {
+    return false;
+  }
+  if (appId.length < 8 || appSecret.length < 16) {
+    return false;
+  }
+  return !/\s/.test(appId) && !/\s/.test(appSecret);
+}
+
 export function resolveFeishuCredentials(cfg?: FeishuConfig): {
   appId: string;
   appSecret: string;
@@ -85,7 +100,7 @@ export function resolveFeishuCredentials(cfg?: FeishuConfig): {
 } | null {
   const appId = cfg?.appId?.trim();
   const appSecret = cfg?.appSecret?.trim();
-  if (!appId || !appSecret) {
+  if (!looksLikeFeishuCredentialPair({ appId, appSecret })) {
     return null;
   }
   return {

@@ -4,6 +4,7 @@ import type { FasedAgentConfig } from "fased/plugin-sdk";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const probeFeishuMock = vi.hoisted(() => vi.fn());
+const feishuWsStartMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@larksuiteoapi/node-sdk", () => ({
   adaptDefault: vi.fn(
@@ -19,7 +20,7 @@ vi.mock("./probe.js", () => ({
 }));
 
 vi.mock("./client.js", () => ({
-  createFeishuWSClient: vi.fn(() => ({ start: vi.fn() })),
+  createFeishuWSClient: vi.fn(() => ({ start: feishuWsStartMock })),
   createEventDispatcher: vi.fn(() => ({ register: vi.fn() })),
 }));
 
@@ -71,7 +72,7 @@ function buildConfig(params: {
           [params.accountId]: {
             enabled: true,
             appId: "cli_test",
-            appSecret: "secret_test",
+            appSecret: "secret_test_1234567890",
             connectionMode: "webhook",
             webhookHost: "127.0.0.1",
             webhookPort: params.port,
@@ -122,9 +123,32 @@ async function withRunningWebhookMonitor(
 afterEach(() => {
   clearFeishuWebhookRateLimitStateForTest();
   stopFeishuMonitor();
+  feishuWsStartMock.mockReset();
+  probeFeishuMock.mockReset();
 });
 
 describe("Feishu webhook security hardening", () => {
+  it("does not start websocket monitoring when credential probe fails", async () => {
+    probeFeishuMock.mockResolvedValue({ ok: false, error: "API error: invalid app_id" });
+    const runtime = { log: vi.fn(), error: vi.fn(), exit: vi.fn() };
+
+    await monitorFeishuProvider({
+      config: {
+        channels: {
+          feishu: {
+            enabled: true,
+            appId: "cli_invalid",
+            appSecret: "invalid_secret_1234567890",
+          },
+        },
+      } as FasedAgentConfig,
+      runtime,
+    });
+
+    expect(feishuWsStartMock).not.toHaveBeenCalled();
+    expect(runtime.log).toHaveBeenCalledWith(expect.stringContaining("credential check failed"));
+  });
+
   it("rejects webhook mode without verificationToken", async () => {
     probeFeishuMock.mockResolvedValue({ ok: true, botOpenId: "bot_open_id" });
 
