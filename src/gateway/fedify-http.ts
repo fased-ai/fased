@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { Application, Follow, MemoryKvStore, createFederation, type Context } from "@fedify/fedify";
+import { MemoryKvStore, createFederation, type Context } from "@fedify/fedify";
+import { Application, Follow } from "@fedify/fedify/vocab";
 
 export type FedifyHandler = (req: IncomingMessage, res: ServerResponse) => Promise<boolean>;
 

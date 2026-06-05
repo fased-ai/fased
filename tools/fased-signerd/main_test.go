@@ -85,7 +85,7 @@ func TestRPCURLForWalletUsesSingleScopedMappingWhenWalletIDMissing(t *testing.T)
 }
 
 func TestMustValidateRejectsDisallowedChain(t *testing.T) {
-	cfg := signerConfig{chains: []string{"evm"}}
+	cfg := signerConfig{chains: []string{"unsupported"}}
 
 	req := request{
 		Op:    "getBalance",
@@ -97,7 +97,7 @@ func TestMustValidateRejectsDisallowedChain(t *testing.T) {
 }
 
 func TestMustValidateRejectsDisallowedSolanaInstruction(t *testing.T) {
-	cfg := signerConfig{chains: []string{"evm"}}
+	cfg := signerConfig{chains: []string{"unsupported"}}
 
 	req := request{
 		Op: "sendSolanaInstruction",
@@ -245,7 +245,7 @@ func TestHandleHybridNativeCustodyLockClearsUnlockState(t *testing.T) {
 		Passphrase: "custody-secret",
 	}, time.Now().Add(time.Minute))
 
-	cfg := signerConfig{chains: []string{"evm", "solana"}}
+	cfg := signerConfig{chains: []string{"solana"}}
 	resp, err := handleHybridNative(
 		request{
 			Op:      "lockCustody",

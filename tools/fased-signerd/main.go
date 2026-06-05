@@ -30,11 +30,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ethereum/go-ethereum/accounts/keystore"
-	"github.com/ethereum/go-ethereum/common"
-	ethtypes "github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/ethclient"
 	bin "github.com/gagliardetto/binary"
 	solana "github.com/gagliardetto/solana-go"
 	system "github.com/gagliardetto/solana-go/programs/system"
@@ -50,15 +45,12 @@ const (
 var errRequestTooLarge = errors.New("signer request exceeds maximum size")
 
 type custodyUnlockScope struct {
-	WalletID       string
-	Role           string
-	Chains         map[string]bool
-	AllowContracts map[string]bool
-	AllowPrograms  map[string]bool
-	EVMMaxPerTx    *big.Int
-	EVMMaxDaily    *big.Int
-	SOLMaxPerTx    *big.Int
-	SOLMaxDaily    *big.Int
+	WalletID      string
+	Role          string
+	Chains        map[string]bool
+	AllowPrograms map[string]bool
+	SOLMaxPerTx   *big.Int
+	SOLMaxDaily   *big.Int
 }
 
 type custodyUnlockEntry struct {
@@ -69,7 +61,6 @@ type custodyUnlockEntry struct {
 	ExpiresAt     time.Time
 	Passphrase    []byte
 	Scope         custodyUnlockScope
-	EVMSpentDaily *big.Int
 	SOLSpentDaily *big.Int
 	DailyBucket   string
 }
@@ -91,19 +82,16 @@ type request struct {
 }
 
 type custodyUnlockRequest struct {
-	SessionID      string   `json:"sessionId"`
-	Host           string   `json:"host"`
-	WalletID       string   `json:"walletId"`
-	Role           string   `json:"role,omitempty"`
-	Chains         []string `json:"chains,omitempty"`
-	AllowContracts []string `json:"allowContracts,omitempty"`
-	AllowPrograms  []string `json:"allowPrograms,omitempty"`
-	ExpiresAt      string   `json:"expiresAt"`
-	Passphrase     string   `json:"passphrase"`
-	EVMMaxPerTx    string   `json:"evmMaxPerTx,omitempty"`
-	EVMMaxDaily    string   `json:"evmMaxDaily,omitempty"`
-	SOLMaxPerTx    string   `json:"solanaMaxPerTx,omitempty"`
-	SOLMaxDaily    string   `json:"solanaMaxDaily,omitempty"`
+	SessionID     string   `json:"sessionId"`
+	Host          string   `json:"host"`
+	WalletID      string   `json:"walletId"`
+	Role          string   `json:"role,omitempty"`
+	Chains        []string `json:"chains,omitempty"`
+	AllowPrograms []string `json:"allowPrograms,omitempty"`
+	ExpiresAt     string   `json:"expiresAt"`
+	Passphrase    string   `json:"passphrase"`
+	SOLMaxPerTx   string   `json:"solanaMaxPerTx,omitempty"`
+	SOLMaxDaily   string   `json:"solanaMaxDaily,omitempty"`
 }
 
 type custodyLockRequest struct {
@@ -131,15 +119,10 @@ type signerConfig struct {
 	backendMode         string
 	chains              []string
 	keystorePath        string
-	evmKeystorePath     string
 	solanaKeystorePath  string
-	evmKeystorePaths    map[string]string
 	solanaKeystorePaths map[string]string
-	evmAddress          string
 	rpcURL              string
-	evmRPCURL           string
 	solanaRPCURL        string
-	evmRPCURLs          map[string]string
 	solanaRPCURLs       map[string]string
 }
 
@@ -338,24 +321,10 @@ func normalizeStringSet(values []string, normalize func(string) string) map[stri
 
 func normalizeChainName(raw string) string {
 	value := strings.TrimSpace(strings.ToLower(raw))
-	if value != "evm" && value != "solana" {
+	if value != "solana" {
 		return ""
 	}
 	return value
-}
-
-func normalizeContractAddress(raw string) string {
-	value := strings.TrimSpace(strings.ToLower(raw))
-	if value == "" {
-		return ""
-	}
-	if !strings.HasPrefix(value, "0x") {
-		value = "0x" + value
-	}
-	if !common.IsHexAddress(value) {
-		return ""
-	}
-	return common.HexToAddress(value).Hex()
 }
 
 func normalizeProgramID(raw string) string {
@@ -408,17 +377,13 @@ func setCustodyUnlock(req custodyUnlockRequest, expiresAt time.Time) {
 		ExpiresAt:  expiresAt.UTC(),
 		Passphrase: append([]byte(nil), []byte(req.Passphrase)...),
 		Scope: custodyUnlockScope{
-			WalletID:       walletID,
-			Role:           strings.TrimSpace(req.Role),
-			Chains:         normalizeStringSet(req.Chains, normalizeChainName),
-			AllowContracts: normalizeStringSet(req.AllowContracts, normalizeContractAddress),
-			AllowPrograms:  normalizeStringSet(req.AllowPrograms, normalizeProgramID),
-			EVMMaxPerTx:    parseCapBigInt(req.EVMMaxPerTx),
-			EVMMaxDaily:    parseCapBigInt(req.EVMMaxDaily),
-			SOLMaxPerTx:    parseCapBigInt(req.SOLMaxPerTx),
-			SOLMaxDaily:    parseCapBigInt(req.SOLMaxDaily),
+			WalletID:      walletID,
+			Role:          strings.TrimSpace(req.Role),
+			Chains:        normalizeStringSet(req.Chains, normalizeChainName),
+			AllowPrograms: normalizeStringSet(req.AllowPrograms, normalizeProgramID),
+			SOLMaxPerTx:   parseCapBigInt(req.SOLMaxPerTx),
+			SOLMaxDaily:   parseCapBigInt(req.SOLMaxDaily),
 		},
-		EVMSpentDaily: big.NewInt(0),
 		SOLSpentDaily: big.NewInt(0),
 		DailyBucket:   currentDayBucket(time.Now()),
 	}
@@ -479,18 +444,9 @@ func applyDailySpendLocked(entry *custodyUnlockEntry, chain string, amount *big.
 	bucket := currentDayBucket(time.Now())
 	if entry.DailyBucket != bucket {
 		entry.DailyBucket = bucket
-		entry.EVMSpentDaily = big.NewInt(0)
 		entry.SOLSpentDaily = big.NewInt(0)
 	}
 	switch chain {
-	case "evm":
-		if entry.Scope.EVMMaxDaily != nil && entry.Scope.EVMMaxDaily.Sign() > 0 {
-			next := new(big.Int).Add(entry.EVMSpentDaily, amount)
-			if next.Cmp(entry.Scope.EVMMaxDaily) > 0 {
-				return errors.New("custody evm daily cap exceeded")
-			}
-			entry.EVMSpentDaily = next
-		}
 	case "solana":
 		if entry.Scope.SOLMaxDaily != nil && entry.Scope.SOLMaxDaily.Sign() > 0 {
 			next := new(big.Int).Add(entry.SOLSpentDaily, amount)
@@ -592,7 +548,7 @@ func mustValidate(req request, cfg signerConfig) error {
 			return errors.New("invalid signer request")
 		}
 	case "getBalance":
-		if req.Chain != "evm" && req.Chain != "solana" {
+		if req.Chain != "solana" {
 			return errors.New("invalid signer request")
 		}
 		if err := cfg.ensureChainAllowed(req.Chain); err != nil {
@@ -611,7 +567,7 @@ func mustValidate(req request, cfg signerConfig) error {
 		}
 		rv := body
 		chain, _ := rv["chain"].(string)
-		if chain != "evm" && chain != "solana" {
+		if chain != "solana" {
 			return errors.New("invalid signer request")
 		}
 		if err := cfg.ensureChainAllowed(chain); err != nil {
@@ -761,25 +717,13 @@ func parseArgs() signerConfig {
 			strings.TrimSpace(os.Getenv("FASED_WALLET_KEYSTORE_PATH")),
 			filepath.Join(userHomeDir(), ".fased", "wallet", "keystore.v1.enc"),
 		),
-		evmKeystorePath: firstNonEmpty(
-			strings.TrimSpace(os.Getenv("FASED_WALLET_EVM_KEYSTORE_PATH")),
-			strings.TrimSpace(os.Getenv("FASED_WALLET_KEYSTORE_PATH")),
-		),
 		solanaKeystorePath: firstNonEmpty(
 			strings.TrimSpace(os.Getenv("FASED_WALLET_SOLANA_KEYSTORE_PATH")),
 			strings.TrimSpace(os.Getenv("FASED_WALLET_KEYSTORE_PATH")),
 		),
-		evmAddress: strings.TrimSpace(os.Getenv("FASED_WALLET_KEYSTORE_DEFAULT_EVM_ADDRESS")),
 		rpcURL: firstNonEmpty(
 			strings.TrimSpace(os.Getenv("FASED_WALLET_EMBEDDED_KEYSTORE_RPC_URL")),
 			strings.TrimSpace(os.Getenv("FASED_WALLET_RPC_URL")),
-		),
-		evmRPCURL: firstNonEmpty(
-			strings.TrimSpace(os.Getenv("FASED_WALLET_EVM_RPC_URL")),
-			firstNonEmpty(
-				strings.TrimSpace(os.Getenv("FASED_WALLET_EMBEDDED_KEYSTORE_RPC_URL")),
-				strings.TrimSpace(os.Getenv("FASED_WALLET_RPC_URL")),
-			),
 		),
 		solanaRPCURL: firstNonEmpty(
 			strings.TrimSpace(os.Getenv("FASED_WALLET_SOLANA_RPC_URL")),
@@ -789,9 +733,7 @@ func parseArgs() signerConfig {
 			),
 		),
 	}
-	cfg.evmKeystorePaths = parseWalletMapEnv("FASED_WALLET_EVM_KEYSTORE_PATH__")
 	cfg.solanaKeystorePaths = parseWalletMapEnv("FASED_WALLET_SOLANA_KEYSTORE_PATH__")
-	cfg.evmRPCURLs = parseWalletMapEnv("FASED_WALLET_EVM_RPC_URL__")
 	cfg.solanaRPCURLs = parseWalletMapEnv("FASED_WALLET_SOLANA_RPC_URL__")
 	fs := flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 	fs.StringVar(&cfg.socketPath, "socket", cfg.socketPath, "unix socket path")
@@ -827,15 +769,10 @@ func (cfg signerConfig) keystorePathFor(chain string) string {
 }
 
 func conventionalKeystoreFilenameFor(chain, walletID string) string {
+	_ = chain
 	normalized := normalizeWalletIDForFilename(walletID)
 	if normalized == "" || normalized == "default" {
-		if chain == "evm" {
-			return "keystore-evm.v1.enc"
-		}
 		return "keystore-solana.v1.enc"
-	}
-	if chain == "evm" {
-		return fmt.Sprintf("keystore-evm-%s.v1.enc", normalized)
 	}
 	return fmt.Sprintf("keystore-solana-%s.v1.enc", normalized)
 }
@@ -857,8 +794,6 @@ func (cfg signerConfig) inferredScopedKeystorePath(chain, walletID string) strin
 	}
 	basePath := ""
 	switch chain {
-	case "evm":
-		basePath = firstNonEmpty(cfg.evmKeystorePath, cfg.keystorePath)
 	case "solana":
 		basePath = firstNonEmpty(cfg.solanaKeystorePath, cfg.keystorePath)
 	default:
@@ -892,24 +827,6 @@ func singleScopedValue(values map[string]string) string {
 func (cfg signerConfig) keystorePathForWallet(chain, walletID string) string {
 	wid := normalizeWalletID(walletID)
 	switch chain {
-	case "evm":
-		if p := strings.TrimSpace(cfg.evmKeystorePaths[wid]); p != "" {
-			return p
-		}
-		if wid != "default" {
-			if p := strings.TrimSpace(cfg.evmKeystorePaths["default"]); p != "" {
-				return p
-			}
-		}
-		if wid == "default" {
-			if p := singleScopedValue(cfg.evmKeystorePaths); p != "" {
-				return p
-			}
-		}
-		if p := cfg.inferredScopedKeystorePath("evm", walletID); p != "" {
-			return p
-		}
-		return firstNonEmpty(cfg.evmKeystorePath, cfg.keystorePath)
 	case "solana":
 		if p := strings.TrimSpace(cfg.solanaKeystorePaths[wid]); p != "" {
 			return p
@@ -940,21 +857,6 @@ func (cfg signerConfig) rpcURLFor(chain string) string {
 func (cfg signerConfig) rpcURLForWallet(chain, walletID string) string {
 	wid := normalizeWalletID(walletID)
 	switch chain {
-	case "evm":
-		if u := strings.TrimSpace(cfg.evmRPCURLs[wid]); u != "" {
-			return u
-		}
-		if wid != "default" {
-			if u := strings.TrimSpace(cfg.evmRPCURLs["default"]); u != "" {
-				return u
-			}
-		}
-		if wid == "default" {
-			if u := singleScopedValue(cfg.evmRPCURLs); u != "" {
-				return u
-			}
-		}
-		return firstNonEmpty(cfg.evmRPCURL, cfg.rpcURL)
 	case "solana":
 		if u := strings.TrimSpace(cfg.solanaRPCURLs[wid]); u != "" {
 			return u
@@ -984,7 +886,7 @@ func parseChainsEnv(raw string) []string {
 		if v == "" {
 			continue
 		}
-		if v != "evm" && v != "solana" {
+		if v != "solana" {
 			continue
 		}
 		if !seen[v] {
@@ -993,7 +895,7 @@ func parseChainsEnv(raw string) []string {
 		}
 	}
 	if len(out) == 0 {
-		return []string{"evm"}
+		return []string{"solana"}
 	}
 	return out
 }
@@ -1163,25 +1065,6 @@ func readRequestLine(br *bufio.Reader, maxBytes int) ([]byte, error) {
 	}
 }
 
-func parseEVMAddressFromKeystore(data []byte) (string, error) {
-	var generic map[string]any
-	if err := json.Unmarshal(data, &generic); err != nil {
-		return "", err
-	}
-	addr, _ := generic["address"].(string)
-	addr = strings.TrimSpace(addr)
-	if addr == "" {
-		return "", errors.New("evm keystore address missing")
-	}
-	if !strings.HasPrefix(strings.ToLower(addr), "0x") {
-		addr = "0x" + addr
-	}
-	if !common.IsHexAddress(addr) {
-		return "", errors.New("invalid evm keystore address")
-	}
-	return common.HexToAddress(addr).Hex(), nil
-}
-
 func detectKeystoreTypeAndSolanaPubkey(keystorePath string) (string, string) {
 	data, err := os.ReadFile(keystorePath)
 	if err != nil {
@@ -1195,133 +1078,7 @@ func detectKeystoreTypeAndSolanaPubkey(keystorePath string) (string, string) {
 		pub, _ := generic["publicKey"].(string)
 		return "solana-envelope", strings.TrimSpace(pub)
 	}
-	if _, ok := generic["crypto"]; ok {
-		return "evm-ethers-json", ""
-	}
-	if _, ok := generic["Crypto"]; ok {
-		return "evm-ethers-json", ""
-	}
 	return "unknown", ""
-}
-
-func loadEVMKeyAddressFromKeystore(keystorePath string, walletID string) (*keystore.Key, string, error) {
-	data, err := os.ReadFile(keystorePath)
-	if err != nil {
-		return nil, "", err
-	}
-	if kt, _ := detectKeystoreTypeAndSolanaPubkey(keystorePath); kt != "evm-ethers-json" {
-		return nil, "", errors.New("not an evm keystore")
-	}
-	fallbackAddr, _ := parseEVMAddressFromKeystore(data)
-	pass, err := readPassphrase(walletID)
-	if err != nil {
-		return nil, fallbackAddr, err
-	}
-	if pass == "" {
-		if fallbackAddr == "" {
-			fallbackAddr = strings.TrimSpace(os.Getenv("FASED_WALLET_KEYSTORE_DEFAULT_EVM_ADDRESS"))
-		}
-		return nil, fallbackAddr, errors.New("missing passphrase")
-	}
-	key, err := keystore.DecryptKey(data, pass)
-	if err != nil {
-		return nil, fallbackAddr, err
-	}
-	return key, key.Address.Hex(), nil
-}
-
-func evmRPCGetBalance(rpcURL, address string) (*big.Int, error) {
-	if strings.TrimSpace(rpcURL) == "" {
-		return nil, errors.New("missing rpc url")
-	}
-	client, err := ethclient.Dial(strings.TrimSpace(rpcURL))
-	if err != nil {
-		return nil, err
-	}
-	defer client.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	return client.BalanceAt(ctx, common.HexToAddress(address), nil)
-}
-
-func parseWeiAmount(raw string) (*big.Int, error) {
-	s := strings.TrimSpace(raw)
-	if s == "" {
-		return nil, errors.New("missing amount")
-	}
-	n, ok := new(big.Int).SetString(s, 10)
-	if !ok || n.Sign() < 0 {
-		return nil, fmt.Errorf("invalid wei amount: %s", s)
-	}
-	return n, nil
-}
-
-func evmSendEIP1559(rpcURL, keystorePath string, txReq signerTxRequest) (string, string, error) {
-	if txReq.Chain != "evm" {
-		return "", "", errors.New("invalid chain for native evm send")
-	}
-	toHex := strings.TrimSpace(txReq.To)
-	if toHex == "" || !common.IsHexAddress(toHex) {
-		return "", "", errors.New("invalid recipient")
-	}
-	value, err := parseWeiAmount(txReq.Amount)
-	if err != nil {
-		return "", "", err
-	}
-	k, signerAddr, err := loadEVMKeyAddressFromKeystore(keystorePath, txReq.WalletID)
-	if err != nil {
-		return "", signerAddr, err
-	}
-	client, err := ethclient.Dial(strings.TrimSpace(rpcURL))
-	if err != nil {
-		return "", "", err
-	}
-	defer client.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	from := k.Address
-	nonce, err := client.PendingNonceAt(ctx, from)
-	if err != nil {
-		return "", "", err
-	}
-	chainID, err := client.ChainID(ctx)
-	if err != nil {
-		return "", "", err
-	}
-	tipCap, err := client.SuggestGasTipCap(ctx)
-	if err != nil {
-		tipCap = big.NewInt(2_000_000_000) // 2 gwei fallback
-	}
-	head, err := client.HeaderByNumber(ctx, nil)
-	if err != nil {
-		return "", "", err
-	}
-	baseFee := big.NewInt(0)
-	if head.BaseFee != nil {
-		baseFee = head.BaseFee
-	}
-	maxFee := new(big.Int).Add(new(big.Int).Mul(baseFee, big.NewInt(2)), tipCap)
-	to := common.HexToAddress(toHex)
-	tx := ethtypes.NewTx(&ethtypes.DynamicFeeTx{
-		ChainID:   chainID,
-		Nonce:     nonce,
-		To:        &to,
-		Value:     value,
-		Gas:       21_000,
-		GasFeeCap: maxFee,
-		GasTipCap: tipCap,
-	})
-	signer := ethtypes.LatestSignerForChainID(chainID)
-	signed, err := ethtypes.SignTx(tx, signer, k.PrivateKey)
-	if err != nil {
-		return "", "", err
-	}
-	if err := client.SendTransaction(ctx, signed); err != nil {
-		return "", "", err
-	}
-	// Ensure key is actually valid for address (belt and suspenders)
-	derived := crypto.PubkeyToAddress(k.PrivateKey.PublicKey).Hex()
-	return signed.Hash().Hex(), derived, nil
 }
 
 type solanaEnvelopeV1 struct {
@@ -1623,25 +1380,12 @@ func custodyStatusResult(walletID string) map[string]any {
 		}
 		res["chains"] = chains
 	}
-	if len(entry.Scope.AllowContracts) > 0 {
-		contracts := make([]string, 0, len(entry.Scope.AllowContracts))
-		for contract := range entry.Scope.AllowContracts {
-			contracts = append(contracts, contract)
-		}
-		res["allowContracts"] = contracts
-	}
 	if len(entry.Scope.AllowPrograms) > 0 {
 		programs := make([]string, 0, len(entry.Scope.AllowPrograms))
 		for program := range entry.Scope.AllowPrograms {
 			programs = append(programs, program)
 		}
 		res["allowPrograms"] = programs
-	}
-	if entry.Scope.EVMMaxPerTx != nil {
-		res["evmMaxPerTx"] = entry.Scope.EVMMaxPerTx.String()
-	}
-	if entry.Scope.EVMMaxDaily != nil {
-		res["evmMaxDaily"] = entry.Scope.EVMMaxDaily.String()
 	}
 	if entry.Scope.SOLMaxPerTx != nil {
 		res["solanaMaxPerTx"] = entry.Scope.SOLMaxPerTx.String()
@@ -1679,28 +1423,8 @@ func validateCustodyScopeForSendTx(txReq signerTxRequest) (*big.Int, error) {
 	if len(entry.Scope.Chains) > 0 && !entry.Scope.Chains[normalizeChainName(txReq.Chain)] {
 		return nil, fmt.Errorf("custody chain %s not allowed for wallet %s", txReq.Chain, entry.WalletID)
 	}
-	if contract := normalizeContractAddress(txReq.Contract); contract != "" {
-		if len(entry.Scope.AllowContracts) == 0 || !entry.Scope.AllowContracts[contract] {
-			return nil, fmt.Errorf("custody contract %s not allowed for wallet %s", contract, entry.WalletID)
-		}
-	}
 	var amount *big.Int
 	switch normalizeChainName(txReq.Chain) {
-	case "evm":
-		parsed, err := parseWeiAmount(txReq.Amount)
-		if err != nil {
-			return nil, err
-		}
-		amount = parsed
-		if entry.Scope.EVMMaxPerTx != nil && entry.Scope.EVMMaxPerTx.Sign() > 0 && amount.Cmp(entry.Scope.EVMMaxPerTx) > 0 {
-			return nil, errors.New("custody evm per-tx cap exceeded")
-		}
-		if entry.Scope.EVMMaxDaily != nil && entry.Scope.EVMMaxDaily.Sign() > 0 {
-			next := new(big.Int).Add(entry.EVMSpentDaily, amount)
-			if next.Cmp(entry.Scope.EVMMaxDaily) > 0 {
-				return nil, errors.New("custody evm daily cap exceeded")
-			}
-		}
 	case "solana":
 		lamports, err := parseLamports(txReq.Amount)
 		if err != nil {
@@ -1716,6 +1440,8 @@ func validateCustodyScopeForSendTx(txReq signerTxRequest) (*big.Int, error) {
 				return nil, errors.New("custody solana daily cap exceeded")
 			}
 		}
+	default:
+		return nil, errors.New("unsupported chain")
 	}
 	return cloneBigInt(amount), nil
 }
@@ -2039,9 +1765,8 @@ func handleHybridNative(req request, raw map[string]any, cfg signerConfig) ([]by
 	_ = raw
 	switch req.Op {
 	case "health":
-		evmKeystoreType, _ := detectKeystoreTypeAndSolanaPubkey(cfg.keystorePathFor("evm"))
 		solanaKeystoreType, _ := detectKeystoreTypeAndSolanaPubkey(cfg.keystorePathFor("solana"))
-		keystoreType := firstNonEmpty(evmKeystoreType, solanaKeystoreType)
+		keystoreType := solanaKeystoreType
 		if keystoreType == "" {
 			keystoreType = "unknown"
 		}
@@ -2062,14 +1787,6 @@ func handleHybridNative(req request, raw map[string]any, cfg signerConfig) ([]by
 			solPub = addr
 		}
 		res := map[string]any{}
-		if cfg.chainAllowed("evm") {
-			if k, evmAddr, err := loadEVMKeyAddressFromKeystore(cfg.keystorePathForWallet("evm", req.WalletID), req.WalletID); err == nil && evmAddr != "" {
-				_ = k
-				res["evm"] = evmAddr
-			} else if cfg.evmAddress != "" {
-				res["evm"] = cfg.evmAddress
-			}
-		}
 		if cfg.chainAllowed("solana") && solPub != "" {
 			res["solana"] = solPub
 		}
@@ -2114,28 +1831,6 @@ func handleHybridNative(req request, raw map[string]any, cfg signerConfig) ([]by
 		if err := cfg.ensureChainAllowed(req.Chain); err != nil {
 			return nil, err
 		}
-		if req.Chain == "evm" {
-			_, addr, err := loadEVMKeyAddressFromKeystore(cfg.keystorePathForWallet("evm", req.WalletID), req.WalletID)
-			if err != nil && addr == "" {
-				addr = strings.TrimSpace(cfg.evmAddress)
-			}
-			if addr == "" {
-				return nil, errors.New("evm address unavailable")
-			}
-			bal, err := evmRPCGetBalance(cfg.rpcURLForWallet("evm", req.WalletID), addr)
-			if err != nil {
-				return nil, err
-			}
-			res := map[string]any{
-				"ok":      true,
-				"chain":   "evm",
-				"address": addr,
-				"balance": bal.String(),
-				"unit":    "wei",
-			}
-			b, _ := json.Marshal(map[string]any{"ok": true, "result": res})
-			return b, nil
-		}
 		if req.Chain != "solana" {
 			return nil, errors.New("unsupported hybrid native op")
 		}
@@ -2161,7 +1856,7 @@ func handleHybridNative(req request, raw map[string]any, cfg signerConfig) ([]by
 		if err := json.Unmarshal(req.Request, &txReq); err != nil {
 			return nil, errors.New("invalid signer request")
 		}
-		if txReq.Chain != "evm" && txReq.Chain != "solana" {
+		if txReq.Chain != "solana" {
 			return nil, errors.New("unsupported chain")
 		}
 		if err := cfg.ensureChainAllowed(txReq.Chain); err != nil {
@@ -2169,30 +1864,6 @@ func handleHybridNative(req request, raw map[string]any, cfg signerConfig) ([]by
 		}
 		if strings.TrimSpace(txReq.To) == "" {
 			return nil, errors.New("missing recipient")
-		}
-		if txReq.Chain == "evm" {
-			if !common.IsHexAddress(strings.TrimSpace(txReq.To)) {
-				return nil, errors.New("invalid recipient")
-			}
-			if _, err := parseWeiAmount(txReq.Amount); err != nil {
-				return nil, err
-			}
-			_, signerAddr, _ := loadEVMKeyAddressFromKeystore(cfg.keystorePathForWallet("evm", txReq.WalletID), txReq.WalletID)
-			if signerAddr == "" {
-				signerAddr = strings.TrimSpace(cfg.evmAddress)
-			}
-			res := map[string]any{
-				"ok":         true,
-				"chain":      "evm",
-				"preparedId": randomPreparedID(),
-				"signer":     signerAddr,
-				"metadata": map[string]any{
-					"mode": "native",
-					"type": "eip1559",
-				},
-			}
-			b, _ := json.Marshal(map[string]any{"ok": true, "result": res})
-			return b, nil
 		}
 		if _, err := parseLamports(txReq.Amount); err != nil {
 			return nil, err
@@ -2222,27 +1893,6 @@ func handleHybridNative(req request, raw map[string]any, cfg signerConfig) ([]by
 		custodyActiveForWallet := custodySplitKeyActiveForWallet(txReq.WalletID)
 		if custodyActiveForWallet && err != nil {
 			return nil, err
-		}
-		if txReq.Chain == "evm" {
-			txHash, signer, err := evmSendEIP1559(cfg.rpcURLForWallet("evm", txReq.WalletID), cfg.keystorePathForWallet("evm", txReq.WalletID), txReq)
-			if err != nil {
-				return nil, err
-			}
-			if custodyActiveForWallet {
-				recordCustodyUsage(txReq.WalletID, "evm", usageAmount)
-			}
-			res := map[string]any{
-				"ok":     true,
-				"chain":  "evm",
-				"txHash": txHash,
-				"signer": signer,
-				"metadata": map[string]any{
-					"mode": "native",
-					"type": "eip1559",
-				},
-			}
-			b, _ := json.Marshal(map[string]any{"ok": true, "result": res})
-			return b, nil
 		}
 		if txReq.Chain != "solana" {
 			return nil, errors.New("unsupported hybrid native op")
