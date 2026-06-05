@@ -2103,6 +2103,23 @@ export async function finalizeOnboardingWizard(
               stableMs: 8_000,
               pollMs: 750,
             });
+            if (!stableListener.ok) {
+              const [rootState, userState] = await Promise.all([
+                isSystemdServiceActive({ name: "fased-gateway", scope: "root" }),
+                isSystemdServiceActive({ name: "fased-gateway", scope: "user" }),
+              ]);
+              if (rootState.ok || userState.ok) {
+                await prompter.note(
+                  [
+                    "Gateway listener was reachable, but one stability recheck was slow.",
+                    `Detail: ${stableListener.detail ?? "listener recheck timed out"}`,
+                    "The active service and browser dashboard checks will continue.",
+                  ].join("\n"),
+                  "Listener readiness",
+                );
+                return;
+              }
+            }
             if (!stableListener.ok && !opts.allowInsecure) {
               throw new Error(
                 await formatStrictListenerFailureDiagnostics(

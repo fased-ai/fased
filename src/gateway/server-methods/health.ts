@@ -1,6 +1,6 @@
+import { getGatewayLivenessHealthSnapshot } from "../../commands/health.js";
 import { getStatusSummary } from "../../commands/status.js";
 import { ErrorCodes, errorShape } from "../protocol/index.js";
-import { HEALTH_REFRESH_INTERVAL_MS } from "../server-constants.js";
 import { formatError } from "../server-utils.js";
 import { formatForLog } from "../ws-log.js";
 import type { GatewayRequestHandlers } from "./types.js";
@@ -13,10 +13,16 @@ export const healthHandlers: GatewayRequestHandlers = {
     const wantsProbe = params?.probe === true;
     const scopes = Array.isArray(client?.connect?.scopes) ? client.connect.scopes : [];
     const includeSensitive = scopes.includes(ADMIN_SCOPE);
-    const now = Date.now();
     const cached = getHealthCache();
-    if (!wantsProbe && cached && now - cached.ts < HEALTH_REFRESH_INTERVAL_MS) {
+    if (!wantsProbe && cached) {
       respond(true, cached, undefined, { cached: true });
+      void refreshHealthSnapshot({ probe: false, includeSensitive }).catch((err) =>
+        logHealth.error(`background health refresh failed: ${formatError(err)}`),
+      );
+      return;
+    }
+    if (!wantsProbe) {
+      respond(true, getGatewayLivenessHealthSnapshot(), undefined, { provisional: true });
       void refreshHealthSnapshot({ probe: false, includeSensitive }).catch((err) =>
         logHealth.error(`background health refresh failed: ${formatError(err)}`),
       );

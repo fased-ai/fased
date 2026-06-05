@@ -245,6 +245,45 @@ const buildSessionSummary = (storePath: string) => {
   } satisfies HealthSummary["sessions"];
 };
 
+export function getGatewayLivenessHealthSnapshot(): HealthSummary {
+  const start = Date.now();
+  const cfg = loadConfig();
+  const { defaultAgentId, ordered } = resolveAgentOrder(cfg);
+  const agents: AgentHealthSummary[] = ordered.map((entry) => {
+    const storePath = resolveStorePath(cfg.session?.store, { agentId: entry.id });
+    return {
+      agentId: entry.id,
+      name: entry.name,
+      isDefault: entry.id === defaultAgentId,
+      heartbeat: resolveHeartbeatSummary(cfg, entry.id),
+      sessions: buildSessionSummary(storePath),
+    } satisfies AgentHealthSummary;
+  });
+  const defaultAgent = agents.find((agent) => agent.isDefault) ?? agents[0];
+  const sessions =
+    defaultAgent?.sessions ??
+    buildSessionSummary(resolveStorePath(cfg.session?.store, { agentId: defaultAgentId }));
+  const channelOrder = listChannelPlugins().map((plugin) => plugin.id);
+  const channelLabels = Object.fromEntries(
+    listChannelPlugins().map((plugin) => [plugin.id, plugin.meta.label ?? plugin.id]),
+  );
+  return {
+    ok: true,
+    ts: Date.now(),
+    durationMs: Date.now() - start,
+    channels: {},
+    channelOrder,
+    channelLabels,
+    heartbeatSeconds: defaultAgent?.heartbeat.everyMs
+      ? Math.round(defaultAgent.heartbeat.everyMs / 1000)
+      : 0,
+    defaultAgentId,
+    agents,
+    sessions,
+    startup: buildGatewayStartupReadinessSnapshot(getLastGatewayStartupTraceSnapshot()),
+  };
+}
+
 const isAccountEnabled = (account: unknown): boolean => {
   if (!account || typeof account !== "object") {
     return true;
