@@ -821,7 +821,7 @@ wait_for_gateway_health_after_restart() {
   fi
   local attempt
   for attempt in {1..20}; do
-    if "$FASED_CLI_PATH" health --timeout 3000 >/dev/null 2>&1; then
+    if "$FASED_CLI_PATH" health --json --timeout 3000 >/dev/null 2>&1; then
       return 0
     fi
     sleep 1
