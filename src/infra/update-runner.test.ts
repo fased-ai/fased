@@ -84,7 +84,7 @@ describe("runGatewayUpdate", () => {
       if (key === "pnpm install") {
         return { stdout: "", stderr: "", code: 0 };
       }
-      if (key === "pnpm build") {
+      if (key === "pnpm build:app") {
         return { stdout: "", stderr: "", code: 0 };
       }
       if (key === "pnpm ui:build") {
@@ -233,7 +233,7 @@ describe("runGatewayUpdate", () => {
       },
       [`git -C ${tempDir} rebase ${upstreamSha}`]: { stdout: "" },
       "pnpm install": { stdout: "" },
-      "pnpm build": { stdout: "" },
+      "pnpm build:app": { stdout: "" },
       "pnpm lint": { code: 1, stderr: "lint should not run by default" },
       "pnpm ui:build": { stdout: "" },
       [`${process.execPath} ${path.join(tempDir, "fased.mjs")} doctor --non-interactive --fix`]: {
@@ -246,7 +246,8 @@ describe("runGatewayUpdate", () => {
     expect(result.status).toBe("ok");
     expect(calls).not.toContain("pnpm lint");
     expect(calls).toContain(`git -C ${tempDir} rebase ${upstreamSha}`);
-    expect(calls).toContain("pnpm ui:build");
+    expect(calls).toContain("pnpm build:app");
+    expect(calls).not.toContain("pnpm ui:build");
   });
 
   it("runs dev preflight lint only when explicitly enabled", async () => {
@@ -263,7 +264,7 @@ describe("runGatewayUpdate", () => {
         stdout: `${upstreamSha}\n`,
       },
       "pnpm install": { stdout: "" },
-      "pnpm build": { stdout: "" },
+      "pnpm build:app": { stdout: "" },
       "pnpm lint": { code: 1, stderr: "intentional lint failure" },
     });
 
@@ -310,7 +311,7 @@ describe("runGatewayUpdate", () => {
 
     expect(result.status).toBe("error");
     expect(result.reason).toBe("deps-install-failed");
-    expect(calls.some((call) => call === "pnpm build")).toBe(false);
+    expect(calls.some((call) => call === "pnpm build:app")).toBe(false);
     expect(calls.some((call) => call === "pnpm ui:build")).toBe(false);
   });
 
@@ -320,13 +321,13 @@ describe("runGatewayUpdate", () => {
     const { runner, calls } = createRunner({
       ...buildStableTagResponses(stableTag),
       "pnpm install": { stdout: "" },
-      "pnpm build": { code: 1, stderr: "tsc: error TS2345" },
+      "pnpm build:app": { code: 1, stderr: "tsc: error TS2345" },
     });
 
     const result = await runWithRunner(runner, { channel: "stable" });
 
     expect(result.status).toBe("error");
-    expect(result.reason).toBe("build-failed");
+    expect(result.reason).toBe("build-app-failed");
     expect(calls.some((call) => call === "pnpm install")).toBe(true);
     expect(calls.some((call) => call === "pnpm ui:build")).toBe(false);
   });
@@ -339,7 +340,7 @@ describe("runGatewayUpdate", () => {
     const { runner, calls } = createRunner({
       ...buildStableTagResponses(stableTag, { additionalTags: [betaTag] }),
       "pnpm install": { stdout: "" },
-      "pnpm build": { stdout: "" },
+      "pnpm build:app": { stdout: "" },
       "pnpm ui:build": { stdout: "" },
       [`${process.execPath} ${path.join(tempDir, "fased.mjs")} doctor --non-interactive --fix`]: {
         stdout: "",
@@ -594,7 +595,7 @@ describe("runGatewayUpdate", () => {
     const { runner } = createRunner({
       ...buildStableTagResponses(stableTag),
       "pnpm install": { stdout: "" },
-      "pnpm build": { stdout: "" },
+      "pnpm build:app": { stdout: "" },
       "pnpm ui:build": { stdout: "" },
     });
 
@@ -623,7 +624,7 @@ describe("runGatewayUpdate", () => {
     const result = await runWithCommand(runCommand, { channel: "stable" });
 
     expect(result.status).toBe("ok");
-    expect(getUiBuildCount()).toBe(2);
+    expect(getUiBuildCount()).toBe(1);
     expect(await pathExists(uiIndexPath)).toBe(true);
     expect(calls).toContain(doctorKey);
   });
@@ -636,12 +637,7 @@ describe("runGatewayUpdate", () => {
     const { runCommand } = createStableTagRunner({
       stableTag,
       uiIndexPath,
-      onUiBuild: async (count) => {
-        if (count === 1) {
-          await fs.mkdir(path.dirname(uiIndexPath), { recursive: true });
-          await fs.writeFile(uiIndexPath, "<html>built</html>", "utf-8");
-        }
-      },
+      onUiBuild: async () => {},
       onDoctor: removeControlUiAssets,
     });
 

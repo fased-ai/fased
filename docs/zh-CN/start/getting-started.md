@@ -183,13 +183,12 @@ fased pairing approve whatsapp <code>
 git clone https://github.com/fased-ai/fased.git fased
 cd fased
 pnpm install
-pnpm ui:build # 首次运行时自动安装 UI 依赖
-pnpm build
+pnpm build:app # 构建运行时和 Control UI
 ./install.sh --no-onboard
 fased onboard --install-daemon
 ```
 
-如果 `fased` 命令缺失，请先在仓库目录运行 `./install.sh --no-onboard`。`pnpm build` 也会打包 A2UI 资源；如果你只需要运行那个步骤，使用 `pnpm canvas:a2ui:bundle`。
+如果 `fased` 命令缺失，请先在仓库目录运行 `./install.sh --no-onboard`。`pnpm build:app` 也会打包 A2UI 资源；如果你只需要运行那个步骤，使用 `pnpm canvas:a2ui:bundle`。
 
 Gateway 网关（从此仓库）：
 

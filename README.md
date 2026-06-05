@@ -354,10 +354,10 @@ Common source commands:
 
 ```bash
 pnpm install
+pnpm build:app
 pnpm build
 pnpm test:fast
 pnpm --dir ui test
-pnpm ui:build
 pnpm check:docs
 ```
 

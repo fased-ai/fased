@@ -602,7 +602,11 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
           }
 
           const buildStep = await runStep(
-            step(`preflight build (${shortSha})`, managerScriptArgs(manager, "build"), worktreeDir),
+            step(
+              `preflight build:app (${shortSha})`,
+              managerScriptArgs(manager, "build:app"),
+              worktreeDir,
+            ),
           );
           steps.push(buildStep);
           if (buildStep.exitCode !== 0) {
@@ -737,30 +741,16 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
       };
     }
 
-    const buildStep = await runStep(step("build", managerScriptArgs(manager, "build"), gitRoot));
+    const buildStep = await runStep(
+      step("build:app", managerScriptArgs(manager, "build:app"), gitRoot),
+    );
     steps.push(buildStep);
     if (buildStep.exitCode !== 0) {
       return {
         status: "error",
         mode: "git",
         root: gitRoot,
-        reason: "build-failed",
-        before: { sha: beforeSha, version: beforeVersion },
-        steps,
-        durationMs: Date.now() - startedAt,
-      };
-    }
-
-    const uiBuildStep = await runStep(
-      step("ui:build", managerScriptArgs(manager, "ui:build"), gitRoot),
-    );
-    steps.push(uiBuildStep);
-    if (uiBuildStep.exitCode !== 0) {
-      return {
-        status: "error",
-        mode: "git",
-        root: gitRoot,
-        reason: "ui-build-failed",
+        reason: "build-app-failed",
         before: { sha: beforeSha, version: beforeVersion },
         steps,
         durationMs: Date.now() - startedAt,

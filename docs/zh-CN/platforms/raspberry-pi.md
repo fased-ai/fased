@@ -131,7 +131,7 @@ cd fased
 git clone https://github.com/fased-ai/fased.git fased
 cd fased
 pnpm install
-pnpm build
+pnpm build:app
 ./install.sh --no-onboard
 ```
 

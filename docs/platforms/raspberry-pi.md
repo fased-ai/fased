@@ -124,8 +124,7 @@ cd fased
 git clone https://github.com/fased-ai/fased.git fased
 cd fased
 pnpm install
-pnpm build
-pnpm ui:build
+pnpm build:app
 ./install.sh --no-onboard
 ```
 
@@ -332,7 +331,7 @@ journalctl --user -u fased-gateway.service --no-pager -n 100
 
 # Common fix: rebuild
 cd ~/fased  # if using hackable install
-pnpm build
+pnpm build:app
 systemctl --user restart fased-gateway.service
 ```
 

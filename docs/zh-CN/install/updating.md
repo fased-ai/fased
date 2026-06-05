@@ -81,8 +81,7 @@ fased update --no-restart
 cd ~/fased
 git pull --rebase
 pnpm install
-pnpm build
-pnpm ui:build
+pnpm build:app
 fased doctor
 fased gateway restart
 fased health
@@ -111,7 +110,7 @@ cd ~/fased
 git fetch origin
 git checkout "<commit>"
 pnpm install
-pnpm build
+pnpm build:app
 fased gateway restart
 ```
 
