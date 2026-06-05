@@ -18,6 +18,7 @@ HOSTING_REQUESTED=0
 REQUESTED_SWAP_GB=""
 TEMP_SUDOERS=""
 FASED_CLI_PATH=""
+MARKER_REPO_PATH_MIGRATED=0
 
 ORIGINAL_INSTALL_ARGS=("$@")
 pass_args=()
@@ -529,14 +530,20 @@ assert_marker_matches_repo() {
   marker_repo="$(read_marker_repo_path || true)"
   if [[ -n "$marker_repo" && "$marker_repo" != "$repo_root" ]]; then
     if [[ "$(basename "$marker_repo")" == "agent" && "$(basename "$repo_root")" == "fased" && "$(dirname "$marker_repo")" == "$(dirname "$repo_root")" ]]; then
-      echo "Install marker uses old hosted path ($marker_repo); continuing with $repo_root."
+      MARKER_REPO_PATH_MIGRATED=1
+      if [[ "$INSTALL_VERBOSE" == "1" ]]; then
+        echo "Install marker uses old hosted path ($marker_repo); continuing with $repo_root."
+      fi
       return 0
     fi
     if [[ "$(basename "$marker_repo")" == "fased" \
       && "$(basename "$repo_root")" == "fased" \
       && "$(basename "$(dirname "$marker_repo")")" == "agent" \
       && "$(dirname "$(dirname "$marker_repo")")" == "$(dirname "$repo_root")" ]]; then
-      echo "Install marker uses old repo path ($marker_repo); continuing with $repo_root."
+      MARKER_REPO_PATH_MIGRATED=1
+      if [[ "$INSTALL_VERBOSE" == "1" ]]; then
+        echo "Install marker uses old repo path ($marker_repo); continuing with $repo_root."
+      fi
       return 0
     fi
     echo "Install marker mismatch." >&2
@@ -1403,6 +1410,9 @@ refresh_current_checkout_and_reexec_if_needed
 
 REPO_ROOT="$(resolve_repo_root)"
 assert_marker_matches_repo "$REPO_ROOT"
+if [[ "$MARKER_REPO_PATH_MIGRATED" -eq 1 ]]; then
+  write_install_marker "$REPO_ROOT" "false"
+fi
 prefer_compatible_user_node_if_available || prefer_compatible_system_node_if_available || true
 export COREPACK_HOME="${COREPACK_HOME:-$INSTALL_CACHE_DIR/corepack}"
 export COREPACK_ENABLE_DOWNLOAD_PROMPT="${COREPACK_ENABLE_DOWNLOAD_PROMPT:-0}"
