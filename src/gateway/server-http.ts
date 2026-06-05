@@ -350,6 +350,23 @@ function applyLoopbackCorsIfAllowed(
   return true;
 }
 
+function firstForwardedHeaderValue(value: string | string[] | undefined): string {
+  const raw = Array.isArray(value) ? value[0] : value;
+  return raw?.split(",")[0]?.trim() ?? "";
+}
+
+function resolveControlUiPublicHost(req: IncomingMessage, trustedProxies: string[]): string {
+  const remoteAddr = req.socket?.remoteAddress;
+  const forwardedHost = firstForwardedHeaderValue(req.headers["x-forwarded-host"]);
+  if (forwardedHost && isTrustedProxyAddress(remoteAddr, trustedProxies)) {
+    const normalizedForwardedHost = normalizePublicHost(forwardedHost);
+    if (normalizedForwardedHost) {
+      return normalizedForwardedHost;
+    }
+  }
+  return normalizePublicHost(req.headers.host ?? "");
+}
+
 function parseHostForControlUiRedirect(host: string): { hostname: string; port: string } | null {
   const normalized = normalizePublicHost(host);
   if (!normalized) {
@@ -4214,7 +4231,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
       const configSnapshot = loadConfig();
       const trustedProxies = configSnapshot.gateway?.trustedProxies ?? [];
       const allowRealIpFallback = configSnapshot.gateway?.allowRealIpFallback === true;
-      const host = normalizePublicHost(req.headers.host ?? "");
+      const host = resolveControlUiPublicHost(req, trustedProxies);
       const loopbackCorsApplied = applyLoopbackCorsIfAllowed(req, res, host);
       if (
         req.method === "OPTIONS" &&

@@ -40,6 +40,7 @@ function createRequest(params: {
   method?: string;
   path: string;
   host?: string;
+  headers?: Record<string, string>;
   cookie?: string;
   body?: unknown;
 }): IncomingMessage {
@@ -48,6 +49,7 @@ function createRequest(params: {
   req.url = params.path;
   req.headers = {
     host: params.host ?? "fasedagent7f1b9b93ccfdb.agents.fased.app",
+    ...params.headers,
     ...(params.cookie ? { cookie: params.cookie } : {}),
   };
   (req as unknown as { socket: { remoteAddress: string } }).socket = {
@@ -442,6 +444,104 @@ describe("control-ui login exchange endpoint", () => {
           host: "fasedagent7f1b9b93ccfdb.agents.fased.app",
         });
         expect(response.res.statusCode).not.toBe(401);
+      },
+    });
+  });
+
+  test("uses trusted forwarded host for proxied hosted session checks", async () => {
+    await withTempConfig({
+      cfg: { gateway: { trustedProxies: ["127.0.0.1/32", "::1/128"] } },
+      run: async () => {
+        const authorizeSessionToken = vi.fn(() => ({ ok: true }));
+        const server = createGatewayHttpServer({
+          canvasHost: null,
+          clients: new Set(),
+          controlUiEnabled: true,
+          controlUiBasePath: "",
+          openAiChatCompletionsEnabled: false,
+          openResponsesEnabled: false,
+          handleHooksRequest: async () => false,
+          resolvedAuth,
+          controlUiLogin: {
+            exchangeGrant: () => ({ ok: false, code: "invalid_grant" }),
+            issueSession: () => ({ ok: false, code: "invalid_session_host" }),
+            authorizeSessionToken,
+            revokeSessionToken: () => ({ ok: true }),
+          },
+        });
+        const response = createResponse();
+        await dispatch(
+          server,
+          createRequest({
+            method: "GET",
+            path: "/",
+            host: "127.0.0.1:18789",
+            headers: {
+              "x-forwarded-host": "fased-vps.tailnet.ts.net",
+              "x-forwarded-proto": "https",
+              "x-forwarded-for": "100.65.209.118",
+            },
+            cookie: "fased_ui_session=session-cookie-token",
+          }),
+          response.res,
+        );
+        expect(authorizeSessionToken).toHaveBeenCalledWith({
+          token: "session-cookie-token",
+          host: "fased-vps.tailnet.ts.net",
+        });
+        expect(response.res.statusCode).not.toBe(401);
+      },
+    });
+  });
+
+  test("issues hosted login sessions against trusted forwarded host", async () => {
+    await withTempConfig({
+      cfg: { gateway: { trustedProxies: ["127.0.0.1/32", "::1/128"] } },
+      run: async () => {
+        const issueSession = vi.fn(() => ({
+          ok: true as const,
+          sessionToken: "session-token-hosted",
+          expiresAtMs: 1_700_000_100_000,
+          idleTimeoutMs: 3_600_000,
+        }));
+        const server = createGatewayHttpServer({
+          canvasHost: null,
+          clients: new Set(),
+          controlUiEnabled: true,
+          controlUiBasePath: "",
+          openAiChatCompletionsEnabled: false,
+          openResponsesEnabled: false,
+          handleHooksRequest: async () => false,
+          resolvedAuth,
+          controlUiLogin: {
+            exchangeGrant: () => ({ ok: false, code: "invalid_grant" }),
+            issueSession,
+            authorizeSessionToken: () => ({ ok: false, code: "invalid_session_token" }),
+            revokeSessionToken: () => ({ ok: true }),
+          },
+        });
+        const response = createResponse();
+        await dispatch(
+          server,
+          createRequest({
+            method: "POST",
+            path: "/api/control-ui/login/token",
+            host: "127.0.0.1:18789",
+            headers: {
+              "x-forwarded-host": "fased-vps.tailnet.ts.net",
+              "x-forwarded-proto": "https",
+              "x-forwarded-for": "100.65.209.118",
+            },
+            body: { token: "root-token" },
+          }),
+          response.res,
+        );
+        expect(issueSession).toHaveBeenCalledWith({ host: "fased-vps.tailnet.ts.net" });
+        expect(response.res.statusCode).toBe(200);
+        expect(JSON.parse(response.getBody())).toMatchObject({
+          ok: true,
+          sessionToken: "session-token-hosted",
+        });
       },
     });
   });

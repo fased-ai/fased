@@ -532,6 +532,13 @@ assert_marker_matches_repo() {
       echo "Install marker uses old hosted path ($marker_repo); continuing with $repo_root."
       return 0
     fi
+    if [[ "$(basename "$marker_repo")" == "fased" \
+      && "$(basename "$repo_root")" == "fased" \
+      && "$(basename "$(dirname "$marker_repo")")" == "agent" \
+      && "$(dirname "$(dirname "$marker_repo")")" == "$(dirname "$repo_root")" ]]; then
+      echo "Install marker uses old repo path ($marker_repo); continuing with $repo_root."
+      return 0
+    fi
     echo "Install marker mismatch." >&2
     echo "Marker repoPath: $marker_repo" >&2
     echo "Current repoPath: $repo_root" >&2
