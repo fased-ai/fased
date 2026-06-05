@@ -12,7 +12,6 @@ describe("buildOnboardingDashboardUrl", () => {
       baseUrl: "http://localhost:18789/control/",
       basePath: "/control",
       token: "abc123",
-      gatewayUrl: "ws://localhost:18789/control",
       walletSecurityFocus: {
         walletId: "wallet-agent",
         role: "agent",
@@ -27,7 +26,7 @@ describe("buildOnboardingDashboardUrl", () => {
     expect(parsed.searchParams.get("wallet_security")).toBeNull();
     const hash = new URLSearchParams(parsed.hash.slice(1));
     expect(hash.get("token")).toBe("abc123");
-    expect(hash.get("gatewayUrl")).toBe("ws://localhost:18789/control");
+    expect(hash.get("gatewayUrl")).toBeNull();
     expect(hash.get("wallet")).toBe("wallet-agent");
     expect(hash.get("wallet_role")).toBe("agent");
     expect(hash.get("wallet_security")).toBe("1");

@@ -131,6 +131,12 @@ function isSameOriginGatewayUrl(rawGatewayUrl: string): boolean {
   }
 }
 
+function buildSameOriginGatewayUrl(basePath?: string | null): string {
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const normalizedBasePath = normalizeBasePath(basePath ?? "");
+  return `${protocol}//${window.location.host}${normalizedBasePath}`;
+}
+
 function isUsableModelAuthStatus(status: string | null | undefined) {
   return status === "ok" || status === "static" || status === "expiring";
 }
@@ -238,7 +244,11 @@ export async function applySettingsFromUrl(host?: SettingsHost) {
   let shouldCleanUrl = false;
 
   const current = host?.settings ?? loadSettings();
-  const gatewayUrl = gatewayUrlRaw?.trim() ?? "";
+  const explicitGatewayUrl = gatewayUrlRaw?.trim() ?? "";
+  const tokenLikeUrl = tokenRaw != null || loginRaw != null || sessionRaw != null;
+  const inferredGatewayUrl =
+    !explicitGatewayUrl && tokenLikeUrl ? buildSameOriginGatewayUrl(host?.basePath) : "";
+  const gatewayUrl = explicitGatewayUrl || inferredGatewayUrl;
   const currentGatewayUrl = current.gatewayUrl?.trim() ?? "";
   const gatewayUrlChanged =
     !!gatewayUrl &&

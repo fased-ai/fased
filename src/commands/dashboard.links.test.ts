@@ -81,10 +81,8 @@ describe("dashboardCommand", () => {
       customBindHost: undefined,
       basePath: undefined,
     });
-    const expectedUrl =
-      "http://localhost:18789/#token=abc123&gatewayUrl=ws%3A%2F%2F127.0.0.1%3A18789";
-    expect(copyToClipboardMock).toHaveBeenCalledWith(expectedUrl);
-    expect(openUrlMock).toHaveBeenCalledWith(expectedUrl);
+    expect(copyToClipboardMock).toHaveBeenCalledWith("http://localhost:18789/#token=abc123");
+    expect(openUrlMock).toHaveBeenCalledWith("http://localhost:18789/#token=abc123");
     expect(runtime.log).toHaveBeenCalledWith(
       "Opened in your browser. Keep that tab to control Fased Agent.",
     );

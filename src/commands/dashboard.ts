@@ -13,20 +13,12 @@ type DashboardOptions = {
   noOpen?: boolean;
 };
 
-function buildDashboardUrl(params: {
-  httpUrl: string;
-  token?: string;
-  gatewayUrl?: string;
-}): string {
+function buildDashboardUrl(params: { httpUrl: string; token?: string }): string {
   const url = new URL(params.httpUrl);
   const hashParams = new URLSearchParams();
   const token = params.token?.trim();
   if (token) {
     hashParams.set("token", token);
-  }
-  const gatewayUrl = params.gatewayUrl?.trim();
-  if (gatewayUrl) {
-    hashParams.set("gatewayUrl", gatewayUrl);
   }
   const hash = hashParams.toString();
   url.hash = hash ? `#${hash}` : "";
@@ -57,7 +49,6 @@ export async function dashboardCommand(
   const dashboardUrl = buildDashboardUrl({
     httpUrl: links.httpUrl,
     token,
-    gatewayUrl: links.wsUrl,
   });
 
   runtime.log(`Dashboard URL: ${dashboardUrl}`);

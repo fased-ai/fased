@@ -359,10 +359,8 @@ describe("applySettingsFromUrl", () => {
     expect(window.location.search).toBe("");
   });
 
-  it("accepts same-origin hosted gateway URLs without confirmation", async () => {
-    setTestWindowUrl(
-      "https://fased-vps.tailnet.ts.net/#gatewayUrl=wss%3A%2F%2Ffased-vps.tailnet.ts.net&token=abc123",
-    );
+  it("infers same-origin hosted gateway URLs from token-only links", async () => {
+    setTestWindowUrl("https://fased-vps.tailnet.ts.net/#token=abc123");
     const host = createHost("overview");
     host.settings.gatewayUrl = "ws://127.0.0.1:18789";
 
