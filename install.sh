@@ -653,6 +653,21 @@ read_marker_repo_path() {
   sed -n 's/.*"repoPath"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$INSTALL_MARKER_PATH" | head -n 1
 }
 
+read_marker_onboarding_completed() {
+  if [[ ! -f "$INSTALL_MARKER_PATH" ]]; then
+    return 0
+  fi
+  if need_cmd node; then
+    node -e 'const fs=require("fs");try{const p=process.argv[1];const o=JSON.parse(fs.readFileSync(p,"utf8"));if(o.onboardingCompleted===true)process.stdout.write("true");else if(o.onboardingCompleted===false)process.stdout.write("false");}catch{}' "$INSTALL_MARKER_PATH"
+    return 0
+  fi
+  if grep -q '"onboardingCompleted"[[:space:]]*:[[:space:]]*true' "$INSTALL_MARKER_PATH" 2>/dev/null; then
+    printf 'true\n'
+  elif grep -q '"onboardingCompleted"[[:space:]]*:[[:space:]]*false' "$INSTALL_MARKER_PATH" 2>/dev/null; then
+    printf 'false\n'
+  fi
+}
+
 assert_marker_matches_repo() {
   local repo_root="$1"
   local marker_repo
@@ -687,6 +702,141 @@ write_install_marker() {
 }
 EOF
   chmod 600 "$INSTALL_MARKER_PATH" 2>/dev/null || true
+}
+
+repair_tailscale_serve_gateway_config() {
+  local config_path="${FASED_CONFIG_PATH:-$FASED_CONFIG_DIR/fased.json}"
+  if [[ ! -f "$config_path" ]] || ! need_cmd node; then
+    return 0
+  fi
+
+  local output
+  output="$(
+    CONFIG_PATH="$config_path" node <<'NODE'
+const fs = require("fs");
+
+const configPath = process.env.CONFIG_PATH;
+if (!configPath || !fs.existsSync(configPath)) {
+  process.exit(0);
+}
+
+let cfg;
+try {
+  cfg = JSON.parse(fs.readFileSync(configPath, "utf8"));
+} catch {
+  process.exit(0);
+}
+
+const gateway = cfg && typeof cfg === "object" ? (cfg.gateway ?? {}) : {};
+const tailscale = gateway && typeof gateway === "object" ? (gateway.tailscale ?? {}) : {};
+if (!tailscale || tailscale.mode !== "serve") {
+  process.exit(0);
+}
+
+let changed = false;
+cfg.gateway = gateway;
+
+const trusted = Array.isArray(gateway.trustedProxies) ? [...gateway.trustedProxies] : [];
+for (const proxy of ["127.0.0.1/32", "::1/128"]) {
+  if (!trusted.includes(proxy)) {
+    trusted.push(proxy);
+    changed = true;
+  }
+}
+gateway.trustedProxies = trusted;
+
+const controlUi =
+  gateway.controlUi && typeof gateway.controlUi === "object" ? gateway.controlUi : {};
+if (controlUi.allowInsecureAuth !== true) {
+  controlUi.allowInsecureAuth = true;
+  changed = true;
+}
+gateway.controlUi = controlUi;
+
+if (gateway.bind !== "loopback") {
+  gateway.bind = "loopback";
+  changed = true;
+}
+
+if (!changed) {
+  process.exit(0);
+}
+
+const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+$/, "Z");
+try {
+  fs.copyFileSync(configPath, `${configPath}.bak-hosted-serve-${stamp}`);
+} catch {
+  // best-effort backup; continue with atomic-enough write below
+}
+fs.writeFileSync(configPath, `${JSON.stringify(cfg, null, 2)}\n`, { mode: 0o600 });
+try {
+  fs.chmodSync(configPath, 0o600);
+} catch {}
+console.log("changed");
+NODE
+  )" || return 0
+
+  if [[ "$output" == *changed* ]]; then
+    step_done "Hosted dashboard config repaired"
+  fi
+}
+
+has_system_gateway_service() {
+  if ! need_cmd systemctl; then
+    return 1
+  fi
+  systemctl list-unit-files fased-gateway.service --no-legend 2>/dev/null | grep -q '^fased-gateway.service' && return 0
+  sudo -n systemctl list-unit-files fased-gateway.service --no-legend 2>/dev/null | grep -q '^fased-gateway.service' && return 0
+  systemctl status fased-gateway.service >/dev/null 2>&1 && return 0
+  sudo -n systemctl status fased-gateway.service >/dev/null 2>&1 && return 0
+  return 1
+}
+
+has_user_gateway_service() {
+  if ! need_cmd systemctl; then
+    return 1
+  fi
+  systemctl --user list-unit-files fased-gateway.service --no-legend 2>/dev/null | grep -q '^fased-gateway.service' && return 0
+  systemctl --user status fased-gateway.service >/dev/null 2>&1 && return 0
+  return 1
+}
+
+restart_existing_gateway_service_after_install() {
+  if has_system_gateway_service; then
+    sudo -n systemctl daemon-reload >/dev/null 2>&1 || true
+    if sudo -n systemctl restart --no-block fased-gateway.service >/dev/null 2>&1; then
+      return 0
+    fi
+    if sudo -n systemctl start --no-block fased-gateway.service >/dev/null 2>&1; then
+      return 0
+    fi
+  fi
+
+  if has_user_gateway_service; then
+    systemctl --user daemon-reload >/dev/null 2>&1 || true
+    if systemctl --user restart fased-gateway.service >/dev/null 2>&1; then
+      return 0
+    fi
+    if systemctl --user start fased-gateway.service >/dev/null 2>&1; then
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+wait_for_gateway_health_after_restart() {
+  if [[ -z "${FASED_CLI_PATH:-}" || ! -x "$FASED_CLI_PATH" ]]; then
+    return 1
+  fi
+  local attempt
+  for attempt in {1..20}; do
+    if "$FASED_CLI_PATH" health --timeout 3000 >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
 }
 
 upsert_env_var() {
@@ -1645,9 +1795,28 @@ fi
 install_fased_cli_launcher
 
 if [[ "$RUN_ONBOARD" -eq 0 ]]; then
-  write_install_marker "$REPO_ROOT" "false"
+  marker_onboarding_completed="$(read_marker_onboarding_completed || true)"
+  if [[ "$marker_onboarding_completed" == "true" ]] || has_system_gateway_service || has_user_gateway_service; then
+    write_install_marker "$REPO_ROOT" "true"
+  else
+    write_install_marker "$REPO_ROOT" "false"
+  fi
+  repair_tailscale_serve_gateway_config
+  if restart_existing_gateway_service_after_install; then
+    step_done "Gateway restart requested"
+    if wait_for_gateway_health_after_restart; then
+      step_done "Gateway online"
+    else
+      echo "Gateway restart requested; still warming up."
+      echo "Check: fased health"
+    fi
+  else
+    echo "No existing Gateway service was found to restart."
+  fi
   echo "Onboarding skipped (--no-onboard)."
-  if [[ "$HOSTING_REQUESTED" -eq 1 ]]; then
+  if has_system_gateway_service || has_user_gateway_service; then
+    echo "Open: fased dashboard --no-open"
+  elif [[ "$HOSTING_REQUESTED" -eq 1 ]]; then
     echo "Run when ready: ./install.sh --hosting"
   else
     echo "Run when ready: fased onboard --install-daemon"
