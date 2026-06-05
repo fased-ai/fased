@@ -102,12 +102,12 @@ describe("gatewayServiceMatchesCurrentInstall", () => {
     const result = gatewayServiceMatchesCurrentInstall({
       repoRoot: "/home/fc/fasedbot/fased",
       command: {
-        programArguments: ["/bin/bash", "/home/fc/fasedbot/agent/fased/scripts/start-managed.sh"],
+        programArguments: ["/bin/bash", "/opt/stale-fased/scripts/start-managed.sh"],
       },
     });
 
     expect(result.ok).toBe(false);
-    expect(result.detail).toContain("/home/fc/fasedbot/agent/fased/scripts/start-managed.sh");
+    expect(result.detail).toContain("/opt/stale-fased/scripts/start-managed.sh");
     expect(result.detail).toContain("/home/fc/fasedbot/fased/scripts/start-managed.sh");
   });
 
@@ -127,11 +127,7 @@ describe("gatewayServiceMatchesCurrentInstall", () => {
     const result = gatewayServiceMatchesCurrentInstall({
       repoRoot: "/home/fc/fasedbot/fased",
       command: {
-        programArguments: [
-          "/usr/bin/node",
-          "/home/fc/fasedbot/agent/fased/dist/entry.js",
-          "gateway",
-        ],
+        programArguments: ["/usr/bin/node", "/opt/stale-fased/dist/entry.js", "gateway"],
       },
     });
 
