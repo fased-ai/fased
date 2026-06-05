@@ -1298,7 +1298,11 @@ export async function runOnboardingWizard(
                 ? "Jupiter key configured"
                 : "Enable Jupiter Trigger limit orders for Agent wallets",
             },
-            { value: "skip", label: "Done / skip" },
+            {
+              value: "skip",
+              label: "Finish / set up later",
+              hint: "Keeps existing wallets and lets hosting finish.",
+            },
           ],
           initialValue: flow === "quickstart" ? "self-hosted" : "skip",
         });

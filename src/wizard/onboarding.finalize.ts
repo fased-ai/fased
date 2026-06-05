@@ -525,26 +525,10 @@ async function verifyStrictVpsMaintenanceReadiness(params: {
     );
   }
 
-  const walletStatus = await readWalletStatusSnapshot({
-    config: params.nextConfig,
-    env: process.env,
-  });
-  if (walletStatus.enabled && !walletStatus.service.healthy) {
-    let detail = walletStatus.error ?? `${walletStatus.provider.id} wallet runtime is unhealthy`;
-    if (walletStatus.provider.id === "local-socket-signer") {
-      try {
-        const { collectWalletSignerDoctorReport } = await import("../commands/wallet.js");
-        const doctor = await collectWalletSignerDoctorReport(process.env);
-        const firstFailedCheck = doctor.checks.find((check) => !check.ok);
-        if (firstFailedCheck) {
-          detail = `${firstFailedCheck.check}: ${firstFailedCheck.detail ?? "failed"}`;
-        }
-      } catch {
-        // Keep the wallet status detail when signer doctor is unavailable.
-      }
-    }
-    throw new Error(`Hosting requires healthy wallet runtime before completion (${detail})`);
-  }
+  // Wallet/signer readiness is feature readiness, not host access readiness.
+  // If the user creates/imports a self-hosted wallet in this onboarding run,
+  // the wallet ceremony already enforces signer checks earlier. A skipped or
+  // deferred wallet setup must not block SSH/dashboard hardening completion.
 }
 
 async function isSystemdServiceRunningOrStarting(params: {
