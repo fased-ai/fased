@@ -36,8 +36,12 @@ export function shouldSkipControlUiPairing(
   policy: ControlUiAuthPolicy,
   sharedAuthOk: boolean,
   trustedProxyAuthOk = false,
+  trustedTailscaleServeControlUiContext = false,
 ): boolean {
   if (trustedProxyAuthOk) {
+    return true;
+  }
+  if (trustedTailscaleServeControlUiContext && sharedAuthOk) {
     return true;
   }
   return policy.allowBypass && sharedAuthOk;
@@ -86,6 +90,7 @@ export function evaluateMissingDeviceIdentity(params: {
   authOk: boolean;
   hasSharedAuth: boolean;
   isLocalClient: boolean;
+  trustedTailscaleServeControlUiContext?: boolean;
 }): MissingDeviceIdentityDecision {
   if (params.hasDeviceIdentity) {
     return { kind: "allow" };
@@ -94,12 +99,14 @@ export function evaluateMissingDeviceIdentity(params: {
     return { kind: "allow" };
   }
   if (params.isControlUi && !params.controlUiAuthPolicy.allowBypass) {
-    // Allow localhost Control UI connections when allowInsecureAuth is configured.
-    // Localhost has no network interception risk, and browser SubtleCrypto
-    // (needed for device identity) is unavailable in insecure HTTP contexts.
-    // Remote connections are still rejected to preserve the MitM protection
-    // that the security fix (#20684) intended.
-    if (!params.controlUiAuthPolicy.allowInsecureAuthConfigured || !params.isLocalClient) {
+    // Allow token/password-only Control UI connections when allowInsecureAuth
+    // is configured and the browser context is either localhost or hosted
+    // Tailscale Serve HTTPS. Other remote browser contexts are still rejected
+    // to preserve the MitM protection that the security fix (#20684) intended.
+    if (
+      !params.controlUiAuthPolicy.allowInsecureAuthConfigured ||
+      (!params.isLocalClient && !params.trustedTailscaleServeControlUiContext)
+    ) {
       return { kind: "reject-control-ui-insecure-auth" };
     }
   }

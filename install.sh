@@ -1522,7 +1522,11 @@ install_fased_cli_launcher
 if [[ "$RUN_ONBOARD" -eq 0 ]]; then
   write_install_marker "$REPO_ROOT" "false"
   echo "Onboarding skipped (--no-onboard)."
-  echo "Run when ready: fased onboard --install-daemon"
+  if [[ "$HOSTING_REQUESTED" -eq 1 ]]; then
+    echo "Run when ready: ./install.sh --hosting"
+  else
+    echo "Run when ready: fased onboard --install-daemon"
+  fi
   exit 0
 fi
 

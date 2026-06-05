@@ -41,6 +41,8 @@ const DEFAULT_DANGEROUS_NODE_DENY_COMMANDS = [
   "reminders.add",
 ];
 
+const HOSTED_TAILSCALE_TRUSTED_PROXIES = ["127.0.0.1/32", "::1/128"];
+
 type ConfigureGatewayOptions = {
   flow: WizardFlow;
   hostProfile: HostSetupProfile;
@@ -264,6 +266,15 @@ export async function configureGatewayForOnboarding(
       mode: "local",
       port,
       bind: bind as GatewayBindMode,
+      trustedProxies:
+        strictHosting && tailscaleMode === "serve"
+          ? Array.from(
+              new Set([
+                ...(nextConfig.gateway?.trustedProxies ?? []),
+                ...HOSTED_TAILSCALE_TRUSTED_PROXIES,
+              ]),
+            )
+          : nextConfig.gateway?.trustedProxies,
       ...(bind === "custom" && customBindHost ? { customBindHost } : {}),
       tailscale: {
         ...nextConfig.gateway?.tailscale,

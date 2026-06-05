@@ -93,6 +93,22 @@ describe("ws connect policy", () => {
       }).kind,
     ).toBe("allow");
 
+    // Trusted HTTPS proxy Control UI with allowInsecureAuth -> allowed.
+    expect(
+      evaluateMissingDeviceIdentity({
+        hasDeviceIdentity: false,
+        role: "operator",
+        isControlUi: true,
+        controlUiAuthPolicy: controlUiStrict,
+        trustedProxyAuthOk: false,
+        sharedAuthOk: true,
+        authOk: true,
+        hasSharedAuth: true,
+        isLocalClient: false,
+        trustedTailscaleServeControlUiContext: true,
+      }).kind,
+    ).toBe("allow");
+
     // Control UI without allowInsecureAuth, even on localhost -> rejected.
     const controlUiNoInsecure = resolveControlUiAuthPolicy({
       isControlUi: true,
@@ -186,6 +202,8 @@ describe("ws connect policy", () => {
     expect(shouldSkipControlUiPairing(bypass, false, false)).toBe(false);
     expect(shouldSkipControlUiPairing(strict, true, false)).toBe(false);
     expect(shouldSkipControlUiPairing(strict, false, true)).toBe(true);
+    expect(shouldSkipControlUiPairing(strict, true, false, true)).toBe(true);
+    expect(shouldSkipControlUiPairing(strict, false, false, true)).toBe(false);
   });
 
   test("trusted-proxy control-ui bypass only applies to operator + trusted-proxy auth", () => {

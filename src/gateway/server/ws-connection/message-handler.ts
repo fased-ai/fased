@@ -102,17 +102,57 @@ function firstHeaderValue(value: string | string[] | undefined): string | undefi
   return Array.isArray(value) ? value[0] : value;
 }
 
-function resolveForwardedOriginHost(req: IncomingMessage): string | undefined {
+function firstForwardedHeaderValue(value: string | string[] | undefined): string | undefined {
+  return firstHeaderValue(value)?.split(",")[0]?.trim();
+}
+
+function resolveForwardedOriginHost(
+  req: IncomingMessage,
+  params?: {
+    remoteAddr?: string;
+    trustedProxies?: string[];
+  },
+): string | undefined {
   const forwardedHost = firstHeaderValue(req.headers["x-forwarded-host"])?.trim();
   if (!forwardedHost) {
     return undefined;
   }
+  const trustedProxy =
+    params?.remoteAddr && isTrustedProxyAddress(params.remoteAddr, params.trustedProxies);
   const hasTailscaleProxyHeaders = Boolean(
     req.headers["x-forwarded-for"] &&
     req.headers["x-forwarded-proto"] &&
-    req.headers["tailscale-user-login"],
+    (req.headers["tailscale-user-login"] || trustedProxy),
   );
   return hasTailscaleProxyHeaders ? forwardedHost : undefined;
+}
+
+function isTrustedHttpsControlUiProxyContext(
+  req: IncomingMessage,
+  params: {
+    remoteAddr?: string;
+    requestOrigin?: string;
+    trustedProxies?: string[];
+  },
+): boolean {
+  if (!params.remoteAddr || !isTrustedProxyAddress(params.remoteAddr, params.trustedProxies)) {
+    return false;
+  }
+  const forwardedProto = firstForwardedHeaderValue(req.headers["x-forwarded-proto"])
+    ?.toLowerCase()
+    .trim();
+  const forwardedHost = firstForwardedHeaderValue(req.headers["x-forwarded-host"])
+    ?.toLowerCase()
+    .trim();
+  if (forwardedProto !== "https" || !forwardedHost || !params.requestOrigin) {
+    return false;
+  }
+  try {
+    const origin = new URL(params.requestOrigin);
+    return origin.protocol === "https:" && origin.host.toLowerCase() === forwardedHost;
+  } catch {
+    return false;
+  }
 }
 
 function resolveHandshakeBrowserSecurityContext(params: {
@@ -324,11 +364,22 @@ export function attachGatewayWsMessageHandler(params: {
   const remoteIsTrustedProxy = isTrustedProxyAddress(remoteAddr, trustedProxies);
   const hasUntrustedProxyHeaders = hasProxyHeaders && !remoteIsTrustedProxy;
   const hostIsLocalish = isLocalishHost(requestHost);
-  const isLocalClient = isLocalDirectRequest(upgradeReq, trustedProxies, allowRealIpFallback);
+  const hasLoopbackNonLocalHost =
+    !hostIsLocalish && isLoopbackAddress(remoteAddr) && !hasProxyHeaders;
+  const isLocalClient =
+    isLocalDirectRequest(upgradeReq, trustedProxies, allowRealIpFallback) &&
+    !hasLoopbackNonLocalHost;
   const originRequestHost =
     !isLocalClient && isLoopbackAddress(remoteAddr)
-      ? (resolveForwardedOriginHost(upgradeReq) ?? requestHost)
+      ? (resolveForwardedOriginHost(upgradeReq, { remoteAddr, trustedProxies }) ?? requestHost)
       : requestHost;
+  const trustedTailscaleServeControlUiContext =
+    configSnapshot.gateway?.tailscale?.mode === "serve" &&
+    isTrustedHttpsControlUiProxyContext(upgradeReq, {
+      remoteAddr,
+      requestOrigin,
+      trustedProxies,
+    });
   const reportedClientIp =
     isLocalClient || hasUntrustedProxyHeaders
       ? undefined
@@ -343,7 +394,7 @@ export function attachGatewayWsMessageHandler(params: {
         "Configure gateway.trustedProxies to restore local client detection behind your proxy.",
     );
   }
-  if (!hostIsLocalish && isLoopbackAddress(remoteAddr) && !hasProxyHeaders) {
+  if (hasLoopbackNonLocalHost) {
     logWsControl.warn(
       "Loopback connection with non-local Host header. " +
         "Treating it as remote. If you're behind a reverse proxy, " +
@@ -624,6 +675,7 @@ export function attachGatewayWsMessageHandler(params: {
             authOk,
             hasSharedAuth,
             isLocalClient,
+            trustedTailscaleServeControlUiContext,
           });
           if (decision.kind === "allow") {
             return true;
@@ -634,6 +686,7 @@ export function attachGatewayWsMessageHandler(params: {
               "control ui requires device identity (use HTTPS or localhost secure context)";
             markHandshakeFailure("control-ui-insecure-auth", {
               insecureAuthConfigured: controlUiAuthPolicy.allowInsecureAuthConfigured,
+              trustedTailscaleServeControlUiContext,
             });
             sendHandshakeErrorResponse(ErrorCodes.INVALID_REQUEST, errorMessage, {
               details: { code: ConnectErrorDetailCodes.CONTROL_UI_DEVICE_IDENTITY_REQUIRED },
@@ -756,6 +809,7 @@ export function attachGatewayWsMessageHandler(params: {
           controlUiAuthPolicy,
           sharedAuthOk,
           trustedProxyAuthOk,
+          isControlUi && trustedTailscaleServeControlUiContext,
         );
         if (device && devicePublicKey && !skipPairing) {
           const formatAuditList = (items: string[] | undefined): string => {

@@ -120,7 +120,7 @@ export function isLocalDirectRequest(
   // OR if we're behind a trusted proxy and the proxy-aware resolution (if any)
   // still points to a local address.
   if (isLoopbackAddress(remoteAddr)) {
-    if (hasTailscaleProxyHeaders(req)) {
+    if (hasForwardedProxyHeaders(req)) {
       return false;
     }
     return true;
@@ -162,6 +162,19 @@ function hasTailscaleProxyHeaders(req?: IncomingMessage): boolean {
     req.headers["x-forwarded-for"] &&
     req.headers["x-forwarded-proto"] &&
     req.headers["x-forwarded-host"],
+  );
+}
+
+function hasForwardedProxyHeaders(req?: IncomingMessage): boolean {
+  if (!req) {
+    return false;
+  }
+  return Boolean(
+    req.headers["forwarded"] ||
+    req.headers["x-forwarded-for"] ||
+    req.headers["x-forwarded-host"] ||
+    req.headers["x-forwarded-proto"] ||
+    req.headers["x-real-ip"],
   );
 }
 

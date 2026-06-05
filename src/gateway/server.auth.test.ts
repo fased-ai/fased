@@ -111,6 +111,7 @@ const TRUSTED_PROXY_CONTROL_UI_HEADERS = {
   origin: "https://localhost",
   "x-forwarded-for": "203.0.113.10",
   "x-forwarded-proto": "https",
+  "x-forwarded-host": "localhost",
   "x-forwarded-user": "peter@example.com",
 } as const;
 
@@ -832,11 +833,7 @@ describe("gateway server auth/connect", () => {
 
     afterAll(async () => {
       await server.close();
-      if (prevToken === undefined) {
-        delete process.env.FASED_GATEWAY_TOKEN;
-      } else {
-        process.env.FASED_GATEWAY_TOKEN = prevToken;
-      }
+      restoreGatewayToken(prevToken);
     });
 
     test("allows loopback connect without shared secret when mode is none", async () => {
@@ -1039,6 +1036,8 @@ describe("gateway server auth/connect", () => {
           headers: {
             origin: "https://localhost",
             "x-forwarded-for": "203.0.113.10",
+            "x-forwarded-proto": "https",
+            "x-forwarded-host": "localhost",
           },
         });
         const challengePromise = onceMessage<{

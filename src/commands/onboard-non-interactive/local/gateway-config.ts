@@ -3,6 +3,8 @@ import type { RuntimeEnv } from "../../../runtime.js";
 import { randomToken } from "../../onboard-helpers.js";
 import type { OnboardOptions } from "../../onboard-types.js";
 
+const HOSTED_TAILSCALE_TRUSTED_PROXIES = ["127.0.0.1/32", "::1/128"];
+
 export function applyNonInteractiveGatewayConfig(params: {
   nextConfig: FasedAgentConfig;
   opts: OnboardOptions;
@@ -97,6 +99,15 @@ export function applyNonInteractiveGatewayConfig(params: {
       ...nextConfig.gateway,
       port,
       bind,
+      trustedProxies:
+        hostingProfile && tailscaleMode === "serve"
+          ? Array.from(
+              new Set([
+                ...(nextConfig.gateway?.trustedProxies ?? []),
+                ...HOSTED_TAILSCALE_TRUSTED_PROXIES,
+              ]),
+            )
+          : nextConfig.gateway?.trustedProxies,
       tailscale: {
         ...nextConfig.gateway?.tailscale,
         mode: tailscaleMode,
