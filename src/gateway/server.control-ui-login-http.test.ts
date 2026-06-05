@@ -402,6 +402,7 @@ describe("control-ui login exchange endpoint", () => {
         await dispatch(server, createRequest({ method: "GET", path: "/" }), response.res);
         expect(response.res.statusCode).toBe(401);
         expect(response.getBody()).toContain("<h1>Sign in to Fased Agent</h1>");
+        expect(response.getBody()).toContain("gatewayUrl: currentGatewayUrl()");
         expect(response.getBody()).toContain("fased.control.token.local.v1");
         expect(response.getBody()).toContain("fased.control.token.session.v1");
       },

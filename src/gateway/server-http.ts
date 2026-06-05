@@ -524,8 +524,11 @@ function controlUiLoginPageHtml(): string {
       const hashParams = new URLSearchParams(window.location.hash.startsWith("#") ? window.location.hash.slice(1) : window.location.hash);
       return (hashParams.get("login") || searchParams.get("login") || "").trim();
     };
-    const storeSessionToken = (sessionToken) => {
-      if (!sessionToken) { return; }
+    const currentGatewayUrl = () => {
+      const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+      return proto + "//" + window.location.host;
+    };
+    const storeGatewayUrl = () => {
       try {
         const raw = localStorage.getItem(${JSON.stringify(CONTROL_UI_SETTINGS_STORAGE_KEY)});
         const parsed = raw ? JSON.parse(raw) : {};
@@ -533,10 +536,17 @@ function controlUiLoginPageHtml(): string {
           ${JSON.stringify(CONTROL_UI_SETTINGS_STORAGE_KEY)},
           JSON.stringify({
             ...parsed,
+            gatewayUrl: currentGatewayUrl(),
             authStorage: "local",
             token: "",
           }),
         );
+      } catch {}
+    };
+    const storeSessionToken = (sessionToken) => {
+      if (!sessionToken) { return; }
+      storeGatewayUrl();
+      try {
         localStorage.setItem(
           ${JSON.stringify(CONTROL_UI_TOKEN_LOCAL_STORAGE_KEY)},
           sessionToken,
@@ -637,6 +647,7 @@ function controlUiLoginPageHtml(): string {
         });
         const data = await res.json().catch(() => ({}));
         if (res.ok && data?.ok === true) {
+          storeGatewayUrl();
           window.location.replace(buildRedirectUrl());
           return;
         }
