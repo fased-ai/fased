@@ -19,7 +19,7 @@ export type HostedDashboardBrowserProbeResult =
   | {
       ok: false;
       durationMs: number;
-      stage: "login" | "websocket";
+      stage: "login" | "assets" | "websocket";
       message: string;
       wsUrl?: string;
     };
@@ -53,6 +53,171 @@ function buildWsUrl(httpUrl: string): string {
   url.search = "";
   url.hash = "";
   return url.toString();
+}
+
+function resolveAssetUrl(src: string, baseUrl: string): string | null {
+  const trimmed = src.trim();
+  if (!trimmed) {
+    return null;
+  }
+  try {
+    return new URL(trimmed, baseUrl).toString();
+  } catch {
+    return null;
+  }
+}
+
+function extractHtmlAssetUrls(html: string, baseUrl: string): string[] {
+  const urls = new Set<string>();
+  for (const match of html.matchAll(/<(?:script|link)\b[^>]*\b(?:src|href)=["']([^"']+)["']/gi)) {
+    const resolved = resolveAssetUrl(match[1] ?? "", baseUrl);
+    if (resolved) {
+      urls.add(resolved);
+    }
+  }
+  return [...urls];
+}
+
+function extractDynamicImportUrls(js: string, baseUrl: string): string[] {
+  const urls = new Set<string>();
+  for (const match of js.matchAll(/\bimport\(\s*["']([^"']+\.js)["']\s*\)/g)) {
+    const resolved = resolveAssetUrl(match[1] ?? "", baseUrl);
+    if (resolved) {
+      urls.add(resolved);
+    }
+  }
+  return [...urls];
+}
+
+async function fetchTextWithTimeout(params: {
+  url: string;
+  timeoutMs: number;
+  headers?: HeadersInit;
+}): Promise<
+  { ok: true; status: number; contentType: string; text: string } | { ok: false; message: string }
+> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), params.timeoutMs);
+  try {
+    const response = await fetch(params.url, {
+      method: "GET",
+      headers: params.headers,
+      cache: "no-store",
+      redirect: "follow",
+      signal: controller.signal,
+    });
+    const text = await response.text().catch(() => "");
+    return {
+      ok: true,
+      status: response.status,
+      contentType: response.headers.get("content-type") ?? "",
+      text,
+    };
+  } catch (err) {
+    return { ok: false, message: sanitizeErrorMessage(err) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function validateAssetResponse(params: {
+  url: string;
+  status: number;
+  contentType: string;
+  text: string;
+}): { ok: true } | { ok: false; message: string } {
+  if (params.status < 200 || params.status >= 300) {
+    return { ok: false, message: `${params.url} returned HTTP ${params.status}` };
+  }
+  const head = params.text.slice(0, 80).trimStart().toLowerCase();
+  if (head.startsWith("<!doctype") || head.startsWith("<html")) {
+    return { ok: false, message: `${params.url} returned HTML instead of an asset` };
+  }
+  const lowerUrl = params.url.toLowerCase();
+  const lowerContentType = params.contentType.toLowerCase();
+  if (lowerUrl.endsWith(".js") && !lowerContentType.includes("javascript")) {
+    return {
+      ok: false,
+      message: `${params.url} returned ${params.contentType || "missing content-type"} instead of JavaScript`,
+    };
+  }
+  if (lowerUrl.endsWith(".css") && !lowerContentType.includes("text/css")) {
+    return {
+      ok: false,
+      message: `${params.url} returned ${params.contentType || "missing content-type"} instead of CSS`,
+    };
+  }
+  return { ok: true };
+}
+
+async function probeHostedControlUiAssets(params: {
+  httpUrl: string;
+  sessionToken: string;
+  timeoutMs: number;
+}): Promise<{ ok: true } | { ok: false; message: string }> {
+  const cookieHeader = `fased_ui_session=${encodeURIComponent(params.sessionToken)}`;
+  const index = await fetchTextWithTimeout({
+    url: params.httpUrl,
+    timeoutMs: params.timeoutMs,
+    headers: {
+      accept: "text/html",
+      cookie: cookieHeader,
+    },
+  });
+  if (!index.ok) {
+    return { ok: false, message: `index fetch failed: ${index.message}` };
+  }
+  if (index.status < 200 || index.status >= 300) {
+    return { ok: false, message: `index returned HTTP ${index.status}` };
+  }
+  if (!index.contentType.toLowerCase().includes("text/html")) {
+    return {
+      ok: false,
+      message: `index returned ${index.contentType || "missing content-type"} instead of HTML`,
+    };
+  }
+  const htmlAssets = extractHtmlAssetUrls(index.text, params.httpUrl).filter((url) =>
+    /\.(?:js|css)(?:[?#].*)?$/i.test(url),
+  );
+  if (htmlAssets.length === 0) {
+    return { ok: false, message: "index did not reference dashboard JS/CSS assets" };
+  }
+
+  const checked = new Set<string>();
+  const pending = [...htmlAssets];
+  while (pending.length > 0) {
+    const assetUrl = pending.shift();
+    if (!assetUrl || checked.has(assetUrl)) {
+      continue;
+    }
+    checked.add(assetUrl);
+    const asset = await fetchTextWithTimeout({
+      url: assetUrl,
+      timeoutMs: params.timeoutMs,
+      headers: { accept: "*/*" },
+    });
+    if (!asset.ok) {
+      return { ok: false, message: `${assetUrl} fetch failed: ${asset.message}` };
+    }
+    const valid = validateAssetResponse({
+      url: assetUrl,
+      status: asset.status,
+      contentType: asset.contentType,
+      text: asset.text,
+    });
+    if (!valid.ok) {
+      return valid;
+    }
+    if (/\.js(?:[?#].*)?$/i.test(assetUrl)) {
+      for (const dynamicUrl of extractDynamicImportUrls(asset.text, assetUrl)) {
+        if (!checked.has(dynamicUrl)) {
+          pending.push(dynamicUrl);
+        }
+      }
+    }
+  }
+
+  return { ok: true };
 }
 
 async function readLoginJson(response: Response): Promise<LoginResponse> {
@@ -302,6 +467,21 @@ export async function probeHostedDashboardBrowserPath(params: {
       durationMs: Date.now() - startedAt,
       stage: "login",
       message: login.message,
+      wsUrl,
+    };
+  }
+
+  const assets = await probeHostedControlUiAssets({
+    httpUrl: params.httpUrl,
+    sessionToken: login.sessionToken,
+    timeoutMs,
+  });
+  if (!assets.ok) {
+    return {
+      ok: false,
+      durationMs: Date.now() - startedAt,
+      stage: "assets",
+      message: assets.message,
       wsUrl,
     };
   }
