@@ -129,6 +129,23 @@ describe("ws connect policy", () => {
       }).kind,
     ).toBe("reject-control-ui-insecure-auth");
 
+    // Hosted Tailscale Serve is a private HTTPS owner path. A verified shared/session token
+    // can bootstrap the dashboard even if the browser cannot provide device identity.
+    expect(
+      evaluateMissingDeviceIdentity({
+        hasDeviceIdentity: false,
+        role: "operator",
+        isControlUi: true,
+        controlUiAuthPolicy: controlUiNoInsecure,
+        trustedProxyAuthOk: false,
+        sharedAuthOk: true,
+        authOk: true,
+        hasSharedAuth: true,
+        isLocalClient: false,
+        trustedTailscaleServeControlUiContext: true,
+      }).kind,
+    ).toBe("allow");
+
     expect(
       evaluateMissingDeviceIdentity({
         hasDeviceIdentity: false,

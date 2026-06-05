@@ -1,6 +1,12 @@
 import { WebSocket } from "ws";
+import { buildDeviceAuthPayload } from "../gateway/device-auth.js";
 import { ADMIN_SCOPE, APPROVALS_SCOPE, PAIRING_SCOPE } from "../gateway/method-scopes.js";
 import { PROTOCOL_VERSION } from "../gateway/protocol/index.js";
+import {
+  createEphemeralDeviceIdentity,
+  publicKeyRawBase64UrlFromPem,
+  signDevicePayload,
+} from "../infra/device-identity.js";
 import { rawDataToString } from "../infra/ws.js";
 import { GATEWAY_CLIENT_MODES, GATEWAY_CLIENT_NAMES } from "../utils/message-channel.js";
 
@@ -132,6 +138,16 @@ function probeHostedWs(params: {
     let settled = false;
     let connectSent = false;
     let ws: WebSocket | null = null;
+    let connectNonce = "";
+    const role = "operator";
+    const scopes = [ADMIN_SCOPE, APPROVALS_SCOPE, PAIRING_SCOPE];
+    const client = {
+      id: GATEWAY_CLIENT_NAMES.CONTROL_UI,
+      version: "dashboard-probe",
+      platform: "node",
+      mode: GATEWAY_CLIENT_MODES.UI,
+    };
+    const deviceIdentity = createEphemeralDeviceIdentity();
 
     const finish = (result: { ok: true } | { ok: false; message: string }) => {
       if (settled) {
@@ -152,6 +168,17 @@ function probeHostedWs(params: {
         return;
       }
       connectSent = true;
+      const signedAtMs = Date.now();
+      const payload = buildDeviceAuthPayload({
+        deviceId: deviceIdentity.deviceId,
+        clientId: client.id,
+        clientMode: client.mode,
+        role,
+        scopes,
+        signedAtMs,
+        token: params.sessionToken,
+        nonce: connectNonce,
+      });
       ws.send(
         JSON.stringify({
           type: "req",
@@ -160,14 +187,16 @@ function probeHostedWs(params: {
           params: {
             minProtocol: PROTOCOL_VERSION,
             maxProtocol: PROTOCOL_VERSION,
-            client: {
-              id: GATEWAY_CLIENT_NAMES.CONTROL_UI,
-              version: "dashboard-probe",
-              platform: "node",
-              mode: GATEWAY_CLIENT_MODES.UI,
+            client,
+            role,
+            scopes,
+            device: {
+              id: deviceIdentity.deviceId,
+              publicKey: publicKeyRawBase64UrlFromPem(deviceIdentity.publicKeyPem),
+              signature: signDevicePayload(deviceIdentity.privateKeyPem, payload),
+              signedAt: signedAtMs,
+              nonce: connectNonce,
             },
-            role: "operator",
-            scopes: [ADMIN_SCOPE, APPROVALS_SCOPE, PAIRING_SCOPE],
             caps: [],
             auth: {
               token: params.sessionToken,
@@ -197,7 +226,8 @@ function probeHostedWs(params: {
     }
 
     ws.on("open", () => {
-      setTimeout(sendConnect, 100);
+      // The browser waits for the gateway challenge before signing device auth.
+      // Keep the hosted probe on the same path so health matches the real UI.
     });
     ws.on("message", (data) => {
       let parsed: unknown;
@@ -208,6 +238,11 @@ function probeHostedWs(params: {
       }
       const frame = parsed as { type?: unknown; event?: unknown; id?: unknown; ok?: unknown };
       if (frame.type === "event" && frame.event === "connect.challenge") {
+        const nonce =
+          parsed && typeof parsed === "object" && "payload" in parsed
+            ? ((parsed as { payload?: { nonce?: unknown } }).payload?.nonce ?? "")
+            : "";
+        connectNonce = typeof nonce === "string" ? nonce : "";
         sendConnect();
         return;
       }

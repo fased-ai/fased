@@ -62,6 +62,10 @@ function generateIdentity(): DeviceIdentity {
   return { deviceId, publicKeyPem, privateKeyPem };
 }
 
+export function createEphemeralDeviceIdentity(): DeviceIdentity {
+  return generateIdentity();
+}
+
 export function loadOrCreateDeviceIdentity(
   filePath: string = resolveDefaultIdentityPath(),
 ): DeviceIdentity {

@@ -98,6 +98,9 @@ export function evaluateMissingDeviceIdentity(params: {
   if (params.isControlUi && params.trustedProxyAuthOk) {
     return { kind: "allow" };
   }
+  if (params.isControlUi && params.trustedTailscaleServeControlUiContext && params.sharedAuthOk) {
+    return { kind: "allow" };
+  }
   if (params.isControlUi && !params.controlUiAuthPolicy.allowBypass) {
     // Allow token/password-only Control UI connections when allowInsecureAuth
     // is configured and the browser context is either localhost or hosted
