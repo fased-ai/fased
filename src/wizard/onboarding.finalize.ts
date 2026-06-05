@@ -692,6 +692,83 @@ export function isCanonicalGatewayServiceCommand(
   return startupMode === "managed-up" ? isManagedUpCommand : isGatewayCommand;
 }
 
+function normalizeServicePath(value: string): string {
+  return path.resolve(value).replaceAll("\\", "/");
+}
+
+function isPathInside(baseDir: string, candidate: string): boolean {
+  const normalizedBase = normalizeServicePath(baseDir);
+  const normalizedCandidate = normalizeServicePath(candidate);
+  return (
+    normalizedCandidate === normalizedBase || normalizedCandidate.startsWith(`${normalizedBase}/`)
+  );
+}
+
+export async function ensureGatewaySecretMatchesToken(token: string): Promise<boolean> {
+  const normalizedToken = token.trim();
+  if (!normalizedToken) {
+    return false;
+  }
+  const tokenPath = resolveUserPath("~/.fased/gateway-secret");
+  const existing = await fs.readFile(tokenPath, "utf8").catch(() => "");
+  if (existing.trim() === normalizedToken) {
+    return false;
+  }
+  await fs.mkdir(path.dirname(tokenPath), { recursive: true });
+  await fs.writeFile(tokenPath, `${normalizedToken}\n`, { mode: 0o600 });
+  await fs.chmod(tokenPath, 0o600).catch(() => {});
+  return true;
+}
+
+export function gatewayServiceMatchesCurrentInstall(params: {
+  command: { programArguments?: string[]; workingDirectory?: string } | null | undefined;
+  repoRoot: string;
+}): { ok: boolean; detail?: string } {
+  const command = params.command;
+  const args = Array.isArray(command?.programArguments) ? command.programArguments : [];
+  const repoRoot = path.resolve(params.repoRoot);
+
+  const workingDirectory = command?.workingDirectory?.trim();
+  if (
+    workingDirectory &&
+    path.isAbsolute(workingDirectory) &&
+    !isPathInside(repoRoot, workingDirectory)
+  ) {
+    return {
+      ok: false,
+      detail: `working directory ${workingDirectory} is outside ${repoRoot}`,
+    };
+  }
+
+  for (const arg of args) {
+    const value = arg.trim();
+    if (!value || !path.isAbsolute(value)) {
+      continue;
+    }
+    const basename = path.basename(value);
+    if (basename === "start-managed.sh" || basename === "start-vps.sh") {
+      const expected = path.join(repoRoot, "scripts", basename);
+      if (normalizeServicePath(value) !== normalizeServicePath(expected)) {
+        return {
+          ok: false,
+          detail: `${basename} points to ${value}; expected ${expected}`,
+        };
+      }
+      continue;
+    }
+    if (basename === "entry.js" || basename === "index.js" || basename === "fased.mjs") {
+      if (!isPathInside(repoRoot, value)) {
+        return {
+          ok: false,
+          detail: `entrypoint ${value} is outside ${repoRoot}`,
+        };
+      }
+    }
+  }
+
+  return { ok: true };
+}
+
 function wsToHttpUrl(wsUrl: string): string {
   const parsed = new URL(wsUrl);
   parsed.protocol = parsed.protocol === "wss:" ? "https:" : "http:";
@@ -1054,6 +1131,15 @@ export async function finalizeOnboardingWizard(
             ""
         )?.trim() || ""
       : "";
+  if (settings.authMode === "token" && preferredGatewayToken) {
+    const synced = await ensureGatewaySecretMatchesToken(preferredGatewayToken);
+    if (synced) {
+      await prompter.note(
+        "Aligned the gateway service token with the dashboard token.",
+        "Gateway auth",
+      );
+    }
+  }
 
   const withWizardProgress = async <T>(
     label: string,
@@ -1360,7 +1446,32 @@ export async function finalizeOnboardingWizard(
               "Detected legacy gateway service command; reinstalling canonical hosted service.",
               "Gateway service",
             );
+          } else {
+            const installMatch = gatewayServiceMatchesCurrentInstall({
+              command: existing,
+              repoRoot: process.cwd(),
+            });
+            if (!installMatch.ok) {
+              action = "reinstall";
+              await prompter.note(
+                `Detected gateway service from another checkout; reinstalling current service. ${installMatch.detail ?? ""}`.trim(),
+                "Gateway service",
+              );
+            }
+          }
+          if (
+            action !== "reinstall" &&
+            serviceAudit.issues.some(
+              (issue) => issue.code === SERVICE_AUDIT_CODES.gatewayEntrypointMismatch,
+            )
+          ) {
+            action = "reinstall";
+            await prompter.note(
+              "Gateway service entrypoint is stale; reinstalling current service.",
+              "Gateway service",
+            );
           } else if (
+            action !== "reinstall" &&
             serviceAudit.issues.some(
               (issue) => issue.code === SERVICE_AUDIT_CODES.gatewayTokenMismatch,
             )
@@ -2121,6 +2232,35 @@ export async function finalizeOnboardingWizard(
     token: settings.authMode === "token" ? gatewayTokenForUi || undefined : undefined,
     password: settings.authMode === "password" ? nextConfig.gateway?.auth?.password : "",
   });
+  if (!strictVps && opts.mode !== "remote" && !opts.skipUi && !gatewayProbe.ok) {
+    await prompter.note(
+      "Gateway is not reachable yet; restarting the service once before showing the dashboard link.",
+      "Gateway startup",
+    );
+    await restartGatewayServiceOnce("fased-gateway");
+    const ready = await waitForGatewayReachable({
+      url: links.wsUrl,
+      token: settings.authMode === "token" ? gatewayTokenForUi || undefined : undefined,
+      password: settings.authMode === "password" ? nextConfig.gateway?.auth?.password : "",
+      deadlineMs: lowRamMode ? 120_000 : 60_000,
+      probeTimeoutMs: 5_000,
+      pollMs: 750,
+    });
+    if (!ready.ok) {
+      throw new Error(
+        [
+          "Gateway did not become reachable, so the dashboard link would be offline.",
+          `Detail: ${ready.detail ?? gatewayProbe.detail ?? "gateway not reachable"}`,
+          "Debug commands:",
+          "  systemctl --user status fased-gateway --no-pager",
+          "  journalctl --user -u fased-gateway -n 120 --no-pager",
+          "Repair command:",
+          `  ${formatCliCommand("fased gateway install --force")}`,
+        ].join("\n"),
+      );
+    }
+    gatewayProbe = { ok: true };
+  }
   const gatewayStatusLine = gatewayProbe.ok
     ? "Gateway: reachable"
     : `Gateway: not detected${gatewayProbe.detail ? ` (${gatewayProbe.detail})` : ""}`;

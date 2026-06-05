@@ -1,9 +1,14 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   buildGatewayWsUrlFromHttpUrl,
   buildOnboardingDashboardUrl,
+  ensureGatewaySecretMatchesToken,
   formatLocalDashboardReady,
   formatStrictRemoteAccessDetails,
+  gatewayServiceMatchesCurrentInstall,
 } from "./onboarding.finalize.js";
 
 describe("buildOnboardingDashboardUrl", () => {
@@ -89,5 +94,73 @@ describe("formatLocalDashboardReady", () => {
     expect(text).toContain("Agent > Models");
     expect(text).toContain("Token backup");
     expect(text).not.toContain("Gateway WS");
+  });
+});
+
+describe("gatewayServiceMatchesCurrentInstall", () => {
+  it("rejects a managed gateway service from another checkout", () => {
+    const result = gatewayServiceMatchesCurrentInstall({
+      repoRoot: "/home/fc/fasedbot/fased",
+      command: {
+        programArguments: ["/bin/bash", "/home/fc/fasedbot/agent/fased/scripts/start-managed.sh"],
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain("/home/fc/fasedbot/agent/fased/scripts/start-managed.sh");
+    expect(result.detail).toContain("/home/fc/fasedbot/fased/scripts/start-managed.sh");
+  });
+
+  it("accepts a managed gateway service from the current checkout", () => {
+    const result = gatewayServiceMatchesCurrentInstall({
+      repoRoot: "/home/fc/fasedbot/fased",
+      command: {
+        programArguments: ["/bin/bash", "/home/fc/fasedbot/fased/scripts/start-managed.sh"],
+        workingDirectory: "/home/fc/fasedbot/fased",
+      },
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejects an absolute entrypoint outside the current checkout", () => {
+    const result = gatewayServiceMatchesCurrentInstall({
+      repoRoot: "/home/fc/fasedbot/fased",
+      command: {
+        programArguments: [
+          "/usr/bin/node",
+          "/home/fc/fasedbot/agent/fased/dist/entry.js",
+          "gateway",
+        ],
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain("entrypoint");
+  });
+});
+
+describe("ensureGatewaySecretMatchesToken", () => {
+  it("keeps the gateway service token file aligned with the configured token", async () => {
+    const previousHome = process.env.FASED_HOME;
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-gateway-secret-"));
+    process.env.FASED_HOME = dir;
+    try {
+      const changed = await ensureGatewaySecretMatchesToken("config-token");
+      expect(changed).toBe(true);
+      await expect(fs.readFile(path.join(dir, ".fased", "gateway-secret"), "utf8")).resolves.toBe(
+        "config-token\n",
+      );
+
+      const unchanged = await ensureGatewaySecretMatchesToken("config-token");
+      expect(unchanged).toBe(false);
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.FASED_HOME;
+      } else {
+        process.env.FASED_HOME = previousHome;
+      }
+      await fs.rm(dir, { recursive: true, force: true });
+    }
   });
 });
