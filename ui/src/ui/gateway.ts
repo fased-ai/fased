@@ -131,6 +131,9 @@ export class GatewayBrowserClient {
     if (this.closed) {
       return;
     }
+    this.connectSent = false;
+    this.connectNonce = null;
+    this.pendingConnectError = undefined;
     this.ws = new WebSocket(this.opts.url);
     this.ws.addEventListener("open", () => this.queueConnect());
     this.ws.addEventListener("message", (ev) => this.handleMessage(String(ev.data ?? "")));

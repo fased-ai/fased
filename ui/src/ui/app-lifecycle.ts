@@ -44,10 +44,12 @@ type LifecycleHost = {
   popStateHandler: () => void;
   topbarObserver: ResizeObserver | null;
   settings: { token: string };
+  authBootstrapPending?: boolean;
 };
 
 export function handleConnected(host: LifecycleHost) {
   host.basePath = inferBasePath();
+  host.authBootstrapPending = true;
   void loadControlUiBootstrapConfig(host);
   syncTabWithLocation(host as unknown as Parameters<typeof syncTabWithLocation>[0], true);
   syncThemeWithSettings(host as unknown as Parameters<typeof syncThemeWithSettings>[0]);
@@ -57,9 +59,13 @@ export function handleConnected(host: LifecycleHost) {
   // is shown and the user will call connect() after signing in.
   void applySettingsFromUrl(host as unknown as Parameters<typeof applySettingsFromUrl>[0]).then(
     () => {
+      host.authBootstrapPending = false;
       if (host.settings.token.trim() && !host.client) {
         connectGateway(host as unknown as Parameters<typeof connectGateway>[0]);
       }
+    },
+    () => {
+      host.authBootstrapPending = false;
     },
   );
   startNodesPolling(host as unknown as Parameters<typeof startNodesPolling>[0]);

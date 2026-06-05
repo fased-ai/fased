@@ -1209,6 +1209,7 @@ export class FasedAgentApp extends LitElement {
   @state() loginTokenPending = false;
   @state() loginTokenError: string | null = null;
   @state() loginTokenCandidate = "";
+  @state() authBootstrapPending = true;
   @state() authNotice: string | null = null;
   @state() authSessionExpiresAt: string | null = null;
   @state() authSessionIdleTimeoutSeconds: number | null = null;

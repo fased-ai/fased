@@ -245,6 +245,7 @@ export type AppViewState = {
   loginTokenPending: boolean;
   loginTokenError: string | null;
   loginTokenCandidate: string;
+  authBootstrapPending: boolean;
   authNotice: string | null;
   authSessionExpiresAt: string | null;
   authSessionIdleTimeoutSeconds: number | null;

@@ -2861,7 +2861,7 @@ export function renderApp(state: AppViewState) {
     !isChat;
   // Keep the dashboard visible during reconnects when we already have a session token.
   const canShowSignOut = hasValidSessionToken;
-  const ownerLoginRequired = !hasValidSessionToken;
+  const ownerLoginRequired = !state.authBootstrapPending && !hasValidSessionToken;
   const gatewayRestarting =
     !state.connected &&
     typeof state.lastError === "string" &&
@@ -2890,6 +2890,25 @@ export function renderApp(state: AppViewState) {
     }
     resetToolsEffectiveState(state);
   };
+
+  if (state.authBootstrapPending && !hasValidSessionToken) {
+    return html`
+      <style>
+        .login-page { min-height:100vh; display:flex; align-items:center; justify-content:center; background:#080e1a; font-family:system-ui,-apple-system,sans-serif; padding:24px; box-sizing:border-box; }
+        .login-card { width:100%; max-width:420px; background:#0f1929; border:1px solid rgba(255,255,255,0.07); border-radius:16px; padding:40px 36px; box-shadow:0 24px 64px rgba(0,0,0,0.5); }
+        .login-logo { width:48px; height:48px; border-radius:12px; background:linear-gradient(135deg,#2563eb,#7c3aed); display:flex; align-items:center; justify-content:center; margin-bottom:24px; font-size:26px; }
+        .login-title { font-size:22px; font-weight:700; color:#f0f4ff; margin:0 0 6px; }
+        .login-desc { font-size:14px; color:#6b7a99; margin:0; line-height:1.6; }
+      </style>
+      <div class="login-page">
+        <div class="login-card">
+          <div class="login-logo">⚡</div>
+          <h1 class="login-title">Opening ${FASED_AGENT_NAME}</h1>
+          <p class="login-desc">Checking the private dashboard session…</p>
+        </div>
+      </div>
+    `;
+  }
 
   if (ownerLoginRequired) {
     const isPending = state.loginTokenPending;

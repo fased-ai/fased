@@ -376,6 +376,10 @@ describe("GatewayBrowserClient", () => {
 
     await vi.advanceTimersByTimeAsync(800);
     expect(wsInstances).toHaveLength(2);
+    const ws2 = getLatestWebSocket();
+    const { connectFrame: secondConnect } = await continueConnect(ws2, "nonce-2");
+    expect(secondConnect.method).toBe("connect");
+    expect(secondConnect.params?.auth?.token).toBe("shared-auth-token");
 
     client.stop();
     vi.useRealTimers();

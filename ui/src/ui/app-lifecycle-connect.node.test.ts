@@ -67,6 +67,7 @@ function createHost() {
     popStateHandler: vi.fn(),
     settings: { token: "owner-token-for-lifecycle-test" },
     topbarObserver: null,
+    authBootstrapPending: false,
   };
 }
 
@@ -89,8 +90,10 @@ describe("handleConnected", () => {
     const host = createHost();
 
     handleConnected(host as never);
+    expect(host.authBootstrapPending).toBe(true);
     expect(connectGatewayMock).not.toHaveBeenCalled();
     await Promise.resolve();
+    expect(host.authBootstrapPending).toBe(false);
     expect(connectGatewayMock).toHaveBeenCalledTimes(1);
 
     resolveBootstrap();
@@ -110,7 +113,9 @@ describe("handleConnected", () => {
     host.settings.token = "";
 
     handleConnected(host as never);
+    expect(host.authBootstrapPending).toBe(true);
     await Promise.resolve();
+    expect(host.authBootstrapPending).toBe(false);
     expect(connectGatewayMock).not.toHaveBeenCalled();
 
     resolveBootstrap();
@@ -141,6 +146,18 @@ describe("handleConnected", () => {
     handleConnected(host as never);
     await Promise.resolve();
 
+    expect(host.authBootstrapPending).toBe(false);
+    expect(connectGatewayMock).not.toHaveBeenCalled();
+  });
+
+  it("clears auth bootstrap state when URL settings fail", async () => {
+    const host = createHost();
+    applySettingsFromUrlMock.mockRejectedValueOnce(new Error("url settings failed"));
+
+    handleConnected(host as never);
+    await Promise.resolve();
+
+    expect(host.authBootstrapPending).toBe(false);
     expect(connectGatewayMock).not.toHaveBeenCalled();
   });
 });
