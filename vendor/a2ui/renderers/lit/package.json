@@ -102,7 +102,12 @@
     "@lit-labs/signals": "^0.1.3",
     "@lit/context": "^1.1.4",
     "lit": "^3.3.1",
-    "markdown-it": "^14.1.0",
+    "markdown-it": "^14.1.1",
     "signal-utils": "^0.21.1"
+  },
+  "overrides": {
+    "brace-expansion": "^5.0.6",
+    "picomatch": "^4.0.4",
+    "uuid": "^11.1.1"
   }
 }
