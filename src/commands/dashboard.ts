@@ -8,6 +8,10 @@ import { runExec } from "../process/exec.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { defaultRuntime } from "../runtime.js";
 import { probeHostedDashboardBrowserPath } from "./hosted-dashboard-probe.js";
+import type {
+  HostedDashboardBootAssetCheck,
+  HostedDashboardBootCheck,
+} from "./hosted-dashboard-probe.js";
 import {
   detectBrowserOpenSupport,
   formatControlUiSshHint,
@@ -49,7 +53,7 @@ async function resolveHostedDashboardHttpUrl(params: {
     return null;
   }
   const basePath = normalizeControlUiBasePath(params.basePath);
-  return `https://${dns}${basePath || "/"}`;
+  return `https://${dns}${basePath ? `${basePath}/` : "/"}`;
 }
 
 async function probeDashboardGateway(
@@ -79,6 +83,33 @@ function isHostedDashboardUrl(httpUrl: string, localHttpUrl: string): boolean {
   } catch {
     return false;
   }
+}
+
+function formatBootAssetLine(label: string, asset: HostedDashboardBootAssetCheck | undefined) {
+  if (!asset) {
+    return `Dashboard ${label}: not referenced`;
+  }
+  const status = typeof asset.status === "number" ? String(asset.status) : "fetch failed";
+  const contentType = asset.contentType?.trim() || "missing content-type";
+  const suffix = asset.ok ? "" : ` (${asset.message ?? "failed"})`;
+  return `Dashboard ${label}: ${asset.url} [${status}, ${contentType}]${suffix}`;
+}
+
+function logHostedDashboardBootCheck(runtime: RuntimeEnv, bootCheck: HostedDashboardBootCheck) {
+  const indexStatus =
+    typeof bootCheck.indexResponse.status === "number"
+      ? String(bootCheck.indexResponse.status)
+      : "fetch failed";
+  const indexType = bootCheck.indexResponse.contentType?.trim() || "missing content-type";
+  const indexSuffix = bootCheck.indexResponse.ok
+    ? ""
+    : ` (${bootCheck.indexResponse.message ?? "failed"})`;
+  runtime.log(`Dashboard boot check: ${bootCheck.index} via ${bootCheck.serve}`);
+  runtime.log(
+    `Dashboard index: ${bootCheck.indexResponse.url} [${indexStatus}, ${indexType}]${indexSuffix}`,
+  );
+  runtime.log(formatBootAssetLine("entry JS", bootCheck.entryJs));
+  runtime.log(formatBootAssetLine("app JS", bootCheck.appJs));
 }
 
 export async function dashboardCommand(
@@ -141,10 +172,16 @@ export async function dashboardCommand(
             Math.round(hostedProbe.durationMs),
           )}ms)`,
         );
+        if (options.noOpen) {
+          logHostedDashboardBootCheck(runtime, hostedProbe.bootCheck);
+        }
       } else {
         runtime.log(
           `Dashboard browser path: offline via Tailscale (${hostedProbe.stage}: ${hostedProbe.message})`,
         );
+        if (hostedProbe.bootCheck) {
+          logHostedDashboardBootCheck(runtime, hostedProbe.bootCheck);
+        }
         if (hostedProbe.wsUrl) {
           runtime.log(`Dashboard websocket: ${hostedProbe.wsUrl}`);
         }

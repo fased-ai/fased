@@ -174,6 +174,7 @@ import {
 } from "./auth.js";
 import { callGatewayScoped } from "./call.js";
 import { normalizeCanvasScopedUrl } from "./canvas-capability.js";
+import { CONTROL_UI_BOOT_CHECK_PATH, resolveControlUiBootCheck } from "./control-ui-boot-check.js";
 import {
   normalizePublicHost,
   resolveControlUiPublicHost,
@@ -4346,6 +4347,32 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
         }
         return true;
       };
+      if (requestPath === CONTROL_UI_BOOT_CHECK_PATH) {
+        if (req.method !== "GET" && req.method !== "HEAD") {
+          res.statusCode = 405;
+          res.setHeader("Allow", "GET, HEAD");
+          sendLoginResponse(405, {
+            ok: false,
+            error: { code: "method_not_allowed", message: "method must be GET or HEAD" },
+          });
+          return;
+        }
+        const bootCheck = resolveControlUiBootCheck({
+          basePath: controlUiBasePath,
+          root: controlUiRoot,
+          origin: `${secureCookie ? "https" : "http"}://${host || "localhost"}`,
+          serve: configSnapshot.gateway?.tailscale?.mode === "serve" ? "tailscale" : "direct",
+        });
+        res.statusCode = bootCheck.index === "ok" ? 200 : 503;
+        res.setHeader("Content-Type", "application/json; charset=utf-8");
+        res.setHeader("Cache-Control", "no-store");
+        if (req.method === "HEAD") {
+          res.end();
+          return;
+        }
+        res.end(JSON.stringify(bootCheck));
+        return;
+      }
       if (requestPath === "/api/control-ui/login/exchange") {
         if (req.method !== "POST") {
           res.statusCode = 405;

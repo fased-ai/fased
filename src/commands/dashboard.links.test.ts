@@ -74,6 +74,32 @@ function mockSnapshot(token = "abc", gateway: Record<string, unknown> = {}) {
   });
 }
 
+function mockBootCheck() {
+  return {
+    serve: "tailscale" as const,
+    index: "ok" as const,
+    indexResponse: {
+      url: "https://fased-vps.tailnet.ts.net/",
+      ok: true,
+      status: 200,
+      contentType: "text/html; charset=utf-8",
+    },
+    entryJs: {
+      url: "https://fased-vps.tailnet.ts.net/assets/index-abc.js",
+      ok: true,
+      status: 200,
+      contentType: "application/javascript; charset=utf-8",
+    },
+    appJs: {
+      url: "https://fased-vps.tailnet.ts.net/assets/app-def.js",
+      ok: true,
+      status: 200,
+      contentType: "application/javascript; charset=utf-8",
+    },
+    assets: [],
+  };
+}
+
 describe("dashboardCommand", () => {
   beforeEach(() => {
     resetRuntime();
@@ -92,6 +118,7 @@ describe("dashboardCommand", () => {
       ok: true,
       durationMs: 57,
       wsUrl: "wss://fased-vps.tailnet.ts.net/",
+      bootCheck: mockBootCheck(),
     });
   });
 
@@ -126,8 +153,34 @@ describe("dashboardCommand", () => {
 
     expect(copyToClipboardMock).not.toHaveBeenCalled();
     expect(runtime.log).toHaveBeenCalledWith("Dashboard browser path: online via Tailscale (57ms)");
+    expect(runtime.log).toHaveBeenCalledWith("Dashboard boot check: ok via tailscale");
+    expect(runtime.log).toHaveBeenCalledWith(
+      "Dashboard entry JS: https://fased-vps.tailnet.ts.net/assets/index-abc.js [200, application/javascript; charset=utf-8]",
+    );
+    expect(runtime.log).toHaveBeenCalledWith(
+      "Dashboard app JS: https://fased-vps.tailnet.ts.net/assets/app-def.js [200, application/javascript; charset=utf-8]",
+    );
     expect(runtime.log).toHaveBeenCalledWith(
       "Dashboard URL: https://fased-vps.tailnet.ts.net/#token=abc123",
+    );
+  });
+
+  it("keeps a trailing slash for hosted dashboard base paths", async () => {
+    mockSnapshot("abc123", {
+      controlUi: { basePath: "/dash" },
+      tailscale: { mode: "serve" },
+    });
+    getTailnetHostnameMock.mockResolvedValue("fased-vps.tailnet.ts.net");
+
+    await dashboardCommand(runtime, { noOpen: true });
+
+    expect(probeHostedDashboardBrowserPathMock).toHaveBeenCalledWith({
+      httpUrl: "https://fased-vps.tailnet.ts.net/dash/",
+      token: "abc123",
+      timeoutMs: 6000,
+    });
+    expect(runtime.log).toHaveBeenCalledWith(
+      "Dashboard URL: https://fased-vps.tailnet.ts.net/dash/#token=abc123",
     );
   });
 

@@ -15,6 +15,7 @@ export type HostedDashboardBrowserProbeResult =
       ok: true;
       durationMs: number;
       wsUrl: string;
+      bootCheck: HostedDashboardBootCheck;
     }
   | {
       ok: false;
@@ -22,7 +23,25 @@ export type HostedDashboardBrowserProbeResult =
       stage: "login" | "assets" | "websocket";
       message: string;
       wsUrl?: string;
+      bootCheck?: HostedDashboardBootCheck;
     };
+
+export type HostedDashboardBootAssetCheck = {
+  url: string;
+  ok: boolean;
+  status?: number;
+  contentType?: string;
+  message?: string;
+};
+
+export type HostedDashboardBootCheck = {
+  serve: "tailscale" | "direct";
+  index: "ok" | "failed";
+  indexResponse: HostedDashboardBootAssetCheck;
+  entryJs?: HostedDashboardBootAssetCheck;
+  appJs?: HostedDashboardBootAssetCheck;
+  assets: HostedDashboardBootAssetCheck[];
+};
 
 type LoginResponse = {
   ok?: boolean;
@@ -78,6 +97,17 @@ function extractHtmlAssetUrls(html: string, baseUrl: string): string[] {
   return [...urls];
 }
 
+function extractHtmlScriptAssetUrls(html: string, baseUrl: string): string[] {
+  const urls = new Set<string>();
+  for (const match of html.matchAll(/<script\b[^>]*\bsrc=["']([^"']+)["']/gi)) {
+    const resolved = resolveAssetUrl(match[1] ?? "", baseUrl);
+    if (resolved && /\.js(?:[?#].*)?$/i.test(resolved)) {
+      urls.add(resolved);
+    }
+  }
+  return [...urls];
+}
+
 function extractDynamicImportUrls(js: string, baseUrl: string): string[] {
   const urls = new Set<string>();
   for (const match of js.matchAll(/\bimport\(\s*["']([^"']+\.js)["']\s*\)/g)) {
@@ -94,7 +124,8 @@ async function fetchTextWithTimeout(params: {
   timeoutMs: number;
   headers?: HeadersInit;
 }): Promise<
-  { ok: true; status: number; contentType: string; text: string } | { ok: false; message: string }
+  | { ok: true; url: string; status: number; contentType: string; text: string }
+  | { ok: false; message: string }
 > {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), params.timeoutMs);
@@ -109,6 +140,7 @@ async function fetchTextWithTimeout(params: {
     const text = await response.text().catch(() => "");
     return {
       ok: true,
+      url: response.url || params.url,
       status: response.status,
       contentType: response.headers.get("content-type") ?? "",
       text,
@@ -118,6 +150,50 @@ async function fetchTextWithTimeout(params: {
   } finally {
     clearTimeout(timer);
   }
+}
+
+function inferServe(httpUrl: string): "tailscale" | "direct" {
+  try {
+    return new URL(httpUrl).protocol === "https:" ? "tailscale" : "direct";
+  } catch {
+    return "direct";
+  }
+}
+
+function urlPathnameLower(url: string): string {
+  try {
+    return new URL(url).pathname.toLowerCase();
+  } catch {
+    return url.toLowerCase();
+  }
+}
+
+function isLikelyAppJsUrl(url: string): boolean {
+  const basename = urlPathnameLower(url).split("/").pop() ?? "";
+  return /^app-[^.]+\.js$/.test(basename);
+}
+
+function makeAssetCheck(params: {
+  url: string;
+  status: number;
+  contentType: string;
+  text: string;
+}): HostedDashboardBootAssetCheck {
+  const valid = validateAssetResponse(params);
+  return valid.ok
+    ? {
+        url: params.url,
+        ok: true,
+        status: params.status,
+        contentType: params.contentType,
+      }
+    : {
+        url: params.url,
+        ok: false,
+        status: params.status,
+        contentType: params.contentType,
+        message: valid.message,
+      };
 }
 
 function validateAssetResponse(params: {
@@ -133,7 +209,7 @@ function validateAssetResponse(params: {
   if (head.startsWith("<!doctype") || head.startsWith("<html")) {
     return { ok: false, message: `${params.url} returned HTML instead of an asset` };
   }
-  const lowerUrl = params.url.toLowerCase();
+  const lowerUrl = urlPathnameLower(params.url);
   const lowerContentType = params.contentType.toLowerCase();
   if (lowerUrl.endsWith(".js") && !lowerContentType.includes("javascript")) {
     return {
@@ -154,7 +230,19 @@ async function probeHostedControlUiAssets(params: {
   httpUrl: string;
   sessionToken: string;
   timeoutMs: number;
-}): Promise<{ ok: true } | { ok: false; message: string }> {
+}): Promise<
+  | { ok: true; bootCheck: HostedDashboardBootCheck }
+  | { ok: false; message: string; bootCheck: HostedDashboardBootCheck }
+> {
+  const bootCheck: HostedDashboardBootCheck = {
+    serve: inferServe(params.httpUrl),
+    index: "failed",
+    indexResponse: {
+      url: params.httpUrl,
+      ok: false,
+    },
+    assets: [],
+  };
   const cookieHeader = `fased_ui_session=${encodeURIComponent(params.sessionToken)}`;
   const index = await fetchTextWithTimeout({
     url: params.httpUrl,
@@ -165,26 +253,40 @@ async function probeHostedControlUiAssets(params: {
     },
   });
   if (!index.ok) {
-    return { ok: false, message: `index fetch failed: ${index.message}` };
+    bootCheck.indexResponse.message = `index fetch failed: ${index.message}`;
+    return { ok: false, message: bootCheck.indexResponse.message, bootCheck };
   }
+  bootCheck.indexResponse = {
+    url: index.url,
+    ok: false,
+    status: index.status,
+    contentType: index.contentType,
+  };
   if (index.status < 200 || index.status >= 300) {
-    return { ok: false, message: `index returned HTTP ${index.status}` };
+    bootCheck.indexResponse.message = `index returned HTTP ${index.status}`;
+    return { ok: false, message: bootCheck.indexResponse.message, bootCheck };
   }
   if (!index.contentType.toLowerCase().includes("text/html")) {
-    return {
-      ok: false,
-      message: `index returned ${index.contentType || "missing content-type"} instead of HTML`,
-    };
+    bootCheck.indexResponse.message = `index returned ${
+      index.contentType || "missing content-type"
+    } instead of HTML`;
+    return { ok: false, message: bootCheck.indexResponse.message, bootCheck };
   }
-  const htmlAssets = extractHtmlAssetUrls(index.text, params.httpUrl).filter((url) =>
+  bootCheck.index = "ok";
+  bootCheck.indexResponse.ok = true;
+  const htmlAssets = extractHtmlAssetUrls(index.text, index.url).filter((url) =>
     /\.(?:js|css)(?:[?#].*)?$/i.test(url),
   );
+  const entryJsUrl = extractHtmlScriptAssetUrls(index.text, index.url)[0];
   if (htmlAssets.length === 0) {
-    return { ok: false, message: "index did not reference dashboard JS/CSS assets" };
+    const message = "index did not reference dashboard JS/CSS assets";
+    bootCheck.indexResponse.message = message;
+    return { ok: false, message, bootCheck };
   }
 
   const checked = new Set<string>();
   const pending = [...htmlAssets];
+  let appJsUrl: string | undefined;
   while (pending.length > 0) {
     const assetUrl = pending.shift();
     if (!assetUrl || checked.has(assetUrl)) {
@@ -197,19 +299,42 @@ async function probeHostedControlUiAssets(params: {
       headers: { accept: "*/*" },
     });
     if (!asset.ok) {
-      return { ok: false, message: `${assetUrl} fetch failed: ${asset.message}` };
+      const failedAsset: HostedDashboardBootAssetCheck = {
+        url: assetUrl,
+        ok: false,
+        message: `${assetUrl} fetch failed: ${asset.message}`,
+      };
+      bootCheck.assets.push(failedAsset);
+      if (assetUrl === entryJsUrl) {
+        bootCheck.entryJs = failedAsset;
+      }
+      if (assetUrl === appJsUrl) {
+        bootCheck.appJs = failedAsset;
+      }
+      return { ok: false, message: failedAsset.message ?? "asset fetch failed", bootCheck };
     }
-    const valid = validateAssetResponse({
+    const assetCheck = makeAssetCheck({
       url: assetUrl,
       status: asset.status,
       contentType: asset.contentType,
       text: asset.text,
     });
-    if (!valid.ok) {
-      return valid;
+    bootCheck.assets.push(assetCheck);
+    if (assetUrl === entryJsUrl) {
+      bootCheck.entryJs = assetCheck;
+    }
+    if (assetUrl === appJsUrl) {
+      bootCheck.appJs = assetCheck;
+    }
+    if (!assetCheck.ok) {
+      return { ok: false, message: assetCheck.message ?? "asset validation failed", bootCheck };
     }
     if (/\.js(?:[?#].*)?$/i.test(assetUrl)) {
-      for (const dynamicUrl of extractDynamicImportUrls(asset.text, assetUrl)) {
+      const dynamicUrls = extractDynamicImportUrls(asset.text, assetUrl);
+      if (assetUrl === entryJsUrl && !appJsUrl) {
+        appJsUrl = dynamicUrls.find(isLikelyAppJsUrl) ?? dynamicUrls[0];
+      }
+      for (const dynamicUrl of dynamicUrls) {
         if (!checked.has(dynamicUrl)) {
           pending.push(dynamicUrl);
         }
@@ -217,7 +342,7 @@ async function probeHostedControlUiAssets(params: {
     }
   }
 
-  return { ok: true };
+  return { ok: true, bootCheck };
 }
 
 async function readLoginJson(response: Response): Promise<LoginResponse> {
@@ -482,6 +607,7 @@ export async function probeHostedDashboardBrowserPath(params: {
       durationMs: Date.now() - startedAt,
       stage: "assets",
       message: assets.message,
+      bootCheck: assets.bootCheck,
       wsUrl,
     };
   }
@@ -498,6 +624,7 @@ export async function probeHostedDashboardBrowserPath(params: {
       durationMs: Date.now() - startedAt,
       stage: "websocket",
       message: websocket.message,
+      bootCheck: assets.bootCheck,
       wsUrl,
     };
   }
@@ -505,6 +632,7 @@ export async function probeHostedDashboardBrowserPath(params: {
   return {
     ok: true,
     durationMs: Date.now() - startedAt,
+    bootCheck: assets.bootCheck,
     wsUrl,
   };
 }

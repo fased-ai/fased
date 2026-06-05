@@ -1,10 +1,11 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { describe, expect, test, vi } from "vitest";
 import type { ResolvedGatewayAuth } from "./auth.js";
+import { CONTROL_UI_BOOT_CHECK_PATH } from "./control-ui-boot-check.js";
 import { createGatewayHttpServer } from "./server-http.js";
 
 vi.mock("https-proxy-agent", () => ({
@@ -271,6 +272,83 @@ describe("control-ui login exchange endpoint", () => {
         expect(issueSession).toHaveBeenCalledWith({
           host: "fasedagent7f1b9b93ccfdb.agents.fased.app",
         });
+      },
+    });
+  });
+
+  test("returns hosted Control UI boot-check asset details", async () => {
+    await withTempConfig({
+      cfg: { gateway: { tailscale: { mode: "serve" }, trustedProxies: ["127.0.0.1/32"] } },
+      run: async () => {
+        const root = await mkdtemp(path.join(os.tmpdir(), "fased-control-ui-boot-check-"));
+        try {
+          await mkdir(path.join(root, "assets"), { recursive: true });
+          await writeFile(
+            path.join(root, "index.html"),
+            '<!doctype html><script type="module" src="./assets/index-abc.js"></script>',
+            "utf-8",
+          );
+          await writeFile(
+            path.join(root, "assets", "index-abc.js"),
+            'import("./app-def.js");',
+            "utf-8",
+          );
+          await writeFile(path.join(root, "assets", "app-def.js"), "console.log('app');", "utf-8");
+
+          const server = createGatewayHttpServer({
+            canvasHost: null,
+            clients: new Set(),
+            controlUiEnabled: true,
+            controlUiBasePath: "/dash",
+            controlUiRoot: { kind: "resolved", path: root },
+            openAiChatCompletionsEnabled: false,
+            openResponsesEnabled: false,
+            handleHooksRequest: async () => false,
+            resolvedAuth,
+          });
+          const response = createResponse();
+          await dispatch(
+            server,
+            createRequest({
+              method: "GET",
+              path: CONTROL_UI_BOOT_CHECK_PATH,
+              host: "127.0.0.1:18789",
+              headers: {
+                "x-forwarded-host": "fased-vps.tailnet.ts.net",
+                "x-forwarded-proto": "https",
+                "x-forwarded-for": "100.65.209.118",
+              },
+            }),
+            response.res,
+          );
+
+          expect(response.res.statusCode).toBe(200);
+          expect(response.setHeader).toHaveBeenCalledWith("Cache-Control", "no-store");
+          expect(JSON.parse(response.getBody())).toEqual({
+            index: "ok",
+            indexResponse: {
+              url: "https://fased-vps.tailnet.ts.net/dash/",
+              ok: true,
+              status: 200,
+              contentType: "text/html; charset=utf-8",
+            },
+            entryJs: {
+              url: "https://fased-vps.tailnet.ts.net/dash/assets/index-abc.js",
+              ok: true,
+              status: 200,
+              contentType: "application/javascript; charset=utf-8",
+            },
+            appJs: {
+              url: "https://fased-vps.tailnet.ts.net/dash/assets/app-def.js",
+              ok: true,
+              status: 200,
+              contentType: "application/javascript; charset=utf-8",
+            },
+            serve: "tailscale",
+          });
+        } finally {
+          await rm(root, { recursive: true, force: true });
+        }
       },
     });
   });
