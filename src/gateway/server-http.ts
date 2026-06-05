@@ -4229,7 +4229,9 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
       const configSnapshot = loadConfig();
       const trustedProxies = configSnapshot.gateway?.trustedProxies ?? [];
       const allowRealIpFallback = configSnapshot.gateway?.allowRealIpFallback === true;
-      const host = resolveControlUiPublicHost(req, trustedProxies);
+      const host = resolveControlUiPublicHost(req, trustedProxies, {
+        allowLoopbackHttpsOriginFallback: configSnapshot.gateway?.tailscale?.mode === "serve",
+      });
       const loopbackCorsApplied = applyLoopbackCorsIfAllowed(req, res, host);
       if (
         req.method === "OPTIONS" &&

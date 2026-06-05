@@ -293,3 +293,45 @@ export async function probeHostedDashboardBrowserPath(params: {
     wsUrl,
   };
 }
+
+export async function waitForHostedDashboardBrowserPath(params: {
+  httpUrl: string;
+  token: string;
+  deadlineMs?: number;
+  probeTimeoutMs?: number;
+  pollMs?: number;
+}): Promise<HostedDashboardBrowserProbeResult> {
+  const deadlineMs = Math.max(1, Math.floor(params.deadlineMs ?? 15_000));
+  const probeTimeoutMs = Math.max(1, Math.floor(params.probeTimeoutMs ?? 6000));
+  const pollMs = Math.max(250, Math.floor(params.pollMs ?? 1000));
+  const startedAt = Date.now();
+  let lastResult: HostedDashboardBrowserProbeResult | null = null;
+
+  while (Date.now() - startedAt < deadlineMs) {
+    lastResult = await probeHostedDashboardBrowserPath({
+      httpUrl: params.httpUrl,
+      token: params.token,
+      timeoutMs: probeTimeoutMs,
+    });
+    if (lastResult.ok) {
+      return {
+        ...lastResult,
+        durationMs: Date.now() - startedAt,
+      };
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+
+  if (lastResult) {
+    return {
+      ...lastResult,
+      durationMs: Date.now() - startedAt,
+    };
+  }
+  return {
+    ok: false,
+    durationMs: Date.now() - startedAt,
+    stage: "websocket",
+    message: "timeout before first hosted dashboard probe completed",
+  };
+}

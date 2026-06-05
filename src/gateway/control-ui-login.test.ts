@@ -87,6 +87,34 @@ describe("control-ui public host resolution", () => {
 
     expect(resolveControlUiPublicHost(req, ["127.0.0.1/32"])).toBe("127.0.0.1:18789");
   });
+
+  it("can use HTTPS origin as hosted fallback for trusted loopback Serve requests", () => {
+    const req = {
+      socket: { remoteAddress: "127.0.0.1" },
+      headers: {
+        host: "127.0.0.1:18789",
+        origin: "https://fased-vps.tailnet.ts.net",
+      },
+    } as unknown as import("node:http").IncomingMessage;
+
+    expect(
+      resolveControlUiPublicHost(req, ["127.0.0.1/32"], {
+        allowLoopbackHttpsOriginFallback: true,
+      }),
+    ).toBe("fased-vps.tailnet.ts.net");
+  });
+
+  it("does not use HTTPS origin fallback unless explicitly enabled", () => {
+    const req = {
+      socket: { remoteAddress: "127.0.0.1" },
+      headers: {
+        host: "127.0.0.1:18789",
+        origin: "https://fased-vps.tailnet.ts.net",
+      },
+    } as unknown as import("node:http").IncomingMessage;
+
+    expect(resolveControlUiPublicHost(req, ["127.0.0.1/32"])).toBe("127.0.0.1:18789");
+  });
 });
 
 describe("ControlUiLoginService", () => {

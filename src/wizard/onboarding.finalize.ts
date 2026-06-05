@@ -16,6 +16,7 @@ import {
 } from "../commands/daemon-runtime.js";
 import { formatHealthCheckFailure } from "../commands/health-format.js";
 import { healthCommand } from "../commands/health.js";
+import { waitForHostedDashboardBrowserPath } from "../commands/hosted-dashboard-probe.js";
 import {
   detectBrowserOpenSupport,
   formatControlUiSshHint,
@@ -2407,23 +2408,38 @@ export async function finalizeOnboardingWizard(
             }
             runtime.error(`Tailscale dashboard URL still warming: ${detail}`);
           }
-          progress.update("Confirming dashboard gateway connection…");
-          const wsWarmup = await waitForGatewayReachable({
-            url: tailscaleGatewayWsUrl,
-            token: settings.authMode === "token" ? gatewayTokenForUi || undefined : undefined,
-            password:
-              settings.authMode === "password" ? nextConfig.gateway?.auth?.password : undefined,
-            deadlineMs: lowRamMode ? 180_000 : 90_000,
-            probeTimeoutMs: 8_000,
-            pollMs: 1_500,
-          });
+          progress.update("Confirming browser dashboard connection…");
+          const wsWarmup =
+            settings.authMode === "token" && gatewayTokenForUi
+              ? await waitForHostedDashboardBrowserPath({
+                  httpUrl: tailscaleAdminUrl,
+                  token: gatewayTokenForUi,
+                  deadlineMs: lowRamMode ? 180_000 : 90_000,
+                  probeTimeoutMs: 8_000,
+                  pollMs: 1_500,
+                })
+              : await waitForGatewayReachable({
+                  url: tailscaleGatewayWsUrl,
+                  token: settings.authMode === "token" ? gatewayTokenForUi || undefined : undefined,
+                  password:
+                    settings.authMode === "password"
+                      ? nextConfig.gateway?.auth?.password
+                      : undefined,
+                  deadlineMs: lowRamMode ? 180_000 : 90_000,
+                  probeTimeoutMs: 8_000,
+                  pollMs: 1_500,
+                });
           if (!wsWarmup.ok) {
             if (!opts.allowInsecure) {
               throw new Error(
                 [
-                  "Tailscale dashboard page is reachable, but the Gateway is not online through that URL.",
+                  "Tailscale dashboard page is reachable, but the browser Gateway connection is not online through that URL.",
                   `Gateway URL: ${tailscaleGatewayWsUrl}`,
-                  `Detail: ${wsWarmup.detail ?? "gateway websocket not reachable"}`,
+                  `Detail: ${
+                    "stage" in wsWarmup
+                      ? `${wsWarmup.stage}: ${wsWarmup.message}`
+                      : (wsWarmup.detail ?? "gateway websocket not reachable")
+                  }`,
                   "Check from the app user terminal:",
                   "  systemctl status --user fased-gateway --no-pager",
                   "  sudo systemctl status fased-gateway --no-pager",
@@ -2432,7 +2448,11 @@ export async function finalizeOnboardingWizard(
               );
             }
             runtime.error(
-              `Tailscale dashboard Gateway still warming: ${wsWarmup.detail ?? "websocket not reachable"}`,
+              `Tailscale dashboard Gateway still warming: ${
+                "stage" in wsWarmup
+                  ? `${wsWarmup.stage}: ${wsWarmup.message}`
+                  : (wsWarmup.detail ?? "websocket not reachable")
+              }`,
             );
           }
         },

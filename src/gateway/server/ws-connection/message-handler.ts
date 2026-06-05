@@ -164,6 +164,25 @@ function resolveTrustedHttpsControlUiProxyOriginHost(
   }
 }
 
+function resolveTrustedLoopbackHttpsControlUiOriginHost(params: {
+  remoteAddr?: string;
+  requestOrigin?: string;
+  trustedProxies?: string[];
+}): string | undefined {
+  if (!params.remoteAddr || !isTrustedProxyAddress(params.remoteAddr, params.trustedProxies)) {
+    return undefined;
+  }
+  if (!params.requestOrigin) {
+    return undefined;
+  }
+  try {
+    const origin = new URL(params.requestOrigin);
+    return origin.protocol === "https:" ? origin.host.toLowerCase() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function resolveHandshakeBrowserSecurityContext(params: {
   requestOrigin?: string;
   clientIp: string | undefined;
@@ -375,9 +394,6 @@ export function attachGatewayWsMessageHandler(params: {
   const hostIsLocalish = isLocalishHost(requestHost);
   const hasLoopbackNonLocalHost =
     !hostIsLocalish && isLoopbackAddress(remoteAddr) && !hasProxyHeaders;
-  const isLocalClient =
-    isLocalDirectRequest(upgradeReq, trustedProxies, allowRealIpFallback) &&
-    !hasLoopbackNonLocalHost;
   const trustedTailscaleServeControlUiHost =
     configSnapshot.gateway?.tailscale?.mode === "serve"
       ? resolveTrustedHttpsControlUiProxyOriginHost(upgradeReq, {
@@ -386,10 +402,25 @@ export function attachGatewayWsMessageHandler(params: {
           trustedProxies,
         })
       : undefined;
-  const trustedTailscaleServeControlUiContext = Boolean(trustedTailscaleServeControlUiHost);
+  const trustedLoopbackHttpsControlUiHost =
+    configSnapshot.gateway?.tailscale?.mode === "serve"
+      ? resolveTrustedLoopbackHttpsControlUiOriginHost({
+          remoteAddr,
+          requestOrigin,
+          trustedProxies,
+        })
+      : undefined;
+  const trustedTailscaleServeControlUiContext = Boolean(
+    trustedTailscaleServeControlUiHost || trustedLoopbackHttpsControlUiHost,
+  );
+  const isLocalClient =
+    !trustedTailscaleServeControlUiContext &&
+    isLocalDirectRequest(upgradeReq, trustedProxies, allowRealIpFallback) &&
+    !hasLoopbackNonLocalHost;
   const originRequestHost =
     !isLocalClient && isLoopbackAddress(remoteAddr)
       ? (trustedTailscaleServeControlUiHost ??
+        trustedLoopbackHttpsControlUiHost ??
         resolveForwardedOriginHost(upgradeReq, { remoteAddr, trustedProxies }) ??
         requestHost)
       : requestHost;

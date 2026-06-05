@@ -184,9 +184,32 @@ function originHostFromTrustedTailscaleServe(
   }
 }
 
+function originHostFromTrustedLoopbackHttpsOrigin(
+  req: IncomingMessage,
+  trustedProxies: string[],
+): string {
+  if (!isTrustedProxyAddress(req.socket?.remoteAddress, trustedProxies)) {
+    return "";
+  }
+  const origin = firstForwardedHeaderValue(req.headers.origin);
+  if (!origin) {
+    return "";
+  }
+  try {
+    const parsed = new URL(origin);
+    if (parsed.protocol !== "https:") {
+      return "";
+    }
+    return normalizePublicHost(parsed.host);
+  } catch {
+    return "";
+  }
+}
+
 export function resolveControlUiPublicHost(
   req: IncomingMessage | undefined,
   trustedProxies: string[] = [],
+  options: { allowLoopbackHttpsOriginFallback?: boolean } = {},
 ): string {
   if (!req) {
     return "";
@@ -202,6 +225,12 @@ export function resolveControlUiPublicHost(
   const originHost = originHostFromTrustedTailscaleServe(req, trustedProxies);
   if (originHost) {
     return originHost;
+  }
+  if (options.allowLoopbackHttpsOriginFallback === true) {
+    const fallbackOriginHost = originHostFromTrustedLoopbackHttpsOrigin(req, trustedProxies);
+    if (fallbackOriginHost) {
+      return fallbackOriginHost;
+    }
   }
   return normalizePublicHost(req.headers.host ?? "");
 }

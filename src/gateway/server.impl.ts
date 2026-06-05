@@ -366,7 +366,9 @@ export async function startGatewayServer(
           req?: import("node:http").IncomingMessage;
           trustedProxies?: string[];
         }) => {
-          const host = resolveControlUiPublicHost(params.req, params.trustedProxies ?? []);
+          const host = resolveControlUiPublicHost(params.req, params.trustedProxies ?? [], {
+            allowLoopbackHttpsOriginFallback: tailscaleMode === "serve",
+          });
           if (!host) {
             return { ok: false } as const;
           }
