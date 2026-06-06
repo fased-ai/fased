@@ -144,10 +144,25 @@ Hosting note:
 
 Update note:
 
-- `fased update` is the normal end-user update path
-- stable is the default channel and resolves to the latest stable release tag
-- `git pull --ff-only origin main` and `fased update --channel dev` are
-  development flows
+| Command                                                 | What it gets              |
+| ------------------------------------------------------- | ------------------------- |
+| `git clone https://github.com/fased-ai/fased.git fased` | Latest `main` checkout    |
+| `git pull --ff-only origin main`                        | Latest `main` checkout    |
+| `fased update`                                          | Latest stable release tag |
+| `fased update --channel dev`                            | Latest `main` checkout    |
+
+Use `fased update` for normal end-user updates. Use `git pull --ff-only origin
+main` or `fased update --channel dev` only when you intentionally want the
+developer channel.
+
+Native signer note:
+
+- fresh dashboard, Gateway, and Fased Network setup do not require `fased-signerd`
+- generated signer binaries are not committed to Git
+- when you later choose the local signer wallet path, Fased builds
+  `fased-signerd` locally when Go is available
+- otherwise provide `FASED_WALLET_LOCAL_SIGNER_BIN`, or an explicit signer asset
+  source with `FASED_LOCAL_SIGNER_VERSION` / `FASED_LOCAL_SIGNER_BASE_URL`
 
 ## Common modes
 

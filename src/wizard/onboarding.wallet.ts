@@ -46,7 +46,12 @@ const INSTALL_SCRIPT_RELPATHS = [
   "scripts/install-fased-signerd.sh",
   "../scripts/install-fased-signerd.sh",
 ];
+const BUILD_SCRIPT_RELPATHS = [
+  "scripts/build-fased-signerd.sh",
+  "../scripts/build-fased-signerd.sh",
+];
 const BROKER_CLI_RELPATHS = ["./index.js", "../../dist/index.js"];
+const DEFAULT_SIGNER_RELEASE_DOWNLOAD_BASE = "https://github.com/fased-ai/fased/releases/download";
 
 function runCommand(params: {
   command: string;
@@ -148,6 +153,16 @@ function resolveInstallScript(): string | null {
   return null;
 }
 
+function resolveBuildScript(): string | null {
+  for (const rel of BUILD_SCRIPT_RELPATHS) {
+    const abs = path.resolve(rel);
+    if (fs.existsSync(abs)) {
+      return abs;
+    }
+  }
+  return null;
+}
+
 function resolveBrokerCliPath(): string | null {
   for (const rel of BROKER_CLI_RELPATHS) {
     const candidate = fileURLToPath(new URL(rel, import.meta.url));
@@ -171,13 +186,147 @@ function resolveLocalSignerdReleaseBaseUrl(installScriptPath: string): string | 
   return `file://${releaseDir}`;
 }
 
-function installSignerdBinary(binPath: string): void {
+function resolveGoBinary(env: NodeJS.ProcessEnv = process.env): string | null {
+  const explicit = String(env.FASED_GO_BIN ?? "").trim();
+  if (explicit && fs.existsSync(explicit)) {
+    return explicit;
+  }
+  if (fs.existsSync("/usr/local/go/bin/go")) {
+    return "/usr/local/go/bin/go";
+  }
+  const child = spawnSync("bash", ["-lc", "command -v go || true"], {
+    env,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  const candidate = String(child.stdout ?? "")
+    .trim()
+    .split("\n")[0]
+    ?.trim();
+  return candidate || null;
+}
+
+function isGoModernEnough(goBin: string): boolean {
+  const child = spawnSync(goBin, ["version"], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  if (child.status !== 0) {
+    return false;
+  }
+  const match = String(child.stdout ?? "").match(/\bgo(\d+)\.(\d+)(?:\.\d+)?\b/);
+  if (!match) {
+    return false;
+  }
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  return major > 1 || (major === 1 && minor >= 21);
+}
+
+function hasExplicitSignerdAssetSource(env: NodeJS.ProcessEnv = process.env): boolean {
+  const baseUrl = String(env.FASED_LOCAL_SIGNER_BASE_URL ?? "").trim();
+  const version = String(env.FASED_LOCAL_SIGNER_VERSION ?? "").trim();
+  const latestTag = String(env.FASED_LOCAL_SIGNER_LATEST_TAG ?? "").trim();
+  if (baseUrl && baseUrl !== DEFAULT_SIGNER_RELEASE_DOWNLOAD_BASE) {
+    return true;
+  }
+  if (version && version !== "latest") {
+    return true;
+  }
+  if (latestTag && latestTag !== "latest") {
+    return true;
+  }
+  return false;
+}
+
+function runScriptOrThrow(params: {
+  script: string;
+  args?: string[];
+  env?: NodeJS.ProcessEnv;
+  verbose?: boolean;
+  fallbackError: string;
+}): void {
+  const child = spawnSync("bash", [params.script, ...(params.args ?? [])], {
+    env: params.env,
+    encoding: "utf8",
+    stdio: params.verbose ? "inherit" : ["ignore", "pipe", "pipe"],
+  });
+  if (child.status === 0) {
+    return;
+  }
+  const stderr = typeof child.stderr === "string" ? child.stderr.trim() : "";
+  const stdout = typeof child.stdout === "string" ? child.stdout.trim() : "";
+  const detail = (stderr || stdout).split("\n").slice(-12).join("\n");
+  throw new Error(detail || params.fallbackError);
+}
+
+function copySignerdBinaryToTarget(params: {
+  sourcePath: string;
+  targetPath: string;
+  runAsUser?: string;
+}): void {
+  const sourcePath = path.resolve(params.sourcePath);
+  const targetPath = path.resolve(params.targetPath);
+  if (!fs.existsSync(sourcePath)) {
+    throw new Error(`fased-signerd build completed but binary was not found at ${sourcePath}.`);
+  }
+  if (params.runAsUser) {
+    runCommand({
+      command: "sudo",
+      args: [
+        "bash",
+        "-lc",
+        [
+          "set -euo pipefail",
+          `install -d -m 755 -o ${JSON.stringify(params.runAsUser)} -g ${JSON.stringify(params.runAsUser)} ${JSON.stringify(path.dirname(targetPath))}`,
+          `install -m 755 -o ${JSON.stringify(params.runAsUser)} -g ${JSON.stringify(params.runAsUser)} ${JSON.stringify(sourcePath)} ${JSON.stringify(targetPath)}`,
+        ].join("; "),
+      ],
+    });
+    return;
+  }
+  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+  fs.copyFileSync(sourcePath, targetPath);
+  fs.chmodSync(targetPath, 0o755);
+}
+
+function buildSignerdBinaryFromSource(binPath: string): boolean {
+  if (String(process.env.FASED_SKIP_NATIVE_SIGNER_BUILD ?? "").trim() === "1") {
+    return false;
+  }
+  const script = resolveBuildScript();
+  const goBin = resolveGoBinary(process.env);
+  if (!script || !goBin || !isGoModernEnough(goBin)) {
+    return false;
+  }
+  const verboseInstall =
+    String(process.env.FASED_INSTALL_VERBOSE ?? "").trim() === "1" ||
+    String(process.env.FASED_ONBOARD_VERBOSE ?? "").trim() === "1";
+  runScriptOrThrow({
+    script,
+    env: { ...process.env, FASED_GO_BIN: goBin },
+    verbose: verboseInstall,
+    fallbackError: "fased-signerd source build failed",
+  });
+  const builtPath = path.resolve(path.dirname(script), "..", "dist-native", "fased-signerd");
+  copySignerdBinaryToTarget({
+    sourcePath: builtPath,
+    targetPath: binPath,
+    runAsUser: resolveLocalSignerRunAsUser(process.env),
+  });
+  return true;
+}
+
+function installSignerdBinaryFromExplicitAsset(binPath: string): boolean {
+  if (!hasExplicitSignerdAssetSource(process.env)) {
+    return false;
+  }
   const script = resolveInstallScript();
   if (!script) {
     throw new Error(
       `install-fased-signerd.sh not found. Cannot install fased-signerd.\n` +
         `Expected at one of: ${INSTALL_SCRIPT_RELPATHS.join(", ")}\n` +
-        `Download manually from https://github.com/fased-ai/fased/releases`,
+        `Install Go >= 1.21, or provide FASED_WALLET_LOCAL_SIGNER_BIN.`,
     );
   }
   const runAsUser = resolveLocalSignerRunAsUser(process.env);
@@ -235,6 +384,25 @@ function installSignerdBinary(binPath: string): void {
         `Check install script output above for errors.`,
     );
   }
+  return true;
+}
+
+function installSignerdBinary(binPath: string): void {
+  if (buildSignerdBinaryFromSource(binPath)) {
+    return;
+  }
+  if (installSignerdBinaryFromExplicitAsset(binPath)) {
+    return;
+  }
+  throw new Error(
+    [
+      "fased-signerd is required only after you choose the local signer wallet path.",
+      "Install Go >= 1.21 and rerun wallet setup so Fased can build the signer locally.",
+      "Alternatively set FASED_WALLET_LOCAL_SIGNER_BIN to an existing signer binary,",
+      "or set FASED_LOCAL_SIGNER_VERSION/FASED_LOCAL_SIGNER_BASE_URL to an explicit signer asset.",
+      "Normal dashboard, Gateway, and Fased Network startup do not require fased-signerd.",
+    ].join("\n"),
+  );
 }
 
 function hasScopedWalletEnvValue(env: NodeJS.ProcessEnv, prefix: string): boolean {
@@ -1096,13 +1264,12 @@ export async function configureWalletForOnboarding(params: {
     const runAsUser = resolveLocalSignerRunAsUser(process.env);
     ensureLocalSignerPassphrase();
 
-    // Install binary if not present — MANDATORY, not optional
     if (!fs.existsSync(binPath)) {
       if (!quietSignerNotes) {
         await prompter.note(
           [
             `fased-signerd not found at: ${binPath}`,
-            "Downloading fased-signerd binary from GitHub releases...",
+            "Building fased-signerd locally when Go is available, or using an explicitly configured signer asset.",
           ].join("\n"),
           "Local socket signer",
         );

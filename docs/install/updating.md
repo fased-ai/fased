@@ -56,6 +56,13 @@ By default, `fased update` uses the **stable** channel. On a git checkout,
 stable means the newest stable `v*` release tag. It does **not** mean the moving
 head of `main`.
 
+| Command                                                 | What it gets              |
+| ------------------------------------------------------- | ------------------------- |
+| `git clone https://github.com/fased-ai/fased.git fased` | Latest `main` checkout    |
+| `git pull --ff-only origin main`                        | Latest `main` checkout    |
+| `fased update`                                          | Latest stable release tag |
+| `fased update --channel dev`                            | Latest `main` checkout    |
+
 Use this for normal end-user updates:
 
 ```bash
@@ -80,6 +87,20 @@ git pull --ff-only origin main
 
 On a hosted VPS, run the development checkout flow as `app` from
 `/home/app/fased` and use `./install.sh --hosting`.
+
+## Native signer artifacts
+
+Fresh dashboard, Gateway, and Fased Network setup do not require
+`fased-signerd`. The native signer is only needed after you choose the local
+signer wallet path.
+
+When that path is enabled, Fased first tries to build `fased-signerd` locally
+from source when Go >= 1.21 is available. If Go is not available, provide either
+an existing signer binary with `FASED_WALLET_LOCAL_SIGNER_BIN` or an explicit
+asset source with `FASED_LOCAL_SIGNER_VERSION` / `FASED_LOCAL_SIGNER_BASE_URL`.
+
+Do not commit generated signer binaries to Git, and do not cut a release just to
+test signer setup.
 
 ## Control UI update
 

@@ -223,6 +223,13 @@ channel** and resolves to the latest stable release tag, not every commit on
 `main`. Current development fixes on `main` are available only when you
 intentionally track the developer channel:
 
+| Command                                                 | What it gets              |
+| ------------------------------------------------------- | ------------------------- |
+| `git clone https://github.com/fased-ai/fased.git fased` | Latest `main` checkout    |
+| `git pull --ff-only origin main`                        | Latest `main` checkout    |
+| `fased update`                                          | Latest stable release tag |
+| `fased update --channel dev`                            | Latest `main` checkout    |
+
 ```bash
 fased update --channel dev
 ```
@@ -239,6 +246,13 @@ On a hosted VPS, run that same development checkout flow as `app` from
 `/home/app/fased` and use `./install.sh --hosting`. Use
 `./install.sh --no-git-update` only when testing local changes that should not
 be replaced by Git.
+
+Fresh dashboard, Gateway, and Fased Network setup do not require the native
+wallet signer. If you later choose the local signer wallet path, Fased builds
+`fased-signerd` locally when Go is available. Otherwise provide an explicit
+signer binary with `FASED_WALLET_LOCAL_SIGNER_BIN`, or an explicit signer asset
+source with `FASED_LOCAL_SIGNER_VERSION` / `FASED_LOCAL_SIGNER_BASE_URL`.
+Generated signer binaries are never committed to Git.
 
 After install, open the dashboard, configure **Agent > Models**, send a first
 browser chat, then add channels, skills, services, wallets, mining, and tasks

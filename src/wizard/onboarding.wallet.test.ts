@@ -7,6 +7,7 @@ import {
   configureWalletForOnboarding,
   renderLocalSignerEnvFile,
   shouldSyncLocalSocketSignerFromConfig,
+  syncLocalSocketSignerFromConfig,
   writeLocalSignerEnvFile,
 } from "./onboarding.wallet.js";
 import type { WizardPrompter } from "./prompts.js";
@@ -83,6 +84,44 @@ describe("local signer env file helpers", () => {
     expect(next.wallet?.runtime?.enabled).toBe(false);
     expect(next.env?.vars?.FASED_WALLET_LOCAL_SIGNER_SOCKET).toBeUndefined();
     expect(process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET).toBeUndefined();
+  });
+
+  it("fails explicit signer setup without silently downloading latest release assets", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-onboarding-wallet-signer-"));
+    tempDirs.push(root);
+    const binPath = path.join(root, "bin", "fased-signerd");
+    const socketPath = path.join(root, "wallet", "local-signer.sock");
+    vi.stubEnv("HOME", root);
+    vi.stubEnv("FASED_STATE_DIR", root);
+    vi.stubEnv("FASED_CONFIG_DIR", root);
+    vi.stubEnv("FASED_WALLET_LOCAL_SIGNER_BIN", binPath);
+    vi.stubEnv("FASED_WALLET_LOCAL_SIGNER_SOCKET", socketPath);
+    vi.stubEnv("FASED_SKIP_NATIVE_SIGNER_BUILD", "1");
+    vi.stubEnv("FASED_LOCAL_SIGNER_BASE_URL", "");
+    vi.stubEnv("FASED_LOCAL_SIGNER_VERSION", "latest");
+    vi.stubEnv("FASED_LOCAL_SIGNER_LATEST_TAG", "latest");
+
+    const cfg: FasedAgentConfig = {
+      env: {
+        vars: {
+          FASED_WALLET_LOCAL_SIGNER_SOCKET: socketPath,
+          FASED_WALLET_PASSPHRASE: "test-passphrase",
+        },
+      },
+      wallet: {
+        provider: { id: "local-socket-signer" },
+        runtime: { enabled: true },
+      },
+    };
+
+    await expect(
+      syncLocalSocketSignerFromConfig({
+        config: cfg,
+        env: process.env,
+        restart: false,
+      }),
+    ).rejects.toThrow(/Install Go >= 1\.21/);
+    expect(fs.existsSync(binPath)).toBe(false);
   });
 
   it("renders named-wallet signer env from config state", () => {
