@@ -607,7 +607,8 @@ export async function runOnboardingWizard(
       "bash",
       [
         "-lc",
-        "if [ -x /usr/local/go/bin/go ]; then GOCMD=/usr/local/go/bin/go; " +
+        'if [ -n "${FASED_GO_BIN:-}" ] && [ -x "$FASED_GO_BIN" ]; then GOCMD="$FASED_GO_BIN"; ' +
+          "elif [ -x /usr/local/go/bin/go ]; then GOCMD=/usr/local/go/bin/go; " +
           "elif command -v go >/dev/null 2>&1; then GOCMD=$(command -v go); " +
           "else exit 1; fi; " +
           "v=$($GOCMD version 2>/dev/null | awk '{print $3}' | sed 's/^go//'); " +
@@ -617,6 +618,17 @@ export async function runOnboardingWizard(
       { stdio: "ignore" },
     );
     return probe.status === 0;
+  };
+  const shellQuote = (value: string): string => `'${value.replaceAll("'", `'"'"'`)}'`;
+  const hasExplicitSignerAssetSource = (): boolean => {
+    const baseUrl = String(process.env.FASED_LOCAL_SIGNER_BASE_URL ?? "").trim();
+    const version = String(process.env.FASED_LOCAL_SIGNER_VERSION ?? "").trim();
+    const latestTag = String(process.env.FASED_LOCAL_SIGNER_LATEST_TAG ?? "").trim();
+    return Boolean(
+      (baseUrl && !baseUrl.includes("github.com/fased-ai/fased/releases/download")) ||
+      (version && version !== "latest") ||
+      (latestTag && latestTag !== "latest"),
+    );
   };
   const runShell = async (command: string): Promise<void> => {
     await new Promise<void>((resolve, reject) => {
@@ -649,6 +661,57 @@ export async function runOnboardingWizard(
       });
     });
   };
+  const installPrivateGoForOnboarding = async (): Promise<
+    "installed" | "declined" | "unavailable"
+  > => {
+    if (process.platform !== "linux" || !hasCommand("curl") || !hasCommand("tar")) {
+      return "unavailable";
+    }
+    const goVersion = String(process.env.FASED_GO_VERSION ?? "1.23.6").trim() || "1.23.6";
+    const stateRoot =
+      String(process.env.FASED_STATE_DIR ?? "").trim() ||
+      path.join(String(process.env.HOME ?? "").trim() || process.cwd(), ".fased");
+    const installRoot = path.join(stateRoot, "toolchains", `go${goVersion}`);
+    const goBin = path.join(installRoot, "bin", "go");
+    if (fs.existsSync(goBin)) {
+      process.env.FASED_GO_BIN = goBin;
+      return goModernEnough() ? "installed" : "unavailable";
+    }
+    const installNow = await prompter.confirm({
+      message:
+        "Go >=1.21 is required to create local signer wallets. Install private Go toolchain now?",
+      initialValue: true,
+    });
+    if (!installNow) {
+      return "declined";
+    }
+    const progress = prompter.progress("Installing Go toolchain…");
+    try {
+      await runShell(
+        [
+          "set -euo pipefail",
+          "arch=$(dpkg --print-architecture 2>/dev/null || uname -m)",
+          'case "$arch" in amd64|x86_64) goarch=amd64 ;; arm64|aarch64) goarch=arm64 ;; *) echo "Unsupported arch: $arch"; exit 1 ;; esac',
+          `goversion=${shellQuote(goVersion)}`,
+          `install_root=${shellQuote(installRoot)}`,
+          'tmpdir="$(mktemp -d)"',
+          "trap 'rm -rf \"$tmpdir\"' EXIT",
+          'curl -fsSL "https://go.dev/dl/go${goversion}.linux-${goarch}.tar.gz" -o "$tmpdir/go.tgz"',
+          'tar -C "$tmpdir" -xzf "$tmpdir/go.tgz"',
+          'mkdir -p "$(dirname "$install_root")"',
+          'rm -rf "$install_root"',
+          'mv "$tmpdir/go" "$install_root"',
+          'chmod -R u+rwX "$install_root"',
+        ].join("; "),
+      );
+      process.env.FASED_GO_BIN = goBin;
+      progress.stop("Go toolchain ready.");
+    } catch (error) {
+      progress.stop("Go toolchain install failed.");
+      throw error;
+    }
+    return goModernEnough() ? "installed" : "unavailable";
+  };
   const signerdBinaryAlreadyInstalled = (): boolean => {
     if (String(process.env.FASED_FORCE_NATIVE_SIGNER_BUILD ?? "").trim() === "1") {
       return false;
@@ -658,6 +721,13 @@ export async function runOnboardingWizard(
   const maybeInstallGoForOnboarding = async (): Promise<boolean> => {
     if (goModernEnough()) {
       return true;
+    }
+    const privateGoInstall = await installPrivateGoForOnboarding();
+    if (privateGoInstall === "installed") {
+      return true;
+    }
+    if (privateGoInstall === "declined") {
+      return false;
     }
     if (process.platform !== "linux" || !hasCommand("sudo")) {
       return false;
@@ -691,6 +761,16 @@ export async function runOnboardingWizard(
       throw error;
     }
     return goModernEnough();
+  };
+  const prepareLocalSignerForOnboarding = async (params: { binPath: string }): Promise<void> => {
+    if (
+      fs.existsSync(params.binPath) ||
+      String(process.env.FASED_SKIP_NATIVE_SIGNER_BUILD ?? "").trim() === "1" ||
+      hasExplicitSignerAssetSource()
+    ) {
+      return;
+    }
+    await maybeInstallGoForOnboarding();
   };
   printWizardHeader(runtime);
   await prompter.intro("Setup");
@@ -1247,6 +1327,7 @@ export async function runOnboardingWizard(
     flow,
     hostProfile,
     nextConfig,
+    prepareLocalSigner: prepareLocalSignerForOnboarding,
     prompter,
   });
   nextConfig = syncLocalSignerRuntimeEnvIntoConfig(nextConfig);
@@ -1598,6 +1679,7 @@ export async function runOnboardingWizard(
             forceEnable: true,
             hostProfile,
             nextConfig,
+            prepareLocalSigner: prepareLocalSignerForOnboarding,
             prompter,
           });
           nextConfig = syncLocalSignerRuntimeEnvIntoConfig(nextConfig);

@@ -1420,6 +1420,7 @@ export async function configureWalletForOnboarding(params: {
   forceEnable?: boolean;
   hostProfile?: HostSetupProfile;
   nextConfig: FasedAgentConfig;
+  prepareLocalSigner?: (params: { binPath: string }) => Promise<void>;
   prompter: WizardPrompter;
 }): Promise<FasedAgentConfig> {
   const { flow, prompter } = params;
@@ -1524,7 +1525,10 @@ export async function configureWalletForOnboarding(params: {
           "Local socket signer",
         );
       }
-      installSignerdBinary(binPath);
+      await params.prepareLocalSigner?.({ binPath });
+      if (!fs.existsSync(binPath)) {
+        installSignerdBinary(binPath);
+      }
       if (!quietSignerNotes) {
         await prompter.note(`fased-signerd installed at: ${binPath}`, "Local socket signer");
       }

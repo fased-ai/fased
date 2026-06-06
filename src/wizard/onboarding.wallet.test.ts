@@ -124,6 +124,34 @@ describe("local signer env file helpers", () => {
     expect(fs.existsSync(binPath)).toBe(false);
   });
 
+  it("runs the local signer preparation hook before signer install", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-onboarding-wallet-prepare-"));
+    tempDirs.push(root);
+    const binPath = path.join(root, "bin", "fased-signerd");
+    vi.stubEnv("HOME", root);
+    vi.stubEnv("FASED_STATE_DIR", root);
+    vi.stubEnv("FASED_CONFIG_DIR", root);
+    vi.stubEnv("FASED_WALLET_LOCAL_SIGNER_BIN", binPath);
+    vi.stubEnv("FASED_WALLET_LOCAL_SIGNER_SOCKET", path.join(root, "wallet", "local-signer.sock"));
+    vi.stubEnv("FASED_SKIP_NATIVE_SIGNER_BUILD", "1");
+    vi.stubEnv("FASED_LOCAL_SIGNER_BASE_URL", "");
+    vi.stubEnv("FASED_LOCAL_SIGNER_VERSION", "latest");
+    vi.stubEnv("FASED_LOCAL_SIGNER_LATEST_TAG", "latest");
+    const prepareLocalSigner = vi.fn(async () => {});
+
+    await expect(
+      configureWalletForOnboarding({
+        flow: "quickstart",
+        forceEnable: true,
+        nextConfig: {},
+        prepareLocalSigner,
+        prompter: createPrompterStub(),
+      }),
+    ).rejects.toThrow(/Install Go >= 1\.21/);
+
+    expect(prepareLocalSigner).toHaveBeenCalledWith({ binPath });
+  });
+
   it("renders named-wallet signer env from config state", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-onboarding-wallet-env-"));
     tempDirs.push(root);
