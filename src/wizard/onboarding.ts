@@ -661,9 +661,7 @@ export async function runOnboardingWizard(
       });
     });
   };
-  const installPrivateGoForOnboarding = async (): Promise<
-    "installed" | "declined" | "unavailable"
-  > => {
+  const installPrivateGoForOnboarding = async (): Promise<"installed" | "unavailable"> => {
     if (process.platform !== "linux" || !hasCommand("curl") || !hasCommand("tar")) {
       return "unavailable";
     }
@@ -677,15 +675,7 @@ export async function runOnboardingWizard(
       process.env.FASED_GO_BIN = goBin;
       return goModernEnough() ? "installed" : "unavailable";
     }
-    const installNow = await prompter.confirm({
-      message:
-        "Go >=1.21 is required to create local signer wallets. Install private Go toolchain now?",
-      initialValue: true,
-    });
-    if (!installNow) {
-      return "declined";
-    }
-    const progress = prompter.progress("Installing Go toolchain…");
+    const progress = prompter.progress("Installing private Go toolchain…");
     try {
       await runShell(
         [
@@ -725,9 +715,6 @@ export async function runOnboardingWizard(
     const privateGoInstall = await installPrivateGoForOnboarding();
     if (privateGoInstall === "installed") {
       return true;
-    }
-    if (privateGoInstall === "declined") {
-      return false;
     }
     if (process.platform !== "linux" || !hasCommand("sudo")) {
       return false;
@@ -770,7 +757,10 @@ export async function runOnboardingWizard(
     ) {
       return;
     }
-    await maybeInstallGoForOnboarding();
+    if (goModernEnough()) {
+      return;
+    }
+    await installPrivateGoForOnboarding();
   };
   printWizardHeader(runtime);
   await prompter.intro("Setup");
