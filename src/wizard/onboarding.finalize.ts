@@ -239,6 +239,12 @@ async function installRootServiceMaintenanceAccess(params: {
 }): Promise<{ ok: boolean; detail?: string }> {
   const safeServiceName = params.serviceName.replace(/[^A-Za-z0-9@_.-]/g, "");
   const safeUser = params.runAsUser.replace(/[^A-Za-z0-9@_.-]/g, "");
+  const existingAccess = await runShell(
+    `sudo -n systemctl show ${safeServiceName}.service -p ActiveState --value >/dev/null`,
+  );
+  if (existingAccess.ok) {
+    return { ok: true };
+  }
   const sudoersPath = `/etc/sudoers.d/${safeServiceName}-${safeUser}-maintenance`;
   const sudoers = [
     `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl restart ${safeServiceName}.service`,
@@ -270,7 +276,9 @@ async function installRootSystemdFallback(params: {
   workingDirectory?: string;
   environment?: Record<string, string | undefined>;
 }): Promise<{ ok: boolean; detail?: string }> {
-  const unitPath = `/etc/systemd/system/${params.serviceName}.service`;
+  const safeServiceName = params.serviceName.replace(/[^A-Za-z0-9@_.-]/g, "");
+  const safeRunAsUser = params.runAsUser.replace(/[^A-Za-z0-9@_.-]/g, "");
+  const unitPath = `/etc/systemd/system/${safeServiceName}.service`;
   const escapedUser = params.runAsUser.replace(/"/g, '\\"');
   const baseUnit = buildSystemdUnit({
     description: "Fased Gateway (managed)",
@@ -299,19 +307,21 @@ async function installRootSystemdFallback(params: {
   }
   const unit = unitLines.join("\n");
   const b64 = Buffer.from(unit, "utf8").toString("base64");
+  const helperInstallCommand = `printf '%s' '${b64}' | base64 -d | sudo -n /usr/local/sbin/fased-install-gateway-service '${safeServiceName}' '${safeRunAsUser}'`;
+  const helperResult = await runShell(helperInstallCommand);
   const installCommand = [
     `echo '${b64}' | base64 -d | sudo -n tee '${unitPath}' >/dev/null`,
     "sudo -n systemctl daemon-reload",
-    `sudo -n systemctl enable --now '${params.serviceName}.service'`,
+    `sudo -n systemctl enable --now '${safeServiceName}.service'`,
   ].join(" && ");
-  const result = await runShell(installCommand);
+  const result = helperResult.ok ? helperResult : await runShell(installCommand);
   if (!result.ok) {
     return {
       ok: false,
       detail:
-        `systemd install failed (exit=${result.detail}). This usually requires interactive sudo. ` +
-        `Please run manually: sudo tee ${unitPath} <<EOF\n${unit}\nEOF && ` +
-        `sudo systemctl daemon-reload && sudo systemctl enable --now ${params.serviceName}.service`,
+        `systemd install failed (${result.detail ?? "unknown error"}). ` +
+        `Installer helper result: ${helperResult.detail ?? (helperResult.ok ? "ok" : "unavailable")}. ` +
+        "Rerun ./install.sh --hosting from root so the hosted service helper and sudoers are refreshed.",
     };
   }
   if (params.runAsUser !== "root") {

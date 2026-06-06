@@ -1696,6 +1696,7 @@ ${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl show fased-gateway.servic
 ${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl show fased-gateway *
 ${target_user} ALL=(root) NOPASSWD: /usr/bin/journalctl -u fased-gateway.service *
 ${target_user} ALL=(root) NOPASSWD: /usr/bin/journalctl -u fased-gateway *
+${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-install-gateway-service fased-gateway ${target_user}
 ${target_user} ALL=(root) NOPASSWD: /usr/bin/sed -i * /etc/ssh/sshd_config
 EOF
   chmod 440 "$sudoers_path"
@@ -1704,7 +1705,80 @@ EOF
   fi
 }
 
+install_host_gateway_service_helper() {
+  local helper_path="/usr/local/sbin/fased-install-gateway-service"
+  cat >"$helper_path" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+service_name="${1:-}"
+run_as_user="${2:-}"
+
+if [[ "$service_name" != "fased-gateway" ]]; then
+  echo "unsupported service: $service_name" >&2
+  exit 2
+fi
+if [[ -z "$run_as_user" || "$run_as_user" == "root" || ! "$run_as_user" =~ ^[A-Za-z0-9_.@-]+$ ]]; then
+  echo "invalid run-as user: $run_as_user" >&2
+  exit 2
+fi
+
+unit_path="/etc/systemd/system/${service_name}.service"
+tmp="$(mktemp)"
+cleanup() {
+  rm -f "$tmp"
+}
+trap cleanup EXIT
+cat >"$tmp"
+
+require_line() {
+  local pattern="$1"
+  local label="$2"
+  if ! grep -Eq "$pattern" "$tmp"; then
+    echo "invalid gateway unit: missing $label" >&2
+    exit 3
+  fi
+}
+
+reject_line() {
+  local pattern="$1"
+  local label="$2"
+  if grep -Eq "$pattern" "$tmp"; then
+    echo "invalid gateway unit: forbidden $label" >&2
+    exit 3
+  fi
+}
+
+require_line '^\[Unit\]$' "[Unit]"
+require_line '^\[Service\]$' "[Service]"
+require_line '^\[Install\]$' "[Install]"
+require_line "^User=${run_as_user}$" "User=${run_as_user}"
+require_line "^Group=${run_as_user}$" "Group=${run_as_user}"
+require_line "^ExecStart=/bin/bash /home/${run_as_user}/fased/scripts/start-managed\\.sh$" "managed ExecStart"
+require_line "^WorkingDirectory=/home/${run_as_user}/fased$" "hosted WorkingDirectory"
+require_line '^Environment=FASED_GATEWAY_MODE=managed$' "managed mode"
+require_line '^Environment=FASED_MANAGED_INTERNAL=1$' "managed internal flag"
+require_line '^Environment=FASED_GATEWAY_PORT=18789$' "loopback gateway port"
+require_line '^NoNewPrivileges=true$' "NoNewPrivileges"
+require_line '^PrivateTmp=true$' "PrivateTmp"
+require_line '^WantedBy=multi-user\.target$' "multi-user target"
+
+reject_line '^User=root$' "root user"
+reject_line '^Group=root$' "root group"
+reject_line '^Exec(Start|Stop|Reload)(Pre|Post)=' "extra privileged lifecycle command"
+reject_line '^PermissionsStartOnly=' "PermissionsStartOnly"
+reject_line '^AmbientCapabilities=' "AmbientCapabilities"
+reject_line '^CapabilityBoundingSet=' "CapabilityBoundingSet"
+
+install -o root -g root -m 0644 "$tmp" "$unit_path"
+systemctl daemon-reload
+systemctl enable --now "${service_name}.service"
+EOF
+  chmod 755 "$helper_path"
+}
+
 if [[ "$(id -u)" -eq 0 ]]; then
+  install_host_gateway_service_helper
   install_host_maintenance_sudoers "${FASED_INSTALL_USER:-app}"
   ensure_early_swap_for_hosting
   install_missing_deps_as_root_if_needed
