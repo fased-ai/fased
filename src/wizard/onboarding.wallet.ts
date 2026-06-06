@@ -105,6 +105,43 @@ async function isSignerdHealthy(socketPath: string): Promise<boolean> {
   });
 }
 
+async function sleep(ms: number): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+function readFileTail(filePath: string, maxLines = 20): string | undefined {
+  try {
+    const text = fs.readFileSync(filePath, "utf8").trim();
+    if (!text) {
+      return undefined;
+    }
+    return text.split("\n").slice(-maxLines).join("\n");
+  } catch {
+    return undefined;
+  }
+}
+
+async function waitForSignerdHealthy(socketPath: string, deadlineMs: number): Promise<boolean> {
+  const deadline = Date.now() + Math.max(1_000, deadlineMs);
+  while (Date.now() < deadline) {
+    if (isSignerdRunning(socketPath) && (await isSignerdHealthy(socketPath))) {
+      return true;
+    }
+    await sleep(500);
+  }
+  return isSignerdRunning(socketPath) && (await isSignerdHealthy(socketPath));
+}
+
+function resolveSignerdLogPath(params: {
+  appSocketPath: string;
+  materialDir: string;
+  runAsUser?: string;
+}): string {
+  return params.runAsUser
+    ? path.join(path.dirname(params.appSocketPath), "local-signer.log")
+    : path.join(params.materialDir, "local-signer.log");
+}
+
 function normalizeSignerChains(raw: Iterable<string>): string[] {
   const out = new Set<string>();
   for (const value of raw) {
@@ -949,9 +986,7 @@ function startSignerdBackground(
   const appSocketPath = resolveLocalSignerSocketPath(env);
   const backendSocketPath = resolveLocalSignerBackendSocketPath(env);
   const { pidPath, auditPath } = resolveLocalSignerSidecarPaths(socketPath);
-  const logPath = runAsUser
-    ? path.join(path.dirname(appSocketPath), "local-signer.log")
-    : path.join(materialDir, "local-signer.log");
+  const logPath = resolveSignerdLogPath({ appSocketPath, materialDir, runAsUser });
   if (runAsUser && process.getuid?.() === 0) {
     throw new Error("signer isolation should not be started directly as root");
   }
@@ -1568,9 +1603,8 @@ export async function configureWalletForOnboarding(params: {
       if (backendSocketPath !== socketPath) {
         startSignerBrokerBackground(socketPath, backendSocketPath, materialDir);
       }
-      // Brief wait for socket to appear
-      await new Promise<void>((resolve) => setTimeout(resolve, 1000));
-      if (isSignerdRunning(socketPath) && (await isSignerdHealthy(socketPath))) {
+      const readyTimeoutMs = runAsUser ? 20_000 : 8_000;
+      if (await waitForSignerdHealthy(socketPath, readyTimeoutMs)) {
         if (!quietSignerNotes) {
           await prompter.note(
             [
@@ -1585,11 +1619,29 @@ export async function configureWalletForOnboarding(params: {
           process.env.FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET = backendSocketPath;
         }
       } else {
-        const signerLogPath = path.join(materialDir, "local-signer.log");
+        const signerLogPath = resolveSignerdLogPath({
+          appSocketPath: socketPath,
+          materialDir,
+          runAsUser,
+        });
         const brokerLogPath = path.join(path.dirname(socketPath), "local-signer-broker.log");
+        const logDetails: string[] = [];
+        const signerLogTail = readFileTail(signerLogPath);
+        if (signerLogTail) {
+          logDetails.push(`Signer log tail (${signerLogPath}):\n${signerLogTail}`);
+        }
+        const brokerLogTail =
+          backendSocketPath !== socketPath ? readFileTail(brokerLogPath) : undefined;
+        if (brokerLogTail) {
+          logDetails.push(`Broker log tail (${brokerLogPath}):\n${brokerLogTail}`);
+        }
         throw new Error(
-          `fased-signerd did not start. Check logs: ${signerLogPath}${backendSocketPath !== socketPath ? `, ${brokerLogPath}` : ""}\n` +
+          [
+            `fased-signerd did not become ready within ${Math.round(readyTimeoutMs / 1000)}s.`,
+            `Check logs: ${signerLogPath}${backendSocketPath !== socketPath ? `, ${brokerLogPath}` : ""}`,
             `Run manually: ${binPath} -socket ${backendSocketPath}`,
+            ...logDetails,
+          ].join("\n"),
         );
       }
     }
