@@ -6,19 +6,29 @@ third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 
 ## Unreleased
 
-- Add the Agent > Tasks ledger-backed workflow layer: webhook triggers, source
-  task records, graph workflow review, approval/resume, and source-specific
-  task actions now share one audit/work surface.
-- Polish the Agent > Tasks workflow UI with template preview modals, source
-  badges, explicit Preview/Use actions, graph run-state review, and clearer
-  graph linking/zoom controls.
-- Add browser E2E coverage for the webhook -> task ledger -> workflow review ->
-  approval resume path, plus a composite ledger smoke across task sources.
-- Clarify SAT startup guidance: Fased Agent can run without SAT, while SAT is
-  the operator asset for mining, bond, and higher-trust network participation.
-- Keep the release gate clean for this slice with `pnpm test:fast`,
-  `pnpm ui:build`, `pnpm exec tsc --noEmit`, `pnpm check:docs`, and the
-  Control UI workflow browser smoke.
+- No unreleased changes yet.
+
+## 0.1.5
+
+- Fix public local and VPS hosting onboarding readiness so setup finishes only
+  after the Gateway, dashboard assets, WebSocket path, and Control UI boot path
+  are actually usable.
+- Harden hosted VPS operation around the non-root `app` runtime, loopback
+  Gateway bind, root-managed `User=app` service, Tailscale Serve dashboard, and
+  automatic low-memory swap/build handling.
+- Fix hosted Fased Network joining and UI join/register actions, including
+  handle preload, enrollment, endpoint update, and verified readiness reporting.
+- Improve Control UI startup reliability with guarded boot, clearer bundle
+  failure screens, hosted asset checks, and no infinite "Opening Fased Agent"
+  loading state.
+- Make `fased health`, `fased dashboard --no-open`, and `fased doctor` handle
+  small-VPS hosted warm-up without false offline failures.
+- Clarify end-user update docs: `fased update` defaults to the latest stable
+  release tag, while `fased update --channel dev` or
+  `git pull --ff-only origin main` is the development path.
+
+## 0.1.4
+
 - Prepare the public Fased Agent repository under `fased-ai/fased`.
 - Align public source links, install docs, and repository metadata.
 - Keep Fased-specific wallet, Fased Network, SAT mining, operator records, and

@@ -1,6 +1,6 @@
 {
   "name": "@fased/telegram",
-  "version": "0.1.1",
+  "version": "0.1.5",
   "private": true,
   "description": "FasedAgent Telegram channel plugin",
   "type": "module",

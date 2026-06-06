@@ -41,10 +41,10 @@ fased update --channel dev
   Use `fased update --channel dev --safe-fallback` only for repair/debug
   sessions that should try older commits if latest `main` fails preflight.
 
-`git pull origin main` is a development flow, not a stable release update. The
-stable end-user path is `fased update`, which lands on a release tag. Current
-development fixes become available to stable users only after a new stable tag
-or package release is published.
+`git pull --ff-only origin main` is a development flow, not a stable release
+update. The stable end-user path is `fased update`, which lands on a release
+tag. Current development fixes become available to stable users only after a new
+stable tag or package release is published.
 
 npm/pnpm global install:
 

@@ -2,7 +2,7 @@
   <img src="docs/assets/fased-mark-color.svg" alt="Fased" width="96">
 </p>
 
-<h1 align="center">Fased Agent</h1>
+# Fased Agent
 
 <p align="center">
   Self-hosted agent node for chat, tools, skills, memory, wallet policy, SAT mining, and Fased Network participation.

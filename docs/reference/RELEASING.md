@@ -216,7 +216,7 @@ publication is deliberately enabled. When that happens, update this page with:
 ## Post-public repository hardening
 
 - [ ] enable `main` branch protection once the repository is public or the
-  organization plan supports private-repo protection
+      organization plan supports private-repo protection
 - [ ] block force pushes and branch deletion
 - [ ] add required status checks after CI is stable for the public repo
 - [ ] keep emergency admin bypass limited to maintainers who cut releases
