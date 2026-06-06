@@ -1,5 +1,6 @@
 import { formatCliCommand } from "../cli/command-format.js";
 import { resolveFasedAgentPackageRoot } from "../infra/fased-root.js";
+import type { UpdateChannel } from "../infra/update-channels.js";
 import {
   checkUpdateStatus,
   compareSemverStrings,
@@ -33,12 +34,16 @@ export type UpdateAvailability = {
   gitBehind: number | null;
 };
 
-export function resolveUpdateAvailability(update: UpdateCheckResult): UpdateAvailability {
+export function resolveUpdateAvailability(
+  update: UpdateCheckResult,
+  opts: { channel?: UpdateChannel } = {},
+): UpdateAvailability {
   const latestVersion = update.registry?.latestVersion ?? null;
   const registryCmp = latestVersion ? compareSemverStrings(VERSION, latestVersion) : null;
   const hasRegistryUpdate = registryCmp != null && registryCmp < 0;
+  const includeGitBehind = opts.channel == null || opts.channel === "dev";
   const gitBehind =
-    update.installKind === "git" && typeof update.git?.behind === "number"
+    includeGitBehind && update.installKind === "git" && typeof update.git?.behind === "number"
       ? update.git.behind
       : null;
   const hasGitUpdate = gitBehind != null && gitBehind > 0;
@@ -52,8 +57,11 @@ export function resolveUpdateAvailability(update: UpdateCheckResult): UpdateAvai
   };
 }
 
-export function formatUpdateAvailableHint(update: UpdateCheckResult): string | null {
-  const availability = resolveUpdateAvailability(update);
+export function formatUpdateAvailableHint(
+  update: UpdateCheckResult,
+  opts: { channel?: UpdateChannel } = {},
+): string | null {
+  const availability = resolveUpdateAvailability(update, opts);
   if (!availability.available) {
     return null;
   }
@@ -69,7 +77,10 @@ export function formatUpdateAvailableHint(update: UpdateCheckResult): string | n
   return `Update available${suffix}. Run: ${formatCliCommand("fased update")}`;
 }
 
-export function formatUpdateOneLiner(update: UpdateCheckResult): string {
+export function formatUpdateOneLiner(
+  update: UpdateCheckResult,
+  opts: { channel?: UpdateChannel } = {},
+): string {
   const parts: string[] = [];
 
   const appendRegistryUpdateSummary = () => {
@@ -90,27 +101,34 @@ export function formatUpdateOneLiner(update: UpdateCheckResult): string {
   };
 
   if (update.installKind === "git" && update.git) {
-    const branch = update.git.branch ? `git ${update.git.branch}` : "git";
-    parts.push(branch);
-    if (update.git.upstream) {
-      parts.push(`↔ ${update.git.upstream}`);
-    }
-    if (update.git.dirty === true) {
-      parts.push("dirty");
-    }
-    if (update.git.behind != null && update.git.ahead != null) {
-      if (update.git.behind === 0 && update.git.ahead === 0) {
-        parts.push("up to date");
-      } else if (update.git.behind > 0 && update.git.ahead === 0) {
-        parts.push(`behind ${update.git.behind}`);
-      } else if (update.git.behind === 0 && update.git.ahead > 0) {
-        parts.push(`ahead ${update.git.ahead}`);
-      } else if (update.git.behind > 0 && update.git.ahead > 0) {
-        parts.push(`diverged (ahead ${update.git.ahead}, behind ${update.git.behind})`);
+    if (opts.channel && opts.channel !== "dev") {
+      parts.push(`${opts.channel} channel`);
+      if (update.git.dirty === true) {
+        parts.push("dirty");
       }
-    }
-    if (update.git.fetchOk === false) {
-      parts.push("fetch failed");
+    } else {
+      const branch = update.git.branch ? `git ${update.git.branch}` : "git";
+      parts.push(branch);
+      if (update.git.upstream) {
+        parts.push(`↔ ${update.git.upstream}`);
+      }
+      if (update.git.dirty === true) {
+        parts.push("dirty");
+      }
+      if (update.git.behind != null && update.git.ahead != null) {
+        if (update.git.behind === 0 && update.git.ahead === 0) {
+          parts.push("up to date");
+        } else if (update.git.behind > 0 && update.git.ahead === 0) {
+          parts.push(`behind ${update.git.behind}`);
+        } else if (update.git.behind === 0 && update.git.ahead > 0) {
+          parts.push(`ahead ${update.git.ahead}`);
+        } else if (update.git.behind > 0 && update.git.ahead > 0) {
+          parts.push(`diverged (ahead ${update.git.ahead}, behind ${update.git.behind})`);
+        }
+      }
+      if (update.git.fetchOk === false) {
+        parts.push("fetch failed");
+      }
     }
     appendRegistryUpdateSummary();
   } else {

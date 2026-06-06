@@ -155,7 +155,12 @@ describe("runGatewayUpdate", () => {
 
   async function runWithCommand(
     runCommand: (argv: string[]) => Promise<CommandResult>,
-    options?: { channel?: "stable" | "beta"; tag?: string; cwd?: string },
+    options?: {
+      channel?: "stable" | "beta" | "dev";
+      tag?: string;
+      cwd?: string;
+      allowDevFallback?: boolean;
+    },
   ) {
     return runGatewayUpdate({
       cwd: options?.cwd ?? tempDir,
@@ -163,12 +168,18 @@ describe("runGatewayUpdate", () => {
       timeoutMs: 5000,
       ...(options?.channel ? { channel: options.channel } : {}),
       ...(options?.tag ? { tag: options.tag } : {}),
+      ...(options?.allowDevFallback ? { allowDevFallback: options.allowDevFallback } : {}),
     });
   }
 
   async function runWithRunner(
     runner: (argv: string[]) => Promise<CommandResult>,
-    options?: { channel?: "stable" | "beta"; tag?: string; cwd?: string },
+    options?: {
+      channel?: "stable" | "beta" | "dev";
+      tag?: string;
+      cwd?: string;
+      allowDevFallback?: boolean;
+    },
   ) {
     return runWithCommand(runner, options);
   }
@@ -188,10 +199,32 @@ describe("runGatewayUpdate", () => {
       ...buildGitWorktreeProbeResponses({ status: " M README.md" }),
     });
 
-    const result = await runWithRunner(runner);
+    const result = await runWithRunner(runner, { channel: "dev" });
 
     expect(result.status).toBe("skipped");
     expect(result.reason).toBe("dirty");
+    expect(calls.some((call) => call.includes("rebase"))).toBe(false);
+  });
+
+  it("defaults git updates to the latest stable tag instead of main", async () => {
+    await setupGitCheckout({ packageManager: "pnpm@8.0.0" });
+    await setupUiIndex();
+    const stableTag = "v1.0.1";
+    const { runner, calls } = createRunner({
+      ...buildStableTagResponses(stableTag),
+      "pnpm install": { stdout: "" },
+      "pnpm build:app": { stdout: "" },
+      [`${process.execPath} ${path.join(tempDir, "fased.mjs")} doctor --non-interactive --fix`]: {
+        stdout: "",
+      },
+      [`git -C ${tempDir} rev-parse HEAD (after)`]: { stdout: "after-sha" },
+    });
+
+    const result = await runWithRunner(runner);
+
+    expect(result.status).toBe("ok");
+    expect(calls).toContain(`git -C ${tempDir} checkout --detach ${stableTag}`);
+    expect(calls.some((call) => call.includes("rev-list"))).toBe(false);
     expect(calls.some((call) => call.includes("rebase"))).toBe(false);
   });
 
@@ -209,7 +242,7 @@ describe("runGatewayUpdate", () => {
       },
     });
 
-    const result = await runWithRunner(runner);
+    const result = await runWithRunner(runner, { channel: "dev" });
 
     expect(result.status).toBe("error");
     expect(result.reason).toBe("fetch-failed");
@@ -228,7 +261,7 @@ describe("runGatewayUpdate", () => {
       },
       [`git -C ${tempDir} fetch --all --prune --tags`]: { stdout: "" },
       [`git -C ${tempDir} rev-parse @{upstream}`]: { stdout: upstreamSha },
-      [`git -C ${tempDir} rev-list --max-count=10 ${upstreamSha}`]: {
+      [`git -C ${tempDir} rev-list --max-count=1 ${upstreamSha}`]: {
         stdout: `${upstreamSha}\n`,
       },
       [`git -C ${tempDir} rebase ${upstreamSha}`]: { stdout: "" },
@@ -241,7 +274,7 @@ describe("runGatewayUpdate", () => {
       },
     });
 
-    const result = await runWithRunner(runner);
+    const result = await runWithRunner(runner, { channel: "dev" });
 
     expect(result.status).toBe("ok");
     expect(calls).not.toContain("pnpm lint");
@@ -260,7 +293,7 @@ describe("runGatewayUpdate", () => {
       },
       [`git -C ${tempDir} fetch --all --prune --tags`]: { stdout: "" },
       [`git -C ${tempDir} rev-parse @{upstream}`]: { stdout: upstreamSha },
-      [`git -C ${tempDir} rev-list --max-count=10 ${upstreamSha}`]: {
+      [`git -C ${tempDir} rev-list --max-count=1 ${upstreamSha}`]: {
         stdout: `${upstreamSha}\n`,
       },
       "pnpm install": { stdout: "" },
@@ -269,13 +302,99 @@ describe("runGatewayUpdate", () => {
     });
 
     const result = await withEnvAsync({ FASED_UPDATE_PREFLIGHT_LINT: "1" }, async () =>
-      runWithRunner(runner),
+      runWithRunner(runner, { channel: "dev" }),
     );
 
     expect(result.status).toBe("error");
     expect(result.reason).toBe("preflight-no-good-commit");
     expect(calls).toContain("pnpm lint");
     expect(calls.some((call) => call.includes("rebase"))).toBe(false);
+  });
+
+  it("tries older dev candidates only when safe fallback is enabled", async () => {
+    await setupGitCheckout({ packageManager: "pnpm@8.0.0" });
+    await setupUiIndex();
+    const newestSha = "newest123";
+    const olderSha = "older456";
+    const calls: string[] = [];
+    let installCount = 0;
+    const runner = async (argv: string[]) => {
+      const key = argv.join(" ");
+      calls.push(key);
+
+      if (key === `git -C ${tempDir} rev-parse --show-toplevel`) {
+        return { stdout: tempDir, stderr: "", code: 0 };
+      }
+      if (key === `git -C ${tempDir} rev-parse HEAD`) {
+        return { stdout: "before-sha", stderr: "", code: 0 };
+      }
+      if (key === `git -C ${tempDir} rev-parse --abbrev-ref HEAD`) {
+        return { stdout: "main", stderr: "", code: 0 };
+      }
+      if (key === `git -C ${tempDir} status --porcelain -- :!dist/control-ui/`) {
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      if (key === `git -C ${tempDir} rev-parse --abbrev-ref --symbolic-full-name @{upstream}`) {
+        return { stdout: "origin/main", stderr: "", code: 0 };
+      }
+      if (key === `git -C ${tempDir} fetch --all --prune --tags`) {
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      if (key === `git -C ${tempDir} rev-parse @{upstream}`) {
+        return { stdout: newestSha, stderr: "", code: 0 };
+      }
+      if (key === `git -C ${tempDir} rev-list --max-count=10 ${newestSha}`) {
+        return { stdout: `${newestSha}\n${olderSha}\n`, stderr: "", code: 0 };
+      }
+      if (key.includes(" worktree add --detach ")) {
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      if (key.includes(` checkout --detach ${newestSha}`)) {
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      if (key.includes(` checkout --detach ${olderSha}`)) {
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      if (key === "pnpm install") {
+        installCount += 1;
+        return installCount === 1
+          ? { stdout: "", stderr: "network blip", code: 1 }
+          : { stdout: "", stderr: "", code: 0 };
+      }
+      if (key === "pnpm build:app") {
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      if (key.includes(" worktree remove --force ")) {
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      if (key === `git -C ${tempDir} worktree prune`) {
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      if (key === `git -C ${tempDir} rebase ${olderSha}`) {
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      if (
+        key ===
+        `${process.execPath} ${path.join(tempDir, "fased.mjs")} doctor --non-interactive --fix`
+      ) {
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      if (key === `git -C ${tempDir} rev-parse HEAD`) {
+        return { stdout: olderSha, stderr: "", code: 0 };
+      }
+      return { stdout: "", stderr: "", code: 0 };
+    };
+
+    const result = await runWithCommand(runner, {
+      channel: "dev",
+      allowDevFallback: true,
+    });
+
+    expect(result.status).toBe("ok");
+    expect(calls).toContain(`git -C ${tempDir} rev-list --max-count=10 ${newestSha}`);
+    expect(calls.some((call) => call.includes(`checkout --detach ${newestSha}`))).toBe(true);
+    expect(calls.some((call) => call.includes(`checkout --detach ${olderSha}`))).toBe(true);
+    expect(calls).toContain(`git -C ${tempDir} rebase ${olderSha}`);
   });
 
   it("aborts rebase on failure", async () => {
@@ -287,12 +406,12 @@ describe("runGatewayUpdate", () => {
       },
       [`git -C ${tempDir} fetch --all --prune --tags`]: { stdout: "" },
       [`git -C ${tempDir} rev-parse @{upstream}`]: { stdout: "upstream123" },
-      [`git -C ${tempDir} rev-list --max-count=10 upstream123`]: { stdout: "upstream123\n" },
+      [`git -C ${tempDir} rev-list --max-count=1 upstream123`]: { stdout: "upstream123\n" },
       [`git -C ${tempDir} rebase upstream123`]: { code: 1, stderr: "conflict" },
       [`git -C ${tempDir} rebase --abort`]: { stdout: "" },
     });
 
-    const result = await runWithRunner(runner);
+    const result = await runWithRunner(runner, { channel: "dev" });
 
     expect(result.status).toBe("error");
     expect(result.reason).toBe("rebase-failed");

@@ -384,6 +384,7 @@ async function runGitUpdate(params: {
     progress: params.progress,
     channel: params.channel,
     tag: params.tag,
+    allowDevFallback: Boolean(params.opts.safeFallback),
   });
   const steps = [...(cloneStep ? [cloneStep] : []), ...updateResult.steps];
 
@@ -744,7 +745,14 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
     } else if (switchToPackage) {
       actions.push(`Switch install mode from git to package manager (${mode})`);
     } else if (updateInstallKind === "git") {
-      actions.push(`Run git update flow on channel ${channel} (fetch/rebase/build/doctor)`);
+      actions.push(`Run git update flow on channel ${channel}`);
+      if (channel === "dev") {
+        actions.push(
+          opts.safeFallback
+            ? "Dev repair mode: try older main commits if the latest commit fails preflight"
+            : "Dev mode: preflight only latest origin/main",
+        );
+      }
     } else {
       actions.push(`Run global package manager update with spec fased@${tag}`);
     }

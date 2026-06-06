@@ -26,6 +26,7 @@ fased update --channel dev
 fased update --tag beta
 fased update --dry-run
 fased update --no-restart
+fased update --channel dev --safe-fallback
 fased update --yes
 fased --update
 ```
@@ -46,6 +47,8 @@ sudo -iu app fased update
 - `--json`
 - `--timeout <seconds>`
 - `--yes`
+- `--safe-fallback` dev channel only; try older `main` commits when the latest
+  commit fails preflight
 
 Downgrades require confirmation because older versions can break the current
 config or runtime state.
@@ -79,7 +82,7 @@ High-level flow:
 1. require a clean worktree
 2. switch to the selected channel or tag
 3. fetch upstream when needed
-4. for `dev`, preflight a clean build path before rebasing
+4. for `dev`, preflight the latest `origin/main` commit before rebasing
 5. install dependencies
 6. rebuild runtime and browser UI assets
 7. run `fased doctor`
@@ -89,11 +92,15 @@ High-level flow:
 Current channel behavior:
 
 - `stable`
+  - default for end users
   - latest stable tag
 - `beta`
   - latest beta tag
 - `dev`
-  - `main` plus fetch and rebase flow
+  - developer channel
+  - latest `origin/main` only by default
+  - use `--safe-fallback` only for repair/debug sessions that should try older
+    candidate commits if the latest commit fails preflight
 
 ## `--update` shorthand
 

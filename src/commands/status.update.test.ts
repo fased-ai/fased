@@ -63,6 +63,31 @@ describe("resolveUpdateAvailability", () => {
     expect(availability.hasRegistryUpdate).toBe(true);
     expect(availability.latestVersion).toBe(latestVersion);
   });
+
+  it("ignores git-behind updates on stable channel", () => {
+    const update = buildUpdate({
+      installKind: "git",
+      git: {
+        root: "/tmp/repo",
+        sha: null,
+        tag: null,
+        branch: "main",
+        upstream: "origin/main",
+        dirty: false,
+        ahead: 0,
+        behind: 3,
+        fetchOk: true,
+      },
+    });
+
+    expect(resolveUpdateAvailability(update, { channel: "stable" })).toEqual({
+      available: false,
+      hasGitUpdate: false,
+      hasRegistryUpdate: false,
+      latestVersion: null,
+      gitBehind: null,
+    });
+  });
 });
 
 describe("formatUpdateOneLiner", () => {
@@ -109,6 +134,34 @@ describe("formatUpdateOneLiner", () => {
 
     expect(formatUpdateOneLiner(update)).toBe("Update: npm · npm latest unknown · deps missing");
   });
+
+  it("renders stable git status without main branch behind noise", () => {
+    const update = buildUpdate({
+      installKind: "git",
+      git: {
+        root: "/tmp/repo",
+        sha: "abc123456789",
+        tag: null,
+        branch: "main",
+        upstream: "origin/main",
+        dirty: false,
+        ahead: 0,
+        behind: 9,
+        fetchOk: true,
+      },
+      registry: { latestVersion: VERSION },
+      deps: {
+        manager: "pnpm",
+        status: "ok",
+        lockfilePath: "pnpm-lock.yaml",
+        markerPath: "node_modules/.modules.yaml",
+      },
+    });
+
+    expect(formatUpdateOneLiner(update, { channel: "stable" })).toBe(
+      `Update: stable channel · npm latest ${VERSION} · deps ok`,
+    );
+  });
 });
 
 describe("formatUpdateAvailableHint", () => {
@@ -143,5 +196,25 @@ describe("formatUpdateAvailableHint", () => {
     expect(formatUpdateAvailableHint(update)).toBe(
       `Update available (git behind 2 · npm ${latestVersion}). Run: fased update`,
     );
+  });
+
+  it("does not render git-behind hints on stable channel", () => {
+    const update = buildUpdate({
+      installKind: "git",
+      git: {
+        root: "/tmp/repo",
+        sha: null,
+        tag: null,
+        branch: "main",
+        upstream: "origin/main",
+        dirty: false,
+        ahead: 0,
+        behind: 2,
+        fetchOk: true,
+      },
+      registry: { latestVersion: VERSION },
+    });
+
+    expect(formatUpdateAvailableHint(update, { channel: "stable" })).toBeNull();
   });
 });

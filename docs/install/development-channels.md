@@ -14,7 +14,8 @@ Fased ships three update channels:
 
 - **stable**: npm dist-tag `latest`.
 - **beta**: npm dist-tag `beta` (builds under test).
-- **dev**: moving head of `main` (git). npm dist-tag: `dev` (when published).
+- **dev**: developer channel for moving head of `main` (git). npm dist-tag:
+  `dev` (when published).
 
 <Note>
 The current public install path is repo-backed. Package dist-tags are
@@ -35,7 +36,9 @@ fased update --channel dev
 ```
 
 - `stable`/`beta` check out the latest matching tag (often the same tag).
-- `dev` switches to `main` and rebases on the upstream.
+- `dev` switches to `main` and rebases to the latest upstream commit only.
+  Use `fased update --channel dev --safe-fallback` only for repair/debug
+  sessions that should try older commits if latest `main` fails preflight.
 
 npm/pnpm global install:
 

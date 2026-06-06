@@ -215,7 +215,10 @@ fased update
 If the browser Control UI is healthy, you can also use **Update & Restart** from
 the system/debug update area. Rerun `./install.sh` when you want
 repair/reinstall behavior; it fast-forwards a clean Git checkout before
-building. Use `./install.sh --no-git-update` only when testing local changes.
+building. `fased update` uses the configured channel; stable is the default
+end-user channel. Use `fased update --channel dev` only when intentionally
+tracking `main`. Use `./install.sh --no-git-update` only when testing local
+changes.
 
 After install, open the dashboard, configure **Agent > Models**, send a first
 browser chat, then add channels, skills, services, wallets, mining, and tasks

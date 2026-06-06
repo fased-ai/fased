@@ -66,8 +66,11 @@ export async function updateStatusCommand(opts: UpdateStatusOptions): Promise<vo
         })
       : null;
 
-  const updateAvailability = resolveUpdateAvailability(update);
-  const updateLine = formatUpdateOneLiner(update).replace(/^Update:\s*/i, "");
+  const updateAvailability = resolveUpdateAvailability(update, { channel: channelInfo.channel });
+  const updateLine = formatUpdateOneLiner(update, { channel: channelInfo.channel }).replace(
+    /^Update:\s*/i,
+    "",
+  );
 
   if (opts.json) {
     defaultRuntime.log(
@@ -121,7 +124,7 @@ export async function updateStatusCommand(opts: UpdateStatusOptions): Promise<vo
   );
   defaultRuntime.log("");
 
-  const updateHint = formatUpdateAvailableHint(update);
+  const updateHint = formatUpdateAvailableHint(update, { channel: channelInfo.channel });
   if (updateHint) {
     defaultRuntime.log(theme.warn(updateHint));
   }

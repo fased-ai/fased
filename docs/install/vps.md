@@ -183,7 +183,9 @@ fased update
 
 If the browser Control UI is reachable, **Update & Restart** uses the same
 gateway update path. Rerun `./install.sh --hosting` only for repair/reinstall
-behavior; current installers fast-forward a clean Git checkout before building.
+behavior. `fased update` uses the configured channel; stable is the default
+end-user channel. Use `fased update --channel dev` only when intentionally
+tracking `main`.
 
 <Note>
 You do not need a Tailscale API key for the normal manual VPS flow. The

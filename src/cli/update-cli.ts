@@ -42,11 +42,17 @@ export function registerUpdateCli(program: Command) {
     .option("--tag <dist-tag|version>", "Override npm dist-tag or version for this update")
     .option("--timeout <seconds>", "Timeout for each update step in seconds (default: 1200)")
     .option("--yes", "Skip confirmation prompts (non-interactive)", false)
+    .option(
+      "--safe-fallback",
+      "Dev channel only: try older main commits when the latest commit fails preflight",
+      false,
+    )
     .addHelpText("after", () => {
       const examples = [
-        ["fased update", "Update a source checkout (git)"],
+        ["fased update", "Update to the configured channel (stable by default)"],
         ["fased update --channel beta", "Switch to beta channel (git + npm)"],
         ["fased update --channel dev", "Switch to dev channel (git + npm)"],
+        ["fased update --channel dev --safe-fallback", "Developer repair: try older main commits"],
         ["fased update --tag beta", "One-off update to a dist-tag or version"],
         ["fased update --dry-run", "Preview actions without changing anything"],
         ["fased update --no-restart", "Update without restarting the service"],
@@ -60,7 +66,9 @@ export function registerUpdateCli(program: Command) {
         .join("\n");
       return `
 ${theme.heading("What this does:")}
-  - Git checkouts: fetches, rebases, installs deps, builds, and runs doctor
+  - Default channel is stable for end users
+  - Git checkouts on stable/beta: check out the latest release tag, install, build, and run doctor
+  - Git checkouts on dev: update to latest origin/main only unless --safe-fallback is set
   - npm installs: updates via detected package manager
 
 ${theme.heading("Switch channels:")}
@@ -94,6 +102,7 @@ ${theme.muted("Docs:")} ${formatDocsLink("/cli/update", "docs.fased.ai/cli/updat
           tag: opts.tag as string | undefined,
           timeout: opts.timeout as string | undefined,
           yes: Boolean(opts.yes),
+          safeFallback: Boolean(opts.safeFallback),
         });
       } catch (err) {
         defaultRuntime.error(String(err));

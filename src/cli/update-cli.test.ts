@@ -433,11 +433,11 @@ describe("update-cli", () => {
 
   it.each([
     {
-      name: "defaults to dev channel for git installs when unset",
+      name: "defaults to stable channel for git installs when unset",
       mode: "git" as const,
       options: {},
       prepare: async () => {},
-      expectedChannel: "dev" as const,
+      expectedChannel: "stable" as const,
       expectedTag: undefined as string | undefined,
     },
     {
@@ -514,6 +514,16 @@ describe("update-cli", () => {
 
     const call = vi.mocked(runGatewayUpdate).mock.calls[0]?.[0];
     expect(call?.tag).toBe("next");
+  });
+
+  it("passes safe fallback only when explicitly requested", async () => {
+    vi.mocked(runGatewayUpdate).mockResolvedValue(makeOkUpdateResult());
+
+    await updateCommand({ channel: "dev", safeFallback: true });
+
+    const call = vi.mocked(runGatewayUpdate).mock.calls[0]?.[0];
+    expect(call?.channel).toBe("dev");
+    expect(call?.allowDevFallback).toBe(true);
   });
 
   it("updateCommand outputs JSON when --json is set", async () => {

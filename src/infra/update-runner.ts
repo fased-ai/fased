@@ -11,6 +11,7 @@ import { readPackageName, readPackageVersion } from "./package-json.js";
 import { trimLogTail } from "./restart-sentinel.js";
 import {
   channelToNpmTag,
+  DEFAULT_GIT_CHANNEL,
   DEFAULT_PACKAGE_CHANNEL,
   DEV_BRANCH,
   isBetaTag,
@@ -75,6 +76,7 @@ type UpdateRunnerOptions = {
   argv1?: string;
   tag?: string;
   channel?: UpdateChannel;
+  allowDevFallback?: boolean;
   timeoutMs?: number;
   runCommand?: CommandRunner;
   progress?: UpdateStepProgress;
@@ -319,6 +321,16 @@ function shouldRunDevPreflightLint(env: NodeJS.ProcessEnv = process.env): boolea
   return value === "1" || value === "true";
 }
 
+function isDiscardedPreflightCandidateFailure(step: UpdateStepResult): boolean {
+  return (
+    step.exitCode !== 0 &&
+    (step.name.startsWith("preflight checkout ") ||
+      step.name.startsWith("preflight deps install ") ||
+      step.name.startsWith("preflight build:app ") ||
+      step.name.startsWith("preflight lint "))
+  );
+}
+
 function normalizeTag(tag?: string) {
   const trimmed = tag?.trim();
   if (!trimmed) {
@@ -396,7 +408,7 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
     });
     const beforeSha = beforeShaResult.stdout.trim() || null;
     const beforeVersion = await readPackageVersion(gitRoot);
-    const channel: UpdateChannel = opts.channel ?? "dev";
+    const channel: UpdateChannel = opts.channel ?? DEFAULT_GIT_CHANNEL;
     const branch = channel === "dev" ? await readBranchName(runCommand, gitRoot, timeoutMs) : null;
     const needsCheckoutMain = channel === "dev" && branch !== DEV_BRANCH;
     gitTotalSteps = channel === "dev" ? (needsCheckoutMain ? 11 : 10) : 9;
@@ -519,10 +531,11 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
         };
       }
 
+      const preflightMaxCommits = opts.allowDevFallback ? PREFLIGHT_MAX_COMMITS : 1;
       const revListStep = await runStep(
         step(
           "git rev-list",
-          ["git", "-C", gitRoot, "rev-list", `--max-count=${PREFLIGHT_MAX_COMMITS}`, upstreamSha],
+          ["git", "-C", gitRoot, "rev-list", `--max-count=${preflightMaxCommits}`, upstreamSha],
           gitRoot,
         ),
       );
@@ -844,7 +857,9 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
       }
     }
 
-    const failedStep = steps.find((s) => s.exitCode !== 0);
+    const failedStep = steps.find(
+      (s) => s.exitCode !== 0 && !isDiscardedPreflightCandidateFailure(s),
+    );
     const afterShaStep = await runStep(
       step("git rev-parse HEAD (after)", ["git", "-C", gitRoot, "rev-parse", "HEAD"], gitRoot),
     );

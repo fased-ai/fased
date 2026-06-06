@@ -95,7 +95,7 @@ Use `./install.sh --no-git-update` only when testing local changes.
 
 `fased update`:
 
-- updates code
+- updates to the configured channel; stable is the default end-user channel
 - rebuilds
 - refreshes the installed runtime
 - restarts when needed

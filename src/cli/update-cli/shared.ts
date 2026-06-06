@@ -28,6 +28,7 @@ export type UpdateCommandOptions = {
   tag?: string;
   timeout?: string;
   yes?: boolean;
+  safeFallback?: boolean;
 };
 
 export type UpdateStatusOptions = {

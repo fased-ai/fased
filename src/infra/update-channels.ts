@@ -2,7 +2,7 @@ export type UpdateChannel = "stable" | "beta" | "dev";
 export type UpdateChannelSource = "config" | "git-tag" | "git-branch" | "default";
 
 export const DEFAULT_PACKAGE_CHANNEL: UpdateChannel = "stable";
-export const DEFAULT_GIT_CHANNEL: UpdateChannel = "dev";
+export const DEFAULT_GIT_CHANNEL: UpdateChannel = "stable";
 export const DEV_BRANCH = "main";
 
 export function normalizeUpdateChannel(value?: string | null): UpdateChannel | null {
@@ -47,10 +47,6 @@ export function resolveEffectiveUpdateChannel(params: {
     const tag = params.git?.tag;
     if (tag) {
       return { channel: isBetaTag(tag) ? "beta" : "stable", source: "git-tag" };
-    }
-    const branch = params.git?.branch;
-    if (branch && branch !== "HEAD") {
-      return { channel: "dev", source: "git-branch" };
     }
     return { channel: DEFAULT_GIT_CHANNEL, source: "default" };
   }
