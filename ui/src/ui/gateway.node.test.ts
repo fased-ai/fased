@@ -80,7 +80,8 @@ vi.mock("./device-identity.ts", () => ({
   signDevicePayload: signDevicePayloadMock,
 }));
 
-const { CONTROL_UI_OPERATOR_SCOPES, GatewayBrowserClient } = await import("./gateway.ts");
+const { CONTROL_UI_OPERATOR_SCOPES, GatewayBrowserClient, GatewayRequestTimeoutError } =
+  await import("./gateway.ts");
 
 type ConnectFrame = {
   id?: string;
@@ -402,6 +403,46 @@ describe("GatewayBrowserClient", () => {
 
     expect(ws.sent).toHaveLength(0);
 
+    vi.useRealTimers();
+  });
+
+  it("rejects unanswered gateway requests instead of leaving UI loaders pending forever", async () => {
+    vi.useFakeTimers();
+    const client = new GatewayBrowserClient({
+      url: "ws://127.0.0.1:18789",
+      token: "shared-auth-token",
+    });
+
+    const { ws, connectFrame } = await startConnect(client);
+    ws.emitMessage({
+      type: "res",
+      id: connectFrame.id,
+      ok: true,
+      payload: {
+        type: "hello-ok",
+        protocol: 3,
+        auth: {},
+      },
+    });
+
+    const request = client.request("status", {}, { timeoutMs: 25 });
+    const rejection = request.catch((err: unknown) => err);
+    const requestFrame = JSON.parse(ws.sent.at(-1) ?? "{}") as { id?: string; method?: string };
+    expect(requestFrame.method).toBe("status");
+
+    await vi.advanceTimersByTimeAsync(25);
+    const error = await rejection;
+    expect(error).toBeInstanceOf(GatewayRequestTimeoutError);
+    expect(error).toHaveProperty("message", "gateway request timed out after 25ms: status");
+
+    ws.emitMessage({
+      type: "res",
+      id: requestFrame.id,
+      ok: true,
+      payload: { ok: true },
+    });
+
+    client.stop();
     vi.useRealTimers();
   });
 

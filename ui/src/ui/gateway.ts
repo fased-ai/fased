@@ -71,6 +71,23 @@ export type GatewayHelloOk = {
 type Pending = {
   resolve: (value: unknown) => void;
   reject: (err: unknown) => void;
+  timer: number | null;
+};
+
+export class GatewayRequestTimeoutError extends Error {
+  readonly method: string;
+  readonly timeoutMs: number;
+
+  constructor(method: string, timeoutMs: number) {
+    super(`gateway request timed out after ${timeoutMs}ms: ${method}`);
+    this.name = "GatewayRequestTimeoutError";
+    this.method = method;
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+export type GatewayRequestOptions = {
+  timeoutMs?: number;
 };
 
 export const CONTROL_UI_OPERATOR_SCOPES = [
@@ -92,10 +109,14 @@ export type GatewayBrowserClientOptions = {
   onEvent?: (evt: GatewayEventFrame) => void;
   onClose?: (info: { code: number; reason: string; error?: GatewayErrorInfo }) => void;
   onGap?: (info: { expected: number; received: number }) => void;
+  requestTimeoutMs?: number;
+  connectTimeoutMs?: number;
 };
 
 // 4008 = application-defined code (browser rejects 1008 "Policy Violation")
 const CONNECT_FAILED_CLOSE_CODE = 4008;
+const DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS = 30_000;
+const DEFAULT_GATEWAY_CONNECT_TIMEOUT_MS = 15_000;
 
 export class GatewayBrowserClient {
   private ws: WebSocket | null = null;
@@ -162,6 +183,9 @@ export class GatewayBrowserClient {
 
   private flushPending(err: Error) {
     for (const [, p] of this.pending) {
+      if (p.timer !== null) {
+        window.clearTimeout(p.timer);
+      }
       p.reject(err);
     }
     this.pending.clear();
@@ -256,7 +280,9 @@ export class GatewayBrowserClient {
       locale: navigator.language,
     };
 
-    void this.request<GatewayHelloOk>("connect", params)
+    void this.request<GatewayHelloOk>("connect", params, {
+      timeoutMs: this.opts.connectTimeoutMs ?? DEFAULT_GATEWAY_CONNECT_TIMEOUT_MS,
+    })
       .then((hello) => {
         if (hello?.auth?.deviceToken && deviceIdentity) {
           storeDeviceAuthToken({
@@ -275,6 +301,11 @@ export class GatewayBrowserClient {
             code: err.gatewayCode,
             message: err.message,
             details: err.details,
+          };
+        } else if (err instanceof GatewayRequestTimeoutError) {
+          this.pendingConnectError = {
+            code: "REQUEST_TIMEOUT",
+            message: err.message,
           };
         } else {
           this.pendingConnectError = undefined;
@@ -328,6 +359,9 @@ export class GatewayBrowserClient {
         return;
       }
       this.pending.delete(res.id);
+      if (pending.timer !== null) {
+        window.clearTimeout(pending.timer);
+      }
       if (res.ok) {
         pending.resolve(res.payload);
       } else {
@@ -343,14 +377,34 @@ export class GatewayBrowserClient {
     }
   }
 
-  request<T = unknown>(method: string, params?: unknown): Promise<T> {
+  request<T = unknown>(
+    method: string,
+    params?: unknown,
+    options?: GatewayRequestOptions,
+  ): Promise<T> {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       return Promise.reject(new Error("gateway not connected"));
     }
     const id = generateUUID();
     const frame = { type: "req", id, method, params };
+    const requestedTimeoutMs = options?.timeoutMs ?? this.opts.requestTimeoutMs;
+    const timeoutMs =
+      typeof requestedTimeoutMs === "number" && Number.isFinite(requestedTimeoutMs)
+        ? Math.max(0, Math.floor(requestedTimeoutMs))
+        : DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS;
     const p = new Promise<T>((resolve, reject) => {
-      this.pending.set(id, { resolve: (v) => resolve(v as T), reject });
+      let timer: number | null = null;
+      if (timeoutMs > 0) {
+        timer = window.setTimeout(() => {
+          const pending = this.pending.get(id);
+          if (!pending) {
+            return;
+          }
+          this.pending.delete(id);
+          pending.reject(new GatewayRequestTimeoutError(method, timeoutMs));
+        }, timeoutMs);
+      }
+      this.pending.set(id, { resolve: (v) => resolve(v as T), reject, timer });
     });
     this.ws.send(JSON.stringify(frame));
     return p;
