@@ -3811,34 +3811,6 @@ function compactReference(value: string | undefined, start = 10, end = 8): strin
   return `${trimmed.slice(0, start)}...${trimmed.slice(-end)}`;
 }
 
-export function describeFederationBondNotice(warning: string): { text: string; className: string } {
-  if (warning === "Bond Vault is not configured for live SAT bond inspection.") {
-    return {
-      text: "Configure",
-      className: "callout",
-    };
-  }
-  if (warning === "Current SAT bond is below published network tiers.") {
-    return {
-      text: "Configure",
-      className: "callout",
-    };
-  }
-  return { text: warning, className: "callout warn" };
-}
-
-function dedupeFederationBondNotices(warnings: string[]): Array<{
-  text: string;
-  className: string;
-}> {
-  const notices = new Map<string, { text: string; className: string }>();
-  for (const warning of warnings) {
-    const notice = describeFederationBondNotice(warning);
-    notices.set(`${notice.className}:${notice.text}`, notice);
-  }
-  return [...notices.values()];
-}
-
 function formatOperatorEconomyAssetLabel(
   asset: FederationOperatorEconomyFeeObjectRecord["asset"],
 ): string {
@@ -4298,7 +4270,6 @@ export function renderFederation(props: FederationProps) {
   const bondStatus = props.status?.bond ?? null;
   const bondTier = bondStatus?.tier ?? statusToken?.bondTier ?? "none";
   const bondState = bondStatus?.status ?? statusToken?.bondStatus ?? "missing";
-  const bondWarnings = bondStatus?.warnings ?? [];
   const bondScopes = bondStatus?.derivedScopes ?? statusToken?.bondDerivedScopes ?? [];
   const bondAmountRaw = bondStatus?.amountRaw ?? statusToken?.bondAmountRaw ?? "0";
   const bondAmountSat = formatSatAmountFromRaw(bondAmountRaw);
@@ -4376,7 +4347,6 @@ export function renderFederation(props: FederationProps) {
     ? compactReference(bondWalletAddress, 4, 4)
     : "Configure";
   const proofRefCompact = proofRef ? compactReference(proofRef, 4, 4) : "Configure";
-  const bondNotices = dedupeFederationBondNotices(bondWarnings);
   const localOfferDraftOpen = props.localOfferDraftOpen;
   const localListingDraftKind = props.localListingDraftKind ?? "offer";
   const localOfferEditorTitle =
@@ -6475,18 +6445,6 @@ export function renderFederation(props: FederationProps) {
                     ${
                       bondUnlockPendingText
                         ? html`<div class="muted">${bondUnlockPendingText}</div>`
-                        : nothing
-                    }
-                    ${
-                      bondNotices.length > 0
-                        ? html`
-                            <div class="stack">
-                              ${bondNotices.map(
-                                (notice) =>
-                                  html`<div class=${notice.className}>${notice.text}</div>`,
-                              )}
-                            </div>
-                          `
                         : nothing
                     }
                   </div>

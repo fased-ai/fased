@@ -116,6 +116,7 @@ describe("readWalletStatusSnapshot", () => {
   });
 
   it("redacts secret-bearing provider diagnostics from status errors", async () => {
+    vi.mocked(resolveWalletProviderId).mockReturnValue("embedded-keystore");
     vi.mocked(createWalletProviderAdapter).mockReturnValue({
       health: vi.fn().mockResolvedValue({
         ok: false,
@@ -128,6 +129,23 @@ describe("readWalletStatusSnapshot", () => {
 
     expect(status.error).toContain("api_key=***");
     expect(status.error).not.toContain("super-secret-rpc-key");
+  });
+
+  it("treats fresh local-signer installs with no wallets as setup pending", async () => {
+    vi.mocked(createWalletProviderAdapter).mockReturnValue({
+      health: vi.fn().mockResolvedValue({
+        ok: false,
+        details:
+          "local-socket-signer socket is unavailable: ENOENT: no such file or directory, stat '/home/app/.fased/wallet/local-signer.sock'",
+      }),
+      getAddresses: vi.fn(),
+    } as never);
+
+    const status = await readWalletStatusSnapshot();
+
+    expect(status.service.healthy).toBe(true);
+    expect(status.startupState).toBe("healthy");
+    expect(status.error).toBeUndefined();
   });
 
   it("uses config env vars when probing wallet provider health", async () => {

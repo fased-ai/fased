@@ -2992,6 +2992,13 @@ export async function collectWalletSignerDoctorReport(
 
   const providerId = resolveWalletProviderId(cfg, effectiveEnv);
   const isLocalSigner = providerId === "local-socket-signer";
+  const providerRegistry = readWalletProviderRegistry(effectiveEnv);
+  const providerWallets = providerRegistry.wallets.filter(
+    (entry) => entry.providerId === providerId,
+  );
+  const localSignerSetupPending = isLocalSigner && providerWallets.length === 0;
+  const isNotFoundError = (err: unknown): boolean =>
+    (err as NodeJS.ErrnoException | undefined)?.code === "ENOENT";
 
   if (isLocalSigner) {
     try {
@@ -3002,7 +3009,11 @@ export async function collectWalletSignerDoctorReport(
         push("socket.mode", mode === 0o600, `mode=${mode.toString(8)}`);
       } catch {}
     } catch (err) {
-      push("socket.exists", false, String(err));
+      push(
+        "socket.exists",
+        localSignerSetupPending && isNotFoundError(err),
+        localSignerSetupPending && isNotFoundError(err) ? "Configure" : String(err),
+      );
     }
 
     try {
@@ -3019,33 +3030,40 @@ export async function collectWalletSignerDoctorReport(
         push("pid.alive", false, "invalid pid file");
       }
     } catch (err) {
-      push("pid.alive", false, String(err));
+      push(
+        "pid.alive",
+        localSignerSetupPending && isNotFoundError(err),
+        localSignerSetupPending && isNotFoundError(err) ? "Configure" : String(err),
+      );
     }
 
     try {
       const st = fs.statSync(auditPath);
       push("audit.exists", true, `bytes=${st.size}`);
     } catch (err) {
-      push("audit.exists", false, String(err));
+      push(
+        "audit.exists",
+        localSignerSetupPending && isNotFoundError(err),
+        localSignerSetupPending && isNotFoundError(err) ? "Configure" : String(err),
+      );
     }
 
-    try {
-      const signerHealth = await createWalletProviderAdapter({
-        cfg,
-        wallet,
-        env: effectiveEnv,
-        providerIdOverride: "local-socket-signer",
-      }).health();
-      push("socket.health", signerHealth.ok, signerHealth.details);
-    } catch (err) {
-      push("socket.health", false, String(err));
+    if (localSignerSetupPending) {
+      push("socket.health", true, "Configure");
+    } else {
+      try {
+        const signerHealth = await createWalletProviderAdapter({
+          cfg,
+          wallet,
+          env: effectiveEnv,
+          providerIdOverride: "local-socket-signer",
+        }).health();
+        push("socket.health", signerHealth.ok, signerHealth.details);
+      } catch (err) {
+        push("socket.health", false, String(err));
+      }
     }
   }
-
-  const providerRegistry = readWalletProviderRegistry(effectiveEnv);
-  const providerWallets = providerRegistry.wallets.filter(
-    (entry) => entry.providerId === providerId,
-  );
   const providerDefaultWallet = providerRegistry.defaultWalletId
     ? providerWallets.find((entry) => entry.id === providerRegistry.defaultWalletId)
     : undefined;

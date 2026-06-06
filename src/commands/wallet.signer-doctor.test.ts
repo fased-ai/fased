@@ -172,4 +172,45 @@ describe("collectWalletSignerDoctorReport", () => {
     expect(report.pidPath).toBe(path.join(walletDir, "local-signer.pid"));
     expect(report.auditPath).toBe(path.join(walletDir, "local-signer.audit.jsonl"));
   });
+
+  it("does not surface raw missing sidecar ENOENTs before wallet setup", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-wallet-doctor-fresh-"));
+    tempDirs.push(root);
+    const stateDir = path.join(root, "state");
+    const walletDir = path.join(stateDir, "wallet");
+    fs.mkdirSync(walletDir, { recursive: true });
+
+    const report = await collectWalletSignerDoctorReport(
+      {
+        HOME: "/home/app",
+        FASED_STATE_DIR: stateDir,
+      } as NodeJS.ProcessEnv,
+      {
+        config: {
+          wallet: {
+            provider: { id: "local-socket-signer" },
+          },
+        },
+      },
+    );
+
+    expect(report.ok).toBe(true);
+    expect(report.checks.find((check) => check.check === "socket.exists")).toMatchObject({
+      ok: true,
+      detail: "Configure",
+    });
+    expect(report.checks.find((check) => check.check === "pid.alive")).toMatchObject({
+      ok: true,
+      detail: "Configure",
+    });
+    expect(report.checks.find((check) => check.check === "audit.exists")).toMatchObject({
+      ok: true,
+      detail: "Configure",
+    });
+    expect(report.checks.find((check) => check.check === "socket.health")).toMatchObject({
+      ok: true,
+      detail: "Configure",
+    });
+    expect(JSON.stringify(report.checks)).not.toContain("ENOENT");
+  });
 });

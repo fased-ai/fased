@@ -5,7 +5,6 @@ import {
 } from "../marketplace-order-evidence.ts";
 import {
   buildMarketplaceOrderStatusHistory,
-  describeFederationBondNotice,
   describeOperatorReadiness,
   renderFederation,
   resolveMarketplaceIndexOrderReview,
@@ -551,21 +550,6 @@ describe("describeOperatorReadiness", () => {
 });
 
 describe("renderFederation", () => {
-  it("renders fresh bond setup notices as configure prompts", () => {
-    expect(
-      describeFederationBondNotice("Bond Vault is not configured for live SAT bond inspection."),
-    ).toEqual({
-      text: "Configure",
-      className: "callout",
-    });
-    expect(
-      describeFederationBondNotice("Current SAT bond is below published network tiers."),
-    ).toEqual({
-      text: "Configure",
-      className: "callout",
-    });
-  });
-
   it("surfaces live bond state without noisy access copy", () => {
     const text = flattenTemplateText(
       renderFederation({

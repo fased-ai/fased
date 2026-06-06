@@ -3,6 +3,7 @@ import type { WalletProviderId } from "../config/types.wallet.js";
 import { readWalletApprovalAuthSnapshot } from "./wallet-approval-auth.js";
 import { readWalletCustodyStatus } from "./wallet-custody.js";
 import { resolveWalletPolicyConfig } from "./wallet-policy.js";
+import { readWalletProviderRegistry } from "./wallet-provider-registry.js";
 import {
   createWalletProviderAdapter,
   resolveWalletProviderId,
@@ -120,6 +121,10 @@ export async function readWalletStatusSnapshot(params?: {
   const cfg = params?.config ?? loadConfig();
   const effectiveEnv = { ...env, ...cfg.env?.vars };
   const providerId = resolveWalletProviderId(cfg, effectiveEnv);
+  const providerRegistry = readWalletProviderRegistry(effectiveEnv);
+  const localSignerSetupPending =
+    providerId === "local-socket-signer" &&
+    !providerRegistry.wallets.some((wallet) => wallet.providerId === "local-socket-signer");
   const runtimeConfig = resolveWalletRuntimeConfig(cfg, effectiveEnv);
   const resolved = resolveWalletPolicyConfig(cfg, effectiveEnv, params?.walletId);
   const gatewayMode = (effectiveEnv.FASED_GATEWAY_MODE ?? "").trim().toLowerCase();
@@ -164,7 +169,7 @@ export async function readWalletStatusSnapshot(params?: {
     providerHealth = { ok: false, details: walletDiagnosticErrorString(err) };
   }
 
-  const serviceHealthy = Boolean(providerHealth.ok);
+  const serviceHealthy = Boolean(providerHealth.ok || localSignerSetupPending);
   const authState: WalletStatusSnapshot["authState"] = serviceHealthy ? "ok" : "required";
   const startupState: WalletStatusSnapshot["startupState"] = serviceHealthy
     ? "healthy"
