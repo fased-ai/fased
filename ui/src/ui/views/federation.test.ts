@@ -566,7 +566,7 @@ describe("renderFederation", () => {
     });
   });
 
-  it("surfaces live bond state and derived federation privileges", () => {
+  it("surfaces live bond state without noisy access copy", () => {
     const text = flattenTemplateText(
       renderFederation({
         loading: false,
@@ -975,8 +975,10 @@ describe("renderFederation", () => {
 
     expect(text).toContain("Fased Network trust state: verified");
     expect(text).toContain("Live");
-    expect(text).toContain("Access");
-    expect(text).toContain("Read, Write");
+    expect(text).not.toContain("Access");
+    expect(text).not.toContain("Read, Write");
+    expect(text).not.toContain("Payments");
+    expect(text).not.toContain("proof-derived");
     expect(text).toContain("Bond state:");
     expect(text).toContain("Market");
     expect(text).toContain("Vault");

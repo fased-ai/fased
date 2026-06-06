@@ -3382,11 +3382,6 @@ async function readLocalFederationStatus(
           : "Bond unlock is in progress. Network access state can change after unlock finalizes.",
       );
     }
-    if (liveBond && (token.bondDerivedScopes?.length ?? 0) === 0) {
-      warnings.push(
-        "On-chain SAT bond exists, but federation proof has not granted network scopes yet.",
-      );
-    }
     if ((liveBond?.tierLabel ?? tokenBondTier ?? "none") === "none") {
       warnings.push("Current SAT bond is below published network tiers.");
     }

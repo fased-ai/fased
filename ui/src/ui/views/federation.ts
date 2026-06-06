@@ -3786,34 +3786,6 @@ function isPositiveRaw(raw: string | undefined): boolean {
   }
 }
 
-function formatBondScopeLabel(scope: string): string {
-  switch (scope) {
-    case "offers.publish":
-      return "Public offers";
-    case "payments.receive.boost":
-      return "Boosted payments";
-    case "directory.priority.basic":
-      return "Directory priority";
-    case "routing.capacity.basic":
-      return "Routing priority";
-    default:
-      return scope;
-  }
-}
-
-function formatFederationTokenScopeLabel(scope: string): string {
-  switch (scope) {
-    case "federation.read":
-      return "Read";
-    case "federation.write":
-      return "Write";
-    case "payments.receive":
-      return "Payments";
-    default:
-      return scope;
-  }
-}
-
 function renderFactMeta(text: unknown) {
   if (typeof text === "string") {
     const value = text.trim();
@@ -4319,10 +4291,6 @@ export function renderFederation(props: FederationProps) {
   const statusHandle = statusToken?.handle ?? "";
   const statusExpiresAt = statusToken?.expiresAt ?? "n/a";
   const statusExpiresDisplay = formatDateTimeHuman(statusToken?.expiresAt);
-  const statusScopes = Array.isArray(statusToken?.scopes) ? statusToken.scopes : [];
-  const statusAccessDisplay = statusScopes.length
-    ? statusScopes.map((scope) => formatFederationTokenScopeLabel(scope)).join(", ")
-    : "Configure";
   const statusTrustState = props.managedMode
     ? managedTrustState
     : (props.token?.trustState ?? "pending");
@@ -4364,10 +4332,7 @@ export function renderFederation(props: FederationProps) {
     (bondStakingDistributor?.status === "active" &&
       bondStakingPosition?.exists === true &&
       isPositiveRaw(bondStakingPosition.activeStakeRaw));
-  const bondPrivilegesInfo =
-    bondScopes.length > 0
-      ? `Bond tier: ${bondTier}. Active access: ${bondScopes.map((scope) => formatBondScopeLabel(scope)).join(", ")}.`
-      : `Bond tier: ${bondTier}. No proof-derived Fased Network access is active yet.`;
+  const bondSummaryInfo = `Bond tier: ${bondTier}. Status: ${bondState}.`;
   const bondWalletOptions = props.walletNamedWallets.filter(
     (wallet) =>
       Boolean(wallet.addresses?.solana) &&
@@ -6348,11 +6313,6 @@ export function renderFederation(props: FederationProps) {
                         meta: tokenLifecycleMeta,
                         title: statusExpiresAt,
                       })}
-                      ${renderFactCard({
-                        label: "Access",
-                        value: statusAccessDisplay,
-                        title: statusScopes.join(", ") || "Configure",
-                      })}
                     </div>
                     <div class="federation-token-actions">
                       <button
@@ -6397,7 +6357,7 @@ export function renderFederation(props: FederationProps) {
                           </span>
                         `,
                         meta: `${bondVaultSatBalance} · ${bondVaultSolBalance}`,
-                        info: bondPrivilegesInfo,
+                        info: bondSummaryInfo,
                         title: bondWalletAddress || "Configure",
                       })}
                       ${renderFactCard({
