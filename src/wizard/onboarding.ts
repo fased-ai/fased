@@ -202,6 +202,49 @@ export async function runOnboardingWizard(
     }
     return next;
   };
+  const syncLocalSignerRuntimeEnvIntoConfig = (cfg: FasedAgentConfig): FasedAgentConfig => {
+    if (
+      !(cfg.wallet?.runtime?.enabled === true && cfg.wallet?.provider?.id === "local-socket-signer")
+    ) {
+      return cfg;
+    }
+    let next = cfg;
+    const signerSocketPath = resolveLocalSignerSocketPath(process.env);
+    process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET = signerSocketPath;
+    next = setConfigEnvVar(next, "FASED_WALLET_LOCAL_SIGNER_SOCKET", signerSocketPath);
+    const backendSocketPath = resolveLocalSignerBackendSocketPath(process.env);
+    if (backendSocketPath !== signerSocketPath) {
+      process.env.FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET = backendSocketPath;
+      next = setConfigEnvVar(next, "FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET", backendSocketPath);
+    } else {
+      delete process.env.FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET;
+      next = setConfigEnvVar(next, "FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET", undefined);
+    }
+    const signerStateDir = resolveLocalSignerMaterialRootDir(process.env);
+    if (signerStateDir !== ensureWalletStateDir(process.env).rootDir) {
+      process.env.FASED_WALLET_SIGNER_STATE_DIR = signerStateDir;
+      next = setConfigEnvVar(next, "FASED_WALLET_SIGNER_STATE_DIR", signerStateDir);
+    } else {
+      delete process.env.FASED_WALLET_SIGNER_STATE_DIR;
+      next = setConfigEnvVar(next, "FASED_WALLET_SIGNER_STATE_DIR", undefined);
+    }
+    const signerRunAsUser = resolveLocalSignerRunAsUser(process.env);
+    if (signerRunAsUser) {
+      process.env.FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER = signerRunAsUser;
+      next = setConfigEnvVar(next, "FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER", signerRunAsUser);
+    } else {
+      delete process.env.FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER;
+      next = setConfigEnvVar(next, "FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER", undefined);
+    }
+    const signerBinPath = String(process.env.FASED_WALLET_LOCAL_SIGNER_BIN ?? "").trim();
+    if (signerBinPath) {
+      next = setConfigEnvVar(next, "FASED_WALLET_LOCAL_SIGNER_BIN", signerBinPath);
+    } else {
+      delete process.env.FASED_WALLET_LOCAL_SIGNER_BIN;
+      next = setConfigEnvVar(next, "FASED_WALLET_LOCAL_SIGNER_BIN", undefined);
+    }
+    return next;
+  };
   const jupiterApiKeyEnvKey = "FASED_JUPITER_API_KEY";
   const jupiterTriggerApiBaseUrlEnvKey = "FASED_JUPITER_TRIGGER_API_BASE_URL";
   const readJupiterLimitOrderApiKey = (): string =>
@@ -1206,64 +1249,16 @@ export async function runOnboardingWizard(
     nextConfig,
     prompter,
   });
-  if (
-    nextConfig.wallet?.runtime?.enabled === true &&
-    nextConfig.wallet?.provider?.id === "local-socket-signer"
-  ) {
-    const signerSocketPath = resolveLocalSignerSocketPath(process.env);
-    process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET = signerSocketPath;
-    nextConfig = setConfigEnvVar(nextConfig, "FASED_WALLET_LOCAL_SIGNER_SOCKET", signerSocketPath);
-    const backendSocketPath = resolveLocalSignerBackendSocketPath(process.env);
-    if (backendSocketPath !== signerSocketPath) {
-      process.env.FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET = backendSocketPath;
-      nextConfig = setConfigEnvVar(
-        nextConfig,
-        "FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET",
-        backendSocketPath,
-      );
-    } else {
-      delete process.env.FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET;
-      nextConfig = setConfigEnvVar(
-        nextConfig,
-        "FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET",
-        undefined,
-      );
-    }
-    const signerStateDir = resolveLocalSignerMaterialRootDir(process.env);
-    if (signerStateDir !== ensureWalletStateDir(process.env).rootDir) {
-      process.env.FASED_WALLET_SIGNER_STATE_DIR = signerStateDir;
-      nextConfig = setConfigEnvVar(nextConfig, "FASED_WALLET_SIGNER_STATE_DIR", signerStateDir);
-    } else {
-      delete process.env.FASED_WALLET_SIGNER_STATE_DIR;
-      nextConfig = setConfigEnvVar(nextConfig, "FASED_WALLET_SIGNER_STATE_DIR", undefined);
-    }
-    const signerRunAsUser = resolveLocalSignerRunAsUser(process.env);
-    if (signerRunAsUser) {
-      process.env.FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER = signerRunAsUser;
-      nextConfig = setConfigEnvVar(
-        nextConfig,
-        "FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER",
-        signerRunAsUser,
-      );
-    } else {
-      delete process.env.FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER;
-      nextConfig = setConfigEnvVar(nextConfig, "FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER", undefined);
-    }
-    const signerBinPath = String(process.env.FASED_WALLET_LOCAL_SIGNER_BIN ?? "").trim();
-    if (signerBinPath) {
-      nextConfig = setConfigEnvVar(nextConfig, "FASED_WALLET_LOCAL_SIGNER_BIN", signerBinPath);
-    } else {
-      delete process.env.FASED_WALLET_LOCAL_SIGNER_BIN;
-      nextConfig = setConfigEnvVar(nextConfig, "FASED_WALLET_LOCAL_SIGNER_BIN", undefined);
-    }
-  }
+  nextConfig = syncLocalSignerRuntimeEnvIntoConfig(nextConfig);
 
   let onboardingWalletSecurityFocus: {
     walletId: string;
     role: "agent" | "vault";
   } | null = null;
 
-  if (nextConfig.wallet?.runtime?.enabled) {
+  const offerHostedWalletSetup =
+    hostingMode && flow === "quickstart" && nextConfig.wallet?.runtime?.enabled !== true;
+  if (nextConfig.wallet?.runtime?.enabled || offerHostedWalletSetup) {
     let attemptedSelfHostedSetupThisRun = false;
     let createdOrImportedSelfHostedWalletThisRun = false;
     const previousSuppressOverwrite = process.env.FASED_SUPPRESS_CONFIG_OVERWRITE_LOG;
@@ -1592,6 +1587,20 @@ export async function runOnboardingWizard(
             initialValue: false,
           });
           continue;
+        }
+
+        if (nextConfig.wallet?.runtime?.enabled !== true) {
+          if (hostingMode) {
+            nextConfig = applyHostedLocalSignerDefaults(nextConfig);
+          }
+          nextConfig = await configureWalletForOnboarding({
+            flow,
+            forceEnable: true,
+            hostProfile,
+            nextConfig,
+            prompter,
+          });
+          nextConfig = syncLocalSignerRuntimeEnvIntoConfig(nextConfig);
         }
 
         attemptedSelfHostedSetupThisRun = true;

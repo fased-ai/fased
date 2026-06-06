@@ -74,6 +74,11 @@ const setDefaultWallet = vi.hoisted(() => vi.fn());
 const setNamedWalletRole = vi.hoisted(() => vi.fn());
 const resolveWalletUserRole = vi.hoisted(() => vi.fn<() => unknown>(() => undefined));
 const restartLocalSocketSigner = vi.hoisted(() => vi.fn(async () => {}));
+const installSignerdBinary = vi.hoisted(() => vi.fn());
+const migrateLocalSignerKeystoreToMaterialDir = vi.hoisted(() =>
+  vi.fn(({ keystorePath }: { keystorePath: string }) => keystorePath),
+);
+const resolveSignerdBinaryPath = vi.hoisted(() => vi.fn(() => "/tmp/fased-signerd"));
 const configureWalletForOnboarding = vi.hoisted(() =>
   vi.fn(async ({ nextConfig }) => ({
     ...nextConfig,
@@ -148,7 +153,10 @@ vi.mock("../wallet/wallet-provider-registry.js", () => ({
 
 vi.mock("./onboarding.wallet.js", () => ({
   configureWalletForOnboarding,
+  installSignerdBinary,
+  migrateLocalSignerKeystoreToMaterialDir,
   restartLocalSocketSigner,
+  resolveSignerdBinaryPath,
 }));
 
 vi.mock("../commands/onboard-helpers.js", async (importActual) => {
@@ -344,6 +352,7 @@ describe("runOnboardingWizard", () => {
         passkeyCount: 0,
       },
     });
+    walletSetupCommand.mockClear();
     configureGatewayForOnboarding.mockClear();
     configureFederationForOnboarding.mockClear();
     configureWalletForOnboarding.mockClear();
@@ -1783,6 +1792,147 @@ describe("runOnboardingWizard", () => {
         expect.any(String),
       );
       expect(runtime.exit).not.toHaveBeenCalled();
+    } finally {
+      await fs.rm(tempHome, { recursive: true, force: true });
+    }
+  });
+
+  it("offers wallet setup during hosted quickstart even before wallet runtime exists", async () => {
+    const tempHome = await fs.mkdtemp(path.join(os.tmpdir(), "fased-hosted-wallet-skip-"));
+    vi.stubEnv("USER", "app");
+    vi.stubEnv("HOME", tempHome);
+    configureWalletForOnboarding.mockImplementationOnce(async ({ nextConfig }) => ({
+      ...nextConfig,
+      wallet: {
+        ...nextConfig.wallet,
+        runtime: { ...nextConfig.wallet?.runtime, enabled: false },
+      },
+    }));
+    const select = vi.fn(async (opts: unknown) => {
+      const rawMessage = (opts as { message?: unknown })?.message;
+      const message = typeof rawMessage === "string" ? rawMessage : "";
+      if (message === "Wallet setup action") {
+        return "skip";
+      }
+      if (message === "How do you want to hatch your bot?") {
+        return "skip";
+      }
+      return "quickstart";
+    }) as unknown as WizardPrompter["select"];
+    const prompter = createWizardPrompter({ select });
+    writeConfigFile.mockImplementationOnce(async () => {
+      throw new Error("write-reached");
+    });
+
+    try {
+      await expect(
+        runOnboardingWizard(
+          {
+            acceptRisk: true,
+            flow: "quickstart",
+            authChoice: "skip",
+            hostProfile: "hosting",
+            installDaemon: false,
+            skipProviders: true,
+            skipSkills: true,
+            skipHealth: true,
+            skipUi: true,
+          },
+          createRuntime({ throwsOnExit: true }),
+          prompter,
+        ),
+      ).rejects.toThrow("write-reached");
+
+      expect(select).toHaveBeenCalledWith(
+        expect.objectContaining({ message: "Wallet setup action" }),
+      );
+      expect(configureWalletForOnboarding).toHaveBeenCalledTimes(1);
+      expect(walletSetupCommand).not.toHaveBeenCalled();
+    } finally {
+      await fs.rm(tempHome, { recursive: true, force: true });
+    }
+  });
+
+  it("enables wallet runtime only after hosted quickstart user chooses wallet creation", async () => {
+    const tempHome = await fs.mkdtemp(path.join(os.tmpdir(), "fased-hosted-wallet-create-"));
+    vi.stubEnv("USER", "app");
+    vi.stubEnv("HOME", tempHome);
+    configureWalletForOnboarding
+      .mockImplementationOnce(async ({ nextConfig }) => ({
+        ...nextConfig,
+        wallet: {
+          ...nextConfig.wallet,
+          runtime: { ...nextConfig.wallet?.runtime, enabled: false },
+        },
+      }))
+      .mockImplementationOnce(async ({ nextConfig }) => ({
+        ...nextConfig,
+        wallet: {
+          ...nextConfig.wallet,
+          provider: { ...nextConfig.wallet?.provider, id: "local-socket-signer" },
+          runtime: { ...nextConfig.wallet?.runtime, enabled: true },
+        },
+      }));
+    const select = vi.fn(async (opts: unknown) => {
+      const rawMessage = (opts as { message?: unknown })?.message;
+      const message = typeof rawMessage === "string" ? rawMessage : "";
+      if (message === "Wallet setup action") {
+        return "self-hosted";
+      }
+      if (message === "Wallet action") {
+        return "create";
+      }
+      if (message === "How do you want to hatch your bot?") {
+        return "skip";
+      }
+      return "quickstart";
+    }) as unknown as WizardPrompter["select"];
+    const text = vi.fn(async (opts: unknown) => {
+      const rawMessage = (opts as { message?: unknown })?.message;
+      const message = typeof rawMessage === "string" ? rawMessage : "";
+      if (message.includes("RPC URL")) {
+        return "https://api.devnet.solana.com";
+      }
+      return "";
+    }) as unknown as WizardPrompter["text"];
+    const prompter = createWizardPrompter({ select, text });
+    writeConfigFile.mockImplementationOnce(async () => {
+      throw new Error("write-reached");
+    });
+
+    try {
+      await expect(
+        runOnboardingWizard(
+          {
+            acceptRisk: true,
+            flow: "quickstart",
+            authChoice: "skip",
+            hostProfile: "hosting",
+            installDaemon: false,
+            skipProviders: true,
+            skipSkills: true,
+            skipHealth: true,
+            skipUi: true,
+          },
+          createRuntime({ throwsOnExit: true }),
+          prompter,
+        ),
+      ).rejects.toThrow("write-reached");
+
+      expect(configureWalletForOnboarding).toHaveBeenCalledTimes(2);
+      expect(configureWalletForOnboarding).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          forceEnable: true,
+          hostProfile: "hosting",
+        }),
+      );
+      expect(walletSetupCommand).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          mode: "local-signer-create",
+          rpcUrl: "https://api.devnet.solana.com",
+        }),
+      );
     } finally {
       await fs.rm(tempHome, { recursive: true, force: true });
     }

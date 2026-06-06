@@ -1417,6 +1417,7 @@ function clearLocalSignerEnv(base: FasedAgentConfig): FasedAgentConfig {
 
 export async function configureWalletForOnboarding(params: {
   flow: WizardFlow;
+  forceEnable?: boolean;
   hostProfile?: HostSetupProfile;
   nextConfig: FasedAgentConfig;
   prompter: WizardPrompter;
@@ -1443,12 +1444,14 @@ export async function configureWalletForOnboarding(params: {
     current?.enabled === false ? false : Boolean(current?.enabled && configuredWalletMaterial);
 
   const enabled =
-    flow === "quickstart"
-      ? defaultEnabled
-      : await prompter.confirm({
-          message: "Enable wallet integration?",
-          initialValue: defaultEnabled,
-        });
+    params.forceEnable === true
+      ? true
+      : flow === "quickstart"
+        ? defaultEnabled
+        : await prompter.confirm({
+            message: "Enable wallet integration?",
+            initialValue: defaultEnabled,
+          });
 
   if (!enabled) {
     setWalletProvidersEnabled({ enabledProviders: [], env: process.env });
