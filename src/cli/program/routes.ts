@@ -18,7 +18,10 @@ const routeHealth: RouteSpec = {
       return false;
     }
     const { healthCommand } = await import("../../commands/health.js");
-    await healthCommand({ json, timeoutMs, verbose }, defaultRuntime);
+    await healthCommand(
+      { json, timeoutMs, verbose, gatewayFailureMode: "log-and-exit" },
+      defaultRuntime,
+    );
     return true;
   },
 };

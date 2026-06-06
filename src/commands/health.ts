@@ -31,6 +31,18 @@ import { styleHealthChannelLine } from "../terminal/health-style.js";
 import { isRich } from "../terminal/theme.js";
 import { probeHostedDashboardBrowserPath } from "./hosted-dashboard-probe.js";
 
+const LOCAL_HEALTH_GATEWAY_TIMEOUT_MS = 30_000;
+const HOSTED_HEALTH_GATEWAY_TIMEOUT_MS = 120_000;
+
+type HealthCommandOptions = {
+  json?: boolean;
+  timeoutMs?: number;
+  verbose?: boolean;
+  config?: FasedAgentConfig;
+  gatewayFailureMode?: "throw" | "log-and-exit";
+  includeHostedBrowserPath?: boolean;
+};
+
 export type ChannelAccountHealthSummary = {
   accountId: string;
   configured?: boolean;
@@ -193,6 +205,72 @@ async function resolveHostedDashboardRouteStatus(
       ? `tailscale ${mode} routes to 127.0.0.1:${port}`
       : `tailscale ${mode} is not routing to 127.0.0.1:${port}`,
   };
+}
+
+function isHostedHealthConfig(cfg: FasedAgentConfig): boolean {
+  const mode = cfg.gateway?.tailscale?.mode;
+  return mode === "serve" || mode === "funnel";
+}
+
+function resolveHealthGatewayTimeoutMs(cfg: FasedAgentConfig): number {
+  return isHostedHealthConfig(cfg)
+    ? HOSTED_HEALTH_GATEWAY_TIMEOUT_MS
+    : LOCAL_HEALTH_GATEWAY_TIMEOUT_MS;
+}
+
+function getFirstErrorLine(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  return message.split("\n")[0]?.trim() || "unknown error";
+}
+
+function isGatewayWarmupTimeout(message: string): boolean {
+  return /gateway timeout|operation was aborted|aborted due to timeout/i.test(message);
+}
+
+function logHandledGatewayFailure(params: {
+  runtime: RuntimeEnv;
+  cfg: FasedAgentConfig;
+  err: unknown;
+  json?: boolean;
+  verbose?: boolean;
+  timeoutMs: number;
+}) {
+  const message = getFirstErrorLine(params.err);
+  const hosted = isHostedHealthConfig(params.cfg);
+  const warmup = hosted && isGatewayWarmupTimeout(message);
+  if (params.json) {
+    params.runtime.log(
+      JSON.stringify(
+        {
+          ok: false,
+          gateway: warmup ? "warming" : "offline",
+          error: message,
+          hosted,
+          timeoutMs: params.timeoutMs,
+        },
+        null,
+        2,
+      ),
+    );
+    return;
+  }
+
+  params.runtime.log(info(`Gateway: ${warmup ? "warming" : "offline"} (${message})`));
+  if (warmup) {
+    params.runtime.log(
+      info("Hosted Gateway is still warming after restart; retry health after it settles."),
+    );
+  } else {
+    params.runtime.log(info("The Gateway is not accepting health requests yet."));
+  }
+  params.runtime.log(info(`Dashboard: ${formatCliCommand("fased dashboard --no-open")}`));
+  if (params.verbose) {
+    const details = buildGatewayConnectionDetails({ config: params.cfg });
+    params.runtime.log(info("Gateway connection:"));
+    for (const line of details.message.split("\n")) {
+      params.runtime.log(`  ${line}`);
+    }
+  }
 }
 
 const resolveAgentOrder = (cfg: ReturnType<typeof loadConfig>) => {
@@ -664,26 +742,41 @@ export async function getHealthSnapshot(params?: {
   return summary;
 }
 
-export async function healthCommand(
-  opts: { json?: boolean; timeoutMs?: number; verbose?: boolean; config?: FasedAgentConfig },
-  runtime: RuntimeEnv,
-) {
+export async function healthCommand(opts: HealthCommandOptions, runtime: RuntimeEnv) {
   const cfg = opts.config ?? loadConfig();
+  const gatewayTimeoutMs = opts.timeoutMs ?? resolveHealthGatewayTimeoutMs(cfg);
   // Always query the running gateway; do not open a direct Baileys socket here.
-  const summary = await withProgress(
-    {
-      label: "Checking gateway health…",
-      indeterminate: true,
-      enabled: opts.json !== true,
-    },
-    async () =>
-      await callGateway<HealthSummary>({
-        method: "health",
-        params: opts.verbose ? { probe: true } : undefined,
-        timeoutMs: opts.timeoutMs,
-        config: cfg,
-      }),
-  );
+  let summary: HealthSummary;
+  try {
+    summary = await withProgress(
+      {
+        label: "Checking gateway health…",
+        indeterminate: true,
+        enabled: opts.json !== true,
+      },
+      async () =>
+        await callGateway<HealthSummary>({
+          method: "health",
+          params: opts.verbose ? { probe: true } : undefined,
+          timeoutMs: gatewayTimeoutMs,
+          config: cfg,
+        }),
+    );
+  } catch (err) {
+    if (opts.gatewayFailureMode !== "log-and-exit") {
+      throw err;
+    }
+    logHandledGatewayFailure({
+      runtime,
+      cfg,
+      err,
+      json: opts.json,
+      verbose: opts.verbose,
+      timeoutMs: gatewayTimeoutMs,
+    });
+    runtime.exit(1);
+    return;
+  }
   // Gateway reachability defines success; channel issues are reported but not fatal here.
   const fatal = false;
 
@@ -705,11 +798,16 @@ export async function healthCommand(
         ),
       );
       const token = cfg.gateway?.auth?.token ?? process.env.FASED_GATEWAY_TOKEN ?? "";
-      if (hostedRouteStatus.ok && hostedRouteStatus.url && token.trim()) {
+      if (
+        hostedRouteStatus.ok &&
+        hostedRouteStatus.url &&
+        token.trim() &&
+        opts.includeHostedBrowserPath !== false
+      ) {
         const hostedProbe = await probeHostedDashboardBrowserPath({
           httpUrl: hostedRouteStatus.url,
           token,
-          timeoutMs: opts.timeoutMs ?? 6000,
+          timeoutMs: gatewayTimeoutMs,
         });
         runtime.log(
           info(
@@ -721,8 +819,10 @@ export async function healthCommand(
               : `Dashboard browser path: offline via Tailscale (${hostedProbe.stage}: ${hostedProbe.message})`,
           ),
         );
-      } else if (hostedRouteStatus.ok && hostedRouteStatus.url) {
+      } else if (hostedRouteStatus.ok && hostedRouteStatus.url && !token.trim()) {
         runtime.log(info("Dashboard browser path: not checked (missing gateway token)"));
+      } else if (hostedRouteStatus.ok && hostedRouteStatus.url) {
+        runtime.log(info("Dashboard browser path: not checked"));
       }
     }
     if (opts.verbose) {

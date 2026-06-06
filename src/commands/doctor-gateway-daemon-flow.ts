@@ -262,7 +262,13 @@ export async function maybeRepairGatewayDaemon(params: {
       });
       await sleep(1500);
       try {
-        await healthCommand({ json: false, timeoutMs: 10_000 }, params.runtime);
+        const tailscaleMode = params.cfg.gateway?.tailscale?.mode;
+        const timeoutMs =
+          tailscaleMode === "serve" || tailscaleMode === "funnel" ? 120_000 : 10_000;
+        await healthCommand(
+          { json: false, timeoutMs, includeHostedBrowserPath: false },
+          params.runtime,
+        );
       } catch (err) {
         const message = String(err);
         if (message.includes("gateway closed")) {

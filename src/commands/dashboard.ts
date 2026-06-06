@@ -33,7 +33,8 @@ type DashboardHealthSummary = {
 };
 
 const LOCAL_DASHBOARD_GATEWAY_TIMEOUT_MS = 30_000;
-const HOSTED_DASHBOARD_GATEWAY_TIMEOUT_MS = 20_000;
+const HOSTED_DASHBOARD_GATEWAY_TIMEOUT_MS = 120_000;
+const HOSTED_DASHBOARD_BROWSER_TIMEOUT_MS = 120_000;
 function buildDashboardUrl(params: { httpUrl: string; token?: string }): string {
   const url = new URL(params.httpUrl);
   const hashParams = new URLSearchParams();
@@ -90,6 +91,22 @@ function isHostedDashboardUrl(httpUrl: string, localHttpUrl: string): boolean {
     return hosted.origin !== local.origin && hosted.protocol === "https:";
   } catch {
     return false;
+  }
+}
+
+function isGatewayWarmupTimeout(message: string): boolean {
+  return /gateway timeout|operation was aborted|aborted due to timeout/i.test(message);
+}
+
+function buildDashboardWsUrl(httpUrl: string): string | null {
+  try {
+    const url = new URL(httpUrl);
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return null;
   }
 }
 
@@ -201,19 +218,33 @@ export async function dashboardCommand(
         : "";
     runtime.log(`Gateway: online${suffix}`);
   } else {
-    runtime.log(`Gateway: offline (${gatewayProbe.message})`);
+    const warming = hostedDashboard && isGatewayWarmupTimeout(gatewayProbe.message);
+    runtime.log(`Gateway: ${warming ? "warming" : "offline"} (${gatewayProbe.message})`);
     runtime.log(
-      "The dashboard page may load, but it will stay offline until the Gateway is healthy.",
+      warming
+        ? "Hosted Gateway is still warming after restart; retry dashboard after it settles."
+        : "The dashboard page may load, but it will stay offline until the Gateway is healthy.",
     );
     runtime.log("Run: fased health");
   }
 
   if (hostedDashboard) {
-    if (token.trim()) {
+    if (!gatewayProbe.ok) {
+      const warming = isGatewayWarmupTimeout(gatewayProbe.message);
+      runtime.log(
+        `Dashboard browser path: not checked via Tailscale (gateway ${
+          warming ? "warming" : "offline"
+        })`,
+      );
+      const wsUrl = buildDashboardWsUrl(hostedHttpUrl);
+      if (wsUrl) {
+        runtime.log(`Dashboard websocket: ${wsUrl}`);
+      }
+    } else if (token.trim()) {
       const hostedProbe = await probeHostedDashboardBrowserPath({
         httpUrl: hostedHttpUrl,
         token,
-        timeoutMs: 15_000,
+        timeoutMs: HOSTED_DASHBOARD_BROWSER_TIMEOUT_MS,
       });
       if (hostedProbe.ok) {
         runtime.log(

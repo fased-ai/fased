@@ -160,7 +160,7 @@ describe("dashboardCommand", () => {
     expect(callGatewayMock).toHaveBeenCalledWith(
       expect.objectContaining({
         method: "health",
-        timeoutMs: 20_000,
+        timeoutMs: 120_000,
       }),
     );
     expect(copyToClipboardMock).not.toHaveBeenCalled();
@@ -189,7 +189,7 @@ describe("dashboardCommand", () => {
     expect(probeHostedDashboardBrowserPathMock).toHaveBeenCalledWith({
       httpUrl: "https://fased-vps.tailnet.ts.net/dash/",
       token: "abc123",
-      timeoutMs: 15_000,
+      timeoutMs: 120_000,
     });
     expect(runtime.log).toHaveBeenCalledWith(
       "Dashboard URL: https://fased-vps.tailnet.ts.net/dash/#token=abc123",
@@ -233,7 +233,30 @@ describe("dashboardCommand", () => {
     );
     expect(runtime.log).toHaveBeenCalledWith("Run: fased health");
     expect(runtime.log).toHaveBeenCalledWith(
+      "Dashboard browser path: not checked via Tailscale (gateway offline)",
+    );
+    expect(runtime.log).toHaveBeenCalledWith(
+      "Dashboard websocket: wss://fased-vps.tailnet.ts.net/",
+    );
+    expect(probeHostedDashboardBrowserPathMock).not.toHaveBeenCalled();
+    expect(runtime.log).toHaveBeenCalledWith(
       "Dashboard URL: https://fased-vps.tailnet.ts.net/#token=abc123",
+    );
+  });
+
+  it("reports hosted gateway warmup separately from offline failures", async () => {
+    mockSnapshot("abc123", { tailscale: { mode: "serve" } });
+    getTailnetHostnameMock.mockResolvedValue("fased-vps.tailnet.ts.net");
+    callGatewayMock.mockRejectedValue(new Error("gateway timeout after 120000ms"));
+
+    await dashboardCommand(runtime, { noOpen: true });
+
+    expect(runtime.log).toHaveBeenCalledWith("Gateway: warming (gateway timeout after 120000ms)");
+    expect(runtime.log).toHaveBeenCalledWith(
+      "Hosted Gateway is still warming after restart; retry dashboard after it settles.",
+    );
+    expect(runtime.log).toHaveBeenCalledWith(
+      "Dashboard browser path: not checked via Tailscale (gateway warming)",
     );
   });
 

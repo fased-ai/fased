@@ -20,11 +20,17 @@ export async function checkGatewayHealth(params: {
   includeChannelWarnings?: boolean;
 }) {
   const gatewayDetails = buildGatewayConnectionDetails({ config: params.cfg });
-  const timeoutMs =
+  const requestedTimeoutMs =
     typeof params.timeoutMs === "number" && params.timeoutMs > 0 ? params.timeoutMs : 10_000;
+  const tailscaleMode = params.cfg.gateway?.tailscale?.mode;
+  const hosted = tailscaleMode === "serve" || tailscaleMode === "funnel";
+  const timeoutMs = hosted ? Math.max(requestedTimeoutMs, 120_000) : requestedTimeoutMs;
   let healthOk = false;
   try {
-    await healthCommand({ json: false, timeoutMs, config: params.cfg }, params.runtime);
+    await healthCommand(
+      { json: false, timeoutMs, config: params.cfg, includeHostedBrowserPath: false },
+      params.runtime,
+    );
     healthOk = true;
   } catch (err) {
     const message = String(err);

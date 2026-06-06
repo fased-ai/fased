@@ -149,6 +149,34 @@ describe("healthCommand", () => {
     expect(output).toContain("Telegram: not configured");
   });
 
+  it("prints hosted warmup instead of throwing for direct CLI health failures", async () => {
+    callGatewayMock.mockRejectedValueOnce(
+      new Error(
+        [
+          "gateway timeout after 120000ms",
+          "Gateway target: ws://127.0.0.1:18789",
+          "Source: local loopback",
+        ].join("\n"),
+      ),
+    );
+
+    await healthCommand(
+      {
+        json: false,
+        verbose: true,
+        config: { gateway: { tailscale: { mode: "serve" } } } as never,
+        gatewayFailureMode: "log-and-exit",
+      },
+      runtime as never,
+    );
+
+    const output = stripAnsi(runtime.log.mock.calls.map((call) => String(call[0])).join("\n"));
+    expect(output).toContain("Gateway: warming (gateway timeout after 120000ms)");
+    expect(output).toContain("Hosted Gateway is still warming after restart");
+    expect(output).toContain("Gateway connection:");
+    expect(runtime.exit).toHaveBeenCalledWith(1);
+  });
+
   it("formats per-account probe timings", () => {
     const summary = createHealthSummary({
       channels: {

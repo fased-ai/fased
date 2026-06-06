@@ -70,4 +70,24 @@ describe("checkGatewayHealth", () => {
       "Channel warnings",
     );
   });
+
+  it("uses hosted-safe health timeout for Tailscale hosting configs", async () => {
+    const cfg = { gateway: { tailscale: { mode: "serve" } } };
+
+    const result = await checkGatewayHealth({
+      cfg,
+      runtime: { log: vi.fn(), error: vi.fn(), exit: vi.fn() },
+      timeoutMs: 3000,
+    });
+
+    expect(result.healthOk).toBe(true);
+    expect(mocks.healthCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: cfg,
+        includeHostedBrowserPath: false,
+        timeoutMs: 120_000,
+      }),
+      expect.any(Object),
+    );
+  });
 });
