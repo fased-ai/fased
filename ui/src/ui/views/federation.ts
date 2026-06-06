@@ -3801,6 +3801,19 @@ function formatBondScopeLabel(scope: string): string {
   }
 }
 
+function formatFederationTokenScopeLabel(scope: string): string {
+  switch (scope) {
+    case "federation.read":
+      return "Read";
+    case "federation.write":
+      return "Write";
+    case "payments.receive":
+      return "Payments";
+    default:
+      return scope;
+  }
+}
+
 function renderFactMeta(text: unknown) {
   if (typeof text === "string") {
     const value = text.trim();
@@ -4306,6 +4319,10 @@ export function renderFederation(props: FederationProps) {
   const statusHandle = statusToken?.handle ?? "";
   const statusExpiresAt = statusToken?.expiresAt ?? "n/a";
   const statusExpiresDisplay = formatDateTimeHuman(statusToken?.expiresAt);
+  const statusScopes = Array.isArray(statusToken?.scopes) ? statusToken.scopes : [];
+  const statusAccessDisplay = statusScopes.length
+    ? statusScopes.map((scope) => formatFederationTokenScopeLabel(scope)).join(", ")
+    : "Configure";
   const statusTrustState = props.managedMode
     ? managedTrustState
     : (props.token?.trustState ?? "pending");
@@ -6330,6 +6347,11 @@ export function renderFederation(props: FederationProps) {
                         value: statusExpiresDisplay,
                         meta: tokenLifecycleMeta,
                         title: statusExpiresAt,
+                      })}
+                      ${renderFactCard({
+                        label: "Access",
+                        value: statusAccessDisplay,
+                        title: statusScopes.join(", ") || "Configure",
                       })}
                     </div>
                     <div class="federation-token-actions">

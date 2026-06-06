@@ -96,6 +96,8 @@ function expectAppChromeGeometry(app: HTMLElement, label: string) {
 describe("iOS standalone PWA layout", () => {
   it("keeps standalone iOS metadata and safe-area capable CSS in place", async () => {
     const index = await commands.readFile("index.html");
+    const viteConfig = await commands.readFile("vite.config.ts");
+    const bootWatchdog = await commands.readFile("public/boot-watchdog.js");
     const styles = await commands.readFile("src/styles/components.css");
     const layout = await commands.readFile("src/styles/layout.css");
 
@@ -107,6 +109,9 @@ describe("iOS standalone PWA layout", () => {
     expect(index).toContain('name="mobile-web-app-capable" content="yes"');
     expect(index).toContain('rel="manifest" href="/manifest.webmanifest"');
     expect(index).toContain('rel="apple-touch-icon" sizes="180x180"');
+    expect(viteConfig).toContain("data-fased-boot-watchdog");
+    expect(bootWatchdog).toContain("Dashboard did not finish opening");
+    expect(bootWatchdog).toContain("data-fased-boot-shell");
     expect(layout).toContain("@supports (height: 100dvh)");
     expect(styles).toContain("env(safe-area-inset-bottom");
   });

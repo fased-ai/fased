@@ -1,8 +1,15 @@
 (function () {
-  var BOOT_TIMEOUT_MS = 10000;
-  var READY_STAGES = {
-    "first-updated": true,
-    rendered: true,
+  var BOOT_TIMEOUT_MS = 15000;
+  var BOOT_STAGE_RANK = {
+    "watchdog-loaded": 5,
+    "entry-loaded": 10,
+    "app-import-start": 20,
+    "app-imported": 30,
+    "custom-element-defined": 40,
+    connected: 50,
+    "first-updated": 60,
+    rendered: 70,
+    "boot-failed": 100,
   };
 
   function now() {
@@ -12,16 +19,22 @@
   var state = (window.__FASED_CONTROL_UI_BOOT = window.__FASED_CONTROL_UI_BOOT || {});
   state.stage = state.stage || "watchdog-loaded";
   state.updatedAt = state.updatedAt || now();
+  var previousMark = typeof state.mark === "function" ? state.mark : null;
+  var completed = bootRank(state.stage) >= BOOT_STAGE_RANK.connected;
 
   function mark(stage, detail) {
+    if (previousMark && previousMark !== mark) {
+      previousMark(stage, detail);
+    }
     state.stage = stage;
     state.detail = detail || "";
     state.updatedAt = now();
+    if (bootRank(stage) >= BOOT_STAGE_RANK.connected) {
+      completed = true;
+    }
   }
 
-  if (typeof state.mark !== "function") {
-    state.mark = mark;
-  }
+  state.mark = mark;
 
   window.addEventListener("fased-control-ui-boot", function (event) {
     var detail = event && event.detail ? event.detail : {};
@@ -30,16 +43,20 @@
     }
   });
 
-  function bootIsReady() {
-    return Boolean(READY_STAGES[state.stage]);
+  function bootRank(stage) {
+    return BOOT_STAGE_RANK[stage || ""] || 0;
+  }
+
+  function hasStaticBootShell(host) {
+    return Boolean(host.querySelector("[data-fased-boot-shell]"));
   }
 
   function renderFailure() {
-    if (bootIsReady()) {
+    if (completed || bootRank(state.stage) >= BOOT_STAGE_RANK.connected) {
       return;
     }
     var host = document.querySelector("fased-app");
-    if (!host) {
+    if (!host || !hasStaticBootShell(host)) {
       return;
     }
     host.innerHTML = [
@@ -54,8 +71,8 @@
       "</style>",
       '<div class="boot-page">',
       '<section class="boot-card">',
-      '<h1 class="boot-title">Dashboard app did not start</h1>',
-      '<p class="boot-desc">The gateway page loaded, but the browser did not finish starting the private dashboard app. Reload first. If it keeps happening after an update, clear this site&rsquo;s browser data and run <code>fased dashboard --no-open</code> for diagnostics.</p>',
+      '<h1 class="boot-title">Dashboard did not finish opening</h1>',
+      '<p class="boot-desc">The page loaded, but the dashboard app did not mount. Reload first. If it keeps happening after an update, reset this site&rsquo;s browser data and sign in again.</p>',
       '<div class="boot-error">Last boot stage: ' +
         escapeText(state.stage || "unknown") +
         (state.detail ? "\\nDetail: " + escapeText(state.detail) : "") +

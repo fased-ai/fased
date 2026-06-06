@@ -577,6 +577,7 @@ describe("renderFederation", () => {
         nodeEndpoint: "http://127.0.0.1:18789",
         token: {
           handle: "@bonded@ff1.fased.app",
+          scopes: ["federation.read", "federation.write"],
           trustState: "verified",
           hostedState: "ready",
           expiresAt: "2026-05-01T00:00:00.000Z",
@@ -974,6 +975,8 @@ describe("renderFederation", () => {
 
     expect(text).toContain("Fased Network trust state: verified");
     expect(text).toContain("Live");
+    expect(text).toContain("Access");
+    expect(text).toContain("Read, Write");
     expect(text).toContain("Bond state:");
     expect(text).toContain("Market");
     expect(text).toContain("Vault");

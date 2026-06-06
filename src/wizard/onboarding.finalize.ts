@@ -2118,21 +2118,19 @@ export async function finalizeOnboardingWizard(
     let fastHealthSatisfied = false;
     let restartAttemptedInHealth = false;
     const localFastReadinessDeadlineMs = lowRamMode ? 120_000 : 30_000;
+    const hostingReadinessDeadlineMs = lowRamMode ? 120_000 : 90_000;
+    const hostingProbeTimeoutMs = lowRamMode ? 20_000 : 15_000;
     const warmupDeadlineMs = strictVps
-      ? fastHealth
-        ? 3_000
-        : 90_000
+      ? hostingReadinessDeadlineMs
       : fastHealth
         ? localFastReadinessDeadlineMs
         : 60_000;
     const listenerDeadlineMs = strictVps
-      ? fastHealth
-        ? 3_000
-        : 90_000
+      ? hostingReadinessDeadlineMs
       : fastHealth
         ? localFastReadinessDeadlineMs
         : 60_000;
-    const strictProbeTimeoutMs = fastHealth ? 5_000 : 15_000;
+    const strictProbeTimeoutMs = strictVps ? hostingProbeTimeoutMs : fastHealth ? 5_000 : 15_000;
 
     // Ensure local listener is actually up for systemd-managed installs.
     if (installDaemon && opts.mode !== "remote") {
@@ -2421,12 +2419,17 @@ export async function finalizeOnboardingWizard(
           wsUrl: probeLinks.wsUrl,
           deadlineMs: listenerDeadlineMs,
         });
-        let strictProbe = await probeGatewayReachable({
-          url: probeLinks.wsUrl,
-          token: healthProbeToken,
-          password: healthProbePassword,
-          timeoutMs: strictProbeTimeoutMs,
-        });
+        let strictProbe =
+          wsWarmupProbe?.ok === true
+            ? wsWarmupProbe
+            : await waitForGatewayReachable({
+                url: probeLinks.wsUrl,
+                token: healthProbeToken,
+                password: healthProbePassword,
+                deadlineMs: hostingReadinessDeadlineMs,
+                probeTimeoutMs: strictProbeTimeoutMs,
+                pollMs: 750,
+              });
         if (
           !strictProbe.ok &&
           String(strictProbe.detail ?? "")
@@ -2443,11 +2446,13 @@ export async function finalizeOnboardingWizard(
             ].join("\n"),
             "Gateway auth recovery",
           );
-          strictProbe = await probeGatewayReachable({
+          strictProbe = await waitForGatewayReachable({
             url: probeLinks.wsUrl,
             token: healthProbeToken,
             password: healthProbePassword,
-            timeoutMs: strictProbeTimeoutMs,
+            deadlineMs: hostingReadinessDeadlineMs,
+            probeTimeoutMs: strictProbeTimeoutMs,
+            pollMs: 750,
           });
         }
         if (!httpReady.ok && !strictProbe.ok) {
