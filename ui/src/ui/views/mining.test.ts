@@ -254,8 +254,8 @@ describe("mining view helpers", () => {
       status: null,
     });
 
-    expect(summary.title).toContain("Configure mining wallet");
-    expect(summary.detail).toContain("Create or import @wallet:mining");
+    expect(summary.title).toBe("Configure");
+    expect(summary.detail).toBe("");
     expect(summary.detail).not.toContain("reattach");
     expect(summary.displayWallet?.walletId).toBe("wallet-a");
   });

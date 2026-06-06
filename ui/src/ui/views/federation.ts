@@ -3829,17 +3829,29 @@ function compactReference(value: string | undefined, start = 10, end = 8): strin
 export function describeFederationBondNotice(warning: string): { text: string; className: string } {
   if (warning === "Bond Vault is not configured for live SAT bond inspection.") {
     return {
-      text: "Configure Bond Vault for live SAT bond inspection.",
+      text: "Configure",
       className: "callout",
     };
   }
   if (warning === "Current SAT bond is below published network tiers.") {
     return {
-      text: "Configure SAT bond to unlock network tiers.",
+      text: "Configure",
       className: "callout",
     };
   }
   return { text: warning, className: "callout warn" };
+}
+
+function dedupeFederationBondNotices(warnings: string[]): Array<{
+  text: string;
+  className: string;
+}> {
+  const notices = new Map<string, { text: string; className: string }>();
+  for (const warning of warnings) {
+    const notice = describeFederationBondNotice(warning);
+    notices.set(`${notice.className}:${notice.text}`, notice);
+  }
+  return [...notices.values()];
 }
 
 function formatOperatorEconomyAssetLabel(
@@ -4382,7 +4394,7 @@ export function renderFederation(props: FederationProps) {
     ? compactReference(bondWalletAddress, 4, 4)
     : "Configure";
   const proofRefCompact = proofRef ? compactReference(proofRef, 4, 4) : "Configure";
-  const bondNotices = bondWarnings.map((warning) => describeFederationBondNotice(warning));
+  const bondNotices = dedupeFederationBondNotices(bondWarnings);
   const localOfferDraftOpen = props.localOfferDraftOpen;
   const localListingDraftKind = props.localListingDraftKind ?? "offer";
   const localOfferEditorTitle =
@@ -6514,7 +6526,11 @@ export function renderFederation(props: FederationProps) {
                         <strong>${
                           bondStakingDistributor?.exists ? bondStakingPendingPoolSat : "Configure"
                         }</strong>
-                        <small>${bondStakingDistributor?.status ?? "inactive"}</small>
+                        ${
+                          bondStakingDistributor?.exists
+                            ? html`<small>${bondStakingDistributor.status}</small>`
+                            : nothing
+                        }
                       </div>
                     </div>
                     <div class="federation-panel-actions">

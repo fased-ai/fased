@@ -205,8 +205,8 @@ export function resolveMiningWalletContext(params: {
         runtimeWallet,
         profileWallet,
         displayWallet,
-        title: "Configure mining wallet",
-        detail: "Create or import @wallet:mining before resuming SAT history.",
+        title: "Configure",
+        detail: "",
       };
     }
     return {
@@ -214,8 +214,8 @@ export function resolveMiningWalletContext(params: {
       runtimeWallet,
       profileWallet,
       displayWallet,
-      title: "Configure mining wallet",
-      detail: "Create or import @wallet:mining before starting SAT.",
+      title: "Configure",
+      detail: "",
     };
   }
 
@@ -2721,7 +2721,7 @@ export function describeDashboardState(params: {
       };
     }
     if (!walletSelected) {
-      return { label: "Stopped", tone: "neutral", detail: "Configure wallet." };
+      return { label: "Stopped", tone: "neutral", detail: "Configure" };
     }
     if (!rpcReady) {
       return { label: "Stopped", tone: "neutral", detail: "Set RPC." };
@@ -3887,7 +3887,7 @@ export function renderMining(props: MiningViewProps) {
     : mainnetSyncBlocked
       ? mainnetSyncState.detail
       : !profile?.walletId || !walletSelected
-        ? "Configure wallet."
+        ? "Configure"
         : !rpcReady
           ? "Set RPC."
           : !walletFundingReady
@@ -6402,7 +6402,9 @@ export function renderMining(props: MiningViewProps) {
         ${
           showWalletContextNote
             ? html`<div class="mining-note mining-note--compact">
-              <strong>${walletContext.title}</strong> · ${walletContext.detail}
+              <strong>${walletContext.title}</strong>${
+                walletContext.detail ? html` · ${walletContext.detail}` : nothing
+              }
             </div>`
             : nothing
         }

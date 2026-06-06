@@ -555,13 +555,13 @@ describe("renderFederation", () => {
     expect(
       describeFederationBondNotice("Bond Vault is not configured for live SAT bond inspection."),
     ).toEqual({
-      text: "Configure Bond Vault for live SAT bond inspection.",
+      text: "Configure",
       className: "callout",
     });
     expect(
       describeFederationBondNotice("Current SAT bond is below published network tiers."),
     ).toEqual({
-      text: "Configure SAT bond to unlock network tiers.",
+      text: "Configure",
       className: "callout",
     });
   });
