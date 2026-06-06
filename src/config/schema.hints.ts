@@ -120,6 +120,10 @@ const SENSITIVE_PATTERNS = [
   /serviceaccount(?:ref)?$/i,
 ];
 
+function shouldWarnSensitiveHintMiss(): boolean {
+  return process.env.FASED_DEBUG_CONFIG_SCHEMA_HINTS === "1";
+}
+
 function isWhitelistedSensitivePath(path: string): boolean {
   const lowerPath = path.toLowerCase();
   return NORMALIZED_SENSITIVE_KEY_WHITELIST_SUFFIXES.some((suffix) => lowerPath.endsWith(suffix));
@@ -208,7 +212,11 @@ export function mapSensitivePaths(
 
   if (isSensitive) {
     next[path] = { ...next[path], sensitive: true };
-  } else if (isSensitiveConfigPath(path) && !next[path]?.sensitive) {
+  } else if (
+    isSensitiveConfigPath(path) &&
+    !next[path]?.sensitive &&
+    shouldWarnSensitiveHintMiss()
+  ) {
     log.warn(`possibly sensitive key found: (${path})`);
   }
 

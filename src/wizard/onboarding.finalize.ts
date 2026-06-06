@@ -2734,7 +2734,7 @@ export async function finalizeOnboardingWizard(
   } as NodeJS.ProcessEnv;
   const walletRegistry = readWalletProviderRegistry(onboardingEnv);
   const miningWalletId = readSatMiningWalletId(nextConfig);
-  const persistedFederationToken = federation.enabled
+  let persistedFederationToken = federation.enabled
     ? await loadPersistedFederationToken(onboardingEnv).catch(() => null)
     : null;
   let walletStatusForReadiness: Awaited<ReturnType<typeof readWalletStatusSnapshot>> | null = null;
@@ -2758,10 +2758,19 @@ export async function finalizeOnboardingWizard(
           fedToken: readManagedFederationTokenSummary(onboardingEnv),
           reservations: readManagedReservationSummaries(onboardingEnv),
         };
+    if (fedToken.exists && !persistedFederationToken) {
+      persistedFederationToken = await loadPersistedFederationToken(onboardingEnv).catch(
+        () => null,
+      );
+    }
     const resolvedPublicUrl = (fedToken.publicUrl ?? "").trim();
     await prompter.note(
       strictVps
         ? [
+            "Fased Network auto-connect: enabled",
+            fedToken.exists
+              ? `Join status: token present${fedToken.handle ? ` (${fedToken.handle})` : ""}`
+              : "Join status: not joined yet",
             resolvedPublicUrl
               ? `Agent URL (Fased Network): ${resolvedPublicUrl}`
               : "Agent URL (Fased Network): not issued yet",
@@ -2780,7 +2789,10 @@ export async function finalizeOnboardingWizard(
             .join("\n")
         : [
             "Fased Network:",
-            `Join: enabled`,
+            "Auto-connect: enabled",
+            persistedFederationToken
+              ? `Join status: token present (${persistedFederationToken.handle})`
+              : "Join status: not joined yet",
             `Server: ${resolvedBase}`,
             `Handle: ${handle}`,
             resolvedPublicUrl ? `Final public URL: ${resolvedPublicUrl}` : undefined,
@@ -2797,7 +2809,7 @@ export async function finalizeOnboardingWizard(
       "Fased Network",
     );
   } else {
-    await prompter.note("Fased Network join is disabled.", "Fased Network");
+    await prompter.note("Fased Network auto-connect is disabled.", "Fased Network");
   }
 
   const operatorReadiness = describeOperatorReadinessChecklist({
