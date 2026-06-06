@@ -2800,8 +2800,6 @@ export async function finalizeOnboardingWizard(
   }
 
   if (federation.enabled) {
-    const resolvedBase = (federation.baseUrl ?? "").trim() || "https://ff1.fased.app";
-    const handle = (federation.handle ?? "").trim() || "(auto)";
     let hostedFederationAutoConnectAttempted = false;
     let hostedFederationAutoConnectReason = "";
     if (strictVps && !readManagedFederationTokenSummary(onboardingEnv).exists) {
@@ -2835,61 +2833,22 @@ export async function finalizeOnboardingWizard(
         () => null,
       );
     }
-    const resolvedPublicUrl = (fedToken.publicUrl ?? "").trim();
-    await prompter.note(
-      strictVps
-        ? [
-            "Fased Network auto-connect: enabled",
-            fedToken.exists
-              ? `Join status: token present${fedToken.handle ? ` (${fedToken.handle})` : ""}`
-              : "Join status: not joined yet",
-            hostedFederationAutoConnectAttempted && fedToken.exists
-              ? "Auto-connect check: issued token during final readiness."
-              : undefined,
-            hostedFederationAutoConnectAttempted &&
-            !fedToken.exists &&
-            hostedFederationAutoConnectReason
-              ? `Auto-connect failure: ${hostedFederationAutoConnectReason}`
-              : undefined,
-            resolvedPublicUrl
-              ? `Agent URL (Fased Network): ${resolvedPublicUrl}`
-              : "Agent URL (Fased Network): not issued yet",
-            !resolvedPublicUrl && fedToken.exists
-              ? `Fased Network token: present at ${fedToken.path}`
-              : undefined,
-            !resolvedPublicUrl && reservations.length > 0
-              ? `Reservation: ${reservations[0]?.slug} (public URL still pending token refresh)`
-              : undefined,
-            !resolvedPublicUrl && !fedToken.exists && reservations.length === 0
-              ? "Managed Fased Network token has not been issued in this session yet."
-              : undefined,
-            !resolvedPublicUrl ? "Inspect details: `fased managed up --json`" : undefined,
-          ]
-            .filter(Boolean)
-            .join("\n")
-        : [
-            "Fased Network:",
-            "Auto-connect: enabled",
-            persistedFederationToken
-              ? `Join status: token present (${persistedFederationToken.handle})`
-              : "Join status: not joined yet",
-            `Server: ${resolvedBase}`,
-            `Handle: ${handle}`,
-            resolvedPublicUrl ? `Final public URL: ${resolvedPublicUrl}` : undefined,
-            !resolvedPublicUrl && reservations.length > 0
-              ? `Reservation present: ${reservations[0]?.slug} (public URL pending token refresh)`
-              : undefined,
-            !resolvedPublicUrl && reservations.length === 0
-              ? "Public URL not issued yet (will appear after managed tunnel/Fased Network token refresh)."
-              : undefined,
-            !resolvedPublicUrl ? "Inspect details: `fased managed up --json`" : undefined,
-          ]
-            .filter(Boolean)
-            .join("\n"),
-      "Fased Network",
-    );
-  } else {
-    await prompter.note("Fased Network auto-connect is disabled.", "Fased Network");
+    if (strictVps && hostedFederationAutoConnectAttempted && !fedToken.exists) {
+      await prompter.note(
+        [
+          "Fased Network silent join did not finish.",
+          hostedFederationAutoConnectReason
+            ? `Reason: ${hostedFederationAutoConnectReason}`
+            : "Reason: token was not issued before final readiness.",
+          reservations.length > 0 ? `Reservation: ${reservations[0]?.slug}` : undefined,
+          "Dashboard and SSH are ready over Tailscale.",
+          "Inspect details: `fased managed up --json`",
+        ]
+          .filter(Boolean)
+          .join("\n"),
+        "Fased Network",
+      );
+    }
   }
 
   const operatorReadiness = describeOperatorReadinessChecklist({
