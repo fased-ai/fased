@@ -2383,14 +2383,30 @@ export async function registerFederationHandle(host: FasedAgentApp) {
   host.federationError = null;
   host.federationMessage = null;
   try {
-    const requestedHandle = String(host.federationHandle ?? "").trim();
-    const nodeEndpoint = String(host.federationNodeEndpoint ?? "").trim();
-    const registered = await getApi().registerHandle({ requestedHandle, nodeEndpoint });
-    if (registered.status === "rejected") {
-      host.federationError = registered.reason ?? "Handle rejected";
-      return;
+    const requestedHandle =
+      String(host.federationHandle ?? "").trim() || resolveFederationHandle(host) || "";
+    const nodeEndpoint =
+      String(host.federationNodeEndpoint ?? "").trim() ||
+      host.federationStatus?.configured?.nodeEndpoint?.trim() ||
+      "";
+    let handle = requestedHandle;
+    try {
+      const registered = await getApi().registerHandle({ requestedHandle, nodeEndpoint });
+      const registrationStatus = (registered as { status?: string }).status;
+      if (registrationStatus === "rejected") {
+        host.federationError = registered.reason ?? "Handle rejected";
+        return;
+      }
+      if (registrationStatus === "unauthorized" && !handle) {
+        host.federationError = "Fased Network registry registration requires authentication.";
+        return;
+      }
+      handle = registered.handle?.trim() || handle;
+    } catch (err) {
+      if (!isFederationUnauthorizedError(err) || !handle) {
+        throw err;
+      }
     }
-    const handle = registered.handle?.trim() || requestedHandle;
     if (!handle) {
       host.federationError = "Federation registry did not return a handle.";
       return;

@@ -1987,6 +1987,12 @@ step_start "Start setup"
 onboard_old_space_mb="$(recommended_onboard_old_space_mb)"
 onboard_node_options="$(node_options_with_old_space "${NODE_OPTIONS:-}" "$onboard_old_space_mb")"
 (cd "$FASED_DIR" && env NODE_OPTIONS="$onboard_node_options" FASED_INSTALLER_ONBOARD=1 "$FASED_CLI_PATH" onboard --install-daemon "${pass_args[@]}")
+if [[ ! -f "${FASED_CONFIG_PATH:-$FASED_CONFIG_DIR/fased.json}" ]]; then
+  write_install_marker "$REPO_ROOT" "false"
+  echo "Onboarding did not create ${FASED_CONFIG_PATH:-$FASED_CONFIG_DIR/fased.json}." >&2
+  echo "Rerun ./install.sh from an interactive terminal, or pass non-interactive onboarding flags after --." >&2
+  exit 1
+fi
 write_install_marker "$REPO_ROOT" "true"
 
 echo

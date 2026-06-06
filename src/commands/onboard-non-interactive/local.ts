@@ -5,7 +5,10 @@ import { logConfigUpdated } from "../../config/logging.js";
 import { clearDeviceAuthStore } from "../../infra/device-auth-store.js";
 import type { RuntimeEnv } from "../../runtime.js";
 import { isHostedSecurityCapableSession } from "../../wizard/host-security-capability.js";
+import { configureFederationForOnboarding } from "../../wizard/onboarding.federation.js";
 import { applyHostingSecurity } from "../../wizard/onboarding.host-security.js";
+import type { FederationWizardSettings, HostSetupProfile } from "../../wizard/onboarding.types.js";
+import type { WizardPrompter } from "../../wizard/prompts.js";
 import { DEFAULT_GATEWAY_DAEMON_RUNTIME } from "../daemon-runtime.js";
 import { formatHealthCheckFailure } from "../health-format.js";
 import { healthCommand } from "../health.js";
@@ -27,6 +30,73 @@ import { logNonInteractiveOnboardingJson } from "./local/output.js";
 import { applyNonInteractiveSkillsConfig } from "./local/skills-config.js";
 import { applyNonInteractiveWalletConfig } from "./local/wallet-config.js";
 import { resolveNonInteractiveWorkspaceDir } from "./local/workspace.js";
+
+const nonInteractiveFederationPrompter: WizardPrompter = {
+  intro: async () => {},
+  outro: async () => {},
+  note: async () => {},
+  select: async (params) => params.options[0].value,
+  multiselect: async () => [],
+  text: async (params) => params.initialValue ?? "",
+  secret: async () => "",
+  confirm: async () => true,
+  progress: () => ({
+    update: () => {},
+    stop: () => {},
+  }),
+};
+
+function setConfigEnvVar(
+  config: FasedAgentConfig,
+  key: string,
+  value: string | undefined,
+): FasedAgentConfig {
+  const currentVars = config.env?.vars ?? {};
+  const nextVars = { ...currentVars };
+  if (value === undefined || value === "") {
+    delete nextVars[key];
+  } else {
+    nextVars[key] = value;
+  }
+  return {
+    ...config,
+    env: {
+      ...config.env,
+      vars: nextVars,
+    },
+  };
+}
+
+function applyFederationSettings(
+  config: FasedAgentConfig,
+  federation: FederationWizardSettings,
+  hostProfile: HostSetupProfile,
+): FasedAgentConfig {
+  let nextConfig = setConfigEnvVar(
+    config,
+    "FASED_FEDERATION_AUTO_CONNECT",
+    federation.enabled ? "1" : "0",
+  );
+  nextConfig = setConfigEnvVar(
+    nextConfig,
+    "FASED_FEDERATION_BASE_URL",
+    federation.enabled ? federation.baseUrl : undefined,
+  );
+  nextConfig = setConfigEnvVar(
+    nextConfig,
+    "FASED_FEDERATION_HANDLE",
+    federation.enabled ? federation.handle : undefined,
+  );
+  nextConfig = setConfigEnvVar(
+    nextConfig,
+    "FASED_A2A_HANDLE",
+    federation.enabled ? federation.handle : undefined,
+  );
+  if (hostProfile === "hosting" || federation.enabled) {
+    nextConfig = setConfigEnvVar(nextConfig, "FASED_GATEWAY_MODE", "managed");
+  }
+  return nextConfig;
+}
 
 export async function runNonInteractiveOnboardingLocal(params: {
   opts: OnboardOptions;
@@ -113,6 +183,15 @@ export async function runNonInteractiveOnboardingLocal(params: {
     return;
   }
   nextConfig = gatewayResult.nextConfig;
+
+  const hostProfile: HostSetupProfile = opts.hostProfile === "hosting" ? "hosting" : "local";
+  const federation = await configureFederationForOnboarding({
+    flow: opts.flow === "advanced" || opts.flow === "manual" ? "advanced" : "quickstart",
+    hostProfile,
+    baseConfig: nextConfig,
+    prompter: nonInteractiveFederationPrompter,
+  });
+  nextConfig = applyFederationSettings(nextConfig, federation, hostProfile);
 
   nextConfig = applyNonInteractiveSkillsConfig({ nextConfig, opts, runtime });
   nextConfig = applyRecommendedInternalHooks(nextConfig);

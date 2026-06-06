@@ -240,6 +240,85 @@ describe("buildLocalOfferPayload", () => {
     expect(host.federationStatus?.joined).toBe(true);
   });
 
+  it("joins with the configured handle when registry registration requires admin auth", async () => {
+    federationApi.registerHandle.mockRejectedValue(new Error('{"status":"unauthorized"}'));
+    federationApi.enrollChallenge.mockResolvedValue({
+      status: "accepted",
+      challengeId: "challenge-configured",
+      nonce: "nonce-configured",
+    });
+    federationApi.enroll.mockResolvedValue({
+      status: "accepted",
+      token: {
+        tokenId: "token-configured",
+        nodeId: "node-configured",
+        handle: "@configured@ff1.fased.app",
+        issuedAt: "2026-06-06T00:00:00.000Z",
+        expiresAt: "2099-01-01T00:00:00.000Z",
+        scopes: ["federation.read", "federation.write"],
+        signature: "sig",
+      },
+    });
+    federationApi.getStatus.mockResolvedValue({
+      status: {
+        joined: true,
+        lifecycle: "active",
+        token: {
+          tokenId: "token-configured",
+          nodeId: "node-configured",
+          handle: "@configured@ff1.fased.app",
+          issuedAt: "2026-06-06T00:00:00.000Z",
+          expiresAt: "2099-01-01T00:00:00.000Z",
+          scopes: ["federation.read", "federation.write"],
+          signature: "sig",
+        },
+      },
+    });
+    federationApi.listDirectory.mockResolvedValue([]);
+    const host = {
+      federationHandle: "",
+      federationNodeEndpoint: "",
+      federationLoading: false,
+      federationError: null,
+      federationMessage: null,
+      federationToken: null,
+      federationStatus: {
+        joined: false,
+        lifecycle: "missing",
+        configured: {
+          autoConnect: true,
+          handle: "@configured@ff1.fased.app",
+          nodeEndpoint: "http://127.0.0.1:18789",
+        },
+      },
+      federationDirectory: [],
+      federationBondWalletIdDraft: "",
+      federationBondTierDraft: "basic-bond",
+      federationBondAmountDraft: "1",
+      walletNamedWallets: [],
+      walletDefaultWalletId: null,
+    } as unknown as FasedAgentApp;
+
+    await registerFederationHandle(host);
+
+    expect(federationApi.registerHandle).toHaveBeenCalledWith({
+      requestedHandle: "@configured@ff1.fased.app",
+      nodeEndpoint: "http://127.0.0.1:18789",
+    });
+    expect(federationApi.enrollChallenge).toHaveBeenCalledWith({
+      handle: "@configured@ff1.fased.app",
+      nodeEndpoint: "http://127.0.0.1:18789",
+    });
+    expect(federationApi.enroll).toHaveBeenCalledWith({
+      challengeId: "challenge-configured",
+      nonce: "nonce-configured",
+      handle: "@configured@ff1.fased.app",
+    });
+    expect(host.federationError).toBeNull();
+    expect(host.federationHandle).toBe("@configured@ff1.fased.app");
+    expect(host.federationStatus?.joined).toBe(true);
+  });
+
   it("keeps Marketplace UI-created offers on the same payment-term contract as chat drafts", () => {
     const payload = buildLocalOfferPayload({
       federationLocalOfferEnabledDraft: false,

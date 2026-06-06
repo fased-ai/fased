@@ -141,6 +141,7 @@ describe("onboard (non-interactive): gateway and remote auth", () => {
       const cfg = await readJsonFile<{
         gateway?: { auth?: { mode?: string; token?: string } };
         agents?: { defaults?: { workspace?: string } };
+        env?: { vars?: Record<string, string> };
         hooks?: {
           internal?: {
             enabled?: boolean;
@@ -152,6 +153,13 @@ describe("onboard (non-interactive): gateway and remote auth", () => {
       expect(cfg?.agents?.defaults?.workspace).toBe(workspace);
       expect(cfg?.gateway?.auth?.mode).toBe("token");
       expect(cfg?.gateway?.auth?.token).toBe(token);
+      expect(cfg?.env?.vars?.FASED_FEDERATION_AUTO_CONNECT).toBe("1");
+      expect(cfg?.env?.vars?.FASED_FEDERATION_BASE_URL).toBe("https://ff1.fased.app");
+      expect(cfg?.env?.vars?.FASED_FEDERATION_HANDLE).toMatch(
+        /^@fased-agent-[a-f0-9]{12}@ff1\.fased\.app$/,
+      );
+      expect(cfg?.env?.vars?.FASED_A2A_HANDLE).toBe(cfg?.env?.vars?.FASED_FEDERATION_HANDLE);
+      expect(cfg?.env?.vars?.FASED_GATEWAY_MODE).toBe("managed");
       expect(cfg?.hooks?.internal?.enabled).toBe(true);
       expect(cfg?.hooks?.internal?.entries?.["session-memory"]?.enabled).toBe(true);
     });
