@@ -17,6 +17,7 @@ import {
 
 const DEFAULT_RENEW_INTERVAL_MS = 45 * 60 * 1000;
 const DEFAULT_TOKEN_SKEW_MS = 30_000;
+const DEFAULT_HTTP_TIMEOUT_MS = 15_000;
 
 type FederationLogger = {
   info?: (message: string) => void;
@@ -131,7 +132,9 @@ async function postJson(params: {
   url: string;
   body: unknown;
   apiToken?: string;
+  timeoutMs?: number;
 }): Promise<PostResult> {
+  const timeoutMs = Math.max(1_000, params.timeoutMs ?? DEFAULT_HTTP_TIMEOUT_MS);
   const response = await fetch(params.url, {
     method: "POST",
     headers: {
@@ -139,6 +142,7 @@ async function postJson(params: {
       ...buildAuthHeaders(params.apiToken),
     },
     body: JSON.stringify(params.body),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   const bodyText = await response.text();
   let json: unknown;

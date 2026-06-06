@@ -33,6 +33,7 @@ import { resolveGatewayService } from "../daemon/service.js";
 import { buildSystemdUnit } from "../daemon/systemd-unit.js";
 import { isSystemdUserServiceAvailable } from "../daemon/systemd.js";
 import { loadPersistedFederationToken } from "../federation/access-token.js";
+import { runFederationAutoConnectOnce } from "../federation/auto-connect.js";
 import {
   CONTROL_UI_BOOT_CHECK_PATH,
   type ControlUiBootCheck,
@@ -1002,6 +1003,7 @@ async function waitForManagedFederationSummary(params: {
   env: NodeJS.ProcessEnv;
   deadlineMs?: number;
   pollMs?: number;
+  requireToken?: boolean;
 }): Promise<{
   fedToken: ReturnType<typeof readManagedFederationTokenSummary>;
   reservations: ReturnType<typeof readManagedReservationSummaries>;
@@ -1012,7 +1014,10 @@ async function waitForManagedFederationSummary(params: {
   let reservations = readManagedReservationSummaries(params.env);
   while (Date.now() < deadlineAt) {
     const resolvedPublicUrl = (fedToken.publicUrl ?? "").trim();
-    if (resolvedPublicUrl || fedToken.exists || reservations.length > 0) {
+    const ready = params.requireToken
+      ? fedToken.exists
+      : resolvedPublicUrl || fedToken.exists || reservations.length > 0;
+    if (ready) {
       break;
     }
     await new Promise((resolve) => setTimeout(resolve, pollMs));
@@ -2787,9 +2792,31 @@ export async function finalizeOnboardingWizard(
   if (federation.enabled) {
     const resolvedBase = (federation.baseUrl ?? "").trim() || "https://ff1.fased.app";
     const handle = (federation.handle ?? "").trim() || "(auto)";
+    let hostedFederationAutoConnectAttempted = false;
+    let hostedFederationAutoConnectReason = "";
+    if (strictVps && !readManagedFederationTokenSummary(onboardingEnv).exists) {
+      hostedFederationAutoConnectAttempted = true;
+      const autoConnect = await runFederationAutoConnectOnce({
+        env: onboardingEnv,
+        log: {
+          info: (message) => runtime.log(message),
+          warn: (message) => {
+            hostedFederationAutoConnectReason = message;
+            runtime.log(message);
+          },
+          error: (message) => {
+            hostedFederationAutoConnectReason = message;
+            runtime.error(message);
+          },
+        },
+      });
+      hostedFederationAutoConnectReason = autoConnect.reason ?? hostedFederationAutoConnectReason;
+    }
     const { fedToken, reservations } = strictVps
       ? await waitForManagedFederationSummary({
           env: onboardingEnv,
+          deadlineMs: 20_000,
+          requireToken: true,
         })
       : {
           fedToken: readManagedFederationTokenSummary(onboardingEnv),
@@ -2808,6 +2835,14 @@ export async function finalizeOnboardingWizard(
             fedToken.exists
               ? `Join status: token present${fedToken.handle ? ` (${fedToken.handle})` : ""}`
               : "Join status: not joined yet",
+            hostedFederationAutoConnectAttempted && fedToken.exists
+              ? "Auto-connect check: issued token during final readiness."
+              : undefined,
+            hostedFederationAutoConnectAttempted &&
+            !fedToken.exists &&
+            hostedFederationAutoConnectReason
+              ? `Auto-connect failure: ${hostedFederationAutoConnectReason}`
+              : undefined,
             resolvedPublicUrl
               ? `Agent URL (Fased Network): ${resolvedPublicUrl}`
               : "Agent URL (Fased Network): not issued yet",

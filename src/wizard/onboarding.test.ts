@@ -105,6 +105,9 @@ const readManagedReservationSummaries = vi.hoisted(() => vi.fn(() => []));
 const loadPersistedFederationToken = vi.hoisted(() =>
   vi.fn<() => Promise<unknown>>(async () => null),
 );
+const runFederationAutoConnectOnce = vi.hoisted(() =>
+  vi.fn(async () => ({ enabled: true, reason: undefined })),
+);
 const readWalletStatusSnapshot = vi.hoisted(() =>
   vi.fn(async () => ({
     approvalAuth: {
@@ -220,6 +223,14 @@ vi.mock("../federation/access-token.js", async (importActual) => {
   };
 });
 
+vi.mock("../federation/auto-connect.js", async (importActual) => {
+  const actual = await importActual<typeof import("../federation/auto-connect.js")>();
+  return {
+    ...actual,
+    runFederationAutoConnectOnce,
+  };
+});
+
 vi.mock("../wallet/wallet-status.js", async (importActual) => {
   const actual = await importActual<typeof import("../wallet/wallet-status.js")>();
   return {
@@ -323,6 +334,8 @@ describe("runOnboardingWizard", () => {
     readManagedReservationSummaries.mockReturnValue([]);
     loadPersistedFederationToken.mockReset();
     loadPersistedFederationToken.mockResolvedValue(null);
+    runFederationAutoConnectOnce.mockReset();
+    runFederationAutoConnectOnce.mockResolvedValue({ enabled: true, reason: undefined });
     readWalletStatusSnapshot.mockReset();
     readWalletStatusSnapshot.mockResolvedValue({
       approvalAuth: {
