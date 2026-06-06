@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { UpdateRunResult } from "../../infra/update-runner.js";
-import { inferUpdateFailureHints } from "./progress.js";
+import { formatLongUpdateStepMessage, inferUpdateFailureHints } from "./progress.js";
 
 function makeResult(
   stepName: string,
@@ -52,5 +52,24 @@ describe("inferUpdateFailureHints", () => {
       "pnpm",
     );
     expect(inferUpdateFailureHints(result)).toEqual([]);
+  });
+});
+
+describe("formatLongUpdateStepMessage", () => {
+  it("includes elapsed time, command, and working directory", () => {
+    const text = formatLongUpdateStepMessage(
+      {
+        name: "preflight deps install (989e40c3)",
+        command: "pnpm install",
+        cwd: "/tmp/fased-update-preflight-123/worktree",
+        index: 6,
+        total: 18,
+      },
+      65_000,
+    );
+
+    expect(text).toContain("preflight deps install (989e40c3) still running");
+    expect(text).toContain("pnpm install");
+    expect(text).toContain("/tmp/fased-update-preflight-123/worktree");
   });
 });

@@ -32,8 +32,15 @@ const STEP_LABELS: Record<string, string> = {
   "global install": "Installing global package",
 };
 
+const LONG_STEP_HEARTBEAT_MS = 30_000;
+
 function getStepLabel(step: UpdateStepInfo): string {
   return STEP_LABELS[step.name] ?? step.name;
+}
+
+export function formatLongUpdateStepMessage(step: UpdateStepInfo, elapsedMs: number): string {
+  const elapsed = formatDurationPrecise(elapsedMs);
+  return `${getStepLabel(step)} still running after ${elapsed}. Command: ${step.command}. CWD: ${step.cwd}`;
 }
 
 export function inferUpdateFailureHints(result: UpdateRunResult): string[] {
@@ -84,13 +91,38 @@ export function createUpdateProgress(enabled: boolean): ProgressController {
   }
 
   let currentSpinner: ReturnType<typeof spinner> | null = null;
+  let heartbeat: ReturnType<typeof setInterval> | null = null;
+
+  const stopHeartbeat = () => {
+    if (heartbeat) {
+      clearInterval(heartbeat);
+      heartbeat = null;
+    }
+  };
 
   const progress: UpdateStepProgress = {
     onStepStart: (step) => {
+      stopHeartbeat();
       currentSpinner = spinner();
       currentSpinner.start(theme.accent(getStepLabel(step)));
+      const startedAt = Date.now();
+      heartbeat = setInterval(() => {
+        if (!currentSpinner) {
+          return;
+        }
+        const message = theme.muted(formatLongUpdateStepMessage(step, Date.now() - startedAt));
+        const activeSpinner = currentSpinner as ReturnType<typeof spinner> & {
+          message?: (value: string) => void;
+        };
+        if (typeof activeSpinner.message === "function") {
+          activeSpinner.message(message);
+        } else {
+          defaultRuntime.log(message);
+        }
+      }, LONG_STEP_HEARTBEAT_MS);
     },
     onStepComplete: (step) => {
+      stopHeartbeat();
       if (!currentSpinner) {
         return;
       }
@@ -116,6 +148,7 @@ export function createUpdateProgress(enabled: boolean): ProgressController {
   return {
     progress,
     stop: () => {
+      stopHeartbeat();
       if (currentSpinner) {
         currentSpinner.stop();
         currentSpinner = null;

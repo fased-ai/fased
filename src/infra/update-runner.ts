@@ -54,6 +54,7 @@ type CommandRunner = (
 export type UpdateStepInfo = {
   name: string;
   command: string;
+  cwd: string;
   index: number;
   total: number;
 };
@@ -259,6 +260,7 @@ async function runStep(opts: RunStepOptions): Promise<UpdateStepResult> {
   const stepInfo: UpdateStepInfo = {
     name,
     command,
+    cwd,
     index: stepIndex,
     total: totalSteps,
   };

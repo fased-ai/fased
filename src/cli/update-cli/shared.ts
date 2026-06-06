@@ -158,16 +158,18 @@ export async function runUpdateStep(params: {
   progress?: UpdateStepProgress;
 }): Promise<UpdateStepResult> {
   const command = params.argv.join(" ");
+  const cwd = params.cwd ?? process.cwd();
   params.progress?.onStepStart?.({
     name: params.name,
     command,
+    cwd,
     index: 0,
     total: 0,
   });
 
   const started = Date.now();
   const res = await runCommandWithTimeout(params.argv, {
-    cwd: params.cwd,
+    cwd,
     timeoutMs: params.timeoutMs,
   });
   const durationMs = Date.now() - started;
@@ -176,6 +178,7 @@ export async function runUpdateStep(params: {
   params.progress?.onStepComplete?.({
     name: params.name,
     command,
+    cwd,
     index: 0,
     total: 0,
     durationMs,
@@ -186,7 +189,7 @@ export async function runUpdateStep(params: {
   return {
     name: params.name,
     command,
-    cwd: params.cwd ?? process.cwd(),
+    cwd,
     durationMs,
     exitCode: res.code,
     stdoutTail: trimLogTail(res.stdout, MAX_LOG_CHARS),
