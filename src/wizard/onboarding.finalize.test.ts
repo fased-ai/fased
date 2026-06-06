@@ -7,6 +7,7 @@ import {
   buildGatewayWsUrlFromHttpUrl,
   buildOnboardingDashboardUrl,
   ensureGatewaySecretMatchesToken,
+  formatHostedRootServiceRequiredFailure,
   formatLocalDashboardReady,
   formatStrictRemoteAccessDetails,
   gatewayServiceMatchesCurrentInstall,
@@ -114,8 +115,23 @@ describe("buildGatewayServiceRestartAttempts", () => {
       (attempt) => attempt.label,
     );
 
-    expect(labels.slice(0, 3)).toEqual(["root restart", "root start", "root enable+start"]);
-    expect(labels).toContain("user restart");
+    expect(labels).toEqual(["root restart", "root start", "root enable+start"]);
+    expect(labels).not.toContain("user restart");
+  });
+});
+
+describe("formatHostedRootServiceRequiredFailure", () => {
+  it("explains that hosting does not fall back to an app-managed user service", () => {
+    const text = formatHostedRootServiceRequiredFailure({
+      runAsUser: "app",
+      detail: "sudo denied",
+    });
+
+    expect(text).toContain("root-managed fased-gateway.service running as User=app");
+    expect(text).toContain("will not fall back to an app-managed user service");
+    expect(text).toContain("Root service repair failed: sudo denied");
+    expect(text).toContain("./install.sh --hosting");
+    expect(text).toContain("sudo systemctl status fased-gateway");
   });
 });
 

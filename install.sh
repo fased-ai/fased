@@ -818,6 +818,19 @@ restart_existing_gateway_service_after_install() {
   local profile
   profile="$(resolved_host_profile)"
 
+  if [[ "$profile" == "hosting" ]]; then
+    if has_system_gateway_service; then
+      sudo -n systemctl daemon-reload >/dev/null 2>&1 || true
+      if sudo -n systemctl restart --no-block fased-gateway.service >/dev/null 2>&1; then
+        return 0
+      fi
+      if sudo -n systemctl start --no-block fased-gateway.service >/dev/null 2>&1; then
+        return 0
+      fi
+    fi
+    return 1
+  fi
+
   if [[ "$profile" != "hosting" ]] && has_user_gateway_service; then
     systemctl --user daemon-reload >/dev/null 2>&1 || true
     if systemctl --user restart fased-gateway.service >/dev/null 2>&1; then
@@ -834,16 +847,6 @@ restart_existing_gateway_service_after_install() {
       return 0
     fi
     if sudo -n systemctl start --no-block fased-gateway.service >/dev/null 2>&1; then
-      return 0
-    fi
-  fi
-
-  if [[ "$profile" == "hosting" ]] && has_user_gateway_service; then
-    systemctl --user daemon-reload >/dev/null 2>&1 || true
-    if systemctl --user restart fased-gateway.service >/dev/null 2>&1; then
-      return 0
-    fi
-    if systemctl --user start fased-gateway.service >/dev/null 2>&1; then
       return 0
     fi
   fi
@@ -1871,8 +1874,9 @@ fi
 install_fased_cli_launcher
 
 if [[ "$RUN_ONBOARD" -eq 0 ]]; then
+  no_onboard_profile="$(resolved_host_profile)"
   marker_onboarding_completed="$(read_marker_onboarding_completed || true)"
-  if [[ "$marker_onboarding_completed" == "true" ]] || has_system_gateway_service || has_user_gateway_service; then
+  if [[ "$marker_onboarding_completed" == "true" ]] || has_system_gateway_service || { [[ "$no_onboard_profile" != "hosting" ]] && has_user_gateway_service; }; then
     write_install_marker "$REPO_ROOT" "true"
   else
     write_install_marker "$REPO_ROOT" "false"
@@ -1895,7 +1899,7 @@ if [[ "$RUN_ONBOARD" -eq 0 ]]; then
     fi
   fi
   echo "Onboarding skipped (--no-onboard)."
-  if has_system_gateway_service || has_user_gateway_service; then
+  if has_system_gateway_service || { [[ "$no_onboard_profile" != "hosting" ]] && has_user_gateway_service; }; then
     echo "Open: fased dashboard --no-open"
   elif [[ "$HOSTING_REQUESTED" -eq 1 ]]; then
     echo "Run when ready: ./install.sh --hosting"

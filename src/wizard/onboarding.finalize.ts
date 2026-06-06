@@ -431,6 +431,22 @@ export function formatPersistentRuntimeServiceFailure(params: {
   return `Persistent runtime service was not detected (status=${detail}).`;
 }
 
+export function formatHostedRootServiceRequiredFailure(params: {
+  runAsUser?: string;
+  detail?: string;
+}): string {
+  const runAsUser = params.runAsUser?.trim() || "app";
+  const detail = params.detail?.trim() || "unknown error";
+  return [
+    `Hosting requires the root-managed fased-gateway.service running as User=${runAsUser}.`,
+    "The installer will not fall back to an app-managed user service for the hosting profile.",
+    `Root service repair failed: ${detail}`,
+    "Repair: rerun ./install.sh --hosting from root on the VPS, or restore the installer sudoers for the app user and rerun ./install.sh --hosting.",
+    "Inspect: sudo systemctl status fased-gateway --no-pager",
+    "Inspect logs: sudo journalctl -u fased-gateway -n 120 --no-pager",
+  ].join("\n");
+}
+
 async function migrateStrictVpsGatewayServices(): Promise<{ ok: boolean; detail?: string }> {
   return await runShell(
     [
@@ -653,7 +669,7 @@ export function buildGatewayServiceRestartAttempts(
   ];
   return [
     ...(profile === "hosting" ? rootAttempts : userAttempts),
-    ...(profile === "hosting" ? userAttempts : rootAttempts),
+    ...(profile === "hosting" ? [] : rootAttempts),
   ];
 }
 
@@ -1283,7 +1299,6 @@ export async function finalizeOnboardingWizard(
 ): Promise<{ launchedTui: boolean }> {
   const { flow, opts, baseConfig, nextConfig, settings, federation, prompter, runtime } = options;
   const strictVps = opts.hostProfile === "hosting";
-  const hostedMaintenanceSession = strictVps && opts.hostMaintenanceSession === true;
   const recommendedGatewayMaxOldSpaceMb = resolveGatewayMaxOldSpaceMb({
     env: process.env,
     fallbackMb: 1024,
@@ -1353,7 +1368,7 @@ export async function finalizeOnboardingWizard(
   if (process.platform === "linux" && !systemdAvailable) {
     await prompter.note(
       strictVps
-        ? "Systemd user services are unavailable in this session. Skipping linger checks; hosted install will use root-managed service fallback if needed."
+        ? "Systemd user services are unavailable in this session. Skipping linger checks; hosted install requires the root-managed gateway service."
         : "Systemd user services are unavailable. Skipping lingering checks and user-service install.",
       "Systemd",
     );
@@ -1420,18 +1435,26 @@ export async function finalizeOnboardingWizard(
     const preferRootService = strictVps;
 
     let rootServiceActiveSuccessfully = false;
+    if (strictVps && !canUseRootService) {
+      throw new Error(
+        formatHostedRootServiceRequiredFailure({
+          runAsUser: resolveGatewayServiceRunAsUser(),
+          detail: "non-interactive sudo is unavailable for systemd service install/repair",
+        }),
+      );
+    }
     if (preferRootService && canUseRootService) {
       const runAsUser = resolveGatewayServiceRunAsUser();
       if (!runAsUser) {
-        if (strictVps && !opts.allowInsecure && !hostedMaintenanceSession) {
+        if (strictVps) {
           throw new Error(
-            "Hosting mode requires root-managed persistent service, but the runtime user could not be resolved.",
+            formatHostedRootServiceRequiredFailure({
+              detail: "runtime user could not be resolved",
+            }),
           );
         }
         await prompter.note(
-          hostedMaintenanceSession
-            ? "Unable to resolve root service bootstrap inputs in hosted maintenance session; falling back to app-managed persistent service."
-            : "Unable to resolve root service runtime user; falling back to non-root service install.",
+          "Unable to resolve root service runtime user; falling back to non-root service install.",
           "Gateway service",
         );
       } else {
@@ -1514,15 +1537,16 @@ export async function finalizeOnboardingWizard(
               repairInstalled: rootService.ok,
             });
             if (!rootService.ok) {
-              if (strictVps && !opts.allowInsecure && !hostedMaintenanceSession) {
+              if (strictVps) {
                 throw new Error(
-                  `Hosting mode requires root-managed persistent service. Install failed: ${rootService.detail ?? "unknown error"}`,
+                  formatHostedRootServiceRequiredFailure({
+                    runAsUser,
+                    detail: rootService.detail,
+                  }),
                 );
               }
               await prompter.note(
-                hostedMaintenanceSession
-                  ? "Hosted maintenance could not repair the root-managed gateway service with the current sudo capability set. Falling back to app-managed persistent service."
-                  : `${strictVps ? "Hosting" : "Local"} root service install failed: ${rootService.detail ?? "unknown error"}. Falling back to non-root service.`,
+                `${strictVps ? "Hosting" : "Local"} root service install failed: ${rootService.detail ?? "unknown error"}. Falling back to non-root service.`,
                 "Gateway service",
               );
             }
@@ -1540,9 +1564,14 @@ export async function finalizeOnboardingWizard(
               runAsUser,
             );
             if (!strictExecAfter.ok) {
-              if (strictVps && !opts.allowInsecure) {
+              if (strictVps) {
                 throw new Error(
-                  "Hosting root service check failed: ExecStart is not the canonical hosted service command.",
+                  formatHostedRootServiceRequiredFailure({
+                    runAsUser,
+                    detail:
+                      strictExecAfter.detail ||
+                      "unit ExecStart/User is not the canonical hosted service command",
+                  }),
                 );
               }
               await prompter.note(
@@ -1562,6 +1591,14 @@ export async function finalizeOnboardingWizard(
           }
         }
       }
+    }
+    if (strictVps && !rootServiceActiveSuccessfully) {
+      throw new Error(
+        formatHostedRootServiceRequiredFailure({
+          runAsUser: resolveGatewayServiceRunAsUser(),
+          detail: "root-managed gateway service was not verified after restart/repair",
+        }),
+      );
     }
     if (!rootServiceActiveSuccessfully) {
       const daemonRuntime =
