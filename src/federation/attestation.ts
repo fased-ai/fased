@@ -7,6 +7,9 @@ import {
 import { resolveCommitHash } from "../infra/git-commit.js";
 import { VERSION } from "../version.js";
 
+export const FEDERATION_ATTESTATION_SCHEMA_URL =
+  "https://schemas.fased.ai/fased-network-attestation-v1.json";
+
 export type AttestationPluginRef = {
   name: string;
   version: string;
@@ -75,7 +78,7 @@ export function buildAttestation(options: AttestationOptions): AttestationPayloa
   const schemaUrl =
     options.schemaUrl?.trim() ||
     process.env.FASED_FEDERATION_SCHEMA_URL?.trim() ||
-    "https://schemas.fased.ai/attestation-v1.json";
+    FEDERATION_ATTESTATION_SCHEMA_URL;
   const walletChain =
     options.walletChain?.trim() || process.env.FASED_FEDERATION_WALLET_CHAIN?.trim() || "solana";
   const walletAddress =

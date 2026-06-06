@@ -49,7 +49,7 @@ async function writeFederationToken(stateDir: string): Promise<void> {
 }
 
 describe("configureFederationForOnboarding", () => {
-  it("offers to enable auto-connect when no federation state exists", async () => {
+  it("silently enables auto-connect when no federation state exists", async () => {
     const stateDir = await makeTempStateDir();
     const confirm = vi.fn(async () => true);
     const text = vi.fn(async (opts) => opts.initialValue ?? "");
@@ -69,12 +69,9 @@ describe("configureFederationForOnboarding", () => {
         prompter,
       });
 
-      expect(confirm).toHaveBeenCalledWith(
-        expect.objectContaining({
-          message: "Enable Fased Network auto-connect? (registers after the Gateway starts)",
-          initialValue: true,
-        }),
-      );
+      expect(confirm).not.toHaveBeenCalled();
+      expect(prompter.note).not.toHaveBeenCalled();
+      expect(text).not.toHaveBeenCalled();
       expect(result).toEqual({
         enabled: true,
         baseUrl: "https://ff1.fased.app",
@@ -85,7 +82,7 @@ describe("configureFederationForOnboarding", () => {
     }
   });
 
-  it("keeps auto-connect settings without claiming the node is already joined", async () => {
+  it("keeps auto-connect settings silently", async () => {
     const stateDir = await makeTempStateDir();
     const confirm = vi.fn(async () => true);
     const text = vi.fn(async (opts) => opts.initialValue ?? "");
@@ -108,16 +105,8 @@ describe("configureFederationForOnboarding", () => {
         prompter,
       });
 
-      expect(confirm).toHaveBeenCalledWith(
-        expect.objectContaining({
-          message: "Keep Fased Network auto-connect enabled? (not joined yet)",
-          initialValue: true,
-        }),
-      );
-      expect(prompter.note).toHaveBeenCalledWith(
-        expect.stringContaining("Joining is complete only after a network token is issued"),
-        "Fased Network",
-      );
+      expect(confirm).not.toHaveBeenCalled();
+      expect(prompter.note).not.toHaveBeenCalled();
       expect(text).not.toHaveBeenCalled();
       expect(result).toEqual({
         enabled: true,
@@ -129,7 +118,7 @@ describe("configureFederationForOnboarding", () => {
     }
   });
 
-  it("reports joined only when a persisted federation token exists", async () => {
+  it("uses a persisted federation token handle silently", async () => {
     const stateDir = await makeTempStateDir();
     const confirm = vi.fn(async () => true);
     const text = vi.fn(async (opts) => opts.initialValue ?? "");
@@ -153,12 +142,7 @@ describe("configureFederationForOnboarding", () => {
         prompter,
       });
 
-      expect(confirm).toHaveBeenCalledWith(
-        expect.objectContaining({
-          message: "Keep Fased Network joined?",
-          initialValue: true,
-        }),
-      );
+      expect(confirm).not.toHaveBeenCalled();
       expect(prompter.note).not.toHaveBeenCalled();
       expect(text).not.toHaveBeenCalled();
       expect(result).toEqual({
@@ -166,6 +150,36 @@ describe("configureFederationForOnboarding", () => {
         baseUrl: "https://ff1.fased.app",
         handle: "@agent@ff1.fased.app",
       });
+    } finally {
+      await fs.rm(stateDir, { force: true, recursive: true });
+    }
+  });
+
+  it("respects an explicitly disabled existing auto-connect setting", async () => {
+    const stateDir = await makeTempStateDir();
+    const confirm = vi.fn(async () => true);
+    const text = vi.fn(async (opts) => opts.initialValue ?? "");
+    const prompter = makePrompter({ confirm, text });
+
+    try {
+      const result = await configureFederationForOnboarding({
+        flow: "quickstart",
+        hostProfile: "local",
+        baseConfig: {
+          env: {
+            vars: {
+              FASED_STATE_DIR: stateDir,
+              FASED_FEDERATION_AUTO_CONNECT: "0",
+            },
+          },
+        },
+        prompter,
+      });
+
+      expect(confirm).not.toHaveBeenCalled();
+      expect(prompter.note).not.toHaveBeenCalled();
+      expect(text).not.toHaveBeenCalled();
+      expect(result).toEqual({ enabled: false });
     } finally {
       await fs.rm(stateDir, { force: true, recursive: true });
     }

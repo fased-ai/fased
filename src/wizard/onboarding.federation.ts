@@ -14,69 +14,27 @@ export async function configureFederationForOnboarding(params: {
   baseConfig: FasedAgentConfig;
   prompter: WizardPrompter;
 }): Promise<FederationWizardSettings> {
-  const { baseConfig, prompter } = params;
+  const { baseConfig } = params;
 
   const env = { ...process.env, ...baseConfig.env?.vars };
-  const explicitBaseUrl =
-    env.FASED_FEDERATION_BASE_URL?.trim() || env.FASED_FEDERATION_URL?.trim() || "";
   const explicitHandle = env.FASED_A2A_HANDLE?.trim() || env.FASED_FEDERATION_HANDLE?.trim() || "";
   const currentBaseUrl = resolveFederationBaseUrl(env);
   const currentHandle = explicitHandle ? resolveFederationHandle({ env }) : "";
   const autoConnectRaw = String(env.FASED_FEDERATION_AUTO_CONNECT ?? "")
     .trim()
     .toLowerCase();
-  const autoConnectConfigured = autoConnectRaw === "1" || autoConnectRaw === "true";
   const persistedToken = await loadPersistedFederationToken(env).catch(() => null);
-  const alreadyJoined = Boolean(persistedToken?.tokenId);
-  const alreadyConfigured = Boolean(explicitBaseUrl || explicitHandle || autoConnectConfigured);
 
-  const promptMessage = alreadyJoined
-    ? "Keep Fased Network joined?"
-    : alreadyConfigured
-      ? "Keep Fased Network auto-connect enabled? (not joined yet)"
-      : "Enable Fased Network auto-connect? (registers after the Gateway starts)";
-  const enabled = await prompter.confirm({
-    message: promptMessage,
-    initialValue: true,
-  });
-
-  if (!alreadyJoined && enabled) {
-    await prompter.note(
-      [
-        "Fased Network auto-connect is enabled.",
-        "Joining is complete only after a network token is issued and shown as joined/trusted in readiness.",
-      ].join("\n"),
-      "Fased Network",
-    );
-  }
-
-  if (!enabled) {
+  if (autoConnectRaw === "0" || autoConnectRaw === "false" || autoConnectRaw === "off") {
     return { enabled: false };
   }
 
   const defaultBaseUrl = currentBaseUrl || DEFAULT_FEDERATION_BASE_URL;
-  const baseUrl =
-    params.flow === "quickstart"
-      ? defaultBaseUrl
-      : await prompter.text({
-          message: "Fased Network Server",
-          initialValue: defaultBaseUrl,
-          placeholder: "Fased Network (ff1.fased.app)",
-        });
-
   const defaultHandle = currentHandle || persistedToken?.handle || "";
-  const handle =
-    params.flow === "quickstart"
-      ? defaultHandle
-      : await prompter.text({
-          message: "Desired Handle",
-          initialValue: defaultHandle,
-          placeholder: "@your-agent@domain",
-        });
 
   return {
     enabled: true,
-    handle: handle || undefined,
-    baseUrl: baseUrl || undefined,
+    handle: defaultHandle || undefined,
+    baseUrl: defaultBaseUrl || undefined,
   };
 }

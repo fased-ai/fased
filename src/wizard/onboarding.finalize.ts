@@ -2812,11 +2812,9 @@ export async function finalizeOnboardingWizard(
           info: (message) => runtime.log(message),
           warn: (message) => {
             hostedFederationAutoConnectReason = message;
-            runtime.log(message);
           },
           error: (message) => {
             hostedFederationAutoConnectReason = message;
-            runtime.error(message);
           },
         },
       });
