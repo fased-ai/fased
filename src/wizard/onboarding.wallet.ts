@@ -142,6 +142,40 @@ function resolveSignerdLogPath(params: {
     : path.join(params.materialDir, "local-signer.log");
 }
 
+function buildSignerdReadinessError(params: {
+  appSocketPath: string;
+  backendSocketPath: string;
+  binPath: string;
+  materialDir: string;
+  readyTimeoutMs: number;
+  runAsUser?: string;
+}): Error {
+  const signerLogPath = resolveSignerdLogPath({
+    appSocketPath: params.appSocketPath,
+    materialDir: params.materialDir,
+    runAsUser: params.runAsUser,
+  });
+  const brokerLogPath = path.join(path.dirname(params.appSocketPath), "local-signer-broker.log");
+  const logDetails: string[] = [];
+  const signerLogTail = readFileTail(signerLogPath);
+  if (signerLogTail) {
+    logDetails.push(`Signer log tail (${signerLogPath}):\n${signerLogTail}`);
+  }
+  const brokerLogTail =
+    params.backendSocketPath !== params.appSocketPath ? readFileTail(brokerLogPath) : undefined;
+  if (brokerLogTail) {
+    logDetails.push(`Broker log tail (${brokerLogPath}):\n${brokerLogTail}`);
+  }
+  return new Error(
+    [
+      `fased-signerd did not become ready within ${Math.round(params.readyTimeoutMs / 1000)}s.`,
+      `Check logs: ${signerLogPath}${params.backendSocketPath !== params.appSocketPath ? `, ${brokerLogPath}` : ""}`,
+      `Run manually: ${params.binPath} -socket ${params.backendSocketPath}`,
+      ...logDetails,
+    ].join("\n"),
+  );
+}
+
 function normalizeSignerChains(raw: Iterable<string>): string[] {
   const out = new Set<string>();
   for (const value of raw) {
@@ -1246,7 +1280,17 @@ export async function restartLocalSocketSigner(
   if (backendSocketPath !== socketPath) {
     startSignerBrokerBackground(socketPath, backendSocketPath, materialDir, env);
   }
-  await new Promise<void>((resolve) => setTimeout(resolve, 1200));
+  const readyTimeoutMs = runAsUser ? 20_000 : 8_000;
+  if (!(await waitForSignerdHealthy(socketPath, readyTimeoutMs))) {
+    throw buildSignerdReadinessError({
+      appSocketPath: socketPath,
+      backendSocketPath,
+      binPath,
+      materialDir,
+      readyTimeoutMs,
+      runAsUser,
+    });
+  }
 }
 
 export async function syncLocalSocketSignerFromConfig(params?: {
@@ -1619,30 +1663,14 @@ export async function configureWalletForOnboarding(params: {
           process.env.FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET = backendSocketPath;
         }
       } else {
-        const signerLogPath = resolveSignerdLogPath({
+        throw buildSignerdReadinessError({
           appSocketPath: socketPath,
+          backendSocketPath,
+          binPath,
           materialDir,
+          readyTimeoutMs,
           runAsUser,
         });
-        const brokerLogPath = path.join(path.dirname(socketPath), "local-signer-broker.log");
-        const logDetails: string[] = [];
-        const signerLogTail = readFileTail(signerLogPath);
-        if (signerLogTail) {
-          logDetails.push(`Signer log tail (${signerLogPath}):\n${signerLogTail}`);
-        }
-        const brokerLogTail =
-          backendSocketPath !== socketPath ? readFileTail(brokerLogPath) : undefined;
-        if (brokerLogTail) {
-          logDetails.push(`Broker log tail (${brokerLogPath}):\n${brokerLogTail}`);
-        }
-        throw new Error(
-          [
-            `fased-signerd did not become ready within ${Math.round(readyTimeoutMs / 1000)}s.`,
-            `Check logs: ${signerLogPath}${backendSocketPath !== socketPath ? `, ${brokerLogPath}` : ""}`,
-            `Run manually: ${binPath} -socket ${backendSocketPath}`,
-            ...logDetails,
-          ].join("\n"),
-        );
       }
     }
   }
