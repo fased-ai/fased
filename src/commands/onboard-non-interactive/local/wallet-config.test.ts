@@ -103,6 +103,31 @@ describe("applyNonInteractiveWalletConfig", () => {
     expect(next.wallet?.runtime?.enabled).toBe(false);
   });
 
+  it("uses isolated signer defaults when hosted wallet is explicitly enabled", () => {
+    const appHome = path.join(tempConfigDir, "home-app");
+    vi.stubEnv("HOME", appHome);
+    const runtime = createRuntimeStub();
+    const next = applyNonInteractiveWalletConfig({
+      nextConfig: {},
+      opts: { hostProfile: "hosting", walletEnabled: true } as OnboardOptions,
+      runtime,
+    });
+
+    expect(next.wallet?.runtime?.enabled).toBe(true);
+    expect(next.wallet?.provider?.id).toBe("local-socket-signer");
+    expect(next.env?.vars?.FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER).toBe("fased-signer");
+    expect(next.env?.vars?.FASED_WALLET_SIGNER_STATE_DIR).toBe("/home/fased-signer/.fased/wallet");
+    expect(next.env?.vars?.FASED_WALLET_LOCAL_SIGNER_SOCKET).toBe(
+      path.join(appHome, ".fased/wallet/local-signer.sock"),
+    );
+    expect(next.env?.vars?.FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET).toBe(
+      "/home/fased-signer/.fased/wallet/local-signer.sock",
+    );
+    expect(next.env?.vars?.FASED_WALLET_LOCAL_SIGNER_BIN).toBe(
+      "/home/fased-signer/.fased/bin/fased-signerd",
+    );
+  });
+
   it("rejects invalid chain values", () => {
     const runtime = createRuntimeStub();
     applyNonInteractiveWalletConfig({

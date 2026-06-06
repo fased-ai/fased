@@ -421,6 +421,8 @@ SIGNERD_PASSPHRASE_FILE="$SIGNERD_MATERIAL_DIR/passphrase"
 SIGNERD_EVM_KEYSTORE="$SIGNERD_MATERIAL_DIR/keystore-evm.v1.enc"
 SIGNERD_SOL_KEYSTORE="$SIGNERD_MATERIAL_DIR/keystore-solana.v1.enc"
 SIGNERD_LOG="${LOG_DIR}/fased-signerd.log"
+SIGNERD_BROKER_LOG="${LOG_DIR}/local-signer-broker.log"
+SIGNER_ISOLATION_HELPER="/usr/local/sbin/fased-signer-isolation"
 CONFIG_JSON="${FASED_CONFIG_DIR}/fased.json"
 SIGNERD_ENV_FILE="${FASED_CONFIG_DIR}/wallet/signer.env"
 WALLET_REGISTRY_JSON="${FASED_CONFIG_DIR}/wallet/provider-registry.v1.json"
@@ -451,7 +453,9 @@ load_wallet_signer_env_from_config() {
       || [[ "$key" == "FASED_WALLET_LOCAL_SIGNER_SOCKET" ]] \
       || [[ "$key" == "FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET" ]] \
       || [[ "$key" == "FASED_WALLET_SIGNER_STATE_DIR" ]] \
-      || [[ "$key" == "FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER" ]]; then
+      || [[ "$key" == "FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER" ]] \
+      || [[ "$key" == "FASED_WALLET_LOCAL_SIGNER_BIN" ]] \
+      || [[ "$key" =~ ^FASED_WALLET_LOCAL_SIGNER_(ROLE|DIRECT_SIGNING|CAPS_ENABLED|SOLANA_MAX_PER_TX|SOLANA_MAX_DAILY|SOLANA_ALLOW_PROGRAMS)(__[A-Za-z0-9_-]+)?$ ]]; then
       export "$key=$value"
     fi
   done < <(
@@ -467,6 +471,8 @@ load_wallet_signer_env_from_config() {
             or . == "FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET"
             or . == "FASED_WALLET_SIGNER_STATE_DIR"
             or . == "FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER"
+            or . == "FASED_WALLET_LOCAL_SIGNER_BIN"
+            or test("^FASED_WALLET_LOCAL_SIGNER_(ROLE|DIRECT_SIGNING|CAPS_ENABLED|SOLANA_MAX_PER_TX|SOLANA_MAX_DAILY|SOLANA_ALLOW_PROGRAMS)(__[A-Za-z0-9_-]+)?$")
         )
       | "\(.key)=\(.value|tostring)"
     ' "$CONFIG_JSON" 2>/dev/null || true
@@ -637,13 +643,18 @@ should_start_signerd() {
 }
 
 collect_existing_signerd_pids() {
-  local pid_file
+  local pid_file app_pid_file
   pid_file="$(resolve_local_signer_sidecar_path "$SIGNERD_BACKEND_SOCKET" "pid")"
+  app_pid_file="$(resolve_local_signer_sidecar_path "$SIGNERD_SOCKET" "pid")"
   {
     if [[ -f "$pid_file" ]]; then
       cat "$pid_file" 2>/dev/null || true
     fi
+    if [[ "$app_pid_file" != "$pid_file" && -f "$app_pid_file" ]]; then
+      cat "$app_pid_file" 2>/dev/null || true
+    fi
     pgrep -f "$SIGNERD_BIN" 2>/dev/null || true
+    pgrep -f "wallet signer broker" 2>/dev/null || true
   } | awk '/^[0-9]+$/ { if (!seen[$1]++) print $1 }'
 }
 
@@ -660,8 +671,16 @@ dump_existing_signerd_processes() {
 }
 
 stop_existing_signerd() {
-  local pid_file
+  local pid_file app_pid_file
   pid_file="$(resolve_local_signer_sidecar_path "$SIGNERD_BACKEND_SOCKET" "pid")"
+  app_pid_file="$(resolve_local_signer_sidecar_path "$SIGNERD_SOCKET" "pid")"
+  if signer_isolation_helper_available; then
+    run_signer_isolation_helper stop "$SIGNERD_BACKEND_SOCKET" "$pid_file" >/dev/null 2>&1 || true
+    if [[ "$SIGNERD_SOCKET" != "$SIGNERD_BACKEND_SOCKET" ]]; then
+      run_signer_isolation_helper stop "$SIGNERD_SOCKET" "$app_pid_file" >/dev/null 2>&1 || true
+    fi
+    return 0
+  fi
   local pid=""
   while IFS= read -r pid; do
     [[ "$pid" =~ ^[0-9]+$ ]] || continue
@@ -672,7 +691,7 @@ stop_existing_signerd() {
     [[ "$pid" =~ ^[0-9]+$ ]] || continue
     kill -9 "$pid" >/dev/null 2>&1 || true
   done < <(collect_existing_signerd_pids)
-  rm -f "$SIGNERD_SOCKET" "$SIGNERD_BACKEND_SOCKET" "$pid_file"
+  rm -f "$SIGNERD_SOCKET" "$SIGNERD_BACKEND_SOCKET" "$pid_file" "$app_pid_file"
 }
 
 wait_for_signerd_ready() {
@@ -700,9 +719,136 @@ wait_for_signerd_ready() {
   done
 }
 
+wait_for_signer_broker_ready() {
+  local retries="$1"
+  local count=0
+  while true; do
+    if [[ -S "$SIGNERD_SOCKET" ]]; then
+      return 0
+    fi
+    sleep 1
+    count=$((count + 1))
+    if [[ $count -ge $retries ]]; then
+      echo "[signerd] ERROR: signer broker did not create app socket within ${retries}s."
+      tail -n 40 "$SIGNERD_BROKER_LOG" 2>/dev/null || true
+      return 1
+    fi
+  done
+}
+
+collect_wallet_env_args() {
+  local key value
+  while IFS='=' read -r key value; do
+    [[ "$key" == FASED_WALLET_* ]] || continue
+    printf '%s=%s\0' "$key" "$value"
+  done < <(env)
+}
+
+current_app_user() {
+  id -un 2>/dev/null || printf '%s\n' "${USER:-app}"
+}
+
+signer_isolation_helper_available() {
+  [[ -n "${FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER:-}" ]] || return 1
+  [[ -x "$SIGNER_ISOLATION_HELPER" ]] || return 1
+  command -v sudo >/dev/null 2>&1 || return 1
+}
+
+run_signer_isolation_helper() {
+  local app_user
+  app_user="$(current_app_user)"
+  sudo -n -E "$SIGNER_ISOLATION_HELPER" "$app_user" "$FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER" "$@"
+}
+
+start_signerd_process() {
+  local pid_file audit_log
+  pid_file="$(resolve_local_signer_sidecar_path "$SIGNERD_BACKEND_SOCKET" "pid")"
+  audit_log="$(resolve_local_signer_sidecar_path "$SIGNERD_BACKEND_SOCKET" "audit")"
+  if [[ -n "${FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER:-}" ]]; then
+    if signer_isolation_helper_available; then
+      run_signer_isolation_helper start-signerd \
+        "$SIGNERD_BIN" \
+        "$SIGNERD_BACKEND_SOCKET" \
+        "$pid_file" \
+        "$audit_log" \
+        >>"$SIGNERD_LOG" 2>&1 &
+      return 0
+    fi
+    if ! command -v sudo >/dev/null 2>&1; then
+      return 1
+    fi
+    local env_args=()
+    while IFS= read -r -d '' env_arg; do
+      env_args+=("$env_arg")
+    done < <(collect_wallet_env_args)
+    sudo -n -u "$FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER" -H env "${env_args[@]}" \
+      "$SIGNERD_BIN" \
+        -socket "$SIGNERD_BACKEND_SOCKET" \
+        -pid-file "$pid_file" \
+        -audit-log "$audit_log" \
+        >>"$SIGNERD_LOG" 2>&1 &
+    return 0
+  fi
+  "$SIGNERD_BIN" \
+    -socket "$SIGNERD_BACKEND_SOCKET" \
+    -pid-file "$pid_file" \
+    -audit-log "$audit_log" \
+    >>"$SIGNERD_LOG" 2>&1 &
+}
+
+start_signer_broker_process() {
+  if [[ "$SIGNERD_SOCKET" == "$SIGNERD_BACKEND_SOCKET" ]]; then
+    return 0
+  fi
+  local gateway_entry
+  gateway_entry="$(resolve_gateway_cli_entry || true)"
+  if [[ -z "$gateway_entry" ]]; then
+    echo "[signerd] ERROR: signer broker CLI unavailable under $FASED_ROOT/dist"
+    return 1
+  fi
+  if [[ -n "${FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER:-}" ]]; then
+    if signer_isolation_helper_available; then
+      run_signer_isolation_helper start-broker \
+        "$NODE_BIN" \
+        "$gateway_entry" \
+        "$SIGNERD_SOCKET" \
+        "$SIGNERD_BACKEND_SOCKET" \
+        "$(resolve_local_signer_sidecar_path "$SIGNERD_SOCKET" "pid")" \
+        "$(resolve_local_signer_sidecar_path "$SIGNERD_SOCKET" "audit")" \
+        >>"$SIGNERD_BROKER_LOG" 2>&1 &
+      return 0
+    fi
+    if ! command -v sudo >/dev/null 2>&1; then
+      return 1
+    fi
+    local env_args=()
+    while IFS= read -r -d '' env_arg; do
+      env_args+=("$env_arg")
+    done < <(collect_wallet_env_args)
+    sudo -n -u "$FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER" -H env "${env_args[@]}" \
+      "$NODE_BIN" "$gateway_entry" wallet signer broker \
+        --socket "$SIGNERD_SOCKET" \
+        --backend-socket "$SIGNERD_BACKEND_SOCKET" \
+        --pid-file "$(resolve_local_signer_sidecar_path "$SIGNERD_SOCKET" "pid")" \
+        --audit-log "$(resolve_local_signer_sidecar_path "$SIGNERD_SOCKET" "audit")" \
+        >>"$SIGNERD_BROKER_LOG" 2>&1 &
+    return 0
+  fi
+  "$NODE_BIN" "$gateway_entry" wallet signer broker \
+    --socket "$SIGNERD_SOCKET" \
+    --backend-socket "$SIGNERD_BACKEND_SOCKET" \
+    --pid-file "$(resolve_local_signer_sidecar_path "$SIGNERD_SOCKET" "pid")" \
+    --audit-log "$(resolve_local_signer_sidecar_path "$SIGNERD_SOCKET" "audit")" \
+    >>"$SIGNERD_BROKER_LOG" 2>&1 &
+}
+
 load_wallet_signer_env_from_config
 load_wallet_signer_env_file
+SIGNERD_BIN="${FASED_WALLET_LOCAL_SIGNER_BIN:-$SIGNERD_BIN}"
 SIGNERD_MATERIAL_DIR="${FASED_WALLET_SIGNER_STATE_DIR:-$SIGNERD_MATERIAL_DIR}"
+if [[ -n "${FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER:-}" ]]; then
+  SIGNERD_BROKER_LOG="$(dirname "${FASED_WALLET_LOCAL_SIGNER_SOCKET:-$SIGNERD_SOCKET}")/local-signer-broker.log"
+fi
 hydrate_scoped_wallet_keystore_env_from_registry "$SIGNERD_MATERIAL_DIR"
 if should_start_signerd; then
   SIGNERD_STARTUP_MODE="healthy"
@@ -742,14 +888,21 @@ if should_start_signerd; then
     fi
     echo "==> Starting fased-signerd (Go key signer)..."
     mkdir -p "$LOG_DIR"
-    "$SIGNERD_BIN" \
-      -socket "$SIGNERD_BACKEND_SOCKET" \
-      -pid-file "$(resolve_local_signer_sidecar_path "$SIGNERD_BACKEND_SOCKET" "pid")" \
-      -audit-log "$(resolve_local_signer_sidecar_path "$SIGNERD_BACKEND_SOCKET" "audit")" \
-      >>"$SIGNERD_LOG" 2>&1 &
-    SIGNERD_PID=$!
-    if wait_for_signerd_ready "$SIGNERD_READY_TIMEOUT_SECONDS"; then
-      echo "==> fased-signerd started (PID=$SIGNERD_PID, socket: $SIGNERD_BACKEND_SOCKET)"
+    mkdir -p "$(dirname "$SIGNERD_LOG")" "$(dirname "$SIGNERD_BROKER_LOG")" 2>/dev/null || true
+    if start_signerd_process; then
+      SIGNERD_PID=$!
+    else
+      mark_signerd_degraded "failed to start isolated fased-signerd as ${FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER:-current user}. Check sudoers and $SIGNERD_LOG"
+      SIGNERD_PID=""
+    fi
+    if [[ -n "$SIGNERD_PID" ]] && wait_for_signerd_ready "$SIGNERD_READY_TIMEOUT_SECONDS"; then
+      if ! start_signer_broker_process; then
+        mark_signerd_degraded "fased-signerd started but signer broker failed. Check $SIGNERD_BROKER_LOG"
+      elif wait_for_signer_broker_ready "$SIGNERD_READY_TIMEOUT_SECONDS"; then
+        echo "==> fased-signerd started (PID=$SIGNERD_PID, socket: $SIGNERD_BACKEND_SOCKET)"
+      else
+        mark_signerd_degraded "fased-signerd broker did not become ready. Check $SIGNERD_BROKER_LOG"
+      fi
     else
       mark_signerd_degraded "fased-signerd did not create socket. Check $SIGNERD_LOG"
     fi

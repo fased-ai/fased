@@ -158,6 +158,55 @@ function clearLocalSignerEnv(base: FasedAgentConfig): FasedAgentConfig {
   };
 }
 
+function setConfigEnvVar(
+  config: FasedAgentConfig,
+  key: string,
+  value: string | undefined,
+): FasedAgentConfig {
+  const vars = { ...config.env?.vars };
+  if (value === undefined || value === "") {
+    delete vars[key];
+  } else {
+    vars[key] = value;
+  }
+  return {
+    ...config,
+    env: {
+      ...config.env,
+      vars,
+    },
+  };
+}
+
+function applyHostedLocalSignerDefaults(base: FasedAgentConfig): FasedAgentConfig {
+  const signerUser = String(process.env.FASED_SIGNER_USER ?? "fased-signer").trim();
+  if (!signerUser) {
+    return base;
+  }
+  const appHome = String(process.env.HOME ?? "/home/app").trim() || "/home/app";
+  const signerHome = `/home/${signerUser}`;
+  const defaults: Record<(typeof LOCAL_SIGNER_ENV_KEYS)[number], string> = {
+    FASED_WALLET_LOCAL_SIGNER_SOCKET: `${appHome}/.fased/wallet/local-signer.sock`,
+    FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET: `${signerHome}/.fased/wallet/local-signer.sock`,
+    FASED_WALLET_SIGNER_STATE_DIR: `${signerHome}/.fased/wallet`,
+    FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER: signerUser,
+    FASED_WALLET_LOCAL_SIGNER_BIN: `${signerHome}/.fased/bin/fased-signerd`,
+    FASED_WALLET_PASSPHRASE_FILE: `${signerHome}/.fased/wallet/passphrase`,
+  };
+  let next = base;
+  for (const [key, value] of Object.entries(defaults)) {
+    const existing = String(process.env[key] ?? base.env?.vars?.[key] ?? "").trim();
+    if (existing) {
+      process.env[key] = existing;
+      next = setConfigEnvVar(next, key, existing);
+      continue;
+    }
+    process.env[key] = value;
+    next = setConfigEnvVar(next, key, value);
+  }
+  return next;
+}
+
 export function applyNonInteractiveWalletConfig(params: {
   nextConfig: FasedAgentConfig;
   opts: OnboardOptions;
@@ -317,7 +366,12 @@ export function applyNonInteractiveWalletConfig(params: {
     current?.policy?.solana?.maxDaily?.trim() ||
     DEFAULT_SOLANA_MAX_DAILY;
 
-  return applyWalletConfig(nextConfig, {
+  const configuredBase =
+    opts.hostProfile === "hosting" && defaultProvider === "local-socket-signer"
+      ? applyHostedLocalSignerDefaults(nextConfig)
+      : nextConfig;
+
+  return applyWalletConfig(configuredBase, {
     enabled: true,
     defaultProviderId: defaultProvider,
     mode,

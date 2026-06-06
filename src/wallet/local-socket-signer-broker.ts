@@ -24,6 +24,7 @@ const ALLOWED_OPS = new Set<LocalSocketSignerRequest["op"]>([
   "prepareTx",
   "sendTx",
   "signTx",
+  "sendSolanaInstruction",
 ]);
 
 type BrokerOptions = {
@@ -86,7 +87,13 @@ function validateBrokerRequest(
   if (!ALLOWED_OPS.has(req.op)) {
     return `operation ${req.op} is not allowed through broker`;
   }
-  if (readOnly && (req.op === "prepareTx" || req.op === "sendTx" || req.op === "signTx")) {
+  if (
+    readOnly &&
+    (req.op === "prepareTx" ||
+      req.op === "sendTx" ||
+      req.op === "signTx" ||
+      req.op === "sendSolanaInstruction")
+  ) {
     return "read-only signer mode";
   }
   return undefined;

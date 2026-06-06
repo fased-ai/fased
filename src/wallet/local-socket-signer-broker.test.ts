@@ -91,12 +91,39 @@ describe("local-socket-signer-broker", () => {
     }
   });
 
-  it("rejects sendSolanaInstruction through the broker", async () => {
-    const dir = await createSocketDir("fased-broker-reject-");
+  it("forwards sendSolanaInstruction through the broker for signer-side policy enforcement", async () => {
+    const dir = await createSocketDir("fased-broker-instruction-");
     const backendSocketPath = path.join(dir, "backend.sock");
     const brokerSocketPath = path.join(dir, "broker.sock");
+    const calls: Array<{ op?: string; request?: { programId?: string } }> = [];
 
-    const backend = net.createServer();
+    const backend = net.createServer((socket) => {
+      socket.setEncoding("utf8");
+      let buf = "";
+      socket.on("data", (chunk: string) => {
+        buf += chunk;
+        const idx = buf.indexOf("\n");
+        if (idx < 0) {
+          return;
+        }
+        const msg = JSON.parse(buf.slice(0, idx)) as {
+          op?: string;
+          request?: { programId?: string };
+        };
+        calls.push(msg);
+        socket.end(
+          `${JSON.stringify({
+            ok: true,
+            result: {
+              ok: true,
+              chain: "solana",
+              txHash: "signature",
+              signer: "So11111111111111111111111111111111111111112",
+            },
+          })}\n`,
+        );
+      });
+    });
     await mkdir(path.dirname(backendSocketPath), { recursive: true });
     await new Promise<void>((resolve) => backend.listen(backendSocketPath, resolve));
     const broker = await startLocalSocketSignerBroker({
@@ -108,18 +135,25 @@ describe("local-socket-signer-broker", () => {
     });
 
     try {
-      await expect(
-        callLocalSocketSigner(brokerSocketPath, {
+      const result = await callLocalSocketSigner<{ txHash: string }>(brokerSocketPath, {
+        op: "sendSolanaInstruction",
+        request: {
+          programId: "11111111111111111111111111111111",
+          dataBase64: "AQ==",
+          keys: [
+            { pubkey: "11111111111111111111111111111111", isSigner: false, isWritable: false },
+          ],
+        },
+      });
+      expect(result.txHash).toBe("signature");
+      expect(calls).toEqual([
+        expect.objectContaining({
           op: "sendSolanaInstruction",
-          request: {
+          request: expect.objectContaining({
             programId: "11111111111111111111111111111111",
-            dataBase64: "AQ==",
-            keys: [
-              { pubkey: "11111111111111111111111111111111", isSigner: false, isWritable: false },
-            ],
-          },
+          }),
         }),
-      ).rejects.toThrow(/not allowed through broker/);
+      ]);
     } finally {
       await broker.close();
       await new Promise<void>((resolve) => backend.close(() => resolve()));

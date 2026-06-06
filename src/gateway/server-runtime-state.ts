@@ -57,6 +57,7 @@ export async function createGatewayRuntimeState(params: {
   logHooks: ReturnType<typeof createSubsystemLogger>;
   logPlugins: ReturnType<typeof createSubsystemLogger>;
   controlUiLogin?: import("./server-http.js").GatewayHttpServerOpts["controlUiLogin"];
+  getPluginRegistry?: () => PluginRegistry;
 }): Promise<{
   canvasHost: CanvasHostHandler | null;
   httpServer: HttpServer;
@@ -114,6 +115,7 @@ export async function createGatewayRuntimeState(params: {
 
   const handlePluginRequest = createGatewayPluginRequestHandler({
     registry: params.pluginRegistry,
+    getRegistry: params.getPluginRegistry,
     log: params.logPlugins,
   });
 

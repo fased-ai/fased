@@ -77,6 +77,7 @@ import { GATEWAY_EVENTS, listGatewayMethods } from "./server-methods-list.js";
 import { coreGatewayHandlers } from "./server-methods.js";
 import { createExecApprovalHandlers } from "./server-methods/exec-approval.js";
 import { safeParseJson } from "./server-methods/nodes.helpers.js";
+import type { GatewayRequestHandlers } from "./server-methods/types.js";
 import { hasConnectedMobileNode } from "./server-mobile-nodes.js";
 import { loadGatewayModelCatalog } from "./server-model-catalog.js";
 import { createNodeSubscriptionManager } from "./server-node-subscriptions.js";
@@ -350,20 +351,25 @@ export async function startGatewayServer(
   const emptyPluginRegistry: PluginRegistry = createEmptyPluginRegistry();
   const managedFastStart =
     process.env.FASED_GATEWAY_MODE === "managed" && process.env.FASED_GATEWAY_FAST_START === "1";
-  const { pluginRegistry, gatewayMethods: baseGatewayMethods } =
-    minimalTestGateway || managedFastStart
-      ? { pluginRegistry: emptyPluginRegistry, gatewayMethods: baseMethods }
-      : startupTrace.measureSync("plugins.load", () =>
-          loadGatewayPlugins({
-            cfg: cfgAtStart,
-            workspaceDir: defaultWorkspaceDir,
-            log,
-            coreGatewayHandlers,
-            baseMethods,
-          }),
-        );
+  let pluginRegistry = emptyPluginRegistry;
+  let baseGatewayMethods = baseMethods;
+  if (!minimalTestGateway && !managedFastStart) {
+    const loadedPlugins = startupTrace.measureSync("plugins.load", () =>
+      loadGatewayPlugins({
+        cfg: cfgAtStart,
+        workspaceDir: defaultWorkspaceDir,
+        log,
+        coreGatewayHandlers,
+        baseMethods,
+      }),
+    );
+    pluginRegistry = loadedPlugins.pluginRegistry;
+    baseGatewayMethods = loadedPlugins.gatewayMethods;
+  }
   if (managedFastStart && !minimalTestGateway) {
-    log.info("gateway: managed fast start enabled; skipping optional plugin imports before bind");
+    log.info(
+      "gateway: managed fast start enabled; deferring optional plugin imports until after bind",
+    );
   }
   const channelLogs = Object.fromEntries(
     listChannelPlugins().map((plugin) => [plugin.id, logChannels.child(plugin.id)]),
@@ -373,6 +379,23 @@ export async function startGatewayServer(
   ) as Record<ChannelId, RuntimeEnv>;
   const channelMethods = listChannelPlugins().flatMap((plugin) => plugin.gatewayMethods ?? []);
   const gatewayMethods = Array.from(new Set([...baseGatewayMethods, ...channelMethods]));
+  const extraGatewayHandlers: GatewayRequestHandlers = {};
+  const addGatewayMethods = (methods: string[]) => {
+    const seen = new Set(gatewayMethods);
+    for (const method of methods) {
+      if (seen.has(method)) {
+        continue;
+      }
+      seen.add(method);
+      gatewayMethods.push(method);
+    }
+  };
+  const addPluginGatewayHandlers = (handlers: GatewayRequestHandlers) => {
+    for (const [method, handler] of Object.entries(handlers)) {
+      extraGatewayHandlers[method] = handler;
+    }
+  };
+  addPluginGatewayHandlers(pluginRegistry.gatewayHandlers);
   let pluginServices: PluginServicesHandle | null = null;
   const runtimeConfig = await startupTrace.measure("runtime.config", () =>
     resolveGatewayRuntimeConfig({
@@ -531,6 +554,7 @@ export async function startGatewayServer(
       gatewayTls,
       hooksConfig: () => hooksConfig,
       pluginRegistry,
+      getPluginRegistry: () => pluginRegistry,
       deps,
       canvasRuntime,
       canvasHostEnabled,
@@ -541,6 +565,24 @@ export async function startGatewayServer(
       logPlugins,
     }),
   );
+  if (managedFastStart && !minimalTestGateway) {
+    const loadedPlugins = startupTrace.measureSync("plugins.load.deferred", () =>
+      loadGatewayPlugins({
+        cfg: cfgAtStart,
+        workspaceDir: defaultWorkspaceDir,
+        log,
+        coreGatewayHandlers,
+        baseMethods,
+      }),
+    );
+    pluginRegistry = loadedPlugins.pluginRegistry;
+    addGatewayMethods(loadedPlugins.gatewayMethods);
+    addPluginGatewayHandlers(pluginRegistry.gatewayHandlers);
+    const loadedPluginCount = pluginRegistry.plugins.filter(
+      (plugin) => plugin.status === "loaded",
+    ).length;
+    log.info(`gateway: managed fast start loaded deferred plugins (${loadedPluginCount} loaded)`);
+  }
   let bonjourStop: (() => Promise<void>) | null = null;
   const nodeRegistry = new NodeRegistry();
   const nodePresenceTimers = new Map<string, ReturnType<typeof setInterval>>();
@@ -737,6 +779,7 @@ export async function startGatewayServer(
   const execApprovalHandlers = createExecApprovalHandlers(execApprovalManager, {
     forwarder: execApprovalForwarder,
   });
+  Object.assign(extraGatewayHandlers, execApprovalHandlers);
 
   const canvasHostServerPort = (canvasHostServer as CanvasHostServer | null)?.port;
 
@@ -755,10 +798,7 @@ export async function startGatewayServer(
       logGateway: log,
       logHealth,
       logWsControl,
-      extraHandlers: {
-        ...pluginRegistry.gatewayHandlers,
-        ...execApprovalHandlers,
-      },
+      extraHandlers: extraGatewayHandlers,
       broadcast,
       context: {
         deps,

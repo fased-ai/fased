@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
@@ -263,5 +264,74 @@ func TestHandleHybridNativeCustodyLockClearsUnlockState(t *testing.T) {
 	active, _ := currentCustodyStatus("wallet-a")
 	if active {
 		t.Fatal("expected custody unlock state to be cleared")
+	}
+}
+
+func TestSignerPolicyRejectsDirectSigningDisabled(t *testing.T) {
+	cfg := signerConfig{
+		walletDirectSigning: map[string]bool{"agent_wallet": false},
+	}
+
+	_, _, err := validateSignerPolicyForNativeSend(cfg, signerTxRequest{
+		Chain:    "solana",
+		WalletID: "agent-wallet",
+		Amount:   "1",
+	})
+	if err == nil || !strings.Contains(err.Error(), "direct signing disabled") {
+		t.Fatalf("expected direct signing disabled error, got %v", err)
+	}
+}
+
+func TestSignerPolicyRejectsMiningNativeTransfer(t *testing.T) {
+	cfg := signerConfig{
+		walletRoles:         map[string]string{"mining": "mining"},
+		walletDirectSigning: map[string]bool{"mining": true},
+	}
+
+	_, _, err := validateSignerPolicyForNativeSend(cfg, signerTxRequest{
+		Chain:    "solana",
+		WalletID: "mining",
+		Amount:   "1",
+	})
+	if err == nil || !strings.Contains(err.Error(), "mining wallet") {
+		t.Fatalf("expected mining native transfer error, got %v", err)
+	}
+}
+
+func TestSignerPolicyEnforcesSolanaAmountCaps(t *testing.T) {
+	cfg := signerConfig{
+		walletDirectSigning: map[string]bool{"agent": true},
+		walletCapsEnabled:   map[string]bool{"agent": true},
+		solanaMaxPerTx:      map[string]*big.Int{"agent": big.NewInt(10)},
+	}
+
+	_, _, err := validateSignerPolicyForNativeSend(cfg, signerTxRequest{
+		Chain:    "solana",
+		WalletID: "agent",
+		Amount:   "11",
+	})
+	if err == nil || !strings.Contains(err.Error(), "per-tx cap") {
+		t.Fatalf("expected cap error, got %v", err)
+	}
+}
+
+func TestSignerPolicyEnforcesProgramAllowlist(t *testing.T) {
+	cfg := signerConfig{
+		walletDirectSigning: map[string]bool{"agent": true},
+		solanaAllowPrograms: map[string]map[string]bool{
+			"agent": {
+				normalizeProgramID("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"): true,
+			},
+		},
+	}
+
+	_, err := validateSignerPolicyForProgramSend(
+		cfg,
+		"agent",
+		"11111111111111111111111111111111",
+		nil,
+	)
+	if err == nil || !strings.Contains(err.Error(), "not allowed") {
+		t.Fatalf("expected program allowlist error, got %v", err)
 	}
 }

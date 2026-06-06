@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALL_DIR_DEFAULT="${HOME}/.fased/bin"
 INSTALL_DIR="${FASED_LOCAL_SIGNER_BIN_DIR:-$INSTALL_DIR_DEFAULT}"
-VERSION="${FASED_LOCAL_SIGNER_VERSION:-latest}"
+VERSION="${FASED_LOCAL_SIGNER_VERSION:-}"
 
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 ARCH="$(uname -m)"
@@ -27,11 +27,30 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 DEFAULT_RELEASE_DOWNLOAD_BASE="https://github.com/fased-ai/fased/releases/download"
-BASE_URL="${FASED_LOCAL_SIGNER_BASE_URL:-$DEFAULT_RELEASE_DOWNLOAD_BASE}"
-if [[ "$VERSION" == "latest" ]]; then
-  VERSION_TAG="${FASED_LOCAL_SIGNER_LATEST_TAG-latest}"
+BASE_URL="${FASED_LOCAL_SIGNER_BASE_URL:-}"
+if [[ -z "$BASE_URL" ]]; then
+  BASE_URL="$DEFAULT_RELEASE_DOWNLOAD_BASE"
+fi
+if [[ -z "$VERSION" || "$VERSION" == "latest" ]]; then
+  VERSION_TAG="${FASED_LOCAL_SIGNER_LATEST_TAG:-}"
 else
   VERSION_TAG="$VERSION"
+fi
+
+if [[ "$BASE_URL" == "$DEFAULT_RELEASE_DOWNLOAD_BASE" && ( -z "$VERSION_TAG" || "$VERSION_TAG" == "latest" ) ]]; then
+  cat >&2 <<'EOF'
+fased-signerd installer requires an explicit signer asset source.
+
+Normal Fased install, dashboard, Gateway, and Fased Network startup do not need fased-signerd.
+For first-time wallet signer setup, prefer building locally with:
+  scripts/build-fased-signerd.sh
+
+To install a published signer asset, set one of:
+  FASED_LOCAL_SIGNER_VERSION=vX.Y.Z
+  FASED_LOCAL_SIGNER_BASE_URL=file:///path/to/release FASED_LOCAL_SIGNER_LATEST_TAG=
+  FASED_LOCAL_SIGNER_BASE_URL=https://example.invalid/releases/download FASED_LOCAL_SIGNER_VERSION=vX.Y.Z
+EOF
+  exit 1
 fi
 
 ASSET="fased-signerd-${OS}-${ARCH}"

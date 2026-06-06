@@ -74,6 +74,16 @@ var activeCustodyUnlock = custodyUnlockState{
 	sessions: map[string]*custodyUnlockEntry{},
 }
 
+type signerPolicyUsageState struct {
+	mu     sync.Mutex
+	bucket string
+	solana map[string]*big.Int
+}
+
+var signerPolicyUsage = signerPolicyUsageState{
+	solana: map[string]*big.Int{},
+}
+
 type request struct {
 	Op       string          `json:"op"`
 	Chain    string          `json:"chain,omitempty"`
@@ -124,6 +134,12 @@ type signerConfig struct {
 	rpcURL              string
 	solanaRPCURL        string
 	solanaRPCURLs       map[string]string
+	walletRoles         map[string]string
+	walletDirectSigning map[string]bool
+	walletCapsEnabled   map[string]bool
+	solanaAllowPrograms map[string]map[string]bool
+	solanaMaxPerTx      map[string]*big.Int
+	solanaMaxDaily      map[string]*big.Int
 }
 
 type opBucket struct {
@@ -533,6 +549,70 @@ func parseWalletMapEnv(prefix string) map[string]string {
 	return out
 }
 
+func parseScopedStringEnv(name string) map[string]string {
+	out := map[string]string{}
+	if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+		out["default"] = value
+	}
+	prefix := name + "__"
+	for _, kv := range os.Environ() {
+		i := strings.IndexByte(kv, '=')
+		if i <= 0 {
+			continue
+		}
+		k := kv[:i]
+		if !strings.HasPrefix(k, prefix) {
+			continue
+		}
+		value := strings.TrimSpace(kv[i+1:])
+		if value == "" {
+			continue
+		}
+		out[normalizeWalletID(strings.TrimPrefix(k, prefix))] = value
+	}
+	return out
+}
+
+func parseScopedBoolEnv(name string) map[string]bool {
+	raw := parseScopedStringEnv(name)
+	out := map[string]bool{}
+	for walletID, value := range raw {
+		normalized := strings.TrimSpace(strings.ToLower(value))
+		out[walletID] = normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on"
+	}
+	return out
+}
+
+func parseScopedBigIntEnv(name string) map[string]*big.Int {
+	raw := parseScopedStringEnv(name)
+	out := map[string]*big.Int{}
+	for walletID, value := range raw {
+		parsed := parseCapBigInt(value)
+		if parsed != nil {
+			out[walletID] = parsed
+		}
+	}
+	return out
+}
+
+func parseScopedProgramAllowlistEnv(name string) map[string]map[string]bool {
+	raw := parseScopedStringEnv(name)
+	out := map[string]map[string]bool{}
+	for walletID, value := range raw {
+		programs := map[string]bool{}
+		for _, part := range strings.Split(value, ",") {
+			program := normalizeProgramID(part)
+			if program != "" {
+				programs[program] = true
+			}
+		}
+		if len(programs) > 0 {
+			out[walletID] = programs
+		}
+	}
+	return out
+}
+
 func mustValidate(req request, cfg signerConfig) error {
 	switch req.Op {
 	case "health":
@@ -735,6 +815,12 @@ func parseArgs() signerConfig {
 	}
 	cfg.solanaKeystorePaths = parseWalletMapEnv("FASED_WALLET_SOLANA_KEYSTORE_PATH__")
 	cfg.solanaRPCURLs = parseWalletMapEnv("FASED_WALLET_SOLANA_RPC_URL__")
+	cfg.walletRoles = parseScopedStringEnv("FASED_WALLET_LOCAL_SIGNER_ROLE")
+	cfg.walletDirectSigning = parseScopedBoolEnv("FASED_WALLET_LOCAL_SIGNER_DIRECT_SIGNING")
+	cfg.walletCapsEnabled = parseScopedBoolEnv("FASED_WALLET_LOCAL_SIGNER_CAPS_ENABLED")
+	cfg.solanaAllowPrograms = parseScopedProgramAllowlistEnv("FASED_WALLET_LOCAL_SIGNER_SOLANA_ALLOW_PROGRAMS")
+	cfg.solanaMaxPerTx = parseScopedBigIntEnv("FASED_WALLET_LOCAL_SIGNER_SOLANA_MAX_PER_TX")
+	cfg.solanaMaxDaily = parseScopedBigIntEnv("FASED_WALLET_LOCAL_SIGNER_SOLANA_MAX_DAILY")
 	fs := flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 	fs.StringVar(&cfg.socketPath, "socket", cfg.socketPath, "unix socket path")
 	fs.StringVar(&cfg.pidFile, "pid-file", "", "pid file path (default <socket>.pid)")
@@ -1491,38 +1577,259 @@ func recordCustodyUsage(walletID, chain string, amount *big.Int) {
 	_ = applyDailySpendLocked(entry, normalizeChainName(chain), amount)
 }
 
-func solanaSendNativeTransferAndConfirm(rpcURL, keystorePath string, txReq signerTxRequest) (string, string, error) {
+type resolvedSignerPolicy struct {
+	WalletID       string
+	Role           string
+	DirectSigning  bool
+	CapsEnabled    bool
+	AllowPrograms  map[string]bool
+	SolanaMaxPerTx *big.Int
+	SolanaMaxDaily *big.Int
+}
+
+func normalizeSignerRole(raw string) string {
+	switch strings.TrimSpace(strings.ToLower(raw)) {
+	case "mining":
+		return "mining"
+	case "vault":
+		return "vault"
+	default:
+		return "agent"
+	}
+}
+
+func lookupStringPolicy(values map[string]string, walletID string, fallback string) string {
+	wid := normalizeWalletID(walletID)
+	if value, ok := values[wid]; ok && strings.TrimSpace(value) != "" {
+		return strings.TrimSpace(value)
+	}
+	if value, ok := values["default"]; ok && strings.TrimSpace(value) != "" {
+		return strings.TrimSpace(value)
+	}
+	return fallback
+}
+
+func lookupBoolPolicy(values map[string]bool, walletID string, fallback bool) bool {
+	wid := normalizeWalletID(walletID)
+	if value, ok := values[wid]; ok {
+		return value
+	}
+	if value, ok := values["default"]; ok {
+		return value
+	}
+	return fallback
+}
+
+func lookupBigIntPolicy(values map[string]*big.Int, walletID string) *big.Int {
+	wid := normalizeWalletID(walletID)
+	if value := values[wid]; value != nil {
+		return cloneBigInt(value)
+	}
+	if value := values["default"]; value != nil {
+		return cloneBigInt(value)
+	}
+	return nil
+}
+
+func lookupProgramPolicy(values map[string]map[string]bool, walletID string) map[string]bool {
+	wid := normalizeWalletID(walletID)
+	if value := values[wid]; len(value) > 0 {
+		return value
+	}
+	if value := values["default"]; len(value) > 0 {
+		return value
+	}
+	return nil
+}
+
+func resolveSignerPolicy(cfg signerConfig, walletID string) resolvedSignerPolicy {
+	return resolvedSignerPolicy{
+		WalletID:       normalizeWalletID(walletID),
+		Role:           normalizeSignerRole(lookupStringPolicy(cfg.walletRoles, walletID, "agent")),
+		DirectSigning:  lookupBoolPolicy(cfg.walletDirectSigning, walletID, true),
+		CapsEnabled:    lookupBoolPolicy(cfg.walletCapsEnabled, walletID, false),
+		AllowPrograms:  lookupProgramPolicy(cfg.solanaAllowPrograms, walletID),
+		SolanaMaxPerTx: lookupBigIntPolicy(cfg.solanaMaxPerTx, walletID),
+		SolanaMaxDaily: lookupBigIntPolicy(cfg.solanaMaxDaily, walletID),
+	}
+}
+
+func parsePolicyAmount(raw string, required bool) (*big.Int, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		if required {
+			return nil, errors.New("signer policy amount required")
+		}
+		return nil, nil
+	}
+	value, ok := new(big.Int).SetString(trimmed, 10)
+	if !ok || value.Sign() < 0 {
+		return nil, errors.New("invalid signer policy amount")
+	}
+	return value, nil
+}
+
+func recordSignerPolicyUsage(policy resolvedSignerPolicy, chain string, amount *big.Int) {
+	if !policy.CapsEnabled || amount == nil || amount.Sign() <= 0 || normalizeChainName(chain) != "solana" {
+		return
+	}
+	signerPolicyUsage.mu.Lock()
+	defer signerPolicyUsage.mu.Unlock()
+	bucket := currentDayBucket(time.Now())
+	if signerPolicyUsage.bucket != bucket {
+		signerPolicyUsage.bucket = bucket
+		signerPolicyUsage.solana = map[string]*big.Int{}
+	}
+	current := signerPolicyUsage.solana[policy.WalletID]
+	if current == nil {
+		current = big.NewInt(0)
+	}
+	signerPolicyUsage.solana[policy.WalletID] = new(big.Int).Add(current, amount)
+}
+
+func validateSignerPolicyAmount(policy resolvedSignerPolicy, chain string, amount *big.Int) error {
+	if !policy.CapsEnabled || amount == nil || amount.Sign() <= 0 || normalizeChainName(chain) != "solana" {
+		return nil
+	}
+	if policy.SolanaMaxPerTx != nil && policy.SolanaMaxPerTx.Sign() > 0 && amount.Cmp(policy.SolanaMaxPerTx) > 0 {
+		return errors.New("signer policy solana per-tx cap exceeded")
+	}
+	if policy.SolanaMaxDaily != nil && policy.SolanaMaxDaily.Sign() > 0 {
+		signerPolicyUsage.mu.Lock()
+		defer signerPolicyUsage.mu.Unlock()
+		bucket := currentDayBucket(time.Now())
+		if signerPolicyUsage.bucket != bucket {
+			signerPolicyUsage.bucket = bucket
+			signerPolicyUsage.solana = map[string]*big.Int{}
+		}
+		current := signerPolicyUsage.solana[policy.WalletID]
+		if current == nil {
+			current = big.NewInt(0)
+		}
+		next := new(big.Int).Add(current, amount)
+		if next.Cmp(policy.SolanaMaxDaily) > 0 {
+			return errors.New("signer policy solana daily cap exceeded")
+		}
+	}
+	return nil
+}
+
+func validateSignerPolicyProgram(policy resolvedSignerPolicy, programID string) error {
+	if len(policy.AllowPrograms) == 0 {
+		return nil
+	}
+	normalized := normalizeProgramID(programID)
+	if normalized == "" || !policy.AllowPrograms[normalized] {
+		return fmt.Errorf("signer policy program %s not allowed for wallet %s", strings.TrimSpace(programID), policy.WalletID)
+	}
+	return nil
+}
+
+func validateSignerPolicyForNativeSend(cfg signerConfig, txReq signerTxRequest) (*big.Int, resolvedSignerPolicy, error) {
+	policy := resolveSignerPolicy(cfg, txReq.WalletID)
+	if !policy.DirectSigning {
+		return nil, policy, errors.New("signer policy direct signing disabled")
+	}
+	if policy.Role == "mining" {
+		return nil, policy, errors.New("mining wallet cannot use generic native transfer signer path")
+	}
+	amount, err := parsePolicyAmount(txReq.Amount, policy.CapsEnabled)
+	if err != nil {
+		return nil, policy, err
+	}
+	if err := validateSignerPolicyAmount(policy, txReq.Chain, amount); err != nil {
+		return nil, policy, err
+	}
+	return amount, policy, nil
+}
+
+func validateSignerPolicyForProgramSend(cfg signerConfig, walletID string, programID string, amount *big.Int) (resolvedSignerPolicy, error) {
+	policy := resolveSignerPolicy(cfg, walletID)
+	if !policy.DirectSigning {
+		return policy, errors.New("signer policy direct signing disabled")
+	}
+	if err := validateSignerPolicyProgram(policy, programID); err != nil {
+		return policy, err
+	}
+	if err := validateSignerPolicyAmount(policy, "solana", amount); err != nil {
+		return policy, err
+	}
+	return policy, nil
+}
+
+func validateSignerPolicyForSerializedTx(cfg signerConfig, txReq signerTxRequest, tx *solana.Transaction, signer string) (*big.Int, resolvedSignerPolicy, error) {
+	policy := resolveSignerPolicy(cfg, txReq.WalletID)
+	if !policy.DirectSigning {
+		return nil, policy, errors.New("signer policy direct signing disabled")
+	}
+	requiredSigner := false
+	for _, signerKey := range tx.Message.Signers() {
+		if signerKey.String() == signer {
+			requiredSigner = true
+			break
+		}
+	}
+	if !requiredSigner {
+		return nil, policy, errors.New("serialized solana transaction does not require this wallet signer")
+	}
+	for _, inst := range tx.Message.Instructions {
+		programID, err := tx.ResolveProgramIDIndex(inst.ProgramIDIndex)
+		if err != nil {
+			if len(policy.AllowPrograms) > 0 {
+				return nil, policy, fmt.Errorf("cannot resolve serialized solana program id: %w", err)
+			}
+			continue
+		}
+		if err := validateSignerPolicyProgram(policy, programID.String()); err != nil {
+			return nil, policy, err
+		}
+	}
+	amount, err := parsePolicyAmount(txReq.Amount, policy.CapsEnabled)
+	if err != nil {
+		return nil, policy, err
+	}
+	if err := validateSignerPolicyAmount(policy, txReq.Chain, amount); err != nil {
+		return nil, policy, err
+	}
+	return amount, policy, nil
+}
+
+func solanaSendNativeTransferAndConfirm(rpcURL, keystorePath string, txReq signerTxRequest, cfg signerConfig) (string, string, *big.Int, resolvedSignerPolicy, error) {
 	if txReq.Chain != "solana" {
-		return "", "", errors.New("invalid chain for native solana send")
+		return "", "", nil, resolvedSignerPolicy{}, errors.New("invalid chain for native solana send")
 	}
 	if strings.TrimSpace(txReq.SerializedTxBase64) != "" {
-		return solanaSendSerializedTransactionAndConfirm(rpcURL, keystorePath, txReq)
+		return solanaSendSerializedTransactionAndConfirm(rpcURL, keystorePath, txReq, cfg)
+	}
+	usageAmount, policy, err := validateSignerPolicyForNativeSend(cfg, txReq)
+	if err != nil {
+		return "", "", nil, policy, err
 	}
 	if strings.TrimSpace(txReq.To) == "" {
-		return "", "", errors.New("missing recipient")
+		return "", "", nil, policy, errors.New("missing recipient")
 	}
 	lamports, err := parseLamports(txReq.Amount)
 	if err != nil {
-		return "", "", err
+		return "", "", nil, policy, err
 	}
 	priv, expectedPub, err := loadSolanaPrivateKeyFromEnvelope(keystorePath, txReq.WalletID)
 	if err != nil {
-		return "", "", err
+		return "", "", nil, policy, err
 	}
 	fromPub := priv.PublicKey()
 	if expectedPub != "" && fromPub.String() != expectedPub {
-		return "", "", errors.New("solana envelope public key mismatch")
+		return "", "", nil, policy, errors.New("solana envelope public key mismatch")
 	}
 	toPub, err := solana.PublicKeyFromBase58(strings.TrimSpace(txReq.To))
 	if err != nil {
-		return "", "", err
+		return "", "", nil, policy, err
 	}
 	client := rpc.New(strings.TrimSpace(rpcURL))
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	bh, err := client.GetLatestBlockhash(ctx, rpc.CommitmentFinalized)
 	if err != nil {
-		return "", "", err
+		return "", "", nil, policy, err
 	}
 	ix := system.NewTransferInstruction(lamports, fromPub, toPub).Build()
 	tx, err := solana.NewTransaction(
@@ -1531,7 +1838,7 @@ func solanaSendNativeTransferAndConfirm(rpcURL, keystorePath string, txReq signe
 		solana.TransactionPayer(fromPub),
 	)
 	if err != nil {
-		return "", "", err
+		return "", "", nil, policy, err
 	}
 	_, err = tx.Sign(func(key solana.PublicKey) *solana.PrivateKey {
 		if key.Equals(fromPub) {
@@ -1541,14 +1848,14 @@ func solanaSendNativeTransferAndConfirm(rpcURL, keystorePath string, txReq signe
 		return nil
 	})
 	if err != nil {
-		return "", "", err
+		return "", "", nil, policy, err
 	}
 	sig, err := client.SendTransactionWithOpts(ctx, tx, rpc.TransactionOpts{
 		SkipPreflight:       false,
 		PreflightCommitment: rpc.CommitmentConfirmed,
 	})
 	if err != nil {
-		return "", "", err
+		return "", "", nil, policy, err
 	}
 
 	// Simple confirm polling loop
@@ -1559,7 +1866,7 @@ func solanaSendNativeTransferAndConfirm(rpcURL, keystorePath string, txReq signe
 	for {
 		select {
 		case <-confirmCtx.Done():
-			return sig.String(), fromPub.String(), fmt.Errorf("solana confirm timeout for %s", sig.String())
+			return sig.String(), fromPub.String(), usageAmount, policy, fmt.Errorf("solana confirm timeout for %s", sig.String())
 		case <-tick.C:
 			st, err := client.GetSignatureStatuses(confirmCtx, true, sig)
 			if err != nil {
@@ -1569,24 +1876,24 @@ func solanaSendNativeTransferAndConfirm(rpcURL, keystorePath string, txReq signe
 				continue
 			}
 			if st.Value[0].Err != nil {
-				return sig.String(), fromPub.String(), fmt.Errorf("solana tx failed: %v", st.Value[0].Err)
+				return sig.String(), fromPub.String(), usageAmount, policy, fmt.Errorf("solana tx failed: %v", st.Value[0].Err)
 			}
 			if st.Value[0].ConfirmationStatus == rpc.ConfirmationStatusConfirmed ||
 				st.Value[0].ConfirmationStatus == rpc.ConfirmationStatusFinalized {
-				return sig.String(), fromPub.String(), nil
+				return sig.String(), fromPub.String(), usageAmount, policy, nil
 			}
 		}
 	}
 }
 
-func solanaSendSerializedTransactionAndConfirm(rpcURL, keystorePath string, txReq signerTxRequest) (string, string, error) {
-	signedTxBase64, signer, err := solanaSignSerializedTransaction(keystorePath, txReq)
+func solanaSendSerializedTransactionAndConfirm(rpcURL, keystorePath string, txReq signerTxRequest, cfg signerConfig) (string, string, *big.Int, resolvedSignerPolicy, error) {
+	signedTxBase64, signer, usageAmount, policy, err := solanaSignSerializedTransaction(keystorePath, txReq, cfg)
 	if err != nil {
-		return "", signer, err
+		return "", signer, nil, policy, err
 	}
 	signedRaw, err := base64.StdEncoding.DecodeString(signedTxBase64)
 	if err != nil {
-		return "", signer, err
+		return "", signer, nil, policy, err
 	}
 	client := rpc.New(strings.TrimSpace(rpcURL))
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -1596,7 +1903,7 @@ func solanaSendSerializedTransactionAndConfirm(rpcURL, keystorePath string, txRe
 		PreflightCommitment: rpc.CommitmentConfirmed,
 	})
 	if err != nil {
-		return "", "", err
+		return "", "", nil, policy, err
 	}
 	confirmCtx, confirmCancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer confirmCancel()
@@ -1605,7 +1912,7 @@ func solanaSendSerializedTransactionAndConfirm(rpcURL, keystorePath string, txRe
 	for {
 		select {
 		case <-confirmCtx.Done():
-			return sig.String(), signer, fmt.Errorf("solana confirm timeout for %s", sig.String())
+			return sig.String(), signer, usageAmount, policy, fmt.Errorf("solana confirm timeout for %s", sig.String())
 		case <-tick.C:
 			st, err := client.GetSignatureStatuses(confirmCtx, true, sig)
 			if err != nil {
@@ -1615,32 +1922,36 @@ func solanaSendSerializedTransactionAndConfirm(rpcURL, keystorePath string, txRe
 				continue
 			}
 			if st.Value[0].Err != nil {
-				return sig.String(), signer, fmt.Errorf("solana tx failed: %v", st.Value[0].Err)
+				return sig.String(), signer, usageAmount, policy, fmt.Errorf("solana tx failed: %v", st.Value[0].Err)
 			}
 			if st.Value[0].ConfirmationStatus == rpc.ConfirmationStatusConfirmed ||
 				st.Value[0].ConfirmationStatus == rpc.ConfirmationStatusFinalized {
-				return sig.String(), signer, nil
+				return sig.String(), signer, usageAmount, policy, nil
 			}
 		}
 	}
 }
 
-func solanaSignSerializedTransaction(keystorePath string, txReq signerTxRequest) (string, string, error) {
+func solanaSignSerializedTransaction(keystorePath string, txReq signerTxRequest, cfg signerConfig) (string, string, *big.Int, resolvedSignerPolicy, error) {
 	priv, expectedPub, err := loadSolanaPrivateKeyFromEnvelope(keystorePath, txReq.WalletID)
 	if err != nil {
-		return "", "", err
+		return "", "", nil, resolvedSignerPolicy{}, err
 	}
 	fromPub := priv.PublicKey()
 	if expectedPub != "" && fromPub.String() != expectedPub {
-		return "", "", errors.New("solana envelope public key mismatch")
+		return "", "", nil, resolvedSignerPolicy{}, errors.New("solana envelope public key mismatch")
 	}
 	rawTx, err := base64.StdEncoding.DecodeString(strings.TrimSpace(txReq.SerializedTxBase64))
 	if err != nil {
-		return "", "", err
+		return "", "", nil, resolvedSignerPolicy{}, err
 	}
 	tx, err := solana.TransactionFromDecoder(bin.NewBinDecoder(rawTx))
 	if err != nil {
-		return "", "", err
+		return "", "", nil, resolvedSignerPolicy{}, err
+	}
+	usageAmount, policy, err := validateSignerPolicyForSerializedTx(cfg, txReq, tx, fromPub.String())
+	if err != nil {
+		return "", "", nil, policy, err
 	}
 	signed := false
 	_, err = tx.PartialSign(func(key solana.PublicKey) *solana.PrivateKey {
@@ -1652,40 +1963,45 @@ func solanaSignSerializedTransaction(keystorePath string, txReq signerTxRequest)
 		return nil
 	})
 	if err != nil {
-		return "", "", err
+		return "", "", nil, policy, err
 	}
 	if !signed {
-		return "", "", errors.New("serialized solana transaction does not require this wallet signer")
+		return "", "", nil, policy, errors.New("serialized solana transaction does not require this wallet signer")
 	}
 	signedRaw, err := tx.MarshalBinary()
 	if err != nil {
-		return "", "", err
+		return "", "", nil, policy, err
 	}
-	return base64.StdEncoding.EncodeToString(signedRaw), fromPub.String(), nil
+	return base64.StdEncoding.EncodeToString(signedRaw), fromPub.String(), usageAmount, policy, nil
 }
 
-func solanaSendInstructionAndConfirm(rpcURL, keystorePath string, req solanaInstructionRequest) (string, string, error) {
+func solanaSendInstructionAndConfirm(rpcURL, keystorePath string, req solanaInstructionRequest, cfg signerConfig) (string, string, *big.Int, resolvedSignerPolicy, error) {
+	usageAmount := extractSolanaInstructionAmount(req)
+	policy, err := validateSignerPolicyForProgramSend(cfg, req.WalletID, req.ProgramID, usageAmount)
+	if err != nil {
+		return "", "", nil, policy, err
+	}
 	priv, expectedPub, err := loadSolanaPrivateKeyFromEnvelope(keystorePath, req.WalletID)
 	if err != nil {
-		return "", "", err
+		return "", "", nil, policy, err
 	}
 	fromPub := priv.PublicKey()
 	if expectedPub != "" && fromPub.String() != expectedPub {
-		return "", "", errors.New("solana envelope public key mismatch")
+		return "", "", nil, policy, errors.New("solana envelope public key mismatch")
 	}
 	programID, err := solana.PublicKeyFromBase58(strings.TrimSpace(req.ProgramID))
 	if err != nil {
-		return "", "", err
+		return "", "", nil, policy, err
 	}
 	data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(req.DataBase64))
 	if err != nil {
-		return "", "", err
+		return "", "", nil, policy, err
 	}
 	accounts := make(solana.AccountMetaSlice, 0, len(req.Keys))
 	for _, key := range req.Keys {
 		pub, err := solana.PublicKeyFromBase58(strings.TrimSpace(key.Pubkey))
 		if err != nil {
-			return "", "", err
+			return "", "", nil, policy, err
 		}
 		accounts = append(accounts, &solana.AccountMeta{
 			PublicKey:  pub,
@@ -1698,7 +2014,7 @@ func solanaSendInstructionAndConfirm(rpcURL, keystorePath string, req solanaInst
 	defer cancel()
 	bh, err := client.GetLatestBlockhash(ctx, rpc.CommitmentFinalized)
 	if err != nil {
-		return "", "", err
+		return "", "", nil, policy, err
 	}
 	ix := solana.NewInstruction(programID, accounts, data)
 	tx, err := solana.NewTransaction(
@@ -1707,7 +2023,7 @@ func solanaSendInstructionAndConfirm(rpcURL, keystorePath string, req solanaInst
 		solana.TransactionPayer(fromPub),
 	)
 	if err != nil {
-		return "", "", err
+		return "", "", nil, policy, err
 	}
 	_, err = tx.Sign(func(key solana.PublicKey) *solana.PrivateKey {
 		if key.Equals(fromPub) {
@@ -1717,14 +2033,14 @@ func solanaSendInstructionAndConfirm(rpcURL, keystorePath string, req solanaInst
 		return nil
 	})
 	if err != nil {
-		return "", "", err
+		return "", "", nil, policy, err
 	}
 	sig, err := client.SendTransactionWithOpts(ctx, tx, rpc.TransactionOpts{
 		SkipPreflight:       false,
 		PreflightCommitment: rpc.CommitmentConfirmed,
 	})
 	if err != nil {
-		return "", "", err
+		return "", "", nil, policy, err
 	}
 	confirmCtx, confirmCancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer confirmCancel()
@@ -1733,7 +2049,7 @@ func solanaSendInstructionAndConfirm(rpcURL, keystorePath string, req solanaInst
 	for {
 		select {
 		case <-confirmCtx.Done():
-			return sig.String(), fromPub.String(), fmt.Errorf("solana confirm timeout for %s", sig.String())
+			return sig.String(), fromPub.String(), usageAmount, policy, fmt.Errorf("solana confirm timeout for %s", sig.String())
 		case <-tick.C:
 			st, err := client.GetSignatureStatuses(confirmCtx, true, sig)
 			if err != nil {
@@ -1743,11 +2059,11 @@ func solanaSendInstructionAndConfirm(rpcURL, keystorePath string, req solanaInst
 				continue
 			}
 			if st.Value[0].Err != nil {
-				return sig.String(), fromPub.String(), fmt.Errorf("solana tx failed: %v", st.Value[0].Err)
+				return sig.String(), fromPub.String(), usageAmount, policy, fmt.Errorf("solana tx failed: %v", st.Value[0].Err)
 			}
 			if st.Value[0].ConfirmationStatus == rpc.ConfirmationStatusConfirmed ||
 				st.Value[0].ConfirmationStatus == rpc.ConfirmationStatusFinalized {
-				return sig.String(), fromPub.String(), nil
+				return sig.String(), fromPub.String(), usageAmount, policy, nil
 			}
 		}
 	}
@@ -1897,13 +2213,19 @@ func handleHybridNative(req request, raw map[string]any, cfg signerConfig) ([]by
 		if txReq.Chain != "solana" {
 			return nil, errors.New("unsupported hybrid native op")
 		}
-		txHash, signer, err := solanaSendNativeTransferAndConfirm(cfg.rpcURLForWallet("solana", txReq.WalletID), cfg.keystorePathForWallet("solana", txReq.WalletID), txReq)
+		txHash, signer, policyUsageAmount, signerPolicy, err := solanaSendNativeTransferAndConfirm(
+			cfg.rpcURLForWallet("solana", txReq.WalletID),
+			cfg.keystorePathForWallet("solana", txReq.WalletID),
+			txReq,
+			cfg,
+		)
 		if err != nil {
 			return nil, err
 		}
 		if custodyActiveForWallet {
 			recordCustodyUsage(txReq.WalletID, "solana", usageAmount)
 		}
+		recordSignerPolicyUsage(signerPolicy, "solana", policyUsageAmount)
 		res := map[string]any{
 			"ok":     true,
 			"chain":  "solana",
@@ -1931,13 +2253,18 @@ func handleHybridNative(req request, raw map[string]any, cfg signerConfig) ([]by
 		if custodyActiveForWallet && err != nil {
 			return nil, err
 		}
-		signedTx, signer, err := solanaSignSerializedTransaction(cfg.keystorePathForWallet("solana", txReq.WalletID), txReq)
+		signedTx, signer, policyUsageAmount, signerPolicy, err := solanaSignSerializedTransaction(
+			cfg.keystorePathForWallet("solana", txReq.WalletID),
+			txReq,
+			cfg,
+		)
 		if err != nil {
 			return nil, err
 		}
 		if custodyActiveForWallet {
 			recordCustodyUsage(txReq.WalletID, "solana", usageAmount)
 		}
+		recordSignerPolicyUsage(signerPolicy, "solana", policyUsageAmount)
 		res := map[string]any{
 			"ok":             true,
 			"chain":          "solana",
@@ -1963,10 +2290,11 @@ func handleHybridNative(req request, raw map[string]any, cfg signerConfig) ([]by
 		if custodyActiveForWallet && err != nil {
 			return nil, err
 		}
-		txHash, signer, err := solanaSendInstructionAndConfirm(
+		txHash, signer, policyUsageAmount, signerPolicy, err := solanaSendInstructionAndConfirm(
 			cfg.rpcURLForWallet("solana", instructionReq.WalletID),
 			cfg.keystorePathForWallet("solana", instructionReq.WalletID),
 			instructionReq,
+			cfg,
 		)
 		if err != nil {
 			return nil, err
@@ -1974,6 +2302,7 @@ func handleHybridNative(req request, raw map[string]any, cfg signerConfig) ([]by
 		if custodyActiveForWallet {
 			recordCustodyUsage(instructionReq.WalletID, "solana", usageAmount)
 		}
+		recordSignerPolicyUsage(signerPolicy, "solana", policyUsageAmount)
 		res := map[string]any{
 			"ok":     true,
 			"chain":  "solana",

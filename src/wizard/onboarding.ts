@@ -1,5 +1,4 @@
 import { spawn, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { ensureAuthProfileStore } from "../agents/auth-profiles.js";
@@ -68,8 +67,10 @@ import type {
 } from "./onboarding.types.js";
 import {
   configureWalletForOnboarding,
+  installSignerdBinary,
   migrateLocalSignerKeystoreToMaterialDir,
   restartLocalSocketSigner,
+  resolveSignerdBinaryPath,
 } from "./onboarding.wallet.js";
 import type { WizardPrompter } from "./prompts.js";
 import { normalizeHostedWalletPaths } from "./wallet-path-migration.js";
@@ -174,6 +175,32 @@ export async function runOnboardingWizard(
         vars,
       },
     };
+  };
+  const applyHostedLocalSignerDefaults = (cfg: FasedAgentConfig): FasedAgentConfig => {
+    const signerUser = String(process.env.FASED_SIGNER_USER ?? "fased-signer").trim();
+    if (!signerUser) {
+      return cfg;
+    }
+    const appHome = String(process.env.HOME ?? "/home/app").trim() || "/home/app";
+    const signerHome = `/home/${signerUser}`;
+    const defaults: Record<string, string> = {
+      FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER: signerUser,
+      FASED_WALLET_SIGNER_STATE_DIR: `${signerHome}/.fased/wallet`,
+      FASED_WALLET_LOCAL_SIGNER_SOCKET: `${appHome}/.fased/wallet/local-signer.sock`,
+      FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET: `${signerHome}/.fased/wallet/local-signer.sock`,
+      FASED_WALLET_LOCAL_SIGNER_BIN: `${signerHome}/.fased/bin/fased-signerd`,
+    };
+    let next = cfg;
+    for (const [key, value] of Object.entries(defaults)) {
+      const existing = String(process.env[key] ?? cfg.env?.vars?.[key] ?? "").trim();
+      if (existing) {
+        process.env[key] = existing;
+        continue;
+      }
+      process.env[key] = value;
+      next = setConfigEnvVar(next, key, value);
+    }
+    return next;
   };
   const jupiterApiKeyEnvKey = "FASED_JUPITER_API_KEY";
   const jupiterTriggerApiBaseUrlEnvKey = "FASED_JUPITER_TRIGGER_API_BASE_URL";
@@ -579,42 +606,11 @@ export async function runOnboardingWizard(
       });
     });
   };
-  const resolveHostSignerTarget = (): string => {
-    const os =
-      process.platform === "darwin" ? "darwin" : process.platform === "linux" ? "linux" : "";
-    const arch = process.arch === "x64" ? "amd64" : process.arch === "arm64" ? "arm64" : "";
-    return os && arch ? `${os}/${arch}` : "linux/amd64";
-  };
-  const hashFile = (filePath: string): string | null => {
-    try {
-      const hash = createHash("sha256");
-      hash.update(fs.readFileSync(filePath));
-      return hash.digest("hex");
-    } catch {
-      return null;
-    }
-  };
-  const resolveHostSignerReleaseAssetPath = (): string | null => {
-    const [os, arch] = resolveHostSignerTarget().split("/");
-    if (!os || !arch) {
-      return null;
-    }
-    return path.resolve("dist-native", "release", `fased-signerd-${os}-${arch}`);
-  };
-  const resolveInstalledSignerdPath = (): string =>
-    String(process.env.FASED_WALLET_LOCAL_SIGNER_BIN ?? "").trim() ||
-    path.join(process.env.HOME ?? "/root", ".fased", "bin", "fased-signerd");
-  const installedSignerMatchesRelease = (): boolean => {
+  const signerdBinaryAlreadyInstalled = (): boolean => {
     if (String(process.env.FASED_FORCE_NATIVE_SIGNER_BUILD ?? "").trim() === "1") {
       return false;
     }
-    const releaseAssetPath = resolveHostSignerReleaseAssetPath();
-    if (!releaseAssetPath) {
-      return false;
-    }
-    const releaseHash = hashFile(releaseAssetPath);
-    const installedHash = hashFile(resolveInstalledSignerdPath());
-    return Boolean(releaseHash && installedHash && releaseHash === installedHash);
+    return fs.existsSync(resolveSignerdBinaryPath(process.env));
   };
   const maybeInstallGoForOnboarding = async (): Promise<boolean> => {
     if (goModernEnough()) {
@@ -1164,6 +1160,9 @@ export async function runOnboardingWizard(
   }
 
   const hostingMode = hostProfile === "hosting";
+  if (hostingMode) {
+    nextConfig = applyHostedLocalSignerDefaults(nextConfig);
+  }
   const buildNativeSignerFromSource =
     String(process.env.FASED_BUILD_NATIVE_SIGNER_FROM_SOURCE ?? "").trim() === "1";
   const skipNativeSignerBuild =
@@ -1176,7 +1175,7 @@ export async function runOnboardingWizard(
           "Native signer",
         );
       }
-    } else if (installedSignerMatchesRelease()) {
+    } else if (signerdBinaryAlreadyInstalled()) {
       if (flow !== "quickstart") {
         await prompter.note("Native signer already current.", "Native signer");
       }
@@ -1189,15 +1188,10 @@ export async function runOnboardingWizard(
       }
       await prompter.note(`${detail} Skipping signer build/install.`, "Native signer");
     } else {
-      const hostTarget = resolveHostSignerTarget();
       const progress = prompter.progress("Native signer");
       try {
-        progress.update(`Building native signer for ${hostTarget}…`);
-        await runShell(`FASED_SIGNER_TARGETS="${hostTarget}" scripts/release-fased-signerd.sh`);
-        progress.update("Installing native signer…");
-        await runShell(
-          'FASED_LOCAL_SIGNER_BASE_URL="file://$PWD/dist-native/release" FASED_LOCAL_SIGNER_LATEST_TAG="" scripts/install-fased-signerd.sh',
-        );
+        progress.update("Building native signer locally…");
+        installSignerdBinary(resolveSignerdBinaryPath(process.env));
         progress.stop("Native signer installed.");
       } catch (error) {
         progress.stop("Native signer failed.");
