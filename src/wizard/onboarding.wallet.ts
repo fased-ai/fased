@@ -1083,57 +1083,77 @@ function startSignerdBackground(
 
 function stopProcessBySocket(socketPath: string, runAsUser?: string): void {
   const { pidPath } = resolveLocalSignerSidecarPaths(socketPath);
+  const legacyPidPath = `${socketPath}.pid`;
+  const pidPaths = Array.from(new Set([pidPath, legacyPidPath]));
   if (runAsUser) {
-    const helperResult = runSignerIsolationHelper(runAsUser, ["stop", socketPath, pidPath]);
-    if (helperResult !== undefined) {
+    let stoppedWithHelper = false;
+    for (const candidatePidPath of pidPaths) {
+      const helperResult = runSignerIsolationHelper(runAsUser, [
+        "stop",
+        socketPath,
+        candidatePidPath,
+      ]);
+      if (helperResult !== undefined) {
+        stoppedWithHelper = true;
+      }
+    }
+    if (stoppedWithHelper) {
       return;
     }
-    try {
-      const rawPid = runCommand({
-        command: "sudo",
-        args: [
-          "bash",
-          "-lc",
-          `if [ -f ${JSON.stringify(pidPath)} ]; then cat ${JSON.stringify(pidPath)}; fi`,
-        ],
-        capture: true,
-      }).trim();
-      const pid = Number.parseInt(rawPid, 10);
-      if (Number.isFinite(pid) && pid > 0) {
+    for (const candidatePidPath of pidPaths) {
+      try {
+        const rawPid = runCommand({
+          command: "sudo",
+          args: [
+            "bash",
+            "-lc",
+            `if [ -f ${JSON.stringify(candidatePidPath)} ]; then cat ${JSON.stringify(candidatePidPath)}; fi`,
+          ],
+          capture: true,
+        }).trim();
+        const pid = Number.parseInt(rawPid, 10);
+        if (Number.isFinite(pid) && pid > 0) {
+          runCommand({
+            command: "sudo",
+            args: [
+              "bash",
+              "-lc",
+              `cmd=$(ps -p ${pid} -o command= 2>/dev/null || true); case "$cmd" in *fased-signerd*|*local-socket-signer-broker*) kill ${pid} >/dev/null 2>&1 || true ;; esac`,
+            ],
+          });
+        }
+      } catch {}
+      try {
         runCommand({
           command: "sudo",
           args: [
             "bash",
             "-lc",
-            `cmd=$(ps -p ${pid} -o command= 2>/dev/null || true); case "$cmd" in *fased-signerd*|*local-socket-signer-broker*) kill ${pid} >/dev/null 2>&1 || true ;; esac`,
+            `rm -f ${JSON.stringify(socketPath)} ${JSON.stringify(candidatePidPath)}`,
           ],
         });
+      } catch {}
+    }
+    return;
+  }
+  for (const candidatePidPath of pidPaths) {
+    try {
+      const pid = Number.parseInt(fs.readFileSync(candidatePidPath, "utf8").trim(), 10);
+      if (Number.isFinite(pid) && pid > 0) {
+        try {
+          const command = readProcessCommand(pid);
+          if (isLocalSignerProcessCommand(command)) {
+            process.kill(pid, "SIGTERM");
+          }
+        } catch {}
       }
     } catch {}
     try {
-      runCommand({
-        command: "sudo",
-        args: ["bash", "-lc", `rm -f ${JSON.stringify(socketPath)} ${JSON.stringify(pidPath)}`],
-      });
+      fs.unlinkSync(candidatePidPath);
     } catch {}
-    return;
   }
   try {
-    const pid = Number.parseInt(fs.readFileSync(pidPath, "utf8").trim(), 10);
-    if (Number.isFinite(pid) && pid > 0) {
-      try {
-        const command = readProcessCommand(pid);
-        if (isLocalSignerProcessCommand(command)) {
-          process.kill(pid, "SIGTERM");
-        }
-      } catch {}
-    }
-  } catch {}
-  try {
     fs.unlinkSync(socketPath);
-  } catch {}
-  try {
-    fs.unlinkSync(pidPath);
   } catch {}
 }
 
@@ -1169,6 +1189,7 @@ function startSignerBrokerBackground(
   }
   const logPath = path.join(path.dirname(appSocketPath), "local-signer-broker.log");
   const runAsUser = resolveLocalSignerRunAsUser(env);
+  const { pidPath, auditPath } = resolveLocalSignerSidecarPaths(appSocketPath);
   if (runAsUser) {
     ensureIsolatedSignerPaths(materialDir, backendSocketPath, appSocketPath, runAsUser);
     const envArgs = Object.entries({
@@ -1188,8 +1209,8 @@ function startSignerBrokerBackground(
             brokerCli,
             appSocketPath,
             backendSocketPath,
-            `${appSocketPath}.pid`,
-            `${appSocketPath}.audit.jsonl`,
+            pidPath,
+            auditPath,
           ],
           logPath,
           {
@@ -1213,7 +1234,7 @@ function startSignerBrokerBackground(
               [
                 "set -euo pipefail",
                 "umask 007",
-                `${JSON.stringify(process.execPath)} ${JSON.stringify(brokerCli)} wallet signer broker --socket ${JSON.stringify(appSocketPath)} --backend-socket ${JSON.stringify(backendSocketPath)} --pid-file ${JSON.stringify(`${appSocketPath}.pid`)} --audit-log ${JSON.stringify(`${appSocketPath}.audit.jsonl`)} >> ${JSON.stringify(logPath)} 2>&1 &`,
+                `${JSON.stringify(process.execPath)} ${JSON.stringify(brokerCli)} wallet signer broker --socket ${JSON.stringify(appSocketPath)} --backend-socket ${JSON.stringify(backendSocketPath)} --pid-file ${JSON.stringify(pidPath)} --audit-log ${JSON.stringify(auditPath)} >> ${JSON.stringify(logPath)} 2>&1 &`,
               ].join("; "),
             ),
           ].join(" "),
@@ -1242,9 +1263,9 @@ function startSignerBrokerBackground(
       "--backend-socket",
       backendSocketPath,
       "--pid-file",
-      `${appSocketPath}.pid`,
+      pidPath,
       "--audit-log",
-      `${appSocketPath}.audit.jsonl`,
+      auditPath,
     ],
     {
       detached: true,
