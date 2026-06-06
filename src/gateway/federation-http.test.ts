@@ -232,6 +232,52 @@ describe("federation HTTP proxy", () => {
     });
   });
 
+  it("persists a federation token returned from browser enrollment", async () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "fased-fed-enroll-token-"));
+    process.env.FASED_FEDERATION_TOKEN_PATH = path.join(stateDir, "access-token.json");
+    const issuedToken = {
+      tokenId: "joined-token",
+      nodeId: "node-joined",
+      handle: "@joined@ff1.fased.app",
+      issuedAt: "2026-06-06T00:00:00.000Z",
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      scopes: ["federation.read", "federation.write"],
+      signature: "sig",
+      trustState: "pending",
+      hostedState: "ready",
+      publicUrl: "https://joined.tailnet.ts.net",
+    };
+    const fetchMock = vi.fn(async (input: URL | RequestInfo, init?: RequestInit) => {
+      const url = new URL(
+        typeof input === "string" ? input : input instanceof URL ? input : input.url,
+      );
+      expect(url.toString()).toBe("https://ff1.fased.app/api/federation/admission/enroll");
+      expect(init?.method).toBe("POST");
+      return new Response(JSON.stringify({ status: "accepted", token: issuedToken }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await invoke({
+      method: "POST",
+      url: "/api/federation/admission/enroll",
+      body: JSON.stringify({
+        challengeId: "challenge-1",
+        attestation: { schema: "test" },
+      }),
+      headers: { "content-type": "application/json" },
+    });
+
+    expect(response.handled).toBe(true);
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.bodyText)).toEqual({ status: "accepted", token: issuedToken });
+    expect(JSON.parse(fs.readFileSync(process.env.FASED_FEDERATION_TOKEN_PATH, "utf-8"))).toEqual(
+      issuedToken,
+    );
+  });
+
   it("falls back to local threshold status when the upstream fee status route is missing", async () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "fased-fed-ops-status-"));
     process.env.FASED_OPERATOR_ECON_THRESHOLD_STATUS_PATH = path.join(

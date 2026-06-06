@@ -6122,49 +6122,44 @@ export function renderFederation(props: FederationProps) {
               <div class="card-sub">
                 ${
                   props.managedMode
-                    ? "Join/attest/revoke are locked in managed mode to prevent accidental loss of access."
-                    : "Register a handle and send attestation. Normal Fased Network join lands as trusted; hosted/public exposure is still a separate decision."
+                    ? "Join runs through the local Gateway and stores the managed token on this node."
+                    : "Register a handle and complete local attestation in one step."
                 }
               </div>
-              ${
-                props.managedMode
-                  ? html`
-                      <div class="callout" style="margin-top: 12px">
-                        Use startup-managed enrollment only. Check:
-                        <span class="mono">~/.fased/federation/access-token.json</span>
-                      </div>
-                    `
-                  : html`
-                      <div class="form-grid" style="margin-top: 16px;">
-                        <label class="field">
-                          <span>Handle</span>
-                          <input
-                            .value=${props.handle}
-                            @input=${(e: Event) =>
-                              props.onHandleChange((e.target as HTMLInputElement).value)}
-                            placeholder="@agent-xyz@domain.com"
-                          />
-                        </label>
-                        <label class="field">
-                          <span>Node endpoint</span>
-                          <input
-                            .value=${props.nodeEndpoint}
-                            @input=${(e: Event) =>
-                              props.onNodeEndpointChange((e.target as HTMLInputElement).value)}
-                            placeholder="https://node.local"
-                          />
-                        </label>
-                      </div>
-                      <div class="row" style="margin-top: 12px;">
-                        <button class="btn" ?disabled=${props.loading} @click=${props.onRegister}>
-                          Register handle
+              <div class="form-grid" style="margin-top: 16px;">
+                <label class="field">
+                  <span>Handle</span>
+                  <input
+                    .value=${props.handle}
+                    @input=${(e: Event) =>
+                      props.onHandleChange((e.target as HTMLInputElement).value)}
+                    placeholder="@agent-xyz@domain.com"
+                  />
+                </label>
+                <label class="field">
+                  <span>Node endpoint</span>
+                  <input
+                    .value=${props.nodeEndpoint}
+                    @input=${(e: Event) =>
+                      props.onNodeEndpointChange((e.target as HTMLInputElement).value)}
+                    placeholder="https://node.local"
+                  />
+                </label>
+              </div>
+              <div class="row" style="margin-top: 12px;">
+                <button class="btn primary" ?disabled=${props.loading} @click=${props.onRegister}>
+                  Join Fased Network
+                </button>
+                ${
+                  props.managedMode
+                    ? nothing
+                    : html`
+                        <button class="btn" ?disabled=${props.loading} @click=${props.onAttest}>
+                          Attest only
                         </button>
-                        <button class="btn primary" ?disabled=${props.loading} @click=${props.onAttest}>
-                          Attest + join
-                        </button>
-                      </div>
-                    `
-              }
+                      `
+                }
+              </div>
             </section>
           `
     }

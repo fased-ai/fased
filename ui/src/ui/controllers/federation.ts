@@ -1068,7 +1068,7 @@ export async function loadFederation(host: FasedAgentApp) {
   } finally {
     host.federationLoading = false;
   }
-  await Promise.all([
+  void Promise.allSettled([
     loadLocalFederationOffers(host),
     loadLocalMarketplaceRequests(host),
     loadLocalMarketplaceOrders(host),
@@ -2385,14 +2385,34 @@ export async function registerFederationHandle(host: FasedAgentApp) {
       return;
     }
     const nodeEndpoint = host.federationNodeEndpoint.trim();
-    const res = await getApi().registerHandle({ requestedHandle, nodeEndpoint });
-    if (res.status === "rejected") {
-      host.federationError = res.reason ?? "Handle rejected";
+    const registered = await getApi().registerHandle({ requestedHandle, nodeEndpoint });
+    if (registered.status === "rejected") {
+      host.federationError = registered.reason ?? "Handle rejected";
       return;
     }
-    if (res.handle) {
-      host.federationHandle = res.handle;
+    const handle = registered.handle?.trim() || requestedHandle;
+    host.federationHandle = handle;
+
+    const challenge = await getApi().enrollChallenge({ handle, nodeEndpoint });
+    if (challenge.status === "rejected") {
+      host.federationError = challenge.reason ?? "Federation challenge rejected";
+      return;
     }
+    const challengeId = challenge.challengeId?.trim() ?? "";
+    const nonce = challenge.nonce?.trim() ?? "";
+    if (!challengeId || !nonce) {
+      host.federationError = "Federation challenge did not return a complete enrollment payload.";
+      return;
+    }
+    const enrolled = await getApi().enroll({ challengeId, nonce, handle });
+    if (enrolled.status === "rejected") {
+      host.federationError = enrolled.reason ?? "Federation enrollment rejected";
+      return;
+    }
+    host.federationToken = enrolled.token ?? null;
+    host.federationMessage = enrolled.token
+      ? `Joined Fased Network as ${enrolled.token.handle}.`
+      : "Fased Network enrollment accepted.";
     await loadFederation(host);
   } catch (err) {
     host.federationError = describeFederationError(err);

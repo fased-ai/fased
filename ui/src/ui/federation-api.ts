@@ -1434,6 +1434,24 @@ export type AttestationRequest = {
   handle: string;
 };
 
+export type FederationEnrollChallengeRequest = {
+  handle: string;
+  nodeEndpoint?: string;
+};
+
+export type FederationEnrollChallengeResult = {
+  status?: "accepted" | "rejected";
+  challengeId?: string;
+  nonce?: string;
+  reason?: string;
+};
+
+export type FederationEnrollRequest = {
+  challengeId: string;
+  nonce: string;
+  handle: string;
+};
+
 export type AttestationResult = {
   status: "accepted" | "rejected";
   reason?: string;
@@ -1478,6 +1496,10 @@ export type FederationApi = {
   }) => Promise<FederationBondActionResponse>;
   syncBondStaking: (payload?: { walletId?: string }) => Promise<FederationBondActionResponse>;
   claimBondStaking: (payload?: { walletId?: string }) => Promise<FederationBondActionResponse>;
+  enrollChallenge: (
+    payload: FederationEnrollChallengeRequest,
+  ) => Promise<FederationEnrollChallengeResult>;
+  enroll: (payload: FederationEnrollRequest) => Promise<AttestationResult>;
   attest: (payload: AttestationRequest) => Promise<AttestationResult>;
   renew: (payload: AttestationRequest) => Promise<AttestationResult>;
   revoke: (payload: TokenRevokeRequest) => Promise<TokenRevokeResult>;
@@ -2838,6 +2860,17 @@ function createMockFederationApi(): FederationApi {
         tx: { txHash: "mock-bond-staking-claim" },
         status: buildMockStatus(payload?.walletId ?? "mock-bond-wallet").status,
       };
+    },
+    async enrollChallenge(payload) {
+      ensureHandle(payload.handle);
+      return {
+        status: "accepted",
+        challengeId: `challenge-${Date.now()}`,
+        nonce: "mock-nonce",
+      };
+    },
+    async enroll(payload) {
+      return await issueToken(payload.handle);
     },
     async attest(payload) {
       return await issueToken(payload.handle);
@@ -4548,6 +4581,23 @@ export function createFederationApi(): FederationApi {
           body: JSON.stringify(payload ?? {}),
         },
       );
+    },
+    async enrollChallenge(payload) {
+      return await fetchJson<FederationEnrollChallengeResult>(
+        `${baseUrl}/api/federation/admission/challenge`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        },
+      );
+    },
+    async enroll(payload) {
+      return await fetchJson<AttestationResult>(`${baseUrl}/api/federation/admission/enroll`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
     },
     async attest(payload) {
       return await fetchJson<AttestationResult>(`${baseUrl}/api/federation/admission/attest`, {

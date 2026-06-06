@@ -658,11 +658,12 @@ export async function refreshActiveTab(host: SettingsHost) {
   }
   if (host.tab === "chat") {
     void loadCommandsCatalog(host as unknown as FasedAgentApp, { quiet: true });
+    const app = host as unknown as FasedAgentApp;
+    void loadConfig(app);
+    void loadProviderModelCatalog(host);
+    void loadCron(host);
     await Promise.all([
-      loadAgents(host as unknown as FasedAgentApp),
-      loadConfig(host as unknown as FasedAgentApp),
-      loadProviderModelCatalog(host),
-      loadCron(host),
+      loadAgents(app),
       refreshChat(host as unknown as Parameters<typeof refreshChat>[0]),
     ]);
     scheduleChatScroll(

@@ -3939,10 +3939,6 @@ export class FasedAgentApp extends LitElement {
   }
 
   async handleFederationRegister() {
-    if (this.federationManagedMode) {
-      this.federationError = "Managed mode: manual federation join is disabled.";
-      return;
-    }
     await registerFederationHandleInternal(this);
   }
 

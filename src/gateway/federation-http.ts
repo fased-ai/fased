@@ -8,7 +8,11 @@ import {
   readConfigFileSnapshotForWrite,
   writeConfigFile,
 } from "../config/config.js";
-import { loadFederationBearerToken } from "../federation/access-token.js";
+import {
+  loadFederationBearerToken,
+  persistFederationAccessToken,
+  type PersistedFederationToken,
+} from "../federation/access-token.js";
 import { buildAttestation } from "../federation/attestation.js";
 import { runMarketplaceCapabilityAdapter } from "../federation/marketplace-capability-adapter.js";
 import {
@@ -155,6 +159,100 @@ function asScalarString(value: unknown): string | null {
     return String(value);
   }
   return null;
+}
+
+function parseFederationToken(value: unknown): PersistedFederationToken | null {
+  const envelope = asObject(value);
+  const token = asObject(envelope?.token);
+  if (!token) {
+    return null;
+  }
+  const tokenId = asScalarString(token.tokenId)?.trim() ?? "";
+  const nodeId = asScalarString(token.nodeId)?.trim() ?? "";
+  const handle = asScalarString(token.handle)?.trim() ?? "";
+  const issuedAt = asScalarString(token.issuedAt)?.trim() ?? "";
+  const expiresAt = asScalarString(token.expiresAt)?.trim() ?? "";
+  const signature = asScalarString(token.signature)?.trim() ?? "";
+  const scopesRaw = Array.isArray(token.scopes) ? token.scopes : [];
+  const scopes = scopesRaw.map((scope) => asScalarString(scope)?.trim() ?? "").filter(Boolean);
+  if (!tokenId || !nodeId || !handle || !issuedAt || !expiresAt || !signature || !scopes.length) {
+    return null;
+  }
+  return {
+    tokenId,
+    nodeId,
+    handle,
+    issuedAt,
+    expiresAt,
+    scopes,
+    signature,
+    trustState:
+      token.trustState === "pending" ||
+      token.trustState === "verified" ||
+      token.trustState === "revoked" ||
+      token.trustState === "blocked"
+        ? token.trustState
+        : undefined,
+    hostedState:
+      token.hostedState === "disabled" ||
+      token.hostedState === "pending" ||
+      token.hostedState === "ready" ||
+      token.hostedState === "missing"
+        ? token.hostedState
+        : undefined,
+    agentSlug: asScalarString(token.agentSlug)?.trim() || undefined,
+    publicUrl: asScalarString(token.publicUrl)?.trim() || undefined,
+    zrokToken: asScalarString(token.zrokToken)?.trim() || undefined,
+    paidFlowEligible:
+      typeof token.paidFlowEligible === "boolean" ? token.paidFlowEligible : undefined,
+    bondId: asScalarString(token.bondId)?.trim() || undefined,
+    bondWallet:
+      asObject(token.bondWallet) &&
+      asScalarString(asObject(token.bondWallet)?.chain) &&
+      asScalarString(asObject(token.bondWallet)?.address)
+        ? {
+            chain: asScalarString(asObject(token.bondWallet)?.chain) ?? "",
+            address: asScalarString(asObject(token.bondWallet)?.address) ?? "",
+          }
+        : undefined,
+    bondStatus:
+      token.bondStatus === "missing" ||
+      token.bondStatus === "active" ||
+      token.bondStatus === "unlocking" ||
+      token.bondStatus === "unlocked"
+        ? token.bondStatus
+        : undefined,
+    bondTier:
+      token.bondTier === "none" ||
+      token.bondTier === "basic-bond" ||
+      token.bondTier === "operator-bond"
+        ? token.bondTier
+        : undefined,
+    bondAmountRaw: asScalarString(token.bondAmountRaw)?.trim() || undefined,
+    bondUnlockAvailableAt: asScalarString(token.bondUnlockAvailableAt)?.trim() || undefined,
+    bondQuotaBand:
+      token.bondQuotaBand === "standard" ||
+      token.bondQuotaBand === "boosted" ||
+      token.bondQuotaBand === "operator"
+        ? token.bondQuotaBand
+        : undefined,
+    bondDerivedScopes: Array.isArray(token.bondDerivedScopes)
+      ? token.bondDerivedScopes.map((scope) => asScalarString(scope)?.trim() ?? "").filter(Boolean)
+      : undefined,
+  };
+}
+
+async function persistFederationTokenResponse(text: string): Promise<void> {
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    const token = parseFederationToken(parsed);
+    if (!token) {
+      return;
+    }
+    await persistFederationAccessToken(token, process.env);
+  } catch {
+    // The upstream response is still forwarded as-is. Persistence failure only affects local status.
+  }
 }
 
 function safeConfigIdSegment(value: string): string {
@@ -1254,8 +1352,18 @@ async function forwardRequest(params: {
   overridePath?: string;
   body?: unknown;
   fallbackFederationToken?: boolean;
+  persistFederationToken?: boolean;
 }) {
-  const { req, res, baseUrl, apiToken, overridePath, body, fallbackFederationToken } = params;
+  const {
+    req,
+    res,
+    baseUrl,
+    apiToken,
+    overridePath,
+    body,
+    fallbackFederationToken,
+    persistFederationToken,
+  } = params;
   const url = new URL(req.url ?? "/", "http://localhost");
   const targetPath = overridePath ?? url.pathname + url.search;
   const target = new URL(targetPath, baseUrl);
@@ -1280,6 +1388,9 @@ async function forwardRequest(params: {
     body: bodyPayload,
   });
   const text = await upstream.text();
+  if (upstream.ok && persistFederationToken) {
+    await persistFederationTokenResponse(text);
+  }
   res.statusCode = upstream.status;
   const contentType = upstream.headers.get("content-type");
   if (contentType) {
@@ -2308,6 +2419,7 @@ export async function handleFederationHttpRequest(
         apiToken,
         overridePath: `${basePath}/admission/attest`,
         body: attestation,
+        persistFederationToken: true,
       });
       return true;
     }
@@ -2326,6 +2438,7 @@ export async function handleFederationHttpRequest(
         apiToken,
         overridePath: `${basePath}/admission/renew`,
         body: { attestation },
+        persistFederationToken: true,
       });
       return true;
     }
@@ -2335,6 +2448,13 @@ export async function handleFederationHttpRequest(
         nodeEndpoint?: string;
         nodeId?: string;
       };
+      const handle =
+        payload.handle?.trim() ||
+        resolveFederationHandle({
+          env: process.env,
+          fallbackDomain: new URL(baseUrl).hostname,
+        });
+      const nodeId = payload.nodeId?.trim() || buildAttestation({ handle }).nodeId;
       await forwardRequest({
         req,
         res,
@@ -2342,14 +2462,9 @@ export async function handleFederationHttpRequest(
         apiToken,
         overridePath: `${basePath}/admission/challenge`,
         body: {
-          handle:
-            payload.handle?.trim() ||
-            resolveFederationHandle({
-              env: process.env,
-              fallbackDomain: new URL(baseUrl).hostname,
-            }),
+          handle,
           nodeEndpoint: payload.nodeEndpoint?.trim() || resolveAgentPublicOrigin(process.env),
-          nodeId: payload.nodeId?.trim() || undefined,
+          nodeId,
         },
       });
       return true;
@@ -2385,6 +2500,7 @@ export async function handleFederationHttpRequest(
             challengeId,
             attestation,
           },
+          persistFederationToken: true,
         });
         return true;
       }
@@ -2395,6 +2511,7 @@ export async function handleFederationHttpRequest(
         apiToken,
         overridePath: `${basePath}/admission/enroll`,
         body: body.value,
+        persistFederationToken: true,
       });
       return true;
     }

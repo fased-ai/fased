@@ -137,6 +137,38 @@ export async function loadPersistedFederationToken(
   }
 }
 
+function mergePersistedFederationTokenMetadata(params: {
+  next: PersistedFederationToken;
+  previous: PersistedFederationToken | null;
+}): PersistedFederationToken {
+  const previous = params.previous;
+  if (!previous) {
+    return params.next;
+  }
+  return {
+    ...params.next,
+    hostedState: params.next.hostedState ?? previous.hostedState,
+    agentSlug: params.next.agentSlug ?? previous.agentSlug,
+    publicUrl: params.next.publicUrl ?? previous.publicUrl,
+    zrokToken: params.next.zrokToken ?? previous.zrokToken,
+    zrokTokenPresent: params.next.zrokTokenPresent ?? previous.zrokTokenPresent,
+  };
+}
+
+export async function persistFederationAccessToken(
+  token: PersistedFederationToken,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<PersistedFederationToken> {
+  const tokenPath = resolveFederationTokenPath(env);
+  const previous = await loadPersistedFederationToken(env);
+  const next = mergePersistedFederationTokenMetadata({ next: token, previous });
+  await fs.mkdir(path.dirname(tokenPath), { recursive: true, mode: 0o700 });
+  const tmpPath = `${tokenPath}.tmp`;
+  await fs.writeFile(tmpPath, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
+  await fs.rename(tmpPath, tokenPath);
+  return next;
+}
+
 export async function loadFederationBearerToken(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<string> {

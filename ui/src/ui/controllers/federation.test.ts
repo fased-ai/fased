@@ -14,6 +14,7 @@ import {
   openMarketplaceIndexOrderFeedback,
   publishFederationDispute,
   publishFederationReview,
+  registerFederationHandle,
   releaseMarketplaceEscrowOrder,
   refundMarketplaceEscrowOrder,
   runPaidFederationContentSummarize,
@@ -22,6 +23,11 @@ import {
 } from "./federation.ts";
 
 const federationApi = vi.hoisted(() => ({
+  registerHandle: vi.fn(),
+  enrollChallenge: vi.fn(),
+  enroll: vi.fn(),
+  getStatus: vi.fn(),
+  listDirectory: vi.fn(),
   createLocalOrder: vi.fn(),
   updateLocalOrder: vi.fn(),
   submitLocalOrderToSeller: vi.fn(),
@@ -42,6 +48,85 @@ vi.mock("../federation-api.js", () => ({
 }));
 
 describe("buildLocalOfferPayload", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("registers and enrolls a federation handle in one join action", async () => {
+    federationApi.registerHandle.mockResolvedValue({
+      status: "accepted",
+      handle: "@joined@ff1.fased.app",
+    });
+    federationApi.enrollChallenge.mockResolvedValue({
+      status: "accepted",
+      challengeId: "challenge-1",
+      nonce: "nonce-1",
+    });
+    federationApi.enroll.mockResolvedValue({
+      status: "accepted",
+      token: {
+        tokenId: "token-1",
+        nodeId: "node-1",
+        handle: "@joined@ff1.fased.app",
+        issuedAt: "2026-06-06T00:00:00.000Z",
+        expiresAt: "2099-01-01T00:00:00.000Z",
+        scopes: ["federation.read", "federation.write"],
+        signature: "sig",
+      },
+    });
+    federationApi.getStatus.mockResolvedValue({
+      status: {
+        joined: true,
+        lifecycle: "active",
+        token: {
+          tokenId: "token-1",
+          nodeId: "node-1",
+          handle: "@joined@ff1.fased.app",
+          issuedAt: "2026-06-06T00:00:00.000Z",
+          expiresAt: "2099-01-01T00:00:00.000Z",
+          scopes: ["federation.read", "federation.write"],
+          signature: "sig",
+        },
+      },
+    });
+    federationApi.listDirectory.mockResolvedValue([]);
+    const host = {
+      federationHandle: "@joined@ff1.fased.app",
+      federationNodeEndpoint: "https://joined.tailnet.ts.net",
+      federationLoading: false,
+      federationError: null,
+      federationMessage: null,
+      federationToken: null,
+      federationStatus: null,
+      federationDirectory: [],
+      federationBondWalletIdDraft: "",
+      federationBondTierDraft: "basic-bond",
+      federationBondAmountDraft: "1",
+      walletNamedWallets: [],
+      walletDefaultWalletId: null,
+    } as unknown as FasedAgentApp;
+
+    await registerFederationHandle(host);
+
+    expect(federationApi.registerHandle).toHaveBeenCalledWith({
+      requestedHandle: "@joined@ff1.fased.app",
+      nodeEndpoint: "https://joined.tailnet.ts.net",
+    });
+    expect(federationApi.enrollChallenge).toHaveBeenCalledWith({
+      handle: "@joined@ff1.fased.app",
+      nodeEndpoint: "https://joined.tailnet.ts.net",
+    });
+    expect(federationApi.enroll).toHaveBeenCalledWith({
+      challengeId: "challenge-1",
+      nonce: "nonce-1",
+      handle: "@joined@ff1.fased.app",
+    });
+    expect(host.federationError).toBeNull();
+    expect(host.federationToken?.tokenId).toBe("token-1");
+    expect(host.federationStatus?.joined).toBe(true);
+    expect(host.federationLoading).toBe(false);
+  });
+
   it("keeps Marketplace UI-created offers on the same payment-term contract as chat drafts", () => {
     const payload = buildLocalOfferPayload({
       federationLocalOfferEnabledDraft: false,
