@@ -7,8 +7,7 @@ import {
 import { resolveCommitHash } from "../infra/git-commit.js";
 import { VERSION } from "../version.js";
 
-export const FEDERATION_ATTESTATION_SCHEMA_URL =
-  "https://schemas.fased.ai/fased-network-attestation-v1.json";
+export const FEDERATION_ATTESTATION_SCHEMA_URL = "https://domain.com/schemas/attestation-v1.json";
 
 export type AttestationPluginRef = {
   name: string;

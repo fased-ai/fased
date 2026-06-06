@@ -278,6 +278,46 @@ describe("federation HTTP proxy", () => {
     );
   });
 
+  it("derives a federation handle for blank browser join requests", async () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "fased-fed-derived-handle-"));
+    process.env.FASED_STATE_DIR = stateDir;
+    process.env.FASED_A2A_ORIGIN = "https://joined.tailnet.ts.net";
+    let forwardedBody: Record<string, unknown> | null = null;
+    const fetchMock = vi.fn(async (input: URL | RequestInfo, init?: RequestInit) => {
+      const url = new URL(
+        typeof input === "string" ? input : input instanceof URL ? input : input.url,
+      );
+      expect(url.toString()).toBe("https://ff1.fased.app/api/federation/registry/handles");
+      expect(typeof init?.body).toBe("string");
+      forwardedBody = JSON.parse(typeof init?.body === "string" ? init.body : "{}") as Record<
+        string,
+        unknown
+      >;
+      return new Response(
+        JSON.stringify({ status: "accepted", handle: forwardedBody.requestedHandle }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await invoke({
+      method: "POST",
+      url: "/api/federation/registry/handles",
+      body: JSON.stringify({ requestedHandle: "", nodeEndpoint: "" }),
+      headers: { "content-type": "application/json" },
+    });
+
+    expect(response.handled).toBe(true);
+    expect(response.statusCode).toBe(200);
+    expect(String(forwardedBody?.requestedHandle)).toMatch(
+      /^@fased-agent-[a-f0-9]{12}@ff1\.fased\.app$/,
+    );
+    expect(forwardedBody?.nodeEndpoint).toBe("https://joined.tailnet.ts.net");
+  });
+
   it("falls back to local threshold status when the upstream fee status route is missing", async () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "fased-fed-ops-status-"));
     process.env.FASED_OPERATOR_ECON_THRESHOLD_STATUS_PATH = path.join(

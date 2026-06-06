@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../agents/agent-scope.js";
 import { getActiveEmbeddedRunCount } from "../agents/pi-embedded-runner/runs.js";
@@ -53,7 +54,10 @@ import {
   createWalletProviderAdapter,
   resolveWalletProviderId,
 } from "../wallet/wallet-provider-resolver.js";
-import { resolveWalletRuntimeConfig } from "../wallet/wallet-runtime-config.js";
+import {
+  resolveLocalSignerMaterialRootDir,
+  resolveWalletRuntimeConfig,
+} from "../wallet/wallet-runtime-config.js";
 import { runOnboardingWizard } from "../wizard/onboarding.js";
 import { createAuthRateLimiter, type AuthRateLimiter } from "./auth-rate-limit.js";
 import { startGatewayConfigReloader } from "./config-reload.js";
@@ -123,10 +127,42 @@ const logWsControl = log.child("ws");
 const gatewayRuntime = runtimeForLogger(log);
 const canvasRuntime = runtimeForLogger(logCanvas);
 
+const LOCAL_SIGNER_STARTUP_RECOVERY_TIMEOUT_MS = 2_000;
+
+function hasConfiguredLocalSignerKeystoreMaterial(env: NodeJS.ProcessEnv): boolean {
+  for (const [key, rawValue] of Object.entries(env)) {
+    if (typeof rawValue !== "string" || rawValue.trim().length === 0) {
+      continue;
+    }
+    if (
+      key === "FASED_WALLET_SOLANA_KEYSTORE_PATH" ||
+      key.startsWith("FASED_WALLET_SOLANA_KEYSTORE_PATH__")
+    ) {
+      return true;
+    }
+  }
+
+  try {
+    const materialDir = resolveLocalSignerMaterialRootDir(env);
+    if (!fs.existsSync(materialDir)) {
+      return false;
+    }
+    return fs
+      .readdirSync(materialDir, { withFileTypes: true })
+      .some((entry) => entry.isFile() && /^keystore-solana(?:-.+)?\.v1\.enc$/i.test(entry.name));
+  } catch {
+    return false;
+  }
+}
+
 async function ensureLocalSignerReadyAtGatewayStart(cfg: ReturnType<typeof loadConfig>) {
   const effectiveEnv = { ...process.env, ...cfg.env?.vars };
   const providerId = resolveWalletProviderId(cfg, effectiveEnv);
   if (providerId !== "local-socket-signer") {
+    return;
+  }
+  if (!hasConfiguredLocalSignerKeystoreMaterial(effectiveEnv)) {
+    log.debug("local signer startup check skipped: no self-hosted signer keystore material found");
     return;
   }
   const wallet = resolveWalletRuntimeConfig(cfg, effectiveEnv);
@@ -143,7 +179,21 @@ async function ensureLocalSignerReadyAtGatewayStart(cfg: ReturnType<typeof loadC
   log.warn(`local signer unhealthy at gateway start: ${initialHealth.details ?? "unknown error"}`);
   try {
     const { restartLocalSocketSigner } = await import("../wizard/onboarding.wallet.js");
-    await restartLocalSocketSigner(undefined, effectiveEnv);
+    const restarted = await Promise.race([
+      restartLocalSocketSigner(undefined, effectiveEnv)
+        .then(() => true)
+        .catch((err) => {
+          log.warn(`failed to restart local signer at gateway start: ${String(err)}`);
+          return true;
+        }),
+      new Promise<boolean>((resolve) =>
+        setTimeout(() => resolve(false), LOCAL_SIGNER_STARTUP_RECOVERY_TIMEOUT_MS),
+      ),
+    ]);
+    if (!restarted) {
+      log.warn("local signer restart attempt timed out at gateway start; continuing startup");
+      return;
+    }
   } catch (err) {
     log.warn(`failed to restart local signer at gateway start: ${String(err)}`);
     return;

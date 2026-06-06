@@ -127,6 +127,80 @@ describe("buildLocalOfferPayload", () => {
     expect(host.federationLoading).toBe(false);
   });
 
+  it("lets hosted gateway derive the handle when the UI field is empty", async () => {
+    federationApi.registerHandle.mockResolvedValue({
+      status: "accepted",
+      handle: "@derived@ff1.fased.app",
+    });
+    federationApi.enrollChallenge.mockResolvedValue({
+      status: "accepted",
+      challengeId: "challenge-derived",
+      nonce: "nonce-derived",
+    });
+    federationApi.enroll.mockResolvedValue({
+      status: "accepted",
+      token: {
+        tokenId: "token-derived",
+        nodeId: "node-derived",
+        handle: "@derived@ff1.fased.app",
+        issuedAt: "2026-06-06T00:00:00.000Z",
+        expiresAt: "2099-01-01T00:00:00.000Z",
+        scopes: ["federation.read", "federation.write"],
+        signature: "sig",
+      },
+    });
+    federationApi.getStatus.mockResolvedValue({
+      status: {
+        joined: true,
+        lifecycle: "active",
+        token: {
+          tokenId: "token-derived",
+          nodeId: "node-derived",
+          handle: "@derived@ff1.fased.app",
+          issuedAt: "2026-06-06T00:00:00.000Z",
+          expiresAt: "2099-01-01T00:00:00.000Z",
+          scopes: ["federation.read", "federation.write"],
+          signature: "sig",
+        },
+      },
+    });
+    federationApi.listDirectory.mockResolvedValue([]);
+    const host = {
+      federationHandle: "",
+      federationNodeEndpoint: "https://joined.tailnet.ts.net",
+      federationLoading: false,
+      federationError: null,
+      federationMessage: null,
+      federationToken: null,
+      federationStatus: null,
+      federationDirectory: [],
+      federationBondWalletIdDraft: "",
+      federationBondTierDraft: "basic-bond",
+      federationBondAmountDraft: "1",
+      walletNamedWallets: [],
+      walletDefaultWalletId: null,
+    } as unknown as FasedAgentApp;
+
+    await registerFederationHandle(host);
+
+    expect(federationApi.registerHandle).toHaveBeenCalledWith({
+      requestedHandle: "",
+      nodeEndpoint: "https://joined.tailnet.ts.net",
+    });
+    expect(federationApi.enrollChallenge).toHaveBeenCalledWith({
+      handle: "@derived@ff1.fased.app",
+      nodeEndpoint: "https://joined.tailnet.ts.net",
+    });
+    expect(federationApi.enroll).toHaveBeenCalledWith({
+      challengeId: "challenge-derived",
+      nonce: "nonce-derived",
+      handle: "@derived@ff1.fased.app",
+    });
+    expect(host.federationError).toBeNull();
+    expect(host.federationHandle).toBe("@derived@ff1.fased.app");
+    expect(host.federationStatus?.joined).toBe(true);
+  });
+
   it("keeps Marketplace UI-created offers on the same payment-term contract as chat drafts", () => {
     const payload = buildLocalOfferPayload({
       federationLocalOfferEnabledDraft: false,

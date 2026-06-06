@@ -2380,10 +2380,6 @@ export async function registerFederationHandle(host: FasedAgentApp) {
   host.federationMessage = null;
   try {
     const requestedHandle = host.federationHandle.trim();
-    if (!requestedHandle) {
-      host.federationError = "Missing handle";
-      return;
-    }
     const nodeEndpoint = host.federationNodeEndpoint.trim();
     const registered = await getApi().registerHandle({ requestedHandle, nodeEndpoint });
     if (registered.status === "rejected") {
@@ -2391,6 +2387,10 @@ export async function registerFederationHandle(host: FasedAgentApp) {
       return;
     }
     const handle = registered.handle?.trim() || requestedHandle;
+    if (!handle) {
+      host.federationError = "Federation registry did not return a handle.";
+      return;
+    }
     host.federationHandle = handle;
 
     const challenge = await getApi().enrollChallenge({ handle, nodeEndpoint });
