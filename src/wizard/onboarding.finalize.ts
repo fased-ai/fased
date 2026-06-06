@@ -1,5 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs/promises";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { Writable } from "node:stream";
@@ -981,7 +982,56 @@ async function collectLocalGatewayHealthCheck(params: {
   ].join("\n");
 }
 
-async function waitForGatewayHttpListener(params: {
+function parseGatewayTcpEndpoint(wsUrl: string): { host: string; port: number } | null {
+  try {
+    const url = new URL(wsUrl);
+    const host = url.hostname.replace(/^\[(.*)\]$/, "$1");
+    const defaultPort = url.protocol === "wss:" ? 443 : url.protocol === "ws:" ? 80 : 0;
+    const port = Number(url.port || defaultPort);
+    if (!host || !Number.isInteger(port) || port <= 0 || port > 65_535) {
+      return null;
+    }
+    return { host, port };
+  } catch {
+    return null;
+  }
+}
+
+function isLoopbackTcpHost(host: string): boolean {
+  const normalized = host.trim().toLowerCase();
+  return (
+    normalized === "localhost" ||
+    normalized === "::1" ||
+    normalized === "0:0:0:0:0:0:0:1" ||
+    normalized === "127.0.0.1" ||
+    normalized.startsWith("127.")
+  );
+}
+
+async function probeTcpEndpoint(params: {
+  host: string;
+  port: number;
+  timeoutMs: number;
+}): Promise<{ ok: boolean; detail?: string }> {
+  return await new Promise((resolve) => {
+    const socket = net.createConnection({ host: params.host, port: params.port });
+    let settled = false;
+    const finish = (result: { ok: boolean; detail?: string }) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      socket.destroy();
+      resolve(result);
+    };
+    socket.setTimeout(Math.max(100, params.timeoutMs));
+    socket.once("connect", () => finish({ ok: true }));
+    socket.once("timeout", () => finish({ ok: false, detail: "tcp connection timed out" }));
+    socket.once("error", (err) => finish({ ok: false, detail: err.message }));
+  });
+}
+
+export async function waitForGatewayHttpListener(params: {
   wsUrl: string;
   deadlineMs: number;
   pollMs?: number;
@@ -989,8 +1039,22 @@ async function waitForGatewayHttpListener(params: {
   const deadlineAt = Date.now() + Math.max(1, params.deadlineMs);
   const pollMs = Math.max(100, params.pollMs ?? 500);
   const httpUrl = wsToHttpUrl(params.wsUrl);
+  const tcpEndpoint = parseGatewayTcpEndpoint(params.wsUrl);
+  const canUseTcpListenerProbe =
+    tcpEndpoint != null && isLoopbackTcpHost(tcpEndpoint.host) && tcpEndpoint.port > 0;
   let lastError = "connection not ready";
   while (Date.now() < deadlineAt) {
+    if (canUseTcpListenerProbe) {
+      const tcp = await probeTcpEndpoint({
+        host: tcpEndpoint.host,
+        port: tcpEndpoint.port,
+        timeoutMs: 750,
+      });
+      if (tcp.ok) {
+        return { ok: true };
+      }
+      lastError = `tcp ${tcp.detail ?? "connection failed"}`;
+    }
     try {
       const res = await fetch(httpUrl, {
         method: "GET",
@@ -1002,7 +1066,8 @@ async function waitForGatewayHttpListener(params: {
       }
       lastError = `http status ${res.status}`;
     } catch (err) {
-      lastError = err instanceof Error ? err.message : String(err);
+      const httpError = err instanceof Error ? err.message : String(err);
+      lastError = lastError.startsWith("tcp ") ? `${lastError}; http ${httpError}` : httpError;
     }
     await new Promise((resolve) => setTimeout(resolve, pollMs));
   }

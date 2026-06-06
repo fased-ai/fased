@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -12,6 +13,7 @@ import {
   formatStrictRemoteAccessDetails,
   gatewayServiceMatchesCurrentInstall,
   validateLocalDashboardBootCheck,
+  waitForGatewayHttpListener,
 } from "./onboarding.finalize.js";
 
 describe("buildOnboardingDashboardUrl", () => {
@@ -117,6 +119,39 @@ describe("buildGatewayServiceRestartAttempts", () => {
 
     expect(labels).toEqual(["root restart", "root start", "root enable+start"]);
     expect(labels).not.toContain("user restart");
+  });
+});
+
+describe("waitForGatewayHttpListener", () => {
+  it("accepts a loopback TCP listener even when HTTP root does not answer", async () => {
+    const sockets = new Set<net.Socket>();
+    const server = net.createServer((socket) => {
+      sockets.add(socket);
+      socket.once("close", () => sockets.delete(socket));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("test server did not bind to a TCP port");
+      }
+
+      const result = await waitForGatewayHttpListener({
+        wsUrl: `ws://127.0.0.1:${address.port}`,
+        deadlineMs: 1_000,
+        pollMs: 100,
+      });
+
+      expect(result.ok).toBe(true);
+    } finally {
+      for (const socket of sockets) {
+        socket.destroy();
+      }
+      await new Promise<void>((resolve, reject) => {
+        server.close((err) => (err ? reject(err) : resolve()));
+      });
+    }
   });
 });
 

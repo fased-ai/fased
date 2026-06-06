@@ -3826,6 +3826,22 @@ function compactReference(value: string | undefined, start = 10, end = 8): strin
   return `${trimmed.slice(0, start)}...${trimmed.slice(-end)}`;
 }
 
+export function describeFederationBondNotice(warning: string): { text: string; className: string } {
+  if (warning === "Bond Vault is not configured for live SAT bond inspection.") {
+    return {
+      text: "Configure Bond Vault for live SAT bond inspection.",
+      className: "callout",
+    };
+  }
+  if (warning === "Current SAT bond is below published network tiers.") {
+    return {
+      text: "Configure SAT bond to unlock network tiers.",
+      className: "callout",
+    };
+  }
+  return { text: warning, className: "callout warn" };
+}
+
 function formatOperatorEconomyAssetLabel(
   asset: FederationOperatorEconomyFeeObjectRecord["asset"],
 ): string {
@@ -4364,8 +4380,9 @@ export function renderFederation(props: FederationProps) {
   const statusHandleCompact = statusHandle ? compactReference(statusHandle, 8, 4) : "Not joined";
   const bondWalletAddressCompact = bondWalletAddress
     ? compactReference(bondWalletAddress, 4, 4)
-    : "missing";
-  const proofRefCompact = proofRef ? compactReference(proofRef, 4, 4) : "missing";
+    : "Configure";
+  const proofRefCompact = proofRef ? compactReference(proofRef, 4, 4) : "Configure";
+  const bondNotices = bondWarnings.map((warning) => describeFederationBondNotice(warning));
   const localOfferDraftOpen = props.localOfferDraftOpen;
   const localListingDraftKind = props.localListingDraftKind ?? "offer";
   const localOfferEditorTitle =
@@ -6341,24 +6358,24 @@ export function renderFederation(props: FederationProps) {
                         label: "Bond wallet",
                         value: html`
                           <span class="row" style="gap: 8px; align-items: center; justify-content: space-between; flex-wrap: nowrap;">
-                            <span title=${bondWalletAddress || "not configured"}>${bondWalletAddressCompact}</span>
+                            <span title=${bondWalletAddress || "Configure"}>${bondWalletAddressCompact}</span>
                             ${renderReferenceActions(bondWalletAddress, "bond wallet")}
                           </span>
                         `,
                         meta: `${bondVaultSatBalance} · ${bondVaultSolBalance}`,
                         info: bondPrivilegesInfo,
-                        title: bondWalletAddress || "not configured",
+                        title: bondWalletAddress || "Configure",
                       })}
                       ${renderFactCard({
                         label: "Bond position",
                         value: html`
                           <span class="row" style="gap: 8px; align-items: center; justify-content: space-between; flex-wrap: nowrap;">
-                            <span title=${proofRef || "missing"}>${proofRefCompact}</span>
+                            <span title=${proofRef || "Configure"}>${proofRefCompact}</span>
                             ${renderReferenceActions(proofRef, "bond position")}
                           </span>
                         `,
                         meta: `${bondAmountSat} bonded`,
-                        title: proofRef || "missing",
+                        title: proofRef || "Configure",
                       })}
                     </div>
                     <div class="federation-bond-controls">
@@ -6467,11 +6484,12 @@ export function renderFederation(props: FederationProps) {
                         : nothing
                     }
                     ${
-                      bondWarnings.length > 0
+                      bondNotices.length > 0
                         ? html`
                             <div class="stack">
-                              ${bondWarnings.map(
-                                (warning) => html`<div class="callout warn">${warning}</div>`,
+                              ${bondNotices.map(
+                                (notice) =>
+                                  html`<div class=${notice.className}>${notice.text}</div>`,
                               )}
                             </div>
                           `
@@ -6494,9 +6512,7 @@ export function renderFederation(props: FederationProps) {
                       <div class="federation-bond-stat">
                         <span>Pool</span>
                         <strong>${
-                          bondStakingDistributor?.exists
-                            ? bondStakingPendingPoolSat
-                            : "not initialized"
+                          bondStakingDistributor?.exists ? bondStakingPendingPoolSat : "Configure"
                         }</strong>
                         <small>${bondStakingDistributor?.status ?? "inactive"}</small>
                       </div>

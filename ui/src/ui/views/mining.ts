@@ -205,9 +205,8 @@ export function resolveMiningWalletContext(params: {
         runtimeWallet,
         profileWallet,
         displayWallet,
-        title: "No singleton mining wallet configured",
-        detail:
-          "The form still shows a prior wallet; create or import @wallet:mining in onboarding or CLI before resuming SAT history.",
+        title: "Configure mining wallet",
+        detail: "Create or import @wallet:mining before resuming SAT history.",
       };
     }
     return {
@@ -215,8 +214,8 @@ export function resolveMiningWalletContext(params: {
       runtimeWallet,
       profileWallet,
       displayWallet,
-      title: "No singleton mining wallet configured",
-      detail: "Create or import @wallet:mining in onboarding or CLI before starting SAT.",
+      title: "Configure mining wallet",
+      detail: "Create or import @wallet:mining before starting SAT.",
     };
   }
 
@@ -2722,7 +2721,7 @@ export function describeDashboardState(params: {
       };
     }
     if (!walletSelected) {
-      return { label: "Stopped", tone: "neutral", detail: "Wallet is missing." };
+      return { label: "Stopped", tone: "neutral", detail: "Configure wallet." };
     }
     if (!rpcReady) {
       return { label: "Stopped", tone: "neutral", detail: "Set RPC." };
@@ -3888,7 +3887,7 @@ export function renderMining(props: MiningViewProps) {
     : mainnetSyncBlocked
       ? mainnetSyncState.detail
       : !profile?.walletId || !walletSelected
-        ? "Wallet is missing."
+        ? "Configure wallet."
         : !rpcReady
           ? "Set RPC."
           : !walletFundingReady
