@@ -318,6 +318,8 @@ function logWsOptimized(direction: "in" | "out", kind: string, meta?: Record<str
   const id = typeof meta?.id === "string" ? meta.id : undefined;
   const ok = typeof meta?.ok === "boolean" ? meta.ok : undefined;
   const method = typeof meta?.method === "string" ? meta.method : undefined;
+  const errorCode = typeof meta?.errorCode === "string" ? meta.errorCode : undefined;
+  const errorMessage = typeof meta?.errorMessage === "string" ? meta.errorMessage : undefined;
 
   const inflightKey = connId && id ? `${connId}:${id}` : undefined;
 
@@ -344,6 +346,15 @@ function logWsOptimized(direction: "in" | "out", kind: string, meta?: Record<str
   }
 
   if (direction !== "out" || kind !== "res") {
+    return;
+  }
+
+  if (
+    ok === false &&
+    errorCode === "INVALID_REQUEST" &&
+    method?.startsWith("sat.") &&
+    errorMessage === `unknown method: ${method}`
+  ) {
     return;
   }
 
