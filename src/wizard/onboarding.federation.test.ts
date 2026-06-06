@@ -72,11 +72,9 @@ describe("configureFederationForOnboarding", () => {
       expect(confirm).not.toHaveBeenCalled();
       expect(prompter.note).not.toHaveBeenCalled();
       expect(text).not.toHaveBeenCalled();
-      expect(result).toEqual({
-        enabled: true,
-        baseUrl: "https://ff1.fased.app",
-        handle: undefined,
-      });
+      expect(result.enabled).toBe(true);
+      expect(result.baseUrl).toBe("https://ff1.fased.app");
+      expect(result.handle).toMatch(/^@fased-agent-[a-f0-9]{12}@ff1\.fased\.app$/);
     } finally {
       await fs.rm(stateDir, { force: true, recursive: true });
     }

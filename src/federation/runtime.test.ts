@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_FEDERATION_BASE_URL,
@@ -37,6 +40,22 @@ describe("federation runtime defaults", () => {
       nodeId: "0123456789abcdef0123456789abcdef",
     });
     expect(handle).toBe("@agent@ff1.fased.app");
+  });
+
+  it("derives missing handles from the configured state directory identity", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "fased-runtime-identity-"));
+    try {
+      const handle = resolveFederationHandle({
+        env: {
+          FASED_STATE_DIR: stateDir,
+          FASED_FEDERATION_BASE_URL: "https://ff1.fased.app",
+        },
+      });
+      expect(handle).toMatch(/^@fased-agent-[a-f0-9]{12}@ff1\.fased\.app$/);
+      expect(fs.existsSync(path.join(stateDir, "identity", "device.json"))).toBe(true);
+    } finally {
+      fs.rmSync(stateDir, { force: true, recursive: true });
+    }
   });
 
   it("uses explicit public origin when configured", () => {

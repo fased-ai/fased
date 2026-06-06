@@ -10,6 +10,7 @@ import {
   createMarketplaceOrderFromSelectedOffer,
   createMarketplaceOrderFromIndexEntry,
   fundMarketplaceEscrowOrder,
+  loadFederation,
   loadLocalMarketplaceOrders,
   openMarketplaceIndexOrderFeedback,
   publishFederationDispute,
@@ -125,6 +126,44 @@ describe("buildLocalOfferPayload", () => {
     expect(host.federationToken?.tokenId).toBe("token-1");
     expect(host.federationStatus?.joined).toBe(true);
     expect(host.federationLoading).toBe(false);
+  });
+
+  it("preloads the configured gateway handle before a token exists", async () => {
+    federationApi.getStatus.mockResolvedValue({
+      status: {
+        joined: false,
+        lifecycle: "missing",
+        configured: {
+          autoConnect: true,
+          baseUrl: "https://ff1.fased.app",
+          handle: "@configured@ff1.fased.app",
+          nodeEndpoint: "http://127.0.0.1:18789",
+        },
+      },
+    });
+    federationApi.listDirectory.mockResolvedValue([]);
+    const host = {
+      federationHandle: "",
+      federationNodeEndpoint: "",
+      federationManagedMode: false,
+      federationLoading: false,
+      federationError: null,
+      federationToken: null,
+      federationStatus: null,
+      federationDirectory: [],
+      federationBondWalletIdDraft: "",
+      federationBondTierDraft: "basic-bond",
+      federationBondAmountDraft: "1",
+      walletNamedWallets: [],
+      walletDefaultWalletId: null,
+    } as unknown as FasedAgentApp;
+
+    await loadFederation(host);
+
+    expect(host.federationHandle).toBe("@configured@ff1.fased.app");
+    expect(host.federationNodeEndpoint).toBe("http://127.0.0.1:18789");
+    expect(host.federationToken).toBeNull();
+    expect(host.federationStatus?.configured?.handle).toBe("@configured@ff1.fased.app");
   });
 
   it("lets hosted gateway derive the handle when the UI field is empty", async () => {

@@ -1,4 +1,6 @@
+import path from "node:path";
 import type { FasedAgentConfig } from "../config/config.js";
+import { resolveStateDir } from "../config/paths.js";
 import { loadOrCreateDeviceIdentity } from "../infra/device-identity.js";
 
 export const DEFAULT_FEDERATION_BASE_URL = "https://ff1.fased.app";
@@ -73,7 +75,9 @@ export function resolveFederationHandle(params?: {
 
   const federationBaseUrl = resolveFederationBaseUrl(env);
   const federationDomain = federationBaseUrl ? new URL(federationBaseUrl).hostname : fallbackDomain;
-  const nodeId = params?.nodeId ?? loadOrCreateDeviceIdentity().deviceId;
+  const nodeId =
+    params?.nodeId ??
+    loadOrCreateDeviceIdentity(path.join(resolveStateDir(env), "identity", "device.json")).deviceId;
   const prefix = sanitizeName(env.FASED_A2A_NAME?.trim() || "fased-agent");
   const shortNodeId = nodeId.slice(0, 12);
   return `@${prefix}-${shortNodeId}@${federationDomain}`;

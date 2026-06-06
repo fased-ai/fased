@@ -1201,6 +1201,12 @@ export type FederationStatus = {
   joined: boolean;
   lifecycle: "active" | "expired" | "missing" | "invalid";
   checkedAt: string;
+  configured?: {
+    autoConnect: boolean;
+    baseUrl?: string;
+    handle?: string;
+    nodeEndpoint?: string;
+  };
   token?: FederationToken;
   bond?: FederationBondStatus;
   sellerLane?: FederationSellerLaneSummary;

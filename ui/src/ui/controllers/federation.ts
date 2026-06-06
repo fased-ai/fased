@@ -779,16 +779,36 @@ function resolveFederationWriteToken(host: FasedAgentApp): string {
 
 function resolveFederationHandle(host: FasedAgentApp): string | undefined {
   const handle =
-    host.federationStatus?.token?.handle?.trim() ?? host.federationToken?.handle?.trim() ?? "";
+    host.federationStatus?.token?.handle?.trim() ??
+    host.federationStatus?.configured?.handle?.trim() ??
+    host.federationToken?.handle?.trim() ??
+    "";
   return handle || undefined;
+}
+
+function syncConfiguredFederationIdentity(host: FasedAgentApp, status: FederationStatus) {
+  if (status.token) {
+    host.federationToken = status.token;
+    host.federationHandle = status.token.handle;
+  } else if (!status.joined) {
+    host.federationToken = null;
+    const configuredHandle = status.configured?.handle?.trim() ?? "";
+    if (configuredHandle && !String(host.federationHandle ?? "").trim()) {
+      host.federationHandle = configuredHandle;
+    }
+  }
+
+  const configuredNodeEndpoint = status.configured?.nodeEndpoint?.trim() ?? "";
+  if (configuredNodeEndpoint && !String(host.federationNodeEndpoint ?? "").trim()) {
+    host.federationNodeEndpoint = configuredNodeEndpoint;
+  }
 }
 
 async function refreshFederationWriteToken(host: FasedAgentApp): Promise<string> {
   const statusResponse = await getApi().getStatus();
   host.federationStatus = statusResponse.status;
+  syncConfiguredFederationIdentity(host, statusResponse.status);
   if (statusResponse.status.token) {
-    host.federationToken = statusResponse.status.token;
-    host.federationHandle = statusResponse.status.token.handle;
     return statusResponse.status.token.tokenId.trim();
   }
   return "";
@@ -939,10 +959,7 @@ async function applyFederationBondActionResult(
   message: string,
 ) {
   host.federationStatus = result.status;
-  host.federationToken = result.status.token ?? null;
-  if (result.status.token?.handle) {
-    host.federationHandle = result.status.token.handle;
-  }
+  syncConfiguredFederationIdentity(host, result.status);
   syncBondDraftsFromStatus(host);
   const warning = result.proofWarning?.trim();
   host.federationMessage = warning ? `${message} ${warning}` : message;
@@ -976,10 +993,7 @@ async function refreshFederationBondStatusAfterError(host: FasedAgentApp): Promi
   try {
     const statusResponse = await getApi().getStatus();
     host.federationStatus = statusResponse.status;
-    host.federationToken = statusResponse.status.token ?? null;
-    if (statusResponse.status.token?.handle) {
-      host.federationHandle = statusResponse.status.token.handle;
-    }
+    syncConfiguredFederationIdentity(host, statusResponse.status);
     syncBondDraftsFromStatus(host);
   } catch {
     // Preserve the original action error; this refresh only prevents stale bond state.
@@ -1040,12 +1054,7 @@ export async function loadFederation(host: FasedAgentApp) {
       const statusResponse = await getApi().getStatus();
       status = statusResponse.status;
       host.federationStatus = status;
-      if (status.token) {
-        host.federationToken = status.token;
-        host.federationHandle = status.token.handle;
-      } else if (!status.joined) {
-        host.federationToken = null;
-      }
+      syncConfiguredFederationIdentity(host, status);
       syncBondDraftsFromStatus(host);
     } catch (statusErr) {
       host.federationStatus = null;
@@ -1089,12 +1098,7 @@ export async function refreshFederationStatus(
   try {
     const statusResponse = await getApi().getStatus();
     host.federationStatus = statusResponse.status;
-    if (statusResponse.status.token) {
-      host.federationToken = statusResponse.status.token;
-      host.federationHandle = statusResponse.status.token.handle;
-    } else if (!statusResponse.status.joined) {
-      host.federationToken = null;
-    }
+    syncConfiguredFederationIdentity(host, statusResponse.status);
     syncBondDraftsFromStatus(host);
     if (!options.quiet) {
       host.federationError = null;
@@ -2379,8 +2383,8 @@ export async function registerFederationHandle(host: FasedAgentApp) {
   host.federationError = null;
   host.federationMessage = null;
   try {
-    const requestedHandle = host.federationHandle.trim();
-    const nodeEndpoint = host.federationNodeEndpoint.trim();
+    const requestedHandle = String(host.federationHandle ?? "").trim();
+    const nodeEndpoint = String(host.federationNodeEndpoint ?? "").trim();
     const registered = await getApi().registerHandle({ requestedHandle, nodeEndpoint });
     if (registered.status === "rejected") {
       host.federationError = registered.reason ?? "Handle rejected";
@@ -2426,11 +2430,7 @@ export async function attestFederation(host: FasedAgentApp) {
   host.federationError = null;
   host.federationMessage = null;
   try {
-    const handle = host.federationHandle.trim();
-    if (!handle) {
-      host.federationError = "Missing handle";
-      return;
-    }
+    const handle = String(host.federationHandle ?? "").trim();
     const res = await getApi().attest({ handle });
     if (res.status === "rejected") {
       host.federationError = res.reason ?? "Attestation rejected";
@@ -2450,11 +2450,7 @@ export async function renewFederationToken(host: FasedAgentApp) {
   host.federationError = null;
   host.federationMessage = null;
   try {
-    const handle = host.federationHandle.trim();
-    if (!handle) {
-      host.federationError = "Missing handle";
-      return;
-    }
+    const handle = String(host.federationHandle ?? "").trim();
     const res = await getApi().renew({ handle });
     if (res.status === "rejected") {
       host.federationError = res.reason ?? "Token renewal rejected";
@@ -2475,7 +2471,7 @@ export async function revokeFederationToken(host: FasedAgentApp) {
   host.federationMessage = null;
   try {
     const tokenId = host.federationToken?.tokenId;
-    const handle = host.federationHandle.trim();
+    const handle = String(host.federationHandle ?? "").trim();
     if (!tokenId && !handle) {
       host.federationError = "Missing token or handle";
       return;
@@ -2509,7 +2505,7 @@ export async function setFederationBondWallet(host: FasedAgentApp) {
     }
     const response = await getApi().setBondWallet(walletId);
     host.federationStatus = response.status;
-    host.federationToken = response.status.token ?? null;
+    syncConfiguredFederationIdentity(host, response.status);
     syncBondDraftsFromStatus(host);
     host.federationMessage = `Fased Network bond Vault set to ${walletId}.`;
     await loadFederationOffers(host);
@@ -2527,7 +2523,7 @@ export async function clearFederationBondWallet(host: FasedAgentApp) {
   try {
     const response = await getApi().clearBondWallet();
     host.federationStatus = response.status;
-    host.federationToken = response.status.token ?? null;
+    syncConfiguredFederationIdentity(host, response.status);
     host.federationBondWalletIdDraft = "";
     syncBondDraftsFromStatus(host);
     host.federationMessage = "Fased Network bond Vault cleared.";

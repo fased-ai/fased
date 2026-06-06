@@ -30,7 +30,16 @@ export async function configureFederationForOnboarding(params: {
   }
 
   const defaultBaseUrl = currentBaseUrl || DEFAULT_FEDERATION_BASE_URL;
-  const defaultHandle = currentHandle || persistedToken?.handle || "";
+  const defaultHandle =
+    currentHandle ||
+    persistedToken?.handle ||
+    resolveFederationHandle({
+      env: {
+        ...env,
+        FASED_FEDERATION_BASE_URL: defaultBaseUrl,
+      },
+      fallbackDomain: new URL(defaultBaseUrl).hostname,
+    });
 
   return {
     enabled: true,

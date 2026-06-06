@@ -63,7 +63,12 @@ import {
   createAndSubmitFederationBondProof,
   loadPersistedFederationBondProof,
 } from "../federation/auto-connect.js";
-import { resolveAgentPublicOrigin, resolveFederationBondWalletId } from "../federation/runtime.js";
+import {
+  resolveAgentPublicOrigin,
+  resolveFederationBaseUrl,
+  resolveFederationBondWalletId,
+  resolveFederationHandle,
+} from "../federation/runtime.js";
 import { retryAsync } from "../infra/retry.js";
 import { getDiagnosticStabilitySnapshot } from "../logging/diagnostic-stability.js";
 import type { createSubsystemLogger } from "../logging/subsystem.js";
@@ -889,6 +894,12 @@ type FederationStatusPayload = {
   joined: boolean;
   lifecycle: "active" | "expired" | "missing" | "invalid";
   checkedAt: string;
+  configured?: {
+    autoConnect: boolean;
+    baseUrl?: string;
+    handle?: string;
+    nodeEndpoint?: string;
+  };
   token?: FederationStatusToken;
   bond?: FederationStatusBond;
   sellerLane?: FederationSellerLanePayload;
@@ -3078,6 +3089,25 @@ function deriveFederationArtifactAvailability(params: {
   };
 }
 
+function resolveConfiguredFederationStatus(
+  env: NodeJS.ProcessEnv = process.env,
+): NonNullable<FederationStatusPayload["configured"]> {
+  const autoConnectRaw = String(env.FASED_FEDERATION_AUTO_CONNECT ?? "")
+    .trim()
+    .toLowerCase();
+  const autoConnect = !["0", "false", "off", "no"].includes(autoConnectRaw);
+  const baseUrl = resolveFederationBaseUrl(env);
+  const fallbackDomain = baseUrl ? new URL(baseUrl).hostname : "localhost";
+  const handle = resolveFederationHandle({ env, fallbackDomain }).trim();
+  const nodeEndpoint = resolveAgentPublicOrigin(env).trim();
+  return {
+    autoConnect,
+    ...(baseUrl ? { baseUrl } : {}),
+    ...(handle ? { handle } : {}),
+    ...(nodeEndpoint ? { nodeEndpoint } : {}),
+  };
+}
+
 async function readLocalFederationStatus(
   env: NodeJS.ProcessEnv = process.env,
   fetchImpl: typeof fetch = fetch,
@@ -3085,6 +3115,7 @@ async function readLocalFederationStatus(
   const checkedAt = new Date().toISOString();
   const sourcePath = path.join(resolveStateDir(env), "federation", "access-token.json");
   const managed = (env.FASED_GATEWAY_MODE ?? "").trim().toLowerCase() === "managed";
+  const configured = resolveConfiguredFederationStatus(env);
   if (!fs.existsSync(sourcePath)) {
     return {
       managed,
@@ -3092,6 +3123,7 @@ async function readLocalFederationStatus(
       joined: false,
       lifecycle: "missing",
       checkedAt,
+      configured,
     };
   }
 
@@ -3105,6 +3137,7 @@ async function readLocalFederationStatus(
       joined: false,
       lifecycle: "invalid",
       checkedAt,
+      configured,
     };
   }
 
@@ -3122,6 +3155,7 @@ async function readLocalFederationStatus(
       joined: false,
       lifecycle: "invalid",
       checkedAt,
+      configured,
     };
   }
 
@@ -3138,6 +3172,7 @@ async function readLocalFederationStatus(
       joined: false,
       lifecycle: "invalid",
       checkedAt,
+      configured,
     };
   }
 
@@ -3240,6 +3275,7 @@ async function readLocalFederationStatus(
     joined: true,
     lifecycle,
     checkedAt,
+    configured,
     token,
   };
   try {
