@@ -128,20 +128,6 @@ async function loadFederationSummary(state: OperationsStatusState) {
   }
 }
 
-function shouldRefreshMiningSummary(state: OperationsStatusState): boolean {
-  return Boolean(
-    state.miningAttachedWalletId ||
-    state.miningProfile ||
-    state.miningReadiness ||
-    state.miningStatus ||
-    state.miningHistory,
-  );
-}
-
-function shouldRefreshFederationSummary(state: OperationsStatusState): boolean {
-  return Boolean(state.federationToken || state.federationStatus?.joined);
-}
-
 export async function loadOperationsStatus(state: OperationsStatusState): Promise<void> {
   if (!state.connected) {
     return;
@@ -149,7 +135,7 @@ export async function loadOperationsStatus(state: OperationsStatusState): Promis
 
   await Promise.allSettled([
     loadWalletSummary(state),
-    shouldRefreshMiningSummary(state) ? loadMiningSummary(state) : Promise.resolve(),
-    shouldRefreshFederationSummary(state) ? loadFederationSummary(state) : Promise.resolve(),
+    loadMiningSummary(state),
+    loadFederationSummary(state),
   ]);
 }

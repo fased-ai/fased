@@ -26,85 +26,7 @@ vi.mock("../federation-api.js", () => ({
 }));
 
 describe("loadOperationsStatus", () => {
-  it("keeps fresh install overview quiet for optional Mining and Fased Network summaries", async () => {
-    walletApi.getWalletStatus.mockResolvedValue({
-      status: {
-        enabled: false,
-        managedMode: false,
-        mode: "external",
-        runtime: "external-custom",
-        settlement: { class: "off-chain", realChainReady: false, summary: "Not configured" },
-        service: { host: "127.0.0.1", port: 1, healthy: false },
-        chains: [],
-        policy: {
-          executionMode: "manual",
-          directSigning: false,
-          toolAccessMode: "owner-only",
-          allowAgents: [],
-          solana: { allowPrograms: [], maxPerTx: "0", maxDaily: "0" },
-        },
-        approvalAuth: {
-          mode: "none",
-          ready: false,
-          passkeyCount: 0,
-          notes: [],
-          passkeys: [],
-          statePath: "",
-        },
-        custody: {
-          mode: "single-key",
-          target: {},
-          scope: { chains: [], allowPrograms: [], solana: { maxPerTx: "0", maxDaily: "0" } },
-          unlock: { active: false },
-          phase2: {
-            complete: false,
-            splitKeyEnabled: false,
-            passkeyCeremonyEnabled: false,
-            ephemeralReconstructionEnabled: false,
-            notes: [],
-          },
-        },
-        paths: { rootDir: "", keysPath: "", pidPath: "" },
-        checkedAt: "2026-05-07T00:00:00Z",
-        startupState: "disabled",
-        authState: "missing",
-      },
-    });
-    walletApi.getWalletNamedWallets.mockResolvedValue({
-      defaultWalletId: null,
-      assignments: {},
-      wallets: [],
-    });
-
-    const { loadOperationsStatus } = await import("./operations-status.ts");
-    const state: OperationsStatusState = {
-      connected: true,
-      walletStatus: null,
-      walletNamedWallets: [],
-      walletAssignments: {},
-      walletDefaultWalletId: null,
-      miningAttachedWalletId: null,
-      miningProfile: null,
-      miningReadiness: null,
-      miningStatus: null,
-      miningHistory: null,
-      federationToken: null,
-      federationStatus: null,
-    };
-
-    await loadOperationsStatus(state as never);
-
-    expect(walletApi.getWalletStatus).toHaveBeenCalled();
-    expect(walletApi.getWalletNamedWallets).toHaveBeenCalled();
-    expect(walletApi.getWalletBalances).not.toHaveBeenCalled();
-    expect(miningApi.getMiningProfile).not.toHaveBeenCalled();
-    expect(miningApi.getMiningWalletAttachment).not.toHaveBeenCalled();
-    expect(miningApi.getMiningStatus).not.toHaveBeenCalled();
-    expect(miningApi.getMiningHistory).not.toHaveBeenCalled();
-    expect(federationApi.getStatus).not.toHaveBeenCalled();
-  });
-
-  it("refreshes Wallet, Mining, and Fased Network summaries when optional state already exists", async () => {
+  it("hydrates Wallet, Mining, and Fased Network summaries without visiting those pages first", async () => {
     walletApi.getWalletStatus.mockResolvedValue({
       status: {
         enabled: true,
@@ -236,20 +158,12 @@ describe("loadOperationsStatus", () => {
       walletAssignments: {},
       walletDefaultWalletId: null,
       miningAttachedWalletId: null,
-      miningProfile: { walletId: "miner", network: "devnet", riskMode: "balanced" },
+      miningProfile: null,
       miningReadiness: null,
       miningStatus: null,
       miningHistory: null,
-      federationToken: {
-        tokenId: "token-old",
-        nodeId: "node-1",
-        handle: "node.fased",
-        issuedAt: "2026-05-07T00:00:00Z",
-        expiresAt: "2026-05-08T00:00:00Z",
-        scopes: ["federation.join"],
-        signature: "sig",
-      },
-      federationStatus: { joined: true },
+      federationToken: null,
+      federationStatus: null,
     };
 
     await loadOperationsStatus(state as never);
