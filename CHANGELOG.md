@@ -8,6 +8,14 @@ third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 
 - No unreleased changes yet.
 
+## 0.1.6
+
+- Fix fresh local and hosted QuickStart onboarding so the dashboard does not
+  require `fased-signerd` or native signer release assets before a wallet is
+  configured.
+- Clean stale local-signer socket environment from disabled wallet configs, and
+  keep the managed Gateway online when signer material is not configured.
+
 ## 0.1.5
 
 - Fix public local and VPS hosting onboarding readiness so setup finishes only

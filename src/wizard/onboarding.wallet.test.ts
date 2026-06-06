@@ -1,17 +1,20 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { FasedAgentConfig } from "../config/config.js";
 import {
+  configureWalletForOnboarding,
   renderLocalSignerEnvFile,
   shouldSyncLocalSocketSignerFromConfig,
   writeLocalSignerEnvFile,
 } from "./onboarding.wallet.js";
+import type { WizardPrompter } from "./prompts.js";
 
 const tempDirs: string[] = [];
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop();
     if (dir) {
@@ -20,7 +23,68 @@ afterEach(() => {
   }
 });
 
+function createPrompterStub(): WizardPrompter {
+  return {
+    confirm: vi.fn(),
+    multiselect: vi.fn(),
+    note: vi.fn(),
+    progress: vi.fn(() => ({
+      update: vi.fn(),
+      stop: vi.fn(),
+    })),
+    select: vi.fn(),
+    text: vi.fn(),
+  } as unknown as WizardPrompter;
+}
+
 describe("local signer env file helpers", () => {
+  it("keeps fresh quickstart wallet disabled so installer does not require signerd assets", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-onboarding-wallet-fresh-"));
+    tempDirs.push(root);
+    vi.stubEnv("HOME", root);
+    vi.stubEnv("FASED_STATE_DIR", root);
+    vi.stubEnv("FASED_CONFIG_DIR", root);
+
+    const next = await configureWalletForOnboarding({
+      flow: "quickstart",
+      nextConfig: {},
+      prompter: createPrompterStub(),
+    });
+
+    expect(next.wallet?.runtime?.enabled).toBe(false);
+    expect(next.wallet?.provider?.id).toBeUndefined();
+    expect(next.env?.vars?.FASED_WALLET_LOCAL_SIGNER_SOCKET).toBeUndefined();
+  });
+
+  it("cleans stale local signer socket config when quickstart has no wallet material", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-onboarding-wallet-stale-"));
+    tempDirs.push(root);
+    vi.stubEnv("HOME", root);
+    vi.stubEnv("FASED_STATE_DIR", root);
+    vi.stubEnv("FASED_CONFIG_DIR", root);
+    vi.stubEnv("FASED_WALLET_LOCAL_SIGNER_SOCKET", path.join(root, "wallet", "local-signer.sock"));
+
+    const next = await configureWalletForOnboarding({
+      flow: "quickstart",
+      nextConfig: {
+        env: {
+          vars: {
+            FASED_WALLET_LOCAL_SIGNER_SOCKET: path.join(root, "wallet", "local-signer.sock"),
+          },
+        },
+        wallet: {
+          provider: { id: "local-socket-signer" },
+          runtime: { enabled: true },
+        },
+      },
+      prompter: createPrompterStub(),
+    });
+
+    expect(next.wallet?.runtime?.enabled).toBe(false);
+    expect(next.env?.vars?.FASED_WALLET_LOCAL_SIGNER_SOCKET).toBeUndefined();
+    expect(process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET).toBeUndefined();
+  });
+
   it("renders named-wallet signer env from config state", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-onboarding-wallet-env-"));
     tempDirs.push(root);

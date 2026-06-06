@@ -33,20 +33,18 @@ describe("applyNonInteractiveWalletConfig", () => {
     }
   });
 
-  it("defaults to local-socket-signer runtime wallet in quickstart local flow", () => {
+  it("keeps fresh quickstart wallet disabled until the user configures one", () => {
     const runtime = createRuntimeStub();
     const next = applyNonInteractiveWalletConfig({
       nextConfig: {},
       opts: {} as OnboardOptions,
       runtime,
     });
-    expect(next.wallet?.runtime?.enabled).toBe(true);
-    expect(next.wallet?.runtime?.mode).toBe("external");
-    expect(next.wallet?.runtime?.runtime).toBe("external-custom");
-    expect(next.wallet?.provider?.id).toBe("local-socket-signer");
+    expect(next.wallet?.runtime?.enabled).toBe(false);
+    expect(next.wallet?.provider?.id).toBeUndefined();
   });
 
-  it("prefers local-socket-signer over legacy embedded-keystore defaults", () => {
+  it("does not migrate legacy embedded-keystore defaults while wallet is disabled", () => {
     const runtime = createRuntimeStub();
     const next = applyNonInteractiveWalletConfig({
       nextConfig: {
@@ -58,10 +56,11 @@ describe("applyNonInteractiveWalletConfig", () => {
       runtime,
     });
 
-    expect(next.wallet?.provider?.id).toBe("local-socket-signer");
+    expect(next.wallet?.runtime?.enabled).toBe(false);
+    expect(next.wallet?.provider?.id).toBe("embedded-keystore");
   });
 
-  it("keeps self-hosted wallet defaults aligned across local and hosting profiles", () => {
+  it("keeps fresh wallet defaults aligned across local and hosting profiles", () => {
     const runtime = createRuntimeStub();
     const localConfig = applyNonInteractiveWalletConfig({
       nextConfig: {},
@@ -74,14 +73,16 @@ describe("applyNonInteractiveWalletConfig", () => {
       runtime,
     });
 
-    expect(localConfig.wallet?.provider?.id).toBe("local-socket-signer");
-    expect(hostingConfig.wallet?.provider?.id).toBe("local-socket-signer");
+    expect(localConfig.wallet?.runtime?.enabled).toBe(false);
+    expect(hostingConfig.wallet?.runtime?.enabled).toBe(false);
+    expect(localConfig.wallet?.provider?.id).toBeUndefined();
+    expect(hostingConfig.wallet?.provider?.id).toBeUndefined();
     expect(localConfig.wallet?.runtime?.runtime).toBe(hostingConfig.wallet?.runtime?.runtime);
     expect(localConfig.wallet?.runtime?.mode).toBe(hostingConfig.wallet?.runtime?.mode);
     expect(localConfig.wallet?.runtime?.chains).toEqual(hostingConfig.wallet?.runtime?.chains);
   });
 
-  it("enables wallet by default in managed mode", () => {
+  it("does not enable wallet by default in managed mode without wallet material", () => {
     vi.stubEnv("FASED_GATEWAY_MODE", "managed");
     const runtime = createRuntimeStub();
     const next = applyNonInteractiveWalletConfig({
@@ -89,11 +90,7 @@ describe("applyNonInteractiveWalletConfig", () => {
       opts: {} as OnboardOptions,
       runtime,
     });
-    expect(next.wallet?.runtime?.enabled).toBe(true);
-    expect(next.wallet?.runtime?.mode).toBe("external");
-    expect(next.wallet?.runtime?.runtime).toBe("external-custom");
-    expect(next.wallet?.runtime?.external?.kind).toBe("custom");
-    expect(next.wallet?.runtime?.chains).toEqual(["solana"]);
+    expect(next.wallet?.runtime?.enabled).toBe(false);
   });
 
   it("respects explicit disable flag", () => {

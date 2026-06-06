@@ -869,17 +869,6 @@ const DEFAULT_WALLET_RUNTIME_PORT = 19444;
 const DEFAULT_SOLANA_MAX_PER_TX = "1000000000";
 const DEFAULT_SOLANA_MAX_DAILY = "5000000000";
 
-function isManagedGatewayMode(flow: WizardFlow, env: NodeJS.ProcessEnv = process.env): boolean {
-  const mode = (env.FASED_GATEWAY_MODE ?? "").trim().toLowerCase();
-  if (mode === "managed") {
-    return true;
-  }
-  if (mode === "local" || mode === "gateway") {
-    return false;
-  }
-  return flow === "quickstart";
-}
-
 function splitCsvList(value: string | undefined): string[] {
   return (value ?? "")
     .split(",")
@@ -935,21 +924,78 @@ export function applyWalletConfig(
   runtimeConfig: WalletRuntimeConfig & { defaultProviderId?: WalletProviderId },
 ): FasedAgentConfig {
   const { defaultProviderId, ...walletRuntimeConfig } = runtimeConfig;
+  const providerId = defaultProviderId ?? normalizeProviderId(base.wallet?.provider?.id);
+  const provider = {
+    ...base.wallet?.provider,
+    ...(providerId ? { id: providerId } : {}),
+  };
+  if (!providerId) {
+    delete provider.id;
+  }
   return {
     ...base,
     wallet: {
       ...base.wallet,
-      provider: {
-        ...base.wallet?.provider,
-        id:
-          defaultProviderId ??
-          normalizeProviderId(base.wallet?.provider?.id) ??
-          "local-socket-signer",
-      },
+      provider,
       runtime: {
         ...base.wallet?.runtime,
         ...walletRuntimeConfig,
       },
+    },
+  };
+}
+
+function hasConfiguredWalletMaterial(params: {
+  config: FasedAgentConfig;
+  registry: ReturnType<typeof readWalletProviderRegistry>;
+  env: NodeJS.ProcessEnv;
+}): boolean {
+  if (params.registry.wallets.length > 0) {
+    return true;
+  }
+  const mergedEnv = { ...params.env, ...params.config.env?.vars };
+  if (
+    String(mergedEnv.FASED_WALLET_SOLANA_KEYSTORE_PATH ?? "").trim() ||
+    hasScopedWalletEnvValue(mergedEnv, "FASED_WALLET_SOLANA_KEYSTORE_PATH")
+  ) {
+    return true;
+  }
+  try {
+    const walletDir = ensureWalletStateDir(mergedEnv).rootDir;
+    return fs
+      .readdirSync(walletDir)
+      .some(
+        (entry) =>
+          /^keystore-solana(?:-[A-Za-z0-9_-]+)?\.v1\.enc$/.test(entry) ||
+          /^keystore-evm(?:-[A-Za-z0-9_-]+)?\.v1\.enc$/.test(entry),
+      );
+  } catch {
+    return false;
+  }
+}
+
+const LOCAL_SIGNER_ENV_KEYS = [
+  "FASED_WALLET_LOCAL_SIGNER_SOCKET",
+  "FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET",
+  "FASED_WALLET_SIGNER_STATE_DIR",
+  "FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER",
+  "FASED_WALLET_LOCAL_SIGNER_BIN",
+  "FASED_WALLET_PASSPHRASE_FILE",
+] as const;
+
+function clearLocalSignerEnv(base: FasedAgentConfig): FasedAgentConfig {
+  for (const key of LOCAL_SIGNER_ENV_KEYS) {
+    delete process.env[key];
+  }
+  const vars = { ...base.env?.vars };
+  for (const key of LOCAL_SIGNER_ENV_KEYS) {
+    delete vars[key];
+  }
+  return {
+    ...base,
+    env: {
+      ...base.env,
+      vars,
     },
   };
 }
@@ -961,7 +1007,6 @@ export async function configureWalletForOnboarding(params: {
   prompter: WizardPrompter;
 }): Promise<FasedAgentConfig> {
   const { flow, prompter } = params;
-  const managedMode = isManagedGatewayMode(flow);
   const current = params.nextConfig.wallet?.runtime;
   const registry = readWalletProviderRegistry(process.env);
   const currentEnabledProviders = WALLET_PROVIDER_IDS.filter(
@@ -974,11 +1019,17 @@ export async function configureWalletForOnboarding(params: {
     ["local-socket-signer"].includes(providerId),
   );
   const currentChains = normalizeChains(current?.chains);
-  const defaultEnabled = current?.enabled ?? (flow === "quickstart" ? true : managedMode);
+  const configuredWalletMaterial = hasConfiguredWalletMaterial({
+    config: params.nextConfig,
+    registry,
+    env: process.env,
+  });
+  const defaultEnabled =
+    current?.enabled === false ? false : Boolean(current?.enabled && configuredWalletMaterial);
 
   const enabled =
     flow === "quickstart"
-      ? true
+      ? defaultEnabled
       : await prompter.confirm({
           message: "Enable wallet integration?",
           initialValue: defaultEnabled,
@@ -986,7 +1037,7 @@ export async function configureWalletForOnboarding(params: {
 
   if (!enabled) {
     setWalletProvidersEnabled({ enabledProviders: [], env: process.env });
-    return applyWalletConfig(params.nextConfig, { enabled: false });
+    return applyWalletConfig(clearLocalSignerEnv(params.nextConfig), { enabled: false });
   }
 
   const enabledProviderDefaults =

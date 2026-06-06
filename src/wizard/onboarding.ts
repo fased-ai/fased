@@ -1212,7 +1212,10 @@ export async function runOnboardingWizard(
     nextConfig,
     prompter,
   });
-  if (nextConfig.wallet?.provider?.id === "local-socket-signer") {
+  if (
+    nextConfig.wallet?.runtime?.enabled === true &&
+    nextConfig.wallet?.provider?.id === "local-socket-signer"
+  ) {
     const signerSocketPath = resolveLocalSignerSocketPath(process.env);
     process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET = signerSocketPath;
     nextConfig = setConfigEnvVar(nextConfig, "FASED_WALLET_LOCAL_SIGNER_SOCKET", signerSocketPath);

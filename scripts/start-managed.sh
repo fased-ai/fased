@@ -424,8 +424,7 @@ SIGNERD_LOG="${LOG_DIR}/fased-signerd.log"
 CONFIG_JSON="${FASED_CONFIG_DIR}/fased.json"
 SIGNERD_ENV_FILE="${FASED_CONFIG_DIR}/wallet/signer.env"
 WALLET_REGISTRY_JSON="${FASED_CONFIG_DIR}/wallet/provider-registry.v1.json"
-export FASED_WALLET_LOCAL_SIGNER_SOCKET="$SIGNERD_SOCKET"
-SIGNERD_STARTUP_MODE="healthy"
+SIGNERD_STARTUP_MODE="disabled"
 SIGNERD_ERROR=""
 
 mark_signerd_degraded() {
@@ -612,6 +611,31 @@ resolve_local_signer_sidecar_path() {
   fi
 }
 
+registry_has_local_signer_wallet() {
+  if [[ ! -f "$WALLET_REGISTRY_JSON" ]] || ! command -v jq >/dev/null 2>&1; then
+    return 1
+  fi
+  jq -e '
+    (.wallets // [])
+    | any(.providerId == "local-socket-signer")
+  ' "$WALLET_REGISTRY_JSON" >/dev/null 2>&1
+}
+
+has_local_signer_keystore_material() {
+  if [[ -n "${FASED_WALLET_SOLANA_KEYSTORE_PATH:-}" ]] || has_scoped_wallet_env_value "FASED_WALLET_SOLANA_KEYSTORE_PATH"; then
+    return 0
+  fi
+  local candidate
+  for candidate in "$SIGNERD_MATERIAL_DIR"/keystore-solana*.v1.enc "$SIGNERD_MATERIAL_DIR"/keystore-evm*.v1.enc; do
+    [[ -f "$candidate" ]] && return 0
+  done
+  return 1
+}
+
+should_start_signerd() {
+  registry_has_local_signer_wallet || has_local_signer_keystore_material
+}
+
 collect_existing_signerd_pids() {
   local pid_file
   pid_file="$(resolve_local_signer_sidecar_path "$SIGNERD_BACKEND_SOCKET" "pid")"
@@ -678,78 +702,70 @@ wait_for_signerd_ready() {
 
 load_wallet_signer_env_from_config
 load_wallet_signer_env_file
-SIGNERD_SOCKET="${FASED_WALLET_LOCAL_SIGNER_SOCKET:-$SIGNERD_SOCKET}"
-SIGNERD_BACKEND_SOCKET="${FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET:-$SIGNERD_SOCKET}"
 SIGNERD_MATERIAL_DIR="${FASED_WALLET_SIGNER_STATE_DIR:-$SIGNERD_MATERIAL_DIR}"
 hydrate_scoped_wallet_keystore_env_from_registry "$SIGNERD_MATERIAL_DIR"
-SIGNERD_EVM_KEYSTORE="$(resolve_signerd_keystore_export "${FASED_WALLET_EVM_KEYSTORE_PATH:-}" "FASED_WALLET_EVM_KEYSTORE_PATH" "$SIGNERD_MATERIAL_DIR/keystore-evm.v1.enc")"
-SIGNERD_SOL_KEYSTORE="$(resolve_signerd_keystore_export "${FASED_WALLET_SOLANA_KEYSTORE_PATH:-}" "FASED_WALLET_SOLANA_KEYSTORE_PATH" "$SIGNERD_MATERIAL_DIR/keystore-solana.v1.enc")"
-SIGNERD_PASSPHRASE="${FASED_WALLET_PASSPHRASE:-}"
-SIGNERD_PASSPHRASE_FILE="${FASED_WALLET_PASSPHRASE_FILE:-}"
-SIGNERD_CHAINS="${FASED_WALLET_CHAINS:-$(resolve_wallet_chains_from_config)}"
-export FASED_WALLET_LOCAL_SIGNER_SOCKET="$SIGNERD_SOCKET"
-export FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET="$SIGNERD_BACKEND_SOCKET"
-export FASED_WALLET_SIGNER_STATE_DIR="$SIGNERD_MATERIAL_DIR"
-export FASED_WALLET_CHAINS="${SIGNERD_CHAINS:-evm,solana}"
-if [[ -n "$SIGNERD_EVM_KEYSTORE" ]]; then
-  export FASED_WALLET_EVM_KEYSTORE_PATH="$SIGNERD_EVM_KEYSTORE"
-else
-  unset FASED_WALLET_EVM_KEYSTORE_PATH
-fi
-if [[ -n "$SIGNERD_SOL_KEYSTORE" ]]; then
-  export FASED_WALLET_SOLANA_KEYSTORE_PATH="$SIGNERD_SOL_KEYSTORE"
-else
-  unset FASED_WALLET_SOLANA_KEYSTORE_PATH
-fi
-if [[ -n "$SIGNERD_PASSPHRASE" ]]; then
-  export FASED_WALLET_PASSPHRASE="$SIGNERD_PASSPHRASE"
-  unset FASED_WALLET_PASSPHRASE_FILE
-else
-  SIGNERD_PASSPHRASE_FILE="${SIGNERD_PASSPHRASE_FILE:-$SIGNERD_MATERIAL_DIR/passphrase}"
-  export FASED_WALLET_PASSPHRASE_FILE="$SIGNERD_PASSPHRASE_FILE"
-  unset FASED_WALLET_PASSPHRASE
-fi
-if [[ -f "$SIGNERD_BIN" ]]; then
-  if [[ -S "$SIGNERD_SOCKET" ]] || [[ -S "$SIGNERD_BACKEND_SOCKET" ]] || [[ -f "$(resolve_local_signer_sidecar_path "$SIGNERD_BACKEND_SOCKET" "pid")" ]] || [[ "$(count_existing_signerd_pids)" -gt 0 ]]; then
-    echo "==> Restarting fased-signerd to apply current wallet chain/runtime config..."
-    stop_existing_signerd
-  fi
-  echo "==> Starting fased-signerd (Go key signer)..."
-  mkdir -p "$LOG_DIR"
-  "$SIGNERD_BIN" \
-    -socket "$SIGNERD_BACKEND_SOCKET" \
-    -pid-file "$(resolve_local_signer_sidecar_path "$SIGNERD_BACKEND_SOCKET" "pid")" \
-    -audit-log "$(resolve_local_signer_sidecar_path "$SIGNERD_BACKEND_SOCKET" "audit")" \
-    >>"$SIGNERD_LOG" 2>&1 &
-  SIGNERD_PID=$!
-  if wait_for_signerd_ready "$SIGNERD_READY_TIMEOUT_SECONDS"; then
-    echo "==> fased-signerd started (PID=$SIGNERD_PID, socket: $SIGNERD_BACKEND_SOCKET)"
+if should_start_signerd; then
+  SIGNERD_STARTUP_MODE="healthy"
+  SIGNERD_SOCKET="${FASED_WALLET_LOCAL_SIGNER_SOCKET:-$SIGNERD_SOCKET}"
+  SIGNERD_BACKEND_SOCKET="${FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET:-$SIGNERD_SOCKET}"
+  SIGNERD_EVM_KEYSTORE="$(resolve_signerd_keystore_export "${FASED_WALLET_EVM_KEYSTORE_PATH:-}" "FASED_WALLET_EVM_KEYSTORE_PATH" "$SIGNERD_MATERIAL_DIR/keystore-evm.v1.enc")"
+  SIGNERD_SOL_KEYSTORE="$(resolve_signerd_keystore_export "${FASED_WALLET_SOLANA_KEYSTORE_PATH:-}" "FASED_WALLET_SOLANA_KEYSTORE_PATH" "$SIGNERD_MATERIAL_DIR/keystore-solana.v1.enc")"
+  SIGNERD_PASSPHRASE="${FASED_WALLET_PASSPHRASE:-}"
+  SIGNERD_PASSPHRASE_FILE="${FASED_WALLET_PASSPHRASE_FILE:-}"
+  SIGNERD_CHAINS="${FASED_WALLET_CHAINS:-$(resolve_wallet_chains_from_config)}"
+  export FASED_WALLET_LOCAL_SIGNER_SOCKET="$SIGNERD_SOCKET"
+  export FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET="$SIGNERD_BACKEND_SOCKET"
+  export FASED_WALLET_SIGNER_STATE_DIR="$SIGNERD_MATERIAL_DIR"
+  export FASED_WALLET_CHAINS="${SIGNERD_CHAINS:-evm,solana}"
+  if [[ -n "$SIGNERD_EVM_KEYSTORE" ]]; then
+    export FASED_WALLET_EVM_KEYSTORE_PATH="$SIGNERD_EVM_KEYSTORE"
   else
-    mark_signerd_degraded "fased-signerd did not create socket. Check $SIGNERD_LOG"
+    unset FASED_WALLET_EVM_KEYSTORE_PATH
   fi
-else
-  echo "==> fased-signerd not found at $SIGNERD_BIN — installing from GitHub releases..."
-  INSTALL_SCRIPT="$FASED_ROOT/scripts/install-fased-signerd.sh"
-  if [[ ! -f "$INSTALL_SCRIPT" ]]; then
-    mark_signerd_degraded "install-fased-signerd.sh not found at $INSTALL_SCRIPT"
-  elif ! bash "$INSTALL_SCRIPT"; then
-    mark_signerd_degraded "install-fased-signerd.sh failed. Check release asset access and network."
-  elif [[ ! -f "$SIGNERD_BIN" ]]; then
-    mark_signerd_degraded "install completed but binary still not found at $SIGNERD_BIN"
+  if [[ -n "$SIGNERD_SOL_KEYSTORE" ]]; then
+    export FASED_WALLET_SOLANA_KEYSTORE_PATH="$SIGNERD_SOL_KEYSTORE"
   else
-    echo "==> fased-signerd installed. Starting daemon..."
-    stop_existing_signerd
+    unset FASED_WALLET_SOLANA_KEYSTORE_PATH
+  fi
+  if [[ -n "$SIGNERD_PASSPHRASE" ]]; then
+    export FASED_WALLET_PASSPHRASE="$SIGNERD_PASSPHRASE"
+    unset FASED_WALLET_PASSPHRASE_FILE
+  else
+    SIGNERD_PASSPHRASE_FILE="${SIGNERD_PASSPHRASE_FILE:-$SIGNERD_MATERIAL_DIR/passphrase}"
+    export FASED_WALLET_PASSPHRASE_FILE="$SIGNERD_PASSPHRASE_FILE"
+    unset FASED_WALLET_PASSPHRASE
+  fi
+  if [[ -f "$SIGNERD_BIN" ]]; then
+    if [[ -S "$SIGNERD_SOCKET" ]] || [[ -S "$SIGNERD_BACKEND_SOCKET" ]] || [[ -f "$(resolve_local_signer_sidecar_path "$SIGNERD_BACKEND_SOCKET" "pid")" ]] || [[ "$(count_existing_signerd_pids)" -gt 0 ]]; then
+      echo "==> Restarting fased-signerd to apply current wallet chain/runtime config..."
+      stop_existing_signerd
+    fi
+    echo "==> Starting fased-signerd (Go key signer)..."
+    mkdir -p "$LOG_DIR"
     "$SIGNERD_BIN" \
       -socket "$SIGNERD_BACKEND_SOCKET" \
       -pid-file "$(resolve_local_signer_sidecar_path "$SIGNERD_BACKEND_SOCKET" "pid")" \
       -audit-log "$(resolve_local_signer_sidecar_path "$SIGNERD_BACKEND_SOCKET" "audit")" \
       >>"$SIGNERD_LOG" 2>&1 &
+    SIGNERD_PID=$!
     if wait_for_signerd_ready "$SIGNERD_READY_TIMEOUT_SECONDS"; then
-      echo "==> fased-signerd started (socket: $SIGNERD_BACKEND_SOCKET)"
+      echo "==> fased-signerd started (PID=$SIGNERD_PID, socket: $SIGNERD_BACKEND_SOCKET)"
     else
-      mark_signerd_degraded "fased-signerd did not start after install. Check $SIGNERD_LOG"
+      mark_signerd_degraded "fased-signerd did not create socket. Check $SIGNERD_LOG"
     fi
+  else
+    mark_signerd_degraded "fased-signerd is not installed; dashboard stays online. Configure wallet signer from the dashboard or run fased wallet signer setup."
   fi
+else
+  unset FASED_WALLET_LOCAL_SIGNER_SOCKET
+  unset FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET
+  unset FASED_WALLET_SIGNER_STATE_DIR
+  unset FASED_WALLET_CHAINS
+  unset FASED_WALLET_SOLANA_KEYSTORE_PATH
+  unset FASED_WALLET_EVM_KEYSTORE_PATH
+  unset FASED_WALLET_PASSPHRASE
+  unset FASED_WALLET_PASSPHRASE_FILE
+  echo "==> Wallet signer not configured; skipping fased-signerd startup."
 fi
 if [[ -f "$ZROK_MONITOR_PID_FILE" ]]; then
   OLD_MONITOR_PID=$(cat "$ZROK_MONITOR_PID_FILE" 2>/dev/null || true)

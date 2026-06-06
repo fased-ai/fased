@@ -61,17 +61,19 @@ function applyWalletConfig(
   runtimeConfig: WalletRuntimeConfig & { defaultProviderId?: WalletProviderId },
 ): FasedAgentConfig {
   const { defaultProviderId, ...walletRuntimeConfig } = runtimeConfig;
+  const providerId = defaultProviderId ?? parseWalletProviderId(base.wallet?.provider?.id);
+  const provider = {
+    ...base.wallet?.provider,
+    ...(providerId ? { id: providerId } : {}),
+  };
+  if (!providerId) {
+    delete provider.id;
+  }
   return {
     ...base,
     wallet: {
       ...base.wallet,
-      provider: {
-        ...base.wallet?.provider,
-        id:
-          defaultProviderId ??
-          parseWalletProviderId(base.wallet?.provider?.id) ??
-          "local-socket-signer",
-      },
+      provider,
       runtime: {
         ...base.wallet?.runtime,
         ...walletRuntimeConfig,
@@ -126,6 +128,36 @@ function parseToolAccessMode(raw: string | undefined): WalletToolAccessMode | nu
   return null;
 }
 
+function hasConfiguredWalletMaterial(registry: ReturnType<typeof readWalletProviderRegistry>) {
+  return registry.wallets.length > 0;
+}
+
+const LOCAL_SIGNER_ENV_KEYS = [
+  "FASED_WALLET_LOCAL_SIGNER_SOCKET",
+  "FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET",
+  "FASED_WALLET_SIGNER_STATE_DIR",
+  "FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER",
+  "FASED_WALLET_LOCAL_SIGNER_BIN",
+  "FASED_WALLET_PASSPHRASE_FILE",
+] as const;
+
+function clearLocalSignerEnv(base: FasedAgentConfig): FasedAgentConfig {
+  for (const key of LOCAL_SIGNER_ENV_KEYS) {
+    delete process.env[key];
+  }
+  const vars = { ...base.env?.vars };
+  for (const key of LOCAL_SIGNER_ENV_KEYS) {
+    delete vars[key];
+  }
+  return {
+    ...base,
+    env: {
+      ...base.env,
+      vars,
+    },
+  };
+}
+
 export function applyNonInteractiveWalletConfig(params: {
   nextConfig: FasedAgentConfig;
   opts: OnboardOptions;
@@ -134,14 +166,17 @@ export function applyNonInteractiveWalletConfig(params: {
   const { nextConfig, opts, runtime } = params;
   const current = nextConfig.wallet?.runtime;
   const managedMode = isManagedGatewayMode(opts);
-  const enabled = opts.walletEnabled ?? current?.enabled ?? managedMode;
+  const registry = readWalletProviderRegistry(process.env);
+  const configuredWalletMaterial = hasConfiguredWalletMaterial(registry);
+  const enabled =
+    opts.walletEnabled ??
+    (current?.enabled === false ? false : Boolean(current?.enabled && configuredWalletMaterial));
 
   if (!enabled) {
     setWalletProvidersEnabled({ enabledProviders: [], env: process.env });
-    return applyWalletConfig(nextConfig, { enabled: false });
+    return applyWalletConfig(clearLocalSignerEnv(nextConfig), { enabled: false });
   }
 
-  const registry = readWalletProviderRegistry(process.env);
   const providersFromOption =
     typeof opts.walletProviders === "string"
       ? opts.walletProviders
