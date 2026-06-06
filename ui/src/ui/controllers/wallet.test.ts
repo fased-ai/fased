@@ -300,6 +300,31 @@ describe("loadWallet", () => {
     expect(host.walletBalancesError).toBeNull();
   });
 
+  it("clears transient local signer socket errors when signer doctor is healthy", async () => {
+    const statusResponse = await walletApi.getWalletStatus();
+    walletApi.getWalletStatus.mockClear();
+    walletApi.getWalletStatus.mockResolvedValueOnce({
+      ...statusResponse,
+      status: {
+        ...statusResponse.status,
+        service: {
+          ...statusResponse.status.service,
+          healthy: false,
+        },
+        startupState: "unreachable",
+        error: "Error: connect ENOENT /home/app/.fased/wallet/local-signer.sock",
+      },
+    });
+
+    const host = createHost();
+
+    await loadWallet(host);
+
+    expect(host.walletError).toBeNull();
+    expect(host.walletStatus?.service.healthy).toBe(true);
+    expect(host.walletStatus?.error).toBeUndefined();
+  });
+
   it("shows wallet activity before slow token balances finish loading", async () => {
     const host = createHost();
     const selectedBalances = {

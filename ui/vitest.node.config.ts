@@ -7,6 +7,7 @@ export default defineConfig({
     include: [
       "src/**/*.node.test.ts",
       "src/ui/app-settings.test.ts",
+      "src/ui/controllers/wallet.test.ts",
       "src/ui/controllers/skills.test.ts",
     ],
     environment: "node",

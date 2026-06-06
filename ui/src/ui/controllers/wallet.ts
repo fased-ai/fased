@@ -105,6 +105,33 @@ function mergeCachedWalletData(
   } satisfies WalletNamedWallet;
 }
 
+function signerDoctorIsHealthy(
+  report:
+    | {
+        ok?: boolean;
+        running?: boolean;
+        checks?: Array<{ check: string; ok: boolean; detail?: string }>;
+      }
+    | undefined,
+): boolean {
+  if (!report) {
+    return false;
+  }
+  if (report.ok && report.running) {
+    return true;
+  }
+  return Boolean(
+    report.running && report.checks?.some((check) => check.ok && check.check === "socket.health"),
+  );
+}
+
+function looksLikeTransientLocalSignerSocketError(error: unknown): boolean {
+  const message = typeof error === "string" ? error : error instanceof Error ? error.message : "";
+  return (
+    /local-signer\.sock/.test(message) && /(ENOENT|ECONNREFUSED|connect|not found)/i.test(message)
+  );
+}
+
 function buildWalletBalanceCacheEntry(
   result: Awaited<ReturnType<typeof getWalletBalances>>,
   fallback?: WalletNamedWallet,
@@ -432,15 +459,35 @@ export async function loadWallet(host: FasedAgentApp) {
         };
       }
       if (!statusResult.value.status.service.healthy) {
-        host.walletError =
-          statusResult.value.status.error ||
-          (signerDoctorResult.status === "fulfilled"
-            ? signerDoctorResult.value.report.checks
-                .filter((check) => !check.ok)
-                .slice(0, 3)
-                .map((check) => check.detail || check.check)
-                .join("; ") || "Wallet signer is not healthy."
-            : "Wallet signer is not healthy.");
+        const signerDoctorRecovered =
+          signerDoctorResult.status === "fulfilled" &&
+          signerDoctorIsHealthy(signerDoctorResult.value.report) &&
+          looksLikeTransientLocalSignerSocketError(statusResult.value.status.error);
+        if (signerDoctorRecovered && host.walletStatus) {
+          host.walletStatus = {
+            ...host.walletStatus,
+            error: undefined,
+            service: {
+              ...host.walletStatus.service,
+              healthy: true,
+            },
+            startupState:
+              host.walletStatus.startupState === "unreachable"
+                ? "healthy"
+                : host.walletStatus.startupState,
+          };
+          host.walletError = null;
+        } else {
+          host.walletError =
+            statusResult.value.status.error ||
+            (signerDoctorResult.status === "fulfilled"
+              ? signerDoctorResult.value.report.checks
+                  .filter((check) => !check.ok)
+                  .slice(0, 3)
+                  .map((check) => check.detail || check.check)
+                  .join("; ") || "Wallet signer is not healthy."
+              : "Wallet signer is not healthy.");
+        }
       }
     } else {
       host.walletStatus = null;
