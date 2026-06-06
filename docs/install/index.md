@@ -216,6 +216,43 @@ recovery options and VPS provider console access working.
   </Tab>
 </Tabs>
 
+## Update after setup
+
+Normal end-user updates use the stable channel:
+
+```bash
+fased update status
+fased update
+```
+
+On a hosted VPS, run updates as `app` over Tailscale:
+
+```bash
+ssh app@YOUR_VPS_TAILSCALE_NAME
+cd /home/app/fased
+fased update status
+fased update
+```
+
+Stable resolves to the latest stable release tag for repo checkouts. It does
+not follow every commit on `main`. Use the developer channel only when you
+intentionally want latest development commits:
+
+```bash
+fased update --channel dev
+```
+
+For development/testing from a source checkout:
+
+```bash
+git checkout main
+git pull --ff-only origin main
+./install.sh
+```
+
+Use `./install.sh --hosting` for that same development checkout flow on a
+hosted VPS, and run it as `app` from `/home/app/fased`.
+
 The installer is repo-backed from `fased-ai/fased`.
 
 <Note>

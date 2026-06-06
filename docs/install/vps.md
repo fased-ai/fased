@@ -92,8 +92,8 @@ Use a 25 GB disk or larger. Keep the raw Gateway port private; use Tailscale for
 operator access.
 
 Current installers try a clean fast-forward update from Git before building. If
-you already started from an older installer and it stopped, update the checkout
-once and rerun:
+you already started from an older installer and it stopped before creating the
+`app` runtime, update the bootstrap checkout once and rerun:
 
 ```bash
 cd ~/fased
@@ -141,6 +141,7 @@ uses the `app` user over Tailscale from your own computer:
 
 ```bash
 ssh app@YOUR_VPS_TAILSCALE_NAME
+cd /home/app/fased
 fased health
 fased status
 fased dashboard
@@ -177,6 +178,7 @@ For normal updates, log in as `app` through Tailscale:
 
 ```bash
 ssh app@YOUR_VPS_TAILSCALE_NAME
+cd /home/app/fased
 fased update status
 fased update
 ```
@@ -184,8 +186,23 @@ fased update
 If the browser Control UI is reachable, **Update & Restart** uses the same
 gateway update path. Rerun `./install.sh --hosting` only for repair/reinstall
 behavior. `fased update` uses the configured channel; stable is the default
-end-user channel. Use `fased update --channel dev` only when intentionally
-tracking `main`.
+end-user channel and resolves to the latest stable release tag. It does not
+pull every new commit from `main`.
+
+Use `fased update --channel dev` only when intentionally tracking latest
+development commits. For development/testing from the hosted repo checkout, the
+direct app-user flow is:
+
+```bash
+ssh app@YOUR_VPS_TAILSCALE_NAME
+cd /home/app/fased
+git checkout main
+git pull --ff-only origin main
+./install.sh --hosting
+```
+
+Do not use the root bootstrap checkout for normal updates after hosted
+onboarding has completed.
 
 <Note>
 You do not need a Tailscale API key for the normal manual VPS flow. The

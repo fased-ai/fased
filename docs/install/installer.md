@@ -86,6 +86,7 @@ On Windows, use [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install), t
 
     ```bash
     ssh app@YOUR_VPS_TAILSCALE_NAME
+    cd /home/app/fased
     fased status
     fased dashboard
     ```
@@ -138,6 +139,15 @@ Hosting note:
 - use an auth key only for unattended automation
 - use the **hosting** profile in the wizard
 - keep access tailnet-only unless you later make a deliberate, separately-audited exposure choice
+- after hosted onboarding completes, run normal CLI/update/repair commands as
+  `app` from `/home/app/fased`; root is only for first bootstrap or emergency repair
+
+Update note:
+
+- `fased update` is the normal end-user update path
+- stable is the default channel and resolves to the latest stable release tag
+- `git pull --ff-only origin main` and `fased update --channel dev` are
+  development flows
 
 ## Common modes
 

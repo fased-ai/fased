@@ -194,6 +194,28 @@ For the full decision table, read [Setup Matrix](/start/setup-matrix).
     3. `Advanced > Debug`: raw diagnostics and repair tools
 
   </Step>
+  <Step title="Update later">
+    Normal updates use the stable release channel:
+
+    ```bash
+    fased update status
+    fased update
+    ```
+
+    On a hosted VPS, run that as `app`:
+
+    ```bash
+    ssh app@YOUR_VPS_TAILSCALE_NAME
+    cd /home/app/fased
+    fased update status
+    fased update
+    ```
+
+    Stable follows release tags. It does not pull every new `main` commit. Use
+    `fased update --channel dev` only when intentionally tracking latest
+    development commits.
+
+  </Step>
 </Steps>
 
 <Check>

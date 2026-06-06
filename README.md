@@ -129,8 +129,8 @@ cd fased
 ```
 
 Current installers try a clean fast-forward update from Git before building. If
-you already started from an older installer and it stopped before updating,
-update the checkout once and rerun:
+you already started from an older installer and it stopped before creating the
+`app` runtime, update the bootstrap checkout once and rerun:
 
 ```bash
 cd ~/fased
@@ -181,6 +181,7 @@ shell as the operating shell. Open a new terminal on your own computer and use:
 
 ```bash
 ssh app@YOUR_VPS_TAILSCALE_NAME
+cd /home/app/fased
 fased status
 fased dashboard
 ```
@@ -208,17 +209,36 @@ On a hosted VPS, log in as the app user through Tailscale first:
 
 ```bash
 ssh app@YOUR_VPS_TAILSCALE_NAME
+cd /home/app/fased
 fased update status
 fased update
 ```
 
 If the browser Control UI is healthy, you can also use **Update & Restart** from
 the system/debug update area. Rerun `./install.sh` when you want
-repair/reinstall behavior; it fast-forwards a clean Git checkout before
-building. `fased update` uses the configured channel; stable is the default
-end-user channel. Use `fased update --channel dev` only when intentionally
-tracking `main`. Use `./install.sh --no-git-update` only when testing local
-changes.
+repair/reinstall behavior.
+
+`fased update` uses the configured channel. **Stable is the default end-user
+channel** and resolves to the latest stable release tag, not every commit on
+`main`. Current development fixes on `main` are available only when you
+intentionally track the developer channel:
+
+```bash
+fased update --channel dev
+```
+
+For development/testing from a repo checkout, the direct equivalent is:
+
+```bash
+git checkout main
+git pull --ff-only origin main
+./install.sh
+```
+
+On a hosted VPS, run that same development checkout flow as `app` from
+`/home/app/fased` and use `./install.sh --hosting`. Use
+`./install.sh --no-git-update` only when testing local changes that should not
+be replaced by Git.
 
 After install, open the dashboard, configure **Agent > Models**, send a first
 browser chat, then add channels, skills, services, wallets, mining, and tasks

@@ -12,7 +12,8 @@ Last updated: 2026-01-21
 
 Fased ships three update channels:
 
-- **stable**: npm dist-tag `latest`.
+- **stable**: latest stable release tag for git checkouts; npm dist-tag
+  `latest` for package installs.
 - **beta**: npm dist-tag `beta` (builds under test).
 - **dev**: developer channel for moving head of `main` (git). npm dist-tag:
   `dev` (when published).
@@ -39,6 +40,11 @@ fased update --channel dev
 - `dev` switches to `main` and rebases to the latest upstream commit only.
   Use `fased update --channel dev --safe-fallback` only for repair/debug
   sessions that should try older commits if latest `main` fails preflight.
+
+`git pull origin main` is a development flow, not a stable release update. The
+stable end-user path is `fased update`, which lands on a release tag. Current
+development fixes become available to stable users only after a new stable tag
+or package release is published.
 
 npm/pnpm global install:
 
@@ -68,7 +74,8 @@ When you switch channels with `fased update`, Fased also syncs plugin sources:
 
 ## Tagging best practices
 
-- Tag releases you want git checkouts to land on (`vYYYY.M.D` for stable, `vYYYY.M.D-beta.N` for beta).
+- Tag releases you want git checkout users to receive through `fased update`
+  (`vX.Y.Z` or another stable `v*` tag for stable, `vX.Y.Z-beta.N` for beta).
 - `vYYYY.M.D.beta.N` is also recognized for compatibility, but prefer `-beta.N`.
 - Legacy `vYYYY.M.D-<patch>` tags are still recognized as stable (non-beta).
 - Keep tags immutable: never move or reuse a tag.

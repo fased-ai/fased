@@ -31,12 +31,16 @@ fased update --yes
 fased --update
 ```
 
-On hosted VPS installs where you SSH in as `root`, run update as the app user:
+On hosted VPS installs, normal updates run as the `app` user over Tailscale:
 
 ```bash
-sudo -iu app fased update status
-sudo -iu app fased update
+ssh app@YOUR_VPS_TAILSCALE_NAME
+cd /home/app/fased
+fased update status
+fased update
 ```
+
+Root is only for first bootstrap or emergency repair after hosted hardening.
 
 ## Options
 
@@ -93,7 +97,8 @@ Current channel behavior:
 
 - `stable`
   - default for end users
-  - latest stable tag
+  - latest stable release tag on git checkouts
+  - npm `latest` when package installs are enabled
 - `beta`
   - latest beta tag
 - `dev`
@@ -101,6 +106,24 @@ Current channel behavior:
   - latest `origin/main` only by default
   - use `--safe-fallback` only for repair/debug sessions that should try older
     candidate commits if the latest commit fails preflight
+
+`fased update` without `--channel dev` does not pull every commit from `main`.
+If you need latest development fixes from a repo checkout, use:
+
+```bash
+fased update --channel dev
+```
+
+Or update the checkout directly during development:
+
+```bash
+git checkout main
+git pull --ff-only origin main
+./install.sh
+```
+
+On a hosted VPS, run that direct development flow as `app` from
+`/home/app/fased` and use `./install.sh --hosting`.
 
 ## `--update` shorthand
 

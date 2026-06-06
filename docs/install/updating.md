@@ -35,6 +35,7 @@ On a hosted VPS, use the `app` user through Tailscale:
 
 ```bash
 ssh app@YOUR_VPS_TAILSCALE_NAME
+cd /home/app/fased
 fased update status
 fased update
 ```
@@ -50,6 +51,35 @@ fased update --no-restart
 
 Use this when the runtime already lives on a repo checkout and you want the
 gateway-aware update flow.
+
+By default, `fased update` uses the **stable** channel. On a git checkout,
+stable means the newest stable `v*` release tag. It does **not** mean the moving
+head of `main`.
+
+Use this for normal end-user updates:
+
+```bash
+fased update status
+fased update
+```
+
+Use the developer channel only when you intentionally want the latest commits
+from `main`:
+
+```bash
+fased update --channel dev
+```
+
+For development/testing from a source checkout, the manual equivalent is:
+
+```bash
+git checkout main
+git pull --ff-only origin main
+./install.sh
+```
+
+On a hosted VPS, run the development checkout flow as `app` from
+`/home/app/fased` and use `./install.sh --hosting`.
 
 ## Control UI update
 
@@ -78,6 +108,7 @@ On hosted installs that live under `/home/app/fased`, run it as the app user:
 
 ```bash
 ssh app@YOUR_VPS_TAILSCALE_NAME
+cd /home/app/fased
 ./install.sh --no-onboard
 ```
 
@@ -96,6 +127,7 @@ Use `./install.sh --no-git-update` only when testing local changes.
 `fased update`:
 
 - updates to the configured channel; stable is the default end-user channel
+  and resolves to the newest stable release tag
 - rebuilds
 - refreshes the installed runtime
 - restarts when needed
