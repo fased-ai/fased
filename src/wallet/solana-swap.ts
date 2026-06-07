@@ -425,6 +425,8 @@ export async function executeSolanaSwapApprovalPayload(params: {
     walletId: params.payload.walletId,
     serializedTxBase64: order.transaction,
     amount: params.payload.amount,
+    tokenMint:
+      params.payload.inputMint === SOLANA_NATIVE_MINT ? undefined : params.payload.inputMint,
   });
   return {
     ok: true,

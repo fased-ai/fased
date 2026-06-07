@@ -1180,15 +1180,19 @@ type solanaEnvelopeV1 struct {
 }
 
 type signerTxRequest struct {
-	Chain              string `json:"chain"`
-	WalletID           string `json:"walletId,omitempty"`
-	To                 string `json:"to,omitempty"`
-	Amount             string `json:"amount,omitempty"`
-	Contract           string `json:"contract,omitempty"`
-	Program            string `json:"program,omitempty"`
-	Memo               string `json:"memo,omitempty"`
-	SerializedTxBase64 string `json:"serializedTxBase64,omitempty"`
-	PreparedID         string `json:"preparedId,omitempty"`
+	Chain                string   `json:"chain"`
+	WalletID             string   `json:"walletId,omitempty"`
+	To                   string   `json:"to,omitempty"`
+	Amount               string   `json:"amount,omitempty"`
+	Contract             string   `json:"contract,omitempty"`
+	Program              string   `json:"program,omitempty"`
+	TokenMint            string   `json:"tokenMint,omitempty"`
+	Source               string   `json:"source,omitempty"`
+	Destination          string   `json:"destination,omitempty"`
+	AllowSPLInstructions []string `json:"allowSplInstructions,omitempty"`
+	Memo                 string   `json:"memo,omitempty"`
+	SerializedTxBase64   string   `json:"serializedTxBase64,omitempty"`
+	PreparedID           string   `json:"preparedId,omitempty"`
 }
 
 type solanaInstructionAccount struct {
@@ -1725,6 +1729,231 @@ func validateSignerPolicyProgram(policy resolvedSignerPolicy, programID string) 
 	return nil
 }
 
+func normalizeSolanaPublicKey(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", nil
+	}
+	key, err := solana.PublicKeyFromBase58(trimmed)
+	if err != nil {
+		return "", err
+	}
+	return key.String(), nil
+}
+
+func expectedSerializedTokenMint(txReq signerTxRequest) (string, error) {
+	for _, raw := range []string{txReq.TokenMint, txReq.Contract} {
+		key, err := normalizeSolanaPublicKey(raw)
+		if err != nil {
+			return "", fmt.Errorf("invalid expected token mint: %w", err)
+		}
+		if key != "" {
+			return key, nil
+		}
+	}
+	return "", nil
+}
+
+func expectedSerializedSource(txReq signerTxRequest) (string, error) {
+	key, err := normalizeSolanaPublicKey(txReq.Source)
+	if err != nil {
+		return "", fmt.Errorf("invalid expected source account: %w", err)
+	}
+	return key, nil
+}
+
+func expectedSerializedDestination(txReq signerTxRequest) (string, error) {
+	key, err := normalizeSolanaPublicKey(txReq.Destination)
+	if err != nil {
+		return "", fmt.Errorf("invalid expected destination account: %w", err)
+	}
+	return key, nil
+}
+
+func isSPLTokenProgram(programID string) bool {
+	normalized := normalizeProgramID(programID)
+	return normalized == normalizeProgramID(solana.TokenProgramID.String()) ||
+		normalized == normalizeProgramID(solana.Token2022ProgramID.String())
+}
+
+func allowSerializedSPLInstruction(txReq signerTxRequest, name string) bool {
+	needle := strings.TrimSpace(strings.ToLower(name))
+	if needle == "" {
+		return false
+	}
+	for _, value := range txReq.AllowSPLInstructions {
+		if strings.TrimSpace(strings.ToLower(value)) == needle {
+			return true
+		}
+	}
+	return false
+}
+
+func riskySPLInstructionName(kind byte) string {
+	switch kind {
+	case 4:
+		return "Approve"
+	case 6:
+		return "SetAuthority"
+	case 7:
+		return "MintTo"
+	case 8:
+		return "Burn"
+	case 10:
+		return "FreezeAccount"
+	case 11:
+		return "ThawAccount"
+	case 13:
+		return "ApproveChecked"
+	case 14:
+		return "MintToChecked"
+	case 15:
+		return "BurnChecked"
+	default:
+		return ""
+	}
+}
+
+func accountKeyAt(accounts []*solana.AccountMeta, index int) string {
+	if index < 0 || index >= len(accounts) || accounts[index] == nil {
+		return ""
+	}
+	return accounts[index].PublicKey.String()
+}
+
+func instructionHasSigner(accounts []*solana.AccountMeta, signer string) bool {
+	for _, account := range accounts {
+		if account != nil && account.IsSigner && account.PublicKey.String() == signer {
+			return true
+		}
+	}
+	return false
+}
+
+func decodeSPLAmount(data []byte) (*big.Int, error) {
+	if len(data) < 9 {
+		return nil, errors.New("SPL transfer instruction data is too short")
+	}
+	return new(big.Int).SetUint64(binary.LittleEndian.Uint64(data[1:9])), nil
+}
+
+func addAmount(total *big.Int, amount *big.Int) *big.Int {
+	if total == nil {
+		total = big.NewInt(0)
+	}
+	if amount == nil {
+		return total
+	}
+	return new(big.Int).Add(total, amount)
+}
+
+func validateAgentSerializedSPLSemantics(txReq signerTxRequest, tx *solana.Transaction, signer string, declaredAmount *big.Int) error {
+	expectedMint, err := expectedSerializedTokenMint(txReq)
+	if err != nil {
+		return err
+	}
+	expectedSource, err := expectedSerializedSource(txReq)
+	if err != nil {
+		return err
+	}
+	expectedDestination, err := expectedSerializedDestination(txReq)
+	if err != nil {
+		return err
+	}
+
+	var checkedTotal *big.Int
+	sawSignerSPLTransfer := false
+	for _, inst := range tx.Message.Instructions {
+		programID, err := tx.ResolveProgramIDIndex(inst.ProgramIDIndex)
+		if err != nil {
+			return fmt.Errorf("cannot resolve serialized solana program id: %w", err)
+		}
+		if !isSPLTokenProgram(programID.String()) {
+			continue
+		}
+		accounts, err := inst.ResolveInstructionAccounts(&tx.Message)
+		if err != nil {
+			return fmt.Errorf("cannot resolve serialized SPL instruction accounts: %w", err)
+		}
+		data := []byte(inst.Data)
+		if len(data) == 0 {
+			return errors.New("serialized SPL instruction has no data")
+		}
+		kind := data[0]
+		switch kind {
+		case 3: // Transfer: source, destination, owner; mint is not encoded.
+			if len(accounts) < 3 {
+				return errors.New("serialized SPL transfer has too few accounts")
+			}
+			authority := accountKeyAt(accounts, 2)
+			if authority != signer {
+				if instructionHasSigner(accounts, signer) {
+					return errors.New("serialized SPL transfer authority does not match wallet signer")
+				}
+				continue
+			}
+			sawSignerSPLTransfer = true
+			if expectedMint != "" && !allowSerializedSPLInstruction(txReq, "Transfer") {
+				return errors.New("serialized Agent SPL transfer must use transferChecked when tokenMint is declared")
+			}
+			amount, err := decodeSPLAmount(data)
+			if err != nil {
+				return err
+			}
+			if expectedSource != "" && accountKeyAt(accounts, 0) != expectedSource {
+				return errors.New("serialized SPL transfer source does not match expected source")
+			}
+			if expectedDestination != "" && accountKeyAt(accounts, 1) != expectedDestination {
+				return errors.New("serialized SPL transfer destination does not match expected destination")
+			}
+			if expectedMint == "" || allowSerializedSPLInstruction(txReq, "Transfer") {
+				checkedTotal = addAmount(checkedTotal, amount)
+			}
+		case 12: // TransferChecked: source, mint, destination, owner.
+			if len(accounts) < 4 {
+				return errors.New("serialized SPL transferChecked has too few accounts")
+			}
+			authority := accountKeyAt(accounts, 3)
+			if authority != signer {
+				if instructionHasSigner(accounts, signer) {
+					return errors.New("serialized SPL transferChecked authority does not match wallet signer")
+				}
+				continue
+			}
+			amount, err := decodeSPLAmount(data)
+			if err != nil {
+				return err
+			}
+			sawSignerSPLTransfer = true
+			mint := accountKeyAt(accounts, 1)
+			if expectedMint != "" && mint != expectedMint {
+				return errors.New("serialized SPL transferChecked mint does not match expected tokenMint")
+			}
+			if expectedSource != "" && accountKeyAt(accounts, 0) != expectedSource {
+				return errors.New("serialized SPL transferChecked source does not match expected source")
+			}
+			if expectedDestination != "" && accountKeyAt(accounts, 2) != expectedDestination {
+				return errors.New("serialized SPL transferChecked destination does not match expected destination")
+			}
+			if expectedMint == "" || mint == expectedMint {
+				checkedTotal = addAmount(checkedTotal, amount)
+			}
+		default:
+			name := riskySPLInstructionName(kind)
+			if name != "" && instructionHasSigner(accounts, signer) && !allowSerializedSPLInstruction(txReq, name) {
+				return fmt.Errorf("serialized Agent transaction contains risky SPL instruction %s", name)
+			}
+		}
+	}
+	if sawSignerSPLTransfer && declaredAmount == nil {
+		return errors.New("serialized Agent SPL transfer requires declared amount")
+	}
+	if checkedTotal != nil && declaredAmount != nil && checkedTotal.Cmp(declaredAmount) != 0 {
+		return errors.New("serialized SPL transferChecked amount does not match declared amount")
+	}
+	return nil
+}
+
 func validateSignerPolicyForNativeSend(cfg signerConfig, txReq signerTxRequest) (*big.Int, resolvedSignerPolicy, error) {
 	policy := resolveSignerPolicy(cfg, txReq.WalletID)
 	if !policy.DirectSigning {
@@ -1787,6 +2016,11 @@ func validateSignerPolicyForSerializedTx(cfg signerConfig, txReq signerTxRequest
 	amount, err := parsePolicyAmount(txReq.Amount, policy.CapsEnabled)
 	if err != nil {
 		return nil, policy, err
+	}
+	if policy.Role == "agent" {
+		if err := validateAgentSerializedSPLSemantics(txReq, tx, signer, amount); err != nil {
+			return nil, policy, err
+		}
 	}
 	if err := validateSignerPolicyAmount(policy, txReq.Chain, amount); err != nil {
 		return nil, policy, err

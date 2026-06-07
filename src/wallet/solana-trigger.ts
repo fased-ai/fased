@@ -99,6 +99,7 @@ async function signSerializedSolanaTx(params: {
   walletId: string;
   serializedTxBase64: string;
   amount?: string;
+  tokenMint?: string;
 }): Promise<{ signedTxBase64: string; signer?: string }> {
   if (!params.provider.signTx) {
     throw new Error("wallet provider cannot sign Jupiter Trigger deposit transactions");
@@ -108,6 +109,7 @@ async function signSerializedSolanaTx(params: {
     walletId: params.walletId,
     serializedTxBase64: params.serializedTxBase64,
     amount: params.amount ?? "0",
+    tokenMint: params.tokenMint,
   });
   if (!signed.ok || !signed.signedTxBase64) {
     throw new Error("wallet provider failed to sign Jupiter Trigger transaction");
@@ -356,6 +358,7 @@ export async function createJupiterTriggerLimitOrder(params: {
     walletId: params.walletId,
     serializedTxBase64: depositTx,
     amount: params.amount,
+    tokenMint: params.inputMint === SOLANA_NATIVE_MINT ? undefined : params.inputMint,
   });
   const orderBody = {
     orderType: "single",

@@ -43,6 +43,10 @@ export type WalletProviderPrepareTxRequest = {
   amount?: string;
   contract?: string;
   program?: string;
+  tokenMint?: string;
+  source?: string;
+  destination?: string;
+  allowSplInstructions?: string[];
   memo?: string;
   serializedTxBase64?: string;
   preparedId?: string;

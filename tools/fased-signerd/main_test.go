@@ -2,12 +2,17 @@ package main
 
 import (
 	"bufio"
+	"encoding/base64"
 	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	bin "github.com/gagliardetto/binary"
+	solana "github.com/gagliardetto/solana-go"
+	token "github.com/gagliardetto/solana-go/programs/token"
 )
 
 func TestKeystorePathForWalletFallsBackToDefaultWalletMapping(t *testing.T) {
@@ -333,5 +338,162 @@ func TestSignerPolicyEnforcesProgramAllowlist(t *testing.T) {
 	)
 	if err == nil || !strings.Contains(err.Error(), "not allowed") {
 		t.Fatalf("expected program allowlist error, got %v", err)
+	}
+}
+
+func mustSerializedTestTx(t *testing.T, payer solana.PublicKey, instructions ...solana.Instruction) string {
+	t.Helper()
+	tx, err := solana.NewTransaction(instructions, solana.Hash{}, solana.TransactionPayer(payer))
+	if err != nil {
+		t.Fatalf("build transaction: %v", err)
+	}
+	raw, err := tx.MarshalBinary()
+	if err != nil {
+		t.Fatalf("marshal transaction: %v", err)
+	}
+	return base64.StdEncoding.EncodeToString(raw)
+}
+
+func mustDecodeSerializedTestTx(t *testing.T, serialized string) *solana.Transaction {
+	t.Helper()
+	raw, err := base64.StdEncoding.DecodeString(serialized)
+	if err != nil {
+		t.Fatalf("decode transaction: %v", err)
+	}
+	tx, err := solana.TransactionFromDecoder(bin.NewBinDecoder(raw))
+	if err != nil {
+		t.Fatalf("decode transaction: %v", err)
+	}
+	return tx
+}
+
+func TestSignerPolicyAgentSerializedTransferCheckedMatchesExpected(t *testing.T) {
+	signer := solana.NewWallet().PublicKey()
+	source := solana.NewWallet().PublicKey()
+	mint := solana.NewWallet().PublicKey()
+	destination := solana.NewWallet().PublicKey()
+	serialized := mustSerializedTestTx(t, signer,
+		token.NewTransferCheckedInstruction(42, 6, source, mint, destination, signer, nil).Build(),
+	)
+	tx := mustDecodeSerializedTestTx(t, serialized)
+	cfg := signerConfig{
+		walletRoles:         map[string]string{"agent": "agent"},
+		walletDirectSigning: map[string]bool{"agent": true},
+	}
+
+	_, _, err := validateSignerPolicyForSerializedTx(cfg, signerTxRequest{
+		Chain:              "solana",
+		WalletID:           "agent",
+		Amount:             "42",
+		TokenMint:          mint.String(),
+		Source:             source.String(),
+		Destination:        destination.String(),
+		SerializedTxBase64: serialized,
+	}, tx, signer.String())
+	if err != nil {
+		t.Fatalf("expected serialized transferChecked to pass, got %v", err)
+	}
+}
+
+func TestSignerPolicyAgentSerializedTransferCheckedRejectsAmountMismatch(t *testing.T) {
+	signer := solana.NewWallet().PublicKey()
+	source := solana.NewWallet().PublicKey()
+	mint := solana.NewWallet().PublicKey()
+	destination := solana.NewWallet().PublicKey()
+	serialized := mustSerializedTestTx(t, signer,
+		token.NewTransferCheckedInstruction(42, 6, source, mint, destination, signer, nil).Build(),
+	)
+	tx := mustDecodeSerializedTestTx(t, serialized)
+	cfg := signerConfig{
+		walletRoles:         map[string]string{"agent": "agent"},
+		walletDirectSigning: map[string]bool{"agent": true},
+	}
+
+	_, _, err := validateSignerPolicyForSerializedTx(cfg, signerTxRequest{
+		Chain:              "solana",
+		WalletID:           "agent",
+		Amount:             "41",
+		TokenMint:          mint.String(),
+		SerializedTxBase64: serialized,
+	}, tx, signer.String())
+	if err == nil || !strings.Contains(err.Error(), "amount does not match") {
+		t.Fatalf("expected amount mismatch error, got %v", err)
+	}
+}
+
+func TestSignerPolicyAgentSerializedTransferCheckedRejectsMintMismatch(t *testing.T) {
+	signer := solana.NewWallet().PublicKey()
+	source := solana.NewWallet().PublicKey()
+	mint := solana.NewWallet().PublicKey()
+	otherMint := solana.NewWallet().PublicKey()
+	destination := solana.NewWallet().PublicKey()
+	serialized := mustSerializedTestTx(t, signer,
+		token.NewTransferCheckedInstruction(42, 6, source, mint, destination, signer, nil).Build(),
+	)
+	tx := mustDecodeSerializedTestTx(t, serialized)
+	cfg := signerConfig{
+		walletRoles:         map[string]string{"agent": "agent"},
+		walletDirectSigning: map[string]bool{"agent": true},
+	}
+
+	_, _, err := validateSignerPolicyForSerializedTx(cfg, signerTxRequest{
+		Chain:              "solana",
+		WalletID:           "agent",
+		Amount:             "42",
+		TokenMint:          otherMint.String(),
+		SerializedTxBase64: serialized,
+	}, tx, signer.String())
+	if err == nil || !strings.Contains(err.Error(), "mint does not match") {
+		t.Fatalf("expected mint mismatch error, got %v", err)
+	}
+}
+
+func TestSignerPolicyAgentSerializedRejectsUncheckedTransferWhenMintExpected(t *testing.T) {
+	signer := solana.NewWallet().PublicKey()
+	source := solana.NewWallet().PublicKey()
+	mint := solana.NewWallet().PublicKey()
+	destination := solana.NewWallet().PublicKey()
+	serialized := mustSerializedTestTx(t, signer,
+		token.NewTransferInstruction(42, source, destination, signer, nil).Build(),
+	)
+	tx := mustDecodeSerializedTestTx(t, serialized)
+	cfg := signerConfig{
+		walletRoles:         map[string]string{"agent": "agent"},
+		walletDirectSigning: map[string]bool{"agent": true},
+	}
+
+	_, _, err := validateSignerPolicyForSerializedTx(cfg, signerTxRequest{
+		Chain:              "solana",
+		WalletID:           "agent",
+		Amount:             "42",
+		TokenMint:          mint.String(),
+		SerializedTxBase64: serialized,
+	}, tx, signer.String())
+	if err == nil || !strings.Contains(err.Error(), "transferChecked") {
+		t.Fatalf("expected transferChecked requirement error, got %v", err)
+	}
+}
+
+func TestSignerPolicyAgentSerializedRejectsRiskySPLInstruction(t *testing.T) {
+	signer := solana.NewWallet().PublicKey()
+	source := solana.NewWallet().PublicKey()
+	delegate := solana.NewWallet().PublicKey()
+	serialized := mustSerializedTestTx(t, signer,
+		token.NewApproveInstruction(42, source, delegate, signer, nil).Build(),
+	)
+	tx := mustDecodeSerializedTestTx(t, serialized)
+	cfg := signerConfig{
+		walletRoles:         map[string]string{"agent": "agent"},
+		walletDirectSigning: map[string]bool{"agent": true},
+	}
+
+	_, _, err := validateSignerPolicyForSerializedTx(cfg, signerTxRequest{
+		Chain:              "solana",
+		WalletID:           "agent",
+		Amount:             "42",
+		SerializedTxBase64: serialized,
+	}, tx, signer.String())
+	if err == nil || !strings.Contains(err.Error(), "Approve") {
+		t.Fatalf("expected risky SPL instruction error, got %v", err)
 	}
 }
