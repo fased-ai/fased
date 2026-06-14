@@ -2769,7 +2769,7 @@ function createMockFederationApi(): FederationApi {
         latest.bondStatus = "active";
         latest.bondTier = payload.tier ?? "basic-bond";
         latest.bondAmountRaw =
-          payload.tier === "operator-bond" ? "100000000000000" : "100000000000";
+          payload.tier === "operator-bond" ? "50000000000000" : "2500000000000";
         latest.bondQuotaBand = payload.tier === "operator-bond" ? "operator" : "boosted";
         latest.bondDerivedScopes =
           payload.tier === "operator-bond"

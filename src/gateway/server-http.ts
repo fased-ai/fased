@@ -2249,11 +2249,11 @@ function resolveFederationBondDefaultWalletId(
 }
 
 function resolveDefaultBondAmountSat(tier: FederationBondMutationInput["tier"]): string {
-  return tier === "operator-bond" ? "1000" : "1";
+  return tier === "operator-bond" ? "500" : "25";
 }
 
 function resolveEffectiveBondStakingMinRaw(rawInput: string | undefined): string {
-  const operatorMinRaw = "100000000000000";
+  const operatorMinRaw = "50000000000000";
   try {
     const configured = BigInt(rawInput?.trim() || "0");
     const operatorMin = BigInt(operatorMinRaw);

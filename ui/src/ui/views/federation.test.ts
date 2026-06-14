@@ -967,7 +967,7 @@ describe("renderFederation", () => {
     expect(text).toContain("Market");
     expect(text).toContain("Vault");
     expect(text).toContain("Bond...1111");
-    expect(text).toContain("1000 SAT");
+    expect(text).toContain("500 SAT");
     expect(text).toContain("Bond position");
     expect(text).toContain("Top up");
     expect(text).toContain("Unlock all");

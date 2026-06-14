@@ -7,9 +7,9 @@
   "discriminator": 141,
   "pdaSeed": "sat_bond_tier_policy",
   "defaults": {
-    "basicMinRaw": "100000000000",
-    "operatorMinRaw": "100000000000000",
-    "unlockDelaySlots": "17280"
+    "basicMinRaw": "2500000000000",
+    "operatorMinRaw": "50000000000000",
+    "unlockDelaySlots": "216000"
   },
   "offsets": {
     "version": 0,

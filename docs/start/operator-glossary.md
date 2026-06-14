@@ -101,10 +101,10 @@ anti-spam cost, and operator trust.
     SAT locked into a trust-bearing operator position.
   </Accordion>
   <Accordion title="Basic bond">
-    Entry bond layer for identity, anti-spam cost, and basic profile trust. The recommended starting minimum is `1 SAT`.
+    Entry bond layer for identity, anti-spam cost, and basic profile trust. The recommended T0 minimum is `25 SAT`.
   </Accordion>
   <Accordion title="Operator bond">
-    Stronger bond layer for seller lanes, operator roles, higher-trust Fased Network participation, and staking eligibility when that path is enabled. The recommended starting minimum is `1,000 SAT`.
+    Stronger bond layer for seller lanes, operator roles, higher-trust Fased Network participation, and staking eligibility when that path is enabled. The recommended first-year minimum is `500 SAT`; `1,000 SAT` is a later mature-network candidate after mining gets harder and distribution/liquidity improve.
   </Accordion>
   <Accordion title="Staking bond">
     Eligibility state for active operator bonds when SAT staking distribution is enabled. Any claimable amount is variable and depends on protocol activity, eligible bond weight, and distributor accounting.

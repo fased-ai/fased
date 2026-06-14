@@ -107,9 +107,15 @@ Current starting policy:
 
 | Layer                 | Starting rule                                         |
 | --------------------- | ----------------------------------------------------- |
-| Basic bond            | `1 SAT`                                               |
-| Operator/staking bond | `1,000 SAT`                                           |
+| Basic bond            | `25 SAT`                                              |
+| Operator/staking bond | `500 SAT`                                             |
+| Unlock delay          | `216,000` slots                                       |
 | Distribution          | SAT-only from the existing `5%` staking emission lane |
+
+The first-year operator/staking threshold is intentionally serious but not
+whale-only. It can mature later as mining gets harder, SAT distribution
+broadens, and liquidity improves; `1,000 SAT` is a later-network candidate, not
+the T0 default.
 
 ### User flow
 

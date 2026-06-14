@@ -126,8 +126,8 @@ const LEGACY_FALLBACK_LAYOUT: SatBondPositionLayoutSpec = {
   discriminator: 139,
   pdaSeed: "sat_bond_position",
   thresholds: {
-    basicMinRaw: "100000000000",
-    operatorMinRaw: "100000000000000",
+    basicMinRaw: "2500000000000",
+    operatorMinRaw: "50000000000000",
   },
   status: {
     inactive: 0,
@@ -198,9 +198,9 @@ const DEDICATED_FALLBACK_POLICY_LAYOUT: SatBondTierPolicyLayoutSpec = {
   discriminator: 141,
   pdaSeed: "sat_bond_tier_policy",
   defaults: {
-    basicMinRaw: "100000000000",
-    operatorMinRaw: "100000000000000",
-    unlockDelaySlots: "17280",
+    basicMinRaw: "2500000000000",
+    operatorMinRaw: "50000000000000",
+    unlockDelaySlots: "216000",
   },
   offsets: {
     version: 0,

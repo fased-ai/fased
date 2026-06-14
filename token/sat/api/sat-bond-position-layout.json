@@ -6,8 +6,8 @@
   "discriminator": 139,
   "pdaSeed": "sat_bond_position",
   "thresholds": {
-    "basicMinRaw": "100000000000",
-    "operatorMinRaw": "100000000000000"
+    "basicMinRaw": "2500000000000",
+    "operatorMinRaw": "50000000000000"
   },
   "status": {
     "inactive": 0,

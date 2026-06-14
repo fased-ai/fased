@@ -4290,7 +4290,7 @@ export function renderFederation(props: FederationProps) {
   const bondStakingClaimableStateLabel = isPositiveRaw(bondStakingClaimableRaw)
     ? "ready"
     : "no rewards";
-  const bondOperatorStakingMinRaw = "100000000000000";
+  const bondOperatorStakingMinRaw = "50000000000000";
   const bondStakingConfiguredMinRaw =
     bondStakingDistributor?.minStakeRaw ?? bondOperatorStakingMinRaw;
   const bondStakingMinRaw =
@@ -4313,7 +4313,7 @@ export function renderFederation(props: FederationProps) {
   );
   const bondWalletDraft = props.bondWalletIdDraft?.trim() || bondStatus?.walletId || "";
   const bondAmountDraft =
-    props.bondAmountDraft?.trim() || (bondTier === "operator-bond" ? "1000" : "1");
+    props.bondAmountDraft?.trim() || (bondTier === "operator-bond" ? "500" : "25");
   const bondBusyAction = props.bondBusyAction?.trim() || null;
   const legacyBondActionBusy = props.bondActionBusy === true && !bondBusyAction;
   const walletBondBusy =
@@ -6376,7 +6376,7 @@ export function renderFederation(props: FederationProps) {
                           ?disabled=${inventoryBondBusy || bondState === "unlocking"}
                           @input=${(e: Event) =>
                             props.onBondAmountDraftChange?.((e.target as HTMLInputElement).value)}
-                          placeholder="1000"
+                          placeholder="500"
                         />
                       </label>
                     </div>
