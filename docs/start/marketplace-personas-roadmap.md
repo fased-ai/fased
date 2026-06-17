@@ -9,7 +9,7 @@ title: "Marketplace and Personas Roadmap"
 # Marketplace and Personas Roadmap
 
 Marketplace is the first Fased Network service showcase inside Fased Agent.
-It demonstrates that an owned node can publish offers, create orders, use the
+It demonstrates that a self-hosted agent can publish offers, create orders, use the
 Agent wallet payment path, attach evidence, deliver results, and keep buyer and
 seller history.
 
@@ -37,14 +37,18 @@ The agent UI and runtime can show the basic service-order path:
 
 The strongest live service paths are:
 
-| Service kind                                       | Current behavior                                                                                                                          |
-| -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `content.summarize`                                | Automated order demo. Buyer pays through the explicit payment path, seller validates evidence, summary runs, result returns to the order. |
-| `task.general`, `human.task`, `freelancer.service` | Manual services. Buyer payment and seller delivery stay attached to the order evidence.                                                   |
-| `data.lookup`, `data.extract`                      | Structured data result demos for lookup/extract style services.                                                                           |
-| `api.access`                                       | Access-token or endpoint delivery demo for API products.                                                                                  |
-| `data.feed`                                        | Feed/subscription-shaped delivery demo. Renewal and stop scheduling are still upcoming.                                                   |
-| `plugin.service`, `skill.execution`                | Capability-product demos that represent plugin or skill-backed work with payment evidence.                                                |
+- **`content.summarize`:** automated order demo. Buyer pays through the
+  explicit payment path, seller validates evidence, summary runs, and the
+  result returns to the order.
+- **`task.general`, `human.task`, `freelancer.service`:** manual services.
+  Buyer payment and seller delivery stay attached to the order evidence.
+- **`data.lookup`, `data.extract`:** structured data result demos for
+  lookup/extract style services.
+- **`api.access`:** access-token or endpoint delivery demo for API products.
+- **`data.feed`:** feed/subscription-shaped delivery demo. Renewal and stop
+  scheduling are still upcoming.
+- **`plugin.service`, `skill.execution`:** capability-product demos that
+  represent plugin or skill-backed work with payment evidence.
 
 Delivery support is intentionally scoped. App inbox and order result delivery are
 the default. Webhook delivery is the first external adapter. Other delivery
@@ -79,14 +83,24 @@ The public Fased roadmap describes Marketplace as the first wedge of a larger
 network service layer. These are the concrete cases that should shape future
 offer types and UI defaults:
 
-| Use case family        | Marketplace shape                                  | Wallet and delivery notes                                                                                      |
-| ---------------------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| Business workflow      | `api.access`, `task.general`, or payment request   | Agent wallet handles supported payments; receipt and support handoff are first-class records.                  |
-| Data lookup service    | `data.lookup`, `data.extract`, `data.feed`         | Buyer can pay once or subscribe; delivery can be app inbox, artifact, webhook, feed, or Fased Network message. |
-| API-backed service     | `api.access`, `plugin.service`, `skill.execution`  | Seller returns endpoint, token, output, or proof; metering and expiry become required before broad automation. |
-| Manual service         | `human.task`, `freelancer.service`, `task.general` | Buyer pays through explicit payment flow; seller manually accepts, performs, delivers, and gets reviewed.      |
-| Wallet-policy workflow | payment request, scheduled payment, capped order   | Agent wallet only; wallet caps, destination allowlists, approval mode, and receipts are required controls.     |
-| Satcoin operator       | public mining history and later seller lanes       | Mining wallet stays separate; SAT history can inform operator status but not replace payment evidence.         |
+- **Business workflow:** `api.access`, `task.general`, or payment request.
+  Agent wallet handles supported payments; receipt and support handoff are
+  first-class records.
+- **Data lookup service:** `data.lookup`, `data.extract`, or `data.feed`.
+  Buyer can pay once or subscribe; delivery can be app inbox, artifact, webhook,
+  feed, or Fased Network message.
+- **API-backed service:** `api.access`, `plugin.service`, or
+  `skill.execution`. Seller returns endpoint, token, output, or proof. Metering
+  and expiry become required before broad automation.
+- **Manual service:** `human.task`, `freelancer.service`, or `task.general`.
+  Buyer pays through explicit payment flow; seller manually accepts, performs,
+  delivers, and gets reviewed.
+- **Wallet-policy workflow:** payment request, scheduled payment, or capped
+  order. Agent wallet controls caps, destination allowlists, approval mode, and
+  receipts.
+- **Satcoin operator:** public mining history and later seller lanes. Mining
+  wallet stays separate; SAT history can inform operator status but does not
+  replace payment evidence.
 
 Privacy and personas should be designed into those cases from the start:
 
@@ -136,14 +150,18 @@ rules.
 
 Likely Marketplace personas:
 
-| Persona          | Controls                                                                                                                            |
-| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Seller           | Drafts listings, improves descriptions, tracks Sales, follows up on delivery, and requests approval before publishing new products. |
-| Buyer            | Searches Marketplace, compares seller score and price, and creates orders only inside spend policy.                                 |
-| Researcher       | Requests data lookup, data feed, or human review when local sources are not enough.                                                 |
-| Market Scout     | Watches service demand, seller history, and listing terms without automatically spending.                                           |
-| Policy Reviewer  | Reviews allowed sellers, wallet caps, delivery methods, dispute history, and renewal rules.                                         |
-| Miner / Operator | Watches Satcoin mining, bond, route health, and operator readiness without mixing mining wallets into Marketplace payments.         |
+- **Seller:** drafts listings, improves descriptions, tracks Sales, follows up
+  on delivery, and requests approval before publishing new products.
+- **Buyer:** searches Marketplace, compares seller score and price, and creates
+  orders only inside spend policy.
+- **Researcher:** requests data lookup, data feed, or human review when local
+  sources are not enough.
+- **Market Scout:** watches service demand, seller history, and listing terms
+  without automatically spending.
+- **Policy Reviewer:** reviews allowed sellers, wallet caps, delivery methods,
+  dispute history, and renewal rules.
+- **Miner / Operator:** watches Satcoin mining, bond, route health, and operator
+  readiness without mixing mining wallets into Marketplace payments.
 
 The intended automation boundary is:
 

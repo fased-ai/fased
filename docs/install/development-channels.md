@@ -8,8 +8,6 @@ title: "Development Channels"
 
 # Development channels
 
-Last updated: 2026-01-21
-
 Fased ships three update channels:
 
 - **stable**: latest stable release tag for git checkouts; npm dist-tag
@@ -23,8 +21,9 @@ The current public install path is repo-backed. Package dist-tags are
 release-maintainer context until public package publication is active.
 </Note>
 
-We ship builds to **beta**, test them, then **promote a vetted build to `latest`**
-without changing the version number — dist-tags are the source of truth for npm installs.
+Maintainers ship builds to **beta**, test them, then **promote a vetted build to
+`latest`** without changing the version number. Dist-tags are the source of
+truth for npm installs.
 
 ## Switching channels
 
@@ -63,7 +62,8 @@ the install method:
   updates it, and installs the global CLI from that checkout.
 - `stable`/`beta` installs from npm using the matching dist-tag.
 
-Tip: if you want stable + dev in parallel, keep two clones and point your gateway at the stable one.
+Tip: if you want stable + dev in parallel, keep two clones and point your
+gateway at the stable one.
 
 ## Plugins and channels
 

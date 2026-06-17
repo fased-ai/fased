@@ -31,10 +31,12 @@ public mining history, and future operator roles.
 
 <AccordionGroup>
   <Accordion title="Fased Agent">
-    The user-run agent for sessions, plugins, wallet use, Satcoin mining, Fased Network, and operator workflows.
+    The user-run agent for sessions, plugins, wallet use, Satcoin mining,
+    Fased Network, and operator workflows.
   </Accordion>
   <Accordion title="Operator">
-    A user who runs and maintains infrastructure instead of only using hosted access. Operators handle install health, wallet boundaries, and network posture.
+    A user who runs and maintains their own Fased infrastructure. Operators
+    handle install health, wallet boundaries, and network posture.
   </Accordion>
   <Accordion title="User-run agent">
     A Fased Agent install run by the user or operator instead of only by a centralized hosted service.
@@ -43,13 +45,19 @@ public mining history, and future operator roles.
     Settings that decide what wallet-connected actions can happen, what needs approval, and which balances stay separated.
   </Accordion>
   <Accordion title="Agent wallet">
-    The wallet used for ordinary sends, receipts, Marketplace payment flows, and reviewed skill/plugin wallet actions. It is selected by explicit `@wallet:<walletId>` handle or the primary Agent fallback.
+    The wallet used for ordinary sends, receipts, Marketplace payment flows, and
+    reviewed skill/plugin wallet actions. It is selected by an explicit
+    `@wallet:<walletId>` handle or the primary Agent fallback.
   </Accordion>
   <Accordion title="Mining wallet">
-    The singleton `@wallet:mining` Solana wallet reserved for SAT mining. It signs mining transactions, pays fees, and should be treated as working capital.
+    The singleton `@wallet:mining` Solana wallet reserved for SAT mining. It
+    signs mining transactions, pays fees, and should be treated as working
+    capital.
   </Accordion>
   <Accordion title="Bond Vault">
-    A Vault wallet selected by Fased Network for SAT bond lifecycle and bond proof. Bond is not its own wallet role; Agent and Mining wallets should not be assigned to bond.
+    A Vault wallet selected by Fased Network for SAT bond lifecycle and bond
+    proof. Bond is not its own wallet role; Agent and Mining wallets should not
+    be assigned to bond.
   </Accordion>
   <Accordion title="Wallet SOL">
     SOL held directly by the wallet for transaction fees, signer-side costs, rent, and operational reserve.
@@ -104,13 +112,21 @@ public mining history, and future operator roles.
     Entry bond layer for profile cost and basic public trust. The recommended T0 minimum is `25 SAT`.
   </Accordion>
   <Accordion title="Operator bond">
-    Stronger bond layer for seller lanes, operator roles, higher-trust Fased Network participation, and staking eligibility when that path is enabled. The recommended first-year minimum is `500 SAT`; `1,000 SAT` is a later mature-network candidate after mining gets harder and distribution/liquidity improve.
+    Stronger bond layer for seller lanes, operator roles, higher-trust Fased
+    Network participation, and staking eligibility when that path is enabled.
+    The recommended first-year minimum is `500 SAT`. `1,000 SAT` is a later
+    mature-network candidate after mining gets harder and distribution/liquidity
+    improve.
   </Accordion>
   <Accordion title="Staking bond">
-    Eligibility state for active operator bonds when SAT staking distribution is enabled. Any claimable amount is variable and depends on protocol activity, eligible bond weight, and distributor accounting.
+    Eligibility state for active operator bonds when SAT staking distribution is
+    enabled. Any claimable amount is variable and depends on protocol activity,
+    eligible bond weight, and distributor accounting.
   </Accordion>
   <Accordion title="Staking distributor">
-    Program-owned accounting layer that tracks the staking SAT lane and assigns claimable amounts across eligible active staking bonds by proportional bond weight.
+    Program-owned accounting layer that tracks the staking SAT lane and assigns
+    claimable amounts across eligible active staking bonds by proportional bond
+    weight.
   </Accordion>
   <Accordion title="Pending pool">
     SAT currently visible in the distributor before eligible positions sync or claim. It is pool state, not a personal balance.
@@ -119,13 +135,18 @@ public mining history, and future operator roles.
     The amount synced to one bond position and available to claim into the selected Vault wallet.
   </Accordion>
   <Accordion title="Staking claim">
-    Manual Bond Operator action that first syncs accounting for the bond position, then transfers claimable SAT to the Vault wallet when a claimable amount exists.
+    Manual Bond Operator action that first syncs accounting for the bond
+    position, then transfers claimable SAT to the Vault wallet when a claimable
+    amount exists.
   </Accordion>
   <Accordion title="Protocol maintainer">
-    Operator loop for protocol housekeeping such as reserve refill, fixed-recipient accounting, distributor feed, and cleanup. It is not treasury custody.
+    Operator loop for protocol housekeeping such as reserve refill,
+    fixed-recipient accounting, distributor feed, and cleanup. It is not
+    treasury custody.
   </Accordion>
   <Accordion title="Fased Network">
-    The network participation layer for public handles, routing, discovery, offers, public route health, and stronger operator roles.
+    The network participation layer for public handles, routing, discovery,
+    offers, public route health, and stronger operator roles.
   </Accordion>
   <Accordion title="Offer">
     A public or semi-public service listing that can be routed, discovered, or matched through Fased Network.

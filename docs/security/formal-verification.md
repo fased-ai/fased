@@ -9,22 +9,25 @@ permalink: /security/formal-verification/
 
 # Formal Verification (Security Models)
 
-This page tracks optional Fased **formal security models** (TLA+/TLC today; more as needed).
+This page tracks optional Fased **formal security models** (TLA+/TLC today; more
+as needed).
 
 **Goal (north star):** provide a machine-checked argument that Fased enforces its
 intended security policy (authorization, session isolation, tool gating, and
 misconfiguration safety), under explicit assumptions.
 
-For product-facing setup guidance, start with [Security Overview](/security). The formal models
-below cover bounded claims; they do not replace runtime configuration review in Agent, Wallets,
-Usage, Logs, or Advanced.
+For product-facing setup guidance, start with [Security Overview](/security).
+The formal models below cover bounded claims; they do not replace runtime
+configuration review in Agent, Wallets, Usage, Logs, or Advanced.
 
 **What this is (today):** an executable, attacker-driven **security regression suite**:
 
 - Each claim has a runnable model-check over a finite state space.
-- Many claims have a paired **negative model** that produces a counterexample trace for a realistic bug class.
+- Many claims have a paired **negative model** that produces a counterexample
+  trace for a realistic bug class.
 
-**What this is not (yet):** a proof that “Fased is secure in all respects” or that the full TypeScript implementation is correct.
+**What this is not (yet):** a proof that “Fased is secure in all respects” or
+that the full TypeScript implementation is correct.
 
 ## Where the models live
 
@@ -35,13 +38,17 @@ source of truth.
 
 ## Important caveats
 
-- These are **models**, not the full TypeScript implementation. Drift between model and code is possible.
-- Results are bounded by the state space explored by TLC; “green” does not imply security beyond the modeled assumptions and bounds.
-- Some claims rely on explicit environmental assumptions (e.g., correct deployment, correct configuration inputs).
+- These are **models**, not the full TypeScript implementation. Drift between
+  model and code is possible.
+- Results are bounded by the state space explored by TLC; “green” does not imply
+  security beyond the modeled assumptions and bounds.
+- Some claims rely on explicit environmental assumptions, such as correct
+  deployment and correct configuration inputs.
 
 ## Reproducing results
 
-Today, results are reproduced by cloning the models repo locally and running TLC (see below). A future iteration could offer:
+Today, results are reproduced by cloning the models repo locally and running TLC.
+A future iteration could offer:
 
 - CI-run models with public artifacts (counterexample traces, run logs)
 - a hosted “run this model” workflow for small, bounded checks
@@ -60,7 +67,9 @@ make <target>
 
 ### Gateway exposure and open gateway misconfiguration
 
-**Claim:** binding beyond loopback without auth can make remote compromise possible / increases exposure; token/password blocks unauth attackers (per the model assumptions).
+**Claim:** binding beyond loopback without auth can increase exposure and make
+remote compromise possible. Token/password auth blocks unauthenticated attackers
+under the model assumptions.
 
 - Green runs:
   - `make gateway-exposure-v2`
@@ -72,7 +81,9 @@ See also: `docs/gateway-exposure-matrix.md` in the models repo.
 
 ### Nodes.run pipeline (highest-risk capability)
 
-**Claim:** `nodes.run` requires (a) node command allowlist plus declared commands and (b) live approval when configured; approvals are tokenized to prevent replay (in the model).
+**Claim:** `nodes.run` requires both node command allowlist/declaration and live
+approval when configured. Approvals are tokenized to prevent replay in the
+model.
 
 - Green runs:
   - `make nodes-pipeline`
@@ -83,16 +94,17 @@ See also: `docs/gateway-exposure-matrix.md` in the models repo.
 
 ### Agent tool and skill gates
 
-**Claim target:** installing or configuring a skill should not imply Agent access, tool access, or
-wallet authority. Agent skill allowlists, Agent > Tools policy, and Wallet > Skill Grants should be
-modeled as separate gates.
+**Claim target:** installing or configuring a skill should not imply Agent
+access, tool access, or wallet authority. Agent skill allowlists, Agent > Tools
+policy, and Wallet > Skill Grants should be modeled as separate gates.
 
 Status: model target identified; not yet represented as a published TLC target.
 
 ### Wallet and mining authority
 
-**Claim target:** generic skills can use only explicitly granted Agent-role wallets; mining and vault
-wallet roles remain unavailable to generic skills, and SAT mining uses the mining runtime policy.
+**Claim target:** generic skills can use only explicitly granted Agent-role
+wallets. Mining and Vault wallet roles remain unavailable to generic skills, and
+SAT mining uses the mining runtime policy.
 
 Status: model target identified; not yet represented as a published TLC target.
 
@@ -127,11 +139,14 @@ Status: model target identified; not yet represented as a published TLC target.
 
 ## v1++: additional bounded models (concurrency, retries, trace correctness)
 
-These are follow-on models that tighten fidelity around real-world failure modes (non-atomic updates, retries, and message fan-out).
+These are follow-on models that tighten fidelity around real-world failure
+modes: non-atomic updates, retries, and message fan-out.
 
 ### Pairing store concurrency / idempotency
 
-**Claim:** a pairing store should enforce `MaxPending` and idempotency even under interleavings (i.e., “check-then-write” must be atomic / locked; refresh shouldn’t create duplicates).
+**Claim:** a pairing store should enforce `MaxPending` and idempotency even under
+interleavings. In practice, “check-then-write” must be atomic/locked, and refresh
+should not create duplicates.
 
 What it means:
 
@@ -172,7 +187,8 @@ What it means:
 
 ### Routing dmScope precedence + identityLinks
 
-**Claim:** routing must keep DM sessions isolated by default, and only collapse sessions when explicitly configured (channel precedence + identity links).
+**Claim:** routing must keep DM sessions isolated by default, and only collapse
+sessions when explicitly configured through channel precedence + identity links.
 
 What it means:
 

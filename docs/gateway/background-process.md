@@ -29,17 +29,23 @@ Behavior:
 - When backgrounded (explicitly or after `yieldMs`), the tool returns
   `status: "running"` + `sessionId` and a short tail.
 - Output is kept in memory until the session is polled or cleared.
-- If the `process` tool is disallowed, `exec` runs synchronously and ignores `yieldMs`/`background`.
+- If the `process` tool is disallowed, `exec` runs synchronously and ignores
+  `yieldMs`/`background`.
 
 ## Child process bridging
 
-When spawning long-running child processes outside the exec/process tools (for example, CLI respawns or gateway helpers), attach the child-process bridge helper so termination signals are forwarded and listeners are detached on exit/error. This avoids orphaned processes on systemd and keeps shutdown behavior consistent across platforms.
+When spawning long-running child processes outside the exec/process tools, attach
+the child-process bridge helper. That covers CLI respawns, gateway helpers, and
+similar children. It forwards termination signals, detaches listeners on
+exit/error, avoids orphaned processes on systemd, and keeps shutdown behavior
+consistent across platforms.
 
 Environment overrides:
 
 - `PI_BASH_YIELD_MS`: default yield (ms)
 - `PI_BASH_MAX_OUTPUT_CHARS`: in‑memory output cap (chars)
-- `FASED_BASH_PENDING_MAX_OUTPUT_CHARS`: pending stdout/stderr cap per stream (chars)
+- `FASED_BASH_PENDING_MAX_OUTPUT_CHARS`: pending stdout/stderr cap per stream
+  (chars)
 - `PI_BASH_JOB_TTL_MS`: TTL for finished sessions (ms, bounded to 1m–3h)
 
 Config (preferred):
@@ -47,8 +53,10 @@ Config (preferred):
 - `tools.exec.backgroundMs` (default 10000)
 - `tools.exec.timeoutSec` (default 1800)
 - `tools.exec.cleanupMs` (default 1800000)
-- `tools.exec.notifyOnExit` (default true): enqueue a system event + request heartbeat when a backgrounded exec exits.
-- `tools.exec.notifyOnExitEmptySuccess` (default false): when true, also enqueue completion events for successful backgrounded runs that produced no output.
+- `tools.exec.notifyOnExit` (default true): enqueue a system event and request a
+  heartbeat when a backgrounded exec exits.
+- `tools.exec.notifyOnExitEmptySuccess` (default false): also enqueue completion
+  events for successful backgrounded runs that produced no output.
 
 ## process tool
 
@@ -69,12 +77,15 @@ Notes:
 
 - Only backgrounded sessions are listed/persisted in memory.
 - Sessions are lost on process restart (no disk persistence).
-- Session logs are only saved to chat history if you run `process poll/log` and the tool result is recorded.
+- Session logs are only saved to chat history if you run `process poll/log` and
+  the tool result is recorded.
 - `process` is scoped per agent; it only sees sessions started by that agent.
 - `process list` includes a derived `name` (command verb + target) for quick scans.
 - `process log` uses line-based `offset`/`limit`.
-- When both `offset` and `limit` are omitted, it returns the last 200 lines and includes a paging hint.
-- When `offset` is provided and `limit` is omitted, it returns from `offset` to the end (not capped to 200).
+- When both `offset` and `limit` are omitted, it returns the last 200 lines and
+  includes a paging hint.
+- When `offset` is provided and `limit` is omitted, it returns from `offset` to
+  the end and is not capped to 200.
 
 ## Examples
 

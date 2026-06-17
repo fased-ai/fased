@@ -1,5 +1,5 @@
 ---
-summary: "Architecture guide for self-hosted wallets in Fased: local signer, Go signer, storage paths, passkey, lock state, and security boundaries."
+summary: "Self-hosted wallet architecture: local signer, storage paths, passkey, lock state, and security boundaries."
 read_when:
   - You want the full self-hosted wallet model
   - You need to understand what lives on disk, what the signer owns, and how lock or unlock works
@@ -36,10 +36,10 @@ The self-hosted signer is the default sovereignty path. Hosted or MPC wallet
 providers can be useful optional adapters later with their own custody,
 credential, recovery, and policy model.
 
-## Why Fased uses role-separated self-hosted wallets
+## Why Fased uses role-separated wallets
 
-Fased is an Agent runtime, not only a wallet API. A normal wallet product asks,
-"can this user sign?" Fased also has to ask:
+Fased is an Agent runtime with wallet actions. A normal wallet product asks
+whether a user can sign. Fased also has to ask:
 
 - which Agent requested the action
 - whether the request came from chat, a task, a channel, a skill, or the UI
@@ -49,8 +49,8 @@ Fased is an Agent runtime, not only a wallet API. A normal wallet product asks,
   Fased Network wallet work
 - whether passkey approval, custody unlock, caps, and policy allow the action
 
-That is why Fased separates wallet purposes instead of treating all wallets as
-generic signing accounts:
+This is why Fased uses permanent wallet purposes rather than one generic
+signing account for everything:
 
 - **Agent wallets** are the only normal automation wallets.
 - **Mining wallets** are reserved for SAT mining and SAT sweep paths.
@@ -63,8 +63,7 @@ without receiving mining, Vault, or raw key access.
 
 ## Local signer boundary
 
-The local signer exists so the Gateway runtime and skills do not need raw wallet
-keys.
+The local signer keeps raw wallet keys inside the signer boundary.
 
 The intended boundary is:
 
@@ -76,9 +75,9 @@ The intended boundary is:
 - `fased-signerd` owns signer-side material, custody unlock state, signing, and
   signer audit logs
 
-In other words, Agent code should not receive seed phrases, private keys,
-keystores, signer master passwords, or provider master credentials. It should
-receive only policy-mediated wallet tools and structured results.
+Agent code receives policy-mediated wallet tools and structured results. Seed
+phrases, private keys, keystores, signer master passwords, and provider master
+credentials stay out of Agent code.
 
 Go is a reasonable implementation language for `fased-signerd` because it gives
 Fased a small native process, static release binaries, simple deployment on
@@ -123,8 +122,8 @@ An external wallet provider may make sense when you need:
 - enterprise audit/compliance integration
 - a hosted wallet fleet for many app users
 
-Do not mix these models casually. If an external provider is added, document
-which part of custody, recovery, policy, and audit moved outside the local signer.
+Keep these models explicit. If an external provider is added, document which
+part of custody, recovery, policy, and audit moved outside the local signer.
 
 Important distinction:
 
@@ -135,14 +134,13 @@ Important distinction:
 ## How it is put together
 
 ```mermaid
-flowchart LR
-    UI[Wallets UI or CLI] --> Runtime[Fased runtime]
-    Runtime --> Socket[local-socket-signer socket]
-    Socket --> Signer[fased-signerd]
-    Signer --> RPC[Chain RPC]
-    Signer --> Material[Local signer material]
-    UI --> Passkey[Wallet Control Passkey]
-    Passkey --> Runtime
+flowchart TD
+    UI["Wallets UI or CLI"] --> Runtime["Fased runtime"]
+    Passkey["Wallet Control Passkey"] --> Runtime
+    Runtime --> Socket["local-socket-signer socket"]
+    Socket --> Signer["fased-signerd"]
+    Signer --> RPC["Chain RPC"]
+    Signer --> Material["Local signer material"]
 ```
 
 Read it like this:
@@ -171,8 +169,8 @@ fased wallet signer doctor --json
 ```
 
 For long-running mining, Agent wallet automation, or Vault-backed Fased Network
-bond use, do not treat RPC as optional. Public RPC can be enough for local
-testing, but dedicated private RPC is the stronger operating posture.
+bond use, RPC is required operating infrastructure. Public RPC can be enough for
+local testing, but dedicated private RPC is the stronger operating posture.
 
 For setup details, read [Solana RPC setup](/plugins/crypto/wallet-rpc-setup).
 
@@ -186,21 +184,57 @@ By default, wallet state lives under:
 
 Important files and paths:
 
-| Path                                                | Purpose                                                     |
-| --------------------------------------------------- | ----------------------------------------------------------- |
-| `~/.fased/wallet/wallet-keys.json`                  | Runtime wallet registry and provider mappings               |
-| `~/.fased/wallet/policy-usage.json`                 | Daily policy usage counters                                 |
-| `~/.fased/wallet/wallet-send-approvals.json`        | Pending wallet approval requests                            |
-| `~/.fased/wallet/wallet-audit.jsonl`                | Wallet audit trail                                          |
-| `~/.fased/wallet/wallet-service.pid`                | Local wallet service pid file                               |
-| `~/.fased/wallet/wallet-service.log`                | Local wallet service log                                    |
-| `~/.fased/wallet/wallet-service.meta.json`          | Local wallet service metadata                               |
-| `~/.fased/wallet/local-signer.sock`                 | Local signer socket                                         |
-| `~/.fased/wallet/local-signer.pid`                  | Local signer pid file                                       |
-| `~/.fased/wallet/local-signer.audit.jsonl`          | Signer-side audit log                                       |
-| `~/.fased/wallet/wallet-approval-auth.json`         | Passkey public keys, challenges, and approval grants        |
-| `~/.fased/wallet/custody/<walletId>/state.json`     | Per-wallet custody and unlock-session state                 |
-| `~/.fased/wallet/custody/<walletId>/shares.v1.json` | Device-share and recovery-share metadata compatibility file |
+**`~/.fased/wallet/wallet-keys.json`**
+
+Runtime wallet registry and provider mappings.
+
+**`~/.fased/wallet/policy-usage.json`**
+
+Daily policy usage counters.
+
+**`~/.fased/wallet/wallet-send-approvals.json`**
+
+Pending wallet approval requests.
+
+**`~/.fased/wallet/wallet-audit.jsonl`**
+
+Wallet audit trail.
+
+**`~/.fased/wallet/wallet-service.pid`**
+
+Local wallet service pid file.
+
+**`~/.fased/wallet/wallet-service.log`**
+
+Local wallet service log.
+
+**`~/.fased/wallet/wallet-service.meta.json`**
+
+Local wallet service metadata.
+
+**`~/.fased/wallet/local-signer.sock`**
+
+Local signer socket.
+
+**`~/.fased/wallet/local-signer.pid`**
+
+Local signer pid file.
+
+**`~/.fased/wallet/local-signer.audit.jsonl`**
+
+Signer-side audit log.
+
+**`~/.fased/wallet/wallet-approval-auth.json`**
+
+Passkey public keys, challenges, and approval grants.
+
+**`~/.fased/wallet/custody/<walletId>/state.json`**
+
+Per-wallet custody and unlock-session state.
+
+**`~/.fased/wallet/custody/<walletId>/shares.v1.json`**
+
+Device-share and recovery-share metadata compatibility file.
 
 The signer material root also defaults to `~/.fased/wallet` unless you override it with signer environment variables.
 
@@ -225,8 +259,8 @@ The signer boundary is supposed to own:
 
 Practical reading:
 
-- the UI should not need direct raw key access
-- the runtime should talk to the signer, not act like the signer
+- the UI works through the runtime and signer boundary
+- the runtime talks to the signer for signing work
 - chain RPC is used for balance, mint metadata, and transaction operations
 - skills and plugins should request wallet work through policy rather than
   receiving raw keys, seeds, keystores, or provider master credentials
@@ -292,14 +326,15 @@ That gives you:
 Good practice:
 
 - keep the recovery share offline
-- do not store recovery share and device share together
+- store recovery share and device share separately
 - revoke and rotate after any suspected device compromise
 
 ## Mining, Agent wallet, and bond separation
 
 The recommended operating model is:
 
-- Agent wallets for normal sends, Fased Network wallet work, and skill/plugin wallet actions
+- Agent wallets for normal sends, Fased Network wallet work, and skill/plugin
+  wallet actions
 - mining wallet for Satcoin
 - Vault wallet for manual-first hot or warm reserve use
 - Agent wallets for invoices, fresh receiving addresses, or service receipts
@@ -310,7 +345,8 @@ Why this matters:
 
 - mining needs stable Solana RPC and ongoing fee headroom
 - Agent wallet needs tighter everyday send control
-- bond should not quietly become the same wallet used for ordinary outbound work
+- bond stays easier to review when it uses a Vault wallet separate from the
+  everyday outbound wallet
 
 ## How to protect a self-hosted wallet
 

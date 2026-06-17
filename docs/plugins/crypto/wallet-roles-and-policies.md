@@ -1,5 +1,5 @@
 ---
-summary: "Operational guide for Agent, Mining, Vault, split-key custody, wallet policy, chat wallet handles, Marketplace order actions, and mining use."
+summary: "Guide to Agent, Mining, Vault, wallet policy, chat handles, Marketplace actions, and mining use."
 read_when:
   - You are deciding which wallet role to use for chat, Marketplace, mining, Vault, or skills
   - You need exact @wallet handle behavior and policy boundaries
@@ -22,12 +22,34 @@ External addr = read-only balance checks or send destination, never a local sour
 
 ## Role map
 
-| Role                    | Use it for                                                                                                                    | Do not use it for                                         |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
-| Agent                   | Chat sends, Marketplace order actions, invoices, skill/plugin wallet actions, small working balances, reviewed wallet actions | Satcoin mining, Vault storage, bond authority             |
-| Mining                  | Satcoin mining start/stop/fund/commit/withdraw paths and mining history                                                       | Marketplace buying, ordinary chat sends, skills, invoices |
-| Vault                   | Manual-first storage, higher-value balances, recovery separation, optional Fased Network bond assignment                      | Routine automation, Marketplace order actions, mining     |
-| External Solana address | Read-only SOL/SPL balance checks or destination address for manual/approved sends                                             | Local signing source                                      |
+<CardGroup cols={2}>
+  <Card title="Agent wallet">
+    Use it for chat sends, Marketplace order actions, invoices, skill/plugin
+    wallet actions, small working balances, and reviewed wallet actions.
+
+    Keep Satcoin mining, Vault storage, and bond authority on their own lanes.
+  </Card>
+  <Card title="Mining wallet">
+    Use it for Satcoin start, stop, fund, commit, withdraw, claim, sweep, and
+    mining history.
+
+    Keep Marketplace buying, ordinary chat sends, skills, and invoices on Agent
+    wallets.
+  </Card>
+  <Card title="Vault wallet">
+    Use it for manual-first storage, higher-value balances, recovery separation,
+    and optional Fased Network bond assignment.
+
+    Keep routine automation, Marketplace order actions, and mining on their own
+    lanes.
+  </Card>
+  <Card title="External Solana address">
+    Use it for read-only SOL/SPL balance checks or as a destination for
+    manual/approved sends.
+
+    External addresses are never local signing sources.
+  </Card>
+</CardGroup>
 
 Bond is not a fourth wallet purpose. Fased Network bond authority is an
 assignment that must point to a Vault wallet.
@@ -151,8 +173,8 @@ Current policy boundary:
 - disabled skills cannot use wallet tools
 - skills can request optional route actions, schedule plans, scheduled sends, and
   trigger-order actions only when their wallet action grant includes those actions
-- custom, workspace, and catalog-installed skills cannot use Mining or Vault wallets; only
-  the built-in Satcoin mining runtime and bundled SAT mining skill use the
+- custom, workspace, and catalog-installed skills cannot use Mining or Vault
+  wallets; only the built-in Satcoin mining runtime and bundled SAT mining skill use the
   `@wallet:mining` path
 
 Target behavior for future personas:
@@ -259,18 +281,46 @@ No funds were moved.
 
 ## Scenario guide
 
-| Scenario                | Wallet                                             | Surface                                 |
-| ----------------------- | -------------------------------------------------- | --------------------------------------- |
-| Ask for all balances    | Any local handle or external Solana address        | Chat or Wallets                         |
-| Manual send             | Agent source; local handle or external destination | Wallets page                            |
-| Marketplace purchase    | Agent                                              | Marketplace or chat-assisted checkout   |
-| Seller receipt          | Seller Agent/payee                                 | Marketplace Sales                       |
-| Skill wallet action     | Agent, with skill wallet policy                    | Chat, skill, or schedule                |
-| SAT mining              | Mining                                             | Mining page and `@mining` chat tools    |
-| Fased Network bond      | Vault assignment                                   | Fased Network page                      |
-| Vault storage           | Vault                                              | Wallets page/manual flows               |
-| Advanced wallet actions | Agent                                              | Chat/channel `wallet_action` plus Tasks |
-| External Solana balance | External address                                   | Chat read-only                          |
+**Ask for all balances**
+
+Wallet: any local handle or external Solana address. Surface: Chat or Wallets.
+
+**Manual send**
+
+Wallet: Agent source, with a local handle or external destination. Surface:
+Wallets page.
+
+**Marketplace purchase**
+
+Wallet: Agent. Surface: Marketplace or chat-assisted checkout.
+
+**Seller receipt**
+
+Wallet: seller Agent/payee. Surface: Marketplace Sales.
+
+**Skill wallet action**
+
+Wallet: Agent, with skill wallet policy. Surface: Chat, skill, or schedule.
+
+**SAT mining**
+
+Wallet: Mining. Surface: Mining page and `@mining` chat tools.
+
+**Fased Network bond**
+
+Wallet: Vault assignment. Surface: Fased Network page.
+
+**Vault storage**
+
+Wallet: Vault. Surface: Wallets page/manual flows.
+
+**Advanced wallet actions**
+
+Wallet: Agent. Surface: Chat/channel `wallet_action` plus Tasks.
+
+**External Solana balance**
+
+Wallet: external address. Surface: Chat read-only.
 
 ## Read next
 

@@ -35,51 +35,96 @@ Healthy baseline:
 
 ## WhatsApp
 
-| Symptom                     | First check                                   | Fix                                     |
-| --------------------------- | --------------------------------------------- | --------------------------------------- |
-| connected but no DM replies | `fased pairing list whatsapp`                 | approve sender or change DM policy      |
-| group messages ignored      | inspect `requireMention` and mention patterns | mention the agent or relax group policy |
-| relogin loops               | channel probe plus logs                       | re-pair and inspect credential state    |
+**Connected but no DM replies**
+
+First check: `fased pairing list whatsapp`. Fix: approve the sender or change
+DM policy.
+
+**Group messages ignored**
+
+First check: `requireMention` and mention patterns. Fix: mention the agent or
+relax group policy.
+
+**Relogin loops**
+
+First check: channel probe plus logs. Fix: re-pair and inspect credential
+state.
 
 Full page: [WhatsApp](/channels/whatsapp#troubleshooting-quick)
 
 ## Telegram
 
-| Symptom                               | First check                            | Fix                                     |
-| ------------------------------------- | -------------------------------------- | --------------------------------------- |
-| `/start` works but chat flow does not | `fased pairing list telegram`          | approve pairing or change DM policy     |
-| bot is online but group stays silent  | check privacy mode and mention gating  | disable privacy mode or mention the bot |
-| send failures or fetch errors         | inspect logs for Telegram API failures | fix DNS, IPv6, proxy, or reachability   |
+**`/start` works but chat flow does not**
+
+First check: `fased pairing list telegram`. Fix: approve pairing or change DM
+policy.
+
+**Bot is online but group stays silent**
+
+First check: privacy mode and mention gating. Fix: disable privacy mode or
+mention the bot.
+
+**Send failures or fetch errors**
+
+First check: logs for Telegram API failures. Fix: DNS, IPv6, proxy, or
+reachability.
 
 Full page: [Telegram](/channels/telegram#troubleshooting)
 
 ## Discord
 
-| Symptom                                      | First check                     | Fix                                                          |
-| -------------------------------------------- | ------------------------------- | ------------------------------------------------------------ |
-| bot is online but guild replies never happen | `fased channels status --probe` | verify guild or channel allowlist and message-content intent |
-| group messages ignored                       | inspect logs for mention gating | mention the bot or relax `requireMention`                    |
-| DMs missing                                  | `fased pairing list discord`    | approve DM pairing or change DM policy                       |
+**Bot is online but guild replies never happen**
+
+First check: `fased channels status --probe`. Fix: verify guild/channel
+allowlists and Message Content Intent.
+
+**Group messages ignored**
+
+First check: logs for mention gating. Fix: mention the bot or relax
+`requireMention`.
+
+**DMs missing**
+
+First check: `fased pairing list discord`. Fix: approve DM pairing or change
+DM policy.
 
 Full page: [Discord](/channels/discord#troubleshooting)
 
 ## Slack
 
-| Symptom                                        | First check                          | Fix                                     |
-| ---------------------------------------------- | ------------------------------------ | --------------------------------------- |
-| Socket Mode is connected but no replies happen | `fased channels status --probe`      | verify app token, bot token, and scopes |
-| DMs blocked                                    | `fased pairing list slack`           | approve pairing or relax DM policy      |
-| channel messages ignored                       | inspect `groupPolicy` and allowlists | allow the channel or open the policy    |
+**Socket Mode is connected but no replies happen**
+
+First check: `fased channels status --probe`. Fix: verify app token, bot
+token, and scopes.
+
+**DMs blocked**
+
+First check: `fased pairing list slack`. Fix: approve pairing or relax DM
+policy.
+
+**Channel messages ignored**
+
+First check: `groupPolicy` and allowlists. Fix: allow the channel or open the
+policy.
 
 Full page: [Slack](/channels/slack#troubleshooting)
 
 ## iMessage and BlueBubbles
 
-| Symptom                              | First check                                        | Fix                                          |
-| ------------------------------------ | -------------------------------------------------- | -------------------------------------------- |
-| no inbound events                    | verify webhook reachability and server state       | fix webhook URL or BlueBubbles server health |
-| can send but cannot receive on macOS | inspect macOS privacy permissions                  | re-grant TCC permissions and restart         |
-| DM sender blocked                    | `fased pairing list imessage` or `... bluebubbles` | approve pairing or update allowlist          |
+**No inbound events**
+
+First check: webhook reachability and server state. Fix: webhook URL or
+BlueBubbles server health.
+
+**Can send but cannot receive on macOS**
+
+First check: macOS privacy permissions. Fix: re-grant TCC permissions and
+restart.
+
+**DM sender blocked**
+
+First check: `fased pairing list imessage` or
+`fased pairing list bluebubbles`. Fix: approve pairing or update allowlist.
 
 Full pages:
 
@@ -88,20 +133,37 @@ Full pages:
 
 ## Signal
 
-| Symptom                                  | First check                                  | Fix                                          |
-| ---------------------------------------- | -------------------------------------------- | -------------------------------------------- |
-| daemon is reachable but bot stays silent | `fased channels status --probe`              | verify daemon URL, account, and receive mode |
-| DMs blocked                              | `fased pairing list signal`                  | approve sender or change DM policy           |
-| group replies never trigger              | inspect group allowlist and mention patterns | add sender or group, or relax gating         |
+**Daemon is reachable but bot stays silent**
+
+First check: `fased channels status --probe`. Fix: verify daemon URL, account,
+and receive mode.
+
+**DMs blocked**
+
+First check: `fased pairing list signal`. Fix: approve sender or change DM
+policy.
+
+**Group replies never trigger**
+
+First check: group allowlist and mention patterns. Fix: add sender/group or
+relax gating.
 
 Full page: [Signal](/channels/signal#troubleshooting)
 
 ## Matrix
 
-| Symptom                                 | First check                     | Fix                                        |
-| --------------------------------------- | ------------------------------- | ------------------------------------------ |
-| logged in but room messages are ignored | `fased channels status --probe` | inspect room allowlist and group policy    |
-| DMs do not process                      | `fased pairing list matrix`     | approve sender or change DM policy         |
-| encrypted rooms fail                    | inspect encryption setup        | enable crypto support and rejoin or resync |
+**Logged in but room messages are ignored**
+
+First check: `fased channels status --probe`. Fix: inspect room allowlist and
+group policy.
+
+**DMs do not process**
+
+First check: `fased pairing list matrix`. Fix: approve sender or change DM
+policy.
+
+**Encrypted rooms fail**
+
+First check: encryption setup. Fix: enable crypto support and rejoin or resync.
 
 Full page: [Matrix](/channels/matrix#troubleshooting)

@@ -7,7 +7,8 @@ read_when:
 
 # Together AI
 
-The [Together AI](https://together.ai) provides access to leading open-source models including Llama, DeepSeek, Kimi, and more through a unified API.
+[Together AI](https://together.ai) provides access to open-source models
+including Llama, DeepSeek, Kimi, and more through a unified API.
 
 - Provider: `together`
 - Auth: `TOGETHER_API_KEY`

@@ -24,7 +24,7 @@ the selected Agent.
    Agent, session, task, or channel.
 
 ```mermaid
-flowchart LR
+flowchart TD
   start["Open Agent"] --> auth["Add provider auth"]
   auth --> roles["Set model roles"]
   roles --> chat["Test in Chat"]
@@ -42,12 +42,25 @@ flowchart LR
 
 ## Pick The Provider Shape
 
-| Shape                 | Start with                                                                                                                                                                   |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Hosted API or sign-in | [OpenAI](/providers/openai), [Anthropic](/providers/anthropic), [Chutes](/providers/chutes), or another provider page.                                                       |
-| Router or aggregator  | [OpenRouter](/providers/openrouter), [Vercel AI](/providers/vercel-ai-gateway), [LiteLLM](/providers/litellm), or [Cloudflare AI Gateway](/providers/cloudflare-ai-gateway). |
-| Local model           | [Ollama](/providers/ollama), [LM Studio](/providers/lmstudio), or [vLLM-compatible](/providers/vllm).                                                                        |
-| Custom endpoint       | [Custom Provider](/providers/custom).                                                                                                                                        |
+<CardGroup cols={2}>
+  <Card title="Hosted API or sign-in">
+    Start with [OpenAI](/providers/openai), [Anthropic](/providers/anthropic),
+    [Chutes](/providers/chutes), or another hosted provider page.
+  </Card>
+  <Card title="Router or aggregator">
+    Start with [OpenRouter](/providers/openrouter),
+    [Vercel AI](/providers/vercel-ai-gateway), [LiteLLM](/providers/litellm),
+    or [Cloudflare AI Gateway](/providers/cloudflare-ai-gateway).
+  </Card>
+  <Card title="Local model">
+    Start with [Ollama](/providers/ollama), [LM Studio](/providers/lmstudio),
+    or [vLLM-compatible](/providers/vllm).
+  </Card>
+  <Card title="Custom endpoint">
+    Use [Custom Provider](/providers/custom) when the built-in provider shapes
+    do not fit your endpoint.
+  </Card>
+</CardGroup>
 
 ## Catalog Maintenance
 

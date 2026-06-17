@@ -128,18 +128,20 @@ If a proof fails, fix it before calling the task layer frozen.
 
 ## What Changed From Cron/Heartbeat
 
-| Area           | Older model                                            | Tasks v1                                                                 |
-| -------------- | ------------------------------------------------------ | ------------------------------------------------------------------------ |
-| Product object | Cron job, heartbeat wake, or channel-triggered message | Task owned by an Agent and Session                                       |
-| Ownership      | Implied by main session or channel route               | Explicit `agentId`, `sessionKey`, task id, trigger, policy, and delivery |
-| Channel role   | Often shaped the user experience                       | Transport and optional delivery target                                   |
-| Scheduling     | Gateway cron/heartbeat internals                       | Triggers wake Tasks; policy decides execution                            |
-| Execution      | One prompt or one scheduler event                      | No-model, skill-only, model, or graph execution                          |
-| Memory         | Mostly session/prompt-shaped                           | Explicit memory scope per Task                                           |
-| Skills         | Usually Agent/tool prompt availability                 | Explicit skill scope and preflight                                       |
-| Recovery       | Scheduler-centric restart/backoff                      | Queue status, leases, retry, checkpoint, delivery replay                 |
-| Evidence       | Logs and transcript                                    | Run detail, queue steps, source quality, adapters, delivery, transcript  |
-| UI naming      | Could still say cron                                   | User-facing UI says Task; `cron.*` remains internal storage              |
+- Product object: older cron jobs, heartbeat wakes, and channel-triggered
+  messages become Tasks owned by an Agent and Session.
+- Ownership: Tasks carry explicit `agentId`, `sessionKey`, task id, trigger,
+  policy, and delivery.
+- Channel role: channels stay transport and optional delivery targets.
+- Scheduling: triggers wake Tasks; task policy decides execution.
+- Execution: a Task can run no-model, skill-only, model, or graph execution.
+- Memory: memory scope is explicit per Task.
+- Skills: skill scope and preflight are explicit.
+- Recovery: queue status, leases, retry, checkpoint, and delivery replay are
+  part of the task runtime.
+- Evidence: run detail carries queue steps, source quality, adapters, delivery,
+  transcript, and other proof.
+- UI naming: user-facing UI says Task; `cron.*` remains internal storage.
 
 The important change is moving work ownership away from scheduler mechanics and
 into durable Agent/session Tasks.

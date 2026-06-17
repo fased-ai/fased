@@ -23,7 +23,8 @@ cd fased
 ```
 
 <Note>
-On Windows, use [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install), then run the same repo-backed commands inside Ubuntu.
+On Windows, use [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install),
+then run the same repo-backed commands inside Ubuntu.
 </Note>
 
 ## What `install.sh` does
@@ -222,19 +223,27 @@ current surface, run `./install.sh --help` from the repo root.
 
 ## Environment variables
 
-| Variable                            | Description                                                                                                                     |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `FASED_INSTALL_REPO=<url>`          | Repo URL used by bootstrap installs.                                                                                            |
-| `FASED_INSTALL_DIR=<path>`          | Checkout/install directory.                                                                                                     |
-| `FASED_STATE_DIR=<path>`            | Runtime state directory for config, sessions, credentials, logs, wallets, and caches.                                           |
-| `FASED_CONFIG_PATH=<path>`          | Explicit config file path. Defaults to `$FASED_STATE_DIR/fased.json`.                                                           |
-| `FASED_CONFIG_DIR=<path>`           | Installer compatibility alias for state, install marker, cache, and logs directory. Prefer `FASED_STATE_DIR` for new installs.  |
-| `FASED_CLI_BIN_DIR=<path>`          | Directory where `install.sh` writes the `fased` command.                                                                        |
-| `FASED_INSTALL_VERBOSE=1`           | Show install command output instead of only log paths.                                                                          |
-| `FASED_INSTALL_USER=<name>`         | Non-root app user used by root bootstrap installs.                                                                              |
-| `FASED_EXISTING_DATA_ACTION=<mode>` | Advanced local state override: `keep`, `reset-config`, or `separate-state`. Normal installs keep existing state automatically.  |
-| `FASED_EXISTING_DATA_DIR=<path>`    | State directory used with `FASED_EXISTING_DATA_ACTION=separate-state`.                                                          |
-| `FASED_SAT_RUNTIME_ENV_FILE=<path>` | Optional SAT runtime ID env file for explicit test networks or verified manual recovery. Normal mainnet setup uses Mining Sync. |
+- `FASED_INSTALL_REPO=<url>`: repo URL used by bootstrap installs.
+- `FASED_INSTALL_DIR=<path>`: checkout/install directory.
+- `FASED_STATE_DIR=<path>`: runtime state directory for config, sessions,
+  credentials, logs, wallets, and caches.
+- `FASED_CONFIG_PATH=<path>`: explicit config file path. Defaults to
+  `$FASED_STATE_DIR/fased.json`.
+- `FASED_CONFIG_DIR=<path>`: installer compatibility alias for state, install
+  marker, cache, and logs directory. Prefer `FASED_STATE_DIR` for new installs.
+- `FASED_CLI_BIN_DIR=<path>`: directory where `install.sh` writes the `fased`
+  command.
+- `FASED_INSTALL_VERBOSE=1`: show install command output instead of only log
+  paths.
+- `FASED_INSTALL_USER=<name>`: non-root app user used by root bootstrap installs.
+- `FASED_EXISTING_DATA_ACTION=<mode>`: advanced local state override: `keep`,
+  `reset-config`, or `separate-state`. Normal installs keep existing state
+  automatically.
+- `FASED_EXISTING_DATA_DIR=<path>`: state directory used with
+  `FASED_EXISTING_DATA_ACTION=separate-state`.
+- `FASED_SAT_RUNTIME_ENV_FILE=<path>`: optional SAT runtime ID env file for
+  explicit test networks or verified manual recovery. Normal mainnet setup uses
+  Mining Sync.
 
 ## Automation
 
@@ -251,7 +260,8 @@ If you automate a hosted install, keep the same security order:
 1. provision the host
 2. join it to Tailscale; use an auth key only for non-interactive provisioning
 3. run onboarding
-4. access Control UI / gateway only through Tailscale or a deliberate private tunnel
+4. access Control UI / gateway only through Tailscale or a deliberate private
+   tunnel
 
 Use a controlled install directory in CI or on a managed host:
 

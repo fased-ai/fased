@@ -120,7 +120,9 @@ State is stored in `auth-profiles.json` under `usageStats`:
 
 ## Billing disables
 
-Billing or credit failures are treated as failover-worthy, but they are usually not transient. Instead of a short cooldown, Fased marks the profile as disabled with a longer backoff and rotates to the next profile or provider.
+Billing or credit failures are treated as failover-worthy, but they are usually
+not transient. Instead of a short cooldown, Fased marks the profile as disabled
+with a longer backoff and rotates to the next profile or provider.
 
 State is stored in `auth-profiles.json`:
 

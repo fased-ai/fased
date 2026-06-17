@@ -8,7 +8,8 @@ title: "logs"
 
 # `fased logs`
 
-Tail gateway file logs over RPC. This is the quick path when the runtime is remote and you do not want to SSH into the host just to inspect logs.
+Tail gateway file logs over RPC. This is the quick path when the runtime is
+remote and you do not want to SSH into the host just to inspect logs.
 
 Related:
 

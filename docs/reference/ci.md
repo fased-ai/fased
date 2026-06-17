@@ -9,7 +9,8 @@ read_when:
 
 # CI Pipeline
 
-The CI runs on every push to `main` and every pull request. It uses smart scoping to skip expensive jobs when only docs or native code changed.
+The CI runs on every push to `main` and every pull request. It uses smart
+scoping to skip expensive jobs when only docs or native code changed.
 
 ## Job Overview
 

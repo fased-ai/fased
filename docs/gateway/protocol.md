@@ -220,19 +220,36 @@ The Gateway treats these as **claims** and enforces server-side allowlists.
 
 ### Device auth migration diagnostics
 
-For legacy clients that still use pre-challenge signing behavior, `connect` now returns
-`DEVICE_AUTH_*` detail codes under `error.details.code` with a stable `error.details.reason`.
+For legacy clients that still use pre-challenge signing behavior, `connect`
+returns `DEVICE_AUTH_*` detail codes under `error.details.code` with a stable
+`error.details.reason`.
 
 Common migration failures:
 
-| Message                     | details.code                     | details.reason           | Meaning                                            |
-| --------------------------- | -------------------------------- | ------------------------ | -------------------------------------------------- |
-| `device nonce required`     | `DEVICE_AUTH_NONCE_REQUIRED`     | `device-nonce-missing`   | Client omitted `device.nonce` (or sent blank).     |
-| `device nonce mismatch`     | `DEVICE_AUTH_NONCE_MISMATCH`     | `device-nonce-mismatch`  | Client signed with a stale/wrong nonce.            |
-| `device signature invalid`  | `DEVICE_AUTH_SIGNATURE_INVALID`  | `device-signature`       | Signature payload does not match v2 payload.       |
-| `device signature expired`  | `DEVICE_AUTH_SIGNATURE_EXPIRED`  | `device-signature-stale` | Signed timestamp is outside allowed skew.          |
-| `device identity mismatch`  | `DEVICE_AUTH_DEVICE_ID_MISMATCH` | `device-id-mismatch`     | `device.id` does not match public key fingerprint. |
-| `device public key invalid` | `DEVICE_AUTH_PUBLIC_KEY_INVALID` | `device-public-key`      | Public key format/canonicalization failed.         |
+- `device nonce required`
+  - code: `DEVICE_AUTH_NONCE_REQUIRED`
+  - reason: `device-nonce-missing`
+  - meaning: client omitted `device.nonce` or sent it blank.
+- `device nonce mismatch`
+  - code: `DEVICE_AUTH_NONCE_MISMATCH`
+  - reason: `device-nonce-mismatch`
+  - meaning: client signed with a stale or wrong nonce.
+- `device signature invalid`
+  - code: `DEVICE_AUTH_SIGNATURE_INVALID`
+  - reason: `device-signature`
+  - meaning: signature payload does not match v2 payload.
+- `device signature expired`
+  - code: `DEVICE_AUTH_SIGNATURE_EXPIRED`
+  - reason: `device-signature-stale`
+  - meaning: signed timestamp is outside allowed skew.
+- `device identity mismatch`
+  - code: `DEVICE_AUTH_DEVICE_ID_MISMATCH`
+  - reason: `device-id-mismatch`
+  - meaning: `device.id` does not match public key fingerprint.
+- `device public key invalid`
+  - code: `DEVICE_AUTH_PUBLIC_KEY_INVALID`
+  - reason: `device-public-key`
+  - meaning: public key format/canonicalization failed.
 
 Migration target:
 

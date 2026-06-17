@@ -32,9 +32,11 @@ The expected operator flow is:
 - active commit amount
 - recent mining history
 
-Recovery and claim-heavy workflows are still easier in Mining when you need guided operator context.
+Recovery and claim-heavy workflows are still easier in Mining when you need
+guided operator context.
 
-For strategy tuning, planner behavior, claim policy, sweep policy, and recovery interpretation, read [Advanced SAT mining](/plugins/crypto/mining-advanced).
+For strategy tuning, planner behavior, claim policy, sweep policy, and recovery
+interpretation, read [Advanced SAT mining](/plugins/crypto/mining-advanced).
 
 ## Common commands
 

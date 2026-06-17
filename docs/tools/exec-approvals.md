@@ -9,11 +9,16 @@ title: "Exec Approvals"
 
 # Exec approvals
 
-Exec approvals are the **companion app / node host guardrail** for letting a sandboxed agent run
-commands on a real host (`gateway` or `node`). Think of it like a safety interlock:
-commands are allowed only when policy + allowlist + (optional) user approval all agree.
-Exec approvals are **in addition** to tool policy and elevated gating (unless elevated is set to `full`, which skips approvals).
-Effective policy is the **stricter** of `tools.exec.*` and approvals defaults; if an approvals field is omitted, the `tools.exec` value is used.
+Exec approvals are the **companion app / node host guardrail** for letting a
+sandboxed agent run commands on a real host (`gateway` or `node`). Think of it
+like a safety interlock: commands are allowed only when policy + allowlist +
+optional user approval all agree.
+
+Exec approvals are **in addition** to tool policy and elevated gating, unless
+elevated is set to `full`, which skips approvals.
+
+Effective policy is the **stricter** of `tools.exec.*` and approvals defaults.
+If an approvals field is omitted, the `tools.exec` value is used.
 
 If the companion app UI is **not available**, any request that requires a prompt is
 resolved by the **ask fallback** (default: deny).
@@ -123,12 +128,15 @@ Each allowlist entry tracks:
 
 When **Auto-allow skill CLIs** is enabled, executables referenced by known skills
 are treated as allowlisted on nodes (macOS node or headless node host). This uses
-`skills.bins` over the Gateway RPC to fetch the skill bin list. Disable this if you want strict manual allowlists.
+`skills.bins` over the Gateway RPC to fetch the skill bin list. Disable this if
+you want strict manual allowlists.
 
 Important trust notes:
 
-- This is an **implicit convenience allowlist**, separate from manual path allowlist entries.
-- It is intended for trusted operator environments where Gateway and node are in the same trust boundary.
+- This is an **implicit convenience allowlist**, separate from manual path
+  allowlist entries.
+- It is intended for trusted operator environments where Gateway and node are in
+  the same trust boundary.
 - If you require strict explicit trust, keep `autoAllowSkills: false` and use manual path allowlist entries only.
 
 ## Safe bins (stdin-only)
@@ -137,8 +145,11 @@ Important trust notes:
 that can run in allowlist mode **without** explicit allowlist entries. Safe bins reject
 positional file args and path-like tokens, so they can only operate on the incoming stream.
 Treat this as a narrow fast-path for stream filters, not a general trust list.
-Do **not** add interpreter or runtime binaries (for example `python3`, `node`, `ruby`, `bash`, `sh`, `zsh`) to `safeBins`.
-If a command can evaluate code, execute subcommands, or read files by design, prefer explicit allowlist entries and keep approval prompts enabled.
+Do **not** add interpreter or runtime binaries to `safeBins`, including
+`python3`, `node`, `ruby`, `bash`, `sh`, or `zsh`.
+
+If a command can evaluate code, execute subcommands, or read files by design,
+prefer explicit allowlist entries and keep approval prompts enabled.
 Custom safe bins must define an explicit profile in `tools.exec.safeBinProfiles.<bin>`.
 Validation is deterministic from argv shape only (no host filesystem existence checks), which
 prevents file-existence oracle behavior from allow/deny differences.
@@ -192,22 +203,40 @@ rejected so file operands cannot be smuggled as ambiguous positionals.
 
 ### Safe bins versus allowlist
 
-| Topic            | `tools.exec.safeBins`                                  | Allowlist (`exec-approvals.json`)                            |
-| ---------------- | ------------------------------------------------------ | ------------------------------------------------------------ |
-| Goal             | Auto-allow narrow stdin filters                        | Explicitly trust specific executables                        |
-| Match type       | Executable name + safe-bin argv policy                 | Resolved executable path glob pattern                        |
-| Argument scope   | Restricted by safe-bin profile and literal-token rules | Path match only; arguments are otherwise your responsibility |
-| Typical examples | `jq`, `head`, `tail`, `wc`                             | `python3`, `node`, `ffmpeg`, custom CLIs                     |
-| Best use         | Low-risk text transforms in pipelines                  | Any tool with broader behavior or side effects               |
+- Goal:
+  - `tools.exec.safeBins`: auto-allow narrow stdin filters.
+  - Allowlist: explicitly trust specific executables.
+- Match type:
+  - `tools.exec.safeBins`: executable name + safe-bin argv policy.
+  - Allowlist: resolved executable path glob pattern.
+- Argument scope:
+  - `tools.exec.safeBins`: restricted by safe-bin profile and literal-token
+    rules.
+  - Allowlist: path match only; arguments are otherwise your responsibility.
+- Typical examples:
+  - `tools.exec.safeBins`: `jq`, `head`, `tail`, `wc`.
+  - Allowlist: `python3`, `node`, `ffmpeg`, custom CLIs.
+- Best use:
+  - `tools.exec.safeBins`: low-risk text transforms in pipelines.
+  - Allowlist: any tool with broader behavior or side effects.
 
 Configuration location:
 
-- `safeBins` comes from config (`tools.exec.safeBins` or per-agent `agents.list[].tools.exec.safeBins`).
-- `safeBinTrustedDirs` comes from config (`tools.exec.safeBinTrustedDirs` or per-agent `agents.list[].tools.exec.safeBinTrustedDirs`).
-- `safeBinProfiles` comes from config (`tools.exec.safeBinProfiles` or per-agent `agents.list[].tools.exec.safeBinProfiles`). Per-agent profile keys override global keys.
-- allowlist entries live in host-local `~/.fased/exec-approvals.json` under `agents.<id>.allowlist` (or via Control UI / `fased approvals allowlist ...`).
-- `fased security audit` warns with `tools.exec.safe_bins_interpreter_unprofiled` when interpreter/runtime bins appear in `safeBins` without explicit profiles.
-- `fased doctor --fix` can scaffold missing custom `safeBinProfiles.<bin>` entries as `{}` (review and tighten afterward). Interpreter/runtime bins are not auto-scaffolded.
+- `safeBins` comes from config: `tools.exec.safeBins` or per-agent
+  `agents.list[].tools.exec.safeBins`.
+- `safeBinTrustedDirs` comes from config: `tools.exec.safeBinTrustedDirs` or
+  per-agent `agents.list[].tools.exec.safeBinTrustedDirs`.
+- `safeBinProfiles` comes from config: `tools.exec.safeBinProfiles` or
+  per-agent `agents.list[].tools.exec.safeBinProfiles`. Per-agent profile keys
+  override global keys.
+- allowlist entries live in host-local `~/.fased/exec-approvals.json` under
+  `agents.<id>.allowlist`, or via Control UI / `fased approvals allowlist ...`.
+- `fased security audit` warns with
+  `tools.exec.safe_bins_interpreter_unprofiled` when interpreter/runtime bins
+  appear in `safeBins` without explicit profiles.
+- `fased doctor --fix` can scaffold missing custom `safeBinProfiles.<bin>`
+  entries as `{}`. Review and tighten afterward. Interpreter/runtime bins are
+  not auto-scaffolded.
 
 Custom profile example:
 
@@ -241,17 +270,20 @@ must advertise `system.execApprovals.get/set` (macOS app or headless node host).
 If a node does not advertise exec approvals yet, edit its local
 `~/.fased/exec-approvals.json` directly.
 
-CLI: `fased approvals` supports gateway or node editing (see [Approvals CLI](/cli/approvals)).
+CLI: `fased approvals` supports gateway or node editing. See
+[Approvals CLI](/cli/approvals).
 
 ## Approval flow
 
-When a prompt is required, the gateway broadcasts `exec.approval.requested` to operator clients.
-The Control UI and macOS app resolve it via `exec.approval.resolve`, then the gateway forwards the
-approved request to the node host.
+When a prompt is required, the gateway broadcasts `exec.approval.requested` to
+operator clients. The Control UI and macOS app resolve it via
+`exec.approval.resolve`, then the gateway forwards the approved request to the
+node host.
 
-When approvals are required, the exec tool returns immediately with an approval id. Use that id to
-correlate later system events (`Exec finished` / `Exec denied`). If no decision arrives before the
-timeout, the request is treated as an approval timeout and surfaced as a denial reason.
+When approvals are required, the exec tool returns immediately with an approval
+id. Use that id to correlate later system events (`Exec finished` /
+`Exec denied`). If no decision arrives before the timeout, the request is
+treated as an approval timeout and surfaced as a denial reason.
 
 The confirmation dialog includes:
 
@@ -269,8 +301,9 @@ Actions:
 
 ## Approval forwarding to chat channels
 
-You can forward exec approval prompts to any chat channel (including plugin channels) and approve
-them with `/approve`. This uses the normal outbound delivery pipeline.
+You can forward exec approval prompts to any chat channel, including plugin
+channels, and approve them with `/approve`. This uses the normal outbound
+delivery pipeline.
 
 Config:
 
@@ -323,7 +356,8 @@ Exec lifecycle is surfaced as system messages:
 - `Exec denied`
 
 These are posted to the agent’s session after the node reports the event.
-Gateway-host exec approvals emit the same lifecycle events when the command finishes (and optionally when running longer than the threshold).
+Gateway-host exec approvals emit the same lifecycle events when the command
+finishes, and optionally when running longer than the threshold.
 Approval-gated execs reuse the approval id as the `runId` in these messages for easy correlation.
 
 ## Implications
@@ -331,8 +365,10 @@ Approval-gated execs reuse the approval id as the `runId` in these messages for 
 - **full** is powerful; prefer allowlists when possible.
 - **ask** keeps you in the loop while still allowing fast approvals.
 - Per-agent allowlists prevent one agent’s approvals from leaking into others.
-- Approvals only apply to host exec requests from **authorized senders**. Unauthorized senders cannot issue `/exec`.
-- `/exec security=full` is a session-level convenience for authorized operators and skips approvals by design.
+- Approvals only apply to host exec requests from **authorized senders**.
+  Unauthorized senders cannot issue `/exec`.
+- `/exec security=full` is a session-level convenience for authorized operators
+  and skips approvals by design.
   To hard-block host exec, set approvals security to `deny` or deny the `exec` tool via tool policy.
 
 Related:

@@ -19,10 +19,14 @@ title: "Elevated Mode"
 
 ## What it controls (and what it doesn’t)
 
-- **Availability gates**: `tools.elevated` is the global baseline. `agents.list[].tools.elevated` can further restrict elevated per agent (both must allow).
+- **Availability gates**: `tools.elevated` is the global baseline.
+  `agents.list[].tools.elevated` can further restrict elevated per agent. Both
+  must allow.
 - **Per-session state**: `/elevated on|off|ask|full` sets the elevated level for the current session key.
 - **Inline directive**: `/elevated on|ask|full` inside a message applies to that message only.
-- **Groups**: In group chats, elevated directives are only honored when the agent is mentioned. Command-only messages that bypass mention requirements are treated as mentioned.
+- **Groups**: in group chats, elevated directives are only honored when the
+  agent is mentioned. Command-only messages that bypass mention requirements are
+  treated as mentioned.
 - **Host execution**: elevated forces `exec` onto the gateway host; `full` also sets `security=full`.
 - **Approvals**: `full` skips exec approvals; `on`/`ask` honor them when allowlist/ask rules require.
 - **Unsandboxed agents**: no-op for location; only affects gating, logging, and status.
@@ -39,22 +43,31 @@ title: "Elevated Mode"
 
 - Send a message that is **only** the directive (whitespace allowed), e.g. `/elevated full`.
 - Confirmation reply is sent (`Elevated mode set to full...` / `Elevated mode disabled.`).
-- If elevated access is disabled or the sender is not on the approved allowlist, the directive replies with an actionable error and does not change session state.
+- If elevated access is disabled or the sender is not on the approved allowlist,
+  the directive replies with an actionable error and does not change session
+  state.
 - Send `/elevated` (or `/elevated:`) with no argument to see the current elevated level.
 
 ## Availability + allowlists
 
 - Feature gate: `tools.elevated.enabled` (default can be off via config even if the code supports it).
 - Sender allowlist: `tools.elevated.allowFrom` with per-provider allowlists (e.g. `discord`, `whatsapp`).
-- Unprefixed allowlist entries match sender-scoped identity values only (`SenderId`, `SenderE164`, `From`); recipient routing fields are never used for elevated authorization.
+- Unprefixed allowlist entries match sender-scoped identity values only:
+  `SenderId`, `SenderE164`, `From`. Recipient routing fields are never used for
+  elevated authorization.
 - Mutable sender metadata requires explicit prefixes:
   - `name:<value>` matches `SenderName`
   - `username:<value>` matches `SenderUsername`
   - `tag:<value>` matches `SenderTag`
   - `id:<value>`, `from:<value>`, `e164:<value>` are available for explicit identity targeting
 - Per-agent gate: `agents.list[].tools.elevated.enabled` (optional; can only further restrict).
-- Per-agent allowlist: `agents.list[].tools.elevated.allowFrom` (optional; when set, the sender must match **both** global + per-agent allowlists).
-- Discord fallback: if `tools.elevated.allowFrom.discord` is omitted, the `channels.discord.allowFrom` list is used as a fallback (legacy: `channels.discord.dm.allowFrom`). Set `tools.elevated.allowFrom.discord` (even `[]`) to override. Per-agent allowlists do **not** use the fallback.
+- Per-agent allowlist: `agents.list[].tools.elevated.allowFrom`. When set, the
+  sender must match **both** global + per-agent allowlists.
+- Discord fallback: if `tools.elevated.allowFrom.discord` is omitted, Fased uses
+  `channels.discord.allowFrom` as a fallback. Legacy fallback:
+  `channels.discord.dm.allowFrom`.
+- Set `tools.elevated.allowFrom.discord`, even to `[]`, to override the
+  fallback. Per-agent allowlists do **not** use the fallback.
 - All gates must pass; otherwise elevated is treated as unavailable.
 
 ## Logging + status

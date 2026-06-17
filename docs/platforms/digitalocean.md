@@ -132,7 +132,10 @@ Open: `https://<magicdns>/`
 
 Notes:
 
-- Serve keeps the Gateway loopback-only and authenticates Control UI/WebSocket traffic via Tailscale identity headers (tokenless auth assumes trusted gateway host; HTTP APIs still require token/password).
+- Serve keeps the Gateway loopback-only and authenticates Control UI/WebSocket
+  traffic through Tailscale headers.
+- Tokenless browser auth assumes a trusted gateway host. HTTP APIs still require
+  token/password.
 - To require token/password instead, set `gateway.auth.allowTailscale: false` or use `gateway.auth.mode: "password"`.
 
 **Option D: Tailnet bind (no Serve)**

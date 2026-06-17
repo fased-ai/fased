@@ -18,7 +18,15 @@ Fased assembles its own system prompt on every run. It includes:
 - Tool list + short descriptions
 - Skills list (only metadata; instructions are loaded on demand with `read`)
 - Self-update instructions
-- Workspace + bootstrap files (`AGENTS.md`, `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`, `HEARTBEAT.md`, `BOOTSTRAP.md` when new, plus canonical `MEMORY.md` and compatibility `memory.md` when present). Large files are truncated by `agents.defaults.bootstrapMaxChars` (default: 20000), and total bootstrap injection is capped by `agents.defaults.bootstrapTotalMaxChars` (default: 150000). `memory/*.md` files are on-demand via memory tools and are not auto-injected.
+- Workspace + bootstrap files:
+  `AGENTS.md`, `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`,
+  `HEARTBEAT.md`, `BOOTSTRAP.md` when new, plus canonical `MEMORY.md` and
+  compatibility `memory.md` when present.
+- Large bootstrap files are truncated by `agents.defaults.bootstrapMaxChars`
+  (default: `20000`). Total bootstrap injection is capped by
+  `agents.defaults.bootstrapTotalMaxChars` (default: `150000`).
+- `memory/*.md` files are on-demand through memory tools and are not
+  auto-injected.
 - Time (UTC + user timezone)
 - Reply tags + heartbeat behavior
 - Runtime metadata (host/OS/model/thinking)
@@ -42,7 +50,8 @@ Use `agents.defaults.imageMaxDimensionPx` (default: `1200`) to tune this:
 - Lower values usually reduce vision-token usage and payload size.
 - Higher values preserve more visual detail for OCR/UI-heavy screenshots.
 
-For a practical breakdown (per injected file, tools, skills, and system prompt size), use `/context list` or `/context detail`. See [Context](/concepts/context).
+For a practical breakdown per injected file, tools, skills, and system prompt
+size, use `/context list` or `/context detail`. See [Context](/concepts/context).
 
 ## How to see token usage
 
@@ -89,22 +98,25 @@ has expired, then resets the cache window so subsequent requests can re-use the
 freshly cached context instead of re-caching the full history. This keeps cache
 write costs lower when a session goes idle past the TTL.
 
-Configure it from Agent > Models where available, or from [Gateway configuration](/gateway/configuration) for advanced fields, and see the
-behavior details in [Session pruning](/concepts/session-pruning).
+Configure it from Agent > Models where available, or from
+[Gateway configuration](/gateway/configuration) for advanced fields.
+
+See the behavior details in [Session pruning](/concepts/session-pruning).
 
 Heartbeat can keep the cache **warm** across idle gaps. If your model cache TTL
 is `1h`, setting the heartbeat interval just under that (e.g., `55m`) can avoid
 re-caching the full prompt, reducing cache write costs.
 
-In multi-agent setups, you can keep one shared model config and tune cache behavior
-per agent with `agents.list[].params.cacheRetention`.
+In multi-agent setups, you can keep one shared model config and tune cache
+behavior per agent with `agents.list[].params.cacheRetention`.
 
 For a full knob-by-knob guide, see [Prompt Caching](/reference/prompt-caching).
 
 For Anthropic API pricing, cache reads are significantly cheaper than input
 tokens, while cache writes are billed at a higher multiplier. See Anthropic’s
 prompt caching pricing for the latest rates and TTL multipliers:
-[https://docs.anthropic.com/docs/build-with-claude/prompt-caching](https://docs.anthropic.com/docs/build-with-claude/prompt-caching)
+
+- [Anthropic prompt caching](https://docs.anthropic.com/docs/build-with-claude/prompt-caching)
 
 ### Example: keep 1h cache warm with heartbeat
 

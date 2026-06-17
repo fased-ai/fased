@@ -10,7 +10,10 @@ title: "acp"
 
 Run the [Agent Client Protocol (ACP)](https://agentclientprotocol.com/) bridge against a Fased gateway.
 
-Use this when an IDE or external ACP client should drive the same self-hosted runtime you already use from the CLI or browser UI. The command speaks ACP over stdio and forwards requests over the gateway WebSocket while keeping ACP sessions pinned to gateway session keys.
+Use this when an IDE or external ACP client should drive the same self-hosted
+runtime you already use from the CLI or browser UI. The command speaks ACP over
+stdio and forwards requests over the gateway WebSocket while keeping ACP
+sessions pinned to gateway session keys.
 
 ## Usage
 

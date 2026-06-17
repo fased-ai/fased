@@ -1,6 +1,6 @@
 ---
 title: "Diagnostics"
-summary: "Operator diagnostics map for Logs, Usage, Advanced > Debug, Advanced > Nodes, structured diagnostics, cache trace, OpenTelemetry, and targeted flags."
+summary: "Operator diagnostics map for Logs, Usage, Advanced views, traces, telemetry, and flags."
 read_when:
   - You need to troubleshoot a running Fased gateway
   - You need to know whether to open Logs, Usage, Advanced > Debug, or Advanced > Nodes
@@ -10,8 +10,7 @@ read_when:
 # Diagnostics
 
 Diagnostics are operator/admin surfaces. They help explain what the running
-Gateway is doing after normal setup is complete. They are not the first place to
-connect models, channels, services, skills, memory, or tasks.
+Gateway is doing after normal setup is complete.
 
 Normal setup starts in the selected Agent:
 
@@ -25,14 +24,20 @@ Normal setup starts in the selected Agent:
 
 ## Surfaces
 
-| Surface   | UI location           | Use it for                                                                                                                                                          |
-| --------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Logs      | **Logs**              | Live gateway file logs, filter, auto-follow, export, and redacted troubleshooting evidence.                                                                         |
-| Usage     | **Usage**             | Local model usage history over the selected window by Agent, provider, model, session, task, channel/source, tokens, cache tokens, and cost when priced.            |
-| Debug     | **Advanced > Debug**  | Ordered status cards, status/health/model snapshots, plugin runtime diagnostics, provider catalog checks, memory repair preview, event log, and raw RPC inspection. |
-| Nodes     | **Advanced > Nodes**  | Paired device/runtime clients, pending pairings, command exposure, capabilities, permissions, and node last-seen state.                                             |
-| Config    | **Advanced > Config** | Raw `~/.fased/fased.json` escape hatch for settings that do not yet have a focused page.                                                                            |
-| Dashboard | **Dashboard**         | Compact health widgets only. It intentionally does not replace Logs, Usage, or Advanced diagnostics.                                                                |
+- **Logs**: live gateway file logs, filter, auto-follow, export, and redacted
+  troubleshooting evidence.
+- **Usage**: local model usage history over the selected window by Agent,
+  provider, model, session, task, channel/source, tokens, cache tokens, and cost
+  when priced.
+- **Advanced > Debug**: ordered status cards, status/health/model snapshots,
+  plugin runtime diagnostics, provider catalog checks, memory repair preview,
+  event log, and raw RPC inspection.
+- **Advanced > Nodes**: paired device/runtime clients, pending pairings, command
+  exposure, capabilities, permissions, and node last-seen state.
+- **Advanced > Config**: raw `~/.fased/fased.json` escape hatch for settings
+  that do not yet have a focused page.
+- **Dashboard**: compact health widgets for quick checks. Use Logs, Usage, or
+  Advanced diagnostics when you need detail.
 
 ## First Checks
 

@@ -1,5 +1,5 @@
 ---
-summary: "CLI reference for the self-hosted Fased runtime, Agent setup, diagnostics, channels, Fased Network, wallets, and mining surfaces"
+summary: "CLI reference for the self-hosted Fased runtime, Agent setup, diagnostics, channels, wallets, network, and mining."
 read_when:
   - Adding or modifying CLI commands or options
   - Documenting new command surfaces
@@ -27,7 +27,7 @@ Nodes**.
 ## Command map
 
 ```mermaid
-flowchart LR
+flowchart TD
   cli["fased CLI"] --> setup["setup and lifecycle"]
   cli --> runtime["runtime and ops"]
   cli --> agent["agents and tasks"]

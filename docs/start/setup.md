@@ -18,8 +18,11 @@ Reviewed for the current Agent-centered Control UI.
 ## TL;DR
 
 - **Tailoring lives outside the repo:** `~/.fased/workspace` (workspace) + `~/.fased/fased.json` (config).
-- **Stable workflow:** use the repo-backed installer, then finish setup in `Agent > Models`, `Agent > Skills`, `Agent > Channels`, and `Agent > Services`.
-- **Bleeding edge workflow:** run the Gateway yourself via `pnpm gateway:watch`, then let the app or browser UI attach in Local mode.
+- **Stable workflow:** use the repo-backed installer, then finish setup in
+  `Agent > Models`, `Agent > Skills`, `Agent > Channels`, and
+  `Agent > Services`.
+- **Bleeding edge workflow:** run the Gateway yourself via `pnpm gateway:watch`,
+  then let the app or browser UI attach in Local mode.
 
 ## Prereqs (from source)
 

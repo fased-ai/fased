@@ -37,9 +37,9 @@ export default function (api) {
 }
 ```
 
-## Optional tool (opt‑in)
+## Optional tool (opt-in)
 
-Optional tools are **never** auto‑enabled. Users must add them to an agent
+Optional tools are **never** auto-enabled. Users must add them to an agent
 allowlist.
 
 ```ts

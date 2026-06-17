@@ -31,10 +31,26 @@ catalog.
 
 Normal setup shows the current curated BytePlus routes:
 
-| Route                               | Models                                                                                                                                                       |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `byteplus`                          | `seed-2-0-pro-260328`, `seed-2-0-lite-260228`, `seed-2-0-mini-260215`, `seed-2-0-code-preview-260328`, `deepseek-v3-2-251201`, `glm-4-7-251222`              |
-| `byteplus-coding` / `byteplus-plan` | `ark-code-latest`, `dola-seed-2.0-pro`, `dola-seed-2.0-lite`, `dola-seed-2.0-code`, `bytedance-seed-code`, `glm-5.1`, `glm-4.7`, `kimi-k2.5`, `gpt-oss-120b` |
+**`byteplus`**
+
+- `seed-2-0-pro-260328`
+- `seed-2-0-lite-260228`
+- `seed-2-0-mini-260215`
+- `seed-2-0-code-preview-260328`
+- `deepseek-v3-2-251201`
+- `glm-4-7-251222`
+
+**`byteplus-coding` / `byteplus-plan`**
+
+- `ark-code-latest`
+- `dola-seed-2.0-pro`
+- `dola-seed-2.0-lite`
+- `dola-seed-2.0-code`
+- `bytedance-seed-code`
+- `glm-5.1`
+- `glm-4.7`
+- `kimi-k2.5`
+- `gpt-oss-120b`
 
 Older runtime models remain compatible when already configured, but they are not
 first-run defaults.

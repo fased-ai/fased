@@ -16,7 +16,7 @@ page.
 ## Fast path
 
 ```mermaid
-flowchart LR
+flowchart TD
   issue["issue or error"] --> triage["Troubleshooting"]
   triage --> logs["Logs and diagnostics"]
   logs --> owner["focused owner page"]

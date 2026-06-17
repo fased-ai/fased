@@ -14,7 +14,8 @@ Fased gives you two scheduling patterns:
 - **heartbeat** for periodic awareness inside the main session
 - **Tasks** for exact schedules, reminders, and isolated runs
 
-They overlap a little, but they are not the same tool.
+They overlap a little. Choose based on timing, isolation, and how much main
+session context the work needs.
 
 Both patterns run under an Agent. Scheduled Tasks choose a main or isolated
 session lane. A channel can receive the result, but the channel is only
@@ -106,7 +107,8 @@ the selected Agent.
 
 - exact `at`, `every`, and `cron` schedules
 - timezone support
-- isolated runs in `cron:<jobId>`
+- isolated runs in task-owned lanes such as
+  `agent:main:cron:<jobId>:run:<runId>`
 - per-task model and thinking overrides
 - direct delivery via announce or webhook modes
 - one-shot reminders with `--at`
@@ -193,10 +195,10 @@ fased task add --name "Call back" --at "2h" --session main --system-event "Call 
 
 |                 | Heartbeat           | Task (main)               | Task (isolated)                                      |
 | --------------- | ------------------- | ------------------------- | ---------------------------------------------------- |
-| Runtime session | main                | main via system event     | `cron:<jobId>` run lane                              |
+| Runtime session | main                | main via system event     | task-owned run lane                                  |
 | Task owner      | Agent main session  | Agent/session on the task | Agent/session on the task                            |
 | Context         | full                | full                      | clean run context                                    |
-| History         | shared              | shared                    | separate run transcript, linked back by `sessionKey` |
+| History         | shared              | shared                    | separate run transcript, linked by `sessionKey`      |
 | Model           | Agent/session model | Agent/session model       | overrideable                                         |
 | Delivery        | heartbeat result    | main-session event        | announce/webhook/none                                |
 

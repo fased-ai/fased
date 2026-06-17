@@ -9,13 +9,15 @@ title: "Configuration"
 
 # Configuration
 
-Fased reads an optional <Tooltip tip="JSON5 supports comments and trailing commas">**JSON5**</Tooltip> config from `~/.fased/fased.json`.
+Fased reads an optional
+<Tooltip tip="JSON5 supports comments and trailing commas">**JSON5**</Tooltip>
+config from `~/.fased/fased.json`.
 
 If the file is missing, Fased uses safe defaults. In most setups, `fased onboard` should write the first version for you.
 
 Common reasons to add a config:
 
-- Connect channels and control who can message the bot
+- Connect channels and control who can message the agent
 - Set models, tools, sandboxing, or automation (cron, hooks)
 - Tune sessions, media, networking, or UI
 
@@ -43,9 +45,11 @@ The onboarding profile sets the baseline runtime shape:
   - VPS or always-on machine
   - supervised service install is expected
   - still loopback-first by default
-  - remote access should normally come from Tailscale Serve, a direct tailnet bind, a trusted reverse proxy, or SSH
+  - remote access should normally come from Tailscale Serve, a direct tailnet
+    bind, a trusted reverse proxy, or SSH
 
-In both profiles, the raw gateway port should stay closed to the public internet unless you intentionally designed around a wider exposure model.
+In both profiles, keep the raw gateway port closed to the public internet unless
+you intentionally designed around a wider exposure model.
 
 ## Minimal config
 
@@ -79,14 +83,18 @@ In both profiles, the raw gateway port should stay closed to the public internet
     **Debug** and **Nodes** beside it for operator diagnostics.
   </Tab>
   <Tab title="Direct edit">
-    Edit `~/.fased/fased.json` directly. The Gateway watches the file and applies changes automatically (see [hot reload](#config-hot-reload)).
+    Edit `~/.fased/fased.json` directly. The Gateway watches the file and
+    applies changes automatically (see [hot reload](#config-hot-reload)).
   </Tab>
 </Tabs>
 
 ## Strict validation
 
 <Warning>
-Fased only accepts configurations that fully match the schema. Unknown keys, malformed types, or invalid values cause the Gateway to **refuse to start**. The only root-level exception is `$schema` (string), so editors can attach JSON Schema metadata.
+Fased only accepts configurations that fully match the schema. Unknown keys,
+malformed types, or invalid values cause the Gateway to **refuse to start**. The
+only root-level exception is `$schema` (string), so editors can attach JSON
+Schema metadata.
 </Warning>
 
 When validation fails:
@@ -154,15 +162,21 @@ When validation fails:
     }
     ```
 
-    - `agents.defaults.models` defines the model catalog and acts as the allowlist for `/model`.
+    - `agents.defaults.models` defines the model catalog and acts as the
+      allowlist for `/model`.
     - Model refs use `provider/model` format (e.g. `anthropic/claude-opus-4-6`).
-    - `agents.defaults.imageMaxDimensionPx` controls transcript/tool image downscaling (default `1200`); lower values usually reduce vision-token usage on screenshot-heavy runs.
-    - See [Models CLI](/concepts/models) for switching models in chat and [Model Failover](/concepts/model-failover) for auth rotation and fallback behavior.
-    - For custom/self-hosted providers, see [Custom providers](/gateway/configuration-reference#custom-providers-and-base-urls) in the reference.
+    - `agents.defaults.imageMaxDimensionPx` controls transcript/tool image
+      downscaling. Lower values usually reduce vision-token usage on
+      screenshot-heavy runs.
+    - See [Models CLI](/concepts/models) for switching models in chat and
+      [Model Failover](/concepts/model-failover) for auth rotation and fallback
+      behavior.
+    - For custom/self-hosted providers, see
+      [Custom providers](/gateway/configuration-reference#custom-providers-and-base-urls).
 
   </Accordion>
 
-  <Accordion title="Control who can message the bot">
+  <Accordion title="Control who can message the agent">
     DM access is controlled per channel via `dmPolicy`:
 
     - `"pairing"` (default): unknown senders get a one-time pairing code to approve
@@ -201,7 +215,8 @@ When validation fails:
 
     - **Metadata mentions**: native @-mentions (WhatsApp tap-to-mention, Telegram @bot, etc.)
     - **Text patterns**: regex patterns in `mentionPatterns`
-    - See [full reference](/gateway/configuration-reference#group-chat-mention-gating) for per-channel overrides and self-chat mode.
+    - See [full reference](/gateway/configuration-reference#group-chat-mention-gating)
+      for per-channel overrides and self-chat mode.
 
   </Accordion>
 
@@ -226,8 +241,11 @@ When validation fails:
     }
     ```
 
-    - `dmScope`: `main` (shared) | `per-peer` | `per-channel-peer` | `per-account-channel-peer`
-    - `threadBindings`: global defaults for thread-bound session routing (Discord supports `/focus`, `/unfocus`, `/agents`, `/session idle`, and `/session max-age`).
+    - `dmScope`: `main` (shared), `per-peer`, `per-channel-peer`, or
+      `per-account-channel-peer`.
+    - `threadBindings`: global defaults for thread-bound session routing.
+      Discord supports `/focus`, `/unfocus`, `/agents`, `/session idle`, and
+      `/session max-age`.
     - See [Session Management](/concepts/session) for scoping, identity links, and send policy.
     - See [full reference](/gateway/configuration-reference#session) for all fields.
 
@@ -251,7 +269,8 @@ When validation fails:
 
     Build the image first: `scripts/sandbox-setup.sh`
 
-    See [Sandboxing](/gateway/sandboxing) for the full guide and [full reference](/gateway/configuration-reference#sandbox) for all options.
+    See [Sandboxing](/gateway/sandboxing) for the full guide and
+    [full reference](/gateway/configuration-reference#sandbox) for all options.
 
   </Accordion>
 
@@ -346,7 +365,9 @@ When validation fails:
     }
     ```
 
-    See [Multi-Agent](/concepts/multi-agent) and [full reference](/gateway/configuration-reference#multi-agent-routing) for binding rules and per-agent access profiles.
+    See [Multi-Agent](/concepts/multi-agent) and
+    [full reference](/gateway/configuration-reference#multi-agent-routing) for
+    binding rules and per-agent access profiles.
 
   </Accordion>
 
@@ -369,7 +390,8 @@ When validation fails:
     - **Sibling keys**: merged after includes (override included values)
     - **Nested includes**: supported up to 10 levels deep
     - **Relative paths**: resolved relative to the including file
-    - **Error handling**: clear errors for missing files, parse errors, and circular includes
+    - **Error handling**: clear errors for missing files, parse errors, and
+      circular includes
 
   </Accordion>
 
@@ -389,16 +411,20 @@ When validation fails:
 
     - Tailscale Serve for tailnet-only browser and WebSocket access
     - SSH tunnels for operator-only access
-    - direct tailnet bind only when you intentionally want tailnet clients to talk to the gateway without Serve
+    - direct tailnet bind when tailnet clients should talk to the gateway
+      without Serve
 
-    Avoid exposing the raw gateway port publicly unless you deliberately designed that deployment and reviewed the auth and proxy posture.
+    Keep the raw gateway port closed to the public internet unless you
+    deliberately designed that deployment and reviewed the auth and proxy
+    posture.
 
   </Accordion>
 </AccordionGroup>
 
 ## Config hot reload
 
-The Gateway watches `~/.fased/fased.json` and applies changes automatically — no manual restart needed for most settings.
+The Gateway watches `~/.fased/fased.json` and applies most changes
+automatically.
 
 ### Reload modes
 
@@ -419,7 +445,8 @@ The Gateway watches `~/.fased/fased.json` and applies changes automatically — 
 
 ### What hot-applies vs what needs a restart
 
-Most fields hot-apply without downtime. In `hybrid` mode, restart-required changes are handled automatically.
+Most fields hot-apply without downtime. In `hybrid` mode, restart-required
+changes are handled automatically.
 
 | Category            | Fields                                                                  | Restart needed? |
 | ------------------- | ----------------------------------------------------------------------- | --------------- |
@@ -439,7 +466,9 @@ Most fields hot-apply without downtime. In `hybrid` mode, restart-required chang
 ## Config RPC (programmatic updates)
 
 <Note>
-Control-plane write RPCs (`config.apply`, `config.patch`, `update.run`) are rate-limited to **3 requests per 60 seconds** per `deviceId+clientIp`. When limited, the RPC returns `UNAVAILABLE` with `retryAfterMs`.
+Control-plane write RPCs (`config.apply`, `config.patch`, `update.run`) are
+rate-limited to **3 requests per 60 seconds** per `deviceId+clientIp`. When
+limited, the RPC returns `UNAVAILABLE` with `retryAfterMs`.
 </Note>
 
 <AccordionGroup>
@@ -458,7 +487,8 @@ Control-plane write RPCs (`config.apply`, `config.patch`, `update.run`) are rate
     - `note` (optional) — note for the restart sentinel
     - `restartDelayMs` (optional) — delay before restart (default 2000)
 
-    Restart requests are coalesced while one is already pending/in-flight, and a 30-second cooldown applies between restart cycles.
+    Restart requests are coalesced while one is already pending/in-flight. A
+    30-second cooldown applies between restart cycles.
 
     ```bash
     fased gateway call config.get --params '{}'  # capture payload.hash
@@ -592,4 +622,6 @@ For the complete field-by-field reference, see **[Configuration Reference](/gate
 
 ---
 
-_Related: [Configuration Examples](/gateway/configuration-examples) · [Configuration Reference](/gateway/configuration-reference) · [Doctor](/gateway/doctor)_
+_Related: [Configuration Examples](/gateway/configuration-examples) ·
+[Configuration Reference](/gateway/configuration-reference) ·
+[Doctor](/gateway/doctor)_

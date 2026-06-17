@@ -76,7 +76,8 @@ curl -fsSL https://tailscale.com/install.sh | sh
 sudo tailscale up --ssh --hostname=fased
 ```
 
-This enables Tailscale SSH, so you can connect via `ssh fased` from any device on your tailnet — no public IP needed.
+This enables Tailscale SSH, so you can connect via `ssh fased` from any device
+on your tailnet. No public IP is needed for normal access.
 
 Verify:
 
@@ -128,7 +129,9 @@ curl http://localhost:18789
 
 ## 8) Lock Down VCN Security
 
-Now that everything is working, lock down the VCN to block all traffic except Tailscale. OCI's Virtual Cloud Network acts as a firewall at the network edge — traffic is blocked before it reaches your instance.
+Now that everything is working, lock down the VCN to block all traffic except
+Tailscale. OCI's Virtual Cloud Network acts as a firewall at the network edge:
+traffic is blocked before it reaches your instance.
 
 1. Go to **Networking → Virtual Cloud Networks** in the OCI Console
 2. Click your VCN → **Security Lists** → Default Security List
@@ -136,7 +139,8 @@ Now that everything is working, lock down the VCN to block all traffic except Ta
    - `0.0.0.0/0 UDP 41641` (Tailscale)
 4. Keep default egress rules (allow all outbound)
 
-This blocks SSH on port 22, HTTP, HTTPS, and everything else at the network edge. From now on, you can only connect via Tailscale.
+This blocks SSH on port 22, HTTP, HTTPS, and everything else at the network
+edge. From now on, normal access goes through Tailscale.
 
 ---
 
@@ -160,7 +164,7 @@ Replace `<tailnet-name>` with your tailnet name (visible in `tailscale status`).
 Tailscale provides:
 
 - HTTPS encryption (automatic certs)
-- Authentication via Tailscale identity
+- Access controlled by your Tailscale account and device membership
 - Access from any device on your tailnet (laptop, phone, etc.)
 
 Inside the Control UI, use **Dashboard** for overview, **Chat** to test the
@@ -175,18 +179,24 @@ With the VCN locked down (only UDP 41641 open) and the Gateway bound to loopback
 public traffic is blocked at the network edge and admin access happens over your
 tailnet.
 
-This setup often removes the _need_ for extra host-based firewall rules purely to stop Internet-wide SSH brute force — but you should still keep the OS updated, run `fased security audit`, and verify you aren’t accidentally listening on public interfaces.
+This setup often removes the need for extra host-based firewall rules purely to
+stop internet-wide SSH brute force. Still keep the OS updated, run
+`fased security audit`, and verify you are not accidentally listening on public
+interfaces.
 
 ### What the VCN changes
 
-| Traditional step   | Role after VCN lock-down | Why                                                                          |
-| ------------------ | ------------------------ | ---------------------------------------------------------------------------- |
-| UFW firewall       | Usually secondary        | VCN blocks before traffic reaches instance                                   |
-| fail2ban           | Usually secondary        | Port 22 is not internet-reachable when VCN rules are tight                   |
-| sshd hardening     | Still review             | Tailscale SSH can reduce direct sshd exposure                                |
-| Disable root login | Still review             | Keep normal OS hardening aligned with your access model                      |
-| SSH key-only auth  | Still review             | Tailscale identity is the preferred access path                              |
-| IPv6 hardening     | Verify                   | Depends on your VCN/subnet settings; verify what’s actually assigned/exposed |
+- **UFW firewall:** usually secondary because VCN blocks before traffic reaches
+  the instance.
+- **fail2ban:** usually secondary when port 22 is not internet-reachable.
+- **sshd hardening:** still review it. Tailscale SSH can reduce direct `sshd`
+  exposure, but normal OS hardening still matters.
+- **Disable root login:** still review it and keep it aligned with your access
+  model.
+- **SSH key-only auth:** still review it; Tailscale is the preferred access
+  path.
+- **IPv6 hardening:** verify what is actually assigned/exposed by your VCN and
+  subnet settings.
 
 ### Still Recommended
 

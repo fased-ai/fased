@@ -11,18 +11,27 @@ title: "Discovery and Transports"
 
 Fased has two distinct problems that look similar on the surface:
 
-1. **Operator remote control**: the macOS menu bar app controlling a gateway running elsewhere.
-2. **Node pairing**: iOS/Android (and future nodes) finding a gateway and pairing securely.
+1. **Operator remote control**: the macOS menu bar app controlling a gateway
+   running elsewhere.
+2. **Node pairing**: iOS/Android and future nodes finding a gateway and pairing
+   securely.
 
-The design goal is to keep discovery owned by the gateway while keeping operator clients and node clients as consumers. The gateway stays loopback-first by default; discovery helps clients find the right controlled path to reach it.
+Discovery is owned by the gateway. Operator clients and node clients consume the
+published hints. The gateway stays loopback-first by default; discovery helps
+clients find the right controlled path to reach it.
 
 ## Terms
 
-- **Gateway**: a single long-running gateway process that owns state (sessions, pairing, node registry) and runs channels. Most setups use one per host; isolated multi-gateway setups are possible.
-- **Gateway WS (control plane)**: the WebSocket endpoint on `127.0.0.1:18789` by default; it can be bound to LAN or tailnet via `gateway.bind`, but loopback remains the recommended baseline.
+- **Gateway**: a single long-running gateway process that owns sessions,
+  pairing, node registry, and channels. Most setups use one per host.
+- **Gateway WS (control plane)**: the WebSocket endpoint on
+  `127.0.0.1:18789` by default. It can bind to LAN or tailnet via
+  `gateway.bind`, but loopback remains the recommended baseline.
 - **Direct WS transport**: a LAN/tailnet-facing Gateway WS endpoint (no SSH).
 - **SSH transport (fallback)**: remote control by forwarding `127.0.0.1:18789` over SSH.
-- **Legacy TCP bridge (deprecated/removed)**: older node transport (see [Bridge protocol](/gateway/bridge-protocol)); no longer advertised for discovery.
+- **Legacy TCP bridge (deprecated/removed)**: older node transport. See
+  [Bridge protocol](/gateway/bridge-protocol). It is no longer advertised for
+  discovery.
 
 Protocol details:
 
@@ -44,7 +53,8 @@ Protocol details:
 
 ### 1) Bonjour / mDNS (LAN only)
 
-Bonjour is best-effort and does not cross networks. It is only used for “same LAN” convenience.
+Bonjour is best-effort and does not cross networks. It is only used for
+"same LAN" convenience.
 
 Target direction:
 
@@ -62,18 +72,25 @@ Troubleshooting and beacon details: [Bonjour](/gateway/bonjour).
   - `lanHost=<hostname>.local`
   - `gatewayPort=18789` (Gateway WS + HTTP)
   - `gatewayTls=1` (only when TLS is enabled)
-  - `gatewayTlsSha256=<sha256>` (only when TLS is enabled and fingerprint is available)
-  - `canvasPort=<port>` (canvas host port; currently the same as `gatewayPort` when the canvas host is enabled)
+  - `gatewayTlsSha256=<sha256>` (only when TLS is enabled and fingerprint is
+    available)
+  - `canvasPort=<port>` (currently the same as `gatewayPort` when canvas host is
+    enabled)
   - `tailnetDns=<magicdns>` (optional hint; auto-detected when Tailscale is available)
   - `sshPort=<port>` (only in `discovery.mdns.mode: "full"`)
   - `cliPath=<path>` (only in `discovery.mdns.mode: "full"`)
 
 Security notes:
 
-- Bonjour/mDNS TXT records are **unauthenticated**. Clients must treat TXT values as UX hints only.
-- Routing (host/port) should prefer the **resolved service endpoint** (SRV + A/AAAA) over TXT-provided `lanHost`, `tailnetDns`, or `gatewayPort`.
-- TLS pinning must never allow an advertised `gatewayTlsSha256` to override a previously stored pin.
-- iOS/Android nodes should treat discovery-based direct connects as **TLS-only** and require an explicit “trust this fingerprint” confirmation before storing a first-time pin (out-of-band verification).
+- Bonjour/mDNS TXT records are **unauthenticated**. Clients must treat TXT values
+  as UX hints only.
+- Routing should prefer the **resolved service endpoint** (SRV + A/AAAA) over
+  TXT-provided `lanHost`, `tailnetDns`, or `gatewayPort`.
+- TLS pinning must keep the previously stored pin when an advertised
+  `gatewayTlsSha256` changes.
+- iOS/Android nodes should treat discovery-based direct connects as
+  **TLS-only** and require an explicit "trust this fingerprint" confirmation
+  before storing a first-time pin.
 
 Disable/override:
 
@@ -92,11 +109,13 @@ Once you leave one LAN, Bonjour stops helping. The preferred direct target is th
 
 - Tailscale MagicDNS name (preferred) or a stable tailnet IP.
 
-If the gateway can detect it is running under Tailscale, it publishes `tailnetDns` as an optional hint for clients (including wide-area beacons).
+If the gateway can detect it is running under Tailscale, it publishes
+`tailnetDns` as an optional hint for clients, including wide-area beacons.
 
 ### 3) Manual / SSH target
 
-When there is no direct route, or when you deliberately keep the gateway loopback-only, clients can always connect via SSH by forwarding the loopback gateway port.
+When there is no direct route, or when the gateway stays loopback-only, clients
+can connect via SSH by forwarding the loopback gateway port.
 
 See [Remote access](/gateway/remote).
 

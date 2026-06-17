@@ -9,7 +9,8 @@ title: "browser"
 
 # `fased browser`
 
-Manage the Fased browser control server and run browser actions such as tabs, snapshots, screenshots, navigation, clicks, and typing.
+Manage the Fased browser control server and run browser actions such as tabs,
+snapshots, screenshots, navigation, clicks, and typing.
 
 Related:
 
@@ -94,14 +95,20 @@ fased browser extension install
 fased browser extension path
 ```
 
-Then Chrome → `chrome://extensions` → enable “Developer mode” → “Load unpacked” → select the printed folder.
+Then Chrome → `chrome://extensions` → enable “Developer mode” →
+“Load unpacked” → select the printed folder.
 
 Full guide: [Chrome extension](/tools/chrome-extension)
 
 ## Remote browser control (node host proxy)
 
-If the Gateway runs on a different machine than the browser, run a **node host** on the machine that has Chrome/Brave/Edge/Chromium. The Gateway will proxy browser actions to that node (no separate browser control server required).
+If the Gateway runs on a different machine than the browser, run a **node host**
+on the machine that has Chrome/Brave/Edge/Chromium. The Gateway will proxy
+browser actions to that node.
 
-Use `gateway.nodes.browser.mode` to control auto-routing and `gateway.nodes.browser.node` to pin a specific node if multiple are connected.
+Use `gateway.nodes.browser.mode` to control auto-routing and
+`gateway.nodes.browser.node` to pin a specific node if multiple are connected.
 
-Security + remote setup: [Browser tool](/tools/browser), [Remote access](/gateway/remote), [Tailscale](/gateway/tailscale), [Security](/gateway/security)
+Security + remote setup: [Browser tool](/tools/browser),
+[Remote access](/gateway/remote), [Tailscale](/gateway/tailscale),
+[Security](/gateway/security)

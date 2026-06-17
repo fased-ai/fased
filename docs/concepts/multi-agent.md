@@ -14,7 +14,7 @@ Bindings route inbound messages to Agents. After routing, Sessions and Tasks own
 the work context.
 
 ```mermaid
-flowchart LR
+flowchart TD
   Channel[Channel account] --> Binding[Route binding]
   Binding --> Agent[Agent]
   Agent --> Workspace[Workspace]
@@ -53,8 +53,8 @@ Default paths:
 | Agent dir      | `~/.fased/agents/<agentId>/agent`    |
 | Sessions       | `~/.fased/agents/<agentId>/sessions` |
 
-Do not reuse one `agentDir` across Agents. It causes auth and session state to
-collide.
+Keep one `agentDir` per Agent. Reusing it across Agents causes auth and
+session state to collide.
 
 ## Quick start
 
@@ -241,7 +241,8 @@ See [Sandboxing](/gateway/sandboxing) for the full policy model.
 - Route channels/accounts explicitly.
 - Avoid hidden fan-out to all Agents.
 - Keep group Agents narrower than private Agents.
-- Do not assume a Channel owns the work; it only routes and delivers.
+- Treat Channels as routing and delivery surfaces. Agent/session state owns the
+  work.
 
 ## Related docs
 

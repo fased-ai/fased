@@ -12,7 +12,7 @@ The Gateway is fully supported on Linux. **Node is the normal runtime**. Bun is
 experimental for the Gateway because some channel adapters depend on Node
 behavior.
 
-Native Linux companion apps are planned. Contributions are welcome if you want to help build one.
+Native Linux companion apps are planned. Contributions are welcome.
 
 ## Beginner quick path (VPS)
 
@@ -27,13 +27,15 @@ For a local Linux laptop/dev box, use plain `./install.sh` or
 `./install.sh --local`. The installer runs onboarding unless you pass
 `--no-onboard`.
 
-Step-by-step VPS guide: [Hetzner](/install/hetzner) or the general [VPS hosting](/install/vps) hub.
+Step-by-step VPS guide: [Hetzner](/install/hetzner) or the general
+[VPS hosting](/install/vps) hub.
 
 ## Install
 
 - [Getting Started](/start/getting-started)
 - [Install & updates](/install/updating)
-- Optional flows: [Bun (experimental)](/install/bun), [Nix](/install/nix), [Docker](/install/docker)
+- Optional flows: [Bun (experimental)](/install/bun), [Nix](/install/nix),
+  [Docker](/install/docker)
 
 ## Gateway
 

@@ -25,7 +25,8 @@ System control (launchd/systemd) lives on the Gateway host. See [Gateway](/gatew
 
 Android node app ⇄ (mDNS/NSD + WebSocket) ⇄ **Gateway**
 
-Android connects directly to the Gateway WebSocket (default `ws://<host>:18789`) and uses Gateway-owned pairing.
+Android connects directly to the Gateway WebSocket, default
+`ws://<host>:18789`, and uses Gateway-owned pairing.
 
 ### Prerequisites
 
@@ -63,7 +64,9 @@ More debugging notes: [Bonjour](/gateway/bonjour).
 
 #### Tailnet (Vienna ⇄ London) discovery via unicast DNS-SD
 
-Android NSD/mDNS discovery won’t cross networks. If your Android node and the gateway are on different networks but connected via Tailscale, use Wide-Area Bonjour / unicast DNS-SD instead:
+Android NSD/mDNS discovery does not cross networks. If your Android node and the
+gateway are on different networks but connected via Tailscale, use Wide-Area
+Bonjour / unicast DNS-SD instead:
 
 1. Set up a DNS-SD zone (example `fased.internal.`) on the gateway host and publish `_fased-gw._tcp` records.
 2. Configure Tailscale split DNS for your chosen domain pointing at that DNS server.
@@ -127,26 +130,41 @@ clients pointed at the same Agent/session:
 
 #### Gateway Canvas Host (recommended for web content)
 
-If you want the node to show real HTML/CSS/JS that the agent can edit on disk, point the node at the Gateway canvas host.
+If you want the node to show real HTML/CSS/JS that the agent can edit on disk,
+point the node at the Gateway canvas host.
 
-Note: nodes load canvas from the Gateway HTTP server (same port as `gateway.port`, default `18789`).
+Nodes load canvas from the Gateway HTTP server, using the same port as
+`gateway.port`. Default: `18789`.
 
 1. Create `~/.fased/workspace/canvas/index.html` on the gateway host.
 
 2. Navigate the node to it (LAN):
 
 ```bash
-fased nodes invoke --node "<Android Node>" --command canvas.navigate --params '{"url":"http://<gateway-hostname>.local:18789/__fased__/canvas/"}'
+fased nodes invoke \
+  --node "<Android Node>" \
+  --command canvas.navigate \
+  --params '{"url":"http://<gateway-hostname>.local:18789/__fased__/canvas/"}'
 ```
 
-Tailnet (optional): if both devices are on Tailscale, use a MagicDNS name or tailnet IP instead of `.local`, e.g. `http://<gateway-magicdns>:18789/__fased__/canvas/`.
+Tailnet option: if both devices are on Tailscale, use a MagicDNS name or tailnet
+IP instead of `.local`.
+
+Example:
+
+```text
+http://<gateway-magicdns>:18789/__fased__/canvas/
+```
 
 This server injects a live-reload client into HTML and reloads on file changes.
 The A2UI host lives at `http://<gateway-host>:18789/__fased__/a2ui/`.
 
 Canvas commands (foreground only):
 
-- `canvas.eval`, `canvas.snapshot`, `canvas.navigate` (use `{"url":""}` or `{"url":"/"}` to return to the default scaffold). `canvas.snapshot` returns `{ format, base64 }` (default `format="jpeg"`).
+- `canvas.eval`, `canvas.snapshot`, `canvas.navigate`.
+  - Use `{"url":""}` or `{"url":"/"}` to return to the default scaffold.
+  - `canvas.snapshot` returns `{ format, base64 }`. Default:
+    `format="jpeg"`.
 - A2UI: `canvas.a2ui.push`, `canvas.a2ui.reset` (`canvas.a2ui.pushJSONL` legacy alias)
 
 Camera commands (foreground only; permission-gated):

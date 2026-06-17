@@ -1,5 +1,5 @@
 ---
-summary: "Operational model for secure Fased communication: private local runtime first, sender policy today, and signed/encrypted network exchange as roadmap work."
+summary: "Operational model for secure Fased communication and future encrypted network exchange."
 read_when:
   - Designing secure communication between users, agents, and Fased Network nodes
   - Separating current Fased channel security from future Fased Network privacy work
@@ -50,7 +50,7 @@ selectively shared.
 ## Message envelope model
 
 ```mermaid
-flowchart LR
+flowchart TD
     Sender[User or agent] --> Envelope[Signed encrypted envelope]
     Envelope --> Relay[Fased Network relay or direct route]
     Relay --> Receiver[Recipient agent]
@@ -69,7 +69,8 @@ The envelope should eventually carry:
 - optional external reference
 - signature over the routing metadata that must be public
 
-Route health and offer discovery can rely on public metadata while payloads stay private.
+Route health and offer discovery can rely on public metadata while payloads
+stay private.
 
 ## What should be public
 
@@ -77,7 +78,7 @@ Some facts need to be public or selectively revealed:
 
 - route health
 - public offers
-- public operator identity
+- public operator profile
 - public review summaries
 - public protocol proofs from enabled modules
 - selected review/support evidence
@@ -96,7 +97,7 @@ Default-private material includes:
 - files and deliverables
 - internal agent memory
 - wallet policy details that do not need to be public
-- addresses or handles not meant for public identity
+- addresses or handles not meant for the public profile
 - raw keys, provider credentials, and signer material
 
 ## Operator guidance

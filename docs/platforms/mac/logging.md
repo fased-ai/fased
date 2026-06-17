@@ -10,11 +10,13 @@ title: "macOS Logging"
 
 ## Rolling diagnostics file log (Debug pane)
 
-The macOS app routes logs through swift-log (unified logging by default) and can write a local, rotating file log to disk when you need a durable capture.
+The macOS app routes logs through swift-log, using unified logging by default.
+It can also write a local, rotating file log when you need a durable capture.
 
 - Verbosity: **Debug pane → Logs → App logging → Verbosity**
 - Enable: **Debug pane → Logs → App logging → “Write rolling diagnostics log (JSONL)”**
-- Location: `~/Library/Logs/FasedAgent/diagnostics.jsonl` (rotates automatically; old files are suffixed with `.1`, `.2`, …)
+- Location: `~/Library/Logs/FasedAgent/diagnostics.jsonl`. It rotates
+  automatically; old files are suffixed with `.1`, `.2`, and so on.
 - Clear: **Debug pane → Logs → App logging → “Clear”**
 
 Notes:
@@ -24,7 +26,10 @@ Notes:
 
 ## Unified logging private data on macOS
 
-Unified logging redacts most payloads unless a subsystem opts into `privacy -off`. Per Peter's write-up on macOS [logging privacy shenanigans](https://steipete.me/posts/2025/logging-privacy-shenanigans) (2025) this is controlled by a plist in `/Library/Preferences/Logging/Subsystems/` keyed by the subsystem name. Only new log entries pick up the flag, so enable it before reproducing an issue.
+Unified logging redacts most payloads unless a subsystem opts into
+`privacy -off`. This is controlled by a plist in
+`/Library/Preferences/Logging/Subsystems/` keyed by subsystem name. Only new log
+entries pick up the flag, so enable it before reproducing an issue.
 
 ## Enable for the macOS app (`ai.fased`)
 
@@ -47,12 +52,15 @@ EOF
 sudo install -m 644 -o root -g wheel /tmp/ai.fased.plist /Library/Preferences/Logging/Subsystems/ai.fased.plist
 ```
 
-- No reboot is required; logd notices the file quickly, but only new log lines will include private payloads.
+- No reboot is required; `logd` notices the file quickly, but only new log lines
+  include private payloads.
 - View richer macOS unified-log output with `log show` or `log stream` filtered
   to subsystem `ai.fased`.
 
 ## Disable after debugging
 
 - Remove the override: `sudo rm /Library/Preferences/Logging/Subsystems/ai.fased.plist`.
-- Optionally run `sudo log config --reload` to force logd to drop the override immediately.
-- Remember this surface can include phone numbers and message bodies; keep the plist in place only while you actively need the extra detail.
+- Optionally run `sudo log config --reload` to force `logd` to drop the override
+  immediately.
+- This surface can include phone numbers and message bodies. Keep the plist in
+  place only while you actively need the extra detail.

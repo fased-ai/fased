@@ -231,8 +231,8 @@ Hard controls matter more than wording:
 - sandboxing;
 - restricted file roots;
 - modern instruction-following models for tool-enabled Agents;
-- reader/summarizer Agents for untrusted content before passing summaries to a
-  higher-authority Agent.
+- dedicated summarizer Agents for untrusted content before passing summaries to
+  a higher-authority Agent.
 
 Keep external-content bypass flags off unless you are debugging a tightly scoped
 case:

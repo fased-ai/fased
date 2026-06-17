@@ -81,9 +81,10 @@ The macOS packaging flow expects a stable Info.plist template at:
 apps/macos/Sources/FasedAgent/Resources/Info.plist
 ```
 
-[`scripts/package-mac-app.sh`](https://github.com/fased-ai/fased/blob/main/scripts/package-mac-app.sh) copies this template into the app bundle and patches dynamic fields
-(bundle ID, version/build, Git SHA, Sparkle keys). This keeps the plist deterministic for SwiftPM
-packaging and Nix builds (which do not rely on a full Xcode toolchain).
+[`scripts/package-mac-app.sh`](https://github.com/fased-ai/fased/blob/main/scripts/package-mac-app.sh)
+copies this template into the app bundle and patches dynamic fields: bundle ID,
+version/build, Git SHA, and Sparkle keys. This keeps the plist deterministic for
+SwiftPM packaging and Nix builds, which do not rely on a full Xcode toolchain.
 
 ## Related
 

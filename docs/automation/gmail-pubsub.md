@@ -26,8 +26,8 @@ Supported public endpoint pattern:
 
 - **Tailscale Funnel**
 
-Other tunnel providers can work, but they are DIY and not the documented
-baseline.
+Tailscale Funnel is the documented baseline. Other tunnel providers are
+advanced DIY setups.
 
 ## Minimal webhook config
 
@@ -57,7 +57,7 @@ To push Gmail summaries into a chat surface, override the preset with a mapping:
         wakeMode: "now",
         name: "Gmail",
         sessionKey: "hook:gmail:{{messages[0].id}}",
-        messageTemplate: "New email from {{messages[0].from}}\nSubject: {{messages[0].subject}}\n{{messages[0].snippet}}\n{{messages[0].body}}",
+        messageTemplate: "New email from {{messages[0].from}}\nSubject: {{messages[0].subject}}\n{{messages[0].snippet}}",
         model: "openai/gpt-5.4-mini",
         deliver: true,
         channel: "last",
@@ -101,8 +101,8 @@ Use a model that is already configured for the target Agent. Set or review that
 model in **Agent > Models** before pinning a Gmail mapping to a specific
 `provider/model` ref.
 
-If you are not sure which model to use, omit the mapping-level `model` and let
-the target Agent use its configured primary/fallback model.
+For the simplest setup, omit the mapping-level `model` and let the target Agent
+use its configured primary/fallback model.
 
 ## Recommended setup: wizard
 
@@ -146,8 +146,8 @@ Opt out:
 FASED_SKIP_GMAIL_WATCHER=1
 ```
 
-Do not run the manual daemon at the same time as gateway auto-start or you will
-hit a port bind conflict.
+Run either gateway auto-start or the manual daemon. Running both at the same
+time can hit a port bind conflict.
 
 Manual runner:
 

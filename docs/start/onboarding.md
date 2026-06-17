@@ -24,12 +24,14 @@ Approve the initial macOS trust warning so the app can launch and continue onboa
 Approve local network discovery so the app can find or talk to the local Gateway runtime.
 </Step>
 <Step title="Welcome and security notice">
-Read the security notice shown in the app and decide whether this machine should stay a private single-operator runtime or be hardened for a more shared setup.
+Read the security notice shown in the app and decide whether this machine should
+stay a private single-operator runtime or be hardened for a more shared setup.
 
 Security trust model:
 
 - By default, Fased is a single-operator Agent: one trusted operator boundary.
-- Shared/multi-user setups require lock-down (split trust boundaries, keep tool access minimal, and follow [Security](/gateway/security)).
+- Shared/multi-user setups require lock-down. Split trust boundaries, keep tool
+  access minimal, and follow [Security](/gateway/security).
 
 </Step>
 <Step title="Local vs Remote">

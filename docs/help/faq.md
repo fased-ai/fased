@@ -246,7 +246,7 @@ Use separate roles where possible:
 
 - Agent wallet for normal Agent wallet actions.
 - Mining wallet for SAT mining.
-- Vault/bond wallet for bond/operator inventory.
+- Vault wallet for bond and operator funds.
 
 This makes wallet roles, screenshots, and recovery easier to reason about.
 
@@ -366,7 +366,7 @@ plane. Treat node pairing as operator-level access to that node's capabilities.
 Use pairing or allowlists. Avoid open inbound DMs for tool-enabled Agents unless
 you intentionally trust that audience and have tight tool controls.
 
-### Is prompt injection only a concern for public bots?
+### Is prompt injection only a concern for public channels?
 
 No. Prompt injection can arrive through web pages, emails, files, logs, images,
 or pasted text. Use access control, tool controls, sandboxing, and modern models;
@@ -374,10 +374,10 @@ do not rely on prompt wording alone.
 
 See [Gateway security](/gateway/security).
 
-### Should my bot have separate accounts?
+### Should my agent have separate accounts?
 
-For channels, email, browser profiles, wallets, and paired devices, separate accounts
-make permission and recovery cleaner. Do not mix personal accounts into a
+For channels, email, browser profiles, wallets, and paired devices, separate
+accounts make permission and recovery cleaner. Keep personal accounts out of a
 Fased install you expose to other users.
 
 ## More Help

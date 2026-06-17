@@ -8,7 +8,10 @@ title: "Media Understanding"
 
 # Media Understanding
 
-Fased can **summarize inbound media** (image/audio/video) before the reply pipeline runs. It auto-detects when local tools or provider keys are available, and can be disabled or customized. If understanding is off, models still receive the original files/URLs as usual.
+Fased can **summarize inbound media** (image/audio/video) before the reply
+pipeline runs. It auto-detects local tools or provider keys when available, and
+you can disable or customize it. If understanding is off, models still receive
+the original files or URLs as usual.
 
 This is a Gateway media/tool pipeline. It is not the **Advanced > Nodes**
 diagnostics tab. Use **Agent > Services** for friendly provider setup when
@@ -17,15 +20,17 @@ only for raw `tools.media` overrides.
 
 ## Goals
 
-- Optional: pre‑digest inbound media into short text for faster routing + better command parsing.
+- Optional: turn inbound media into short text for faster routing and better
+  command parsing.
 - Preserve original media delivery to the model (always).
 - Support **provider APIs** and **CLI fallbacks**.
-- Allow multiple models with ordered fallback (error/size/timeout).
+- Allow multiple models with ordered fallback for error, size, and timeout cases.
 
 ## High‑level behavior
 
 1. Collect inbound attachments (`MediaPaths`, `MediaUrls`, `MediaTypes`).
-2. For each enabled capability (image/audio/video), select attachments per policy (default: **first**).
+2. For each enabled capability (image/audio/video), select attachments per
+   policy. Default: **first**.
 3. Choose the first eligible model entry (size + capability + auth).
 4. If a model fails or the media is too large, **fall back to the next entry**.
 5. On success:
@@ -34,7 +39,8 @@ only for raw `tools.media` overrides.
      otherwise the transcript.
    - Captions are preserved as `User text:` inside the block.
 
-If understanding fails or is disabled, **the reply flow continues** with the original body + attachments.
+If understanding fails or is disabled, **the reply flow continues** with the
+original body and attachments.
 
 ## Config overview
 
@@ -48,7 +54,7 @@ If understanding fails or is disabled, **the reply flow continues** with the ori
   - optional **per‑capability `models` list** (preferred before shared models)
   - `attachments` policy (`mode`, `maxAttachments`, `prefer`)
   - `scope` (optional gating by channel/chatType/session key)
-- `tools.media.concurrency`: max concurrent capability runs (default **2**).
+- `tools.media.concurrency`: max concurrent capability runs. Default: **2**.
 
 ```json5
 {
@@ -129,7 +135,8 @@ Rules:
 
 - If media exceeds `maxBytes`, that model is skipped and the **next model is tried**.
 - If the model returns more than `maxChars`, output is trimmed.
-- `prompt` defaults to simple “Describe the {media}.” plus the `maxChars` guidance (image/video only).
+- `prompt` defaults to simple "Describe the {media}." plus the `maxChars`
+  guidance for image/video only.
 - If `<capability>.enabled: true` but no models are configured, Fased tries the
   **active reply model** when its provider supports the capability.
 
@@ -140,8 +147,10 @@ configured models, Fased auto-detects in this order and **stops at the first
 working option**:
 
 1. **Local CLIs** (audio only; if installed)
-   - `sherpa-onnx-offline` (requires `SHERPA_ONNX_MODEL_DIR` with encoder/decoder/joiner/tokens)
-   - `whisper-cli` (`whisper-cpp`; uses `WHISPER_CPP_MODEL` or the bundled tiny model)
+   - `sherpa-onnx-offline` (requires `SHERPA_ONNX_MODEL_DIR` with
+     encoder/decoder/joiner/tokens)
+   - `whisper-cli` (`whisper-cpp`; uses `WHISPER_CPP_MODEL` or the bundled tiny
+     model)
    - `whisper` (Python CLI; downloads models automatically)
 2. **Gemini CLI** (`gemini`) using `read_many_files`
 3. **Provider keys**
@@ -163,7 +172,9 @@ To disable auto-detection, set:
 }
 ```
 
-Note: Binary detection is best-effort across macOS/Linux/Windows; ensure the CLI is on `PATH` (we expand `~`), or set an explicit CLI model with a full command path.
+Binary detection is best-effort across macOS/Linux/Windows. Ensure the CLI is on
+`PATH` (Fased expands `~`), or set an explicit CLI model with a full command
+path.
 
 ## Capabilities (optional)
 
@@ -178,13 +189,13 @@ lists, Fased can infer defaults:
 For CLI entries, **set `capabilities` explicitly** to avoid surprising matches.
 If you omit `capabilities`, the entry is eligible for the list it appears in.
 
-## Provider support matrix (Fased integrations)
+## Provider support (Fased integrations)
 
-| Capability | Provider integration                                                 | Notes                                                     |
-| ---------- | -------------------------------------------------------------------- | --------------------------------------------------------- |
-| Image      | OpenAI / Anthropic / Google / others via the Fased provider registry | Any image-capable model in the registry works.            |
-| Audio      | OpenAI, Groq, Deepgram, Google, Mistral                              | Provider transcription (Whisper/Deepgram/Gemini/Voxtral). |
-| Video      | Google (Gemini API)                                                  | Provider video understanding.                             |
+- **Image**: OpenAI, Anthropic, Google, and others through the Fased provider
+  registry. Any image-capable model in the registry works.
+- **Audio**: OpenAI, Groq, Deepgram, Google, and Mistral for provider
+  transcription, including Whisper, Deepgram, Gemini, and Voxtral paths.
+- **Video**: Google Gemini API for provider video understanding.
 
 ## Recommended providers
 
@@ -196,7 +207,8 @@ If you omit `capabilities`, the entry is eligible for the list it appears in.
 
 **Audio**
 
-- `openai/gpt-4o-mini-transcribe`, `groq/whisper-large-v3-turbo`, `deepgram/nova-3`, or `mistral/voxtral-mini-latest`.
+- `openai/gpt-4o-mini-transcribe`, `groq/whisper-large-v3-turbo`,
+  `deepgram/nova-3`, or `mistral/voxtral-mini-latest`.
 - CLI fallback: `whisper-cli` (whisper-cpp) or `whisper`.
 - Deepgram is configured through `tools.media.audio` as a media transcription
   provider, not as an Agent model provider.

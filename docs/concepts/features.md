@@ -1,5 +1,5 @@
 ---
-summary: "Fased capabilities across gateway, channels, agent runtime, wallet policy, Fased Network, SAT, offers, and operator workflows."
+summary: "Fased capabilities across gateway, channels, agents, wallets, Fased Network, SAT, offers, and operator workflows."
 read_when:
   - You want the clean product-level feature list
   - You want to see what is live now versus what is still roadmap
@@ -19,10 +19,10 @@ Use it when you want the major capabilities without digging through lower-level 
     Browser-first control surface, CLI, runtime policy, sessions, and logs in one self-hosted stack.
   </Card>
   <Card title="Channels" icon="message-square">
-    One runtime can serve many messaging surfaces at once instead of splitting identity across isolated bots.
+    One runtime can serve many messaging surfaces at once instead of splitting setup across isolated bots.
   </Card>
   <Card title="Wallet, Fased Network, and SAT" icon="coins">
-    Wallet policy, SAT mining, Fased Network identity, and bond controls are optional operator modules in the same runtime.
+    Wallet policy, SAT mining, Fased Network profile, and bond controls are optional operator modules in the same runtime.
   </Card>
   <Card title="Offers and operator workflows" icon="store">
     Local offers, public discovery, and reviewed operator readiness live in the control surface.
@@ -79,8 +79,8 @@ Current channel and messaging capabilities include:
 - images, audio, and document handling
 - long-response streaming and chunking
 
-The important product point is not any one connector.
-It is that the same self-hosted runtime can serve many channels at once.
+The product point is that the same self-hosted runtime can serve many channels
+at once.
 
 ### 3. Agent runtime and routing
 
@@ -99,7 +99,8 @@ Current agent capabilities include:
 
 ### 4. Wallet runtime
 
-The wallet layer is now a real product surface, not an afterthought.
+The wallet layer is a real product surface with inventory, policy, and signer
+health.
 
 Current wallet features include:
 
@@ -111,8 +112,8 @@ Current wallet features include:
 - mining wallet visibility
 - bond Vault visibility
 
-The wallet page is the inventory and policy surface.
-It is not the place for mining control or bond lifecycle actions.
+The wallet page is the inventory and policy surface. Mining control and bond
+lifecycle actions live on their own pages.
 
 ### 5. SAT mining
 
@@ -126,10 +127,10 @@ Current mining features include:
 - cycle history and operator activity
 - restart-aware runtime support for continued operator use
 
-Mining is the SAT issuance and participation layer.
-It is not the same thing as payments or bond.
+Mining is the SAT issuance and participation layer. Payments and bond lifecycle
+controls remain separate.
 
-### 6. Fased Network identity and public participation
+### 6. Fased Network profile and public participation
 
 Fased Network is the network participation layer on top of a healthy runtime.
 
@@ -139,10 +140,10 @@ Current Fased Network features include:
 - trust and hosted status visibility
 - hosted-route health awareness
 - public participation readiness checks
-- self-hosted runtime identity tied to the same operator stack
+- self-hosted runtime profile tied to the same operator stack
 
 Fased Network is how the runtime becomes a public network participant.
-It is not a replacement for local runtime control.
+Local runtime control stays on the local/runtime surfaces.
 
 ### 7. Bonded operator path
 
@@ -179,7 +180,7 @@ Important boundary:
 
 - local offers can exist without public bonded visibility
 - marketplace discovery is separate from any payment provider
-- bond does not replace the payment layer
+- payment setup remains separate from bond
 
 ### 9. Operator status and evidence
 
@@ -237,7 +238,7 @@ If you want the shortest product summary, read it like this:
 - `Agent runtime`: routing, tools, memory, sessions, policy
 - `Wallet`: inventory, signer health, send flows, wallet-role visibility
 - `Mining`: SAT issuance and mining operations
-- `Fased Network`: public identity, trust, hosted route, network participation
+- `Fased Network`: public profile, trust, hosted route, network participation
 - `Bond`: SAT-backed operator eligibility and proof
 - `Offers`: local publishing and remote discovery
 - `Operator status`: evidence and controlled maturity path
@@ -246,7 +247,7 @@ If you want the shortest product summary, read it like this:
 
 ## Roadmap, not current features
 
-Do not treat roadmap items as live features.
+Keep roadmap items labeled separately from current features.
 
 The next public roadmap lanes are:
 

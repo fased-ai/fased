@@ -11,8 +11,10 @@ title: "Voice Wake"
 Fased treats **wake words as a single global list** owned by the **Gateway**.
 
 - There are **no per-node custom wake words**.
-- **Any node/app UI may edit** the list; changes are persisted by the Gateway and broadcast to everyone.
-- Each device still keeps its own **Voice Wake enabled/disabled** toggle (local UX + permissions differ).
+- **Any node/app UI may edit** the list; changes are persisted by the Gateway
+  and broadcast to everyone.
+- Each device still keeps its own **Voice Wake enabled/disabled** toggle because
+  local UX and permissions differ.
 - **Advanced > Nodes** can show connected node state, but wake-word editing is a
   Gateway/client setting, not a node pairing action.
 
@@ -47,14 +49,16 @@ Notes:
 Who receives it:
 
 - All WebSocket clients (macOS app, browser Chat clients, etc.)
-- All connected nodes (iOS/Android), and also on node connect as an initial “current state” push.
+- All connected nodes (iOS/Android), and also on node connect as an initial
+  current-state push.
 
 ## Client behavior
 
 ### macOS app
 
 - Uses the global list to gate `VoiceWakeRuntime` triggers.
-- Editing “Trigger words” in Voice Wake settings calls `voicewake.set` and then relies on the broadcast to keep other clients in sync.
+- Editing "Trigger words" in Voice Wake settings calls `voicewake.set` and then
+  relies on the broadcast to keep other clients in sync.
 
 ### iOS node
 

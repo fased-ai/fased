@@ -9,9 +9,11 @@ read_when:
 
 # Configuration Reference
 
-Every field available in `~/.fased/fased.json`. For a task-oriented overview, see [Configuration](/gateway/configuration).
+Every field available in `~/.fased/fased.json`. For a task-oriented overview,
+see [Configuration](/gateway/configuration).
 
-Config format is **JSON5** (comments and trailing commas are allowed). All fields are optional and Fased uses safe defaults when omitted.
+Config format is **JSON5**. Comments and trailing commas are allowed. All
+fields are optional and Fased uses safe defaults when omitted.
 
 ---
 
@@ -42,14 +44,20 @@ All channels support DM policies and group policies:
 | `disabled`            | Block all group/room messages                          |
 
 <Note>
-`channels.defaults.groupPolicy` sets the default when a provider's `groupPolicy` is unset.
-Pairing codes expire after 1 hour. Pending DM pairing requests are capped at **3 per channel**.
-If a provider block is missing entirely (`channels.<provider>` absent), runtime group policy falls back to `allowlist` (fail-closed) with a startup warning.
+`channels.defaults.groupPolicy` sets the default when a provider's
+`groupPolicy` is unset.
+Pairing codes expire after 1 hour. Pending DM pairing requests are capped at
+**3 per channel**.
+If a provider block is missing entirely (`channels.<provider>` absent), runtime
+group policy falls back to `allowlist` (fail-closed) with a startup warning.
 </Note>
 
 ### Channel model overrides
 
-Use `channels.modelByChannel` to pin specific channel IDs to a model. Values accept `provider/model` or configured model aliases. The channel mapping applies when a session does not already have a model override (for example, set via `/model`).
+Use `channels.modelByChannel` to pin specific channel IDs to a model. Values
+accept `provider/model` or configured model aliases. The channel mapping applies
+when a session does not already have a model override, such as one set via
+`/model`.
 
 ```json5
 {
@@ -72,7 +80,8 @@ Use `channels.modelByChannel` to pin specific channel IDs to a model. Values acc
 
 ### Channel defaults and heartbeat
 
-Use `channels.defaults` for shared group-policy and heartbeat behavior across providers:
+Use `channels.defaults` for shared group-policy and heartbeat behavior across
+providers:
 
 ```json5
 {
@@ -89,14 +98,16 @@ Use `channels.defaults` for shared group-policy and heartbeat behavior across pr
 }
 ```
 
-- `channels.defaults.groupPolicy`: fallback group policy when a provider-level `groupPolicy` is unset.
+- `channels.defaults.groupPolicy`: fallback group policy when a provider-level
+  `groupPolicy` is unset.
 - `channels.defaults.heartbeat.showOk`: include healthy channel statuses in heartbeat output.
 - `channels.defaults.heartbeat.showAlerts`: include degraded/error statuses in heartbeat output.
 - `channels.defaults.heartbeat.useIndicator`: render compact indicator-style heartbeat output.
 
 ### WhatsApp
 
-WhatsApp runs through the gateway's web channel (Baileys Web). It starts automatically when a linked session exists.
+WhatsApp runs through the gateway's web channel (Baileys Web). It starts
+automatically when a linked session exists.
 
 ```json5
 {
@@ -147,9 +158,13 @@ WhatsApp runs through the gateway's web channel (Baileys Web). It starts automat
 }
 ```
 
-- Outbound commands default to account `default` if present; otherwise the first configured account id (sorted).
+- Outbound commands default to account `default` if present; otherwise the first
+  configured account id (sorted).
 - Legacy single-account Baileys auth dir is migrated by `fased doctor` into `whatsapp/default`.
-- Per-account overrides: `channels.whatsapp.accounts.<id>.sendReadReceipts`, `channels.whatsapp.accounts.<id>.dmPolicy`, `channels.whatsapp.accounts.<id>.allowFrom`.
+- Per-account overrides:
+  - `channels.whatsapp.accounts.<id>.sendReadReceipts`
+  - `channels.whatsapp.accounts.<id>.dmPolicy`
+  - `channels.whatsapp.accounts.<id>.allowFrom`
 
 </Accordion>
 
@@ -207,9 +222,12 @@ WhatsApp runs through the gateway's web channel (Baileys Web). It starts automat
 }
 ```
 
-- Bot token: `channels.telegram.botToken` or `channels.telegram.tokenFile`, with `TELEGRAM_BOT_TOKEN` as fallback for the default account.
-- `configWrites: false` blocks Telegram-initiated config writes (supergroup ID migrations, `/config set|unset`).
-- Telegram stream previews use `sendMessage` + `editMessageText` (works in direct and group chats).
+- Bot token: `channels.telegram.botToken` or `channels.telegram.tokenFile`.
+  `TELEGRAM_BOT_TOKEN` is the fallback for the default account.
+- `configWrites: false` blocks Telegram-initiated config writes, including
+  supergroup ID migrations and `/config set|unset`.
+- Telegram stream previews use `sendMessage` + `editMessageText`. This works in
+  direct and group chats.
 - Retry policy: see [Retry policy](/concepts/retry).
 
 ### Discord
@@ -303,24 +321,40 @@ WhatsApp runs through the gateway's web channel (Baileys Web). It starts automat
 }
 ```
 
-- Token: `channels.discord.token`, with `DISCORD_BOT_TOKEN` as fallback for the default account.
-- Use `user:<id>` (DM) or `channel:<id>` (guild channel) for delivery targets; bare numeric IDs are rejected.
-- Guild slugs are lowercase with spaces replaced by `-`; channel keys use the slugged name (no `#`). Prefer guild IDs.
-- Bot-authored messages are ignored by default. `allowBots: true` enables them (own messages still filtered).
+- Token: `channels.discord.token`, with `DISCORD_BOT_TOKEN` as fallback for the
+  default account.
+- Use `user:<id>` for DMs or `channel:<id>` for guild channel delivery targets.
+  Bare numeric IDs are rejected.
+- Guild slugs are lowercase with spaces replaced by `-`; channel keys use the
+  slugged name without `#`. Prefer guild IDs.
+- Bot-authored messages are ignored by default. `allowBots: true` enables them;
+  own messages are still filtered.
 - `maxLinesPerMessage` (default 17) splits tall messages even when under 2000 chars.
 - `channels.discord.threadBindings` controls Discord thread-bound routing:
-  - `enabled`: Discord override for thread-bound session features (`/focus`, `/unfocus`, `/agents`, `/session idle`, `/session max-age`, and bound delivery/routing)
+  - `enabled`: Discord override for thread-bound session features:
+    `/focus`, `/unfocus`, `/agents`, `/session idle`, `/session max-age`,
+    and bound delivery/routing
   - `idleHours`: Discord override for inactivity auto-unfocus in hours (`0` disables)
   - `maxAgeHours`: Discord override for hard max age in hours (`0` disables)
-  - `spawnSubagentSessions`: opt-in switch for `sessions_spawn({ thread: true })` auto thread creation/binding
-- `channels.discord.ui.components.accentColor` sets the accent color for Discord components v2 containers.
-- `channels.discord.voice` enables Discord voice channel conversations and optional auto-join + TTS overrides.
-- `channels.discord.voice.daveEncryption` and `channels.discord.voice.decryptionFailureTolerance` pass through to `@discordjs/voice` DAVE options (`true` and `24` by default).
-- Fased additionally attempts voice receive recovery by leaving/rejoining a voice session after repeated decrypt failures.
-- `channels.discord.streaming` is the canonical stream mode key. Legacy `streamMode` and boolean `streaming` values are auto-migrated.
-- `channels.discord.dangerouslyAllowNameMatching` re-enables mutable name/tag matching (break-glass compatibility mode).
+  - `spawnSubagentSessions`: opt-in switch for
+    `sessions_spawn({ thread: true })` auto thread creation/binding
+- `channels.discord.ui.components.accentColor` sets the accent color for
+  Discord components v2 containers.
+- `channels.discord.voice` enables Discord voice channel conversations and
+  optional auto-join + TTS overrides.
+- `channels.discord.voice.daveEncryption` and
+  `channels.discord.voice.decryptionFailureTolerance` pass through to
+  `@discordjs/voice` DAVE options (`true` and `24` by default).
+- Fased additionally attempts voice receive recovery by leaving/rejoining a voice
+  session after repeated decrypt failures.
+- `channels.discord.streaming` is the canonical stream mode key. Legacy
+  `streamMode` and boolean `streaming` values are auto-migrated.
+- `channels.discord.dangerouslyAllowNameMatching` re-enables mutable name/tag
+  matching for break-glass compatibility mode.
 
-**Reaction notification modes:** `off` (none), `own` (bot's messages, default), `all` (all messages), `allowlist` (from `guilds.<id>.users` on all messages).
+**Reaction notification modes:** `off` (none), `own` (bot's messages, default),
+`all` (all messages), and `allowlist` (from `guilds.<id>.users` on all
+messages).
 
 ### Google Chat
 
@@ -355,7 +389,8 @@ WhatsApp runs through the gateway's web channel (Baileys Web). It starts automat
 - Service account SecretRef is also supported (`serviceAccountRef`).
 - Env fallbacks: `GOOGLE_CHAT_SERVICE_ACCOUNT` or `GOOGLE_CHAT_SERVICE_ACCOUNT_FILE`.
 - Use `spaces/<spaceId>` or `users/<userId>` for delivery targets.
-- `channels.googlechat.dangerouslyAllowNameMatching` re-enables mutable email principal matching (break-glass compatibility mode).
+- `channels.googlechat.dangerouslyAllowNameMatching` re-enables mutable email
+  principal matching for break-glass compatibility mode.
 
 ### Slack
 
@@ -412,15 +447,20 @@ WhatsApp runs through the gateway's web channel (Baileys Web). It starts automat
 }
 ```
 
-- **Socket mode** requires both `botToken` and `appToken` (`SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` for default account env fallback).
+- **Socket mode** requires both `botToken` and `appToken`.
+  `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` are the default account env fallback.
 - **HTTP mode** requires `botToken` plus `signingSecret` (at root or per-account).
 - `configWrites: false` blocks Slack-initiated config writes.
-- `channels.slack.streaming` is the canonical stream mode key. Legacy `streamMode` and boolean `streaming` values are auto-migrated.
+- `channels.slack.streaming` is the canonical stream mode key. Legacy
+  `streamMode` and boolean `streaming` values are auto-migrated.
 - Use `user:<id>` (DM) or `channel:<id>` for delivery targets.
 
-**Reaction notification modes:** `off`, `own` (default), `all`, `allowlist` (from `reactionAllowlist`).
+**Reaction notification modes:** `off`, `own` (default), `all`, and
+`allowlist` from `reactionAllowlist`.
 
-**Thread session isolation:** `thread.historyScope` is per-thread (default) or shared across channel. `thread.inheritParent` copies parent channel transcript to new threads.
+**Thread session isolation:** `thread.historyScope` is per-thread (default) or
+shared across channel. `thread.inheritParent` copies parent channel transcript
+to new threads.
 
 | Action group | Default | Notes                  |
 | ------------ | ------- | ---------------------- |
@@ -451,10 +491,13 @@ Mattermost ships as a plugin: `fased plugins install @fased/mattermost`.
 }
 ```
 
-Chat modes: `oncall` (respond on @-mention, default), `onmessage` (every message), `onchar` (messages starting with trigger prefix).
+Chat modes: `oncall` (respond on @-mention, default), `onmessage` (every
+message), and `onchar` (messages starting with trigger prefix).
 
-- `channels.mattermost.configWrites`: allow or deny Mattermost-initiated config writes.
-- `channels.mattermost.requireMention`: require `@mention` before replying in channels.
+- `channels.mattermost.configWrites`: allow or deny Mattermost-initiated config
+  writes.
+- `channels.mattermost.requireMention`: require `@mention` before replying in
+  channels.
 
 ### Signal
 
@@ -475,14 +518,17 @@ Chat modes: `oncall` (respond on @-mention, default), `onmessage` (every message
 }
 ```
 
-**Reaction notification modes:** `off`, `own` (default), `all`, `allowlist` (from `reactionAllowlist`).
+**Reaction notification modes:** `off`, `own` (default), `all`, and
+`allowlist` from `reactionAllowlist`.
 
-- `channels.signal.account`: pin channel startup to a specific Signal account identity.
+- `channels.signal.account`: pin channel startup to a specific Signal account
+  identity.
 - `channels.signal.configWrites`: allow or deny Signal-initiated config writes.
 
 ### BlueBubbles
 
-BlueBubbles is the recommended iMessage path (plugin-backed, configured under `channels.bluebubbles`).
+BlueBubbles is the recommended iMessage path. It is plugin-backed and configured
+under `channels.bluebubbles`.
 
 ```json5
 {
@@ -497,8 +543,10 @@ BlueBubbles is the recommended iMessage path (plugin-backed, configured under `c
 }
 ```
 
-- Core key paths covered here: `channels.bluebubbles`, `channels.bluebubbles.dmPolicy`.
-- Full BlueBubbles channel configuration is documented in [BlueBubbles](/channels/bluebubbles).
+- Core key paths covered here: `channels.bluebubbles` and
+  `channels.bluebubbles.dmPolicy`.
+- Full BlueBubbles channel configuration is documented in
+  [BlueBubbles](/channels/bluebubbles).
 
 ### iMessage
 
@@ -529,7 +577,8 @@ Fased spawns `imsg rpc` (JSON-RPC over stdio). No daemon or port required.
 - Requires Full Disk Access to the Messages DB.
 - Prefer `chat_id:<id>` targets. Use `imsg chats --limit 20` to list chats.
 - `cliPath` can point to an SSH wrapper; set `remoteHost` (`host` or `user@host`) for SCP attachment fetching.
-- `attachmentRoots` and `remoteAttachmentRoots` restrict inbound attachment paths (default: `/Users/*/Library/Messages/Attachments`).
+- `attachmentRoots` and `remoteAttachmentRoots` restrict inbound attachment
+  paths. Default: `/Users/*/Library/Messages/Attachments`.
 - SCP uses strict host-key checking, so ensure the relay host key already exists in `~/.ssh/known_hosts`.
 - `channels.imessage.configWrites`: allow or deny iMessage-initiated config writes.
 
@@ -560,7 +609,8 @@ Microsoft Teams is extension-backed and configured under `channels.msteams`.
 ```
 
 - Core key paths covered here: `channels.msteams`, `channels.msteams.configWrites`.
-- Full Teams config (credentials, webhook, DM/group policy, per-team/per-channel overrides) is documented in [Microsoft Teams](/channels/msteams).
+- Full Teams config is documented in [Microsoft Teams](/channels/msteams):
+  credentials, webhook, DM/group policy, and per-team/per-channel overrides.
 
 ### IRC
 
@@ -615,18 +665,28 @@ Run multiple accounts per channel (each with its own `accountId`):
 - Env tokens only apply to the **default** account.
 - Base channel settings apply to all accounts unless overridden per account.
 - Use `bindings[].match.accountId` to route each account to a different agent.
-- If you add a non-default account via `fased channels add` (or channel onboarding) while still on a single-account top-level channel config, Fased moves account-scoped top-level single-account values into `channels.<channel>.accounts.default` first so the original account keeps working.
+- If you add a non-default account via `fased channels add` or channel
+  onboarding while still on a single-account top-level channel config, Fased
+  moves account-scoped top-level single-account values into
+  `channels.<channel>.accounts.default` first so the original account keeps
+  working.
 - Existing channel-only bindings (no `accountId`) keep matching the default account; account-scoped bindings remain optional.
-- `fased doctor --fix` also repairs mixed shapes by moving account-scoped top-level single-account values into `accounts.default` when named accounts exist but `default` is missing.
+- `fased doctor --fix` also repairs mixed shapes by moving account-scoped
+  top-level single-account values into `accounts.default` when named accounts
+  exist but `default` is missing.
 
 ### Other extension channels
 
-Many extension channels are configured as `channels.<id>` and documented in their dedicated channel pages (for example Feishu, Matrix, LINE, Nostr, Zalo, Nextcloud Talk, Synology Chat, and Twitch).
+Many extension channels are configured as `channels.<id>` and documented in
+their dedicated channel pages. Examples include Feishu, Matrix, LINE, Nostr,
+Zalo, Nextcloud Talk, Synology Chat, and Twitch.
 See the full channel index: [Channels](/channels).
 
 ### Group chat mention gating
 
-Group messages default to **require mention** (metadata mention or regex patterns). Applies to WhatsApp, Telegram, Discord, Google Chat, and iMessage group chats.
+Group messages default to **require mention** using metadata mentions or regex
+patterns. This applies to WhatsApp, Telegram, Discord, Google Chat, and iMessage
+group chats.
 
 **Mention types:**
 
@@ -645,7 +705,9 @@ Group messages default to **require mention** (metadata mention or regex pattern
 }
 ```
 
-`messages.groupChat.historyLimit` sets the global default. Channels can override with `channels.<channel>.historyLimit` (or per-account). Set `0` to disable.
+`messages.groupChat.historyLimit` sets the global default. Channels can
+override with `channels.<channel>.historyLimit` or per-account settings. Set
+`0` to disable.
 
 #### DM history limits
 
@@ -716,10 +778,12 @@ Include your own number in `allowFrom` to enable self-chat mode (ignores native 
 - `native: "auto"` turns on native commands for Discord/Telegram, leaves Slack off.
 - Override per channel: `channels.discord.commands.native` (bool or `"auto"`). `false` clears previously registered commands.
 - `channels.telegram.customCommands` adds extra Telegram bot menu entries.
-- `bash: true` enables `! <cmd>` for host shell. Requires `tools.elevated.enabled` and sender in `tools.elevated.allowFrom.<channel>`.
+- `bash: true` enables `! <cmd>` for host shell. Requires
+  `tools.elevated.enabled` and sender in `tools.elevated.allowFrom.<channel>`.
 - `config: true` enables `/config` (reads/writes `fased.json`).
 - `channels.<provider>.configWrites` gates config mutations per channel (default: true).
-- `allowFrom` is per-provider. When set, it is the **only** authorization source (channel allowlists/pairing and `useAccessGroups` are ignored).
+- `allowFrom` is per-provider. When set, it is the **only** authorization
+  source. Channel allowlists/pairing and `useAccessGroups` are ignored.
 - `useAccessGroups: false` allows commands to bypass access-group policies when `allowFrom` is not set.
 
 </Accordion>
@@ -740,7 +804,8 @@ Default: `~/.fased/workspace`.
 
 ### `agents.defaults.repoRoot`
 
-Optional repository root shown in the system prompt's Runtime line. If unset, Fased auto-detects by walking upward from the workspace.
+Optional repository root shown in the system prompt's Runtime line. If unset,
+Fased auto-detects by walking upward from the workspace.
 
 ```json5
 {
@@ -750,7 +815,9 @@ Optional repository root shown in the system prompt's Runtime line. If unset, Fa
 
 ### `agents.defaults.skipBootstrap`
 
-Disables automatic creation of workspace bootstrap files (`AGENTS.md`, `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`).
+Disables automatic creation of workspace bootstrap files:
+`AGENTS.md`, `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`,
+`HEARTBEAT.md`, and `BOOTSTRAP.md`.
 
 ```json5
 {
@@ -848,10 +915,18 @@ Time format in system prompt. Default: `auto` (OS preference).
 - `imageModel`: accepts either a string (`"provider/model"`) or an object (`{ primary, fallbacks }`).
   - Used by the `image` tool path as its vision-model config.
   - Also used as fallback routing when the selected/default model cannot accept image input.
-- `model.primary`: format `provider/model` (e.g. `anthropic/claude-opus-4-6`). If you omit the provider, Fased assumes `anthropic` (deprecated).
-- `models`: the configured model catalog and allowlist for `/model`. Each entry can include `alias` (shortcut) and `params` (provider-specific, for example `temperature`, `maxTokens`, `cacheRetention`, `context1m`).
-- `params` merge precedence (config): `agents.defaults.models["provider/model"].params` is the base, then `agents.list[].params` (matching agent id) overrides by key.
-- Config writers that mutate these fields (for example `/models set`, `/models set-image`, and fallback add/remove commands) save canonical object form and preserve existing fallback lists when possible.
+- `model.primary`: format `provider/model`, for example
+  `anthropic/claude-opus-4-6`. If you omit the provider, Fased assumes
+  `anthropic` (deprecated).
+- `models`: the configured model catalog and allowlist for `/model`. Each entry
+  can include `alias` and provider-specific `params`, such as `temperature`,
+  `maxTokens`, `cacheRetention`, or `context1m`.
+- `params` merge precedence: `agents.defaults.models["provider/model"].params`
+  is the base, then `agents.list[].params` for the matching agent id overrides
+  by key.
+- Config writers that mutate these fields, such as `/models set`,
+  `/models set-image`, and fallback add/remove commands, save canonical object
+  form and preserve existing fallback lists when possible.
 - `maxConcurrent`: max parallel agent runs across sessions (each session still serialized). Default: 1.
 
 **Built-in alias shorthands** (only apply when the model is in `agents.defaults.models`):
@@ -867,8 +942,12 @@ Time format in system prompt. Default: `auto` (OS preference).
 
 Your configured aliases always win over defaults.
 
-Z.AI GLM-4.x models automatically enable thinking mode unless you set `--thinking off` or define `agents.defaults.models["zai/<model>"].params.thinking` yourself.
-Z.AI models enable `tool_stream` by default for tool call streaming. Set `agents.defaults.models["zai/<model>"].params.tool_stream` to `false` to disable it.
+Z.AI GLM-4.x models automatically enable thinking mode unless you set
+`--thinking off` or define
+`agents.defaults.models["zai/<model>"].params.thinking` yourself.
+Z.AI models enable `tool_stream` by default for tool call streaming. Set
+`agents.defaults.models["zai/<model>"].params.tool_stream` to `false` to
+disable it.
 
 ### `agents.defaults.cliBackends`
 
@@ -931,7 +1010,9 @@ Periodic heartbeat runs.
 
 - `every`: duration string (ms/s/m/h). Default: `30m`.
 - `suppressToolErrorWarnings`: when true, suppresses tool error warning payloads during heartbeat runs.
-- `directPolicy`: direct/DM delivery policy. `allow` (default) permits direct-target delivery. `block` suppresses direct-target delivery and emits `reason=dm-blocked`.
+- `directPolicy`: direct/DM delivery policy. `allow` permits direct-target
+  delivery and is the default. `block` suppresses direct-target delivery and
+  emits `reason=dm-blocked`.
 - Per-agent: set `agents.list[].heartbeat`. When any agent defines `heartbeat`, **only those agents** run heartbeats.
 - Heartbeats run full agent turns — shorter intervals burn more tokens.
 
@@ -945,7 +1026,7 @@ Periodic heartbeat runs.
         mode: "safeguard", // default | safeguard
         reserveTokensFloor: 24000,
         identifierPolicy: "strict", // strict | off | custom
-        identifierInstructions: "Preserve deployment IDs, ticket IDs, and host:port pairs exactly.", // used when identifierPolicy=custom
+        identifierInstructions: "Preserve deployment IDs exactly.", // used when identifierPolicy=custom
         memoryFlush: {
           enabled: true,
           softThresholdTokens: 6000,
@@ -959,7 +1040,9 @@ Periodic heartbeat runs.
 ```
 
 - `mode`: `default` or `safeguard` (chunked summarization for long histories). See [Compaction](/concepts/compaction).
-- `identifierPolicy`: `strict` (default), `off`, or `custom`. `strict` prepends built-in opaque identifier retention guidance during compaction summarization.
+- `identifierPolicy`: `strict` (default), `off`, or `custom`. `strict`
+  prepends built-in opaque identifier retention guidance during compaction
+  summarization.
 - `identifierInstructions`: optional custom identifier-preservation text used when `identifierPolicy=custom`.
 - `memoryFlush`: silent agentic turn before auto-compaction to store durable memories. Skipped when workspace is read-only.
 
@@ -1024,7 +1107,9 @@ See [Session Pruning](/concepts/session-pruning) for behavior details.
 ```
 
 - Non-Telegram channels require explicit `*.blockStreaming: true` to enable block replies.
-- Channel overrides: `channels.<channel>.blockStreamingCoalesce` (and per-account variants). Signal/Slack/Discord/Google Chat default `minChars: 1500`.
+- Channel overrides: `channels.<channel>.blockStreamingCoalesce` and
+  per-account variants. Signal/Slack/Discord/Google Chat default to
+  `minChars: 1500`.
 - `humanDelay`: randomized pause between block replies. `natural` = 800–2500ms. Per-agent override: `agents.list[].humanDelay`.
 
 See [Streaming](/concepts/streaming) for behavior + chunking details.
@@ -1153,13 +1238,20 @@ Optional **Docker sandboxing** for the embedded agent. See [Sandboxing](/gateway
 
 **`docker.binds`** mounts additional host directories; global and per-agent binds are merged.
 
-**Sandboxed browser** (`sandbox.browser.enabled`): Chromium + CDP in a container. noVNC URL injected into system prompt. Does not require `browser.enabled` in main config.
-noVNC observer access uses VNC auth by default and Fased emits a short-lived token URL (instead of exposing the password in the shared URL).
+**Sandboxed browser** (`sandbox.browser.enabled`): Chromium + CDP in a
+container. noVNC URL is injected into the system prompt. This does not require
+`browser.enabled` in main config.
+noVNC observer access uses VNC auth by default. Fased emits a short-lived token
+URL instead of exposing the password in the shared URL.
 
 - `allowHostControl: false` (default) blocks sandboxed sessions from targeting the host browser.
-- `network` defaults to `fased-sandbox-browser` (dedicated bridge network). Set to `bridge` only when you explicitly want global bridge connectivity.
-- `cdpSourceRange` optionally restricts CDP ingress at the container edge to a CIDR range (for example `172.21.0.1/32`).
-- `sandbox.browser.binds` mounts additional host directories into the sandbox browser container only. When set (including `[]`), it replaces `docker.binds` for the browser container.
+- `network` defaults to `fased-sandbox-browser`, a dedicated bridge network.
+  Set to `bridge` only when you explicitly want global bridge connectivity.
+- `cdpSourceRange` optionally restricts CDP ingress at the container edge to a
+  CIDR range, for example `172.21.0.1/32`.
+- `sandbox.browser.binds` mounts additional host directories into the sandbox
+  browser container only. When set, including `[]`, it replaces `docker.binds`
+  for the browser container.
 
 </Accordion>
 
@@ -1207,8 +1299,14 @@ scripts/sandbox-browser-setup.sh   # optional browser image
 
 - `id`: stable agent id (required).
 - `default`: when multiple are set, first wins (warning logged). If none set, first list entry is default.
-- `model`: string form overrides `primary` only; object form `{ primary, fallbacks }` overrides both (`[]` disables global fallbacks). Scheduled tasks that only override `primary` still inherit default fallbacks unless you set `fallbacks: []`.
-- `params`: per-agent stream params merged over the selected model entry in `agents.defaults.models`. Use this for agent-specific overrides like `cacheRetention`, `temperature`, or `maxTokens` without duplicating the whole model catalog.
+- `model`: string form overrides `primary` only. Object form
+  `{ primary, fallbacks }` overrides both. Use `fallbacks: []` to disable global
+  fallbacks. Scheduled tasks that only override `primary` still inherit default
+  fallbacks unless you set `fallbacks: []`.
+- `params`: per-agent stream params merged over the selected model entry in
+  `agents.defaults.models`. Use this for agent-specific overrides like
+  `cacheRetention`, `temperature`, or `maxTokens` without duplicating the whole
+  model catalog.
 - `identity.avatar`: workspace-relative path, `http(s)` URL, or `data:` URI.
 - `identity` derives defaults: `ackReaction` from `emoji`, `mentionPatterns` from `name`/`emoji`.
 - `subagents.allowAgents`: allowlist of agent ids for `sessions_spawn` (`["*"]` = any; default: same agent only).
@@ -1406,20 +1504,27 @@ See [Multi-Agent Sandbox & Tools](/tools/multi-agent-sandbox-tools) for preceden
   - `per-channel-peer`: isolate per channel + sender (recommended for multi-user inboxes).
   - `per-account-channel-peer`: isolate per account + channel + sender (recommended for multi-account).
 - **`identityLinks`**: map canonical ids to provider-prefixed peers for cross-channel session sharing.
-- **`reset`**: primary reset policy. `daily` resets at `atHour` local time; `idle` resets after `idleMinutes`. When both configured, whichever expires first wins.
+- **`reset`**: primary reset policy. `daily` resets at `atHour` local time;
+  `idle` resets after `idleMinutes`. When both are configured, whichever
+  expires first wins.
 - **`resetByType`**: per-type overrides (`direct`, `group`, `thread`). Legacy `dm` accepted as alias for `direct`.
 - **`parentForkMaxTokens`**: max parent-session `totalTokens` allowed when creating a forked thread session (default `100000`).
-  - If parent `totalTokens` is above this value, Fased starts a fresh thread session instead of inheriting parent transcript history.
+  - If parent `totalTokens` is above this value, Fased starts a fresh thread
+    session instead of inheriting parent transcript history.
   - Set `0` to disable this guard and always allow parent forking.
 - **`mainKey`**: legacy field. Runtime now always uses `"main"` for the main direct-chat bucket.
-- **`sendPolicy`**: match by `channel`, `chatType` (`direct|group|channel`, with legacy `dm` alias), `keyPrefix`, or `rawKeyPrefix`. First deny wins.
+- **`sendPolicy`**: match by `channel`, `chatType`
+  (`direct|group|channel`, with legacy `dm` alias), `keyPrefix`, or
+  `rawKeyPrefix`. First deny wins.
 - **`maintenance`**: session-store cleanup + retention controls.
   - `mode`: `warn` emits warnings only; `enforce` applies cleanup.
   - `pruneAfter`: age cutoff for stale entries (default `30d`).
   - `maxEntries`: maximum number of entries in `sessions.json` (default `500`).
   - `rotateBytes`: rotate `sessions.json` when it exceeds this size (default `10mb`).
-  - `resetArchiveRetention`: retention for `*.reset.<timestamp>` transcript archives. Defaults to `pruneAfter`; set `false` to disable.
-  - `maxDiskBytes`: optional sessions-directory disk budget. In `warn` mode it logs warnings; in `enforce` mode it removes oldest artifacts/sessions first.
+  - `resetArchiveRetention`: retention for `*.reset.<timestamp>` transcript
+    archives. Defaults to `pruneAfter`; set `false` to disable.
+  - `maxDiskBytes`: optional sessions-directory disk budget. In `warn` mode it
+    logs warnings; in `enforce` mode it removes oldest artifacts/sessions first.
   - `highWaterBytes`: optional target after budget cleanup. Defaults to `80%` of `maxDiskBytes`.
 - **`threadBindings`**: global defaults for thread-bound session features.
   - `enabled`: master default switch (providers can override; Discord uses `channels.discord.threadBindings.enabled`)
@@ -1464,7 +1569,9 @@ See [Multi-Agent Sandbox & Tools](/tools/multi-agent-sandbox-tools) for preceden
 
 Per-channel/account overrides: `channels.<channel>.responsePrefix`, `channels.<channel>.accounts.<id>.responsePrefix`.
 
-Resolution (most specific wins): account → channel → global. `""` disables and stops cascade. `"auto"` derives `[{identity.name}]`.
+Resolution order is account → channel → global, with the most specific value
+winning. `""` disables and stops cascade. `"auto"` derives
+`[{identity.name}]`.
 
 **Template variables:**
 
@@ -1488,7 +1595,8 @@ Variables are case-insensitive. `{think}` is an alias for `{thinkingLevel}`.
 
 ### Inbound debounce
 
-Batches rapid text-only messages from the same sender into a single agent turn. Media/attachments flush immediately. Control commands bypass debouncing.
+Batches rapid text-only messages from the same sender into a single agent turn.
+Media/attachments flush immediately. Control commands bypass debouncing.
 
 ### TTS (text-to-speech)
 
@@ -1764,7 +1872,9 @@ Configures inbound media understanding (image/audio/video):
 
 **Common fields:**
 
-- `capabilities`: optional list (`image`, `audio`, `video`). Defaults: `openai`/`anthropic`/`minimax` → image, `google` → image+audio+video, `groq` → audio.
+- `capabilities`: optional list (`image`, `audio`, `video`). Defaults:
+  `openai`/`anthropic`/`minimax` → image, `google` → image+audio+video, and
+  `groq` → audio.
 - `prompt`, `maxChars`, `maxBytes`, `timeoutSeconds`, `language`: per-entry overrides.
 - Failures fall back to the next entry.
 
@@ -1806,9 +1916,12 @@ Notes:
 
 - `self`: only the current session key.
 - `tree`: current session + sessions spawned by the current session (subagents).
-- `agent`: any session belonging to the current agent id (can include other users if you run per-sender sessions under the same agent id).
+- `agent`: any session belonging to the current agent id. This can include
+  other users if you run per-sender sessions under the same agent id.
 - `all`: any session. Cross-agent targeting still requires `tools.agentToAgent`.
-- Sandbox clamp: when the current session is sandboxed and `agents.defaults.sandbox.sessionToolsVisibility="spawned"`, visibility is forced to `tree` even if `tools.sessions.visibility="all"`.
+- Sandbox clamp: when the current session is sandboxed and
+  `agents.defaults.sandbox.sessionToolsVisibility="spawned"`, visibility is
+  forced to `tree` even if `tools.sessions.visibility="all"`.
 
 ### `tools.subagents`
 
@@ -1828,14 +1941,17 @@ Notes:
 ```
 
 - `model`: default model for spawned sub-agents. If omitted, sub-agents inherit the caller's model.
-- `runTimeoutSeconds`: default timeout (seconds) for `sessions_spawn` when the tool call omits `runTimeoutSeconds`. `0` means no timeout.
+- `runTimeoutSeconds`: default timeout in seconds for `sessions_spawn` when the
+  tool call omits `runTimeoutSeconds`. `0` means no timeout.
 - Per-subagent tool policy: `tools.subagents.tools.allow` / `tools.subagents.tools.deny`.
 
 ---
 
 ## Custom providers and base URLs
 
-Fased uses its curated model/provider catalog. Add custom providers via `models.providers` in config or `~/.fased/agents/<agentId>/agent/models.json`.
+Fased uses its curated model/provider catalog. Add custom providers via
+`models.providers` in config or
+`~/.fased/agents/<agentId>/agent/models.json`.
 
 ```json5
 {
@@ -1874,7 +1990,8 @@ Fased uses its curated model/provider catalog. Add custom providers via `models.
 
 - `models.mode`: provider catalog behavior (`merge` or `replace`).
 - `models.providers`: custom provider map keyed by provider id.
-- `models.providers.*.api`: request adapter (`openai-completions`, `openai-responses`, `anthropic-messages`, `google-generative-ai`, etc).
+- `models.providers.*.api`: request adapter, such as `openai-completions`,
+  `openai-responses`, `anthropic-messages`, or `google-generative-ai`.
 - `models.providers.*.apiKey`: provider credential (prefer SecretRef/env substitution).
 - `models.providers.*.auth`: auth strategy (`api-key`, `token`, `oauth`, `aws-sdk`).
 - `models.providers.*.authHeader`: force credential transport in the `Authorization` header when required.
@@ -2105,7 +2222,9 @@ Set `MINIMAX_API_KEY`. Shortcut: `fased onboard --auth-choice minimax-api`.
 
 <Accordion title="Local models (LM Studio)">
 
-See [Local Models](/gateway/local-models). TL;DR: run MiniMax M2.1 via LM Studio Responses API on serious hardware; keep hosted models merged for fallback.
+See [Local Models](/gateway/local-models). TL;DR: run MiniMax M2.1 via
+LM Studio Responses API on serious hardware; keep hosted models merged for
+fallback.
 
 </Accordion>
 
@@ -2171,7 +2290,9 @@ See [Local Models](/gateway/local-models). TL;DR: run MiniMax M2.1 via LM Studio
 - `plugins.entries.<id>.config`: plugin-defined config object (validated by plugin schema).
 - `plugins.slots.memory`: pick the active memory plugin id, or `"none"` to disable memory plugins.
 - `plugins.installs`: CLI-managed install metadata used by `fased plugins update`.
-  - Includes `source`, `spec`, `sourcePath`, `installPath`, `version`, `resolvedName`, `resolvedVersion`, `resolvedSpec`, `integrity`, `shasum`, `resolvedAt`, `installedAt`.
+  - Includes `source`, `spec`, `sourcePath`, `installPath`, `version`,
+    `resolvedName`, `resolvedVersion`, `resolvedSpec`, `integrity`, `shasum`,
+    `resolvedAt`, and `installedAt`.
   - Treat `plugins.installs.*` as managed state; prefer CLI commands over manual edits.
 
 See [Plugins](/tools/plugin).
@@ -2294,36 +2415,63 @@ See [Plugins](/tools/plugin).
 - `mode`: `local` (run gateway) or `remote` (connect to remote gateway). Gateway refuses to start unless `local`.
 - `port`: single multiplexed port for WS + HTTP. Precedence: `--port` > `FASED_GATEWAY_PORT` > `gateway.port` > `18789`.
 - `bind`: `auto`, `loopback` (default), `lan` (`0.0.0.0`), `tailnet` (Tailscale IP only), or `custom`.
-- **Auth**: required by default. Non-loopback binds require a shared token/password. Onboarding wizard generates a token by default.
-- Accepted public config auth modes are `"token"`, `"password"`, and `"trusted-proxy"`. Do not set `gateway.auth.mode: "none"` in `fased.json`; no-auth is an internal/test override, not a supported public config mode. If `gateway.auth` is omitted, startup/onboarding generates token auth.
-- `gateway.auth.mode: "trusted-proxy"`: delegate auth to an identity-aware reverse proxy and trust identity headers from `gateway.trustedProxies` (see [Trusted Proxy Auth](/gateway/trusted-proxy-auth)).
-- `gateway.auth.allowTailscale`: when `true`, Tailscale Serve identity headers can satisfy Control UI/WebSocket auth (verified via `tailscale whois`); HTTP API endpoints still require token/password auth. This tokenless flow assumes the gateway host is trusted. Defaults to `true` when `tailscale.mode = "serve"`.
-- `gateway.auth.rateLimit`: optional failed-auth limiter. Applies per client IP and per auth scope (shared-secret and device-token are tracked independently). Blocked attempts return `429` + `Retry-After`.
-  - `gateway.auth.rateLimit.exemptLoopback` defaults to `true`; set `false` when you intentionally want localhost traffic rate-limited too (for test setups or strict proxy deployments).
-- Browser-origin WS auth attempts are always throttled with loopback exemption disabled (defense-in-depth against browser-based localhost brute force).
+- **Auth**: required by default. Non-loopback binds require a shared
+  token/password. Onboarding wizard generates a token by default.
+- Accepted public config auth modes are `"token"`, `"password"`, and
+  `"trusted-proxy"`. Do not set `gateway.auth.mode: "none"` in `fased.json`;
+  no-auth is an internal/test override, not a supported public config mode. If
+  `gateway.auth` is omitted, startup/onboarding generates token auth.
+- `gateway.auth.mode: "trusted-proxy"` delegates auth to an identity-aware
+  reverse proxy and trusts identity headers from `gateway.trustedProxies`. See
+  [Trusted Proxy Auth](/gateway/trusted-proxy-auth).
+- `gateway.auth.allowTailscale`: when `true`, Tailscale Serve identity headers
+  can satisfy Control UI/WebSocket auth, verified via `tailscale whois`. HTTP
+  API endpoints still require token/password auth. This tokenless flow assumes
+  the gateway host is trusted. Defaults to `true` when `tailscale.mode = "serve"`.
+- `gateway.auth.rateLimit`: optional failed-auth limiter. Applies per client IP
+  and per auth scope. Shared-secret and device-token are tracked independently.
+  Blocked attempts return `429` + `Retry-After`.
+  - `gateway.auth.rateLimit.exemptLoopback` defaults to `true`; set `false`
+    when you intentionally want localhost traffic rate-limited too, such as in
+    test setups or strict proxy deployments.
+- Browser-origin WS auth attempts are always throttled with loopback exemption
+  disabled as defense-in-depth against browser-based localhost brute force.
 - `tailscale.mode`: `serve` (tailnet only, loopback bind) or `funnel` (public, requires auth).
-- `controlUi.allowedOrigins`: explicit browser-origin allowlist for Gateway WebSocket connects. Set it when the browser `Origin` differs from the Gateway host/origin that serves the UI, such as custom proxy domains.
-- `controlUi.dangerouslyAllowHostHeaderOriginFallback`: dangerous mode that enables Host-header origin fallback for deployments that intentionally rely on Host-header origin policy.
-- `remote.transport`: `ssh` (default) or `direct` (ws/wss). For `direct`, `remote.url` must be `ws://` or `wss://`.
-- `gateway.remote.token` / `.password` are remote-client credential fields. They do not configure gateway auth by themselves.
-- Local gateway call paths can use `gateway.remote.*` as fallback when `gateway.auth.*` is unset.
-- `trustedProxies`: reverse proxy IPs that terminate TLS. Only list proxies you control.
-- `allowRealIpFallback`: when `true`, the gateway accepts `X-Real-IP` if `X-Forwarded-For` is missing. Default `false` for fail-closed behavior.
-- `gateway.tools.deny`: extra tool names blocked for HTTP `POST /tools/invoke` (extends default deny list).
+- `controlUi.allowedOrigins`: explicit browser-origin allowlist for Gateway
+  WebSocket connects. Set it when the browser `Origin` differs from the Gateway
+  host/origin that serves the UI, such as custom proxy domains.
+- `controlUi.dangerouslyAllowHostHeaderOriginFallback`: dangerous mode that
+  enables Host-header origin fallback for deployments that intentionally rely on
+  Host-header origin policy.
+- `remote.transport`: `ssh` (default) or `direct` (ws/wss). For `direct`,
+  `remote.url` must be `ws://` or `wss://`.
+- `gateway.remote.token` / `.password` are remote-client credential fields.
+  They do not configure gateway auth by themselves.
+- Local gateway call paths can use `gateway.remote.*` as fallback when
+  `gateway.auth.*` is unset.
+- `trustedProxies`: reverse proxy IPs that terminate TLS. Only list proxies you
+  control.
+- `allowRealIpFallback`: when `true`, the gateway accepts `X-Real-IP` if
+  `X-Forwarded-For` is missing. Default `false` for fail-closed behavior.
+- `gateway.tools.deny`: extra tool names blocked for HTTP `POST /tools/invoke`.
+  This extends the default deny list.
 - `gateway.tools.allow`: remove tool names from the default HTTP deny list.
 
 </Accordion>
 
 ### OpenAI-compatible endpoints
 
-- Chat Completions: disabled by default. Enable with `gateway.http.endpoints.chatCompletions.enabled: true`.
+- Chat Completions: disabled by default. Enable with
+  `gateway.http.endpoints.chatCompletions.enabled: true`.
 - Responses API: `gateway.http.endpoints.responses.enabled`.
 - Responses URL-input hardening:
   - `gateway.http.endpoints.responses.maxUrlParts`
   - `gateway.http.endpoints.responses.files.urlAllowlist`
   - `gateway.http.endpoints.responses.images.urlAllowlist`
 - Optional response hardening header:
-  - `gateway.http.securityHeaders.strictTransportSecurity` (set only for HTTPS origins you control; see [Trusted Proxy Auth](/gateway/trusted-proxy-auth#tls-termination-and-hsts))
+  - `gateway.http.securityHeaders.strictTransportSecurity`
+    Set only for HTTPS origins you control. See
+    [Trusted Proxy Auth](/gateway/trusted-proxy-auth#tls-termination-and-hsts).
 
 ### Multi-instance isolation
 
@@ -2335,7 +2483,10 @@ FASED_STATE_DIR=~/.fased-a \
 fased gateway --port 19001
 ```
 
-Convenience flags: `--dev` (uses `~/.fased-dev` + port `19001`), `--profile <name>` (uses `~/.fased-<name>`).
+Convenience flags:
+
+- `--dev`: uses `~/.fased-dev` + port `19001`
+- `--profile <name>`: uses `~/.fased-<name>`
 
 See [Multiple Gateways](/gateway/multiple-gateways).
 
@@ -2379,8 +2530,10 @@ Auth: `Authorization: Bearer <token>` or `x-fased-token: <token>`.
 **Endpoints:**
 
 - `POST /hooks/wake` → `{ text, mode?: "now"|"next-heartbeat" }`
-- `POST /hooks/agent` → `{ message, name?, agentId?, sessionKey?, wakeMode?, deliver?, channel?, to?, model?, thinking?, timeoutSeconds? }`
-  - `sessionKey` from request payload is accepted only when `hooks.allowRequestSessionKey=true` (default: `false`).
+- `POST /hooks/agent` → `{ message, name?, agentId?, sessionKey?, wakeMode?,
+  deliver?, channel?, to?, model?, thinking?, timeoutSeconds? }`
+- `sessionKey` from request payload is accepted only when
+  `hooks.allowRequestSessionKey=true` (default: `false`).
 - `POST /hooks/<name>` → resolved via `hooks.mappings`
 
 <Accordion title="Mapping details">
@@ -2444,9 +2597,13 @@ Auth: `Authorization: Bearer <token>` or `x-fased-token: <token>`.
   - `http://<gateway-host>:<gateway.port>/__fased__/canvas/`
   - `http://<gateway-host>:<gateway.port>/__fased__/a2ui/`
 - Local-only: keep `gateway.bind: "loopback"` (default).
-- Non-loopback binds: canvas routes require Gateway auth (token/password/trusted-proxy), same as other Gateway HTTP surfaces.
-- Node WebViews typically don't send auth headers; after a node is paired and connected, the Gateway advertises node-scoped capability URLs for canvas/A2UI access.
-- Capability URLs are bound to the active node WS session and expire quickly. IP-based fallback is not used.
+- Non-loopback binds: canvas routes require Gateway auth
+  (token/password/trusted-proxy), same as other Gateway HTTP surfaces.
+- Node WebViews typically don't send auth headers. After a node is paired and
+  connected, the Gateway advertises node-scoped capability URLs for canvas/A2UI
+  access.
+- Capability URLs are bound to the active node WS session and expire quickly.
+  IP-based fallback is not used.
 - Injects live-reload client into served HTML.
 - Auto-creates starter `index.html` when empty.
 - Also serves A2UI at `/__fased__/a2ui/`.
@@ -2483,7 +2640,9 @@ Auth: `Authorization: Bearer <token>` or `x-fased-token: <token>`.
 }
 ```
 
-Writes a unicast DNS-SD zone under `~/.fased/dns/`. For cross-network discovery, pair with a DNS server (CoreDNS recommended) + Tailscale split DNS.
+Writes a unicast DNS-SD zone under `~/.fased/dns/`. For cross-network
+discovery, pair it with a DNS server, preferably CoreDNS, plus Tailscale split
+DNS.
 
 Setup: `fased dns setup --apply`.
 
@@ -2590,12 +2749,18 @@ Validation:
 
 Notes:
 
-- `file` provider supports `mode: "json"` and `mode: "singleValue"` (`id` must be `"value"` in singleValue mode).
-- `exec` provider requires an absolute `command` path and uses protocol payloads on stdin/stdout.
-- By default, symlink command paths are rejected. Set `allowSymlinkCommand: true` to allow symlink paths while validating the resolved target path.
+- `file` provider supports `mode: "json"` and `mode: "singleValue"`.
+  `id` must be `"value"` in singleValue mode.
+- `exec` provider requires an absolute `command` path and uses protocol
+  payloads on stdin/stdout.
+- By default, symlink command paths are rejected. Set
+  `allowSymlinkCommand: true` to allow symlink paths while validating the
+  resolved target path.
 - If `trustedDirs` is configured, the trusted-dir check applies to the resolved target path.
-- `exec` child environment is minimal by default; pass required variables explicitly with `passEnv`.
-- Secret refs are resolved at activation time into an in-memory snapshot, then request paths read the snapshot only.
+- `exec` child environment is minimal by default; pass required variables
+  explicitly with `passEnv`.
+- Secret refs are resolved at activation time into an in-memory snapshot, then
+  request paths read the snapshot only.
 
 ---
 
@@ -2616,11 +2781,14 @@ Notes:
 ```
 
 - Per-agent auth profiles stored at `<agentDir>/auth-profiles.json`.
-- Auth profiles support value-level refs (`keyRef` for `api_key`, `tokenRef` for `token`).
-- Static runtime credentials come from in-memory resolved snapshots; legacy static `auth.json` entries are scrubbed when discovered.
+- Auth profiles support value-level refs: `keyRef` for `api_key`, `tokenRef`
+  for `token`.
+- Static runtime credentials come from in-memory resolved snapshots. Legacy
+  static `auth.json` entries are scrubbed when discovered.
 - Legacy OAuth imports from `~/.fased/credentials/oauth.json`.
 - See [OAuth](/concepts/oauth).
-- Secrets runtime behavior and `audit/configure/apply` tooling: [Secrets Management](/gateway/secrets).
+- Secrets runtime behavior and `audit/configure/apply` tooling:
+  [Secrets Management](/gateway/secrets).
 
 ---
 
@@ -2693,7 +2861,9 @@ Written by the macOS onboarding assistant. Derives defaults:
 
 ## Bridge (legacy, removed)
 
-Current builds no longer include the TCP bridge. Nodes connect over the Gateway WebSocket. `bridge.*` keys are no longer part of the config schema (validation fails until removed; `fased doctor --fix` can strip unknown keys).
+Current builds no longer include the TCP bridge. Nodes connect over the Gateway
+WebSocket. `bridge.*` keys are no longer part of the config schema. Validation
+fails until removed; `fased doctor --fix` can strip unknown keys.
 
 <Accordion title="Legacy bridge config (historical reference)">
 
@@ -2733,11 +2903,16 @@ Current builds no longer include the TCP bridge. Nodes connect over the Gateway 
 }
 ```
 
-- `sessionRetention`: how long to keep completed isolated cron run sessions before pruning from `sessions.json`. Also controls cleanup of archived deleted cron transcripts. Default: `24h`; set `false` to disable.
-- `runLog.maxBytes`: max size per run log file (`cron/runs/<jobId>.jsonl`) before pruning. Default: `2_000_000` bytes.
+- `sessionRetention`: how long to keep completed isolated cron run sessions
+  before pruning from `sessions.json`. Also controls cleanup of archived deleted
+  cron transcripts. Default: `24h`; set `false` to disable.
+- `runLog.maxBytes`: max size per run log file
+  (`cron/runs/<jobId>.jsonl`) before pruning. Default: `2_000_000` bytes.
 - `runLog.keepLines`: newest lines retained when run-log pruning is triggered. Default: `2000`.
-- `webhookToken`: bearer token used for cron webhook POST delivery (`delivery.mode = "webhook"`), if omitted no auth header is sent.
-- `webhook`: deprecated legacy fallback webhook URL (http/https) used only for stored jobs that still have `notify: true`.
+- `webhookToken`: bearer token used for cron webhook POST delivery
+  (`delivery.mode = "webhook"`). If omitted, no auth header is sent.
+- `webhook`: deprecated legacy fallback webhook URL (http/https) used only for
+  stored jobs that still have `notify: true`.
 
 See [Scheduled Tasks](/automation/cron-jobs).
 
@@ -2793,9 +2968,14 @@ Split config into multiple files:
 - Array of files: deep-merged in order (later overrides earlier).
 - Sibling keys: merged after includes (override included values).
 - Nested includes: up to 10 levels deep.
-- Paths: resolved relative to the including file, but must stay inside the top-level config directory (`dirname` of the main config file). Absolute/`../` forms are allowed only when they still resolve inside that boundary.
+- Paths are resolved relative to the including file, but must stay inside the
+  top-level config directory (`dirname` of the main config file).
+  Absolute/`../` forms are allowed only when they still resolve inside that
+  boundary.
 - Errors: clear messages for missing files, parse errors, and circular includes.
 
 ---
 
-_Related: [Configuration](/gateway/configuration) · [Configuration Examples](/gateway/configuration-examples) · [Doctor](/gateway/doctor)_
+_Related: [Configuration](/gateway/configuration) ·
+[Configuration Examples](/gateway/configuration-examples) ·
+[Doctor](/gateway/doctor)_

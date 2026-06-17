@@ -7,9 +7,13 @@ title: "Tlon"
 
 # Tlon
 
-Tlon gives Fased an Urbit-native chat surface without forcing a separate hosted backend. The plugin connects to your ship, handles DMs and group channels, and keeps the same allowlist and mention gates that the rest of the gateway uses.
+Tlon gives Fased an Urbit-native chat surface without a separate hosted
+backend. The plugin connects to your ship, handles DMs and group channels, and
+keeps the same allowlist and mention gates that the rest of the gateway uses.
 
-Status: bundled channel extension for DMs, group mentions, thread replies, and text-plus-URL media fallback. Reactions, polls, and native media uploads are not supported.
+Status: bundled channel extension for DMs, group mentions, thread replies, and
+text-plus-URL media fallback. Reactions, polls, and native media uploads are
+not supported.
 
 ## Setup from Agent > Channels
 
@@ -22,7 +26,8 @@ UI reports that the runtime still needs to load.
 
 ## Setup
 
-You need one ship URL plus a valid ship login code. After that, the main decision is whether you rely on auto-discovered group channels or pin an explicit allowlist.
+You need one ship URL plus a valid ship login code. After that, choose
+auto-discovered group channels or an explicit allowlist.
 
 1. Gather your ship URL and login code.
 2. Configure **Agent > Channels > Tlon**.
@@ -46,9 +51,9 @@ Minimal config (single account):
 
 Private/LAN ship URLs (advanced):
 
-By default, Fased blocks private/internal hostnames and IP ranges for this plugin (SSRF hardening).
-If your ship URL is on a private network (for example `http://192.168.1.50:8080` or `http://localhost:8080`),
-you must explicitly opt in:
+By default, Fased blocks private/internal hostnames and IP ranges for this
+plugin as SSRF hardening. If your ship URL is on a private network, explicitly
+opt in:
 
 ```json5
 {
@@ -88,7 +93,7 @@ Disable auto-discovery:
 
 ## Access control
 
-DM allowlist (empty = allow all):
+DM allowlist for production:
 
 ```json5
 {
@@ -99,6 +104,9 @@ DM allowlist (empty = allow all):
   },
 }
 ```
+
+The current runtime treats an empty `dmAllowlist` as an open DM lane. Set
+explicit ships before using the bot beyond a private test.
 
 Group authorization (restricted by default):
 

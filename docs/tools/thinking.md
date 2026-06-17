@@ -32,7 +32,9 @@ title: "Thinking Levels"
 
 - Send a message that is **only** the directive (whitespace allowed), e.g. `/think:medium` or `/t high`.
 - That sticks for the current session (per-sender by default); cleared by `/think:off` or session idle reset.
-- Confirmation reply is sent (`Thinking level set to high.` / `Thinking disabled.`). If the level is invalid (e.g. `/thinking big`), the command is rejected with a hint and the session state is left unchanged.
+- Confirmation reply is sent, for example `Thinking level set to high.` or
+  `Thinking disabled.` If the level is invalid, such as `/thinking big`, the
+  command is rejected with a hint and the session state is left unchanged.
 - Send `/think` (or `/think:`) with no argument to see the current thinking level.
 
 ## Application by agent
@@ -42,20 +44,30 @@ title: "Thinking Levels"
 ## Verbose directives (/verbose or /v)
 
 - Levels: `on` (minimal) | `full` | `off` (default).
-- Directive-only message toggles session verbose and replies `Verbose logging enabled.` / `Verbose logging disabled.`; invalid levels return a hint without changing state.
+- Directive-only message toggles session verbose and replies
+  `Verbose logging enabled.` or `Verbose logging disabled.` Invalid levels
+  return a hint without changing state.
 - `/verbose off` stores an explicit session override; clear it via the Sessions UI by choosing `inherit`.
 - Inline directive affects only that message; session/global defaults apply otherwise.
 - Send `/verbose` (or `/verbose:`) with no argument to see the current verbose level.
-- When verbose is on, agents that emit structured tool results (Pi, other JSON agents) send each tool call back as its own metadata-only message, prefixed with `<emoji> <tool-name>: <arg>` when available (path/command). These tool summaries are sent as soon as each tool starts (separate bubbles), not as streaming deltas.
+- When verbose is on, agents that emit structured tool results send each tool
+  call back as its own metadata-only message. The prefix is
+  `<emoji> <tool-name>: <arg>` when a path or command is available.
+- Tool summaries are sent as soon as each tool starts, as separate bubbles, not
+  as streaming deltas.
 - Tool failure summaries remain visible in normal mode, but raw error detail suffixes are hidden unless verbose is `on` or `full`.
-- When verbose is `full`, tool outputs are also forwarded after completion (separate bubble, truncated to a safe length). If you toggle `/verbose on|full|off` while a run is in-flight, subsequent tool bubbles honor the new setting.
+- When verbose is `full`, tool outputs are also forwarded after completion in a
+  separate bubble, truncated to a safe length.
+- If you toggle `/verbose on|full|off` while a run is in-flight, subsequent tool
+  bubbles honor the new setting.
 
 ## Reasoning visibility (/reasoning)
 
 - Levels: `on|off|stream`.
 - Directive-only message toggles whether thinking blocks are shown in replies.
 - When enabled, reasoning is sent as a **separate message** prefixed with `Reasoning:`.
-- `stream` (Telegram only): streams reasoning into the Telegram draft bubble while the reply is generating, then sends the final answer without reasoning.
+- `stream` (Telegram only): streams reasoning into the Telegram draft bubble
+  while the reply is generating, then sends the final answer without reasoning.
 - Alias: `/reason`.
 - Send `/reasoning` (or `/reasoning:`) with no argument to see the current reasoning level.
 
@@ -65,11 +77,23 @@ title: "Thinking Levels"
 
 ## Heartbeats
 
-- Heartbeat probe body is the configured heartbeat prompt (default: `Read HEARTBEAT.md if it exists (workspace context). Follow it strictly. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK.`). Inline directives in a heartbeat message apply as usual (but avoid changing session defaults from heartbeats).
-- Heartbeat delivery defaults to the final payload only. To also send the separate `Reasoning:` message (when available), set `agents.defaults.heartbeat.includeReasoning: true` or per-agent `agents.list[].heartbeat.includeReasoning: true`.
+- Heartbeat probe body is the configured heartbeat prompt. Default:
+  ```text
+  Read HEARTBEAT.md if it exists (workspace context). Follow it strictly.
+  Do not infer or repeat old tasks from prior chats.
+  If nothing needs attention, reply HEARTBEAT_OK.
+  ```
+- Inline directives in a heartbeat message apply as usual, but avoid changing
+  session defaults from heartbeats.
+- Heartbeat delivery defaults to the final payload only. To also send the
+  separate `Reasoning:` message when available, set
+  `agents.defaults.heartbeat.includeReasoning: true` or per-agent
+  `agents.list[].heartbeat.includeReasoning: true`.
 
 ## Web chat UI
 
 - The web chat thinking selector mirrors the session's stored level from the inbound session store/config when the page loads.
-- Picking another level applies only to the next message (`thinkingOnce`); after sending, the selector snaps back to the stored session level.
-- To change the session default, send a `/think:<level>` directive (as before); the selector will reflect it after the next reload.
+- Picking another level applies only to the next message (`thinkingOnce`). After
+  sending, the selector snaps back to the stored session level.
+- To change the session default, send a `/think:<level>` directive. The selector
+  will reflect it after the next reload.

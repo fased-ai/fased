@@ -8,17 +8,19 @@ title: "Webhooks"
 
 # Webhooks
 
-Fased can expose a small authenticated HTTP ingress for trusted automation.
+Fased can expose a small authenticated HTTP endpoint for trusted automation.
 Use it when another system needs to wake the main session, run an isolated
-agent turn, or map external payloads into Fased work.
+Agent turn, or map external payloads into Fased work.
 
-This is not meant to be a wide-open public API. Treat it as private ingress and
-keep it behind loopback, Tailscale, or a trusted reverse proxy.
+Treat webhooks as private ingress. Keep them behind loopback, Tailscale, or a
+trusted reverse proxy.
 
-Inbound automation uses the gateway Hooks surface documented below. The normal
-UI is **Agent > Tasks > Webhook Triggers**, where operators create
-authenticated trigger paths next to scheduled tasks while keeping the same
-token, route, and Agent policy boundaries.
+This page is about inbound HTTP. For local runtime extensions that run inside
+the gateway, use [Hooks](/automation/hooks).
+
+The normal UI is **Agent > Tasks > Webhook Triggers**. That is where operators
+create authenticated trigger paths next to scheduled tasks while keeping the
+same token, route, and Agent policy boundaries.
 
 ## Enable webhook ingress
 
@@ -152,27 +154,56 @@ Webhook Triggers** for the common case. It creates a mapping, enables
 `hooks.enabled`, generates a hook token on first save when needed, and shows the
 endpoint URL. Manual config is still available for advanced operators.
 
-## Agent Trigger Modal
+## Agent Trigger modal
 
 The **+ Trigger** button in **Agent > Tasks** creates a saved Trigger definition,
-not a scheduled Task. The selected Agent owns the definition. Every matching
-POST creates a run-history row with `definitionKind = "trigger"`; if the target
-is a workflow or graph, the workflow run is linked by the same correlation id.
+which sits beside scheduled Tasks in the same page. The selected Agent owns the
+definition. Every matching POST creates a run-history row with
+`definitionKind = "trigger"`. If the target is a workflow or graph, the
+workflow run is linked by the same correlation id.
 
-Fields:
+**Name**
 
-| Field                    | Meaning                                                                                                   |
-| ------------------------ | --------------------------------------------------------------------------------------------------------- |
-| **Name**                 | Human label shown under the Agent's Trigger definitions.                                                  |
-| **Path**                 | Endpoint path under the configured hooks base path, for example `/hooks/release`.                         |
-| **Run target**           | `Agent prompt`, `Workflow / graph`, or `Heartbeat wake`.                                                  |
-| **Run timing**           | `Run now` starts immediately; `Next heartbeat` queues work for the Agent heartbeat loop.                  |
-| **Workflow target**      | Saved workflow or graph to run when the Trigger fires.                                                    |
-| **Delivery**             | `Internal only` records history; `Deliver reply` also sends the Agent reply.                              |
-| **Prompt template**      | Template for Agent prompt or wake text. Supports `{{payload}}`, `{{headers}}`, `{{path}}`, and `{{now}}`. |
-| **Reply channel/target** | Optional delivery route used only when delivery is enabled.                                               |
-| **Timeout**              | Optional Agent turn timeout in seconds.                                                                   |
-| **Notify**               | Run-history notification policy: silent, done only, or state changes.                                     |
+Human label shown under the Agent's Trigger definitions.
+
+**Path**
+
+Endpoint path under the configured hooks base path, for example
+`/hooks/release`.
+
+**Run target**
+
+`Agent prompt`, `Workflow / graph`, or `Heartbeat wake`.
+
+**Run timing**
+
+`Run now` starts immediately. `Next heartbeat` queues work for the Agent
+heartbeat loop.
+
+**Workflow target**
+
+Saved workflow or graph to run when the Trigger fires.
+
+**Delivery**
+
+`Internal only` records history. `Deliver reply` also sends the Agent reply.
+
+**Prompt template**
+
+Template for Agent prompt or wake text. Supports `{{payload}}`, `{{headers}}`,
+`{{path}}`, and `{{now}}`.
+
+**Reply channel/target**
+
+Optional delivery route used when delivery is enabled.
+
+**Timeout**
+
+Optional Agent turn timeout in seconds.
+
+**Notify**
+
+Run-history notification policy: silent, done only, or state changes.
 
 Use a Trigger when an outside system calls Fased over HTTP. Use a Task when
 Fased should run something on its own schedule.
@@ -252,8 +283,8 @@ curl -X POST http://127.0.0.1:18789/hooks/agent \
   -d '{"message":"Summarize inbox","name":"Email","model":"openai/gpt-5.4-mini"}'
 ```
 
-Use a model that is already configured for the target Agent. If you are not
-sure, omit `model` and let the Agent use its primary/fallback model settings.
+Use a model that is already configured for the target Agent. For the simplest
+setup, omit `model` and let the Agent use its primary/fallback model settings.
 
 Mapped Gmail payload:
 
@@ -268,12 +299,12 @@ curl -X POST http://127.0.0.1:18789/hooks/gmail \
 
 - keep webhook ingress on loopback, a tailnet, or behind a trusted reverse
   proxy
-- use a dedicated hook token, not your main gateway auth token
+- use a dedicated hook token separate from your main gateway auth token
 - repeated auth failures are rate-limited per client address
 - if you expose multi-agent routing, set `hooks.allowedAgentIds`
-- keep `hooks.allowRequestSessionKey = false` unless you truly need it
-- if request session keys are enabled, restrict them with
-  `hooks.allowedSessionKeyPrefixes`
+- keep `hooks.allowRequestSessionKey = false` for the normal setup
+- restrict request session keys with `hooks.allowedSessionKeyPrefixes` when
+  request-provided session keys are enabled
 - avoid dumping raw third-party payloads into logs
 - external content is treated as untrusted by default; only set
   `allowUnsafeExternalContent: true` for tightly controlled internal feeds

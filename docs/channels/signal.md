@@ -8,7 +8,9 @@ title: "Signal"
 
 # Signal (signal-cli)
 
-Signal in Fased is powered by `signal-cli`, not by a bundled libsignal runtime. The gateway either links to an existing Signal device or registers a dedicated number, then talks to the `signal-cli` daemon over JSON-RPC and SSE.
+Signal in Fased is powered by `signal-cli`. The gateway either links to an
+existing Signal device or registers a dedicated number, then talks to the
+`signal-cli` daemon over JSON-RPC and SSE.
 
 Status: supported external CLI integration for DMs, groups, media, typing, and reactions.
 
@@ -21,7 +23,9 @@ Status: supported external CLI integration for DMs, groups, media, typing, and r
 
 ## Quick setup (beginner)
 
-The most reliable path is a separate Signal number for the bot. That avoids self-message loops and keeps the device state separate from your personal Signal account.
+The most reliable path is a separate Signal number for the bot. That avoids
+self-message loops and keeps bot state separate from your personal Signal
+account.
 
 1. Use a **separate Signal number** for the bot (recommended).
 2. Install `signal-cli` (Java required if you use the JVM build).
@@ -51,18 +55,28 @@ Minimal config:
 
 Field reference:
 
-| Field       | Description                                       |
-| ----------- | ------------------------------------------------- |
-| `account`   | Bot phone number in E.164 format (`+15551234567`) |
-| `cliPath`   | Path to `signal-cli` (`signal-cli` if on `PATH`)  |
-| `dmPolicy`  | DM access policy (`pairing` recommended)          |
-| `allowFrom` | Phone numbers or `uuid:<id>` values allowed to DM |
+**`account`**
+
+Bot phone number in E.164 format, such as `+15551234567`.
+
+**`cliPath`**
+
+Path to `signal-cli`; use `signal-cli` when it is on `PATH`.
+
+**`dmPolicy`**
+
+DM access policy. Start with `pairing`.
+
+**`allowFrom`**
+
+Phone numbers or `uuid:<id>` values allowed to DM.
 
 ## What it is
 
-- Signal channel via `signal-cli` (not embedded libsignal).
+- Signal channel through `signal-cli`.
 - Deterministic routing: replies always go back to Signal.
-- DMs share the agent's main session; groups are isolated (`agent:<agentId>:signal:group:<groupId>`).
+- DMs share the agent's main session; groups are isolated:
+  `agent:<agentId>:signal:group:<groupId>`.
 
 ## Config writes
 
@@ -105,26 +119,33 @@ Example:
 }
 ```
 
-Multi-account support: use `channels.signal.accounts` with per-account config and optional `name`. See [`gateway/configuration`](/gateway/configuration#telegramaccounts--discordaccounts--slackaccounts--signalaccounts--imessageaccounts) for the shared pattern.
+Multi-account support uses `channels.signal.accounts` with per-account config
+and optional `name`. See
+[gateway configuration](/gateway/configuration#telegramaccounts--discordaccounts--slackaccounts--signalaccounts--imessageaccounts)
+for the shared pattern.
 
 ## Setup path B: register dedicated bot number (SMS, Linux)
 
-Use this when you want a dedicated bot number instead of linking an existing Signal app account.
+Use this when you want a dedicated bot number instead of linking an existing
+Signal app account.
 
 1. Get a number that can receive SMS (or voice verification for landlines).
    - Use a dedicated bot number to avoid account/session conflicts.
 2. Install `signal-cli` on the gateway host:
 
 ```bash
-VERSION=$(curl -Ls -o /dev/null -w %{url_effective} https://github.com/AsamK/signal-cli/releases/latest | sed -e 's/^.*\/v//')
-curl -L -O "https://github.com/AsamK/signal-cli/releases/download/v${VERSION}/signal-cli-${VERSION}-Linux-native.tar.gz"
+VERSION=$(curl -Ls -o /dev/null -w %{url_effective} \
+  https://github.com/AsamK/signal-cli/releases/latest | sed -e 's/^.*\/v//')
+curl -L -O \
+  "https://github.com/AsamK/signal-cli/releases/download/v${VERSION}/signal-cli-${VERSION}-Linux-native.tar.gz"
 sudo tar xf "signal-cli-${VERSION}-Linux-native.tar.gz" -C /opt
 sudo ln -sf /opt/signal-cli /usr/local/bin/
 signal-cli --version
 ```
 
-If you use the JVM build (`signal-cli-${VERSION}.tar.gz`), install JRE 25+ first.
-Keep `signal-cli` updated; upstream notes that old releases can break as Signal server APIs change.
+If you use the JVM build (`signal-cli-${VERSION}.tar.gz`), install JRE 25+
+first. Keep `signal-cli` updated; old releases can break as Signal server APIs
+change.
 
 3. Register and verify the number:
 
@@ -160,7 +181,10 @@ fased channels status --probe
    - Approve code on the server: `fased pairing approve signal <PAIRING_CODE>`.
    - Save the bot number as a contact on your phone to avoid "Unknown contact".
 
-Important: registering a phone number account with `signal-cli` can de-authenticate the main Signal app session for that number. Prefer a dedicated bot number, or use QR link mode if you need to keep your existing phone app setup.
+Important: registering a phone number account with `signal-cli` can
+de-authenticate the main Signal app session for that number. Prefer a dedicated
+bot number, or use QR link mode if you need to keep your existing phone app
+setup.
 
 Upstream references:
 
@@ -170,7 +194,8 @@ Upstream references:
 
 ## External daemon mode (httpUrl)
 
-If you want to manage `signal-cli` yourself (slow JVM cold starts, container init, or shared CPUs), run the daemon separately and point Fased at it:
+If you want to manage `signal-cli` yourself, run the daemon separately and
+point Fased at it:
 
 ```json5
 {
@@ -183,14 +208,16 @@ If you want to manage `signal-cli` yourself (slow JVM cold starts, container ini
 }
 ```
 
-This skips auto-spawn and the startup wait inside Fased. For slow starts when auto-spawning, set `channels.signal.startupTimeoutMs`.
+This skips auto-spawn and the startup wait inside Fased. For slow starts when
+auto-spawning, set `channels.signal.startupTimeoutMs`.
 
 ## Access control (DMs + groups)
 
 DMs:
 
 - Default: `channels.signal.dmPolicy = "pairing"`.
-- Unknown senders receive a pairing code; messages are ignored until approved (codes expire after 1 hour).
+- Unknown senders receive a pairing code. Messages wait for approval, and codes
+  expire after 1 hour.
 - Approve via:
   - `fased pairing list signal`
   - `fased pairing approve signal <CODE>`
@@ -201,7 +228,8 @@ Groups:
 
 - `channels.signal.groupPolicy = open | allowlist | disabled`.
 - `channels.signal.groupAllowFrom` controls who can trigger in groups when `allowlist` is set.
-- Runtime note: if `channels.signal` is completely missing, runtime falls back to `groupPolicy="allowlist"` for group checks (even if `channels.defaults.groupPolicy` is set).
+- Runtime note: if `channels.signal` is completely missing, runtime falls back
+  to `groupPolicy="allowlist"` for group checks.
 
 ## How it works (behavior)
 
@@ -212,16 +240,21 @@ Groups:
 ## Media + limits
 
 - Outbound text is chunked to `channels.signal.textChunkLimit` (default 4000).
-- Optional newline chunking: set `channels.signal.chunkMode="newline"` to split on blank lines (paragraph boundaries) before length chunking.
+- Optional newline chunking: set `channels.signal.chunkMode="newline"` to split
+  on blank lines before length chunking.
 - Attachments supported (base64 fetched from `signal-cli`).
 - Default media cap: `channels.signal.mediaMaxMb` (default 8).
 - Use `channels.signal.ignoreAttachments` to skip downloading media.
-- Group history context uses `channels.signal.historyLimit` (or `channels.signal.accounts.*.historyLimit`), falling back to `messages.groupChat.historyLimit`. Set `0` to disable (default 50).
+- Group history context uses `channels.signal.historyLimit` or
+  `channels.signal.accounts.*.historyLimit`, then falls back to
+  `messages.groupChat.historyLimit`. Set `0` to disable.
 
 ## Typing + read receipts
 
-- **Typing indicators**: Fased sends typing signals via `signal-cli sendTyping` and refreshes them while a reply is running.
-- **Read receipts**: when `channels.signal.sendReadReceipts` is true, Fased forwards read receipts for allowed DMs.
+- **Typing indicators**: Fased sends typing signals via
+  `signal-cli sendTyping` and refreshes them while a reply is running.
+- **Read receipts**: when `channels.signal.sendReadReceipts` is true, Fased
+  forwards read receipts for allowed DMs.
 - Signal-cli does not expose read receipts for groups.
 
 ## Reactions (message tool)
@@ -234,9 +267,12 @@ Groups:
 Examples:
 
 ```
-message action=react channel=signal target=uuid:123e4567-e89b-12d3-a456-426614174000 messageId=1737630212345 emoji=🔥
-message action=react channel=signal target=+15551234567 messageId=1737630212345 emoji=🔥 remove=true
-message action=react channel=signal target=signal:group:<groupId> targetAuthor=uuid:<sender-uuid> messageId=1737630212345 emoji=✅
+message action=react channel=signal target=uuid:123e4567-e89b-12d3-a456-426614174000 \
+  messageId=1737630212345 emoji=fire
+message action=react channel=signal target=+15551234567 \
+  messageId=1737630212345 emoji=fire remove=true
+message action=react channel=signal target=signal:group:<groupId> \
+  targetAuthor=uuid:<sender-uuid> messageId=1737630212345 emoji=check
 ```
 
 Config:
@@ -245,7 +281,8 @@ Config:
 - `channels.signal.reactionLevel`: `off | ack | minimal | extensive`.
   - `off`/`ack` disables agent reactions (message tool `react` will error).
   - `minimal`/`extensive` enables agent reactions and sets the guidance level.
-- Per-account overrides: `channels.signal.accounts.<id>.actions.reactions`, `channels.signal.accounts.<id>.reactionLevel`.
+- Per-account overrides: `channels.signal.accounts.<id>.actions.reactions`,
+  `channels.signal.accounts.<id>.reactionLevel`.
 
 ## Delivery targets (CLI/cron)
 
@@ -295,7 +332,8 @@ For triage flow: [/channels/troubleshooting](/channels/troubleshooting).
 - `signal-cli` stores account keys locally (typically `~/.local/share/signal-cli/data/`).
 - Back up Signal account state before server migration or rebuild.
 - Keep `channels.signal.dmPolicy: "pairing"` unless you explicitly want broader DM access.
-- SMS verification is only needed for registration or recovery flows, but losing control of the number/account can complicate re-registration.
+- SMS verification is used for registration or recovery flows. Losing control
+  of the number/account can complicate re-registration.
 
 ## Configuration reference (Signal)
 
@@ -315,13 +353,16 @@ Provider options:
 - `channels.signal.ignoreStories`: ignore stories from the daemon.
 - `channels.signal.sendReadReceipts`: forward read receipts.
 - `channels.signal.dmPolicy`: `pairing | allowlist | open | disabled` (default: pairing).
-- `channels.signal.allowFrom`: DM allowlist (E.164 or `uuid:<id>`). `open` requires `"*"`. Signal has no usernames; use phone/UUID ids.
+- `channels.signal.allowFrom`: DM allowlist using E.164 or `uuid:<id>`.
+  `open` requires `"*"`. Signal has no usernames; use phone/UUID ids.
 - `channels.signal.groupPolicy`: `open | allowlist | disabled` (default: allowlist).
 - `channels.signal.groupAllowFrom`: group sender allowlist.
 - `channels.signal.historyLimit`: max group messages to include as context (0 disables).
-- `channels.signal.dmHistoryLimit`: DM history limit in user turns. Per-user overrides: `channels.signal.dms["<phone_or_uuid>"].historyLimit`.
+- `channels.signal.dmHistoryLimit`: DM history limit in user turns.
+  Per-user override: `channels.signal.dms["<phone_or_uuid>"].historyLimit`.
 - `channels.signal.textChunkLimit`: outbound chunk size (chars).
-- `channels.signal.chunkMode`: `length` (default) or `newline` to split on blank lines (paragraph boundaries) before length chunking.
+- `channels.signal.chunkMode`: `length` or `newline`; `newline` splits on
+  blank lines before length chunking.
 - `channels.signal.mediaMaxMb`: inbound/outbound media cap (MB).
 
 Related global options:

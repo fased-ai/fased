@@ -14,7 +14,8 @@ matters, while still allowing safe parallelism across sessions.
 
 - Auto-reply runs can be expensive and can collide when multiple inbound
   messages arrive close together.
-- Serializing avoids competing for shared resources (session files, logs, CLI stdin) and reduces the chance of upstream rate limits.
+- Serializing avoids competing for shared resources such as session files,
+  logs, and CLI stdin. It also reduces the chance of upstream rate limits.
 
 ## How it works
 
@@ -34,9 +35,13 @@ matters, while still allowing safe parallelism across sessions.
 
 Inbound messages can steer the current run, wait for a followup turn, or do both:
 
-- `steer`: inject immediately into the current run (cancels pending tool calls after the next tool boundary). If not streaming, falls back to followup.
+- `steer`: inject immediately into the current run and cancel pending tool
+  calls after the next tool boundary. If the run is not streaming, it falls back
+  to followup.
 - `followup`: enqueue for the next agent turn after the current run ends.
-- `collect`: coalesce all queued messages into a **single** followup turn (default). If messages target different channels/threads, they drain individually to preserve routing.
+- `collect`: coalesce all queued messages into a **single** followup turn
+  (default). If messages target different channels/threads, they drain
+  individually to preserve routing.
 - `steer-backlog` (aka `steer+backlog`): steer now **and** preserve the message for a followup turn.
 - `interrupt` (legacy): clear pending work for the session lane, abort the
   active embedded run, then run the newest message.
@@ -78,7 +83,8 @@ when it falls back to followup):
 - `cap`: max queued messages per session.
 - `drop`: overflow policy (`old`, `new`, `summarize`).
 
-Summarize keeps a short bullet list of dropped messages and injects it as a synthetic followup prompt.
+Summarize keeps a short bullet list of dropped messages and injects it as a
+synthetic followup prompt.
 Defaults: `debounceMs: 1000`, `cap: 20`, `drop: summarize`.
 
 ## Per-session overrides
@@ -91,8 +97,10 @@ Defaults: `debounceMs: 1000`, `cap: 20`, `drop: summarize`.
 
 - Applies to auto-reply agent runs across inbound channels that use the gateway
   reply pipeline.
-- Default lane (`main`) is process-wide for inbound + main heartbeats; set `agents.defaults.maxConcurrent` to allow multiple sessions in parallel.
-- Additional lanes may exist (e.g. `cron`, `subagent`) so background jobs can run in parallel without blocking inbound replies.
+- Default lane (`main`) is process-wide for inbound + main heartbeats. Set
+  `agents.defaults.maxConcurrent` to allow multiple sessions in parallel.
+- Additional lanes may exist, such as `cron` and `subagent`, so background jobs
+  can run in parallel without blocking inbound replies.
 - Per-session lanes keep one agent run active for a given session at a time.
 - No external dependencies or background worker threads; pure TypeScript + promises.
 

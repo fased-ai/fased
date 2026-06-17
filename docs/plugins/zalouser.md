@@ -8,19 +8,25 @@ title: "Zalo Personal Plugin"
 
 # Zalo Personal (plugin)
 
-Zalo Personal support for Fased via a plugin, using `zca-cli` to automate a normal Zalo user account.
+Zalo Personal support for Fased runs through a plugin that uses `zca-cli` to
+automate a normal Zalo user account.
 
-> **Warning:** Unofficial automation may lead to account suspension/ban. Use at your own risk.
+> **Account risk:** This is unofficial automation and may lead to account
+> restriction or suspension. Use a dedicated account if you cannot risk the main
+> account.
 
 ## Naming
 
-Channel id is `zalouser` to make it explicit this automates a **personal Zalo user account** (unofficial). We keep `zalo` reserved for a potential future official Zalo API integration.
+Channel id is `zalouser` to make it explicit this automates a **personal Zalo
+user account** through an unofficial path. `zalo` stays reserved for a potential
+future official Zalo API integration.
 
 ## Where it runs
 
 This plugin runs **inside the Gateway process**.
 
-If you use a remote Gateway, install/configure it on the **machine running the Gateway**, then restart the Gateway.
+If you use a remote Gateway, install and configure it on the **machine running
+the Gateway**, then restart the Gateway.
 
 ## Normal setup
 

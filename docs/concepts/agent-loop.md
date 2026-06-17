@@ -23,7 +23,8 @@ wired end-to-end.
 
 ## How it works (high-level)
 
-1. `agent` RPC validates params, resolves session (sessionKey/sessionId), persists session metadata, returns `{ runId, acceptedAt }` immediately.
+1. `agent` RPC validates params, resolves session (`sessionKey`/`sessionId`),
+   persists session metadata, and returns `{ runId, acceptedAt }` immediately.
 2. `agentCommand` resolves the Agent, session, workspace, model defaults, thinking/verbose
    defaults, and skills snapshot, then chooses the runtime path:
    - ACP session path when the session is bound to ACP.
@@ -88,8 +89,10 @@ See [Hooks](/automation/hooks) for setup and examples.
 
 These run inside the agent loop or gateway pipeline:
 
-- **`before_model_resolve`**: runs pre-session (no `messages`) to deterministically override provider/model before model resolution.
-- **`before_prompt_build`**: runs after session load (with `messages`) to inject `prependContext`/`systemPrompt` before prompt submission.
+- **`before_model_resolve`**: runs pre-session (no `messages`) to
+  deterministically override provider/model before model resolution.
+- **`before_prompt_build`**: runs after session load (with `messages`) to
+  inject `prependContext`/`systemPrompt` before prompt submission.
 - **`llm_input`**: observes the final model input immediately before the model call.
 - **`before_agent_start`**: legacy compatibility hook that may run in either phase; prefer the explicit hooks above.
 - **`agent_end`**: inspect the final message list and run metadata after completion.

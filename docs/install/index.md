@@ -14,7 +14,7 @@ continue there. This page is for install methods, platform notes, hosting
 profiles, and maintenance.
 
 ```mermaid
-flowchart LR
+flowchart TD
   choose["choose install path"] --> repo["repo installer"]
   choose --> container["container path"]
   choose --> host["hosted Fased"]
@@ -47,7 +47,7 @@ Windows has two different paths:
   [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) and run Fased
   inside Ubuntu.
 - **Managing a hosted VPS from Windows:** use PowerShell or Windows Terminal
-  with the Windows Tailscale app online. Do not use WSL for hosted SSH checks
+  with the Windows Tailscale app online. Use WSL for hosted SSH checks only
   unless Tailscale is also installed and logged in inside WSL.
   </Note>
 
@@ -57,10 +57,18 @@ These are different setup paths. Choose **Local** for a laptop, desktop, dev
 box, or WSL2. Choose **VPS Hosting** only on the server that will run Fased
 all the time.
 
-| Path          | Best for                                | Security posture                                                                                                                                                | Access dependency                                                            |
-| ------------- | --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| Local install | Personal laptop, desktop, dev box, WSL2 | Lowest setup risk. Gateway stays on your machine; a home router usually does not expose it to the public internet. Tailscale is optional.                       | Your local OS login.                                                         |
-| VPS Hosting   | Always-on cloud server                  | Higher exposure by default because a VPS is internet-reachable. Hosted setup closes public admin ports and requires Tailscale for private dashboard/SSH access. | Your Tailscale account plus the VPS provider console for emergency recovery. |
+- **Local install**
+  - Best for: personal laptop, desktop, dev box, or WSL2.
+  - Posture: lowest setup risk. Gateway stays on your machine; a home router
+    usually does not expose it to the public internet. Tailscale is optional.
+  - Access dependency: your local OS login.
+- **VPS Hosting**
+  - Best for: always-on cloud server.
+  - Posture: higher exposure by default because a VPS is internet-reachable.
+    Hosted setup closes public admin ports and requires Tailscale for private
+    dashboard and SSH access.
+  - Access dependency: your Tailscale account plus the VPS provider console for
+    emergency recovery.
 
 <Warning>
 If you lose access to the Tailscale account used for a hosted VPS, normal
@@ -118,12 +126,15 @@ recovery options and VPS provider console access working.
 
     Start on your own computer:
 
-    | Your computer | Use this terminal | Tailscale requirement |
-    | --- | --- | --- |
-    | Windows | PowerShell or Windows Terminal | Install/sign into the Windows Tailscale app from [tailscale.com/download](https://tailscale.com/download). PowerShell can SSH into the Linux VPS. |
-    | macOS | Terminal | Install/sign into the macOS Tailscale app. |
-    | Linux | Terminal | Install/start Tailscale on that Linux machine. |
-    | WSL | Advanced only | Either use PowerShell instead, or install/start Tailscale inside WSL too. Windows Tailscale does not automatically make WSL a Tailscale node. |
+    - **Windows**: use PowerShell or Windows Terminal. Install and sign into the
+      Windows Tailscale app from
+      [tailscale.com/download](https://tailscale.com/download). PowerShell can
+      SSH into the Linux VPS.
+    - **macOS**: use Terminal and sign into the macOS Tailscale app.
+    - **Linux**: use Terminal and install/start Tailscale on that Linux machine.
+    - **WSL**: advanced only. Use PowerShell instead, or install/start Tailscale
+      inside WSL too. Windows Tailscale does not automatically make WSL a
+      Tailscale node.
 
     Installing Tailscale from PowerShell is fine, but it still installs the
     Windows Tailscale app/service. PowerShell uses that Windows Tailscale

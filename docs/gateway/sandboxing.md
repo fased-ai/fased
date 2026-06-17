@@ -20,31 +20,41 @@ and process access during unexpected or unsafe tool calls.
 
 - Tool execution (`exec`, `read`, `write`, `edit`, `apply_patch`, `process`, etc.).
 - Optional sandboxed browser (`agents.defaults.sandbox.browser`).
-  - By default, the sandbox browser auto-starts (ensures CDP is reachable) when the browser tool needs it.
-    Configure via `agents.defaults.sandbox.browser.autoStart` and `agents.defaults.sandbox.browser.autoStartTimeoutMs`.
-  - By default, sandbox browser containers use a dedicated Docker network (`fased-sandbox-browser`) instead of the global `bridge` network.
+  - By default, the sandbox browser auto-starts when the browser tool needs it.
+    This ensures CDP is reachable.
+  - Configure auto-start with `agents.defaults.sandbox.browser.autoStart` and
+    `agents.defaults.sandbox.browser.autoStartTimeoutMs`.
+  - By default, sandbox browser containers use a dedicated Docker network
+    (`fased-sandbox-browser`) instead of the global `bridge` network.
     Configure with `agents.defaults.sandbox.browser.network`.
-  - Optional `agents.defaults.sandbox.browser.cdpSourceRange` restricts container-edge CDP ingress with a CIDR allowlist (for example `172.21.0.1/32`).
-  - noVNC observer access is password-protected by default; Fased emits a short-lived token URL that resolves to the observer session.
-  - `agents.defaults.sandbox.browser.allowHostControl` lets sandboxed sessions target the host browser explicitly.
-  - Optional allowlists gate `target: "custom"`: `allowedControlUrls`, `allowedControlHosts`, `allowedControlPorts`.
+  - Optional `agents.defaults.sandbox.browser.cdpSourceRange` restricts
+    container-edge CDP ingress with a CIDR allowlist.
+  - noVNC observer access is password-protected by default. Fased emits a
+    short-lived token URL that resolves to the observer session.
+  - `agents.defaults.sandbox.browser.allowHostControl` lets sandboxed sessions
+    target the host browser explicitly.
+  - Optional allowlists gate `target: "custom"`: `allowedControlUrls`,
+    `allowedControlHosts`, `allowedControlPorts`.
 
 Not sandboxed:
 
 - The Gateway process itself.
 - Any tool explicitly allowed to run on the host (e.g. `tools.elevated`).
   - **Elevated exec runs on the host and bypasses sandboxing.**
-  - If sandboxing is off, `tools.elevated` does not change execution (already on host). See [Elevated Mode](/tools/elevated).
+  - If sandboxing is off, `tools.elevated` does not change execution because
+    tools are already on host. See [Elevated Mode](/tools/elevated).
 
 ## Modes
 
 `agents.defaults.sandbox.mode` controls **when** sandboxing is used:
 
 - `"off"`: no sandboxing.
-- `"non-main"`: sandbox only **non-main** sessions (default if you want normal chats on host).
+- `"non-main"`: sandbox only **non-main** sessions. Use this when normal chats
+  should stay on host.
 - `"all"`: every session runs in a sandbox.
-  Note: `"non-main"` is based on `session.mainKey` (default `"main"`), not agent id.
-  Group/channel sessions use their own keys, so they count as non-main and will be sandboxed.
+  Note: `"non-main"` is based on `session.mainKey` (default `"main"`), not agent
+  id. Group/channel sessions use their own keys, so they count as non-main and
+  will be sandboxed.
 
 ## Scope
 
@@ -59,7 +69,8 @@ Not sandboxed:
 `agents.defaults.sandbox.workspaceAccess` controls **what the sandbox can see**:
 
 - `"none"` (default): tools see a sandbox workspace under `~/.fased/sandboxes`.
-- `"ro"`: mounts the agent workspace read-only at `/agent` (disables `write`/`edit`/`apply_patch`).
+- `"ro"`: mounts the agent workspace read-only at `/agent`; this disables
+  `write`, `edit`, and `apply_patch`.
 - `"rw"`: mounts the agent workspace read/write at `/workspace`.
 
 Inbound media is copied into the active sandbox workspace (`media/inbound/*`).
@@ -70,15 +81,19 @@ they can be read. With `"rw"`, workspace skills are readable from
 
 ## Custom bind mounts
 
-`agents.defaults.sandbox.docker.binds` mounts additional host directories into the container.
+`agents.defaults.sandbox.docker.binds` mounts additional host directories into
+the container.
 Format: `host:container:mode` (e.g., `"/home/user/source:/source:rw"`).
 
-Global and per-agent binds are **merged** (not replaced). Under `scope: "shared"`, per-agent binds are ignored.
+Global and per-agent binds are **merged**. Under `scope: "shared"`, per-agent
+binds are ignored.
 
-`agents.defaults.sandbox.browser.binds` mounts additional host directories into the **sandbox browser** container only.
+`agents.defaults.sandbox.browser.binds` mounts additional host directories into
+the **sandbox browser** container only.
 
 - When set (including `[]`), it replaces `agents.defaults.sandbox.docker.binds` for the browser container.
-- When omitted, the browser container falls back to `agents.defaults.sandbox.docker.binds` (backwards compatible).
+- When omitted, the browser container falls back to
+  `agents.defaults.sandbox.docker.binds`.
 
 Example (read-only source + an extra data directory):
 
@@ -108,11 +123,16 @@ Example (read-only source + an extra data directory):
 
 Security notes:
 
-- Binds bypass the sandbox filesystem: they expose host paths with whatever mode you set (`:ro` or `:rw`).
-- Fased blocks dangerous bind sources (for example: `docker.sock`, `/etc`, `/proc`, `/sys`, `/dev`, and parent mounts that would expose them).
-- Sensitive mounts (secrets, SSH keys, service credentials) should be `:ro` unless absolutely required.
-- Combine with `workspaceAccess: "ro"` if you only need read access to the workspace; bind modes stay independent.
-- See [Sandbox vs Tool Policy vs Elevated](/gateway/sandbox-vs-tool-policy-vs-elevated) for how binds interact with tool policy and elevated exec.
+- Binds bypass the sandbox filesystem: they expose host paths with whatever mode
+  you set (`:ro` or `:rw`).
+- Fased blocks dangerous bind sources, including `docker.sock`, `/etc`, `/proc`,
+  `/sys`, `/dev`, and parent mounts that would expose them.
+- Sensitive mounts such as secrets, SSH keys, and service credentials should be
+  `:ro` unless write access is required.
+- Combine with `workspaceAccess: "ro"` if you only need read access to the
+  workspace; bind modes stay independent.
+- See [Sandbox vs Tool Policy vs Elevated](/gateway/sandbox-vs-tool-policy-vs-elevated)
+  for how binds interact with tool policy and elevated exec.
 
 ## Images + setup
 
@@ -172,13 +192,15 @@ Tool allow/deny policies still apply before sandbox rules. If a tool is denied
 globally or per-agent, sandboxing doesn’t bring it back.
 
 `tools.elevated` is an explicit escape hatch that runs `exec` on the host.
-`/exec` directives only apply for authorized senders and persist per session; to hard-disable
-`exec`, use tool policy deny (see [Sandbox vs Tool Policy vs Elevated](/gateway/sandbox-vs-tool-policy-vs-elevated)).
+`/exec` directives only apply for authorized senders and persist per session. To
+hard-disable `exec`, use tool policy deny. See
+[Sandbox vs Tool Policy vs Elevated](/gateway/sandbox-vs-tool-policy-vs-elevated).
 
 Debugging:
 
 - Use `fased sandbox explain` to inspect effective sandbox mode, tool policy, and fix-it config keys.
-- See [Sandbox vs Tool Policy vs Elevated](/gateway/sandbox-vs-tool-policy-vs-elevated) for the “why is this blocked?” mental model.
+- See [Sandbox vs Tool Policy vs Elevated](/gateway/sandbox-vs-tool-policy-vs-elevated)
+  for the "why is this blocked?" mental model.
 
 ## Multi-agent overrides
 

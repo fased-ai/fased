@@ -20,7 +20,9 @@ How to see whether the Gateway and linked channels are healthy from the menu bar
 
 ## Settings
 
-- General tab gains a Health card showing: linked auth age, session-store path/count, last check time, last error/status code, and buttons for Run Health Check / Reveal Logs.
+- General tab has a Health card showing linked auth age, session-store
+  path/count, last check time, last error/status code, and buttons for Run
+  Health Check / Reveal Logs.
 - Uses a cached snapshot so the UI loads instantly and falls back gracefully when offline.
 - Channel account setup and routing are managed in the browser Control UI under
   **Agent > Channels**. The macOS app can surface health, but it is not the
@@ -28,8 +30,10 @@ How to see whether the Gateway and linked channels are healthy from the menu bar
 
 ## How the probe works
 
-- App runs `fased health --json` via `ShellExecutor` every ~60s and on demand. The probe loads creds and reports status without sending messages.
-- Cache the last good snapshot and the last error separately to avoid flicker; show the timestamp of each.
+- App runs `fased health --json` via `ShellExecutor` every ~60s and on demand.
+  The probe loads creds and reports status without sending messages.
+- Cache the last good snapshot and the last error separately to avoid flicker;
+  show the timestamp of each.
 
 ## When in doubt
 

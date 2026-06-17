@@ -9,10 +9,12 @@ read_when:
 
 # Security Overview
 
-Fased is a user-run agent with a local Gateway. Treat it like a local server with access to chats, tools,
-credentials, files, wallets, and optional paired devices. The conservative setup keeps each capability
-behind a separate gate: connect the service, allow the Agent to use the tool, then approve sensitive
-actions when needed.
+Fased is a user-run agent with a local Gateway. Treat it like a local server with
+access to chats, tools, credentials, files, wallets, and optional paired devices.
+
+The conservative setup keeps each capability behind a separate gate: connect the
+service, allow the Agent to use the tool, then approve sensitive actions when
+needed.
 
 ## Normal Setup Surfaces
 
@@ -21,7 +23,8 @@ Use the selected Agent first:
 - **Agent > Models**: connect provider auth and choose this Agent's primary, fallback, and task models.
 - **Agent > Channels**: configure chat apps and route messages to this Agent.
 - **Agent > Services**: connect API services such as web search, GitHub, Gmail, media, and custom APIs.
-- **Agent > Skills**: review/install skills, configure values, install dependencies, test loading, and allow the skill for this Agent.
+- **Agent > Skills**: review/install skills, configure values, install
+  dependencies, test loading, and allow the skill for this Agent.
 - **Agent > Tools**: grant or block this Agent from using tools that already exist.
 - **Agent > Memory**: inspect session-memory status and roots for this Agent.
 - **Agent > Tasks**: schedule work that runs as this Agent.
@@ -40,8 +43,9 @@ Preferred modes:
 - Private remote: use Tailscale or an SSH tunnel.
 - Public hosting: require gateway auth, TLS in front of the gateway, and firewall rules that expose only the intended port.
 
-Avoid binding the gateway to a public interface without auth. If you need remote browser access, keep
-Token or Password auth enabled and use Tailscale/private networking where possible.
+Avoid binding the gateway to a public interface without auth. If you need remote
+browser access, keep Token or Password auth enabled and use Tailscale/private
+networking where possible.
 
 Related docs:
 
@@ -64,29 +68,35 @@ Use:
 - Environment-backed secret refs when you do not want keys stored directly in config.
 - **Agent > Tools** to decide whether the selected Agent can use the resulting tool.
 
-Avoid pasting secrets into chat, workspace files, skill instructions, or screenshots. Advanced Config is
-the raw escape hatch for fields that do not yet have a friendly page.
+Avoid pasting secrets into chat, workspace files, skill instructions, or
+screenshots. Advanced Config is the raw escape hatch for fields that do not yet
+have a friendly page.
 
 ## Skills And Plugin Discovery
 
-A skill is a `SKILL.md` instruction package plus optional configuration and dependencies. Installing a
-skill means Fased has the skill file in the library or workspace. It does not mean the dependency binary,
-API key, wallet access, or Agent access is ready.
+A skill is a `SKILL.md` instruction package plus optional configuration and
+dependencies. Installing a skill means Fased has the skill file in the library
+or workspace. It does not mean the dependency binary, API key, wallet access, or
+Agent access is ready.
 
 Conservative flow:
 
 1. Review the source: bundled, workspace, or plugin catalog.
 2. Install or copy the skill file.
 3. Configure skill values in Agent > Skills.
-4. Install dependencies only after reviewing the package manager, exact command, pin/integrity state, and PATH target.
-5. Verify dependency health after install; command success is not enough if the binary is not visible to the gateway.
+4. Install dependencies only after reviewing the package manager, exact command,
+   pin/integrity state, and PATH target.
+5. Verify dependency health after install. Command success is not enough if the
+   binary is not visible to the gateway.
 6. Allow the skill for the selected Agent.
 7. Grant tools or wallets separately when needed.
 
-Plugin review should happen before files are written or made available. Review archive layout, `SKILL.md`,
-requested permissions, dependency installers, suspicious files, and update-risk changes. Skills can be
-malicious even when they are only text instructions, because they can steer the Agent toward dangerous
-tool use.
+Plugin review should happen before files are written or made available. Review
+archive layout, `SKILL.md`, requested permissions, dependency installers,
+suspicious files, and update-risk changes.
+
+Skills can be malicious even when they are only text instructions, because they
+can steer the Agent toward dangerous tool use.
 
 Related docs:
 
@@ -106,8 +116,9 @@ Wallet access is intentionally separate from skills and tools.
 - SAT mining uses the dedicated mining path and Mining wallet controls.
 - A skill install, plugin review, or Agent skill allowlist change does not grant wallet access.
 
-For wallet-capable skills, use **Wallets > Skill Grants** after review. Grant only the actions, wallet ids,
-chains, caps, and automation level required for the workflow.
+For wallet-capable skills, use **Wallets > Skill Grants** after review. Grant
+only the actions, wallet ids, chains, caps, and automation level required for
+the workflow.
 
 Fased's default custody path is a role-separated self-hosted signer:
 

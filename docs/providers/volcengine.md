@@ -31,9 +31,25 @@ catalog.
 
 Normal setup shows the current curated Volcano Engine routes:
 
-| Route                                   | Models                                                                                                                                                                |
-| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `volcengine`                            | `doubao-seed-2-0-pro-260215`, `doubao-seed-2-0-lite-260215`, `doubao-seed-2-0-code-preview-260215`, `deepseek-v3-2-251201`, `glm-4-7-251222`                          |
-| `volcengine-coding` / `volcengine-plan` | `ark-code-latest`, `doubao-seed-2.0-code`, `doubao-seed-2.0-pro`, `doubao-seed-2.0-lite`, `doubao-seed-code`, `minimax-m2.5`, `glm-4.7`, `deepseek-v3.2`, `kimi-k2.5` |
+**`volcengine`**
 
-Older runtime models remain compatible when already configured, but they are not first-run defaults.
+- `doubao-seed-2-0-pro-260215`
+- `doubao-seed-2-0-lite-260215`
+- `doubao-seed-2-0-code-preview-260215`
+- `deepseek-v3-2-251201`
+- `glm-4-7-251222`
+
+**`volcengine-coding` / `volcengine-plan`**
+
+- `ark-code-latest`
+- `doubao-seed-2.0-code`
+- `doubao-seed-2.0-pro`
+- `doubao-seed-2.0-lite`
+- `doubao-seed-code`
+- `minimax-m2.5`
+- `glm-4.7`
+- `deepseek-v3.2`
+- `kimi-k2.5`
+
+Older runtime models remain compatible when already configured, but they are not
+first-run defaults.

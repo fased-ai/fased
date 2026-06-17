@@ -71,25 +71,28 @@ its base URL, override `models.providers.synthetic.baseUrl`.
 
 All models below use cost `0` (input/output/cache).
 
-| Model ID                                            | Context window | Max tokens | Reasoning | Input        |
-| --------------------------------------------------- | -------------- | ---------- | --------- | ------------ |
-| `hf:zai-org/GLM-5.1`                                | 196608         | 65536      | true      | text         |
-| `hf:moonshotai/Kimi-K2.6`                           | 262144         | 65536      | true      | text + image |
-| `hf:MiniMaxAI/MiniMax-M2.5`                         | 191488         | 65536      | false     | text         |
-| `hf:zai-org/GLM-4.7-Flash`                          | 196608         | 65536      | false     | text         |
-| `hf:zai-org/GLM-5`                                  | 196608         | 65536      | true      | text         |
-| `hf:zai-org/GLM-4.7`                                | 202752         | 65536      | false     | text         |
-| `hf:deepseek-ai/DeepSeek-V3.2`                      | 159000         | 8192       | false     | text         |
-| `hf:Qwen/Qwen3-Coder-480B-A35B-Instruct`            | 256000         | 8192       | false     | text         |
-| `hf:Qwen/Qwen3-235B-A22B-Thinking-2507`             | 256000         | 8192       | true      | text         |
-| `hf:Qwen/Qwen3.5-397B-A17B`                         | 256000         | 8192       | false     | text         |
-| `hf:nvidia/Kimi-K2.5-NVFP4`                         | 256000         | 8192       | false     | text         |
-| `hf:nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4` | 256000         | 8192       | false     | text         |
-| `hf:openai/gpt-oss-120b`                            | 128000         | 8192       | false     | text         |
-| `hf:meta-llama/Llama-3.3-70B-Instruct`              | 128000         | 8192       | false     | text         |
-| `hf:deepseek-ai/DeepSeek-R1-0528`                   | 128000         | 8192       | true      | text         |
-| `hf:moonshotai/Kimi-K2.5`                           | 262144         | 8192       | true      | text + image |
-| `hf:deepseek-ai/DeepSeek-V3`                        | 128000         | 8192       | false     | text         |
+**65k max tokens**
+
+- `hf:zai-org/GLM-5.1` — context `196608`, reasoning, text
+- `hf:moonshotai/Kimi-K2.6` — context `262144`, reasoning, text + image
+- `hf:MiniMaxAI/MiniMax-M2.5` — context `191488`, text
+- `hf:zai-org/GLM-4.7-Flash` — context `196608`, text
+- `hf:zai-org/GLM-5` — context `196608`, reasoning, text
+- `hf:zai-org/GLM-4.7` — context `202752`, text
+
+**8k max tokens**
+
+- `hf:deepseek-ai/DeepSeek-V3.2` — context `159000`, text
+- `hf:Qwen/Qwen3-Coder-480B-A35B-Instruct` — context `256000`, text
+- `hf:Qwen/Qwen3-235B-A22B-Thinking-2507` — context `256000`, reasoning, text
+- `hf:Qwen/Qwen3.5-397B-A17B` — context `256000`, text
+- `hf:nvidia/Kimi-K2.5-NVFP4` — context `256000`, text
+- `hf:nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4` — context `256000`, text
+- `hf:openai/gpt-oss-120b` — context `128000`, text
+- `hf:meta-llama/Llama-3.3-70B-Instruct` — context `128000`, text
+- `hf:deepseek-ai/DeepSeek-R1-0528` — context `128000`, reasoning, text
+- `hf:moonshotai/Kimi-K2.5` — context `262144`, reasoning, text + image
+- `hf:deepseek-ai/DeepSeek-V3` — context `128000`, text
 
 ## Notes
 

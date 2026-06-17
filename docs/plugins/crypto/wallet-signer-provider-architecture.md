@@ -18,14 +18,29 @@ provider secrets inside skills.
 ## Architecture layers
 
 ```mermaid
-flowchart LR
-    Chat[Owner chat or UI] --> Runtime[Fased runtime]
-    Skill[Skill or plugin] --> Runtime
-    Runtime --> Policy[Wallet policy]
-    Policy --> Provider[Wallet provider adapter]
-    Provider --> Signer[Signer boundary]
-    Signer --> RPC[Chain RPC]
-    Signer --> Chain[Solana]
+flowchart TD
+    Chat["Owner chat<br/>Control UI"] --> Runtime["Fased runtime"]
+    Skill["Skill<br/>Plugin"] --> Runtime
+
+    subgraph RuntimeLayer["Runtime layer"]
+      Runtime --> Policy["Wallet policy<br/>roles, caps, approvals"]
+      Policy --> Adapter["Provider adapter"]
+    end
+
+    subgraph ProviderLayer["Provider lane"]
+      Adapter --> Local["local-socket-signer"]
+      Adapter --> Hosted["Hosted or MPC provider"]
+      Adapter --> Offline["Hardware or offline signer"]
+    end
+
+    subgraph SignerLayer["Signer boundary"]
+      Local --> Sign["Signing operation"]
+      Hosted --> Sign
+      Offline --> Sign
+    end
+
+    Sign --> RPC["Solana RPC<br/>balances, simulation, submit"]
+    RPC --> Chain["Solana"]
 ```
 
 Fased should be read by layer:
@@ -38,22 +53,36 @@ Fased should be read by layer:
 
 ## Provider models
 
-| Model                      | What it means                                     | Strength                       | Tradeoff                                                 |
-| -------------------------- | ------------------------------------------------- | ------------------------------ | -------------------------------------------------------- |
-| raw key in skill or env    | plugin code can reach the secret                  | easiest to prototype           | highest blast radius and hard to audit                   |
-| `local-socket-signer`      | Fased runtime asks a local signer to sign         | sovereign, local, policy-aware | operator must manage backups, RPC, and host security     |
-| hosted or MPC provider     | external provider controls or co-controls signing | easier onboarding and recovery | provider/API-key trust, cost, policy limits, and lock-in |
-| hardware or offline signer | signing happens outside the live runtime          | strongest for offline reserve  | slower and not suited to unattended automation           |
+<CardGroup cols={2}>
+  <Card title="Raw key in skill or env">
+    Plugin code can reach the secret. This is the easiest prototype path, but
+    it has the highest blast radius and is hard to audit.
+  </Card>
+  <Card title="local-socket-signer">
+    Fased runtime asks a local signer to sign. This is the local-first,
+    policy-aware path; the operator manages backups, RPC, and host security.
+  </Card>
+  <Card title="Hosted or MPC provider">
+    An external provider controls or co-controls signing. This can simplify
+    onboarding and recovery, with provider trust, cost, policy limits, and
+    lock-in as tradeoffs.
+  </Card>
+  <Card title="Hardware or offline signer">
+    Signing happens outside the live runtime. This is strongest for offline
+    reserve, but it is slower and not suited to unattended automation.
+  </Card>
+</CardGroup>
 
-The public Fased posture is local-first. Hosted providers can be useful later,
-but they should be explicit optional adapters, not the default sovereign path.
+The public Fased posture is local-first. Hosted providers can be useful later
+as explicit optional adapters. The local signer remains the default
+sovereignty path.
 
-## Why not expose keys to skills
+## Keep keys outside skills
 
 Skills are execution surfaces. They may contain third-party code, model-driven
 plans, external APIs, or user-authored workflows.
 
-Do not treat a skill install as wallet approval.
+Skill install and wallet approval are separate gates.
 
 If a skill can read a private key, seed phrase, raw keystore, provider master
 API key, or unscoped wallet credential, the skill can become the wallet. That
@@ -99,8 +128,8 @@ Use them with care:
 - chain fees and RPC/provider fees still exist
 - operators should know whether the wallet is self-hosted, provider-managed, or hybrid
 
-Hosted providers are a good optional lane. They are not a replacement for the
-local sovereign signer.
+Hosted providers are a good optional lane. Keep the local sovereign signer as
+the reference path for self-hosted operation.
 
 ## Reviewed wallet actions
 
@@ -116,7 +145,8 @@ Manual flow:
 Skill or agent flow:
 
 - a skill requests a reviewed send or route action through the wallet tool surface
-- wallet policy checks wallet role, token allowlist, route allowlist, recipient or invoice trust, per-tx cap, daily cap, approval threshold, and custody state
+- wallet policy checks wallet role, token allowlist, route allowlist, recipient
+  or invoice trust, per-tx cap, daily cap, approval threshold, and custody state
 - the signer executes only after policy and approval pass
 - audit records route type, asset, amount, recipient reference, receipt reference, and the requesting skill
 

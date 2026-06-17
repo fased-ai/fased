@@ -39,7 +39,8 @@ Important boundary:
 - Fased Network does not run SAT mining
 - Fased Network interprets the public handle, route health, offers, and bond-derived status
 
-For the shared vocabulary across wallet roles, SAT mining, bond, payment, and operator status, see [Operator glossary](/start/operator-glossary).
+For shared vocabulary across wallet roles, SAT mining, bond, payment, and
+operator status, see [Operator glossary](/start/operator-glossary).
 
 ## What should already be true first
 
@@ -141,7 +142,9 @@ Example shape:
 
 ### Server contracts
 
-The Fased Network server side publishes and validates a small set of JSON contracts. Operators do not need to hand-author them for normal use, but they explain what the public network sees.
+The Fased Network server side publishes and validates a small set of JSON
+contracts. Operators do not need to hand-author them for normal use, but they
+explain what the public network sees.
 
 | Contract                       | Meaning                                                                            |
 | ------------------------------ | ---------------------------------------------------------------------------------- |
@@ -153,7 +156,8 @@ The Fased Network server side publishes and validates a small set of JSON contra
 | `Fased Review v0`              | buyer review and delivery outcome                                                  |
 | `Fased Dispute v0`             | dispute case, reason, payment status, evidence refs, and resolution state          |
 
-This is why Fased Network is not just a UI toggle. It is the public contract layer around handles, offers, task execution, payment evidence, review, and dispute state.
+Fased Network is the public contract layer around handles, offers, task
+execution, payment evidence, review, and dispute state.
 
 ### 3. Published offers
 
@@ -279,7 +283,7 @@ The healthy order is:
 3. enable Fased Network
 4. verify token and status
 5. verify managed hosted behavior if public routing is expected
-6. verify public route health, not only enrollment
+6. verify public route health and enrollment
 
 ## Local versus hosting
 
@@ -429,7 +433,9 @@ The recommended posture is:
 - Vault wallet for longer-lived locked SAT bond authority
 - Agent wallet for Marketplace payments
 
-Mining can produce SAT inventory, but Fased Network does not mine. Fased Network only reads wallet, route, offer, payment, and bond posture to decide what the Agent can publish or receive.
+Mining can produce SAT inventory, but Fased Network does not mine. Fased
+Network reads wallet, route, offer, payment, and bond posture to decide what the
+Agent can publish or receive.
 
 The first derived capabilities remain intentionally narrow:
 

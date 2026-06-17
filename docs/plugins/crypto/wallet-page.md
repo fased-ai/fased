@@ -21,24 +21,39 @@ Use it to:
 - review split-key and lock state
 - inspect wallet controls and recent activity
 
-Use other pages for the economic workflows themselves:
+Use the matching page for each workflow:
 
-- [Operator glossary](/start/operator-glossary) for shared wallet, mining, Fased Network, bond, and order terms
-- [Mining](/plugins/crypto/mining-page) for Satcoin capital, commit, start, stop, claim, and sweep
-- [Wallet Chat and Channels](/plugins/crypto/wallet-chat-and-channels) for `@wallet` balances, sends, advanced wallet actions, skills, and channel control
-- [Mining Chat and Automation](/plugins/crypto/mining-chat-and-automation) for `@mining` start/stop/fund/withdraw/commit/strategy commands
-- [Fased Network guide](/start/federation) for network participation and public route health
-- [Bond operator](/start/bond-operator-economy) for bond posture and operator lanes
+<CardGroup cols={2}>
+  <Card title="Mining" href="/plugins/crypto/mining-page">
+    Satcoin capital, commit, start, stop, claim, and sweep.
+  </Card>
+  <Card title="Wallet chat" href="/plugins/crypto/wallet-chat-and-channels">
+    `@wallet` balances, sends, advanced wallet actions, skills, and channel control.
+  </Card>
+  <Card title="Mining chat" href="/plugins/crypto/mining-chat-and-automation">
+    `@mining` start, stop, fund, withdraw, commit, and strategy commands.
+  </Card>
+  <Card title="Fased Network" href="/start/federation">
+    Network participation and public route health.
+  </Card>
+  <Card title="Bond operator" href="/start/bond-operator-economy">
+    Bond posture and operator lanes.
+  </Card>
+  <Card title="Operator glossary" href="/start/operator-glossary">
+    Shared wallet, mining, Fased Network, bond, and order terms.
+  </Card>
+</CardGroup>
 
 ## How wallets fit into the stack
 
 ```mermaid
-flowchart LR
-    Onboard[Onboarding or CLI setup] --> Wallets[Wallets]
-    Wallets --> Mining[Mining]
-    Wallets --> Network[Fased Network]
-    Network --> Bond[Bond operator lane]
-    Network --> Offers[Offers and Marketplace]
+flowchart TD
+    Setup["Onboarding<br/>or CLI setup"] --> Wallets["Wallets"]
+    Wallets --> Funding["Fund and secure<br/>wallets"]
+    Funding --> Mining["Mining<br/>SAT operations"]
+    Funding --> Network["Fased Network"]
+    Network --> Bond["Bond operator lane"]
+    Network --> Offers["Offers<br/>Marketplace"]
 ```
 
 Read it like this:
@@ -136,9 +151,9 @@ This is where you review or save wallet controls:
 - Sweep: Mining-only SAT movement after successful claims
 
 Automated execution means the Agent wallet may execute approved background
-actions when role controls, enabled caps, allowlists, and custody state allow it. It does
-not control Wallets UI manual Send. Manual Send always creates a reviewed request,
-then approval executes the request.
+actions when role controls, enabled caps, allowlists, and custody state allow it.
+Wallets UI manual Send still creates a reviewed request first, then approval
+executes the request.
 
 For Mining, automated signing is reserved for Satcoin mining operations and Satcoin
 sweep. It does not allow generic chat, skill, wallet-action, or bond actions from the
@@ -178,12 +193,11 @@ There are three permanent wallet purposes in the product:
 - Mining
 - Vault
 
-Those purposes are stored on the wallet record and should not be changed after
-creation. The current public wallet UI is Solana-only. Display name is only a
-label; the permanent handle is `@wallet:<walletId>`.
+Those purposes are stored on the wallet record and stay fixed after creation.
+The current public wallet UI is Solana-only. Display name is only a label; the
+permanent handle is `@wallet:<walletId>`.
 
-Bond is not a wallet purpose. It is a Fased Network assignment that must point to a
-Vault wallet.
+Bond authority is configured through Fased Network and points to a Vault wallet.
 
 ### Agent wallet
 
@@ -195,7 +209,9 @@ This is the normal working role for:
 - skill/plugin wallet tasks
 - reviewed advanced wallet actions
 
-You can have more than one Agent wallet. One Agent wallet can be marked primary; that is the fallback when an approved wallet action does not include an explicit handle. Other Agent wallets are still usable with their exact handles.
+You can have more than one Agent wallet. One Agent wallet can be marked primary;
+that is the fallback when an approved wallet action does not include an explicit
+handle. Other Agent wallets are still usable with their exact handles.
 
 The wallet purpose stored on the wallet is Agent because it is the wallet the
 agent is allowed to use for risky chat, skill, plugin, Fased Network, and
@@ -203,10 +219,11 @@ advanced wallet actions.
 
 New wallets should be assigned explicitly during onboarding or CLI creation.
 Legacy wallets without purpose metadata are manual-first until you create or
-mark a proper Agent wallet. Do not repurpose Mining or Vault wallets into Agent
-wallets.
+mark a proper Agent wallet. Keep Mining and Vault wallets in their original
+roles.
 
-The wallet name/id should describe purpose, not chain. Use `Agent` / `agent`; the UI shows the chain separately as `Solana`.
+Use the wallet name/id for purpose. Use `Agent` / `agent`; the UI shows the
+chain separately as `Solana`.
 
 Use explicit handles for risky actions:
 
@@ -214,15 +231,15 @@ Use explicit handles for risky actions:
 @wallet:agent
 ```
 
-Display names are hints only. They are not enough to execute a send, wallet action, or
-scheduled wallet action. Use the exact `@wallet:<walletId>` handle or a
-structured tool/API `walletId`.
+Display names are hints only. Execute a send, wallet action, or scheduled
+wallet action with the exact `@wallet:<walletId>` handle or a structured
+tool/API `walletId`.
 
 Agent wallet actions from owner chat or allowed channels can execute
-automatically when Auto is On and wallet controls allow the action. This is not the same
-as the Wallets page manual Send form. Manual Send creates a request in the Wallets
-page; Agent wallet chat actions still use enabled caps, allowlists, balance
-checks, transaction inspection, custody state, and audit logs before signing.
+automatically when Auto is On and wallet controls allow the action. Manual Send
+is the Wallets page request flow. Agent wallet chat actions still use enabled
+caps, allowlists, balance checks, transaction inspection, custody state, and
+audit logs before signing.
 
 The same Agent wallet controls also gate advanced `wallet_action` chat flows and
 scheduled wallet work. Those flows must name the Agent wallet handle or resolve
@@ -232,8 +249,8 @@ advanced wallet-action sources.
 Marketplace order actions and evidence also use Agent wallets only. If a user
 buys an offer, handles an order, receives service receipts, or publishes order
 evidence, Fased should use an Agent wallet under wallet controls. Mining wallets
-are for Satcoin mining and SAT sweep. Vault wallets are protected/manual-first
-and should not become Marketplace automation wallets.
+are for Satcoin mining and SAT sweep. Vault wallets are protected/manual-first;
+keep Marketplace automation on Agent wallets.
 
 Examples:
 
@@ -277,18 +294,20 @@ This is the dedicated Solana working wallet for:
 - post-claim sweep
 
 Mining wallet automation is limited to Satcoin mining and configured SAT sweep.
-It must not be used for Marketplace checkout, service receipts, chat sends,
-plugin order actions, recurring transfers, or API/data-service subscriptions.
+Keep Marketplace checkout, service receipts, chat sends, plugin order actions,
+recurring transfers, and API/data-service subscriptions on Agent wallets.
 
-For unattended mining, use a background-ready self-hosted signer path. In practice that means `local-socket-signer` with `fased-signerd`, enough wallet SOL for fees, and the singleton `@wallet:mining` wallet instead of reusing the Agent wallet.
+For unattended mining, use a background-ready self-hosted signer path. In
+practice that means `local-socket-signer` with `fased-signerd`, enough wallet
+SOL for fees, and the dedicated singleton `@wallet:mining` wallet.
 
-Fased treats the active mining wallet as protected operational state. Do
-not delete or repurpose it while mining is active.
+Fased treats the active mining wallet as protected operational state. Keep it
+in place while mining is active.
 
 To stop using a mining wallet: stop mining, let pending cycles clear, claim,
 withdraw or sweep what you need, then delete that wallet through the guarded
 wallet-management path if you no longer want it. Create a new Agent or Vault
-wallet instead of changing the mining wallet purpose.
+wallet for other purposes.
 
 ### Vault wallet
 
@@ -300,10 +319,10 @@ This is the manual-first wallet for:
 - Satcoin bond authority when selected for Fased Network bond
 
 Vault wallets are reserve/custody wallets. They can receive funds manually and
-can be selected for bond-related authority, but they should not run Marketplace
-checkout, provider order actions, subscription renewal, chat automation, plugin order actions,
-or scheduled task transfers. Vault can still have Caps for reviewed Wallets UI sends, but
-Vault never gets Auto.
+can be selected for bond-related authority. Keep Marketplace checkout, provider
+order actions, subscription renewal, chat automation, plugin order actions, and
+scheduled transfers on Agent wallets. Vault can still have Caps for reviewed
+Wallets UI sends, but Vault never gets Auto.
 
 Policy, custody, and signer status records use `vault` for this purpose.
 
@@ -332,9 +351,10 @@ Role defaults:
 - CLI creation/import marks a wallet Agent or Vault when you pass `--role agent` or `--role vault`
 - one singleton Mining wallet is created or imported as `@wallet:mining`
 - wallets with no Agent role behave like Vault/manual-first wallets for risky chat and skill actions
-- existing wallet purpose is treated as permanent; create a new wallet instead of repurposing Mining, Agent, or Vault wallets
+- existing wallet purpose is treated as permanent; create a new wallet for a different purpose
 - onboarding reset does not delete wallet keystores or registry state under `~/.fased/wallet`
-- wallet deletion is separate, per-wallet, and requires typing the exact wallet id after you save recovery material and move funds if needed
+- wallet deletion is separate and per-wallet; save recovery material, move funds
+  if needed, then type the exact wallet id
 
 For production, use role/purpose ids without chain suffixes:
 
@@ -438,15 +458,15 @@ For the step-by-step flows, see:
 - [Autonomous wallet security](/plugins/crypto/wallet-autonomous-security)
 - [Autonomous wallet sessions](/plugins/crypto/wallet-autonomous-sessions)
 
-## What Wallet should not be used for
+## Keep Wallet focused
 
-Wallet should not become:
+Wallet stays focused on:
 
-- a duplicate onboarding flow
-- a duplicate mining page
-- a duplicate bond lifecycle page
-- a place to bypass send approval discipline
-- a substitute for offline reserve or cold storage
+- wallet inventory
+- funding checks
+- approval controls
+- wallet security
+- signer and RPC health
 
 Use the clean split:
 

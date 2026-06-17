@@ -13,7 +13,7 @@ Fased core runs through the Gateway. **Node is the recommended runtime**.
 The normal setup path is:
 
 ```mermaid
-flowchart LR
+flowchart TD
   host["Gateway host"] --> ui["Browser Control UI"]
   host --> agents["Agents"]
   agents --> channels["Channels"]
@@ -47,14 +47,13 @@ path is WSL2.
 
 ## Choose your OS
 
-| Platform                                | Best current path                                      |
-| --------------------------------------- | ------------------------------------------------------ |
-| [macOS](/platforms/macos)               | Gateway plus native menu bar companion.                |
-| [Linux](/platforms/linux)               | Gateway host, local machine, VPS, or always-on node.   |
-| [Windows](/platforms/windows)           | WSL2 for the Gateway. Native companion app is planned. |
-| [iOS](/platforms/ios)                   | Mobile node connected to another Gateway.              |
-| [Android](/platforms/android)           | Mobile node connected to another Gateway.              |
-| [Raspberry Pi](/platforms/raspberry-pi) | Low-power always-on Gateway host.                      |
+- [macOS](/platforms/macos): Gateway plus native menu bar companion.
+- [Linux](/platforms/linux): Gateway host, local machine, VPS, or always-on node.
+- [Windows](/platforms/windows): WSL2 for the Gateway. Native companion app is
+  planned.
+- [iOS](/platforms/ios): mobile node connected to another Gateway.
+- [Android](/platforms/android): mobile node connected to another Gateway.
+- [Raspberry Pi](/platforms/raspberry-pi): low-power always-on Gateway host.
 
 ## VPS & hosting
 
@@ -84,5 +83,6 @@ Use one of these (all supported):
 
 The service target depends on OS:
 
-- macOS: LaunchAgent (`ai.fased.gateway` or `ai.fased.<profile>`; legacy `com.fased.*`)
+- macOS: LaunchAgent (`ai.fased.gateway` or `ai.fased.<profile>`; legacy
+  `com.fased.*`)
 - Linux/WSL2: systemd user service (`fased-gateway[-<profile>].service`)

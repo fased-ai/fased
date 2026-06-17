@@ -12,7 +12,7 @@ Agent has its own identity, workspace, model selection, skill/tool policy,
 channels, sessions, tasks, and workspace files.
 
 ```mermaid
-flowchart LR
+flowchart TD
   agent["Selected Agent"] --> models["Models"]
   agent --> workspace["Workspace"]
   agent --> memory["Memory"]
@@ -38,19 +38,28 @@ flowchart LR
 Normal setup starts from **Agents**, then the selected Agent. The selected Agent
 owns the user-facing setup tabs:
 
-| Tab          | Owns                                                                                                                                   |
-| ------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
-| Setup        | Summary cards for identity, workspace, memory, skills, models, channels, tools, services, tasks, sessions, usage, and extension health |
-| Models       | Connected providers plus this Agent's primary, fallback, and task model refs                                                           |
-| Channels     | Chat account setup, QR/login flows, routing, DM/group policy, and delivery to this Agent                                               |
-| Skills       | Skill library/catalog, create/edit/config, dependency install, and this Agent's skill access policy                                    |
-| Tools        | Per-Agent allow/deny for runtime tools after services/extensions expose them                                                           |
-| Memory       | Session archive enable/disable, workspace memory roots, backend, QMD status, and per-Agent validation                                  |
-| Sessions     | This Agent's conversations, token/session metadata, attached tasks, and protected delete/restore actions                               |
-| Services     | Connector setup/status in the selected Agent context; service credentials remain global where the service requires it                  |
-| Tasks        | Scheduled and event-triggered work owned by this Agent and its sessions                                                                |
-| Coordination | Multi-Agent task evidence, selected-Agent review, and retry-with-evidence controls                                                     |
-| Files        | User-owned workspace bootstrap files such as `AGENTS.md`, `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`, and `MEMORY.md`             |
+- **Setup**: summary cards for identity, workspace, memory, skills, models,
+  channels, tools, services, tasks, sessions, usage, and extension health.
+- **Models**: connected providers plus this Agent's primary, fallback, and task
+  model refs.
+- **Channels**: chat account setup, QR/login flows, routing, DM/group policy,
+  and delivery to this Agent.
+- **Skills**: skill library/catalog, create/edit/config, dependency install,
+  and this Agent's skill access policy.
+- **Tools**: per-Agent allow/deny for runtime tools after services/extensions
+  expose them.
+- **Memory**: session archive enable/disable, workspace memory roots, backend,
+  QMD status, and per-Agent validation.
+- **Sessions**: this Agent's conversations, token/session metadata, attached
+  tasks, and protected delete/restore actions.
+- **Services**: connector setup/status in the selected Agent context. Service
+  credentials remain global where the service requires it.
+- **Tasks**: scheduled and event-triggered work owned by this Agent and its
+  sessions.
+- **Coordination**: Multi-Agent task evidence, selected-Agent review, and
+  retry-with-evidence controls.
+- **Files**: user-owned workspace bootstrap files such as `AGENTS.md`,
+  `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`, and `MEMORY.md`.
 
 Global/operator pages such as Dashboard, Usage, Logs, Advanced, Extensions,
 Wallets, Mining, Fased Network, and Marketplace still exist for runtime,
@@ -67,7 +76,8 @@ Without an explicit workspace, Fased derives one from the default workspace or
 the Fased state directory. The active Agent workspace is the working directory
 for file tools and workspace context.
 
-Recommended: use `fased setup` to create `~/.fased/fased.json` if missing and initialize the workspace files.
+Recommended: use `fased setup` to create `~/.fased/fased.json` if missing and
+initialize the workspace files.
 
 Full workspace layout + backup guide: [Agent workspace](/concepts/agent-workspace)
 
@@ -95,9 +105,12 @@ only the heartbeat context.
 Blank files are skipped. Large files are trimmed and truncated with a marker so
 prompts stay lean; use file or memory tools to read the full content when needed.
 
-If a file is missing, Fased injects a single “missing file” marker line (and `fased setup` will create a baseline template).
+If a file is missing, Fased injects a single “missing file” marker line.
+`fased setup` will create a baseline template.
 
-`BOOTSTRAP.md` is only created for a **brand new workspace** (no other bootstrap files present). If you delete it after completing the ritual, it should not be recreated on later restarts.
+`BOOTSTRAP.md` is only created for a **brand new workspace** with no other
+bootstrap files present. If you delete it after completing the ritual, it
+should stay deleted on later restarts.
 
 To disable bootstrap file creation entirely (for pre-seeded workspaces), set:
 
@@ -158,9 +171,11 @@ current turn ends, then a new agent turn starts with the queued payloads. See
 
 Block streaming sends completed assistant blocks as soon as they finish; it is
 **off by default** (`agents.defaults.blockStreamingDefault: "off"`).
-Tune the boundary via `agents.defaults.blockStreamingBreak` (`text_end` vs `message_end`; defaults to text_end).
-Control soft block chunking with `agents.defaults.blockStreamingChunk` (defaults to
-800–1200 chars; prefers paragraph breaks, then newlines; sentences last).
+Tune the boundary via `agents.defaults.blockStreamingBreak` (`text_end` vs
+`message_end`; defaults to `text_end`).
+Control soft block chunking with `agents.defaults.blockStreamingChunk`.
+Defaults are 800–1200 chars, with paragraph breaks preferred first, then
+newlines, then sentences.
 Coalesce streamed chunks with `agents.defaults.blockStreamingCoalesce` to reduce
 single-line spam (idle-based merging before send). Non-Telegram channels require
 explicit `*.blockStreaming: true` to enable block replies.
@@ -175,8 +190,10 @@ example `agents.defaults.model`, `agents.defaults.models`, and
 `agents.list[].model`) are parsed by splitting on the **first** `/`.
 
 - Use `provider/model` when configuring models.
-- If the model ID itself contains `/` (OpenRouter-style), include the provider prefix (example: `openrouter/moonshotai/kimi-k2`).
-- If you omit the provider, Fased treats the input as an alias or a model for the default provider (only works when there is no `/` in the model ID).
+- If the model ID itself contains `/` (OpenRouter-style), include the provider
+  prefix: `openrouter/moonshotai/kimi-k2`.
+- If you omit the provider, Fased treats the input as an alias or a model for
+  the default provider. That only works when there is no `/` in the model ID.
 
 ## Configuration (minimal)
 

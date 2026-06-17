@@ -7,13 +7,17 @@ title: "Google Chat"
 
 # Google Chat (Chat API)
 
-Google Chat in Fased is an HTTP-only integration. The gateway verifies Google-signed webhook requests, routes DMs and spaces into the normal session model, and sends replies back through the Chat API using your service account.
+Google Chat in Fased is an HTTP-only integration. The gateway verifies
+Google-signed webhook requests, routes DMs and spaces into the normal session
+model, and sends replies through the Chat API using your service account.
 
 Status: supported for DMs and spaces through Google Chat webhooks.
 
 ## Quick setup (beginner)
 
-The important design constraint is exposure: only the Google Chat webhook path should be public. Keep the rest of the gateway private behind Tailscale, your reverse proxy, or another access boundary.
+Only the Google Chat webhook path should be public. Keep the dashboard and the
+rest of the gateway private behind Tailscale, your reverse proxy, or another
+access boundary.
 
 1. Create a Google Cloud project and enable the **Google Chat API**.
    - Go to: [Google Chat API Credentials](https://console.cloud.google.com/apis/api/chat.googleapis.com/credentials)
@@ -29,7 +33,8 @@ The important design constraint is exposure: only the Google Chat webhook path s
    - Click **Add Key** > **Create new key**.
    - Select **JSON** and press **Create**.
 4. Store the downloaded JSON file on your gateway host (e.g., `~/.fased/googlechat-service-account.json`).
-5. Create a Google Chat app in the [Google Cloud Console Chat Configuration](https://console.cloud.google.com/apis/api/chat.googleapis.com/hangouts-chat):
+5. Create a Google Chat app in the
+   [Google Cloud Console Chat Configuration](https://console.cloud.google.com/apis/api/chat.googleapis.com/hangouts-chat):
    - Fill in the **Application info**:
      - **App name**: (e.g. `Fased`)
      - **Avatar URL**: (e.g. `https://example.com/logo.png`)
@@ -37,9 +42,12 @@ The important design constraint is exposure: only the Google Chat webhook path s
    - Enable **Interactive features**.
    - Under **Functionality**, check **Join spaces and group conversations**.
    - Under **Connection settings**, select **HTTP endpoint URL**.
-   - Under **Triggers**, select **Use a common HTTP endpoint URL for all triggers** and set it to your gateway's public URL followed by `/googlechat`.
+   - Under **Triggers**, select **Use a common HTTP endpoint URL for all
+     triggers** and set it to your gateway's public URL followed by
+     `/googlechat`.
      - _Tip: Run `fased status` to find your gateway's public URL._
-   - Under **Visibility**, check **Make this Chat app available to specific people and groups in &lt;Your Domain&gt;**.
+   - Under **Visibility**, check **Make this Chat app available to specific
+     people and groups in &lt;Your Domain&gt;**.
    - Enter your email address (e.g. `user@example.com`) in the text box.
    - Click **Save** at the bottom.
 6. **Enable the app status**:
@@ -61,19 +69,23 @@ Once the gateway is running and your email is added to the visibility list:
 
 1. Go to [Google Chat](https://chat.google.com/).
 2. Click the **+** (plus) icon next to **Direct Messages**.
-3. In the search bar (where you usually add people), type the **App name** you configured in the Google Cloud Console.
-   - **Note**: The bot will _not_ appear in the "Marketplace" browse list because it is a private app. You must search for it by name.
+3. In the search bar, type the **App name** you configured in Google Cloud.
+   - Private apps do not appear in the public Marketplace browse list. Search
+     for the app by name.
 4. Select your bot from the results.
 5. Click **Add** or **Chat** to start a 1:1 conversation.
 6. Send "Hello" to trigger the assistant!
 
 ## Public URL (Webhook-only)
 
-Google Chat webhooks require a public HTTPS endpoint. For security, **only expose the `/googlechat` path** to the internet. Keep the Fased dashboard and other sensitive endpoints on your private network.
+Google Chat webhooks require a public HTTPS endpoint. Expose only the
+`/googlechat` path to the internet. Keep the Fased dashboard and other
+sensitive endpoints on your private network.
 
 ### Option A: Tailscale Funnel (Recommended)
 
-Use Tailscale Serve for the private dashboard and Funnel for the public webhook path. This keeps `/` private while exposing only `/googlechat`.
+Use Tailscale Serve for the private dashboard and Funnel for the public webhook
+path. This keeps `/` private while exposing only `/googlechat`.
 
 1. **Check what address your gateway is bound to:**
 
@@ -133,7 +145,8 @@ your-domain.com {
 }
 ```
 
-With this config, any request to `your-domain.com/` will be ignored or returned as 404, while `your-domain.com/googlechat` is routed to Fased.
+With this config, `your-domain.com/googlechat` is routed to Fased and the rest
+of the domain stays outside the gateway route.
 
 ### Option C: Cloudflare Tunnel
 
@@ -144,14 +157,16 @@ Configure your tunnel's ingress rules to only route the webhook path:
 
 ## How it works
 
-1. Google Chat sends webhook POSTs to the gateway. Each request includes an `Authorization: Bearer <token>` header.
+1. Google Chat sends webhook POSTs to the gateway. Each request includes an
+   `Authorization: Bearer <token>` header.
 2. Fased verifies the token against the configured `audienceType` + `audience`:
    - `audienceType: "app-url"` → audience is your HTTPS webhook URL.
    - `audienceType: "project-number"` → audience is the Cloud project number.
 3. Messages are routed by space:
    - DMs use session key `agent:<agentId>:googlechat:dm:<spaceId>`.
    - Spaces use session key `agent:<agentId>:googlechat:group:<spaceId>`.
-4. DM access is pairing by default. Unknown senders receive a pairing code; approve with:
+4. DM access is pairing by default. Unknown senders receive a pairing code.
+   Approve with:
    - `fased pairing approve googlechat <code>`
 5. Group spaces require @-mention by default. Use `botUser` if mention detection needs the app’s user name.
 
@@ -160,7 +175,8 @@ Configure your tunnel's ingress rules to only route the webhook path:
 Use these identifiers for delivery and allowlists:
 
 - Direct messages: `users/<userId>` (recommended).
-- Raw email `name@example.com` is mutable and only used for direct allowlist matching when `channels.googlechat.dangerouslyAllowNameMatching: true`.
+- Raw email `name@example.com` is mutable. It is only used for direct allowlist
+  matching when `channels.googlechat.dangerouslyAllowNameMatching: true`.
 - Deprecated: `users/<email>` is treated as a user id, not an email allowlist.
 - Spaces: `spaces/<spaceId>`.
 
@@ -201,12 +217,17 @@ Use these identifiers for delivery and allowlists:
 Notes:
 
 - Service account credentials can also be passed inline with `serviceAccount` (JSON string).
-- `serviceAccountRef` is also supported (env/file SecretRef), including per-account refs under `channels.googlechat.accounts.<id>.serviceAccountRef`.
+- `serviceAccountRef` is also supported as an env/file SecretRef, including
+  per-account refs under
+  `channels.googlechat.accounts.<id>.serviceAccountRef`.
 - Default webhook path is `/googlechat` if `webhookPath` isn’t set.
-- `dangerouslyAllowNameMatching` re-enables mutable email principal matching for allowlists (break-glass compatibility mode).
+- `dangerouslyAllowNameMatching` re-enables mutable email principal matching for
+  allowlists. Treat it as compatibility mode.
 - Reactions are available via the `reactions` tool and `channels action` when `actions.reactions` is enabled.
-- `typingIndicator` supports `none`, `message` (default), and `reaction` (reaction requires user OAuth).
-- Attachments are downloaded through the Chat API and stored in the media pipeline (size capped by `mediaMaxMb`).
+- `typingIndicator` supports `none`, `message` (default), and `reaction`.
+  Reaction typing requires user OAuth.
+- Attachments are downloaded through the Chat API and stored in the media
+  pipeline, capped by `mediaMaxMb`.
 
 Secrets reference details: [Secrets Management](/gateway/secrets).
 
@@ -234,7 +255,7 @@ This means the webhook handler isn't registered. Common causes:
    **Agent > Channels** shows restart required after saving credentials,
    restart the gateway so the runtime registers the webhook handler.
 
-3. **Gateway not restarted**: After adding config, restart the gateway:
+3. **Gateway not restarted**: after adding config, restart the gateway:
 
    ```bash
    fased gateway restart
@@ -250,8 +271,10 @@ fased channels status
 ### Other issues
 
 - Check `fased channels status --probe` for auth errors or missing audience config.
-- If no messages arrive, confirm the Chat app's webhook URL + event subscriptions.
-- If mention gating blocks replies, set `botUser` to the app's user resource name and verify `requireMention`.
+- If no messages arrive, confirm the Chat app's webhook URL and event
+  subscriptions.
+- If mention gating blocks replies, set `botUser` to the app's user resource
+  name and verify `requireMention`.
 - Use `fased logs --follow` while sending a test message to see if requests reach the gateway.
 
 Related docs:

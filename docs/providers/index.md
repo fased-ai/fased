@@ -19,7 +19,7 @@ separate from model providers; configure those from **Agent > Channels**.
 ## Model Route
 
 ```mermaid
-flowchart LR
+flowchart TD
   provider["Provider auth"] --> models["Agent > Models"]
   local["Local endpoints"] --> models
   custom["Custom routes"] --> models

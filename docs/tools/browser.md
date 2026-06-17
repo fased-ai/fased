@@ -93,8 +93,10 @@ Notes:
 - `cdpUrl` defaults to the relay port when unset.
 - `remoteCdpTimeoutMs` applies to remote (non-loopback) CDP reachability checks.
 - `remoteCdpHandshakeTimeoutMs` applies to remote CDP WebSocket reachability checks.
-- Browser navigation/open-tab is SSRF-guarded before navigation and best-effort re-checked on final `http(s)` URL after navigation.
-- `browser.ssrfPolicy.dangerouslyAllowPrivateNetwork` defaults to `true` (trusted-network model). Set it to `false` for strict public-only browsing.
+- Browser navigation/open-tab is SSRF-guarded before navigation and best-effort
+  re-checked on final `http(s)` URL after navigation.
+- `browser.ssrfPolicy.dangerouslyAllowPrivateNetwork` defaults to `true`
+  (trusted-network model). Set it to `false` for strict public-only browsing.
 - `browser.ssrfPolicy.allowPrivateNetwork` remains supported as a legacy alias for compatibility.
 - `attachOnly: true` means “never launch a local browser; only attach if it is already running.”
 - `color` + per-profile `color` tint the browser UI so you can see which profile is active.
@@ -202,7 +204,8 @@ Notes:
 Key ideas:
 
 - Browser control is loopback-only; access flows through the Gateway’s auth or node pairing.
-- If browser control is enabled and no auth is configured, Fased auto-generates `gateway.auth.token` on startup and persists it to config.
+- If browser control is enabled and no auth is configured, Fased auto-generates
+  `gateway.auth.token` on startup and persists it to config.
 - Keep the Gateway and any node hosts on a private network (Tailscale); avoid public exposure.
 - Treat remote CDP URLs/tokens as secrets; prefer env vars or a secrets manager.
 
@@ -230,7 +233,8 @@ All control endpoints accept `?profile=<name>`; the CLI uses `--browser-profile`
 
 ## Chrome extension relay (use your existing Chrome)
 
-Fased can also drive **your existing Chrome tabs** (no separate “fased” Chrome instance) via a local CDP relay + a Chrome extension.
+Fased can also drive **your existing Chrome tabs** via a local CDP relay +
+Chrome extension. This does not require a separate “fased” Chrome instance.
 
 Full guide: [Chrome extension](/tools/chrome-extension)
 
@@ -322,7 +326,9 @@ For local integrations only, the Gateway exposes a small loopback HTTP API:
 - Network: `POST /response/body`
 - State: `GET /cookies`, `POST /cookies/set`, `POST /cookies/clear`
 - State: `GET /storage/:kind`, `POST /storage/:kind/set`, `POST /storage/:kind/clear`
-- Settings: `POST /set/offline`, `POST /set/headers`, `POST /set/credentials`, `POST /set/geolocation`, `POST /set/media`, `POST /set/timezone`, `POST /set/locale`, `POST /set/device`
+- Settings: `POST /set/offline`, `POST /set/headers`,
+  `POST /set/credentials`, `POST /set/geolocation`, `POST /set/media`,
+  `POST /set/timezone`, `POST /set/locale`, `POST /set/device`
 
 All endpoints accept `?profile=<name>`.
 
@@ -464,8 +470,12 @@ Notes:
   - `--format ai` (default when Playwright is installed): returns an AI snapshot with numeric refs (`aria-ref="<n>"`).
   - `--format aria`: returns the accessibility tree (no refs; inspection only).
   - `--efficient` (or `--mode efficient`): compact role snapshot preset (interactive + compact + depth + lower maxChars).
-  - Config default (tool/CLI only): set `browser.snapshotDefaults.mode: "efficient"` to use efficient snapshots when the caller does not pass a mode (see [Gateway configuration](/gateway/configuration#browser-fased-managed-browser)).
-  - Role snapshot options (`--interactive`, `--compact`, `--depth`, `--selector`) force a role-based snapshot with refs like `ref=e12`.
+  - Config default (tool/CLI only): set
+    `browser.snapshotDefaults.mode: "efficient"` to use efficient snapshots when
+    the caller does not pass a mode. See
+    [Gateway configuration](/gateway/configuration#browser-fased-managed-browser).
+  - Role snapshot options (`--interactive`, `--compact`, `--depth`,
+    `--selector`) force a role-based snapshot with refs like `ref=e12`.
   - `--frame "<iframe selector>"` scopes role snapshots to an iframe (pairs with role refs like `e12`).
   - `--interactive` outputs a flat, easy-to-pick list of interactive elements (best for driving actions).
   - `--labels` adds a viewport-only screenshot with overlayed ref labels (prints `MEDIA:<path>`).
@@ -481,7 +491,9 @@ Fased supports two “snapshot” styles:
   - Actions: `fased browser click 12`, `fased browser type 23 "hello"`.
   - Internally, the ref is resolved via Playwright’s `aria-ref`.
 
-- **Role snapshot (role refs like `e12`)**: `fased browser snapshot --interactive` (or `--compact`, `--depth`, `--selector`, `--frame`)
+- **Role snapshot (role refs like `e12`)**:
+  `fased browser snapshot --interactive` or `--compact`, `--depth`,
+  `--selector`, `--frame`.
   - Output: a role-based list/tree with `[ref=e12]` (and optional `[nth=1]`).
   - Actions: `fased browser click e12`, `fased browser highlight e12`.
   - Internally, the ref is resolved via `getByRole(...)` (plus `nth()` for duplicates).
@@ -543,7 +555,9 @@ fased browser requests --filter api --json
 fased browser cookies --json
 ```
 
-Role snapshots in JSON include `refs` plus a small `stats` block (lines/chars/refs/interactive) so tools can reason about payload size and density.
+Role snapshots in JSON include `refs` plus a small `stats` block with lines,
+chars, refs, and interactive counts. Tools can use that to reason about payload
+size and density.
 
 ## State and environment knobs
 

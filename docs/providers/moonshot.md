@@ -31,7 +31,9 @@ Kimi Coding:
 fased onboard --auth-choice kimi-code-api-key
 ```
 
-Note: Moonshot and Kimi Coding are separate providers. Keys are not interchangeable, endpoints differ, and model refs differ (Moonshot uses `moonshot/...`, Kimi Coding uses `kimi-coding/...`).
+Note: Moonshot and Kimi Coding are separate providers. Keys are not
+interchangeable, endpoints differ, and model refs differ. Moonshot uses
+`moonshot/...`; Kimi Coding uses `kimi-coding/...`.
 
 ## Config snippet (Moonshot API)
 
@@ -102,8 +104,10 @@ Note: Moonshot and Kimi Coding are separate providers. Keys are not interchangea
 
 ## Notes
 
-- Moonshot model refs use `moonshot/<modelId>`. Kimi Coding model refs use `kimi-coding/<modelId>`.
+- Moonshot model refs use `moonshot/<modelId>`. Kimi Coding model refs use
+  `kimi-coding/<modelId>`.
 - Override pricing and context metadata in `models.providers` if needed.
 - If Moonshot publishes different context limits for a model, adjust
   `contextWindow` accordingly.
-- Use `https://api.moonshot.ai/v1` for the international endpoint, and `https://api.moonshot.cn/v1` for the China endpoint.
+- Use `https://api.moonshot.ai/v1` for the international endpoint, and
+  `https://api.moonshot.cn/v1` for the China endpoint.

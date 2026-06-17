@@ -41,7 +41,9 @@ Apply aggressive repairs too (overwrites custom supervisor configs).
 fased doctor --non-interactive
 ```
 
-Run without prompts and only apply safe migrations (config normalization + on-disk state moves). Skips restart/service/sandbox actions that require human confirmation.
+Run without prompts and only apply safe migrations: config normalization and
+on-disk state moves. It skips restart, service, and sandbox actions that require
+human confirmation.
 Legacy state migrations run automatically when detected.
 
 ```bash
@@ -67,7 +69,8 @@ cat ~/.fased/fased.json
 - Legacy on-disk state migration (sessions/agent dir/WhatsApp auth).
 - State integrity and permissions checks (sessions, transcripts, state dir).
 - Config file permission checks (chmod 600) when running locally.
-- Model auth health: checks OAuth expiry, can refresh expiring tokens, and reports auth-profile cooldown/disabled states.
+- Model auth health: checks OAuth expiry, can refresh expiring tokens, and
+  reports auth-profile cooldown/disabled states.
 - Extra workspace dir detection (`~/fased`).
 - Sandbox image repair when sandboxing is enabled.
 - Legacy service migration and extra gateway detection.
@@ -77,9 +80,11 @@ cat ~/.fased/fased.json
 - Gateway runtime best-practice checks (Node vs Bun, version-manager paths).
 - Gateway port collision diagnostics (default `18789`).
 - Security warnings for open DM policies.
-- Gateway auth warnings when shared Gateway auth is missing or weak (local mode; offers token generation).
+- Gateway auth warnings when shared Gateway auth is missing or weak. In local
+  mode, doctor can offer token generation.
 - systemd linger check on Linux.
-- Source install checks (pnpm workspace mismatch, missing UI assets, missing tsx binary).
+- Source install checks: pnpm workspace mismatch, missing UI assets, or missing
+  `tsx` binary.
 - Writes updated config + wizard metadata.
 
 ## Detailed behavior and rationale
@@ -112,16 +117,20 @@ legacy config format, so stale configs are repaired without manual intervention.
 Current migrations:
 
 - `routing.allowFrom` → `channels.whatsapp.allowFrom`
-- `routing.groupChat.requireMention` → `channels.whatsapp/telegram/imessage.groups."*".requireMention`
+- `routing.groupChat.requireMention` →
+  `channels.whatsapp/telegram/imessage.groups."*".requireMention`
 - `routing.groupChat.historyLimit` → `messages.groupChat.historyLimit`
 - `routing.groupChat.mentionPatterns` → `messages.groupChat.mentionPatterns`
 - `routing.queue` → `messages.queue`
 - `routing.bindings` → top-level `bindings`
-- `routing.agents`/`routing.defaultAgentId` → `agents.list` + `agents.list[].default`
+- `routing.agents`/`routing.defaultAgentId` → `agents.list` +
+  `agents.list[].default`
 - `routing.agentToAgent` → `tools.agentToAgent`
 - `routing.transcribeAudio` → `tools.media.audio.models`
 - `bindings[].match.accountID` → `bindings[].match.accountId`
-- For channels with named `accounts` but missing `accounts.default`, move account-scoped top-level single-account channel values into `channels.<channel>.accounts.default` when present
+- For channels with named `accounts` but missing `accounts.default`, move
+  account-scoped top-level single-account channel values into
+  `channels.<channel>.accounts.default` when present.
 - `identity` → `agents.list[].identity`
 - `agent.*` → `agents.defaults` + `tools.*` (tools/elevated/exec/sandbox/subagents)
 - `agent.model`/`allowedModels`/`modelAliases`/`modelFallbacks`/`imageModelFallbacks`

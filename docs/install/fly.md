@@ -19,7 +19,9 @@ the tailnet. If you want that posture, use [Hetzner](/install/hetzner) or
 </Warning>
 
 <Note>
-Use Fly only when you intentionally want an internet-facing deployment or a Fly-native edge setup. Do not treat `*.fly.dev` as the default private operator path.
+Use Fly when you intentionally want an internet-facing deployment or a
+Fly-native edge setup. For the default private operator path, use a VPS with
+Tailscale.
 </Note>
 
 ## What you need
@@ -50,13 +52,16 @@ fly apps create my-fased
 fly volumes create fased_data --size 1 --region iad
 ```
 
-**Tip:** Choose a region close to you. Common options: `lhr` (London), `iad` (Virginia), `sjc` (San Jose).
+**Tip:** Choose a region close to you. Common options: `lhr` (London), `iad`
+(Virginia), `sjc` (San Jose).
 
 ## 2) Configure fly.toml
 
 Edit `deploy/hosting/fly.toml` to match your app name and requirements.
 
-**Security note:** The default Fly path exposes a public URL. That is not the standard Fased operator posture. If you need private operator access, prefer a VPS with Tailscale instead of Fly.
+**Security note:** The default Fly path exposes a public URL. That is not the
+standard Fased operator posture. If you need private operator access, prefer a
+VPS with Tailscale instead of Fly.
 
 ```toml
 app = "my-fased"  # Your app name
@@ -129,7 +134,9 @@ fly secrets set FASED_GATEWAY_TOKEN=$(openssl rand -hex 32)
 
 - Non-loopback binds (`--bind lan`) require `FASED_GATEWAY_TOKEN` for security.
 - Treat these tokens like passwords.
-- **Prefer env vars over config file** for all API keys and tokens. This keeps secrets out of `fased.json` where they could be accidentally exposed or logged.
+- **Prefer env vars over config file** for API keys and tokens. This keeps
+  secrets out of `fased.json` where they could be accidentally exposed or
+  logged.
 
 ## 4) Deploy
 
@@ -137,7 +144,8 @@ fly secrets set FASED_GATEWAY_TOKEN=$(openssl rand -hex 32)
 fly deploy -c deploy/hosting/fly.toml
 ```
 
-First deploy builds the Docker image (~2-3 minutes). Subsequent deploys are faster.
+First deploy builds the Docker image, usually in about 2-3 minutes. Subsequent
+deploys are faster.
 
 After deployment, verify:
 
@@ -213,11 +221,13 @@ The gateway is binding to `127.0.0.1` instead of `0.0.0.0`.
 
 Fly can't reach the gateway on the configured port.
 
-**Fix:** Ensure `internal_port` matches the gateway port (set `--port 3000` or `FASED_GATEWAY_PORT=3000`).
+**Fix:** Ensure `internal_port` matches the gateway port. Set `--port 3000` or
+`FASED_GATEWAY_PORT=3000`.
 
 ### OOM / Memory Issues
 
-Container keeps restarting or getting killed. Signs: `SIGABRT`, `v8::internal::Runtime_AllocateInYoungGeneration`, or silent restarts.
+Container keeps restarting or getting killed. Signs include `SIGABRT`,
+`v8::internal::Runtime_AllocateInYoungGeneration`, or silent restarts.
 
 **Fix:** Increase memory in `deploy/hosting/fly.toml`:
 
@@ -232,13 +242,15 @@ Or update an existing machine:
 fly machine update <machine-id> --vm-memory 2048 -y
 ```
 
-**Note:** 512MB is too small. 1GB may work but can OOM under load or with verbose logging. **2GB is recommended.**
+**Note:** 512MB is too small. 1GB may work but can OOM under load or with verbose
+logging. **2GB is recommended.**
 
 ### Gateway Lock Issues
 
 Gateway refuses to start with "already running" errors.
 
-This happens when the container restarts but the PID lock file persists on the volume.
+This happens when the container restarts but the PID lock file persists on the
+volume.
 
 **Fix:** Delete the lock file:
 
@@ -251,7 +263,8 @@ The lock file is at `/data/gateway.*.lock` (not in a subdirectory).
 
 ### Config Not Being Read
 
-If using `--allow-unconfigured`, the gateway creates a minimal config. Your custom config at `/data/fased.json` should be read on restart.
+If using `--allow-unconfigured`, the gateway creates a minimal config. Your
+custom config at `/data/fased.json` should be read on restart.
 
 Verify the config exists:
 
@@ -261,7 +274,8 @@ fly ssh console --command "cat /data/fased.json"
 
 ### Writing Config via SSH
 
-The `fly ssh console -C` command doesn't support shell redirection. To write a config file:
+The `fly ssh console -C` command does not support shell redirection. To write a
+config file:
 
 ```bash
 # Use echo + tee (pipe from local to remote)
@@ -313,11 +327,15 @@ fly machine update <machine-id> --command "node dist/index.js gateway --port 300
 fly machine update <machine-id> --vm-memory 2048 --command "node dist/index.js gateway --port 3000 --bind lan" -y
 ```
 
-**Note:** After `fly deploy`, the machine command may reset to what's in `deploy/hosting/fly.toml`. If you made manual changes, re-apply them after deploy.
+**Note:** After `fly deploy`, the machine command may reset to what is in
+`deploy/hosting/fly.toml`. If you made manual changes, re-apply them after
+deploy.
 
 ## Private Deployment (Hardened)
 
-By default, Fly allocates public IPs, making your gateway accessible at `https://your-app.fly.dev`. This is convenient but means your deployment is discoverable by internet scanners.
+By default, Fly allocates public IPs, making your gateway accessible at
+`https://your-app.fly.dev`. This is convenient, but internet scanners can
+discover it.
 
 For a hardened deployment with **no public exposure**, use the repo-backed
 private config, `deploy/hosting/fly.private.toml`.
@@ -325,7 +343,8 @@ private config, `deploy/hosting/fly.private.toml`.
 ### When to use private deployment
 
 - You only make **outbound** calls/messages (no inbound webhooks)
-- You use a separate private access layer for operator control and do not rely on the public Fly URL for administration
+- You use a separate private access layer for operator control and do not rely on
+  the public Fly URL for administration
 - You access the gateway via **SSH, proxy, or WireGuard** instead of browser
 - You want the deployment **hidden from internet scanners**
 
@@ -420,7 +439,9 @@ Example voice-call config with a separate tunnel provider:
 }
 ```
 
-Whatever relay or tunnel you use for inbound webhooks, keep it separate from the operator control path. Public webhook ingress is not the same thing as public admin access.
+Whatever relay or tunnel you use for inbound webhooks, keep it separate from the
+operator control path. Public webhook ingress is not the same thing as public
+admin access.
 
 ### Exposure differences
 

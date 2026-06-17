@@ -17,11 +17,15 @@ compatibility route.
 
 Use the same two OpenAI methods in every setup surface:
 
-| Surface    | What to do                                                                                                                                                                                                        |
-| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Control UI | Open **Agents**, select an Agent, then use **Agent > Models**. Choose **OpenAI**, then **Sign in** or **API key**, and assign the Agent's model roles there. Chat can override the model for the current session. |
-| Onboarding | Choose **Set up model providers** only if you want provider setup during onboarding, then choose **OpenAI (OpenAI sign-in + API key)** and pick **OpenAI sign-in** or **OpenAI API key**.                         |
-| CLI        | Use `fased onboard --auth-choice openai-codex` for sign-in, `fased onboard --auth-choice openai-api-key`, or `fased onboard --openai-api-key "$OPENAI_API_KEY"` for API key setup.                                |
+- **Control UI:** Open **Agents**, select an Agent, then use **Agent > Models**.
+  Choose **OpenAI**, then **Sign in** or **API key**, and assign the Agent's
+  model roles there. Chat can override the model for the current session.
+- **Onboarding:** Choose **Set up model providers** only if you want provider
+  setup during onboarding. Choose **OpenAI (OpenAI sign-in + API key)**, then
+  pick **OpenAI sign-in** or **OpenAI API key**.
+- **CLI:** Use `fased onboard --auth-choice openai-codex` for sign-in,
+  `fased onboard --auth-choice openai-api-key`, or
+  `fased onboard --openai-api-key "$OPENAI_API_KEY"` for API key setup.
 
 The two auth methods use different internal routes:
 

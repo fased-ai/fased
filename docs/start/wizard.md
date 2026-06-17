@@ -73,7 +73,9 @@ The wizard starts with **QuickStart** (defaults) vs **Advanced** (full control).
     - Workspace default (or existing workspace)
     - Gateway port **18789**
     - Gateway auth **Token** (auto‑generated, even on loopback)
-    - DM isolation default: local onboarding writes `session.dmScope: "per-channel-peer"` when unset. Details: [CLI Onboarding Reference](/start/wizard-cli-reference#outputs-and-internals)
+    - DM isolation default: local onboarding writes
+      `session.dmScope: "per-channel-peer"` when unset. Details:
+      [CLI Onboarding Reference](/start/wizard-cli-reference#outputs-and-internals)
     - Tailscale exposure **Off**
     - Chat app channels are connected later from `Agent > Channels`
   </Tab>
@@ -123,12 +125,14 @@ Hosted setup uses two machines:
 
 Use the terminal that has Tailscale access:
 
-| Your computer | Use this terminal              | Tailscale requirement                                                                                                                             |
-| ------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Windows       | PowerShell or Windows Terminal | Install/sign into the Windows Tailscale app from [tailscale.com/download](https://tailscale.com/download). PowerShell can SSH into the Linux VPS. |
-| macOS         | Terminal                       | Install/sign into the macOS Tailscale app.                                                                                                        |
-| Linux         | Terminal                       | Install/start Tailscale on that Linux machine.                                                                                                    |
-| WSL           | Advanced only                  | Either use PowerShell instead, or install/start Tailscale inside WSL too. Windows Tailscale does not automatically make WSL a Tailscale node.     |
+- **Windows:** use PowerShell or Windows Terminal. Install/sign into the
+  Windows Tailscale app from [tailscale.com/download](https://tailscale.com/download).
+  PowerShell can SSH into the Linux VPS.
+- **macOS:** use Terminal and install/sign into the macOS Tailscale app.
+- **Linux:** use Terminal and install/start Tailscale on that Linux machine.
+- **WSL:** advanced only. Either use PowerShell instead, or install/start
+  Tailscale inside WSL too. Windows Tailscale does not automatically make WSL a
+  Tailscale node.
 
 If you lose access to the Tailscale account used for a hosted VPS, normal
 dashboard and SSH access can be lost. Recovery then depends on the VPS
@@ -174,9 +178,14 @@ interactive onboarding does not ask you to choose every provider anymore.
 <Note>
 Re-running the wizard does **not** wipe durable instance setup.
 If an existing config is present, choose **Review settings** or **Repair sign-in**.
-Review settings starts from the existing config and keeps wallets, Tailscale account/device access, gateway port assumptions, mining/bond state, and firewall state unless you explicitly edit those sections.
-Repair sign-in clears only selected auth/session state. It keeps `fased.json`, gateway token/password, gateway settings, wallet assignments, SAT mining, Fased Network, plugins, Tailscale, firewall state, and wallet data.
-CLI `fased onboard --reset` uses the same scoped repair flow and defaults to `auth+sessions`; use `--reset-scope sessions|auth|auth+sessions`.
+Review settings starts from the existing config and keeps wallets, Tailscale
+account/device access, gateway port assumptions, mining/bond state, and firewall
+state unless you explicitly edit those sections.
+Repair sign-in clears only selected auth/session state. It keeps `fased.json`,
+gateway token/password, gateway settings, wallet assignments, SAT mining,
+Fased Network, plugins, Tailscale, firewall state, and wallet data.
+CLI `fased onboard --reset` uses the same scoped repair flow and defaults to
+`auth+sessions`; use `--reset-scope sessions|auth|auth+sessions`.
 Use the explicit admin command `fased reset --scope ...` only when you intentionally want destructive config/state reset.
 If the config is invalid or contains legacy keys, the wizard asks you to run `fased doctor` first.
 </Note>
@@ -217,18 +226,32 @@ The practical split is:
 
 Chain type is separate from the name/id. Use `Agent` / `agent`, not `Agent SOL`; Wallet shows Solana separately.
 
-When you create a wallet, the wizard lets you pick Agent, Mining, or Vault, then edit the wallet display name once before creation. The permanent `walletId` is generated from the selected purpose, not from the display name.
+When you create a wallet, the wizard lets you pick Agent, Mining, or Vault, then
+choose the display name before creation. The permanent `walletId` is generated
+from the selected purpose, not from the display name. The display name is fixed
+after creation; create a new wallet if you need a different permanent label.
 
 Only Agent and Vault can have multiple wallets:
 
-- second Agent wallet: default id `agent-2`; display name can be `Agent 2`, `Receipts`, `Operations`, or another user label
-- second Vault wallet: default id `vault-2`; display name can be `Vault 2`, `Cold`, `Archive`, or another user label
+- second Agent wallet: default id `agent-2`; display name can be `Agent 2`,
+  `Receipts`, `Operations`, or another user label
+- second Vault wallet: default id `vault-2`; display name can be `Vault 2`,
+  `Cold`, `Archive`, or another user label
 
-Mining is one active configured wallet. To replace it, stop mining, clear
-pending work and funds, delete the old Mining wallet through guarded wallet
-management if needed, then create the new one.
+The onboarding wizard generates `agent-2`, `agent-3`, `vault-2`, `vault-3`,
+and so on when those ids are already used. CLI wallet setup can also create
+extra Agent or Vault wallets, but you must pass the intended `--wallet-id`
+yourself.
 
-Wallets are persistent machine state. Wizard repair never deletes them. Delete a wallet only from wallet management, one wallet at a time, after saving recovery material and typing the exact wallet id. Tailscale is also persistent machine access; repair does not remove it, so log out or remove the device in Tailscale only when you intentionally want to cut access.
+Mining is one active configured wallet, normally `@wallet:mining`. To replace
+it, stop mining, clear pending work and funds, delete the old Mining wallet
+through guarded wallet management if needed, then create the new one.
+
+Wallets are persistent machine state. Wizard repair never deletes them. Delete a
+wallet only from wallet management, one wallet at a time, after saving recovery
+material and typing the exact wallet id. Tailscale is also persistent machine
+access; repair does not remove it, so log out or remove the device in Tailscale
+only when you intentionally want to cut access.
 
 Important distinction:
 
@@ -237,7 +260,8 @@ Important distinction:
 - Agent wallets are for reviewed sends, receipts, and explicitly granted wallet-connected workflows
 - multiple Agent wallets are allowed, but risky actions should use explicit handles like `@wallet:agent`
 - display name is only a label; handle is always `@wallet:<walletId>`
-- wallet purpose is treated as permanent after creation; if you want a different purpose, create a new wallet instead of repurposing the old one
+- wallet purpose is treated as permanent after creation; if you want a different
+  purpose, create a new wallet instead of repurposing the old one
 
 Only a Vault wallet should be selected for Fased Network bond. Agent and Mining wallets are rejected for bond authority.
 

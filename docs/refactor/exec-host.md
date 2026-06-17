@@ -37,7 +37,7 @@ page keeps the design boundary and remaining limitations concise.
 ## Exec Route
 
 ```mermaid
-flowchart LR
+flowchart TD
   tool["exec request"] --> resolve["Resolve host + policy"]
   resolve --> sandbox["sandbox host"]
   resolve --> gateway["gateway host"]

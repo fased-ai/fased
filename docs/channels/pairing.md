@@ -43,15 +43,28 @@ fased pairing list telegram
 fased pairing approve telegram <CODE>
 ```
 
-Supported channels include:
+Pairing support comes from the active channel plugin registry. The current
+bundled/plugin set includes:
 
 - `telegram`
 - `whatsapp`
-- `signal`
-- `imessage`
 - `discord`
 - `slack`
+- `signal`
+- `imessage`
+- `bluebubbles`
+- `googlechat`
 - `feishu`
+- `irc`
+- `line`
+- `matrix`
+- `mattermost`
+- `msteams`
+- `nextcloud-talk`
+- `nostr`
+- `synology-chat`
+- `zalo`
+- `zalouser`
 
 ### Where DM pairing state lives
 

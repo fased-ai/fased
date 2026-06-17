@@ -15,7 +15,7 @@ Onboarding gets the machine ready. The Control UI makes the agent useful.
 The intended flow is:
 
 ```mermaid
-flowchart LR
+flowchart TD
   onboard["Onboarding"] --> models["Agent > Models"]
   models --> skills["Agent > Skills"]
   skills --> channels["Agent > Channels"]
@@ -34,16 +34,32 @@ flowchart LR
 
 The first browser setup pass should start from the selected Agent:
 
-| Order | Surface            | Goal                                                                                 |
-| ----- | ------------------ | ------------------------------------------------------------------------------------ |
-| 1     | `/agents`          | Create or select the Agent that will own chat, channel routes, tasks, and memory.    |
-| 2     | `Agent > Models`   | Connect provider auth if needed, then choose primary, fallback, and task models.     |
-| 3     | `Agent > Skills`   | Create, review, install, configure, and allow skills for this Agent.                 |
-| 4     | `Agent > Channels` | Connect chat apps and route accounts, topics, or guilds to this Agent.               |
-| 5     | `Agent > Services` | Connect external APIs such as web/search, Gmail, Calendar, GitHub, or browser/media. |
-| 6     | `Agent > Memory`   | Enable session-memory and review per-Agent archive/QMD state.                        |
-| 7     | `Agent > Tasks`    | Create saved tasks, triggers, workflows, graphs, programs, and templates.            |
-| 8     | `/config`          | Use Advanced Config only for fields that do not have a friendly page yet.            |
+<Steps>
+  <Step title="/agents">
+    Create or select the Agent that will own chat, channel routes, tasks, and memory.
+  </Step>
+  <Step title="Agent > Models">
+    Connect provider auth if needed, then choose primary, fallback, and task models.
+  </Step>
+  <Step title="Agent > Skills">
+    Create, review, install, configure, and allow skills for this Agent.
+  </Step>
+  <Step title="Agent > Channels">
+    Connect chat apps and route accounts, topics, or guilds to this Agent.
+  </Step>
+  <Step title="Agent > Services">
+    Connect external APIs such as web/search, Gmail, Calendar, GitHub, or browser/media.
+  </Step>
+  <Step title="Agent > Memory">
+    Enable session-memory and review per-Agent archive/QMD state.
+  </Step>
+  <Step title="Agent > Tasks">
+    Create saved tasks, triggers, workflows, graphs, programs, and templates.
+  </Step>
+  <Step title="/config">
+    Use Advanced Config only for fields that do not have a friendly page yet.
+  </Step>
+</Steps>
 
 For the focused model-to-agent flow, see
 [Models to Agents to Chat](/start/provider-agent-chat-flow).
@@ -78,18 +94,39 @@ fased dashboard
 
 Then use the browser pages for product setup:
 
-| Page             | Use it for                                                                                                                 |
-| ---------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `/agents`        | Create or select an Agent and attach model, skills, services, channels, memory, tasks, tools, sessions, and wallet policy. |
-| `/extensions`    | Review runtime plugins, source trust, dependencies, scanner warnings, and advanced extension setup.                        |
-| `/usage`         | Review local model usage by provider, model, Agent, session, task, channel, and source.                                    |
-| `/notifications` | Configure notification routing and recent in-app/external delivery.                                                        |
-| `/wallet`        | Review wallet policy, approvals, balances, custody, and signer health.                                                     |
-| `/mining`        | Operate SAT mining readiness, capital, commit, recovery, and history.                                                      |
-| `/federation`    | Operate Fased Network status, routing, and marketplace-facing identity.                                                    |
-| `/marketplace`   | Review Fased Network offers, requests, purchases, and disputes.                                                            |
-| `/memory`        | Read memory diagnostics across Agents. Enable session-memory from `Agent > Memory`.                                        |
-| `/config`        | Advanced Config only. Use this when a field is not exposed in a friendly page yet.                                         |
+<CardGroup cols={2}>
+  <Card title="/agents">
+    Create or select an Agent and attach model, skills, services, channels,
+    memory, tasks, tools, sessions, and wallet policy.
+  </Card>
+  <Card title="/extensions">
+    Review runtime plugins, source trust, dependencies, scanner warnings, and advanced extension setup.
+  </Card>
+  <Card title="/usage">
+    Review local model usage by provider, model, Agent, session, task, channel, and source.
+  </Card>
+  <Card title="/notifications">
+    Configure notification routing and recent in-app/external delivery.
+  </Card>
+  <Card title="/wallet">
+    Review wallet policy, approvals, balances, custody, and signer health.
+  </Card>
+  <Card title="/mining">
+    Operate SAT mining readiness, capital, commit, recovery, and history.
+  </Card>
+  <Card title="/federation">
+    Operate Fased Network status, routing, and marketplace-facing identity.
+  </Card>
+  <Card title="/marketplace">
+    Review Fased Network offers, requests, purchases, and disputes.
+  </Card>
+  <Card title="/memory">
+    Read memory diagnostics across Agents. Enable session-memory from `Agent > Memory`.
+  </Card>
+  <Card title="/config">
+    Advanced Config only. Use this when a field is not exposed in a friendly page yet.
+  </Card>
+</CardGroup>
 
 <Note>
 Dashboard is a launch/status widget board. It is not the setup wizard. Start
@@ -138,13 +175,30 @@ routes/delivery, and Services/Media for connector setup.
 
 Use these words consistently:
 
-| Term      | Meaning                                                                                                                                                      |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Skill     | A user-facing ability or instruction pack the agent can use. Create, review, configure, and allow it from `Agent > Skills`.                                  |
-| Extension | Runtime plugin code that can add tools, channels, hooks, schemas, commands, or UI panels. Review it in `/extensions`.                                        |
-| Channel   | A chat app where the agent receives or sends messages. Connect and route it from `Agent > Channels`. Channels do not own tasks.                              |
-| Service   | An external API the agent can use, such as Gmail, Calendar, GitHub, web/search, browser/media, or a plugin-reported API. Connect it from `Agent > Services`. |
-| Hook      | Background automation around runtime events. Review hook packs in `/extensions`; Agent memory archive control lives in `Agent > Memory`.                     |
+**Skill**
+
+A user-facing ability or instruction pack the agent can use. Create, review,
+configure, and allow it from `Agent > Skills`.
+
+**Extension**
+
+Runtime plugin code that can add tools, channels, hooks, schemas, commands, or
+UI panels. Review it in `/extensions`.
+
+**Channel**
+
+A chat app where the agent receives or sends messages. Connect and route it from
+`Agent > Channels`. Channels do not own tasks.
+
+**Service**
+
+An external API the agent can use, such as Gmail, Calendar, GitHub, web/search,
+browser/media, or a plugin-reported API. Connect it from `Agent > Services`.
+
+**Hook**
+
+Background automation around runtime events. Review hook packs in `/extensions`;
+Agent memory archive control lives in `Agent > Memory`.
 
 Skill setup is intentionally split by responsibility but exposed in one Agent
 surface:

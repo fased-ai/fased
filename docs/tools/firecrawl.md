@@ -45,10 +45,12 @@ Notes:
 
 ## Stealth / bot circumvention
 
-Firecrawl exposes a **proxy mode** parameter for bot circumvention (`basic`, `stealth`, or `auto`).
+Firecrawl exposes a **proxy mode** parameter for bot circumvention:
+`basic`, `stealth`, or `auto`.
 Fased always uses `proxy: "auto"` plus `storeInCache: true` for Firecrawl requests.
-If proxy is omitted, Firecrawl defaults to `auto`. `auto` retries with stealth proxies if a basic attempt fails, which may use more credits
-than basic-only scraping.
+If proxy is omitted, Firecrawl defaults to `auto`. `auto` retries with stealth
+proxies if a basic attempt fails, which may use more credits than basic-only
+scraping.
 
 ## How `web_fetch` uses Firecrawl
 

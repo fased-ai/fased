@@ -7,9 +7,11 @@ read_when:
 
 # TOOLS.md - Local Tool Notes
 
-This file is for local details that help the agent use tools correctly. It does not define tool availability and it does not grant access.
+This file is for local details that help the agent use tools correctly. It does
+not define tool availability and it does not grant access.
 
-Use Agent > Tools to allow or block tools. Use Agent > Services for service credentials. Use Agent > Skills for skill instructions and dependency setup.
+Use Agent > Tools to allow or block tools. Use Agent > Services for service
+credentials. Use Agent > Skills for skill instructions and dependency setup.
 
 ## Local Notes
 

@@ -8,19 +8,23 @@ title: "Tailscale"
 
 # Tailscale (Gateway dashboard)
 
-Tailscale is the preferred remote-access layer for Fased when you want the gateway reachable off the local machine without opening the raw gateway port to the wider network. The intended pattern is still loopback-first: keep the gateway on `127.0.0.1`, then let Tailscale expose the control surface on top.
+Tailscale is the preferred remote-access layer when you want the gateway
+reachable off the local machine without opening the raw gateway port to the wider
+network. The intended pattern is loopback-first: keep the gateway on
+`127.0.0.1`, then let Tailscale expose the control surface on top.
 
 ## Modes
 
 - `serve`: Tailnet-only Serve via `tailscale serve`. The gateway stays on `127.0.0.1`.
-- `funnel`: Public HTTPS via `tailscale funnel`. Fased requires a shared password and this should be the exception, not the baseline.
+- `funnel`: Public HTTPS via `tailscale funnel`. Fased requires a shared
+  password. Use this as the exception, not the baseline.
 - `off`: Default (no Tailscale automation).
 
 ## Recommended policy
 
 - prefer `serve`
 - keep the raw gateway port closed in your host firewall
-- keep `gateway.bind: "loopback"` unless you intentionally need a direct tailnet bind
+- keep `gateway.bind: "loopback"` unless you need a direct tailnet bind
 - use `funnel` only when you truly need public ingress
 
 ## First-time setup
@@ -83,11 +87,13 @@ force `gateway.auth.mode: "password"`.
 
 Open: `https://<magicdns>/` (or your configured `gateway.controlUi.basePath`)
 
-This is the normal recommendation for both local and hosting profiles when you want browser access from other devices on your tailnet.
+This is the normal recommendation for local and hosting profiles when you want
+browser access from other devices on your tailnet.
 
 ### Tailnet-only (bind to Tailnet IP)
 
-Use this only when you intentionally want the gateway to listen directly on the tailnet IP instead of staying on loopback behind Serve.
+Use this when the gateway should listen directly on the tailnet IP instead of
+staying on loopback behind Serve.
 
 ```json5
 {

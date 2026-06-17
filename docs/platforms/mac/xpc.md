@@ -7,13 +7,19 @@ title: "macOS IPC"
 
 # Fased macOS IPC architecture
 
-**Current model:** a local Unix socket connects the **node host service** to the **macOS app** for exec approvals + `system.run`. A `fased-mac` debug CLI exists for discovery/connect checks; agent actions still flow through the Gateway WebSocket and `node.invoke`. UI automation uses PeekabooBridge.
+**Current model:** a local Unix socket connects the **node host service** to the
+**macOS app** for exec approvals and `system.run`. A `fased-mac` debug CLI
+exists for discovery/connect checks. Agent actions still flow through the
+Gateway WebSocket and `node.invoke`. UI automation uses PeekabooBridge.
 
 ## Goals
 
-- Single GUI app instance that owns all TCC-facing work (notifications, screen recording, mic, speech, AppleScript).
-- A small surface for automation: Gateway + node commands, plus PeekabooBridge for UI automation.
-- Predictable permissions: always the same signed bundle ID, launched by launchd, so TCC grants stick.
+- Single GUI app instance that owns TCC-facing work: notifications, screen
+  recording, mic, speech, and AppleScript.
+- A small automation surface: Gateway + node commands, plus PeekabooBridge for
+  UI automation.
+- Predictable permissions: same signed bundle ID, launched by launchd, so TCC
+  grants stick.
 
 ## How it works
 
@@ -21,7 +27,8 @@ title: "macOS IPC"
 
 - The app attaches to or manages the local Gateway through launchd and connects
   to it as a node.
-- Agent actions are performed via `node.invoke` (e.g. `system.run`, `system.notify`, `canvas.*`).
+- Agent actions are performed via `node.invoke`, for example `system.run`,
+  `system.notify`, and `canvas.*`.
 
 ### Node service + app IPC
 
@@ -40,14 +47,18 @@ Agent -> Gateway -> Node Service (WS)
 
 ### PeekabooBridge (UI automation)
 
-- UI automation uses a separate UNIX socket named `bridge.sock` and the PeekabooBridge JSON protocol.
-- Host preference order (client-side): `Peekaboo.app` → `Claude.app` → `FasedAgent.app` → local execution.
-- Security: bridge hosts require an allowed TeamID; DEBUG-only same-UID escape hatch is guarded by `PEEKABOO_ALLOW_UNSIGNED_SOCKET_CLIENTS=1` (Peekaboo convention).
+- UI automation uses a separate UNIX socket named `bridge.sock` and the
+  PeekabooBridge JSON protocol.
+- Host preference order (client-side): `Peekaboo.app` -> `Claude.app` ->
+  `FasedAgent.app` -> local execution.
+- Security: bridge hosts require an allowed TeamID. DEBUG-only same-UID local
+  development is guarded by `PEEKABOO_ALLOW_UNSIGNED_SOCKET_CLIENTS=1`.
 - See: [PeekabooBridge usage](/platforms/mac/peekaboo) for details.
 
 ## Operational flows
 
-- Restart/rebuild: `SIGN_IDENTITY="Apple Development: <Developer Name> (<TEAMID>)" scripts/restart-mac.sh`
+- Restart/rebuild:
+  `SIGN_IDENTITY="Apple Development: <Developer Name> (<TEAMID>)" scripts/restart-mac.sh`
   - Kills existing instances
   - Swift build + package
   - Writes/bootstraps/kickstarts the LaunchAgent
@@ -56,8 +67,11 @@ Agent -> Gateway -> Node Service (WS)
 ## Hardening notes
 
 - Prefer requiring a TeamID match for all privileged surfaces.
-- PeekabooBridge: `PEEKABOO_ALLOW_UNSIGNED_SOCKET_CLIENTS=1` (DEBUG-only) may allow same-UID callers for local development.
+- PeekabooBridge: `PEEKABOO_ALLOW_UNSIGNED_SOCKET_CLIENTS=1` is DEBUG-only and
+  may allow same-UID callers for local development.
 - The privileged app IPC remains local-only. Gateway WebSocket traffic stays on
   loopback or a private remote path, depending on Local vs Remote mode.
-- TCC prompts originate only from the GUI app bundle; keep the signed bundle ID stable across rebuilds.
-- IPC hardening: socket mode `0600`, token, peer-UID checks, HMAC challenge/response, short TTL.
+- TCC prompts originate only from the GUI app bundle; keep the signed bundle ID
+  stable across rebuilds.
+- IPC hardening: socket mode `0600`, token, peer-UID checks, HMAC
+  challenge/response, short TTL.

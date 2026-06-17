@@ -15,7 +15,7 @@ streaming, and reasoning visibility.
 ## Message flow (high level)
 
 ```mermaid
-flowchart LR
+flowchart TD
   Inbound[Inbound message] --> Routing[Routing and bindings]
   Routing --> Session[Session key]
   Session --> Queue[Queue or active run]
@@ -103,9 +103,9 @@ When a channel supplies history, it uses a shared wrapper:
 - `[Chat messages since your last reply - for context]`
 - `[Current message - respond to this]`
 
-For **non-direct chats** (groups/channels/rooms), the **current message body** is prefixed with the
-sender label (same style used for history entries). This keeps real-time and queued/history
-messages consistent in the agent prompt.
+For **non-direct chats** (groups/channels/rooms), the **current message body**
+is prefixed with the sender label, using the same style as history entries.
+This keeps real-time and queued/history messages consistent in the agent prompt.
 
 History buffers are **pending-only**: they include group messages that did _not_
 trigger a run (for example, mention-gated messages) and **exclude** messages
@@ -162,7 +162,10 @@ Details: [Thinking + reasoning directives](/tools/thinking) and [Token use](/ref
 
 Outbound message formatting is centralized in `messages`:
 
-- `messages.responsePrefix`, `channels.<channel>.responsePrefix`, and `channels.<channel>.accounts.<id>.responsePrefix` (outbound prefix cascade), plus `channels.whatsapp.messagePrefix` (WhatsApp inbound prefix)
+- `messages.responsePrefix`, `channels.<channel>.responsePrefix`, and
+  `channels.<channel>.accounts.<id>.responsePrefix` for the outbound prefix
+  cascade.
+- `channels.whatsapp.messagePrefix` for the WhatsApp inbound prefix.
 - Reply threading via `replyToMode` and per-channel defaults
 
 Details: [Configuration](/gateway/configuration#messages) and channel docs.

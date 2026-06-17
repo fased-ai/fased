@@ -20,11 +20,15 @@ title: "Location Command"
 
 ## Why a selector (not just a switch)
 
-OS permissions are multi-level. We can expose a selector in-app, but the OS still decides the actual grant.
+OS permissions are multi-level. Fased can expose a selector in-app, but the OS
+still decides the actual grant.
 
-- iOS/macOS: user can choose **While Using** or **Always** in system prompts/Settings. App can request upgrade, but OS may require Settings.
-- Android: background location is a separate permission; on Android 10+ it often requires a Settings flow.
-- Precise location is a separate grant (iOS 14+ “Precise”, Android “fine” vs “coarse”).
+- iOS/macOS: user can choose **While Using** or **Always** in system prompts or
+  Settings. The app can request an upgrade, but the OS may require Settings.
+- Android: background location is a separate permission; on Android 10+ it often
+  requires a Settings flow.
+- Precise location is a separate grant: iOS 14+ "Precise", Android "fine" vs
+  "coarse".
 
 Selector in UI drives our requested mode; actual grant lives in OS settings.
 

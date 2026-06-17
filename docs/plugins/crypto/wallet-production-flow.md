@@ -1,5 +1,5 @@
 ---
-summary: "Full operator guide for wallet operations: onboarding, funding, role separation, policy profiles, passkey, custody, and sweep discipline."
+summary: "Wallet operating guide for setup, funding, roles, policy, passkey, custody, and sweeps."
 read_when:
   - You want the full wallet operating model after onboarding
   - You are validating wallet behavior for order actions, mining, Fased Network, or plugins
@@ -9,7 +9,7 @@ sidebarTitle: "Wallet security"
 
 # Wallet operations and security
 
-This is the full operator guide for wallets in Fased.
+This is the operator guide for wallets in Fased.
 
 Use it as the contract between:
 
@@ -73,7 +73,7 @@ For the full file layout and signer boundary, see [Self-hosted wallet signer](/p
 
 ## 3. Funding and working balances
 
-Runtime wallets are working wallets, not treasury wallets.
+Runtime wallets should be sized as working wallets.
 
 Good operating posture:
 
@@ -102,7 +102,8 @@ Important detail:
 
 - wallet purpose is stored as Agent, Mining, or Vault
 - new policy, custody, and signer status records use `agent`, `vault`, or `mining`
-- risky chat and skill actions must use explicit `@wallet:<walletId>` handles or structured `walletId`; display names are not execution authority
+- risky chat and skill actions use explicit `@wallet:<walletId>` handles or
+  structured `walletId`; display names are labels only
 - Agent wallets are the automation path; Vault wallets are manual-only and use reviewed Wallets page approval
 - Mining wallets should not be repurposed; create a new Agent or Vault wallet when the purpose changes
 
@@ -175,7 +176,8 @@ The ordinary user send path is:
 4. complete passkey approval if enabled
 5. let the runtime execute and log the send
 
-That means the Wallets page is an approval surface, not a fire-and-forget broadcast button.
+The Wallets page is an approval surface. It shows the request before signing and
+broadcast.
 
 ### Approval details and audit records
 
@@ -205,14 +207,32 @@ when enabled.
 Wallet policy should stay editable, but normal operators should be able to
 start from one-click presets in Wallets > Access. Preset meanings:
 
-| Preset                  | Meaning                                                                                          |
-| ----------------------- | ------------------------------------------------------------------------------------------------ |
-| Read-only               | Balance/status only. No sends, route actions, mining changes, scheduled wallet work, or signing. |
-| Manual only             | Wallets UI reviewed requests only. No chat/task/skill automation.                                |
-| Small Agent spend       | Agent wallet can perform small approved work under low caps and narrow destinations/routes.      |
-| Mining only             | Mining wallet can perform SAT mining and sweep paths only. No generic wallet actions.            |
-| Skill limited           | Reviewed wallet-capable skills can use only selected Agent wallets/actions/caps.                 |
-| Advanced wallet actions | Agent wallet can use inspected route-action adapters with explicit caps and route checks.        |
+**Read-only**
+
+Balance and status only.
+
+**Manual only**
+
+Wallets UI reviewed requests only.
+
+**Small Agent spend**
+
+Agent wallet can perform small approved work under low caps and narrow
+destinations/routes.
+
+**Mining only**
+
+Mining wallet can perform SAT mining and sweep paths.
+
+**Skill limited**
+
+Reviewed wallet-capable skills can use only selected Agent wallets, actions,
+and caps.
+
+**Advanced wallet actions**
+
+Agent wallet can use inspected route-action adapters with explicit caps and
+route checks.
 
 Presets compile down to the same role policy, caps, allowlists, approval mode,
 and skill-grant checks that the runtime already enforces. They are not a second
@@ -225,10 +245,9 @@ a secret-proxy primitive for service/tool code: resolve a SecretRef inside a
 bounded provider call, return only sanitized results, and fail if the call tries
 to echo the raw secret back out.
 
-This is a lower-level boundary, not a reason to paste keys into prompts. Keep
-secrets in Agent > Services, Agent > Skills config, environment-backed
-SecretRefs, or Advanced Config only when no friendly page exists. Do not paste
-provider API keys into chat or skill instructions.
+This is a lower-level boundary. Keep secrets in Agent > Services, Agent >
+Skills config, environment-backed SecretRefs, or Advanced Config only when no
+friendly page exists. Keep provider API keys out of chat and skill instructions.
 
 ## 8. Passkey and split-key custody
 
@@ -291,15 +310,16 @@ Treat the wallet stack as ready for serious operation only when all of these are
 9. working balances are intentionally small
 10. sweep discipline exists and is reviewed
 
-## 10. What this page does not claim
+## 10. Scope
 
 This page describes the current operator contract.
 
-It does not claim:
+Current scope:
 
-- that one wallet should be reused across all economic roles
-- that passkey alone means complete at-rest protection
-- that every future plugin automation path is already public or stable
+- each economic role has its own wallet lane
+- passkey is one layer in the wallet security model
+- future plugin automation paths will be documented as they become public and
+  stable
 
 ## Related docs
 

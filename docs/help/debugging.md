@@ -32,7 +32,8 @@ This is different from **Advanced > Debug** in the Control UI. `/debug` changes
 the current runtime override state; **Advanced > Debug** is an operator
 diagnostics surface. `/debug` is disabled by default; enable with
 `commands.debug: true`.
-This is handy when you need to toggle obscure settings without editing `fased.json`.
+This is handy when you need to toggle obscure settings without editing
+`fased.json`.
 
 Examples:
 
@@ -110,7 +111,12 @@ pnpm gateway:watch
 This maps to:
 
 ```bash
-node --watch-path src --watch-path tsconfig.json --watch-path package.json --watch-preserve-output scripts/run-node.mjs gateway --force
+node \
+  --watch-path src \
+  --watch-path tsconfig.json \
+  --watch-path package.json \
+  --watch-preserve-output \
+  scripts/run-node.mjs gateway --force
 ```
 
 Add any gateway CLI flags after `gateway:watch` and they will be passed through
@@ -134,7 +140,7 @@ debugging. There are **two** `--dev` flags:
 - **Global `--dev` (profile):** isolates state under `~/.fased-dev` and
   defaults the gateway port to `19001` (derived ports shift with it).
 - **`gateway --dev`: tells the Gateway to auto-create a default config +
-  workspace** when missing (and skip BOOTSTRAP.md).
+  workspace** when missing and skip `BOOTSTRAP.md`.
 
 Recommended flow (dev profile + dev bootstrap):
 
@@ -160,7 +166,9 @@ What this does:
    - Sets `agent.skipBootstrap=true` (no BOOTSTRAP.md).
    - Seeds the workspace files if missing:
      `AGENTS.md`, `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`, `HEARTBEAT.md`.
-   - Uses the dev identity seeded into `IDENTITY.md`; edit that file or the Agent overview identity card when you need a custom dev Agent identity.
+   - Uses the dev profile seeded into `IDENTITY.md`; edit that file or the
+     Agent overview identity card when you need custom dev Agent display
+     details.
    - Skips channel providers in dev mode (`FASED_SKIP_CHANNELS=1`).
 
 Reset flow (fresh start):
@@ -176,8 +184,8 @@ If you need to spell it out, use the env var form:
 FASED_PROFILE=dev fased gateway --dev --reset
 ```
 
-`--reset` wipes config, credentials, sessions, and the dev workspace (using
-`trash`, not `rm`), then recreates the default dev setup.
+`--reset` wipes config, credentials, sessions, and the dev workspace using
+`trash`, then recreates the default dev setup.
 
 Tip: if a non‑dev gateway is already running (launchd/systemd), stop it first:
 

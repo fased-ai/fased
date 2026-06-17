@@ -19,7 +19,8 @@ Messages path, then exposes it in **Agent > Models**.
 - Provider: `cloudflare-ai-gateway`
 - Base URL: `https://gateway.ai.cloudflare.com/v1/<account_id>/<gateway_id>/anthropic`
 - Default model: `cloudflare-ai-gateway/claude-sonnet-4-6`
-- API key: `CLOUDFLARE_AI_GATEWAY_API_KEY` (the Anthropic provider key used for requests through this Gateway path)
+- API key: `CLOUDFLARE_AI_GATEWAY_API_KEY`
+  (the Anthropic provider key used for requests through this Gateway path)
 - Auth method: Account ID + Gateway ID + API key
 
 Cloudflare also supports OpenAI-compatible Gateway routes, Workers AI routes,
@@ -95,4 +96,6 @@ so **Agent > Models** and Chat know which model IDs are valid for your Gateway.
 
 ## Environment note
 
-If the Gateway runs as a daemon (launchd/systemd), make sure `CLOUDFLARE_AI_GATEWAY_API_KEY` is available to that process (for example, in `~/.fased/.env` or via `env.shellEnv`).
+If the Gateway runs as a daemon (launchd/systemd), make sure
+`CLOUDFLARE_AI_GATEWAY_API_KEY` is available to that process. Use
+`~/.fased/.env` or `env.shellEnv`.

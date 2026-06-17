@@ -11,7 +11,9 @@ Fased has three related (but different) controls:
 
 1. **Sandbox** (`agents.defaults.sandbox.*` / `agents.list[].sandbox.*`) decides **where tools run** (Docker vs host).
 2. **Tool policy** (`tools.*`, `tools.sandbox.tools.*`, `agents.list[].tools.*`) decides **which tools are available/allowed**.
-3. **Elevated** (`tools.elevated.*`, `agents.list[].tools.elevated.*`) is an **explicit host-exec path** for authorized senders when a session is sandboxed.
+3. **Elevated** (`tools.elevated.*`, `agents.list[].tools.elevated.*`) is an
+   **explicit host-exec path** for authorized senders when a session is
+   sandboxed.
 
 ## Quick debug
 
@@ -36,14 +38,16 @@ It prints:
 Sandboxing is controlled by `agents.defaults.sandbox.mode`:
 
 - `"off"`: everything runs on the host.
-- `"non-main"`: only non-main sessions are sandboxed (common “surprise” for groups/channels).
+- `"non-main"`: only non-main sessions are sandboxed. This often surprises
+  group/channel setups.
 - `"all"`: everything is sandboxed.
 
 See [Sandboxing](/gateway/sandboxing) for the full matrix (scope, workspace mounts, images).
 
 ### Bind mounts (security quick check)
 
-- `docker.binds` _pierces_ the sandbox filesystem: whatever you mount is visible inside the container with the mode you set (`:ro` or `:rw`).
+- `docker.binds` _pierces_ the sandbox filesystem: whatever you mount is visible
+  inside the container with the mode you set (`:ro` or `:rw`).
 - Default is read-write if you omit the mode; prefer `:ro` for source/secrets.
 - `scope: "shared"` ignores per-agent binds (only global binds apply).
 - Binding `/var/run/docker.sock` effectively hands host control to the sandbox; only do this intentionally.
@@ -54,10 +58,15 @@ See [Sandboxing](/gateway/sandboxing) for the full matrix (scope, workspace moun
 Two layers matter:
 
 - **Tool profile**: `tools.profile` and `agents.list[].tools.profile` (base allowlist)
-- **Provider tool profile**: `tools.byProvider[provider].profile` and `agents.list[].tools.byProvider[provider].profile`
-- **Global/per-agent tool policy**: `tools.allow`/`tools.deny` and `agents.list[].tools.allow`/`agents.list[].tools.deny`
-- **Provider tool policy**: `tools.byProvider[provider].allow/deny` and `agents.list[].tools.byProvider[provider].allow/deny`
-- **Sandbox tool policy** (only applies when sandboxed): `tools.sandbox.tools.allow`/`tools.sandbox.tools.deny` and `agents.list[].tools.sandbox.tools.*`
+- **Provider tool profile**: `tools.byProvider[provider].profile` and
+  `agents.list[].tools.byProvider[provider].profile`
+- **Global/per-agent tool policy**: `tools.allow`/`tools.deny` and
+  `agents.list[].tools.allow`/`agents.list[].tools.deny`
+- **Provider tool policy**: `tools.byProvider[provider].allow/deny` and
+  `agents.list[].tools.byProvider[provider].allow/deny`
+- **Sandbox tool policy**: applies only when sandboxed. Use
+  `tools.sandbox.tools.allow`/`tools.sandbox.tools.deny` and
+  `agents.list[].tools.sandbox.tools.*`
 
 Rules of thumb:
 
@@ -70,7 +79,8 @@ Rules of thumb:
 
 ### Tool groups (shorthands)
 
-Tool policies (global, agent, sandbox) support `group:*` entries that expand to multiple tools:
+Tool policies (global, agent, sandbox) support `group:*` entries that expand to
+multiple tools:
 
 ```json5
 {
@@ -88,7 +98,8 @@ Available groups:
 
 - `group:runtime`: `exec`, `bash`, `process`
 - `group:fs`: `read`, `write`, `edit`, `apply_patch`
-- `group:sessions`: `sessions_list`, `sessions_history`, `sessions_send`, `sessions_spawn`, `session_status`
+- `group:sessions`: `sessions_list`, `sessions_history`, `sessions_send`,
+  `sessions_spawn`, `session_status`
 - `group:memory`: `memory_search`, `memory_get`
 - `group:ui`: `browser`, `canvas`
 - `group:automation`: `cron`, `gateway`
@@ -100,16 +111,20 @@ Available groups:
 
 Elevated does **not** grant extra tools; it only affects `exec`.
 
-- If you’re sandboxed, `/elevated on` (or `exec` with `elevated: true`) runs on the host (approvals may still apply).
+- If you're sandboxed, `/elevated on` or `exec` with `elevated: true` runs on
+  the host. Approvals may still apply.
 - Use `/elevated full` to skip exec approvals for the session.
 - If you’re already running direct, elevated is effectively a no-op (still gated).
 - Elevated is **not** skill-scoped and does **not** override tool allow/deny.
-- `/exec` is separate from elevated. It only adjusts per-session exec defaults for authorized senders.
+- `/exec` is separate from elevated. It only adjusts per-session exec defaults
+  for authorized senders.
 
 Gates:
 
-- Enablement: `tools.elevated.enabled` (and optionally `agents.list[].tools.elevated.enabled`)
-- Sender allowlists: `tools.elevated.allowFrom.<provider>` (and optionally `agents.list[].tools.elevated.allowFrom.<provider>`)
+- Enablement: `tools.elevated.enabled` and optionally
+  `agents.list[].tools.elevated.enabled`
+- Sender allowlists: `tools.elevated.allowFrom.<provider>` and optionally
+  `agents.list[].tools.elevated.allowFrom.<provider>`
 
 See [Elevated Mode](/tools/elevated).
 
@@ -119,11 +134,14 @@ See [Elevated Mode](/tools/elevated).
 
 Fix-it keys (pick one):
 
-- Disable sandbox: `agents.defaults.sandbox.mode=off` (or per-agent `agents.list[].sandbox.mode=off`)
+- Disable sandbox: `agents.defaults.sandbox.mode=off`, or per-agent
+  `agents.list[].sandbox.mode=off`
 - Allow the tool inside sandbox:
-  - remove it from `tools.sandbox.tools.deny` (or per-agent `agents.list[].tools.sandbox.tools.deny`)
+  - remove it from `tools.sandbox.tools.deny` or per-agent
+    `agents.list[].tools.sandbox.tools.deny`
   - or add it to `tools.sandbox.tools.allow` (or per-agent allow)
 
 ### “I thought this was main, why is it sandboxed?”
 
-In `"non-main"` mode, group/channel keys are _not_ main. Use the main session key (shown by `sandbox explain`) or switch mode to `"off"`.
+In `"non-main"` mode, group/channel keys are _not_ main. Use the main session
+key shown by `sandbox explain`, or switch mode to `"off"`.

@@ -9,7 +9,8 @@ sidebarTitle: "Autonomous sessions"
 
 # Autonomous wallet sessions
 
-This guide explains how unattended wallet work should run in Fased without leaving a self-hosted wallet permanently open.
+This guide explains how unattended wallet work should run in Fased without
+leaving a self-hosted wallet permanently open.
 
 Use it for:
 
@@ -37,20 +38,19 @@ Unlock sessions separate:
 ## Session flow
 
 ```mermaid
-sequenceDiagram
-    actor User
-    participant UI as Wallets UI
-    participant Signer as fased-signerd
-    participant Runtime as Fased runtime
-
-    User->>UI: Unlock Agent or Vault wallet
-    UI->>Signer: Start unlock ceremony
-    User->>UI: Passkey approval
-    UI->>Signer: Device share or recovery path
-    Signer-->>UI: Session created with scope and expiry
-    Runtime->>Signer: Request signature inside allowed scope
-    Signer-->>Runtime: Sign or reject
-    Signer-->>UI: Session expires or is revoked
+flowchart TD
+    User["User"] --> UI["Wallets UI"]
+    UI --> Ceremony["Unlock Agent or Vault wallet"]
+    Ceremony --> Passkey["Passkey approval"]
+    Passkey --> Share["Device share<br/>or recovery path"]
+    Share --> Signer["fased-signerd"]
+    Signer --> Session["Session created<br/>scope and expiry"]
+    Runtime["Fased runtime"] --> Request["Signature request<br/>inside allowed scope"]
+    Request --> Signer
+    Signer --> Decision{"Allowed?"}
+    Decision -->|yes| Signed["Sign"]
+    Decision -->|no| Rejected["Reject"]
+    Session --> Expiry["Expires<br/>or revoked"]
 ```
 
 ## What a healthy session should include
@@ -70,14 +70,14 @@ Current runtime defaults:
 
 ## Mining note
 
-Satcoin mining is a separate runtime path, not a generic Agent/Vault unlock
-session. The normal posture is:
+Satcoin mining is a separate runtime path from generic Agent/Vault unlock
+sessions. The normal posture is:
 
 - mining wallet only
 - Solana only
 - Satcoin mining actions and configured sweep behavior only
 
-Do not turn a mining session into a general send session.
+Keep mining sessions limited to Satcoin mining and configured sweep behavior.
 
 ## Agent-wallet session reading
 

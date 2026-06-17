@@ -8,7 +8,10 @@ title: "Channel Location Parsing"
 
 # Channel location parsing
 
-When a supported channel sends a pinned location, venue, or live-share payload, Fased converts it into plain text plus structured context fields. That keeps prompts readable while still letting tools or templates access exact coordinates.
+When a supported channel sends a pinned location, venue, or live-share payload,
+Fased converts it into plain text plus structured context fields. That keeps
+prompts readable while still letting tools or templates access exact
+coordinates.
 
 Fased normalizes shared locations from chat channels into:
 
@@ -19,6 +22,7 @@ Currently supported:
 
 - **Telegram** (location pins + venues + live locations)
 - **WhatsApp** (locationMessage + liveLocationMessage)
+- **LINE** (location messages)
 - **Matrix** (`m.location` with `geo_uri`)
 
 ## Text formatting
@@ -53,6 +57,11 @@ When a location is present, these fields are added to `ctx`:
 
 ## Channel notes
 
-- **Telegram**: venues map to `LocationName/LocationAddress`; live locations use `live_period`.
-- **WhatsApp**: `locationMessage.comment` and `liveLocationMessage.caption` are appended as the caption line.
-- **Matrix**: `geo_uri` is parsed as a pin location; altitude is ignored and `LocationIsLive` is always false.
+- **Telegram**: venues map to `LocationName/LocationAddress`; live locations
+  use `live_period`.
+- **WhatsApp**: `locationMessage.comment` and `liveLocationMessage.caption`
+  are appended as the caption line.
+- **LINE**: location messages map title/address into
+  `LocationName/LocationAddress`.
+- **Matrix**: `geo_uri` is parsed as a pin location; altitude is ignored and
+  `LocationIsLive` is always false.

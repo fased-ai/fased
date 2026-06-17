@@ -34,11 +34,12 @@ and one-click entry into the browser Control UI.
   otherwise it enables the launchd service via `fased gateway install`.
 - **Remote**: the app connects to a Gateway over SSH/Tailscale and does not
   start a local Gateway.
-  The app starts the local **node host service** so the remote Gateway can reach this Mac.
+  The app starts the local **node host service** so the remote Gateway can reach
+  this Mac.
   The app does not spawn the Gateway as a child process.
 
 ```mermaid
-flowchart LR
+flowchart TD
   local["Local mode"] --> launchd["launchd Gateway"]
   local --> control["Control UI"]
   remote["Remote mode"] --> tunnel["SSH / tailnet tunnel"]
@@ -57,8 +58,9 @@ flowchart LR
 
 ## Launchd control
 
-The app manages a per‑user LaunchAgent labeled `ai.fased.gateway`
-(or `ai.fased.<profile>` when using `--profile`/`FASED_PROFILE`; legacy `com.fased.*` still unloads).
+The app manages a per-user LaunchAgent labeled `ai.fased.gateway`
+or `ai.fased.<profile>` when using `--profile`/`FASED_PROFILE`. Legacy
+`com.fased.*` agents still unload.
 
 ```bash
 launchctl kickstart -k gui/$UID/ai.fased.gateway
@@ -74,7 +76,8 @@ If the LaunchAgent isn’t installed, enable it from the app or run
 
 The macOS app presents itself as a node. Common commands:
 
-- Canvas: `canvas.present`, `canvas.navigate`, `canvas.eval`, `canvas.snapshot`, `canvas.a2ui.*`
+- Canvas: `canvas.present`, `canvas.navigate`, `canvas.eval`, `canvas.snapshot`,
+  `canvas.a2ui.*`
 - Camera: `camera.snap`, `camera.clip`
 - Screen: `screen.record`
 - System: `system.run`, `system.notify`
@@ -83,8 +86,10 @@ The node reports a `permissions` map so agents can decide what’s allowed.
 
 Node service + app IPC:
 
-- When the headless node host service is running (remote mode), it connects to the Gateway WS as a node.
-- `system.run` executes in the macOS app (UI/TCC context) over a local Unix socket; prompts + output stay in-app.
+- When the headless node host service is running in remote mode, it connects to
+  the Gateway WebSocket as a node.
+- `system.run` executes in the macOS app UI/TCC context over a local Unix socket;
+  prompts and output stay in-app.
 
 For protocol details, see [macOS IPC](/platforms/mac/xpc).
 

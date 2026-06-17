@@ -44,7 +44,9 @@ The product split is:
 2. `Bond`
    Lock `SAT` to qualify for the bonded operator lane and narrow Fased Network capabilities.
 3. `Bond staking`
-   Active operator-bond lane where qualified locked `SAT` can accrue a proportional claimable amount from staking-lane SAT when distribution is enabled.
+   Active operator-bond lane where qualified locked `SAT` can accrue a
+   proportional claimable amount from staking-lane SAT when distribution is
+   enabled.
 4. `Agent wallet`
    Handles real work on the normal payment rail, typically stable assets such as `USDC`.
 5. `Operator status`
@@ -205,16 +207,19 @@ In the current architecture they are decided by:
 - the canonical on-chain bond state format
 - the runtime and Fased Network services that interpret bond amount and tier
 
-That means changing minimum or maximum bond posture is not only a UI edit.
+That means changing minimum or maximum bond posture requires coordinated policy
+and runtime changes.
 
 It requires a coordinated update across:
 
 - SAT bond policy and state interpretation
-- runtime readers and UI defaults
+- runtime consumers and UI defaults
 - Fased Network verification and capability rules
 - public docs and rollout guidance
 
-If SAT price changes materially over time, the right long-term architecture is a versioned tier-policy surface, not duplicated hard-coded thresholds in multiple places.
+If SAT price changes materially over time, the right long-term architecture is a
+versioned tier-policy surface instead of duplicated hard-coded thresholds in
+multiple places.
 
 ## How the current system is split
 
@@ -321,7 +326,8 @@ For the dedicated guide, see [Offers and Marketplace](/start/offers-marketplace)
 
 The next cleanups worth doing are:
 
-1. unify bond threshold policy into one canonical source instead of relying on duplicated reader assumptions
+1. unify bond threshold policy into one canonical source instead of relying on
+   duplicated consumer assumptions
 2. keep UI focused on lanes and capabilities instead of raw scope strings
 3. move any automated fee, release, or penalty policy behind explicit signed packets
 4. keep routing fees deferred until routing measurements are mature enough to justify them

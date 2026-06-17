@@ -24,22 +24,41 @@ fased security audit --fix
 fased security audit --json
 ```
 
-The audit warns when multiple DM senders share the main session and recommends **secure DM mode**: `session.dmScope="per-channel-peer"` (or `per-account-channel-peer` for multi-account channels) for shared inboxes.
-This is for cooperative/shared inbox hardening. A single Gateway shared by mutually untrusted/adversarial operators is not a recommended setup; split trust boundaries with separate gateways (or separate OS users/hosts).
-It also emits `security.trust_model.multi_user_heuristic` when config suggests likely shared-user ingress (for example open DM/group policy, configured group targets, or wildcard sender rules), and reminds you that Fased is a personal-assistant trust model by default.
-For intentional shared-user setups, the audit guidance is to sandbox all sessions, keep filesystem access workspace-scoped, and keep personal/private identities or credentials off that runtime.
-It also warns when small models (`<=300B`) are used without sandboxing and with web/browser tools enabled.
-For webhook ingress, it warns when `hooks.defaultSessionKey` is unset, when request `sessionKey` overrides are enabled, and when overrides are enabled without `hooks.allowedSessionKeyPrefixes`.
-It also warns when sandbox Docker settings are configured while sandbox mode is off, when `gateway.nodes.denyCommands` uses ineffective pattern-like/unknown entries (exact node command-name matching only, not shell-text filtering), when `gateway.nodes.allowCommands` explicitly enables dangerous node commands, when global `tools.profile="minimal"` is overridden by agent tool profiles, when open groups expose runtime/filesystem tools without sandbox/workspace guards, and when installed extension plugin tools may be reachable under permissive tool policy.
-It also flags `gateway.allowRealIpFallback=true` (header-spoofing risk if proxies are misconfigured) and `discovery.mdns.mode="full"` (metadata leakage via mDNS TXT records).
-It also warns when sandbox browser uses Docker `bridge` network without `sandbox.browser.cdpSourceRange`.
-It also flags dangerous sandbox Docker network modes (including `host` and `container:*` namespace joins).
-It also warns when existing sandbox browser Docker containers have missing/stale hash labels (for example pre-migration containers missing `fased.browserConfigEpoch`) and recommends `fased sandbox recreate --browser --all`.
-It also warns when npm-based plugin/hook install records are unpinned, missing integrity metadata, or drift from currently installed package versions.
-It warns when channel allowlists rely on mutable names/emails/tags instead of stable IDs (Discord, Slack, Google Chat, MS Teams, Mattermost, IRC scopes where applicable).
-It warns when `gateway.auth.mode="none"` leaves Gateway HTTP APIs reachable without a shared secret (`/tools/invoke` plus any enabled `/v1/*` endpoint).
-Settings prefixed with `dangerous`/`dangerously` are explicit break-glass operator overrides; enabling one is not, by itself, a security vulnerability report.
-For the complete dangerous-parameter inventory, see the "Insecure or dangerous flags summary" section in [Security](/gateway/security).
+The audit reports the main places where runtime security can drift:
+
+- Shared DM inboxes: recommends secure DM mode
+  `session.dmScope="per-channel-peer"` or
+  `per-account-channel-peer` for multi-account channels.
+- Shared-user ingress: emits `security.trust_model.multi_user_heuristic` when
+  open DM/group policy, group targets, or wildcard sender rules suggest that
+  several people may be sharing one runtime.
+- Shared-user hardening: recommends sandboxed sessions, workspace-scoped file
+  access, and keeping personal identities or credentials off shared runtimes.
+- Model/tool risk: warns when small models (`<=300B`) can use web/browser tools
+  without sandboxing.
+- Webhook ingress: checks `hooks.defaultSessionKey`, request `sessionKey`
+  overrides, and `hooks.allowedSessionKeyPrefixes`.
+- Sandbox drift: checks Docker settings while sandbox mode is off, unsafe Docker
+  network modes, and browser containers with missing or stale config hash labels.
+- Node command policy: reports ineffective `gateway.nodes.denyCommands`
+  patterns and dangerous entries in `gateway.nodes.allowCommands`.
+- Tool policy: reports global `tools.profile="minimal"` overrides, open groups
+  with runtime/filesystem tools, and extension plugin tools reachable under a
+  permissive policy.
+- Network exposure: flags `gateway.allowRealIpFallback=true`,
+  `discovery.mdns.mode="full"`, and browser Docker `bridge` mode without
+  `sandbox.browser.cdpSourceRange`.
+- Supply-chain records: warns when npm-based plugin or hook install records are
+  unpinned, missing integrity metadata, or drift from installed package versions.
+- Channel allowlists: warns when allowlists rely on mutable names, emails, or
+  tags instead of stable IDs.
+- Gateway auth: warns when `gateway.auth.mode="none"` leaves HTTP APIs reachable
+  without a shared secret.
+
+Settings prefixed with `dangerous` or `dangerously` are explicit break-glass
+operator overrides. Enabling one is not, by itself, a vulnerability report.
+For the complete dangerous-parameter inventory, see the
+"Insecure or dangerous flags summary" section in [Security](/gateway/security).
 
 ## JSON output
 
@@ -62,7 +81,9 @@ fased security audit --fix --json | jq '{fix: .fix.ok, summary: .report.summary}
 
 - flips common `groupPolicy="open"` to `groupPolicy="allowlist"` (including account variants in supported channels)
 - sets `logging.redactSensitive` from `"off"` to `"tools"`
-- tightens permissions for state/config and common sensitive files (`credentials/*.json`, `auth-profiles.json`, `sessions.json`, session `*.jsonl`)
+- tightens permissions for state/config and common sensitive files such as
+  `credentials/*.json`, `auth-profiles.json`, `sessions.json`, and session
+  `*.jsonl`
 
 `--fix` does **not**:
 

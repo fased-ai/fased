@@ -33,7 +33,9 @@ Credentials are **not** shared between agents. Never reuse `agentDir` across age
 If you want to share creds, copy `auth-profiles.json` into the other agent's `agentDir`.
 
 For how sandboxing behaves at runtime, see [Sandboxing](/gateway/sandboxing).
-For debugging “why is this blocked?”, see [Sandbox vs Tool Policy vs Elevated](/gateway/sandbox-vs-tool-policy-vs-elevated) and `fased sandbox explain`.
+For debugging “why is this blocked?”, see
+[Sandbox vs Tool Policy vs Elevated](/gateway/sandbox-vs-tool-policy-vs-elevated)
+and `fased sandbox explain`.
 
 ---
 
@@ -202,7 +204,9 @@ agents.list[].sandbox.prune.* > agents.defaults.sandbox.prune.*
 
 **Notes:**
 
-- `agents.list[].sandbox.{docker,browser,prune}.*` overrides `agents.defaults.sandbox.{docker,browser,prune}.*` for that agent (ignored when sandbox scope resolves to `"shared"`).
+- `agents.list[].sandbox.{docker,browser,prune}.*` overrides
+  `agents.defaults.sandbox.{docker,browser,prune}.*` for that agent. It is
+  ignored when sandbox scope resolves to `"shared"`.
 
 ### Tool Restrictions
 
@@ -229,7 +233,8 @@ Tool policies (global, agent, sandbox) support `group:*` entries that expand to 
 
 - `group:runtime`: `exec`, `process`, `code_execution`
 - `group:fs`: `read`, `write`, `edit`, `apply_patch`
-- `group:sessions`: `sessions_list`, `sessions_history`, `sessions_send`, `sessions_spawn`, `sessions_yield`, `subagents`, `session_status`
+- `group:sessions`: `sessions_list`, `sessions_history`, `sessions_send`,
+  `sessions_spawn`, `sessions_yield`, `subagents`, `session_status`
 - `group:memory`: `memory_search`, `memory_get`
 - `group:web`: `web_search`, `web_fetch`, `x_search`
 - `group:ui`: `browser`, `canvas`, `diff_view`
@@ -242,7 +247,9 @@ Tool policies (global, agent, sandbox) support `group:*` entries that expand to 
 
 ### Elevated Mode
 
-`tools.elevated` is the global baseline (sender-based allowlist). `agents.list[].tools.elevated` can further restrict elevated for specific agents (both must allow).
+`tools.elevated` is the global baseline (sender-based allowlist).
+`agents.list[].tools.elevated` can further restrict elevated for specific
+agents. Both must allow.
 
 Mitigation patterns:
 

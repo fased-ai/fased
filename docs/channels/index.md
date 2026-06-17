@@ -18,7 +18,7 @@ account status, routing to the selected Agent, DM access, allowlists, and
 restart-required notices.
 
 ```mermaid
-flowchart LR
+flowchart TD
   agent["Select Agent"] --> account["Connect channel account"]
   account --> access["Pair DM / allow groups"]
   access --> route["Route to Agent"]
@@ -45,20 +45,67 @@ Optional/plugin so first-run setup stays focused on the common channels.
 
 ## Channel map
 
-| Group                    | Channels                                                                                                                                                                                                                     | Use when                                                                                                                     |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| Common setup             | [WhatsApp](/channels/whatsapp), [Telegram](/channels/telegram), [Discord](/channels/discord), [Slack](/channels/slack), [Signal](/channels/signal), [BlueBubbles](/channels/bluebubbles)                                     | You want the fastest practical route to DMs, groups, or team chat.                                                           |
-| Team and enterprise      | [Google Chat](/channels/googlechat), [Feishu](/channels/feishu), [Microsoft Teams](/channels/msteams), [LINE](/channels/line), [Zalo](/channels/zalo), [Zalo Personal](/channels/zalouser)                                   | You are connecting a company, regional app, or business chat surface.                                                        |
-| Self-hosted and protocol | [IRC](/channels/irc), [Mattermost](/channels/mattermost), [Matrix](/channels/matrix), [Nextcloud Talk](/channels/nextcloud-talk), [Synology Chat](/channels/synology-chat), [Nostr](/channels/nostr), [Tlon](/channels/tlon) | You want self-hosted, protocol-native, or private collaboration routes.                                                      |
-| Optional and legacy      | [Twitch](/channels/twitch), [iMessage](/channels/imessage)                                                                                                                                                                   | You need a live-stream chat bridge or an established legacy `imsg` setup. New iMessage setups should start with BlueBubbles. |
+<CardGroup cols={2}>
+  <Card title="Common Setup" icon="message-circle" href="/channels/telegram">
+    Start here for WhatsApp, Telegram, Discord, Slack, Signal, or BlueBubbles.
+    These are the fastest practical routes to DMs, groups, and team chat.
+  </Card>
+  <Card title="Team And Enterprise" icon="building-2" href="/channels/googlechat">
+    Use Google Chat, Feishu, Microsoft Teams, LINE, Zalo, or Zalo Personal for
+    company, regional, or business chat surfaces.
+  </Card>
+  <Card title="Self-Hosted And Protocol" icon="server" href="/channels/matrix">
+    Use IRC, Mattermost, Matrix, Nextcloud Talk, Synology Chat, Nostr, or Tlon
+    for self-hosted, protocol-native, or private collaboration routes.
+  </Card>
+  <Card title="Optional And Legacy" icon="archive" href="/channels/twitch">
+    Use Twitch for live chat. Use iMessage only for established `imsg` setups;
+    new iMessage-style setups should start with BlueBubbles.
+  </Card>
+</CardGroup>
+
+Common setup:
+
+- [WhatsApp](/channels/whatsapp)
+- [Telegram](/channels/telegram)
+- [Discord](/channels/discord)
+- [Slack](/channels/slack)
+- [Signal](/channels/signal)
+- [BlueBubbles](/channels/bluebubbles)
+
+Team and enterprise:
+
+- [Google Chat](/channels/googlechat)
+- [Feishu](/channels/feishu)
+- [Microsoft Teams](/channels/msteams)
+- [LINE](/channels/line)
+- [Zalo](/channels/zalo)
+- [Zalo Personal](/channels/zalouser)
+
+Self-hosted and protocol:
+
+- [IRC](/channels/irc)
+- [Mattermost](/channels/mattermost)
+- [Matrix](/channels/matrix)
+- [Nextcloud Talk](/channels/nextcloud-talk)
+- [Synology Chat](/channels/synology-chat)
+- [Nostr](/channels/nostr)
+- [Tlon](/channels/tlon)
+
+Optional and legacy:
+
+- [Twitch](/channels/twitch)
+- [iMessage](/channels/imessage)
 
 ## Runtime status
 
-- Fresh Gateway setup loads Telegram and Discord by default.
-- Bundled/local channel rows appear in **Agent > Channels** with setup fields.
+- **Agent > Channels** shows core channels plus bundled channel extensions from
+  the active plugin registry.
 - Saving credentials enables that channel for the selected Agent.
-- Some local channel services need a gateway restart after setup.
-- External catalog channels install first and expose setup fields after the plugin loads.
+- Some bundled channel services need a gateway restart after setup so their
+  runtime can register webhooks, sockets, or background monitors.
+- External catalog channels install first and expose setup fields after the
+  plugin loads.
 
 ## Good first choices
 
@@ -74,8 +121,8 @@ Optional/plugin so first-run setup stays focused on the common channels.
 - channels from the repo are not external downloads; setup starts with their
   credential fields in **Agent > Channels**
 - only external catalog channels should use an install/download action
-- if a local bundled channel is configured while its plugin is not loaded,
-  restart the gateway to load that channel service
+- if a bundled channel shows restart required, restart the gateway before
+  testing live messages
 - routing is deterministic per peer and per channel; see
   [Channel Routing](/channels/channel-routing)
 - group behavior is documented separately in [Groups](/channels/groups)

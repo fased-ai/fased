@@ -9,9 +9,12 @@ title: "Configuration Examples"
 
 # Configuration Examples
 
-Examples below are aligned with the current config schema. For the exhaustive reference and per-field notes, see [Configuration](/gateway/configuration).
+Examples below are aligned with the current config schema. For the exhaustive
+reference and per-field notes, see [Configuration](/gateway/configuration).
 
-The normal baseline for both local and hosting profiles is still loopback-first. Use these examples as starting points, then layer on Tailscale Serve, a tailnet bind, or a trusted proxy only when you actually need remote access.
+The normal baseline for local and hosting profiles is loopback-first. Use these
+examples as starting points, then add Tailscale Serve, a tailnet bind, or a
+trusted proxy when you need remote access.
 
 ## Quick start
 
@@ -468,7 +471,10 @@ Save to `~/.fased/fased.json` and you can DM the bot from that number.
 
 ### Secure DM mode (shared inbox / multi-user DMs)
 
-If more than one person can DM your bot (multiple entries in `allowFrom`, pairing approvals for multiple people, or `dmPolicy: "open"`), enable **secure DM mode** so DMs from different senders don’t share one context by default:
+If more than one person can DM your bot, enable **secure DM mode** so different
+senders do not share one context by default. This applies when `allowFrom`
+contains multiple people, pairing approvals cover multiple people, or
+`dmPolicy: "open"` is enabled:
 
 ```json5
 {
@@ -492,8 +498,10 @@ If more than one person can DM your bot (multiple entries in `allowFrom`, pairin
 }
 ```
 
-For Discord/Slack/Google Chat/MS Teams/Mattermost/IRC, sender authorization is ID-first by default.
-Only enable direct mutable name/email/nick matching with each channel's `dangerouslyAllowNameMatching: true` if you explicitly accept that risk.
+For Discord, Slack, Google Chat, MS Teams, Mattermost, and IRC, sender
+authorization is ID-first by default. Enable direct mutable name/email/nick
+matching with each channel's `dangerouslyAllowNameMatching: true` only after
+reviewing the risk.
 
 ### OAuth with API key failover
 

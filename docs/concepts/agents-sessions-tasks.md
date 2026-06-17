@@ -13,7 +13,7 @@ This page defines the product vocabulary for Fased work.
 The short rule:
 
 ```mermaid
-flowchart LR
+flowchart TD
   Agent[Agent] --> Session[Session]
   Session --> Task[Task]
   Task --> Run[Run history]
@@ -38,15 +38,24 @@ boundary, read [Tasks v1 Freeze](/concepts/tasks-v1-freeze).
 
 ## Core objects
 
-| Object       | Owns                                                                                                                | Does not own                                                |
-| ------------ | ------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| Agent        | Identity, workspace, model choices, skills, memory namespace, wallet policy, channel permissions, task permissions. | Another Agent's private memory or channel transport itself. |
-| Channel      | Telegram, Discord, Slack, WhatsApp, WebChat, or another transport connection.                                       | Tasks, model choice, private transcript state.              |
-| Route        | Mapping from channel/account/peer/thread to an Agent/session.                                                       | Execution or transcript storage.                            |
-| Session      | Conversation or task context under one Agent.                                                                       | Global channel setup or provider credentials.               |
-| Task         | Scheduled, manual, webhook, channel, or event-triggered work under one Agent/session.                               | Channel ownership or domain authority.                      |
-| Helper Agent | Temporary worker session or another configured Agent asked to help with part of a task.                             | Durable ownership of the parent Agent's task.               |
-| Run history  | Audit record for something that happened.                                                                           | Saved task definition or control ownership.                 |
+- **Agent** owns identity, workspace, model choices, skills, memory namespace,
+  wallet policy, channel permissions, and task permissions.
+  Boundary: another Agent's private memory and the channel transport itself.
+- **Channel** owns a transport connection such as Telegram, Discord, Slack,
+  WhatsApp, WebChat, or another chat surface.
+  Boundary: task ownership, model choice, and private transcript state.
+- **Route** maps channel/account/peer/thread traffic to an Agent/session.
+  Boundary: execution and transcript storage.
+- **Session** owns conversation or task context under one Agent.
+  Boundary: global channel setup and provider credentials.
+- **Task** owns scheduled, manual, webhook, channel, or event-triggered work
+  under one Agent/session.
+  Boundary: channel ownership and domain authority.
+- **Helper Agent** is a temporary worker session or another configured Agent
+  asked to help with part of a task.
+  Boundary: durable ownership of the parent Agent's task.
+- **Run history** records what happened.
+  Boundary: saved task definition and control ownership.
 
 ## Agent
 
@@ -240,14 +249,15 @@ Use the task docs for full syntax.
 
 ## Guardrails
 
-- Do not put task ownership inside Channel setup.
-- Do not make Channel assignment imply shared model/provider state.
-- Do not make helper/subagent sessions appear as channel identities.
-- Do not fan one inbound channel message to multiple Agents unless fan-out is
-  an explicit routed-task feature.
-- Do not store future network task-room state as local private transcript state.
-- Do not expose cross-Agent or cross-node sharing without policy, budget, and
-  delivery controls.
+- Keep task ownership in Agent/session state, not Channel setup.
+- Treat Channel assignment as routing and delivery, not shared model/provider
+  state.
+- Present helper/subagent sessions as work helpers, not channel identities.
+- Use fan-out only when it is an explicit routed-task feature.
+- Keep future network task-room state separate from local private transcript
+  state.
+- Require policy, budget, and delivery controls before cross-Agent or
+  cross-node sharing.
 
 ## Related docs
 

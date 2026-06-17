@@ -10,14 +10,28 @@ title: "Tests"
 - Full testing kit (suites, live, Docker): [Testing](/help/testing)
 - Public release gate: [Full Release Validation](/reference/full-release-validation)
 
-- `pnpm test:fast`: Runs the unit suite through `vitest.unit.config.ts`. Use this as the quick local gate for code that does not need Docker, live providers, or browser/UI coverage.
-- `pnpm test:force`: Kills any lingering gateway process holding the default control port, then runs the full Vitest suite with an isolated gateway port so server tests don’t collide with a running instance. Use this when a prior gateway run left port 18789 occupied.
-- `pnpm test:coverage`: Runs the unit suite with V8 coverage (via `vitest.unit.config.ts`). Global thresholds are 70% lines/branches/functions/statements. Coverage excludes integration-heavy entrypoints (CLI wiring, gateway/telegram bridges, webchat static server) to keep the target focused on unit-testable logic.
-- `pnpm test` on Node 24+: Fased auto-disables Vitest `vmForks` and uses `forks` to avoid `ERR_VM_MODULE_LINK_FAILURE` / `module is already linked`. You can force behavior with `FASED_TEST_VM_FORKS=0|1`.
-- `pnpm test:e2e`: Runs gateway end-to-end smoke tests (multi-instance WS/HTTP/node pairing). Defaults to `vmForks` + adaptive workers in `vitest.e2e.config.ts`; tune with `FASED_E2E_WORKERS=<n>` and set `FASED_E2E_VERBOSE=1` for verbose logs.
+- `pnpm test:fast`: runs the unit suite through `vitest.unit.config.ts`. Use
+  this as the quick local gate for code that does not need Docker, live
+  providers, or browser/UI coverage.
+- `pnpm test:force`: clears a lingering gateway process on the default control
+  port, then runs the full Vitest suite with an isolated gateway port. Use this
+  when a prior gateway run left port 18789 occupied.
+- `pnpm test:coverage`: runs the unit suite with V8 coverage through
+  `vitest.unit.config.ts`. Global thresholds are 70% for lines, branches,
+  functions, and statements. Integration-heavy entrypoints stay excluded so the
+  target stays focused on unit-testable logic.
+- `pnpm test` on Node 24+: Fased auto-disables Vitest `vmForks` and uses
+  `forks` to avoid `ERR_VM_MODULE_LINK_FAILURE` / `module is already linked`.
+  You can force behavior with `FASED_TEST_VM_FORKS=0|1`.
+- `pnpm test:e2e`: runs gateway end-to-end smoke tests for multi-instance
+  WS/HTTP/node pairing. Defaults to `vmForks` + adaptive workers in
+  `vitest.e2e.config.ts`; tune with `FASED_E2E_WORKERS=<n>` and set
+  `FASED_E2E_VERBOSE=1` for verbose logs.
 - `pnpm test:ui`: Runs the Control UI test suite after the raw-window-open lint guard.
-- `pnpm test:smoke:agent-flow`: Runs the composite Provider -> Agent -> Skill -> Chat -> Task -> Memory -> Channel delivery smoke lane.
-- `pnpm test:live`: Runs provider live tests (minimax/zai). Requires API keys and `LIVE=1` (or provider-specific `*_LIVE_TEST=1`) to unskip.
+- `pnpm test:smoke:agent-flow`: runs the composite Provider -> Agent -> Skill
+  -> Chat -> Task -> Memory -> Channel delivery smoke lane.
+- `pnpm test:live`: runs provider live tests (minimax/zai). Requires API keys
+  and `LIVE=1` or provider-specific `*_LIVE_TEST=1` to unskip.
 
 ## Local PR gate
 
@@ -28,7 +42,10 @@ For local PR land/gate checks, run:
 - `pnpm test`
 - `pnpm check:docs`
 
-If `pnpm test` flakes on a loaded host, rerun once before treating it as a regression, then isolate with `pnpm vitest run <path/to/test>`. For memory-constrained hosts, use:
+If `pnpm test` flakes on a loaded host, rerun once before treating it as a
+regression, then isolate with `pnpm vitest run <path/to/test>`.
+
+For memory-constrained hosts, use:
 
 - `FASED_TEST_PROFILE=low FASED_TEST_SERIAL_GATEWAY=1 pnpm test`
 
@@ -56,7 +73,8 @@ Full cold-start flow in a clean Linux container:
 scripts/e2e/onboard-docker.sh
 ```
 
-This script drives the interactive wizard via a pseudo-tty, verifies config/workspace/session files, then starts the gateway and runs `fased health`.
+This script drives the interactive wizard through a pseudo-tty, verifies
+config/workspace/session files, starts the gateway, and runs `fased health`.
 
 ## QR import smoke (Docker)
 

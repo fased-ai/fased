@@ -48,9 +48,11 @@ fased nodes canvas snapshot --node <id|name|ip>
 fased nodes location get --node <id|name|ip>
 ```
 
-`nodes list` prints pending/paired tables. Paired rows include the most recent connect age (Last Connect).
-Use `--connected` to only show currently-connected nodes. Use `--last-connected <duration>` to
-filter to nodes that connected within a duration (e.g. `24h`, `7d`).
+`nodes list` prints pending/paired tables. Paired rows include the most recent
+connect age (Last Connect).
+Use `--connected` to show only currently-connected nodes. Use
+`--last-connected <duration>` to filter to nodes that connected within a
+duration such as `24h` or `7d`.
 
 Pairing commands are top-level under `fased nodes`: `pending`, `approve`,
 `reject`, `remove`, and `rename`.
@@ -82,13 +84,15 @@ Invoke flags:
 Flags:
 
 - `--cwd <path>`: working directory.
-- `--env <key=val>`: env override (repeatable). Note: node hosts ignore `PATH` overrides (and `tools.exec.pathPrepend` is not applied to node hosts).
+- `--env <key=val>`: env override (repeatable). Node hosts ignore `PATH`
+  overrides, and `tools.exec.pathPrepend` is not applied to node hosts.
 - `--command-timeout <ms>`: command timeout.
 - `--invoke-timeout <ms>`: node invoke timeout (default `30000`).
 - `--needs-screen-recording`: require screen recording permission.
 - `--raw <command>`: run a shell string (`/bin/sh -lc` or `cmd.exe /c`).
-  In allowlist mode on Windows node hosts, `cmd.exe /c` shell-wrapper runs require approval
-  (allowlist entry alone does not auto-allow the wrapper form).
+  In allowlist mode on Windows node hosts, `cmd.exe /c` shell-wrapper runs
+  require approval. An allowlist entry alone does not auto-allow the wrapper
+  form.
 - `--agent <id>`: agent-scoped approvals/allowlists (defaults to configured agent).
 - `--ask <off|on-miss|always>`, `--security <deny|allowlist|full>`: overrides.
 

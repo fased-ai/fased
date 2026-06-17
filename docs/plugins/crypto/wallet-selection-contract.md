@@ -39,7 +39,8 @@ Read-only wallet routing resolves in this order:
 3. explicit agent assignment
 4. primary Agent wallet
 
-If `walletName` is ambiguous and the request does not supply a stronger selector, the runtime should fail.
+If `walletName` is ambiguous and the request does not supply a stronger
+selector, the runtime should fail.
 
 Risky chat, skill, plugin, and automation actions are stricter:
 
@@ -48,13 +49,16 @@ Risky chat, skill, plugin, and automation actions are stricter:
 3. primary Agent wallet
 
 For those actions, `walletName` is display-only and cannot authorize execution.
-Mining and Vault wallets are rejected for generic chat, skill, plugin, and scheduled task
-send or route actions. Agent wallets are the execution path for those flows.
-Vault wallets stay reviewed/manual through the Wallets page.
+Agent wallets are the execution path for generic chat, skill, plugin, scheduled
+send, and route actions. Vault wallets stay reviewed/manual through the Wallets
+page. Mining wallets stay on the SAT mining and SAT sweep path.
 
-Multiple Agent wallets are allowed. The primary Agent wallet is only the fallback. Exact handles such as `@wallet:agent` or `@wallet:agent-2` select a specific Agent wallet.
+Multiple Agent wallets are allowed. The primary Agent wallet is only the
+fallback. Exact handles such as `@wallet:agent` or `@wallet:agent-2` select a
+specific Agent wallet.
 
-New wallets should not become risky Agent wallets by accident. Onboarding and CLI creation mark the purpose. Existing wallet purpose should be treated as permanent for normal operator use.
+Onboarding and CLI creation mark the wallet purpose. Existing wallet purpose
+should be treated as permanent for normal operator use.
 
 ## 3. Recommended caller fields
 
@@ -110,7 +114,9 @@ The strongest production rule is:
 }
 ```
 
-Plain prose such as “send from my other wallet” is not enough to execute. The agent may ask a follow-up question, show the matching wallet, or require an explicit `@wallet:<walletId>` handle.
+Plain prose such as “send from my other wallet” is not enough to execute. The
+agent may ask a follow-up question, show the matching wallet, or require an
+explicit `@wallet:<walletId>` handle.
 
 `@wallet:vault` is valid as a destination. It is not valid as a chat, skill,
 plugin, or scheduled task source wallet.
@@ -242,7 +248,8 @@ Do not expose the Jupiter Trigger API directly to the model path.
 
 ## 5. Multi-wallet signer mappings
 
-When a deployment uses multiple self-hosted wallets behind the local signer, the runtime expects per-wallet mappings for keystore and RPC configuration.
+When a deployment uses multiple self-hosted wallets behind the local signer,
+the runtime expects per-wallet mappings for keystore and RPC configuration.
 
 Example pattern for wallet `agent`:
 
@@ -273,10 +280,9 @@ So the contract is two-stage:
 1. choose the wallet deterministically
 2. enforce whether the caller is allowed to use it
 
-Do not expose third-party Solana agent kits directly to the model. Jupiter,
-SendAI, or other modules may be used only behind Fased-owned wrappers that run
-wallet selection, role checks, caps, allowlists, approval/passkey/custody, and
-audit logging before signing.
+Third-party Solana agent kits should sit behind Fased-owned wrappers. Those
+wrappers run wallet selection, role checks, caps, allowlists,
+approval/passkey/custody, and audit logging before signing.
 
 Skill-level wallet action permissions live under the skill config object.
 Normal setup starts in **Agent > Skills** for install/review, then uses
@@ -288,7 +294,8 @@ The CLI helper generates the same block for scripted/admin setup:
 ```bash
 fased skills wallet grant wallet-actions \
   --registry https://clawhub.com \
-  --actions quote,swap,schedule_plan,schedule_send,limit_order,limit_history,limit_cancel \
+  --actions quote,swap,schedule_plan,schedule_send \
+  --actions limit_order,limit_history,limit_cancel \
   --role agent \
   --wallet-id agent \
   --chain solana \
@@ -351,7 +358,7 @@ For production operator setups:
 - give each economic role a dedicated wallet id
 - never rely on display name alone in automation
 - keep Agent, mining, and vault separated
-- select the bond Vault explicitly through Fased Network config instead of guessing from default wallet state
+- select the bond Vault explicitly through Fased Network config
 - fail closed on ambiguity
 
 Related pages:

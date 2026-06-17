@@ -27,9 +27,11 @@ fased message <subcommand> [flags]
 | `--dry-run`           | Preview without sending where supported.         |
 | `--verbose`           | More diagnostic output.                          |
 
-Built-in channel names include `whatsapp`, `telegram`, `discord`, `irc`,
-`googlechat`, `slack`, `signal`, and `imessage`. Installed channel plugins can
-add names such as `mattermost`, `msteams`, `matrix`, and `bluebubbles`.
+Channel names come from the active channel plugin registry. Core channels
+include `telegram`, `whatsapp`, `discord`, `irc`, `googlechat`, `slack`,
+`signal`, and `imessage`. A configured install can also expose bundled or
+external channels such as `mattermost`, `msteams`, `matrix`, `bluebubbles`,
+`line`, `zalo`, `nostr`, `tlon`, and `twitch`.
 
 ## Target formats
 
@@ -58,24 +60,38 @@ fased message read --channel discord --target channel:123 --limit 20
 fased message broadcast --channel all --targets telegram:123 slack:C123 --message "Update"
 ```
 
-## Action map
+## Common action groups
 
-| Action                                        | Common channels                                         | Notes                                              |
-| --------------------------------------------- | ------------------------------------------------------- | -------------------------------------------------- |
-| `send`                                        | all major chat channels                                 | Text and optional media/reply/thread flags.        |
-| `poll`                                        | WhatsApp, Telegram, Discord, Matrix, MS Teams           | Poll options are repeatable.                       |
-| `react`                                       | Discord, Google Chat, Slack, Telegram, WhatsApp, Signal | Some channels require author/participant metadata. |
-| `reactions`                                   | Discord, Google Chat, Slack                             | List reactions for a message.                      |
-| `read`                                        | Discord, Slack                                          | Read recent messages.                              |
-| `edit` / `delete`                             | Discord, Slack, Telegram where supported                | Requires message id and target.                    |
-| `pin` / `unpin` / `pins`                      | Discord, Slack                                          | Pin management.                                    |
-| `permissions`                                 | Discord/Slack where supported                           | Fetch channel permission metadata.                 |
-| `search`                                      | Discord                                                 | Search messages by guild/query filters.            |
-| `thread create/list/reply`                    | Discord                                                 | Thread operations.                                 |
-| `emoji list/upload`                           | Discord, Slack                                          | Upload is Discord-only.                            |
-| `sticker send/upload`                         | Discord                                                 | Sticker operations.                                |
-| `role`, `channel`, `member`, `voice`, `event` | Discord/Slack where supported                           | Administrative channel helpers.                    |
-| `timeout`, `kick`, `ban`                      | Discord                                                 | Moderation helpers.                                |
+Core delivery:
+
+- `send`: send text and optional media/reply/thread fields.
+- `broadcast`: send one message to several targets.
+- `poll`: create a poll where the channel supports polls.
+
+Message management:
+
+- `react` and `reactions`: add or inspect reactions.
+- `read`: read recent messages from channels that support reads.
+- `edit` and `delete`: update or remove a message by id.
+- `pin`, `unpin`, and `pins`: manage pinned messages.
+
+Thread and search helpers:
+
+- `thread create`, `thread list`, and `thread reply`: Discord-style thread
+  operations.
+- `permissions`: inspect channel permission metadata.
+- `search`: search messages by provider-supported filters.
+
+Community admin helpers:
+
+- `emoji list` and `emoji upload`: emoji management.
+- `sticker send` and `sticker upload`: sticker actions.
+- `role`, `channel`, `member`, `voice`, and `event`: Discord/Slack-style
+  administrative helpers.
+- `timeout`, `kick`, and `ban`: Discord moderation helpers.
+
+Plugins can expose extra action names behind the same channel capability
+surface. The CLI subcommands above cover the common operator actions.
 
 Run `fased message --help` and `fased message <action> --help` for the current
 flags.

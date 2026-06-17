@@ -8,7 +8,9 @@ title: "qr"
 
 # `fased qr`
 
-Generate a pairing QR and setup code from the current gateway configuration. This is mainly used for iOS or other remote setup flows that consume the same gateway URL and auth payload.
+Generate a pairing QR and setup code from the current gateway configuration.
+This is mainly used for iOS or other remote setup flows that consume the same
+gateway URL and auth payload.
 
 ## Usage
 

@@ -43,7 +43,7 @@ Normal first-run surfaces show the current Chat API models:
 - `xai/grok-4.20-0309-non-reasoning`
 
 Older Grok 4, Grok 4 Fast, Grok 4.1 Fast, Grok 3, and Grok Code Fast models
-are not shown in normal setup because xAI is retiring those API models on May
-15, 2026. Existing explicit configs are not removed automatically.
+are hidden from normal setup after the May 15, 2026 retirement window. Existing
+explicit configs are not removed automatically.
 
 Run `fased models list --all --provider xai` to see the full runtime catalog.

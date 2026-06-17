@@ -8,15 +8,16 @@ title: "Polls"
 
 # Polls
 
-Fased can send lightweight polls through the gateway. This is a delivery
-feature, not a general workflow engine, so channel behavior depends on what the
-target surface actually supports.
+Fased can send lightweight polls through the gateway. Polls are delivery
+features, so channel behavior depends on what the target surface actually
+supports.
 
 ## Supported channels
 
 - WhatsApp web
 - Telegram
 - Discord
+- Matrix
 - Microsoft Teams via Adaptive Cards
 
 Before sending a poll, connect the channel account in **Agents > Channels** and
@@ -66,15 +67,24 @@ fased message poll --channel msteams \
   --poll-question "Lunch?" \
   --poll-option "Pizza" \
   --poll-option "Sushi"
+
+# Matrix
+fased message poll --channel matrix --target '!roomid:example.org' \
+  --poll-question "Ship the release?" \
+  --poll-option "Yes" \
+  --poll-option "No"
 ```
 
 Common flags:
 
-- `--channel`: `whatsapp` (default), `telegram`, `discord`, or `msteams`
+- `--channel`: `whatsapp`, `telegram`, `discord`, `matrix`, or `msteams`
 - `--poll-multi`: allow more than one selection
 - `--poll-duration-hours`: Discord only, defaults to `24`
 - `--poll-duration-seconds`: Telegram only, 5-600 seconds
 - `--poll-anonymous` / `--poll-public`: Telegram only
+
+If `--channel` is omitted, Fased uses the normal outbound channel selection for
+your current setup.
 
 ## Gateway RPC
 
@@ -91,9 +101,10 @@ Params:
 - `isAnonymous` (boolean, optional, Telegram only)
 - `silent` (boolean, optional)
 - `threadId` (string, optional)
-- `channel` (string, optional, default `whatsapp`)
+- `channel` (string, optional; omitted uses normal outbound channel selection)
 - `accountId` (string, optional)
-- `idempotencyKey` (string, required)
+- `idempotencyKey` (string, required for direct Gateway RPC callers; the CLI
+  and Agent tool generate it automatically)
 
 ## Agent tool
 
@@ -125,8 +136,12 @@ Supported fields:
 - **Discord**
   - 2 to 10 options
   - `durationHours` is clamped to `1` to `768`
-  - `maxSelections > 1` becomes multi-select, but Discord has no strict "pick
-    exactly N" mode
+  - `maxSelections > 1` becomes multi-select, with Discord handling the exact
+    voting rules
+- **Matrix**
+  - sends a Matrix poll start event
+  - `maxSelections > 1` becomes a multi-answer poll
+  - room support follows the Matrix account and room permissions
 - **Microsoft Teams**
   - requires the loaded Teams channel plugin to expose poll support
   - `durationHours` is ignored
@@ -134,7 +149,7 @@ Supported fields:
 
 ## Operational notes
 
-- Polls are outbound only; channel-specific vote storage and follow-up handling
-  stay with the gateway.
+- Poll creation is outbound; channel-specific vote storage and follow-up
+  handling stay with the gateway.
 - Teams polls depend on the installed Teams adapter, so keep that route for
   controlled, gateway-managed workflows instead of public/high-scale distribution.

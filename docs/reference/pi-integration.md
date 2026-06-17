@@ -27,7 +27,7 @@ Keep exact versions in `package.json` and lockfiles, not in this page.
 ## Runtime Path
 
 ```mermaid
-flowchart LR
+flowchart TD
   input["Prompt / channel event"] --> route["Resolve Agent + session"]
   route --> model["Resolve model + auth profile"]
   route --> tools["Build Fased tool set"]
@@ -49,18 +49,30 @@ flowchart LR
 
 ## Source Map
 
-| Area                  | Main files                                                                                          |
-| --------------------- | --------------------------------------------------------------------------------------------------- |
-| Runner entry          | `src/agents/pi-embedded-runner.ts`, `src/agents/pi-embedded-runner/run.ts`                          |
-| Run attempt           | `src/agents/pi-embedded-runner/run/attempt.ts`                                                      |
-| Session manager       | `src/agents/pi-embedded-runner/session-manager-*`                                                   |
-| Event subscription    | `src/agents/pi-embedded-subscribe*.ts`                                                              |
-| Tool creation         | `src/agents/pi-tools*.ts`, `src/agents/tools/**`                                                    |
-| Tool adaptation       | `src/agents/pi-tool-definition-adapter.ts`                                                          |
-| Model/auth resolution | `src/agents/pi-embedded-runner/model.ts`, `src/agents/model-auth.ts`, `src/agents/auth-profiles/**` |
-| System prompt         | `src/agents/pi-embedded-runner/system-prompt.ts`, `src/agents/system-prompt*.ts`                    |
-| Compaction/pruning    | `src/agents/pi-embedded-runner/compact.ts`, `src/agents/pi-extensions/**`                           |
-| Provider quirks       | `src/agents/pi-embedded-runner/extra-params.ts`, provider-specific wrapper files                    |
+- Runner entry:
+  `src/agents/pi-embedded-runner.ts`,
+  `src/agents/pi-embedded-runner/run.ts`
+- Run attempt:
+  `src/agents/pi-embedded-runner/run/attempt.ts`
+- Session manager:
+  `src/agents/pi-embedded-runner/session-manager-*`
+- Event subscription:
+  `src/agents/pi-embedded-subscribe*.ts`
+- Tool creation:
+  `src/agents/pi-tools*.ts`, `src/agents/tools/**`
+- Tool adaptation:
+  `src/agents/pi-tool-definition-adapter.ts`
+- Model/auth resolution:
+  `src/agents/pi-embedded-runner/model.ts`, `src/agents/model-auth.ts`,
+  `src/agents/auth-profiles/**`
+- System prompt:
+  `src/agents/pi-embedded-runner/system-prompt.ts`,
+  `src/agents/system-prompt*.ts`
+- Compaction/pruning:
+  `src/agents/pi-embedded-runner/compact.ts`, `src/agents/pi-extensions/**`
+- Provider quirks:
+  `src/agents/pi-embedded-runner/extra-params.ts`,
+  provider-specific wrapper files
 
 ## Session Lifecycle
 
@@ -79,7 +91,7 @@ Fased does not expose Pi's default tool surface directly. It builds a controlled
 tool list, adapts it to Pi's tool definition shape, and then applies policy.
 
 ```mermaid
-flowchart LR
+flowchart TD
   base["Fased tools"] --> channel["Channel tools"]
   channel --> skills["Skill tools"]
   skills --> policy["Agent/group/tool policy"]

@@ -7,9 +7,14 @@ title: "Matrix"
 
 # Matrix
 
-Matrix is the right channel when you want federated messaging, self-hosted homeservers, and optional end-to-end encryption without giving up the normal Fased routing model. The gateway logs in as a Matrix user, handles DMs and rooms, and keeps per-room policy separate from DM access.
+Matrix is the right channel when you want federated messaging, self-hosted
+homeservers, and optional end-to-end encryption. The gateway logs in as a
+Matrix user, handles DMs and rooms, and keeps per-room policy separate from DM
+access.
 
-Status: bundled channel extension. DMs, rooms, threads, media, reactions, location, polls-as-text, and Matrix E2EE are available when the crypto runtime is present.
+Status: bundled channel extension. DMs, rooms, threads, media, reactions,
+location, polls-as-text, and Matrix E2EE are available when the crypto runtime
+is present.
 
 ## Setup from Agent > Channels
 
@@ -23,7 +28,8 @@ needs to load.
 
 ## Setup
 
-You need a Matrix user for the bot plus either an access token or a username/password flow the gateway can exchange for a token.
+You need a Matrix user for the bot plus either an access token or a
+username/password flow the gateway can exchange for a token.
 
 1. Create a Matrix account on a homeserver:
    - Browse hosting options at [https://matrix.org/ecosystem/hosting/](https://matrix.org/ecosystem/hosting/)
@@ -46,20 +52,23 @@ You need a Matrix user for the bot plus either an access token or a username/pas
    ```
 
    - Replace `matrix.example.org` with your homeserver URL.
-   - Or set `channels.matrix.userId` + `channels.matrix.password`: Fased calls the same
-     login endpoint, stores the access token in `~/.fased/credentials/matrix/credentials.json`,
-     and reuses it on next start.
+   - Or set `channels.matrix.userId` + `channels.matrix.password`: Fased calls
+     the same login endpoint, stores the access token in
+     `~/.fased/credentials/matrix/credentials.json`, and reuses it on next
+     start.
 
 3. Configure credentials in **Agent > Channels > Matrix**:
-   - Env: `MATRIX_HOMESERVER`, `MATRIX_ACCESS_TOKEN` (or `MATRIX_USER_ID` + `MATRIX_PASSWORD`)
+   - Env: `MATRIX_HOMESERVER`, `MATRIX_ACCESS_TOKEN`, or
+     `MATRIX_USER_ID` + `MATRIX_PASSWORD`
    - Or config: `channels.matrix.*`
    - If both are set, config takes precedence.
    - With access token: user ID is fetched automatically via `/whoami`.
-   - When set, `channels.matrix.userId` should be the full Matrix ID (example: `@bot:example.org`).
+   - When set, `channels.matrix.userId` should be the full Matrix ID, such as
+     `@bot:example.org`.
 4. Restart the gateway if the UI asks for it.
-5. Start a DM with the bot or invite it to a room from any Matrix client
-   (Element, Beeper, etc.; see [https://matrix.org/ecosystem/clients/](https://matrix.org/ecosystem/clients/)). Beeper requires E2EE,
-   so set `channels.matrix.encryption: true` and verify the device.
+5. Start a DM with the bot or invite it to a room from any Matrix client.
+   Beeper requires E2EE, so set `channels.matrix.encryption: true` and verify
+   the device.
 
 Minimal config (access token, user ID auto-fetched):
 
@@ -102,9 +111,10 @@ Enable with `channels.matrix.encryption: true`:
 - Outbound media is encrypted when sending to encrypted rooms.
 - On first connection, Fased requests device verification from your other sessions.
 - Verify the device in another Matrix client (Element, etc.) to enable key sharing.
-- If the crypto module cannot be loaded, E2EE is disabled and encrypted rooms will not decrypt;
-  Fased logs a warning.
-- If you see missing crypto module errors (for example, `@matrix-org/matrix-sdk-crypto-nodejs-*`),
+- If the crypto module cannot be loaded, E2EE is disabled and encrypted rooms
+  will not decrypt; Fased logs a warning.
+- If you see missing crypto module errors, such as
+  `@matrix-org/matrix-sdk-crypto-nodejs-*`,
   allow build scripts for `@matrix-org/matrix-sdk-crypto-nodejs` and run
   `pnpm rebuild @matrix-org/matrix-sdk-crypto-nodejs` or fetch the binary with
   `node node_modules/@matrix-org/matrix-sdk-crypto-nodejs/download-lib.js`.
@@ -115,14 +125,17 @@ Crypto state is stored per account + access token in
 If the access token (device) changes, a new store is created and the bot must be
 re-verified for encrypted rooms.
 
-**Device verification:**
-When E2EE is enabled, the bot will request verification from your other sessions on startup.
-Open Element (or another client) and approve the verification request to establish trust.
-Once verified, the bot can decrypt messages in encrypted rooms.
+**Device verification:** when E2EE is enabled, the bot requests verification
+from your other sessions on startup. Open Element or another Matrix client and
+approve the request. Once verified, the bot can decrypt messages in encrypted
+rooms.
 
 ## Multi-account
 
-Multi-account support: use `channels.matrix.accounts` with per-account credentials and optional `name`. See [`gateway/configuration`](/gateway/configuration#telegramaccounts--discordaccounts--slackaccounts--signalaccounts--imessageaccounts) for the shared pattern.
+Multi-account support uses `channels.matrix.accounts` with per-account
+credentials and optional `name`. See
+[gateway configuration](/gateway/configuration#telegramaccounts--discordaccounts--slackaccounts--signalaccounts--imessageaccounts)
+for the shared pattern.
 
 Each account runs as a separate Matrix user on any homeserver. Per-account config
 inherits from the top-level `channels.matrix` settings and can override any option
@@ -156,8 +169,9 @@ inherits from the top-level `channels.matrix` settings and can override any opti
 Notes:
 
 - Account startup is serialized to avoid race conditions with concurrent module imports.
-- Env variables (`MATRIX_HOMESERVER`, `MATRIX_ACCESS_TOKEN`, etc.) only apply to the **default** account.
-- Base channel settings (DM policy, group policy, mention gating, etc.) apply to all accounts unless overridden per account.
+- Env variables such as `MATRIX_HOMESERVER` and `MATRIX_ACCESS_TOKEN` apply
+  only to the **default** account.
+- Base channel settings apply to all accounts unless overridden per account.
 - Use `bindings[].match.accountId` to route each account to a different agent.
 - Crypto state is stored per account + access token (separate key stores per account).
 
@@ -168,19 +182,26 @@ Notes:
 
 ## Access control (DMs)
 
-- Default: `channels.matrix.dm.policy = "pairing"`. Unknown senders get a pairing code.
+- Default: `channels.matrix.dm.policy = "pairing"`. Unknown senders get a
+  pairing code.
 - Approve via:
   - `fased pairing list matrix`
   - `fased pairing approve matrix <CODE>`
 - Public DMs: `channels.matrix.dm.policy="open"` plus `channels.matrix.dm.allowFrom=["*"]`.
-- `channels.matrix.dm.allowFrom` accepts full Matrix user IDs (example: `@user:server`). The wizard resolves display names to user IDs when directory search finds a single exact match.
-- Do not use display names or bare localparts (example: `"Alice"` or `"alice"`). They are ambiguous and are ignored for allowlist matching. Use full `@user:server` IDs.
+- `channels.matrix.dm.allowFrom` accepts full Matrix user IDs, such as
+  `@user:server`. The wizard resolves display names to user IDs when directory
+  search finds a single exact match.
+- Use full `@user:server` IDs for allowlists. Display names and bare localparts
+  such as `"Alice"` or `"alice"` are ambiguous.
 
 ## Rooms (groups)
 
-- Default: `channels.matrix.groupPolicy = "allowlist"` (mention-gated). Use `channels.defaults.groupPolicy` to override the default when unset.
-- Runtime note: if `channels.matrix` is completely missing, runtime falls back to `groupPolicy="allowlist"` for room checks (even if `channels.defaults.groupPolicy` is set).
-- Allowlist rooms with `channels.matrix.groups` (room IDs or aliases; names are resolved to IDs when directory search finds a single exact match):
+- Default: `channels.matrix.groupPolicy = "allowlist"` with mention gating.
+  Use `channels.defaults.groupPolicy` to override the default when unset.
+- Runtime note: if `channels.matrix` is completely missing, runtime falls back
+  to `groupPolicy="allowlist"` for room checks.
+- Allowlist rooms with `channels.matrix.groups`. Use room IDs or aliases; names
+  resolve to IDs only on an exact, unique match.
 
 ```json5
 {
@@ -199,11 +220,14 @@ Notes:
 
 - `requireMention: false` enables auto-reply in that room.
 - `groups."*"` can set defaults for mention gating across rooms.
-- `groupAllowFrom` restricts which senders can trigger the bot in rooms (full Matrix user IDs).
-- Per-room `users` allowlists can further restrict senders inside a specific room (use full Matrix user IDs).
+- `groupAllowFrom` restricts which senders can trigger the bot in rooms. Use
+  full Matrix user IDs.
+- Per-room `users` allowlists can further restrict senders inside a specific
+  room. Use full Matrix user IDs.
 - Agent > Channels and CLI setup can prompt for room allowlists (room IDs,
   aliases, or names) and resolve names only on an exact, unique match.
-- On startup, Fased resolves room/user names in allowlists to IDs and logs the mapping; unresolved entries are ignored for allowlist matching.
+- On startup, Fased resolves room/user names in allowlists to IDs and logs the
+  mapping. Unresolved entries are ignored for allowlist matching.
 - Invites are auto-joined by default; control with `channels.matrix.autoJoin` and `channels.matrix.autoJoinAllowlist`.
 - To allow **no rooms**, set `channels.matrix.groupPolicy: "disabled"` (or keep an empty allowlist).
 - Legacy key: `channels.matrix.rooms` (same shape as `groups`).
@@ -218,17 +242,18 @@ Notes:
 
 ## Capabilities
 
-| Feature         | Status                                                                                |
-| --------------- | ------------------------------------------------------------------------------------- |
-| Direct messages | ✅ Supported                                                                          |
-| Rooms           | ✅ Supported                                                                          |
-| Threads         | ✅ Supported                                                                          |
-| Media           | ✅ Supported                                                                          |
-| E2EE            | ✅ Supported (crypto module required)                                                 |
-| Reactions       | ✅ Supported (send/read via tools)                                                    |
-| Polls           | ✅ Send supported; inbound poll starts are converted to text (responses/ends ignored) |
-| Location        | ✅ Supported (geo URI; altitude ignored)                                              |
-| Native commands | ✅ Supported                                                                          |
+**Direct messages, rooms, threads, media, reactions, location, and native commands**
+
+Supported.
+
+**E2EE**
+
+Supported when the crypto module is available.
+
+**Polls**
+
+Send is supported. Inbound poll starts are converted to text; responses and
+ends are ignored.
 
 ## Troubleshooting
 
@@ -272,9 +297,12 @@ Provider options:
 - `channels.matrix.initialSyncLimit`: initial sync limit.
 - `channels.matrix.threadReplies`: `off | inbound | always` (default: inbound).
 - `channels.matrix.textChunkLimit`: outbound text chunk size (chars).
-- `channels.matrix.chunkMode`: `length` (default) or `newline` to split on blank lines (paragraph boundaries) before length chunking.
-- `channels.matrix.dm.policy`: `pairing | allowlist | open | disabled` (default: pairing).
-- `channels.matrix.dm.allowFrom`: DM allowlist (full Matrix user IDs). `open` requires `"*"`. The wizard resolves names to IDs when possible.
+- `channels.matrix.chunkMode`: `length` or `newline`; `newline` splits on
+  blank lines before length chunking.
+- `channels.matrix.dm.policy`: `pairing | allowlist | open | disabled`
+  (default: pairing).
+- `channels.matrix.dm.allowFrom`: DM allowlist with full Matrix user IDs.
+  `open` requires `"*"`.
 - `channels.matrix.groupPolicy`: `allowlist | open | disabled` (default: allowlist).
 - `channels.matrix.groupAllowFrom`: allowlisted senders for group messages (full Matrix user IDs).
 - `channels.matrix.allowlistOnly`: force allowlist rules for DMs + rooms.
@@ -282,7 +310,9 @@ Provider options:
 - `channels.matrix.rooms`: legacy group allowlist/config.
 - `channels.matrix.replyToMode`: reply-to mode for threads/tags.
 - `channels.matrix.mediaMaxMb`: inbound/outbound media cap (MB).
-- `channels.matrix.autoJoin`: invite handling (`always | allowlist | off`, default: always).
+- `channels.matrix.autoJoin`: invite handling (`always | allowlist | off`,
+  default: always).
 - `channels.matrix.autoJoinAllowlist`: allowed room IDs/aliases for auto-join.
-- `channels.matrix.accounts`: multi-account configuration keyed by account ID (each account inherits top-level settings).
+- `channels.matrix.accounts`: multi-account configuration keyed by account ID.
+  Each account inherits top-level settings.
 - `channels.matrix.actions`: per-action tool gating (reactions/messages/pins/memberInfo/channelInfo).

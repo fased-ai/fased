@@ -1,5 +1,5 @@
 ---
-summary: "Nodes: paired devices, local peripherals, node-host execution, permissions, and diagnostics."
+summary: "Nodes: paired devices, local tools, node-host execution, permissions, and diagnostics."
 read_when:
   - Inspecting Advanced > Nodes in the Control UI
   - Pairing iOS, Android, macOS, or headless nodes to a Gateway
@@ -10,8 +10,7 @@ title: "Nodes"
 # Nodes
 
 A **node** is a paired device or headless runner that connects to the Gateway
-WebSocket with `role: "node"` and exposes device or host commands through
-`node.invoke`.
+and exposes local commands through `node.invoke`.
 
 Nodes are optional peripherals. They do not run the Gateway service, and they
 are not needed for first-run Agent setup. Use **Advanced > Nodes** when you need
@@ -19,7 +18,7 @@ paired-device status, pending pairings, advertised capabilities, runtime
 clients, permissions, or command exposure details.
 
 ```mermaid
-flowchart LR
+flowchart TD
   gateway["Gateway"] --> pairing["Device pairing"]
   pairing --> mobile["iOS / Android node"]
   pairing --> mac["macOS node app"]
@@ -52,8 +51,8 @@ For failures, start with [Node troubleshooting](/nodes/troubleshooting).
 
 ## Pairing and status
 
-WS nodes use device pairing. The node presents a device identity during
-`connect`; the Gateway creates a pairing request for role `node`.
+WebSocket nodes use device pairing. The node presents device info during
+`connect`, and the Gateway creates a pairing request for role `node`.
 
 ```bash
 fased devices list
@@ -96,8 +95,8 @@ fased node install --host <gateway-host> --port 18789 --display-name "Build Node
 fased node restart
 ```
 
-For hosted gateways, prefer Tailscale or a private SSH tunnel. Do not expose the
-raw Gateway port publicly just to attach a node host.
+For hosted gateways, prefer Tailscale or a private SSH tunnel. Keep the raw
+Gateway port private when attaching a node host.
 
 SSH tunnel example:
 
@@ -159,17 +158,15 @@ fased nodes invoke --node <idOrNameOrIp> --command canvas.eval --params '{"javaS
 Higher-level helpers print `MEDIA:<path>` when they create an attachment for the
 Agent.
 
-| Capability        | CLI                                                                    |
-| ----------------- | ---------------------------------------------------------------------- |
-| Canvas snapshot   | `fased nodes canvas snapshot --node <id>`                              |
-| Canvas navigation | `fased nodes canvas present --node <id> --target https://example.com`  |
-| Canvas eval       | `fased nodes canvas eval --node <id> --js "document.title"`            |
-| Camera photo      | `fased nodes camera snap --node <id>`                                  |
-| Camera clip       | `fased nodes camera clip --node <id> --duration 10s`                   |
-| Screen record     | `fased nodes screen record --node <id> --duration 10s --fps 10`        |
-| Location          | `fased nodes location get --node <id>`                                 |
-| System command    | `fased nodes run --node <id> -- echo "hello"`                          |
-| Notification      | `fased nodes notify --node <id> --title "Ping" --body "Gateway ready"` |
+- **Canvas snapshot:** `fased nodes canvas snapshot --node <id>`
+- **Canvas navigation:** `fased nodes canvas present --node <id> --target https://example.com`
+- **Canvas eval:** `fased nodes canvas eval --node <id> --js "document.title"`
+- **Camera photo:** `fased nodes camera snap --node <id>`
+- **Camera clip:** `fased nodes camera clip --node <id> --duration 10s`
+- **Screen record:** `fased nodes screen record --node <id> --duration 10s --fps 10`
+- **Location:** `fased nodes location get --node <id>`
+- **System command:** `fased nodes run --node <id> -- echo "hello"`
+- **Notification:** `fased nodes notify --node <id> --title "Ping" --body "Gateway ready"`
 
 ## Capability notes
 

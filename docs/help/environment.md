@@ -9,17 +9,22 @@ title: "Environment Variables"
 
 # Environment variables
 
-Fased pulls environment variables from multiple sources. The rule is **never override existing values**.
+Fased pulls environment variables from multiple sources. The rule is **never
+override existing values**.
 
 ## Precedence (highest → lowest)
 
-1. **Process environment** (what the Gateway process already has from the parent shell/daemon).
+1. **Process environment**: what the Gateway process already has from the parent
+   shell or daemon.
 2. **`.env` in the current working directory** (dotenv default; does not override).
-3. **Global `.env`** at `~/.fased/.env` (aka `$FASED_STATE_DIR/.env`; does not override).
+3. **Global `.env`** at `~/.fased/.env`, also known as
+   `$FASED_STATE_DIR/.env`; does not override.
 4. **Config `env` block** in `~/.fased/fased.json` (applied only if missing).
-5. **Optional login-shell import** (`env.shellEnv.enabled` or `FASED_LOAD_SHELL_ENV=1`), applied only for missing expected keys.
+5. **Optional login-shell import**: `env.shellEnv.enabled` or
+   `FASED_LOAD_SHELL_ENV=1`, applied only for missing expected keys.
 
-If the config file is missing entirely, step 4 is skipped; shell import still runs if enabled.
+If the config file is missing entirely, step 4 is skipped. Shell import still
+runs if enabled.
 
 ## Config `env` block
 
@@ -58,7 +63,8 @@ Env var equivalents:
 
 ## Env var substitution in config
 
-You can reference env vars directly in config string values using `${VAR_NAME}` syntax:
+You can reference env vars directly in config string values using
+`${VAR_NAME}` syntax:
 
 ```json5
 {
@@ -72,35 +78,43 @@ You can reference env vars directly in config string values using `${VAR_NAME}` 
 }
 ```
 
-See [Configuration: Env var substitution](/gateway/configuration#env-var-substitution-in-config) for full details.
+See
+[Configuration: Env var substitution](/gateway/configuration#env-var-substitution-in-config)
+for full details.
 
 ## Secret refs vs `${ENV}` strings
 
 Fased supports two env-driven patterns:
 
 - `${VAR}` string substitution in config values.
-- SecretRef objects (`{ source: "env", provider: "default", id: "VAR" }`) for fields that support secrets references.
+- SecretRef objects (`{ source: "env", provider: "default", id: "VAR" }`) for
+  fields that support secrets references.
 
-Both resolve from process env at activation time. SecretRef details are documented in [Secrets Management](/gateway/secrets).
+Both resolve from process env at activation time. SecretRef details are
+documented in [Secrets Management](/gateway/secrets).
 
 ## Path-related env vars
 
-| Variable            | Purpose                                                                                                                                                                    |
-| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `FASED_HOME`        | Override the home directory used for all internal path resolution (`~/.fased/`, agent dirs, sessions, credentials). Useful when running Fased as a dedicated service user. |
-| `FASED_PROFILE`     | Select a named profile. The dev profile uses isolated state under `~/.fased-dev` and shifts the gateway port.                                                              |
-| `FASED_STATE_DIR`   | Override the state directory (default `~/.fased`).                                                                                                                         |
-| `FASED_CONFIG_PATH` | Override the config file path (default `~/.fased/fased.json`).                                                                                                             |
+- `FASED_HOME`: overrides the home directory used for internal path resolution,
+  including `~/.fased/`, agent dirs, sessions, and credentials. Useful for a
+  dedicated service user.
+- `FASED_PROFILE`: selects a named profile. The dev profile uses isolated state
+  under `~/.fased-dev` and shifts the gateway port.
+- `FASED_STATE_DIR`: overrides the state directory. Default: `~/.fased`.
+- `FASED_CONFIG_PATH`: overrides the config file path. Default:
+  `~/.fased/fased.json`.
 
 ## Logging
 
-| Variable          | Purpose                                                                                                                                                                                      |
-| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `FASED_LOG_LEVEL` | Override log level for both file and console (e.g. `debug`, `trace`). Takes precedence over `logging.level` and `logging.consoleLevel` in config. Invalid values are ignored with a warning. |
+- `FASED_LOG_LEVEL`: overrides log level for both file and console, for example
+  `debug` or `trace`. It takes precedence over `logging.level` and
+  `logging.consoleLevel` in config. Invalid values are ignored with a warning.
 
 ### `FASED_HOME`
 
-When set, `FASED_HOME` replaces the system home directory (`$HOME` / `os.homedir()`) for all internal path resolution. This enables full filesystem isolation for headless service accounts.
+When set, `FASED_HOME` replaces the system home directory (`$HOME` /
+`os.homedir()`) for all internal path resolution. This enables full filesystem
+isolation for headless service accounts.
 
 **Precedence:** `FASED_HOME` > `$HOME` > `USERPROFILE` > `os.homedir()`
 
@@ -114,7 +128,8 @@ When set, `FASED_HOME` replaces the system home directory (`$HOME` / `os.homedir
 </dict>
 ```
 
-`FASED_HOME` can also be set to a tilde path (e.g. `~/svc`), which gets expanded using `$HOME` before use.
+`FASED_HOME` can also be set to a tilde path, such as `~/svc`. Fased expands it
+using `$HOME` before use.
 
 ## Related
 

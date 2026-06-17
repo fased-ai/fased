@@ -8,7 +8,9 @@ title: "channels"
 
 # `fased channels`
 
-Manage channel accounts and inspect their live runtime state from the terminal. This is the command surface for account setup, login flows, status probes, provider capabilities, and provider-specific logs.
+Manage channel accounts and inspect their live runtime state from the terminal.
+This is the command surface for account setup, login flows, status probes,
+provider capabilities, and provider-specific logs.
 
 Browser equivalent: **Agent > Channels**. That is the normal place to set up
 accounts, QR/login flows, credentials, route assignment, and delivery targets

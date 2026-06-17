@@ -8,7 +8,10 @@ title: "Synology Chat"
 
 # Synology Chat
 
-Synology Chat is useful when the NAS is already part of your internal collaboration stack and you want a lightweight webhook bridge instead of a full separate chat server. Fased accepts inbound events from Synology Chat outgoing webhooks and replies through the paired incoming webhook URL.
+Synology Chat is useful when the NAS is already part of your internal
+collaboration stack and you want a lightweight webhook bridge instead of a full
+separate chat server. Fased accepts inbound events from Synology Chat outgoing
+webhooks and replies through the paired incoming webhook URL.
 
 Status: bundled channel extension as a DM-focused channel backed by Synology Chat webhooks.
 
@@ -24,7 +27,8 @@ load.
 
 ## Quick setup
 
-This integration is simplest when you keep it allowlisted and private. Start with one known user ID, then widen access only if you actually need it.
+This integration is simplest when you keep it allowlisted and private. Start
+with one known user ID, then widen access only when needed.
 
 1. In Synology Chat integrations:
    - Create an incoming webhook and copy its URL.
@@ -44,7 +48,7 @@ Minimal config:
     "synology-chat": {
       enabled: true,
       token: "synology-outgoing-token",
-      incomingUrl: "https://nas.example.com/webapi/entry.cgi?api=SYNO.Chat.External&method=incoming&version=2&token=...",
+      incomingUrl: "https://nas.example.com/webapi/entry.cgi?...",
       webhookPath: "/webhook/synology",
       dmPolicy: "allowlist",
       allowedUserIds: ["123456"],
@@ -71,8 +75,11 @@ Config values override env vars.
 ## DM policy and access control
 
 - `dmPolicy: "allowlist"` is the recommended default.
-- `allowedUserIds` accepts a list (or comma-separated string) of Synology user IDs.
-- In `allowlist` mode, an empty `allowedUserIds` list is treated as misconfiguration and the webhook route will not start (use `dmPolicy: "open"` for allow-all).
+- `allowedUserIds` accepts a list or comma-separated string of Synology user
+  IDs.
+- In `allowlist` mode, an empty `allowedUserIds` list is treated as
+  misconfiguration and the webhook route will not start. Use
+  `dmPolicy: "open"` for allow-all.
 - `dmPolicy: "open"` allows any sender.
 - `dmPolicy: "disabled"` blocks DMs.
 - Pairing approvals work with:
@@ -86,16 +93,19 @@ Use numeric Synology Chat user IDs as targets.
 Examples:
 
 ```bash
-fased message send --channel synology-chat --target 123456 --message "Hello from Fased"
-fased message send --channel synology-chat --target synology-chat:123456 --message "Hello again"
+fased message send --channel synology-chat --target 123456 \
+  --message "Hello from Fased"
+fased message send --channel synology-chat --target synology-chat:123456 \
+  --message "Hello again"
 ```
 
 Media sends are supported by URL-based file delivery.
 
 ## Multi-account
 
-Multiple Synology Chat accounts are supported under `channels.synology-chat.accounts`.
-Each account can override token, incoming URL, webhook path, DM policy, and limits.
+Multiple Synology Chat accounts are supported under
+`channels.synology-chat.accounts`. Each account can override token, incoming
+URL, webhook path, DM policy, and limits.
 
 ```json5
 {

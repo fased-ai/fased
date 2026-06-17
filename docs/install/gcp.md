@@ -11,7 +11,8 @@ title: "GCP"
 
 ## Goal
 
-Run a persistent Fased Gateway on a GCP Compute Engine VM using Docker, with durable state, baked-in binaries, and predictable restart behavior.
+Run a persistent Fased Gateway on a GCP Compute Engine VM using Docker, with
+durable state, baked-in binaries, and predictable restart behavior.
 
 Pricing varies by machine type and region. Pick the smallest VM that fits your
 workload and scale up if you hit OOMs.
@@ -22,7 +23,8 @@ workload and scale up if you hit OOMs.
 - Create a Compute Engine VM
 - Install Docker (isolated app runtime)
 - Start the Fased Gateway in Docker
-- Persist `~/.fased` + `~/.fased/workspace` on the host (survives restarts/rebuilds)
+- Persist `~/.fased` + `~/.fased/workspace` on the host so state survives
+  restarts and rebuilds
 - Join the VM to Tailscale before onboarding
 - Keep operator access private through Tailscale
 
@@ -63,7 +65,7 @@ For the generic Docker flow, see [Docker](/install/docker).
 - Model auth credentials
 - Optional provider credentials
   - WhatsApp QR
-  - Telegram bot token
+  - Telegram agent token
   - Gmail OAuth
 
 ---
@@ -96,7 +98,9 @@ gcloud projects create my-fased-project --name="Fased Gateway"
 gcloud config set project my-fased-project
 ```
 
-Enable billing at [https://console.cloud.google.com/billing](https://console.cloud.google.com/billing) (required for Compute Engine).
+Enable billing at
+[https://console.cloud.google.com/billing](https://console.cloud.google.com/billing).
+Compute Engine requires billing.
 
 Enable the Compute Engine API:
 
@@ -374,7 +378,9 @@ docker compose build
 docker compose up -d fased-gateway
 ```
 
-If build fails with `Killed` / `exit code 137` during `pnpm install --frozen-lockfile`, the VM is out of memory. Use `e2-small` minimum, or `e2-medium` for more reliable first builds.
+If build fails with `Killed` / `exit code 137` during
+`pnpm install --frozen-lockfile`, the VM is out of memory. Use `e2-small`
+minimum, or `e2-medium` for more reliable first builds.
 
 The container binds on LAN internally while the host port stays on `127.0.0.1`.
 If the Control UI rejects the local origin, set an explicit allowed origin:
@@ -426,7 +432,8 @@ Use a private tailnet path from your laptop:
 - an SSH tunnel carried over Tailscale
 - another private tailnet path you control
 
-Do not treat the public VM IP or a raw open gateway port as the normal operator access path.
+Keep the public VM IP and raw gateway port out of the normal operator access
+path.
 
 Fetch a fresh tokenized dashboard link:
 
@@ -492,11 +499,13 @@ Check your OS Login profile:
 gcloud compute os-login describe-profile
 ```
 
-Ensure your account has the required IAM permissions (Compute OS Login or Compute OS Admin Login).
+Ensure your account has the required IAM permissions: Compute OS Login or
+Compute OS Admin Login.
 
 **Out of memory (OOM)**
 
-If Docker build fails with `Killed` and `exit code 137`, the VM was OOM-killed. Upgrade to e2-small (minimum) or e2-medium (recommended for reliable local builds):
+If Docker build fails with `Killed` and `exit code 137`, the VM was OOM-killed.
+Upgrade to `e2-small` minimum or `e2-medium` for reliable local builds:
 
 ```bash
 # Stop the VM first
@@ -517,7 +526,8 @@ gcloud compute instances start fased-gateway --zone=us-central1-a
 
 For personal use, your default user account works fine.
 
-For automation or CI/CD pipelines, create a dedicated service account with minimal permissions:
+For automation or CI/CD pipelines, create a dedicated service account with
+minimal permissions:
 
 1. Create a service account:
 
@@ -536,7 +546,9 @@ For automation or CI/CD pipelines, create a dedicated service account with minim
 
 Avoid using the Owner role for automation. Use the principle of least privilege.
 
-See [https://cloud.google.com/iam/docs/understanding-roles](https://cloud.google.com/iam/docs/understanding-roles) for IAM role details.
+See
+[https://cloud.google.com/iam/docs/understanding-roles](https://cloud.google.com/iam/docs/understanding-roles)
+for IAM role details.
 
 ---
 

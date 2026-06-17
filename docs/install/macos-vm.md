@@ -12,11 +12,17 @@ title: "macOS VMs"
 
 ## Recommended default (most users)
 
-- **Small Linux VPS** for an always-on Gateway and low cost. See [VPS hosting](/install/vps).
-- **Dedicated hardware** (Mac mini or Linux box) if you want full control and a **residential IP** for browser automation. Many sites block data center IPs, so local browsing often works better.
-- **Hybrid:** keep the Gateway on a cheap VPS, and connect your Mac as a **node** when you need browser/UI automation. Manage paired devices in **Advanced > Nodes**; see [Nodes](/nodes) and [Gateway remote](/gateway/remote).
+- **Small Linux VPS** for an always-on Gateway and low cost. See
+  [VPS hosting](/install/vps).
+- **Dedicated hardware** (Mac mini or Linux box) if you want full control and a
+  **residential IP** for browser automation. Many sites block data center IPs,
+  so local browsing often works better.
+- **Hybrid:** keep the Gateway on a cheap VPS, and connect your Mac as a
+  **node** when you need browser/UI automation. Manage paired devices in
+  **Advanced > Nodes**; see [Nodes](/nodes) and [Gateway remote](/gateway/remote).
 
-Use a macOS VM when you specifically need macOS-only capabilities (iMessage/BlueBubbles) or want strict isolation from your daily Mac.
+Use a macOS VM when you specifically need macOS-only capabilities
+(iMessage/BlueBubbles) or want strict isolation from your daily Mac.
 
 ## macOS VM options
 
@@ -242,18 +248,20 @@ Keep the VM running by:
 - Disabling sleep in System Settings → Energy Saver
 - Using `caffeinate` if needed
 
-For true always-on, consider a dedicated Mac mini or a small VPS. See [VPS hosting](/install/vps).
+For true always-on, consider a dedicated Mac mini or a small VPS. See
+[VPS hosting](/install/vps).
 
 ---
 
 ## Troubleshooting
 
-| Problem                  | Solution                                                                                                                 |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
-| Can't SSH into VM        | Check "Remote Login" is enabled in VM's System Settings                                                                  |
-| VM IP not showing        | Wait for VM to fully boot, run `lume get fased` again                                                                    |
-| Lume command not found   | Add `~/.local/bin` to your PATH                                                                                          |
-| WhatsApp QR not scanning | Open the Control UI from the VM runtime and use **Agent > Channels** so the QR session is stored in the VM's Fased state |
+- **Can't SSH into VM**: check "Remote Login" is enabled in the VM's System
+  Settings.
+- **VM IP not showing**: wait for the VM to fully boot, then run
+  `lume get fased` again.
+- **Lume command not found**: add `~/.local/bin` to your PATH.
+- **WhatsApp QR not scanning**: open the Control UI from the VM runtime and use
+  **Agent > Channels** so the QR session is stored in the VM's Fased state.
 
 ---
 

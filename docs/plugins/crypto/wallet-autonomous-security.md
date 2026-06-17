@@ -1,5 +1,5 @@
 ---
-summary: "Operator guide for protecting unattended Agent and Vault wallets with passkey ceremonies, split-key custody, and signer-only unlock."
+summary: "Protect unattended Agent and Vault wallets with passkey, split-key custody, and signer-only unlock."
 read_when:
   - You want Agent wallet automation without making the host the only source of truth
   - You need the end-user security model for locked self-hosted wallets
@@ -48,13 +48,21 @@ For production, use this split:
 That means the host is necessary, but not sufficient by itself.
 
 ```mermaid
-flowchart LR
-    UI[Trusted browser + passkey] -->|unlock ceremony| Signer[fased-signerd]
-    Device[Encrypted device share] -->|release after passkey| Signer
-    Host[Host share + wallet metadata] --> Signer
-    Recovery[Offline recovery share] -. emergency recovery .-> Signer
-    Signer --> Wallet[Wallet material]
-    Runtime[Fased runtime] -->|sign request inside session| Signer
+flowchart TD
+    Runtime["Fased runtime<br/>sign request"] --> Session["Scoped unlock session"]
+    UI["Trusted browser<br/>passkey ceremony"] --> Session
+    Device["Encrypted device share"] --> Session
+
+    subgraph HostLayer["Host"]
+      Host["Host share<br/>wallet metadata"]
+      Signer["fased-signerd"]
+      Wallet["Encrypted wallet material"]
+    end
+
+    Session --> Signer
+    Host --> Signer
+    Signer --> Wallet
+    Recovery["Offline recovery share"] -. emergency recovery .-> Signer
 ```
 
 ## What to avoid
@@ -92,7 +100,7 @@ Good defaults:
 
 - Agent: keep automation on only when caps and allowlists are correct; use `Stop` as emergency pause.
 - Vault: unlock until manual lock for deliberate work, or choose a short timed unlock.
-- Keep wallet-specific sessions instead of one global unlock.
+- Use wallet-specific sessions with one wallet, one purpose, and a short duration.
 
 ## Recovery discipline
 
@@ -127,7 +135,8 @@ advanced wallet automation, the conservative posture is:
 - automation `Stop` available as an emergency pause
 - easy revoke and clear audit trail
 
-Risky agent actions should use explicit handles such as `@wallet:agent`. Mining and vault wallets must not be generic prompt wallets.
+Risky agent actions should use explicit handles such as `@wallet:agent`.
+Mining and vault wallets must not be generic prompt wallets.
 
 Optional route actions add another boundary. Keep them behind Fased wallet
 policy, action allowlists, small working limits, explicit expiry, and visible

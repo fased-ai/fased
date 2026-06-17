@@ -16,7 +16,7 @@ mechanisms. The product object is a **Task** owned by an **Agent** and
 **Session**.
 
 ```mermaid
-flowchart LR
+flowchart TD
   Agent[Agent] --> Session[Session]
   Session --> Task[Task]
   Task --> Trigger[Trigger]

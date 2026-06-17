@@ -13,15 +13,15 @@ Hooks are local event handlers that run inside the gateway when matching Fased
 events occur. They are useful for small runtime extensions such as session
 memory, startup files, command logging, and plugin-side tool-result transforms.
 
-Hooks are not webhooks. For inbound HTTP automation, read
+Hooks are local runtime extensions. For inbound HTTP automation, read
 [Webhooks](/automation/webhook).
 
 ```mermaid
-flowchart LR
-  Event[Gateway event] --> Registry[Hook registry]
-  Registry --> Handler[Enabled hook handler]
-  Handler --> Result[Messages or side effect]
-  Handler --> Logs[Logs and diagnostics]
+flowchart TD
+  Event["Gateway event"] --> Registry["Hook registry"]
+  Registry --> Handler["Enabled hook handler"]
+  Handler --> Result["Messages or side effect"]
+  Handler --> Logs["Logs and diagnostics"]
 
   classDef main fill:#1f2937,stroke:#ff8a65,color:#ffffff
   classDef aux fill:#101827,stroke:#38bdf8,color:#ffffff
@@ -43,12 +43,25 @@ installing or enabling them.
 
 ## Bundled hooks
 
-| Hook                    | Event            | Purpose                                                               | Normal user path              |
-| ----------------------- | ---------------- | --------------------------------------------------------------------- | ----------------------------- |
-| `session-memory`        | `/new`, `/reset` | Archives recent session context into the Agent workspace memory area. | Onboarding or Agent > Memory. |
-| `boot-md`               | gateway startup  | Runs `BOOT.md` from each Agent workspace on gateway start.            | Operator startup automation.  |
-| `bootstrap-extra-files` | agent bootstrap  | Adds extra workspace files into Agent bootstrap context.              | Advanced workspace setup.     |
-| `command-logger`        | commands         | Appends command events to `~/.fased/logs/commands.log`.               | Debug command usage.          |
+**`session-memory`**
+
+Event: `/new`, `/reset`. Archives recent session context into the Agent
+workspace memory area. Normal setup path: onboarding or Agent > Memory.
+
+**`boot-md`**
+
+Event: gateway startup. Runs `BOOT.md` from each Agent workspace on gateway
+start. Normal setup path: operator startup automation.
+
+**`bootstrap-extra-files`**
+
+Event: agent bootstrap. Adds extra workspace files into Agent bootstrap
+context. Normal setup path: advanced workspace setup.
+
+**`command-logger`**
+
+Event: commands. Appends command events to `~/.fased/logs/commands.log`.
+Normal setup path: debug command usage.
 
 Useful commands:
 
@@ -173,17 +186,29 @@ non-matching events.
 
 ## Event families
 
-| Family      | Examples                                         |
-| ----------- | ------------------------------------------------ |
-| Command     | `command:new`, `command:reset`, `command:custom` |
-| Agent       | `agent:bootstrap`                                |
-| Gateway     | `gateway:startup`, `gateway:shutdown`            |
-| Message     | `message:received`, `message:sent`               |
-| Tool result | plugin-side tool-result transforms               |
+**Command**
+
+Examples: `command:new`, `command:reset`, `command:custom`.
+
+**Agent**
+
+Example: `agent:bootstrap`.
+
+**Gateway**
+
+Examples: `gateway:startup`, `gateway:shutdown`.
+
+**Message**
+
+Examples: `message:received`, `message:sent`.
+
+**Tool result**
+
+Plugin-side tool-result transforms.
 
 Tool-result hooks are intentionally narrow. They can transform tool output for
-a participating plugin path; they do not create tools, grant credentials, or
-change wallet/mining/marketplace control.
+a participating plugin path. Tool, credential, wallet, mining, and marketplace
+authority stay in their owning surfaces.
 
 ## Configuration
 
@@ -225,12 +250,21 @@ fased logs --follow
 
 Common causes:
 
-| Symptom             | Check                                                        |
-| ------------------- | ------------------------------------------------------------ |
-| Hook not discovered | Directory name, `HOOK.md`, load source, and name collisions. |
-| Hook not eligible   | Missing binary, env var, config key, or OS requirement.      |
-| Hook not executing  | Event name, enabled state, gateway restart, and logs.        |
-| Handler errors      | Catch expected failures and write concise diagnostics.       |
+**Hook not discovered**
+
+Check directory name, `HOOK.md`, load source, and name collisions.
+
+**Hook not eligible**
+
+Check missing binary, env var, config key, or OS requirement.
+
+**Hook not executing**
+
+Check event name, enabled state, gateway restart, and logs.
+
+**Handler errors**
+
+Catch expected failures and write concise diagnostics.
 
 ## See also
 

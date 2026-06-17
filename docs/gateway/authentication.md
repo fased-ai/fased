@@ -25,7 +25,8 @@ operator workflows.
 
 See [/concepts/oauth](/concepts/oauth) for the full OAuth flow and storage
 layout.
-For SecretRef-based auth (`env`/`file`/`exec` providers), see [Secrets Management](/gateway/secrets).
+For SecretRef-based auth (`env`/`file`/`exec` providers), see
+[Secrets Management](/gateway/secrets).
 
 ## Recommended Anthropic setup (API key)
 
@@ -145,13 +146,18 @@ hits a provider rate limit.
 
 ### Per-session (chat command)
 
-Use `/model <alias-or-id>@<profileId>` to pin a specific provider credential for the current session (example profile ids: `anthropic:default`, `anthropic:work`).
+Use `/model <alias-or-id>@<profileId>` to pin a specific provider credential for
+the current session. Example profile ids: `anthropic:default` and
+`anthropic:work`.
 
-Use `/model` (or `/model list`) for a compact picker; use `/model status` for the full view (candidates + next auth profile, plus provider endpoint details when configured).
+Use `/model` or `/model list` for a compact picker. Use `/model status` for the
+full view: candidates, next auth profile, and provider endpoint details when
+configured.
 
 ### Per-agent (CLI override)
 
-Set an explicit auth profile order override for an agent (stored in that agent’s `auth-profiles.json`):
+Set an explicit auth profile order override for an agent. Fased stores it in that
+agent's `auth-profiles.json`:
 
 ```bash
 fased models auth order get --provider anthropic
@@ -159,7 +165,8 @@ fased models auth order set --provider anthropic anthropic:default
 fased models auth order clear --provider anthropic
 ```
 
-Use `--agent <id>` to target a specific agent; omit it to use the configured default agent.
+Use `--agent <id>` to target a specific agent. Omit it to use the configured
+default agent.
 
 ## Troubleshooting
 

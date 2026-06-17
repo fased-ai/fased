@@ -8,22 +8,31 @@ title: "Slash Commands"
 
 # Slash commands
 
-Commands are handled by the Gateway. Most commands must be sent as a **standalone** message that starts with `/`.
+Commands are handled by the Gateway. Most commands must be sent as a
+**standalone** message that starts with `/`.
 The host-only bash chat command uses `! <cmd>` (with `/bash <cmd>` as an alias).
 
 There are two related systems:
 
 - **Commands**: standalone `/...` messages.
-- **Directives**: `/think`, `/verbose`, `/reasoning`, `/elevated`, `/exec`, `/model`, `/queue`.
+- **Directives**: `/think`, `/verbose`, `/reasoning`, `/elevated`, `/exec`,
+  `/model`, `/queue`.
   - Directives are stripped from the message before the model sees it.
-  - In normal chat messages (not directive-only), they are treated as “inline hints” and do **not** persist session settings.
-  - In directive-only messages (the message contains only directives), they persist to the session and reply with an acknowledgement.
-  - Directives are only applied for **authorized senders**. If `commands.allowFrom` is set, it is the only
-    allowlist used; otherwise authorization comes from channel allowlists/pairing plus `commands.useAccessGroups`.
+  - In normal chat messages, they are treated as inline hints and do **not**
+    persist session settings.
+  - In directive-only messages, they persist to the session and reply with an
+    acknowledgement.
+  - Directives are only applied for **authorized senders**. If
+    `commands.allowFrom` is set, it is the only allowlist used.
+    Otherwise authorization comes from channel allowlists/pairing plus
+    `commands.useAccessGroups`.
     Unauthorized senders see directives treated as plain text.
 
-There are also a few **inline shortcuts** (allowlisted/authorized senders only): `/help`, `/commands`, `/status`, `/whoami` (`/id`).
-They run immediately, are stripped before the model sees the message, and the remaining text continues through the normal flow.
+There are also a few **inline shortcuts** for allowlisted/authorized senders:
+`/help`, `/commands`, `/status`, `/whoami` (`/id`).
+
+They run immediately, are stripped before the model sees the message, and the
+remaining text continues through the normal flow.
 
 ## Config
 
@@ -48,22 +57,36 @@ They run immediately, are stripped before the model sees the message, and the re
 ```
 
 - `commands.text` (default `true`) enables parsing `/...` in chat messages.
-  - On surfaces without native commands (WhatsApp/WebChat/Signal/iMessage/Google Chat/MS Teams), text commands still work even if you set this to `false`.
+  - On surfaces without native commands, text commands still work even if you
+    set this to `false`: WhatsApp, WebChat, Signal, iMessage, Google Chat, and
+    Microsoft Teams.
 - `commands.native` (default `"auto"`) registers native commands.
-  - Auto: on for Discord/Telegram; off for Slack (until you add slash commands); ignored for providers without native support.
-  - Set `channels.discord.commands.native`, `channels.telegram.commands.native`, or `channels.slack.commands.native` to override per provider (bool or `"auto"`).
-  - `false` clears previously registered commands on Discord/Telegram at startup. Slack commands are managed in the Slack app and are not removed automatically.
+  - Auto: on for Discord/Telegram; off for Slack until you add slash commands;
+    ignored for providers without native support.
+  - Override per provider with `channels.discord.commands.native`,
+    `channels.telegram.commands.native`, or `channels.slack.commands.native`.
+    Values are boolean or `"auto"`.
+  - `false` clears previously registered commands on Discord/Telegram at
+    startup. Slack commands are managed in the Slack app and are not removed
+    automatically.
 - `commands.nativeSkills` (default `"auto"`) registers **skill** commands natively when supported.
   - Auto: on for Discord/Telegram; off for Slack (Slack requires creating a slash command per skill).
-  - Set `channels.discord.commands.nativeSkills`, `channels.telegram.commands.nativeSkills`, or `channels.slack.commands.nativeSkills` to override per provider (bool or `"auto"`).
-- `commands.bash` (default `false`) enables `! <cmd>` to run host shell commands (`/bash <cmd>` is an alias; requires `tools.elevated` allowlists).
-- `commands.bashForegroundMs` (default `2000`) controls how long bash waits before switching to background mode (`0` backgrounds immediately).
+  - Override per provider with `channels.discord.commands.nativeSkills`,
+    `channels.telegram.commands.nativeSkills`, or
+    `channels.slack.commands.nativeSkills`. Values are boolean or `"auto"`.
+- `commands.bash` (default `false`) enables `! <cmd>` to run host shell
+  commands. `/bash <cmd>` is an alias and requires `tools.elevated` allowlists.
+- `commands.bashForegroundMs` (default `2000`) controls how long bash waits
+  before switching to background mode. `0` backgrounds immediately.
 - `commands.config` (default `false`) enables `/config` (reads/writes `~/.fased/fased.json`).
 - `commands.debug` (default `false`) enables `/debug` (runtime-only overrides).
-- `commands.allowFrom` (optional) sets a per-provider allowlist for command authorization. When configured, it is the
-  only authorization source for commands and directives (channel allowlists/pairing and `commands.useAccessGroups`
-  are ignored). Use `"*"` for a global default; provider-specific keys override it.
-- `commands.useAccessGroups` (default `true`) enforces allowlists/policies for commands when `commands.allowFrom` is not set.
+- `commands.allowFrom` (optional) sets a per-provider allowlist for command
+  authorization. When configured, it is the only authorization source for
+  commands and directives. Channel allowlists/pairing and
+  `commands.useAccessGroups` are ignored.
+- Use `"*"` for a global default; provider-specific keys override it.
+- `commands.useAccessGroups` (default `true`) enforces allowlists/policies for
+  commands when `commands.allowFrom` is not set.
 
 ## Command list
 
@@ -82,28 +105,63 @@ Text + native (when enabled):
 - `/session list|new|switch|current` (create and move between named sessions for this channel chat)
 - `/session idle <duration|off>` (manage inactivity auto-unfocus for focused thread bindings)
 - `/session max-age <duration|off>` (manage hard max-age auto-unfocus for focused thread bindings)
-- `/task new every <duration> [<name>:] <prompt>` (create a scheduled task for the current Agent/session)
-  - Natural examples: `/task new every 10 minutes Check provider health and send here.`, `/task new check docs updates hourly`, `/task new every 30m Service pulse: summarize gateway health.`, and `/task new remind me every Friday to review open tasks.`
-  - Advanced policy flags: `--objective <text>`, `--success <text>`, `--mode agent-turn|skill-only|no-model|auto`, `--memory none|session-summary|pinned|search|agent`, `--skills wallet,search`, `--tool <name>`, `--input <json>`, `--model <provider/model>`, `--escalate <provider/model>`, `--max-tokens <n>`, `--max-cost <usd>`, `--max-runs-hour <n>`, `--stop-on-success`, `--stop-text done,complete`, `--max-successes <n>`, `--max-total-runs <n>`, `--auto-repair true|false`, `--auto-stop-optional true|false`, `--max-auto-repairs <n>`, `--primary-source-approval true|false`.
-- `/task edit <id> ...` (edit schedule, prompt/name, delivery, objective, success, model, memory, skill, budget, and stop policy for a scheduled task owned by the current Agent/session)
-  - Natural examples: `/task edit <id> every 30m`, `/task edit <id> send here`, `/task edit <id> use cheap check`, `/task edit <id> use no model`, `/task edit <id> escalate to openrouter/z-ai/glm-5.1`, and `/task edit <id> stop after success`.
-- `/task list|show <id>|runs <id>|last <id>|run-show <runId>|run <id>|pause <id>|resume <id>|cancel <id>` (inspect, show details, inspect recent runs, show the latest run, force-run, pause, resume, or cancel scheduled tasks for the current Agent/session)
-- `/task cancel-run <runId>|retry-run <runId>|clear-stale <runId>` controls one queued task run. These use run ids from `/task runs` or `/task last`, not task ids.
+- `/task new every <duration> [<name>:] <prompt>` creates a scheduled task for
+  the current Agent/session.
+  - Natural examples:
+    - `/task new every 10 minutes Check provider health and send here.`
+    - `/task new check docs updates hourly`
+    - `/task new every 30m Service pulse: summarize gateway health.`
+    - `/task new remind me every Friday to review open tasks.`
+  - Common policy flags:
+    - `--objective <text>`, `--success <text>`
+    - `--mode agent-turn|skill-only|no-model|auto`
+    - `--memory none|session-summary|pinned|search|agent`
+    - `--skills wallet,search`, `--tool <name>`, `--input <json>`
+    - `--model <provider/model>`, `--escalate <provider/model>`
+    - `--max-tokens <n>`, `--max-cost <usd>`, `--max-runs-hour <n>`
+    - `--stop-on-success`, `--stop-text done,complete`
+    - `--max-successes <n>`, `--max-total-runs <n>`
+    - `--auto-repair true|false`, `--auto-stop-optional true|false`
+    - `--max-auto-repairs <n>`, `--primary-source-approval true|false`
+- `/task edit <id> ...` edits schedule, prompt/name, delivery, objective,
+  success, model, memory, skill, budget, and stop policy for a scheduled task.
+  - Natural examples:
+    - `/task edit <id> every 30m`
+    - `/task edit <id> send here`
+    - `/task edit <id> use cheap check`
+    - `/task edit <id> use no model`
+    - `/task edit <id> escalate to openrouter/z-ai/glm-5.1`
+    - `/task edit <id> stop after success`
+- `/task list|show <id>|runs <id>|last <id>|run-show <runId>|run <id>|pause <id>|resume <id>|cancel <id>`
+  inspects, force-runs, pauses, resumes, or cancels scheduled tasks for the
+  current Agent/session.
+- `/task cancel-run <runId>|retry-run <runId>|clear-stale <runId>` controls one
+  queued task run. These use run ids from `/task runs` or `/task last`, not task
+  ids.
   - `/task list` shows plan, delivery, next run, and last result.
   - `/task show <id>` shows full task policy, delivery target, run counters, and evaluator state.
   - `/task runs <id>` lists recent runs with status, result source, delivery, duration, and summary/error.
-  - `/task last <id>` expands the newest run with source, adapter/model, delivery, usage, evaluator, session key, and `/chat?session=...` transcript path.
-  - `/task run-show <runId>` expands one queue run with checkpoint steps, attempt counts, lease owner/expiry, source/adapter/model, delivery, recommended recovery actions, and transcript path.
+  - `/task last <id>` expands the newest run with source, adapter/model,
+    delivery, usage, evaluator, session key, and `/chat?session=...` transcript
+    path.
+  - `/task run-show <runId>` expands one queue run with checkpoint steps,
+    attempt counts, lease owner/expiry, source/adapter/model, delivery,
+    recommended recovery actions, and transcript path.
   - `/task resume <id>` re-runs task preflight. If access is still missing, it stays blocked and replies with the setup target.
   - `/task repair <id> configure|add-source|retry|stop-source` mirrors the Agent > Tasks and run-detail source recovery buttons.
-  - `fased task sources list|add|show|enable|disable|forget` manages trusted source memory used by task repair and future source planning.
-- `/subagents list|kill|log|info|send|steer|spawn` (inspect, control, or spawn sub-agent runs for the current session)
-- `/acp spawn|cancel|steer|close|status|set-mode|set|cwd|permissions|timeout|model|reset-options|doctor|install|sessions` (inspect and control ACP runtime sessions)
+  - `fased task sources list|add|show|enable|disable|forget` manages trusted
+    source memory used by task repair and future source planning.
+- `/subagents list|kill|log|info|send|steer|spawn` inspects, controls, or spawns
+  sub-agent runs for the current session.
+- `/acp spawn|cancel|steer|close|status|set-mode|set|cwd|permissions|timeout|model|reset-options|doctor|install|sessions`
+  inspects and controls ACP runtime sessions.
 - `/agents` (list thread-bound agents for this session)
 - `/focus <target>` (Discord: bind this thread, or a new thread, to a session/subagent target)
 - `/unfocus` (Discord: remove the current thread binding)
 - `/kill <id|#|all>` (immediately abort one or all running sub-agents for this session; no confirmation message)
-- `/steer <id|#> <message>` (steer a running sub-agent immediately: in-run when possible, otherwise abort current work and restart on the steer message)
+- `/steer <id|#> <message>` steers a running sub-agent immediately. It uses
+  in-run steering when possible; otherwise it aborts current work and restarts
+  on the steer message.
 - `/tell <id|#> <message>` (alias for `/steer`)
 - `/config show|get|set|unset` (persist config to disk, owner-only; requires `commands.config: true`)
 - `/debug show|set|unset|reset` (runtime overrides, owner-only; requires `commands.debug: true`)
@@ -120,9 +178,11 @@ Text + native (when enabled):
 - `/reset` or `/new [model]` (optional model hint; remainder is passed through)
 - `/think <off|minimal|low|medium|high|xhigh>` (dynamic choices by model/provider; aliases: `/thinking`, `/t`)
 - `/verbose on|full|off` (alias: `/v`)
-- `/reasoning on|off|stream` (alias: `/reason`; when on, sends a separate message prefixed `Reasoning:`; `stream` = Telegram draft only)
+- `/reasoning on|off|stream` (alias: `/reason`) sends a separate message
+  prefixed `Reasoning:` when on. `stream` means Telegram draft only.
 - `/elevated on|off|ask|full` (alias: `/elev`; `full` skips exec approvals)
-- `/exec host=<sandbox|gateway|node> security=<deny|allowlist|full> ask=<off|on-miss|always> node=<id>` (send `/exec` to show current)
+- `/exec host=<sandbox|gateway|node> security=<deny|allowlist|full> ask=<off|on-miss|always> node=<id>`
+  sets exec routing defaults. Send `/exec` to show current settings.
 - `/model <name>` (alias: `/models`; or `/<alias>` from `agents.defaults.models.*.alias`)
 - `/queue <mode>` (plus options like `debounce:2s cap:25 drop:summarize`; send `/queue` to see current settings)
 - `/bash <command>` (host-only; alias for `! <command>`; requires `commands.bash: true` + `tools.elevated` allowlists)
@@ -137,33 +197,49 @@ Text-only:
 Notes:
 
 - Commands accept an optional `:` between the command and args (e.g. `/think: high`, `/send: on`, `/help:`).
-- `/new <model>` accepts a model alias, `provider/model`, or a provider name (fuzzy match); if no match, the text is treated as the message body.
+- `/new <model>` accepts a model alias, `provider/model`, or a provider name
+  with fuzzy match. If no match is found, the text is treated as the message
+  body.
 - For full provider usage breakdown, use `fased status --usage`.
 - `/allowlist add|remove` requires `commands.config=true` and honors channel `configWrites`.
 - `/usage` controls the per-response usage footer; `/usage cost` prints a local cost summary from Fased session logs.
 - `/restart` is enabled by default; set `commands.restart: false` to disable it.
-- Discord-only native command: `/vc join|leave|status` controls voice channels (requires `channels.discord.voice` and native commands; not available as text).
-- Discord thread-binding commands (`/focus`, `/unfocus`, `/agents`, `/session idle`, `/session max-age`) require effective thread bindings to be enabled (`session.threadBindings.enabled` and/or `channels.discord.threadBindings.enabled`).
+- Discord-only native command: `/vc join|leave|status` controls voice channels.
+  Requires `channels.discord.voice` and native commands; not available as text.
+- Discord thread-binding commands require effective thread bindings to be
+  enabled: `/focus`, `/unfocus`, `/agents`, `/session idle`, `/session max-age`.
+  Use `session.threadBindings.enabled` and/or
+  `channels.discord.threadBindings.enabled`.
 - ACP command reference and runtime behavior: [ACP Agents](/tools/acp-agents).
 - `/verbose` is meant for debugging and extra visibility; keep it **off** in normal use.
-- Tool failure summaries are still shown when relevant, but detailed failure text is only included when `/verbose` is `on` or `full`.
-- `/reasoning` (and `/verbose`) are risky in group settings: they may reveal internal reasoning or tool output you did not intend to expose. Prefer leaving them off, especially in group chats.
+- Tool failure summaries are still shown when relevant. Detailed failure text is
+  only included when `/verbose` is `on` or `full`.
+- `/reasoning` and `/verbose` are risky in group settings: they may reveal
+  internal reasoning or tool output you did not intend to expose. Prefer leaving
+  them off, especially in group chats.
 - **Fast path:** command-only messages from allowlisted senders are handled immediately (bypass queue + model).
 - **Group mention gating:** command-only messages from allowlisted senders bypass mention requirements.
-- **Inline shortcuts (allowlisted senders only):** certain commands also work when embedded in a normal message and are stripped before the model sees the remaining text.
+- **Inline shortcuts (allowlisted senders only):** certain commands also work
+  when embedded in a normal message and are stripped before the model sees the
+  remaining text.
   - Example: `hey /status` triggers a status reply, and the remaining text continues through the normal flow.
 - Currently: `/help`, `/commands`, `/status`, `/whoami` (`/id`).
 - Unauthorized command-only messages are silently ignored, and inline `/...` tokens are treated as plain text.
-- **Skill commands:** `user-invocable` skills are exposed as slash commands. Names are sanitized to `a-z0-9_` (max 32 chars); collisions get numeric suffixes (e.g. `_2`).
+- **Skill commands:** `user-invocable` skills are exposed as slash commands.
+  Names are sanitized to `a-z0-9_` with max 32 chars; collisions get numeric
+  suffixes such as `_2`.
   - `/skill <name> [input]` runs a skill by name (useful when native command limits prevent per-skill commands).
   - By default, skill commands are forwarded to the model as a normal request.
   - Skills may optionally declare `command-dispatch: tool` to route the command directly to a tool (deterministic, no model).
   - Example: `/prose` (OpenProse plugin) — see [OpenProse](/plugins/open-prose).
-- **Native command arguments:** Discord uses autocomplete for dynamic options (and button menus when you omit required args). Telegram and Slack show a button menu when a command supports choices and you omit the arg.
+- **Native command arguments:** Discord uses autocomplete for dynamic options and
+  button menus when required args are omitted. Telegram and Slack show a button
+  menu when a command supports choices and you omit the arg.
 
 ## Usage surfaces (what shows where)
 
-- **Provider usage/quota** (example: “Claude 80% left”) shows up in `/status` for the current model provider when usage tracking is enabled.
+- **Provider usage/quota** (example: “Claude 80% left”) shows up in `/status`
+  for the current model provider when usage tracking is enabled.
 - **Per-response tokens/cost** is controlled by `/usage off|tokens|full` (appended to normal replies).
 - `/model status` is about **models/auth/endpoints**, not usage.
 
@@ -191,7 +267,9 @@ Notes:
 
 ## Debug overrides
 
-`/debug` lets you set **runtime-only** config overrides (memory, not disk). Owner-only. Disabled by default; enable with `commands.debug: true`.
+`/debug` lets you set **runtime-only** config overrides. They live in memory,
+not on disk. Owner-only. Disabled by default; enable with
+`commands.debug: true`.
 
 Examples:
 
@@ -210,7 +288,8 @@ Notes:
 
 ## Config updates
 
-`/config` writes to your on-disk config (`~/.fased/fased.json`). Owner-only. Disabled by default; enable with `commands.config: true`.
+`/config` writes to your on-disk config (`~/.fased/fased.json`). Owner-only.
+Disabled by default; enable with `commands.config: true`.
 
 Examples:
 
@@ -235,5 +314,9 @@ Notes:
   - Slack: `agent:<agentId>:slack:slash:<userId>` (prefix configurable via `channels.slack.slashCommand.sessionPrefix`)
   - Telegram: `telegram:slash:<userId>` (targets the chat session via `CommandTargetSessionKey`)
 - **`/stop`** targets the active chat session so it can abort the current run.
-- **Slack:** `channels.slack.slashCommand` is still supported for a single `/fased`-style command. If you enable `commands.native`, you must create one Slack slash command per built-in command (same names as `/help`). Command argument menus for Slack are delivered as ephemeral Block Kit buttons.
-  - Slack native exception: register `/agentstatus` (not `/status`) because Slack reserves `/status`. Text `/status` still works in Slack messages.
+- **Slack:** `channels.slack.slashCommand` is still supported for a single
+  `/fased`-style command. If you enable `commands.native`, create one Slack
+  slash command per built-in command using the same names as `/help`.
+  Command argument menus are delivered as ephemeral Block Kit buttons.
+  - Slack native exception: register `/agentstatus`, not `/status`, because
+    Slack reserves `/status`. Text `/status` still works in Slack messages.

@@ -1,6 +1,7 @@
 # Onboarding Operations Guide
 
-This guide is the canonical operator path from a clean machine to a stable Fased runtime with optional wallets, Fased Network, plugins, and SAT mining.
+This guide is the canonical operator path from a clean machine to a stable Fased
+runtime with optional wallets, Fased Network, plugins, and SAT mining.
 
 It is written for the current Fased operating model:
 

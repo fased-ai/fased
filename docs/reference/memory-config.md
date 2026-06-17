@@ -72,20 +72,24 @@ override per Agent with `agents.list[].memorySearch`.
 
 Key fields:
 
-| Field                                                 | Purpose                                                                                                  |
-| ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `enabled`                                             | Enables memory tools for Agents that can use them.                                                       |
-| `sources`                                             | `"memory"` indexes Markdown memory files. `"sessions"` is gated by experimental session-memory indexing. |
-| `extraPaths`                                          | Extra Markdown files or directories to index. Keep paths reviewed.                                       |
-| `provider`                                            | Embedding provider: `openai`, `gemini`, `voyage`, `mistral`, or `local`.                                 |
-| `remote.baseUrl` / `remote.apiKey` / `remote.headers` | Custom remote embedding endpoint settings.                                                               |
-| `remote.batch.*`                                      | Batch embedding indexing for supported remote providers.                                                 |
-| `local.modelPath`                                     | GGUF path or supported local model reference for local embeddings.                                       |
-| `fallback`                                            | Fallback provider when the primary provider fails. Use `"none"` for strict local-only behavior.          |
-| `store.path`                                          | SQLite store path. Supports `{agentId}`.                                                                 |
-| `query.hybrid.*`                                      | BM25 + vector search merge settings.                                                                     |
-| `cache.*`                                             | In-process memory search cache settings.                                                                 |
-| `sync.*`                                              | File watcher/session sync controls.                                                                      |
+- `enabled`: enables memory tools for Agents that can use them.
+- `sources`: `"memory"` indexes Markdown memory files. `"sessions"` is gated by
+  experimental session-memory indexing.
+- `extraPaths`: extra Markdown files or directories to index. Keep paths
+  reviewed.
+- `provider`: embedding provider: `openai`, `gemini`, `voyage`, `mistral`, or
+  `local`.
+- `remote.baseUrl`, `remote.apiKey`, `remote.headers`: custom remote embedding
+  endpoint settings.
+- `remote.batch.*`: batch embedding indexing for supported remote providers.
+- `local.modelPath`: GGUF path or supported local model reference for local
+  embeddings.
+- `fallback`: fallback provider when the primary provider fails. Use `"none"`
+  for strict local-only behavior.
+- `store.path`: SQLite store path. Supports `{agentId}`.
+- `query.hybrid.*`: BM25 + vector search merge settings.
+- `cache.*`: in-process memory search cache settings.
+- `sync.*`: file watcher/session sync controls.
 
 Memory search API keys can come from provider auth/config/env for common
 providers. For custom endpoints, use `memorySearch.remote.apiKey`.

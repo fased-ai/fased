@@ -1,5 +1,5 @@
 ---
-summary: "How to operate Satcoin mining from chat and channels with @mining, scheduled tasks, strategy analysis, the singleton mining wallet, capital, commit, claim, and recovery."
+summary: "Operate Satcoin mining from chat, channels, and scheduled tasks with @mining."
 read_when:
   - You want to start, stop, fund, or inspect Satcoin mining from chat
   - You want scheduled or conditional mining automation
@@ -9,16 +9,16 @@ title: "Mining Chat and Automation"
 
 # Mining Chat and Automation
 
-`@mining` is the chat handle for Satcoin mining operations. It uses a dedicated
-mining tool, not the generic wallet send tool.
+`@mining` is the chat handle for Satcoin mining operations. It uses the
+dedicated mining tool.
 
 That boundary matters:
 
 - the Mining wallet can run Satcoin mining operations
 - the Mining wallet can claim and optionally sweep SAT after mining
-- the Mining wallet is not a generic chat-send, Marketplace order, route-action, recurring wallet-action, or bond wallet
-- Agent wallets still handle ordinary sends, Marketplace order actions, optional route actions, and scheduled wallet actions
-- Vault wallets still handle protected storage and Fased Network bond authority
+- Agent wallets handle ordinary sends, Marketplace order actions, optional route
+  actions, and scheduled wallet actions
+- Vault wallets handle protected storage and Fased Network bond authority
 
 When task logs say a strategy task used "no wallet source", that does not mean
 mining ran without the Mining wallet. It means the isolated task did not load
@@ -78,15 +78,38 @@ printing success.
 
 The mining tool supports these lanes.
 
-| Lane               | Actions                                                                                                                                      |
-| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| Profile            | `profile`, `profile_update`, `strategy_set`, `strategy_analyze`                                                                              |
-| Wallet             | `wallets`, `wallet_attachment` status                                                                                                        |
-| Health and state   | `readiness`, `status`, `history`, `recovery`                                                                                                 |
-| Runtime            | `start`, `stop`                                                                                                                              |
-| Capital and commit | `capital_init`, `reserve_top_up`, `deposit_capital`, `withdraw_capital`, `set_commit`                                                        |
-| Cycle work         | `submit_cycle`, `participate`, `crank`, `settle_cycle_page`, `score_cycle_page`, `distribute_cycle_page`, `finalize_cycle`, `finalize_epoch` |
-| Claim and recovery | `claim`, `claim_batch`, `recovery_claim`, `resolve_dispute`, `republish_roots`, `clear_history`                                              |
+**Profile**
+
+Use `profile`, `profile_update`, `strategy_set`, and `strategy_analyze` to
+inspect or change the mining profile.
+
+**Wallet**
+
+Use `wallets` and `wallet_attachment` to check the configured Mining wallet.
+
+**Health and state**
+
+Use `readiness`, `status`, `history`, and `recovery` for normal inspection.
+
+**Runtime**
+
+Use `start` and `stop` for mining participation.
+
+**Capital and commit**
+
+Use `capital_init`, `reserve_top_up`, `deposit_capital`,
+`withdraw_capital`, and `set_commit` for miner capital.
+
+**Cycle work**
+
+Use `submit_cycle`, `participate`, `crank`, `settle_cycle_page`,
+`score_cycle_page`, `distribute_cycle_page`, `finalize_cycle`, and
+`finalize_epoch` for cycle execution.
+
+**Claim and recovery**
+
+Use `claim`, `claim_batch`, `recovery_claim`, `resolve_dispute`,
+`republish_roots`, and `clear_history` after cycles settle or need recovery.
 
 Use `sol` or `amountSol` for human SOL values, or `lamports` /
 `amountLamports` for exact lamports.
@@ -134,16 +157,38 @@ Ask @mining to review history and recommend the next strategy.
 
 Supported profile fields include:
 
-| Field               | Values or meaning                                                                                          |
-| ------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `strategyPreset`    | `spread`, `balanced`, `conviction`, `swarm`, `top_k`, `ranked`, `adaptive`, `crowd_aware`, `safe_fallback` |
-| `strategyExecution` | `deterministic`, `auto`                                                                                    |
-| `strategyMode`      | `base`, `skill`                                                                                            |
-| `riskMode`          | `conservative`, `balanced`, `aggressive`, `swarm`                                                          |
-| `claimMode`         | `auto`, `prompt`, `manual`                                                                                 |
-| `autoClaim`         | enable or disable automatic miner claim                                                                    |
-| `autoFinalizeEpoch` | enable or disable automatic epoch finalization                                                             |
-| `satSweepEnabled`   | enable or disable post-claim SAT sweep                                                                     |
+**`strategyPreset`**
+
+Supported values are `spread`, `balanced`, `conviction`, `swarm`, `top_k`,
+`ranked`, `adaptive`, `crowd_aware`, and `safe_fallback`.
+
+**`strategyExecution`**
+
+Use `deterministic` or `auto`.
+
+**`strategyMode`**
+
+Use `base` or `skill`.
+
+**`riskMode`**
+
+Use `conservative`, `balanced`, `aggressive`, or `swarm`.
+
+**`claimMode`**
+
+Use `auto`, `prompt`, or `manual`.
+
+**`autoClaim`**
+
+Enable or disable automatic miner claim.
+
+**`autoFinalizeEpoch`**
+
+Enable or disable automatic epoch finalization.
+
+**`satSweepEnabled`**
+
+Enable or disable post-claim SAT sweep.
 
 `strategy_analyze` reads mining status and history and returns a deterministic
 recommendation. For model-guided strategy review, schedule an isolated agent
@@ -211,25 +256,54 @@ leave miner claim settings unchanged.
 
 Recommended Create Task fields for this mining strategy shape:
 
-| Field           | Value                                                                                                                   |
-| --------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Name            | `Mining strategy review`                                                                                                |
-| Prompt          | Use the strategy-only prompt above.                                                                                     |
-| Objective       | `Improve mining strategy selection without changing capital risk.`                                                      |
-| Success         | `Report old strategy, new strategy, reason, and confirm active commit stayed unchanged.`                                |
-| Session         | `New task session`                                                                                                      |
-| Delivery target | `No delivery` during testing, or a channel if the operator wants reports.                                               |
-| Execution       | `Auto` or `Agent turn`; use `Skill-only` only for exact deterministic mining tool calls.                                |
-| Memory          | `None` for strict isolated tests; `Session summary` or `Agent` only when you intentionally want prior context.          |
-| Skill access    | `Narrow selected skills` with `mining` only.                                                                            |
-| Ask Agents      | Off for normal strategy runs; use Consult/Parallel only when you explicitly want other local Agents to review evidence. |
+**Name**
 
-The `Mining strategy review` Task template pre-fills those fields. Strategy review is
-a scheduled Task because it has a recurring schedule, prompt, execution settings,
-and safety limits. Workflow templates such as mining readiness/start-gate review
-are different: they create a review flow, not a recurring strategy task. The
-execution model is still a Task, not a Mining page control and not a generic wallet
-task.
+`Mining strategy review`
+
+**Prompt**
+
+Use the strategy-only prompt above.
+
+**Objective**
+
+`Improve mining strategy selection without changing capital risk.`
+
+**Success**
+
+`Report old strategy, new strategy, reason, and confirm active commit stayed unchanged.`
+
+**Session**
+
+`New task session`
+
+**Delivery target**
+
+Use `No delivery` during testing, or choose a channel when you want reports.
+
+**Execution**
+
+Use `Auto` or `Agent turn`. Use `Skill-only` only for exact deterministic
+mining tool calls.
+
+**Memory**
+
+Use `None` for strict isolated tests. Use `Session summary` or `Agent` only
+when you intentionally want prior context.
+
+**Skill access**
+
+Use `Narrow selected skills` with `mining` only.
+
+**Ask Agents**
+
+Keep Ask Agents off for normal strategy runs. Use Consult/Parallel only when
+you want other local Agents to review evidence.
+
+The `Mining strategy review` Task template pre-fills those fields. Strategy
+review is a scheduled Task because it has a recurring schedule, prompt,
+execution settings, and safety limits. Workflow templates such as mining
+readiness/start-gate review create a review flow instead of a recurring
+strategy task. The execution model is a Task with mining-only access.
 
 From the Mining page, use the `Task` button next to Strategy and Execution
 to create the same strategy-only task without leaving the mining context. The
@@ -239,13 +313,28 @@ and how SAT/rebate/net SOL moved across settled cycles.
 
 Useful mining-side Task templates:
 
-| Template                 | Scope                                                                                     |
-| ------------------------ | ----------------------------------------------------------------------------------------- |
-| `Mining strategy review` | Strategy-only review; may change strategy fields only.                                    |
-| `Mining status report`   | Read-only status, cycle, wallet balance, capital, locked, claimable, and blockers.        |
-| `Strategy A/B review`    | Strategy-only comparison across `balanced`, `top_k`, `ranked`, `crowd_aware`, `adaptive`. |
-| `Wallet reserve watch`   | Read-only reserve alert for Agent, Vault, and Mining wallets.                             |
-| `Staking claim watch`    | Read-only Fased Network staking report for bond, claimable SAT, distributor pool, vault.  |
+**`Mining strategy review`**
+
+Strategy-only review. It may change strategy fields only.
+
+**`Mining status report`**
+
+Read-only status, cycle, wallet balance, capital, locked, claimable, and
+blockers.
+
+**`Strategy A/B review`**
+
+Strategy-only comparison across `balanced`, `top_k`, `ranked`, `crowd_aware`,
+and `adaptive`.
+
+**`Wallet reserve watch`**
+
+Read-only reserve alert for Agent, Vault, and Mining wallets.
+
+**`Staking claim watch`**
+
+Read-only Fased Network staking report for bond, claimable SAT, distributor
+pool, and vault.
 
 Do not use Task templates for capital funding, withdraw, wallet sends, bond
 top-up, custody, or Mining start/stop. Those remain page-owned actions with their
@@ -284,12 +373,18 @@ The recommended implementation pattern is:
 CLI example for an isolated strategy-only task:
 
 ```bash
+TASK_MESSAGE="Every cycle, inspect @mining status/history only. \
+You may change strategyPreset, strategyExecution, and strategyMode. \
+Do not change active commit, target max, capital, funding, withdraw, \
+claim mode, or sweep settings. Report old strategy, new strategy, reason, \
+and whether active commit changed."
+
 fased task add \
   --name "Mining strategy review" \
   --every 5m \
   --session isolated \
   --no-deliver \
-  --message "Every cycle, inspect @mining status/history only. You may change strategyPreset, strategyExecution, and strategyMode. Do not use wallet, order, send, route-action, bond, or web-search tools. Do not change active commit, target max, capital, funding, withdraw, claim mode, or sweep settings. Report old strategy, new strategy, reason, and whether active commit changed."
+  --message "$TASK_MESSAGE"
 ```
 
 Mining remains controlled from the Mining page. Scheduled or workflow-driven
@@ -332,13 +427,9 @@ Use the Mining wallet for:
 - miner claim and recovery
 - optional SAT sweep after claim
 
-Do not use it for:
-
-- ordinary chat sends
-- Marketplace checkout or seller payment flows
-- optional route actions or recurring wallet actions
-- Fased Network bond authority
-- long-term Vault storage
+Use Agent wallets for ordinary chat sends, Marketplace payments, optional route
+actions, and recurring wallet actions. Use a Vault wallet for Fased Network bond
+authority and long-term storage.
 
 ## Related docs
 

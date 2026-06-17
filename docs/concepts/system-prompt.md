@@ -31,7 +31,9 @@ The prompt is intentionally compact and uses fixed sections:
 - **Runtime**: host, OS, node, model, repo root (when detected), thinking level (one line).
 - **Reasoning**: current visibility level + /reasoning toggle hint.
 
-Safety guardrails in the system prompt are advisory. They guide model behavior but do not enforce policy. Use tool policy, exec approvals, sandboxing, and channel allowlists for hard enforcement; operators can disable these by design.
+Safety guardrails in the system prompt are advisory. They guide model behavior,
+but hard enforcement comes from tool policy, exec approvals, sandboxing, and
+channel allowlists. Operators can change or disable those controls by design.
 
 ## Prompt modes
 
@@ -53,7 +55,8 @@ Context** instead of **Group Chat Context**.
 
 ## Workspace bootstrap injection
 
-Bootstrap files are trimmed and appended under **Project Context** so the model sees identity and profile context without needing explicit reads:
+Bootstrap files are trimmed and appended under **Project Context** so the model
+sees identity and profile context without needing explicit reads:
 
 - `AGENTS.md`
 - `SOUL.md`
@@ -84,7 +87,9 @@ are filtered out to keep the sub-agent context small).
 Internal hooks can intercept this step via `agent:bootstrap` to mutate or replace
 the injected bootstrap files (for example swapping `SOUL.md` for an alternate persona).
 
-To inspect how much each injected file contributes (raw vs injected, truncation, plus tool schema overhead), use `/context list` or `/context detail`. See [Context](/concepts/context).
+To inspect how much each injected file contributes, including raw vs injected
+size, truncation, and tool schema overhead, use `/context list` or
+`/context detail`. See [Context](/concepts/context).
 
 ## Time handling
 

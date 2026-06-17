@@ -17,7 +17,7 @@ Gateway. Use **Agent > Skills** when you only need instructions. Use **Agent >
 Services** when you only need credentials for an existing service.
 
 ```mermaid
-flowchart LR
+flowchart TD
   install["Install / enable plugin"] --> manifest["fased.plugin.json"]
   manifest --> validate["Config validation"]
   validate --> gateway["Gateway loads plugin"]
@@ -40,14 +40,18 @@ flowchart LR
 
 ## Where Plugin Setup Lives
 
-| Need                                      | Use                                             |
-| ----------------------------------------- | ----------------------------------------------- |
-| Install, enable, disable, update, inspect | **Extensions** or `fased plugins ...`           |
-| Channel account setup                     | **Agent > Channels**                            |
-| Agent tool allow/deny                     | **Agent > Tools**                               |
-| Skill access and dependency setup         | **Agent > Skills**                              |
-| Provider sign-in/API key                  | **Agent > Models**                              |
-| Raw plugin config                         | **Advanced > Config** when no focused UI exists |
+- Install, enable, disable, update, inspect:
+  **Extensions** or `fased plugins ...`.
+- Channel account setup:
+  **Agent > Channels**.
+- Agent tool allow/deny:
+  **Agent > Tools**.
+- Skill access and dependency setup:
+  **Agent > Skills**.
+- Provider sign-in/API key:
+  **Agent > Models**.
+- Raw plugin config:
+  **Advanced > Config** when no focused UI exists.
 
 Plugins are runtime extensions. They do not automatically grant a selected Agent
 permission to use every tool, skill, channel, or wallet-related path they expose.
@@ -83,15 +87,20 @@ Restart the Gateway after changing runtime plugin state.
 
 ## What A Plugin Can Provide
 
-| Capability      | Example                                    | User setup surface             |
-| --------------- | ------------------------------------------ | ------------------------------ |
-| Channel runtime | Zalo Personal, external chat adapters      | Agent > Channels               |
-| Agent tool      | workflow helper, voice-call tool           | Agent > Tools                  |
-| Skill pack      | plugin-owned `skills/<name>/SKILL.md`      | Agent > Skills                 |
-| Provider auth   | OAuth or token setup for a model provider  | Agent > Models                 |
-| Gateway method  | `pluginId.status`, `pluginId.action`       | Plugin-specific docs / CLI     |
-| Slash command   | `/plugin-command ...` without a model turn | Chat/channel command surface   |
-| Hook            | lifecycle/event hook registered by plugin  | Plugin lifecycle, not Hooks UI |
+- Channel runtime, such as Zalo Personal or external chat adapters.
+  Setup surface: Agent > Channels.
+- Agent tool, such as a workflow helper or voice-call tool.
+  Setup surface: Agent > Tools.
+- Skill pack, such as plugin-owned `skills/<name>/SKILL.md`.
+  Setup surface: Agent > Skills.
+- Provider auth, such as OAuth or token setup for a model provider.
+  Setup surface: Agent > Models.
+- Gateway method, such as `pluginId.status` or `pluginId.action`.
+  Setup surface: plugin-specific docs or CLI.
+- Slash command, such as `/plugin-command ...` without a model turn.
+  Setup surface: chat/channel command surface.
+- Hook, such as a lifecycle/event hook registered by the plugin.
+  Setup surface: plugin lifecycle, not Hooks UI.
 
 Channel plugins put account config under `channels.<id>`, not
 `plugins.entries.<id>.config`, because Channels owns account setup and routing.

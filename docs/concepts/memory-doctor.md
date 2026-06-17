@@ -69,7 +69,7 @@ live write-capable Memory Doctor RPCs. Both require `operator.admin`.
 ## Diagnostic Flow
 
 ```mermaid
-flowchart LR
+flowchart TD
   A[Inventory] --> B[Validate]
   B --> C[Repair preview]
   C --> D{Operator executes?}
@@ -170,9 +170,9 @@ Focused tests lock the boundary:
 - `src/memory/repair-preview-redaction-regression.test.ts` verifies preview
   generation does not copy transcript/body text.
 - `src/cli/memory-cli.test.ts` verifies CLI `doctor --json`, including
-  inventory and validation sections. It verifies this contract: each report contains only
-  `agentId`, `inventory`, `validation`, and `repairPreview`; it also verifies
-  repair execution requires `--yes`.
+  inventory and validation sections. Each report contains only `agentId`,
+  `inventory`, `validation`, and `repairPreview`; repair execution also
+  requires `--yes`.
 - `ui/src/ui/controllers/debug.test.ts` strips unsafe transcript/body or
   executable fields before state storage.
 - `ui/src/ui/views/debug.test.ts` snapshots the visible gated-execute dashboard

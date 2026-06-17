@@ -9,9 +9,13 @@ title: LINE
 
 # LINE
 
-Use LINE when you need a supported bot path for direct chats, groups, and richer message cards in the LINE ecosystem. The gateway receives inbound events on a webhook endpoint and signs outbound calls with your channel credentials.
+Use LINE when you need a supported bot path for direct chats, groups, and richer
+message cards in the LINE ecosystem. The gateway receives inbound events on a
+webhook endpoint and signs outbound calls with your channel credentials.
 
-Status: bundled channel extension. DMs, groups, media, locations, Flex messages, template messages, and quick replies are supported. Reactions and threads are not.
+Status: bundled channel extension. DMs, groups, media, locations, Flex
+messages, template messages, and quick replies are supported. Reactions and
+threads are not supported.
 
 ## Setup from Agent > Channels
 
@@ -24,7 +28,8 @@ if the UI reports that the runtime still needs to load.
 
 ## Setup
 
-You need one Messaging API channel in the LINE Developers console and one HTTPS endpoint that LINE can call back into on the Fased gateway.
+You need one Messaging API channel in the LINE Developers console and one HTTPS
+endpoint that LINE can call back into on the Fased gateway.
 
 1. Create a LINE Developers account and open the Console:
    [https://developers.line.biz/console/](https://developers.line.biz/console/)
@@ -38,7 +43,8 @@ You need one Messaging API channel in the LINE Developers console and one HTTPS 
 https://gateway-host/line/webhook
 ```
 
-The gateway responds to LINE’s webhook verification (GET) and inbound events (POST).
+The gateway responds to LINE's webhook verification (GET) and inbound events
+(POST).
 If you need a custom path, set `channels.line.webhookPath` or
 `channels.line.accounts.<id>.webhookPath` and update the URL accordingly.
 
@@ -112,7 +118,8 @@ Allowlists and policies:
 - `channels.line.groupPolicy`: `allowlist | open | disabled`
 - `channels.line.groupAllowFrom`: allowlisted LINE user IDs for groups
 - Per-group overrides: `channels.line.groups.<groupId>.allowFrom`
-- Runtime note: if `channels.line` is completely missing, runtime falls back to `groupPolicy="allowlist"` for group checks (even if `channels.defaults.groupPolicy` is set).
+- Runtime note: if `channels.line` is completely missing, runtime falls back to
+  `groupPolicy="allowlist"` for group checks.
 
 LINE IDs are case-sensitive. Valid IDs look like:
 

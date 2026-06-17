@@ -1,6 +1,8 @@
 ---
 title: "Security Test Report"
-summary: "Maintained security evidence for gateway access, wallet custody, passkeys, split-key policy, skills, tasks, and SAT maintainer operations."
+summary: >-
+  Maintained security evidence for gateway access, wallet custody, passkeys,
+  split-key policy, skills, tasks, and SAT maintainer operations.
 read_when:
   - Reviewing a Fased host before exposing remote access
   - Checking wallet/passkey/split-key policy before unattended operation
@@ -16,18 +18,28 @@ for unattended wallet, SAT mining, or Fased Network operation.
 
 ## Current evidence status
 
-| Area                           | Evidence status          | Notes                                                                                                                                                          |
-| ------------------------------ | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Gateway and node access        | Covered                  | Host checks and private-access guidance exist. Operator must verify their own network exposure.                                                                |
-| Signer and wallet key safety   | Covered                  | Signer doctor, socket/file permissions, wallet status, and no-key-output checks.                                                                               |
-| Wallet role separation         | Covered                  | Agent, Mining, and Vault roles are separate; generic skills must not reach Mining or Vault wallets.                                                            |
-| Passkey controls               | Covered                  | Wallet Control Passkey mode, first enrollment, approval, and removal behavior have regression coverage.                                                        |
-| Split-key / Vault security     | Covered                  | Vault custody state and manual signing window behavior are tested as Vault policy, not generic passkey state.                                                  |
-| Agent skills and wallet grants | Covered                  | Skill install/allowlist is separate from Wallet > Skill Grants. Denied actions fail closed.                                                                    |
-| Tasks and automation           | Covered                  | Saved task definitions are separate from run history; mining strategy tasks are strategy-only.                                                                 |
-| SAT mining runtime             | Covered on devnet        | Max-capital targets, restart continuity, commit downsizing, and cycle-claim recovery have regression and live evidence.                                        |
-| SAT protocol maintainer        | Partial / drill required | Primary maintainer behavior and safe fixed-recipient lanes are documented. Standby, alert delivery, and cleanup backlog evidence must be rerun per deployment. |
-| Public hosting posture         | Operator-specific        | Every hosted install must rerun network, auth, firewall, signer, and alert checks.                                                                             |
+- Gateway and node access: **covered**. Host checks and private-access guidance
+  exist. Operators must verify their own network exposure.
+- Signer and wallet key safety: **covered**. Signer doctor, socket/file
+  permissions, wallet status, and no-key-output checks exist.
+- Wallet role separation: **covered**. Agent, Mining, and Vault roles are
+  separate; generic skills must not reach Mining or Vault wallets.
+- Passkey controls: **covered**. Wallet Control Passkey mode, first enrollment,
+  approval, and removal behavior have regression coverage.
+- Split-key / Vault security: **covered**. Vault custody state and manual signing
+  windows are tested as Vault policy, not generic passkey state.
+- Agent skills and wallet grants: **covered**. Skill install/allowlist is
+  separate from Wallet > Skill Grants. Denied actions fail closed.
+- Tasks and automation: **covered**. Saved task definitions are separate from run
+  history; mining strategy tasks are strategy-only.
+- SAT mining runtime: **covered on devnet**. Max-capital targets, restart
+  continuity, commit downsizing, and cycle-claim recovery have regression and
+  live evidence.
+- SAT protocol maintainer: **partial / drill required**. Primary maintainer
+  behavior and safe fixed-recipient lanes are documented. Standby, alert
+  delivery, and cleanup backlog evidence must be rerun per deployment.
+- Public hosting posture: **operator-specific**. Every hosted install must rerun
+  network, auth, firewall, signer, and alert checks.
 
 ## What was tested
 

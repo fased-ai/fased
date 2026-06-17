@@ -8,7 +8,9 @@ title: "approvals"
 
 # `fased approvals`
 
-Manage exec approvals for the local machine, the gateway host, or a connected node host. By default the command edits the local approvals file on disk. Use `--gateway` to target the gateway, or `--node` to target a specific node.
+Manage exec approvals for the local machine, the gateway host, or a connected
+node host. By default the command edits the local approvals file on disk. Use
+`--gateway` to target the gateway, or `--node` to target a specific node.
 
 Browser equivalents: **Agent > Tools** for per-Agent tool access and
 **Advanced > Nodes** for node host diagnostics. The CLI remains the precise way

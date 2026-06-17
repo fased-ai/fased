@@ -33,16 +33,17 @@ pnpm check:docs
 
 What this covers:
 
-| Command                      | Coverage                                                                                             |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `pnpm check`                 | Formatting, lint, docs temp guards, auth/channel boundary guards, Swift env-policy generation check. |
-| `pnpm build`                 | TypeScript bundle, plugin SDK d.ts, protocol/build metadata, canvas/export template copies.          |
-| `pnpm ui:build`              | Control UI production build.                                                                         |
-| `pnpm test:fast`             | Unit suite through `vitest.unit.config.ts`.                                                          |
-| `pnpm test:ui`               | Control UI test suite plus raw-window-open guard.                                                    |
-| `pnpm test:smoke:agent-flow` | Composite Provider -> Agent -> Skill -> Chat -> Task -> Memory -> Channel delivery smoke lane.       |
-| `pnpm check:docs`            | Docs formatting, markdown lint, and internal link audit.                                             |
-| `pnpm exec tsc --noEmit`     | Repository TypeScript gate without emitting files.                                                   |
+- `pnpm check`: formatting, lint, docs temp guards, auth/channel boundary
+  guards, and Swift env-policy generation check.
+- `pnpm build`: TypeScript bundle, plugin SDK d.ts, protocol/build metadata,
+  and canvas/export template copies.
+- `pnpm ui:build`: Control UI production build.
+- `pnpm test:fast`: unit suite through `vitest.unit.config.ts`.
+- `pnpm test:ui`: Control UI test suite plus raw-window-open guard.
+- `pnpm test:smoke:agent-flow`: composite Provider -> Agent -> Skill -> Chat
+  -> Task -> Memory -> Channel delivery smoke lane.
+- `pnpm check:docs`: docs formatting, markdown lint, and internal link audit.
+- `pnpm exec tsc --noEmit`: repository TypeScript gate without emitting files.
 
 If the default Gateway port is occupied from local work, use:
 

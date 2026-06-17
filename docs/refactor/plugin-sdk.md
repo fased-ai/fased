@@ -24,7 +24,7 @@ plugin code should use the Fased import path only.
 ## Target Boundary
 
 ```mermaid
-flowchart LR
+flowchart TD
   plugin["Plugin package"] --> sdk["fased/plugin-sdk"]
   plugin --> runtime["Injected runtime API"]
   sdk --> types["Types + config helpers"]
@@ -66,20 +66,18 @@ that runtime instead of importing internal source files.
 
 Runtime groups should stay narrow:
 
-| Runtime group      | Purpose                                     |
-| ------------------ | ------------------------------------------- |
-| `channel.text`     | chunking, command detection, text limits    |
-| `channel.reply`    | reply dispatch and buffered delivery        |
-| `channel.routing`  | channel/account/peer session routing        |
-| `channel.pairing`  | pairing replies and allow-from reads        |
-| `channel.media`    | remote media fetch and saved media buffers  |
-| `channel.mentions` | mention regex and matching helpers          |
-| `channel.groups`   | group policy and require-mention resolution |
-| `channel.debounce` | inbound debounce helpers                    |
-| `channel.commands` | command authorization helpers               |
-| `logging`          | plugin logger access                        |
-| `state`            | state directory resolution                  |
-| `helpers.sessions` | read-only session status/metadata           |
+- `channel.text`: chunking, command detection, and text limits.
+- `channel.reply`: reply dispatch and buffered delivery.
+- `channel.routing`: channel, account, and peer session routing.
+- `channel.pairing`: pairing replies and allow-from reads.
+- `channel.media`: remote media fetch and saved media buffers.
+- `channel.mentions`: mention regex and matching helpers.
+- `channel.groups`: group policy and require-mention resolution.
+- `channel.debounce`: inbound debounce helpers.
+- `channel.commands`: command authorization helpers.
+- `logging`: plugin logger access.
+- `state`: state directory resolution.
+- `helpers.sessions`: read-only session status and metadata.
 
 ## Session Helper Rule
 

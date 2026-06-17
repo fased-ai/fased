@@ -25,7 +25,7 @@ Fased resolves a run in this order:
    the current provider route is exhausted for a failover-worthy error.
 
 ```mermaid
-flowchart LR
+flowchart TD
   A["Agent model"] --> B["Provider route"]
   B --> C["Auth profile order"]
   C --> D["Run"]
@@ -39,7 +39,9 @@ Related:
 
 - `agents.defaults.models` is the allowlist or catalog of models Fased can use, plus aliases.
 - `agents.defaults.imageModel` is used **only when** the primary model can't accept images.
-- Per-agent defaults can override `agents.defaults.model` via `agents.list[].model` plus bindings (see [/concepts/multi-agent](/concepts/multi-agent)).
+- Per-agent defaults can override `agents.defaults.model` via
+  `agents.list[].model` plus bindings. See
+  [/concepts/multi-agent](/concepts/multi-agent).
 
 ## Choosing a model
 
@@ -53,7 +55,7 @@ actual job. For example:
 
 ## Setup wizard and UI setup
 
-If you don't want to hand-edit config, run the onboarding wizard:
+For setup without raw config edits, run the onboarding wizard:
 
 ```bash
 fased onboard
@@ -133,13 +135,19 @@ You can switch models for the current session without restarting:
 
 Notes:
 
-- `/model` (and `/model list`) is a compact, numbered picker (model family + available providers).
-- On Discord, `/model` and `/models` open an interactive picker with provider and model dropdowns plus a Submit step.
+- `/model` and `/model list` open a compact, numbered picker with model family
+  and available providers.
+- On Discord, `/model` and `/models` open an interactive picker with provider
+  and model dropdowns plus a Submit step.
 - `/model <#>` selects from that picker.
-- `/model status` is the detailed view (auth candidates and, when configured, provider endpoint `baseUrl` + `api` mode).
-- Model refs are parsed by splitting on the **first** `/`. Use `provider/model` when typing `/model <ref>`.
-- If the model ID itself contains `/` (OpenRouter-style), you must include the provider prefix (example: `/model openrouter/moonshotai/kimi-k2`).
-- If you omit the provider, Fased treats the input as an alias or a model for the default provider, but only when there is no `/` in the model ID.
+- `/model status` is the detailed view, including auth candidates and, when
+  configured, provider endpoint `baseUrl` plus `api` mode.
+- Model refs are parsed by splitting on the **first** `/`. Use
+  `provider/model` when typing `/model <ref>`.
+- If the model ID itself contains `/` (OpenRouter-style), include the provider
+  prefix: `/model openrouter/moonshotai/kimi-k2`.
+- If you omit the provider, Fased treats the input as an alias or a model for
+  the default provider. That only works when there is no `/` in the model ID.
 
 Full command behavior/config: [Slash commands](/tools/slash-commands).
 

@@ -1,5 +1,5 @@
 ---
-summary: "Advanced Satcoin mining operation: strategy, planner behavior, capital safety, claims, sweep policy, recovery, and telemetry."
+summary: "Advanced Satcoin mining operation for strategy, capital safety, claims, sweeps, recovery, and telemetry."
 read_when:
   - You already understand the basic Mining page
   - You want to tune Satcoin mining strategy, automation, recovery, or history review
@@ -13,22 +13,23 @@ sidebarTitle: "Advanced mining"
 Advanced mining is about keeping the loop stable while you tune capital posture,
 strategy, claim, sweep, and recovery.
 
-Start here after the singleton Mining wallet is configured, funded, initialized, and already completing small cycles.
+Start here after the singleton Mining wallet is configured, funded,
+initialized, and already completing small cycles.
 
 ## Operator model
 
 ```mermaid
-flowchart LR
-  Wallet["mining wallet"] --> Capital["miner capital"]
-  Capital --> Target["target max"]
-  Capital --> Safe["safe commit"]
-  Safe --> Active["active commit"]
-  Active --> Planner["strategy planner"]
-  Planner --> Submit["cycle submit"]
-  Submit --> Settle["settlement"]
-  Settle --> Claim["claim Satcoin + rebate"]
-  Claim --> Sweep["optional sweep"]
-  Sweep --> Bond["bond Vault or reserve"]
+flowchart TD
+  Wallet["Mining wallet"] --> Capital["Miner capital"]
+  Capital --> Target["Target max"]
+  Capital --> Safe["Safe commit"]
+  Safe --> Active["Active commit"]
+  Active --> Planner["Strategy planner"]
+  Planner --> Submit["Cycle submit"]
+  Submit --> Settle["Settlement"]
+  Settle --> Claim["Claim Satcoin + rebate"]
+  Claim --> Sweep["Optional sweep"]
+  Sweep --> Bond["Bond Vault or reserve"]
 ```
 
 Read it like this:
@@ -46,20 +47,21 @@ Read it like this:
 - claim mints Satcoin and accounts for SOL rebate
 - sweep is optional post-claim wallet hygiene
 
-Mining should stay separate from ordinary payment sends and from long-lived bond storage.
+Keep mining separate from ordinary payment sends and long-lived bond storage.
 
 ## Cycle loop
 
-Satcoin mining is cycle-native. A cycle is the five-minute participation window that the runtime reads, submits into, settles, and later claims from.
+Satcoin mining is cycle-native. A cycle is the five-minute participation window
+that the runtime reads, submits into, settles, and later claims from.
 
 ```mermaid
-flowchart LR
-  A["readiness"] --> B["capital"]
-  B --> C["plan"]
-  C --> D["submit"]
-  D --> E["settle"]
-  E --> F["claim"]
-  F --> G["close + history"]
+flowchart TD
+  Readiness["Readiness"] --> Capital["Capital"]
+  Capital --> Plan["Plan"]
+  Plan --> Submit["Submit"]
+  Submit --> Settle["Settle"]
+  Settle --> Claim["Claim"]
+  Claim --> History["Close + history"]
 ```
 
 The Control UI and CLI show this as:
@@ -73,7 +75,9 @@ The Control UI and CLI show this as:
 - recent failures
 - worker state
 
-Do not treat `Stop` as instant unlock. `Stop` stops new cycle submits. Claim and recovery can keep running so capital already tied to submitted or pending cycles can settle, claim, close, and become withdrawable.
+`Stop` stops new cycle submits. Claim and recovery can keep running so capital
+already tied to submitted or pending cycles can settle, claim, close, and
+become withdrawable.
 
 When `Stop` finds locked capital, the page enters `Clearing`.
 
@@ -83,19 +87,26 @@ Clearing means:
 - claim and recovery workers can still run
 - locked capital can return to free capital as settlement and claim complete
 - `Resume` starts new cycle submits again
-- `Stop` is not the action to restart or accelerate clearing
 - when locked and pending capital are both clear, the page returns to `Ready`
 
-If the user funds more capital while clearing, the target can be saved, but the runtime still waits for `Resume` before submitting new cycles. If `Target max` is above `Safe commit`, the target stays saved for later and the next active update uses the current safe value.
+If the user funds more capital while clearing, the target can be saved, but the
+runtime still waits for `Resume` before submitting new cycles. If `Target max`
+is above `Safe commit`, the target stays saved for later and the next active
+update uses the current safe value.
 
 ## Capital safety
 
 There are two SOL pools.
 
-| Pool          | Meaning                                            | Operator mistake                                        |
-| ------------- | -------------------------------------------------- | ------------------------------------------------------- |
-| wallet SOL    | pays fees, rent, and signer-side transaction costs | funding capital but leaving the wallet unable to submit |
-| miner capital | protocol capital account used for cycle commit     | setting commit too close to the whole funded balance    |
+**Wallet SOL**
+
+Pays fees, rent, and signer-side transaction costs. Keep enough wallet SOL
+outside miner capital so the wallet can still submit and claim.
+
+**Miner capital**
+
+Protocol capital account used for cycle commit. Keep target commit below the
+whole funded balance so recovery and missed-cycle work still have room.
 
 Current runtime defaults:
 
@@ -151,7 +162,8 @@ Example:
 | `Safe commit 3.272`   | maximum usable now                                    |
 | `Active commit 5.975` | current on-chain commit from the last submitted cycle |
 
-This is healthy if the older cycle is still settling. The full target cannot be used until enough capital is free after settlement and claim.
+This is healthy if the older cycle is still settling. The full target can be
+used after enough capital is free from settlement and claim.
 
 Good posture:
 
@@ -185,7 +197,8 @@ active commit: small
 ```
 
 Move strategy execution to `auto` only after deterministic mining is stable.
-For launch canaries, unattended mode means deterministic mining plus automatic claim stays stable across cycles.
+For launch canaries, unattended mode means deterministic mining plus automatic
+claim stays stable across cycles.
 Keep first runs on automatic miner claim unless you are deliberately testing an
 advanced profile. `prompt` and `manual` are profile values for review or
 recovery-oriented setups; they are not a separate protocol claim path.
@@ -221,13 +234,26 @@ Auto mode can include:
 
 Fased strategy compiler modes now sit above the same protocol vector:
 
-| Compiler mode             | Meaning                                                                                                          |
-| ------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| Top-K Sparse              | choose only the strongest K buckets, set the rest to zero or a tiny floor                                        |
-| Ranked Allocation         | output ranked preferences, then convert rank into weights                                                        |
-| Adaptive Agent Allocation | review history, rebates, net SOL cost, missed cycles, crowding exposure, preset, and result before changing mode |
-| Crowd-Aware Allocation    | avoid likely overcrowded buckets and spread into underweighted buckets                                           |
-| Safe Fallback             | use deterministic balanced preset if planner, model, signer, or RPC checks fail                                  |
+**Top-K Sparse**
+
+Choose only the strongest K buckets. Set the rest to zero or a tiny floor.
+
+**Ranked Allocation**
+
+Output ranked preferences, then convert rank into weights.
+
+**Adaptive Agent Allocation**
+
+Review history, rebates, net SOL cost, missed cycles, crowding exposure,
+preset, and result before changing mode.
+
+**Crowd-Aware Allocation**
+
+Avoid likely overcrowded buckets and spread into underweighted buckets.
+
+**Safe Fallback**
+
+Use deterministic balanced preset if planner, model, signer, or RPC checks fail.
 
 These are strategy intents, not protocol changes. Each mode still compiles to
 one valid dense 25-bucket allocation vector before `sat_submit_cycle`.
@@ -318,7 +344,8 @@ Watch:
 - `lastClaimSolRebateLamports`
 - `lastClaimFeeLamports`
 
-If claim fails with an already-closed or invalid-owner style error, the runtime may record it as a no-op when the cycle was already claimed and closed.
+If claim fails with an already-closed or invalid-owner style error, the runtime
+may record it as a no-op when the cycle was already claimed and closed.
 
 ## Keeper economics
 
@@ -372,7 +399,8 @@ Use raw SAT units only when you know the decimal scale. SAT uses `11` decimals.
 
 ## Workers
 
-The mining runtime reports worker state so you can tell the difference between waiting, retrying, and failing.
+The mining runtime reports worker state so you can tell the difference between
+waiting, retrying, and failing.
 
 | Worker         | Role                                                 |
 | -------------- | ---------------------------------------------------- |
@@ -395,11 +423,11 @@ Useful worker fields:
 - `lastSelectedStage`
 - `lastSkipReason`
 
-If a worker is waiting, do not treat it as broken until the waiting reason says it is blocked.
+If a worker is waiting, read the waiting reason before treating it as blocked.
 
 ## Recovery
 
-Recovery is for blocked state, not for impatience.
+Recovery is for blocked state.
 
 Common readings:
 
@@ -489,7 +517,8 @@ Good scaling rule:
 }
 ```
 
-Use the UI or CLI for normal changes. Edit config directly only when you are operating a known server profile and can restart cleanly.
+Use the UI or CLI for normal changes. Edit config directly only when you are
+operating a known server profile and can restart cleanly.
 
 ## Advanced runbook
 

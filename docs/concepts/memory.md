@@ -14,7 +14,7 @@ Markdown files are the durable source of truth; search backends only help the
 Agent retrieve relevant snippets.
 
 ```mermaid
-flowchart LR
+flowchart TD
   Workspace[Agent workspace] --> Files[Markdown memory files]
   Session[Session archive hook] --> Files
   Files --> Index[Memory index]

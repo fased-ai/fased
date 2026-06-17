@@ -12,9 +12,11 @@ Fased’s Gateway can serve a small OpenAI-compatible Chat Completions endpoint.
 This endpoint is **disabled by default**. When disabled, the route is not served.
 
 - `POST /v1/chat/completions`
-- Same port as the Gateway (WS + HTTP multiplex): `http://<gateway-host>:<port>/v1/chat/completions`
+- Same port as the Gateway:
+  `http://<gateway-host>:<port>/v1/chat/completions`
 
-Under the hood, requests are executed as a normal Gateway agent run (same codepath as `fased agent`), so routing/permissions/config match your Gateway.
+Under the hood, requests execute as a normal Gateway agent run. Routing,
+permissions, and config match your Gateway.
 
 ## Authentication
 
@@ -24,9 +26,12 @@ Uses the Gateway auth configuration. Send a bearer token:
 
 Notes:
 
-- When `gateway.auth.mode="token"`, use `gateway.auth.token` (or `FASED_GATEWAY_TOKEN`).
-- When `gateway.auth.mode="password"`, use `gateway.auth.password` (or `FASED_GATEWAY_PASSWORD`).
-- If `gateway.auth.rateLimit` is configured and too many auth failures occur, the endpoint returns `429` with `Retry-After`.
+- When `gateway.auth.mode="token"`, use `gateway.auth.token` or
+  `FASED_GATEWAY_TOKEN`.
+- When `gateway.auth.mode="password"`, use `gateway.auth.password` or
+  `FASED_GATEWAY_PASSWORD`.
+- If `gateway.auth.rateLimit` is configured and too many auth failures occur,
+  the endpoint returns `429` with `Retry-After`.
 
 ## Choosing an agent
 
@@ -79,9 +84,11 @@ Set `gateway.http.endpoints.chatCompletions.enabled` to `false`:
 
 ## Session behavior
 
-By default the endpoint is **stateless per request** (a new session key is generated each call).
+By default, the endpoint is **stateless per request**. A new session key is
+generated for each call.
 
-If the request includes an OpenAI `user` string, the Gateway derives a stable session key from it, so repeated calls can share an agent session.
+If the request includes an OpenAI `user` string, the Gateway derives a stable
+session key from it so repeated calls can share an agent session.
 
 ## Message support
 

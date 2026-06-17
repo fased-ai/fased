@@ -1,5 +1,5 @@
 ---
-summary: "How to control wallets from Chat and paired channels with exact @wallet handles, policy, tasks, skills, Marketplace, and reviewed wallet actions."
+summary: "Control wallets from Chat and paired channels with exact @wallet handles and normal wallet policy."
 read_when:
   - You want to ask balances or send from a wallet in chat
   - You want channel commands to use the same wallet policy as the Control UI
@@ -42,12 +42,20 @@ Show SOL and SPL assets for 4ey8zYsSo9...nfXWVg5g.
 
 Supported read targets:
 
-| Target                     | Supported reads                                 |
-| -------------------------- | ----------------------------------------------- |
-| `@wallet:<id>`             | address, status, native balance, SOL/SPL assets |
-| all local wallets          | wallet list and per-wallet balances/assets      |
-| external Solana address    | read-only SOL/SPL balance and assets            |
-| external address as source | not allowed                                     |
+**`@wallet:<id>`**
+
+Address, status, native balance, and SOL/SPL assets.
+
+**All local wallets**
+
+Wallet list and per-wallet balances/assets.
+
+**External Solana address**
+
+Read-only SOL/SPL balance and assets.
+
+External addresses can be destinations or read-only balance targets. They are
+not local signing sources.
 
 ## Sends
 
@@ -143,15 +151,33 @@ Draft a buyer request for a weekly research report.
 
 Implemented chat actions:
 
-| Intent                 | Tool/action                                  |
-| ---------------------- | -------------------------------------------- |
-| Search offers/requests | `marketplace` with `action="search"`         |
-| List local offers      | `marketplace` with `action="local_offers"`   |
-| List local requests    | `marketplace` with `action="local_requests"` |
-| List orders            | `marketplace` with `action="orders"`         |
-| List payment evidence  | `marketplace` with `action="paid_invoices"`  |
-| Create offer draft     | `marketplace_offer_draft`                    |
-| Create request draft   | `marketplace_request_draft`                  |
+**Search offers/requests**
+
+Use `marketplace` with `action="search"`.
+
+**List local offers**
+
+Use `marketplace` with `action="local_offers"`.
+
+**List local requests**
+
+Use `marketplace` with `action="local_requests"`.
+
+**List orders**
+
+Use `marketplace` with `action="orders"`.
+
+**List payment evidence**
+
+Use `marketplace` with `action="paid_invoices"`.
+
+**Create offer draft**
+
+Use `marketplace_offer_draft`.
+
+**Create request draft**
+
+Use `marketplace_request_draft`.
 
 Order actions still use the Agent wallet and the adapter for that service kind.
 Chat search does not bypass checkout, wallet policy, seller evidence checks, or

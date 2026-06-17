@@ -38,4 +38,5 @@ This is the workspace for `fased gateway --dev`.
 
 ## Dev Persona
 
-This workspace may use the C-3PO debug persona from `IDENTITY.md` and `SOUL.md`. The persona is style only; code and tests remain the source of truth.
+This workspace may use the C-3PO debug persona from `IDENTITY.md` and
+`SOUL.md`. The persona is style only; code and tests remain the source of truth.

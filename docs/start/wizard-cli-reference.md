@@ -50,17 +50,24 @@ It does not install or modify anything on the remote host.
   </Step>
   <Step title="Existing config detection">
     - If `~/.fased/fased.json` exists, choose Review settings or Repair sign-in.
-    - Review settings starts from the existing config and updates explicit setup sections while preserving wallet keystores, Tailscale account/device access, gateway port assumptions, mining/bond state, and firewall state unless you edit those sections.
+    - Review settings starts from the existing config and updates explicit setup
+      sections. It preserves wallet keystores, Tailscale account/device access,
+      gateway port assumptions, mining/bond state, and firewall state unless
+      you edit those sections.
     - Re-running the wizard does not wipe durable instance setup.
     - Repair sign-in clears only selected auth/session state.
-    - Repair keeps `fased.json`, gateway token/password, gateway settings, wallet assignments, SAT mining, Fased Network, plugins, Tailscale, and firewall state.
+    - Repair keeps `fased.json`, gateway token/password, gateway settings,
+      wallet assignments, SAT mining, Fased Network, plugins, Tailscale, and
+      firewall state.
     - CLI `fased onboard --reset` defaults to `auth+sessions`; use `--reset-scope sessions|auth|auth+sessions`.
     - If config is invalid or contains legacy keys, the wizard stops and asks you to run `fased doctor` before continuing.
     - Repair uses `trash` and offers scopes:
       - Sessions only
       - Auth only
       - Auth + sessions
-    - Destructive config/state reset is not a normal onboarding path. Use the explicit admin command `fased reset --scope ...` only when you intentionally want to remove config/state.
+    - Destructive config/state reset is an explicit admin action. Use
+      `fased reset --scope ...` only when you intentionally want to remove
+      config/state.
   </Step>
   <Step title="Workspace">
     - Default `~/.fased/workspace` (configurable).
@@ -107,8 +114,10 @@ It does not install or modify anything on the remote host.
 </Steps>
 
 <Note>
-If no GUI is detected, the wizard prints SSH port-forward instructions for the Control UI instead of opening a browser.
-If Control UI assets are missing, rerun `./install.sh` from the Fased checkout; if Fased is already installed, run `fased doctor --fix` for guided repair.
+If no GUI is detected, the wizard prints SSH port-forward instructions for the
+Control UI instead of opening a browser.
+If Control UI assets are missing, rerun `./install.sh` from the Fased checkout.
+If Fased is already installed, run `fased doctor --fix` for guided repair.
 Save the printed Gateway token. It is the recovery token for a new browser,
 another machine in your tailnet, or a future `fased dashboard --no-open` link.
 </Note>
@@ -259,7 +268,12 @@ API key storage mode:
 - In non-interactive mode, `--secret-input-mode ref` is env-backed only.
   - Set the provider env var in the onboarding process environment.
   - Inline key flags (for example `--openai-api-key`) require that env var to be set; otherwise onboarding fails fast.
-  - For custom providers, non-interactive `ref` mode stores `models.providers.<id>.apiKey` as `{ source: "env", provider: "default", id: "CUSTOM_API_KEY" }`.
+  - For custom providers, non-interactive `ref` mode stores
+    `models.providers.<id>.apiKey` as:
+
+    ```json
+    { "source": "env", "provider": "default", "id": "CUSTOM_API_KEY" }
+    ```
   - In that custom-provider case, `--custom-api-key` requires `CUSTOM_API_KEY` to be set; otherwise onboarding fails fast.
 - Existing plaintext setups continue to work unchanged.
 

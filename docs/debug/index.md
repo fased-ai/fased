@@ -9,26 +9,28 @@ read_when:
 
 # Debug
 
-Debug docs cover operator and admin diagnostics. They are not the normal setup
-path for a new Agent. Start in **Agent > Models**, **Agent > Channels**,
-**Agent > Skills**, **Agent > Tools**, **Agent > Memory**, **Agent > Services**,
-and **Agent > Tasks** first. Use Debug when the friendly setup page says the
-runtime state does not match saved config, when a plugin is not loaded, or when
-you need raw evidence for support.
+Debug docs cover operator and admin diagnostics. For first setup, start in
+**Agent > Models**, **Agent > Channels**, **Agent > Skills**, **Agent > Tools**,
+**Agent > Memory**, **Agent > Services**, and **Agent > Tasks**. Use Debug when
+the setup page says runtime state does not match saved config, when a plugin is
+not loaded, or when you need raw evidence for support.
 
 ## Where to Look
 
-| Surface | UI location           | Use it for                                                                                                                                                                               |
-| ------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Config  | **Advanced > Config** | Raw `~/.fased/fased.json` escape hatch for settings that do not yet have a focused page.                                                                                                 |
-| Debug   | **Advanced > Debug**  | Ordered diagnostics, status/health/model snapshots, task/run diagnostics, provider catalog checks, plugin runtime diagnostics, memory repair preview, event log, and raw RPC inspection. |
-| Nodes   | **Advanced > Nodes**  | Paired devices, node capabilities, runtime clients, exposed command counts, pending pairings, and command exposure checks.                                                               |
-| Logs    | **Logs**              | Live gateway file logs, filters, auto-follow, export, and redacted operator troubleshooting.                                                                                             |
-| Usage   | **Usage**             | Local model usage history by Agent, provider, model, session, task, channel/source, tokens, cache tokens, and priced/unpriced cost.                                                      |
+- **Advanced > Config**: raw `~/.fased/fased.json` escape hatch for settings
+  that do not yet have a focused page.
+- **Advanced > Debug**: ordered diagnostics, status/health/model snapshots,
+  task/run diagnostics, provider catalog checks, plugin runtime diagnostics,
+  memory repair preview, event log, and raw RPC inspection.
+- **Advanced > Nodes**: paired devices, node capabilities, runtime clients,
+  exposed command counts, pending pairings, and command exposure checks.
+- **Logs**: live gateway file logs, filters, auto-follow, export, and redacted
+  operator troubleshooting.
+- **Usage**: local model usage history by Agent, provider, model, session, task,
+  channel/source, tokens, cache tokens, and priced/unpriced cost.
 
-Normal users should not need to open Advanced for first setup. If you are trying
-to connect a model, channel, skill, service, wallet, or task, use the focused
-Agent or runtime page instead.
+First setup should stay on the focused Agent or runtime page. Use those pages
+for models, channels, skills, services, wallets, and tasks.
 
 ## Common Workflows
 

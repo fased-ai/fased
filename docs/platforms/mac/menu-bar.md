@@ -9,7 +9,8 @@ title: "Menu Bar"
 
 ## What is shown
 
-- We surface the current agent work state in the menu bar icon and in the first status row of the menu.
+- We surface the current agent work state in the menu bar icon and in the first
+  status row of the menu.
 - Health status is hidden while work is active; it returns when all sessions are idle.
 - The “Nodes” block in the menu lists **devices** only (paired nodes via `node.list`), not client/presence entries.
 - A “Usage” section appears under Context when local usage history data is
@@ -17,8 +18,12 @@ title: "Menu Bar"
 
 ## State model
 
-- Sessions: events arrive with `runId` (per-run) plus `sessionKey` in the payload. The “main” session is the key `main`; if absent, we fall back to the most recently updated session.
-- Priority: main always wins. If main is active, its state is shown immediately. If main is idle, the most recently active non‑main session is shown. We do not flip‑flop mid‑activity; we only switch when the current session goes idle or main becomes active.
+- Sessions: events arrive with `runId` (per-run) plus `sessionKey` in the
+  payload. The main session key is `main`; if absent, we fall back to the most
+  recently updated session.
+- Priority: main always wins. If main is active, its state is shown immediately.
+  If main is idle, the most recently active non-main session is shown. We only
+  switch when the current session goes idle or main becomes active.
 - Activity kinds:
   - `job`: high‑level command execution (`state: started|streaming|done|error`).
   - `tool`: `phase: start|result` with `toolName` and `meta/args`.
@@ -49,7 +54,8 @@ title: "Menu Bar"
 ## Status row text (menu)
 
 - While work is active: `<Session role> · <activity label>`
-  - Examples: `Main · exec: pnpm test`, `Other · read: apps/macos/Sources/FasedAgent/AppState.swift`.
+  - Examples: `Main · exec: pnpm test`,
+    `Other · read: apps/macos/Sources/FasedAgent/AppState.swift`.
 - When idle: falls back to the health summary.
 
 ## Event ingestion
@@ -75,8 +81,10 @@ title: "Menu Bar"
 
 ## Testing checklist
 
-- Trigger main session job: verify icon switches immediately and status row shows main label.
-- Trigger non‑main session job while main idle: icon/status shows non‑main; stays stable until it finishes.
+- Trigger main session job: verify icon switches immediately and status row
+  shows main label.
+- Trigger non-main session job while main idle: icon/status shows non-main and
+  stays stable until it finishes.
 - Start main while other active: icon flips to main instantly.
 - Rapid tool bursts: ensure badge does not flicker (TTL grace on tool results).
 - Health row reappears once all sessions idle.

@@ -80,7 +80,8 @@ fased devices revoke --device <deviceId> --role node
 
 ## Common options
 
-- `--url <url>`: Gateway WebSocket URL (defaults to `gateway.remote.url` when configured).
+- `--url <url>`: Gateway WebSocket URL. Defaults to `gateway.remote.url` when
+  configured.
 - `--token <token>`: Gateway token (if required).
 - `--password <password>`: Gateway password (password auth).
 - `--timeout <ms>`: RPC timeout.
@@ -94,4 +95,5 @@ is an error.
 
 - These commands require `operator.pairing` (or `operator.admin`) scope.
 - `devices clear` is intentionally gated by `--yes`.
-- If pairing scope is unavailable on local loopback (and no explicit `--url` is passed), list/approve can use a local pairing fallback.
+- If pairing scope is unavailable on local loopback and no explicit `--url` is
+  passed, list/approve can use a local pairing fallback.

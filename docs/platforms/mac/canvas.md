@@ -61,7 +61,8 @@ fased nodes canvas snapshot --node <id>
 
 Notes:
 
-- `canvas.navigate` accepts **local canvas paths**, `http(s)` URLs, and `file://` URLs.
+- `canvas.navigate` accepts **local canvas paths**, `http(s)` URLs, and
+  `file://` URLs.
 - If you pass `"/"`, the Canvas shows the local scaffold or `index.html`.
 
 ## A2UI in Canvas
@@ -87,21 +88,16 @@ Canvas currently accepts **A2UI v0.8** server→client messages:
 
 `createSurface` (v0.9) is not supported.
 
-CLI example:
-
-```bash
-cat > /tmp/a2ui-v0.8.jsonl <<'EOFA2'
-{"surfaceUpdate":{"surfaceId":"main","components":[{"id":"root","component":{"Column":{"children":{"explicitList":["title","content"]}}}},{"id":"title","component":{"Text":{"text":{"literalString":"Canvas (A2UI v0.8)"},"usageHint":"h1"}}},{"id":"content","component":{"Text":{"text":{"literalString":"If you can read this, A2UI push works."},"usageHint":"body"}}}]}}
-{"beginRendering":{"surfaceId":"main","root":"root"}}
-EOFA2
-
-fased nodes canvas a2ui push --jsonl /tmp/a2ui-v0.8.jsonl --node <id>
-```
-
 Quick smoke:
 
 ```bash
 fased nodes canvas a2ui push --node <id> --text "Hello from A2UI"
+```
+
+Structured JSONL payloads can also be sent with `--jsonl`:
+
+```bash
+fased nodes canvas a2ui push --jsonl /tmp/a2ui-v0.8.jsonl --node <id>
 ```
 
 ## Triggering agent runs from Canvas
@@ -120,6 +116,7 @@ The app prompts for confirmation unless a valid key is provided.
 
 ## Security notes
 
-- Canvas scheme blocks directory traversal; files must live under the session root.
+- Canvas scheme blocks directory traversal; files must live under the session
+  root.
 - Local Canvas content uses a custom scheme (no loopback server required).
 - External `http(s)` URLs are allowed only when explicitly navigated.

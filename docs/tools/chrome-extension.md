@@ -9,7 +9,9 @@ title: "Chrome Extension"
 
 # Chrome extension (browser relay)
 
-The Fased Chrome extension lets the agent control your **existing Chrome tabs** (your normal Chrome window) instead of launching a separate fased-managed Chrome profile.
+The Fased Chrome extension lets the agent control your **existing Chrome tabs**
+in your normal Chrome window instead of launching a separate fased-managed Chrome
+profile.
 
 Attach/detach happens via a **single Chrome toolbar button**.
 
@@ -18,7 +20,8 @@ Attach/detach happens via a **single Chrome toolbar button**.
 There are three parts:
 
 - **Browser control service** (Gateway or node): the API the agent/tool calls (via the Gateway)
-- **Local relay server** (loopback CDP): bridges between the control server and the extension (`http://127.0.0.1:18792` by default)
+- **Local relay server** (loopback CDP): bridges between the control server and
+  the extension. Default: `http://127.0.0.1:18792`.
 - **Chrome MV3 extension**: attaches to the active tab using `chrome.debugger` and pipes CDP messages to the relay
 
 Fased then controls the attached tab through the normal `browser` tool surface (selecting the right profile).
@@ -166,7 +169,9 @@ Debugging: `fased sandbox explain`
 
 `fased browser extension path` prints the **installed** on-disk directory containing the extension files.
 
-The CLI intentionally does **not** print a `node_modules` path. Always run `fased browser extension install` first to copy the extension to a stable location under your Fased state directory.
+The CLI intentionally does **not** print a `node_modules` path. Always run
+`fased browser extension install` first to copy the extension to a stable
+location under your Fased state directory.
 
 If you move or delete that install directory, Chrome will mark the extension as broken until you reload it from a valid path.
 

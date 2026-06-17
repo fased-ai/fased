@@ -8,7 +8,12 @@ title: "Skills"
 
 # Skills
 
-Fased uses **[AgentSkills](https://agentskills.io)-compatible** skill folders to teach the agent how to use tools. Each skill is a directory containing a `SKILL.md` with YAML frontmatter and instructions. Fased loads **bundled skills** plus optional local overrides, and filters them at load time based on environment, config, and binary presence.
+Fased uses **[AgentSkills](https://agentskills.io)-compatible** skill folders to
+teach the agent how to use tools. Each skill is a directory containing a
+`SKILL.md` with YAML frontmatter and instructions.
+
+Fased loads **bundled skills** plus optional local overrides, and filters them at
+load time based on environment, config, and binary presence.
 
 ## Locations and precedence
 
@@ -337,8 +342,11 @@ Notes:
 - Optional frontmatter keys:
   - `homepage` — URL surfaced as “Website” in the skill detail UI (also supported via `metadata.fased.homepage`).
   - `user-invocable` — `true|false` (default: `true`). When `true`, the skill is exposed as a user slash command.
-  - `disable-model-invocation` — `true|false` (default: `false`). When `true`, the skill is excluded from the model prompt (still available via user invocation).
-  - `command-dispatch` — `tool` (optional). When set to `tool`, the slash command bypasses the model and dispatches directly to a tool.
+  - `disable-model-invocation` — `true|false` (default: `false`). When `true`,
+    the skill is excluded from the model prompt but still available via user
+    invocation.
+  - `command-dispatch` — `tool` (optional). When set to `tool`, the slash
+    command bypasses the model and dispatches directly to a tool.
   - `command-tool` — tool name to invoke when `command-dispatch: tool` is set.
   - `command-arg-mode` — `raw` (default). For tool dispatch, forwards the raw args string to the tool (no core parsing).
 
@@ -433,7 +441,12 @@ Notes:
   re-checks those binaries after the command exits. Exit code `0` is not enough:
   if the binary is still missing from gateway `PATH`, the install is reported as
   failed with a PATH hint.
-- Download installs: `url` (required), `archive` (`tar.gz` | `tar.bz2` | `zip`), `extract` (default: auto when archive detected), `stripComponents`, `targetDir` (default: `~/.fased/tools/<skillKey>`).
+- Download installs:
+  - `url` (required)
+  - `archive` (`tar.gz` | `tar.bz2` | `zip`)
+  - `extract` (default: auto when archive detected)
+  - `stripComponents`
+  - `targetDir` (default: `~/.fased/tools/<skillKey>`)
 
 If no `metadata.fased` is present, the skill is always eligible (unless
 disabled in config or blocked by `skills.allowBundled` for bundled skills).
@@ -493,19 +506,31 @@ This is **scoped to the agent run**, not a global shell environment.
 
 ## Session snapshot (performance)
 
-Fased snapshots the eligible skills **when a session starts** and reuses that list for subsequent turns in the same session. Changes to skills or config take effect on the next new session.
+Fased snapshots the eligible skills **when a session starts** and reuses that
+list for subsequent turns in the same session. Changes to skills or config take
+effect on the next new session.
 
-Skills can also refresh mid-session when the skills watcher is enabled or when a new eligible remote node appears (see below). Think of this as a **hot reload**: the refreshed list is picked up on the next agent turn.
+Skills can also refresh mid-session when the skills watcher is enabled or when a
+new eligible remote node appears. Think of this as a **hot reload**: the
+refreshed list is picked up on the next agent turn.
 
 ## Remote macOS nodes (Linux gateway)
 
-If the Gateway is running on Linux but a **macOS node** is connected **with `system.run` allowed** (Exec approvals security not set to `deny`), Fased can treat macOS-only skills as eligible when the required binaries are present on that node. The agent should execute those skills via the `nodes` tool (typically `nodes.run`).
+If the Gateway is running on Linux but a **macOS node** is connected with
+`system.run` allowed, Fased can treat macOS-only skills as eligible when the
+required binaries are present on that node.
 
-This relies on the node reporting its command support and on a bin probe via `system.run`. If the macOS node goes offline later, the skills remain visible; invocations may fail until the node reconnects.
+This requires Exec approvals security to be something other than `deny`. The
+agent should execute those skills through the `nodes` tool, usually `nodes.run`.
+
+This relies on the node reporting its command support and on a bin probe through
+`system.run`. If the macOS node goes offline later, the skills remain visible;
+invocations may fail until the node reconnects.
 
 ## Skills watcher (auto-refresh)
 
-By default, Fased watches skill folders and bumps the skills snapshot when `SKILL.md` files change. Configure this under `skills.load`:
+By default, Fased watches skill folders and bumps the skills snapshot when
+`SKILL.md` files change. Configure this under `skills.load`:
 
 ```json5
 {
@@ -520,7 +545,9 @@ By default, Fased watches skill folders and bumps the skills snapshot when `SKIL
 
 ## Token impact (skills list)
 
-When skills are eligible, Fased injects a compact XML list of available skills into the system prompt through the embedded agent prompt formatter. The cost is deterministic:
+When skills are eligible, Fased injects a compact XML list of available skills
+into the system prompt through the embedded agent prompt formatter. The cost is
+deterministic:
 
 - **Base overhead (only when ≥1 skill):** 195 characters.
 - **Per skill:** 97 characters + the length of the XML-escaped `<name>`, `<description>`, and `<location>` values.
@@ -534,7 +561,9 @@ total = 195 + Σ (97 + len(name_escaped) + len(description_escaped) + len(locati
 Notes:
 
 - XML escaping expands `& < > " '` into entities (`&amp;`, `&lt;`, etc.), increasing length.
-- Token counts vary by model tokenizer. A rough OpenAI-style estimate is ~4 chars/token, so **97 chars ≈ 24 tokens** per skill plus your actual field lengths.
+- Token counts vary by model tokenizer. A rough OpenAI-style estimate is
+  ~4 chars/token, so **97 chars is about 24 tokens** per skill plus your actual
+  field lengths.
 
 ## Managed skills lifecycle
 

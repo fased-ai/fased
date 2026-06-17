@@ -9,7 +9,8 @@ title: "Context"
 
 # Context
 
-Context is everything Fased sends to the model for one run. It is bounded by the model's context window.
+Context is everything Fased sends to the model for one run. It is bounded by
+the model's context window.
 
 Beginner mental model:
 
@@ -18,7 +19,8 @@ Beginner mental model:
 - **Tool calls/results + attachments**: command output, file reads, images/audio, etc.
 - **Run metadata**: channel/session routing, sender context, sandbox state, and runtime settings when relevant.
 
-Context is not the same thing as memory. Memory can be stored on disk and reloaded later; context is what is inside the model's current window for this run.
+Context is the model's current window for this run. Memory can be stored on disk
+and retrieved later.
 
 ## Quick start (inspect context)
 
@@ -121,9 +123,13 @@ For full Agent runs, Fased injects recognized workspace files when present:
 - `MEMORY.md`
 - `memory.md`
 
-Large files are truncated per file using `agents.defaults.bootstrapMaxChars` (default `20000` chars). Fased also enforces a total bootstrap injection cap across files with `agents.defaults.bootstrapTotalMaxChars` (default `150000` chars). `/context` shows raw vs injected sizes and whether truncation happened.
+Large files are truncated per file using `agents.defaults.bootstrapMaxChars`
+(default `20000` chars). Fased also enforces a total bootstrap injection cap
+across files with `agents.defaults.bootstrapTotalMaxChars` (default `150000`
+chars). `/context` shows raw vs injected sizes and whether truncation happened.
 
-Lightweight runs may use a smaller context set. Heartbeat runs keep `HEARTBEAT.md`; sub-agent and cron sessions use a reduced bootstrap allowlist.
+Lightweight runs may use a smaller context set. Heartbeat runs keep
+`HEARTBEAT.md`; sub-agent and cron sessions use a reduced bootstrap allowlist.
 
 ## Skills: what is injected vs loaded on-demand
 
@@ -136,7 +142,8 @@ Skill instructions are not included by default. The model is expected to read th
 Tools affect context in two ways:
 
 1. **Tool list text** in the system prompt (what you see as "Tooling").
-2. **Tool schemas** (JSON). These are sent to the model so it can call tools. They count toward context even though you do not see them as plain text.
+2. **Tool schemas** (JSON). These are sent to the model so it can call tools.
+   They count toward context even though you do not see them as plain text.
 
 `/context detail` breaks down the biggest tool schemas so you can see what dominates.
 
@@ -145,10 +152,13 @@ Tools affect context in two ways:
 Slash commands are handled by the Gateway. There are a few different behaviors:
 
 - **Standalone commands**: a message that is only `/...` runs as a command.
-- **Directives**: `/think`, `/verbose`, `/reasoning`, `/elevated`, `/model`, `/queue` are stripped before the model sees the message.
+- **Directives**: `/think`, `/verbose`, `/reasoning`, `/elevated`, `/model`,
+  and `/queue` are stripped before the model sees the message.
   - Directive-only messages persist session settings.
   - Inline directives in a normal message act as per-message hints.
-- **Inline shortcuts** (allowlisted senders only): certain `/...` tokens inside a normal message can run immediately, such as `hey /status`, and are stripped before the model sees the remaining text.
+- **Inline shortcuts** (allowlisted senders only): certain `/...` tokens inside
+  a normal message can run immediately, such as `hey /status`, and are stripped
+  before the model sees the remaining text.
 
 Details: [Slash commands](/tools/slash-commands).
 
@@ -167,6 +177,9 @@ Docs: [Session](/concepts/session), [Compaction](/concepts/compaction), [Session
 `/context` prefers the latest run-built system prompt report when available:
 
 - `System prompt (run)` = captured from the last embedded (tool-capable) run and persisted in the session store.
-- `System prompt (estimate)` = computed on the fly when no run report exists or when the current backend does not generate the report.
+- `System prompt (estimate)` = computed on the fly when no run report exists or
+  when the current backend does not generate the report.
 
-Either way, it reports sizes and top contributors. It does not dump the full system prompt or raw tool schemas unless you explicitly use the JSON report for diagnostics.
+Either way, it reports sizes and top contributors. It does not dump the full
+system prompt or raw tool schemas unless you explicitly use the JSON report for
+diagnostics.

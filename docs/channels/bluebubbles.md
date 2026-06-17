@@ -1,5 +1,5 @@
 ---
-summary: "BlueBubbles setup for the supported iMessage path on macOS, including webhooks, pairing, typing, reactions, and admin actions."
+summary: "BlueBubbles setup for the supported iMessage path on macOS."
 read_when:
   - Setting up BlueBubbles channel
   - Troubleshooting webhook pairing
@@ -9,26 +9,34 @@ title: "BlueBubbles"
 
 # BlueBubbles (macOS REST)
 
-Use BlueBubbles when you want the supported iMessage bridge in Fased. The gateway talks to the BlueBubbles macOS server over HTTP, accepts inbound events from webhook delivery, and keeps the rest of the channel rules aligned with the normal Fased DM and group model.
+Use BlueBubbles when you want the supported iMessage bridge in Fased. The
+gateway talks to the BlueBubbles macOS server over HTTP, receives inbound
+webhook events, and uses the normal Fased DM and group access model.
 
-Status: bundled channel bridge for iMessage on macOS. New iMessage deployments should start here, not on the older `imsg` path.
+Status: bundled channel bridge for iMessage on macOS. New iMessage deployments
+should start here. Use the older `imsg` path only for established installs.
 
 ## Overview
 
 - Runs on macOS via the BlueBubbles helper app ([bluebubbles.app](https://bluebubbles.app)).
-- Recommended/tested: macOS Sequoia (15). macOS Tahoe (26) works; edit is currently broken on Tahoe, and group icon updates may report success but not sync.
-- Fased talks to it through its REST API (`GET /api/v1/ping`, `POST /message/text`, `POST /chat/:id/*`).
-- Incoming messages arrive via webhooks; outgoing replies, typing indicators, read receipts, and tapbacks are REST calls.
-- Attachments and stickers are ingested as inbound media (and surfaced to the agent when possible).
-- Pairing/allowlist works the same way as other channels (`/channels/pairing` etc) with `channels.bluebubbles.allowFrom` + pairing codes.
-- Reactions are surfaced as system events just like Slack/Telegram so agents can "mention" them before replying.
-- Advanced features: edit, unsend, reply threading, message effects, group management.
+- Recommended/tested: macOS Sequoia (15). macOS Tahoe (26) works, but edit is
+  currently broken and group icon updates may report success without syncing.
+- Fased talks to BlueBubbles through its REST API.
+- Incoming messages arrive by webhook.
+- Outgoing replies, typing indicators, read receipts, and tapbacks are REST
+  calls.
+- Attachments and stickers are ingested as inbound media when possible.
+- Pairing and allowlists work like other Fased channels.
+- Advanced features include edit, unsend, reply threading, message effects, and
+  group management.
 
 ## Quick start
 
-You need one macOS host running the BlueBubbles server and one Fased gateway that can reach it over HTTP. In small setups they can be the same machine.
+You need one macOS host running the BlueBubbles server and one Fased gateway
+that can reach it over HTTP. In small setups they can be the same machine.
 
-1. Install the BlueBubbles server on your Mac (follow the instructions at [bluebubbles.app/install](https://bluebubbles.app/install)).
+1. Install the BlueBubbles server on your Mac from
+   [bluebubbles.app/install](https://bluebubbles.app/install).
 2. In the BlueBubbles config, enable the web API and set a password.
 3. Open **Agents**, select the Agent, then use **Agent > Channels >
    BlueBubbles**. Enter the server URL, password, and webhook path. Scripted
@@ -47,18 +55,27 @@ You need one macOS host running the BlueBubbles server and one Fased gateway tha
    }
    ```
 
-4. Point BlueBubbles webhooks to your gateway (example: `https://your-gateway-host:3000/bluebubbles-webhook?password=<password>`).
+4. Point BlueBubbles webhooks to your gateway:
+
+   ```text
+   https://your-gateway-host:3000/bluebubbles-webhook?password=<password>
+   ```
+
 5. Start or restart the gateway if the UI asks for it; it will register the
    webhook handler and start pairing.
 
 Security note:
 
 - Always set a webhook password.
-- Webhook authentication is always required. Fased rejects BlueBubbles webhook requests unless they include a password/guid that matches `channels.bluebubbles.password` (for example `?password=<password>` or `x-password`), regardless of loopback/proxy topology.
+- Fased rejects BlueBubbles webhook requests unless they include a password or
+  guid that matches `channels.bluebubbles.password`, such as
+  `?password=<password>` or `x-password`.
 
 ## Keeping Messages.app alive (VM / headless setups)
 
-Some macOS VM / always-on setups can end up with Messages.app going “idle” (incoming events stop until the app is opened/foregrounded). A simple workaround is to **poke Messages every 5 minutes** using an AppleScript + LaunchAgent.
+Some macOS VM or always-on setups can leave Messages.app idle. Incoming events
+may stop until the app is opened again. A simple workaround is to poke Messages
+every 5 minutes with an AppleScript and LaunchAgent.
 
 ### 1) Save the AppleScript
 
@@ -121,7 +138,9 @@ Save this as:
 Notes:
 
 - This runs **every 300 seconds** and **on login**.
-- The first run may trigger macOS **Automation** prompts (`osascript` → Messages). Approve them in the same user session that runs the LaunchAgent.
+- The first run may trigger macOS **Automation** prompts
+  (`osascript` -> Messages). Approve them in the same user session that runs
+  the LaunchAgent.
 
 Load it:
 
@@ -141,7 +160,8 @@ fased onboard
 
 The wizard prompts for:
 
-- **Server URL** (required): BlueBubbles server address (e.g., `http://192.168.1.100:1234`)
+- **Server URL** (required): BlueBubbles server address, for example
+  `http://192.168.1.100:1234`
 - **Password** (required): API password from BlueBubbles Server settings
 - **Webhook path** (optional): Defaults to `/bluebubbles-webhook`
 - **DM policy**: pairing, allowlist, open, or disabled
@@ -158,7 +178,8 @@ fased channels add --channel bluebubbles --http-url http://192.168.1.100:1234 --
 DMs:
 
 - Default: `channels.bluebubbles.dmPolicy = "pairing"`.
-- Unknown senders receive a pairing code; messages are ignored until approved (codes expire after 1 hour).
+- Unknown senders receive a pairing code. Messages wait for approval, and codes
+  expire after 1 hour.
 - Approve via:
   - `fased pairing list bluebubbles`
   - `fased pairing approve bluebubbles <CODE>`
@@ -173,7 +194,8 @@ Groups:
 
 BlueBubbles supports mention gating for group chats, matching iMessage/WhatsApp behavior:
 
-- Uses `agents.list[].groupChat.mentionPatterns` (or `messages.groupChat.mentionPatterns`) to detect mentions.
+- Uses `agents.list[].groupChat.mentionPatterns` or
+  `messages.groupChat.mentionPatterns` to detect mentions.
 - When `requireMention` is enabled for a group, the agent only responds when mentioned.
 - Control commands from authorized senders bypass mention gating.
 
@@ -202,9 +224,11 @@ Per-group configuration:
 
 ## Typing + read receipts
 
-- **Typing indicators**: Sent automatically before and during response generation.
-- **Read receipts**: Controlled by `channels.bluebubbles.sendReadReceipts` (default: `true`).
-- **Typing indicators**: Fased sends typing start events; BlueBubbles clears typing automatically on send or timeout (manual stop via DELETE is unreliable).
+- **Typing indicators**: Fased sends typing start events before and during
+  response generation. BlueBubbles clears typing automatically on send or
+  timeout.
+- **Read receipts**: controlled by `channels.bluebubbles.sendReadReceipts`
+  (default: `true`).
 
 ```json5
 {
@@ -250,12 +274,14 @@ Available actions:
 - **reply**: Reply to a specific message (`messageId`, `text`, `to`)
 - **sendWithEffect**: Send with iMessage effect (`text`, `to`, `effectId`)
 - **renameGroup**: Rename a group chat (`chatGuid`, `displayName`)
-- **setGroupIcon**: Set a group chat's icon/photo (`chatGuid`, `media`) — flaky on macOS 26 Tahoe (API may return success but the icon does not sync).
+- **setGroupIcon**: Set a group chat's icon/photo (`chatGuid`, `media`).
+  This can be flaky on macOS 26 Tahoe.
 - **addParticipant**: Add someone to a group (`chatGuid`, `address`)
 - **removeParticipant**: Remove someone from a group (`chatGuid`, `address`)
 - **leaveGroup**: Leave a group chat (`chatGuid`)
 - **sendAttachment**: Send media/files (`to`, `buffer`, `filename`, `asVoice`)
-  - Voice memos: set `asVoice: true` with **MP3** or **CAF** audio to send as an iMessage voice message. BlueBubbles converts MP3 → CAF when sending voice memos.
+  - Voice memos: set `asVoice: true` with **MP3** or **CAF** audio. BlueBubbles
+    converts MP3 to CAF when sending voice memos.
 
 ### Message IDs (short vs full)
 
@@ -302,18 +328,25 @@ Provider options:
 - `channels.bluebubbles.enabled`: Enable/disable the channel.
 - `channels.bluebubbles.serverUrl`: BlueBubbles REST API base URL.
 - `channels.bluebubbles.password`: API password.
-- `channels.bluebubbles.webhookPath`: Webhook endpoint path (default: `/bluebubbles-webhook`).
+- `channels.bluebubbles.webhookPath`: Webhook endpoint path
+  (default: `/bluebubbles-webhook`).
 - `channels.bluebubbles.dmPolicy`: `pairing | allowlist | open | disabled` (default: `pairing`).
-- `channels.bluebubbles.allowFrom`: DM allowlist (handles, emails, E.164 numbers, `chat_id:*`, `chat_guid:*`).
+- `channels.bluebubbles.allowFrom`: DM allowlist using handles, emails,
+  E.164 numbers, `chat_id:*`, or `chat_guid:*`.
 - `channels.bluebubbles.groupPolicy`: `open | allowlist | disabled` (default: `allowlist`).
 - `channels.bluebubbles.groupAllowFrom`: Group sender allowlist.
 - `channels.bluebubbles.groups`: Per-group config (`requireMention`, etc.).
 - `channels.bluebubbles.sendReadReceipts`: Send read receipts (default: `true`).
-- `channels.bluebubbles.blockStreaming`: Enable block streaming (default: `false`; required for streaming replies).
+- `channels.bluebubbles.blockStreaming`: Enable block streaming
+  (default: `false`; required for streaming replies).
 - `channels.bluebubbles.textChunkLimit`: Outbound chunk size in chars (default: 4000).
-- `channels.bluebubbles.chunkMode`: `length` (default) splits only when exceeding `textChunkLimit`; `newline` splits on blank lines (paragraph boundaries) before length chunking.
+- `channels.bluebubbles.chunkMode`: `length` or `newline`. `newline` splits on
+  blank lines before length chunking.
 - `channels.bluebubbles.mediaMaxMb`: Inbound media cap in MB (default: 8).
-- `channels.bluebubbles.mediaLocalRoots`: Explicit allowlist of absolute local directories permitted for outbound local media paths. Local path sends are denied by default unless this is configured. Per-account override: `channels.bluebubbles.accounts.<accountId>.mediaLocalRoots`.
+- `channels.bluebubbles.mediaLocalRoots`: Absolute local directories allowed for
+  outbound local media paths. Local path sends require this allowlist.
+  Per-account override:
+  `channels.bluebubbles.accounts.<accountId>.mediaLocalRoots`.
 - `channels.bluebubbles.historyLimit`: Max group messages for context (0 disables).
 - `channels.bluebubbles.dmHistoryLimit`: DM history limit.
 - `channels.bluebubbles.actions`: Enable/disable specific actions.
@@ -332,23 +365,32 @@ Prefer `chat_guid` for stable routing:
 - `chat_id:123`
 - `chat_identifier:...`
 - Direct handles: `+15555550123`, `user@example.com`
-  - If a direct handle does not have an existing DM chat, Fased will create one via `POST /api/v1/chat/new`. This requires the BlueBubbles Private API to be enabled.
+  - If a direct handle has no existing DM chat, Fased creates one through
+    `POST /api/v1/chat/new`. This requires the BlueBubbles Private API.
 
 ## Security
 
-- Webhook requests are authenticated by comparing `guid`/`password` query params or headers against `channels.bluebubbles.password`. Requests from `localhost` are also accepted.
+- Webhook requests are authenticated by comparing `guid` or `password` query
+  params or headers against `channels.bluebubbles.password`.
 - Keep the API password and webhook endpoint secret (treat them like credentials).
-- Localhost trust means a same-host reverse proxy can unintentionally bypass the password. If you proxy the gateway, require auth at the proxy and configure `gateway.trustedProxies`. See [Gateway security](/gateway/security#reverse-proxy-configuration).
+- If you proxy the gateway on the same host, require auth at the proxy and
+  configure `gateway.trustedProxies`. See
+  [Gateway security](/gateway/security#reverse-proxy-configuration).
 - Enable HTTPS + firewall rules on the BlueBubbles server if exposing it outside your LAN.
 
 ## Troubleshooting
 
-- If typing/read events stop working, check the BlueBubbles webhook logs and verify the gateway path matches `channels.bluebubbles.webhookPath`.
-- Pairing codes expire after one hour; use `fased pairing list bluebubbles` and `fased pairing approve bluebubbles <code>`.
+- If typing/read events stop working, check BlueBubbles webhook logs and verify
+  the gateway path matches `channels.bluebubbles.webhookPath`.
+- Pairing codes expire after one hour; use `fased pairing list bluebubbles`
+  and `fased pairing approve bluebubbles <code>`.
 - Reactions require the BlueBubbles private API (`POST /api/v1/message/react`); ensure the server version exposes it.
-- Edit/unsend require macOS 13+ and a compatible BlueBubbles server version. On macOS 26 (Tahoe), edit is currently broken due to private API changes.
-- Group icon updates can be flaky on macOS 26 (Tahoe): the API may return success but the new icon does not sync.
-- Fased auto-hides known-broken actions based on the BlueBubbles server's macOS version. If edit still appears on macOS 26 (Tahoe), disable it manually with `channels.bluebubbles.actions.edit=false`.
+- Edit/unsend require macOS 13+ and a compatible BlueBubbles server version.
+  On macOS 26 Tahoe, edit is currently broken due to private API changes.
+- Group icon updates can be flaky on macOS 26 Tahoe.
+- Fased auto-hides known-broken actions based on the BlueBubbles server's
+  macOS version. If edit still appears on macOS 26 Tahoe, disable it manually
+  with `channels.bluebubbles.actions.edit=false`.
 - For status/health info: `fased status --all` or `fased status --deep`.
 
 For general channel workflow reference, see [Channels](/channels) and the [Plugins](/tools/plugin) guide.

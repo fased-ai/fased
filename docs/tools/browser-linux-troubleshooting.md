@@ -16,7 +16,9 @@ Fased's browser control server fails to launch Chrome/Brave/Edge/Chromium with t
 
 ### Root Cause
 
-On Ubuntu (and many Linux distros), the default Chromium installation is a **snap package**. Snap's AppArmor confinement interferes with how Fased spawns and monitors the browser process.
+On Ubuntu and many Linux distros, the default Chromium installation is a
+**snap package**. Snap's AppArmor confinement interferes with how Fased spawns
+and monitors the browser process.
 
 The `apt install chromium` command installs a stub package that redirects to snap:
 
@@ -85,7 +87,10 @@ Description=Fased Browser (Chrome CDP)
 After=network.target
 
 [Service]
-ExecStart=/snap/bin/chromium --headless --no-sandbox --disable-gpu --remote-debugging-port=18800 --user-data-dir=%h/.fased/browser/fased/user-data about:blank
+ExecStart=/snap/bin/chromium --headless --no-sandbox --disable-gpu \
+  --remote-debugging-port=18800 \
+  --user-data-dir=%h/.fased/browser/fased/user-data \
+  about:blank
 Restart=on-failure
 RestartSec=5
 
@@ -112,14 +117,15 @@ curl -s http://127.0.0.1:18791/tabs
 
 ### Config Reference
 
-| Option                   | Description                                                          | Default                                                     |
-| ------------------------ | -------------------------------------------------------------------- | ----------------------------------------------------------- |
-| `browser.enabled`        | Enable browser control                                               | `true`                                                      |
-| `browser.executablePath` | Path to a Chromium-based browser binary (Chrome/Brave/Edge/Chromium) | auto-detected (prefers default browser when Chromium-based) |
-| `browser.headless`       | Run without GUI                                                      | `false`                                                     |
-| `browser.noSandbox`      | Add `--no-sandbox` flag (needed for some Linux setups)               | `false`                                                     |
-| `browser.attachOnly`     | Don't launch browser, only attach to existing                        | `false`                                                     |
-| `browser.cdpPort`        | Chrome DevTools Protocol port                                        | `18800`                                                     |
+- `browser.enabled`: enable browser control. Default: `true`.
+- `browser.executablePath`: path to a Chromium-based browser binary, such as
+  Chrome, Brave, Edge, or Chromium. Default: auto-detected.
+- `browser.headless`: run without GUI. Default: `false`.
+- `browser.noSandbox`: add `--no-sandbox` for Linux setups that need it.
+  Default: `false`.
+- `browser.attachOnly`: attach to an existing browser instead of launching one.
+  Default: `false`.
+- `browser.cdpPort`: Chrome DevTools Protocol port. Default: `18800`.
 
 ### Problem: "Chrome extension relay is running, but no tab is connected"
 

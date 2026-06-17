@@ -6,7 +6,9 @@ title: "Remote Gateway Setup"
 
 # Running the Fased Agent macOS app with a remote gateway
 
-The macOS app ships as `FasedAgent.app`. This guide shows the SSH-tunnel path for reaching a gateway on another host without exposing the raw gateway port publicly.
+The macOS app ships as `FasedAgent.app`. This guide shows the SSH-tunnel path
+for reaching a gateway on another host while keeping the raw gateway port closed
+to the public internet.
 
 ## Overview
 
@@ -155,4 +157,7 @@ launchctl bootout gui/$UID/ai.fased.ssh-tunnel
 | `KeepAlive`                          | Automatically restarts tunnel if it crashes                  |
 | `RunAtLoad`                          | Starts tunnel when the agent loads                           |
 
-The macOS app connects to `ws://127.0.0.1:18789` on your client machine. The SSH tunnel forwards that connection to port `18789` on the remote machine where the gateway is running. Keep the remote gateway on loopback unless you intentionally switch to a tailnet bind or trusted proxy design.
+The macOS app connects to `ws://127.0.0.1:18789` on your client machine. The SSH
+tunnel forwards that connection to port `18789` on the remote machine where the
+gateway is running. Keep the remote gateway on loopback unless you intentionally
+switch to a tailnet bind or trusted proxy design.

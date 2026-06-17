@@ -25,7 +25,9 @@ Talk mode is a continuous voice conversation loop:
 - **Listening → Thinking → Speaking** phase transitions.
 - On a **short pause** (silence window), the current transcript is sent.
 - Replies are **written to the active browser Chat session** (same as typing).
-- **Interrupt on speech** (default on): if the user starts talking while the assistant is speaking, we stop playback and note the interruption timestamp for the next prompt.
+- **Interrupt on speech** (default on): if the user starts talking while the
+  assistant is speaking, playback stops and the next prompt includes the
+  interruption timestamp.
 
 ## Voice directives in replies
 
@@ -68,10 +70,13 @@ Supported keys:
 Defaults:
 
 - `interruptOnSpeech`: true
-- `voiceId`: falls back to `ELEVENLABS_VOICE_ID` / `SAG_VOICE_ID` (or first ElevenLabs voice when API key is available)
+- `voiceId`: falls back to `ELEVENLABS_VOICE_ID` / `SAG_VOICE_ID`, or the first
+  ElevenLabs voice when an API key is available
 - `modelId`: defaults to `eleven_v3` when unset
-- `apiKey`: falls back to `ELEVENLABS_API_KEY` (or gateway shell profile if available)
-- `outputFormat`: defaults to `pcm_44100` on macOS/iOS and `pcm_24000` on Android (set `mp3_*` to force MP3 streaming)
+- `apiKey`: falls back to `ELEVENLABS_API_KEY`, or gateway shell profile if
+  available
+- `outputFormat`: defaults to `pcm_44100` on macOS/iOS and `pcm_24000` on
+  Android. Set `mp3_*` to force MP3 streaming.
 
 ## macOS UI
 
@@ -90,7 +95,10 @@ Defaults:
 
 - Requires Speech + Microphone permissions.
 - Uses `chat.send` against session key `main`.
-- TTS uses ElevenLabs streaming API with `ELEVENLABS_API_KEY` and incremental playback on macOS/iOS/Android for lower latency.
-- `stability` for `eleven_v3` is validated to `0.0`, `0.5`, or `1.0`; other models accept `0..1`.
+- TTS uses ElevenLabs streaming API with `ELEVENLABS_API_KEY` and incremental
+  playback on macOS/iOS/Android for lower latency.
+- `stability` for `eleven_v3` is validated to `0.0`, `0.5`, or `1.0`; other
+  models accept `0..1`.
 - `latency_tier` is validated to `0..4` when set.
-- Android supports `pcm_16000`, `pcm_22050`, `pcm_24000`, and `pcm_44100` output formats for low-latency AudioTrack streaming.
+- Android supports `pcm_16000`, `pcm_22050`, `pcm_24000`, and `pcm_44100` output
+  formats for low-latency AudioTrack streaming.

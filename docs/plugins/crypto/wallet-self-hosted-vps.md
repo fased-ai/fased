@@ -55,7 +55,7 @@ Open the Wallets page or inspect runtime status to confirm:
 
 ### 3. Confirm chain RPC wiring
 
-The wallet path is not ready for unattended use until chain RPC is set and
+The wallet path is ready for unattended use only after chain RPC is set and
 responsive.
 
 Use the runtime and wallet status surfaces to confirm:
@@ -77,7 +77,7 @@ fased mining readiness --wallet mining
 
 ## Operational rule
 
-Do not treat “wallet exists on disk” as success.
+Wallet readiness means more than a file on disk.
 
 Treat the wallet as ready only when all of these are true:
 

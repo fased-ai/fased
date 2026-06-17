@@ -85,8 +85,9 @@ agent-to-agent reply/announce steps), Fased persists the created user turn with:
 - `message.provenance.kind = "inter_session"`
 
 This metadata is written at transcript append time and does not change role
-(`role: "user"` remains for provider compatibility). Transcript readers can use
-this to avoid treating routed internal prompts as end-user-authored instructions.
+(`role: "user"` remains for provider compatibility). Diagnostics and repair
+tools can use this marker to distinguish routed internal prompts from
+end-user-authored instructions.
 
 During context rebuild, Fased also prepends a short `[Inter-session message]`
 marker to those user turns in-memory so the model can distinguish them from
@@ -99,7 +100,8 @@ external end-user instructions.
 **OpenAI / OpenAI sign-in**
 
 - Image sanitization only.
-- Drop orphaned reasoning signatures (standalone reasoning items without a following content block) for OpenAI Responses/Codex transcripts.
+- Drop orphaned reasoning signatures for OpenAI Responses/Codex transcripts.
+  These are standalone reasoning items without a following content block.
 - No tool call id sanitization.
 - No tool result pairing repair.
 - No turn validation or reordering.

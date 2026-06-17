@@ -20,11 +20,18 @@ provider health from the Models page.
 
 Use the same Anthropic methods in every setup surface:
 
-| Surface    | What to do                                                                                                                                                                                                                                            |
-| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Control UI | Open **Agents**, select an Agent, then use **Agent > Models**. Choose **Anthropic**, then **Sign in**, **Token**, or **API key**, and assign the Agent's model roles there. Chat can override the model for the current session.                      |
-| Onboarding | Choose **Set up model providers** only if you want provider setup during onboarding, then choose **Anthropic** and pick **Anthropic OAuth (Claude Code)**, **Anthropic token (paste setup-token)**, or **Anthropic API key**.                         |
-| CLI        | Use `fased models auth login --provider anthropic --method anthropic-oauth`, `fased models auth setup-token --provider anthropic`, `fased models auth paste-token --provider anthropic`, or `fased onboard --anthropic-api-key "$ANTHROPIC_API_KEY"`. |
+- **Control UI:** Open **Agents**, select an Agent, then use **Agent > Models**.
+  Choose **Anthropic**, then **Sign in**, **Token**, or **API key**, and assign
+  the Agent's model roles there. Chat can override the model for the current
+  session.
+- **Onboarding:** Choose **Set up model providers** only if you want provider
+  setup during onboarding. Choose **Anthropic**, then pick **Anthropic OAuth
+  (Claude Code)**, **Anthropic token (paste setup-token)**, or **Anthropic API
+  key**.
+- **CLI:** Use `fased models auth login --provider anthropic --method anthropic-oauth`,
+  `fased models auth setup-token --provider anthropic`,
+  `fased models auth paste-token --provider anthropic`, or
+  `fased onboard --anthropic-api-key "$ANTHROPIC_API_KEY"`.
 
 ## Option A: Sign in (Claude Code OAuth)
 
@@ -141,7 +148,8 @@ fased onboard --anthropic-api-key "$ANTHROPIC_API_KEY"
 
 ## Prompt caching (Anthropic API)
 
-Fased supports Anthropic's prompt caching feature. This is **API-only**; subscription auth does not honor cache settings.
+Fased supports Anthropic's prompt caching feature. This is **API-only**;
+subscription auth does not honor cache settings.
 
 ### Configuration
 
@@ -169,7 +177,9 @@ Use the `cacheRetention` parameter in your model config:
 
 ### Defaults
 
-When using Anthropic API Key authentication, Fased automatically applies `cacheRetention: "short"` (5-minute cache) for all Anthropic models. You can override this by explicitly setting `cacheRetention` in your config.
+When using Anthropic API Key authentication, Fased automatically applies
+`cacheRetention: "short"` (5-minute cache) for all Anthropic models. You can
+override this by explicitly setting `cacheRetention` in your config.
 
 ### Per-agent cacheRetention overrides
 
@@ -199,7 +209,8 @@ Config merge order for cache-related params:
 1. `agents.defaults.models["provider/model"].params`
 2. `agents.list[].params` (matching `id`, overrides by key)
 
-This lets one agent keep a long-lived cache while another agent on the same model disables caching to avoid write costs on bursty/low-reuse traffic.
+This lets one agent keep a long-lived cache while another agent on the same
+model disables caching to avoid write costs on bursty or low-reuse traffic.
 
 ### Legacy parameter
 
@@ -244,7 +255,8 @@ context1m beta header for OAuth auth and keeps the required OAuth betas.
 - Generate setup-tokens with `claude setup-token` and paste them in
   **Agent > Models**, onboarding, or
   `fased models auth paste-token --provider anthropic`.
-- If you see “OAuth token refresh failed …” on a Claude subscription, re-auth with a setup-token. See [/gateway/troubleshooting#oauth-token-refresh-failed-anthropic-claude-subscription](/gateway/troubleshooting#oauth-token-refresh-failed-anthropic-claude-subscription).
+- If you see “OAuth token refresh failed …” on a Claude subscription, re-auth
+  with a setup-token. See [Gateway troubleshooting](/gateway/troubleshooting).
 - Auth details + reuse rules are in [/concepts/oauth](/concepts/oauth).
 
 ## Troubleshooting

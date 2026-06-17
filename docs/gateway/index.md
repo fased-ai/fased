@@ -1,5 +1,5 @@
 ---
-summary: "Run and operate the gateway service: local and hosting profiles, loopback-first binds, remote access, health, and repair."
+summary: "Run and operate the gateway service: profiles, loopback-first binds, remote access, health, and repair."
 read_when:
   - Running or debugging the gateway process
 title: "Gateway Runbook"
@@ -14,7 +14,8 @@ The intended default is simple:
 - keep the gateway on `loopback`
 - keep the raw gateway port closed to LAN and internet
 - choose the right onboarding profile up front
-- add remote access through Tailscale Serve, a direct tailnet path, or SSH only when you actually need it
+- add remote access through Tailscale Serve, a direct tailnet path, or SSH when
+  you need it
 
 Normal product setup happens in the browser from the selected Agent:
 
@@ -30,7 +31,7 @@ moved into a focused page yet.
 ## Operator map
 
 ```mermaid
-flowchart LR
+flowchart TD
   host["Gateway host"] --> bind["loopback bind"]
   bind --> ui["Control UI"]
   bind --> api["WS / HTTP APIs"]
@@ -129,7 +130,9 @@ Default mode is `gateway.reload.mode="hybrid"`.
   - HTTP APIs (OpenAI-compatible, Responses, tools invoke)
   - browser Control UI and HTTP hooks/webhooks
 - Default bind mode: `loopback`.
-- Auth is required by default (`gateway.auth.token` / `gateway.auth.password`, or `FASED_GATEWAY_TOKEN` / `FASED_GATEWAY_PASSWORD`).
+- Auth is required by default. Use `gateway.auth.token`,
+  `gateway.auth.password`, `FASED_GATEWAY_TOKEN`, or
+  `FASED_GATEWAY_PASSWORD`.
 
 ### Control UI login protection
 
@@ -187,7 +190,9 @@ fased doctor
 Preferred: Tailscale Serve or a private tailnet path.
 Fallback: SSH tunnel.
 
-Do not treat `18789` as a public internet port you should open by default. In the normal local and hosting profiles, the gateway stays on loopback and the exposure layer lives above it.
+Keep `18789` closed to the public internet by default. In the normal local and
+hosting profiles, the gateway stays on loopback and the exposure layer lives
+above it.
 
 ```bash
 ssh -N -L 18789:127.0.0.1:18789 user@host
@@ -215,7 +220,8 @@ fased gateway restart
 fased gateway stop
 ```
 
-LaunchAgent labels are `ai.fased.gateway` (default) or `ai.fased.<profile>` (named profile). `fased doctor` audits and repairs service config drift.
+LaunchAgent labels are `ai.fased.gateway` by default or `ai.fased.<profile>` for
+a named profile. `fased doctor` audits and repairs service config drift.
 
   </Tab>
 

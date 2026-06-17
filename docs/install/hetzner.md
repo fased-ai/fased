@@ -12,15 +12,18 @@ title: "Hetzner"
 
 ## Goal
 
-Run a persistent Fased Gateway on a Hetzner VPS using Docker, with durable state, baked-in binaries, and predictable restart behavior.
+Run a persistent Fased Gateway on a Hetzner VPS using Docker, with durable
+state, baked-in binaries, and predictable restart behavior.
 
 Pick a small Debian/Ubuntu VPS and scale up if you hit OOMs. Provider pricing
 changes, so check the current plan before provisioning.
 
 Security model reminder:
 
-- Company-shared agents are fine when everyone is in the same trust boundary and the runtime is business-only.
-- Keep strict separation: dedicated VPS/runtime + dedicated accounts; no personal Apple/Google/browser/password-manager profiles on that host.
+- Company-shared agents are fine when everyone is in the same trust boundary and
+  the runtime is business-only.
+- Keep strict separation: dedicated VPS/runtime plus dedicated accounts. Keep
+  personal Apple/Google/browser/password-manager profiles off that host.
 - If users are adversarial to each other, split by gateway/host/OS user.
 
 See [Security](/gateway/security) and [VPS hosting](/install/vps).
@@ -30,7 +33,8 @@ See [Security](/gateway/security) and [VPS hosting](/install/vps).
 - Rent a small Linux server (Hetzner VPS)
 - Install Docker (isolated app runtime)
 - Start the Fased Gateway in Docker
-- Persist `~/.fased` + `~/.fased/workspace` on the host (survives restarts/rebuilds)
+- Persist `~/.fased` + `~/.fased/workspace` on the host so state survives
+  restarts and rebuilds
 - Join the VPS to Tailscale before onboarding
 - Keep the gateway loopback-only
 - Access the Control UI privately from your laptop through Tailscale
@@ -72,7 +76,7 @@ For the generic Docker flow, see [Docker](/install/docker).
 - Model auth credentials
 - Optional provider credentials
   - WhatsApp QR
-  - Telegram bot token
+  - Telegram agent token
   - Gmail OAuth
 
 ---
@@ -88,7 +92,7 @@ ssh root@YOUR_VPS_IP
 ```
 
 This guide assumes the VPS is stateful.
-Do not treat it as disposable infrastructure.
+Treat it as persistent infrastructure.
 
 After the host is provisioned and joined to Tailscale, ongoing operator access
 should move to **Tailscale/private access**, not normal public root login.
@@ -224,7 +228,10 @@ services:
       ]
 ```
 
-`--allow-unconfigured` is only for bootstrap convenience, it is not a replacement for a proper gateway configuration. Still set auth (`gateway.auth.token` or password) and use private bind settings for your deployment.
+`--allow-unconfigured` is only for bootstrap convenience. It is not a
+replacement for a proper gateway configuration. Still set auth
+(`gateway.auth.token` or password) and use private bind settings for your
+deployment.
 
 ---
 

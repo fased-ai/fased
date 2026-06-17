@@ -8,11 +8,15 @@ title: "Zalo Personal"
 
 # Zalo Personal (unofficial)
 
-This channel is the unofficial fallback when you need Zalo access from a personal account instead of the official bot platform. Fased drives `zca-cli`, listens for inbound messages, and keeps the usual DM and group policy model on top of that automation layer.
+This channel is the unofficial fallback when you need Zalo access from a
+personal account instead of the official bot platform. Fased drives `zca-cli`,
+listens for inbound messages, and keeps the usual DM and group policy model on
+top of that automation layer.
 
 Status: experimental. This integration automates a personal Zalo account through `zca-cli`.
 
-> **Warning:** This is an unofficial integration and may result in account suspension/ban. Use at your own risk.
+> **Warning:** This is an unofficial integration and may result in account
+> suspension or ban. Use at your own risk.
 
 ## Setup from Agent > Channels
 
@@ -28,11 +32,13 @@ the UI reports that the runtime still needs to load.
 The Gateway machine must have the `zca` binary available in `PATH`.
 
 - Verify: `zca --version`
-- If missing, install zca-cli (see `extensions/zalouser/README.md` or the upstream zca-cli docs).
+- If missing, install zca-cli. See `extensions/zalouser/README.md` or the
+  upstream zca-cli docs.
 
 ## Quick setup (beginner)
 
-Treat this as a higher-risk integration. Keep it on a separate personal account, assume the login can break, and avoid exposing it more broadly than necessary.
+Treat this as a higher-risk integration. Keep it on a separate personal
+account, assume the login can break, and keep access narrow.
 
 1. Login (QR, on the Gateway machine):
    - `fased channels login --channel zalouser`
@@ -61,7 +67,8 @@ Treat this as a higher-risk integration. Keep it on a separate personal account,
 
 ## Naming
 
-Channel id is `zalouser` to make it explicit this automates a **personal Zalo user account** (unofficial). We keep `zalo` reserved for a potential future official Zalo API integration.
+Channel id is `zalouser` to make it explicit this automates a **personal Zalo
+user account**. The `zalo` id stays reserved for the official Zalo API path.
 
 ## Finding IDs (directory)
 
@@ -80,8 +87,10 @@ fased directory groups list --channel zalouser --query "work"
 
 ## Access control (DMs)
 
-`channels.zalouser.dmPolicy` supports: `pairing | allowlist | open | disabled` (default: `pairing`).
-`channels.zalouser.allowFrom` accepts user IDs or names. The wizard resolves names to IDs via `zca friend find` when available.
+`channels.zalouser.dmPolicy` supports `pairing | allowlist | open | disabled`
+(default: `pairing`).
+`channels.zalouser.allowFrom` accepts user IDs or names. The wizard resolves
+names to IDs via `zca friend find` when available.
 
 Approve via:
 
@@ -90,13 +99,15 @@ Approve via:
 
 ## Group access (optional)
 
-- Default: `channels.zalouser.groupPolicy = "open"` (groups allowed). Use `channels.defaults.groupPolicy` to override the default when unset.
+- Default: `channels.zalouser.groupPolicy = "open"` (groups allowed). Use
+  `channels.defaults.groupPolicy` to override the default when unset.
 - Restrict to an allowlist with:
   - `channels.zalouser.groupPolicy = "allowlist"`
   - `channels.zalouser.groups` (keys are group IDs or names)
 - Block all groups: `channels.zalouser.groupPolicy = "disabled"`.
 - Agent > Channels and CLI setup can prompt for group allowlists.
-- On startup, Fased resolves group/user names in allowlists to IDs and logs the mapping; unresolved entries are kept as typed.
+- On startup, Fased resolves group/user names in allowlists to IDs and logs the
+  mapping. Unresolved entries are kept as typed.
 
 Example:
 

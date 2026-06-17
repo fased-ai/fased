@@ -7,7 +7,11 @@ read_when:
 
 # LiteLLM
 
-[LiteLLM](https://litellm.ai) is an open-source LLM gateway that provides a unified OpenAI-compatible API to many model providers. Route Fased through LiteLLM to centralize usage tracking, logging, virtual keys, and backend switching behind one proxy.
+[LiteLLM](https://litellm.ai) is an open-source LLM gateway that provides a
+unified OpenAI-compatible API to many model providers.
+
+Route Fased through LiteLLM when you want usage tracking, logging, virtual
+keys, and backend switching behind one proxy.
 
 ## Why use LiteLLM with Fased?
 
@@ -139,20 +143,24 @@ LiteLLM handles the upstream routing.
 
 ## Model discovery
 
-LiteLLM exposes the models available on your proxy through `/models` when configured for model discovery. That model list is local to your LiteLLM instance, not a global LiteLLM catalog.
+LiteLLM exposes the models available on your proxy through `/models` when
+configured for model discovery. That model list is local to your LiteLLM
+instance, not a global LiteLLM catalog.
 
 ```bash
 curl "http://localhost:4000/models" \
   -H "Authorization: Bearer $LITELLM_API_KEY"
 ```
 
-Because this catalog is instance-local, `fased providers refresh` does not fetch a central LiteLLM model list. In the normal UI, LiteLLM is treated as a dynamic provider: `litellm/<model-id>` is allowed when your proxy exposes that model.
+Because this catalog is instance-local, `fased providers refresh` does not fetch
+a central LiteLLM model list. In the normal UI, LiteLLM is treated as a dynamic
+provider: `litellm/<model-id>` is allowed when your proxy exposes that model.
 
 ## Viewing usage
 
 Fased **Usage** shows the local model usage history for calls made by Fased,
-grouped by provider, model, Agent, task, channel, and session. LiteLLM's dashboard or API
-shows proxy-level spend and quota from LiteLLM's perspective:
+grouped by provider, model, Agent, task, channel, and session. LiteLLM's
+dashboard or API shows proxy-level spend and quota from LiteLLM's perspective:
 
 ```bash
 # Key info

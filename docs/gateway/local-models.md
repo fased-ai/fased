@@ -9,7 +9,12 @@ title: "Local Models"
 
 # Local models
 
-Local is doable, but Fased works best with enough context and model quality for tool-heavy, security-sensitive conversations. Small or heavily quantized models can truncate context, miss policy cues, or produce weaker tool decisions. Use the strongest model your hardware can run reliably, keep hosted fallback models configured when you need higher reliability, and review local-model exposure with the same care as any private endpoint (see [Security](/gateway/security)).
+Local models can work well when they have enough context and tool-calling
+quality. Small or heavily quantized models may truncate context, miss policy
+cues, or make weaker tool decisions. Use the strongest model your hardware can
+run reliably, keep hosted fallbacks configured when you need higher reliability,
+and review local-model exposure with the same care as any private endpoint. See
+[Security](/gateway/security).
 
 ## Advanced local stack: LM Studio
 
@@ -61,7 +66,8 @@ through the first-class **LM Studio** provider in **Agent > Models**.
 - Adjust `contextWindow`/`maxTokens` if your LM Studio build differs.
 - If LM Studio auth is disabled, leave the token blank in **Agent > Models**.
 
-Keep hosted models configured even when running local; use `models.mode: "merge"` so fallbacks stay available.
+Keep hosted models configured even when running local. Use
+`models.mode: "merge"` so fallbacks stay available.
 
 ### Hybrid config: hosted primary, local fallback
 
@@ -107,12 +113,18 @@ Keep hosted models configured even when running local; use `models.mode: "merge"
 
 ### Local-first with hosted safety net
 
-Swap the primary and fallback order; keep the same providers block and `models.mode: "merge"` so you can fall back to Sonnet or Opus when the local box is down.
+Swap the primary and fallback order. Keep the same providers block and
+`models.mode: "merge"` so you can fall back to Sonnet or Opus when the local box
+is down.
 
 ### Regional hosting / data routing
 
-- Hosted MiniMax/Kimi/GLM variants also exist on OpenRouter with region-pinned endpoints (e.g., US-hosted). Pick the regional variant there to keep traffic in your chosen jurisdiction while still using `models.mode: "merge"` for Anthropic/OpenAI fallbacks.
-- Local-only remains the strongest privacy path; hosted regional routing is the middle ground when you need provider features but want control over data flow.
+- Hosted MiniMax/Kimi/GLM variants also exist on OpenRouter with region-pinned
+  endpoints, such as US-hosted. Pick the regional variant to keep traffic in
+  your chosen jurisdiction while still using `models.mode: "merge"` for
+  Anthropic/OpenAI fallbacks.
+- Local-only remains the strongest privacy path. Hosted regional routing is the
+  middle ground when you need provider features but want control over data flow.
 
 ## Registry-Supported Local Routes
 

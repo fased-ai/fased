@@ -10,7 +10,8 @@ title: "Date and Time"
 
 Fased keeps runtime time handling split by purpose:
 
-- Channel message envelopes use a configurable envelope timezone. The default is the host timezone.
+- Channel message envelopes use a configurable envelope timezone. The default
+  is the host timezone.
 - Direct Gateway messages are timestamped with the resolved user timezone.
 - The system prompt includes the user timezone only, not a live clock.
 - Provider timestamps are preserved in tool payloads, with normalized UTC fields added where supported.
@@ -70,23 +71,30 @@ You can override this behavior:
 
 ## System prompt: Current Date & Time
 
-If the user timezone is known, the system prompt includes a dedicated **Current Date & Time** section with the time zone only. It intentionally does not include the current clock time, day, or date, so prompt caching stays stable:
+If the user timezone is known, the system prompt includes a dedicated
+**Current Date & Time** section with the time zone only. It intentionally keeps
+the live clock, day, and date out of the system prompt so prompt caching stays
+stable:
 
 ```
 Time zone: America/Chicago
 ```
 
-The prompt also tells the agent to use `session_status` when it needs the current date, time, or day of week. The status card includes a timestamp line.
+The prompt also tells the agent to use `session_status` when it needs the
+current date, time, or day of week. The status card includes a timestamp line.
 
 ## Direct Gateway messages
 
-Messages sent through direct Gateway paths, including `agent` and `chat.send`, receive a compact timestamp prefix unless they already have one:
+Messages sent through direct Gateway paths, including `agent` and `chat.send`,
+receive a compact timestamp prefix unless they already have one:
 
 ```
 [Wed 2026-01-28 19:30 CST] hello
 ```
 
-These prefixes use `agents.defaults.userTimezone` after validation. If no user timezone is configured, Fased resolves the host timezone at runtime and falls back to `UTC` only if the host cannot provide one.
+These prefixes use `agents.defaults.userTimezone` after validation. If no user
+timezone is configured, Fased resolves the host timezone at runtime and falls
+back to `UTC` only if the host cannot provide one.
 
 ## System event lines (local by default)
 
@@ -110,7 +118,9 @@ System: [2026-01-12 12:19:17 PST] Model switched.
 }
 ```
 
-- `userTimezone` sets the user-local timezone used for prompt context, direct Gateway timestamp injection, `session_status`, and cron-style current-time lines.
+- `userTimezone` sets the user-local timezone used for prompt context, direct
+  Gateway timestamp injection, `session_status`, and cron-style current-time
+  lines.
 - `timeFormat` controls 12h/24h display in `session_status` and cron-style current-time lines. `auto` follows OS prefs.
 
 ## Time format detection (auto)
@@ -121,7 +131,8 @@ to avoid repeated system calls.
 
 ## Tool payloads + connectors (raw provider time + normalized fields)
 
-Channel tools return provider-native timestamps and add normalized fields for consistency where the connector has a timestamp to normalize:
+Channel tools return provider-native timestamps and add normalized fields for
+consistency where the connector has a timestamp to normalize:
 
 - `timestampMs`: epoch milliseconds (UTC)
 - `timestampUtc`: ISO 8601 UTC string

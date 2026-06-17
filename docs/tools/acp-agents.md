@@ -10,9 +10,13 @@ title: "ACP Agents"
 
 # ACP agents
 
-[Agent Client Protocol (ACP)](https://agentclientprotocol.com/) sessions let Fased run external coding harnesses (for example Pi, Claude Code, Codex, OpenCode, and Gemini CLI) through an ACP backend plugin.
+[Agent Client Protocol (ACP)](https://agentclientprotocol.com/) sessions let
+Fased run external coding harnesses through an ACP backend plugin. Examples
+include Pi, Claude Code, Codex, OpenCode, and Gemini CLI.
 
-If you ask Fased in plain language to "run this in Codex" or "start Claude Code in a thread", Fased should route that request to the ACP runtime (not the native sub-agent runtime).
+If you ask Fased in plain language to "run this in Codex" or "start Claude Code
+in a thread", Fased should route that request to the ACP runtime, not the native
+sub-agent runtime.
 
 ## Fast operator flow
 
@@ -55,14 +59,21 @@ for ACP runtime control; run history does not replace the ACP backend.
 
 ## ACP versus sub-agents
 
-Use ACP when you want an external harness runtime. Use sub-agents when you want Fased-native delegated runs.
+Use ACP when you want an external harness runtime. Use sub-agents when you want
+Fased-native delegated runs.
 
-| Area          | ACP session                           | Sub-agent run                      |
-| ------------- | ------------------------------------- | ---------------------------------- |
-| Runtime       | ACP backend plugin (for example acpx) | Fased native sub-agent runtime     |
-| Session key   | `agent:<agentId>:acp:<uuid>`          | `agent:<agentId>:subagent:<uuid>`  |
-| Main commands | `/acp ...`                            | `/subagents ...`                   |
-| Spawn tool    | `sessions_spawn` with `runtime:"acp"` | `sessions_spawn` (default runtime) |
+- Runtime:
+  - ACP session: ACP backend plugin, for example `acpx`.
+  - Sub-agent run: Fased native sub-agent runtime.
+- Session key:
+  - ACP session: `agent:<agentId>:acp:<uuid>`.
+  - Sub-agent run: `agent:<agentId>:subagent:<uuid>`.
+- Main commands:
+  - ACP session: `/acp ...`.
+  - Sub-agent run: `/subagents ...`.
+- Spawn tool:
+  - ACP session: `sessions_spawn` with `runtime:"acp"`.
+  - Sub-agent run: `sessions_spawn` with the default runtime.
 
 See also [Sub-agents](/tools/subagents).
 
@@ -75,7 +86,9 @@ When thread bindings are enabled for a channel adapter, ACP sessions can be boun
 - ACP output is delivered back to the same thread.
 - Unfocus/close/archive/idle-timeout or max-age expiry removes the binding.
 
-Thread binding support is adapter-specific. If the active channel adapter does not support thread bindings, Fased returns a clear unsupported/unavailable message.
+Thread binding support is adapter-specific. If the active channel adapter does
+not support thread bindings, Fased returns a clear unsupported/unavailable
+message.
 
 Required feature flags for thread-bound ACP:
 
@@ -108,7 +121,8 @@ Use `runtime: "acp"` to start an ACP session from an agent turn or tool call.
 
 Notes:
 
-- `runtime` defaults to `subagent`, so set `runtime: "acp"` explicitly for ACP sessions.
+- `runtime` defaults to `subagent`, so set `runtime: "acp"` explicitly for ACP
+  sessions.
 - If `agentId` is omitted, Fased uses `acp.defaultAgent` when configured.
 - `mode: "session"` requires `thread: true` to keep a persistent bound conversation.
 
@@ -120,7 +134,8 @@ Interface details:
 - `thread` (optional, default `false`): request thread binding flow where supported.
 - `mode` (optional): `run` (one-shot) or `session` (persistent).
   - default is `run`
-  - if `thread: true` and mode omitted, Fased may default to persistent behavior per runtime path
+  - if `thread: true` and mode omitted, Fased may default to persistent behavior
+    per runtime path
   - `mode: "session"` requires `thread: true`
 - `cwd` (optional): requested runtime working directory (validated by backend/runtime policy).
 - `label` (optional): operator-facing label used in session/banner text.
@@ -163,16 +178,16 @@ If no target resolves, Fased returns a clear error (`Unable to resolve session t
 
 `/acp spawn` supports `--thread auto|here|off`.
 
-| Mode   | Behavior                                                                                            |
-| ------ | --------------------------------------------------------------------------------------------------- |
-| `auto` | In an active thread: bind that thread. Outside a thread: create/bind a child thread when supported. |
-| `here` | Require current active thread; fail if not in one.                                                  |
-| `off`  | No binding. Session starts unbound.                                                                 |
+- `auto`: in an active thread, bind that thread. Outside a thread, create/bind a
+  child thread when supported.
+- `here`: require current active thread; fail if not in one.
+- `off`: no binding. Session starts unbound.
 
 Notes:
 
 - On non-thread binding surfaces, default behavior is effectively `off`.
-- Thread-bound spawn requires channel policy support (for Discord: `channels.discord.threadBindings.spawnAcpSessions=true`).
+- Thread-bound spawn requires channel policy support. For Discord, set
+  `channels.discord.threadBindings.spawnAcpSessions=true`.
 
 ## ACP controls
 
@@ -194,29 +209,44 @@ Available command family:
 - `/acp doctor`
 - `/acp install`
 
-`/acp status` shows the effective runtime options and, when available, both runtime-level and backend-level session identifiers.
+`/acp status` shows the effective runtime options and, when available, both
+runtime-level and backend-level session identifiers.
 
-Some controls depend on backend capabilities. If a backend does not support a control, Fased returns a clear unsupported-control error.
+Some controls depend on backend capabilities. If a backend does not support a
+control, Fased returns a clear unsupported-control error.
 
 ## ACP command cookbook
 
-| Command              | What it does                                              | Example                                                        |
-| -------------------- | --------------------------------------------------------- | -------------------------------------------------------------- |
-| `/acp spawn`         | Create ACP session; optional thread bind.                 | `/acp spawn codex --mode persistent --thread auto --cwd /repo` |
-| `/acp cancel`        | Cancel in-flight turn for target session.                 | `/acp cancel agent:codex:acp:<uuid>`                           |
-| `/acp steer`         | Send steer instruction to running session.                | `/acp steer --session support inbox prioritize failing tests`  |
-| `/acp close`         | Close session and unbind thread targets.                  | `/acp close`                                                   |
-| `/acp status`        | Show backend, mode, state, runtime options, capabilities. | `/acp status`                                                  |
-| `/acp set-mode`      | Set runtime mode for target session.                      | `/acp set-mode plan`                                           |
-| `/acp set`           | Generic runtime config option write.                      | `/acp set model openai/gpt-5.5`                                |
-| `/acp cwd`           | Set runtime working directory override.                   | `/acp cwd /Users/user/Projects/repo`                           |
-| `/acp permissions`   | Set approval policy profile.                              | `/acp permissions strict`                                      |
-| `/acp timeout`       | Set runtime timeout (seconds).                            | `/acp timeout 120`                                             |
-| `/acp model`         | Set runtime model override.                               | `/acp model anthropic/claude-opus-4-5`                         |
-| `/acp reset-options` | Remove session runtime option overrides.                  | `/acp reset-options`                                           |
-| `/acp sessions`      | List recent ACP sessions from store.                      | `/acp sessions`                                                |
-| `/acp doctor`        | Backend health, capabilities, actionable fixes.           | `/acp doctor`                                                  |
-| `/acp install`       | Print deterministic install and enable steps.             | `/acp install`                                                 |
+- `/acp spawn`: create ACP session; optional thread bind.
+  Example: `/acp spawn codex --mode persistent --thread auto --cwd /repo`
+- `/acp cancel`: cancel in-flight turn for target session.
+  Example: `/acp cancel agent:codex:acp:<uuid>`
+- `/acp steer`: send steer instruction to running session.
+  Example: `/acp steer --session support inbox prioritize failing tests`
+- `/acp close`: close session and unbind thread targets.
+  Example: `/acp close`
+- `/acp status`: show backend, mode, state, runtime options, capabilities.
+  Example: `/acp status`
+- `/acp set-mode`: set runtime mode for target session.
+  Example: `/acp set-mode plan`
+- `/acp set`: generic runtime config option write.
+  Example: `/acp set model openai/gpt-5.5`
+- `/acp cwd`: set runtime working directory override.
+  Example: `/acp cwd /Users/user/Projects/repo`
+- `/acp permissions`: set approval policy profile.
+  Example: `/acp permissions strict`
+- `/acp timeout`: set runtime timeout in seconds.
+  Example: `/acp timeout 120`
+- `/acp model`: set runtime model override.
+  Example: `/acp model anthropic/claude-opus-4-5`
+- `/acp reset-options`: remove session runtime option overrides.
+  Example: `/acp reset-options`
+- `/acp sessions`: list recent ACP sessions from store.
+  Example: `/acp sessions`
+- `/acp doctor`: backend health, capabilities, actionable fixes.
+  Example: `/acp doctor`
+- `/acp install`: print deterministic install and enable steps.
+  Example: `/acp install`
 
 ## Runtime options mapping
 
@@ -242,9 +272,12 @@ Current acpx built-in harness aliases:
 - `opencode`
 - `gemini`
 
-When Fased uses the acpx backend, prefer these values for `agentId` unless your acpx config defines custom agent aliases.
+When Fased uses the acpx backend, prefer these values for `agentId` unless your
+acpx config defines custom agent aliases.
 
-Direct acpx CLI usage can also target arbitrary adapters via `--agent <command>`, but that raw escape hatch is an acpx CLI feature (not the normal Fased `agentId` path).
+Direct acpx CLI usage can also target arbitrary adapters via `--agent <command>`.
+That raw escape hatch is an acpx CLI feature, not the normal Fased `agentId`
+path.
 
 ## Required config
 
@@ -328,7 +361,9 @@ Then verify backend health:
 3. Plugin config does not expose `command` or `commandArgs`, so runtime command drift is blocked.
 4. Startup registers the ACP backend immediately as not-ready.
 5. A background ensure job verifies `acpx --version` against the pinned version.
-6. If missing/mismatched, it runs plugin-local install (`npm install --omit=dev --no-save acpx@<pinned>`) and re-verifies before healthy.
+6. If missing/mismatched, it runs plugin-local install and re-verifies before
+   healthy:
+   `npm install --omit=dev --no-save acpx@<pinned>`
 
 Notes:
 
@@ -339,14 +374,30 @@ See [Plugins](/tools/plugin).
 
 ## Troubleshooting
 
-| Symptom                                                                 | Likely cause                                   | Fix                                                        |
-| ----------------------------------------------------------------------- | ---------------------------------------------- | ---------------------------------------------------------- |
-| `ACP runtime backend is not configured`                                 | Backend plugin missing or disabled.            | Install and enable backend plugin, then run `/acp doctor`. |
-| `ACP is disabled by policy (acp.enabled=false)`                         | ACP globally disabled.                         | Set `acp.enabled=true`.                                    |
-| `ACP dispatch is disabled by policy (acp.dispatch.enabled=false)`       | Dispatch from normal thread messages disabled. | Set `acp.dispatch.enabled=true`.                           |
-| `ACP agent "<id>" is not allowed by policy`                             | Agent not in allowlist.                        | Use allowed `agentId` or update `acp.allowedAgents`.       |
-| `Unable to resolve session target: ...`                                 | Bad key/id/label token.                        | Run `/acp sessions`, copy exact key/label, retry.          |
-| `--thread here requires running /acp spawn inside an active ... thread` | `--thread here` used outside a thread context. | Move to target thread or use `--thread auto`/`off`.        |
-| `Only <user-id> can rebind this thread.`                                | Another user owns thread binding.              | Rebind as owner or use a different thread.                 |
-| `Thread bindings are unavailable for <channel>.`                        | Adapter lacks thread binding capability.       | Use `--thread off` or move to supported adapter/channel.   |
-| Missing ACP metadata for bound session                                  | Stale/deleted ACP session metadata.            | Recreate with `/acp spawn`, then rebind/focus thread.      |
+- `ACP runtime backend is not configured`
+  - Cause: backend plugin missing or disabled.
+  - Fix: install and enable backend plugin, then run `/acp doctor`.
+- `ACP is disabled by policy (acp.enabled=false)`
+  - Cause: ACP globally disabled.
+  - Fix: set `acp.enabled=true`.
+- `ACP dispatch is disabled by policy (acp.dispatch.enabled=false)`
+  - Cause: dispatch from normal thread messages disabled.
+  - Fix: set `acp.dispatch.enabled=true`.
+- `ACP agent "<id>" is not allowed by policy`
+  - Cause: Agent not in allowlist.
+  - Fix: use allowed `agentId` or update `acp.allowedAgents`.
+- `Unable to resolve session target: ...`
+  - Cause: bad key/id/label token.
+  - Fix: run `/acp sessions`, copy exact key/label, retry.
+- `--thread here requires running /acp spawn inside an active ... thread`
+  - Cause: `--thread here` used outside a thread context.
+  - Fix: move to target thread or use `--thread auto`/`off`.
+- `Only <user-id> can rebind this thread.`
+  - Cause: another user owns thread binding.
+  - Fix: rebind as owner or use a different thread.
+- `Thread bindings are unavailable for <channel>.`
+  - Cause: adapter lacks thread binding capability.
+  - Fix: use `--thread off` or move to supported adapter/channel.
+- Missing ACP metadata for bound session
+  - Cause: stale/deleted ACP session metadata.
+  - Fix: recreate with `/acp spawn`, then rebind/focus thread.

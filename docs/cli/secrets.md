@@ -9,12 +9,15 @@ title: "secrets"
 
 # `fased secrets`
 
-Use `fased secrets` to migrate credentials out of plaintext config, apply SecretRefs safely, and keep the active secrets runtime healthy.
+Use `fased secrets` to migrate credentials out of plaintext config, apply
+SecretRefs safely, and keep the active secrets runtime healthy.
 
 Command roles:
 
-- `reload`: gateway RPC (`secrets.reload`) that re-resolves refs and swaps runtime snapshot only on full success (no config writes).
-- `audit`: read-only scan of config + auth stores + legacy residues (`.env`, `auth.json`) for plaintext, unresolved refs, and precedence drift.
+- `reload`: gateway RPC (`secrets.reload`) that re-resolves refs and swaps the
+  runtime snapshot only on full success. It does not write config.
+- `audit`: read-only scan of config, auth stores, and legacy residues (`.env`,
+  `auth.json`) for plaintext, unresolved refs, and precedence drift.
 - `configure`: interactive planner for provider setup + target mapping + preflight (TTY required).
 - `apply`: execute a saved plan (`--dry-run` for validation only), then scrub migrated plaintext residues.
 
@@ -112,7 +115,9 @@ Notes:
 - Requires an interactive TTY.
 - You cannot combine `--providers-only` with `--skip-provider-setup`.
 - `configure` targets secret-bearing fields in `fased.json`.
-- Include all secret-bearing fields you intend to migrate (for example both `models.providers.*.apiKey` and `skills.entries.*.apiKey`) so audit can reach a clean state.
+- Include all secret-bearing fields you intend to migrate, for example both
+  `models.providers.*.apiKey` and `skills.entries.*.apiKey`, so audit can reach
+  a clean state.
 - It performs preflight resolution before apply.
 - Generated plans default to scrub options (`scrubEnv`, `scrubAuthProfilesForProviderTargets`, `scrubLegacyAuthJson` all enabled).
 - Apply path is one-way for migrated plaintext values.
@@ -122,7 +127,8 @@ Notes:
 Exec provider safety note:
 
 - Homebrew installs often expose symlinked binaries under `/opt/homebrew/bin/*`.
-- Set `allowSymlinkCommand: true` only when needed for trusted package-manager paths, and pair it with `trustedDirs` (for example `["/opt/homebrew"]`).
+- Set `allowSymlinkCommand: true` only when needed for trusted package-manager
+  paths, and pair it with `trustedDirs` such as `["/opt/homebrew"]`.
 
 ## Apply a saved plan
 
@@ -160,4 +166,6 @@ fased secrets configure
 fased secrets audit --check
 ```
 
-If `audit --check` still reports plaintext findings after a partial migration, verify you also migrated skill keys (`skills.entries.*.apiKey`) and any other reported target paths.
+If `audit --check` still reports plaintext findings after a partial migration,
+verify you also migrated skill keys (`skills.entries.*.apiKey`) and any other
+reported target paths.

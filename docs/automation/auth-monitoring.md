@@ -21,7 +21,8 @@ Exit codes:
 
 - `0`: credentials look healthy
 - `1`: credentials are missing or already expired
-- `2`: credentials are close to expiry, currently within 24 hours
+- `2`: credentials are close to expiry, currently inside the default 24-hour
+  OAuth warning window
 
 This is the best automation surface because it stays portable across local
 setups, hosted gateways, cron, and systemd.
@@ -32,16 +33,17 @@ If you need richer output, use:
 fased models status --json
 ```
 
-## Optional scripts
+## Optional Claude-oriented scripts
 
-The helper scripts under `scripts/` are convenience layers for personal ops
-flows. They are not required for standard monitoring.
+The helper scripts under `scripts/` are convenience layers for personal Claude
+Code and Fased auth ops flows. The standard provider-aware monitoring path is
+`fased models status --check`.
 
 - `scripts/claude-auth-status.sh`
   - reads `fased models status --json` first
   - falls back to direct file inspection only if the CLI is unavailable
 - `scripts/auth-monitor.sh`
-  - timer-friendly wrapper for local alerts or phone notifications
+  - Claude Code expiry wrapper for local alerts or phone notifications
 - `scripts/systemd/fased-auth-monitor.{service,timer}`
   - user-level systemd timer units
 - `scripts/mobile-reauth.sh`
@@ -53,5 +55,4 @@ flows. They are not required for standard monitoring.
 - `scripts/termux-sync-widget.sh`
   - sync helper for Claude Code credentials into Fased
 
-If you do not need phone widgets or custom timer wrappers, skip the scripts and
-monitor `fased models status --check` directly.
+For normal monitoring, use `fased models status --check` directly.

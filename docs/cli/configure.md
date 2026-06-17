@@ -29,7 +29,8 @@ Related:
 
 Notes:
 
-- Choosing where the Gateway runs always updates `gateway.mode`. You can select "Continue" without other sections if that is all you need.
+- Choosing where the Gateway runs always updates `gateway.mode`. You can select
+  "Continue" without other sections if that is all you need.
 - `--section web` opens the same Web/search provider flow used by
   Services. It can select available built-in or configured providers, store the
   provider key or base URL when needed, and enable `web_search`.

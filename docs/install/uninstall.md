@@ -87,7 +87,8 @@ launchctl bootout gui/$UID/ai.fased.gateway
 rm -f ~/Library/LaunchAgents/ai.fased.gateway.plist
 ```
 
-If you used a profile, replace the label and plist name with `ai.fased.<profile>`. Remove any legacy `com.fased.*` plists if present.
+If you used a profile, replace the label and plist name with
+`ai.fased.<profile>`. Remove any legacy `com.fased.*` plists if present.
 
 ### Linux (systemd user unit)
 
@@ -115,7 +116,8 @@ If you used a profile, delete the matching task name and `~\.fased-<profile>\gat
 
 ### Normal install (repo `install.sh`)
 
-If you used the repo-backed `install.sh`, uninstall the gateway service first, then remove the repo checkout and `~/.fased` data if you want a full wipe.
+If you used the repo-backed `install.sh`, uninstall the gateway service first.
+Then remove the repo checkout and `~/.fased` data if you want a full wipe.
 
 ### Source checkout (git clone)
 

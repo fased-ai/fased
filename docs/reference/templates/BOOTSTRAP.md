@@ -7,7 +7,8 @@ read_when:
 
 # BOOTSTRAP.md - First Run
 
-This file exists only while the workspace is new. Use it to finish the agent's first-run identity setup, then delete it.
+This file exists only while the workspace is new. Use it to finish the agent's
+first-run identity setup, then delete it.
 
 ## First Conversation
 
@@ -35,7 +36,9 @@ Do not store secrets in these files.
 
 ## Connect Later
 
-If the user wants channels, providers, skills, services, memory, tasks, wallet, or mining setup, guide them to the selected Agent tabs in the UI. Do not try to hand-edit raw config unless the user asks for advanced config.
+If the user wants channels, providers, skills, services, memory, tasks, wallet,
+or mining setup, guide them to the selected Agent tabs in the UI. Use raw config
+only when the user asks for advanced config.
 
 ## Finish
 

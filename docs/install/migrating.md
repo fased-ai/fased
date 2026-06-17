@@ -8,14 +8,18 @@ title: "Migration Guide"
 
 # Migrating Fased to a new machine
 
-This guide migrates a Fased Gateway from one machine to another **without redoing onboarding**.
+This guide migrates a Fased Gateway from one machine to another **without
+redoing onboarding**.
 
 The migration is simple conceptually:
 
-- Copy the **state directory** (`$FASED_STATE_DIR`, default: `~/.fased/`) — this includes config, auth, sessions, and channel state.
-- Copy your **workspace** (`~/.fased/workspace/` by default) — this includes your agent files (memory, prompts, etc.).
+- Copy the **state directory** (`$FASED_STATE_DIR`, default: `~/.fased/`). This
+  includes config, auth, sessions, and channel state.
+- Copy your **workspace** (`~/.fased/workspace/` by default). This includes your
+  agent files, memory, prompts, and related workspace content.
 
-But there are common footguns around **profiles**, **permissions**, and **partial copies**.
+The common migration mistakes are **profiles**, **permissions**, and **partial
+copies**.
 
 ## Before you start (what you are migrating)
 
@@ -130,11 +134,12 @@ fased gateway restart
 fased status
 ```
 
-## Common footguns (and how to avoid them)
+## Common mistakes and fixes
 
-### Footgun: profile / state-dir mismatch
+### Profile / state-dir mismatch
 
-If you ran the old gateway with a profile (or `FASED_STATE_DIR`), and the new gateway uses a different one, you’ll see symptoms like:
+If you ran the old gateway with a profile or `FASED_STATE_DIR`, and the new
+gateway uses a different one, you will see symptoms like:
 
 - config changes not taking effect
 - channels missing / logged out

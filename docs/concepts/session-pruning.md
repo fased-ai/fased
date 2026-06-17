@@ -8,7 +8,9 @@ read_when:
 
 # Session Pruning
 
-Session pruning trims **old tool results** from the in-memory context right before each LLM call. It does **not** rewrite the on-disk session history (`*.jsonl`).
+Session pruning trims **old tool results** from the in-memory context right
+before each LLM call. It does **not** rewrite the on-disk session history
+(`*.jsonl`).
 
 ## When it runs
 
@@ -34,10 +36,15 @@ Session pruning trims **old tool results** from the in-memory context right befo
 
 ## What this improves (cost + cache behavior)
 
-- **Why prune:** Anthropic prompt caching only applies within the TTL. If a session goes idle past the TTL, the next request re-caches the full prompt unless you trim it first.
+- **Why prune:** Anthropic prompt caching only applies within the TTL. If a
+  session goes idle past the TTL, the next request re-caches the full prompt
+  unless you trim it first.
 - **What gets cheaper:** pruning reduces the **cacheWrite** size for that first request after the TTL expires.
-- **Why the TTL reset matters:** once pruning runs, the cache window resets, so follow-up requests can reuse the freshly cached prompt instead of re-caching the full history again.
-- **What it does not do:** pruning does not add tokens or double costs; it only changes what gets cached on that first post-TTL request.
+- **Why the TTL reset matters:** once pruning runs, the cache window resets, so
+  follow-up requests can reuse the freshly cached prompt instead of re-caching
+  the full history again.
+- **Cost behavior:** pruning does not add tokens or double costs; it only
+  changes what gets cached on that first post-TTL request.
 
 ## What can be pruned
 
@@ -83,8 +90,11 @@ If `agents.defaults.contextTokens` is set, it is treated as a cap (min) on the r
 
 ## Interaction with other limits
 
-- Built-in tools already truncate their own output; session pruning is an extra layer that prevents long-running chats from accumulating too much tool output in the model context.
-- Compaction is separate: compaction summarizes and persists, pruning is transient per request. See [/concepts/compaction](/concepts/compaction).
+- Built-in tools already truncate their own output; session pruning is an extra
+  layer that prevents long-running chats from accumulating too much tool output
+  in the model context.
+- Compaction is separate: compaction summarizes and persists, while pruning is
+  transient per request. See [/concepts/compaction](/concepts/compaction).
 
 ## Manual defaults (when enabled)
 

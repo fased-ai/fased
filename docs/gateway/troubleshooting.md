@@ -127,7 +127,10 @@ Look for:
 
 Common signatures:
 
-- `Gateway start blocked: set gateway.mode=local` → local gateway mode is not enabled. Fix: set `gateway.mode="local"` in your config (or run `fased configure`). If you are running Fased via Podman using the dedicated `fased` user, the config lives at `~fased/.fased/fased.json`.
+- `Gateway start blocked: set gateway.mode=local` → local gateway mode is not
+  enabled. Fix: set `gateway.mode="local"` in your config or run
+  `fased configure`. If you are running Fased via Podman using the dedicated
+  `fased` user, the config lives at `~fased/.fased/fased.json`.
 - `refusing to bind gateway ... without auth` → non-loopback bind without token/password.
 - `another gateway instance is already listening` / `EADDRINUSE` → port conflict.
 
@@ -139,7 +142,8 @@ Related:
 
 ## Channel connected messages not flowing
 
-If channel state is connected but message flow is dead, focus on policy, permissions, and channel specific delivery rules.
+If channel state is connected but message flow is dead, focus on policy,
+permissions, and channel-specific delivery rules.
 
 ```bash
 fased channels status --probe
@@ -159,7 +163,8 @@ Common signatures:
 
 - `mention required` → message ignored by group mention policy.
 - `pairing` / pending approval traces → sender is not approved.
-- `missing_scope`, `not_in_channel`, `Forbidden`, `401/403` → channel auth/permissions issue.
+- `missing_scope`, `not_in_channel`, `Forbidden`, `401/403` → channel
+  auth/permissions issue.
 
 Related:
 
@@ -170,7 +175,8 @@ Related:
 
 ## Tasks and heartbeat delivery
 
-If a scheduled task or heartbeat did not run or did not deliver, verify scheduler state first, then delivery target.
+If a scheduled task or heartbeat did not run or did not deliver, verify
+scheduler state first, then delivery target.
 
 ```bash
 fased task status
@@ -192,7 +198,9 @@ Common signatures:
 - `cron: timer tick failed` → scheduler tick failed; check file/log/runtime errors.
 - `heartbeat skipped` with `reason=quiet-hours` → outside active hours window.
 - `heartbeat: unknown accountId` → invalid account id for heartbeat delivery target.
-- `heartbeat skipped` with `reason=dm-blocked` → heartbeat target resolved to a DM-style destination while `agents.defaults.heartbeat.directPolicy` (or per-agent override) is set to `block`.
+- `heartbeat skipped` with `reason=dm-blocked` → heartbeat target resolved to a
+  DM-style destination while `agents.defaults.heartbeat.directPolicy` or a
+  per-agent override is set to `block`.
 
 Related:
 

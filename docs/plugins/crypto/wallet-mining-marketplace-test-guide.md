@@ -195,7 +195,8 @@ Expected result:
 Create disabled scheduled tasks first. Suggested prompts:
 
 ```text
-Every hour, check @mining status. Stop @mining if the pool has more than 100 SOL and more than 10 miners. Start again when miners drop below 10.
+Every hour, check @mining status. Stop @mining if the pool has more than
+100 SOL and more than 10 miners. Start again when miners drop below 10.
 ```
 
 ```text

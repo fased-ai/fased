@@ -9,7 +9,8 @@ sidebarTitle: "Wallet passkey"
 
 # Wallet Control Passkey
 
-Wallet Control Passkey is the approval and ceremony layer for wallet-sensitive actions in Fased.
+Wallet Control Passkey is the approval and ceremony layer for wallet-sensitive
+actions in Fased.
 
 Use it for:
 
@@ -42,7 +43,8 @@ Practical rule:
 - use HTTPS
 - or use `http://localhost:18789` on the gateway host
 
-If you are browsing from a different machine over plain HTTP, passkey behavior may fail even when the wallet setup itself is healthy.
+If you are browsing from a different machine over plain HTTP, passkey behavior
+may fail even when the wallet setup itself is healthy.
 
 ## Step 1: enable passkey approval
 
@@ -123,20 +125,22 @@ Recovery share:
 - should be downloaded, printed, or otherwise stored offline
 - should stay separate from both the host and any device share
 
-If you lose the browser-stored device share, the recovery share is the thing that gets you back in.
+If you lose the browser-stored device share, the recovery share is the thing
+that gets you back in.
 
 ## Encrypted browser storage
 
 Some browsers can keep the current device share in encrypted browser storage.
 
-That is helpful, but it is not a replacement for the recovery share.
+That is helpful. The recovery share remains the real backup.
 
 Practical rule:
 
 - encrypted browser storage is convenience for this client
 - offline recovery share is the real backup
 
-If the browser or authenticator does not support the required passkey storage path, keep the device share manual on that client.
+If the browser or authenticator does not support the required passkey storage
+path, keep the device share manual on that client.
 
 ## Unlock, recovery, and second device
 
@@ -161,11 +165,13 @@ Best practice:
 - do not rely on one browser profile as your only recovery path
 - do not remove the last passkey while secured wallets still depend on it
 
-## What this guide does not claim
+## Scope
 
 Wallet Control Passkey is already real for approval and ceremony.
 
-A passkey approval gate is not, by itself, complete at-rest custody protection for every wallet.
+A passkey approval gate is one part of wallet protection. Split-key custody,
+small working balances, signer isolation, and recovery discipline remain part
+of the wallet security model.
 
 For the deeper operator model, see:
 

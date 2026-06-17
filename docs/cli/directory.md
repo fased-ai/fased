@@ -8,11 +8,13 @@ title: "directory"
 
 # `fased directory`
 
-Use `directory` when you need stable IDs for contacts, groups, or the current account on a channel that exposes directory data.
+Use `directory` when you need stable IDs for contacts, groups, or the current
+account on a channel that exposes directory data.
 
 ## Common flags
 
-- `--channel <name>`: channel id/alias (required when multiple channels are configured; auto when only one is configured)
+- `--channel <name>`: channel id/alias. Required when multiple channels are
+  configured; automatic when only one is configured.
 - `--account <id>`: account id (default: channel default)
 - `--query <text>`: filter peer/group list results when supported
 - `--limit <n>`: cap peer/group list results
@@ -23,7 +25,8 @@ Use `directory` when you need stable IDs for contacts, groups, or the current ac
 - `directory` is meant to help you find IDs you can paste into other commands (especially `fased message send --target ...`).
 - For many channels, results are config-backed (allowlists / configured groups) rather than a live provider directory.
 - Default output is a compact table; use `--json` for scripting.
-- If a channel adapter does not expose self, peers, groups, or members, the command reports that the directory capability is unsupported for that channel.
+- If a channel adapter does not expose self, peers, groups, or members, the
+  command reports that the directory capability is unsupported for that channel.
 
 ## Using results with `message send`
 

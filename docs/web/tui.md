@@ -106,7 +106,8 @@ Session lifecycle:
 - `/settings`
 - `/exit`
 
-Other Gateway slash commands (for example, `/context`) are forwarded to the Gateway and shown as system output. See [Slash commands](/tools/slash-commands).
+Other Gateway slash commands, such as `/context`, are forwarded to the Gateway
+and shown as system output. See [Slash commands](/tools/slash-commands).
 
 ## Local shell commands
 

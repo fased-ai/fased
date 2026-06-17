@@ -8,7 +8,10 @@ title: "Mattermost"
 
 # Mattermost
 
-Mattermost is the self-hosted Slack-like option when you want familiar team chat but keep the server in your own environment. Fased connects with a bot token, listens over Mattermost’s event stream, and applies the standard DM, channel, and mention controls from the gateway.
+Mattermost is the self-hosted Slack-like option when you want familiar team chat
+but keep the server in your own environment. Fased connects with a bot token,
+listens over Mattermost's event stream, and applies the standard DM, channel,
+and mention controls from the gateway.
 
 Status: bundled channel extension for DMs, channels, and groups over bot-token auth plus live events.
 
@@ -23,7 +26,8 @@ the UI reports that the runtime still needs to load.
 
 ## Quick setup
 
-The minimal path is one Mattermost bot user, one base URL, and one bot token. Start there before adding multi-account or per-channel policies.
+The minimal path is one Mattermost bot user, one base URL, and one bot token.
+Start there before adding multi-account or per-channel policies.
 
 1. Create a Mattermost bot account and copy the **bot token**.
 2. Copy the Mattermost **base URL** (e.g., `https://chat.example.com`).
@@ -52,7 +56,8 @@ Set these on the gateway host if you prefer env vars:
 - `MATTERMOST_BOT_TOKEN=...`
 - `MATTERMOST_URL=https://chat.example.com`
 
-Env vars apply only to the **default** account (`default`). Other accounts must use config values.
+Env vars apply only to the **default** account (`default`). Other accounts must
+use config values.
 
 ## Chat modes
 
@@ -78,11 +83,13 @@ Config example:
 Notes:
 
 - `onchar` still responds to explicit @mentions.
-- `channels.mattermost.requireMention` is honored for legacy configs but `chatmode` is preferred.
+- `channels.mattermost.requireMention` is honored for legacy configs, but
+  `chatmode` is preferred.
 
 ## Access control (DMs)
 
-- Default: `channels.mattermost.dmPolicy = "pairing"` (unknown senders get a pairing code).
+- Default: `channels.mattermost.dmPolicy = "pairing"`; unknown senders get a
+  pairing code.
 - Approve via:
   - `fased pairing list mattermost`
   - `fased pairing approve mattermost <CODE>`
@@ -92,9 +99,11 @@ Notes:
 
 - Default: `channels.mattermost.groupPolicy = "allowlist"` (mention-gated).
 - Allowlist senders with `channels.mattermost.groupAllowFrom` (user IDs recommended).
-- `@username` matching is mutable and only enabled when `channels.mattermost.dangerouslyAllowNameMatching: true`.
+- `@username` matching is mutable and only enabled when
+  `channels.mattermost.dangerouslyAllowNameMatching: true`.
 - Open channels: `channels.mattermost.groupPolicy="open"` (mention-gated).
-- Runtime note: if `channels.mattermost` is completely missing, runtime falls back to `groupPolicy="allowlist"` for group checks (even if `channels.defaults.groupPolicy` is set).
+- Runtime note: if `channels.mattermost` is completely missing, runtime falls
+  back to `groupPolicy="allowlist"` for group checks.
 
 ## Targets for outbound delivery
 
@@ -112,18 +121,22 @@ Bare IDs are treated as channels.
 - `messageId` is the Mattermost post id.
 - `emoji` accepts names like `thumbsup` or `:+1:` (colons are optional).
 - Set `remove=true` (boolean) to remove a reaction.
-- Reaction add/remove events are forwarded as system events to the routed agent session.
+- Reaction add/remove events are forwarded as system events to the routed agent
+  session.
 
 Examples:
 
 ```
-message action=react channel=mattermost target=channel:<channelId> messageId=<postId> emoji=thumbsup
-message action=react channel=mattermost target=channel:<channelId> messageId=<postId> emoji=thumbsup remove=true
+message action=react channel=mattermost target=channel:<channelId> \
+  messageId=<postId> emoji=thumbsup
+message action=react channel=mattermost target=channel:<channelId> \
+  messageId=<postId> emoji=thumbsup remove=true
 ```
 
 Config:
 
-- `channels.mattermost.actions.reactions`: enable/disable reaction actions (default true).
+- `channels.mattermost.actions.reactions`: enable/disable reaction actions
+  (default true).
 - Per-account override: `channels.mattermost.accounts.<id>.actions.reactions`.
 
 ## Multi-account
@@ -135,8 +148,16 @@ Mattermost supports multiple accounts under `channels.mattermost.accounts`:
   channels: {
     mattermost: {
       accounts: {
-        default: { name: "Primary", botToken: "mm-token", baseUrl: "https://chat.example.com" },
-        alerts: { name: "Alerts", botToken: "mm-token-2", baseUrl: "https://alerts.example.com" },
+        default: {
+          name: "Primary",
+          botToken: "mm-token",
+          baseUrl: "https://chat.example.com",
+        },
+        alerts: {
+          name: "Alerts",
+          botToken: "mm-token-2",
+          baseUrl: "https://alerts.example.com",
+        },
       },
     },
   },
@@ -145,6 +166,7 @@ Mattermost supports multiple accounts under `channels.mattermost.accounts`:
 
 ## Troubleshooting
 
-- No replies in channels: ensure the bot is in the channel and mention it (oncall), use a trigger prefix (onchar), or set `chatmode: "onmessage"`.
+- No replies in channels: ensure the bot is in the channel and mention it, use
+  a trigger prefix, or set `chatmode: "onmessage"`.
 - Auth errors: check the bot token, base URL, and whether the account is enabled.
 - Multi-account issues: env vars only apply to the `default` account.

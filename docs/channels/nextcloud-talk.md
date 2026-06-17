@@ -7,7 +7,10 @@ title: "Nextcloud Talk"
 
 # Nextcloud Talk
 
-Nextcloud Talk is the clean self-hosted path when you already run Nextcloud and want a bot that lives alongside the rest of your internal collaboration stack. Fased receives webhook events from the Talk bot API and sends replies back through the same channel account.
+Nextcloud Talk is the self-hosted path when you already run Nextcloud and want
+a bot alongside the rest of your internal collaboration stack. Fased receives
+webhook events from the Talk bot API and sends replies back through the same
+channel account.
 
 Status: bundled channel extension for DMs, rooms, reactions, and markdown-style replies.
 
@@ -22,7 +25,8 @@ gateway if the UI reports that the runtime still needs to load.
 
 ## Quick setup (beginner)
 
-The only externally visible piece is the bot webhook URL. Everything else can stay inside your normal Nextcloud and gateway trust boundary.
+The only externally visible piece is the bot webhook URL. Everything else can
+stay inside your normal Nextcloud and gateway trust boundary.
 
 1. On your Nextcloud server, create a bot:
 
@@ -32,7 +36,8 @@ The only externally visible piece is the bot webhook URL. Everything else can st
 
 2. Enable the bot in the target room settings.
 3. Configure Fased in **Agent > Channels > Nextcloud Talk**:
-   - Config: `channels.nextcloud-talk.baseUrl` + `channels.nextcloud-talk.botSecret`
+   - Config: `channels.nextcloud-talk.baseUrl` +
+     `channels.nextcloud-talk.botSecret`
    - Or env: `NEXTCLOUD_TALK_BOT_SECRET` (default account only)
 4. Restart the gateway if the UI asks for it.
 
@@ -54,17 +59,21 @@ Minimal config:
 ## Notes
 
 - Bots cannot initiate DMs. The user must message the bot first.
-- Webhook URL must be reachable by the Gateway; set `webhookPublicUrl` if behind a proxy.
+- Webhook URL must be reachable by the Gateway; set `webhookPublicUrl` if
+  behind a proxy.
 - Media uploads are not supported by the bot API; media is sent as URLs.
-- The webhook payload does not distinguish DMs vs rooms; set `apiUser` + `apiPassword` to enable room-type lookups (otherwise DMs are treated as rooms).
+- The webhook payload does not distinguish DMs vs rooms. Set `apiUser` +
+  `apiPassword` to enable room-type lookups; otherwise DMs are treated as rooms.
 
 ## Access control (DMs)
 
-- Default: `channels.nextcloud-talk.dmPolicy = "pairing"`. Unknown senders get a pairing code.
+- Default: `channels.nextcloud-talk.dmPolicy = "pairing"`. Unknown senders get
+  a pairing code.
 - Approve via:
   - `fased pairing list nextcloud-talk`
   - `fased pairing approve nextcloud-talk <CODE>`
-- Public DMs: `channels.nextcloud-talk.dmPolicy="open"` plus `channels.nextcloud-talk.allowFrom=["*"]`.
+- Public DMs: `channels.nextcloud-talk.dmPolicy="open"` plus
+  `channels.nextcloud-talk.allowFrom=["*"]`.
 - `allowFrom` matches Nextcloud user IDs only; display names are ignored.
 
 ## Rooms (groups)
@@ -84,7 +93,8 @@ Minimal config:
 }
 ```
 
-- To allow no rooms, keep the allowlist empty or set `channels.nextcloud-talk.groupPolicy="disabled"`.
+- To allow no rooms, keep the allowlist empty or set
+  `channels.nextcloud-talk.groupPolicy="disabled"`.
 
 ## Capabilities
 
@@ -112,10 +122,12 @@ Provider options:
 - `channels.nextcloud-talk.apiPasswordFile`: API password file path.
 - `channels.nextcloud-talk.webhookPort`: webhook listener port (default: 8788).
 - `channels.nextcloud-talk.webhookHost`: webhook host (default: 0.0.0.0).
-- `channels.nextcloud-talk.webhookPath`: webhook path (default: /nextcloud-talk-webhook).
+- `channels.nextcloud-talk.webhookPath`: webhook path
+  (default: /nextcloud-talk-webhook).
 - `channels.nextcloud-talk.webhookPublicUrl`: externally reachable webhook URL.
 - `channels.nextcloud-talk.dmPolicy`: `pairing | allowlist | open | disabled`.
-- `channels.nextcloud-talk.allowFrom`: DM allowlist (user IDs). `open` requires `"*"`.
+- `channels.nextcloud-talk.allowFrom`: DM allowlist using user IDs. `open`
+  requires `"*"`.
 - `channels.nextcloud-talk.groupPolicy`: `allowlist | open | disabled`.
 - `channels.nextcloud-talk.groupAllowFrom`: group allowlist (user IDs).
 - `channels.nextcloud-talk.rooms`: per-room settings and allowlist.
@@ -123,7 +135,8 @@ Provider options:
 - `channels.nextcloud-talk.dmHistoryLimit`: DM history limit (0 disables).
 - `channels.nextcloud-talk.dms`: per-DM overrides (historyLimit).
 - `channels.nextcloud-talk.textChunkLimit`: outbound text chunk size (chars).
-- `channels.nextcloud-talk.chunkMode`: `length` (default) or `newline` to split on blank lines (paragraph boundaries) before length chunking.
+- `channels.nextcloud-talk.chunkMode`: `length` or `newline`; `newline`
+  splits on blank lines before length chunking.
 - `channels.nextcloud-talk.blockStreaming`: disable block streaming for this channel.
 - `channels.nextcloud-talk.blockStreamingCoalesce`: block streaming coalesce tuning.
 - `channels.nextcloud-talk.mediaMaxMb`: inbound media cap (MB).

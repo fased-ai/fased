@@ -8,13 +8,17 @@ title: "Docker"
 
 # Docker (optional)
 
-Docker is **optional**. Use it only if you want a containerized gateway or to validate the Docker flow.
+Docker is **optional**. Use it when you want a containerized gateway or need to
+validate the Docker flow.
 
 ## Is Docker right for me?
 
-- **Yes**: you want an isolated, throwaway gateway environment or to run Fased on a host without local installs.
-- **No**: you’re running on your own machine and just want the fastest dev loop. Use the normal install flow instead.
-- **Sandboxing note**: agent sandboxing uses Docker too, but it does **not** require the full gateway to run in Docker. See [Sandboxing](/gateway/sandboxing).
+- **Yes**: you want an isolated, throwaway gateway environment or a host without
+  local installs.
+- **No**: you are running on your own machine and want the fastest dev loop. Use
+  the normal install flow instead.
+- **Sandboxing note**: agent sandboxing uses Docker too, but it does **not**
+  require the full gateway to run in Docker. See [Sandboxing](/gateway/sandboxing).
 
 This guide covers:
 
@@ -26,7 +30,8 @@ Sandboxing details: [Sandboxing](/gateway/sandboxing)
 ## Requirements
 
 - Docker Desktop (or Docker Engine) + Docker Compose v2
-- At least 2 GB RAM for image build (`pnpm install` may be OOM-killed on 1 GB hosts with exit 137)
+- At least 2 GB RAM for image build. On 1 GB hosts, `pnpm install` may be
+  OOM-killed with exit 137.
 - Enough disk for images + logs
 
 ## Containerized Gateway (Docker Compose)
@@ -315,7 +320,9 @@ pnpm test:docker:qr
 ### Notes
 
 - Gateway bind defaults to `lan` for container use.
-- Dockerfile CMD uses `--allow-unconfigured`; mounted config with `gateway.mode` not `local` will still start. Override CMD to enforce the guard.
+- Dockerfile CMD uses `--allow-unconfigured`; mounted config with
+  `gateway.mode` not `local` will still start. Override CMD to enforce the
+  guard.
 - The gateway container is the source of truth for sessions (`~/.fased/agents/<agentId>/sessions/`).
 
 ## Agent Sandbox (host gateway + Docker tools)
@@ -459,7 +466,9 @@ docker build -t my-fased-sbx -f deploy/containers/Dockerfile.sandbox .
 
 ## Troubleshooting
 
-- Image missing: build with [`scripts/sandbox-setup.sh`](https://github.com/fased-ai/fased/blob/main/scripts/sandbox-setup.sh) or set `agents.defaults.sandbox.docker.image`.
+- Image missing: build with
+  [`scripts/sandbox-setup.sh`](https://github.com/fased-ai/fased/blob/main/scripts/sandbox-setup.sh)
+  or set `agents.defaults.sandbox.docker.image`.
 - Container not running: it will auto-create per session on demand.
 - Permission errors in sandbox: set `docker.user` to a UID:GID that matches your
   mounted workspace ownership (or chown the workspace folder).

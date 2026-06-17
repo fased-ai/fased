@@ -62,13 +62,16 @@ Add bindings:
 fased agents bind --agent work --bind telegram:ops --bind discord:guild-a
 ```
 
-If you omit `accountId` (`--bind <channel>`), Fased resolves it from channel defaults and plugin setup hooks when available.
+If you omit `accountId` (`--bind <channel>`), Fased resolves it from channel
+defaults and plugin setup hooks when available.
 
 ### Binding scope behavior
 
 - A binding without `accountId` matches the channel default account only.
 - `accountId: "*"` is the channel-wide fallback (all accounts) and is less specific than an explicit account binding.
-- If the same agent already has a matching channel binding without `accountId`, and you later bind with an explicit or resolved `accountId`, Fased upgrades that existing binding in place instead of adding a duplicate.
+- If the same agent already has a matching channel binding without `accountId`,
+  and you later bind with an explicit or resolved `accountId`, Fased upgrades
+  that existing binding in place instead of adding a duplicate.
 
 Example:
 
@@ -80,7 +83,9 @@ fased agents bind --agent work --bind telegram
 fased agents bind --agent work --bind telegram:ops
 ```
 
-After the upgrade, routing for that binding is scoped to `telegram:ops`. If you also want default-account routing, add it explicitly (for example `--bind telegram:default`).
+After the upgrade, routing for that binding is scoped to `telegram:ops`. If you
+also want default-account routing, add it explicitly:
+`--bind telegram:default`.
 
 Remove bindings:
 

@@ -26,8 +26,10 @@ These are **not** browser automation. For JS-heavy sites or logins, use the
   - **DuckDuckGo**: keyless fallback for lightweight public search.
   - **Exa**: research-oriented results with highlights.
   - **Firecrawl Search**: structured search results from Firecrawl.
-  - **Perplexity**: returns AI-synthesized answers with citations from real-time web search.
-  - **Gemini**: returns AI-synthesized answers grounded in Google Search with citations.
+  - **Perplexity**: returns AI-synthesized answers with citations from real-time
+    web search.
+  - **Gemini**: returns AI-synthesized answers grounded in Google Search with
+    citations.
   - **Kimi**: uses Moonshot/Kimi search-capable models.
   - **Grok**: uses xAI search-capable models.
   - **SearXNG**: uses your self-hosted metasearch instance.
@@ -39,20 +41,23 @@ These are **not** browser automation. For JS-heavy sites or logins, use the
 
 ## Choosing a search provider
 
-| Provider       | Best for                          | Setup needed                                  |
-| -------------- | --------------------------------- | --------------------------------------------- |
-| **Brave**      | Fast structured search            | `BRAVE_API_KEY`                               |
-| **DuckDuckGo** | Keyless fallback                  | None                                          |
-| **Exa**        | Research search and highlights    | `EXA_API_KEY`                                 |
-| **Firecrawl**  | Structured search + page crawling | `FIRECRAWL_API_KEY`                           |
-| **Gemini**     | Google Search grounding           | `GEMINI_API_KEY`                              |
-| **Grok**       | xAI search-capable answers        | `XAI_API_KEY`                                 |
-| **Kimi**       | Long-context answer synthesis     | `KIMI_API_KEY` or `MOONSHOT_API_KEY`          |
-| **Perplexity** | AI answers with citations         | `OPENROUTER_API_KEY` or `PERPLEXITY_API_KEY`  |
-| **SearXNG**    | Self-hosted/private metasearch    | `SEARXNG_BASE_URL` or Services base URL field |
-| **Tavily**     | Structured search and summaries   | `TAVILY_API_KEY`                              |
+- **Brave**: fast structured search. Needs `BRAVE_API_KEY`.
+- **DuckDuckGo**: keyless fallback. Needs no setup.
+- **Exa**: research search and highlights. Needs `EXA_API_KEY`.
+- **Firecrawl**: structured search + page crawling. Needs `FIRECRAWL_API_KEY`.
+- **Gemini**: Google Search grounding. Needs `GEMINI_API_KEY`.
+- **Grok**: xAI search-capable answers. Needs `XAI_API_KEY`.
+- **Kimi**: long-context answer synthesis. Needs `KIMI_API_KEY` or
+  `MOONSHOT_API_KEY`.
+- **Perplexity**: AI answers with citations. Needs `OPENROUTER_API_KEY` or
+  `PERPLEXITY_API_KEY`.
+- **SearXNG**: self-hosted/private metasearch. Needs `SEARXNG_BASE_URL` or the
+  Services base URL field.
+- **Tavily**: structured search and summaries. Needs `TAVILY_API_KEY`.
 
-See [Brave Search setup](/tools/web#getting-a-brave-api-key) and [Perplexity Sonar](/tools/web#using-perplexity-direct-or-via-openrouter) for provider-specific details.
+See [Brave Search setup](/tools/web#getting-a-brave-api-key) and
+[Perplexity Sonar](/tools/web#using-perplexity-direct-or-via-openrouter) for
+provider-specific details.
 
 ## Where to configure it
 
@@ -72,12 +77,15 @@ after the service is configured.
 
 ### Auto-detection
 
-If no `provider` is explicitly set, Fased auto-detects which provider to use based on available API keys, checking in this order:
+If no `provider` is explicitly set, Fased auto-detects which provider to use
+based on available API keys, checking in this order:
 
 1. **Brave** — `BRAVE_API_KEY` env var or `search.apiKey` config
 2. **Gemini** — `GEMINI_API_KEY` env var or `search.gemini.apiKey` config
-3. **Kimi** — `KIMI_API_KEY` / `MOONSHOT_API_KEY` env var or `search.kimi.apiKey` config
-4. **Perplexity** — `PERPLEXITY_API_KEY` / `OPENROUTER_API_KEY` env var or `search.perplexity.apiKey` config
+3. **Kimi** — `KIMI_API_KEY` / `MOONSHOT_API_KEY` env var or
+   `search.kimi.apiKey` config
+4. **Perplexity** — `PERPLEXITY_API_KEY` / `OPENROUTER_API_KEY` env var or
+   `search.perplexity.apiKey` config
 5. **Grok** — `XAI_API_KEY` env var or `search.grok.apiKey` config
 6. **Exa** — `EXA_API_KEY` env var or `search.exa.apiKey` config
 7. **Tavily** — `TAVILY_API_KEY` env var or `search.tavily.apiKey` config
@@ -161,7 +169,8 @@ Example: switch to Perplexity Sonar (direct API):
 
 1. Create a Brave Search API account at [https://brave.com/search/api/](https://brave.com/search/api/)
 2. In the dashboard, choose the **Data for Search** plan (not “Data for AI”) and generate an API key.
-3. Run `fased configure --section web` to store the key in config (recommended), or set `BRAVE_API_KEY` in your environment.
+3. Run `fased configure --section web` to store the key in config
+   (recommended), or set `BRAVE_API_KEY` in your environment.
 
 Check the Brave API portal for current limits and pricing.
 
@@ -209,8 +218,8 @@ compatible model gateway.
 }
 ```
 
-**Environment alternative:** set `OPENROUTER_API_KEY` or `PERPLEXITY_API_KEY` in the Gateway
-environment. For a gateway install, put it in `~/.fased/.env`.
+**Environment alternative:** set `OPENROUTER_API_KEY` or `PERPLEXITY_API_KEY` in
+the Gateway environment. For a gateway install, put it in `~/.fased/.env`.
 
 If no base URL is set, Fased chooses a default based on the API key source:
 
@@ -220,16 +229,18 @@ If no base URL is set, Fased chooses a default based on the API key source:
 
 ### Available Perplexity models
 
-| Model                            | Description                          | Best for          |
-| -------------------------------- | ------------------------------------ | ----------------- |
-| `perplexity/sonar`               | Fast Q&A with web search             | Quick lookups     |
-| `perplexity/sonar-pro` (default) | Multi-step reasoning with web search | Complex questions |
-| `perplexity/sonar-reasoning-pro` | Chain-of-thought analysis            | Deep research     |
+- `perplexity/sonar`: fast Q&A with web search. Best for quick lookups.
+- `perplexity/sonar-pro` (default): multi-step reasoning with web search. Best
+  for complex questions.
+- `perplexity/sonar-reasoning-pro`: chain-of-thought analysis. Best for deep
+  research.
 
 ## Using Gemini (Google Search grounding)
 
-Gemini models support built-in [Google Search grounding](https://ai.google.dev/gemini-api/docs/grounding),
-which returns AI-synthesized answers backed by live Google Search results with citations.
+Gemini models support built-in
+[Google Search grounding](https://ai.google.dev/gemini-api/docs/grounding),
+which returns AI-synthesized answers backed by live Google Search results with
+citations.
 
 ### Getting a Gemini API key
 
@@ -264,8 +275,10 @@ For a gateway install, put it in `~/.fased/.env`.
 
 - Citation URLs from Gemini grounding are automatically resolved from Google's
   redirect URLs to direct URLs.
-- Redirect resolution uses the SSRF guard path (HEAD + redirect checks + http/https validation) before returning the final citation URL.
-- This redirect resolver follows the trusted-network model (private/internal networks allowed by default) to match Gateway operator trust assumptions.
+- Redirect resolution uses the SSRF guard path before returning the final
+  citation URL. It checks HEAD, redirects, and http/https validity.
+- This redirect resolver follows Gateway operator trust assumptions:
+  private/internal networks are allowed by default.
 - The default model (`gemini-2.5-flash`) is fast and cost-effective.
   Any Gemini model that supports grounding can be used.
 
@@ -302,7 +315,8 @@ Search the web using your configured provider.
 
 - `query` (required)
 - `count` (1–10; default from config)
-- `country` (optional): 2-letter country code for region-specific results (e.g., "DE", "US", "ALL"). If omitted, Brave chooses its default region.
+- `country` (optional): 2-letter country code for region-specific results, such
+  as `"DE"`, `"US"`, or `"ALL"`. If omitted, Brave chooses its default region.
 - `search_lang` (optional): ISO language code for search results (e.g., "de", "en", "fr")
 - `ui_lang` (optional): ISO language code for UI elements
 - `freshness` (optional): filter by discovery time
@@ -358,7 +372,7 @@ Fetch a URL and extract readable content.
         timeoutSeconds: 30,
         cacheTtlMinutes: 15,
         maxRedirects: 3,
-        userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_7_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        userAgent: "Mozilla/5.0 ... Chrome/122.0.0.0 Safari/537.36",
         readability: true,
         firecrawl: {
           enabled: true,
@@ -382,13 +396,17 @@ Fetch a URL and extract readable content.
 
 Notes:
 
-- For HTML, `web_fetch` uses Readability first and falls back to basic HTML cleanup when Readability cannot extract main content.
-- Firecrawl fallback is used when direct fetch fails, the server returns an error, or extraction returns no content and Firecrawl is configured.
+- For HTML, `web_fetch` uses Readability first and falls back to basic HTML
+  cleanup when Readability cannot extract main content.
+- Firecrawl fallback is used when direct fetch fails, the server returns an
+  error, or extraction returns no content and Firecrawl is configured.
 - Firecrawl requests use bot-circumvention mode and cache results by default.
 - `web_fetch` sends a Chrome-like User-Agent and `Accept-Language` by default; override `userAgent` if needed.
 - `web_fetch` blocks private/internal hostnames and re-checks redirects (limit with `maxRedirects`).
 - `maxChars` is clamped to `tools.web.fetch.maxCharsCap`.
-- `web_fetch` caps the downloaded response body size to `tools.web.fetch.maxResponseBytes` before parsing; oversized responses are truncated and include a warning.
+- `web_fetch` caps the downloaded response body size to
+  `tools.web.fetch.maxResponseBytes` before parsing. Oversized responses are
+  truncated and include a warning.
 - `web_fetch` is best-effort extraction; some sites will need the browser tool.
 - See [Firecrawl](/tools/firecrawl) for key setup and service details.
 - Responses are cached (default 15 minutes) to reduce repeated fetches.

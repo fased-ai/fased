@@ -8,7 +8,9 @@ title: "Nostr"
 
 # Nostr
 
-Nostr gives Fased a lightweight decentralized DM lane without a central service account. The gateway signs in with a Nostr private key, listens on one or more relays, and routes encrypted DMs into the normal Fased session model.
+Nostr gives Fased a lightweight decentralized DM lane without a central service
+account. The gateway signs in with a Nostr private key, listens on one or more
+relays, and routes encrypted DMs into the normal Fased session model.
 
 **Status:** bundled channel extension, disabled until configured.
 
@@ -23,7 +25,9 @@ the UI reports that the runtime still needs to load.
 
 ## Quick setup
 
-For most setups, treat Nostr as a DM-only channel with explicit allowlists. Start with one keypair and two or three relays, then widen from there only if you need more reach.
+For most setups, treat Nostr as a DM-only channel with explicit allowlists.
+Start with one keypair and two or three relays, then widen from there only if
+you need more reach.
 
 1. Generate a Nostr keypair (if needed):
 

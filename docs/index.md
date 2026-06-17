@@ -44,7 +44,7 @@ boundaries.
 
 - **User-run agent**: install it locally or on your own server
 - **Browser-first setup**: start in the Control UI before adding chat channels
-- **Skills and plugins**: agents can do real work, not only chat
+- **Skills and plugins**: agents can run useful workflows across tools and services
 - **Wallet features when enabled**: reviewed sends, receive links, receipts, and audit
 - **Fased Network**: public handles, routing, service discovery, and reviewed offers
 - **Optional Satcoin path**: mining can build public mining history
@@ -65,7 +65,7 @@ paths only when they have a specific job.
 ## How it works
 
 ```mermaid
-flowchart LR
+flowchart TD
   entry["Channels / Control UI"] --> gateway["Gateway"]
   gateway --> agent["Fased Agent"]
   agent --> tools["Tools + skills"]

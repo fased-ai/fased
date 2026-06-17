@@ -61,7 +61,8 @@ For tool call behavior, prompt for a `read` or `exec` action so you can see tool
 
 ## Clean Slate Reset
 
-State lives under the Fased state directory. Default is `~/.fased`. If `FASED_STATE_DIR` is set, use that directory instead.
+State lives under the Fased state directory. Default is `~/.fased`. If
+`FASED_STATE_DIR` is set, use that directory.
 
 To reset everything:
 
@@ -72,7 +73,12 @@ To reset everything:
 - `sessions/` if legacy paths exist
 - `workspace/` if you want a blank workspace
 
-If you only want to reset sessions, delete `agents/<agentId>/sessions/` and `agents/<agentId>/sessions.json` for that agent. Keep `credentials/` if you do not want to reauthenticate.
+If you only want to reset sessions, delete these paths for that agent:
+
+- `agents/<agentId>/sessions/`
+- `agents/<agentId>/sessions.json`
+
+Keep `credentials/` if you do not want to reauthenticate.
 
 ## References
 

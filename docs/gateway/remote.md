@@ -7,10 +7,13 @@ title: "Remote Access"
 
 # Remote access (SSH, tunnels, and tailnets)
 
-Fased supports remote access by keeping one gateway running on a dedicated host and connecting clients to it over a controlled transport such as SSH or Tailscale.
+Fased supports remote access by keeping one gateway running on a dedicated host
+and connecting clients to it over a controlled transport such as SSH or
+Tailscale.
 
 - For **operators (you / the macOS app)**: SSH tunneling is the universal fallback.
-- For **nodes (iOS/Android and future devices)**: connect to the Gateway **WebSocket** (LAN/tailnet or SSH tunnel as needed).
+- For **nodes (iOS/Android and future devices)**: connect to the Gateway
+  **WebSocket** over LAN, tailnet, or SSH tunnel as needed.
 
 ## The core idea
 
@@ -19,16 +22,19 @@ Fased supports remote access by keeping one gateway running on a dedicated host 
 
 ## Common VPN/tailnet setups (where the agent lives)
 
-Think of the **Gateway host** as “where the agent lives.” It owns sessions, auth profiles, channels, and state.
+Think of the **Gateway host** as "where the agent lives." It owns sessions, auth
+profiles, channels, and state.
 Your laptop/desktop (and nodes) connect to that host.
 
 ### 1) Always-on Gateway in your tailnet (VPS or home server)
 
-Run the gateway on a persistent host and reach it via Tailscale Serve, a direct tailnet bind when necessary, or SSH.
+Run the gateway on a persistent host and reach it via Tailscale Serve, a direct
+tailnet bind when necessary, or SSH.
 
 - **Best UX:** keep `gateway.bind: "loopback"` and use **Tailscale Serve** for the Control UI.
 - **Fallback:** keep loopback + SSH tunnel from any machine that needs access.
-- **Examples:** [Hetzner](/install/hetzner) (production VPS) or the general [VPS hosting](/install/vps) hub.
+- **Examples:** [Hetzner](/install/hetzner) for a production VPS, or the general
+  [VPS hosting](/install/vps) hub.
 
 This is ideal when your laptop sleeps often but you want the agent always-on.
 
@@ -63,7 +69,9 @@ Flow example (Telegram → node):
 
 Notes:
 
-- **Nodes do not run the gateway service.** Only one gateway should run per host unless you intentionally run isolated profiles (see [Multiple gateways](/gateway/multiple-gateways)).
+- **Nodes do not run the gateway service.** Only one gateway should run per host
+  unless you intentionally run isolated profiles. See
+  [Multiple gateways](/gateway/multiple-gateways).
 - macOS app “node mode” is just a node client over the Gateway WebSocket.
 
 ## SSH tunnel (CLI + tools)
@@ -76,10 +84,13 @@ ssh -N -L 18789:127.0.0.1:18789 user@host
 
 With the tunnel up:
 
-- `fased health` and `fased status --deep` now reach the remote gateway via `ws://127.0.0.1:18789`.
-- `fased gateway {status,health,send,agent,call}` can also target the forwarded URL via `--url` when needed.
+- `fased health` and `fased status --deep` now reach the remote gateway via
+  `ws://127.0.0.1:18789`.
+- `fased gateway {status,health,send,agent,call}` can target the forwarded URL
+  with `--url` when needed.
 
-Note: replace `18789` with your configured `gateway.port` (or `--port`/`FASED_GATEWAY_PORT`).
+Note: replace `18789` with your configured `gateway.port`, `--port`, or
+`FASED_GATEWAY_PORT`.
 Note: when you pass `--url`, the CLI does not fall back to config or environment credentials.
 Include `--token` or `--password` explicitly. Missing explicit credentials is an error.
 
@@ -99,7 +110,8 @@ You can persist a remote target so CLI commands use it by default:
 }
 ```
 
-When the gateway is loopback-only, keep the URL at `ws://127.0.0.1:18789` and open the SSH tunnel first.
+When the gateway is loopback-only, keep the URL at `ws://127.0.0.1:18789` and
+open the SSH tunnel first.
 
 ## Credential precedence
 
@@ -112,18 +124,21 @@ Gateway call/probe credential resolution now follows one shared contract:
 - Remote mode defaults:
   - token: `gateway.remote.token` -> `FASED_GATEWAY_TOKEN` -> `gateway.auth.token`
   - password: `FASED_GATEWAY_PASSWORD` -> `gateway.remote.password` -> `gateway.auth.password`
-- Remote probe/status token checks are strict by default: they use `gateway.remote.token` only (no local token fallback) when targeting remote mode.
+- Remote probe/status token checks are strict by default: they use
+  `gateway.remote.token` only when targeting remote mode.
 
 ## Chat UI over SSH
 
-WebChat no longer uses a separate HTTP port. The SwiftUI chat UI connects directly to the Gateway WebSocket.
+WebChat uses the Gateway WebSocket directly instead of a separate HTTP port.
 
 - Forward `18789` over SSH (see above), then connect clients to `ws://127.0.0.1:18789`.
-- On macOS, prefer the app’s “Remote over SSH” mode, which manages the tunnel automatically.
+- On macOS, prefer the app's "Remote over SSH" mode, which manages the tunnel
+  automatically.
 
 ## macOS app “Remote over SSH”
 
-The macOS menu bar app can drive the same setup end-to-end (remote status checks, WebChat, and Voice Wake forwarding).
+The macOS menu bar app can drive the same setup end-to-end: remote status
+checks, WebChat, and Voice Wake forwarding.
 
 Runbook: [macOS remote access](/platforms/mac/remote).
 
@@ -132,20 +147,25 @@ Runbook: [macOS remote access](/platforms/mac/remote).
 Short version: keep the gateway loopback-only unless you are sure you need a bind.
 
 - **Loopback + SSH/Tailscale Serve** is the recommended default (no public exposure).
-- **Non-loopback binds** (`lan`/`tailnet`/`custom`, or `auto` when loopback is unavailable) must use auth tokens/passwords.
-- `gateway.remote.token` / `.password` are client credential sources. They do **not** configure server auth by themselves.
+- **Non-loopback binds** (`lan`/`tailnet`/`custom`, or `auto` when loopback is
+  unavailable) must use auth tokens/passwords.
+- `gateway.remote.token` / `.password` are client credential sources. They do
+  **not** configure server auth by themselves.
 - Local call paths can use `gateway.remote.*` as fallback when `gateway.auth.*` is unset.
 - `gateway.remote.tlsFingerprint` pins the remote TLS cert when using `wss://`.
 - **Tailscale Serve** can authenticate Control UI/WebSocket traffic via identity
   headers when `gateway.auth.allowTailscale: true`; HTTP API endpoints still
   require token/password auth. This tokenless flow assumes the gateway host is
   trusted. Set it to `false` if you want tokens/passwords everywhere.
-- Treat browser control like operator access: tailnet-only + deliberate node pairing.
+- Treat browser control like operator access: tailnet-only plus deliberate node
+  pairing.
 
 ### Port policy
 
-- Do not expose the raw gateway port publicly just because the runtime is hosted.
-- In the normal hosting profile, keep the gateway on loopback and expose it through Tailscale Serve, a trusted reverse proxy, or SSH.
-- If you intentionally bind to `tailnet`, restrict that reachability to the tailnet and keep internet firewalls closed.
+- Keep the raw gateway port closed to the public internet by default.
+- In the normal hosting profile, keep the gateway on loopback and expose it
+  through Tailscale Serve, a trusted reverse proxy, or SSH.
+- If you intentionally bind to `tailnet`, restrict that reachability to the
+  tailnet and keep internet firewalls closed.
 
 Deep dive: [Security](/gateway/security).

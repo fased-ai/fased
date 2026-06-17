@@ -18,10 +18,15 @@ For a high-level overview, see [Onboarding Wizard](/start/wizard).
 <Steps>
   <Step title="Existing config detection">
     - If `~/.fased/fased.json` exists, choose **Review settings** or **Repair sign-in**.
-    - **Review settings** starts from the existing config and updates explicit setup sections while preserving existing wallet keystores, Tailscale account/device access, gateway port assumptions, mining/bond state, and firewall state unless you edit those sections.
+    - **Review settings** starts from the existing config and updates explicit
+      setup sections. It preserves existing wallet keystores, Tailscale
+      account/device access, gateway port assumptions, mining/bond state, and
+      firewall state unless you edit those sections.
     - Re-running the wizard does **not** wipe durable instance setup.
     - CLI `fased onboard --reset` defaults to `auth+sessions`; use `--reset-scope sessions|auth|auth+sessions`.
-    - Repair never changes `fased.json`, gateway token/password, gateway settings, wallet assignments, SAT mining, Fased Network, plugins, Tailscale, firewall state, or wallet keystores under `~/.fased/wallet`.
+    - Repair never changes `fased.json`, gateway token/password, gateway
+      settings, wallet assignments, SAT mining, Fased Network, plugins,
+      Tailscale, firewall state, or wallet keystores under `~/.fased/wallet`.
     - If the config is invalid or contains legacy keys, the wizard stops and asks
       you to run `fased doctor` before continuing.
     - Repair uses `trash` (never `rm`) and offers scopes:
@@ -32,14 +37,20 @@ For a high-level overview, see [Onboarding Wizard](/start/wizard).
   </Step>
   <Step title="Model/Auth">
     - **Anthropic API key (recommended)**: uses `ANTHROPIC_API_KEY` if present or prompts for a key, then saves it for daemon use.
-    - **Anthropic OAuth (Claude Code CLI)**: on macOS the wizard checks Keychain item "Claude Code-credentials" (choose "Always Allow" so launchd starts don't block); on Linux/Windows it reuses `~/.claude/.credentials.json` if present.
-    - **Anthropic token (paste setup-token)**: run `claude setup-token` on any machine, then paste the token (you can name it; blank = default).
-    - **OpenAI sign-in (existing local credential)**: if `~/.codex/auth.json` exists, the wizard can reuse the existing OpenAI sign-in credential.
+    - **Anthropic OAuth (Claude Code CLI)**: on macOS the wizard checks
+      Keychain item "Claude Code-credentials". Choose "Always Allow" so launchd
+      starts do not block. On Linux/Windows it reuses
+      `~/.claude/.credentials.json` if present.
+    - **Anthropic token (paste setup-token)**: run `claude setup-token` on any
+      machine, then paste the token. You can name it; blank = default.
+    - **OpenAI sign-in (existing local credential)**: if `~/.codex/auth.json`
+      exists, the wizard can reuse the existing OpenAI sign-in credential.
     - **OpenAI sign-in (ChatGPT OAuth)**: browser flow through OpenAI sign-in through the OpenAI Codex provider route.
       - Sets `agents.defaults.model` to `openai-codex/gpt-5.5` when model is unset or `openai/*`.
     - **OpenAI API key**: uses `OPENAI_API_KEY` if present or prompts for a key, then stores it in auth profiles.
     - **xAI (Grok)**: use Agent > Models for browser sign-in, device-code sign-in, or `XAI_API_KEY`.
-    - **OpenCode Zen (multi-model proxy)**: prompts for `OPENCODE_API_KEY` (or `OPENCODE_ZEN_API_KEY`, get it at https://opencode.ai/auth).
+    - **OpenCode Zen (multi-model proxy)**: prompts for `OPENCODE_API_KEY` or
+      `OPENCODE_ZEN_API_KEY`. Get it at https://opencode.ai/auth.
     - **API key**: stores the key for you.
     - **Vercel AI Gateway (multi-model proxy)**: prompts for `AI_GATEWAY_API_KEY`.
     - More detail: [Vercel AI Gateway](/providers/vercel-ai-gateway)
@@ -55,10 +66,16 @@ For a high-level overview, see [Onboarding Wizard](/start/wizard).
     - **Skip**: no auth configured yet.
     - Pick a default model from detected options (or enter provider/model manually).
     - Wizard runs a model check and warns if the configured model is unknown or missing auth.
-    - API key storage mode defaults to plaintext auth-profile values. Use `--secret-input-mode ref` to store env-backed refs instead (for example `keyRef: { source: "env", provider: "default", id: "OPENAI_API_KEY" }`).
-    - OAuth credentials live in `~/.fased/credentials/oauth.json`; auth profiles live in `~/.fased/agents/<agentId>/agent/auth-profiles.json` (API keys + OAuth).
+    - API key storage mode defaults to plaintext auth-profile values. Use
+      `--secret-input-mode ref` to store env-backed refs, for example
+      `keyRef: { source: "env", provider: "default", id: "OPENAI_API_KEY" }`.
+    - OAuth credentials live in `~/.fased/credentials/oauth.json`.
+      Auth profiles live in
+      `~/.fased/agents/<agentId>/agent/auth-profiles.json`.
     - More detail: [/concepts/oauth](/concepts/oauth)
-    - After onboarding, manage provider accounts and this Agent's selected models from **Agent > Models**. Use Advanced Config only for raw provider fields that are not exposed yet.
+    - After onboarding, manage provider accounts and this Agent's selected
+      models from **Agent > Models**. Use Advanced Config only for raw provider
+      fields that are not exposed yet.
     <Note>
     Headless/server tip: complete OAuth on a machine with a browser, then copy
     `~/.fased/credentials/oauth.json` (or `$FASED_STATE_DIR/credentials/oauth.json`) to the
@@ -88,7 +105,8 @@ For a high-level overview, see [Onboarding Wizard](/start/wizard).
     - [Signal](/channels/signal): optional `signal-cli` install + account config.
     - [BlueBubbles](/channels/bluebubbles): **recommended for iMessage**; server URL + password + webhook.
     - [iMessage](/channels/imessage): legacy `imsg` CLI path + DB access.
-    - DM security: default is pairing. First DM sends a code; approve via `fased pairing approve <channel> <code>` or use allowlists.
+    - DM security: default is pairing. First DM sends a code; approve with
+      `fased pairing approve <channel> <code>` or use allowlists.
     - After onboarding, manage channel credentials and this Agent's routes from **Agent > Channels**.
   </Step>
   <Step title="Daemon install">
@@ -107,7 +125,10 @@ For a high-level overview, see [Onboarding Wizard](/start/wizard).
     - Reads the available skills and checks requirements.
     - Lets you choose a node manager: **npm / pnpm** (bun not recommended).
     - Installs optional dependencies (some use Homebrew on macOS).
-    - After onboarding, manage creation, install/review, dependency health, configuration, and per-Agent access from **Agent > Skills**. Wallet-capable skills still need explicit Wallet > Skill Grants before they can use wallets.
+    - After onboarding, manage creation, install/review, dependency health,
+      configuration, and per-Agent access from **Agent > Skills**.
+      Wallet-capable skills still need explicit Wallet > Skill Grants before
+      they can use wallets.
   </Step>
   <Step title="Finish">
     - Summary + next steps, including iOS/Android/macOS apps for extra features.
@@ -116,7 +137,9 @@ For a high-level overview, see [Onboarding Wizard](/start/wizard).
 
 <Note>
 If no GUI is detected, the wizard prints SSH port-forward instructions for the Control UI instead of opening a browser.
-If the Control UI assets are missing, rerun `./install.sh` from the Fased checkout; if Fased is already installed, run `fased doctor --fix` for guided repair.
+If the Control UI assets are missing, rerun `./install.sh` from the Fased
+checkout. If Fased is already installed, run `fased doctor --fix` for guided
+repair.
 </Note>
 
 ## After onboarding
@@ -275,7 +298,8 @@ Typical fields in `~/.fased/fased.json`:
 - `gateway.*` (mode, bind, auth, tailscale)
 - `session.dmScope` (behavior details: [CLI Onboarding Reference](/start/wizard-cli-reference#outputs-and-internals))
 - `channels.telegram.botToken`, `channels.discord.token`, `channels.signal.*`, `channels.imessage.*`
-- Channel allowlists (Slack/Discord/Matrix/Microsoft Teams) when you opt in during the prompts (names resolve to IDs when possible).
+- Channel allowlists for Slack, Discord, Matrix, and Microsoft Teams when you
+  opt in during the prompts. Names resolve to IDs when possible.
 - `skills.install.nodeManager`
 - `wizard.lastRunAt`
 - `wizard.lastRunVersion`
@@ -297,5 +321,8 @@ not already shipped with Fased.
 - Wizard overview: [Onboarding Wizard](/start/wizard)
 - macOS app onboarding: [Onboarding](/start/onboarding)
 - Config reference: [Gateway configuration](/gateway/configuration)
-- Channels: [WhatsApp](/channels/whatsapp), [Telegram](/channels/telegram), [Discord](/channels/discord), [Google Chat](/channels/googlechat), [Signal](/channels/signal), [BlueBubbles](/channels/bluebubbles) (iMessage), [iMessage](/channels/imessage) (legacy)
+- Channels: [WhatsApp](/channels/whatsapp), [Telegram](/channels/telegram),
+  [Discord](/channels/discord), [Google Chat](/channels/googlechat),
+  [Signal](/channels/signal), [BlueBubbles](/channels/bluebubbles) (iMessage),
+  [iMessage](/channels/imessage) (legacy)
 - Skills: [Skills](/tools/skills), [Skills config](/tools/skills-config)

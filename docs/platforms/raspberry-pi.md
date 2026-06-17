@@ -17,7 +17,7 @@ Perfect for:
 
 - 24/7 Fased Agent host
 - Home automation hub
-- Low-power, always-available Telegram/WhatsApp bot
+- Low-power, always-available Telegram/WhatsApp agent
 
 ## Hardware requirements
 
@@ -196,7 +196,8 @@ Or use Tailscale Serve for always-on private access:
 sudo tailscale serve --bg 443 http://127.0.0.1:18789
 ```
 
-This keeps the Gateway loopback-only and gives you HTTPS on your tailnet identity.
+This keeps the Gateway loopback-only and gives you HTTPS on your tailnet access
+path.
 
 ---
 

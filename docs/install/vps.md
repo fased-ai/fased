@@ -13,10 +13,18 @@ hosted Fased posture at a high level.
 
 ## Local vs VPS security
 
-| Path          | Best for                                | Security posture                                                                                                                                                | Access dependency                                                            |
-| ------------- | --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| Local install | Personal laptop, desktop, dev box, WSL2 | Lowest setup risk. Gateway stays on your machine; a home router usually does not expose it to the public internet. Tailscale is optional.                       | Your local OS login.                                                         |
-| VPS Hosting   | Always-on cloud node                    | Higher exposure by default because a VPS is internet-reachable. Hosted setup closes public admin ports and requires Tailscale for private dashboard/SSH access. | Your Tailscale account plus the VPS provider console for emergency recovery. |
+- **Local install**
+  - Best for: personal laptop, desktop, dev box, or WSL2.
+  - Posture: lowest setup risk. Gateway stays on your machine; a home router
+    usually does not expose it to the public internet. Tailscale is optional.
+  - Access dependency: your local OS login.
+- **VPS Hosting**
+  - Best for: always-on cloud node.
+  - Posture: higher exposure by default because a VPS is internet-reachable.
+    Hosted setup closes public admin ports and requires Tailscale for private
+    dashboard and SSH access.
+  - Access dependency: your Tailscale account plus the VPS provider console for
+    emergency recovery.
 
 <Warning>
 If you lose access to the Tailscale account used for a hosted VPS, normal
@@ -41,12 +49,14 @@ Hosted setup uses two machines:
 
 Start on your own computer:
 
-| Your computer | Use this terminal              | Tailscale requirement                                                                                                                             |
-| ------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Windows       | PowerShell or Windows Terminal | Install/sign into the Windows Tailscale app from [tailscale.com/download](https://tailscale.com/download). PowerShell can SSH into the Linux VPS. |
-| macOS         | Terminal                       | Install/sign into the macOS Tailscale app.                                                                                                        |
-| Linux         | Terminal                       | Install/start Tailscale on that Linux machine.                                                                                                    |
-| WSL           | Advanced only                  | Either use PowerShell instead, or install/start Tailscale inside WSL too. Windows Tailscale does not automatically make WSL a Tailscale node.     |
+- **Windows**: use PowerShell or Windows Terminal. Install and sign into the
+  Windows Tailscale app from [tailscale.com/download](https://tailscale.com/download).
+  PowerShell can SSH into the Linux VPS.
+- **macOS**: use Terminal and sign into the macOS Tailscale app.
+- **Linux**: use Terminal and install/start Tailscale on that Linux machine.
+- **WSL**: advanced only. Use PowerShell instead, or install/start Tailscale
+  inside WSL too. Windows Tailscale does not automatically make WSL a Tailscale
+  node.
 
 Installing Tailscale from PowerShell is fine, but it still installs the Windows
 Tailscale app/service. PowerShell uses that Windows Tailscale connection.

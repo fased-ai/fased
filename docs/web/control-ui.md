@@ -128,14 +128,23 @@ internal-only runs, or webhook delivery when `delivery.mode = "webhook"` and
 
 ## Chat behavior
 
-- `chat.send` is **non-blocking**: it acks immediately with `{ runId, status: "started" }` and the response streams via `chat` events.
-- The Control UI subscribes to `sessions.changed` and the selected session's `session.message` stream, so the Sessions panel and active chat can update without waiting for manual refresh or polling.
-- Re-sending with the same `idempotencyKey` returns `{ status: "in_flight" }` while running, and `{ status: "ok" }` after completion.
-- `chat.history` responses are size-bounded for UI safety. When transcript entries are too large, Gateway may truncate long text fields, omit heavy metadata blocks, and replace oversized messages with a placeholder (`[chat.history omitted: message too large]`).
-- `chat.inject` appends an assistant note to the session transcript and broadcasts a `chat` event for UI-only updates (no agent run, no channel delivery).
+- `chat.send` is **non-blocking**. It acks immediately with
+  `{ runId, status: "started" }` and the response streams via `chat` events.
+- The Control UI subscribes to `sessions.changed` and the selected session's
+  `session.message` stream. The Sessions panel and active chat can update
+  without manual refresh or polling.
+- Re-sending with the same `idempotencyKey` returns `{ status: "in_flight" }`
+  while running, and `{ status: "ok" }` after completion.
+- `chat.history` responses are size-bounded for UI safety. Gateway may truncate
+  long text fields, omit heavy metadata blocks, and replace oversized messages
+  with `[chat.history omitted: message too large]`.
+- `chat.inject` appends an assistant note to the session transcript and
+  broadcasts a `chat` event for UI-only updates. It does not start an agent run
+  or channel delivery.
 - Stop:
   - Click **Stop** (calls `chat.abort`)
-  - Type `/stop` (or standalone abort phrases like `stop`, `stop action`, `stop run`, `stop fased`, `please stop`) to abort out-of-band
+  - Type `/stop` or standalone abort phrases to abort out-of-band, such as
+    `stop`, `stop action`, `stop run`, `stop fased`, `please stop`.
   - `chat.abort` supports `{ sessionKey }` (no `runId`) to abort all active runs for that session
 - Abort partial retention:
   - When a run is aborted, partial assistant text can still be shown in the UI

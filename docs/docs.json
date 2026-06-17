@@ -1228,16 +1228,8 @@
             ]
           },
           {
-            "tab": "Network",
+            "tab": "Wallets & Network",
             "groups": [
-              {
-                "group": "Fased Network",
-                "pages": ["start/federation", "start/bond-operator-economy"]
-              },
-              {
-                "group": "Marketplace",
-                "pages": ["start/offers-marketplace"]
-              },
               {
                 "group": "Wallets",
                 "pages": [
@@ -1257,6 +1249,14 @@
                   "plugins/crypto/mining-chat-and-automation",
                   "plugins/crypto/mining-advanced"
                 ]
+              },
+              {
+                "group": "Fased Network",
+                "pages": ["start/federation", "start/bond-operator-economy"]
+              },
+              {
+                "group": "Marketplace",
+                "pages": ["start/offers-marketplace"]
               },
               {
                 "group": "Operator reference",

@@ -7,17 +7,21 @@ status: active
 
 # `fased sandbox`
 
-Manage Docker-based sandbox containers for isolated agent execution and inspect the effective sandbox policy that the runtime is actually applying.
+Manage Docker-based sandbox containers for isolated agent execution and inspect
+the effective sandbox policy that the runtime is actually applying.
 
 ## Overview
 
-Fased can run agents in isolated Docker containers for security. The `sandbox` commands help you manage these containers, especially after updates or configuration changes.
+Fased can run agents in isolated Docker containers for security. The `sandbox`
+commands help you manage these containers, especially after updates or
+configuration changes.
 
 ## Commands
 
 ### `fased sandbox explain`
 
-Inspect the **effective** sandbox mode/scope/workspace access, sandbox tool policy, and elevated gates (with fix-it config key paths).
+Inspect the **effective** sandbox mode, scope, workspace access, sandbox tool
+policy, and elevated gates with fix-it config key paths.
 
 ```bash
 fased sandbox explain
@@ -114,14 +118,16 @@ fased sandbox recreate --agent alfred
 - Containers are only pruned after 24h of inactivity
 - Regularly-used agents keep old containers running indefinitely
 
-**Solution:** Use `fased sandbox recreate` to force removal of old containers. They'll be recreated automatically with current settings when next needed.
+**Solution:** Use `fased sandbox recreate` to force removal of old containers.
+They will be recreated automatically with current settings when next needed.
 
 Tip: prefer `fased sandbox recreate` over manual `docker rm`. It uses the
 Gateway’s container naming and avoids mismatches when scope/session keys change.
 
 ## Configuration
 
-Sandbox settings live in `~/.fased/fased.json` under `agents.defaults.sandbox` (per-agent overrides go in `agents.list[].sandbox`):
+Sandbox settings live in `~/.fased/fased.json` under
+`agents.defaults.sandbox`. Per-agent overrides go in `agents.list[].sandbox`.
 
 ```jsonc
 {

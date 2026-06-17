@@ -1,5 +1,5 @@
 ---
-summary: "Full operator guide to Satcoin mining: wallet choice, readiness, capital, commit, strategies, cycles, fees, claim, sweep, and recovery."
+summary: "Satcoin mining guide for wallet choice, readiness, capital, commit, strategy, claim, sweep, and recovery."
 read_when:
   - You are starting Satcoin mining for the first time
   - You want the full meaning of capital, commit, cycles, emission, erosion, or sweep
@@ -11,8 +11,8 @@ sidebarTitle: "Mining"
 
 Mining is the Satcoin (SAT) runtime control surface.
 
-Fased Agent is the first-class runtime for Satcoin agent-operated mining:
-application-layer mining for agent-operated infrastructure on Solana.
+Fased Agent runs the Satcoin mining workflow for agent-operated infrastructure
+on Solana.
 
 Use it to:
 
@@ -26,13 +26,14 @@ Use it to:
 - understand cycles, claim, sweep, and recovery
 - coordinate the same operations from chat or channels with `@mining`
 
-Mining is not the page for ordinary sends or bond lifecycle. Use:
+Use the matching page for the surrounding work:
 
-- [Operator glossary](/start/operator-glossary) for shared terms across wallet, mining, Fased Network, bond, and payment
 - [Wallet](/plugins/crypto/wallet-page) for funding, manual sends, approval, and wallet security
 - [Solana RPC setup](/plugins/crypto/wallet-rpc-setup) for reliable RPC before long-running mining
-- [Mining Chat and Automation](/plugins/crypto/mining-chat-and-automation) for `@mining` commands, scheduled mining, and channel control
+- [Mining Chat and Automation](/plugins/crypto/mining-chat-and-automation)
+  for `@mining` commands, scheduled mining, and channel control
 - [Fased Network](/start/federation) for bond posture and public-network state
+- [Operator glossary](/start/operator-glossary) for shared terms across wallet, mining, Fased Network, bond, and payment
 
 ## Read path
 
@@ -84,12 +85,13 @@ writes the SAT mint and program IDs locally.
 ## How Mining fits into the stack
 
 ```mermaid
-flowchart LR
-    Wallet[Wallet funded and secured] --> Mining[Mining]
-    Mining --> Claim[Claimed Satcoin]
-    Claim --> Sweep[Sweep to another wallet or address]
-    Wallet --> Network[Fased Network]
-    Network --> Bond[Bond operator lane]
+flowchart TD
+    Wallet["Mining wallet<br/>funded and secured"] --> Mining["Mining page"]
+    Mining --> Capital["Miner capital<br/>commit and cycles"]
+    Capital --> Claim["Claimed Satcoin"]
+    Claim --> Sweep["Optional sweep"]
+    Wallet --> Network["Fased Network"]
+    Network --> Bond["Bond operator lane"]
 ```
 
 Read it like this:
@@ -149,8 +151,8 @@ This is the main operator block for:
 Commit edits save the target in Fased Agent. `Update` sends the transaction
 that changes active commit in the miner capital PDA.
 
-If the target is larger than the safe commit right now, `Update` uses the safe
-value instead of forcing the saved target lower.
+If the target is larger than the safe commit right now, `Update` submits the
+safe value while keeping the saved target available for later cycles.
 
 When the submitted commit is lower than the saved target, check locked capital
 and fee reserve first. A smaller safe submit is usually better than missing the
@@ -185,7 +187,10 @@ Healthy mining usually requires all of these:
 - token account readiness
 - a dedicated `@wallet:mining` runtime wallet
 
-Solana RPC health matters for long-running mining because the runtime has to read chain time, submit cycles, settle pages, and claim ready cycles on schedule. A weak or wrong RPC can turn a healthy wallet into missed reads, missed submits, delayed settlement, or delayed claim.
+Solana RPC health matters for long-running mining because the runtime has to
+read chain time, submit cycles, settle pages, and claim ready cycles on schedule.
+A weak or wrong RPC can turn a healthy wallet into missed reads, missed submits,
+delayed settlement, or delayed claim.
 
 For serious mainnet mining, use a reliable private or commercial Solana RPC. Any
 provider with stable HTTP/WebSocket support, usage visibility, and enough request
@@ -200,7 +205,9 @@ fased wallet signer doctor --json
 fased mining status
 ```
 
-At bare minimum, the mining wallet needs enough SOL to open the next round. The runtime fallback check uses about `0.005 SOL` as the floor, but long-running mining should keep more than that on hand for fees and buffer.
+At bare minimum, the mining wallet needs enough SOL to open the next round. The
+runtime fallback check uses about `0.005 SOL` as the floor, but long-running
+mining should keep more than that on hand for fees and buffer.
 
 ## Beginner start sequence
 
@@ -227,23 +234,49 @@ actions still use Agent or Vault wallets.
 
 The Mining page uses a few terms repeatedly:
 
-| Term          | Meaning                                                                 |
-| ------------- | ----------------------------------------------------------------------- |
-| Mining wallet | dedicated Solana wallet configured as `@wallet:mining`                  |
-| Capital       | SOL deposited into the miner capital PDA                                |
-| Locked        | capital tied to pending or live cycles                                  |
-| Withdraw      | free capital that can withdraw or support future commits now            |
-| Target max    | saved upper commit limit for later                                      |
-| Safe commit   | usable now after locks, reserve, fees, buffer, and erosion              |
-| Active commit | current commit stored in the miner capital PDA                          |
-| Cycle         | current Satcoin participation window                                    |
-| Erosion       | per-cycle SOL cost applied to committed capital                         |
-| Rebate        | miner-side SOL returned by deterministic and performance rebate routing |
+**Mining wallet**
 
-`Target max` is not a promise that every cycle will submit that amount. The
-runtime can submit less when capital is locked, wallet fee reserve is low,
-erosion coverage is tight, recovery buffer is retained, or stale-RPC guards
-block the full target.
+Dedicated Solana wallet configured as `@wallet:mining`.
+
+**Capital**
+
+SOL deposited into the miner capital PDA.
+
+**Locked**
+
+Capital tied to pending or live cycles.
+
+**Withdraw**
+
+Free capital that can withdraw or support future commits now.
+
+**Target max**
+
+Saved upper commit limit for later.
+
+**Safe commit**
+
+Usable now after locks, reserve, fees, buffer, and erosion.
+
+**Active commit**
+
+Current commit stored in the miner capital PDA.
+
+**Cycle**
+
+Current Satcoin participation window.
+
+**Erosion**
+
+Per-cycle SOL cost applied to committed capital.
+
+**Rebate**
+
+Miner-side SOL returned by deterministic and performance rebate routing.
+
+`Target max` is the saved upper bound. The runtime can submit less when capital
+is locked, wallet fee reserve is low, erosion coverage is tight, recovery
+buffer is retained, or stale-RPC guards block the full target.
 
 If target is `9.9 SOL` and a cycle submits `0.8 SOL`, inspect `Locked`,
 `Withdraw`, `Safe commit`, worker reason, and recent claim state before changing
@@ -392,12 +425,12 @@ Practical reading:
 
 Button meaning:
 
-| Button   | Meaning                                                                    |
-| -------- | -------------------------------------------------------------------------- |
-| `Stop`   | stop future cycle submits; already-submitted cycles still settle and claim |
-| `Resume` | exit clearing and allow new cycle submits again                            |
+- `Stop`: stop future cycle submits. Already-submitted cycles still settle and claim.
+- `Resume`: exit clearing and allow new cycle submits again.
 
-Clearing is not an error. It is the controlled stop state for wallets that still have capital locked in pending or live cycles. When locked and pending capital are both clear, the page returns to `Ready`.
+Clearing is the controlled stop state for wallets that still have capital locked
+in pending or live cycles. When locked and pending capital are both clear, the
+page returns to `Ready`.
 
 ## Claim and sweep
 
@@ -449,10 +482,9 @@ Post-claim sweep supports:
 - minimum sweep threshold
 - keep-after-sweep balance
 
-Mining automated signing exists for Satcoin mining operations and this Satcoin sweep
-path. It does not turn the mining wallet into a generic chat, skill, wallet-action, or
-Fased Network bond authority. Generic Agent actions must use an Agent wallet.
-Fased Network bond must use a Vault wallet selected on Fased Network.
+Mining automated signing exists for Satcoin mining operations and this Satcoin
+sweep path. Generic chat, skill, wallet-action, and Marketplace work uses Agent
+wallets. Fased Network bond uses a Vault wallet selected on Fased Network.
 
 Good practice:
 
@@ -527,7 +559,8 @@ fased mining stop
 fased mining history
 ```
 
-For automation, run the same commands with `--json` and read the API map in [Satcoin mining API and protocol](/plugins/crypto/mining-protocol).
+For automation, run the same commands with `--json` and read the API map in
+[Satcoin mining API and protocol](/plugins/crypto/mining-protocol).
 
 For chat/channel automation, use [Mining Chat and Automation](/plugins/crypto/mining-chat-and-automation).
 

@@ -14,9 +14,12 @@ For new iMessage deployments, use <a href="/channels/bluebubbles">BlueBubbles</a
 The `imsg` integration is legacy and may be removed in a future release.
 </Warning>
 
-This page documents the older `imsg` bridge. It still works for established installs, but it is no longer the recommended iMessage path for new Fased setups.
+This page documents the older `imsg` bridge. It still works for established
+installs, but BlueBubbles is the recommended iMessage path for new Fased
+setups.
 
-Status: legacy external CLI integration. The gateway spawns `imsg rpc` and speaks JSON-RPC over stdio without a separate daemon or TCP port.
+Status: legacy external CLI integration. The gateway spawns `imsg rpc` and
+speaks JSON-RPC over stdio without a separate daemon or TCP port.
 
 <CardGroup cols={3}>
   <Card title="BlueBubbles (recommended)" icon="message-circle" href="/channels/bluebubbles">
@@ -32,7 +35,9 @@ Status: legacy external CLI integration. The gateway spawns `imsg rpc` and speak
 
 ## Quick setup
 
-Use this only when you already depend on `imsg`, or when BlueBubbles is not workable in your environment. Otherwise start with [BlueBubbles](/channels/bluebubbles).
+Use this only when you already depend on `imsg`, or when BlueBubbles is not
+workable in your environment. Otherwise start with
+[BlueBubbles](/channels/bluebubbles).
 
 <Tabs>
   <Tab title="Local Mac (fast path)">
@@ -87,7 +92,8 @@ fased pairing approve imessage <CODE>
   </Tab>
 
   <Tab title="Remote Mac over SSH">
-    Fased only requires a stdio-compatible `cliPath`, so you can point `cliPath` at a wrapper script that SSHes to a remote Mac and runs `imsg`.
+    Fased only requires a stdio-compatible `cliPath`, so you can point
+    `cliPath` at a wrapper script that SSHes to a remote Mac and runs `imsg`.
 
 ```bash
 #!/usr/bin/env bash
@@ -113,10 +119,12 @@ exec ssh -T gateway-host imsg "$@"
 }
 ```
 
-    If `remoteHost` is not set, Fased attempts to auto-detect it by parsing the SSH wrapper script.
+    If `remoteHost` is not set, Fased attempts to auto-detect it by parsing the
+    SSH wrapper script.
     `remoteHost` must be `host` or `user@host` (no spaces or SSH options).
-    Fased uses strict host-key checking for SCP, so the relay host key must already exist in `~/.ssh/known_hosts`.
-    Attachment paths are validated against allowed roots (`attachmentRoots` / `remoteAttachmentRoots`).
+    Fased uses strict host-key checking for SCP, so the relay host key must
+    already exist in `~/.ssh/known_hosts`.
+    Attachment paths are validated against allowed roots.
 
   </Tab>
 </Tabs>
@@ -128,7 +136,9 @@ exec ssh -T gateway-host imsg "$@"
 - Automation permission is required to send messages through Messages.app.
 
 <Tip>
-Permissions are granted per process context. If gateway runs headless (LaunchAgent/SSH), run a one-time interactive command in that same context to trigger prompts:
+Permissions are granted per process context. If the gateway runs headless
+(LaunchAgent/SSH), run a one-time interactive command in that same context to
+trigger prompts:
 
 ```bash
 imsg chats --limit 1
@@ -165,12 +175,15 @@ imsg send <handle> "test"
     Group sender allowlist: `channels.imessage.groupAllowFrom`.
 
     Runtime fallback: if `groupAllowFrom` is unset, iMessage group sender checks fall back to `allowFrom` when available.
-    Runtime note: if `channels.imessage` is completely missing, runtime falls back to `groupPolicy="allowlist"` and logs a warning (even if `channels.defaults.groupPolicy` is set).
+    Runtime note: if `channels.imessage` is completely missing, runtime falls
+    back to `groupPolicy="allowlist"` and logs a warning.
 
     Mention gating for groups:
 
     - iMessage has no native mention metadata
-    - mention detection uses regex patterns (`agents.list[].groupChat.mentionPatterns`, fallback `messages.groupChat.mentionPatterns`)
+    - mention detection uses regex patterns from
+      `agents.list[].groupChat.mentionPatterns` or
+      `messages.groupChat.mentionPatterns`
     - with no configured patterns, mention gating cannot be enforced
 
     Control commands from authorized senders can bypass mention gating in groups.
@@ -186,7 +199,9 @@ imsg send <handle> "test"
     Group-ish thread behavior:
 
     Some multi-participant iMessage threads can arrive with `is_group=false`.
-    If that `chat_id` is explicitly configured under `channels.imessage.groups`, Fased treats it as group traffic (group gating + group session isolation).
+    If that `chat_id` is explicitly configured under
+    `channels.imessage.groups`, Fased treats it as group traffic with group
+    gating and group session isolation.
 
   </Tab>
 </Tabs>
@@ -246,7 +261,9 @@ exec ssh -T bot@mac-mini.tailnet-1234.ts.net imsg "$@"
   <Accordion title="Multi-account pattern">
     iMessage supports per-account config under `channels.imessage.accounts`.
 
-    Each account can override fields such as `cliPath`, `dbPath`, `allowFrom`, `groupPolicy`, `mediaMaxMb`, history settings, and attachment root allowlists.
+    Each account can override fields such as `cliPath`, `dbPath`, `allowFrom`,
+    `groupPolicy`, `mediaMaxMb`, history settings, and attachment root
+    allowlists.
 
   </Accordion>
 </AccordionGroup>

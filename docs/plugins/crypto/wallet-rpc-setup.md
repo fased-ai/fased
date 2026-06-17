@@ -54,16 +54,9 @@ issues, Discord, Telegram, or channel messages.
 
 ## Configure during wallet setup
 
-For a new local signer Mining wallet:
-
-```bash
-fased wallet setup \
-  --mode local-signer-create \
-  --role mining \
-  --wallet-id mining \
-  --wallet-name Mining \
-  --rpc-url "https://YOUR_PROVIDER_MAINNET_RPC/?api-key=YOUR_API_KEY"
-```
+For a new local signer Mining wallet, use onboarding or the Mining page. Mining
+is the singleton `@wallet:mining` path, and generic wallet CLI role setup is
+reserved for Agent and Vault wallets.
 
 For a new Agent wallet:
 

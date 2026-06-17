@@ -9,14 +9,21 @@ read_when:
 
 # Prompt caching
 
-Prompt caching means the model provider can reuse unchanged prompt prefixes (usually system/developer instructions and other stable context) across turns instead of re-processing them every time. The first matching request writes cache tokens (`cacheWrite`), and later matching requests can read them back (`cacheRead`).
+Prompt caching lets the model provider reuse unchanged prompt prefixes across
+turns. Those prefixes are usually system/developer instructions and other stable
+context.
 
-Why this matters: lower token cost, faster responses, and more predictable performance for long-running sessions. Without caching, repeated prompts pay the full prompt cost on every turn even when most input did not change.
+The first matching request writes cache tokens (`cacheWrite`). Later matching
+requests can read them back (`cacheRead`).
+
+Why this matters: lower token cost, faster responses, and more predictable
+performance for long-running sessions.
 
 This page covers all cache-related knobs that affect prompt reuse and token cost.
 
 For provider-specific cache behavior and current pricing, check the provider docs:
-[https://docs.anthropic.com/docs/build-with-claude/prompt-caching](https://docs.anthropic.com/docs/build-with-claude/prompt-caching)
+
+- [Anthropic prompt caching](https://docs.anthropic.com/docs/build-with-claude/prompt-caching)
 
 ## Primary knobs
 
@@ -93,7 +100,8 @@ Per-agent heartbeat is supported at `agents.list[].heartbeat`.
 
 ### OpenRouter Anthropic models
 
-For `openrouter/anthropic/*` model refs, Fased injects Anthropic `cache_control` on system/developer prompt blocks to improve prompt-cache reuse.
+For `openrouter/anthropic/*` model refs, Fased injects Anthropic
+`cache_control` on system/developer prompt blocks to improve prompt-cache reuse.
 
 ### Other providers
 
@@ -163,16 +171,22 @@ Defaults:
 
 ### What to inspect
 
-- Cache trace events are JSONL and include staged snapshots like `session:loaded`, `prompt:before`, `stream:context`, and `session:after`.
+- Cache trace events are JSONL and include staged snapshots like
+  `session:loaded`, `prompt:before`, `stream:context`, and `session:after`.
 - Per-turn cache token impact is visible in the Control UI **Usage** page via `cacheRead` and `cacheWrite`.
-- Chat `/usage full` can still show a per-response footer for the current session, but the Usage page is the better history view for provider/model/accounting review.
+- Chat `/usage full` can still show a per-response footer for the current
+  session. The Usage page is the better history view for provider, model, and
+  accounting review.
 - Cache trace files are operator diagnostics; use Logs or Advanced > Debug when you need raw trace inspection.
 
 ## Quick troubleshooting
 
 - High `cacheWrite` on most turns: check for volatile system-prompt inputs and verify model/provider supports your cache settings.
 - No effect from `cacheRetention`: confirm model key matches `agents.defaults.models["provider/model"]`.
-- Configured providers without compatible cache support may ignore Fased cache settings or show no cache-token effect. Bedrock-compatible Anthropic model configs can pass explicit `cacheRetention` when configured through Advanced Config or a custom provider block.
+- Providers without compatible cache support may ignore Fased cache settings or
+  show no cache-token effect.
+- Bedrock-compatible Anthropic model configs can pass explicit `cacheRetention`
+  when configured through Advanced Config or a custom provider block.
 
 Related docs:
 

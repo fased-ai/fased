@@ -8,8 +8,9 @@ title: "Voice Call Plugin"
 
 # Voice Call (plugin)
 
-Voice calls for Fased via a plugin. Supports outbound notifications and
-multi-turn conversations with inbound policies.
+The Voice Call plugin lets Fased place outbound calls and handle inbound calls.
+It supports one-way notifications and multi-turn conversations with inbound
+policies.
 
 Current providers:
 
@@ -34,7 +35,8 @@ tool is per-Agent.
 
 The Voice Call plugin runs **inside the Gateway process**.
 
-If you use a remote Gateway, install/configure the plugin on the **machine running the Gateway**, then restart the Gateway to load it.
+If you use a remote Gateway, install and configure the plugin on the **machine
+running the Gateway**, then restart the Gateway to load it.
 
 ## Install
 
@@ -132,8 +134,12 @@ Notes:
 - Telnyx requires `telnyx.publicKey` (or `TELNYX_PUBLIC_KEY`) unless `skipSignatureVerification` is true.
 - `skipSignatureVerification` is for local testing only.
 - If you use ngrok free tier, set `publicUrl` to the exact ngrok URL; signature verification is always enforced.
-- `tunnel.allowNgrokFreeTierLoopbackBypass: true` allows Twilio webhooks with invalid signatures **only** when `tunnel.provider="ngrok"` and `serve.bind` is loopback (ngrok local agent). Use for local dev only.
-- Ngrok free tier URLs can change or add interstitial behavior; if `publicUrl` drifts, Twilio signatures will fail. For production, prefer a stable domain or Tailscale funnel.
+- `tunnel.allowNgrokFreeTierLoopbackBypass: true` allows Twilio webhooks with
+  invalid signatures **only** when `tunnel.provider="ngrok"` and `serve.bind`
+  is loopback. Use this for local development only.
+- Ngrok free tier URLs can change or add interstitial behavior. If `publicUrl`
+  drifts, Twilio signatures will fail. For production, prefer a stable domain
+  or Tailscale funnel.
 - Streaming security defaults:
   - `streaming.preStartTimeoutMs` closes sockets that never send a valid `start` frame.
   - `streaming.maxPendingConnections` caps total unauthenticated pre-start sockets.

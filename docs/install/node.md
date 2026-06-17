@@ -9,7 +9,10 @@ read_when:
 
 # Node.js
 
-Fased recommends **Node 24** and supports **Node 22.14 or newer with the built-in `node:sqlite` module**. The [installer script](/install) will detect and install Node automatically — this page is for when you want to set up Node yourself and make sure everything is wired up correctly.
+Fased recommends **Node 24** and supports **Node 22.14 or newer with the built-in
+`node:sqlite` module**. The [installer script](/install) detects and installs
+Node automatically. Use this page when you want to set up Node yourself or debug
+PATH/runtime issues.
 
 ## Check your version
 
@@ -18,7 +21,10 @@ node -v
 node -e 'require("node:sqlite"); console.log("node:sqlite ok")'
 ```
 
-If this prints `v24.x` or `v22.14.x` or higher and `node:sqlite ok`, you're good. If Node isn't installed, the version is too old, or `node:sqlite` is missing, pick an install method below. Some custom/version-manager Node builds can report a new version but still omit `node:sqlite`; those are not suitable for full memory support.
+If this prints `v24.x` or `v22.14.x` or higher and `node:sqlite ok`, you are
+set. If Node is missing, too old, or missing `node:sqlite`, pick an install
+method below. Some custom/version-manager Node builds can report a new version
+but still omit `node:sqlite`; those are not suitable for full memory support.
 
 ## Install Node
 
@@ -83,7 +89,9 @@ fnm use 22
 ```
 
   <Warning>
-  Make sure your version manager is initialized in your shell startup file (`~/.zshrc` or `~/.bashrc`). If it isn't, `fased` may not be found in new terminal sessions because the PATH won't include Node's bin directory.
+  Make sure your version manager is initialized in your shell startup file
+  (`~/.zshrc` or `~/.bashrc`). If it is not, new terminal sessions may not find
+  `fased` because PATH does not include Node's bin directory.
   </Warning>
 </Accordion>
 

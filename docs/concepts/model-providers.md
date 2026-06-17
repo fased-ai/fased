@@ -84,7 +84,7 @@ and wallet policy. Chat and channels both talk to an Agent; they are different
 delivery surfaces for the same routeable setup.
 
 ```mermaid
-flowchart LR
+flowchart TD
   A["Agent > Models"] --> B["Provider credential"]
   B --> C["Primary model"]
   C --> D["Fallback models"]
@@ -165,14 +165,15 @@ review or explicit apply.
 
 Use one of the registry-supported local/manual routes:
 
-| Route           | Use when                                                                                            |
-| --------------- | --------------------------------------------------------------------------------------------------- |
-| Ollama          | You run Ollama locally, in a tailnet, or through Ollama Cloud and want the native `/api/chat` path. |
-| LM Studio       | You run LM Studio on `localhost:1234` and want model discovery from its local catalog.              |
-| vLLM            | You run a vLLM server and want a first-class local provider.                                        |
-| LiteLLM         | You proxy multiple models through a LiteLLM gateway.                                                |
-| Custom Provider | You have another OpenAI-compatible or Anthropic-compatible endpoint, including SGLang.              |
-| Cloudflare AI   | You use Cloudflare AI Gateway routing.                                                              |
+- **Ollama**: local, tailnet, or Ollama Cloud setup with the native `/api/chat`
+  path.
+- **LM Studio**: local model discovery from LM Studio, usually on
+  `localhost:1234`.
+- **vLLM**: a vLLM server exposed as a first-class local provider.
+- **LiteLLM**: multiple models routed through a LiteLLM gateway.
+- **Cloudflare AI**: Cloudflare AI Gateway routing.
+- **Custom Provider**: another OpenAI-compatible or Anthropic-compatible
+  endpoint, including SGLang.
 
 Ollama is native in Fased. Use `http://127.0.0.1:11434`, not `/v1`. LM Studio is
 OpenAI-compatible and normally uses `http://127.0.0.1:1234/v1`. SGLang stays

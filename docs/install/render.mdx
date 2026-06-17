@@ -125,7 +125,8 @@ Modify variables in **Dashboard → your service → Environment**. Changes trig
 
 ### Auto-deploy
 
-If you use the main Fased repository, Render will not auto-deploy your Fased runtime. To update it, run a manual Blueprint sync from the dashboard.
+If you use the main Fased repository, Render will not auto-deploy your Fased
+runtime. To update it, run a manual Blueprint sync from the dashboard.
 
 ## Custom domain
 
@@ -173,7 +174,8 @@ workspace.
 
 ### Health check failures
 
-Render expects a 200 response from `/health` within 30 seconds. If builds succeed but deploys fail, the service may be taking too long to start. Check:
+Render expects a 200 response from `/health` within 30 seconds. If builds
+succeed but deploys fail, the service may be taking too long to start. Check:
 
 - Build logs for errors
 - Whether the container runs locally with `docker build && docker run`

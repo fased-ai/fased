@@ -73,7 +73,9 @@ Session persistence has automatic maintenance controls (`session.maintenance`) f
 - `pruneAfter`: stale-entry age cutoff (default `30d`)
 - `maxEntries`: cap entries in `sessions.json` (default `500`)
 - `rotateBytes`: rotate `sessions.json` when oversized (default `10mb`)
-- `resetArchiveRetention`: retention for `*.reset.<timestamp>` transcript archives (default: same as `pruneAfter`; `false` disables cleanup)
+- `resetArchiveRetention`: retention for `*.reset.<timestamp>` transcript
+  archives. Defaults to the same value as `pruneAfter`; `false` disables
+  cleanup.
 - `maxDiskBytes`: optional sessions-directory budget
 - `highWaterBytes`: optional target after cleanup (default `80%` of `maxDiskBytes`)
 
@@ -96,10 +98,13 @@ fased sessions cleanup --enforce
 
 ## Task/cron sessions and run logs
 
-Scheduled task runs and legacy cron runs can create isolated session entries/transcripts, and they have dedicated retention controls:
+Scheduled task runs and legacy cron runs can create isolated session entries and
+transcripts. They have dedicated retention controls:
 
 - `cron.sessionRetention` (default `24h`) prunes old isolated task/cron run sessions from the session store (`false` disables).
-- `cron.runLog.maxBytes` + `cron.runLog.keepLines` prune `~/.fased/cron/runs/<jobId>.jsonl` files (defaults: `2_000_000` bytes and `2000` lines).
+- `cron.runLog.maxBytes` + `cron.runLog.keepLines` prune
+  `~/.fased/cron/runs/<jobId>.jsonl` files. Defaults are `2_000_000` bytes
+  and `2000` lines.
 
 ---
 
@@ -126,9 +131,15 @@ Each `sessionKey` points at a current `sessionId` (the transcript file that cont
 Rules of thumb:
 
 - **Reset** (`/new`, `/reset`) creates a new `sessionId` for that `sessionKey`.
-- **Daily reset** (default 4:00 AM local time on the gateway host) creates a new `sessionId` on the next message after the reset boundary.
-- **Idle expiry** (`session.reset.idleMinutes` or legacy `session.idleMinutes`) creates a new `sessionId` when a message arrives after the idle window. When daily + idle are both configured, whichever expires first wins.
-- **Thread parent fork guard** (`session.parentForkMaxTokens`, default `100000`) skips parent transcript forking when the parent session is already too large; the new thread starts fresh. Set `0` to disable.
+- **Daily reset** defaults to 4:00 AM local time on the gateway host. It
+  creates a new `sessionId` on the next message after the reset boundary.
+- **Idle expiry** uses `session.reset.idleMinutes` or legacy
+  `session.idleMinutes`. It creates a new `sessionId` when a message arrives
+  after the idle window. When daily + idle are both configured, whichever
+  expires first wins.
+- **Thread parent fork guard** uses `session.parentForkMaxTokens` with default
+  `100000`. It skips parent transcript forking when the parent session is
+  already too large, so the new thread starts fresh. Set `0` to disable.
 
 Implementation detail: the decision happens in `initSessionState()` in `src/auto-reply/reply/session.ts`.
 
@@ -186,7 +197,8 @@ Fased intentionally does **not** “fix up” transcripts; the Gateway uses `Ses
 Two different concepts matter:
 
 1. **Model context window**: hard cap per model (tokens visible to the model)
-2. **Session store counters**: rolling stats written into `sessions.json` (used for chat status, Agent > Sessions, and fallback usage display)
+2. **Session store counters**: rolling stats written into `sessions.json`.
+   These power chat status, Agent > Sessions, and fallback usage display.
 
 If you’re tuning limits:
 
@@ -278,7 +290,9 @@ Convention:
 - The assistant starts its output with `NO_REPLY` to indicate “do not deliver a reply to the user”.
 - Fased strips/suppresses this in the delivery layer.
 
-As of `2026.1.10`, Fased also suppresses **draft/typing streaming** when a partial chunk begins with `NO_REPLY`, so silent operations don’t leak partial output mid-turn.
+As of `2026.1.10`, Fased also suppresses **draft/typing streaming** when a
+partial chunk begins with `NO_REPLY`. This keeps silent operations from showing
+partial output mid-turn.
 
 ---
 
@@ -317,10 +331,12 @@ flush logic lives on the Gateway side today.
 
 ## Troubleshooting checklist
 
-- Session key wrong? Start with [/concepts/session](/concepts/session) and confirm the `sessionKey` in chat `/status` or Agent > Sessions.
+- Session key wrong? Start with [/concepts/session](/concepts/session) and
+  confirm the `sessionKey` in chat `/status` or Agent > Sessions.
 - Store vs transcript mismatch? Confirm the Gateway host and the store path from `fased status`.
 - Compaction spam? Check:
   - model context window (too small)
   - compaction settings (`reserveTokens` too high for the model window can cause earlier compaction)
   - tool-result bloat: enable/tune session pruning
-- Silent turns leaking? Confirm the reply starts with `NO_REPLY` (exact token) and you’re on a build that includes the streaming suppression fix.
+- Silent turns leaking? Confirm the reply starts with `NO_REPLY` exactly, and
+  confirm the build includes the streaming suppression fix.

@@ -7,7 +7,9 @@ title: "Zalo"
 
 # Zalo (Bot API)
 
-Zalo is the official bot path for teams or businesses that need to meet users inside the Zalo ecosystem. The plugin can long-poll by default or switch to a webhook model, while Fased keeps DM policy and group policy separate the same way it does on other channels.
+Zalo is the official bot path for teams or businesses that need to meet users
+inside the Zalo ecosystem. The plugin can long-poll by default or switch to a
+webhook model, while Fased keeps DM policy and group policy separate.
 
 Status: experimental. DMs are supported, and groups are available behind explicit policy controls.
 
@@ -22,7 +24,8 @@ that the runtime still needs to load.
 
 ## Quick setup (beginner)
 
-If you are just starting, use long-polling first. Move to webhook mode only when you need it and can expose a dedicated HTTPS path safely.
+If you are just starting, use long-polling first. Move to webhook mode only
+when you need it and can expose a dedicated HTTPS path safely.
 
 1. Set the token:
    - Env: `ZALO_BOT_TOKEN=...`
@@ -46,13 +49,15 @@ Minimal config:
 
 ## What it is
 
-Zalo is a Vietnam-focused messaging app; its Bot API lets the Gateway run a bot for 1:1 conversations.
-It is a good fit for support or notifications where you want deterministic routing back to Zalo.
+Zalo is a Vietnam-focused messaging app. Its Bot API lets the Gateway run a bot
+for 1:1 conversations. It is a good fit for support or notifications where you
+want deterministic routing back to Zalo.
 
 - A Zalo Bot API channel owned by the Gateway.
 - Deterministic routing: replies go back to Zalo; the model never chooses channels.
 - DMs share the agent's main session.
-- Groups are supported with policy controls (`groupPolicy` + `groupAllowFrom`) and default to fail-closed allowlist behavior.
+- Groups are supported with policy controls and default to fail-closed
+  allowlist behavior.
 
 ## Setup (fast path)
 
@@ -80,7 +85,8 @@ Example:
 
 Env option: `ZALO_BOT_TOKEN=...` (works for the default account only).
 
-Multi-account support: use `channels.zalo.accounts` with per-account tokens and optional `name`.
+Multi-account support uses `channels.zalo.accounts` with per-account tokens and
+optional `name`.
 
 3. Restart the gateway. Zalo starts when a token is resolved (env or config).
 4. DM access defaults to pairing. Approve the code when the bot is first contacted.
@@ -101,7 +107,8 @@ Multi-account support: use `channels.zalo.accounts` with per-account tokens and 
 
 ### DM access
 
-- Default: `channels.zalo.dmPolicy = "pairing"`. Unknown senders receive a pairing code; messages are ignored until approved (codes expire after 1 hour).
+- Default: `channels.zalo.dmPolicy = "pairing"`. Unknown senders receive a
+  pairing code. Messages wait for approval, and codes expire after 1 hour.
 - Approve via:
   - `fased pairing list zalo`
   - `fased pairing approve zalo <CODE>`
@@ -112,7 +119,8 @@ Multi-account support: use `channels.zalo.accounts` with per-account tokens and 
 
 - `channels.zalo.groupPolicy` controls group inbound handling: `open | allowlist | disabled`.
 - Default behavior is fail-closed: `allowlist`.
-- `channels.zalo.groupAllowFrom` restricts which sender IDs can trigger the bot in groups.
+- `channels.zalo.groupAllowFrom` restricts which sender IDs can trigger the bot
+  in groups.
 - If `groupAllowFrom` is unset, Zalo falls back to `allowFrom` for sender checks.
 - `groupPolicy: "disabled"` blocks all group messages.
 - `groupPolicy: "open"` allows any group member (mention-gated).
@@ -125,12 +133,13 @@ Multi-account support: use `channels.zalo.accounts` with per-account tokens and 
   - The webhook secret must be 8-256 characters.
   - Webhook URL must use HTTPS.
   - Zalo sends events with `X-Bot-Api-Secret-Token` header for verification.
-  - Gateway HTTP handles webhook requests at `channels.zalo.webhookPath` (defaults to the webhook URL path).
+  - Gateway HTTP handles webhook requests at `channels.zalo.webhookPath`.
   - Requests must use `Content-Type: application/json` (or `+json` media types).
   - Duplicate events (`event_name + message_id`) are ignored for a short replay window.
   - Burst traffic is rate-limited per path/source and may return HTTP 429.
 
-**Note:** getUpdates (polling) and webhook are mutually exclusive per Zalo API docs.
+Note: getUpdates polling and webhook mode are mutually exclusive per Zalo API
+docs.
 
 ## Supported message types
 

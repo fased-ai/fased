@@ -1,18 +1,21 @@
 ---
-summary: "Camera capture (iOS node + macOS app) for agent use: photos (jpg) and short video clips (mp4)"
+summary: "Camera capture for paired nodes: photos (jpg) and short video clips (mp4)"
 read_when:
   - Adding or modifying camera capture on iOS nodes or macOS
   - Extending agent-accessible MEDIA temp-file workflows
 title: "Camera Capture"
 ---
 
-# Camera capture (agent)
+# Camera capture
 
 Fased supports **camera capture** for agent workflows:
 
-- **iOS node** (paired via Gateway): capture a **photo** (`jpg`) or **short video clip** (`mp4`, with optional audio) via `node.invoke`.
-- **Android node** (paired via Gateway): capture a **photo** (`jpg`) or **short video clip** (`mp4`, with optional audio) via `node.invoke`.
-- **macOS app** (node via Gateway): capture a **photo** (`jpg`) or **short video clip** (`mp4`, with optional audio) via `node.invoke`.
+- **iOS node**: capture a **photo** (`jpg`) or **short video clip** (`mp4`,
+  with optional audio) via `node.invoke`.
+- **Android node**: capture a **photo** (`jpg`) or **short video clip** (`mp4`,
+  with optional audio) via `node.invoke`.
+- **macOS app**: capture a **photo** (`jpg`) or **short video clip** (`mp4`,
+  with optional audio) via `node.invoke`.
 
 All camera access is gated behind **user-controlled settings**.
 
@@ -67,11 +70,13 @@ UI boundary:
 
 ### Foreground requirement
 
-Like `canvas.*`, the iOS node only allows `camera.*` commands in the **foreground**. Background invocations return `NODE_BACKGROUND_UNAVAILABLE`.
+Like `canvas.*`, the iOS node only allows `camera.*` commands in the
+**foreground**. Background invocations return `NODE_BACKGROUND_UNAVAILABLE`.
 
 ### CLI helper (temp files + MEDIA)
 
-The easiest way to get attachments is via the CLI helper, which writes decoded media to a temp file and prints `MEDIA:<path>`.
+The easiest way to get attachments is the CLI helper. It writes decoded media to
+a temp file and prints `MEDIA:<path>`.
 
 Examples:
 
@@ -101,12 +106,13 @@ Notes:
   - `CAMERA` for both `camera.snap` and `camera.clip`.
   - `RECORD_AUDIO` for `camera.clip` when `includeAudio=true`.
 
-If permissions are missing, the app will prompt when possible; if denied, `camera.*` requests fail with a
-`*_PERMISSION_REQUIRED` error.
+If permissions are missing, the app prompts when possible. If denied,
+`camera.*` requests fail with a `*_PERMISSION_REQUIRED` error.
 
 ### Android foreground requirement
 
-Like `canvas.*`, the Android node only allows `camera.*` commands in the **foreground**. Background invocations return `NODE_BACKGROUND_UNAVAILABLE`.
+Like `canvas.*`, the Android node only allows `camera.*` commands in the
+**foreground**. Background invocations return `NODE_BACKGROUND_UNAVAILABLE`.
 
 ### Android commands (via Gateway `node.invoke`)
 
@@ -140,8 +146,8 @@ fased nodes camera snap --node <id>            # prints MEDIA:<path>
 fased nodes camera snap --node <id> --max-width 1280
 fased nodes camera snap --node <id> --delay-ms 2000
 fased nodes camera snap --node <id> --device-id <id>
-fased nodes camera clip --node <id> --duration 10s          # prints MEDIA:<path>
-fased nodes camera clip --node <id> --duration-ms 3000      # prints MEDIA:<path> (legacy flag)
+fased nodes camera clip --node <id> --duration 10s     # prints MEDIA:<path>
+fased nodes camera clip --node <id> --duration-ms 3000 # legacy flag
 fased nodes camera clip --node <id> --device-id <id>
 fased nodes camera clip --node <id> --no-audio
 ```
@@ -149,13 +155,14 @@ fased nodes camera clip --node <id> --no-audio
 Notes:
 
 - `fased nodes camera snap` defaults to `maxWidth=1600` unless overridden.
-- On macOS, `camera.snap` waits `delayMs` (default 2000ms) after warm-up/exposure settle before capturing.
+- On macOS, `camera.snap` waits `delayMs` (default 2000ms) after warm-up/exposure
+  settle before capturing.
 - Photo payloads are recompressed to keep base64 under 5 MB.
 
 ## Safety + practical limits
 
-- Camera and microphone access trigger the usual OS permission prompts (and require usage strings in Info.plist).
-- Video clips are capped (currently `<= 60s`) to avoid oversized node payloads (base64 overhead + message limits).
+- Camera and microphone access trigger the usual OS permission prompts.
+- Video clips are capped (currently `<= 60s`) to avoid oversized node payloads.
 
 ## macOS screen video (OS-level)
 

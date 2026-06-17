@@ -8,9 +8,9 @@ title: "Bonjour Discovery"
 
 # Bonjour / mDNS discovery
 
-Fased uses Bonjour (mDNS / DNS‑SD) as a **LAN‑only convenience** to discover
-an active Gateway (WebSocket endpoint). It is best‑effort and does **not** replace SSH or
-Tailnet-based connectivity.
+Fased uses Bonjour (mDNS / DNS-SD) as a **LAN-only convenience** to discover an
+active Gateway WebSocket endpoint. It is best-effort. Use SSH or Tailnet-based
+connectivity for reliable remote access.
 
 ## Wide‑area Bonjour (Unicast DNS‑SD) over Tailscale
 
@@ -49,7 +49,8 @@ fased dns setup --apply
 On macOS/Homebrew hosts, `--apply` installs CoreDNS and configures it to:
 
 - listen on port 53 only on the gateway’s Tailscale interfaces
-- serve your chosen domain (example: `fased.internal.`) from `~/.fased/dns/<domain>.db`
+- serve your chosen domain from `~/.fased/dns/<domain>.db`
+  (example: `fased.internal.`)
 
 Validate from a tailnet‑connected machine:
 
@@ -95,8 +96,10 @@ The Gateway advertises small non‑secret hints to make UI flows convenient:
 - `lanHost=<hostname>.local`
 - `gatewayPort=<port>` (Gateway WS + HTTP)
 - `gatewayTls=1` (only when TLS is enabled)
-- `gatewayTlsSha256=<sha256>` (only when TLS is enabled and fingerprint is available)
-- `canvasPort=<port>` (only when the canvas host is enabled; currently the same as `gatewayPort`)
+- `gatewayTlsSha256=<sha256>` (only when TLS is enabled and fingerprint is
+  available)
+- `canvasPort=<port>` (only when the canvas host is enabled; currently the same
+  as `gatewayPort`)
 - `sshPort=<port>` (only in `discovery.mdns.mode: "full"`)
 - `transport=gateway`
 - `cliPath=<path>` (only in `discovery.mdns.mode: "full"`)
@@ -104,10 +107,16 @@ The Gateway advertises small non‑secret hints to make UI flows convenient:
 
 Security notes:
 
-- Bonjour/mDNS TXT records are **unauthenticated**. Clients must not treat TXT as authoritative routing.
-- Clients should route using the resolved service endpoint (SRV + A/AAAA). Treat `lanHost`, `tailnetDns`, `gatewayPort`, and `gatewayTlsSha256` as hints only.
-- TLS pinning must never allow an advertised `gatewayTlsSha256` to override a previously stored pin.
-- iOS/Android nodes should treat discovery-based direct connects as **TLS-only** and require explicit user confirmation before trusting a first-time fingerprint.
+- Bonjour/mDNS TXT records are **unauthenticated**. Clients should treat them as
+  hints, not authoritative routing.
+- Route using the resolved service endpoint: SRV plus A/AAAA records.
+- Treat `lanHost`, `tailnetDns`, `gatewayPort`, and `gatewayTlsSha256` as hints
+  only.
+- TLS pinning must keep the previously stored pin when an advertised
+  `gatewayTlsSha256` changes.
+- iOS/Android nodes should treat discovery-based direct connects as
+  **TLS-only** and require explicit user confirmation before trusting a
+  first-time fingerprint.
 
 ## Debugging on macOS
 

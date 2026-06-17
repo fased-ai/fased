@@ -35,12 +35,18 @@ If a target does not match these rules, apply fails before mutating config.
 
 ## Allowed target types and paths
 
-| `target.type`                        | Allowed `target.path` shape                               | Optional id match rule                              |
-| ------------------------------------ | --------------------------------------------------------- | --------------------------------------------------- |
-| `models.providers.apiKey`            | `models.providers.<providerId>.apiKey`                    | `providerId` must match `<providerId>` when present |
-| `skills.entries.apiKey`              | `skills.entries.<skillKey>.apiKey`                        | n/a                                                 |
-| `channels.googlechat.serviceAccount` | `channels.googlechat.serviceAccount`                      | `accountId` must be empty/omitted                   |
-| `channels.googlechat.serviceAccount` | `channels.googlechat.accounts.<accountId>.serviceAccount` | `accountId` must match `<accountId>` when present   |
+- `models.providers.apiKey`
+  - path: `models.providers.<providerId>.apiKey`
+  - id rule: `providerId` must match `<providerId>` when present
+- `skills.entries.apiKey`
+  - path: `skills.entries.<skillKey>.apiKey`
+  - id rule: none
+- `channels.googlechat.serviceAccount`
+  - path: `channels.googlechat.serviceAccount`
+  - id rule: `accountId` must be empty or omitted
+- `channels.googlechat.serviceAccount`
+  - path: `channels.googlechat.accounts.<accountId>.serviceAccount`
+  - id rule: `accountId` must match `<accountId>` when present
 
 ## Path validation rules
 
@@ -48,7 +54,8 @@ Each target is validated with all of the following:
 
 - `type` must be one of the allowed target types above.
 - `path` must be a non-empty dot path.
-- `pathSegments` can be omitted. If provided, it must normalize to exactly the same path as `path`.
+- `pathSegments` can be omitted. If provided, it must normalize to exactly the
+  same path as `path`.
 - Forbidden segments are rejected: `__proto__`, `prototype`, `constructor`.
 - The normalized path must match one of the allowed path shapes for the target type.
 - If `providerId` / `accountId` is set, it must match the id encoded in the path.
@@ -65,15 +72,18 @@ No partial mutation is committed for that invalid target path.
 
 ## Ref-only auth profiles and implicit providers
 
-Implicit provider discovery also considers auth profiles that store refs instead of plaintext credentials:
+Implicit provider discovery also considers auth profiles that store refs instead
+of plaintext credentials:
 
 - `type: "api_key"` profiles can use `keyRef` (for example env-backed refs).
 - `type: "token"` profiles can use `tokenRef`.
 
 Behavior:
 
-- For API-key providers (for example `volcengine`, `byteplus`), ref-only profiles can still activate implicit provider entries.
-- For `github-copilot`, if the profile has no plaintext token, discovery will try `tokenRef` env resolution before token exchange.
+- For API-key providers such as `volcengine` and `byteplus`, ref-only profiles
+  can still activate implicit provider entries.
+- For `github-copilot`, if the profile has no plaintext token, discovery will
+  try `tokenRef` env resolution before token exchange.
 
 ## Operator checks
 
@@ -85,7 +95,9 @@ fased secrets apply --from /tmp/fased-secrets-plan.json --dry-run
 fased secrets apply --from /tmp/fased-secrets-plan.json
 ```
 
-If apply fails with an invalid target path message, regenerate the plan with `fased secrets configure` or fix the target path to one of the allowed shapes above.
+If apply fails with an invalid target path message, regenerate the plan with
+`fased secrets configure` or fix the target path to one of the allowed shapes
+above.
 
 ## Related docs
 

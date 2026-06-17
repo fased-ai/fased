@@ -11,7 +11,8 @@ title: "Streaming and Chunking"
 
 Fased has two separate streaming layers:
 
-- **Block streaming (channels):** emit completed **blocks** as the assistant writes. These are normal channel messages (not token deltas).
+- **Block streaming (channels):** emit completed **blocks** as the assistant
+  writes. These are normal channel messages, not token deltas.
 - **Preview streaming (Telegram/Discord/Slack):** update a temporary **preview message** while generating.
 
 There is **no true token-delta streaming** to channel messages today. Preview streaming is message-based (send + edits/appends).
@@ -44,7 +45,8 @@ Legend:
 - `agents.defaults.blockStreamingChunk`: `{ minChars, maxChars, breakPreference? }`.
 - `agents.defaults.blockStreamingCoalesce`: `{ minChars?, maxChars?, idleMs? }` (merge streamed blocks before send).
 - Channel hard cap: `*.textChunkLimit` (e.g., `channels.whatsapp.textChunkLimit`).
-- Channel chunk mode: `*.chunkMode` (`length` default, `newline` splits on blank lines (paragraph boundaries) before length chunking).
+- Channel chunk mode: `*.chunkMode`. The default is `length`; `newline` splits
+  on blank lines before length chunking.
 - Discord soft cap: `channels.discord.maxLinesPerMessage` (default 17) splits tall replies to avoid UI clipping.
 
 **Boundary semantics:**
@@ -94,7 +96,9 @@ more natural.
 
 This maps to:
 
-- **Stream chunks:** `blockStreamingDefault: "on"` + `blockStreamingBreak: "text_end"` (emit as you go). Non-Telegram channels also need `*.blockStreaming: true`.
+- **Stream chunks:** `blockStreamingDefault: "on"` plus
+  `blockStreamingBreak: "text_end"` emits as the assistant writes.
+  Non-Telegram channels also need `*.blockStreaming: true`.
 - **Stream everything at end:** `blockStreamingBreak: "message_end"` (flush once, possibly multiple chunks if very long).
 - **No block streaming:** `blockStreamingDefault: "off"` (only final reply).
 

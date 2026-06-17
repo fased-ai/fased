@@ -26,10 +26,13 @@ This keeps secret-provider outages off the hot request path.
 
 ## Onboarding reference preflight
 
-When onboarding runs in interactive mode and you choose secret reference storage, Fased performs a fast preflight check before saving:
+When onboarding runs in interactive mode and you choose secret reference storage,
+Fased performs a fast preflight check before saving:
 
-- Env refs: validates env var name and confirms a non-empty value is visible during onboarding.
-- Provider refs (`file` or `exec`): validates the selected provider, resolves the provided `id`, and checks value type.
+- Env refs: validates env var name and confirms a non-empty value is visible
+  during onboarding.
+- Provider refs (`file` or `exec`): validates the selected provider, resolves the
+  provided `id`, and checks value type.
 
 If validation fails, onboarding shows the error and lets you retry.
 
@@ -127,8 +130,10 @@ Define providers under `secrets.providers`:
 
 - Runs configured absolute binary path, no shell.
 - By default, `command` must point to a regular file (not a symlink).
-- Set `allowSymlinkCommand: true` to allow symlink command paths (for example Homebrew shims). Fased validates the resolved target path.
-- Enable `allowSymlinkCommand` only when required for trusted package-manager paths, and pair it with `trustedDirs` (for example `["/opt/homebrew"]`).
+- Set `allowSymlinkCommand: true` to allow symlink command paths, such as
+  Homebrew shims. Fased validates the resolved target path.
+- Enable `allowSymlinkCommand` only when required for trusted package-manager
+  paths, and pair it with `trustedDirs`, for example `["/opt/homebrew"]`.
 - When `trustedDirs` is set, checks apply to the resolved target path.
 - Supports timeout, no-output timeout, output byte limits, env allowlist, and trusted dirs.
 - Request payload (stdin):
@@ -314,7 +319,8 @@ fased secrets audit --check
 Migration completeness:
 
 - Include `skills.entries.<skillKey>.apiKey` targets when those skills use API keys.
-- If `audit --check` still reports plaintext findings after a partial migration, migrate the remaining reported paths and rerun audit.
+- If `audit --check` still reports plaintext findings after a partial migration,
+  migrate the remaining reported paths and rerun audit.
 
 ### `secrets audit`
 

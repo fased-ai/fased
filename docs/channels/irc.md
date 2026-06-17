@@ -7,14 +7,19 @@ read_when:
   - You are configuring IRC allowlists, group policy, or mention gating
 ---
 
-IRC is still a good fit when you want a small, always-on chat surface without a hosted control plane. Fased joins as a normal IRC client, keeps DMs and channels separate, and applies the same allowlist and mention controls used elsewhere in the gateway.
+IRC is still a good fit when you want a small, always-on chat surface without a
+hosted control plane. Fased joins as a normal IRC client, keeps DMs and
+channels separate, and applies the same allowlist and mention controls used
+elsewhere in the gateway.
 
 Status: bundled channel extension. Configure it from **Agent > Channels > IRC**
 or under `channels.irc` in the main Fased config for scripted setups.
 
 ## Quick start
 
-Start with one server, one nick, and one known channel. Once the bot is stable there, add sender allowlists and per-channel rules before exposing it to broader public traffic.
+Start with one server, one nick, and one known channel. Once the bot is stable,
+add sender allowlists and per-channel rules before exposing it to broader
+public traffic.
 
 1. Open **Agents**, select the Agent, then use **Agent > Channels > IRC**.
 2. Enter at least server, port, TLS, nick, and channels. Scripted setups can use:
@@ -52,7 +57,9 @@ fased gateway run
 There are two separate “gates” for IRC channels:
 
 1. **Channel access** (`groupPolicy` + `groups`): whether the bot accepts messages from a channel at all.
-2. **Sender access** (`groupAllowFrom` / per-channel `groups["#channel"].allowFrom`): who is allowed to trigger the bot inside that channel.
+2. **Sender access** (`groupAllowFrom` or
+   `groups["#channel"].allowFrom`): who is allowed to trigger the bot inside
+   that channel.
 
 Config keys:
 
@@ -92,9 +99,11 @@ Example (allow anyone in `#tuirc-dev` to talk to the bot):
 
 ## Reply triggering (mentions)
 
-Even if a channel is allowed (via `groupPolicy` + `groups`) and the sender is allowed, Fased defaults to **mention-gating** in group contexts.
+Even if a channel is allowed and the sender is allowed, Fased defaults to
+**mention-gating** in group contexts.
 
-That means you may see logs like `drop channel … (missing-mention)` unless the message includes a mention pattern that matches the bot.
+That means you may see logs like `drop channel ... (missing-mention)` unless
+the message includes a mention pattern that matches the bot.
 
 To make the bot reply in an IRC channel **without needing a mention**, disable mention gating for that channel:
 
@@ -186,7 +195,8 @@ Notes:
 - Legacy unprefixed keys are still accepted and matched as `id:` only.
 - The first matching sender policy wins; `"*"` is the wildcard fallback.
 
-For more on group access vs mention-gating (and how they interact), see: [/channels/groups](/channels/groups).
+For more on group access and mention-gating, see
+[Groups](/channels/groups).
 
 ## NickServ
 
@@ -240,6 +250,9 @@ Default account supports:
 
 ## Troubleshooting
 
-- If the bot connects but never replies in channels, verify `channels.irc.groups` **and** whether mention-gating is dropping messages (`missing-mention`). If you want it to reply without pings, set `requireMention:false` for the channel.
+- If the bot connects but never replies in channels, verify
+  `channels.irc.groups` and whether mention-gating is dropping messages
+  (`missing-mention`). To reply without pings, set `requireMention:false` for
+  the channel.
 - If login fails, verify nick availability and server password.
 - If TLS fails on a custom network, verify host/port and certificate setup.

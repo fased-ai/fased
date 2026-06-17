@@ -25,7 +25,7 @@ Docs: [Dashboard](/web/dashboard) and [Control UI](/web/control-ui).
 </Info>
 
 ```mermaid
-flowchart LR
+flowchart TD
   install["Install"] --> onboard["Onboard"]
   onboard --> dashboard["Dashboard"]
   dashboard --> model["Model"]

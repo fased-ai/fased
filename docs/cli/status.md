@@ -32,9 +32,11 @@ Notes:
 - `--verbose` and `--debug` enable verbose logging.
 - `--json` prints machine-readable output.
 - Output includes per-agent session stores when multiple agents are configured.
-- Status output includes Gateway + node host service install/runtime state when available.
+- Status output includes Gateway + node host service install/runtime state when
+  available.
 - Status output includes update channel + git SHA for source checkouts.
-- Update info also surfaces in the Dashboard; if an update is available, status prints a hint to run `fased update` (see [Updating](/install/updating)).
+- Update info also surfaces in the Dashboard. If an update is available, status
+  prints a hint to run `fased update` (see [Updating](/install/updating)).
 
 Related:
 

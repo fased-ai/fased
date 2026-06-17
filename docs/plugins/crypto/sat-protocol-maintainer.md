@@ -1,5 +1,5 @@
 ---
-summary: "How the SAT protocol maintainer runs reserve refill, fixed-recipient treasury and staking claims, staking distributor feed, cleanup, standby, and alerts."
+summary: "How SAT protocol maintenance runs reserve refill, fixed-recipient claims, cleanup, standby, and alerts."
 read_when:
   - You operate a Fased host that participates in SAT protocol maintenance
   - You need to verify reserve, treasury, staking, cleanup, standby, or alerts
@@ -10,8 +10,9 @@ sidebarTitle: "SAT maintainer"
 
 # SAT Protocol Maintainer
 
-The SAT protocol maintainer is operator tooling for protocol upkeep. It is not
-the normal Mining page, and it is not a treasury custody wallet.
+The SAT protocol maintainer is operator tooling for protocol upkeep. Mining
+users still use the Mining page. Treasury custody stays separate from the hot
+maintainer payer.
 
 The maintainer submits transactions that make already-defined protocol state
 move forward:
@@ -26,29 +27,45 @@ move forward:
 The caller pays transaction fees. Program state fixes recipients and caps, so a
 caller cannot redirect treasury/staking funds to themselves.
 
-## What it is not
+## Scope
 
-The maintainer is not:
+The maintainer is limited to bounded protocol maintenance:
 
-- a normal user mining control;
-- a wallet send surface;
-- a bond top-up surface;
-- a Marketplace fee release surface;
-- a way to choose arbitrary treasury recipients;
-- a replacement for signer, passkey, split-key, or wallet policy.
+- reserve refill to configured caps;
+- fixed-recipient treasury and staking claims;
+- staking distributor feed;
+- cleanup/reclaim for resolved accounts;
+- monitor and standby records.
 
 Mining users still use the Mining page for miner-owned work. Fased Network users
 still use the Bond/Staking card for their own bond claim.
 
 ## Maintenance lanes
 
-| Lane                 | Source                                | Destination                             | Caller can redirect? |
-| -------------------- | ------------------------------------- | --------------------------------------- | -------------------- |
-| Registry reserve     | protocol treasury SOL vault           | `sat_registry_reserve` up to target/cap | No                   |
-| Treasury SAT/SOL     | protocol pending lanes                | configured treasury recipient           | No                   |
-| Staking SAT feed     | protocol pending staking SAT          | bond distributor vault                  | No                   |
-| Staking SOL claim    | protocol pending staking SOL          | configured ops/staking-SOL recipient    | No                   |
-| Cleanup/reclaim rent | resolved cycle/page/progress accounts | expected PDA/owner or reserve path      | No                   |
+**Registry reserve**
+
+Source: protocol treasury SOL vault. Destination: `sat_registry_reserve` up to
+the configured target/cap.
+
+**Treasury SAT/SOL**
+
+Source: protocol pending lanes. Destination: configured treasury recipient.
+
+**Staking SAT feed**
+
+Source: protocol pending staking SAT. Destination: bond distributor vault.
+
+**Staking SOL claim**
+
+Source: protocol pending staking SOL. Destination: configured ops/staking-SOL
+recipient.
+
+**Cleanup/reclaim rent**
+
+Source: resolved cycle/page/progress accounts. Destination: expected PDA/owner
+or reserve path.
+
+Program state fixes recipients and caps for all lanes.
 
 This is why the maintainer can be run by a hot payer without giving that payer
 treasury custody.
@@ -115,11 +132,17 @@ The maintainer should run with:
 
 Use three separate responsibilities:
 
-| Component | Responsibility                                                          |
-| --------- | ----------------------------------------------------------------------- |
-| Primary   | regular maintenance loop                                                |
-| Standby   | periodic takeover attempt when primary is stopped or unhealthy          |
-| Monitor   | read-only alert state for freshness, payer SOL, reserve, lanes, cleanup |
+**Primary**
+
+Regular maintenance loop.
+
+**Standby**
+
+Periodic takeover attempt when primary is stopped or unhealthy.
+
+**Monitor**
+
+Read-only alert state for freshness, payer SOL, reserve, lanes, and cleanup.
 
 Expected behavior:
 

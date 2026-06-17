@@ -7,7 +7,9 @@ title: "Twitch"
 
 # Twitch
 
-Twitch is best treated as a live-channel companion, not an open public inbox. Fased joins Twitch chat through the IRC bridge, speaks as a Twitch bot account, and relies on allowlists or moderator roles to keep control of who can trigger it.
+Twitch is best treated as a live-channel companion. Fased joins Twitch chat
+through the IRC bridge, speaks as a Twitch bot account, and relies on
+allowlists or moderator roles to control who can trigger it.
 
 Status: bundled channel extension through Twitch chat over IRC.
 
@@ -23,21 +25,23 @@ load.
 
 ## Quick setup (beginner)
 
-Use a dedicated bot account when possible. It makes channel moderation, token rotation, and auditability much cleaner than sharing your primary Twitch identity.
+Use a dedicated bot account when possible. It makes channel moderation, token
+rotation, and auditability cleaner than sharing your primary Twitch identity.
 
 1. Create a dedicated Twitch account for the bot (or use an existing account).
 2. Generate credentials: [Twitch Token Generator](https://twitchtokengenerator.com/)
    - Select **Bot Token**
    - Verify scopes `chat:read` and `chat:write` are selected
    - Copy the **Client ID** and **Access Token**
-3. Find your Twitch user ID: [https://www.streamweasels.com/tools/convert-twitch-username-to-user-id/](https://www.streamweasels.com/tools/convert-twitch-username-to-user-id/)
+3. Find your Twitch user ID with a Twitch username-to-ID converter.
 4. Configure the token in **Agent > Channels > Twitch**:
    - Env: `FASED_TWITCH_ACCESS_TOKEN=...` (default account only)
    - Or config: `channels.twitch.accessToken`
    - If both are set, config takes precedence (env fallback is default-account only).
 5. Start the gateway.
 
-**⚠️ Important:** Add access control (`allowFrom` or `allowedRoles`) to prevent unauthorized users from triggering the bot. `requireMention` defaults to `true`.
+Important: add access control with `allowFrom` or `allowedRoles` before using
+the bot in a live channel. `requireMention` defaults to `true`.
 
 Minimal config:
 
@@ -47,10 +51,10 @@ Minimal config:
     twitch: {
       enabled: true,
       username: "fased", // Bot's Twitch account
-      accessToken: "oauth:abc123...", // OAuth Access Token (or use FASED_TWITCH_ACCESS_TOKEN env var)
+      accessToken: "oauth:abc123...", // or FASED_TWITCH_ACCESS_TOKEN
       clientId: "xyz789...", // Client ID from Token Generator
       channel: "vevisk", // Which Twitch channel's chat to join (required)
-      allowFrom: ["123456789"], // (recommended) Your Twitch user ID only - get it from https://www.streamweasels.com/tools/convert-twitch-username-to-user-id/
+      allowFrom: ["123456789"], // recommended: your Twitch user ID
     },
   },
 }
@@ -60,8 +64,9 @@ Minimal config:
 
 - A Twitch channel owned by the Gateway.
 - Deterministic routing: replies always go back to Twitch.
-- Each account maps to an isolated session key `agent:<agentId>:twitch:<accountName>`.
-- `username` is the bot's account (who authenticates), `channel` is which chat room to join.
+- Each account maps to an isolated session key:
+  `agent:<agentId>:twitch:<accountName>`.
+- `username` is the bot's account; `channel` is which chat room to join.
 
 ## Setup (detailed)
 
@@ -113,19 +118,22 @@ If both env and config are set, config takes precedence.
 }
 ```
 
-Prefer `allowFrom` for a hard allowlist. Use `allowedRoles` instead if you want role-based access.
+Prefer `allowFrom` for a hard allowlist. Use `allowedRoles` when you want
+role-based access.
 
 **Available roles:** `"moderator"`, `"owner"`, `"vip"`, `"subscriber"`, `"all"`.
 
 **Why user IDs?** Usernames can change, allowing impersonation. User IDs are permanent.
 
-Find your Twitch user ID: [https://www.streamweasels.com/tools/convert-twitch-username-%20to-user-id/](https://www.streamweasels.com/tools/convert-twitch-username-%20to-user-id/) (Convert your Twitch username to ID)
+Find your Twitch user ID with a Twitch username-to-ID converter.
 
 ## Token refresh (optional)
 
-Tokens from [Twitch Token Generator](https://twitchtokengenerator.com/) cannot be automatically refreshed - regenerate when expired.
+Tokens from [Twitch Token Generator](https://twitchtokengenerator.com/) cannot
+be automatically refreshed. Regenerate them when expired.
 
-For automatic token refresh, create your own Twitch application at [Twitch Developer Console](https://dev.twitch.tv/console) and add to config:
+For automatic token refresh, create your own Twitch application at
+[Twitch Developer Console](https://dev.twitch.tv/console) and add to config:
 
 ```json5
 {
@@ -142,7 +150,8 @@ The bot automatically refreshes tokens before expiration and logs refresh events
 
 ## Multi-account support
 
-Use `channels.twitch.accounts` with per-account tokens. See [`gateway/configuration`](/gateway/configuration) for the shared pattern.
+Use `channels.twitch.accounts` with per-account tokens. See
+[gateway configuration](/gateway/configuration) for the shared pattern.
 
 Example (one bot account in two channels):
 

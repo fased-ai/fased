@@ -10,29 +10,38 @@ read_when:
 
 # Trusted Proxy Auth
 
-> ⚠️ **Security-sensitive feature.** This mode delegates authentication entirely to your reverse proxy. Misconfiguration can expose your Gateway to unauthorized access. Read this page carefully before enabling.
+> **Security-sensitive feature.** This mode delegates authentication entirely to
+> your reverse proxy. Misconfiguration can expose your Gateway to unauthorized
+> access. Read this page carefully before enabling.
 
 ## When to Use
 
 Use `trusted-proxy` auth mode when:
 
-- You run Fased behind an **identity-aware proxy** (Pomerium, Caddy + OAuth, nginx + oauth2-proxy, Traefik + forward auth)
+- You run Fased behind an **identity-aware proxy** such as Pomerium, Caddy +
+  OAuth, nginx + oauth2-proxy, or Traefik + forward auth
 - Your proxy handles all authentication and passes user identity via headers
-- You're in a Kubernetes or container environment where the proxy is the only path to the Gateway
-- You're hitting WebSocket `1008 unauthorized` errors because browsers can't pass tokens in WS payloads
+- You're in a Kubernetes or container environment where the proxy is the only
+  path to the Gateway
+- You're hitting WebSocket `1008 unauthorized` errors because browsers cannot
+  pass tokens in WS payloads
 
 ## When NOT to Use
 
 - If your proxy doesn't authenticate users (just a TLS terminator or load balancer)
-- If there's any path to the Gateway that bypasses the proxy (firewall holes, internal network access)
+- If there is any path to the Gateway that bypasses the proxy, such as firewall
+  holes or internal network access
 - If you're unsure whether your proxy correctly strips/overwrites forwarded headers
-- If you only need personal single-user access (consider Tailscale Serve + loopback for simpler setup)
+- If you only need personal single-user access, consider Tailscale Serve plus
+  loopback for a simpler setup
 
 ## How It Works
 
 1. Your reverse proxy authenticates users (OAuth, OIDC, SAML, etc.)
-2. Proxy adds a header with the authenticated user identity (e.g., `x-forwarded-user: nick@example.com`)
-3. Fased checks that the request came from a **trusted proxy IP** (configured in `gateway.trustedProxies`)
+2. Proxy adds a header with the authenticated user identity, for example
+   `x-forwarded-user: nick@example.com`.
+3. Fased checks that the request came from a **trusted proxy IP** configured in
+   `gateway.trustedProxies`.
 4. Fased extracts the user identity from the configured header
 5. If everything checks out, the request is authorized
 
@@ -45,8 +54,10 @@ pairing identity.
 Implications:
 
 - Pairing is no longer the primary gate for Control UI access in this mode.
-- Your reverse proxy auth policy and `allowUsers` become the effective access control.
-- Keep gateway ingress locked to trusted proxy IPs only (`gateway.trustedProxies` + firewall).
+- Your reverse proxy auth policy and `allowUsers` become the effective access
+  control.
+- Keep gateway ingress locked to trusted proxy IPs only:
+  `gateway.trustedProxies` plus firewall.
 
 ## Configuration
 
@@ -86,13 +97,15 @@ proxy instead.
 
 ### Configuration Reference
 
-| Field                                       | Required | Description                                                                 |
-| ------------------------------------------- | -------- | --------------------------------------------------------------------------- |
-| `gateway.trustedProxies`                    | Yes      | Array of proxy IP addresses to trust. Requests from other IPs are rejected. |
-| `gateway.auth.mode`                         | Yes      | Must be `"trusted-proxy"`                                                   |
-| `gateway.auth.trustedProxy.userHeader`      | Yes      | Header name containing the authenticated user identity                      |
-| `gateway.auth.trustedProxy.requiredHeaders` | No       | Additional headers that must be present for the request to be trusted       |
-| `gateway.auth.trustedProxy.allowUsers`      | No       | Allowlist of user identities. Empty means allow all authenticated users.    |
+- `gateway.trustedProxies` (required): proxy IP addresses to trust. Requests
+  from other IPs are rejected.
+- `gateway.auth.mode` (required): must be `"trusted-proxy"`.
+- `gateway.auth.trustedProxy.userHeader` (required): header containing the
+  authenticated user identity.
+- `gateway.auth.trustedProxy.requiredHeaders` (optional): extra headers that
+  must be present for the request to be trusted.
+- `gateway.auth.trustedProxy.allowUsers` (optional): allowlist of user
+  identities. Empty means all authenticated users are allowed.
 
 ## TLS termination and HSTS
 
@@ -265,15 +278,20 @@ location / {
 
 Before enabling trusted-proxy auth, verify:
 
-- [ ] **Proxy is the only path**: The Gateway port is firewalled from everything except your proxy
-- [ ] **trustedProxies is minimal**: Only your actual proxy IPs, not entire subnets
-- [ ] **Proxy strips headers**: Your proxy overwrites (not appends) `x-forwarded-*` headers from clients
+- [ ] **Proxy is the only path**: the Gateway port is firewalled from everything
+      except your proxy
+- [ ] **trustedProxies is minimal**: only your actual proxy IPs, not entire
+      subnets
+- [ ] **Proxy strips headers**: your proxy overwrites, not appends,
+      `x-forwarded-*` headers from clients
 - [ ] **TLS termination**: Your proxy handles TLS; users connect via HTTPS
-- [ ] **allowUsers is set** (recommended): Restrict to known users rather than allowing anyone authenticated
+- [ ] **allowUsers is set** (recommended): restrict to known users rather than
+      allowing anyone authenticated
 
 ## Security Audit
 
-`fased security audit` will flag trusted-proxy auth with a **critical** severity finding. This is intentional — it's a reminder that you're delegating security to your proxy setup.
+`fased security audit` flags trusted-proxy auth with a **critical** severity
+finding. That is intentional: this mode delegates security to your proxy setup.
 
 The audit checks for:
 

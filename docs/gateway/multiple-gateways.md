@@ -8,7 +8,10 @@ title: "Multiple Gateways"
 
 # Multiple Gateways (same host)
 
-Most setups should use one gateway because a single gateway can already handle multiple messaging connections and agents. If you need stronger isolation or redundancy, such as a rescue profile, run separate gateways with isolated profiles and ports.
+Most setups should use one gateway because a single gateway can handle multiple
+messaging connections and agents. If you need stronger isolation or redundancy,
+such as a rescue profile, run separate gateways with isolated profiles and
+ports.
 
 ## Isolation checklist (required)
 
@@ -22,7 +25,8 @@ If these are shared, you will hit config races and port conflicts.
 
 ## Recommended: profiles (`--profile`)
 
-Profiles auto-scope `FASED_STATE_DIR` + `FASED_CONFIG_PATH` and suffix service names.
+Profiles auto-scope `FASED_STATE_DIR` + `FASED_CONFIG_PATH` and suffix service
+names.
 
 ```bash
 # main
@@ -50,9 +54,11 @@ Run a second Gateway on the same host with its own:
 - workspace
 - base port plus derived browser ports
 
-This keeps the rescue bot isolated from the main bot so it can debug or apply config changes if the primary bot is down.
+This keeps the rescue bot isolated from the main bot so it can debug or apply
+config changes if the primary bot is down.
 
-Port spacing: leave at least 20 ports between base ports so the derived browser/CDP ports never collide.
+Port spacing: leave at least 20 ports between base ports so the derived
+browser/CDP ports never collide.
 
 ### How to install (rescue bot)
 
@@ -79,18 +85,21 @@ Base port = `gateway.port` (or `FASED_GATEWAY_PORT` / `--port`).
 
 - browser control service port = base + 2 (loopback only)
 - extension relay CDP port = browser control + 1
-- Browser profile CDP ports auto-allocate from `browser.controlPort + 9 .. + 108`
+- Browser profile CDP ports auto-allocate from `browser.controlPort + 9 .. + 108`.
 - canvas host is served on the Gateway HTTP server (same port as `gateway.port`)
 
-If you override any of these in config or env, you must keep them unique per instance.
+If you override any of these in config or env, keep them unique per instance.
 
-For hosted setups, keep each gateway loopback-first unless a specific instance truly needs a tailnet bind or proxy exposure.
+For hosted setups, keep each gateway loopback-first unless a specific instance
+needs a tailnet bind or proxy exposure.
 
 ## Browser/CDP notes (common footgun)
 
 - Do **not** pin `browser.cdpUrl` to the same values on multiple instances.
-- Each instance needs its own browser control port and CDP range (derived from its gateway port).
-- If you need explicit CDP ports, set `browser.profiles.<name>.cdpPort` per instance.
+- Each instance needs its own browser control port and CDP range. The range is
+  derived from its gateway port.
+- If you need explicit CDP ports, set `browser.profiles.<name>.cdpPort` per
+  instance.
 - Remote Chrome: use `browser.profiles.<name>.cdpUrl` (per profile, per instance).
 
 ## Manual env example

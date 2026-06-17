@@ -27,7 +27,7 @@ title: "Gateway Architecture"
 ## Architecture map
 
 ```mermaid
-flowchart LR
+flowchart TD
   clients["Control UI / CLI / app"] --> gateway["Gateway"]
   channels["Channels"] --> gateway
   nodes["Paired nodes"] --> gateway
@@ -58,7 +58,8 @@ Agent instead of becoming separate product owners.
 - Maintains configured channel connections and runtime services.
 - Exposes a typed WS API (requests, responses, server-push events).
 - Validates inbound frames against JSON Schema.
-- Emits events like `agent`, `chat`, `presence`, `health`, `heartbeat`, and task scheduler events.
+- Emits events like `agent`, `chat`, `presence`, `health`, `heartbeat`, and
+  task scheduler events.
 
 ### Clients (mac app / CLI / Control UI)
 
@@ -70,8 +71,8 @@ Agent instead of becoming separate product owners.
 ### Nodes (macOS / iOS / Android / headless)
 
 - Connect to the **same WS server** with `role: node`.
-- Provide a device identity in `connect`; pairing is **device-based** (role `node`) and
-  approval lives in the device pairing store.
+- Provide a device identity in `connect`; pairing is **device-based** with
+  role `node`, and approval lives in the device pairing store.
 - Expose commands such as `canvas.*`, `camera.*`, `screen.record`, and
   `location.get` when the paired node advertises those capabilities.
 

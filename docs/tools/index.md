@@ -16,7 +16,7 @@ Tools**. That page decides which discovered tools this Agent may use. Credential
 and domain controls stay on the owning surfaces.
 
 ```mermaid
-flowchart LR
+flowchart TD
   agent["Selected Agent"] --> policy["Agent > Tools policy"]
   services["Services"] --> catalog["Tool catalog"]
   channels["Channels"] --> catalog
@@ -38,16 +38,14 @@ flowchart LR
 
 ## Setup Ownership
 
-| Need                              | Use                  |
-| --------------------------------- | -------------------- |
-| Allow or deny tools for an Agent  | **Agent > Tools**    |
-| Web/search, GitHub, Gmail, media  | **Agent > Services** |
-| Chat delivery and channel actions | **Agent > Channels** |
-| Skill instructions and deps       | **Agent > Skills**   |
-| Wallet approvals and signing      | **Wallets**          |
-| Mining start/stop/capital/claims  | **Mining**           |
-| Marketplace offers and orders     | **Marketplace**      |
-| Device pairing and diagnostics    | **Advanced > Nodes** |
+- Allow or deny tools for an Agent: **Agent > Tools**.
+- Web/search, GitHub, Gmail, and media credentials: **Agent > Services**.
+- Chat delivery and channel actions: **Agent > Channels**.
+- Skill instructions and dependencies: **Agent > Skills**.
+- Wallet approvals and signing: **Wallets**.
+- Mining start/stop, capital, and claims: **Mining**.
+- Marketplace offers and orders: **Marketplace**.
+- Device pairing and diagnostics: **Advanced > Nodes**.
 
 Agent > Tools should answer: “May this Agent use this capability?” It should
 not collect API keys, wallet approvals, mining capital, channel credentials, or
@@ -55,16 +53,21 @@ plugin install settings.
 
 ## Tool Families
 
-| Family              | Examples                                                  | Main docs                                                   |
-| ------------------- | --------------------------------------------------------- | ----------------------------------------------------------- |
-| Runtime and files   | `exec`, `process`, `read`, `write`, `edit`, `apply_patch` | [Exec](/tools/exec), [Files](/tools/files)                  |
-| Web and browser     | `web_search`, `web_fetch`, `browser`                      | [Web](/tools/web), [Browser](/tools/browser)                |
-| Messaging           | `message`, polls, reactions, threads                      | [Channels](/channels)                                       |
-| Sessions and Agents | `sessions_*`, `agents_list`, subagents, ACP               | [Subagents](/tools/subagents)                               |
-| Tasks               | scheduled task and run controls                           | [Automation](/automation)                                   |
-| Nodes and media     | canvas, camera, screen, audio, location, notifications    | [Nodes](/nodes)                                             |
-| Review and output   | `diff_view`, text-to-speech, reactions, thinking levels   | [Diff Viewer](/tools/diff-viewer)                           |
-| Workflow helpers    | LLM Task and task/workflow orchestration                  | [LLM Task](/tools/llm-task), [Tasks](/automation/cron-jobs) |
+- Runtime and files: `exec`, `process`, `read`, `write`, `edit`,
+  `apply_patch`. Start with [Exec](/tools/exec) and [Files](/tools/files).
+- Web and browser: `web_search`, `web_fetch`, and `browser`. Start with
+  [Web](/tools/web) and [Browser](/tools/browser).
+- Messaging: `message`, polls, reactions, and threads. Start with
+  [Channels](/channels).
+- Sessions and Agents: `sessions_*`, `agents_list`, sub-agents, and ACP. Start
+  with [Subagents](/tools/subagents).
+- Tasks: scheduled task and run controls. Start with [Automation](/automation).
+- Nodes and media: canvas, camera, screen, audio, location, and notifications.
+  Start with [Nodes](/nodes).
+- Review and output: `diff_view`, text-to-speech, reactions, and thinking
+  levels. Start with [Diff Viewer](/tools/diff-viewer).
+- Workflow helpers: LLM Task and task/workflow orchestration. Start with
+  [LLM Task](/tools/llm-task) and [Tasks](/automation/cron-jobs).
 
 ## Tool Policy
 
@@ -92,29 +95,26 @@ Tool policy can be global or per-Agent.
 
 Profiles:
 
-| Profile     | Meaning                                               |
-| ----------- | ----------------------------------------------------- |
-| `minimal`   | Only basic session status.                            |
-| `coding`    | File, runtime, web, session, memory, and media tools. |
-| `messaging` | Message and session tools.                            |
-| `full`      | No profile restriction.                               |
+- `minimal`: only basic session status.
+- `coding`: file, runtime, web, session, memory, and media tools.
+- `messaging`: message and session tools.
+- `full`: no profile restriction.
 
 Groups:
 
-| Group              | Includes                                                    |
-| ------------------ | ----------------------------------------------------------- |
-| `group:runtime`    | `exec`, `process`, `code_execution`                         |
-| `group:fs`         | `read`, `write`, `edit`, `apply_patch`                      |
-| `group:sessions`   | session list/history/send/spawn/yield/status and sub-agents |
-| `group:memory`     | memory search/read tools                                    |
-| `group:web`        | `web_search`, `web_fetch`, `x_search`                       |
-| `group:ui`         | browser, canvas, diff view                                  |
-| `group:automation` | task/gateway automation controls                            |
-| `group:messaging`  | message tool                                                |
-| `group:nodes`      | paired node tools                                           |
-| `group:agents`     | agent list and plan update tools                            |
-| `group:media`      | image, music, video, and text-to-speech tools               |
-| `group:fased`      | all built-in Fased tools except provider plugin tools       |
+- `group:runtime`: `exec`, `process`, `code_execution`.
+- `group:fs`: `read`, `write`, `edit`, `apply_patch`.
+- `group:sessions`: session list/history/send/spawn/yield/status and
+  sub-agents.
+- `group:memory`: memory search/read tools.
+- `group:web`: `web_search`, `web_fetch`, `x_search`.
+- `group:ui`: browser, canvas, diff view.
+- `group:automation`: task/gateway automation controls.
+- `group:messaging`: message tool.
+- `group:nodes`: paired node tools.
+- `group:agents`: agent list and plan update tools.
+- `group:media`: image, music, video, and text-to-speech tools.
+- `group:fased`: all built-in Fased tools except provider plugin tools.
 
 Provider-specific policy can only narrow access:
 

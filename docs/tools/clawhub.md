@@ -315,11 +315,15 @@ clawhub sync --all
 
 ### Local changes vs registry versions
 
-Updates compare the local skill contents to registry versions using a content hash. If local files do not match any published version, the CLI asks before overwriting (or requires `--force` in non-interactive runs).
+Updates compare the local skill contents to registry versions using a content
+hash. If local files do not match any published version, the CLI asks before
+overwriting, or requires `--force` in non-interactive runs.
 
 ### Sync scanning and fallback roots
 
-`clawhub sync` scans your current workdir first. If no skills are found, it falls back to known legacy locations (for example `~/fased/skills` and `~/.fased/skills`). This is designed to find older skill installs without extra flags.
+`clawhub sync` scans your current workdir first. If no skills are found, it
+falls back to known legacy locations, such as `~/fased/skills` and
+`~/.fased/skills`. This helps find older skill installs without extra flags.
 
 ### Storage and lockfile
 
@@ -328,7 +332,8 @@ Updates compare the local skill contents to registry versions using a content ha
 
 ### Telemetry (install counts)
 
-When you run `clawhub sync` while logged in, the CLI sends a minimal snapshot to compute install counts. You can disable this entirely:
+When you run `clawhub sync` while logged in, the CLI sends a minimal snapshot to
+compute install counts. You can disable this entirely:
 
 ```bash
 export CLAWHUB_DISABLE_TELEMETRY=1

@@ -45,7 +45,7 @@ Good output in one line:
 - `fased channels status --probe` → channels report `connected` or `ready`.
 - `fased logs --follow` → steady activity, no repeating fatal errors.
 
-If the thing that broke is Wallet, Mining, or Fased Network, run this ladder next:
+If Wallet, Mining, or Fased Network broke, run this ladder next:
 
 ```bash
 fased wallet status --json
@@ -59,25 +59,28 @@ fased federation bond-wallet status
 
 Good output in one line:
 
-- `fased wallet status --json` → provider, RPC, custody, and policy all look healthy.
-- `fased wallet signer doctor --json` → local signer is reachable and ready to sign.
+- `fased wallet status --json` → provider, RPC, custody, and policy look healthy.
+- `fased wallet signer doctor --json` → local signer is reachable and ready to
+  sign.
 - `fased mining wallets` → the intended mining wallet is visible to the runtime.
-- `fased mining readiness --wallet mining` → no signer, RPC, capital, or wallet mismatch blocker.
+- `fased mining readiness --wallet mining` → no signer, RPC, capital, or wallet
+  mismatch blocker.
 - `fased mining status` → live SAT state is readable and not stuck on obvious gaps.
-- `fased federation status` → Fased Network token, hosted state, and public route picture make sense.
+- `fased federation status` → Fased Network state and public route picture make
+  sense.
 - `fased federation bond-wallet status` → the bond assignment points at the wallet you expect.
 
 ## Decision tree
 
 ```mermaid
 flowchart TD
-  A[Fased is not working] --> B{What breaks first}
+  A[Something is not working] --> B{What breaks first}
   B --> C[No replies]
   B --> D[Dashboard or Control UI will not connect]
   B --> E[Gateway will not start or service not running]
   B --> F[Channel connects but messages do not flow]
   B --> G[Tasks or heartbeat did not fire or did not deliver]
-  B --> H[Node is paired but camera canvas screen exec fails]
+  B --> H[Node is paired but a node-backed tool fails]
   B --> I[Browser tool fails]
   B --> J[Wallet Mining Fased Network or bond state is wrong]
 
@@ -140,7 +143,8 @@ flowchart TD
 
     Common log signatures:
 
-    - `device identity required` → HTTP/non-secure context cannot complete device auth.
+    - `device identity required` → HTTP/non-secure context cannot complete
+      device auth.
     - `unauthorized` / reconnect loop → wrong token/password or auth mode mismatch.
     - `gateway connect failed:` → UI is targeting the wrong URL/port or unreachable gateway.
 
@@ -202,11 +206,12 @@ flowchart TD
 
     - `mention required` → group mention gating blocked processing.
     - `pairing` / `pending` → DM sender is not approved yet.
-    - `not_in_channel`, `missing_scope`, `Forbidden`, `401/403` → channel permission token issue.
+    - `not_in_channel`, `missing_scope`, `Forbidden`, `401/403` → channel
+      permission token issue.
 
     Deep pages:
 
-    - [/gateway/troubleshooting#channel-connected-messages-not-flowing](/gateway/troubleshooting#channel-connected-messages-not-flowing)
+    - [Gateway troubleshooting](/gateway/troubleshooting#channel-connected-messages-not-flowing)
     - [/channels/troubleshooting](/channels/troubleshooting)
 
   </Accordion>
@@ -228,16 +233,21 @@ flowchart TD
     - signer doctor says the self-hosted signer is reachable
     - mining readiness passes for the wallet you actually want to use
     - mining status shows capital, commit, and cycle state without blocker notes
-    - Fased Network status shows the expected handle, hosted state, and trust picture
+    - Fased Network status shows the expected handle, network state, and public
+      route picture
     - `fased federation bond-wallet status` shows the intended bond Vault
 
     Common signatures:
 
-    - signer unhealthy or socket missing → fix the local signer before blaming mining or Fased Network
+    - signer unhealthy or socket missing → fix the local signer before debugging
+      mining or Fased Network
     - wallet not listed in `fased mining wallets` → wrong role or wrong wallet selection
-    - readiness fails on SOL, capital, or commit → fund the wallet, deposit capital, or set commit first
-    - Fased Network orange after unlock request → full bond unlock cooldown is active; that is expected until cancel or withdraw
-    - bond Vault mismatch → Fased Network is reading a different Vault wallet than the one you funded
+    - readiness fails on SOL, capital, or commit → fund the wallet, deposit
+      capital, or set commit first
+    - Fased Network orange after unlock request → full bond unlock cooldown is
+      active until cancel or withdraw
+    - bond Vault mismatch → Fased Network is reading a different Vault wallet
+      than the one you funded
 
     Deep pages:
 
@@ -283,7 +293,7 @@ flowchart TD
 
   </Accordion>
 
-  <Accordion title="Node is paired but tool fails camera canvas screen exec">
+  <Accordion title="Node is paired but a node-backed tool fails">
     ```bash
     fased status
     fased gateway status
@@ -333,8 +343,10 @@ flowchart TD
 
     - `Failed to start Chrome CDP on port` → local browser launch failed.
     - `browser.executablePath not found` → configured binary path is wrong.
-    - `Chrome extension relay is running, but no tab is connected` → extension not attached.
-    - `Browser attachOnly is enabled ... not reachable` → attach-only profile has no live CDP target.
+    - `Chrome extension relay is running, but no tab is connected` → extension
+      not attached.
+    - `Browser attachOnly is enabled ... not reachable` → attach-only profile
+      has no live CDP target.
 
     Deep pages:
 

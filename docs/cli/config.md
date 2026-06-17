@@ -7,7 +7,9 @@ title: "config"
 
 # `fased config`
 
-Use `fased config` for non-interactive config edits. It can read, write, and unset values by path. Run it without a subcommand to open the same interactive wizard as `fased configure`.
+Use `fased config` for non-interactive config edits. It can read, write, and
+unset values by path. Run it without a subcommand to open the same interactive
+wizard as `fased configure`.
 
 Browser equivalent: **Advanced > Config**. Use it as the raw escape hatch only
 after checking the focused page that owns the setting, such as **Agent >

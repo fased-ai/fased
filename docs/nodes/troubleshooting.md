@@ -59,12 +59,20 @@ If you see `NODE_BACKGROUND_UNAVAILABLE`, bring the node app to the foreground a
 
 ## Permissions matrix
 
-| Capability                   | iOS                                     | Android                                      | macOS node app                | Typical failure code           |
-| ---------------------------- | --------------------------------------- | -------------------------------------------- | ----------------------------- | ------------------------------ |
-| `camera.snap`, `camera.clip` | Camera (+ mic for clip audio)           | Camera (+ mic for clip audio)                | Camera (+ mic for clip audio) | `*_PERMISSION_REQUIRED`        |
-| `screen.record`              | Screen Recording (+ mic optional)       | Screen capture prompt (+ mic optional)       | Screen Recording              | `*_PERMISSION_REQUIRED`        |
-| `location.get`               | While Using or Always (depends on mode) | Foreground/Background location based on mode | Location permission           | `LOCATION_PERMISSION_REQUIRED` |
-| `system.run`                 | n/a (node host path)                    | n/a (node host path)                         | Exec approvals required       | `SYSTEM_RUN_DENIED`            |
+- **`camera.snap`, `camera.clip`**
+  - iOS/Android/macOS: Camera permission; microphone permission for clip audio.
+  - Typical failure: `*_PERMISSION_REQUIRED`.
+- **`screen.record`**
+  - iOS/macOS: Screen Recording permission.
+  - Android: screen capture prompt; microphone permission if audio is included.
+  - Typical failure: `*_PERMISSION_REQUIRED`.
+- **`location.get`**
+  - iOS/macOS: While Using or Always, depending on requested mode.
+  - Android: foreground/background location, depending on requested mode.
+  - Typical failure: `LOCATION_PERMISSION_REQUIRED`.
+- **`system.run`**
+  - Uses the node host path and exec approvals.
+  - Typical failure: `SYSTEM_RUN_DENIED`.
 
 ## Pairing versus approvals
 
@@ -94,11 +102,12 @@ for that Agent.
 - `*_PERMISSION_REQUIRED` → OS permission missing/denied.
 - `LOCATION_DISABLED` → location mode is off.
 - `LOCATION_PERMISSION_REQUIRED` → requested location mode not granted.
-- `LOCATION_BACKGROUND_UNAVAILABLE` → app is backgrounded but only While Using permission exists.
+- `LOCATION_BACKGROUND_UNAVAILABLE` → app is backgrounded but only While Using
+  permission exists.
 - `SYSTEM_RUN_DENIED: approval required` → exec request needs explicit approval.
 - `SYSTEM_RUN_DENIED: allowlist miss` → command blocked by allowlist mode.
-  On Windows node hosts, shell-wrapper forms like `cmd.exe /c ...` are treated as allowlist misses in
-  allowlist mode unless approved via ask flow.
+  On Windows node hosts, shell-wrapper forms like `cmd.exe /c ...` are treated
+  as allowlist misses in allowlist mode unless approved via ask flow.
 
 ## Fast recovery loop
 

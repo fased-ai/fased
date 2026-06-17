@@ -43,9 +43,16 @@ Example config:
 
 ## Defaults
 
-- Interval: `30m` (or `1h` when Anthropic OAuth/setup-token is the detected auth mode). Set `agents.defaults.heartbeat.every` or per-agent `agents.list[].heartbeat.every`; use `0m` to disable.
+- Interval: `30m`, or `1h` when Anthropic OAuth/setup-token is the detected auth
+  mode. Set `agents.defaults.heartbeat.every` or per-agent
+  `agents.list[].heartbeat.every`; use `0m` to disable.
 - Prompt body (configurable via `agents.defaults.heartbeat.prompt`):
-  `Read HEARTBEAT.md if it exists (workspace context). Follow it strictly. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK.`
+
+  ```text
+  Read HEARTBEAT.md if it exists (workspace context). Follow it strictly.
+  Do not infer or repeat old tasks from prior chats.
+  If nothing needs attention, reply HEARTBEAT_OK.
+  ```
 - The heartbeat prompt is sent **verbatim** as the user message. The system
   prompt includes a “Heartbeat” section and the run is flagged internally.
 - Active hours (`heartbeat.activeHours`) are checked in the configured timezone.
@@ -75,8 +82,8 @@ stats” or “verify gateway health”), set `agents.defaults.heartbeat.prompt`
   specially.
 - For alerts, **do not** include `HEARTBEAT_OK`; return only the alert text.
 
-Outside heartbeats, stray `HEARTBEAT_OK` at the start/end of a message is stripped
-and logged; a message that is only `HEARTBEAT_OK` is dropped.
+Outside heartbeats, stray `HEARTBEAT_OK` at the start/end of a message is
+stripped and logged; a message that is only `HEARTBEAT_OK` is dropped.
 
 ## Config
 
@@ -91,7 +98,7 @@ and logged; a message that is only `HEARTBEAT_OK` is dropped.
         target: "last", // default: none | options: last | none | <channel id> (core or plugin, e.g. "bluebubbles")
         to: "+15551234567", // optional channel-specific override
         accountId: "ops-bot", // optional multi-account channel id
-        prompt: "Read HEARTBEAT.md if it exists (workspace context). Follow it strictly. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK.",
+        prompt: "Check HEARTBEAT.md and reply HEARTBEAT_OK when nothing needs attention.",
         ackMaxChars: 300, // max chars allowed after HEARTBEAT_OK
       },
     },
@@ -105,7 +112,8 @@ and logged; a message that is only `HEARTBEAT_OK` is dropped.
 - `agents.list[].heartbeat` merges on top; if any agent has a `heartbeat` block, **only those agents** run heartbeats.
 - `channels.defaults.heartbeat` sets visibility defaults for all channels.
 - `channels.<channel>.heartbeat` overrides channel defaults.
-- `channels.<channel>.accounts.<id>.heartbeat` (multi-account channels) overrides per-channel settings.
+- `channels.<channel>.accounts.<id>.heartbeat` overrides per-channel settings
+  for multi-account channels.
 
 ### Per-agent heartbeats
 
@@ -132,7 +140,7 @@ Example: two agents, only the second agent runs heartbeats.
           every: "1h",
           target: "whatsapp",
           to: "+15551234567",
-          prompt: "Read HEARTBEAT.md if it exists (workspace context). Follow it strictly. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK.",
+          prompt: "Check HEARTBEAT.md and reply HEARTBEAT_OK when nothing needs attention.",
         },
       },
     ],
@@ -154,7 +162,7 @@ Restrict heartbeats to business hours in a specific timezone:
         activeHours: {
           start: "09:00",
           end: "22:00",
-          timezone: "America/New_York", // optional; uses your userTimezone if set, otherwise host tz
+          timezone: "America/New_York",
         },
       },
     },
@@ -162,13 +170,15 @@ Restrict heartbeats to business hours in a specific timezone:
 }
 ```
 
-Outside this window (before 9am or after 10pm Eastern), heartbeats are skipped. The next scheduled tick inside the window will run normally.
+Outside this window, heartbeats are skipped. The next scheduled tick inside the
+window will run normally.
 
 ### 24/7 setup
 
 If you want heartbeats to run all day, use one of these patterns:
 
-- Omit `activeHours` entirely (no time-window restriction; this is the default behavior).
+- Omit `activeHours` entirely. This is the default and has no time-window
+  restriction.
 - Set a full-day window: `activeHours: { start: "00:00", end: "24:00" }`.
 
 Do not set the same `start` and `end` time (for example `08:00` to `08:00`).
@@ -176,7 +186,8 @@ That is treated as a zero-width window, so heartbeats are always skipped.
 
 ### Multi account example
 
-Use `accountId` to target a specific account on multi-account channels like Telegram:
+Use `accountId` to target a specific account on multi-account channels like
+Telegram:
 
 ```json5
 {
@@ -207,7 +218,8 @@ Use `accountId` to target a specific account on multi-account channels like Tele
 
 - `every`: heartbeat interval (duration string; default unit = minutes).
 - `model`: optional model override for heartbeat runs (`provider/model`).
-- `includeReasoning`: when enabled, also deliver the separate `Reasoning:` message when available (same shape as `/reasoning on`).
+- `includeReasoning`: when enabled, also deliver the separate `Reasoning:`
+  message when available. Same shape as `/reasoning on`.
 - `session`: optional session key for heartbeat runs.
   - `main` (default): agent main session.
   - Explicit session key (copy from `fased sessions --json` or the [sessions CLI](/cli/sessions)).
@@ -219,12 +231,19 @@ Use `accountId` to target a specific account on multi-account channels like Tele
 - `directPolicy`: controls direct/DM delivery behavior:
   - `allow` (default): allow direct/DM heartbeat delivery.
   - `block`: suppress direct/DM delivery (`reason=dm-blocked`).
-- `to`: optional recipient override (channel-specific id, e.g. E.164 for WhatsApp or a Telegram chat id). For Telegram topics/threads, use `<chatId>:topic:<messageThreadId>`.
-- `accountId`: optional account id for multi-account channels. When `target: "last"`, the account id applies to the resolved last channel if it supports accounts; otherwise it is ignored. If the account id does not match a configured account for the resolved channel, delivery is skipped.
+- `to`: optional recipient override, such as E.164 for WhatsApp or a Telegram
+  chat id. For Telegram topics/threads, use
+  `<chatId>:topic:<messageThreadId>`.
+- `accountId`: optional account id for multi-account channels. When
+  `target: "last"`, the account id applies to the resolved last channel if it
+  supports accounts. If the account id does not match a configured account for
+  the resolved channel, delivery is skipped.
 - `prompt`: overrides the default prompt body (not merged).
 - `ackMaxChars`: max chars allowed after `HEARTBEAT_OK` before delivery.
 - `suppressToolErrorWarnings`: when true, suppresses tool error warning payloads during heartbeat runs.
-- `activeHours`: restricts heartbeat runs to a time window. Object with `start` (HH:MM, inclusive; use `00:00` for start-of-day), `end` (HH:MM exclusive; `24:00` allowed for end-of-day), and optional `timezone`.
+- `activeHours`: restricts heartbeat runs to a time window. Object with `start`
+  (HH:MM, inclusive; use `00:00` for start-of-day), `end` (HH:MM exclusive;
+  `24:00` allowed for end-of-day), and optional `timezone`.
   - Omitted or `"user"`: uses your `agents.defaults.userTimezone` if set, otherwise falls back to the host system timezone.
   - `"local"`: always uses the host system timezone.
   - Any IANA identifier (e.g. `America/New_York`): used directly; if invalid, falls back to the `"user"` behavior above.
@@ -239,7 +258,9 @@ Use `accountId` to target a specific account on multi-account channels like Tele
 - `session` only affects the run context; delivery is controlled by `target` and `to`.
 - To deliver to a specific channel/recipient, set `target` + `to`. With
   `target: "last"`, delivery uses the last external channel for that session.
-- Heartbeat deliveries allow direct/DM targets by default. Set `directPolicy: "block"` to suppress direct-target sends while still running the heartbeat turn.
+- Heartbeat deliveries allow direct/DM targets by default. Set
+  `directPolicy: "block"` to suppress direct-target sends while still running
+  the heartbeat turn.
 - If the main queue is busy, the heartbeat is skipped and retried later.
 - If `target` resolves to no external destination, the run still happens but no
   outbound message is sent.
@@ -301,12 +322,12 @@ channels:
 
 ### Common patterns
 
-| Goal                                     | Config                                                                                   |
-| ---------------------------------------- | ---------------------------------------------------------------------------------------- |
-| Default behavior (silent OKs, alerts on) | _(no config needed)_                                                                     |
-| Fully silent (no messages, no indicator) | `channels.defaults.heartbeat: { showOk: false, showAlerts: false, useIndicator: false }` |
-| Indicator-only (no messages)             | `channels.defaults.heartbeat: { showOk: false, showAlerts: false, useIndicator: true }`  |
-| OKs in one channel only                  | `channels.telegram.heartbeat: { showOk: true }`                                          |
+- Default behavior: silent OKs, alerts on. No config needed.
+- Fully silent: `channels.defaults.heartbeat` with `showOk: false`,
+  `showAlerts: false`, and `useIndicator: false`.
+- Indicator-only: `channels.defaults.heartbeat` with `showOk: false`,
+  `showAlerts: false`, and `useIndicator: true`.
+- OKs in one channel only: `channels.telegram.heartbeat: { showOk: true }`.
 
 ## HEARTBEAT.md (optional)
 

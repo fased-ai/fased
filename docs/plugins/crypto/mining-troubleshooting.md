@@ -27,8 +27,8 @@ recovery is clearing older cycles.
 
 This is usually normal.
 
-`Target max` is the saved upper limit for later. It is not a promise that every
-cycle can use that amount. The actual submitted commit is capped by:
+`Target max` is the saved upper limit for later cycles. The actual submitted
+commit is capped by:
 
 - free miner capital;
 - locked capital from pending cycles;
@@ -46,8 +46,8 @@ Common messages:
 | `Commit reduced: free capital`            | the miner capital PDA has less free SOL than the saved target right now |
 | `Commit restored: capital unlocked`       | older capital cleared and Fased Agent could raise commit again          |
 
-If commit drops for one cycle and returns on the next cycle, Fased Agent is
-usually doing the right thing: it kept participating instead of idling.
+If commit drops for one cycle and returns on the next cycle, Fased Agent likely
+kept participating with the safe available amount.
 
 ## Locked capital clearing
 

@@ -17,15 +17,15 @@ Use [Tasks vs Heartbeat](/automation/cron-vs-heartbeat) if you are deciding
 between scheduled work and the Agent heartbeat.
 
 ```mermaid
-flowchart LR
-  Agent[Agent] --> Definition[Saved Task definition]
-  Definition --> Schedule[Schedule]
-  Definition --> Policy[Execution policy]
-  Definition --> Delivery[Optional delivery]
-  Schedule --> Run[Run]
+flowchart TD
+  Agent["Agent"] --> Definition["Saved Task definition"]
+  Definition --> Schedule["Schedule"]
+  Definition --> Policy["Execution policy"]
+  Definition --> Delivery["Optional delivery"]
+  Schedule --> Run["Run"]
   Policy --> Run
-  Run --> History[Run history]
-  Delivery --> Target[Channel or webhook]
+  Run --> History["Run history"]
+  Delivery --> Target["Channel or webhook"]
 
   classDef main fill:#1f2937,stroke:#ff8a65,color:#ffffff
   classDef aux fill:#101827,stroke:#3b82f6,color:#ffffff
@@ -80,21 +80,60 @@ The browser **Create task** dialog writes one saved task definition through
 `cron.add`. The definition is attached to the selected Agent unless the global
 Tasks view explicitly chooses another Agent.
 
-| Field               | Meaning                                                                                                     |
-| ------------------- | ----------------------------------------------------------------------------------------------------------- |
-| **Name**            | Human label shown in Agent > Tasks.                                                                         |
-| **Prompt**          | Instruction the Agent runs on each schedule.                                                                |
-| **Objective**       | Optional goal stored with the task for planning and review.                                                 |
-| **Success**         | Optional completion criteria for review and stop-on-success.                                                |
-| **Schedule**        | One-time, interval, or cron expression.                                                                     |
-| **Session**         | New task session isolates each run. Main Agent session posts into the Agent's main lane.                    |
-| **Delivery target** | No delivery keeps the result internal. Channel or webhook delivery sends the result to the selected target. |
-| **Execution**       | Auto, Agent turn, skill-only, or no-model execution.                                                        |
-| **Memory**          | Retrieval scope for this run.                                                                               |
-| **Skill access**    | Inherit, narrow, or disable skills for the task.                                                            |
-| **Ask Agents**      | Optional helper Agents that add evidence before final synthesis.                                            |
-| **Session key**     | Advanced routing key. Leave default unless you are wiring a specific route.                                 |
-| **Presets**         | Policy shortcuts. They do not replace the task prompt or schedule.                                          |
+**Name**
+
+Human label shown in Agent > Tasks.
+
+**Prompt**
+
+Instruction the Agent runs on each schedule.
+
+**Objective**
+
+Optional goal stored with the task for planning and review.
+
+**Success**
+
+Optional completion criteria for review and stop-on-success.
+
+**Schedule**
+
+One-time, interval, or cron expression.
+
+**Session**
+
+`New task session` isolates each run. `Main Agent session` posts into the
+Agent's main lane.
+
+**Delivery target**
+
+`No delivery` keeps the result internal. Channel or webhook delivery sends the
+result to the selected target.
+
+**Execution**
+
+Auto, Agent turn, skill-only, or no-model execution.
+
+**Memory**
+
+Retrieval scope for this run.
+
+**Skill access**
+
+Inherit, narrow, or disable skills for the task.
+
+**Ask Agents**
+
+Optional helper Agents that add evidence before final synthesis.
+
+**Session key**
+
+Advanced routing key. Leave default unless you are wiring a specific route.
+
+**Presets**
+
+Policy shortcuts that set execution, memory, model, evaluator, or stop-policy
+fields.
 
 ## Definitions vs run history
 
@@ -106,11 +145,11 @@ Agent > Tasks starts with saved definitions:
 - Graph
 - Program
 
-Templates are starter presets. They fill a Task form, but they are not saved
-definitions until you save the resulting task.
+Templates are starter presets. They become saved definitions after you save the
+resulting task.
 
 Every time one of them runs, Fased writes run history. History is evidence of
-what happened; it is not the saved definition itself.
+what happened. The saved definition controls future runs.
 
 Run history can include scheduled tasks, webhook triggers, channel runs, helper
 Agents, wallet approvals, marketplace order records, mining events, media jobs,
@@ -128,16 +167,45 @@ Task templates fill the whole task shape: schedule, prompt, objective, success
 criteria, execution policy, memory, skill access, and delivery. Saving the form
 turns the template into a normal Task definition.
 
-| Template                   | Use when                                                                                                                                        |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Mining strategy review** | You want strategy review using mining status/history without changing funding, withdraw, start/stop, wallet send, or bond controls.             |
-| **Mining status report**   | You want a read-only mining report: running/stopped state, current cycle, wallet SOL/SAT, capital, locked capital, claimable SAT, and blockers. |
-| **Strategy A/B review**    | You want evidence across `balanced`, `top_k`, `ranked`, `crowd_aware`, and `adaptive` while active commit settings stay unchanged.              |
-| **Wallet reserve watch**   | You want alerts before Agent, Vault, or Mining wallet fee reserves get too low.                                                                 |
-| **Staking rewards watch**  | You want a read-only Fased Network check for bond amount, claimable SAT, reward pool, and vault balance.                                        |
-| **Provider health check**  | You want recurring checks for model providers, channels, tools, signer, and RPC readiness.                                                      |
-| **Marketplace follow-up**  | You want open orders with payment, delivery, receipt, or review state surfaced for manual action.                                               |
-| **RPC pressure report**    | You want an operator report for RPC calls, `getAccountInfo` pressure, failover, and cost-reduction targets.                                     |
+**Mining strategy review**
+
+Use when you want strategy review from mining status/history while funding,
+withdraw, start/stop, wallet send, and bond controls stay unchanged.
+
+**Mining status report**
+
+Use when you want a read-only mining report: running/stopped state, current
+cycle, wallet SOL/SAT, capital, locked capital, claimable SAT, and blockers.
+
+**Strategy A/B review**
+
+Use when you want evidence across `balanced`, `top_k`, `ranked`,
+`crowd_aware`, and `adaptive` while active commit settings stay unchanged.
+
+**Wallet reserve watch**
+
+Use when you want alerts before Agent, Vault, or Mining wallet fee reserves get
+too low.
+
+**Staking rewards watch**
+
+Use when you want a read-only Fased Network check for bond amount, claimable
+SAT, reward pool, and vault balance.
+
+**Provider health check**
+
+Use when you want recurring checks for model providers, channels, tools,
+signer, and RPC readiness.
+
+**Marketplace follow-up**
+
+Use when you want open orders with payment, delivery, receipt, or review state
+surfaced for manual action.
+
+**RPC pressure report**
+
+Use when you want an operator report for RPC calls, `getAccountInfo` pressure,
+failover, and cost-reduction targets.
 
 Presets are smaller than templates. A preset changes execution, memory, skill,
 model, evaluator, or stop policy fields without replacing the full task.
@@ -146,21 +214,31 @@ model, evaluator, or stop policy fields without replacing the full task.
 
 Tasks can keep results internal or deliver them outward.
 
-| Delivery    | Behavior                                                                                      |
-| ----------- | --------------------------------------------------------------------------------------------- |
-| **None**    | The result stays in the Agent UI and run history.                                             |
-| **Channel** | The result is sent through a connected channel such as Telegram, Discord, WhatsApp, or Slack. |
-| **Webhook** | The finished run payload is POSTed to the configured URL.                                     |
+**None**
 
-Delivery is not ownership. The selected Agent owns the task even when the result
-is announced to a channel.
+The result stays in the Agent UI and run history.
+
+**Channel**
+
+The result is sent through a connected channel such as Telegram, Discord,
+WhatsApp, or Slack.
+
+**Webhook**
+
+The finished run payload is POSTed to the configured URL.
+
+The selected Agent owns the task even when the result is announced to a
+channel.
 
 ## Main vs isolated session
 
-| Mode                   | Use when                                                          |
-| ---------------------- | ----------------------------------------------------------------- |
-| **Main Agent session** | The run belongs in the Agent's main conversation lane.            |
-| **New task session**   | The run should stay isolated, quieter, or easier to audit by run. |
+**Main Agent session**
+
+Use when the run belongs in the Agent's main conversation lane.
+
+**New task session**
+
+Use when the run should stay isolated, quieter, or easier to audit by run.
 
 Most recurring tasks should use a new task session. Use the main session when
 the scheduled work is part of the ongoing conversation.
@@ -170,10 +248,10 @@ the scheduled work is part of the ongoing conversation.
 The gateway manages scheduled tasks under `~/.fased/cron/` internally.
 
 - task definitions: `~/.fased/cron/jobs.json`
+- queued task-run state: `~/.fased/cron/task-runs/queue.json`
 - run logs: `~/.fased/cron/runs/<jobId>.jsonl`
 
-Do not edit those files while the gateway is running. Use the UI, CLI, or RPC
-instead.
+Use the UI, CLI, or RPC for changes while the gateway is running.
 
 Relevant reference pages:
 

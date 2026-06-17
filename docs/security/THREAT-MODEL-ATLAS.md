@@ -15,7 +15,10 @@ sidebarTitle: "Threat model"
 
 ### Framework Attribution
 
-This threat model is built on [MITRE ATLAS](https://atlas.mitre.org/), the industry-standard framework for documenting adversarial threats to AI/ML systems. ATLAS is maintained by [MITRE](https://www.mitre.org/) in collaboration with the AI security community.
+This threat model is built on [MITRE ATLAS](https://atlas.mitre.org/), the
+industry-standard framework for documenting adversarial threats to AI/ML
+systems. ATLAS is maintained by [MITRE](https://www.mitre.org/) in collaboration
+with the AI security community.
 
 **Key ATLAS Resources:**
 
@@ -290,15 +293,17 @@ audits of those external systems.
 
 #### T-PERSIST-001: Malicious Skill Installation
 
-| Attribute               | Value                                                                                                                                     |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| **ATLAS ID**            | AML.T0010.001 - Supply Chain Compromise: AI Software                                                                                      |
-| **Description**         | Attacker publishes malicious skill to the plugin catalog                                                                                  |
-| **Attack Vector**       | Create account, publish skill with hidden malicious code                                                                                  |
-| **Affected Components** | Plugin catalog, skill loading, agent execution                                                                                            |
-| **Current Mitigations** | Registry moderation where available, Fased install review, path/layout checks, required `SKILL.md`, Agent allowlist separate from install |
-| **Residual Risk**       | High - Skills can still steer tool use and dependency installers may introduce supply-chain risk                                          |
-| **Recommendations**     | Package integrity/pinning, stronger external package trust warnings, skill sandboxing, community review                                   |
+- **ATLAS ID:** AML.T0010.001 - Supply Chain Compromise: AI Software.
+- **Description:** attacker publishes a malicious skill to the plugin catalog.
+- **Attack vector:** create account, publish skill with hidden malicious code.
+- **Affected components:** plugin catalog, skill loading, agent execution.
+- **Current mitigations:** registry moderation where available, Fased install
+  review, path/layout checks, required `SKILL.md`, and Agent allowlist separate
+  from install.
+- **Residual risk:** High - skills can still steer tool use, and dependency
+  installers may introduce supply-chain risk.
+- **Recommendations:** package integrity/pinning, stronger external package
+  trust warnings, skill sandboxing, community review.
 
 #### T-PERSIST-002: Skill Update Poisoning
 
@@ -410,15 +415,17 @@ audits of those external systems.
 
 #### T-EXFIL-003: Credential Harvesting
 
-| Attribute               | Value                                                                                                                                          |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| **ATLAS ID**            | AML.T0009 - Collection                                                                                                                         |
-| **Description**         | Malicious skill harvests credentials from agent context                                                                                        |
-| **Attack Vector**       | Skill code reads environment variables, config files                                                                                           |
-| **Affected Components** | Skill execution environment                                                                                                                    |
-| **Current Mitigations** | Skill install/config is separate from Agent access; service credentials belong in Services/skill config; wallet and mining grants are separate |
-| **Residual Risk**       | High - A malicious allowed skill can still influence the Agent to reveal or misuse available context/tools                                     |
-| **Recommendations**     | Skill sandboxing, credential isolation, stronger secret redaction and review warnings                                                          |
+- **ATLAS ID:** AML.T0009 - Collection.
+- **Description:** malicious skill harvests credentials from agent context.
+- **Attack vector:** skill code reads environment variables and config files.
+- **Affected components:** skill execution environment.
+- **Current mitigations:** skill install/config is separate from Agent access;
+  service credentials belong in Services/skill config; wallet and mining grants
+  are separate.
+- **Residual risk:** High - a malicious allowed skill can still influence the
+  Agent to reveal or misuse available context/tools.
+- **Recommendations:** skill sandboxing, credential isolation, stronger secret
+  redaction and review warnings.
 
 ---
 
@@ -438,15 +445,16 @@ audits of those external systems.
 
 #### T-IMPACT-002: Resource Exhaustion (DoS)
 
-| Attribute               | Value                                                                                                                  |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| **ATLAS ID**            | AML.T0031 - Erode AI Model Integrity                                                                                   |
-| **Description**         | Attacker exhausts API credits or compute resources                                                                     |
-| **Attack Vector**       | Automated message flooding, expensive tool calls                                                                       |
-| **Affected Components** | Gateway, agent sessions, API provider                                                                                  |
-| **Current Mitigations** | Gateway auth rate limits, task run budgets, provider cooldown/failover, and channel/provider backoff where implemented |
-| **Residual Risk**       | High - public or high-volume channels can still exhaust account/API/provider resources if policy is too loose          |
-| **Recommendations**     | Expand per-sender limits, cost budgets, and operator alerts for public/high-volume routes                              |
+- **ATLAS ID:** AML.T0031 - Erode AI Model Integrity.
+- **Description:** attacker exhausts API credits or compute resources.
+- **Attack vector:** automated message flooding and expensive tool calls.
+- **Affected components:** Gateway, agent sessions, API provider.
+- **Current mitigations:** Gateway auth rate limits, task run budgets, provider
+  cooldown/failover, and channel/provider backoff where implemented.
+- **Residual risk:** High - public or high-volume channels can still exhaust
+  account/API/provider resources if policy is too loose.
+- **Recommendations:** expand per-sender limits, cost budgets, and operator
+  alerts for public/high-volume routes.
 
 #### T-IMPACT-003: Reputation Damage
 
@@ -462,15 +470,20 @@ audits of those external systems.
 
 #### T-IMPACT-004: Unauthorized Wallet Or Mining Action
 
-| Attribute               | Value                                                                                                                               |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| **ATLAS ID**            | AML.T0031 - Erode AI Model Integrity                                                                                                |
-| **Description**         | Attacker causes an Agent or skill to spend funds, change wallet policy, or start mining                                             |
-| **Attack Vector**       | Prompt injection, malicious skill instructions, overbroad tool/wallet grants                                                        |
-| **Affected Components** | Wallet runtime, SAT mining runtime, Agent tool policy, Skill Grants                                                                 |
-| **Current Mitigations** | Role-separated wallets, caps, passkey/approval gates, explicit Wallet > Skill Grants, mining wallet not available to generic skills |
-| **Residual Risk**       | High - User can still over-grant or approve a malicious action                                                                      |
-| **Recommendations**     | Stronger policy simulation, clearer approval diffs, hardware wallet support where possible                                          |
+- **ATLAS ID:** AML.T0031 - Erode AI Model Integrity.
+- **Description:** attacker causes an Agent or skill to spend funds, change
+  wallet policy, or start mining.
+- **Attack vector:** prompt injection, malicious skill instructions, overbroad
+  tool/wallet grants.
+- **Affected components:** wallet runtime, SAT mining runtime, Agent tool
+  policy, Skill Grants.
+- **Current mitigations:** role-separated wallets, caps, passkey/approval gates,
+  explicit Wallet > Skill Grants, and mining wallet not available to generic
+  skills.
+- **Residual risk:** High - user can still over-grant or approve a malicious
+  action.
+- **Recommendations:** stronger policy simulation, clearer approval diffs,
+  hardware wallet support where possible.
 
 ---
 
@@ -486,19 +499,38 @@ Fased has two different control layers:
   archives before copying skill files into an Agent workspace or shared skill
   library.
 
-| Control                   | Implementation                                                                                       | Effectiveness                                                                             |
-| ------------------------- | ---------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| Trusted registry origin   | Fased install path records and checks the configured registry origin.                                | Medium - Prevents silent origin drift                                                     |
-| Archive extraction safety | Install flow rejects traversal, symlink, oversized, VCS, dependency, and binary-style archive risks. | High - Prevents common filesystem and archive attacks                                     |
-| Required `SKILL.md`       | `src/agents/skills-marketplace-policy.ts` rejects archives without a conventional `SKILL.md`.        | Medium - Ensures the install has a reviewable skill contract                              |
-| Permission inspection     | `inspectSkillMarketplaceManifest()` records requested wallet, tool, and install metadata.            | Medium - Makes risky asks visible before grant                                            |
-| Dependency trust summary  | `summarizeSkillInstallTrust()` flags unpinned npm/go/uv/brew/download installers.                    | Medium - Shows package-manager trust and integrity gaps                                   |
-| Archive/content scanning  | `src/security/skill-scanner.ts` and plugin artifact review surface suspicious files/patterns.        | Medium - Useful guardrail, not a proof of safety                                          |
-| Install Review            | Agent Skills / plugin review flow shows source, warnings, permissions, and dependency plan.          | Medium - Makes source, warnings, and dependencies visible before install                  |
-| Grant Separation          | Agent Skills / Tools / Wallet Skill Grants                                                           | High - Install does not grant Agent, tool, wallet, mining, or vault access                |
-| Dependency Verification   | Installer result plus requirement check                                                              | Medium - Command success is not enough; required binaries must be visible to gateway PATH |
-| Agent-scoped skill access | Agent Skills stores allow/deny policy for the selected Agent.                                        | High - A skill installed for one Agent is not automatically policy-approved everywhere    |
-| Wallet role restriction   | Skill install policy only permits `agent` wallet role requests.                                      | High - Generic skills cannot request mining or vault wallet roles                         |
+- **Trusted registry origin:** install path records and checks the configured
+  registry origin. Effectiveness: Medium - prevents silent origin drift.
+- **Archive extraction safety:** install flow rejects traversal, symlink,
+  oversized, VCS, dependency, and binary-style archive risks. Effectiveness:
+  High - prevents common filesystem and archive attacks.
+- **Required `SKILL.md`:** `src/agents/skills-marketplace-policy.ts` rejects
+  archives without a conventional `SKILL.md`. Effectiveness: Medium - ensures
+  the install has a reviewable skill contract.
+- **Permission inspection:** `inspectSkillMarketplaceManifest()` records
+  requested wallet, tool, and install metadata. Effectiveness: Medium - makes
+  risky asks visible before grant.
+- **Dependency trust summary:** `summarizeSkillInstallTrust()` flags unpinned
+  npm/go/uv/brew/download installers. Effectiveness: Medium - shows
+  package-manager trust and integrity gaps.
+- **Archive/content scanning:** `src/security/skill-scanner.ts` and plugin
+  artifact review surface suspicious files/patterns. Effectiveness: Medium -
+  useful guardrail, not a proof of safety.
+- **Install Review:** Agent Skills / plugin review flow shows source, warnings,
+  permissions, and dependency plan. Effectiveness: Medium - makes source,
+  warnings, and dependencies visible before install.
+- **Grant Separation:** Agent Skills / Tools / Wallet Skill Grants.
+  Effectiveness: High - install does not grant Agent, tool, wallet, mining, or
+  vault access.
+- **Dependency Verification:** installer result plus requirement check.
+  Effectiveness: Medium - command success is not enough; required binaries must
+  be visible to gateway PATH.
+- **Agent-scoped skill access:** Agent Skills stores allow/deny policy for the
+  selected Agent. Effectiveness: High - a skill installed for one Agent is not
+  automatically policy-approved everywhere.
+- **Wallet role restriction:** skill install policy only permits `agent` wallet
+  role requests. Effectiveness: High - generic skills cannot request mining or
+  vault wallet roles.
 
 ### 4.2 Moderation Flag Patterns
 

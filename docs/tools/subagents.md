@@ -9,7 +9,9 @@ title: "Sub-Agents"
 
 # Sub-agents
 
-Sub-agents are background agent runs spawned from an existing agent run. They run in their own session (`agent:<agentId>:subagent:<uuid>`) and, when finished, **announce** their result back to the requester chat channel.
+Sub-agents are background agent runs spawned from an existing agent run. They run
+in their own session (`agent:<agentId>:subagent:<uuid>`) and, when finished,
+**announce** their result back to the requester chat channel.
 
 ## Slash command
 
@@ -25,7 +27,8 @@ Use `/subagents` to inspect or control sub-agent runs for the **current session*
 
 Thread binding controls:
 
-These commands work on channels that support persistent thread bindings. See **Thread supporting channels** below.
+These commands work on channels that support persistent thread bindings. See
+**Thread supporting channels** below.
 
 - `/focus <subagent-label|session-key|session-id|session-label>`
 - `/unfocus`
@@ -33,11 +36,13 @@ These commands work on channels that support persistent thread bindings. See **T
 - `/session idle <duration|off>`
 - `/session max-age <duration|off>`
 
-`/subagents info` shows run metadata (status, timestamps, session id, transcript path, cleanup).
+`/subagents info` shows run metadata: status, timestamps, session id, transcript
+path, and cleanup state.
 
 ### Spawn behavior
 
-`/subagents spawn` starts a background sub-agent as a user command, not an internal relay, and it sends one final completion update back to the requester chat when the run finishes.
+`/subagents spawn` starts a background sub-agent as a user command. It sends one
+final completion update back to the requester chat when the run finishes.
 
 - The spawn command is non-blocking; it returns a run id immediately.
 - On completion, the sub-agent announces a summary/result message back to the requester chat channel.
@@ -51,8 +56,11 @@ These commands work on channels that support persistent thread bindings. See **T
   - compact runtime/token stats
 - `--model` and `--thinking` override defaults for that specific run.
 - Use `info`/`log` to inspect details and output after completion.
-- `/subagents spawn` is one-shot mode (`mode: "run"`). For persistent thread-bound sessions, use `sessions_spawn` with `thread: true` and `mode: "session"`.
-- For ACP harness sessions (Codex, Claude Code, Gemini CLI), use `sessions_spawn` with `runtime: "acp"` and see [ACP Agents](/tools/acp-agents).
+- `/subagents spawn` is one-shot mode (`mode: "run"`). For persistent
+  thread-bound sessions, use `sessions_spawn` with `thread: true` and
+  `mode: "session"`.
+- For ACP harness sessions such as Codex, Claude Code, or Gemini CLI, use
+  `sessions_spawn` with `runtime: "acp"` and see [ACP Agents](/tools/acp-agents).
 
 Primary goals:
 
@@ -61,8 +69,9 @@ Primary goals:
 - Keep the tool surface hard to misuse: sub-agents do **not** get session tools by default.
 - Support configurable nesting depth for orchestrator patterns.
 
-Cost note: each sub-agent has its **own** context and token usage. For heavy or repetitive
-tasks, set a cheaper model for sub-agents and keep your main agent on a higher-quality model.
+Cost note: each sub-agent has its **own** context and token usage. For heavy or
+repetitive tasks, set a cheaper model for sub-agents and keep your main agent on
+a higher-quality model.
 You can configure this via `agents.defaults.subagents.model` or per-agent overrides.
 
 ## Tool
@@ -71,18 +80,29 @@ Use `sessions_spawn`:
 
 - Starts a sub-agent run (`deliver: false`, global lane: `subagent`)
 - Then runs an announce step and posts the announce reply to the requester chat channel
-- Default model: inherits the caller unless you set `agents.defaults.subagents.model` (or per-agent `agents.list[].subagents.model`); an explicit `sessions_spawn.model` still wins.
-- Default thinking: inherits the caller unless you set `agents.defaults.subagents.thinking` (or per-agent `agents.list[].subagents.thinking`); an explicit `sessions_spawn.thinking` still wins.
-- Default run timeout: if `sessions_spawn.runTimeoutSeconds` is omitted, Fased uses `agents.defaults.subagents.runTimeoutSeconds` when set; otherwise it falls back to `0` (no timeout).
+- Default model: inherits the caller unless you set
+  `agents.defaults.subagents.model` or per-agent
+  `agents.list[].subagents.model`. An explicit `sessions_spawn.model` still
+  wins.
+- Default thinking: inherits the caller unless you set
+  `agents.defaults.subagents.thinking` or per-agent
+  `agents.list[].subagents.thinking`. An explicit `sessions_spawn.thinking`
+  still wins.
+- Default run timeout: if `sessions_spawn.runTimeoutSeconds` is omitted, Fased
+  uses `agents.defaults.subagents.runTimeoutSeconds` when set. Otherwise it
+  falls back to `0` (no timeout).
 
 Tool params:
 
 - `task` (required)
 - `label?` (optional)
 - `agentId?` (optional; spawn under another agent id if allowed)
-- `model?` (optional; overrides the sub-agent model; invalid values are skipped and the sub-agent runs on the default model with a warning in the tool result)
+- `model?` (optional): overrides the sub-agent model. Invalid values are skipped
+  and the sub-agent runs on the default model with a warning in the tool result.
 - `thinking?` (optional; overrides thinking level for the sub-agent run)
-- `runTimeoutSeconds?` (defaults to `agents.defaults.subagents.runTimeoutSeconds` when set, otherwise `0`; when set, the sub-agent run is aborted after N seconds)
+- `runTimeoutSeconds?`: defaults to `agents.defaults.subagents.runTimeoutSeconds`
+  when set, otherwise `0`. When set, the sub-agent run is aborted after N
+  seconds.
 - `thread?` (default `false`; when `true`, requests channel thread binding for this sub-agent session)
 - `mode?` (`run|session`)
   - default is `run`
@@ -92,11 +112,19 @@ Tool params:
 
 ## Thread-bound sessions
 
-When thread bindings are enabled for a channel, a sub-agent can stay bound to a thread so follow-up user messages in that thread keep routing to the same sub-agent session.
+When thread bindings are enabled for a channel, a sub-agent can stay bound to a
+thread. Follow-up user messages in that thread keep routing to the same
+sub-agent session.
 
 ### Thread supporting channels
 
-- Discord (currently the only supported channel): supports persistent thread-bound subagent sessions (`sessions_spawn` with `thread: true`), manual thread controls (`/focus`, `/unfocus`, `/agents`, `/session idle`, `/session max-age`), and adapter keys `channels.discord.threadBindings.enabled`, `channels.discord.threadBindings.idleHours`, `channels.discord.threadBindings.maxAgeHours`, and `channels.discord.threadBindings.spawnSubagentSessions`.
+- Discord is currently the only built-in supported channel. It supports
+  persistent thread-bound sub-agent sessions, manual thread controls, and these
+  adapter keys:
+  - `channels.discord.threadBindings.enabled`
+  - `channels.discord.threadBindings.idleHours`
+  - `channels.discord.threadBindings.maxAgeHours`
+  - `channels.discord.threadBindings.spawnSubagentSessions`
 
 Quick flow:
 
@@ -118,11 +146,13 @@ Config switches:
 - Global default: `session.threadBindings.enabled`, `session.threadBindings.idleHours`, `session.threadBindings.maxAgeHours`
 - Channel override and spawn auto-bind keys are adapter-specific. See **Thread supporting channels** above.
 
-See [Configuration Reference](/gateway/configuration-reference) and [Slash commands](/tools/slash-commands) for current adapter details.
+See [Configuration Reference](/gateway/configuration-reference) and
+[Slash commands](/tools/slash-commands) for current adapter details.
 
 Allowlist:
 
-- `agents.list[].subagents.allowAgents`: list of agent ids that can be targeted via `agentId` (`["*"]` to allow any). Default: only the requester agent.
+- `agents.list[].subagents.allowAgents`: list of agent ids that can be targeted
+  via `agentId`. Use `["*"]` to allow any. Default: only the requester agent.
 
 Discovery:
 
@@ -139,7 +169,9 @@ Auto-archive:
 
 ## Nested Sub-Agents
 
-By default, sub-agents cannot spawn their own sub-agents (`maxSpawnDepth: 1`). You can enable one level of nesting by setting `maxSpawnDepth: 2`, which allows the **orchestrator pattern**: main → orchestrator sub-agent → worker sub-sub-agents.
+By default, sub-agents cannot spawn their own sub-agents (`maxSpawnDepth: 1`).
+You can enable one level of nesting with `maxSpawnDepth: 2`. That allows the
+orchestrator pattern: main -> orchestrator sub-agent -> worker sub-sub-agents.
 
 ### How to enable
 
@@ -160,11 +192,15 @@ By default, sub-agents cannot spawn their own sub-agents (`maxSpawnDepth: 1`). Y
 
 ### Depth levels
 
-| Depth | Session key shape                            | Role                                          | Can spawn?                   |
-| ----- | -------------------------------------------- | --------------------------------------------- | ---------------------------- |
-| 0     | `agent:<id>:main`                            | Main agent                                    | Always                       |
-| 1     | `agent:<id>:subagent:<uuid>`                 | Sub-agent (orchestrator when depth 2 allowed) | Only if `maxSpawnDepth >= 2` |
-| 2     | `agent:<id>:subagent:<uuid>:subagent:<uuid>` | Sub-sub-agent (leaf worker)                   | Never                        |
+- Depth 0: `agent:<id>:main`
+  - Role: main agent.
+  - Can spawn: always.
+- Depth 1: `agent:<id>:subagent:<uuid>`
+  - Role: sub-agent, or orchestrator when depth 2 is allowed.
+  - Can spawn: only if `maxSpawnDepth >= 2`.
+- Depth 2: `agent:<id>:subagent:<uuid>:subagent:<uuid>`
+  - Role: sub-sub-agent leaf worker.
+  - Can spawn: never.
 
 ### Announce chain
 
@@ -178,13 +214,16 @@ Each level only sees announces from its direct children.
 
 ### Tool policy by depth
 
-- **Depth 1 (orchestrator, when `maxSpawnDepth >= 2`)**: Gets `sessions_spawn`, `subagents`, `sessions_list`, `sessions_history` so it can manage its children. Other session/system tools remain denied.
+- **Depth 1 orchestrator (`maxSpawnDepth >= 2`)**: gets `sessions_spawn`,
+  `subagents`, `sessions_list`, and `sessions_history` so it can manage its
+  children. Other session/system tools remain denied.
 - **Depth 1 (leaf, when `maxSpawnDepth == 1`)**: No session tools (current default behavior).
 - **Depth 2 (leaf worker)**: No session tools — `sessions_spawn` is always denied at depth 2. Cannot spawn further children.
 
 ### Per-agent spawn limit
 
-Each agent session (at any depth) can have at most `maxChildrenPerAgent` (default: 5) active children at a time. This prevents runaway fan-out from a single orchestrator.
+Each agent session can have at most `maxChildrenPerAgent` active children at a
+time. Default is `5`. This prevents runaway fan-out from a single orchestrator.
 
 ### Cascade stop
 
@@ -202,7 +241,8 @@ Sub-agent auth is resolved by **agent id**, not by session type:
 - The auth store is loaded from that agent's `agentDir`.
 - The main agent's auth profiles are merged in as a **fallback**; agent profiles override main profiles on conflicts.
 
-Note: the merge is additive, so main profiles are always available as fallbacks. Fully isolated auth per agent is not supported yet.
+Note: the merge is additive, so main profiles are always available as fallbacks.
+Fully isolated auth per agent is not supported yet.
 
 ## Announce
 
@@ -223,7 +263,8 @@ Announce payloads include a stats line at the end (even when wrapped):
 - Runtime (e.g., `runtime 5m12s`)
 - Token usage (input/output/total)
 - Estimated cost when model pricing is configured (`models.providers.*.models[].cost`)
-- `sessionKey`, `sessionId`, and transcript path (so the main agent can fetch history via `sessions_history` or inspect the file on disk)
+- `sessionKey`, `sessionId`, and transcript path. The main agent can use these
+  to fetch history via `sessions_history` or inspect the file on disk.
 
 ## Tool Policy (sub-agent tools)
 
@@ -234,7 +275,9 @@ By default, sub-agents get **all tools except session tools** and system tools:
 - `sessions_send`
 - `sessions_spawn`
 
-When `maxSpawnDepth >= 2`, depth-1 orchestrator sub-agents additionally receive `sessions_spawn`, `subagents`, `sessions_list`, and `sessions_history` so they can manage their children.
+When `maxSpawnDepth >= 2`, depth-1 orchestrator sub-agents additionally receive
+`sessions_spawn`, `subagents`, `sessions_list`, and `sessions_history` so they
+can manage their children.
 
 Override via config:
 
@@ -269,7 +312,8 @@ Sub-agents use a dedicated in-process queue lane:
 
 ## Stopping
 
-- Sending `/stop` in the requester chat aborts the requester session and stops any active sub-agent runs spawned from it, cascading to nested children.
+- Sending `/stop` in the requester chat aborts the requester session and stops
+  any active sub-agent runs spawned from it, cascading to nested children.
 - `/subagents kill <id>` stops a specific sub-agent and cascades to its children.
 
 ## Limitations
@@ -277,6 +321,7 @@ Sub-agents use a dedicated in-process queue lane:
 - Sub-agent announce is **best-effort**. If the gateway restarts, pending "announce back" work is lost.
 - Sub-agents still share the same gateway process resources; treat `maxConcurrent` as a safety valve.
 - `sessions_spawn` is always non-blocking: it returns `{ status: "accepted", runId, childSessionKey }` immediately.
-- Sub-agent context only injects `AGENTS.md` + `TOOLS.md` (no `SOUL.md`, `IDENTITY.md`, `USER.md`, `HEARTBEAT.md`, or `BOOTSTRAP.md`).
+- Sub-agent context only injects `AGENTS.md` + `TOOLS.md`. It does not inject
+  `SOUL.md`, `IDENTITY.md`, `USER.md`, `HEARTBEAT.md`, or `BOOTSTRAP.md`.
 - Maximum nesting depth is 5 (`maxSpawnDepth` range: 1–5). Depth 2 is recommended for most use cases.
 - `maxChildrenPerAgent` caps active children per session (default: 5, range: 1–20).

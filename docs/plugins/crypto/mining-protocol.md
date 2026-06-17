@@ -1,5 +1,5 @@
 ---
-summary: "Satcoin mining API, gateway methods, config fields, protocol accounts, constants, and integration rules used by Fased Agent."
+summary: "Satcoin mining API, gateway methods, config fields, accounts, constants, and Fased Agent integration rules."
 read_when:
   - You are integrating against the Satcoin mining runtime
   - You need the Control UI routes, gateway methods, config fields, or protocol constants
@@ -26,19 +26,36 @@ Gateway, CLI, and the Mining page.
 ## Stack map
 
 ```mermaid
-flowchart TB
-  UI["Control UI"] --> REST["Gateway HTTP routes"]
-  CLI["fased mining"] --> RPC["Gateway RPC client"]
-  REST --> Methods["sat.* gateway methods"]
+flowchart TD
+  subgraph OperatorSurfaces["Operator surfaces"]
+    UI["Control UI<br/>Mining page"]
+    CLI["fased mining<br/>CLI"]
+  end
+
+  subgraph Gateway["Gateway"]
+    REST["HTTP routes"]
+    RPC["RPC client"]
+    Methods["sat.* methods"]
+  end
+
+  subgraph Runtime["Mining runtime"]
+    Plugin["sat-mining plugin"]
+    Signer["local-socket-signer"]
+  end
+
+  UI --> REST
+  CLI --> RPC
+  REST --> Methods
   RPC --> Methods
-  Methods --> Plugin["sat-mining plugin"]
-  Plugin --> Signer["local-socket-signer"]
-  Plugin --> Solana["Satcoin Solana programs"]
+  Methods --> Plugin
+  Plugin --> Signer
+  Plugin --> Solana["Satcoin<br/>Solana programs"]
 ```
 
 The public operator surfaces are the Mining page and `fased mining`.
 
-The internal integration surface is the `sat.*` gateway method family registered by the `sat-mining` plugin.
+The internal integration surface is the `sat.*` gateway method family
+registered by the `sat-mining` plugin.
 
 ## Runtime IDs
 
@@ -84,7 +101,8 @@ flow.
 
 ## Control UI routes
 
-The browser Mining page talks to Gateway HTTP routes. These routes require the normal Control UI auth and wallet approval gates where applicable.
+The browser Mining page talks to Gateway HTTP routes. These routes require the
+normal Control UI auth and wallet approval gates where applicable.
 
 | Route                                  | Method | Purpose                                                        |
 | -------------------------------------- | ------ | -------------------------------------------------------------- |
@@ -112,7 +130,9 @@ The browser Mining page talks to Gateway HTTP routes. These routes require the n
 | `/api/mining/recovery/republish-roots` | `POST` | republish selected roots after preflight                       |
 | `/api/mining/history/clear`            | `POST` | clear local mining history                                     |
 
-Some recovery route names still carry legacy `epoch` wording because the surrounding UI used that name before the current cycle-native protocol was finalized. New protocol language should use `cycle` where possible.
+Some recovery route names still carry legacy `epoch` wording because the
+surrounding UI used that name before the current cycle-native protocol was
+finalized. New protocol language should use `cycle` where possible.
 
 ## CLI surface
 
@@ -122,20 +142,58 @@ documented operator command is the installed `fased mining ...` binary. If the
 command is missing from a source checkout, run `./install.sh --no-onboard` once
 to install the repo-backed CLI.
 
-| Command                         | Gateway method                   | Notes                                                      |
-| ------------------------------- | -------------------------------- | ---------------------------------------------------------- |
-| `fased mining status`           | `sat.getMiningStatus`            | live status, workers, capital, planner, and action summary |
-| `fased mining readiness`        | `sat.getMiningReadiness`         | wallet, signer, RPC, funding, miner init, ATA checks       |
-| `fased mining wallets`          | `sat.listMiningWallets`          | mining-eligible local wallets                              |
-| `fased mining start`            | `sat.startMining`                | waits for final result and validates `running=true`        |
-| `fased mining stop`             | `sat.stopMining`                 | waits for final result; reports drain mode separately      |
-| `fased mining history`          | `sat.getMiningHistory`           | history and activity windows                               |
-| `fased mining deposit-capital`  | `sat.depositMinerCapital`        | deposit SOL into miner capital                             |
-| `fased mining withdraw-capital` | `sat.withdrawMinerCapital`       | withdraw free miner capital                                |
-| `fased mining set-commit`       | `sat.setActiveCommit`            | update active commit amount                                |
-| `fased mining claim-backlog`    | `sat.claimBacklog`               | claim the oldest ready backlog batch                       |
-| `fased mining keeper run`       | `sat.runKeeperOnce`              | run one keeper/cranker tick                                |
-| `fased mining cleanup resolved` | `sat.closeResolvedCycleAccounts` | close resolved cycle accounts for one cycle                |
+**`fased mining status`**
+
+Gateway method: `sat.getMiningStatus`. Shows live status, workers, capital,
+planner, and action summary.
+
+**`fased mining readiness`**
+
+Gateway method: `sat.getMiningReadiness`. Checks wallet, signer, RPC, funding,
+miner init, and ATAs.
+
+**`fased mining wallets`**
+
+Gateway method: `sat.listMiningWallets`. Lists mining-eligible local wallets.
+
+**`fased mining start`**
+
+Gateway method: `sat.startMining`. Waits for final result and validates
+`running=true`.
+
+**`fased mining stop`**
+
+Gateway method: `sat.stopMining`. Waits for final result and reports drain mode
+separately.
+
+**`fased mining history`**
+
+Gateway method: `sat.getMiningHistory`. Shows history and activity windows.
+
+**`fased mining deposit-capital`**
+
+Gateway method: `sat.depositMinerCapital`. Deposits SOL into miner capital.
+
+**`fased mining withdraw-capital`**
+
+Gateway method: `sat.withdrawMinerCapital`. Withdraws free miner capital.
+
+**`fased mining set-commit`**
+
+Gateway method: `sat.setActiveCommit`. Updates active commit amount.
+
+**`fased mining claim-backlog`**
+
+Gateway method: `sat.claimBacklog`. Claims the oldest ready backlog batch.
+
+**`fased mining keeper run`**
+
+Gateway method: `sat.runKeeperOnce`. Runs one keeper/cranker tick.
+
+**`fased mining cleanup resolved`**
+
+Gateway method: `sat.closeResolvedCycleAccounts`. Closes resolved cycle accounts
+for one cycle.
 
 CLI start and stop do not rely on a submitted request alone. `start` prints
 success only when the final Gateway payload says mining started and the returned
@@ -223,9 +281,12 @@ protocol funds.
 
 ### Bond-staking roadmap boundary
 
-Miner auto-claim only claims that miner's own cycle SAT and rebates. It does not claim the protocol treasury lane, the protocol staking lane, or other miners' SAT.
+Miner auto-claim only claims that miner's own cycle SAT and rebates. It does not
+claim the protocol treasury lane, the protocol staking lane, or other miners'
+SAT.
 
-The bond-staking distributor consumes the existing protocol staking lane without coupling staking logic into mining settlement:
+The bond-staking distributor consumes the existing protocol staking lane without
+coupling staking logic into mining settlement:
 
 - split staking SAT claim pulls pending staking-lane SAT to the bond distributor vault
 - split staking SOL claim sends the SOL lane to the ops/maintenance recipient
@@ -235,9 +296,9 @@ The bond-staking distributor consumes the existing protocol staking lane without
 Bond-staking policy belongs to launch configuration and public launch proof.
 This API page only describes the integration boundary: miner auto-claim is
 miner-owned, while bond distributor claims are position-owned and separate from
-miner claim-out. Basic bonds can be used for identity and anti-spam, while any
-staking-weight thresholds, warmup, cooldown, or unlock timing must come from the
-active launch configuration.
+miner claim-out. Basic bonds can mark a public operator position and add spam
+cost, while any staking-weight thresholds, warmup, cooldown, or unlock timing
+must come from the active launch configuration.
 
 ### Scale improvement roadmap
 
@@ -245,14 +306,32 @@ The current keeper and auto-claim loop is the launch baseline. The runtime now
 has the operator controls needed to rehearse scale deliberately before raising any
 defaults:
 
-| Track                  | Fased Agent work                                                                                                                         |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| Larger claim batches   | `automation.claimBatchCycles` defaults to `5` and is capped at `16`; benchmark `5`, `8`, `10`, `12`, and `16` before raising the default |
-| Delayed-claim recovery | persist backlog status, claim oldest ready cycles first, and expose `fased mining claim-backlog`                                         |
-| Public keeper tooling  | expose `fased mining keeper run` for one headless keeper/cranker tick by an eligible miner wallet                                        |
-| RPC hardening          | support primary/backup RPC, show timeout/rate-limit counters, and separate read/submit paths where useful                                |
-| Account cleanup        | expose `fased mining cleanup resolved --cycle <id>` first; add broad scanners only after delayed claims are proven                       |
-| Metrics                | show settlement lag, claim backlog, failed keeper steps, keeper wins/misses, reserve health, and cleanup queue size                      |
+<CardGroup cols={2}>
+  <Card title="Larger claim batches">
+    `automation.claimBatchCycles` defaults to `5` and is capped at `16`.
+    Benchmark `5`, `8`, `10`, `12`, and `16` before raising the default.
+  </Card>
+  <Card title="Delayed-claim recovery">
+    Persist backlog status, claim oldest ready cycles first, and expose
+    `fased mining claim-backlog`.
+  </Card>
+  <Card title="Public keeper tooling">
+    Expose `fased mining keeper run` for one headless keeper/cranker tick by an
+    eligible miner wallet.
+  </Card>
+  <Card title="RPC hardening">
+    Support primary/backup RPC, show timeout/rate-limit counters, and separate
+    read/submit paths where useful.
+  </Card>
+  <Card title="Account cleanup">
+    Expose `fased mining cleanup resolved --cycle <id>` first. Add broad
+    scanners only after delayed claims are proven.
+  </Card>
+  <Card title="Metrics">
+    Show settlement lag, claim backlog, failed keeper steps, keeper wins/misses,
+    reserve health, and cleanup queue size.
+  </Card>
+</CardGroup>
 
 Keep settlement chunk size conservative until compute, account count, and
 unattended soak runs prove a larger value.
@@ -261,29 +340,90 @@ unattended soak runs prove a larger value.
 
 The plugin config lives under `plugins.entries["sat-mining"].config`.
 
-| Field                          | Meaning                                                                                                                       |
-| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
-| `enabled`                      | whether the runtime wants mining enabled                                                                                      |
-| `network`                      | `local`, `devnet`, or `mainnet-beta`                                                                                          |
-| `walletId`                     | active mining wallet id                                                                                                       |
-| `role`                         | `miner`, `validator`, or `admin`                                                                                              |
-| `riskMode`                     | legacy risk name: `conservative`, `balanced`, `aggressive`, `swarm`                                                           |
-| `strategyPreset`               | current preset: `spread`, `balanced`, `conviction`, `swarm`, `top_k`, `ranked`, `adaptive`, `crowd_aware`, or `safe_fallback` |
-| `strategyExecution`            | `deterministic` or `auto`                                                                                                     |
-| `strategyMode`                 | legacy mode: `base` or `skill`                                                                                                |
-| `commitLamports`               | configured active commit in lamports                                                                                          |
-| `minSolBalanceLamports`        | wallet reserve target                                                                                                         |
-| `claimMode`                    | `auto`, `prompt`, or `manual`                                                                                                 |
-| `skillConfig`                  | model or skill-backed strategy planning options                                                                               |
-| `automation.autoFinalizeEpoch` | automatic settlement-finalize helper                                                                                          |
-| `automation.autoClaim`         | automatic claim helper                                                                                                        |
-| `automation.claimBatchCycles`  | hidden claim backlog batch cap; defaults to `5`, capped at `16`                                                               |
-| `automation.satSweep`          | post-claim sweep policy                                                                                                       |
-| `tokenConfig`                  | SAT program, bond program, mint, and mint program overrides                                                                   |
-| `plannerConfig`                | UCB or Thompson planner policy options                                                                                        |
-| `federationHandle`             | optional Fased Network handle context                                                                                         |
-| `federationPeers`              | optional coordination peer list                                                                                               |
-| `coordinationGroup`            | optional coordination group label                                                                                             |
+**`enabled`**
+
+Whether the runtime wants mining enabled.
+
+**`network`**
+
+`local`, `devnet`, or `mainnet-beta`.
+
+**`walletId`**
+
+Active mining wallet id.
+
+**`role`**
+
+`miner`, `validator`, or `admin`.
+
+**`riskMode`**
+
+Legacy risk name: `conservative`, `balanced`, `aggressive`, or `swarm`.
+
+**`strategyPreset`**
+
+Current preset: `spread`, `balanced`, `conviction`, `swarm`, `top_k`, `ranked`,
+`adaptive`, `crowd_aware`, or `safe_fallback`.
+
+**`strategyExecution`**
+
+`deterministic` or `auto`.
+
+**`strategyMode`**
+
+Legacy mode: `base` or `skill`.
+
+**`commitLamports`**
+
+Configured active commit in lamports.
+
+**`minSolBalanceLamports`**
+
+Wallet reserve target.
+
+**`claimMode`**
+
+`auto`, `prompt`, or `manual`.
+
+**`skillConfig`**
+
+Model or skill-backed strategy planning options.
+
+**`automation.autoFinalizeEpoch`**
+
+Automatic settlement-finalize helper.
+
+**`automation.autoClaim`**
+
+Automatic claim helper.
+
+**`automation.claimBatchCycles`**
+
+Hidden claim backlog batch cap; defaults to `5`, capped at `16`.
+
+**`automation.satSweep`**
+
+Post-claim sweep policy.
+
+**`tokenConfig`**
+
+SAT program, bond program, mint, and mint program overrides.
+
+**`plannerConfig`**
+
+UCB or Thompson planner policy options.
+
+**`federationHandle`**
+
+Optional Fased Network handle context.
+
+**`federationPeers`**
+
+Optional coordination peer list.
+
+**`coordinationGroup`**
+
+Optional coordination group label.
 
 `claimMode` is a runtime profile value. The beginner Mining page should not be
 read as promising a separate manual protocol claim product. Normal stable mining
@@ -293,17 +433,38 @@ recovery profile settings when exposed by the active install.
 ## State layout
 
 ```mermaid
-flowchart TB
-  Global["SatGlobalState"] --> Cycle["SatCycleState"]
-  Cycle --> Registry["Registry meta + pages"]
-  Cycle --> Settlement["Settlement progress"]
-  Cycle --> MinerCycle["SatMinerCycleState"]
-  MinerCycle --> Capital["SatMinerCapitalState"]
-  Global --> Treasury["SatTreasuryState"]
-  Treasury --> Vaults["rebate / treasury / staking vaults"]
-  Global --> Reserve["registry reserve"]
-  Global --> Bond["bond policy + positions"]
-  Treasury --> Mint["mint authority PDA"]
+flowchart TD
+  Global["SatGlobalState"]
+
+  subgraph CycleLane["Cycle lane"]
+    Cycle["SatCycleState"]
+    Registry["Registry meta<br/>and pages"]
+    Settlement["Settlement progress"]
+    MinerCycle["SatMinerCycleState"]
+    Capital["SatMinerCapitalState"]
+  end
+
+  subgraph ProtocolLane["Protocol lane"]
+    Treasury["SatTreasuryState"]
+    Vaults["rebate / treasury<br/>staking vaults"]
+    Reserve["registry reserve"]
+    Mint["mint authority PDA"]
+  end
+
+  subgraph BondLane["Bond lane"]
+    Bond["bond policy<br/>positions"]
+  end
+
+  Global --> Cycle
+  Cycle --> Registry
+  Cycle --> Settlement
+  Cycle --> MinerCycle
+  MinerCycle --> Capital
+  Global --> Treasury
+  Treasury --> Vaults
+  Treasury --> Mint
+  Global --> Reserve
+  Global --> Bond
 ```
 
 Common PDA seed families:
@@ -325,7 +486,8 @@ Common PDA seed families:
 
 ## Authority and PDA notes
 
-PDAs do not have private key files. The program signs for them by seed when an instruction path allows it.
+PDAs do not have private key files. The program signs for them by seed when an
+instruction path allows it.
 
 Satcoin authority surfaces:
 
@@ -338,7 +500,9 @@ Satcoin authority surfaces:
 | SAT `program_admin`                | can set treasury and staking recipient addresses   |
 | bond policy update authority       | can update bond tier thresholds and unlock delay   |
 
-The miner runtime does not hold admin keys. It uses the singleton `@wallet:mining` wallet for operator actions and reads the configured program ids, mint address, mint program id, bond program id, network, and RPC.
+The miner runtime does not hold admin keys. It uses the singleton
+`@wallet:mining` wallet for operator actions and reads the configured program
+ids, mint address, mint program id, bond program id, network, and RPC.
 
 ## Cost and account flow
 

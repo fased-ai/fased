@@ -67,10 +67,15 @@ fased sessions cleanup --json
 
 `fased sessions cleanup` uses `session.maintenance` settings from config:
 
-- Scope note: `fased sessions cleanup` maintains session stores/transcripts only. It does not prune task activity logs (`cron/runs/<jobId>.jsonl`), which are managed by `cron.runLog.maxBytes` and `cron.runLog.keepLines` in [Task configuration](/automation/cron-jobs#configuration) and explained in [Task maintenance](/automation/cron-jobs#maintenance).
+- Scope note: `fased sessions cleanup` maintains session stores/transcripts
+  only. It does not prune task activity logs (`cron/runs/<jobId>.jsonl`).
+  Those are managed by `cron.runLog.maxBytes` and `cron.runLog.keepLines`, as
+  explained in [Task configuration](/automation/cron-jobs#configuration) and
+  [Task maintenance](/automation/cron-jobs#maintenance).
 
 - `--dry-run`: preview how many entries would be pruned/capped without writing.
-  - In text mode, dry-run prints a per-session action table (`Action`, `Key`, `Age`, `Model`, `Flags`) so you can see what would be kept vs removed.
+  - In text mode, dry-run prints a per-session action table so you can see what
+    would be kept vs removed.
 - `--fix-missing`: also remove store entries whose transcript files are
   missing. Use it with `--dry-run` first.
 - `--enforce`: apply maintenance even when `session.maintenance.mode` is `warn`.
@@ -78,7 +83,8 @@ fased sessions cleanup --json
 - `--agent <id>`: run cleanup for one configured agent store.
 - `--all-agents`: run cleanup for all configured agent stores.
 - `--store <path>`: run against a specific `sessions.json` file.
-- `--json`: print a JSON summary. With `--all-agents`, output includes one summary per store.
+- `--json`: print a JSON summary. With `--all-agents`, output includes one
+  summary per store.
 
 `fased sessions cleanup --all-agents --dry-run --json`:
 

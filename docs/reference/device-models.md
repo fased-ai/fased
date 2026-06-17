@@ -8,7 +8,9 @@ title: "Device Model Database"
 
 # Device model database (friendly names)
 
-The macOS companion app and **Advanced > Nodes** diagnostics show friendly Apple device model names by mapping Apple model identifiers (e.g. `iPad16,6`, `Mac16,6`) to human-readable names.
+The macOS companion app and **Advanced > Nodes** diagnostics show friendly Apple
+device model names. They map Apple model identifiers, such as `iPad16,6` and
+`Mac16,6`, to human-readable names.
 
 The mapping is vendored as JSON under:
 
@@ -20,7 +22,10 @@ We currently vendor the mapping from the MIT-licensed repository:
 
 - `kyle-seongwoo-jun/apple-device-identifiers`
 
-To keep builds deterministic, the JSON files are pinned to specific upstream commits (recorded in `apps/macos/Sources/FasedAgent/Resources/DeviceModels/NOTICE.md`).
+To keep builds deterministic, the JSON files are pinned to specific upstream
+commits. The pinned commits are recorded in:
+
+- `apps/macos/Sources/FasedAgent/Resources/DeviceModels/NOTICE.md`
 
 ## Updating the database
 
@@ -31,15 +36,18 @@ To keep builds deterministic, the JSON files are pinned to specific upstream com
 ```bash
 IOS_COMMIT="<commit sha for ios-device-identifiers.json>"
 MAC_COMMIT="<commit sha for mac-device-identifiers.json>"
+DEVICE_DB_BASE="https://raw.githubusercontent.com/kyle-seongwoo-jun/apple-device-identifiers"
 
-curl -fsSL "https://raw.githubusercontent.com/kyle-seongwoo-jun/apple-device-identifiers/${IOS_COMMIT}/ios-device-identifiers.json" \
+curl -fsSL "${DEVICE_DB_BASE}/${IOS_COMMIT}/ios-device-identifiers.json" \
   -o apps/macos/Sources/FasedAgent/Resources/DeviceModels/ios-device-identifiers.json
 
-curl -fsSL "https://raw.githubusercontent.com/kyle-seongwoo-jun/apple-device-identifiers/${MAC_COMMIT}/mac-device-identifiers.json" \
+curl -fsSL "${DEVICE_DB_BASE}/${MAC_COMMIT}/mac-device-identifiers.json" \
   -o apps/macos/Sources/FasedAgent/Resources/DeviceModels/mac-device-identifiers.json
 ```
 
-4. Ensure `apps/macos/Sources/FasedAgent/Resources/DeviceModels/LICENSE.apple-device-identifiers.txt` still matches upstream (replace it if the upstream license changes).
+4. Ensure the vendored license still matches upstream. Replace it if the
+   upstream license changes:
+   `apps/macos/Sources/FasedAgent/Resources/DeviceModels/LICENSE.apple-device-identifiers.txt`
 5. Verify the macOS app builds cleanly (no warnings):
 
 ```bash

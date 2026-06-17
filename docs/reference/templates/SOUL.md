@@ -7,7 +7,8 @@ read_when:
 
 # SOUL.md - Agent Style
 
-Use this file for personality, tone, and standing behavior preferences. Keep it practical and update it when the user changes how they want the agent to behave.
+Use this file for personality, tone, and standing behavior preferences. Keep it
+practical and update it when the user changes how they want the agent to behave.
 
 ## Default Style
 
@@ -26,6 +27,7 @@ Use this file for personality, tone, and standing behavior preferences. Keep it 
 
 ## Continuity
 
-This file shapes tone. Durable facts belong in `MEMORY.md` or `memory/YYYY-MM-DD.md`. Local tool/device details belong in `TOOLS.md`.
+This file shapes tone. Durable facts belong in `MEMORY.md` or
+`memory/YYYY-MM-DD.md`. Local tool/device details belong in `TOOLS.md`.
 
 If you make a meaningful change to this file, mention it to the user.

@@ -18,7 +18,7 @@ the Control UI, CLI, channels, skills, wallets, and future Agents talk to.
 ## Choose The Right Host Setup Profile
 
 ```mermaid
-flowchart LR
+flowchart TD
   machine["Where will Gateway run?"] --> local["Laptop / desktop"]
   machine --> hosting["VPS / always-on server"]
   local --> localProfile["Local profile"]
@@ -33,10 +33,27 @@ flowchart LR
   class hosting,tailscale,hostingProfile hostLane;
 ```
 
-| Choice  | Use when                                            | What it changes                                                                                                                                                                                                              | Wrong choice risk                                                                                                                                     |
-| ------- | --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Local   | The agent runs on this laptop, desktop, or dev box. | Creates local config, workspace, gateway settings, local signer/wallet state if selected, and local service startup. Tailscale is not part of the basic Local path.                                                          | Local on a VPS means no SSH/firewall hardening. It can still run, but it does not apply the hosting security baseline.                                |
-| Hosting | The agent runs on a VPS or always-on server.        | Uses the local runtime setup plus hosting hardening: Tailscale-first admin access, firewall policy, SSH hardening, fail2ban/unattended-upgrades where supported, and hosted gateway service behavior. Tailscale is required. | Hosting on personal Linux changes SSH/firewall behavior. Do not choose it on your daily machine unless you intentionally want server-style hardening. |
+### Local
+
+Use this when the agent runs on this laptop, desktop, or dev box.
+
+It creates local config, workspace, gateway settings, local signer/wallet state
+if selected, and local service startup. Tailscale is not part of the basic Local
+path.
+
+Risk: Local on a VPS means no SSH/firewall hardening. It can still run, but it
+does not apply the hosting security baseline.
+
+### Hosting
+
+Use this when the agent runs on a VPS or always-on server.
+
+It uses the local runtime setup plus hosting hardening: Tailscale-first admin
+access, firewall policy, SSH hardening, fail2ban/unattended-upgrades where
+supported, and hosted gateway service behavior. Tailscale is required.
+
+Risk: Hosting on personal Linux changes SSH/firewall behavior. Use it only when
+you intentionally want server-style hardening on that machine.
 
 <Warning>
 If you are SSH'd into a VPS and choose **Local**, Fased will not protect that
@@ -82,33 +99,104 @@ then runs the onboarding wizard with daemon setup unless you pass `--no-onboard`
 
 ## What Each Step Is For
 
-| Step          | Purpose                                                                                                                                                     |
-| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Model         | Needed before the agent can answer. Add it after onboarding in `Agent > Models`, then use it in Chat or tasks.                                              |
-| Provider auth | Stores API/OAuth credentials or references for model providers. Ordinary setup belongs in `Agent > Models`.                                                 |
-| Gateway       | The connection point for Control UI, CLI, WebChat, channels, and remote clients.                                                                            |
-| Tailscale     | Hidden from the basic Local path. Required for Hosting profile admin access.                                                                                |
-| Channels      | External apps like Telegram, Discord, WhatsApp, and Slack. Connect them after onboarding in `Agent > Channels`, then route each account to an Agent.        |
-| Wallet        | Policy-bound actions for sends, receipts, mining, Marketplace, and reviewed wallet-connected workflows. Not required for normal chat.                       |
-| Skills        | Agent abilities. Configure, edit, install, and allow them after onboarding in `Agent > Skills`.                                                             |
-| Plugins       | Runtime extensions. Install/review after onboarding in Control UI > Extensions.                                                                             |
-| Hooks         | Background automation that runs around agent events. Enable `session-memory` after onboarding in `Agent > Memory`.                                          |
-| Memory        | Workspace memory files, session archives, and optional QMD-backed indexing/export. Memory diagnostics are read-only in the UI; repair remains in Debug/CLI. |
+- **Model:** needed before the agent can answer. Add it after onboarding in
+  `Agent > Models`, then use it in Chat or tasks.
+- **Provider auth:** stores API/OAuth credentials or references for model
+  providers. Ordinary setup belongs in `Agent > Models`.
+- **Gateway:** the connection point for Control UI, CLI, WebChat, channels, and
+  remote clients.
+- **Tailscale:** hidden from the basic Local path. Required for Hosting profile
+  admin access.
+- **Channels:** external apps like Telegram, Discord, WhatsApp, and Slack.
+  Connect them after onboarding in `Agent > Channels`, then route each account
+  to an Agent.
+- **Wallet:** policy-bound actions for sends, receipts, mining, Marketplace,
+  and reviewed wallet-connected workflows. Not required for normal chat.
+- **Skills:** agent abilities. Configure, edit, install, and allow them after
+  onboarding in `Agent > Skills`.
+- **Plugins:** runtime extensions. Install/review after onboarding in
+  Control UI > Extensions.
+- **Hooks:** background automation that runs around agent events. Enable
+  `session-memory` after onboarding in `Agent > Memory`.
+- **Memory:** workspace memory files, session archives, and optional QMD-backed
+  indexing/export. Memory diagnostics are read-only in the UI; repair remains
+  in Debug/CLI.
 
 ## Onboarding vs Control UI vs CLI
 
-| Area                      | Onboarding                                                      | Control UI                                                                                                                                                            | CLI                                                               |
-| ------------------------- | --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| First working model       | Not normal onboarding.                                          | `Agent > Models` adds provider auth when needed and saves the Agent's primary/fallback/task model refs.                                                               | `fased configure`, provider/auth commands, and env/profile files. |
-| Gateway access            | Choose port, bind, auth, token/password, and Hosting Tailscale. | Dashboard shows compact Gateway access; Debug owns raw diagnostics.                                                                                                   | `fased dashboard`, `fased status`, `fased doctor`.                |
-| Channels                  | Optional setup prompt.                                          | `Agent > Channels` lists the onboarding-order channels, exposes setup/status/start-stop/probe controls, and assigns routes to Agents. Channels do not own Tasks.      | Channel-specific config commands.                                 |
-| Services                  | Not normal onboarding.                                          | `Agent > Services` owns connector setup/status for web/search, Gmail/Calendar, GitHub, browser/media, plugin-reported APIs, and task needs-access recovery.           | Service-specific CLI/config commands.                             |
-| Wallet / Mining / Network | Optional setup, role assignment, and readiness summary.         | Wallet, Mining, and Fased Network stay separate source-of-truth pages. `/agents` may show their setup status but should load the same live data.                      | Wallet, mining, and federation commands.                          |
-| Skills                    | Not normal onboarding.                                          | `Agent > Skills` separates bundled, ready, needs API key, needs dependency, needs config, disabled, and blocked, and stores the selected Agent's skill access policy. | `fased skills` plus config/env setup.                             |
-| Plugins                   | Not normal onboarding.                                          | Extensions/Plugins page owns source trust, plugin-catalog activation, dependency/script warnings, scanners, and update review.                                        | `fased plugins`.                                                  |
-| Hooks                     | Not normal onboarding.                                          | Extensions owns hook pack lifecycle. Agent memory archive control lives in Agent > Memory; external webhook task triggers should move to Tasks later.                 | `fased hooks`.                                                    |
-| Memory                    | Not normal onboarding.                                          | Memory page is read-only diagnostics and QMD overview. Agent > Memory owns session-memory activation and mirrors QMD setup.                                           | `fased memory` and Debug repair flows.                            |
-| Tasks                     | Not required for first chat.                                    | Tasks are created from Chat, channels, Agent > Tasks, or task deep links. Runtime still uses cron internally, but UI should say Tasks.                                | Task/cron commands where available.                               |
+### First working model
+
+- Onboarding: not normal onboarding.
+- Control UI: `Agent > Models` adds provider auth when needed and saves the
+  Agent's primary, fallback, and task model refs.
+- CLI: `fased configure`, provider/auth commands, and env/profile files.
+
+### Gateway access
+
+- Onboarding: choose port, bind, auth, token/password, and Hosting Tailscale.
+- Control UI: Dashboard shows compact Gateway access; Debug owns raw
+  diagnostics.
+- CLI: `fased dashboard`, `fased status`, `fased doctor`.
+
+### Channels
+
+- Onboarding: optional setup prompt.
+- Control UI: `Agent > Channels` lists setup/status/start-stop/probe controls
+  and assigns routes to Agents. Channels do not own Tasks.
+- CLI: channel-specific config commands.
+
+### Services
+
+- Onboarding: not normal onboarding.
+- Control UI: `Agent > Services` owns connector setup/status for web/search,
+  Gmail/Calendar, GitHub, browser/media, plugin-reported APIs, and task
+  needs-access recovery.
+- CLI: service-specific CLI/config commands.
+
+### Wallet / Mining / Network
+
+- Onboarding: optional setup, role assignment, and readiness summary.
+- Control UI: Wallet, Mining, and Fased Network stay separate source-of-truth
+  pages. `/agents` may show their setup status but should load the same live
+  data.
+- CLI: wallet, mining, and federation commands.
+
+### Skills
+
+- Onboarding: not normal onboarding.
+- Control UI: `Agent > Skills` separates bundled, ready, needs API key, needs
+  dependency, needs config, disabled, and blocked. It stores the selected
+  Agent's skill access policy.
+- CLI: `fased skills` plus config/env setup.
+
+### Plugins
+
+- Onboarding: not normal onboarding.
+- Control UI: Extensions/Plugins owns source trust, plugin-catalog activation,
+  dependency/script warnings, scanners, and update review.
+- CLI: `fased plugins`.
+
+### Hooks
+
+- Onboarding: not normal onboarding.
+- Control UI: Extensions owns hook pack lifecycle. Agent memory archive control
+  lives in `Agent > Memory`; external webhook task triggers should move to
+  Tasks later.
+- CLI: `fased hooks`.
+
+### Memory
+
+- Onboarding: not normal onboarding.
+- Control UI: Memory page is read-only diagnostics and QMD overview.
+  `Agent > Memory` owns session-memory activation and mirrors QMD setup.
+- CLI: `fased memory` and Debug repair flows.
+
+### Tasks
+
+- Onboarding: not required for first chat.
+- Control UI: Tasks are created from Chat, channels, Agent > Tasks, or task deep
+  links. Runtime still uses cron internally, but UI should say Tasks.
+- CLI: task/cron commands where available.
 
 ## Post-onboarding Control UI Shape
 

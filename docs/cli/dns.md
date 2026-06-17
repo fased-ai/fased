@@ -8,7 +8,8 @@ title: "dns"
 
 # `fased dns`
 
-DNS helpers for wide-area discovery, mainly around Tailscale plus CoreDNS. The current guidance is centered on the macOS and Homebrew CoreDNS path.
+DNS helpers for wide-area discovery, mainly around Tailscale plus CoreDNS. The
+current guidance is centered on the macOS and Homebrew CoreDNS path.
 
 Related:
 
