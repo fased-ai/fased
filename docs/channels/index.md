@@ -14,7 +14,7 @@ the channel.
 
 For normal browser setup, open **Agents**, select the Agent, then use
 **Agent > Channels**. That page owns channel credentials, QR/login flows,
-account status, routing to the selected Agent, DM policy, allowlists, and
+account status, routing to the selected Agent, DM access, allowlists, and
 restart-required notices.
 
 ```mermaid
@@ -38,7 +38,7 @@ The Control UI Channels tab is split into:
 - **Behavior**: reply behavior, reactions, group mention behavior, and TTS.
 - **Access**: command and native-tool access for channel users.
 - **Sessions**: channel-to-session binding and reset rules.
-- **Runtime**: web/runtime settings for channel delivery.
+- **Gateway**: web and gateway settings for channel delivery.
 
 Account cards are grouped as Major, Enterprise, Self-hosted/protocol, and
 Optional/plugin so first-run setup stays focused on the common channels.
@@ -54,10 +54,10 @@ Optional/plugin so first-run setup stays focused on the common channels.
 
 ## Runtime status
 
-- Fresh gateway runtime loads Telegram and Discord by default.
+- Fresh Gateway setup loads Telegram and Discord by default.
 - Bundled/local channel rows appear in **Agent > Channels** with setup fields.
 - Saving credentials enables that channel for the selected Agent.
-- Some local channel runtimes need a gateway restart after setup.
+- Some local channel services need a gateway restart after setup.
 - External catalog channels install first and expose setup fields after the plugin loads.
 
 ## Good first choices
@@ -75,7 +75,7 @@ Optional/plugin so first-run setup stays focused on the common channels.
   credential fields in **Agent > Channels**
 - only external catalog channels should use an install/download action
 - if a local bundled channel is configured while its plugin is not loaded,
-  restart the gateway to load that channel runtime
+  restart the gateway to load that channel service
 - routing is deterministic per peer and per channel; see
   [Channel Routing](/channels/channel-routing)
 - group behavior is documented separately in [Groups](/channels/groups)

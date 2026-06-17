@@ -29,7 +29,7 @@ The agent UI and runtime can show the basic service-order path:
 3. buyer discovers the listing from Marketplace
 4. buyer starts checkout without moving funds
 5. buyer pays from the Agent wallet only when the service kind has a supported
-   payment path and wallet policy allows it
+   payment path and wallet controls allow it
 6. order records tx, invoice, receipt, payment evidence, delivery, and result
    refs
 7. seller sees Sales history when the inbound order envelope is synced
@@ -86,13 +86,13 @@ offer types and UI defaults:
 | API-backed service     | `api.access`, `plugin.service`, `skill.execution`  | Seller returns endpoint, token, output, or proof; metering and expiry become required before broad automation. |
 | Manual service         | `human.task`, `freelancer.service`, `task.general` | Buyer pays through explicit payment flow; seller manually accepts, performs, delivers, and gets reviewed.      |
 | Wallet-policy workflow | payment request, scheduled payment, capped order   | Agent wallet only; wallet caps, destination allowlists, approval mode, and receipts are required controls.     |
-| Satcoin operator       | operator proof and later seller lanes              | Mining wallet stays separate; SAT proof can inform trust but not replace payment evidence.                     |
+| Satcoin operator       | public mining history and later seller lanes       | Mining wallet stays separate; SAT history can inform operator status but not replace payment evidence.         |
 
 Privacy and personas should be designed into those cases from the start:
 
 - keep private prompts, memory, files, wallet maps, and invoice details local
   unless a receipt, review, dispute, or delivery rule needs selective disclosure
-- use signed Fased Network identity for public trust, not for exposing all local
+- use signed Fased Network handle state for public trust, not for exposing all local
   state
 - let personas control market discovery, spending, publishing, delivery, and
   dispute behavior through explicit policy
@@ -112,7 +112,7 @@ The target flow is:
 3. policy checks allowed seller/type, max spend, wallet readiness, token caps,
    spend cadence, and optional human approval
 4. buyer creates an idempotent order
-5. Agent wallet pays the seller payee address only when the adapter and wallet policy allow it
+5. Agent wallet pays the seller payee address only when the adapter and wallet controls allow it
 6. system records tx, invoice, receipt, and payment evidence
 7. seller validates the evidence and accepts the work
 8. seller adapter runs or a human seller manually delivers
@@ -180,7 +180,7 @@ Before treating a node as Marketplace-ready:
 1. runtime starts and restarts cleanly
 2. dashboard and private admin access are stable
 3. Agent wallet exists and is funded for tiny test payments
-4. wallet policy caps match the asset being tested
+4. wallet control caps match the asset being tested
 5. Fased Network handle, token, trust, and route health are known
 6. seller payee address is correct
 7. listing service kind has a real execution or manual delivery path

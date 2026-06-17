@@ -1,5 +1,5 @@
 ---
-summary: "Telegram bot setup, DM and group policy, and long-polling or webhook behavior."
+summary: "Telegram bot setup, DM and group access, and long-polling or webhook behavior."
 read_when:
   - Setting up Telegram
   - Debugging Telegram DMs, groups, or bot delivery
@@ -10,7 +10,7 @@ title: "Telegram"
 
 Telegram is the fastest public bot surface for many Fased setups. The gateway
 owns the bot token, receives updates through long polling by default, and keeps
-DM and group policy separate.
+DM and group access separate.
 
 Status: supported for DMs and groups. Long polling is default; webhook mode is
 optional.
@@ -75,9 +75,9 @@ For most groups, keep mention gating on.
 | Sender access | owner or allowlist first                  |
 | Agent routing | explicit route per peer/topic when needed |
 
-## Runtime behavior
+## Gateway behavior
 
-- Long polling is the normal local runtime.
+- Long polling is the normal local mode.
 - Webhook mode is optional when you have a public HTTPS endpoint.
 - Forum topics can route to distinct sessions.
 - Task commands create Agent-owned Tasks; Telegram is only the transport and

@@ -516,4 +516,4 @@ For a stable VPS miner:
 - [Self-hosted wallet signer](/plugins/crypto/wallet-self-hosted)
 - [CLI mining](/cli/mining)
 - [Fased Network](/start/federation)
-- [Satcoin protocol source](https://github.com/satcoin-org/sat)
+- [Satcoin docs](https://docs.satcoin.app)

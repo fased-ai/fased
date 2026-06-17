@@ -15,7 +15,7 @@ The recommended operating model is:
 
 ```text
 Agent wallet  = normal approved work, Marketplace order actions, skills, sends
-Mining wallet = Satcoin mining actions and mining/operator proof
+Mining wallet = Satcoin mining actions and public mining history
 Vault wallet  = protected storage and optional Fased Network bond authority
 External addr = read-only balance checks or send destination, never a local source
 ```

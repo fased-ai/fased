@@ -1,7 +1,7 @@
 ---
-summary: "Compact FAQ for Fased setup, runtime, models, channels, wallets, tasks, and troubleshooting."
+summary: "Compact FAQ for Fased setup, models, channels, wallets, tasks, and troubleshooting."
 read_when:
-  - Answering common setup, install, onboarding, or runtime support questions
+  - Answering common setup, install, onboarding, or support questions
   - Triaging user-reported issues before deeper debugging
 title: "FAQ"
 ---
@@ -32,7 +32,7 @@ Then open the owner page for the thing that failed:
 - Agent > Models for model/provider issues.
 - Agent > Channels for chat routes.
 - Agent > Services for external APIs.
-- Agent > Skills and Agent > Tools for runtime capability issues.
+- Agent > Skills and Agent > Tools for capability issues.
 - Agent > Memory for memory/QMD/session-memory state.
 - Agent > Tasks for saved task definitions and runs.
 - Wallets, Mining, or Fased Network for crypto/operator state.
@@ -73,11 +73,11 @@ Use [Getting Started](/start/getting-started). The normal path is:
 
 ### What does onboarding do?
 
-Onboarding creates the local runtime baseline: state directory, config,
+Onboarding creates the local baseline: state directory, config,
 workspace, Gateway, dashboard access, and optional initial wallet/mining setup.
 
 It does not fully configure every model, channel, skill, task, service, wallet,
-or network role. Those belong in the Control UI after the base runtime works.
+or network role. Those belong in the Control UI after the base install works.
 
 See [Onboarding Overview](/start/wizard) and
 [Control UI Setup](/start/control-ui-setup).
@@ -98,7 +98,7 @@ fased gateway status
 
 ### How long does install and onboarding take?
 
-Local install is usually minutes. Real channel, provider, wallet, node, or
+Local install is usually minutes. Real channel, provider, wallet, device, or
 remote setup can take longer because each external service has its own account,
 token, permission, and network requirements.
 
@@ -136,7 +136,7 @@ Configure it in **Agent > Models**. Use [Models](/concepts/models) and
 
 Use the strongest reliable model available for the Agent's job. Tool-enabled
 Agents that read untrusted content should use stronger instruction-following
-models and tighter tool policy. Smaller/local models can be useful, but reduce
+models and tighter tool controls. Smaller/local models can be useful, but reduce
 tool authority and sandbox aggressively.
 
 ### How do I switch models?
@@ -248,7 +248,7 @@ Use separate roles where possible:
 - Mining wallet for SAT mining.
 - Vault/bond wallet for bond/operator inventory.
 
-This makes policy, screenshots, and recovery easier to reason about.
+This makes wallet roles, screenshots, and recovery easier to reason about.
 
 ### What do I need before SAT mining?
 
@@ -261,19 +261,19 @@ You need:
 - funded miner capital;
 - readiness checks passing.
 
-Mining outcomes vary by cycle, commit, strategy, rebates, fees, and runtime
+Mining outcomes vary by cycle, commit, strategy, rebates, fees, and mining
 state. Use small first runs until readiness and recovery are understood.
 
 ### Why can a submitted commit be lower than my target?
 
-The runtime caps actual commit by usable miner capital, locked/pending capital,
+Fased caps actual commit by usable miner capital, locked/pending capital,
 fee reserve, erosion coverage, and recovery buffer. A lower submit can be
 correct when capital is clearing or fee headroom changes.
 
 ### Does Fased Network require a bond?
 
 Some public/operator flows may use bond state as an eligibility or trust signal.
-The Wallet, Agent, and local runtime do not require a bond for normal use.
+The Wallet, Agent, and local Fased install do not require a bond for normal use.
 
 ## Memory, Files, And Backup
 
@@ -364,21 +364,21 @@ plane. Treat node pairing as operator-level access to that node's capabilities.
 ### Should I expose Fased to inbound DMs?
 
 Use pairing or allowlists. Avoid open inbound DMs for tool-enabled Agents unless
-you intentionally trust that audience and have tight tool policy.
+you intentionally trust that audience and have tight tool controls.
 
 ### Is prompt injection only a concern for public bots?
 
 No. Prompt injection can arrive through web pages, emails, files, logs, images,
-or pasted text. Use access control, tool policy, sandboxing, and modern models;
+or pasted text. Use access control, tool controls, sandboxing, and modern models;
 do not rely on prompt wording alone.
 
-See [Gateway Security](/gateway/security).
+See [Gateway security](/gateway/security).
 
 ### Should my bot have separate accounts?
 
-For channels, email, browser profiles, wallets, and nodes, separate accounts
+For channels, email, browser profiles, wallets, and paired devices, separate accounts
 make permission and recovery cleaner. Do not mix personal accounts into a
-runtime you expose to other users.
+Fased install you expose to other users.
 
 ## More Help
 

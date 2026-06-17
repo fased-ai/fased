@@ -228,13 +228,13 @@ Once the dashboard is up, pick the path that matches your goal:
 
 <CardGroup cols={3}>
   <Card title="Fased Agent first" href="/start/fased" icon="cpu">
-    Use Fased as your self-hosted Agent runtime with sessions, tools, and channels.
+    Use Fased Agent for sessions, tools, memory, and channels.
   </Card>
   <Card title="Wallet + Fased Network" href="/start/federation" icon="shield">
-    Continue into wallet policy, hosted reachability, trusted network participation, and bond operator setup.
+    Continue into wallet use, public routes, offers, and later bond setup.
   </Card>
   <Card title="SAT operator path" href="/plugins/crypto/mining-page" icon="coins">
-    Create or import `@wallet:mining`, fund capital, and run the SAT mining workflow.
+    Create or import `@wallet:mining`, fund mining capital, and run Satcoin mining.
   </Card>
 </CardGroup>
 

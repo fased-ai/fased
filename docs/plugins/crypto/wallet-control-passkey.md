@@ -14,7 +14,7 @@ Wallet Control Passkey is the approval and ceremony layer for wallet-sensitive a
 Use it for:
 
 - send approvals
-- policy changes
+- wallet-control changes
 - wallet security setup
 - unlock
 - recovery
@@ -24,7 +24,7 @@ It is the first approval-control step before you rely on split-key wallet securi
 
 ## What it protects today
 
-Current runtime behavior is:
+Current behavior is:
 
 - ordinary user sends create an approval request first
 - passkey is used on `Approve`, not on `Create Approval Request`
@@ -42,7 +42,7 @@ Practical rule:
 - use HTTPS
 - or use `http://localhost:18789` on the gateway host
 
-If you are browsing from a different machine over plain HTTP, passkey behavior may fail even when the wallet runtime itself is healthy.
+If you are browsing from a different machine over plain HTTP, passkey behavior may fail even when the wallet setup itself is healthy.
 
 ## Step 1: enable passkey approval
 
@@ -53,7 +53,7 @@ In the Wallets page:
 3. find `Wallet Control Passkey`
 4. click `Enable passkey approval`
 
-After that, the runtime is in passkey mode but still not ready until a passkey is enrolled.
+After that, Fased is in passkey mode but still not ready until a passkey is enrolled.
 
 ## Step 2: enroll the first passkey
 
@@ -66,7 +66,7 @@ Still in `Wallet Control Passkey`:
 Once enrolled, Wallet Control Passkey becomes the normal gate for:
 
 - approving sends
-- changing wallet policy
+- changing wallet controls
 - setting up split-key security
 - unlock and recovery actions
 
@@ -80,7 +80,7 @@ The current send flow is:
 4. review the pending request
 5. click `Approve`
 6. complete passkey verification if enabled
-7. let the runtime execute and log the send
+7. let Fased execute and log the send
 
 This matters because the passkey is attached to approval, not to typing the form.
 

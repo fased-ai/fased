@@ -19,7 +19,7 @@ Mining is an operating loop:
 wallet SOL -> miner capital -> safe commit -> cycle submit -> settlement -> claim -> free capital
 ```
 
-Each step has a separate blocker. A healthy runtime can still submit a smaller
+Each step has a separate blocker. A healthy Fased Agent can still submit a smaller
 cycle than the saved target when capital is locked, wallet SOL is low, or
 recovery is clearing older cycles.
 
@@ -44,9 +44,9 @@ Common messages:
 | `Commit reduced: locked capital clearing` | earlier cycles still hold capital until settlement/claim frees it       |
 | `Commit reduced: fee reserve`             | the mining wallet needs more SOL outside miner capital for fees/rent    |
 | `Commit reduced: free capital`            | the miner capital PDA has less free SOL than the saved target right now |
-| `Commit restored: capital unlocked`       | older capital cleared and the runtime could raise commit again          |
+| `Commit restored: capital unlocked`       | older capital cleared and Fased Agent could raise commit again          |
 
-If commit drops for one cycle and returns on the next cycle, the runtime is
+If commit drops for one cycle and returns on the next cycle, Fased Agent is
 usually doing the right thing: it kept participating instead of idling.
 
 ## Locked capital clearing
@@ -58,7 +58,7 @@ Expected signs:
 
 - `Locked` is non-zero;
 - `Withdraw` is lower than total capital;
-- the runtime may submit a smaller cycle;
+- Fased Agent may submit a smaller cycle;
 - the claim/recovery worker keeps running;
 - later cycles can restore toward the saved target once capital unlocks.
 
@@ -83,7 +83,7 @@ capital.
 
 ## Missed or skipped cycles
 
-A skipped cycle means the runtime did not submit into that cycle from this
+A skipped cycle means Fased Agent did not submit into that cycle from this
 wallet. Causes include:
 
 - free capital below minimum entry;
@@ -91,7 +91,7 @@ wallet. Causes include:
 - wallet SOL below fee reserve;
 - RPC rate limit or stale state;
 - signer unavailable;
-- gateway/runtime restart during a submit window;
+- gateway restart during a submit window;
 - previous cycle still in a claim/recovery path.
 
 What to check:
@@ -103,7 +103,7 @@ fased mining readiness --wallet mining
 fased wallet signer doctor --json
 ```
 
-If the runtime is running and later submits resume, a short skipped range is not
+If mining is running and later submits resume, a short skipped range is not
 automatically a protocol failure. A long skipped range with enough free capital
 and wallet SOL usually points to RPC, signer, or recovery state.
 
@@ -111,7 +111,7 @@ and wallet SOL usually points to RPC, signer, or recovery state.
 
 `Stop` means no new cycle submits.
 
-If capital is locked, the runtime enters clearing:
+If capital is locked, mining enters clearing:
 
 - no new submits;
 - claim and recovery can keep running;
@@ -157,7 +157,7 @@ retrying the same action.
 
 ## Strategy outcome was not better
 
-Strategy modes are wiring and decision policy. Outcomes vary by cycle, crowding,
+Strategy modes control mining decisions. Outcomes vary by cycle, crowding,
 fees, missed windows, and other miners.
 
 A single miner can prove that strategy selection submits valid cycles, but it

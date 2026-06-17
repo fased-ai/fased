@@ -9,8 +9,8 @@ read_when:
 
 # Security Overview
 
-Fased is a self-hosted agent runtime. Treat it like a local server with access to chats, tools,
-credentials, files, wallets, and optional remote nodes. The conservative setup keeps each capability
+Fased is a user-run agent with a local Gateway. Treat it like a local server with access to chats, tools,
+credentials, files, wallets, and optional paired devices. The conservative setup keeps each capability
 behind a separate gate: connect the service, allow the Agent to use the tool, then approve sensitive
 actions when needed.
 
@@ -48,7 +48,7 @@ Related docs:
 - [Security Test Report](/security/security-test-report)
 - [Threat Model Atlas](/security/THREAT-MODEL-ATLAS)
 - [Formal Verification](/security/formal-verification)
-- [Gateway Security](/gateway/security)
+- [Gateway security](/gateway/security)
 - [Remote Access](/gateway/remote)
 - [Tailscale](/gateway/tailscale)
 - [SecretRef Matrix](/reference/secretref-matrix)
@@ -103,7 +103,7 @@ Wallet access is intentionally separate from skills and tools.
 - Wallet setup and approvals live in **Wallets**.
 - Generic wallet-capable skills can only use Agent-role wallets that you explicitly allow.
 - Mining and vault wallets are not available to generic skills.
-- SAT mining uses the dedicated mining runtime and mining wallet policy.
+- SAT mining uses the dedicated mining path and Mining wallet controls.
 - A skill install, plugin review, or Agent skill allowlist change does not grant wallet access.
 
 For wallet-capable skills, use **Wallets > Skill Grants** after review. Grant only the actions, wallet ids,
@@ -112,15 +112,15 @@ chains, caps, and automation level required for the workflow.
 Fased's default custody path is a role-separated self-hosted signer:
 
 - `fased-signerd` owns signer-side material and signing operations.
-- the Gateway runtime owns policy, approvals, Agent routing, and audit state.
-- skills and plugins request wallet work through policy-mediated tools instead
+- the Gateway owns controls, approvals, Agent routing, and audit state.
+- skills and plugins request wallet work through wallet-control tools instead
   of receiving raw keys, seed phrases, keystores, or signer master credentials.
 
 This is different from a generic hosted wallet provider. Hosted or MPC providers
 can be useful optional adapters, especially for managed recovery, but they move
-custody, recovery, provider credentials, and some policy semantics outside the
-local signer boundary. If you use one, keep Fased role policy, Agent tool
-policy, Wallet > Skill Grants, approval state, and audit as the controlling
+custody, recovery, provider credentials, and some control semantics outside the
+local signer boundary. If you use one, keep Fased role controls, Agent tool
+controls, Wallet > Skill Grants, approval state, and audit as the controlling
 layer above it.
 
 Related docs:

@@ -51,8 +51,8 @@ Use this page for first operation and daily checks.
   <Card title="Mining API" href="/plugins/crypto/mining-protocol" icon="terminal">
     Inspect routes, gateway methods, config fields, account state, and protocol constants.
   </Card>
-  <Card title="Satcoin source" href="https://github.com/satcoin-org/sat" icon="github">
-    Verify the public Satcoin program source used by the mining runtime.
+  <Card title="Satcoin site" href="https://satcoin.app" icon="coins">
+    Use the official Satcoin site for launch status and public references.
   </Card>
   <Card title="Satcoin docs" href="https://docs.satcoin.app" icon="book-open">
     Use Satcoin docs for protocol constants, economics, addresses, and launch proof.
@@ -544,4 +544,4 @@ For chat/channel automation, use [Mining Chat and Automation](/plugins/crypto/mi
 - [Fased Network](/start/federation)
 - [Bond operator](/start/bond-operator-economy)
 - [CLI Mining](/cli/mining)
-- [Satcoin protocol source](https://github.com/satcoin-org/sat)
+- [Satcoin docs](https://docs.satcoin.app)

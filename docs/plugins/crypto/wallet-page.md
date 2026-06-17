@@ -9,7 +9,7 @@ sidebarTitle: "Wallets"
 
 # Wallets
 
-The Wallets page is the day-to-day control surface for runtime wallets in Fased.
+The Wallets page is the day-to-day control surface for Fased wallets.
 
 Use it to:
 
@@ -19,7 +19,7 @@ Use it to:
 - create and approve sends
 - turn on Wallet Control Passkey
 - review split-key and lock state
-- inspect wallet policy and recent activity
+- inspect wallet controls and recent activity
 
 Use other pages for the economic workflows themselves:
 
@@ -81,7 +81,7 @@ shortcut for wallet-sensitive actions.
 Use it for:
 
 - send approvals
-- policy changes
+- wallet-control changes
 - wallet security setup
 - lock and unlock
 - recovery
@@ -109,14 +109,14 @@ The real flow is:
 1. choose the source wallet by exact `@wallet:<id>` handle
 2. fill out the destination as another local wallet handle or an external address
 3. click `Create Approval Request`
-4. review the pending request, policy simulation, and approval diff
+4. review the pending request, wallet-control simulation, and approval diff
 5. click `Approve`
 6. complete passkey approval if enabled
-7. let the runtime execute and log the send
+7. let Fased execute and log the send
 
 That is why the Wallets page is an approval surface, not just a raw signer surface.
 
-### 4. Selected wallet policy
+### 4. Selected wallet controls
 
 This section changes by role.
 
@@ -124,19 +124,19 @@ This section changes by role.
 - Vault wallets show `Caps` and `Security`
 - Mining wallets show `Sweep`
 
-### 5. Policy and safety
+### 5. Wallet controls and safety
 
-This is where you review or save wallet policy:
+This is where you review or save wallet controls:
 
 - Preset: one-click starting point for the selected wallet role
 - Caps: optional per-wallet spend limits, Off by default on fresh wallets
-- Send: one Agent-wallet recurring send policy shared by chat and the Wallets UI
+- Send: one Agent-wallet recurring send setting shared by chat and the Wallets UI
 - Auto: Agent background execution, On by default for Agent wallets
 - Security: Vault split-key/passkey custody
 - Sweep: Mining-only SAT movement after successful claims
 
 Automated execution means the Agent wallet may execute approved background
-actions when role policy, enabled caps, allowlists, and custody state allow it. It does
+actions when role controls, enabled caps, allowlists, and custody state allow it. It does
 not control Wallets UI manual Send. Manual Send always creates a reviewed request,
 then approval executes the request.
 
@@ -151,19 +151,19 @@ On enforces the SOL row and every configured SPL token row. Existing wallets wit
 non-zero saved caps are treated as Caps On until the operator switches them Off.
 
 Pending approvals include a compact diff showing what will spend, from which
-wallet role, to which destination, and what source triggered it. The runtime also
-stores the policy-simulation result so an operator can see whether the request is
-passing policy, blocked, or waiting for manual approval.
+wallet role, to which destination, and what source triggered it. Fased also
+stores the wallet-control simulation result so an operator can see whether the
+request is passing controls, blocked, or waiting for manual approval.
 
 Each pending approval also creates an audit record. Use Wallets recent activity
-or the run/history surfaces to inspect the matching `wallet` record, policy
+or the run/history surfaces to inspect the matching `wallet` record, control
 simulation, related marketplace/task ids when available, and final broadcast
 result. The record is audit visibility only; approval and signing still happen
 from Wallets.
 
 ### 6. Recent activity
 
-This is the fastest way to confirm what the runtime actually did:
+This is the fastest way to confirm what Fased actually did:
 
 - request created
 - request approved or rejected
@@ -219,19 +219,19 @@ scheduled wallet action. Use the exact `@wallet:<walletId>` handle or a
 structured tool/API `walletId`.
 
 Agent wallet actions from owner chat or allowed channels can execute
-automatically when Auto is On and policy allows the action. This is not the same
+automatically when Auto is On and wallet controls allow the action. This is not the same
 as the Wallets page manual Send form. Manual Send creates a request in the Wallets
 page; Agent wallet chat actions still use enabled caps, allowlists, balance
 checks, transaction inspection, custody state, and audit logs before signing.
 
-The same Agent wallet policy also gates advanced `wallet_action` chat flows and
+The same Agent wallet controls also gate advanced `wallet_action` chat flows and
 scheduled wallet work. Those flows must name the Agent wallet handle or resolve
 the configured primary Agent wallet; they never use Mining or Vault wallets as
 advanced wallet-action sources.
 
 Marketplace order actions and evidence also use Agent wallets only. If a user
 buys an offer, handles an order, receives service receipts, or publishes order
-evidence, the runtime should use an Agent wallet under policy. Mining wallets
+evidence, Fased should use an Agent wallet under wallet controls. Mining wallets
 are for Satcoin mining and SAT sweep. Vault wallets are protected/manual-first
 and should not become Marketplace automation wallets.
 
@@ -282,7 +282,7 @@ plugin order actions, recurring transfers, or API/data-service subscriptions.
 
 For unattended mining, use a background-ready self-hosted signer path. In practice that means `local-socket-signer` with `fased-signerd`, enough wallet SOL for fees, and the singleton `@wallet:mining` wallet instead of reusing the Agent wallet.
 
-The runtime treats the active mining wallet as protected operational state. Do
+Fased treats the active mining wallet as protected operational state. Do
 not delete or repurpose it while mining is active.
 
 To stop using a mining wallet: stop mining, let pending cycles clear, claim,
@@ -307,11 +307,11 @@ Vault never gets Auto.
 
 Policy, custody, and signer status records use `vault` for this purpose.
 
-### Offline reserve outside the runtime
+### Offline reserve outside Fased
 
 You should still keep an offline reserve or cold wallet outside Fased.
 
-That matters more than inventing extra runtime labels.
+That matters more than inventing extra Fased wallet labels.
 
 ## How wallets are created or imported
 
@@ -321,7 +321,7 @@ The normal public path is:
 2. create or import a wallet
 3. choose a permanent purpose and display label
 4. configure RPC for the chain
-5. let the runtime register the wallet
+5. let Fased register the wallet
 6. confirm the wallet appears in Wallet
 
 Role defaults:
@@ -362,9 +362,9 @@ Use the handle in prompts and skill configuration:
 ## Agent wallet actions and skills
 
 Chat, skills, plugins, and schedules can use the bundled wallet-action path only
-through Agent wallets and only when wallet policy allows it.
+through Agent wallets and only when wallet controls allow it.
 
-The Wallets page is where you see the resulting policy, approvals, activity, and
+The Wallets page is where you see the resulting controls, approvals, activity, and
 Skill Grants state. It is not the reference page for every wallet-action schema.
 
 Use these docs for the deeper paths:
@@ -375,7 +375,7 @@ Use these docs for the deeper paths:
 
 The important rule is simple: custom or installed skills cannot use Mining or
 Vault wallets. They must use explicitly granted Agent wallets, and normal wallet
-policy still checks role, caps, balance, signer state, transaction inspection,
+controls still check role, caps, balance, signer state, transaction inspection,
 and audit logging.
 
 ## How to fund a wallet
@@ -395,13 +395,13 @@ Operational rules:
 - use a Vault wallet for bond-related Satcoin
 - move excess value back to vault or offline reserve on purpose
 
-If a runtime wallet silently grows into treasury-sized balance, the operator model has already slipped.
+If a Fased wallet silently grows into treasury-sized balance, the operator model has already slipped.
 
 ## Self-hosted signer and lock model
 
 The public self-hosted path is:
 
-- wallet registry in the runtime
+- local wallet registry
 - provider id `local-socket-signer`
 - native signer `fased-signerd`
 - explicit chain RPC
@@ -451,8 +451,8 @@ Wallet should not become:
 Use the clean split:
 
 - onboarding creates or imports wallets
-- Wallet handles inventory, funding, approval, policy, and security
-- Mining handles Satcoin runtime operations
+- Wallet handles inventory, funding, approval, controls, and security
+- Mining handles Satcoin mining operations
 - Fased Network handles bond posture and public network state
 
 ## CLI quick reference

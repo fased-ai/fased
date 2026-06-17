@@ -1,16 +1,16 @@
 ---
-summary: "How Fased Agent receives official Satcoin mainnet program IDs after launch."
+summary: "How Fased Agent receives official Satcoin mainnet IDs after launch."
 read_when:
   - You see the Mining page Sync control
   - You are preparing Fased Agent before Satcoin mainnet launch
-  - You need to verify or manually set SAT runtime IDs
+  - You need to verify or manually set SAT mainnet IDs
 title: "SAT Mainnet Sync"
 sidebarTitle: "Mainnet Sync"
 ---
 
 # SAT Mainnet Sync
 
-Fased Agent ships pre-launch without active Satcoin mainnet runtime IDs.
+Fased Agent ships pre-launch without active Satcoin mainnet IDs.
 
 After the official Satcoin launch announcement, use **Sync** on the Mining page
 before funding or starting mainnet mining.

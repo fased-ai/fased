@@ -17,12 +17,11 @@ Use it to understand how the Control UI, CLI, plugin gateway methods, and Satcoi
 This page describes how Fased Agent connects to **Satcoin mining v1**, the
 current agent-operated mining protocol implementation.
 
-The Satcoin on-chain programs, API crates, layouts, build docs, and security policy
-live in the public protocol source repo:
-[satcoin-org/sat](https://github.com/satcoin-org/sat).
+Use the official Satcoin docs to verify current program addresses, manifest
+hashes, IDL hashes, launch proof, and public protocol status.
 
-Use that repo to verify protocol source. Use this page to understand how Fased
-Agent connects that protocol to wallets, Gateway, CLI, and the Mining page.
+Use this page to understand how Fased Agent connects Satcoin mining to wallets,
+Gateway, CLI, and the Mining page.
 
 ## Stack map
 
@@ -386,4 +385,4 @@ post-launch venue concept.
 - [CLI mining](/cli/mining)
 - [Wallet](/plugins/crypto/wallet-page)
 - [Fased Network](/start/federation)
-- [Satcoin protocol source](https://github.com/satcoin-org/sat)
+- [Satcoin docs](https://docs.satcoin.app)

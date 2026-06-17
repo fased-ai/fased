@@ -17,7 +17,7 @@ profiles, and maintenance.
 flowchart LR
   choose["choose install path"] --> repo["repo installer"]
   choose --> container["container path"]
-  choose --> host["hosted runtime"]
+  choose --> host["hosted Fased"]
   repo --> onboard["onboarding"]
   container --> verify["verify gateway"]
   host --> private["private access first"]
@@ -60,7 +60,7 @@ all the time.
 | Path          | Best for                                | Security posture                                                                                                                                                | Access dependency                                                            |
 | ------------- | --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
 | Local install | Personal laptop, desktop, dev box, WSL2 | Lowest setup risk. Gateway stays on your machine; a home router usually does not expose it to the public internet. Tailscale is optional.                       | Your local OS login.                                                         |
-| VPS Hosting   | Always-on cloud node                    | Higher exposure by default because a VPS is internet-reachable. Hosted setup closes public admin ports and requires Tailscale for private dashboard/SSH access. | Your Tailscale account plus the VPS provider console for emergency recovery. |
+| VPS Hosting   | Always-on cloud server                  | Higher exposure by default because a VPS is internet-reachable. Hosted setup closes public admin ports and requires Tailscale for private dashboard/SSH access. | Your Tailscale account plus the VPS provider console for emergency recovery. |
 
 <Warning>
 If you lose access to the Tailscale account used for a hosted VPS, normal
@@ -108,8 +108,8 @@ recovery options and VPS provider console access working.
   </Tab>
   <Tab title="VPS Hosting install">
     Use this on a clean Linux VPS. A 1 vCPU / 1 GB RAM VPS can work as a
-    minimum test node, but expect slow install/onboarding. For a smoother public
-    node, use at least 2 GB RAM; 2 vCPU / 4 GB RAM is more comfortable.
+    minimum test server, but expect slow install/onboarding. For a smoother public
+    server, use at least 2 GB RAM; 2 vCPU / 4 GB RAM is more comfortable.
 
     Hosted setup uses two machines:
 
@@ -132,7 +132,7 @@ recovery options and VPS provider console access working.
     Other private-access systems are custom deployments. The standard hosted
     installer does not configure or verify WireGuard, Headscale, ZeroTier,
     bastion hosts, or manual SSH tunnels. If you replace Tailscale, you own
-    dashboard exposure, SSH policy, TLS, firewall rules, and recovery.
+    dashboard exposure, SSH rules, TLS, firewall rules, and recovery.
 
     Do not paste the Linux install commands into PowerShell unless PowerShell is
     already connected to the VPS over SSH. The commands below run **inside the
@@ -278,7 +278,7 @@ The installer:
 - runs onboarding by default
 - opens the path to the browser Control UI
 
-To install the CLI/runtime without onboarding:
+To install the CLI without onboarding:
 
 ```bash
 ./install.sh --no-onboard
@@ -304,7 +304,7 @@ installer fast-forwards a clean Git checkout before building unless
 
 ## What onboarding does
 
-Onboarding creates the baseline runtime: state directory, config, workspace,
+Onboarding creates the baseline install: state directory, config, workspace,
 Gateway service, dashboard access, and selected hosting posture.
 
 It does not configure every Agent capability. After install, continue in the
@@ -320,14 +320,14 @@ Control UI from the selected Agent:
 8. Wallets, Mining, and Fased Network only when you intentionally enable them
 
 <Note>
-Pre-launch installs keep Satcoin runtime IDs empty. After official Satcoin
+Pre-launch installs keep Satcoin mainnet IDs empty. After official Satcoin
 mainnet proof is published, use **Mining > Sync** to verify the signed manifest
 and write `config/sat-runtime.env`.
 </Note>
 
 ## VPS hosting posture
 
-For a hosted or VPS runtime:
+For a hosted or VPS install:
 
 1. start from a clean Linux VPS
 2. create/sign into Tailscale and join the VPS to your tailnet with `sudo tailscale up --ssh`
@@ -351,15 +351,15 @@ Use [VPS hosting](/install/vps), [Hetzner](/install/hetzner), or
 
 | Method                   | Status                    | Use when                                                              |
 | ------------------------ | ------------------------- | --------------------------------------------------------------------- |
-| Repo-backed `install.sh` | Recommended public path   | macOS, Linux, WSL2, local laptop, or VPS runtime                      |
+| Repo-backed `install.sh` | Recommended public path   | macOS, Linux, WSL2, local laptop, or VPS install                      |
 | Source checkout          | Contributor path          | You want to build, test, or patch the repo directly                   |
 | Hosted/VPS profile       | Supported                 | You want an always-on Linux host with private access first            |
 | Docker                   | Supported optional path   | You want a containerized Gateway or sandbox validation                |
 | Podman                   | Supported container path  | You want rootless containers on Linux                                 |
-| Nix                      | Advanced/declarative path | You already manage runtimes with Nix/Home Manager                     |
-| Bun                      | Experimental dev path     | You want local TypeScript iteration; use Node for the Gateway runtime |
+| Nix                      | Advanced/declarative path | You already manage systems with Nix/Home Manager                      |
+| Bun                      | Experimental dev path     | You want local TypeScript iteration; use Node for the Gateway         |
 | Remote client mode       | Supported client mode     | This machine should connect to an existing Gateway                    |
-| Task worker install      | Supported after setup     | You want separate task workers once a Gateway/runtime already exists  |
+| Task worker install      | Supported after setup     | You want separate task workers once a Gateway already exists          |
 
 <CardGroup cols={2}>
   <Card title="Docker" href="/install/docker" icon="container">
@@ -398,17 +398,17 @@ Good result:
 
 ## After install
 
-Use this order for a new runtime:
+Use this order for a new install:
 
-1. verify runtime health
+1. verify install health
 2. confirm private operator access
 3. configure model access
 4. send a first chat message
 5. add channels and services as needed
 6. define wallet and signer posture before using wallet-related features
-7. enable Mining or Fased Network only after the base runtime is stable
+7. enable Mining or Fased Network only after the base Agent is stable
 
-Successful installation means the runtime exists. It does not replace the
+Successful installation means Fased is installed. It does not replace the
 setup checks for channels, services, wallets, mining, or network roles.
 
 ## Troubleshooting: `fased` not found
@@ -439,7 +439,7 @@ Then open a new terminal, or run `rehash` in zsh / `hash -r` in bash.
 
 <CardGroup cols={3}>
   <Card title="Updating" href="/install/updating" icon="refresh-cw">
-    Refresh the repo-backed runtime.
+    Refresh the repo-backed install.
   </Card>
   <Card title="Migrating" href="/install/migrating" icon="arrow-right">
     Move state and workspace to a new machine.

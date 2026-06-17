@@ -1,5 +1,5 @@
 ---
-summary: "Run Fased Agent with channels, wallets, Fased Network, and SAT paths"
+summary: "Set up Fased Agent with channels, wallets, Fased Network, and Satcoin mining."
 read_when:
   - Onboarding a new assistant instance
   - Reviewing safety/permission implications
@@ -9,10 +9,9 @@ title: "Fased Agent Setup"
 
 # Fased Agent Setup
 
-Fased Agent is a self-hosted agent runtime. Start with the Gateway and browser
-dashboard, then add models, skills, services, channels, wallets, Fased Network,
-or SAT mining only when the base agent is trusted and the operator setup needs
-them.
+Fased Agent is the agent you run on your machine or server. Start with the
+Gateway and browser dashboard, then add models, skills, services, channels,
+wallets, Fased Network, or Satcoin mining only when they have a specific job.
 
 Use this page after first boot to turn a working install into a real Agent
 setup.
@@ -29,16 +28,16 @@ setup.
   </Card>
 </Columns>
 
-## Runtime Model
+## Agent Model
 
 ```mermaid
 flowchart TB
   entry["Channels / Control UI"] --> gateway["Gateway"]
-  gateway --> agent["Agent runtime + workspace"]
+  gateway --> agent["Fased Agent + workspace"]
   agent --> tools["Tools + plugins"]
-  agent --> wallets["Wallet policy"]
+  agent --> wallets["Wallet use"]
   agent --> network["Fased Network"]
-  agent --> mining["SAT mining"]
+  agent --> mining["Satcoin mining"]
 
   classDef entry fill:#120605,stroke:#ff5a36,color:#ffffff;
   classDef core fill:#071018,stroke:#12cfff,color:#ffffff;
@@ -50,11 +49,11 @@ flowchart TB
 
 The recommended order is:
 
-1. make the runtime stable
+1. make the install stable
 2. connect one trusted model
 3. send the first browser chat
 4. add skills, services, memory, channels, and tasks
-5. add wallet, Fased Network, or SAT mining only when the base agent is trusted
+5. add wallets, Fased Network, or Satcoin mining only when the base agent is ready
 
 ## Conservative Defaults
 
@@ -63,7 +62,7 @@ Start conservative:
 - keep the Gateway private by default
 - use Tailscale for hosted/admin access
 - connect one trusted channel before adding public routes
-- keep wallet-bearing and mining workflows separate from normal chat
+- keep wallet and mining workflows separate from normal chat
 - review skills and services before allowing them for an Agent
 
 For host hardening and gateway operations, use [Gateway & Ops](/gateway).
@@ -109,17 +108,17 @@ Useful links:
 - [Memory](/concepts/memory)
 - [Control UI Setup Model](/start/control-ui-setup)
 
-## Wallet, Network, And SAT
+## Wallet, Network, And Satcoin
 
-Fased works without wallets or SAT. Add wallet, Fased Network, or SAT modules
+Fased works without wallets or Satcoin. Add wallets, Fased Network, or Satcoin modules
 only when they have a specific job:
 
 | Path          | When to use it                                                                   |
 | ------------- | -------------------------------------------------------------------------------- |
-| Wallet policy | When the Agent needs reviewed sends, balances, receipts, or wallet-bound skills  |
-| Fased Network | When this runtime needs identity, hosted reachability, offers, or operator trust |
-| SAT mining    | When the node will mine, claim, and build public operator history                |
-| Bond          | When SAT inventory should back an operator trust role                            |
+| Wallet use    | When the Agent needs reviewed sends, balances, receipts, or wallet-connected skills |
+| Fased Network | When the Agent needs a public handle, route, offers, or operator history         |
+| Satcoin mining | When the Agent will mine, claim, and build public mining history                |
+| Bond          | When bonded SAT should support a stronger operator role                          |
 
 Relevant pages:
 

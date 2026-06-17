@@ -1,8 +1,11 @@
 {
   "$schema": "https://mintlify.com/docs.json",
   "name": "Fased",
-  "description": "Fased Agent docs for the self-hosted agent node: tasks, wallet policy, skills, memory, SAT mining, and Fased Network participation.",
+  "description": "Fased docs for user-run agents: setup, tasks, wallets, skills, memory, channels, Satcoin mining, and Fased Network.",
   "theme": "mint",
+  "modeToggle": {
+    "default": "dark"
+  },
   "icons": {
     "library": "lucide"
   },
@@ -35,17 +38,45 @@
   "navbar": {
     "links": [
       {
-        "label": "Fased Agent",
-        "href": "https://github.com/fased-ai/fased",
-        "icon": "github"
+        "label": "Links",
+        "href": "/links",
+        "icon": "link"
+      },
+      {
+        "label": "Fased App",
+        "href": "https://fased.ai",
+        "icon": "app-window"
       },
       {
         "label": "Satcoin",
-        "href": "https://github.com/satcoin-org/sat"
+        "href": "https://satcoin.app",
+        "icon": "coins"
+      },
+      {
+        "label": "Discord",
+        "href": "https://dsc.gg/fased",
+        "icon": "message-circle"
+      },
+      {
+        "label": "GitHub",
+        "href": "https://github.com/fased-ai/fased",
+        "icon": "github"
       }
     ]
   },
   "redirects": [
+    {
+      "source": "/official-links",
+      "destination": "/links"
+    },
+    {
+      "source": "/link-hub",
+      "destination": "/links"
+    },
+    {
+      "source": "/socials",
+      "destination": "/links"
+    },
     {
       "source": "/messages",
       "destination": "/concepts/messages"
@@ -941,7 +972,7 @@
             "pages": [
               {
                 "group": "Overview",
-                "pages": ["index", "concepts/features"]
+                "pages": ["index", "links", "concepts/features"]
               },
               {
                 "group": "First run",

@@ -126,5 +126,5 @@ fased mining readiness --wallet mining
 - [Getting Started](/start/getting-started)
 - [Install](/install)
 - [Control UI Setup](/start/control-ui-setup)
-- [Gateway Security](/gateway/security)
+- [Gateway security](/gateway/security)
 - [Help](/help)

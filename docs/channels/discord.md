@@ -16,10 +16,10 @@ Status: supported for DMs and guild channels.
 
 <CardGroup cols={3}>
   <Card title="Pairing" icon="link" href="/channels/pairing">
-    DMs start with pairing unless you choose another policy.
+    DMs start with pairing unless you choose another access mode.
   </Card>
   <Card title="Groups" icon="users" href="/channels/groups">
-    Group policy, mentions, and sender controls.
+    Group access, mentions, and sender controls.
   </Card>
   <Card title="Troubleshooting" icon="wrench" href="/channels/troubleshooting">
     Cross-channel checks and repair steps.
@@ -67,10 +67,10 @@ Do not paste bot tokens into Chat or channel messages. Store them from
 | Agent routing | route server/channel/thread to the selected Agent explicitly |
 
 Discord servers should start narrow: one private test server, one allowed user,
-and mention-gated channels. Widen access after the route and command policy are
+and mention-gated channels. Widen access after the route and command controls are
 working.
 
-## Runtime behavior
+## Gateway behavior
 
 - DMs and guild messages route into Agent sessions.
 - Threads and forum channels keep their own session shape.

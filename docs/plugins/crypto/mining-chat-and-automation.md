@@ -23,14 +23,14 @@ That boundary matters:
 When task logs say a strategy task used "no wallet source", that does not mean
 mining ran without the Mining wallet. It means the isolated task did not load
 the generic wallet tool/source. The task only read `@mining` state and used the
-mining tool. The mining runtime still uses the configured Mining wallet for real
+mining tool. Fased mining still uses the configured Mining wallet for real
 cycle submit, claim, sweep, and capital actions under the normal Mining wallet
-policy.
+controls.
 
 ## What chat can do
 
-Chat and paired channels can call the same mining actions as the operator
-runtime. Use the exact mining wallet handle when starting with a wallet:
+Chat and paired channels can call the same mining actions as the Mining page.
+Use the exact mining wallet handle when starting with a wallet:
 
 ```text
 Check @mining readiness.
@@ -106,7 +106,7 @@ Crank @mining cycle 123 page 0 and finalize if complete.
 `@mining` is an owner-only mining tool exposed to the agent. It is not a normal
 Marketplace order tool and it is not the generic wallet send tool. The agent
 can use this tool to inspect mining state, analyze history, set strategy fields,
-and start or stop mining under the Mining wallet policy.
+and start or stop mining under the Mining wallet controls.
 
 Fased can let the agent choose strategy in three levels:
 
@@ -120,7 +120,7 @@ Those are not three separate mining modes. The user-facing modes are
 
 The protocol still scores the submitted allocation on-chain. Agent strategy only
 chooses the preset, execution mode, or advanced allocation input; it does not
-bypass signer policy, wallet reserve checks, cycle settlement, or claim rules.
+bypass signer controls, wallet reserve checks, cycle settlement, or claim rules.
 
 Mining strategy can be changed from chat:
 
@@ -189,7 +189,7 @@ For a strategy-only mining task, keep the prompt explicit:
 Every cycle, inspect @mining status/history only. You may change strategyPreset,
 strategyExecution, and strategyMode. Do not use wallet, order, send,
 route-action, bond, or web-search tools. Do not change active commit, target
-max, capital, funding, withdraw, claim mode, or sweep policy. Report old
+max, capital, funding, withdraw, claim mode, or sweep settings. Report old
 strategy, new strategy, reason, and whether active commit changed.
 ```
 
@@ -207,7 +207,7 @@ profile while saved target commit and live active commit remain unchanged.
 
 Do not include `claimMode`, `autoClaim`, or sweep fields in a strategy-only task
 unless the task is explicitly a recovery or claim task. Strategy review should
-leave miner claim policy unchanged.
+leave miner claim settings unchanged.
 
 Recommended Create Task fields for this mining strategy shape:
 
@@ -225,10 +225,10 @@ Recommended Create Task fields for this mining strategy shape:
 | Ask Agents      | Off for normal strategy runs; use Consult/Parallel only when you explicitly want other local Agents to review evidence. |
 
 The `Mining strategy review` Task template pre-fills those fields. Strategy review is
-a scheduled Task because it has a recurring schedule, prompt, execution policy,
+a scheduled Task because it has a recurring schedule, prompt, execution settings,
 and safety limits. Workflow templates such as mining readiness/start-gate review
 are different: they create a review flow, not a recurring strategy task. The
-runtime model is still a Task, not a Mining page control and not a generic wallet
+execution model is still a Task, not a Mining page control and not a generic wallet
 task.
 
 From the Mining page, use the `Task` button next to Strategy and Execution
@@ -289,14 +289,14 @@ fased task add \
   --every 5m \
   --session isolated \
   --no-deliver \
-  --message "Every cycle, inspect @mining status/history only. You may change strategyPreset, strategyExecution, and strategyMode. Do not use wallet, order, send, route-action, bond, or web-search tools. Do not change active commit, target max, capital, funding, withdraw, claim mode, or sweep policy. Report old strategy, new strategy, reason, and whether active commit changed."
+  --message "Every cycle, inspect @mining status/history only. You may change strategyPreset, strategyExecution, and strategyMode. Do not use wallet, order, send, route-action, bond, or web-search tools. Do not change active commit, target max, capital, funding, withdraw, claim mode, or sweep settings. Report old strategy, new strategy, reason, and whether active commit changed."
 ```
 
 Mining remains controlled from the Mining page. Scheduled or workflow-driven
 mining checks mirror readiness/start/stop/cycle/capital/recovery events into
 Agent task history so **Agent > Tasks** can audit what happened and open the
-source mining record, but Tasks does not bypass the Mining wallet, runtime
-policy, or approval gates.
+source mining record, but Tasks does not bypass the Mining wallet, wallet
+controls, or approval gates.
 
 ## Channel operation
 
@@ -327,7 +327,7 @@ Use the Mining wallet for:
 - Satcoin capital initialization
 - deposit and withdraw miner capital
 - active commit updates
-- start and stop runtime participation
+- start and stop mining participation
 - cycle submit/settle/score/distribute/finalize
 - miner claim and recovery
 - optional SAT sweep after claim

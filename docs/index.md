@@ -1,5 +1,5 @@
 ---
-summary: "Fased is a self-hosted agent runtime with gateway, channels, plugins, wallet policy, and optional operator modules."
+summary: "Fased is a user-run agent with a browser dashboard, channels, plugins, wallets, and optional Satcoin mining."
 read_when:
   - Introducing Fased to newcomers
 title: "Fased"
@@ -7,16 +7,16 @@ title: "Fased"
 
 # Fased
 
-**A self-hosted Agent runtime with gateway, channels, plugins, and optional operator modules.**
+**A user-run agent for tasks, channels, wallets, and mining.**
 
-Run your own agent on your own machine or server, start with the browser dashboard,
-then add channels, services, wallet policy, Fased Network, or SAT mining only
-where you actually need them.
+Run Fased Agent on your machine or server. Start with the browser dashboard,
+then add channels, services, wallet features, Fased Network, or Satcoin mining
+only where you need them.
 
-Fased is an owned AI runtime: gateway, sessions, tools, memory, channels,
-plugins, and policy controls running under your operator boundary.
+Fased Agent gives you sessions, tools, memory, channels, plugins, and safety
+controls in one install.
 
-**Gateway + agent runtime + channels + optional wallet/network modules.**
+**Gateway + agent + channels + optional wallet, network, and mining paths.**
 
 <Columns>
   <Card title="Get Started" href="/start/getting-started" icon="rocket">
@@ -32,31 +32,32 @@ plugins, and policy controls running under your operator boundary.
 
 ## What is Fased?
 
-Fased is a **self-hosted agent runtime**. You can use it immediately through the
-browser dashboard, then layer on channels, services, plugins, wallet policy,
-Fased Network, and SAT mining as your setup grows. It runs on your own machine
-or server and stays under your runtime and policy control.
+Fased is a **user-run agent**. You can use it immediately through the browser
+dashboard, then add channels, services, plugins, wallet features, Fased Network,
+and Satcoin mining as your setup grows.
 
-**Who is it for?** Developers, operators, and power users who want an Agent they can message from anywhere without giving up runtime control, wallet control, or plugin control.
+**Who is it for?** Developers, operators, and power users who want an agent they
+can message from the browser or chat apps, with local setup and clear safety
+boundaries.
 
 **What makes it different?**
 
-- **Owned runtime**: not rented AI; the node runs under the operator's control
-- **Signer and policy boundary**: wallet actions use policy, caps, approvals, custody state, and audit instead of raw keys in skills
+- **User-run agent**: install it locally or on your own server
+- **Browser-first setup**: start in the Control UI before adding chat channels
 - **Skills and plugins**: agents can do real work, not only chat
-- **Fased Network**: identity, routing, service discovery, and reviewed offer flows
-- **Optional Satcoin path**: mining and bond can contribute to operator-history signals
-- **Optional wallet tools**: policy-bound sends, receive links, receipts, and wallet audit
-- **Optional operator modules**: wallet, Fased Network, SAT mining, and Marketplace stay separate from first chat
+- **Wallet features when enabled**: reviewed sends, receive links, receipts, and audit
+- **Fased Network**: public handles, routing, service discovery, and reviewed offers
+- **Optional Satcoin path**: mining can build public mining history
+- **Clear add-on paths**: wallets, Fased Network, Satcoin mining, and Marketplace stay separate from first chat
 
-The product shape is simple: owned runtime first, optional operator modules when
-the base agent is trusted.
+The product shape is simple: start with the base agent, then add the advanced
+paths only when they have a specific job.
 
-- **Self-hosted**: runs on your hardware, your rules
+- **Self-hosted**: runs on your hardware or server
 - **Multi-channel**: one Gateway serves WhatsApp, Telegram, Discord, and more simultaneously
 - **Agent-native**: built for coding agents with tool use, sessions, memory, and multi-agent routing
-- **Wallet-aware when enabled**: the runtime can enforce wallet policy and approvals
-- **Network-ready when enabled**: Fased Network and SAT mining live beside the base runtime
+- **Wallet-ready when enabled**: wallet actions can use limits, approvals, and audit
+- **Network-ready when enabled**: Fased Network and Satcoin mining live beside the base agent
 - **Open source**: MIT licensed with preserved upstream and third-party notices
 
 **What do you need?** Node 22+, an API key (Anthropic recommended), and 5 minutes.
@@ -66,21 +67,21 @@ the base agent is trusted.
 ```mermaid
 flowchart LR
   entry["Channels / Control UI"] --> gateway["Gateway"]
-  gateway --> runtime["Agent runtime"]
-  runtime --> tools["Tools + skills"]
-  runtime --> wallets["Optional wallet policy"]
-  runtime --> network["Optional Fased Network"]
-  runtime --> mining["Optional SAT mining"]
+  gateway --> agent["Fased Agent"]
+  agent --> tools["Tools + skills"]
+  agent --> wallets["Optional wallet use"]
+  agent --> network["Optional Fased Network"]
+  agent --> mining["Optional Satcoin mining"]
 
   classDef entry fill:#120605,stroke:#ff5a36,color:#ffffff;
   classDef core fill:#071018,stroke:#12cfff,color:#ffffff;
   classDef operator fill:#20120a,stroke:#ffb020,color:#ffffff;
   class entry entry;
-  class gateway,runtime core;
+  class gateway,agent core;
   class tools,wallets,network,mining operator;
 ```
 
-The Gateway is the single source of truth for sessions, routing, channels, and operator runtime behavior.
+The Gateway keeps sessions, routing, channels, and agent behavior in one place.
 
 ## Key capabilities
 
@@ -88,8 +89,8 @@ The Gateway is the single source of truth for sessions, routing, channels, and o
   <Card title="Multi-channel gateway" icon="network">
     Add WhatsApp, Telegram, Discord, iMessage, and more when you want remote chat surfaces.
   </Card>
-  <Card title="Sovereign agent runtime" icon="cpu">
-    Sessions, tools, memory, plugins, and policy stay under operator control.
+  <Card title="User-run agent" icon="cpu">
+    Sessions, tools, memory, plugins, and safety controls in one install.
   </Card>
   <Card title="Plugin channels" icon="plug">
     Add Mattermost and more with extension packages.
@@ -104,7 +105,7 @@ The Gateway is the single source of truth for sessions, routing, channels, and o
     Browser dashboard for chat, config, sessions, and nodes.
   </Card>
   <Card title="Fased Network and SAT mining" icon="coins">
-    Add Fased Network and SAT mining only after the base runtime is trusted.
+    Add Fased Network and Satcoin mining after the base agent works.
   </Card>
   <Card title="Mobile nodes" icon="smartphone">
     Pair iOS and Android nodes with Canvas support.
@@ -183,7 +184,7 @@ Example:
     Install methods, deployment choices, and maintenance.
   </Card>
   <Card title="Wallets, Fased Network, and SAT" href="/start/fased" icon="shield">
-    Follow the sovereign operator path after first-run setup.
+    Add wallets, network participation, and mining after first-run setup.
   </Card>
   <Card title="Operator glossary" href="/start/operator-glossary" icon="book-open">
     Learn the shared wallet, mining, Fased Network, bond, and operator terms.

@@ -248,7 +248,7 @@ Node 是 paired execution/device surface。Gateway 仍然是控制平面。Node 
 
 不是。网页、邮件、文件、日志、图片或粘贴文本都可能携带对抗性指令。使用 access control、tool policy、sandboxing 和现代模型，不要只依赖 prompt 文案。
 
-见 [Gateway Security](/gateway/security)。
+见 [Gateway security](/gateway/security)。
 
 ## 更多帮助
 

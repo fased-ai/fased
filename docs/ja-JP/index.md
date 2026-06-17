@@ -97,5 +97,5 @@ fased dashboard
 - [Wizard](/start/wizard)
 - [Install](/install)
 - [Features](/concepts/features)
-- [Gateway Security](/gateway/security)
+- [Gateway security](/gateway/security)
 - [Help](/help)
