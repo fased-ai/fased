@@ -18,6 +18,8 @@ gateway wrapper. The CLI manages:
 - plugins, skills, and hooks
 - wallets, Fased Network, and mining where enabled
 
+For the short command list, start with [CLI Cheatsheet](/cli/cheatsheet).
+
 The browser setup path is Agent-first: open **Agents**, select an Agent, then use
 Models, Channels, Skills, Tools, Memory, Sessions, Services, Tasks,
 Coordination, and Files. CLI commands are the scriptable/admin equivalent.

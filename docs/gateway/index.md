@@ -85,11 +85,11 @@ In both profiles, the raw gateway port should stay closed to the public internet
   <Step title="Start the Gateway">
 
 ```bash
-fased gateway --port 18789
+fased gateway run --port 18789 --bind loopback
 # debug/trace mirrored to stdio
-fased gateway --port 18789 --verbose
+fased gateway run --port 18789 --bind loopback --verbose
 # force-kill listener on selected port, then start
-fased gateway --force
+fased gateway run --port 18789 --bind loopback --force
 ```
 
   </Step>

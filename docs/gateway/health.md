@@ -41,7 +41,7 @@ login --verbose` when status codes 409–515 or `loggedOut` appear in logs.
 - `logged out` or status 409–515 → relink from **Agent > Channels**, or use
   `fased channels logout` then `fased channels login` for CLI repair.
 - Gateway unreachable:
-  - local profile / source dev → start it with `fased gateway --port 18789`
+  - local profile / source dev → start it with `fased gateway run --port 18789 --bind loopback`
   - use `--force` if the port is busy
   - hosting profile / installed daemon → restart the managed service
   - keep the gateway on loopback; use Tailscale Serve, a tailnet path, or SSH

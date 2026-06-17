@@ -26,9 +26,9 @@ const EXAMPLES = [
     'fased message send --target +15555550123 --message "Hi" --json',
     "Send via your web session and print JSON result.",
   ],
-  ["fased gateway --port 18789", "Run the WebSocket Gateway locally."],
-  ["fased --dev gateway", "Run a dev Gateway (isolated state/config) on ws://127.0.0.1:19001."],
-  ["fased gateway --force", "Kill anything bound to the default gateway port, then start it."],
+  ["fased gateway run --port 18789", "Run the WebSocket Gateway locally."],
+  ["fased --dev gateway run", "Run a dev Gateway (isolated state/config) on ws://127.0.0.1:19001."],
+  ["fased gateway run --force", "Kill anything bound to the default gateway port, then start it."],
   ["fased gateway ...", "Gateway control via WebSocket."],
   [
     'fased agent --to +15555550123 --message "Run summary" --deliver',

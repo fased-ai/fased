@@ -55,6 +55,10 @@ Prefer localhost, Tailscale Serve, or an SSH tunnel.
   URL when a gateway token is configured.
 - Re-open anytime: `fased dashboard` (copies the `#token=...` fragment link,
   opens the browser if possible, and shows an SSH hint if headless).
+- Print the auth-ready URL without opening a browser:
+  `fased dashboard --no-open`.
+- From a source checkout, use:
+  `node fased.mjs dashboard --no-open`.
 - The token lives in the URL fragment, not the query string. The UI stores it
   locally and removes it from the visible URL after load.
 - If the UI prompts for auth, paste the token from `gateway.auth.token` (or
@@ -106,6 +110,8 @@ boundary.
 - **Localhost**: open `http://localhost:18789/`.
 - **Token source**: `gateway.auth.token` or `FASED_GATEWAY_TOKEN`. The UI stores
   a copy in localStorage after you connect.
+- **Print URL**: `fased dashboard --no-open`.
+- **Print raw token**: `fased config get gateway.auth.token`.
 - **Not localhost**: use Tailscale Serve, tailnet bind with a token, or an SSH
   tunnel. Tailscale Serve can be tokenless for Control UI/WebSocket when
   `gateway.auth.allowTailscale: true`; HTTP APIs still need token/password.

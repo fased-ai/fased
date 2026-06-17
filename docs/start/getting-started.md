@@ -245,7 +245,7 @@ Once the dashboard is up, pick the path that matches your goal:
     Useful for quick tests or troubleshooting.
 
     ```bash
-    fased gateway --port 18789
+    fased gateway run --port 18789 --bind loopback
     ```
 
   </Accordion>

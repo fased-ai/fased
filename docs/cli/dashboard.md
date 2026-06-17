@@ -29,6 +29,34 @@ fased dashboard
 fased dashboard --no-open
 ```
 
+From a source checkout, use the same command through `fased.mjs`:
+
+```bash
+node fased.mjs dashboard --no-open
+```
+
+Use `--no-open` when you want the auth-ready URL printed in the terminal. It
+does not run onboarding. It reads the current Gateway auth config and prints a
+URL like `http://localhost:18789/#token=...`.
+
+To print only the raw Gateway token:
+
+```bash
+fased config get gateway.auth.token
+```
+
+From a source checkout:
+
+```bash
+node fased.mjs config get gateway.auth.token
+```
+
+If the Gateway does not have a token yet, generate one:
+
+```bash
+fased doctor --generate-gateway-token
+```
+
 Related:
 
 - [Dashboard](/web/dashboard)

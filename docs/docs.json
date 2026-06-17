@@ -981,7 +981,8 @@
                   "start/setup-matrix",
                   "start/wizard",
                   "start/onboarding",
-                  "start/control-ui-setup"
+                  "start/control-ui-setup",
+                  "start/agent-wallet-mining-walkthrough"
                 ]
               },
               {
@@ -1487,7 +1488,7 @@
             "groups": [
               {
                 "group": "CLI overview",
-                "pages": ["cli/index"]
+                "pages": ["cli/index", "cli/cheatsheet"]
               },
               {
                 "group": "Setup and lifecycle",

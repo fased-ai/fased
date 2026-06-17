@@ -51,7 +51,7 @@ install the CLI, then run the command again.
 After `pnpm build`, you can run the packaged CLI directly:
 
 ```bash
-node fased.mjs gateway --port 18789 --verbose
+node fased.mjs gateway run --port 18789 --bind loopback --verbose
 ```
 
 ## Stable workflow
