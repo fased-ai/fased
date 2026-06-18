@@ -389,6 +389,11 @@ desired_pnpm_version() {
 }
 
 install_pnpm_for_active_node() {
+  local npm_prefix="${FASED_NPM_GLOBAL_PREFIX:-$INSTALL_CACHE_DIR/npm-global}"
+  if [[ -d "$npm_prefix/bin" ]]; then
+    export PATH="$npm_prefix/bin:$PATH"
+    hash -r 2>/dev/null || true
+  fi
   if need_cmd pnpm; then
     return 0
   fi
@@ -403,7 +408,12 @@ install_pnpm_for_active_node() {
     corepack prepare "pnpm@${pnpm_version}" --activate || true
   fi
   if ! need_cmd pnpm && need_cmd npm; then
-    npm install -g "pnpm@${pnpm_version}" || run_as_root npm install -g "pnpm@${pnpm_version}"
+    mkdir -p "$npm_prefix"
+    npm install -g --prefix "$npm_prefix" "pnpm@${pnpm_version}" || {
+      echo "User-local pnpm install failed; trying system npm install." >&2
+      run_as_root npm install -g "pnpm@${pnpm_version}"
+    }
+    export PATH="$npm_prefix/bin:$PATH"
   fi
   hash -r 2>/dev/null || true
   need_cmd pnpm
@@ -1765,10 +1775,10 @@ install_missing_deps_as_root_if_needed() {
 
   echo "== Root bootstrap: installing missing system dependencies =="
   if [[ ${#missing[@]} -gt 0 ]]; then
-    echo "Missing dependencies: ${missing[*]}"
+    echo "Installing missing dependencies: ${missing[*]}"
   fi
   if ! node_runtime_ok; then
-    echo "Node runtime is incompatible: $(node_runtime_issue)"
+    echo "Installing or selecting compatible Node runtime: $(node_runtime_issue)"
   fi
 
   install_linux_system_dependencies
@@ -2357,6 +2367,10 @@ export COREPACK_HOME="${COREPACK_HOME:-$INSTALL_CACHE_DIR/corepack}"
 export COREPACK_ENABLE_DOWNLOAD_PROMPT="${COREPACK_ENABLE_DOWNLOAD_PROMPT:-0}"
 export npm_config_cache="${npm_config_cache:-$INSTALL_CACHE_DIR/npm-cache}"
 mkdir -p "$COREPACK_HOME" "$npm_config_cache"
+if [[ -d "$INSTALL_CACHE_DIR/npm-global/bin" ]]; then
+  export PATH="$INSTALL_CACHE_DIR/npm-global/bin:$PATH"
+  hash -r 2>/dev/null || true
+fi
 
 missing=()
 for cmd in git curl pnpm; do
@@ -2368,14 +2382,14 @@ fi
 
 if [[ ${#missing[@]} -gt 0 || ! node_runtime_ok ]]; then
   if [[ ${#missing[@]} -gt 0 ]]; then
-    echo "Missing dependencies: ${missing[*]}"
+    echo "Installing missing dependencies: ${missing[*]}"
   fi
   if ! node_runtime_ok && node_runtime_is_user_managed; then
     print_node_runtime_help
     exit 1
   fi
   if ! node_runtime_ok; then
-    echo "Node runtime is incompatible: $(node_runtime_issue)"
+    echo "Installing or selecting compatible Node runtime: $(node_runtime_issue)"
   fi
   if [[ "$AUTO_INSTALL" -eq 1 ]]; then
     install_supported_system_dependencies
