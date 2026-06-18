@@ -41,11 +41,12 @@ flowchart TD
 - Node 24, or Node 22.14+ with `node:sqlite`, when you manage Node yourself
 
 <Note>
-On Debian, Ubuntu, WSL Ubuntu, Fedora, and common RHEL-family systems, the repo
-installer can install missing command-line tools, Node, and `pnpm` when
-auto-install is enabled. On macOS, the installer can do the same when Homebrew
-is already installed. Normal users should start with `./install.sh`; source
-build commands are for developer workflows.
+On common VPS and workstation systems, the repo installer can install missing
+command-line tools, Node, and `pnpm` when auto-install is enabled. That includes
+Ubuntu, Debian, Kali, Fedora, CentOS, AlmaLinux, Rocky Linux, CloudLinux, Oracle
+Linux, Amazon Linux, openSUSE, SLES, Alpine, Arch, FreeBSD, WSL2 Ubuntu, and
+macOS with Homebrew. Normal users should start with `./install.sh`; source build
+commands are for developer workflows.
 </Note>
 
 <Note>
@@ -423,7 +424,7 @@ The repository itself uses `pnpm` internally. The installer installs or activate
 
 - Local install: macOS, FreeBSD, WSL2 Ubuntu, and common Linux hosts including
   Ubuntu, Debian, Kali, Fedora, CentOS, AlmaLinux, Rocky Linux, CloudLinux,
-  Alpine, and Arch.
+  Oracle Linux, Amazon Linux, openSUSE, SLES, Alpine, and Arch.
 - Hosted/VPS hardening: Linux with systemd, including the common Debian/Ubuntu,
   Fedora, and RHEL-family hosts. Alpine and Arch can install Fased, but hosted
   firewall/service hardening depends on the provider image and init system.

@@ -44,9 +44,10 @@ For most users, the hosted path is:
 
 The hosted hardening profile is for Linux VPS systems with systemd. Auto-install
 supports the common VPS families: Ubuntu, Debian, Kali, Fedora, CentOS,
-AlmaLinux, Rocky Linux, CloudLinux, Alpine, and Arch. Local macOS, FreeBSD, and
-WSL installs are supported for running Fased, but macOS, FreeBSD, and native
-Windows are not hosted hardening targets.
+AlmaLinux, Rocky Linux, CloudLinux, Oracle Linux, Amazon Linux, openSUSE, SLES,
+Alpine, and Arch. Local macOS, FreeBSD, and WSL installs are supported for
+running Fased, but macOS, FreeBSD, and native Windows are not hosted hardening
+targets.
 
 Hosted setup uses two machines:
 

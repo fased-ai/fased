@@ -42,7 +42,7 @@ Fased installer (single path): install.sh -> fased onboard --install-daemon
 Usage: ./install.sh [options] [-- <extra onboard args>]
 
 Options:
-  --auto-install   install missing deps with apt/dnf/yum/apk/pacman/pkg or Homebrew (default)
+  --auto-install   install missing deps with apt/dnf/yum/zypper/apk/pacman/pkg or Homebrew (default)
   --no-auto-install  Disable automatic dependency installation
   --install-dir <path>  Checkout/install directory (default: $HOME/fased)
   --hosting       VPS/always-on server profile. Requires Tailscale; applies hosted
@@ -504,10 +504,21 @@ install_linux_system_dependencies() {
   elif need_cmd pacman; then
     run_as_root pacman -Sy --needed --noconfirm git curl ca-certificates nodejs npm
     hash -r 2>/dev/null || true
+  elif need_cmd zypper; then
+    run_as_root zypper --non-interactive refresh || true
+    run_as_root zypper --non-interactive install --no-recommends git curl ca-certificates
+    hash -r 2>/dev/null || true
+    if ! node_runtime_ok; then
+      run_as_root zypper --non-interactive install --no-recommends nodejs24 npm24 || \
+        run_as_root zypper --non-interactive install --no-recommends nodejs22 npm22 || \
+        run_as_root zypper --non-interactive install --no-recommends nodejs npm
+      hash -r 2>/dev/null || true
+      prefer_compatible_system_node_if_available || true
+    fi
   else
     echo "Unsupported Linux package manager for --auto-install." >&2
     echo "Detected system: $(linux_os_summary)" >&2
-    echo "Supported auto-install package managers: apt-get, dnf, dnf5, yum, apk, pacman." >&2
+    echo "Supported auto-install package managers: apt-get, dnf, dnf5, yum, zypper, apk, pacman." >&2
     echo "Install git, curl, Node 24, and pnpm manually, then rerun ./install.sh." >&2
     return 1
   fi
@@ -606,7 +617,7 @@ install_supported_system_dependencies() {
       ;;
     *)
       echo "Unsupported operating system for --auto-install: $(uname -s)" >&2
-      echo "Supported auto-install targets: Linux with apt-get/dnf/dnf5/yum/apk/pacman, FreeBSD with pkg, or macOS with Homebrew." >&2
+      echo "Supported auto-install targets: Linux with apt-get/dnf/dnf5/yum/zypper/apk/pacman, FreeBSD with pkg, or macOS with Homebrew." >&2
       echo "Install git, curl, Node 24, and pnpm manually, then rerun ./install.sh." >&2
       return 1
       ;;
@@ -2480,8 +2491,9 @@ Automatic install:
 
 Supported auto-install package managers:
   - apt-get on Debian/Ubuntu/Kali/WSL Ubuntu
-  - dnf/dnf5 on Fedora, CentOS, AlmaLinux, Rocky Linux, CloudLinux
+  - dnf/dnf5 on Fedora, CentOS, AlmaLinux, Rocky Linux, CloudLinux, Oracle Linux, Amazon Linux
   - yum on older RHEL-family systems
+  - zypper on openSUSE/SLES
   - apk on Alpine
   - pacman on Arch
   - pkg on FreeBSD

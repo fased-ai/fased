@@ -12,9 +12,9 @@ read_when:
 Fased recommends **Node 24** and supports **Node 22.14 or newer with the built-in
 `node:sqlite` module**. The [installer script](/install) can install Node
 automatically on common VPS and workstation families: Ubuntu, Debian, Kali,
-Fedora, CentOS, AlmaLinux, Rocky Linux, CloudLinux, Alpine, Arch, FreeBSD, WSL2
-Ubuntu, and macOS with Homebrew. Use this page when you want to set up Node
-yourself or debug PATH/runtime issues.
+Fedora, CentOS, AlmaLinux, Rocky Linux, CloudLinux, Oracle Linux, Amazon Linux,
+openSUSE, SLES, Alpine, Arch, FreeBSD, WSL2 Ubuntu, and macOS with Homebrew. Use
+this page when you want to set up Node yourself or debug PATH/runtime issues.
 
 ## Check your version
 
@@ -56,7 +56,7 @@ but still omit `node:sqlite`; those are not suitable for full memory support.
     sudo dnf install -y nodejs24-bin nodejs24-npm-bin
     ```
 
-    **CentOS / AlmaLinux / Rocky Linux / CloudLinux:**
+    **CentOS / AlmaLinux / Rocky Linux / CloudLinux / Oracle Linux / Amazon Linux:**
 
     ```bash
     curl -fsSL https://rpm.nodesource.com/setup_24.x | sudo bash -
@@ -64,6 +64,12 @@ but still omit `node:sqlite`; those are not suitable for full memory support.
     ```
 
     Use `yum` instead of `dnf` on older images.
+
+    **openSUSE / SLES:**
+
+    ```bash
+    sudo zypper --non-interactive install --no-recommends nodejs24 npm24
+    ```
 
     **Alpine:**
 

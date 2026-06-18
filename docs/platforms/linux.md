@@ -28,9 +28,10 @@ For a local Linux laptop/dev box, use plain `./install.sh` or
 `--no-onboard`.
 
 Auto-install is built for the common Linux VPS families: Ubuntu, Debian, Kali,
-Fedora, CentOS, AlmaLinux, Rocky Linux, CloudLinux, Alpine, and Arch. It uses
-the system package manager, installs Node 24 where the platform supports it,
-then verifies `node:sqlite` before setup continues.
+Fedora, CentOS, AlmaLinux, Rocky Linux, CloudLinux, Oracle Linux, Amazon Linux,
+openSUSE, SLES, Alpine, and Arch. It uses the system package manager, installs
+Node 24 where the platform supports it, then verifies `node:sqlite` before setup
+continues.
 
 Step-by-step VPS guide: [Hetzner](/install/hetzner) or the general
 [VPS hosting](/install/vps) hub.

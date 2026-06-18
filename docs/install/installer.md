@@ -38,7 +38,8 @@ then run the same repo-backed commands inside Ubuntu.
     `node:sqlite` module. With auto-install enabled, the installer can install
     missing command-line tools, Node, and `pnpm` on common VPS and workstation
     families: Ubuntu, Debian, Kali, Fedora, CentOS, AlmaLinux, Rocky Linux,
-    CloudLinux, Alpine, Arch, FreeBSD, WSL2 Ubuntu, and macOS with Homebrew.
+    CloudLinux, Oracle Linux, Amazon Linux, openSUSE, SLES, Alpine, Arch,
+    FreeBSD, WSL2 Ubuntu, and macOS with Homebrew.
   </Step>
   <Step title="Ensure Git">
     Installs Git if it is missing.
@@ -132,15 +133,17 @@ From the repo root:
 `./install.sh` uses the host's normal package manager, then verifies that Node
 can load `node:sqlite` before continuing.
 
-| System family                              | Package manager path                                              |
-| ------------------------------------------ | ----------------------------------------------------------------- |
-| Ubuntu, Debian, Kali, WSL2 Ubuntu          | `apt-get` + NodeSource Node 24 when needed                        |
-| Fedora                                     | `dnf` / `dnf5`; native Node 24 package first, NodeSource fallback |
-| CentOS, AlmaLinux, Rocky Linux, CloudLinux | `dnf` / `yum` + NodeSource Node 24 fallback                       |
-| Alpine                                     | `apk` packages, then runtime verification                         |
-| Arch                                       | `pacman` packages, then runtime verification                      |
-| FreeBSD                                    | `pkg` packages, then runtime verification                         |
-| macOS                                      | Homebrew, if Homebrew is already installed                        |
+| System family                                            | Package manager path                                              |
+| -------------------------------------------------------- | ----------------------------------------------------------------- |
+| Ubuntu, Debian, Kali, WSL2 Ubuntu                        | `apt-get` + NodeSource Node 24 when needed                        |
+| Fedora                                                   | `dnf` / `dnf5`; native Node 24 package first, NodeSource fallback |
+| CentOS, AlmaLinux, Rocky Linux, CloudLinux, Oracle Linux | `dnf` / `yum` + NodeSource Node 24 fallback                       |
+| Amazon Linux                                             | `dnf` / `yum` + NodeSource Node 24 fallback                       |
+| openSUSE, SLES                                           | `zypper` packages, then runtime verification                      |
+| Alpine                                                   | `apk` packages, then runtime verification                         |
+| Arch                                                     | `pacman` packages, then runtime verification                      |
+| FreeBSD                                                  | `pkg` packages, then runtime verification                         |
+| macOS                                                    | Homebrew, if Homebrew is already installed                        |
 
 If a provider image ships an old or custom Node build, the installer stops with
 the exact Node problem instead of continuing with a broken runtime.
