@@ -1,5 +1,5 @@
 {
-  "name": "fased",
+  "name": "@fased/fased",
   "version": "0.1.7",
   "description": "Fased Agent self-hosted AI gateway with channels, tools, plugins, and operator modules",
   "keywords": [
