@@ -70,13 +70,6 @@ To print the local link without opening a browser:
 fased dashboard --no-open
 ```
 
-From a source checkout:
-
-```bash
-npm run build
-node fased.mjs dashboard --no-open
-```
-
 If the browser asks for a token later, use the Gateway token printed by the
 dashboard command or read the raw token:
 

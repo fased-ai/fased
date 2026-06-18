@@ -41,11 +41,14 @@ flowchart TD
 
 ## Prereqs
 
-- Node 24 recommended, or Node 22.14+ with the built-in `node:sqlite` module
+- Linux, macOS, or Windows through WSL2
+- Git access to the Fased repository
 
 <Tip>
-Check your runtime with `node --version` and
-`node -e 'require("node:sqlite"); console.log("node:sqlite ok")'` if you are unsure.
+On Debian, Ubuntu, WSL Ubuntu, Fedora, and common RHEL-family systems, the
+installer can install the needed command-line tools and Node runtime when they
+are missing. If you manage Node yourself, use Node 24, or Node 22.14+ with the
+built-in `node:sqlite` module.
 </Tip>
 
 ## Which install do I need?

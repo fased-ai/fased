@@ -42,7 +42,7 @@ Fased installer (single path): install.sh -> fased onboard --install-daemon
 Usage: ./install.sh [options] [-- <extra onboard args>]
 
 Options:
-  --auto-install   Linux only: install missing deps with apt (default)
+  --auto-install   Linux only: install missing deps with apt/dnf/yum (default)
   --no-auto-install  Disable automatic dependency installation
   --install-dir <path>  Checkout/install directory (default: $HOME/fased)
   --hosting       VPS/always-on server profile. Requires Tailscale; applies hosted
@@ -361,6 +361,104 @@ prefer_compatible_system_node_if_available() {
     fi
   done
   return 1
+}
+
+run_as_root() {
+  if [[ "$(id -u)" -eq 0 ]]; then
+    "$@"
+  else
+    sudo "$@"
+  fi
+}
+
+desired_pnpm_version() {
+  local version=""
+  if [[ -f "$FASED_DIR/package.json" ]]; then
+    version="$(
+      awk -F'"' '/"packageManager"[[:space:]]*:[[:space:]]*"pnpm@/ {
+        sub(/^pnpm@/, "", $4);
+        print $4;
+        exit
+      }' "$FASED_DIR/package.json" 2>/dev/null || true
+    )"
+  fi
+  printf '%s\n' "${version:-10.23.0}"
+}
+
+install_pnpm_for_active_node() {
+  if need_cmd pnpm; then
+    return 0
+  fi
+  if ! node_runtime_ok; then
+    return 1
+  fi
+
+  local pnpm_version
+  pnpm_version="$(desired_pnpm_version)"
+  if need_cmd corepack; then
+    run_as_root corepack enable || true
+    corepack enable || true
+    corepack prepare "pnpm@${pnpm_version}" --activate || true
+  fi
+  if ! need_cmd pnpm && need_cmd npm; then
+    npm install -g "pnpm@${pnpm_version}" || run_as_root npm install -g "pnpm@${pnpm_version}"
+  fi
+  hash -r 2>/dev/null || true
+  need_cmd pnpm
+}
+
+install_nodesource_node_apt() {
+  local setup_script
+  setup_script="$(mktemp)"
+  curl -fsSL https://deb.nodesource.com/setup_24.x -o "$setup_script"
+  run_as_root bash "$setup_script"
+  rm -f "$setup_script"
+  run_as_root apt-get install -y nodejs
+}
+
+install_linux_system_dependencies() {
+  if [[ "$(uname -s)" != "Linux" ]]; then
+    return 1
+  fi
+
+  if need_cmd apt-get; then
+    run_as_root apt-get update
+    run_as_root apt-get install -y git curl ca-certificates
+    hash -r 2>/dev/null || true
+    if ! node_runtime_ok; then
+      install_nodesource_node_apt
+      hash -r 2>/dev/null || true
+      prefer_compatible_system_node_if_available || true
+    fi
+  elif need_cmd dnf; then
+    run_as_root dnf install -y git curl ca-certificates
+    hash -r 2>/dev/null || true
+    if ! node_runtime_ok; then
+      run_as_root dnf install -y nodejs24-bin nodejs24-npm-bin || \
+        run_as_root dnf install -y nodejs22-bin nodejs22-npm-bin || \
+        run_as_root dnf install -y nodejs npm
+      hash -r 2>/dev/null || true
+      prefer_compatible_system_node_if_available || true
+    fi
+  elif need_cmd yum; then
+    run_as_root yum install -y git curl ca-certificates
+    hash -r 2>/dev/null || true
+    if ! node_runtime_ok; then
+      run_as_root yum install -y nodejs npm
+      hash -r 2>/dev/null || true
+      prefer_compatible_system_node_if_available || true
+    fi
+  else
+    echo "Unsupported Linux package manager for --auto-install." >&2
+    echo "Supported auto-install package managers: apt-get, dnf, yum." >&2
+    return 1
+  fi
+
+  if ! node_runtime_ok; then
+    print_node_runtime_help
+    return 1
+  fi
+  install_pnpm_for_active_node
 }
 
 root_has_active_time_sync_service() {
@@ -1586,17 +1684,7 @@ install_missing_deps_as_root_if_needed() {
     echo "Node runtime is incompatible: $(node_runtime_issue)"
   fi
 
-  apt-get update
-  apt-get install -y git curl ca-certificates
-  if ! node_runtime_ok; then
-    curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
-    apt-get install -y nodejs
-    prefer_compatible_system_node_if_available || true
-  fi
-  if ! need_cmd pnpm; then
-    corepack enable || true
-    corepack prepare pnpm@latest --activate || npm install -g pnpm
-  fi
+  install_linux_system_dependencies
 }
 
 bootstrap_repo_for_target_user() {
@@ -2207,18 +2295,7 @@ if [[ ${#missing[@]} -gt 0 || ! node_runtime_ok ]]; then
       echo "sudo is required for --auto-install" >&2
       exit 1
     fi
-    sudo apt-get update
-    sudo apt-get install -y git curl ca-certificates
-    if ! node_runtime_ok; then
-      curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
-      sudo apt-get install -y nodejs
-      prefer_compatible_system_node_if_available || true
-    fi
-    if ! need_cmd pnpm; then
-      sudo corepack enable || true
-      corepack enable || true
-      corepack prepare pnpm@latest --activate || npm install -g pnpm
-    fi
+    install_linux_system_dependencies
   else
     cat <<'EOF_HELP'
 Install missing tools, then rerun install.sh:
@@ -2229,6 +2306,11 @@ Install missing tools, then rerun install.sh:
 
 Linux auto install:
   ./install.sh --auto-install
+
+Supported auto-install package managers:
+  - apt-get on Debian/Ubuntu/WSL Ubuntu
+  - dnf on Fedora/RHEL-family systems
+  - yum on older RHEL-family systems
 
 Disable auto install:
   ./install.sh --no-auto-install

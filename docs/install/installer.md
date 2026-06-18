@@ -35,8 +35,9 @@ then run the same repo-backed commands inside Ubuntu.
   </Step>
   <Step title="Ensure a compatible Node.js runtime">
     Fased recommends Node 24 and requires Node 22.14 or newer with the built-in
-    `node:sqlite` module. On supported Linux hosts, the installer can install
-    missing dependencies when auto-install is enabled.
+    `node:sqlite` module. On Debian, Ubuntu, WSL Ubuntu, Fedora, and common
+    RHEL-family systems, the installer can install missing command-line tools,
+    Node, and `pnpm` when auto-install is enabled.
   </Step>
   <Step title="Ensure Git">
     Installs Git if it is missing.

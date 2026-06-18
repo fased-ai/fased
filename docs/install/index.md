@@ -36,9 +36,16 @@ flowchart TD
 
 ## System requirements
 
-- [Node 24 recommended, or Node 22.14+ with `node:sqlite`](/install/node)
 - macOS, Linux, or Windows through WSL2
-- `pnpm` only when building from source
+- Git access to the Fased repository
+- Node 24, or Node 22.14+ with `node:sqlite`, when you manage Node yourself
+
+<Note>
+On Debian, Ubuntu, WSL Ubuntu, Fedora, and common RHEL-family systems, the repo
+installer can install missing command-line tools, Node, and `pnpm` when
+auto-install is enabled. Normal users should start with `./install.sh`; source
+build commands are for developer workflows.
+</Note>
 
 <Note>
 Windows has two different paths:
@@ -360,17 +367,17 @@ Use [VPS hosting](/install/vps), [Hetzner](/install/hetzner), or
 
 ## Install method map
 
-| Method                   | Status                    | Use when                                                              |
-| ------------------------ | ------------------------- | --------------------------------------------------------------------- |
-| Repo-backed `install.sh` | Recommended public path   | macOS, Linux, WSL2, local laptop, or VPS install                      |
-| Source checkout          | Contributor path          | You want to build, test, or patch the repo directly                   |
-| Hosted/VPS profile       | Supported                 | You want an always-on Linux host with private access first            |
-| Docker                   | Supported optional path   | You want a containerized Gateway or sandbox validation                |
-| Podman                   | Supported container path  | You want rootless containers on Linux                                 |
-| Nix                      | Advanced/declarative path | You already manage systems with Nix/Home Manager                      |
-| Bun                      | Experimental dev path     | You want local TypeScript iteration; use Node for the Gateway         |
-| Remote client mode       | Supported client mode     | This machine should connect to an existing Gateway                    |
-| Task worker install      | Supported after setup     | You want separate task workers once a Gateway already exists          |
+| Method                   | Status                    | Use when                                                      |
+| ------------------------ | ------------------------- | ------------------------------------------------------------- |
+| Repo-backed `install.sh` | Recommended public path   | macOS, Linux, WSL2, local laptop, or VPS install              |
+| Source checkout          | Contributor path          | You want to build, test, or patch the repo directly           |
+| Hosted/VPS profile       | Supported                 | You want an always-on Linux host with private access first    |
+| Docker                   | Supported optional path   | You want a containerized Gateway or sandbox validation        |
+| Podman                   | Supported container path  | You want rootless containers on Linux                         |
+| Nix                      | Advanced/declarative path | You already manage systems with Nix/Home Manager              |
+| Bun                      | Experimental dev path     | You want local TypeScript iteration; use Node for the Gateway |
+| Remote client mode       | Supported client mode     | This machine should connect to an existing Gateway            |
+| Task worker install      | Supported after setup     | You want separate task workers once a Gateway already exists  |
 
 <CardGroup cols={2}>
   <Card title="Docker" href="/install/docker" icon="container">
