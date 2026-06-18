@@ -180,9 +180,9 @@ not reloaded its startup files yet.
 
 ### Advanced: npm global prefix problems
 
-After the first npm package is published, `npm install -g fased@latest` is the
-clean install path for users who already have Node/npm. Fresh machines and
-hosted VPS installs should still start with the curl bootstrap.
+This only matters if you are installing other npm tools or dependencies
+manually. Fased's normal public install path is the curl bootstrap until the
+package-manager path is published and tested.
 
 If you see `EACCES` errors from `npm install -g`, switch npm's global prefix to
 a user-writable directory:

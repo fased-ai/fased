@@ -375,7 +375,6 @@ Use [VPS hosting](/install/vps), [Hetzner](/install/hetzner), or
 | Method                   | Status                    | Use when                                                           |
 | ------------------------ | ------------------------- | ------------------------------------------------------------------ |
 | Repo-backed `install.sh` | Recommended public path   | macOS, Linux, WSL2, local laptop, or VPS install                   |
-| `npm install -g fased`   | After first npm publish   | You already have Node/npm and want the clean package path          |
 | Source checkout          | Contributor path          | You want to build, test, or patch the repo directly                |
 | Hosted/VPS profile       | Supported Linux path      | You want an always-on systemd Linux host with private access first |
 | Docker                   | Supported optional path   | You want a containerized Gateway or sandbox validation             |
@@ -402,9 +401,8 @@ Use [VPS hosting](/install/vps), [Hetzner](/install/hetzner), or
 
 <Note>
 The curl bootstrap remains the normal beginner setup path because it can install
-missing tools and handle fresh VPS setup. After the first npm package is
-published, `npm install -g fased@latest` is the clean path for users who already
-have Node/npm.
+missing tools and handle fresh VPS setup. Package-manager install will be
+documented after it is published and tested.
 </Note>
 
 ## Package manager rule

@@ -399,10 +399,8 @@ Normal users install with the curl bootstrap:
 curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash
 ```
 
-After the first npm package is published, users who already have Node/npm can
-use `npm install -g fased@latest`. Fresh VPS and hosted installs should keep
-using the curl bootstrap. The commands below are for contributors working from
-the source checkout.
+Package-manager install will be documented after the package is published and
+tested. The commands below are for contributors working from the source checkout.
 
 Common source commands:
 

@@ -209,16 +209,13 @@ fased status
 
 ## Current public boundary
 
-The public docs still assume the curl bootstrap for fresh installs and hosted
-systems:
+The public docs assume the curl bootstrap for fresh installs and hosted systems:
 
 - curl bootstrap or an existing checkout
 - `fased update`
 
-After the first npm package is published, `npm install -g fased@latest` becomes
-the clean path for users who already have Node/npm. Fresh VPS installs should
-still use the curl bootstrap because it prepares the host and then hands off to
-onboarding.
+Package-manager update guidance will be added only after the package-manager
+install path is published and tested.
 
 ## Related
 
