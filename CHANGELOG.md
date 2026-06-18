@@ -8,6 +8,20 @@ third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 
 - No unreleased changes yet.
 
+## 0.1.8
+
+- Publish and verify the npm package as `@fased/fased@latest`; the installed
+  command remains `fased`.
+- Fix the npm package contents so the global CLI includes the launcher runtime,
+  and add release checks for launcher packaging and brand-version drift.
+- Clarify the public install order: curl bootstrap for fresh local/VPS installs,
+  npm package for users who already have Node/npm, and source checkout for
+  contributors.
+- Expand installer portability across common Linux, VPS, FreeBSD, WSL2, and
+  macOS/Homebrew host families.
+- Supersede the broken `@fased/fased@0.1.7` npm package, which missed the
+  launcher runtime file.
+
 ## 0.1.6
 
 - Fix fresh local and hosted QuickStart onboarding so the dashboard does not
