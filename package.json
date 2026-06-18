@@ -65,6 +65,9 @@
     },
     "./cli-entry": "./fased.mjs"
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "android:assemble": "cd apps/android && ./gradlew :app:assembleDebug",
     "android:install": "cd apps/android && ./gradlew :app:installDebug",
