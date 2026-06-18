@@ -92,9 +92,7 @@ recovery options and VPS provider console access working.
     Use this on your own machine:
 
     ```bash
-    git clone https://github.com/fased-ai/fased.git fased
-    cd fased
-    ./install.sh
+    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash
     ```
 
     Local setup keeps the Gateway on this machine and does not apply VPS SSH or
@@ -170,11 +168,17 @@ recovery options and VPS provider console access working.
 
     ```bash
     curl -fsSL https://tailscale.com/install.sh | sh
-    sudo tailscale up --ssh
+    tailscale up --ssh
 
-    git clone https://github.com/fased-ai/fased.git fased
-    cd fased
-    ./install.sh --hosting
+    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
+    ```
+
+    The Fased installer bootstraps the repository itself. A fresh VPS does not
+    need `git clone` first. If the image is so small that `curl` is missing,
+    install only the downloader first, then rerun the same command:
+
+    ```bash
+    dnf install -y curl ca-certificates
     ```
 
     Current installers try a clean fast-forward update from Git before building.

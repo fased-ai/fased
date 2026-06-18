@@ -2414,7 +2414,15 @@ fi
 if [[ ! -f "$FASED_DIR/package.json" || ! -d "$FASED_DIR/src" ]]; then
   echo "== Bootstrap repository =="
   if ! need_cmd git; then
+    if [[ "$AUTO_INSTALL" -eq 1 ]]; then
+      echo "git is missing; installing bootstrap dependencies first."
+      install_supported_system_dependencies
+      hash -r 2>/dev/null || true
+    fi
+  fi
+  if ! need_cmd git; then
     echo "git is required to bootstrap the repository checkout." >&2
+    echo "Install git manually or rerun with --auto-install on a supported OS." >&2
     exit 1
   fi
   if [[ ! -e "$INSTALL_BASE_DIR" ]]; then

@@ -87,11 +87,27 @@ Then run this on the VPS:
 
 ```bash
 curl -fsSL https://tailscale.com/install.sh | sh
-sudo tailscale up --ssh
+tailscale up --ssh
 
-git clone https://github.com/fased-ai/fased.git fased
-cd fased
-./install.sh --hosting
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
+```
+
+The Fased installer bootstraps the repository itself. A fresh VPS does not need
+`git clone` first. It installs missing system tools, Node, `pnpm`, and Git when
+the OS package manager supports auto-install.
+
+If a very small Fedora/RHEL-family image does not have `curl`, install only the
+downloader first, then rerun the same hosted command:
+
+```bash
+dnf install -y curl ca-certificates
+```
+
+On Debian/Ubuntu-family images without `curl`, use:
+
+```bash
+apt-get update
+apt-get install -y curl ca-certificates
 ```
 
 ## Recommended VPS size

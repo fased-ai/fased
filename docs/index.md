@@ -117,9 +117,7 @@ The Gateway keeps sessions, routing, channels, and agent behavior in one place.
 <Steps>
   <Step title="Install Fased">
     ```bash
-    git clone https://github.com/fased-ai/fased.git fased
-    cd fased
-    ./install.sh
+    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash
     ```
   </Step>
   <Step title="Open the Control UI">

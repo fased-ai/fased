@@ -17,14 +17,12 @@ This docs set only documents the installer that exists in this repo:
 If you are starting from zero, the normal path is:
 
 ```bash
-git clone https://github.com/fased-ai/fased.git fased
-cd fased
-./install.sh
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash
 ```
 
 <Note>
 On Windows, use [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install),
-then run the same repo-backed commands inside Ubuntu.
+then run the same bootstrap command inside Ubuntu.
 </Note>
 
 ## What `install.sh` does
@@ -151,9 +149,13 @@ the exact Node problem instead of continuing with a broken runtime.
 Fresh machine, one copy-paste block:
 
 ```bash
-git clone https://github.com/fased-ai/fased.git fased
-cd fased
-./install.sh
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash
+```
+
+Fresh VPS hosting, after Tailscale login:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
 ```
 
 Hosting note:

@@ -77,9 +77,7 @@ For the full decision table, read [Setup Matrix](/start/setup-matrix).
     <Tabs>
       <Tab title="Local">
         ```bash
-        git clone https://github.com/fased-ai/fased.git fased
-        cd fased
-        ./install.sh
+        curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash
         ```
 
         Use this for your laptop, desktop, dev box, or WSL2.
@@ -94,11 +92,9 @@ For the full decision table, read [Setup Matrix](/start/setup-matrix).
       <Tab title="VPS Hosting">
         ```bash
         curl -fsSL https://tailscale.com/install.sh | sh
-        sudo tailscale up --ssh
+        tailscale up --ssh
 
-        git clone https://github.com/fased-ai/fased.git fased
-        cd fased
-        ./install.sh --hosting
+        curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
         ```
 
         Run this **on the VPS itself**. If Tailscale prints a login URL in SSH,
@@ -124,9 +120,7 @@ For the full decision table, read [Setup Matrix](/start/setup-matrix).
         Use [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install), then run the same installer inside Ubuntu:
 
         ```bash
-        git clone https://github.com/fased-ai/fased.git fased
-        cd fased
-        ./install.sh
+        curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash
         ```
       </Tab>
     </Tabs>

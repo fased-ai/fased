@@ -42,9 +42,7 @@ flowchart TD
 Use the normal install path:
 
 ```bash
-git clone https://github.com/fased-ai/fased.git fased
-cd fased
-./install.sh
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash
 ```
 
 Choose **Local** for a laptop, desktop, dev box, or first test. Choose
