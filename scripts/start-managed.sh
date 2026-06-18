@@ -26,7 +26,8 @@ resolve_node_bin() {
     "$HOME"/.asdf/shims/node \
     "$HOME"/.local/share/mise/shims/node \
     /usr/bin/node \
-    /usr/local/bin/node; do
+    /usr/local/bin/node \
+    /opt/homebrew/bin/node; do
     [[ -e "$candidate" ]] || continue
     if node_runtime_ok_for "$candidate"; then
       printf '%s\n' "$candidate"

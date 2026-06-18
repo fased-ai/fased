@@ -462,13 +462,17 @@ install_linux_system_dependencies() {
       hash -r 2>/dev/null || true
       prefer_compatible_system_node_if_available || true
     fi
-  elif need_cmd dnf; then
-    run_as_root dnf install -y git curl ca-certificates
+  elif need_cmd dnf || need_cmd dnf5; then
+    local dnf_cmd="dnf"
+    if ! need_cmd dnf && need_cmd dnf5; then
+      dnf_cmd="dnf5"
+    fi
+    run_as_root "$dnf_cmd" install -y git curl ca-certificates
     hash -r 2>/dev/null || true
     if ! node_runtime_ok; then
-      run_as_root dnf install -y nodejs24-bin nodejs24-npm-bin || \
-        run_as_root dnf install -y nodejs22-bin nodejs22-npm-bin || \
-        run_as_root dnf install -y nodejs npm
+      run_as_root "$dnf_cmd" install -y nodejs24-bin nodejs24-npm-bin || \
+        run_as_root "$dnf_cmd" install -y nodejs22-bin nodejs22-npm-bin || \
+        run_as_root "$dnf_cmd" install -y nodejs npm
       hash -r 2>/dev/null || true
       prefer_compatible_system_node_if_available || true
     fi
@@ -483,7 +487,7 @@ install_linux_system_dependencies() {
   else
     echo "Unsupported Linux package manager for --auto-install." >&2
     echo "Detected system: $(linux_os_summary)" >&2
-    echo "Supported auto-install package managers: apt-get, dnf, yum." >&2
+    echo "Supported auto-install package managers: apt-get, dnf, dnf5, yum." >&2
     echo "Install git, curl, Node 24, and pnpm manually, then rerun ./install.sh." >&2
     return 1
   fi
@@ -551,7 +555,7 @@ install_supported_system_dependencies() {
       ;;
     *)
       echo "Unsupported operating system for --auto-install: $(uname -s)" >&2
-      echo "Supported auto-install targets: Linux with apt-get/dnf/yum, or macOS with Homebrew." >&2
+      echo "Supported auto-install targets: Linux with apt-get/dnf/dnf5/yum, or macOS with Homebrew." >&2
       echo "Install git, curl, Node 24, and pnpm manually, then rerun ./install.sh." >&2
       return 1
       ;;
@@ -1848,6 +1852,7 @@ install_host_maintenance_sudoers() {
   cat >"$sudoers_path" <<EOF
 ${target_user} ALL=(root) NOPASSWD: /usr/bin/tailscale *
 ${target_user} ALL=(root) NOPASSWD: /usr/sbin/ufw *
+${target_user} ALL=(root) NOPASSWD: /usr/bin/firewall-cmd *
 ${target_user} ALL=(root) NOPASSWD: /usr/bin/timedatectl set-ntp true
 ${target_user} ALL=(root) NOPASSWD: /usr/bin/timedatectl status
 ${target_user} ALL=(root) NOPASSWD: /usr/bin/timedatectl timesync-status
@@ -1857,18 +1862,35 @@ ${target_user} ALL=(root) NOPASSWD: /usr/bin/apt-get install -y ufw
 ${target_user} ALL=(root) NOPASSWD: /usr/bin/apt-get install -y fail2ban
 ${target_user} ALL=(root) NOPASSWD: /usr/bin/apt-get install -y chrony
 ${target_user} ALL=(root) NOPASSWD: /usr/bin/apt-get install -y unattended-upgrades
+${target_user} ALL=(root) NOPASSWD: /usr/bin/dnf install -y firewalld
+${target_user} ALL=(root) NOPASSWD: /usr/bin/dnf install -y fail2ban
+${target_user} ALL=(root) NOPASSWD: /usr/bin/dnf install -y chrony
+${target_user} ALL=(root) NOPASSWD: /usr/bin/dnf install -y dnf-automatic
+${target_user} ALL=(root) NOPASSWD: /usr/bin/dnf5 install -y firewalld
+${target_user} ALL=(root) NOPASSWD: /usr/bin/dnf5 install -y fail2ban
+${target_user} ALL=(root) NOPASSWD: /usr/bin/dnf5 install -y chrony
+${target_user} ALL=(root) NOPASSWD: /usr/bin/dnf5 install -y dnf-automatic
+${target_user} ALL=(root) NOPASSWD: /usr/bin/yum install -y firewalld
+${target_user} ALL=(root) NOPASSWD: /usr/bin/yum install -y fail2ban
+${target_user} ALL=(root) NOPASSWD: /usr/bin/yum install -y chrony
+${target_user} ALL=(root) NOPASSWD: /usr/bin/yum install -y dnf-automatic
+${target_user} ALL=(root) NOPASSWD: /usr/bin/yum install -y yum-cron
 ${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl daemon-reload
 ${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl is-active --quiet ssh
 ${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl is-active --quiet sshd
+${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl is-active --quiet firewalld
 ${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now systemd-timesyncd
 ${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl restart systemd-timesyncd
 ${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now chrony
 ${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now chronyd
 ${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl restart chrony
 ${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl restart chronyd
+${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now firewalld
 ${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now fail2ban
 ${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now unattended-upgrades
 ${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now apt-daily.timer apt-daily-upgrade.timer
+${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now dnf-automatic.timer
+${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now yum-cron
 ${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl restart ssh
 ${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl restart sshd
 ${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl restart fased-gateway.service
@@ -1888,6 +1910,7 @@ ${target_user} ALL=(root) NOPASSWD: /usr/bin/journalctl -u fased-gateway *
 ${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-install-gateway-service fased-gateway ${target_user}
 ${target_user} ALL=(root) NOPASSWD:SETENV: /usr/local/sbin/fased-signer-isolation ${target_user} ${signer_user} *
 ${target_user} ALL=(root) NOPASSWD: /usr/bin/sed -i * /etc/ssh/sshd_config
+${target_user} ALL=(root) NOPASSWD: /usr/bin/sed -i * /etc/dnf/automatic.conf
 EOF
   chmod 440 "$sudoers_path"
   if need_cmd visudo; then

@@ -368,17 +368,17 @@ Use [VPS hosting](/install/vps), [Hetzner](/install/hetzner), or
 
 ## Install method map
 
-| Method                   | Status                    | Use when                                                      |
-| ------------------------ | ------------------------- | ------------------------------------------------------------- |
-| Repo-backed `install.sh` | Recommended public path   | macOS, Linux, WSL2, local laptop, or VPS install              |
-| Source checkout          | Contributor path          | You want to build, test, or patch the repo directly           |
-| Hosted/VPS profile       | Supported                 | You want an always-on Linux host with private access first    |
-| Docker                   | Supported optional path   | You want a containerized Gateway or sandbox validation        |
-| Podman                   | Supported container path  | You want rootless containers on Linux                         |
-| Nix                      | Advanced/declarative path | You already manage systems with Nix/Home Manager              |
-| Bun                      | Experimental dev path     | You want local TypeScript iteration; use Node for the Gateway |
-| Remote client mode       | Supported client mode     | This machine should connect to an existing Gateway            |
-| Task worker install      | Supported after setup     | You want separate task workers once a Gateway already exists  |
+| Method                   | Status                    | Use when                                                           |
+| ------------------------ | ------------------------- | ------------------------------------------------------------------ |
+| Repo-backed `install.sh` | Recommended public path   | macOS, Linux, WSL2, local laptop, or VPS install                   |
+| Source checkout          | Contributor path          | You want to build, test, or patch the repo directly                |
+| Hosted/VPS profile       | Supported Linux path      | You want an always-on systemd Linux host with private access first |
+| Docker                   | Supported optional path   | You want a containerized Gateway or sandbox validation             |
+| Podman                   | Supported container path  | You want rootless containers on Linux                              |
+| Nix                      | Advanced/declarative path | You already manage systems with Nix/Home Manager                   |
+| Bun                      | Experimental dev path     | You want local TypeScript iteration; use Node for the Gateway      |
+| Remote client mode       | Supported client mode     | This machine should connect to an existing Gateway                 |
+| Task worker install      | Supported after setup     | You want separate task workers once a Gateway already exists       |
 
 <CardGroup cols={2}>
   <Card title="Docker" href="/install/docker" icon="container">
@@ -418,6 +418,16 @@ The repository itself uses `pnpm` internally. The installer installs or activate
 - `npm`: occasional plugin/skill dependency installs, or fallback for installing
   `pnpm` when Corepack is unavailable.
 - `Bun`: experimental local development only. Use Node for the Gateway runtime.
+
+## OS support boundary
+
+- Local install: macOS, Debian/Ubuntu, WSL Ubuntu, Fedora/RHEL-family Linux, and
+  common Linux hosts with `apt-get`, `dnf`, `dnf5`, or `yum`.
+- Hosted/VPS hardening: Linux with systemd, currently Debian/Ubuntu and
+  Fedora/RHEL-family hosts.
+- Containers: Docker and Podman paths are separate from host package managers.
+- Native Windows: use WSL2 for the Gateway. The native Windows app/runtime path
+  is not the public install path.
 
 ## Validate install
 

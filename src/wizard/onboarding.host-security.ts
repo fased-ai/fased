@@ -11,7 +11,7 @@ import type { HostSetupProfile } from "./onboarding.types.js";
 import type { WizardPrompter } from "./prompts.js";
 
 export type HostSecurityCheck = {
-  name: "swap" | "tailscale" | "ufw" | "ssh" | "fail2ban" | "updates";
+  name: "swap" | "tailscale" | "firewall" | "ssh" | "fail2ban" | "updates";
   ok: boolean;
   detail: string;
 };
@@ -306,11 +306,15 @@ function ensureTailnetSshIngressForVerification(params: {
 }): { ok: boolean; detail?: string } {
   const runner = params.runner ?? run;
   const command = [
-    "if ! command -v ufw >/dev/null 2>&1; then exit 0; fi",
-    "if sudo -n ufw status | grep -qi '^Status: active'; then",
-    "sudo -n ufw insert 1 allow in on tailscale0 to any port 22 proto tcp || sudo -n ufw allow in on tailscale0 to any port 22 proto tcp",
-    "else",
-    "sudo -n ufw allow in on tailscale0 to any port 22 proto tcp >/dev/null 2>&1 || true",
+    "if command -v ufw >/dev/null 2>&1; then",
+    "  if sudo -n ufw status | grep -qi '^Status: active'; then",
+    "    sudo -n ufw insert 1 allow in on tailscale0 to any port 22 proto tcp || sudo -n ufw allow in on tailscale0 to any port 22 proto tcp",
+    "  else",
+    "    sudo -n ufw allow in on tailscale0 to any port 22 proto tcp >/dev/null 2>&1 || true",
+    "  fi",
+    "elif command -v firewall-cmd >/dev/null 2>&1 && sudo -n systemctl is-active --quiet firewalld; then",
+    "  sudo -n firewall-cmd --permanent --zone=trusted --add-interface=tailscale0 >/dev/null 2>&1 || true",
+    "  sudo -n firewall-cmd --reload >/dev/null 2>&1 || true",
     "fi",
   ].join("\n");
   const result = runner(command, params.logPath);
@@ -491,11 +495,79 @@ function isTailscaleServeReady(port: number): boolean {
   return out.includes(`127.0.0.1:${port}`);
 }
 
-function runApt(command: string): { ok: boolean; detail?: string } {
+function runHostSetupCommand(command: string): { ok: boolean; detail?: string } {
   return run(
     `export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a PYTHONWARNINGS=ignore::SyntaxWarning; ${command}`,
     resolveHostSecurityLogPath(),
   );
+}
+
+function packageInstallCommand(packages: string[]): string {
+  const packageList = packages.map(shellQuote).join(" ");
+  return [
+    "if command -v apt-get >/dev/null 2>&1; then",
+    "  sudo -n apt-get update && sudo -n apt-get install -y " + packageList,
+    "elif command -v dnf >/dev/null 2>&1; then",
+    "  sudo -n dnf install -y " + packageList,
+    "elif command -v dnf5 >/dev/null 2>&1; then",
+    "  sudo -n dnf5 install -y " + packageList,
+    "elif command -v yum >/dev/null 2>&1; then",
+    "  sudo -n yum install -y " + packageList,
+    "else",
+    "  echo 'unsupported package manager: need apt-get, dnf, dnf5, or yum' >&2",
+    "  exit 1",
+    "fi",
+  ].join("\n");
+}
+
+function firewallBaselineCommand(): string {
+  return [
+    "if command -v ufw >/dev/null 2>&1 || command -v apt-get >/dev/null 2>&1; then",
+    "  command -v ufw >/dev/null 2>&1 || { " + packageInstallCommand(["ufw"]) + "; }",
+    "  sudo -n ufw default deny incoming",
+    "  sudo -n ufw default allow outgoing",
+    "  sudo -n ufw insert 1 allow in on tailscale0 to any port 22 proto tcp || sudo -n ufw allow in on tailscale0 to any port 22 proto tcp",
+    "  sudo -n ufw insert 2 allow in on tailscale0 to any port 443 proto tcp || sudo -n ufw allow in on tailscale0 to any port 443 proto tcp",
+    "  sudo -n ufw deny 22/tcp || true",
+    "  sudo -n ufw --force enable",
+    "elif command -v firewall-cmd >/dev/null 2>&1 || command -v dnf >/dev/null 2>&1 || command -v dnf5 >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; then",
+    "  command -v firewall-cmd >/dev/null 2>&1 || { " +
+      packageInstallCommand(["firewalld"]) +
+      "; }",
+    "  sudo -n systemctl enable --now firewalld",
+    "  sudo -n firewall-cmd --permanent --zone=trusted --add-interface=tailscale0 >/dev/null 2>&1 || true",
+    "  sudo -n firewall-cmd --permanent --zone=public --remove-service=ssh >/dev/null 2>&1 || true",
+    "  sudo -n firewall-cmd --permanent --zone=public --remove-port=22/tcp >/dev/null 2>&1 || true",
+    "  sudo -n firewall-cmd --reload",
+    "else",
+    "  echo 'no supported firewall manager found: need ufw or firewalld' >&2",
+    "  exit 1",
+    "fi",
+  ].join("\n");
+}
+
+function automaticUpdatesCommand(): string {
+  return [
+    "if command -v apt-get >/dev/null 2>&1; then",
+    "  " + packageInstallCommand(["unattended-upgrades"]),
+    "  sudo -n systemctl enable --now unattended-upgrades >/dev/null 2>&1 || true",
+    "  sudo -n systemctl enable --now apt-daily.timer apt-daily-upgrade.timer",
+    "elif command -v dnf >/dev/null 2>&1 || command -v dnf5 >/dev/null 2>&1; then",
+    "  " + packageInstallCommand(["dnf-automatic"]),
+    "  sudo -n sed -i 's/^apply_updates[[:space:]]*=.*/apply_updates = yes/' /etc/dnf/automatic.conf >/dev/null 2>&1 || true",
+    "  sudo -n systemctl enable --now dnf-automatic.timer",
+    "elif command -v yum >/dev/null 2>&1; then",
+    "  (" +
+      packageInstallCommand(["dnf-automatic"]) +
+      ") || (" +
+      packageInstallCommand(["yum-cron"]) +
+      ")",
+    "  sudo -n systemctl enable --now dnf-automatic.timer >/dev/null 2>&1 || sudo -n systemctl enable --now yum-cron",
+    "else",
+    "  echo 'unsupported package manager for automatic updates' >&2",
+    "  exit 1",
+    "fi",
+  ].join("\n");
 }
 
 function failOrContinue(params: {
@@ -630,7 +702,7 @@ export async function applyHostingSecurity(params: {
   }
 
   if (!hasCommand("sudo")) {
-    checks.push({ name: "ufw", ok: false, detail: "sudo is required for hosting setup" });
+    checks.push({ name: "firewall", ok: false, detail: "sudo is required for hosting setup" });
     failOrContinue({ opts, runtime, step: "sudo is required for hosting setup" });
     return { profile, checks, enforced: false, logPath };
   }
@@ -810,7 +882,7 @@ export async function applyHostingSecurity(params: {
     failOrContinue({
       opts,
       runtime,
-      step: "tailscale not ready; refusing to apply ssh/ufw lock-down",
+      step: "tailscale not ready; refusing to apply ssh/firewall lock-down",
     });
     return { profile, checks, enforced: false, logPath };
   }
@@ -859,7 +931,7 @@ export async function applyHostingSecurity(params: {
     failOrContinue({
       opts,
       runtime,
-      step: "tailscale serve setup failed; refusing to apply ssh/ufw lock-down",
+      step: "tailscale serve setup failed; refusing to apply ssh/firewall lock-down",
       detail: serveRes.detail,
     });
     return { profile, checks, enforced: false, logPath };
@@ -870,22 +942,25 @@ export async function applyHostingSecurity(params: {
     detail: `tailscale serve is active for 127.0.0.1:${servePort}`,
   });
 
-  const ufwRes = runApt(
-    "command -v ufw >/dev/null 2>&1 || (sudo -n apt-get update && sudo -n apt-get install -y ufw); " +
-      "sudo -n ufw default deny incoming; sudo -n ufw default allow outgoing; " +
-      "sudo -n ufw insert 1 allow in on tailscale0 to any port 22 proto tcp || sudo -n ufw allow in on tailscale0 to any port 22 proto tcp; " +
-      "sudo -n ufw insert 2 allow in on tailscale0 to any port 443 proto tcp || sudo -n ufw allow in on tailscale0 to any port 443 proto tcp; " +
-      "sudo -n ufw deny 22/tcp || true; sudo -n ufw --force enable",
-  );
-  if (!ufwRes.ok) {
-    checks.push({ name: "ufw", ok: false, detail: ufwRes.detail ?? "ufw baseline failed" });
-    failOrContinue({ opts, runtime, step: "ufw baseline failed", detail: ufwRes.detail });
+  const firewallRes = runHostSetupCommand(firewallBaselineCommand());
+  if (!firewallRes.ok) {
+    checks.push({
+      name: "firewall",
+      ok: false,
+      detail: firewallRes.detail ?? "firewall baseline failed",
+    });
+    failOrContinue({
+      opts,
+      runtime,
+      step: "firewall baseline failed",
+      detail: firewallRes.detail,
+    });
     return { profile, checks, enforced: false };
   }
   checks.push({
-    name: "ufw",
+    name: "firewall",
     ok: true,
-    detail: "default-deny with tailnet SSH/HTTPS ingress only",
+    detail: "default-deny public ingress with tailnet SSH/HTTPS access",
   });
 
   const sshRes = run(
@@ -905,8 +980,8 @@ export async function applyHostingSecurity(params: {
     detail: "password auth/root login disabled and ssh restarted",
   });
 
-  const f2bRes = runApt(
-    "sudo -n apt-get install -y fail2ban && sudo -n systemctl enable --now fail2ban",
+  const f2bRes = runHostSetupCommand(
+    `${packageInstallCommand(["fail2ban"])}\nsudo -n systemctl enable --now fail2ban`,
   );
   if (!f2bRes.ok) {
     checks.push({ name: "fail2ban", ok: false, detail: f2bRes.detail ?? "fail2ban setup failed" });
@@ -915,11 +990,7 @@ export async function applyHostingSecurity(params: {
   }
   checks.push({ name: "fail2ban", ok: true, detail: "installed and enabled" });
 
-  const updatesRes = runApt(
-    "sudo -n apt-get install -y unattended-upgrades && " +
-      "sudo -n systemctl enable --now unattended-upgrades >/dev/null 2>&1 || true; " +
-      "sudo -n systemctl enable --now apt-daily.timer apt-daily-upgrade.timer",
-  );
+  const updatesRes = runHostSetupCommand(automaticUpdatesCommand());
   if (!updatesRes.ok) {
     checks.push({
       name: "updates",
@@ -934,7 +1005,7 @@ export async function applyHostingSecurity(params: {
     });
     return { profile, checks, enforced: false, logPath };
   }
-  checks.push({ name: "updates", ok: true, detail: "unattended upgrades/timers enabled" });
+  checks.push({ name: "updates", ok: true, detail: "automatic security updates enabled" });
 
   runtime.log("Hosting host hardening complete.");
   return { profile, checks, enforced: true, logPath };
@@ -952,5 +1023,8 @@ export const __testing = {
   sanitizeHostSecurityLogText,
   confirmTailnetSshBeforeLockdown,
   ensureTailnetSshIngressForVerification,
+  firewallBaselineCommand,
+  packageInstallCommand,
+  automaticUpdatesCommand,
   verifyTailnetSshServerPrerequisites,
 };

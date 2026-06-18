@@ -138,11 +138,52 @@ describe("onboarding host security", () => {
     expect(result.ok).toBe(true);
     expect(commands).toHaveLength(1);
     expect(commands[0]).toContain("ufw insert 1 allow in on tailscale0 to any port 22");
+    expect(commands[0]).toContain(
+      "firewall-cmd --permanent --zone=trusted --add-interface=tailscale0",
+    );
     expect(commands[0]).not.toContain("ufw allow 22/tcp");
-    expect(commands[0]).not.toContain("then;");
-    expect(commands[0]).not.toContain("else;");
     const syntax = spawnSync("bash", ["-n"], {
       input: commands[0],
+      encoding: "utf8",
+    });
+    expect(syntax.status, syntax.stderr).toBe(0);
+  });
+
+  it("generates portable package manager commands for hosted hardening", () => {
+    const command = __testing.packageInstallCommand(["fail2ban"]);
+
+    expect(command).toContain("apt-get install -y 'fail2ban'");
+    expect(command).toContain("dnf install -y 'fail2ban'");
+    expect(command).toContain("dnf5 install -y 'fail2ban'");
+    expect(command).toContain("yum install -y 'fail2ban'");
+    const syntax = spawnSync("bash", ["-n"], {
+      input: command,
+      encoding: "utf8",
+    });
+    expect(syntax.status, syntax.stderr).toBe(0);
+  });
+
+  it("generates hosted firewall hardening for ufw and firewalld", () => {
+    const command = __testing.firewallBaselineCommand();
+
+    expect(command).toContain("ufw default deny incoming");
+    expect(command).toContain("firewall-cmd --permanent --zone=trusted --add-interface=tailscale0");
+    expect(command).toContain("firewall-cmd --permanent --zone=public --remove-service=ssh");
+    const syntax = spawnSync("bash", ["-n"], {
+      input: command,
+      encoding: "utf8",
+    });
+    expect(syntax.status, syntax.stderr).toBe(0);
+  });
+
+  it("generates automatic update setup for apt and dnf families", () => {
+    const command = __testing.automaticUpdatesCommand();
+
+    expect(command).toContain("unattended-upgrades");
+    expect(command).toContain("dnf-automatic");
+    expect(command).toContain("yum-cron");
+    const syntax = spawnSync("bash", ["-n"], {
+      input: command,
       encoding: "utf8",
     });
     expect(syntax.status, syntax.stderr).toBe(0);

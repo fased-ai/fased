@@ -206,7 +206,7 @@ These are the flags that matter for the current public repo-backed flow.
 
 | Flag                   | Description                                                       |
 | ---------------------- | ----------------------------------------------------------------- |
-| `--auto-install`       | Install missing Linux dependencies with `apt` where supported.    |
+| `--auto-install`       | Install missing macOS/Linux dependencies where supported.         |
 | `--no-auto-install`    | Do not install missing dependencies automatically.                |
 | `--install-dir <path>` | Bootstrap or resolve the checkout under a specific directory.     |
 | `--hosting`            | Use hosted/VPS onboarding defaults.                               |
