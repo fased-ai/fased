@@ -393,14 +393,22 @@ Marketplace and Mining integration is intentionally task-ledger aware:
 
 ## Development
 
-Normal users install with the curl bootstrap:
+Fresh machines and hosted VPS installs should use the curl bootstrap because it
+can install missing OS tools, Git, Node, and `pnpm`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash
 ```
 
-Package-manager install will be documented after the package is published and
-tested. The commands below are for contributors working from the source checkout.
+If you already have Node/npm and only want the CLI package:
+
+```bash
+npm install -g @fased/fased@latest
+```
+
+The installed command is still `fased`.
+
+The commands below are for contributors working from the source checkout.
 
 Common source commands:
 

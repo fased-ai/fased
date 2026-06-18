@@ -297,8 +297,15 @@ curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | ba
 The curl bootstrap is the best first-run path for fresh machines because it can
 install missing OS tools, Git, Node, and `pnpm`.
 
-Package-manager install will be documented after the package is published,
-installed on a clean test machine, and verified end to end.
+If you already have Node/npm and only want the published CLI package:
+
+```bash
+npm install -g @fased/fased@latest
+fased --version
+fased dashboard --no-open
+```
+
+The npm package name is `@fased/fased`; the installed command is `fased`.
 
 Bun global installs are not the public Fased install path; Bun remains
 experimental local development only.

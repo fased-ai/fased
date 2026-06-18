@@ -15,8 +15,10 @@ Fased ships three update channels for repo-backed updates:
 - **dev**: developer channel for moving head of `main`.
 
 <Note>
-The public install path starts with the curl bootstrap. Package-manager channel
-guidance will be added after that path is published and tested.
+Fresh machines and hosted VPS installs should start with the curl bootstrap.
+Users who already have Node/npm can install the published package with
+`npm install -g @fased/fased@latest`. Source checkout channels use
+`fased update`, not npm dist-tags.
 </Note>
 
 Maintainers ship builds to **beta**, test them, then **promote a vetted build to
@@ -52,7 +54,11 @@ fased update --channel dev
 ```
 
 Fresh machines and hosted VPS installs should still use the curl bootstrap
-first.
+first. Npm global installs use the npm `latest` dist-tag:
+
+```bash
+npm install -g @fased/fased@latest
+```
 
 When you **explicitly** switch channels with `--channel`, Fased also aligns
 the install method:

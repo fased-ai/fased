@@ -21,6 +21,7 @@ installable snapshot users should receive.
 Today the public release model is:
 
 - curl bootstrap install for beginner/local/fresh VPS setup
+- npm package for users who already have Node/npm
 - annotated Git tag + GitHub release for user-installable snapshots
 - optional macOS Sparkle/appcast if a signed desktop build is being shipped
 
@@ -31,8 +32,13 @@ OS tools, Git, Node, and pnpm:
 curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash
 ```
 
-Do not add public package-manager install commands until the package is
-published, installed on a clean test machine, and verified end to end.
+The tested npm package path is:
+
+```bash
+npm install -g @fased/fased@latest
+```
+
+The npm package name is `@fased/fased`; the installed command is `fased`.
 
 ## Version vs tag vs release vs appcast
 

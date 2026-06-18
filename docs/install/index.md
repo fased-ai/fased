@@ -401,24 +401,40 @@ Use [VPS hosting](/install/vps), [Hetzner](/install/hetzner), or
 
 <Note>
 The curl bootstrap remains the normal beginner setup path because it can install
-missing tools and handle fresh VPS setup. Package-manager install will be
-documented after it is published and tested.
+missing tools and handle fresh VPS setup. If you already have Node/npm and only
+want the CLI package, use the npm package path below.
 </Note>
 
-## Package manager rule
+## Install order
 
-Normal users should run the curl bootstrap installer:
+Fresh machines, local desktops, WSL2, and hosted VPS installs should start with
+the curl bootstrap:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash
 ```
 
-The repository itself uses `pnpm` internally. The installer installs or activates
-`pnpm` when it is needed. Do not run `npm install` to install Fased from source.
+If Node/npm is already installed and compatible, install the published CLI
+package:
+
+```bash
+npm install -g @fased/fased@latest
+fased --version
+fased dashboard --no-open
+```
+
+The npm package name is `@fased/fased`; the installed command is `fased`.
+
+## Package manager rule
+
+The repository itself uses `pnpm` internally. The curl installer installs or
+activates `pnpm` when it is needed. Do not run plain `npm install` to install
+Fased from source.
 
 - `pnpm`: source builds, tests, docs, Docker builds, and contributor workflows.
-- `npm`: occasional plugin/skill dependency installs, or fallback for installing
-  `pnpm` when Corepack is unavailable.
+- `npm`: global install of the published `@fased/fased` package, occasional
+  plugin/skill dependency installs, or fallback for installing `pnpm` when
+  Corepack is unavailable.
 - `Bun`: experimental local development only. Use Node for the Gateway runtime.
 
 ## OS support boundary

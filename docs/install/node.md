@@ -180,9 +180,13 @@ not reloaded its startup files yet.
 
 ### Advanced: npm global prefix problems
 
-This only matters if you are installing other npm tools or dependencies
-manually. Fased's normal public install path is the curl bootstrap until the
-package-manager path is published and tested.
+This matters if you install the published package with npm:
+
+```bash
+npm install -g @fased/fased@latest
+```
+
+The package name is `@fased/fased`; the installed command is `fased`.
 
 If you see `EACCES` errors from `npm install -g`, switch npm's global prefix to
 a user-writable directory:

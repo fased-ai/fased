@@ -209,13 +209,18 @@ fased status
 
 ## Current public boundary
 
-The public docs assume the curl bootstrap for fresh installs and hosted systems:
+Fresh installs and hosted systems should use the curl bootstrap:
 
-- curl bootstrap or an existing checkout
-- `fased update`
+- curl bootstrap for fresh local machines, WSL2, and hosted VPS
+- `fased update` for repo-backed installs
+- `npm install -g @fased/fased@latest` for npm global installs
 
-Package-manager update guidance will be added only after the package-manager
-install path is published and tested.
+If you installed with npm, update with:
+
+```bash
+npm install -g @fased/fased@latest
+fased --version
+```
 
 ## Related
 
