@@ -22,40 +22,38 @@ Primary ecosystem link hub: [fcode.ai/links](https://fcode.ai/links)
 
 ## Fased
 
-| Name | Link |
-| --- | --- |
-| Fased App | [fased.ai](https://fased.ai) |
-| Fased Network | [fased.app](https://fased.app) |
-| Fased docs | [docs.fased.ai](https://docs.fased.ai) |
+| Name               | Link                                                           |
+| ------------------ | -------------------------------------------------------------- |
+| Fased App          | [fased.ai](https://fased.ai)                                   |
+| Fased Network      | [fased.app](https://fased.app)                                 |
+| Fased docs         | [docs.fased.ai](https://docs.fased.ai)                         |
 | Fased Agent GitHub | [github.com/fased-ai/fased](https://github.com/fased-ai/fased) |
-| Fased on X | [x.com/fased_ai](https://x.com/fased_ai) |
+| Fased on X         | [x.com/fased_ai](https://x.com/fased_ai)                       |
 
 ## Fcode Ecosystem
 
-| Name | Link |
-| --- | --- |
-| Fcode AI | [fcode.ai](https://fcode.ai) |
-| Fcode docs | [docs.fcode.ai](https://docs.fcode.ai) |
+| Name                     | Link                                     |
+| ------------------------ | ---------------------------------------- |
+| Fcode AI                 | [fcode.ai](https://fcode.ai)             |
+| Fcode docs               | [docs.fcode.ai](https://docs.fcode.ai)   |
 | Official ecosystem links | [fcode.ai/links](https://fcode.ai/links) |
-| Fcode on X | [x.com/FcodeAi](https://x.com/FcodeAi) |
+| Fcode on X               | [x.com/FcodeAi](https://x.com/FcodeAi)   |
 
 ## Satcoin
 
-| Name | Link |
-| --- | --- |
-| Satcoin site | [satcoin.app](https://satcoin.app) |
+| Name         | Link                                         |
+| ------------ | -------------------------------------------- |
+| Satcoin site | [satcoin.app](https://satcoin.app)           |
 | Satcoin docs | [docs.satcoin.app](https://docs.satcoin.app) |
-| Satcoin on X | [x.com/SatcoinHQ](https://x.com/SatcoinHQ) |
+| Satcoin on X | [x.com/SatcoinHQ](https://x.com/SatcoinHQ)   |
 
 Use Satcoin docs for the current launch state, official program addresses,
 manifest hashes, IDL hashes, and mining status.
 
 ## Community
 
-| Name | Link |
-| --- | --- |
-| Discord | [dsc.gg/fased](https://dsc.gg/fased) |
-| Telegram | [t.me/FcodeAi](https://t.me/FcodeAi) |
-| Reddit / Fased Agent | [reddit.com/r/FasedAgent](https://www.reddit.com/r/FasedAgent/) |
-| Reddit / Satcoin | [reddit.com/r/Satcoin](https://www.reddit.com/r/Satcoin/) |
-| Medium | [medium.com/@fcodeai](https://medium.com/@fcodeai/) |
+| Name     | Link                                                |
+| -------- | --------------------------------------------------- |
+| Discord  | [dsc.gg/fased](https://dsc.gg/fased)                |
+| Telegram | [t.me/FcodeAi](https://t.me/FcodeAi)                |
+| Medium   | [medium.com/@fcodeai](https://medium.com/@fcodeai/) |
