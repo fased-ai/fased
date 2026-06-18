@@ -1,7 +1,8 @@
 ---
 summary: "Advanced setup and development workflows for Fased"
 read_when:
-  - Setting up a new machine
+  - You already installed Fased and want setup strategy
+  - You are developing from a source checkout
   - You want “latest + greatest” without breaking your personal setup
 title: "Setup"
 ---
@@ -13,6 +14,11 @@ If you are setting up for the first time, start with [Getting Started](/start/ge
 For wizard details, see [Onboarding Wizard](/start/wizard).
 </Note>
 
+<Note>
+Normal installs use `./install.sh`. The `pnpm` commands on this page are for
+source checkout and contributor workflows, not the beginner install path.
+</Note>
+
 Reviewed for the current Agent-centered Control UI.
 
 ## TL;DR
@@ -21,7 +27,8 @@ Reviewed for the current Agent-centered Control UI.
 - **Stable workflow:** use the repo-backed installer, then finish setup in
   `Agent > Models`, `Agent > Skills`, `Agent > Channels`, and
   `Agent > Services`.
-- **Bleeding edge workflow:** run the Gateway yourself via `pnpm gateway:watch`,
+- **Bleeding edge workflow:** after installing source dependencies, run the
+  Gateway yourself via `pnpm gateway:watch`,
   then let the app or browser UI attach in Local mode.
 
 ## Prereqs (from source)

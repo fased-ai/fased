@@ -29,7 +29,8 @@ fased dashboard
 fased dashboard --no-open
 ```
 
-From a source checkout, use the same command through `fased.mjs`:
+From a source checkout, contributors can use the same command through
+`fased.mjs` after the repo has been built:
 
 ```bash
 node fased.mjs dashboard --no-open
@@ -45,7 +46,7 @@ To print only the raw Gateway token:
 fased config get gateway.auth.token
 ```
 
-From a source checkout:
+From a source checkout after the repo has been built:
 
 ```bash
 node fased.mjs config get gateway.auth.token

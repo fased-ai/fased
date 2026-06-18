@@ -387,6 +387,9 @@ Marketplace and Mining integration is intentionally task-ledger aware:
 
 ## Development
 
+Normal users install with `./install.sh`. The commands below are for
+contributors working from the source checkout.
+
 Common source commands:
 
 ```bash

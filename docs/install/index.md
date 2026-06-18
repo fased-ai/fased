@@ -401,6 +401,24 @@ Use the repo-backed installer until a package release is published and
 documented.
 </Note>
 
+## Package manager rule
+
+Normal users should run the repo-backed installer:
+
+```bash
+git clone https://github.com/fased-ai/fased.git fased
+cd fased
+./install.sh
+```
+
+The repository itself uses `pnpm` internally. The installer installs or activates
+`pnpm` when it is needed. Do not run `npm install` to install Fased from source.
+
+- `pnpm`: source builds, tests, docs, Docker builds, and contributor workflows.
+- `npm`: occasional plugin/skill dependency installs, or fallback for installing
+  `pnpm` when Corepack is unavailable.
+- `Bun`: experimental local development only. Use Node for the Gateway runtime.
+
 ## Validate install
 
 ```bash

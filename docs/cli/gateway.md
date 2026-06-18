@@ -28,7 +28,7 @@ fased gateway run --port 18789 --bind loopback
 `fased gateway` remains supported as a shortcut, but `fased gateway run` is the
 clearest foreground command and is preferred in docs and scripts.
 
-From a source checkout:
+From a source checkout after the repo has been built:
 
 ```bash
 node fased.mjs gateway run --port 18789 --bind loopback

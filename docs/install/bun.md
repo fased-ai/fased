@@ -8,19 +8,20 @@ title: "Bun (Experimental)"
 
 # Bun (experimental)
 
-Goal: run this repo with **Bun** for local development without diverging from
-pnpm workflows.
+Goal: use **Bun** only for experimental local development. This is not the
+normal install path for Fased.
 
 <Warning>
-Bun is not recommended for the Gateway runtime. Use Node for the Gateway,
-especially when testing WhatsApp, Telegram, and other channel integrations.
+Normal installs use `./install.sh`, and the Gateway runtime should use Node.
+Bun is not recommended for the Gateway runtime, especially when testing
+WhatsApp, Telegram, and other channel integrations.
 </Warning>
 
 ## Status
 
-- Bun is an optional local runtime for running TypeScript directly.
-- `pnpm` is the default for builds and remains fully supported. Some docs tools
-  still expect pnpm.
+- Bun is an optional local runtime for running TypeScript directly during
+  development.
+- `pnpm` remains the source-build package manager for this repo.
 - Bun cannot use `pnpm-lock.yaml` and will ignore it.
 
 ## Install

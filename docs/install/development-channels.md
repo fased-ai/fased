@@ -8,13 +8,15 @@ title: "Development Channels"
 
 # Development channels
 
-Fased ships three update channels:
+Fased ships three update channels for repo-backed updates and future package
+publication:
 
-- **stable**: latest stable release tag for git checkouts; npm dist-tag
-  `latest` for package installs.
-- **beta**: npm dist-tag `beta` (builds under test).
-- **dev**: developer channel for moving head of `main` (git). npm dist-tag:
-  `dev` (when published).
+- **stable**: latest stable release tag for git checkouts; `latest` package
+  dist-tag after public package publication.
+- **beta**: beta release tag for git checkouts; `beta` package dist-tag after
+  public package publication.
+- **dev**: developer channel for moving head of `main` (git); `dev` package
+  dist-tag only when explicitly published.
 
 <Note>
 The current public install path is repo-backed. Package dist-tags are
@@ -22,8 +24,8 @@ release-maintainer context until public package publication is active.
 </Note>
 
 Maintainers ship builds to **beta**, test them, then **promote a vetted build to
-`latest`** without changing the version number. Dist-tags are the source of
-truth for npm installs.
+stable/latest** without changing the version number. Public users should use
+`fased update`, not direct package-manager commands.
 
 ## Switching channels
 
@@ -45,7 +47,7 @@ update. The stable end-user path is `fased update`, which lands on a release
 tag. Current development fixes become available to stable users only after a new
 stable tag or package release is published.
 
-npm/pnpm global install:
+Future package/global install:
 
 ```bash
 fased update --channel stable
@@ -53,14 +55,16 @@ fased update --channel beta
 fased update --channel dev
 ```
 
-This updates via the corresponding npm dist-tag (`latest`, `beta`, `dev`).
+This is package-release context for maintainers and future public package
+installs. The current public setup path remains the repo-backed installer.
 
 When you **explicitly** switch channels with `--channel`, Fased also aligns
 the install method:
 
 - `dev` ensures a git checkout (default `~/fased`, override with `FASED_GIT_DIR`),
   updates it, and installs the global CLI from that checkout.
-- `stable`/`beta` installs from npm using the matching dist-tag.
+- `stable`/`beta` can install from package dist-tags after public package
+  publication is active.
 
 Tip: if you want stable + dev in parallel, keep two clones and point your
 gateway at the stable one.

@@ -20,6 +20,9 @@ Most docs use the installed command:
 fased <command>
 ```
 
+Normal users get that command by running `./install.sh` from the repo checkout.
+The source checkout form below is for contributor/debug workflows.
+
 When you are inside a source checkout and have already built the repo, use:
 
 ```bash

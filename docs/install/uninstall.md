@@ -121,7 +121,7 @@ Then remove the repo checkout and `~/.fased` data if you want a full wipe.
 
 ### Source checkout (git clone)
 
-If you run from a repo checkout (`git clone` + `fased ...` / `bun run fased ...`):
+If you run from a repo checkout with the installed `fased` command:
 
 1. Uninstall the gateway service **before** deleting the repo (use the easy path above or manual service removal).
 2. Delete the repo directory.
