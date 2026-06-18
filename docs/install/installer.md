@@ -37,7 +37,8 @@ then run the same repo-backed commands inside Ubuntu.
     Fased recommends Node 24 and requires Node 22.14 or newer with the built-in
     `node:sqlite` module. On Debian, Ubuntu, WSL Ubuntu, Fedora, and common
     RHEL-family systems, the installer can install missing command-line tools,
-    Node, and `pnpm` when auto-install is enabled.
+    Node, and `pnpm` when auto-install is enabled. On macOS, it can use
+    Homebrew when Homebrew is already installed.
   </Step>
   <Step title="Ensure Git">
     Installs Git if it is missing.

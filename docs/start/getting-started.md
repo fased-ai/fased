@@ -47,8 +47,9 @@ flowchart TD
 <Tip>
 On Debian, Ubuntu, WSL Ubuntu, Fedora, and common RHEL-family systems, the
 installer can install the needed command-line tools and Node runtime when they
-are missing. If you manage Node yourself, use Node 24, or Node 22.14+ with the
-built-in `node:sqlite` module.
+are missing. On macOS, it can use Homebrew when Homebrew is already installed.
+If you manage Node yourself, use Node 24, or Node 22.14+ with the built-in
+`node:sqlite` module.
 </Tip>
 
 ## Which install do I need?

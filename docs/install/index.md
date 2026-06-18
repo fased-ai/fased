@@ -43,7 +43,8 @@ flowchart TD
 <Note>
 On Debian, Ubuntu, WSL Ubuntu, Fedora, and common RHEL-family systems, the repo
 installer can install missing command-line tools, Node, and `pnpm` when
-auto-install is enabled. Normal users should start with `./install.sh`; source
+auto-install is enabled. On macOS, the installer can do the same when Homebrew
+is already installed. Normal users should start with `./install.sh`; source
 build commands are for developer workflows.
 </Note>
 

@@ -42,7 +42,7 @@ Fased installer (single path): install.sh -> fased onboard --install-daemon
 Usage: ./install.sh [options] [-- <extra onboard args>]
 
 Options:
-  --auto-install   Linux only: install missing deps with apt/dnf/yum (default)
+  --auto-install   install missing deps with apt/dnf/yum or Homebrew (default)
   --no-auto-install  Disable automatic dependency installation
   --install-dir <path>  Checkout/install directory (default: $HOME/fased)
   --hosting       VPS/always-on server profile. Requires Tailscale; applies hosted
@@ -314,7 +314,7 @@ Fased needs Node 24 recommended, or Node >=22.14.0, with the built-in node:sqlit
 EOF_NODE
   if node_runtime_is_user_managed; then
     cat >&2 <<'EOF_NODE'
-Your active node appears to be managed by a user-level version manager, so install.sh will not replace it with sudo/apt automatically.
+Your active node appears to be managed by a user-level version manager, so install.sh will not replace it with a system package manager automatically.
 
 For nvm:
   nvm install 24
@@ -323,7 +323,7 @@ For nvm:
 EOF_NODE
   else
     cat >&2 <<'EOF_NODE'
-Install the official NodeSource/Node.js 24 package or fix PATH so install.sh uses a compatible node.
+Install Node 24 with your system package manager or fix PATH so install.sh uses a compatible node.
 EOF_NODE
   fi
   cat >&2 <<'EOF_NODE'
@@ -353,7 +353,7 @@ prefer_compatible_user_node_if_available() {
 
 prefer_compatible_system_node_if_available() {
   local candidate
-  for candidate in /usr/bin/node /usr/local/bin/node; do
+  for candidate in /usr/bin/node /usr/local/bin/node /opt/homebrew/bin/node; do
     if node_runtime_ok_for "$candidate"; then
       export PATH="$(dirname "$candidate"):$PATH"
       hash -r 2>/dev/null || true
@@ -366,8 +366,11 @@ prefer_compatible_system_node_if_available() {
 run_as_root() {
   if [[ "$(id -u)" -eq 0 ]]; then
     "$@"
-  else
+  elif need_cmd sudo; then
     sudo "$@"
+  else
+    echo "sudo is required for system dependency installation." >&2
+    return 1
   fi
 }
 
@@ -396,8 +399,7 @@ install_pnpm_for_active_node() {
   local pnpm_version
   pnpm_version="$(desired_pnpm_version)"
   if need_cmd corepack; then
-    run_as_root corepack enable || true
-    corepack enable || true
+    corepack enable || run_as_root corepack enable || true
     corepack prepare "pnpm@${pnpm_version}" --activate || true
   fi
   if ! need_cmd pnpm && need_cmd npm; then
@@ -414,6 +416,26 @@ install_nodesource_node_apt() {
   run_as_root bash "$setup_script"
   rm -f "$setup_script"
   run_as_root apt-get install -y nodejs
+}
+
+linux_os_summary() {
+  if [[ -r /etc/os-release ]]; then
+    local pretty=""
+    local id=""
+    local version=""
+    # shellcheck source=/dev/null
+    . /etc/os-release
+    pretty="${PRETTY_NAME:-}"
+    id="${ID:-}"
+    version="${VERSION_ID:-}"
+    if [[ -n "$pretty" ]]; then
+      printf '%s\n' "$pretty"
+      return 0
+    fi
+    printf '%s %s\n' "$id" "$version"
+    return 0
+  fi
+  uname -a
 }
 
 install_linux_system_dependencies() {
@@ -450,7 +472,9 @@ install_linux_system_dependencies() {
     fi
   else
     echo "Unsupported Linux package manager for --auto-install." >&2
+    echo "Detected system: $(linux_os_summary)" >&2
     echo "Supported auto-install package managers: apt-get, dnf, yum." >&2
+    echo "Install git, curl, Node 24, and pnpm manually, then rerun ./install.sh." >&2
     return 1
   fi
 
@@ -459,6 +483,69 @@ install_linux_system_dependencies() {
     return 1
   fi
   install_pnpm_for_active_node
+}
+
+install_macos_system_dependencies() {
+  if [[ "$(uname -s)" != "Darwin" ]]; then
+    return 1
+  fi
+  if ! need_cmd brew; then
+    cat >&2 <<'EOF_MACOS'
+macOS auto-install needs Homebrew.
+
+Install Homebrew from https://brew.sh, then rerun:
+  ./install.sh
+
+Or install Node 24 manually from https://nodejs.org, enable pnpm with Corepack,
+and rerun:
+  corepack enable
+  corepack prepare pnpm@10.23.0 --activate
+  ./install.sh
+EOF_MACOS
+    return 1
+  fi
+
+  if ! need_cmd git; then
+    brew install git
+  fi
+  if ! need_cmd curl; then
+    brew install curl
+  fi
+  if ! node_runtime_ok; then
+    brew install node || brew upgrade node
+    hash -r 2>/dev/null || true
+    prefer_compatible_system_node_if_available || true
+  fi
+  if ! need_cmd pnpm; then
+    brew install pnpm || install_pnpm_for_active_node
+    hash -r 2>/dev/null || true
+  fi
+
+  if ! node_runtime_ok; then
+    print_node_runtime_help
+    return 1
+  fi
+  if ! need_cmd pnpm; then
+    install_pnpm_for_active_node
+  fi
+  return 0
+}
+
+install_supported_system_dependencies() {
+  case "$(uname -s)" in
+    Linux)
+      install_linux_system_dependencies
+      ;;
+    Darwin)
+      install_macos_system_dependencies
+      ;;
+    *)
+      echo "Unsupported operating system for --auto-install: $(uname -s)" >&2
+      echo "Supported auto-install targets: Linux with apt-get/dnf/yum, or macOS with Homebrew." >&2
+      echo "Install git, curl, Node 24, and pnpm manually, then rerun ./install.sh." >&2
+      return 1
+      ;;
+  esac
 }
 
 root_has_active_time_sync_service() {
@@ -2290,12 +2377,8 @@ if [[ ${#missing[@]} -gt 0 || ! node_runtime_ok ]]; then
   if ! node_runtime_ok; then
     echo "Node runtime is incompatible: $(node_runtime_issue)"
   fi
-  if [[ "$AUTO_INSTALL" -eq 1 && "$(uname -s)" == "Linux" ]]; then
-    if ! need_cmd sudo; then
-      echo "sudo is required for --auto-install" >&2
-      exit 1
-    fi
-    install_linux_system_dependencies
+  if [[ "$AUTO_INSTALL" -eq 1 ]]; then
+    install_supported_system_dependencies
   else
     cat <<'EOF_HELP'
 Install missing tools, then rerun install.sh:
@@ -2304,13 +2387,14 @@ Install missing tools, then rerun install.sh:
   - node (Node 24 recommended, or v22.14+ with node:sqlite)
   - pnpm
 
-Linux auto install:
+Automatic install:
   ./install.sh --auto-install
 
 Supported auto-install package managers:
   - apt-get on Debian/Ubuntu/WSL Ubuntu
   - dnf on Fedora/RHEL-family systems
   - yum on older RHEL-family systems
+  - Homebrew on macOS
 
 Disable auto install:
   ./install.sh --no-auto-install
