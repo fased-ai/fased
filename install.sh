@@ -42,7 +42,7 @@ Fased installer (single path): install.sh -> fased onboard --install-daemon
 Usage: ./install.sh [options] [-- <extra onboard args>]
 
 Options:
-  --auto-install   install missing deps with apt/dnf/yum or Homebrew (default)
+  --auto-install   install missing deps with apt/dnf/yum/apk/pacman/pkg or Homebrew (default)
   --no-auto-install  Disable automatic dependency installation
   --install-dir <path>  Checkout/install directory (default: $HOME/fased)
   --hosting       VPS/always-on server profile. Requires Tailscale; applies hosted
@@ -409,9 +409,10 @@ install_pnpm_for_active_node() {
   fi
   if ! need_cmd pnpm && need_cmd npm; then
     mkdir -p "$npm_prefix"
-    npm install -g --prefix "$npm_prefix" "pnpm@${pnpm_version}" || {
-      echo "User-local pnpm install failed; trying system npm install." >&2
-      run_as_root npm install -g "pnpm@${pnpm_version}"
+    npm_config_prefix="$npm_prefix" npm install -g --prefix "$npm_prefix" "pnpm@${pnpm_version}" || {
+      echo "User-local pnpm install failed." >&2
+      echo "Install pnpm manually or rerun with FASED_INSTALL_VERBOSE=1 for npm details." >&2
+      return 1
     }
     export PATH="$npm_prefix/bin:$PATH"
   fi
@@ -426,6 +427,16 @@ install_nodesource_node_apt() {
   run_as_root bash "$setup_script"
   rm -f "$setup_script"
   run_as_root apt-get install -y nodejs
+}
+
+install_nodesource_node_rpm() {
+  local pkg_cmd="$1"
+  local setup_script
+  setup_script="$(mktemp)"
+  curl -fsSL https://rpm.nodesource.com/setup_24.x -o "$setup_script"
+  run_as_root bash "$setup_script"
+  rm -f "$setup_script"
+  run_as_root "$pkg_cmd" install -y nodejs
 }
 
 linux_os_summary() {
@@ -471,7 +482,9 @@ install_linux_system_dependencies() {
     hash -r 2>/dev/null || true
     if ! node_runtime_ok; then
       run_as_root "$dnf_cmd" install -y nodejs24-bin nodejs24-npm-bin || \
+        run_as_root "$dnf_cmd" install -y nodejs24 npm || \
         run_as_root "$dnf_cmd" install -y nodejs22-bin nodejs22-npm-bin || \
+        install_nodesource_node_rpm "$dnf_cmd" || \
         run_as_root "$dnf_cmd" install -y nodejs npm
       hash -r 2>/dev/null || true
       prefer_compatible_system_node_if_available || true
@@ -480,16 +493,51 @@ install_linux_system_dependencies() {
     run_as_root yum install -y git curl ca-certificates
     hash -r 2>/dev/null || true
     if ! node_runtime_ok; then
-      run_as_root yum install -y nodejs npm
+      install_nodesource_node_rpm yum || \
+        run_as_root yum install -y nodejs npm
       hash -r 2>/dev/null || true
       prefer_compatible_system_node_if_available || true
     fi
+  elif need_cmd apk; then
+    run_as_root apk add --no-cache git curl ca-certificates nodejs npm
+    hash -r 2>/dev/null || true
+  elif need_cmd pacman; then
+    run_as_root pacman -Sy --needed --noconfirm git curl ca-certificates nodejs npm
+    hash -r 2>/dev/null || true
   else
     echo "Unsupported Linux package manager for --auto-install." >&2
     echo "Detected system: $(linux_os_summary)" >&2
-    echo "Supported auto-install package managers: apt-get, dnf, dnf5, yum." >&2
+    echo "Supported auto-install package managers: apt-get, dnf, dnf5, yum, apk, pacman." >&2
     echo "Install git, curl, Node 24, and pnpm manually, then rerun ./install.sh." >&2
     return 1
+  fi
+
+  if ! node_runtime_ok; then
+    print_node_runtime_help
+    return 1
+  fi
+  install_pnpm_for_active_node
+}
+
+install_freebsd_system_dependencies() {
+  if [[ "$(uname -s)" != "FreeBSD" ]]; then
+    return 1
+  fi
+  if ! need_cmd pkg; then
+    echo "FreeBSD auto-install needs pkg." >&2
+    echo "Install git, curl, ca_root_nss, Node 24, npm, and pnpm manually, then rerun ./install.sh." >&2
+    return 1
+  fi
+
+  run_as_root pkg update -f || true
+  run_as_root pkg install -y git curl ca_root_nss
+  hash -r 2>/dev/null || true
+  if ! node_runtime_ok; then
+    run_as_root pkg install -y node24 npm-node24 || \
+      run_as_root pkg install -y node22 npm-node22 || \
+      run_as_root pkg install -y node npm
+    hash -r 2>/dev/null || true
+    prefer_compatible_system_node_if_available || true
   fi
 
   if ! node_runtime_ok; then
@@ -553,9 +601,12 @@ install_supported_system_dependencies() {
     Darwin)
       install_macos_system_dependencies
       ;;
+    FreeBSD)
+      install_freebsd_system_dependencies
+      ;;
     *)
       echo "Unsupported operating system for --auto-install: $(uname -s)" >&2
-      echo "Supported auto-install targets: Linux with apt-get/dnf/dnf5/yum, or macOS with Homebrew." >&2
+      echo "Supported auto-install targets: Linux with apt-get/dnf/dnf5/yum/apk/pacman, FreeBSD with pkg, or macOS with Homebrew." >&2
       echo "Install git, curl, Node 24, and pnpm manually, then rerun ./install.sh." >&2
       return 1
       ;;
@@ -2428,9 +2479,12 @@ Automatic install:
   ./install.sh --auto-install
 
 Supported auto-install package managers:
-  - apt-get on Debian/Ubuntu/WSL Ubuntu
-  - dnf on Fedora/RHEL-family systems
+  - apt-get on Debian/Ubuntu/Kali/WSL Ubuntu
+  - dnf/dnf5 on Fedora, CentOS, AlmaLinux, Rocky Linux, CloudLinux
   - yum on older RHEL-family systems
+  - apk on Alpine
+  - pacman on Arch
+  - pkg on FreeBSD
   - Homebrew on macOS
 
 Disable auto install:

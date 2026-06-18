@@ -11,9 +11,10 @@ read_when:
 
 Fased recommends **Node 24** and supports **Node 22.14 or newer with the built-in
 `node:sqlite` module**. The [installer script](/install) can install Node
-automatically on Debian/Ubuntu/WSL Ubuntu, Fedora/RHEL-family Linux, and macOS
-with Homebrew. Use this page when you want to set up Node yourself or debug
-PATH/runtime issues.
+automatically on common VPS and workstation families: Ubuntu, Debian, Kali,
+Fedora, CentOS, AlmaLinux, Rocky Linux, CloudLinux, Alpine, Arch, FreeBSD, WSL2
+Ubuntu, and macOS with Homebrew. Use this page when you want to set up Node
+yourself or debug PATH/runtime issues.
 
 ## Check your version
 
@@ -42,22 +43,48 @@ but still omit `node:sqlite`; those are not suitable for full memory support.
 
   </Tab>
   <Tab title="Linux">
-    **Ubuntu / Debian:**
+    **Ubuntu / Debian / Kali:**
 
     ```bash
     curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
     sudo apt-get install -y nodejs
     ```
 
-    **Fedora / RHEL-family:**
+    **Fedora:**
 
     ```bash
     sudo dnf install -y nodejs24-bin nodejs24-npm-bin
     ```
 
-    If Node 24 packages are unavailable, use Node 22 packages with
-    `node:sqlite`, or install Node 24 from your preferred trusted package
-    source.
+    **CentOS / AlmaLinux / Rocky Linux / CloudLinux:**
+
+    ```bash
+    curl -fsSL https://rpm.nodesource.com/setup_24.x | sudo bash -
+    sudo dnf install -y nodejs
+    ```
+
+    Use `yum` instead of `dnf` on older images.
+
+    **Alpine:**
+
+    ```bash
+    sudo apk add --no-cache nodejs npm
+    ```
+
+    **Arch:**
+
+    ```bash
+    sudo pacman -Sy --needed nodejs npm
+    ```
+
+    **FreeBSD:**
+
+    ```bash
+    sudo pkg install -y node24 npm-node24
+    ```
+
+    If Node 24 packages are unavailable, use Node 22.14 or newer with
+    `node:sqlite`, or install Node 24 from your preferred trusted package source.
 
     Or use a version manager (see below).
 

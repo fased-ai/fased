@@ -42,10 +42,11 @@ For most users, the hosted path is:
 3. Join the VPS to the same tailnet, install Fased, and choose the
    **Hosting** profile.
 
-The hosted hardening profile is for Linux VPS systems with systemd. It supports
-the common Debian/Ubuntu family and Fedora/RHEL-family hosts. Local macOS and
-WSL installs are supported, but macOS and native Windows are not VPS hardening
-targets.
+The hosted hardening profile is for Linux VPS systems with systemd. Auto-install
+supports the common VPS families: Ubuntu, Debian, Kali, Fedora, CentOS,
+AlmaLinux, Rocky Linux, CloudLinux, Alpine, and Arch. Local macOS, FreeBSD, and
+WSL installs are supported for running Fased, but macOS, FreeBSD, and native
+Windows are not hosted hardening targets.
 
 Hosted setup uses two machines:
 

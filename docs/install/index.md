@@ -421,10 +421,12 @@ The repository itself uses `pnpm` internally. The installer installs or activate
 
 ## OS support boundary
 
-- Local install: macOS, Debian/Ubuntu, WSL Ubuntu, Fedora/RHEL-family Linux, and
-  common Linux hosts with `apt-get`, `dnf`, `dnf5`, or `yum`.
-- Hosted/VPS hardening: Linux with systemd, currently Debian/Ubuntu and
-  Fedora/RHEL-family hosts.
+- Local install: macOS, FreeBSD, WSL2 Ubuntu, and common Linux hosts including
+  Ubuntu, Debian, Kali, Fedora, CentOS, AlmaLinux, Rocky Linux, CloudLinux,
+  Alpine, and Arch.
+- Hosted/VPS hardening: Linux with systemd, including the common Debian/Ubuntu,
+  Fedora, and RHEL-family hosts. Alpine and Arch can install Fased, but hosted
+  firewall/service hardening depends on the provider image and init system.
 - Containers: Docker and Podman paths are separate from host package managers.
 - Native Windows: use WSL2 for the Gateway. The native Windows app/runtime path
   is not the public install path.

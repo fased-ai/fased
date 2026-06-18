@@ -35,10 +35,10 @@ then run the same repo-backed commands inside Ubuntu.
   </Step>
   <Step title="Ensure a compatible Node.js runtime">
     Fased recommends Node 24 and requires Node 22.14 or newer with the built-in
-    `node:sqlite` module. On Debian, Ubuntu, WSL Ubuntu, Fedora, and common
-    RHEL-family systems, the installer can install missing command-line tools,
-    Node, and `pnpm` when auto-install is enabled. On macOS, it can use
-    Homebrew when Homebrew is already installed.
+    `node:sqlite` module. With auto-install enabled, the installer can install
+    missing command-line tools, Node, and `pnpm` on common VPS and workstation
+    families: Ubuntu, Debian, Kali, Fedora, CentOS, AlmaLinux, Rocky Linux,
+    CloudLinux, Alpine, Arch, FreeBSD, WSL2 Ubuntu, and macOS with Homebrew.
   </Step>
   <Step title="Ensure Git">
     Installs Git if it is missing.
@@ -126,6 +126,24 @@ From the repo root:
 ```bash
 ./install.sh --verbose
 ```
+
+## Auto-install support
+
+`./install.sh` uses the host's normal package manager, then verifies that Node
+can load `node:sqlite` before continuing.
+
+| System family                              | Package manager path                                              |
+| ------------------------------------------ | ----------------------------------------------------------------- |
+| Ubuntu, Debian, Kali, WSL2 Ubuntu          | `apt-get` + NodeSource Node 24 when needed                        |
+| Fedora                                     | `dnf` / `dnf5`; native Node 24 package first, NodeSource fallback |
+| CentOS, AlmaLinux, Rocky Linux, CloudLinux | `dnf` / `yum` + NodeSource Node 24 fallback                       |
+| Alpine                                     | `apk` packages, then runtime verification                         |
+| Arch                                       | `pacman` packages, then runtime verification                      |
+| FreeBSD                                    | `pkg` packages, then runtime verification                         |
+| macOS                                      | Homebrew, if Homebrew is already installed                        |
+
+If a provider image ships an old or custom Node build, the installer stops with
+the exact Node problem instead of continuing with a broken runtime.
 
 Fresh machine, one copy-paste block:
 
