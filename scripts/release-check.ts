@@ -14,6 +14,7 @@ const requiredPathGroups = [
   "dist/plugin-sdk/index.js",
   "dist/plugin-sdk/index.d.ts",
   "dist/build-info.json",
+  "scripts/fased-launcher-runtime.mjs",
 ];
 const forbiddenPrefixes = ["dist/FasedAgent.app/"];
 
@@ -106,8 +107,32 @@ function checkPluginVersions() {
   }
 }
 
+function checkBrandVersion() {
+  const rootPackagePath = resolve("package.json");
+  const rootPackage = JSON.parse(readFileSync(rootPackagePath, "utf8")) as PackageJson;
+  const targetVersion = rootPackage.version;
+  const targetBaseVersion = targetVersion ? normalizePluginSyncVersion(targetVersion) : null;
+  if (!targetBaseVersion) {
+    console.error("release-check: root package.json missing version.");
+    process.exit(1);
+  }
+
+  const brandPath = resolve("src/brand.ts");
+  const brandSource = readFileSync(brandPath, "utf8");
+  const match = /FASED_PRODUCT_VERSION\s*=\s*"([^"]+)"/.exec(brandSource);
+  const brandVersion = match?.[1] ? normalizePluginSyncVersion(match[1]) : null;
+  if (brandVersion !== targetBaseVersion) {
+    console.error(
+      `release-check: src/brand.ts FASED_PRODUCT_VERSION must match release base ${targetBaseVersion}.`,
+    );
+    console.error(`  - found: ${match?.[1] ?? "missing"}`);
+    process.exit(1);
+  }
+}
+
 function main() {
   checkPluginVersions();
+  checkBrandVersion();
 
   const results = runPackDry();
   const files = results.flatMap((entry) => entry.files ?? []);
