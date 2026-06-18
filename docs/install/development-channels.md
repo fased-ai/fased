@@ -19,8 +19,9 @@ publication:
   dist-tag only when explicitly published.
 
 <Note>
-The current public install path is repo-backed. Package dist-tags are
-release-maintainer context until public package publication is active.
+The current public install path starts with the curl bootstrap. Package
+dist-tags are release-maintainer context until the first public npm package is
+published.
 </Note>
 
 Maintainers ship builds to **beta**, test them, then **promote a vetted build to
@@ -47,7 +48,7 @@ update. The stable end-user path is `fased update`, which lands on a release
 tag. Current development fixes become available to stable users only after a new
 stable tag or package release is published.
 
-Future package/global install:
+Package/global install after the first npm publish:
 
 ```bash
 fased update --channel stable
@@ -56,7 +57,8 @@ fased update --channel dev
 ```
 
 This is package-release context for maintainers and future public package
-installs. The current public setup path remains the repo-backed installer.
+installs. Fresh machines and hosted VPS installs should still use the curl
+bootstrap first.
 
 When you **explicitly** switch channels with `--channel`, Fased also aligns
 the install method:

@@ -209,14 +209,16 @@ fased status
 
 ## Current public boundary
 
-Public package-manager update flows are not the default public docs path yet.
+The public docs still assume the curl bootstrap for fresh installs and hosted
+systems:
 
-Until `fased` is actually published and supportable as a package, the official
-docs assume:
-
-- git checkout
-- `./install.sh`
+- curl bootstrap or an existing checkout
 - `fased update`
+
+After the first npm package is published, `npm install -g fased@latest` becomes
+the clean path for users who already have Node/npm. Fresh VPS installs should
+still use the curl bootstrap because it prepares the host and then hands off to
+onboarding.
 
 ## Related
 

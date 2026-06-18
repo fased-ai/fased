@@ -45,8 +45,8 @@ On common VPS and workstation systems, the repo installer can install missing
 command-line tools, Node, and `pnpm` when auto-install is enabled. That includes
 Ubuntu, Debian, Kali, Fedora, CentOS, AlmaLinux, Rocky Linux, CloudLinux, Oracle
 Linux, Amazon Linux, openSUSE, SLES, Alpine, Arch, FreeBSD, WSL2 Ubuntu, and
-macOS with Homebrew. Normal users should start with `./install.sh`; source build
-commands are for developer workflows.
+macOS with Homebrew. Normal users should start with the curl bootstrap; source
+build commands are for developer workflows.
 </Note>
 
 <Note>
@@ -290,9 +290,7 @@ unavailable” instead of creating an incomplete hosted setup.
 ## Basic installer command
 
 ```bash
-git clone https://github.com/fased-ai/fased.git fased
-cd fased
-./install.sh
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash
 ```
 
 The installer:
@@ -377,6 +375,7 @@ Use [VPS hosting](/install/vps), [Hetzner](/install/hetzner), or
 | Method                   | Status                    | Use when                                                           |
 | ------------------------ | ------------------------- | ------------------------------------------------------------------ |
 | Repo-backed `install.sh` | Recommended public path   | macOS, Linux, WSL2, local laptop, or VPS install                   |
+| `npm install -g fased`   | After first npm publish   | You already have Node/npm and want the clean package path          |
 | Source checkout          | Contributor path          | You want to build, test, or patch the repo directly                |
 | Hosted/VPS profile       | Supported Linux path      | You want an always-on systemd Linux host with private access first |
 | Docker                   | Supported optional path   | You want a containerized Gateway or sandbox validation             |
@@ -402,19 +401,18 @@ Use [VPS hosting](/install/vps), [Hetzner](/install/hetzner), or
 </CardGroup>
 
 <Note>
-Public npm/pnpm global installation is not the normal public setup path yet.
-Use the repo-backed installer until a package release is published and
-documented.
+The curl bootstrap remains the normal beginner setup path because it can install
+missing tools and handle fresh VPS setup. After the first npm package is
+published, `npm install -g fased@latest` is the clean path for users who already
+have Node/npm.
 </Note>
 
 ## Package manager rule
 
-Normal users should run the repo-backed installer:
+Normal users should run the curl bootstrap installer:
 
 ```bash
-git clone https://github.com/fased-ai/fased.git fased
-cd fased
-./install.sh
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash
 ```
 
 The repository itself uses `pnpm` internally. The installer installs or activates

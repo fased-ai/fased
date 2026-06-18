@@ -138,7 +138,7 @@ Make sure your version manager is initialized in your shell startup file
 
 ### `fased: command not found`
 
-The public installer does not depend on a global npm package. It writes a small
+The curl installer does not depend on a global npm package. It writes a small
 repo-backed launcher to `${FASED_CLI_BIN_DIR:-$HOME/.local/bin}/fased`.
 This error usually means that directory is not on your PATH, or your shell has
 not reloaded its startup files yet.
@@ -171,8 +171,7 @@ not reloaded its startup files yet.
       </Tab>
       <Tab title="Windows / WSL2">
         Add the same line to the Ubuntu shell startup file inside WSL2. Native
-        Windows global package-manager installs are not the current public Fased
-        setup path.
+        Use WSL2 for the normal public install path.
       </Tab>
     </Tabs>
 
@@ -181,12 +180,12 @@ not reloaded its startup files yet.
 
 ### Advanced: npm global prefix problems
 
-Direct npm global installation is not the public setup path yet. This only
-matters if you are doing your own package-manager experiment or installing a
-skill dependency with npm.
+After the first npm package is published, `npm install -g fased@latest` is the
+clean install path for users who already have Node/npm. Fresh machines and
+hosted VPS installs should still start with the curl bootstrap.
 
-If you see `EACCES` errors from a manual `npm install -g`, switch npm's global
-prefix to a user-writable directory:
+If you see `EACCES` errors from `npm install -g`, switch npm's global prefix to
+a user-writable directory:
 
 ```bash
 mkdir -p "$HOME/.npm-global"

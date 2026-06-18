@@ -393,26 +393,33 @@ Marketplace and Mining integration is intentionally task-ledger aware:
 
 ## Development
 
-Normal users install with `./install.sh`. The commands below are for
-contributors working from the source checkout.
+Normal users install with the curl bootstrap:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash
+```
+
+After the first npm package is published, users who already have Node/npm can
+use `npm install -g fased@latest`. Fresh VPS and hosted installs should keep
+using the curl bootstrap. The commands below are for contributors working from
+the source checkout.
 
 Common source commands:
 
 ```bash
 pnpm install
-pnpm build:app
+pnpm fased setup
+pnpm ui:build
 pnpm build
 pnpm test:fast
 pnpm --dir ui test
 pnpm check:docs
 ```
 
-Run locally:
+Run the development gateway with reload:
 
 ```bash
-pnpm dev
-# or
-pnpm fased gateway
+pnpm gateway:watch
 ```
 
 Useful docs:

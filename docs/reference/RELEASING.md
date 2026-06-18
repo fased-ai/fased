@@ -20,20 +20,29 @@ installable snapshot users should receive.
 
 Today the public release model is:
 
-- repo-backed install
+- curl bootstrap install for beginner/local/fresh VPS setup
 - annotated Git tag + GitHub release for user-installable snapshots
+- npm package publication after the package release lane is enabled
 - optional macOS Sparkle/appcast if a signed desktop build is being shipped
 
-Public npm publication is not the default release surface yet.
-
-For now, do **not** publish package-manager releases. The public install path is
-the Git repository:
+The beginner install path should stay curl-first because it can install missing
+OS tools, Git, Node, and pnpm:
 
 ```bash
-git clone https://github.com/fased-ai/fased.git fased
-cd fased
-./install.sh
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash
 ```
+
+After npm publication is enabled, npm/pnpm global install becomes the clean
+Node-user path, not the only beginner path:
+
+```bash
+npm install -g fased@latest
+fased onboard --install-daemon
+```
+
+Fresh VPS and hosting installs should continue using the curl bootstrap path
+because `npm install -g` assumes Node/npm already exist and does not apply the
+full hosted hardening flow.
 
 ## Version vs tag vs release vs appcast
 
@@ -202,17 +211,123 @@ release. Do not move `v0.1.2`.
 
 ## Package publication status
 
-`package.json` version is still the application/repo version, even before npm
-publication. Keep it in sync with release tags.
+`package.json` version is the application/repo/npm version. Keep it in sync
+with release tags.
 
-Do not run `npm publish`, `pnpm publish`, or set npm dist-tags until package
-publication is deliberately enabled. When that happens, update this page with:
+Package name:
 
-- package name
-- registry
-- required npm account/org
-- `latest`, `beta`, and `dev` dist-tag policy
-- package smoke-test command after install
+- package: `fased`
+- registry: `https://registry.npmjs.org`
+- package page after first publish: `https://www.npmjs.com/package/fased`
+- owner: official Fased/Fcode maintainer npm account or organization
+
+Dist-tag policy:
+
+- `latest`: stable public release
+- `beta`: candidate release for public testing
+- `dev`: optional moving development snapshot; publish only intentionally
+
+Beginner docs should still prefer curl bootstrap. npm install docs are for users
+who already have Node/npm or for release smoke tests.
+
+## First npm publish
+
+The first publish reserves the `fased` package name. Do this only from a clean
+release commit that has already passed the normal release gates.
+
+Prerequisites:
+
+- npm account created and secured with 2FA
+- maintainer is logged in locally with `npm login`
+- working tree is clean
+- `package.json` version matches the release tag to be cut
+- release commit is the exact source snapshot intended for users
+
+Check the package name before first publish:
+
+```bash
+npm view fased name version --json
+```
+
+Expected before first publish: npm returns `E404 Not Found`. After first
+publish, it should return the published package metadata.
+
+Build and inspect:
+
+```bash
+git status --short
+pnpm install --frozen-lockfile
+pnpm build
+pnpm release:check
+npm pack --dry-run
+```
+
+Publish stable:
+
+```bash
+npm publish --tag latest
+```
+
+If npm asks for a one-time password, enter the code from the maintainer's 2FA
+app, or pass it explicitly:
+
+```bash
+npm publish --tag latest --otp 123456
+```
+
+Verify:
+
+```bash
+npm view fased name version dist-tags --json
+npm install -g fased@latest
+fased --version
+fased onboard --help
+```
+
+For beta:
+
+```bash
+npm publish --tag beta
+npm view fased dist-tags --json
+```
+
+Do not move `latest` to an untested build. Promote by publishing a vetted stable
+version or moving the dist-tag only after smoke tests pass.
+
+## Trusted publishing
+
+After the first package exists, configure npm trusted publishing for GitHub
+Actions so future package releases do not depend on long-lived npm write tokens.
+
+On npmjs.com:
+
+1. Open `fased` package settings.
+2. Open **Trusted publishing**.
+3. Add GitHub Actions as trusted publisher.
+4. Set organization/repository to `fased-ai/fased`.
+5. Set workflow filename to the npm publish workflow name.
+6. Allow `npm publish`; allow `npm stage publish` only if staged releases are
+   adopted.
+
+The GitHub workflow must run on a GitHub-hosted runner and include:
+
+```yaml
+permissions:
+  contents: read
+  id-token: write
+```
+
+Use Node 24 in release publishing. With trusted publishing enabled, npm
+generates provenance automatically for supported CI. If using token-based CI
+instead, publish with provenance from a supported CI runner:
+
+```bash
+npm publish --provenance --tag latest
+```
+
+Manual local publishing remains acceptable for the first reservation publish or
+emergency release, but normal releases should use trusted publishing once
+configured.
 
 ## Post-public repository hardening
 

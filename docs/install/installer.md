@@ -272,12 +272,10 @@ current surface, run `./install.sh --help` from the repo root.
 
 ## Automation
 
-Headless repo-backed install:
+Headless install without onboarding:
 
 ```bash
-git clone https://github.com/fased-ai/fased.git fased
-cd fased
-./install.sh --no-onboard
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --no-onboard
 ```
 
 If you automate a hosted install, keep the same security order:
@@ -291,17 +289,29 @@ If you automate a hosted install, keep the same security order:
 Use a controlled install directory in CI or on a managed host:
 
 ```bash
-git clone https://github.com/fased-ai/fased.git fased
-cd fased
-./install.sh --install-dir "$HOME/agent" --no-onboard
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --install-dir "$HOME/agent" --no-onboard
 ```
 
-## Not public install paths yet
+## Package install path
 
-Direct `npm install -g`, `pnpm add -g`, or Bun global package installs are not
-the current public setup path. They can come back after package publication and
-release automation are ready. Until then, the supported public path is the
-repo-backed installer.
+The curl bootstrap is the best first-run path for fresh machines because it can
+install missing OS tools, Git, Node, and `pnpm`.
+
+After the first npm package is published, users who already have Node/npm can
+use the package path:
+
+```bash
+npm install -g fased@latest
+fased onboard --install-daemon
+```
+
+Keep using the curl bootstrap for fresh VPS setup and hosted installs. `npm
+install -g` does not join Tailscale, apply the hosted profile, or install
+system packages on a minimal server.
+
+`pnpm add -g fased@latest` can be used by people who already manage global
+tools with `pnpm`. Bun global installs are not the public Fased install path;
+Bun remains experimental local development only.
 
 ## Related
 
