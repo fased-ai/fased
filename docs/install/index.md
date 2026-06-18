@@ -58,7 +58,8 @@ Windows has two different paths:
 - **Managing a hosted VPS from Windows:** use PowerShell or Windows Terminal
   with the Windows Tailscale app online. Use WSL for hosted SSH checks only
   unless Tailscale is also installed and logged in inside WSL.
-  </Note>
+
+</Note>
 
 ## Pick local or VPS hosting
 

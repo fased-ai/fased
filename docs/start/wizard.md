@@ -28,7 +28,8 @@ Fastest first chat:
 1. Run `./install.sh` locally.
 2. Keep the dashboard tab that opens, or run `fased dashboard`.
 3. Use **Agent > Models**, then open **Chat** and send a test message.
-   </Info>
+
+</Info>
 
 <Tip>
 VPS setup: create the server, join it to Tailscale, then run `./install.sh --hosting`.

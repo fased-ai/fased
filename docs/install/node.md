@@ -127,11 +127,11 @@ fnm install 22
 fnm use 22
 ```
 
-  <Warning>
-  Make sure your version manager is initialized in your shell startup file
-  (`~/.zshrc` or `~/.bashrc`). If it is not, new terminal sessions may not find
-  `fased` because PATH does not include Node's bin directory.
-  </Warning>
+<Warning>
+Make sure your version manager is initialized in your shell startup file
+(`~/.zshrc` or `~/.bashrc`). If it is not, new terminal sessions may not find
+`fased` because PATH does not include Node's bin directory.
+</Warning>
 </Accordion>
 
 ## Troubleshooting
