@@ -2761,7 +2761,7 @@ export async function finalizeOnboardingWizard(
           progress.update("Waiting for Tailscale HTTPS dashboard URL to become reachable…");
           const warmup = await waitForHttpUrlReachable({
             url: tailscaleAdminUrl,
-            deadlineMs: lowRamMode ? 300_000 : 180_000,
+            deadlineMs: lowRamMode ? 90_000 : 45_000,
             pollMs: 1_000,
             requestTimeoutMs: 5_000,
             // 401/403 still prove Tailscale HTTPS endpoint is reachable;
@@ -2770,9 +2770,16 @@ export async function finalizeOnboardingWizard(
           });
           if (!warmup.ok) {
             const detail = warmup.detail ?? "not reachable yet";
-            runtime.error(
-              `Tailscale dashboard URL still warming from this VPS: ${detail}. ` +
-                "Setup will finish if the local gateway listener remains healthy; open the printed Tailscale URL from your own Tailscale-connected computer.",
+            await prompter.note(
+              [
+                "The Tailscale HTTPS dashboard URL is still warming from this VPS.",
+                `Detail: ${detail}`,
+                "",
+                "Setup will continue if the local Gateway listener is healthy.",
+                "Open the printed Tailscale URL from your own Tailscale-connected computer.",
+                "If another VPN breaks MagicDNS, turn it off or use the 100.x Tailscale IP fallback.",
+              ].join("\n"),
+              "Dashboard warmup",
             );
             return;
           }
@@ -2782,7 +2789,7 @@ export async function finalizeOnboardingWizard(
               ? await waitForHostedDashboardBrowserPath({
                   httpUrl: tailscaleAdminUrl,
                   token: gatewayTokenForUi,
-                  deadlineMs: lowRamMode ? 180_000 : 90_000,
+                  deadlineMs: lowRamMode ? 90_000 : 45_000,
                   probeTimeoutMs: 8_000,
                   pollMs: 1_500,
                 })
@@ -2793,7 +2800,7 @@ export async function finalizeOnboardingWizard(
                     settings.authMode === "password"
                       ? nextConfig.gateway?.auth?.password
                       : undefined,
-                  deadlineMs: lowRamMode ? 180_000 : 90_000,
+                  deadlineMs: lowRamMode ? 90_000 : 45_000,
                   probeTimeoutMs: 8_000,
                   pollMs: 1_500,
                 });

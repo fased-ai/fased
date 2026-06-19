@@ -21,23 +21,31 @@ function displayPromptMessage(message: string): string {
   return DISPLAY_MESSAGE_OVERRIDES.get(trimmed) ?? message;
 }
 
-function sectionHeading(value: string, marker: string): string {
-  const text = `${marker} ${value}`;
+function normalizeSectionTitle(value: string): string {
+  return value.trim().toUpperCase();
+}
+
+function sectionHeading(value: string): string {
+  const text = normalizeSectionTitle(value);
   return isRich() ? theme.heading(text) : text;
 }
 
 export function formatWizardIntro(title: string): string {
+  const heading = sectionHeading(title);
+  if (process.env.FASED_INSTALLER_ONBOARD === "1") {
+    return heading;
+  }
   const ascii = isRich() ? theme.accentBright(WIZARD_ASCII) : WIZARD_ASCII;
-  return `${ascii}\n\n${sectionHeading(title, "◆")}`;
+  return `${ascii}\n\n${heading}`;
 }
 
 export const stylePromptMessage = (message: string): string =>
-  sectionHeading(displayPromptMessage(message), "◆");
+  sectionHeading(displayPromptMessage(message));
 
 export const stylePromptTitle = (title?: string): string | undefined =>
-  title ? sectionHeading(title, "▰") : title;
+  title ? sectionHeading(title) : title;
 
-export const styleProgressTitle = (title: string): string => sectionHeading(title, "●");
+export const styleProgressTitle = (title: string): string => sectionHeading(title);
 
 export const stylePromptHint = (hint?: string): string | undefined =>
   hint && isRich() ? theme.muted(hint) : hint;

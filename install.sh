@@ -276,6 +276,13 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
+for ((i = 0; i < ${#pass_args[@]}; i++)); do
+  if [[ "${pass_args[$i]}" == "--host-profile" && "${pass_args[$((i + 1))]:-}" == "hosting" ]]; then
+    HOSTING_REQUESTED=1
+    break
+  fi
+done
+
 set_installer_state_dir() {
   local state_dir="$1"
   case "$state_dir" in
@@ -1567,7 +1574,8 @@ remove_root_bootstrap_checkout_after_success() {
   if [[ ! -f "$source_dir/install.sh" || ! -f "$source_dir/package.json" || ! -d "$source_dir/src" ]]; then
     return 0
   fi
-  echo "== Root bootstrap: removing temporary checkout $source_dir =="
+  step_done "Removed temporary root checkout"
+  printf '%s %s\n' "$(color_green "Removed:")" "$(color_dim "$source_dir")"
   cd /
   rm -rf "$source_dir"
 }
@@ -1662,26 +1670,24 @@ reexec_as_app_user() {
     if need_cmd tailscale; then
       tailscale_dns="$(tailscale status --json 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>{try{const o=JSON.parse(s);process.stdout.write(String(o?.Self?.DNSName||"").replace(/\.$/,""));}catch{}})' 2>/dev/null || true)"
     fi
-    echo ""
-    echo "== Hosted handoff =="
-    echo "Initial root bootstrap is complete."
-    echo "Steady-state Fased commands should run as '$target_user'."
+    section "Hosted handoff"
+    step_done "Root bootstrap complete"
+    printf '%s %s\n' "$(color_green "Run as:")" "$(color_cyan "$target_user")"
     if [[ -n "$tailscale_dns" ]]; then
-      echo "Reconnect from your local machine over Tailscale with:"
-      echo "  ssh ${target_user}@${tailscale_dns}"
-      echo "Your shell starts in $target_repo_dir."
-      echo "If your tailnet enables Tailscale SSH, this also works:"
-      echo "  tailscale ssh ${target_user}@${tailscale_dns}"
-      echo "Then run:"
-      echo "  fased status"
-      echo "  fased dashboard"
+      printf '\n%s\n' "$(color_cyan "${C_BOLD}SSH terminal${C_RESET}")"
+      printf '  %s\n' "$(color_yellow "ssh ${target_user}@${tailscale_dns}")"
+      printf '%s %s\n' "$(color_green "Starts in:")" "$(color_dim "$target_repo_dir")"
+      printf '\n%s\n' "$(color_cyan "${C_BOLD}Tailscale SSH alternative${C_RESET}")"
+      printf '  %s\n' "$(color_yellow "tailscale ssh ${target_user}@${tailscale_dns}")"
     else
-      echo "Reconnect over your Tailscale network as '$target_user', then run:"
-      echo "  fased status"
-      echo "  fased dashboard"
-      echo "The '$target_user' shell is configured to start in $target_repo_dir."
+      printf '\n%s\n' "$(color_cyan "${C_BOLD}SSH terminal${C_RESET}")"
+      printf '  %s\n' "$(color_yellow "ssh ${target_user}@YOUR_VPS_TAILSCALE_NAME")"
+      printf '%s %s\n' "$(color_green "Starts in:")" "$(color_dim "$target_repo_dir")"
     fi
-    echo "Do not use the root checkout for normal operation after hosted hardening."
+    printf '\n%s\n' "$(color_cyan "${C_BOLD}Useful commands${C_RESET}")"
+    printf '  %s\n' "$(color_yellow "fased status")"
+    printf '  %s\n' "$(color_yellow "fased dashboard")"
+    printf '\n%s\n' "$(color_dim "Use the app checkout for normal operation; root was only for bootstrap.")"
     remove_root_bootstrap_checkout_after_success "$FASED_DIR" "$target_repo_dir"
   fi
 
@@ -2773,7 +2779,11 @@ section "Interactive setup"
 step_start "Start setup"
 onboard_old_space_mb="$(recommended_onboard_old_space_mb)"
 onboard_node_options="$(node_options_with_old_space "${NODE_OPTIONS:-}" "$onboard_old_space_mb")"
-(cd "$FASED_DIR" && env NODE_OPTIONS="$onboard_node_options" FASED_INSTALLER_ONBOARD=1 "$FASED_CLI_PATH" onboard --install-daemon "${pass_args[@]}")
+onboard_color_env=()
+if supports_color && [[ -z "${NO_COLOR:-}" && -z "${FORCE_COLOR:-}" ]]; then
+  onboard_color_env=(FORCE_COLOR=1)
+fi
+(cd "$FASED_DIR" && env NODE_OPTIONS="$onboard_node_options" "${onboard_color_env[@]}" FASED_INSTALLER_ONBOARD=1 "$FASED_CLI_PATH" onboard --install-daemon "${pass_args[@]}")
 if [[ ! -f "${FASED_CONFIG_PATH:-$FASED_CONFIG_DIR/fased.json}" ]]; then
   write_install_marker "$REPO_ROOT" "false"
   echo "Onboarding did not create ${FASED_CONFIG_PATH:-$FASED_CONFIG_DIR/fased.json}." >&2
