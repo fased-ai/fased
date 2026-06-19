@@ -15,7 +15,13 @@ import {
 import { createCliProgress } from "../cli/progress.js";
 import { stripAnsi } from "../terminal/ansi.js";
 import { note as emitNote } from "../terminal/note.js";
-import { stylePromptHint, stylePromptMessage, stylePromptTitle } from "../terminal/prompt-style.js";
+import {
+  formatWizardIntro,
+  styleProgressTitle,
+  stylePromptHint,
+  stylePromptMessage,
+  stylePromptTitle,
+} from "../terminal/prompt-style.js";
 import { theme } from "../terminal/theme.js";
 import type { WizardProgress, WizardPrompter } from "./prompts.js";
 import { WizardCancelledError } from "./prompts.js";
@@ -62,7 +68,7 @@ export function tokenizedOptionFilter<T>(search: string, option: Option<T>): boo
 export function createClackPrompter(): WizardPrompter {
   return {
     intro: async (title) => {
-      intro(stylePromptTitle(title) ?? title);
+      intro(formatWizardIntro(title));
     },
     outro: async (message) => {
       outro(stylePromptTitle(message) ?? message);
@@ -139,7 +145,7 @@ export function createClackPrompter(): WizardPrompter {
       const startedAt = Date.now();
       let currentMessage = label;
       const render = (message: string) =>
-        `${theme.accent(message)} ${theme.muted(`(${formatElapsed(Date.now() - startedAt)})`)}`;
+        `${styleProgressTitle(message)} ${theme.muted(`(${formatElapsed(Date.now() - startedAt)})`)}`;
       spin.start(render(currentMessage));
       const elapsedTimer = setInterval(() => {
         spin.message(render(currentMessage));
