@@ -211,49 +211,11 @@ recovery options and VPS provider console access working.
 
     ### 3. Install Fased and let it join Tailscale
 
-    <Tabs>
-      <Tab title="Ubuntu">
-        Recommended for the first hosted setup. Use this for Ubuntu or Debian
-        VPS images:
+    Use the same hosted command on supported VPS systems:
 
-        ```bash
-        curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
-        ```
-      </Tab>
-      <Tab title="Fedora">
-        On Fedora VPS images, let the Fased hosted installer run the Tailscale
-        install/start/login flow. This avoids a CLI case where manual
-        `tailscale up --ssh` can stay open after the VPS is already approved in
-        the Tailscale UI.
-
-        ```bash
-        curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
-        ```
-      </Tab>
-      <Tab title="RHEL">
-        Use this for RHEL-family VPS images such as AlmaLinux, Rocky Linux,
-        CloudLinux, Oracle Linux, and Amazon Linux:
-
-        ```bash
-        curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
-        ```
-      </Tab>
-      <Tab title="Arch">
-        ```bash
-        curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
-        ```
-      </Tab>
-      <Tab title="Alpine">
-        Alpine can install Fased, but hosted service/firewall hardening depends
-        on the provider image and init system.
-
-        ```bash
-        apk add --no-cache curl ca-certificates
-
-        curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
-        ```
-      </Tab>
-    </Tabs>
+    ```bash
+    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
+    ```
 
     The hosted installer installs/starts Tailscale when needed. When Fased
     prints a Tailscale login URL, open that URL in your local PC browser, sign
@@ -278,8 +240,8 @@ recovery options and VPS provider console access working.
 
     The Fased installer bootstraps the repository itself. A fresh VPS does not
     need `git clone` first. If the image is so small that `curl` is missing,
-    install only the downloader for that VPS OS, then rerun the same hosted
-    command.
+    install only the downloader for that VPS OS, then rerun the hosted command
+    above.
 
     <Tabs>
       <Tab title="Ubuntu">
