@@ -112,7 +112,7 @@ type TailnetSshPrerequisites = {
 const LOW_MEMORY_SWAP_THRESHOLD_MB = 2304;
 const LOW_MEMORY_HOSTING_SWAP_GB = 4;
 const HOSTING_SWAP_GB = 2;
-const TAILSCALE_INTERACTIVE_TIMEOUT_MS = 5 * 60 * 1000;
+const TAILSCALE_INTERACTIVE_TIMEOUT_MS = 2 * 60 * 1000;
 
 function detectTotalMemoryMb(): number {
   if (process.platform === "linux") {
@@ -199,7 +199,7 @@ function formatTailscaleBrowserLoginNote(): string {
     "Tailscale will print a login URL in this terminal.",
     "Open it, approve this VPS, then return here.",
     "After approval this should finish automatically.",
-    "If the command does not return after a few minutes, setup will continue when a tailnet IP is present.",
+    "If the command does not return after about two minutes, setup will continue when a tailnet IP is present.",
   ].join("\n");
 }
 
@@ -208,7 +208,7 @@ function formatTailscaleAccountBrowserLoginNote(): string {
     "Tailscale will print a login URL in this terminal.",
     "Open it from the same computer/account you want to use for the dashboard and SSH.",
     "After approval this should finish automatically.",
-    "If the command does not return after a few minutes, setup will continue when a tailnet IP is present.",
+    "If the command does not return after about two minutes, setup will continue when a tailnet IP is present.",
   ].join("\n");
 }
 

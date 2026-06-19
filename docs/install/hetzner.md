@@ -35,7 +35,7 @@ See [Security](/gateway/security) and [VPS hosting](/install/vps).
 - Start the Fased Gateway in Docker
 - Persist `~/.fased` + `~/.fased/workspace` on the host so state survives
   restarts and rebuilds
-- Join the VPS to Tailscale before onboarding
+- Keep operator access private through Tailscale
 - Keep the gateway loopback-only
 - Access the Control UI privately from your laptop through Tailscale
 
@@ -56,7 +56,7 @@ For the generic Docker flow, see [Docker](/install/docker).
 
 1. Provision Hetzner VPS
 2. Install Docker
-3. Join the VPS to Tailscale
+3. Prepare Tailscale operator access
 4. Clone the Fased repository
 5. Create persistent host directories
 6. Configure `.env` and `docker-compose.yml`
@@ -114,10 +114,10 @@ docker --version
 docker compose version
 ```
 
-## 2.5) Join the VPS to Tailscale before onboarding
+## 2.5) Prepare Tailscale operator access
 
 Create or sign into your Tailscale account first, then join the VPS to your
-tailnet before you onboard the runtime.
+tailnet before you rely on the private operator path.
 
 ```bash
 curl -fsSL https://tailscale.com/install.sh | sh
@@ -131,6 +131,11 @@ For a manual VPS, `tailscale up` prints a login URL in SSH. Open that URL in
 your local computer's browser, then return to the SSH session. Use a Tailscale
 auth key only when you need unattended provisioning, cloud-init, Terraform, or
 another non-interactive install path.
+
+If the Tailscale UI shows the VPS as approved but the SSH command keeps
+waiting, verify `tailscale status` and `tailscale ip -4` in a second SSH
+session. If the VPS has a `100.x.x.x` tailnet IP, press `Ctrl+C` in the stuck
+terminal and continue.
 
 ---
 

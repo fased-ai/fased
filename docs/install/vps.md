@@ -40,7 +40,7 @@ For most users, the hosted path is:
 
 1. On your own computer, install/sign into Tailscale and keep it online.
 2. SSH into the fresh VPS using the login your VPS provider gives you.
-3. Join the VPS to the same tailnet, install Fased, and choose the
+3. Run the Fased hosted installer; it joins the VPS to Tailscale and guides the
    **Hosting** profile.
 
 Ubuntu LTS is the recommended VPS OS for a first hosted setup. Debian is close
@@ -124,7 +124,7 @@ First SSH into the fresh VPS, often as `root`:
 ssh root@YOUR_PUBLIC_VPS_IP
 ```
 
-## 3. Join the VPS to Tailscale and install Fased
+## 3. Install Fased and let it join Tailscale
 
 <Tabs>
   <Tab title="Ubuntu">
@@ -132,23 +132,17 @@ ssh root@YOUR_PUBLIC_VPS_IP
     images:
 
     ```bash
-    curl -fsSL https://tailscale.com/install.sh | sh
-    tailscale up --ssh
-
     curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
     ```
 
   </Tab>
   <Tab title="Fedora">
-    On Fedora VPS images, install and start Tailscale, then let the Fased
-    hosted installer run the Tailscale browser login. This avoids a Fedora CLI
-    case where manual `tailscale up --ssh` can stay open after the VPS is
-    already approved in the Tailscale UI.
+    On Fedora VPS images, let the Fased hosted installer run the Tailscale
+    install/start/login flow. This avoids a CLI case where manual
+    `tailscale up --ssh` can stay open after the VPS is already approved in the
+    Tailscale UI.
 
     ```bash
-    dnf install -y tailscale
-    systemctl enable --now tailscaled
-
     curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
     ```
 
@@ -158,19 +152,12 @@ ssh root@YOUR_PUBLIC_VPS_IP
     CloudLinux, Oracle Linux, and Amazon Linux:
 
     ```bash
-    curl -fsSL https://tailscale.com/install.sh | sh
-    tailscale up --ssh
-
     curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
     ```
 
   </Tab>
   <Tab title="Arch">
     ```bash
-    pacman -Sy --needed --noconfirm tailscale
-    systemctl enable --now tailscaled
-    tailscale up --ssh
-
     curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
     ```
 
@@ -181,8 +168,6 @@ ssh root@YOUR_PUBLIC_VPS_IP
 
     ```bash
     apk add --no-cache curl ca-certificates
-    curl -fsSL https://tailscale.com/install.sh | sh
-    tailscale up --ssh
 
     curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
     ```
@@ -190,13 +175,14 @@ ssh root@YOUR_PUBLIC_VPS_IP
   </Tab>
 </Tabs>
 
-When either `tailscale up --ssh` or the Fased installer prints a Tailscale login
-URL, open that URL in your local PC browser, sign in, and approve. After that,
-the VPS is added to your tailnet automatically.
+The hosted installer installs/starts Tailscale when needed. When Fased prints a
+Tailscale login URL, open that URL in your local PC browser, sign in, and
+approve. After that, the VPS is added to your tailnet automatically.
 
-On some Fedora/RHEL-family images, the Tailscale UI can show the VPS as
-approved while a manual `tailscale up --ssh` command in SSH keeps waiting. In a
-second provider SSH session, verify that Tailscale is actually online:
+Avoid running `tailscale up --ssh` manually before Fased. On some VPS images,
+the Tailscale UI can show the VPS as approved while the manual CLI command
+keeps waiting. If you already ran it and it is stuck, open a second provider SSH
+session and verify that Tailscale is actually online:
 
 ```bash
 tailscale status
@@ -206,7 +192,7 @@ tailscale ip -4
 If those commands show the VPS and a `100.x.x.x` tailnet IP, press `Ctrl+C` in
 the stuck `tailscale up --ssh` terminal and continue with the Fased hosted
 install command. If they do not show a tailnet IP, run `tailscale logout`,
-restart `tailscaled`, and run `tailscale up --ssh` again.
+restart `tailscaled`, and run the Fased hosted install command again.
 
 The Fased installer bootstraps the repository itself. A fresh VPS does not need
 `git clone` first. It installs missing system tools, Node, `pnpm`, and Git when
@@ -279,8 +265,9 @@ user, prepares `/home/app/fased`, and re-runs the installer as `app`. That is
 expected. After successful hosted onboarding, the temporary root checkout is
 removed. Do not move the repo back to `/root`.
 
-When `sudo tailscale up --ssh` prints a login URL in the SSH terminal, copy that
-URL into your own device's browser. The VPS does not need a desktop browser.
+When the Fased installer prints a Tailscale login URL in the SSH terminal, copy
+that URL into your own device's browser. The VPS does not need a desktop
+browser.
 
 Before SSH/firewall lock-down, setup pauses and asks you to test terminal access
 from your own computer. That computer must have Tailscale installed, running,
@@ -432,9 +419,8 @@ them from this repo.
 - Root installs are bootstrapped into `/home/app/fased` and run as the `app`
   user. The root checkout is temporary bootstrap state.
 - Treat the VPS as the source of truth and **back up** the state + workspace.
-- Create or sign into **Tailscale before onboarding** that host. If you skip
-  this, Hosting onboarding will stop to install/login Tailscale before it locks
-  down SSH/firewall rules.
+- Let hosted onboarding install/start/login Tailscale when needed before it
+  locks down SSH/firewall rules.
 - Use `fased onboard --host-profile hosting` for the hosted path.
 - Keep the gateway on loopback and access it via the private Tailscale HTTPS
   dashboard URL or SSH over the Tailscale network.

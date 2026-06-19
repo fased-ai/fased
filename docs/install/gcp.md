@@ -25,7 +25,6 @@ workload and scale up if you hit OOMs.
 - Start the Fased Gateway in Docker
 - Persist `~/.fased` + `~/.fased/workspace` on the host so state survives
   restarts and rebuilds
-- Join the VM to Tailscale before onboarding
 - Keep operator access private through Tailscale
 
 The intended operator access path is:
@@ -195,10 +194,10 @@ docker compose version
 
 ---
 
-## 5.5) Join the VM to Tailscale before onboarding
+## 5.5) Prepare Tailscale operator access
 
 Create or sign into your Tailscale account first, then join the VM to your
-tailnet before you continue with the runtime setup.
+tailnet before you rely on the private operator path.
 
 ```bash
 curl -fsSL https://tailscale.com/install.sh | sh
@@ -212,6 +211,11 @@ For a manual VM, `sudo tailscale up` prints a login URL in SSH. Open that URL in
 your local computer's browser, then return to the SSH session. Use a Tailscale
 auth key only when you need unattended provisioning, cloud-init, Terraform, or
 another non-interactive install path.
+
+If the Tailscale UI shows the VM as approved but the SSH command keeps waiting,
+verify `tailscale status` and `tailscale ip -4` in a second SSH session. If the
+VM has a `100.x.x.x` tailnet IP, press `Ctrl+C` in the stuck terminal and
+continue.
 
 ---
 

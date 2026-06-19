@@ -160,9 +160,8 @@ curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | ba
 ```
 
 Fresh VPS hosting uses the OS-specific steps in [Install](/install#vps-hosting-install).
-Ubuntu commonly joins Tailscale before the Fased command. Fedora/RHEL-family
-hosts can install/start `tailscaled` first and let the Fased hosted installer
-run the browser login with its timeout/readiness checks.
+The Fased hosted installer installs/starts Tailscale when needed and runs the
+browser login with timeout/readiness checks.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
@@ -170,7 +169,7 @@ curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | ba
 
 Hosting note:
 
-- follow the OS-specific Tailscale setup in [Install](/install#vps-hosting-install)
+- follow the OS-specific hosted setup in [Install](/install#vps-hosting-install)
 - when Tailscale prints a login URL in SSH, open it in your local browser
 - use an auth key only for unattended automation
 - use the **hosting** profile in the wizard
