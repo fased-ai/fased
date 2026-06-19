@@ -199,17 +199,30 @@ recovery options and VPS provider console access working.
     commands inside the VPS SSH session.
 
     If your own computer says `tailscale: command not found`, install Tailscale
-    on your own computer first:
+    on your own computer first. Use the command for your own computer's OS, not
+    the VPS OS:
 
     ```bash
+    # Fedora local computer
+    sudo dnf install -y tailscale
+    sudo systemctl enable --now tailscaled
+    sudo tailscale up
+
+    # Ubuntu / Debian / Kali local computer
     curl -fsSL https://tailscale.com/install.sh | sh
+    sudo tailscale up
+
+    # Arch local computer
+    sudo pacman -S tailscale
+    sudo systemctl enable --now tailscaled
     sudo tailscale up
     ```
 
-    On Windows or macOS, install and sign into the Tailscale app, then use
-    PowerShell or Terminal for the check. A separate VPN on your own computer
-    can interfere with Tailscale DNS or routing; if ping/SSH cannot reach the
-    VPS, disconnect the other VPN or allow Tailscale traffic and try again.
+    On Windows, install and sign into the Tailscale app, then use PowerShell
+    for the check. On macOS, install and sign into the Tailscale app, then use
+    Terminal. A separate VPN on your own computer can interfere with Tailscale
+    DNS or routing; if ping/SSH cannot reach the VPS, disconnect the other VPN
+    or allow Tailscale traffic and try again.
 
     ```bash
     tailscale ping YOUR_VPS_TAILSCALE_NAME

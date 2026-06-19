@@ -81,6 +81,7 @@ describe("onboarding host security", () => {
     expect(note).toContain("tailscale ping 100.64.1.2");
     expect(note).toContain("These commands run on your own computer");
     expect(note).toContain("must have Tailscale installed");
+    expect(note).toContain("sudo dnf install -y tailscale");
     expect(note).toContain('"no matching peer"');
     expect(note).toContain("not in the same tailnet");
     expect(note).toContain("ssh app@fased-vps.tailnet.ts.net");
