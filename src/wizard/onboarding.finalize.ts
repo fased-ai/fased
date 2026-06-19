@@ -2736,12 +2736,11 @@ export async function finalizeOnboardingWizard(
           });
           if (!warmup.ok) {
             const detail = warmup.detail ?? "not reachable yet";
-            if (!opts.allowInsecure) {
-              throw new Error(
-                `Hosting requires reachable Tailscale dashboard URL before completion (${detail})`,
-              );
-            }
-            runtime.error(`Tailscale dashboard URL still warming: ${detail}`);
+            runtime.error(
+              `Tailscale dashboard URL still warming from this VPS: ${detail}. ` +
+                "Setup will finish if the local gateway listener remains healthy; open the printed Tailscale URL from your own Tailscale-connected computer.",
+            );
+            return;
           }
           progress.update("Confirming browser dashboard connection…");
           const wsWarmup =
