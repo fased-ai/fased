@@ -43,6 +43,13 @@ function buildOptionSearchText<T>(option: Option<T>): string {
   return `${label} ${hint} ${value}`.toLowerCase();
 }
 
+function formatElapsed(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+}
+
 export function tokenizedOptionFilter<T>(search: string, option: Option<T>): boolean {
   const tokens = normalizeSearchTokens(search);
   if (tokens.length === 0) {
@@ -129,7 +136,15 @@ export function createClackPrompter(): WizardPrompter {
       ),
     progress: (label: string): WizardProgress => {
       const spin = spinner();
-      spin.start(theme.accent(label));
+      const startedAt = Date.now();
+      let currentMessage = label;
+      const render = (message: string) =>
+        `${theme.accent(message)} ${theme.muted(`(${formatElapsed(Date.now() - startedAt)})`)}`;
+      spin.start(render(currentMessage));
+      const elapsedTimer = setInterval(() => {
+        spin.message(render(currentMessage));
+      }, 1_000);
+      elapsedTimer.unref?.();
       const osc = createCliProgress({
         label,
         indeterminate: true,
@@ -138,13 +153,15 @@ export function createClackPrompter(): WizardPrompter {
       });
       return {
         update: (message) => {
-          spin.message(theme.accent(message));
+          currentMessage = message;
+          spin.message(render(currentMessage));
           osc.setLabel(message);
         },
         stop: (message) => {
+          clearInterval(elapsedTimer);
           osc.done();
           if (message && message.trim().length > 0) {
-            spin.stop(message);
+            spin.stop(theme.success(message));
           } else {
             spin.clear();
           }

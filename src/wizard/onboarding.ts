@@ -860,13 +860,11 @@ export async function runOnboardingWizard(
 
   await prompter.note(
     [
-      theme.heading("Choose the setup profile for this machine:"),
+      theme.heading("Choose one profile"),
       "",
-      theme.info("Local"),
-      "Use on your own computer. Good for first chat and the local Control UI. No VPS SSH/firewall hardening.",
+      `- ${theme.info("Local")}: your own computer, local Control UI, no VPS SSH/firewall hardening.`,
       "",
-      theme.warn("VPS Hosting"),
-      "Use on an always-on server. Applies private Tailscale access and hosted SSH/firewall hardening.",
+      `- ${theme.warn("VPS Hosting")}: always-on server with private Tailscale access and hosted SSH/firewall hardening.`,
     ].join("\n"),
     "Setup map",
   );
@@ -944,13 +942,12 @@ export async function runOnboardingWizard(
         theme.heading("Private access"),
         "Hosting uses private access through Tailscale.",
         "",
-        theme.info("Web dashboard: open the Tailscale HTTPS URL printed at the end."),
-        theme.success("SSH terminal: use ssh app@YOUR_VPS_TAILSCALE_NAME for CLI commands."),
-        theme.warn("Tailscale SSH is optional and only works when enabled in your tailnet."),
+        `- ${theme.info("Dashboard")}: open the Tailscale HTTPS URL printed at the end.`,
+        `- ${theme.success("SSH")}: use ssh app@YOUR_VPS_TAILSCALE_NAME for CLI commands.`,
+        `- ${theme.warn("Tailscale SSH")}: optional; only works when enabled in your tailnet.`,
         "",
-        theme.error(
-          "Public SSH and Gateway ports stay blocked. Root is only for first bootstrap or emergency repair.",
-        ),
+        `- ${theme.error("Public SSH/Gateway ports stay blocked.")}`,
+        `- ${theme.warn("Root")}: first bootstrap or emergency repair only.`,
       ].join("\n"),
       "Hosting access",
     );
@@ -1100,38 +1097,39 @@ export async function runOnboardingWizard(
     const quickstartLines = quickstartGateway.hasExisting
       ? hostProfile === "hosting"
         ? [
-            "Hosting quickstart:",
-            "Private web dashboard through Tailscale.",
-            "Private SSH terminal through Tailscale.",
-            "Gateway uses token auth and stays behind localhost.",
+            theme.heading("Hosting quickstart"),
+            "- Private dashboard through Tailscale.",
+            "- Private SSH terminal through Tailscale.",
+            "- Gateway uses token auth and stays behind localhost.",
           ]
         : [
-            "Keeping your current gateway settings:",
-            `Gateway port: ${quickstartGateway.port}`,
-            `Gateway bind: ${formatBind(quickstartGateway.bind)}`,
+            theme.heading("Current gateway settings"),
+            `- Port: ${quickstartGateway.port}`,
+            `- Bind: ${formatBind(quickstartGateway.bind)}`,
             ...(quickstartGateway.bind === "custom" && quickstartGateway.customBindHost
-              ? [`Gateway custom IP: ${quickstartGateway.customBindHost}`]
+              ? [`- Custom IP: ${quickstartGateway.customBindHost}`]
               : []),
-            `Gateway auth: ${formatAuth(quickstartGateway.authMode)}`,
-            `Tailscale exposure: ${formatTailscale(quickstartGateway.tailscaleMode)}`,
-            "Connect chat apps later in Control UI > Channels.",
+            `- Auth: ${formatAuth(quickstartGateway.authMode)}`,
+            `- Tailscale: ${formatTailscale(quickstartGateway.tailscaleMode)}`,
+            "- Connect chat apps later in Control UI > Channels.",
           ]
       : hostProfile === "hosting"
         ? [
-            "Hosting quickstart:",
-            "Private web dashboard through Tailscale.",
-            "Private SSH terminal through Tailscale.",
-            "Gateway uses token auth and stays behind localhost.",
+            theme.heading("Hosting quickstart"),
+            "- Private dashboard through Tailscale.",
+            "- Private SSH terminal through Tailscale.",
+            "- Gateway uses token auth and stays behind localhost.",
           ]
         : [
-            `Gateway port: ${DEFAULT_GATEWAY_PORT}`,
-            "Gateway bind: Loopback (127.0.0.1)",
-            "Gateway auth: Token (default)",
-            `Tailscale exposure: Off`,
-            "Connect chat apps later in Control UI > Channels.",
+            theme.heading("Local quickstart"),
+            `- Port: ${DEFAULT_GATEWAY_PORT}`,
+            "- Bind: Loopback (127.0.0.1)",
+            "- Auth: Token (default)",
+            "- Tailscale: Off",
+            "- Connect chat apps later in Control UI > Channels.",
           ];
     if (hostProfile === "hosting") {
-      quickstartLines.push("Installer applies the Tailscale-only admin access baseline.");
+      quickstartLines.push(`- ${theme.warn("Admin access stays Tailscale-only.")}`);
     }
     await prompter.note(quickstartLines.join("\n"), "QuickStart");
   }

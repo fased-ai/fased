@@ -48,6 +48,7 @@ import { readManagedReservationSummaries } from "../managed/tunnel.js";
 import { describeOperatorReadinessChecklist } from "../operator/operator-readiness.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { restoreTerminalState } from "../terminal/restore.js";
+import { theme } from "../terminal/theme.js";
 import { runTui } from "../tui/tui.js";
 import { resolveUserPath } from "../utils.js";
 import { readWalletProviderRegistry } from "../wallet/wallet-provider-registry.js";
@@ -1127,44 +1128,64 @@ function readSatMiningWalletId(config: FasedAgentConfig): string | null {
 function formatOperatorReadinessSummary(
   items: ReturnType<typeof describeOperatorReadinessChecklist>,
 ): string {
-  const summaryLines = items.map((item) => `- ${item.title}: ${item.summary}`);
+  const titleLabel = (title: string) => {
+    if (title === "Wallet Control Passkey ready") {
+      return "Passkey";
+    }
+    if (title === "Agent wallet set") {
+      return "Agent wallet";
+    }
+    if (title === "Mining wallet separate") {
+      return "Mining wallet";
+    }
+    if (title === "Vault wallet present") {
+      return "Vault wallet";
+    }
+    if (title === "Fased Network joined / trusted") {
+      return "Network trust";
+    }
+    if (title === "Fased Network reachability state") {
+      return "Network reachability";
+    }
+    return title;
+  };
+  const tone = (item: (typeof items)[number]) => {
+    if (item.tone === "success") {
+      return theme.success(item.summary);
+    }
+    if (item.tone === "warn") {
+      return theme.warn(item.summary);
+    }
+    return theme.info(item.summary);
+  };
+  const summaryLines = items.map((item) => `- ${titleLabel(item.title)}: ${tone(item)}`);
   const nextActionLines: string[] = [];
   if (
     items.some((item) => item.title === "Wallet Control Passkey ready" && item.tone !== "success")
   ) {
-    nextActionLines.push(
-      "- Wallet: finish Wallet Control Passkey before trusting higher-risk automation.",
-    );
+    nextActionLines.push("- Wallet: finish passkey before higher-risk automation.");
   }
   if (items.some((item) => item.title === "Agent wallet set" && item.tone !== "success")) {
-    nextActionLines.push(
-      "- Wallet: set a dedicated Agent wallet before paid Fased Network or skill wallet work.",
-    );
+    nextActionLines.push("- Wallet: set an Agent wallet before paid network or skill wallet work.");
   }
   if (
     items.some((item) => item.title === "Mining wallet separate" && item.summary === "Conflict")
   ) {
-    nextActionLines.push(
-      "- Mining: move Mining to a separate wallet before using paid Agent wallet flows.",
-    );
+    nextActionLines.push("- Mining: move Mining to a separate wallet before paid Agent flows.");
   } else if (
     items.some(
       (item) =>
         item.title === "Mining wallet separate" && item.summary === "Optional and not configured",
     )
   ) {
-    nextActionLines.push(
-      "- Mining: optional. If you enable it later, create or import the singleton @wallet:mining wallet.",
-    );
+    nextActionLines.push("- Mining: optional; create/import @wallet:mining later.");
   }
   if (
     items.some(
       (item) => item.title === "Fased Network joined / trusted" && item.summary !== "Verified",
     )
   ) {
-    nextActionLines.push(
-      "- Fased Network: register, attest, and complete trust review before expecting normal network routing.",
-    );
+    nextActionLines.push("- Fased Network: complete registration and trust review.");
   }
   if (
     items.some(
@@ -1174,14 +1195,12 @@ function formatOperatorReadinessSummary(
         item.summary !== "Disabled",
     )
   ) {
-    nextActionLines.push(
-      "- Fased Network: check hosted token issuance if you expect a public URL.",
-    );
+    nextActionLines.push("- Fased Network: check hosted token issuance for public URL.");
   }
   return [
-    "Operator readiness summary:",
+    theme.heading("Operator readiness summary"),
     ...summaryLines,
-    ...(nextActionLines.length > 0 ? ["", "Next actions:", ...nextActionLines] : []),
+    ...(nextActionLines.length > 0 ? ["", theme.heading("Next actions"), ...nextActionLines] : []),
   ].join("\n");
 }
 
@@ -1240,8 +1259,8 @@ async function verifyStrictHostedGatewayReady(params: {
     url: params.wsUrl,
     token: params.token,
     password: params.password,
-    deadlineMs: params.lowRamMode ? 60_000 : 30_000,
-    probeTimeoutMs: 5_000,
+    deadlineMs: params.lowRamMode ? 300_000 : 180_000,
+    probeTimeoutMs: params.lowRamMode ? 60_000 : 15_000,
     pollMs: 750,
   });
   if (!probe.ok) {
@@ -1433,13 +1452,7 @@ export async function finalizeOnboardingWizard(
     options: { doneMessage?: string },
     work: (progress: { update: (message: string) => void }) => Promise<T>,
   ): Promise<T> => {
-    const progress =
-      options.doneMessage === undefined
-        ? {
-            update: (_message: string) => {},
-            stop: (_message?: string) => {},
-          }
-        : prompter.progress(label);
+    const progress = prompter.progress(label);
     let completed = false;
     try {
       const result = await work(progress);

@@ -429,7 +429,7 @@ describe("runOnboardingWizard", () => {
     );
 
     expect(prompter.note).toHaveBeenCalledWith(
-      expect.stringContaining("No VPS SSH/firewall hardening."),
+      expect.stringContaining("no VPS SSH/firewall hardening."),
       "Setup map",
     );
     expect(prompter.note).toHaveBeenCalledWith(

@@ -167,8 +167,10 @@ BANNER
   if supports_color; then
     printf '%s' "$C_RESET"
   fi
+  printf '\n'
   printf '%s\n' "$(color_cyan "${C_BOLD}Fased Agent v${version}${C_RESET}")"
-  printf '%s\n\n' "$(color_dim "Profile: ${profile}  |  Logs: ${INSTALL_LOG_DIR}")"
+  printf '%s %s\n' "$(color_green "Mode:")" "$(color_cyan "${profile}")"
+  printf '%s %s\n\n' "$(color_yellow "Logs:")" "$(color_dim "${INSTALL_LOG_DIR}")"
 }
 
 section() {

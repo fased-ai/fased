@@ -83,7 +83,7 @@ describe("onboarding host security", () => {
       repoDir: "/home/app/fased",
     });
 
-    expect(note).toContain("Before Fased locks down public SSH/root/password access");
+    expect(note).toContain("Prove private terminal access");
     expect(note).toContain("tailscale ping fased-vps.tailnet.ts.net");
     expect(note).toContain("tailscale ping 100.64.1.2");
     expect(note).toContain("These commands run on your own computer");
