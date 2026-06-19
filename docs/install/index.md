@@ -142,30 +142,65 @@ recovery options and VPS provider console access working.
     - **Your own computer:** opens the dashboard and runs SSH checks.
     - **The VPS:** runs Fased Agent.
 
-    Start on your own computer:
+    ### 1. Connect your local PC to Tailscale
 
-    - **Windows**: use PowerShell or Windows Terminal. Install and sign into the
-      Windows Tailscale app from
-      [tailscale.com/download](https://tailscale.com/download). PowerShell can
-      SSH into the Linux VPS.
-    - **macOS**: use Terminal and sign into the macOS Tailscale app.
-    - **Linux**: use Terminal and install/start Tailscale on that Linux machine.
-    - **WSL**: advanced only. Use PowerShell instead, or install/start Tailscale
-      inside WSL too. Windows Tailscale does not automatically make WSL a
-      Tailscale node.
+    Your own computer must join the same Tailscale account/tailnet as the VPS.
+    That is the computer where you will open the dashboard and run SSH checks.
 
-    Installing Tailscale from PowerShell is fine, but it still installs the
-    Windows Tailscale app/service. PowerShell uses that Windows Tailscale
-    connection.
+    <Tabs>
+      <Tab title="Windows">
+        Install the Tailscale app from
+        [tailscale.com/download](https://tailscale.com/download), sign in, and
+        use PowerShell or Windows Terminal for checks.
+
+        PowerShell uses the Windows Tailscale app/service. If you use WSL
+        instead, install and sign into Tailscale inside WSL too.
+      </Tab>
+      <Tab title="macOS">
+        Install the Tailscale app from
+        [tailscale.com/download](https://tailscale.com/download) or the App
+        Store, sign in, and use Terminal for checks.
+      </Tab>
+      <Tab title="Ubuntu">
+        Use this for Ubuntu, Debian, or Kali local computers:
+
+        ```bash
+        curl -fsSL https://tailscale.com/install.sh | sh
+        sudo tailscale up
+        tailscale status
+        tailscale ip -4
+        ```
+      </Tab>
+      <Tab title="Fedora">
+        ```bash
+        sudo dnf install -y tailscale
+        sudo systemctl enable --now tailscaled
+        sudo tailscale up
+        tailscale status
+        tailscale ip -4
+        ```
+      </Tab>
+      <Tab title="Arch">
+        ```bash
+        sudo pacman -S tailscale
+        sudo systemctl enable --now tailscaled
+        sudo tailscale up
+        tailscale status
+        tailscale ip -4
+        ```
+      </Tab>
+    </Tabs>
 
     Other private-access systems are custom deployments. The standard hosted
     installer does not configure or verify WireGuard, Headscale, ZeroTier,
     bastion hosts, or manual SSH tunnels. If you replace Tailscale, you own
     dashboard exposure, SSH rules, TLS, firewall rules, and recovery.
 
-    Do not paste the Linux install commands into PowerShell unless PowerShell is
-    already connected to the VPS over SSH. The commands below run **inside the
-    VPS SSH session**.
+    Do not paste the Linux VPS install commands into PowerShell unless
+    PowerShell is already connected to the VPS over SSH. The commands below run
+    **inside the VPS SSH session**.
+
+    ### 2. SSH into the VPS
 
     First SSH into the fresh VPS using the login your VPS provider gives you,
     often `root@YOUR_PUBLIC_VPS_IP`:
@@ -174,44 +209,104 @@ recovery options and VPS provider console access working.
     ssh root@YOUR_PUBLIC_VPS_IP
     ```
 
-    Then run this on the VPS:
+    ### 3. Join the VPS to Tailscale and install Fased
 
-    ```bash
-    curl -fsSL https://tailscale.com/install.sh | sh
-    tailscale up --ssh
+    <Tabs>
+      <Tab title="Ubuntu">
+        Recommended for the first hosted setup. Use this for Ubuntu or Debian
+        VPS images:
 
-    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
-    ```
+        ```bash
+        curl -fsSL https://tailscale.com/install.sh | sh
+        tailscale up --ssh
+
+        curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
+        ```
+      </Tab>
+      <Tab title="Fedora">
+        ```bash
+        dnf install -y tailscale
+        systemctl enable --now tailscaled
+        tailscale up --ssh
+
+        curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
+        ```
+      </Tab>
+      <Tab title="RHEL">
+        Use this for RHEL-family VPS images such as AlmaLinux, Rocky Linux,
+        CloudLinux, Oracle Linux, and Amazon Linux:
+
+        ```bash
+        curl -fsSL https://tailscale.com/install.sh | sh
+        tailscale up --ssh
+
+        curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
+        ```
+      </Tab>
+      <Tab title="Arch">
+        ```bash
+        pacman -Sy --needed --noconfirm tailscale
+        systemctl enable --now tailscaled
+        tailscale up --ssh
+
+        curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
+        ```
+      </Tab>
+      <Tab title="Alpine">
+        Alpine can install Fased, but hosted service/firewall hardening depends
+        on the provider image and init system.
+
+        ```bash
+        apk add --no-cache curl ca-certificates
+        curl -fsSL https://tailscale.com/install.sh | sh
+        tailscale up --ssh
+
+        curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
+        ```
+      </Tab>
+    </Tabs>
+
+    When `tailscale up --ssh` prints a login URL, open that URL in your local
+    PC browser, sign in, and approve. After that, the VPS is added to your
+    tailnet automatically.
 
     The Fased installer bootstraps the repository itself. A fresh VPS does not
     need `git clone` first. If the image is so small that `curl` is missing,
     install only the downloader for that VPS OS, then rerun the same hosted
     command.
 
-    **Ubuntu / Debian / Kali:**
+    <Tabs>
+      <Tab title="Ubuntu">
+        Use this for Ubuntu, Debian, or Kali VPS images:
 
-    ```bash
-    apt-get update
-    apt-get install -y curl ca-certificates
-    ```
+        ```bash
+        apt-get update
+        apt-get install -y curl ca-certificates
+        ```
+      </Tab>
+      <Tab title="Fedora">
+        ```bash
+        dnf install -y curl ca-certificates
+        ```
+      </Tab>
+      <Tab title="RHEL">
+        Use this for RHEL-family VPS images:
 
-    **Fedora / RHEL-family:**
-
-    ```bash
-    dnf install -y curl ca-certificates
-    ```
-
-    **Arch:**
-
-    ```bash
-    pacman -Sy --needed --noconfirm curl ca-certificates
-    ```
-
-    **Alpine:**
-
-    ```bash
-    apk add --no-cache curl ca-certificates
-    ```
+        ```bash
+        dnf install -y curl ca-certificates
+        ```
+      </Tab>
+      <Tab title="Arch">
+        ```bash
+        pacman -Sy --needed --noconfirm curl ca-certificates
+        ```
+      </Tab>
+      <Tab title="Alpine">
+        ```bash
+        apk add --no-cache curl ca-certificates
+        ```
+      </Tab>
+    </Tabs>
 
     Current installers try a clean fast-forward update from Git before building.
     If you already started from an older installer and it stopped, run
@@ -230,38 +325,11 @@ recovery options and VPS provider console access working.
     running, and signed into the same tailnet as the VPS. Do not run the check
     commands inside the VPS SSH session.
 
-    If your own computer says `tailscale: command not found`, install Tailscale
-    on your own computer first. Use the command for your own computer's OS, not
-    the VPS OS:
-
-    **Ubuntu / Debian / Kali local computer:**
-
-    ```bash
-    curl -fsSL https://tailscale.com/install.sh | sh
-    sudo tailscale up
-    ```
-
-    **Fedora local computer:**
-
-    ```bash
-    sudo dnf install -y tailscale
-    sudo systemctl enable --now tailscaled
-    sudo tailscale up
-    ```
-
-    **Arch local computer:**
-
-    ```bash
-    sudo pacman -S tailscale
-    sudo systemctl enable --now tailscaled
-    sudo tailscale up
-    ```
-
-    On Windows, install and sign into the Tailscale app, then use PowerShell
-    for the check. On macOS, install and sign into the Tailscale app, then use
-    Terminal. A separate VPN on your own computer can interfere with Tailscale
-    DNS or routing; if ping/SSH cannot reach the VPS, disconnect the other VPN
-    or allow Tailscale traffic and try again.
+    If your own computer says `tailscale: command not found`, return to step 1
+    and install Tailscale on your local PC first. A separate VPN on your own
+    computer can interfere with Tailscale DNS or routing; if ping/SSH cannot
+    reach the VPS, disconnect the other VPN or allow Tailscale traffic and try
+    again.
 
     If `tailscale ping 100.x.x.x` works but
     `ssh app@YOUR_VPS_TAILSCALE_NAME` fails with a hostname/DNS error,
@@ -270,7 +338,9 @@ recovery options and VPS provider console access working.
     or use the Tailscale IP directly:
 
     ```bash
+    tailscale status
     tailscale ping YOUR_VPS_TAILSCALE_NAME
+    tailscale ping 100.x.x.x
     ssh app@YOUR_VPS_TAILSCALE_NAME
     ssh app@100.x.x.x
     ```
