@@ -270,6 +270,21 @@ recovery options and VPS provider console access working.
     PC browser, sign in, and approve. After that, the VPS is added to your
     tailnet automatically.
 
+    On some Fedora/RHEL-family images, the Tailscale UI can show the VPS as
+    approved while the `tailscale up --ssh` command in SSH keeps waiting. In a
+    second provider SSH session, verify that Tailscale is actually online:
+
+    ```bash
+    tailscale status
+    tailscale ip -4
+    ```
+
+    If those commands show the VPS and a `100.x.x.x` tailnet IP, press
+    `Ctrl+C` in the stuck `tailscale up --ssh` terminal and continue with the
+    Fased hosted install command. If they do not show a tailnet IP, run
+    `tailscale logout`, restart `tailscaled`, and run `tailscale up --ssh`
+    again.
+
     The Fased installer bootstraps the repository itself. A fresh VPS does not
     need `git clone` first. If the image is so small that `curl` is missing,
     install only the downloader for that VPS OS, then rerun the same hosted
