@@ -196,9 +196,16 @@ Terminal. A separate VPN on your own computer can interfere with Tailscale DNS
 or routing; if ping/SSH cannot reach the VPS, disconnect the other VPN or allow
 Tailscale traffic and try again.
 
+If `tailscale ping 100.x.x.x` works but
+`ssh app@YOUR_VPS_TAILSCALE_NAME` fails with a hostname/DNS error, Tailscale is
+connected but MagicDNS is being blocked or overridden, often by the other VPN.
+Disconnect the other VPN, fix its DNS split-tunnel rules, or use the Tailscale
+IP directly:
+
 ```bash
 tailscale ping YOUR_VPS_TAILSCALE_NAME
 ssh app@YOUR_VPS_TAILSCALE_NAME
+ssh app@100.x.x.x
 ```
 
 If `tailscale ping` says `no matching peer`, your computer and the VPS are not
