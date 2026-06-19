@@ -141,7 +141,9 @@ provider's web console/rescue mode/rebuild tools.
 
 Before lock-down, the wizard asks you to test `tailscale ping
 YOUR_VPS_TAILSCALE_NAME`, then `ssh app@YOUR_VPS_TAILSCALE_NAME` from your own
-computer. If `tailscale ping` says `no matching peer`, your computer and the VPS
+computer. That computer must have Tailscale installed, running, and signed into
+the same tailnet as the VPS. Do not run the check commands inside the VPS SSH
+session. If `tailscale ping` says `no matching peer`, your computer and the VPS
 are not in the same Tailscale network. Confirm only after SSH connects through
 Tailscale and opens `/home/app/fased`. If it does not connect, setup stops
 before disabling root or password SSH.

@@ -194,7 +194,9 @@ recovery options and VPS provider console access working.
     The hosted profile keeps the raw Gateway port closed.
 
     Before SSH/firewall lock-down, setup pauses and asks you to test terminal
-    access from your own computer:
+    access from your own computer. That computer must have Tailscale installed,
+    running, and signed into the same tailnet as the VPS. Do not run the check
+    commands inside the VPS SSH session.
 
     ```bash
     tailscale ping YOUR_VPS_TAILSCALE_NAME

@@ -1,4 +1,7 @@
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { __testing } from "./onboarding.host-security.js";
 
@@ -76,6 +79,8 @@ describe("onboarding host security", () => {
     expect(note).toContain("Before Fased locks down public SSH/root/password access");
     expect(note).toContain("tailscale ping fased-vps.tailnet.ts.net");
     expect(note).toContain("tailscale ping 100.64.1.2");
+    expect(note).toContain("These commands run on your own computer");
+    expect(note).toContain("must have Tailscale installed");
     expect(note).toContain('"no matching peer"');
     expect(note).toContain("not in the same tailnet");
     expect(note).toContain("ssh app@fased-vps.tailnet.ts.net");
@@ -180,6 +185,8 @@ describe("onboarding host security", () => {
     const command = __testing.automaticUpdatesCommand();
 
     expect(command).toContain("unattended-upgrades");
+    expect(command).toContain("dnf5-plugin-automatic");
+    expect(command).toContain("dnf5-automatic.timer");
     expect(command).toContain("dnf-automatic");
     expect(command).toContain("yum-cron");
     const syntax = spawnSync("bash", ["-n"], {
@@ -271,6 +278,57 @@ describe("onboarding host security", () => {
     expect(notes.some((note) => note.includes("new.tailnet.ts.net"))).toBe(true);
     expect(commands).toContain("tailscale status --json");
     expect(confirms).toEqual([]);
+  });
+
+  it("skips repeated SSH verification after a previous successful confirmation", async () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "fased-host-security-confirm-"));
+    const previousStateDir = process.env.FASED_STATE_DIR;
+    process.env.FASED_STATE_DIR = stateDir;
+    fs.writeFileSync(
+      path.join(stateDir, "hosting-tailnet-ssh-confirmed.json"),
+      JSON.stringify({
+        user: "app",
+        repoDir: "/home/app/fased",
+      }),
+      "utf8",
+    );
+
+    try {
+      const result = await __testing.confirmTailnetSshBeforeLockdown({
+        opts: { hostProfile: "hosting" } as never,
+        runtime: {
+          error: (message: string) => {
+            throw new Error(message);
+          },
+          exit: (code?: number) => {
+            throw new Error(`exit ${code ?? 0}`);
+          },
+        } as never,
+        prompter: {
+          note: async () => {
+            throw new Error("unexpected note");
+          },
+          confirm: async () => {
+            throw new Error("unexpected confirm");
+          },
+        } as never,
+        logPath: path.join(stateDir, "host-security.log"),
+        target: {
+          user: "app",
+          host: "fased-vps.tailnet.ts.net",
+          repoDir: "/home/app/fased",
+        },
+      });
+
+      expect(result).toBe(true);
+    } finally {
+      if (previousStateDir === undefined) {
+        delete process.env.FASED_STATE_DIR;
+      } else {
+        process.env.FASED_STATE_DIR = previousStateDir;
+      }
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
   });
 
   it("uses Tailscale DNS for the SSH verification target", () => {

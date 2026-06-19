@@ -41,6 +41,45 @@ function appendHostSecurityLog(logPath: string, title: string, detail?: string) 
   fs.appendFileSync(logPath, body, "utf8");
 }
 
+function resolveTailnetSshConfirmationPath(): string {
+  const stateDir =
+    process.env.FASED_STATE_DIR?.trim() ||
+    process.env.FASED_CONFIG_DIR?.trim() ||
+    path.join(process.env.HOME?.trim() || os.homedir(), ".fased");
+  return path.join(stateDir, "hosting-tailnet-ssh-confirmed.json");
+}
+
+function hasStoredTailnetSshConfirmation(target: TailnetSshTarget): boolean {
+  try {
+    const raw = fs.readFileSync(resolveTailnetSshConfirmationPath(), "utf8");
+    const parsed = JSON.parse(raw) as { user?: unknown; repoDir?: unknown };
+    return parsed.user === target.user && parsed.repoDir === target.repoDir;
+  } catch {
+    return false;
+  }
+}
+
+function writeTailnetSshConfirmation(target: TailnetSshTarget): void {
+  const markerPath = resolveTailnetSshConfirmationPath();
+  fs.mkdirSync(path.dirname(markerPath), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(
+    markerPath,
+    `${JSON.stringify(
+      {
+        confirmedAt: new Date().toISOString(),
+        user: target.user,
+        host: target.host,
+        dns: target.dns,
+        ipv4: target.ipv4,
+        repoDir: target.repoDir,
+      },
+      null,
+      2,
+    )}\n`,
+    { encoding: "utf8", mode: 0o600 },
+  );
+}
+
 function sanitizeHostSecurityLogText(value: string): string {
   return redactSensitiveText(redactSensitiveUrlLikeString(value), { mode: "tools" })
     .replace(/--authkey(?:=|\s+)(["']?)([^\s"']+)\1/gi, "--authkey ***")
@@ -241,6 +280,9 @@ function formatTailnetSshVerificationNote(target: TailnetSshTarget): string {
   return [
     "Before Fased locks down public SSH/root/password access, prove the private terminal path works.",
     "",
+    "These commands run on your own computer, not inside the VPS SSH session.",
+    "Your own computer must have Tailscale installed, running, and signed into the same tailnet as this VPS.",
+    "",
     "On your own computer, open a second terminal and first check that this VPS is visible in Tailscale:",
     ...pingTargets.map((host) => `tailscale ping ${host}`),
     "",
@@ -364,6 +406,10 @@ async function confirmTailnetSshBeforeLockdown(params: {
     appendHostSecurityLog(logPath, "tailnet ssh confirmation", "confirmed by env");
     return true;
   }
+  if (hasStoredTailnetSshConfirmation(target)) {
+    appendHostSecurityLog(logPath, "tailnet ssh confirmation", "confirmed by previous run");
+    return true;
+  }
   if (!prompter || opts.nonInteractive === true) {
     failTailnetSshConfirmation({ runtime, logPath, target });
     return false;
@@ -441,6 +487,7 @@ async function confirmTailnetSshBeforeLockdown(params: {
       failTailnetSshConfirmation({ runtime, logPath, target });
       return false;
     }
+    writeTailnetSshConfirmation(target);
     appendHostSecurityLog(logPath, "tailnet ssh confirmation", "confirmed interactively");
     return true;
   }
@@ -553,9 +600,13 @@ function automaticUpdatesCommand(): string {
     "  sudo -n systemctl enable --now unattended-upgrades >/dev/null 2>&1 || true",
     "  sudo -n systemctl enable --now apt-daily.timer apt-daily-upgrade.timer",
     "elif command -v dnf >/dev/null 2>&1 || command -v dnf5 >/dev/null 2>&1; then",
-    "  " + packageInstallCommand(["dnf-automatic"]),
+    "  (" +
+      packageInstallCommand(["dnf5-plugin-automatic"]) +
+      ") || (" +
+      packageInstallCommand(["dnf-automatic"]) +
+      ")",
     "  sudo -n sed -i 's/^apply_updates[[:space:]]*=.*/apply_updates = yes/' /etc/dnf/automatic.conf >/dev/null 2>&1 || true",
-    "  sudo -n systemctl enable --now dnf-automatic.timer",
+    "  sudo -n systemctl enable --now dnf5-automatic.timer >/dev/null 2>&1 || sudo -n systemctl enable --now dnf-automatic.timer",
     "elif command -v yum >/dev/null 2>&1; then",
     "  (" +
       packageInstallCommand(["dnf-automatic"]) +

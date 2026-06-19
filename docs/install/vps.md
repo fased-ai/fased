@@ -143,7 +143,9 @@ When `sudo tailscale up --ssh` prints a login URL in the SSH terminal, copy that
 URL into your own device's browser. The VPS does not need a desktop browser.
 
 Before SSH/firewall lock-down, setup pauses and asks you to test terminal access
-from your own computer:
+from your own computer. That computer must have Tailscale installed, running,
+and signed into the same tailnet as the VPS. Do not run the check commands
+inside the VPS SSH session.
 
 ```bash
 tailscale ping YOUR_VPS_TAILSCALE_NAME
