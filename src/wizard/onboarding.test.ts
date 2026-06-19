@@ -358,6 +358,9 @@ describe("runOnboardingWizard", () => {
     configureWalletForOnboarding.mockClear();
     handleOnboardingRepair.mockClear();
     writeConfigFile.mockClear();
+    ensureSystemdUserLingerInteractive.mockClear();
+    isSystemdUserServiceAvailable.mockReset();
+    isSystemdUserServiceAvailable.mockResolvedValue(true);
   });
 
   afterEach(() => {
@@ -1846,6 +1849,7 @@ describe("runOnboardingWizard", () => {
       expect(select).toHaveBeenCalledWith(
         expect.objectContaining({ message: "Wallet setup action" }),
       );
+      expect(ensureSystemdUserLingerInteractive).not.toHaveBeenCalled();
       expect(configureWalletForOnboarding).toHaveBeenCalledTimes(1);
       expect(walletSetupCommand).not.toHaveBeenCalled();
     } finally {

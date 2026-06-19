@@ -228,9 +228,16 @@ leave that tunnel running.
 
 <Note>
 Small VPS installs size swap automatically when possible and run onboarding
-with a larger Node heap. If an older checkout already failed with
-`JavaScript heap out of memory`, update the checkout and rerun
-`./install.sh --hosting`.
+with a larger Node heap. On hosts around 2 GB RAM, the first install can still
+take several minutes while dependencies build and the gateway warms up.
+</Note>
+
+<Note>
+Hosted VPS setup uses the root-managed `fased-gateway.service`, and that
+service runs as the non-root `app` user. It should not ask for the `app`
+password to run `sudo loginctl enable-linger app`. If an older checkout shows
+that prompt or previously failed with `JavaScript heap out of memory`, update
+the checkout and rerun `./install.sh --hosting`.
 </Note>
 
 ## Update later

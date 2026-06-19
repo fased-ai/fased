@@ -1454,7 +1454,15 @@ export async function finalizeOnboardingWizard(
     );
   }
 
-  if (process.platform === "linux" && systemdAvailable) {
+  if (process.platform === "linux" && systemdAvailable && strictVps) {
+    await prompter.note(
+      [
+        "Hosted setup uses the root-managed fased-gateway.service running as the non-root app user.",
+        "Skipping systemd user lingering; no app sudo password is required.",
+      ].join("\n"),
+      "Systemd",
+    );
+  } else if (process.platform === "linux" && systemdAvailable) {
     const { ensureSystemdUserLingerInteractive } = await import("../commands/systemd-linger.js");
     await ensureSystemdUserLingerInteractive({
       runtime,
@@ -2118,8 +2126,8 @@ export async function finalizeOnboardingWizard(
     let fastHealthSatisfied = false;
     let restartAttemptedInHealth = false;
     const localFastReadinessDeadlineMs = lowRamMode ? 120_000 : 30_000;
-    const hostingReadinessDeadlineMs = lowRamMode ? 120_000 : 90_000;
-    const hostingProbeTimeoutMs = lowRamMode ? 20_000 : 15_000;
+    const hostingReadinessDeadlineMs = lowRamMode ? 240_000 : 120_000;
+    const hostingProbeTimeoutMs = lowRamMode ? 60_000 : 30_000;
     const warmupDeadlineMs = strictVps
       ? hostingReadinessDeadlineMs
       : fastHealth
@@ -2142,7 +2150,7 @@ export async function finalizeOnboardingWizard(
       if (!listenerReady.ok && fastHealth) {
         listenerReady = await waitForGatewayHttpListener({
           wsUrl: probeLinks.wsUrl,
-          deadlineMs: strictVps ? 25_000 : 10_000,
+          deadlineMs: strictVps ? (lowRamMode ? 60_000 : 30_000) : 10_000,
         });
       }
       if (!listenerReady.ok) {
@@ -2183,12 +2191,12 @@ export async function finalizeOnboardingWizard(
           deadlineMs: fastHealth
             ? strictVps
               ? lowRamMode
-                ? 120_000
+                ? 240_000
                 : 60_000
               : 20_000
             : strictVps
               ? lowRamMode
-                ? 120_000
+                ? 240_000
                 : 60_000
               : 45_000,
         });
@@ -2278,7 +2286,7 @@ export async function finalizeOnboardingWizard(
           progress.update("Waiting for hosting gateway listener…");
           let strictFastListener = await waitForGatewayHttpListener({
             wsUrl: probeLinks.wsUrl,
-            deadlineMs: lowRamMode ? 120_000 : 60_000,
+            deadlineMs: lowRamMode ? 240_000 : 90_000,
           });
           if (!strictFastListener.ok) {
             const rootBusy = await isSystemdServiceRunningOrStarting({
@@ -2302,7 +2310,7 @@ export async function finalizeOnboardingWizard(
                 );
                 strictFastListener = await waitForGatewayHttpListener({
                   wsUrl: probeLinks.wsUrl,
-                  deadlineMs: lowRamMode ? 120_000 : 75_000,
+                  deadlineMs: lowRamMode ? 240_000 : 120_000,
                 });
               }
             } else {
@@ -2310,7 +2318,7 @@ export async function finalizeOnboardingWizard(
               // Give slow VPS starts one more bounded warmup pass without service churn.
               strictFastListener = await waitForGatewayHttpListener({
                 wsUrl: probeLinks.wsUrl,
-                deadlineMs: lowRamMode ? 120_000 : 60_000,
+                deadlineMs: lowRamMode ? 240_000 : 90_000,
               });
             }
           }
@@ -2353,7 +2361,7 @@ export async function finalizeOnboardingWizard(
             progress.update("Listener reachable; confirming stable startup…");
             const stableListener = await waitForStableGatewayHttpListener({
               wsUrl: probeLinks.wsUrl,
-              deadlineMs: lowRamMode ? 90_000 : 45_000,
+              deadlineMs: lowRamMode ? 120_000 : 60_000,
               stableMs: 8_000,
               pollMs: 750,
             });
@@ -2401,7 +2409,7 @@ export async function finalizeOnboardingWizard(
           token: healthProbeToken,
           password: healthProbePassword,
           deadlineMs: warmupDeadlineMs,
-          probeTimeoutMs: strictVps ? 12_000 : 5_000,
+          probeTimeoutMs: strictVps ? hostingProbeTimeoutMs : 5_000,
           pollMs: 750,
         });
         if (!wsWarmupProbe.ok) {

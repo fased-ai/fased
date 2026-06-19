@@ -261,6 +261,10 @@ recovery options and VPS provider console access working.
     The `app` shell is a full Linux shell on the VPS and is configured to start
     in `/home/app/fased`.
 
+    Hosted VPS setup uses the root-managed `fased-gateway.service`, and that
+    service runs as the non-root `app` user. It should not ask for the `app`
+    password to run `sudo loginctl enable-linger app`.
+
     Root SSH is for initial bootstrap or emergency repair, not normal
     operation. `http://localhost:18789` is only the advanced SSH tunnel fallback:
     it works on your local computer after you start the tunnel shown by

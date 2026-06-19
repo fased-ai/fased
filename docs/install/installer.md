@@ -93,6 +93,10 @@ then run the same bootstrap command inside Ubuntu.
     fased dashboard
     ```
 
+    Hosted VPS setup uses the root-managed `fased-gateway.service`, and that
+    service runs as the non-root `app` user. It should not ask for the `app`
+    password to run `sudo loginctl enable-linger app`.
+
     Non-interactive automation must only set
     `FASED_HOSTING_TAILNET_SSH_CONFIRMED=1` after an out-of-band check proves the
     `app` SSH path over Tailscale works. Without that explicit confirmation,
