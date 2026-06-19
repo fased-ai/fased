@@ -1,5 +1,5 @@
 ---
-summary: "Install Fased with the repo-backed installer, then finish setup in the Control UI."
+summary: "Install Fased by choosing Local or VPS Hosting, then finish setup in the Control UI."
 read_when:
   - You need an install method other than the Getting Started quickstart
   - You want to deploy to a local machine, container, or private host
@@ -10,17 +10,15 @@ title: "Install"
 # Install
 
 Already followed [Getting Started](/start/getting-started)? You can usually
-continue there. This page is for install methods, platform notes, hosting
-profiles, and maintenance.
+continue there. This page is for the two supported setup profiles, platform
+notes, hosting details, and maintenance.
 
 ```mermaid
 flowchart TD
-  choose["choose install path"] --> repo["repo installer"]
-  choose --> container["container path"]
-  choose --> host["hosted Fased"]
-  repo --> onboard["onboarding"]
-  container --> verify["verify gateway"]
-  host --> private["private access first"]
+  choose["choose setup profile"] --> local["Local install"]
+  choose --> hosting["VPS Hosting install"]
+  local --> onboard["onboarding"]
+  hosting --> private["Tailscale first"]
   private --> onboard
   onboard --> ui["Control UI"]
   ui --> models["Models"]
@@ -29,9 +27,9 @@ flowchart TD
   classDef root fill:#120605,stroke:#ff5a36,color:#ffffff;
   classDef run fill:#071018,stroke:#12cfff,color:#ffffff;
   classDef host fill:#20120a,stroke:#ffb020,color:#ffffff;
-  class choose,repo root;
-  class onboard,ui,models,chat,verify run;
-  class container,host,private host;
+  class choose,local root;
+  class onboard,ui,models,chat run;
+  class hosting,private host;
 ```
 
 ## System requirements
@@ -319,11 +317,15 @@ session that cannot apply host security, onboarding stops with “Hosted setup
 unavailable” instead of creating an incomplete hosted setup.
 </Note>
 
-## Basic installer command
+## Basic Local Installer Command
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash
 ```
+
+Use this only for the **Local install** profile. For a VPS, use the **VPS
+Hosting install** tab above so Tailscale and hosted hardening are part of first
+setup.
 
 The installer:
 
@@ -402,26 +404,29 @@ lockdown because you could lose remote access.
 Use [VPS hosting](/install/vps), [Hetzner](/install/hetzner), or
 [GCP](/install/gcp) for provider-specific commands.
 
-## Install method map
+## Advanced References
 
-| Method                   | Status                    | Use when                                                           |
-| ------------------------ | ------------------------- | ------------------------------------------------------------------ |
-| Repo-backed `install.sh` | Recommended public path   | macOS, Linux, WSL2, local laptop, or VPS install                   |
-| Source checkout          | Contributor path          | You want to build, test, or patch the repo directly                |
-| Hosted/VPS profile       | Supported Linux path      | You want an always-on systemd Linux host with private access first |
-| Docker                   | Supported optional path   | You want a containerized Gateway or sandbox validation             |
-| Podman                   | Supported container path  | You want rootless containers on Linux                              |
-| Nix                      | Advanced/declarative path | You already manage systems with Nix/Home Manager                   |
-| Bun                      | Experimental dev path     | You want local TypeScript iteration; use Node for the Gateway      |
-| Remote client mode       | Supported client mode     | This machine should connect to an existing Gateway                 |
-| Task worker install      | Supported after setup     | You want separate task workers once a Gateway already exists       |
+Normal users should choose **Local install** or **VPS Hosting install** above.
+The pages below are references for advanced environments after that profile
+choice is clear.
+
+| Reference                | Status                    | Use when                                                      |
+| ------------------------ | ------------------------- | ------------------------------------------------------------- |
+| Repo-backed `install.sh` | Main bootstrap            | You are using either Local or VPS Hosting                     |
+| Source checkout          | Contributor path          | You want to build, test, or patch the repo directly           |
+| Docker                   | Advanced reference        | You want a containerized Gateway or sandbox validation        |
+| Podman                   | Advanced reference        | You want rootless containers on Linux                         |
+| Nix                      | Advanced/declarative path | You already manage systems with Nix/Home Manager              |
+| Bun                      | Experimental dev path     | You want local TypeScript iteration; use Node for the Gateway |
+| Remote client mode       | Client mode               | This machine should connect to an existing Gateway            |
+| Task worker install      | After setup               | You want separate task workers once a Gateway already exists  |
 
 <CardGroup cols={2}>
   <Card title="Docker" href="/install/docker" icon="container">
     Containerized Gateway and sandbox reference.
   </Card>
   <Card title="Podman" href="/install/podman" icon="container">
-    Rootless container path for Linux.
+    Rootless container reference for Linux.
   </Card>
   <Card title="Nix" href="/install/nix" icon="snowflake">
     Declarative install path for Nix users.
@@ -437,17 +442,15 @@ missing tools and handle fresh VPS setup. If you already have Node/npm and only
 want the CLI package, use the npm package path below.
 </Note>
 
-## Install order
+## Install Order
 
-Fresh machines, local desktops, WSL2, and hosted VPS installs should start with
-the curl bootstrap:
+Fresh machines should start with the correct curl bootstrap for their profile:
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash
-```
+- **Local install:** use the Local tab above.
+- **VPS Hosting install:** use the VPS Hosting tab above.
 
 If Node/npm is already installed and compatible, install the published CLI
-package:
+package for a Local CLI install:
 
 ```bash
 npm install -g @fased/fased@latest

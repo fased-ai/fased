@@ -44,5 +44,5 @@ host (for example, `user@gateway-host:~/.fased/workspace`).
 
 ## Related docs
 
-- macOS app onboarding: [Onboarding](/start/onboarding)
+- macOS local app surface: [Onboarding](/start/onboarding)
 - Workspace layout: [Agent workspace](/concepts/agent-workspace)

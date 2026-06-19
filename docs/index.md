@@ -9,18 +9,22 @@ title: "Fased"
 
 **A user-run agent for tasks, channels, wallets, and mining.**
 
-Run Fased Agent on your machine or server. Start with the browser dashboard,
-then add channels, services, wallet features, Fased Network, or Satcoin mining
-only where you need them.
+Start by choosing one of two setup profiles:
+
+- **Local install** for a laptop, desktop, dev box, or WSL2.
+- **VPS Hosting install** for an always-on server.
+
+After the Gateway and browser dashboard are working, add channels, services,
+wallet features, Fased Network, or Satcoin mining only where you need them.
 
 Fased Agent gives you sessions, tools, memory, channels, plugins, and safety
-controls in one install.
+controls in the selected setup profile.
 
 **Gateway + agent + channels + optional wallet, network, and mining paths.**
 
 <Columns>
   <Card title="Get Started" href="/start/getting-started" icon="rocket">
-    Install Fased and bring up the Gateway in minutes.
+    Choose Local or VPS Hosting and bring up the Gateway.
   </Card>
   <Card title="Run the Wizard" href="/start/wizard" icon="sparkles">
     Guided setup with `fased onboard` and pairing flows.
@@ -42,7 +46,7 @@ boundaries.
 
 **What makes it different?**
 
-- **User-run agent**: install it locally or on your own server
+- **User-run agent**: choose Local for this computer or VPS Hosting for an always-on server
 - **Browser-first setup**: start in the Control UI before adding chat channels
 - **Skills and plugins**: agents can run useful workflows across tools and services
 - **Wallet features when enabled**: reviewed sends, receive links, receipts, and audit
@@ -53,14 +57,16 @@ boundaries.
 The product shape is simple: start with the base agent, then add the advanced
 paths only when they have a specific job.
 
-- **Self-hosted**: runs on your hardware or server
+- **Self-hosted**: runs on your own computer or your own VPS
 - **Multi-channel**: one Gateway serves WhatsApp, Telegram, Discord, and more simultaneously
 - **Agent-native**: built for coding agents with tool use, sessions, memory, and multi-agent routing
 - **Wallet-ready when enabled**: wallet actions can use limits, approvals, and audit
 - **Network-ready when enabled**: Fased Network and Satcoin mining live beside the base agent
 - **Open source**: MIT licensed with preserved upstream and third-party notices
 
-**What do you need?** Node 22+, an API key (Anthropic recommended), and 5 minutes.
+**What do you need?** For normal setup, use the installer path for Local or VPS
+Hosting. If you manage Node yourself, use Node 24, or Node 22.14+ with
+`node:sqlite`.
 
 ## How it works
 
@@ -90,7 +96,7 @@ The Gateway keeps sessions, routing, channels, and agent behavior in one place.
     Add WhatsApp, Telegram, Discord, iMessage, and more when you want remote chat surfaces.
   </Card>
   <Card title="User-run agent" icon="cpu">
-    Sessions, tools, memory, plugins, and safety controls in one install.
+    Sessions, tools, memory, plugins, and safety controls in one setup profile.
   </Card>
   <Card title="Plugin channels" icon="plug">
     Add Mattermost and more with extension packages.
@@ -112,34 +118,44 @@ The Gateway keeps sessions, routing, channels, and agent behavior in one place.
   </Card>
 </Columns>
 
-## Quick start
+## Choose Your Install
 
-<Steps>
-  <Step title="Install Fased">
+<Tabs>
+  <Tab title="Local install">
+    Use this for your laptop, desktop, dev box, or WSL2:
+
     ```bash
     curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash
     ```
-  </Step>
-  <Step title="Open the Control UI">
+
+    Then open the dashboard:
+
     ```bash
     fased dashboard
     ```
-  </Step>
-  <Step title="Confirm the runtime">
+
+    Local setup keeps the Gateway on this machine. Tailscale is optional.
+
+  </Tab>
+  <Tab title="VPS Hosting install">
+    Use this on the VPS that will run Fased all the time:
+
     ```bash
-    fased status
+    curl -fsSL https://tailscale.com/install.sh | sh
+    tailscale up --ssh
+
+    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
     ```
-  </Step>
-</Steps>
 
-<Note>
-If this machine is a VPS or hosted operator node, join it to **Tailscale before
-onboarding**, then choose the **hosting** profile. Keep the dashboard and admin
-surface private through the tailnet instead of exposing the raw gateway port.
-</Note>
+    Run those commands on the VPS itself. Open any Tailscale login URL from your
+    local computer's browser. Before SSH/firewall lock-down, confirm that
+    `ssh app@YOUR_VPS_TAILSCALE_NAME` reaches `/home/app/fased`.
 
-Need the full install and dev setup? See [Quick start](/start/quickstart).
-Want the sovereign runtime path after first boot? See [Build with Fased](/start/fased).
+  </Tab>
+</Tabs>
+
+Need the full install guide? See [Install](/install).
+Want the Agent setup path after first boot? See [Fased Agent Setup](/start/fased).
 
 ## Dashboard
 

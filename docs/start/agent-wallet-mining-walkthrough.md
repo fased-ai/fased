@@ -39,14 +39,34 @@ flowchart TD
 
 ## 1. Install Fased
 
-Use the normal install path:
+Choose the setup profile first.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash
-```
+<Tabs>
+  <Tab title="Local install">
+    Use this for a laptop, desktop, dev box, or WSL2:
 
-Choose **Local** for a laptop, desktop, dev box, or first test. Choose
-**Hosting** only when the machine is a VPS or always-on server.
+    ```bash
+    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash
+    ```
+
+    Choose **Local** during onboarding.
+
+  </Tab>
+  <Tab title="VPS Hosting install">
+    Use this only on the VPS or always-on server:
+
+    ```bash
+    curl -fsSL https://tailscale.com/install.sh | sh
+    tailscale up --ssh
+
+    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
+    ```
+
+    Confirm Tailscale SSH from your own computer before setup hardens SSH and
+    firewall access.
+
+  </Tab>
+</Tabs>
 
 Read next:
 

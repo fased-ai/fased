@@ -9,12 +9,16 @@ sidebarTitle: "Onboarding: CLI"
 
 # Onboarding Wizard (CLI)
 
-The onboarding wizard is the **recommended** way to set up Fased on macOS,
-Linux, or Windows (via WSL2; strongly recommended).
+The onboarding wizard configures one of two setup profiles:
+
+- **Local** for a laptop, desktop, dev box, macOS local setup, or WSL2.
+- **VPS Hosting** for an always-on server with Tailscale-first access.
+
 It configures the machine/runtime first: host profile, workspace, Gateway,
 local signer wallet state, optional singleton Mining wallet setup, and hosting
-security. Model providers, skills, extensions, channels, services, hooks,
-memory activation, tasks, and Agent assembly continue in the Control UI.
+security when Hosting is selected. Model providers, skills, extensions,
+channels, services, hooks, memory activation, tasks, and Agent assembly continue
+in the Control UI.
 Before choosing Local or Hosting, read the
 [First-run Setup Matrix](/start/setup-matrix).
 
@@ -23,9 +27,9 @@ fased onboard
 ```
 
 <Info>
-Fastest first chat:
+Fastest Local first chat:
 
-1. Run `./install.sh` locally.
+1. Run the Local install.
 2. Keep the dashboard tab that opens, or run `fased dashboard`.
 3. Use **Agent > Models**, then open **Chat** and send a test message.
 
@@ -321,5 +325,5 @@ RPC API, and a full list of config fields the wizard writes, see the
 
 - CLI command reference: [`fased onboard`](/cli/onboard)
 - First-run setup matrix: [Setup Matrix](/start/setup-matrix)
-- macOS app onboarding: [Onboarding](/start/onboarding)
+- macOS local app surface: [Onboarding](/start/onboarding)
 - Agent first-run ritual: [Agent Bootstrapping](/start/bootstrapping)

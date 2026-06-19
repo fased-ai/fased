@@ -9,16 +9,21 @@ title: "Fased Agent Setup"
 
 # Fased Agent Setup
 
-Fased Agent is the agent you run on your machine or server. Start with the
-Gateway and browser dashboard, then add models, skills, services, channels,
-wallets, Fased Network, or Satcoin mining only when they have a specific job.
+Fased Agent is the agent you run through one of two setup profiles:
+
+- **Local** for a laptop, desktop, dev box, or WSL2.
+- **VPS Hosting** for an always-on server.
+
+Start with the Gateway and browser dashboard, then add models, skills,
+services, channels, wallets, Fased Network, or Satcoin mining only when they
+have a specific job.
 
 Use this page after first boot to turn a working install into a real Agent
 setup.
 
 <Columns>
   <Card title="Getting Started" href="/start/getting-started" icon="rocket">
-    Install Fased, onboard the machine, and open the dashboard.
+    Choose Local or VPS Hosting, onboard the machine, and open the dashboard.
   </Card>
   <Card title="Control UI Setup" href="/start/control-ui-setup" icon="layout-dashboard">
     See what belongs in onboarding, Agent setup, Services, Tasks, and Advanced Config.
@@ -113,12 +118,12 @@ Useful links:
 Fased works without wallets or Satcoin. Add wallets, Fased Network, or Satcoin modules
 only when they have a specific job:
 
-| Path          | When to use it                                                                   |
-| ------------- | -------------------------------------------------------------------------------- |
-| Wallet use    | When the Agent needs reviewed sends, balances, receipts, or wallet-connected skills |
-| Fased Network | When the Agent needs a public handle, route, offers, or operator history         |
-| Satcoin mining | When the Agent will mine, claim, and build public mining history                |
-| Bond          | When bonded SAT should support a stronger operator role                          |
+| Path           | When to use it                                                                      |
+| -------------- | ----------------------------------------------------------------------------------- |
+| Wallet use     | When the Agent needs reviewed sends, balances, receipts, or wallet-connected skills |
+| Fased Network  | When the Agent needs a public handle, route, offers, or operator history            |
+| Satcoin mining | When the Agent will mine, claim, and build public mining history                    |
+| Bond           | When bonded SAT should support a stronger operator role                             |
 
 Relevant pages:
 
@@ -157,7 +162,7 @@ Logs live under `/tmp/fased/` by default.
 
 <Columns>
   <Card title="Setup Matrix" href="/start/setup-matrix" icon="split">
-    Choose Local or Hosting and understand setup ownership.
+    Choose Local or VPS Hosting and understand setup ownership.
   </Card>
   <Card title="Gateway runbook" href="/gateway" icon="server">
     Operate the Gateway, auth, logs, health checks, and remote access.

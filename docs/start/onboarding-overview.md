@@ -27,37 +27,54 @@ either skip VPS hardening or apply server-style SSH/firewall changes to a
 personal machine.
 </Info>
 
-## The Two Real Entry Paths
+## The Two Real Host Profiles
 
-### 1. CLI wizard
+### 1. Local
 
-Use the CLI wizard if you want the full product path:
+Use Local when the Gateway runs on the computer you are using:
 
-- local workstation setup
-- VPS or hosted runtime setup
-- wallet-aware operator path later
-- Fased Network and SAT participation later
+- laptop
+- desktop
+- dev box
+- WSL2
+- macOS local setup
 
-Run:
+Local is the fastest path to a working browser chat. It does not apply VPS
+SSH/firewall hardening.
 
 ```bash
-fased onboard
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash
+```
+
+### 2. VPS Hosting
+
+Use VPS Hosting when the Gateway runs on an always-on server:
+
+- cloud VPS
+- hosted operator node
+- public/long-running runtime
+
+Hosting requires Tailscale first, then installs Fased with hosted hardening.
+
+```bash
+curl -fsSL https://tailscale.com/install.sh | sh
+tailscale up --ssh
+
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
 ```
 
 Docs:
 
-- [Onboarding Wizard (CLI)](/start/wizard)
+- [Getting Started](/start/getting-started)
 - [First-run Setup Matrix](/start/setup-matrix)
+- [Onboarding Wizard (CLI)](/start/wizard)
 - [`fased onboard` command](/cli/onboard)
 - [CLI Onboarding Reference](/start/wizard-cli-reference)
 
-### 2. macOS app onboarding
-
-Use the macOS app if you want the most guided Apple-first first-run flow.
-
-Docs:
-
-- [Onboarding (macOS App)](/start/onboarding)
+<Note>
+The macOS app is a Local setup surface. It can guide Apple-first local setup,
+but it is not a third host profile.
+</Note>
 
 ## How To Choose The Right Onboarding Shape
 

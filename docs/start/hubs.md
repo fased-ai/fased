@@ -17,6 +17,8 @@ Use these hubs to discover every page, including deep dives and reference docs t
 
 - [Index](/)
 - [Getting Started](/start/getting-started)
+- [Install: Local or VPS Hosting](/install)
+- [Setup Matrix](/start/setup-matrix)
 - [Onboarding](/start/onboarding)
 - [Control UI setup model](/start/control-ui-setup)
 - [Wizard](/start/wizard)
@@ -30,6 +32,7 @@ Use these hubs to discover every page, including deep dives and reference docs t
 
 ## Installation + updates
 
+- [Install: Local or VPS Hosting](/install)
 - [Docker](/install/docker)
 - [Nix](/install/nix)
 - [Updating / rollback](/install/updating)

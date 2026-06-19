@@ -28,11 +28,12 @@ Minimum preflight:
 
 ## 2. Primary entry commands
 
-Install and onboard:
+Install and onboard with the right profile:
 
-```bash
-./install.sh
-```
+- **Local:** use `./install.sh` from the checkout, or the Local curl bootstrap
+  in [Getting Started](/start/getting-started).
+- **VPS Hosting:** use `./install.sh --hosting` from `/home/app/fased`, or the
+  VPS Hosting curl bootstrap in [Getting Started](/start/getting-started).
 
 Run onboarding directly after install:
 

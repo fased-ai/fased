@@ -54,7 +54,7 @@ If you manage Node yourself, use Node 24, or Node 22.14+ with the built-in
 
 ## Which install do I need?
 
-<CardGroup cols={3}>
+<CardGroup cols={2}>
   <Card title="This computer" icon="monitor" href="#quick-setup-cli">
     Choose Local. Best for a laptop, desktop, dev box, WSL2, or first chat.
   </Card>
@@ -62,13 +62,10 @@ If you manage Node yourself, use Node 24, or Node 22.14+ with the built-in
     Choose Hosting. Create/sign into Tailscale first, then run the hosted
     installer on the VPS.
   </Card>
-  <Card title="macOS app" icon="apple" href="/start/onboarding">
-    Use the app-first flow, then finish models, skills, channels, and tasks in
-    the Control UI.
-  </Card>
 </CardGroup>
 
 For the full decision table, read [Setup Matrix](/start/setup-matrix).
+The macOS app is a Local setup surface, not a separate hosting profile.
 
 ## Quick setup (CLI)
 
@@ -80,7 +77,8 @@ For the full decision table, read [Setup Matrix](/start/setup-matrix).
         curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash
         ```
 
-        Use this for your laptop, desktop, dev box, or WSL2.
+        Use this for your laptop, desktop, dev box, macOS local setup, or WSL2.
+        On Windows, install WSL2 first, then run this inside Ubuntu.
 
         After local setup:
 
@@ -114,14 +112,6 @@ For the full decision table, read [Setup Matrix](/start/setup-matrix).
         asks for it.
 
         The `app` shell starts in `/home/app/fased`.
-
-      </Tab>
-      <Tab title="Windows">
-        Use [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install), then run the same installer inside Ubuntu:
-
-        ```bash
-        curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash
-        ```
       </Tab>
     </Tabs>
 
@@ -273,8 +263,8 @@ Full environment variable reference: [Environment vars](/help/environment).
   <Card title="Onboarding Wizard (details)" href="/start/wizard">
     Full CLI wizard reference and advanced options.
   </Card>
-  <Card title="macOS app onboarding" href="/start/onboarding">
-    First run flow for the macOS app.
+  <Card title="macOS local app" href="/start/onboarding">
+    Apple-first Local setup surface for the same Local profile.
   </Card>
 </Columns>
 
