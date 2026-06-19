@@ -57,14 +57,9 @@ Ubuntu LTS is the recommended first VPS target. Other Linux VPS families can
 work, but follow the OS-specific install notes when a minimal image is missing
 basic tools.
 
-Hosting requires Tailscale first, then installs Fased with hosted hardening.
-
-```bash
-curl -fsSL https://tailscale.com/install.sh | sh
-tailscale up --ssh
-
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
-```
+Hosting uses Tailscale and hosted hardening. Ubuntu LTS is the recommended
+first VPS target. Fedora/RHEL-family systems need their own Tailscale/package
+steps, so use the OS tabs in [Install](/install#vps-hosting-install).
 
 Docs:
 

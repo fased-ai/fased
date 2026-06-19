@@ -55,14 +55,9 @@ Choose the setup profile first.
   </Tab>
   <Tab title="VPS Hosting install">
     Use this only on the VPS or always-on server. Ubuntu LTS is the recommended
-    default for a first hosted setup.
-
-    ```bash
-    curl -fsSL https://tailscale.com/install.sh | sh
-    tailscale up --ssh
-
-    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
-    ```
+    default for a first hosted setup. Fedora/RHEL-family systems need their own
+    Tailscale/package steps, so use the OS tabs in
+    [Install](/install#vps-hosting-install).
 
     Confirm Tailscale SSH from your own computer before setup hardens SSH and
     firewall access.

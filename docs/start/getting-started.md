@@ -91,18 +91,13 @@ The macOS app is a Local setup surface, not a separate hosting profile.
 
       </Tab>
       <Tab title="VPS Hosting">
-        ```bash
-        curl -fsSL https://tailscale.com/install.sh | sh
-        tailscale up --ssh
-
-        curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
-        ```
-
         Run this **on the VPS itself**. Ubuntu LTS is the recommended first VPS
-        target. If Tailscale prints a login URL in SSH, open that URL in your
-        local computer's browser. Normal manual setup does not need a Tailscale
-        API key. If you start as `root`, Fased bootstraps into
-        `/home/app/fased` and continues as the `app` user. Before
+        target. Fedora/RHEL-family systems need their own Tailscale/package
+        steps, so use the OS tabs in [Install](/install#vps-hosting-install)
+        instead of copying one generic command block.
+
+        During hosted setup, Fased bootstraps into `/home/app/fased` and
+        continues as the `app` user when you start as `root`. Before
         SSH/firewall lock-down, setup asks you to test this from your own
         computer:
 

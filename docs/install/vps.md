@@ -140,10 +140,14 @@ ssh root@YOUR_PUBLIC_VPS_IP
 
   </Tab>
   <Tab title="Fedora">
+    On Fedora VPS images, install and start Tailscale, then let the Fased
+    hosted installer run the Tailscale browser login. This avoids a Fedora CLI
+    case where manual `tailscale up --ssh` can stay open after the VPS is
+    already approved in the Tailscale UI.
+
     ```bash
     dnf install -y tailscale
     systemctl enable --now tailscaled
-    tailscale up --ssh
 
     curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
     ```
@@ -186,12 +190,12 @@ ssh root@YOUR_PUBLIC_VPS_IP
   </Tab>
 </Tabs>
 
-When `tailscale up --ssh` prints a login URL, open that URL in your local PC
-browser, sign in, and approve. After that, the VPS is added to your tailnet
-automatically.
+When either `tailscale up --ssh` or the Fased installer prints a Tailscale login
+URL, open that URL in your local PC browser, sign in, and approve. After that,
+the VPS is added to your tailnet automatically.
 
 On some Fedora/RHEL-family images, the Tailscale UI can show the VPS as
-approved while the `tailscale up --ssh` command in SSH keeps waiting. In a
+approved while a manual `tailscale up --ssh` command in SSH keeps waiting. In a
 second provider SSH session, verify that Tailscale is actually online:
 
 ```bash
