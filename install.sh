@@ -1,6 +1,88 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ -z "${BASH_SOURCE[0]:-}" || "${BASH_SOURCE[0]:-}" == "bash" || "${BASH_SOURCE[0]:-}" == "-" || "${BASH_SOURCE[0]:-}" == "/dev/stdin" ]]; then
+  install_repo_url="${FASED_INSTALL_REPO:-https://github.com/fased-ai/fased.git}"
+  install_base_dir="${FASED_INSTALL_DIR:-$HOME/fased}"
+  auto_install=1
+  args=("$@")
+
+  for ((i = 0; i < ${#args[@]}; i++)); do
+    case "${args[$i]}" in
+      --install-dir)
+        if (( i + 1 >= ${#args[@]} )); then
+          echo "Missing value for --install-dir" >&2
+          exit 1
+        fi
+        install_base_dir="${args[$((i + 1))]}"
+        ;;
+      --no-auto-install)
+        auto_install=0
+        ;;
+    esac
+  done
+
+  run_as_root() {
+    if [[ "$(id -u)" -eq 0 ]]; then
+      "$@"
+    elif command -v sudo >/dev/null 2>&1; then
+      sudo "$@"
+    else
+      echo "Missing required command: git" >&2
+      echo "Install git, or rerun on a host where sudo is available." >&2
+      exit 1
+    fi
+  }
+
+  install_bootstrap_git() {
+    if [[ "$auto_install" -ne 1 ]]; then
+      return 1
+    fi
+    if command -v apt-get >/dev/null 2>&1; then
+      run_as_root apt-get update
+      run_as_root apt-get install -y git curl ca-certificates
+    elif command -v dnf >/dev/null 2>&1; then
+      run_as_root dnf install -y git curl ca-certificates
+    elif command -v yum >/dev/null 2>&1; then
+      run_as_root yum install -y git curl ca-certificates
+    elif command -v zypper >/dev/null 2>&1; then
+      run_as_root zypper --non-interactive install git curl ca-certificates
+    elif command -v apk >/dev/null 2>&1; then
+      run_as_root apk add --no-cache bash git curl ca-certificates
+    elif command -v pacman >/dev/null 2>&1; then
+      run_as_root pacman -Sy --noconfirm git curl ca-certificates
+    elif command -v pkg >/dev/null 2>&1; then
+      run_as_root pkg install -y bash git curl ca_root_nss
+    elif command -v brew >/dev/null 2>&1; then
+      brew install git
+    else
+      return 1
+    fi
+  }
+
+  if ! command -v git >/dev/null 2>&1; then
+    echo "git is missing; installing bootstrap dependencies first."
+    install_bootstrap_git || {
+      echo "git is required to bootstrap the repository checkout." >&2
+      exit 1
+    }
+    hash -r 2>/dev/null || true
+  fi
+
+  if [[ ! -e "$install_base_dir" ]]; then
+    mkdir -p "$(dirname "$install_base_dir")"
+    git clone "$install_repo_url" "$install_base_dir"
+  elif [[ -d "$install_base_dir/.git" ]]; then
+    git -C "$install_base_dir" pull --ff-only origin main
+  else
+    echo "Refusing to overwrite existing path: $install_base_dir" >&2
+    echo "Set --install-dir to a new directory or clean the existing one, then rerun." >&2
+    exit 1
+  fi
+
+  exec bash "$install_base_dir/install.sh" "$@"
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FASED_DIR="$SCRIPT_DIR"
 SAT_RUNTIME_ENV_FILE="${FASED_SAT_RUNTIME_ENV_FILE:-$FASED_DIR/config/sat-runtime.env}"
