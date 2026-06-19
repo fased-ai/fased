@@ -56,10 +56,12 @@ If you manage Node yourself, use Node 24, or Node 22.14+ with the built-in
 
 <CardGroup cols={2}>
   <Card title="This computer" icon="monitor" href="#quick-setup-cli">
-    Choose Local. Best for a laptop, desktop, dev box, WSL2, or first chat.
+    Choose Local. Best for macOS Terminal, Windows with WSL2 Ubuntu, Linux
+    desktops, dev boxes, and first chat.
   </Card>
   <Card title="VPS / always-on server" icon="server" href="#quick-setup-cli">
-    Choose Hosting. Create/sign into Tailscale first, then run the hosted
+    Choose Hosting for an always-on Linux VPS. Ubuntu LTS is the recommended
+    first VPS target. Create/sign into Tailscale first, then run the hosted
     installer on the VPS.
   </Card>
 </CardGroup>
@@ -77,8 +79,9 @@ The macOS app is a Local setup surface, not a separate hosting profile.
         curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash
         ```
 
-        Use this for your laptop, desktop, dev box, macOS local setup, or WSL2.
-        On Windows, install WSL2 first, then run this inside Ubuntu.
+        Use this on your own computer. On macOS, use Terminal. On Windows,
+        install WSL2 first, then run this inside Ubuntu. On Linux, use your
+        distro terminal.
 
         After local setup:
 
@@ -95,10 +98,11 @@ The macOS app is a Local setup surface, not a separate hosting profile.
         curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
         ```
 
-        Run this **on the VPS itself**. If Tailscale prints a login URL in SSH,
-        open that URL in your local computer's browser. Normal manual setup does
-        not need a Tailscale API key. If you start as `root`, Fased bootstraps
-        into `/home/app/fased` and continues as the `app` user. Before
+        Run this **on the VPS itself**. Ubuntu LTS is the recommended first VPS
+        target. If Tailscale prints a login URL in SSH, open that URL in your
+        local computer's browser. Normal manual setup does not need a Tailscale
+        API key. If you start as `root`, Fased bootstraps into
+        `/home/app/fased` and continues as the `app` user. Before
         SSH/firewall lock-down, setup asks you to test this from your own
         computer:
 

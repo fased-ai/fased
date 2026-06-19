@@ -11,8 +11,11 @@ title: "Fased"
 
 Start by choosing one of two setup profiles:
 
-- **Local install** for a laptop, desktop, dev box, or WSL2.
-- **VPS Hosting install** for an always-on server.
+- **Local install** for your own computer. Use Terminal on macOS, WSL2 Ubuntu
+  on Windows, or your Linux distro terminal.
+- **VPS Hosting install** for an always-on server. Ubuntu LTS is the
+  recommended VPS default; use other Linux VPS families only with their
+  matching package-manager notes.
 
 After the Gateway and browser dashboard are working, add channels, services,
 wallet features, Fased Network, or Satcoin mining only where you need them.
@@ -122,7 +125,8 @@ The Gateway keeps sessions, routing, channels, and agent behavior in one place.
 
 <Tabs>
   <Tab title="Local install">
-    Use this for your laptop, desktop, dev box, or WSL2:
+    Use this on your own computer. On macOS, use Terminal. On Windows, use WSL2
+    with Ubuntu. On Linux, use your distro terminal.
 
     ```bash
     curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash
@@ -138,7 +142,8 @@ The Gateway keeps sessions, routing, channels, and agent behavior in one place.
 
   </Tab>
   <Tab title="VPS Hosting install">
-    Use this on the VPS that will run Fased all the time:
+    Use this on the VPS that will run Fased all the time. Ubuntu LTS is the
+    recommended default for a first hosted setup.
 
     ```bash
     curl -fsSL https://tailscale.com/install.sh | sh

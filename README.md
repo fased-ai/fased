@@ -32,10 +32,10 @@ Public install is repo-backed:
 
 ### Local vs VPS Hosting
 
-| Path          | Best for                                | Security posture                                                                                                                                                | Access dependency                                                            |
-| ------------- | --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| Local install | Personal laptop, desktop, dev box, WSL2 | Lowest setup risk. Gateway stays on your machine; a home router usually does not expose it to the public internet. Tailscale is optional.                       | Your local OS login.                                                         |
-| VPS Hosting   | Always-on cloud node                    | Higher exposure by default because a VPS is internet-reachable. Hosted setup closes public admin ports and requires Tailscale for private dashboard/SSH access. | Your Tailscale account plus the VPS provider console for emergency recovery. |
+| Path          | Best for                                                                               | Security posture                                                                                                                                                | Access dependency                                                            |
+| ------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Local install | Your own computer: macOS Terminal, Windows with WSL2 Ubuntu, Linux desktop, or dev box | Lowest setup risk. Gateway stays on your machine; a home router usually does not expose it to the public internet. Tailscale is optional.                       | Your local OS login.                                                         |
+| VPS Hosting   | Always-on cloud node                                                                   | Higher exposure by default because a VPS is internet-reachable. Hosted setup closes public admin ports and requires Tailscale for private dashboard/SSH access. | Your Tailscale account plus the VPS provider console for emergency recovery. |
 
 If you lose access to the Tailscale account used for a hosted VPS, normal
 dashboard and SSH access can be lost. Recovery then depends on the VPS
@@ -44,7 +44,12 @@ recovery options and VPS provider console access working.
 
 ### Local install
 
-Use this on a laptop, desktop, dev box, or WSL2:
+Use this on your own machine:
+
+- **macOS:** run the command in Terminal.
+- **Windows:** install WSL2 with Ubuntu, then run the command inside the Ubuntu
+  shell.
+- **Linux:** run the command in your distro terminal.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash
@@ -77,10 +82,15 @@ you intentionally installed and logged into Tailscale inside WSL too.
 
 ### VPS Hosting install
 
-Use this on the VPS that will run Fased all the time. A 1 vCPU / 1 GB RAM VPS
-can work as a minimum test node, but expect slow install/onboarding. For a
-smoother public node, use at least 2 GB RAM; 2 vCPU / 4 GB RAM is more
-comfortable.
+Use this on the VPS that will run Fased all the time. Ubuntu LTS is the
+recommended default for a first hosted setup. Debian is close to the same path.
+Fedora/RHEL-family and other Linux VPS systems can work, but use their
+OS-specific package-manager commands when a minimal image is missing basic
+tools.
+
+A 1 vCPU / 1 GB RAM VPS can work as a minimum test node, but expect slow
+install/onboarding. For a smoother public node, use at least 2 GB RAM; 2 vCPU /
+4 GB RAM is more comfortable.
 
 Hosted setup uses two machines:
 
@@ -130,8 +140,29 @@ and Git when the OS package manager supports auto-install. If a minimal VPS
 image does not have `curl`, install only the downloader first, then rerun the
 same command:
 
+**Ubuntu / Debian / Kali:**
+
+```bash
+apt-get update
+apt-get install -y curl ca-certificates
+```
+
+**Fedora / RHEL-family:**
+
 ```bash
 dnf install -y curl ca-certificates
+```
+
+**Arch:**
+
+```bash
+pacman -Sy --needed --noconfirm curl ca-certificates
+```
+
+**Alpine:**
+
+```bash
+apk add --no-cache curl ca-certificates
 ```
 
 Current installers try a clean fast-forward update from Git before building. If
@@ -164,17 +195,24 @@ If your own computer says `tailscale: command not found`, install Tailscale on
 your own computer first. Use the command for your own computer's OS, not the
 VPS OS:
 
+**Ubuntu / Debian / Kali local computer:**
+
 ```bash
-# Fedora local computer
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up
+```
+
+**Fedora local computer:**
+
+```bash
 sudo dnf install -y tailscale
 sudo systemctl enable --now tailscaled
 sudo tailscale up
+```
 
-# Ubuntu / Debian / Kali local computer
-curl -fsSL https://tailscale.com/install.sh | sh
-sudo tailscale up
+**Arch local computer:**
 
-# Arch local computer
+```bash
 sudo pacman -S tailscale
 sudo systemctl enable --now tailscaled
 sudo tailscale up

@@ -11,8 +11,10 @@ title: "Fased Agent Setup"
 
 Fased Agent is the agent you run through one of two setup profiles:
 
-- **Local** for a laptop, desktop, dev box, or WSL2.
-- **VPS Hosting** for an always-on server.
+- **Local** for your own computer. Use Terminal on macOS, WSL2 Ubuntu on
+  Windows, or your Linux distro terminal.
+- **VPS Hosting** for an always-on server. Ubuntu LTS is the recommended first
+  VPS target.
 
 Start with the Gateway and browser dashboard, then add models, skills,
 services, channels, wallets, Fased Network, or Satcoin mining only when they

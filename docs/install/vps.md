@@ -14,7 +14,8 @@ hosted Fased posture at a high level.
 ## Local vs VPS security
 
 - **Local install**
-  - Best for: personal laptop, desktop, dev box, or WSL2.
+  - Best for: your own computer: macOS Terminal, Windows with WSL2 Ubuntu,
+    Linux desktop, or dev box.
   - Posture: lowest setup risk. Gateway stays on your machine; a home router
     usually does not expose it to the public internet. Tailscale is optional.
   - Access dependency: your local OS login.
@@ -42,12 +43,13 @@ For most users, the hosted path is:
 3. Join the VPS to the same tailnet, install Fased, and choose the
    **Hosting** profile.
 
-The hosted hardening profile is for Linux VPS systems with systemd. Auto-install
-supports the common VPS families: Ubuntu, Debian, Kali, Fedora, CentOS,
-AlmaLinux, Rocky Linux, CloudLinux, Oracle Linux, Amazon Linux, openSUSE, SLES,
-Alpine, and Arch. Local macOS, FreeBSD, and WSL installs are supported for
-running Fased, but macOS, FreeBSD, and native Windows are not hosted hardening
-targets.
+Ubuntu LTS is the recommended VPS OS for a first hosted setup. Debian is close
+to the same path. The hosted hardening profile is for Linux VPS systems with
+systemd. Auto-install supports the common VPS families: Ubuntu, Debian, Kali,
+Fedora, CentOS, AlmaLinux, Rocky Linux, CloudLinux, Oracle Linux, Amazon Linux,
+openSUSE, SLES, Alpine, and Arch. Local macOS, FreeBSD, and WSL installs are
+supported for running Fased, but macOS, FreeBSD, and native Windows are not
+hosted hardening targets.
 
 Hosted setup uses two machines:
 
@@ -96,18 +98,32 @@ The Fased installer bootstraps the repository itself. A fresh VPS does not need
 `git clone` first. It installs missing system tools, Node, `pnpm`, and Git when
 the OS package manager supports auto-install.
 
-If a very small Fedora/RHEL-family image does not have `curl`, install only the
-downloader first, then rerun the same hosted command:
+If a very small VPS image does not have `curl`, install only the downloader for
+that VPS OS, then rerun the same hosted command.
+
+**Ubuntu / Debian / Kali:**
+
+```bash
+apt-get update
+apt-get install -y curl ca-certificates
+```
+
+**Fedora / RHEL-family:**
 
 ```bash
 dnf install -y curl ca-certificates
 ```
 
-On Debian/Ubuntu-family images without `curl`, use:
+**Arch:**
 
 ```bash
-apt-get update
-apt-get install -y curl ca-certificates
+pacman -Sy --needed --noconfirm curl ca-certificates
+```
+
+**Alpine:**
+
+```bash
+apk add --no-cache curl ca-certificates
 ```
 
 ## Recommended VPS size
@@ -151,17 +167,24 @@ If your own computer says `tailscale: command not found`, install Tailscale on
 your own computer first. Use the command for your own computer's OS, not the
 VPS OS:
 
+**Ubuntu / Debian / Kali local computer:**
+
 ```bash
-# Fedora local computer
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up
+```
+
+**Fedora local computer:**
+
+```bash
 sudo dnf install -y tailscale
 sudo systemctl enable --now tailscaled
 sudo tailscale up
+```
 
-# Ubuntu / Debian / Kali local computer
-curl -fsSL https://tailscale.com/install.sh | sh
-sudo tailscale up
+**Arch local computer:**
 
-# Arch local computer
+```bash
 sudo pacman -S tailscale
 sudo systemctl enable --now tailscaled
 sudo tailscale up

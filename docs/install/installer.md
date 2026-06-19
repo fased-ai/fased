@@ -14,11 +14,14 @@ This docs set only documents the installer that exists in this repo:
 
 - [`install.sh`](https://github.com/fased-ai/fased/blob/main/install.sh)
 
-If you are starting from zero, the normal path is:
+If you are starting from zero on your own computer, use the Local install:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash
 ```
+
+If you are starting from zero on a VPS, use the Hosting install from
+[Install](/install). Ubuntu LTS is the recommended first VPS target.
 
 <Note>
 On Windows, use [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install),

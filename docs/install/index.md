@@ -61,12 +61,14 @@ Windows has two different paths:
 
 ## Pick local or VPS hosting
 
-These are different setup paths. Choose **Local** for a laptop, desktop, dev
-box, or WSL2. Choose **VPS Hosting** only on the server that will run Fased
-all the time.
+These are different setup paths. Start with **Local** unless you already know
+you need an always-on server. Choose **VPS Hosting** only on the server that
+will run Fased all the time. For the first hosted VPS, Ubuntu LTS is the
+recommended default.
 
 - **Local install**
-  - Best for: personal laptop, desktop, dev box, or WSL2.
+  - Best for: your own computer: macOS Terminal, Windows with WSL2 Ubuntu,
+    Linux desktop, or dev box.
   - Posture: lowest setup risk. Gateway stays on your machine; a home router
     usually does not expose it to the public internet. Tailscale is optional.
   - Access dependency: your local OS login.
@@ -87,7 +89,12 @@ recovery options and VPS provider console access working.
 
 <Tabs>
   <Tab title="Local install">
-    Use this on your own machine:
+    Use this on your own machine. Most local users fit one of these paths:
+
+    - **macOS:** run the command in Terminal.
+    - **Windows:** install WSL2 with Ubuntu, then run the command inside the
+      Ubuntu shell.
+    - **Linux:** run the command in your distro terminal.
 
     ```bash
     curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash
@@ -121,9 +128,14 @@ recovery options and VPS provider console access working.
 
   </Tab>
   <Tab title="VPS Hosting install">
-    Use this on a clean Linux VPS. A 1 vCPU / 1 GB RAM VPS can work as a
-    minimum test server, but expect slow install/onboarding. For a smoother public
-    server, use at least 2 GB RAM; 2 vCPU / 4 GB RAM is more comfortable.
+    Use this on a clean Linux VPS. Ubuntu LTS is the recommended default for a
+    first hosted setup. Debian is close to the same path. Fedora/RHEL-family and
+    other Linux VPS systems can work, but use their OS-specific package-manager
+    commands when a minimal image is missing basic tools.
+
+    A 1 vCPU / 1 GB RAM VPS can work as a minimum test server, but expect slow
+    install/onboarding. For a smoother public server, use at least 2 GB RAM; 2
+    vCPU / 4 GB RAM is more comfortable.
 
     Hosted setup uses two machines:
 
@@ -173,10 +185,32 @@ recovery options and VPS provider console access working.
 
     The Fased installer bootstraps the repository itself. A fresh VPS does not
     need `git clone` first. If the image is so small that `curl` is missing,
-    install only the downloader first, then rerun the same command:
+    install only the downloader for that VPS OS, then rerun the same hosted
+    command.
+
+    **Ubuntu / Debian / Kali:**
+
+    ```bash
+    apt-get update
+    apt-get install -y curl ca-certificates
+    ```
+
+    **Fedora / RHEL-family:**
 
     ```bash
     dnf install -y curl ca-certificates
+    ```
+
+    **Arch:**
+
+    ```bash
+    pacman -Sy --needed --noconfirm curl ca-certificates
+    ```
+
+    **Alpine:**
+
+    ```bash
+    apk add --no-cache curl ca-certificates
     ```
 
     Current installers try a clean fast-forward update from Git before building.
@@ -200,17 +234,24 @@ recovery options and VPS provider console access working.
     on your own computer first. Use the command for your own computer's OS, not
     the VPS OS:
 
+    **Ubuntu / Debian / Kali local computer:**
+
     ```bash
-    # Fedora local computer
+    curl -fsSL https://tailscale.com/install.sh | sh
+    sudo tailscale up
+    ```
+
+    **Fedora local computer:**
+
+    ```bash
     sudo dnf install -y tailscale
     sudo systemctl enable --now tailscaled
     sudo tailscale up
+    ```
 
-    # Ubuntu / Debian / Kali local computer
-    curl -fsSL https://tailscale.com/install.sh | sh
-    sudo tailscale up
+    **Arch local computer:**
 
-    # Arch local computer
+    ```bash
     sudo pacman -S tailscale
     sudo systemctl enable --now tailscaled
     sudo tailscale up

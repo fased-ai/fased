@@ -33,11 +33,10 @@ personal machine.
 
 Use Local when the Gateway runs on the computer you are using:
 
-- laptop
-- desktop
+- macOS Terminal
+- Windows with WSL2 Ubuntu
+- Linux desktop
 - dev box
-- WSL2
-- macOS local setup
 
 Local is the fastest path to a working browser chat. It does not apply VPS
 SSH/firewall hardening.
@@ -53,6 +52,10 @@ Use VPS Hosting when the Gateway runs on an always-on server:
 - cloud VPS
 - hosted operator node
 - public/long-running runtime
+
+Ubuntu LTS is the recommended first VPS target. Other Linux VPS families can
+work, but follow the OS-specific install notes when a minimal image is missing
+basic tools.
 
 Hosting requires Tailscale first, then installs Fased with hosted hardening.
 

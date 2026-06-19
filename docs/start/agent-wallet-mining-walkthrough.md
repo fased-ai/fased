@@ -43,7 +43,8 @@ Choose the setup profile first.
 
 <Tabs>
   <Tab title="Local install">
-    Use this for a laptop, desktop, dev box, or WSL2:
+    Use this on your own computer. On macOS, use Terminal. On Windows, use WSL2
+    with Ubuntu. On Linux, use your distro terminal.
 
     ```bash
     curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash
@@ -53,7 +54,8 @@ Choose the setup profile first.
 
   </Tab>
   <Tab title="VPS Hosting install">
-    Use this only on the VPS or always-on server:
+    Use this only on the VPS or always-on server. Ubuntu LTS is the recommended
+    default for a first hosted setup.
 
     ```bash
     curl -fsSL https://tailscale.com/install.sh | sh

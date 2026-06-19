@@ -35,7 +35,8 @@ flowchart TD
 
 ### Local
 
-Use this when the agent runs on this laptop, desktop, or dev box.
+Use this when the agent runs on your own computer. On macOS, use Terminal. On
+Windows, use WSL2 with Ubuntu. On Linux, use your distro terminal.
 
 It creates local config, workspace, gateway settings, local signer/wallet state
 if selected, and local service startup. Tailscale is not part of the basic Local
@@ -47,6 +48,11 @@ does not apply the hosting security baseline.
 ### Hosting
 
 Use this when the agent runs on a VPS or always-on server.
+
+Ubuntu LTS is the recommended first VPS target. Debian is close to the same
+path. Fedora/RHEL-family and other Linux VPS systems can work, but use the
+matching package-manager notes from [Install](/install) when a minimal image is
+missing basic tools.
 
 It uses the local runtime setup plus hosting hardening: Tailscale-first admin
 access, firewall policy, SSH hardening, fail2ban/unattended-upgrades where
@@ -70,11 +76,12 @@ guides for the detailed host steps.
 </Note>
 
 <Tip>
-Simple VPS order: create server → `sudo tailscale up --ssh` → `./install.sh --hosting`.
-If the wizard offers a Tailscale auth key, use it only for scripted provisioning.
-For normal setup, use browser login: the Tailscale CLI shows a login URL in SSH;
-open that URL in your local computer's browser, then return to the SSH session.
-Before SSH/firewall lock-down, the wizard asks you to test
+Simple VPS order: create Ubuntu LTS server, install/sign into Tailscale on the
+VPS, run the hosted Fased installer, then test Tailscale SSH from your own
+computer. If the wizard offers a Tailscale auth key, use it only for scripted
+provisioning. For normal setup, use browser login: the Tailscale CLI shows a
+login URL in SSH; open that URL in your local computer's browser, then return to
+the SSH session. Before SSH/firewall lock-down, the wizard asks you to test
 `ssh app@YOUR_VPS_TAILSCALE_NAME` from your own computer and only continue after
 that terminal reaches `/home/app/fased`.
 </Tip>
