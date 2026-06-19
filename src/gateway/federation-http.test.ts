@@ -282,24 +282,22 @@ describe("federation HTTP proxy", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "fased-fed-derived-handle-"));
     process.env.FASED_STATE_DIR = stateDir;
     process.env.FASED_A2A_ORIGIN = "https://joined.tailnet.ts.net";
-    let forwardedBody: Record<string, unknown> | null = null;
+    let forwardedBody: Record<string, unknown> | undefined;
     const fetchMock = vi.fn(async (input: URL | RequestInfo, init?: RequestInit) => {
       const url = new URL(
         typeof input === "string" ? input : input instanceof URL ? input : input.url,
       );
       expect(url.toString()).toBe("https://ff1.fased.app/api/federation/registry/handles");
       expect(typeof init?.body).toBe("string");
-      forwardedBody = JSON.parse(typeof init?.body === "string" ? init.body : "{}") as Record<
+      const body = JSON.parse(typeof init?.body === "string" ? init.body : "{}") as Record<
         string,
         unknown
       >;
-      return new Response(
-        JSON.stringify({ status: "accepted", handle: forwardedBody.requestedHandle }),
-        {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        },
-      );
+      forwardedBody = body;
+      return new Response(JSON.stringify({ status: "accepted", handle: body.requestedHandle }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
     });
     vi.stubGlobal("fetch", fetchMock);
 

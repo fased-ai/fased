@@ -72,7 +72,7 @@ describe("checkGatewayHealth", () => {
   });
 
   it("uses hosted-safe health timeout for Tailscale hosting configs", async () => {
-    const cfg = { gateway: { tailscale: { mode: "serve" } } };
+    const cfg = { gateway: { tailscale: { mode: "serve" as const } } };
 
     const result = await checkGatewayHealth({
       cfg,

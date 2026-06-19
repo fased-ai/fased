@@ -2035,6 +2035,7 @@ describe("runOnboardingWizard", () => {
     await runOnboardingWizard(
       {
         acceptRisk: true,
+        allowInsecure: true,
         flow: "quickstart",
         authChoice: "skip",
         installDaemon: false,
@@ -2048,27 +2049,27 @@ describe("runOnboardingWizard", () => {
     );
 
     expect(prompter.note).toHaveBeenCalledWith(
-      expect.stringContaining("Operator readiness summary:"),
+      expect.stringContaining("Operator readiness summary"),
       "Operator readiness",
     );
     expect(prompter.note).toHaveBeenCalledWith(
-      expect.stringContaining("Wallet Control Passkey ready: Passkey approval ready (1)"),
+      expect.stringContaining("Passkey: Passkey approval ready (1)"),
       "Operator readiness",
     );
     expect(prompter.note).toHaveBeenCalledWith(
-      expect.stringContaining("Agent wallet set: Agent Wallet"),
+      expect.stringContaining("Agent wallet: Agent Wallet"),
       "Operator readiness",
     );
     expect(prompter.note).toHaveBeenCalledWith(
-      expect.stringContaining("Mining wallet separate:"),
+      expect.stringContaining("Mining wallet:"),
       "Operator readiness",
     );
     expect(prompter.note).toHaveBeenCalledWith(
-      expect.stringContaining("Fased Network joined / trusted: Verified"),
+      expect.stringContaining("Network trust: Verified"),
       "Operator readiness",
     );
     expect(prompter.note).toHaveBeenCalledWith(
-      expect.stringContaining("Fased Network reachability state: Ready"),
+      expect.stringContaining("Network reachability: Ready"),
       "Operator readiness",
     );
   });
