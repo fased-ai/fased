@@ -143,10 +143,23 @@ Before lock-down, the wizard asks you to test `tailscale ping
 YOUR_VPS_TAILSCALE_NAME`, then `ssh app@YOUR_VPS_TAILSCALE_NAME` from your own
 computer. That computer must have Tailscale installed, running, and signed into
 the same tailnet as the VPS. Do not run the check commands inside the VPS SSH
-session. If `tailscale ping` says `no matching peer`, your computer and the VPS
-are not in the same Tailscale network. Confirm only after SSH connects through
-Tailscale and opens `/home/app/fased`. If it does not connect, setup stops
-before disabling root or password SSH.
+session. If your own computer says `tailscale: command not found`, install
+Tailscale on your own computer first:
+
+```bash
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up
+```
+
+On Windows or macOS, install and sign into the Tailscale app, then use
+PowerShell or Terminal for the check. A separate VPN on your own computer can
+interfere with Tailscale DNS or routing; if ping/SSH cannot reach the VPS,
+disconnect the other VPN or allow Tailscale traffic and try again.
+
+If `tailscale ping` says `no matching peer`, your computer and the VPS are not
+in the same Tailscale network. Confirm only after SSH connects through Tailscale
+and opens `/home/app/fased`. If it does not connect, setup stops before
+disabling root or password SSH.
 If the original VPS login was password-only and no SSH public key is available,
 setup stops before hardening; add your public key and rerun.
 
