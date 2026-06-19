@@ -1242,10 +1242,10 @@ async function verifyStrictHostedGatewayReady(params: {
   token?: string;
   password?: string;
   lowRamMode: boolean;
-}): Promise<{ ok: boolean; detail?: string }> {
+}): Promise<{ ok: boolean; detail?: string; gatewayHealthReady?: boolean }> {
   const listener = await waitForStableGatewayHttpListener({
     wsUrl: params.wsUrl,
-    deadlineMs: params.lowRamMode ? 60_000 : 20_000,
+    deadlineMs: params.lowRamMode ? 45_000 : 15_000,
     stableMs: 2_000,
     pollMs: 750,
   });
@@ -1255,21 +1255,20 @@ async function verifyStrictHostedGatewayReady(params: {
       detail: `listener not stable: ${listener.detail ?? "not reachable"}`,
     };
   }
-  const probe = await waitForGatewayReachable({
+  const probe = await probeGatewayReachable({
     url: params.wsUrl,
     token: params.token,
     password: params.password,
-    deadlineMs: params.lowRamMode ? 60_000 : 30_000,
-    probeTimeoutMs: params.lowRamMode ? 15_000 : 8_000,
-    pollMs: 750,
+    timeoutMs: params.lowRamMode ? 6_000 : 3_000,
   });
   if (!probe.ok) {
     return {
-      ok: false,
-      detail: `gateway health failed: ${probe.detail ?? "not reachable"}`,
+      ok: true,
+      gatewayHealthReady: false,
+      detail: `dashboard listener ready; gateway health still warming (${probe.detail ?? "not reachable"})`,
     };
   }
-  return { ok: true };
+  return { ok: true, gatewayHealthReady: true };
 }
 
 async function waitForHttpUrlReachable(params: {
@@ -2151,9 +2150,9 @@ export async function finalizeOnboardingWizard(
     const fastProbeTimeoutMs = strictVps ? 2_500 : 1_500;
     let fastHealthSatisfied = false;
     let restartAttemptedInHealth = false;
-    const localFastReadinessDeadlineMs = lowRamMode ? 120_000 : 30_000;
-    const hostingReadinessDeadlineMs = lowRamMode ? 240_000 : 120_000;
-    const hostingProbeTimeoutMs = lowRamMode ? 60_000 : 30_000;
+    const localFastReadinessDeadlineMs = lowRamMode ? 60_000 : 20_000;
+    const hostingReadinessDeadlineMs = lowRamMode ? 90_000 : 45_000;
+    const hostingProbeTimeoutMs = lowRamMode ? 15_000 : 8_000;
     const warmupDeadlineMs = strictVps
       ? hostingReadinessDeadlineMs
       : fastHealth
@@ -2217,13 +2216,13 @@ export async function finalizeOnboardingWizard(
           deadlineMs: fastHealth
             ? strictVps
               ? lowRamMode
-                ? 240_000
-                : 60_000
+                ? 90_000
+                : 30_000
               : 20_000
             : strictVps
               ? lowRamMode
-                ? 240_000
-                : 60_000
+                ? 90_000
+                : 30_000
               : 45_000,
         });
         if (!listenerAfterRestart.ok && strictVps && !opts.allowInsecure) {
@@ -2312,7 +2311,7 @@ export async function finalizeOnboardingWizard(
           progress.update("Waiting for hosting gateway listener…");
           let strictFastListener = await waitForGatewayHttpListener({
             wsUrl: probeLinks.wsUrl,
-            deadlineMs: lowRamMode ? 240_000 : 90_000,
+            deadlineMs: lowRamMode ? 90_000 : 30_000,
           });
           if (!strictFastListener.ok) {
             const rootBusy = await isSystemdServiceRunningOrStarting({
@@ -2336,7 +2335,7 @@ export async function finalizeOnboardingWizard(
                 );
                 strictFastListener = await waitForGatewayHttpListener({
                   wsUrl: probeLinks.wsUrl,
-                  deadlineMs: lowRamMode ? 240_000 : 120_000,
+                  deadlineMs: lowRamMode ? 90_000 : 45_000,
                 });
               }
             } else {
@@ -2344,7 +2343,7 @@ export async function finalizeOnboardingWizard(
               // Give slow VPS starts one more bounded warmup pass without service churn.
               strictFastListener = await waitForGatewayHttpListener({
                 wsUrl: probeLinks.wsUrl,
-                deadlineMs: lowRamMode ? 240_000 : 90_000,
+                deadlineMs: lowRamMode ? 90_000 : 30_000,
               });
             }
           }
@@ -2387,8 +2386,8 @@ export async function finalizeOnboardingWizard(
             progress.update("Listener reachable; confirming stable startup…");
             const stableListener = await waitForStableGatewayHttpListener({
               wsUrl: probeLinks.wsUrl,
-              deadlineMs: lowRamMode ? 120_000 : 60_000,
-              stableMs: 8_000,
+              deadlineMs: lowRamMode ? 45_000 : 20_000,
+              stableMs: 2_000,
               pollMs: 750,
             });
             if (!stableListener.ok) {
@@ -2703,7 +2702,7 @@ export async function finalizeOnboardingWizard(
     const identity = strictVps
       ? await waitForTailscaleIdentity({
           basePath: controlUiBasePath,
-          deadlineMs: lowRamMode ? 180_000 : 90_000,
+          deadlineMs: lowRamMode ? 60_000 : 30_000,
         })
       : {
           ok: true,
@@ -2729,18 +2728,22 @@ export async function finalizeOnboardingWizard(
         progress.update("Waiting for tailscale serve route mapping…");
         const serveWarmup = await waitForTailscaleServeRoute({
           port: settings.port,
-          deadlineMs: lowRamMode ? 180_000 : 90_000,
+          deadlineMs: lowRamMode ? 45_000 : 20_000,
         });
         if (serveWarmup.ok) {
           return;
         }
         const detail = serveWarmup.detail ?? "mapping not detected";
-        if (!opts.allowInsecure) {
-          throw new Error(
-            `Hosting requires tailscale serve route mapping before completion (${detail})`,
-          );
-        }
-        runtime.error(`Tailscale serve route still warming: ${detail}`);
+        await prompter.note(
+          [
+            "Tailscale serve is still warming.",
+            `Detail: ${detail}`,
+            "",
+            "Setup will continue if the local Gateway service is healthy.",
+            "Use the SSH tunnel fallback immediately, or open the Tailscale dashboard URL again shortly.",
+          ].join("\n"),
+          "Tailscale serve warmup",
+        );
       },
     );
   }
@@ -2761,9 +2764,9 @@ export async function finalizeOnboardingWizard(
           progress.update("Waiting for Tailscale HTTPS dashboard URL to become reachable…");
           const warmup = await waitForHttpUrlReachable({
             url: tailscaleAdminUrl,
-            deadlineMs: lowRamMode ? 90_000 : 45_000,
+            deadlineMs: lowRamMode ? 45_000 : 20_000,
             pollMs: 1_000,
-            requestTimeoutMs: 5_000,
+            requestTimeoutMs: 3_000,
             // 401/403 still prove Tailscale HTTPS endpoint is reachable;
             // auth happens in browser with the gateway token shown separately.
             successStatuses: [401, 403],
@@ -2789,8 +2792,8 @@ export async function finalizeOnboardingWizard(
               ? await waitForHostedDashboardBrowserPath({
                   httpUrl: tailscaleAdminUrl,
                   token: gatewayTokenForUi,
-                  deadlineMs: lowRamMode ? 90_000 : 45_000,
-                  probeTimeoutMs: 8_000,
+                  deadlineMs: lowRamMode ? 45_000 : 20_000,
+                  probeTimeoutMs: lowRamMode ? 6_000 : 3_000,
                   pollMs: 1_500,
                 })
               : await waitForGatewayReachable({
@@ -2800,34 +2803,25 @@ export async function finalizeOnboardingWizard(
                     settings.authMode === "password"
                       ? nextConfig.gateway?.auth?.password
                       : undefined,
-                  deadlineMs: lowRamMode ? 90_000 : 45_000,
-                  probeTimeoutMs: 8_000,
+                  deadlineMs: lowRamMode ? 45_000 : 20_000,
+                  probeTimeoutMs: lowRamMode ? 6_000 : 3_000,
                   pollMs: 1_500,
                 });
           if (!wsWarmup.ok) {
-            if (!opts.allowInsecure) {
-              throw new Error(
-                [
-                  "Tailscale dashboard page is reachable, but the browser Gateway connection is not online through that URL.",
-                  `Gateway URL: ${tailscaleGatewayWsUrl}`,
-                  `Detail: ${
-                    "stage" in wsWarmup
-                      ? `${wsWarmup.stage}: ${wsWarmup.message}`
-                      : (wsWarmup.detail ?? "gateway websocket not reachable")
-                  }`,
-                  "Check from the app user terminal:",
-                  "  systemctl status --user fased-gateway --no-pager",
-                  "  sudo systemctl status fased-gateway --no-pager",
-                  "  tail -n 120 ~/.fased/logs/start-managed-gateway.log",
-                ].join("\n"),
-              );
-            }
-            runtime.error(
-              `Tailscale dashboard Gateway still warming: ${
-                "stage" in wsWarmup
-                  ? `${wsWarmup.stage}: ${wsWarmup.message}`
-                  : (wsWarmup.detail ?? "websocket not reachable")
-              }`,
+            await prompter.note(
+              [
+                "The Tailscale dashboard page is reachable, but the browser Gateway connection is still warming.",
+                `Gateway URL: ${tailscaleGatewayWsUrl}`,
+                `Detail: ${
+                  "stage" in wsWarmup
+                    ? `${wsWarmup.stage}: ${wsWarmup.message}`
+                    : (wsWarmup.detail ?? "websocket not reachable")
+                }`,
+                "",
+                "Setup will continue if the local Gateway listener is healthy.",
+                "Use the SSH tunnel fallback immediately, or open the Tailscale dashboard URL again shortly.",
+              ].join("\n"),
+              "Dashboard warmup",
             );
           } else {
             hostedDashboardBrowserVerified = true;
