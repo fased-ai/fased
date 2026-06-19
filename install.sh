@@ -617,6 +617,7 @@ linux_os_summary() {
 }
 
 install_linux_system_dependencies() {
+  local install_pnpm="${1:-1}"
   if [[ "$(uname -s)" != "Linux" ]]; then
     return 1
   fi
@@ -684,7 +685,9 @@ install_linux_system_dependencies() {
     print_node_runtime_help
     return 1
   fi
-  install_pnpm_for_active_node
+  if [[ "$install_pnpm" == "1" ]]; then
+    install_pnpm_for_active_node
+  fi
 }
 
 install_freebsd_system_dependencies() {
@@ -1984,7 +1987,7 @@ install_missing_deps_as_root_if_needed() {
   fi
 
   local missing=()
-  for cmd in git curl pnpm; do
+  for cmd in git curl; do
     need_cmd "$cmd" || missing+=("$cmd")
   done
   if ! need_cmd node; then
@@ -2003,7 +2006,7 @@ install_missing_deps_as_root_if_needed() {
     echo "Installing or selecting compatible Node runtime: $(node_runtime_issue)"
   fi
 
-  install_linux_system_dependencies
+  install_linux_system_dependencies 0
 }
 
 bootstrap_repo_for_target_user() {

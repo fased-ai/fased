@@ -183,6 +183,17 @@ describe("onboarding host security", () => {
     expect(syntax.status, syntax.stderr).toBe(0);
   });
 
+  it("wraps Tailscale browser login so approval continues once a tailnet IP appears", () => {
+    const command = __testing.buildTailscaleLoginWaitCommand("sudo -n tailscale up --ssh");
+
+    expect(command).toContain("sudo -n tailscale up --ssh");
+    expect(command).toContain("tailscale ip -4");
+    expect(command).toContain('kill -INT "$ts_pid"');
+    expect(command).toContain("exit 124");
+    const syntax = checkBashSyntax(command);
+    expect(syntax.status, syntax.stderr).toBe(0);
+  });
+
   it("generates hosted firewall hardening for ufw and firewalld", () => {
     const command = __testing.firewallBaselineCommand();
 

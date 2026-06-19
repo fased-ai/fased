@@ -189,10 +189,57 @@ function runInteractive(
   return { ok: false, detail, timedOut };
 }
 
+function buildTailscaleLoginWaitCommand(command: string): string {
+  const quotedCommand = shellQuote(command);
+  return [
+    "set +e",
+    `bash -lc ${quotedCommand} &`,
+    "ts_pid=$!",
+    "for _ in $(seq 1 55); do",
+    "  if tailscale ip -4 >/dev/null 2>&1 || sudo -n tailscale ip -4 >/dev/null 2>&1; then",
+    '    kill -INT "$ts_pid" >/dev/null 2>&1 || true',
+    '    wait "$ts_pid" >/dev/null 2>&1 || true',
+    "    exit 0",
+    "  fi",
+    '  if ! kill -0 "$ts_pid" >/dev/null 2>&1; then',
+    '    wait "$ts_pid"',
+    "    exit $?",
+    "  fi",
+    "  sleep 2",
+    "done",
+    'kill -INT "$ts_pid" >/dev/null 2>&1 || true',
+    'wait "$ts_pid" >/dev/null 2>&1 || true',
+    "if tailscale ip -4 >/dev/null 2>&1 || sudo -n tailscale ip -4 >/dev/null 2>&1; then",
+    "  exit 0",
+    "fi",
+    "exit 124",
+  ].join("\n");
+}
+
 function runInteractiveTailscaleLogin(command: string, logPath?: string) {
-  return runInteractive(command, logPath, {
+  if (logPath) {
+    appendHostSecurityLog(
+      logPath,
+      command,
+      "interactive Tailscale login started; output shown in terminal",
+    );
+  }
+  const result = runInteractive(buildTailscaleLoginWaitCommand(command), undefined, {
     timeoutMs: TAILSCALE_INTERACTIVE_TIMEOUT_MS,
   });
+  if (logPath) {
+    appendHostSecurityLog(
+      logPath,
+      "tailscale login result",
+      result.ok
+        ? "tailnet IP appeared or tailscale up completed"
+        : (result.detail ?? "tailscale login failed"),
+    );
+  }
+  if (result.ok) {
+    return { ok: true, detail: "tailnet IP appeared or tailscale up completed" };
+  }
+  return result;
 }
 
 function noteHeading(value: string): string {
@@ -1240,5 +1287,6 @@ export const __testing = {
   packageInstallCommand,
   tailscaleInstallCommand,
   automaticUpdatesCommand,
+  buildTailscaleLoginWaitCommand,
   verifyTailnetSshServerPrerequisites,
 };
