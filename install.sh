@@ -113,6 +113,69 @@ HOSTING_SWAP_GB=2
 ORIGINAL_INSTALL_ARGS=("$@")
 pass_args=()
 
+supports_color() {
+  if [[ "${FORCE_COLOR:-}" == "0" ]]; then
+    return 1
+  fi
+  if [[ -n "${NO_COLOR:-}" && "${FORCE_COLOR:-}" != "1" ]]; then
+    return 1
+  fi
+  [[ -t 1 || -n "${FORCE_COLOR:-}" ]]
+}
+
+if supports_color; then
+  C_RESET=$'\033[0m'
+  C_BOLD=$'\033[1m'
+  C_DIM=$'\033[2m'
+  C_CYAN=$'\033[36m'
+  C_GREEN=$'\033[32m'
+  C_YELLOW=$'\033[33m'
+  C_RED=$'\033[31m'
+else
+  C_RESET=""
+  C_BOLD=""
+  C_DIM=""
+  C_CYAN=""
+  C_GREEN=""
+  C_YELLOW=""
+  C_RED=""
+fi
+
+color_cyan() { printf '%s%s%s' "$C_CYAN" "$1" "$C_RESET"; }
+color_green() { printf '%s%s%s' "$C_GREEN" "$1" "$C_RESET"; }
+color_yellow() { printf '%s%s%s' "$C_YELLOW" "$1" "$C_RESET"; }
+color_red() { printf '%s%s%s' "$C_RED" "$1" "$C_RESET"; }
+color_dim() { printf '%s%s%s' "$C_DIM" "$1" "$C_RESET"; }
+
+print_installer_banner() {
+  local version="$1"
+  local profile="Local"
+  if [[ "$HOSTING_REQUESTED" -eq 1 ]]; then
+    profile="VPS Hosting"
+  fi
+  printf '\n'
+  if supports_color; then
+    printf '%s' "$C_CYAN"
+  fi
+  cat <<'BANNER'
+  _____   _     ____   _____  ____
+ |  ___| / \   / ___| | ____||  _ \
+ | |_   / _ \  \___ \ |  _|  | | | |
+ |  _| / ___ \  ___) || |___ | |_| |
+ |_|  /_/   \_\|____/ |_____||____/
+BANNER
+  if supports_color; then
+    printf '%s' "$C_RESET"
+  fi
+  printf '%s\n' "$(color_cyan "${C_BOLD}Fased Agent v${version}${C_RESET}")"
+  printf '%s\n\n' "$(color_dim "Profile: ${profile}  |  Logs: ${INSTALL_LOG_DIR}")"
+}
+
+section() {
+  local label="$1"
+  printf '\n%s\n' "$(color_cyan "${C_BOLD}${label}${C_RESET}")"
+}
+
 if [[ -f "$SAT_RUNTIME_ENV_FILE" ]]; then
   set -a
   # shellcheck source=/dev/null
@@ -1253,17 +1316,17 @@ install_log_path() {
 
 step_start() {
   local label="$1"
-  printf '• %s...\n' "$label"
+  printf '%s %s\n' "$(color_yellow "•")" "$(color_yellow "${label}...")"
 }
 
 step_done() {
   local label="$1"
-  printf '✓ %s\n' "$label"
+  printf '%s %s\n' "$(color_green "✓")" "$(color_green "$label")"
 }
 
 step_skip() {
   local label="$1"
-  printf '✓ %s unchanged\n' "$label"
+  printf '%s %s\n' "$(color_green "✓")" "$(color_dim "${label} unchanged")"
 }
 
 SPINNER_PID=""
@@ -1278,7 +1341,7 @@ spinner_start() {
     local frame
     while true; do
       for frame in '-' '\' '|' '/'; do
-        printf '\r• %s %s' "$label" "$frame"
+        printf '\r%s %s %s' "$(color_yellow "•")" "$(color_yellow "$label")" "$(color_dim "$frame")"
         sleep 0.12
       done
     done
@@ -1306,7 +1369,7 @@ spinner_done() {
 spinner_failed() {
   local label="$1"
   spinner_clear
-  printf '✕ %s\n' "$label" >&2
+  printf '%s %s\n' "$(color_red "✕")" "$(color_red "$label")" >&2
 }
 
 run_logged_in() {
@@ -1331,9 +1394,9 @@ run_logged_in() {
     return 0
   fi
   spinner_failed "$label"
-  echo "Failed: $label" >&2
-  echo "Full log: $log_path" >&2
-  echo "Last lines:" >&2
+  printf '%s %s\n' "$(color_red "Failed:")" "$label" >&2
+  printf '%s %s\n' "$(color_dim "Full log:")" "$log_path" >&2
+  printf '%s\n' "$(color_dim "Last lines:")" >&2
   tail -n 30 "$log_path" >&2 || true
   return 1
 }
@@ -2608,11 +2671,11 @@ if ! node_runtime_ok; then
 fi
 
 FASED_INSTALL_VERSION="$(node -e 'const fs=require("fs");try{const p=process.argv[1];const o=JSON.parse(fs.readFileSync(p,"utf8"));process.stdout.write(o.version||"0.0.0")}catch{process.stdout.write("0.0.0")}' "$FASED_DIR/package.json" 2>/dev/null || printf '0.0.0')"
-printf '\nFased Agent v%s\n' "$FASED_INSTALL_VERSION"
-printf 'Setup\n\n'
+print_installer_banner "$FASED_INSTALL_VERSION"
 
 export CI="${CI:-1}"
 export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+section "System preparation"
 ensure_low_memory_swap_if_possible
 pnpm_install_with_adaptive_profile
 build_old_space_mb="$(recommended_onboard_old_space_mb)"
@@ -2629,6 +2692,7 @@ fi
 export FASED_SAT_BOND_LAYOUT_PATH="${FASED_SAT_BOND_LAYOUT_PATH:-$FASED_DIR/token/sat/bond-api/bond-position-layout.json}"
 export FASED_SAT_BOND_POLICY_LAYOUT_PATH="${FASED_SAT_BOND_POLICY_LAYOUT_PATH:-$FASED_DIR/token/sat/bond-api/bond-tier-policy-layout.json}"
 
+section "Build"
 core_build_profile="$(resolved_core_build_profile)"
 core_cache_name="core-build-${core_build_profile:-default}"
 core_fingerprint="$(fingerprint_targets "$FASED_DIR" package.json pnpm-lock.yaml tsconfig.json tsdown.config.ts src scripts extensions config tools/fased-signerd)"
@@ -2703,6 +2767,7 @@ if [[ "$RUN_ONBOARD" -eq 0 ]]; then
   exit 0
 fi
 
+section "Interactive setup"
 step_start "Start setup"
 onboard_old_space_mb="$(recommended_onboard_old_space_mb)"
 onboard_node_options="$(node_options_with_old_space "${NODE_OPTIONS:-}" "$onboard_old_space_mb")"

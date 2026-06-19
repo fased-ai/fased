@@ -763,7 +763,7 @@ export async function runOnboardingWizard(
     await installPrivateGoForOnboarding();
   };
   printWizardHeader(runtime);
-  await prompter.intro("Setup");
+  await prompter.intro("FASED Setup");
   await requireRiskAcknowledgement({ opts, prompter });
 
   const snapshot = await readConfigFileSnapshot();
@@ -859,9 +859,13 @@ export async function runOnboardingWizard(
 
   await prompter.note(
     [
-      "Choose the host setup profile for the machine you are configuring:",
-      "- Local: this machine or laptop. Good for first chat and the local Control UI. Local on a VPS means no SSH/firewall hardening.",
-      "- Hosting: VPS or always-on server. Applies the Tailscale-first hosting baseline. Hosting on personal Linux changes SSH/firewall behavior.",
+      "Choose the setup profile for this machine:",
+      "",
+      "Local",
+      "Use on your own computer. Good for first chat and the local Control UI. No VPS SSH/firewall hardening.",
+      "",
+      "VPS Hosting",
+      "Use on an always-on server. Applies the Tailscale-first hosting baseline. This changes SSH/firewall behavior.",
     ].join("\n"),
     "Setup map",
   );

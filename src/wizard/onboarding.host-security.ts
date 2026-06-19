@@ -624,6 +624,32 @@ function packageInstallCommand(packages: string[]): string {
   ].join("\n");
 }
 
+function tailscaleInstallCommand(): string {
+  return [
+    "if command -v tailscale >/dev/null 2>&1; then",
+    "  :",
+    "elif command -v apt-get >/dev/null 2>&1; then",
+    "  curl -fsSL https://tailscale.com/install.sh | sudo -E env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a sh",
+    "elif command -v dnf >/dev/null 2>&1; then",
+    "  sudo -n dnf install -y tailscale || curl -fsSL https://tailscale.com/install.sh | sudo -E sh",
+    "elif command -v dnf5 >/dev/null 2>&1; then",
+    "  sudo -n dnf5 install -y tailscale || curl -fsSL https://tailscale.com/install.sh | sudo -E sh",
+    "elif command -v yum >/dev/null 2>&1; then",
+    "  sudo -n yum install -y tailscale || curl -fsSL https://tailscale.com/install.sh | sudo -E sh",
+    "elif command -v pacman >/dev/null 2>&1; then",
+    "  sudo -n pacman -Sy --needed --noconfirm tailscale",
+    "elif command -v apk >/dev/null 2>&1; then",
+    "  sudo -n apk add --no-cache tailscale",
+    "else",
+    "  curl -fsSL https://tailscale.com/install.sh | sudo -E sh",
+    "fi",
+    "if command -v systemctl >/dev/null 2>&1; then",
+    "  sudo -n systemctl enable --now tailscaled >/dev/null 2>&1 || true",
+    "fi",
+    "command -v tailscale >/dev/null 2>&1",
+  ].join("\n");
+}
+
 function firewallBaselineCommand(): string {
   return [
     "if command -v ufw >/dev/null 2>&1 || command -v apt-get >/dev/null 2>&1; then",
@@ -836,10 +862,7 @@ export async function applyHostingSecurity(params: {
   }
 
   if (!hasCommand("tailscale")) {
-    const installTs = run(
-      "curl -fsSL https://tailscale.com/install.sh | sudo -E env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a sh",
-      logPath,
-    );
+    const installTs = run(tailscaleInstallCommand(), logPath);
     if (!installTs.ok) {
       checks.push({
         name: "tailscale",
@@ -849,6 +872,8 @@ export async function applyHostingSecurity(params: {
       failOrContinue({ opts, runtime, step: "tailscale install failed", detail: installTs.detail });
       return { profile, checks, enforced: false, logPath };
     }
+  } else if (hasCommand("systemctl")) {
+    run("sudo -n systemctl enable --now tailscaled >/dev/null 2>&1 || true", logPath);
   }
 
   if (prompter && opts.nonInteractive !== true) {
@@ -1115,6 +1140,7 @@ export const __testing = {
   ensureTailnetSshIngressForVerification,
   firewallBaselineCommand,
   packageInstallCommand,
+  tailscaleInstallCommand,
   automaticUpdatesCommand,
   verifyTailnetSshServerPrerequisites,
 };

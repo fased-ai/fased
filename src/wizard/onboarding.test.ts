@@ -429,11 +429,11 @@ describe("runOnboardingWizard", () => {
     );
 
     expect(prompter.note).toHaveBeenCalledWith(
-      expect.stringContaining("Local on a VPS means no SSH/firewall hardening."),
+      expect.stringContaining("No VPS SSH/firewall hardening."),
       "Setup map",
     );
     expect(prompter.note).toHaveBeenCalledWith(
-      expect.stringContaining("Hosting on personal Linux changes SSH/firewall behavior."),
+      expect.stringContaining("This changes SSH/firewall behavior."),
       "Setup map",
     );
     expect(prompter.note).not.toHaveBeenCalledWith(

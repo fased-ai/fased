@@ -170,6 +170,19 @@ describe("onboarding host security", () => {
     expect(syntax.status, syntax.stderr).toBe(0);
   });
 
+  it("generates a Fedora-friendly Tailscale install command", () => {
+    const command = __testing.tailscaleInstallCommand();
+
+    expect(command).toContain("command -v tailscale");
+    expect(command).toContain("dnf install -y tailscale");
+    expect(command).toContain("dnf5 install -y tailscale");
+    expect(command).toContain("yum install -y tailscale");
+    expect(command).toContain("systemctl enable --now tailscaled");
+    expect(command).toContain("https://tailscale.com/install.sh");
+    const syntax = checkBashSyntax(command);
+    expect(syntax.status, syntax.stderr).toBe(0);
+  });
+
   it("generates hosted firewall hardening for ufw and firewalld", () => {
     const command = __testing.firewallBaselineCommand();
 
