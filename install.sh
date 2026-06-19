@@ -80,6 +80,9 @@ if [[ -z "${BASH_SOURCE[0]:-}" || "${BASH_SOURCE[0]:-}" == "bash" || "${BASH_SOU
     exit 1
   fi
 
+  if ( : < /dev/tty ) 2>/dev/null; then
+    exec bash "$install_base_dir/install.sh" "$@" < /dev/tty
+  fi
   exec bash "$install_base_dir/install.sh" "$@"
 fi
 
