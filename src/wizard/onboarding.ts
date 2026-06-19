@@ -37,6 +37,7 @@ import {
 import { logConfigUpdated } from "../config/logging.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { defaultRuntime } from "../runtime.js";
+import { theme } from "../terminal/theme.js";
 import { resolveUserPath } from "../utils.js";
 import type { WalletNamedWallet } from "../wallet/wallet-provider-registry.js";
 import { readWalletProviderRegistry } from "../wallet/wallet-provider-registry.js";
@@ -859,13 +860,13 @@ export async function runOnboardingWizard(
 
   await prompter.note(
     [
-      "Choose the setup profile for this machine:",
+      theme.heading("Choose the setup profile for this machine:"),
       "",
-      "Local",
+      theme.info("Local"),
       "Use on your own computer. Good for first chat and the local Control UI. No VPS SSH/firewall hardening.",
       "",
-      "VPS Hosting",
-      "Use on an always-on server. Applies the Tailscale-first hosting baseline. This changes SSH/firewall behavior.",
+      theme.warn("VPS Hosting"),
+      "Use on an always-on server. Applies private Tailscale access and hosted SSH/firewall hardening.",
     ].join("\n"),
     "Setup map",
   );
@@ -940,13 +941,16 @@ export async function runOnboardingWizard(
   if (hostProfile === "hosting") {
     await prompter.note(
       [
+        theme.heading("Private access"),
         "Hosting uses private access through Tailscale.",
         "",
-        "Web dashboard: open the Tailscale HTTPS URL printed at the end.",
-        "SSH terminal: use ssh app@YOUR_VPS_TAILSCALE_NAME for CLI commands.",
-        "Tailscale SSH is optional and only works when enabled in your tailnet.",
+        theme.info("Web dashboard: open the Tailscale HTTPS URL printed at the end."),
+        theme.success("SSH terminal: use ssh app@YOUR_VPS_TAILSCALE_NAME for CLI commands."),
+        theme.warn("Tailscale SSH is optional and only works when enabled in your tailnet."),
         "",
-        "Public SSH and Gateway ports stay blocked. Root is only for first bootstrap or emergency repair.",
+        theme.error(
+          "Public SSH and Gateway ports stay blocked. Root is only for first bootstrap or emergency repair.",
+        ),
       ].join("\n"),
       "Hosting access",
     );

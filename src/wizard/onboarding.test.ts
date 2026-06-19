@@ -433,7 +433,7 @@ describe("runOnboardingWizard", () => {
       "Setup map",
     );
     expect(prompter.note).toHaveBeenCalledWith(
-      expect.stringContaining("This changes SSH/firewall behavior."),
+      expect.stringContaining("private Tailscale access and hosted SSH/firewall hardening"),
       "Setup map",
     );
     expect(prompter.note).not.toHaveBeenCalledWith(

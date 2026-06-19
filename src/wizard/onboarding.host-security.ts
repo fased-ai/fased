@@ -6,6 +6,7 @@ import type { OnboardOptions } from "../commands/onboard-types.js";
 import { redactSensitiveText } from "../logging/redact.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { redactSensitiveUrlLikeString } from "../shared/net/redact-sensitive-url.js";
+import { theme } from "../terminal/theme.js";
 import { isHostingProfile } from "./onboarding.types.js";
 import type { HostSetupProfile } from "./onboarding.types.js";
 import type { WizardPrompter } from "./prompts.js";
@@ -194,21 +195,59 @@ function runInteractiveTailscaleLogin(command: string, logPath?: string) {
   });
 }
 
+function noteHeading(value: string): string {
+  return theme.heading(value);
+}
+
+function noteKey(value: string): string {
+  return theme.accentBright(value);
+}
+
+function noteInfo(value: string): string {
+  return theme.info(value);
+}
+
+function noteSuccess(value: string): string {
+  return theme.success(value);
+}
+
+function noteWarn(value: string): string {
+  return theme.warn(value);
+}
+
+function noteError(value: string): string {
+  return theme.error(value);
+}
+
+function noteCommand(value: string): string {
+  return theme.command(value);
+}
+
 function formatTailscaleBrowserLoginNote(): string {
   return [
+    noteHeading("Browser approval"),
     "Tailscale will print a login URL in this terminal.",
     "Open it, approve this VPS, then return here.",
+    "",
+    noteHeading("After approval"),
     "After approval this should finish automatically.",
-    "If the command does not return after about two minutes, setup will continue when a tailnet IP is present.",
+    noteWarn(
+      "If the command does not return after about two minutes, setup will continue when a tailnet IP is present.",
+    ),
   ].join("\n");
 }
 
 function formatTailscaleAccountBrowserLoginNote(): string {
   return [
+    noteHeading("Browser approval"),
     "Tailscale will print a login URL in this terminal.",
     "Open it from the same computer/account you want to use for the dashboard and SSH.",
+    "",
+    noteHeading("After approval"),
     "After approval this should finish automatically.",
-    "If the command does not return after about two minutes, setup will continue when a tailnet IP is present.",
+    noteWarn(
+      "If the command does not return after about two minutes, setup will continue when a tailnet IP is present.",
+    ),
   ].join("\n");
 }
 
@@ -308,23 +347,39 @@ function resolveTailnetSshTarget(params: {
 
 function formatLocalDeviceTailnetRequirementNote(): string {
   return [
+    noteHeading("Two devices"),
     "Hosted setup uses two machines. Keep both online:",
     "",
-    "1. This VPS runs Fased Agent.",
-    "2. Your own computer opens the dashboard and runs the final SSH check.",
+    noteSuccess("VPS: This VPS runs Fased Agent."),
+    noteInfo("Local computer: opens the dashboard and runs the final SSH check."),
     "",
     "Your own computer must have Tailscale installed, running, and signed into the same tailnet before the dashboard or SSH can work.",
     "",
-    "Windows: use PowerShell or Windows Terminal with the Windows Tailscale app running.",
-    "macOS: use Terminal with the macOS Tailscale app running.",
-    "Fedora local computer: `sudo dnf install -y tailscale && sudo systemctl enable --now tailscaled && sudo tailscale up`.",
-    "Ubuntu/Debian/Kali local computer: `curl -fsSL https://tailscale.com/install.sh | sh`, then `sudo tailscale up`.",
-    "Arch local computer: `sudo pacman -S tailscale && sudo systemctl enable --now tailscaled && sudo tailscale up`.",
-    "WSL: advanced only. Windows Tailscale does not automatically make WSL a Tailscale node. Use PowerShell, or install/start Tailscale inside WSL.",
-    "If your own computer says `tailscale: command not found`, install Tailscale on that computer before running the ping/ssh check.",
-    "A separate VPN on your own computer can interfere with Tailscale DNS or routing; if ping/SSH fails, disconnect the other VPN or allow Tailscale traffic and try again.",
+    noteHeading("Local computer setup"),
+    noteInfo("Windows: use PowerShell or Windows Terminal with the Windows Tailscale app running."),
+    noteKey("macOS: use Terminal with the macOS Tailscale app running."),
+    noteSuccess(
+      `Fedora: ${noteCommand("sudo dnf install -y tailscale && sudo systemctl enable --now tailscaled && sudo tailscale up")}.`,
+    ),
+    noteInfo(
+      `Ubuntu/Debian/Kali: ${noteCommand("curl -fsSL https://tailscale.com/install.sh | sh")}, then ${noteCommand("sudo tailscale up")}.`,
+    ),
+    noteKey(
+      `Arch: ${noteCommand("sudo pacman -S tailscale && sudo systemctl enable --now tailscaled && sudo tailscale up")}.`,
+    ),
+    noteWarn(
+      "WSL: advanced only. Windows Tailscale does not automatically make WSL a Tailscale node. Use PowerShell, or install/start Tailscale inside WSL.",
+    ),
     "",
-    "Keep this VPS installer terminal open while you test from your own device.",
+    noteHeading("Common blockers"),
+    noteError(
+      "If your own computer says `tailscale: command not found`, install Tailscale on that computer before running the ping/ssh check.",
+    ),
+    noteWarn(
+      "VPN warning: another VPN can break Tailscale MagicDNS names. Turn the other VPN off for the cleanest setup. If it must stay on, use the 100.x Tailscale IP instead of the hostname.",
+    ),
+    "",
+    noteError("Keep this VPS installer terminal open while you test from your own device."),
   ].join("\n");
 }
 
@@ -335,29 +390,51 @@ function formatTailnetSshVerificationNote(target: TailnetSshTarget): string {
   ].filter((value): value is string => Boolean(value));
   const sshTargets = pingTargets;
   return [
+    noteHeading("Before lock-down"),
     "Before Fased locks down public SSH/root/password access, prove the private terminal path works.",
     "",
-    "These commands run on your own computer, not inside the VPS SSH session.",
+    noteError("These commands run on your own computer, not inside the VPS SSH session."),
     "Your own computer must have Tailscale installed, running, and signed into the same tailnet as this VPS.",
-    "If your own computer says `tailscale: command not found`, install Tailscale there first.",
-    "Fedora local computer: `sudo dnf install -y tailscale && sudo systemctl enable --now tailscaled && sudo tailscale up`.",
-    "Ubuntu/Debian/Kali local computer: `curl -fsSL https://tailscale.com/install.sh | sh`, then `sudo tailscale up`.",
-    "Arch local computer: `sudo pacman -S tailscale && sudo systemctl enable --now tailscaled && sudo tailscale up`.",
-    "Windows/macOS local computer: install and sign into the Tailscale app, then use PowerShell/Terminal.",
-    "A separate VPN can interfere with Tailscale DNS/routing; pause it if this check cannot reach the VPS.",
+    noteError(
+      "If your own computer says `tailscale: command not found`, install Tailscale there first.",
+    ),
     "",
+    noteHeading("Local computer setup"),
+    noteSuccess(
+      `Fedora: ${noteCommand("sudo dnf install -y tailscale && sudo systemctl enable --now tailscaled && sudo tailscale up")}.`,
+    ),
+    noteInfo(
+      `Ubuntu/Debian/Kali: ${noteCommand("curl -fsSL https://tailscale.com/install.sh | sh")}, then ${noteCommand("sudo tailscale up")}.`,
+    ),
+    noteKey(
+      `Arch: ${noteCommand("sudo pacman -S tailscale && sudo systemctl enable --now tailscaled && sudo tailscale up")}.`,
+    ),
+    noteInfo(
+      "Windows/macOS: install and sign into the Tailscale app, then use PowerShell/Terminal.",
+    ),
+    noteWarn(
+      "VPN warning: another VPN can break MagicDNS hostnames. Turn it off for the cleanest setup. If it must stay on, use the 100.x Tailscale IP commands below.",
+    ),
+    "",
+    noteHeading("1. Check visibility"),
     "On your own computer, open a second terminal and first check that this VPS is visible in Tailscale:",
-    ...pingTargets.map((host) => `tailscale ping ${host}`),
+    ...pingTargets.map((host) => noteCommand(`tailscale ping ${host}`)),
     "",
-    'If Tailscale says "no matching peer", this computer and the VPS are not in the same tailnet. Sign this computer into the same Tailscale account, or re-authenticate Tailscale on the VPS, then rerun this check.',
+    noteError(
+      'If Tailscale says "no matching peer", this computer and the VPS are not in the same tailnet. Sign this computer into the same Tailscale account, or re-authenticate Tailscale on the VPS, then rerun this check.',
+    ),
     "",
+    noteHeading("2. Connect over Tailscale"),
     "After Tailscale ping works, connect over the tailnet:",
-    ...sshTargets.map((host) => `ssh ${target.user}@${host}`),
+    ...sshTargets.map((host) => noteCommand(`ssh ${target.user}@${host}`)),
     "",
     `It must connect over your Tailscale network as ${target.user} and open in ${target.repoDir}.`,
-    "Keep this installer running while you test.",
+    noteWarn(
+      "If the hostname fails but the 100.x IP works, keep the VPN off or use the 100.x IP form.",
+    ),
+    noteError("Keep this installer running while you test."),
     "",
-    "Do not continue until one of those SSH commands works from your own computer.",
+    noteError("Do not continue until one of those SSH commands works from your own computer."),
   ].join("\n");
 }
 

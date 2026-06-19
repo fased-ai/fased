@@ -232,15 +232,16 @@ and signed into the same tailnet as the VPS. Do not run the check commands
 inside the VPS SSH session.
 
 If your own computer says `tailscale: command not found`, return to step 1 and
-install Tailscale on your local PC first. A separate VPN on your own computer
-can interfere with Tailscale DNS or routing; if ping/SSH cannot reach the VPS,
-disconnect the other VPN or allow Tailscale traffic and try again.
+install Tailscale on your local PC first. A separate VPN on your own computer can
+interfere with Tailscale DNS or routing. Turn the other VPN off for the cleanest
+setup. If it must stay on, use the `100.x.x.x` Tailscale IP instead of the
+hostname.
 
 If `tailscale ping 100.x.x.x` works but
 `ssh app@YOUR_VPS_TAILSCALE_NAME` fails with a hostname/DNS error, Tailscale is
 connected but MagicDNS is being blocked or overridden, often by the other VPN.
-Disconnect the other VPN, fix its DNS split-tunnel rules, or use the Tailscale
-IP directly:
+Turn the other VPN off, fix its DNS split-tunnel rules, or use the Tailscale IP
+directly:
 
 ```bash
 tailscale status
