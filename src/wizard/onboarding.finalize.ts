@@ -117,6 +117,8 @@ export function formatStrictRemoteAccessDetails(params: {
   gatewayToken?: string;
 }): string {
   const sshTarget = params.tailscaleNodeName || params.tailscaleIpv4 || "(tailscale-node)";
+  const tailscaleIpv4 = params.tailscaleIpv4?.trim();
+  const hasIpFallback = Boolean(tailscaleIpv4 && tailscaleIpv4 !== sshTarget);
   return [
     "Use both access paths after hosted setup:",
     "",
@@ -127,18 +129,29 @@ export function formatStrictRemoteAccessDetails(params: {
     "2. SSH TERMINAL",
     "   Use this for CLI commands, updates, logs, and repairs over Tailscale:",
     `   ssh ${params.tailscaleSshUser}@${sshTarget}`,
+    hasIpFallback
+      ? `   If hostname DNS fails but Tailscale IP ping works, use: ssh ${params.tailscaleSshUser}@${tailscaleIpv4}`
+      : undefined,
     "   The app user shell opens in the Fased repo directory.",
     "",
     "ADVANCED FALLBACK",
     "   If the Tailscale web URL is unavailable, run this on your local computer and leave it open:",
     `   ssh -N -L ${params.port}:127.0.0.1:${params.port} ${params.tailscaleSshUser}@${sshTarget}`,
+    hasIpFallback
+      ? `   If a VPN blocks MagicDNS hostname lookup, use: ssh -N -L ${params.port}:127.0.0.1:${params.port} ${params.tailscaleSshUser}@${tailscaleIpv4}`
+      : undefined,
     "   Then open:",
     `   ${params.tunnelUrl}`,
+    hasIpFallback
+      ? "   Note: another VPN can break Tailscale MagicDNS while raw 100.x Tailscale IP access still works."
+      : undefined,
     "",
     "GATEWAY TOKEN BACKUP",
     "   Only paste this if the browser asks for a token:",
     `   ${params.gatewayToken || "(token not available)"}`,
-  ].join("\n");
+  ]
+    .filter((line): line is string => line !== undefined)
+    .join("\n");
 }
 
 export function formatLocalDashboardReady(params: {

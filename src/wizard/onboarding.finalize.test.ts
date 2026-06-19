@@ -48,6 +48,7 @@ describe("formatStrictRemoteAccessDetails", () => {
     const text = formatStrictRemoteAccessDetails({
       tailscaleSshUser: "app",
       tailscaleNodeName: "fased-vps.tailnet.ts.net",
+      tailscaleIpv4: "100.64.1.9",
       dashboardUrl: "https://fased-vps.tailnet.ts.net/#token=abc123",
       tunnelUrl: "http://localhost:18789/#token=abc123",
       port: 18789,
@@ -59,8 +60,13 @@ describe("formatStrictRemoteAccessDetails", () => {
     expect(text).toContain("Open this on your own computer");
     expect(text).toContain("https://fased-vps.tailnet.ts.net/#token=abc123");
     expect(text).toContain("ssh app@fased-vps.tailnet.ts.net");
+    expect(text).toContain("ssh app@100.64.1.9");
+    expect(text).toContain("hostname DNS fails");
+    expect(text).toContain("VPN blocks MagicDNS");
+    expect(text).toContain("raw 100.x Tailscale IP access still works");
     expect(text).not.toContain("tailscale ssh");
     expect(text).toContain("ssh -N -L 18789:127.0.0.1:18789 app@fased-vps.tailnet.ts.net");
+    expect(text).toContain("ssh -N -L 18789:127.0.0.1:18789 app@100.64.1.9");
     expect(text).toContain("http://localhost:18789/#token=abc123");
     expect(text).toContain("Only paste this if the browser asks for a token:");
   });
