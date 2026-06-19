@@ -196,7 +196,7 @@ function runInteractiveTailscaleLogin(command: string, logPath?: string) {
 }
 
 function noteHeading(value: string): string {
-  return theme.heading(value);
+  return theme.heading(value.toUpperCase());
 }
 
 function noteKey(value: string): string {
@@ -213,10 +213,6 @@ function noteSuccess(value: string): string {
 
 function noteWarn(value: string): string {
   return theme.warn(value);
-}
-
-function noteError(value: string): string {
-  return theme.error(value);
 }
 
 function noteCommand(value: string): string {
@@ -389,14 +385,14 @@ function formatLocalDeviceTailnetRequirementNote(): string {
     "",
     noteHeading("Common blockers"),
     noteBullet(
-      noteError("If `tailscale` is not found, install Tailscale on your own computer first."),
+      noteWarn("If `tailscale` is not found, install Tailscale on your own computer first."),
     ),
     noteBullet(
       noteWarn(
         "VPN can break MagicDNS. Turn it off, or use the 100.x Tailscale IP instead of the hostname.",
       ),
     ),
-    noteBullet(noteError("Keep this VPS installer terminal open while you test.")),
+    noteBullet(noteInfo("Keep this VPS installer terminal open while you test.")),
     "",
   ].join("\n");
 }
@@ -412,11 +408,11 @@ function formatTailnetSshVerificationNote(target: TailnetSshTarget): string {
     "Prove private terminal access before Fased closes public SSH/root/password paths.",
     "",
     noteBullet(
-      noteError("These commands run on your own computer, not inside the VPS SSH session."),
+      noteInfo("These commands run on your own computer, not inside the VPS SSH session."),
     ),
     noteBullet("Your own computer must have Tailscale installed and be in the same tailnet."),
     noteBullet(
-      noteError("If `tailscale` is not found, install Tailscale on your own computer first."),
+      noteWarn("If `tailscale` is not found, install Tailscale on your own computer first."),
     ),
     "",
     noteHeading("Local computer setup"),
@@ -449,7 +445,7 @@ function formatTailnetSshVerificationNote(target: TailnetSshTarget): string {
     ...pingTargets.map((host) => noteCommand(`tailscale ping ${host}`)),
     "",
     noteBullet(
-      noteError('"no matching peer" means your computer and VPS are not in the same tailnet.'),
+      noteWarn('"no matching peer" means your computer and VPS are not in the same tailnet.'),
     ),
     "",
     noteHeading("2. Connect over Tailscale"),
@@ -458,8 +454,8 @@ function formatTailnetSshVerificationNote(target: TailnetSshTarget): string {
     "",
     noteBullet(`It must connect as ${target.user} and open in ${noteCommand(target.repoDir)}.`),
     noteBullet(noteWarn("If hostname fails but 100.x IP works, keep VPN off or use the IP form.")),
-    noteBullet(noteError("Keep this installer running while you test.")),
-    noteBullet(noteError("Do not continue until one SSH command works from your own computer.")),
+    noteBullet(noteInfo("Keep this installer running while you test.")),
+    noteBullet(noteWarn("Do not continue until one SSH command works from your own computer.")),
   ].join("\n");
 }
 

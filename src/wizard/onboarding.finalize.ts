@@ -1245,8 +1245,8 @@ async function verifyStrictHostedGatewayReady(params: {
 }): Promise<{ ok: boolean; detail?: string }> {
   const listener = await waitForStableGatewayHttpListener({
     wsUrl: params.wsUrl,
-    deadlineMs: params.lowRamMode ? 180_000 : 90_000,
-    stableMs: 8_000,
+    deadlineMs: params.lowRamMode ? 60_000 : 20_000,
+    stableMs: 2_000,
     pollMs: 750,
   });
   if (!listener.ok) {
@@ -1259,8 +1259,8 @@ async function verifyStrictHostedGatewayReady(params: {
     url: params.wsUrl,
     token: params.token,
     password: params.password,
-    deadlineMs: params.lowRamMode ? 300_000 : 180_000,
-    probeTimeoutMs: params.lowRamMode ? 60_000 : 15_000,
+    deadlineMs: params.lowRamMode ? 60_000 : 30_000,
+    probeTimeoutMs: params.lowRamMode ? 15_000 : 8_000,
     pollMs: 750,
   });
   if (!probe.ok) {
@@ -3001,19 +3001,32 @@ export async function finalizeOnboardingWizard(
           lowRamMode,
         });
         if (!finalGateway.ok) {
-          if (hostedDashboardBrowserVerified) {
+          const [rootState, userState] = await Promise.all([
+            isSystemdServiceActive({ name: "fased-gateway", scope: "root" }),
+            isSystemdServiceActive({ name: "fased-gateway", scope: "user" }),
+          ]);
+          const serviceActive = rootState.ok || userState.ok;
+          if (hostedDashboardBrowserVerified || serviceActive) {
             gatewayProbe = {
               ok: false,
               detail: finalGateway.detail ?? "final gateway recheck timed out",
             };
             await prompter.note(
               [
-                "The hosted browser dashboard passed its full check earlier.",
-                `A final local listener recheck timed out (${finalGateway.detail ?? "gateway not reachable"}).`,
-                "Setup will finish and leave the active gateway service running.",
-                "Run: fased dashboard --no-open",
+                serviceActive
+                  ? "The hosted Gateway service is active, but the dashboard is still warming."
+                  : "The hosted browser dashboard passed its full check earlier.",
+                `Detail: ${finalGateway.detail ?? "gateway not reachable yet"}`,
+                "",
+                "Setup will finish and leave the Gateway service running.",
+                "Open the printed Tailscale dashboard URL again in a few minutes.",
+                "If MagicDNS is slow or another VPN is active, use the 100.x Tailscale IP fallback.",
+                "",
+                "Check from the app terminal:",
+                "fased status",
+                "fased dashboard --no-open",
               ].join("\n"),
-              "Final dashboard check",
+              "Dashboard warmup",
             );
             return;
           }

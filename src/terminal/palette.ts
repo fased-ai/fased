@@ -1,12 +1,12 @@
 // Fased palette tokens for CLI/UI theming.
 // Keep in sync with docs/cli/index.md (CLI palette section).
 export const FASED_PALETTE = {
-  accent: "#FF5A2D",
-  accentBright: "#FF7A3D",
-  accentDim: "#D14A22",
-  info: "#FF8A5B",
-  success: "#2FBF71",
-  warn: "#FFB020",
-  error: "#E23D2D",
-  muted: "#8B7F77",
+  accent: "#22D3EE",
+  accentBright: "#67E8F9",
+  accentDim: "#0891B2",
+  info: "#93C5FD",
+  success: "#4ADE80",
+  warn: "#FACC15",
+  error: "#F87171",
+  muted: "#A3A3A3",
 } as const;
