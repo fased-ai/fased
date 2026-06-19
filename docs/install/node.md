@@ -42,21 +42,23 @@ but still omit `node:sqlite`; those are not suitable for full memory support.
     Or download the macOS installer from [nodejs.org](https://nodejs.org/).
 
   </Tab>
-  <Tab title="Linux">
-    **Ubuntu / Debian / Kali:**
+  <Tab title="Ubuntu">
+    Use this for Ubuntu, Debian, or Kali:
 
     ```bash
     curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
     sudo apt-get install -y nodejs
     ```
 
-    **Fedora:**
-
+  </Tab>
+  <Tab title="Fedora">
     ```bash
     sudo dnf install -y nodejs24-bin nodejs24-npm-bin
     ```
-
-    **CentOS / AlmaLinux / Rocky Linux / CloudLinux / Oracle Linux / Amazon Linux:**
+  </Tab>
+  <Tab title="RHEL">
+    Use this for CentOS, AlmaLinux, Rocky Linux, CloudLinux, Oracle Linux, or
+    Amazon Linux:
 
     ```bash
     curl -fsSL https://rpm.nodesource.com/setup_24.x | sudo bash -
@@ -65,35 +67,29 @@ but still omit `node:sqlite`; those are not suitable for full memory support.
 
     Use `yum` instead of `dnf` on older images.
 
-    **openSUSE / SLES:**
+  </Tab>
+  <Tab title="SUSE">
+    Use this for openSUSE or SLES:
 
     ```bash
     sudo zypper --non-interactive install --no-recommends nodejs24 npm24
     ```
 
-    **Alpine:**
-
+  </Tab>
+  <Tab title="Alpine">
     ```bash
     sudo apk add --no-cache nodejs npm
     ```
-
-    **Arch:**
-
+  </Tab>
+  <Tab title="Arch">
     ```bash
     sudo pacman -Sy --needed nodejs npm
     ```
-
-    **FreeBSD:**
-
+  </Tab>
+  <Tab title="FreeBSD">
     ```bash
     sudo pkg install -y node24 npm-node24
     ```
-
-    If Node 24 packages are unavailable, use Node 22.14 or newer with
-    `node:sqlite`, or install Node 24 from your preferred trusted package source.
-
-    Or use a version manager (see below).
-
   </Tab>
   <Tab title="Windows">
     **winget** (recommended):
@@ -102,7 +98,7 @@ but still omit `node:sqlite`; those are not suitable for full memory support.
     winget install OpenJS.NodeJS.LTS
     ```
 
-    **Chocolatey:**
+    Or use Chocolatey:
 
     ```powershell
     choco install nodejs-lts
@@ -112,6 +108,10 @@ but still omit `node:sqlite`; those are not suitable for full memory support.
 
   </Tab>
 </Tabs>
+
+If Node 24 packages are unavailable for your OS, use Node 22.14 or newer with
+`node:sqlite`, install Node 24 from your preferred trusted package source, or
+use a version manager.
 
 <Accordion title="Using a version manager (nvm, fnm, mise, asdf)">
   Version managers let you switch between Node versions easily. Popular options:

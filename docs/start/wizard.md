@@ -130,14 +130,51 @@ Hosted setup uses two machines:
 
 Use the terminal that has Tailscale access:
 
-- **Windows:** use PowerShell or Windows Terminal. Install/sign into the
-  Windows Tailscale app from [tailscale.com/download](https://tailscale.com/download).
-  PowerShell can SSH into the Linux VPS.
-- **macOS:** use Terminal and install/sign into the macOS Tailscale app.
-- **Linux:** use Terminal and install/start Tailscale on that Linux machine.
-- **WSL:** advanced only. Either use PowerShell instead, or install/start
-  Tailscale inside WSL too. Windows Tailscale does not automatically make WSL a
-  Tailscale node.
+<Tabs>
+  <Tab title="Windows">
+    Install the Tailscale app from
+    [tailscale.com/download](https://tailscale.com/download), sign in, and use
+    PowerShell or Windows Terminal for checks.
+
+    PowerShell uses the Windows Tailscale app/service. If you use WSL instead,
+    install and sign into Tailscale inside WSL too.
+
+  </Tab>
+  <Tab title="macOS">
+    Install the Tailscale app from
+    [tailscale.com/download](https://tailscale.com/download) or the App Store,
+    sign in, and use Terminal for checks.
+  </Tab>
+  <Tab title="Ubuntu">
+    Use this for Ubuntu, Debian, or Kali local computers:
+
+    ```bash
+    curl -fsSL https://tailscale.com/install.sh | sh
+    sudo tailscale up
+    tailscale status
+    tailscale ip -4
+    ```
+
+  </Tab>
+  <Tab title="Fedora">
+    ```bash
+    sudo dnf install -y tailscale
+    sudo systemctl enable --now tailscaled
+    sudo tailscale up
+    tailscale status
+    tailscale ip -4
+    ```
+  </Tab>
+  <Tab title="Arch">
+    ```bash
+    sudo pacman -S tailscale
+    sudo systemctl enable --now tailscaled
+    sudo tailscale up
+    tailscale status
+    tailscale ip -4
+    ```
+  </Tab>
+</Tabs>
 
 If you lose access to the Tailscale account used for a hosted VPS, normal
 dashboard and SSH access can be lost. Recovery then depends on the VPS
@@ -149,29 +186,9 @@ computer. That computer must have Tailscale installed, running, and signed into
 the same tailnet as the VPS. Do not run the check commands inside the VPS SSH
 session. If your own computer says `tailscale: command not found`, install
 Tailscale on your own computer first. Use the command for your own computer's
-OS, not the VPS OS:
-
-```bash
-# Fedora local computer
-sudo dnf install -y tailscale
-sudo systemctl enable --now tailscaled
-sudo tailscale up
-
-# Ubuntu / Debian / Kali local computer
-curl -fsSL https://tailscale.com/install.sh | sh
-sudo tailscale up
-
-# Arch local computer
-sudo pacman -S tailscale
-sudo systemctl enable --now tailscaled
-sudo tailscale up
-```
-
-On Windows, install and sign into the Tailscale app, then use PowerShell for
-the check. On macOS, install and sign into the Tailscale app, then use
-Terminal. A separate VPN on your own computer can interfere with Tailscale DNS
-or routing; if ping/SSH cannot reach the VPS, disconnect the other VPN or allow
-Tailscale traffic and try again.
+OS, not the VPS OS. A separate VPN on your own computer can interfere with
+Tailscale DNS or routing; if ping/SSH cannot reach the VPS, disconnect the
+other VPN or allow Tailscale traffic and try again.
 
 If `tailscale ping 100.x.x.x` works but
 `ssh app@YOUR_VPS_TAILSCALE_NAME` fails with a hostname/DNS error, Tailscale is
