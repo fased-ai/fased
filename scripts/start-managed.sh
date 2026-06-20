@@ -58,7 +58,7 @@ if [[ "${FASED_MANAGED_INTERNAL:-0}" != "1" ]]; then
     exit 1
   fi
   export PATH="$(dirname "$NODE_BIN"):$PATH"
-  exec "$NODE_BIN" "$RUN_NODE_SCRIPT" managed up "$@"
+  FASED_SKIP_BUILD="${FASED_SKIP_BUILD:-1}" exec "$NODE_BIN" "$RUN_NODE_SCRIPT" managed up "$@"
 fi
 
 set -euo pipefail
