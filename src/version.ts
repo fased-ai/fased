@@ -1,7 +1,7 @@
 import { createRequire } from "node:module";
 
 declare const __FASED_VERSION__: string | undefined;
-const CORE_PACKAGE_NAME = "fased";
+const CORE_PACKAGE_NAMES = new Set(["fased", "@fased/fased"]);
 
 const PACKAGE_JSON_CANDIDATES = [
   "../package.json",
@@ -30,7 +30,7 @@ function readVersionFromJsonCandidates(
         if (!version) {
           continue;
         }
-        if (opts.requirePackageName && parsed.name !== CORE_PACKAGE_NAME) {
+        if (opts.requirePackageName && !CORE_PACKAGE_NAMES.has(parsed.name ?? "")) {
           continue;
         }
         return version;

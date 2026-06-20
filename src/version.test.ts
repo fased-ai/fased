@@ -43,10 +43,19 @@ function expectVersionMetadataToBeMissing(moduleUrl: string) {
 describe("version resolution", () => {
   it("resolves package version from nested dist/plugin-sdk module URL", async () => {
     await withTempDir(async (root) => {
-      await writeJsonFixture(root, "package.json", { name: "fased", version: "1.2.3" });
+      await writeJsonFixture(root, "package.json", { name: "@fased/fased", version: "1.2.3" });
       const moduleUrl = await ensureModuleFixture(root);
       expect(readVersionFromPackageJsonForModuleUrl(moduleUrl)).toBe("1.2.3");
       expect(resolveVersionFromModuleUrl(moduleUrl)).toBe("1.2.3");
+    });
+  });
+
+  it("keeps legacy unscoped package metadata valid", async () => {
+    await withTempDir(async (root) => {
+      await writeJsonFixture(root, "package.json", { name: "fased", version: "1.2.4" });
+      const moduleUrl = await ensureModuleFixture(root);
+      expect(readVersionFromPackageJsonForModuleUrl(moduleUrl)).toBe("1.2.4");
+      expect(resolveVersionFromModuleUrl(moduleUrl)).toBe("1.2.4");
     });
   });
 

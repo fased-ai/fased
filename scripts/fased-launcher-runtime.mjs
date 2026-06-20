@@ -29,6 +29,35 @@ export const nodeVersionAllowed = (version) => {
   return parsed.major === 22 && parsed.minor >= 14;
 };
 
+const isNodeSqliteExperimentalWarning = (warning) =>
+  warning?.name === "ExperimentalWarning" &&
+  typeof warning?.message === "string" &&
+  warning.message.includes("SQLite is an experimental feature");
+
+const withSuppressedNodeSqliteExperimentalWarning = (run) => {
+  const originalEmitWarning = process.emitWarning.bind(process);
+  process.emitWarning = (...args) => {
+    const warning = args[0];
+    if (warning instanceof Error && isNodeSqliteExperimentalWarning(warning)) {
+      return;
+    }
+    const warningType = typeof args[1] === "string" ? args[1] : args[1]?.type;
+    if (
+      warningType === "ExperimentalWarning" &&
+      typeof warning === "string" &&
+      warning.includes("SQLite is an experimental feature")
+    ) {
+      return;
+    }
+    return Reflect.apply(originalEmitWarning, process, args);
+  };
+  try {
+    return run();
+  } finally {
+    process.emitWarning = originalEmitWarning;
+  }
+};
+
 export const currentNodeCanRunFased = ({
   nodeVersion = process.versions?.node,
   requireFn = defaultRequire,
@@ -36,12 +65,14 @@ export const currentNodeCanRunFased = ({
   if (!nodeVersionAllowed(nodeVersion)) {
     return false;
   }
-  try {
-    requireFn("node:sqlite");
-    return true;
-  } catch {
-    return false;
-  }
+  return withSuppressedNodeSqliteExperimentalWarning(() => {
+    try {
+      requireFn("node:sqlite");
+      return true;
+    } catch {
+      return false;
+    }
+  });
 };
 
 export const nodeCandidateCanRunFased = (candidate, { spawnSyncImpl = spawnSync } = {}) => {

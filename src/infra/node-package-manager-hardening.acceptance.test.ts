@@ -2,7 +2,10 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { reexecWithSupportedNodeIfNeeded } from "../../scripts/fased-launcher-runtime.mjs";
+import {
+  currentNodeCanRunFased,
+  reexecWithSupportedNodeIfNeeded,
+} from "../../scripts/fased-launcher-runtime.mjs";
 import { runtimeSatisfies, type RuntimeDetails } from "./runtime-guard.js";
 import { runGatewayUpdate } from "./update-runner.js";
 
@@ -79,6 +82,35 @@ describe("Lane 6 Node/package-manager hardening", () => {
 
     expect(runtimeSatisfies(node24MissingSqlite)).toBe(false);
     expect(runtimeSatisfies(node22WithSqlite)).toBe(true);
+  });
+
+  it("suppresses the launcher sqlite experimental warning during runtime probing", () => {
+    const originalEmitWarning = process.emitWarning.bind(process);
+    const emittedWarnings: unknown[][] = [];
+    process.emitWarning = ((...args: unknown[]) => {
+      emittedWarnings.push(args);
+    }) as typeof process.emitWarning;
+
+    try {
+      const ok = currentNodeCanRunFased({
+        nodeVersion: "24.15.0",
+        requireFn: (specifier: string) => {
+          if (specifier === "node:sqlite") {
+            process.emitWarning(
+              "SQLite is an experimental feature and might change at any time",
+              "ExperimentalWarning",
+            );
+            return {};
+          }
+          throw new Error(`unexpected require ${specifier}`);
+        },
+      });
+
+      expect(ok).toBe(true);
+      expect(emittedWarnings).toEqual([]);
+    } finally {
+      process.emitWarning = originalEmitWarning;
+    }
   });
 
   it("uses the declared package manager for git checkout install/build/UI steps", async () => {
