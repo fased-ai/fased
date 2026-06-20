@@ -148,6 +148,35 @@ color_yellow() { printf '%s%s%s' "$C_YELLOW" "$1" "$C_RESET"; }
 color_red() { printf '%s%s%s' "$C_RED" "$1" "$C_RESET"; }
 color_dim() { printf '%s%s%s' "$C_DIM" "$1" "$C_RESET"; }
 
+repeat_char() {
+  local char="$1"
+  local count="$2"
+  local out=""
+  local i
+  for ((i = 0; i < count; i++)); do
+    out+="$char"
+  done
+  printf '%s' "$out"
+}
+
+block_top() {
+  local title="$1"
+  printf '\n%s %s %s\n' "$(color_cyan "╭─")" "$(color_cyan "${C_BOLD}${title}${C_RESET}")" "$(color_cyan "$(repeat_char "─" 56)")"
+}
+
+block_line() {
+  local text="${1:-}"
+  if [[ -z "$text" ]]; then
+    printf '%s\n' "$(color_cyan "│")"
+  else
+    printf '%s  %s\n' "$(color_cyan "│")" "$text"
+  fi
+}
+
+block_bottom() {
+  printf '%s\n' "$(color_cyan "╰$(repeat_char "─" 72)")"
+}
+
 print_installer_banner() {
   local version="$1"
   local profile="Local"
@@ -1607,6 +1636,8 @@ copy_bootstrap_ssh_keys_for_target_user() {
   echo "== Root bootstrap: copied SSH authorized_keys to '$target_user' for tailnet SSH =="
 }
 
+REMOVED_BOOTSTRAP_CHECKOUT=""
+
 remove_root_bootstrap_checkout_after_success() {
   local source_dir="$1"
   local target_repo_dir="$2"
@@ -1625,10 +1656,42 @@ remove_root_bootstrap_checkout_after_success() {
   if [[ ! -f "$source_dir/install.sh" || ! -f "$source_dir/package.json" || ! -d "$source_dir/src" ]]; then
     return 0
   fi
-  step_done "Removed temporary root checkout"
-  printf '%s %s\n' "$(color_green "Removed:")" "$(color_dim "$source_dir")"
+  REMOVED_BOOTSTRAP_CHECKOUT="$source_dir"
   cd /
   rm -rf "$source_dir"
+}
+
+print_hosted_handoff_block() {
+  local target_user="$1"
+  local target_repo_dir="$2"
+  local tailscale_dns="$3"
+  local removed_checkout="$4"
+  local ssh_host="${tailscale_dns:-YOUR_VPS_TAILSCALE_NAME}"
+
+  block_top "HOSTED HANDOFF"
+  block_line "$(color_green "✓ Root bootstrap complete")"
+  block_line "$(color_green "Run as:") $(color_cyan "$target_user")"
+  block_line
+  block_line "$(color_cyan "${C_BOLD}SSH TERMINAL${C_RESET}")"
+  block_line "  $(color_yellow "ssh ${target_user}@${ssh_host}")"
+  block_line "$(color_green "Starts in:") $(color_dim "$target_repo_dir")"
+  if [[ -n "$tailscale_dns" ]]; then
+    block_line
+    block_line "$(color_cyan "${C_BOLD}TAILSCALE SSH ALTERNATIVE${C_RESET}")"
+    block_line "  $(color_yellow "tailscale ssh ${target_user}@${tailscale_dns}")"
+  fi
+  block_line
+  block_line "$(color_cyan "${C_BOLD}USEFUL COMMANDS${C_RESET}")"
+  block_line "  $(color_yellow "fased status")"
+  block_line "  $(color_yellow "fased dashboard")"
+  block_line
+  block_line "$(color_dim "Use the app checkout for normal operation; root was only for bootstrap.")"
+  if [[ -n "$removed_checkout" ]]; then
+    block_line
+    block_line "$(color_green "✓ Removed temporary root checkout")"
+    block_line "$(color_green "Removed:") $(color_dim "$removed_checkout")"
+  fi
+  block_bottom
 }
 
 runtime_assets_ready() {
@@ -1721,25 +1784,8 @@ reexec_as_app_user() {
     if need_cmd tailscale; then
       tailscale_dns="$(tailscale status --json 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>{try{const o=JSON.parse(s);process.stdout.write(String(o?.Self?.DNSName||"").replace(/\.$/,""));}catch{}})' 2>/dev/null || true)"
     fi
-    section "Hosted handoff"
-    step_done "Root bootstrap complete"
-    printf '%s %s\n' "$(color_green "Run as:")" "$(color_cyan "$target_user")"
-    if [[ -n "$tailscale_dns" ]]; then
-      printf '\n%s\n' "$(color_cyan "${C_BOLD}SSH terminal${C_RESET}")"
-      printf '  %s\n' "$(color_yellow "ssh ${target_user}@${tailscale_dns}")"
-      printf '%s %s\n' "$(color_green "Starts in:")" "$(color_dim "$target_repo_dir")"
-      printf '\n%s\n' "$(color_cyan "${C_BOLD}Tailscale SSH alternative${C_RESET}")"
-      printf '  %s\n' "$(color_yellow "tailscale ssh ${target_user}@${tailscale_dns}")"
-    else
-      printf '\n%s\n' "$(color_cyan "${C_BOLD}SSH terminal${C_RESET}")"
-      printf '  %s\n' "$(color_yellow "ssh ${target_user}@YOUR_VPS_TAILSCALE_NAME")"
-      printf '%s %s\n' "$(color_green "Starts in:")" "$(color_dim "$target_repo_dir")"
-    fi
-    printf '\n%s\n' "$(color_cyan "${C_BOLD}Useful commands${C_RESET}")"
-    printf '  %s\n' "$(color_yellow "fased status")"
-    printf '  %s\n' "$(color_yellow "fased dashboard")"
-    printf '\n%s\n' "$(color_dim "Use the app checkout for normal operation; root was only for bootstrap.")"
     remove_root_bootstrap_checkout_after_success "$FASED_DIR" "$target_repo_dir"
+    print_hosted_handoff_block "$target_user" "$target_repo_dir" "$tailscale_dns" "$REMOVED_BOOTSTRAP_CHECKOUT"
   fi
 
   exit "$child_status"
