@@ -654,7 +654,7 @@ install_linux_system_dependencies() {
 
   if need_cmd apt-get; then
     run_as_root apt-get update
-    run_as_root apt-get install -y git curl ca-certificates
+    run_as_root apt-get install -y git curl ca-certificates jq
     hash -r 2>/dev/null || true
     if ! node_runtime_ok; then
       install_nodesource_node_apt
@@ -666,7 +666,7 @@ install_linux_system_dependencies() {
     if ! need_cmd dnf && need_cmd dnf5; then
       dnf_cmd="dnf5"
     fi
-    run_as_root "$dnf_cmd" install -y git curl ca-certificates
+    run_as_root "$dnf_cmd" install -y git curl ca-certificates jq
     hash -r 2>/dev/null || true
     if ! node_runtime_ok; then
       run_as_root "$dnf_cmd" install -y nodejs24-bin nodejs24-npm-bin || \
@@ -678,7 +678,7 @@ install_linux_system_dependencies() {
       prefer_compatible_system_node_if_available || true
     fi
   elif need_cmd yum; then
-    run_as_root yum install -y git curl ca-certificates
+    run_as_root yum install -y git curl ca-certificates jq
     hash -r 2>/dev/null || true
     if ! node_runtime_ok; then
       install_nodesource_node_rpm yum || \
@@ -687,14 +687,14 @@ install_linux_system_dependencies() {
       prefer_compatible_system_node_if_available || true
     fi
   elif need_cmd apk; then
-    run_as_root apk add --no-cache git curl ca-certificates nodejs npm
+    run_as_root apk add --no-cache git curl ca-certificates jq nodejs npm
     hash -r 2>/dev/null || true
   elif need_cmd pacman; then
-    run_as_root pacman -Sy --needed --noconfirm git curl ca-certificates nodejs npm
+    run_as_root pacman -Sy --needed --noconfirm git curl ca-certificates jq nodejs npm
     hash -r 2>/dev/null || true
   elif need_cmd zypper; then
     run_as_root zypper --non-interactive refresh || true
-    run_as_root zypper --non-interactive install --no-recommends git curl ca-certificates
+    run_as_root zypper --non-interactive install --no-recommends git curl ca-certificates jq
     hash -r 2>/dev/null || true
     if ! node_runtime_ok; then
       run_as_root zypper --non-interactive install --no-recommends nodejs24 npm24 || \
@@ -707,7 +707,7 @@ install_linux_system_dependencies() {
     echo "Unsupported Linux package manager for --auto-install." >&2
     echo "Detected system: $(linux_os_summary)" >&2
     echo "Supported auto-install package managers: apt-get, dnf, dnf5, yum, zypper, apk, pacman." >&2
-    echo "Install git, curl, Node 24, and pnpm manually, then rerun ./install.sh." >&2
+    echo "Install git, curl, jq, Node 24, and pnpm manually, then rerun ./install.sh." >&2
     return 1
   fi
 
@@ -2081,7 +2081,7 @@ install_missing_deps_as_root_if_needed() {
   fi
 
   local missing=()
-  for cmd in git curl; do
+  for cmd in git curl jq; do
     need_cmd "$cmd" || missing+=("$cmd")
   done
   if ! need_cmd node; then

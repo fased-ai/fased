@@ -1137,6 +1137,14 @@ fi
 
 if [[ "$MANAGED_TUNNEL_DISABLED" != "1" ]]; then
 
+if ! command -v jq >/dev/null 2>&1; then
+  disable_managed_tunnel "jq is not installed. Managed tunnel token parsing is disabled until jq is installed."
+fi
+
+fi
+
+if [[ "$MANAGED_TUNNEL_DISABLED" != "1" ]]; then
+
 ZROK_TOKEN=$(jq -r .zrokToken "$TOKEN_PATH")
 SERVER_SLUG=$(jq -r '.agentSlug // empty' "$TOKEN_PATH")
 AGENT_HANDLE=$(jq -r '.handle // empty' "$TOKEN_PATH")
@@ -1394,7 +1402,9 @@ if command -v tailscale >/dev/null 2>&1; then
      sudo tailscale serve status 2>/dev/null | grep -q "127.0.0.1:${FASED_GATEWAY_PORT}"; then
     TAILSCALE_SERVE_READY=1
   fi
-  TAILSCALE_DNS_NAME=$(tailscale status --json 2>/dev/null | jq -r '.Self.DNSName // empty' | tr -d '\n' || true)
+  if command -v jq >/dev/null 2>&1; then
+    TAILSCALE_DNS_NAME=$(tailscale status --json 2>/dev/null | jq -r '.Self.DNSName // empty' | tr -d '\n' || true)
+  fi
   TAILSCALE_DNS_NAME="${TAILSCALE_DNS_NAME%.}"
   if [[ -n "$TAILSCALE_DNS_NAME" ]]; then
     TAILSCALE_SSH_CMD="tailscale ssh app@${TAILSCALE_DNS_NAME}"
@@ -1404,12 +1414,20 @@ if command -v tailscale >/dev/null 2>&1; then
   fi
 fi
 
-FED_HANDLE=$(jq -r '.handle // "N/A"' "$TOKEN_PATH" 2>/dev/null || echo "N/A")
-FED_TOKEN_ID=$(jq -r '.tokenId // "N/A"' "$TOKEN_PATH" 2>/dev/null || echo "N/A")
-FED_EXPIRES_AT=$(jq -r '.expiresAt // "N/A"' "$TOKEN_PATH" 2>/dev/null || echo "N/A")
-FED_AGENT_SLUG=$(jq -r '.agentSlug // "N/A"' "$TOKEN_PATH" 2>/dev/null || echo "N/A")
-FED_PUBLIC_URL=$(jq -r '.publicUrl // "N/A"' "$TOKEN_PATH" 2>/dev/null || echo "N/A")
-FED_ZROK_TOKEN=$(jq -r '.zrokToken // empty' "$TOKEN_PATH" 2>/dev/null || true)
+FED_HANDLE="N/A"
+FED_TOKEN_ID="N/A"
+FED_EXPIRES_AT="N/A"
+FED_AGENT_SLUG="N/A"
+FED_PUBLIC_URL="N/A"
+FED_ZROK_TOKEN=""
+if command -v jq >/dev/null 2>&1; then
+  FED_HANDLE=$(jq -r '.handle // "N/A"' "$TOKEN_PATH" 2>/dev/null || echo "N/A")
+  FED_TOKEN_ID=$(jq -r '.tokenId // "N/A"' "$TOKEN_PATH" 2>/dev/null || echo "N/A")
+  FED_EXPIRES_AT=$(jq -r '.expiresAt // "N/A"' "$TOKEN_PATH" 2>/dev/null || echo "N/A")
+  FED_AGENT_SLUG=$(jq -r '.agentSlug // "N/A"' "$TOKEN_PATH" 2>/dev/null || echo "N/A")
+  FED_PUBLIC_URL=$(jq -r '.publicUrl // "N/A"' "$TOKEN_PATH" 2>/dev/null || echo "N/A")
+  FED_ZROK_TOKEN=$(jq -r '.zrokToken // empty' "$TOKEN_PATH" 2>/dev/null || true)
+fi
 FED_ZROK_TOKEN_MASKED="N/A"
 if [[ -n "$FED_ZROK_TOKEN" ]]; then
   FED_ZROK_TOKEN_MASKED=$(mask_secret "$FED_ZROK_TOKEN")
