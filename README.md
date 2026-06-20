@@ -149,10 +149,10 @@ temporary root checkout is removed after successful hosted onboarding. During
 Tailscale setup, copy the login URL printed in SSH and open it in your local
 computer's browser.
 
-The VPS must also join the same Tailscale tailnet before onboarding can finish
-safely. When Fased prints a Tailscale login URL in the SSH terminal, open that
-URL in your own device's browser. The VPS does not need a desktop browser. A
-Tailscale auth key is only needed for unattended automation.
+The installer adds the VPS to the same Tailscale tailnet before onboarding can
+finish safely. When Fased prints a Tailscale login URL in the SSH terminal,
+open that URL in your own device's browser. The VPS does not need a desktop
+browser. A Tailscale auth key is only needed for unattended automation.
 
 Before SSH/firewall lock-down, setup pauses and asks you to test terminal access
 from your own computer. That computer must have Tailscale installed, running,

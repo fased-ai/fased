@@ -14,8 +14,9 @@ Start by choosing one of two setup profiles:
 - **Local install** for your own computer. Use Terminal on macOS, WSL2 Ubuntu
   on Windows, or your Linux distro terminal.
 - **VPS Hosting install** for an always-on server. Ubuntu LTS is the
-  recommended VPS default; use other Linux VPS families only with their
-  matching package-manager notes.
+  recommended VPS default. Fedora and RHEL-family systems are hosted targets
+  too. Alpine, Arch, macOS, and FreeBSD are local/dev targets until their
+  hosted hardening paths are validated separately.
 
 After the Gateway and browser dashboard are working, add channels, services,
 wallet features, Fased Network, or Satcoin mining only where you need them.
@@ -146,15 +147,19 @@ The Gateway keeps sessions, routing, channels, and agent behavior in one place.
     recommended default for a first hosted setup.
 
     ```bash
-    curl -fsSL https://tailscale.com/install.sh | sh
-    tailscale up --ssh
-
     curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
     ```
 
-    Run those commands on the VPS itself. Open any Tailscale login URL from your
-    local computer's browser. Before SSH/firewall lock-down, confirm that
+    Run that command on the VPS itself. Fased installs/starts Tailscale when
+    needed and prints the VPS login URL. Open that URL from your local
+    computer's browser. Before SSH/firewall lock-down, confirm that
     `ssh app@YOUR_VPS_TAILSCALE_NAME` reaches `/home/app/fased`.
+
+    <Accordion title="Hosted support boundary">
+      - Hosted VPS hardening: Ubuntu/Fedora/RHEL-family Linux with systemd.
+      - Local/dev install: Alpine, Arch, macOS, FreeBSD, WSL2, and common Linux
+        desktops until their hosted hardening paths are validated separately.
+    </Accordion>
 
   </Tab>
 </Tabs>

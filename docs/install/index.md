@@ -213,7 +213,7 @@ recovery options and VPS provider console access working.
     ssh root@YOUR_PUBLIC_VPS_IP
     ```
 
-    ### 3. Install Fased and let it join Tailscale
+    ### 3. Install Fased and connect through Tailscale
 
     Use the same hosted command on supported VPS systems:
 
@@ -298,8 +298,8 @@ recovery options and VPS provider console access working.
     prepares `/home/app/fased`, re-runs itself there, and removes the temporary
     root checkout after successful hosted onboarding.
 
-    The VPS must also join the same Tailscale tailnet before setup can finish.
-    The hosted profile keeps the raw Gateway port closed.
+    The installer adds the VPS to the same Tailscale tailnet before setup can
+    finish. The hosted profile keeps the raw Gateway port closed.
 
     Before SSH/firewall lock-down, setup pauses and asks you to test terminal
     access from your own computer. That computer must have Tailscale installed,

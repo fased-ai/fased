@@ -53,25 +53,14 @@ have reviewed their startup scripts and firewall defaults.
 ssh root@YOUR_DROPLET_IP
 ```
 
-## 3) Join Tailscale
+## 3) Install Fased with the hosting profile
+
+For hosted deployments, run the standard hosting installer on the VPS itself.
+It installs missing tools, starts Tailscale when needed, prints the Tailscale
+login URL, and applies the hosted profile.
 
 ```bash
-apt update && apt upgrade -y
-apt install -y curl ca-certificates
-
-curl -fsSL https://tailscale.com/install.sh | sh
-tailscale up --ssh --hostname=fased-do
-```
-
-## 4) Install Fased with the hosting profile
-
-For hosted deployments, run the hosting installer on the VPS itself.
-
-```bash
-apt install -y git
-git clone https://github.com/fased-ai/fased.git fased
-cd fased
-./install.sh --hosting
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
 ```
 
 The hosting installer runs onboarding and walks you through:
@@ -80,25 +69,26 @@ The hosting installer runs onboarding and walks you through:
 - Gateway token generation
 - Optional wallet/mining setup if you choose those paths
 - Daemon installation (systemd)
+- Tailscale-only dashboard and SSH access
 
 After the Gateway is online, finish product setup in the Control UI from the
 selected Agent: **Agent > Models**, **Agent > Channels**, **Agent > Services**,
 **Agent > Skills**, **Agent > Memory**, and **Agent > Tasks**.
 
-## 5) Verify the Gateway
+## 4) Verify the Gateway
 
 ```bash
 # Check status
 fased status
 
 # Check service
-systemctl --user status fased-gateway.service
+sudo -n systemctl status fased-gateway.service --no-pager
 
 # View logs
-journalctl --user -u fased-gateway.service -f
+sudo -n journalctl -u fased-gateway.service -n 120 --no-pager
 ```
 
-## 6) Access the Control UI
+## 5) Access the Control UI
 
 The hosting path keeps the raw Gateway port private. To access the Control UI:
 

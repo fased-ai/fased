@@ -123,7 +123,7 @@ First SSH into the fresh VPS, often as `root`:
 ssh root@YOUR_PUBLIC_VPS_IP
 ```
 
-## 3. Install Fased and let it join Tailscale
+## 3. Install Fased and connect through Tailscale
 
 Use the same hosted command on supported VPS systems:
 

@@ -35,7 +35,14 @@ Run gateway and signer as these users (never as root).
 
 ### 2. Private admin network path via Tailscale (`required`)
 
-Install and authenticate Tailscale:
+For normal hosted VPS setup, use the hosted installer. It starts Tailscale when
+needed, prints the login URL, and verifies private access before lock-down:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
+```
+
+Manual hardening only: install and authenticate Tailscale yourself:
 
 ```bash
 curl -fsSL https://tailscale.com/install.sh | sh

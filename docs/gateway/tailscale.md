@@ -29,7 +29,14 @@ network. The intended pattern is loopback-first: keep the gateway on
 
 ## First-time setup
 
-For a manual laptop, desktop, or VPS install:
+For a hosted VPS, use the normal hosted installer. It starts Tailscale on the
+VPS when needed and prints the browser login URL:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
+```
+
+For a manual laptop or desktop setup:
 
 1. Create or sign in to a Tailscale account.
 2. Install Tailscale on the gateway host.
@@ -38,11 +45,11 @@ For a manual laptop, desktop, or VPS install:
 5. Use Tailscale Serve only when you want the Control UI reachable from other
    devices in your tailnet.
 
-Linux host example:
+Linux local host example:
 
 ```bash
 curl -fsSL https://tailscale.com/install.sh | sh
-sudo tailscale up --ssh
+sudo tailscale up
 ```
 
 You do **not** need a Tailscale API key for a normal manual host. Use a

@@ -69,56 +69,33 @@ sudo passwd ubuntu
 sudo loginctl enable-linger ubuntu
 ```
 
-## 4) Install Tailscale
+## 4) Install Fased with the hosting profile
+
+Run the standard hosting installer on the instance itself. It installs missing
+tools, starts Tailscale when needed, prints the Tailscale login URL, and applies
+the hosted profile.
 
 ```bash
-curl -fsSL https://tailscale.com/install.sh | sh
-sudo tailscale up --ssh --hostname=fased
-```
-
-This enables Tailscale SSH, so you can connect via `ssh fased` from any device
-on your tailnet. No public IP is needed for normal access.
-
-Verify:
-
-```bash
-tailscale status
-```
-
-**From now on, connect via Tailscale:** `ssh ubuntu@fased` (or use the Tailscale IP).
-
-## 5) Install Fased with the hosting profile
-
-```bash
-git clone https://github.com/fased-ai/fased.git fased
-cd fased
-./install.sh --hosting
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
 ```
 
 > Note: If you hit ARM-native build issues, start with system packages (e.g.
 > `sudo apt install -y build-essential`) before reaching for Homebrew.
 
-## 6) Optional: configure Tailscale Serve
+## 5) Tailscale Serve
 
-The hosting installer can keep the Gateway private and print a Tailscale access
-path. If you want Tailscale Serve explicitly:
+The hosting installer keeps the Gateway private and prints the Tailscale access
+path. Use that printed dashboard URL first. Manual Tailscale Serve changes are
+advanced repair/customization work, not the normal install path.
 
-```bash
-# Expose over Tailscale Serve (HTTPS + tailnet access)
-fased config set gateway.tailscale.mode serve
-fased config set gateway.trustedProxies '["127.0.0.1"]'
-
-systemctl --user restart fased-gateway
-```
-
-## 7) Verify
+## 6) Verify
 
 ```bash
 # Check version
 fased --version
 
 # Check daemon status
-systemctl --user status fased-gateway
+sudo -n systemctl status fased-gateway.service --no-pager
 
 # Check Tailscale Serve
 tailscale serve status
@@ -250,7 +227,7 @@ Capacity can be limited. Try:
 sudo tailscale status
 
 # Re-authenticate
-sudo tailscale up --ssh --hostname=fased --reset
+sudo tailscale up --reset
 ```
 
 ### Gateway won't start

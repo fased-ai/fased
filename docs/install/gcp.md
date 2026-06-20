@@ -30,7 +30,9 @@ workload and scale up if you hit OOMs.
 The intended operator access path is:
 
 - bootstrap with `gcloud compute ssh` only long enough to provision the host
-- join the VM to your Tailscale tailnet
+- keep your local computer signed into Tailscale
+- run the standard hosted installer when you want the maintained Fased host
+  hardening path, or manually install Tailscale only for this Docker guide
 - keep the gateway loopback-only on the VM
 - use Tailscale or a private tunnel over Tailscale for ongoing admin access
 
@@ -194,10 +196,14 @@ docker compose version
 
 ---
 
-## 5.5) Prepare Tailscale operator access
+## 5.5) Prepare Tailscale operator access (manual Docker path)
 
-Create or sign into your Tailscale account first, then join the VM to your
-tailnet before you rely on the private operator path.
+This section is only for the manual Docker guide. For the maintained hosted
+Fased path, use [VPS Hosting](/install/vps) and let the hosted installer handle
+Tailscale login.
+
+Create or sign into your Tailscale account first, then authenticate the VM
+before you rely on the private operator path.
 
 ```bash
 curl -fsSL https://tailscale.com/install.sh | sh

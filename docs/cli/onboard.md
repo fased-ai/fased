@@ -57,7 +57,9 @@ fased onboard --non-interactive \
   - local-first runtime path
 - `--host-profile hosting`
   - hosted or VPS path with managed service expectations
-  - create or sign into **Tailscale first**, then join the host to your tailnet before onboarding
+  - install/sign into Tailscale on your own computer first
+  - run the hosted Fased installer on the VPS; it starts Tailscale there and
+    prints the browser login URL
   - keep admin access private through Tailscale rather than opening the raw gateway port publicly
 - `--mode remote`
   - connect to an existing gateway instead of creating a new runtime

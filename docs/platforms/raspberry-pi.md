@@ -132,14 +132,21 @@ The hackable install gives you direct access to logs and code while still
 installing the normal `fased` command — useful for debugging ARM-specific
 issues.
 
-## 7) Join Tailscale before onboarding
+## 7) Private access before onboarding
 
-For a headless always-on Pi, put the device on your tailnet before onboarding so
-ongoing access stays private.
+For normal server-style/headless setup, use the hosted installer and let it
+handle Tailscale login and private access checks:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
+```
+
+For this hackable source path, you can still put the device on your tailnet
+manually before onboarding:
 
 ```bash
 curl -fsSL https://tailscale.com/install.sh | sh
-sudo tailscale up --ssh --hostname=fased-pi
+sudo tailscale up
 ```
 
 ## 8) Run Onboarding
