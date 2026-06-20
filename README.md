@@ -120,19 +120,16 @@ First SSH into the fresh VPS using the login your VPS provider gives you, often
 ssh root@YOUR_PUBLIC_VPS_IP
 ```
 
-Then run this on an Ubuntu/Debian VPS:
+Then run this on the VPS:
 
 ```bash
-curl -fsSL https://tailscale.com/install.sh | sh
-tailscale up --ssh
-
 curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
 ```
 
 The Fased installer bootstraps the repository itself. A fresh VPS does not need
 `git clone` first; the installer installs missing system tools, Node, and Git
-when the OS package manager supports auto-install. Hosted installs use the
-published `@fased/fased` npm package by default and skip the slow source build.
+when the OS package manager supports auto-install. Hosted installs may use the
+published runtime package internally and skip the slow source build.
 If a minimal VPS image does not have `curl`, use the OS tab in the install docs
 to install only the downloader first, then rerun the same hosted command.
 
@@ -153,9 +150,9 @@ Tailscale setup, copy the login URL printed in SSH and open it in your local
 computer's browser.
 
 The VPS must also join the same Tailscale tailnet before onboarding can finish
-safely. When `sudo tailscale up --ssh` prints a login URL in the SSH terminal,
-open that URL in your own device's browser. The VPS does not need a desktop
-browser. A Tailscale auth key is only needed for unattended automation.
+safely. When Fased prints a Tailscale login URL in the SSH terminal, open that
+URL in your own device's browser. The VPS does not need a desktop browser. A
+Tailscale auth key is only needed for unattended automation.
 
 Before SSH/firewall lock-down, setup pauses and asks you to test terminal access
 from your own computer. That computer must have Tailscale installed, running,
@@ -222,6 +219,12 @@ that tunnel running. The raw gateway port stays closed to the public internet.
 
 `install.sh` runs onboarding by default. Use `./install.sh --no-onboard` only
 when you want to install first and run onboarding later.
+
+Hosted support boundary:
+
+- **Hosted VPS hardening:** Ubuntu/Fedora/RHEL-family Linux with systemd.
+- **Local/dev install:** Alpine, Arch, macOS, FreeBSD, WSL2, and common Linux
+  desktops until their hosted hardening paths are validated separately.
 
 ## Update
 
@@ -415,22 +418,15 @@ Marketplace and Mining integration is intentionally task-ledger aware:
 ## Development
 
 Fresh machines and hosted VPS installs should use the curl bootstrap because it
-can install missing OS tools, Git, and Node. Hosted installs use the npm
-prebuilt runtime by default:
+can install missing OS tools, Git, and Node, then choose the correct Local or
+VPS Hosting setup:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash
 ```
 
-If you already have Node/npm and only want the CLI package:
-
-```bash
-npm install -g @fased/fased@latest
-```
-
-The installed command is still `fased`.
-
-The commands below are for contributors working from the source checkout.
+The commands below are for contributors working from the source checkout. Do
+not use plain `npm install` to install Fased from source.
 
 Common source commands:
 

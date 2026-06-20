@@ -13,9 +13,10 @@ read_when:
 
 <Warning>
 Fly is **not** the default Fased hosting posture. The standard hosted guidance is:
-use a normal VPS, join it to Tailscale, and keep operator access private through
-the tailnet. If you want that posture, use [Hetzner](/install/hetzner) or
-[GCP](/install/gcp) instead.
+use a normal VPS, run the hosted Fased installer there, approve the Tailscale
+login URL it prints, and keep operator access private through the tailnet. If
+you want that posture, use [Hetzner](/install/hetzner) or [GCP](/install/gcp)
+instead.
 </Warning>
 
 <Note>

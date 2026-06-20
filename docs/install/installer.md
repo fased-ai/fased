@@ -40,16 +40,17 @@ then run the same bootstrap command inside Ubuntu.
     missing command-line tools and Node on common VPS and workstation families:
     Ubuntu, Debian, Kali, Fedora, CentOS, AlmaLinux, Rocky Linux, CloudLinux,
     Oracle Linux, Amazon Linux, openSUSE, SLES, Alpine, Arch, FreeBSD, WSL2
-    Ubuntu, and macOS with Homebrew. Hosted installs use the published
-    `@fased/fased` npm package by default. Source/developer installs use `pnpm`
-    when a checkout needs to be built.
+    Ubuntu, and macOS with Homebrew. Hosted installs may use the published
+    runtime package internally so small VPS hosts can skip the slow source
+    build. Source/developer installs use `pnpm` when a checkout needs to be
+    built.
   </Step>
   <Step title="Ensure Git">
     Installs Git if it is missing.
   </Step>
   <Step title="Prepare the runtime">
     Uses the checkout as the update/repair anchor. For hosted installs, the
-    runtime itself comes from `@fased/fased@latest` by default so the full
+    runtime can come from the published package behind the scenes so the full
     source build is skipped.
     Current installers attempt a fast-forward-only update from `origin` before
     setup. If source changes during that update, the installer restarts once so
@@ -80,9 +81,9 @@ then run the same bootstrap command inside Ubuntu.
 
     For a hosted or VPS runtime, the intended sequence is:
 
-    1. create or sign into your **Tailscale** account
-    2. join the host to your tailnet
-    3. run onboarding with the **hosting** profile
+    1. install/sign into Tailscale on your own computer
+    2. run the hosted installer on the VPS
+    3. approve the Tailscale login URL printed by Fased
     4. when prompted, test `ssh app@YOUR_VPS_TAILSCALE_NAME` from your own computer
     5. confirm only after SSH reaches `/home/app/fased`
     6. open the printed Tailscale dashboard URL in your local browser
@@ -274,10 +275,9 @@ current surface, run `./install.sh --help` from the repo root.
 - `FASED_INSTALL_VERBOSE=1`: show install command output instead of only log
   paths.
 - `FASED_INSTALL_USER=<name>`: non-root app user used by root bootstrap installs.
-- `FASED_HOSTING_NPM_PACKAGE=<spec>`: hosted runtime package spec. Defaults to
-  `@fased/fased@latest`.
+- `FASED_HOSTING_NPM_PACKAGE=<spec>`: advanced hosted runtime package override.
 - `FASED_HOSTING_SOURCE_INSTALL=1`: advanced hosted testing path that uses the
-  source checkout, `pnpm`, and local builds instead of the npm prebuilt runtime.
+  source checkout, `pnpm`, and local builds instead of the prebuilt runtime.
 - `FASED_EXISTING_DATA_ACTION=<mode>`: advanced local state override: `keep`,
   `reset-config`, or `separate-state`. Normal installs keep existing state
   automatically.
@@ -298,7 +298,8 @@ curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | ba
 If you automate a hosted install, keep the same security order:
 
 1. provision the host
-2. join it to Tailscale; use an auth key only for non-interactive provisioning
+2. let the hosted installer start Tailscale and approve the printed login URL;
+   use an auth key only for non-interactive provisioning
 3. run onboarding
 4. access Control UI / gateway only through Tailscale or a deliberate private
    tunnel
@@ -309,21 +310,13 @@ Use a controlled install directory in CI or on a managed host:
 curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --install-dir "$HOME/agent" --no-onboard
 ```
 
-## Package install path
+## Package runtime note
 
-The curl bootstrap is the best first-run path for fresh machines because it can
-install missing OS tools, Git, and Node. Hosted installs then use the published
-npm prebuilt runtime by default.
-
-If you already have Node/npm and only want the published CLI package:
-
-```bash
-npm install -g @fased/fased@latest
-fased --version
-fased dashboard --no-open
-```
-
-The npm package name is `@fased/fased`; the installed command is `fased`.
+The curl bootstrap is the public first-run path for fresh machines because it
+can install missing OS tools, Git, and Node, then choose the right Local or VPS
+Hosting setup. Hosted installs may use the published npm package internally as
+the runtime payload, but users should still begin with the Fased installer so
+Tailscale, service setup, host hardening, and onboarding stay aligned.
 
 Bun global installs are not the public Fased install path; Bun remains
 experimental local development only.

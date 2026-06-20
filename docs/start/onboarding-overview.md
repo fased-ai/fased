@@ -53,13 +53,16 @@ Use VPS Hosting when the Gateway runs on an always-on server:
 - hosted operator node
 - public/long-running runtime
 
-Ubuntu LTS is the recommended first VPS target. Other Linux VPS families can
-work, but follow the OS-specific install notes when a minimal image is missing
-basic tools.
+Ubuntu LTS is the recommended first VPS target. Fedora and RHEL-family systems
+are also hosted targets. Alpine, Arch, macOS, and FreeBSD are Local/dev install
+targets until their hosted hardening paths are validated separately.
 
-Hosting uses Tailscale and hosted hardening. Ubuntu LTS is the recommended
-first VPS target. Fedora/RHEL-family systems need their own Tailscale/package
-steps, so use the OS tabs in [Install](/install#vps-hosting-install).
+Hosting uses Tailscale and hosted hardening. Run the hosted installer on the VPS
+and approve the Tailscale login URL when Fased prints it:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
+```
 
 Docs:
 

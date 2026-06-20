@@ -16,9 +16,9 @@ Fased ships three update channels for repo-backed updates:
 
 <Note>
 Fresh machines and hosted VPS installs should start with the curl bootstrap.
-Users who already have Node/npm can install the published package with
-`npm install -g @fased/fased@latest`. Source checkout channels use
-`fased update`, not npm dist-tags.
+Source checkout channels use `fased update`, not package-manager commands. The
+installer may use the published runtime package internally, but that does not
+replace Local or VPS Hosting setup.
 </Note>
 
 Maintainers ship builds to **beta**, test them, then **promote a vetted build to
@@ -54,11 +54,8 @@ fased update --channel dev
 ```
 
 Fresh machines and hosted VPS installs should still use the curl bootstrap
-first. Npm global installs use the npm `latest` dist-tag:
-
-```bash
-npm install -g @fased/fased@latest
-```
+first. Package-manager dist-tags are an implementation detail for released
+runtime payloads, not the public setup decision.
 
 When you **explicitly** switch channels with `--channel`, Fased also aligns
 the install method:
@@ -84,8 +81,8 @@ When you switch channels with `fased update`, Fased also syncs plugin sources:
 - `vYYYY.M.D.beta.N` is also recognized for compatibility, but prefer `-beta.N`.
 - Legacy `vYYYY.M.D-<patch>` tags are still recognized as stable (non-beta).
 - Keep tags immutable: never move or reuse a tag.
-- Package-manager dist-tags are not part of the public install docs until that
-  path is published and tested.
+- Package-manager dist-tags are maintained for released runtime payloads, but
+  public setup docs should still point users to the Fased installer.
 
 ## macOS app availability
 

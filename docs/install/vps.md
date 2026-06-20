@@ -44,12 +44,11 @@ For most users, the hosted path is:
    **Hosting** profile.
 
 Ubuntu LTS is the recommended VPS OS for a first hosted setup. Debian is close
-to the same path. The hosted hardening profile is for Linux VPS systems with
-systemd. Auto-install supports the common VPS families: Ubuntu, Debian, Kali,
-Fedora, CentOS, AlmaLinux, Rocky Linux, CloudLinux, Oracle Linux, Amazon Linux,
-openSUSE, SLES, Alpine, and Arch. Local macOS, FreeBSD, and WSL installs are
-supported for running Fased, but macOS, FreeBSD, and native Windows are not
-hosted hardening targets.
+to the same path. The honest hosted support line is:
+
+- **Hosted VPS hardening:** Ubuntu/Fedora/RHEL-family Linux with systemd.
+- **Local/dev install:** Alpine, Arch, macOS, FreeBSD, WSL2, and common Linux
+  desktops until their hosted hardening paths are validated separately.
 
 Hosted setup uses two machines:
 
@@ -136,6 +135,7 @@ The hosted installer installs/starts Tailscale when needed. When Fased prints a
 Tailscale login URL, open that URL in your local PC browser, sign in, and
 approve. After that, the VPS is added to your tailnet automatically.
 
+<Accordion title="If you already ran Tailscale manually and it is stuck">
 Avoid running `tailscale up --ssh` manually before Fased. On some VPS images,
 the Tailscale UI can show the VPS as approved while the manual CLI command
 keeps waiting. If you already ran it and it is stuck, open a second provider SSH
@@ -150,51 +150,54 @@ If those commands show the VPS and a `100.x.x.x` tailnet IP, press `Ctrl+C` in
 the stuck `tailscale up --ssh` terminal and continue with the Fased hosted
 install command. If they do not show a tailnet IP, run `tailscale logout`,
 restart `tailscaled`, and run the Fased hosted install command again.
+</Accordion>
 
 The Fased installer bootstraps the repository itself. A fresh VPS does not need
 `git clone` first. It installs missing system tools, Node, and Git when the OS
-package manager supports auto-install. Hosted installs use the published
-`@fased/fased` npm package by default, so the slow source build is skipped.
-Set `FASED_HOSTING_SOURCE_INSTALL=1` only when you deliberately want to test the
-source-build path.
+package manager supports auto-install. Hosted installs may use the published
+runtime package internally, so the slow source build is skipped on normal fresh
+VPS installs.
 
 If a very small VPS image does not have `curl`, install only the downloader for
 that VPS OS, then rerun the hosted command above.
 
-<Tabs>
-  <Tab title="Ubuntu">
-    Use this for Ubuntu, Debian, or Kali VPS images:
+<Accordion title="Minimal VPS image: install curl first">
+  <Tabs>
+    <Tab title="Ubuntu">
+      Use this for Ubuntu, Debian, or Kali VPS images:
 
-    ```bash
-    apt-get update
-    apt-get install -y curl ca-certificates
-    ```
+      ```bash
+      apt-get update
+      apt-get install -y curl ca-certificates
+      ```
 
-  </Tab>
-  <Tab title="Fedora">
-    ```bash
-    dnf install -y curl ca-certificates
-    ```
-  </Tab>
-  <Tab title="RHEL">
-    Use this for RHEL-family VPS images:
+    </Tab>
+    <Tab title="Fedora">
+      ```bash
+      dnf install -y curl ca-certificates
+      ```
+    </Tab>
+    <Tab title="RHEL">
+      Use this for RHEL-family VPS images:
 
-    ```bash
-    dnf install -y curl ca-certificates
-    ```
+      ```bash
+      dnf install -y curl ca-certificates
+      ```
 
-  </Tab>
-  <Tab title="Arch">
-    ```bash
-    pacman -Sy --needed --noconfirm curl ca-certificates
-    ```
-  </Tab>
-  <Tab title="Alpine">
-    ```bash
-    apk add --no-cache curl ca-certificates
-    ```
-  </Tab>
-</Tabs>
+    </Tab>
+    <Tab title="Arch">
+      ```bash
+      pacman -Sy --needed --noconfirm curl ca-certificates
+      ```
+    </Tab>
+    <Tab title="Alpine">
+      ```bash
+      apk add --no-cache curl ca-certificates
+      ```
+    </Tab>
+
+  </Tabs>
+</Accordion>
 
 ## Recommended VPS size
 
@@ -234,6 +237,7 @@ from your own computer. That computer must have Tailscale installed, running,
 and signed into the same tailnet as the VPS. Do not run the check commands
 inside the VPS SSH session.
 
+<Accordion title="Tailscale check, VPN, and MagicDNS troubleshooting">
 If your own computer says `tailscale: command not found`, return to step 1 and
 install Tailscale on your local PC first. A separate VPN on your own computer can
 interfere with Tailscale DNS or routing. Turn the other VPN off for the cleanest
@@ -257,6 +261,7 @@ ssh app@100.x.x.x
 If `tailscale ping` says `no matching peer`, your computer and the VPS are not
 in the same Tailscale network. Sign your computer into the same Tailscale
 account, or re-authenticate Tailscale on the VPS, then rerun the check.
+</Accordion>
 
 Only confirm after that command connects through Tailscale and opens
 `/home/app/fased`. If it does not connect, setup stops before disabling root or

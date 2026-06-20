@@ -213,14 +213,8 @@ Fresh installs and hosted systems should use the curl bootstrap:
 
 - curl bootstrap for fresh local machines, WSL2, and hosted VPS
 - `fased update` for repo-backed installs
-- `npm install -g @fased/fased@latest` for npm global installs
-
-If you installed with npm, update with:
-
-```bash
-npm install -g @fased/fased@latest
-fased --version
-```
+- published package payloads may be used by the installer internally, but they
+  do not replace the Local or VPS Hosting setup flow
 
 ## Related
 

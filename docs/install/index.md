@@ -39,12 +39,11 @@ flowchart TD
 - Node 24, or Node 22.14+ with `node:sqlite`, when you manage Node yourself
 
 <Note>
-On common VPS and workstation systems, the installer can install missing
-command-line tools and Node when auto-install is enabled. Hosted installs use
-the published `@fased/fased` npm package by default, so they skip the slow
-source build. Local source/developer installs still use `pnpm` when a checkout
-needs to be built. Normal users should start with the curl bootstrap; source
-build commands are for developer workflows.
+Use the Fased installer as the public install path. It can install missing
+command-line tools and Node on common systems, then runs the right Local or VPS
+Hosting setup. Hosted installs may use the published runtime package internally
+to avoid a slow source build, but normal users should still start from the curl
+installer.
 </Note>
 
 <Note>
@@ -129,9 +128,14 @@ recovery options and VPS provider console access working.
   </Tab>
   <Tab title="VPS Hosting install">
     Use this on a clean Linux VPS. Ubuntu LTS is the recommended default for a
-    first hosted setup. Debian is close to the same path. Fedora/RHEL-family and
-    other Linux VPS systems can work, but use their OS-specific package-manager
-    commands when a minimal image is missing basic tools.
+    first hosted setup. Debian is close to the same path.
+
+    Honest support boundary:
+
+    - **Hosted VPS hardening:** Ubuntu/Fedora/RHEL-family Linux with systemd.
+    - **Local/dev install:** Alpine, Arch, macOS, FreeBSD, WSL2, and common
+      Linux desktops until their hosted hardening paths are validated
+      separately.
 
     A 1 vCPU / 1 GB RAM VPS can work as a minimum test server, but expect slow
     install/onboarding. For a smoother public server, use at least 2 GB RAM; 2
@@ -222,6 +226,7 @@ recovery options and VPS provider console access working.
     in, and approve. After that, the VPS is added to your tailnet
     automatically.
 
+    <Accordion title="If you already ran Tailscale manually and it is stuck">
     Avoid running `tailscale up --ssh` manually before Fased. On some VPS
     images, the Tailscale UI can show the VPS as approved while the manual CLI
     command keeps waiting. If you already ran it and it is stuck, open a second
@@ -237,49 +242,52 @@ recovery options and VPS provider console access working.
     Fased hosted install command. If they do not show a tailnet IP, run
     `tailscale logout`, restart `tailscaled`, and run the Fased hosted install
     command again.
+    </Accordion>
 
     The Fased installer bootstraps the repository itself. A fresh VPS does not
     need `git clone` first. If the image is so small that `curl` is missing,
     install only the downloader for that VPS OS, then rerun the hosted command
     above.
 
-    <Tabs>
-      <Tab title="Ubuntu">
-        Use this for Ubuntu, Debian, or Kali VPS images:
+    <Accordion title="Minimal VPS image: install curl first">
+      <Tabs>
+        <Tab title="Ubuntu">
+          Use this for Ubuntu, Debian, or Kali VPS images:
 
-        ```bash
-        apt-get update
-        apt-get install -y curl ca-certificates
-        ```
-      </Tab>
-      <Tab title="Fedora">
-        ```bash
-        dnf install -y curl ca-certificates
-        ```
-      </Tab>
-      <Tab title="RHEL">
-        Use this for RHEL-family VPS images:
+          ```bash
+          apt-get update
+          apt-get install -y curl ca-certificates
+          ```
+        </Tab>
+        <Tab title="Fedora">
+          ```bash
+          dnf install -y curl ca-certificates
+          ```
+        </Tab>
+        <Tab title="RHEL">
+          Use this for RHEL-family VPS images:
 
-        ```bash
-        dnf install -y curl ca-certificates
-        ```
-      </Tab>
-      <Tab title="Arch">
-        ```bash
-        pacman -Sy --needed --noconfirm curl ca-certificates
-        ```
-      </Tab>
-      <Tab title="Alpine">
-        ```bash
-        apk add --no-cache curl ca-certificates
-        ```
-      </Tab>
-    </Tabs>
+          ```bash
+          dnf install -y curl ca-certificates
+          ```
+        </Tab>
+        <Tab title="Arch">
+          ```bash
+          pacman -Sy --needed --noconfirm curl ca-certificates
+          ```
+        </Tab>
+        <Tab title="Alpine">
+          ```bash
+          apk add --no-cache curl ca-certificates
+          ```
+        </Tab>
+      </Tabs>
+    </Accordion>
 
     Hosted setup keeps `/home/app/fased` as the app checkout for updates and
-    repair commands, but the runtime package is installed from
-    `@fased/fased@latest` and source build is skipped. If you need the old
-    source-build path for testing, set `FASED_HOSTING_SOURCE_INSTALL=1`.
+    repair commands. The installer may use the published runtime package behind
+    the scenes so the full source tree does not need to build on small VPS
+    hosts.
 
     Current installers try a clean fast-forward update from Git before setup.
     If you already started from an older installer and it stopped, run
@@ -298,6 +306,7 @@ recovery options and VPS provider console access working.
     running, and signed into the same tailnet as the VPS. Do not run the check
     commands inside the VPS SSH session.
 
+    <Accordion title="Tailscale check, VPN, and MagicDNS troubleshooting">
     If your own computer says `tailscale: command not found`, return to step 1
     and install Tailscale on your local PC first. A separate VPN on your own
     computer can interfere with Tailscale DNS or routing. Turn the other VPN off
@@ -322,6 +331,7 @@ recovery options and VPS provider console access working.
     not in the same Tailscale network. Sign your computer into the same
     Tailscale account, or re-authenticate Tailscale on the VPS, then rerun the
     check.
+    </Accordion>
 
     Only confirm after that command connects through Tailscale and opens
     `/home/app/fased`. If it does not connect, setup stops before disabling root
@@ -408,17 +418,9 @@ session that cannot apply host security, onboarding stops with “Hosted setup
 unavailable” instead of creating an incomplete hosted setup.
 </Note>
 
-## Basic Local Installer Command
+## Installer Behavior
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash
-```
-
-Use this only for the **Local install** profile. For a VPS, use the **VPS
-Hosting install** tab above so Tailscale and hosted hardening are part of first
-setup.
-
-The installer:
+The curl installer:
 
 - checks the host environment
 - checks Node and installs supported Linux dependencies when needed
@@ -527,31 +529,6 @@ choice is clear.
   </Card>
 </CardGroup>
 
-<Note>
-The curl bootstrap remains the normal beginner setup path because it can install
-missing tools and handle fresh VPS setup. Hosted curl installs use the npm
-prebuilt runtime by default. If you already have Node/npm and only want the CLI
-package on a local machine, use the npm package path below.
-</Note>
-
-## Install Order
-
-Fresh machines should start with the correct curl bootstrap for their profile:
-
-- **Local install:** use the Local tab above.
-- **VPS Hosting install:** use the VPS Hosting tab above.
-
-If Node/npm is already installed and compatible, install the published CLI
-package for a Local CLI install:
-
-```bash
-npm install -g @fased/fased@latest
-fased --version
-fased dashboard --no-open
-```
-
-The npm package name is `@fased/fased`; the installed command is `fased`.
-
 ## Package manager rule
 
 The repository itself uses `pnpm` internally. The curl installer installs or
@@ -559,9 +536,8 @@ activates `pnpm` only when a source build is needed. Do not run plain
 `npm install` to install Fased from source.
 
 - `pnpm`: source builds, tests, docs, Docker builds, and contributor workflows.
-- `npm`: global install of the published `@fased/fased` package, occasional
-  plugin/skill dependency installs, or fallback for installing `pnpm` when
-  Corepack is unavailable.
+- `npm`: used by the installer for the published runtime package when that is
+  the fastest safe path, plus occasional dependency tooling.
 - `Bun`: experimental local development only. Use Node for the Gateway runtime.
 
 ## OS support boundary
@@ -569,9 +545,9 @@ activates `pnpm` only when a source build is needed. Do not run plain
 - Local install: macOS, FreeBSD, WSL2 Ubuntu, and common Linux hosts including
   Ubuntu, Debian, Kali, Fedora, CentOS, AlmaLinux, Rocky Linux, CloudLinux,
   Oracle Linux, Amazon Linux, openSUSE, SLES, Alpine, and Arch.
-- Hosted/VPS hardening: Linux with systemd, including the common Debian/Ubuntu,
-  Fedora, and RHEL-family hosts. Alpine and Arch can install Fased, but hosted
-  firewall/service hardening depends on the provider image and init system.
+- Hosted/VPS hardening: Ubuntu/Fedora/RHEL-family Linux with systemd. Alpine,
+  Arch, macOS, and FreeBSD are local/dev install targets until their hosted
+  hardening paths are validated separately.
 - Containers: Docker and Podman paths are separate from host package managers.
 - Native Windows: use WSL2 for the Gateway. The native Windows app/runtime path
   is not the public install path.

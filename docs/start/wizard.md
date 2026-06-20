@@ -36,11 +36,12 @@ Fastest Local first chat:
 </Info>
 
 <Tip>
-VPS setup: create the server, join it to Tailscale, then run `./install.sh --hosting`.
-Manual VPS setup does not require a Tailscale API key; use one only for
-non-interactive automation. If you start as `root`, the installer bootstraps
-Fased into `/home/app/fased`, continues as the `app` user, and removes the
-temporary root checkout after successful hosted onboarding.
+VPS setup: create the server, SSH into it, then run the hosted installer on that
+VPS. Fased installs/starts Tailscale when needed and prints the browser login
+URL. A Tailscale API key is only for non-interactive automation. If you start as
+`root`, the installer bootstraps Fased into `/home/app/fased`, continues as the
+`app` user, and removes the temporary root checkout after successful hosted
+onboarding.
 </Tip>
 
 <Note>

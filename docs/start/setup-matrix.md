@@ -22,7 +22,7 @@ flowchart TD
   machine["Where will Gateway run?"] --> local["Laptop / desktop"]
   machine --> hosting["VPS / always-on server"]
   local --> localProfile["Local profile"]
-  hosting --> tailscale["Tailscale first"]
+  hosting --> tailscale["Tailscale access"]
   tailscale --> hostingProfile["Hosting profile"]
 
   classDef question fill:#071018,stroke:#12cfff,color:#ffffff;
@@ -50,9 +50,9 @@ does not apply the hosting security baseline.
 Use this when the agent runs on a VPS or always-on server.
 
 Ubuntu LTS is the recommended first VPS target. Debian is close to the same
-path. Fedora/RHEL-family and other Linux VPS systems can work, but use the
-matching package-manager notes from [Install](/install) when a minimal image is
-missing basic tools.
+path. Fedora and RHEL-family systems are also hosted targets. Alpine, Arch,
+macOS, and FreeBSD are Local/dev install targets until their hosted hardening
+paths are validated separately.
 
 It uses the local runtime setup plus hosting hardening: Tailscale-first admin
 access, firewall policy, SSH hardening, fail2ban/unattended-upgrades where
@@ -68,22 +68,19 @@ workstation, the wizard may change firewall and SSH behavior for that machine.
 </Warning>
 
 <Note>
-For the normal Hosting path you usually do not need a Tailscale API key. Create
-or sign into a Tailscale account, join the host to your tailnet with the
-`tailscale` CLI, then run Fased onboarding. Tailscale API/auth keys are only for
-automated provisioning. See [Tailscale](/gateway/tailscale) and the VPS install
-guides for the detailed host steps.
+For the normal Hosting path you usually do not need a Tailscale API key. Install
+and sign into Tailscale on your own computer, then run the Fased hosted
+installer on the VPS. Fased prints the VPS Tailscale browser login URL during
+setup. Tailscale API/auth keys are only for automated provisioning. See
+[Tailscale](/gateway/tailscale) and the VPS install guides for details.
 </Note>
 
 <Tip>
-Simple VPS order: create Ubuntu LTS server, install/sign into Tailscale on the
-VPS, run the hosted Fased installer, then test Tailscale SSH from your own
-computer. If the wizard offers a Tailscale auth key, use it only for scripted
-provisioning. For normal setup, use browser login: the Tailscale CLI shows a
-login URL in SSH; open that URL in your local computer's browser, then return to
-the SSH session. Before SSH/firewall lock-down, the wizard asks you to test
-`ssh app@YOUR_VPS_TAILSCALE_NAME` from your own computer and only continue after
-that terminal reaches `/home/app/fased`.
+Simple VPS order: create Ubuntu LTS server, sign into Tailscale on your own
+computer, SSH into the VPS, run the hosted Fased installer, approve the printed
+Tailscale login URL, then test `ssh app@YOUR_VPS_TAILSCALE_NAME` from your own
+computer before lock-down. Use a Tailscale auth key only for scripted
+provisioning.
 </Tip>
 
 ## Actual Interactive Wizard Order

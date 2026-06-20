@@ -92,9 +92,17 @@ The macOS app is a Local setup surface, not a separate hosting profile.
       </Tab>
       <Tab title="VPS Hosting">
         Run this **on the VPS itself**. Ubuntu LTS is the recommended first VPS
-        target. Fedora/RHEL-family systems need their own Tailscale/package
-        steps, so use the OS tabs in [Install](/install#vps-hosting-install)
-        instead of copying one generic command block.
+        target. Fedora/RHEL-family systems are also hosted targets; Alpine,
+        Arch, macOS, and FreeBSD are local/dev targets until their hosted
+        hardening paths are validated separately.
+
+        ```bash
+        curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
+        ```
+
+        If the VPS image is so small that `curl` is missing, use the OS tabs in
+        [Install](/install#vps-hosting-install) to install only the downloader,
+        then rerun the hosted command.
 
         During hosted setup, Fased bootstraps into `/home/app/fased` and
         continues as the `app` user when you start as `root`. Before

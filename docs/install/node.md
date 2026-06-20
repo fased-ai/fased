@@ -181,16 +181,12 @@ your shell has not reloaded its startup files yet.
 
 ### Advanced: npm global prefix problems
 
-This matters if you install the published package with npm:
+The public install path is the Fased curl installer. Hosted installs may use the
+published npm package internally under `~/.fased/install-cache/npm-global`.
 
-```bash
-npm install -g @fased/fased@latest
-```
-
-The package name is `@fased/fased`; the installed command is `fased`.
-
-If you see `EACCES` errors from `npm install -g`, switch npm's global prefix to
-a user-writable directory:
+If you are debugging a maintainer/package test and see `EACCES` errors from a
+manual npm global install, switch npm's global prefix to a user-writable
+directory:
 
 ```bash
 mkdir -p "$HOME/.npm-global"
