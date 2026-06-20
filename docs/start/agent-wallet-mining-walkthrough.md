@@ -47,10 +47,16 @@ Choose the setup profile first.
     with Ubuntu. On Linux, use your distro terminal.
 
     ```bash
-    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash
+    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
     ```
 
-    Choose **Local** during onboarding.
+    This selects the **Local** profile and keeps VPS SSH/firewall hardening off.
+
+    ![Local installer selecting the Local profile](/images/screenshots/local/local-ui-1.png)
+
+    ![Local QuickStart gateway settings](/images/screenshots/local/local-ui-2.png)
+
+    ![Local dashboard link printed after setup](/images/screenshots/local/final-ui-1.png)
 
   </Tab>
   <Tab title="VPS Hosting install">
@@ -61,6 +67,12 @@ Choose the setup profile first.
 
     Confirm Tailscale SSH from your own computer before setup hardens SSH and
     firewall access.
+
+    ![Tailscale local computer requirement during hosted setup](/images/screenshots/remote/tailscale-1.png)
+
+    ![Hosted setup verifying SSH over Tailscale](/images/screenshots/remote/tailscale-2.png)
+
+    ![Hosted remote access details after setup](/images/screenshots/remote/remote-access-1.png)
 
   </Tab>
 </Tabs>
@@ -85,6 +97,8 @@ To print the local link without opening a browser:
 fased dashboard --no-open
 ```
 
+![Fased Control UI dashboard after setup](/images/screenshots/web/dashboard.png)
+
 If the browser asks for a token later, use the Gateway token printed by the
 dashboard command or read the raw token:
 
@@ -105,6 +119,13 @@ The selected Agent owns chat, model settings, skills, services, channels,
 tasks, memory, and wallet policy. Start with one Agent unless you already know
 you need separate work profiles.
 
+![Agent setup page with setup checklist](/images/screenshots/web/agent-setup-1.png)
+
+If you choose chat channels during onboarding, the terminal wizard can collect
+the channel token. You can skip this and add channels later.
+
+![Telegram channel setup during onboarding](/images/screenshots/local/chat-ui-1.png)
+
 Read next:
 
 - [Control UI Setup Model](/start/control-ui-setup)
@@ -116,6 +137,10 @@ Open **Agent > Models**.
 
 Add a model provider key or sign in, then choose a primary model. Send a first
 test message from **Chat** before moving into wallet or mining flows.
+
+![Model selection in the Control UI](/images/screenshots/web/agent-model-2.png)
+
+![Model provider sign-in during local setup](/images/screenshots/local/model-ui-1.png)
 
 Read next:
 
@@ -137,6 +162,17 @@ Create or import wallets in this order:
 3. **Vault wallet**
    Manual-first wallet for reserve storage and Fased Network bond authority.
    Agent and Vault can have multiple wallets; Mining is a singleton role.
+
+![Wallet cards after Agent, Mining, and Vault setup](/images/screenshots/web/wallet-1.png)
+
+![Wallet setup in the local installer](/images/screenshots/local/wallet-ui-1.png)
+
+![Wallet role summary after local setup](/images/screenshots/local/wallet-ui-2.png)
+
+Open **Access** to set the Wallet Control Passkey before higher-risk wallet
+actions.
+
+![Wallet Control Passkey state](/images/screenshots/web/wallet-passkey-2.png)
 
 Read next:
 
@@ -181,6 +217,8 @@ On **Mining**, use the Mining Capital block.
 Deposit a small amount of SOL into miner capital. The Fund action creates the
 wallet-scoped miner account on-chain when it is missing.
 
+![Mining funding and capital controls](/images/screenshots/web/mining-funding-1.png)
+
 Read next:
 
 - [Mining](/plugins/crypto/mining-page)
@@ -195,6 +233,8 @@ Click **Update** to write the active commit. If the saved target is higher than
 the safe value, Fased submits the safe value and keeps the saved target for
 later.
 
+![Mining commit controls](/images/screenshots/web/mining-commit-2.png)
+
 Read next:
 
 - [Mining](/plugins/crypto/mining-page)
@@ -206,6 +246,8 @@ Click **Start** only after readiness is green and the fee warning is clear.
 
 The Mining page shows whether the runtime is ready, running, blocked, or
 waiting.
+
+![Mining runtime activity after start](/images/screenshots/web/mining-activity-3.png)
 
 Read next:
 
@@ -222,6 +264,8 @@ Use recent activity and history to confirm what the runtime did:
 - missed cycles
 - fee or gap events
 - RPC failures
+
+![Mining history and cycle charts](/images/screenshots/web/mining-history-4.png)
 
 Read next:
 
@@ -260,6 +304,8 @@ Open **Fased Network** after the base Agent, wallets, and mining path are clear.
 
 Use this area for public route status, Fased Network readiness, Vault-backed
 bond controls, and later operator-economy features.
+
+![Fased Network bond and distributor support view](/images/screenshots/web/network-bond-staking-1.png)
 
 Read next:
 

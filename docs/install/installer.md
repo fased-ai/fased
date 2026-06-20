@@ -17,7 +17,7 @@ This docs set only documents the installer that exists in this repo:
 If you are starting from zero on your own computer, use the Local install:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
 ```
 
 If you are starting from zero on a VPS, use the Hosting install from
@@ -161,7 +161,7 @@ the exact Node problem instead of continuing with a broken runtime.
 Fresh machine, one copy-paste block:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
 ```
 
 Fresh VPS hosting uses the OS-specific steps in [Install](/install#vps-hosting-install).

@@ -52,7 +52,7 @@ Use this on your own machine:
 - **Linux:** run the command in your distro terminal.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
 ```
 
 After local setup:
@@ -418,11 +418,17 @@ Marketplace and Mining integration is intentionally task-ledger aware:
 ## Development
 
 Fresh machines and hosted VPS installs should use the curl bootstrap because it
-can install missing OS tools, Git, and Node, then choose the correct Local or
-VPS Hosting setup:
+can install missing OS tools, Git, and Node. Use the explicit Local profile on
+your own machine:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
+```
+
+Use the VPS Hosting profile only on the server that will run Fased all the time:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
 ```
 
 The commands below are for contributors working from the source checkout. Do

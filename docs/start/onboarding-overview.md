@@ -42,7 +42,7 @@ Local is the fastest path to a working browser chat. It does not apply VPS
 SSH/firewall hardening.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
 ```
 
 ### 2. VPS Hosting

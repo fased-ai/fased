@@ -130,7 +130,7 @@ The Gateway keeps sessions, routing, channels, and agent behavior in one place.
     with Ubuntu. On Linux, use your distro terminal.
 
     ```bash
-    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash
+    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
     ```
 
     Then open the dashboard:

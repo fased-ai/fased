@@ -96,7 +96,7 @@ recovery options and VPS provider console access working.
     - **Linux:** run the command in your distro terminal.
 
     ```bash
-    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash
+    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
     ```
 
     Local setup keeps the Gateway on this machine and does not apply VPS SSH or

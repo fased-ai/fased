@@ -76,7 +76,7 @@ The macOS app is a Local setup surface, not a separate hosting profile.
     <Tabs>
       <Tab title="Local">
         ```bash
-        curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash
+        curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
         ```
 
         Use this on your own computer. On macOS, use Terminal. On Windows,
