@@ -130,10 +130,11 @@ curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | ba
 ```
 
 The Fased installer bootstraps the repository itself. A fresh VPS does not need
-`git clone` first; the installer installs missing system tools, Node, `pnpm`,
-and Git when the OS package manager supports auto-install. If a minimal VPS
-image does not have `curl`, use the OS tab in the install docs to install only
-the downloader first, then rerun the same hosted command.
+`git clone` first; the installer installs missing system tools, Node, and Git
+when the OS package manager supports auto-install. Hosted installs use the
+published `@fased/fased` npm package by default and skip the slow source build.
+If a minimal VPS image does not have `curl`, use the OS tab in the install docs
+to install only the downloader first, then rerun the same hosted command.
 
 Current installers try a clean fast-forward update from Git before building. If
 you already started from an older installer and it stopped before creating the
@@ -414,7 +415,8 @@ Marketplace and Mining integration is intentionally task-ledger aware:
 ## Development
 
 Fresh machines and hosted VPS installs should use the curl bootstrap because it
-can install missing OS tools, Git, Node, and `pnpm`:
+can install missing OS tools, Git, and Node. Hosted installs use the npm
+prebuilt runtime by default:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash

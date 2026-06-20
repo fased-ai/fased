@@ -4,7 +4,30 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FASED_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 INSTALL_MARKER_PATH="${FASED_CONFIG_DIR:-$HOME/.fased}/install-complete.json"
-RUN_NODE_SCRIPT="$FASED_ROOT/scripts/run-node.mjs"
+
+runtime_root_has_build() {
+  local root="$1"
+  [[ -n "$root" ]] || return 1
+  [[ -f "$root/scripts/run-node.mjs" ]] || return 1
+  [[ -f "$root/dist/index.js" || -f "$root/dist/index.mjs" || -f "$root/dist/entry.js" || -f "$root/dist/entry.mjs" ]]
+}
+
+resolve_managed_runtime_root() {
+  local root
+  for root in \
+    "${FASED_MANAGED_RUNTIME_ROOT:-}" \
+    "$FASED_ROOT" \
+    "$HOME/.fased/install-cache/npm-global/lib/node_modules/@fased/fased"; do
+    if runtime_root_has_build "$root"; then
+      printf '%s\n' "$root"
+      return 0
+    fi
+  done
+  printf '%s\n' "$FASED_ROOT"
+}
+
+FASED_RUNTIME_ROOT="$(resolve_managed_runtime_root)"
+RUN_NODE_SCRIPT="$FASED_RUNTIME_ROOT/scripts/run-node.mjs"
 
 node_runtime_ok_for() {
   local node_bin="$1"
@@ -104,10 +127,10 @@ CLOCK_SYNC_SKEW_THRESHOLD_SECONDS="${FASED_CLOCK_SYNC_SKEW_THRESHOLD_SECONDS:-2}
 
 resolve_gateway_cli_entry() {
   local candidates=(
-    "$FASED_ROOT/dist/index.js"
-    "$FASED_ROOT/dist/index.mjs"
-    "$FASED_ROOT/dist/entry.js"
-    "$FASED_ROOT/dist/entry.mjs"
+    "$FASED_RUNTIME_ROOT/dist/index.js"
+    "$FASED_RUNTIME_ROOT/dist/index.mjs"
+    "$FASED_RUNTIME_ROOT/dist/entry.js"
+    "$FASED_RUNTIME_ROOT/dist/entry.mjs"
   )
   local candidate
   for candidate in "${candidates[@]}"; do

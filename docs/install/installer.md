@@ -37,19 +37,23 @@ then run the same bootstrap command inside Ubuntu.
   <Step title="Ensure a compatible Node.js runtime">
     Fased recommends Node 24 and requires Node 22.14 or newer with the built-in
     `node:sqlite` module. With auto-install enabled, the installer can install
-    missing command-line tools, Node, and `pnpm` on common VPS and workstation
-    families: Ubuntu, Debian, Kali, Fedora, CentOS, AlmaLinux, Rocky Linux,
-    CloudLinux, Oracle Linux, Amazon Linux, openSUSE, SLES, Alpine, Arch,
-    FreeBSD, WSL2 Ubuntu, and macOS with Homebrew.
+    missing command-line tools and Node on common VPS and workstation families:
+    Ubuntu, Debian, Kali, Fedora, CentOS, AlmaLinux, Rocky Linux, CloudLinux,
+    Oracle Linux, Amazon Linux, openSUSE, SLES, Alpine, Arch, FreeBSD, WSL2
+    Ubuntu, and macOS with Homebrew. Hosted installs use the published
+    `@fased/fased` npm package by default. Source/developer installs use `pnpm`
+    when a checkout needs to be built.
   </Step>
   <Step title="Ensure Git">
     Installs Git if it is missing.
   </Step>
-  <Step title="Prepare the repo-backed runtime">
-    Uses the checkout and install flow this repository actually supports for public use.
+  <Step title="Prepare the runtime">
+    Uses the checkout as the update/repair anchor. For hosted installs, the
+    runtime itself comes from `@fased/fased@latest` by default so the full
+    source build is skipped.
     Current installers attempt a fast-forward-only update from `origin` before
-    dependency install and build. If source changes during that update, the
-    installer restarts once so the new installer code runs.
+    setup. If source changes during that update, the installer restarts once so
+    the new installer code runs.
 
     Local installs check for existing `~/.fased` data before onboarding. If
     state already exists, the installer asks whether to keep it, reset local
@@ -270,6 +274,10 @@ current surface, run `./install.sh --help` from the repo root.
 - `FASED_INSTALL_VERBOSE=1`: show install command output instead of only log
   paths.
 - `FASED_INSTALL_USER=<name>`: non-root app user used by root bootstrap installs.
+- `FASED_HOSTING_NPM_PACKAGE=<spec>`: hosted runtime package spec. Defaults to
+  `@fased/fased@latest`.
+- `FASED_HOSTING_SOURCE_INSTALL=1`: advanced hosted testing path that uses the
+  source checkout, `pnpm`, and local builds instead of the npm prebuilt runtime.
 - `FASED_EXISTING_DATA_ACTION=<mode>`: advanced local state override: `keep`,
   `reset-config`, or `separate-state`. Normal installs keep existing state
   automatically.
@@ -304,7 +312,8 @@ curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | ba
 ## Package install path
 
 The curl bootstrap is the best first-run path for fresh machines because it can
-install missing OS tools, Git, Node, and `pnpm`.
+install missing OS tools, Git, and Node. Hosted installs then use the published
+npm prebuilt runtime by default.
 
 If you already have Node/npm and only want the published CLI package:
 

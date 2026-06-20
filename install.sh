@@ -100,6 +100,7 @@ INSTALL_CACHE_DIR="$FASED_CONFIG_DIR/install-cache"
 INSTALL_LOG_DIR="$FASED_CONFIG_DIR/logs"
 INSTALL_VERBOSE="${FASED_INSTALL_VERBOSE:-0}"
 INSTALL_GIT_UPDATE="${FASED_INSTALL_GIT_UPDATE:-1}"
+HOSTING_NPM_PACKAGE="${FASED_HOSTING_NPM_PACKAGE:-@fased/fased@latest}"
 AUTO_INSTALL=1
 RUN_ONBOARD=1
 HOSTING_REQUESTED=0
@@ -1006,6 +1007,53 @@ install_fased_cli_launcher() {
   fi
 
   step_done "CLI installed"
+}
+
+use_hosting_npm_prebuilt_runtime() {
+  [[ "$(resolved_host_profile)" == "hosting" && "${FASED_HOSTING_SOURCE_INSTALL:-0}" != "1" ]]
+}
+
+install_hosting_npm_prebuilt_runtime() {
+  local package_spec="${HOSTING_NPM_PACKAGE:-@fased/fased@latest}"
+  local npm_prefix="${FASED_NPM_GLOBAL_PREFIX:-$INSTALL_CACHE_DIR/npm-global}"
+  local bin_dir="$npm_prefix/bin"
+  local target="$bin_dir/fased"
+  local install_log
+  install_log="$(install_log_path "npm prebuilt install")"
+
+  mkdir -p "$npm_prefix" "$npm_config_cache"
+  spinner_start "Install prebuilt package"
+  if [[ "$INSTALL_VERBOSE" == "1" ]]; then
+    npm_config_prefix="$npm_prefix" npm_config_cache="$npm_config_cache" \
+      npm install -g --prefix "$npm_prefix" "$package_spec" --no-audit --no-fund
+  else
+    npm_config_prefix="$npm_prefix" npm_config_cache="$npm_config_cache" \
+      npm install -g --prefix "$npm_prefix" "$package_spec" --no-audit --no-fund >"$install_log" 2>&1 || {
+        spinner_failed "Install prebuilt package"
+        echo "Failed: npm prebuilt package install" >&2
+        echo "Package: $package_spec" >&2
+        echo "Log: $install_log" >&2
+        tail -n 80 "$install_log" >&2 || true
+        return 1
+      }
+  fi
+
+  export PATH="$bin_dir:$PATH"
+  hash -r 2>/dev/null || true
+  FASED_CLI_PATH="$target"
+
+  install_user_cli_path_snippet "$bin_dir" "$HOME/.profile"
+  install_user_cli_path_snippet "$bin_dir" "$HOME/.bashrc"
+  install_user_cli_path_snippet "$bin_dir" "$HOME/.zshrc"
+
+  if [[ ! -x "$FASED_CLI_PATH" ]] || ! "$FASED_CLI_PATH" --version >/dev/null 2>&1; then
+    spinner_failed "Install prebuilt package"
+    echo "Installed npm CLI did not start correctly: $FASED_CLI_PATH" >&2
+    echo "Log: $install_log" >&2
+    return 1
+  fi
+
+  spinner_done "Prebuilt package ready"
 }
 
 pass_args_contains() {
@@ -2540,8 +2588,8 @@ require_line '^\[Service\]$' "[Service]"
 require_line '^\[Install\]$' "[Install]"
 require_line "^User=${run_as_user}$" "User=${run_as_user}"
 require_line "^Group=${run_as_user}$" "Group=${run_as_user}"
-require_line "^ExecStart=/bin/bash /home/${run_as_user}/fased/scripts/start-managed\\.sh$" "managed ExecStart"
-require_line "^WorkingDirectory=/home/${run_as_user}/fased$" "hosted WorkingDirectory"
+require_line "^ExecStart=/bin/bash (/home/${run_as_user}/fased/scripts/start-managed\\.sh|/home/${run_as_user}/\\.fased/install-cache/npm-global/lib/node_modules/@fased/fased/scripts/start-managed\\.sh)$" "managed ExecStart"
+require_line "^WorkingDirectory=(/home/${run_as_user}/fased|/home/${run_as_user}/\\.fased/install-cache/npm-global/lib/node_modules/@fased/fased)$" "hosted WorkingDirectory"
 require_line '^Environment=FASED_GATEWAY_MODE=managed$' "managed mode"
 require_line '^Environment=FASED_MANAGED_INTERNAL=1$' "managed internal flag"
 require_line '^Environment=FASED_GATEWAY_PORT=18789$' "loopback gateway port"
@@ -2628,7 +2676,13 @@ if [[ -d "$INSTALL_CACHE_DIR/npm-global/bin" ]]; then
 fi
 
 missing=()
-for cmd in git curl pnpm; do
+required_tools=(git curl)
+if use_hosting_npm_prebuilt_runtime; then
+  required_tools+=(npm)
+else
+  required_tools+=(pnpm)
+fi
+for cmd in "${required_tools[@]}"; do
   need_cmd "$cmd" || missing+=("$cmd")
 done
 if ! need_cmd node; then
@@ -2688,9 +2742,13 @@ export CI="${CI:-1}"
 export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 section "System preparation"
 ensure_low_memory_swap_if_possible
-pnpm_install_with_adaptive_profile
 build_old_space_mb="$(recommended_onboard_old_space_mb)"
 build_node_options="$(node_options_with_old_space "${NODE_OPTIONS:-}" "$build_old_space_mb")"
+if use_hosting_npm_prebuilt_runtime; then
+  install_hosting_npm_prebuilt_runtime
+else
+  pnpm_install_with_adaptive_profile
+fi
 
 if [[ -n "${FASED_SAT_PROGRAM_ID:-}" && -n "${FASED_SAT_BOND_PROGRAM_ID:-}" && -n "${FASED_SAT_MINT_ADDRESS:-}" && -n "${FASED_SAT_MINT_PROGRAM_ID:-}" ]]; then
   persist_managed_env_var "FASED_SAT_PROGRAM_ID" "$FASED_SAT_PROGRAM_ID"
@@ -2703,44 +2761,49 @@ fi
 export FASED_SAT_BOND_LAYOUT_PATH="${FASED_SAT_BOND_LAYOUT_PATH:-$FASED_DIR/token/sat/bond-api/bond-position-layout.json}"
 export FASED_SAT_BOND_POLICY_LAYOUT_PATH="${FASED_SAT_BOND_POLICY_LAYOUT_PATH:-$FASED_DIR/token/sat/bond-api/bond-tier-policy-layout.json}"
 
-section "Build"
-core_build_profile="$(resolved_core_build_profile)"
-core_cache_name="core-build-${core_build_profile:-default}"
-core_fingerprint="$(fingerprint_targets "$FASED_DIR" package.json pnpm-lock.yaml tsconfig.json tsdown.config.ts src scripts extensions config tools/fased-signerd)"
-if [[ -f "$FASED_DIR/dist/entry.js" && -f "$FASED_DIR/dist/index.js" ]] && cache_matches "$core_cache_name" "$core_fingerprint"; then
-  step_skip "Core build"
+if use_hosting_npm_prebuilt_runtime; then
+  section "Runtime"
+  step_done "Using prebuilt runtime"
 else
-  rm -rf "$FASED_DIR/dist"
-  if [[ -n "$core_build_profile" ]]; then
-    run_logged_in "$FASED_DIR" "Build core" env NODE_OPTIONS="$build_node_options" FASED_BUILD_PROFILE="$core_build_profile" pnpm --silent run build:fast
+  section "Build"
+  core_build_profile="$(resolved_core_build_profile)"
+  core_cache_name="core-build-${core_build_profile:-default}"
+  core_fingerprint="$(fingerprint_targets "$FASED_DIR" package.json pnpm-lock.yaml tsconfig.json tsdown.config.ts src scripts extensions config tools/fased-signerd)"
+  if [[ -f "$FASED_DIR/dist/entry.js" && -f "$FASED_DIR/dist/index.js" ]] && cache_matches "$core_cache_name" "$core_fingerprint"; then
+    step_skip "Core build"
   else
-    run_logged_in "$FASED_DIR" "Build core" env NODE_OPTIONS="$build_node_options" pnpm --silent run build:fast
+    rm -rf "$FASED_DIR/dist"
+    if [[ -n "$core_build_profile" ]]; then
+      run_logged_in "$FASED_DIR" "Build core" env NODE_OPTIONS="$build_node_options" FASED_BUILD_PROFILE="$core_build_profile" pnpm --silent run build:fast
+    else
+      run_logged_in "$FASED_DIR" "Build core" env NODE_OPTIONS="$build_node_options" pnpm --silent run build:fast
+    fi
+    write_cache "$core_cache_name" "$core_fingerprint"
   fi
-  write_cache "$core_cache_name" "$core_fingerprint"
-fi
 
-runtime_assets_fingerprint="$(fingerprint_targets "$FASED_DIR" package.json pnpm-lock.yaml scripts/bundle-a2ui.sh scripts/canvas-a2ui-copy.ts scripts/copy-export-html-templates.ts scripts/copy-hook-metadata.ts scripts/write-build-info.ts scripts/write-cli-compat.ts src/canvas-host/a2ui apps/shared/FasedAgentKit/Tools/CanvasA2UI vendor/a2ui/renderers/lit src/auto-reply/reply/export-html src/hooks/bundled src/cli/daemon-cli-compat.ts)"
-if runtime_assets_ready && cache_matches "runtime-assets" "$runtime_assets_fingerprint"; then
-  step_skip "Runtime assets"
-else
-  run_logged_in "$FASED_DIR" "Prepare runtime assets" env NODE_OPTIONS="$build_node_options" pnpm --silent run build:runtime-assets
-  write_cache "runtime-assets" "$runtime_assets_fingerprint"
-fi
-
-ui_fingerprint="$(fingerprint_targets "$FASED_DIR" package.json pnpm-lock.yaml ui/package.json ui/vite.config.ts ui/tsconfig.json ui/index.html ui/src)"
-if [[ -f "$FASED_DIR/dist/control-ui/index.html" ]] && cache_matches "control-ui-build" "$ui_fingerprint"; then
-  step_skip "Control UI"
-else
-  run_logged_in "$FASED_DIR" "Build Control UI" env NODE_OPTIONS="$build_node_options" pnpm --silent run ui:build
-  if [[ ! -f "$FASED_DIR/dist/control-ui/index.html" ]]; then
-    spinner_failed "Build Control UI"
-    echo "Control UI build completed but dist/control-ui/index.html is missing." >&2
-    exit 1
+  runtime_assets_fingerprint="$(fingerprint_targets "$FASED_DIR" package.json pnpm-lock.yaml scripts/bundle-a2ui.sh scripts/canvas-a2ui-copy.ts scripts/copy-export-html-templates.ts scripts/copy-hook-metadata.ts scripts/write-build-info.ts scripts/write-cli-compat.ts src/canvas-host/a2ui apps/shared/FasedAgentKit/Tools/CanvasA2UI vendor/a2ui/renderers/lit src/auto-reply/reply/export-html src/hooks/bundled src/cli/daemon-cli-compat.ts)"
+  if runtime_assets_ready && cache_matches "runtime-assets" "$runtime_assets_fingerprint"; then
+    step_skip "Runtime assets"
+  else
+    run_logged_in "$FASED_DIR" "Prepare runtime assets" env NODE_OPTIONS="$build_node_options" pnpm --silent run build:runtime-assets
+    write_cache "runtime-assets" "$runtime_assets_fingerprint"
   fi
-  write_cache "control-ui-build" "$ui_fingerprint"
-fi
 
-install_fased_cli_launcher
+  ui_fingerprint="$(fingerprint_targets "$FASED_DIR" package.json pnpm-lock.yaml ui/package.json ui/vite.config.ts ui/tsconfig.json ui/index.html ui/src)"
+  if [[ -f "$FASED_DIR/dist/control-ui/index.html" ]] && cache_matches "control-ui-build" "$ui_fingerprint"; then
+    step_skip "Control UI"
+  else
+    run_logged_in "$FASED_DIR" "Build Control UI" env NODE_OPTIONS="$build_node_options" pnpm --silent run ui:build
+    if [[ ! -f "$FASED_DIR/dist/control-ui/index.html" ]]; then
+      spinner_failed "Build Control UI"
+      echo "Control UI build completed but dist/control-ui/index.html is missing." >&2
+      exit 1
+    fi
+    write_cache "control-ui-build" "$ui_fingerprint"
+  fi
+
+  install_fased_cli_launcher
+fi
 
 if [[ "$RUN_ONBOARD" -eq 0 ]]; then
   no_onboard_profile="$(resolved_host_profile)"

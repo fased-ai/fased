@@ -39,11 +39,11 @@ flowchart TD
 - Node 24, or Node 22.14+ with `node:sqlite`, when you manage Node yourself
 
 <Note>
-On common VPS and workstation systems, the repo installer can install missing
-command-line tools, Node, and `pnpm` when auto-install is enabled. That includes
-Ubuntu, Debian, Kali, Fedora, CentOS, AlmaLinux, Rocky Linux, CloudLinux, Oracle
-Linux, Amazon Linux, openSUSE, SLES, Alpine, Arch, FreeBSD, WSL2 Ubuntu, and
-macOS with Homebrew. Normal users should start with the curl bootstrap; source
+On common VPS and workstation systems, the installer can install missing
+command-line tools and Node when auto-install is enabled. Hosted installs use
+the published `@fased/fased` npm package by default, so they skip the slow
+source build. Local source/developer installs still use `pnpm` when a checkout
+needs to be built. Normal users should start with the curl bootstrap; source
 build commands are for developer workflows.
 </Note>
 
@@ -276,7 +276,12 @@ recovery options and VPS provider console access working.
       </Tab>
     </Tabs>
 
-    Current installers try a clean fast-forward update from Git before building.
+    Hosted setup keeps `/home/app/fased` as the app checkout for updates and
+    repair commands, but the runtime package is installed from
+    `@fased/fased@latest` and source build is skipped. If you need the old
+    source-build path for testing, set `FASED_HOSTING_SOURCE_INSTALL=1`.
+
+    Current installers try a clean fast-forward update from Git before setup.
     If you already started from an older installer and it stopped, run
     `git pull --ff-only origin main` once in the checkout and rerun
     `./install.sh --hosting`.
@@ -524,8 +529,9 @@ choice is clear.
 
 <Note>
 The curl bootstrap remains the normal beginner setup path because it can install
-missing tools and handle fresh VPS setup. If you already have Node/npm and only
-want the CLI package, use the npm package path below.
+missing tools and handle fresh VPS setup. Hosted curl installs use the npm
+prebuilt runtime by default. If you already have Node/npm and only want the CLI
+package on a local machine, use the npm package path below.
 </Note>
 
 ## Install Order
@@ -549,8 +555,8 @@ The npm package name is `@fased/fased`; the installed command is `fased`.
 ## Package manager rule
 
 The repository itself uses `pnpm` internally. The curl installer installs or
-activates `pnpm` when it is needed. Do not run plain `npm install` to install
-Fased from source.
+activates `pnpm` only when a source build is needed. Do not run plain
+`npm install` to install Fased from source.
 
 - `pnpm`: source builds, tests, docs, Docker builds, and contributor workflows.
 - `npm`: global install of the published `@fased/fased` package, occasional

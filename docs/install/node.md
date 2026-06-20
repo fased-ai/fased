@@ -138,10 +138,11 @@ Make sure your version manager is initialized in your shell startup file
 
 ### `fased: command not found`
 
-The curl installer does not depend on a global npm package. It writes a small
-repo-backed launcher to `${FASED_CLI_BIN_DIR:-$HOME/.local/bin}/fased`.
-This error usually means that directory is not on your PATH, or your shell has
-not reloaded its startup files yet.
+Local/source installs write a small repo-backed launcher to
+`${FASED_CLI_BIN_DIR:-$HOME/.local/bin}/fased`. Hosted installs use the
+prebuilt npm runtime under `~/.fased/install-cache/npm-global/bin/fased`.
+This error usually means the relevant bin directory is not on your PATH, or
+your shell has not reloaded its startup files yet.
 
 <Steps>
   <Step title="Check for the launcher">

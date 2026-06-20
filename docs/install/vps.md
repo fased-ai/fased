@@ -152,8 +152,11 @@ install command. If they do not show a tailnet IP, run `tailscale logout`,
 restart `tailscaled`, and run the Fased hosted install command again.
 
 The Fased installer bootstraps the repository itself. A fresh VPS does not need
-`git clone` first. It installs missing system tools, Node, `pnpm`, and Git when
-the OS package manager supports auto-install.
+`git clone` first. It installs missing system tools, Node, and Git when the OS
+package manager supports auto-install. Hosted installs use the published
+`@fased/fased` npm package by default, so the slow source build is skipped.
+Set `FASED_HOSTING_SOURCE_INSTALL=1` only when you deliberately want to test the
+source-build path.
 
 If a very small VPS image does not have `curl`, install only the downloader for
 that VPS OS, then rerun the hosted command above.
@@ -302,7 +305,8 @@ leave that tunnel running.
 <Note>
 Small VPS installs size swap automatically when possible and run onboarding
 with a larger Node heap. On hosts around 2 GB RAM, the first install can still
-take several minutes while dependencies build and the gateway warms up.
+take a little time while the npm package installs and the gateway warms up, but
+the hosted default no longer builds the full source tree.
 </Note>
 
 <Note>
