@@ -904,11 +904,11 @@ export async function applyHostingSecurity(params: {
 
     let tsAuthkey = opts.tsAuthkey?.trim() ?? "";
     if (!tsAuthkey) {
-      const useAuthkey = await prompter.confirm({
-        message: "Use a Tailscale auth key instead of browser login? (advanced)",
-        initialValue: false,
+      const useBrowserLogin = await prompter.confirm({
+        message: "Use browser login for Tailscale? (recommended)",
+        initialValue: true,
       });
-      if (useAuthkey) {
+      if (!useBrowserLogin) {
         const keyValue =
           typeof prompter.secret === "function"
             ? await prompter.secret({
@@ -1065,11 +1065,11 @@ export async function applyHostingSecurity(params: {
   if (!tsHealthy) {
     let tsAuthkey = opts.tsAuthkey?.trim() ?? "";
     if (!tsAuthkey && opts.nonInteractive !== true && prompter) {
-      const useAuthkey = await prompter.confirm({
-        message: "Use a Tailscale auth key instead of browser login? (advanced)",
-        initialValue: false,
+      const useBrowserLogin = await prompter.confirm({
+        message: "Use browser login for Tailscale? (recommended)",
+        initialValue: true,
       });
-      if (useAuthkey) {
+      if (!useBrowserLogin) {
         const keyValue =
           typeof prompter.secret === "function"
             ? await prompter.secret({

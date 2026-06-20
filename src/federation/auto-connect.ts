@@ -430,7 +430,7 @@ async function syncHostedEndpointOverride(params: {
     );
     return;
   }
-  params.log?.info?.(`federation endpoint update ok (${params.token.handle} -> ${publicUrl})`);
+  params.log?.info?.(`Endpoint updated: ${params.token.handle} -> ${publicUrl}`);
 }
 
 async function runEnrollmentCycle(params: {
@@ -478,7 +478,11 @@ async function runEnrollmentCycle(params: {
   }
 
   const issuedToken = parseIssuedToken(admission.json);
-  params.log?.info?.(`federation ${params.mode} ok (${params.handle} -> ${params.nodeEndpoint})`);
+  params.log?.info?.(
+    `${params.mode === "renew" ? "Renewal confirmed" : "Attestation confirmed"}: ${
+      params.handle
+    } -> ${params.nodeEndpoint}`,
+  );
   return { ok: true, status: admission.status, token: issuedToken ?? undefined };
 }
 
@@ -545,7 +549,7 @@ async function runChallengeEnroll(params: {
     fallbackUrl: params.nodeEndpoint,
     log: params.log,
   });
-  params.log?.info?.(`federation enroll ok (${params.handle} -> ${params.nodeEndpoint})`);
+  params.log?.info?.(`Enrollment confirmed: ${params.handle} -> ${params.nodeEndpoint}`);
   return { ok: true, token };
 }
 

@@ -2251,11 +2251,18 @@ export async function runOnboardingWizard(
       : { profile: hostProfile, checks: [], enforced: false };
   if (hostSecurity.profile === "hosting" && hostSecurity.checks.length > 0) {
     const lines = [
-      "Hosting security checklist:",
+      theme.heading("HOSTING SECURITY CHECKLIST"),
+      "",
       ...hostSecurity.checks.map(
-        (check) => `${check.ok ? "✓" : "✗"} ${check.name}: ${check.detail}`,
+        (check) =>
+          `${check.ok ? theme.success("✓") : theme.error("✗")} ${theme.accentBright(check.name)}: ${
+            check.ok ? theme.info(check.detail) : theme.error(check.detail)
+          }`,
       ),
-      hostSecurity.logPath ? `Detailed host hardening log: ${hostSecurity.logPath}` : undefined,
+      "",
+      hostSecurity.logPath
+        ? `${theme.muted("Detailed host hardening log:")} ${theme.command(hostSecurity.logPath)}`
+        : undefined,
     ];
     await prompter.note(lines.filter(Boolean).join("\n"), "Host security");
   }

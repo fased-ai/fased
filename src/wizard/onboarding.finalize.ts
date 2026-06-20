@@ -108,6 +108,45 @@ export function buildOnboardingDashboardUrl(params: {
   return url.toString();
 }
 
+function noteHeading(value: string): string {
+  return theme.heading(value.toUpperCase());
+}
+
+function noteLabel(value: string): string {
+  return theme.accentBright(value);
+}
+
+function noteInfo(value: string): string {
+  return theme.info(value);
+}
+
+function noteSuccess(value: string): string {
+  return theme.success(value);
+}
+
+function noteWarn(value: string): string {
+  return theme.warn(value);
+}
+
+function noteMuted(value: string): string {
+  return theme.muted(value);
+}
+
+function noteCommand(value: string): string {
+  return theme.command(value);
+}
+
+function noteBullet(value: string): string {
+  return `- ${value}`;
+}
+
+function formatFasedNetworkAutoConnectSummary(messages: string[]): string {
+  return [
+    noteHeading("Connection confirmed"),
+    ...messages.map((message) => noteBullet(noteSuccess(message))),
+  ].join("\n");
+}
+
 export function formatStrictRemoteAccessDetails(params: {
   tailscaleSshUser: string;
   tailscaleNodeName?: string;
@@ -121,35 +160,45 @@ export function formatStrictRemoteAccessDetails(params: {
   const tailscaleIpv4 = params.tailscaleIpv4?.trim();
   const hasIpFallback = Boolean(tailscaleIpv4 && tailscaleIpv4 !== sshTarget);
   return [
-    "Use both access paths after hosted setup:",
+    noteInfo("Use both access paths after hosted setup:"),
     "",
-    "1. WEB DASHBOARD",
-    "   Open this on your own computer after signing into the same Tailscale account:",
-    `   ${params.dashboardUrl}`,
+    noteHeading("1. Web dashboard"),
+    `   ${noteInfo("Open this on your own computer after signing into the same Tailscale account:")}`,
+    `   ${noteCommand(params.dashboardUrl)}`,
     "",
-    "2. SSH TERMINAL",
-    "   Use this for CLI commands, updates, logs, and repairs over Tailscale:",
-    `   ssh ${params.tailscaleSshUser}@${sshTarget}`,
+    noteHeading("2. SSH terminal"),
+    `   ${noteInfo("Use this for CLI commands, updates, logs, and repairs over Tailscale:")}`,
+    `   ${noteCommand(`ssh ${params.tailscaleSshUser}@${sshTarget}`)}`,
     hasIpFallback
-      ? `   If hostname DNS fails but Tailscale IP ping works, use: ssh ${params.tailscaleSshUser}@${tailscaleIpv4}`
+      ? `   ${noteWarn("If hostname DNS fails but Tailscale IP ping works, use:")} ${noteCommand(
+          `ssh ${params.tailscaleSshUser}@${tailscaleIpv4}`,
+        )}`
       : undefined,
-    "   The app user shell opens in the Fased repo directory.",
+    `   ${noteInfo("The app user shell opens in the Fased repo directory.")}`,
     "",
-    "ADVANCED FALLBACK",
-    "   If the Tailscale web URL is unavailable, run this on your local computer and leave it open:",
-    `   ssh -N -L ${params.port}:127.0.0.1:${params.port} ${params.tailscaleSshUser}@${sshTarget}`,
+    noteHeading("Advanced fallback"),
+    `   ${noteInfo(
+      "If the Tailscale web URL is unavailable, run this on your local computer and leave it open:",
+    )}`,
+    `   ${noteCommand(
+      `ssh -N -L ${params.port}:127.0.0.1:${params.port} ${params.tailscaleSshUser}@${sshTarget}`,
+    )}`,
     hasIpFallback
-      ? `   If a VPN blocks MagicDNS hostname lookup, use: ssh -N -L ${params.port}:127.0.0.1:${params.port} ${params.tailscaleSshUser}@${tailscaleIpv4}`
+      ? `   ${noteWarn("If a VPN blocks MagicDNS hostname lookup, use:")} ${noteCommand(
+          `ssh -N -L ${params.port}:127.0.0.1:${params.port} ${params.tailscaleSshUser}@${tailscaleIpv4}`,
+        )}`
       : undefined,
-    "   Then open:",
-    `   ${params.tunnelUrl}`,
+    `   ${noteInfo("Then open:")}`,
+    `   ${noteCommand(params.tunnelUrl)}`,
     hasIpFallback
-      ? "   Note: another VPN can break Tailscale MagicDNS while raw 100.x Tailscale IP access still works."
+      ? `   ${noteWarn(
+          "Note: another VPN can break Tailscale MagicDNS while raw 100.x Tailscale IP access still works.",
+        )}`
       : undefined,
     "",
-    "GATEWAY TOKEN BACKUP",
-    "   Only paste this if the browser asks for a token:",
-    `   ${params.gatewayToken || "(token not available)"}`,
+    noteHeading("Gateway token backup"),
+    `   ${noteWarn("Only paste this if the browser asks for a token:")}`,
+    `   ${noteCommand(params.gatewayToken || "(token not available)")}`,
   ]
     .filter((line): line is string => line !== undefined)
     .join("\n");
@@ -2086,11 +2135,12 @@ export async function finalizeOnboardingWizard(
     if (strictVps) {
       await prompter.note(
         [
-          "Hosted runtime is private by default.",
+          noteHeading("Private access"),
+          noteInfo("Hosted runtime is private by default."),
           "",
-          "Web dashboard: Tailscale HTTPS URL.",
-          "SSH terminal: ssh app@YOUR_VPS_TAILSCALE_NAME over Tailscale.",
-          "Public SSH and Gateway ports remain blocked.",
+          `${noteLabel("Web dashboard:")} ${noteCommand("Tailscale HTTPS URL")}`,
+          `${noteLabel("SSH terminal:")} ${noteCommand("ssh app@YOUR_VPS_TAILSCALE_NAME")} ${noteInfo("over Tailscale")}`,
+          noteBullet(noteWarn("Public SSH and Gateway ports remain blocked.")),
         ].join("\n"),
         "Hosting access",
       );
@@ -2775,12 +2825,23 @@ export async function finalizeOnboardingWizard(
             const detail = warmup.detail ?? "not reachable yet";
             await prompter.note(
               [
-                "The Tailscale HTTPS dashboard URL is still warming from this VPS.",
-                `Detail: ${detail}`,
+                noteHeading("Tailscale HTTPS"),
+                noteWarn("The Tailscale HTTPS dashboard URL is still warming from this VPS."),
+                `${noteMuted("Detail:")} ${noteInfo(detail)}`,
                 "",
-                "Setup will continue if the local Gateway listener is healthy.",
-                "Open the printed Tailscale URL from your own Tailscale-connected computer.",
-                "If another VPN breaks MagicDNS, turn it off or use the 100.x Tailscale IP fallback.",
+                noteBullet(
+                  noteSuccess("Setup will continue if the local Gateway listener is healthy."),
+                ),
+                noteBullet(
+                  noteInfo(
+                    "Open the printed Tailscale URL from your own Tailscale-connected computer.",
+                  ),
+                ),
+                noteBullet(
+                  noteWarn(
+                    "If another VPN breaks MagicDNS, turn it off or use the 100.x Tailscale IP fallback.",
+                  ),
+                ),
               ].join("\n"),
               "Dashboard warmup",
             );
@@ -2810,16 +2871,25 @@ export async function finalizeOnboardingWizard(
           if (!wsWarmup.ok) {
             await prompter.note(
               [
-                "The Tailscale dashboard page is reachable, but the browser Gateway connection is still warming.",
-                `Gateway URL: ${tailscaleGatewayWsUrl}`,
-                `Detail: ${
+                noteHeading("Gateway connection"),
+                noteWarn(
+                  "The Tailscale dashboard page is reachable, but the browser Gateway connection is still warming.",
+                ),
+                `${noteLabel("Gateway URL:")} ${noteCommand(tailscaleGatewayWsUrl)}`,
+                `${noteMuted("Detail:")} ${noteInfo(
                   "stage" in wsWarmup
                     ? `${wsWarmup.stage}: ${wsWarmup.message}`
-                    : (wsWarmup.detail ?? "websocket not reachable")
-                }`,
+                    : (wsWarmup.detail ?? "websocket not reachable"),
+                )}`,
                 "",
-                "Setup will continue if the local Gateway listener is healthy.",
-                "Use the SSH tunnel fallback immediately, or open the Tailscale dashboard URL again shortly.",
+                noteBullet(
+                  noteSuccess("Setup will continue if the local Gateway listener is healthy."),
+                ),
+                noteBullet(
+                  noteInfo(
+                    "Use the SSH tunnel fallback immediately, or open the Tailscale dashboard URL again shortly.",
+                  ),
+                ),
               ].join("\n"),
               "Dashboard warmup",
             );
@@ -2906,12 +2976,15 @@ export async function finalizeOnboardingWizard(
   if (federation.enabled) {
     let hostedFederationAutoConnectAttempted = false;
     let hostedFederationAutoConnectReason = "";
+    const hostedFederationAutoConnectMessages: string[] = [];
     if (strictVps && !readManagedFederationTokenSummary(onboardingEnv).exists) {
       hostedFederationAutoConnectAttempted = true;
       const autoConnect = await runFederationAutoConnectOnce({
         env: onboardingEnv,
         log: {
-          info: (message) => runtime.log(message),
+          info: (message) => {
+            hostedFederationAutoConnectMessages.push(message);
+          },
           warn: (message) => {
             hostedFederationAutoConnectReason = message;
           },
@@ -2937,16 +3010,28 @@ export async function finalizeOnboardingWizard(
         () => null,
       );
     }
+    if (
+      strictVps &&
+      hostedFederationAutoConnectAttempted &&
+      hostedFederationAutoConnectMessages.length > 0
+    ) {
+      await prompter.note(
+        formatFasedNetworkAutoConnectSummary(hostedFederationAutoConnectMessages),
+        "Fased Network",
+      );
+    }
     if (strictVps && hostedFederationAutoConnectAttempted && !fedToken.exists) {
       await prompter.note(
         [
-          "Fased Network silent join did not finish.",
+          noteWarn("Fased Network silent join did not finish."),
           hostedFederationAutoConnectReason
-            ? `Reason: ${hostedFederationAutoConnectReason}`
-            : "Reason: token was not issued before final readiness.",
-          reservations.length > 0 ? `Reservation: ${reservations[0]?.slug}` : undefined,
-          "Dashboard and SSH are ready over Tailscale.",
-          "Inspect details: `fased managed up --json`",
+            ? `${noteMuted("Reason:")} ${noteInfo(hostedFederationAutoConnectReason)}`
+            : `${noteMuted("Reason:")} ${noteInfo("token was not issued before final readiness.")}`,
+          reservations.length > 0
+            ? `${noteMuted("Reservation:")} ${noteCommand(reservations[0]?.slug ?? "")}`
+            : undefined,
+          noteSuccess("Dashboard and SSH are ready over Tailscale."),
+          `${noteMuted("Inspect details:")} ${noteCommand("fased managed up --json")}`,
         ]
           .filter(Boolean)
           .join("\n"),
@@ -3007,18 +3092,29 @@ export async function finalizeOnboardingWizard(
             };
             await prompter.note(
               [
+                noteHeading("Service active"),
                 serviceActive
-                  ? "The hosted Gateway service is active, but the dashboard is still warming."
-                  : "The hosted browser dashboard passed its full check earlier.",
-                `Detail: ${finalGateway.detail ?? "gateway not reachable yet"}`,
+                  ? noteWarn(
+                      "The hosted Gateway service is active, but the dashboard is still warming.",
+                    )
+                  : noteInfo("The hosted browser dashboard passed its full check earlier."),
+                `${noteMuted("Detail:")} ${noteInfo(
+                  finalGateway.detail ?? "gateway not reachable yet",
+                )}`,
                 "",
-                "Setup will finish and leave the Gateway service running.",
-                "Open the printed Tailscale dashboard URL again in a few minutes.",
-                "If MagicDNS is slow or another VPN is active, use the 100.x Tailscale IP fallback.",
+                noteBullet(noteSuccess("Setup will finish and leave the Gateway service running.")),
+                noteBullet(
+                  noteInfo("Open the printed Tailscale dashboard URL again in a few minutes."),
+                ),
+                noteBullet(
+                  noteWarn(
+                    "If MagicDNS is slow or another VPN is active, use the 100.x Tailscale IP fallback.",
+                  ),
+                ),
                 "",
-                "Check from the app terminal:",
-                "fased status",
-                "fased dashboard --no-open",
+                noteHeading("Check from the app terminal"),
+                noteCommand("fased status"),
+                noteCommand("fased dashboard --no-open"),
               ].join("\n"),
               "Dashboard warmup",
             );
