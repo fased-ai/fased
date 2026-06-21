@@ -35,6 +35,8 @@ fased wallet keystore status
 fased wallet keystore validate
 ```
 
+For Solana import, the preferred human format is a base58 64-byte private key.
+The importer also accepts a Solana JSON byte array, base64/base64url, or hex.
 Keep private keys out of shell history. Prefer environment variables, files, or
 the browser setup flow when possible.
 

@@ -32,6 +32,34 @@ Modes:
 For direct gateway options such as port, bind mode, auth, and Tailscale, use
 [`fased gateway`](/cli/gateway).
 
+## Stop
+
+If `fased start` is running in the current terminal, stop it with:
+
+```bash
+Ctrl+C
+```
+
+If Fased was installed as a local Gateway service, stop the service with:
+
+```bash
+fased gateway stop
+```
+
+On a hosted VPS install, the root-managed service runs as the non-root `app`
+user. Normal operation should use:
+
+```bash
+fased gateway status
+fased gateway restart
+```
+
+Stopping that hosted service is an admin action:
+
+```bash
+sudo systemctl stop fased-gateway.service
+```
+
 Related:
 
 - [Gateway CLI](/cli/gateway)

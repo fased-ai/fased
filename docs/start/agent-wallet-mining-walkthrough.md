@@ -163,6 +163,10 @@ Create or import wallets in this order:
    Manual-first wallet for reserve storage and Fased Network bond authority.
    Agent and Vault can have multiple wallets; Mining is a singleton role.
 
+When importing a Solana wallet, use a base58 64-byte private key from your
+wallet/export tool. Fased also accepts Solana JSON byte array, base64/base64url,
+or hex imports. Do not paste seed phrases into wallet import.
+
 ![Wallet cards after Agent, Mining, and Vault setup](/images/screenshots/web/wallet-1.png)
 
 ![Wallet setup in the local installer](/images/screenshots/local/wallet-ui-1.png)

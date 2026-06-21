@@ -161,6 +161,10 @@ The normal public path is:
 5. let Fased register the wallet entry
 6. verify signer and wallet health
 
+For Solana import, use a base58 64-byte private key when importing from a
+wallet/export tool. Fased also accepts a Solana JSON byte array,
+base64/base64url, or hex. Do not paste seed phrases into Fased wallet import.
+
 Useful checks:
 
 ```bash
