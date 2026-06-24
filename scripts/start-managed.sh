@@ -105,6 +105,13 @@ FASED_GATEWAY_MAX_OLD_SPACE_MB="${FASED_GATEWAY_MAX_OLD_SPACE_MB:-1024}"
 if [[ "${NODE_OPTIONS:-}" != *"--max-old-space-size="* ]]; then
   export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--max-old-space-size=${FASED_GATEWAY_MAX_OLD_SPACE_MB}"
 fi
+GATEWAY_NODE_ARGS=()
+if [[ "${FASED_SUPPRESS_NODE_EXPERIMENTAL_WARNINGS:-1}" != "0" ]]; then
+  GATEWAY_NODE_ARGS+=(--disable-warning=ExperimentalWarning)
+fi
+if [[ "${FASED_SUPPRESS_NODE_PUNYCODE_WARNING:-1}" != "0" ]]; then
+  GATEWAY_NODE_ARGS+=(--disable-warning=DEP0040)
+fi
 TOKEN_PATH="$FASED_CONFIG_DIR/federation/access-token.json"
 GW_TOKEN_PATH="$FASED_CONFIG_DIR/gateway-secret"
 INITIAL_TOKEN_SIG=""
@@ -396,10 +403,10 @@ start_gateway_if_needed() {
     exit 1
   fi
   if [[ "$VERBOSE_STARTUP" == "1" ]]; then
-    FASED_SKIP_BUILD=1 "$NODE_BIN" "$GATEWAY_ENTRY" gateway --allow-unconfigured --force --bind loopback --port "$FASED_GATEWAY_PORT" &
+    FASED_SKIP_BUILD=1 "$NODE_BIN" "${GATEWAY_NODE_ARGS[@]}" "$GATEWAY_ENTRY" gateway --allow-unconfigured --force --bind loopback --port "$FASED_GATEWAY_PORT" &
   else
     : > "$GATEWAY_BOOT_LOG"
-    FASED_SKIP_BUILD=1 "$NODE_BIN" "$GATEWAY_ENTRY" gateway --allow-unconfigured --force --bind loopback --port "$FASED_GATEWAY_PORT" >>"$GATEWAY_BOOT_LOG" 2>&1 &
+    FASED_SKIP_BUILD=1 "$NODE_BIN" "${GATEWAY_NODE_ARGS[@]}" "$GATEWAY_ENTRY" gateway --allow-unconfigured --force --bind loopback --port "$FASED_GATEWAY_PORT" >>"$GATEWAY_BOOT_LOG" 2>&1 &
   fi
   AGENT_PID=$!
 
