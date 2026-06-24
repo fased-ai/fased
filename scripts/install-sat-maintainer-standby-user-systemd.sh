@@ -29,9 +29,17 @@ FASED_SAT_MAINTAIN_CLEANUP_MAX_CYCLES=3
 FASED_SAT_MAINTAIN_TARGET_RESERVE_LAMPORTS=1000000000
 FASED_SAT_MAINTAIN_LOG_FILE=$HOME/.fased/sat-maintainer.jsonl
 FASED_SAT_MAINTAIN_LOCK_FILE=$HOME/.fased/sat-maintainer.lock
+FASED_SAT_MAINTAIN_GATEWAY_WAIT_SECONDS=90
+FASED_SAT_MAINTAIN_GATEWAY_READY_DELAY_SECONDS=20
 ENV
 fi
 
+if ! grep -q '^FASED_SAT_MAINTAIN_GATEWAY_WAIT_SECONDS=' "$ENV_FILE"; then
+  printf 'FASED_SAT_MAINTAIN_GATEWAY_WAIT_SECONDS=90\n' >>"$ENV_FILE"
+fi
+if ! grep -q '^FASED_SAT_MAINTAIN_GATEWAY_READY_DELAY_SECONDS=' "$ENV_FILE"; then
+  printf 'FASED_SAT_MAINTAIN_GATEWAY_READY_DELAY_SECONDS=20\n' >>"$ENV_FILE"
+fi
 if ! grep -q '^PNPM_BIN=' "$ENV_FILE" && command -v pnpm >/dev/null 2>&1; then
   printf 'PNPM_BIN=%s\n' "$(command -v pnpm)" >>"$ENV_FILE"
 fi
@@ -39,8 +47,8 @@ fi
 cat >"$SERVICE_TARGET" <<UNIT
 [Unit]
 Description=Fased Agent SAT protocol maintainer standby pass
-After=network-online.target
-Wants=network-online.target
+After=network-online.target fased-gateway.service
+Wants=network-online.target fased-gateway.service
 
 [Service]
 Type=oneshot

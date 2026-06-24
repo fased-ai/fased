@@ -1,7 +1,7 @@
 [Unit]
 Description=Fased Agent SAT protocol maintainer standby pass
-After=network-online.target
-Wants=network-online.target
+After=network-online.target fased-gateway.service
+Wants=network-online.target fased-gateway.service
 
 [Service]
 Type=oneshot
