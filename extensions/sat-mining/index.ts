@@ -73,6 +73,10 @@ import {
 } from "./src/cycle-progress.js";
 import { buildSatDisputeReview } from "./src/dispute-review.js";
 import { createSatEpochService } from "./src/epoch-service.js";
+import {
+  summarizeSatMaintenanceCleanupResults,
+  type SatMaintenanceCleanupResultSummary,
+} from "./src/maintenance-output.js";
 import { generateSatRoundPlan } from "./src/payloads.js";
 import {
   classifyPlannerRegime,
@@ -6711,6 +6715,8 @@ const satMiningPlugin = {
         deferred?: string;
         cycleId?: number;
         resultCount?: number;
+        cleanupResults?: SatMaintenanceCleanupResultSummary[];
+        cleanupResultsTruncated?: number;
       }> = [];
       const pushSubmitted = (entry: (typeof submitted)[number]) => {
         submitted.push(entry);
@@ -7005,6 +7011,7 @@ const satMiningPlugin = {
                   cycleId,
                   txHash: lastTxHash,
                   resultCount: result.results.length,
+                  ...summarizeSatMaintenanceCleanupResults(result.results),
                   ...(typeof result.cleanupDeferred === "string"
                     ? { deferred: result.cleanupDeferred }
                     : {}),
