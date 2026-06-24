@@ -56,7 +56,7 @@ The important boundary is:
 
 - mining does not become the payment rail
 - bond does not replace the Agent wallet payment rail
-- bond staking is not mining; it is a locked-SAT network support lane
+- bond staking is not mining; it is a locked-SAT distributor lane
 - staking amounts are variable and depend on protocol activity, eligible bond weight, and distributor accounting
 - operator status does not mint SAT from mining emissions
 
@@ -124,12 +124,12 @@ the T0 default.
 1. Move SAT to the Vault wallet selected for Fased Network bond.
 2. Open or increase the bond from the Fased Network page.
 3. Once the bond is active and at or above the operator threshold, it becomes staking-eligible.
-4. The staking lane feeds the distributor through protocol housekeeping.
+4. The SAT distributor lane feeds the distributor through protocol housekeeping.
 5. The Bond Operator card shows:
    - Vault balance: free SAT/SOL still in the Vault wallet
    - Bonded: SAT locked in the bond position
-   - Claimable: staking SAT available to this bond position
-   - Pool: staking SAT held by the distributor before claim or sync
+   - Claimable: distributor SAT available to this bond position
+   - Pool: distributor SAT held by the distributor before claim or sync
 6. Click `Claim` when claimable SAT is available.
 
 `Claim` performs the required accounting sync first, then transfers claimable SAT
@@ -149,7 +149,7 @@ claiming signs transactions and pays network fees in the background.
 | Vault balance | free SAT/SOL in the Vault wallet, not the locked bond amount |
 | Bond position | on-chain position PDA for locked SAT                         |
 | Bonded        | SAT locked as operator inventory                             |
-| Claimable     | this position's synced staking SAT amount                    |
+| Claimable     | this position's synced distributor SAT amount                |
 | Pool          | staking distributor vault balance before claims              |
 
 The pool is a shared distributor number. It is not the same thing as claimable
@@ -157,10 +157,10 @@ SAT for one bond unless that bond is the only eligible active position.
 
 ### Claim accounting
 
-The staking distributor uses proportional index accounting:
+The SAT distributor uses proportional index accounting:
 
 - each active bond has staking weight equal to its active bonded SAT;
-- new staking SAT increases the distributor accounting index;
+- new distributor SAT increases the distributor accounting index;
 - a bond position records its accounting debt and claimable amount when it syncs;
 - another operator claiming first does not take this position's synced share;
 - synced amounts remain claimable until claimed or until protocol state is changed by
@@ -298,7 +298,7 @@ The surfaces are:
 2. `Bond`
    Vault wallet, bond position, bonded SAT, top-up, and unlock.
 3. `Staking`
-   Claimable staking SAT, distributor pool, and claim.
+   Claimable distributor SAT, distributor pool, and claim.
 4. `Offers`
    Local offer management only.
 5. `Marketplace`

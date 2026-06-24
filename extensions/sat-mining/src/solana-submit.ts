@@ -45,7 +45,6 @@ const SAT_TREASURY_STATE_SEED = "sat_treasury_state";
 const SAT_REGISTRY_RESERVE_SEED = "sat_registry_reserve";
 const SAT_REBATE_VAULT_SEED = "sat_rebate_vault";
 const SAT_TREASURY_VAULT_SEED = "sat_treasury_vault";
-const SAT_STAKING_VAULT_SEED = "sat_staking_vault";
 const SAT_CYCLE_REGISTRY_PAGE_CAPACITY = 64;
 const MINING_POOL_SEED = "mining_pool";
 const MINING_STAKE_SEED = "mining_stake";
@@ -63,7 +62,6 @@ const IX = {
   resolveDispute: 48,
   republishEpochRoots: 49,
   submitParticipation: 52,
-  initMinerSlots: 35,
   initMinerCapital: 36,
   depositMinerCapital: 37,
   openCycle: 56,
@@ -83,10 +81,7 @@ const IX = {
   compactPendingCycleRange: 75,
   setProtocolRecipients: 76,
   claimProtocolTreasury: 77,
-  claimProtocolStaking: 78,
-  claimProtocolStakingSat: 85,
-  claimProtocolStakingSol: 86,
-  setProtocolStakingSolRecipient: 87,
+  claimProtocolDistributorSat: 85,
   refillRegistryReserveFromTreasury: 88,
   openBondPosition: 79,
   increaseBondPosition: 80,
@@ -109,6 +104,12 @@ const BOND_IX = {
   syncStakingPosition: 9,
   claimStakingRewards: 10,
 } as const;
+
+function satSubmitDebug(message: string) {
+  if (String(process.env.FASED_SAT_SUBMIT_DEBUG ?? "").trim() === "1") {
+    console.error(message);
+  }
+}
 
 type SolanaModuleLike = typeof import("@solana/web3.js");
 
@@ -335,46 +336,74 @@ export async function resolveSatValidatorAuthority(_config: SatMiningConfig) {
   );
 }
 
-async function submitInstructionViaLocalSigner(params: {
-  cfg: FasedAgentConfig;
-  env: NodeJS.ProcessEnv;
+type SatInstructionSubmitSpec = {
   data: Buffer;
   programId?: string;
   accountResolver: (
     solana: SolanaModuleLike,
     signer: import("@solana/web3.js").PublicKey,
   ) => Promise<SolanaAccountMeta[]>;
-}) {
-  const effectiveEnv = resolveSatEffectiveEnv(params.cfg, params.env);
+};
+
+async function prepareLocalSignerSubmitContext(cfg: FasedAgentConfig, env: NodeJS.ProcessEnv) {
+  const effectiveEnv = resolveSatEffectiveEnv(cfg, env);
   const solana = await loadSolanaWeb3();
-  const walletId = resolveSatWalletId(params.cfg);
+  const walletId = resolveSatWalletId(cfg);
   const socketPath = requireLocalSocketSignerPath(effectiveEnv);
   const signerAddress = await resolveSatLocalSignerAddress(
-    params.cfg,
+    cfg,
     effectiveEnv,
     "local-socket-signer returned no Solana address for SAT mining wallet",
   );
   const signer = new solana.PublicKey(signerAddress);
-  const keys = await params.accountResolver(solana, signer);
-  console.error(
-    `[sat-submit-debug] data_len=${params.data.length} disc=${params.data[0] ?? -1} keys=${keys.length}`,
+  return { effectiveEnv, solana, walletId, socketPath, signerAddress, signer };
+}
+
+async function buildLocalSignerInstructionRequest(params: {
+  solana: SolanaModuleLike;
+  signer: import("@solana/web3.js").PublicKey;
+  walletId?: string;
+  spec: SatInstructionSubmitSpec;
+}) {
+  const keys = await params.spec.accountResolver(params.solana, params.signer);
+  satSubmitDebug(
+    `[sat-submit-debug] data_len=${params.spec.data.length} disc=${params.spec.data[0] ?? -1} keys=${keys.length}`,
   );
-  const submitted = await callLocalSocketSigner<{ txHash: string; signer?: string }>(socketPath, {
-    op: "sendSolanaInstruction",
-    request: {
-      ...(walletId ? { walletId } : {}),
-      programId: params.programId ?? SAT_PROGRAM_ID(),
-      dataBase64: params.data.toString("base64"),
-      keys: keys.map((key) => ({
-        pubkey: key.pubkey.toBase58(),
-        isSigner: key.isSigner,
-        isWritable: key.isWritable,
-      })),
-    },
+  return {
+    ...(params.walletId ? { walletId: params.walletId } : {}),
+    programId: params.spec.programId ?? SAT_PROGRAM_ID(),
+    dataBase64: params.spec.data.toString("base64"),
+    keys: keys.map((key) => ({
+      pubkey: key.pubkey.toBase58(),
+      isSigner: key.isSigner,
+      isWritable: key.isWritable,
+    })),
+  };
+}
+
+async function submitInstructionViaLocalSigner(
+  params: {
+    cfg: FasedAgentConfig;
+    env: NodeJS.ProcessEnv;
+  } & SatInstructionSubmitSpec,
+) {
+  const context = await prepareLocalSignerSubmitContext(params.cfg, params.env);
+  const request = await buildLocalSignerInstructionRequest({
+    solana: context.solana,
+    signer: context.signer,
+    walletId: context.walletId,
+    spec: params,
   });
+  const submitted = await callLocalSocketSigner<{ txHash: string; signer?: string }>(
+    context.socketPath,
+    {
+      op: "sendSolanaInstruction",
+      request,
+    },
+  );
   return {
     txHash: submitted.txHash,
-    signer: submitted.signer ?? signerAddress,
+    signer: submitted.signer ?? context.signerAddress,
   };
 }
 
@@ -400,6 +429,56 @@ async function submitInstruction(params: {
     programId: params.programId,
     accountResolver: params.accountResolver,
   });
+}
+
+async function submitInstructionBatch(params: {
+  cfg: FasedAgentConfig;
+  env: NodeJS.ProcessEnv;
+  purpose: "sat-cleanup";
+  instructions: SatInstructionSubmitSpec[];
+}) {
+  if (params.instructions.length === 0) {
+    throw new Error("SAT cleanup batch has no instructions");
+  }
+  if (params.instructions.length > 6) {
+    throw new Error("SAT cleanup batch exceeds signer limit");
+  }
+  const effectiveEnv = resolveSatEffectiveEnv(params.cfg, params.env);
+  await enforceSatCustodyAutonomousSigning(params.cfg, effectiveEnv);
+  if (resolveSatProviderId(params.cfg, effectiveEnv) !== "local-socket-signer") {
+    throw new Error(
+      "SAT mining unattended batch submission currently requires local-socket-signer",
+    );
+  }
+  const context = await prepareLocalSignerSubmitContext(params.cfg, effectiveEnv);
+  const instructions: Array<Awaited<ReturnType<typeof buildLocalSignerInstructionRequest>>> = [];
+  for (const spec of params.instructions) {
+    instructions.push(
+      await buildLocalSignerInstructionRequest({
+        solana: context.solana,
+        signer: context.signer,
+        walletId: context.walletId,
+        spec,
+      }),
+    );
+  }
+  const submitted = await callLocalSocketSigner<{
+    txHash: string;
+    signer?: string;
+    metadata?: Record<string, unknown>;
+  }>(context.socketPath, {
+    op: "sendSolanaInstructions",
+    request: {
+      ...(context.walletId ? { walletId: context.walletId } : {}),
+      purpose: params.purpose,
+      instructions,
+    },
+  });
+  return {
+    txHash: submitted.txHash,
+    signer: submitted.signer ?? context.signerAddress,
+    instructionCount: instructions.length,
+  };
 }
 
 function buildInitializeCycleData(params: {
@@ -549,10 +628,6 @@ function buildOpenCycleData(params: { cycleId: number }) {
   return Buffer.concat([Buffer.from([IX.openCycle]), encodeU64(params.cycleId)]);
 }
 
-function buildInitMinerSlotsData(params: { authority: string }) {
-  return Buffer.concat([Buffer.from([IX.initMinerSlots]), encodePubkey(params.authority)]);
-}
-
 function buildInitMinerCapitalData(params: { authority: string }) {
   return Buffer.concat([Buffer.from([IX.initMinerCapital]), encodePubkey(params.authority)]);
 }
@@ -677,7 +752,7 @@ function buildSubmitCycleData(params: { cycleId: number; allocationFp: number[] 
     ),
     Buffer.alloc(4),
   ]);
-  console.error(
+  satSubmitDebug(
     `[sat-submit-build] allocs=${params.allocationFp.length} len=${body.length} cycle=${params.cycleId}`,
   );
   return body;
@@ -703,12 +778,12 @@ function buildClaimCycleRewardsBatchData(params: { cycleIds: number[] }) {
 
 function buildSetProtocolRecipientsData(params: {
   treasuryRecipient: string;
-  stakingRecipient: string;
+  distributorRecipient: string;
 }) {
   return Buffer.concat([
     Buffer.from([IX.setProtocolRecipients]),
     encodePubkey(params.treasuryRecipient),
-    encodePubkey(params.stakingRecipient),
+    encodePubkey(params.distributorRecipient),
   ]);
 }
 
@@ -723,23 +798,8 @@ function buildRefillRegistryReserveFromTreasuryData(params: { targetBalanceLampo
   ]);
 }
 
-function buildClaimProtocolStakingData() {
-  return Buffer.from([IX.claimProtocolStaking]);
-}
-
-function buildClaimProtocolStakingSatData() {
-  return Buffer.from([IX.claimProtocolStakingSat]);
-}
-
-function buildClaimProtocolStakingSolData() {
-  return Buffer.from([IX.claimProtocolStakingSol]);
-}
-
-function buildSetProtocolStakingSolRecipientData(params: { stakingSolRecipient: string }) {
-  return Buffer.concat([
-    Buffer.from([IX.setProtocolStakingSolRecipient]),
-    encodePubkey(params.stakingSolRecipient),
-  ]);
+function buildClaimProtocolDistributorSatData() {
+  return Buffer.from([IX.claimProtocolDistributorSat]);
 }
 
 function buildSettleCyclePageData(params: {
@@ -1073,10 +1133,6 @@ export async function submitSatBootstrap(
         [Buffer.from(SAT_TREASURY_VAULT_SEED)],
         programId,
       );
-      const [satStakingVault] = solana.PublicKey.findProgramAddressSync(
-        [Buffer.from(SAT_STAKING_VAULT_SEED)],
-        programId,
-      );
       return [
         { pubkey: signer, isSigner: true, isWritable: true },
         { pubkey: satGlobalState, isSigner: false, isWritable: true },
@@ -1086,7 +1142,6 @@ export async function submitSatBootstrap(
         { pubkey: solana.SystemProgram.programId, isSigner: false, isWritable: false },
         { pubkey: satRebateVault, isSigner: false, isWritable: true },
         { pubkey: satTreasuryVault, isSigner: false, isWritable: true },
-        { pubkey: satStakingVault, isSigner: false, isWritable: true },
       ];
     },
   });
@@ -1134,27 +1189,6 @@ export async function submitSatOpenCycle(_config: SatMiningConfig, params: { cyc
         { pubkey: solana.SystemProgram.programId, isSigner: false, isWritable: false },
         { pubkey: satTreasuryVault, isSigner: false, isWritable: true },
       ];
-    },
-  });
-}
-
-export async function submitSatInitMinerSlots(
-  _config: SatMiningConfig,
-  params: { authority?: string },
-) {
-  const cfg = loadConfigForSatRuntime(_config);
-  return submitInstruction({
-    cfg,
-    env: process.env,
-    data: buildInitMinerSlotsData({ authority: params.authority ?? "" }),
-    accountResolver: async (solana, signer) => {
-      const authority = params.authority?.trim() ? new solana.PublicKey(params.authority) : signer;
-      const accounts = [
-        { pubkey: signer, isSigner: true, isWritable: true },
-        { pubkey: solana.SystemProgram.programId, isSigner: false, isWritable: false },
-      ];
-      void authority;
-      return accounts;
     },
   });
 }
@@ -1720,10 +1754,6 @@ export async function submitSatCycle(
         [Buffer.from(SAT_TREASURY_VAULT_SEED)],
         programId,
       );
-      const [satStakingVault] = solana.PublicKey.findProgramAddressSync(
-        [Buffer.from(SAT_STAKING_VAULT_SEED)],
-        programId,
-      );
       return [
         { pubkey: signer, isSigner: true, isWritable: true },
         { pubkey: satGlobalState, isSigner: false, isWritable: true },
@@ -1738,7 +1768,6 @@ export async function submitSatCycle(
         { pubkey: solana.SystemProgram.programId, isSigner: false, isWritable: false },
         { pubkey: satRebateVault, isSigner: false, isWritable: true },
         { pubkey: satTreasuryVault, isSigner: false, isWritable: true },
-        { pubkey: satStakingVault, isSigner: false, isWritable: true },
       ];
     },
   });
@@ -2209,7 +2238,7 @@ export async function submitSatClaimCycleRewardsBatch(
 
 export async function submitSatSetProtocolRecipients(
   _config: SatMiningConfig,
-  params: { treasuryRecipient: string; stakingRecipient: string },
+  params: { treasuryRecipient: string; distributorRecipient: string },
 ) {
   const cfg = loadConfigForSatRuntime(_config);
   return submitInstruction({
@@ -2334,7 +2363,7 @@ export async function submitSatRefillRegistryReserveFromTreasury(
   });
 }
 
-export async function submitSatClaimProtocolStaking(
+export async function submitSatClaimProtocolDistributorSat(
   _config: SatMiningConfig,
   params: { recipientOwner: string },
 ) {
@@ -2342,67 +2371,7 @@ export async function submitSatClaimProtocolStaking(
   return submitInstruction({
     cfg,
     env: process.env,
-    data: buildClaimProtocolStakingData(),
-    accountResolver: async (solana, signer) => {
-      const programId = new solana.PublicKey(SAT_PROGRAM_ID());
-      const recipientOwner = new solana.PublicKey(params.recipientOwner);
-      const [satGlobalState] = solana.PublicKey.findProgramAddressSync(
-        [Buffer.from(SAT_GLOBAL_STATE_SEED)],
-        programId,
-      );
-      const [treasury] = solana.PublicKey.findProgramAddressSync(
-        [Buffer.from("treasury")],
-        programId,
-      );
-      const [satTreasuryState] = solana.PublicKey.findProgramAddressSync(
-        [Buffer.from(SAT_TREASURY_STATE_SEED)],
-        programId,
-      );
-      const [satStakingVault] = solana.PublicKey.findProgramAddressSync(
-        [Buffer.from(SAT_STAKING_VAULT_SEED)],
-        programId,
-      );
-      const [mintAuthority] = solana.PublicKey.findProgramAddressSync(
-        [Buffer.from("authority")],
-        new solana.PublicKey(SAT_MINT_PROGRAM_ID()),
-      );
-      const recipientAta = deriveAssociatedTokenAddress(
-        solana,
-        recipientOwner,
-        new solana.PublicKey(SAT_MINT_ADDRESS()),
-      );
-      return [
-        { pubkey: signer, isSigner: true, isWritable: true },
-        { pubkey: satGlobalState, isSigner: false, isWritable: false },
-        { pubkey: treasury, isSigner: false, isWritable: true },
-        { pubkey: satTreasuryState, isSigner: false, isWritable: true },
-        { pubkey: satStakingVault, isSigner: false, isWritable: true },
-        { pubkey: recipientOwner, isSigner: false, isWritable: true },
-        { pubkey: mintAuthority, isSigner: false, isWritable: true },
-        { pubkey: new solana.PublicKey(SAT_MINT_ADDRESS()), isSigner: false, isWritable: true },
-        { pubkey: recipientAta, isSigner: false, isWritable: true },
-        { pubkey: solana.SystemProgram.programId, isSigner: false, isWritable: false },
-        { pubkey: new solana.PublicKey(TOKEN_PROGRAM_ID), isSigner: false, isWritable: false },
-        {
-          pubkey: new solana.PublicKey(ASSOCIATED_TOKEN_PROGRAM_ID),
-          isSigner: false,
-          isWritable: false,
-        },
-        { pubkey: new solana.PublicKey(SAT_MINT_PROGRAM_ID()), isSigner: false, isWritable: false },
-      ];
-    },
-  });
-}
-
-export async function submitSatClaimProtocolStakingSat(
-  _config: SatMiningConfig,
-  params: { recipientOwner: string },
-) {
-  const cfg = loadConfigForSatRuntime(_config);
-  return submitInstruction({
-    cfg,
-    env: process.env,
-    data: buildClaimProtocolStakingSatData(),
+    data: buildClaimProtocolDistributorSatData(),
     accountResolver: async (solana, signer) => {
       const programId = new solana.PublicKey(SAT_PROGRAM_ID());
       const recipientOwner = new solana.PublicKey(params.recipientOwner);
@@ -2444,70 +2413,6 @@ export async function submitSatClaimProtocolStakingSat(
           isWritable: false,
         },
         { pubkey: new solana.PublicKey(SAT_MINT_PROGRAM_ID()), isSigner: false, isWritable: false },
-      ];
-    },
-  });
-}
-
-export async function submitSatClaimProtocolStakingSol(
-  _config: SatMiningConfig,
-  params: { recipientOwner: string },
-) {
-  const cfg = loadConfigForSatRuntime(_config);
-  return submitInstruction({
-    cfg,
-    env: process.env,
-    data: buildClaimProtocolStakingSolData(),
-    accountResolver: async (solana, signer) => {
-      const programId = new solana.PublicKey(SAT_PROGRAM_ID());
-      const recipientOwner = new solana.PublicKey(params.recipientOwner);
-      const [satGlobalState] = solana.PublicKey.findProgramAddressSync(
-        [Buffer.from(SAT_GLOBAL_STATE_SEED)],
-        programId,
-      );
-      const [satTreasuryState] = solana.PublicKey.findProgramAddressSync(
-        [Buffer.from(SAT_TREASURY_STATE_SEED)],
-        programId,
-      );
-      const [satStakingVault] = solana.PublicKey.findProgramAddressSync(
-        [Buffer.from(SAT_STAKING_VAULT_SEED)],
-        programId,
-      );
-      return [
-        { pubkey: signer, isSigner: true, isWritable: true },
-        { pubkey: satGlobalState, isSigner: false, isWritable: false },
-        { pubkey: satTreasuryState, isSigner: false, isWritable: true },
-        { pubkey: satStakingVault, isSigner: false, isWritable: true },
-        { pubkey: recipientOwner, isSigner: false, isWritable: true },
-        { pubkey: solana.SystemProgram.programId, isSigner: false, isWritable: false },
-      ];
-    },
-  });
-}
-
-export async function submitSatSetProtocolStakingSolRecipient(
-  _config: SatMiningConfig,
-  params: { stakingSolRecipient: string },
-) {
-  const cfg = loadConfigForSatRuntime(_config);
-  return submitInstruction({
-    cfg,
-    env: process.env,
-    data: buildSetProtocolStakingSolRecipientData(params),
-    accountResolver: async (solana, signer) => {
-      const programId = new solana.PublicKey(SAT_PROGRAM_ID());
-      const [satGlobalState] = solana.PublicKey.findProgramAddressSync(
-        [Buffer.from(SAT_GLOBAL_STATE_SEED)],
-        programId,
-      );
-      const [satTreasuryState] = solana.PublicKey.findProgramAddressSync(
-        [Buffer.from(SAT_TREASURY_STATE_SEED)],
-        programId,
-      );
-      return [
-        { pubkey: signer, isSigner: true, isWritable: true },
-        { pubkey: satGlobalState, isSigner: false, isWritable: false },
-        { pubkey: satTreasuryState, isSigner: false, isWritable: true },
       ];
     },
   });
@@ -2541,14 +2446,11 @@ export async function submitSatRetargetUnlock(
   });
 }
 
-export async function submitSatCloseResolvedMinerCycleState(
-  _config: SatMiningConfig,
-  params: { cycleId: number; authority: string },
-) {
-  const cfg = loadConfigForSatRuntime(_config);
-  return submitInstruction({
-    cfg,
-    env: process.env,
+function buildCloseResolvedMinerCycleStateSpec(params: {
+  cycleId: number;
+  authority: string;
+}): SatInstructionSubmitSpec {
+  return {
     data: buildCloseResolvedMinerCycleStateData(params),
     accountResolver: async (solana, signer) => {
       const programId = new solana.PublicKey(SAT_PROGRAM_ID());
@@ -2582,17 +2484,14 @@ export async function submitSatCloseResolvedMinerCycleState(
         { pubkey: satCycleRegistryMeta, isSigner: false, isWritable: true },
       ];
     },
-  });
+  };
 }
 
-export async function submitSatCloseResolvedCycleRegistryPage(
-  _config: SatMiningConfig,
-  params: { cycleId: number; pageIndex: number },
-) {
-  const cfg = loadConfigForSatRuntime(_config);
-  return submitInstruction({
-    cfg,
-    env: process.env,
+function buildCloseResolvedCycleRegistryPageSpec(params: {
+  cycleId: number;
+  pageIndex: number;
+}): SatInstructionSubmitSpec {
+  return {
     data: buildCloseResolvedCycleRegistryPageData(params),
     accountResolver: async (solana, signer) => {
       const programId = new solana.PublicKey(SAT_PROGRAM_ID());
@@ -2624,17 +2523,13 @@ export async function submitSatCloseResolvedCycleRegistryPage(
         { pubkey: satRegistryReserve, isSigner: false, isWritable: true },
       ];
     },
-  });
+  };
 }
 
-export async function submitSatCloseResolvedCycleArtifacts(
-  _config: SatMiningConfig,
-  params: { cycleId: number },
-) {
-  const cfg = loadConfigForSatRuntime(_config);
-  return submitInstruction({
-    cfg,
-    env: process.env,
+function buildCloseResolvedCycleArtifactsSpec(params: {
+  cycleId: number;
+}): SatInstructionSubmitSpec {
+  return {
     data: buildCloseResolvedCycleArtifactsData(params),
     accountResolver: async (solana, signer) => {
       const programId = new solana.PublicKey(SAT_PROGRAM_ID());
@@ -2662,6 +2557,72 @@ export async function submitSatCloseResolvedCycleArtifacts(
         { pubkey: satRegistryReserve, isSigner: false, isWritable: true },
       ];
     },
+  };
+}
+
+export async function submitSatCloseResolvedMinerCycleState(
+  _config: SatMiningConfig,
+  params: { cycleId: number; authority: string },
+) {
+  const cfg = loadConfigForSatRuntime(_config);
+  return submitInstruction({
+    cfg,
+    env: process.env,
+    ...buildCloseResolvedMinerCycleStateSpec(params),
+  });
+}
+
+export async function submitSatCloseResolvedCycleRegistryPage(
+  _config: SatMiningConfig,
+  params: { cycleId: number; pageIndex: number },
+) {
+  const cfg = loadConfigForSatRuntime(_config);
+  return submitInstruction({
+    cfg,
+    env: process.env,
+    ...buildCloseResolvedCycleRegistryPageSpec(params),
+  });
+}
+
+export async function submitSatCloseResolvedCycleArtifacts(
+  _config: SatMiningConfig,
+  params: { cycleId: number },
+) {
+  const cfg = loadConfigForSatRuntime(_config);
+  return submitInstruction({
+    cfg,
+    env: process.env,
+    ...buildCloseResolvedCycleArtifactsSpec(params),
+  });
+}
+
+export type SatCloseResolvedCleanupBatchItem =
+  | { kind: "minerCycleState"; cycleId: number; authority: string }
+  | { kind: "cycleRegistryPage"; cycleId: number; pageIndex: number }
+  | { kind: "cycleArtifacts"; cycleId: number };
+
+export async function submitSatCloseResolvedCleanupBatch(
+  _config: SatMiningConfig,
+  items: SatCloseResolvedCleanupBatchItem[],
+) {
+  if (items.length === 0) {
+    throw new Error("SAT cleanup batch has no items");
+  }
+  const cfg = loadConfigForSatRuntime(_config);
+  return submitInstructionBatch({
+    cfg,
+    env: process.env,
+    purpose: "sat-cleanup",
+    instructions: items.map((item) => {
+      switch (item.kind) {
+        case "minerCycleState":
+          return buildCloseResolvedMinerCycleStateSpec(item);
+        case "cycleRegistryPage":
+          return buildCloseResolvedCycleRegistryPageSpec(item);
+        case "cycleArtifacts":
+          return buildCloseResolvedCycleArtifactsSpec(item);
+      }
+    }),
   });
 }
 

@@ -451,7 +451,7 @@ Use them like this:
 - `manual` for deliberate testing or recovery-oriented claim review
 
 This claim mode is for miner claim-out. It does not run protocol treasury or
-staking recipient claim-out.
+SAT distributor claim-out.
 
 ### Claim backlog
 

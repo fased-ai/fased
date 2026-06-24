@@ -296,7 +296,7 @@ Maintainer behavior to verify:
   - maintainer failure streak
   - low payer SOL
   - registry reserve below launch buffer
-  - pending treasury/staking lanes
+  - pending treasury and distributor lanes
 - pending mining-cycle backlog
 - cleanup/reclaim problem streak
 

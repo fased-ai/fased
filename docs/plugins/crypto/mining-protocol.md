@@ -92,12 +92,11 @@ flow.
 | allocation buckets       | `25`             |
 | erosion                  | `83 ppm`         |
 | miner SAT route          | `90%`            |
-| staking SAT route        | `5%`             |
+| SAT distributor route    | `5%`             |
 | treasury SAT route       | `5%`             |
 | SOL deterministic rebate | `30%`            |
 | SOL performance rebate   | `50%`            |
-| SOL treasury route       | `15%`            |
-| SOL staking route        | `5%`             |
+| SOL treasury route       | `20%`            |
 
 ## Control UI routes
 
@@ -219,7 +218,6 @@ running; if locked capital or pending cycles remain, the CLI reports drain mode.
 
 | Method                         | Purpose                                                  |
 | ------------------------------ | -------------------------------------------------------- |
-| `sat.initMinerSlots`           | prepare miner cycle slots for an authority               |
 | `sat.initMinerCapital`         | initialize miner capital account                         |
 | `sat.depositMinerCapital`      | move wallet SOL into miner capital                       |
 | `sat.withdrawMinerCapital`     | withdraw free capital back to the wallet                 |
@@ -261,13 +259,13 @@ running; if locked capital or pending cycles remain, the CLI reports drain mode.
 
 ### Protocol lane methods
 
-| Method                                  | Purpose                                                             |
-| --------------------------------------- | ------------------------------------------------------------------- |
-| `sat.setProtocolRecipients`             | set treasury and staking recipients                                 |
-| `sat.refillRegistryReserveFromTreasury` | refill the registry reserve from protocol treasury SOL shortfall    |
-| `sat.claimProtocolTreasury`             | claim treasury lane, leaving reserve-aware maintenance first        |
-| `sat.claimProtocolStaking`              | compatibility staking lane claim                                    |
-| `sat.runProtocolMaintenanceOnce`        | one bounded operator pass over reserve, treasury, and staking lanes |
+| Method                                  | Purpose                                                                 |
+| --------------------------------------- | ----------------------------------------------------------------------- |
+| `sat.setProtocolRecipients`             | set treasury and SAT distributor recipients                             |
+| `sat.refillRegistryReserveFromTreasury` | refill the registry reserve from protocol treasury SOL shortfall        |
+| `sat.claimProtocolTreasury`             | claim treasury lane, leaving reserve-aware maintenance first            |
+| `sat.claimProtocolDistributorSat`       | claim SAT distributor lane to the bond distributor                      |
+| `sat.runProtocolMaintenanceOnce`        | one bounded operator pass over reserve, treasury, and distributor lanes |
 
 These are protocol maintenance operations. They are not normal miner day-to-day
 actions, and they are not shown on the Mining page. Launch operators run them
@@ -275,23 +273,21 @@ from internal maintenance tooling.
 
 The bounded model is permissionless: any caller may pay the transaction fee, but
 the program fixes recipients and caps the action. Reserve refill can only target
-`sat_registry_reserve` and only up to the configured shortfall. Treasury and
-staking claims use fixed protocol recipients, so a random caller cannot redirect
-protocol funds.
+`sat_registry_reserve` and only up to the configured shortfall. Treasury, SAT
+distributor claims use fixed protocol recipients, so a random caller cannot
+redirect protocol funds.
 
 ### Bond-staking roadmap boundary
 
 Miner auto-claim only claims that miner's own cycle SAT and rebates. It does not
-claim the protocol treasury lane, the protocol staking lane, or other miners'
-SAT.
+claim protocol treasury, SAT distributor, or other miners' SAT.
 
-The bond-staking distributor consumes the existing protocol staking lane without
-coupling staking logic into mining settlement:
+The bond distributor consumes the existing SAT distributor lane without coupling
+bond logic into mining settlement:
 
-- split staking SAT claim pulls pending staking-lane SAT to the bond distributor vault
-- split staking SOL claim sends the SOL lane to the ops/maintenance recipient
-- eligible staking bonds can share SAT from the distributor by index accounting
-- each staking bond owner still claims their own synced SAT amount
+- split SAT claim pulls pending distributor SAT to the bond distributor vault
+- eligible bonds can share SAT from the distributor by index accounting
+- each bond owner still claims their own synced SAT amount
 
 Bond-staking policy belongs to launch configuration and public launch proof.
 This API page only describes the integration boundary: miner auto-claim is
@@ -446,7 +442,7 @@ flowchart TD
 
   subgraph ProtocolLane["Protocol lane"]
     Treasury["SatTreasuryState"]
-    Vaults["rebate / treasury<br/>staking vaults"]
+    Vaults["rebate / treasury<br/>vaults"]
     Reserve["registry reserve"]
     Mint["mint authority PDA"]
   end
@@ -480,7 +476,6 @@ Common PDA seed families:
 - `sat_registry_reserve`
 - `sat_rebate_vault`
 - `sat_treasury_vault`
-- `sat_staking_vault`
 - `sat_bond_position`
 - `sat_bond_tier_policy`
 
@@ -491,14 +486,14 @@ instruction path allows it.
 
 Satcoin authority surfaces:
 
-| Surface                            | Meaning                                            |
-| ---------------------------------- | -------------------------------------------------- |
-| SAT program upgrade authority      | can upgrade SAT mining program code while retained |
-| SAT mint program upgrade authority | can upgrade mint-program code while retained       |
-| SPL mint authority                 | should be the SAT mint-authority PDA after init    |
-| SPL freeze authority               | should be none for the public mint posture         |
-| SAT `program_admin`                | can set treasury and staking recipient addresses   |
-| bond policy update authority       | can update bond tier thresholds and unlock delay   |
+| Surface                            | Meaning                                                  |
+| ---------------------------------- | -------------------------------------------------------- |
+| SAT program upgrade authority      | can upgrade SAT mining program code while retained       |
+| SAT mint program upgrade authority | can upgrade mint-program code while retained             |
+| SPL mint authority                 | should be the SAT mint-authority PDA after init          |
+| SPL freeze authority               | should be none for the public mint posture               |
+| SAT `program_admin`                | can set treasury and SAT distributor recipient addresses |
+| bond policy update authority       | can update bond tier thresholds and unlock delay         |
 
 The miner runtime does not hold admin keys. It uses the singleton
 `@wallet:mining` wallet for operator actions and reads the configured program
@@ -519,14 +514,14 @@ Per-cycle flow:
 - the miner wallet pays submit, settlement, claim, and recovery transaction fees
 - the miner wallet pays miner-cycle PDA rent when it first submits that cycle
 - active commit is locked inside miner capital until distribute releases it
-- erosion is charged from miner capital and routed into rebate, treasury, and staking lanes
+- erosion is charged from miner capital and routed into miner rebate and treasury lanes
 - keeper bounty comes from the performance rebate lane when the cycle can fund it
 - claim mints Satcoin to the miner ATA and moves SOL rebate back into miner capital
 
-Treasury/staking recipients are fixed recipient lanes. They are not the payer
-for normal shared cycle account creation. In the bond-staking path, the staking
-recipient can become a distributor PDA while the SOL staking lane remains an
-operations support route.
+Treasury and SAT distributor are fixed accounting lanes. They are
+not the payer for normal shared cycle account creation. In the launch posture,
+the SAT distributor recipient is the bond distributor path, while non-rebate SOL
+claims into treasury custody.
 
 Cycle committed SOL is mining participation. Market liquidity is a separate
 post-launch venue concept.

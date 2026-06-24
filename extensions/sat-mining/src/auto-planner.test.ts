@@ -40,7 +40,6 @@ describe("computeAutoPlannerDecision", () => {
         deterministicRebatePoolLamports: "0",
         performanceRebatePoolLamports: "0",
         treasurySolLamports: "0",
-        stakingSolLamports: "0",
       },
       currentRegistryMeta: {
         address: "meta",
@@ -98,7 +97,6 @@ describe("computeAutoPlannerDecision", () => {
         deterministicRebatePoolLamports: "0",
         performanceRebatePoolLamports: "0",
         treasurySolLamports: "0",
-        stakingSolLamports: "0",
       },
       currentRegistryMeta: {
         address: "meta",
@@ -254,7 +252,6 @@ describe("computeAutoPlannerDecision", () => {
         deterministicRebatePoolLamports: "0",
         performanceRebatePoolLamports: "0",
         treasurySolLamports: "0",
-        stakingSolLamports: "0",
       },
       outcomeHistory: [
         {
@@ -323,7 +320,6 @@ describe("computeAutoPlannerDecision", () => {
         deterministicRebatePoolLamports: "0",
         performanceRebatePoolLamports: "0",
         treasurySolLamports: "0",
-        stakingSolLamports: "0",
       },
       outcomeHistory: [
         {
@@ -401,7 +397,6 @@ describe("computeAutoPlannerDecision", () => {
         deterministicRebatePoolLamports: "0",
         performanceRebatePoolLamports: "0",
         treasurySolLamports: "0",
-        stakingSolLamports: "0",
       },
       currentRegistryMeta: {
         address: "meta",
@@ -469,6 +464,6 @@ describe("computeAutoPlannerDecision", () => {
     });
 
     expect(decision.commitLamports).toBe(250_000_000);
-    expect(decision.rationale).toContain("configured baseline");
+    expect(decision.rationale).toContain("configured max");
   });
 });

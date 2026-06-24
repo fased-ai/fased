@@ -244,9 +244,9 @@ That is how the Agent moves from:
 - to public seller
 - to bonded operator lanes
 
-### 6. Bond staking
+### 6. Bond distributor rewards
 
-Active operator bonds can participate in SAT staking distribution when that path
+Active operator bonds can participate in SAT distributor rewards when that path
 is enabled and the position is eligible.
 
 The user flow is:
@@ -255,9 +255,9 @@ The user flow is:
 2. Move SAT into that Vault wallet.
 3. Open or top up the bond from the Bond Operator card.
 4. Keep the bond active and at or above the operator threshold.
-5. Claim staking SAT from the same Bond Operator card when `Claimable` is nonzero.
+5. Claim distributor SAT from the same Bond Operator card when `Claimable` is nonzero.
 
-The `Claim` button syncs the staking position first, then submits the claim if
+The `Claim` button syncs the bond position first, then submits the claim if
 there is SAT available. Claiming is manual; Fased does not auto-claim on a
 timer unless a future explicit wallet-control setting is added. Claimable amounts are
 proportional to active bonded SAT and depend on distributor accounting; another
@@ -265,12 +265,12 @@ operator claiming first does not take this position's synced share.
 
 Read the staking numbers this way:
 
-| UI value      | Meaning                                                       |
-| ------------- | ------------------------------------------------------------- |
-| Vault balance | free SAT/SOL in the selected Vault wallet                     |
-| Bonded        | SAT locked in the bond position                               |
-| Claimable     | this bond position's synced staking amount                    |
-| Pool          | staking SAT in the distributor before positions claim or sync |
+| UI value      | Meaning                                            |
+| ------------- | -------------------------------------------------- |
+| Vault balance | free SAT/SOL in the selected Vault wallet          |
+| Bonded        | SAT locked in the bond position                    |
+| Claimable     | this bond position's synced distributor SAT amount |
+| Pool          | distributor SAT before positions claim or sync     |
 
 The pool is distributor state, not a personal balance.
 

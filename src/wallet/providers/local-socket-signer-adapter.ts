@@ -51,6 +51,7 @@ const SIGNER_SOCKET_TIMEOUT_MS: Record<LocalSocketSignerRequest["op"], number> =
   signTx: 20_000,
   sendTx: 120_000,
   sendSolanaInstruction: 120_000,
+  sendSolanaInstructions: 120_000,
   custodyStatus: 5_000,
   unlockCustody: 10_000,
   lockCustody: 10_000,

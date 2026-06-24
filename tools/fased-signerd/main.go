@@ -42,6 +42,11 @@ const (
 	socketReadTimeout     = 30 * time.Second
 )
 
+const (
+	maxSolanaInstructionBatchSize = 6
+	satCleanupPurpose             = "sat-cleanup"
+)
+
 var errRequestTooLarge = errors.New("signer request exceeds maximum size")
 
 type custodyUnlockScope struct {
@@ -670,6 +675,23 @@ func mustValidate(req request, cfg signerConfig) error {
 		if err := cfg.ensureChainAllowed("solana"); err != nil {
 			return err
 		}
+	case "sendSolanaInstructions":
+		if cfg.readOnly {
+			return errors.New("read-only signer mode")
+		}
+		if len(req.Request) == 0 {
+			return errors.New("invalid signer request")
+		}
+		var body solanaInstructionsRequest
+		if err := json.Unmarshal(req.Request, &body); err != nil {
+			return errors.New("invalid signer request")
+		}
+		if _, err := normalizeSolanaInstructionBatch(body); err != nil {
+			return err
+		}
+		if err := cfg.ensureChainAllowed("solana"); err != nil {
+			return err
+		}
 	case "unlockCustody":
 		if len(req.Request) == 0 || req.Chain != "" || req.WalletID != "" {
 			return errors.New("invalid signer request")
@@ -845,6 +867,10 @@ func parseArgs() signerConfig {
 		"signTx":                getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_SIGNTX", 60),
 		"sendTx":                getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_SENDTX", 40),
 		"sendSolanaInstruction": getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_SENDSOLANAINSTRUCTION", 80),
+		"sendSolanaInstructions": getenvInt(
+			"FASED_WALLET_LOCAL_SIGNER_RATE_SENDSOLANAINSTRUCTIONS",
+			40,
+		),
 	}
 	cfg.chains = parseChainsEnv(os.Getenv("FASED_WALLET_CHAINS"))
 	return cfg
@@ -1208,8 +1234,55 @@ type solanaInstructionRequest struct {
 	Keys       []solanaInstructionAccount `json:"keys"`
 }
 
+type solanaInstructionsRequest struct {
+	WalletID     string                     `json:"walletId,omitempty"`
+	Purpose      string                     `json:"purpose"`
+	Instructions []solanaInstructionRequest `json:"instructions"`
+}
+
 type signerTxRequestEnvelope struct {
 	Request signerTxRequest `json:"request"`
+}
+
+func isSatCleanupInstructionData(dataBase64 string) bool {
+	data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(dataBase64))
+	if err != nil || len(data) == 0 {
+		return false
+	}
+	switch data[0] {
+	case 69, 70, 71:
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeSolanaInstructionBatch(req solanaInstructionsRequest) ([]solanaInstructionRequest, error) {
+	if strings.TrimSpace(req.Purpose) != satCleanupPurpose {
+		return nil, errors.New("unsupported solana instruction batch purpose")
+	}
+	if len(req.Instructions) == 0 || len(req.Instructions) > maxSolanaInstructionBatchSize {
+		return nil, errors.New("invalid solana instruction batch size")
+	}
+	walletID := strings.TrimSpace(req.WalletID)
+	out := make([]solanaInstructionRequest, 0, len(req.Instructions))
+	for _, inst := range req.Instructions {
+		if strings.TrimSpace(inst.WalletID) != "" && walletID != "" && strings.TrimSpace(inst.WalletID) != walletID {
+			return nil, errors.New("mixed wallet ids in solana instruction batch")
+		}
+		if walletID == "" {
+			walletID = strings.TrimSpace(inst.WalletID)
+		}
+		inst.WalletID = walletID
+		if strings.TrimSpace(inst.ProgramID) == "" || strings.TrimSpace(inst.DataBase64) == "" || len(inst.Keys) == 0 {
+			return nil, errors.New("invalid solana instruction in batch")
+		}
+		if !isSatCleanupInstructionData(inst.DataBase64) {
+			return nil, errors.New("solana instruction batch only supports SAT cleanup instructions")
+		}
+		out = append(out, inst)
+	}
+	return out, nil
 }
 
 func readPassphrase(walletID string) (string, error) {
@@ -1565,6 +1638,50 @@ func validateCustodyScopeForSolanaInstruction(req solanaInstructionRequest) (*bi
 		}
 	}
 	return cloneBigInt(amount), nil
+}
+
+func validateCustodyScopeForSolanaInstructions(requests []solanaInstructionRequest) (*big.Int, error) {
+	if len(requests) == 0 {
+		return nil, errors.New("invalid solana instruction batch")
+	}
+	activeCustodyUnlock.mu.Lock()
+	defer activeCustodyUnlock.mu.Unlock()
+	cleanupExpiredCustodyUnlocksLocked(time.Now())
+	walletID := normalizeWalletID(requests[0].WalletID)
+	entry := activeCustodyUnlock.sessions[walletID]
+	if entry == nil || entry.ExpiresAt.IsZero() || !entry.ExpiresAt.After(time.Now()) || len(entry.Passphrase) == 0 {
+		return nil, errors.New("custody unlock required")
+	}
+	if len(entry.Scope.Chains) > 0 && !entry.Scope.Chains["solana"] {
+		return nil, fmt.Errorf("custody chain solana not allowed for wallet %s", entry.WalletID)
+	}
+	total := big.NewInt(0)
+	for _, req := range requests {
+		if normalizeWalletID(req.WalletID) != walletID {
+			return nil, errors.New("mixed wallet ids in solana instruction batch")
+		}
+		programID := normalizeProgramID(req.ProgramID)
+		if len(entry.Scope.AllowPrograms) == 0 || !entry.Scope.AllowPrograms[programID] {
+			return nil, fmt.Errorf("custody program %s not allowed for wallet %s", strings.TrimSpace(req.ProgramID), entry.WalletID)
+		}
+		amount := extractSolanaInstructionAmount(req)
+		if amount != nil {
+			total = new(big.Int).Add(total, amount)
+		}
+	}
+	if total.Sign() == 0 {
+		return nil, nil
+	}
+	if entry.Scope.SOLMaxPerTx != nil && entry.Scope.SOLMaxPerTx.Sign() > 0 && total.Cmp(entry.Scope.SOLMaxPerTx) > 0 {
+		return nil, errors.New("custody solana per-tx cap exceeded")
+	}
+	if entry.Scope.SOLMaxDaily != nil && entry.Scope.SOLMaxDaily.Sign() > 0 {
+		next := new(big.Int).Add(entry.SOLSpentDaily, total)
+		if next.Cmp(entry.Scope.SOLMaxDaily) > 0 {
+			return nil, errors.New("custody solana daily cap exceeded")
+		}
+	}
+	return total, nil
 }
 
 func recordCustodyUsage(walletID, chain string, amount *big.Int) {
@@ -1986,6 +2103,22 @@ func validateSignerPolicyForProgramSend(cfg signerConfig, walletID string, progr
 	return policy, nil
 }
 
+func validateSignerPolicyForProgramBatchSend(cfg signerConfig, walletID string, requests []solanaInstructionRequest, amount *big.Int) (resolvedSignerPolicy, error) {
+	policy := resolveSignerPolicy(cfg, walletID)
+	if !policy.DirectSigning {
+		return policy, errors.New("signer policy direct signing disabled")
+	}
+	for _, req := range requests {
+		if err := validateSignerPolicyProgram(policy, req.ProgramID); err != nil {
+			return policy, err
+		}
+	}
+	if err := validateSignerPolicyAmount(policy, "solana", amount); err != nil {
+		return policy, err
+	}
+	return policy, nil
+}
+
 func validateSignerPolicyForSerializedTx(cfg signerConfig, txReq signerTxRequest, tx *solana.Transaction, signer string) (*big.Int, resolvedSignerPolicy, error) {
 	policy := resolveSignerPolicy(cfg, txReq.WalletID)
 	if !policy.DirectSigning {
@@ -2209,6 +2342,30 @@ func solanaSignSerializedTransaction(keystorePath string, txReq signerTxRequest,
 	return base64.StdEncoding.EncodeToString(signedRaw), fromPub.String(), usageAmount, policy, nil
 }
 
+func buildSolanaInstruction(req solanaInstructionRequest) (solana.Instruction, error) {
+	programID, err := solana.PublicKeyFromBase58(strings.TrimSpace(req.ProgramID))
+	if err != nil {
+		return nil, err
+	}
+	data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(req.DataBase64))
+	if err != nil {
+		return nil, err
+	}
+	accounts := make(solana.AccountMetaSlice, 0, len(req.Keys))
+	for _, key := range req.Keys {
+		pub, err := solana.PublicKeyFromBase58(strings.TrimSpace(key.Pubkey))
+		if err != nil {
+			return nil, err
+		}
+		accounts = append(accounts, &solana.AccountMeta{
+			PublicKey:  pub,
+			IsSigner:   key.IsSigner,
+			IsWritable: key.IsWritable,
+		})
+	}
+	return solana.NewInstruction(programID, accounts, data), nil
+}
+
 func solanaSendInstructionAndConfirm(rpcURL, keystorePath string, req solanaInstructionRequest, cfg signerConfig) (string, string, *big.Int, resolvedSignerPolicy, error) {
 	usageAmount := extractSolanaInstructionAmount(req)
 	policy, err := validateSignerPolicyForProgramSend(cfg, req.WalletID, req.ProgramID, usageAmount)
@@ -2223,25 +2380,9 @@ func solanaSendInstructionAndConfirm(rpcURL, keystorePath string, req solanaInst
 	if expectedPub != "" && fromPub.String() != expectedPub {
 		return "", "", nil, policy, errors.New("solana envelope public key mismatch")
 	}
-	programID, err := solana.PublicKeyFromBase58(strings.TrimSpace(req.ProgramID))
+	ix, err := buildSolanaInstruction(req)
 	if err != nil {
 		return "", "", nil, policy, err
-	}
-	data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(req.DataBase64))
-	if err != nil {
-		return "", "", nil, policy, err
-	}
-	accounts := make(solana.AccountMetaSlice, 0, len(req.Keys))
-	for _, key := range req.Keys {
-		pub, err := solana.PublicKeyFromBase58(strings.TrimSpace(key.Pubkey))
-		if err != nil {
-			return "", "", nil, policy, err
-		}
-		accounts = append(accounts, &solana.AccountMeta{
-			PublicKey:  pub,
-			IsSigner:   key.IsSigner,
-			IsWritable: key.IsWritable,
-		})
 	}
 	client := rpc.New(strings.TrimSpace(rpcURL))
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -2250,9 +2391,100 @@ func solanaSendInstructionAndConfirm(rpcURL, keystorePath string, req solanaInst
 	if err != nil {
 		return "", "", nil, policy, err
 	}
-	ix := solana.NewInstruction(programID, accounts, data)
 	tx, err := solana.NewTransaction(
 		[]solana.Instruction{ix},
+		bh.Value.Blockhash,
+		solana.TransactionPayer(fromPub),
+	)
+	if err != nil {
+		return "", "", nil, policy, err
+	}
+	_, err = tx.Sign(func(key solana.PublicKey) *solana.PrivateKey {
+		if key.Equals(fromPub) {
+			k := priv
+			return &k
+		}
+		return nil
+	})
+	if err != nil {
+		return "", "", nil, policy, err
+	}
+	sig, err := client.SendTransactionWithOpts(ctx, tx, rpc.TransactionOpts{
+		SkipPreflight:       false,
+		PreflightCommitment: rpc.CommitmentConfirmed,
+	})
+	if err != nil {
+		return "", "", nil, policy, err
+	}
+	confirmCtx, confirmCancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer confirmCancel()
+	tick := time.NewTicker(1500 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case <-confirmCtx.Done():
+			return sig.String(), fromPub.String(), usageAmount, policy, fmt.Errorf("solana confirm timeout for %s", sig.String())
+		case <-tick.C:
+			st, err := client.GetSignatureStatuses(confirmCtx, true, sig)
+			if err != nil {
+				continue
+			}
+			if st == nil || st.Value == nil || len(st.Value) == 0 || st.Value[0] == nil {
+				continue
+			}
+			if st.Value[0].Err != nil {
+				return sig.String(), fromPub.String(), usageAmount, policy, fmt.Errorf("solana tx failed: %v", st.Value[0].Err)
+			}
+			if st.Value[0].ConfirmationStatus == rpc.ConfirmationStatusConfirmed ||
+				st.Value[0].ConfirmationStatus == rpc.ConfirmationStatusFinalized {
+				return sig.String(), fromPub.String(), usageAmount, policy, nil
+			}
+		}
+	}
+}
+
+func solanaSendInstructionsAndConfirm(rpcURL, keystorePath string, requests []solanaInstructionRequest, cfg signerConfig) (string, string, *big.Int, resolvedSignerPolicy, error) {
+	if len(requests) == 0 {
+		return "", "", nil, resolvedSignerPolicy{}, errors.New("invalid solana instruction batch")
+	}
+	usageAmount := big.NewInt(0)
+	for _, req := range requests {
+		if amount := extractSolanaInstructionAmount(req); amount != nil {
+			usageAmount = new(big.Int).Add(usageAmount, amount)
+		}
+	}
+	if usageAmount.Sign() == 0 {
+		usageAmount = nil
+	}
+	policy, err := validateSignerPolicyForProgramBatchSend(cfg, requests[0].WalletID, requests, usageAmount)
+	if err != nil {
+		return "", "", nil, policy, err
+	}
+	priv, expectedPub, err := loadSolanaPrivateKeyFromEnvelope(keystorePath, requests[0].WalletID)
+	if err != nil {
+		return "", "", nil, policy, err
+	}
+	fromPub := priv.PublicKey()
+	if expectedPub != "" && fromPub.String() != expectedPub {
+		return "", "", nil, policy, errors.New("solana envelope public key mismatch")
+	}
+	instructions := make([]solana.Instruction, 0, len(requests))
+	for _, req := range requests {
+		ix, err := buildSolanaInstruction(req)
+		if err != nil {
+			return "", "", nil, policy, err
+		}
+		instructions = append(instructions, ix)
+	}
+	client := rpc.New(strings.TrimSpace(rpcURL))
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	bh, err := client.GetLatestBlockhash(ctx, rpc.CommitmentFinalized)
+	if err != nil {
+		return "", "", nil, policy, err
+	}
+	tx, err := solana.NewTransaction(
+		instructions,
 		bh.Value.Blockhash,
 		solana.TransactionPayer(fromPub),
 	)
@@ -2545,6 +2777,50 @@ func handleHybridNative(req request, raw map[string]any, cfg signerConfig) ([]by
 			"metadata": map[string]any{
 				"mode": "native",
 				"type": "program-instruction",
+			},
+		}
+		b, _ := json.Marshal(map[string]any{"ok": true, "result": res})
+		return b, nil
+	case "sendSolanaInstructions":
+		if err := cfg.ensureChainAllowed("solana"); err != nil {
+			return nil, err
+		}
+		var batchReq solanaInstructionsRequest
+		if err := json.Unmarshal(req.Request, &batchReq); err != nil {
+			return nil, errors.New("invalid signer request")
+		}
+		instructions, err := normalizeSolanaInstructionBatch(batchReq)
+		if err != nil {
+			return nil, err
+		}
+		usageAmount, err := validateCustodyScopeForSolanaInstructions(instructions)
+		custodyActiveForWallet := custodySplitKeyActiveForWallet(instructions[0].WalletID)
+		if custodyActiveForWallet && err != nil {
+			return nil, err
+		}
+		txHash, signer, policyUsageAmount, signerPolicy, err := solanaSendInstructionsAndConfirm(
+			cfg.rpcURLForWallet("solana", instructions[0].WalletID),
+			cfg.keystorePathForWallet("solana", instructions[0].WalletID),
+			instructions,
+			cfg,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if custodyActiveForWallet {
+			recordCustodyUsage(instructions[0].WalletID, "solana", usageAmount)
+		}
+		recordSignerPolicyUsage(signerPolicy, "solana", policyUsageAmount)
+		res := map[string]any{
+			"ok":     true,
+			"chain":  "solana",
+			"txHash": txHash,
+			"signer": signer,
+			"metadata": map[string]any{
+				"mode":             "native",
+				"type":             "program-instruction-batch",
+				"purpose":          satCleanupPurpose,
+				"instructionCount": len(instructions),
 			},
 		}
 		b, _ := json.Marshal(map[string]any{"ok": true, "result": res})

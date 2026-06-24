@@ -80,6 +80,18 @@ describe("SAT CLI actions", () => {
       "42",
       "--cleanup-max-cycles",
       "2",
+      "--cleanup-budget-ms",
+      "12000",
+      "--cleanup-max-transactions",
+      "3",
+      "--cleanup-batch-mode",
+      "auto",
+      "--cleanup-max-batch-instructions",
+      "4",
+      "--cleanup-scan-mode",
+      "scan",
+      "--status-mode",
+      "none",
       "--json",
     ]);
 
@@ -91,6 +103,12 @@ describe("SAT CLI actions", () => {
         minSolLamports: "5000",
         minSatRaw: "42",
         cleanupMaxCycles: "2",
+        cleanupBudgetMs: "12000",
+        cleanupMaxTransactions: "3",
+        cleanupBatchMode: "auto",
+        cleanupMaxBatchInstructions: "4",
+        cleanupScanMode: "scan",
+        statusMode: "none",
       },
       undefined,
     );
@@ -112,6 +130,22 @@ describe("SAT CLI actions", () => {
     expect(runtimeErrors[0]).toContain(
       "Use either --target-reserve-sol or --target-reserve-lamports",
     );
+  });
+
+  it("rejects unknown maintenance modes", async () => {
+    await runCli(["sat", "maintain", "--cleanup-scan-mode", "global"]);
+    expect(callGatewayFromCli).not.toHaveBeenCalled();
+    expect(runtimeErrors[0]).toContain("--cleanup-scan-mode must be recent, scan, or auto");
+
+    resetRuntimeCapture();
+    await runCli(["sat", "maintain", "--status-mode", "large"]);
+    expect(callGatewayFromCli).not.toHaveBeenCalled();
+    expect(runtimeErrors[0]).toContain("--status-mode must be compact, ui, debug, or none");
+
+    resetRuntimeCapture();
+    await runCli(["sat", "maintain", "--cleanup-batch-mode", "always"]);
+    expect(callGatewayFromCli).not.toHaveBeenCalled();
+    expect(runtimeErrors[0]).toContain("--cleanup-batch-mode must be off or auto");
   });
 
   it("runs a bounded maintenance loop with lock, jitter disabled, and JSONL records", async () => {

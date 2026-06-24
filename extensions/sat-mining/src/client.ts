@@ -1,7 +1,6 @@
 import type { SatMiningConfig } from "./config.js";
 
 export const SAT_GATEWAY_METHODS = {
-  initMinerSlots: "sat.initMinerSlots",
   initMinerCapital: "sat.initMinerCapital",
   depositMinerCapital: "sat.depositMinerCapital",
   withdrawMinerCapital: "sat.withdrawMinerCapital",
@@ -44,13 +43,6 @@ export class SatMiningClient {
   buildOpenCycleRequest(params: { cycleId: number }) {
     return {
       method: SAT_GATEWAY_METHODS.openCycle,
-      params,
-    };
-  }
-
-  buildInitMinerSlotsRequest(params: { authority: string }) {
-    return {
-      method: SAT_GATEWAY_METHODS.initMinerSlots,
       params,
     };
   }

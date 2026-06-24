@@ -67,6 +67,7 @@ vi.mock("./src/rpc-read.js", async () => {
 import {
   submitSatInitBondTierPolicy,
   submitSatCancelBondUnlock,
+  submitSatCloseResolvedCleanupBatch,
   submitSatCloseResolvedCycleArtifacts,
   submitSatCloseResolvedCycleRegistryPage,
   submitSatCloseResolvedMinerCycleState,
@@ -121,7 +122,7 @@ describe("submitSatCycle", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.FASED_SAT_PROGRAM_ID = SAT_PROGRAM_ID_TEXT;
-    delete process.env.FASED_SAT_BOND_PROGRAM_ID;
+    process.env.FASED_SAT_BOND_PROGRAM_ID = SAT_BOND_PROGRAM_ID_TEXT;
     process.env.FASED_SAT_MINT_ADDRESS = SAT_MINT_ADDRESS_TEXT;
     process.env.FASED_SAT_MINT_PROGRAM_ID = SAT_MINT_PROGRAM_ID_TEXT;
     readWalletProviderRegistry.mockImplementation(() => ({
@@ -222,11 +223,6 @@ describe("submitSatCycle", () => {
       },
       {
         pubkey: findPda(Buffer.from("sat_treasury_vault")),
-        isSigner: false,
-        isWritable: true,
-      },
-      {
-        pubkey: findPda(Buffer.from("sat_staking_vault")),
         isSigner: false,
         isWritable: true,
       },
@@ -827,6 +823,35 @@ describe("submitSatCycle", () => {
         isWritable: true,
       },
     ]);
+  });
+
+  it("submits cleanup close instructions as one sat-cleanup batch", async () => {
+    callLocalSocketSigner
+      .mockResolvedValueOnce({ solana: SIGNER.toBase58() })
+      .mockResolvedValueOnce({
+        txHash: "tx-cleanup-batch",
+        signer: SIGNER.toBase58(),
+        metadata: { instructionCount: 2 },
+      });
+    const cycleId = 9_859_162;
+    const authority = "4wxmFJm7xBkqLk7K3qn2gGw8v6SnM8j4rJz7s2p9dJQY";
+
+    await submitSatCloseResolvedCleanupBatch({} as never, [
+      { kind: "minerCycleState", cycleId, authority },
+      { kind: "cycleRegistryPage", cycleId, pageIndex: 1 },
+    ]);
+
+    expect(callLocalSocketSigner).toHaveBeenCalledTimes(2);
+    const request = callLocalSocketSigner.mock.calls[1]?.[1];
+    expect(request?.op).toBe("sendSolanaInstructions");
+    expect(request?.request?.purpose).toBe("sat-cleanup");
+    expect(request?.request?.instructions).toHaveLength(2);
+    expect(request?.request?.instructions?.[0]?.dataBase64).toBe(
+      Buffer.concat([Buffer.from([69]), encodeU64(cycleId)]).toString("base64"),
+    );
+    expect(request?.request?.instructions?.[1]?.dataBase64).toBe(
+      Buffer.concat([Buffer.from([70]), encodeU64(cycleId), encodeU64(1)]).toString("base64"),
+    );
   });
 
   it("uses the upgraded score/distribute progress PDA", async () => {

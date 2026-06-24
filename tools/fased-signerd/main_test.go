@@ -118,6 +118,50 @@ func TestMustValidateRejectsDisallowedSolanaInstruction(t *testing.T) {
 	}
 }
 
+func TestMustValidateAcceptsSatCleanupSolanaInstructionBatch(t *testing.T) {
+	cfg := signerConfig{chains: []string{"solana"}}
+
+	req := request{
+		Op: "sendSolanaInstructions",
+		Request: []byte(`{
+			"walletId":"mining",
+			"purpose":"sat-cleanup",
+			"instructions":[{
+				"programId":"11111111111111111111111111111111",
+				"dataBase64":"RQAAAAAAAAAA",
+				"keys":[{"pubkey":"11111111111111111111111111111111","isSigner":false,"isWritable":false}]
+			},{
+				"programId":"11111111111111111111111111111111",
+				"dataBase64":"RgAAAAAAAAAA",
+				"keys":[{"pubkey":"11111111111111111111111111111111","isSigner":false,"isWritable":false}]
+			}]
+		}`),
+	}
+	if err := mustValidate(req, cfg); err != nil {
+		t.Fatalf("expected cleanup batch to validate, got %v", err)
+	}
+}
+
+func TestMustValidateRejectsNonCleanupSolanaInstructionBatch(t *testing.T) {
+	cfg := signerConfig{chains: []string{"solana"}}
+
+	req := request{
+		Op: "sendSolanaInstructions",
+		Request: []byte(`{
+			"walletId":"mining",
+			"purpose":"sat-cleanup",
+			"instructions":[{
+				"programId":"11111111111111111111111111111111",
+				"dataBase64":"AQAAAAAAAAAA",
+				"keys":[{"pubkey":"11111111111111111111111111111111","isSigner":false,"isWritable":false}]
+			}]
+		}`),
+	}
+	if err := mustValidate(req, cfg); err == nil || !strings.Contains(err.Error(), "SAT cleanup") {
+		t.Fatalf("expected non-cleanup batch error, got %v", err)
+	}
+}
+
 func TestReadRequestLineRejectsOversizedPayload(t *testing.T) {
 	reader := bufio.NewReader(strings.NewReader(strings.Repeat("a", 32) + "\n"))
 	if _, err := readRequestLine(reader, 16); err != errRequestTooLarge {

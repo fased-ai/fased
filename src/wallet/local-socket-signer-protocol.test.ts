@@ -36,6 +36,45 @@ describe("local socket signer protocol", () => {
     ).toBe(true);
   });
 
+  it("accepts sat cleanup sendSolanaInstructions requests", () => {
+    const parsed = parseLocalSocketSignerRequest({
+      op: "sendSolanaInstructions",
+      request: {
+        walletId: "wallet-a",
+        purpose: "sat-cleanup",
+        instructions: [
+          {
+            programId: "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75",
+            dataBase64: Buffer.from([69, 1, 0, 0, 0, 0, 0, 0, 0]).toString("base64"),
+            keys: [
+              {
+                pubkey: "11111111111111111111111111111111",
+                isSigner: true,
+                isWritable: true,
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(parsed.op).toBe("sendSolanaInstructions");
+  });
+
+  it("validates sendSolanaInstructions results", () => {
+    expect(
+      validateLocalSocketSignerResult("sendSolanaInstructions", {
+        ok: true,
+        chain: "solana",
+        txHash: "sig-batch-123",
+        signer: "miner-wallet-1",
+        metadata: {
+          instructionCount: 2,
+        },
+      }),
+    ).toBe(true);
+  });
+
   it("accepts custody unlock requests", () => {
     const parsed = parseLocalSocketSignerRequest({
       op: "unlockCustody",

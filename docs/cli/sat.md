@@ -24,6 +24,9 @@ Run one SAT protocol maintenance pass through the gateway.
 fased sat maintain --json
 fased sat maintain --target-reserve-sol 1 --json
 fased sat maintain --min-sol 0.01 --min-sat-raw 100000000000
+fased sat maintain --cleanup-max-cycles 3 --cleanup-budget-ms 20000 --cleanup-max-transactions 2
+fased sat maintain --cleanup-batch-mode auto --cleanup-max-batch-instructions 4 --json
+fased sat maintain --status-mode compact --cleanup-scan-mode recent --json
 ```
 
 Loop mode is available for operators who want a local periodic runner:
@@ -42,6 +45,12 @@ fased sat maintain \
 - `--min-sol <amount>` or `--min-sol-lamports <amount>`
 - `--min-sat-raw <amount>`
 - `--cleanup-max-cycles <count>`
+- `--cleanup-budget-ms <ms>`
+- `--cleanup-max-transactions <count>`
+- `--cleanup-batch-mode <mode>`: `off` or `auto`
+- `--cleanup-max-batch-instructions <count>`
+- `--cleanup-scan-mode <mode>`: `recent`, `scan`, or `auto`
+- `--status-mode <mode>`: `compact`, `ui`, `debug`, or `none`
 - `--loop`
 - `--interval-seconds <seconds>`
 - `--jitter-seconds <seconds>`
@@ -61,6 +70,18 @@ The command also accepts the standard gateway RPC flags such as `--url`,
 - It does not change the SAT cap or create discretionary rewards.
 - It should run with a dedicated operator environment, logs, and RPC health
   checks.
+- Cleanup is incremental. If old resolved cycle accounts are numerous, a pass can
+  submit a small number of cleanup transactions and return `deferred` so the
+  next loop pass continues without holding the gateway request open.
+- Maintainer responses are compact by default. Use `--status-mode debug` only
+  when you need the full dashboard/debug status payload in the CLI response.
+- Cleanup discovery uses `recent` mode by default, which starts from cycle
+  candidates already observed by this runtime. Use `--cleanup-scan-mode scan`
+  only for explicit backfill/debug runs because broad program-account scans get
+  slower as public account history grows.
+- Cleanup batching is opt-in with `--cleanup-batch-mode auto`. It batches only
+  SAT cleanup close instructions and falls back to single cleanup transactions
+  when an older local signer does not support the batch operation.
 
 Related:
 

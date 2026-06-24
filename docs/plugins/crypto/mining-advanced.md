@@ -328,9 +328,8 @@ Claim does two things:
 - mints earned Satcoin into the miner token account
 - accounts SOL rebate back into miner capital
 
-This claim policy is miner-side. Protocol treasury and staking recipient lanes
-use separate maintenance instructions and are outside the Mining page claim
-flow.
+This claim policy is miner-side. Protocol treasury and SAT distributor lanes use
+separate maintenance instructions and are outside the Mining page claim flow.
 
 Claim does not unlock committed capital. Distribute unlocks committed capital
 first; claim then collects Satcoin and rebate after the cycle is settled.

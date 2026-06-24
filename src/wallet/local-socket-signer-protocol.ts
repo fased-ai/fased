@@ -41,6 +41,15 @@ const SolanaInstructionRequestSchema = Type.Object(
   { additionalProperties: false },
 );
 
+const SolanaInstructionsRequestSchema = Type.Object(
+  {
+    walletId: Type.Optional(Type.String()),
+    purpose: Type.Literal("sat-cleanup"),
+    instructions: Type.Array(SolanaInstructionRequestSchema, { minItems: 1, maxItems: 6 }),
+  },
+  { additionalProperties: false },
+);
+
 const LocalSocketSignerCustodyUnlockRequestSchema = Type.Object(
   {
     sessionId: Type.String(),
@@ -97,6 +106,10 @@ export const LocalSocketSignerRequestSchema = Type.Union(
     ),
     Type.Object(
       { op: Type.Literal("sendSolanaInstruction"), request: SolanaInstructionRequestSchema },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      { op: Type.Literal("sendSolanaInstructions"), request: SolanaInstructionsRequestSchema },
       { additionalProperties: false },
     ),
     Type.Object(
@@ -192,6 +205,8 @@ export const LocalSocketSignerSignResultSchema = Type.Object(
 );
 
 export const LocalSocketSignerSendSolanaInstructionResultSchema = LocalSocketSignerSendResultSchema;
+export const LocalSocketSignerSendSolanaInstructionsResultSchema =
+  LocalSocketSignerSendResultSchema;
 
 export const LocalSocketSignerCustodyStatusResultSchema = Type.Object(
   {
@@ -254,6 +269,8 @@ export function validateLocalSocketSignerResult(
       return Value.Check(LocalSocketSignerSignResultSchema, result);
     case "sendSolanaInstruction":
       return Value.Check(LocalSocketSignerSendSolanaInstructionResultSchema, result);
+    case "sendSolanaInstructions":
+      return Value.Check(LocalSocketSignerSendSolanaInstructionsResultSchema, result);
     case "custodyStatus":
       return Value.Check(LocalSocketSignerCustodyStatusResultSchema, result);
     case "unlockCustody":

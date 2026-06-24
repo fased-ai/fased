@@ -119,19 +119,19 @@ public mining history, and future operator roles.
     improve.
   </Accordion>
   <Accordion title="Staking bond">
-    Eligibility state for active operator bonds when SAT staking distribution is
-    enabled. Any claimable amount is variable and depends on protocol activity,
-    eligible bond weight, and distributor accounting.
+    Eligibility state for active operator bonds when SAT distributor rewards
+    are enabled. Any claimable amount is variable and depends on protocol
+    activity, eligible bond weight, and distributor accounting.
   </Accordion>
   <Accordion title="Staking distributor">
-    Program-owned accounting layer that tracks the staking SAT lane and assigns
-    claimable amounts across eligible active staking bonds by proportional bond
+    Program-owned accounting layer that tracks the SAT distributor lane and
+    assigns claimable amounts across eligible active bonds by proportional bond
     weight.
   </Accordion>
   <Accordion title="Pending pool">
     SAT currently visible in the distributor before eligible positions sync or claim. It is pool state, not a personal balance.
   </Accordion>
-  <Accordion title="Claimable staking SAT">
+  <Accordion title="Claimable distributor SAT">
     The amount synced to one bond position and available to claim into the selected Vault wallet.
   </Accordion>
   <Accordion title="Staking claim">

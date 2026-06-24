@@ -4955,7 +4955,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
                 async () => await submitSatClaimBondStakingRewards(bondCfg as never),
               );
             } else {
-              proofWarning = "No claimable staking SAT after sync.";
+              proofWarning = "No claimable distributor SAT after sync.";
             }
             invalidateFederationBondReadCaches();
             liveBond = await readBond();

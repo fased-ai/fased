@@ -11,11 +11,13 @@ import {
 } from "./src/audit-store.js";
 
 const SAT_PROGRAM_ID = "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75";
+const SAT_BOND_PROGRAM_ID = "8RYKuGb2k8hBcGX34QdYJXdXZkNvD3fKy85s63Pph2j7";
 const SAT_MINT_ADDRESS = "2AhikHhzJdv6uve1yUBSUmhRKWaSfa7exrsDsfKjVFKa";
 const SAT_MINT_PROGRAM_ID = "8fb3Mpowe4pD6ed89gwm6gLuh8csPSrLi3hypcesqs5C";
 
 beforeEach(() => {
   process.env.FASED_SAT_PROGRAM_ID = SAT_PROGRAM_ID;
+  process.env.FASED_SAT_BOND_PROGRAM_ID = SAT_BOND_PROGRAM_ID;
   process.env.FASED_SAT_MINT_ADDRESS = SAT_MINT_ADDRESS;
   process.env.FASED_SAT_MINT_PROGRAM_ID = SAT_MINT_PROGRAM_ID;
 });
@@ -115,7 +117,6 @@ vi.mock("../../src/wallet/providers/local-socket-signer-adapter.js", async (impo
 });
 
 vi.mock("./src/solana-submit.js", () => ({
-  submitSatInitMinerSlots: vi.fn(async () => ({ ok: true, txHash: "tx-init-miner-slots" })),
   submitSatInitMinerCapital: vi.fn(async () => ({ ok: true, txHash: "tx-init-miner-capital" })),
   submitSatDepositMinerCapital: vi.fn(async () => ({
     ok: true,
@@ -1828,104 +1829,6 @@ describe("sat-mining plugin config persistence", () => {
     );
   });
 
-  it("fails startMining when initMinerSlots rejects", async () => {
-    const solanaSubmit = await import("./src/solana-submit.js");
-    const initMinerSlotsMock = vi.mocked(solanaSubmit.submitSatInitMinerSlots);
-    initMinerSlotsMock.mockRejectedValueOnce(
-      new Error(
-        "Transaction simulation failed: Error processing Instruction 0: insufficient account keys for instruction",
-      ),
-    );
-
-    const { default: satMiningPlugin } = await import("./index.js");
-    const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
-    const services: Array<{
-      id: string;
-      start?: (ctx?: unknown) => Promise<void>;
-      stop?: (ctx?: unknown) => Promise<void>;
-    }> = [];
-    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
-    const configState = {
-      plugins: {
-        entries: {
-          "sat-mining": {
-            enabled: true,
-            config: {
-              enabled: false,
-              network: "devnet",
-              riskMode: "balanced",
-              walletId: "wallet-a",
-            },
-          },
-        },
-      },
-    };
-
-    satMiningPlugin.register({
-      id: "sat-mining",
-      name: "SAT Mining",
-      source: "test",
-      config: {} as never,
-      pluginConfig: {
-        enabled: true,
-        network: "devnet",
-        riskMode: "balanced",
-        walletId: "wallet-a",
-      },
-      runtime: {
-        version: "test",
-        config: {
-          loadConfig: vi.fn(() => structuredClone(configState)),
-          writeConfigFile: vi.fn(async (next) => {
-            Object.assign(configState, next);
-          }),
-        },
-      },
-      logger,
-      registerTool: vi.fn(),
-      registerHook: vi.fn(),
-      registerHttpHandler: vi.fn(),
-      registerHttpRoute: vi.fn(),
-      registerChannel: vi.fn(),
-      registerGatewayMethod: vi.fn((name: string, handler: RegisteredGatewayMethod["handler"]) => {
-        gatewayMethods.set(name, { handler });
-      }),
-      registerCli: vi.fn(),
-      registerService: vi.fn((service) => {
-        services.push(service);
-      }),
-      registerProvider: vi.fn(),
-      registerCommand: vi.fn(),
-      resolvePath: vi.fn((input: string) => input),
-      on: vi.fn(),
-    } as never);
-
-    const mainService = services.find((service) => service.id === "sat-mining");
-    await mainService?.start?.({
-      config: {},
-      stateDir: "/tmp",
-      logger,
-    });
-
-    let response: { ok: boolean; payload: unknown; error?: unknown } | null = null;
-    await gatewayMethods.get("sat.startMining")!.handler({
-      respond: (ok, payload, error) => {
-        response = { ok, payload, error };
-      },
-    });
-
-    expect(response).toMatchObject({
-      ok: false,
-      payload: undefined,
-      error: {
-        code: "UNAVAILABLE",
-        message:
-          "Transaction simulation failed: Error processing Instruction 0: insufficient account keys for instruction",
-      },
-    });
-    expect(logger.warn).not.toHaveBeenCalled();
-  });
-
   it("returns a fresh non-clearing status when startMining resumes from drain mode", async () => {
     const { default: satMiningPlugin } = await import("./index.js");
     const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
@@ -3240,6 +3143,7 @@ describe("sat-mining plugin config persistence", () => {
 
       let response: { ok: boolean; payload: unknown } | null = null;
       await gatewayMethods.get("sat.getMiningStatus")!.handler({
+        params: { forceFresh: true, includeTxReceipts: true },
         respond: (ok, payload) => {
           response = { ok, payload };
         },

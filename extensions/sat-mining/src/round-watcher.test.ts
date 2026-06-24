@@ -25,9 +25,8 @@ type CycleView = {
   currentUnlockSolLamports?: string;
   currentUnlockSatRaw?: string;
   pendingTreasurySatRaw?: string;
-  pendingStakingSatRaw?: string;
+  pendingDistributorSatRaw?: string;
   pendingTreasurySolLamports?: string;
-  stakingSolLamports?: string;
   issuedCycleMinerSatRaw?: string;
   issuedCycleTreasurySatRaw?: string;
   unissuedCycleMinerSatRaw?: string;
@@ -1451,7 +1450,6 @@ describe("createSatRoundWatcherService", () => {
       deterministicRebatePoolLamports: "0",
       performanceRebatePoolLamports: "0",
       treasurySolLamports: "0",
-      stakingSolLamports: "0",
     });
     inspectSatCycleRegistryMeta.mockResolvedValueOnce({
       address: "meta",
@@ -1534,7 +1532,6 @@ describe("createSatRoundWatcherService", () => {
       deterministicRebatePoolLamports: "0",
       performanceRebatePoolLamports: "0",
       treasurySolLamports: "0",
-      stakingSolLamports: "0",
     });
     inspectSatCycleRegistryMeta.mockResolvedValueOnce({
       address: "meta",

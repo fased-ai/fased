@@ -215,7 +215,7 @@ export type SatGlobalStateView = {
   minimumEntryLamports: string;
   cycleErosionPpm: number;
   treasuryRecipient?: string;
-  stakingRecipient?: string;
+  distributorRecipient?: string;
 };
 
 export type SatCycleView = {
@@ -234,7 +234,6 @@ export type SatCycleView = {
   deterministicRebatePoolLamports: string;
   performanceRebatePoolLamports: string;
   treasurySolLamports: string;
-  stakingSolLamports: string;
   submittedSolErosionPoolLamports?: string;
   keeperBountyPaidLamports?: string;
 };
@@ -380,11 +379,9 @@ export type SatCycleSettlementProgressV2View = {
 
 export type SatTreasuryStateView = {
   address: string;
-  pendingStakingSatRaw: string;
+  pendingDistributorSatRaw: string;
   pendingTreasurySatRaw: string;
-  pendingStakingSolLamports: string;
   pendingTreasurySolLamports: string;
-  stakingSolRecipient?: string;
 };
 
 export type SatPayoutReadinessView = {
@@ -798,7 +795,7 @@ export function decodeSatGlobalState(data: Buffer, address: string): SatGlobalSt
     totalIssuedSatRaw: readU64String(body, 168),
     cycleErosionPpm: readU64Number(body, 184),
     treasuryRecipient: readPubkey(body, 192),
-    stakingRecipient: readPubkey(body, 224),
+    distributorRecipient: readPubkey(body, 224),
   };
 }
 
@@ -820,9 +817,8 @@ function decodeSatCycle(data: Buffer, address: string): SatCycleView {
     deterministicRebatePoolLamports: readU64String(body, 232),
     performanceRebatePoolLamports: readU64String(body, 240),
     treasurySolLamports: readU64String(body, 248),
-    stakingSolLamports: readU64String(body, 256),
-    submittedSolErosionPoolLamports: readU64String(body, 264),
-    keeperBountyPaidLamports: readU64String(body, 272),
+    submittedSolErosionPoolLamports: readU64String(body, 256),
+    keeperBountyPaidLamports: readU64String(body, 264),
   };
 }
 
@@ -1108,11 +1104,9 @@ function decodeSatTreasuryState(data: Buffer, address: string): SatTreasuryState
   );
   return {
     address,
-    pendingStakingSatRaw: readU64String(body, 0),
+    pendingDistributorSatRaw: readU64String(body, 0),
     pendingTreasurySatRaw: readU64String(body, 8),
-    pendingStakingSolLamports: readU64String(body, 16),
-    pendingTreasurySolLamports: readU64String(body, 24),
-    stakingSolRecipient: readPubkey(body, 32),
+    pendingTreasurySolLamports: readU64String(body, 16),
   };
 }
 

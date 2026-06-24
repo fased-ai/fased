@@ -160,6 +160,93 @@ describe("local-socket-signer-broker", () => {
     }
   });
 
+  it("forwards sat cleanup sendSolanaInstructions through the broker", async () => {
+    const dir = await createSocketDir("fased-broker-instruction-batch-");
+    const backendSocketPath = path.join(dir, "backend.sock");
+    const brokerSocketPath = path.join(dir, "broker.sock");
+    const calls: Array<{ op?: string; request?: { purpose?: string; instructions?: unknown[] } }> =
+      [];
+
+    const backend = net.createServer((socket) => {
+      socket.setEncoding("utf8");
+      let buf = "";
+      socket.on("data", (chunk: string) => {
+        buf += chunk;
+        const idx = buf.indexOf("\n");
+        if (idx < 0) {
+          return;
+        }
+        const msg = JSON.parse(buf.slice(0, idx)) as {
+          op?: string;
+          request?: { purpose?: string; instructions?: unknown[] };
+        };
+        calls.push(msg);
+        socket.end(
+          `${JSON.stringify({
+            ok: true,
+            result: {
+              ok: true,
+              chain: "solana",
+              txHash: "batch-signature",
+              signer: "So11111111111111111111111111111111111111112",
+              metadata: { instructionCount: 2 },
+            },
+          })}\n`,
+        );
+      });
+    });
+    await mkdir(path.dirname(backendSocketPath), { recursive: true });
+    await new Promise<void>((resolve) => backend.listen(backendSocketPath, resolve));
+    const broker = await startLocalSocketSignerBroker({
+      socketPath: brokerSocketPath,
+      backendSocketPath,
+      pidFile: `${brokerSocketPath}.pid`,
+      auditLog: `${brokerSocketPath}.audit.jsonl`,
+      readOnly: false,
+    });
+
+    try {
+      const result = await callLocalSocketSigner<{ txHash: string }>(brokerSocketPath, {
+        op: "sendSolanaInstructions",
+        request: {
+          purpose: "sat-cleanup",
+          instructions: [
+            {
+              programId: "11111111111111111111111111111111",
+              dataBase64: "RQ==",
+              keys: [
+                { pubkey: "11111111111111111111111111111111", isSigner: false, isWritable: false },
+              ],
+            },
+            {
+              programId: "11111111111111111111111111111111",
+              dataBase64: "Rg==",
+              keys: [
+                { pubkey: "11111111111111111111111111111111", isSigner: false, isWritable: false },
+              ],
+            },
+          ],
+        },
+      });
+      expect(result.txHash).toBe("batch-signature");
+      expect(calls).toEqual([
+        expect.objectContaining({
+          op: "sendSolanaInstructions",
+          request: expect.objectContaining({
+            purpose: "sat-cleanup",
+            instructions: expect.arrayContaining([
+              expect.objectContaining({ dataBase64: "RQ==" }),
+              expect.objectContaining({ dataBase64: "Rg==" }),
+            ]),
+          }),
+        }),
+      ]);
+    } finally {
+      await broker.close();
+      await new Promise<void>((resolve) => backend.close(() => resolve()));
+    }
+  });
+
   it("remains compatible with the local signer adapter used by gateway and mining", async () => {
     const dir = await createSocketDir("fased-broker-adapter-");
     const backendSocketPath = path.join(dir, "backend.sock");

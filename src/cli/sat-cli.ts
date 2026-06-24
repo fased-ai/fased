@@ -23,6 +23,13 @@ type SatGatewayOpts = GatewayRpcOpts & {
   jitterSeconds?: string;
   maxIterations?: string;
   cleanupMaxCycles?: string;
+  cleanupBudgetMs?: string;
+  cleanupMaxTransactions?: string;
+  cleanupBatchMode?: string;
+  cleanupMaxBatchInstructions?: string;
+  cleanupScanMode?: string;
+  statusMode?: string;
+  includeStatus?: string;
   logFile?: string;
   lockFile?: string;
   staleLockSeconds?: string;
@@ -78,6 +85,39 @@ function parseNonNegativeInteger(raw: string | undefined, label: string): string
   }
   if (!/^\d+$/.test(value)) {
     throw new Error(`${label} must be a non-negative integer string`);
+  }
+  return value;
+}
+
+function parseMaintenanceStatusMode(raw: string | undefined): string | undefined {
+  const value = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+  if (!value) {
+    return undefined;
+  }
+  if (!["compact", "ui", "debug", "none"].includes(value)) {
+    throw new Error("--status-mode must be compact, ui, debug, or none");
+  }
+  return value;
+}
+
+function parseMaintenanceCleanupScanMode(raw: string | undefined): string | undefined {
+  const value = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+  if (!value) {
+    return undefined;
+  }
+  if (!["recent", "scan", "auto"].includes(value)) {
+    throw new Error("--cleanup-scan-mode must be recent, scan, or auto");
+  }
+  return value;
+}
+
+function parseMaintenanceCleanupBatchMode(raw: string | undefined): string | undefined {
+  const value = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+  if (!value) {
+    return undefined;
+  }
+  if (!["off", "auto"].includes(value)) {
+    throw new Error("--cleanup-batch-mode must be off or auto");
   }
   return value;
 }
@@ -152,11 +192,29 @@ function buildMaintenanceParams(opts: SatGatewayOpts): Record<string, string> {
   });
   const minSatRaw = parseNonNegativeInteger(opts.minSatRaw, "--min-sat-raw");
   const cleanupMaxCycles = parseNonNegativeInteger(opts.cleanupMaxCycles, "--cleanup-max-cycles");
+  const cleanupBudgetMs = parseNonNegativeInteger(opts.cleanupBudgetMs, "--cleanup-budget-ms");
+  const cleanupMaxTransactions = parseNonNegativeInteger(
+    opts.cleanupMaxTransactions,
+    "--cleanup-max-transactions",
+  );
+  const cleanupMaxBatchInstructions = parseNonNegativeInteger(
+    opts.cleanupMaxBatchInstructions,
+    "--cleanup-max-batch-instructions",
+  );
+  const cleanupBatchMode = parseMaintenanceCleanupBatchMode(opts.cleanupBatchMode);
+  const cleanupScanMode = parseMaintenanceCleanupScanMode(opts.cleanupScanMode);
+  const statusMode = parseMaintenanceStatusMode(opts.statusMode);
   return {
     ...(targetBalanceLamports ? { targetBalanceLamports } : {}),
     ...(minSolLamports ? { minSolLamports } : {}),
     ...(minSatRaw ? { minSatRaw } : {}),
     ...(cleanupMaxCycles ? { cleanupMaxCycles } : {}),
+    ...(cleanupBudgetMs ? { cleanupBudgetMs } : {}),
+    ...(cleanupMaxTransactions ? { cleanupMaxTransactions } : {}),
+    ...(cleanupMaxBatchInstructions ? { cleanupMaxBatchInstructions } : {}),
+    ...(cleanupBatchMode ? { cleanupBatchMode } : {}),
+    ...(cleanupScanMode ? { cleanupScanMode } : {}),
+    ...(statusMode ? { statusMode } : {}),
   };
 }
 
@@ -285,6 +343,8 @@ function summarizeMaintenanceResult(result: unknown): unknown {
         currentCycleId?: unknown;
         running?: unknown;
         nextAction?: unknown;
+        lanes?: unknown;
+        cleanup?: unknown;
         updatedAt?: unknown;
       };
     };
@@ -300,6 +360,8 @@ function summarizeMaintenanceResult(result: unknown): unknown {
           currentCycleId: envelope.payload.status.currentCycleId,
           running: envelope.payload.status.running,
           nextAction: envelope.payload.status.nextAction,
+          lanes: envelope.payload.status.lanes,
+          cleanup: envelope.payload.status.cleanup,
           updatedAt: envelope.payload.status.updatedAt,
         }
       : undefined,
@@ -419,7 +481,7 @@ export function registerSatCli(program: Command) {
     sat
       .command("maintain")
       .description(
-        "Run one safe SAT protocol maintenance pass: reserve refill, fixed-recipient protocol claims, and staking feed",
+        "Run one safe SAT protocol maintenance pass: reserve refill, fixed-recipient protocol claims, and bounded cleanup",
       )
       .option("--target-reserve-sol <amount>", "Reserve target in SOL")
       .option("--target-reserve-lamports <amount>", "Reserve target in lamports")
@@ -445,6 +507,21 @@ export function registerSatCli(program: Command) {
         "--cleanup-max-cycles <count>",
         "Maximum settled cycles to cleanup per maintenance pass",
       )
+      .option(
+        "--cleanup-budget-ms <ms>",
+        "Cleanup time budget per maintenance pass; remaining cleanup is deferred",
+      )
+      .option(
+        "--cleanup-max-transactions <count>",
+        "Maximum cleanup transactions to submit per maintenance pass",
+      )
+      .option("--cleanup-batch-mode <mode>", "Cleanup batching mode: off or auto")
+      .option(
+        "--cleanup-max-batch-instructions <count>",
+        "Maximum cleanup close instructions per batch transaction",
+      )
+      .option("--cleanup-scan-mode <mode>", "Cleanup discovery mode: recent, scan, or auto")
+      .option("--status-mode <mode>", "Response status mode: compact, ui, debug, or none")
       .option("--log-file <path>", "Append JSONL audit records")
       .option("--lock-file <path>", "Local lock file for the loop")
       .option(

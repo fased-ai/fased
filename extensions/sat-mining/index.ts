@@ -98,6 +98,7 @@ import {
   inspectCurrentSatRoundBucket,
   inspectSatMinerCapitalAccountStatus,
   inspectSatMinerCycleByAddress,
+  inspectSatMinerCyclesByAddress,
   inspectSatCycleRegistryPage,
   inspectSatCycleSettlementProgressV2,
   inspectSatDispute,
@@ -131,21 +132,19 @@ import {
 } from "./src/service-read-timeout.js";
 import {
   submitSatBootstrap,
-  submitSatClaimProtocolStaking,
-  submitSatClaimProtocolStakingSat,
-  submitSatClaimProtocolStakingSol,
+  submitSatClaimProtocolDistributorSat,
   submitSatClaimProtocolTreasury,
   submitSatClaimCycleRewards,
   submitSatClaimCycleRewardsBatch,
   submitSatCompactPendingCycleRange,
   submitSatCloseResolvedCycleArtifacts,
+  submitSatCloseResolvedCleanupBatch,
   submitSatCloseResolvedCycleRegistryPage,
   submitSatCloseResolvedMinerCycleState,
   submitSatCycle,
   submitSatDepositMinerCapital,
   submitSatFinalizeCycleSettlement,
   submitSatInitMinerCapital,
-  submitSatInitMinerSlots,
   submitSatOpenCycle,
   submitSatOpenDispute,
   submitSatRepublishEpochRoots,
@@ -181,6 +180,18 @@ const SAT_STATUS_RESPONSIVE_TIMEOUT_MS = 5_000;
 const SAT_STATUS_RESPONSIVE_REFRESH_MIN_INTERVAL_MS = 20_000;
 const SAT_READINESS_PROBE_TIMEOUT_MS = 3_500;
 const SAT_PENDING_RANGE_COMPACT_CHUNK_CYCLES = 4;
+const SAT_MAINTENANCE_CLEANUP_DEFAULT_BUDGET_MS = 20_000;
+const SAT_MAINTENANCE_CLEANUP_MAX_BUDGET_MS = 120_000;
+const SAT_MAINTENANCE_CLEANUP_DEFAULT_MAX_TRANSACTIONS = 2;
+const SAT_MAINTENANCE_CLEANUP_MAX_TRANSACTIONS = 16;
+const SAT_MAINTENANCE_CLEANUP_DEFAULT_MAX_BATCH_INSTRUCTIONS = 4;
+const SAT_MAINTENANCE_CLEANUP_MAX_BATCH_INSTRUCTIONS = 6;
+const SAT_MAINTENANCE_RECENT_CLEANUP_CYCLE_LIMIT = 64;
+
+type SatMaintenanceLane = "reserve" | "treasury" | "distributor" | "cleanup" | "monitor";
+type SatMaintenanceStatusMode = "none" | "compact" | "ui" | "debug";
+type SatMaintenanceCleanupScanMode = "recent" | "scan" | "auto";
+type SatMaintenanceCleanupBatchMode = "off" | "auto";
 
 function readSatNonNegativeBigIntParam(params: unknown, key: string): bigint | undefined {
   const value = (params as Record<string, unknown> | null | undefined)?.[key];
@@ -204,6 +215,73 @@ function readSatSafeNonNegativeNumberParam(params: unknown, key: string): number
   }
   const maxSafe = BigInt(Number.MAX_SAFE_INTEGER);
   return Number(value > maxSafe ? maxSafe : value);
+}
+
+function readSatOptionalStringParam(params: unknown, key: string): string | undefined {
+  const value = (params as Record<string, unknown> | null | undefined)?.[key];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function readSatOptionalBooleanParam(params: unknown, key: string): boolean | undefined {
+  const value = (params as Record<string, unknown> | null | undefined)?.[key];
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number") {
+    return value === 1 ? true : value === 0 ? false : undefined;
+  }
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (["1", "true", "yes", "y", "on"].includes(normalized)) {
+    return true;
+  }
+  if (["0", "false", "no", "n", "off"].includes(normalized)) {
+    return false;
+  }
+  return undefined;
+}
+
+function normalizeSatMaintenanceStatusMode(
+  raw: string | undefined,
+): SatMaintenanceStatusMode | undefined {
+  switch (raw?.trim().toLowerCase()) {
+    case "none":
+    case "compact":
+    case "ui":
+    case "debug":
+      return raw.trim().toLowerCase() as SatMaintenanceStatusMode;
+    case "full":
+      return "debug";
+    default:
+      return undefined;
+  }
+}
+
+function normalizeSatMaintenanceCleanupScanMode(
+  raw: string | undefined,
+): SatMaintenanceCleanupScanMode | undefined {
+  switch (raw?.trim().toLowerCase()) {
+    case "recent":
+    case "scan":
+    case "auto":
+      return raw.trim().toLowerCase() as SatMaintenanceCleanupScanMode;
+    default:
+      return undefined;
+  }
+}
+
+function normalizeSatMaintenanceCleanupBatchMode(
+  raw: string | undefined,
+): SatMaintenanceCleanupBatchMode | undefined {
+  switch (raw?.trim().toLowerCase()) {
+    case "off":
+    case "auto":
+      return raw.trim().toLowerCase() as SatMaintenanceCleanupBatchMode;
+    default:
+      return undefined;
+  }
 }
 
 type SatMiningWalletSummary = {
@@ -1900,7 +1978,6 @@ const satMiningPlugin = {
       new Set([
         "startMining",
         "stopMining",
-        "initMinerSlots",
         "initMinerCapital",
         "depositMinerCapital",
         "withdrawMinerCapital",
@@ -5019,9 +5096,8 @@ const satMiningPlugin = {
         currentSatBalanceRaw,
         treasurySatBalanceRaw: payoutReadiness?.treasuryBalanceRaw,
         treasuryAtaAddress: payoutReadiness?.treasuryAta ?? null,
-        treasuryPendingStakingSatRaw: treasuryState?.pendingStakingSatRaw ?? null,
+        treasuryPendingDistributorSatRaw: treasuryState?.pendingDistributorSatRaw ?? null,
         treasuryPendingTreasurySatRaw: treasuryState?.pendingTreasurySatRaw ?? null,
-        treasuryPendingStakingSolLamports: treasuryState?.pendingStakingSolLamports ?? null,
         treasuryPendingTreasurySolLamports: treasuryState?.pendingTreasurySolLamports ?? null,
         registryReserveAddress: snapshot.registryReserve?.address ?? null,
         registryReserveLamports,
@@ -5685,6 +5761,61 @@ const satMiningPlugin = {
         );
       }
     };
+    const compactMiningStatusPayload = (status: unknown) => {
+      const source =
+        status && typeof status === "object" && !Array.isArray(status)
+          ? (status as Record<string, unknown>)
+          : {};
+      const claimBacklog =
+        source.claimBacklog && typeof source.claimBacklog === "object"
+          ? (source.claimBacklog as Record<string, unknown>)
+          : null;
+      return {
+        mode: "compact",
+        running: source.running,
+        statusFresh: source.statusFresh,
+        degraded: source.degraded,
+        drainOnly: source.drainOnly,
+        enabledWanted: source.enabledWanted,
+        walletId: source.walletId,
+        role: source.role,
+        network: source.network,
+        currentCycleId: source.currentCycleId,
+        nextAction: source.nextAction,
+        nextActionDetail: source.nextActionDetail,
+        blocked: source.blocked,
+        blockedReason: source.blockedReason,
+        lastAction: source.lastAction,
+        lastActionTxHash: source.lastActionTxHash,
+        lastFailure: source.lastFailure,
+        currentSolBalanceLamports: source.currentSolBalanceLamports,
+        currentSatBalanceRaw: source.currentSatBalanceRaw,
+        treasuryPendingDistributorSatRaw: source.treasuryPendingDistributorSatRaw,
+        treasuryPendingTreasurySatRaw: source.treasuryPendingTreasurySatRaw,
+        treasuryPendingTreasurySolLamports: source.treasuryPendingTreasurySolLamports,
+        registryReserveLamports: source.registryReserveLamports,
+        registryReserveTargetLamports: source.registryReserveTargetLamports,
+        registryReserveShortfallLamports: source.registryReserveShortfallLamports,
+        currentCapitalLockedLamports: source.currentCapitalLockedLamports,
+        currentCapitalFreeLamports: source.currentCapitalFreeLamports,
+        currentCapitalFirstPendingCycleId: source.currentCapitalFirstPendingCycleId,
+        currentCapitalLastPendingCycleId: source.currentCapitalLastPendingCycleId,
+        currentCapitalPendingCycleCount: source.currentCapitalPendingCycleCount,
+        claimBacklog: claimBacklog
+          ? {
+              total: claimBacklog.total,
+              pending: claimBacklog.pending,
+              ready: claimBacklog.ready,
+              failed: claimBacklog.failed,
+              claiming: claimBacklog.claiming,
+              oldestPendingCycleId: claimBacklog.oldestPendingCycleId,
+              oldestPendingAgeMs: claimBacklog.oldestPendingAgeMs,
+              maxRetryCount: claimBacklog.maxRetryCount,
+            }
+          : null,
+        updatedAt: source.updatedAt,
+      };
+    };
     const resolveMiningAuthorityOrThrow = async () => {
       const { wallet } = await ensureStartupWalletBinding({ requireResolvedWallet: true });
       const authority = wallet?.address?.trim();
@@ -5753,26 +5884,108 @@ const satMiningPlugin = {
       }
       return null;
     };
-    const closeResolvedExactCycleAccounts = async (cycleId: number) => {
+    const closeResolvedExactCycleAccounts = async (
+      cycleId: number,
+      limits?: {
+        deadlineAtMs?: number;
+        maxTransactions?: number;
+        partialOnLimit?: boolean;
+        batchMode?: SatMaintenanceCleanupBatchMode;
+        maxBatchInstructions?: number;
+      },
+    ) => {
       const authority = await resolveMiningAuthorityOrThrow();
       const [registryMeta, participantAddresses] = await Promise.all([
         satOps.inspectSatCycleRegistryMeta(state.activeConfig, { cycleId }).catch(() => null),
         listSatMinerCycleAddressesForCycle(state.activeConfig, { cycleId }).catch(() => []),
       ]);
       const results: Array<Record<string, unknown>> = [];
+      let cleanupDeferred: string | null = null;
+      const pageCount = Number(registryMeta?.pageCount ?? 0);
+      const cleanupBatchMode = limits?.batchMode ?? "off";
+      const cleanupMaxBatchInstructions = Math.max(
+        1,
+        Math.min(
+          SAT_MAINTENANCE_CLEANUP_MAX_BATCH_INSTRUCTIONS,
+          Math.floor(
+            limits?.maxBatchInstructions ?? SAT_MAINTENANCE_CLEANUP_DEFAULT_MAX_BATCH_INSTRUCTIONS,
+          ),
+        ),
+      );
+      const useCleanupBatching = cleanupBatchMode === "auto" && cleanupMaxBatchInstructions > 1;
+      const submittedTxCount = () =>
+        results.filter((entry) => typeof entry.txHash === "string" && entry.txHash.trim()).length;
+      const shouldFallbackFromBatchError = (error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        return (
+          message.includes("sendSolanaInstructions") ||
+          message.includes("unsupported hybrid native op") ||
+          message.includes("unsupported op") ||
+          message.includes("operation sendSolanaInstructions is not allowed through broker") ||
+          message.includes("invalid signer request")
+        );
+      };
+      const cleanupLimitReason = () => {
+        if (
+          typeof limits?.maxTransactions === "number" &&
+          Number.isFinite(limits.maxTransactions) &&
+          submittedTxCount() >= Math.max(0, Math.floor(limits.maxTransactions))
+        ) {
+          return "transaction-budget-reached";
+        }
+        if (
+          typeof limits?.deadlineAtMs === "number" &&
+          Number.isFinite(limits.deadlineAtMs) &&
+          Date.now() >= limits.deadlineAtMs
+        ) {
+          return "time-budget-reached";
+        }
+        return null;
+      };
+      const buildResult = (params: {
+        fullyClosed: boolean;
+        remainingParticipantCount: number;
+      }) => ({
+        authority,
+        cycleId,
+        pageCount,
+        participantCount: participantAddresses.length,
+        remainingParticipantCount: params.remainingParticipantCount,
+        fullyClosed: params.fullyClosed,
+        results,
+        ...(cleanupDeferred ? { cleanupDeferred } : {}),
+      });
+      const maybeReturnPartial = () => {
+        const reason = cleanupLimitReason();
+        if (!reason) {
+          return null;
+        }
+        cleanupDeferred = reason;
+        return limits?.partialOnLimit
+          ? buildResult({
+              fullyClosed: false,
+              remainingParticipantCount: participantAddresses.length,
+            })
+          : null;
+      };
       const resolvedAuthorities = new Set<string>();
       const candidateAuthorities = new Set<string>();
-      for (const address of participantAddresses) {
-        const minerCycle = await inspectSatMinerCycleByAddress(state.activeConfig, {
-          address,
-        }).catch(() => null);
+      const minerCyclesByAddress = await inspectSatMinerCyclesByAddress(state.activeConfig, {
+        addresses: participantAddresses,
+      }).catch(() => []);
+      for (const minerCycle of minerCyclesByAddress) {
         const participantAuthority = String(minerCycle?.authority ?? "").trim();
         if (participantAuthority) {
           candidateAuthorities.add(participantAuthority);
         }
       }
       candidateAuthorities.add(authority);
+      const resolvedAuthorityList: string[] = [];
       for (const participantAuthority of candidateAuthorities) {
+        const partial = maybeReturnPartial();
+        if (partial) {
+          return partial;
+        }
         if (resolvedAuthorities.has(participantAuthority)) {
           continue;
         }
@@ -5786,6 +5999,9 @@ const satMiningPlugin = {
           continue;
         }
         resolvedAuthorities.add(participantAuthority);
+        resolvedAuthorityList.push(participantAuthority);
+      }
+      const submitSingleMinerClose = async (participantAuthority: string) => {
         const submitted = await submitSatCloseResolvedMinerCycleState(state.activeConfig, {
           cycleId,
           authority: participantAuthority,
@@ -5795,9 +6011,56 @@ const satMiningPlugin = {
           authority: participantAuthority,
           txHash: submitted.txHash,
         });
+      };
+      for (let index = 0; index < resolvedAuthorityList.length; ) {
+        const partial = maybeReturnPartial();
+        if (partial) {
+          return partial;
+        }
+        const batch = resolvedAuthorityList.slice(index, index + cleanupMaxBatchInstructions);
+        if (useCleanupBatching && batch.length > 1) {
+          try {
+            const submitted = await submitSatCloseResolvedCleanupBatch(
+              state.activeConfig,
+              batch.map((participantAuthority) => ({
+                kind: "minerCycleState" as const,
+                cycleId,
+                authority: participantAuthority,
+              })),
+            );
+            results.push({
+              step: "closeResolvedMinerCycleStateBatch",
+              authorities: batch,
+              txHash: submitted.txHash,
+              instructionCount: submitted.instructionCount,
+            });
+          } catch (error) {
+            if (!shouldFallbackFromBatchError(error)) {
+              throw error;
+            }
+            for (const participantAuthority of batch) {
+              const nestedPartial = maybeReturnPartial();
+              if (nestedPartial) {
+                return nestedPartial;
+              }
+              await submitSingleMinerClose(participantAuthority);
+            }
+          }
+        } else {
+          await submitSingleMinerClose(batch[0] ?? "");
+        }
+        index += batch.length;
+        const postSubmitPartial = maybeReturnPartial();
+        if (postSubmitPartial) {
+          return postSubmitPartial;
+        }
       }
-      const pageCount = Number(registryMeta?.pageCount ?? 0);
+      const closablePageIndexes: number[] = [];
       for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
+        const partial = maybeReturnPartial();
+        if (partial) {
+          return partial;
+        }
         const page = await inspectSatCycleRegistryPage(state.activeConfig, {
           cycleId,
           pageIndex,
@@ -5805,6 +6068,9 @@ const satMiningPlugin = {
         if (!page) {
           continue;
         }
+        closablePageIndexes.push(pageIndex);
+      }
+      const submitSingleRegistryPageClose = async (pageIndex: number) => {
         const submitted = await submitSatCloseResolvedCycleRegistryPage(state.activeConfig, {
           cycleId,
           pageIndex,
@@ -5814,6 +6080,49 @@ const satMiningPlugin = {
           pageIndex,
           txHash: submitted.txHash,
         });
+      };
+      for (let index = 0; index < closablePageIndexes.length; ) {
+        const partial = maybeReturnPartial();
+        if (partial) {
+          return partial;
+        }
+        const batch = closablePageIndexes.slice(index, index + cleanupMaxBatchInstructions);
+        if (useCleanupBatching && batch.length > 1) {
+          try {
+            const submitted = await submitSatCloseResolvedCleanupBatch(
+              state.activeConfig,
+              batch.map((pageIndex) => ({
+                kind: "cycleRegistryPage" as const,
+                cycleId,
+                pageIndex,
+              })),
+            );
+            results.push({
+              step: "closeResolvedCycleRegistryPageBatch",
+              pageIndexes: batch,
+              txHash: submitted.txHash,
+              instructionCount: submitted.instructionCount,
+            });
+          } catch (error) {
+            if (!shouldFallbackFromBatchError(error)) {
+              throw error;
+            }
+            for (const pageIndex of batch) {
+              const nestedPartial = maybeReturnPartial();
+              if (nestedPartial) {
+                return nestedPartial;
+              }
+              await submitSingleRegistryPageClose(pageIndex);
+            }
+          }
+        } else {
+          await submitSingleRegistryPageClose(batch[0] ?? 0);
+        }
+        index += batch.length;
+        const postSubmitPartial = maybeReturnPartial();
+        if (postSubmitPartial) {
+          return postSubmitPartial;
+        }
       }
       const [
         remainingParticipants,
@@ -5841,10 +6150,24 @@ const satMiningPlugin = {
           remainingPageCount === 0 &&
           (cycleStateAfterClose || registryMetaAfterClose))
       ) {
+        const partial = maybeReturnPartial();
+        if (partial) {
+          return {
+            ...partial,
+            remainingParticipantCount,
+          };
+        }
         const submitted = await submitSatCloseResolvedCycleArtifacts(state.activeConfig, {
           cycleId,
         });
         results.push({ step: "closeResolvedCycleArtifacts", txHash: submitted.txHash });
+        const postSubmitPartial = maybeReturnPartial();
+        if (postSubmitPartial) {
+          return {
+            ...postSubmitPartial,
+            remainingParticipantCount,
+          };
+        }
       }
       const [
         finalOwnMinerCycle,
@@ -5870,15 +6193,10 @@ const satMiningPlugin = {
         !finalRegistryMeta &&
         !finalProgress &&
         finalParticipantAddresses.length === 0;
-      return {
-        authority,
-        cycleId,
-        pageCount,
-        participantCount: participantAddresses.length,
-        remainingParticipantCount: finalParticipantAddresses.length,
+      return buildResult({
         fullyClosed,
-        results,
-      };
+        remainingParticipantCount: finalParticipantAddresses.length,
+      });
     };
     const minerCycleFullyResolved = (
       minerCycle: Awaited<ReturnType<typeof satOps.inspectSatMinerCycle>> | null | undefined,
@@ -6276,13 +6594,13 @@ const satMiningPlugin = {
           typeof (params as { treasuryRecipient?: string })?.treasuryRecipient === "string"
             ? String((params as { treasuryRecipient?: string }).treasuryRecipient).trim()
             : "";
-        const stakingRecipient =
-          typeof (params as { stakingRecipient?: string })?.stakingRecipient === "string"
-            ? String((params as { stakingRecipient?: string }).stakingRecipient).trim()
+        const distributorRecipient =
+          typeof (params as { distributorRecipient?: string })?.distributorRecipient === "string"
+            ? String((params as { distributorRecipient?: string }).distributorRecipient).trim()
             : "";
         const submitted = await submitSatSetProtocolRecipients(state.activeConfig, {
           treasuryRecipient,
-          stakingRecipient,
+          distributorRecipient,
         });
         markActionSuccess("setProtocolRecipients", submitted.txHash, null);
         respond(true, jsonOk({ submitted, status: await getMiningStatus() }));
@@ -6309,19 +6627,19 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.claimProtocolStaking", async ({ params, respond }) => {
+    api.registerGatewayMethod("sat.claimProtocolDistributorSat", async ({ params, respond }) => {
       try {
         const recipientOwner =
           typeof (params as { recipientOwner?: string })?.recipientOwner === "string"
             ? String((params as { recipientOwner?: string }).recipientOwner).trim()
             : "";
-        const submitted = await submitSatClaimProtocolStaking(state.activeConfig, {
+        const submitted = await submitSatClaimProtocolDistributorSat(state.activeConfig, {
           recipientOwner,
         });
-        markActionSuccess("claimProtocolStaking", submitted.txHash, null);
+        markActionSuccess("claimProtocolDistributorSat", submitted.txHash, null);
         respond(true, jsonOk({ submitted, status: await getMiningStatus() }));
       } catch (error) {
-        markActionFailure("claimProtocolStaking", error, null);
+        markActionFailure("claimProtocolDistributorSat", error, null);
         respondGatewayError(respond, error);
       }
     });
@@ -6347,14 +6665,56 @@ const satMiningPlugin = {
       },
     );
 
+    const collectRecentMaintenanceCleanupCycleIds = (limit: number): number[] => {
+      const cycleIds = new Set<number>();
+      const addCycleId = (value: unknown) => {
+        if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+          return;
+        }
+        cycleIds.add(Math.floor(value));
+      };
+      for (const entry of state.recentActions) {
+        if (
+          entry.status !== "success" ||
+          ![
+            "claimCycleRewards",
+            "claimCycleRewardsBatch",
+            "closeResolvedCycleAccounts",
+            "closeResolvedCycleArtifacts",
+            "closeResolvedMinerCycleState",
+            "closeResolvedCycleRegistryPage",
+          ].includes(entry.action)
+        ) {
+          continue;
+        }
+        addCycleId(entry.cycleId);
+      }
+      for (const entry of state.claimBacklog.values()) {
+        if (entry.stage === "claimed" || entry.stage === "resolved") {
+          addCycleId(entry.cycleId);
+        }
+      }
+      for (const roundKey of state.roundExecution.keys()) {
+        addCycleId(parseSatCycleRoundKey(roundKey));
+      }
+      return [...cycleIds]
+        .sort((left, right) => left - right)
+        .slice(0, Math.max(0, Math.min(limit, SAT_MAINTENANCE_RECENT_CLEANUP_CYCLE_LIMIT)));
+    };
+
     api.registerGatewayMethod("sat.runProtocolMaintenanceOnce", async ({ params, respond }) => {
       const submitted: Array<{
+        lane: SatMaintenanceLane;
         action: string;
         txHash?: string;
         skipped?: string;
+        deferred?: string;
         cycleId?: number;
         resultCount?: number;
       }> = [];
+      const pushSubmitted = (entry: (typeof submitted)[number]) => {
+        submitted.push(entry);
+      };
       const defaultPubkey = "11111111111111111111111111111111";
       const minSolLamports = readSatNonNegativeBigIntParam(params, "minSolLamports") ?? 5_000n;
       const minSatRaw = readSatNonNegativeBigIntParam(params, "minSatRaw") ?? 1n;
@@ -6366,6 +6726,54 @@ const satMiningPlugin = {
         readSatSafeNonNegativeNumberParam(params, "cleanupMaxCycles") ?? 3,
         10,
       );
+      const cleanupBudgetMs = Math.min(
+        readSatSafeNonNegativeNumberParam(params, "cleanupBudgetMs") ??
+          SAT_MAINTENANCE_CLEANUP_DEFAULT_BUDGET_MS,
+        SAT_MAINTENANCE_CLEANUP_MAX_BUDGET_MS,
+      );
+      const cleanupMaxTransactions = Math.min(
+        readSatSafeNonNegativeNumberParam(params, "cleanupMaxTransactions") ??
+          SAT_MAINTENANCE_CLEANUP_DEFAULT_MAX_TRANSACTIONS,
+        SAT_MAINTENANCE_CLEANUP_MAX_TRANSACTIONS,
+      );
+      const cleanupMaxBatchInstructions = Math.min(
+        readSatSafeNonNegativeNumberParam(params, "cleanupMaxBatchInstructions") ??
+          SAT_MAINTENANCE_CLEANUP_DEFAULT_MAX_BATCH_INSTRUCTIONS,
+        SAT_MAINTENANCE_CLEANUP_MAX_BATCH_INSTRUCTIONS,
+      );
+      const includeStatus = readSatOptionalBooleanParam(params, "includeStatus");
+      const statusMode =
+        includeStatus === false
+          ? "none"
+          : (normalizeSatMaintenanceStatusMode(readSatOptionalStringParam(params, "statusMode")) ??
+            (includeStatus === true ? "debug" : "compact"));
+      const cleanupBatchMode =
+        normalizeSatMaintenanceCleanupBatchMode(
+          readSatOptionalStringParam(params, "cleanupBatchMode"),
+        ) ?? "off";
+      const cleanupScanMode =
+        normalizeSatMaintenanceCleanupScanMode(
+          readSatOptionalStringParam(params, "cleanupScanMode"),
+        ) ?? "recent";
+      const cleanupSummary: {
+        mode: SatMaintenanceCleanupScanMode;
+        candidateSource: "recent" | "scan" | "mixed" | "disabled";
+        candidateCount: number;
+        broadScanUsed: boolean;
+        batchMode: SatMaintenanceCleanupBatchMode;
+        maxBatchInstructions: number;
+        submittedCount: number;
+        deferred: string | null;
+      } = {
+        mode: cleanupScanMode,
+        candidateSource: "disabled",
+        candidateCount: 0,
+        broadScanUsed: false,
+        batchMode: cleanupBatchMode,
+        maxBatchInstructions: cleanupMaxBatchInstructions,
+        submittedCount: 0,
+        deferred: null,
+      };
       const readFresh = async () => {
         invalidateSatReadCaches();
         const [global, treasuryState, registryReserve, rent] = await Promise.all([
@@ -6381,6 +6789,62 @@ const satMiningPlugin = {
         const reserve = BigInt(registryReserve?.lamports ?? "0");
         return { global, treasuryState, registryReserve, target, reserve };
       };
+      const buildLaneSummary = () => {
+        const lanes: Record<
+          SatMaintenanceLane,
+          { submitted: number; skipped: number; deferred: number }
+        > = {
+          reserve: { submitted: 0, skipped: 0, deferred: 0 },
+          treasury: { submitted: 0, skipped: 0, deferred: 0 },
+          distributor: { submitted: 0, skipped: 0, deferred: 0 },
+          cleanup: { submitted: 0, skipped: 0, deferred: 0 },
+          monitor: { submitted: 0, skipped: 0, deferred: 0 },
+        };
+        for (const entry of submitted) {
+          const lane = lanes[entry.lane];
+          if (entry.txHash) {
+            lane.submitted += 1;
+          } else if (entry.deferred) {
+            lane.deferred += 1;
+          } else {
+            lane.skipped += 1;
+          }
+        }
+        return lanes;
+      };
+      const buildCompactMaintenanceStatus = (snapshot: Awaited<ReturnType<typeof readFresh>>) => {
+        const chainTime = resolveStatusSatChainTime({ state });
+        const registryReserveShortfallLamports =
+          snapshot.target > snapshot.reserve
+            ? (snapshot.target - snapshot.reserve).toString()
+            : "0";
+        return {
+          mode: "compact",
+          network: state.activeConfig.network,
+          walletId: state.activeConfig.walletId ?? null,
+          running: state.running,
+          enabledWanted:
+            state.activeConfig.enabled === true && state.activeConfig.drainOnly !== true,
+          drainOnly: state.activeConfig.drainOnly ?? false,
+          currentCycleId:
+            typeof chainTime.derivedCycleId === "number" &&
+            Number.isFinite(chainTime.derivedCycleId)
+              ? chainTime.derivedCycleId
+              : null,
+          nextAction: state.lastKnownStatus ? (state.lastAction ?? null) : null,
+          lastAction: state.lastAction,
+          lastFailure: state.lastFailure,
+          registryReserveLamports: snapshot.reserve.toString(),
+          registryReserveTargetLamports: snapshot.target.toString(),
+          registryReserveShortfallLamports,
+          pendingTreasurySatRaw: snapshot.treasuryState?.pendingTreasurySatRaw ?? "0",
+          pendingTreasurySolLamports: snapshot.treasuryState?.pendingTreasurySolLamports ?? "0",
+          pendingDistributorSatRaw: snapshot.treasuryState?.pendingDistributorSatRaw ?? "0",
+          cleanup: cleanupSummary,
+          lanes: buildLaneSummary(),
+          updatedAt: new Date().toISOString(),
+        };
+      };
       try {
         let snapshot = await readFresh();
         if (
@@ -6390,11 +6854,16 @@ const satMiningPlugin = {
           const tx = await submitSatRefillRegistryReserveFromTreasury(state.activeConfig, {
             targetBalanceLamports,
           });
-          submitted.push({ action: "refillRegistryReserveFromTreasury", txHash: tx.txHash });
+          pushSubmitted({
+            lane: "reserve",
+            action: "refillRegistryReserveFromTreasury",
+            txHash: tx.txHash,
+          });
           markActionSuccess("refillRegistryReserveFromTreasury", tx.txHash, null);
           snapshot = await readFresh();
         } else {
-          submitted.push({
+          pushSubmitted({
+            lane: "reserve",
             action: "refillRegistryReserveFromTreasury",
             skipped: "no-shortfall-or-below-threshold",
           });
@@ -6410,75 +6879,94 @@ const satMiningPlugin = {
           const tx = await submitSatClaimProtocolTreasury(state.activeConfig, {
             recipientOwner: treasuryRecipient,
           });
-          submitted.push({ action: "claimProtocolTreasury", txHash: tx.txHash });
+          pushSubmitted({ lane: "treasury", action: "claimProtocolTreasury", txHash: tx.txHash });
           markActionSuccess("claimProtocolTreasury", tx.txHash, null);
           snapshot = await readFresh();
         } else {
-          submitted.push({
+          pushSubmitted({
+            lane: "treasury",
             action: "claimProtocolTreasury",
             skipped: "no-recipient-or-below-threshold",
           });
         }
 
-        const stakingRecipient = snapshot.global?.stakingRecipient;
+        const distributorRecipient = snapshot.global?.distributorRecipient;
         if (
-          stakingRecipient &&
-          stakingRecipient !== defaultPubkey &&
-          BigInt(snapshot.treasuryState?.pendingStakingSatRaw ?? "0") >= minSatRaw
+          distributorRecipient &&
+          distributorRecipient !== defaultPubkey &&
+          BigInt(snapshot.treasuryState?.pendingDistributorSatRaw ?? "0") >= minSatRaw
         ) {
-          const tx = await submitSatClaimProtocolStakingSat(state.activeConfig, {
-            recipientOwner: stakingRecipient,
+          const tx = await submitSatClaimProtocolDistributorSat(state.activeConfig, {
+            recipientOwner: distributorRecipient,
           });
-          submitted.push({ action: "claimProtocolStakingSat", txHash: tx.txHash });
-          markActionSuccess("claimProtocolStakingSat", tx.txHash, null);
+          pushSubmitted({
+            lane: "distributor",
+            action: "claimProtocolDistributorSat",
+            txHash: tx.txHash,
+          });
+          markActionSuccess("claimProtocolDistributorSat", tx.txHash, null);
           snapshot = await readFresh();
         } else {
-          submitted.push({
-            action: "claimProtocolStakingSat",
+          pushSubmitted({
+            lane: "distributor",
+            action: "claimProtocolDistributorSat",
             skipped: "no-recipient-or-below-threshold",
           });
         }
 
-        const stakingSolRecipient =
-          snapshot.treasuryState?.stakingSolRecipient &&
-          snapshot.treasuryState.stakingSolRecipient !== defaultPubkey
-            ? snapshot.treasuryState.stakingSolRecipient
-            : stakingRecipient;
-        if (
-          stakingSolRecipient &&
-          stakingSolRecipient !== defaultPubkey &&
-          BigInt(snapshot.treasuryState?.pendingStakingSolLamports ?? "0") >= minSolLamports
-        ) {
-          const tx = await submitSatClaimProtocolStakingSol(state.activeConfig, {
-            recipientOwner: stakingSolRecipient,
-          });
-          submitted.push({ action: "claimProtocolStakingSol", txHash: tx.txHash });
-          markActionSuccess("claimProtocolStakingSol", tx.txHash, null);
-          snapshot = await readFresh();
-        } else {
-          submitted.push({
-            action: "claimProtocolStakingSol",
-            skipped: "no-recipient-or-below-threshold",
-          });
-        }
-
-        if (cleanupMaxCycles > 0) {
-          const settledCycleIds = (
-            await satOps.listSettledSatCycleIds(state.activeConfig).catch(() => [])
-          ).slice(0, Math.min(50, Math.max(cleanupMaxCycles * 10, cleanupMaxCycles)));
+        if (cleanupMaxCycles > 0 && cleanupBudgetMs > 0 && cleanupMaxTransactions > 0) {
+          const maxCleanupCandidates = Math.min(
+            50,
+            Math.max(cleanupMaxCycles * 10, cleanupMaxCycles),
+          );
+          const recentCycleIds = collectRecentMaintenanceCleanupCycleIds(maxCleanupCandidates);
+          let settledCycleIds = recentCycleIds;
+          cleanupSummary.candidateSource = "recent";
+          if (
+            cleanupScanMode === "scan" ||
+            (cleanupScanMode === "auto" && recentCycleIds.length === 0)
+          ) {
+            const scannedCycleIds = (
+              await satOps.listSettledSatCycleIds(state.activeConfig).catch(() => [])
+            ).slice(0, maxCleanupCandidates);
+            cleanupSummary.broadScanUsed = true;
+            cleanupSummary.candidateSource =
+              recentCycleIds.length > 0 && scannedCycleIds.length > 0 ? "mixed" : "scan";
+            settledCycleIds = [...new Set([...recentCycleIds, ...scannedCycleIds])].sort(
+              (left, right) => left - right,
+            );
+          }
+          cleanupSummary.candidateCount = settledCycleIds.length;
           if (settledCycleIds.length === 0) {
-            submitted.push({
+            pushSubmitted({
+              lane: "cleanup",
               action: "cleanupResolvedCycleAccounts",
               skipped: "no-settled-candidates",
             });
           }
           let cleanupSubmittedCount = 0;
+          const cleanupDeadlineAtMs = Date.now() + cleanupBudgetMs;
           for (const cycleId of settledCycleIds) {
-            if (cleanupSubmittedCount >= cleanupMaxCycles) {
+            if (cleanupSubmittedCount >= cleanupMaxTransactions) {
+              break;
+            }
+            if (Date.now() >= cleanupDeadlineAtMs) {
+              cleanupSummary.deferred = "time-budget-reached";
+              pushSubmitted({
+                lane: "cleanup",
+                action: "cleanupResolvedCycleAccounts",
+                deferred: "time-budget-reached",
+              });
               break;
             }
             try {
-              const result = await closeResolvedExactCycleAccounts(cycleId);
+              const result = await closeResolvedExactCycleAccounts(cycleId, {
+                deadlineAtMs: cleanupDeadlineAtMs,
+                maxTransactions: cleanupMaxTransactions - cleanupSubmittedCount,
+                partialOnLimit: true,
+                batchMode: cleanupBatchMode,
+                maxBatchInstructions: cleanupMaxBatchInstructions,
+              });
               const lastResult =
                 result.results.length > 0
                   ? (result.results.at(-1) as { step?: string; txHash?: string } | undefined)
@@ -6487,33 +6975,61 @@ const satMiningPlugin = {
                 typeof lastResult?.txHash === "string" && lastResult.txHash.trim()
                   ? lastResult.txHash
                   : undefined;
+              const resultTxCount = result.results.filter(
+                (entry) =>
+                  typeof (entry as { txHash?: unknown }).txHash === "string" &&
+                  String((entry as { txHash?: unknown }).txHash).trim(),
+              ).length;
               if (result.fullyClosed && Number.isFinite(cycleId) && cycleId >= 0) {
                 state.roundExecution.delete(`${cycleId}:0`);
                 markSatClaimBacklogClaimed(state, [cycleId], lastTxHash ?? null);
               }
               if (lastTxHash) {
-                cleanupSubmittedCount += 1;
+                cleanupSubmittedCount += resultTxCount;
+                cleanupSummary.submittedCount += resultTxCount;
                 markActionSuccess(
-                  result.fullyClosed ? "closeResolvedCycleAccounts" : "closeResolvedCycleArtifacts",
+                  result.fullyClosed
+                    ? "closeResolvedCycleAccounts"
+                    : typeof lastResult?.step === "string"
+                      ? lastResult.step
+                      : "closeResolvedCycleArtifacts",
                   lastTxHash,
                   cycleId,
                 );
-                submitted.push({
+                if (typeof result.cleanupDeferred === "string") {
+                  cleanupSummary.deferred = result.cleanupDeferred;
+                }
+                pushSubmitted({
+                  lane: "cleanup",
                   action: "cleanupResolvedCycleAccounts",
                   cycleId,
                   txHash: lastTxHash,
                   resultCount: result.results.length,
+                  ...(typeof result.cleanupDeferred === "string"
+                    ? { deferred: result.cleanupDeferred }
+                    : {}),
                 });
               } else {
-                submitted.push({
+                if (typeof result.cleanupDeferred === "string") {
+                  cleanupSummary.deferred = result.cleanupDeferred;
+                }
+                pushSubmitted({
+                  lane: "cleanup",
                   action: "cleanupResolvedCycleAccounts",
                   cycleId,
-                  skipped: "no-resolved-accounts",
+                  skipped:
+                    typeof result.cleanupDeferred === "string"
+                      ? result.cleanupDeferred
+                      : "no-resolved-accounts",
                 });
+              }
+              if (typeof result.cleanupDeferred === "string") {
+                break;
               }
             } catch (error) {
               const message = error instanceof Error ? error.message : String(error);
-              submitted.push({
+              pushSubmitted({
+                lane: "cleanup",
                 action: "cleanupResolvedCycleAccounts",
                 cycleId,
                 skipped: message,
@@ -6521,31 +7037,29 @@ const satMiningPlugin = {
             }
           }
         } else {
-          submitted.push({
+          pushSubmitted({
+            lane: "cleanup",
             action: "cleanupResolvedCycleAccounts",
-            skipped: "disabled",
+            skipped:
+              cleanupMaxCycles <= 0
+                ? "disabled"
+                : cleanupBudgetMs <= 0
+                  ? "time-budget-disabled"
+                  : "transaction-budget-disabled",
           });
         }
 
         await persistRecentActions();
-        respond(true, jsonOk({ submitted, status: await getMiningStatus() }));
+        const payload: Record<string, unknown> = { submitted };
+        if (statusMode !== "none") {
+          payload.status =
+            statusMode === "debug" || statusMode === "ui"
+              ? await getMiningStatus({ includeTxReceipts: statusMode === "debug" })
+              : buildCompactMaintenanceStatus(snapshot);
+        }
+        respond(true, jsonOk(payload));
       } catch (error) {
         markActionFailure("runProtocolMaintenanceOnce", error, null);
-        respondGatewayError(respond, error);
-      }
-    });
-
-    api.registerGatewayMethod("sat.initMinerSlots", async ({ params, respond }) => {
-      try {
-        const authority =
-          typeof (params as { authority?: string })?.authority === "string"
-            ? String((params as { authority?: string }).authority).trim()
-            : (state.activeWalletAddress ?? "");
-        const submitted = await submitSatInitMinerSlots(state.activeConfig, { authority });
-        markActionSuccess("initMinerSlots", submitted.txHash, null);
-        respond(true, jsonOk({ submitted }));
-      } catch (error) {
-        markActionFailure("initMinerSlots", error, null);
         respondGatewayError(respond, error);
       }
     });
@@ -7148,32 +7662,42 @@ const satMiningPlugin = {
 
     api.registerGatewayMethod("sat.getMiningStatus", async ({ params, respond }) => {
       try {
+        const statusMode =
+          normalizeSatMaintenanceStatusMode(
+            readSatOptionalStringParam(params, "mode") ??
+              readSatOptionalStringParam(params, "statusMode"),
+          ) ?? "ui";
         const responsive =
           (params as { responsive?: unknown } | undefined)?.responsive === true ||
           String((params as { responsive?: unknown } | undefined)?.responsive ?? "")
             .trim()
             .toLowerCase() === "true";
+        if (statusMode === "none") {
+          respond(true, jsonOk({ mode: "none" }));
+          return;
+        }
+        const effectiveResponsive = statusMode === "debug" ? false : responsive;
         const forceFresh =
           (params as { forceFresh?: unknown } | undefined)?.forceFresh === true ||
           String((params as { forceFresh?: unknown } | undefined)?.forceFresh ?? "")
             .trim()
             .toLowerCase() === "true";
-        const includeTxReceiptsParam = (params as { includeTxReceipts?: unknown } | undefined)
-          ?.includeTxReceipts;
+        const includeTxReceiptsParam = readSatOptionalBooleanParam(params, "includeTxReceipts");
         const includeTxReceipts =
-          !responsive &&
-          !(
-            includeTxReceiptsParam === false ||
-            String(includeTxReceiptsParam ?? "")
-              .trim()
-              .toLowerCase() === "false"
-          );
+          statusMode === "debug" ||
+          (!effectiveResponsive && statusMode === "ui" && includeTxReceiptsParam === true);
         respond(
           true,
           jsonOk(
-            await (responsive
-              ? getMiningStatusResponsive({ forceFresh })
-              : getMiningStatus({ includeTxReceipts, forceFresh })),
+            statusMode === "compact"
+              ? compactMiningStatusPayload(
+                  await (effectiveResponsive || !forceFresh
+                    ? getMiningStatusResponsive({ forceFresh })
+                    : getMiningStatus({ includeTxReceipts: false, forceFresh })),
+                )
+              : await (effectiveResponsive
+                  ? getMiningStatusResponsive({ forceFresh })
+                  : getMiningStatus({ includeTxReceipts, forceFresh })),
           ),
         );
       } catch (error) {
@@ -7491,9 +8015,6 @@ const satMiningPlugin = {
         resetSatWorkerRuntimeState(state);
         state.activeConfig.drainOnly = false;
         if (activeWallet?.address) {
-          await submitSatInitMinerSlots(state.activeConfig, {
-            authority: activeWallet.address,
-          });
           await maybePrimeSatMinerCapitalAccount(activeWallet.address);
           await submitSatSetActiveCommit(state.activeConfig, {
             lamports: state.activeConfig.commitLamports ?? 250_000_000,

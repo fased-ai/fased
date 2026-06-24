@@ -1,3 +1,8 @@
+export function currentNodeCanRunFased(params?: {
+  nodeVersion?: string;
+  requireFn?: (specifier: string) => unknown;
+}): boolean;
+
 export function reexecWithSupportedNodeIfNeeded(params?: {
   argv?: string[];
   env?: Record<string, string | undefined>;

@@ -309,7 +309,7 @@ Open **Fased Network** after the base Agent, wallets, and mining path are clear.
 Use this area for public route status, Fased Network readiness, Vault-backed
 bond controls, and later operator-economy features.
 
-![Fased Network bond and distributor support view](/images/screenshots/web/network-bond-staking-1.png)
+![Fased Network bond and SAT distributor view](/images/screenshots/web/network-bond-staking-1.png)
 
 Read next:
 

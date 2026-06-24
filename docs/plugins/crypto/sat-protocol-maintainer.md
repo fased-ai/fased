@@ -2,7 +2,7 @@
 summary: "How SAT protocol maintenance runs reserve refill, fixed-recipient claims, cleanup, standby, and alerts."
 read_when:
   - You operate a Fased host that participates in SAT protocol maintenance
-  - You need to verify reserve, treasury, staking, cleanup, standby, or alerts
+  - You need to verify reserve, treasury, distributor, cleanup, standby, or alerts
   - You want to understand why maintainer calls are not treasury custody
 title: "SAT Protocol Maintainer"
 sidebarTitle: "SAT maintainer"
@@ -19,26 +19,25 @@ move forward:
 
 - refill registry reserve up to the configured target;
 - claim treasury SAT/SOL to fixed treasury recipients;
-- claim staking SAT into the bond staking distributor;
-- claim staking SOL to the configured ops/staking-SOL recipient;
+- claim distributor SAT into the bond distributor;
 - clean up resolved accounts so rent returns to the expected owner/PDA;
 - record logs and monitor alert state.
 
 The caller pays transaction fees. Program state fixes recipients and caps, so a
-caller cannot redirect treasury/staking funds to themselves.
+caller cannot redirect treasury or distributor funds to themselves.
 
 ## Scope
 
 The maintainer is limited to bounded protocol maintenance:
 
 - reserve refill to configured caps;
-- fixed-recipient treasury and staking claims;
-- staking distributor feed;
+- fixed-recipient treasury and SAT distributor claims;
+- bond distributor feed;
 - cleanup/reclaim for resolved accounts;
 - monitor and standby records.
 
 Mining users still use the Mining page for miner-owned work. Fased Network users
-still use the Bond/Staking card for their own bond claim.
+still use the Bond card for their own bond claim.
 
 ## Maintenance lanes
 
@@ -51,19 +50,24 @@ the configured target/cap.
 
 Source: protocol pending lanes. Destination: configured treasury recipient.
 
-**Staking SAT feed**
+**SAT distributor feed**
 
-Source: protocol pending staking SAT. Destination: bond distributor vault.
-
-**Staking SOL claim**
-
-Source: protocol pending staking SOL. Destination: configured ops/staking-SOL
-recipient.
+Source: protocol pending distributor SAT. Destination: bond distributor vault.
 
 **Cleanup/reclaim rent**
 
 Source: resolved cycle/page/progress accounts. Destination: expected PDA/owner
 or reserve path.
+
+Cleanup is intentionally incremental. A maintainer pass can submit a small
+number of cleanup transactions, return `deferred`, and let the next pass continue
+from the same resolved backlog. This keeps one-shot maintenance calls inside the
+gateway timeout while still reclaiming old accounts over time.
+
+Maintainer responses are compact by default. The normal response reports the
+maintenance lanes, pending treasury/distributor amounts, registry reserve state,
+and cleanup backlog/defer reason. Full dashboard/debug status is available on
+request, but the loop should not pull it every pass.
 
 Program state fixes recipients and caps for all lanes.
 
@@ -126,7 +130,33 @@ The maintainer should run with:
 - the same trusted RPC profile used for operator maintenance;
 - thresholds so it does not submit tiny claim/refill transactions every loop;
 - jitter/backoff so multiple operators do not collide constantly;
-- monitor state for freshness, failures, reserve, lanes, and cleanup backlog.
+- monitor state for freshness, failures, reserve, lanes, and cleanup backlog;
+- compact status mode for the regular loop and debug status mode only during
+  investigations.
+
+Runner batch knobs:
+
+```bash
+FASED_SAT_MAINTAIN_CLEANUP_BATCH_MODE=auto
+FASED_SAT_MAINTAIN_CLEANUP_MAX_BATCH_INSTRUCTIONS=4
+```
+
+Cleanup discovery has two modes:
+
+- `recent`: default. Use local backlog, recent actions, and observed cycle state
+  first. This avoids asking RPC for every historical cycle account.
+- `scan`: explicit backfill/debug. This uses broad program-account scans and can
+  get slower as devnet/mainnet history grows.
+
+Cleanup batching is available as an opt-in soak path. Use
+`--cleanup-batch-mode auto` to let the maintainer combine multiple resolved
+miner-cycle or registry-page close instructions into one signed transaction,
+capped by `--cleanup-max-batch-instructions`.
+
+The local signer still validates the batch as a SAT cleanup operation. It
+rejects non-cleanup instructions, mixed wallet IDs, and batches above the signer
+cap. If the installed signer is older and does not support the batch operation,
+Fased falls back to single cleanup transactions.
 
 ## Primary, standby, and monitor
 
@@ -160,7 +190,7 @@ Launch alerting should cover:
 - maintainer failure streak;
 - payer SOL below threshold;
 - registry reserve below target;
-- pending treasury/staking lanes growing;
+- pending treasury or distributor lanes growing;
 - cleanup backlog growing;
 - RPC failure or rate-limit streak.
 
@@ -177,8 +207,7 @@ For a real launch drill, record:
 - primary resume after standby;
 - reserve refill transaction or no-op proof when reserve is full;
 - treasury claim transaction or no-op proof when pending lanes are empty;
-- staking SAT feed transaction or no-op proof;
-- staking SOL claim transaction or no-op proof;
+- SAT distributor feed transaction or no-op proof;
 - cleanup/reclaim transaction or no-op proof;
 - monitor alert state before and after the drill.
 
@@ -192,7 +221,7 @@ For a real launch drill, record:
     Diagnose skipped cycles, claim backlog, RPC errors, and low commit.
   </Card>
   <Card title="Bond + economy" href="/start/bond-operator-economy" icon="badge-check">
-    Understand bond, staking claim, and operator lanes.
+    Understand bond, distributor claims, and operator lanes.
   </Card>
   <Card title="Security test report" href="/security/security-test-report" icon="shield-check">
     Review host, wallet, task, mining, and maintainer evidence status.
