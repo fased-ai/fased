@@ -12,7 +12,7 @@ description: "Official Fased and Fcode ecosystem links for Fased Agent, Fased Ap
 Use this page to verify Fased links before installing software, connecting
 wallets, mining, or joining community rooms.
 
-Primary ecosystem link hub: [fcode.ai/links](https://fcode.ai/links)
+Primary ecosystem link hub: [docs.fcode.ai/links](https://docs.fcode.ai/links)
 
 <Warning>
   The team will never ask for seed phrases, private keys, or keypair files in
@@ -36,7 +36,7 @@ Primary ecosystem link hub: [fcode.ai/links](https://fcode.ai/links)
 | ------------------------ | ---------------------------------------- |
 | Fcode AI                 | [fcode.ai](https://fcode.ai)             |
 | Fcode docs               | [docs.fcode.ai](https://docs.fcode.ai)   |
-| Official ecosystem links | [fcode.ai/links](https://fcode.ai/links) |
+| Official ecosystem links | [docs.fcode.ai/links](https://docs.fcode.ai/links) |
 | Fcode on X               | [x.com/FcodeAi](https://x.com/FcodeAi)   |
 
 ## Satcoin
