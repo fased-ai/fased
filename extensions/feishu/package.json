@@ -4,7 +4,7 @@
   "description": "FasedAgent Feishu/Lark channel plugin (community maintained by @m1heng)",
   "type": "module",
   "dependencies": {
-    "@larksuiteoapi/node-sdk": "^1.66.1",
+    "@larksuiteoapi/node-sdk": "^1.68.0",
     "@sinclair/typebox": "0.34.48",
     "zod": "^4.3.6"
   },

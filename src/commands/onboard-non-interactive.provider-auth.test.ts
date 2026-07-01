@@ -229,7 +229,7 @@ describe("onboard (non-interactive): provider auth", () => {
       expect(cfg.auth?.profiles?.["zai:default"]?.provider).toBe("zai");
       expect(cfg.auth?.profiles?.["zai:default"]?.mode).toBe("api_key");
       expect(cfg.models?.providers?.zai?.baseUrl).toBe("https://api.z.ai/api/paas/v4");
-      expect(cfg.agents?.defaults?.model?.primary).toBe("zai/glm-5.1");
+      expect(cfg.agents?.defaults?.model?.primary).toBe("zai/glm-5.2");
       await expectApiKeyProfile({ profileId: "zai:default", provider: "zai", key: "zai-test-key" });
     });
   });
@@ -309,7 +309,7 @@ describe("onboard (non-interactive): provider auth", () => {
 
       expect(cfg.auth?.profiles?.["qwen:default"]?.provider).toBe("qwen");
       expect(cfg.auth?.profiles?.["qwen:default"]?.mode).toBe("api_key");
-      expect(cfg.agents?.defaults?.model?.primary).toBe("qwen/qwen3.6-plus");
+      expect(cfg.agents?.defaults?.model?.primary).toBe("qwen/qwen3.7-plus");
       await expectApiKeyProfile({
         profileId: "qwen:default",
         provider: "qwen",
@@ -325,7 +325,7 @@ describe("onboard (non-interactive): provider auth", () => {
 
       expect(cfg.auth?.profiles?.["qwen-coding-plan:default"]?.provider).toBe("qwen-coding-plan");
       expect(cfg.auth?.profiles?.["qwen-coding-plan:default"]?.mode).toBe("api_key");
-      expect(cfg.agents?.defaults?.model?.primary).toBe("qwen-coding-plan/qwen3.6-plus");
+      expect(cfg.agents?.defaults?.model?.primary).toBe("qwen-coding-plan/qwen3.7-plus");
       await expectApiKeyProfile({
         profileId: "qwen-coding-plan:default",
         provider: "qwen-coding-plan",
@@ -579,7 +579,7 @@ describe("onboard (non-interactive): provider auth", () => {
         "cloudflare-ai-gateway",
       );
       expect(cfg.auth?.profiles?.["cloudflare-ai-gateway:default"]?.mode).toBe("api_key");
-      expect(cfg.agents?.defaults?.model?.primary).toBe("cloudflare-ai-gateway/claude-sonnet-4-6");
+      expect(cfg.agents?.defaults?.model?.primary).toBe("cloudflare-ai-gateway/claude-sonnet-5");
       await expectApiKeyProfile({
         profileId: "cloudflare-ai-gateway:default",
         provider: "cloudflare-ai-gateway",

@@ -347,7 +347,7 @@ describe("applyAuthChoice", () => {
         token: "zai-test-key",
         endpointSelection: "coding-cn",
         expectedBaseUrl: ZAI_CODING_CN_BASE_URL,
-        expectedModel: "zai/glm-5.1",
+        expectedModel: "zai/glm-5.2",
         shouldPromptForEndpoint: true,
       },
       {
@@ -1173,7 +1173,7 @@ describe("applyAuthChoice", () => {
         mode: "api_key",
       });
       expect(resolveAgentModelPrimaryValue(result.config.agents?.defaults?.model)).toBe(
-        "cloudflare-ai-gateway/claude-sonnet-4-6",
+        "cloudflare-ai-gateway/claude-sonnet-5",
       );
 
       const profile = await readAuthProfile("cloudflare-ai-gateway:default");

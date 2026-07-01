@@ -25,7 +25,7 @@ describe("detectZaiEndpoint", () => {
         responses: {
           "https://api.z.ai/api/paas/v4/chat/completions": { status: 200 },
         },
-        expected: { endpoint: "global", modelId: "glm-5.1" },
+        expected: { endpoint: "global", modelId: "glm-5.2" },
       },
       {
         responses: {
@@ -35,7 +35,7 @@ describe("detectZaiEndpoint", () => {
           },
           "https://open.bigmodel.cn/api/paas/v4/chat/completions": { status: 200 },
         },
-        expected: { endpoint: "cn", modelId: "glm-5.1" },
+        expected: { endpoint: "cn", modelId: "glm-5.2" },
       },
       {
         responses: {

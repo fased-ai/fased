@@ -99,12 +99,16 @@ async function loadMiningSummary(state: OperationsStatusState) {
     state.miningHistory = historyResult.value.history;
   }
 
-  const attachedWalletId =
-    (attachmentResult.status === "fulfilled"
-      ? (attachmentResult.value.attachment?.walletId ?? null)
-      : null) ??
-    (statusResult.status === "fulfilled" ? (statusResult.value.status.walletId ?? null) : null) ??
-    (profileResult.status === "fulfilled" ? (profileResult.value.profile?.walletId ?? null) : null);
+  let attachedWalletId: string | null = null;
+  if (attachmentResult.status === "fulfilled") {
+    attachedWalletId = attachmentResult.value.attachment?.walletId ?? null;
+  }
+  if (attachedWalletId === null && statusResult.status === "fulfilled") {
+    attachedWalletId = statusResult.value.status.walletId ?? null;
+  }
+  if (attachedWalletId === null && profileResult.status === "fulfilled") {
+    attachedWalletId = profileResult.value.profile?.walletId ?? null;
+  }
   state.miningAttachedWalletId = attachedWalletId;
 
   if (!attachedWalletId) {
