@@ -8,6 +8,17 @@ third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 
 - No unreleased changes yet.
 
+## 0.1.13
+
+- Refresh the curated model catalogs for provider defaults and onboarding,
+  including newer Claude Sonnet, Z.AI GLM, Qwen, Minimax, xAI, Chutes, and
+  OpenCode Zen selections.
+- Update vulnerable dependency pins across the runtime, UI, and bundled
+  extensions, reducing npm audit output to the remaining unpatched upstream
+  `@mariozechner/pi-coding-agent` advisories.
+- Fix stale workspace peer package names for bundled Google Chat and Memory
+  Core extensions so workspace installs resolve cleanly.
+
 ## 0.1.8
 
 - Publish and verify the npm package as `@fased/fased@latest`; the installed
