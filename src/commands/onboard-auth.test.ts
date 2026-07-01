@@ -597,9 +597,7 @@ describe("applyXaiProviderConfig", () => {
     expect(cfg.models?.providers?.xai?.models.map((m) => m.id)).toEqual([
       "custom-model",
       "grok-4.3",
-      "grok-4.20-multi-agent-0309",
-      "grok-4.20-0309-reasoning",
-      "grok-4.20-0309-non-reasoning",
+      "grok-build-0.1",
     ]);
   });
 });
@@ -636,10 +634,7 @@ describe("applyMistralProviderConfig", () => {
       "mistral-medium-3.5",
       "mistral-small-2603",
       "mistral-large-2512",
-      "mistral-medium-2508",
       "devstral-2512",
-      "magistral-medium-2509",
-      "magistral-small-2509",
       "ministral-14b-2512",
       "ministral-8b-2512",
       "ministral-3b-2512",

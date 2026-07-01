@@ -133,13 +133,16 @@ describe("provider registry", () => {
 
   it("keeps OpenAI API-key and sign-in model routes separate", () => {
     expect(OPENAI_API_MODEL_REFS).toContain("openai/gpt-5.5");
-    expect(OPENAI_API_MODEL_REFS).toContain("openai/gpt-5-codex");
+    expect(OPENAI_API_MODEL_REFS).toContain("openai/gpt-5.4-nano");
+    expect(OPENAI_API_MODEL_REFS).not.toContain("openai/gpt-5-codex");
+    expect(OPENAI_API_MODEL_REFS).not.toContain("openai/gpt-5.5-pro");
+    expect(OPENAI_API_MODEL_REFS).not.toContain("openai/gpt-5.4-pro");
     expect(OPENAI_SIGN_IN_MODEL_REFS).toContain("openai-codex/gpt-5.5");
+    expect(OPENAI_SIGN_IN_MODEL_REFS).toContain("openai-codex/gpt-5.3-codex-spark");
     expect(OPENAI_SIGN_IN_MODEL_REFS).not.toContain("openai-codex/gpt-5.1");
     expect(OPENAI_SIGN_IN_MODEL_REFS).not.toContain("openai-codex/gpt-5.2-codex");
     expect(OPENAI_SIGN_IN_MODEL_REFS).not.toContain("openai-codex/gpt-5.5-pro");
     expect(OPENAI_SIGN_IN_MODEL_REFS).not.toContain("openai-codex/gpt-5.4-pro");
-    expect(OPENAI_SIGN_IN_MODEL_REFS).not.toContain("openai-codex/gpt-5.3-codex-spark");
   });
 
   it("exposes curated per-model thinking metadata from provider manifests", () => {
@@ -148,13 +151,13 @@ describe("provider registry", () => {
       defaultThinkingLevel: "low",
       thinkingMode: "openai-reasoning-effort",
     });
-    expect(lookupProviderManifestModelCapability("anthropic", "claude-sonnet-4-6")).toMatchObject({
+    expect(lookupProviderManifestModelCapability("anthropic", "claude-sonnet-5")).toMatchObject({
       thinkingLevels: ["off", "minimal", "low", "medium", "high"],
       defaultThinkingLevel: "low",
       thinkingMode: "anthropic-adaptive",
       reasoningBudgetSupported: true,
     });
-    expect(lookupProviderManifestModelCapability("anthropic", "claude-opus-4-7")).toMatchObject({
+    expect(lookupProviderManifestModelCapability("anthropic", "claude-opus-4-8")).toMatchObject({
       thinkingLevels: ["off", "minimal", "low", "medium", "high"],
       defaultThinkingLevel: "low",
       thinkingMode: "anthropic-adaptive",
@@ -186,19 +189,9 @@ describe("provider registry", () => {
       thinkingMode: "xai-reasoning-effort",
       reasoningBudgetSupported: false,
     });
-    expect(
-      lookupProviderManifestModelCapability("xai", "grok-4.20-multi-agent-0309"),
-    ).toMatchObject({
+    expect(lookupProviderManifestModelCapability("xai", "grok-build-0.1")).toMatchObject({
       tools: true,
       json: true,
-      thinkingLevels: ["low", "medium", "high", "xhigh"],
-      defaultThinkingLevel: "low",
-      thinkingMode: "xai-multi-agent-effort",
-    });
-    expect(lookupProviderManifestModelCapability("xai", "grok-4.20-0309-reasoning")).toMatchObject({
-      tools: true,
-      json: true,
-      fixedReasoning: true,
     });
     expect(
       lookupProviderManifestModelCapability("volcengine", "doubao-seed-2-0-pro-260215"),
@@ -219,7 +212,7 @@ describe("provider registry", () => {
         thinkingMode: "byteplus-thinking-type",
       },
     );
-    expect(lookupProviderManifestModelCapability("zai", "glm-5.1")).toMatchObject({
+    expect(lookupProviderManifestModelCapability("zai", "glm-5.2")).toMatchObject({
       tools: true,
       json: true,
       thinkingLevels: ["off", "low"],
@@ -232,7 +225,7 @@ describe("provider registry", () => {
       thinkingMode: "zai-binary",
     });
     expect(
-      lookupProviderManifestModelCapability("openrouter", "anthropic/claude-sonnet-4.6"),
+      lookupProviderManifestModelCapability("openrouter", "anthropic/claude-sonnet-5"),
     ).toMatchObject({
       thinkingMode: "anthropic-adaptive",
     });
@@ -341,7 +334,7 @@ describe("provider registry", () => {
     expect(
       resolveProviderRouteModelCapability({
         route: "vercel-ai-gateway",
-        model: "anthropic/claude-sonnet-4.6",
+        model: "anthropic/claude-sonnet-5",
         reasoning: true,
       }),
     ).toMatchObject({
@@ -361,7 +354,8 @@ describe("provider registry", () => {
 
   it("filters old OpenAI runtime models from normal pickers", () => {
     expect(isStandardProviderModelRef("openai/gpt-5.5")).toBe(true);
-    expect(isStandardProviderModelRef("openai/gpt-5-codex")).toBe(true);
+    expect(isStandardProviderModelRef("openai/gpt-5.4-nano")).toBe(true);
+    expect(isStandardProviderModelRef("openai/gpt-5-codex")).toBe(false);
     expect(isStandardProviderModelRef("openai/gpt-5.1")).toBe(false);
     expect(isStandardProviderModelRef("openai/gpt-4.1-mini")).toBe(false);
     expect(isStandardProviderModelRef("openai-codex/gpt-5.1")).toBe(false);
@@ -376,8 +370,9 @@ describe("provider registry", () => {
 
   it("keeps Anthropic and Google route-compatible model refs explicit", () => {
     expect(ANTHROPIC_PROVIDER_MANIFEST.models.recommended).toEqual([
-      "anthropic/claude-opus-4-7",
-      "anthropic/claude-sonnet-4-6",
+      "anthropic/claude-fable-5",
+      "anthropic/claude-opus-4-8",
+      "anthropic/claude-sonnet-5",
       "anthropic/claude-haiku-4-5",
     ]);
     expect(GOOGLE_PROVIDER_MANIFEST.methods.map((method) => method.id)).toEqual([
@@ -385,20 +380,14 @@ describe("provider registry", () => {
       "google-gemini-cli",
     ]);
     expect(GOOGLE_PROVIDER_MANIFEST.models.recommended).toEqual([
+      "google/gemini-3.5-flash",
       "google/gemini-3.1-pro-preview",
-      "google/gemini-3.1-pro-preview-customtools",
       "google/gemini-3-flash-preview",
       "google/gemini-3.1-flash-lite",
-      "google/gemini-2.5-pro",
-      "google/gemini-2.5-flash",
-      "google/gemini-2.5-flash-lite",
+      "google-gemini-cli/gemini-3.5-flash",
       "google-gemini-cli/gemini-3.1-pro-preview",
-      "google-gemini-cli/gemini-3.1-pro-preview-customtools",
       "google-gemini-cli/gemini-3-flash-preview",
       "google-gemini-cli/gemini-3.1-flash-lite",
-      "google-gemini-cli/gemini-2.5-pro",
-      "google-gemini-cli/gemini-2.5-flash",
-      "google-gemini-cli/gemini-2.5-flash-lite",
     ]);
     expect(isStandardProviderModelRef("google/gemini-3.1-pro-preview")).toBe(true);
     expect(isStandardProviderModelRef("google/gemini-3-pro-preview")).toBe(false);
@@ -505,14 +494,14 @@ describe("provider registry", () => {
     ]);
     expect(XAI_PROVIDER_MANIFEST.models.recommended).toEqual([
       "xai/grok-4.3",
-      "xai/grok-4.20-multi-agent-0309",
-      "xai/grok-4.20-0309-reasoning",
-      "xai/grok-4.20-0309-non-reasoning",
+      "xai/grok-build-0.1",
     ]);
     expect(isStandardProviderModelRef("xai/grok-4.3")).toBe(true);
+    expect(isStandardProviderModelRef("xai/grok-build-0.1")).toBe(true);
     expect(isStandardProviderModelRef("xai/grok-4")).toBe(false);
     expect(isStandardProviderModelRef("xai/grok-4-1-fast")).toBe(false);
     expect(isStandardProviderModelRef("xai/grok-code-fast-1")).toBe(false);
+    expect(isStandardProviderModelRef("xai/grok-4.20-multi-agent-0309")).toBe(false);
   });
 
   it("keeps Qianfan auth methods and current models route-compatible", () => {
@@ -564,45 +553,29 @@ describe("provider registry", () => {
       "github-copilot/gpt-5.5",
       "github-copilot/gpt-5.4",
       "github-copilot/gpt-5.4-mini",
-      "github-copilot/gpt-5.3-codex",
-      "github-copilot/gpt-5.2-codex",
-      "github-copilot/gpt-5.2",
-      "github-copilot/gpt-5-mini",
+      "github-copilot/gpt-5.3-codex-spark",
       "github-copilot/gpt-4.1",
-      "github-copilot/claude-opus-4.7",
-      "github-copilot/claude-opus-4.6",
-      "github-copilot/claude-opus-4.6-fast",
-      "github-copilot/claude-opus-4.5",
-      "github-copilot/claude-sonnet-4.6",
-      "github-copilot/claude-sonnet-4.5",
+      "github-copilot/claude-fable-5",
+      "github-copilot/claude-opus-4.8",
+      "github-copilot/claude-sonnet-5",
       "github-copilot/claude-haiku-4.5",
-      "github-copilot/gemini-2.5-pro",
+      "github-copilot/gemini-3.5-flash",
       "github-copilot/gemini-3.1-pro",
       "github-copilot/gemini-3-flash",
-      "github-copilot/grok-code-fast-1",
-      "github-copilot/raptor-mini",
-      "github-copilot/goldeneye",
+      "github-copilot/grok-build-0.1",
       "copilot-proxy/gpt-5.5",
       "copilot-proxy/gpt-5.4",
       "copilot-proxy/gpt-5.4-mini",
-      "copilot-proxy/gpt-5.3-codex",
-      "copilot-proxy/gpt-5.2-codex",
-      "copilot-proxy/gpt-5.2",
-      "copilot-proxy/gpt-5-mini",
+      "copilot-proxy/gpt-5.3-codex-spark",
       "copilot-proxy/gpt-4.1",
-      "copilot-proxy/claude-opus-4.7",
-      "copilot-proxy/claude-opus-4.6",
-      "copilot-proxy/claude-opus-4.6-fast",
-      "copilot-proxy/claude-opus-4.5",
-      "copilot-proxy/claude-sonnet-4.6",
-      "copilot-proxy/claude-sonnet-4.5",
+      "copilot-proxy/claude-fable-5",
+      "copilot-proxy/claude-opus-4.8",
+      "copilot-proxy/claude-sonnet-5",
       "copilot-proxy/claude-haiku-4.5",
-      "copilot-proxy/gemini-2.5-pro",
+      "copilot-proxy/gemini-3.5-flash",
       "copilot-proxy/gemini-3.1-pro",
       "copilot-proxy/gemini-3-flash",
-      "copilot-proxy/grok-code-fast-1",
-      "copilot-proxy/raptor-mini",
-      "copilot-proxy/goldeneye",
+      "copilot-proxy/grok-build-0.1",
     ]);
     expect(isStandardProviderModelRef("github-copilot/gpt-5.4")).toBe(true);
     expect(COPILOT_PROVIDER_MANIFEST.models.recommended).not.toContain(
@@ -615,7 +588,7 @@ describe("provider registry", () => {
       thinkingMode: "openai-reasoning-effort",
     });
     expect(
-      COPILOT_PROVIDER_MANIFEST.modelCapabilities?.["github-copilot/claude-opus-4.7"],
+      COPILOT_PROVIDER_MANIFEST.modelCapabilities?.["github-copilot/claude-opus-4.8"],
     ).toMatchObject({
       tools: true,
       json: true,
@@ -645,29 +618,24 @@ describe("provider registry", () => {
     expect(VERCEL_AI_GATEWAY_PROVIDER_MANIFEST.modelProviderIds).toEqual(["vercel-ai-gateway"]);
     expect(VERCEL_AI_GATEWAY_PROVIDER_MANIFEST.models.dynamic).toBe(true);
     expect(VERCEL_AI_GATEWAY_PROVIDER_MANIFEST.models.recommended).toEqual([
-      "vercel-ai-gateway/openai/gpt-5.5-pro",
       "vercel-ai-gateway/openai/gpt-5.5",
-      "vercel-ai-gateway/openai/gpt-5.4-pro",
       "vercel-ai-gateway/openai/gpt-5.4",
       "vercel-ai-gateway/openai/gpt-5.4-mini",
       "vercel-ai-gateway/openai/gpt-5.4-nano",
-      "vercel-ai-gateway/openai/gpt-5.3-codex",
-      "vercel-ai-gateway/openai/gpt-5-codex",
-      "vercel-ai-gateway/anthropic/claude-opus-4.7",
-      "vercel-ai-gateway/anthropic/claude-sonnet-4.6",
-      "vercel-ai-gateway/anthropic/claude-opus-4.6",
+      "vercel-ai-gateway/anthropic/claude-fable-5",
+      "vercel-ai-gateway/anthropic/claude-opus-4.8",
+      "vercel-ai-gateway/anthropic/claude-sonnet-5",
       "vercel-ai-gateway/anthropic/claude-haiku-4.5",
-      "vercel-ai-gateway/anthropic/claude-sonnet-4.5",
+      "vercel-ai-gateway/google/gemini-3.5-flash",
       "vercel-ai-gateway/google/gemini-3.1-pro-preview",
+      "vercel-ai-gateway/google/gemini-3-flash-preview",
       "vercel-ai-gateway/google/gemini-3.1-flash-lite",
-      "vercel-ai-gateway/google/gemini-3-flash",
-      "vercel-ai-gateway/google/gemini-2.5-pro",
-      "vercel-ai-gateway/google/gemini-2.5-flash",
       "vercel-ai-gateway/xai/grok-4.3",
-      "vercel-ai-gateway/xai/grok-code-fast-1",
-      "vercel-ai-gateway/mistral/mistral-large-3",
-      "vercel-ai-gateway/mistral/mistral-medium",
-      "vercel-ai-gateway/mistral/devstral-2",
+      "vercel-ai-gateway/xai/grok-build-0.1",
+      "vercel-ai-gateway/mistral/mistral-medium-3.5",
+      "vercel-ai-gateway/mistral/mistral-small-2603",
+      "vercel-ai-gateway/mistral/mistral-large-2512",
+      "vercel-ai-gateway/mistral/devstral-2512",
       "vercel-ai-gateway/minimax/minimax-m2.7",
       "vercel-ai-gateway/minimax/minimax-m2.7-highspeed",
       "vercel-ai-gateway/moonshotai/kimi-k2.6",
@@ -680,7 +648,7 @@ describe("provider registry", () => {
     });
     expect(
       VERCEL_AI_GATEWAY_PROVIDER_MANIFEST.modelCapabilities?.[
-        "vercel-ai-gateway/anthropic/claude-opus-4.7"
+        "vercel-ai-gateway/anthropic/claude-opus-4.8"
       ],
     ).toMatchObject({
       tools: true,
@@ -688,7 +656,7 @@ describe("provider registry", () => {
     });
     expect(
       VERCEL_AI_GATEWAY_PROVIDER_MANIFEST.modelCapabilities?.[
-        "vercel-ai-gateway/google/gemini-3-flash"
+        "vercel-ai-gateway/google/gemini-3-flash-preview"
       ],
     ).toMatchObject({
       tools: true,
@@ -696,7 +664,7 @@ describe("provider registry", () => {
     });
     expect(
       VERCEL_AI_GATEWAY_PROVIDER_MANIFEST.modelCapabilities?.[
-        "vercel-ai-gateway/mistral/mistral-large-3"
+        "vercel-ai-gateway/mistral/mistral-large-2512"
       ],
     ).toMatchObject({
       tools: false,
@@ -716,26 +684,20 @@ describe("provider registry", () => {
     expect(OPENCODE_ZEN_PROVIDER_MANIFEST.models.dynamic).toBe(true);
     expect(OPENCODE_ZEN_PROVIDER_MANIFEST.models.recommended).toEqual([
       "opencode/gpt-5.5",
-      "opencode/gpt-5.5-pro",
       "opencode/gpt-5.4",
-      "opencode/gpt-5.4-pro",
       "opencode/gpt-5.4-mini",
       "opencode/gpt-5.4-nano",
-      "opencode/gpt-5.3-codex",
       "opencode/gpt-5.3-codex-spark",
-      "opencode/gpt-5.2",
-      "opencode/gpt-5.2-codex",
-      "opencode/claude-opus-4-7",
-      "opencode/claude-opus-4-6",
-      "opencode/claude-opus-4-5",
-      "opencode/claude-sonnet-4-6",
-      "opencode/claude-sonnet-4-5",
+      "opencode/claude-fable-5",
+      "opencode/claude-opus-4-8",
+      "opencode/claude-sonnet-5",
       "opencode/claude-haiku-4-5",
+      "opencode/gemini-3.5-flash",
       "opencode/gemini-3.1-pro",
       "opencode/gemini-3-flash",
-      "opencode/qwen3.6-plus",
+      "opencode/qwen3.7-plus",
       "opencode/minimax-m2.7",
-      "opencode/glm-5.1",
+      "opencode/glm-5.2",
       "opencode/kimi-k2.6",
     ]);
     expect(OPENCODE_ZEN_PROVIDER_MANIFEST.models.recommended).not.toContain("opencode/gpt-5.1");
@@ -746,7 +708,7 @@ describe("provider registry", () => {
       thinkingMode: "openai-reasoning-effort",
     });
     expect(
-      OPENCODE_ZEN_PROVIDER_MANIFEST.modelCapabilities?.["opencode/claude-opus-4-7"],
+      OPENCODE_ZEN_PROVIDER_MANIFEST.modelCapabilities?.["opencode/claude-opus-4-8"],
     ).toMatchObject({
       tools: true,
       json: true,
@@ -1039,15 +1001,15 @@ describe("provider registry", () => {
     ]);
     expect(CLOUDFLARE_AI_GATEWAY_PROVIDER_MANIFEST.models.dynamic).toBeUndefined();
     expect(CLOUDFLARE_AI_GATEWAY_PROVIDER_MANIFEST.models.recommended).toEqual([
-      "cloudflare-ai-gateway/claude-sonnet-4-6",
-      "cloudflare-ai-gateway/claude-opus-4-6",
+      "cloudflare-ai-gateway/claude-sonnet-5",
+      "cloudflare-ai-gateway/claude-opus-4-8",
       "cloudflare-ai-gateway/claude-haiku-4-5",
     ]);
-    expect(isStandardProviderModelRef("cloudflare-ai-gateway/claude-sonnet-4-6")).toBe(true);
+    expect(isStandardProviderModelRef("cloudflare-ai-gateway/claude-sonnet-5")).toBe(true);
     expect(isStandardProviderModelRef("cloudflare-ai-gateway/openai/gpt-5.2")).toBe(false);
     expect(
       CLOUDFLARE_AI_GATEWAY_PROVIDER_MANIFEST.modelCapabilities?.[
-        "cloudflare-ai-gateway/claude-sonnet-4-6"
+        "cloudflare-ai-gateway/claude-sonnet-5"
       ],
     ).toMatchObject({
       tools: true,
@@ -1081,10 +1043,7 @@ describe("provider registry", () => {
       "mistral/mistral-medium-3.5",
       "mistral/mistral-small-2603",
       "mistral/mistral-large-2512",
-      "mistral/mistral-medium-2508",
       "mistral/devstral-2512",
-      "mistral/magistral-medium-2509",
-      "mistral/magistral-small-2509",
       "mistral/ministral-14b-2512",
       "mistral/ministral-8b-2512",
       "mistral/ministral-3b-2512",
@@ -1101,13 +1060,7 @@ describe("provider registry", () => {
       defaultThinkingLevel: "high",
       thinkingMode: "mistral-reasoning-effort",
     });
-    expect(
-      MISTRAL_PROVIDER_MANIFEST.modelCapabilities?.["mistral/magistral-small-2509"],
-    ).toMatchObject({
-      tools: true,
-      json: true,
-      fixedReasoning: true,
-    });
+    expect(isStandardProviderModelRef("mistral/magistral-small-2509")).toBe(false);
   });
 
   it("keeps Volcano Engine auth methods and current models route-compatible", () => {
@@ -1243,40 +1196,41 @@ describe("provider registry", () => {
     expect(OPENROUTER_PROVIDER_MANIFEST.models.dynamic).toBe(true);
     expect(OPENROUTER_PROVIDER_MANIFEST.models.recommended).toEqual([
       "openrouter/openrouter/owl-alpha",
-      "openrouter/openai/gpt-5.5-pro",
       "openrouter/openai/gpt-5.5",
       "openrouter/openai/gpt-5.4",
-      "openrouter/openai/gpt-5.4-pro",
       "openrouter/openai/gpt-5.4-mini",
       "openrouter/openai/gpt-5.4-nano",
-      "openrouter/openai/gpt-5-codex",
-      "openrouter/anthropic/claude-opus-4.7",
-      "openrouter/anthropic/claude-sonnet-4.6",
+      "openrouter/anthropic/claude-fable-5",
+      "openrouter/anthropic/claude-opus-4.8",
+      "openrouter/anthropic/claude-sonnet-5",
       "openrouter/anthropic/claude-haiku-4.5",
+      "openrouter/google/gemini-3.5-flash",
       "openrouter/google/gemini-3.1-pro-preview",
       "openrouter/google/gemini-3-flash-preview",
       "openrouter/google/gemini-3.1-flash-lite",
       "openrouter/x-ai/grok-4.3",
-      "openrouter/x-ai/grok-4.20",
-      "openrouter/x-ai/grok-4.20-multi-agent",
+      "openrouter/x-ai/grok-build-0.1",
       "openrouter/mistralai/mistral-medium-3-5",
       "openrouter/mistralai/mistral-small-2603",
+      "openrouter/mistralai/mistral-large-2512",
+      "openrouter/mistralai/devstral-2512",
+      "openrouter/qwen/qwen3.7-max",
+      "openrouter/qwen/qwen3.7-plus",
       "openrouter/qwen/qwen3.6-flash",
-      "openrouter/qwen/qwen3.6-max-preview",
-      "openrouter/z-ai/glm-5.1",
+      "openrouter/z-ai/glm-5.2",
       "openrouter/deepseek/deepseek-v4-pro",
+      "openrouter/deepseek/deepseek-v4-flash",
       "openrouter/minimax/minimax-m2.7",
       "openrouter/moonshotai/kimi-k2.6",
     ]);
     expect(isStandardProviderModelRef("openrouter/openai/gpt-5.5")).toBe(true);
-    expect(isStandardProviderModelRef("openrouter/qwen/qwen3.6-flash")).toBe(true);
+    expect(isStandardProviderModelRef("openrouter/qwen/qwen3.7-plus")).toBe(true);
     expect(isStandardProviderModelRef("openrouter/openai/gpt-4o")).toBe(true);
     expect(
-      OPENROUTER_PROVIDER_MANIFEST.modelCapabilities?.["openrouter/qwen/qwen3.6-flash"],
+      OPENROUTER_PROVIDER_MANIFEST.modelCapabilities?.["openrouter/qwen/qwen3.7-plus"],
     ).toMatchObject({
       tools: true,
       json: true,
-      video: true,
       thinkingMode: "qwen-thinking",
     });
     expect(
@@ -1302,44 +1256,38 @@ describe("provider registry", () => {
     ]);
     expect(QWEN_PROVIDER_MANIFEST.modelProviderIds).toEqual(["qwen-coding-plan", "qwen"]);
     expect(QWEN_PROVIDER_MANIFEST.models.recommended).toEqual([
-      "qwen-coding-plan/qwen3.6-plus",
-      "qwen-coding-plan/qwen3.5-plus",
-      "qwen-coding-plan/qwen3-max-2026-01-23",
-      "qwen-coding-plan/qwen3-coder-plus",
-      "qwen-coding-plan/qwen3-coder-next",
-      "qwen-coding-plan/kimi-k2.5",
-      "qwen-coding-plan/glm-5",
-      "qwen-coding-plan/glm-4.7",
+      "qwen-coding-plan/qwen3.7-max",
+      "qwen-coding-plan/qwen3.7-plus",
+      "qwen-coding-plan/qwen3.6-flash",
+      "qwen-coding-plan/deepseek-v4-pro",
+      "qwen-coding-plan/deepseek-v4-flash",
+      "qwen-coding-plan/kimi-k2.7-code",
+      "qwen-coding-plan/glm-5.2",
       "qwen-coding-plan/MiniMax-M2.5",
-      "qwen/qwen3.6-plus",
+      "qwen/qwen3.7-max",
+      "qwen/qwen3.7-plus",
       "qwen/qwen3.6-flash",
-      "qwen/qwen3.6-max-preview",
-      "qwen/qwen3-coder-plus",
-      "qwen/qwen3-coder-flash",
-      "qwen/qwen3-coder-next",
-      "qwen/qwen3.5-plus",
-      "qwen/qwen3.5-flash",
     ]);
-    expect(isStandardProviderModelRef("qwen/qwen3.6-plus")).toBe(true);
-    expect(isStandardProviderModelRef("qwen-coding-plan/qwen3-coder-plus")).toBe(true);
+    expect(isStandardProviderModelRef("qwen/qwen3.7-plus")).toBe(true);
+    expect(isStandardProviderModelRef("qwen-coding-plan/deepseek-v4-pro")).toBe(true);
     expect(isStandardProviderModelRef("qwen-portal/coder-model")).toBe(false);
     expect(isStandardProviderModelRef("qwen-portal/vision-model")).toBe(false);
-    expect(isStandardProviderModelRef("qwen-portal/qwen3.6-plus")).toBe(false);
-    expect(QWEN_PROVIDER_MANIFEST.modelCapabilities?.["qwen/qwen3.6-plus"]).toMatchObject({
+    expect(isStandardProviderModelRef("qwen-portal/qwen3.7-plus")).toBe(false);
+    expect(QWEN_PROVIDER_MANIFEST.modelCapabilities?.["qwen/qwen3.7-plus"]).toMatchObject({
       tools: true,
       json: true,
       thinkingMode: "qwen-thinking",
       reasoningBudgetSupported: true,
     });
     expect(
-      QWEN_PROVIDER_MANIFEST.modelCapabilities?.["qwen-coding-plan/qwen3.6-plus"],
+      QWEN_PROVIDER_MANIFEST.modelCapabilities?.["qwen-coding-plan/qwen3.7-plus"],
     ).toMatchObject({
       tools: true,
       json: true,
       thinkingMode: "qwen-thinking",
     });
     expect(
-      QWEN_PROVIDER_MANIFEST.modelCapabilities?.["qwen-coding-plan/qwen3-coder-plus"],
+      QWEN_PROVIDER_MANIFEST.modelCapabilities?.["qwen-coding-plan/minimax-m2.5"],
     ).toMatchObject({
       tools: true,
       json: true,
@@ -1361,6 +1309,7 @@ describe("provider registry", () => {
       "zai-cn",
     ]);
     expect(ZAI_PROVIDER_MANIFEST.models.recommended).toEqual([
+      "zai/glm-5.2",
       "zai/glm-5.1",
       "zai/glm-5",
       "zai/glm-5-turbo",
@@ -1369,6 +1318,7 @@ describe("provider registry", () => {
       "zai/glm-4.7-flashx",
       "zai/glm-4.7-flash",
     ]);
+    expect(isStandardProviderModelRef("zai/glm-5.2")).toBe(true);
     expect(isStandardProviderModelRef("zai/glm-5.1")).toBe(true);
     expect(isStandardProviderModelRef("zai/glm-5v-turbo")).toBe(true);
     expect(isStandardProviderModelRef("zai/glm-4.7-flashx")).toBe(true);

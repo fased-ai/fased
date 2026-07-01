@@ -8,11 +8,11 @@ import {
 
 describe("resolveOpencodeZenAlias", () => {
   it("resolves opus alias", () => {
-    expect(resolveOpencodeZenAlias("opus")).toBe("claude-opus-4-7");
+    expect(resolveOpencodeZenAlias("opus")).toBe("claude-opus-4-8");
   });
 
   it("keeps legacy aliases working", () => {
-    expect(resolveOpencodeZenAlias("sonnet")).toBe("claude-sonnet-4-6");
+    expect(resolveOpencodeZenAlias("sonnet")).toBe("claude-sonnet-5");
     expect(resolveOpencodeZenAlias("haiku")).toBe("claude-haiku-4-5");
     expect(resolveOpencodeZenAlias("gpt4")).toBe("gpt-5.4-mini");
     expect(resolveOpencodeZenAlias("o1")).toBe("gpt-5.5");
@@ -32,7 +32,7 @@ describe("resolveOpencodeZenAlias", () => {
   });
 
   it("is case-insensitive", () => {
-    expect(resolveOpencodeZenAlias("OPUS")).toBe("claude-opus-4-7");
+    expect(resolveOpencodeZenAlias("OPUS")).toBe("claude-opus-4-8");
     expect(resolveOpencodeZenAlias("Gpt5")).toBe("gpt-5.5");
   });
 });
@@ -53,24 +53,23 @@ describe("getOpencodeZenStaticFallbackModels", () => {
   it("returns an array of models", () => {
     const models = getOpencodeZenStaticFallbackModels();
     expect(Array.isArray(models)).toBe(true);
-    expect(models.length).toBe(22);
+    expect(models.length).toBe(16);
   });
 
   it("includes Claude, GPT, Gemini, and GLM models", () => {
     const models = getOpencodeZenStaticFallbackModels();
     const ids = models.map((m) => m.id);
 
-    expect(ids).toContain("claude-opus-4-7");
-    expect(ids).toContain("claude-opus-4-6");
-    expect(ids).toContain("claude-sonnet-4-5");
-    expect(ids).toContain("claude-sonnet-4-6");
+    expect(ids).toContain("claude-fable-5");
+    expect(ids).toContain("claude-opus-4-8");
+    expect(ids).toContain("claude-sonnet-5");
     expect(ids).toContain("gpt-5.5");
-    expect(ids).toContain("gpt-5.3-codex");
-    expect(ids).toContain("gpt-5.2");
-    expect(ids).toContain("gpt-5.2-codex");
+    expect(ids).toContain("gpt-5.3-codex-spark");
+    expect(ids).toContain("gemini-3.5-flash");
     expect(ids).toContain("gemini-3.1-pro");
-    expect(ids).toContain("glm-5.1");
+    expect(ids).toContain("glm-5.2");
     expect(ids).not.toContain("gpt-5.1");
+    expect(ids).not.toContain("gpt-5.5-pro");
     expect(ids).not.toContain("big-pickle");
   });
 
@@ -90,15 +89,15 @@ describe("getOpencodeZenStaticFallbackModels", () => {
 
 describe("OPENCODE_ZEN_MODEL_ALIASES", () => {
   it("has expected aliases", () => {
-    expect(OPENCODE_ZEN_MODEL_ALIASES.opus).toBe("claude-opus-4-7");
-    expect(OPENCODE_ZEN_MODEL_ALIASES.codex).toBe("gpt-5.3-codex");
+    expect(OPENCODE_ZEN_MODEL_ALIASES.opus).toBe("claude-opus-4-8");
+    expect(OPENCODE_ZEN_MODEL_ALIASES.codex).toBe("gpt-5.3-codex-spark");
     expect(OPENCODE_ZEN_MODEL_ALIASES.gpt5).toBe("gpt-5.5");
     expect(OPENCODE_ZEN_MODEL_ALIASES.gemini).toBe("gemini-3.1-pro");
-    expect(OPENCODE_ZEN_MODEL_ALIASES.glm).toBe("glm-5.1");
-    expect(OPENCODE_ZEN_MODEL_ALIASES["opus-4.5"]).toBe("claude-opus-4-5");
+    expect(OPENCODE_ZEN_MODEL_ALIASES.glm).toBe("glm-5.2");
+    expect(OPENCODE_ZEN_MODEL_ALIASES["opus-4.5"]).toBe("claude-opus-4-8");
 
     // Legacy aliases (kept for backward compatibility).
-    expect(OPENCODE_ZEN_MODEL_ALIASES.sonnet).toBe("claude-sonnet-4-6");
+    expect(OPENCODE_ZEN_MODEL_ALIASES.sonnet).toBe("claude-sonnet-5");
     expect(OPENCODE_ZEN_MODEL_ALIASES.haiku).toBe("claude-haiku-4-5");
     expect(OPENCODE_ZEN_MODEL_ALIASES.gpt4).toBe("gpt-5.4-mini");
     expect(OPENCODE_ZEN_MODEL_ALIASES.o1).toBe("gpt-5.5");

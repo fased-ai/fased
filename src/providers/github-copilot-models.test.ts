@@ -8,16 +8,17 @@ import {
 
 describe("github-copilot-models", () => {
   describe("getDefaultCopilotModelIds", () => {
-    it("includes claude-sonnet-4.6", () => {
-      expect(getDefaultCopilotModelIds()).toContain("claude-sonnet-4.6");
+    it("includes claude-sonnet-5", () => {
+      expect(getDefaultCopilotModelIds()).toContain("claude-sonnet-5");
     });
 
     it("includes current OpenAI, Anthropic, and Google Copilot models", () => {
       expect(getDefaultCopilotModelIds()).toContain("gpt-5.5");
-      expect(getDefaultCopilotModelIds()).toContain("claude-opus-4.7");
-      expect(getDefaultCopilotModelIds()).toContain("claude-opus-4.6-fast");
+      expect(getDefaultCopilotModelIds()).toContain("claude-opus-4.8");
+      expect(getDefaultCopilotModelIds()).toContain("claude-fable-5");
+      expect(getDefaultCopilotModelIds()).toContain("gemini-3.5-flash");
       expect(getDefaultCopilotModelIds()).toContain("gemini-3.1-pro");
-      expect(getDefaultCopilotModelIds()).toContain("raptor-mini");
+      expect(getDefaultCopilotModelIds()).toContain("grok-build-0.1");
       expect(getDefaultCopilotModelIds()).not.toContain("gpt-5.4-nano");
     });
 
@@ -32,16 +33,16 @@ describe("github-copilot-models", () => {
   describe("getDefaultCopilotProxyModelIds", () => {
     it("uses the curated Copilot Proxy defaults", () => {
       expect(getDefaultCopilotProxyModelIds()).toContain("gpt-5.5");
-      expect(getDefaultCopilotProxyModelIds()).toContain("grok-code-fast-1");
-      expect(getDefaultCopilotProxyModelIds()).toContain("goldeneye");
+      expect(getDefaultCopilotProxyModelIds()).toContain("grok-build-0.1");
+      expect(getDefaultCopilotProxyModelIds()).toContain("claude-sonnet-5");
       expect(getDefaultCopilotProxyModelIds()).not.toContain("gpt-4o");
     });
   });
 
   describe("buildCopilotModelDefinition", () => {
-    it("builds a valid definition for claude-sonnet-4.6", () => {
-      const def = buildCopilotModelDefinition("claude-sonnet-4.6");
-      expect(def.id).toBe("claude-sonnet-4.6");
+    it("builds a valid definition for claude-sonnet-5", () => {
+      const def = buildCopilotModelDefinition("claude-sonnet-5");
+      expect(def.id).toBe("claude-sonnet-5");
       expect(def.api).toBe("openai-responses");
     });
 
@@ -63,7 +64,7 @@ describe("github-copilot-models", () => {
     });
 
     it("derives model-family capabilities", () => {
-      expect(buildCopilotModelDefinition("claude-opus-4.7").capabilities).toMatchObject({
+      expect(buildCopilotModelDefinition("claude-opus-4.8").capabilities).toMatchObject({
         tools: true,
         json: true,
         thinkingMode: "anthropic-adaptive",
@@ -73,7 +74,7 @@ describe("github-copilot-models", () => {
         json: true,
         thinkingMode: "google-thinking-budget",
       });
-      expect(buildCopilotModelDefinition("grok-code-fast-1").capabilities).toMatchObject({
+      expect(buildCopilotModelDefinition("grok-build-0.1").capabilities).toMatchObject({
         tools: true,
         json: true,
       });

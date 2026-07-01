@@ -344,7 +344,7 @@ export async function setVeniceApiKey(
   });
 }
 
-export const ZAI_DEFAULT_MODEL_REF = "zai/glm-5.1";
+export const ZAI_DEFAULT_MODEL_REF = "zai/glm-5.2";
 export const XIAOMI_DEFAULT_MODEL_REF = "xiaomi/mimo-v2.5-pro";
 export const OPENROUTER_DEFAULT_MODEL_REF = "openrouter/auto";
 

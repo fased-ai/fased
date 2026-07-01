@@ -15,8 +15,11 @@ export function normalizeGooglePreviewModelId(id: string): string {
   if (id === "gemini-3.1-pro") {
     return "gemini-3.1-pro-preview";
   }
-  if (id === "gemini-3.1-flash-lite") {
-    return "gemini-3.1-flash-lite-preview";
+  if (id === "gemini-3.5-flash-preview") {
+    return "gemini-3.5-flash";
+  }
+  if (id === "gemini-3.1-flash-lite-preview") {
+    return "gemini-3.1-flash-lite";
   }
   if (id === "gemini-3.1-flash" || id === "gemini-3.1-flash-preview") {
     return "gemini-3-flash-preview";

@@ -27,8 +27,9 @@ export const ZAI_CODING_GLOBAL_BASE_URL = "https://api.z.ai/api/coding/paas/v4";
 export const ZAI_CODING_CN_BASE_URL = "https://open.bigmodel.cn/api/coding/paas/v4";
 export const ZAI_GLOBAL_BASE_URL = "https://api.z.ai/api/paas/v4";
 export const ZAI_CN_BASE_URL = "https://open.bigmodel.cn/api/paas/v4";
-export const ZAI_DEFAULT_MODEL_ID = "glm-5.1";
+export const ZAI_DEFAULT_MODEL_ID = "glm-5.2";
 export const ZAI_RECOMMENDED_MODEL_IDS = [
+  "glm-5.2",
   "glm-5.1",
   "glm-5",
   "glm-5-turbo",
@@ -99,6 +100,7 @@ const ZAI_MODEL_CATALOG: Record<
     maxTokens?: number;
   }
 > = {
+  "glm-5.2": { name: "GLM-5.2", reasoning: true, contextWindow: 1000000, maxTokens: 128000 },
   "glm-5.1": { name: "GLM-5.1", reasoning: true, contextWindow: 200000, maxTokens: 128000 },
   "glm-5": { name: "GLM-5", reasoning: true, contextWindow: 200000, maxTokens: 128000 },
   "glm-5-turbo": {
@@ -213,15 +215,6 @@ export const MISTRAL_MODEL_CATALOG = [
     cost: { input: 0.5, output: 1.5, cacheRead: 0, cacheWrite: 0 },
   },
   {
-    id: "mistral-medium-2508",
-    name: "Mistral Medium 3.1",
-    reasoning: false,
-    input: ["text", "image"] as const,
-    contextWindow: 262_144,
-    maxTokens: 262_144,
-    cost: { input: 0.4, output: 2, cacheRead: 0, cacheWrite: 0 },
-  },
-  {
     id: "devstral-2512",
     name: "Devstral 2",
     reasoning: false,
@@ -229,24 +222,6 @@ export const MISTRAL_MODEL_CATALOG = [
     contextWindow: 262_144,
     maxTokens: 262_144,
     cost: { input: 0.4, output: 2, cacheRead: 0, cacheWrite: 0 },
-  },
-  {
-    id: "magistral-medium-2509",
-    name: "Magistral Medium 1.2",
-    reasoning: false,
-    input: ["text", "image"] as const,
-    contextWindow: 128_000,
-    maxTokens: 128_000,
-    cost: { input: 2, output: 5, cacheRead: 0, cacheWrite: 0 },
-  },
-  {
-    id: "magistral-small-2509",
-    name: "Magistral Small 1.2",
-    reasoning: false,
-    input: ["text", "image"] as const,
-    contextWindow: 128_000,
-    maxTokens: 128_000,
-    cost: { input: 0.5, output: 1.5, cacheRead: 0, cacheWrite: 0 },
   },
   {
     id: "ministral-14b-2512",
@@ -335,27 +310,11 @@ export const XAI_MODEL_CATALOG = [
     maxTokens: 64_000,
   },
   {
-    id: "grok-4.20-multi-agent-0309",
-    name: "Grok 4.20 Multi-Agent",
-    reasoning: true,
-    input: ["text", "image"] as const,
-    contextWindow: 2_000_000,
-    maxTokens: 64_000,
-  },
-  {
-    id: "grok-4.20-0309-reasoning",
-    name: "Grok 4.20 Reasoning",
-    reasoning: true,
-    input: ["text", "image"] as const,
-    contextWindow: 2_000_000,
-    maxTokens: 64_000,
-  },
-  {
-    id: "grok-4.20-0309-non-reasoning",
-    name: "Grok 4.20 Non-Reasoning",
+    id: "grok-build-0.1",
+    name: "Grok Build 0.1",
     reasoning: false,
-    input: ["text", "image"] as const,
-    contextWindow: 2_000_000,
+    input: ["text"] as const,
+    contextWindow: 256_000,
     maxTokens: 64_000,
   },
 ] as const;
@@ -372,25 +331,10 @@ export function buildXaiModelDefinition(modelId = XAI_DEFAULT_MODEL_ID): ModelDe
           thinkingMode: "xai-reasoning-effort",
           reasoningBudgetSupported: false,
         }
-      : catalog.id === "grok-4.20-multi-agent-0309"
-        ? {
-            tools: true,
-            json: true,
-            thinkingLevels: ["low", "medium", "high", "xhigh"],
-            defaultThinkingLevel: "low",
-            thinkingMode: "xai-multi-agent-effort",
-            reasoningBudgetSupported: false,
-          }
-        : catalog.id === "grok-4.20-0309-reasoning"
-          ? {
-              tools: true,
-              json: true,
-              fixedReasoning: true,
-            }
-          : {
-              tools: true,
-              json: true,
-            };
+      : {
+          tools: true,
+          json: true,
+        };
   return {
     id: catalog.id,
     name: catalog.name,

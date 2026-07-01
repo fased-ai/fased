@@ -21,9 +21,9 @@ import {
 
 export function applyMinimaxProviderConfig(cfg: FasedAgentConfig): FasedAgentConfig {
   const models = { ...cfg.agents?.defaults?.models };
-  models["anthropic/claude-opus-4-6"] = {
-    ...models["anthropic/claude-opus-4-6"],
-    alias: models["anthropic/claude-opus-4-6"]?.alias ?? "Opus",
+  models["anthropic/claude-opus-4-8"] = {
+    ...models["anthropic/claude-opus-4-8"],
+    alias: models["anthropic/claude-opus-4-8"]?.alias ?? "Opus",
   };
   return applyOnboardAuthAgentModelsAndProviders(cfg, {
     agentModels: models,

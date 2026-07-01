@@ -35,17 +35,17 @@ export type ModelThinkingCapability = {
 
 export const XHIGH_MODEL_REFS = [
   "openai/gpt-5.5",
-  "openai/gpt-5.5-pro",
   "openai/gpt-5.4",
-  "openai/gpt-5.4-pro",
   "openai/gpt-5.4-mini",
   "openai/gpt-5.4-nano",
-  "openai/gpt-5.2",
   "openai-codex/gpt-5.5",
   "openai-codex/gpt-5.4",
-  "openai-codex/gpt-5.3-codex",
-  "github-copilot/gpt-5.2-codex",
-  "github-copilot/gpt-5.2",
+  "openai-codex/gpt-5.4-mini",
+  "openai-codex/gpt-5.3-codex-spark",
+  "github-copilot/gpt-5.5",
+  "github-copilot/gpt-5.4",
+  "github-copilot/gpt-5.4-mini",
+  "github-copilot/gpt-5.3-codex-spark",
 ] as const;
 
 const XHIGH_MODEL_SET = new Set(XHIGH_MODEL_REFS.map((entry) => entry.toLowerCase()));
@@ -143,10 +143,14 @@ function listGenericThinkingLevels(
 function isAnthropicAdaptiveModel(model?: string | null): boolean {
   const modelId = model?.trim().toLowerCase() ?? "";
   return (
+    modelId.includes("fable-5") ||
+    modelId.includes("opus-4-8") ||
+    modelId.includes("opus-4.8") ||
     modelId.includes("opus-4-6") ||
     modelId.includes("opus-4.6") ||
     modelId.includes("opus-4-7") ||
     modelId.includes("opus-4.7") ||
+    modelId.includes("sonnet-5") ||
     modelId.includes("sonnet-4-6") ||
     modelId.includes("sonnet-4.6") ||
     modelId.includes("sonnet-4-7") ||

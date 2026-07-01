@@ -204,7 +204,7 @@ describe("loadModelCatalog", () => {
     );
   });
 
-  it("does not synthesize stale openai-codex/gpt-5.3-codex-spark entries from gpt-5.4", async () => {
+  it("keeps the curated openai-codex/gpt-5.3-codex-spark entry with gpt-5.4", async () => {
     mockPiDiscoveryModels([
       {
         id: "gpt-5.4",
@@ -222,7 +222,7 @@ describe("loadModelCatalog", () => {
     ]);
 
     const result = await loadModelCatalog({ config: {} as FasedAgentConfig });
-    expect(result).not.toContainEqual(
+    expect(result).toContainEqual(
       expect.objectContaining({
         provider: "openai-codex",
         id: "gpt-5.3-codex-spark",
@@ -243,7 +243,7 @@ describe("loadModelCatalog", () => {
     );
   });
 
-  it("filters gated gpt-5.3-codex-spark built-ins from the catalog without plan-aware routing", async () => {
+  it("keeps gpt-5.3-codex-spark only on the openai-codex catalog", async () => {
     mockPiDiscoveryModels([
       {
         id: "gpt-5.3-codex-spark",
@@ -284,7 +284,7 @@ describe("loadModelCatalog", () => {
         id: "gpt-5.3-codex-spark",
       }),
     );
-    expect(result).not.toContainEqual(
+    expect(result).toContainEqual(
       expect.objectContaining({
         provider: "openai-codex",
         id: "gpt-5.3-codex-spark",
@@ -353,16 +353,17 @@ describe("loadModelCatalog", () => {
       .map((entry) => entry.id);
 
     expect(openaiIds).toContain("gpt-5.5");
-    expect(openaiIds).toContain("gpt-5-codex");
+    expect(openaiIds).toContain("gpt-5.4-nano");
+    expect(openaiIds).not.toContain("gpt-5-codex");
     expect(openaiIds).not.toContain("chat-latest");
     expect(openaiIds).not.toContain("gpt-5.2");
     expect(openaiIds).not.toContain("gpt-5.1");
     expect(openaiIds).not.toContain("gpt-4.1-mini");
     expect(openaiCodexIds).toContain("gpt-5.5");
+    expect(openaiCodexIds).toContain("gpt-5.3-codex-spark");
     expect(openaiCodexIds).not.toContain("gpt-5.2-codex");
     expect(openaiCodexIds).not.toContain("gpt-5.5-pro");
     expect(openaiCodexIds).not.toContain("gpt-5.4-pro");
-    expect(openaiCodexIds).not.toContain("gpt-5.3-codex-spark");
   });
 
   it("synthesizes current OpenAI forward-compat entries from template models", async () => {

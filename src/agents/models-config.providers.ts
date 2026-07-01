@@ -130,7 +130,7 @@ const KIMI_CODING_DEFAULT_COST = {
 
 export const QWEN_DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1";
 export const QWEN_CODING_PLAN_BASE_URL = "https://coding.dashscope.aliyuncs.com/v1";
-export const QWEN_DEFAULT_MODEL_ID = "qwen3.6-plus";
+export const QWEN_DEFAULT_MODEL_ID = "qwen3.7-plus";
 export const QWEN_DEFAULT_MODEL_REF = `qwen/${QWEN_DEFAULT_MODEL_ID}`;
 export const QWEN_CODING_PLAN_DEFAULT_MODEL_REF = `qwen-coding-plan/${QWEN_DEFAULT_MODEL_ID}`;
 const QWEN_DEFAULT_CONTEXT_WINDOW = 1_000_000;
@@ -144,8 +144,17 @@ const QWEN_DEFAULT_COST = {
 
 const QWEN_DASHSCOPE_MODEL_CATALOG: ProviderModelConfig[] = [
   {
-    id: "qwen3.6-plus",
-    name: "Qwen3.6 Plus",
+    id: "qwen3.7-max",
+    name: "Qwen3.7 Max",
+    reasoning: true,
+    input: ["text", "image"],
+    cost: QWEN_DEFAULT_COST,
+    contextWindow: QWEN_DEFAULT_CONTEXT_WINDOW,
+    maxTokens: QWEN_DEFAULT_MAX_TOKENS,
+  },
+  {
+    id: "qwen3.7-plus",
+    name: "Qwen3.7 Plus",
     reasoning: true,
     input: ["text", "image"],
     cost: QWEN_DEFAULT_COST,
@@ -158,105 +167,50 @@ const QWEN_DASHSCOPE_MODEL_CATALOG: ProviderModelConfig[] = [
     reasoning: true,
     input: ["text", "image"],
     cost: QWEN_DEFAULT_COST,
-    contextWindow: QWEN_DEFAULT_CONTEXT_WINDOW,
-    maxTokens: QWEN_DEFAULT_MAX_TOKENS,
-  },
-  {
-    id: "qwen3.6-max-preview",
-    name: "Qwen3.6 Max Preview",
-    reasoning: true,
-    input: ["text"],
-    cost: QWEN_DEFAULT_COST,
-    contextWindow: 262_144,
-    maxTokens: QWEN_DEFAULT_MAX_TOKENS,
-  },
-  {
-    id: "qwen3-coder-plus",
-    name: "Qwen3 Coder Plus",
-    reasoning: false,
-    input: ["text"],
-    cost: QWEN_DEFAULT_COST,
     contextWindow: 1_000_000,
-    maxTokens: QWEN_DEFAULT_MAX_TOKENS,
-  },
-  {
-    id: "qwen3-coder-flash",
-    name: "Qwen3 Coder Flash",
-    reasoning: false,
-    input: ["text"],
-    cost: QWEN_DEFAULT_COST,
-    contextWindow: 1_000_000,
-    maxTokens: QWEN_DEFAULT_MAX_TOKENS,
-  },
-  {
-    id: "qwen3-coder-next",
-    name: "Qwen3 Coder Next",
-    reasoning: false,
-    input: ["text"],
-    cost: QWEN_DEFAULT_COST,
-    contextWindow: 262_144,
-    maxTokens: QWEN_DEFAULT_MAX_TOKENS,
-  },
-  {
-    id: "qwen3.5-plus",
-    name: "Qwen3.5 Plus",
-    reasoning: true,
-    input: ["text", "image"],
-    cost: QWEN_DEFAULT_COST,
-    contextWindow: QWEN_DEFAULT_CONTEXT_WINDOW,
-    maxTokens: QWEN_DEFAULT_MAX_TOKENS,
-  },
-  {
-    id: "qwen3.5-flash",
-    name: "Qwen3.5 Flash",
-    reasoning: true,
-    input: ["text"],
-    cost: QWEN_DEFAULT_COST,
-    contextWindow: QWEN_DEFAULT_CONTEXT_WINDOW,
     maxTokens: QWEN_DEFAULT_MAX_TOKENS,
   },
 ];
 
 const QWEN_CODING_PLAN_MODEL_CATALOG: ProviderModelConfig[] = [
   QWEN_DASHSCOPE_MODEL_CATALOG[0],
-  QWEN_DASHSCOPE_MODEL_CATALOG[6],
+  QWEN_DASHSCOPE_MODEL_CATALOG[1],
+  QWEN_DASHSCOPE_MODEL_CATALOG[2],
   {
-    id: "qwen3-max-2026-01-23",
-    name: "Qwen3 Max 2026-01-23",
+    id: "deepseek-v4-pro",
+    name: "DeepSeek V4 Pro",
     reasoning: true,
-    input: ["text", "image"],
+    input: ["text"],
     cost: QWEN_DEFAULT_COST,
-    contextWindow: 262_144,
-    maxTokens: QWEN_DEFAULT_MAX_TOKENS,
+    contextWindow: 1_000_000,
+    maxTokens: 131_072,
   },
-  QWEN_DASHSCOPE_MODEL_CATALOG[3],
-  QWEN_DASHSCOPE_MODEL_CATALOG[5],
   {
-    id: "kimi-k2.5",
-    name: "Kimi K2.5",
+    id: "deepseek-v4-flash",
+    name: "DeepSeek V4 Flash",
     reasoning: true,
-    input: ["text", "image"],
+    input: ["text"],
+    cost: QWEN_DEFAULT_COST,
+    contextWindow: 1_000_000,
+    maxTokens: 131_072,
+  },
+  {
+    id: "kimi-k2.7-code",
+    name: "Kimi K2.7 Code",
+    reasoning: true,
+    input: ["text"],
     cost: QWEN_DEFAULT_COST,
     contextWindow: 262_144,
     maxTokens: 98_304,
   },
   {
-    id: "glm-5",
-    name: "GLM-5",
+    id: "glm-5.2",
+    name: "GLM-5.2",
     reasoning: true,
     input: ["text"],
     cost: QWEN_DEFAULT_COST,
-    contextWindow: 202_752,
-    maxTokens: 16_384,
-  },
-  {
-    id: "glm-4.7",
-    name: "GLM-4.7",
-    reasoning: true,
-    input: ["text"],
-    cost: QWEN_DEFAULT_COST,
-    contextWindow: 202_752,
-    maxTokens: 16_384,
+    contextWindow: 1_000_000,
+    maxTokens: 128_000,
   },
   {
     id: "MiniMax-M2.5",
@@ -611,6 +565,9 @@ function resolveDiscoveryApiKey(apiKey?: string): string | undefined {
 }
 
 export function normalizeGoogleModelId(id: string): string {
+  if (id === "gemini-3.5-flash-preview") {
+    return "gemini-3.5-flash";
+  }
   if (id === "gemini-3-pro" || id === "gemini-3-pro-preview" || id === "gemini-3.1-pro") {
     return "gemini-3.1-pro-preview";
   }

@@ -26,10 +26,9 @@ function buildCopilotCapability(modelId: string): ModelCapabilityConfig {
     };
   }
   if (
-    normalized === "claude-opus-4.7" ||
-    normalized === "claude-opus-4.6" ||
-    normalized === "claude-opus-4.6-fast" ||
-    normalized === "claude-sonnet-4.6"
+    normalized === "claude-fable-5" ||
+    normalized === "claude-opus-4.8" ||
+    normalized === "claude-sonnet-5"
   ) {
     return {
       tools: true,
@@ -40,11 +39,7 @@ function buildCopilotCapability(modelId: string): ModelCapabilityConfig {
       reasoningBudgetSupported: true,
     };
   }
-  if (
-    normalized === "claude-opus-4.5" ||
-    normalized === "claude-sonnet-4.5" ||
-    normalized === "claude-haiku-4.5"
-  ) {
+  if (normalized === "claude-haiku-4.5") {
     return {
       tools: true,
       json: true,
@@ -55,7 +50,7 @@ function buildCopilotCapability(modelId: string): ModelCapabilityConfig {
     };
   }
   if (
-    normalized === "gemini-2.5-pro" ||
+    normalized === "gemini-3.5-flash" ||
     normalized === "gemini-3.1-pro" ||
     normalized === "gemini-3-flash"
   ) {

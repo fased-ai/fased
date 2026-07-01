@@ -227,7 +227,7 @@ describe("provider refresh", () => {
       brandId: "openai",
       route: "openai",
       missingSource: false,
-      additions: ["gpt-5.6"],
+      additions: ["gpt-5.6", "gpt-5-codex"],
     });
     expect(openai?.removals).toContain("gpt-5.4-mini");
 
@@ -336,7 +336,7 @@ describe("provider refresh", () => {
     const registrySource = [
       "export const OPENROUTER_MODEL_IDS = [",
       '  "openai/gpt-5.5",',
-      '  "anthropic/claude-sonnet-4.6",',
+      '  "anthropic/claude-sonnet-5",',
       "] as const;",
       "",
     ].join("\n");
@@ -345,7 +345,7 @@ describe("provider refresh", () => {
     const capabilitySource = buildProviderCapabilityOverridesSource(report);
 
     expect(nextSource).toContain('"openai/gpt-5.5"');
-    expect(nextSource).toContain('"anthropic/claude-sonnet-4.6"');
+    expect(nextSource).toContain('"anthropic/claude-sonnet-5"');
     expect(capabilitySource).toContain('"openrouter/openai/gpt-5.5"');
     expect(capabilitySource).toContain('"thinkingLevels"');
   });
@@ -416,13 +416,7 @@ describe("provider refresh", () => {
       gpt-4.1-mini gpt-5 gpt-5.2 gpt-5.4 gpt-5.4-mini gpt-5.5 gpt-5.6-pro gpt-5-codex
     `);
 
-    expect(selectOpenAIApiModelsForNormalUi(ids)).toEqual([
-      "gpt-5.5",
-      "gpt-5.4",
-      "gpt-5.4-mini",
-      "gpt-5-codex",
-      "gpt-5.6-pro",
-    ]);
+    expect(selectOpenAIApiModelsForNormalUi(ids)).toEqual(["gpt-5.5", "gpt-5.4", "gpt-5.4-mini"]);
   });
 
   it("parses and curates Chutes model catalog ids for normal UI", () => {
@@ -538,33 +532,35 @@ describe("provider refresh", () => {
     expect(
       selectAnthropicModelsForNormalUi([
         "claude-3-5-sonnet-20241022",
-        "claude-sonnet-4-6",
-        "claude-opus-4-7",
+        "claude-sonnet-5",
+        "claude-opus-4-8",
+        "claude-fable-5",
       ]),
-    ).toEqual(["claude-opus-4-7", "claude-sonnet-4-6"]);
+    ).toEqual(["claude-fable-5", "claude-opus-4-8", "claude-sonnet-5"]);
     expect(
       selectGoogleGeminiModelsForNormalUi([
-        "gemini-2.5-pro",
+        "gemini-3.5-flash",
         "gemini-3.1-pro-preview",
-        "gemini-3.1-pro-preview-customtools",
+        "gemini-3-flash-preview",
         "gemini-3.1-pro-preview",
       ]),
-    ).toEqual(["gemini-3.1-pro-preview", "gemini-3.1-pro-preview-customtools", "gemini-2.5-pro"]);
+    ).toEqual(["gemini-3.5-flash", "gemini-3.1-pro-preview", "gemini-3-flash-preview"]);
     expect(selectXaiModelsForNormalUi(["grok-3", "grok-4.3"])).toEqual(["grok-4.3"]);
     expect(
       selectMistralModelsForNormalUi([
         "mistral-large-2407",
         "mistral-medium-3.5",
+        "mistral-small-2603",
         "mistral-medium-2508",
-        "magistral-small-2509",
       ]),
-    ).toEqual(["mistral-medium-3.5", "mistral-medium-2508", "magistral-small-2509"]);
+    ).toEqual(["mistral-medium-3.5", "mistral-small-2603"]);
     expect(selectMinimaxModelsForNormalUi(["MiniMax-M2.7", "abab6.5"])).toEqual(["MiniMax-M2.7"]);
     expect(selectMoonshotModelsForNormalUi(["kimi-k2.6", "moonshot-v1-8k"])).toEqual(["kimi-k2.6"]);
     expect(selectKimiCodingModelsForNormalUi(["kimi-for-coding", "kimi-old"])).toEqual([
       "kimi-for-coding",
     ]);
-    expect(selectZaiModelsForNormalUi(["glm-4", "glm-5.1", "glm-5v-turbo"])).toEqual([
+    expect(selectZaiModelsForNormalUi(["glm-4", "glm-5.2", "glm-5.1", "glm-5v-turbo"])).toEqual([
+      "glm-5.2",
       "glm-5.1",
       "glm-5v-turbo",
     ]);
@@ -585,7 +581,7 @@ describe("provider refresh", () => {
         json: async () => ({
           data: [
             {
-              id: "claude-opus-4-7",
+              id: "claude-opus-4-8",
               max_input_tokens: 1000000,
               max_tokens: 128000,
               capabilities: {
@@ -611,9 +607,9 @@ describe("provider refresh", () => {
       fetch: fetchMock as typeof fetch,
       env: { ANTHROPIC_API_KEY: "anthropic-test" },
     });
-    expect(routeIds(snapshot.providers?.anthropic?.routes?.anthropic)).toEqual(["claude-opus-4-7"]);
+    expect(routeIds(snapshot.providers?.anthropic?.routes?.anthropic)).toEqual(["claude-opus-4-8"]);
     expect(snapshot.providers?.anthropic?.routes?.anthropic?.[0]).toMatchObject({
-      id: "claude-opus-4-7",
+      id: "claude-opus-4-8",
       input: ["text", "image"],
       reasoning: true,
       tools: true,
@@ -637,12 +633,12 @@ describe("provider refresh", () => {
         json: async () => ({
           models: [
             {
-              name: "models/gemini-3.1-pro-preview",
+              name: "models/gemini-3.5-flash",
               inputTokenLimit: 1048576,
               outputTokenLimit: 65536,
             },
-            { name: "models/gemini-3.1-pro-preview-customtools" },
-            { name: "models/gemini-2.5-flash" },
+            { name: "models/gemini-3.1-pro-preview" },
+            { name: "models/gemini-3.1-flash-lite" },
             { name: "models/gemini-2.0-flash" },
           ],
         }),
@@ -654,16 +650,16 @@ describe("provider refresh", () => {
       env: { GEMINI_API_KEY: "gemini-test" },
     });
     expect(routeIds(snapshot.providers?.google?.routes?.google)).toEqual([
+      "gemini-3.5-flash",
       "gemini-3.1-pro-preview",
-      "gemini-3.1-pro-preview-customtools",
-      "gemini-2.5-flash",
+      "gemini-3.1-flash-lite",
     ]);
     expect(snapshot.providers?.google?.routes?.["google-gemini-cli"]).toBeUndefined();
     expect(snapshot.providers?.google?.missing?.["google-gemini-cli"]?.reason).toBe(
       "credential-missing",
     );
     expect(snapshot.providers?.google?.routes?.google?.[0]).toMatchObject({
-      id: "gemini-3.1-pro-preview",
+      id: "gemini-3.5-flash",
       contextWindow: 1048576,
       maxTokens: 65536,
     });
@@ -712,7 +708,7 @@ describe("provider refresh", () => {
         ["https://api.mistral.ai/v1/models", "mistral-medium-3.5"],
         ["https://api.minimax.io/v1/models", "MiniMax-M2.7"],
         ["https://api.moonshot.ai/v1/models", "kimi-k2.6"],
-        ["https://api.z.ai/api/paas/v4/models", "glm-5.1"],
+        ["https://api.z.ai/api/paas/v4/models", "glm-5.2"],
         ["https://qianfan.baidubce.com/v2/models", "ernie-5.1"],
       ]);
       const id = idByUrl.get(fetchUrlText(url));
@@ -789,7 +785,7 @@ describe("provider refresh", () => {
       maxTokens: 32768,
       thinkingMode: "moonshot-thinking",
     });
-    expect(routeIds(zai.providers?.zai?.routes?.zai)).toEqual(["glm-5.1"]);
+    expect(routeIds(zai.providers?.zai?.routes?.zai)).toEqual(["glm-5.2"]);
     expect(routeIds(qianfan.providers?.qianfan?.routes?.qianfan)).toEqual(["ernie-5.1"]);
     expect(calls).toEqual(
       expect.arrayContaining([
@@ -943,9 +939,9 @@ describe("provider refresh", () => {
     expect(selectBytePlusCodingModelsForNormalUi(["dola-seed-2.0-pro", "old-code"])).toEqual([
       "dola-seed-2.0-pro",
     ]);
-    expect(selectQwenModelsForNormalUi(["qwen3.6-plus", "qwen-old"])).toEqual(["qwen3.6-plus"]);
-    expect(selectQwenCodingPlanModelsForNormalUi(["qwen3.5-plus", "qwen-old"])).toEqual([
-      "qwen3.5-plus",
+    expect(selectQwenModelsForNormalUi(["qwen3.7-plus", "qwen-old"])).toEqual(["qwen3.7-plus"]);
+    expect(selectQwenCodingPlanModelsForNormalUi(["qwen3.7-plus", "qwen-old"])).toEqual([
+      "qwen3.7-plus",
     ]);
     expect(
       selectCopilotProxyModelsForNormalUi(["gpt-5.5", "gpt-4.1", "gpt-5.4-nano", "old-code"]),
@@ -970,11 +966,11 @@ describe("provider refresh", () => {
     ).toEqual(["moonshotai/Kimi-K2.6", "deepseek-ai/DeepSeek-V3.1"]);
     expect(
       selectCloudflareAiGatewayModelsForNormalUi([
-        "claude-opus-4-6",
-        "claude-sonnet-4-6",
+        "claude-opus-4-8",
+        "claude-sonnet-5",
         "claude-old",
       ]),
-    ).toEqual(["claude-sonnet-4-6", "claude-opus-4-6"]);
+    ).toEqual(["claude-sonnet-5", "claude-opus-4-8"]);
     expect(selectLitellmModelsForNormalUi(["my-local-model"])).toEqual(["my-local-model"]);
   });
 
@@ -1083,7 +1079,7 @@ describe("provider refresh", () => {
           ok: true,
           json: async () => ({
             data: [
-              { id: "qwen3.5-plus", supported_features: ["tools", "json_mode", "reasoning"] },
+              { id: "qwen3.7-plus", supported_features: ["tools", "json_mode", "reasoning"] },
               { id: "qwen-old" },
             ],
           }),
@@ -1095,7 +1091,7 @@ describe("provider refresh", () => {
           ok: true,
           json: async () => ({
             data: [
-              { id: "qwen3-coder-plus", supported_features: ["tools", "json_mode", "reasoning"] },
+              { id: "qwen3.7-max", supported_features: ["tools", "json_mode", "reasoning"] },
               { id: "old" },
             ],
           }),
@@ -1154,14 +1150,14 @@ describe("provider refresh", () => {
       }),
     ]);
 
-    expect(routeIds(qwen.providers?.qwen?.routes?.["qwen-coding-plan"])).toEqual(["qwen3.5-plus"]);
+    expect(routeIds(qwen.providers?.qwen?.routes?.["qwen-coding-plan"])).toEqual(["qwen3.7-plus"]);
     expect(qwen.providers?.qwen?.routes?.["qwen-coding-plan"]?.[0]).toMatchObject({
-      id: "qwen3.5-plus",
+      id: "qwen3.7-plus",
       tools: true,
       json: true,
       thinkingMode: "qwen-thinking",
     });
-    expect(routeIds(qwen.providers?.qwen?.routes?.qwen)).toEqual(["qwen3-coder-plus"]);
+    expect(routeIds(qwen.providers?.qwen?.routes?.qwen)).toEqual(["qwen3.7-max"]);
     expect(routeIds(vllm.providers?.vllm?.routes?.vllm)).toEqual(["local-llama"]);
     expect(vllm.providers?.vllm?.routes?.vllm?.[0]).toMatchObject({
       id: "local-llama",
@@ -1310,8 +1306,8 @@ describe("provider refresh", () => {
         ok: true,
         json: async () => ({
           data: [
-            { id: "claude-opus-4-6", context_window: 200000 },
-            { id: "claude-sonnet-4-6", context_window: 200000 },
+            { id: "claude-opus-4-8", context_window: 1000000 },
+            { id: "claude-sonnet-5", context_window: 1000000 },
             { id: "claude-old", context_window: 200000 },
           ],
         }),
@@ -1330,12 +1326,12 @@ describe("provider refresh", () => {
 
     expect(
       routeIds(snapshot.providers?.["cloudflare-ai-gateway"]?.routes?.["cloudflare-ai-gateway"]),
-    ).toEqual(["claude-sonnet-4-6", "claude-opus-4-6"]);
+    ).toEqual(["claude-sonnet-5", "claude-opus-4-8"]);
     expect(
       snapshot.providers?.["cloudflare-ai-gateway"]?.routes?.["cloudflare-ai-gateway"]?.[0],
     ).toMatchObject({
-      id: "claude-sonnet-4-6",
-      contextWindow: 200000,
+      id: "claude-sonnet-5",
+      contextWindow: 1000000,
       thinkingMode: "anthropic-adaptive",
     });
   });
@@ -1347,14 +1343,14 @@ describe("provider refresh", () => {
         { id: "openai/gpt-5.5" },
         { id: "openai/gpt-5.4-mini" },
         { id: "openai/gpt-4o" },
-        { id: "anthropic/claude-opus-4.7" },
-        { id: "anthropic/claude-sonnet-4.6" },
+        { id: "anthropic/claude-opus-4.8" },
+        { id: "anthropic/claude-sonnet-5" },
         { id: "google/gemini-3-flash-preview" },
         { id: "google/gemini-3.1-flash-lite" },
-        { id: "x-ai/grok-4.20" },
+        { id: "x-ai/grok-build-0.1" },
         { id: "mistralai/mistral-small-2603" },
         { id: "qwen/qwen3.6-flash" },
-        { id: "z-ai/glm-5.1" },
+        { id: "z-ai/glm-5.2" },
         { id: "deepseek/deepseek-v4-pro" },
         { id: "moonshotai/kimi-k2.6" },
       ],
@@ -1364,14 +1360,14 @@ describe("provider refresh", () => {
       "openrouter/owl-alpha",
       "openai/gpt-5.5",
       "openai/gpt-5.4-mini",
-      "anthropic/claude-opus-4.7",
-      "anthropic/claude-sonnet-4.6",
+      "anthropic/claude-opus-4.8",
+      "anthropic/claude-sonnet-5",
       "google/gemini-3-flash-preview",
       "google/gemini-3.1-flash-lite",
-      "x-ai/grok-4.20",
+      "x-ai/grok-build-0.1",
       "mistralai/mistral-small-2603",
       "qwen/qwen3.6-flash",
-      "z-ai/glm-5.1",
+      "z-ai/glm-5.2",
       "deepseek/deepseek-v4-pro",
       "moonshotai/kimi-k2.6",
     ]);
@@ -1385,7 +1381,7 @@ describe("provider refresh", () => {
         json: async () => ({
           data: [
             {
-              id: "openai/gpt-5.5-pro",
+              id: "openai/gpt-5.5",
               supported_parameters: ["tools", "response_format", "reasoning_effort"],
               architecture: { input_modalities: ["text", "image"], output_modalities: ["text"] },
               context_length: 1_000_000,
@@ -1397,7 +1393,7 @@ describe("provider refresh", () => {
             },
             { id: "openai/gpt-4o" },
             {
-              id: "anthropic/claude-sonnet-4.6",
+              id: "anthropic/claude-sonnet-5",
               supported_parameters: ["tools", "reasoning"],
             },
             {
@@ -1433,16 +1429,16 @@ describe("provider refresh", () => {
       fetch: fetchMock as typeof fetch,
     });
     expect(routeIds(snapshot.providers?.openrouter?.routes?.openrouter)).toEqual([
-      "openai/gpt-5.5-pro",
+      "openai/gpt-5.5",
       "openai/gpt-5.4",
-      "anthropic/claude-sonnet-4.6",
+      "anthropic/claude-sonnet-5",
       "google/gemini-3.1-pro-preview",
       "x-ai/grok-4.3",
       "qwen/qwen3.6-flash",
     ]);
     const models = snapshot.providers?.openrouter?.routes?.openrouter ?? [];
     expect(models[0]).toMatchObject({
-      id: "openai/gpt-5.5-pro",
+      id: "openai/gpt-5.5",
       input: ["text", "image"],
       tools: true,
       json: true,
@@ -1451,7 +1447,7 @@ describe("provider refresh", () => {
       maxTokens: 128_000,
     });
     expect(models[2]).toMatchObject({
-      id: "anthropic/claude-sonnet-4.6",
+      id: "anthropic/claude-sonnet-5",
       thinkingMode: "anthropic-adaptive",
     });
     expect(models[3]).toMatchObject({
@@ -1476,28 +1472,28 @@ describe("provider refresh", () => {
         { id: "openai/gpt-5.5" },
         { id: "openai/gpt-5.4-mini" },
         { id: "openai/gpt-4o" },
-        { id: "anthropic/claude-opus-4.7" },
-        { id: "anthropic/claude-opus-4.6" },
-        { id: "google/gemini-3-flash" },
+        { id: "anthropic/claude-opus-4.8" },
+        { id: "anthropic/claude-sonnet-5" },
+        { id: "google/gemini-3-flash-preview" },
         { id: "google/gemini-3.1-flash-lite" },
         { id: "xai/grok-4.3" },
-        { id: "xai/grok-code-fast-1" },
-        { id: "mistral/mistral-large-3" },
-        { id: "mistral/mistral-medium" },
+        { id: "xai/grok-build-0.1" },
+        { id: "mistral/mistral-large-2512" },
+        { id: "mistral/mistral-medium-3.5" },
       ],
     });
 
     expect(selectVercelAiGatewayModelsForNormalUi(ids)).toEqual([
       "openai/gpt-5.5",
       "openai/gpt-5.4-mini",
-      "anthropic/claude-opus-4.7",
-      "anthropic/claude-opus-4.6",
+      "anthropic/claude-opus-4.8",
+      "anthropic/claude-sonnet-5",
+      "google/gemini-3-flash-preview",
       "google/gemini-3.1-flash-lite",
-      "google/gemini-3-flash",
       "xai/grok-4.3",
-      "xai/grok-code-fast-1",
-      "mistral/mistral-large-3",
-      "mistral/mistral-medium",
+      "xai/grok-build-0.1",
+      "mistral/mistral-medium-3.5",
+      "mistral/mistral-large-2512",
     ]);
   });
 
@@ -1509,14 +1505,14 @@ describe("provider refresh", () => {
         json: async () => ({
           data: [
             {
-              id: "openai/gpt-5.5-pro",
+              id: "openai/gpt-5.5",
               context_window: 1000000,
               max_tokens: 128000,
               tags: ["reasoning", "tool-use", "vision"],
             },
             { id: "openai/gpt-4o" },
-            { id: "anthropic/claude-sonnet-4.6" },
-            { id: "google/gemini-3-flash", tags: ["reasoning", "tool-use", "vision"] },
+            { id: "anthropic/claude-sonnet-5" },
+            { id: "google/gemini-3-flash-preview", tags: ["reasoning", "tool-use", "vision"] },
             { id: "moonshotai/kimi-k2.6" },
           ],
         }),
@@ -1528,13 +1524,13 @@ describe("provider refresh", () => {
     });
     const route = snapshot.providers?.["ai-gateway"]?.routes?.["vercel-ai-gateway"];
     expect(routeIds(route)).toEqual([
-      "openai/gpt-5.5-pro",
-      "anthropic/claude-sonnet-4.6",
-      "google/gemini-3-flash",
+      "openai/gpt-5.5",
+      "anthropic/claude-sonnet-5",
+      "google/gemini-3-flash-preview",
       "moonshotai/kimi-k2.6",
     ]);
     expect(route?.[0]).toMatchObject({
-      id: "openai/gpt-5.5-pro",
+      id: "openai/gpt-5.5",
       input: ["text", "image"],
       reasoning: true,
       tools: true,
@@ -1550,10 +1546,11 @@ describe("provider refresh", () => {
         { id: "gpt-5.4-mini" },
         { id: "gpt-5.2" },
         { id: "gpt-5.1" },
-        { id: "claude-opus-4-7" },
-        { id: "claude-sonnet-4-5" },
+        { id: "claude-opus-4-8" },
+        { id: "claude-sonnet-5" },
+        { id: "gemini-3.5-flash" },
         { id: "gemini-3.1-pro" },
-        { id: "glm-4.7" },
+        { id: "glm-5.2" },
         { id: "kimi-k2.6" },
         { id: "big-pickle" },
       ],
@@ -1562,10 +1559,11 @@ describe("provider refresh", () => {
     expect(selectOpencodeZenModelsForNormalUi(ids)).toEqual([
       "gpt-5.5",
       "gpt-5.4-mini",
-      "gpt-5.2",
-      "claude-opus-4-7",
-      "claude-sonnet-4-5",
+      "claude-opus-4-8",
+      "claude-sonnet-5",
+      "gemini-3.5-flash",
       "gemini-3.1-pro",
+      "glm-5.2",
       "kimi-k2.6",
     ]);
   });
@@ -1579,9 +1577,9 @@ describe("provider refresh", () => {
           data: [
             { id: "gpt-5.5" },
             { id: "gpt-5.1" },
-            { id: "claude-sonnet-4-6" },
+            { id: "claude-sonnet-5" },
             { id: "claude-sonnet-4-5" },
-            { id: "glm-5.1" },
+            { id: "glm-5.2" },
             { id: "deepseek-v4-flash-free" },
           ],
         }),
@@ -1593,9 +1591,8 @@ describe("provider refresh", () => {
     });
     expect(routeIds(snapshot.providers?.["opencode-zen"]?.routes?.opencode)).toEqual([
       "gpt-5.5",
-      "claude-sonnet-4-6",
-      "claude-sonnet-4-5",
-      "glm-5.1",
+      "claude-sonnet-5",
+      "glm-5.2",
     ]);
   });
 
@@ -1980,7 +1977,7 @@ describe("provider refresh", () => {
         providers: {
           "ai-gateway": {
             routes: {
-              "vercel-ai-gateway": ["openai/gpt-5.5", "anthropic/claude-opus-4.7"],
+              "vercel-ai-gateway": ["openai/gpt-5.5", "anthropic/claude-opus-4.8"],
             },
           },
         },
@@ -1999,7 +1996,7 @@ describe("provider refresh", () => {
 
     expect(patch).toContain("VERCEL_AI_GATEWAY_MODEL_IDS");
     expect(patch).toContain('"openai/gpt-5.5"');
-    expect(patch).toContain('"anthropic/claude-opus-4.7"');
+    expect(patch).toContain('"anthropic/claude-opus-4.8"');
   });
 
   it("generates a review patch for OpenCode Zen model ids", () => {
@@ -2009,7 +2006,7 @@ describe("provider refresh", () => {
         providers: {
           "opencode-zen": {
             routes: {
-              opencode: ["gpt-5.5", "claude-opus-4-7"],
+              opencode: ["gpt-5.5", "claude-opus-4-8"],
             },
           },
         },
@@ -2028,7 +2025,7 @@ describe("provider refresh", () => {
 
     expect(patch).toContain("OPENCODE_ZEN_MODEL_IDS");
     expect(patch).toContain('"gpt-5.5"');
-    expect(patch).toContain('"claude-opus-4-7"');
+    expect(patch).toContain('"claude-opus-4-8"');
   });
 
   it("generates a review patch for Hugging Face model ids", () => {

@@ -98,7 +98,7 @@ export async function detectZaiEndpoint(params: {
 
   const timeoutMs = params.timeoutMs ?? 5_000;
 
-  // Prefer GLM-5.1 on the general API endpoints.
+  // Prefer GLM-5.2 on the general API endpoints.
   const glm5: Array<{ endpoint: ZaiEndpointId; baseUrl: string }> = [
     { endpoint: "global", baseUrl: ZAI_GLOBAL_BASE_URL },
     { endpoint: "cn", baseUrl: ZAI_CN_BASE_URL },
@@ -107,7 +107,7 @@ export async function detectZaiEndpoint(params: {
     const result = await probeZaiChatCompletions({
       baseUrl: candidate.baseUrl,
       apiKey: params.apiKey,
-      modelId: "glm-5.1",
+      modelId: "glm-5.2",
       timeoutMs,
       fetchFn: params.fetchFn,
     });
@@ -115,13 +115,13 @@ export async function detectZaiEndpoint(params: {
       return {
         endpoint: candidate.endpoint,
         baseUrl: candidate.baseUrl,
-        modelId: "glm-5.1",
-        note: `Verified GLM-5.1 on ${candidate.endpoint} endpoint.`,
+        modelId: "glm-5.2",
+        note: `Verified GLM-5.2 on ${candidate.endpoint} endpoint.`,
       };
     }
   }
 
-  // Fallback: Coding Plan endpoint (GLM-5.1 may not be available there).
+  // Fallback: Coding Plan endpoint (GLM-5.2 may not be available there).
   const coding: Array<{ endpoint: ZaiEndpointId; baseUrl: string }> = [
     { endpoint: "coding-global", baseUrl: ZAI_CODING_GLOBAL_BASE_URL },
     { endpoint: "coding-cn", baseUrl: ZAI_CODING_CN_BASE_URL },

@@ -7,7 +7,10 @@ export type ModelRef = {
 };
 
 const HIGH_SIGNAL_LIVE_MODEL_PRIORITY = [
-  "anthropic/claude-opus-4-6",
+  "anthropic/claude-fable-5",
+  "anthropic/claude-opus-4-8",
+  "anthropic/claude-sonnet-5",
+  "google/gemini-3.5-flash",
   "google/gemini-3.1-pro-preview",
   "google/gemini-3-flash-preview",
   "minimax/minimax-m2.7",
@@ -15,7 +18,7 @@ const HIGH_SIGNAL_LIVE_MODEL_PRIORITY = [
   "openai-codex/gpt-5.5",
   "openrouter/ai21/jamba-large-1.7",
   "xai/grok-4.3",
-  "zai/glm-5.1",
+  "zai/glm-5.2",
   "minimax-portal/minimax-m2.7",
 ] as const;
 

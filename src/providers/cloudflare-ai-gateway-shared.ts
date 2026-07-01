@@ -4,7 +4,7 @@ import { BASE_THINKING_LEVELS } from "../shared/model-thinking.js";
 export const CLOUDFLARE_AI_GATEWAY_PROVIDER_BRAND_ID = "cloudflare-ai-gateway";
 export const CLOUDFLARE_AI_GATEWAY_ROUTE_ID = "cloudflare-ai-gateway";
 export const CLOUDFLARE_AI_GATEWAY_PROVIDER_PATH = "anthropic";
-export const CLOUDFLARE_AI_GATEWAY_DEFAULT_MODEL_ID = "claude-sonnet-4-6";
+export const CLOUDFLARE_AI_GATEWAY_DEFAULT_MODEL_ID = "claude-sonnet-5";
 export const CLOUDFLARE_AI_GATEWAY_DEFAULT_MODEL_REF = `${CLOUDFLARE_AI_GATEWAY_ROUTE_ID}/${CLOUDFLARE_AI_GATEWAY_DEFAULT_MODEL_ID}`;
 
 const CLOUDFLARE_AI_GATEWAY_ZERO_COST = {
@@ -31,12 +31,12 @@ const CLOUDFLARE_ANTHROPIC_THINKING = {
 export const CLOUDFLARE_AI_GATEWAY_MODEL_CATALOG = [
   {
     id: CLOUDFLARE_AI_GATEWAY_DEFAULT_MODEL_ID,
-    name: "Claude Sonnet 4.6",
+    name: "Claude Sonnet 5",
     reasoning: true,
     input: ["text", "image"],
     cost: CLOUDFLARE_AI_GATEWAY_ZERO_COST,
-    contextWindow: 200_000,
-    maxTokens: 64_000,
+    contextWindow: 1_000_000,
+    maxTokens: 128_000,
     capabilities: {
       ...CLOUDFLARE_ANTHROPIC_BASE_CAPABILITY,
       ...CLOUDFLARE_ANTHROPIC_THINKING,
@@ -44,13 +44,13 @@ export const CLOUDFLARE_AI_GATEWAY_MODEL_CATALOG = [
     },
   },
   {
-    id: "claude-opus-4-6",
-    name: "Claude Opus 4.6",
+    id: "claude-opus-4-8",
+    name: "Claude Opus 4.8",
     reasoning: true,
     input: ["text", "image"],
     cost: CLOUDFLARE_AI_GATEWAY_ZERO_COST,
-    contextWindow: 200_000,
-    maxTokens: 64_000,
+    contextWindow: 1_000_000,
+    maxTokens: 128_000,
     capabilities: {
       ...CLOUDFLARE_ANTHROPIC_BASE_CAPABILITY,
       ...CLOUDFLARE_ANTHROPIC_THINKING,

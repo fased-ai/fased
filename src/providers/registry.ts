@@ -226,21 +226,13 @@ export const LITELLM_ROUTE_ID = "litellm";
 export const CUSTOM_PROVIDER_BRAND_ID = "custom";
 export const CUSTOM_PROVIDER_ROUTE_ID = "custom";
 
-export const OPENAI_API_MODEL_IDS = [
-  "gpt-5.5",
-  "gpt-5.5-pro",
-  "gpt-5.4",
-  "gpt-5.4-pro",
-  "gpt-5.4-mini",
-  "gpt-5.4-nano",
-  "gpt-5-codex",
-] as const;
+export const OPENAI_API_MODEL_IDS = ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"] as const;
 
 export const OPENAI_SIGN_IN_MODEL_IDS = [
   "gpt-5.5",
   "gpt-5.4",
   "gpt-5.4-mini",
-  "gpt-5.3-codex",
+  "gpt-5.3-codex-spark",
 ] as const;
 
 export const OPENAI_API_MODEL_REFS = OPENAI_API_MODEL_IDS.map(
@@ -252,8 +244,9 @@ export const OPENAI_SIGN_IN_MODEL_REFS = OPENAI_SIGN_IN_MODEL_IDS.map(
 );
 
 export const ANTHROPIC_MODEL_IDS = [
-  "claude-opus-4-7",
-  "claude-sonnet-4-6",
+  "claude-fable-5",
+  "claude-opus-4-8",
+  "claude-sonnet-5",
   "claude-haiku-4-5",
 ] as const;
 export const ANTHROPIC_MODEL_REFS = ANTHROPIC_MODEL_IDS.map((id) => `${ANTHROPIC_ROUTE_ID}/${id}`);
@@ -296,13 +289,10 @@ export const KIMI_CODING_MODEL_REFS = KIMI_CODING_MODEL_IDS.map(
 );
 
 export const GOOGLE_GEMINI_MODEL_IDS = [
+  "gemini-3.5-flash",
   "gemini-3.1-pro-preview",
-  "gemini-3.1-pro-preview-customtools",
   "gemini-3-flash-preview",
   "gemini-3.1-flash-lite",
-  "gemini-2.5-pro",
-  "gemini-2.5-flash",
-  "gemini-2.5-flash-lite",
 ] as const;
 export const GOOGLE_API_MODEL_REFS = GOOGLE_GEMINI_MODEL_IDS.map(
   (id) => `${GOOGLE_API_ROUTE_ID}/${id}`,
@@ -311,22 +301,14 @@ export const GOOGLE_GEMINI_CLI_MODEL_REFS = GOOGLE_GEMINI_MODEL_IDS.map(
   (id) => `${GOOGLE_GEMINI_CLI_ROUTE_ID}/${id}`,
 );
 
-export const XAI_MODEL_IDS = [
-  "grok-4.3",
-  "grok-4.20-multi-agent-0309",
-  "grok-4.20-0309-reasoning",
-  "grok-4.20-0309-non-reasoning",
-] as const;
+export const XAI_MODEL_IDS = ["grok-4.3", "grok-build-0.1"] as const;
 export const XAI_MODEL_REFS = XAI_MODEL_IDS.map((id) => `${XAI_ROUTE_ID}/${id}`);
 
 export const MISTRAL_MODEL_IDS = [
   "mistral-medium-3.5",
   "mistral-small-2603",
   "mistral-large-2512",
-  "mistral-medium-2508",
   "devstral-2512",
-  "magistral-medium-2509",
-  "magistral-small-2509",
   "ministral-14b-2512",
   "ministral-8b-2512",
   "ministral-3b-2512",
@@ -386,28 +368,30 @@ export const BYTEPLUS_CODING_MODEL_REFS = BYTEPLUS_CODING_MODEL_IDS.flatMap((id)
 
 export const OPENROUTER_MODEL_IDS = [
   "openrouter/owl-alpha",
-  "openai/gpt-5.5-pro",
   "openai/gpt-5.5",
   "openai/gpt-5.4",
-  "openai/gpt-5.4-pro",
   "openai/gpt-5.4-mini",
   "openai/gpt-5.4-nano",
-  "openai/gpt-5-codex",
-  "anthropic/claude-opus-4.7",
-  "anthropic/claude-sonnet-4.6",
+  "anthropic/claude-fable-5",
+  "anthropic/claude-opus-4.8",
+  "anthropic/claude-sonnet-5",
   "anthropic/claude-haiku-4.5",
+  "google/gemini-3.5-flash",
   "google/gemini-3.1-pro-preview",
   "google/gemini-3-flash-preview",
   "google/gemini-3.1-flash-lite",
   "x-ai/grok-4.3",
-  "x-ai/grok-4.20",
-  "x-ai/grok-4.20-multi-agent",
+  "x-ai/grok-build-0.1",
   "mistralai/mistral-medium-3-5",
   "mistralai/mistral-small-2603",
+  "mistralai/mistral-large-2512",
+  "mistralai/devstral-2512",
+  "qwen/qwen3.7-max",
+  "qwen/qwen3.7-plus",
   "qwen/qwen3.6-flash",
-  "qwen/qwen3.6-max-preview",
-  "z-ai/glm-5.1",
+  "z-ai/glm-5.2",
   "deepseek/deepseek-v4-pro",
+  "deepseek/deepseek-v4-flash",
   "minimax/minimax-m2.7",
   "moonshotai/kimi-k2.6",
 ] as const;
@@ -415,32 +399,23 @@ export const OPENROUTER_MODEL_REFS = OPENROUTER_MODEL_IDS.map(
   (id) => `${OPENROUTER_ROUTE_ID}/${id}`,
 );
 
-export const QWEN_API_MODEL_IDS = [
-  "qwen3.6-plus",
-  "qwen3.6-flash",
-  "qwen3.6-max-preview",
-  "qwen3-coder-plus",
-  "qwen3-coder-flash",
-  "qwen3-coder-next",
-  "qwen3.5-plus",
-  "qwen3.5-flash",
-] as const;
+export const QWEN_API_MODEL_IDS = ["qwen3.7-max", "qwen3.7-plus", "qwen3.6-flash"] as const;
 export const QWEN_API_MODEL_REFS = QWEN_API_MODEL_IDS.map((id) => `${QWEN_API_ROUTE_ID}/${id}`);
 export const QWEN_CODING_PLAN_MODEL_IDS = [
-  "qwen3.6-plus",
-  "qwen3.5-plus",
-  "qwen3-max-2026-01-23",
-  "qwen3-coder-plus",
-  "qwen3-coder-next",
-  "kimi-k2.5",
-  "glm-5",
-  "glm-4.7",
+  "qwen3.7-max",
+  "qwen3.7-plus",
+  "qwen3.6-flash",
+  "deepseek-v4-pro",
+  "deepseek-v4-flash",
+  "kimi-k2.7-code",
+  "glm-5.2",
   "MiniMax-M2.5",
 ] as const;
 export const QWEN_CODING_PLAN_MODEL_REFS = QWEN_CODING_PLAN_MODEL_IDS.map(
   (id) => `${QWEN_CODING_PLAN_ROUTE_ID}/${id}`,
 );
 export const ZAI_MODEL_IDS = [
+  "glm-5.2",
   "glm-5.1",
   "glm-5",
   "glm-5-turbo",
@@ -524,24 +499,16 @@ export const GITHUB_COPILOT_MODEL_IDS = [
   "gpt-5.5",
   "gpt-5.4",
   "gpt-5.4-mini",
-  "gpt-5.3-codex",
-  "gpt-5.2-codex",
-  "gpt-5.2",
-  "gpt-5-mini",
+  "gpt-5.3-codex-spark",
   "gpt-4.1",
-  "claude-opus-4.7",
-  "claude-opus-4.6",
-  "claude-opus-4.6-fast",
-  "claude-opus-4.5",
-  "claude-sonnet-4.6",
-  "claude-sonnet-4.5",
+  "claude-fable-5",
+  "claude-opus-4.8",
+  "claude-sonnet-5",
   "claude-haiku-4.5",
-  "gemini-2.5-pro",
+  "gemini-3.5-flash",
   "gemini-3.1-pro",
   "gemini-3-flash",
-  "grok-code-fast-1",
-  "raptor-mini",
-  "goldeneye",
+  "grok-build-0.1",
 ] as const;
 export const GITHUB_COPILOT_MODEL_REFS = GITHUB_COPILOT_MODEL_IDS.map(
   (id) => `${GITHUB_COPILOT_ROUTE_ID}/${id}`,
@@ -555,23 +522,15 @@ const COPILOT_OPENAI_REASONING_MODELS = new Set([
   "gpt-5.5",
   "gpt-5.4",
   "gpt-5.4-mini",
-  "gpt-5.3-codex",
-  "gpt-5.2-codex",
-  "gpt-5.2",
-  "gpt-5-mini",
+  "gpt-5.3-codex-spark",
 ]);
 const COPILOT_ANTHROPIC_ADAPTIVE_MODELS = new Set([
-  "claude-opus-4.7",
-  "claude-opus-4.6",
-  "claude-opus-4.6-fast",
-  "claude-sonnet-4.6",
+  "claude-fable-5",
+  "claude-opus-4.8",
+  "claude-sonnet-5",
 ]);
-const COPILOT_ANTHROPIC_BUDGET_MODELS = new Set([
-  "claude-opus-4.5",
-  "claude-sonnet-4.5",
-  "claude-haiku-4.5",
-]);
-const COPILOT_GOOGLE_MODELS = new Set(["gemini-2.5-pro", "gemini-3.1-pro", "gemini-3-flash"]);
+const COPILOT_ANTHROPIC_BUDGET_MODELS = new Set(["claude-haiku-4.5"]);
+const COPILOT_GOOGLE_MODELS = new Set(["gemini-3.5-flash", "gemini-3.1-pro", "gemini-3-flash"]);
 
 function buildCopilotCapabilityOverrides(
   refs: readonly string[],
@@ -759,13 +718,19 @@ function buildProviderModelCapabilitiesWithOverrides(
 
 const ANTHROPIC_THINKING_LEVELS = [...BASE_THINKING_LEVELS];
 const ANTHROPIC_MODEL_CAPABILITY_OVERRIDES: Record<string, ModelCapabilityConfig> = {
-  "anthropic/claude-opus-4-7": {
+  "anthropic/claude-fable-5": {
     thinkingLevels: ANTHROPIC_THINKING_LEVELS,
     defaultThinkingLevel: "low",
     thinkingMode: "anthropic-adaptive",
     reasoningBudgetSupported: false,
   },
-  "anthropic/claude-sonnet-4-6": {
+  "anthropic/claude-opus-4-8": {
+    thinkingLevels: ANTHROPIC_THINKING_LEVELS,
+    defaultThinkingLevel: "low",
+    thinkingMode: "anthropic-adaptive",
+    reasoningBudgetSupported: false,
+  },
+  "anthropic/claude-sonnet-5": {
     thinkingLevels: ANTHROPIC_THINKING_LEVELS,
     defaultThinkingLevel: "low",
     thinkingMode: "anthropic-adaptive",
@@ -852,20 +817,7 @@ const XAI_MODEL_CAPABILITY_OVERRIDES: Record<string, ModelCapabilityConfig> = {
     thinkingMode: "xai-reasoning-effort",
     reasoningBudgetSupported: false,
   },
-  "xai/grok-4.20-multi-agent-0309": {
-    tools: true,
-    json: true,
-    thinkingLevels: ["low", "medium", "high", "xhigh"],
-    defaultThinkingLevel: "low",
-    thinkingMode: "xai-multi-agent-effort",
-    reasoningBudgetSupported: false,
-  },
-  "xai/grok-4.20-0309-reasoning": {
-    tools: true,
-    json: true,
-    fixedReasoning: true,
-  },
-  "xai/grok-4.20-0309-non-reasoning": {
+  "xai/grok-build-0.1": {
     tools: true,
     json: true,
   },
@@ -886,9 +838,6 @@ const MISTRAL_MODEL_CAPABILITY_OVERRIDES: Record<string, ModelCapabilityConfig> 
               thinkingMode: "mistral-reasoning-effort",
               reasoningBudgetSupported: false,
             }
-          : {}),
-        ...(ref === "mistral/magistral-medium-2509" || ref === "mistral/magistral-small-2509"
-          ? { fixedReasoning: true }
           : {}),
       } satisfies ModelCapabilityConfig,
     ]),
@@ -978,14 +927,18 @@ const BYTEPLUS_MODEL_CAPABILITY_OVERRIDES: Record<string, ModelCapabilityConfig>
   );
 
 const OPENROUTER_AUDIO_MODEL_REFS = new Set([
+  "openrouter/google/gemini-3.5-flash",
   "openrouter/google/gemini-3.1-pro-preview",
   "openrouter/google/gemini-3-flash-preview",
   "openrouter/google/gemini-3.1-flash-lite",
 ]);
 const OPENROUTER_VIDEO_MODEL_REFS = new Set([
+  "openrouter/google/gemini-3.5-flash",
   "openrouter/google/gemini-3.1-pro-preview",
   "openrouter/google/gemini-3-flash-preview",
   "openrouter/google/gemini-3.1-flash-lite",
+  "openrouter/qwen/qwen3.7-max",
+  "openrouter/qwen/qwen3.7-plus",
   "openrouter/qwen/qwen3.6-flash",
 ]);
 const OPENROUTER_MISTRAL_REASONING_MODEL_REFS = new Set([
@@ -993,7 +946,10 @@ const OPENROUTER_MISTRAL_REASONING_MODEL_REFS = new Set([
   "openrouter/mistralai/mistral-small-2603",
 ]);
 const OPENROUTER_MINIMAX_REASONING_MODEL_REFS = new Set(["openrouter/minimax/minimax-m2.7"]);
-const OPENROUTER_GENERIC_REASONING_MODEL_REFS = new Set(["openrouter/deepseek/deepseek-v4-pro"]);
+const OPENROUTER_GENERIC_REASONING_MODEL_REFS = new Set([
+  "openrouter/deepseek/deepseek-v4-pro",
+  "openrouter/deepseek/deepseek-v4-flash",
+]);
 const OPENROUTER_MODEL_CAPABILITY_OVERRIDES: Record<string, ModelCapabilityConfig> =
   Object.fromEntries(
     OPENROUTER_MODEL_REFS.map((ref) => [
@@ -1032,11 +988,9 @@ const OPENROUTER_MODEL_CAPABILITY_OVERRIDES: Record<string, ModelCapabilityConfi
   );
 
 const QWEN_NON_THINKING_MODEL_REFS = new Set([
-  "qwen/qwen3-coder-plus",
-  "qwen/qwen3-coder-flash",
-  "qwen/qwen3-coder-next",
-  "qwen-coding-plan/qwen3-coder-plus",
-  "qwen-coding-plan/qwen3-coder-next",
+  "qwen-coding-plan/kimi-k2.7-code",
+  "qwen-coding-plan/glm-5.2",
+  "qwen-coding-plan/MiniMax-M2.5",
 ]);
 const QWEN_MODEL_CAPABILITY_OVERRIDES: Record<string, ModelCapabilityConfig> = Object.fromEntries(
   [...QWEN_API_MODEL_REFS, ...QWEN_CODING_PLAN_MODEL_REFS].map((ref) => [

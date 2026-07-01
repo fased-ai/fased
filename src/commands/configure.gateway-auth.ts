@@ -27,10 +27,9 @@ function sanitizeTokenValue(value: string | undefined): string | undefined {
 }
 
 const ANTHROPIC_OAUTH_MODEL_KEYS = [
-  "anthropic/claude-sonnet-4-6",
-  "anthropic/claude-opus-4-6",
-  "anthropic/claude-opus-4-5",
-  "anthropic/claude-sonnet-4-5",
+  "anthropic/claude-fable-5",
+  "anthropic/claude-opus-4-8",
+  "anthropic/claude-sonnet-5",
   "anthropic/claude-haiku-4-5",
 ];
 
@@ -114,7 +113,7 @@ export async function promptAuthConfig(
       config: next,
       prompter,
       allowedKeys: anthropicOAuth ? ANTHROPIC_OAUTH_MODEL_KEYS : undefined,
-      initialSelections: anthropicOAuth ? ["anthropic/claude-sonnet-4-6"] : undefined,
+      initialSelections: anthropicOAuth ? ["anthropic/claude-sonnet-5"] : undefined,
       message: anthropicOAuth ? "Anthropic OAuth models" : undefined,
       preferredProvider,
     });

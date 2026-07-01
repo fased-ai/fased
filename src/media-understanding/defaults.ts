@@ -53,7 +53,7 @@ export const AUTO_IMAGE_KEY_PROVIDERS = [
 export const AUTO_VIDEO_KEY_PROVIDERS = ["google", "moonshot"] as const;
 export const DEFAULT_IMAGE_MODELS: Record<string, string> = {
   openai: "gpt-5-mini",
-  anthropic: "claude-opus-4-6",
+  anthropic: "claude-opus-4-8",
   google: "gemini-3-flash-preview",
   minimax: "MiniMax-VL-01",
   zai: "glm-4.6v",

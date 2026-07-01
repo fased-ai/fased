@@ -63,8 +63,9 @@ const HIDDEN_ROUTER_MODELS = new Set(["openrouter/auto"]);
 const RECOMMENDED_MODEL_ORDER = [
   ...OPENAI_API_MODEL_REFS,
   ...OPENAI_SIGN_IN_MODEL_REFS,
-  "anthropic/claude-opus-4-7",
-  "anthropic/claude-sonnet-4-6",
+  "anthropic/claude-fable-5",
+  "anthropic/claude-opus-4-8",
+  "anthropic/claude-sonnet-5",
   ...GOOGLE_API_MODEL_REFS,
   ...GOOGLE_GEMINI_CLI_MODEL_REFS,
   ...OPENROUTER_MODEL_REFS,
@@ -677,7 +678,7 @@ export async function promptModelAllowlist(params: {
         params.message ??
         "Allowlist models (comma-separated provider/model; blank to keep current)",
       initialValue: existingKeys.join(", "),
-      placeholder: `${OPENAI_CODEX_DEFAULT_MODEL}, anthropic/claude-opus-4-7`,
+      placeholder: `${OPENAI_CODEX_DEFAULT_MODEL}, anthropic/claude-opus-4-8`,
     });
     const parsed = String(raw ?? "")
       .split(",")

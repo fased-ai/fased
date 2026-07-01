@@ -227,17 +227,16 @@ const OLLAMA_DEFAULT_BASE_URL = "http://127.0.0.1:11434";
 const LMSTUDIO_DEFAULT_BASE_URL = "http://127.0.0.1:1234/v1";
 const LITELLM_DEFAULT_BASE_URL = LITELLM_BASE_URL;
 
-const OPENAI_CURRENT_API_MODEL_RE = /^gpt-(?:5\.(?:[4-9]|\d{2,})(?:-(?:pro|mini|nano))?|5-codex)$/;
-const OPENAI_CURRENT_SIGN_IN_MODEL_RE =
-  /^gpt-(?:5\.(?:[4-9]|\d{2,})(?:-(?:pro|mini))?|5\.(?:3|2)-codex(?:-spark)?)$/;
+const OPENAI_CURRENT_API_MODEL_RE = /^gpt-5\.(?:[4-9]|\d{2,})(?:-(?:mini|nano))?$/;
+const OPENAI_CURRENT_SIGN_IN_MODEL_RE = /^gpt-(?:5\.(?:[4-9]|\d{2,})(?:-mini)?|5\.3-codex-spark)$/;
 const CHUTES_CURRENT_NORMAL_UI_MODEL_RE =
   /^(?:google\/gemma-4-[^/]+-TEE|Qwen\/Qwen3(?:\.\d+)?-[^/]+-TEE|deepseek-ai\/DeepSeek-V3\.2-TEE|zai-org\/GLM-5(?:\.\d+)?-TEE|moonshotai\/Kimi-K2\.6-TEE)$/;
 const OPENROUTER_CURRENT_NORMAL_UI_MODEL_RE =
-  /^(?:openrouter\/owl-alpha|openai\/gpt-(?:5\.5(?:-pro)?|5\.4(?:-(?:pro|mini|nano))?|5-codex)|anthropic\/claude-(?:opus-4\.7|sonnet-4\.6|haiku-4\.5)|google\/gemini-(?:3\.1-(?:pro-preview(?:-customtools)?|flash-lite)|3-flash-preview|2\.5-(?:pro|flash(?:-lite)?))|x-ai\/grok-4\.(?:3|20(?:-multi-agent)?)|mistralai\/mistral-(?:medium-3-5|small-2603)|qwen\/qwen3\.6-(?:flash|max-preview)|z-ai\/glm-5\.1|deepseek\/deepseek-v4-pro|minimax\/minimax-m2\.7|moonshotai\/kimi-k2\.6)$/;
+  /^(?:openrouter\/owl-alpha|openai\/gpt-(?:5\.5|5\.4(?:-(?:mini|nano))?)|anthropic\/claude-(?:fable-5|opus-4\.8|sonnet-5|haiku-4\.5)|google\/gemini-(?:3\.5-flash|3\.1-(?:pro-preview|flash-lite)|3-flash-preview)|x-ai\/(?:grok-4\.3|grok-build-0\.1)|mistralai\/(?:mistral-medium-3-5|mistral-small-2603|mistral-large-2512|devstral-2512)|qwen\/qwen3\.(?:7-(?:max|plus)|6-flash)|z-ai\/glm-5\.2|deepseek\/deepseek-v4-(?:pro|flash)|minimax\/minimax-m2\.7|moonshotai\/kimi-k2\.6)$/;
 const VERCEL_AI_GATEWAY_CURRENT_NORMAL_UI_MODEL_RE =
-  /^(?:openai\/gpt-(?:5\.5(?:-pro)?|5\.4(?:-(?:pro|mini|nano))?|5\.3-codex|5-codex)|anthropic\/claude-(?:opus-4\.[5-9]|sonnet-4\.[5-9]|haiku-4\.5)|google\/gemini-(?:3\.1-(?:pro-preview(?:-customtools)?|flash-lite)|3-flash|2\.5-(?:pro|flash(?:-lite)?))|xai\/grok-(?:4\.3|code-fast-1)|mistral\/(?:mistral-(?:large-3|medium)|devstral-2)|minimax\/minimax-m2\.7(?:-highspeed)?|moonshotai\/kimi-k2\.6)$/;
+  /^(?:openai\/gpt-(?:5\.5|5\.4(?:-(?:mini|nano))?)|anthropic\/claude-(?:fable-5|opus-4\.8|sonnet-5|haiku-4\.5)|google\/gemini-(?:3\.5-flash|3\.1-(?:pro-preview|flash-lite)|3-flash-preview)|xai\/(?:grok-4\.3|grok-build-0\.1)|mistral\/(?:mistral-medium-3\.5|mistral-small-2603|mistral-large-2512|devstral-2512)|minimax\/minimax-m2\.7(?:-highspeed)?|moonshotai\/kimi-k2\.6)$/;
 const OPENCODE_ZEN_CURRENT_NORMAL_UI_MODEL_RE =
-  /^(?:gpt-5\.(?:5(?:-pro)?|4(?:-(?:pro|mini|nano))?|3-codex(?:-spark)?|2(?:-codex)?)|claude-(?:opus-4-[5-9]|sonnet-4-[5-9]|haiku-4-5)|gemini-(?:3\.1-pro|3-flash|2\.5-(?:pro|flash(?:-lite)?))|qwen3\.6-plus|minimax-m2\.7|glm-5\.1|kimi-k2\.6)$/;
+  /^(?:gpt-5\.(?:5|4(?:-(?:mini|nano))?|3-codex-spark)|claude-(?:fable-5|opus-4-8|sonnet-5|haiku-4-5)|gemini-(?:3\.5-flash|3\.1-pro|3-flash)|qwen3\.7-plus|minimax-m2\.7|glm-5\.2|kimi-k2\.6)$/;
 
 function normalizeModelIds(
   values: Iterable<string>,

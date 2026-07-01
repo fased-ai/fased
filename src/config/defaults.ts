@@ -20,15 +20,15 @@ type AnthropicAuthDefaultsMode = "api_key" | "oauth";
 
 const DEFAULT_MODEL_ALIASES: Readonly<Record<string, string>> = {
   // Anthropic (pi-ai catalog uses "latest" ids without date suffix)
-  opus: "anthropic/claude-opus-4-6",
-  sonnet: "anthropic/claude-sonnet-4-6",
+  opus: "anthropic/claude-opus-4-8",
+  sonnet: "anthropic/claude-sonnet-5",
 
   // OpenAI
   gpt: "openai/gpt-5.5",
   "gpt-mini": "openai/gpt-5.4-mini",
 
   // Google Gemini
-  gemini: "google/gemini-3.1-pro-preview",
+  gemini: "google/gemini-3.5-flash",
   "gemini-flash": "google/gemini-3-flash-preview",
   "gemini-flash-lite": "google/gemini-3.1-flash-lite",
 };

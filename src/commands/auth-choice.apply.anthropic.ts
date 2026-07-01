@@ -16,7 +16,7 @@ import {
 } from "./onboard-auth.js";
 import { openUrl } from "./onboard-helpers.js";
 
-const DEFAULT_ANTHROPIC_MODEL = "anthropic/claude-sonnet-4-6";
+const DEFAULT_ANTHROPIC_MODEL = "anthropic/claude-sonnet-5";
 
 async function openOAuthUrl(url: string): Promise<void> {
   await openUrl(url);
