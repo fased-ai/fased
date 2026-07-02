@@ -1,8 +1,8 @@
 ---
-summary: "How the Marketplace page handles local offers, remote discovery, orders, and evidence."
+summary: "How the Marketplace page handles local service listings, remote discovery, orders, and evidence."
 read_when:
-  - You want to understand the difference between Offers and Marketplace
-  - You are publishing local offers or selecting remote public offers
+  - You want to understand the difference between service listings and Marketplace
+  - You are publishing local listings or selecting remote public listings
 title: "Offers and Marketplace"
 ---
 
@@ -11,7 +11,7 @@ title: "Offers and Marketplace"
 The current Control UI keeps Fased Network state and marketplace work separate on purpose.
 
 Fased Network shows identity, route, and bond posture. Marketplace is where
-offers, requests, orders, reviews, disputes, and selected offer details live.
+service listings, requests, orders, reviews, disputes, and selected listing details live.
 Some CLI/API names still use `federation` because that is the current internal
 protocol surface.
 
@@ -22,43 +22,43 @@ There are three marketplace objects:
 1. `Offers`
    Services this node, a human, an agent, a plugin, an API, or a dataset can provide.
 2. `Requests`
-   Work a user wants another node or operator to perform.
+   Work a user wants another node or service runner to perform.
 3. `Orders`
-   Accepted offer/request work with payment, receipt, delivery, dispute, and review state.
+   Accepted listing/request work with payment, delivery, dispute, and review state.
 
 The roadmap direction is broader than manual listings. Marketplace is intended
 to become a Fased Network service layer where humans, agents, plugins, APIs,
 datasets, and service nodes can request or provide capabilities under explicit
-policy.
+rules.
 
 Supported modes should converge on the same order model:
 
 - human provides service to human
 - human requests service from agent
 - agent prepares work for human approval
-- agent requests service from agent only when explicit policy and an adapter allow it
-- hybrid work where the agent runs tools and the operator approves final delivery
+- agent requests service from agent only when explicit rules and an adapter allow it
+- hybrid work where the agent runs tools and the user approves final delivery
 
 The current UI focuses on listing and draft review first:
 
 1. `Listings`
-   One table for this node’s local offers and remote public offers.
+   One table for this node's local listings and remote public listings.
 2. `Requests`
    Draft/open buyer requests before matching or payment.
 3. `Details`
-   Modal detail for editing a local draft or running/reviewing a selected remote offer.
+   Modal detail for editing a local draft or running/reviewing a selected remote listing.
 
 That boundary matters:
 
 - local publishing and remote buying stay visually distinct
 - discovery should stay compact and searchable
-- detailed execution should appear only after an offer is opened
+- detailed execution should appear only after a listing is opened
 
 Marketplace also mirrors its local request and order lifecycle into
 **Agent > Tasks**. Marketplace remains the editing, checkout, delivery, and
-dispute surface. Agent > Tasks is the shared audit trail: request state,
-payment, receipt evidence, delivery, and dispute steps appear next to scheduled
-work, wallet approvals, webhook runs, and workflow runs for the same Agent.
+dispute surface. Agent > Tasks is the activity trail: request state, payment,
+delivery, and dispute steps appear next to scheduled work, wallet review steps,
+webhook runs, and workflow runs for the same Agent.
 
 ## Current state
 
@@ -82,7 +82,7 @@ Near-term work still includes:
 - more live smokes for USDC/SPL and failure cases
 - subscription stop/renewal behavior and delivery-stop enforcement
 - capability-backed products from installed skills, plugins, APIs, and datasets
-- Fased Personas for controlled marketplace, wallet, and capability policy
+- Fased Personas for controlled marketplace, wallet, and capability rules
 
 ## Who can buy and sell
 
@@ -90,7 +90,7 @@ Marketplace uses different gates for buyers and sellers.
 
 ### Buyer
 
-Required now: Agent wallet, verified Fased Network token, payment policy/caps,
+Required now: Agent wallet, verified Fased Network token, payment rules/caps,
 and enough funds.
 
 Not required: Vault wallet, SAT bond, or seller score.
@@ -108,9 +108,9 @@ Required now: Agent wallet.
 
 Public bond is required only when the draft is enabled and published.
 
-### Operator / verifier / routing role
+### Verifier / routing role
 
-Required now: Vault/bond posture for the operator lane.
+Required now: Vault/bond posture for that stronger lane.
 
 This is needed only for those lanes, not ordinary buying.
 
@@ -118,8 +118,8 @@ The buyer pays from the Agent wallet. The seller receives to the seller Agent
 wallet or configured payee address. Mining wallets and Vault wallets are not the
 Marketplace automation wallets.
 
-Seller reputation score is a trust and ranking signal. It can help buyers
-review a listing, but it is not the basic permission to buy.
+Seller trust score is a ranking signal. It can help buyers review a listing,
+but it is not the basic permission to buy.
 
 ## Transaction schematic
 
@@ -129,20 +129,20 @@ Checkout and payment are separate.
 flowchart TD
   A[Buyer opens public listing] --> B[Start checkout]
   B --> C[Local Purchase order is saved]
-  C --> D[Buyer reviews terms, payee, Agent wallet, delivery, receipt rules]
+  C --> D[Buyer reviews terms, payee, Agent wallet, delivery rules]
   D --> E{Buyer clicks Pay}
   E --> F[Agent wallet sends payment to seller payee]
   F --> G[Payment evidence is published]
   G --> H[Order tasks.create is sent to seller node]
-  H --> I[Seller validates offer id, invoice, receipt, tx proof]
+  H --> I[Seller validates offer id, invoice, and payment proof]
   I --> J[Service adapter runs]
   J --> K[Result is returned]
-  K --> L[Buyer order records tx, invoice, receipt, result, delivery refs]
+  K --> L[Buyer order records tx, invoice, result, delivery refs]
   L --> M[Seller Sales sync records incoming order work]
 ```
 
 `Start checkout` never moves funds. `Pay` is the first step that can move funds,
-and it must fail loudly if the Agent wallet, caps, token policy, payee, offer
+and it must fail loudly if the Agent wallet, caps, token rules, payee, offer
 lookup, or payment evidence path is not valid.
 
 For the first working adapter, `content.summarize`, the seller node runs the
@@ -159,12 +159,12 @@ To demonstrate Marketplace as a working concept, use a narrow but complete path:
 3. Buyer finds the listing from another node.
 4. Buyer starts checkout. A local Purchase appears; no payment is sent yet.
 5. Buyer enters source text and clicks `Pay`.
-6. Buyer sees wallet payment progress, tx/evidence, receipt, and result in the same Purchase modal.
+6. Buyer sees wallet payment progress, tx/evidence, and result in the same Purchase modal.
 7. Seller sees a stable Sales entry with payment/result evidence.
 8. Buyer can review or dispute using saved evidence refs.
 
-That proves the service path: discovery, checkout, payment, payment evidence,
-service execution, delivery record, receipt, and provider intake.
+That proves the service path: discovery, checkout, payment, service execution,
+delivery record, and provider intake.
 
 The next showcase upgrades should be added in this order:
 
@@ -174,7 +174,7 @@ The next showcase upgrades should be added in this order:
 4. Fased Network node delivery: agent-to-agent result delivery without exposing raw local state.
 5. Subscription scheduler: renewal, expiry, cancel, and delivery stop.
 6. Capability products: turn selected skills/plugins/APIs/datasets into offer-backed services.
-7. Persona policy: let scoped personas propose or pay only inside explicit wallet and marketplace limits.
+7. Persona rules: let scoped personas propose or pay only inside explicit wallet and marketplace limits.
 
 ## Listings
 
@@ -208,9 +208,9 @@ Chat can create a saved local offer draft:
 Draft an offer for a content summary service.
 ```
 
-The saved draft appears in Marketplace under `My offers` and stays disabled until the
-operator reviews and enables it. Agents should not publish new offer types
-automatically unless an explicit future automation policy allows it.
+The saved draft appears in Marketplace under `My offers` and stays disabled
+until the user reviews and enables it. Agents should not publish new offer types
+automatically unless an explicit future automation rule allows it.
 
 Chat can also create a buyer request draft:
 
@@ -219,14 +219,14 @@ Draft a request for a data lookup service, budget 25 USDC per day.
 ```
 
 Requests are saved separately from offers. A request is not an order and does
-not publish or pay until the operator reviews it.
+not publish or pay until the user reviews it.
 
 Chat can also search Marketplace and inspect local order evidence:
 
 ```text
 Find @offers for public API access.
 Search @offers for data.lookup sellers that accept USDC.
-Show Marketplace invoices, receipts, tx evidence, and payment records.
+Show Marketplace invoices, payments, tx evidence, and delivery state.
 Show my Marketplace purchases from the last week.
 ```
 
@@ -263,7 +263,7 @@ The wizard asks for:
    What the buyer provides, what the seller returns, and whether fulfillment is
    human, agent, API, dataset, hybrid, or agent-with-approval.
 4. `Payment terms`
-   Amount or quote policy, unit, payment asset, accepted assets, and payment method.
+   Amount or quote rules, unit, payment asset, accepted assets, and payment method.
 5. `Review`
    A compact summary before saving the draft.
 
@@ -283,7 +283,7 @@ chat-created drafts, and future Fased Network routing agree on terms.
 | `pricing.amount`   | Optional fixed amount or budget. Quote-based listings can omit it.                 |
 | `pricing.unit`     | Unit such as `per-job`, `per-hour`, `per-api-call`, or `per-month`.                |
 | `fulfillmentMode`  | Who or what performs it: `human`, `agent`, `api`, `dataset`, or hybrid.            |
-| `receiptRules`     | Required result, artifact, invoice, tx, signature, or manual receipt.              |
+| `receiptRules`     | Technical field for required result, artifact, invoice, tx, signature, or proof.   |
 | `acceptedAssets`   | Assets the offer or request can accept.                                            |
 | `paymentRails`     | Technical route such as Agent wallet, invoice, or metered API.                     |
 
@@ -322,12 +322,12 @@ The current payment showcase has explicit support for these lanes:
 
 Every offer should make these terms visible before it is published:
 
-- fixed amount, usage unit, or quote policy
+- fixed amount, usage unit, or quote rules
 - payment asset and payment rail
 - accepted payment assets such as `USDC`, `SOL`, or another configured SPL asset
 - service terms: input shape, delivery shape, availability, and trust or bond requirement
-- operator identity and seller-lane state
-- receipt rules for order work, including invoice and receipt references
+- seller identity and seller-lane state
+- delivery rules for order work, including invoice and payment references
 
 The server does not need a hardcoded enum for these categories. It indexes and
 filters `serviceKind` as a string so new kinds can be introduced without a
@@ -364,11 +364,11 @@ The long-term agent-to-agent loop is capability brokerage.
 Example:
 
 1. A local agent task needs feed data for a research report.
-2. The local runtime does not have that scraper, API key, dataset, or plugin.
+2. The local setup does not have that scraper, API key, dataset, or plugin.
 3. The agent searches Marketplace for a seller offering API access or a
    realtime data feed.
-4. The agent prepares an order or subscription under operator policy.
-5. The Agent wallet pays only when the accepted payment path and wallet policy allow it.
+4. The agent prepares an order or subscription under user-approved rules.
+5. The Agent wallet pays only when the accepted payment path and wallet rules allow it.
 6. The seller agent delivers data through webhook, app inbox, artifact, feed, or
    Fased Network message.
 7. The buyer agent uses that result in its own workflow.
@@ -376,14 +376,14 @@ Example:
    subscription expire and delivery stops.
 
 This is not fully automatic for every service kind yet. Each automatic path
-needs a capability source, payment policy, execution adapter, delivery adapter,
-and receipt rules.
+needs a capability source, payment rules, execution adapter, delivery adapter,
+and delivery rules.
 
 Fased Personas are the roadmap control layer for this loop. A Researcher persona
 could request a data lookup, a Seller persona could prepare a listing draft, and
 a Policy Reviewer persona could block a payment because the seller, service kind,
-asset, or spend amount violates policy. Personas should organize automation; they
-should not bypass wallet caps, operator approval, delivery scope, or review and
+asset, or spend amount violates rules. Personas should organize automation; they
+should not bypass wallet caps, user approval, delivery scope, or review and
 dispute evidence.
 
 ## Order lifecycle
@@ -392,17 +392,17 @@ Use this sequence when testing or explaining Marketplace:
 
 1. discover a listing
 2. create checkout/order
-3. review payment intent, Agent wallet, delivery target, and receipt rules
+3. review payment intent, Agent wallet, and delivery target
 4. pay from the Agent wallet only when an adapter supports the service kind
 5. publish payment evidence
 6. run the service
 7. deliver the result to the saved target
-8. write invoice, receipt, tx, result, and artifact refs back to the order
+8. write invoice, tx, result, and artifact refs back to the order
 9. renew, cancel, expire, or stop delivery if the order is recurring
-10. use review, dispute, and reputation state after payment/delivery evidence exists
+10. use review, dispute, and trust state after payment/delivery evidence exists
 
 Creating checkout does not move funds. Payment starts only from the explicit Pay
-action or a future approved automation policy.
+action or a future approved automation rule.
 
 ## Public Offers
 
@@ -435,7 +435,7 @@ This block can carry:
 
 - full offer description
 - payment details
-- runtime inputs
+- run inputs
 - payment flow
 - review or dispute controls
 
@@ -481,9 +481,9 @@ Marketplace discovery is not the same thing as payment.
 The clean payment boundary is:
 
 - `Marketplace` finds and selects the offer
-- `Create order` records payment intent, receipt rules, and delivery status
+- `Create order` records payment intent and delivery status
 - `Offer Details` carries the actual payment and execution path when an adapter exists
-- direct payment uses invoice, receipt, payment-evidence, and payment-proof records
+- direct payment uses invoice, payment evidence, and payment-proof records
 - any future held-payment mode needs explicit product hardening and release gating before broad use
 - payment usually uses stable assets such as `USDC`, but the asset and chain come from the offer's payment defaults
 
@@ -497,18 +497,18 @@ not silently charge a wallet. It saves a local order record with:
 - order status, such as `accepted`, `funded`, `running`, or `delivered`
 - payment intent, including amount, asset, accepted assets, payment method, and payee
 - delivery record, including input shape, delivery shape, result refs, and artifact refs
-- receipt record, including invoice, receipt, transaction, result, and dispute refs
+- delivery record, including invoice, transaction, result, and dispute refs
 
 The first implementation is intentionally an intent/status flow. It lets the UI
-show the payment intent, expected delivery path, and receipt evidence before a
+show the payment intent and expected delivery path before a
 real payment adapter executes.
 
 Direct execution is still adapter-specific. `content.summarize` is the first
 order-backed adapter: the dashboard creates an order, records the payment intent,
 copies the offer's payment defaults into the saved payment intent, marks
 delivery as running, pays from the Agent wallet, publishes payment evidence,
-runs the summarize task with invoice and receipt proof, then writes invoice,
-receipt, transaction, result, artifact, and delivery-target status back to the
+runs the summarize task with invoice and payment proof, then writes invoice,
+transaction, result, artifact, and delivery-target status back to the
 order. App inbox, artifact, webhook, Telegram channel, and Fased Network node targets
 can be marked delivered immediately. Handle-only Fased Network targets resolve
 through the Fased Network directory when the directory returns a live node endpoint;
@@ -519,8 +519,8 @@ execution adapter before automatic pay-and-run is enabled.
 
 ### Payment smoke tests
 
-Operator smoke tests should stay small and explicit. The buyer Agent wallet
-must be funded, the wallet policy must allow the exact asset and amount, the
+Payment smoke tests should stay small and explicit. The buyer Agent wallet
+must be funded, the wallet rules must allow the exact asset and amount, the
 seller payee must match the selected offer, and payment evidence must verify
 before a result is accepted.
 
@@ -559,7 +559,7 @@ Delivery targets are part of the order contract, not loose chat text.
 
 | Target                 | Used for                                                        |
 | ---------------------- | --------------------------------------------------------------- |
-| Fased inbox            | Consumer results, receipts, reports, disputes.                  |
+| Fased inbox            | Consumer results, reports, disputes.                            |
 | Telegram/Discord/email | Human-readable alerts, reports, support updates, subscriptions. |
 | Webhook                | SaaS integrations, workflow automation, merchant events.        |
 | WebSocket/SSE feed     | Live data feeds, alerts, monitoring streams.                    |
@@ -614,7 +614,7 @@ Delivery must stop when:
 - the configured capacity or usage limit is reached
 
 Current implementation records subscription terms on the local order. This
-includes billing period, capacity, start/end timestamps, renewal policy, payment
+includes billing period, capacity, start/end timestamps, renewal rules, payment
 expiry, and delivery-stop state. It does not yet run renewals or stop external
 delivery by itself; those actions need the later subscription scheduler and
 delivery adapters.
@@ -634,9 +634,9 @@ The seller can be:
 The buyer can be:
 
 - a consumer using hosted Fased access
-- another Fased agent acting under policy
-- a node operator
-- a plugin or automation workflow acting under an explicit policy
+- another Fased agent acting under rules
+- a node runner
+- a plugin or automation workflow acting under explicit rules
 
 Agent-to-agent examples:
 
@@ -644,8 +644,8 @@ Agent-to-agent examples:
   delivers a WebSocket feed to another agent
 - an agent subscribes to a monitoring offer and sends alerts to Telegram
 - an agent orders a dataset export and stores the artifact in an order record
-- an agent asks another bonded operator for browser research and receives a
-  markdown report plus receipt
+- an agent asks another bonded seller for browser research and receives a
+  markdown report plus delivery proof
 
 Agent-created offers should be capability-backed. Fased should know which skill,
 plugin, API key, dataset, schedule, or manual approval path can actually deliver
@@ -660,7 +660,7 @@ The product model stays split by responsibility:
 - capability products should come from real skills, plugins, APIs, datasets, or
   approved human workflows
 - public indexing publishes sanitized offer/request summaries only
-- reviews, disputes, resolution evidence, and receipt evidence stay attached to
+- reviews, disputes, resolution evidence, and delivery proof stay attached to
   the selected order
 
 ## What should stay out of these blocks
@@ -677,7 +677,7 @@ The product model stays split by responsibility:
 - a raw network-debug panel
 - a duplicate of `Offer Details`
 
-`Offer Details` should not appear before the operator has actually opened an offer.
+`Offer Details` should not appear before the user has actually opened an offer.
 
 ## Practical reading order
 
@@ -691,7 +691,7 @@ Use the current flow like this:
 ## Related docs
 
 - [Fased Network guide](/start/federation)
-- [SAT Bond Operator Overview](/start/bond-operator-economy)
+- [SAT Bond Overview](/start/bond-operator-economy)
 - [Wallet](/plugins/crypto/wallet-page)
-- [Wallet Roles and Policies](/plugins/crypto/wallet-roles-and-policies)
+- [Wallet Roles and Rules](/plugins/crypto/wallet-roles-and-policies)
 - [Mining](/plugins/crypto/mining-page)

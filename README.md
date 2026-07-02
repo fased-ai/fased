@@ -5,7 +5,7 @@
 # Fased Agent
 
 <p align="center">
-  Self-hosted agent node for chat, tools, skills, memory, wallet policy, SAT mining, and Fased Network participation.
+  Run Agent. Mine SAT. Build Trust.
 </p>
 
 <p align="center">
@@ -15,12 +15,11 @@
   <a href="./SECURITY.md"><img src="https://img.shields.io/badge/security-policy-222?style=for-the-badge" alt="Security"></a>
 </p>
 
-**Fased Agent** is a self-hosted agent node. It brings models, channels, tools,
-skills, services, files, sessions, memory, tasks, wallet policy, SAT mining, and
-network activity into one browser Control UI that you operate.
+**Fased Agent** is the agent you run yourself. Use it for tasks, wallets,
+services, and SAT mining from one browser Control UI.
 
-Use it on your own machine for private chat and automation, or use the VPS
-Hosting path for an always-on agent node with private access through Tailscale.
+Run it on your own machine, or use the VPS Hosting path when the agent needs to
+stay online.
 
 **Links:** [Install](#install) · [Docs](https://docs.fased.ai) ·
 [Security](./SECURITY.md) · [Release checklist](./docs/reference/RELEASING.md) ·
@@ -300,16 +299,13 @@ Read next:
 ## What Fased Runs
 
 - Gateway, CLI, onboarding, local auth, device pairing, and browser Control UI
-- Agent workbench for models, channels, services, skills, tools, memory,
-  sessions, files, tasks, coordination, and programs
-- Task ledger for scheduled work, webhooks, workflows, wallet approvals,
-  marketplace records, mining events, ACP/subagent runs, and CLI/system activity
-- Wallet UI with local signer integration, role-separated policy, approval
-  review, and spend caps
-- SAT mining runtime path with mining wallet separation, cycle history, and
-  mining event records
-- Fased Network, node presence, operator/bond surfaces, marketplace offers,
-  plugin SDK, bundled skills, extensions, mobile/macOS app code, and public docs
+- Agent workbench for tasks, tools, services, memory, files, and sessions
+- Task history for workflows, webhooks, wallet actions, marketplace activity,
+  mining events, ACP/subagent runs, and CLI/system activity
+- Wallet UI with local signer integration, wallet roles, review, and spend caps
+- SAT mining path with mining wallets, cycle history, and claim events
+- Fased Network, Marketplace, bond surfaces, plugin SDK, bundled skills,
+  extensions, mobile/macOS app code, and public docs
 
 ## Product Model
 
@@ -338,12 +334,11 @@ Fased is built around private access and explicit authority boundaries:
 - Skills require explicit wallet, mining, service, or tool grants.
 - Services connect credentials; Agent Tools and Skills decide what a selected
   Agent may use.
-- Wallet pages own signing, caps, approval, and broadcast. Workflows can request
-  or review wallet actions while spend authority stays in wallet policy.
-- Marketplace and Mining pages own their state-changing controls. Agent Tasks
-  records and reviews those actions.
-- Advanced/Debug/Nodes are operator/admin surfaces for diagnostics and raw
-  controls.
+- Wallet pages own signing, caps, review, and broadcast. Workflows can request
+  wallet actions while spend authority stays with wallet rules.
+- Marketplace and Mining pages own their state-changing actions. Agent Tasks
+  tracks and reviews those actions.
+- Advanced/Debug/Nodes are admin surfaces for diagnostics and raw controls.
 
 Read:
 
@@ -361,12 +356,12 @@ Agent activity records.
 - **Trigger**: an HTTP/webhook entrypoint that can run an Agent prompt,
   heartbeat wake, or workflow target.
 - **Workflow**: a saved multi-step procedure.
-- **Graph**: a visual editor for the same workflow JSON/runtime.
+- **Graph**: a visual editor for the same workflow JSON.
 - **Template**: a starter workflow such as wallet approval review, mining
   readiness/start gate, marketplace delivery/dispute, channel delivery review,
   media generation review, or service health check.
 - **Program**: an Agent-scoped durable standing order that can propose work for
-  review while grants still come from Tools, Skills, Wallets, and Mining policy.
+  review while grants still come from Tools, Skills, Wallets, and Mining rules.
 - **Activity**: the ledger of what actually happened, grouped by correlation id.
 
 This solves the old scattered-work problem: cron runs, webhooks, channel tasks,
@@ -385,16 +380,16 @@ Wallets are role-separated:
 
 - **Agent** wallets are for ordinary agent operations.
 - **Mining** wallets are for SAT mining capital and mining actions.
-- **Vault** wallets are for reserve/bond/operator roles.
+- **Vault** wallets are for reserve, bond, and stronger trust roles.
 
-Fased favors a self-hosted local signer and explicit policy over hosted wallet
+Fased favors a self-hosted local signer and explicit wallet rules over hosted wallet
 abstraction. External wallet providers can make sense for managed custody,
 multi-tenant products, or compliance-heavy deployments, but Fased's default
-model keeps keys and approvals under the operator's runtime and policy.
+model keeps keys and reviews under your setup and wallet rules.
 
 Marketplace and Mining integration is intentionally task-ledger aware:
 
-- Wallet approvals show spend/policy evidence.
+- Wallet reviews show spend evidence.
 - Mining events mirror readiness, start/stop, cycle, claim, recovery, and
   capital changes.
 - Marketplace offer/order/delivery/dispute records can be reviewed from the
@@ -472,7 +467,7 @@ The root intentionally contains both product code and build/deploy control files
 - `extensions/`: bundled extensions and extension runtime code
 - `skills/`: bundled skills and skill metadata
 - `scripts/`: build, install, docs, release, and test scripts
-- `tools/`: repo tooling and operator helpers
+- `tools/`: repo tooling and admin helpers
 - `vendor/`: vendored third-party code that must keep its own notices
 - `config/`: runtime and channel/provider configuration helpers
 - `test/`: test fixtures and integration helpers
@@ -495,8 +490,8 @@ Important:
 - Third-party bundled code and assets are tracked in
   [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
-Before using wallet, mining, federation, trading, marketplace, or similar
-operator features, read:
+Before using wallet, mining, Fased Network, trading, marketplace, or similar
+economic features, read:
 
 - [LICENSE](./LICENSE)
 - [SECURITY.md](./SECURITY.md)
@@ -506,5 +501,5 @@ operator features, read:
 - [Plugin license policy](./docs/reference/plugin-license-policy.md)
 
 Fased software is not financial, investment, tax, legal, or operational advice.
-Wallets, crypto, mining, federation, trading, marketplace, and news/market
-workflows carry real risk.
+Wallets, crypto, mining, Fased Network, and marketplace workflows carry real
+risk.

@@ -1,24 +1,24 @@
 ---
-summary: "Set up Fased Agent with chat apps, wallets, Fased Network, and Satcoin mining."
+summary: "Set up Fased Agent with tasks, tools, wallets, Fased Network, and Satcoin mining."
 read_when:
   - Onboarding a new assistant instance
   - Reviewing safety/permission implications
-  - Moving from first chat to a real operator setup
+  - Moving from first chat to a real agent setup
 title: "Fased Agent Setup"
 ---
 
 # Fased Agent Setup
 
-Fased Agent is the agent you run through one of two setup profiles:
+Fased Agent is the agent workbench you run through one of two setup profiles:
 
 - **Local** for your own computer. Use Terminal on macOS, WSL2 Ubuntu on
   Windows, or your Linux distro terminal.
 - **VPS Hosting** for an always-on server. Ubuntu LTS is the recommended first
   VPS target.
 
-Start with the Gateway and browser dashboard, then add models, skills,
-services, chat apps, wallets, Fased Network, or Satcoin mining only when they
-have a specific job.
+Start with the Gateway and browser dashboard, then add models, skills, services,
+chat apps, tasks, wallets, Fased Network, or Satcoin mining only when they have
+a specific job.
 
 Use this page after first boot to turn a working install into a real Agent
 setup.
@@ -30,8 +30,8 @@ setup.
   <Card title="Control UI Setup" href="/start/control-ui-setup" icon="layout-dashboard">
     See what belongs in onboarding, Agent setup, Services, Tasks, and Advanced Config.
   </Card>
-  <Card title="Operator Glossary" href="/start/operator-glossary" icon="book-open">
-    Learn the shared wallet, mining, bond, and Fased Network terms.
+  <Card title="Fased Glossary" href="/start/operator-glossary" icon="book-open">
+    Learn the shared wallet, mining, bond, and network terms.
   </Card>
 </Columns>
 
@@ -59,7 +59,7 @@ The recommended order is:
 1. make the install stable
 2. connect one trusted model
 3. send the first browser chat
-4. add skills, services, saved context, chat apps, and tasks
+4. add skills, services, memory, chat apps, and tasks
 5. add wallets, Fased Network, or Satcoin mining only when the base agent is ready
 
 ## Conservative Defaults
@@ -117,15 +117,15 @@ Useful links:
 
 ## Wallet, Network, And Satcoin
 
-Fased works without wallets or Satcoin. Add wallets, Fased Network, or Satcoin modules
-only when they have a specific job:
+Fased works without wallets or Satcoin. Add wallets, Fased Network, or Satcoin
+modules only when they have a specific job:
 
-| Path           | When to use it                                                                      |
-| -------------- | ----------------------------------------------------------------------------------- |
-| Wallet use     | When the Agent needs reviewed sends, balances, receipts, or wallet-connected skills |
-| Fased Network  | When the Agent needs a public handle, route, offers, or operator history            |
-| Satcoin mining | When the Agent will mine, claim, and build public mining history                    |
-| Bond           | When bonded SAT should support a stronger operator role                             |
+| Path           | When to use it                                                                                           |
+| -------------- | -------------------------------------------------------------------------------------------------------- |
+| Wallet use     | When the Agent needs wallet roles, reviewed sends, balances, payment history, or wallet-connected skills |
+| Fased Network  | When the Agent needs a public handle, services, or trust                                                 |
+| Satcoin mining | When the Agent will mine, claim, and build mining history                                                |
+| Bond           | When held SAT should support a stronger trust role                                                       |
 
 Relevant pages:
 
@@ -133,17 +133,17 @@ Relevant pages:
 - [Fased Network](/start/federation)
 - [Mining](/plugins/crypto/mining-page)
 - [Advanced SAT mining](/plugins/crypto/mining-advanced)
-- [Bond operator overview](/start/bond-operator-economy)
+- [Bond overview](/start/bond-operator-economy)
 
 ## Chat Apps And Tasks
 
 Connect chat apps only after the browser chat works. Route each account, topic,
 or guild to a selected Agent from `Agent > Channels`.
 
-Use `Agent > Tasks` for saved work definitions. Run history is audit data; the
-owning domain page still controls the operation:
+Use `Agent > Tasks` for saved work definitions. Activity history helps you
+understand what happened; the owning domain page still controls the operation:
 
-- Mining controls stay in Mining
+- Mining setup stays in Mining
 - Wallet signing stays in Wallet
 - Marketplace orders stay in Marketplace
 - Chat app routing stays in Channels

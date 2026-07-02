@@ -1,5 +1,5 @@
 ---
-summary: "Fased is the agent you run yourself for chat, tasks, tools, wallets, and optional Satcoin mining."
+summary: "Run your own agent for tasks, wallets, services, and SAT mining."
 read_when:
   - Introducing Fased to newcomers
 title: "Fased"
@@ -7,7 +7,11 @@ title: "Fased"
 
 # Fased
 
-**Run your own agent for chat, tools, wallets, and mining.**
+**Run Agent. Mine SAT. Build Trust.**
+
+Fased Agent is the agent you run yourself. Start with tasks and the browser
+dashboard. Add wallets, services, Fased Network, and Satcoin mining when the
+work is ready for them.
 
 Start by choosing one of two setup profiles:
 
@@ -18,54 +22,48 @@ Start by choosing one of two setup profiles:
   too. Alpine, Arch, macOS, and FreeBSD are local/dev targets until their
   hosted hardening paths are validated separately.
 
-After the Gateway and browser dashboard are working, connect chat apps,
-services, wallet features, Fased Network, or Satcoin mining only where you need
-them.
+After the Gateway and browser dashboard are working, add only what you need:
+wallets, services, Fased Network, or Satcoin mining.
 
-Fased Agent gives you browser chat, tools, saved context, plugins, chat app
-connections, and safety controls in the selected setup profile.
-
-**Gateway + dashboard + agent + optional wallets, network, and mining paths.**
+**Gateway + dashboard + agent + wallets + services + mining when ready.**
 
 <Columns>
   <Card title="Get Started" href="/start/getting-started" icon="rocket">
-    Choose Local or VPS Hosting and bring up the Gateway.
+    Choose Local or VPS Hosting and bring up the agent.
   </Card>
   <Card title="Run the Wizard" href="/start/wizard" icon="sparkles">
-    Guided setup with `fased onboard` and pairing flows.
+    Guided setup with `fased onboard`.
   </Card>
   <Card title="Open the Control UI" href="/web/control-ui" icon="layout-dashboard">
-    Launch the browser dashboard for chat, config, and sessions.
+    Launch the browser dashboard and start working.
   </Card>
 </Columns>
 
 ## What is Fased?
 
-Fased is an **agent you run yourself**. Use it first through the browser
-dashboard, then connect chat apps, services, plugins, wallet features, Fased
-Network, and Satcoin mining as your setup grows.
+Fased is an **agent workbench you run yourself**. Use it first through the
+browser dashboard, then connect services, wallet features, Fased Network, and
+Satcoin mining as your setup grows.
 
 **Who is it for?** Developers, builders, and power users who want an agent they
-can message from the browser or chat apps, with local setup and clear safety
-boundaries.
+can run from their own computer or VPS.
 
 **What makes it different?**
 
 - **Runs under your control**: choose Local for this computer or VPS Hosting for an always-on server
-- **Browser-first setup**: start in the Control UI before connecting Telegram, Discord, WhatsApp, or other chat apps
-- **Skills and plugins**: agents can run useful workflows across tools and services
-- **Wallet features when enabled**: reviewed sends, receive links, receipts, and audit
-- **Fased Network**: public handles, routing, service discovery, and reviewed offers
-- **Optional Satcoin path**: mining can build public mining history
-- **Clear add-on paths**: wallets, Fased Network/Marketplace, and Satcoin mining stay separate from first chat
+- **Browser-first setup**: start in the Control UI
+- **Tasks and tools**: run useful work across services and plugins
+- **Wallets when enabled**: use wallet roles, reviewed sends, receive links, and payment history
+- **Fased Network**: make services easier to find and trust
+- **Satcoin mining**: mine SAT and build mining proof
 
-The product shape is simple: start with the base agent, then add the advanced
-paths only when they have a specific job.
+The product shape is simple: run the agent first, then add mining and network
+work when they have a specific job.
 
 - **Runs on your machine**: use your own computer or your own VPS
-- **Chat app ready**: one Gateway can serve WhatsApp, Telegram, Discord, and more
-- **Built for agent work**: tools, sessions, saved context, and multi-agent routing
-- **Wallet-ready when enabled**: wallet actions can use limits, approvals, and audit
+- **Chat app ready**: connect WhatsApp, Telegram, Discord, and more when needed
+- **Built for agent work**: tasks, tools, memory, sessions, and multi-agent routing
+- **Wallet-ready when enabled**: wallet actions can use wallet roles and protected signing
 - **Network-ready when enabled**: Fased Network and Satcoin mining live beside the base agent
 - **Open source**: MIT licensed with preserved upstream and third-party notices
 
@@ -92,8 +90,8 @@ flowchart TD
   class tools,wallets,network,mining addon;
 ```
 
-The Gateway keeps sessions, routing, chat app connections, and agent behavior
-in one place.
+The Gateway keeps sessions, routing, chat app connections, and agent behavior in
+one place.
 
 ## Key capabilities
 
@@ -102,7 +100,7 @@ in one place.
     Add WhatsApp, Telegram, Discord, iMessage, and more when you want remote chat surfaces.
   </Card>
   <Card title="Agent you run" icon="cpu">
-    Sessions, tools, saved context, plugins, and safety controls in one setup profile.
+    Sessions, tasks, tools, memory, and plugins in one setup profile.
   </Card>
   <Card title="Plugin integrations" icon="plug">
     Add Mattermost and other integrations with extension packages.
@@ -212,8 +210,8 @@ Example:
   <Card title="Wallets, Fased Network, and SAT" href="/start/fased" icon="shield">
     Add wallets, network participation, and mining after first-run setup.
   </Card>
-  <Card title="Operator glossary" href="/start/operator-glossary" icon="book-open">
-    Learn the shared wallet, mining, Fased Network, bond, and operator terms.
+  <Card title="Fased glossary" href="/start/operator-glossary" icon="book-open">
+    Learn the shared wallet, mining, Fased Network, and bond terms.
   </Card>
   <Card title="Remote access" href="/gateway/remote" icon="globe">
     SSH and tailnet access patterns.
@@ -251,6 +249,6 @@ Example:
     Project origin and current attribution policy.
   </Card>
   <Card title="Roadmap" href="/reference/roadmap" icon="map">
-    What comes after the current wallet, Fased Network, and operator features.
+    What comes after the current wallet, Fased Network, and trust features.
   </Card>
 </Columns>

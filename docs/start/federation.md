@@ -1,8 +1,8 @@
 ---
-summary: "What Fased Network means in Fased, how public routes and offers work, and how to operate it in practice."
+summary: "What Fased Network means in Fased, how public routes and service listings work, and how to operate it in practice."
 read_when:
   - You want to understand Fased Network before turning it on
-  - You need the operator meaning of trust state, hosted state, public route health, or bond
+  - You need the meaning of trust state, hosted state, public route health, or bond
 title: "Fased Network Guide"
 sidebarTitle: "Fased Network"
 ---
@@ -10,15 +10,15 @@ sidebarTitle: "Fased Network"
 # Fased Network guide
 
 Fased Network is the public network layer for a Fased Agent install. Some
-command names, API paths, config keys, and code identifiers still
-use the literal word `federation`; those are implementation surfaces. Product
-copy and operator docs should read this as Fased Network.
+command names, API paths, config keys, and code identifiers still use the
+literal word `federation`; those are implementation surfaces. Product and user
+docs should read this as Fased Network.
 
 It is how a Fased Agent can:
 
 - register a Fased Network handle
 - hold Fased Network token state
-- publish an A2A agent card and public offers
+- publish an agent card and public service listings
 - expose a public route when the managed hosted path is healthy
 - participate in routing, discovery, and reviewed Marketplace flows
 
@@ -31,23 +31,23 @@ Read the stack like this:
 1. [Wallet](/plugins/crypto/wallet-page) gives the Agent its payment, mining, and bond-adjacent wallet map
 2. [Mining](/plugins/crypto/mining-page) runs SAT participation on the mining wallet
 3. Fased Network uses payment and bond posture to decide what the Agent can publish or receive
-4. [Bond operator](/start/bond-operator-economy) explains how bonded operator lanes sit on top of Fased Network
+4. [Bond](/start/bond-operator-economy) explains how stronger bond lanes sit on top of Fased Network
 
 Important boundary:
 
 - Fased Network does not replace Wallet
 - Fased Network does not run SAT mining
-- Fased Network interprets the public handle, route health, offers, and bond-derived status
+- Fased Network interprets the public handle, route health, service listings, and bond-derived status
 
-For shared vocabulary across wallet roles, SAT mining, bond, payment, and
-operator status, see [Operator glossary](/start/operator-glossary).
+For shared vocabulary across wallet roles, SAT mining, bond, payment, and trust
+status, see [Fased glossary](/start/operator-glossary).
 
 ## What should already be true first
 
 Fased Network should usually come after:
 
 - stable Fased Agent install
-- stable private operator access
+- stable private access
 - clear wallet separation if economic behavior is planned
 
 Do not use Fased Network as the thing that forces you to clean up an unstable base install.
@@ -62,7 +62,7 @@ Fased Network is not:
 
 Think of it as a network layer attached to an Agent that already works.
 
-## The operator model
+## The trust model
 
 There are four separate questions:
 
@@ -169,8 +169,8 @@ Built-in Fased Network offers start with the small executable base shapes:
 - `content.summarize`
 
 Marketplace drafts and public listings can use any non-empty `serviceKind`.
-Fased now gives the UI and chat-draft tool a broader service catalog so operators
-do not have to invent names from scratch. Common examples include:
+Fased now gives the UI and chat-draft tool a broader service catalog so users do
+not have to invent names from scratch. Common examples include:
 
 - `data.lookup`, `data.extract`, `data.enrich`, `data.labeling`
 - `api.access`, `api.proxy`
@@ -243,26 +243,26 @@ That is how the Agent moves from:
 - local-only
 - to verified
 - to public seller
-- to bonded operator lanes
+- to stronger bond lanes
 
 ### 6. Bond distributor rewards
 
-Active operator bonds can participate in SAT distributor rewards when that path
+Active stronger bonds can participate in SAT distributor rewards when that path
 is enabled and the position is eligible.
 
 The user flow is:
 
 1. Select a Vault wallet for Fased Network bond.
 2. Move SAT into that Vault wallet.
-3. Open or top up the bond from the Bond Operator card.
-4. Keep the bond active and at or above the operator threshold.
-5. Claim distributor SAT from the same Bond Operator card when `Claimable` is nonzero.
+3. Open or top up the bond from the Bond card.
+4. Keep the bond active and at or above the stronger-bond threshold.
+5. Claim distributor SAT from the same Bond card when `Claimable` is nonzero.
 
 The `Claim` button syncs the bond position first, then submits the claim if
 there is SAT available. Claiming is manual; Fased does not auto-claim on a
 timer unless a future explicit wallet-control setting is added. Claimable amounts are
 proportional to active bonded SAT and depend on distributor accounting; another
-operator claiming first does not take this position's synced share.
+bond claiming first does not take this position's synced share.
 
 Read the staking numbers this way:
 
@@ -332,7 +332,7 @@ In practice it affects:
 - visibility
 - routing confidence
 - order/payment evidence readiness
-- marketplace ranking and reputation
+- marketplace ranking and trust
 
 Important rule:
 
@@ -399,14 +399,14 @@ Possible reality:
 
 That is why probe health matters.
 
-## Bonded operator path
+## Stronger bond path
 
-The intended path to becoming a bonded Fased Network operator is through Fased.
+The intended path to a stronger Fased Network bond is through Fased.
 
 Why:
 
 - the Agent already holds Fased Network handle and token state
-- the Agent already owns wallet controls
+- the Agent already owns wallet rules
 - the Agent is where higher-trust execution belongs
 
 The clean future path is:
@@ -418,12 +418,12 @@ The clean future path is:
 5. choose a Vault wallet in Fased for bond authority
 6. create or increase the bond from the Fased Network surface
 7. prove Vault ownership through Fased
-8. receive bond-derived scopes and later operator-lane eligibility
+8. receive bond-derived scopes and later trust-role eligibility
 
-Current operator surfaces:
+Current bond surfaces:
 
 - onboarding can assign a Vault wallet for Fased Network bond
-- the Wallet surface stays focused on inventory, controls, and send requests
+- the Wallet surface stays focused on inventory, review, and send requests
 - the Fased Network screen is the place for bond open, top-up, unlock, withdraw, and proof actions
 - CLI can inspect or change the configured bond Vault
 
@@ -445,26 +445,26 @@ The first derived capabilities remain intentionally narrow:
 - `directory.priority.basic`
 - `routing.capacity.basic`
 
-## Bond vs payment vs operator status
+## Bond vs payment vs trust status
 
 The clean model is:
 
-- bond locks `SAT` so the Agent can qualify for the public bonded operator lane
+- bond locks `SAT` so the Agent can qualify for a stronger public trust lane
 - payment still handles the real order on the normal payment rail, often with assets such as `USDC`
-- operator status is the later review and service-evidence layer on top of bonded service roles
+- trust status is the later review and service-evidence layer on top of bonded service roles
 
 That means:
 
 - bond can improve public participation posture
 - bond does not turn `SAT` into the default order-payment asset
-- later service-accounting lanes are explicit operator policy, not mining emissions
+- later service-accounting lanes are explicit rollout rules, not mining emissions
 
-For the dedicated overview, see [SAT Bond Operator Overview](/start/bond-operator-economy).
+For the dedicated overview, see [SAT Bond Overview](/start/bond-operator-economy).
 
 ## Current Fased Network page shape
 
-The current Fased Network page is deliberately focused on network and operator
-state:
+The current Fased Network page is deliberately focused on network, bond, and
+trust state:
 
 1. `Network handle`
    Handle, token expiry, last seen time, and compact live/bond/market status.
@@ -487,11 +487,11 @@ The current offer surfaces follow this boundary:
 
 - `Listings` combines this Agent's local offers and remote public offers
 - `Offer Details` is where create/edit, run, payment, review, and dispute flow lives
-- Fased Network/Bond Operator remains separate from offer authoring and buying
+- Fased Network/Bond remains separate from offer authoring and buying
 
 Chat can create saved local Marketplace drafts, but those drafts stay disabled
-until the operator reviews and enables them in Marketplace. Bond actions remain
-Fased Network/Bond Operator actions because they lock SAT from a Vault wallet.
+until the user reviews and enables them in Marketplace. Bond actions remain
+Fased Network/Bond actions because they lock SAT from a Vault wallet.
 
 For the dedicated guide, see [Offers and Marketplace](/start/offers-marketplace).
 
@@ -522,7 +522,7 @@ The direction later is:
 
 - hosted handles for onboarding and reference hosting
 - self-hosted domains for stronger control
-- later bond-backed multi-operator services around routing, discovery, verification, and availability
+- later bond-backed services around routing, discovery, verification, and availability
 
 ## Common mistakes
 
@@ -549,8 +549,8 @@ Agent that is already healthy.
 
 ## Related docs
 
-- [Operator glossary](/start/operator-glossary)
-- [SAT Bond Operator Overview](/start/bond-operator-economy)
+- [Fased glossary](/start/operator-glossary)
+- [SAT Bond Overview](/start/bond-operator-economy)
 - [Offers and Marketplace](/start/offers-marketplace)
 - [Wallet](/plugins/crypto/wallet-page)
 - [Mining](/plugins/crypto/mining-page)

@@ -2,32 +2,31 @@
 summary: "Plain definitions for Fased wallets, Satcoin mining, Fased Network, bonded SAT, and marketplace workflows."
 read_when:
   - You want the short vocabulary for wallets, mining, Fased Network, bond, and marketplace workflows
-  - You are checking whether SAT, payment rails, bond, and operator terms are being used consistently
-title: "Operator Glossary"
+  - You are checking whether SAT, payments, bond, and trust terms are being used consistently
+title: "Fased Glossary"
 sidebarTitle: "Glossary"
 ---
 
-# Operator glossary
+# Fased glossary
 
 These are the shared Fased terms for wallets, Satcoin mining, Fased Network,
 bonded SAT, and marketplace workflows. It keeps product words consistent without
 making every page explain them again.
 
-Use this page when a word appears in Wallet, Mining, Fased Network, Bond
-Operator, or Marketplace docs.
+Use this page when a word appears in Wallet, Mining, Fased Network, Bond, or
+Marketplace docs.
 
 ## Short model
 
 ```text
-payment rails = ordinary task, offer, invoice, and receipt flows
-SAT           = mining, bonded SAT, public mining history, and future operator roles
+payments     = ordinary task, service, invoice, and payment flows
+SAT          = mining, bonded SAT, public mining history, and future trust roles
 FCOD          = broader Fcode ecosystem support, not required for Agent setup
 ```
 
 SAT is not the ordinary payment token for every task. Fased Network marketplace
-flows can use normal payment rails for tasks, offers, invoices, and receipts.
-SAT stays close to mining, bonded SAT, public mining history, and future
-operator roles.
+flows can use normal payments for tasks, services, and invoices. SAT stays close
+to mining, bonded SAT, public mining history, and future trust roles.
 
 ## Core terms
 
@@ -37,20 +36,20 @@ operator roles.
     mining, Fased Network, and marketplace workflows.
   </Accordion>
   <Accordion title="Operator">
-    A person or team that runs and maintains its own Fased setup. Operators
-    handle install health, wallet boundaries, and network posture.
+    Advanced term for a person or team running a Fased setup for public network
+    work. Most users should think: run the agent first.
   </Accordion>
   <Accordion title="Agent you run">
-    A Fased Agent install run by the user or operator instead of only by a
+    A Fased Agent install run by the user or team instead of only by a
     centralized hosted service.
   </Accordion>
-  <Accordion title="Wallet controls">
-    Settings that decide which wallet-connected actions can happen, what needs
-    approval, and which balances stay separated.
+  <Accordion title="Wallet rules">
+    Settings that decide which wallet actions can happen, which wallet is used,
+    and what needs review.
   </Accordion>
   <Accordion title="Agent wallet">
-    The wallet used for ordinary sends, receipts, Marketplace payment flows, and
-    reviewed skill/plugin wallet actions. It is selected by an explicit
+    The wallet used for ordinary sends, Marketplace payment flows, and reviewed
+    skill/plugin wallet actions. It is selected by an explicit
     `@wallet:<walletId>` handle or the primary Agent fallback.
   </Accordion>
   <Accordion title="Mining wallet">
@@ -107,23 +106,23 @@ operator roles.
   <Accordion title="SAT">
     The mining and bond asset used first-class by Fased Agent and Fased Network
     for agent-operated mining, bonded SAT, public mining history, and future
-    operator roles.
+    trust roles.
   </Accordion>
   <Accordion title="Bond">
-    SAT locked into a trust-bearing operator position.
+    SAT locked into a stronger public trust position.
   </Accordion>
   <Accordion title="Basic bond">
     Entry bond layer for profile cost and basic public trust. The recommended T0 minimum is `25 SAT`.
   </Accordion>
-  <Accordion title="Operator bond">
-    Stronger bond layer for seller lanes, operator roles, higher-trust Fased
-    Network participation, and staking eligibility when that path is enabled.
+  <Accordion title="Stronger bond">
+    Stronger bond layer for seller lanes, higher-trust Fased Network
+    participation, and staking eligibility when that path is enabled.
     The recommended first-year minimum is `500 SAT`. `1,000 SAT` is a later
     mature-network candidate after mining gets harder and distribution/liquidity
     improve.
   </Accordion>
   <Accordion title="Staking bond">
-    Eligibility state for active operator bonds when SAT distributor rewards
+    Eligibility state for active stronger bonds when SAT distributor rewards
     are enabled. Any claimable amount is variable and depends on protocol
     activity, eligible bond weight, and distributor accounting.
   </Accordion>
@@ -144,13 +143,13 @@ operator roles.
     amount exists.
   </Accordion>
   <Accordion title="Protocol maintainer">
-    Operator loop for protocol housekeeping such as reserve refill,
-    fixed-recipient accounting, distributor feed, and cleanup. It is not
-    treasury custody.
+    Maintenance loop for protocol housekeeping such as reserve refill,
+    fixed-recipient accounting, distributor feed, and cleanup. It is not treasury
+    custody.
   </Accordion>
   <Accordion title="Fased Network">
     The network participation layer for public handles, routing, discovery,
-    offers, public route health, and stronger operator roles.
+    service listings, public route health, and stronger trust roles.
   </Accordion>
   <Accordion title="Offer">
     A public or semi-public service listing that can be routed, discovered, or matched through Fased Network.
@@ -158,15 +157,15 @@ operator roles.
   <Accordion title="Public route">
     The externally reachable Fased Network route. Token presence and hosted enrollment do not prove that this route is healthy.
   </Accordion>
-  <Accordion title="Stronger operator role">
-    A stronger network role supported by route health, history, and bond posture.
+  <Accordion title="Stronger trust role">
+    A stronger network role supported by route health, activity history, and bond posture.
   </Accordion>
-  <Accordion title="Operator status">
-    The evidence and review layer for service work, route posture, reconciliation, and selected operator records.
+  <Accordion title="Trust status">
+    The review layer for service work, route posture, reconciliation, and selected public activity.
   </Accordion>
   <Accordion title="Marketplace payments">
     Practical payment rails inside Fased Network marketplace flows for ordinary
-    tasks, services, pricing, invoices, and receipts.
+    tasks, services, pricing, invoices, and payments.
   </Accordion>
   <Accordion title="FCOD">
     The broader Fcode ecosystem support token. It is separate from SAT and is not required to understand or run Fased Agent.
@@ -175,12 +174,12 @@ operator roles.
 
 ## Boundary rules
 
-- Wallet handles inventory, funding, controls, approvals, and security.
+- Wallet handles inventory, funding, review steps, and security.
 - Mining handles capital, commit, cycles, claim, sweep, and recovery.
-- Fased Network handles public handles, routing, offers, public reachability, and bond-derived status.
-- Bond uses SAT as an operator trust signal.
+- Fased Network handles public handles, routing, service listings, public reachability, and bond-derived status.
+- Bond uses SAT as a public trust signal.
 - Agent wallet stays on the normal payment rail.
-- Operator status tracks service evidence; it does not mint SAT.
+- Trust status tracks service evidence; it does not mint SAT.
 
 ## Related docs
 
@@ -188,4 +187,4 @@ operator roles.
 - [Mining](/plugins/crypto/mining-page)
 - [Advanced SAT mining](/plugins/crypto/mining-advanced)
 - [Fased Network](/start/federation)
-- [Bond operator](/start/bond-operator-economy)
+- [Bond overview](/start/bond-operator-economy)
