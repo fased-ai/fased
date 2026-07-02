@@ -274,18 +274,18 @@ This keeps payment asset, accepted assets, and payment rail separate.
 Offers and requests share the same service contract shape so Marketplace UI,
 chat-created drafts, and future Fased Network routing agree on terms.
 
-| Field              | Meaning                                                                  |
-| ------------------ | ------------------------------------------------------------------------ |
-| `title`            | Human-readable listing title.                                            |
-| `serviceKind`      | Routing label such as `data.lookup`, `api.access`, or `automation.task`. |
-| `summary`          | Short explanation of what is being offered or requested.                 |
-| `pricing.currency` | Primary payment asset, for example `USDC`, `SOL`, `SAT`, or `FCOD`.      |
-| `pricing.amount`   | Optional fixed amount or budget. Quote-based listings can omit it.       |
-| `pricing.unit`     | Unit such as `per-job`, `per-hour`, `per-api-call`, or `per-month`.      |
-| `fulfillmentMode`  | Who or what performs it: `human`, `agent`, `api`, `dataset`, or hybrid.  |
-| `receiptRules`     | Required result, artifact, invoice, tx, signature, or manual receipt.    |
-| `acceptedAssets`   | Assets the offer or request can accept.                                  |
-| `paymentRails`     | Technical route such as Agent wallet, invoice, or metered API.           |
+| Field              | Meaning                                                                            |
+| ------------------ | ---------------------------------------------------------------------------------- |
+| `title`            | Human-readable listing title.                                                      |
+| `serviceKind`      | Routing label such as `data.lookup`, `api.access`, or `automation.task`.           |
+| `summary`          | Short explanation of what is being offered or requested.                           |
+| `pricing.currency` | Primary payment asset, for example `USDC`, `SOL`, or another configured SPL asset. |
+| `pricing.amount`   | Optional fixed amount or budget. Quote-based listings can omit it.                 |
+| `pricing.unit`     | Unit such as `per-job`, `per-hour`, `per-api-call`, or `per-month`.                |
+| `fulfillmentMode`  | Who or what performs it: `human`, `agent`, `api`, `dataset`, or hybrid.            |
+| `receiptRules`     | Required result, artifact, invoice, tx, signature, or manual receipt.              |
+| `acceptedAssets`   | Assets the offer or request can accept.                                            |
+| `paymentRails`     | Technical route such as Agent wallet, invoice, or metered API.                     |
 
 Publishing and payment are gated by the Agent wallet. If the Agent wallet is
 missing, Fased can still describe the draft in chat, but it will not save a
@@ -324,7 +324,7 @@ Every offer should make these terms visible before it is published:
 
 - fixed amount, usage unit, or quote policy
 - payment asset and payment rail
-- accepted payment assets such as `USDC`, `SOL`, `SAT`, and `FCOD`
+- accepted payment assets such as `USDC`, `SOL`, or another configured SPL asset
 - service terms: input shape, delivery shape, availability, and trust or bond requirement
 - operator identity and seller-lane state
 - receipt rules for order work, including invoice and receipt references
@@ -526,14 +526,14 @@ before a result is accepted.
 
 Use smoke tests for controlled validation, not as a normal buyer workflow.
 
-## Consumer app and no-node buyers
+## Hosted access and no-node buyers
 
-Marketplace should also work for a consumer who only runs the Fased App and does
-not operate a public node.
+Marketplace should also work for a consumer who only uses hosted Fased access
+and does not operate a public node.
 
 That flow is:
 
-1. onboard with the Fased App
+1. open hosted Fased access
 2. create or fund the Agent wallet
 3. search public marketplace offers
 4. create a request or choose an offer
@@ -559,7 +559,7 @@ Delivery targets are part of the order contract, not loose chat text.
 
 | Target                 | Used for                                                        |
 | ---------------------- | --------------------------------------------------------------- |
-| Fased app inbox        | Consumer app results, receipts, reports, disputes.              |
+| Fased inbox            | Consumer results, receipts, reports, disputes.                  |
 | Telegram/Discord/email | Human-readable alerts, reports, support updates, subscriptions. |
 | Webhook                | SaaS integrations, workflow automation, merchant events.        |
 | WebSocket/SSE feed     | Live data feeds, alerts, monitoring streams.                    |
@@ -633,7 +633,7 @@ The seller can be:
 
 The buyer can be:
 
-- a consumer using the Fased App
+- a consumer using hosted Fased access
 - another Fased agent acting under policy
 - a node operator
 - a plugin or automation workflow acting under an explicit policy

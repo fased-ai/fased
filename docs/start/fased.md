@@ -1,5 +1,5 @@
 ---
-summary: "Set up Fased Agent with channels, wallets, Fased Network, and Satcoin mining."
+summary: "Set up Fased Agent with chat apps, wallets, Fased Network, and Satcoin mining."
 read_when:
   - Onboarding a new assistant instance
   - Reviewing safety/permission implications
@@ -17,7 +17,7 @@ Fased Agent is the agent you run through one of two setup profiles:
   VPS target.
 
 Start with the Gateway and browser dashboard, then add models, skills,
-services, channels, wallets, Fased Network, or Satcoin mining only when they
+services, chat apps, wallets, Fased Network, or Satcoin mining only when they
 have a specific job.
 
 Use this page after first boot to turn a working install into a real Agent
@@ -39,7 +39,7 @@ setup.
 
 ```mermaid
 flowchart TB
-  entry["Channels / Control UI"] --> gateway["Gateway"]
+  entry["Control UI / chat apps"] --> gateway["Gateway"]
   gateway --> agent["Fased Agent + workspace"]
   agent --> tools["Tools + plugins"]
   agent --> wallets["Wallet use"]
@@ -48,10 +48,10 @@ flowchart TB
 
   classDef entry fill:#120605,stroke:#ff5a36,color:#ffffff;
   classDef core fill:#071018,stroke:#12cfff,color:#ffffff;
-  classDef operator fill:#20120a,stroke:#ffb020,color:#ffffff;
+  classDef addon fill:#20120a,stroke:#ffb020,color:#ffffff;
   class entry entry;
   class gateway,agent core;
-  class tools,wallets,network,mining operator;
+  class tools,wallets,network,mining addon;
 ```
 
 The recommended order is:
@@ -59,7 +59,7 @@ The recommended order is:
 1. make the install stable
 2. connect one trusted model
 3. send the first browser chat
-4. add skills, services, memory, channels, and tasks
+4. add skills, services, saved context, chat apps, and tasks
 5. add wallets, Fased Network, or Satcoin mining only when the base agent is ready
 
 ## Conservative Defaults
@@ -68,7 +68,7 @@ Start conservative:
 
 - keep the Gateway private by default
 - use Tailscale for hosted/admin access
-- connect one trusted channel before adding public routes
+- connect one trusted chat app before adding public routes
 - keep wallet and mining workflows separate from normal chat
 - review skills and services before allowing them for an Agent
 
@@ -91,7 +91,7 @@ Then work from the selected Agent:
 | `Agent > Skills`   | Create, install, configure, review, and allow Agent skills          |
 | `Agent > Services` | Web/search, Gmail, Calendar, GitHub, browser/media, and custom APIs |
 | `Agent > Channels` | Chat app setup and routing to this Agent                            |
-| `Agent > Memory`   | Session-memory and archive state                                    |
+| `Agent > Memory`   | Saved session context and archive state                             |
 | `Agent > Tasks`    | Saved tasks, triggers, workflows, graphs, programs, and templates   |
 
 Dashboard is the launch/status board. Use `/agents` for real setup.
@@ -106,8 +106,8 @@ The default workspace is:
 
 Fased creates starter files such as `AGENTS.md`, `SOUL.md`, `TOOLS.md`,
 `IDENTITY.md`, `USER.md`, `HEARTBEAT.md`, `MEMORY.md`, and `memory/` when the
-workspace is new. Treat this folder like the agent's operational memory and
-keep it private.
+workspace is new. Treat this folder like the agent's private working context
+and keep it private.
 
 Useful links:
 
@@ -135,9 +135,9 @@ Relevant pages:
 - [Advanced SAT mining](/plugins/crypto/mining-advanced)
 - [Bond operator overview](/start/bond-operator-economy)
 
-## Channels And Tasks
+## Chat Apps And Tasks
 
-Connect channels only after the browser chat works. Route each account, topic,
+Connect chat apps only after the browser chat works. Route each account, topic,
 or guild to a selected Agent from `Agent > Channels`.
 
 Use `Agent > Tasks` for saved work definitions. Run history is audit data; the
@@ -146,7 +146,7 @@ owning domain page still controls the operation:
 - Mining controls stay in Mining
 - Wallet signing stays in Wallet
 - Marketplace orders stay in Marketplace
-- Channel routing stays in Channels
+- Chat app routing stays in Channels
 - Service auth stays in Services
 
 ## Operations Checks

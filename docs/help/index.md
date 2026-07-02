@@ -9,9 +9,9 @@ title: "Help"
 # Help
 
 Use Help when something is broken, unclear, or hard to inspect. Normal setup
-still starts in the selected Agent: Models, Channels, Services, Skills, Tools,
-Memory, Tasks, Wallets, Mining, and Fased Network each have their own owner
-page.
+still starts in the selected Agent: Models, Channels (chat apps), Services,
+Skills, Tools, Memory, Tasks, Wallets, Mining, and Fased Network each have
+their own focused page.
 
 ## Fast path
 
@@ -33,7 +33,7 @@ flowchart TD
 
 <CardGroup cols={2}>
   <Card title="Troubleshooting" icon="wrench" href="/help/troubleshooting">
-    Symptom-first checks for no replies, gateway issues, channels, tasks, nodes, browser, wallet, mining, and Fased Network.
+    Symptom-first checks for no replies, gateway issues, chat apps, tasks, nodes, browser, wallet, mining, and Fased Network.
   </Card>
   <Card title="Diagnostics" icon="activity" href="/diagnostics/index">
     Where to use Logs, Usage, Advanced > Debug, Advanced > Nodes, diagnostic flags, and structured diagnostics.

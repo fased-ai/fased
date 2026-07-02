@@ -2,7 +2,7 @@
 summary: "What setup belongs in onboarding, Control UI pages, Advanced Config, and CLI"
 read_when:
   - You finished onboarding and need to make the agent usable
-  - You are deciding where to add providers, skills, channels, services, hooks, or memory
+  - You are deciding where to add providers, skills, chat apps, services, hooks, or saved context
   - You are confused by overlap between Control UI pages and Advanced Config
 title: "Control UI Setup Model"
 sidebarTitle: "Control UI Setup"
@@ -36,7 +36,7 @@ The first browser setup pass should start from the selected Agent:
 
 <Steps>
   <Step title="/agents">
-    Create or select the Agent that will own chat, channel routes, tasks, and memory.
+    Create or select the Agent that will own chat, chat app routes, tasks, and saved context.
   </Step>
   <Step title="Agent > Models">
     Connect provider auth if needed, then choose primary, fallback, and task models.
@@ -51,7 +51,7 @@ The first browser setup pass should start from the selected Agent:
     Connect external APIs such as web/search, Gmail, Calendar, GitHub, or browser/media.
   </Step>
   <Step title="Agent > Memory">
-    Enable session-memory and review per-Agent archive/QMD state.
+    Enable saved session context and review per-Agent archive state.
   </Step>
   <Step title="Agent > Tasks">
     Create saved tasks, triggers, workflows, graphs, programs, and templates.
@@ -96,20 +96,20 @@ Then use the browser pages for product setup:
 
 <CardGroup cols={2}>
   <Card title="/agents">
-    Create or select an Agent and attach model, skills, services, channels,
-    memory, tasks, tools, sessions, and wallet policy.
+    Create or select an Agent and attach model, skills, services, chat apps,
+    saved context, tasks, tools, sessions, and wallet controls.
   </Card>
   <Card title="/extensions">
     Review runtime plugins, source trust, dependencies, scanner warnings, and advanced extension setup.
   </Card>
   <Card title="/usage">
-    Review local model usage by provider, model, Agent, session, task, channel, and source.
+    Review local model usage by provider, model, Agent, session, task, chat app, and source.
   </Card>
   <Card title="/notifications">
     Configure notification routing and recent in-app/external delivery.
   </Card>
   <Card title="/wallet">
-    Review wallet policy, approvals, balances, custody, and signer health.
+    Review wallet controls, approvals, balances, custody, and signer health.
   </Card>
   <Card title="/mining">
     Operate SAT mining readiness, capital, commit, recovery, and history.
@@ -135,19 +135,18 @@ with `/agents` when the Gateway is already online.
 
 ## Agent Means
 
-In the Control UI, an Agent is the routeable workspace identity you actually
-operate.
+In the Control UI, an Agent is the workspace profile you actually operate.
 
 It can have:
 
 - model and fallbacks
 - skills
 - services
-- channels
-- memory settings
+- chat apps
+- saved context settings
 - scheduled tasks
 - files and workspace context
-- wallet policy
+- wallet controls
 
 Examples:
 
@@ -156,19 +155,20 @@ Examples:
 - Mining Operator
 - Operations Reviewer
 
-Channels and scheduled tasks should route to a configured Agent. Subagents are
-different: they are internal runtime workers used during a task, not normal
-channel routing targets.
+Channels and scheduled tasks should route to a configured Agent. In the UI,
+Channels means chat app connections such as Telegram, Discord, and WhatsApp.
+Subagents are different: they are internal runtime workers used during a task,
+not normal chat routing targets.
 
 `Agent > Tasks` is the selected Agent's saved-work control surface. Create a
 **Task** for scheduled work first. Add Triggers, Workflows, Graphs, Programs,
 or Templates only when the run needs that structure.
 
 Run history can include scheduled runs plus records mirrored from webhooks,
-channels, subagents/ACP, CLI/system runs, media generation, wallet approvals,
+chat apps, subagents/ACP, CLI/system runs, media generation, wallet approvals,
 Marketplace, mining, and workflows. It is audit data, not the primary task list.
 Use the owning page for the actual domain operation: Wallets for signing,
-Marketplace for orders/disputes, Mining for mining control, Channels for
+Marketplace for orders/disputes, Mining for mining control, Channels for chat
 routes/delivery, and Services/Media for connector setup.
 
 ## Skills, Extensions, Channels, Services
@@ -182,8 +182,8 @@ configure, and allow it from `Agent > Skills`.
 
 **Extension**
 
-Runtime plugin code that can add tools, channels, hooks, schemas, commands, or
-UI panels. Review it in `/extensions`.
+Plugin code that can add tools, channels, hooks, schemas, commands, or UI
+panels. Review it in `/extensions`.
 
 **Channel**
 
@@ -197,7 +197,7 @@ browser/media, or a plugin-reported API. Connect it from `Agent > Services`.
 
 **Hook**
 
-Background automation around runtime events. Review hook packs in `/extensions`;
+Background automation around Fased events. Review hook packs in `/extensions`;
 Agent memory archive control lives in `Agent > Memory`.
 
 Skill setup is intentionally split by responsibility but exposed in one Agent
@@ -206,7 +206,7 @@ surface:
 - **Agent > Skills**: create workspace skills, review plugin-catalog installs, save
   skill config, fix dependencies, edit skill files, and allow/deny skills for
   that Agent.
-- **Agent > Tools**: allow or deny runtime tools exposed by core code, services,
+- **Agent > Tools**: allow or deny tools exposed by core code, services,
   channels, or extensions.
 - **Agent > Services**: connect API credentials a skill/tool depends on.
 - **Wallet > Skill Grants tab**: grant narrow Agent-wallet actions for reviewed
@@ -223,10 +223,10 @@ fallback, not the first-run path.
 task needs web search, GitHub, Gmail/Google Workspace, Firecrawl, model auth,
 channel delivery, or a configured skill, it should pause in `needs-access` and
 point back to the matching setup surface instead of repeatedly running. Access
-is still constrained by that Agent's Tools, Skills, wallet policy, and task
+is still constrained by that Agent's Tools, Skills, wallet controls, and task
 policy.
 
-## Memory
+## Memory (Saved Context)
 
 Memory has multiple pieces:
 

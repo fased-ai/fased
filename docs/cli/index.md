@@ -1,5 +1,5 @@
 ---
-summary: "CLI reference for the self-hosted Fased runtime, Agent setup, diagnostics, channels, wallets, network, and mining."
+summary: "CLI reference for Fased setup, diagnostics, chat apps, wallets, network, and mining."
 read_when:
   - Adding or modifying CLI commands or options
   - Documenting new command surfaces
@@ -8,12 +8,12 @@ title: "CLI Reference"
 
 # CLI reference
 
-`fased` is the control surface for the self-hosted runtime. It is not just a
-gateway wrapper. The CLI manages:
+`fased` is the scriptable control surface for Fased. It is not just a Gateway
+wrapper. The CLI manages:
 
 - onboarding and install flows
 - config and secrets
-- Agent workspaces, channel accounts, routing, skills, services, tools, and tasks
+- Agent workspaces, chat app accounts, routing, skills, services, tools, and tasks
 - live gateway control and diagnostics
 - plugins, skills, and hooks
 - wallets, Fased Network, and mining where enabled

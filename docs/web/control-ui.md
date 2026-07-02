@@ -1,5 +1,5 @@
 ---
-summary: "Browser-based control UI for the runtime: chat, wallets, mining, Fased Network, config, and ops."
+summary: "Browser-based Control UI for chat, wallets, mining, Fased Network, config, and operations."
 read_when:
   - You want to operate the Gateway from a browser
   - You want Tailnet access without SSH tunnels
@@ -8,7 +8,7 @@ title: "Control UI"
 
 # Control UI (browser)
 
-The Control UI is a small **Vite + Lit** single-page app served by the runtime gateway:
+The Control UI is the browser app served by the Gateway:
 
 - default: `http://<host>:18789/`
 - optional prefix: set `gateway.controlUi.basePath` (e.g. `/fased`)
@@ -21,14 +21,14 @@ For first-run product setup after onboarding, see
 - `/dash` is the compact widget dashboard.
 - `/chat` is the live browser chat surface.
 - `/agents` is the normal setup workbench: Setup, Models, Channels, Skills,
-  Tools, Memory, Sessions, Services, Tasks (including Coordination), and Files
+  Tools, Memory, Sessions, Services, Tasks, and Files
   for the selected Agent.
 - Agent Tasks shows saved work definitions first. Task templates create scheduled
   tasks; workflow/graph templates create review flows; run history is audit, not
   the task itself.
-- `/wallet`, `/mining`, `/federation`, and `/marketplace` own their focused runtime workflows.
-- `/extensions` owns global plugin/runtime lifecycle; channel account routing still belongs in Agents/Channels.
-- `/notifications`, `/usage`, and `/logs` are operator monitoring pages.
+- `/wallet`, `/mining`, `/federation`, and `/marketplace` own their focused workflows.
+- `/extensions` owns global plugin lifecycle; chat app account routing still belongs in Agents/Channels.
+- `/notifications`, `/usage`, and `/logs` are monitoring pages.
 - `/config` is **Advanced**. It now groups raw Config, Debug, and Nodes under one advanced surface.
 
 The older global provider/channel/service/skills/task routes remain routable for
@@ -89,18 +89,17 @@ you revoke it with `fased devices revoke --device <id> --role <role>`. See
 
 ## What it can do
 
-The Control UI operates the self-hosted runtime without requiring a messaging
-channel first.
+The Control UI operates Fased without requiring a messaging app first.
 
 - **Dashboard**: compact widget board for Agents, Usage, Wallets, Mining, and
   Fased Network state.
 - **Chat**: browser chat for the selected Agent/session, with session switching,
   model overrides, stats, task/session panels, and streamed tool cards.
 - **Agents**: setup workbench for Models, Channels, Skills, Tools, Memory,
-  Sessions, Services, Tasks, Coordination, and Files.
-- **Wallet, Mining, Fased Network, Marketplace**: focused runtime pages for the
+  Sessions, Services, Tasks, and Files.
+- **Wallet, Mining, Fased Network, Marketplace**: focused pages for the
   actions and records owned by those domains.
-- **Usage, Notifications, Logs**: operator monitoring and recent activity.
+- **Usage, Notifications, Logs**: monitoring and recent activity.
 - **Advanced**: Config, Debug, Nodes, exec approvals, raw RPC tools, and update
   actions.
 

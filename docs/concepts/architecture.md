@@ -48,8 +48,8 @@ flowchart TD
 ```
 
 The Gateway is the control plane. Agents own work identity and policy. Sessions,
-Tasks, tools, skills, memory, channels, and nodes attach through that selected
-Agent instead of becoming separate product owners.
+Tasks, tools, skills, saved context, chat apps, and nodes attach through that
+selected Agent instead of becoming separate product owners.
 
 ## Components and flows
 

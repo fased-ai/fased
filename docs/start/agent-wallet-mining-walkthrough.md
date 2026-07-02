@@ -194,9 +194,9 @@ Read next:
 
 Open **Agents**.
 
-The selected Agent owns chat, model settings, skills, services, channels,
-tasks, memory, and wallet policy. Start with one Agent unless you already know
-you need separate work profiles.
+The selected Agent owns chat, model settings, skills, services, chat app
+routes, tasks, saved context, and wallet controls. Start with one Agent unless
+you already know you need separate work profiles.
 
 ![Agent setup page with setup checklist](/images/screenshots/polished/operator-school-008-agent-setup.png)
 

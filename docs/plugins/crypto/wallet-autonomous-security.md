@@ -70,7 +70,7 @@ flowchart TD
 Avoid these patterns:
 
 - one Agent wallet reused for mining, bond, and vault storage
-- one wallet reused for mining, service payments, treasury, and private business receipts
+- one wallet reused for mining, marketplace payments, treasury, and private business receipts
 - host-only passphrase files as the only real unlock boundary
 - recovery share stored next to the device share
 - leaving Agent automation enabled without tight caps and allowlists

@@ -1,5 +1,5 @@
 ---
-summary: "First-run setup matrix for local and hosting Fased Agent installs"
+summary: "Choose the right first-run path for a local or hosted Fased Agent install"
 read_when:
   - Choosing local or hosting onboarding
   - Choosing local gateway or remote gateway connection mode
@@ -12,8 +12,8 @@ sidebarTitle: "Setup Matrix"
 
 Use this page before `install.sh` or `fased onboard`.
 
-The main choice is where the **Gateway** runs. The Gateway is the process that
-the Control UI, CLI, channels, skills, wallets, and future Agents talk to.
+The main choice is where the **Gateway** runs. The Gateway is the service that
+the Control UI, CLI, chat apps, skills, wallets, and future Agents talk to.
 
 ## Choose The Right Host Setup Profile
 
@@ -107,11 +107,12 @@ then runs the onboarding wizard with daemon setup unless you pass `--no-onboard`
   `Agent > Models`, then use it in Chat or tasks.
 - **Provider auth:** stores API/OAuth credentials or references for model
   providers. Ordinary setup belongs in `Agent > Models`.
-- **Gateway:** the connection point for Control UI, CLI, WebChat, channels, and
+- **Gateway:** the connection point for Control UI, CLI, WebChat, chat apps, and
   remote clients.
 - **Tailscale:** hidden from the basic Local path. Required for Hosting profile
   admin access.
-- **Channels:** external apps like Telegram, Discord, WhatsApp, and Slack.
+- **Channels:** the internal name for external chat apps like Telegram,
+  Discord, WhatsApp, and Slack.
   Connect them after onboarding in `Agent > Channels`, then route each account
   to an Agent.
 - **Wallet:** policy-bound actions for sends, receipts, mining, Marketplace,
@@ -122,9 +123,9 @@ then runs the onboarding wizard with daemon setup unless you pass `--no-onboard`
   Control UI > Extensions.
 - **Hooks:** background automation that runs around agent events. Enable
   `session-memory` after onboarding in `Agent > Memory`.
-- **Memory:** workspace memory files, session archives, and optional QMD-backed
-  indexing/export. Memory diagnostics are read-only in the UI; repair remains
-  in Debug/CLI.
+- **Memory:** saved workspace context, session archives, and optional
+  QMD-backed indexing/export. Memory diagnostics are read-only in the UI;
+  repair remains in Debug/CLI.
 
 ## Onboarding vs Control UI vs CLI
 
@@ -198,7 +199,7 @@ then runs the onboarding wizard with daemon setup unless you pass `--no-onboard`
 ### Tasks
 
 - Onboarding: not required for first chat.
-- Control UI: Tasks are created from Chat, channels, Agent > Tasks, or task deep
+- Control UI: Tasks are created from Chat, chat apps, Agent > Tasks, or task deep
   links. Runtime still uses cron internally, but UI should say Tasks.
 - CLI: task/cron commands where available.
 
@@ -209,10 +210,10 @@ After onboarding, use `/agents` as the single **Agent Setup** checklist:
 ```text
 Model connected
 Provider auth ready
-Memory archive on/off
+Saved context on/off
 Skills ready or needs setup
-Channels connected
-Wallet policy
+Chat apps connected
+Wallet controls
 Task bindings
 ```
 

@@ -76,12 +76,12 @@ Use this path after onboarding:
    model refs.
 3. `/chat`: talk to the selected Agent. The model picker can override the model
    for the current chat session when the selected provider route is usable.
-4. **Agent > Channels**: connect apps such as Telegram or Discord and route each channel
+4. **Agent > Channels**: connect apps such as Telegram or Discord and route each
    account/topic/guild to the selected Agent.
 
-The Agent owns model defaults, skills, services, memory, channels, tasks,
-and wallet policy. Chat and channels both talk to an Agent; they are different
-delivery surfaces for the same routeable setup.
+The Agent owns model defaults, skills, services, saved context, chat app
+routes, tasks, and wallet controls. Browser chat and connected chat apps both
+talk to an Agent; they are different delivery surfaces for the same setup.
 
 ```mermaid
 flowchart TD

@@ -1,10 +1,10 @@
 ---
-summary: "Official Fased and Fcode ecosystem links for Fased Agent, Fased App, Satcoin, docs, community, and social accounts."
+summary: "Official Fased and Fcode ecosystem links for Fased Agent, Fased Network, Satcoin, docs, community, and social accounts."
 read_when:
   - Finding official Fased links
   - Verifying docs, community, social accounts, or Satcoin links
 title: "Official Links"
-description: "Official Fased and Fcode ecosystem links for Fased Agent, Fased App, Satcoin, docs, community, and social accounts."
+description: "Official Fased and Fcode ecosystem links for Fased Agent, Fased Network, Satcoin, docs, community, and social accounts."
 ---
 
 # Official Links
@@ -24,7 +24,7 @@ Primary ecosystem link hub: [docs.fcode.ai/links](https://docs.fcode.ai/links)
 
 | Name               | Link                                                           |
 | ------------------ | -------------------------------------------------------------- |
-| Fased App          | [fased.ai](https://fased.ai)                                   |
+| Fased site         | [fased.ai](https://fased.ai)                                   |
 | Fased Network      | [fased.app](https://fased.app)                                 |
 | Fased docs         | [docs.fased.ai](https://docs.fased.ai)                         |
 | Fased Agent GitHub | [github.com/fased-ai/fased](https://github.com/fased-ai/fased) |
@@ -32,12 +32,12 @@ Primary ecosystem link hub: [docs.fcode.ai/links](https://docs.fcode.ai/links)
 
 ## Fcode Ecosystem
 
-| Name                     | Link                                     |
-| ------------------------ | ---------------------------------------- |
-| Fcode AI                 | [fcode.ai](https://fcode.ai)             |
-| Fcode docs               | [docs.fcode.ai](https://docs.fcode.ai)   |
+| Name                     | Link                                               |
+| ------------------------ | -------------------------------------------------- |
+| Fcode AI                 | [fcode.ai](https://fcode.ai)                       |
+| Fcode docs               | [docs.fcode.ai](https://docs.fcode.ai)             |
 | Official ecosystem links | [docs.fcode.ai/links](https://docs.fcode.ai/links) |
-| Fcode on X               | [x.com/FcodeAi](https://x.com/FcodeAi)   |
+| Fcode on X               | [x.com/FcodeAi](https://x.com/FcodeAi)             |
 
 ## Satcoin
 

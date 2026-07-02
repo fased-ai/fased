@@ -110,7 +110,7 @@ Privacy and personas should be designed into those cases from the start:
   state
 - let personas control market discovery, spending, publishing, delivery, and
   dispute behavior through explicit policy
-- use Agent wallets for service payments, Mining wallets for mining, and Vault
+- use Agent wallets for marketplace payments, Mining wallets for mining, and Vault
   wallets for protected storage or bond assignment
 
 ## Agent-to-agent buying

@@ -14,11 +14,11 @@ The onboarding wizard configures one of two setup profiles:
 - **Local** for a laptop, desktop, dev box, macOS local setup, or WSL2.
 - **VPS Hosting** for an always-on server with Tailscale-first access.
 
-It configures the machine/runtime first: host profile, workspace, Gateway,
+It configures the machine first: host profile, workspace, Gateway,
 local signer wallet state, optional singleton Mining wallet setup, and hosting
 security when Hosting is selected. Model providers, skills, extensions,
-channels, services, hooks, memory activation, tasks, and Agent assembly continue
-in the Control UI.
+chat apps, services, hooks, saved context, tasks, and Agent assembly continue in
+the Control UI.
 Before choosing Local or Hosting, read the
 [First-run Setup Matrix](/start/setup-matrix).
 
@@ -254,7 +254,7 @@ the host first if the Gateway does not already exist.
 
 ## What it does not do
 
-Onboarding gets the runtime online. It is not the whole operator path.
+Onboarding gets Fased online. It is not the whole setup path.
 
 After onboarding, you usually continue into one of these:
 
@@ -265,7 +265,7 @@ After onboarding, you usually continue into one of these:
 - `Agent > Services` to connect web/search, Gmail, Calendar, GitHub, browser/media, and APIs
 - `Agent > Memory` and `Agent > Tasks` to archive sessions and schedule work
 - [Dashboard](/web/dashboard) for normal day-to-day use
-- [Build with Fased](/start/fased) for the sovereign runtime path
+- [Build with Fased](/start/fased) for the full Agent setup path
 - [Wallet](/plugins/crypto/wallet-page) for wallet policy and wallet runtime
 - [Mining](/plugins/crypto/mining-page) for SAT operator setup
 

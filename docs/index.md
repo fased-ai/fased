@@ -1,5 +1,5 @@
 ---
-summary: "Fased is a user-run agent with a browser dashboard, channels, plugins, wallets, and optional Satcoin mining."
+summary: "Fased is the agent you run yourself for chat, tasks, tools, wallets, and optional Satcoin mining."
 read_when:
   - Introducing Fased to newcomers
 title: "Fased"
@@ -7,7 +7,7 @@ title: "Fased"
 
 # Fased
 
-**A user-run agent for tasks, channels, wallets, and mining.**
+**Run your own agent for chat, tools, wallets, and mining.**
 
 Start by choosing one of two setup profiles:
 
@@ -18,13 +18,14 @@ Start by choosing one of two setup profiles:
   too. Alpine, Arch, macOS, and FreeBSD are local/dev targets until their
   hosted hardening paths are validated separately.
 
-After the Gateway and browser dashboard are working, add channels, services,
-wallet features, Fased Network, or Satcoin mining only where you need them.
+After the Gateway and browser dashboard are working, connect chat apps,
+services, wallet features, Fased Network, or Satcoin mining only where you need
+them.
 
-Fased Agent gives you sessions, tools, memory, channels, plugins, and safety
-controls in the selected setup profile.
+Fased Agent gives you browser chat, tools, saved context, plugins, chat app
+connections, and safety controls in the selected setup profile.
 
-**Gateway + agent + channels + optional wallet, network, and mining paths.**
+**Gateway + dashboard + agent + optional wallets, network, and mining paths.**
 
 <Columns>
   <Card title="Get Started" href="/start/getting-started" icon="rocket">
@@ -40,30 +41,30 @@ controls in the selected setup profile.
 
 ## What is Fased?
 
-Fased is a **user-run agent**. You can use it immediately through the browser
-dashboard, then add channels, services, plugins, wallet features, Fased Network,
-and Satcoin mining as your setup grows.
+Fased is an **agent you run yourself**. Use it first through the browser
+dashboard, then connect chat apps, services, plugins, wallet features, Fased
+Network, and Satcoin mining as your setup grows.
 
-**Who is it for?** Developers, operators, and power users who want an agent they
+**Who is it for?** Developers, builders, and power users who want an agent they
 can message from the browser or chat apps, with local setup and clear safety
 boundaries.
 
 **What makes it different?**
 
-- **User-run agent**: choose Local for this computer or VPS Hosting for an always-on server
-- **Browser-first setup**: start in the Control UI before adding chat channels
+- **Runs under your control**: choose Local for this computer or VPS Hosting for an always-on server
+- **Browser-first setup**: start in the Control UI before connecting Telegram, Discord, WhatsApp, or other chat apps
 - **Skills and plugins**: agents can run useful workflows across tools and services
 - **Wallet features when enabled**: reviewed sends, receive links, receipts, and audit
 - **Fased Network**: public handles, routing, service discovery, and reviewed offers
 - **Optional Satcoin path**: mining can build public mining history
-- **Clear add-on paths**: wallets, Fased Network, Satcoin mining, and Marketplace stay separate from first chat
+- **Clear add-on paths**: wallets, Fased Network/Marketplace, and Satcoin mining stay separate from first chat
 
 The product shape is simple: start with the base agent, then add the advanced
 paths only when they have a specific job.
 
-- **Self-hosted**: runs on your own computer or your own VPS
-- **Multi-channel**: one Gateway serves WhatsApp, Telegram, Discord, and more simultaneously
-- **Agent-native**: built for coding agents with tool use, sessions, memory, and multi-agent routing
+- **Runs on your machine**: use your own computer or your own VPS
+- **Chat app ready**: one Gateway can serve WhatsApp, Telegram, Discord, and more
+- **Built for agent work**: tools, sessions, saved context, and multi-agent routing
 - **Wallet-ready when enabled**: wallet actions can use limits, approvals, and audit
 - **Network-ready when enabled**: Fased Network and Satcoin mining live beside the base agent
 - **Open source**: MIT licensed with preserved upstream and third-party notices
@@ -76,7 +77,7 @@ Hosting. If you manage Node yourself, use Node 24, or Node 22.14+ with
 
 ```mermaid
 flowchart TD
-  entry["Channels / Control UI"] --> gateway["Gateway"]
+  entry["Control UI / chat apps"] --> gateway["Gateway"]
   gateway --> agent["Fased Agent"]
   agent --> tools["Tools + skills"]
   agent --> wallets["Optional wallet use"]
@@ -85,25 +86,26 @@ flowchart TD
 
   classDef entry fill:#120605,stroke:#ff5a36,color:#ffffff;
   classDef core fill:#071018,stroke:#12cfff,color:#ffffff;
-  classDef operator fill:#20120a,stroke:#ffb020,color:#ffffff;
+  classDef addon fill:#20120a,stroke:#ffb020,color:#ffffff;
   class entry entry;
   class gateway,agent core;
-  class tools,wallets,network,mining operator;
+  class tools,wallets,network,mining addon;
 ```
 
-The Gateway keeps sessions, routing, channels, and agent behavior in one place.
+The Gateway keeps sessions, routing, chat app connections, and agent behavior
+in one place.
 
 ## Key capabilities
 
 <Columns>
-  <Card title="Multi-channel gateway" icon="network">
+  <Card title="Chat app gateway" icon="network">
     Add WhatsApp, Telegram, Discord, iMessage, and more when you want remote chat surfaces.
   </Card>
-  <Card title="User-run agent" icon="cpu">
-    Sessions, tools, memory, plugins, and safety controls in one setup profile.
+  <Card title="Agent you run" icon="cpu">
+    Sessions, tools, saved context, plugins, and safety controls in one setup profile.
   </Card>
-  <Card title="Plugin channels" icon="plug">
-    Add Mattermost and more with extension packages.
+  <Card title="Plugin integrations" icon="plug">
+    Add Mattermost and other integrations with extension packages.
   </Card>
   <Card title="Multi-agent routing" icon="route">
     Isolated sessions per agent, workspace, or sender.
@@ -216,8 +218,8 @@ Example:
   <Card title="Remote access" href="/gateway/remote" icon="globe">
     SSH and tailnet access patterns.
   </Card>
-  <Card title="Channels" href="/channels/telegram" icon="message-square">
-    Channel-specific setup for WhatsApp, Telegram, Discord, and more.
+  <Card title="Chat apps" href="/channels/telegram" icon="message-square">
+    Setup guides for WhatsApp, Telegram, Discord, and more.
   </Card>
   <Card title="Nodes" href="/nodes" icon="smartphone">
     iOS and Android nodes with pairing and Canvas.
@@ -231,7 +233,7 @@ Example:
 
 <Columns>
   <Card title="Full feature list" href="/concepts/features" icon="list">
-    Complete channel, routing, and media capabilities.
+    Complete chat app, routing, and media capabilities.
   </Card>
   <Card title="Multi-agent routing" href="/concepts/multi-agent" icon="route">
     Workspace isolation and per-agent sessions.
@@ -249,6 +251,6 @@ Example:
     Project origin and current attribution policy.
   </Card>
   <Card title="Roadmap" href="/reference/roadmap" icon="map">
-    What comes after the current wallet, Fased Network, and operator tranche.
+    What comes after the current wallet, Fased Network, and operator features.
   </Card>
 </Columns>

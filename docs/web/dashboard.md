@@ -1,5 +1,5 @@
 ---
-summary: "Dashboard access and auth for the self-hosted runtime Control UI."
+summary: "Dashboard access and auth for the browser Control UI."
 read_when:
   - Changing dashboard authentication or exposure modes
 title: "Dashboard"
@@ -25,16 +25,16 @@ What the dashboard is for:
 - open the top-bar Widgets drawer to add, remove, or reset widgets
 - drag widgets by their header to reorder the saved board
 - keep widgets compact; open the focused page when you need full tables, forms, or diagnostics
-- keep low-level gateway access, runtime clients, raw config, Debug, and Nodes
-  off the normal dashboard unless the operator opens Advanced
+- keep low-level gateway access, raw config, Debug, and Nodes off the normal
+  dashboard unless you open Advanced
 
 Detailed setup and operation stay on focused pages:
 
-- Agents: model choices, skills, channels, services, tools, memory, tasks, and sessions
+- Agents: model choices, skills, chat apps, services, tools, saved context, tasks, and sessions
 - Wallets: wallet roles, balances, approvals, passkeys, and security policy
 - Mining: SAT mining controls, capital, live cycle, history, and recovery
 - Usage: local model usage history by provider, model, Agent, session, task, and source
-- Advanced: raw config, Debug, and Nodes tabs for operator diagnostics
+- Advanced: raw config, Debug, and Nodes tabs for admin diagnostics
 
 Key references:
 
@@ -74,9 +74,9 @@ Default widgets are intentionally high-signal:
 - **Mining**: live mining status, mining wallet balance, locked capital, and seven-day SAT history.
 - **Fased Network**: compact node identity and operator status.
 
-Gateway access and raw runtime-client/presence details are not dashboard widgets
-for normal users. Use the top-bar health dot for live/offline status and the
-Advanced Debug/Nodes tabs when you need low-level diagnostics.
+Gateway access and low-level presence details are not normal dashboard widgets.
+Use the top-bar health dot for live/offline status and the Advanced Debug/Nodes
+tabs when you need low-level diagnostics.
 
 The saved dashboard layout is one ordered widget board today. Older saved
 multi-column layouts are normalized into that board so stale layout state does

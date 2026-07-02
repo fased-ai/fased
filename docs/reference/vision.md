@@ -8,13 +8,14 @@ read_when:
 
 ## Fased Vision
 
-Fased is a self-hosted agent runtime for operators who want real control over:
+Fased is an agent setup you can run on your own computer or server when you
+want real control over:
 
-- runtime and host access
-- browser control surfaces
+- host access and remote access
+- the browser Control UI
 - wallets and signer posture
 - optional Fased Network and SAT modules
-- plugins, channels, offers, and reviewed operator workflows
+- plugins, chat apps, offers, and reviewed marketplace workflows
 
 Project overview: [`README.md`](https://github.com/fased-ai/fased/blob/main/README.md)
 Contribution policy: [`CONTRIBUTING.md`](https://github.com/fased-ai/fased/blob/main/CONTRIBUTING.md)
@@ -29,10 +30,10 @@ The current shape is:
 - browser-first control UI
 - local or hosted onboarding flows
 - token-protected and device-auth protected control pages
-- wallet-aware runtime policy
+- wallet-aware controls
 - SAT mining
-- bonded Fased Network operator surfaces
-- operator network views and accounting records
+- bonded Fased Network roles
+- network views and accounting records
 - local offer records and marketplace discovery
 
 Near-term roadmap:
@@ -70,7 +71,8 @@ Preferred posture:
 
 ## Access and safety posture
 
-Fased should make the safe path the default without pretending the runtime is low-power.
+Fased should make the safe path the default without pretending the agent is
+low-power.
 
 Current principles:
 
@@ -82,17 +84,17 @@ Current principles:
 
 ## Wallets, mining, bond, and federation
 
-Wallet and network features belong in the same sovereign runtime, but they should
-not all be turned on at once.
+Wallet and network features belong near the agent, but they should not all be
+turned on at once.
 
-Healthy operator sequence:
+Safe setup sequence:
 
-1. bring up the runtime
+1. bring up the Gateway and dashboard
 2. confirm private access and restart health
-3. choose wallet posture
+3. choose wallet controls
 4. attach signer or passkey-backed wallet flows where needed
-5. define sweep and funding policy before funds
-6. add mining, federation, and bond only after the base runtime is stable
+5. define sweep and funding rules before moving funds
+6. add mining, Fased Network, and bond only after the base agent is stable
 
 Current module split:
 
@@ -120,10 +122,11 @@ product or security reason.
 
 The target product is:
 
-- a self-hosted agent for one operator or one trust boundary
-- a sovereign wallet-aware runtime
+- an agent you can run for one person, team, or trust boundary
+- wallet-aware automation with clear controls
 - a bonded network participant when the operator chooses that path
-- a place where chat, marketplace, network, and market/news review workflows can live under one policy surface
+- a place where chat, marketplace, network, and market/news review workflows can
+  live under one control surface
 
 ## Guardrails
 

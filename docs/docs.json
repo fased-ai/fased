@@ -1,7 +1,7 @@
 {
   "$schema": "https://mintlify.com/docs.json",
   "name": "Fased",
-  "description": "Fased docs for user-run agents: setup, tasks, wallets, skills, memory, channels, Satcoin mining, and Fased Network.",
+  "description": "Fased docs for the agent you run yourself: setup, chat, tasks, tools, wallets, Satcoin mining, and Fased Network.",
   "theme": "mint",
   "modeToggle": {
     "default": "dark"

@@ -579,7 +579,7 @@ Use this order for a new install:
 7. enable Mining or Fased Network only after the base Agent is stable
 
 Successful installation means Fased is installed. It does not replace the
-setup checks for channels, services, wallets, mining, or network roles.
+setup checks for chat apps, services, wallets, mining, or network roles.
 
 ## Troubleshooting: `fased` not found
 

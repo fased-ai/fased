@@ -166,8 +166,8 @@ The macOS app is a Local setup surface, not a separate hosting profile.
     - `Agent > Models`: add a provider API key or sign in, then choose the Agent's primary and fallback models.
     - `Agent > Skills`: create, review, install, configure, edit, and allow skills for that Agent.
     - `Agent > Services`: connect Gmail, Calendar, GitHub, web/search, browser/media, or custom APIs.
-    - `Agent > Channels`: connect chat apps and route them to the Agent.
-    - `Agent > Memory`: enable session-memory and review this Agent's archive/QMD state.
+    - `Agent > Channels`: connect Telegram, Discord, WhatsApp, Slack, and other chat apps.
+    - `Agent > Memory`: enable saved session context and review this Agent's archive state.
     - `Agent > Tasks`: schedule recurring work for this Agent when needed.
 
     See [Control UI Setup Model](/start/control-ui-setup) for what belongs in
@@ -223,7 +223,7 @@ Once the dashboard is up, pick the path that matches your goal:
 
 <CardGroup cols={3}>
   <Card title="Fased Agent first" href="/start/fased" icon="cpu">
-    Use Fased Agent for sessions, tools, memory, and channels.
+    Use Fased Agent for browser chat, tools, saved context, and chat apps.
   </Card>
   <Card title="Wallet + Fased Network" href="/start/federation" icon="shield">
     Continue into wallet use, public routes, offers, and later bond setup.
@@ -278,16 +278,16 @@ Full environment variable reference: [Environment vars](/help/environment).
 ## What you will have
 
 - A running Gateway
-- A workspace and runtime identity
+- A workspace and Fased identity
 - Gateway token auth configured, with an auth-ready dashboard link for local setup
 - A browser setup path for Agent model/provider auth
-- Control UI access or a connected channel
+- Control UI access or a connected chat app
 
 ## Next steps
 
 - Run it as a real Agent setup: [Fased Agent Setup](/start/fased)
 - Learn where setup belongs: [Control UI Setup Model](/start/control-ui-setup)
 - DM safety and approvals: [Pairing](/channels/pairing)
-- Connect more channels: open `Agent > Channels`
+- Connect more chat apps: open `Agent > Channels`
 - Wallet, Fased Network, and SAT path: [Mining](/plugins/crypto/mining-page)
 - Advanced workflows and from source: [Setup](/start/setup)

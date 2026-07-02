@@ -1,8 +1,8 @@
 ---
-summary: "Shared definitions for Fased wallets, Satcoin mining, Fased Network, bonded SAT, and operator workflows."
+summary: "Plain definitions for Fased wallets, Satcoin mining, Fased Network, bonded SAT, and marketplace workflows."
 read_when:
-  - You want the short vocabulary for wallets, mining, Fased Network, bond, and operator workflows
-  - You are checking whether SAT, payments, bond, and operator terms are being used consistently
+  - You want the short vocabulary for wallets, mining, Fased Network, bond, and marketplace workflows
+  - You are checking whether SAT, payment rails, bond, and operator terms are being used consistently
 title: "Operator Glossary"
 sidebarTitle: "Glossary"
 ---
@@ -10,7 +10,8 @@ sidebarTitle: "Glossary"
 # Operator glossary
 
 These are the shared Fased terms for wallets, Satcoin mining, Fased Network,
-bonded SAT, and operator workflows.
+bonded SAT, and marketplace workflows. It keeps product words consistent without
+making every page explain them again.
 
 Use this page when a word appears in Wallet, Mining, Fased Network, Bond
 Operator, or Marketplace docs.
@@ -18,31 +19,34 @@ Operator, or Marketplace docs.
 ## Short model
 
 ```text
-payments = ordinary task and service payment rails
-SAT      = mining, bonded SAT, public mining history, and future operator roles
-FCOD     = broader Fcode ecosystem support
+payment rails = ordinary task, offer, invoice, and receipt flows
+SAT           = mining, bonded SAT, public mining history, and future operator roles
+FCOD          = broader Fcode ecosystem support, not required for Agent setup
 ```
 
-SAT is not the ordinary payment token for every task. Service payment rails can
-handle normal task and service payments. SAT stays close to mining, bonded SAT,
-public mining history, and future operator roles.
+SAT is not the ordinary payment token for every task. Fased Network marketplace
+flows can use normal payment rails for tasks, offers, invoices, and receipts.
+SAT stays close to mining, bonded SAT, public mining history, and future
+operator roles.
 
 ## Core terms
 
 <AccordionGroup>
   <Accordion title="Fased Agent">
-    The user-run agent for sessions, plugins, wallet use, Satcoin mining,
-    Fased Network, and operator workflows.
+    The agent you run yourself for chat, tools, plugins, wallet use, Satcoin
+    mining, Fased Network, and marketplace workflows.
   </Accordion>
   <Accordion title="Operator">
-    A user who runs and maintains their own Fased infrastructure. Operators
+    A person or team that runs and maintains its own Fased setup. Operators
     handle install health, wallet boundaries, and network posture.
   </Accordion>
-  <Accordion title="User-run agent">
-    A Fased Agent install run by the user or operator instead of only by a centralized hosted service.
+  <Accordion title="Agent you run">
+    A Fased Agent install run by the user or operator instead of only by a
+    centralized hosted service.
   </Accordion>
   <Accordion title="Wallet controls">
-    Settings that decide what wallet-connected actions can happen, what needs approval, and which balances stay separated.
+    Settings that decide which wallet-connected actions can happen, what needs
+    approval, and which balances stay separated.
   </Accordion>
   <Accordion title="Agent wallet">
     The wallet used for ordinary sends, receipts, Marketplace payment flows, and
@@ -160,8 +164,9 @@ public mining history, and future operator roles.
   <Accordion title="Operator status">
     The evidence and review layer for service work, route posture, reconciliation, and selected operator records.
   </Accordion>
-  <Accordion title="Service payments">
-    Practical payment rails for ordinary tasks, services, marketplace pricing, invoices, and receipts.
+  <Accordion title="Marketplace payments">
+    Practical payment rails inside Fased Network marketplace flows for ordinary
+    tasks, services, pricing, invoices, and receipts.
   </Accordion>
   <Accordion title="FCOD">
     The broader Fcode ecosystem support token. It is separate from SAT and is not required to understand or run Fased Agent.

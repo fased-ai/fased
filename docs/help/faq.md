@@ -1,5 +1,5 @@
 ---
-summary: "Compact FAQ for Fased setup, models, channels, wallets, tasks, and troubleshooting."
+summary: "Compact FAQ for Fased setup, models, chat apps, wallets, tasks, and troubleshooting."
 read_when:
   - Answering common setup, install, onboarding, or support questions
   - Triaging user-reported issues before deeper debugging
@@ -30,12 +30,12 @@ fased logs --follow
 Then open the owner page for the thing that failed:
 
 - Agent > Models for model/provider issues.
-- Agent > Channels for chat routes.
+- Agent > Channels for chat app routes.
 - Agent > Services for external APIs.
 - Agent > Skills and Agent > Tools for capability issues.
-- Agent > Memory for memory/QMD/session-memory state.
+- Agent > Memory for saved context, archive, and session-memory state.
 - Agent > Tasks for saved task definitions and runs.
-- Wallets, Mining, or Fased Network for crypto/operator state.
+- Wallets, Mining, or Fased Network for crypto and network state.
 
 ## I'm Stuck - What's The Fastest Way To Get Unstuck?
 

@@ -1,16 +1,17 @@
 ---
 title: "Security Overview"
-summary: "Security-first setup guide for remote access, credentials, skills, wallet grants, and operator surfaces."
+summary: "Security-first setup guide for remote access, credentials, skills, wallet grants, and admin surfaces."
 read_when:
   - Preparing a public or hosted Fased install
   - Reviewing skill, wallet, service credential, or remote access risk
-  - Explaining which UI surfaces are for normal setup versus operator diagnostics
+  - Explaining which UI surfaces are for normal setup versus admin diagnostics
 ---
 
 # Security Overview
 
-Fased is a user-run agent with a local Gateway. Treat it like a local server with
-access to chats, tools, credentials, files, wallets, and optional paired devices.
+Fased is an agent you run with a local Gateway. Treat it like a local server
+with access to chats, tools, credentials, files, wallets, and optional paired
+devices.
 
 The conservative setup keeps each capability behind a separate gate: connect the
 service, allow the Agent to use the tool, then approve sensitive actions when
@@ -26,10 +27,10 @@ Use the selected Agent first:
 - **Agent > Skills**: review/install skills, configure values, install
   dependencies, test loading, and allow the skill for this Agent.
 - **Agent > Tools**: grant or block this Agent from using tools that already exist.
-- **Agent > Memory**: inspect session-memory status and roots for this Agent.
+- **Agent > Memory**: inspect saved context, session-memory status, and roots for this Agent.
 - **Agent > Tasks**: schedule work that runs as this Agent.
 
-Operator surfaces are separate:
+Admin and monitoring surfaces are separate:
 
 - **Usage**: local token and cost history.
 - **Logs**: gateway log tail.
@@ -145,12 +146,12 @@ Related docs:
 
 - Gateway auth enabled for any non-loopback access.
 - Remote access uses Tailscale, SSH tunnel, or a locked-down reverse proxy.
-- Agent models, channels, services, skills, tools, memory, and tasks configured per Agent.
+- Agent models, chat apps, services, skills, tools, saved context, and tasks configured per Agent.
 - Skills reviewed before install; dependency installers reviewed and verified after install.
 - Wallet skill grants are narrow and separate from mining/vault roles.
 - Logs and Usage reviewed after setup smoke tests.
 - Threat model and security-test-report claims reviewed for the current release.
-- Advanced > Debug and Advanced > Nodes treated as operator/admin diagnostics, not first-run setup.
+- Advanced > Debug and Advanced > Nodes treated as admin diagnostics, not first-run setup.
 - Run the public launch checks in [Full release validation](/reference/full-release-validation).
 
 ## Reporting Vulnerabilities

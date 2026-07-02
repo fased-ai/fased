@@ -20,8 +20,8 @@ mode, and see [Gateway security](/gateway/security) for page and API protection.
 
 For normal browser setup, open the selected Agent and use **Agent > Models**.
 That page owns provider sign-in, API-key entry, per-Agent model roles, and model
-selection. The CLI commands below are for automation, repair, or advanced
-operator workflows.
+selection. The CLI commands below are for automation, repair, or advanced setup
+workflows.
 
 See [/concepts/oauth](/concepts/oauth) for the full OAuth flow and storage
 layout.

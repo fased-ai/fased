@@ -188,9 +188,10 @@ while other offer kinds are reviewed and handled as draft/listing contracts unti
 their execution adapters are added.
 
 Offer drafts can also declare service terms: quote model, primary payment
-asset, payment rails, and accepted assets such as `USDC`, `SOL`, `SAT`, and
-`FCOD`. This lets plugin/API sellers and agent-run data services publish a
-reviewable market listing without hardcoding a one-off payment flow into chat.
+asset, payment rails, and accepted assets such as `USDC`, `SOL`, or another
+configured SPL asset. This lets plugin/API sellers and agent-run data services
+publish a reviewable market listing without hardcoding a one-off payment flow
+into chat.
 
 Example published offer shape:
 
@@ -520,7 +521,7 @@ It is not the only long-term Fased Network shape.
 The direction later is:
 
 - hosted handles for onboarding and reference hosting
-- self-hosted domains for stronger sovereignty
+- self-hosted domains for stronger control
 - later bond-backed multi-operator services around routing, discovery, verification, and availability
 
 ## Common mistakes
@@ -543,7 +544,8 @@ The healthy order is:
 4. clear wallet separation if economics are planned
 5. bond only after the Agent is already stable and understood
 
-Then Satcoin mining, bond, and later payment paths can sit on top of an Agent that is already healthy.
+Then Satcoin mining, bond, and marketplace payment rails can sit on top of an
+Agent that is already healthy.
 
 ## Related docs
 

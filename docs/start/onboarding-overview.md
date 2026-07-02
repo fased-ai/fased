@@ -1,5 +1,5 @@
 ---
-summary: "Overview of Fased onboarding options and flows"
+summary: "Overview of Fased onboarding choices and first-run flows"
 read_when:
   - Choosing an onboarding path
   - Setting up a new environment
@@ -9,7 +9,7 @@ sidebarTitle: "Onboarding Overview"
 
 # Onboarding Overview
 
-Onboarding is the step that turns a raw install into a usable Fased runtime.
+Onboarding is the step that turns a raw install into a usable Fased setup.
 
 It handles:
 
@@ -127,7 +127,7 @@ machine first if the Gateway does not already exist.
 
 After onboarding, you should have:
 
-- a working runtime identity
+- a working Fased identity
 - a persisted config
 - a running gateway or a valid remote-gateway connection
 - a clear next step toward Agent setup, Wallet, Mining, Fased Network, Usage,
@@ -147,9 +147,9 @@ Normal product setup happens after the Gateway is online:
 - `/agents`: create or select the Agent workspace.
 - `Agent > Models`: add model auth/sign-in and choose primary, fallback, and task models.
 - `Agent > Skills`: create, review, install, configure, edit, and allow skills for that Agent.
-- `Agent > Channels`: connect Telegram, Discord, WhatsApp, Slack, Signal, and other apps.
+- `Agent > Channels`: connect Telegram, Discord, WhatsApp, Slack, Signal, and other chat apps.
 - `Agent > Services`: connect Gmail, Calendar, GitHub, web/search, browser/media, and APIs.
-- `Agent > Memory`: enable session-memory and inspect this Agent's archive/QMD state.
+- `Agent > Memory`: enable saved session context and inspect this Agent's archive state.
 - `Agent > Tasks`: schedule recurring work for this Agent and its sessions.
 - `/memory`: read-only cross-Agent diagnostics.
 

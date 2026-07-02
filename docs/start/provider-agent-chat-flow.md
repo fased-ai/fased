@@ -1,9 +1,9 @@
 ---
-summary: "How Providers, Agents, Sessions, Tasks, Chat, and Channels fit together."
+summary: "How model access, Agents, sessions, tasks, browser chat, and chat apps fit together."
 read_when:
   - You added a provider and need to attach it to an Agent
   - You want to know where model choice belongs
-  - You want Chat and channels to use the same Agent setup
+  - You want browser chat and chat apps to use the same Agent setup
 title: "Models, Agents, Sessions, And Chat"
 sidebarTitle: "Models to Agents"
 ---
@@ -15,11 +15,12 @@ Use this flow after onboarding finishes.
 The control model is:
 
 ```text
-Provider auth -> Agent model refs -> Session -> Task/Subagent -> Delivery channel
+Provider auth -> Agent model refs -> Session -> Task/Subagent -> Delivery
 ```
 
 Provider auth supplies model access. Agents choose what they can use. Sessions
-own conversation/task context. Channels deliver messages.
+own conversation and task context. Channels are the chat apps that deliver
+messages outside the browser.
 
 For task optimization and future task rooms, read
 [Task Operating Layer](/concepts/task-operating-layer).
@@ -50,11 +51,12 @@ Use it to:
 - create or select an Agent
 - choose the Agent's default provider route and model
 - attach skills and services
-- route channels to the Agent
-- configure memory, hooks, tasks, and wallet policy for that Agent
+- route chat apps to the Agent
+- configure saved context, hooks, tasks, and wallet controls for that Agent
 
 An Agent is the persistent setup object. It owns the default model, enabled
-abilities, workspace, memory, channel routes, schedules, and wallet policy.
+abilities, workspace, saved context, chat app routes, schedules, and wallet
+controls.
 
 ## 3. Sessions
 
@@ -68,10 +70,10 @@ Research Agent / Service watch
 Operations Agent / Provider monitor
 ```
 
-WebChat can create named local sessions. Channel chats can create and switch
+Browser chat can create named local sessions. Chat apps can create and switch
 named sessions with `/session new`, `/session list`, and `/session switch`.
 
-Tasks should attach to a Session, not to a Channel.
+Tasks should attach to a Session, not to a chat app.
 
 ## 4. Chat
 
@@ -86,22 +88,23 @@ registry. Old runtime provider catalogs are compatibility data, not normal
 picker entries.
 
 Use **Schedule this** in the Chat composer to create a scheduled task for the
-current Agent/session. If the selected session came from a channel, the task can
-optionally deliver back there.
+current Agent/session. If the selected session came from a chat app, the task
+can optionally deliver back there.
 
 ## 5. Channels
 
 Open `Agent > Channels` to connect external apps.
 
-Each channel route should target an Agent. Example:
+Each chat app route should target an Agent. Example:
 
 ```text
 Telegram ops DM -> Operations
 Discord support channel -> Support
 ```
 
-The channel uses the routed Agent's model, skills, services, memory, and wallet
-policy. Use Chat for internal/operator work; use channels for external delivery.
+The chat app uses the routed Agent's model, skills, services, saved context, and
+wallet controls. Use browser Chat for your own private work; use Channels for
+external delivery.
 
 Channels do not own scheduled work. A scheduled report is:
 
