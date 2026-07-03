@@ -19,8 +19,11 @@ import {
 import {
   formatThreadBindingDisabledError,
   formatThreadBindingSpawnDisabledError,
+  resolveThreadBindingConversationRef,
+  resolveThreadBindingDeliveryTo,
   resolveThreadBindingIdleTimeoutMsForChannel,
   resolveThreadBindingMaxAgeMsForChannel,
+  resolveThreadBindingPlacement,
   resolveThreadBindingSpawnPolicy,
 } from "../channels/thread-bindings-policy.js";
 import { parseDurationMs } from "../cli/parse-duration.js";
@@ -32,7 +35,6 @@ import { resolveSessionTranscriptFile } from "../config/sessions/transcript.js";
 import { callGateway } from "../gateway/call.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { areHeartbeatsEnabled } from "../infra/heartbeat-wake.js";
-import { resolveConversationIdFromTargets } from "../infra/outbound/conversation-id.js";
 import {
   getSessionBindingService,
   isSessionBindingError,
@@ -244,66 +246,6 @@ function resolveAcpSpawnChannelAccountId(params: {
   return normalizeOptionalString(channels?.[channel]?.defaultAccount) ?? "default";
 }
 
-function stripKnownTargetPrefix(value: string): string {
-  const typed = value.match(/^[a-z0-9_-]+:(user|group|room|channel):(.+)$/i);
-  if (typed?.[2]) {
-    return typed[2];
-  }
-  const colon = value.indexOf(":");
-  return colon > 0 ? value.slice(colon + 1) : value;
-}
-
-function resolveConversationRefForThreadBinding(params: {
-  channel?: string;
-  to?: string;
-  threadId?: string | number;
-  groupId?: string | number;
-}): { conversationId: string; parentConversationId?: string } | null {
-  const channel = normalizeOptionalLowercaseString(params.channel);
-  const threadId = params.threadId != null ? String(params.threadId).trim() : "";
-  const groupId = params.groupId != null ? String(params.groupId).trim() : "";
-  const to = normalizeOptionalString(params.to);
-  if (channel === "telegram") {
-    if (groupId && threadId) {
-      return {
-        conversationId: `${groupId}:topic:${threadId}`,
-        parentConversationId: groupId,
-      };
-    }
-    if (to) {
-      const target = stripKnownTargetPrefix(to);
-      const topic = target.match(/^(.+):topic:([^:]+)$/);
-      if (topic?.[1] && topic[2]) {
-        return {
-          conversationId: `${topic[1]}:topic:${topic[2]}`,
-          parentConversationId: topic[1],
-        };
-      }
-    }
-  }
-  if (channel === "line" && to) {
-    return { conversationId: stripKnownTargetPrefix(to) };
-  }
-  if (to?.startsWith("room:")) {
-    return { conversationId: to.slice("room:".length) };
-  }
-  const resolved = resolveConversationIdFromTargets({
-    threadId,
-    targets: [to],
-  });
-  return resolved ? { conversationId: resolved } : null;
-}
-
-function resolveBindingPlacement(params: {
-  channel: string;
-  placements: SessionBindingPlacement[];
-}): SessionBindingPlacement {
-  if (params.channel === "telegram" || params.channel === "line") {
-    return params.placements.includes("current") ? "current" : "child";
-  }
-  return params.placements.includes("child") ? "child" : "current";
-}
-
 function isHeartbeatEnabledForSessionAgent(params: {
   cfg: FasedAgentConfig;
   sessionKey?: string;
@@ -483,7 +425,7 @@ function prepareAcpThreadBinding(params: {
       error: `Thread bindings are unavailable for ${policy.channel}.`,
     };
   }
-  const placement = resolveBindingPlacement({
+  const placement = resolveThreadBindingPlacement({
     channel: policy.channel,
     placements: capabilities.placements,
   });
@@ -493,7 +435,7 @@ function prepareAcpThreadBinding(params: {
       error: `Thread bindings do not support ${placement} placement for ${policy.channel}.`,
     };
   }
-  const conversationRef = resolveConversationRefForThreadBinding({
+  const conversationRef = resolveThreadBindingConversationRef({
     channel: policy.channel,
     to: params.to,
     threadId: params.threadId,
@@ -760,13 +702,13 @@ export async function spawnAcpDirect(
   const bindingPlacement = preparedBinding?.placement;
   const deliveryThreadId =
     bindingPlacement === "child" ? (boundThreadId ?? fallbackThreadId) : fallbackThreadId;
-  const inferredDeliveryTo =
-    boundThreadId && bindingPlacement === "child"
-      ? `channel:${boundThreadId}`
-      : boundThreadId && bindingPlacement === "current" && preparedBinding?.channel === "line"
-        ? boundThreadId
-        : requesterOrigin?.to?.trim() ||
-          (deliveryThreadId ? `channel:${deliveryThreadId}` : undefined);
+  const inferredDeliveryTo = resolveThreadBindingDeliveryTo({
+    channel: preparedBinding?.channel,
+    placement: bindingPlacement,
+    boundConversationId: boundThreadId,
+    requesterTo: requesterOrigin?.to,
+    deliveryThreadId,
+  });
   const hasDeliveryTarget = Boolean(
     requestThreadBinding && !streamToParent && requesterOrigin?.channel && inferredDeliveryTo,
   );

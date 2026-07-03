@@ -2531,7 +2531,7 @@ Auth: `Authorization: Bearer <token>` or `x-fased-token: <token>`.
 
 - `POST /hooks/wake` → `{ text, mode?: "now"|"next-heartbeat" }`
 - `POST /hooks/agent` → `{ message, name?, agentId?, sessionKey?, wakeMode?,
-  deliver?, channel?, to?, model?, thinking?, timeoutSeconds? }`
+deliver?, channel?, to?, model?, thinking?, timeoutSeconds? }`
 - `sessionKey` from request payload is accepted only when
   `hooks.allowRequestSessionKey=true` (default: `false`).
 - `POST /hooks/<name>` → resolved via `hooks.mappings`

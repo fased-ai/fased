@@ -1,7 +1,11 @@
 import type { FasedAgentConfig } from "../config/config.js";
+import { resolveConversationIdFromTargets } from "../infra/outbound/conversation-id.js";
+import type { SessionBindingPlacement } from "../infra/outbound/session-binding-service.js";
 import { normalizeAccountId } from "../routing/session-key.js";
 
 export const DISCORD_THREAD_BINDING_CHANNEL = "discord";
+const TELEGRAM_THREAD_BINDING_CHANNEL = "telegram";
+const LINE_THREAD_BINDING_CHANNEL = "line";
 const DEFAULT_THREAD_BINDING_IDLE_HOURS = 24;
 const DEFAULT_THREAD_BINDING_MAX_AGE_HOURS = 0;
 
@@ -31,6 +35,10 @@ function normalizeChannelId(value: string | undefined | null): string {
   return String(value ?? "")
     .trim()
     .toLowerCase();
+}
+
+function normalizeOptionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 function normalizeBoolean(value: unknown): boolean | undefined {
@@ -135,6 +143,92 @@ export function resolveThreadBindingSpawnPolicy(params: {
     enabled,
     spawnEnabled,
   };
+}
+
+function stripKnownTargetPrefix(value: string): string {
+  const typed = value.match(/^[a-z0-9_-]+:(user|group|room|channel):(.+)$/i);
+  if (typed?.[2]) {
+    return typed[2];
+  }
+  const colon = value.indexOf(":");
+  return colon > 0 ? value.slice(colon + 1) : value;
+}
+
+export function resolveThreadBindingConversationRef(params: {
+  channel?: string;
+  to?: string;
+  threadId?: string | number;
+  groupId?: string | number;
+}): { conversationId: string; parentConversationId?: string } | null {
+  const channel = normalizeChannelId(params.channel);
+  const threadId = params.threadId != null ? String(params.threadId).trim() : "";
+  const groupId = params.groupId != null ? String(params.groupId).trim() : "";
+  const to = normalizeOptionalString(params.to);
+  if (channel === TELEGRAM_THREAD_BINDING_CHANNEL) {
+    if (groupId && threadId) {
+      return {
+        conversationId: `${groupId}:topic:${threadId}`,
+        parentConversationId: groupId,
+      };
+    }
+    if (to) {
+      const target = stripKnownTargetPrefix(to);
+      const topic = target.match(/^(.+):topic:([^:]+)$/);
+      if (topic?.[1] && topic[2]) {
+        return {
+          conversationId: `${topic[1]}:topic:${topic[2]}`,
+          parentConversationId: topic[1],
+        };
+      }
+    }
+  }
+  if (channel === LINE_THREAD_BINDING_CHANNEL && to) {
+    return { conversationId: stripKnownTargetPrefix(to) };
+  }
+  if (to?.startsWith("room:")) {
+    return { conversationId: to.slice("room:".length) };
+  }
+  const resolved = resolveConversationIdFromTargets({
+    threadId,
+    targets: [to],
+  });
+  return resolved ? { conversationId: resolved } : null;
+}
+
+export function resolveThreadBindingPlacement(params: {
+  channel: string;
+  placements: SessionBindingPlacement[];
+}): SessionBindingPlacement {
+  const channel = normalizeChannelId(params.channel);
+  if (channel === TELEGRAM_THREAD_BINDING_CHANNEL || channel === LINE_THREAD_BINDING_CHANNEL) {
+    return params.placements.includes("current") ? "current" : "child";
+  }
+  return params.placements.includes("child") ? "child" : "current";
+}
+
+export function resolveThreadBindingDeliveryTo(params: {
+  channel?: string;
+  placement?: SessionBindingPlacement;
+  boundConversationId?: string;
+  requesterTo?: string;
+  deliveryThreadId?: string;
+}): string | undefined {
+  const channel = normalizeChannelId(params.channel);
+  const boundConversationId = normalizeOptionalString(params.boundConversationId);
+  if (boundConversationId && params.placement === "child") {
+    return `channel:${boundConversationId}`;
+  }
+  if (
+    boundConversationId &&
+    params.placement === "current" &&
+    channel === LINE_THREAD_BINDING_CHANNEL
+  ) {
+    return boundConversationId;
+  }
+  return (
+    normalizeOptionalString(params.requesterTo) ||
+    (params.deliveryThreadId ? `channel:${params.deliveryThreadId}` : undefined)
+  );
 }
 
 export function resolveThreadBindingIdleTimeoutMsForChannel(params: {

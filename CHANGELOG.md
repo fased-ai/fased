@@ -8,6 +8,15 @@ third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 
 - No unreleased changes yet.
 
+## 0.1.14
+
+- Clear the public-release check gate by moving ACP thread-binding channel
+  details behind the channel/thread-binding layer.
+- Keep Satcoin live-chaos markers under the preferred Fased temp root unless an
+  explicit marker directory is configured.
+- Fix release-readiness lint and docs formatting issues found during the public
+  repository hardening pass.
+
 ## 0.1.13
 
 - Refresh the curated model catalogs for provider defaults and onboarding,

@@ -274,7 +274,9 @@ API key storage mode:
     ```json
     { "source": "env", "provider": "default", "id": "CUSTOM_API_KEY" }
     ```
+
   - In that custom-provider case, `--custom-api-key` requires `CUSTOM_API_KEY` to be set; otherwise onboarding fails fast.
+
 - Existing plaintext setups continue to work unchanged.
 
 <Note>

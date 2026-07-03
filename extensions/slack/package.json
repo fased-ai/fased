@@ -1,6 +1,6 @@
 {
   "name": "@fased/slack",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "private": true,
   "description": "FasedAgent Slack channel plugin",
   "type": "module",

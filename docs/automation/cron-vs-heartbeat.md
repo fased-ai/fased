@@ -193,14 +193,14 @@ fased task add --name "Call back" --at "2h" --session main --system-event "Call 
 
 ## Main session vs isolated tasks
 
-|                 | Heartbeat           | Task (main)               | Task (isolated)                                      |
-| --------------- | ------------------- | ------------------------- | ---------------------------------------------------- |
-| Runtime session | main                | main via system event     | task-owned run lane                                  |
-| Task owner      | Agent main session  | Agent/session on the task | Agent/session on the task                            |
-| Context         | full                | full                      | clean run context                                    |
-| History         | shared              | shared                    | separate run transcript, linked by `sessionKey`      |
-| Model           | Agent/session model | Agent/session model       | overrideable                                         |
-| Delivery        | heartbeat result    | main-session event        | announce/webhook/none                                |
+|                 | Heartbeat           | Task (main)               | Task (isolated)                                 |
+| --------------- | ------------------- | ------------------------- | ----------------------------------------------- |
+| Runtime session | main                | main via system event     | task-owned run lane                             |
+| Task owner      | Agent main session  | Agent/session on the task | Agent/session on the task                       |
+| Context         | full                | full                      | clean run context                               |
+| History         | shared              | shared                    | separate run transcript, linked by `sessionKey` |
+| Model           | Agent/session model | Agent/session model       | overrideable                                    |
+| Delivery        | heartbeat result    | main-session event        | announce/webhook/none                           |
 
 ### Use main-session tasks when
 

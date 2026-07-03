@@ -28,6 +28,7 @@ External addr = read-only balance checks or send destination, never a local sour
     wallet actions, small working balances, and reviewed wallet actions.
 
     Keep Satcoin mining, Vault storage, and bond authority on their own lanes.
+
   </Card>
   <Card title="Mining wallet">
     Use it for Satcoin start, stop, fund, commit, withdraw, claim, sweep, and
@@ -35,6 +36,7 @@ External addr = read-only balance checks or send destination, never a local sour
 
     Keep Marketplace buying, ordinary chat sends, skills, and invoices on Agent
     wallets.
+
   </Card>
   <Card title="Vault wallet">
     Use it for manual-first storage, higher-value balances, recovery separation,
@@ -42,12 +44,14 @@ External addr = read-only balance checks or send destination, never a local sour
 
     Keep routine automation, Marketplace order actions, and mining on their own
     lanes.
+
   </Card>
   <Card title="External Solana address">
     Use it for read-only SOL/SPL balance checks or as a destination for
     manual/approved sends.
 
     External addresses are never local signing sources.
+
   </Card>
 </CardGroup>
 

@@ -1,6 +1,6 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
+import { resolvePreferredFasedAgentTmpDir } from "fased/plugin-sdk";
 
 function truthy(value: string | undefined): boolean {
   if (value == null) {
@@ -12,7 +12,8 @@ function truthy(value: string | undefined): boolean {
 
 function markerDir(env: NodeJS.ProcessEnv): string {
   return (
-    env.FASED_SAT_LIVE_CHAOS_MARKER_DIR?.trim() || path.join(os.tmpdir(), "fased-sat-live-chaos")
+    env.FASED_SAT_LIVE_CHAOS_MARKER_DIR?.trim() ||
+    path.join(resolvePreferredFasedAgentTmpDir(), "fased-sat-live-chaos")
   );
 }
 

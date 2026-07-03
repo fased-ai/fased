@@ -35,6 +35,7 @@ Release builds must be Developer ID-signed, zipped, and published with a signed 
         --key-id "$APP_STORE_CONNECT_KEY_ID" \
         --issuer "$APP_STORE_CONNECT_ISSUER_ID"
       ```
+
 - `pnpm` deps installed (`pnpm install --config.node-linker=hoisted`).
 - Sparkle tools are fetched automatically via SwiftPM at
   `apps/macos/.build/artifacts/sparkle/Sparkle/bin/`.

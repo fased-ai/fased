@@ -351,24 +351,28 @@ FASED_LIVE_CLI_BACKEND=1 \
 Narrow, explicit allowlists are fastest and least flaky:
 
 - Single model, direct (no gateway):
+
   ```bash
   FASED_LIVE_MODELS="<provider/model>" \
     pnpm test:live src/agents/models.profiles.live.test.ts
   ```
 
 - Single model, gateway smoke:
+
   ```bash
   FASED_LIVE_GATEWAY_MODELS="<provider/model>" \
     pnpm test:live src/gateway/gateway-models.profiles.live.test.ts
   ```
 
 - Tool calling across several providers you actively support:
+
   ```bash
   FASED_LIVE_GATEWAY_MODELS="<provider/model>,<provider/model>" \
     pnpm test:live src/gateway/gateway-models.profiles.live.test.ts
   ```
 
 - Google focus (Gemini API key + Gemini CLI):
+
   ```bash
   FASED_LIVE_GATEWAY_MODELS="google/<model>" \
     pnpm test:live src/gateway/gateway-models.profiles.live.test.ts
@@ -449,6 +453,7 @@ If you rely on env keys exported in `~/.profile`, run local tests after
     BYTEPLUS_LIVE_TEST=1 \
     pnpm test:live src/agents/byteplus.live.test.ts
   ```
+
 - Optional model override: `BYTEPLUS_CODING_MODEL=<model-id>`
 
 ## Docker runners (optional “works in Linux” checks)

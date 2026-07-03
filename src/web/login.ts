@@ -34,7 +34,7 @@ export async function loginWeb(
         ),
       );
       try {
-        sock.ws?.close();
+        void sock.ws?.close();
       } catch {
         // ignore
       }
@@ -69,7 +69,7 @@ export async function loginWeb(
     // Let Baileys flush any final events before closing the socket.
     setTimeout(() => {
       try {
-        sock.ws?.close();
+        void sock.ws?.close();
       } catch {
         // ignore
       }

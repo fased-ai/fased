@@ -53,6 +53,7 @@ Example config:
   Do not infer or repeat old tasks from prior chats.
   If nothing needs attention, reply HEARTBEAT_OK.
   ```
+
 - The heartbeat prompt is sent **verbatim** as the user message. The system
   prompt includes a “Heartbeat” section and the run is flagged internally.
 - Active hours (`heartbeat.activeHours`) are checked in the configured timezone.
