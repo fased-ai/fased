@@ -89,11 +89,11 @@ Choose the setup profile first.
     fased dashboard
     ```
 
-    ![Local installer selecting the Local profile](/images/screenshots/polished/operator-school-001-local-install-profile.png)
+    ![Local installer selecting the Local profile](/images/screenshots/local/local-ui-1.png)
 
-    ![Local QuickStart gateway settings](/images/screenshots/polished/operator-school-002-local-gateway-settings.png)
+    ![Local QuickStart gateway settings](/images/screenshots/local/local-ui-2.png)
 
-    ![Local dashboard link printed after setup](/images/screenshots/polished/operator-school-003-local-dashboard-link.png)
+    ![Local dashboard link printed after setup](/images/screenshots/local/final-ui-1.png)
 
   </Tab>
   <Tab title="VPS Hosting install">
@@ -128,11 +128,11 @@ Choose the setup profile first.
 
     It should connect and land in `/home/app/fased`.
 
-    ![Tailscale local computer requirement during hosted setup](/images/screenshots/polished/operator-school-004-hosted-tailscale-start.png)
+    ![Tailscale local computer requirement during hosted setup](/images/screenshots/remote/tailscale-1.png)
 
-    ![Hosted setup verifying SSH over Tailscale](/images/screenshots/polished/operator-school-005-hosted-ssh-check.png)
+    ![Hosted setup verifying SSH over Tailscale](/images/screenshots/remote/tailscale-2.png)
 
-    ![Hosted remote access details after setup](/images/screenshots/polished/operator-school-006-hosted-private-access.png)
+    ![Hosted remote access details after setup](/images/screenshots/remote/remote-access-1.png)
 
   </Tab>
 </Tabs>
@@ -176,7 +176,7 @@ To print the local link without opening a browser:
 fased dashboard --no-open
 ```
 
-![Fased Control UI dashboard after setup](/images/screenshots/polished/operator-school-007-dashboard-open.png)
+![Fased Control UI dashboard after setup](/images/screenshots/web/dashboard.png)
 
 If the browser asks for a token later, use the Gateway token printed by the
 dashboard command or read the raw token:
@@ -198,12 +198,12 @@ The selected Agent owns chat, model settings, skills, services, chat app
 routes, tasks, saved context, and wallet controls. Start with one Agent unless
 you already know you need separate work profiles.
 
-![Agent setup page with setup checklist](/images/screenshots/polished/operator-school-008-agent-setup.png)
+![Agent setup page with setup checklist](/images/screenshots/web/agent-setup-1.png)
 
 If you choose chat channels during onboarding, the terminal wizard can collect
 the channel token. You can skip this and add channels later.
 
-![Telegram channel setup during onboarding](/images/screenshots/polished/operator-school-009-chat-channel-setup.png)
+![Telegram channel setup during onboarding](/images/screenshots/local/chat-ui-1.png)
 
 Read next:
 
@@ -217,9 +217,9 @@ Open **Agent > Models**.
 Add a model provider key or sign in, then choose a primary model. Send a first
 test message from **Chat** before moving into wallet or mining flows.
 
-![Model selection in the Control UI](/images/screenshots/polished/operator-school-010-model-selection.png)
+![Model selection in the Control UI](/images/screenshots/web/agent-model-2.png)
 
-![Model provider sign-in during local setup](/images/screenshots/polished/operator-school-011-model-provider-sign-in.png)
+![Model provider sign-in during local setup](/images/screenshots/local/model-ui-1.png)
 
 Read next:
 
@@ -246,16 +246,16 @@ When importing a Solana wallet, use a base58 64-byte private key from your
 wallet/export tool. Fased also accepts Solana JSON byte array, base64/base64url,
 or hex imports. Do not paste seed phrases into wallet import.
 
-![Wallet cards after Agent, Mining, and Vault setup](/images/screenshots/polished/operator-school-012-wallet-roles.png)
+![Wallet cards after Agent, Mining, and Vault setup](/images/screenshots/web/wallet-1.png)
 
-![Wallet setup in the local installer](/images/screenshots/polished/operator-school-013-wallet-create.png)
+![Wallet setup in the local installer](/images/screenshots/local/wallet-ui-1.png)
 
-![Wallet role summary after local setup](/images/screenshots/polished/operator-school-014-wallet-summary.png)
+![Wallet role summary after local setup](/images/screenshots/local/wallet-ui-2.png)
 
 Open **Access** to set the Wallet Control Passkey before higher-risk wallet
 actions.
 
-![Wallet Control Passkey state](/images/screenshots/polished/operator-school-015-wallet-passkey.png)
+![Wallet Control Passkey state](/images/screenshots/web/wallet-passkey-2.png)
 
 Read next:
 
@@ -300,7 +300,7 @@ On **Mining**, use the Mining Capital block.
 Deposit a small amount of SOL into miner capital. The Fund action creates the
 wallet-scoped miner account on-chain when it is missing.
 
-![Mining funding and capital controls](/images/screenshots/polished/operator-school-016-mining-funding.png)
+![Mining funding and capital controls](/images/screenshots/web/mining-funding-1.png)
 
 Read next:
 
@@ -316,7 +316,7 @@ Click **Update** to write the active commit. If the saved target is higher than
 the safe value, Fased submits the safe value and keeps the saved target for
 later.
 
-![Mining commit controls](/images/screenshots/polished/operator-school-017-mining-commit.png)
+![Mining commit controls](/images/screenshots/web/mining-commit-2.png)
 
 Read next:
 
@@ -330,7 +330,7 @@ Click **Start** only after readiness is green and the fee warning is clear.
 The Mining page shows whether the runtime is ready, running, blocked, or
 waiting.
 
-![Mining runtime activity after start](/images/screenshots/polished/operator-school-018-mining-activity.png)
+![Mining runtime activity after start](/images/screenshots/web/mining-activity-3.png)
 
 Read next:
 
@@ -348,7 +348,7 @@ Use recent activity and history to confirm what the runtime did:
 - fee or gap events
 - RPC failures
 
-![Mining history and cycle charts](/images/screenshots/polished/operator-school-019-mining-history.png)
+![Mining history and cycle charts](/images/screenshots/web/mining-history-4.png)
 
 Read next:
 
@@ -388,7 +388,7 @@ Open **Fased Network** after the base Agent, wallets, and mining path are clear.
 Use this area for public route status, Fased Network readiness, Vault-backed
 bond controls, and later operator-economy features.
 
-![Fased Network bond and SAT distributor view](/images/screenshots/polished/operator-school-020-network-bond.png)
+![Fased Network bond and SAT distributor view](/images/screenshots/web/network-bond-staking-1.png)
 
 Read next:
 
