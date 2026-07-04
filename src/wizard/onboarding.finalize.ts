@@ -109,15 +109,15 @@ export function buildOnboardingDashboardUrl(params: {
 }
 
 function noteHeading(value: string): string {
-  return theme.heading(value.toUpperCase());
+  return theme.success(value.toUpperCase());
 }
 
 function noteLabel(value: string): string {
-  return theme.accentBright(value);
+  return theme.success(value);
 }
 
 function noteInfo(value: string): string {
-  return theme.info(value);
+  return value;
 }
 
 function noteSuccess(value: string): string {
@@ -133,11 +133,15 @@ function noteMuted(value: string): string {
 }
 
 function noteCommand(value: string): string {
-  return theme.command(value);
+  return theme.error(value);
 }
 
 function noteBullet(value: string): string {
   return `- ${value}`;
+}
+
+function noteCommands(commands: string[]): string[] {
+  return ["", ...commands.map((command) => noteCommand(command)), ""];
 }
 
 function formatFasedNetworkAutoConnectSummary(messages: string[]): string {
@@ -170,53 +174,44 @@ export function formatStrictRemoteAccessDetails(params: {
     // Keep the generic localhost URL if the provided tunnel URL is not parseable.
   }
   return [
-    noteInfo("Use both access paths after hosted setup:"),
+    noteHeading("Web UI"),
+    "Open this on your own computer after signing into the same Tailscale account:",
+    ...noteCommands([params.dashboardUrl]),
+    noteHeading("SSH"),
+    "Use this for updates, logs, and repairs:",
+    ...noteCommands([`ssh ${params.tailscaleSshUser}@${sshTarget}`]),
+    hasIpFallback ? "If hostname DNS fails but `tailscale ping 100.x.x.x` works:" : undefined,
+    ...(hasIpFallback ? noteCommands([`ssh ${params.tailscaleSshUser}@${tailscaleIpv4}`]) : []),
+    `The app user shell opens in the Fased repo directory.`,
     "",
-    noteHeading("1. Web dashboard"),
-    `   ${noteInfo("Open this on your own computer after signing into the same Tailscale account:")}`,
-    `   ${noteCommand(params.dashboardUrl)}`,
-    "",
-    noteHeading("2. SSH terminal"),
-    `   ${noteInfo("Use this for CLI commands, updates, logs, and repairs over Tailscale:")}`,
-    `   ${noteCommand(`ssh ${params.tailscaleSshUser}@${sshTarget}`)}`,
-    hasIpFallback
-      ? `   ${noteWarn("If hostname DNS fails but Tailscale IP ping works, use:")} ${noteCommand(
-          `ssh ${params.tailscaleSshUser}@${tailscaleIpv4}`,
-        )}`
-      : undefined,
-    `   ${noteInfo("The app user shell opens in the Fased repo directory.")}`,
-    "",
-    noteHeading("Advanced fallback"),
-    `   ${noteInfo(
-      "If the Tailscale web URL is unavailable, run this on your local computer and leave it open:",
-    )}`,
-    `   ${noteCommand(
+    noteHeading("Fallback tunnel"),
+    "Use only if the Web UI URL is not ready. Run this locally and leave it open:",
+    ...noteCommands([
       `ssh -N -L ${params.port}:127.0.0.1:${params.port} ${params.tailscaleSshUser}@${sshTarget}`,
-    )}`,
-    hasIpFallback
-      ? `   ${noteWarn("If a VPN blocks MagicDNS hostname lookup, use:")} ${noteCommand(
+    ]),
+    "Then open:",
+    ...noteCommands([params.tunnelUrl]),
+    hasIpFallback ? "If a VPN blocks MagicDNS hostname lookup, use the IP tunnel:" : undefined,
+    ...(hasIpFallback
+      ? noteCommands([
           `ssh -N -L ${params.port}:127.0.0.1:${params.port} ${params.tailscaleSshUser}@${tailscaleIpv4}`,
-        )}`
-      : undefined,
-    `   ${noteInfo("Then open:")}`,
-    `   ${noteCommand(params.tunnelUrl)}`,
-    `   ${noteWarn(
-      `If SSH reports "Address already in use" for 127.0.0.1:${params.port}, stop your local Fased gateway or use an unused local port:`,
-    )}`,
-    `   ${noteCommand(
+        ])
+      : []),
+    noteHeading("Local port busy"),
+    `If SSH says "Address already in use" for 127.0.0.1:${params.port}:`,
+    noteBullet("Stop the local Fased gateway, or use a different local port."),
+    ...noteCommands([
       `ssh -N -L ${alternateLocalPort}:127.0.0.1:${params.port} ${params.tailscaleSshUser}@${sshTarget}`,
-    )}`,
-    `   ${noteInfo("Then open:")}`,
-    `   ${noteCommand(alternateTunnelUrl)}`,
+    ]),
+    "Then open:",
+    ...noteCommands([alternateTunnelUrl]),
     hasIpFallback
-      ? `   ${noteWarn(
-          "Note: another VPN can break Tailscale MagicDNS while raw 100.x Tailscale IP access still works.",
-        )}`
+      ? noteBullet(noteWarn("Another VPN can break MagicDNS while `100.x` IP access still works."))
       : undefined,
     "",
-    noteHeading("Gateway token backup"),
-    `   ${noteWarn("Only paste this if the browser asks for a token:")}`,
-    `   ${noteCommand(params.gatewayToken || "(token not available)")}`,
+    noteHeading("Token backup"),
+    "Only paste this if the browser asks for a token:",
+    ...noteCommands([params.gatewayToken || "(token not available)"]),
   ]
     .filter((line): line is string => line !== undefined)
     .join("\n");
@@ -230,24 +225,21 @@ export function formatLocalDashboardReady(params: {
   healthCheck?: string;
 }): string {
   return [
-    "1. Dashboard",
-    params.opened
-      ? "   Opened in your browser. Keep that tab open."
-      : "   Open this URL in a browser on this machine:",
-    params.opened ? `   Backup link: ${params.dashboardUrl}` : `   ${params.dashboardUrl}`,
+    noteHeading("Web UI"),
+    params.opened ? "Opened in your browser. Keep that tab open." : "Open this on this machine:",
+    ...noteCommands([params.dashboardUrl]),
     "",
-    "2. First setup",
-    "   In the dashboard, go to Agent > Models and connect a model provider.",
+    noteHeading("Next"),
+    noteBullet("In the dashboard, go to Agent > Models and connect a model provider."),
+    noteBullet("Open Chat and send a test message."),
     "",
-    "3. First chat",
-    "   Open Chat and send a test message.",
     params.gatewayToken ? "" : undefined,
-    params.gatewayToken ? "Token backup" : undefined,
-    params.gatewayToken ? `   ${params.gatewayToken}` : undefined,
+    params.gatewayToken ? noteHeading("Token backup") : undefined,
+    ...(params.gatewayToken ? noteCommands([params.gatewayToken]) : []),
     params.healthCheck ? "" : undefined,
     params.healthCheck,
     params.fallbackHint ? "" : undefined,
-    params.fallbackHint ? "Remote browser fallback" : undefined,
+    params.fallbackHint ? noteHeading("Remote browser fallback") : undefined,
     params.fallbackHint,
   ]
     .filter((line): line is string => line !== undefined)
@@ -2944,7 +2936,7 @@ export async function finalizeOnboardingWizard(
         port: settings.port,
         gatewayToken: gatewayTokenForUi || undefined,
       }),
-      "Remote Access Details",
+      "Hosted access",
     );
   } else if (flow !== "quickstart") {
     await prompter.note(
@@ -3322,11 +3314,13 @@ export async function finalizeOnboardingWizard(
   }
 
   await prompter.outro(
-    controlUiOpened
-      ? "Setup complete. Next: Agent > Models, then Chat."
-      : seededInBackground
-        ? "Setup complete. Open the dashboard link above, then use Agent > Models and Chat."
-        : "Setup complete. Use the dashboard link above, then use Agent > Models and Chat.",
+    strictVps
+      ? "Setup complete. Use HOSTED ACCESS above: Web UI, SSH, or fallback tunnel."
+      : controlUiOpened
+        ? "Setup complete. Next: Agent > Models, then Chat."
+        : seededInBackground
+          ? "Setup complete. Open the dashboard link above, then use Agent > Models and Chat."
+          : "Setup complete. Use the dashboard link above, then use Agent > Models and Chat.",
   );
 
   return { launchedTui };

@@ -55,21 +55,24 @@ describe("formatStrictRemoteAccessDetails", () => {
       gatewayToken: "abc123",
     });
 
-    expect(text).toContain("1. WEB DASHBOARD");
-    expect(text).toContain("2. SSH TERMINAL");
+    expect(text).toContain("WEB UI");
+    expect(text).toContain("SSH");
+    expect(text).toContain("FALLBACK TUNNEL");
+    expect(text).toContain("LOCAL PORT BUSY");
+    expect(text).toContain("TOKEN BACKUP");
     expect(text).toContain("Open this on your own computer");
     expect(text).toContain("https://fased-vps.tailnet.ts.net/#token=abc123");
     expect(text).toContain("ssh app@fased-vps.tailnet.ts.net");
     expect(text).toContain("ssh app@100.64.1.9");
     expect(text).toContain("hostname DNS fails");
     expect(text).toContain("VPN blocks MagicDNS");
-    expect(text).toContain("raw 100.x Tailscale IP access still works");
+    expect(text).toContain("100.x");
     expect(text).not.toContain("tailscale ssh");
     expect(text).toContain("ssh -N -L 18789:127.0.0.1:18789 app@fased-vps.tailnet.ts.net");
     expect(text).toContain("ssh -N -L 18789:127.0.0.1:18789 app@100.64.1.9");
     expect(text).toContain("http://localhost:18789/#token=abc123");
     expect(text).toContain("Address already in use");
-    expect(text).toContain("stop your local Fased gateway");
+    expect(text).toContain("Stop the local Fased gateway");
     expect(text).toContain("ssh -N -L 18790:127.0.0.1:18789 app@fased-vps.tailnet.ts.net");
     expect(text).toContain("http://localhost:18790/#token=abc123");
     expect(text).toContain("Only paste this if the browser asks for a token:");
@@ -96,18 +99,18 @@ describe("buildGatewayWsUrlFromHttpUrl", () => {
 });
 
 describe("formatLocalDashboardReady", () => {
-  it("prints local setup as a short 1-2-3 checklist", () => {
+  it("prints local setup as a short scannable checklist", () => {
     const text = formatLocalDashboardReady({
       dashboardUrl: "http://localhost:18789/#token=abc123",
       gatewayToken: "abc123",
       opened: true,
     });
 
-    expect(text).toContain("1. Dashboard");
-    expect(text).toContain("2. First setup");
-    expect(text).toContain("3. First chat");
+    expect(text).toContain("WEB UI");
+    expect(text).toContain("NEXT");
+    expect(text).toContain("http://localhost:18789/#token=abc123");
     expect(text).toContain("Agent > Models");
-    expect(text).toContain("Token backup");
+    expect(text).toContain("TOKEN BACKUP");
     expect(text).not.toContain("Gateway WS");
   });
 });

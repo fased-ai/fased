@@ -1667,23 +1667,33 @@ print_hosted_handoff_block() {
   local tailscale_dns="$3"
   local removed_checkout="$4"
   local ssh_host="${tailscale_dns:-YOUR_VPS_TAILSCALE_NAME}"
+  local web_host="${tailscale_dns:-YOUR_VPS_TAILSCALE_NAME}"
 
-  block_top "HOSTED HANDOFF"
-  block_line "$(color_green "✓ Root bootstrap complete")"
+  block_top "HOSTED ACCESS"
+  block_line "$(color_green "✓ Setup complete")"
   block_line "$(color_green "Run as:") $(color_cyan "$target_user")"
   block_line
-  block_line "$(color_cyan "${C_BOLD}SSH TERMINAL${C_RESET}")"
-  block_line "  $(color_yellow "ssh ${target_user}@${ssh_host}")"
-  block_line "$(color_green "Starts in:") $(color_dim "$target_repo_dir")"
-  if [[ -n "$tailscale_dns" ]]; then
-    block_line
-    block_line "$(color_cyan "${C_BOLD}TAILSCALE SSH ALTERNATIVE${C_RESET}")"
-    block_line "  $(color_yellow "tailscale ssh ${target_user}@${tailscale_dns}")"
-  fi
+  block_line "$(color_green "${C_BOLD}WEB UI${C_RESET}")"
+  block_line "  $(color_red "https://${web_host}/")"
+  block_line "  $(color_dim "Use the gateway token printed by the wizard if the browser asks.")"
   block_line
-  block_line "$(color_cyan "${C_BOLD}USEFUL COMMANDS${C_RESET}")"
-  block_line "  $(color_yellow "fased status")"
-  block_line "  $(color_yellow "fased dashboard")"
+  block_line "$(color_green "${C_BOLD}SSH${C_RESET}")"
+  block_line "  $(color_red "ssh ${target_user}@${ssh_host}")"
+  block_line "  $(color_dim "Starts in ${target_repo_dir}")"
+  block_line
+  block_line "$(color_green "${C_BOLD}FALLBACK TUNNEL${C_RESET}")"
+  block_line "  $(color_red "ssh -N -L 18789:127.0.0.1:18789 ${target_user}@${ssh_host}")"
+  block_line "  $(color_red "http://localhost:18789/")"
+  block_line
+  block_line "$(color_green "${C_BOLD}LOCAL PORT BUSY${C_RESET}")"
+  block_line "  $(color_dim "If 18789 is already in use locally, use 18790 instead.")"
+  block_line "  $(color_red "ssh -N -L 18790:127.0.0.1:18789 ${target_user}@${ssh_host}")"
+  block_line "  $(color_red "http://localhost:18790/")"
+  block_line
+  block_line "$(color_green "${C_BOLD}APP COMMANDS${C_RESET}")"
+  block_line "  $(color_red "cd ${target_repo_dir}")"
+  block_line "  $(color_red "fased status")"
+  block_line "  $(color_red "fased dashboard --no-open")"
   block_line
   block_line "$(color_dim "Use the app checkout for normal operation; root was only for bootstrap.")"
   if [[ -n "$removed_checkout" ]]; then
