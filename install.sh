@@ -151,6 +151,10 @@ color_red() { printf '%s%s%s' "$C_RED" "$1" "$C_RESET"; }
 color_dim() { printf '%s%s%s' "$C_DIM" "$1" "$C_RESET"; }
 color_gray() { printf '%s%s%s' "$C_GRAY" "$1" "$C_RESET"; }
 
+INSTALL_BLOCK_CONTENT_WIDTH=72
+INSTALL_STATUS_FRAME_OPEN=0
+INSTALL_STATUS_SECTION_COUNT=0
+
 repeat_char() {
   local char="$1"
   local count="$2"
@@ -162,22 +166,59 @@ repeat_char() {
   printf '%s' "$out"
 }
 
+visible_length() {
+  printf '%s' "$1" | sed -E $'s/\x1B\\[[0-9;]*[A-Za-z]//g' | wc -m | tr -d ' '
+}
+
 block_top() {
   local title="$1"
-  printf '\n%s %s %s\n' "$(color_gray "╭─")" "$(color_cyan "${C_BOLD}${title}${C_RESET}")" "$(color_gray "$(repeat_char "─" 56)")"
+  local title_width
+  local rule_width
+  title_width="$(visible_length "$title")"
+  rule_width=$((INSTALL_BLOCK_CONTENT_WIDTH + 2 - title_width - 3))
+  if (( rule_width < 0 )); then
+    rule_width=0
+  fi
+  printf '\n  %s%s%s%s%s\n' \
+    "$(color_gray "╭─ ")" \
+    "$(color_gray "${C_BOLD}${title}${C_RESET}")" \
+    "$(color_gray " ")" \
+    "$(color_gray "$(repeat_char "─" "$rule_width")")" \
+    "$(color_gray "╮")"
 }
 
 block_line() {
   local text="${1:-}"
-  if [[ -z "$text" ]]; then
-    printf '%s\n' "$(color_gray "│")"
-  else
-    printf '%s  %s\n' "$(color_gray "│")" "$text"
+  local width
+  local padding
+  width="$(visible_length "$text")"
+  padding=$((INSTALL_BLOCK_CONTENT_WIDTH - width))
+  if (( padding < 0 )); then
+    padding=0
   fi
+  printf '  %s %s%s %s\n' \
+    "$(color_gray "│")" \
+    "$text" \
+    "$(repeat_char " " "$padding")" \
+    "$(color_gray "│")"
 }
 
 block_bottom() {
-  printf '%s\n' "$(color_gray "╰$(repeat_char "─" 72)")"
+  printf '  %s\n' "$(color_gray "╰$(repeat_char "─" $((INSTALL_BLOCK_CONTENT_WIDTH + 2)))╯")"
+}
+
+status_frame_start() {
+  block_top "INSTALLER STATUS"
+  INSTALL_STATUS_FRAME_OPEN=1
+  INSTALL_STATUS_SECTION_COUNT=0
+}
+
+status_frame_end() {
+  if [[ "$INSTALL_STATUS_FRAME_OPEN" -eq 1 ]]; then
+    block_bottom
+    INSTALL_STATUS_FRAME_OPEN=0
+    printf '\n'
+  fi
 }
 
 print_installer_banner() {
@@ -186,30 +227,33 @@ print_installer_banner() {
   if [[ "$HOSTING_REQUESTED" -eq 1 ]]; then
     profile="VPS Hosting"
   fi
-  printf '\n'
-  if supports_color; then
-    printf '%s' "$C_CYAN"
-  fi
-  cat <<'BANNER'
-  _____   _     ____   _____  ____
- |  ___| / \   / ___| | ____||  _ \
- | |_   / _ \  \___ \ |  _|  | | | |
- |  _| / ___ \  ___) || |___ | |_| |
- |_|  /_/   \_\|____/ |_____||____/
-BANNER
-  if supports_color; then
-    printf '%s' "$C_RESET"
-  fi
-  printf '\n'
-  printf '%s\n' "$(color_cyan "${C_BOLD}Fased Agent v${version}${C_RESET}")"
-  printf '%s %s\n' "$(color_yellow "Mode:")" "$profile"
-  printf '%s %s\n\n' "$(color_yellow "Logs:")" "$(color_green "${INSTALL_LOG_DIR}")"
+  block_top "FASED AGENT"
+  block_line
+  block_line "$(color_gray "  _____   _     ____   _____  ____")"
+  block_line "$(color_gray " |  ___| / \\   / ___| | ____||  _ \\")"
+  block_line "$(color_gray " | |_   / _ \\  \\___ \\ |  _|  | | | |")"
+  block_line "$(color_gray " |  _| / ___ \\  ___) || |___ | |_| |")"
+  block_line "$(color_gray " |_|  /_/   \\_\\|____/ |_____||____/")"
+  block_line
+  block_line "Fased Agent v${version}"
+  block_line "$(color_yellow "Mode")  ${profile}"
+  block_line "$(color_yellow "Logs")  ${INSTALL_LOG_DIR}"
+  block_line
+  block_bottom
 }
 
 section() {
   local label="$1"
   local display="${label^^}"
-  printf '\n%s\n' "$(color_cyan "${C_BOLD}${display}${C_RESET}")"
+  if [[ "$INSTALL_STATUS_FRAME_OPEN" -eq 1 ]]; then
+    if [[ "$INSTALL_STATUS_SECTION_COUNT" -gt 0 ]]; then
+      block_line
+    fi
+    block_line "$(color_yellow "${C_BOLD}${display}${C_RESET}")"
+    INSTALL_STATUS_SECTION_COUNT=$((INSTALL_STATUS_SECTION_COUNT + 1))
+  else
+    printf '\n%s\n' "$(color_gray "${C_BOLD}${display}${C_RESET}")"
+  fi
 }
 
 if [[ -f "$SAT_RUNTIME_ENV_FILE" ]]; then
@@ -1409,23 +1453,39 @@ install_log_path() {
 
 step_start() {
   local label="$1"
-  printf '%s %s\n' "$(color_yellow "•")" "$(color_yellow "${label}...")"
+  if [[ "$INSTALL_STATUS_FRAME_OPEN" -eq 1 ]]; then
+    block_line "$(color_yellow "•") ${label}..."
+  else
+    printf '%s %s\n' "$(color_yellow "•")" "$(color_yellow "${label}...")"
+  fi
 }
 
 step_done() {
   local label="$1"
-  printf '%s %s\n' "$(color_green "✓")" "$(color_green "$label")"
+  if [[ "$INSTALL_STATUS_FRAME_OPEN" -eq 1 ]]; then
+    block_line "$(color_green "✓") ${label}"
+  else
+    printf '%s %s\n' "$(color_green "✓")" "$label"
+  fi
 }
 
 step_skip() {
   local label="$1"
-  printf '%s %s\n' "$(color_green "✓")" "$(color_dim "${label} unchanged")"
+  if [[ "$INSTALL_STATUS_FRAME_OPEN" -eq 1 ]]; then
+    block_line "$(color_green "✓") $(color_dim "${label} unchanged")"
+  else
+    printf '%s %s\n' "$(color_green "✓")" "$(color_dim "${label} unchanged")"
+  fi
 }
 
 SPINNER_PID=""
 
 spinner_start() {
   local label="$1"
+  if [[ "$INSTALL_STATUS_FRAME_OPEN" -eq 1 ]]; then
+    step_start "$label"
+    return 0
+  fi
   if [[ "$INSTALL_VERBOSE" == "1" || ! -t 1 ]]; then
     step_start "$label"
     return 0
@@ -1443,6 +1503,9 @@ spinner_start() {
 }
 
 spinner_clear() {
+  if [[ "$INSTALL_STATUS_FRAME_OPEN" -eq 1 ]]; then
+    return 0
+  fi
   if [[ -n "${SPINNER_PID:-}" ]]; then
     kill "$SPINNER_PID" >/dev/null 2>&1 || true
     wait "$SPINNER_PID" 2>/dev/null || true
@@ -2883,6 +2946,7 @@ fi
 
 FASED_INSTALL_VERSION="$(node -e 'const fs=require("fs");try{const p=process.argv[1];const o=JSON.parse(fs.readFileSync(p,"utf8"));process.stdout.write(o.version||"0.0.0")}catch{process.stdout.write("0.0.0")}' "$FASED_DIR/package.json" 2>/dev/null || printf '0.0.0')"
 print_installer_banner "$FASED_INSTALL_VERSION"
+status_frame_start
 
 export CI="${CI:-1}"
 export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
@@ -2952,6 +3016,7 @@ else
 fi
 
 if [[ "$RUN_ONBOARD" -eq 0 ]]; then
+  status_frame_end
   no_onboard_profile="$(resolved_host_profile)"
   marker_onboarding_completed="$(read_marker_onboarding_completed || true)"
   if [[ "$marker_onboarding_completed" == "true" ]] || has_system_gateway_service || { [[ "$no_onboard_profile" != "hosting" ]] && has_user_gateway_service; }; then
@@ -2989,6 +3054,7 @@ fi
 
 section "Interactive setup"
 step_start "Start setup"
+status_frame_end
 onboard_old_space_mb="$(recommended_onboard_old_space_mb)"
 onboard_node_options="$(node_options_with_old_space "${NODE_OPTIONS:-}" "$onboard_old_space_mb")"
 onboard_color_env=()

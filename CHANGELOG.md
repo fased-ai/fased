@@ -4,6 +4,15 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.17
+
+- Frame the installer banner and top setup status so the FASED logo, version,
+  mode, logs, system preparation, runtime, and interactive setup messages use
+  the same terminal block style as onboarding prompts.
+- Keep the existing FASED ASCII logo text while changing the installer header
+  colors to gray titles/borders, yellow labels, plain values, and green status
+  checkmarks.
+
 ## 0.1.16
 
 - Restore framed wizard panels and radio/check prompt markers while keeping the
