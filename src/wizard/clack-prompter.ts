@@ -1,7 +1,6 @@
 import { clearScreenDown, cursorTo, emitKeypressEvents, moveCursor } from "node:readline";
 import {
   cancel,
-  confirm,
   intro,
   isCancel,
   type Option,
@@ -56,11 +55,10 @@ function formatElapsed(ms: number): string {
 
 function formatChoiceLabel<T>(option: Option<T>): string {
   const label = option.label ?? String(option.value ?? "");
-  const hint = option.hint ? ` ${option.hint}` : "";
   if (option.disabled) {
-    return `${theme.muted(label)}${hint}`;
+    return theme.muted(label);
   }
-  return `${label}${hint}`;
+  return label;
 }
 
 function firstEnabledIndex<T>(options: Option<T>[]): number {
@@ -127,6 +125,7 @@ async function chooseWithArrows<T>(params: {
     const cleanup = () => {
       process.stdin.off("keypress", onKeypress);
       process.stdin.setRawMode?.(false);
+      process.stdin.pause();
       process.stdout.write("\n");
     };
     const onKeypress = (_value: string, key: Keypress = {}) => {
@@ -203,6 +202,7 @@ async function chooseMultiWithArrows<T>(params: {
     const cleanup = () => {
       process.stdin.off("keypress", onKeypress);
       process.stdin.setRawMode?.(false);
+      process.stdin.pause();
       process.stdout.write("\n");
     };
     const onKeypress = (_value: string, key: Keypress = {}) => {
@@ -239,6 +239,77 @@ async function chooseMultiWithArrows<T>(params: {
             .toSorted((a, b) => a - b)
             .map((index) => params.options[index].value),
         );
+      }
+    };
+    process.stdout.write("\n");
+    emitKeypressEvents(process.stdin);
+    process.stdin.setRawMode?.(true);
+    process.stdin.resume();
+    process.stdin.on("keypress", onKeypress);
+    render();
+  });
+}
+
+async function confirmWithArrows(params: {
+  message: string;
+  initialValue?: boolean;
+}): Promise<boolean> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY || !process.stdin.setRawMode) {
+    return params.initialValue ?? true;
+  }
+  let activeValue = params.initialValue ?? true;
+  let renderedLines = 0;
+
+  return await new Promise<boolean>((resolve, reject) => {
+    const render = () => {
+      if (renderedLines > 0) {
+        moveCursor(process.stdout, 0, -renderedLines);
+        cursorTo(process.stdout, 0);
+        clearScreenDown(process.stdout);
+      }
+      const lines = [
+        stylePromptMessage(params.message),
+        `  ${activeValue ? theme.option(">") : " "} Yes`,
+        `  ${!activeValue ? theme.option(">") : " "} No`,
+      ];
+      process.stdout.write(`${lines.join("\n")}\n`);
+      renderedLines = lines.length;
+    };
+    const cleanup = () => {
+      process.stdin.off("keypress", onKeypress);
+      process.stdin.setRawMode?.(false);
+      process.stdin.pause();
+      process.stdout.write("\n");
+    };
+    const onKeypress = (_value: string, key: Keypress = {}) => {
+      if (key.ctrl && key.name === "c") {
+        cleanup();
+        reject(new WizardCancelledError());
+        return;
+      }
+      if (
+        key.name === "up" ||
+        key.name === "down" ||
+        key.sequence === "\u001B[A" ||
+        key.sequence === "\u001B[B"
+      ) {
+        activeValue = !activeValue;
+        render();
+        return;
+      }
+      if (key.name === "y" || key.sequence?.toLowerCase() === "y") {
+        cleanup();
+        resolve(true);
+        return;
+      }
+      if (key.name === "n" || key.sequence?.toLowerCase() === "n") {
+        cleanup();
+        resolve(false);
+        return;
+      }
+      if (key.name === "return" || key.name === "enter") {
+        cleanup();
+        resolve(activeValue);
       }
     };
     process.stdout.write("\n");
@@ -313,12 +384,10 @@ export function createClackPrompter(): WizardPrompter {
       );
     },
     confirm: async (params) =>
-      guardCancel(
-        await confirm({
-          message: stylePromptMessage(params.message),
-          initialValue: params.initialValue,
-        }),
-      ),
+      confirmWithArrows({
+        message: params.message,
+        initialValue: params.initialValue,
+      }),
     progress: (label: string): WizardProgress => {
       const spin = spinner();
       const startedAt = Date.now();

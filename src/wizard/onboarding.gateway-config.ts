@@ -100,7 +100,6 @@ export async function configureGatewayForOnboarding(
         {
           value: "loopback",
           label: "Loopback (127.0.0.1)",
-          hint: "Recommended. Keeps the gateway local to this machine.",
         },
         { value: "lan", label: "LAN (0.0.0.0)" },
         { value: "custom", label: "Custom IP" },
@@ -130,7 +129,6 @@ export async function configureGatewayForOnboarding(
         {
           value: "token",
           label: "Token",
-          hint: "Recommended default (local + remote)",
         },
         { value: "password", label: "Password" },
       ],

@@ -28,16 +28,10 @@ import type {
 } from "../commands/onboard-types.js";
 import { collectWalletSignerDoctorReport, walletSetupCommand } from "../commands/wallet.js";
 import type { FasedAgentConfig } from "../config/config.js";
-import {
-  DEFAULT_GATEWAY_PORT,
-  readConfigFileSnapshot,
-  resolveGatewayPort,
-  writeConfigFile,
-} from "../config/config.js";
+import { readConfigFileSnapshot, resolveGatewayPort, writeConfigFile } from "../config/config.js";
 import { logConfigUpdated } from "../config/logging.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { defaultRuntime } from "../runtime.js";
-import { theme } from "../terminal/theme.js";
 import { resolveUserPath } from "../utils.js";
 import type { WalletNamedWallet } from "../wallet/wallet-provider-registry.js";
 import { readWalletProviderRegistry } from "../wallet/wallet-provider-registry.js";
@@ -59,7 +53,9 @@ import {
 import { isHostedSecurityCapableSession } from "./host-security-capability.js";
 import {
   noteBullet,
+  noteCommand,
   noteHeading,
+  noteLabel,
   noteStep,
   noteSuccess,
   noteWarn,
@@ -829,8 +825,6 @@ export async function runOnboardingWizard(
     return;
   }
 
-  const quickstartHint = `Configure details later via ${formatCliCommand("fased configure")}.`;
-  const manualHint = "Configure port, network, Tailscale, and auth options.";
   const explicitFlowRaw = opts.flow?.trim();
   const normalizedExplicitFlow = explicitFlowRaw === "manual" ? "advanced" : explicitFlowRaw;
   if (
@@ -851,8 +845,8 @@ export async function runOnboardingWizard(
     (await prompter.select({
       message: "Onboarding mode",
       options: [
-        { value: "quickstart", label: "QuickStart", hint: quickstartHint },
-        { value: "advanced", label: "Manual", hint: manualHint },
+        { value: "quickstart", label: "QuickStart" },
+        { value: "advanced", label: "Manual" },
       ],
       initialValue: "quickstart",
     }));
@@ -864,17 +858,6 @@ export async function runOnboardingWizard(
     );
     flow = "advanced";
   }
-
-  await prompter.note(
-    [
-      theme.heading("Choose one profile"),
-      "",
-      `- ${theme.info("Local")}: your own computer, local Control UI, no VPS SSH/firewall hardening.`,
-      "",
-      `- ${theme.warn("VPS Hosting")}: always-on server with private Tailscale access and hosted SSH/firewall hardening.`,
-    ].join("\n"),
-    "Setup map",
-  );
 
   const rawHostProfile = typeof opts.hostProfile === "string" ? opts.hostProfile.trim() : "";
   const requestedHostProfile: HostSetupProfile | undefined =
@@ -893,12 +876,6 @@ export async function runOnboardingWizard(
     "This session cannot run hosting security setup.",
     `Rerun ${formatCliCommand("./install.sh")} from root on the VPS and choose a hosting profile there.`,
   ].join("\n");
-  const hostedProfileHint =
-    hostSecurityCapable || hostMaintenanceSession
-      ? "VPS hardening; Tailscale required"
-      : "Root session required; Tailscale required for hosting";
-  const localProfileHint = "This machine and local dashboard; no VPS hardening";
-
   const hostProfile: HostSetupProfile =
     opts.mode === "remote"
       ? "local"
@@ -911,12 +888,10 @@ export async function runOnboardingWizard(
                 {
                   value: "local",
                   label: "Local",
-                  hint: localProfileHint,
                 },
                 {
                   value: "hosting",
                   label: "Hosting",
-                  hint: hostedProfileHint,
                 },
               ],
               initialValue: interactiveHostProfileInitialValue,
@@ -941,31 +916,6 @@ export async function runOnboardingWizard(
     await prompter.note(hostedProfileUnavailableNote, "Host setup profile");
     runtime.exit(1);
     return;
-  }
-
-  if (hostProfile === "hosting") {
-    await prompter.note(
-      [
-        theme.heading("Private access"),
-        "Hosting uses private access through Tailscale.",
-        "",
-        noteHeading("Dashboard"),
-        "Tailscale HTTPS URL prints at the end.",
-        "",
-        noteHeading("SSH"),
-        "Use the final SSH command for CLI commands.",
-        "",
-        noteHeading("Tailscale SSH"),
-        "Optional. Only works when enabled in your tailnet.",
-        "",
-        noteHeading("Public SSH/Gateway"),
-        noteWarn("Public SSH/Gateway ports stay blocked."),
-        "",
-        noteHeading("Root"),
-        "Root is only for bootstrap or emergency repair.",
-      ].join("\n"),
-      "Hosting access",
-    );
   }
 
   if (snapshot.exists) {
@@ -1077,77 +1027,6 @@ export async function runOnboardingWizard(
       federationHandle: undefined,
     };
   })();
-
-  if (flow === "quickstart") {
-    const formatBind = (value: "loopback" | "lan" | "auto" | "custom" | "tailnet") => {
-      if (value === "loopback") {
-        return "Loopback (127.0.0.1)";
-      }
-      if (value === "lan") {
-        return "LAN";
-      }
-      if (value === "custom") {
-        return "Custom IP";
-      }
-      if (value === "tailnet") {
-        return "Tailnet (Tailscale IP)";
-      }
-      return "Auto";
-    };
-    const formatAuth = (value: GatewayAuthChoice) => {
-      if (value === "token") {
-        return "Token (default)";
-      }
-      return "Password";
-    };
-    const formatTailscale = (value: "off" | "serve" | "funnel") => {
-      if (value === "off") {
-        return "Off";
-      }
-      if (value === "serve") {
-        return "Serve";
-      }
-      return "Funnel";
-    };
-    const quickstartLines = quickstartGateway.hasExisting
-      ? hostProfile === "hosting"
-        ? [
-            theme.heading("Hosting quickstart"),
-            "- Private dashboard through Tailscale.",
-            "- Private SSH terminal through Tailscale.",
-            "- Gateway uses token auth and stays behind localhost.",
-          ]
-        : [
-            theme.heading("Current gateway settings"),
-            `- Port: ${quickstartGateway.port}`,
-            `- Bind: ${formatBind(quickstartGateway.bind)}`,
-            ...(quickstartGateway.bind === "custom" && quickstartGateway.customBindHost
-              ? [`- Custom IP: ${quickstartGateway.customBindHost}`]
-              : []),
-            `- Auth: ${formatAuth(quickstartGateway.authMode)}`,
-            `- Tailscale: ${formatTailscale(quickstartGateway.tailscaleMode)}`,
-            "- Connect chat apps later in Control UI > Channels.",
-          ]
-      : hostProfile === "hosting"
-        ? [
-            theme.heading("Hosting quickstart"),
-            "- Private dashboard through Tailscale.",
-            "- Private SSH terminal through Tailscale.",
-            "- Gateway uses token auth and stays behind localhost.",
-          ]
-        : [
-            theme.heading("Local quickstart"),
-            `- Port: ${DEFAULT_GATEWAY_PORT}`,
-            "- Bind: Loopback (127.0.0.1)",
-            "- Auth: Token (default)",
-            "- Tailscale: Off",
-            "- Connect chat apps later in Control UI > Channels.",
-          ];
-    if (hostProfile === "hosting") {
-      quickstartLines.push(`- ${theme.warn("Admin access stays Tailscale-only.")}`);
-    }
-    await prompter.note(quickstartLines.join("\n"), "QuickStart");
-  }
 
   const localPort = resolveGatewayPort(baseConfig);
   const localUrl = `ws://127.0.0.1:${localPort}`;
@@ -2281,18 +2160,16 @@ export async function runOnboardingWizard(
       : { profile: hostProfile, checks: [], enforced: false };
   if (hostSecurity.profile === "hosting" && hostSecurity.checks.length > 0) {
     const lines = [
-      theme.heading("HOSTING SECURITY CHECKLIST"),
-      "",
+      noteHeading("Checks"),
       ...hostSecurity.checks.map(
         (check) =>
-          `${check.ok ? theme.success("✓") : theme.error("✗")} ${theme.accentBright(check.name)}: ${
-            check.ok ? theme.info(check.detail) : theme.error(check.detail)
+          `${check.ok ? noteSuccess("✓") : noteWarn("!")} ${noteLabel(check.name)}: ${
+            check.ok ? check.detail : noteWarn(check.detail)
           }`,
       ),
-      "",
-      hostSecurity.logPath
-        ? `${theme.muted("Detailed host hardening log:")} ${theme.command(hostSecurity.logPath)}`
-        : undefined,
+      hostSecurity.logPath ? "" : undefined,
+      hostSecurity.logPath ? noteHeading("Log") : undefined,
+      hostSecurity.logPath ? noteCommand(hostSecurity.logPath) : undefined,
     ];
     await prompter.note(lines.filter(Boolean).join("\n"), "Host security");
   }

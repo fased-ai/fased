@@ -27,7 +27,7 @@ function normalizeSectionTitle(value: string): string {
 
 function sectionHeading(value: string): string {
   const text = normalizeSectionTitle(value);
-  return isRich() ? theme.heading(text) : text;
+  return isRich() ? theme.noteTitle(text) : text;
 }
 
 export function formatWizardIntro(title: string): string {
@@ -35,7 +35,7 @@ export function formatWizardIntro(title: string): string {
   if (process.env.FASED_INSTALLER_ONBOARD === "1") {
     return heading;
   }
-  const ascii = isRich() ? theme.accentBright(WIZARD_ASCII) : WIZARD_ASCII;
+  const ascii = isRich() ? theme.noteChrome(WIZARD_ASCII) : WIZARD_ASCII;
   return `${ascii}\n\n${heading}`;
 }
 

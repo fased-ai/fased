@@ -128,6 +128,7 @@ if supports_color; then
   C_RESET=$'\033[0m'
   C_BOLD=$'\033[1m'
   C_DIM=$'\033[2m'
+  C_GRAY=$'\033[90m'
   C_CYAN=$'\033[36m'
   C_GREEN=$'\033[32m'
   C_YELLOW=$'\033[33m'
@@ -136,6 +137,7 @@ else
   C_RESET=""
   C_BOLD=""
   C_DIM=""
+  C_GRAY=""
   C_CYAN=""
   C_GREEN=""
   C_YELLOW=""
@@ -147,6 +149,7 @@ color_green() { printf '%s%s%s' "$C_GREEN" "$1" "$C_RESET"; }
 color_yellow() { printf '%s%s%s' "$C_YELLOW" "$1" "$C_RESET"; }
 color_red() { printf '%s%s%s' "$C_RED" "$1" "$C_RESET"; }
 color_dim() { printf '%s%s%s' "$C_DIM" "$1" "$C_RESET"; }
+color_gray() { printf '%s%s%s' "$C_GRAY" "$1" "$C_RESET"; }
 
 repeat_char() {
   local char="$1"
@@ -161,20 +164,20 @@ repeat_char() {
 
 block_top() {
   local title="$1"
-  printf '\n%s %s %s\n' "$(color_dim "╭─")" "${C_BOLD}${title}${C_RESET}" "$(color_dim "$(repeat_char "─" 56)")"
+  printf '\n%s %s %s\n' "$(color_gray "╭─")" "$(color_cyan "${C_BOLD}${title}${C_RESET}")" "$(color_gray "$(repeat_char "─" 56)")"
 }
 
 block_line() {
   local text="${1:-}"
   if [[ -z "$text" ]]; then
-    printf '%s\n' "$(color_dim "│")"
+    printf '%s\n' "$(color_gray "│")"
   else
-    printf '%s  %s\n' "$(color_dim "│")" "$text"
+    printf '%s  %s\n' "$(color_gray "│")" "$text"
   fi
 }
 
 block_bottom() {
-  printf '%s\n' "$(color_dim "╰$(repeat_char "─" 72)")"
+  printf '%s\n' "$(color_gray "╰$(repeat_char "─" 72)")"
 }
 
 print_installer_banner() {
@@ -199,13 +202,14 @@ BANNER
   fi
   printf '\n'
   printf '%s\n' "$(color_cyan "${C_BOLD}Fased Agent v${version}${C_RESET}")"
-  printf '%s %s\n' "$(color_yellow "Mode:")" "$(color_green "${profile}")"
-  printf '%s %s\n\n' "$(color_yellow "Logs:")" "$(color_dim "${INSTALL_LOG_DIR}")"
+  printf '%s %s\n' "$(color_yellow "Mode:")" "$profile"
+  printf '%s %s\n\n' "$(color_yellow "Logs:")" "$(color_green "${INSTALL_LOG_DIR}")"
 }
 
 section() {
   local label="$1"
-  printf '\n%s\n' "$(color_yellow "${C_BOLD}${label}${C_RESET}")"
+  local display="${label^^}"
+  printf '\n%s\n' "$(color_cyan "${C_BOLD}${display}${C_RESET}")"
 }
 
 if [[ -f "$SAT_RUNTIME_ENV_FILE" ]]; then
@@ -1725,7 +1729,7 @@ print_hosted_handoff_block() {
   block_line "Setup complete."
   block_line
   block_line "$(color_yellow "${C_BOLD}RUN AS${C_RESET}")"
-  block_line "  $(color_green "$target_user")"
+  block_line "  $target_user"
   block_line
   block_line "$(color_yellow "${C_BOLD}WEB UI${C_RESET}")"
   block_line "  Open this on your own Tailscale-connected computer."

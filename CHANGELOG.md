@@ -4,9 +4,15 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
-## Unreleased
+## 0.1.15
 
-- No unreleased changes yet.
+- Clean hosted onboarding output so local-device, Tailscale, security,
+  readiness, and final access blocks use one readable terminal style.
+- Remove redundant hosted setup helper cards while keeping the underlying
+  Gateway, systemd, Tailscale, and hardening checks active.
+- Document that hosted VPS installs use the npm prebuilt runtime for speed and
+  require npm `latest` to be published when a new fresh-VPS setup should see the
+  newest wizard/runtime behavior.
 
 ## 0.1.14
 

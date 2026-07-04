@@ -6,13 +6,7 @@ import type { OnboardOptions } from "../commands/onboard-types.js";
 import { redactSensitiveText } from "../logging/redact.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { redactSensitiveUrlLikeString } from "../shared/net/redact-sensitive-url.js";
-import {
-  noteBullet,
-  noteCommands,
-  noteHeading,
-  noteStep,
-  noteWarn,
-} from "./onboarding-note-format.js";
+import { noteCommands, noteHeading, noteStep, noteWarn } from "./onboarding-note-format.js";
 import { isHostingProfile } from "./onboarding.types.js";
 import type { HostSetupProfile } from "./onboarding.types.js";
 import type { WizardPrompter } from "./prompts.js";
@@ -250,33 +244,27 @@ function runInteractiveTailscaleLogin(command: string, logPath?: string) {
 
 function formatTailscaleBrowserLoginNote(): string {
   return [
-    noteHeading("Browser approval"),
-    noteBullet("Open the Tailscale login URL printed below."),
-    noteBullet("Approve this VPS in your local browser, then return here."),
+    noteStep(1, "Open login URL"),
+    "Use the Tailscale login URL printed below.",
     "",
-    noteHeading("After approval"),
-    noteBullet("Setup continues automatically when Tailscale is ready."),
-    noteBullet(
-      noteWarn(
-        "If the command keeps waiting, setup continues after about two minutes when a tailnet IP is present.",
-      ),
-    ),
+    noteStep(2, "Approve VPS"),
+    "Approve this VPS in your local browser.",
+    "",
+    noteHeading("If it waits"),
+    noteWarn("Setup continues after about two minutes when a tailnet IP is already present."),
   ].join("\n");
 }
 
 function formatTailscaleAccountBrowserLoginNote(): string {
   return [
-    noteHeading("Browser approval"),
-    noteBullet("Open the Tailscale login URL printed below."),
-    noteBullet("Use the same account you want for dashboard and SSH access."),
+    noteStep(1, "Open login URL"),
+    "Use the Tailscale login URL printed below.",
     "",
-    noteHeading("After approval"),
-    noteBullet("Setup continues automatically when Tailscale is ready."),
-    noteBullet(
-      noteWarn(
-        "If the command keeps waiting, setup continues after about two minutes when a tailnet IP is present.",
-      ),
-    ),
+    noteStep(2, "Use same account"),
+    "Use the account you want for dashboard and SSH access.",
+    "",
+    noteHeading("If it waits"),
+    noteWarn("Setup continues after about two minutes when a tailnet IP is already present."),
   ].join("\n");
 }
 
@@ -376,24 +364,21 @@ function resolveTailnetSshTarget(params: {
 
 function formatLocalDeviceTailnetRequirementNote(): string {
   return [
-    noteHeading("Tailscale first"),
-    "Do this on your own computer before VPS lock-down.",
+    noteStep(1, "Prepare local computer"),
+    "Do this on your own computer, not inside the VPS.",
     "",
-    "Turn off Mullvad or any other local VPN.",
-    "Sign in to the same Tailscale account used on this VPS.",
-    "Keep this VPS installer open while you test.",
+    "Turn off any non-Tailscale VPN.",
+    "Sign into the same Tailscale account used on this VPS.",
+    "Leave this VPS installer open.",
     "",
-    noteStep(1, "Check local Tailscale"),
+    noteStep(2, "Check Tailscale"),
     "Run these on your own computer:",
     ...noteCommands(["tailscale status", "tailscale ip -4"]),
-    "Continue only when `tailscale ip -4` prints a `100.x.x.x` address.",
+    "Continue only after `tailscale ip -4` prints a `100.x.x.x` address.",
     "",
-    noteStep(2, "Install locally if needed"),
-    noteHeading("Windows"),
-    "Use the Tailscale app, then run checks from PowerShell.",
-    "",
-    noteHeading("macOS"),
-    "Use the Tailscale app, then run checks from Terminal.",
+    noteStep(3, "Install if needed"),
+    noteHeading("Windows and macOS"),
+    "Install the Tailscale app. Sign in. Then run step 2.",
     "",
     noteHeading("Fedora"),
     ...noteCommands([
@@ -407,18 +392,10 @@ function formatLocalDeviceTailnetRequirementNote(): string {
       "sudo systemctl enable --now tailscaled",
       "sudo tailscale up",
     ]),
-    noteHeading("Arch"),
-    ...noteCommands([
-      "sudo pacman -S tailscale",
-      "sudo systemctl enable --now tailscaled",
-      "sudo tailscale up",
-    ]),
-    noteHeading("WSL"),
-    "Advanced only. Prefer PowerShell Tailscale, or install/start Tailscale inside WSL.",
-    "",
     noteHeading("Common blockers"),
-    "`tailscale` not found means Tailscale is not installed on your own computer.",
-    "VPN can break MagicDNS. Turn it off, or use the `100.x.x.x` IP fallback.",
+    noteWarn("`tailscale` not found means Tailscale is not installed locally."),
+    noteWarn("Another VPN can break MagicDNS."),
+    noteWarn("Use the `100.x.x.x` IP fallback when hostname lookup fails."),
     "",
   ].join("\n");
 }
@@ -430,27 +407,22 @@ function formatTailnetSshVerificationNote(target: TailnetSshTarget): string {
   ].filter((value): value is string => Boolean(value));
   const sshTargets = pingTargets;
   return [
-    noteHeading("Before lock-down"),
-    "Run these on your own computer, not inside the VPS SSH session.",
-    "",
-    "Local Tailscale must be running and signed into the same account.",
-    "Turn off Mullvad or any other local VPN while testing.",
-    "",
-    noteStep(1, "Check Tailscale"),
+    noteStep(1, "Check visibility"),
+    "Run on your own computer:",
     ...noteCommands([
       "tailscale status",
       "tailscale ip -4",
       ...pingTargets.map((host) => `tailscale ping ${host}`),
     ]),
-    '"no matching peer" means your computer and VPS are not in the same tailnet.',
+    noteWarn('"no matching peer" means this computer and VPS are not in the same tailnet.'),
     "",
     noteStep(2, "SSH into VPS"),
+    "Run one command:",
     ...noteCommands(sshTargets.map((host) => `ssh ${target.user}@${host}`)),
-    `It must connect as ${target.user} and open in ${target.repoDir}.`,
-    "Do not continue until one SSH command works from your own computer.",
+    `Continue only after SSH opens in ${target.repoDir}.`,
     "",
-    noteHeading("If hostname fails"),
-    "Keep the other VPN off, or use the `100.x.x.x` IP command above.",
+    noteHeading("Fallback"),
+    noteWarn("If hostname lookup fails, keep the other VPN off and use the `100.x.x.x` command."),
   ].join("\n");
 }
 

@@ -1,7 +1,7 @@
 import { theme } from "../terminal/theme.js";
 
 export function noteHeading(value: string): string {
-  return theme.option(value.toUpperCase());
+  return theme.noteHeading(value.toUpperCase());
 }
 
 export function noteStep(index: number, value: string): string {
@@ -9,7 +9,7 @@ export function noteStep(index: number, value: string): string {
 }
 
 export function noteLabel(value: string): string {
-  return theme.option(value);
+  return theme.noteHeading(value.toUpperCase());
 }
 
 export function noteKey(value: string): string {

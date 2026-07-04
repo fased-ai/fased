@@ -57,6 +57,7 @@ import {
   noteCommand,
   noteCommands,
   noteHeading,
+  noteLabel,
   noteMuted,
   noteSuccess,
   noteWarn,
@@ -1193,7 +1194,7 @@ function formatOperatorReadinessSummary(
     }
     return item.summary;
   };
-  const summaryLines = items.map((item) => `- ${titleLabel(item.title)}: ${tone(item)}`);
+  const summaryLines = items.map((item) => `${noteLabel(titleLabel(item.title))}: ${tone(item)}`);
   const nextActionLines: string[] = [];
   if (
     items.some((item) => item.title === "Wallet Control Passkey ready" && item.tone !== "success")
@@ -1239,7 +1240,9 @@ function formatOperatorReadinessSummary(
   return [
     noteHeading("Readiness"),
     ...summaryLines,
-    ...(nextActionLines.length > 0 ? ["", noteHeading("Optional next"), ...nextActionLines] : []),
+    ...(nextActionLines.length > 0
+      ? ["", noteHeading("Optional next"), ...nextActionLines.map(noteWarn)]
+      : []),
   ].join("\n");
 }
 
@@ -1476,13 +1479,7 @@ export async function finalizeOnboardingWizard(
         )?.trim() || ""
       : "";
   if (settings.authMode === "token" && preferredGatewayToken) {
-    const synced = await ensureGatewaySecretMatchesToken(preferredGatewayToken);
-    if (synced) {
-      await prompter.note(
-        "Aligned the gateway service token with the dashboard token.",
-        "Gateway auth",
-      );
-    }
+    await ensureGatewaySecretMatchesToken(preferredGatewayToken);
   }
 
   const withWizardProgress = async <T>(
@@ -1509,23 +1506,15 @@ export async function finalizeOnboardingWizard(
 
   const systemdAvailable =
     process.platform === "linux" ? await isSystemdUserServiceAvailable() : true;
-  if (process.platform === "linux" && !systemdAvailable) {
+  if (process.platform === "linux" && !systemdAvailable && !strictVps && flow !== "quickstart") {
     await prompter.note(
-      strictVps
-        ? "Systemd user services are unavailable in this session. Skipping linger checks; hosted install requires the root-managed gateway service."
-        : "Systemd user services are unavailable. Skipping lingering checks and user-service install.",
+      "Systemd user services are unavailable. Skipping lingering checks and user-service install.",
       "Systemd",
     );
   }
 
   if (process.platform === "linux" && systemdAvailable && strictVps) {
-    await prompter.note(
-      [
-        "Hosted setup uses the root-managed fased-gateway.service running as the non-root app user.",
-        "Skipping systemd user lingering; no app sudo password is required.",
-      ].join("\n"),
-      "Systemd",
-    );
+    // Hosted setup intentionally uses a root-managed service running as the non-root app user.
   } else if (process.platform === "linux" && systemdAvailable) {
     const { ensureSystemdUserLingerInteractive } = await import("../commands/systemd-linger.js");
     await ensureSystemdUserLingerInteractive({
@@ -1568,13 +1557,6 @@ export async function finalizeOnboardingWizard(
   }
 
   if (process.platform === "linux" && !systemdAvailable && installDaemon) {
-    await prompter.note(
-      [
-        "Systemd user services are unavailable.",
-        "Attempting root-managed systemd fallback next (runs as non-root user).",
-      ].join("\n"),
-      "Gateway service",
-    );
     installDaemon = false;
   }
 
@@ -1630,15 +1612,17 @@ export async function finalizeOnboardingWizard(
             ].join(" && "),
             { timeoutMs: 12_000 },
           );
-          await prompter.note(
-            [
-              "Hosting root-managed gateway service already healthy; reusing existing service.",
-              patchHeap.ok
-                ? `Updated heap limit to ${recommendedGatewayMaxOldSpaceMb}MB and restarted.`
-                : `Heap patch skipped (${patchHeap.detail ?? "unknown error"}); unit may need manual update.`,
-            ].join("\n"),
-            "Gateway service",
-          );
+          if (!strictVps || flow !== "quickstart") {
+            await prompter.note(
+              [
+                "Root-managed gateway service already healthy; reusing existing service.",
+                patchHeap.ok
+                  ? `Updated heap limit to ${recommendedGatewayMaxOldSpaceMb}MB and restarted.`
+                  : `Heap patch skipped (${patchHeap.detail ?? "unknown error"}); unit may need manual update.`,
+              ].join("\n"),
+              "Gateway service",
+            );
+          }
           rootServiceActiveSuccessfully = true;
         } else {
           let rootRestartQueued = false;
@@ -1647,10 +1631,12 @@ export async function finalizeOnboardingWizard(
               "sudo -n systemctl restart --no-block fased-gateway.service",
             );
             if (restartExisting.ok) {
-              await prompter.note(
-                `Started existing ${strictVps ? "Hosting" : "Local"} root-managed gateway service.`,
-                "Gateway service",
-              );
+              if (!strictVps || flow !== "quickstart") {
+                await prompter.note(
+                  "Started existing root-managed gateway service.",
+                  "Gateway service",
+                );
+              }
               rootRestartQueued = true;
             }
           }
@@ -1736,10 +1722,12 @@ export async function finalizeOnboardingWizard(
             await runShell(
               "systemctl --user disable --now fased-gateway 2>/dev/null || true && systemctl --user reset-failed fased-gateway 2>/dev/null || true",
             );
-            await prompter.note(
-              `${strictVps ? "Hosting" : "Local"} root-managed gateway service ready (fased-gateway).`,
-              "Gateway service",
-            );
+            if (!strictVps || flow !== "quickstart") {
+              await prompter.note(
+                "Root-managed gateway service ready (fased-gateway).",
+                "Gateway service",
+              );
+            }
           }
         }
       }
@@ -1986,10 +1974,12 @@ export async function finalizeOnboardingWizard(
                 "Runtime start",
               );
             } else {
-              await prompter.note(
-                "Installed root-managed systemd fallback service (fased-gateway.service) running as non-root user.",
-                "Runtime start",
-              );
+              if (!strictVps || flow !== "quickstart") {
+                await prompter.note(
+                  "Installed root-managed systemd fallback service (fased-gateway.service) running as non-root user.",
+                  "Runtime start",
+                );
+              }
               installDaemon = true;
             }
           }
@@ -2121,23 +2111,6 @@ export async function finalizeOnboardingWizard(
           await new Promise((resolve) => setTimeout(resolve, 2_000));
         }
       }
-    }
-    if (strictVps) {
-      await prompter.note(
-        [
-          noteHeading("Access model"),
-          "Hosted runtime is private by default.",
-          "",
-          noteHeading("Web UI"),
-          "Tailscale HTTPS URL prints at the end.",
-          "",
-          noteHeading("SSH"),
-          "Use the final SSH command for updates and repairs.",
-          "",
-          noteBullet(noteWarn("Public SSH and Gateway ports remain blocked.")),
-        ].join("\n"),
-        "Hosting access",
-      );
     }
     const requirePersistentRuntime = strictVps || expectedGatewayStartupMode === "managed-up";
     if (requirePersistentRuntime && !autoStartEnabled && !opts.allowInsecure) {
@@ -2819,13 +2792,12 @@ export async function finalizeOnboardingWizard(
             const detail = warmup.detail ?? "not reachable yet";
             await prompter.note(
               [
-                noteHeading("Tailscale HTTPS"),
-                "Dashboard URL is still warming.",
-                `Detail: ${detail}`,
+                noteHeading("Web UI warming"),
+                "Tailscale HTTPS is not reachable yet from this VPS.",
+                noteWarn(`Detail: ${detail}`),
                 "",
                 "Setup will continue if the local Gateway listener is healthy.",
-                "Open the Web UI URL from your own Tailscale-connected computer.",
-                "If MagicDNS fails, turn off local VPN or use the 100.x IP fallback.",
+                "Use the final Web UI URL shortly, or use the fallback tunnel.",
               ].join("\n"),
               "Dashboard warmup",
             );
@@ -2855,18 +2827,16 @@ export async function finalizeOnboardingWizard(
           if (!wsWarmup.ok) {
             await prompter.note(
               [
-                noteHeading("Gateway connection"),
+                noteHeading("Gateway warming"),
                 "Dashboard page is reachable, but Gateway connection is still warming.",
-                "",
-                noteHeading("Gateway websocket"),
-                ...noteCommands([tailscaleGatewayWsUrl]),
                 `Detail: ${
                   "stage" in wsWarmup
                     ? `${wsWarmup.stage}: ${wsWarmup.message}`
                     : (wsWarmup.detail ?? "websocket not reachable")
                 }`,
                 "",
-                "Setup will continue if the local Gateway listener is healthy.",
+                noteHeading("Gateway websocket"),
+                ...noteCommands([tailscaleGatewayWsUrl]),
                 "Use fallback tunnel now, or retry Web UI shortly.",
               ].join("\n"),
               "Dashboard warmup",

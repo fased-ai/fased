@@ -1,6 +1,5 @@
-import { note as clackNote } from "@clack/prompts";
 import { visibleWidth } from "./ansi.js";
-import { stylePromptTitle } from "./prompt-style.js";
+import { theme } from "./theme.js";
 
 const URL_PREFIX_RE = /^(https?:\/\/|file:\/\/)/i;
 const WINDOWS_DRIVE_RE = /^[a-zA-Z]:[\\/]/;
@@ -129,6 +128,23 @@ export function wrapNoteMessage(
     .join("\n");
 }
 
+function formatNoteTitle(title?: string): string | undefined {
+  const value = title?.trim();
+  return value ? theme.noteTitle(value.toUpperCase()) : undefined;
+}
+
 export function note(message: string, title?: string) {
-  clackNote(wrapNoteMessage(message), stylePromptTitle(title));
+  const wrapped = wrapNoteMessage(message);
+  const lines = wrapped.split("\n");
+  const output: string[] = [];
+  const titleText = formatNoteTitle(title);
+
+  output.push(titleText ? `${theme.noteChrome("◇")} ${titleText}` : theme.noteChrome("◇"));
+  for (const line of lines) {
+    output.push(
+      line.trim().length > 0 ? `${theme.noteChrome("│")}  ${line}` : theme.noteChrome("│"),
+    );
+  }
+  output.push(theme.noteChrome("╰"));
+  process.stdout.write(`${output.join("\n")}\n`);
 }
