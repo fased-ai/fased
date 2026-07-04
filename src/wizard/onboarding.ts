@@ -767,7 +767,6 @@ export async function runOnboardingWizard(
     await installPrivateGoForOnboarding();
   };
   printWizardHeader(runtime);
-  await prompter.intro("FASED Setup");
   await requireRiskAcknowledgement({ opts, prompter });
 
   const snapshot = await readConfigFileSnapshot();
