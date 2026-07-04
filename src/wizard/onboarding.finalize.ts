@@ -48,11 +48,20 @@ import { readManagedReservationSummaries } from "../managed/tunnel.js";
 import { describeOperatorReadinessChecklist } from "../operator/operator-readiness.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { restoreTerminalState } from "../terminal/restore.js";
-import { theme } from "../terminal/theme.js";
 import { runTui } from "../tui/tui.js";
 import { resolveUserPath } from "../utils.js";
 import { readWalletProviderRegistry } from "../wallet/wallet-provider-registry.js";
 import { readWalletStatusSnapshot } from "../wallet/wallet-status.js";
+import {
+  noteBullet,
+  noteCommand,
+  noteCommands,
+  noteHeading,
+  noteLabel,
+  noteMuted,
+  noteSuccess,
+  noteWarn,
+} from "./onboarding-note-format.js";
 import type {
   FederationWizardSettings,
   GatewayWizardSettings,
@@ -108,45 +117,13 @@ export function buildOnboardingDashboardUrl(params: {
   return url.toString();
 }
 
-function noteHeading(value: string): string {
-  return theme.success(value.toUpperCase());
-}
-
-function noteLabel(value: string): string {
-  return theme.success(value);
-}
-
 function noteInfo(value: string): string {
   return value;
 }
 
-function noteSuccess(value: string): string {
-  return theme.success(value);
-}
-
-function noteWarn(value: string): string {
-  return theme.warn(value);
-}
-
-function noteMuted(value: string): string {
-  return theme.muted(value);
-}
-
-function noteCommand(value: string): string {
-  return theme.error(value);
-}
-
-function noteBullet(value: string): string {
-  return `- ${value}`;
-}
-
-function noteCommands(commands: string[]): string[] {
-  return ["", ...commands.map((command) => noteCommand(command)), ""];
-}
-
 function formatFasedNetworkAutoConnectSummary(messages: string[]): string {
   return [
-    noteHeading("Connection confirmed"),
+    noteHeading("Network connected"),
     ...messages.map((message) => noteBullet(noteSuccess(message))),
   ].join("\n");
 }
@@ -1210,41 +1187,45 @@ function formatOperatorReadinessSummary(
   };
   const tone = (item: (typeof items)[number]) => {
     if (item.tone === "success") {
-      return theme.success(item.summary);
+      return noteSuccess(item.summary);
     }
     if (item.tone === "warn") {
-      return theme.warn(item.summary);
+      return noteWarn(item.summary);
     }
-    return theme.info(item.summary);
+    return item.summary;
   };
   const summaryLines = items.map((item) => `- ${titleLabel(item.title)}: ${tone(item)}`);
   const nextActionLines: string[] = [];
   if (
     items.some((item) => item.title === "Wallet Control Passkey ready" && item.tone !== "success")
   ) {
-    nextActionLines.push("- Wallet: finish passkey before higher-risk automation.");
+    nextActionLines.push(noteBullet("Wallet: finish passkey before higher-risk automation."));
   }
   if (items.some((item) => item.title === "Agent wallet set" && item.tone !== "success")) {
-    nextActionLines.push("- Wallet: set an Agent wallet before paid network or skill wallet work.");
+    nextActionLines.push(
+      noteBullet("Wallet: set an Agent wallet before paid network or skill wallet work."),
+    );
   }
   if (
     items.some((item) => item.title === "Mining wallet separate" && item.summary === "Conflict")
   ) {
-    nextActionLines.push("- Mining: move Mining to a separate wallet before paid Agent flows.");
+    nextActionLines.push(
+      noteBullet("Mining: move Mining to a separate wallet before paid Agent flows."),
+    );
   } else if (
     items.some(
       (item) =>
         item.title === "Mining wallet separate" && item.summary === "Optional and not configured",
     )
   ) {
-    nextActionLines.push("- Mining: optional; create/import @wallet:mining later.");
+    nextActionLines.push(noteBullet("Mining: optional. Create/import @wallet:mining later."));
   }
   if (
     items.some(
       (item) => item.title === "Fased Network joined / trusted" && item.summary !== "Verified",
     )
   ) {
-    nextActionLines.push("- Fased Network: complete registration and trust review.");
+    nextActionLines.push(noteBullet("Fased Network: complete registration and trust review."));
   }
   if (
     items.some(
@@ -1254,12 +1235,12 @@ function formatOperatorReadinessSummary(
         item.summary !== "Disabled",
     )
   ) {
-    nextActionLines.push("- Fased Network: check hosted token issuance for public URL.");
+    nextActionLines.push(noteBullet("Fased Network: check hosted token issuance for public URL."));
   }
   return [
-    theme.heading("Operator readiness summary"),
+    noteHeading("Readiness"),
     ...summaryLines,
-    ...(nextActionLines.length > 0 ? ["", theme.heading("Next actions"), ...nextActionLines] : []),
+    ...(nextActionLines.length > 0 ? ["", noteHeading("Optional next"), ...nextActionLines] : []),
   ].join("\n");
 }
 
@@ -2145,11 +2126,15 @@ export async function finalizeOnboardingWizard(
     if (strictVps) {
       await prompter.note(
         [
-          noteHeading("Private access"),
-          noteInfo("Hosted runtime is private by default."),
+          noteHeading("Access model"),
+          "Hosted runtime is private by default.",
           "",
-          `${noteLabel("Web dashboard:")} ${noteCommand("Tailscale HTTPS URL")}`,
-          `${noteLabel("SSH terminal:")} ${noteCommand("ssh app@YOUR_VPS_TAILSCALE_NAME")} ${noteInfo("over Tailscale")}`,
+          noteHeading("Web UI"),
+          "Tailscale HTTPS URL prints at the end.",
+          "",
+          noteHeading("SSH"),
+          "Use the final SSH command for updates and repairs.",
+          "",
           noteBullet(noteWarn("Public SSH and Gateway ports remain blocked.")),
         ].join("\n"),
         "Hosting access",

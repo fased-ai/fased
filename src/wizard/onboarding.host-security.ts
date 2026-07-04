@@ -6,7 +6,14 @@ import type { OnboardOptions } from "../commands/onboard-types.js";
 import { redactSensitiveText } from "../logging/redact.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { redactSensitiveUrlLikeString } from "../shared/net/redact-sensitive-url.js";
-import { theme } from "../terminal/theme.js";
+import {
+  noteBullet,
+  noteCommands,
+  noteHeading,
+  noteKey,
+  noteStep,
+  noteWarn,
+} from "./onboarding-note-format.js";
 import { isHostingProfile } from "./onboarding.types.js";
 import type { HostSetupProfile } from "./onboarding.types.js";
 import type { WizardPrompter } from "./prompts.js";
@@ -242,30 +249,6 @@ function runInteractiveTailscaleLogin(command: string, logPath?: string) {
   return result;
 }
 
-function noteHeading(value: string): string {
-  return theme.success(value.toUpperCase());
-}
-
-function noteKey(value: string): string {
-  return theme.accentBright(value);
-}
-
-function noteWarn(value: string): string {
-  return theme.warn(value);
-}
-
-function noteCommand(value: string): string {
-  return theme.error(value);
-}
-
-function noteBullet(value: string): string {
-  return `- ${value}`;
-}
-
-function noteCommands(commands: string[]): string[] {
-  return ["", ...commands.map((command) => noteCommand(command)), ""];
-}
-
 function formatTailscaleBrowserLoginNote(): string {
   return [
     noteHeading("Browser approval"),
@@ -442,7 +425,7 @@ function formatTailnetSshVerificationNote(target: TailnetSshTarget): string {
     noteBullet("Local Tailscale must be running and signed into the same account."),
     noteBullet(noteWarn("Turn off Mullvad or any other local VPN while testing.")),
     "",
-    noteHeading("1. Check visibility"),
+    noteStep(1, "Check Tailscale"),
     ...noteCommands([
       "tailscale status",
       "tailscale ip -4",
@@ -452,7 +435,7 @@ function formatTailnetSshVerificationNote(target: TailnetSshTarget): string {
       noteWarn('"no matching peer" means local computer and VPS are not in the same tailnet.'),
     ),
     "",
-    noteHeading("2. Connect over Tailscale"),
+    noteStep(2, "SSH into VPS"),
     ...noteCommands(sshTargets.map((host) => `ssh ${target.user}@${host}`)),
     noteBullet(`It must connect as ${target.user} and open in ${target.repoDir}.`),
     noteBullet(noteWarn("Do not continue until one SSH command works from your own computer.")),

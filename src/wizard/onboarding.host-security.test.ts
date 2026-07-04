@@ -89,6 +89,8 @@ describe("onboarding host security", () => {
     });
 
     expect(note).toContain("BEFORE LOCK-DOWN");
+    expect(note).toContain("1. CHECK TAILSCALE");
+    expect(note).toContain("2. SSH INTO VPS");
     expect(note).toContain("tailscale ping fased-vps.tailnet.ts.net");
     expect(note).toContain("tailscale ping 100.64.1.2");
     expect(note).toContain("Run this from your own computer");
