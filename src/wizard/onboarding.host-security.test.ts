@@ -72,6 +72,10 @@ describe("onboarding host security", () => {
     expect(note).toContain("Windows: use PowerShell");
     expect(note).toContain("macOS: use Terminal");
     expect(note).toContain("WSL: advanced only");
+    expect(note).toContain("Turn off local VPNs such as Mullvad");
+    expect(note).toContain("tailscale status");
+    expect(note).toContain("tailscale ip -4");
+    expect(note).toContain("tailscaled is not running");
   });
 
   it("formats the pre-lockdown SSH over Tailscale check", () => {
@@ -88,7 +92,11 @@ describe("onboarding host security", () => {
     expect(note).toContain("tailscale ping 100.64.1.2");
     expect(note).toContain("These commands run on your own computer");
     expect(note).toContain("must have Tailscale installed");
-    expect(note).toContain("sudo dnf install -y tailscale");
+    expect(note).toContain("Turn off local VPNs such as Mullvad");
+    expect(note).toContain("tailscale status");
+    expect(note).toContain("tailscale ip -4");
+    expect(note).toContain("tailscaled is not running");
+    expect(note).toContain("curl -fsSL https://tailscale.com/install.sh | sh");
     expect(note).toContain('"no matching peer"');
     expect(note).toContain("not in the same tailnet");
     expect(note).toContain("ssh app@fased-vps.tailnet.ts.net");

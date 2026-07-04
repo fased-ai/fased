@@ -100,6 +100,10 @@ Start on your own computer by installing/signing into Tailscale with the same
 account you will use for the VPS. Windows users should use PowerShell or Windows
 Terminal with the Windows Tailscale app. macOS users should use Terminal with
 the macOS Tailscale app. Linux users should install Tailscale for their distro.
+Before you start the VPS installer, shut down local VPNs such as Mullvad,
+Proton VPN, NordVPN, corporate VPN clients, and browser/device VPN apps. Other
+VPNs can override Tailscale DNS, firewall rules, or `100.x` routing. Re-enable
+them only after Tailscale SSH and the dashboard work.
 The full OS-specific commands are kept in the tabbed
 [VPS Hosting install docs](https://docs.fased.ai/install#vps-hosting-install).
 
@@ -160,9 +164,13 @@ inside the VPS SSH session.
 
 If your own computer says `tailscale: command not found`, install Tailscale on
 your own computer first. Use the command for your local PC OS, not the VPS OS.
-Those commands are in the tabbed install docs. A separate VPN on your own
-computer can interfere with Tailscale DNS or routing; if ping/SSH cannot reach
-the VPS, disconnect the other VPN or allow Tailscale traffic and try again.
+Those commands are in the tabbed install docs. Do not continue until
+`tailscale status` shows your local computer online and `tailscale ip -4`
+prints a `100.x.x.x` address. If status says it cannot connect to local
+`tailscaled`, start the local Tailscale service, rerun `sudo tailscale up`, and
+sign in. A separate VPN on your own computer can interfere with Tailscale DNS
+or routing; if ping/SSH cannot reach the VPS, disconnect the other VPN or allow
+Tailscale traffic and try again.
 
 If `tailscale ping 100.x.x.x` works but
 `ssh app@YOUR_VPS_TAILSCALE_NAME` fails with a hostname/DNS error, Tailscale is
@@ -214,7 +222,16 @@ password to run `sudo loginctl enable-linger app`.
 
 `http://localhost:18789` is only the advanced SSH tunnel fallback. It works on
 your local computer after you start the tunnel shown by onboarding and leave
-that tunnel running. The raw gateway port stays closed to the public internet.
+that tunnel running. If SSH says `bind [127.0.0.1]:18789: Address already in
+use`, Tailscale worked but your local port is busy. Stop the local Fased
+gateway, or forward a different local port:
+
+```bash
+ssh -N -L 18790:127.0.0.1:18789 app@YOUR_VPS_TAILSCALE_NAME
+```
+
+Then open `http://localhost:18790/`. The raw gateway port stays closed to the
+public internet.
 
 `install.sh` runs onboarding by default. Use `./install.sh --no-onboard` only
 when you want to install first and run onboarding later.

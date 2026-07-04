@@ -68,6 +68,10 @@ describe("formatStrictRemoteAccessDetails", () => {
     expect(text).toContain("ssh -N -L 18789:127.0.0.1:18789 app@fased-vps.tailnet.ts.net");
     expect(text).toContain("ssh -N -L 18789:127.0.0.1:18789 app@100.64.1.9");
     expect(text).toContain("http://localhost:18789/#token=abc123");
+    expect(text).toContain("Address already in use");
+    expect(text).toContain("stop your local Fased gateway");
+    expect(text).toContain("ssh -N -L 18790:127.0.0.1:18789 app@fased-vps.tailnet.ts.net");
+    expect(text).toContain("http://localhost:18790/#token=abc123");
     expect(text).toContain("Only paste this if the browser asks for a token:");
   });
 });

@@ -159,6 +159,16 @@ export function formatStrictRemoteAccessDetails(params: {
   const sshTarget = params.tailscaleNodeName || params.tailscaleIpv4 || "(tailscale-node)";
   const tailscaleIpv4 = params.tailscaleIpv4?.trim();
   const hasIpFallback = Boolean(tailscaleIpv4 && tailscaleIpv4 !== sshTarget);
+  const alternateLocalPort = params.port === 65535 ? 18790 : params.port + 1;
+  let alternateTunnelUrl = `http://localhost:${alternateLocalPort}/`;
+  try {
+    const url = new URL(params.tunnelUrl);
+    url.hostname = "localhost";
+    url.port = String(alternateLocalPort);
+    alternateTunnelUrl = url.toString();
+  } catch {
+    // Keep the generic localhost URL if the provided tunnel URL is not parseable.
+  }
   return [
     noteInfo("Use both access paths after hosted setup:"),
     "",
@@ -190,6 +200,14 @@ export function formatStrictRemoteAccessDetails(params: {
       : undefined,
     `   ${noteInfo("Then open:")}`,
     `   ${noteCommand(params.tunnelUrl)}`,
+    `   ${noteWarn(
+      `If SSH reports "Address already in use" for 127.0.0.1:${params.port}, stop your local Fased gateway or use an unused local port:`,
+    )}`,
+    `   ${noteCommand(
+      `ssh -N -L ${alternateLocalPort}:127.0.0.1:${params.port} ${params.tailscaleSshUser}@${sshTarget}`,
+    )}`,
+    `   ${noteInfo("Then open:")}`,
+    `   ${noteCommand(alternateTunnelUrl)}`,
     hasIpFallback
       ? `   ${noteWarn(
           "Note: another VPN can break Tailscale MagicDNS while raw 100.x Tailscale IP access still works.",

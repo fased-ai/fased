@@ -150,12 +150,18 @@ recovery options and VPS provider console access working.
 
     Your own computer must join the same Tailscale account/tailnet as the VPS.
     That is the computer where you will open the dashboard and run SSH checks.
+    Before you start the remote VPS installer, shut down local VPNs such as
+    Mullvad, Proton VPN, NordVPN, corporate VPN clients, and browser/device VPN
+    apps. Other VPNs can override DNS, firewall rules, or the `100.64.0.0/10`
+    address range that Tailscale uses. Re-enable them only after Tailscale SSH
+    and the dashboard work, and use split tunneling if that VPN must stay on.
 
     <Tabs>
       <Tab title="Windows">
         Install the Tailscale app from
         [tailscale.com/download](https://tailscale.com/download), sign in, and
-        use PowerShell or Windows Terminal for checks.
+        use PowerShell or Windows Terminal for checks. Disconnect other local
+        VPNs first.
 
         PowerShell uses the Windows Tailscale app/service. If you use WSL
         instead, install and sign into Tailscale inside WSL too.
@@ -170,6 +176,7 @@ recovery options and VPS provider console access working.
 
         ```bash
         curl -fsSL https://tailscale.com/install.sh | sh
+        sudo systemctl enable --now tailscaled
         sudo tailscale up
         tailscale status
         tailscale ip -4
@@ -177,7 +184,7 @@ recovery options and VPS provider console access working.
       </Tab>
       <Tab title="Fedora">
         ```bash
-        sudo dnf install -y tailscale
+        curl -fsSL https://tailscale.com/install.sh | sh
         sudo systemctl enable --now tailscaled
         sudo tailscale up
         tailscale status
@@ -194,6 +201,12 @@ recovery options and VPS provider console access working.
         ```
       </Tab>
     </Tabs>
+
+    Do not continue until `tailscale status` shows your local computer online
+    and `tailscale ip -4` prints a `100.x.x.x` address. If status says it failed
+    to connect to local `tailscaled`, start the daemon with
+    `sudo systemctl enable --now tailscaled` on Linux, then rerun
+    `sudo tailscale up` and sign in.
 
     Other private-access systems are custom deployments. The standard hosted
     installer does not configure or verify WireGuard, Headscale, ZeroTier,
@@ -308,7 +321,9 @@ recovery options and VPS provider console access working.
 
     <Accordion title="Tailscale check, VPN, and MagicDNS troubleshooting">
     If your own computer says `tailscale: command not found`, return to step 1
-    and install Tailscale on your local PC first. A separate VPN on your own
+    and install Tailscale on your local PC first. If `tailscale status` says it
+    cannot connect to local `tailscaled`, the local Tailscale service is not
+    running; start it and sign in before continuing. A separate VPN on your own
     computer can interfere with Tailscale DNS or routing. Turn the other VPN off
     for the cleanest setup. If it must stay on, use the `100.x.x.x` Tailscale IP
     instead of the hostname.
@@ -367,7 +382,16 @@ recovery options and VPS provider console access working.
     Root SSH is for initial bootstrap or emergency repair, not normal
     operation. `http://localhost:18789` is only the advanced SSH tunnel fallback:
     it works on your local computer after you start the tunnel shown by
-    onboarding and leave it running.
+    onboarding and leave it running. If SSH says
+    `bind [127.0.0.1]:18789: Address already in use`, Tailscale worked but
+    your local port is busy. Stop the local Fased gateway, or forward a
+    different local port:
+
+    ```bash
+    ssh -N -L 18790:127.0.0.1:18789 app@YOUR_VPS_TAILSCALE_NAME
+    ```
+
+    Then open `http://localhost:18790/`.
 
   </Tab>
 </Tabs>

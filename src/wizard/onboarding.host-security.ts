@@ -408,12 +408,27 @@ function formatLocalDeviceTailnetRequirementNote(): string {
       ),
     ),
     "",
+    noteHeading("Before VPS setup"),
+    noteBullet(
+      noteWarn("Turn off local VPNs such as Mullvad before you connect this VPS to Tailscale."),
+    ),
+    noteBullet(
+      noteInfo(
+        `On your own computer, verify ${noteCommand("tailscale status")} and ${noteCommand("tailscale ip -4")} before continuing.`,
+      ),
+    ),
+    noteBullet(
+      noteWarn(
+        "If status says tailscaled is not running, start Tailscale locally and sign in first.",
+      ),
+    ),
+    "",
     noteHeading("Local computer setup"),
     noteBullet(noteInfo("Windows: use PowerShell with the Tailscale app signed in.")),
     noteBullet(noteKey("macOS: use Terminal with the Tailscale app signed in.")),
     noteBullet(
       noteSuccess(
-        `Fedora: ${noteCommand("sudo dnf install -y tailscale && sudo systemctl enable --now tailscaled && sudo tailscale up")}`,
+        `Fedora: ${noteCommand("curl -fsSL https://tailscale.com/install.sh | sh && sudo systemctl enable --now tailscaled && sudo tailscale up")}`,
       ),
     ),
     noteBullet(
@@ -436,7 +451,7 @@ function formatLocalDeviceTailnetRequirementNote(): string {
     ),
     noteBullet(
       noteWarn(
-        "VPN can break MagicDNS. Turn it off, or use the 100.x Tailscale IP instead of the hostname.",
+        "Other VPNs can break MagicDNS or 100.x routing. Keep them off until SSH and the dashboard work.",
       ),
     ),
     noteBullet(noteInfo("Keep this VPS installer terminal open while you test.")),
@@ -458,6 +473,7 @@ function formatTailnetSshVerificationNote(target: TailnetSshTarget): string {
       noteInfo("These commands run on your own computer, not inside the VPS SSH session."),
     ),
     noteBullet("Your own computer must have Tailscale installed and be in the same tailnet."),
+    noteBullet(noteWarn("Turn off local VPNs such as Mullvad before checking this VPS.")),
     noteBullet(
       noteWarn("If `tailscale` is not found, install Tailscale on your own computer first."),
     ),
@@ -465,7 +481,7 @@ function formatTailnetSshVerificationNote(target: TailnetSshTarget): string {
     noteHeading("Local computer setup"),
     noteBullet(
       noteSuccess(
-        `Fedora: ${noteCommand("sudo dnf install -y tailscale && sudo systemctl enable --now tailscaled && sudo tailscale up")}`,
+        `Fedora: ${noteCommand("curl -fsSL https://tailscale.com/install.sh | sh && sudo systemctl enable --now tailscaled && sudo tailscale up")}`,
       ),
     ),
     noteBullet(
@@ -483,14 +499,21 @@ function formatTailnetSshVerificationNote(target: TailnetSshTarget): string {
     ),
     noteBullet(
       noteWarn(
-        "VPN can break MagicDNS hostnames. Turn it off, or use the 100.x IP commands below.",
+        "Other VPNs can break MagicDNS hostnames or 100.x routing. Keep them off while you test.",
       ),
     ),
     "",
     noteHeading("1. Check visibility"),
     "On your own computer, run:",
+    noteCommand("tailscale status"),
+    noteCommand("tailscale ip -4"),
     ...pingTargets.map((host) => noteCommand(`tailscale ping ${host}`)),
     "",
+    noteBullet(
+      noteWarn(
+        "If status says tailscaled is not running, start Tailscale locally and sign in first.",
+      ),
+    ),
     noteBullet(
       noteWarn('"no matching peer" means your computer and VPS are not in the same tailnet.'),
     ),
