@@ -4,6 +4,13 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.18
+
+- Remove the leftover `FASED SETUP` intro frame so onboarding begins directly
+  with the first framed prompt.
+- Keep the installer banner/status framing from 0.1.17 while aligning the
+  published npm package with the current main branch.
+
 ## 0.1.17
 
 - Frame the installer banner and top setup status so the FASED logo, version,

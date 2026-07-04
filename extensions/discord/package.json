@@ -1,6 +1,6 @@
 {
   "name": "@fased/discord",
-  "version": "0.1.17",
+  "version": "0.1.18",
   "description": "FasedAgent Discord channel plugin",
   "type": "module",
   "fased": {
