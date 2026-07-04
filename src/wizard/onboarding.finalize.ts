@@ -48,11 +48,20 @@ import { readManagedReservationSummaries } from "../managed/tunnel.js";
 import { describeOperatorReadinessChecklist } from "../operator/operator-readiness.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { restoreTerminalState } from "../terminal/restore.js";
-import { theme } from "../terminal/theme.js";
 import { runTui } from "../tui/tui.js";
 import { resolveUserPath } from "../utils.js";
 import { readWalletProviderRegistry } from "../wallet/wallet-provider-registry.js";
 import { readWalletStatusSnapshot } from "../wallet/wallet-status.js";
+import {
+  noteBullet,
+  noteCommand,
+  noteCommands,
+  noteHeading,
+  noteLabel,
+  noteMuted,
+  noteSuccess,
+  noteWarn,
+} from "./onboarding-note-format.js";
 import type {
   FederationWizardSettings,
   GatewayWizardSettings,
@@ -108,41 +117,13 @@ export function buildOnboardingDashboardUrl(params: {
   return url.toString();
 }
 
-function noteHeading(value: string): string {
-  return theme.heading(value.toUpperCase());
-}
-
-function noteLabel(value: string): string {
-  return theme.accentBright(value);
-}
-
 function noteInfo(value: string): string {
-  return theme.info(value);
-}
-
-function noteSuccess(value: string): string {
-  return theme.success(value);
-}
-
-function noteWarn(value: string): string {
-  return theme.warn(value);
-}
-
-function noteMuted(value: string): string {
-  return theme.muted(value);
-}
-
-function noteCommand(value: string): string {
-  return theme.command(value);
-}
-
-function noteBullet(value: string): string {
-  return `- ${value}`;
+  return value;
 }
 
 function formatFasedNetworkAutoConnectSummary(messages: string[]): string {
   return [
-    noteHeading("Connection confirmed"),
+    noteHeading("Network connected"),
     ...messages.map((message) => noteBullet(noteSuccess(message))),
   ].join("\n");
 }
@@ -159,46 +140,55 @@ export function formatStrictRemoteAccessDetails(params: {
   const sshTarget = params.tailscaleNodeName || params.tailscaleIpv4 || "(tailscale-node)";
   const tailscaleIpv4 = params.tailscaleIpv4?.trim();
   const hasIpFallback = Boolean(tailscaleIpv4 && tailscaleIpv4 !== sshTarget);
+  const alternateLocalPort = params.port === 65535 ? 18790 : params.port + 1;
+  let alternateTunnelUrl = `http://localhost:${alternateLocalPort}/`;
+  try {
+    const url = new URL(params.tunnelUrl);
+    url.hostname = "localhost";
+    url.port = String(alternateLocalPort);
+    alternateTunnelUrl = url.toString();
+  } catch {
+    // Keep the generic localhost URL if the provided tunnel URL is not parseable.
+  }
   return [
-    noteInfo("Use both access paths after hosted setup:"),
+    noteHeading("Web UI"),
+    "Open this on your own computer after signing into the same Tailscale account:",
+    ...noteCommands([params.dashboardUrl]),
+    noteHeading("SSH"),
+    "Use this for updates, logs, and repairs:",
+    ...noteCommands([`ssh ${params.tailscaleSshUser}@${sshTarget}`]),
+    hasIpFallback ? "If hostname DNS fails but `tailscale ping 100.x.x.x` works:" : undefined,
+    ...(hasIpFallback ? noteCommands([`ssh ${params.tailscaleSshUser}@${tailscaleIpv4}`]) : []),
+    `The app user shell opens in the Fased repo directory.`,
     "",
-    noteHeading("1. Web dashboard"),
-    `   ${noteInfo("Open this on your own computer after signing into the same Tailscale account:")}`,
-    `   ${noteCommand(params.dashboardUrl)}`,
-    "",
-    noteHeading("2. SSH terminal"),
-    `   ${noteInfo("Use this for CLI commands, updates, logs, and repairs over Tailscale:")}`,
-    `   ${noteCommand(`ssh ${params.tailscaleSshUser}@${sshTarget}`)}`,
-    hasIpFallback
-      ? `   ${noteWarn("If hostname DNS fails but Tailscale IP ping works, use:")} ${noteCommand(
-          `ssh ${params.tailscaleSshUser}@${tailscaleIpv4}`,
-        )}`
-      : undefined,
-    `   ${noteInfo("The app user shell opens in the Fased repo directory.")}`,
-    "",
-    noteHeading("Advanced fallback"),
-    `   ${noteInfo(
-      "If the Tailscale web URL is unavailable, run this on your local computer and leave it open:",
-    )}`,
-    `   ${noteCommand(
+    noteHeading("Fallback tunnel"),
+    "Use only if the Web UI URL is not ready. Run this locally and leave it open:",
+    ...noteCommands([
       `ssh -N -L ${params.port}:127.0.0.1:${params.port} ${params.tailscaleSshUser}@${sshTarget}`,
-    )}`,
-    hasIpFallback
-      ? `   ${noteWarn("If a VPN blocks MagicDNS hostname lookup, use:")} ${noteCommand(
+    ]),
+    "Then open:",
+    ...noteCommands([params.tunnelUrl]),
+    hasIpFallback ? "If a VPN blocks MagicDNS hostname lookup, use the IP tunnel:" : undefined,
+    ...(hasIpFallback
+      ? noteCommands([
           `ssh -N -L ${params.port}:127.0.0.1:${params.port} ${params.tailscaleSshUser}@${tailscaleIpv4}`,
-        )}`
-      : undefined,
-    `   ${noteInfo("Then open:")}`,
-    `   ${noteCommand(params.tunnelUrl)}`,
+        ])
+      : []),
+    noteHeading("Local port busy"),
+    `If SSH says "Address already in use" for 127.0.0.1:${params.port}:`,
+    noteBullet("Stop the local Fased gateway, or use a different local port."),
+    ...noteCommands([
+      `ssh -N -L ${alternateLocalPort}:127.0.0.1:${params.port} ${params.tailscaleSshUser}@${sshTarget}`,
+    ]),
+    "Then open:",
+    ...noteCommands([alternateTunnelUrl]),
     hasIpFallback
-      ? `   ${noteWarn(
-          "Note: another VPN can break Tailscale MagicDNS while raw 100.x Tailscale IP access still works.",
-        )}`
+      ? noteBullet(noteWarn("Another VPN can break MagicDNS while `100.x` IP access still works."))
       : undefined,
     "",
-    noteHeading("Gateway token backup"),
-    `   ${noteWarn("Only paste this if the browser asks for a token:")}`,
-    `   ${noteCommand(params.gatewayToken || "(token not available)")}`,
+    noteHeading("Token backup"),
+    "Only paste this if the browser asks for a token:",
+    ...noteCommands([params.gatewayToken || "(token not available)"]),
   ]
     .filter((line): line is string => line !== undefined)
     .join("\n");
@@ -212,24 +202,21 @@ export function formatLocalDashboardReady(params: {
   healthCheck?: string;
 }): string {
   return [
-    "1. Dashboard",
-    params.opened
-      ? "   Opened in your browser. Keep that tab open."
-      : "   Open this URL in a browser on this machine:",
-    params.opened ? `   Backup link: ${params.dashboardUrl}` : `   ${params.dashboardUrl}`,
+    noteHeading("Web UI"),
+    params.opened ? "Opened in your browser. Keep that tab open." : "Open this on this machine:",
+    ...noteCommands([params.dashboardUrl]),
     "",
-    "2. First setup",
-    "   In the dashboard, go to Agent > Models and connect a model provider.",
+    noteHeading("Next"),
+    noteBullet("In the dashboard, go to Agent > Models and connect a model provider."),
+    noteBullet("Open Chat and send a test message."),
     "",
-    "3. First chat",
-    "   Open Chat and send a test message.",
     params.gatewayToken ? "" : undefined,
-    params.gatewayToken ? "Token backup" : undefined,
-    params.gatewayToken ? `   ${params.gatewayToken}` : undefined,
+    params.gatewayToken ? noteHeading("Token backup") : undefined,
+    ...(params.gatewayToken ? noteCommands([params.gatewayToken]) : []),
     params.healthCheck ? "" : undefined,
     params.healthCheck,
     params.fallbackHint ? "" : undefined,
-    params.fallbackHint ? "Remote browser fallback" : undefined,
+    params.fallbackHint ? noteHeading("Remote browser fallback") : undefined,
     params.fallbackHint,
   ]
     .filter((line): line is string => line !== undefined)
@@ -1200,41 +1187,45 @@ function formatOperatorReadinessSummary(
   };
   const tone = (item: (typeof items)[number]) => {
     if (item.tone === "success") {
-      return theme.success(item.summary);
+      return noteSuccess(item.summary);
     }
     if (item.tone === "warn") {
-      return theme.warn(item.summary);
+      return noteWarn(item.summary);
     }
-    return theme.info(item.summary);
+    return item.summary;
   };
   const summaryLines = items.map((item) => `- ${titleLabel(item.title)}: ${tone(item)}`);
   const nextActionLines: string[] = [];
   if (
     items.some((item) => item.title === "Wallet Control Passkey ready" && item.tone !== "success")
   ) {
-    nextActionLines.push("- Wallet: finish passkey before higher-risk automation.");
+    nextActionLines.push(noteBullet("Wallet: finish passkey before higher-risk automation."));
   }
   if (items.some((item) => item.title === "Agent wallet set" && item.tone !== "success")) {
-    nextActionLines.push("- Wallet: set an Agent wallet before paid network or skill wallet work.");
+    nextActionLines.push(
+      noteBullet("Wallet: set an Agent wallet before paid network or skill wallet work."),
+    );
   }
   if (
     items.some((item) => item.title === "Mining wallet separate" && item.summary === "Conflict")
   ) {
-    nextActionLines.push("- Mining: move Mining to a separate wallet before paid Agent flows.");
+    nextActionLines.push(
+      noteBullet("Mining: move Mining to a separate wallet before paid Agent flows."),
+    );
   } else if (
     items.some(
       (item) =>
         item.title === "Mining wallet separate" && item.summary === "Optional and not configured",
     )
   ) {
-    nextActionLines.push("- Mining: optional; create/import @wallet:mining later.");
+    nextActionLines.push(noteBullet("Mining: optional. Create/import @wallet:mining later."));
   }
   if (
     items.some(
       (item) => item.title === "Fased Network joined / trusted" && item.summary !== "Verified",
     )
   ) {
-    nextActionLines.push("- Fased Network: complete registration and trust review.");
+    nextActionLines.push(noteBullet("Fased Network: complete registration and trust review."));
   }
   if (
     items.some(
@@ -1244,12 +1235,12 @@ function formatOperatorReadinessSummary(
         item.summary !== "Disabled",
     )
   ) {
-    nextActionLines.push("- Fased Network: check hosted token issuance for public URL.");
+    nextActionLines.push(noteBullet("Fased Network: check hosted token issuance for public URL."));
   }
   return [
-    theme.heading("Operator readiness summary"),
+    noteHeading("Readiness"),
     ...summaryLines,
-    ...(nextActionLines.length > 0 ? ["", theme.heading("Next actions"), ...nextActionLines] : []),
+    ...(nextActionLines.length > 0 ? ["", noteHeading("Optional next"), ...nextActionLines] : []),
   ].join("\n");
 }
 
@@ -2135,11 +2126,15 @@ export async function finalizeOnboardingWizard(
     if (strictVps) {
       await prompter.note(
         [
-          noteHeading("Private access"),
-          noteInfo("Hosted runtime is private by default."),
+          noteHeading("Access model"),
+          "Hosted runtime is private by default.",
           "",
-          `${noteLabel("Web dashboard:")} ${noteCommand("Tailscale HTTPS URL")}`,
-          `${noteLabel("SSH terminal:")} ${noteCommand("ssh app@YOUR_VPS_TAILSCALE_NAME")} ${noteInfo("over Tailscale")}`,
+          noteHeading("Web UI"),
+          "Tailscale HTTPS URL prints at the end.",
+          "",
+          noteHeading("SSH"),
+          "Use the final SSH command for updates and repairs.",
+          "",
           noteBullet(noteWarn("Public SSH and Gateway ports remain blocked.")),
         ].join("\n"),
         "Hosting access",
@@ -2926,7 +2921,7 @@ export async function finalizeOnboardingWizard(
         port: settings.port,
         gatewayToken: gatewayTokenForUi || undefined,
       }),
-      "Remote Access Details",
+      "Hosted access",
     );
   } else if (flow !== "quickstart") {
     await prompter.note(
@@ -3304,11 +3299,13 @@ export async function finalizeOnboardingWizard(
   }
 
   await prompter.outro(
-    controlUiOpened
-      ? "Setup complete. Next: Agent > Models, then Chat."
-      : seededInBackground
-        ? "Setup complete. Open the dashboard link above, then use Agent > Models and Chat."
-        : "Setup complete. Use the dashboard link above, then use Agent > Models and Chat.",
+    strictVps
+      ? "Setup complete. Use HOSTED ACCESS above: Web UI, SSH, or fallback tunnel."
+      : controlUiOpened
+        ? "Setup complete. Next: Agent > Models, then Chat."
+        : seededInBackground
+          ? "Setup complete. Open the dashboard link above, then use Agent > Models and Chat."
+          : "Setup complete. Use the dashboard link above, then use Agent > Models and Chat.",
   );
 
   return { launchedTui };

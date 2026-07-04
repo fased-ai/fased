@@ -57,6 +57,13 @@ import {
   resolveLocalSignerSocketPath,
 } from "../wallet/wallet-runtime-config.js";
 import { isHostedSecurityCapableSession } from "./host-security-capability.js";
+import {
+  noteBullet,
+  noteHeading,
+  noteStep,
+  noteSuccess,
+  noteWarn,
+} from "./onboarding-note-format.js";
 import { configureFederationForOnboarding } from "./onboarding.federation.js";
 import { finalizeOnboardingWizard } from "./onboarding.finalize.js";
 import { configureGatewayForOnboarding } from "./onboarding.gateway-config.js";
@@ -1170,14 +1177,13 @@ export async function runOnboardingWizard(
   if (flow !== "quickstart") {
     await prompter.note(
       [
-        "Operator path for this machine:",
-        "1. secure admin access",
-        "2. configure the right wallet roles",
-        "3. join Fased Network",
-        "4. enable hosted reachability only if needed",
-        "5. enable SAT mining only if needed",
+        noteStep(1, "Secure access"),
+        noteStep(2, "Choose wallet roles"),
+        noteStep(3, "Open Web UI"),
         "",
-        "Fased Network join does not automatically mean public paid-task or marketplace readiness.",
+        noteHeading("Optional later"),
+        noteBullet("Fased Network: enable only when you want network tasks."),
+        noteBullet("SAT mining: enable only when you want mining on this host."),
       ].join("\n"),
       "Operator path",
     );
@@ -1562,7 +1568,8 @@ export async function runOnboardingWizard(
             federationBondWalletId = walletId;
             nextConfig = assignFederationBondWallet(nextConfig, { walletId });
             const advisories: string[] = [
-              `Configured Vault wallet ${targetWallet.name} (${walletId}) as the Fased Network bond Vault.`,
+              noteHeading("Network bond"),
+              noteBullet(`Vault wallet: ${targetWallet.name} (${walletId})`),
             ];
             await prompter.note(advisories.join("\n"), "Fased Network bond");
             addAnotherWallet = await prompter.confirm({
@@ -1961,9 +1968,12 @@ export async function runOnboardingWizard(
             if (isAgentWallet) {
               await prompter.note(
                 [
-                  `${walletName} (${walletId}) is now the Agent wallet.`,
-                  "Mining stays on a separate wallet.",
-                  "Create or import one dedicated Mining wallet if you want SAT mining on this host.",
+                  noteHeading("Agent wallet"),
+                  noteBullet(`${walletName} (${walletId})`),
+                  "",
+                  noteHeading("Mining optional"),
+                  noteBullet("Mining uses a separate wallet."),
+                  noteBullet("Create/import a Mining wallet later if you want SAT mining."),
                 ].join("\n"),
                 "Mining",
               );
@@ -1981,14 +1991,18 @@ export async function runOnboardingWizard(
                 });
                 await prompter.note(
                   [
-                    `Mining wallet set to ${walletName} (${walletId}).`,
-                    "Open the Mining page after onboarding to fund Mining capital and start worker automation.",
+                    noteHeading("Mining wallet"),
+                    noteBullet(`${walletName} (${walletId})`),
+                    noteBullet("Open Mining after onboarding to fund and start workers."),
                   ].join("\n"),
                   "Mining",
                 );
               } else if (currentMiningWalletId && currentMiningWalletId !== walletId) {
                 await prompter.note(
-                  `Keeping existing Mining wallet: ${currentMiningWalletId}`,
+                  [
+                    noteHeading("Mining wallet"),
+                    noteBullet(`Keeping existing: ${currentMiningWalletId}`),
+                  ].join("\n"),
                   "Mining",
                 );
               }
@@ -2024,7 +2038,7 @@ export async function runOnboardingWizard(
       }
       if (walletCeremonyEvents.length > 0) {
         const summaryLines = [
-          "Wallet setup summary:",
+          noteHeading("Wallet actions"),
           ...walletCeremonyEvents.map((evt) => {
             const scope = evt.chain
               ? `${evt.chain}:${evt.walletName ?? evt.walletId ?? "default"}`
@@ -2035,23 +2049,31 @@ export async function runOnboardingWizard(
                 : evt.mode === "local-signer-import"
                   ? "self-hosted-import"
                   : evt.mode;
-            return `- ${label} [${scope}] ${evt.ok ? "ok" : "failed"}${evt.detail ? ` (${evt.detail})` : ""}`;
+            const status = evt.ok ? noteSuccess("ok") : noteWarn("failed");
+            return noteBullet(
+              `${label} [${scope}]: ${status}${evt.detail ? ` (${evt.detail})` : ""}`,
+            );
           }),
           "",
-          `- Agent wallet: ${describeWalletRef(readAgentWalletSummary())}`,
-          `- SAT mining wallet: ${describeWalletRef(readRoleWallet("mining"))}`,
-          `- Vault wallet: ${describeWalletRef(readRoleWallet("vault"))}`,
-          `- Fased Network bond Vault: ${
-            federationBondWalletId
-              ? describeWalletRef({
-                  walletId: federationBondWalletId,
-                  walletName: readWalletProviderRegistry(process.env).wallets.find(
-                    (wallet) => wallet.id === federationBondWalletId,
-                  )?.name,
-                })
-              : "not assigned"
-          }`,
-          `- Jupiter wallet actions: ${readJupiterLimitOrderApiKey() ? "configured" : "not configured"}`,
+          noteHeading("Assignments"),
+          noteBullet(`Agent wallet: ${describeWalletRef(readAgentWalletSummary())}`),
+          noteBullet(`SAT mining wallet: ${describeWalletRef(readRoleWallet("mining"))}`),
+          noteBullet(`Vault wallet: ${describeWalletRef(readRoleWallet("vault"))}`),
+          noteBullet(
+            `Fased Network bond Vault: ${
+              federationBondWalletId
+                ? describeWalletRef({
+                    walletId: federationBondWalletId,
+                    walletName: readWalletProviderRegistry(process.env).wallets.find(
+                      (wallet) => wallet.id === federationBondWalletId,
+                    )?.name,
+                  })
+                : "not assigned"
+            }`,
+          ),
+          noteBullet(
+            `Jupiter wallet actions: ${readJupiterLimitOrderApiKey() ? "configured" : "not configured"}`,
+          ),
         ];
         const rpcKeys = Array.from(
           new Set(
@@ -2061,10 +2083,10 @@ export async function runOnboardingWizard(
           ),
         );
         if (rpcKeys.length > 0) {
-          summaryLines.push("", "RPC env keys:");
+          summaryLines.push("", noteHeading("Optional env"));
           for (const key of rpcKeys) {
             const configured = Boolean((nextConfig.env?.vars?.[key] ?? "").trim());
-            summaryLines.push(`- ${key}${configured ? " (configured)" : " (unset)"}`);
+            summaryLines.push(noteBullet(`${key}: ${configured ? "configured" : "unset"}`));
           }
         }
         await prompter.note(summaryLines.join("\n"), "Wallet summary");

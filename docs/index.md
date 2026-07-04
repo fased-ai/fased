@@ -152,8 +152,12 @@ one place.
 
     Run that command on the VPS itself. Fased installs/starts Tailscale when
     needed and prints the VPS login URL. Open that URL from your local
-    computer's browser. Before SSH/firewall lock-down, confirm that
-    `ssh app@YOUR_VPS_TAILSCALE_NAME` reaches `/home/app/fased`.
+    computer's browser. Before running hosted setup, shut down local VPNs such
+    as Mullvad and confirm your local computer is already signed into
+    Tailscale. Before SSH/firewall lock-down, confirm that
+    `tailscale status`, `tailscale ip -4`, and
+    `ssh app@YOUR_VPS_TAILSCALE_NAME` work from your own computer and that SSH
+    reaches `/home/app/fased`.
 
     <Accordion title="Hosted support boundary">
       - Hosted VPS hardening: Ubuntu/Fedora/RHEL-family Linux with systemd.

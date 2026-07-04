@@ -214,6 +214,8 @@ export function formatControlUiSshHint(params: {
   const basePath = normalizeControlUiBasePath(params.basePath);
   const uiPath = basePath ? `${basePath}/` : "/";
   const localUrl = `http://localhost:${params.port}${uiPath}`;
+  const alternateLocalPort = params.port === 65535 ? 18790 : params.port + 1;
+  const alternateLocalUrl = `http://localhost:${alternateLocalPort}${uiPath}`;
   const sshTarget = resolveSshTargetHint();
   return [
     "No local browser was detected.",
@@ -221,6 +223,10 @@ export function formatControlUiSshHint(params: {
     `ssh -N -L ${params.port}:127.0.0.1:${params.port} ${sshTarget}`,
     "Then open:",
     localUrl,
+    `If SSH reports "Address already in use" for 127.0.0.1:${params.port}, stop the local Gateway or use an unused local port:`,
+    `ssh -N -L ${alternateLocalPort}:127.0.0.1:${params.port} ${sshTarget}`,
+    "Then open:",
+    alternateLocalUrl,
     params.token ? "Token backup:" : undefined,
     params.token,
   ]

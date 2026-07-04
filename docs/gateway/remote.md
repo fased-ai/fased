@@ -91,6 +91,15 @@ With the tunnel up:
 
 Note: replace `18789` with your configured `gateway.port`, `--port`, or
 `FASED_GATEWAY_PORT`.
+If SSH says `bind [127.0.0.1]:18789: Address already in use`, the local port is
+already occupied. Stop the local Gateway, or keep the remote Gateway on `18789`
+and choose a different local port:
+
+```bash
+ssh -N -L 18790:127.0.0.1:18789 user@host
+```
+
+Then use `http://localhost:18790/` or `ws://127.0.0.1:18790`.
 Note: when you pass `--url`, the CLI does not fall back to config or environment credentials.
 Include `--token` or `--password` explicitly. Missing explicit credentials is an error.
 

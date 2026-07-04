@@ -2049,7 +2049,7 @@ describe("runOnboardingWizard", () => {
     );
 
     expect(prompter.note).toHaveBeenCalledWith(
-      expect.stringContaining("Operator readiness summary"),
+      expect.stringContaining("READINESS"),
       "Operator readiness",
     );
     expect(prompter.note).toHaveBeenCalledWith(

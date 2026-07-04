@@ -131,11 +131,18 @@ Hosted setup uses two machines:
 
 Use the terminal that has Tailscale access:
 
+Before you start the remote VPS setup, shut down local VPNs such as Mullvad,
+Proton VPN, NordVPN, corporate VPN clients, and browser/device VPN apps. Other
+VPNs can override DNS, firewall rules, or the `100.64.0.0/10` address range
+that Tailscale uses. Re-enable them only after Tailscale SSH and the dashboard
+work, and use split tunneling if that VPN must stay on.
+
 <Tabs>
   <Tab title="Windows">
     Install the Tailscale app from
     [tailscale.com/download](https://tailscale.com/download), sign in, and use
-    PowerShell or Windows Terminal for checks.
+    PowerShell or Windows Terminal for checks. Disconnect other local VPNs
+    first.
 
     PowerShell uses the Windows Tailscale app/service. If you use WSL instead,
     install and sign into Tailscale inside WSL too.
@@ -151,6 +158,7 @@ Use the terminal that has Tailscale access:
 
     ```bash
     curl -fsSL https://tailscale.com/install.sh | sh
+    sudo systemctl enable --now tailscaled
     sudo tailscale up
     tailscale status
     tailscale ip -4
@@ -159,7 +167,7 @@ Use the terminal that has Tailscale access:
   </Tab>
   <Tab title="Fedora">
     ```bash
-    sudo dnf install -y tailscale
+    curl -fsSL https://tailscale.com/install.sh | sh
     sudo systemctl enable --now tailscaled
     sudo tailscale up
     tailscale status
@@ -176,6 +184,12 @@ Use the terminal that has Tailscale access:
     ```
   </Tab>
 </Tabs>
+
+Do not continue until `tailscale status` shows your local computer online and
+`tailscale ip -4` prints a `100.x.x.x` address. If status says it failed to
+connect to local `tailscaled`, start the daemon with
+`sudo systemctl enable --now tailscaled` on Linux, then rerun
+`sudo tailscale up` and sign in.
 
 If you lose access to the Tailscale account used for a hosted VPS, normal
 dashboard and SSH access can be lost. Recovery then depends on the VPS
@@ -226,7 +240,16 @@ The `app` shell starts in `/home/app/fased`.
 
 The raw Gateway port remains closed. `http://localhost:18789` is only the
 advanced SSH tunnel fallback: it works on your local computer after you start
-the tunnel shown by onboarding and keep that tunnel running.
+the tunnel shown by onboarding and keep that tunnel running. If SSH says
+`bind [127.0.0.1]:18789: Address already in use`, Tailscale worked but your
+local port is busy. Stop the local Fased gateway, or forward a different local
+port:
+
+```bash
+ssh -N -L 18790:127.0.0.1:18789 app@YOUR_VPS_TAILSCALE_NAME
+```
+
+Then open `http://localhost:18790/`.
 
 Model/API setup has moved to `Agent > Models` for normal users. Existing
 non-interactive provider flags still work for scripted installs, but first-run
