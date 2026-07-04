@@ -133,18 +133,44 @@ function formatNoteTitle(title?: string): string | undefined {
   return value ? theme.noteTitle(value.toUpperCase()) : undefined;
 }
 
+function padVisible(value: string, width: number): string {
+  const padding = Math.max(0, width - visibleWidth(value));
+  return `${value}${" ".repeat(padding)}`;
+}
+
+export function formatFramedBlock(
+  lines: string[],
+  title?: string,
+  options: { indent?: string; minWidth?: number } = {},
+): string[] {
+  const indent = options.indent ?? "  ";
+  const titleText = formatNoteTitle(title);
+  const minWidth = options.minWidth ?? 48;
+  const contentWidth = Math.max(
+    minWidth,
+    ...lines.map((line) => visibleWidth(line)),
+    titleText ? visibleWidth(titleText) + 4 : 0,
+  );
+  const topInnerWidth = contentWidth + 2;
+  const titleWidth = titleText ? visibleWidth(titleText) : 0;
+  const titlePrefixWidth = titleText ? titleWidth + 3 : 0;
+  const topRule = "─".repeat(Math.max(0, topInnerWidth - titlePrefixWidth));
+  const top = titleText
+    ? `${indent}${theme.noteChrome("╭")}${theme.noteChrome("─ ")}${titleText}${theme.noteChrome(
+        ` ${topRule}╮`,
+      )}`
+    : `${indent}${theme.noteChrome(`╭${"─".repeat(topInnerWidth)}╮`)}`;
+  const body = lines.map(
+    (line) =>
+      `${indent}${theme.noteChrome("│")} ${padVisible(line, contentWidth)} ${theme.noteChrome("│")}`,
+  );
+  const bottom = `${indent}${theme.noteChrome(`╰${"─".repeat(topInnerWidth)}╯`)}`;
+  return [top, ...body, bottom];
+}
+
 export function note(message: string, title?: string) {
   const wrapped = wrapNoteMessage(message);
   const lines = wrapped.split("\n");
-  const output: string[] = [];
-  const titleText = formatNoteTitle(title);
-
-  output.push(titleText ? `${theme.noteChrome("◇")} ${titleText}` : theme.noteChrome("◇"));
-  for (const line of lines) {
-    output.push(
-      line.trim().length > 0 ? `${theme.noteChrome("│")}  ${line}` : theme.noteChrome("│"),
-    );
-  }
-  output.push(theme.noteChrome("╰"));
+  const output = formatFramedBlock(lines, title);
   process.stdout.write(`${output.join("\n")}\n`);
 }

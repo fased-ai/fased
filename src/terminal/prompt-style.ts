@@ -16,7 +16,7 @@ const DISPLAY_MESSAGE_OVERRIDES = new Map<string, string>([
   ["Set up hooks?", "Hooks"],
 ]);
 
-function displayPromptMessage(message: string): string {
+export function displayPromptMessage(message: string): string {
   const trimmed = message.trim();
   return DISPLAY_MESSAGE_OVERRIDES.get(trimmed) ?? message;
 }

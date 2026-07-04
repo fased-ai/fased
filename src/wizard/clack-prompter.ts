@@ -11,8 +11,9 @@ import {
 } from "@clack/prompts";
 import { createCliProgress } from "../cli/progress.js";
 import { stripAnsi } from "../terminal/ansi.js";
-import { note as emitNote } from "../terminal/note.js";
+import { formatFramedBlock, note as emitNote } from "../terminal/note.js";
 import {
+  displayPromptMessage,
   formatWizardIntro,
   styleProgressTitle,
   stylePromptHint,
@@ -59,6 +60,24 @@ function formatChoiceLabel<T>(option: Option<T>): string {
     return theme.muted(label);
   }
   return label;
+}
+
+function radioMark(active: boolean): string {
+  return active ? theme.success("●") : theme.noteChrome("○");
+}
+
+function multiMark(active: boolean, selected: boolean): string {
+  if (selected && active) {
+    return theme.success("◉");
+  }
+  if (selected) {
+    return theme.success("✓");
+  }
+  return radioMark(active);
+}
+
+function renderPromptFrame(title: string, lines: string[]): string[] {
+  return formatFramedBlock(lines, displayPromptMessage(title), { minWidth: 56 });
 }
 
 function firstEnabledIndex<T>(options: Option<T>[]): number {
@@ -112,13 +131,12 @@ async function chooseWithArrows<T>(params: {
         cursorTo(process.stdout, 0);
         clearScreenDown(process.stdout);
       }
-      const lines = [
-        stylePromptMessage(params.message),
-        ...params.options.map((option, index) => {
-          const pointer = index === activeIndex ? theme.option(">") : " ";
-          return `  ${pointer} ${formatChoiceLabel(option)}`;
-        }),
-      ];
+      const lines = renderPromptFrame(
+        params.message,
+        params.options.map(
+          (option, index) => `  ${radioMark(index === activeIndex)} ${formatChoiceLabel(option)}`,
+        ),
+      );
       process.stdout.write(`${lines.join("\n")}\n`);
       renderedLines = lines.length;
     };
@@ -188,14 +206,13 @@ async function chooseMultiWithArrows<T>(params: {
         cursorTo(process.stdout, 0);
         clearScreenDown(process.stdout);
       }
-      const lines = [
-        stylePromptMessage(params.message),
-        ...params.options.map((option, index) => {
-          const pointer = index === activeIndex ? theme.option(">") : " ";
-          const mark = selectedIndexes.has(index) ? theme.command("x") : " ";
-          return `  ${pointer} [${mark}] ${formatChoiceLabel(option)}`;
+      const lines = renderPromptFrame(
+        params.message,
+        params.options.map((option, index) => {
+          const selected = selectedIndexes.has(index);
+          return `  ${multiMark(index === activeIndex, selected)} ${formatChoiceLabel(option)}`;
         }),
-      ];
+      );
       process.stdout.write(`${lines.join("\n")}\n`);
       renderedLines = lines.length;
     };
@@ -267,11 +284,9 @@ async function confirmWithArrows(params: {
         cursorTo(process.stdout, 0);
         clearScreenDown(process.stdout);
       }
-      const lines = [
-        stylePromptMessage(params.message),
-        `  ${activeValue ? theme.option(">") : " "} Yes`,
-        `  ${!activeValue ? theme.option(">") : " "} No`,
-      ];
+      const lines = renderPromptFrame(params.message, [
+        `  ${radioMark(activeValue)} Yes   ${radioMark(!activeValue)} No`,
+      ]);
       process.stdout.write(`${lines.join("\n")}\n`);
       renderedLines = lines.length;
     };
@@ -290,8 +305,12 @@ async function confirmWithArrows(params: {
       if (
         key.name === "up" ||
         key.name === "down" ||
+        key.name === "left" ||
+        key.name === "right" ||
         key.sequence === "\u001B[A" ||
-        key.sequence === "\u001B[B"
+        key.sequence === "\u001B[B" ||
+        key.sequence === "\u001B[D" ||
+        key.sequence === "\u001B[C"
       ) {
         activeValue = !activeValue;
         render();

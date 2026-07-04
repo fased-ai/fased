@@ -4,6 +4,16 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.16
+
+- Restore framed wizard panels and radio/check prompt markers while keeping the
+  cleaner hosted/local onboarding copy from 0.1.15.
+- Standardize terminal onboarding colors so block titles and frames are gray,
+  section labels are yellow, values and copyable URLs/commands/tokens are
+  green, and body text remains plain.
+- Separate Fased Network status labels from copyable handles/URLs so the
+  summary is easier to scan during local and hosted setup.
+
 ## 0.1.15
 
 - Clean hosted onboarding output so local-device, Tailscale, security,

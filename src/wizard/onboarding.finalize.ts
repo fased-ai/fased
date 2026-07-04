@@ -121,10 +121,20 @@ function noteInfo(value: string): string {
   return value;
 }
 
+function formatFasedNetworkAutoConnectMessage(message: string): string[] {
+  const [label, rest] = message.split(/:\s+/, 2);
+  const values = rest?.split(/\s+->\s+/).filter(Boolean) ?? [];
+  if (!label || values.length === 0) {
+    return [noteCommand(message)];
+  }
+  return [noteLabel(label), ...values.map((value) => `  ${noteCommand(value)}`), ""];
+}
+
 function formatFasedNetworkAutoConnectSummary(messages: string[]): string {
   return [
     noteHeading("Network connected"),
-    ...messages.map((message) => noteBullet(noteSuccess(message))),
+    "",
+    ...messages.flatMap((message) => formatFasedNetworkAutoConnectMessage(message)),
   ].join("\n");
 }
 

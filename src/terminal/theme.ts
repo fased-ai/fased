@@ -20,7 +20,7 @@ export const theme = {
   error: hex(FASED_PALETTE.error),
   muted: hex(FASED_PALETTE.muted),
   noteChrome: baseChalk.gray,
-  noteTitle: baseChalk.bold.cyan,
+  noteTitle: baseChalk.bold.gray,
   noteHeading: baseChalk.bold.yellow,
   heading: baseChalk.bold,
   command: baseChalk.green,
