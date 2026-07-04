@@ -1,13 +1,12 @@
+import { clearScreenDown, cursorTo, emitKeypressEvents, moveCursor } from "node:readline";
 import {
   cancel,
   confirm,
   intro,
   isCancel,
-  multiselect,
   type Option,
   outro,
   password,
-  select,
   spinner,
   text,
 } from "@clack/prompts";
@@ -55,6 +54,202 @@ function formatElapsed(ms: number): string {
   return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
 }
 
+function formatChoiceLabel<T>(option: Option<T>): string {
+  const label = option.label ?? String(option.value ?? "");
+  const hint = option.hint ? ` ${option.hint}` : "";
+  if (option.disabled) {
+    return `${theme.muted(label)}${hint}`;
+  }
+  return `${label}${hint}`;
+}
+
+function firstEnabledIndex<T>(options: Option<T>[]): number {
+  return Math.max(
+    0,
+    options.findIndex((option) => !option.disabled),
+  );
+}
+
+function moveSelection<T>(options: Option<T>[], current: number, delta: 1 | -1): number {
+  if (options.length === 0) {
+    return current;
+  }
+  let next = current;
+  for (let i = 0; i < options.length; i += 1) {
+    next = (next + delta + options.length) % options.length;
+    if (!options[next]?.disabled) {
+      return next;
+    }
+  }
+  return current;
+}
+
+type Keypress = {
+  ctrl?: boolean;
+  name?: string;
+  sequence?: string;
+};
+
+async function chooseWithArrows<T>(params: {
+  message: string;
+  options: Option<T>[];
+  initialValue?: T;
+}): Promise<T> {
+  if (params.options.length === 0) {
+    throw new WizardCancelledError("No options available.");
+  }
+  const fallbackIndex = firstEnabledIndex(params.options);
+  if (!process.stdin.isTTY || !process.stdout.isTTY || !process.stdin.setRawMode) {
+    return params.options[fallbackIndex].value;
+  }
+  const initialIndex = params.options.findIndex((opt) => opt.value === params.initialValue);
+  let activeIndex =
+    initialIndex >= 0 && !params.options[initialIndex]?.disabled ? initialIndex : fallbackIndex;
+  let renderedLines = 0;
+
+  return await new Promise<T>((resolve, reject) => {
+    const render = () => {
+      if (renderedLines > 0) {
+        moveCursor(process.stdout, 0, -renderedLines);
+        cursorTo(process.stdout, 0);
+        clearScreenDown(process.stdout);
+      }
+      const lines = [
+        stylePromptMessage(params.message),
+        ...params.options.map((option, index) => {
+          const pointer = index === activeIndex ? theme.option(">") : " ";
+          return `  ${pointer} ${formatChoiceLabel(option)}`;
+        }),
+      ];
+      process.stdout.write(`${lines.join("\n")}\n`);
+      renderedLines = lines.length;
+    };
+    const cleanup = () => {
+      process.stdin.off("keypress", onKeypress);
+      process.stdin.setRawMode?.(false);
+      process.stdout.write("\n");
+    };
+    const onKeypress = (_value: string, key: Keypress = {}) => {
+      if (key.ctrl && key.name === "c") {
+        cleanup();
+        reject(new WizardCancelledError());
+        return;
+      }
+      if (key.name === "up" || key.sequence === "\u001B[A") {
+        activeIndex = moveSelection(params.options, activeIndex, -1);
+        render();
+        return;
+      }
+      if (key.name === "down" || key.sequence === "\u001B[B") {
+        activeIndex = moveSelection(params.options, activeIndex, 1);
+        render();
+        return;
+      }
+      if (key.name === "return" || key.name === "enter") {
+        cleanup();
+        resolve(params.options[activeIndex].value);
+      }
+    };
+    process.stdout.write("\n");
+    emitKeypressEvents(process.stdin);
+    process.stdin.setRawMode?.(true);
+    process.stdin.resume();
+    process.stdin.on("keypress", onKeypress);
+    render();
+  });
+}
+
+async function chooseMultiWithArrows<T>(params: {
+  message: string;
+  options: Option<T>[];
+  initialValues?: T[];
+}): Promise<T[]> {
+  if (params.options.length === 0) {
+    return [];
+  }
+  const initialSet = new Set(params.initialValues ?? []);
+  if (!process.stdin.isTTY || !process.stdout.isTTY || !process.stdin.setRawMode) {
+    return params.options
+      .filter((option) => initialSet.has(option.value) && !option.disabled)
+      .map((option) => option.value);
+  }
+  let activeIndex = firstEnabledIndex(params.options);
+  let renderedLines = 0;
+  const selectedIndexes = new Set<number>();
+  params.options.forEach((option, index) => {
+    if (initialSet.has(option.value) && !option.disabled) {
+      selectedIndexes.add(index);
+    }
+  });
+
+  return await new Promise<T[]>((resolve, reject) => {
+    const render = () => {
+      if (renderedLines > 0) {
+        moveCursor(process.stdout, 0, -renderedLines);
+        cursorTo(process.stdout, 0);
+        clearScreenDown(process.stdout);
+      }
+      const lines = [
+        stylePromptMessage(params.message),
+        ...params.options.map((option, index) => {
+          const pointer = index === activeIndex ? theme.option(">") : " ";
+          const mark = selectedIndexes.has(index) ? theme.command("x") : " ";
+          return `  ${pointer} [${mark}] ${formatChoiceLabel(option)}`;
+        }),
+      ];
+      process.stdout.write(`${lines.join("\n")}\n`);
+      renderedLines = lines.length;
+    };
+    const cleanup = () => {
+      process.stdin.off("keypress", onKeypress);
+      process.stdin.setRawMode?.(false);
+      process.stdout.write("\n");
+    };
+    const onKeypress = (_value: string, key: Keypress = {}) => {
+      if (key.ctrl && key.name === "c") {
+        cleanup();
+        reject(new WizardCancelledError());
+        return;
+      }
+      if (key.name === "up" || key.sequence === "\u001B[A") {
+        activeIndex = moveSelection(params.options, activeIndex, -1);
+        render();
+        return;
+      }
+      if (key.name === "down" || key.sequence === "\u001B[B") {
+        activeIndex = moveSelection(params.options, activeIndex, 1);
+        render();
+        return;
+      }
+      if (key.name === "space" || key.sequence === " ") {
+        if (!params.options[activeIndex]?.disabled) {
+          if (selectedIndexes.has(activeIndex)) {
+            selectedIndexes.delete(activeIndex);
+          } else {
+            selectedIndexes.add(activeIndex);
+          }
+          render();
+        }
+        return;
+      }
+      if (key.name === "return" || key.name === "enter") {
+        cleanup();
+        resolve(
+          Array.from(selectedIndexes)
+            .toSorted((a, b) => a - b)
+            .map((index) => params.options[index].value),
+        );
+      }
+    };
+    process.stdout.write("\n");
+    emitKeypressEvents(process.stdin);
+    process.stdin.setRawMode?.(true);
+    process.stdin.resume();
+    process.stdin.on("keypress", onKeypress);
+    render();
+  });
+}
+
 export function tokenizedOptionFilter<T>(search: string, option: Option<T>): boolean {
   const tokens = normalizeSearchTokens(search);
   if (tokens.length === 0) {
@@ -76,29 +271,25 @@ export function createClackPrompter(): WizardPrompter {
       emitNote(message, title);
     },
     select: async (params) =>
-      guardCancel(
-        await select({
-          message: stylePromptMessage(params.message),
-          options: params.options.map((opt) => {
-            const base = { value: opt.value, label: opt.label, disabled: opt.disabled };
-            return opt.hint === undefined ? base : { ...base, hint: stylePromptHint(opt.hint) };
-          }) as Option<(typeof params.options)[number]["value"]>[],
-          initialValue: params.initialValue,
-        }),
-      ),
+      chooseWithArrows({
+        message: params.message,
+        options: params.options.map((opt) => {
+          const base = { value: opt.value, label: opt.label, disabled: opt.disabled };
+          return opt.hint === undefined ? base : { ...base, hint: stylePromptHint(opt.hint) };
+        }) as Option<(typeof params.options)[number]["value"]>[],
+        initialValue: params.initialValue,
+      }),
     multiselect: async (params) => {
       const options = params.options.map((opt) => {
         const base = { value: opt.value, label: opt.label, disabled: opt.disabled };
         return opt.hint === undefined ? base : { ...base, hint: stylePromptHint(opt.hint) };
       }) as Option<(typeof params.options)[number]["value"]>[];
 
-      return guardCancel(
-        await multiselect({
-          message: stylePromptMessage(params.message),
-          options,
-          initialValues: params.initialValues,
-        }),
-      );
+      return chooseMultiWithArrows({
+        message: params.message,
+        options,
+        initialValues: params.initialValues,
+      });
     },
     text: async (params) => {
       const validate = params.validate;

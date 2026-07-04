@@ -101,10 +101,10 @@ still documented as a compatibility service command.
 
 ## CLI palette
 
-- `success` / green: wizard titles, section labels, successful states
-- `accentBright` / bright cyan: commands, URLs, tokens, copyable values
+- default/bold text: wizard titles
+- `warn` / yellow: section labels, blockers, fallbacks, warnings
+- `success` / green: commands, URLs, tokens, copyable values, successful states
 - default text: short explanations and comments
-- `warn` / yellow: blockers, fallbacks, warnings
 - `error` / red: errors and failed states only
 - `muted` / gray: frames, separators, secondary metadata
 
