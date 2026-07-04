@@ -57,7 +57,6 @@ import {
   noteCommand,
   noteCommands,
   noteHeading,
-  noteLabel,
   noteMuted,
   noteSuccess,
   noteWarn,
@@ -183,7 +182,7 @@ export function formatStrictRemoteAccessDetails(params: {
     "Then open:",
     ...noteCommands([alternateTunnelUrl]),
     hasIpFallback
-      ? noteBullet(noteWarn("Another VPN can break MagicDNS while `100.x` IP access still works."))
+      ? "Another VPN can break MagicDNS while `100.x` IP access still works."
       : undefined,
     "",
     noteHeading("Token backup"),
@@ -2821,22 +2820,12 @@ export async function finalizeOnboardingWizard(
             await prompter.note(
               [
                 noteHeading("Tailscale HTTPS"),
-                noteWarn("The Tailscale HTTPS dashboard URL is still warming from this VPS."),
-                `${noteMuted("Detail:")} ${noteInfo(detail)}`,
+                "The Tailscale HTTPS dashboard URL is still warming from this VPS.",
+                `Detail: ${detail}`,
                 "",
-                noteBullet(
-                  noteSuccess("Setup will continue if the local Gateway listener is healthy."),
-                ),
-                noteBullet(
-                  noteInfo(
-                    "Open the printed Tailscale URL from your own Tailscale-connected computer.",
-                  ),
-                ),
-                noteBullet(
-                  noteWarn(
-                    "If another VPN breaks MagicDNS, turn it off or use the 100.x Tailscale IP fallback.",
-                  ),
-                ),
+                "Setup will continue if the local Gateway listener is healthy.",
+                "Open the printed Tailscale URL from your own Tailscale-connected computer.",
+                "If another VPN breaks MagicDNS, turn it off or use the 100.x Tailscale IP fallback.",
               ].join("\n"),
               "Dashboard warmup",
             );
@@ -2867,24 +2856,18 @@ export async function finalizeOnboardingWizard(
             await prompter.note(
               [
                 noteHeading("Gateway connection"),
-                noteWarn(
-                  "The Tailscale dashboard page is reachable, but the browser Gateway connection is still warming.",
-                ),
-                `${noteLabel("Gateway URL:")} ${noteCommand(tailscaleGatewayWsUrl)}`,
-                `${noteMuted("Detail:")} ${noteInfo(
+                "The Tailscale dashboard page is reachable, but the browser Gateway connection is still warming.",
+                "",
+                noteHeading("Gateway websocket"),
+                ...noteCommands([tailscaleGatewayWsUrl]),
+                `Detail: ${
                   "stage" in wsWarmup
                     ? `${wsWarmup.stage}: ${wsWarmup.message}`
-                    : (wsWarmup.detail ?? "websocket not reachable"),
-                )}`,
+                    : (wsWarmup.detail ?? "websocket not reachable")
+                }`,
                 "",
-                noteBullet(
-                  noteSuccess("Setup will continue if the local Gateway listener is healthy."),
-                ),
-                noteBullet(
-                  noteInfo(
-                    "Use the SSH tunnel fallback immediately, or open the Tailscale dashboard URL again shortly.",
-                  ),
-                ),
+                "Setup will continue if the local Gateway listener is healthy.",
+                "Use the SSH tunnel fallback immediately, or open the Tailscale dashboard URL again shortly.",
               ].join("\n"),
               "Dashboard warmup",
             );
@@ -2925,16 +2908,13 @@ export async function finalizeOnboardingWizard(
     );
   } else if (flow !== "quickstart") {
     await prompter.note(
-      [
-        "Local dashboard:",
-        `  ${links.httpUrl}`,
-        settings.authMode === "token" && gatewayTokenForUi
-          ? `Token backup: ${gatewayTokenForUi}`
-          : undefined,
-        gatewayStatusLine,
-      ]
-        .filter(Boolean)
-        .join("\n"),
+      formatLocalDashboardReady({
+        dashboardUrl: authedUrl,
+        gatewayToken:
+          settings.authMode === "token" && gatewayTokenForUi ? gatewayTokenForUi : undefined,
+        opened: false,
+        healthCheck: gatewayStatusLine,
+      }),
       "Dashboard access",
     );
   }
@@ -3089,27 +3069,16 @@ export async function finalizeOnboardingWizard(
               [
                 noteHeading("Service active"),
                 serviceActive
-                  ? noteWarn(
-                      "The hosted Gateway service is active, but the dashboard is still warming.",
-                    )
-                  : noteInfo("The hosted browser dashboard passed its full check earlier."),
-                `${noteMuted("Detail:")} ${noteInfo(
-                  finalGateway.detail ?? "gateway not reachable yet",
-                )}`,
+                  ? "The hosted Gateway service is active, but the dashboard is still warming."
+                  : "The hosted browser dashboard passed its full check earlier.",
+                `Detail: ${finalGateway.detail ?? "gateway not reachable yet"}`,
                 "",
-                noteBullet(noteSuccess("Setup will finish and leave the Gateway service running.")),
-                noteBullet(
-                  noteInfo("Open the printed Tailscale dashboard URL again in a few minutes."),
-                ),
-                noteBullet(
-                  noteWarn(
-                    "If MagicDNS is slow or another VPN is active, use the 100.x Tailscale IP fallback.",
-                  ),
-                ),
+                "Setup will finish and leave the Gateway service running.",
+                "Open the printed Tailscale dashboard URL again in a few minutes.",
+                "If MagicDNS is slow or another VPN is active, use the 100.x Tailscale IP fallback.",
                 "",
                 noteHeading("Check from the app terminal"),
-                noteCommand("fased status"),
-                noteCommand("fased dashboard --no-open"),
+                ...noteCommands(["fased status", "fased dashboard --no-open"]),
               ].join("\n"),
               "Dashboard warmup",
             );

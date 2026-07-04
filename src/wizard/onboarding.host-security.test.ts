@@ -69,14 +69,20 @@ describe("onboarding host security", () => {
     expect(note).toContain("TAILSCALE FIRST");
     expect(note).toContain("Do this on your own computer");
     expect(note).toContain("Turn off Mullvad");
-    expect(note).toContain("Windows/macOS");
-    expect(note).toContain("Fedora:");
-    expect(note).toContain("Ubuntu/Debian/Kali:");
+    expect(note).toContain("WINDOWS");
+    expect(note).toContain("MACOS");
+    expect(note).toContain("FEDORA");
+    expect(note).toContain("UBUNTU DEBIAN KALI");
+    expect(note).toContain("ARCH");
+    expect(note).toContain("WSL");
+    expect(note).toContain("sudo dnf install -y tailscale");
     expect(note).toContain("curl -fsSL https://tailscale.com/install.sh | sh");
     expect(note).toContain("sudo systemctl enable --now tailscaled");
     expect(note).toContain("tailscale status");
     expect(note).toContain("tailscale ip -4");
     expect(note).toContain("100.x.x.x");
+    expect(note).not.toContain("Fedora: sudo");
+    expect(note).not.toContain("Ubuntu/Debian/Kali: curl");
   });
 
   it("formats the pre-lockdown SSH over Tailscale check", () => {
@@ -93,7 +99,7 @@ describe("onboarding host security", () => {
     expect(note).toContain("2. SSH INTO VPS");
     expect(note).toContain("tailscale ping fased-vps.tailnet.ts.net");
     expect(note).toContain("tailscale ping 100.64.1.2");
-    expect(note).toContain("Run this from your own computer");
+    expect(note).toContain("Run these on your own computer");
     expect(note).toContain("Local Tailscale must be running");
     expect(note).toContain("Turn off Mullvad");
     expect(note).toContain("tailscale status");

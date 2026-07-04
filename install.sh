@@ -1661,6 +1661,54 @@ remove_root_bootstrap_checkout_after_success() {
   rm -rf "$source_dir"
 }
 
+read_target_fased_config_value() {
+  local target_user="$1"
+  local js_expr="$2"
+  local target_home
+  target_home="$(getent passwd "$target_user" 2>/dev/null | cut -d: -f6)"
+  if [[ -z "$target_home" ]]; then
+    target_home="/home/$target_user"
+  fi
+  local config_path="$target_home/.fased/fased.json"
+  if [[ ! -f "$config_path" || ! -r "$config_path" ]]; then
+    return 0
+  fi
+  CONFIG_PATH="$config_path" JS_EXPR="$js_expr" node -e '
+const fs = require("node:fs");
+const configPath = process.env.CONFIG_PATH;
+const expr = process.env.JS_EXPR;
+try {
+  const cfg = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  const value = Function("cfg", `"use strict"; return (${expr});`)(cfg);
+  if (typeof value === "string" && value.trim()) {
+    process.stdout.write(value.trim());
+  }
+} catch {}
+' 2>/dev/null || true
+}
+
+build_hosted_dashboard_url() {
+  local web_host="$1"
+  local token="$2"
+  local base_path="$3"
+  WEB_HOST="$web_host" GATEWAY_TOKEN="$token" CONTROL_BASE_PATH="$base_path" node -e '
+const host = String(process.env.WEB_HOST || "YOUR_VPS_TAILSCALE_NAME").trim();
+const token = String(process.env.GATEWAY_TOKEN || "").trim();
+const rawBasePath = String(process.env.CONTROL_BASE_PATH || "").trim();
+const url = new URL(`https://${host}/`);
+if (rawBasePath && rawBasePath !== "/") {
+  const clean = rawBasePath.replace(/^\/+|\/+$/g, "");
+  url.pathname = clean ? `/${clean}/` : "/";
+}
+if (token) {
+  const hash = new URLSearchParams();
+  hash.set("token", token);
+  url.hash = `#${hash.toString()}`;
+}
+process.stdout.write(url.toString());
+' 2>/dev/null || printf 'https://%s/' "$web_host"
+}
+
 print_hosted_handoff_block() {
   local target_user="$1"
   local target_repo_dir="$2"
@@ -1668,14 +1716,27 @@ print_hosted_handoff_block() {
   local removed_checkout="$4"
   local ssh_host="${tailscale_dns:-YOUR_VPS_TAILSCALE_NAME}"
   local web_host="${tailscale_dns:-YOUR_VPS_TAILSCALE_NAME}"
+  local gateway_token="${5:-}"
+  local control_base_path="${6:-}"
+  local dashboard_url
+  dashboard_url="$(build_hosted_dashboard_url "$web_host" "$gateway_token" "$control_base_path")"
 
   block_top "HOSTED ACCESS"
   block_line "$(color_green "✓ Setup complete")"
   block_line "$(color_green "Run as:") $(color_cyan "$target_user")"
   block_line
   block_line "$(color_green "${C_BOLD}WEB UI${C_RESET}")"
-  block_line "  $(color_red "https://${web_host}/")"
-  block_line "  $(color_dim "Use the gateway token printed by the wizard if the browser asks.")"
+  block_line "  $(color_red "$dashboard_url")"
+  block_line "  $(color_dim "Open this on your own Tailscale-connected computer.")"
+  block_line
+  block_line "$(color_green "${C_BOLD}TOKEN${C_RESET}")"
+  if [[ -n "$gateway_token" ]]; then
+    block_line "  $(color_red "$gateway_token")"
+    block_line "  $(color_dim "Only paste this if the browser asks.")"
+  else
+    block_line "  $(color_red "(token not available in root handoff)")"
+    block_line "  $(color_dim "Run fased dashboard --no-open as ${target_user} to print a fresh tokenized URL.")"
+  fi
   block_line
   block_line "$(color_green "${C_BOLD}SSH${C_RESET}")"
   block_line "  $(color_red "ssh ${target_user}@${ssh_host}")"
@@ -1794,8 +1855,12 @@ reexec_as_app_user() {
     if need_cmd tailscale; then
       tailscale_dns="$(tailscale status --json 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>{try{const o=JSON.parse(s);process.stdout.write(String(o?.Self?.DNSName||"").replace(/\.$/,""));}catch{}})' 2>/dev/null || true)"
     fi
+    local gateway_token=""
+    local control_base_path=""
+    gateway_token="$(read_target_fased_config_value "$target_user" 'cfg?.gateway?.auth?.token')"
+    control_base_path="$(read_target_fased_config_value "$target_user" 'cfg?.gateway?.controlUi?.basePath')"
     remove_root_bootstrap_checkout_after_success "$FASED_DIR" "$target_repo_dir"
-    print_hosted_handoff_block "$target_user" "$target_repo_dir" "$tailscale_dns" "$REMOVED_BOOTSTRAP_CHECKOUT"
+    print_hosted_handoff_block "$target_user" "$target_repo_dir" "$tailscale_dns" "$REMOVED_BOOTSTRAP_CHECKOUT" "$gateway_token" "$control_base_path"
   fi
 
   exit "$child_status"
