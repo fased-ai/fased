@@ -1,5 +1,4 @@
 import {
-  autocompleteMultiselect,
   cancel,
   confirm,
   intro,
@@ -92,17 +91,6 @@ export function createClackPrompter(): WizardPrompter {
         const base = { value: opt.value, label: opt.label, disabled: opt.disabled };
         return opt.hint === undefined ? base : { ...base, hint: stylePromptHint(opt.hint) };
       }) as Option<(typeof params.options)[number]["value"]>[];
-
-      if (params.searchable) {
-        return guardCancel(
-          await autocompleteMultiselect({
-            message: stylePromptMessage(params.message),
-            options,
-            initialValues: params.initialValues,
-            filter: tokenizedOptionFilter,
-          }),
-        );
-      }
 
       return guardCancel(
         await multiselect({

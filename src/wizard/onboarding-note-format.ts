@@ -29,7 +29,7 @@ export function noteMuted(value: string): string {
 }
 
 export function noteCommand(value: string): string {
-  return theme.error(value);
+  return theme.command(value);
 }
 
 export function noteBullet(value: string): string {

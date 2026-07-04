@@ -161,20 +161,20 @@ repeat_char() {
 
 block_top() {
   local title="$1"
-  printf '\n%s %s %s\n' "$(color_cyan "╭─")" "$(color_cyan "${C_BOLD}${title}${C_RESET}")" "$(color_cyan "$(repeat_char "─" 56)")"
+  printf '\n%s %s %s\n' "$(color_dim "╭─")" "$(color_green "${C_BOLD}${title}${C_RESET}")" "$(color_dim "$(repeat_char "─" 56)")"
 }
 
 block_line() {
   local text="${1:-}"
   if [[ -z "$text" ]]; then
-    printf '%s\n' "$(color_cyan "│")"
+    printf '%s\n' "$(color_dim "│")"
   else
-    printf '%s  %s\n' "$(color_cyan "│")" "$text"
+    printf '%s  %s\n' "$(color_dim "│")" "$text"
   fi
 }
 
 block_bottom() {
-  printf '%s\n' "$(color_cyan "╰$(repeat_char "─" 72)")"
+  printf '%s\n' "$(color_dim "╰$(repeat_char "─" 72)")"
 }
 
 print_installer_banner() {
@@ -205,7 +205,7 @@ BANNER
 
 section() {
   local label="$1"
-  printf '\n%s\n' "$(color_cyan "${C_BOLD}${label}${C_RESET}")"
+  printf '\n%s\n' "$(color_green "${C_BOLD}${label}${C_RESET}")"
 }
 
 if [[ -f "$SAT_RUNTIME_ENV_FILE" ]]; then
@@ -1726,35 +1726,35 @@ print_hosted_handoff_block() {
   block_line "$(color_green "Run as:") $(color_cyan "$target_user")"
   block_line
   block_line "$(color_green "${C_BOLD}WEB UI${C_RESET}")"
-  block_line "  $(color_red "$dashboard_url")"
+  block_line "  $(color_cyan "$dashboard_url")"
   block_line "  $(color_dim "Open this on your own Tailscale-connected computer.")"
   block_line
   block_line "$(color_green "${C_BOLD}TOKEN${C_RESET}")"
   if [[ -n "$gateway_token" ]]; then
-    block_line "  $(color_red "$gateway_token")"
+    block_line "  $(color_cyan "$gateway_token")"
     block_line "  $(color_dim "Only paste this if the browser asks.")"
   else
-    block_line "  $(color_red "(token not available in root handoff)")"
+    block_line "  $(color_yellow "(token not available in root handoff)")"
     block_line "  $(color_dim "Run fased dashboard --no-open as ${target_user} to print a fresh tokenized URL.")"
   fi
   block_line
   block_line "$(color_green "${C_BOLD}SSH${C_RESET}")"
-  block_line "  $(color_red "ssh ${target_user}@${ssh_host}")"
+  block_line "  $(color_cyan "ssh ${target_user}@${ssh_host}")"
   block_line "  $(color_dim "Starts in ${target_repo_dir}")"
   block_line
   block_line "$(color_green "${C_BOLD}FALLBACK TUNNEL${C_RESET}")"
-  block_line "  $(color_red "ssh -N -L 18789:127.0.0.1:18789 ${target_user}@${ssh_host}")"
-  block_line "  $(color_red "http://localhost:18789/")"
+  block_line "  $(color_cyan "ssh -N -L 18789:127.0.0.1:18789 ${target_user}@${ssh_host}")"
+  block_line "  $(color_cyan "http://localhost:18789/")"
   block_line
   block_line "$(color_green "${C_BOLD}LOCAL PORT BUSY${C_RESET}")"
   block_line "  $(color_dim "If 18789 is already in use locally, use 18790 instead.")"
-  block_line "  $(color_red "ssh -N -L 18790:127.0.0.1:18789 ${target_user}@${ssh_host}")"
-  block_line "  $(color_red "http://localhost:18790/")"
+  block_line "  $(color_cyan "ssh -N -L 18790:127.0.0.1:18789 ${target_user}@${ssh_host}")"
+  block_line "  $(color_cyan "http://localhost:18790/")"
   block_line
   block_line "$(color_green "${C_BOLD}APP COMMANDS${C_RESET}")"
-  block_line "  $(color_red "cd ${target_repo_dir}")"
-  block_line "  $(color_red "fased status")"
-  block_line "  $(color_red "fased dashboard --no-open")"
+  block_line "  $(color_cyan "cd ${target_repo_dir}")"
+  block_line "  $(color_cyan "fased status")"
+  block_line "  $(color_cyan "fased dashboard --no-open")"
   block_line
   block_line "$(color_dim "Use the app checkout for normal operation; root was only for bootstrap.")"
   if [[ -n "$removed_checkout" ]]; then

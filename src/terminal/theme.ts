@@ -19,7 +19,7 @@ export const theme = {
   warn: hex(FASED_PALETTE.warn),
   error: hex(FASED_PALETTE.error),
   muted: hex(FASED_PALETTE.muted),
-  heading: baseChalk.bold.hex(FASED_PALETTE.accent),
+  heading: baseChalk.bold.hex(FASED_PALETTE.success),
   command: hex(FASED_PALETTE.accentBright),
   option: hex(FASED_PALETTE.warn),
 } as const;

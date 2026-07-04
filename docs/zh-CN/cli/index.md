@@ -79,11 +79,11 @@ x-i18n:
 
 Fased 在 CLI 输出中使用统一的品牌调色板。
 
-- `accent`（#22D3EE）：标题、标签、主要高亮。
-- `accentBright`（#67E8F9）：命令名称、链接、强调。
+- `success`（#4ADE80）：向导标题、分区标签、成功状态。
+- `accentBright`（#67E8F9）：命令、链接、令牌、需要复制的值。
+- `accent`（#22D3EE）：主要高亮。
 - `accentDim`（#0891B2）：次要高亮文本。
 - `info`（#93C5FD）：信息性值。
-- `success`（#4ADE80）：成功状态。
 - `warn`（#FACC15）：警告、回退、注意。
 - `error`（#F87171）：错误、失败。
 - `muted`（#A3A3A3）：弱化、元数据。

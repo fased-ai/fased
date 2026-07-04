@@ -2820,12 +2820,12 @@ export async function finalizeOnboardingWizard(
             await prompter.note(
               [
                 noteHeading("Tailscale HTTPS"),
-                "The Tailscale HTTPS dashboard URL is still warming from this VPS.",
+                "Dashboard URL is still warming.",
                 `Detail: ${detail}`,
                 "",
                 "Setup will continue if the local Gateway listener is healthy.",
-                "Open the printed Tailscale URL from your own Tailscale-connected computer.",
-                "If another VPN breaks MagicDNS, turn it off or use the 100.x Tailscale IP fallback.",
+                "Open the Web UI URL from your own Tailscale-connected computer.",
+                "If MagicDNS fails, turn off local VPN or use the 100.x IP fallback.",
               ].join("\n"),
               "Dashboard warmup",
             );
@@ -2856,7 +2856,7 @@ export async function finalizeOnboardingWizard(
             await prompter.note(
               [
                 noteHeading("Gateway connection"),
-                "The Tailscale dashboard page is reachable, but the browser Gateway connection is still warming.",
+                "Dashboard page is reachable, but Gateway connection is still warming.",
                 "",
                 noteHeading("Gateway websocket"),
                 ...noteCommands([tailscaleGatewayWsUrl]),
@@ -2867,7 +2867,7 @@ export async function finalizeOnboardingWizard(
                 }`,
                 "",
                 "Setup will continue if the local Gateway listener is healthy.",
-                "Use the SSH tunnel fallback immediately, or open the Tailscale dashboard URL again shortly.",
+                "Use fallback tunnel now, or retry Web UI shortly.",
               ].join("\n"),
               "Dashboard warmup",
             );
@@ -3069,13 +3069,13 @@ export async function finalizeOnboardingWizard(
               [
                 noteHeading("Service active"),
                 serviceActive
-                  ? "The hosted Gateway service is active, but the dashboard is still warming."
-                  : "The hosted browser dashboard passed its full check earlier.",
+                  ? "Gateway service is active, but dashboard is still warming."
+                  : "Browser dashboard passed its full check earlier.",
                 `Detail: ${finalGateway.detail ?? "gateway not reachable yet"}`,
                 "",
-                "Setup will finish and leave the Gateway service running.",
-                "Open the printed Tailscale dashboard URL again in a few minutes.",
-                "If MagicDNS is slow or another VPN is active, use the 100.x Tailscale IP fallback.",
+                "Setup will finish and keep Gateway running.",
+                "Retry Web UI in a few minutes.",
+                "If MagicDNS fails, turn off local VPN or use the 100.x IP fallback.",
                 "",
                 noteHeading("Check from the app terminal"),
                 ...noteCommands(["fased status", "fased dashboard --no-open"]),

@@ -99,6 +99,15 @@ still documented as a compatibility service command.
 - progress indicators are shown for long-running commands when the terminal
   supports them
 
+## CLI palette
+
+- `success` / green: wizard titles, section labels, successful states
+- `accentBright` / bright cyan: commands, URLs, tokens, copyable values
+- default text: short explanations and comments
+- `warn` / yellow: blockers, fallbacks, warnings
+- `error` / red: errors and failed states only
+- `muted` / gray: frames, separators, secondary metadata
+
 ## Important current behavior
 
 - install and update are still repo-backed by default
