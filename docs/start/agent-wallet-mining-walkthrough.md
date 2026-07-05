@@ -89,9 +89,18 @@ Choose the setup profile first.
     fased dashboard
     ```
 
+    Screenshot: the local installer starts with the Fased Agent header,
+    installer status, and the first Local profile choices.
+
     ![Local installer selecting the Local profile](/images/screenshots/local/local-ui-1.png)
 
+    Screenshot: if an existing local config is detected, review the workspace,
+    model, gateway mode, and loopback bind before continuing.
+
     ![Local QuickStart gateway settings](/images/screenshots/local/local-ui-2.png)
+
+    Screenshot: setup finishes by printing the local dashboard URL, token
+    backup, and health summary.
 
     ![Local dashboard link printed after setup](/images/screenshots/local/final-ui-1.png)
 
@@ -203,6 +212,9 @@ you already know you need separate work profiles.
 If you choose chat channels during onboarding, the terminal wizard can collect
 the channel token. You can skip this and add channels later.
 
+Screenshot: optional chat channel setup can collect a Telegram bot token during
+onboarding, or you can finish and add channels later.
+
 ![Telegram channel setup during onboarding](/images/screenshots/local/chat-ui-1.png)
 
 Read next:
@@ -218,6 +230,9 @@ Add a model provider key or sign in, then choose a primary model. Send a first
 test message from **Chat** before moving into wallet or mining flows.
 
 ![Model selection in the Control UI](/images/screenshots/web/agent-model-2.png)
+
+Screenshot: optional model setup lets you choose a provider and authentication
+method from the terminal, including browser sign-in when supported.
 
 ![Model provider sign-in during local setup](/images/screenshots/local/model-ui-1.png)
 
@@ -248,7 +263,8 @@ or hex imports. Do not paste seed phrases into wallet import.
 
 ![Wallet cards after Agent, Mining, and Vault setup](/images/screenshots/web/wallet-1.png)
 
-![Wallet setup in the local installer](/images/screenshots/local/wallet-ui-1.png)
+Screenshot: wallet setup can create or import a Solana wallet, set the RPC URL,
+and confirm which Agent or Mining role should use it.
 
 ![Wallet role summary after local setup](/images/screenshots/local/wallet-ui-2.png)
 
