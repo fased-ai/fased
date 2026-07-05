@@ -103,7 +103,13 @@ function extractHtmlScriptAssetUrls(html: string, baseUrl: string): string[] {
 
 function extractDynamicImportUrls(js: string, baseUrl: string): string[] {
   const urls = new Set<string>();
-  for (const match of js.matchAll(/\bimport\(\s*["']([^"']+\.js)["']\s*\)/g)) {
+  for (const match of js.matchAll(/\bimport\(\s*["'`]([^"'`]+\.js)["'`]\s*\)/g)) {
+    const resolved = resolveAssetUrl(match[1] ?? "", baseUrl);
+    if (resolved) {
+      urls.add(resolved);
+    }
+  }
+  for (const match of js.matchAll(/["'`]([^"'`]+\.js)["'`]/g)) {
     const resolved = resolveAssetUrl(match[1] ?? "", baseUrl);
     if (resolved) {
       urls.add(resolved);

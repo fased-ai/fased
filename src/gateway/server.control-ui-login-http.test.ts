@@ -290,7 +290,10 @@ describe("control-ui login exchange endpoint", () => {
           );
           await writeFile(
             path.join(root, "assets", "index-abc.js"),
-            'import("./app-def.js");',
+            [
+              'const __vite__mapDeps = (i, m = __vite__mapDeps, d = (m.f || (m.f = ["./app-def.js"]))) => i.map((i) => d[i]);',
+              "preload(() => import(`./app-def.js`), __vite__mapDeps([0]), import.meta.url);",
+            ].join("\n"),
             "utf-8",
           );
           await writeFile(path.join(root, "assets", "app-def.js"), "console.log('app');", "utf-8");

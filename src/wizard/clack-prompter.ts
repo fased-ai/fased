@@ -1,5 +1,5 @@
 import { clearScreenDown, cursorTo, emitKeypressEvents, moveCursor } from "node:readline";
-import { cancel, intro, isCancel, type Option, outro, password, text } from "@clack/prompts";
+import { intro, type Option, outro } from "@clack/prompts";
 import { createCliProgress } from "../cli/progress.js";
 import { stripAnsi } from "../terminal/ansi.js";
 import { formatFramedBlock, note as emitNote } from "../terminal/note.js";
@@ -7,20 +7,11 @@ import {
   displayPromptMessage,
   formatWizardIntro,
   stylePromptHint,
-  stylePromptMessage,
   stylePromptTitle,
 } from "../terminal/prompt-style.js";
 import { theme } from "../terminal/theme.js";
 import type { WizardProgress, WizardPrompter } from "./prompts.js";
 import { WizardCancelledError } from "./prompts.js";
-
-function guardCancel<T>(value: T | symbol): T {
-  if (isCancel(value)) {
-    cancel(stylePromptTitle("Setup cancelled.") ?? "Setup cancelled.");
-    throw new WizardCancelledError();
-  }
-  return value;
-}
 
 function normalizeSearchTokens(search: string): string[] {
   return search
@@ -64,6 +55,22 @@ function multiMark(active: boolean, selected: boolean): string {
     return theme.success("✓");
   }
   return radioMark(active);
+}
+
+function trimLastChar(value: string): string {
+  const chars = Array.from(value);
+  chars.pop();
+  return chars.join("");
+}
+
+function renderInputValue(
+  value: string,
+  params: { placeholder?: string; secret?: boolean },
+): string {
+  if (value.length > 0) {
+    return params.secret ? theme.noteChrome("•".repeat(Array.from(value).length)) : value;
+  }
+  return params.placeholder ? theme.muted(params.placeholder) : "";
 }
 
 function renderPromptFrame(title: string, lines: string[]): string[] {
@@ -330,6 +337,103 @@ async function confirmWithArrows(params: {
   });
 }
 
+async function textWithFrame(params: {
+  message: string;
+  initialValue?: string;
+  placeholder?: string;
+  validate?: (value: string) => string | undefined;
+  secret?: boolean;
+}): Promise<string> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY || !process.stdin.setRawMode) {
+    const value = params.initialValue ?? "";
+    const error = params.validate?.(value);
+    if (error) {
+      throw new WizardCancelledError(error);
+    }
+    return value;
+  }
+
+  let value = params.initialValue ?? "";
+  let error: string | undefined;
+  let renderedLines = 0;
+
+  return await new Promise<string>((resolve, reject) => {
+    const render = () => {
+      if (renderedLines > 0) {
+        moveCursor(process.stdout, 0, -renderedLines);
+        cursorTo(process.stdout, 0);
+        clearScreenDown(process.stdout);
+      }
+      const input = renderInputValue(value, {
+        placeholder: params.placeholder,
+        secret: params.secret,
+      });
+      const lines = renderPromptFrame(params.message, [
+        `  ${theme.noteChrome(">")} ${input}`,
+        ...(error ? [`  ${theme.error(error)}`] : []),
+      ]);
+      process.stdout.write(`${lines.join("\n")}\n`);
+      renderedLines = lines.length;
+    };
+    const cleanup = () => {
+      process.stdin.off("keypress", onKeypress);
+      process.stdin.setRawMode?.(false);
+      process.stdin.pause();
+      process.stdout.write("\n");
+    };
+    const appendPrintable = (sequence: string) => {
+      for (const char of Array.from(sequence)) {
+        if (char >= " " && char !== "\x7f") {
+          value += char;
+        }
+      }
+    };
+    const onKeypress = (input: string, key: Keypress = {}) => {
+      if (key.ctrl && key.name === "c") {
+        cleanup();
+        reject(new WizardCancelledError());
+        return;
+      }
+      if (key.ctrl && key.name === "u") {
+        value = "";
+        error = undefined;
+        render();
+        return;
+      }
+      if (key.name === "backspace" || key.sequence === "\x7f") {
+        value = trimLastChar(value);
+        error = undefined;
+        render();
+        return;
+      }
+      if (key.name === "return" || key.name === "enter") {
+        const validationError = params.validate?.(value);
+        if (validationError) {
+          error = validationError;
+          render();
+          return;
+        }
+        cleanup();
+        resolve(value);
+        return;
+      }
+      const sequence = key.sequence ?? input;
+      if (!key.ctrl && sequence) {
+        appendPrintable(sequence);
+        error = undefined;
+        render();
+      }
+    };
+
+    process.stdout.write("\n");
+    emitKeypressEvents(process.stdin);
+    process.stdin.setRawMode?.(true);
+    process.stdin.resume();
+    process.stdin.on("keypress", onKeypress);
+    render();
+  });
+}
+
 export function tokenizedOptionFilter<T>(search: string, option: Option<T>): boolean {
   const tokens = normalizeSearchTokens(search);
   if (tokens.length === 0) {
@@ -371,27 +475,8 @@ export function createClackPrompter(): WizardPrompter {
         initialValues: params.initialValues,
       });
     },
-    text: async (params) => {
-      const validate = params.validate;
-      return guardCancel(
-        await text({
-          message: stylePromptMessage(params.message),
-          initialValue: params.initialValue,
-          placeholder: params.placeholder,
-          validate: validate ? (value) => validate(value ?? "") : undefined,
-        }),
-      );
-    },
-    secret: async (params) => {
-      const validate = params.validate;
-      return guardCancel(
-        await password({
-          message: stylePromptMessage(params.message),
-          validate: validate ? (value) => validate(value ?? "") : undefined,
-          mask: "•",
-        }),
-      );
-    },
+    text: async (params) => textWithFrame(params),
+    secret: async (params) => textWithFrame({ ...params, secret: true }),
     confirm: async (params) =>
       confirmWithArrows({
         message: params.message,
