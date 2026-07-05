@@ -1,8 +1,9 @@
 import { clearScreenDown, cursorTo, emitKeypressEvents, moveCursor } from "node:readline";
-import { intro, type Option, outro } from "@clack/prompts";
+import type { Option } from "@clack/prompts";
 import { createCliProgress } from "../cli/progress.js";
 import { stripAnsi } from "../terminal/ansi.js";
 import { formatFramedBlock, note as emitNote } from "../terminal/note.js";
+import { clearActiveProgressLine } from "../terminal/progress-line.js";
 import {
   displayPromptMessage,
   formatWizardIntro,
@@ -75,6 +76,11 @@ function renderInputValue(
 
 function renderPromptFrame(title: string, lines: string[]): string[] {
   return formatFramedBlock(lines, displayPromptMessage(title), { minWidth: 56 });
+}
+
+function writeStandaloneLine(value: string): void {
+  clearActiveProgressLine();
+  process.stdout.write(`${value}\n`);
 }
 
 function firstEnabledIndex<T>(options: Option<T>[]): number {
@@ -446,10 +452,10 @@ export function tokenizedOptionFilter<T>(search: string, option: Option<T>): boo
 export function createClackPrompter(): WizardPrompter {
   return {
     intro: async (title) => {
-      intro(formatWizardIntro(title));
+      writeStandaloneLine(formatWizardIntro(title));
     },
     outro: async (message) => {
-      outro(stylePromptTitle(message) ?? message);
+      writeStandaloneLine(stylePromptTitle(message) ?? message);
     },
     note: async (message, title) => {
       emitNote(message, title);
