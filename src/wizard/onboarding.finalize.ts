@@ -3247,15 +3247,15 @@ export async function finalizeOnboardingWizard(
     );
   }
 
-  await prompter.outro(
-    strictVps
-      ? "Setup complete. Use HOSTED ACCESS above: Web UI, SSH, or fallback tunnel."
-      : controlUiOpened
+  if (!strictVps) {
+    await prompter.outro(
+      controlUiOpened
         ? "Setup complete. Next: Agent > Models, then Chat."
         : seededInBackground
           ? "Setup complete. Open the dashboard link above, then use Agent > Models and Chat."
           : "Setup complete. Use the dashboard link above, then use Agent > Models and Chat.",
-  );
+    );
+  }
 
   return { launchedTui };
 }

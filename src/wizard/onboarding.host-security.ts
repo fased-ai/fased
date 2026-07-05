@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -97,6 +97,14 @@ type HostSecurityCommandRunner = (
   logPath?: string,
 ) => { ok: boolean; detail?: string; timedOut?: boolean };
 
+type HostSecurityCommandResult = ReturnType<HostSecurityCommandRunner>;
+
+type InteractiveHostSecurityCommandRunner = (
+  command: string,
+  logPath?: string,
+  prompter?: WizardPrompter,
+) => HostSecurityCommandResult | Promise<HostSecurityCommandResult>;
+
 type TailnetSshTarget = {
   user: string;
   host: string;
@@ -114,6 +122,7 @@ const LOW_MEMORY_SWAP_THRESHOLD_MB = 2304;
 const LOW_MEMORY_HOSTING_SWAP_GB = 4;
 const HOSTING_SWAP_GB = 2;
 const TAILSCALE_INTERACTIVE_TIMEOUT_MS = 2 * 60 * 1000;
+const TAILSCALE_LOGIN_URL_RE = /https:\/\/login\.tailscale\.com\/a\/[A-Za-z0-9_-]+/i;
 
 function detectTotalMemoryMb(): number {
   if (process.platform === "linux") {
@@ -159,34 +168,85 @@ function run(command: string, logPath?: string): { ok: boolean; detail?: string 
   return { ok: false, detail: detail || `${command} (exit=${proc.status ?? "unknown"})` };
 }
 
-function runInteractive(
+async function runInteractive(
   command: string,
   logPath?: string,
-  options?: { timeoutMs?: number },
-): { ok: boolean; detail?: string; timedOut?: boolean } {
+  options?: { timeoutMs?: number; prompter?: WizardPrompter; noteTitle?: string },
+): Promise<{ ok: boolean; detail?: string; timedOut?: boolean }> {
   if (logPath) {
     appendHostSecurityLog(
       logPath,
       command,
-      "interactive command started; output shown in terminal",
+      "interactive command started; output captured for framed wizard display",
     );
   }
-  const proc = spawnSync("bash", ["-lc", command], {
-    stdio: ["ignore", "inherit", "inherit"],
-    timeout: options?.timeoutMs,
-    killSignal: "SIGINT",
+  return await new Promise((resolve) => {
+    const proc = spawn("bash", ["-lc", command], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let output = "";
+    let loginUrlShown = false;
+    let timedOut = false;
+    let noteQueue = Promise.resolve();
+    const timer =
+      options?.timeoutMs && options.timeoutMs > 0
+        ? setTimeout(() => {
+            timedOut = true;
+            proc.kill("SIGINT");
+          }, options.timeoutMs)
+        : null;
+
+    const maybeShowLoginUrl = (chunk: string) => {
+      output += chunk;
+      if (loginUrlShown) {
+        return;
+      }
+      const loginUrl = output.match(TAILSCALE_LOGIN_URL_RE)?.[0];
+      if (!loginUrl) {
+        return;
+      }
+      loginUrlShown = true;
+      if (options?.prompter) {
+        const message = [
+          noteHeading("Open login URL"),
+          "Open this URL in your local browser:",
+          ...noteCommands([loginUrl]),
+          "Return here after approving this VPS.",
+        ].join("\n");
+        noteQueue = noteQueue.then(() =>
+          options.prompter?.note(message, options.noteTitle ?? "Tailscale login URL"),
+        );
+      }
+    };
+
+    proc.stdout?.on("data", (chunk: Buffer | string) => {
+      maybeShowLoginUrl(String(chunk));
+    });
+    proc.stderr?.on("data", (chunk: Buffer | string) => {
+      maybeShowLoginUrl(String(chunk));
+    });
+    proc.on("error", (error) => {
+      output += `\n${error instanceof Error ? error.message : String(error)}`;
+    });
+    proc.on("close", (code) => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+      const detail = timedOut
+        ? `${command} timed out after ${Math.round((options?.timeoutMs ?? 0) / 1000)}s\n${output}`.trim()
+        : `${command} (exit=${code ?? "unknown"})\n${output}`.trim();
+      if (logPath) {
+        appendHostSecurityLog(logPath, command, detail);
+      }
+      void noteQueue.then(() => {
+        if (code === 0) {
+          resolve({ ok: true, detail });
+          return;
+        }
+        resolve({ ok: false, detail, timedOut });
+      });
+    });
   });
-  const timedOut = (proc.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
-  const detail = timedOut
-    ? `${command} timed out after ${Math.round((options?.timeoutMs ?? 0) / 1000)}s`
-    : `${command} (exit=${proc.status ?? "unknown"})`;
-  if (logPath) {
-    appendHostSecurityLog(logPath, command, detail);
-  }
-  if (proc.status === 0) {
-    return { ok: true, detail };
-  }
-  return { ok: false, detail, timedOut };
 }
 
 function buildTailscaleLoginWaitCommand(command: string): string {
@@ -216,16 +276,22 @@ function buildTailscaleLoginWaitCommand(command: string): string {
   ].join("\n");
 }
 
-function runInteractiveTailscaleLogin(command: string, logPath?: string) {
+async function runInteractiveTailscaleLogin(
+  command: string,
+  logPath?: string,
+  prompter?: WizardPrompter,
+) {
   if (logPath) {
     appendHostSecurityLog(
       logPath,
       command,
-      "interactive Tailscale login started; output shown in terminal",
+      "interactive Tailscale login started; login URL shown in framed wizard note",
     );
   }
-  const result = runInteractive(buildTailscaleLoginWaitCommand(command), undefined, {
+  const result = await runInteractive(buildTailscaleLoginWaitCommand(command), undefined, {
     timeoutMs: TAILSCALE_INTERACTIVE_TIMEOUT_MS,
+    prompter,
+    noteTitle: "Tailscale login URL",
   });
   if (logPath) {
     appendHostSecurityLog(
@@ -524,7 +590,7 @@ async function confirmTailnetSshBeforeLockdown(params: {
   logPath: string;
   target: TailnetSshTarget;
   runner?: HostSecurityCommandRunner;
-  interactiveRunner?: HostSecurityCommandRunner;
+  interactiveRunner?: InteractiveHostSecurityCommandRunner;
 }): Promise<boolean> {
   const { opts, runtime, prompter, logPath } = params;
   const runner = params.runner ?? run;
@@ -580,9 +646,10 @@ async function confirmTailnetSshBeforeLockdown(params: {
         return false;
       }
       await prompter.note(formatTailscaleAccountBrowserLoginNote(), "Tailscale login");
-      const tsReset = interactiveRunner(
+      const tsReset = await interactiveRunner(
         "sudo -n tailscale logout && sudo -n tailscale up --ssh --accept-routes --reset",
         logPath,
+        prompter,
       );
       const acceptedTimedOutLogin = tailscaleTimedOutButReady(tsReset, logPath, runner);
       if ((!tsReset.ok && !acceptedTimedOutLogin) || !hasTailscaleIp(logPath, runner)) {
@@ -850,7 +917,7 @@ export async function applyHostingSecurity(params: {
       : "sudo -n tailscale logout && sudo -n tailscale up --ssh --accept-routes --reset";
     const tsReset = tsAuthkey
       ? run(resetCommand, logPath)
-      : runInteractiveTailscaleLogin(resetCommand, logPath);
+      : await runInteractiveTailscaleLogin(resetCommand, logPath, prompter);
     if (!tsReset.ok && !tailscaleTimedOutButReady(tsReset, logPath)) {
       return {
         ok: false,
@@ -955,9 +1022,10 @@ export async function applyHostingSecurity(params: {
       if (prompter) {
         await prompter.note(formatTailscaleBrowserLoginNote(), "Tailscale login");
       }
-      const tsReset = runInteractiveTailscaleLogin(
+      const tsReset = await runInteractiveTailscaleLogin(
         "sudo -n tailscale logout && sudo -n tailscale up --ssh --accept-routes --reset",
         logPath,
+        prompter,
       );
       if (!tsReset.ok && !tailscaleTimedOutButReady(tsReset, logPath)) {
         checks.push({
@@ -1040,7 +1108,11 @@ export async function applyHostingSecurity(params: {
       if (prompter) {
         await prompter.note(formatTailscaleBrowserLoginNote(), "Tailscale login");
       }
-      const tsUp = runInteractiveTailscaleLogin("sudo -n tailscale up --ssh", logPath);
+      const tsUp = await runInteractiveTailscaleLogin(
+        "sudo -n tailscale up --ssh",
+        logPath,
+        prompter,
+      );
       if (!tsUp.ok && !tailscaleTimedOutButReady(tsUp, logPath)) {
         checks.push({ name: "tailscale", ok: false, detail: tsUp.detail ?? "tailscale up failed" });
         failOrContinue({ opts, runtime, step: "tailscale up failed", detail: tsUp.detail });
@@ -1186,7 +1258,7 @@ export async function applyHostingSecurity(params: {
   }
   checks.push({ name: "updates", ok: true, detail: "automatic security updates enabled" });
 
-  runtime.log("Hosting host hardening complete.");
+  appendHostSecurityLog(logPath, "hosting host hardening complete", "enforced");
   return { profile, checks, enforced: true, logPath };
 }
 

@@ -1,21 +1,11 @@
 import { clearScreenDown, cursorTo, emitKeypressEvents, moveCursor } from "node:readline";
-import {
-  cancel,
-  intro,
-  isCancel,
-  type Option,
-  outro,
-  password,
-  spinner,
-  text,
-} from "@clack/prompts";
+import { cancel, intro, isCancel, type Option, outro, password, text } from "@clack/prompts";
 import { createCliProgress } from "../cli/progress.js";
 import { stripAnsi } from "../terminal/ansi.js";
 import { formatFramedBlock, note as emitNote } from "../terminal/note.js";
 import {
   displayPromptMessage,
   formatWizardIntro,
-  styleProgressTitle,
   stylePromptHint,
   stylePromptMessage,
   stylePromptTitle,
@@ -408,36 +398,30 @@ export function createClackPrompter(): WizardPrompter {
         initialValue: params.initialValue,
       }),
     progress: (label: string): WizardProgress => {
-      const spin = spinner();
       const startedAt = Date.now();
       let currentMessage = label;
       const render = (message: string) =>
-        `${styleProgressTitle(message)} ${theme.muted(`(${formatElapsed(Date.now() - startedAt)})`)}`;
-      spin.start(render(currentMessage));
+        `${message} ${theme.muted(`(${formatElapsed(Date.now() - startedAt)})`)}`;
       const elapsedTimer = setInterval(() => {
-        spin.message(render(currentMessage));
+        osc.setLabel(render(currentMessage));
       }, 1_000);
       elapsedTimer.unref?.();
       const osc = createCliProgress({
-        label,
+        label: render(currentMessage),
         indeterminate: true,
         enabled: true,
-        fallback: "none",
+        fallback: "line",
+        stream: process.stdout,
       });
       return {
         update: (message) => {
           currentMessage = message;
-          spin.message(render(currentMessage));
-          osc.setLabel(message);
+          osc.setLabel(render(currentMessage));
         },
         stop: (message) => {
+          void message;
           clearInterval(elapsedTimer);
           osc.done();
-          if (message && message.trim().length > 0) {
-            spin.stop(theme.success(message));
-          } else {
-            spin.clear();
-          }
         },
       };
     },

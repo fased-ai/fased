@@ -3069,6 +3069,3 @@ if [[ ! -f "${FASED_CONFIG_PATH:-$FASED_CONFIG_DIR/fased.json}" ]]; then
   exit 1
 fi
 write_install_marker "$REPO_ROOT" "true"
-
-echo
-step_done "Setup complete"
