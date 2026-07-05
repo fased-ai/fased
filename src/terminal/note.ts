@@ -1,4 +1,5 @@
 import { visibleWidth } from "./ansi.js";
+import { clearActiveProgressLine } from "./progress-line.js";
 import { theme } from "./theme.js";
 
 const URL_PREFIX_RE = /^(https?:\/\/|file:\/\/)/i;
@@ -169,6 +170,7 @@ export function formatFramedBlock(
 }
 
 export function note(message: string, title?: string) {
+  clearActiveProgressLine();
   const wrapped = wrapNoteMessage(message);
   const lines = wrapped.split("\n");
   const output = formatFramedBlock(lines, title);
