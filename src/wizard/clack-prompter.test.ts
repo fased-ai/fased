@@ -47,6 +47,7 @@ describe("createClackPrompter", () => {
 
     const output = stripAnsi(write.mock.calls.map(([chunk]) => String(chunk)).join(""));
     expect(output).toContain("SETUP COMPLETE. NEXT: AGENT > MODELS, THEN CHAT.");
+    expect(output).toMatch(/^  SETUP COMPLETE\./);
     expect(output).not.toMatch(/[◇│╰]/);
   });
 });

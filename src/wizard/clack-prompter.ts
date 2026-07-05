@@ -78,9 +78,14 @@ function renderPromptFrame(title: string, lines: string[]): string[] {
   return formatFramedBlock(lines, displayPromptMessage(title), { minWidth: 56 });
 }
 
-function writeStandaloneLine(value: string): void {
+function writeStandaloneLine(value: string, options: { indent?: string } = {}): void {
   clearActiveProgressLine();
-  process.stdout.write(`${value}\n`);
+  const indent = options.indent ?? "";
+  const output = value
+    .split("\n")
+    .map((line) => (line.length > 0 ? `${indent}${line}` : line))
+    .join("\n");
+  process.stdout.write(`${output}\n`);
 }
 
 function firstEnabledIndex<T>(options: Option<T>[]): number {
@@ -455,7 +460,7 @@ export function createClackPrompter(): WizardPrompter {
       writeStandaloneLine(formatWizardIntro(title));
     },
     outro: async (message) => {
-      writeStandaloneLine(stylePromptTitle(message) ?? message);
+      writeStandaloneLine(stylePromptTitle(message) ?? message, { indent: "  " });
     },
     note: async (message, title) => {
       emitNote(message, title);
