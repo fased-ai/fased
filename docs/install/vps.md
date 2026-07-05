@@ -61,10 +61,16 @@ Hosted setup uses two machines:
 Your own computer must join the same Tailscale account/tailnet as the VPS. That
 is the computer where you will open the dashboard and run SSH checks.
 Before you start the remote VPS installer, shut down local VPNs such as Mullvad,
-Proton VPN, NordVPN, corporate VPN clients, and browser/device VPN apps. Other
-VPNs can override DNS, firewall rules, or the `100.64.0.0/10` address range
-that Tailscale uses. Re-enable them only after Tailscale SSH and the dashboard
-work, and use split tunneling if that VPN must stay on.
+Proton VPN, NordVPN, corporate VPN clients, and browser/device VPN apps. For
+Fased hosted setup, do not run another VPN beside Tailscale while verifying
+dashboard and SSH access. Other VPNs can override DNS, firewall rules, or the
+`100.64.0.0/10` address range that Tailscale uses.
+
+If you need Mullvad-style privacy while using Tailscale, use Tailscale's paid
+Mullvad VPN add-on instead of running the Mullvad app beside Tailscale. That
+add-on supports Mullvad only; it does not cover Proton, NordVPN, corporate VPN
+clients, or other VPN providers. See
+[Other VPNs and Mullvad](/gateway/tailscale#other-vpns-and-mullvad).
 
 <Tabs>
   <Tab title="Windows">
@@ -256,9 +262,15 @@ If your own computer says `tailscale: command not found`, return to step 1 and
 install Tailscale on your local PC first. If `tailscale status` says it cannot
 connect to local `tailscaled`, the local Tailscale service is not running; start
 it and sign in before continuing. A separate VPN on your own computer can
-interfere with Tailscale DNS or routing. Turn the other VPN off for the cleanest
-setup. If it must stay on, use the `100.x.x.x` Tailscale IP instead of the
-hostname.
+interfere with Tailscale DNS or routing. Turn the other VPN off for hosted
+setup. If it must stay on later, use the `100.x.x.x` Tailscale IP instead of
+the hostname and configure split tunneling in that VPN.
+
+If the VPN you want is Mullvad, prefer Tailscale's paid Mullvad VPN add-on
+instead of running the Mullvad desktop/mobile VPN app beside Tailscale. The
+add-on is enabled in the Tailscale admin console, then granted to devices; it
+supports Mullvad only. See
+[Other VPNs and Mullvad](/gateway/tailscale#other-vpns-and-mullvad).
 
 If `tailscale ping 100.x.x.x` works but
 `ssh app@YOUR_VPS_TAILSCALE_NAME` fails with a hostname/DNS error, Tailscale is
@@ -316,6 +328,14 @@ want optional channel details. If health fails, inspect the service:
 sudo systemctl status fased-gateway --no-pager
 sudo journalctl -u fased-gateway -n 120 --no-pager
 ```
+
+If the hosted dashboard or SSH works immediately after setup but fails after you
+turn another VPN back on, the VPS is usually still fine. Turn the other VPN off
+and test `tailscale status`, `tailscale ping`, and the `100.x.x.x` Tailscale IP
+from your own computer. For Mullvad, use Tailscale's paid Mullvad VPN
+add-on/Mullvad exit nodes instead of running the Mullvad VPN app beside
+Tailscale. Other VPN providers still need their own split-tunnel or firewall
+workaround.
 
 Root SSH is only for first bootstrap or emergency repair after the hosting
 profile hardens SSH/UFW. Keep the raw Gateway port closed to the public

@@ -27,6 +27,50 @@ network. The intended pattern is loopback-first: keep the gateway on
 - keep `gateway.bind: "loopback"` unless you need a direct tailnet bind
 - use `funnel` only when you truly need public ingress
 
+## Other VPNs and Mullvad
+
+For Fased hosted setup, do not run another VPN beside Tailscale while verifying
+dashboard and SSH access. Shut down Mullvad, Proton VPN, NordVPN, corporate VPN
+clients, browser VPNs, and device-level VPN apps before you start the hosted
+installer or before you confirm Tailscale SSH. Other VPNs often change firewall
+rules, DNS behavior, or routes in ways that break MagicDNS, `tailscale ping`,
+or `ssh app@YOUR_VPS_TAILSCALE_NAME`.
+
+If you need Mullvad privacy while using Tailscale, use Tailscale's paid
+**Mullvad VPN add-on**. In Tailscale docs this is called **Mullvad exit nodes**:
+Mullvad servers appear as Tailscale exit nodes in your tailnet. This is not a
+Fased plugin and not a local package to install.
+
+What it supports:
+
+- **Supported VPN provider:** Mullvad only.
+- **Not covered:** Proton VPN, NordVPN, corporate VPNs, browser VPNs, or other
+  VPN providers.
+- **Where to enable:** Tailscale admin console.
+- **Where to choose a region/server:** the Tailscale client, after the device is
+  granted Mullvad access.
+
+Basic setup:
+
+1. Open the Tailscale admin console.
+2. Go to **Settings > General**.
+3. Scroll to **Mullvad VPN** and select **Configure**.
+4. Complete the checkout flow for Mullvad licenses.
+5. Add the devices that should use Mullvad exit nodes, or manage access through
+   the tailnet policy file with the `mullvad` node attribute.
+6. On the local computer, open the Tailscale client and select a Mullvad exit
+   node.
+
+For current Mullvad regions and servers, use the Mullvad server list linked
+from Tailscale's Mullvad exit-node documentation. If your location is not
+available there, the Tailscale add-on will not make it available in Fased.
+
+References:
+
+- Tailscale: [Can I use Tailscale alongside other VPNs?](https://tailscale.com/docs/reference/faq/other-vpns)
+- Tailscale: [Mullvad exit nodes](https://tailscale.com/docs/features/exit-nodes/mullvad-exit-nodes)
+- Mullvad: [Servers](https://mullvad.net/servers)
+
 ## First-time setup
 
 For a hosted VPS, use the normal hosted installer. It starts Tailscale on the
