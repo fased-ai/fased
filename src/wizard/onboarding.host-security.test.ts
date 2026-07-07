@@ -26,13 +26,13 @@ describe("onboarding host security", () => {
     const commands: string[] = [];
     const loggedIn = __testing.isTailscaleLoggedIn(undefined, (command) => {
       commands.push(command);
-      return { ok: command.startsWith("sudo -n tailscale status") };
+      return { ok: command.includes("fased-host-maintenance tailscale-status") };
     });
 
     expect(loggedIn).toBe(true);
     expect(commands).toEqual([
       "tailscale status >/dev/null 2>&1",
-      "sudo -n tailscale status >/dev/null 2>&1",
+      "sudo -n /usr/local/sbin/fased-host-maintenance tailscale-status >/dev/null 2>&1",
     ]);
   });
 
@@ -40,13 +40,13 @@ describe("onboarding host security", () => {
     const commands: string[] = [];
     const hasIp = __testing.hasTailscaleIp(undefined, (command) => {
       commands.push(command);
-      return { ok: command.startsWith("sudo -n tailscale ip") };
+      return { ok: command.includes("fased-host-maintenance tailscale-ip4") };
     });
 
     expect(hasIp).toBe(true);
     expect(commands).toEqual([
       "tailscale ip -4 >/dev/null 2>&1",
-      "sudo -n tailscale ip -4 >/dev/null 2>&1",
+      "sudo -n /usr/local/sbin/fased-host-maintenance tailscale-ip4 >/dev/null 2>&1",
     ]);
   });
 
@@ -168,10 +168,7 @@ describe("onboarding host security", () => {
 
     expect(result.ok).toBe(true);
     expect(commands).toHaveLength(1);
-    expect(commands[0]).toContain("ufw insert 1 allow in on tailscale0 to any port 22");
-    expect(commands[0]).toContain(
-      "firewall-cmd --permanent --zone=trusted --add-interface=tailscale0",
-    );
+    expect(commands[0]).toContain("fased-host-maintenance tailnet-ssh-ingress");
     expect(commands[0]).not.toContain("ufw allow 22/tcp");
     const syntax = checkBashSyntax(commands[0]);
     expect(syntax.status, syntax.stderr).toBe(0);
@@ -192,6 +189,7 @@ describe("onboarding host security", () => {
     const command = __testing.tailscaleInstallCommand();
 
     expect(command).toContain("command -v tailscale");
+    expect(command).toContain("fased-host-maintenance tailscale-install-start");
     expect(command).toContain("dnf install -y tailscale");
     expect(command).toContain("dnf5 install -y tailscale");
     expect(command).toContain("yum install -y tailscale");
@@ -205,6 +203,7 @@ describe("onboarding host security", () => {
     const command = __testing.buildTailscaleLoginWaitCommand("sudo -n tailscale up --ssh");
 
     expect(command).toContain("sudo -n tailscale up --ssh");
+    expect(command).toContain("fased-host-maintenance tailscale-ip4");
     expect(command).toContain("tailscale ip -4");
     expect(command).toContain('kill -INT "$ts_pid"');
     expect(command).toContain("exit 124");
@@ -215,6 +214,7 @@ describe("onboarding host security", () => {
   it("generates hosted firewall hardening for ufw and firewalld", () => {
     const command = __testing.firewallBaselineCommand();
 
+    expect(command).toContain("fased-host-maintenance firewall-baseline");
     expect(command).toContain("ufw default deny incoming");
     expect(command).toContain("firewall-cmd --permanent --zone=trusted --add-interface=tailscale0");
     expect(command).toContain("firewall-cmd --permanent --zone=public --remove-service=ssh");
@@ -225,6 +225,7 @@ describe("onboarding host security", () => {
   it("generates automatic update setup for apt and dnf families", () => {
     const command = __testing.automaticUpdatesCommand();
 
+    expect(command).toContain("fased-host-maintenance automatic-updates");
     expect(command).toContain("unattended-upgrades");
     expect(command).toContain("dnf5-plugin-automatic");
     expect(command).toContain("/usr/local/sbin/fased-host-maintenance enable-dnf-automatic");
@@ -235,13 +236,11 @@ describe("onboarding host security", () => {
     expect(syntax.status, syntax.stderr).toBe(0);
   });
 
-  it("uses the hosted maintenance helper for SSH hardening with a legacy fallback", () => {
+  it("uses the hosted maintenance helper for SSH hardening", () => {
     const command = __testing.sshHardeningCommand();
 
     expect(command).toContain("/usr/local/sbin/fased-host-maintenance harden-ssh");
-    expect(command).toContain("PasswordAuthentication no");
-    expect(command).toContain("PermitRootLogin no");
-    expect(command).toContain("systemctl restart ssh");
+    expect(command).not.toContain("sed -i");
     const syntax = checkBashSyntax(command);
     expect(syntax.status, syntax.stderr).toBe(0);
   });
@@ -326,7 +325,7 @@ describe("onboarding host security", () => {
 
       expect(result).toBe(true);
       expect(interactiveCommands).toEqual([
-        "sudo -n tailscale logout && sudo -n tailscale up --ssh --accept-routes --reset",
+        "sudo -n /usr/local/sbin/fased-host-maintenance tailscale-up-reset-ssh",
       ]);
       expect(notes.some((note) => note.includes("old.tailnet.ts.net"))).toBe(true);
       expect(notes.some((note) => note.includes("new.tailnet.ts.net"))).toBe(true);
@@ -414,7 +413,7 @@ describe("onboarding host security", () => {
 
       expect(result).toBe(true);
       expect(interactiveCommands).toEqual([
-        "sudo -n tailscale logout && sudo -n tailscale up --ssh --accept-routes --reset",
+        "sudo -n /usr/local/sbin/fased-host-maintenance tailscale-up-reset-ssh",
       ]);
       expect(commands).toContain("tailscale ip -4 >/dev/null 2>&1");
       expect(commands).toContain("tailscale status --json");
