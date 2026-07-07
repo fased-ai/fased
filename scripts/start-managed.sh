@@ -453,6 +453,7 @@ SIGNERD_EVM_KEYSTORE="$SIGNERD_MATERIAL_DIR/keystore-evm.v1.enc"
 SIGNERD_SOL_KEYSTORE="$SIGNERD_MATERIAL_DIR/keystore-solana.v1.enc"
 SIGNERD_LOG="${LOG_DIR}/fased-signerd.log"
 SIGNERD_BROKER_LOG="${LOG_DIR}/local-signer-broker.log"
+SIGNER_MAINTENANCE_HELPER="/usr/local/sbin/fased-signer-maintenance"
 SIGNER_ISOLATION_HELPER="/usr/local/sbin/fased-signer-isolation"
 CONFIG_JSON="${FASED_CONFIG_DIR}/fased.json"
 SIGNERD_ENV_FILE="${FASED_CONFIG_DIR}/wallet/signer.env"
@@ -781,14 +782,18 @@ current_app_user() {
 
 signer_isolation_helper_available() {
   [[ -n "${FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER:-}" ]] || return 1
-  [[ -x "$SIGNER_ISOLATION_HELPER" ]] || return 1
+  [[ -x "$SIGNER_MAINTENANCE_HELPER" || -x "$SIGNER_ISOLATION_HELPER" ]] || return 1
   command -v sudo >/dev/null 2>&1 || return 1
 }
 
 run_signer_isolation_helper() {
-  local app_user
-  app_user="$(current_app_user)"
-  sudo -n -E "$SIGNER_ISOLATION_HELPER" "$app_user" "$FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER" "$@"
+  if [[ -x "$SIGNER_MAINTENANCE_HELPER" ]]; then
+    sudo -n -E "$SIGNER_MAINTENANCE_HELPER" "$@"
+  else
+    local app_user
+    app_user="$(current_app_user)"
+    sudo -n -E "$SIGNER_ISOLATION_HELPER" "$app_user" "$FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER" "$@"
+  fi
 }
 
 start_signerd_process() {

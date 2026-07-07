@@ -2393,7 +2393,7 @@ ${target_user} ALL=(root) NOPASSWD: /usr/bin/journalctl -u fased-gateway.service
 ${target_user} ALL=(root) NOPASSWD: /usr/bin/journalctl -u fased-gateway -n 50 --no-pager
 ${target_user} ALL=(root) NOPASSWD: /usr/bin/journalctl -u fased-gateway -n 120 --no-pager
 ${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-install-gateway-service fased-gateway ${target_user}
-${target_user} ALL=(root) NOPASSWD:SETENV: /usr/local/sbin/fased-signer-isolation "^${target_user} ${signer_user} (prepare|ensure-passphrase|install-passphrase|install-binary|copy-keystore|stop|start-signerd|start-broker)( .+)?$"
+${target_user} ALL=(root) NOPASSWD:SETENV: /usr/local/sbin/fased-signer-maintenance
 ${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance harden-ssh
 ${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance enable-dnf-automatic
 ${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance tailscale-status
@@ -2973,6 +2973,26 @@ EOF
   chmod 755 "$helper_path"
 }
 
+install_host_signer_maintenance_wrapper() {
+  local target_user="$1"
+  local signer_user="${FASED_SIGNER_USER:-fased-signer}"
+  local helper_path="/usr/local/sbin/fased-signer-maintenance"
+  [[ -n "$target_user" && "$target_user" != "root" && "$target_user" =~ ^[A-Za-z0-9_.@-]+$ ]] || {
+    echo "invalid app user for signer maintenance wrapper: $target_user" >&2
+    exit 2
+  }
+  [[ -n "$signer_user" && "$signer_user" != "root" && "$signer_user" =~ ^[A-Za-z0-9_.@-]+$ ]] || {
+    echo "invalid signer user for signer maintenance wrapper: $signer_user" >&2
+    exit 2
+  }
+  cat >"$helper_path" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+exec /usr/local/sbin/fased-signer-isolation "$target_user" "$signer_user" "\$@"
+EOF
+  chmod 755 "$helper_path"
+}
+
 ensure_host_signer_isolation_user() {
   local target_user="$1"
   local signer_user="${FASED_SIGNER_USER:-fased-signer}"
@@ -3067,6 +3087,7 @@ if [[ "$(id -u)" -eq 0 ]]; then
   install_host_gateway_service_helper
   install_host_maintenance_helper
   install_host_signer_isolation_helper
+  install_host_signer_maintenance_wrapper "${FASED_INSTALL_USER:-app}"
   install_host_maintenance_sudoers "${FASED_INSTALL_USER:-app}"
   ensure_early_swap_for_hosting
   install_missing_deps_as_root_if_needed
