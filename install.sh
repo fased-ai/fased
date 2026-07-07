@@ -658,10 +658,16 @@ install_pnpm_for_active_node() {
 install_nodesource_node_apt() {
   local setup_script
   setup_script="$(mktemp)"
-  curl -fsSL https://deb.nodesource.com/setup_24.x -o "$setup_script"
-  run_as_root bash "$setup_script"
+  if curl -fsSL https://deb.nodesource.com/setup_24.x -o "$setup_script" && \
+    run_as_root bash "$setup_script" && \
+    run_as_root apt-get install -y nodejs; then
+    rm -f "$setup_script"
+    return 0
+  fi
   rm -f "$setup_script"
-  run_as_root apt-get install -y nodejs
+  echo "NodeSource Node 24 install failed; trying distro nodejs/npm packages as fallback." >&2
+  run_as_root apt-get update
+  run_as_root apt-get install -y nodejs npm
 }
 
 install_nodesource_node_rpm() {
@@ -2324,9 +2330,6 @@ install_host_maintenance_sudoers() {
   local signer_user="${FASED_SIGNER_USER:-fased-signer}"
   local sudoers_path="/etc/sudoers.d/fased-host-maintenance-${target_user}"
   cat >"$sudoers_path" <<EOF
-${target_user} ALL=(root) NOPASSWD: /usr/bin/tailscale *
-${target_user} ALL=(root) NOPASSWD: /usr/sbin/ufw *
-${target_user} ALL=(root) NOPASSWD: /usr/bin/firewall-cmd *
 ${target_user} ALL=(root) NOPASSWD: /usr/bin/timedatectl set-ntp true
 ${target_user} ALL=(root) NOPASSWD: /usr/bin/timedatectl status
 ${target_user} ALL=(root) NOPASSWD: /usr/bin/timedatectl timesync-status
@@ -2378,22 +2381,37 @@ ${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl restart fased-gateway.ser
 ${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl restart --no-block fased-gateway.service
 ${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl start --no-block fased-gateway.service
 ${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now fased-gateway.service
+${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl list-unit-files fased-gateway.service --no-legend
 ${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl status fased-gateway.service
-${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl status fased-gateway.service *
-${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl status fased-gateway *
+${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl status fased-gateway.service --no-pager
 ${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl is-active fased-gateway.service
-${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl is-active fased-gateway.service *
-${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl is-active fased-gateway *
-${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl show fased-gateway.service *
-${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl show fased-gateway *
-${target_user} ALL=(root) NOPASSWD: /usr/bin/journalctl -u fased-gateway.service *
-${target_user} ALL=(root) NOPASSWD: /usr/bin/journalctl -u fased-gateway *
+${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl is-active fased-gateway
+${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl show fased-gateway.service -p ActiveState --value
+${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl cat fased-gateway.service
+${target_user} ALL=(root) NOPASSWD: /usr/bin/journalctl -u fased-gateway.service -n 50 --no-pager
+${target_user} ALL=(root) NOPASSWD: /usr/bin/journalctl -u fased-gateway.service -n 120 --no-pager
+${target_user} ALL=(root) NOPASSWD: /usr/bin/journalctl -u fased-gateway -n 50 --no-pager
+${target_user} ALL=(root) NOPASSWD: /usr/bin/journalctl -u fased-gateway -n 120 --no-pager
 ${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-install-gateway-service fased-gateway ${target_user}
-${target_user} ALL=(root) NOPASSWD:SETENV: /usr/local/sbin/fased-signer-isolation ${target_user} ${signer_user} *
+${target_user} ALL=(root) NOPASSWD:SETENV: /usr/local/sbin/fased-signer-isolation "^${target_user} ${signer_user} (prepare|ensure-passphrase|install-passphrase|install-binary|copy-keystore|stop|start-signerd|start-broker)( .+)?$"
 ${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance harden-ssh
 ${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance enable-dnf-automatic
-${target_user} ALL=(root) NOPASSWD: /usr/bin/sed "^-i s/.+PasswordAuthentication .*/PasswordAuthentication no/ /etc/ssh/sshd_config$"
-${target_user} ALL=(root) NOPASSWD: /usr/bin/sed "^-i s/.+PermitRootLogin .*/PermitRootLogin no/ /etc/ssh/sshd_config$"
+${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance tailscale-status
+${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance tailscale-status-json
+${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance tailscale-ip4
+${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance tailscale-logout
+${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance tailscale-up-ssh
+${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance tailscale-up-reset-ssh
+${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance tailscale-up-authkey-ssh
+${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance tailscale-up-reset-authkey-ssh
+${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance tailscale-serve
+${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance tailscale-serve-status
+${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance tailscale-install-start
+${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance tailscale-set-operator-self
+${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance tailnet-ssh-ingress
+${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance firewall-baseline
+${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance fail2ban-enable
+${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance automatic-updates
 EOF
   chmod 440 "$sudoers_path"
   if need_cmd visudo; then
@@ -2409,10 +2427,139 @@ set -euo pipefail
 
 command_name="${1:-}"
 
+valid_port() {
+  [[ "$1" =~ ^[0-9]+$ && "$1" -ge 1 && "$1" -le 65535 ]]
+}
+
+read_valid_port() {
+  local port=""
+  IFS= read -r port || true
+  valid_port "$port" || {
+    echo "invalid port" >&2
+    exit 2
+  }
+  printf '%s\n' "$port"
+}
+
+install_tailscale_if_needed() {
+  if command -v tailscale >/dev/null 2>&1; then
+    return 0
+  fi
+  if command -v apt-get >/dev/null 2>&1; then
+    curl -fsSL https://tailscale.com/install.sh | env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a sh
+  elif command -v dnf >/dev/null 2>&1; then
+    dnf install -y tailscale || curl -fsSL https://tailscale.com/install.sh | sh
+  elif command -v dnf5 >/dev/null 2>&1; then
+    dnf5 install -y tailscale || curl -fsSL https://tailscale.com/install.sh | sh
+  elif command -v yum >/dev/null 2>&1; then
+    yum install -y tailscale || curl -fsSL https://tailscale.com/install.sh | sh
+  elif command -v pacman >/dev/null 2>&1; then
+    pacman -Sy --needed --noconfirm tailscale
+  elif command -v apk >/dev/null 2>&1; then
+    apk add --no-cache tailscale
+  else
+    curl -fsSL https://tailscale.com/install.sh | sh
+  fi
+}
+
+enable_tailscaled_if_present() {
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl enable --now tailscaled >/dev/null 2>&1 || true
+  fi
+}
+
+tailnet_ssh_ingress() {
+  if command -v ufw >/dev/null 2>&1; then
+    if ufw status | grep -qi '^Status: active'; then
+      ufw insert 1 allow in on tailscale0 to any port 22 proto tcp || ufw allow in on tailscale0 to any port 22 proto tcp
+    else
+      ufw allow in on tailscale0 to any port 22 proto tcp >/dev/null 2>&1 || true
+    fi
+  elif command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active --quiet firewalld; then
+    firewall-cmd --permanent --zone=trusted --add-interface=tailscale0 >/dev/null 2>&1 || true
+    firewall-cmd --reload >/dev/null 2>&1 || true
+  fi
+}
+
+install_package_for_hosting() {
+  local package_name="$1"
+  if command -v apt-get >/dev/null 2>&1; then
+    apt-get update
+    env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y "$package_name"
+  elif command -v dnf >/dev/null 2>&1; then
+    dnf install -y "$package_name"
+  elif command -v dnf5 >/dev/null 2>&1; then
+    dnf5 install -y "$package_name"
+  elif command -v yum >/dev/null 2>&1; then
+    yum install -y "$package_name"
+  else
+    echo "unsupported package manager" >&2
+    return 1
+  fi
+}
+
+firewall_baseline() {
+  if command -v ufw >/dev/null 2>&1 || command -v apt-get >/dev/null 2>&1; then
+    command -v ufw >/dev/null 2>&1 || install_package_for_hosting ufw
+    ufw default deny incoming
+    ufw default allow outgoing
+    ufw insert 1 allow in on tailscale0 to any port 22 proto tcp || ufw allow in on tailscale0 to any port 22 proto tcp
+    ufw insert 2 allow in on tailscale0 to any port 443 proto tcp || ufw allow in on tailscale0 to any port 443 proto tcp
+    ufw deny 22/tcp || true
+    ufw --force enable
+  elif command -v firewall-cmd >/dev/null 2>&1 || command -v dnf >/dev/null 2>&1 || command -v dnf5 >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; then
+    command -v firewall-cmd >/dev/null 2>&1 || install_package_for_hosting firewalld
+    systemctl enable --now firewalld
+    firewall-cmd --permanent --zone=trusted --add-interface=tailscale0 >/dev/null 2>&1 || true
+    firewall-cmd --permanent --zone=public --remove-service=ssh >/dev/null 2>&1 || true
+    firewall-cmd --permanent --zone=public --remove-port=22/tcp >/dev/null 2>&1 || true
+    firewall-cmd --reload
+  else
+    echo "no supported firewall manager found: need ufw or firewalld" >&2
+    exit 1
+  fi
+}
+
+enable_automatic_updates() {
+  if command -v apt-get >/dev/null 2>&1; then
+    install_package_for_hosting unattended-upgrades
+    systemctl enable --now unattended-upgrades >/dev/null 2>&1 || true
+    systemctl enable --now apt-daily.timer apt-daily-upgrade.timer
+  elif command -v dnf >/dev/null 2>&1 || command -v dnf5 >/dev/null 2>&1; then
+    install_package_for_hosting dnf5-plugin-automatic || install_package_for_hosting dnf-automatic
+    if [[ -f /etc/dnf/automatic.conf ]]; then
+      sed -i 's/^apply_updates[[:space:]]*=.*/apply_updates = yes/' /etc/dnf/automatic.conf
+    fi
+    systemctl enable --now dnf5-automatic.timer >/dev/null 2>&1 || systemctl enable --now dnf-automatic.timer
+  elif command -v yum >/dev/null 2>&1; then
+    install_package_for_hosting dnf-automatic || install_package_for_hosting yum-cron
+    systemctl enable --now dnf-automatic.timer >/dev/null 2>&1 || systemctl enable --now yum-cron
+  else
+    echo "unsupported package manager for automatic updates" >&2
+    exit 1
+  fi
+}
+
 case "$command_name" in
   harden-ssh)
-    sed -i 's/^#\?PasswordAuthentication .*/PasswordAuthentication no/' /etc/ssh/sshd_config
-    sed -i 's/^#\?PermitRootLogin .*/PermitRootLogin no/' /etc/ssh/sshd_config
+    install -d -m 0755 /etc/ssh/sshd_config.d
+    if [[ -f /etc/ssh/sshd_config ]] && ! grep -Eiq '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/\*\.conf([[:space:]]|$)' /etc/ssh/sshd_config; then
+      cp -a /etc/ssh/sshd_config "/etc/ssh/sshd_config.fased-pre-dropin.$(date +%Y%m%d%H%M%S).bak" || true
+      tmp_sshd_config="$(mktemp)"
+      {
+        printf '%s\n' 'Include /etc/ssh/sshd_config.d/*.conf'
+        cat /etc/ssh/sshd_config
+      } >"$tmp_sshd_config"
+      cat "$tmp_sshd_config" >/etc/ssh/sshd_config
+      rm -f "$tmp_sshd_config"
+    fi
+    cat >/etc/ssh/sshd_config.d/01-fased-hardening.conf <<'SSHD_CONF'
+PasswordAuthentication no
+PermitRootLogin no
+SSHD_CONF
+    if command -v sshd >/dev/null 2>&1; then
+      sshd -t
+    fi
     systemctl restart ssh || systemctl restart sshd
     ;;
   enable-dnf-automatic)
@@ -2420,8 +2567,74 @@ case "$command_name" in
       sed -i 's/^apply_updates[[:space:]]*=.*/apply_updates = yes/' /etc/dnf/automatic.conf
     fi
     ;;
+  tailscale-status)
+    tailscale status
+    ;;
+  tailscale-status-json)
+    tailscale status --json
+    ;;
+  tailscale-ip4)
+    tailscale ip -4
+    ;;
+  tailscale-logout)
+    tailscale logout
+    ;;
+  tailscale-up-ssh)
+    tailscale up --ssh
+    ;;
+  tailscale-up-reset-ssh)
+    tailscale logout >/dev/null 2>&1 || true
+    tailscale up --ssh --accept-routes --reset
+    ;;
+  tailscale-up-authkey-ssh)
+    read -r authkey
+    [[ "$authkey" == tskey-auth-* ]] || {
+      echo "invalid Tailscale auth key" >&2
+      exit 2
+    }
+    tailscale up --authkey "$authkey" --ssh
+    ;;
+  tailscale-up-reset-authkey-ssh)
+    read -r authkey
+    [[ "$authkey" == tskey-auth-* ]] || {
+      echo "invalid Tailscale auth key" >&2
+      exit 2
+    }
+    tailscale logout >/dev/null 2>&1 || true
+    tailscale up --ssh --accept-routes --reset --authkey "$authkey"
+    ;;
+  tailscale-serve)
+    serve_port="$(read_valid_port)"
+    tailscale serve --bg "http://127.0.0.1:${serve_port}" || tailscale serve https / "http://127.0.0.1:${serve_port}"
+    ;;
+  tailscale-serve-status)
+    tailscale serve status
+    ;;
+  tailscale-install-start)
+    install_tailscale_if_needed
+    enable_tailscaled_if_present
+    command -v tailscale >/dev/null 2>&1
+    ;;
+  tailscale-set-operator-self)
+    operator_user="${SUDO_USER:-}"
+    [[ -n "$operator_user" && "$operator_user" != "root" && "$operator_user" =~ ^[A-Za-z0-9_.@-]+$ ]] || exit 0
+    tailscale set --operator="$operator_user"
+    ;;
+  tailnet-ssh-ingress)
+    tailnet_ssh_ingress
+    ;;
+  firewall-baseline)
+    firewall_baseline
+    ;;
+  fail2ban-enable)
+    install_package_for_hosting fail2ban
+    systemctl enable --now fail2ban
+    ;;
+  automatic-updates)
+    enable_automatic_updates
+    ;;
   *)
-    echo "usage: fased-host-maintenance {harden-ssh|enable-dnf-automatic}" >&2
+    echo "usage: fased-host-maintenance <host-maintenance-command>" >&2
     exit 64
     ;;
 esac

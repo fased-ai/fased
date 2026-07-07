@@ -310,16 +310,18 @@ async function installRootServiceMaintenanceAccess(params: {
   const sudoers = [
     `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl restart ${safeServiceName}.service`,
     `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl restart --no-block ${safeServiceName}.service`,
+    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl start --no-block ${safeServiceName}.service`,
+    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now ${safeServiceName}.service`,
     `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl status ${safeServiceName}.service`,
-    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl status ${safeServiceName}.service *`,
-    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl status ${safeServiceName} *`,
+    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl status ${safeServiceName}.service --no-pager`,
     `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl is-active ${safeServiceName}.service`,
-    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl is-active ${safeServiceName}.service *`,
-    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl is-active ${safeServiceName} *`,
-    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl show ${safeServiceName}.service *`,
-    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl show ${safeServiceName} *`,
-    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/journalctl -u ${safeServiceName}.service *`,
-    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/journalctl -u ${safeServiceName} *`,
+    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl is-active ${safeServiceName}`,
+    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl show ${safeServiceName}.service -p ActiveState --value`,
+    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl cat ${safeServiceName}.service`,
+    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/journalctl -u ${safeServiceName}.service -n 50 --no-pager`,
+    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/journalctl -u ${safeServiceName}.service -n 120 --no-pager`,
+    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/journalctl -u ${safeServiceName} -n 50 --no-pager`,
+    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/journalctl -u ${safeServiceName} -n 120 --no-pager`,
   ].join("\n");
   const b64 = Buffer.from(`${sudoers}\n`, "utf8").toString("base64");
   const installCommand = [

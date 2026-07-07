@@ -1402,11 +1402,11 @@ TAILSCALE_SERVE_READY=0
 if command -v tailscale >/dev/null 2>&1; then
   if [[ "${FASED_TAILSCALE_AUTO_SERVE:-1}" == "1" ]]; then
     tailscale serve --bg "http://127.0.0.1:${FASED_GATEWAY_PORT}" >/dev/null 2>&1 || \
-      sudo tailscale serve --bg "http://127.0.0.1:${FASED_GATEWAY_PORT}" >/dev/null 2>&1 || \
+      printf '%s\n' "${FASED_GATEWAY_PORT}" | sudo -n /usr/local/sbin/fased-host-maintenance tailscale-serve >/dev/null 2>&1 || \
       tailscale serve https / "http://127.0.0.1:${FASED_GATEWAY_PORT}" >/dev/null 2>&1 || true
   fi
   if tailscale serve status 2>/dev/null | grep -q "127.0.0.1:${FASED_GATEWAY_PORT}" || \
-     sudo tailscale serve status 2>/dev/null | grep -q "127.0.0.1:${FASED_GATEWAY_PORT}"; then
+     sudo -n /usr/local/sbin/fased-host-maintenance tailscale-serve-status 2>/dev/null | grep -q "127.0.0.1:${FASED_GATEWAY_PORT}"; then
     TAILSCALE_SERVE_READY=1
   fi
   if command -v jq >/dev/null 2>&1; then

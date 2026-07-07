@@ -50,6 +50,15 @@ but still omit `node:sqlite`; those are not suitable for full memory support.
     sudo apt-get install -y nodejs
     ```
 
+    If NodeSource does not yet support a brand-new Ubuntu/Debian codename,
+    install the distro packages and keep the `node:sqlite` verification step:
+
+    ```bash
+    sudo apt-get update
+    sudo apt-get install -y nodejs npm
+    node -e 'require("node:sqlite"); console.log("node:sqlite ok")'
+    ```
+
   </Tab>
   <Tab title="Fedora">
     ```bash

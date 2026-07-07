@@ -123,6 +123,7 @@ const LOW_MEMORY_HOSTING_SWAP_GB = 4;
 const HOSTING_SWAP_GB = 2;
 const TAILSCALE_INTERACTIVE_TIMEOUT_MS = 2 * 60 * 1000;
 const TAILSCALE_LOGIN_URL_RE = /https:\/\/login\.tailscale\.com\/a\/[A-Za-z0-9_-]+/i;
+const HOST_MAINTENANCE_HELPER = "/usr/local/sbin/fased-host-maintenance";
 
 function detectTotalMemoryMb(): number {
   if (process.platform === "linux") {
@@ -256,7 +257,7 @@ function buildTailscaleLoginWaitCommand(command: string): string {
     `bash -lc ${quotedCommand} &`,
     "ts_pid=$!",
     "for _ in $(seq 1 55); do",
-    "  if tailscale ip -4 >/dev/null 2>&1 || sudo -n tailscale ip -4 >/dev/null 2>&1; then",
+    `  if tailscale ip -4 >/dev/null 2>&1 || ${hostMaintenanceCommand("tailscale-ip4")} >/dev/null 2>&1 || sudo -n tailscale ip -4 >/dev/null 2>&1; then`,
     '    kill -INT "$ts_pid" >/dev/null 2>&1 || true',
     '    wait "$ts_pid" >/dev/null 2>&1 || true',
     "    exit 0",
@@ -269,7 +270,7 @@ function buildTailscaleLoginWaitCommand(command: string): string {
     "done",
     'kill -INT "$ts_pid" >/dev/null 2>&1 || true',
     'wait "$ts_pid" >/dev/null 2>&1 || true',
-    "if tailscale ip -4 >/dev/null 2>&1 || sudo -n tailscale ip -4 >/dev/null 2>&1; then",
+    `if tailscale ip -4 >/dev/null 2>&1 || ${hostMaintenanceCommand("tailscale-ip4")} >/dev/null 2>&1 || sudo -n tailscale ip -4 >/dev/null 2>&1; then`,
     "  exit 0",
     "fi",
     "exit 124",
@@ -357,9 +358,18 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
+function hostMaintenanceCommand(action: string): string {
+  return `sudo -n ${HOST_MAINTENANCE_HELPER} ${action}`;
+}
+
+function hostMaintenanceCommandWithInput(action: string, input: string): string {
+  return `printf '%s\\n' ${shellQuote(input)} | ${hostMaintenanceCommand(action)}`;
+}
+
 function isTailscaleLoggedIn(logPath?: string, runner: HostSecurityCommandRunner = run): boolean {
   return (
     runner("tailscale status >/dev/null 2>&1", logPath).ok ||
+    runner(`${hostMaintenanceCommand("tailscale-status")} >/dev/null 2>&1`, logPath).ok ||
     runner("sudo -n tailscale status >/dev/null 2>&1", logPath).ok
   );
 }
@@ -367,6 +377,7 @@ function isTailscaleLoggedIn(logPath?: string, runner: HostSecurityCommandRunner
 function hasTailscaleIp(logPath?: string, runner: HostSecurityCommandRunner = run): boolean {
   return (
     runner("tailscale ip -4 >/dev/null 2>&1", logPath).ok ||
+    runner(`${hostMaintenanceCommand("tailscale-ip4")} >/dev/null 2>&1`, logPath).ok ||
     runner("sudo -n tailscale ip -4 >/dev/null 2>&1", logPath).ok
   );
 }
@@ -376,7 +387,8 @@ function readTailscaleIp(
   runner: HostSecurityCommandRunner = run,
 ): string | undefined {
   const probe = runner("tailscale ip -4", logPath);
-  const sudoProbe = probe.ok ? probe : runner("sudo -n tailscale ip -4", logPath);
+  const helperProbe = probe.ok ? probe : runner(hostMaintenanceCommand("tailscale-ip4"), logPath);
+  const sudoProbe = helperProbe.ok ? helperProbe : runner("sudo -n tailscale ip -4", logPath);
   if (!sudoProbe.ok || !sudoProbe.detail) {
     return undefined;
   }
@@ -388,7 +400,12 @@ function readTailscaleSelf(
   runner: HostSecurityCommandRunner = run,
 ): { dns?: string; ipv4?: string } {
   const probe = runner("tailscale status --json", logPath);
-  const sudoProbe = probe.ok ? probe : runner("sudo -n tailscale status --json", logPath);
+  const helperProbe = probe.ok
+    ? probe
+    : runner(hostMaintenanceCommand("tailscale-status-json"), logPath);
+  const sudoProbe = helperProbe.ok
+    ? helperProbe
+    : runner("sudo -n tailscale status --json", logPath);
   if (!sudoProbe.ok || !sudoProbe.detail) {
     return { ipv4: readTailscaleIp(logPath, runner) };
   }
@@ -553,7 +570,8 @@ function ensureTailnetSshIngressForVerification(params: {
     "  sudo -n firewall-cmd --reload >/dev/null 2>&1 || true",
     "fi",
   ].join("\n");
-  const result = runner(command, params.logPath);
+  const helperResult = runner(hostMaintenanceCommand("tailnet-ssh-ingress"), params.logPath);
+  const result = helperResult.ok ? helperResult : runner(command, params.logPath);
   if (!result.ok) {
     return {
       ok: false,
@@ -647,7 +665,7 @@ async function confirmTailnetSshBeforeLockdown(params: {
       }
       await prompter.note(formatTailscaleAccountBrowserLoginNote(), "Tailscale login");
       const tsReset = await interactiveRunner(
-        "sudo -n tailscale logout && sudo -n tailscale up --ssh --accept-routes --reset",
+        hostMaintenanceCommand("tailscale-up-reset-ssh"),
         logPath,
         prompter,
       );
@@ -692,9 +710,9 @@ function ensureTailscaleServe(port: number, logPath?: string): { ok: boolean; de
   if (modern.ok) {
     return { ok: true, detail: `tailscale serve --bg -> 127.0.0.1:${port}` };
   }
-  const modernSudo = run(`sudo -n tailscale serve --bg http://127.0.0.1:${port}`, logPath);
+  const modernSudo = run(hostMaintenanceCommandWithInput("tailscale-serve", String(port)), logPath);
   if (modernSudo.ok) {
-    return { ok: true, detail: `sudo tailscale serve --bg -> 127.0.0.1:${port}` };
+    return { ok: true, detail: `host maintenance tailscale serve -> 127.0.0.1:${port}` };
   }
   const legacy = run(`tailscale serve https / http://127.0.0.1:${port}`, logPath);
   if (legacy.ok) {
@@ -719,7 +737,7 @@ function isTailscaleServeReady(port: number): boolean {
     encoding: "utf8",
   });
   if ((probe.status ?? 1) !== 0) {
-    probe = spawnSync("bash", ["-lc", "sudo -n tailscale serve status"], {
+    probe = spawnSync("bash", ["-lc", hostMaintenanceCommand("tailscale-serve-status")], {
       stdio: ["ignore", "pipe", "pipe"],
       encoding: "utf8",
     });
@@ -758,6 +776,7 @@ function packageInstallCommand(packages: string[]): string {
 
 function tailscaleInstallCommand(): string {
   return [
+    `${hostMaintenanceCommand("tailscale-install-start")} && exit 0`,
     "if command -v tailscale >/dev/null 2>&1; then",
     "  :",
     "elif command -v apt-get >/dev/null 2>&1; then",
@@ -784,6 +803,7 @@ function tailscaleInstallCommand(): string {
 
 function firewallBaselineCommand(): string {
   return [
+    `${hostMaintenanceCommand("firewall-baseline")} && exit 0`,
     "if command -v ufw >/dev/null 2>&1 || command -v apt-get >/dev/null 2>&1; then",
     "  command -v ufw >/dev/null 2>&1 || { " + packageInstallCommand(["ufw"]) + "; }",
     "  sudo -n ufw default deny incoming",
@@ -810,6 +830,7 @@ function firewallBaselineCommand(): string {
 
 function automaticUpdatesCommand(): string {
   return [
+    `${hostMaintenanceCommand("automatic-updates")} && exit 0`,
     "if command -v apt-get >/dev/null 2>&1; then",
     "  " + packageInstallCommand(["unattended-upgrades"]),
     "  sudo -n systemctl enable --now unattended-upgrades >/dev/null 2>&1 || true",
@@ -837,15 +858,7 @@ function automaticUpdatesCommand(): string {
 }
 
 function sshHardeningCommand(): string {
-  return [
-    "if sudo -n /usr/local/sbin/fased-host-maintenance harden-ssh >/dev/null 2>&1; then",
-    "  :",
-    "else",
-    "  sudo -n sed -i 's/^#\\?PasswordAuthentication .*/PasswordAuthentication no/' /etc/ssh/sshd_config",
-    "  sudo -n sed -i 's/^#\\?PermitRootLogin .*/PermitRootLogin no/' /etc/ssh/sshd_config",
-    "  sudo -n systemctl restart ssh || sudo -n systemctl restart sshd",
-    "fi",
-  ].join("\n");
+  return hostMaintenanceCommand("harden-ssh");
 }
 
 function failOrContinue(params: {
@@ -925,8 +938,8 @@ export async function applyHostingSecurity(params: {
     }
 
     const resetCommand = tsAuthkey
-      ? `sudo -n tailscale logout && sudo -n tailscale up --ssh --accept-routes --reset --authkey ${JSON.stringify(tsAuthkey)}`
-      : "sudo -n tailscale logout && sudo -n tailscale up --ssh --accept-routes --reset";
+      ? hostMaintenanceCommandWithInput("tailscale-up-reset-authkey-ssh", tsAuthkey)
+      : hostMaintenanceCommand("tailscale-up-reset-ssh");
     const tsReset = tsAuthkey
       ? run(resetCommand, logPath)
       : await runInteractiveTailscaleLogin(resetCommand, logPath, prompter);
@@ -1017,7 +1030,10 @@ export async function applyHostingSecurity(params: {
       return { profile, checks, enforced: false, logPath };
     }
   } else if (hasCommand("systemctl")) {
-    run("sudo -n systemctl enable --now tailscaled >/dev/null 2>&1 || true", logPath);
+    run(
+      `${hostMaintenanceCommand("tailscale-install-start")} >/dev/null 2>&1 || sudo -n systemctl enable --now tailscaled >/dev/null 2>&1 || true`,
+      logPath,
+    );
   }
 
   if (prompter && opts.nonInteractive !== true) {
@@ -1035,7 +1051,7 @@ export async function applyHostingSecurity(params: {
         await prompter.note(formatTailscaleBrowserLoginNote(), "Tailscale login");
       }
       const tsReset = await runInteractiveTailscaleLogin(
-        "sudo -n tailscale logout && sudo -n tailscale up --ssh --accept-routes --reset",
+        hostMaintenanceCommand("tailscale-up-reset-ssh"),
         logPath,
         prompter,
       );
@@ -1086,7 +1102,7 @@ export async function applyHostingSecurity(params: {
 
     if (tsAuthkey) {
       const tsUp = run(
-        `sudo -n tailscale up --authkey ${JSON.stringify(tsAuthkey)} --ssh`,
+        hostMaintenanceCommandWithInput("tailscale-up-authkey-ssh", tsAuthkey),
         logPath,
       );
       if (!tsUp.ok) {
@@ -1121,7 +1137,7 @@ export async function applyHostingSecurity(params: {
         await prompter.note(formatTailscaleBrowserLoginNote(), "Tailscale login");
       }
       const tsUp = await runInteractiveTailscaleLogin(
-        "sudo -n tailscale up --ssh",
+        hostMaintenanceCommand("tailscale-up-ssh"),
         logPath,
         prompter,
       );
@@ -1159,7 +1175,10 @@ export async function applyHostingSecurity(params: {
     ? "app"
     : process.env.SUDO_USER?.trim() || process.env.USER?.trim() || process.env.LOGNAME?.trim();
   if (operatorUser) {
-    run(`sudo -n tailscale set --operator='${operatorUser}' >/dev/null 2>&1 || true`, logPath);
+    run(
+      `${hostMaintenanceCommand("tailscale-set-operator-self")} >/dev/null 2>&1 || true`,
+      logPath,
+    );
   }
 
   const tailnetSshTarget = resolveTailnetSshTarget({
@@ -1239,7 +1258,7 @@ export async function applyHostingSecurity(params: {
   });
 
   const f2bRes = runHostSetupCommand(
-    `${packageInstallCommand(["fail2ban"])}\nsudo -n systemctl enable --now fail2ban`,
+    `${hostMaintenanceCommand("fail2ban-enable")} || (${packageInstallCommand(["fail2ban"])}\nsudo -n systemctl enable --now fail2ban)`,
   );
   if (!f2bRes.ok) {
     checks.push({ name: "fail2ban", ok: false, detail: f2bRes.detail ?? "fail2ban setup failed" });

@@ -117,10 +117,15 @@ Minimum hardening directives:
 ### 8. Disable password SSH login (`required`)
 
 ```bash
-sudo sed -i 's/^#\\?PasswordAuthentication .*/PasswordAuthentication no/' /etc/ssh/sshd_config
-sudo sed -i 's/^#\\?PermitRootLogin .*/PermitRootLogin no/' /etc/ssh/sshd_config
+sudo install -d -m 0755 /etc/ssh/sshd_config.d
+printf '%s\n' 'PasswordAuthentication no' 'PermitRootLogin no' | sudo tee /etc/ssh/sshd_config.d/01-fased-hardening.conf >/dev/null
+sudo sshd -t
 sudo systemctl restart ssh
 ```
+
+If the image does not already load `/etc/ssh/sshd_config.d/*.conf`, add
+`Include /etc/ssh/sshd_config.d/*.conf` near the top of `/etc/ssh/sshd_config`
+before validating with `sshd -t`.
 
 ---
 

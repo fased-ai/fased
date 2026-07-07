@@ -37,11 +37,14 @@ export function isHostedSecurityCapableSession(explicitFlag = false): boolean {
   }
 
   return (
-    canRunHostedMaintenanceCommand("sudo -n tailscale status >/dev/null 2>&1") ||
-    canRunHostedMaintenanceCommand("sudo -n ufw status >/dev/null 2>&1") ||
-    canRunHostedMaintenanceCommand("sudo -n firewall-cmd --state >/dev/null 2>&1") ||
     canRunHostedMaintenanceCommand(
-      "sudo -n systemctl is-active --quiet firewalld >/dev/null 2>&1",
+      "sudo -n /usr/local/sbin/fased-host-maintenance tailscale-status >/dev/null 2>&1",
+    ) ||
+    canRunHostedMaintenanceCommand(
+      "sudo -n /usr/local/sbin/fased-host-maintenance tailnet-ssh-ingress >/dev/null 2>&1",
+    ) ||
+    canRunHostedMaintenanceCommand(
+      "sudo -n /usr/local/sbin/fased-host-maintenance firewall-baseline >/dev/null 2>&1",
     ) ||
     canRunHostedMaintenanceCommand("sudo -n systemctl status fased-gateway.service >/dev/null 2>&1")
   );
