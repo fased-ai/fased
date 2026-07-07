@@ -54,6 +54,7 @@ const BUILD_SCRIPT_RELPATHS = [
 ];
 const BROKER_CLI_RELPATHS = ["./index.js", "../../dist/index.js"];
 const DEFAULT_SIGNER_RELEASE_DOWNLOAD_BASE = "https://github.com/fased-ai/fased/releases/download";
+const SIGNER_MAINTENANCE_HELPER = "/usr/local/sbin/fased-signer-maintenance";
 const SIGNER_ISOLATION_HELPER = "/usr/local/sbin/fased-signer-isolation";
 
 function runCommand(params: {
@@ -848,13 +849,14 @@ function runSignerIsolationHelper(
   args: string[],
   opts?: { capture?: boolean },
 ): string | undefined {
-  if (!fs.existsSync(SIGNER_ISOLATION_HELPER)) {
+  const helperArgs = signerMaintenanceHelperArgs(runAsUser, args);
+  if (!helperArgs) {
     return undefined;
   }
   try {
     return runCommand({
       command: "sudo",
-      args: ["-n", "-E", SIGNER_ISOLATION_HELPER, resolveCurrentUnixUser(), runAsUser, ...args],
+      args: ["-n", "-E", ...helperArgs],
       capture: opts?.capture,
     });
   } catch (err) {
@@ -871,21 +873,28 @@ function startSignerIsolationHelperBackground(
   logPath: string,
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  if (!fs.existsSync(SIGNER_ISOLATION_HELPER)) {
+  const helperArgs = signerMaintenanceHelperArgs(runAsUser, args);
+  if (!helperArgs) {
     return false;
   }
   const out = fs.openSync(logPath, "a", 0o600);
-  const child = spawn(
-    "sudo",
-    ["-n", "-E", SIGNER_ISOLATION_HELPER, resolveCurrentUnixUser(), runAsUser, ...args],
-    {
-      detached: true,
-      stdio: ["ignore", out, out],
-      env: { ...process.env, ...env },
-    },
-  );
+  const child = spawn("sudo", ["-n", "-E", ...helperArgs], {
+    detached: true,
+    stdio: ["ignore", out, out],
+    env: { ...process.env, ...env },
+  });
   child.unref();
   return true;
+}
+
+function signerMaintenanceHelperArgs(runAsUser: string, args: string[]): string[] | undefined {
+  if (fs.existsSync(SIGNER_MAINTENANCE_HELPER)) {
+    return [SIGNER_MAINTENANCE_HELPER, ...args];
+  }
+  if (fs.existsSync(SIGNER_ISOLATION_HELPER)) {
+    return [SIGNER_ISOLATION_HELPER, resolveCurrentUnixUser(), runAsUser, ...args];
+  }
+  return undefined;
 }
 
 function ensureIsolatedSignerPaths(
