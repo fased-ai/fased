@@ -84,9 +84,10 @@ then run the same bootstrap command inside Ubuntu.
     1. install/sign into Tailscale on your own computer
     2. run the hosted installer on the VPS
     3. approve the Tailscale login URL printed by Fased
-    4. if your first VPS login was root/password-only, paste your local `.pub`
-       SSH key when the wizard asks
-    5. when prompted, test `ssh app@YOUR_VPS_TAILSCALE_NAME` from your own computer
+    4. when prompted, test the access command from your own computer:
+       `ssh app@YOUR_VPS_TAILSCALE_NAME` when app keys exist, or
+       `tailscale ssh app@YOUR_VPS_TAILSCALE_NAME` for root/password-only bootstrap
+    5. use the SSH public key fallback only if Tailscale SSH is unavailable
     6. confirm only after SSH reaches `/home/app/fased`
     7. open the printed Tailscale dashboard URL in your local browser
     8. save the gateway token in case the browser asks for it
