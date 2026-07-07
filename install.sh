@@ -2390,13 +2390,43 @@ ${target_user} ALL=(root) NOPASSWD: /usr/bin/journalctl -u fased-gateway.service
 ${target_user} ALL=(root) NOPASSWD: /usr/bin/journalctl -u fased-gateway *
 ${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-install-gateway-service fased-gateway ${target_user}
 ${target_user} ALL=(root) NOPASSWD:SETENV: /usr/local/sbin/fased-signer-isolation ${target_user} ${signer_user} *
-${target_user} ALL=(root) NOPASSWD: /usr/bin/sed -i * /etc/ssh/sshd_config
-${target_user} ALL=(root) NOPASSWD: /usr/bin/sed -i * /etc/dnf/automatic.conf
+${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance harden-ssh
+${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance enable-dnf-automatic
+${target_user} ALL=(root) NOPASSWD: /usr/bin/sed "^-i s/.+PasswordAuthentication .*/PasswordAuthentication no/ /etc/ssh/sshd_config$"
+${target_user} ALL=(root) NOPASSWD: /usr/bin/sed "^-i s/.+PermitRootLogin .*/PermitRootLogin no/ /etc/ssh/sshd_config$"
 EOF
   chmod 440 "$sudoers_path"
   if need_cmd visudo; then
     visudo -cf "$sudoers_path" >/dev/null
   fi
+}
+
+install_host_maintenance_helper() {
+  local helper_path="/usr/local/sbin/fased-host-maintenance"
+  cat >"$helper_path" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+command_name="${1:-}"
+
+case "$command_name" in
+  harden-ssh)
+    sed -i 's/^#\?PasswordAuthentication .*/PasswordAuthentication no/' /etc/ssh/sshd_config
+    sed -i 's/^#\?PermitRootLogin .*/PermitRootLogin no/' /etc/ssh/sshd_config
+    systemctl restart ssh || systemctl restart sshd
+    ;;
+  enable-dnf-automatic)
+    if [[ -f /etc/dnf/automatic.conf ]]; then
+      sed -i 's/^apply_updates[[:space:]]*=.*/apply_updates = yes/' /etc/dnf/automatic.conf
+    fi
+    ;;
+  *)
+    echo "usage: fased-host-maintenance {harden-ssh|enable-dnf-automatic}" >&2
+    exit 64
+    ;;
+esac
+EOF
+  chmod 755 "$helper_path"
 }
 
 install_host_signer_isolation_helper() {
@@ -2822,6 +2852,7 @@ EOF
 
 if [[ "$(id -u)" -eq 0 ]]; then
   install_host_gateway_service_helper
+  install_host_maintenance_helper
   install_host_signer_isolation_helper
   install_host_maintenance_sudoers "${FASED_INSTALL_USER:-app}"
   ensure_early_swap_for_hosting

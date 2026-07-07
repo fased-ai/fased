@@ -820,7 +820,7 @@ function automaticUpdatesCommand(): string {
       ") || (" +
       packageInstallCommand(["dnf-automatic"]) +
       ")",
-    "  sudo -n sed -i 's/^apply_updates[[:space:]]*=.*/apply_updates = yes/' /etc/dnf/automatic.conf >/dev/null 2>&1 || true",
+    "  sudo -n /usr/local/sbin/fased-host-maintenance enable-dnf-automatic >/dev/null 2>&1 || sudo -n sed -i 's/^apply_updates[[:space:]]*=.*/apply_updates = yes/' /etc/dnf/automatic.conf >/dev/null 2>&1 || true",
     "  sudo -n systemctl enable --now dnf5-automatic.timer >/dev/null 2>&1 || sudo -n systemctl enable --now dnf-automatic.timer",
     "elif command -v yum >/dev/null 2>&1; then",
     "  (" +
@@ -832,6 +832,18 @@ function automaticUpdatesCommand(): string {
     "else",
     "  echo 'unsupported package manager for automatic updates' >&2",
     "  exit 1",
+    "fi",
+  ].join("\n");
+}
+
+function sshHardeningCommand(): string {
+  return [
+    "if sudo -n /usr/local/sbin/fased-host-maintenance harden-ssh >/dev/null 2>&1; then",
+    "  :",
+    "else",
+    "  sudo -n sed -i 's/^#\\?PasswordAuthentication .*/PasswordAuthentication no/' /etc/ssh/sshd_config",
+    "  sudo -n sed -i 's/^#\\?PermitRootLogin .*/PermitRootLogin no/' /etc/ssh/sshd_config",
+    "  sudo -n systemctl restart ssh || sudo -n systemctl restart sshd",
     "fi",
   ].join("\n");
 }
@@ -1214,12 +1226,7 @@ export async function applyHostingSecurity(params: {
     detail: "default-deny public ingress with tailnet SSH/HTTPS access",
   });
 
-  const sshRes = run(
-    "sudo -n sed -i 's/^#\\?PasswordAuthentication .*/PasswordAuthentication no/' /etc/ssh/sshd_config; " +
-      "sudo -n sed -i 's/^#\\?PermitRootLogin .*/PermitRootLogin no/' /etc/ssh/sshd_config; " +
-      "sudo -n systemctl restart ssh || sudo -n systemctl restart sshd",
-    logPath,
-  );
+  const sshRes = run(sshHardeningCommand(), logPath);
   if (!sshRes.ok) {
     checks.push({ name: "ssh", ok: false, detail: sshRes.detail ?? "ssh hardening failed" });
     failOrContinue({ opts, runtime, step: "ssh hardening failed", detail: sshRes.detail });
@@ -1279,6 +1286,7 @@ export const __testing = {
   packageInstallCommand,
   tailscaleInstallCommand,
   automaticUpdatesCommand,
+  sshHardeningCommand,
   buildTailscaleLoginWaitCommand,
   verifyTailnetSshServerPrerequisites,
 };

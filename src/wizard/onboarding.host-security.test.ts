@@ -227,9 +227,21 @@ describe("onboarding host security", () => {
 
     expect(command).toContain("unattended-upgrades");
     expect(command).toContain("dnf5-plugin-automatic");
+    expect(command).toContain("/usr/local/sbin/fased-host-maintenance enable-dnf-automatic");
     expect(command).toContain("dnf5-automatic.timer");
     expect(command).toContain("dnf-automatic");
     expect(command).toContain("yum-cron");
+    const syntax = checkBashSyntax(command);
+    expect(syntax.status, syntax.stderr).toBe(0);
+  });
+
+  it("uses the hosted maintenance helper for SSH hardening with a legacy fallback", () => {
+    const command = __testing.sshHardeningCommand();
+
+    expect(command).toContain("/usr/local/sbin/fased-host-maintenance harden-ssh");
+    expect(command).toContain("PasswordAuthentication no");
+    expect(command).toContain("PermitRootLogin no");
+    expect(command).toContain("systemctl restart ssh");
     const syntax = checkBashSyntax(command);
     expect(syntax.status, syntax.stderr).toBe(0);
   });
