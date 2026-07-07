@@ -157,6 +157,98 @@ describe("onboarding host security", () => {
     expect(result.detail).toContain("/home/app/.ssh/authorized_keys");
   });
 
+  it("rejects private key text for hosted app SSH key bootstrap", () => {
+    const result = __testing.normalizeSshPublicKeys(
+      "-----BEGIN OPENSSH PRIVATE KEY-----\nnot-for-authorized-keys\n-----END OPENSSH PRIVATE KEY-----",
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain("private key");
+  });
+
+  it("prompts for an app SSH public key when root password bootstrap has no keys", async () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "fased-host-security-ssh-key-"));
+    const previousStateDir = process.env.FASED_STATE_DIR;
+    process.env.FASED_STATE_DIR = stateDir;
+    const publicKey =
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDrF7r43caJH6vxGOaWOzQ4TYx4bTM0f9HT9M1S6X2eA user@computer";
+    const commands: string[] = [];
+    const notes: string[] = [];
+    const confirms = [true, true];
+    let keyInstalled = false;
+    const prompter = {
+      intro: async () => {},
+      outro: async () => {},
+      note: async (message: string) => {
+        notes.push(message);
+      },
+      select: async () => "",
+      multiselect: async () => [],
+      text: async () => publicKey,
+      confirm: async () => {
+        const next = confirms.shift();
+        if (next === undefined) {
+          throw new Error("unexpected confirm");
+        }
+        return next;
+      },
+      progress: () => ({
+        update: () => {},
+        stop: () => {},
+      }),
+    };
+
+    try {
+      const result = await __testing.confirmTailnetSshBeforeLockdown({
+        opts: { hostProfile: "hosting" } as never,
+        runtime: {
+          error: (message: string) => {
+            throw new Error(message);
+          },
+          exit: (code?: number) => {
+            throw new Error(`exit ${code ?? 0}`);
+          },
+        } as never,
+        prompter: prompter as never,
+        logPath: path.join(stateDir, "host-security.log"),
+        target: {
+          user: "app",
+          host: "fased-vps.tailnet.ts.net",
+          ipv4: "100.64.1.2",
+          repoDir: "/home/app/fased",
+        },
+        runner: (command) => {
+          commands.push(command);
+          if (command === "test -s '/home/app/.ssh/authorized_keys'") {
+            return { ok: keyInstalled };
+          }
+          if (command.includes("base64 -d") && command.includes("/home/app/.ssh/authorized_keys")) {
+            keyInstalled = true;
+            return { ok: true };
+          }
+          return { ok: true, detail: "ok" };
+        },
+      });
+
+      expect(result).toBe(true);
+      expect(notes.some((note) => note.includes("FIND YOUR PUBLIC KEY"))).toBe(true);
+      expect(commands.some((command) => command.includes("base64 -d"))).toBe(true);
+      const installCommand = commands.find((command) => command.includes("base64 -d"));
+      expect(installCommand).toContain("/home/app/.ssh/authorized_keys");
+      expect(installCommand).not.toContain(publicKey);
+      const syntax = checkBashSyntax(installCommand ?? "");
+      expect(syntax.status, syntax.stderr).toBe(0);
+      expect(confirms).toEqual([]);
+    } finally {
+      if (previousStateDir === undefined) {
+        delete process.env.FASED_STATE_DIR;
+      } else {
+        process.env.FASED_STATE_DIR = previousStateDir;
+      }
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
   it("prepares tailnet-only SSH ingress before the external SSH check", () => {
     const commands: string[] = [];
     const result = __testing.ensureTailnetSshIngressForVerification({
