@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -117,6 +118,10 @@ type TailnetSshPrerequisites = {
   ok: boolean;
   detail: string;
 };
+
+type SshPublicKeyParseResult =
+  | { ok: true; keys: string[] }
+  | { ok: false; keys: string[]; detail: string };
 
 const LOW_MEMORY_SWAP_THRESHOLD_MB = 2304;
 const LOW_MEMORY_HOSTING_SWAP_GB = 4;
@@ -509,6 +514,149 @@ function formatTailnetSshVerificationNote(target: TailnetSshTarget): string {
   ].join("\n");
 }
 
+function formatTailnetSshPublicKeyNote(target: TailnetSshTarget): string {
+  return [
+    noteStep(1, "Find your public key"),
+    "Do this on your own computer while this VPS installer stays open.",
+    ...noteCommands(["cat ~/.ssh/id_ed25519.pub", "type $env:USERPROFILE\\.ssh\\id_ed25519.pub"]),
+    noteWarn("Paste a `.pub` key only. Never paste a private key."),
+    "",
+    noteStep(2, "Create one if needed"),
+    "Run this on your own computer, then paste the `.pub` line here:",
+    ...noteCommands(['ssh-keygen -t ed25519 -C "fased-vps" -f ~/.ssh/id_ed25519']),
+    "",
+    noteStep(3, "What Fased will do"),
+    `Install that public key for ${target.user} at /home/${target.user}/.ssh/authorized_keys.`,
+    "Then you will test SSH over Tailscale before root/password access is locked down.",
+  ].join("\n");
+}
+
+function normalizeSshPublicKeys(input: string): SshPublicKeyParseResult {
+  const acceptedTypes = new Set([
+    "ecdsa-sha2-nistp256",
+    "ecdsa-sha2-nistp384",
+    "ecdsa-sha2-nistp521",
+    "sk-ecdsa-sha2-nistp256@openssh.com",
+    "sk-ssh-ed25519@openssh.com",
+    "ssh-ed25519",
+    "ssh-rsa",
+  ]);
+  const lines = input
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length === 0) {
+    return { ok: false, keys: [], detail: "Paste one SSH public key line." };
+  }
+  if (lines.some((line) => /^-{5}BEGIN\b/i.test(line) || /PRIVATE KEY/i.test(line))) {
+    return {
+      ok: false,
+      keys: [],
+      detail: "That looks like a private key. Paste the `.pub` key only.",
+    };
+  }
+  const normalized: string[] = [];
+  for (const line of lines) {
+    const parts = line.split(/\s+/);
+    const keyType = parts[0] ?? "";
+    const keyBody = parts[1] ?? "";
+    if (!acceptedTypes.has(keyType) || !/^[A-Za-z0-9+/]+={0,3}$/.test(keyBody)) {
+      return {
+        ok: false,
+        keys: [],
+        detail:
+          "Paste a valid OpenSSH public key, for example `ssh-ed25519 AAAA... user@computer`.",
+      };
+    }
+    normalized.push(parts.join(" "));
+  }
+  return { ok: true, keys: Array.from(new Set(normalized)) };
+}
+
+function buildInstallTailnetSshAuthorizedKeysCommand(
+  target: TailnetSshTarget,
+  keys: string[],
+): string {
+  const sshDir = `/home/${target.user}/.ssh`;
+  const authorizedKeys = `${sshDir}/authorized_keys`;
+  const encodedKeys = Buffer.from(`${keys.join("\n")}\n`, "utf8").toString("base64");
+  return [
+    "set -e",
+    "umask 077",
+    `mkdir -p ${shellQuote(sshDir)}`,
+    'tmp_keys="$(mktemp)"',
+    'tmp_merged="$(mktemp)"',
+    `printf '%s' ${shellQuote(encodedKeys)} | base64 -d > "$tmp_keys"`,
+    `{ cat ${shellQuote(authorizedKeys)} 2>/dev/null || true; cat "$tmp_keys"; } | awk 'NF { print }' | sort -u > "$tmp_merged"`,
+    `install -m 600 "$tmp_merged" ${shellQuote(authorizedKeys)}`,
+    `chmod 700 ${shellQuote(sshDir)}`,
+    `chmod 600 ${shellQuote(authorizedKeys)}`,
+    'rm -f "$tmp_keys" "$tmp_merged"',
+  ].join("\n");
+}
+
+async function ensureTailnetSshAuthorizedKeys(params: {
+  target: TailnetSshTarget;
+  logPath: string;
+  runtime: RuntimeEnv;
+  prompter: WizardPrompter;
+  runner: HostSecurityCommandRunner;
+}): Promise<boolean> {
+  const { target, logPath, runtime, prompter, runner } = params;
+  const authorizedKeys = `/home/${target.user}/.ssh/authorized_keys`;
+  const existing = runner(`test -s ${shellQuote(authorizedKeys)}`, logPath);
+  if (existing.ok) {
+    return true;
+  }
+
+  await prompter.note(formatTailnetSshPublicKeyNote(target), "App SSH key");
+  const pasted = await prompter.text({
+    message: `Paste the SSH public key to install for ${target.user}`,
+    placeholder: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... user@computer",
+    validate: (value) => {
+      const parsed = normalizeSshPublicKeys(value);
+      return parsed.ok ? undefined : parsed.detail;
+    },
+  });
+  const parsed = normalizeSshPublicKeys(pasted);
+  if (!parsed.ok) {
+    runtime.error("Hosting setup stopped before SSH/firewall lock-down.");
+    runtime.error(parsed.detail);
+    runtime.error(`Host hardening log: ${logPath}`);
+    runtime.exit(1);
+    return false;
+  }
+
+  const installResult = runner(
+    buildInstallTailnetSshAuthorizedKeysCommand(target, parsed.keys),
+    logPath,
+  );
+  if (!installResult.ok) {
+    runtime.error("Hosting setup stopped before SSH/firewall lock-down.");
+    runtime.error(`Could not install SSH public key for ${target.user}: ${authorizedKeys}`);
+    runtime.error(installResult.detail ?? "unknown SSH key install error");
+    runtime.error(`Host hardening log: ${logPath}`);
+    runtime.exit(1);
+    return false;
+  }
+
+  const verify = runner(`test -s ${shellQuote(authorizedKeys)}`, logPath);
+  if (!verify.ok) {
+    runtime.error("Hosting setup stopped before SSH/firewall lock-down.");
+    runtime.error(`SSH public key was not written for ${target.user}: ${authorizedKeys}`);
+    runtime.error(`Host hardening log: ${logPath}`);
+    runtime.exit(1);
+    return false;
+  }
+
+  appendHostSecurityLog(
+    logPath,
+    "tailnet ssh public key installed",
+    `installed ${parsed.keys.length} public key(s) for ${target.user}: ${authorizedKeys}`,
+  );
+  return true;
+}
+
 function verifyTailnetSshServerPrerequisites(params: {
   target: TailnetSshTarget;
   logPath?: string;
@@ -532,7 +680,7 @@ function verifyTailnetSshServerPrerequisites(params: {
   } else {
     failures.push(
       `missing SSH public keys for ${target.user}: ${authorizedKeys}. ` +
-        "The root bootstrap should copy your current authorized_keys; if you used password-only SSH, add a public key before hosting lock-down.",
+        "Interactive hosted setup can install one for root-password bootstrap; non-interactive installs must preseed a public key before lock-down.",
     );
   }
 
@@ -628,6 +776,16 @@ async function confirmTailnetSshBeforeLockdown(params: {
   }
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
+    const keysReady = await ensureTailnetSshAuthorizedKeys({
+      target,
+      logPath,
+      runtime,
+      prompter,
+      runner,
+    });
+    if (!keysReady) {
+      return false;
+    }
     const serverPrereqs = verifyTailnetSshServerPrerequisites({ target, logPath, runner });
     if (!serverPrereqs.ok) {
       runtime.error("Hosting setup stopped before SSH/firewall lock-down.");
@@ -1300,6 +1458,9 @@ export const __testing = {
   resolveTailnetSshTarget,
   sanitizeHostSecurityLogText,
   confirmTailnetSshBeforeLockdown,
+  buildInstallTailnetSshAuthorizedKeysCommand,
+  formatTailnetSshPublicKeyNote,
+  normalizeSshPublicKeys,
   ensureTailnetSshIngressForVerification,
   firewallBaselineCommand,
   packageInstallCommand,

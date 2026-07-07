@@ -191,8 +191,9 @@ account, or re-authenticate Tailscale on the VPS, then rerun the check.
 Only confirm after that command connects through Tailscale and opens
 `/home/app/fased`. If it does not connect, setup stops before disabling root or
 password SSH.
-If the original VPS login was password-only and no SSH public key is available,
-setup stops before hardening; add your public key and rerun.
+If the original VPS login was password-only and no SSH public key is available
+to copy, the wizard asks you to paste a local `.pub` key and installs it for
+`app` before hardening continues.
 
 At the end, onboarding prints two things you will normally use:
 

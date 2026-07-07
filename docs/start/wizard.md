@@ -215,8 +215,9 @@ If `tailscale ping` says `no matching peer`, your computer and the VPS are not
 in the same Tailscale network. Confirm only after SSH connects through Tailscale
 and opens `/home/app/fased`. If it does not connect, setup stops before
 disabling root or password SSH.
-If the original VPS login was password-only and no SSH public key is available,
-setup stops before hardening; add your public key and rerun.
+If the original VPS login was password-only and no SSH public key is available
+to copy, the wizard asks you to paste a local `.pub` key and installs it for
+`app` before hardening continues.
 
 At the end of hosted onboarding, use both access paths:
 
