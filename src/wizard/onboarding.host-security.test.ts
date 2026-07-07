@@ -115,6 +115,25 @@ describe("onboarding host security", () => {
     expect(note).not.toContain("Fedora: sudo");
   });
 
+  it("formats Tailscale SSH verification when app SSH keys are unavailable", () => {
+    const note = __testing.formatTailnetSshVerificationNote(
+      {
+        user: "app",
+        host: "fased-vps.tailnet.ts.net",
+        dns: "fased-vps.tailnet.ts.net",
+        ipv4: "100.64.1.2",
+        repoDir: "/home/app/fased",
+      },
+      "tailscale-ssh",
+    );
+
+    expect(note).toContain("No app SSH key was found");
+    expect(note).toContain("tailscale ssh app@fased-vps.tailnet.ts.net");
+    expect(note).toContain("tailscale ssh app@100.64.1.2");
+    expect(note).toContain("SSH public key fallback");
+    expect(note).not.toContain("\nssh app@fased-vps.tailnet.ts.net");
+  });
+
   it("checks app SSH prerequisites before hosted lock-down", () => {
     const commands: string[] = [];
     const result = __testing.verifyTailnetSshServerPrerequisites({
@@ -137,7 +156,7 @@ describe("onboarding host security", () => {
     expect(commands).toContain("test -s '/home/app/.ssh/authorized_keys'");
   });
 
-  it("stops hosted lock-down when app SSH keys are missing", () => {
+  it("uses Tailscale SSH when app SSH keys are missing", () => {
     const result = __testing.verifyTailnetSshServerPrerequisites({
       target: {
         user: "app",
@@ -152,9 +171,9 @@ describe("onboarding host security", () => {
       },
     });
 
-    expect(result.ok).toBe(false);
-    expect(result.detail).toContain("missing SSH public keys for app");
-    expect(result.detail).toContain("/home/app/.ssh/authorized_keys");
+    expect(result.ok).toBe(true);
+    expect(result.method).toBe("tailscale-ssh");
+    expect(result.detail).toContain("using Tailscale SSH");
   });
 
   it("rejects private key text for hosted app SSH key bootstrap", () => {
@@ -166,7 +185,7 @@ describe("onboarding host security", () => {
     expect(result.detail).toContain("private key");
   });
 
-  it("prompts for an app SSH public key when root password bootstrap has no keys", async () => {
+  it("uses SSH public key fallback only after Tailscale SSH fails", async () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "fased-host-security-ssh-key-"));
     const previousStateDir = process.env.FASED_STATE_DIR;
     process.env.FASED_STATE_DIR = stateDir;
@@ -174,7 +193,7 @@ describe("onboarding host security", () => {
       "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDrF7r43caJH6vxGOaWOzQ4TYx4bTM0f9HT9M1S6X2eA user@computer";
     const commands: string[] = [];
     const notes: string[] = [];
-    const confirms = [true, true];
+    const confirms = [true, false, true, true, true];
     let keyInstalled = false;
     const prompter = {
       intro: async () => {},
@@ -231,6 +250,9 @@ describe("onboarding host security", () => {
       });
 
       expect(result).toBe(true);
+      expect(
+        notes.some((note) => note.includes("tailscale ssh app@fased-vps.tailnet.ts.net")),
+      ).toBe(true);
       expect(notes.some((note) => note.includes("FIND YOUR PUBLIC KEY"))).toBe(true);
       expect(commands.some((command) => command.includes("base64 -d"))).toBe(true);
       const installCommand = commands.find((command) => command.includes("base64 -d"));

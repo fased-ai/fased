@@ -117,11 +117,14 @@ type TailnetSshTarget = {
 type TailnetSshPrerequisites = {
   ok: boolean;
   detail: string;
+  method: TailnetSshVerificationMethod;
 };
 
 type SshPublicKeyParseResult =
   | { ok: true; keys: string[] }
   | { ok: false; keys: string[]; detail: string };
+
+type TailnetSshVerificationMethod = "ssh-key" | "tailscale-ssh";
 
 const LOW_MEMORY_SWAP_THRESHOLD_MB = 2304;
 const LOW_MEMORY_HOSTING_SWAP_GB = 4;
@@ -488,12 +491,19 @@ function formatLocalDeviceTailnetRequirementNote(): string {
   ].join("\n");
 }
 
-function formatTailnetSshVerificationNote(target: TailnetSshTarget): string {
+function formatTailnetSshVerificationNote(
+  target: TailnetSshTarget,
+  method: TailnetSshVerificationMethod = "ssh-key",
+): string {
   const pingTargets = [
     target.host,
     target.ipv4 && target.ipv4 !== target.host ? target.ipv4 : undefined,
   ].filter((value): value is string => Boolean(value));
   const sshTargets = pingTargets;
+  const sshCommands =
+    method === "tailscale-ssh"
+      ? sshTargets.map((host) => `tailscale ssh ${target.user}@${host}`)
+      : sshTargets.map((host) => `ssh ${target.user}@${host}`);
   return [
     noteStep(1, "Check visibility"),
     "Run on your own computer:",
@@ -506,17 +516,28 @@ function formatTailnetSshVerificationNote(target: TailnetSshTarget): string {
     "",
     noteStep(2, "SSH into VPS"),
     "Run one command:",
-    ...noteCommands(sshTargets.map((host) => `ssh ${target.user}@${host}`)),
+    ...(method === "tailscale-ssh"
+      ? [
+          "No app SSH key was found on this VPS.",
+          "Use Tailscale SSH from your own Tailscale-connected computer:",
+        ]
+      : []),
+    ...noteCommands(sshCommands),
     `Continue only after SSH opens in ${target.repoDir}.`,
     "",
     noteHeading("Fallback"),
-    noteWarn("If hostname lookup fails, keep the other VPN off and use the `100.x.x.x` command."),
+    noteWarn(
+      method === "tailscale-ssh"
+        ? "If Tailscale SSH is unavailable in your tailnet, choose the SSH public key fallback."
+        : "If hostname lookup fails, keep the other VPN off and use the `100.x.x.x` command.",
+    ),
   ].join("\n");
 }
 
 function formatTailnetSshPublicKeyNote(target: TailnetSshTarget): string {
   return [
     noteStep(1, "Find your public key"),
+    "Use this fallback only when Tailscale SSH is unavailable in your tailnet.",
     "Do this on your own computer while this VPS installer stays open.",
     ...noteCommands(["cat ~/.ssh/id_ed25519.pub", "type $env:USERPROFILE\\.ssh\\id_ed25519.pub"]),
     noteWarn("Paste a `.pub` key only. Never paste a private key."),
@@ -527,7 +548,7 @@ function formatTailnetSshPublicKeyNote(target: TailnetSshTarget): string {
     "",
     noteStep(3, "What Fased will do"),
     `Install that public key for ${target.user} at /home/${target.user}/.ssh/authorized_keys.`,
-    "Then you will test SSH over Tailscale before root/password access is locked down.",
+    "Then you will test regular SSH over Tailscale before root/password access is locked down.",
   ].join("\n");
 }
 
@@ -609,7 +630,7 @@ async function ensureTailnetSshAuthorizedKeys(params: {
     return true;
   }
 
-  await prompter.note(formatTailnetSshPublicKeyNote(target), "App SSH key");
+  await prompter.note(formatTailnetSshPublicKeyNote(target), "SSH key fallback");
   const pasted = await prompter.text({
     message: `Paste the SSH public key to install for ${target.user}`,
     placeholder: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... user@computer",
@@ -666,6 +687,7 @@ function verifyTailnetSshServerPrerequisites(params: {
   const target = params.target;
   const checks: string[] = [];
   const failures: string[] = [];
+  let method: TailnetSshVerificationMethod = "tailscale-ssh";
   const repo = runner(`test -d ${shellQuote(target.repoDir)}`, params.logPath);
   if (repo.ok) {
     checks.push(`repo directory ready: ${target.repoDir}`);
@@ -676,29 +698,26 @@ function verifyTailnetSshServerPrerequisites(params: {
   const authorizedKeys = `/home/${target.user}/.ssh/authorized_keys`;
   const keys = runner(`test -s ${shellQuote(authorizedKeys)}`, params.logPath);
   if (keys.ok) {
+    method = "ssh-key";
     checks.push(`SSH keys ready: ${authorizedKeys}`);
-  } else {
-    failures.push(
-      `missing SSH public keys for ${target.user}: ${authorizedKeys}. ` +
-        "Interactive hosted setup can install one for root-password bootstrap; non-interactive installs must preseed a public key before lock-down.",
+    const sshService = runner(
+      "systemctl is-active --quiet ssh || systemctl is-active --quiet sshd || " +
+        "sudo -n systemctl is-active --quiet ssh || sudo -n systemctl is-active --quiet sshd",
+      params.logPath,
     );
-  }
-
-  const sshService = runner(
-    "systemctl is-active --quiet ssh || systemctl is-active --quiet sshd || " +
-      "sudo -n systemctl is-active --quiet ssh || sudo -n systemctl is-active --quiet sshd",
-    params.logPath,
-  );
-  if (sshService.ok) {
-    checks.push("OS SSH service active");
+    if (sshService.ok) {
+      checks.push("OS SSH service active");
+    } else {
+      failures.push("OS SSH service is not active");
+    }
   } else {
-    failures.push("OS SSH service is not active");
+    checks.push(`no app SSH keys at ${authorizedKeys}; using Tailscale SSH`);
   }
 
   if (failures.length > 0) {
-    return { ok: false, detail: failures.join("\n") };
+    return { ok: false, detail: failures.join("\n"), method };
   }
-  return { ok: true, detail: checks.join("\n") };
+  return { ok: true, detail: checks.join("\n"), method };
 }
 
 function ensureTailnetSshIngressForVerification(params: {
@@ -740,10 +759,12 @@ function failTailnetSshConfirmation(params: {
   runtime: RuntimeEnv;
   logPath: string;
   target: TailnetSshTarget;
+  method?: TailnetSshVerificationMethod;
 }) {
   const { runtime, logPath, target } = params;
+  const commandPrefix = params.method === "tailscale-ssh" ? "tailscale ssh" : "ssh";
   runtime.error("Hosting setup stopped before SSH/firewall lock-down.");
-  runtime.error(`Confirm SSH over Tailscale first: ssh ${target.user}@${target.host}`);
+  runtime.error(`Confirm SSH over Tailscale first: ${commandPrefix} ${target.user}@${target.host}`);
   runtime.error(`Expected app repo directory after login: ${target.repoDir}`);
   runtime.error(`Host hardening log: ${logPath}`);
   runtime.exit(1);
@@ -771,21 +792,12 @@ async function confirmTailnetSshBeforeLockdown(params: {
     return true;
   }
   if (!prompter || opts.nonInteractive === true) {
-    failTailnetSshConfirmation({ runtime, logPath, target });
+    const serverPrereqs = verifyTailnetSshServerPrerequisites({ target, logPath, runner });
+    failTailnetSshConfirmation({ runtime, logPath, target, method: serverPrereqs.method });
     return false;
   }
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const keysReady = await ensureTailnetSshAuthorizedKeys({
-      target,
-      logPath,
-      runtime,
-      prompter,
-      runner,
-    });
-    if (!keysReady) {
-      return false;
-    }
     const serverPrereqs = verifyTailnetSshServerPrerequisites({ target, logPath, runner });
     if (!serverPrereqs.ok) {
       runtime.error("Hosting setup stopped before SSH/firewall lock-down.");
@@ -795,19 +807,34 @@ async function confirmTailnetSshBeforeLockdown(params: {
       return false;
     }
     appendHostSecurityLog(logPath, "tailnet ssh server prerequisites", serverPrereqs.detail);
-    const ingress = ensureTailnetSshIngressForVerification({ logPath, runner });
-    if (!ingress.ok) {
-      runtime.error("Hosting setup stopped before SSH/firewall lock-down.");
-      runtime.error(
-        "Could not prepare the tailnet-only SSH firewall rule required for verification.",
+    if (serverPrereqs.method === "ssh-key") {
+      const ingress = ensureTailnetSshIngressForVerification({ logPath, runner });
+      if (!ingress.ok) {
+        runtime.error("Hosting setup stopped before SSH/firewall lock-down.");
+        runtime.error(
+          "Could not prepare the tailnet-only SSH firewall rule required for verification.",
+        );
+        runtime.error(ingress.detail ?? "unknown firewall error");
+        runtime.error(`Host hardening log: ${logPath}`);
+        runtime.exit(1);
+        return false;
+      }
+      appendHostSecurityLog(
+        logPath,
+        "tailnet ssh ingress prepared for verification",
+        ingress.detail,
       );
-      runtime.error(ingress.detail ?? "unknown firewall error");
-      runtime.error(`Host hardening log: ${logPath}`);
-      runtime.exit(1);
-      return false;
+    } else {
+      appendHostSecurityLog(
+        logPath,
+        "tailnet ssh verification mode",
+        "using Tailscale SSH because app authorized_keys is empty",
+      );
     }
-    appendHostSecurityLog(logPath, "tailnet ssh ingress prepared for verification", ingress.detail);
-    await prompter.note(formatTailnetSshVerificationNote(target), "Verify SSH over Tailscale");
+    await prompter.note(
+      formatTailnetSshVerificationNote(target, serverPrereqs.method),
+      "Verify SSH over Tailscale",
+    );
     const pingConfirmed = await prompter.confirm({
       message: "Did tailscale ping find this VPS from your own computer?",
       initialValue: false,
@@ -818,7 +845,7 @@ async function confirmTailnetSshBeforeLockdown(params: {
         initialValue: true,
       });
       if (!reauth) {
-        failTailnetSshConfirmation({ runtime, logPath, target });
+        failTailnetSshConfirmation({ runtime, logPath, target, method: serverPrereqs.method });
         return false;
       }
       await prompter.note(formatTailscaleAccountBrowserLoginNote(), "Tailscale login");
@@ -845,11 +872,33 @@ async function confirmTailnetSshBeforeLockdown(params: {
     }
 
     const confirmed = await prompter.confirm({
-      message: `Did SSH over Tailscale connect as ${target.user} and open ${target.repoDir}?`,
+      message:
+        serverPrereqs.method === "tailscale-ssh"
+          ? `Did Tailscale SSH connect as ${target.user} and open ${target.repoDir}?`
+          : `Did SSH over Tailscale connect as ${target.user} and open ${target.repoDir}?`,
       initialValue: false,
     });
     if (!confirmed) {
-      failTailnetSshConfirmation({ runtime, logPath, target });
+      if (serverPrereqs.method === "tailscale-ssh") {
+        const useKeyFallback = await prompter.confirm({
+          message: "Use SSH public key fallback instead?",
+          initialValue: false,
+        });
+        if (useKeyFallback) {
+          const keysReady = await ensureTailnetSshAuthorizedKeys({
+            target,
+            logPath,
+            runtime,
+            prompter,
+            runner,
+          });
+          if (!keysReady) {
+            return false;
+          }
+          continue;
+        }
+      }
+      failTailnetSshConfirmation({ runtime, logPath, target, method: serverPrereqs.method });
       return false;
     }
     writeTailnetSshConfirmation(target);
