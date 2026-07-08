@@ -39,6 +39,8 @@ export type NpmTagStatus = {
   error?: string;
 };
 
+const NPM_PACKAGE_NAME = "@fased/fased";
+
 export type UpdateCheckResult = {
   root: string | null;
   installKind: "git" | "package" | "unknown";
@@ -301,7 +303,7 @@ export async function fetchNpmTagVersion(params: {
   const tag = params.tag;
   try {
     const res = await fetchWithTimeout(
-      `https://registry.npmjs.org/fased/${encodeURIComponent(tag)}`,
+      `https://registry.npmjs.org/${encodeURIComponent(NPM_PACKAGE_NAME)}/${encodeURIComponent(tag)}`,
       {},
       Math.max(250, timeoutMs),
     );

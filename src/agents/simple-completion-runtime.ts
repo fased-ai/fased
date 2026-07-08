@@ -1,4 +1,5 @@
-import { complete, type Api, type Model } from "@mariozechner/pi-ai";
+import type { Api, Model } from "@mariozechner/pi-ai";
+import { complete } from "@mariozechner/pi-ai/compat";
 import type { FasedAgentConfig } from "../config/config.js";
 import { resolveAgentDir, resolveAgentEffectiveModelPrimary } from "./agent-scope.js";
 import { DEFAULT_PROVIDER } from "./defaults.js";

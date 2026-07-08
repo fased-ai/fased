@@ -10,8 +10,9 @@ export type CommandRunner = (
   options: { timeoutMs: number; cwd?: string; env?: NodeJS.ProcessEnv },
 ) => Promise<{ stdout: string; stderr: string; code: number | null }>;
 
-const PRIMARY_PACKAGE_NAME = "fased";
-const ALL_PACKAGE_NAMES = [PRIMARY_PACKAGE_NAME] as const;
+const PRIMARY_PACKAGE_NAME = "@fased/fased";
+const LEGACY_PACKAGE_NAME = "fased";
+const ALL_PACKAGE_NAMES = [PRIMARY_PACKAGE_NAME, LEGACY_PACKAGE_NAME] as const;
 const GLOBAL_RENAME_PREFIX = ".";
 const NPM_GLOBAL_INSTALL_QUIET_FLAGS = ["--no-fund", "--no-audit", "--loglevel=error"] as const;
 const NPM_GLOBAL_INSTALL_OMIT_OPTIONAL_FLAGS = [
@@ -57,6 +58,12 @@ export async function resolveGlobalPackageRoot(
   const root = await resolveGlobalRoot(manager, runCommand, timeoutMs);
   if (!root) {
     return null;
+  }
+  for (const name of ALL_PACKAGE_NAMES) {
+    const candidate = path.join(root, name);
+    if (await pathExists(candidate)) {
+      return candidate;
+    }
   }
   return path.join(root, PRIMARY_PACKAGE_NAME);
 }
@@ -163,7 +170,7 @@ export async function cleanupGlobalRenameDirs(params: {
   if (!root || !name) {
     return { removed };
   }
-  const prefix = `${GLOBAL_RENAME_PREFIX}${name}-`;
+  const safeNames = Array.from(new Set([name, path.basename(name)].filter(Boolean)));
   let entries: string[] = [];
   try {
     entries = await fs.readdir(root);
@@ -171,7 +178,7 @@ export async function cleanupGlobalRenameDirs(params: {
     return { removed };
   }
   for (const entry of entries) {
-    if (!entry.startsWith(prefix)) {
+    if (!safeNames.some((safeName) => entry.startsWith(`${GLOBAL_RENAME_PREFIX}${safeName}-`))) {
       continue;
     }
     const target = path.join(root, entry);

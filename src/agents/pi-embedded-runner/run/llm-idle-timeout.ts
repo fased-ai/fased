@@ -1,5 +1,5 @@
 import type { StreamFn } from "@mariozechner/pi-agent-core";
-import { streamSimple } from "@mariozechner/pi-ai";
+import { streamSimple } from "@mariozechner/pi-ai/compat";
 import type { FasedAgentConfig } from "../../../config/config.js";
 import type { EmbeddedRunTrigger } from "./params.js";
 

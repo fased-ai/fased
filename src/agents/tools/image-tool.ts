@@ -1,4 +1,5 @@
-import { type Api, type Context, complete, type Model } from "@mariozechner/pi-ai";
+import type { Api, Context, Model } from "@mariozechner/pi-ai";
+import { complete } from "@mariozechner/pi-ai/compat";
 import { Type } from "@sinclair/typebox";
 import type { FasedAgentConfig } from "../../config/config.js";
 import { resolveUserPath } from "../../utils.js";

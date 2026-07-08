@@ -1,5 +1,5 @@
 import type { Api, Context, Model } from "@mariozechner/pi-ai";
-import { complete } from "@mariozechner/pi-ai";
+import { complete } from "@mariozechner/pi-ai/compat";
 import { minimaxUnderstandImage } from "../../agents/minimax-vlm.js";
 import { getApiKeyForModel, requireApiKey } from "../../agents/model-auth.js";
 import { ensureFasedAgentModelsJson } from "../../agents/models-config.js";

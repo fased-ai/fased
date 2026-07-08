@@ -63,6 +63,27 @@ Manual `npm install -g @fased/fased` is an advanced local/dev or self-managed
 host path for users who already know how to secure the service user, firewall,
 dashboard access, and recovery flow.
 
+## Installer refresh is different
+
+`fased update` is the normal stable app update.
+
+`install.sh --hosting` is a hosted bootstrap/repair path. It can refresh more
+than the app version:
+
+- when run through the remote curl/bootstrap path, an existing `~/fased`
+  checkout is pulled from `origin main`
+- when run from a local checkout, the installer can fetch and fast-forward the
+  current branch unless `--no-git-update` is used
+- hosted mode normally installs/refreshes the prebuilt runtime package from
+  `@fased/fased@latest`
+- hosted mode can use the source checkout instead when
+  `FASED_HOSTING_SOURCE_INSTALL=1` is set
+- it can repair hosted service files, Tailscale/private access, sudoers, and
+  daemon setup
+
+Use `install.sh --hosting` for first VPS setup or hosted repair. Use
+`fased update` for normal stable app releases.
+
 ## Options
 
 - `--no-restart`
@@ -147,9 +168,9 @@ On a hosted VPS, run that direct development flow as `app` from
 `/home/app/fased` and use `./install.sh --hosting`.
 
 The browser Control UI shows update state under **Advanced -> Debug -> Update
-Status**. If your UI build shows an **Update & Restart** action there, it uses
-the same gateway update runner and configured update channel when the gateway is
-healthy. If the action is not visible, use the CLI commands above.
+Status**. Current UI behavior is status-only: it can show version, channel,
+install source, package/git state, and dependency state. Use the CLI commands
+above to actually update.
 
 ## `--update` shorthand
 

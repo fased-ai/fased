@@ -1,9 +1,5 @@
-import {
-  getOAuthApiKey,
-  getOAuthProviders,
-  type OAuthCredentials,
-  type OAuthProvider,
-} from "@mariozechner/pi-ai";
+import { type OAuthCredentials, type OAuthProvider } from "@mariozechner/pi-ai";
+import { getOAuthApiKey, getOAuthProviders } from "@mariozechner/pi-ai/oauth";
 import { refreshXaiOAuthCredential } from "../../commands/xai-oauth.js";
 import { loadConfig, type FasedAgentConfig } from "../../config/config.js";
 import { coerceSecretRef } from "../../config/types.secrets.js";

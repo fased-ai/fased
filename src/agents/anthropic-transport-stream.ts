@@ -1,14 +1,12 @@
 import type { StreamFn } from "@mariozechner/pi-agent-core";
-import {
-  calculateCost,
-  getEnvApiKey,
-  parseStreamingJson,
-  type AnthropicOptions,
-  type Context,
-  type Model,
-  type SimpleStreamOptions,
-  type ThinkingLevel,
+import type {
+  AnthropicOptions,
+  Context,
+  Model,
+  SimpleStreamOptions,
+  ThinkingLevel,
 } from "@mariozechner/pi-ai";
+import { calculateCost, getEnvApiKey, parseStreamingJson } from "@mariozechner/pi-ai/compat";
 import {
   applyAnthropicPayloadPolicyToParams,
   resolveAnthropicPayloadPolicy,

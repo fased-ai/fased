@@ -1,4 +1,4 @@
-import { createAssistantMessageEventStream } from "@mariozechner/pi-ai";
+import { createAssistantMessageEventStream } from "@mariozechner/pi-ai/compat";
 
 export type TransportUsage = {
   input: number;

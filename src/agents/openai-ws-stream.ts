@@ -29,7 +29,7 @@ import type {
   AssistantMessageEventStream,
   StopReason,
 } from "@mariozechner/pi-ai";
-import * as piAi from "@mariozechner/pi-ai";
+import * as piAi from "@mariozechner/pi-ai/compat";
 import {
   resolveProviderTransportTurnStateWithPlugin,
   resolveProviderWebSocketSessionPolicyWithPlugin,

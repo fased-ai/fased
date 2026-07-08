@@ -1,4 +1,5 @@
-import { completeSimple, type Api, type AssistantMessage, type Model } from "@mariozechner/pi-ai";
+import type { Api, AssistantMessage, Model } from "@mariozechner/pi-ai";
+import { completeSimple } from "@mariozechner/pi-ai/compat";
 import { loadConfig } from "../config/config.js";
 import { isTruthyEnvValue } from "../infra/env.js";
 import { resolveFasedAgentDir } from "./agent-paths.js";

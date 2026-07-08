@@ -107,9 +107,12 @@ describe("runGatewayUpdate", () => {
     };
   }
 
-  async function setupGitCheckout(options?: { packageManager?: string }) {
+  async function setupGitCheckout(options?: { packageManager?: string; packageName?: string }) {
     await fs.mkdir(path.join(tempDir, ".git"));
-    const pkg: Record<string, string> = { name: "fased", version: "1.0.0" };
+    const pkg: Record<string, string> = {
+      name: options?.packageName ?? "fased",
+      version: "1.0.0",
+    };
     if (options?.packageManager) {
       pkg.packageManager = options.packageManager;
     }
@@ -204,6 +207,18 @@ describe("runGatewayUpdate", () => {
     expect(result.status).toBe("skipped");
     expect(result.reason).toBe("dirty");
     expect(calls.some((call) => call.includes("rebase"))).toBe(false);
+  });
+
+  it("accepts scoped package git roots", async () => {
+    await setupGitCheckout({ packageName: "@fased/fased" });
+    const { runner } = createRunner({
+      ...buildGitWorktreeProbeResponses({ status: " M README.md" }),
+    });
+
+    const result = await runWithRunner(runner, { channel: "dev" });
+
+    expect(result.status).toBe("skipped");
+    expect(result.reason).toBe("dirty");
   });
 
   it("defaults git updates to the latest stable tag instead of main", async () => {
