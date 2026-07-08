@@ -2,9 +2,11 @@
   <img src="docs/assets/fased-mark-color.svg" alt="Fased" width="96">
 </p>
 
-# Fased Agent
+<h1 align="center">Fased Agent</h1>
 
 <p align="center">
+  <strong>Run your own agent for tasks, wallets, services, and SAT mining.</strong>
+  <br>
   Run Agent. Mine SAT. Build Trust.
 </p>
 
