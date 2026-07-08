@@ -217,7 +217,6 @@ shell as the operating shell. Open a new terminal on your own computer and use:
 
 ```bash
 ssh app@YOUR_VPS_TAILSCALE_NAME
-cd /home/app/fased
 fased status
 fased dashboard
 ```
@@ -253,9 +252,10 @@ Hosted support boundary:
 
 ## Update
 
-For a running install, use the CLI update path:
+For a local running install, open the Fased install directory first:
 
 ```bash
+cd ~/fased
 fased update status
 fased update
 ```
@@ -264,14 +264,19 @@ On a hosted VPS, log in as the app user through Tailscale first:
 
 ```bash
 ssh app@YOUR_VPS_TAILSCALE_NAME
-cd /home/app/fased
 fased update status
 fased update
 ```
 
-If the browser Control UI is healthy, you can also use **Update & Restart** from
-the system/debug update area. Rerun `./install.sh` when you want
-repair/reinstall behavior.
+After hosted onboarding, SSH as `app` should open directly in `/home/app/fased`.
+For hosted VPS setup, use `install.sh --hosting` so Fased can set the non-root
+runtime, private Tailscale access, and closed public admin posture. Direct
+global npm installs are for advanced local/dev or self-managed hosts.
+
+The browser Control UI shows update state under **Advanced -> Debug -> Update
+Status**. If your UI build shows **Update & Restart** there, use it only when
+the gateway is healthy. Rerun `./install.sh` when you want repair/reinstall
+behavior.
 
 `fased update` uses the configured channel. **Stable is the default end-user
 channel** and resolves to the latest stable release tag, not every commit on

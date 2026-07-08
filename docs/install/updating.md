@@ -14,7 +14,8 @@ Current public installs are repo-backed.
 That means the current update paths are:
 
 - use `fased update` for normal running systems
-- use the Control UI `Update & Restart` action when the gateway is healthy
+- use the Control UI update action only when the UI build shows it and the
+  gateway is healthy
 - rerun `./install.sh` for repair/reinstall behavior
 
 The update path should not require committing generated files. Native signer
@@ -26,7 +27,10 @@ the primary version-update command.
 
 ## Recommended path
 
+For a local install, open a terminal in the Fased install directory first:
+
 ```bash
+cd ~/fased
 fased update status
 fased update
 ```
@@ -35,10 +39,22 @@ On a hosted VPS, use the `app` user through Tailscale:
 
 ```bash
 ssh app@YOUR_VPS_TAILSCALE_NAME
-cd /home/app/fased
 fased update status
 fased update
 ```
+
+After hosted onboarding, SSH as `app` should open directly in `/home/app/fased`.
+If it does not, fix the hosted login/shell setup before updating.
+
+For hosted VPS installs, the recommended setup path is the hosted installer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
+```
+
+That path sets up the non-root `app` runtime, private Tailscale access, and the
+hosted security posture. A manual global npm install is an advanced local/dev or
+self-managed-host path; it is not the normal VPS hosting path.
 
 ## CLI update
 
@@ -54,7 +70,8 @@ gateway-aware update flow.
 
 By default, `fased update` uses the **stable** channel. On a git checkout,
 stable means the newest stable `v*` release tag. It does **not** mean the moving
-head of `main`.
+head of `main`. On package installs, stable uses npm `latest` when the package
+manager path is active and detected.
 
 | Command                                                 | What it gets              |
 | ------------------------------------------------------- | ------------------------- |
@@ -66,6 +83,7 @@ head of `main`.
 Use this for normal end-user updates:
 
 ```bash
+cd ~/fased
 fased update status
 fased update
 ```
@@ -104,14 +122,34 @@ test signer setup.
 
 ## Control UI update
 
-The browser Control UI exposes the same runtime update path through
-`Update & Restart`.
+The browser Control UI shows update state at:
+
+```text
+Advanced -> Debug -> Update Status
+```
+
+If your UI build shows an **Update & Restart** action there, it uses the same
+gateway update runner as `fased update`.
 
 Use it when:
 
 - the gateway is already healthy
-- the repo checkout is the live runtime
-- you want the restart report in the UI
+- the UI is reachable
+- the visible update action is shown
+- you want the restart/report in the UI
+
+It uses the configured update channel. Stable is the default and resolves to the
+latest stable release tag for repo-backed installs.
+
+If the visible update action is not shown, use the CLI:
+
+```bash
+fased update status
+fased update
+```
+
+Use the CLI whenever the Gateway is down, the browser cannot connect, or support
+needs terminal logs.
 
 ## Installer rerun
 
@@ -129,7 +167,6 @@ On hosted installs that live under `/home/app/fased`, run it as the app user:
 
 ```bash
 ssh app@YOUR_VPS_TAILSCALE_NAME
-cd /home/app/fased
 ./install.sh --no-onboard
 ```
 
@@ -213,8 +250,9 @@ Fresh installs and hosted systems should use the curl bootstrap:
 
 - curl bootstrap for fresh local machines, WSL2, and hosted VPS
 - `fased update` for repo-backed installs
-- published package payloads may be used by the installer internally, but they
-  do not replace the Local or VPS Hosting setup flow
+- published package payloads may be used by the installer internally
+- manual `npm install -g @fased/fased` is for advanced/local/manual installs,
+  not the recommended hosted VPS setup flow
 
 ## Related
 

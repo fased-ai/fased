@@ -193,6 +193,7 @@ The macOS app is a Local setup surface, not a separate hosting profile.
     Normal updates use the stable release channel:
 
     ```bash
+    cd ~/fased
     fased update status
     fased update
     ```
@@ -201,10 +202,12 @@ The macOS app is a Local setup surface, not a separate hosting profile.
 
     ```bash
     ssh app@YOUR_VPS_TAILSCALE_NAME
-    cd /home/app/fased
     fased update status
     fased update
     ```
+
+    After hosted onboarding, SSH as `app` should open directly in `/home/app/fased`.
+    If it does not, fix the hosted login/shell setup before updating.
 
     Stable follows release tags. It does not pull every new `main` commit. Use
     `fased update --channel dev` only when intentionally tracking latest
