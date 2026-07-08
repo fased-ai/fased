@@ -12,6 +12,10 @@ SAT mining command surface for terminal-first operators.
 
 Use this when you want to inspect or operate mining without going through the browser UI.
 
+Normal users do not need to run `fased plugins enable sat-mining` to begin
+mining. That command is a lower-level plugin management/debug step. The normal
+path is Mining wallet setup, readiness, capital, commit, then start.
+
 The expected operator flow is:
 
 1. create or import the singleton Mining wallet as `@wallet:mining`

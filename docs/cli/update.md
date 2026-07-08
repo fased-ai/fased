@@ -10,6 +10,14 @@ title: "update"
 
 Update a repo checkout of Fased and optionally switch channels.
 
+For local installs, run it from the Fased install directory, usually `~/fased`:
+
+```bash
+cd ~/fased
+fased update status
+fased update
+```
+
 <Note>
 `fased onboard --install-daemon` installs or reconfigures the runtime service.
 It is not the primary version-update path.
@@ -35,12 +43,25 @@ On hosted VPS installs, normal updates run as the `app` user over Tailscale:
 
 ```bash
 ssh app@YOUR_VPS_TAILSCALE_NAME
-cd /home/app/fased
 fased update status
 fased update
 ```
 
+After hosted onboarding, SSH as `app` should open directly in `/home/app/fased`.
+If it does not, fix the hosted login/shell setup before updating.
+
 Root is only for first bootstrap or emergency repair after hosted hardening.
+
+For normal VPS hosting, install with the hosted installer, not a direct global
+npm install:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
+```
+
+Manual `npm install -g @fased/fased` is an advanced local/dev or self-managed
+host path for users who already know how to secure the service user, firewall,
+dashboard access, and recovery flow.
 
 ## Options
 
@@ -124,6 +145,11 @@ git pull --ff-only origin main
 
 On a hosted VPS, run that direct development flow as `app` from
 `/home/app/fased` and use `./install.sh --hosting`.
+
+The browser Control UI shows update state under **Advanced -> Debug -> Update
+Status**. If your UI build shows an **Update & Restart** action there, it uses
+the same gateway update runner and configured update channel when the gateway is
+healthy. If the action is not visible, use the CLI commands above.
 
 ## `--update` shorthand
 

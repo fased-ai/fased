@@ -318,7 +318,6 @@ uses the `app` user over Tailscale from your own computer:
 
 ```bash
 ssh app@YOUR_VPS_TAILSCALE_NAME
-cd /home/app/fased
 fased health
 fased status
 fased dashboard
@@ -380,16 +379,25 @@ For normal updates, log in as `app` through Tailscale:
 
 ```bash
 ssh app@YOUR_VPS_TAILSCALE_NAME
-cd /home/app/fased
 fased update status
 fased update
 ```
 
+After hosted onboarding, SSH as `app` should open directly in `/home/app/fased`.
+If it does not, fix the hosted login/shell setup before updating.
+
 If the browser Control UI is reachable, **Update & Restart** uses the same
-gateway update path. Rerun `./install.sh --hosting` only for repair/reinstall
-behavior. `fased update` uses the configured channel; stable is the default
-end-user channel and resolves to the latest stable release tag. It does not
-pull every new commit from `main`.
+gateway update path when the visible action is present under **Advanced ->
+Debug -> Update Status**. If the action is not shown, use the CLI commands
+above. Rerun `./install.sh --hosting` only for repair/reinstall behavior.
+`fased update` uses the configured channel; stable is the default end-user
+channel and resolves to the latest stable release tag. It does not pull every
+new commit from `main`.
+
+Do not use a direct global npm install as the normal VPS hosting path. The
+hosted installer is recommended because it sets the `app` runtime, Tailscale
+access, and closed public admin posture. Manual npm installs are for advanced
+local/dev or self-managed hosts.
 
 Use `fased update --channel dev` only when intentionally tracking latest
 development commits. For development/testing from the hosted repo checkout, the
@@ -397,7 +405,6 @@ direct app-user flow is:
 
 ```bash
 ssh app@YOUR_VPS_TAILSCALE_NAME
-cd /home/app/fased
 git checkout main
 git pull --ff-only origin main
 ./install.sh --hosting

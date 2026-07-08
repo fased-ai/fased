@@ -1,6 +1,6 @@
 {
   "name": "@fased/fased",
-  "version": "0.1.23",
+  "version": "0.1.24",
   "description": "Fased Agent self-hosted AI gateway with channels, tools, plugins, and operator modules",
   "keywords": [
     "ai-agent",
@@ -40,7 +40,13 @@
     "scripts/fased-launcher-runtime.mjs",
     "scripts/run-node.mjs",
     "scripts/start-managed.sh",
-    "skills/"
+    "skills/",
+    "src/",
+    "!extensions/**/*.test.ts",
+    "!src/**/*.test.ts",
+    "!src/**/*.test.tsx",
+    "!src/test-helpers/",
+    "!src/test-utils/"
   ],
   "type": "module",
   "main": "dist/index.js",

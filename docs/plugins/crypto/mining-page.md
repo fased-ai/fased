@@ -211,6 +211,10 @@ mining should keep more than that on hand for fees and buffer.
 
 ## Beginner start sequence
 
+You do not normally activate mining by enabling the bundled plugin manually.
+`fased plugins enable sat-mining` only controls plugin loading; it does not start
+mining. Start from the Mining wallet and readiness flow below.
+
 Use this flow before pressing **Start** for the first time:
 
 1. Open **Wallets** and create or import a dedicated **Mining** wallet.

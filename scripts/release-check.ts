@@ -3,7 +3,7 @@
 import { execFileSync } from "node:child_process";
 import { closeSync, mkdtempSync, openSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, posix, resolve } from "node:path";
 
 type PackFile = { path: string };
 type PackResult = { files?: PackFile[] };
@@ -17,6 +17,8 @@ const requiredPathGroups = [
   "scripts/fased-launcher-runtime.mjs",
 ];
 const forbiddenPrefixes = ["dist/FasedAgent.app/"];
+const extensionSourceFileRe = /\.(?:c|m)?(?:t|j)sx?$/;
+const extensionSrcImportRe = /(?:from\s+|import\s*\(\s*)["']((?:\.\.\/)+src\/[^"']+)["']/g;
 
 type PackageJson = {
   name?: string;
@@ -130,6 +132,69 @@ function checkBrandVersion() {
   }
 }
 
+function candidatePackedPathsForExtensionSrcImport(targetPath: string) {
+  const normalized = posix.normalize(targetPath);
+  const candidates = new Set<string>([normalized]);
+
+  if (normalized.endsWith(".js")) {
+    const base = normalized.slice(0, -".js".length);
+    candidates.add(`${base}.ts`);
+    candidates.add(`${base}.tsx`);
+    candidates.add(`${base}.mts`);
+    candidates.add(`${base}.cts`);
+  } else if (normalized.endsWith(".mjs")) {
+    const base = normalized.slice(0, -".mjs".length);
+    candidates.add(`${base}.mts`);
+    candidates.add(`${base}.ts`);
+  } else if (normalized.endsWith(".cjs")) {
+    const base = normalized.slice(0, -".cjs".length);
+    candidates.add(`${base}.cts`);
+    candidates.add(`${base}.ts`);
+  }
+
+  return [...candidates];
+}
+
+function checkBundledExtensionSrcImports(paths: Set<string>) {
+  const missing: string[] = [];
+  const extensionSourcePaths = [...paths]
+    .filter((path) => path.startsWith("extensions/") && extensionSourceFileRe.test(path))
+    .toSorted();
+
+  for (const importerPath of extensionSourcePaths) {
+    let source: string;
+    try {
+      source = readFileSync(resolve(importerPath), "utf8");
+    } catch {
+      continue;
+    }
+
+    const importerDir = posix.dirname(importerPath);
+    for (const match of source.matchAll(extensionSrcImportRe)) {
+      const importPath = match[1];
+      if (!importPath) {
+        continue;
+      }
+      const targetPath = posix.normalize(posix.join(importerDir, importPath));
+      if (!targetPath.startsWith("src/")) {
+        continue;
+      }
+      const candidates = candidatePackedPathsForExtensionSrcImport(targetPath);
+      if (!candidates.some((candidate) => paths.has(candidate))) {
+        missing.push(`${importerPath} -> ${importPath} (${candidates.join(" or ")})`);
+      }
+    }
+  }
+
+  if (missing.length > 0) {
+    console.error("release-check: bundled extension imports missing from npm pack:");
+    for (const item of missing) {
+      console.error(`  - ${item}`);
+    }
+    process.exit(1);
+  }
+}
+
 function main() {
   checkPluginVersions();
   checkBrandVersion();
@@ -165,6 +230,8 @@ function main() {
     }
     process.exit(1);
   }
+
+  checkBundledExtensionSrcImports(paths);
 
   console.log("release-check: npm pack contents look OK.");
 }

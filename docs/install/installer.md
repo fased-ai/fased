@@ -99,7 +99,6 @@ then run the same bootstrap command inside Ubuntu.
 
     ```bash
     ssh app@YOUR_VPS_TAILSCALE_NAME
-    cd /home/app/fased
     fased status
     fased dashboard
     ```

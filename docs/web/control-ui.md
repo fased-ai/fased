@@ -100,8 +100,8 @@ The Control UI operates Fased without requiring a messaging app first.
 - **Wallet, Mining, Fased Network, Marketplace**: focused pages for the
   actions and records owned by those domains.
 - **Usage, Notifications, Logs**: monitoring and recent activity.
-- **Advanced**: Config, Debug, Nodes, exec approvals, raw RPC tools, and update
-  actions.
+- **Advanced**: Config, Debug, Nodes, exec approvals, raw RPC tools, update
+  status, and update actions when the current UI build exposes them.
 
 ## Tasks and history boundary
 

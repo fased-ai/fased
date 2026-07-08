@@ -420,6 +420,7 @@ recovery options and VPS provider console access working.
 Normal end-user updates use the stable channel:
 
 ```bash
+cd ~/fased
 fased update status
 fased update
 ```
@@ -428,14 +429,17 @@ On a hosted VPS, run updates as `app` over Tailscale:
 
 ```bash
 ssh app@YOUR_VPS_TAILSCALE_NAME
-cd /home/app/fased
 fased update status
 fased update
 ```
 
+After hosted onboarding, SSH as `app` should open directly in `/home/app/fased`.
+If it does not, fix the hosted login/shell setup before updating.
+
 Stable resolves to the latest stable release tag for repo checkouts. It does
-not follow every commit on `main`. Use the developer channel only when you
-intentionally want latest development commits:
+not follow every commit on `main`. For package installs, stable uses npm
+`latest` when the package manager path is active and detected. Use the developer
+channel only when you intentionally want latest development commits:
 
 ```bash
 fased update --channel dev
@@ -453,6 +457,11 @@ Use `./install.sh --hosting` for that same development checkout flow on a
 hosted VPS, and run it as `app` from `/home/app/fased`.
 
 The installer is repo-backed from `fased-ai/fased`.
+
+Manual `npm install -g @fased/fased` is an advanced local/dev or self-managed
+host path. It is not the recommended VPS hosting path. For VPS hosting, use the
+hosted installer so Fased can set up the `app` runtime, Tailscale-private
+access, and closed public admin posture.
 
 <Note>
 Do not use normal local `fased onboard` on a laptop to configure a remote VPS.
@@ -491,9 +500,11 @@ fased update
 ```
 
 The browser Control UI can also run **Update & Restart** when the gateway is
-healthy. Rerun `./install.sh` for repair/reinstall behavior; the current
-installer fast-forwards a clean Git checkout before building unless
-`--no-git-update` is set.
+healthy and the visible action is present. Look under **Advanced -> Debug ->
+Update Status**. It uses the same configured update channel as `fased update`.
+If the action is not shown, use the CLI commands above. Rerun `./install.sh`
+for repair/reinstall behavior; the current installer fast-forwards a clean Git
+checkout before building unless `--no-git-update` is set.
 
 ## What onboarding does
 
