@@ -55,8 +55,9 @@ export function parseTimeoutMsOrExit(timeout?: string): number | undefined | nul
 const FASED_REPO_URL = "https://github.com/fased-ai/fased.git";
 const MAX_LOG_CHARS = 8000;
 
-export const DEFAULT_PACKAGE_NAME = "fased";
-const CORE_PACKAGE_NAMES = new Set([DEFAULT_PACKAGE_NAME]);
+export const DEFAULT_PACKAGE_NAME = "@fased/fased";
+const LEGACY_PACKAGE_NAME = "fased";
+const CORE_PACKAGE_NAMES = new Set([LEGACY_PACKAGE_NAME, DEFAULT_PACKAGE_NAME]);
 
 export function normalizeTag(value?: string | null): string | null {
   if (!value) {
@@ -66,8 +67,8 @@ export function normalizeTag(value?: string | null): string | null {
   if (!trimmed) {
     return null;
   }
-  if (trimmed.startsWith("fased@")) {
-    return trimmed.slice("fased@".length);
+  if (trimmed.startsWith(`${LEGACY_PACKAGE_NAME}@`)) {
+    return trimmed.slice(`${LEGACY_PACKAGE_NAME}@`.length);
   }
   if (trimmed.startsWith(`${DEFAULT_PACKAGE_NAME}@`)) {
     return trimmed.slice(`${DEFAULT_PACKAGE_NAME}@`.length);

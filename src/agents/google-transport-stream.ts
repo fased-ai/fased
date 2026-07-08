@@ -1,12 +1,6 @@
 import type { StreamFn } from "@mariozechner/pi-agent-core";
-import {
-  calculateCost,
-  getEnvApiKey,
-  type Context,
-  type Model,
-  type SimpleStreamOptions,
-  type ThinkingLevel,
-} from "@mariozechner/pi-ai";
+import type { Context, Model, SimpleStreamOptions, ThinkingLevel } from "@mariozechner/pi-ai";
+import { calculateCost, getEnvApiKey } from "@mariozechner/pi-ai/compat";
 import { parseGeminiAuth } from "../infra/gemini-auth.js";
 import { normalizeGoogleApiBaseUrl } from "../infra/google-api-base-url.js";
 import { buildGuardedModelFetch } from "./provider-transport-fetch.js";

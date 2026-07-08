@@ -23,14 +23,17 @@ describe("compareSemverStrings", () => {
 
 describe("resolveNpmChannelTag", () => {
   let versionByTag: Record<string, string | null>;
+  let requestedUrls: string[];
 
   beforeEach(() => {
     versionByTag = {};
+    requestedUrls = [];
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
         const url =
           typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        requestedUrls.push(url);
         const tag = decodeURIComponent(url.split("/").pop() ?? "");
         const version = versionByTag[tag] ?? null;
         return {
@@ -53,6 +56,7 @@ describe("resolveNpmChannelTag", () => {
     const resolved = await resolveNpmChannelTag({ channel: "beta", timeoutMs: 1000 });
 
     expect(resolved).toEqual({ tag: "latest", version: "1.0.1-1" });
+    expect(requestedUrls.every((url) => url.includes("%40fased%2Ffased"))).toBe(true);
   });
 
   it("keeps beta when beta is not older", async () => {

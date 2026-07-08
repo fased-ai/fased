@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const CORE_PACKAGE_NAMES = new Set(["fased"]);
+const CORE_PACKAGE_NAMES = new Set(["fased", "@fased/fased"]);
 
 async function readPackageName(dir: string): Promise<string | null> {
   try {

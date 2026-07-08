@@ -1,10 +1,5 @@
-import {
-  streamSimple,
-  type Api,
-  type AssistantMessageEvent,
-  type Message,
-  type Model,
-} from "@mariozechner/pi-ai";
+import type { Api, AssistantMessageEvent, Message, Model } from "@mariozechner/pi-ai";
+import { streamSimple } from "@mariozechner/pi-ai/compat";
 import { SessionManager } from "@mariozechner/pi-coding-agent";
 import type { ReasoningLevel, ThinkLevel } from "../auto-reply/thinking.js";
 import type { GetReplyOptions, ReplyPayload } from "../auto-reply/types.js";

@@ -1,10 +1,6 @@
 import type { StreamFn } from "@mariozechner/pi-agent-core";
-import {
-  getApiProvider,
-  registerApiProvider,
-  type Api,
-  type StreamOptions,
-} from "@mariozechner/pi-ai";
+import type { Api, StreamOptions } from "@mariozechner/pi-ai";
+import { getApiProvider, registerApiProvider } from "@mariozechner/pi-ai/compat";
 
 const CUSTOM_API_SOURCE_PREFIX = "fased-custom-api:";
 

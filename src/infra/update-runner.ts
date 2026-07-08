@@ -86,8 +86,9 @@ const DEFAULT_TIMEOUT_MS = 20 * 60_000;
 const MAX_LOG_CHARS = 8000;
 const PREFLIGHT_MAX_COMMITS = 10;
 const START_DIRS = ["cwd", "argv1", "process"];
-const DEFAULT_PACKAGE_NAME = "fased";
-const CORE_PACKAGE_NAMES = new Set([DEFAULT_PACKAGE_NAME]);
+const DEFAULT_PACKAGE_NAME = "@fased/fased";
+const LEGACY_PACKAGE_NAME = "fased";
+const CORE_PACKAGE_NAMES = new Set([LEGACY_PACKAGE_NAME, DEFAULT_PACKAGE_NAME]);
 const DEV_PREFLIGHT_LINT_OPT_IN_ENV = "FASED_UPDATE_PREFLIGHT_LINT";
 
 function normalizeDir(value?: string | null) {
@@ -336,8 +337,8 @@ function normalizeTag(tag?: string) {
   if (!trimmed) {
     return "latest";
   }
-  if (trimmed.startsWith("fased@")) {
-    return trimmed.slice("fased@".length);
+  if (trimmed.startsWith(`${LEGACY_PACKAGE_NAME}@`)) {
+    return trimmed.slice(`${LEGACY_PACKAGE_NAME}@`.length);
   }
   if (trimmed.startsWith(`${DEFAULT_PACKAGE_NAME}@`)) {
     return trimmed.slice(`${DEFAULT_PACKAGE_NAME}@`.length);

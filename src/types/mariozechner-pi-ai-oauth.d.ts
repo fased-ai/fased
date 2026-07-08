@@ -1,4 +1,9 @@
 declare module "@mariozechner/pi-ai/oauth" {
-  export function getOAuthApiKey(...args: unknown[]): string | undefined;
-  export function getOAuthProviders(...args: unknown[]): unknown[];
+  import type { OAuthCredentials, OAuthProviderInterface } from "@mariozechner/pi-ai";
+
+  export function getOAuthApiKey(
+    providerId: string,
+    credentials: Record<string, OAuthCredentials>,
+  ): Promise<{ newCredentials: OAuthCredentials; apiKey: string } | null>;
+  export function getOAuthProviders(): OAuthProviderInterface[];
 }

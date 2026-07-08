@@ -1,156 +1,85 @@
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { resolveFasedAgentPackageRoot, resolveFasedAgentPackageRootSync } from "./fased-root.js";
 
-type FakeFsEntry = { kind: "file"; content: string } | { kind: "dir" };
+let root: string;
 
-const VITEST_FS_BASE = path.join(path.parse(process.cwd()).root, "__fased_vitest__");
-const FIXTURE_BASE = path.join(VITEST_FS_BASE, "fased-root");
+const fx = (...parts: string[]) => path.join(root, ...parts);
 
-const state = vi.hoisted(() => ({
-  entries: new Map<string, FakeFsEntry>(),
-  realpaths: new Map<string, string>(),
-  realpathErrors: new Set<string>(),
-}));
-
-const abs = (p: string) => path.resolve(p);
-const fx = (...parts: string[]) => path.join(FIXTURE_BASE, ...parts);
-const vitestRootWithSep = `${abs(VITEST_FS_BASE)}${path.sep}`;
-const isFixturePath = (p: string) => {
-  const resolved = abs(p);
-  return resolved === vitestRootWithSep.slice(0, -1) || resolved.startsWith(vitestRootWithSep);
-};
-
-function setFile(p: string, content = "") {
-  state.entries.set(abs(p), { kind: "file", content });
+function writePackageJson(dir: string, name: string) {
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name }), "utf-8");
 }
 
-vi.mock("node:fs", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:fs")>();
-  const wrapped = {
-    ...actual,
-    existsSync: (p: string) =>
-      isFixturePath(p) ? state.entries.has(abs(p)) : actual.existsSync(p),
-    readFileSync: (p: string, encoding?: unknown) => {
-      if (!isFixturePath(p)) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        return actual.readFileSync(p as any, encoding as any) as unknown;
-      }
-      const entry = state.entries.get(abs(p));
-      if (!entry || entry.kind !== "file") {
-        throw new Error(`ENOENT: no such file, open '${p}'`);
-      }
-      return encoding ? entry.content : Buffer.from(entry.content, "utf-8");
-    },
-    statSync: (p: string) => {
-      if (!isFixturePath(p)) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        return actual.statSync(p as any) as unknown;
-      }
-      const entry = state.entries.get(abs(p));
-      if (!entry) {
-        throw new Error(`ENOENT: no such file or directory, stat '${p}'`);
-      }
-      return {
-        isFile: () => entry.kind === "file",
-        isDirectory: () => entry.kind === "dir",
-      };
-    },
-    realpathSync: (p: string) =>
-      isFixturePath(p)
-        ? (() => {
-            const resolved = abs(p);
-            if (state.realpathErrors.has(resolved)) {
-              throw new Error(`ENOENT: no such file or directory, realpath '${p}'`);
-            }
-            return state.realpaths.get(resolved) ?? resolved;
-          })()
-        : actual.realpathSync(p),
-  };
-  return { ...wrapped, default: wrapped };
-});
-
-vi.mock("node:fs/promises", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:fs/promises")>();
-  const wrapped = {
-    ...actual,
-    readFile: async (p: string, encoding?: unknown) => {
-      if (!isFixturePath(p)) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        return (await actual.readFile(p as any, encoding as any)) as unknown;
-      }
-      const entry = state.entries.get(abs(p));
-      if (!entry || entry.kind !== "file") {
-        throw new Error(`ENOENT: no such file, open '${p}'`);
-      }
-      return entry.content;
-    },
-  };
-  return { ...wrapped, default: wrapped };
-});
-
 describe("resolveFasedAgentPackageRoot", () => {
-  let resolveFasedAgentPackageRoot: typeof import("./fased-root.js").resolveFasedAgentPackageRoot;
-  let resolveFasedAgentPackageRootSync: typeof import("./fased-root.js").resolveFasedAgentPackageRootSync;
-
-  beforeAll(async () => {
-    ({ resolveFasedAgentPackageRoot, resolveFasedAgentPackageRootSync } =
-      await import("./fased-root.js"));
-  });
-
   beforeEach(() => {
-    state.entries.clear();
-    state.realpaths.clear();
-    state.realpathErrors.clear();
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-root-"));
   });
 
-  it("resolves package root from .bin argv1", async () => {
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it("resolves package root from .bin argv1", () => {
     const project = fx("bin-scenario");
     const argv1 = path.join(project, "node_modules", ".bin", "fased");
     const pkgRoot = path.join(project, "node_modules", "fased");
-    setFile(path.join(pkgRoot, "package.json"), JSON.stringify({ name: "fased" }));
+    writePackageJson(pkgRoot, "fased");
 
     expect(resolveFasedAgentPackageRootSync({ argv1 })).toBe(pkgRoot);
   });
 
-  it("resolves package root via symlinked argv1", async () => {
+  it("resolves scoped package root from .bin argv1", () => {
+    const project = fx("scoped-bin-scenario");
+    const argv1 = path.join(project, "node_modules", ".bin", "fased");
+    const pkgRoot = path.join(project, "node_modules", "fased");
+    writePackageJson(pkgRoot, "@fased/fased");
+
+    expect(resolveFasedAgentPackageRootSync({ argv1 })).toBe(pkgRoot);
+  });
+
+  it("resolves package root via symlinked argv1", () => {
     const project = fx("symlink-scenario");
     const bin = path.join(project, "bin", "fased");
     const realPkg = path.join(project, "real-pkg");
-    state.realpaths.set(abs(bin), abs(path.join(realPkg, "fased.mjs")));
-    setFile(path.join(realPkg, "package.json"), JSON.stringify({ name: "fased" }));
+    writePackageJson(realPkg, "fased");
+    fs.writeFileSync(path.join(realPkg, "fased.mjs"), "", "utf-8");
+    fs.mkdirSync(path.dirname(bin), { recursive: true });
+    fs.symlinkSync(path.join(realPkg, "fased.mjs"), bin);
 
     expect(resolveFasedAgentPackageRootSync({ argv1: bin })).toBe(realPkg);
   });
 
-  it("falls back when argv1 realpath throws", async () => {
-    const project = fx("realpath-throw-scenario");
+  it("falls back when argv1 does not exist", () => {
+    const project = fx("missing-bin-scenario");
     const argv1 = path.join(project, "node_modules", ".bin", "fased");
     const pkgRoot = path.join(project, "node_modules", "fased");
-    state.realpathErrors.add(abs(argv1));
-    setFile(path.join(pkgRoot, "package.json"), JSON.stringify({ name: "fased" }));
+    writePackageJson(pkgRoot, "fased");
 
     expect(resolveFasedAgentPackageRootSync({ argv1 })).toBe(pkgRoot);
   });
 
-  it("prefers moduleUrl candidates", async () => {
+  it("prefers moduleUrl candidates", () => {
     const pkgRoot = fx("moduleurl");
-    setFile(path.join(pkgRoot, "package.json"), JSON.stringify({ name: "fased" }));
+    writePackageJson(pkgRoot, "fased");
     const moduleUrl = pathToFileURL(path.join(pkgRoot, "dist", "index.js")).toString();
 
     expect(resolveFasedAgentPackageRootSync({ moduleUrl })).toBe(pkgRoot);
   });
 
-  it("returns null for non-fased package roots", async () => {
+  it("returns null for non-fased package roots", () => {
     const pkgRoot = fx("not-fased");
-    setFile(path.join(pkgRoot, "package.json"), JSON.stringify({ name: "not-fased" }));
+    writePackageJson(pkgRoot, "not-fased");
 
     expect(resolveFasedAgentPackageRootSync({ cwd: pkgRoot })).toBeNull();
   });
 
   it("async resolver matches sync behavior", async () => {
     const pkgRoot = fx("async");
-    setFile(path.join(pkgRoot, "package.json"), JSON.stringify({ name: "fased" }));
+    writePackageJson(pkgRoot, "fased");
 
     await expect(resolveFasedAgentPackageRoot({ cwd: pkgRoot })).resolves.toBe(pkgRoot);
   });

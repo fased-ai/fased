@@ -1,4 +1,5 @@
-import { getApiProvider, type Api, type Model } from "@mariozechner/pi-ai";
+import type { Api, Model } from "@mariozechner/pi-ai";
+import { getApiProvider } from "@mariozechner/pi-ai/compat";
 import type { FasedAgentConfig } from "../config/config.js";
 import { createAnthropicVertexStreamFnForModel } from "./anthropic-vertex-stream.js";
 import { ensureCustomApiRegistered } from "./custom-api-registry.js";

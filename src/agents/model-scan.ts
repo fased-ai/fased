@@ -1,12 +1,5 @@
-import {
-  type Context,
-  complete,
-  getEnvApiKey,
-  getModel,
-  type Model,
-  type OpenAICompletionsOptions,
-  type Tool,
-} from "@mariozechner/pi-ai";
+import type { Context, Model, OpenAICompletionsOptions, Tool } from "@mariozechner/pi-ai";
+import { complete, getEnvApiKey, getModel } from "@mariozechner/pi-ai/compat";
 import { Type } from "@sinclair/typebox";
 import { inferParamBFromIdOrName } from "../shared/model-param-b.js";
 import { normalizeProviderId } from "./provider-id.js";
