@@ -15,6 +15,7 @@ const requiredPathGroups = [
   "dist/plugin-sdk/index.d.ts",
   "dist/build-info.json",
   "scripts/fased-launcher-runtime.mjs",
+  "shared/sat-hash-v1.json",
 ];
 const forbiddenPrefixes = ["dist/FasedAgent.app/"];
 const extensionSourceFileRe = /\.(?:c|m)?(?:t|j)sx?$/;
