@@ -106,6 +106,11 @@ const coreEntries: CoreCliEntry[] = [
         hasSubcommands: false,
       },
       {
+        name: "dashboard-link",
+        description: "Generate a one-time public Control UI login link",
+        hasSubcommands: false,
+      },
+      {
         name: "reset",
         description: "Reset local config/state (keeps the CLI installed)",
         hasSubcommands: false,
