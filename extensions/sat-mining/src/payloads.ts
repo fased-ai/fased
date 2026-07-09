@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { buildAttestation } from "../../../src/federation/attestation.js";
+import { buildAttestation } from "fased/plugin-sdk/sat-runtime";
 import type { SatMiningConfig } from "./config.js";
 import {
   deriveSatAllocationHash,

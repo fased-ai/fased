@@ -4,7 +4,7 @@ import {
   loadOrCreateDeviceIdentity,
   publicKeyRawBase64UrlFromPem,
   signDevicePayload,
-} from "../../../src/infra/device-identity.js";
+} from "fased/plugin-sdk/sat-runtime";
 import type { SatAuditArtifact } from "./audit-store.js";
 import { buildSatDisputeReview } from "./dispute-review.js";
 

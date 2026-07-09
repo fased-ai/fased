@@ -110,6 +110,11 @@ const PLUGIN_SDK_ALIAS_SPECS = [
     srcFile: "provider-web-search-config-contract.ts",
     distFile: "provider-web-search-config-contract.js",
   },
+  {
+    requests: ["fased/plugin-sdk/sat-runtime"],
+    srcFile: "sat-runtime.ts",
+    distFile: "sat-runtime.js",
+  },
 ] as const;
 
 function resolvePluginSdkAliases(): Record<string, string> {

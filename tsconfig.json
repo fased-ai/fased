@@ -20,7 +20,8 @@
     "paths": {
       "fased/plugin-sdk": ["./src/plugin-sdk/index.ts"],
       "fased/plugin-sdk/*": ["./src/plugin-sdk/*.ts"],
-      "fased/plugin-sdk/account-id": ["./src/plugin-sdk/account-id.ts"]
+      "fased/plugin-sdk/account-id": ["./src/plugin-sdk/account-id.ts"],
+      "fased/plugin-sdk/sat-runtime": ["./src/plugin-sdk/sat-runtime.ts"]
     }
   },
   "include": ["src/**/*", "ui/**/*", "extensions/**/*"],

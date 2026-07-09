@@ -1,20 +1,18 @@
 import { createRequire } from "node:module";
-import type { FasedAgentConfig } from "../../../src/config/config.js";
-import { loadConfig } from "../../../src/config/config.js";
 import {
+  callLocalSocketSigner,
+  enforceWalletCustodyForAutonomousSend,
+  loadConfig,
+  readWalletProviderRegistry,
+  requireLocalSocketSignerPath,
   resolveSatBondProgramIdFromEnv,
   resolveSatMintAddressFromEnv,
   resolveSatMintProgramIdFromEnv,
   resolveSatProgramIdFromEnv,
-} from "../../../src/config/sat-runtime-ids.js";
-import {
-  callLocalSocketSigner,
-  requireLocalSocketSignerPath,
-} from "../../../src/wallet/providers/local-socket-signer-adapter.js";
-import { enforceWalletCustodyForAutonomousSend } from "../../../src/wallet/wallet-custody.js";
-import { readWalletProviderRegistry } from "../../../src/wallet/wallet-provider-registry.js";
-import { resolveWalletProviderId } from "../../../src/wallet/wallet-provider-resolver.js";
-import { resolveWalletRuntimeConfig } from "../../../src/wallet/wallet-runtime-config.js";
+  resolveWalletProviderId,
+  resolveWalletRuntimeConfig,
+  type FasedAgentConfig,
+} from "fased/plugin-sdk/sat-runtime";
 import type { SatMiningConfig } from "./config.js";
 import { decodeHash32 } from "./hash-spec.js";
 import { inspectSatCycleRegistryMeta, inspectSatMinerCyclesByAddress } from "./rpc-read.js";

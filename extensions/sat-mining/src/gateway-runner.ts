@@ -1,6 +1,5 @@
 import type { FasedAgentPluginApi } from "fased/plugin-sdk";
-import { resolveGatewayPort } from "../../../src/config/config.js";
-import { callGatewayScoped } from "../../../src/gateway/call.js";
+import { callGatewayScoped, resolveGatewayPort } from "fased/plugin-sdk/sat-runtime";
 import { consumeSatGatewayMethodChaosOnce } from "./live-chaos.js";
 
 function chaosError(envName: string, fallback: string): Error {

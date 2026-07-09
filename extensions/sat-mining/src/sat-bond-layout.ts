@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { SAT_RUNTIME_DEFAULTS } from "../../../src/config/sat-runtime-ids.js";
+import { SAT_RUNTIME_DEFAULTS } from "fased/plugin-sdk/sat-runtime";
 
 export type SatBondPositionLayoutSpec = {
   accountName: string;
