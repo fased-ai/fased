@@ -48,6 +48,21 @@ function sanitizeDaemonStatusForJson(status: DaemonStatus): DaemonStatus {
   };
 }
 
+function isGatewayWarmupRpcError(status: DaemonStatus): boolean {
+  if (!status.rpc || status.rpc.ok) {
+    return false;
+  }
+  if (!status.service.loaded || status.service.runtime?.status !== "running") {
+    return false;
+  }
+  const message = String(status.rpc.error ?? "").toLowerCase();
+  return (
+    message.includes("gateway timeout") ||
+    message.includes("read econnreset") ||
+    message.includes("operation was aborted")
+  );
+}
+
 export function printDaemonStatus(status: DaemonStatus, opts: { json: boolean }) {
   if (opts.json) {
     const sanitized = sanitizeDaemonStatusForJson(status);
@@ -178,6 +193,17 @@ export function printDaemonStatus(status: DaemonStatus, opts: { json: boolean })
   if (rpc) {
     if (rpc.ok) {
       defaultRuntime.log(`${label("RPC probe:")} ${okText("ok")}`);
+    } else if (isGatewayWarmupRpcError(status)) {
+      defaultRuntime.log(`${label("RPC probe:")} ${warnText("warming")}`);
+      if (rpc.url) {
+        defaultRuntime.log(`${label("RPC target:")} ${rpc.url}`);
+      }
+      const lines = String(rpc.error ?? "warming")
+        .split(/\r?\n/)
+        .filter(Boolean);
+      for (const line of lines.slice(0, 4)) {
+        defaultRuntime.log(`  ${warnText(line)}`);
+      }
     } else {
       defaultRuntime.error(`${label("RPC probe:")} ${errorText("failed")}`);
       if (rpc.url) {

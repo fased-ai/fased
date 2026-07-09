@@ -4,6 +4,7 @@ import { runCommandWithTimeout } from "../process/exec.js";
 import { fetchWithTimeout } from "../utils/fetch-timeout.js";
 import { detectPackageManager as detectPackageManagerImpl } from "./detect-package-manager.js";
 import { channelToNpmTag, type UpdateChannel } from "./update-channels.js";
+import { resolveHostedNpmInstallTarget } from "./update-global.js";
 
 export type PackageManager = "pnpm" | "bun" | "npm" | "unknown";
 
@@ -465,11 +466,12 @@ export async function checkUpdateStatus(params: {
     };
   }
 
-  const pm = await detectPackageManager(root);
   const gitRoot = await detectGitRoot(root);
   const isGit = gitRoot && path.resolve(gitRoot) === root;
 
   const installKind: UpdateCheckResult["installKind"] = isGit ? "git" : "package";
+  const hostedNpm = !isGit ? resolveHostedNpmInstallTarget(root) : null;
+  const pm = hostedNpm ? "npm" : await detectPackageManager(root);
   const git = isGit
     ? await checkGitUpdateStatus({
         root,

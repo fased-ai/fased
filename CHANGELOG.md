@@ -4,6 +4,19 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.33
+
+- Fix hosted VPS updates so the refreshed gateway service resolves the managed
+  script from the updated npm package instead of a stale `/home/app/fased`
+  checkout.
+- Make managed startup prefer the updated npm runtime root before the bootstrap
+  checkout, so the daemon and CLI use the same Fased version after package
+  updates.
+- Make hosted package update status report npm instead of the source repo
+  package manager, and use cache-friendly npm install flags for package updates.
+- Show gateway RPC timeout during warm-up as `warming` instead of a hard failure
+  when the service is running.
+
 ## 0.1.32
 
 - Probe the lightweight Gateway `health` RPC for gateway status checks so hosted

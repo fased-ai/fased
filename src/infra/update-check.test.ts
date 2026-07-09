@@ -1,5 +1,8 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { compareSemverStrings, resolveNpmChannelTag } from "./update-check.js";
+import { checkUpdateStatus, compareSemverStrings, resolveNpmChannelTag } from "./update-check.js";
 
 describe("compareSemverStrings", () => {
   it("handles stable and prerelease precedence for both legacy and beta formats", () => {
@@ -75,5 +78,41 @@ describe("resolveNpmChannelTag", () => {
     const resolved = await resolveNpmChannelTag({ channel: "beta", timeoutMs: 1000 });
 
     expect(resolved).toEqual({ tag: "latest", version: "1.0.1" });
+  });
+});
+
+describe("checkUpdateStatus", () => {
+  it("reports hosted package-cache installs as npm even when package.json declares pnpm", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "fased-hosted-update-check-"));
+    const pkgRoot = path.join(
+      root,
+      ".fased",
+      "install-cache",
+      "npm-global",
+      "lib",
+      "node_modules",
+      "@fased",
+      "fased",
+    );
+    await fs.mkdir(pkgRoot, { recursive: true });
+    await fs.writeFile(
+      path.join(pkgRoot, "package.json"),
+      JSON.stringify({ name: "@fased/fased", version: "1.0.0", packageManager: "pnpm@10.23.0" }),
+      "utf-8",
+    );
+
+    try {
+      const status = await checkUpdateStatus({
+        root: pkgRoot,
+        timeoutMs: 1000,
+        fetchGit: false,
+        includeRegistry: false,
+      });
+
+      expect(status.installKind).toBe("package");
+      expect(status.packageManager).toBe("npm");
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
   });
 });

@@ -16,8 +16,8 @@ resolve_managed_runtime_root() {
   local root
   for root in \
     "${FASED_MANAGED_RUNTIME_ROOT:-}" \
-    "$FASED_ROOT" \
-    "$HOME/.fased/install-cache/npm-global/lib/node_modules/@fased/fased"; do
+    "$HOME/.fased/install-cache/npm-global/lib/node_modules/@fased/fased" \
+    "$FASED_ROOT"; do
     if runtime_root_has_build "$root"; then
       printf '%s\n' "$root"
       return 0
