@@ -773,6 +773,7 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
 
   const explicitTag = normalizeTag(opts.tag);
   let tag = explicitTag ?? channelToNpmTag(channel);
+  let installTag = tag;
   let currentVersion: string | null = null;
   let targetVersion: string | null = null;
   let downgradeRisk = false;
@@ -793,6 +794,7 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
       !fallbackToLatest &&
       currentVersion != null &&
       (targetVersion == null || (cmp != null && cmp > 0));
+    installTag = targetVersion ?? tag;
   }
 
   if (opts.dryRun) {
@@ -825,7 +827,9 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
         );
       }
     } else {
-      actions.push(`Run global package manager update with spec ${DEFAULT_PACKAGE_NAME}@${tag}`);
+      actions.push(
+        `Run global package manager update with spec ${DEFAULT_PACKAGE_NAME}@${installTag}`,
+      );
     }
     actions.push("Run plugin update sync after core update");
     actions.push("Refresh shell completion cache (if needed)");
@@ -856,7 +860,7 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
         requestedChannel,
         storedChannel,
         effectiveChannel: channel,
-        tag,
+        tag: installTag,
         currentVersion,
         targetVersion,
         downgradeRisk,
@@ -942,7 +946,7 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
     ? await runPackageInstallUpdate({
         root,
         installKind,
-        tag,
+        tag: installTag,
         timeoutMs: timeoutMs ?? 20 * 60_000,
         startedAt,
         progress,
@@ -955,7 +959,7 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
         startedAt,
         progress,
         channel,
-        tag,
+        tag: installTag,
         showProgress,
         opts,
         stop,

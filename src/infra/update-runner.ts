@@ -348,6 +348,11 @@ function normalizeTag(tag?: string) {
   return trimmed;
 }
 
+function normalizeVersionSpec(tag: string): string | null {
+  const cleaned = tag.trim().replace(/^v/, "");
+  return compareSemverStrings(cleaned, cleaned) === 0 ? cleaned : null;
+}
+
 export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<UpdateRunResult> {
   const startedAt = Date.now();
   const runCommand =
@@ -944,11 +949,34 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
     }
 
     const afterVersion = await readPackageVersion(pkgRoot);
+    const expectedVersion = normalizeVersionSpec(tag);
+    let versionVerifyStep: UpdateStepResult | null = null;
+    if (
+      finalStep.exitCode === 0 &&
+      expectedVersion &&
+      compareSemverStrings(afterVersion, expectedVersion) !== 0
+    ) {
+      versionVerifyStep = {
+        name: "version verify",
+        command: `verify ${packageName}@${expectedVersion}`,
+        cwd: pkgRoot,
+        durationMs: 0,
+        exitCode: 1,
+        stderrTail: `expected ${expectedVersion}, found ${afterVersion ?? "unknown"}`,
+      };
+      steps.push(versionVerifyStep);
+    }
+    const failedStep =
+      finalStep.exitCode !== 0
+        ? finalStep
+        : versionVerifyStep?.exitCode !== 0
+          ? versionVerifyStep
+          : null;
     return {
-      status: finalStep.exitCode === 0 ? "ok" : "error",
+      status: failedStep ? "error" : "ok",
       mode: globalManager,
       root: pkgRoot,
-      reason: finalStep.exitCode === 0 ? undefined : finalStep.name,
+      reason: failedStep?.name,
       before: { version: beforeVersion },
       after: { version: afterVersion },
       steps,

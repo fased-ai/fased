@@ -449,7 +449,7 @@ describe("update-cli", () => {
         mockPackageInstallStatus(tempDir);
       },
       expectedChannel: "stable" as const,
-      expectedTag: "latest",
+      expectedTag: "9999.0.0",
     },
     {
       name: "uses stored beta channel when configured",
@@ -497,7 +497,7 @@ describe("update-cli", () => {
     await updateCommand({});
 
     const call = expectUpdateCallChannel("beta");
-    expect(call?.tag).toBe("latest");
+    expect(call?.tag).toBe("1.2.3-1");
   });
 
   it("honors --tag override", async () => {
