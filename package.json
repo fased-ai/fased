@@ -1,6 +1,6 @@
 {
   "name": "@fased/fased",
-  "version": "0.1.27",
+  "version": "0.1.28",
   "description": "Fased Agent self-hosted AI gateway with channels, tools, plugins, and operator modules",
   "keywords": [
     "ai-agent",
@@ -195,7 +195,8 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "0.14.1",
-    "@aws-sdk/client-bedrock": "^3.1062.0",
+    "@aws-sdk/client-bedrock": "3.1062.0",
+    "@aws-sdk/core": "3.974.17",
     "@buape/carbon": "0.0.0-beta-20260216184201",
     "@clack/prompts": "^1.0.1",
     "@discordjs/voice": "^0.19.0",

@@ -1,6 +1,6 @@
 {
   "name": "@fased/llm-task",
-  "version": "0.1.27",
+  "version": "0.1.28",
   "private": true,
   "description": "FasedAgent JSON-only LLM task plugin",
   "type": "module",

@@ -17,6 +17,10 @@ const requiredPathGroups = [
   "scripts/fased-launcher-runtime.mjs",
   "shared/sat-hash-v1.json",
 ];
+const requiredExactDependencies = new Map<string, string>([
+  ["@aws-sdk/client-bedrock", "3.1062.0"],
+  ["@aws-sdk/core", "3.974.17"],
+]);
 const forbiddenPrefixes = ["dist/FasedAgent.app/"];
 const extensionSourceFileRe = /\.(?:c|m)?(?:t|j)sx?$/;
 const extensionSrcImportRe = /(?:from\s+|import\s*\(\s*)["']((?:\.\.\/)+src\/[^"']+)["']/g;
@@ -24,6 +28,7 @@ const extensionSrcImportRe = /(?:from\s+|import\s*\(\s*)["']((?:\.\.\/)+src\/[^"
 type PackageJson = {
   name?: string;
   version?: string;
+  dependencies?: Record<string, string>;
 };
 
 function normalizePluginSyncVersion(version: string): string {
@@ -133,6 +138,28 @@ function checkBrandVersion() {
   }
 }
 
+function checkExactReleaseDependencies() {
+  const rootPackagePath = resolve("package.json");
+  const rootPackage = JSON.parse(readFileSync(rootPackagePath, "utf8")) as PackageJson;
+  const dependencies = rootPackage.dependencies ?? {};
+  const mismatches: string[] = [];
+
+  for (const [name, expected] of requiredExactDependencies) {
+    const actual = dependencies[name];
+    if (actual !== expected) {
+      mismatches.push(`${name}: expected ${expected}, found ${actual ?? "missing"}`);
+    }
+  }
+
+  if (mismatches.length > 0) {
+    console.error("release-check: dependency pins drifted from tested npm install set:");
+    for (const item of mismatches) {
+      console.error(`  - ${item}`);
+    }
+    process.exit(1);
+  }
+}
+
 function candidatePackedPathsForExtensionSrcImport(targetPath: string) {
   const normalized = posix.normalize(targetPath);
   const candidates = new Set<string>([normalized]);
@@ -199,6 +226,7 @@ function checkBundledExtensionSrcImports(paths: Set<string>) {
 function main() {
   checkPluginVersions();
   checkBrandVersion();
+  checkExactReleaseDependencies();
 
   const results = runPackDry();
   const files = results.flatMap((entry) => entry.files ?? []);
