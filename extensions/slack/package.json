@@ -1,12 +1,48 @@
 {
   "name": "@fased/slack",
   "version": "0.1.35",
-  "private": true,
   "description": "FasedAgent Slack channel plugin",
+  "files": [
+    "index.ts",
+    "src",
+    "fased.plugin.json",
+    "!src/**/*.test.ts",
+    "!src/**/*.test.tsx"
+  ],
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@slack/bolt": "^4.6.0",
+    "@slack/web-api": "^7.14.1"
+  },
+  "peerDependencies": {
+    "@fased/fased": "^0.1.35"
+  },
+  "peerDependenciesMeta": {
+    "@fased/fased": {
+      "optional": true
+    }
+  },
   "fased": {
     "extensions": [
       "./index.ts"
-    ]
+    ],
+    "channel": {
+      "id": "slack",
+      "label": "Slack",
+      "selectionLabel": "Slack (Socket Mode)",
+      "docsPath": "/channels/slack",
+      "docsLabel": "slack",
+      "blurb": "Slack app channel using Socket Mode, DMs, channels, threads, and reactions.",
+      "order": 40,
+      "quickstartAllowFrom": true
+    },
+    "install": {
+      "npmSpec": "@fased/slack",
+      "localPath": "extensions/slack",
+      "defaultChoice": "local"
+    }
   }
 }

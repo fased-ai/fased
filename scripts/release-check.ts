@@ -49,8 +49,29 @@ const packageBudgetHardLimits = {
 type PackageJson = {
   name?: string;
   version?: string;
+  private?: boolean;
+  files?: string[];
   dependencies?: Record<string, string>;
+  optionalDependencies?: Record<string, string>;
+  peerDependencies?: Record<string, string>;
+  peerDependenciesMeta?: Record<string, { optional?: boolean }>;
+  publishConfig?: { access?: string };
+  fased?: {
+    extensions?: string[];
+    channel?: { id?: string };
+    install?: { npmSpec?: string; localPath?: string };
+  };
 };
+
+const channelAddonContracts = new Map<string, string[]>([
+  ["telegram", ["@grammyjs/runner", "@grammyjs/transformer-throttler", "grammy"]],
+  ["whatsapp", ["@whiskeysockets/baileys"]],
+  [
+    "discord",
+    ["@buape/carbon", "@discordjs/voice", "@snazzah/davey", "discord-api-types", "opusscript"],
+  ],
+  ["slack", ["@slack/bolt", "@slack/web-api"]],
+]);
 
 function normalizePluginSyncVersion(version: string): string {
   const normalized = version.trim().replace(/^v/, "");
@@ -251,6 +272,70 @@ function checkPluginVersions() {
   }
 }
 
+function checkChannelAddonContracts() {
+  const rootPackage = JSON.parse(readFileSync(resolve("package.json"), "utf8")) as PackageJson;
+  const rootVersion = rootPackage.version;
+  if (!rootVersion) {
+    console.error("release-check: root package.json missing version.");
+    process.exit(1);
+  }
+
+  const failures: string[] = [];
+  for (const [channelId, runtimeDependencies] of channelAddonContracts) {
+    const packagePath = resolve("extensions", channelId, "package.json");
+    const pkg = JSON.parse(readFileSync(packagePath, "utf8")) as PackageJson;
+    const expectedName = `@fased/${channelId}`;
+    const expectedLocalPath = `extensions/${channelId}`;
+
+    if (pkg.name !== expectedName) {
+      failures.push(`${channelId}: name must be ${expectedName}`);
+    }
+    if (pkg.private === true) {
+      failures.push(`${channelId}: package must not be private`);
+    }
+    if (pkg.publishConfig?.access !== "public") {
+      failures.push(`${channelId}: publishConfig.access must be public`);
+    }
+    if (normalizePluginSyncVersion(pkg.version ?? "") !== normalizePluginSyncVersion(rootVersion)) {
+      failures.push(`${channelId}: version ${pkg.version ?? "missing"} must match ${rootVersion}`);
+    }
+    if (pkg.peerDependencies?.["@fased/fased"] !== `^${rootVersion}`) {
+      failures.push(`${channelId}: @fased/fased peer must be ^${rootVersion}`);
+    }
+    if (pkg.peerDependenciesMeta?.["@fased/fased"]?.optional !== true) {
+      failures.push(`${channelId}: @fased/fased peer must be optional for plugin installation`);
+    }
+    if (!pkg.fased?.extensions?.includes("./index.ts")) {
+      failures.push(`${channelId}: fased.extensions must include ./index.ts`);
+    }
+    if (pkg.fased?.channel?.id !== channelId) {
+      failures.push(`${channelId}: fased.channel.id must match the package directory`);
+    }
+    if (pkg.fased?.install?.npmSpec !== expectedName) {
+      failures.push(`${channelId}: fased.install.npmSpec must be ${expectedName}`);
+    }
+    if (pkg.fased?.install?.localPath !== expectedLocalPath) {
+      failures.push(`${channelId}: fased.install.localPath must be ${expectedLocalPath}`);
+    }
+    for (const dependency of runtimeDependencies) {
+      if (!pkg.dependencies?.[dependency]) {
+        failures.push(`${channelId}: missing owned runtime dependency ${dependency}`);
+      }
+    }
+    if (!pkg.files?.includes("fased.plugin.json") || !pkg.files.includes("src")) {
+      failures.push(`${channelId}: files must include src and fased.plugin.json`);
+    }
+  }
+
+  if (failures.length > 0) {
+    console.error("release-check: channel add-on package contracts are invalid:");
+    for (const failure of failures) {
+      console.error(`  - ${failure}`);
+    }
+    process.exit(1);
+  }
+}
+
 function checkBrandVersion() {
   const rootPackagePath = resolve("package.json");
   const rootPackage = JSON.parse(readFileSync(rootPackagePath, "utf8")) as PackageJson;
@@ -361,6 +446,7 @@ function checkBundledExtensionSrcImports(paths: Set<string>) {
 
 function main() {
   checkPluginVersions();
+  checkChannelAddonContracts();
   checkBrandVersion();
   checkExactReleaseDependencies();
 

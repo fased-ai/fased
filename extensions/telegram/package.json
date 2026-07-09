@@ -1,12 +1,49 @@
 {
   "name": "@fased/telegram",
   "version": "0.1.35",
-  "private": true,
   "description": "FasedAgent Telegram channel plugin",
+  "files": [
+    "index.ts",
+    "src",
+    "fased.plugin.json",
+    "!src/**/*.test.ts",
+    "!src/**/*.test.tsx"
+  ],
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@grammyjs/runner": "^2.0.3",
+    "@grammyjs/transformer-throttler": "^1.2.1",
+    "grammy": "^1.40.1"
+  },
+  "peerDependencies": {
+    "@fased/fased": "^0.1.35"
+  },
+  "peerDependenciesMeta": {
+    "@fased/fased": {
+      "optional": true
+    }
+  },
   "fased": {
     "extensions": [
       "./index.ts"
-    ]
+    ],
+    "channel": {
+      "id": "telegram",
+      "label": "Telegram",
+      "selectionLabel": "Telegram (Bot API)",
+      "docsPath": "/channels/telegram",
+      "docsLabel": "telegram",
+      "blurb": "quickest setup path; create a Bot API token with @BotFather.",
+      "order": 10,
+      "quickstartAllowFrom": true
+    },
+    "install": {
+      "npmSpec": "@fased/telegram",
+      "localPath": "extensions/telegram",
+      "defaultChoice": "local"
+    }
   }
 }

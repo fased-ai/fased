@@ -6,6 +6,7 @@ type PackageJson = {
   name?: string;
   version?: string;
   devDependencies?: Record<string, string>;
+  peerDependencies?: Record<string, string>;
 };
 
 function ensureChangelogEntry(changelogPath: string, version: string): boolean {
@@ -39,6 +40,19 @@ function stripWorkspaceFasedDevDependency(pkg: PackageJson): boolean {
   return true;
 }
 
+function syncFasedCorePeerDependency(pkg: PackageJson, targetVersion: string): boolean {
+  const peers = pkg.peerDependencies;
+  if (!peers || !("@fased/fased" in peers)) {
+    return false;
+  }
+  const targetRange = `^${targetVersion}`;
+  if (peers["@fased/fased"] === targetRange) {
+    return false;
+  }
+  peers["@fased/fased"] = targetRange;
+  return true;
+}
+
 export function syncPluginVersions(rootDir = resolve(".")) {
   const rootPackagePath = join(rootDir, "package.json");
   const rootPackage = JSON.parse(readFileSync(rootPackagePath, "utf8")) as PackageJson;
@@ -56,6 +70,7 @@ export function syncPluginVersions(rootDir = resolve(".")) {
   const changelogged: string[] = [];
   const skipped: string[] = [];
   const strippedWorkspaceDevDeps: string[] = [];
+  const syncedCorePeers: string[] = [];
 
   for (const dir of dirs) {
     const packagePath = join(extensionsDir, dir.name, "package.json");
@@ -81,8 +96,13 @@ export function syncPluginVersions(rootDir = resolve(".")) {
       strippedWorkspaceDevDeps.push(pkg.name);
     }
 
+    const corePeerChanged = syncFasedCorePeerDependency(pkg, targetVersion);
+    if (corePeerChanged) {
+      syncedCorePeers.push(pkg.name);
+    }
+
     const versionChanged = pkg.version !== targetVersion;
-    if (!versionChanged && !removedWorkspaceDevDependency) {
+    if (!versionChanged && !removedWorkspaceDevDependency && !corePeerChanged) {
       skipped.push(pkg.name);
       continue;
     }
@@ -98,6 +118,7 @@ export function syncPluginVersions(rootDir = resolve(".")) {
     changelogged,
     skipped,
     strippedWorkspaceDevDeps,
+    syncedCorePeers,
   };
 }
 
@@ -112,6 +133,6 @@ function isCliEntry(): boolean {
 if (isCliEntry()) {
   const summary = syncPluginVersions();
   console.log(
-    `Synced plugin versions to ${summary.targetVersion}. Updated: ${summary.updated.length}. Changelogged: ${summary.changelogged.length}. Stripped workspace devDeps: ${summary.strippedWorkspaceDevDeps.length}. Skipped: ${summary.skipped.length}.`,
+    `Synced plugin versions to ${summary.targetVersion}. Updated: ${summary.updated.length}. Changelogged: ${summary.changelogged.length}. Stripped workspace devDeps: ${summary.strippedWorkspaceDevDeps.length}. Synced core peers: ${summary.syncedCorePeers.length}. Skipped: ${summary.skipped.length}.`,
   );
 }
