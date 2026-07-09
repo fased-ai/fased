@@ -21,6 +21,23 @@ afterEach(() => {
 });
 
 describe("resolveManagedScriptPath", () => {
+  it("prefers the running package script over a stale working-directory script", () => {
+    process.argv = [
+      "node",
+      "/home/app/.fased/install-cache/npm-global/lib/node_modules/@fased/fased/dist/entry.js",
+    ];
+    fsMocks.existsSync.mockImplementation(
+      (target: string) =>
+        target === "/home/app/fased/scripts/start-managed.sh" ||
+        target ===
+          "/home/app/.fased/install-cache/npm-global/lib/node_modules/@fased/fased/scripts/start-managed.sh",
+    );
+
+    expect(resolveManagedScriptPath()).toBe(
+      "/home/app/.fased/install-cache/npm-global/lib/node_modules/@fased/fased/scripts/start-managed.sh",
+    );
+  });
+
   it("finds start-managed.sh next to a bundled dist entrypoint", () => {
     process.argv = ["node", "/srv/fased/dist/index.js"];
     fsMocks.existsSync.mockImplementation(

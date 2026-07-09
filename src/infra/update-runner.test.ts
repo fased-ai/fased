@@ -581,16 +581,19 @@ describe("runGatewayUpdate", () => {
   it.each([
     {
       title: "updates global npm installs when detected",
-      expectedInstallCommand: "npm i -g fased@latest --no-fund --no-audit --loglevel=error",
+      expectedInstallCommand:
+        "npm i -g fased@latest --no-fund --no-audit --loglevel=error --prefer-offline --no-progress",
     },
     {
       title: "uses update channel for global npm installs when tag is omitted",
-      expectedInstallCommand: "npm i -g fased@beta --no-fund --no-audit --loglevel=error",
+      expectedInstallCommand:
+        "npm i -g fased@beta --no-fund --no-audit --loglevel=error --prefer-offline --no-progress",
       channel: "beta" as const,
     },
     {
       title: "updates global npm installs with tag override",
-      expectedInstallCommand: "npm i -g fased@beta --no-fund --no-audit --loglevel=error",
+      expectedInstallCommand:
+        "npm i -g fased@beta --no-fund --no-audit --loglevel=error --prefer-offline --no-progress",
       tag: "beta",
     },
   ])("$title", async ({ expectedInstallCommand, channel, tag }) => {
@@ -613,7 +616,7 @@ describe("runGatewayUpdate", () => {
     const nodeModules = path.join(prefix, "lib", "node_modules");
     const pkgRoot = path.join(nodeModules, "@fased", "fased");
     const expectedInstallCommand =
-      "npm i -g @fased/fased@latest --no-fund --no-audit --loglevel=error";
+      "npm i -g @fased/fased@latest --no-fund --no-audit --loglevel=error --prefer-offline --no-progress";
     await seedGlobalPackageRoot(pkgRoot, "1.0.0", "@fased/fased");
 
     const { calls, envByCommand, runCommand } = createGlobalInstallHarness({
@@ -658,7 +661,10 @@ describe("runGatewayUpdate", () => {
       if (key === "pnpm root -g") {
         return { stdout: "", stderr: "", code: 1 };
       }
-      if (key === "npm i -g fased@latest --no-fund --no-audit --loglevel=error") {
+      if (
+        key ===
+        "npm i -g fased@latest --no-fund --no-audit --loglevel=error --prefer-offline --no-progress"
+      ) {
         stalePresentAtInstall = await pathExists(staleDir);
         return { stdout: "ok", stderr: "", code: 0 };
       }
@@ -689,11 +695,17 @@ describe("runGatewayUpdate", () => {
       if (key === "pnpm root -g") {
         return { stdout: "", stderr: "", code: 1 };
       }
-      if (key === "npm i -g fased@latest --no-fund --no-audit --loglevel=error") {
+      if (
+        key ===
+        "npm i -g fased@latest --no-fund --no-audit --loglevel=error --prefer-offline --no-progress"
+      ) {
         firstAttempt = false;
         return { stdout: "", stderr: "node-gyp failed", code: 1 };
       }
-      if (key === "npm i -g fased@latest --omit=optional --no-fund --no-audit --loglevel=error") {
+      if (
+        key ===
+        "npm i -g fased@latest --omit=optional --no-fund --no-audit --loglevel=error --prefer-offline --no-progress"
+      ) {
         await fs.writeFile(
           path.join(pkgRoot, "package.json"),
           JSON.stringify({ name: "fased", version: "2.0.0" }),

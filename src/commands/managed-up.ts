@@ -37,13 +37,16 @@ function appendManagedScriptCandidates(
 export function resolveManagedScriptPath(): string {
   const candidates: string[] = [];
   const seen = new Set<string>();
+  appendManagedScriptCandidates(candidates, seen, process.argv[1]);
+  appendManagedScriptCandidates(candidates, seen, fileURLToPath(import.meta.url));
   for (const basename of MANAGED_SCRIPT_BASENAMES) {
     const cwdCandidate = path.resolve(process.cwd(), "scripts", basename);
+    if (seen.has(cwdCandidate)) {
+      continue;
+    }
     seen.add(cwdCandidate);
     candidates.push(cwdCandidate);
   }
-  appendManagedScriptCandidates(candidates, seen, process.argv[1]);
-  appendManagedScriptCandidates(candidates, seen, fileURLToPath(import.meta.url));
   for (const candidate of candidates) {
     if (fs.existsSync(candidate)) {
       return candidate;
