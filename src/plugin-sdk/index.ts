@@ -99,6 +99,8 @@ export type {
 export type {
   GatewayRequestHandler,
   GatewayRequestHandlerOptions,
+  GatewayClient,
+  GatewayRequestContext,
   RespondFn,
 } from "../gateway/server-methods/types.js";
 export type { PluginRuntime, RuntimeLogger } from "../plugins/runtime/types.js";
@@ -195,6 +197,7 @@ export {
 } from "../config/zod-schema.core.js";
 export { ToolPolicySchema } from "../config/zod-schema.agent-runtime.js";
 export type { RuntimeEnv } from "../runtime.js";
+export type { OutboundDeliveryResult } from "../infra/outbound/deliver.js";
 export type { WizardPrompter } from "../wizard/prompts.js";
 export { DEFAULT_ACCOUNT_ID, normalizeAccountId } from "../routing/session-key.js";
 export {
@@ -252,8 +255,39 @@ export {
 } from "../infra/device-pairing.js";
 export { createDedupeCache } from "../infra/dedupe.js";
 export type { DedupeCache } from "../infra/dedupe.js";
+export { waitForAbortSignal } from "../infra/abort-signal.js";
 export { formatErrorMessage } from "../infra/errors.js";
 export { redactSensitiveText } from "../logging/redact.js";
+export { runEmbeddedPiAgent } from "../agents/pi-embedded-runner.js";
+export {
+  DEFAULT_FEDERATION_BASE_URL,
+  normalizeHandle,
+  resolveAgentPublicOrigin,
+  resolveFederationBaseUrl,
+  resolveFederationHandle,
+} from "../federation/runtime.js";
+export {
+  runFederationAutoConnectOnce,
+  startFederationAutoConnect,
+} from "../federation/auto-connect.js";
+export {
+  ACPX_PUSH_TEST_METHOD,
+  ACPX_PUSH_TEST_WRAPPER_ID,
+} from "../acp/acpx-push-test-approval-contract.js";
+export type { AcpxPushTestApprovalContractRequest } from "../acp/acpx-push-test-approval-contract.js";
+export { executeAcpxPushTestRequest } from "../acp/acpx-push-test-execution-adapter.js";
+export type { AcpxPushTestExecutionAdapterResult } from "../acp/acpx-push-test-execution-adapter.js";
+export { resolveEffectiveToolInventory } from "../agents/tools-effective-inventory.js";
+export { getPublicGatewayIdentity } from "../gateway/gateway-identity.js";
+export { getStatusSummary } from "../commands/status.js";
+export { loadConfig } from "../config/config.js";
+export { loadGatewayModelCatalog } from "../gateway/server-model-catalog.js";
+export { buildModelCatalogStatus } from "../agents/model-catalog-status.js";
+export { getGatewayUpdateStatus } from "../gateway/update-status.js";
+export { listAgentIds, resolveDefaultAgentId } from "../agents/agent-scope.js";
+export { buildCommandsListResult } from "../gateway/server-methods/commands.js";
+export { getAcpStatusSnapshot } from "../acp/status-snapshot.js";
+export { pushHandlers } from "../gateway/server-methods/push.js";
 export {
   DEFAULT_WEBHOOK_BODY_TIMEOUT_MS,
   DEFAULT_WEBHOOK_MAX_BODY_BYTES,

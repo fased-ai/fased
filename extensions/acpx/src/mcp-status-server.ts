@@ -3,20 +3,28 @@ import { createServer, type Server } from "node:http";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { FasedAgentPluginServiceContext, PluginLogger } from "fased/plugin-sdk";
-import { z } from "zod";
 import {
   ACPX_PUSH_TEST_METHOD,
   ACPX_PUSH_TEST_WRAPPER_ID,
-  type AcpxPushTestApprovalContractRequest,
-} from "../../../src/acp/acpx-push-test-approval-contract.js";
-import {
+  buildCommandsListResult,
+  buildModelCatalogStatus,
   executeAcpxPushTestRequest,
+  getAcpStatusSnapshot,
+  getGatewayUpdateStatus,
+  getPublicGatewayIdentity,
+  getStatusSummary,
+  listAgentIds,
+  loadConfig,
+  loadGatewayModelCatalog,
+  pushHandlers,
+  resolveDefaultAgentId,
+  resolveEffectiveToolInventory,
+  type AcpxPushTestApprovalContractRequest,
   type AcpxPushTestExecutionAdapterResult,
-} from "../../../src/acp/acpx-push-test-execution-adapter.js";
-import type {
-  GatewayClient,
-  GatewayRequestContext,
-} from "../../../src/gateway/server-methods/types.js";
+  type GatewayClient,
+  type GatewayRequestContext,
+} from "fased/plugin-sdk";
+import { z } from "zod";
 import type { ResolvedAcpxMcpBridgeConfig } from "./config.js";
 import {
   ACPX_PUSH_TEST_REQUEST_MCP_TOOL_NAME,
@@ -721,8 +729,6 @@ async function defaultEffectiveToolsPreviewResolver(params: {
   context: FasedAgentPluginServiceContext;
   agentId?: string;
 }): Promise<RawEffectiveToolInventoryResult> {
-  const { resolveEffectiveToolInventory } =
-    await import("../../../src/agents/tools-effective-inventory.js");
   return resolveEffectiveToolInventory({
     cfg: params.context.config,
     agentId: params.agentId,
@@ -731,24 +737,16 @@ async function defaultEffectiveToolsPreviewResolver(params: {
 }
 
 async function defaultGatewayIdentityResolver(): Promise<RawPublicGatewayIdentity> {
-  const { getPublicGatewayIdentity } = await import("../../../src/gateway/gateway-identity.js");
   return getPublicGatewayIdentity();
 }
 
 async function defaultGatewayStatusResolver(): Promise<RawGatewayStatusResult> {
-  const { getStatusSummary } = await import("../../../src/commands/status.js");
   return getStatusSummary({
     includeSensitive: false,
   });
 }
 
 async function defaultModelsCatalogStatusResolver(): Promise<RawModelsCatalogStatusResult> {
-  const [{ loadConfig }, { loadGatewayModelCatalog }, { buildModelCatalogStatus }] =
-    await Promise.all([
-      import("../../../src/config/config.js"),
-      import("../../../src/gateway/server-model-catalog.js"),
-      import("../../../src/agents/model-catalog-status.js"),
-    ]);
   const catalog = await loadGatewayModelCatalog();
   return buildModelCatalogStatus({
     catalog,
@@ -757,7 +755,6 @@ async function defaultModelsCatalogStatusResolver(): Promise<RawModelsCatalogSta
 }
 
 async function defaultUpdateStatusResolver(): Promise<RawUpdateStatusResult> {
-  const { getGatewayUpdateStatus } = await import("../../../src/gateway/update-status.js");
   return getGatewayUpdateStatus({
     fetchGit: false,
     includeRegistry: false,
@@ -771,10 +768,6 @@ async function defaultCommandsListResolver(params: {
   scope: CommandScope;
   includeArgs: boolean;
 }): Promise<RawCommandsListResult> {
-  const [{ listAgentIds, resolveDefaultAgentId }, { buildCommandsListResult }] = await Promise.all([
-    import("../../../src/agents/agent-scope.js"),
-    import("../../../src/gateway/server-methods/commands.js"),
-  ]);
   const cfg = params.context.config;
   const requestedAgentId = normalizeOptionalString(params.agentId);
   const agentId = requestedAgentId ?? resolveDefaultAgentId(cfg);
@@ -794,7 +787,6 @@ async function defaultAcpStatusResolver(params: {
   context: FasedAgentPluginServiceContext;
   limit: number;
 }): Promise<RawAcpStatusResult> {
-  const { getAcpStatusSnapshot } = await import("../../../src/acp/status-snapshot.js");
   return getAcpStatusSnapshot({
     cfg: params.context.config,
     limit: params.limit,
@@ -843,7 +835,6 @@ async function defaultPushTestExecutionAdapter(params: {
   context: FasedAgentPluginServiceContext;
   logger?: PluginLogger;
 }): Promise<AcpxPushTestExecutionAdapterResult> {
-  const { pushHandlers } = await import("../../../src/gateway/server-methods/push.js");
   const handler = pushHandlers[ACPX_PUSH_TEST_METHOD];
   return executeAcpxPushTestRequest({
     request: params.request,

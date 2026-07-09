@@ -2,35 +2,11 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { Type } from "@sinclair/typebox";
 import Ajv from "ajv";
-import { resolvePreferredFasedAgentTmpDir } from "fased/plugin-sdk";
-// NOTE: This extension is intended to be bundled with FasedAgent.
-// When running from source (tests/dev), FasedAgent internals live under src/.
-// When running from a built install, internals live under dist/ (no src/ tree).
-// So we resolve internal imports dynamically with src-first, dist-fallback.
-import type { FasedAgentPluginApi } from "../../../src/plugins/types.js";
-
-type RunEmbeddedPiAgentFn = (params: Record<string, unknown>) => Promise<unknown>;
-
-async function loadRunEmbeddedPiAgent(): Promise<RunEmbeddedPiAgentFn> {
-  // Source checkout (tests/dev)
-  try {
-    const mod = await import("../../../src/agents/pi-embedded-runner.js");
-    // oxlint-disable-next-line typescript/no-explicit-any
-    if (typeof (mod as any).runEmbeddedPiAgent === "function") {
-      // oxlint-disable-next-line typescript/no-explicit-any
-      return (mod as any).runEmbeddedPiAgent;
-    }
-  } catch {
-    // ignore
-  }
-
-  // Bundled install (built)
-  const mod = await import("../../../src/agents/pi-embedded-runner.js");
-  if (typeof mod.runEmbeddedPiAgent !== "function") {
-    throw new Error("Internal error: runEmbeddedPiAgent not available");
-  }
-  return mod.runEmbeddedPiAgent as RunEmbeddedPiAgentFn;
-}
+import {
+  resolvePreferredFasedAgentTmpDir,
+  runEmbeddedPiAgent,
+  type FasedAgentPluginApi,
+} from "fased/plugin-sdk";
 
 function stripCodeFences(s: string): string {
   const trimmed = s.trim();
@@ -183,8 +159,6 @@ export function createLlmTaskTool(api: FasedAgentPluginApi) {
         tmpDir = await fs.mkdtemp(path.join(resolvePreferredFasedAgentTmpDir(), "fased-llm-task-"));
         const sessionId = `llm-task-${Date.now()}`;
         const sessionFile = path.join(tmpDir, "session.json");
-
-        const runEmbeddedPiAgent = await loadRunEmbeddedPiAgent();
 
         const result = await runEmbeddedPiAgent({
           sessionId,

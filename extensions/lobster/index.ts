@@ -2,7 +2,7 @@ import type {
   AnyAgentTool,
   FasedAgentPluginApi,
   FasedAgentPluginToolFactory,
-} from "../../src/plugins/types.js";
+} from "fased/plugin-sdk";
 import { createLobsterTool } from "./src/lobster-tool.js";
 
 export default function register(api: FasedAgentPluginApi) {

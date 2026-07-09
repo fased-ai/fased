@@ -25,6 +25,7 @@ import type {
   ChannelPlugin,
   ChannelResolveKind,
   ChannelResolveResult,
+  RuntimeEnv,
   TwitchAccountConfig,
 } from "./types.js";
 import { isAccountConfigured } from "./utils/twitch.js";
@@ -134,7 +135,7 @@ export const twitchPlugin: ChannelPlugin<TwitchAccountConfig> = {
       accountId?: string | null;
       inputs: string[];
       kind: ChannelResolveKind;
-      runtime: import("../../../src/runtime.js").RuntimeEnv;
+      runtime: RuntimeEnv;
     }): Promise<ChannelResolveResult[]> => {
       const account = getAccountConfig(cfg, accountId ?? DEFAULT_ACCOUNT_ID);
 
