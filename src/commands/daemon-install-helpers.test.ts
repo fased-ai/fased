@@ -90,7 +90,7 @@ describe("buildGatewayInstallPlan", () => {
     expect(mocks.resolvePreferredNodePath).not.toHaveBeenCalled();
   });
 
-  it("pins the managed service node binary into environment PATH", async () => {
+  it("records the service node binary without adding version-manager paths to PATH", async () => {
     mockNodeGatewayPlanFixture({
       serviceEnvironment: {
         PATH: "/usr/bin:/bin",
@@ -108,7 +108,7 @@ describe("buildGatewayInstallPlan", () => {
     });
 
     expect(plan.environment.FASED_NODE_BIN).toBe("/opt/fased/node/v23.3.0/bin/node");
-    expect(plan.environment.PATH).toBe("/opt/fased/node/v23.3.0/bin:/usr/bin:/bin");
+    expect(plan.environment.PATH).toBe("/usr/bin:/bin");
   });
 
   it("emits warnings when renderSystemNodeWarning returns one", async () => {
