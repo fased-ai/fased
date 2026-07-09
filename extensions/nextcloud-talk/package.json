@@ -1,6 +1,6 @@
 {
   "name": "@fased/nextcloud-talk",
-  "version": "0.1.34",
+  "version": "0.1.35",
   "description": "FasedAgent Nextcloud Talk channel plugin",
   "type": "module",
   "fased": {
