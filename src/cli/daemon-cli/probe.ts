@@ -14,7 +14,7 @@ export async function probeGatewayStatus(opts: {
   try {
     await withProgress(
       {
-        label: "Checking gateway status...",
+        label: "Checking gateway health...",
         indeterminate: true,
         enabled: opts.json !== true,
       },
@@ -24,7 +24,7 @@ export async function probeGatewayStatus(opts: {
           token: opts.token,
           password: opts.password,
           tlsFingerprint: opts.tlsFingerprint,
-          method: "status",
+          method: "health",
           timeoutMs: opts.timeoutMs,
           clientName: GATEWAY_CLIENT_NAMES.CLI,
           mode: GATEWAY_CLIENT_MODES.CLI,
