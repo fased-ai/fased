@@ -642,6 +642,33 @@ describe("runGatewayUpdate", () => {
     expect(envByCommand.get(expectedInstallCommand)?.npm_config_cache).toBe(npmCache);
   });
 
+  it("fails hosted package-cache updates when the exact target version is not installed", async () => {
+    const prefix = path.join(tempDir, ".fased", "install-cache", "npm-global");
+    const nodeModules = path.join(prefix, "lib", "node_modules");
+    const pkgRoot = path.join(nodeModules, "@fased", "fased");
+    const expectedInstallCommand =
+      "npm i -g @fased/fased@2.0.0 --no-fund --no-audit --loglevel=error --prefer-offline --no-progress";
+    await seedGlobalPackageRoot(pkgRoot, "1.0.0", "@fased/fased");
+
+    const { calls, runCommand } = createGlobalInstallHarness({
+      pkgRoot,
+      installCommand: expectedInstallCommand,
+    });
+
+    const result = await runWithCommand(runCommand, { cwd: pkgRoot, tag: "2.0.0" });
+
+    expect(result.status).toBe("error");
+    expect(result.reason).toBe("version verify");
+    expect(result.before?.version).toBe("1.0.0");
+    expect(result.after?.version).toBe("1.0.0");
+    expect(calls).toContain(expectedInstallCommand);
+    expect(result.steps.at(-1)).toMatchObject({
+      name: "version verify",
+      exitCode: 1,
+      stderrTail: "expected 2.0.0, found 1.0.0",
+    });
+  });
+
   it("cleans stale npm rename dirs before global update", async () => {
     const nodeModules = path.join(tempDir, "node_modules");
     const pkgRoot = path.join(nodeModules, "fased");
