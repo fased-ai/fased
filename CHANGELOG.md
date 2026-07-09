@@ -4,6 +4,16 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.35
+
+- Add a hosted npm update fast path that downloads the exact Fased package
+  tarball and swaps package files directly when runtime dependencies did not
+  change, avoiding a full npm dependency reinstall for code-only updates.
+- Keep hosted updates on the safer package-manager path when dependencies do
+  change, so fresh dependency graphs still install normally.
+- Prepare the next release after the hosted update version-verification and
+  gateway refresh fixes.
+
 ## 0.1.33
 
 - Fix hosted VPS updates so the refreshed gateway service resolves the managed
