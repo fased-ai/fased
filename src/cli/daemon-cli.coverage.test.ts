@@ -113,14 +113,14 @@ describe("daemon-cli coverage", () => {
     envSnapshot.restore();
   });
 
-  it("probes gateway status by default", async () => {
+  it("probes gateway health by default", async () => {
     resetRuntimeCapture();
     callGateway.mockClear();
 
     await runDaemonCommand(["daemon", "status"]);
 
     expect(callGateway).toHaveBeenCalledTimes(1);
-    expect(callGateway).toHaveBeenCalledWith(expect.objectContaining({ method: "status" }));
+    expect(callGateway).toHaveBeenCalledWith(expect.objectContaining({ method: "health" }));
     expect(findExtraGatewayServices).toHaveBeenCalled();
     expect(inspectPortUsage).toHaveBeenCalled();
   });
@@ -146,7 +146,7 @@ describe("daemon-cli coverage", () => {
     expect(callGateway).toHaveBeenCalledWith(
       expect.objectContaining({
         url: "ws://127.0.0.1:19001",
-        method: "status",
+        method: "health",
       }),
     );
     expect(inspectPortUsage).toHaveBeenCalledWith(19001);

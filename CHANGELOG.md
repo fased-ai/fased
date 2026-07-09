@@ -4,6 +4,12 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.32
+
+- Probe the lightweight Gateway `health` RPC for gateway status checks so hosted
+  VPS instances do not show a false timeout while normal gateway methods are
+  already answering.
+
 ## 0.1.31
 
 - Make gateway restart wait for the local Gateway RPC to answer instead of
