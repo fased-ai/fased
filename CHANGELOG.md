@@ -4,6 +4,13 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.31
+
+- Make gateway restart wait for the local Gateway RPC to answer instead of
+  treating an open port as healthy during hosted VPS warm-up.
+- Stop `fased gateway status` from reporting the expected Fased gateway
+  listener as a port conflict when the gateway is still warming up.
+
 ## 0.1.18
 
 - Remove the leftover `FASED SETUP` intro frame so onboarding begins directly

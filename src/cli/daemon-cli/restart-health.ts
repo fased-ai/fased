@@ -7,6 +7,7 @@ import {
   type PortUsage,
 } from "../../infra/ports.js";
 import { sleep } from "../../utils.js";
+import { probeGatewayStatus } from "./probe.js";
 
 export const DEFAULT_RESTART_HEALTH_TIMEOUT_MS = 60_000;
 export const DEFAULT_RESTART_HEALTH_DELAY_MS = 500;
@@ -18,6 +19,10 @@ export type GatewayRestartSnapshot = {
   runtime: GatewayServiceRuntime;
   portUsage: PortUsage;
   healthy: boolean;
+  rpc?: {
+    ok: boolean;
+    error?: string;
+  };
   staleGatewayPids: number[];
 };
 
@@ -32,6 +37,13 @@ export async function inspectGatewayRestart(params: {
   service: GatewayService;
   port: number;
   env?: NodeJS.ProcessEnv;
+  rpc?: {
+    url: string;
+    token?: string;
+    password?: string;
+    tlsFingerprint?: string;
+    timeoutMs: number;
+  };
 }): Promise<GatewayRestartSnapshot> {
   const env = params.env ?? process.env;
   let runtime: GatewayServiceRuntime = { status: "unknown" };
@@ -67,7 +79,18 @@ export async function inspectGatewayRestart(params: {
       ? portUsage.listeners.some((listener) => listenerOwnedByRuntimePid({ listener, runtimePid }))
       : gatewayListeners.length > 0 ||
         (portUsage.status === "busy" && portUsage.listeners.length === 0);
-  const healthy = running && ownsPort;
+  const shouldProbeRpc = running && ownsPort && params.rpc;
+  const rpc = shouldProbeRpc
+    ? await probeGatewayStatus({
+        url: params.rpc.url,
+        token: params.rpc.token,
+        password: params.rpc.password,
+        tlsFingerprint: params.rpc.tlsFingerprint,
+        timeoutMs: params.rpc.timeoutMs,
+        json: true,
+      })
+    : undefined;
+  const healthy = running && ownsPort && (rpc ? rpc.ok : true);
   const staleGatewayPids = Array.from(
     new Set(
       gatewayListeners
@@ -89,6 +112,7 @@ export async function inspectGatewayRestart(params: {
     runtime,
     portUsage,
     healthy,
+    ...(rpc ? { rpc } : {}),
     staleGatewayPids,
   };
 }
@@ -99,6 +123,13 @@ export async function waitForGatewayHealthyRestart(params: {
   attempts?: number;
   delayMs?: number;
   env?: NodeJS.ProcessEnv;
+  rpc?: {
+    url: string;
+    token?: string;
+    password?: string;
+    tlsFingerprint?: string;
+    timeoutMs: number;
+  };
 }): Promise<GatewayRestartSnapshot> {
   const attempts = params.attempts ?? DEFAULT_RESTART_HEALTH_ATTEMPTS;
   const delayMs = params.delayMs ?? DEFAULT_RESTART_HEALTH_DELAY_MS;
@@ -107,6 +138,7 @@ export async function waitForGatewayHealthyRestart(params: {
     service: params.service,
     port: params.port,
     env: params.env,
+    rpc: params.rpc,
   });
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
@@ -121,6 +153,7 @@ export async function waitForGatewayHealthyRestart(params: {
       service: params.service,
       port: params.port,
       env: params.env,
+      rpc: params.rpc,
     });
   }
 
@@ -150,6 +183,9 @@ export function renderRestartDiagnostics(snapshot: GatewayRestartSnapshot): stri
 
   if (snapshot.portUsage.errors?.length) {
     lines.push(`Port diagnostics errors: ${snapshot.portUsage.errors.join("; ")}`);
+  }
+  if (snapshot.rpc && !snapshot.rpc.ok) {
+    lines.push(`Gateway RPC probe: failed${snapshot.rpc.error ? ` (${snapshot.rpc.error})` : ""}.`);
   }
 
   return lines;

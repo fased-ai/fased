@@ -97,6 +97,10 @@ vi.mock("../../gateway/net.js", () => ({
 vi.mock("../../infra/ports.js", () => ({
   inspectPortUsage: (port: number) => inspectPortUsage(port),
   formatPortDiagnostics: () => [],
+  classifyPortListener: (listener: { commandLine?: string; command?: string }) => {
+    const raw = `${listener.commandLine ?? ""} ${listener.command ?? ""}`.toLowerCase();
+    return raw.includes("fased") ? "gateway" : "unknown";
+  },
 }));
 
 vi.mock("../../infra/tailnet.js", () => ({
@@ -111,7 +115,7 @@ vi.mock("./probe.js", () => ({
   probeGatewayStatus: (opts: unknown) => callGatewayStatusProbe(opts),
 }));
 
-const { gatherDaemonStatus } = await import("./status.gather.js");
+const { gatherDaemonStatus, renderPortDiagnosticsForCli } = await import("./status.gather.js");
 
 describe("gatherDaemonStatus", () => {
   let envSnapshot: ReturnType<typeof captureEnv>;
@@ -183,5 +187,37 @@ describe("gatherDaemonStatus", () => {
     expect(loadGatewayTlsRuntime).not.toHaveBeenCalled();
     expect(callGatewayStatusProbe).not.toHaveBeenCalled();
     expect(status.rpc).toBeUndefined();
+  });
+
+  it("does not report the expected single gateway listener as a port conflict during warm-up", () => {
+    const lines = renderPortDiagnosticsForCli(
+      {
+        service: {
+          label: "systemd",
+          loaded: true,
+          loadedText: "loaded",
+          notLoadedText: "not loaded",
+          runtime: { status: "running", pid: 149372 },
+        },
+        gateway: {
+          bindMode: "loopback",
+          bindHost: "127.0.0.1",
+          port: 18789,
+          portSource: "env/config",
+          probeUrl: "ws://127.0.0.1:18789",
+        },
+        port: {
+          port: 18789,
+          status: "busy",
+          listeners: [{ pid: 149622, user: "app", commandLine: "fased-gateway" }],
+          hints: ["Gateway already running locally."],
+        },
+        rpc: { ok: false, error: "read ECONNRESET" },
+        extraServices: [],
+      },
+      false,
+    );
+
+    expect(lines).toEqual([]);
   });
 });

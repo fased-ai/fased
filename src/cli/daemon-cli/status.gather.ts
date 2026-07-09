@@ -13,6 +13,7 @@ import { auditGatewayServiceConfig } from "../../daemon/service-audit.js";
 import { resolveGatewayService } from "../../daemon/service.js";
 import { resolveGatewayBindHost } from "../../gateway/net.js";
 import {
+  classifyPortListener,
   formatPortDiagnostics,
   inspectPortUsage,
   type PortListener,
@@ -96,14 +97,47 @@ export type DaemonStatus = {
   extraServices: Array<{ label: string; detail: string; scope: string }>;
 };
 
-function shouldReportPortUsage(status: PortUsageStatus | undefined, rpcOk?: boolean) {
-  if (status !== "busy") {
+function shouldReportPortUsage(
+  port: DaemonStatus["port"] | undefined,
+  rpcOk?: boolean,
+  runtime?: DaemonStatus["service"]["runtime"],
+) {
+  if (!port || port.status !== "busy") {
     return false;
   }
   if (rpcOk === true) {
     return false;
   }
+  if (isExpectedSingleGatewayListener(port, runtime)) {
+    return false;
+  }
   return true;
+}
+
+function isExpectedSingleGatewayListener(
+  port: DaemonStatus["port"],
+  runtime?: DaemonStatus["service"]["runtime"],
+): boolean {
+  if (!port || port.status !== "busy" || runtime?.status !== "running") {
+    return false;
+  }
+  if (port.listeners.length === 0) {
+    return false;
+  }
+  const gatewayListeners = port.listeners.filter(
+    (listener) => classifyPortListener(listener, port.port) === "gateway",
+  );
+  if (gatewayListeners.length !== port.listeners.length) {
+    return false;
+  }
+  const pids = Array.from(
+    new Set(
+      gatewayListeners
+        .map((listener) => listener.pid)
+        .filter((pid): pid is number => typeof pid === "number" && Number.isFinite(pid)),
+    ),
+  );
+  return pids.length <= 1;
 }
 
 export async function gatherDaemonStatus(
@@ -285,7 +319,7 @@ export async function gatherDaemonStatus(
 }
 
 export function renderPortDiagnosticsForCli(status: DaemonStatus, rpcOk?: boolean): string[] {
-  if (!status.port || !shouldReportPortUsage(status.port.status, rpcOk)) {
+  if (!shouldReportPortUsage(status.port, rpcOk, status.service.runtime)) {
     return [];
   }
   return formatPortDiagnostics({
