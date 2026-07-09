@@ -6,7 +6,7 @@ import {
   resolveSatMintProgramIdFromEnv,
   resolveSatProgramIdFromEnv,
   type SatRuntimeIds,
-} from "../../../src/config/sat-runtime-ids.js";
+} from "fased/plugin-sdk/sat-runtime";
 
 export type SatMiningConfig = {
   enabled: boolean;

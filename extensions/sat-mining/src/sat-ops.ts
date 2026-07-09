@@ -1,4 +1,4 @@
-import { tryResolveSatRuntimeIds } from "../../../src/config/sat-runtime-ids.js";
+import { tryResolveSatRuntimeIds } from "fased/plugin-sdk/sat-runtime";
 import type { SatMiningConfig } from "./config.js";
 import {
   inspectCurrentSatRoundBucket,

@@ -26,6 +26,10 @@ export default defineConfig({
         replacement: path.join(repoRoot, "src", "plugin-sdk", "account-id.ts"),
       },
       {
+        find: "fased/plugin-sdk/sat-runtime",
+        replacement: path.join(repoRoot, "src", "plugin-sdk", "sat-runtime.ts"),
+      },
+      {
         find: "fased/plugin-sdk",
         replacement: path.join(repoRoot, "src", "plugin-sdk", "index.ts"),
       },

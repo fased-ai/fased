@@ -1,12 +1,12 @@
 import type { FasedAgentPluginApi } from "fased/plugin-sdk";
-import { loadConfig } from "../../../src/config/config.js";
-import { fetchSolanaWalletAssetsViaRpc } from "../../../src/wallet/solana-assets.js";
 import {
+  createOrExecuteWalletSend,
+  fetchSolanaWalletAssetsViaRpc,
+  loadConfig,
+  readWalletProviderRegistry,
   resolveWalletPolicyConfig,
   resolveWalletRolePolicyProfile,
-} from "../../../src/wallet/wallet-policy.js";
-import { readWalletProviderRegistry } from "../../../src/wallet/wallet-provider-registry.js";
-import { createOrExecuteWalletSend } from "../../../src/wallet/wallet-send-approvals.js";
+} from "fased/plugin-sdk/sat-runtime";
 import { refreshSatChainTime } from "./chain-time.js";
 import type { SatMiningConfig } from "./config.js";
 import { resolveSatMintAddress } from "./config.js";

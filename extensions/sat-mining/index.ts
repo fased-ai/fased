@@ -2,26 +2,23 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { Type } from "@sinclair/typebox";
 import { fetchWithSsrFGuard, type FasedAgentPluginApi } from "fased/plugin-sdk";
-import { loadConfig } from "../../src/config/config.js";
-import { ErrorCodes, errorShape } from "../../src/gateway/protocol/index.js";
-import type { ErrorCode } from "../../src/gateway/protocol/index.js";
-import type { RespondFn } from "../../src/gateway/server-methods/types.js";
 import {
+  ErrorCodes,
+  createWalletProviderAdapter,
+  errorShape,
   getSatMainnetSyncStatus,
-  syncSatMainnetRuntimeIds,
-} from "../../src/mining/mainnet-sync.js";
-import { probeLocalSocketSignerHealth } from "../../src/wallet/providers/local-socket-signer-adapter.js";
-import {
+  loadConfig,
+  probeLocalSocketSignerHealth,
   readWalletProviderRegistry,
-  resolveWalletUserRole,
-  upsertNamedWallet,
-} from "../../src/wallet/wallet-provider-registry.js";
-import { createWalletProviderAdapter } from "../../src/wallet/wallet-provider-resolver.js";
-import {
+  readWalletStatusSnapshot,
   resolveLocalSignerSocketPath,
   resolveWalletRuntimeConfig,
-} from "../../src/wallet/wallet-runtime-config.js";
-import { readWalletStatusSnapshot } from "../../src/wallet/wallet-status.js";
+  resolveWalletUserRole,
+  syncSatMainnetRuntimeIds,
+  upsertNamedWallet,
+  type ErrorCode,
+  type RespondFn,
+} from "fased/plugin-sdk/sat-runtime";
 import {
   type SatPendingPlannerCycleMemory,
   type SatAuditArtifact,

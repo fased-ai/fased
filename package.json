@@ -90,6 +90,10 @@
       "types": "./dist/plugin-sdk/provider-web-search-config-contract.d.ts",
       "default": "./dist/plugin-sdk/provider-web-search-config-contract.js"
     },
+    "./plugin-sdk/sat-runtime": {
+      "types": "./dist/plugin-sdk/sat-runtime.d.ts",
+      "default": "./dist/plugin-sdk/sat-runtime.js"
+    },
     "./cli-entry": "./fased.mjs"
   },
   "publishConfig": {

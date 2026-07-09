@@ -1,18 +1,17 @@
 import { completeSimple } from "@mariozechner/pi-ai";
 import {
+  DEFAULT_PROVIDER,
+  buildModelAliasIndex,
+  createSubsystemLogger,
+  getApiKeyForModel,
+  loadConfig,
+  requireApiKey,
   resolveAgentDir,
   resolveAgentEffectiveModelPrimary,
   resolveDefaultAgentId,
-} from "../../../src/agents/agent-scope.js";
-import { DEFAULT_PROVIDER } from "../../../src/agents/defaults.js";
-import { getApiKeyForModel, requireApiKey } from "../../../src/agents/model-auth.js";
-import {
-  buildModelAliasIndex,
   resolveModelRefFromString,
-} from "../../../src/agents/model-selection.js";
-import { resolveModel } from "../../../src/agents/pi-embedded-runner/model.js";
-import { loadConfig } from "../../../src/config/config.js";
-import { createSubsystemLogger } from "../../../src/logging/subsystem.js";
+  resolveModel,
+} from "fased/plugin-sdk/sat-runtime";
 import { computeBaseStrategy, type SatBaseStrategyInput } from "./strategy-base.js";
 import { validateSatStrategyOutput } from "./strategy-validate.js";
 

@@ -72,6 +72,13 @@ const optionalEntries = [
     platform: "node",
   },
   {
+    entry: "src/plugin-sdk/sat-runtime.ts",
+    outDir: "dist/plugin-sdk",
+    env,
+    fixedExtension: false,
+    platform: "node",
+  },
+  {
     entry: "src/extensionAPI.ts",
     env,
     fixedExtension: false,

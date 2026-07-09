@@ -2,16 +2,16 @@ import { createHash } from "node:crypto";
 import http from "node:http";
 import https from "node:https";
 import { createRequire } from "node:module";
-import type { FasedAgentConfig } from "../../../src/config/config.js";
-import { loadConfig } from "../../../src/config/config.js";
 import {
+  loadConfig,
+  loadWalletProviderSecret,
+  readWalletProviderRegistry,
   resolveSatBondProgramIdFromEnv,
   resolveSatMintAddressFromEnv,
   resolveSatProgramIdFromEnv,
-} from "../../../src/config/sat-runtime-ids.js";
-import { readWalletProviderRegistry } from "../../../src/wallet/wallet-provider-registry.js";
-import { resolveWalletProviderId } from "../../../src/wallet/wallet-provider-resolver.js";
-import { loadWalletProviderSecret } from "../../../src/wallet/wallet-secrets-store.js";
+  resolveWalletProviderId,
+  type FasedAgentConfig,
+} from "fased/plugin-sdk/sat-runtime";
 import type { SatMiningConfig } from "./config.js";
 import {
   loadSatBondLayout,
