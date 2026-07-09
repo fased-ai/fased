@@ -8,6 +8,11 @@ import { runGatewayUpdate } from "./update-runner.js";
 
 type CommandResponse = { stdout?: string; stderr?: string; code?: number | null };
 type CommandResult = { stdout: string; stderr: string; code: number | null };
+type TestCommandOptions = {
+  cwd?: string;
+  timeoutMs?: number;
+  env?: NodeJS.ProcessEnv;
+};
 
 function createRunner(responses: Record<string, CommandResponse>) {
   const calls: string[] = [];
@@ -157,7 +162,7 @@ describe("runGatewayUpdate", () => {
   }
 
   async function runWithCommand(
-    runCommand: (argv: string[]) => Promise<CommandResult>,
+    runCommand: (argv: string[], options?: TestCommandOptions) => Promise<CommandResult>,
     options?: {
       channel?: "stable" | "beta" | "dev";
       tag?: string;
@@ -167,7 +172,7 @@ describe("runGatewayUpdate", () => {
   ) {
     return runGatewayUpdate({
       cwd: options?.cwd ?? tempDir,
-      runCommand: async (argv, _runOptions) => runCommand(argv),
+      runCommand: async (argv, runOptions) => runCommand(argv, runOptions),
       timeoutMs: 5000,
       ...(options?.channel ? { channel: options.channel } : {}),
       ...(options?.tag ? { tag: options.tag } : {}),
@@ -187,11 +192,11 @@ describe("runGatewayUpdate", () => {
     return runWithCommand(runner, options);
   }
 
-  async function seedGlobalPackageRoot(pkgRoot: string, version = "1.0.0") {
+  async function seedGlobalPackageRoot(pkgRoot: string, version = "1.0.0", name = "fased") {
     await fs.mkdir(pkgRoot, { recursive: true });
     await fs.writeFile(
       path.join(pkgRoot, "package.json"),
-      JSON.stringify({ name: "fased", version }),
+      JSON.stringify({ name, version }),
       "utf-8",
     );
   }
@@ -547,9 +552,11 @@ describe("runGatewayUpdate", () => {
     onInstall?: () => Promise<void>;
   }) => {
     const calls: string[] = [];
-    const runCommand = async (argv: string[]) => {
+    const envByCommand = new Map<string, NodeJS.ProcessEnv | undefined>();
+    const runCommand = async (argv: string[], options?: TestCommandOptions) => {
       const key = argv.join(" ");
       calls.push(key);
+      envByCommand.set(key, options?.env);
       if (key === `git -C ${params.pkgRoot} rev-parse --show-toplevel`) {
         return { stdout: "", stderr: "not a git repository", code: 128 };
       }
@@ -568,7 +575,7 @@ describe("runGatewayUpdate", () => {
       }
       return { stdout: "", stderr: "", code: 0 };
     };
-    return { calls, runCommand };
+    return { calls, envByCommand, runCommand };
   };
 
   it.each([
@@ -598,6 +605,38 @@ describe("runGatewayUpdate", () => {
     expect(result.before?.version).toBe("1.0.0");
     expect(result.after?.version).toBe("2.0.0");
     expect(calls.some((call) => call === expectedInstallCommand)).toBe(true);
+  });
+
+  it("updates hosted package-cache installs with the Fased npm prefix", async () => {
+    const prefix = path.join(tempDir, ".fased", "install-cache", "npm-global");
+    const npmCache = path.join(tempDir, ".fased", "install-cache", "npm-cache");
+    const nodeModules = path.join(prefix, "lib", "node_modules");
+    const pkgRoot = path.join(nodeModules, "@fased", "fased");
+    const expectedInstallCommand =
+      "npm i -g @fased/fased@latest --no-fund --no-audit --loglevel=error";
+    await seedGlobalPackageRoot(pkgRoot, "1.0.0", "@fased/fased");
+
+    const { calls, envByCommand, runCommand } = createGlobalInstallHarness({
+      pkgRoot,
+      installCommand: expectedInstallCommand,
+      onInstall: async () => {
+        await fs.writeFile(
+          path.join(pkgRoot, "package.json"),
+          JSON.stringify({ name: "@fased/fased", version: "2.0.0" }),
+          "utf-8",
+        );
+      },
+    });
+
+    const result = await runWithCommand(runCommand, { cwd: pkgRoot });
+
+    expect(result.status).toBe("ok");
+    expect(result.mode).toBe("npm");
+    expect(result.before?.version).toBe("1.0.0");
+    expect(result.after?.version).toBe("2.0.0");
+    expect(calls).toContain(expectedInstallCommand);
+    expect(envByCommand.get(expectedInstallCommand)?.npm_config_prefix).toBe(prefix);
+    expect(envByCommand.get(expectedInstallCommand)?.npm_config_cache).toBe(npmCache);
   });
 
   it("cleans stale npm rename dirs before global update", async () => {
