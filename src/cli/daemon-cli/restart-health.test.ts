@@ -6,11 +6,18 @@ const inspectPortUsage = vi.hoisted(() => vi.fn<(port: number) => Promise<PortUs
 const classifyPortListener = vi.hoisted(() =>
   vi.fn<(_listener: unknown, _port: number) => PortListenerKind>(() => "gateway"),
 );
+const probeGatewayStatus = vi.hoisted(() =>
+  vi.fn(async (_opts: unknown) => ({ ok: true as const })),
+);
 
 vi.mock("../../infra/ports.js", () => ({
   classifyPortListener: (listener: unknown, port: number) => classifyPortListener(listener, port),
   formatPortDiagnostics: vi.fn(() => []),
   inspectPortUsage: (port: number) => inspectPortUsage(port),
+}));
+
+vi.mock("./probe.js", () => ({
+  probeGatewayStatus: (opts: unknown) => probeGatewayStatus(opts),
 }));
 
 describe("inspectGatewayRestart", () => {
@@ -24,6 +31,8 @@ describe("inspectGatewayRestart", () => {
     });
     classifyPortListener.mockReset();
     classifyPortListener.mockReturnValue("gateway");
+    probeGatewayStatus.mockReset();
+    probeGatewayStatus.mockResolvedValue({ ok: true });
   });
 
   it("treats a gateway listener child pid as healthy ownership", async () => {
@@ -42,6 +51,31 @@ describe("inspectGatewayRestart", () => {
     const snapshot = await inspectGatewayRestart({ service, port: 18789 });
 
     expect(snapshot.healthy).toBe(true);
+    expect(snapshot.staleGatewayPids).toEqual([]);
+  });
+
+  it("does not treat an open gateway port as healthy until RPC answers", async () => {
+    const service = {
+      readRuntime: vi.fn(async () => ({ status: "running", pid: 7000 })),
+    } as unknown as GatewayService;
+
+    inspectPortUsage.mockResolvedValue({
+      port: 18789,
+      status: "busy",
+      listeners: [{ pid: 7001, ppid: 7000, commandLine: "fased-gateway" }],
+      hints: [],
+    });
+    probeGatewayStatus.mockResolvedValue({ ok: false, error: "read ECONNRESET" });
+
+    const { inspectGatewayRestart } = await import("./restart-health.js");
+    const snapshot = await inspectGatewayRestart({
+      service,
+      port: 18789,
+      rpc: { url: "ws://127.0.0.1:18789", timeoutMs: 1500 },
+    });
+
+    expect(snapshot.healthy).toBe(false);
+    expect(snapshot.rpc).toEqual({ ok: false, error: "read ECONNRESET" });
     expect(snapshot.staleGatewayPids).toEqual([]);
   });
 

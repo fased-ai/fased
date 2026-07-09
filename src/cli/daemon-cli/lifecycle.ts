@@ -1,5 +1,7 @@
 import { loadConfig, resolveGatewayPort } from "../../config/config.js";
 import { resolveGatewayService } from "../../daemon/service.js";
+import { resolveGatewayCredentialsFromConfig } from "../../gateway/credentials.js";
+import { loadGatewayTlsRuntime } from "../../infra/tls/gateway.js";
 import { defaultRuntime } from "../../runtime.js";
 import { theme } from "../../terminal/theme.js";
 import { formatCliCommand } from "../command-format.js";
@@ -33,6 +35,25 @@ async function resolveGatewayRestartPort() {
 
   const portFromArgs = parsePortFromArgs(command?.programArguments);
   return portFromArgs ?? resolveGatewayPort(loadConfig(), mergedEnv);
+}
+
+async function resolveGatewayRestartRpc(port: number) {
+  const cfg = loadConfig();
+  const tlsRuntime =
+    cfg.gateway?.tls?.enabled === true ? await loadGatewayTlsRuntime(cfg.gateway.tls) : undefined;
+  const scheme = tlsRuntime?.enabled ? "wss" : "ws";
+  const auth = resolveGatewayCredentialsFromConfig({
+    cfg,
+    env: process.env,
+    modeOverride: "local",
+  });
+  return {
+    url: `${scheme}://127.0.0.1:${port}`,
+    token: auth.token,
+    password: auth.password,
+    tlsFingerprint: tlsRuntime?.enabled ? tlsRuntime.fingerprintSha256 : undefined,
+    timeoutMs: 1_500,
+  };
 }
 
 export async function runDaemonUninstall(opts: DaemonLifecycleOptions = {}) {
@@ -88,6 +109,7 @@ export async function runDaemonRestart(opts: DaemonLifecycleOptions = {}): Promi
         port: restartPort,
         attempts: POST_RESTART_HEALTH_ATTEMPTS,
         delayMs: POST_RESTART_HEALTH_DELAY_MS,
+        rpc: await resolveGatewayRestartRpc(restartPort),
       });
 
       if (!health.healthy && health.staleGatewayPids.length > 0) {
@@ -105,6 +127,7 @@ export async function runDaemonRestart(opts: DaemonLifecycleOptions = {}): Promi
           port: restartPort,
           attempts: POST_RESTART_HEALTH_ATTEMPTS,
           delayMs: POST_RESTART_HEALTH_DELAY_MS,
+          rpc: await resolveGatewayRestartRpc(restartPort),
         });
       }
 
