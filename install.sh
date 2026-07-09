@@ -1105,20 +1105,32 @@ install_hosting_npm_prebuilt_runtime() {
   install_log="$(install_log_path "npm prebuilt install")"
 
   mkdir -p "$npm_prefix" "$npm_config_cache"
-  spinner_start "Install prebuilt package"
-  if [[ "$INSTALL_VERBOSE" == "1" ]]; then
-    npm_config_prefix="$npm_prefix" npm_config_cache="$npm_config_cache" \
-      npm install -g --prefix "$npm_prefix" "$package_spec" --no-audit --no-fund
-  else
-    npm_config_prefix="$npm_prefix" npm_config_cache="$npm_config_cache" \
-      npm install -g --prefix "$npm_prefix" "$package_spec" --no-audit --no-fund >"$install_log" 2>&1 || {
-        spinner_failed "Install prebuilt package"
-        echo "Failed: npm prebuilt package install" >&2
-        echo "Package: $package_spec" >&2
-        echo "Log: $install_log" >&2
-        tail -n 80 "$install_log" >&2 || true
-        return 1
-      }
+  spinner_start "Install prebuilt runtime"
+  local artifact_result=0
+  "$FASED_DIR/scripts/install-hosted-runtime.sh" \
+    --package "$package_spec" \
+    --prefix "$npm_prefix" \
+    --cache "$INSTALL_CACHE_DIR" || artifact_result=$?
+  if [[ "$artifact_result" -eq 20 ]]; then
+    spinner_failed "Install prebuilt runtime"
+    return 1
+  fi
+  if [[ "$artifact_result" -ne 0 ]]; then
+    if [[ "$INSTALL_VERBOSE" == "1" ]]; then
+      echo "Hosted runtime artifact unavailable; using npm fallback."
+      npm_config_prefix="$npm_prefix" npm_config_cache="$npm_config_cache" \
+        npm install -g --prefix "$npm_prefix" "$package_spec" --no-audit --no-fund
+    else
+      npm_config_prefix="$npm_prefix" npm_config_cache="$npm_config_cache" \
+        npm install -g --prefix "$npm_prefix" "$package_spec" --no-audit --no-fund >"$install_log" 2>&1 || {
+          spinner_failed "Install prebuilt runtime"
+          echo "Failed: hosted runtime and npm fallback install" >&2
+          echo "Package: $package_spec" >&2
+          echo "Log: $install_log" >&2
+          tail -n 80 "$install_log" >&2 || true
+          return 1
+        }
+    fi
   fi
 
   export PATH="$bin_dir:$PATH"
@@ -1130,13 +1142,13 @@ install_hosting_npm_prebuilt_runtime() {
   install_user_cli_path_snippet "$bin_dir" "$HOME/.zshrc"
 
   if [[ ! -x "$FASED_CLI_PATH" ]] || ! "$FASED_CLI_PATH" --version >/dev/null 2>&1; then
-    spinner_failed "Install prebuilt package"
+    spinner_failed "Install prebuilt runtime"
     echo "Installed npm CLI did not start correctly: $FASED_CLI_PATH" >&2
     echo "Log: $install_log" >&2
     return 1
   fi
 
-  spinner_done "Prebuilt package ready"
+  spinner_done "Prebuilt runtime ready"
 }
 
 pass_args_contains() {
