@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import * as tar from "tar";
 import { type CommandOptions, runCommandWithTimeout } from "../process/exec.js";
 import {
   resolveControlUiDistIndexHealth,
@@ -24,6 +25,7 @@ import {
   detectGlobalInstallManagerForRoot,
   globalInstallArgs,
   globalInstallFallbackArgs,
+  type HostedNpmInstallTarget,
   resolveHostedNpmInstallTarget,
   resolveNodeModulesRootForPackageRoot,
 } from "./update-global.js";
@@ -53,6 +55,34 @@ type CommandRunner = (
   argv: string[],
   options: CommandOptions,
 ) => Promise<{ stdout: string; stderr: string; code: number | null }>;
+
+type PackageRuntimeMeta = {
+  dependencies?: Record<string, string>;
+  optionalDependencies?: Record<string, string>;
+  peerDependencies?: Record<string, string>;
+};
+
+type PackageMeta = PackageRuntimeMeta & {
+  name?: string;
+  version?: string;
+};
+
+type HostedArtifactUpdateResult =
+  | {
+      kind: "updated";
+      steps: UpdateStepResult[];
+      afterVersion: string | null;
+    }
+  | {
+      kind: "fallback";
+      steps: UpdateStepResult[];
+    }
+  | {
+      kind: "error";
+      steps: UpdateStepResult[];
+      reason: string;
+      afterVersion: string | null;
+    };
 
 export type UpdateStepInfo = {
   name: string;
@@ -351,6 +381,209 @@ function normalizeTag(tag?: string) {
 function normalizeVersionSpec(tag: string): string | null {
   const cleaned = tag.trim().replace(/^v/, "");
   return compareSemverStrings(cleaned, cleaned) === 0 ? cleaned : null;
+}
+
+async function readPackageMeta(root: string): Promise<PackageMeta | null> {
+  try {
+    const raw = await fs.readFile(path.join(root, "package.json"), "utf-8");
+    return JSON.parse(raw) as PackageMeta;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeRuntimeMeta(meta: PackageMeta | null): PackageRuntimeMeta {
+  return {
+    dependencies: meta?.dependencies ?? {},
+    optionalDependencies: meta?.optionalDependencies ?? {},
+    peerDependencies: meta?.peerDependencies ?? {},
+  };
+}
+
+function runtimeDependencyMetaChanged(before: PackageMeta | null, after: PackageMeta | null) {
+  return (
+    JSON.stringify(normalizeRuntimeMeta(before)) !== JSON.stringify(normalizeRuntimeMeta(after))
+  );
+}
+
+async function listTgzFiles(dir: string): Promise<string[]> {
+  const entries = await fs.readdir(dir, { withFileTypes: true });
+  return entries
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".tgz"))
+    .map((entry) => path.join(dir, entry.name))
+    .toSorted();
+}
+
+async function safeRemove(pathname: string): Promise<void> {
+  await fs.rm(pathname, { recursive: true, force: true }).catch(() => undefined);
+}
+
+async function swapPackageRoot(params: {
+  pkgRoot: string;
+  artifactRoot: string;
+}): Promise<{ backupRoot: string }> {
+  const packageParent = path.dirname(params.pkgRoot);
+  const backupRoot = path.join(
+    packageParent,
+    `.fased-backup-${Date.now()}-${path.basename(params.pkgRoot)}`,
+  );
+
+  try {
+    await fs.rename(params.pkgRoot, backupRoot);
+    await fs.rename(params.artifactRoot, params.pkgRoot);
+    return { backupRoot };
+  } catch (err) {
+    await fs.rename(backupRoot, params.pkgRoot).catch(() => undefined);
+    throw err;
+  }
+}
+
+async function runHostedArtifactUpdate(params: {
+  runCommand: CommandRunner;
+  pkgRoot: string;
+  packageName: string;
+  expectedVersion: string;
+  hostedTarget: HostedNpmInstallTarget;
+  beforeMeta: PackageMeta | null;
+  timeoutMs: number;
+  progress?: UpdateStepProgress;
+}): Promise<HostedArtifactUpdateResult> {
+  const packageParent = path.dirname(params.pkgRoot);
+  const tempRoot = await fs.mkdtemp(path.join(packageParent, ".fased-artifact-update-"));
+  const steps: UpdateStepResult[] = [];
+  let backupRoot: string | null = null;
+
+  try {
+    const spec = `${params.packageName}@${params.expectedVersion}`;
+    const packStep = await runStep({
+      runCommand: params.runCommand,
+      name: "npm pack artifact",
+      argv: [
+        "npm",
+        "pack",
+        spec,
+        "--pack-destination",
+        tempRoot,
+        "--ignore-scripts",
+        "--no-audit",
+        "--no-fund",
+        "--loglevel=error",
+      ],
+      cwd: params.pkgRoot,
+      timeoutMs: params.timeoutMs,
+      env: { ...process.env, ...params.hostedTarget.env },
+      progress: params.progress,
+      stepIndex: 0,
+      totalSteps: 1,
+    });
+    steps.push(packStep);
+    if (packStep.exitCode !== 0) {
+      return { kind: "fallback", steps };
+    }
+
+    const tgzPath = (await listTgzFiles(tempRoot)).at(-1);
+    if (!tgzPath) {
+      steps.push({
+        name: "artifact locate",
+        command: `find ${tempRoot}/*.tgz`,
+        cwd: params.pkgRoot,
+        durationMs: 0,
+        exitCode: 1,
+        stderrTail: "npm pack produced no tgz artifact",
+      });
+      return { kind: "fallback", steps };
+    }
+
+    const extractDir = path.join(tempRoot, "extract");
+    await fs.mkdir(extractDir, { recursive: true });
+    const extractStarted = Date.now();
+    try {
+      await tar.x({ file: tgzPath, cwd: extractDir });
+      steps.push({
+        name: "artifact extract",
+        command: `tar -xzf ${tgzPath}`,
+        cwd: params.pkgRoot,
+        durationMs: Date.now() - extractStarted,
+        exitCode: 0,
+      });
+    } catch (err) {
+      steps.push({
+        name: "artifact extract",
+        command: `tar -xzf ${tgzPath}`,
+        cwd: params.pkgRoot,
+        durationMs: Date.now() - extractStarted,
+        exitCode: 1,
+        stderrTail: String(err),
+      });
+      return { kind: "fallback", steps };
+    }
+
+    const artifactRoot = path.join(extractDir, "package");
+    const artifactMeta = await readPackageMeta(artifactRoot);
+    const artifactVersion = artifactMeta?.version ?? null;
+    if (compareSemverStrings(artifactVersion, params.expectedVersion) !== 0) {
+      steps.push({
+        name: "artifact version check",
+        command: `verify ${params.packageName}@${params.expectedVersion}`,
+        cwd: params.pkgRoot,
+        durationMs: 0,
+        exitCode: 1,
+        stderrTail: `expected ${params.expectedVersion}, found ${artifactVersion ?? "unknown"}`,
+      });
+      return { kind: "fallback", steps };
+    }
+
+    const dependenciesChanged = runtimeDependencyMetaChanged(params.beforeMeta, artifactMeta);
+    steps.push({
+      name: "artifact dependency check",
+      command: `compare package dependency metadata`,
+      cwd: params.pkgRoot,
+      durationMs: 0,
+      exitCode: 0,
+      stdoutTail: dependenciesChanged
+        ? "dependency metadata changed; falling back to package manager"
+        : "dependency metadata unchanged; using package artifact swap",
+    });
+    if (dependenciesChanged) {
+      return { kind: "fallback", steps };
+    }
+
+    const swapStarted = Date.now();
+    try {
+      const swapped = await swapPackageRoot({ pkgRoot: params.pkgRoot, artifactRoot });
+      backupRoot = swapped.backupRoot;
+      steps.push({
+        name: "artifact swap",
+        command: `replace ${params.pkgRoot}`,
+        cwd: packageParent,
+        durationMs: Date.now() - swapStarted,
+        exitCode: 0,
+      });
+    } catch (err) {
+      steps.push({
+        name: "artifact swap",
+        command: `replace ${params.pkgRoot}`,
+        cwd: packageParent,
+        durationMs: Date.now() - swapStarted,
+        exitCode: 1,
+        stderrTail: String(err),
+      });
+      return {
+        kind: "error",
+        steps,
+        reason: "artifact swap",
+        afterVersion: await readPackageVersion(params.pkgRoot),
+      };
+    }
+
+    const afterVersion = await readPackageVersion(params.pkgRoot);
+    return { kind: "updated", steps, afterVersion };
+  } finally {
+    if (backupRoot) {
+      await safeRemove(backupRoot);
+    }
+    await safeRemove(tempRoot);
+  }
 }
 
 export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<UpdateRunResult> {
@@ -900,6 +1133,7 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
   }
 
   const beforeVersion = await readPackageVersion(pkgRoot);
+  const beforeMeta = await readPackageMeta(pkgRoot);
   const hostedTarget = resolveHostedNpmInstallTarget(pkgRoot);
   const globalManager =
     hostedTarget?.manager ??
@@ -915,6 +1149,45 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
     const tag = normalizeTag(opts.tag ?? channelToNpmTag(channel));
     const spec = `${packageName}@${tag}`;
     const steps: UpdateStepResult[] = [];
+    const expectedVersion = normalizeVersionSpec(tag);
+
+    if (hostedTarget && expectedVersion) {
+      const artifactResult = await runHostedArtifactUpdate({
+        runCommand,
+        pkgRoot,
+        packageName,
+        expectedVersion,
+        hostedTarget,
+        beforeMeta,
+        timeoutMs,
+        progress,
+      });
+      steps.push(...artifactResult.steps);
+      if (artifactResult.kind === "updated") {
+        return {
+          status: "ok",
+          mode: globalManager,
+          root: pkgRoot,
+          before: { version: beforeVersion },
+          after: { version: artifactResult.afterVersion },
+          steps,
+          durationMs: Date.now() - startedAt,
+        };
+      }
+      if (artifactResult.kind === "error") {
+        return {
+          status: "error",
+          mode: globalManager,
+          root: pkgRoot,
+          reason: artifactResult.reason,
+          before: { version: beforeVersion },
+          after: { version: artifactResult.afterVersion },
+          steps,
+          durationMs: Date.now() - startedAt,
+        };
+      }
+    }
+
     const updateStep = await runStep({
       runCommand,
       name: "global update",
@@ -949,7 +1222,6 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
     }
 
     const afterVersion = await readPackageVersion(pkgRoot);
-    const expectedVersion = normalizeVersionSpec(tag);
     let versionVerifyStep: UpdateStepResult | null = null;
     if (
       finalStep.exitCode === 0 &&

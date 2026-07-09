@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import * as tar from "tar";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { withEnvAsync } from "../test-utils/env.js";
 import { pathExists } from "../utils.js";
@@ -192,13 +193,44 @@ describe("runGatewayUpdate", () => {
     return runWithCommand(runner, options);
   }
 
-  async function seedGlobalPackageRoot(pkgRoot: string, version = "1.0.0", name = "fased") {
+  async function seedGlobalPackageRoot(
+    pkgRoot: string,
+    version = "1.0.0",
+    name = "fased",
+    dependencies: Record<string, string> = {},
+  ) {
     await fs.mkdir(pkgRoot, { recursive: true });
     await fs.writeFile(
       path.join(pkgRoot, "package.json"),
-      JSON.stringify({ name, version }),
+      JSON.stringify({ name, version, dependencies }),
       "utf-8",
     );
+  }
+
+  async function writePackageArtifact(params: {
+    destination: string;
+    name: string;
+    version: string;
+    dependencies?: Record<string, string>;
+  }) {
+    const workDir = await fs.mkdtemp(path.join(tempDir, "artifact-"));
+    const packageDir = path.join(workDir, "package");
+    await fs.mkdir(packageDir, { recursive: true });
+    await fs.writeFile(
+      path.join(packageDir, "package.json"),
+      JSON.stringify({
+        name: params.name,
+        version: params.version,
+        dependencies: params.dependencies ?? {},
+      }),
+      "utf-8",
+    );
+    await fs.writeFile(path.join(packageDir, "fased.mjs"), "export {};\n", "utf-8");
+    const filename = `${params.name.replace(/^@/, "").replace("/", "-")}-${params.version}.tgz`;
+    const archivePath = path.join(params.destination, filename);
+    await tar.c({ cwd: workDir, file: archivePath, gzip: true }, ["package"]);
+    await fs.rm(workDir, { recursive: true, force: true });
+    return filename;
   }
 
   it("skips git update when worktree is dirty", async () => {
@@ -640,6 +672,107 @@ describe("runGatewayUpdate", () => {
     expect(calls).toContain(expectedInstallCommand);
     expect(envByCommand.get(expectedInstallCommand)?.npm_config_prefix).toBe(prefix);
     expect(envByCommand.get(expectedInstallCommand)?.npm_config_cache).toBe(npmCache);
+  });
+
+  it("uses artifact swap for hosted package-cache updates when dependency metadata is unchanged", async () => {
+    const prefix = path.join(tempDir, ".fased", "install-cache", "npm-global");
+    const nodeModules = path.join(prefix, "lib", "node_modules");
+    const pkgRoot = path.join(nodeModules, "@fased", "fased");
+    await seedGlobalPackageRoot(pkgRoot, "1.0.0", "@fased/fased", { chalk: "^5.0.0" });
+
+    const calls: string[] = [];
+    const runCommand = async (argv: string[], options?: TestCommandOptions) => {
+      const key = argv.join(" ");
+      calls.push(key);
+      if (argv[0] === "git" && argv.at(-2) === "rev-parse" && argv.at(-1) === "--show-toplevel") {
+        return { stdout: "", stderr: "not a git repository", code: 128 };
+      }
+      if (argv[0] === "npm" && argv[1] === "pack") {
+        const destination = argv[argv.indexOf("--pack-destination") + 1];
+        expect(options?.env?.npm_config_prefix).toBe(prefix);
+        const filename = await writePackageArtifact({
+          destination,
+          name: "@fased/fased",
+          version: "2.0.0",
+          dependencies: { chalk: "^5.0.0" },
+        });
+        return { stdout: `${filename}\n`, stderr: "", code: 0 };
+      }
+      throw new Error(`unexpected command: ${key}`);
+    };
+
+    const result = await runWithCommand(runCommand, { cwd: pkgRoot, tag: "2.0.0" });
+
+    expect(result.status).toBe("ok");
+    expect(result.mode).toBe("npm");
+    expect(result.before?.version).toBe("1.0.0");
+    expect(result.after?.version).toBe("2.0.0");
+    expect(
+      calls.some((call) => call.includes("npm pack @fased/fased@2.0.0 --pack-destination")),
+    ).toBe(true);
+    expect(calls.some((call) => call.startsWith("npm i -g @fased/fased@2.0.0"))).toBe(false);
+    expect(result.steps.map((step) => step.name)).toEqual([
+      "npm pack artifact",
+      "artifact extract",
+      "artifact dependency check",
+      "artifact swap",
+    ]);
+  });
+
+  it("falls back to package manager updates when hosted artifact dependencies change", async () => {
+    const prefix = path.join(tempDir, ".fased", "install-cache", "npm-global");
+    const nodeModules = path.join(prefix, "lib", "node_modules");
+    const pkgRoot = path.join(nodeModules, "@fased", "fased");
+    const expectedInstallCommand =
+      "npm i -g @fased/fased@2.0.0 --no-fund --no-audit --loglevel=error --prefer-offline --no-progress";
+    await seedGlobalPackageRoot(pkgRoot, "1.0.0", "@fased/fased", { chalk: "^5.0.0" });
+
+    const calls: string[] = [];
+    const runCommand = async (argv: string[], options?: TestCommandOptions) => {
+      const key = argv.join(" ");
+      calls.push(key);
+      if (argv[0] === "git" && argv.at(-2) === "rev-parse" && argv.at(-1) === "--show-toplevel") {
+        return { stdout: "", stderr: "not a git repository", code: 128 };
+      }
+      if (argv[0] === "npm" && argv[1] === "pack") {
+        const destination = argv[argv.indexOf("--pack-destination") + 1];
+        expect(options?.env?.npm_config_prefix).toBe(prefix);
+        const filename = await writePackageArtifact({
+          destination,
+          name: "@fased/fased",
+          version: "2.0.0",
+          dependencies: { chalk: "^6.0.0" },
+        });
+        return { stdout: `${filename}\n`, stderr: "", code: 0 };
+      }
+      if (key === expectedInstallCommand) {
+        await fs.writeFile(
+          path.join(pkgRoot, "package.json"),
+          JSON.stringify({
+            name: "@fased/fased",
+            version: "2.0.0",
+            dependencies: { chalk: "^6.0.0" },
+          }),
+          "utf-8",
+        );
+        return { stdout: "ok", stderr: "", code: 0 };
+      }
+      return { stdout: "", stderr: "", code: 0 };
+    };
+
+    const result = await runWithCommand(runCommand, { cwd: pkgRoot, tag: "2.0.0" });
+
+    expect(result.status).toBe("ok");
+    expect(result.before?.version).toBe("1.0.0");
+    expect(result.after?.version).toBe("2.0.0");
+    expect(calls.some((call) => call === expectedInstallCommand)).toBe(true);
+    expect(result.steps.map((step) => step.name)).toEqual([
+      "npm pack artifact",
+      "artifact extract",
+      "artifact dependency check",
+      "global update",
+    ]);
+    expect(result.steps[2]?.stdoutTail).toContain("falling back to package manager");
   });
 
   it("fails hosted package-cache updates when the exact target version is not installed", async () => {
