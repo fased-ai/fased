@@ -114,21 +114,9 @@ export async function buildGatewayInstallPlan(params: {
     path.basename(serviceNodeProgram).toLowerCase().startsWith("node")
   ) {
     environment.FASED_NODE_BIN = serviceNodeProgram;
-    const nodeBinDir = path.dirname(serviceNodeProgram);
-    const currentPath = environment.PATH?.trim() || "";
-    const pathParts = currentPath
-      ? currentPath.split(path.delimiter).filter((part) => part && part !== nodeBinDir)
-      : [];
-    environment.PATH = [nodeBinDir, ...pathParts].join(path.delimiter);
   } else if (startupMode === "managed-up" && typeof nodePath === "string" && nodePath.trim()) {
     environment.FASED_NODE_BIN = nodePath;
     environment.FASED_MANAGED_INTERNAL = "1";
-    const nodeBinDir = path.dirname(nodePath);
-    const currentPath = environment.PATH?.trim() || "";
-    const pathParts = currentPath
-      ? currentPath.split(path.delimiter).filter((part) => part && part !== nodeBinDir)
-      : [];
-    environment.PATH = [nodeBinDir, ...pathParts].join(path.delimiter);
   }
 
   return { programArguments, workingDirectory, environment };
