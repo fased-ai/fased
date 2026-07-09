@@ -19,6 +19,8 @@ const requiredPathGroups = [
   ["dist/entry.js", "dist/entry.mjs"],
   "dist/plugin-sdk/index.js",
   "dist/plugin-sdk/index.d.ts",
+  "dist/plugin-sdk/sat-runtime.js",
+  "dist/plugin-sdk/sat-runtime.d.ts",
   "dist/build-info.json",
   "docs/reference/templates/AGENTS.md",
   "scripts/clean-package-dist.mjs",
@@ -29,7 +31,7 @@ const requiredExactDependencies = new Map<string, string>([
   ["@aws-sdk/client-bedrock", "3.1062.0"],
   ["@aws-sdk/core", "3.974.17"],
 ]);
-const forbiddenPrefixes = ["dist/FasedAgent.app/"];
+const forbiddenPrefixes = ["dist/FasedAgent.app/", "src/", "extensions/node_modules/"];
 const allowedDocsPrefixes = ["docs/reference/templates/"];
 const extensionSourceFileRe = /\.(?:c|m)?(?:t|j)sx?$/;
 const extensionSrcImportRe = /(?:from\s+|import\s*\(\s*)["']((?:\.\.\/)+src\/[^"']+)["']/g;
@@ -375,8 +377,10 @@ function main() {
       return paths.has(group) ? [] : [group];
     })
     .toSorted();
-  const forbidden = [...paths].filter((path) =>
-    forbiddenPrefixes.some((prefix) => path.startsWith(prefix)),
+  const forbidden = [...paths].filter(
+    (path) =>
+      forbiddenPrefixes.some((prefix) => path.startsWith(prefix)) ||
+      path.includes("/node_modules/"),
   );
   const forbiddenDocs = [...paths].filter(
     (path) =>

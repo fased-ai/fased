@@ -6,7 +6,14 @@ import path from "node:path";
 //
 // Our package export map points subpath `types` at `dist/plugin-sdk/<entry>.d.ts`, so we
 // generate stable entry d.ts files that re-export the real declarations.
-const entrypoints = ["index", "account-id"] as const;
+const entrypoints = [
+  "index",
+  "account-id",
+  "channel-plugin-common",
+  "command-status",
+  "provider-web-search-config-contract",
+  "sat-runtime",
+] as const;
 for (const entry of entrypoints) {
   const out = path.join(process.cwd(), `dist/plugin-sdk/${entry}.d.ts`);
   fs.mkdirSync(path.dirname(out), { recursive: true });
