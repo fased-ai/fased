@@ -117,33 +117,21 @@ async function main(): Promise<void> {
     const packedTarball = await findPackedTarball(packDir);
     await tar.x({ file: packedTarball, cwd: extractDir });
 
-    await fs.copyFile(
-      path.join(rootDir, "pnpm-lock.yaml"),
-      path.join(packageRoot, "pnpm-lock.yaml"),
-    );
-    await fs.copyFile(
-      path.join(rootDir, "pnpm-workspace.yaml"),
-      path.join(packageRoot, "pnpm-workspace.yaml"),
-    );
-
     console.log("hosted-artifact: installing production runtime dependencies");
     await run(
-      "pnpm",
+      "npm",
       [
         "install",
-        "--prod",
-        "--frozen-lockfile",
+        "--omit=dev",
         "--ignore-scripts",
-        "--filter",
-        "@fased/fased",
-        "--config.auto-install-peers=false",
-        "--config.node-linker=hoisted",
+        "--legacy-peer-deps",
+        "--no-audit",
+        "--no-fund",
+        "--loglevel=error",
       ],
       packageRoot,
+      { npm_config_cache: path.join(tempRoot, "npm-cache") },
     );
-
-    await fs.rm(path.join(packageRoot, "pnpm-lock.yaml"), { force: true });
-    await fs.rm(path.join(packageRoot, "pnpm-workspace.yaml"), { force: true });
 
     await run(process.execPath, [path.join(packageRoot, "fased.mjs"), "--version"], packageRoot);
 
