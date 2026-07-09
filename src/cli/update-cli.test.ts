@@ -622,6 +622,141 @@ describe("update-cli", () => {
     expect(runRestartScript).toHaveBeenCalled();
   });
 
+  it("tries the next updated install entrypoint when the first refresh candidate fails", async () => {
+    const root = createCaseDir("fased-updated-root");
+    await fs.mkdir(path.join(root, "dist"), { recursive: true });
+    await fs.writeFile(path.join(root, "dist", "entry.js"), "stale\n", "utf8");
+    await fs.writeFile(path.join(root, "dist", "index.js"), "fresh\n", "utf8");
+
+    vi.mocked(runCommandWithTimeout)
+      .mockResolvedValueOnce({
+        stdout: "",
+        stderr: "old entry failed",
+        code: 1,
+        signal: null,
+        killed: false,
+        termination: "exit",
+      })
+      .mockResolvedValueOnce({
+        stdout: "",
+        stderr: "",
+        code: 0,
+        signal: null,
+        killed: false,
+        termination: "exit",
+      });
+    vi.mocked(runGatewayUpdate).mockResolvedValue({
+      status: "ok",
+      mode: "npm",
+      root,
+      steps: [],
+      durationMs: 100,
+    });
+    serviceLoaded.mockResolvedValue(true);
+
+    await updateCommand({});
+
+    expect(runCommandWithTimeout).toHaveBeenNthCalledWith(
+      1,
+      [
+        expect.stringMatching(/node/),
+        path.join(root, "dist", "entry.js"),
+        "gateway",
+        "install",
+        "--force",
+      ],
+      expect.objectContaining({ cwd: root, timeoutMs: 60_000 }),
+    );
+    expect(runCommandWithTimeout).toHaveBeenNthCalledWith(
+      2,
+      [
+        expect.stringMatching(/node/),
+        path.join(root, "dist", "index.js"),
+        "gateway",
+        "install",
+        "--force",
+      ],
+      expect.objectContaining({ cwd: root, timeoutMs: 60_000 }),
+    );
+    expect(runDaemonInstall).not.toHaveBeenCalled();
+    expect(runRestartScript).toHaveBeenCalled();
+  });
+
+  it("falls back to daemon install when updated install entrypoints all fail", async () => {
+    const root = createCaseDir("fased-updated-root");
+    await fs.mkdir(path.join(root, "dist"), { recursive: true });
+    await fs.writeFile(path.join(root, "dist", "entry.js"), "bad\n", "utf8");
+
+    vi.mocked(runCommandWithTimeout).mockResolvedValueOnce({
+      stdout: "refresh stdout",
+      stderr: "refresh stderr",
+      code: 1,
+      signal: null,
+      killed: false,
+      termination: "exit",
+    });
+    vi.mocked(runDaemonInstall).mockResolvedValue(undefined);
+    vi.mocked(runGatewayUpdate).mockResolvedValue({
+      status: "ok",
+      mode: "npm",
+      root,
+      steps: [],
+      durationMs: 100,
+    });
+    serviceLoaded.mockResolvedValue(true);
+    vi.mocked(defaultRuntime.log).mockClear();
+
+    await updateCommand({});
+
+    expect(runDaemonInstall).toHaveBeenCalledWith({
+      force: true,
+      json: undefined,
+    });
+    const logs = vi.mocked(defaultRuntime.log).mock.calls.map((call) => String(call[0]));
+    expect(logs.join("\n")).toContain("daemon installer fallback");
+    expect(logs.join("\n")).toContain("refresh stderr");
+    expect(runRestartScript).toHaveBeenCalled();
+  });
+
+  it("marks update partial and skips quip when service repair fails", async () => {
+    const root = createCaseDir("fased-updated-root");
+    await fs.mkdir(path.join(root, "dist"), { recursive: true });
+    await fs.writeFile(path.join(root, "dist", "entry.js"), "bad\n", "utf8");
+    const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0);
+
+    try {
+      vi.mocked(runCommandWithTimeout).mockResolvedValueOnce({
+        stdout: "",
+        stderr: "refresh failed",
+        code: 1,
+        signal: null,
+        killed: false,
+        termination: "exit",
+      });
+      vi.mocked(runDaemonInstall).mockRejectedValueOnce(new Error("daemon install failed"));
+      vi.mocked(runGatewayUpdate).mockResolvedValue({
+        status: "ok",
+        mode: "npm",
+        root,
+        steps: [],
+        durationMs: 100,
+      });
+      serviceLoaded.mockResolvedValue(true);
+      vi.mocked(defaultRuntime.log).mockClear();
+
+      await updateCommand({});
+
+      const logs = vi.mocked(defaultRuntime.log).mock.calls.map((call) => String(call[0]));
+      expect(logs.join("\n")).toContain("Update installed, but gateway service repair failed");
+      expect(logs.join("\n")).toContain("Repair manually:");
+      expect(
+        logs.some((line) => line.includes("Leveled up! New skills unlocked. You're welcome.")),
+      ).toBe(false);
+    } finally {
+      randomSpy.mockRestore();
+    }
+  });
+
   it("updateCommand falls back to restart when env refresh install fails", async () => {
     await runRestartFallbackScenario({ daemonInstall: "fail" });
   });

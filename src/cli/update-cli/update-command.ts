@@ -116,6 +116,40 @@ function formatCommandFailure(stdout: string, stderr: string): string {
   return detail.split("\n").slice(-3).join("\n");
 }
 
+type GatewayServiceRefreshFailure = {
+  candidate: string;
+  detail: string;
+};
+
+type GatewayServiceRefreshResult =
+  | { status: "updated-entrypoint"; failures: GatewayServiceRefreshFailure[] }
+  | { status: "daemon-install-fallback"; failures: GatewayServiceRefreshFailure[] };
+
+class GatewayServiceRefreshError extends Error {
+  readonly failures: GatewayServiceRefreshFailure[];
+  readonly repairCommand: string;
+
+  constructor(params: {
+    failures: GatewayServiceRefreshFailure[];
+    fallbackDetail?: string;
+    repairCommand: string;
+  }) {
+    const details = formatGatewayRefreshFailures(params.failures);
+    const fallback = params.fallbackDetail ? `\nFallback failed:\n${params.fallbackDetail}` : "";
+    super(`gateway service refresh failed.${details}${fallback}`);
+    this.name = "GatewayServiceRefreshError";
+    this.failures = params.failures;
+    this.repairCommand = params.repairCommand;
+  }
+}
+
+function formatGatewayRefreshFailures(failures: GatewayServiceRefreshFailure[]): string {
+  if (failures.length === 0) {
+    return "";
+  }
+  return failures.map((failure) => `\n- ${failure.candidate}\n  ${failure.detail}`).join("");
+}
+
 function formatInvalidUpdateChannelConfigMessage(
   configSnapshot: Awaited<ReturnType<typeof readConfigFileSnapshot>>,
 ): string {
@@ -195,12 +229,13 @@ function printDryRunPreview(preview: UpdateDryRunPreview, jsonMode: boolean): vo
 async function refreshGatewayServiceEnv(params: {
   result: UpdateRunResult;
   jsonMode: boolean;
-}): Promise<void> {
+}): Promise<GatewayServiceRefreshResult> {
   const args = ["gateway", "install", "--force"];
   if (params.jsonMode) {
     args.push("--json");
   }
 
+  const failures: GatewayServiceRefreshFailure[] = [];
   for (const candidate of resolveGatewayInstallEntrypointCandidates(params.result.root)) {
     if (!(await pathExists(candidate))) {
       continue;
@@ -210,14 +245,27 @@ async function refreshGatewayServiceEnv(params: {
       timeoutMs: SERVICE_REFRESH_TIMEOUT_MS,
     });
     if (res.code === 0) {
-      return;
+      return { status: "updated-entrypoint", failures };
     }
-    throw new Error(
-      `updated install refresh failed (${candidate}): ${formatCommandFailure(res.stdout, res.stderr)}`,
-    );
+    failures.push({
+      candidate,
+      detail: formatCommandFailure(res.stdout, res.stderr),
+    });
   }
 
-  await runDaemonInstall({ force: true, json: params.jsonMode || undefined });
+  try {
+    await runDaemonInstall({ force: true, json: params.jsonMode || undefined });
+    return { status: "daemon-install-fallback", failures };
+  } catch (err) {
+    throw new GatewayServiceRefreshError({
+      failures,
+      fallbackDetail: String(err),
+      repairCommand: replaceCliName(
+        `${formatCliCommand("fased gateway install --force", {})} && ${formatCliCommand("fased gateway restart", {})}`,
+        CLI_NAME,
+      ),
+    });
+  }
 }
 
 async function tryInstallShellCompletion(opts: {
@@ -541,7 +589,8 @@ async function maybeRestartService(params: {
   refreshServiceEnv: boolean;
   gatewayPort: number;
   restartScriptPath?: string | null;
-}): Promise<void> {
+}): Promise<{ partial: boolean }> {
+  let partial = false;
   if (params.shouldRestart) {
     if (!params.opts.json) {
       defaultRuntime.log("");
@@ -553,17 +602,35 @@ async function maybeRestartService(params: {
       let restartInitiated = false;
       if (params.refreshServiceEnv) {
         try {
-          await refreshGatewayServiceEnv({
+          const refresh = await refreshGatewayServiceEnv({
             result: params.result,
             jsonMode: Boolean(params.opts.json),
           });
-        } catch (err) {
-          if (!params.opts.json) {
+          if (
+            refresh.status === "daemon-install-fallback" &&
+            refresh.failures.length > 0 &&
+            !params.opts.json
+          ) {
             defaultRuntime.log(
               theme.warn(
-                `Failed to refresh gateway service environment from updated install: ${String(err)}`,
+                `Updated install refresh failed; repaired service with daemon installer fallback.${formatGatewayRefreshFailures(refresh.failures)}`,
               ),
             );
+          }
+        } catch (err) {
+          partial = true;
+          if (!params.opts.json) {
+            const repairCommand =
+              err instanceof GatewayServiceRefreshError
+                ? err.repairCommand
+                : replaceCliName(
+                    `${formatCliCommand("fased gateway install --force", {})} && ${formatCliCommand("fased gateway restart", {})}`,
+                    CLI_NAME,
+                  );
+            defaultRuntime.log(
+              theme.warn(`Update installed, but gateway service repair failed: ${String(err)}`),
+            );
+            defaultRuntime.log(theme.muted(`Repair manually: ${repairCommand}`));
           }
         }
       }
@@ -629,6 +696,7 @@ async function maybeRestartService(params: {
         defaultRuntime.log("");
       }
     } catch (err) {
+      partial = true;
       if (!params.opts.json) {
         defaultRuntime.log(theme.warn(`Daemon restart failed: ${String(err)}`));
         defaultRuntime.log(
@@ -638,7 +706,7 @@ async function maybeRestartService(params: {
         );
       }
     }
-    return;
+    return { partial };
   }
 
   if (!params.opts.json) {
@@ -657,6 +725,7 @@ async function maybeRestartService(params: {
       );
     }
   }
+  return { partial };
 }
 
 export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
@@ -937,7 +1006,7 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
     skipPrompt: Boolean(opts.yes),
   });
 
-  await maybeRestartService({
+  const restartResult = await maybeRestartService({
     shouldRestart,
     result,
     opts,
@@ -946,7 +1015,7 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
     restartScriptPath,
   });
 
-  if (!opts.json) {
+  if (!opts.json && !restartResult.partial) {
     defaultRuntime.log(theme.muted(pickUpdateQuip()));
   }
 }
