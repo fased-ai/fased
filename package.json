@@ -98,7 +98,7 @@
     "build:fast": "tsdown --no-report --no-clean",
     "build:fast:clean": "tsdown --no-report",
     "build:plugin-sdk:dts": "tsc -p tsconfig.plugin-sdk.dts.json",
-    "build:runtime": "node scripts/clean-package-dist.mjs && tsdown && pnpm build:runtime-assets",
+    "build:runtime": "node scripts/clean-package-dist.mjs && node scripts/build-runtime-graphs.mjs && pnpm build:runtime-assets",
     "build:runtime-assets": "pnpm canvas:a2ui:bundle && node --import tsx scripts/canvas-a2ui-copy.ts && node --import tsx scripts/copy-hook-metadata.ts && node --import tsx scripts/copy-export-html-templates.ts && node --import tsx scripts/write-build-info.ts && node --import tsx scripts/write-cli-compat.ts",
     "canvas:a2ui:bundle": "bash scripts/bundle-a2ui.sh",
     "check": "pnpm check:ci",
