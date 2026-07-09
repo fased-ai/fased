@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { UpdateRunResult } from "../../infra/update-runner.js";
-import { formatLongUpdateStepMessage, inferUpdateFailureHints } from "./progress.js";
+import {
+  formatLongUpdateStepMessage,
+  formatUpdateStrategyLabel,
+  inferUpdateFailureHints,
+  summarizeSlowestSteps,
+} from "./progress.js";
 
 function makeResult(
   stepName: string,
@@ -71,5 +76,79 @@ describe("formatLongUpdateStepMessage", () => {
     expect(text).toContain("preflight deps install (989e40c3) still running");
     expect(text).toContain("pnpm install");
     expect(text).toContain("/tmp/fased-update-preflight-123/worktree");
+  });
+});
+
+describe("formatUpdateStrategyLabel", () => {
+  it("names the hosted artifact fast path", () => {
+    const result: UpdateRunResult = {
+      status: "ok",
+      mode: "npm",
+      strategy: {
+        kind: "artifact-swap",
+        reason: "hosted install with unchanged runtime dependencies",
+      },
+      steps: [],
+      durationMs: 1,
+    };
+
+    expect(formatUpdateStrategyLabel(result)).toBe(
+      "fast artifact swap: hosted install with unchanged runtime dependencies",
+    );
+  });
+
+  it("names package-manager fallback reasons", () => {
+    const result: UpdateRunResult = {
+      status: "ok",
+      mode: "npm",
+      strategy: {
+        kind: "package-manager-fallback",
+        reason: "runtime dependency metadata changed",
+      },
+      steps: [],
+      durationMs: 1,
+    };
+
+    expect(formatUpdateStrategyLabel(result)).toBe(
+      "package manager fallback: runtime dependency metadata changed",
+    );
+  });
+});
+
+describe("summarizeSlowestSteps", () => {
+  it("uses friendly labels and sorts by duration", () => {
+    const result: UpdateRunResult = {
+      status: "ok",
+      mode: "npm",
+      steps: [
+        {
+          name: "artifact swap",
+          command: "replace package",
+          cwd: "/tmp",
+          durationMs: 42,
+          exitCode: 0,
+        },
+        {
+          name: "global update",
+          command: "npm i -g @fased/fased@latest",
+          cwd: "/tmp",
+          durationMs: 12_345,
+          exitCode: 0,
+        },
+        {
+          name: "npm pack artifact",
+          command: "npm pack @fased/fased@1.0.0",
+          cwd: "/tmp",
+          durationMs: 1450,
+          exitCode: 0,
+        },
+      ],
+      durationMs: 13_837,
+    };
+
+    expect(summarizeSlowestSteps(result, 2)).toEqual([
+      "Updating via package manager 12.35s",
+      "Downloading update artifact 1.45s",
+    ]);
   });
 });

@@ -27,6 +27,13 @@ const STEP_LABELS: Record<string, string> = {
   "fased doctor entry": "Checking doctor entrypoint",
   "fased doctor": "Running doctor checks",
   "git rev-parse HEAD (after)": "Verifying update",
+  "npm pack artifact": "Downloading update artifact",
+  "artifact locate": "Locating update artifact",
+  "artifact extract": "Extracting update artifact",
+  "artifact version check": "Checking artifact version",
+  "artifact dependency check": "Checking runtime dependencies",
+  "artifact swap": "Activating update artifact",
+  "version verify": "Verifying installed version",
   "global update": "Updating via package manager",
   "global update (omit optional)": "Retrying update without optional deps",
   "global install": "Installing global package",
@@ -34,7 +41,7 @@ const STEP_LABELS: Record<string, string> = {
 
 const LONG_STEP_HEARTBEAT_MS = 30_000;
 
-function getStepLabel(step: UpdateStepInfo): string {
+function getStepLabel(step: Pick<UpdateStepInfo, "name">): string {
   return STEP_LABELS[step.name] ?? step.name;
 }
 
@@ -75,6 +82,34 @@ export function inferUpdateFailureHints(result: UpdateRunResult): string[] {
   }
 
   return hints;
+}
+
+export function formatUpdateStrategyLabel(result: UpdateRunResult): string | null {
+  const strategy = result.strategy;
+  if (!strategy) {
+    return null;
+  }
+
+  const label =
+    strategy.kind === "artifact-swap"
+      ? "fast artifact swap"
+      : strategy.kind === "package-manager-fallback"
+        ? "package manager fallback"
+        : strategy.kind === "package-manager"
+          ? "package manager"
+          : strategy.kind === "git"
+            ? "git"
+            : "unknown";
+
+  return strategy.reason ? `${label}: ${strategy.reason}` : label;
+}
+
+export function summarizeSlowestSteps(result: UpdateRunResult, limit = 3): string[] {
+  return [...result.steps]
+    .filter((step) => Number.isFinite(step.durationMs) && step.durationMs > 0)
+    .toSorted((a, b) => b.durationMs - a.durationMs)
+    .slice(0, limit)
+    .map((step) => `${getStepLabel(step)} ${formatDurationPrecise(step.durationMs)}`);
 }
 
 export type ProgressController = {
@@ -190,6 +225,10 @@ export function printResult(result: UpdateRunResult, opts: PrintResultOptions): 
   if (result.reason) {
     defaultRuntime.log(`  Reason: ${theme.muted(result.reason)}`);
   }
+  const strategyLabel = formatUpdateStrategyLabel(result);
+  if (strategyLabel) {
+    defaultRuntime.log(`  Update mode: ${theme.muted(strategyLabel)}`);
+  }
 
   if (result.before?.version || result.before?.sha) {
     const before = result.before.version ?? result.before.sha?.slice(0, 8) ?? "";
@@ -198,6 +237,10 @@ export function printResult(result: UpdateRunResult, opts: PrintResultOptions): 
   if (result.after?.version || result.after?.sha) {
     const after = result.after.version ?? result.after.sha?.slice(0, 8) ?? "";
     defaultRuntime.log(`  After: ${theme.muted(after)}`);
+  }
+  const slowestSteps = summarizeSlowestSteps(result);
+  if (slowestSteps.length > 0) {
+    defaultRuntime.log(`  Slowest steps: ${theme.muted(slowestSteps.join("; "))}`);
   }
 
   if (!opts.hideSteps && result.steps.length > 0) {

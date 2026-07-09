@@ -637,6 +637,10 @@ describe("runGatewayUpdate", () => {
 
     expect(result.status).toBe("ok");
     expect(result.mode).toBe("npm");
+    expect(result.strategy).toEqual({
+      kind: "package-manager",
+      reason: "global package install",
+    });
     expect(result.before?.version).toBe("1.0.0");
     expect(result.after?.version).toBe("2.0.0");
     expect(calls.some((call) => call === expectedInstallCommand)).toBe(true);
@@ -667,6 +671,10 @@ describe("runGatewayUpdate", () => {
 
     expect(result.status).toBe("ok");
     expect(result.mode).toBe("npm");
+    expect(result.strategy).toEqual({
+      kind: "package-manager",
+      reason: "non-exact package target",
+    });
     expect(result.before?.version).toBe("1.0.0");
     expect(result.after?.version).toBe("2.0.0");
     expect(calls).toContain(expectedInstallCommand);
@@ -705,6 +713,10 @@ describe("runGatewayUpdate", () => {
 
     expect(result.status).toBe("ok");
     expect(result.mode).toBe("npm");
+    expect(result.strategy).toEqual({
+      kind: "artifact-swap",
+      reason: "hosted install with unchanged runtime dependencies",
+    });
     expect(result.before?.version).toBe("1.0.0");
     expect(result.after?.version).toBe("2.0.0");
     expect(
@@ -763,6 +775,10 @@ describe("runGatewayUpdate", () => {
     const result = await runWithCommand(runCommand, { cwd: pkgRoot, tag: "2.0.0" });
 
     expect(result.status).toBe("ok");
+    expect(result.strategy).toEqual({
+      kind: "package-manager-fallback",
+      reason: "runtime dependency metadata changed",
+    });
     expect(result.before?.version).toBe("1.0.0");
     expect(result.after?.version).toBe("2.0.0");
     expect(calls.some((call) => call === expectedInstallCommand)).toBe(true);
