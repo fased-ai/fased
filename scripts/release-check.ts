@@ -381,6 +381,18 @@ function checkExactReleaseDependencies() {
   }
 }
 
+function checkRuntimeBuildExports() {
+  const satRuntimePath = resolve("dist/plugin-sdk/sat-runtime.js");
+  const source = readFileSync(satRuntimePath, "utf8");
+  const exportBlocks = [...source.matchAll(/export\s*\{([^}]*)\}/g)].map((match) => match[1] ?? "");
+  if (!exportBlocks.some((block) => /\bcreateSubsystemLogger\b/.test(block))) {
+    console.error(
+      "release-check: runtime build export validation failed: sat runtime SDK exports are empty",
+    );
+    process.exit(1);
+  }
+}
+
 function candidatePackedPathsForExtensionSrcImport(targetPath: string) {
   const normalized = posix.normalize(targetPath);
   const candidates = new Set<string>([normalized]);
@@ -449,6 +461,7 @@ function main() {
   checkChannelAddonContracts();
   checkBrandVersion();
   checkExactReleaseDependencies();
+  checkRuntimeBuildExports();
 
   const results = runPackDry();
   const files = results.flatMap((entry) => entry.files ?? []);
