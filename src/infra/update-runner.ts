@@ -24,6 +24,8 @@ import {
   detectGlobalInstallManagerForRoot,
   globalInstallArgs,
   globalInstallFallbackArgs,
+  resolveHostedNpmInstallTarget,
+  resolveNodeModulesRootForPackageRoot,
 } from "./update-global.js";
 
 export type UpdateStepResult = {
@@ -893,11 +895,15 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
   }
 
   const beforeVersion = await readPackageVersion(pkgRoot);
-  const globalManager = await detectGlobalInstallManagerForRoot(runCommand, pkgRoot, timeoutMs);
+  const hostedTarget = resolveHostedNpmInstallTarget(pkgRoot);
+  const globalManager =
+    hostedTarget?.manager ??
+    (await detectGlobalInstallManagerForRoot(runCommand, pkgRoot, timeoutMs));
   if (globalManager) {
     const packageName = (await readPackageName(pkgRoot)) ?? DEFAULT_PACKAGE_NAME;
+    const globalEnv = hostedTarget?.env ? { ...process.env, ...hostedTarget.env } : undefined;
     await cleanupGlobalRenameDirs({
-      globalRoot: path.dirname(pkgRoot),
+      globalRoot: hostedTarget?.globalRoot ?? resolveNodeModulesRootForPackageRoot(pkgRoot),
       packageName,
     });
     const channel = opts.channel ?? DEFAULT_PACKAGE_CHANNEL;
@@ -910,6 +916,7 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
       argv: globalInstallArgs(globalManager, spec),
       cwd: pkgRoot,
       timeoutMs,
+      env: globalEnv,
       progress,
       stepIndex: 0,
       totalSteps: 1,
@@ -926,6 +933,7 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
           argv: fallbackArgv,
           cwd: pkgRoot,
           timeoutMs,
+          env: globalEnv,
           progress,
           stepIndex: 0,
           totalSteps: 1,

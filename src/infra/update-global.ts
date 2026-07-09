@@ -5,6 +5,12 @@ import { pathExists } from "../utils.js";
 
 export type GlobalInstallManager = "npm" | "pnpm" | "bun";
 
+export type HostedNpmInstallTarget = {
+  manager: "npm";
+  globalRoot: string;
+  env: NodeJS.ProcessEnv;
+};
+
 export type CommandRunner = (
   argv: string[],
   options: { timeoutMs: number; cwd?: string; env?: NodeJS.ProcessEnv },
@@ -31,6 +37,42 @@ async function tryRealpath(targetPath: string): Promise<string> {
 function resolveBunGlobalRoot(): string {
   const bunInstall = process.env.BUN_INSTALL?.trim() || path.join(os.homedir(), ".bun");
   return path.join(bunInstall, "install", "global", "node_modules");
+}
+
+export function resolveNodeModulesRootForPackageRoot(pkgRoot: string): string {
+  const parent = path.dirname(pkgRoot);
+  if (path.basename(parent).startsWith("@")) {
+    return path.dirname(parent);
+  }
+  return parent;
+}
+
+export function resolveHostedNpmInstallTarget(pkgRoot: string): HostedNpmInstallTarget | null {
+  const resolved = path.resolve(pkgRoot);
+  const prefixMarker = `${path.sep}.fased${path.sep}install-cache${path.sep}npm-global`;
+  const globalRootSuffix = `${path.sep}lib${path.sep}node_modules`;
+  const globalRootMarker = `${prefixMarker}${globalRootSuffix}`;
+  const markerIndex = resolved.indexOf(`${globalRootMarker}${path.sep}`);
+  if (markerIndex < 0) {
+    return null;
+  }
+
+  const prefix = resolved.slice(0, markerIndex + prefixMarker.length);
+  const globalRoot = path.join(prefix, "lib", "node_modules");
+  const cache = path.join(path.dirname(prefix), "npm-cache");
+  const expectedRoot = resolveNodeModulesRootForPackageRoot(resolved);
+  if (path.resolve(expectedRoot) !== path.resolve(globalRoot)) {
+    return null;
+  }
+
+  return {
+    manager: "npm",
+    globalRoot,
+    env: {
+      npm_config_prefix: prefix,
+      npm_config_cache: cache,
+    },
+  };
 }
 
 export async function resolveGlobalRoot(
@@ -73,6 +115,11 @@ export async function detectGlobalInstallManagerForRoot(
   pkgRoot: string,
   timeoutMs: number,
 ): Promise<GlobalInstallManager | null> {
+  const hostedTarget = resolveHostedNpmInstallTarget(pkgRoot);
+  if (hostedTarget) {
+    return hostedTarget.manager;
+  }
+
   const pkgReal = await tryRealpath(pkgRoot);
 
   const candidates: Array<{

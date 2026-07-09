@@ -27,6 +27,7 @@ import {
   cleanupGlobalRenameDirs,
   globalInstallArgs,
   resolveGlobalPackageRoot,
+  resolveNodeModulesRootForPackageRoot,
 } from "../../infra/update-global.js";
 import { runGatewayUpdate, type UpdateRunResult } from "../../infra/update-runner.js";
 import { syncPluginsForUpdateChannel, updateNpmInstalledPlugins } from "../../plugins/update.js";
@@ -296,7 +297,7 @@ async function runPackageInstallUpdate(params: {
   const beforeVersion = pkgRoot ? await readPackageVersion(pkgRoot) : null;
   if (pkgRoot) {
     await cleanupGlobalRenameDirs({
-      globalRoot: path.dirname(pkgRoot),
+      globalRoot: resolveNodeModulesRootForPackageRoot(pkgRoot),
       packageName,
     });
   }
@@ -754,7 +755,7 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
         );
       }
     } else {
-      actions.push(`Run global package manager update with spec fased@${tag}`);
+      actions.push(`Run global package manager update with spec ${DEFAULT_PACKAGE_NAME}@${tag}`);
     }
     actions.push("Run plugin update sync after core update");
     actions.push("Refresh shell completion cache (if needed)");
@@ -914,7 +915,7 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
       );
       defaultRuntime.log(
         theme.muted(
-          `Examples: \`${replaceCliName("npm i -g fased@latest", CLI_NAME)}\` or \`${replaceCliName("pnpm add -g fased@latest", CLI_NAME)}\``,
+          `Examples: \`${replaceCliName("npm i -g @fased/fased@latest", CLI_NAME)}\` or \`${replaceCliName("pnpm add -g @fased/fased@latest", CLI_NAME)}\``,
         ),
       );
     }
