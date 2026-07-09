@@ -14,6 +14,8 @@ const requiredPathGroups = [
   "dist/plugin-sdk/index.js",
   "dist/plugin-sdk/index.d.ts",
   "dist/build-info.json",
+  "docs/reference/templates/AGENTS.md",
+  "scripts/clean-package-dist.mjs",
   "scripts/fased-launcher-runtime.mjs",
   "shared/sat-hash-v1.json",
 ];
@@ -22,6 +24,7 @@ const requiredExactDependencies = new Map<string, string>([
   ["@aws-sdk/core", "3.974.17"],
 ]);
 const forbiddenPrefixes = ["dist/FasedAgent.app/"];
+const allowedDocsPrefixes = ["docs/reference/templates/"];
 const extensionSourceFileRe = /\.(?:c|m)?(?:t|j)sx?$/;
 const extensionSrcImportRe = /(?:from\s+|import\s*\(\s*)["']((?:\.\.\/)+src\/[^"']+)["']/g;
 
@@ -243,8 +246,26 @@ function main() {
   const forbidden = [...paths].filter((path) =>
     forbiddenPrefixes.some((prefix) => path.startsWith(prefix)),
   );
+  const forbiddenDocs = [...paths].filter(
+    (path) =>
+      path.startsWith("docs/") && !allowedDocsPrefixes.some((prefix) => path.startsWith(prefix)),
+  );
+  const forbiddenSourceMaps = [...paths].filter((path) => path.endsWith(".map"));
+  const forbiddenTestSupport = [...paths].filter(
+    (path) =>
+      path.includes(".test-harness.") ||
+      path.includes(".e2e-harness.") ||
+      path.includes(".test-utils.") ||
+      path.startsWith("src/scripts/"),
+  );
 
-  if (missing.length > 0 || forbidden.length > 0) {
+  if (
+    missing.length > 0 ||
+    forbidden.length > 0 ||
+    forbiddenDocs.length > 0 ||
+    forbiddenSourceMaps.length > 0 ||
+    forbiddenTestSupport.length > 0
+  ) {
     if (missing.length > 0) {
       console.error("release-check: missing files in npm pack:");
       for (const path of missing) {
@@ -254,6 +275,24 @@ function main() {
     if (forbidden.length > 0) {
       console.error("release-check: forbidden files in npm pack:");
       for (const path of forbidden) {
+        console.error(`  - ${path}`);
+      }
+    }
+    if (forbiddenDocs.length > 0) {
+      console.error("release-check: docs shipped in npm pack outside runtime templates:");
+      for (const path of forbiddenDocs) {
+        console.error(`  - ${path}`);
+      }
+    }
+    if (forbiddenSourceMaps.length > 0) {
+      console.error("release-check: source maps shipped in npm pack:");
+      for (const path of forbiddenSourceMaps) {
+        console.error(`  - ${path}`);
+      }
+    }
+    if (forbiddenTestSupport.length > 0) {
+      console.error("release-check: test/support source shipped in npm pack:");
+      for (const path of forbiddenTestSupport) {
         console.error(`  - ${path}`);
       }
     }
