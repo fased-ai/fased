@@ -1,12 +1,47 @@
 {
   "name": "@fased/whatsapp",
   "version": "0.1.35",
-  "private": true,
   "description": "FasedAgent WhatsApp channel plugin",
+  "files": [
+    "index.ts",
+    "src",
+    "fased.plugin.json",
+    "!src/**/*.test.ts",
+    "!src/**/*.test.tsx"
+  ],
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "7.0.0-rc12"
+  },
+  "peerDependencies": {
+    "@fased/fased": "^0.1.35"
+  },
+  "peerDependenciesMeta": {
+    "@fased/fased": {
+      "optional": true
+    }
+  },
   "fased": {
     "extensions": [
       "./index.ts"
-    ]
+    ],
+    "channel": {
+      "id": "whatsapp",
+      "label": "WhatsApp",
+      "selectionLabel": "WhatsApp (QR link)",
+      "docsPath": "/channels/whatsapp",
+      "docsLabel": "whatsapp",
+      "blurb": "link a WhatsApp account by QR; a dedicated number is recommended.",
+      "order": 20,
+      "quickstartAllowFrom": true
+    },
+    "install": {
+      "npmSpec": "@fased/whatsapp",
+      "localPath": "extensions/whatsapp",
+      "defaultChoice": "local"
+    }
   }
 }
