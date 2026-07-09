@@ -9,8 +9,7 @@
  * 2. Environment variable: FASED_TWITCH_ACCESS_TOKEN (default account only)
  */
 
-import type { FasedAgentConfig } from "../../../src/config/config.js";
-import { DEFAULT_ACCOUNT_ID, normalizeAccountId } from "../../../src/routing/session-key.js";
+import { DEFAULT_ACCOUNT_ID, normalizeAccountId, type FasedAgentConfig } from "fased/plugin-sdk";
 
 export type TwitchTokenSource = "env" | "config" | "none";
 

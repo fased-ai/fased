@@ -1,8 +1,8 @@
 import {
   ACPX_PUSH_TEST_WRAPPER_ID,
   type AcpxPushTestApprovalContractRequest,
-} from "../../../src/acp/acpx-push-test-approval-contract.js";
-import type { AcpxPushTestExecutionAdapterResult } from "../../../src/acp/acpx-push-test-execution-adapter.js";
+  type AcpxPushTestExecutionAdapterResult,
+} from "fased/plugin-sdk";
 import type { ResolvedAcpxMcpBridgeConfig } from "./config.js";
 
 export const ACPX_PUSH_TEST_REQUEST_MCP_TOOL_NAME = ACPX_PUSH_TEST_WRAPPER_ID;

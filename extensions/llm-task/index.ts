@@ -1,4 +1,4 @@
-import type { AnyAgentTool, FasedAgentPluginApi } from "../../src/plugins/types.js";
+import type { AnyAgentTool, FasedAgentPluginApi } from "fased/plugin-sdk";
 import { createLlmTaskTool } from "./src/llm-task-tool.js";
 
 export default function register(api: FasedAgentPluginApi) {

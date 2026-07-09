@@ -4,8 +4,5 @@ export {
   resolveAgentPublicOrigin,
   resolveFederationBaseUrl,
   resolveFederationHandle,
-} from "../../src/federation/runtime.js";
-export {
-  runFederationAutoConnectOnce,
-  startFederationAutoConnect,
-} from "../../src/federation/auto-connect.js";
+} from "fased/plugin-sdk";
+export { runFederationAutoConnectOnce, startFederationAutoConnect } from "fased/plugin-sdk";
