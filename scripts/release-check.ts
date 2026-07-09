@@ -5,8 +5,14 @@ import { closeSync, mkdtempSync, openSync, readdirSync, readFileSync, rmSync } f
 import { tmpdir } from "node:os";
 import { join, posix, resolve } from "node:path";
 
-type PackFile = { path: string };
-type PackResult = { files?: PackFile[] };
+type PackFile = { path: string; size?: number };
+type PackResult = {
+  filename?: string;
+  files?: PackFile[];
+  size?: number;
+  unpackedSize?: number;
+  totalFiles?: number;
+};
 
 const requiredPathGroups = [
   ["dist/index.js", "dist/index.mjs"],
@@ -27,6 +33,16 @@ const forbiddenPrefixes = ["dist/FasedAgent.app/"];
 const allowedDocsPrefixes = ["docs/reference/templates/"];
 const extensionSourceFileRe = /\.(?:c|m)?(?:t|j)sx?$/;
 const extensionSrcImportRe = /(?:from\s+|import\s*\(\s*)["']((?:\.\.\/)+src\/[^"']+)["']/g;
+const packageBudgetTargets = {
+  packedBytes: 12 * 1024 * 1024,
+  unpackedBytes: 60 * 1024 * 1024,
+  files: 3500,
+};
+const packageBudgetHardLimits = {
+  packedBytes: 30 * 1024 * 1024,
+  unpackedBytes: 130 * 1024 * 1024,
+  files: 8000,
+};
 
 type PackageJson = {
   name?: string;
@@ -67,6 +83,121 @@ function runPackDry(): PackResult[] {
     return JSON.parse(raw) as PackResult[];
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes)) {
+    return "unknown";
+  }
+  const units = ["B", "KB", "MB", "GB"];
+  let value = Math.max(0, bytes);
+  let unit = units[0] ?? "B";
+  for (let i = 1; i < units.length && value >= 1024; i += 1) {
+    value /= 1024;
+    unit = units[i] ?? unit;
+  }
+  const decimals = value >= 10 || unit === "B" ? 0 : 1;
+  return `${value.toFixed(decimals)} ${unit}`;
+}
+
+function formatBudgetMetric(label: string, actual: string, target: string, hard: string): string {
+  return `${label} ${actual} (target ${target}, hard ${hard})`;
+}
+
+function packageArea(pathname: string): string {
+  const [top] = pathname.split("/");
+  if (!top || top === pathname) {
+    return "(root)";
+  }
+  return `${top}/`;
+}
+
+function checkPackageBudget(results: PackResult[], files: PackFile[]) {
+  const packedBytes = results.reduce((sum, entry) => sum + (entry.size ?? 0), 0);
+  const unpackedBytes = results.reduce((sum, entry) => sum + (entry.unpackedSize ?? 0), 0);
+  const fileCount = results.reduce(
+    (sum, entry) => sum + (entry.totalFiles ?? entry.files?.length ?? 0),
+    0,
+  );
+
+  const budgetLine = [
+    formatBudgetMetric(
+      "tarball",
+      formatBytes(packedBytes),
+      formatBytes(packageBudgetTargets.packedBytes),
+      formatBytes(packageBudgetHardLimits.packedBytes),
+    ),
+    formatBudgetMetric(
+      "unpacked",
+      formatBytes(unpackedBytes),
+      formatBytes(packageBudgetTargets.unpackedBytes),
+      formatBytes(packageBudgetHardLimits.unpackedBytes),
+    ),
+    formatBudgetMetric(
+      "files",
+      String(fileCount),
+      String(packageBudgetTargets.files),
+      String(packageBudgetHardLimits.files),
+    ),
+  ].join("; ");
+  console.log(`release-check: npm pack budget: ${budgetLine}.`);
+
+  const targetWarnings: string[] = [];
+  if (packedBytes > packageBudgetTargets.packedBytes) {
+    targetWarnings.push("tarball");
+  }
+  if (unpackedBytes > packageBudgetTargets.unpackedBytes) {
+    targetWarnings.push("unpacked");
+  }
+  if (fileCount > packageBudgetTargets.files) {
+    targetWarnings.push("files");
+  }
+  if (targetWarnings.length > 0) {
+    console.warn(
+      `release-check: npm pack target warning: ${targetWarnings.join(
+        ", ",
+      )} over target; shrink before calling hosted updates fast.`,
+    );
+  }
+
+  const sizedFiles = files.filter((file) => typeof file.size === "number");
+  const largestFiles = sizedFiles
+    .toSorted((a, b) => (b.size ?? 0) - (a.size ?? 0))
+    .slice(0, 5)
+    .map((file) => `${file.path} ${formatBytes(file.size ?? 0)}`);
+  if (largestFiles.length > 0) {
+    console.log(`release-check: largest files: ${largestFiles.join("; ")}.`);
+  }
+
+  const areaSizes = new Map<string, number>();
+  for (const file of sizedFiles) {
+    areaSizes.set(
+      packageArea(file.path),
+      (areaSizes.get(packageArea(file.path)) ?? 0) + (file.size ?? 0),
+    );
+  }
+  const largestAreas = [...areaSizes.entries()]
+    .toSorted((a, b) => b[1] - a[1])
+    .slice(0, 8)
+    .map(([area, size]) => `${area} ${formatBytes(size)}`);
+  if (largestAreas.length > 0) {
+    console.log(`release-check: largest package areas: ${largestAreas.join("; ")}.`);
+  }
+
+  const hardFailures: string[] = [];
+  if (packedBytes > packageBudgetHardLimits.packedBytes) {
+    hardFailures.push(`tarball ${formatBytes(packedBytes)}`);
+  }
+  if (unpackedBytes > packageBudgetHardLimits.unpackedBytes) {
+    hardFailures.push(`unpacked ${formatBytes(unpackedBytes)}`);
+  }
+  if (fileCount > packageBudgetHardLimits.files) {
+    hardFailures.push(`files ${fileCount}`);
+  }
+  if (hardFailures.length > 0) {
+    console.error(`release-check: npm pack hard budget exceeded: ${hardFailures.join(", ")}.`);
+    process.exit(1);
   }
 }
 
@@ -234,6 +365,7 @@ function main() {
   const results = runPackDry();
   const files = results.flatMap((entry) => entry.files ?? []);
   const paths = new Set(files.map((file) => file.path));
+  checkPackageBudget(results, files);
 
   const missing = requiredPathGroups
     .flatMap((group) => {

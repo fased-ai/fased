@@ -40,9 +40,32 @@ export type UpdateStepResult = {
   stderrTail?: string | null;
 };
 
+export type UpdateRunStrategy =
+  | {
+      kind: "git";
+      reason?: string;
+    }
+  | {
+      kind: "artifact-swap";
+      reason?: string;
+    }
+  | {
+      kind: "package-manager";
+      reason?: string;
+    }
+  | {
+      kind: "package-manager-fallback";
+      reason?: string;
+    }
+  | {
+      kind: "unknown";
+      reason?: string;
+    };
+
 export type UpdateRunResult = {
   status: "ok" | "error" | "skipped";
   mode: "git" | "pnpm" | "bun" | "npm" | "unknown";
+  strategy?: UpdateRunStrategy;
   root?: string;
   reason?: string;
   before?: { sha?: string | null; version?: string | null };
@@ -76,6 +99,7 @@ type HostedArtifactUpdateResult =
   | {
       kind: "fallback";
       steps: UpdateStepResult[];
+      reason: string;
     }
   | {
       kind: "error";
@@ -478,7 +502,7 @@ async function runHostedArtifactUpdate(params: {
     });
     steps.push(packStep);
     if (packStep.exitCode !== 0) {
-      return { kind: "fallback", steps };
+      return { kind: "fallback", steps, reason: "npm pack artifact failed" };
     }
 
     const tgzPath = (await listTgzFiles(tempRoot)).at(-1);
@@ -491,7 +515,7 @@ async function runHostedArtifactUpdate(params: {
         exitCode: 1,
         stderrTail: "npm pack produced no tgz artifact",
       });
-      return { kind: "fallback", steps };
+      return { kind: "fallback", steps, reason: "npm pack produced no artifact" };
     }
 
     const extractDir = path.join(tempRoot, "extract");
@@ -515,7 +539,7 @@ async function runHostedArtifactUpdate(params: {
         exitCode: 1,
         stderrTail: String(err),
       });
-      return { kind: "fallback", steps };
+      return { kind: "fallback", steps, reason: "artifact extract failed" };
     }
 
     const artifactRoot = path.join(extractDir, "package");
@@ -530,7 +554,7 @@ async function runHostedArtifactUpdate(params: {
         exitCode: 1,
         stderrTail: `expected ${params.expectedVersion}, found ${artifactVersion ?? "unknown"}`,
       });
-      return { kind: "fallback", steps };
+      return { kind: "fallback", steps, reason: "artifact version mismatch" };
     }
 
     const dependenciesChanged = runtimeDependencyMetaChanged(params.beforeMeta, artifactMeta);
@@ -545,7 +569,11 @@ async function runHostedArtifactUpdate(params: {
         : "dependency metadata unchanged; using package artifact swap",
     });
     if (dependenciesChanged) {
-      return { kind: "fallback", steps };
+      return {
+        kind: "fallback",
+        steps,
+        reason: "runtime dependency metadata changed",
+      };
     }
 
     const swapStarted = Date.now();
@@ -656,6 +684,7 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
     const buildGitErrorResult = (reason: string): UpdateRunResult => ({
       status: "error",
       mode: "git",
+      strategy: { kind: "git", reason: `${channel} channel` },
       root: gitRoot,
       reason,
       before: { sha: beforeSha, version: beforeVersion },
@@ -685,6 +714,7 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
       return {
         status: "skipped",
         mode: "git",
+        strategy: { kind: "git", reason: `${channel} channel` },
         root: gitRoot,
         reason: "dirty",
         before: { sha: beforeSha, version: beforeVersion },
@@ -727,6 +757,7 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
         return {
           status: "skipped",
           mode: "git",
+          strategy: { kind: "git", reason: `${channel} channel` },
           root: gitRoot,
           reason: "no-upstream",
           before: { sha: beforeSha, version: beforeVersion },
@@ -743,6 +774,7 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
         return {
           status: "error",
           mode: "git",
+          strategy: { kind: "git", reason: `${channel} channel` },
           root: gitRoot,
           reason: "fetch-failed",
           before: { sha: beforeSha, version: beforeVersion },
@@ -764,6 +796,7 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
         return {
           status: "error",
           mode: "git",
+          strategy: { kind: "git", reason: `${channel} channel` },
           root: gitRoot,
           reason: "no-upstream-sha",
           before: { sha: beforeSha, version: beforeVersion },
@@ -785,6 +818,7 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
         return {
           status: "error",
           mode: "git",
+          strategy: { kind: "git", reason: `${channel} channel` },
           root: gitRoot,
           reason: "preflight-revlist-failed",
           before: { sha: beforeSha, version: beforeVersion },
@@ -801,6 +835,7 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
         return {
           status: "error",
           mode: "git",
+          strategy: { kind: "git", reason: `${channel} channel` },
           root: gitRoot,
           reason: "preflight-no-candidates",
           before: { sha: beforeSha, version: beforeVersion },
@@ -825,6 +860,7 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
         return {
           status: "error",
           mode: "git",
+          strategy: { kind: "git", reason: `${channel} channel` },
           root: gitRoot,
           reason: "preflight-worktree-failed",
           before: { sha: beforeSha, version: beforeVersion },
@@ -902,6 +938,7 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
         return {
           status: "error",
           mode: "git",
+          strategy: { kind: "git", reason: `${channel} channel` },
           root: gitRoot,
           reason: "preflight-no-good-commit",
           before: { sha: beforeSha, version: beforeVersion },
@@ -931,6 +968,7 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
         return {
           status: "error",
           mode: "git",
+          strategy: { kind: "git", reason: `${channel} channel` },
           root: gitRoot,
           reason: "rebase-failed",
           before: { sha: beforeSha, version: beforeVersion },
@@ -947,6 +985,7 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
         return {
           status: "error",
           mode: "git",
+          strategy: { kind: "git", reason: `${channel} channel` },
           root: gitRoot,
           reason: "fetch-failed",
           before: { sha: beforeSha, version: beforeVersion },
@@ -960,6 +999,7 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
         return {
           status: "error",
           mode: "git",
+          strategy: { kind: "git", reason: `${channel} channel` },
           root: gitRoot,
           reason: "no-release-tag",
           before: { sha: beforeSha, version: beforeVersion },
@@ -989,6 +1029,7 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
       return {
         status: "error",
         mode: "git",
+        strategy: { kind: "git", reason: `${channel} channel` },
         root: gitRoot,
         reason: "deps-install-failed",
         before: { sha: beforeSha, version: beforeVersion },
@@ -1005,6 +1046,7 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
       return {
         status: "error",
         mode: "git",
+        strategy: { kind: "git", reason: `${channel} channel` },
         root: gitRoot,
         reason: "build-app-failed",
         before: { sha: beforeSha, version: beforeVersion },
@@ -1030,6 +1072,7 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
       return {
         status: "error",
         mode: "git",
+        strategy: { kind: "git", reason: `${channel} channel` },
         root: gitRoot,
         reason: "doctor-entry-missing",
         before: { sha: beforeSha, version: beforeVersion },
@@ -1066,6 +1109,7 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
         return {
           status: "error",
           mode: "git",
+          strategy: { kind: "git", reason: `${channel} channel` },
           root: gitRoot,
           reason: repairStep.name,
           before: { sha: beforeSha, version: beforeVersion },
@@ -1089,6 +1133,7 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
         return {
           status: "error",
           mode: "git",
+          strategy: { kind: "git", reason: `${channel} channel` },
           root: gitRoot,
           reason: "ui-assets-missing",
           before: { sha: beforeSha, version: beforeVersion },
@@ -1110,6 +1155,7 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
     return {
       status: failedStep ? "error" : "ok",
       mode: "git",
+      strategy: { kind: "git", reason: `${channel} channel` },
       root: gitRoot,
       reason: failedStep ? failedStep.name : undefined,
       before: { sha: beforeSha, version: beforeVersion },
@@ -1126,6 +1172,7 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
     return {
       status: "error",
       mode: "unknown",
+      strategy: { kind: "unknown", reason: "no Fased package root found" },
       reason: `no root (${START_DIRS.join(",")})`,
       steps: [],
       durationMs: Date.now() - startedAt,
@@ -1150,6 +1197,7 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
     const spec = `${packageName}@${tag}`;
     const steps: UpdateStepResult[] = [];
     const expectedVersion = normalizeVersionSpec(tag);
+    let artifactFallbackReason: string | null = null;
 
     if (hostedTarget && expectedVersion) {
       const artifactResult = await runHostedArtifactUpdate({
@@ -1167,6 +1215,10 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
         return {
           status: "ok",
           mode: globalManager,
+          strategy: {
+            kind: "artifact-swap",
+            reason: "hosted install with unchanged runtime dependencies",
+          },
           root: pkgRoot,
           before: { version: beforeVersion },
           after: { version: artifactResult.afterVersion },
@@ -1178,6 +1230,7 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
         return {
           status: "error",
           mode: globalManager,
+          strategy: { kind: "artifact-swap", reason: artifactResult.reason },
           root: pkgRoot,
           reason: artifactResult.reason,
           before: { version: beforeVersion },
@@ -1185,6 +1238,9 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
           steps,
           durationMs: Date.now() - startedAt,
         };
+      }
+      if (artifactResult.kind === "fallback") {
+        artifactFallbackReason = artifactResult.reason;
       }
     }
 
@@ -1247,6 +1303,16 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
     return {
       status: failedStep ? "error" : "ok",
       mode: globalManager,
+      strategy: {
+        kind: artifactFallbackReason ? "package-manager-fallback" : "package-manager",
+        reason:
+          artifactFallbackReason ??
+          (hostedTarget
+            ? expectedVersion
+              ? "hosted artifact fast path not used"
+              : "non-exact package target"
+            : "global package install"),
+      },
       root: pkgRoot,
       reason: failedStep?.name,
       before: { version: beforeVersion },
@@ -1259,6 +1325,7 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
   return {
     status: "skipped",
     mode: "unknown",
+    strategy: { kind: "unknown", reason: "package manager not detected" },
     root: pkgRoot,
     reason: "not-git-install",
     before: { version: beforeVersion },
