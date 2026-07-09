@@ -15,10 +15,9 @@ export type ChatChannelId = (typeof CHAT_CHANNEL_ORDER)[number];
 
 export const CHANNEL_IDS = [...CHAT_CHANNEL_ORDER] as const;
 
-export const CORE_RUNTIME_CHANNEL_IDS = [
-  "telegram",
-  "discord",
-] as const satisfies readonly ChatChannelId[];
+// External chat channels are opt-in plugins. The core hosted path should stay
+// focused on dashboard chat, tasks, wallets, mining, and network work.
+export const CORE_RUNTIME_CHANNEL_IDS = [] as const satisfies readonly ChatChannelId[];
 
 export type CoreRuntimeChannelId = (typeof CORE_RUNTIME_CHANNEL_IDS)[number];
 

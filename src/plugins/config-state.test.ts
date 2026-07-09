@@ -185,7 +185,7 @@ describe("normalizePluginsConfig", () => {
 });
 
 describe("resolveEffectiveEnableState", () => {
-  it("loads only core runtime channel plugins by default", () => {
+  it("keeps bundled chat channel plugins opt-in by default", () => {
     const normalized = normalizePluginsConfig({
       enabled: true,
     });
@@ -197,7 +197,7 @@ describe("resolveEffectiveEnableState", () => {
         config: normalized,
         rootConfig: {},
       }),
-    ).toEqual({ enabled: true });
+    ).toEqual({ enabled: false, reason: "bundled (disabled by default)" });
     expect(
       resolveEffectiveEnableState({
         id: "discord",
@@ -205,7 +205,7 @@ describe("resolveEffectiveEnableState", () => {
         config: normalized,
         rootConfig: {},
       }),
-    ).toEqual({ enabled: true });
+    ).toEqual({ enabled: false, reason: "bundled (disabled by default)" });
     expect(
       resolveEffectiveEnableState({
         id: "slack",
@@ -224,17 +224,17 @@ describe("resolveEffectiveEnableState", () => {
     ).toEqual({ enabled: false, reason: "bundled (disabled by default)" });
   });
 
-  it("enables non-core bundled channels when channels.<id>.enabled=true", () => {
+  it("enables bundled channels when channels.<id>.enabled=true", () => {
     const normalized = normalizePluginsConfig({
       enabled: true,
     });
     const state = resolveEffectiveEnableState({
-      id: "slack",
+      id: "telegram",
       origin: "bundled",
       config: normalized,
       rootConfig: {
         channels: {
-          slack: {
+          telegram: {
             enabled: true,
           },
         },
