@@ -8,6 +8,7 @@ import {
   resolveControlUiDistIndexPathForRoot,
 } from "./control-ui-assets.js";
 import { detectPackageManager as detectPackageManagerImpl } from "./detect-package-manager.js";
+import { downloadHostedRuntimeArtifact } from "./hosted-runtime-artifact.js";
 import { readPackageName, readPackageVersion } from "./package-json.js";
 import { trimLogTail } from "./restart-sentinel.js";
 import {
@@ -43,6 +44,10 @@ export type UpdateStepResult = {
 export type UpdateRunStrategy =
   | {
       kind: "git";
+      reason?: string;
+    }
+  | {
+      kind: "hosted-artifact";
       reason?: string;
     }
   | {
@@ -136,6 +141,8 @@ type UpdateRunnerOptions = {
   timeoutMs?: number;
   runCommand?: CommandRunner;
   progress?: UpdateStepProgress;
+  hostedReleaseFetch?: typeof fetch | null;
+  hostedReleaseBaseUrl?: string;
 };
 
 const DEFAULT_TIMEOUT_MS = 20 * 60_000;
@@ -606,6 +613,179 @@ async function runHostedArtifactUpdate(params: {
 
     const afterVersion = await readPackageVersion(params.pkgRoot);
     return { kind: "updated", steps, afterVersion };
+  } finally {
+    if (backupRoot) {
+      await safeRemove(backupRoot);
+    }
+    await safeRemove(tempRoot);
+  }
+}
+
+async function pathExists(pathname: string): Promise<boolean> {
+  try {
+    await fs.stat(pathname);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function runHostedReleaseArtifactUpdate(params: {
+  fetchImpl: typeof fetch;
+  baseUrl?: string;
+  pkgRoot: string;
+  expectedVersion: string;
+  progress?: UpdateStepProgress;
+}): Promise<HostedArtifactUpdateResult> {
+  const packageParent = path.dirname(params.pkgRoot);
+  const tempRoot = await fs.mkdtemp(path.join(packageParent, ".fased-release-update-"));
+  const steps: UpdateStepResult[] = [];
+  let backupRoot: string | null = null;
+  let progressIndex = 0;
+  const totalSteps = 4;
+  const startProgress = (name: string, command: string, cwd: string): UpdateStepInfo => {
+    const info = { name, command, cwd, index: progressIndex, total: totalSteps };
+    progressIndex += 1;
+    params.progress?.onStepStart?.(info);
+    return info;
+  };
+  const completeProgress = (info: UpdateStepInfo, step: UpdateStepResult): void => {
+    steps.push(step);
+    params.progress?.onStepComplete?.({
+      ...info,
+      durationMs: step.durationMs,
+      exitCode: step.exitCode,
+      stderrTail: step.stderrTail,
+    });
+  };
+
+  try {
+    const downloadCommand = `download hosted runtime v${params.expectedVersion}`;
+    const downloadInfo = startProgress("hosted artifact download", downloadCommand, params.pkgRoot);
+    const downloadStarted = Date.now();
+    const download = await downloadHostedRuntimeArtifact({
+      version: params.expectedVersion,
+      destinationDir: tempRoot,
+      fetchImpl: params.fetchImpl,
+      baseUrl: params.baseUrl,
+    });
+    completeProgress(downloadInfo, {
+      name: "hosted artifact download",
+      command: downloadCommand,
+      cwd: params.pkgRoot,
+      durationMs: Date.now() - downloadStarted,
+      exitCode: download.kind === "error" ? 1 : 0,
+      ...(download.kind === "downloaded"
+        ? { stdoutTail: `${download.descriptor.assetName} checksum verified` }
+        : { stderrTail: download.reason }),
+    });
+    if (download.kind === "unavailable") {
+      return { kind: "fallback", steps, reason: download.reason };
+    }
+    if (download.kind === "error") {
+      return {
+        kind: "error",
+        steps,
+        reason: download.reason,
+        afterVersion: await readPackageVersion(params.pkgRoot),
+      };
+    }
+
+    const extractDir = path.join(tempRoot, "extract");
+    await fs.mkdir(extractDir, { recursive: true });
+    const extractCommand = `extract ${download.descriptor.assetName}`;
+    const extractInfo = startProgress("hosted artifact extract", extractCommand, params.pkgRoot);
+    const extractStarted = Date.now();
+    try {
+      await tar.x({ file: download.archivePath, cwd: extractDir });
+      completeProgress(extractInfo, {
+        name: "hosted artifact extract",
+        command: extractCommand,
+        cwd: params.pkgRoot,
+        durationMs: Date.now() - extractStarted,
+        exitCode: 0,
+      });
+    } catch (error) {
+      completeProgress(extractInfo, {
+        name: "hosted artifact extract",
+        command: extractCommand,
+        cwd: params.pkgRoot,
+        durationMs: Date.now() - extractStarted,
+        exitCode: 1,
+        stderrTail: String(error),
+      });
+      return {
+        kind: "error",
+        steps,
+        reason: "hosted artifact extract failed",
+        afterVersion: await readPackageVersion(params.pkgRoot),
+      };
+    }
+
+    const artifactRoot = path.join(extractDir, "package");
+    const artifactVersion = await readPackageVersion(artifactRoot);
+    const runtimeReady =
+      compareSemverStrings(artifactVersion, params.expectedVersion) === 0 &&
+      (await pathExists(path.join(artifactRoot, "fased.mjs"))) &&
+      (await pathExists(path.join(artifactRoot, "node_modules")));
+    const verifyCommand = `verify hosted runtime v${params.expectedVersion}`;
+    const verifyInfo = startProgress("hosted artifact verify", verifyCommand, params.pkgRoot);
+    completeProgress(verifyInfo, {
+      name: "hosted artifact verify",
+      command: verifyCommand,
+      cwd: params.pkgRoot,
+      durationMs: 0,
+      exitCode: runtimeReady ? 0 : 1,
+      ...(!runtimeReady
+        ? {
+            stderrTail: `expected complete v${params.expectedVersion}, found ${artifactVersion ?? "unknown"}`,
+          }
+        : {}),
+    });
+    if (!runtimeReady) {
+      return {
+        kind: "error",
+        steps,
+        reason: "hosted artifact verification failed",
+        afterVersion: await readPackageVersion(params.pkgRoot),
+      };
+    }
+
+    const swapCommand = `replace ${params.pkgRoot}`;
+    const swapInfo = startProgress("hosted artifact swap", swapCommand, packageParent);
+    const swapStarted = Date.now();
+    try {
+      const swapped = await swapPackageRoot({ pkgRoot: params.pkgRoot, artifactRoot });
+      backupRoot = swapped.backupRoot;
+      completeProgress(swapInfo, {
+        name: "hosted artifact swap",
+        command: swapCommand,
+        cwd: packageParent,
+        durationMs: Date.now() - swapStarted,
+        exitCode: 0,
+      });
+    } catch (error) {
+      completeProgress(swapInfo, {
+        name: "hosted artifact swap",
+        command: swapCommand,
+        cwd: packageParent,
+        durationMs: Date.now() - swapStarted,
+        exitCode: 1,
+        stderrTail: String(error),
+      });
+      return {
+        kind: "error",
+        steps,
+        reason: "hosted artifact swap failed",
+        afterVersion: await readPackageVersion(params.pkgRoot),
+      };
+    }
+
+    return {
+      kind: "updated",
+      steps,
+      afterVersion: await readPackageVersion(params.pkgRoot),
+    };
   } finally {
     if (backupRoot) {
       await safeRemove(backupRoot);
@@ -1200,6 +1380,48 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
     let artifactFallbackReason: string | null = null;
 
     if (hostedTarget && expectedVersion) {
+      const releaseFetch =
+        opts.hostedReleaseFetch === undefined ? globalThis.fetch : opts.hostedReleaseFetch;
+      if (releaseFetch) {
+        const releaseResult = await runHostedReleaseArtifactUpdate({
+          fetchImpl: releaseFetch,
+          baseUrl: opts.hostedReleaseBaseUrl ?? process.env.FASED_HOSTED_ARTIFACT_BASE_URL,
+          pkgRoot,
+          expectedVersion,
+          progress,
+        });
+        steps.push(...releaseResult.steps);
+        if (releaseResult.kind === "updated") {
+          return {
+            status: "ok",
+            mode: globalManager,
+            strategy: {
+              kind: "hosted-artifact",
+              reason: "verified self-contained hosted runtime",
+            },
+            root: pkgRoot,
+            before: { version: beforeVersion },
+            after: { version: releaseResult.afterVersion },
+            steps,
+            durationMs: Date.now() - startedAt,
+          };
+        }
+        if (releaseResult.kind === "error") {
+          return {
+            status: "error",
+            mode: globalManager,
+            strategy: { kind: "hosted-artifact", reason: releaseResult.reason },
+            root: pkgRoot,
+            reason: releaseResult.reason,
+            before: { version: beforeVersion },
+            after: { version: releaseResult.afterVersion },
+            steps,
+            durationMs: Date.now() - startedAt,
+          };
+        }
+        artifactFallbackReason = releaseResult.reason;
+      }
+
       const artifactResult = await runHostedArtifactUpdate({
         runCommand,
         pkgRoot,
@@ -1240,7 +1462,9 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
         };
       }
       if (artifactResult.kind === "fallback") {
-        artifactFallbackReason = artifactResult.reason;
+        artifactFallbackReason = artifactFallbackReason
+          ? `${artifactFallbackReason}; ${artifactResult.reason}`
+          : artifactResult.reason;
       }
     }
 

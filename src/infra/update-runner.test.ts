@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -169,6 +170,8 @@ describe("runGatewayUpdate", () => {
       tag?: string;
       cwd?: string;
       allowDevFallback?: boolean;
+      hostedReleaseFetch?: typeof fetch | null;
+      hostedReleaseBaseUrl?: string;
     },
   ) {
     return runGatewayUpdate({
@@ -178,6 +181,10 @@ describe("runGatewayUpdate", () => {
       ...(options?.channel ? { channel: options.channel } : {}),
       ...(options?.tag ? { tag: options.tag } : {}),
       ...(options?.allowDevFallback ? { allowDevFallback: options.allowDevFallback } : {}),
+      hostedReleaseFetch: options?.hostedReleaseFetch ?? null,
+      ...(options?.hostedReleaseBaseUrl
+        ? { hostedReleaseBaseUrl: options.hostedReleaseBaseUrl }
+        : {}),
     });
   }
 
@@ -231,6 +238,30 @@ describe("runGatewayUpdate", () => {
     await tar.c({ cwd: workDir, file: archivePath, gzip: true }, ["package"]);
     await fs.rm(workDir, { recursive: true, force: true });
     return filename;
+  }
+
+  async function buildHostedRuntimeResponse(params: { name: string; version: string }) {
+    const workDir = await fs.mkdtemp(path.join(tempDir, "hosted-runtime-"));
+    const packageDir = path.join(workDir, "package");
+    await fs.mkdir(path.join(packageDir, "node_modules"), { recursive: true });
+    await fs.writeFile(
+      path.join(packageDir, "package.json"),
+      JSON.stringify({ name: params.name, version: params.version }),
+      "utf-8",
+    );
+    await fs.writeFile(path.join(packageDir, "fased.mjs"), "export {};\n", "utf-8");
+    const archivePath = path.join(workDir, "runtime.tar.gz");
+    await tar.c({ cwd: workDir, file: archivePath, gzip: true }, ["package"]);
+    const bytes = await fs.readFile(archivePath);
+    const checksum = createHash("sha256").update(bytes).digest("hex");
+    return { bytes, checksum };
+  }
+
+  function fetchInputUrl(input: string | URL | Request): string {
+    if (typeof input === "string") {
+      return input;
+    }
+    return input instanceof URL ? input.href : input.url;
   }
 
   it("skips git update when worktree is dirty", async () => {
@@ -729,6 +760,92 @@ describe("runGatewayUpdate", () => {
       "artifact dependency check",
       "artifact swap",
     ]);
+  });
+
+  it("uses a verified self-contained hosted release artifact before npm", async () => {
+    const prefix = path.join(tempDir, ".fased", "install-cache", "npm-global");
+    const pkgRoot = path.join(prefix, "lib", "node_modules", "@fased", "fased");
+    await seedGlobalPackageRoot(pkgRoot, "1.0.0", "@fased/fased");
+    const artifact = await buildHostedRuntimeResponse({
+      name: "@fased/fased",
+      version: "2.0.0",
+    });
+    const assetName = "fased-hosted-linux-x64-v2.0.0.tar.gz";
+    const calls: string[] = [];
+    const fetchImpl = (async (input: string | URL | Request) => {
+      const url = fetchInputUrl(input);
+      if (url.endsWith(`${assetName}.sha256`)) {
+        return new Response(`${artifact.checksum}  ${assetName}\n`);
+      }
+      if (url.endsWith(assetName)) {
+        return new Response(artifact.bytes);
+      }
+      return new Response("not found", { status: 404 });
+    }) as typeof fetch;
+    const runCommand = async (argv: string[]) => {
+      const key = argv.join(" ");
+      calls.push(key);
+      if (argv[0] === "git" && argv.at(-2) === "rev-parse" && argv.at(-1) === "--show-toplevel") {
+        return { stdout: "", stderr: "not a git repository", code: 128 };
+      }
+      throw new Error(`unexpected command: ${key}`);
+    };
+
+    const result = await runWithCommand(runCommand, {
+      cwd: pkgRoot,
+      tag: "2.0.0",
+      hostedReleaseFetch: fetchImpl,
+      hostedReleaseBaseUrl: "https://releases.example.test",
+    });
+
+    expect(result.status).toBe("ok");
+    expect(result.strategy).toEqual({
+      kind: "hosted-artifact",
+      reason: "verified self-contained hosted runtime",
+    });
+    expect(result.after?.version).toBe("2.0.0");
+    expect(await fs.stat(path.join(pkgRoot, "node_modules"))).toBeTruthy();
+    expect(calls.some((call) => call.startsWith("npm "))).toBe(false);
+    expect(result.steps.map((step) => step.name)).toEqual([
+      "hosted artifact download",
+      "hosted artifact extract",
+      "hosted artifact verify",
+      "hosted artifact swap",
+    ]);
+  });
+
+  it("stops a hosted update when release artifact verification fails", async () => {
+    const prefix = path.join(tempDir, ".fased", "install-cache", "npm-global");
+    const pkgRoot = path.join(prefix, "lib", "node_modules", "@fased", "fased");
+    await seedGlobalPackageRoot(pkgRoot, "1.0.0", "@fased/fased");
+    const assetName = "fased-hosted-linux-x64-v2.0.0.tar.gz";
+    const fetchImpl = (async (input: string | URL | Request) => {
+      const url = fetchInputUrl(input);
+      if (url.endsWith(`${assetName}.sha256`)) {
+        return new Response(`${"0".repeat(64)}  ${assetName}\n`);
+      }
+      if (url.endsWith(assetName)) {
+        return new Response("tampered");
+      }
+      return new Response("not found", { status: 404 });
+    }) as typeof fetch;
+    const runCommand = async (argv: string[]) => {
+      if (argv[0] === "git" && argv.at(-2) === "rev-parse" && argv.at(-1) === "--show-toplevel") {
+        return { stdout: "", stderr: "not a git repository", code: 128 };
+      }
+      throw new Error(`unexpected command: ${argv.join(" ")}`);
+    };
+
+    const result = await runWithCommand(runCommand, {
+      cwd: pkgRoot,
+      tag: "2.0.0",
+      hostedReleaseFetch: fetchImpl,
+    });
+
+    expect(result.status).toBe("error");
+    expect(result.strategy?.kind).toBe("hosted-artifact");
+    expect(result.reason).toContain("checksum mismatch");
+    expect(result.after?.version).toBe("1.0.0");
   });
 
   it("falls back to package manager updates when hosted artifact dependencies change", async () => {
