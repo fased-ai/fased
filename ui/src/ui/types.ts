@@ -2,6 +2,10 @@ export type UpdateAvailable = import("../../../src/infra/update-startup.js").Upd
 import type { ConfigUiHints } from "../../../src/config/schema.hints.js";
 import type { SessionEntry } from "../../../src/config/sessions.js";
 export type { ConfigUiHint, ConfigUiHints } from "../../../src/config/schema.hints.js";
+export type CapabilityReadinessEntry =
+  import("../../../src/capabilities/catalog.js").CapabilityReadinessEntry;
+export type CapabilityReadinessReport =
+  import("../../../src/capabilities/catalog.js").CapabilityReadinessReport;
 export type PluginMarketplaceAction =
   import("../../../src/gateway/protocol/schema/types.js").PluginMarketplaceAction;
 export type PluginMarketplaceMutationAction =

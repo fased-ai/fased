@@ -83,6 +83,7 @@ const METHOD_SCOPE_GROUPS: Record<OperatorScope, readonly string[]> = {
     "commands.list",
     "tools.catalog",
     "tools.effective",
+    "services.capabilities",
     "services.webSearch.providers",
     "services.webSearch.test",
     "tasks.list",

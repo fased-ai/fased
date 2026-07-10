@@ -338,6 +338,15 @@ const entries: SubCliEntry[] = [
     },
   },
   {
+    name: "components",
+    description: "Show core, add-on, and external component readiness",
+    hasSubcommands: false,
+    register: async (program) => {
+      const mod = await import("../components-cli.js");
+      mod.registerComponentsCli(program);
+    },
+  },
+  {
     name: "update",
     description: "Update FasedAgent and inspect update channel status",
     hasSubcommands: true,

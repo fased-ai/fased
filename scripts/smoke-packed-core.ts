@@ -136,6 +136,17 @@ async function main() {
     if (!packageJson.version || version !== packageJson.version) {
       throw new Error(`packed version mismatch: expected ${packageJson.version}, got ${version}`);
     }
+    const componentsRaw = runCore(coreRoot, env, ["components", "--json"]);
+    const components = JSON.parse(componentsRaw) as {
+      summary?: { coreIncluded?: unknown; optionalInstalled?: unknown; errors?: unknown };
+    };
+    if (
+      components.summary?.coreIncluded !== 6 ||
+      components.summary.optionalInstalled !== 0 ||
+      components.summary.errors !== 0
+    ) {
+      throw new Error(`packed core capability catalog failed:\n${componentsRaw}`);
+    }
     const doctor = runCore(coreRoot, env, ["plugins", "doctor"]);
     if (!doctor.includes("No plugin issues detected.")) {
       throw new Error(`packed core plugin doctor failed:\n${doctor}`);
@@ -158,7 +169,7 @@ async function main() {
     }
 
     console.log(
-      `packed-core-smoke: ${version} starts without optional channels; wallet, SAT, Fased Network, and plugin checks passed.`,
+      `packed-core-smoke: ${version} starts without optional channels; capabilities, wallet, SAT, Fased Network, and plugin checks passed.`,
     );
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });

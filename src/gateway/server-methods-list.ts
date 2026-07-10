@@ -73,6 +73,7 @@ const BASE_METHODS = [
   "commands.list",
   "tools.catalog",
   "tools.effective",
+  "services.capabilities",
   "services.gmail.setup",
   "services.webSearch.test",
   "services.webSearch.providers",

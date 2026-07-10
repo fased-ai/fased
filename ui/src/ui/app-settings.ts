@@ -38,7 +38,7 @@ import { loadOperationsStatus } from "./controllers/operations-status.ts";
 import { loadOverviewHealth } from "./controllers/overview-health.ts";
 import { loadExtensionsHooks, loadPluginMarketplace } from "./controllers/plugins-marketplace.ts";
 import { loadPresence } from "./controllers/presence.ts";
-import { loadWebSearchServiceProviders } from "./controllers/services.ts";
+import { loadServiceCapabilities, loadWebSearchServiceProviders } from "./controllers/services.ts";
 import { loadSessions } from "./controllers/sessions.ts";
 import { loadSkills } from "./controllers/skills.ts";
 import { loadUsage } from "./controllers/usage.ts";
@@ -564,6 +564,7 @@ export async function refreshActiveTab(host: SettingsHost) {
       loadConfig(host as unknown as FasedAgentApp),
       loadSkills(host as unknown as FasedAgentApp),
       loadPluginMarketplace(host as unknown as Parameters<typeof loadPluginMarketplace>[0]),
+      loadServiceCapabilities(host as unknown as Parameters<typeof loadServiceCapabilities>[0]),
       loadWebSearchServiceProviders(
         host as unknown as Parameters<typeof loadWebSearchServiceProviders>[0],
       ),

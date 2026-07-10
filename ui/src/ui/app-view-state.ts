@@ -297,6 +297,8 @@ export type AppViewState = {
   configFormDirty: boolean;
   servicesWebSearchTesting: boolean;
   servicesWebSearchTestMessage: string | null;
+  servicesCapabilities: import("./types.ts").CapabilityReadinessReport | null;
+  servicesCapabilitiesLoading: boolean;
   servicesWebSearchProviders: import("./types.ts").WebSearchServiceProviderOption[];
   servicesWebSearchProvidersLoading: boolean;
   servicesGmailProvisioning: boolean;

@@ -1,3 +1,4 @@
+import { buildCapabilityReadinessReport } from "../../capabilities/catalog.js";
 import { loadConfig } from "../../config/config.js";
 import { runGmailSetup, type GmailSetupOptions } from "../../hooks/gmail-ops.js";
 import { listConfiguredWebSearchProviders, runWebSearch } from "../../web-search/runtime.js";
@@ -57,6 +58,13 @@ function gmailSetupOptions(params: Record<string, unknown>): GmailSetupOptions |
 }
 
 export const servicesHandlers: GatewayRequestHandlers = {
+  "services.capabilities": async ({ respond }) => {
+    try {
+      respond(true, buildCapabilityReadinessReport());
+    } catch (err) {
+      respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, formatForLog(err)));
+    }
+  },
   "services.gmail.setup": async ({ respond, params }) => {
     try {
       const parsed = gmailSetupOptions(params);

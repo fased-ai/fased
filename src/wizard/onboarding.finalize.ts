@@ -4,6 +4,10 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { Writable } from "node:stream";
+import {
+  buildCapabilityReadinessReport,
+  formatCapabilityReadinessSummary,
+} from "../capabilities/catalog.js";
 import { formatCliCommand } from "../cli/command-format.js";
 import {
   buildGatewayInstallPlan,
@@ -3023,6 +3027,14 @@ export async function finalizeOnboardingWizard(
     publicUrl: federation.enabled ? (persistedFederationToken?.publicUrl ?? null) : null,
   });
   await prompter.note(formatOperatorReadinessSummary(operatorReadiness), "Operator readiness");
+  const capabilityReadiness = buildCapabilityReadinessReport({
+    config: nextConfig,
+    pluginReport: { plugins: [], diagnostics: [] },
+  });
+  await prompter.note(
+    `${formatCapabilityReadinessSummary(capabilityReadiness)}\nOptional add-ons and external runtimes remain off until selected.`,
+    "Components",
+  );
 
   if (strictVps && !opts.allowInsecure) {
     await withWizardProgress(

@@ -22,6 +22,53 @@ function flattenTemplateText(value: unknown): string {
 }
 
 describe("renderServices", () => {
+  it("renders the shared lifecycle states for core, add-ons, and external runtimes", async () => {
+    const { renderServices } = await import("./services.ts");
+    const text = flattenTemplateText(
+      renderServices({
+        configForm: null,
+        skillsReport: null,
+        skillsLoading: false,
+        pluginsMarketplace: null,
+        capabilities: {
+          entries: [
+            {
+              id: "telegram",
+              label: "Telegram",
+              category: "channel",
+              delivery: "npm-addon",
+              description: "Telegram transport.",
+              docsPath: "/channels/telegram",
+              surface: "Agent > Channels",
+              state: "not-installed",
+              action: "install",
+              detail: "Optional add-on.",
+            },
+          ],
+          summary: {
+            total: 1,
+            coreIncluded: 0,
+            optionalInstalled: 0,
+            optionalConfigured: 0,
+            externalRequired: 0,
+            errors: 0,
+          },
+        },
+        configSaving: false,
+        configDirty: false,
+        onNavigate: vi.fn(),
+        onConfigPatch: vi.fn(),
+        onConfigSave: vi.fn(),
+        onConfigReload: vi.fn(),
+      }),
+    );
+    expect(text).toContain("Components");
+    expect(text).toContain("Telegram");
+    expect(text).toContain("npm-addon");
+    expect(text).toContain("not-installed");
+    expect(text).toContain("Next action: install");
+  });
+
   it("explains services as APIs separate from channels and extensions", async () => {
     const { renderServices } = await import("./services.ts");
     const text = flattenTemplateText(

@@ -13,6 +13,16 @@ sidebarTitle: "Core And Add-ons"
 Fased keeps the Agent and crypto path in core. Large chat integrations and
 machine-specific runtimes are installed only when you choose them.
 
+Inspect the current machine from the CLI:
+
+```bash
+fased components
+```
+
+The Control UI shows the same lifecycle report under **Services > Components**.
+`included`, `installed`, `configured`, and `ready` are separate states. A
+configuration field does not mean its runtime is installed or healthy.
+
 ## Included in core
 
 A normal install includes:
