@@ -1,3 +1,4 @@
+import { loadLinkedom, loadReadability } from "../../browser/runtime-dependency.js";
 import { sanitizeHtml, stripInvisibleUnicode } from "./web-fetch-visibility.js";
 
 export type ExtractMode = "markdown" | "text";
@@ -17,7 +18,7 @@ async function loadReadabilityDeps(): Promise<{
   parseHTML: typeof import("linkedom").parseHTML;
 }> {
   if (!readabilityDepsPromise) {
-    readabilityDepsPromise = Promise.all([import("@mozilla/readability"), import("linkedom")]).then(
+    readabilityDepsPromise = Promise.all([loadReadability(), loadLinkedom()]).then(
       ([readability, linkedom]) => ({
         Readability: readability.Readability,
         parseHTML: linkedom.parseHTML,

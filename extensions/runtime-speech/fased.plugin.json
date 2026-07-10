@@ -1,0 +1,8 @@
+{
+  "id": "speech-runtime",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

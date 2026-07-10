@@ -1,0 +1,37 @@
+{
+  "name": "@fased/media-runtime",
+  "version": "0.1.36",
+  "description": "Optional media runtime for Fased Agent",
+  "files": [
+    "index.ts",
+    "fased.plugin.json"
+  ],
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@napi-rs/canvas": "^0.1.92",
+    "file-type": "^21.3.2",
+    "pdfjs-dist": "^5.4.624",
+    "sharp": "^0.34.5"
+  },
+  "peerDependencies": {
+    "@fased/fased": "^0.1.36"
+  },
+  "peerDependenciesMeta": {
+    "@fased/fased": {
+      "optional": true
+    }
+  },
+  "fased": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "install": {
+      "npmSpec": "@fased/media-runtime",
+      "localPath": "extensions/runtime-media",
+      "defaultChoice": "npm"
+    }
+  }
+}

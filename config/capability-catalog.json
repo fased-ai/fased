@@ -103,6 +103,18 @@
       "id": "browser-runtime",
       "label": "Browser Runtime",
       "category": "runtime",
+      "delivery": "npm-addon",
+      "packageName": "@fased/browser-runtime",
+      "pluginId": "browser-runtime",
+      "restartRequired": true,
+      "docsPath": "/tools/browser",
+      "surface": "Services > Components",
+      "description": "Optional browser automation and readable-page extraction dependencies."
+    },
+    {
+      "id": "browser-binary",
+      "label": "Browser Application",
+      "category": "runtime",
       "delivery": "external-runtime",
       "externalKind": "browser",
       "docsPath": "/tools/browser",
@@ -154,7 +166,19 @@
       "description": "External LiteLLM proxy connected through the bundled provider client."
     },
     {
-      "id": "local-memory",
+      "id": "local-memory-runtime",
+      "label": "Local Vector Memory",
+      "category": "runtime",
+      "delivery": "npm-addon",
+      "packageName": "@fased/local-memory-runtime",
+      "pluginId": "local-memory-runtime",
+      "restartRequired": true,
+      "docsPath": "/concepts/memory",
+      "surface": "Services > Components",
+      "description": "Optional native sqlite vector-search dependency."
+    },
+    {
+      "id": "local-memory-model",
       "label": "Local Memory Embeddings",
       "category": "runtime",
       "delivery": "external-runtime",
@@ -167,10 +191,25 @@
       "id": "media-runtime",
       "label": "Media Runtime",
       "category": "runtime",
-      "delivery": "core",
+      "delivery": "npm-addon",
+      "packageName": "@fased/media-runtime",
+      "pluginId": "media-runtime",
+      "restartRequired": true,
       "docsPath": "/nodes/media-understanding",
-      "surface": "Services > Media",
-      "description": "Current image, PDF, audio, and video processing foundations."
+      "surface": "Services > Components",
+      "description": "Optional image, file-type, and PDF processing dependencies."
+    },
+    {
+      "id": "speech-runtime",
+      "label": "Speech Runtime",
+      "category": "runtime",
+      "delivery": "npm-addon",
+      "packageName": "@fased/speech-runtime",
+      "pluginId": "speech-runtime",
+      "restartRequired": true,
+      "docsPath": "/tools/tts",
+      "surface": "Services > Components",
+      "description": "Optional local Edge TTS dependency."
     }
   ]
 }

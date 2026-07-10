@@ -1,0 +1,8 @@
+{
+  "id": "browser-runtime",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

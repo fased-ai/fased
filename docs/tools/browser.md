@@ -14,10 +14,17 @@ Fased can run a **dedicated Chrome/Brave/Edge/Chromium profile** that the agent 
 It is isolated from your personal browser and is managed through a small local
 control service inside the Gateway (loopback only).
 
-Fased ships browser control, `playwright-core`, and the extension files. It
-does not install a Chrome, Brave, Edge, or Chromium browser binary as part of
-the core package. Use an existing system browser, install Chromium separately,
-or connect a remote browser/node host.
+Fased ships the browser-control interfaces and extension files. Install the
+optional Browser Runtime for Playwright control and readable-page extraction:
+
+```bash
+fased components install browser-runtime
+fased gateway restart
+```
+
+The component does not install a Chrome, Brave, Edge, or Chromium browser
+application. Use an existing system browser, install Chromium separately, or
+connect a remote browser/node host.
 
 Beginner view:
 
@@ -349,9 +356,13 @@ Playwright. If Playwright isn’t installed, those endpoints return a clear 501
 error. ARIA snapshots and basic screenshots still work for fased-managed Chrome.
 For the Chrome extension relay driver, ARIA snapshots and screenshots require Playwright.
 
-If you see `Playwright is not available in this gateway build`, install the full
-Playwright package (not `playwright-core`) and restart the gateway, or reinstall
-Fased with browser support.
+If Fased reports that Playwright is unavailable, install the Browser Runtime and
+restart the Gateway:
+
+```bash
+fased components install browser-runtime
+fased gateway restart
+```
 
 #### Docker Playwright install
 

@@ -62,7 +62,7 @@
       "label": "Amazon Bedrock Provider",
       "delivery": "provider-addon",
       "target": "extract",
-      "dependencies": ["@aws-sdk/client-bedrock", "@aws-sdk/core"]
+      "dependencies": []
     },
     {
       "id": "provider-google",
@@ -83,6 +83,7 @@
       "label": "Browser Runtime",
       "delivery": "runtime-addon",
       "target": "extract",
+      "packagePath": "extensions/runtime-browser/package.json",
       "dependencies": ["@mozilla/readability", "linkedom", "playwright-core"]
     },
     {
@@ -90,13 +91,15 @@
       "label": "Media Runtime",
       "delivery": "runtime-addon",
       "target": "extract",
-      "dependencies": ["file-type", "pdfjs-dist", "sharp"]
+      "packagePath": "extensions/runtime-media/package.json",
+      "dependencies": ["@napi-rs/canvas", "file-type", "pdfjs-dist", "sharp"]
     },
     {
       "id": "speech-runtime",
       "label": "Speech Runtime",
       "delivery": "runtime-addon",
       "target": "extract",
+      "packagePath": "extensions/runtime-speech/package.json",
       "dependencies": ["node-edge-tts"]
     },
     {
@@ -104,6 +107,7 @@
       "label": "Native Local Memory",
       "delivery": "runtime-addon",
       "target": "extract",
+      "packagePath": "extensions/runtime-local-memory/package.json",
       "dependencies": ["sqlite-vec"]
     }
   ]

@@ -1,3 +1,5 @@
+import { loadLinkedom } from "../../browser/runtime-dependency.js";
+
 // CSS property values that indicate an element is hidden
 const HIDDEN_STYLE_PATTERNS: Array<[string, RegExp]> = [
   ["display", /^\s*none\s*$/i],
@@ -129,7 +131,7 @@ export async function sanitizeHtml(html: string): Promise<string> {
 
   let document: Document;
   try {
-    const { parseHTML } = await import("linkedom");
+    const { parseHTML } = await loadLinkedom();
     ({ document } = parseHTML(sanitized) as { document: Document });
   } catch {
     return sanitized;

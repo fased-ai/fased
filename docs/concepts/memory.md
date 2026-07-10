@@ -40,6 +40,17 @@ flowchart TD
 The global Memory page is diagnostic. Agent-owned archive controls live in
 **Agent > Memory**.
 
+File-backed memory remains available in core. Native sqlite vector acceleration
+is optional:
+
+```bash
+fased components install local-memory-runtime
+fased gateway restart
+```
+
+Local GGUF embeddings are a separate external runtime. Install and manage the
+model server or native embedding stack only when you choose that provider.
+
 ## What gets recorded
 
 Memory is recorded only when something writes it:

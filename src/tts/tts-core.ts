@@ -1,7 +1,6 @@
 import { rmSync } from "node:fs";
 import type { TextContent } from "@mariozechner/pi-ai";
 import { completeSimple } from "@mariozechner/pi-ai/compat";
-import { EdgeTTS } from "node-edge-tts";
 import { getApiKeyForModel, requireApiKey } from "../agents/model-auth.js";
 import {
   buildModelAliasIndex,
@@ -11,6 +10,7 @@ import {
 } from "../agents/model-selection.js";
 import { resolveModel } from "../agents/pi-embedded-runner/model.js";
 import type { FasedAgentConfig } from "../config/config.js";
+import { importOptionalRuntimeDependency } from "../infra/optional-runtime-dependency.js";
 import type {
   ResolvedTtsConfig,
   ResolvedTtsModelOverrides,
@@ -659,6 +659,11 @@ export async function edgeTTS(params: {
   timeoutMs: number;
 }): Promise<void> {
   const { text, outputPath, config, timeoutMs } = params;
+  const { EdgeTTS } = await importOptionalRuntimeDependency<typeof import("node-edge-tts")>({
+    componentId: "speech-runtime",
+    packageName: "@fased/speech-runtime",
+    dependency: "node-edge-tts",
+  });
   const tts = new EdgeTTS({
     voice: config.voice,
     lang: config.lang,

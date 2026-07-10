@@ -27,6 +27,12 @@ type PackageJson = {
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const optionalChannels = ["discord", "slack", "telegram", "whatsapp"] as const;
+const optionalRuntimeExtensions = [
+  "runtime-browser",
+  "runtime-local-memory",
+  "runtime-media",
+  "runtime-speech",
+] as const;
 const optionalChannelDependencies = [
   "@buape/carbon",
   "@discordjs/opus",
@@ -40,6 +46,17 @@ const optionalChannelDependencies = [
   "discord-api-types",
   "grammy",
   "opusscript",
+] as const;
+const optionalRuntimeDependencies = [
+  "@mozilla/readability",
+  "@napi-rs/canvas",
+  "file-type",
+  "linkedom",
+  "node-edge-tts",
+  "pdfjs-dist",
+  "playwright-core",
+  "sharp",
+  "sqlite-vec",
 ] as const;
 
 let invocationIndex = 0;
@@ -102,9 +119,19 @@ async function main() {
         throw new Error(`core package still owns optional channel dependency ${dependency}`);
       }
     }
+    for (const dependency of optionalRuntimeDependencies) {
+      if (installedDependencies[dependency]) {
+        throw new Error(`core package still owns optional runtime dependency ${dependency}`);
+      }
+    }
     for (const channelId of optionalChannels) {
       if (existsSync(path.join(coreRoot, "extensions", channelId))) {
         throw new Error(`core package still ships optional channel extension ${channelId}`);
+      }
+    }
+    for (const directory of optionalRuntimeExtensions) {
+      if (existsSync(path.join(coreRoot, "extensions", directory))) {
+        throw new Error(`core package still ships optional runtime extension ${directory}`);
       }
     }
 
@@ -141,7 +168,7 @@ async function main() {
       summary?: { coreIncluded?: unknown; optionalInstalled?: unknown; errors?: unknown };
     };
     if (
-      components.summary?.coreIncluded !== 6 ||
+      components.summary?.coreIncluded !== 5 ||
       components.summary.optionalInstalled !== 0 ||
       components.summary.errors !== 0
     ) {

@@ -1,5 +1,5 @@
 import path from "node:path";
-import { fileTypeFromBuffer } from "file-type";
+import { importOptionalRuntimeDependency } from "../infra/optional-runtime-dependency.js";
 import { type MediaKind, mediaKindFromMime } from "./constants.js";
 
 // Map common mimes to preferred file extensions.
@@ -66,6 +66,13 @@ async function sniffMime(buffer?: Buffer): Promise<string | undefined> {
     return undefined;
   }
   try {
+    const { fileTypeFromBuffer } = await importOptionalRuntimeDependency<
+      typeof import("file-type")
+    >({
+      componentId: "media-runtime",
+      packageName: "@fased/media-runtime",
+      dependency: "file-type",
+    });
     const type = await fileTypeFromBuffer(buffer);
     return type?.mime ?? undefined;
   } catch {

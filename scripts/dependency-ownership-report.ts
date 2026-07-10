@@ -8,6 +8,7 @@ type OwnershipGroup = {
   label: string;
   delivery: "core" | "channel-addon" | "provider-addon" | "runtime-addon";
   target: "keep" | "extract" | "audit";
+  packagePath?: string;
   dependencies: string[];
 };
 
@@ -46,7 +47,7 @@ const productionDependencies = new Set([
   ...Object.keys(packageJson.dependencies ?? {}),
   ...Object.keys(packageJson.optionalDependencies ?? {}),
 ]);
-const owners = new Map<string, string[]>();
+const rootOwners = new Map<string, string[]>();
 const groupIds = new Set<string>();
 const failures: string[] = [];
 
@@ -55,15 +56,33 @@ for (const group of config.groups) {
     failures.push(`duplicate or empty group id: ${group.id || "(empty)"}`);
   }
   groupIds.add(group.id);
+  if (group.packagePath) {
+    const componentPackage = readJson<PackageJson>(group.packagePath);
+    const componentDependencies = new Set([
+      ...Object.keys(componentPackage.dependencies ?? {}),
+      ...Object.keys(componentPackage.optionalDependencies ?? {}),
+    ]);
+    for (const dependency of componentDependencies) {
+      if (!group.dependencies.includes(dependency)) {
+        failures.push(`${group.id} package dependency has no ownership entry: ${dependency}`);
+      }
+    }
+    for (const dependency of group.dependencies) {
+      if (!componentDependencies.has(dependency)) {
+        failures.push(`${group.id} ownership entry is not a package dependency: ${dependency}`);
+      }
+    }
+    continue;
+  }
   for (const dependency of group.dependencies) {
-    const dependencyOwners = owners.get(dependency) ?? [];
+    const dependencyOwners = rootOwners.get(dependency) ?? [];
     dependencyOwners.push(group.id);
-    owners.set(dependency, dependencyOwners);
+    rootOwners.set(dependency, dependencyOwners);
   }
 }
 
 for (const dependency of [...productionDependencies].toSorted()) {
-  const dependencyOwners = owners.get(dependency) ?? [];
+  const dependencyOwners = rootOwners.get(dependency) ?? [];
   if (dependencyOwners.length === 0) {
     failures.push(`production dependency has no owner: ${dependency}`);
   } else if (dependencyOwners.length > 1) {
@@ -73,7 +92,7 @@ for (const dependency of [...productionDependencies].toSorted()) {
   }
 }
 
-for (const [dependency, dependencyOwners] of owners) {
+for (const [dependency, dependencyOwners] of rootOwners) {
   if (!productionDependencies.has(dependency)) {
     failures.push(`ownership entry is not a production dependency: ${dependency}`);
   }
@@ -87,7 +106,12 @@ if (failures.length > 0) {
 }
 
 const report = {
-  totalDependencies: productionDependencies.size,
+  totalDependencies:
+    productionDependencies.size +
+    config.groups
+      .filter((group) => Boolean(group.packagePath))
+      .reduce((total, group) => total + group.dependencies.length, 0),
+  coreDependencies: productionDependencies.size,
   groups: config.groups.map((group) => ({
     ...group,
     dependencies: group.dependencies.toSorted(),
