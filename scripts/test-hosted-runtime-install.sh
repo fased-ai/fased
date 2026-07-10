@@ -34,7 +34,7 @@ else
   printf '%s  %s\n' "$digest" "$ASSET" >"$RELEASE_ROOT/${ASSET}.sha256"
 fi
 
-"$INSTALLER" \
+bash "$INSTALLER" \
   --package "@fased/fased@${VERSION}" \
   --prefix "$PREFIX" \
   --cache "$CACHE" \
@@ -45,7 +45,7 @@ fi
 
 printf '%064d  %s\n' 0 "$ASSET" >"$RELEASE_ROOT/${ASSET}.sha256"
 set +e
-"$INSTALLER" \
+bash "$INSTALLER" \
   --package "@fased/fased@${VERSION}" \
   --prefix "$TEMP_ROOT/tampered-prefix" \
   --cache "$TEMP_ROOT/tampered-cache" \
@@ -55,7 +55,7 @@ set -e
 [[ "$tampered_status" -eq 20 ]]
 
 set +e
-"$INSTALLER" \
+bash "$INSTALLER" \
   --package "@fased/fased@${VERSION}" \
   --prefix "$TEMP_ROOT/missing-prefix" \
   --cache "$TEMP_ROOT/missing-cache" \

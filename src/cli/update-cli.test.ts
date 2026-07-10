@@ -23,6 +23,9 @@ const classifyPortListener = vi.fn();
 const formatPortDiagnostics = vi.fn();
 const syncPluginsForUpdateChannel = vi.fn();
 const updateNpmInstalledPlugins = vi.fn();
+const checkShellCompletionStatus = vi.fn();
+const ensureCompletionCacheExists = vi.fn();
+const installCompletion = vi.fn();
 
 vi.mock("@clack/prompts", () => ({
   confirm,
@@ -78,6 +81,15 @@ vi.mock("../process/exec.js", () => ({
 vi.mock("../plugins/update.js", () => ({
   syncPluginsForUpdateChannel,
   updateNpmInstalledPlugins,
+}));
+
+vi.mock("../commands/doctor-completion.js", () => ({
+  checkShellCompletionStatus,
+  ensureCompletionCacheExists,
+}));
+
+vi.mock("./completion-cli.js", () => ({
+  installCompletion,
 }));
 
 vi.mock("./update-cli/shared.js", async (importOriginal) => {
@@ -278,6 +290,9 @@ describe("update-cli", () => {
     formatPortDiagnostics.mockClear();
     syncPluginsForUpdateChannel.mockClear();
     updateNpmInstalledPlugins.mockClear();
+    checkShellCompletionStatus.mockReset();
+    ensureCompletionCacheExists.mockReset();
+    installCompletion.mockReset();
     vi.mocked(resolveFasedAgentPackageRoot).mockResolvedValue(process.cwd());
     vi.mocked(readConfigFileSnapshot).mockResolvedValue(baseSnapshot);
     vi.mocked(fetchNpmTagVersion).mockResolvedValue({
@@ -358,6 +373,14 @@ describe("update-cli", () => {
       changed: false,
       outcomes: [],
     }));
+    checkShellCompletionStatus.mockResolvedValue({
+      shell: "bash",
+      profileInstalled: true,
+      cacheExists: true,
+      cachePath: "/tmp/fased-completion-cache",
+      usesSlowPattern: false,
+    });
+    ensureCompletionCacheExists.mockResolvedValue(true);
     confirm.mockResolvedValue(false);
     select.mockResolvedValue("stable");
     vi.mocked(runGatewayUpdate).mockResolvedValue(makeOkUpdateResult());
@@ -396,6 +419,24 @@ describe("update-cli", () => {
 
     expect(runGatewayUpdate).toHaveBeenCalled();
     expect(defaultRuntime.log).toHaveBeenCalled();
+  });
+
+  it("accepts the default shell completion install without prompting when --yes is set", async () => {
+    setTty(true);
+    checkShellCompletionStatus.mockResolvedValue({
+      shell: "bash",
+      profileInstalled: false,
+      cacheExists: false,
+      cachePath: "/tmp/fased-completion-cache",
+      usesSlowPattern: false,
+    });
+    vi.mocked(runGatewayUpdate).mockResolvedValue(makeOkUpdateResult());
+
+    await updateCommand({ yes: true, restart: false });
+
+    expect(confirm).not.toHaveBeenCalled();
+    expect(ensureCompletionCacheExists).toHaveBeenCalled();
+    expect(installCompletion).toHaveBeenCalledWith("bash", true, expect.any(String));
   });
 
   it("updateCommand --dry-run previews without mutating", async () => {

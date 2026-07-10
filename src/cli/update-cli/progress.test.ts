@@ -80,6 +80,23 @@ describe("formatLongUpdateStepMessage", () => {
 });
 
 describe("formatUpdateStrategyLabel", () => {
+  it("names the verified hosted runtime fast path", () => {
+    const result: UpdateRunResult = {
+      status: "ok",
+      mode: "npm",
+      strategy: {
+        kind: "hosted-artifact",
+        reason: "verified self-contained hosted runtime",
+      },
+      steps: [],
+      durationMs: 1,
+    };
+
+    expect(formatUpdateStrategyLabel(result)).toBe(
+      "fast hosted artifact: verified self-contained hosted runtime",
+    );
+  });
+
   it("names the hosted artifact fast path", () => {
     const result: UpdateRunResult = {
       status: "ok",

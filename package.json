@@ -1,6 +1,6 @@
 {
   "name": "@fased/fased",
-  "version": "0.1.35",
+  "version": "0.1.36",
   "description": "Fased Agent self-hosted AI gateway with channels, tools, plugins, and operator modules",
   "keywords": [
     "ai-agent",
@@ -163,7 +163,7 @@
     "gateway:watch": "node scripts/watch-node.mjs gateway --force",
     "gen:host-env-policy:swift": "node scripts/generate-host-env-security-policy-swift.mjs --write",
     "ghsa:patch": "node scripts/ghsa-patch.mjs",
-    "hosted:artifact": "node --import tsx scripts/build-hosted-runtime-artifact.ts",
+    "hosted:artifact": "pnpm build && pnpm release:check && node --import tsx scripts/build-hosted-runtime-artifact.ts",
     "ios:build": "bash -lc './scripts/ios-configure-signing.sh && cd apps/ios && xcodegen generate && xcodebuild -project FasedAgent.xcodeproj -scheme FasedAgent -destination \"${IOS_DEST:-platform=iOS Simulator,name=iPhone 17}\" -configuration Debug build'",
     "ios:gen": "bash -lc './scripts/ios-configure-signing.sh && cd apps/ios && xcodegen generate'",
     "ios:open": "bash -lc './scripts/ios-configure-signing.sh && cd apps/ios && xcodegen generate && open FasedAgent.xcodeproj'",

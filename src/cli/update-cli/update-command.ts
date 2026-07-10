@@ -297,10 +297,12 @@ async function tryInstallShellCompletion(opts: {
     defaultRuntime.log("");
     defaultRuntime.log(theme.heading("Shell completion"));
 
-    const shouldInstall = await confirm({
-      message: stylePromptMessage(`Enable ${status.shell} shell completion for ${CLI_NAME}?`),
-      initialValue: true,
-    });
+    const shouldInstall = opts.skipPrompt
+      ? true
+      : await confirm({
+          message: stylePromptMessage(`Enable ${status.shell} shell completion for ${CLI_NAME}?`),
+          initialValue: true,
+        });
 
     if (isCancel(shouldInstall) || !shouldInstall) {
       if (!opts.skipPrompt) {
