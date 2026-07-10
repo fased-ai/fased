@@ -450,11 +450,12 @@ For development/testing from a source checkout:
 ```bash
 git checkout main
 git pull --ff-only origin main
-./install.sh
+./install.sh --source-install
 ```
 
 Use `./install.sh --hosting` for that same development checkout flow on a
-hosted VPS, and run it as `app` from `/home/app/fased`.
+hosted VPS by adding `--source-install`, and run it as `app` from
+`/home/app/fased`.
 
 The installer is repo-backed from `fased-ai/fased`.
 
@@ -502,7 +503,8 @@ fased update
 The browser Control UI reports version and update availability under
 **Advanced > Debug > Update Status**. Run the actual update from the CLI.
 Rerun `./install.sh` for repair/reinstall behavior; the installer refreshes a
-clean checkout and VPS Hosting prefers the verified prebuilt runtime artifact.
+clean checkout and supported Linux Local and VPS Hosting profiles prefer the
+verified prebuilt runtime artifact.
 
 ## What onboarding does
 

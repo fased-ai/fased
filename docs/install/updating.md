@@ -12,8 +12,9 @@ title: "Updating"
 The public installer keeps a checkout as the setup and repair anchor. The
 active runtime depends on the install profile:
 
-- Local installs normally run from the source checkout.
-- VPS Hosting installs normally run a verified prebuilt release artifact.
+- Supported Linux Local and VPS Hosting installs normally run a verified
+  prebuilt release artifact.
+- macOS and explicit `--source-install` installs run from the source checkout.
 - `fased update` is the normal update command for both profiles.
 - The Control UI currently reports update status; it does not start the update.
 - Rerun `./install.sh` for repair or reinstall behavior.
@@ -94,12 +95,12 @@ from `main`:
 fased update --channel dev
 ```
 
-For development/testing from a source checkout, the manual equivalent is:
+For development/testing from a source checkout, use the explicit source path:
 
 ```bash
 git checkout main
 git pull --ff-only origin main
-./install.sh
+./install.sh --source-install
 ```
 
 On a hosted VPS, run the development checkout flow as `app` from
@@ -141,10 +142,10 @@ restart remain terminal operations.
 ## Installer rerun
 
 Rerun `./install.sh` when you want repair/reinstall behavior. Current installers
-refresh a clean checkout first. VPS Hosting then prefers the verified prebuilt
-runtime artifact; Local source installs refresh dependencies and build. If the
-installer itself changes, it restarts once and continues with the updated
-script.
+refresh a clean checkout first. Supported Linux Local and VPS Hosting profiles
+then prefer the verified prebuilt runtime artifact. macOS and explicit
+`--source-install` runs refresh dependencies and build. If the installer itself
+changes, it restarts once and continues with the updated script.
 
 ```bash
 cd ~/fased
@@ -175,7 +176,8 @@ Use `./install.sh --no-git-update` only when testing local changes.
 - updates to the configured channel; stable is the default end-user channel
   and resolves to the newest stable release tag
 - uses a verified release artifact for the managed VPS runtime when available
-- refreshes dependencies and rebuilds for a Local source checkout
+- uses the same verified artifact for supported Linux Local installs
+- refreshes dependencies and rebuilds for macOS or explicit source installs
 - checks tracked npm plugins after the core update
 - restarts when needed
 
@@ -239,8 +241,9 @@ Fresh installs and hosted systems should use the curl bootstrap:
 
 - curl bootstrap for fresh local machines, WSL2, and hosted VPS
 - `fased update` for normal updates
-- verified GitHub Release artifacts for normal VPS Hosting installs and updates
-- source checkout builds for the normal Local install path
+- verified GitHub Release artifacts for supported Linux Local and VPS Hosting
+  installs and updates
+- source checkout builds for macOS and explicit `--source-install` workflows
 - manual `npm install -g @fased/fased` is for advanced/local/manual installs,
   not the recommended hosted VPS setup flow
 

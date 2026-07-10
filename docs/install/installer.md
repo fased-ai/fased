@@ -250,6 +250,7 @@ These are the flags that matter for the current public repo-backed flow.
 | `--install-dir <path>` | Bootstrap or resolve the checkout under a specific directory.     |
 | `--hosting`            | Use hosted/VPS onboarding defaults.                               |
 | `--local`              | Use local-machine onboarding defaults.                            |
+| `--source-install`     | Build from source instead of using the verified Linux runtime.    |
 | `--swap-gb <n>`        | Override automatic install-time swap sizing on small Linux hosts. |
 | `--no-onboard`         | Build/install and skip onboarding.                                |
 | `--verbose`            | Show install command output instead of only log paths.            |
@@ -277,7 +278,10 @@ current surface, run `./install.sh --help` from the repo root.
 - `FASED_INSTALL_VERBOSE=1`: show install command output instead of only log
   paths.
 - `FASED_INSTALL_USER=<name>`: non-root app user used by root bootstrap installs.
-- `FASED_HOSTING_NPM_PACKAGE=<spec>`: advanced hosted runtime package override.
+- `FASED_RUNTIME_NPM_PACKAGE=<spec>`: advanced release-runtime package override.
+- `FASED_HOSTING_NPM_PACKAGE=<spec>`: compatibility alias for hosted installs.
+- `FASED_SOURCE_INSTALL=1`: build from the checkout instead of using a verified
+  Linux release runtime.
 - `FASED_HOSTING_SOURCE_INSTALL=1`: advanced hosted testing path that uses the
   source checkout, `pnpm`, and local builds instead of the prebuilt runtime.
 - `FASED_EXISTING_DATA_ACTION=<mode>`: advanced local state override: `keep`,
@@ -316,9 +320,10 @@ curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | ba
 
 The curl bootstrap is the public first-run path for fresh machines because it
 can install missing OS tools, Git, and Node, then choose the right Local or VPS
-Hosting setup. Hosted installs may use the published npm package internally as
-the runtime payload, but users should still begin with the Fased installer so
-Tailscale, service setup, host hardening, and onboarding stay aligned.
+Hosting setup. Supported Linux Local and VPS Hosting installs use the verified
+release runtime when available. The source checkout remains the setup and repair
+anchor. Users should still begin with the Fased installer so service setup,
+host security, and onboarding stay aligned.
 
 Bun global installs are not the public Fased install path; Bun remains
 experimental local development only.

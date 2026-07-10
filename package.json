@@ -191,7 +191,7 @@
     "protocol:check": "pnpm protocol:gen && pnpm protocol:gen:swift && git diff --exit-code -- dist/protocol.schema.json apps/macos/Sources/FasedAgentProtocol/GatewayModels.swift",
     "protocol:gen": "node --import tsx scripts/protocol-gen.ts",
     "protocol:gen:swift": "node --import tsx scripts/protocol-gen-swift.ts",
-    "release:check": "pnpm check:dependency-ownership && node --import tsx scripts/release-check.ts && node --import tsx scripts/smoke-packed-core.ts",
+    "release:check": "pnpm check:dependency-ownership && bash scripts/test-install-runtime-profile.sh && node --import tsx scripts/release-check.ts && node --import tsx scripts/smoke-packed-core.ts",
     "sat:bond:runtime:local": "bash scripts/set-sat-bond-runtime-env.sh",
     "start": "node scripts/run-node.mjs",
     "test": "node scripts/test-parallel.mjs",

@@ -88,6 +88,8 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FASED_DIR="$SCRIPT_DIR"
+# shellcheck source=scripts/install-runtime-profile.sh
+. "$FASED_DIR/scripts/install-runtime-profile.sh"
 SAT_RUNTIME_ENV_FILE="${FASED_SAT_RUNTIME_ENV_FILE:-$FASED_DIR/config/sat-runtime.env}"
 INSTALL_REPO_URL="${FASED_INSTALL_REPO:-https://github.com/fased-ai/fased.git}"
 INSTALL_BASE_DIR="${FASED_INSTALL_DIR:-$HOME/fased}"
@@ -100,10 +102,11 @@ INSTALL_CACHE_DIR="$FASED_CONFIG_DIR/install-cache"
 INSTALL_LOG_DIR="$FASED_CONFIG_DIR/logs"
 INSTALL_VERBOSE="${FASED_INSTALL_VERBOSE:-0}"
 INSTALL_GIT_UPDATE="${FASED_INSTALL_GIT_UPDATE:-1}"
-HOSTING_NPM_PACKAGE="${FASED_HOSTING_NPM_PACKAGE:-@fased/fased@latest}"
+RELEASE_NPM_PACKAGE="${FASED_RUNTIME_NPM_PACKAGE:-${FASED_HOSTING_NPM_PACKAGE:-@fased/fased@latest}}"
 AUTO_INSTALL=1
 RUN_ONBOARD=1
 HOSTING_REQUESTED=0
+SOURCE_INSTALL_REQUESTED=0
 REQUESTED_SWAP_GB=""
 TEMP_SUDOERS=""
 FASED_CLI_PATH=""
@@ -275,8 +278,10 @@ Options:
   --install-dir <path>  Checkout/install directory (default: $HOME/fased)
   --hosting       VPS/always-on server profile. Requires Tailscale; applies hosted
                   onboarding defaults and may change SSH/firewall behavior.
-  --local         Laptop/dev-box profile. Tailscale is optional; on a VPS this does
+  --local         Laptop/desktop profile. Tailscale is optional; on a VPS this does
                   not apply hosting SSH/firewall hardening.
+  --source-install  Build from the checkout instead of using the verified Linux
+                  release runtime. Intended for contributors and source testing.
   --swap-gb <n>   Override automatic install-time swap size on small Linux hosts
   --no-git-update  Do not fast-forward the checkout from origin before install
   --no-onboard     Skip running onboard (install deps only)
@@ -313,6 +318,9 @@ while [[ $# -gt 0 ]]; do
       ;;
     --local)
       pass_args+=(--mode local --host-profile local --tailscale off)
+      ;;
+    --source-install)
+      SOURCE_INSTALL_REQUESTED=1
       ;;
     --swap-gb)
       shift
@@ -1092,12 +1100,18 @@ install_fased_cli_launcher() {
   step_done "CLI installed"
 }
 
-use_hosting_npm_prebuilt_runtime() {
-  [[ "$(resolved_host_profile)" == "hosting" && "${FASED_HOSTING_SOURCE_INSTALL:-0}" != "1" ]]
+use_prebuilt_release_runtime() {
+  fased_should_use_prebuilt_release_runtime \
+    "$(resolved_host_profile)" \
+    "$SOURCE_INSTALL_REQUESTED" \
+    "${FASED_SOURCE_INSTALL:-0}" \
+    "${FASED_HOSTING_SOURCE_INSTALL:-0}" \
+    "$(uname -s 2>/dev/null || true)" \
+    "$(uname -m 2>/dev/null || true)"
 }
 
-install_hosting_npm_prebuilt_runtime() {
-  local package_spec="${HOSTING_NPM_PACKAGE:-@fased/fased@latest}"
+install_prebuilt_release_runtime() {
+  local package_spec="${RELEASE_NPM_PACKAGE:-@fased/fased@latest}"
   local npm_prefix="${FASED_NPM_GLOBAL_PREFIX:-$INSTALL_CACHE_DIR/npm-global}"
   local bin_dir="$npm_prefix/bin"
   local target="$bin_dir/fased"
@@ -1117,14 +1131,14 @@ install_hosting_npm_prebuilt_runtime() {
   fi
   if [[ "$artifact_result" -ne 0 ]]; then
     if [[ "$INSTALL_VERBOSE" == "1" ]]; then
-      echo "Hosted runtime artifact unavailable; using npm fallback."
+      echo "Release runtime artifact unavailable; using npm fallback."
       npm_config_prefix="$npm_prefix" npm_config_cache="$npm_config_cache" \
         npm install -g --prefix "$npm_prefix" "$package_spec" --no-audit --no-fund
     else
       npm_config_prefix="$npm_prefix" npm_config_cache="$npm_config_cache" \
         npm install -g --prefix "$npm_prefix" "$package_spec" --no-audit --no-fund >"$install_log" 2>&1 || {
           spinner_failed "Install prebuilt runtime"
-          echo "Failed: hosted runtime and npm fallback install" >&2
+          echo "Failed: release runtime and npm fallback install" >&2
           echo "Package: $package_spec" >&2
           echo "Log: $install_log" >&2
           tail -n 80 "$install_log" >&2 || true
@@ -3163,7 +3177,7 @@ fi
 
 missing=()
 required_tools=(git curl)
-if use_hosting_npm_prebuilt_runtime; then
+if use_prebuilt_release_runtime; then
   required_tools+=(npm)
 else
   required_tools+=(pnpm)
@@ -3231,8 +3245,8 @@ section "System preparation"
 ensure_low_memory_swap_if_possible
 build_old_space_mb="$(recommended_onboard_old_space_mb)"
 build_node_options="$(node_options_with_old_space "${NODE_OPTIONS:-}" "$build_old_space_mb")"
-if use_hosting_npm_prebuilt_runtime; then
-  install_hosting_npm_prebuilt_runtime
+if use_prebuilt_release_runtime; then
+  install_prebuilt_release_runtime
 else
   pnpm_install_with_adaptive_profile
 fi
@@ -3248,7 +3262,7 @@ fi
 export FASED_SAT_BOND_LAYOUT_PATH="${FASED_SAT_BOND_LAYOUT_PATH:-$FASED_DIR/token/sat/bond-api/bond-position-layout.json}"
 export FASED_SAT_BOND_POLICY_LAYOUT_PATH="${FASED_SAT_BOND_POLICY_LAYOUT_PATH:-$FASED_DIR/token/sat/bond-api/bond-tier-policy-layout.json}"
 
-if use_hosting_npm_prebuilt_runtime; then
+if use_prebuilt_release_runtime; then
   section "Runtime"
   step_done "Using prebuilt runtime"
 else
