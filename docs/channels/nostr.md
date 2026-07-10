@@ -12,12 +12,13 @@ Nostr gives Fased a lightweight decentralized DM lane without a central service
 account. The gateway signs in with a Nostr private key, listens on one or more
 relays, and routes encrypted DMs into the normal Fased session model.
 
-**Status:** bundled channel extension, disabled until configured.
+**Status:** source extension, disabled until configured.
 
 ## Setup from Agent > Channels
 
-Nostr ships with Fased as a local bundled channel extension. You do not need to
-download an npm package in a normal install.
+Nostr is available from a source install. The lightweight hosted runtime does
+not currently include `nostr-tools`, and Nostr does not yet have an official
+Fased add-on package. Use a maintained source install for this channel.
 
 Open **Agents**, select the Agent, then use **Agent > Channels > Nostr**. Enter
 the private key and relay list, save the channel, then restart the gateway if

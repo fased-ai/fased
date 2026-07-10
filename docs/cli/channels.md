@@ -22,6 +22,7 @@ Related docs:
 - [Channels](/channels/index)
 - [Channel Routing](/channels/channel-routing)
 - [Diagnostics](/diagnostics/index)
+- [Core And Optional Components](/install/components)
 
 ## Common commands
 
@@ -38,6 +39,25 @@ fased channels logs --channel all
 installable channel catalog entries. Installable entries show whether they came
 from the bundled official catalog or an external catalog, and whether the
 catalog entry is integrity pinned before install.
+
+## Install an official channel add-on
+
+Telegram, WhatsApp, Discord, and Slack are downloaded only when selected. Run
+interactive setup and accept the npm install prompt:
+
+```bash
+fased channels add
+```
+
+Or install one package directly, restart, then configure its account:
+
+```bash
+fased plugins install @fased/telegram
+fased gateway restart
+fased channels add --channel telegram --token-file ~/.fased/secrets/telegram.token
+```
+
+The same Install action is available from **Agent > Channels**.
 
 ## Add and remove accounts
 

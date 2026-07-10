@@ -268,6 +268,9 @@ export const VoiceCallConfigSchema = z
     /** Maximum call duration in seconds */
     maxDurationSeconds: z.number().int().positive().default(300),
 
+    /** End calls that remain active beyond this age; 0 disables the reaper */
+    staleCallReaperSeconds: z.number().int().nonnegative().default(0),
+
     /** Silence timeout for end-of-speech detection (ms) */
     silenceTimeoutMs: z.number().int().positive().default(800),
 

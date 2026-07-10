@@ -11,12 +11,14 @@ Twitch is best treated as a live-channel companion. Fased joins Twitch chat
 through the IRC bridge, speaks as a Twitch bot account, and relies on
 allowlists or moderator roles to control who can trigger it.
 
-Status: bundled channel extension through Twitch chat over IRC.
+Status: source extension through Twitch chat over IRC.
 
 ## Setup from Agent > Channels
 
-Twitch ships with Fased as a local bundled channel extension. You do not need to
-download an npm package in a normal install.
+Twitch is available from a source install. The lightweight hosted runtime does
+not currently include the Twurple dependencies, and Twitch does not yet have an
+official Fased add-on package. Use a maintained source install for this
+channel.
 
 Open **Agents**, select the Agent, then use **Agent > Channels > Twitch**. Enter
 the bot username, access token, client ID, and channel name, save the channel,

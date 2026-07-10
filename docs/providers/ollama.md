@@ -11,6 +11,9 @@ title: "Ollama"
 Ollama is a first-class **Agent > Models** provider in Fased. It uses Ollama's
 native API, not the OpenAI-compatible `/v1` endpoint.
 
+Fased does not install Ollama and does not download Ollama model weights. Run
+Ollama separately, then connect its API from **Agent > Models**.
+
 Use a base URL like:
 
 ```bash

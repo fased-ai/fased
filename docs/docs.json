@@ -948,7 +948,7 @@
             "groups": [
               {
                 "group": "Install overview",
-                "pages": ["install/index", "install/node"]
+                "pages": ["install/index", "install/components", "install/node"]
               },
               {
                 "group": "Alternative methods",

@@ -1,5 +1,5 @@
 ---
-summary: "Updating Fased safely with the current repo-backed install flow."
+summary: "Updating local and hosted Fased installs safely."
 read_when:
   - Updating Fased
   - Understanding the difference between install, onboard, and update
@@ -9,14 +9,14 @@ title: "Updating"
 
 # Updating
 
-Current public installs are repo-backed.
+The public installer keeps a checkout as the setup and repair anchor. The
+active runtime depends on the install profile:
 
-That means the current update paths are:
-
-- use `fased update` for normal running systems
-- use the Control UI update action only when the UI build shows it and the
-  gateway is healthy
-- rerun `./install.sh` for repair/reinstall behavior
+- Local installs normally run from the source checkout.
+- VPS Hosting installs normally run a verified prebuilt release artifact.
+- `fased update` is the normal update command for both profiles.
+- The Control UI currently reports update status; it does not start the update.
+- Rerun `./install.sh` for repair or reinstall behavior.
 
 The update path should not require committing generated files. Native signer
 artifacts, build outputs, and service state are install artifacts; keep source
@@ -65,20 +65,19 @@ fased update --dry-run
 fased update --no-restart
 ```
 
-Use this when the runtime already lives on a repo checkout and you want the
-gateway-aware update flow.
+Use this for the gateway-aware update flow on an existing install.
 
 By default, `fased update` uses the **stable** channel. On a git checkout,
 stable means the newest stable `v*` release tag. It does **not** mean the moving
 head of `main`. On package installs, stable uses npm `latest` when the package
 manager path is active and detected.
 
-| Command                                                 | What it gets              |
-| ------------------------------------------------------- | ------------------------- |
-| `git clone https://github.com/fased-ai/fased.git fased` | Latest `main` checkout    |
-| `git pull --ff-only origin main`                        | Latest `main` checkout    |
-| `fased update`                                          | Latest stable release tag |
-| `fased update --channel dev`                            | Latest `main` checkout    |
+| Command                                                 | What it gets                                      |
+| ------------------------------------------------------- | ------------------------------------------------- |
+| `git clone https://github.com/fased-ai/fased.git fased` | Latest `main` checkout                            |
+| `git pull --ff-only origin main`                        | Latest `main` checkout                            |
+| `fased update`                                          | Latest stable release for the active install type |
+| `fased update --channel dev`                            | Latest `main` checkout                            |
 
 Use this for normal end-user updates:
 
@@ -120,42 +119,31 @@ asset source with `FASED_LOCAL_SIGNER_VERSION` / `FASED_LOCAL_SIGNER_BASE_URL`.
 Do not commit generated signer binaries to Git, and do not cut a release just to
 test signer setup.
 
-## Control UI update
+## Control UI update status
 
-The browser Control UI shows update state at:
+The browser Control UI shows read-only update state at:
 
 ```text
 Advanced -> Debug -> Update Status
 ```
 
-If your UI build shows an **Update & Restart** action there, it uses the same
-gateway update runner as `fased update`.
-
-Use it when:
-
-- the gateway is already healthy
-- the UI is reachable
-- the visible update action is shown
-- you want the restart/report in the UI
-
-It uses the configured update channel. Stable is the default and resolves to the
-latest stable release tag for repo-backed installs.
-
-If the visible update action is not shown, use the CLI:
+Use the CLI to run the update:
 
 ```bash
 fased update status
 fased update
 ```
 
-Use the CLI whenever the Gateway is down, the browser cannot connect, or support
-needs terminal logs.
+The status card can show the current version, update channel, install source,
+package or Git state, and whether an update is available. The actual update and
+restart remain terminal operations.
 
 ## Installer rerun
 
 Rerun `./install.sh` when you want repair/reinstall behavior. Current installers
-try a clean fast-forward update from Git before dependency install and build. If
-the installer itself changes, it restarts once and continues with the updated
+refresh a clean checkout first. VPS Hosting then prefers the verified prebuilt
+runtime artifact; Local source installs refresh dependencies and build. If the
+installer itself changes, it restarts once and continues with the updated
 script.
 
 ```bash
@@ -186,8 +174,9 @@ Use `./install.sh --no-git-update` only when testing local changes.
 
 - updates to the configured channel; stable is the default end-user channel
   and resolves to the newest stable release tag
-- rebuilds
-- refreshes the installed runtime
+- uses a verified release artifact for the managed VPS runtime when available
+- refreshes dependencies and rebuilds for a Local source checkout
+- checks tracked npm plugins after the core update
 - restarts when needed
 
 `./install.sh`:
@@ -249,10 +238,14 @@ fased status
 Fresh installs and hosted systems should use the curl bootstrap:
 
 - curl bootstrap for fresh local machines, WSL2, and hosted VPS
-- `fased update` for repo-backed installs
-- published package payloads may be used by the installer internally
+- `fased update` for normal updates
+- verified GitHub Release artifacts for normal VPS Hosting installs and updates
+- source checkout builds for the normal Local install path
 - manual `npm install -g @fased/fased` is for advanced/local/manual installs,
   not the recommended hosted VPS setup flow
+
+See [Core And Optional Components](/install/components) for channel add-ons,
+local model servers, browser binaries, and local memory embeddings.
 
 ## Related
 

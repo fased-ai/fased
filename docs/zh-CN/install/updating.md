@@ -2,7 +2,7 @@
 read_when:
   - 更新 Fased
   - 更新后出现问题
-summary: 通过仓库 checkout、`fased update` 或控制界面安全更新 Fased
+summary: 通过 `fased update` 安全更新本地或托管的 Fased
 title: 更新
 x-i18n:
   generated_at: "2026-04-21T00:00:00Z"
@@ -17,7 +17,8 @@ Fased 还在快速演进。把更新当成基础设施变更：更新 → 检查
 
 <Note>
 `fased onboard --install-daemon` 是初始设置和服务安装流程，不是主要的版本升级命令。
-版本更新请使用重新运行 `./install.sh`、`fased update`，或控制界面的 **Update & Restart**。
+正常版本更新请使用 `fased update`。控制界面目前只显示更新状态；重新运行
+`./install.sh` 用于修复或重新安装。
 </Note>
 
 ## 推荐：更新仓库后重新运行安装器
@@ -65,15 +66,15 @@ fased update
 fased update --no-restart
 ```
 
-## 控制界面更新
+## 控制界面更新状态
 
-控制界面提供 **Update & Restart**（RPC：`update.run`）。
+控制界面的 **Advanced > Debug > Update Status** 会显示当前版本、更新渠道、
+安装来源和可用更新。实际更新仍从终端运行：
 
-适合：
-
-- Gateway 已经健康运行
-- 你希望在 UI 中看到更新报告
-- 你正在更新当前仓库 checkout 对应的运行时
+```bash
+fased update status
+fased update
+```
 
 ## 手动源码更新
 

@@ -144,9 +144,21 @@ async function main() {
     if (!satInfo.includes("id: sat-mining") || satInfo.includes("Status: error")) {
       throw new Error(`packed core SAT plugin discovery failed:\n${satInfo}`);
     }
+    const federationInfo = runCore(coreRoot, env, ["plugins", "info", "fased-federation"]);
+    if (
+      !federationInfo.includes("id: fased-federation") ||
+      federationInfo.includes("Status: error")
+    ) {
+      throw new Error(`packed core Fased Network plugin discovery failed:\n${federationInfo}`);
+    }
+    const walletStatusRaw = runCore(coreRoot, env, ["wallet", "status", "--json"]);
+    const walletStatus = JSON.parse(walletStatusRaw) as { ok?: unknown; status?: unknown };
+    if (walletStatus.ok !== true || !walletStatus.status) {
+      throw new Error(`packed core wallet CLI failed:\n${walletStatusRaw}`);
+    }
 
     console.log(
-      `packed-core-smoke: ${version} starts without optional channels; plugin doctor and SAT discovery passed.`,
+      `packed-core-smoke: ${version} starts without optional channels; wallet, SAT, Fased Network, and plugin checks passed.`,
     );
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });

@@ -158,8 +158,11 @@ Supported provider modes include:
 Remote embedding providers require their own API keys. OpenAI chat sign-in does
 not automatically configure embeddings.
 
-Local mode may need native build approval for `node-llama-cpp` and a local GGUF
-model path or supported `hf:` model URI.
+Local mode needs the optional native `node-llama-cpp` runtime and a local GGUF
+model path or supported `hf:` model URI. The lightweight hosted runtime does
+not include that native add-on or the model file. Use a maintained source
+install for in-process local embeddings, or choose `ollama` or a remote
+embedding provider.
 
 ## Session transcript search
 

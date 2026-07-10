@@ -45,7 +45,8 @@ The first browser setup pass should start from the selected Agent:
     Create, review, install, configure, and allow skills for this Agent.
   </Step>
   <Step title="Agent > Channels">
-    Connect chat apps and route accounts, topics, or guilds to this Agent.
+    Install the official channel add-on when required, then connect and route
+    accounts, topics, or guilds to this Agent.
   </Step>
   <Step title="Agent > Services">
     Connect external APIs such as web/search, Gmail, Calendar, GitHub, or browser/media.
@@ -213,11 +214,17 @@ surface:
   wallet-capable skills. Mining and Vault wallets stay outside generic skill
   grants.
 
-`Agent > Channels` exposes setup fields for every supported channel in the same
-order as onboarding: Telegram, WhatsApp, Discord, IRC, Google Chat, Slack,
-Signal, iMessage, then bundled or external channel plugins. The normal setup
-path is per Agent; any global channel page is an implementation/deep-link
-fallback, not the first-run path.
+`Agent > Channels` exposes installed channels and official add-ons in the same
+order as onboarding. Telegram, WhatsApp, Discord, and Slack show an **Install**
+action on a fresh core install; setup fields appear after the package is
+installed and the Gateway restarts. The normal setup path is per Agent; any
+global channel page is an implementation/deep-link fallback, not the first-run
+path.
+
+Fased includes provider clients for local model servers, but it does not install
+Ollama, LM Studio, vLLM, LiteLLM, or model weights. Install and run that service
+first, then connect it from **Agent > Models**. See
+[Core And Optional Components](/install/components).
 
 `Agent > Services` is the connector recovery center for task preflight. If a
 task needs web search, GitHub, Gmail/Google Workspace, Firecrawl, model auth,

@@ -14,6 +14,11 @@ Fased can run a **dedicated Chrome/Brave/Edge/Chromium profile** that the agent 
 It is isolated from your personal browser and is managed through a small local
 control service inside the Gateway (loopback only).
 
+Fased ships browser control, `playwright-core`, and the extension files. It
+does not install a Chrome, Brave, Edge, or Chromium browser binary as part of
+the core package. Use an existing system browser, install Chromium separately,
+or connect a remote browser/node host.
+
 Beginner view:
 
 - Think of it as a **separate, agent-only browser**.

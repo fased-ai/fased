@@ -12,14 +12,16 @@ homeservers, and optional end-to-end encryption. The gateway logs in as a
 Matrix user, handles DMs and rooms, and keeps per-room policy separate from DM
 access.
 
-Status: bundled channel extension. DMs, rooms, threads, media, reactions,
-location, polls-as-text, and Matrix E2EE are available when the crypto runtime
-is present.
+Status: source extension. DMs, rooms, threads, media, reactions, location,
+polls-as-text, and Matrix E2EE are available when its Matrix runtime
+dependencies are installed.
 
 ## Setup from Agent > Channels
 
-Matrix ships with Fased as a local bundled channel extension. You do not need to
-download an npm package in a normal install.
+Matrix is available from a source install. The lightweight hosted runtime does
+not currently include the Matrix SDK dependencies, and Matrix does not yet have
+an official Fased add-on package. Use a maintained source install for this
+channel.
 
 Open **Agents**, select the Agent, then use **Agent > Channels > Matrix**. Enter
 the homeserver and either an access token or username/password. Save the

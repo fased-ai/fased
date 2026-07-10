@@ -11,14 +11,16 @@ Tlon gives Fased an Urbit-native chat surface without a separate hosted
 backend. The plugin connects to your ship, handles DMs and group channels, and
 keeps the same allowlist and mention gates that the rest of the gateway uses.
 
-Status: bundled channel extension for DMs, group mentions, thread replies, and
-text-plus-URL media fallback. Reactions, polls, and native media uploads are
-not supported.
+Status: source extension for DMs, group mentions, thread replies, and
+text-plus-URL media fallback. Reactions, polls, and native media uploads are not
+supported.
 
 ## Setup from Agent > Channels
 
-Tlon ships with Fased as a local bundled channel extension. You do not need to
-download an npm package in a normal install.
+Tlon is available from a source install. The lightweight hosted runtime does
+not currently include its Urbit runtime dependency, and Tlon does not yet have
+an official Fased add-on package. Use a maintained source install for this
+channel.
 
 Open **Agents**, select the Agent, then use **Agent > Channels > Tlon**. Enter
 the ship URL and login code, save the channel, then restart the gateway if the

@@ -273,10 +273,9 @@ For hosted VPS setup, use `install.sh --hosting` so Fased can set the non-root
 runtime, private Tailscale access, and closed public admin posture. Direct
 global npm installs are for advanced local/dev or self-managed hosts.
 
-The browser Control UI shows update state under **Advanced -> Debug -> Update
-Status**. If your UI build shows **Update & Restart** there, use it only when
-the gateway is healthy. Rerun `./install.sh` when you want repair/reinstall
-behavior.
+The browser Control UI shows read-only update state under **Advanced > Debug >
+Update Status**. Run the update from the CLI. Rerun `./install.sh` when you want
+repair/reinstall behavior.
 
 `fased update` uses the configured channel. **Stable is the default end-user
 channel** and resolves to the latest stable release tag, not every commit on
@@ -306,6 +305,11 @@ On a hosted VPS, run that same development checkout flow as `app` from
 `/home/app/fased` and use `./install.sh --hosting`. Use
 `./install.sh --no-git-update` only when testing local changes that should not
 be replaced by Git.
+
+Telegram, WhatsApp, Discord, and Slack install as official add-ons only when
+selected from **Agent > Channels**, onboarding, or `fased channels add`. Local
+model servers and model weights are not bundled. See
+[Core And Optional Components](./docs/install/components.md).
 
 Fresh dashboard, Gateway, and Fased Network setup do not require the native
 wallet signer. If you later choose the local signer wallet path, Fased builds

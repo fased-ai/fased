@@ -32,13 +32,13 @@ function createConfig(params: {
         enabled: true,
         accounts: {
           a: {
-            appId: "app-a",
-            appSecret: "sec-a",
+            appId: "app-id-a",
+            appSecret: "secret-a-12345678",
             tools: params.toolsA,
           },
           b: {
-            appId: "app-b",
-            appSecret: "sec-b",
+            appId: "app-id-b",
+            appSecret: "secret-b-12345678",
             tools: params.toolsB,
           },
         },
@@ -64,7 +64,7 @@ describe("feishu tool account routing", () => {
     const tool = resolveTool("feishu_wiki", { agentAccountId: "b" });
     await tool.execute("call", { action: "search" });
 
-    expect(createFeishuClientMock.mock.calls.at(-1)?.[0]?.appId).toBe("app-b");
+    expect(createFeishuClientMock.mock.calls.at(-1)?.[0]?.appId).toBe("app-id-b");
   });
 
   test("drive tool registers when first account disables it and routes to agentAccountId", async () => {
@@ -79,7 +79,7 @@ describe("feishu tool account routing", () => {
     const tool = resolveTool("feishu_drive", { agentAccountId: "b" });
     await tool.execute("call", { action: "unknown_action" });
 
-    expect(createFeishuClientMock.mock.calls.at(-1)?.[0]?.appId).toBe("app-b");
+    expect(createFeishuClientMock.mock.calls.at(-1)?.[0]?.appId).toBe("app-id-b");
   });
 
   test("perm tool registers when only second account enables it and routes to agentAccountId", async () => {
@@ -94,7 +94,7 @@ describe("feishu tool account routing", () => {
     const tool = resolveTool("feishu_perm", { agentAccountId: "b" });
     await tool.execute("call", { action: "unknown_action" });
 
-    expect(createFeishuClientMock.mock.calls.at(-1)?.[0]?.appId).toBe("app-b");
+    expect(createFeishuClientMock.mock.calls.at(-1)?.[0]?.appId).toBe("app-id-b");
   });
 
   test("bitable tool routes to agentAccountId and allows explicit accountId override", async () => {
@@ -105,7 +105,7 @@ describe("feishu tool account routing", () => {
     await tool.execute("call-ctx", { url: "invalid-url" });
     await tool.execute("call-override", { url: "invalid-url", accountId: "a" });
 
-    expect(createFeishuClientMock.mock.calls[0]?.[0]?.appId).toBe("app-b");
-    expect(createFeishuClientMock.mock.calls[1]?.[0]?.appId).toBe("app-a");
+    expect(createFeishuClientMock.mock.calls[0]?.[0]?.appId).toBe("app-id-b");
+    expect(createFeishuClientMock.mock.calls[1]?.[0]?.appId).toBe("app-id-a");
   });
 });

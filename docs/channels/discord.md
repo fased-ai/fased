@@ -28,14 +28,23 @@ Status: supported for DMs and guild channels.
 
 ## Quick setup
 
-1. Create a Discord application in the Discord Developer Portal.
-2. Add a Bot user.
-3. Enable **Message Content Intent**. Enable **Server Members Intent** only if
+1. Open **Agents > selected Agent > Channels > Discord** and click
+   **Install**. Restart the Gateway when prompted.
+2. Create a Discord application in the Discord Developer Portal.
+3. Add a Bot user.
+4. Enable **Message Content Intent**. Enable **Server Members Intent** only if
    you need role allowlists or name-to-ID matching.
-4. Invite the bot with `bot` and `applications.commands` scopes.
-5. Open **Agents > selected Agent > Channels > Discord**.
-6. Paste the bot token, server id, and owner/user id.
-7. Save, start or restart the gateway, then pair the first DM if using pairing.
+5. Invite the bot with `bot` and `applications.commands` scopes.
+6. Return to **Agent > Channels > Discord**.
+7. Paste the bot token, server id, and owner/user id.
+8. Save, then pair the first DM if using pairing.
+
+CLI install:
+
+```bash
+fased plugins install @fased/discord
+fased gateway restart
+```
 
 Scripted setup can use config:
 

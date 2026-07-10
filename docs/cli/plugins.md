@@ -46,6 +46,17 @@ fased plugins doctor
 Bundled plugins ship with Fased but start disabled unless a setup path enables
 them.
 
+Telegram, WhatsApp, Discord, and Slack are official add-ons rather than bundled
+core plugins:
+
+```bash
+fased plugins install @fased/telegram
+fased plugins install @fased/whatsapp
+fased plugins install @fased/discord
+fased plugins install @fased/slack
+fased gateway restart
+```
+
 ## Runtime helper grants
 
 Plugins do not receive runtime helper access by default. Grant read-only,

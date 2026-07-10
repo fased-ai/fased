@@ -29,11 +29,20 @@ optional.
 
 ## Quick setup
 
-1. In Telegram, open **@BotFather**.
-2. Run `/newbot` and save the token.
-3. Open **Agents > selected Agent > Channels > Telegram**.
-4. Paste the token and keep DM policy on `pairing` to start.
-5. Save, start the gateway, and approve the first DM pairing.
+1. Open **Agents > selected Agent > Channels > Telegram** and click
+   **Install**. Restart the Gateway when prompted.
+2. In Telegram, open **@BotFather**.
+3. Run `/newbot` and save the token.
+4. Return to **Agent > Channels > Telegram**.
+5. Paste the token and keep DM policy on `pairing` to start.
+6. Save and approve the first DM pairing.
+
+CLI install:
+
+```bash
+fased plugins install @fased/telegram
+fased gateway restart
+```
 
 Config shape:
 

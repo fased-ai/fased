@@ -99,13 +99,15 @@ Optional and legacy:
 
 ## Runtime status
 
-- **Agent > Channels** shows core channels plus bundled channel extensions from
-  the active plugin registry.
+- **Agent > Channels** shows available channels, including official add-ons
+  that are not downloaded yet.
+- Telegram, WhatsApp, Discord, and Slack show **Install** on a fresh core
+  install. The Control UI downloads the matching official npm package.
 - Saving credentials enables that channel for the selected Agent.
-- Some bundled channel services need a gateway restart after setup so their
-  runtime can register webhooks, sockets, or background monitors.
-- External catalog channels install first and expose setup fields after the
-  plugin loads.
+- Installed channel add-ons need a Gateway restart before their credential and
+  login flow becomes active.
+- The onboarding wizard and `fased channels add` can install the same official
+  add-ons before configuration.
 
 ## Good first choices
 
@@ -118,11 +120,12 @@ Optional and legacy:
 ## Notes
 
 - multiple channels can run at the same time
-- channels from the repo are not external downloads; setup starts with their
-  credential fields in **Agent > Channels**
-- only external catalog channels should use an install/download action
-- if a bundled channel shows restart required, restart the gateway before
-  testing live messages
+- Telegram, WhatsApp, Discord, and Slack are official add-ons; install only the
+  channels you use
+- other advanced channel extensions may need a source install or
+  channel-specific dependencies until a published add-on exists
+- if a channel shows restart required, restart the Gateway before testing live
+  messages
 - routing is deterministic per peer and per channel; see
   [Channel Routing](/channels/channel-routing)
 - group behavior is documented separately in [Groups](/channels/groups)
@@ -130,3 +133,5 @@ Optional and legacy:
   [Security](/gateway/security) and [Pairing](/channels/pairing)
 - fast failure triage starts at
   [Channel Troubleshooting](/channels/troubleshooting)
+- the full core/add-on boundary is in
+  [Core And Optional Components](/install/components)
