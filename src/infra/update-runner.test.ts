@@ -788,6 +788,9 @@ describe("runGatewayUpdate", () => {
       if (argv[0] === "git" && argv.at(-2) === "rev-parse" && argv.at(-1) === "--show-toplevel") {
         return { stdout: "", stderr: "not a git repository", code: 128 };
       }
+      if (argv[0] === process.execPath && argv.at(-2) === "plugins" && argv.at(-1) === "doctor") {
+        return { stdout: "No plugin issues detected.", stderr: "", code: 0 };
+      }
       throw new Error(`unexpected command: ${key}`);
     };
 
@@ -846,6 +849,52 @@ describe("runGatewayUpdate", () => {
     expect(result.strategy?.kind).toBe("hosted-artifact");
     expect(result.reason).toContain("checksum mismatch");
     expect(result.after?.version).toBe("1.0.0");
+  });
+
+  it("keeps the current hosted runtime when the extracted CLI smoke fails", async () => {
+    const prefix = path.join(tempDir, ".fased", "install-cache", "npm-global");
+    const pkgRoot = path.join(prefix, "lib", "node_modules", "@fased", "fased");
+    await seedGlobalPackageRoot(pkgRoot, "1.0.0", "@fased/fased");
+    const artifact = await buildHostedRuntimeResponse({
+      name: "@fased/fased",
+      version: "2.0.0",
+    });
+    const assetName = "fased-hosted-linux-x64-v2.0.0.tar.gz";
+    const fetchImpl = (async (input: string | URL | Request) => {
+      const url = fetchInputUrl(input);
+      if (url.endsWith(`${assetName}.sha256`)) {
+        return new Response(`${artifact.checksum}  ${assetName}\n`);
+      }
+      if (url.endsWith(assetName)) {
+        return new Response(artifact.bytes);
+      }
+      return new Response("not found", { status: 404 });
+    }) as typeof fetch;
+    const runCommand = async (argv: string[]) => {
+      if (argv[0] === "git" && argv.at(-2) === "rev-parse" && argv.at(-1) === "--show-toplevel") {
+        return { stdout: "", stderr: "not a git repository", code: 128 };
+      }
+      if (argv[0] === process.execPath && argv.at(-2) === "plugins" && argv.at(-1) === "doctor") {
+        return { stdout: "", stderr: "missing runtime dependency", code: 1 };
+      }
+      throw new Error(`unexpected command: ${argv.join(" ")}`);
+    };
+
+    const result = await runWithCommand(runCommand, {
+      cwd: pkgRoot,
+      tag: "2.0.0",
+      hostedReleaseFetch: fetchImpl,
+    });
+
+    expect(result.status).toBe("error");
+    expect(result.strategy?.kind).toBe("hosted-artifact");
+    expect(result.reason).toBe("hosted artifact verification failed");
+    expect(result.after?.version).toBe("1.0.0");
+    expect(await fs.readFile(path.join(pkgRoot, "package.json"), "utf8")).toContain('"1.0.0"');
+    expect(result.steps.find((step) => step.name === "hosted artifact verify")).toMatchObject({
+      exitCode: 1,
+      stderrTail: "missing runtime dependency",
+    });
   });
 
   it("falls back to package manager updates when hosted artifact dependencies change", async () => {
