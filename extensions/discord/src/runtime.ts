@@ -1,4 +1,4 @@
-import type { PluginRuntime } from "fased/plugin-sdk";
+import type { PluginRuntime } from "fased/plugin-sdk/discord";
 
 let runtime: PluginRuntime | null = null;
 

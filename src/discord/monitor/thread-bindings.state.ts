@@ -74,6 +74,10 @@ export const REUSABLE_WEBHOOKS_BY_ACCOUNT_CHANNEL =
 export const PERSIST_BY_ACCOUNT_ID = THREAD_BINDINGS_STATE.persistByAccountId;
 export const THREAD_BINDING_TOUCH_PERSIST_MIN_INTERVAL_MS = 15_000;
 
+export function getThreadBindingManager(accountId?: string): ThreadBindingManager | null {
+  return MANAGERS_BY_ACCOUNT_ID.get(normalizeAccountId(accountId)) ?? null;
+}
+
 export function rememberThreadBindingToken(params: { accountId?: string; token?: string }) {
   const normalizedAccountId = normalizeAccountId(params.accountId);
   const token = params.token?.trim();

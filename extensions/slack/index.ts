@@ -1,5 +1,4 @@
-import type { FasedAgentPluginApi } from "fased/plugin-sdk";
-import { emptyPluginConfigSchema } from "fased/plugin-sdk";
+import { emptyPluginConfigSchema, type FasedAgentPluginApi } from "fased/plugin-sdk/slack";
 import { slackPlugin } from "./src/channel.js";
 import { setSlackRuntime } from "./src/runtime.js";
 

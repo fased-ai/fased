@@ -1,4 +1,4 @@
-import type { PluginRuntime } from "fased/plugin-sdk";
+import type { PluginRuntime } from "fased/plugin-sdk/telegram";
 
 let runtime: PluginRuntime | null = null;
 

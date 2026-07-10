@@ -29,7 +29,7 @@ import {
   type ChannelMessageActionAdapter,
   type ChannelPlugin,
   type ResolvedDiscordAccount,
-} from "fased/plugin-sdk";
+} from "fased/plugin-sdk/discord";
 import { getDiscordRuntime } from "./runtime.js";
 
 const meta = getChatChannelMeta("discord");

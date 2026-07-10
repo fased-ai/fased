@@ -15,7 +15,6 @@ import {
   resolveSignalSender,
 } from "../../signal/identity.js";
 import { resolveSlackAccount } from "../../slack/accounts.js";
-import { createSlackWebClient } from "../../slack/client.js";
 import { normalizeAllowListLower } from "../../slack/monitor/allow-list.js";
 import { parseSlackTarget } from "../../slack/targets.js";
 import { buildTelegramGroupPeerId } from "../../telegram/bot/helpers.js";
@@ -170,6 +169,7 @@ async function resolveSlackChannelType(params: {
   }
 
   try {
+    const { createSlackWebClient } = await import("../../slack/client.js");
     const client = createSlackWebClient(token);
     const info = await client.conversations.info({ channel: channelId });
     const channel = info.channel as { is_im?: boolean; is_mpim?: boolean } | undefined;

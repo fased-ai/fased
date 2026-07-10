@@ -31,7 +31,7 @@ import {
   type ChannelMessageActionName,
   type ChannelPlugin,
   type ResolvedWhatsAppAccount,
-} from "fased/plugin-sdk";
+} from "fased/plugin-sdk/whatsapp";
 import { getWhatsAppRuntime } from "./runtime.js";
 
 const meta = getChatChannelMeta("whatsapp");

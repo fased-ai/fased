@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { resolvePreferredFasedAgentTmpDir } from "fased/plugin-sdk";
+import { resolvePreferredFasedAgentTmpDir } from "fased/plugin-sdk/sat-runtime";
 
 function truthy(value: string | undefined): boolean {
   if (value == null) {

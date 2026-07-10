@@ -1,4 +1,3 @@
-import { RateLimitError } from "@buape/carbon";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { formatErrorMessage } from "./errors.js";
 import { type RetryConfig, resolveRetryConfig, retryAsync } from "./retry.js";
@@ -21,6 +20,17 @@ export const TELEGRAM_RETRY_DEFAULTS = {
 
 const TELEGRAM_RETRY_RE = /429|timeout|connect|reset|closed|unavailable|temporarily/i;
 const log = createSubsystemLogger("retry-policy");
+
+function getDiscordRetryAfterSeconds(err: unknown): number | undefined {
+  if (!err || typeof err !== "object") {
+    return undefined;
+  }
+  const status = "status" in err ? err.status : undefined;
+  const retryAfter = "retryAfter" in err ? err.retryAfter : undefined;
+  return status === 429 && typeof retryAfter === "number" && Number.isFinite(retryAfter)
+    ? retryAfter
+    : undefined;
+}
 
 function getTelegramRetryAfterMs(err: unknown): number | undefined {
   if (!err || typeof err !== "object") {
@@ -57,8 +67,11 @@ export function createDiscordRetryRunner(params: {
     retryAsync(fn, {
       ...retryConfig,
       label,
-      shouldRetry: (err) => err instanceof RateLimitError,
-      retryAfterMs: (err) => (err instanceof RateLimitError ? err.retryAfter * 1000 : undefined),
+      shouldRetry: (err) => getDiscordRetryAfterSeconds(err) !== undefined,
+      retryAfterMs: (err) => {
+        const retryAfter = getDiscordRetryAfterSeconds(err);
+        return retryAfter === undefined ? undefined : retryAfter * 1000;
+      },
       onRetry: params.verbose
         ? (info) => {
             const labelText = info.label ?? "request";

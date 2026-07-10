@@ -35,7 +35,7 @@ const hookMocks = vi.hoisted(() => ({
   unbindThreadBindingsBySessionKey: vi.fn(() => []),
 }));
 
-vi.mock("fased/plugin-sdk", () => ({
+vi.mock("fased/plugin-sdk/discord", () => ({
   resolveDiscordAccount: hookMocks.resolveDiscordAccount,
   autoBindSpawnedDiscordSubagent: hookMocks.autoBindSpawnedDiscordSubagent,
   listThreadBindingsBySessionKey: hookMocks.listThreadBindingsBySessionKey,

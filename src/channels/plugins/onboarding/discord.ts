@@ -6,11 +6,7 @@ import {
   resolveDiscordAccount,
 } from "../../../discord/accounts.js";
 import { normalizeDiscordSlug } from "../../../discord/monitor/allow-list.js";
-import {
-  resolveDiscordChannelAllowlist,
-  type DiscordChannelResolution,
-} from "../../../discord/resolve-channels.js";
-import { resolveDiscordUserAllowlist } from "../../../discord/resolve-users.js";
+import type { DiscordChannelResolution } from "../../../discord/resolve-channels.js";
 import { DEFAULT_ACCOUNT_ID } from "../../../routing/session-key.js";
 import { formatDocsLink } from "../../../terminal/links.js";
 import type { WizardPrompter } from "../../../wizard/prompts.js";
@@ -119,11 +115,13 @@ async function promptDiscordAllowFrom(params: {
     placeholder: "@alice, 123456789012345678",
     parseId,
     invalidWithoutTokenNote: "Bot token missing; use numeric user ids (or mention form) only.",
-    resolveEntries: ({ token, entries }) =>
-      resolveDiscordUserAllowlist({
+    resolveEntries: async ({ token, entries }) => {
+      const { resolveDiscordUserAllowlist } = await import("../../../discord/resolve-users.js");
+      return resolveDiscordUserAllowlist({
         token,
         entries,
-      }),
+      });
+    },
   });
 }
 
@@ -263,6 +261,8 @@ export const discordOnboardingAdapter: ChannelOnboardingAdapter = {
         }));
         if (accountWithTokens.token && entries.length > 0) {
           try {
+            const { resolveDiscordChannelAllowlist } =
+              await import("../../../discord/resolve-channels.js");
             resolved = await resolveDiscordChannelAllowlist({
               token: accountWithTokens.token,
               entries,

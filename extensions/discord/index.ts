@@ -1,5 +1,4 @@
-import type { FasedAgentPluginApi } from "fased/plugin-sdk";
-import { emptyPluginConfigSchema } from "fased/plugin-sdk";
+import { emptyPluginConfigSchema, type FasedAgentPluginApi } from "fased/plugin-sdk/discord";
 import { discordPlugin } from "./src/channel.js";
 import { setDiscordRuntime } from "./src/runtime.js";
 import { registerDiscordSubagentHooks } from "./src/subagent-hooks.js";

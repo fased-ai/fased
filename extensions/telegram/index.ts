@@ -1,5 +1,8 @@
-import type { ChannelPlugin, FasedAgentPluginApi } from "fased/plugin-sdk";
-import { emptyPluginConfigSchema } from "fased/plugin-sdk";
+import {
+  emptyPluginConfigSchema,
+  type ChannelPlugin,
+  type FasedAgentPluginApi,
+} from "fased/plugin-sdk/telegram";
 import { telegramPlugin } from "./src/channel.js";
 import { setTelegramRuntime } from "./src/runtime.js";
 

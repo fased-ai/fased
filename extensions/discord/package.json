@@ -48,7 +48,7 @@
     "install": {
       "npmSpec": "@fased/discord",
       "localPath": "extensions/discord",
-      "defaultChoice": "local"
+      "defaultChoice": "npm"
     }
   }
 }

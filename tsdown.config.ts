@@ -7,6 +7,17 @@ const env = {
 const buildProfile = (process.env.FASED_BUILD_PROFILE ?? "").trim().toLowerCase();
 const isVpsBuild = buildProfile === "vps" || buildProfile === "vps-lite";
 const buildGraph = (process.env.FASED_BUILD_GRAPH ?? "").trim().toLowerCase();
+const channelRuntimeExternals = [
+  /^@buape\/carbon(?:\/.*)?$/,
+  /^@discordjs\/(?:opus|voice)(?:\/.*)?$/,
+  /^@grammyjs\/(?:runner|transformer-throttler)(?:\/.*)?$/,
+  /^@slack\/(?:bolt|web-api)(?:\/.*)?$/,
+  /^@snazzah\/davey(?:\/.*)?$/,
+  /^@whiskeysockets\/baileys(?:\/.*)?$/,
+  /^discord-api-types(?:\/.*)?$/,
+  /^grammy(?:\/.*)?$/,
+  /^opusscript(?:\/.*)?$/,
+];
 
 const baseEntries = [
   {
@@ -65,6 +76,20 @@ const pluginSdkEntries = [
     platform: "node",
   },
   {
+    entry: "src/plugin-sdk/device-pair.ts",
+    outDir: "dist/plugin-sdk",
+    env,
+    fixedExtension: false,
+    platform: "node",
+  },
+  {
+    entry: "src/plugin-sdk/discord.ts",
+    outDir: "dist/plugin-sdk",
+    env,
+    fixedExtension: false,
+    platform: "node",
+  },
+  {
     entry: "src/plugin-sdk/provider-web-search-config-contract.ts",
     outDir: "dist/plugin-sdk",
     env,
@@ -73,6 +98,27 @@ const pluginSdkEntries = [
   },
   {
     entry: "src/plugin-sdk/sat-runtime.ts",
+    outDir: "dist/plugin-sdk",
+    env,
+    fixedExtension: false,
+    platform: "node",
+  },
+  {
+    entry: "src/plugin-sdk/slack.ts",
+    outDir: "dist/plugin-sdk",
+    env,
+    fixedExtension: false,
+    platform: "node",
+  },
+  {
+    entry: "src/plugin-sdk/telegram.ts",
+    outDir: "dist/plugin-sdk",
+    env,
+    fixedExtension: false,
+    platform: "node",
+  },
+  {
+    entry: "src/plugin-sdk/whatsapp.ts",
     outDir: "dist/plugin-sdk",
     env,
     fixedExtension: false,
@@ -116,14 +162,19 @@ const preservedCoreConfig = {
   env,
   fixedExtension: false,
   platform: "node" as const,
+  external: channelRuntimeExternals,
   treeshake: false,
   unbundle: true,
 };
 
-const defaultEntries = isVpsBuild
-  ? [...baseEntries]
-  : [...baseEntries, ...pluginSdkEntries, ...fullRuntimeEntries];
-const isolatedSdkEntries = pluginSdkEntries.map((entry) => ({ ...entry, clean: false }));
+const defaultEntries = (
+  isVpsBuild ? [...baseEntries] : [...baseEntries, ...pluginSdkEntries, ...fullRuntimeEntries]
+).map((entry) => ({ ...entry, external: channelRuntimeExternals }));
+const isolatedSdkEntries = pluginSdkEntries.map((entry) => ({
+  ...entry,
+  clean: false,
+  external: channelRuntimeExternals,
+}));
 
 export default defineConfig(
   buildGraph === "core"

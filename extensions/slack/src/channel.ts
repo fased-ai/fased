@@ -29,7 +29,7 @@ import {
   SlackConfigSchema,
   type ChannelPlugin,
   type ResolvedSlackAccount,
-} from "fased/plugin-sdk";
+} from "fased/plugin-sdk/slack";
 import { getSlackRuntime } from "./runtime.js";
 
 const meta = getChatChannelMeta("slack");

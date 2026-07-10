@@ -1,12 +1,12 @@
 import os from "node:os";
-import type { FasedAgentPluginApi } from "fased/plugin-sdk";
+import type { FasedAgentPluginApi } from "fased/plugin-sdk/device-pair";
 import {
   approveDevicePairing,
   listDevicePairing,
   resolveGatewayBindUrl,
   runPluginCommandWithTimeout,
   resolveTailnetHostWithRunner,
-} from "fased/plugin-sdk";
+} from "fased/plugin-sdk/device-pair";
 import qrcode from "qrcode-terminal";
 
 function renderQrAscii(data: string): Promise<string> {

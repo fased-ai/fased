@@ -5,6 +5,7 @@ import { createJiti } from "jiti";
 import type { FasedAgentConfig } from "../config/config.js";
 import type { GatewayRequestHandler } from "../gateway/server-methods/types.js";
 import { openBoundaryFileSync } from "../infra/boundary-file-read.js";
+import { resolveFasedAgentPackageRootSync } from "../infra/fased-root.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { resolveUserPath } from "../utils.js";
 import { clearPluginCommands } from "./commands.js";
@@ -106,6 +107,16 @@ const PLUGIN_SDK_ALIAS_SPECS = [
     distFile: "command-status.js",
   },
   {
+    requests: ["fased/plugin-sdk/device-pair"],
+    srcFile: "device-pair.ts",
+    distFile: "device-pair.js",
+  },
+  {
+    requests: ["fased/plugin-sdk/discord"],
+    srcFile: "discord.ts",
+    distFile: "discord.js",
+  },
+  {
     requests: ["fased/plugin-sdk/provider-web-search-config-contract"],
     srcFile: "provider-web-search-config-contract.ts",
     distFile: "provider-web-search-config-contract.js",
@@ -115,7 +126,93 @@ const PLUGIN_SDK_ALIAS_SPECS = [
     srcFile: "sat-runtime.ts",
     distFile: "sat-runtime.js",
   },
+  {
+    requests: ["fased/plugin-sdk/slack"],
+    srcFile: "slack.ts",
+    distFile: "slack.js",
+  },
+  {
+    requests: ["fased/plugin-sdk/telegram"],
+    srcFile: "telegram.ts",
+    distFile: "telegram.js",
+  },
+  {
+    requests: ["fased/plugin-sdk/whatsapp"],
+    srcFile: "whatsapp.ts",
+    distFile: "whatsapp.js",
+  },
 ] as const;
+
+const OFFICIAL_CHANNEL_PLUGIN_IDS = new Set(["discord", "slack", "telegram", "whatsapp"]);
+
+function repairOfficialChannelRuntimeDependencies(params: {
+  pluginId: string;
+  pluginRoot: string;
+  logger: PluginLogger;
+  coreRoot?: string;
+}): void {
+  if (!OFFICIAL_CHANNEL_PLUGIN_IDS.has(params.pluginId)) {
+    return;
+  }
+  const coreRoot =
+    params.coreRoot ?? resolveFasedAgentPackageRootSync({ moduleUrl: import.meta.url });
+  if (!coreRoot || path.resolve(coreRoot) === path.resolve(params.pluginRoot)) {
+    return;
+  }
+  let manifest: {
+    name?: string;
+    dependencies?: Record<string, string>;
+    optionalDependencies?: Record<string, string>;
+  };
+  try {
+    manifest = JSON.parse(fs.readFileSync(path.join(params.pluginRoot, "package.json"), "utf8"));
+  } catch {
+    return;
+  }
+  if (manifest.name !== `@fased/${params.pluginId}`) {
+    return;
+  }
+  const dependencyNames = new Set([
+    ...Object.keys(manifest.dependencies ?? {}),
+    ...Object.keys(manifest.optionalDependencies ?? {}),
+  ]);
+  for (const dependencyName of dependencyNames) {
+    const segments = dependencyName.split("/");
+    const source = path.join(params.pluginRoot, "node_modules", ...segments);
+    if (!fs.existsSync(source)) {
+      continue;
+    }
+    const target = path.join(coreRoot, "node_modules", ...segments);
+    try {
+      const sourceReal = fs.realpathSync(source);
+      let shouldCreate = true;
+      try {
+        const current = fs.lstatSync(target);
+        if (!current.isSymbolicLink()) {
+          shouldCreate = false;
+        } else {
+          const targetReal = fs.realpathSync(target);
+          if (targetReal === sourceReal) {
+            shouldCreate = false;
+          } else {
+            fs.unlinkSync(target);
+          }
+        }
+      } catch {
+        // Missing or stale target; create it below.
+      }
+      if (!shouldCreate) {
+        continue;
+      }
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.symlinkSync(sourceReal, target, process.platform === "win32" ? "junction" : "dir");
+    } catch (error) {
+      params.logger.warn(
+        `[plugins] unable to expose ${dependencyName} from ${params.pluginId}: ${String(error)}`,
+      );
+    }
+  }
+}
 
 function resolvePluginSdkAliases(): Record<string, string> {
   const aliases: Record<string, string> = {};
@@ -135,6 +232,7 @@ function resolvePluginSdkAliases(): Record<string, string> {
 }
 
 export const __testing = {
+  repairOfficialChannelRuntimeDependencies,
   resolvePluginSdkAliasFile,
   resolvePluginSdkAliases,
 };
@@ -633,6 +731,12 @@ export function loadFasedAgentPlugins(options: PluginLoadOptions = {}): PluginRe
     }
     const safeSource = opened.path;
     fs.closeSync(opened.fd);
+
+    repairOfficialChannelRuntimeDependencies({
+      pluginId,
+      pluginRoot,
+      logger,
+    });
 
     let mod: FasedAgentPluginModule | null = null;
     try {

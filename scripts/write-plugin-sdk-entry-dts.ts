@@ -11,8 +11,13 @@ const entrypoints = [
   "account-id",
   "channel-plugin-common",
   "command-status",
+  "device-pair",
+  "discord",
   "provider-web-search-config-contract",
   "sat-runtime",
+  "slack",
+  "telegram",
+  "whatsapp",
 ] as const;
 for (const entry of entrypoints) {
   const out = path.join(process.cwd(), `dist/plugin-sdk/${entry}.d.ts`);

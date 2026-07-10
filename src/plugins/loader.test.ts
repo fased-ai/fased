@@ -1386,6 +1386,31 @@ describe("loadFasedAgentPlugins", () => {
     expect(resolved).toBe(distFile);
   });
 
+  it("exposes official channel dependencies to the core runtime", () => {
+    const root = makeTempDir();
+    const coreRoot = path.join(root, "core");
+    const pluginRoot = path.join(root, "telegram");
+    const dependencyRoot = path.join(pluginRoot, "node_modules", "grammy");
+    fs.mkdirSync(path.join(coreRoot, "node_modules"), { recursive: true });
+    fs.mkdirSync(dependencyRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(pluginRoot, "package.json"),
+      JSON.stringify({ name: "@fased/telegram", dependencies: { grammy: "1.0.0" } }),
+      "utf-8",
+    );
+
+    __testing.repairOfficialChannelRuntimeDependencies({
+      pluginId: "telegram",
+      pluginRoot,
+      coreRoot,
+      logger: { info: () => {}, warn: () => {}, error: () => {} },
+    });
+
+    const exposedDependency = path.join(coreRoot, "node_modules", "grammy");
+    expect(fs.lstatSync(exposedDependency).isSymbolicLink()).toBe(true);
+    expect(fs.realpathSync(exposedDependency)).toBe(fs.realpathSync(dependencyRoot));
+  });
+
   it("prefers src plugin-sdk alias when loader runs from src in non-production", () => {
     const root = makeTempDir();
     const srcFile = path.join(root, "src", "plugin-sdk", "index.ts");

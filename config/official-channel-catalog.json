@@ -1,3 +1,80 @@
 {
-  "entries": []
+  "entries": [
+    {
+      "name": "@fased/telegram",
+      "fased": {
+        "channel": {
+          "id": "telegram",
+          "label": "Telegram",
+          "selectionLabel": "Telegram (Bot API)",
+          "docsPath": "/channels/telegram",
+          "docsLabel": "telegram",
+          "blurb": "quickest setup path; create a Bot API token with @BotFather.",
+          "order": 10,
+          "quickstartAllowFrom": true
+        },
+        "install": {
+          "npmSpec": "@fased/telegram",
+          "defaultChoice": "npm"
+        }
+      }
+    },
+    {
+      "name": "@fased/whatsapp",
+      "fased": {
+        "channel": {
+          "id": "whatsapp",
+          "label": "WhatsApp",
+          "selectionLabel": "WhatsApp (QR link)",
+          "docsPath": "/channels/whatsapp",
+          "docsLabel": "whatsapp",
+          "blurb": "link a WhatsApp account by QR; a dedicated number is recommended.",
+          "order": 20,
+          "quickstartAllowFrom": true
+        },
+        "install": {
+          "npmSpec": "@fased/whatsapp",
+          "defaultChoice": "npm"
+        }
+      }
+    },
+    {
+      "name": "@fased/discord",
+      "fased": {
+        "channel": {
+          "id": "discord",
+          "label": "Discord",
+          "selectionLabel": "Discord (Bot API)",
+          "docsPath": "/channels/discord",
+          "docsLabel": "discord",
+          "blurb": "Bot API channel with DMs, servers, threads, reactions, and moderation workflows.",
+          "order": 30,
+          "quickstartAllowFrom": true
+        },
+        "install": {
+          "npmSpec": "@fased/discord",
+          "defaultChoice": "npm"
+        }
+      }
+    },
+    {
+      "name": "@fased/slack",
+      "fased": {
+        "channel": {
+          "id": "slack",
+          "label": "Slack",
+          "selectionLabel": "Slack (Socket Mode)",
+          "docsPath": "/channels/slack",
+          "docsLabel": "slack",
+          "blurb": "Slack app channel using Socket Mode, DMs, channels, threads, and reactions.",
+          "order": 40,
+          "quickstartAllowFrom": true
+        },
+        "install": {
+          "npmSpec": "@fased/slack",
+          "defaultChoice": "npm"
+        }
+      }
+    }
+  ]
 }

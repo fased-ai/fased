@@ -1,15 +1,13 @@
 import { parseDurationMs } from "../../cli/parse-duration.js";
 import { isRestartEnabled } from "../../config/commands.js";
+import { formatThreadBindingDurationLabel } from "../../discord/monitor/thread-bindings.messages.js";
 import {
-  formatThreadBindingDurationLabel,
   getThreadBindingManager,
   resolveThreadBindingIdleTimeoutMs,
   resolveThreadBindingInactivityExpiresAt,
   resolveThreadBindingMaxAgeExpiresAt,
   resolveThreadBindingMaxAgeMs,
-  setThreadBindingIdleTimeoutBySessionKey,
-  setThreadBindingMaxAgeBySessionKey,
-} from "../../discord/monitor/thread-bindings.js";
+} from "../../discord/monitor/thread-bindings.state.js";
 import { logVerbose } from "../../globals.js";
 import { scheduleGatewaySigusr1Restart, triggerFasedAgentRestart } from "../../infra/restart.js";
 import { loadCostUsageSummary, loadSessionCostSummary } from "../../infra/session-cost-usage.js";
@@ -378,6 +376,8 @@ export const handleSessionCommand: CommandHandler = async (params, allowTextComm
     };
   }
 
+  const { setThreadBindingIdleTimeoutBySessionKey, setThreadBindingMaxAgeBySessionKey } =
+    await import("../../discord/monitor/thread-bindings.lifecycle.js");
   const updatedBindings =
     action === SESSION_ACTION_IDLE
       ? setThreadBindingIdleTimeoutBySessionKey({

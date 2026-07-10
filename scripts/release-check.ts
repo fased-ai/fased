@@ -19,8 +19,18 @@ const requiredPathGroups = [
   ["dist/entry.js", "dist/entry.mjs"],
   "dist/plugin-sdk/index.js",
   "dist/plugin-sdk/index.d.ts",
+  "dist/plugin-sdk/device-pair.js",
+  "dist/plugin-sdk/device-pair.d.ts",
+  "dist/plugin-sdk/discord.js",
+  "dist/plugin-sdk/discord.d.ts",
   "dist/plugin-sdk/sat-runtime.js",
   "dist/plugin-sdk/sat-runtime.d.ts",
+  "dist/plugin-sdk/slack.js",
+  "dist/plugin-sdk/slack.d.ts",
+  "dist/plugin-sdk/telegram.js",
+  "dist/plugin-sdk/telegram.d.ts",
+  "dist/plugin-sdk/whatsapp.js",
+  "dist/plugin-sdk/whatsapp.d.ts",
   "dist/build-info.json",
   "docs/reference/templates/AGENTS.md",
   "scripts/clean-package-dist.mjs",
@@ -59,7 +69,7 @@ type PackageJson = {
   fased?: {
     extensions?: string[];
     channel?: { id?: string };
-    install?: { npmSpec?: string; localPath?: string };
+    install?: { npmSpec?: string; localPath?: string; defaultChoice?: string };
   };
 };
 
@@ -72,6 +82,9 @@ const channelAddonContracts = new Map<string, string[]>([
   ],
   ["slack", ["@slack/bolt", "@slack/web-api"]],
 ]);
+const excludedCoreChannelExtensionPrefixes = [...channelAddonContracts.keys()].map(
+  (channelId) => `extensions/${channelId}/`,
+);
 
 function normalizePluginSyncVersion(version: string): string {
   const normalized = version.trim().replace(/^v/, "");
@@ -317,9 +330,18 @@ function checkChannelAddonContracts() {
     if (pkg.fased?.install?.localPath !== expectedLocalPath) {
       failures.push(`${channelId}: fased.install.localPath must be ${expectedLocalPath}`);
     }
+    if (pkg.fased?.install?.defaultChoice !== "npm") {
+      failures.push(`${channelId}: fased.install.defaultChoice must be npm`);
+    }
     for (const dependency of runtimeDependencies) {
       if (!pkg.dependencies?.[dependency]) {
         failures.push(`${channelId}: missing owned runtime dependency ${dependency}`);
+      }
+      if (
+        rootPackage.dependencies?.[dependency] ||
+        rootPackage.optionalDependencies?.[dependency]
+      ) {
+        failures.push(`${channelId}: ${dependency} must not be owned by the core package`);
       }
     }
     if (!pkg.files?.includes("fased.plugin.json") || !pkg.files.includes("src")) {
@@ -385,9 +407,17 @@ function checkRuntimeBuildExports() {
   const satRuntimePath = resolve("dist/plugin-sdk/sat-runtime.js");
   const source = readFileSync(satRuntimePath, "utf8");
   const exportBlocks = [...source.matchAll(/export\s*\{([^}]*)\}/g)].map((match) => match[1] ?? "");
-  if (!exportBlocks.some((block) => /\bcreateSubsystemLogger\b/.test(block))) {
+  const requiredExports = [
+    "createSubsystemLogger",
+    "fetchWithSsrFGuard",
+    "resolvePreferredFasedAgentTmpDir",
+  ];
+  const missing = requiredExports.filter(
+    (name) => !exportBlocks.some((block) => new RegExp(`\\b${name}\\b`).test(block)),
+  );
+  if (missing.length > 0) {
     console.error(
-      "release-check: runtime build export validation failed: sat runtime SDK exports are empty",
+      `release-check: runtime build export validation failed: missing ${missing.join(", ")}`,
     );
     process.exit(1);
   }
@@ -493,13 +523,17 @@ function main() {
       path.includes(".test-utils.") ||
       path.startsWith("src/scripts/"),
   );
+  const bundledOptionalChannels = [...paths].filter((path) =>
+    excludedCoreChannelExtensionPrefixes.some((prefix) => path.startsWith(prefix)),
+  );
 
   if (
     missing.length > 0 ||
     forbidden.length > 0 ||
     forbiddenDocs.length > 0 ||
     forbiddenSourceMaps.length > 0 ||
-    forbiddenTestSupport.length > 0
+    forbiddenTestSupport.length > 0 ||
+    bundledOptionalChannels.length > 0
   ) {
     if (missing.length > 0) {
       console.error("release-check: missing files in npm pack:");
@@ -528,6 +562,12 @@ function main() {
     if (forbiddenTestSupport.length > 0) {
       console.error("release-check: test/support source shipped in npm pack:");
       for (const path of forbiddenTestSupport) {
+        console.error(`  - ${path}`);
+      }
+    }
+    if (bundledOptionalChannels.length > 0) {
+      console.error("release-check: optional channel extensions shipped in the core npm pack:");
+      for (const path of bundledOptionalChannels) {
         console.error(`  - ${path}`);
       }
     }
