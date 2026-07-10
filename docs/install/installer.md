@@ -227,6 +227,15 @@ Native signer note:
     ./install.sh --hosting
     ```
   </Tab>
+  <Tab title="Repair hosting">
+    ```bash
+    ./install.sh --repair-hosting
+    ```
+
+    Refreshes an existing hosted runtime and root-managed Gateway service
+    without rerunning onboarding or resetting persistent state.
+
+  </Tab>
   <Tab title="Local profile">
     ```bash
     ./install.sh --local
@@ -249,6 +258,7 @@ These are the flags that matter for the current public repo-backed flow.
 | `--no-auto-install`    | Do not install missing dependencies automatically.                |
 | `--install-dir <path>` | Bootstrap or resolve the checkout under a specific directory.     |
 | `--hosting`            | Use hosted/VPS onboarding defaults.                               |
+| `--repair-hosting`     | Repair hosted runtime/service state without rerunning onboarding. |
 | `--local`              | Use local-machine onboarding defaults.                            |
 | `--source-install`     | Build from source instead of using the verified Linux runtime.    |
 | `--swap-gb <n>`        | Override automatic install-time swap sizing on small Linux hosts. |

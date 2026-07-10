@@ -62,6 +62,7 @@ export function addGatewayServiceCommands(parent: Command, opts?: { statusDescri
     .option("--runtime <runtime>", "Daemon runtime (node|bun). Default: node")
     .option("--token <token>", "Gateway token (token auth)")
     .option("--force", "Reinstall/overwrite if already installed", false)
+    .option("--system", "Install the root-managed VPS Hosting service", false)
     .option("--json", "Output JSON", false)
     .action(async (cmdOpts, command) => {
       await runDaemonInstall(resolveInstallOptions(cmdOpts, command));

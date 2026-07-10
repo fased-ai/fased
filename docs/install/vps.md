@@ -393,6 +393,12 @@ Rerun `./install.sh --hosting` only for repair/reinstall behavior.
 channel and resolves to the latest stable release tag. It does not pull every
 new commit from `main`.
 
+If a legacy hosted updater reports success but `fased --version` does not
+change, use the one-time non-destructive repair in
+[Updating](/install/updating#legacy-hosted-updater-repair). It refreshes the
+managed runtime and root Gateway service without rerunning onboarding or
+resetting `/home/app/.fased` state.
+
 Do not use a direct global npm install as the normal VPS hosting path. The
 hosted installer is recommended because it sets the `app` runtime, Tailscale
 access, and closed public admin posture. Manual npm installs are for advanced

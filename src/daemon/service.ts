@@ -25,6 +25,7 @@ import type {
   GatewayServiceInstallArgs,
   GatewayServiceManageArgs,
 } from "./service-types.js";
+import { resolveHostedSystemdService } from "./systemd-system.js";
 import {
   installSystemdService,
   isSystemdServiceEnabled,
@@ -81,6 +82,10 @@ export function resolveGatewayService(): GatewayService {
   }
 
   if (process.platform === "linux") {
+    const hostedSystemService = resolveHostedSystemdService();
+    if (hostedSystemService) {
+      return hostedSystemService;
+    }
     return {
       label: "systemd",
       loadedText: "enabled",

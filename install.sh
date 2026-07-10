@@ -106,6 +106,7 @@ RELEASE_NPM_PACKAGE="${FASED_RUNTIME_NPM_PACKAGE:-${FASED_HOSTING_NPM_PACKAGE:-@
 AUTO_INSTALL=1
 RUN_ONBOARD=1
 HOSTING_REQUESTED=0
+HOSTING_REPAIR_REQUESTED=0
 SOURCE_INSTALL_REQUESTED=0
 REQUESTED_SWAP_GB=""
 TEMP_SUDOERS=""
@@ -278,6 +279,8 @@ Options:
   --install-dir <path>  Checkout/install directory (default: $HOME/fased)
   --hosting       VPS/always-on server profile. Requires Tailscale; applies hosted
                   onboarding defaults and may change SSH/firewall behavior.
+  --repair-hosting  Repair an existing VPS runtime and root-managed gateway service
+                  without rerunning onboarding or changing persistent user state.
   --local         Laptop/desktop profile. Tailscale is optional; on a VPS this does
                   not apply hosting SSH/firewall hardening.
   --source-install  Build from the checkout instead of using the verified Linux
@@ -314,6 +317,12 @@ while [[ $# -gt 0 ]]; do
       ;;
     --hosting)
       HOSTING_REQUESTED=1
+      pass_args+=(--mode local --host-profile hosting --gateway-bind loopback --tailscale serve)
+      ;;
+    --repair-hosting)
+      HOSTING_REQUESTED=1
+      HOSTING_REPAIR_REQUESTED=1
+      RUN_ONBOARD=0
       pass_args+=(--mode local --host-profile hosting --gateway-bind loopback --tailscale serve)
       ;;
     --local)
@@ -1935,6 +1944,9 @@ reexec_as_app_user() {
   for arg in "${pass_args[@]}"; do
     cmd+=" $(shell_quote "$arg")"
   done
+  if [[ "$HOSTING_REPAIR_REQUESTED" -eq 1 ]]; then
+    cmd+=" --repair-hosting"
+  fi
 
   if [[ "$RUN_ONBOARD" -eq 1 ]]; then
     TEMP_SUDOERS="/etc/sudoers.d/fased-install-${target_user}"
@@ -3308,6 +3320,19 @@ fi
 
 if [[ "$RUN_ONBOARD" -eq 0 ]]; then
   status_frame_end
+  if [[ "$HOSTING_REPAIR_REQUESTED" -eq 1 ]]; then
+    echo "Repairing the root-managed hosted gateway service..."
+    if [[ ! -x "/usr/local/sbin/fased-install-gateway-service" ]]; then
+      echo "Hosted service helper is missing." >&2
+      echo "Rerun this repair as root so installer-managed helpers and sudoers are restored." >&2
+      exit 1
+    fi
+    if ! "$FASED_CLI_PATH" gateway install --force --system; then
+      echo "Hosted gateway service repair failed." >&2
+      echo "Persistent state under $FASED_CONFIG_DIR was not removed." >&2
+      exit 1
+    fi
+  fi
   no_onboard_profile="$(resolved_host_profile)"
   marker_onboarding_completed="$(read_marker_onboarding_completed || true)"
   if [[ "$marker_onboarding_completed" == "true" ]] || has_system_gateway_service || { [[ "$no_onboard_profile" != "hosting" ]] && has_user_gateway_service; }; then
@@ -3332,7 +3357,11 @@ if [[ "$RUN_ONBOARD" -eq 0 ]]; then
       echo "No existing Gateway service was found to restart."
     fi
   fi
-  echo "Onboarding skipped (--no-onboard)."
+  if [[ "$HOSTING_REPAIR_REQUESTED" -eq 1 ]]; then
+    echo "Hosted runtime and gateway service repair complete. Onboarding was not rerun."
+  else
+    echo "Onboarding skipped (--no-onboard)."
+  fi
   if has_system_gateway_service || { [[ "$no_onboard_profile" != "hosting" ]] && has_user_gateway_service; }; then
     echo "Open: fased dashboard --no-open"
   elif [[ "$HOSTING_REQUESTED" -eq 1 ]]; then

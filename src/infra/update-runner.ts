@@ -75,8 +75,15 @@ export type UpdateRunResult = {
   reason?: string;
   before?: { sha?: string | null; version?: string | null };
   after?: { sha?: string | null; version?: string | null };
+  transaction?: UpdateTransaction;
   steps: UpdateStepResult[];
   durationMs: number;
+};
+
+export type UpdateTransaction = {
+  kind: "package-root-swap";
+  packageRoot: string;
+  backupRoot: string;
 };
 
 type CommandRunner = (
@@ -100,6 +107,7 @@ type HostedArtifactUpdateResult =
       kind: "updated";
       steps: UpdateStepResult[];
       afterVersion: string | null;
+      transaction: UpdateTransaction;
     }
   | {
       kind: "fallback";
@@ -449,6 +457,29 @@ async function safeRemove(pathname: string): Promise<void> {
   await fs.rm(pathname, { recursive: true, force: true }).catch(() => undefined);
 }
 
+export async function finalizeUpdateTransaction(transaction?: UpdateTransaction): Promise<void> {
+  if (!transaction) {
+    return;
+  }
+  await safeRemove(transaction.backupRoot);
+}
+
+export async function rollbackUpdateTransaction(transaction?: UpdateTransaction): Promise<void> {
+  if (!transaction) {
+    return;
+  }
+
+  const failedRoot = `${transaction.packageRoot}.failed-${Date.now()}`;
+  await fs.rename(transaction.packageRoot, failedRoot);
+  try {
+    await fs.rename(transaction.backupRoot, transaction.packageRoot);
+  } catch (error) {
+    await fs.rename(failedRoot, transaction.packageRoot).catch(() => undefined);
+    throw error;
+  }
+  await safeRemove(failedRoot);
+}
+
 async function swapPackageRoot(params: {
   pkgRoot: string;
   artifactRoot: string;
@@ -483,6 +514,7 @@ async function runHostedArtifactUpdate(params: {
   const tempRoot = await fs.mkdtemp(path.join(packageParent, ".fased-artifact-update-"));
   const steps: UpdateStepResult[] = [];
   let backupRoot: string | null = null;
+  let retainBackup = false;
 
   try {
     const spec = `${params.packageName}@${params.expectedVersion}`;
@@ -612,9 +644,19 @@ async function runHostedArtifactUpdate(params: {
     }
 
     const afterVersion = await readPackageVersion(params.pkgRoot);
-    return { kind: "updated", steps, afterVersion };
+    retainBackup = true;
+    return {
+      kind: "updated",
+      steps,
+      afterVersion,
+      transaction: {
+        kind: "package-root-swap",
+        packageRoot: params.pkgRoot,
+        backupRoot,
+      },
+    };
   } finally {
-    if (backupRoot) {
+    if (backupRoot && !retainBackup) {
       await safeRemove(backupRoot);
     }
     await safeRemove(tempRoot);
@@ -643,6 +685,7 @@ async function runHostedReleaseArtifactUpdate(params: {
   const tempRoot = await fs.mkdtemp(path.join(packageParent, ".fased-release-update-"));
   const steps: UpdateStepResult[] = [];
   let backupRoot: string | null = null;
+  let retainBackup = false;
   let progressIndex = 0;
   const totalSteps = 4;
   const startProgress = (name: string, command: string, cwd: string): UpdateStepInfo => {
@@ -813,13 +856,19 @@ async function runHostedReleaseArtifactUpdate(params: {
       };
     }
 
+    retainBackup = true;
     return {
       kind: "updated",
       steps,
       afterVersion: await readPackageVersion(params.pkgRoot),
+      transaction: {
+        kind: "package-root-swap",
+        packageRoot: params.pkgRoot,
+        backupRoot,
+      },
     };
   } finally {
-    if (backupRoot) {
+    if (backupRoot && !retainBackup) {
       await safeRemove(backupRoot);
     }
     await safeRemove(tempRoot);
@@ -1436,6 +1485,7 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
             root: pkgRoot,
             before: { version: beforeVersion },
             after: { version: releaseResult.afterVersion },
+            transaction: releaseResult.transaction,
             steps,
             durationMs: Date.now() - startedAt,
           };
@@ -1478,6 +1528,7 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
           root: pkgRoot,
           before: { version: beforeVersion },
           after: { version: artifactResult.afterVersion },
+          transaction: artifactResult.transaction,
           steps,
           durationMs: Date.now() - startedAt,
         };
