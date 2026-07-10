@@ -112,7 +112,7 @@ export function applyNonInteractiveGatewayConfig(params: {
         hostingProfile && tailscaleMode === "serve"
           ? {
               ...nextConfig.gateway?.controlUi,
-              allowInsecureAuth: true,
+              allowInsecureAuth: false,
             }
           : nextConfig.gateway?.controlUi,
       tailscale: {
