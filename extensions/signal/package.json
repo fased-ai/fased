@@ -1,6 +1,6 @@
 {
   "name": "@fased/signal",
-  "version": "0.1.39",
+  "version": "0.1.40",
   "private": true,
   "description": "FasedAgent Signal channel plugin",
   "type": "module",
