@@ -333,11 +333,10 @@ See [Configuration Reference](/gateway/configuration-reference).
 
 ## Plugin setup for acpx backend
 
-Install and enable plugin:
+ACPX is a bundled advanced extension in this release. Enable the bundled copy:
 
 ```bash
-fased plugins install @fased/acpx
-fased config set plugins.entries.acpx.enabled true
+fased plugins enable acpx
 ```
 
 Local workspace install during development:
@@ -354,7 +353,7 @@ Then verify backend health:
 
 ### Pinned acpx install strategy (current behavior)
 
-`@fased/acpx` now enforces a strict plugin-local pinning model:
+The bundled ACPX extension enforces a strict plugin-local pinning model:
 
 1. The extension pins an exact acpx dependency in `extensions/acpx/package.json`.
 2. Runtime command is fixed to the plugin-local binary (`extensions/acpx/node_modules/.bin/acpx`), not global `PATH`.

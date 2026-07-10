@@ -20,18 +20,13 @@ x-i18n:
 
 状态：支持文本 + 私信附件；频道/群组文件发送需要 `sharePointSiteId` + Graph 权限（参见[在群聊中发送文件](#sending-files-in-group-chats)）。投票通过 Adaptive Cards 发送。
 
-## 需要插件
+## 随附高级扩展
 
-Microsoft Teams 作为插件提供，不包含在核心安装中。
-
-**破坏性变更（2026.1.15）：** MS Teams 已从核心移出。如果你使用它，必须安装插件。
-
-原因说明：保持核心安装更轻量，并让 MS Teams 依赖项可以独立更新。
-
-通过 CLI 安装（npm 注册表）：
+Microsoft Teams 随主包提供，但默认禁用。它不是本版本的公开 npm 插件。
+通过 CLI 启用：
 
 ```bash
-fased plugins install @fased/msteams
+fased plugins enable msteams
 ```
 
 本地检出（从 git 仓库运行时）：
@@ -245,8 +240,8 @@ tailscale funnel 3978
 
 ## 设置（最小纯文本）
 
-1. **安装 Microsoft Teams 插件**
-   - 从 npm：`fased plugins install @fased/msteams`
+1. **启用 Microsoft Teams 插件**
+   - 随附扩展：`fased plugins enable msteams`
    - 从本地检出：`fased plugins install ./extensions/msteams`
 
 2. **机器人注册**

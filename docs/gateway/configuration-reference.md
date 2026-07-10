@@ -472,7 +472,9 @@ to new threads.
 
 ### Mattermost
 
-Mattermost ships as a plugin: `fased plugins install @fased/mattermost`.
+Mattermost ships as a bundled advanced extension. Configure it under **Agent >
+Channels > Mattermost** and restart the Gateway if the UI asks for a runtime
+reload. It is not one of the public npm add-ons in this release.
 
 ```json5
 {

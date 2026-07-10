@@ -112,15 +112,9 @@ x-i18n:
 - [`docs/reference/release-notes-template.md`](https://github.com/fased-ai/fased/blob/main/docs/reference/release-notes-template.md)
 - [`docs/reference/RELEASING.md`](https://github.com/fased-ai/fased/blob/main/docs/reference/RELEASING.md)
 
-- @fased/bluebubbles
-- @fased/diagnostics-otel
 - @fased/discord
-- @fased/matrix
-- @fased/msteams
-- @fased/nextcloud-talk
-- @fased/nostr
-- @fased/voice-call
-- @fased/zalo
-- @fased/zalouser
+- @fased/slack
+- @fased/telegram
+- @fased/whatsapp
 
 发布说明还必须标注**默认未启用**的**新可选内置插件**（例如：`tlon`）。

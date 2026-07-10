@@ -1568,6 +1568,7 @@
                 "group": "Project and release",
                 "pages": [
                   "reference/legal",
+                  "reference/dependency-ownership",
                   "reference/roadmap",
                   "reference/credits",
                   "reference/RELEASING",

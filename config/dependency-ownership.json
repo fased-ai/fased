@@ -1,0 +1,110 @@
+{
+  "schemaVersion": 1,
+  "groups": [
+    {
+      "id": "agent-core",
+      "label": "Agent Core",
+      "delivery": "core",
+      "target": "keep",
+      "dependencies": [
+        "@agentclientprotocol/sdk",
+        "@clack/prompts",
+        "@homebridge/ciao",
+        "@lydell/node-pty",
+        "@mariozechner/pi-agent-core",
+        "@mariozechner/pi-ai",
+        "@mariozechner/pi-coding-agent",
+        "@mariozechner/pi-tui",
+        "@modelcontextprotocol/sdk",
+        "@sinclair/typebox",
+        "ajv",
+        "chalk",
+        "chokidar",
+        "cli-highlight",
+        "commander",
+        "croner",
+        "dotenv",
+        "express",
+        "https-proxy-agent",
+        "ipaddr.js",
+        "jiti",
+        "json5",
+        "jszip",
+        "long",
+        "markdown-it",
+        "node-domexception",
+        "osc-progress",
+        "qrcode-terminal",
+        "tar",
+        "tslog",
+        "undici",
+        "ws",
+        "yaml",
+        "zod"
+      ]
+    },
+    {
+      "id": "crypto-core",
+      "label": "Wallet And Mining Core",
+      "delivery": "core",
+      "target": "keep",
+      "dependencies": ["@solana/web3.js"]
+    },
+    {
+      "id": "fased-network",
+      "label": "Fased Network",
+      "delivery": "core",
+      "target": "keep",
+      "dependencies": ["@fedify/fedify"]
+    },
+    {
+      "id": "provider-bedrock",
+      "label": "Amazon Bedrock Provider",
+      "delivery": "provider-addon",
+      "target": "extract",
+      "dependencies": ["@aws-sdk/client-bedrock", "@aws-sdk/core"]
+    },
+    {
+      "id": "provider-google",
+      "label": "Google Provider Compatibility",
+      "delivery": "provider-addon",
+      "target": "audit",
+      "dependencies": ["gaxios"]
+    },
+    {
+      "id": "advanced-channels",
+      "label": "Bundled Advanced Channels",
+      "delivery": "channel-addon",
+      "target": "extract",
+      "dependencies": ["@larksuiteoapi/node-sdk", "@line/bot-sdk", "google-auth-library"]
+    },
+    {
+      "id": "browser-runtime",
+      "label": "Browser Runtime",
+      "delivery": "runtime-addon",
+      "target": "extract",
+      "dependencies": ["@mozilla/readability", "linkedom", "playwright-core"]
+    },
+    {
+      "id": "media-runtime",
+      "label": "Media Runtime",
+      "delivery": "runtime-addon",
+      "target": "extract",
+      "dependencies": ["file-type", "pdfjs-dist", "sharp"]
+    },
+    {
+      "id": "speech-runtime",
+      "label": "Speech Runtime",
+      "delivery": "runtime-addon",
+      "target": "extract",
+      "dependencies": ["node-edge-tts"]
+    },
+    {
+      "id": "local-memory",
+      "label": "Native Local Memory",
+      "delivery": "runtime-addon",
+      "target": "extract",
+      "dependencies": ["sqlite-vec"]
+    }
+  ]
+}

@@ -18,14 +18,14 @@ Matrix 是一个开放的去中心化消息协议。Fased 以 Matrix **用户**�
 
 状态：通过插件（@vector-im/matrix-bot-sdk）支持。支持私信、房间、话题、媒体、表情回应、投票（发送 + poll-start 作为文本）、位置和 E2EE（需要加密支持）。
 
-## 需要插件
+## 随附高级扩展
 
-Matrix 作为插件提供，不包含在核心安装中。
+Matrix 随主包提供，但默认禁用。它不是本版本的公开 npm 插件。
 
-通过 CLI 安装（npm 仓库）：
+通过 CLI 启用：
 
 ```bash
-fased plugins install @fased/matrix
+fased plugins enable matrix
 ```
 
 本地检出（从 git 仓库运行时）：
@@ -40,8 +40,8 @@ fased plugins install ./extensions/matrix
 
 ## 设置
 
-1. 安装 Matrix 插件：
-   - 从 npm：`fased plugins install @fased/matrix`
+1. 启用 Matrix 插件：
+   - 随附扩展：`fased plugins enable matrix`
    - 从本地检出：`fased plugins install ./extensions/matrix`
 2. 在主服务器上创建 Matrix 账户：
    - 在 [https://matrix.org/ecosystem/hosting/](https://matrix.org/ecosystem/hosting/) 浏览托管选项

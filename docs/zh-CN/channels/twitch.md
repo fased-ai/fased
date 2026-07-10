@@ -16,14 +16,14 @@ x-i18n:
 
 通过 IRC 连接支持 Twitch 聊天。Fased 以 Twitch 用户（机器人账户）身份连接，在频道中接收和发送消息。
 
-## 需要插件
+## 随附高级扩展
 
-Twitch 作为插件发布，未与核心安装捆绑。
+Twitch 随主包提供，但默认禁用。它不是本版本的公开 npm 插件。
 
-通过 CLI 安装（npm 注册表）：
+通过 CLI 启用：
 
 ```bash
-fased plugins install @fased/twitch
+fased plugins enable twitch
 ```
 
 本地检出（从 git 仓库运行时）：

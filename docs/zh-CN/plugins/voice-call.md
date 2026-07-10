@@ -37,17 +37,18 @@ Voice Call 插件运行在 **Gateway 网关进程内部**。
 
 如果你使用远程 Gateway 网关，在**运行 Gateway 网关的机器**上安装/配置插件，然后重启 Gateway 网关以加载它。
 
-## 安装
+## 启用
 
-### 选项 A：从 npm 安装（推荐）
+Voice Call 在本版本中是随主包提供但默认禁用的高级扩展，不是公开
+npm 插件。启用随附扩展：
 
 ```bash
-fased plugins install @fased/voice-call
+fased plugins enable voice-call
 ```
 
 之后重启 Gateway 网关。
 
-### 选项 B：从本地文件夹安装（开发，不复制）
+从源码检出进行扩展开发时：
 
 ```bash
 fased plugins install ./extensions/voice-call

@@ -29,27 +29,31 @@ x-i18n:
 fased plugins list
 ```
 
-2. 安装官方插件（例如：Voice Call）：
+2. 安装已发布的官方频道插件（例如 Telegram）：
 
 ```bash
-fased plugins install @fased/voice-call
+fased plugins install @fased/telegram
 ```
 
 3. 重启 Gateway 网关，然后在 `plugins.entries.<id>.config` 下配置。
 
 参见 [Voice Call](/plugins/voice-call) 了解具体的插件示例。
 
-## 可用插件（官方）
+## 插件交付状态
 
-- 从 2026.1.15 起 Microsoft Teams 仅作为插件提供；如果使用 Teams，请安装 `@fased/msteams`。
+- 已发布的官方 npm 插件：`@fased/telegram`、`@fased/whatsapp`、
+  `@fased/discord`、`@fased/slack`。
+- Voice Call、Zalo Personal、Matrix、Nostr、Zalo 和 Microsoft Teams
+  在本版本中属于随主包提供的高级扩展。启用随附扩展，不要假设其
+  `@fased/*` 包已经发布。
 - Memory (Core) — 捆绑的记忆搜索插件（通过 `plugins.slots.memory` 默认启用）
 - Memory (LanceDB) — 捆绑的长期记忆插件（自动召回/捕获；设置 `plugins.slots.memory = "memory-lancedb"`）
-- [Voice Call](/plugins/voice-call) — `@fased/voice-call`
-- [Zalo Personal](/plugins/zalouser) — `@fased/zalouser`
-- [Matrix](/channels/matrix) — `@fased/matrix`
-- [Nostr](/channels/nostr) — `@fased/nostr`
-- [Zalo](/channels/zalo) — `@fased/zalo`
-- [Microsoft Teams](/channels/msteams) — `@fased/msteams`
+- [Voice Call](/plugins/voice-call) — 随附高级扩展
+- [Zalo Personal](/plugins/zalouser) — 随附高级扩展
+- [Matrix](/channels/matrix) — 随附高级扩展
+- [Nostr](/channels/nostr) — 随附高级扩展
+- [Zalo](/channels/zalo) — 随附高级扩展
+- [Microsoft Teams](/channels/msteams) — 随附高级扩展
 - Gemini CLI OAuth（提供商认证）— 作为 `google-gemini-cli-auth` 捆绑（默认禁用）
 - Qwen portal OAuth（旧提供商认证）— `qwen-portal-auth` 仅保留给已有配置。Qwen Code OAuth 免费层已于 2026-04-15 停用，普通设置请使用 Qwen Coding Plan 或 DashScope API key。
 - Copilot Proxy（提供商认证）— 本地 VS Code Copilot Proxy 桥接；与内置 `github-copilot` 设备登录不同（捆绑，默认禁用）
@@ -270,7 +274,7 @@ fased plugins install ./extensions/voice-call # relative path ok
 fased plugins install ./plugin.tgz           # install from a local tarball
 fased plugins install ./plugin.zip           # install from a local zip
 fased plugins install -l ./extensions/voice-call # link (no copy) for dev
-fased plugins install @fased/voice-call # install from npm
+fased plugins install @fased/telegram # 从 npm 安装已发布的官方频道插件
 fased plugins update <id>
 fased plugins update --all
 fased plugins enable <id>
@@ -599,7 +603,7 @@ export default function (api) {
 推荐的打包方式：
 
 - 主包：`fased`（本仓库）
-- 插件：`@fased/*` 下的独立 npm 包（例如：`@fased/voice-call`）
+- 已发布的插件：`@fased/*` 下的独立 npm 包（例如：`@fased/telegram`）
 
 发布契约：
 

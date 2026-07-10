@@ -1377,8 +1377,9 @@ Slack 动作组（控制 `slack` 工具动作）：
 
 ### `channels.mattermost`（机器人 token）
 
-Mattermost 作为插件提供，不包含在核心安装中。
-请先安装：`fased plugins install @fased/mattermost`（或从 git checkout 使用 `./extensions/mattermost`）。
+Mattermost 是随主包提供但默认禁用的高级扩展。请先运行
+`fased plugins enable mattermost`。从源码开发时也可以使用
+`./extensions/mattermost`。
 
 Mattermost 需要机器人 token 加上服务器的基础 URL：
 
