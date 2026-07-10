@@ -470,6 +470,9 @@ describe("secondary read rpc fallback", () => {
     });
     configureReadRpc(rpcUrl);
     process.env.FASED_SAT_PROGRAM_ID = "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75";
+    process.env.FASED_SAT_BOND_PROGRAM_ID = "D1ySMMiJmvJRhJJKwYnc171w3g2JDPQnkgD8kGhaG4Vq";
+    process.env.FASED_SAT_MINT_ADDRESS = "2AhikHhzJdv6uve1yUBSUmhRKWaSfa7exrsDsfKjVFKa";
+    process.env.FASED_SAT_MINT_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 
     await expect(
       inspectSatCycleAccountExists({ network: "devnet" } as never, { cycleId: 123 }),

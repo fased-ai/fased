@@ -30,14 +30,22 @@ Status: supported for DMs and channels. Socket Mode is the recommended default.
 
 Socket Mode avoids public inbound exposure.
 
-1. Create a Slack app.
-2. Enable Socket Mode.
-3. Create an App Token with `connections:write`.
-4. Install the app and copy the Bot Token.
-5. Subscribe to message, mention, reaction, and membership events you need.
-6. Open **Agents > selected Agent > Channels > Slack**.
-7. Paste App Token and Bot Token, choose Socket Mode, save, and restart if
-   needed.
+1. Open **Agents > selected Agent > Channels > Slack** and click **Install**.
+   Restart the Gateway when prompted.
+2. Create a Slack app.
+3. Enable Socket Mode.
+4. Create an App Token with `connections:write`.
+5. Install the app and copy the Bot Token.
+6. Subscribe to message, mention, reaction, and membership events you need.
+7. Return to **Agent > Channels > Slack**.
+8. Paste App Token and Bot Token, choose Socket Mode, and save.
+
+CLI install:
+
+```bash
+fased plugins install @fased/slack
+fased gateway restart
+```
 
 Config shape:
 

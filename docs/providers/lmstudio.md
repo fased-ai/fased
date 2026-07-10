@@ -12,6 +12,9 @@ LM Studio is a first-class **Agent > Models** provider for local open-weight
 models. Fased talks to LM Studio through its OpenAI-compatible chat endpoint and
 discovers models from the LM Studio local model API.
 
+Fased does not install LM Studio and does not download its model weights. Run
+LM Studio separately, then connect its local API from **Agent > Models**.
+
 Default endpoints:
 
 - Chat API: `http://127.0.0.1:1234/v1`

@@ -61,7 +61,7 @@ The product shape is simple: run the agent first, then add mining and network
 work when they have a specific job.
 
 - **Runs on your machine**: use your own computer or your own VPS
-- **Chat app ready**: connect WhatsApp, Telegram, Discord, and more when needed
+- **Chat app ready**: install and connect WhatsApp, Telegram, Discord, and more when needed
 - **Built for agent work**: tasks, tools, memory, sessions, and multi-agent routing
 - **Wallet-ready when enabled**: wallet actions can use wallet roles and protected signing
 - **Network-ready when enabled**: Fased Network and Satcoin mining live beside the base agent
@@ -97,7 +97,7 @@ one place.
 
 <Columns>
   <Card title="Chat app gateway" icon="network">
-    Add WhatsApp, Telegram, Discord, iMessage, and more when you want remote chat surfaces.
+    Install the channel add-ons you use, then connect them when you want remote chat surfaces.
   </Card>
   <Card title="Agent you run" icon="cpu">
     Sessions, tasks, tools, memory, and plugins in one setup profile.

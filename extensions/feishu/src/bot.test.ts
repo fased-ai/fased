@@ -498,8 +498,8 @@ describe("handleFeishuMessage command authorization", () => {
     const cfg: FasedAgentConfig = {
       channels: {
         feishu: {
-          appId: "cli_test",
-          appSecret: "sec_test",
+          appId: "cli_test_app",
+          appSecret: "secret_test_123456",
           groups: {
             "oc-group": {
               requireMention: false,

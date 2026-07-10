@@ -9,6 +9,11 @@ title: "Local Models"
 
 # Local models
 
+Fased ships the provider clients and configuration surfaces. It does not ship a
+local model server or model weights. Install and run Ollama, LM Studio, vLLM,
+LiteLLM, SGLang, or another compatible server separately, then connect it from
+**Agent > Models**.
+
 Local models can work well when they have enough context and tool-calling
 quality. Small or heavily quantized models may truncate context, miss policy
 cues, or make weaker tool decisions. Use the strongest model your hardware can
@@ -195,3 +200,7 @@ Public hosted providers do not need this flag.
 - LM Studio model unloaded? Reload; cold start is a common “hanging” cause.
 - Context errors? Lower `contextWindow` or raise your server limit.
 - Safety: local models skip provider-side filters; keep agents narrow and compaction on to limit prompt injection blast radius.
+
+The local chat-model path is separate from in-process local memory embeddings.
+See [Core And Optional Components](/install/components) and
+[Memory](/concepts/memory) for the optional `node-llama-cpp` boundary.

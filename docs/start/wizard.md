@@ -83,7 +83,9 @@ The wizard starts with **QuickStart** (defaults) vs **Advanced** (full control).
       `session.dmScope: "per-channel-peer"` when unset. Details:
       [CLI Onboarding Reference](/start/wizard-cli-reference#outputs-and-internals)
     - Tailscale exposure **Off**
-    - Chat app channels are connected later from `Agent > Channels`
+    - Chat app channels are connected later from `Agent > Channels`; official
+      Telegram, WhatsApp, Discord, and Slack add-ons are downloaded only when
+      selected
   </Tab>
   <Tab title="Advanced (full control)">
     - Exposes profile, mode, workspace, gateway, Fased Network,

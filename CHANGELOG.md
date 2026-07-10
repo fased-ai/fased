@@ -6,13 +6,15 @@ third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 
 ## 0.1.36
 
-- Ship verified hosted release artifacts for fast local and VPS installs and
-  updates without repeating the npm dependency graph on normal releases.
+- Ship verified hosted release artifacts for fast VPS installs and updates
+  without repeating the npm dependency graph on normal releases.
 - Keep dashboard chat, tasks, model providers, wallets, mining, Satcoin, and
   Fased Network in core while moving Telegram, WhatsApp, Discord, and Slack
   runtime stacks to installable add-ons.
 - Add packed-core and package-budget gates plus stable runtime SDK boundaries
   so SAT mining and core startup work without optional channel packages.
+- Require verified voice webhook request keys, suppress replay side effects,
+  and activate the configured stale-call cleanup timer.
 
 ## 0.1.35
 

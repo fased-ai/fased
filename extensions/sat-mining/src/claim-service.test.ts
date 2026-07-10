@@ -26,6 +26,23 @@ const createOrExecuteWalletSend = vi.fn(
     payload: {},
   }),
 );
+const readWalletProviderRegistry = vi.fn(() => ({
+  wallets: [
+    {
+      id: "wallet-a",
+      name: "Miner",
+      providerId: "local-socket-signer",
+      addresses: { solana: "Source1111111111111111111111111111111111111" },
+    },
+    {
+      id: "vault-wallet",
+      name: "Vault",
+      providerId: "local-socket-signer",
+      addresses: { solana: "Vault11111111111111111111111111111111111111" },
+    },
+  ],
+  defaultWalletId: "vault-wallet",
+}));
 
 vi.mock("./gateway-runner.js", () => ({
   runSatGatewayMethod: (args: GatewayMethodArgs) => runSatGatewayMethod(args),
@@ -38,24 +55,16 @@ vi.mock("./rpc-read.js", () => ({
   inspectSatPayoutReadiness: (...args: unknown[]) => inspectSatPayoutReadiness(...args),
 }));
 
-vi.mock("../../../src/wallet/wallet-send-approvals.js", () => ({
-  createOrExecuteWalletSend: (...args: unknown[]) => createOrExecuteWalletSend(...args),
-}));
-
-vi.mock("../../../src/wallet/solana-assets.js", () => ({
-  fetchSolanaWalletAssetsViaRpc: (...args: unknown[]) => fetchSolanaWalletAssetsViaRpc(...args),
-}));
-
-vi.mock("../../../src/config/config.js", () => ({
-  loadConfig: vi.fn(() => ({ wallet: {} })),
-}));
-
-vi.mock("../../../src/wallet/wallet-policy.js", async () => {
-  const actual = await vi.importActual<typeof import("../../../src/wallet/wallet-policy.js")>(
-    "../../../src/wallet/wallet-policy.js",
+vi.mock("fased/plugin-sdk/sat-runtime", async () => {
+  const actual = await vi.importActual<typeof import("fased/plugin-sdk/sat-runtime")>(
+    "fased/plugin-sdk/sat-runtime",
   );
   return {
     ...actual,
+    createOrExecuteWalletSend: (...args: unknown[]) => createOrExecuteWalletSend(...args),
+    fetchSolanaWalletAssetsViaRpc: (...args: unknown[]) => fetchSolanaWalletAssetsViaRpc(...args),
+    loadConfig: vi.fn(() => ({ wallet: {} })),
+    readWalletProviderRegistry: () => readWalletProviderRegistry(),
     resolveWalletPolicyConfig: vi.fn(() => ({
       enabled: true,
       mode: "external",
@@ -97,31 +106,12 @@ vi.mock("../../../src/wallet/wallet-policy.js", async () => {
   };
 });
 
-vi.mock("../../../src/wallet/wallet-provider-registry.js", () => ({
-  readWalletProviderRegistry: vi.fn(() => ({
-    wallets: [
-      {
-        id: "wallet-a",
-        name: "Miner",
-        providerId: "local-socket-signer",
-        addresses: { solana: "Source1111111111111111111111111111111111111" },
-      },
-      {
-        id: "vault-wallet",
-        name: "Vault",
-        providerId: "local-socket-signer",
-        addresses: { solana: "Vault11111111111111111111111111111111111111" },
-      },
-    ],
-    defaultWalletId: "vault-wallet",
-  })),
-}));
-
 describe("createSatClaimService", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-03-07T12:30:05.000Z"));
     process.env.FASED_SAT_PROGRAM_ID = "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75";
+    process.env.FASED_SAT_BOND_PROGRAM_ID = "Bond111111111111111111111111111111111111111";
     process.env.FASED_SAT_MINT_ADDRESS = "2AhikHhzJdv6uve1yUBSUmhRKWaSfa7exrsDsfKjVFKa";
     process.env.FASED_SAT_MINT_PROGRAM_ID = "8fb3Mpowe4pD6ed89gwm6gLuh8csPSrLi3hypcesqs5C";
     runSatGatewayMethod.mockReset();
@@ -148,6 +138,7 @@ describe("createSatClaimService", () => {
   afterEach(() => {
     vi.useRealTimers();
     delete process.env.FASED_SAT_PROGRAM_ID;
+    delete process.env.FASED_SAT_BOND_PROGRAM_ID;
     delete process.env.FASED_SAT_MINT_ADDRESS;
     delete process.env.FASED_SAT_MINT_PROGRAM_ID;
     delete process.env.FASED_WALLET_SOLANA_RPC_URL__WALLET_A;
@@ -400,6 +391,7 @@ describe("createSatClaimService", () => {
     await service.start();
     await vi.advanceTimersByTimeAsync(15_000);
 
+    expect(readWalletProviderRegistry).toHaveBeenCalled();
     expect(createOrExecuteWalletSend).toHaveBeenCalledWith(
       expect.objectContaining({
         payload: expect.objectContaining({

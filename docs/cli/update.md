@@ -1,5 +1,5 @@
 ---
-summary: "CLI reference for `fased update` (repo-backed update plus optional gateway restart)"
+summary: "CLI reference for local, hosted-artifact, and package-manager updates."
 read_when:
   - You want to update a source checkout safely
   - You need to understand `--update` shorthand behavior
@@ -8,7 +8,7 @@ title: "update"
 
 # `fased update`
 
-Update a repo checkout of Fased and optionally switch channels.
+Update an installed Fased runtime and optionally switch channels.
 
 For local installs, run it from the Fased install directory, usually `~/fased`:
 
@@ -123,17 +123,17 @@ Interactive flow to:
 
 ## What it does
 
-High-level flow:
+The exact path depends on the install:
 
-1. require a clean worktree
-2. switch to the selected channel or tag
-3. fetch upstream when needed
-4. for `dev`, preflight the latest `origin/main` commit before rebasing
-5. install dependencies
-6. rebuild runtime and browser UI assets
-7. run `fased doctor`
-8. sync installed plugins
-9. restart the gateway unless `--no-restart` is set
+- **VPS Hosting:** download the exact release artifact, verify its checksum and
+  version, run a pre-swap CLI/plugin check, activate it, sync installed plugins,
+  and refresh the service. Package-manager fallback is used only when the
+  artifact path is unavailable or unsupported.
+- **Local source checkout:** require a clean worktree, select the release tag or
+  branch, refresh dependencies, rebuild runtime and Control UI assets, run
+  doctor checks, sync plugins, and restart when requested.
+- **Manual package install:** update through the detected package manager, sync
+  plugins, and restart when requested.
 
 Current channel behavior:
 
@@ -167,10 +167,10 @@ git pull --ff-only origin main
 On a hosted VPS, run that direct development flow as `app` from
 `/home/app/fased` and use `./install.sh --hosting`.
 
-The browser Control UI shows update state under **Advanced -> Debug -> Update
+The browser Control UI shows update state under **Advanced > Debug > Update
 Status**. Current UI behavior is status-only: it can show version, channel,
-install source, package/git state, and dependency state. Use the CLI commands
-above to actually update.
+install source, package or Git state, and dependency state. Use the CLI commands
+above to update.
 
 ## `--update` shorthand
 
@@ -189,4 +189,5 @@ fased update
 - [Updating](/install/updating)
 - [Development channels](/install/development-channels)
 - [Control UI layout](/web/control-ui)
+- [Core And Optional Components](/install/components)
 - [`fased doctor`](/cli/doctor)

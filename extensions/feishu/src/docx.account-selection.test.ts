@@ -27,8 +27,16 @@ describe("feishu_doc account selection", () => {
         feishu: {
           enabled: true,
           accounts: {
-            a: { appId: "app-a", appSecret: "sec-a", tools: { doc: true } },
-            b: { appId: "app-b", appSecret: "sec-b", tools: { doc: true } },
+            a: {
+              appId: "app-id-a",
+              appSecret: "secret-a-12345678",
+              tools: { doc: true },
+            },
+            b: {
+              appId: "app-id-b",
+              appSecret: "secret-b-12345678",
+              tools: { doc: true },
+            },
           },
         },
       },
@@ -44,8 +52,8 @@ describe("feishu_doc account selection", () => {
     await docToolB.execute("call-b", { action: "list_blocks", doc_token: "d" });
 
     expect(createFeishuClientMock).toHaveBeenCalledTimes(2);
-    expect(createFeishuClientMock.mock.calls[0]?.[0]?.appId).toBe("app-a");
-    expect(createFeishuClientMock.mock.calls[1]?.[0]?.appId).toBe("app-b");
+    expect(createFeishuClientMock.mock.calls[0]?.[0]?.appId).toBe("app-id-a");
+    expect(createFeishuClientMock.mock.calls[1]?.[0]?.appId).toBe("app-id-b");
   });
 
   test("explicit accountId param overrides agentAccountId context", async () => {
@@ -54,8 +62,16 @@ describe("feishu_doc account selection", () => {
         feishu: {
           enabled: true,
           accounts: {
-            a: { appId: "app-a", appSecret: "sec-a", tools: { doc: true } },
-            b: { appId: "app-b", appSecret: "sec-b", tools: { doc: true } },
+            a: {
+              appId: "app-id-a",
+              appSecret: "secret-a-12345678",
+              tools: { doc: true },
+            },
+            b: {
+              appId: "app-id-b",
+              appSecret: "secret-b-12345678",
+              tools: { doc: true },
+            },
           },
         },
       },
@@ -71,6 +87,6 @@ describe("feishu_doc account selection", () => {
       accountId: "a",
     });
 
-    expect(createFeishuClientMock.mock.calls.at(-1)?.[0]?.appId).toBe("app-a");
+    expect(createFeishuClientMock.mock.calls.at(-1)?.[0]?.appId).toBe("app-id-a");
   });
 });

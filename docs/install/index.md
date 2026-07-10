@@ -499,12 +499,10 @@ fased update status
 fased update
 ```
 
-The browser Control UI can also run **Update & Restart** when the gateway is
-healthy and the visible action is present. Look under **Advanced -> Debug ->
-Update Status**. It uses the same configured update channel as `fased update`.
-If the action is not shown, use the CLI commands above. Rerun `./install.sh`
-for repair/reinstall behavior; the current installer fast-forwards a clean Git
-checkout before building unless `--no-git-update` is set.
+The browser Control UI reports version and update availability under
+**Advanced > Debug > Update Status**. Run the actual update from the CLI.
+Rerun `./install.sh` for repair/reinstall behavior; the installer refreshes a
+clean checkout and VPS Hosting prefers the verified prebuilt runtime artifact.
 
 ## What onboarding does
 

@@ -284,9 +284,12 @@ function formatLocalSetupError(err: unknown): string {
     "To enable local embeddings:",
     "1) Use Node 22 LTS (recommended for installs/updates)",
     missing
-      ? "2) Reinstall FasedAgent (this should install node-llama-cpp): npm i -g fased@latest"
+      ? "2) Use a maintained source install and install the optional node-llama-cpp dependency"
       : null,
-    "3) If you use pnpm: pnpm approve-builds (select node-llama-cpp), then pnpm rebuild node-llama-cpp",
+    "3) With pnpm: pnpm approve-builds (select node-llama-cpp), then pnpm rebuild node-llama-cpp",
+    missing
+      ? 'The lightweight hosted runtime does not include this native add-on; use provider = "ollama" or a remote provider instead.'
+      : null,
     ...REMOTE_EMBEDDING_PROVIDER_IDS.map(
       (provider) => `Or set agents.defaults.memorySearch.provider = "${provider}" (remote).`,
     ),

@@ -15,6 +15,7 @@ import type { VoiceCallProvider } from "./providers/base.js";
 import { OpenAIRealtimeSTTProvider } from "./providers/stt-openai-realtime.js";
 import type { TwilioProvider } from "./providers/twilio.js";
 import type { NormalizedEvent, WebhookContext } from "./types.js";
+import { startStaleCallReaper } from "./webhook/stale-call-reaper.js";
 
 const MAX_WEBHOOK_BODY_BYTES = 1024 * 1024;
 
@@ -28,6 +29,7 @@ export class VoiceCallWebhookServer {
   private manager: CallManager;
   private provider: VoiceCallProvider;
   private coreConfig: CoreConfig | null;
+  private stopStaleCallReaper: (() => void) | null = null;
 
   /** Media stream handler for bidirectional audio (when streaming enabled) */
   private mediaStreamHandler: MediaStreamHandler | null = null;
@@ -194,6 +196,11 @@ export class VoiceCallWebhookServer {
       this.server.on("error", reject);
 
       this.server.listen(port, bind, () => {
+        this.stopStaleCallReaper?.();
+        this.stopStaleCallReaper = startStaleCallReaper({
+          manager: this.manager,
+          staleCallReaperSeconds: this.config.staleCallReaperSeconds,
+        });
         const url = `http://${bind}:${port}${webhookPath}`;
         console.log(`[voice-call] Webhook server listening on ${url}`);
         if (this.mediaStreamHandler) {
@@ -208,6 +215,8 @@ export class VoiceCallWebhookServer {
    * Stop the webhook server.
    */
   async stop(): Promise<void> {
+    this.stopStaleCallReaper?.();
+    this.stopStaleCallReaper = null;
     return new Promise((resolve) => {
       if (this.server) {
         this.server.close(() => {
@@ -281,8 +290,22 @@ export class VoiceCallWebhookServer {
       return;
     }
 
+    const verifiedRequestKey = verification.verifiedRequestKey?.trim();
+    if (!verifiedRequestKey) {
+      console.warn("[voice-call] Webhook verification did not return a request key");
+      res.statusCode = 401;
+      res.end("Unauthorized");
+      return;
+    }
+
+    if (verification.isReplay) {
+      res.statusCode = 200;
+      res.end("OK");
+      return;
+    }
+
     // Parse events
-    const result = this.provider.parseWebhookEvent(ctx);
+    const result = this.provider.parseWebhookEvent(ctx, { verifiedRequestKey });
 
     // Process each event
     for (const event of result.events) {

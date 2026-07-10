@@ -37,7 +37,7 @@ describe("planner policy", () => {
       maxCommitLamports: "500000000",
     });
 
-    expect(scores).toHaveLength(12);
+    expect(scores).toHaveLength(27);
     expect(scores.find((entry) => entry.actionKey === "conviction:push")).toBeTruthy();
   });
 

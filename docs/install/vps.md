@@ -386,10 +386,9 @@ fased update
 After hosted onboarding, SSH as `app` should open directly in `/home/app/fased`.
 If it does not, fix the hosted login/shell setup before updating.
 
-If the browser Control UI is reachable, **Update & Restart** uses the same
-gateway update path when the visible action is present under **Advanced ->
-Debug -> Update Status**. If the action is not shown, use the CLI commands
-above. Rerun `./install.sh --hosting` only for repair/reinstall behavior.
+The browser Control UI reports version and update availability under
+**Advanced > Debug > Update Status**. Run the actual update from the CLI.
+Rerun `./install.sh --hosting` only for repair/reinstall behavior.
 `fased update` uses the configured channel; stable is the default end-user
 channel and resolves to the latest stable release tag. It does not pull every
 new commit from `main`.

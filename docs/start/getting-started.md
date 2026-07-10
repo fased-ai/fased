@@ -166,12 +166,15 @@ The macOS app is a Local setup surface, not a separate hosting profile.
     - `Agent > Models`: add a provider API key or sign in, then choose the Agent's primary and fallback models.
     - `Agent > Skills`: create, review, install, configure, edit, and allow skills for that Agent.
     - `Agent > Services`: connect Gmail, Calendar, GitHub, web/search, browser/media, or custom APIs.
-    - `Agent > Channels`: connect Telegram, Discord, WhatsApp, Slack, and other chat apps.
+    - `Agent > Channels`: install the Telegram, Discord, WhatsApp, or Slack add-on you use, then connect its account. Other chat apps follow their channel page.
     - `Agent > Memory`: enable saved session context and review this Agent's archive state.
     - `Agent > Tasks`: schedule recurring work for this Agent when needed.
 
     See [Control UI Setup Model](/start/control-ui-setup) for what belongs in
     onboarding, the browser UI, Advanced Config, and CLI.
+
+    See [Core And Optional Components](/install/components) for what ships in
+    core and what Fased downloads only when selected.
 
   </Step>
   <Step title="Send the first browser chat">

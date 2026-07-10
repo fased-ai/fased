@@ -5,6 +5,26 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const createFeishuClientMock = vi.hoisted(() => vi.fn());
 const fetchRemoteMediaMock = vi.hoisted(() => vi.fn());
+const convertMock = vi.hoisted(() => vi.fn());
+const documentCreateMock = vi.hoisted(() => vi.fn());
+const blockListMock = vi.hoisted(() => vi.fn());
+const blockChildrenCreateMock = vi.hoisted(() => vi.fn());
+const blockChildrenGetMock = vi.hoisted(() => vi.fn());
+const blockChildrenBatchDeleteMock = vi.hoisted(() => vi.fn());
+const driveUploadAllMock = vi.hoisted(() => vi.fn());
+const permissionMemberCreateMock = vi.hoisted(() => vi.fn());
+const blockPatchMock = vi.hoisted(() => vi.fn());
+const scopeListMock = vi.hoisted(() => vi.fn());
+
+const createTestConfig = () => ({
+  channels: {
+    feishu: {
+      appId: "app_id_123456",
+      appSecret: "app_secret_1234567890",
+      tools: { doc: true },
+    },
+  },
+});
 
 vi.mock("./client.js", () => ({
   createFeishuClient: createFeishuClientMock,
@@ -23,17 +43,6 @@ vi.mock("./runtime.js", () => ({
 import { registerFeishuDocTools } from "./docx.js";
 
 describe("feishu_doc image fetch hardening", () => {
-  const convertMock = vi.hoisted(() => vi.fn());
-  const documentCreateMock = vi.hoisted(() => vi.fn());
-  const blockListMock = vi.hoisted(() => vi.fn());
-  const blockChildrenCreateMock = vi.hoisted(() => vi.fn());
-  const blockChildrenGetMock = vi.hoisted(() => vi.fn());
-  const blockChildrenBatchDeleteMock = vi.hoisted(() => vi.fn());
-  const driveUploadAllMock = vi.hoisted(() => vi.fn());
-  const permissionMemberCreateMock = vi.hoisted(() => vi.fn());
-  const blockPatchMock = vi.hoisted(() => vi.fn());
-  const scopeListMock = vi.hoisted(() => vi.fn());
-
   beforeEach(() => {
     vi.clearAllMocks();
 
@@ -113,14 +122,7 @@ describe("feishu_doc image fetch hardening", () => {
 
     const registerTool = vi.fn();
     registerFeishuDocTools({
-      config: {
-        channels: {
-          feishu: {
-            appId: "app_id",
-            appSecret: "app_secret",
-          },
-        },
-      } as any,
+      config: createTestConfig() as any,
       logger: { debug: vi.fn(), info: vi.fn() } as any,
       registerTool,
     } as any);
@@ -148,14 +150,7 @@ describe("feishu_doc image fetch hardening", () => {
   it("reports owner permission details when grant succeeds", async () => {
     const registerTool = vi.fn();
     registerFeishuDocTools({
-      config: {
-        channels: {
-          feishu: {
-            appId: "app_id",
-            appSecret: "app_secret",
-          },
-        },
-      } as any,
+      config: createTestConfig() as any,
       logger: { debug: vi.fn(), info: vi.fn() } as any,
       registerTool,
     } as any);
@@ -185,14 +180,7 @@ describe("feishu_doc image fetch hardening", () => {
 
     const registerTool = vi.fn();
     registerFeishuDocTools({
-      config: {
-        channels: {
-          feishu: {
-            appId: "app_id",
-            appSecret: "app_secret",
-          },
-        },
-      } as any,
+      config: createTestConfig() as any,
       logger: { debug: vi.fn(), info: vi.fn() } as any,
       registerTool,
     } as any);
@@ -221,14 +209,7 @@ describe("feishu_doc image fetch hardening", () => {
   it("skips permission grant when owner_open_id is omitted", async () => {
     const registerTool = vi.fn();
     registerFeishuDocTools({
-      config: {
-        channels: {
-          feishu: {
-            appId: "app_id",
-            appSecret: "app_secret",
-          },
-        },
-      } as any,
+      config: createTestConfig() as any,
       logger: { debug: vi.fn(), info: vi.fn() } as any,
       registerTool,
     } as any);
@@ -256,14 +237,7 @@ describe("feishu_doc image fetch hardening", () => {
 
     const registerTool = vi.fn();
     registerFeishuDocTools({
-      config: {
-        channels: {
-          feishu: {
-            appId: "app_id",
-            appSecret: "app_secret",
-          },
-        },
-      } as any,
+      config: createTestConfig() as any,
       logger: { debug: vi.fn(), info: vi.fn() } as any,
       registerTool,
     } as any);
@@ -295,14 +269,7 @@ describe("feishu_doc image fetch hardening", () => {
 
     const registerTool = vi.fn();
     registerFeishuDocTools({
-      config: {
-        channels: {
-          feishu: {
-            appId: "app_id",
-            appSecret: "app_secret",
-          },
-        },
-      } as any,
+      config: createTestConfig() as any,
       logger: { debug: vi.fn(), info: vi.fn() } as any,
       registerTool,
     } as any);
@@ -356,14 +323,7 @@ describe("feishu_doc image fetch hardening", () => {
     try {
       const registerTool = vi.fn();
       registerFeishuDocTools({
-        config: {
-          channels: {
-            feishu: {
-              appId: "app_id",
-              appSecret: "app_secret",
-            },
-          },
-        } as any,
+        config: createTestConfig() as any,
         logger: { debug: vi.fn(), info: vi.fn() } as any,
         registerTool,
       } as any);
