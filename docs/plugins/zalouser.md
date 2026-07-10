@@ -44,17 +44,10 @@ This enables the local bundled extension and then uses `channels.zalouser` for
 account credentials and routing. If the Gateway is remote, the QR login and
 `zca` dependency still run on the Gateway machine.
 
-## Developer or external install
+## Developer install
 
-Use this only when testing the packaged extension outside the bundled repo copy.
-
-```bash
-fased plugins install @fased/zalouser
-```
-
-Restart the Gateway afterwards.
-
-For local extension development:
+Zalo Personal is not a public npm add-on in this release. For local extension
+development from a source checkout:
 
 ```bash
 fased plugins install ./extensions/zalouser

@@ -16,19 +16,19 @@ x-i18n:
 
 状态：实验性。仅支持私信；根据 Zalo 文档，群组即将推出。
 
-## 需要插件
+## 随附高级扩展
 
-Zalo 以插件形式提供，不包含在核心安装中。
+Zalo 随主包提供，但默认禁用。它不是本版本的公开 npm 插件。
 
-- 通过 CLI 安装：`fased plugins install @fased/zalo`
+- 通过 CLI 启用：`fased plugins enable zalo`
 - 或在新手引导期间选择 **Zalo** 并确认安装提示
 - 详情：[插件](/tools/plugin)
 
 ## 快速设置（初学者）
 
-1. 安装 Zalo 插件：
+1. 启用 Zalo 插件：
    - 从源代码检出：`fased plugins install ./extensions/zalo`
-   - 从 npm（如果已发布）：`fased plugins install @fased/zalo`
+   - 随附扩展：`fased plugins enable zalo`
    - 或在新手引导中选择 **Zalo** 并确认安装提示
 2. 设置 token：
    - 环境变量：`ZALO_BOT_TOKEN=...`

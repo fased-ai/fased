@@ -16,14 +16,14 @@ x-i18n:
 
 状态：通过插件支持（webhook 机器人）。支持私信、房间、表情回应和 Markdown 消息。
 
-## 需要插件
+## 随附高级扩展
 
-Nextcloud Talk 以插件形式提供，不包含在核心安装包中。
+Nextcloud Talk 随主包提供，但默认禁用。它不是本版本的公开 npm 插件。
 
-通过 CLI 安装（npm 仓库）：
+通过 CLI 启用：
 
 ```bash
-fased plugins install @fased/nextcloud-talk
+fased plugins enable nextcloud-talk
 ```
 
 本地检出安装（从 git 仓库运行时）：

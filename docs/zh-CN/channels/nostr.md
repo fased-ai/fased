@@ -33,10 +33,10 @@ Nostr 是一个去中心化的社交网络协议。此渠道使 Fased 能够通�
 
 你可以随时在提示中覆盖选择。
 
-### 手动安装
+### 手动启用
 
 ```bash
-fased plugins install @fased/nostr
+fased plugins enable nostr
 ```
 
 使用本地 checkout（开发工作流）：

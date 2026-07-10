@@ -64,10 +64,10 @@ List plugins:
 fased plugins list
 ```
 
-Install an external package:
+Install one of the published official channel add-ons:
 
 ```bash
-fased plugins install @fased/voice-call
+fased plugins install @fased/telegram
 ```
 
 Install from a local checkout:
@@ -129,14 +129,20 @@ Minimal manifest:
 
 Read the full reference in [Plugin manifest](/plugins/manifest).
 
-## Built-In Examples
+## Bundled Advanced Examples
+
+Voice Call, Zalo Personal, ACPX, and the other advanced extensions in the
+repository are source-maintained bundled extensions in this release. They are
+not part of the public npm add-on set. Enable the bundled copy or use a local
+source checkout; do not assume an `@fased/*` package is published because its
+source directory has a package manifest.
 
 <Columns>
   <Card title="OpenProse" href="/plugins/open-prose" icon="file-text">
     Markdown-first workflow programs and an optional skill pack.
   </Card>
   <Card title="Voice Call" href="/plugins/voice-call" icon="phone">
-    Outbound and inbound call workflows through a trusted plugin.
+    Bundled outbound and inbound call workflows through a trusted plugin.
   </Card>
   <Card title="Zalo Personal" href="/plugins/zalouser" icon="message-circle">
     Personal Zalo channel runtime backed by the bundled extension.

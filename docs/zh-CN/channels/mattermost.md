@@ -19,14 +19,14 @@ x-i18n:
 Mattermost 是一个可自托管的团队消息平台；有关产品详情和下载，请访问官方网站
 [mattermost.com](https://mattermost.com)。
 
-## 需要插件
+## 随附高级扩展
 
-Mattermost 以插件形式提供，不包含在核心安装中。
+Mattermost 随主包提供，但默认禁用。它不是本版本的公开 npm 插件。
 
-通过 CLI 安装（npm 注册表）：
+通过 CLI 启用：
 
 ```bash
-fased plugins install @fased/mattermost
+fased plugins enable mattermost
 ```
 
 本地检出（从 git 仓库运行时）：

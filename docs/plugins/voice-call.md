@@ -38,17 +38,18 @@ The Voice Call plugin runs **inside the Gateway process**.
 If you use a remote Gateway, install and configure the plugin on the **machine
 running the Gateway**, then restart the Gateway to load it.
 
-## Install
+## Enable
 
-### Option A: install from npm (recommended)
+Voice Call is a bundled advanced extension in this release. It is not one of
+the public npm add-ons. Enable the bundled copy on the Gateway host:
 
 ```bash
-fased plugins install @fased/voice-call
+fased plugins enable voice-call
 ```
 
 Restart the Gateway afterwards.
 
-### Option B: install from a local folder (dev, no copying)
+For extension development from a source checkout:
 
 ```bash
 fased plugins install ./extensions/voice-call

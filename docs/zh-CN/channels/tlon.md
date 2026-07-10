@@ -18,14 +18,14 @@ Tlon 是一个基于 Urbit 构建的去中心化即时通讯工具。Fased 连�
 
 状态：通过插件支持。支持私信、群组提及、话题回复和纯文本媒体回退（URL 附加到说明文字）。不支持表情回应、投票和原生媒体上传。
 
-## 需要插件
+## 随附高级扩展
 
-Tlon 作为插件提供，不包含在核心安装中。
+Tlon 随主包提供，但默认禁用。它不是本版本的公开 npm 插件。
 
-通过 CLI 安装（npm 仓库）：
+通过 CLI 启用：
 
 ```bash
-fased plugins install @fased/tlon
+fased plugins enable tlon
 ```
 
 本地检出（从 git 仓库运行时）：

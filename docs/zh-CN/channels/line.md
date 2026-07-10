@@ -20,12 +20,12 @@ LINE 通过 LINE Messaging API 连接到 Fased。该插件作为 webhook 接收�
 
 状态：通过插件支持。支持私信、群聊、媒体、位置、Flex 消息、模板消息和快捷回复。不支持表情回应和话题回复。
 
-## 需要安装插件
+## 随附高级扩展
 
-安装 LINE 插件：
+LINE 随主包提供，但默认禁用。启用随附扩展：
 
 ```bash
-fased plugins install @fased/line
+fased plugins enable line
 ```
 
 本地检出（从 git 仓库运行时）：

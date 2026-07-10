@@ -19,11 +19,11 @@ x-i18n:
 
 > **警告：**这是一个非官方集成，可能导致账户被暂停/封禁。使用风险自负。
 
-## 需要插件
+## 随附高级扩展
 
-Zalo Personal 作为插件提供，不包含在核心安装中。
+Zalo Personal 随主包提供，但默认禁用。它不是本版本的公开 npm 插件。
 
-- 通过 CLI 安装：`fased plugins install @fased/zalouser`
+- 通过 CLI 启用：`fased plugins enable zalouser`
 - 或从源码检出安装：`fased plugins install ./extensions/zalouser`
 - 详情：[插件](/tools/plugin)
 
@@ -36,7 +36,7 @@ Gateway 网关机器必须在 `PATH` 中有可用的 `zca` 二进制文件。
 
 ## 快速设置（新手）
 
-1. 安装插件（见上文）。
+1. 启用插件（见上文）。
 2. 登录（QR，在 Gateway 网关机器上）：
    - `fased channels login --channel zalouser`
    - 用 Zalo 手机应用扫描终端中的二维码。
