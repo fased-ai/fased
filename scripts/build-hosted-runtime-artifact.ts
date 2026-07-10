@@ -133,7 +133,25 @@ async function main(): Promise<void> {
       { npm_config_cache: path.join(tempRoot, "npm-cache") },
     );
 
-    await run(process.execPath, [path.join(packageRoot, "fased.mjs"), "--version"], packageRoot);
+    const smokeHome = path.join(tempRoot, "smoke-home");
+    await fs.mkdir(smokeHome, { recursive: true });
+    const smokeEnv = {
+      HOME: smokeHome,
+      FASED_STATE_DIR: path.join(smokeHome, ".fased"),
+      FASED_CONFIG_PATH: path.join(smokeHome, ".fased", "fased.json"),
+    };
+    await run(
+      process.execPath,
+      [path.join(packageRoot, "fased.mjs"), "--version"],
+      packageRoot,
+      smokeEnv,
+    );
+    await run(
+      process.execPath,
+      [path.join(packageRoot, "fased.mjs"), "plugins", "doctor"],
+      packageRoot,
+      smokeEnv,
+    );
 
     const assetName = `fased-hosted-linux-${arch}-v${version}.tar.gz`;
     const assetPath = path.join(outputDir, assetName);

@@ -125,6 +125,15 @@ if [[ "$(node -p "require(process.argv[1]).version" "$PACKAGE_ROOT/package.json"
   echo "Hosted runtime version does not match v${VERSION}." >&2
   exit 20
 fi
+SMOKE_HOME="$TEMP_ROOT/smoke-home"
+mkdir -p "$SMOKE_HOME"
+if ! HOME="$SMOKE_HOME" \
+  FASED_STATE_DIR="$SMOKE_HOME/.fased" \
+  FASED_CONFIG_PATH="$SMOKE_HOME/.fased/fased.json" \
+  node "$PACKAGE_ROOT/fased.mjs" plugins doctor >/dev/null 2>&1; then
+  echo "Hosted runtime failed its pre-install CLI and plugin check; the current install was not changed." >&2
+  exit 20
+fi
 
 TARGET_ROOT="$PREFIX/lib/node_modules/@fased/fased"
 TARGET_PARENT="$(dirname "$TARGET_ROOT")"

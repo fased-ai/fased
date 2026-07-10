@@ -43,6 +43,33 @@ bash "$INSTALLER" \
 [[ "$($PREFIX/bin/fased --version)" == "$VERSION" ]]
 [[ -d "$PREFIX/lib/node_modules/@fased/fased/node_modules" ]]
 
+cat >"$PACKAGE_ROOT/fased.mjs" <<EOF
+#!/usr/bin/env node
+if (process.argv[2] === "--version") {
+  console.log("${VERSION}");
+  process.exit(0);
+}
+process.exit(42);
+EOF
+chmod 755 "$PACKAGE_ROOT/fased.mjs"
+tar -czf "$RELEASE_ROOT/$ASSET" -C "$TEMP_ROOT/source" package
+if command -v sha256sum >/dev/null 2>&1; then
+  (cd "$RELEASE_ROOT" && sha256sum "$ASSET" >"${ASSET}.sha256")
+else
+  digest="$(shasum -a 256 "$RELEASE_ROOT/$ASSET" | awk '{print $1}')"
+  printf '%s  %s\n' "$digest" "$ASSET" >"$RELEASE_ROOT/${ASSET}.sha256"
+fi
+set +e
+bash "$INSTALLER" \
+  --package "@fased/fased@${VERSION}" \
+  --prefix "$PREFIX" \
+  --cache "$TEMP_ROOT/incomplete-cache" \
+  --base-url "file://$TEMP_ROOT/releases" >/dev/null 2>&1
+incomplete_status=$?
+set -e
+[[ "$incomplete_status" -eq 20 ]]
+[[ "$($PREFIX/bin/fased --version)" == "$VERSION" ]]
+
 printf '%064d  %s\n' 0 "$ASSET" >"$RELEASE_ROOT/${ASSET}.sha256"
 set +e
 bash "$INSTALLER" \

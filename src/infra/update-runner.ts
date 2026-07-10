@@ -635,6 +635,8 @@ async function runHostedReleaseArtifactUpdate(params: {
   baseUrl?: string;
   pkgRoot: string;
   expectedVersion: string;
+  runCommand: CommandRunner;
+  timeoutMs: number;
   progress?: UpdateStepProgress;
 }): Promise<HostedArtifactUpdateResult> {
   const packageParent = path.dirname(params.pkgRoot);
@@ -724,23 +726,53 @@ async function runHostedReleaseArtifactUpdate(params: {
 
     const artifactRoot = path.join(extractDir, "package");
     const artifactVersion = await readPackageVersion(artifactRoot);
-    const runtimeReady =
+    const runtimeShapeReady =
       compareSemverStrings(artifactVersion, params.expectedVersion) === 0 &&
       (await pathExists(path.join(artifactRoot, "fased.mjs"))) &&
       (await pathExists(path.join(artifactRoot, "node_modules")));
-    const verifyCommand = `verify hosted runtime v${params.expectedVersion}`;
-    const verifyInfo = startProgress("hosted artifact verify", verifyCommand, params.pkgRoot);
+    const smokeHome = path.join(tempRoot, "smoke-home");
+    const smokeStateDir = path.join(smokeHome, ".fased");
+    const smokeArgv = [process.execPath, path.join(artifactRoot, "fased.mjs"), "plugins", "doctor"];
+    const verifyCommand = smokeArgv.join(" ");
+    const verifyInfo = startProgress("hosted artifact verify", verifyCommand, artifactRoot);
+    const verifyStarted = Date.now();
+    let smokeResult: Awaited<ReturnType<CommandRunner>> | null = null;
+    let smokeError: string | null = null;
+    if (runtimeShapeReady) {
+      try {
+        await fs.mkdir(smokeHome, { recursive: true });
+        smokeResult = await params.runCommand(smokeArgv, {
+          cwd: artifactRoot,
+          timeoutMs: params.timeoutMs,
+          env: {
+            ...process.env,
+            HOME: smokeHome,
+            FASED_STATE_DIR: smokeStateDir,
+            FASED_CONFIG_PATH: path.join(smokeStateDir, "fased.json"),
+          },
+        });
+      } catch (error) {
+        smokeError = String(error);
+      }
+    }
+    const runtimeReady = runtimeShapeReady && smokeResult?.code === 0;
+    const verifyFailure = !runtimeShapeReady
+      ? `expected complete v${params.expectedVersion}, found ${artifactVersion ?? "unknown"}`
+      : trimLogTail(
+          [smokeResult?.stderr, smokeResult?.stdout, smokeError]
+            .filter((value): value is string => Boolean(value?.trim()))
+            .join("\n"),
+          MAX_LOG_CHARS,
+        ) || "hosted runtime CLI and plugin check failed";
     completeProgress(verifyInfo, {
       name: "hosted artifact verify",
       command: verifyCommand,
-      cwd: params.pkgRoot,
-      durationMs: 0,
+      cwd: artifactRoot,
+      durationMs: Date.now() - verifyStarted,
       exitCode: runtimeReady ? 0 : 1,
-      ...(!runtimeReady
-        ? {
-            stderrTail: `expected complete v${params.expectedVersion}, found ${artifactVersion ?? "unknown"}`,
-          }
-        : {}),
+      ...(runtimeReady
+        ? { stdoutTail: `v${params.expectedVersion} CLI and bundled plugins passed` }
+        : { stderrTail: verifyFailure }),
     });
     if (!runtimeReady) {
       return {
@@ -1388,6 +1420,8 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
           baseUrl: opts.hostedReleaseBaseUrl ?? process.env.FASED_HOSTED_ARTIFACT_BASE_URL,
           pkgRoot,
           expectedVersion,
+          runCommand,
+          timeoutMs,
           progress,
         });
         steps.push(...releaseResult.steps);
