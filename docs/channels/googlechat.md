@@ -13,6 +13,14 @@ model, and sends replies through the Chat API using your service account.
 
 Status: supported for DMs and spaces through Google Chat webhooks.
 
+Google Chat is an official optional add-on. Install it from **Agent >
+Channels**, onboarding, or the CLI before entering credentials:
+
+```bash
+fased plugins install @fased/googlechat
+fased gateway restart
+```
+
 ## Quick setup (beginner)
 
 Only the Google Chat webhook path should be public. Keep the dashboard and the

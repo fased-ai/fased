@@ -73,10 +73,26 @@
     },
     {
       "id": "advanced-channels",
-      "label": "Bundled Advanced Channels",
+      "label": "Bundled LINE Channel",
       "delivery": "channel-addon",
       "target": "extract",
-      "dependencies": ["@larksuiteoapi/node-sdk", "@line/bot-sdk", "google-auth-library"]
+      "dependencies": ["@line/bot-sdk"]
+    },
+    {
+      "id": "channel-feishu",
+      "label": "Feishu Channel",
+      "delivery": "channel-addon",
+      "target": "extract",
+      "packagePath": "extensions/feishu/package.json",
+      "dependencies": ["@larksuiteoapi/node-sdk", "@sinclair/typebox", "zod"]
+    },
+    {
+      "id": "channel-googlechat",
+      "label": "Google Chat Channel",
+      "delivery": "channel-addon",
+      "target": "extract",
+      "packagePath": "extensions/googlechat/package.json",
+      "dependencies": ["google-auth-library"]
     },
     {
       "id": "browser-runtime",

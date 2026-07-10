@@ -2,11 +2,30 @@
   "name": "@fased/feishu",
   "version": "0.1.36",
   "description": "FasedAgent Feishu/Lark channel plugin (community maintained by @m1heng)",
+  "files": [
+    "index.ts",
+    "fased.plugin.json",
+    "src",
+    "!src/**/*.test.ts",
+    "!src/tool-factory-test-harness.ts",
+    "skills"
+  ],
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
     "@larksuiteoapi/node-sdk": "^1.68.0",
     "@sinclair/typebox": "0.34.48",
     "zod": "^4.3.6"
+  },
+  "peerDependencies": {
+    "@fased/fased": "^0.1.36"
+  },
+  "peerDependenciesMeta": {
+    "@fased/fased": {
+      "optional": true
+    }
   },
   "fased": {
     "extensions": [
@@ -26,8 +45,9 @@
       "quickstartAllowFrom": true
     },
     "install": {
+      "npmSpec": "@fased/feishu",
       "localPath": "extensions/feishu",
-      "defaultChoice": "local"
+      "defaultChoice": "npm"
     }
   }
 }

@@ -36,10 +36,13 @@ function report(plugins: PluginMarketplaceEntry[] = []): PluginMarketplaceReport
 describe("capability catalog", () => {
   it("loads one stable catalog without duplicate ids", () => {
     const entries = loadCapabilityCatalog();
-    expect(entries).toHaveLength(16);
+    expect(entries).toHaveLength(21);
     expect(new Set(entries.map((entry) => entry.id)).size).toBe(entries.length);
     expect(entries.find((entry) => entry.id === "sat-mining")?.delivery).toBe("core");
     expect(entries.find((entry) => entry.id === "telegram")?.packageName).toBe("@fased/telegram");
+    expect(entries.find((entry) => entry.id === "googlechat")?.packageName).toBe(
+      "@fased/googlechat",
+    );
   });
 
   it("keeps missing optional and external components out of the error count", () => {
@@ -48,8 +51,8 @@ describe("capability catalog", () => {
       pluginReport: report(),
     });
     expect(capabilities.summary).toMatchObject({
-      total: 16,
-      coreIncluded: 6,
+      total: 21,
+      coreIncluded: 5,
       optionalInstalled: 0,
       externalRequired: 6,
       errors: 0,
