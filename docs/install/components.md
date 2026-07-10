@@ -117,11 +117,12 @@ See [Memory](/concepts/memory).
 
 ## Install and update behavior
 
-| Install type              | Fresh install                                                       | Normal `fased update`                                                                            |
-| ------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| Local recommended install | Source checkout, dependencies, and local build                      | Stable Git tag, dependency refresh, and rebuild                                                  |
-| VPS Hosting install       | Verified Linux release artifact, with npm fallback only when needed | Verified release artifact, checksum and pre-swap checks, atomic activation, then service refresh |
-| Manual global npm install | npm package-manager install                                         | npm package-manager update unless it uses the managed hosted layout                              |
+| Install type                    | Fresh install                                                       | Normal `fased update`                                                                            |
+| ------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Linux Local recommended install | Verified Linux release artifact, with npm fallback only when needed | Verified release artifact, checksum and pre-swap checks, atomic activation, then service refresh |
+| VPS Hosting install             | Verified Linux release artifact, with npm fallback only when needed | Verified release artifact, checksum and pre-swap checks, atomic activation, then service refresh |
+| macOS or source install         | Source checkout, dependencies, and local build                      | Stable Git tag, dependency refresh, and rebuild                                                  |
+| Manual global npm install       | npm package-manager install                                         | npm package-manager update unless it uses the managed release-runtime layout                     |
 
 After the core update succeeds, `fased update` checks tracked npm plugins and
 updates compatible add-ons. You can review them manually with:

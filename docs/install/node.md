@@ -147,9 +147,10 @@ Make sure your version manager is initialized in your shell startup file
 
 ### `fased: command not found`
 
-Local/source installs write a small repo-backed launcher to
-`${FASED_CLI_BIN_DIR:-$HOME/.local/bin}/fased`. Hosted installs use the
-prebuilt npm runtime under `~/.fased/install-cache/npm-global/bin/fased`.
+macOS and explicit source installs write a small repo-backed launcher to
+`${FASED_CLI_BIN_DIR:-$HOME/.local/bin}/fased`. Supported Linux Local and VPS
+Hosting installs use the prebuilt runtime under
+`~/.fased/install-cache/npm-global/bin/fased`.
 This error usually means the relevant bin directory is not on your PATH, or
 your shell has not reloaded its startup files yet.
 
