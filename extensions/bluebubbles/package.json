@@ -1,6 +1,6 @@
 {
   "name": "@fased/bluebubbles",
-  "version": "0.1.36",
+  "version": "0.1.37",
   "description": "FasedAgent BlueBubbles channel plugin",
   "type": "module",
   "fased": {
