@@ -134,10 +134,10 @@ CLOCK_SYNC_SKEW_THRESHOLD_SECONDS="${FASED_CLOCK_SYNC_SKEW_THRESHOLD_SECONDS:-2}
 
 resolve_gateway_cli_entry() {
   local candidates=(
-    "$FASED_RUNTIME_ROOT/dist/index.js"
-    "$FASED_RUNTIME_ROOT/dist/index.mjs"
     "$FASED_RUNTIME_ROOT/dist/entry.js"
     "$FASED_RUNTIME_ROOT/dist/entry.mjs"
+    "$FASED_RUNTIME_ROOT/dist/index.js"
+    "$FASED_RUNTIME_ROOT/dist/index.mjs"
   )
   local candidate
   for candidate in "${candidates[@]}"; do

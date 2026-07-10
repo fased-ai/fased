@@ -1,7 +1,8 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
+import { createConnection, createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
@@ -86,6 +87,95 @@ async function findPackedTarball(dir: string): Promise<string> {
   return path.join(dir, filename);
 }
 
+async function reserveLoopbackPort(): Promise<number> {
+  return await new Promise<number>((resolve, reject) => {
+    const server = createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        server.close(() => reject(new Error("Could not reserve a loopback gateway port.")));
+        return;
+      }
+      server.close((error) => (error ? reject(error) : resolve(address.port)));
+    });
+  });
+}
+
+async function canConnect(port: number): Promise<boolean> {
+  return await new Promise<boolean>((resolve) => {
+    const socket = createConnection({ host: "127.0.0.1", port });
+    socket.setTimeout(500);
+    socket.once("connect", () => {
+      socket.destroy();
+      resolve(true);
+    });
+    const fail = () => {
+      socket.destroy();
+      resolve(false);
+    };
+    socket.once("error", fail);
+    socket.once("timeout", fail);
+  });
+}
+
+async function smokeGateway(packageRoot: string, smokeEnv: NodeJS.ProcessEnv): Promise<void> {
+  const port = await reserveLoopbackPort();
+  const output: string[] = [];
+  const child = spawn(
+    process.execPath,
+    [
+      path.join(packageRoot, "dist", "entry.js"),
+      "gateway",
+      "--allow-unconfigured",
+      "--bind",
+      "loopback",
+      "--port",
+      String(port),
+    ],
+    {
+      cwd: packageRoot,
+      env: {
+        ...process.env,
+        ...smokeEnv,
+        FASED_NO_RESPAWN: "1",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  child.stdout.on("data", (chunk) => output.push(String(chunk)));
+  child.stderr.on("data", (chunk) => output.push(String(chunk)));
+
+  try {
+    const deadline = Date.now() + 20_000;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) {
+        throw new Error(
+          `Hosted runtime gateway exited before listening.\n${output.join("").slice(-8_000)}`,
+        );
+      }
+      if (await canConnect(port)) {
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    throw new Error(
+      `Hosted runtime gateway did not listen within 20 seconds.\n${output.join("").slice(-8_000)}`,
+    );
+  } finally {
+    child.kill("SIGTERM");
+    await Promise.race([
+      new Promise<void>((resolve) => child.once("exit", () => resolve())),
+      new Promise<void>((resolve) =>
+        setTimeout(() => {
+          child.kill("SIGKILL");
+          resolve();
+        }, 5_000),
+      ),
+    ]);
+  }
+}
+
 async function main(): Promise<void> {
   const outputDir = parseOutputDir();
   const arch = hostedArch();
@@ -152,6 +242,9 @@ async function main(): Promise<void> {
       packageRoot,
       smokeEnv,
     );
+    console.log("hosted-artifact: starting isolated packaged gateway");
+    await smokeGateway(packageRoot, smokeEnv);
+    console.log("hosted-artifact: packaged gateway smoke passed");
 
     const assetName = `fased-hosted-linux-${arch}-v${version}.tar.gz`;
     const assetPath = path.join(outputDir, assetName);
