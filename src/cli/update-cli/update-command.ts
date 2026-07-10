@@ -828,6 +828,7 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
   let currentVersion: string | null = null;
   let targetVersion: string | null = null;
   let downgradeRisk = false;
+  let alreadyCurrent = false;
   let fallbackToLatest = false;
 
   if (updateInstallKind !== "git") {
@@ -841,6 +842,7 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
         });
     const cmp =
       currentVersion && targetVersion ? compareSemverStrings(currentVersion, targetVersion) : null;
+    alreadyCurrent = cmp === 0;
     downgradeRisk =
       !fallbackToLatest &&
       currentVersion != null &&
@@ -968,6 +970,26 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
     if (!opts.json) {
       defaultRuntime.log(theme.muted(`Update channel set to ${requestedChannel}.`));
     }
+  }
+
+  if (alreadyCurrent && currentVersion && targetVersion) {
+    if (opts.json) {
+      defaultRuntime.log(
+        JSON.stringify(
+          {
+            status: "current",
+            currentVersion,
+            targetVersion,
+            channel,
+          },
+          null,
+          2,
+        ),
+      );
+    } else {
+      defaultRuntime.log(`Already current: ${currentVersion}`);
+    }
+    return;
   }
 
   const showProgress = !opts.json && process.stdout.isTTY;

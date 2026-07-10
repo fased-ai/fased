@@ -54,6 +54,10 @@ fased update status
 fased update
 ```
 
+When the installed version already matches the selected release, the command
+prints `Already current: <version>` and exits without downloading, swapping the
+runtime, updating plugins, or restarting the service.
+
 After hosted onboarding, SSH as `app` should open directly in `/home/app/fased`.
 If it does not, fix the hosted login/shell setup before updating.
 

@@ -449,6 +449,54 @@ describe("update-cli", () => {
     expect(defaultRuntime.log).toHaveBeenCalled();
   });
 
+  it("returns immediately when a packaged install already matches the target version", async () => {
+    const root = createCaseDir("fased-current-package");
+    mockPackageInstallStatus(root);
+    readPackageVersion.mockResolvedValue("0.1.40");
+    vi.mocked(resolveNpmChannelTag).mockResolvedValue({
+      tag: "latest",
+      version: "0.1.40",
+    });
+
+    await updateCommand({});
+
+    expect(defaultRuntime.log).toHaveBeenCalledWith("Already current: 0.1.40");
+    expect(runGatewayUpdate).not.toHaveBeenCalled();
+    expect(resolveUpdateGatewayServiceTarget).not.toHaveBeenCalled();
+    expect(syncPluginsForUpdateChannel).not.toHaveBeenCalled();
+    expect(updateNpmInstalledPlugins).not.toHaveBeenCalled();
+    expect(runDaemonInstall).not.toHaveBeenCalled();
+    expect(runDaemonRestart).not.toHaveBeenCalled();
+    expect(serviceRestart).not.toHaveBeenCalled();
+  });
+
+  it("reports an already-current packaged install as JSON without mutations", async () => {
+    const root = createCaseDir("fased-current-package-json");
+    mockPackageInstallStatus(root);
+    readPackageVersion.mockResolvedValue("0.1.40");
+    vi.mocked(resolveNpmChannelTag).mockResolvedValue({
+      tag: "latest",
+      version: "0.1.40",
+    });
+
+    await updateCommand({ json: true });
+
+    const currentResult = vi
+      .mocked(defaultRuntime.log)
+      .mock.calls.map(([value]) => String(value))
+      .map((value) => {
+        try {
+          return JSON.parse(value) as { status?: string; currentVersion?: string };
+        } catch {
+          return null;
+        }
+      })
+      .find((value) => value?.status === "current");
+    expect(currentResult).toMatchObject({ status: "current", currentVersion: "0.1.40" });
+    expect(runGatewayUpdate).not.toHaveBeenCalled();
+    expect(resolveUpdateGatewayServiceTarget).not.toHaveBeenCalled();
+  });
+
   it("accepts the default shell completion install without prompting when --yes is set", async () => {
     setTty(true);
     checkShellCompletionStatus.mockResolvedValue({
