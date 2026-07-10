@@ -25,18 +25,26 @@ jobs:
           path: fased
 
       - name: Checkout formal models
+        id: formal-models
+        continue-on-error: true
         uses: actions/checkout@v6
         with:
           repository: vignesh07/fased-formal-models
           ref: main
           path: fased-formal-models
 
+      - name: Report unavailable formal models
+        if: steps.formal-models.outcome != 'success'
+        run: echo "Formal models repository is unavailable; informational conformance was skipped."
+
       - name: Setup Node
+        if: steps.formal-models.outcome == 'success'
         uses: actions/setup-node@v6
         with:
           node-version: "22"
 
       - name: Regenerate extracted constants from fased
+        if: steps.formal-models.outcome == 'success'
         run: |
           set -euo pipefail
           cd fased-formal-models
@@ -47,6 +55,7 @@ jobs:
       # Drift is about extracted artifacts only; compute it before model checking
       # to avoid any incidental file touches affecting the result.
       - name: Compute drift (generated/*)
+        if: steps.formal-models.outcome == 'success'
         id: drift
         run: |
           set -euo pipefail
@@ -61,6 +70,7 @@ jobs:
           git diff -- generated > "${GITHUB_WORKSPACE}/formal-models-drift.diff"
 
       - name: Model check (green suite)
+        if: steps.formal-models.outcome == 'success'
         run: |
           set -euo pipefail
           cd fased-formal-models
@@ -81,6 +91,7 @@ jobs:
             group-alias-check
 
       - name: Model check (negative suite, expected violations)
+        if: steps.formal-models.outcome == 'success'
         continue-on-error: true
         run: |
           set -euo pipefail
@@ -103,14 +114,14 @@ jobs:
             routing-thread-parent-channel-override-negative routing-trirule-negative gateway-auth-proxy-header-spoof-negative
 
       - name: Upload drift diff artifact
-        if: steps.drift.outputs.drift == 'true'
+        if: steps.formal-models.outcome == 'success' && steps.drift.outputs.drift == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: formal-models-conformance-drift
           path: formal-models-drift.diff
 
       - name: Comment on PR (informational)
-        if: steps.drift.outputs.drift == 'true'
+        if: steps.formal-models.outcome == 'success' && steps.drift.outputs.drift == 'true'
         uses: actions/github-script@v7
         with:
           script: |
@@ -133,6 +144,7 @@ jobs:
             });
 
       - name: Summary
+        if: steps.formal-models.outcome == 'success'
         run: |
           if [ "${{ steps.drift.outputs.drift }}" = "true" ]; then
             echo "Formal conformance drift detected (informational)."
