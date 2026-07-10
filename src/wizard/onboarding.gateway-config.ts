@@ -277,7 +277,7 @@ export async function configureGatewayForOnboarding(
         strictHosting && tailscaleMode === "serve"
           ? {
               ...nextConfig.gateway?.controlUi,
-              allowInsecureAuth: true,
+              allowInsecureAuth: false,
             }
           : nextConfig.gateway?.controlUi,
       ...(bind === "custom" && customBindHost ? { customBindHost } : {}),

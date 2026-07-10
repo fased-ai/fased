@@ -373,6 +373,13 @@ that prompt or previously failed with `JavaScript heap out of memory`, update
 the checkout and rerun `./install.sh --hosting`.
 </Note>
 
+<Note>
+Tailscale Serve terminates HTTPS in front of the loopback-only Gateway. Hosted
+setup trusts only the loopback proxy ranges and keeps Control UI device/session
+identity enabled. It does not enable the plain-HTTP `allowInsecureAuth`
+compatibility flag.
+</Note>
+
 ## Update later
 
 For normal updates, log in as `app` through Tailscale:

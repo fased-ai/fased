@@ -212,6 +212,11 @@ app-managed user service with the supported root-managed service, restarts the
 Gateway, and skips onboarding. Wallets, mining state, credentials, sessions,
 plugins, and configuration are not reset.
 
+For Tailscale Serve, repair also keeps the Gateway on loopback, trusts only the
+loopback proxy ranges, and removes the obsolete `allowInsecureAuth`
+compatibility flag. Tailscale HTTPS, shared Gateway auth, and device/session
+identity remain active.
+
 After this one repair, return to the normal command:
 
 ```bash

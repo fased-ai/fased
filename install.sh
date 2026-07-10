@@ -1331,8 +1331,8 @@ gateway.trustedProxies = trusted;
 
 const controlUi =
   gateway.controlUi && typeof gateway.controlUi === "object" ? gateway.controlUi : {};
-if (controlUi.allowInsecureAuth !== true) {
-  controlUi.allowInsecureAuth = true;
+if (controlUi.allowInsecureAuth === true) {
+  delete controlUi.allowInsecureAuth;
   changed = true;
 }
 gateway.controlUi = controlUi;
