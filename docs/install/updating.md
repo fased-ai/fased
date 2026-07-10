@@ -187,6 +187,10 @@ For a healthy supported install, `fased update` is the complete release update.
 You should not need to clear npm caches, reinstall dependencies manually, or
 run a separate Gateway repair command.
 
+If the installed packaged version already matches the selected release,
+`fased update` returns `Already current: <version>` without downloading an
+artifact, changing plugins, or restarting the Gateway.
+
 ## Legacy hosted updater repair
 
 Very old hosted releases may contain an updater that cannot install its own
@@ -214,6 +218,10 @@ After this one repair, return to the normal command:
 ssh app@YOUR_VPS_TAILSCALE_NAME
 fased update
 ```
+
+This repair is only for VPS Hosting installs with the root-managed service.
+Local users should continue using `fased update`; they must not run
+`--repair-hosting`.
 
 `./install.sh`:
 
