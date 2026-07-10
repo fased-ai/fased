@@ -107,6 +107,9 @@ export async function buildGatewayInstallPlan(params: {
     ...collectConfigServiceEnvVars(params.config),
   };
   Object.assign(environment, serviceEnvironment);
+  if (startupMode === "managed-up") {
+    environment.FASED_GATEWAY_MODE = "managed";
+  }
   const serviceNodeProgram = programArguments[0];
   if (
     typeof serviceNodeProgram === "string" &&

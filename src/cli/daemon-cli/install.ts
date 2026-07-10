@@ -12,6 +12,7 @@ import {
 } from "../../config/config.js";
 import { resolveIsNixMode } from "../../config/paths.js";
 import { resolveGatewayService } from "../../daemon/service.js";
+import { installHostedSystemdService } from "../../daemon/systemd-system.js";
 import { resolveGatewayAuth } from "../../gateway/auth.js";
 import { defaultRuntime } from "../../runtime.js";
 import { formatCliCommand } from "../command-format.js";
@@ -46,6 +47,11 @@ export async function runDaemonInstall(opts: DaemonInstallOptions) {
   }
 
   const service = resolveGatewayService();
+  const systemInstall = Boolean(opts.system || service.label === "systemd system service");
+  if (opts.system && process.platform !== "linux") {
+    fail("--system is supported on Linux VPS Hosting installs only.");
+    return;
+  }
   let loaded = false;
   try {
     loaded = await service.isLoaded({ env: process.env });
@@ -138,7 +144,7 @@ export async function runDaemonInstall(opts: DaemonInstallOptions) {
   }
 
   const { programArguments, workingDirectory, environment } = await buildGatewayInstallPlan({
-    env: process.env,
+    env: systemInstall ? { ...process.env, FASED_GATEWAY_MODE: "managed" } : process.env,
     port,
     token,
     runtime: runtimeRaw,
@@ -150,31 +156,46 @@ export async function runDaemonInstall(opts: DaemonInstallOptions) {
       }
     },
     config: cfg,
+    startupMode: systemInstall ? "managed-up" : undefined,
   });
 
   try {
-    await service.install({
-      env: process.env,
-      stdout,
-      programArguments,
-      workingDirectory,
-      environment,
-    });
+    if (systemInstall) {
+      const installed = await installHostedSystemdService({
+        programArguments,
+        workingDirectory,
+        environment,
+      });
+      if (!json) {
+        defaultRuntime.log(`Installed hosted system service: ${installed.unitPath}`);
+      }
+    } else {
+      await service.install({
+        env: process.env,
+        stdout,
+        programArguments,
+        workingDirectory,
+        environment,
+      });
+    }
   } catch (err) {
     fail(`Gateway install failed: ${String(err)}`);
     return;
   }
 
+  const installedService = systemInstall ? resolveGatewayService() : service;
   let installed = true;
-  try {
-    installed = await service.isLoaded({ env: process.env });
-  } catch {
-    installed = true;
+  if (!systemInstall) {
+    try {
+      installed = await installedService.isLoaded({ env: process.env });
+    } catch {
+      installed = true;
+    }
   }
   emit({
     ok: true,
     result: "installed",
-    service: buildDaemonServiceSnapshot(service, installed),
+    service: buildDaemonServiceSnapshot(installedService, installed),
     warnings: warnings.length ? warnings : undefined,
   });
 }

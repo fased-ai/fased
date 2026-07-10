@@ -179,7 +179,41 @@ Use `./install.sh --no-git-update` only when testing local changes.
 - uses the same verified artifact for supported Linux Local installs
 - refreshes dependencies and rebuilds for macOS or explicit source installs
 - checks tracked npm plugins after the core update
-- restarts when needed
+- detects the local user service or root-managed VPS Hosting service
+- restarts the correct service and verifies Gateway health
+- restores the previous packaged runtime automatically if post-update health fails
+
+For a healthy supported install, `fased update` is the complete release update.
+You should not need to clear npm caches, reinstall dependencies manually, or
+run a separate Gateway repair command.
+
+## Legacy hosted updater repair
+
+Very old hosted releases may contain an updater that cannot install its own
+replacement. A typical symptom is an update that reports success while
+`fased --version` remains unchanged. Code added in a newer release cannot run
+inside that already-installed old binary.
+
+Use the hosted installer once to repair that legacy runtime and service without
+rerunning onboarding:
+
+```bash
+ssh root@YOUR_VPS_PUBLIC_IP
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --repair-hosting
+```
+
+The repair keeps the existing `/home/app/fased` checkout and persistent
+`/home/app/.fased` state. It refreshes the managed runtime, replaces a legacy
+app-managed user service with the supported root-managed service, restarts the
+Gateway, and skips onboarding. Wallets, mining state, credentials, sessions,
+plugins, and configuration are not reset.
+
+After this one repair, return to the normal command:
+
+```bash
+ssh app@YOUR_VPS_TAILSCALE_NAME
+fased update
+```
 
 `./install.sh`:
 

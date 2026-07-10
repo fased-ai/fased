@@ -11,7 +11,7 @@ import {
   resolveGatewayPort,
   writeConfigFile,
 } from "../../config/config.js";
-import { resolveGatewayService } from "../../daemon/service.js";
+import { loadGatewayTlsRuntime } from "../../infra/tls/gateway.js";
 import {
   channelToNpmTag,
   DEFAULT_GIT_CHANNEL,
@@ -29,7 +29,12 @@ import {
   resolveGlobalPackageRoot,
   resolveNodeModulesRootForPackageRoot,
 } from "../../infra/update-global.js";
-import { runGatewayUpdate, type UpdateRunResult } from "../../infra/update-runner.js";
+import {
+  finalizeUpdateTransaction,
+  rollbackUpdateTransaction,
+  runGatewayUpdate,
+  type UpdateRunResult,
+} from "../../infra/update-runner.js";
 import { syncPluginsForUpdateChannel, updateNpmInstalledPlugins } from "../../plugins/update.js";
 import { runCommandWithTimeout } from "../../process/exec.js";
 import { defaultRuntime } from "../../runtime.js";
@@ -47,6 +52,10 @@ import {
 } from "../daemon-cli/restart-health.js";
 import { createUpdateProgress, printResult } from "./progress.js";
 import { prepareRestartScript, runRestartScript } from "./restart-helper.js";
+import {
+  resolveUpdateGatewayServiceTarget,
+  type UpdateGatewayServiceTarget,
+} from "./service-target.js";
 import {
   DEFAULT_PACKAGE_NAME,
   createGlobalCommandRunner,
@@ -377,6 +386,22 @@ async function runPackageInstallUpdate(params: {
     }
   }
 
+  const expectedVersion = params.tag.trim().replace(/^v/, "");
+  if (
+    pkgRoot &&
+    compareSemverStrings(expectedVersion, expectedVersion) === 0 &&
+    compareSemverStrings(afterVersion, expectedVersion) !== 0
+  ) {
+    steps.push({
+      name: "version verify",
+      command: `verify ${packageName}@${expectedVersion}`,
+      cwd: pkgRoot,
+      durationMs: 0,
+      exitCode: 1,
+      stderrTail: `expected ${expectedVersion}, found ${afterVersion ?? "unknown"}`,
+    });
+  }
+
   const failedStep = steps.find((step) => step.exitCode !== 0);
   return {
     status: failedStep ? "error" : "ok",
@@ -591,7 +616,16 @@ async function maybeRestartService(params: {
   refreshServiceEnv: boolean;
   gatewayPort: number;
   restartScriptPath?: string | null;
-}): Promise<{ partial: boolean }> {
+  serviceTarget: UpdateGatewayServiceTarget;
+  serviceLoaded: boolean;
+  rpc: {
+    url: string;
+    token?: string;
+    password?: string;
+    tlsFingerprint?: string;
+    timeoutMs: number;
+  };
+}): Promise<{ partial: boolean; healthy: boolean }> {
   let partial = false;
   if (params.shouldRestart) {
     if (!params.opts.json) {
@@ -636,35 +670,25 @@ async function maybeRestartService(params: {
           }
         }
       }
-      if (params.restartScriptPath) {
+      if (params.serviceTarget.scope === "system" && params.serviceLoaded) {
+        await params.serviceTarget.service.restart({
+          env: process.env,
+          stdout: process.stdout,
+        });
+        restartInitiated = true;
+      } else if (params.restartScriptPath) {
         await runRestartScript(params.restartScriptPath);
         restartInitiated = true;
-      } else {
+      } else if (params.serviceTarget.scope === "platform") {
         restarted = await runDaemonRestart();
+        restartInitiated = restarted;
       }
 
-      if (!params.opts.json && restarted) {
-        defaultRuntime.log(theme.success("Daemon restarted successfully."));
-        defaultRuntime.log("");
-        process.env.FASED_UPDATE_IN_PROGRESS = "1";
-        try {
-          const interactiveDoctor =
-            Boolean(process.stdin.isTTY) && !params.opts.json && params.opts.yes !== true;
-          await doctorCommand(defaultRuntime, {
-            nonInteractive: !interactiveDoctor,
-          });
-        } catch (err) {
-          defaultRuntime.log(theme.warn(`Doctor failed: ${String(err)}`));
-        } finally {
-          delete process.env.FASED_UPDATE_IN_PROGRESS;
-        }
-      }
-
-      if (!params.opts.json && restartInitiated) {
-        const service = resolveGatewayService();
+      if (restartInitiated) {
         let health = await waitForGatewayHealthyRestart({
-          service,
+          service: params.serviceTarget.service,
           port: params.gatewayPort,
+          rpc: params.rpc,
         });
         if (!health.healthy && health.staleGatewayPids.length > 0) {
           if (!params.opts.json) {
@@ -675,27 +699,52 @@ async function maybeRestartService(params: {
             );
           }
           await terminateStaleGatewayPids(health.staleGatewayPids);
-          await runDaemonRestart();
+          await params.serviceTarget.service.restart({
+            env: process.env,
+            stdout: process.stdout,
+          });
           health = await waitForGatewayHealthyRestart({
-            service,
+            service: params.serviceTarget.service,
             port: params.gatewayPort,
+            rpc: params.rpc,
           });
         }
 
         if (health.healthy) {
-          defaultRuntime.log(theme.success("Daemon restart completed."));
-        } else {
-          defaultRuntime.log(theme.warn("Gateway did not become healthy after restart."));
-          for (const line of renderRestartDiagnostics(health)) {
-            defaultRuntime.log(theme.muted(line));
+          if (!params.opts.json) {
+            defaultRuntime.log(theme.success("Daemon restart completed."));
           }
-          defaultRuntime.log(
-            theme.muted(
-              `Run \`${replaceCliName(formatCliCommand("fased gateway status --deep"), CLI_NAME)}\` for details.`,
-            ),
-          );
+        } else {
+          partial = true;
+          if (!params.opts.json) {
+            defaultRuntime.log(theme.warn("Gateway did not become healthy after restart."));
+            for (const line of renderRestartDiagnostics(health)) {
+              defaultRuntime.log(theme.muted(line));
+            }
+            defaultRuntime.log(
+              theme.muted(
+                `Run \`${replaceCliName(formatCliCommand("fased gateway status --deep"), CLI_NAME)}\` for details.`,
+              ),
+            );
+          }
         }
-        defaultRuntime.log("");
+        if (!params.opts.json) {
+          defaultRuntime.log("");
+        }
+      }
+
+      if (!partial && restarted && !params.opts.json) {
+        process.env.FASED_UPDATE_IN_PROGRESS = "1";
+        try {
+          const interactiveDoctor = Boolean(process.stdin.isTTY) && params.opts.yes !== true;
+          await doctorCommand(defaultRuntime, {
+            nonInteractive: !interactiveDoctor,
+          });
+        } catch (err) {
+          defaultRuntime.log(theme.warn(`Doctor failed: ${String(err)}`));
+        } finally {
+          delete process.env.FASED_UPDATE_IN_PROGRESS;
+        }
       }
     } catch (err) {
       partial = true;
@@ -708,7 +757,7 @@ async function maybeRestartService(params: {
         );
       }
     }
-    return { partial };
+    return { partial, healthy: !partial };
   }
 
   if (!params.opts.json) {
@@ -727,7 +776,7 @@ async function maybeRestartService(params: {
       );
     }
   }
-  return { partial };
+  return { partial, healthy: true };
 }
 
 export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
@@ -932,12 +981,16 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
 
   let restartScriptPath: string | null = null;
   let refreshGatewayServiceEnv = false;
+  let serviceLoaded = false;
+  const serviceTarget = await resolveUpdateGatewayServiceTarget();
   if (shouldRestart) {
     try {
-      const loaded = await resolveGatewayService().isLoaded({ env: process.env });
-      if (loaded) {
-        restartScriptPath = await prepareRestartScript(process.env);
-        refreshGatewayServiceEnv = true;
+      serviceLoaded = await serviceTarget.service.isLoaded({ env: process.env });
+      if (serviceLoaded) {
+        if (serviceTarget.scope === "platform") {
+          restartScriptPath = await prepareRestartScript(process.env);
+          refreshGatewayServiceEnv = true;
+        }
       }
     } catch {
       // Ignore errors during pre-check; fallback to standard restart
@@ -999,6 +1052,56 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
     return;
   }
 
+  const gatewayPort = resolveGatewayPort(configSnapshot.valid ? configSnapshot.config : undefined);
+  const gatewayConfig = configSnapshot.valid ? configSnapshot.config.gateway : undefined;
+  const tlsRuntime = await loadGatewayTlsRuntime(gatewayConfig?.tls);
+  const restartRpc = {
+    url: `${tlsRuntime.enabled ? "wss" : "ws"}://127.0.0.1:${gatewayPort}`,
+    token: gatewayConfig?.auth?.token,
+    password: gatewayConfig?.auth?.password,
+    tlsFingerprint: tlsRuntime.enabled ? tlsRuntime.fingerprintSha256 : undefined,
+    timeoutMs: 5_000,
+  };
+  const restartResult = await maybeRestartService({
+    shouldRestart,
+    result,
+    opts,
+    refreshServiceEnv: refreshGatewayServiceEnv,
+    gatewayPort,
+    restartScriptPath,
+    serviceTarget,
+    serviceLoaded,
+    rpc: restartRpc,
+  });
+
+  if (!restartResult.healthy) {
+    if (result.transaction) {
+      if (!opts.json) {
+        defaultRuntime.log(
+          theme.warn("Gateway verification failed; restoring the previous runtime."),
+        );
+      }
+      try {
+        await rollbackUpdateTransaction(result.transaction);
+        await serviceTarget.service.restart({ env: process.env, stdout: process.stdout });
+        const rollbackHealth = await waitForGatewayHealthyRestart({
+          service: serviceTarget.service,
+          port: gatewayPort,
+          rpc: restartRpc,
+        });
+        if (!rollbackHealth.healthy) {
+          defaultRuntime.error("Previous runtime was restored, but the gateway is not healthy.");
+        }
+      } catch (error) {
+        defaultRuntime.error(`Automatic runtime rollback failed: ${String(error)}`);
+      }
+    }
+    defaultRuntime.exit(1);
+    return;
+  }
+
+  await finalizeUpdateTransaction(result.transaction);
+
   await updatePluginsAfterCoreUpdate({
     root,
     channel,
@@ -1010,15 +1113,6 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
   await tryInstallShellCompletion({
     jsonMode: Boolean(opts.json),
     skipPrompt: Boolean(opts.yes),
-  });
-
-  const restartResult = await maybeRestartService({
-    shouldRestart,
-    result,
-    opts,
-    refreshServiceEnv: refreshGatewayServiceEnv,
-    gatewayPort: resolveGatewayPort(configSnapshot.valid ? configSnapshot.config : undefined),
-    restartScriptPath,
   });
 
   if (!opts.json && !restartResult.partial) {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildGatewayInstallPlan,
   resolveGatewayStartupMode,
   resolveHostedOnboardingGatewayStartupMode,
 } from "./daemon-install-helpers.js";
@@ -47,5 +48,27 @@ describe("resolveHostedOnboardingGatewayStartupMode", () => {
   it("keeps local onboarding on gateway mode", () => {
     expect(resolveHostedOnboardingGatewayStartupMode("local")).toBe("gateway");
     expect(resolveHostedOnboardingGatewayStartupMode(undefined)).toBe("gateway");
+  });
+});
+
+describe.runIf(process.platform === "linux")("hosted gateway install plan", () => {
+  it("keeps the managed runtime flags required by the root service helper", async () => {
+    const plan = await buildGatewayInstallPlan({
+      env: { FASED_GATEWAY_MODE: "managed" },
+      port: 18789,
+      runtime: "node",
+      nodePath: "/usr/bin/node",
+      devMode: false,
+      startupMode: "managed-up",
+    });
+
+    expect(plan.programArguments[0]).toBe("/bin/bash");
+    expect(plan.programArguments[1]).toMatch(/scripts\/start-managed\.sh$/);
+    expect(plan.environment).toMatchObject({
+      FASED_GATEWAY_MODE: "managed",
+      FASED_MANAGED_INTERNAL: "1",
+      FASED_GATEWAY_PORT: "18789",
+      FASED_NODE_BIN: "/usr/bin/node",
+    });
   });
 });

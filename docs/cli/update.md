@@ -10,6 +10,13 @@ title: "update"
 
 Update an installed Fased runtime and optionally switch channels.
 
+On supported packaged Linux installs, Fased verifies and activates the exact
+release artifact in the existing managed runtime location. It then restarts
+the correct Gateway service and checks health. VPS Hosting uses the
+root-managed system service; Local Linux uses the user service. If the new
+packaged runtime does not become healthy, Fased restores the previous runtime
+automatically.
+
 For local installs, run it from the Fased install directory, usually `~/fased`:
 
 ```bash
@@ -83,6 +90,11 @@ than the app version:
 
 Use `install.sh --hosting` for first VPS setup or hosted repair. Use
 `fased update` for normal stable app releases.
+
+An already-installed legacy updater that cannot replace itself requires the
+one-time `install.sh --repair-hosting` procedure documented in
+[Updating](/install/updating#legacy-hosted-updater-repair). After that repair,
+normal updates use `fased update` alone.
 
 ## Options
 

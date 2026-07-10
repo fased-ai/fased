@@ -18,6 +18,8 @@ const prepareRestartScript = vi.fn();
 const runRestartScript = vi.fn();
 const mockedRunDaemonInstall = vi.fn();
 const serviceReadRuntime = vi.fn();
+const serviceRestart = vi.fn();
+const resolveUpdateGatewayServiceTarget = vi.fn();
 const inspectPortUsage = vi.fn();
 const classifyPortListener = vi.fn();
 const formatPortDiagnostics = vi.fn();
@@ -26,6 +28,9 @@ const updateNpmInstalledPlugins = vi.fn();
 const checkShellCompletionStatus = vi.fn();
 const ensureCompletionCacheExists = vi.fn();
 const installCompletion = vi.fn();
+const probeGatewayStatus = vi.fn();
+const finalizeUpdateTransaction = vi.fn();
+const rollbackUpdateTransaction = vi.fn();
 
 vi.mock("@clack/prompts", () => ({
   confirm,
@@ -37,6 +42,8 @@ vi.mock("@clack/prompts", () => ({
 // Mock the update-runner module
 vi.mock("../infra/update-runner.js", () => ({
   runGatewayUpdate: vi.fn(),
+  finalizeUpdateTransaction,
+  rollbackUpdateTransaction,
 }));
 
 vi.mock("../infra/fased-root.js", () => ({
@@ -118,6 +125,14 @@ vi.mock("../infra/ports.js", () => ({
 vi.mock("./update-cli/restart-helper.js", () => ({
   prepareRestartScript: (...args: unknown[]) => prepareRestartScript(...args),
   runRestartScript: (...args: unknown[]) => runRestartScript(...args),
+}));
+
+vi.mock("./update-cli/service-target.js", () => ({
+  resolveUpdateGatewayServiceTarget,
+}));
+
+vi.mock("./daemon-cli/probe.js", () => ({
+  probeGatewayStatus,
 }));
 
 // Mock doctor (heavy module; should not run in unit tests)
@@ -283,6 +298,8 @@ describe("update-cli", () => {
     resolveGlobalManager.mockClear();
     serviceLoaded.mockClear();
     serviceReadRuntime.mockClear();
+    serviceRestart.mockClear();
+    resolveUpdateGatewayServiceTarget.mockReset();
     prepareRestartScript.mockClear();
     runRestartScript.mockClear();
     inspectPortUsage.mockClear();
@@ -293,6 +310,7 @@ describe("update-cli", () => {
     checkShellCompletionStatus.mockReset();
     ensureCompletionCacheExists.mockReset();
     installCompletion.mockReset();
+    probeGatewayStatus.mockReset();
     vi.mocked(resolveFasedAgentPackageRoot).mockResolvedValue(process.cwd());
     vi.mocked(readConfigFileSnapshot).mockResolvedValue(baseSnapshot);
     vi.mocked(fetchNpmTagVersion).mockResolvedValue({
@@ -345,6 +363,15 @@ describe("update-cli", () => {
       pid: 4242,
       state: "running",
     });
+    serviceRestart.mockResolvedValue(undefined);
+    resolveUpdateGatewayServiceTarget.mockResolvedValue({
+      scope: "platform",
+      service: {
+        isLoaded: (...args: unknown[]) => serviceLoaded(...args),
+        readRuntime: (...args: unknown[]) => serviceReadRuntime(...args),
+        restart: (...args: unknown[]) => serviceRestart(...args),
+      },
+    });
     prepareRestartScript.mockResolvedValue("/tmp/fased-restart-test.sh");
     runRestartScript.mockResolvedValue(undefined);
     inspectPortUsage.mockResolvedValue({
@@ -381,6 +408,7 @@ describe("update-cli", () => {
       usesSlowPattern: false,
     });
     ensureCompletionCacheExists.mockResolvedValue(true);
+    probeGatewayStatus.mockResolvedValue({ ok: true });
     confirm.mockResolvedValue(false);
     select.mockResolvedValue("stable");
     vi.mocked(runGatewayUpdate).mockResolvedValue(makeOkUpdateResult());
@@ -609,6 +637,57 @@ describe("update-cli", () => {
     await updateCommand({});
 
     expect(runDaemonRestart).toHaveBeenCalled();
+  });
+
+  it("restarts a hosted root service without installing a duplicate user service", async () => {
+    resolveUpdateGatewayServiceTarget.mockResolvedValue({
+      scope: "system",
+      service: {
+        isLoaded: (...args: unknown[]) => serviceLoaded(...args),
+        readRuntime: (...args: unknown[]) => serviceReadRuntime(...args),
+        restart: (...args: unknown[]) => serviceRestart(...args),
+      },
+    });
+    serviceLoaded.mockResolvedValue(true);
+    vi.mocked(runGatewayUpdate).mockResolvedValue(makeOkUpdateResult());
+
+    await updateCommand({});
+
+    expect(serviceRestart).toHaveBeenCalled();
+    expect(runDaemonInstall).not.toHaveBeenCalled();
+    expect(runRestartScript).not.toHaveBeenCalled();
+    expect(runDaemonRestart).not.toHaveBeenCalled();
+  });
+
+  it("rolls back an artifact transaction when a JSON-mode hosted restart fails", async () => {
+    const transaction = {
+      kind: "package-root-swap" as const,
+      packageRoot: "/runtime/current",
+      backupRoot: "/runtime/backup",
+    };
+    resolveUpdateGatewayServiceTarget.mockResolvedValue({
+      scope: "system",
+      service: {
+        isLoaded: (...args: unknown[]) => serviceLoaded(...args),
+        readRuntime: (...args: unknown[]) => serviceReadRuntime(...args),
+        restart: (...args: unknown[]) => serviceRestart(...args),
+      },
+    });
+    serviceLoaded.mockResolvedValue(true);
+    serviceRestart.mockRejectedValue(new Error("hosted restart failed"));
+    vi.mocked(runGatewayUpdate).mockResolvedValue(
+      makeOkUpdateResult({
+        transaction,
+        before: { version: "1.0.0" },
+        after: { version: "2.0.0" },
+      }),
+    );
+
+    await updateCommand({ json: true });
+
+    expect(rollbackUpdateTransaction).toHaveBeenCalledWith(transaction);
+    expect(finalizeUpdateTransaction).not.toHaveBeenCalledWith(transaction);
+    expect(defaultRuntime.exit).toHaveBeenCalledWith(1);
   });
 
   it("updateCommand refreshes gateway service env when service is already installed", async () => {

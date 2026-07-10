@@ -6,7 +6,11 @@ import * as tar from "tar";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { withEnvAsync } from "../test-utils/env.js";
 import { pathExists } from "../utils.js";
-import { runGatewayUpdate } from "./update-runner.js";
+import {
+  finalizeUpdateTransaction,
+  rollbackUpdateTransaction,
+  runGatewayUpdate,
+} from "./update-runner.js";
 
 type CommandResponse = { stdout?: string; stderr?: string; code?: number | null };
 type CommandResult = { stdout: string; stderr: string; code: number | null };
@@ -765,6 +769,9 @@ describe("runGatewayUpdate", () => {
   it("uses a verified self-contained hosted release artifact before npm", async () => {
     const prefix = path.join(tempDir, ".fased", "install-cache", "npm-global");
     const pkgRoot = path.join(prefix, "lib", "node_modules", "@fased", "fased");
+    const persistentConfig = path.join(tempDir, ".fased", "fased.json");
+    await fs.mkdir(path.dirname(persistentConfig), { recursive: true });
+    await fs.writeFile(persistentConfig, '{"wallet":{"runtime":{"enabled":true}}}\n', "utf8");
     await seedGlobalPackageRoot(pkgRoot, "1.0.0", "@fased/fased");
     const artifact = await buildHostedRuntimeResponse({
       name: "@fased/fased",
@@ -807,6 +814,11 @@ describe("runGatewayUpdate", () => {
       reason: "verified self-contained hosted runtime",
     });
     expect(result.after?.version).toBe("2.0.0");
+    expect(result.transaction).toMatchObject({
+      kind: "package-root-swap",
+      packageRoot: pkgRoot,
+    });
+    expect(await pathExists(result.transaction?.backupRoot ?? "")).toBe(true);
     expect(await fs.stat(path.join(pkgRoot, "node_modules"))).toBeTruthy();
     expect(calls.some((call) => call.startsWith("npm "))).toBe(false);
     expect(result.steps.map((step) => step.name)).toEqual([
@@ -815,6 +827,29 @@ describe("runGatewayUpdate", () => {
       "hosted artifact verify",
       "hosted artifact swap",
     ]);
+    await finalizeUpdateTransaction(result.transaction);
+    expect(await pathExists(result.transaction?.backupRoot ?? "")).toBe(false);
+    expect(await fs.readFile(persistentConfig, "utf8")).toBe(
+      '{"wallet":{"runtime":{"enabled":true}}}\n',
+    );
+  });
+
+  it("restores the previous package root when a post-swap verification rolls back", async () => {
+    const packageRoot = path.join(tempDir, "runtime", "@fased", "fased");
+    const backupRoot = path.join(tempDir, "runtime", "@fased", ".fased-backup-test");
+    await seedGlobalPackageRoot(packageRoot, "2.0.0", "@fased/fased");
+    await seedGlobalPackageRoot(backupRoot, "1.0.0", "@fased/fased");
+
+    await rollbackUpdateTransaction({
+      kind: "package-root-swap",
+      packageRoot,
+      backupRoot,
+    });
+
+    expect(await fs.readFile(path.join(packageRoot, "package.json"), "utf8")).toContain(
+      '"version":"1.0.0"',
+    );
+    expect(await pathExists(backupRoot)).toBe(false);
   });
 
   it("stops a hosted update when release artifact verification fails", async () => {
