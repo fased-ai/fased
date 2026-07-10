@@ -1,4 +1,4 @@
-import { getThreadBindingManager } from "../../../discord/monitor/thread-bindings.js";
+import { getThreadBindingManager } from "../../../discord/monitor/thread-bindings.state.js";
 import type { CommandHandlerResult } from "../commands-types.js";
 import {
   type SubagentsCommandContext,

@@ -1,5 +1,4 @@
 import path from "node:path";
-import { loginWeb } from "../../../channel-web.js";
 import { formatCliCommand } from "../../../cli/command-format.js";
 import type { FasedAgentConfig } from "../../../config/config.js";
 import { mergeWhatsAppConfig } from "../../../config/merge-config.js";
@@ -340,6 +339,7 @@ export const whatsappOnboardingAdapter: ChannelOnboardingAdapter = {
     });
     if (wantsLink) {
       try {
+        const { loginWeb } = await import("../../../web/login.js");
         await loginWeb(false, undefined, runtime, accountId);
       } catch (err) {
         runtime.error(`WhatsApp login failed: ${String(err)}`);

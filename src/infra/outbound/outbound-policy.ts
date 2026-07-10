@@ -5,7 +5,7 @@ import type {
 } from "../../channels/plugins/types.js";
 import type { FasedAgentConfig } from "../../config/config.js";
 import {
-  getChannelMessageAdapter,
+  loadChannelMessageAdapter,
   type CrossContextComponentsBuilder,
 } from "./channel-adapters.js";
 import { normalizeTargetForProvider } from "./target-normalization.js";
@@ -179,7 +179,7 @@ export async function buildCrossContextDecoration(params: {
   const prefix = prefixTemplate.replaceAll("{channel}", originLabel);
   const suffix = suffixTemplate.replaceAll("{channel}", originLabel);
 
-  const adapter = getChannelMessageAdapter(params.channel);
+  const adapter = await loadChannelMessageAdapter(params.channel);
   const componentsBuilder = adapter.supportsComponentsV2
     ? adapter.buildCrossContextComponents
       ? (message: string) =>

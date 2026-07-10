@@ -1,5 +1,4 @@
-import type { FasedAgentPluginApi } from "fased/plugin-sdk";
-import { emptyPluginConfigSchema } from "fased/plugin-sdk";
+import { emptyPluginConfigSchema, type FasedAgentPluginApi } from "fased/plugin-sdk/whatsapp";
 import { whatsappPlugin } from "./src/channel.js";
 import { setWhatsAppRuntime } from "./src/runtime.js";
 

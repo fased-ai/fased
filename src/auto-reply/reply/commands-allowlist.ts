@@ -10,7 +10,6 @@ import {
   writeConfigFile,
 } from "../../config/config.js";
 import { resolveDiscordAccount } from "../../discord/accounts.js";
-import { resolveDiscordUserAllowlist } from "../../discord/resolve-users.js";
 import { resolveIMessageAccount } from "../../imessage/accounts.js";
 import { isBlockedObjectKey } from "../../infra/prototype-keys.js";
 import {
@@ -25,7 +24,6 @@ import {
 } from "../../routing/session-key.js";
 import { resolveSignalAccount } from "../../signal/accounts.js";
 import { resolveSlackAccount } from "../../slack/accounts.js";
-import { resolveSlackUserAllowlist } from "../../slack/resolve-users.js";
 import { resolveTelegramAccount } from "../../telegram/accounts.js";
 import { resolveWhatsAppAccount } from "../../web/accounts.js";
 import { rejectUnauthorizedCommand, requireCommandFlagEnabled } from "./command-gates.js";
@@ -331,6 +329,7 @@ async function resolveSlackNames(params: {
   if (!token) {
     return new Map<string, string>();
   }
+  const { resolveSlackUserAllowlist } = await import("../../slack/resolve-users.js");
   const resolved = await resolveSlackUserAllowlist({ token, entries: params.entries });
   return mapResolvedAllowlistNames(resolved);
 }
@@ -345,6 +344,7 @@ async function resolveDiscordNames(params: {
   if (!token) {
     return new Map<string, string>();
   }
+  const { resolveDiscordUserAllowlist } = await import("../../discord/resolve-users.js");
   const resolved = await resolveDiscordUserAllowlist({ token, entries: params.entries });
   return mapResolvedAllowlistNames(resolved);
 }

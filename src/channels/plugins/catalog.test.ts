@@ -5,6 +5,15 @@ import { describe, expect, it } from "vitest";
 import { getChannelPluginCatalogEntry, listChannelPluginCatalogEntries } from "./catalog.js";
 
 describe("channel plugin catalog", () => {
+  it.each(["telegram", "whatsapp", "discord", "slack"])(
+    "installs %s from its npm add-on by default",
+    (channelId) => {
+      const entry = getChannelPluginCatalogEntry(channelId);
+      expect(entry?.install.npmSpec).toBe(`@fased/${channelId}`);
+      expect(entry?.install.defaultChoice).toBe("npm");
+    },
+  );
+
   it("includes Microsoft Teams", () => {
     const entry = getChannelPluginCatalogEntry("msteams");
     expect(entry?.install.npmSpec).toBe("@fased/msteams");

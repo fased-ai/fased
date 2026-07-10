@@ -1,7 +1,6 @@
 import { createRequire } from "node:module";
 import { resolveEffectiveMessagesConfig, resolveHumanDelayConfig } from "../../agents/identity.js";
 import { createMemoryGetTool, createMemorySearchTool } from "../../agents/tools/memory-tool.js";
-import { handleSlackAction } from "../../agents/tools/slack-actions.js";
 import {
   chunkByNewline,
   chunkMarkdownText,
@@ -57,16 +56,6 @@ import {
   resolveStorePath,
   updateLastRoute,
 } from "../../config/sessions.js";
-import { auditDiscordChannelPermissions } from "../../discord/audit.js";
-import {
-  listDiscordDirectoryGroupsLive,
-  listDiscordDirectoryPeersLive,
-} from "../../discord/directory-live.js";
-import { monitorDiscordProvider } from "../../discord/monitor.js";
-import { probeDiscord } from "../../discord/probe.js";
-import { resolveDiscordChannelAllowlist } from "../../discord/resolve-channels.js";
-import { resolveDiscordUserAllowlist } from "../../discord/resolve-users.js";
-import { sendMessageDiscord, sendPollDiscord } from "../../discord/send.js";
 import { shouldLogVerbose } from "../../globals.js";
 import { monitorIMessageProvider } from "../../imessage/monitor.js";
 import { probeIMessage } from "../../imessage/probe.js";
@@ -112,21 +101,9 @@ import { monitorSignalProvider } from "../../signal/index.js";
 import { probeSignal } from "../../signal/probe.js";
 import { sendMessageSignal } from "../../signal/send.js";
 import {
-  listSlackDirectoryGroupsLive,
-  listSlackDirectoryPeersLive,
-} from "../../slack/directory-live.js";
-import { monitorSlackProvider } from "../../slack/index.js";
-import { probeSlack } from "../../slack/probe.js";
-import { resolveSlackChannelAllowlist } from "../../slack/resolve-channels.js";
-import { resolveSlackUserAllowlist } from "../../slack/resolve-users.js";
-import { sendMessageSlack } from "../../slack/send.js";
-import {
   auditTelegramGroupMembership,
   collectTelegramUnmentionedGroupIds,
 } from "../../telegram/audit.js";
-import { monitorTelegramProvider } from "../../telegram/monitor.js";
-import { probeTelegram } from "../../telegram/probe.js";
-import { sendMessageTelegram, sendPollTelegram } from "../../telegram/send.js";
 import { resolveTelegramToken } from "../../telegram/token.js";
 import { textToSpeechTelephony } from "../../tts/tts.js";
 import { getActiveWebListener } from "../../web/active-listener.js";
@@ -203,6 +180,138 @@ const handleWhatsAppActionLazy: PluginRuntime["channel"]["whatsapp"]["handleWhat
   async (...args) => {
     const { handleWhatsAppAction } = await loadWhatsAppActions();
     return handleWhatsAppAction(...args);
+  };
+
+const auditDiscordChannelPermissionsLazy: PluginRuntime["channel"]["discord"]["auditChannelPermissions"] =
+  async (...args) => {
+    const { auditDiscordChannelPermissions } = await import("../../discord/audit.js");
+    return auditDiscordChannelPermissions(...args);
+  };
+
+const listDiscordDirectoryGroupsLiveLazy: PluginRuntime["channel"]["discord"]["listDirectoryGroupsLive"] =
+  async (...args) => {
+    const { listDiscordDirectoryGroupsLive } = await import("../../discord/directory-live.js");
+    return listDiscordDirectoryGroupsLive(...args);
+  };
+
+const listDiscordDirectoryPeersLiveLazy: PluginRuntime["channel"]["discord"]["listDirectoryPeersLive"] =
+  async (...args) => {
+    const { listDiscordDirectoryPeersLive } = await import("../../discord/directory-live.js");
+    return listDiscordDirectoryPeersLive(...args);
+  };
+
+const probeDiscordLazy: PluginRuntime["channel"]["discord"]["probeDiscord"] = async (...args) => {
+  const { probeDiscord } = await import("../../discord/probe.js");
+  return probeDiscord(...args);
+};
+
+const resolveDiscordChannelAllowlistLazy: PluginRuntime["channel"]["discord"]["resolveChannelAllowlist"] =
+  async (...args) => {
+    const { resolveDiscordChannelAllowlist } = await import("../../discord/resolve-channels.js");
+    return resolveDiscordChannelAllowlist(...args);
+  };
+
+const resolveDiscordUserAllowlistLazy: PluginRuntime["channel"]["discord"]["resolveUserAllowlist"] =
+  async (...args) => {
+    const { resolveDiscordUserAllowlist } = await import("../../discord/resolve-users.js");
+    return resolveDiscordUserAllowlist(...args);
+  };
+
+const sendMessageDiscordLazy: PluginRuntime["channel"]["discord"]["sendMessageDiscord"] = async (
+  ...args
+) => {
+  const { sendMessageDiscord } = await import("../../discord/send.js");
+  return sendMessageDiscord(...args);
+};
+
+const sendPollDiscordLazy: PluginRuntime["channel"]["discord"]["sendPollDiscord"] = async (
+  ...args
+) => {
+  const { sendPollDiscord } = await import("../../discord/send.js");
+  return sendPollDiscord(...args);
+};
+
+const monitorDiscordProviderLazy: PluginRuntime["channel"]["discord"]["monitorDiscordProvider"] =
+  async (...args) => {
+    const { monitorDiscordProvider } = await import("../../discord/monitor.js");
+    return monitorDiscordProvider(...args);
+  };
+
+const listSlackDirectoryGroupsLiveLazy: PluginRuntime["channel"]["slack"]["listDirectoryGroupsLive"] =
+  async (...args) => {
+    const { listSlackDirectoryGroupsLive } = await import("../../slack/directory-live.js");
+    return listSlackDirectoryGroupsLive(...args);
+  };
+
+const listSlackDirectoryPeersLiveLazy: PluginRuntime["channel"]["slack"]["listDirectoryPeersLive"] =
+  async (...args) => {
+    const { listSlackDirectoryPeersLive } = await import("../../slack/directory-live.js");
+    return listSlackDirectoryPeersLive(...args);
+  };
+
+const probeSlackLazy: PluginRuntime["channel"]["slack"]["probeSlack"] = async (...args) => {
+  const { probeSlack } = await import("../../slack/probe.js");
+  return probeSlack(...args);
+};
+
+const resolveSlackChannelAllowlistLazy: PluginRuntime["channel"]["slack"]["resolveChannelAllowlist"] =
+  async (...args) => {
+    const { resolveSlackChannelAllowlist } = await import("../../slack/resolve-channels.js");
+    return resolveSlackChannelAllowlist(...args);
+  };
+
+const resolveSlackUserAllowlistLazy: PluginRuntime["channel"]["slack"]["resolveUserAllowlist"] =
+  async (...args) => {
+    const { resolveSlackUserAllowlist } = await import("../../slack/resolve-users.js");
+    return resolveSlackUserAllowlist(...args);
+  };
+
+const sendMessageSlackLazy: PluginRuntime["channel"]["slack"]["sendMessageSlack"] = async (
+  ...args
+) => {
+  const { sendMessageSlack } = await import("../../slack/send.js");
+  return sendMessageSlack(...args);
+};
+
+const monitorSlackProviderLazy: PluginRuntime["channel"]["slack"]["monitorSlackProvider"] = async (
+  ...args
+) => {
+  const { monitorSlackProvider } = await import("../../slack/index.js");
+  return monitorSlackProvider(...args);
+};
+
+const handleSlackActionLazy: PluginRuntime["channel"]["slack"]["handleSlackAction"] = async (
+  ...args
+) => {
+  const { handleSlackAction } = await import("../../agents/tools/slack-actions.js");
+  return handleSlackAction(...args);
+};
+
+const probeTelegramLazy: PluginRuntime["channel"]["telegram"]["probeTelegram"] = async (
+  ...args
+) => {
+  const { probeTelegram } = await import("../../telegram/probe.js");
+  return probeTelegram(...args);
+};
+
+const sendMessageTelegramLazy: PluginRuntime["channel"]["telegram"]["sendMessageTelegram"] = async (
+  ...args
+) => {
+  const { sendMessageTelegram } = await import("../../telegram/send.js");
+  return sendMessageTelegram(...args);
+};
+
+const sendPollTelegramLazy: PluginRuntime["channel"]["telegram"]["sendPollTelegram"] = async (
+  ...args
+) => {
+  const { sendPollTelegram } = await import("../../telegram/send.js");
+  return sendPollTelegram(...args);
+};
+
+const monitorTelegramProviderLazy: PluginRuntime["channel"]["telegram"]["monitorTelegramProvider"] =
+  async (...args) => {
+    const { monitorTelegramProvider } = await import("../../telegram/monitor.js");
+    return monitorTelegramProvider(...args);
   };
 
 let webOutboundPromise: Promise<typeof import("../../web/outbound.js")> | null = null;
@@ -371,34 +480,34 @@ function createRuntimeChannel(): PluginRuntime["channel"] {
     },
     discord: {
       messageActions: discordMessageActions,
-      auditChannelPermissions: auditDiscordChannelPermissions,
-      listDirectoryGroupsLive: listDiscordDirectoryGroupsLive,
-      listDirectoryPeersLive: listDiscordDirectoryPeersLive,
-      probeDiscord,
-      resolveChannelAllowlist: resolveDiscordChannelAllowlist,
-      resolveUserAllowlist: resolveDiscordUserAllowlist,
-      sendMessageDiscord,
-      sendPollDiscord,
-      monitorDiscordProvider,
+      auditChannelPermissions: auditDiscordChannelPermissionsLazy,
+      listDirectoryGroupsLive: listDiscordDirectoryGroupsLiveLazy,
+      listDirectoryPeersLive: listDiscordDirectoryPeersLiveLazy,
+      probeDiscord: probeDiscordLazy,
+      resolveChannelAllowlist: resolveDiscordChannelAllowlistLazy,
+      resolveUserAllowlist: resolveDiscordUserAllowlistLazy,
+      sendMessageDiscord: sendMessageDiscordLazy,
+      sendPollDiscord: sendPollDiscordLazy,
+      monitorDiscordProvider: monitorDiscordProviderLazy,
     },
     slack: {
-      listDirectoryGroupsLive: listSlackDirectoryGroupsLive,
-      listDirectoryPeersLive: listSlackDirectoryPeersLive,
-      probeSlack,
-      resolveChannelAllowlist: resolveSlackChannelAllowlist,
-      resolveUserAllowlist: resolveSlackUserAllowlist,
-      sendMessageSlack,
-      monitorSlackProvider,
-      handleSlackAction,
+      listDirectoryGroupsLive: listSlackDirectoryGroupsLiveLazy,
+      listDirectoryPeersLive: listSlackDirectoryPeersLiveLazy,
+      probeSlack: probeSlackLazy,
+      resolveChannelAllowlist: resolveSlackChannelAllowlistLazy,
+      resolveUserAllowlist: resolveSlackUserAllowlistLazy,
+      sendMessageSlack: sendMessageSlackLazy,
+      monitorSlackProvider: monitorSlackProviderLazy,
+      handleSlackAction: handleSlackActionLazy,
     },
     telegram: {
       auditGroupMembership: auditTelegramGroupMembership,
       collectUnmentionedGroupIds: collectTelegramUnmentionedGroupIds,
-      probeTelegram,
+      probeTelegram: probeTelegramLazy,
       resolveTelegramToken,
-      sendMessageTelegram,
-      sendPollTelegram,
-      monitorTelegramProvider,
+      sendMessageTelegram: sendMessageTelegramLazy,
+      sendPollTelegram: sendPollTelegramLazy,
+      monitorTelegramProvider: monitorTelegramProviderLazy,
       messageActions: telegramMessageActions,
     },
     signal: {

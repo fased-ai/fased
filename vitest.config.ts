@@ -26,11 +26,44 @@ export default defineConfig({
         replacement: path.join(repoRoot, "src", "plugin-sdk", "account-id.ts"),
       },
       {
+        find: "fased/plugin-sdk/channel-plugin-common",
+        replacement: path.join(repoRoot, "src", "plugin-sdk", "channel-plugin-common.ts"),
+      },
+      {
+        find: "fased/plugin-sdk/command-status",
+        replacement: path.join(repoRoot, "src", "plugin-sdk", "command-status.ts"),
+      },
+      {
+        find: "fased/plugin-sdk/discord",
+        replacement: path.join(repoRoot, "src", "plugin-sdk", "discord.ts"),
+      },
+      {
+        find: "fased/plugin-sdk/provider-web-search-config-contract",
+        replacement: path.join(
+          repoRoot,
+          "src",
+          "plugin-sdk",
+          "provider-web-search-config-contract.ts",
+        ),
+      },
+      {
         find: "fased/plugin-sdk/sat-runtime",
         replacement: path.join(repoRoot, "src", "plugin-sdk", "sat-runtime.ts"),
       },
       {
-        find: "fased/plugin-sdk",
+        find: "fased/plugin-sdk/slack",
+        replacement: path.join(repoRoot, "src", "plugin-sdk", "slack.ts"),
+      },
+      {
+        find: "fased/plugin-sdk/telegram",
+        replacement: path.join(repoRoot, "src", "plugin-sdk", "telegram.ts"),
+      },
+      {
+        find: "fased/plugin-sdk/whatsapp",
+        replacement: path.join(repoRoot, "src", "plugin-sdk", "whatsapp.ts"),
+      },
+      {
+        find: /^fased\/plugin-sdk$/,
         replacement: path.join(repoRoot, "src", "plugin-sdk", "index.ts"),
       },
     ],

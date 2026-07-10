@@ -1,10 +1,10 @@
-import type { FasedAgentPluginApi } from "fased/plugin-sdk";
 import {
   autoBindSpawnedDiscordSubagent,
+  type FasedAgentPluginApi,
   listThreadBindingsBySessionKey,
   resolveDiscordAccount,
   unbindThreadBindingsBySessionKey,
-} from "fased/plugin-sdk";
+} from "fased/plugin-sdk/discord";
 
 function summarizeError(err: unknown): string {
   if (err instanceof Error) {

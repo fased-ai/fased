@@ -31,7 +31,7 @@ import {
   type FasedAgentConfig,
   type ResolvedTelegramAccount,
   type TelegramProbe,
-} from "fased/plugin-sdk";
+} from "fased/plugin-sdk/telegram";
 import { getTelegramRuntime } from "./runtime.js";
 
 const meta = getChatChannelMeta("telegram");

@@ -5,11 +5,10 @@ import { getChannelPlugin, listChannelPlugins } from "../../channels/plugins/ind
 import type { ChannelCapabilities, ChannelPlugin } from "../../channels/plugins/types.js";
 import { listChatChannels, normalizeChatChannelId } from "../../channels/registry.js";
 import type { FasedAgentConfig } from "../../config/config.js";
-import { fetchChannelPermissionsDiscord } from "../../discord/send.js";
 import { parseDiscordTarget } from "../../discord/targets.js";
 import { danger } from "../../globals.js";
 import { defaultRuntime, type RuntimeEnv } from "../../runtime.js";
-import { fetchSlackScopes, type SlackScopesResult } from "../../slack/scopes.js";
+import type { SlackScopesResult } from "../../slack/scopes.js";
 import { theme } from "../../terminal/theme.js";
 import { formatChannelAccountLabel, requireValidConfig } from "./shared.js";
 
@@ -370,6 +369,7 @@ async function buildDiscordPermissions(params: {
     };
   }
   try {
+    const { fetchChannelPermissionsDiscord } = await import("../../discord/send.js");
     const perms = await fetchChannelPermissionsDiscord(target.channelId, {
       token,
       accountId: params.account.accountId ?? undefined,
@@ -445,6 +445,7 @@ async function resolveChannelReports(params: {
 
     let slackScopes: ChannelCapabilitiesReport["slackScopes"];
     if (plugin.id === "slack" && configured && enabled) {
+      const { fetchSlackScopes } = await import("../../slack/scopes.js");
       const botToken = (resolvedAccount as { botToken?: string }).botToken?.trim();
       const userToken = (
         resolvedAccount as { config?: { userToken?: string } }

@@ -6,9 +6,11 @@ import { readAcpSessionEntry } from "../../../acp/runtime/session-meta.js";
 import {
   resolveDiscordThreadBindingIdleTimeoutMs,
   resolveDiscordThreadBindingMaxAgeMs,
+} from "../../../discord/monitor/thread-bindings.config.js";
+import {
   resolveThreadBindingIntroText,
   resolveThreadBindingThreadName,
-} from "../../../discord/monitor/thread-bindings.js";
+} from "../../../discord/monitor/thread-bindings.messages.js";
 import { getSessionBindingService } from "../../../infra/outbound/session-binding-service.js";
 import type { CommandHandlerResult } from "../commands-types.js";
 import {

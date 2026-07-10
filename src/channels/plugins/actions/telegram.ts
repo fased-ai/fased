@@ -4,7 +4,6 @@ import {
   readStringOrNumberParam,
   readStringParam,
 } from "../../../agents/tools/common.js";
-import { handleTelegramAction } from "../../../agents/tools/telegram-actions.js";
 import type { TelegramActionConfig } from "../../../config/types.telegram.js";
 import { extractToolSend } from "../../../plugin-sdk/tool-send.js";
 import {
@@ -16,6 +15,11 @@ import type { ChannelMessageActionAdapter, ChannelMessageActionName } from "../t
 import { createUnionActionGate, listTokenSourcedAccounts } from "./shared.js";
 
 const providerId = "telegram";
+
+async function loadTelegramActionHandler() {
+  const { handleTelegramAction } = await import("../../../agents/tools/telegram-actions.js");
+  return handleTelegramAction;
+}
 
 function readTelegramSendParams(params: Record<string, unknown>) {
   const to = readStringParam(params, "to", { required: true });
@@ -108,6 +112,7 @@ export const telegramMessageActions: ChannelMessageActionAdapter = {
     return extractToolSend(args, "sendMessage");
   },
   handleAction: async ({ action, params, cfg, accountId, mediaLocalRoots, toolContext }) => {
+    const handleTelegramAction = await loadTelegramActionHandler();
     if (action === "send") {
       const sendParams = readTelegramSendParams(params);
       return await handleTelegramAction(

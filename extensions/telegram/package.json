@@ -43,7 +43,7 @@
     "install": {
       "npmSpec": "@fased/telegram",
       "localPath": "extensions/telegram",
-      "defaultChoice": "local"
+      "defaultChoice": "npm"
     }
   }
 }

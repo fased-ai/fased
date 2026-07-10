@@ -41,7 +41,7 @@
     "install": {
       "npmSpec": "@fased/whatsapp",
       "localPath": "extensions/whatsapp",
-      "defaultChoice": "local"
+      "defaultChoice": "npm"
     }
   }
 }

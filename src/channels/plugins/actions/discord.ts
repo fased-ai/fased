@@ -1,7 +1,6 @@
 import type { DiscordActionConfig } from "../../../config/types.discord.js";
 import { createDiscordActionGate, listEnabledDiscordAccounts } from "../../../discord/accounts.js";
 import type { ChannelMessageActionAdapter, ChannelMessageActionName } from "../types.js";
-import { handleDiscordMessageAction } from "./discord/handle-action.js";
 import { createUnionActionGate, listTokenSourcedAccounts } from "./shared.js";
 
 export const discordMessageActions: ChannelMessageActionAdapter = {
@@ -121,6 +120,7 @@ export const discordMessageActions: ChannelMessageActionAdapter = {
     toolContext,
     mediaLocalRoots,
   }) => {
+    const { handleDiscordMessageAction } = await import("./discord/handle-action.js");
     return await handleDiscordMessageAction({
       action,
       params,

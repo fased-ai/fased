@@ -1,11 +1,12 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Type } from "@sinclair/typebox";
-import { fetchWithSsrFGuard, type FasedAgentPluginApi } from "fased/plugin-sdk";
+import type { FasedAgentPluginApi } from "fased/plugin-sdk";
 import {
   ErrorCodes,
   createWalletProviderAdapter,
   errorShape,
+  fetchWithSsrFGuard,
   getSatMainnetSyncStatus,
   loadConfig,
   probeLocalSocketSignerHealth,

@@ -42,7 +42,7 @@
     "install": {
       "npmSpec": "@fased/slack",
       "localPath": "extensions/slack",
-      "defaultChoice": "local"
+      "defaultChoice": "npm"
     }
   }
 }

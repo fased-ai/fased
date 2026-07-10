@@ -5,8 +5,6 @@ import {
   resolveDefaultSlackAccountId,
   resolveSlackAccount,
 } from "../../../slack/accounts.js";
-import { resolveSlackChannelAllowlist } from "../../../slack/resolve-channels.js";
-import { resolveSlackUserAllowlist } from "../../../slack/resolve-users.js";
 import { formatDocsLink } from "../../../terminal/links.js";
 import type { WizardPrompter } from "../../../wizard/prompts.js";
 import type { ChannelOnboardingAdapter, ChannelOnboardingDmPolicy } from "../onboarding-types.js";
@@ -188,11 +186,13 @@ async function promptSlackAllowFrom(params: {
     placeholder: "@alice, U12345678",
     parseId,
     invalidWithoutTokenNote: "Slack token missing; use user ids (or mention form) only.",
-    resolveEntries: ({ token, entries }) =>
-      resolveSlackUserAllowlist({
+    resolveEntries: async ({ token, entries }) => {
+      const { resolveSlackUserAllowlist } = await import("../../../slack/resolve-users.js");
+      return resolveSlackUserAllowlist({
         token,
         entries,
-      }),
+      });
+    },
   });
 }
 
@@ -357,6 +357,8 @@ export const slackOnboardingAdapter: ChannelOnboardingAdapter = {
         });
         if (accountWithTokens.botToken && entries.length > 0) {
           try {
+            const { resolveSlackChannelAllowlist } =
+              await import("../../../slack/resolve-channels.js");
             const resolved = await resolveSlackChannelAllowlist({
               token: accountWithTokens.botToken,
               entries,
