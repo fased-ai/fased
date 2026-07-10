@@ -41,8 +41,8 @@ setup path.
 
 ## Official channel add-ons
 
-Telegram, WhatsApp, Discord, and Slack are official npm add-ons. They are not
-downloaded by a fresh core install.
+Telegram, WhatsApp, Discord, Slack, Feishu/Lark, and Google Chat are official
+npm add-ons. They are not downloaded by a fresh core install.
 
 The normal browser flow is:
 
@@ -62,6 +62,8 @@ fased plugins install @fased/telegram
 fased plugins install @fased/whatsapp
 fased plugins install @fased/discord
 fased plugins install @fased/slack
+fased plugins install @fased/feishu
+fased plugins install @fased/googlechat
 fased gateway restart
 ```
 
@@ -69,7 +71,7 @@ Install only the channels you use. Each add-on carries its own channel runtime
 dependencies.
 
 <Note>
-The four packages above are the official installable channel add-ons in this
+The packages above are the official installable channel add-ons in this
 release. Other advanced channel extensions may need a source install or their
 own channel-specific dependencies until they receive a published add-on
 package. Follow the individual channel page instead of assuming the lightweight

@@ -63,9 +63,6 @@ importers:
       '@homebridge/ciao':
         specifier: ^1.3.5
         version: 1.3.5
-      '@larksuiteoapi/node-sdk':
-        specifier: ^1.68.0
-        version: 1.68.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
       '@line/bot-sdk':
         specifier: ^10.6.0
         version: 10.6.0
@@ -120,9 +117,6 @@ importers:
       gaxios:
         specifier: 7.1.2
         version: 7.1.2
-      google-auth-library:
-        specifier: 10.5.0
-        version: 10.5.0
       https-proxy-agent:
         specifier: ^7.0.6
         version: 7.0.6
@@ -174,10 +168,10 @@ importers:
     devDependencies:
       '@buape/carbon':
         specifier: 0.0.0-beta-20260216184201
-        version: 0.0.0-beta-20260216184201(bufferutil@4.1.0)(hono@4.12.25)(opusscript@0.1.1)(utf-8-validate@6.0.6)
+        version: 0.0.0-beta-20260216184201(@discordjs/opus@0.10.0)(bufferutil@4.1.0)(hono@4.12.25)(opusscript@0.1.1)(utf-8-validate@6.0.6)
       '@discordjs/voice':
         specifier: ^0.19.0
-        version: 0.19.0(bufferutil@4.1.0)(opusscript@0.1.1)(utf-8-validate@6.0.6)
+        version: 0.19.0(@discordjs/opus@0.10.0)(bufferutil@4.1.0)(opusscript@0.1.1)(utf-8-validate@6.0.6)
       '@grammyjs/runner':
         specifier: ^2.0.3
         version: 2.0.3(grammy@1.40.1)
@@ -187,6 +181,9 @@ importers:
       '@grammyjs/types':
         specifier: ^3.24.0
         version: 3.24.0
+      '@larksuiteoapi/node-sdk':
+        specifier: ^1.68.0
+        version: 1.68.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
       '@lit-labs/signals':
         specifier: ^0.2.0
         version: 0.2.0
@@ -228,7 +225,7 @@ importers:
         version: 7.0.0-dev.20260225.1
       '@vitest/coverage-v8':
         specifier: ^4.1.9
-        version: 4.1.9(vitest@4.1.9)
+        version: 4.1.9(@vitest/browser@4.1.9)(vitest@4.1.9)
       '@whiskeysockets/baileys':
         specifier: 7.0.0-rc12
         version: 7.0.0-rc12(bufferutil@4.1.0)(sharp@0.34.5)(utf-8-validate@6.0.6)
@@ -238,6 +235,9 @@ importers:
       file-type:
         specifier: 21.3.2
         version: 21.3.2
+      google-auth-library:
+        specifier: 10.5.0
+        version: 10.5.0
       grammy:
         specifier: ^1.40.1
         version: 1.40.1
@@ -291,7 +291,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 4.1.9
-        version: 4.1.9(@opentelemetry/api@1.9.1)(@types/node@25.3.2)(@vitest/coverage-v8@4.1.9)(esbuild@0.28.1)(jiti@2.6.1)(tsx@4.22.4)(yaml@2.8.3)
+        version: 4.1.9(@opentelemetry/api@1.9.1)(@types/node@25.3.2)(@vitest/browser-playwright@4.1.9)(@vitest/coverage-v8@4.1.9)(vite@8.1.2(@types/node@25.3.2)(esbuild@0.28.1)(jiti@2.6.1)(tsx@4.22.4)(yaml@2.8.3))
 
   extensions/acpx:
     dependencies:
@@ -610,7 +610,7 @@ importers:
         version: 1.58.2
       vitest:
         specifier: 4.1.9
-        version: 4.1.9(@opentelemetry/api@1.9.1)(@types/node@25.3.2)(@vitest/browser-playwright@4.1.9)(@vitest/coverage-v8@4.1.9)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.8.3)
+        version: 4.1.9(@opentelemetry/api@1.9.1)(@types/node@25.3.2)(@vitest/browser-playwright@4.1.9)(@vitest/coverage-v8@4.1.9)(vite@8.1.2(@types/node@25.3.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.8.3))
 
 packages:
 
@@ -5119,6 +5119,7 @@ packages:
       '@vitest/ui': 4.1.9
       happy-dom: '*'
       jsdom: '*'
+      vite: 8.1.2
     peerDependenciesMeta:
       '@edge-runtime/vm':
         optional: true
@@ -5571,26 +5572,6 @@ snapshots:
       - opusscript
       - utf-8-validate
 
-  '@buape/carbon@0.0.0-beta-20260216184201(bufferutil@4.1.0)(hono@4.12.25)(opusscript@0.1.1)(utf-8-validate@6.0.6)':
-    dependencies:
-      '@types/node': 25.3.2
-      discord-api-types: 0.38.37
-    optionalDependencies:
-      '@cloudflare/workers-types': 4.20260120.0
-      '@discordjs/voice': 0.19.0(bufferutil@4.1.0)(opusscript@0.1.1)(utf-8-validate@6.0.6)
-      '@hono/node-server': 1.19.13(hono@4.12.25)
-      '@types/bun': 1.3.9
-      '@types/ws': 8.18.1
-      ws: 8.21.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
-    transitivePeerDependencies:
-      - '@discordjs/opus'
-      - bufferutil
-      - ffmpeg-static
-      - hono
-      - node-opus
-      - opusscript
-      - utf-8-validate
-
   '@cacheable/memory@2.2.0':
     dependencies:
       '@cacheable/utils': 2.5.0
@@ -5739,21 +5720,6 @@ snapshots:
       '@types/ws': 8.18.1
       discord-api-types: 0.38.40
       prism-media: 1.3.5(@discordjs/opus@0.10.0)(opusscript@0.1.1)
-      tslib: 2.8.1
-      ws: 8.21.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
-    transitivePeerDependencies:
-      - '@discordjs/opus'
-      - bufferutil
-      - ffmpeg-static
-      - node-opus
-      - opusscript
-      - utf-8-validate
-
-  '@discordjs/voice@0.19.0(bufferutil@4.1.0)(opusscript@0.1.1)(utf-8-validate@6.0.6)':
-    dependencies:
-      '@types/ws': 8.18.1
-      discord-api-types: 0.38.40
-      prism-media: 1.3.5(opusscript@0.1.1)
       tslib: 2.8.1
       ws: 8.21.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
     transitivePeerDependencies:
@@ -7581,7 +7547,7 @@ snapshots:
       '@vitest/mocker': 4.1.9(vite@8.1.2(@types/node@25.3.2)(esbuild@0.28.1)(jiti@2.6.1)(tsx@4.22.4)(yaml@2.8.3))
       playwright: 1.58.2
       tinyrainbow: 3.1.0
-      vitest: 4.1.9(@opentelemetry/api@1.9.1)(@types/node@25.3.2)(@vitest/browser-playwright@4.1.9)(@vitest/coverage-v8@4.1.9)(esbuild@0.28.1)(jiti@2.6.1)(tsx@4.22.4)(yaml@2.8.3)
+      vitest: 4.1.9(@opentelemetry/api@1.9.1)(@types/node@25.3.2)(@vitest/browser-playwright@4.1.9)(@vitest/coverage-v8@4.1.9)(vite@8.1.2(@types/node@25.3.2)(esbuild@0.28.1)(jiti@2.6.1)(tsx@4.22.4)(yaml@2.8.3))
     transitivePeerDependencies:
       - bufferutil
       - msw
@@ -7595,7 +7561,7 @@ snapshots:
       '@vitest/mocker': 4.1.9(vite@8.1.2(@types/node@25.3.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.8.3))
       playwright: 1.58.2
       tinyrainbow: 3.1.0
-      vitest: 4.1.9(@opentelemetry/api@1.9.1)(@types/node@25.3.2)(@vitest/browser-playwright@4.1.9)(@vitest/coverage-v8@4.1.9)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.8.3)
+      vitest: 4.1.9(@opentelemetry/api@1.9.1)(@types/node@25.3.2)(@vitest/browser-playwright@4.1.9)(@vitest/coverage-v8@4.1.9)(vite@8.1.2(@types/node@25.3.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.8.3))
     transitivePeerDependencies:
       - bufferutil
       - msw
@@ -7611,7 +7577,7 @@ snapshots:
       pngjs: 7.0.0
       sirv: 3.0.2
       tinyrainbow: 3.1.0
-      vitest: 4.1.9(@opentelemetry/api@1.9.1)(@types/node@25.3.2)(@vitest/browser-playwright@4.1.9)(@vitest/coverage-v8@4.1.9)(esbuild@0.28.1)(jiti@2.6.1)(tsx@4.22.4)(yaml@2.8.3)
+      vitest: 4.1.9(@opentelemetry/api@1.9.1)(@types/node@25.3.2)(@vitest/browser-playwright@4.1.9)(@vitest/coverage-v8@4.1.9)(vite@8.1.2(@types/node@25.3.2)(esbuild@0.28.1)(jiti@2.6.1)(tsx@4.22.4)(yaml@2.8.3))
       ws: 8.21.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
     transitivePeerDependencies:
       - bufferutil
@@ -7629,7 +7595,7 @@ snapshots:
       pngjs: 7.0.0
       sirv: 3.0.2
       tinyrainbow: 3.1.0
-      vitest: 4.1.9(@opentelemetry/api@1.9.1)(@types/node@25.3.2)(@vitest/browser-playwright@4.1.9)(@vitest/coverage-v8@4.1.9)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.8.3)
+      vitest: 4.1.9(@opentelemetry/api@1.9.1)(@types/node@25.3.2)(@vitest/browser-playwright@4.1.9)(@vitest/coverage-v8@4.1.9)(vite@8.1.2(@types/node@25.3.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.8.3))
       ws: 8.21.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
     transitivePeerDependencies:
       - bufferutil
@@ -7649,24 +7615,9 @@ snapshots:
       obug: 2.1.1
       std-env: 4.1.0
       tinyrainbow: 3.1.0
-      vitest: 4.1.9(@opentelemetry/api@1.9.1)(@types/node@25.3.2)(@vitest/browser-playwright@4.1.9)(@vitest/coverage-v8@4.1.9)(esbuild@0.28.1)(jiti@2.6.1)(tsx@4.22.4)(yaml@2.8.3)
+      vitest: 4.1.9(@opentelemetry/api@1.9.1)(@types/node@25.3.2)(@vitest/browser-playwright@4.1.9)(@vitest/coverage-v8@4.1.9)(vite@8.1.2(@types/node@25.3.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.8.3))
     optionalDependencies:
-      '@vitest/browser': 4.1.9(bufferutil@4.1.0)(utf-8-validate@6.0.6)(vite@8.1.2(@types/node@25.3.2)(esbuild@0.28.1)(jiti@2.6.1)(tsx@4.22.4)(yaml@2.8.3))(vitest@4.1.9)
-    optional: true
-
-  '@vitest/coverage-v8@4.1.9(vitest@4.1.9)':
-    dependencies:
-      '@bcoe/v8-coverage': 1.0.2
-      '@vitest/utils': 4.1.9
-      ast-v8-to-istanbul: 1.0.3
-      istanbul-lib-coverage: 3.2.2
-      istanbul-lib-report: 3.0.1
-      istanbul-reports: 3.2.0
-      magicast: 0.5.2
-      obug: 2.1.1
-      std-env: 4.1.0
-      tinyrainbow: 3.1.0
-      vitest: 4.1.9(@opentelemetry/api@1.9.1)(@types/node@25.3.2)(@vitest/coverage-v8@4.1.9)(esbuild@0.28.1)(jiti@2.6.1)(tsx@4.22.4)(yaml@2.8.3)
+      '@vitest/browser': 4.1.9(bufferutil@4.1.0)(utf-8-validate@6.0.6)(vite@8.1.2(@types/node@25.3.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.8.3))(vitest@4.1.9)
 
   '@vitest/expect@4.1.9':
     dependencies:
@@ -9466,10 +9417,6 @@ snapshots:
       '@discordjs/opus': 0.10.0
       opusscript: 0.1.1
 
-  prism-media@1.3.5(opusscript@0.1.1):
-    optionalDependencies:
-      opusscript: 0.1.1
-
   process-nextick-args@2.0.1: {}
 
   process-warning@5.0.0: {}
@@ -10209,7 +10156,7 @@ snapshots:
       tsx: 4.22.4
       yaml: 2.8.3
 
-  vitest@4.1.9(@opentelemetry/api@1.9.1)(@types/node@25.3.2)(@vitest/browser-playwright@4.1.9)(@vitest/coverage-v8@4.1.9)(esbuild@0.28.1)(jiti@2.6.1)(tsx@4.22.4)(yaml@2.8.3):
+  vitest@4.1.9(@opentelemetry/api@1.9.1)(@types/node@25.3.2)(@vitest/browser-playwright@4.1.9)(@vitest/coverage-v8@4.1.9)(vite@8.1.2(@types/node@25.3.2)(esbuild@0.28.1)(jiti@2.6.1)(tsx@4.22.4)(yaml@2.8.3)):
     dependencies:
       '@vitest/expect': 4.1.9
       '@vitest/mocker': 4.1.9(vite@8.1.2(@types/node@25.3.2)(esbuild@0.28.1)(jiti@2.6.1)(tsx@4.22.4)(yaml@2.8.3))
@@ -10237,21 +10184,9 @@ snapshots:
       '@vitest/browser-playwright': 4.1.9(bufferutil@4.1.0)(playwright@1.58.2)(utf-8-validate@6.0.6)(vite@8.1.2(@types/node@25.3.2)(esbuild@0.28.1)(jiti@2.6.1)(tsx@4.22.4)(yaml@2.8.3))(vitest@4.1.9)
       '@vitest/coverage-v8': 4.1.9(@vitest/browser@4.1.9)(vitest@4.1.9)
     transitivePeerDependencies:
-      - '@vitejs/devtools'
-      - esbuild
-      - jiti
-      - less
       - msw
-      - sass
-      - sass-embedded
-      - stylus
-      - sugarss
-      - terser
-      - tsx
-      - yaml
-    optional: true
 
-  vitest@4.1.9(@opentelemetry/api@1.9.1)(@types/node@25.3.2)(@vitest/browser-playwright@4.1.9)(@vitest/coverage-v8@4.1.9)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.8.3):
+  vitest@4.1.9(@opentelemetry/api@1.9.1)(@types/node@25.3.2)(@vitest/browser-playwright@4.1.9)(@vitest/coverage-v8@4.1.9)(vite@8.1.2(@types/node@25.3.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.8.3)):
     dependencies:
       '@vitest/expect': 4.1.9
       '@vitest/mocker': 4.1.9(vite@8.1.2(@types/node@25.3.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.8.3))
@@ -10279,58 +10214,7 @@ snapshots:
       '@vitest/browser-playwright': 4.1.9(bufferutil@4.1.0)(playwright@1.58.2)(utf-8-validate@6.0.6)(vite@8.1.2(@types/node@25.3.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.8.3))(vitest@4.1.9)
       '@vitest/coverage-v8': 4.1.9(@vitest/browser@4.1.9)(vitest@4.1.9)
     transitivePeerDependencies:
-      - '@vitejs/devtools'
-      - esbuild
-      - jiti
-      - less
       - msw
-      - sass
-      - sass-embedded
-      - stylus
-      - sugarss
-      - terser
-      - tsx
-      - yaml
-
-  vitest@4.1.9(@opentelemetry/api@1.9.1)(@types/node@25.3.2)(@vitest/coverage-v8@4.1.9)(esbuild@0.28.1)(jiti@2.6.1)(tsx@4.22.4)(yaml@2.8.3):
-    dependencies:
-      '@vitest/expect': 4.1.9
-      '@vitest/mocker': 4.1.9(vite@8.1.2(@types/node@25.3.2)(esbuild@0.28.1)(jiti@2.6.1)(tsx@4.22.4)(yaml@2.8.3))
-      '@vitest/pretty-format': 4.1.9
-      '@vitest/runner': 4.1.9
-      '@vitest/snapshot': 4.1.9
-      '@vitest/spy': 4.1.9
-      '@vitest/utils': 4.1.9
-      es-module-lexer: 2.1.0
-      expect-type: 1.3.0
-      magic-string: 0.30.21
-      obug: 2.1.1
-      pathe: 2.0.3
-      picomatch: 4.0.4
-      std-env: 4.1.0
-      tinybench: 2.9.0
-      tinyexec: 1.0.2
-      tinyglobby: 0.2.17
-      tinyrainbow: 3.1.0
-      vite: 8.1.2(@types/node@25.3.2)(esbuild@0.28.1)(jiti@2.6.1)(tsx@4.22.4)(yaml@2.8.3)
-      why-is-node-running: 2.3.0
-    optionalDependencies:
-      '@opentelemetry/api': 1.9.1
-      '@types/node': 25.3.2
-      '@vitest/coverage-v8': 4.1.9(vitest@4.1.9)
-    transitivePeerDependencies:
-      - '@vitejs/devtools'
-      - esbuild
-      - jiti
-      - less
-      - msw
-      - sass
-      - sass-embedded
-      - stylus
-      - sugarss
-      - terser
-      - tsx
-      - yaml
 
   web-streams-polyfill@3.3.3: {}
 

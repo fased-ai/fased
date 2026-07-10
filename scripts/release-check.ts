@@ -78,6 +78,8 @@ const channelAddonContracts = new Map<string, string[]>([
     ["@buape/carbon", "@discordjs/voice", "@snazzah/davey", "discord-api-types", "opusscript"],
   ],
   ["slack", ["@slack/bolt", "@slack/web-api"]],
+  ["feishu", ["@larksuiteoapi/node-sdk"]],
+  ["googlechat", ["google-auth-library"]],
 ]);
 const excludedCoreChannelExtensionPrefixes = [...channelAddonContracts.keys()].map(
   (channelId) => `extensions/${channelId}/`,

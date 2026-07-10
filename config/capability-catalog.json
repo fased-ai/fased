@@ -100,6 +100,32 @@
       "description": "Slack Socket Mode transport."
     },
     {
+      "id": "feishu",
+      "label": "Feishu / Lark",
+      "category": "channel",
+      "delivery": "npm-addon",
+      "packageName": "@fased/feishu",
+      "pluginId": "feishu",
+      "channelId": "feishu",
+      "docsPath": "/channels/feishu",
+      "surface": "Agent > Channels",
+      "restartRequired": true,
+      "description": "Feishu and Lark enterprise messaging transport."
+    },
+    {
+      "id": "googlechat",
+      "label": "Google Chat",
+      "category": "channel",
+      "delivery": "npm-addon",
+      "packageName": "@fased/googlechat",
+      "pluginId": "googlechat",
+      "channelId": "googlechat",
+      "docsPath": "/channels/googlechat",
+      "surface": "Agent > Channels",
+      "restartRequired": true,
+      "description": "Google Workspace Chat webhook transport."
+    },
+    {
       "id": "browser-runtime",
       "label": "Browser Runtime",
       "category": "runtime",

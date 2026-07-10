@@ -75,6 +75,45 @@
           "defaultChoice": "npm"
         }
       }
+    },
+    {
+      "name": "@fased/feishu",
+      "fased": {
+        "channel": {
+          "id": "feishu",
+          "label": "Feishu / Lark",
+          "selectionLabel": "Feishu/Lark",
+          "docsPath": "/channels/feishu",
+          "docsLabel": "feishu",
+          "blurb": "Feishu and Lark enterprise messaging with document and workspace tools.",
+          "aliases": ["lark"],
+          "order": 50,
+          "quickstartAllowFrom": true
+        },
+        "install": {
+          "npmSpec": "@fased/feishu",
+          "defaultChoice": "npm"
+        }
+      }
+    },
+    {
+      "name": "@fased/googlechat",
+      "fased": {
+        "channel": {
+          "id": "googlechat",
+          "label": "Google Chat",
+          "selectionLabel": "Google Chat (Chat API)",
+          "docsPath": "/channels/googlechat",
+          "docsLabel": "googlechat",
+          "blurb": "Google Workspace Chat app through verified HTTP webhooks.",
+          "aliases": ["gchat", "google-chat"],
+          "order": 60
+        },
+        "install": {
+          "npmSpec": "@fased/googlechat",
+          "defaultChoice": "npm"
+        }
+      }
     }
   ]
 }

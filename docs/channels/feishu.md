@@ -11,8 +11,16 @@ title: Feishu
 Use Feishu when your team already works in Feishu or Lark and you want Fased to
 join those conversations through the platform's bot APIs.
 
-Status: bundled channel extension for Feishu and Lark workspaces. It supports
-the common bot flow, account-aware config, pairing, and group controls.
+Status: official optional add-on for Feishu and Lark workspaces. Install it
+from **Agent > Channels**, onboarding, or the CLI before entering credentials:
+
+```bash
+fased plugins install @fased/feishu
+fased gateway restart
+```
+
+It supports the common bot flow, account-aware config, pairing, and group
+controls.
 
 ## Setup from Agent > Channels
 

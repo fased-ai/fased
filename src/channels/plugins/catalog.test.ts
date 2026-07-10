@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { getChannelPluginCatalogEntry, listChannelPluginCatalogEntries } from "./catalog.js";
 
 describe("channel plugin catalog", () => {
-  it.each(["telegram", "whatsapp", "discord", "slack"])(
+  it.each(["telegram", "whatsapp", "discord", "slack", "feishu", "googlechat"])(
     "installs %s from its npm add-on by default",
     (channelId) => {
       const entry = getChannelPluginCatalogEntry(channelId);
@@ -23,11 +23,11 @@ describe("channel plugin catalog", () => {
     expect(entry?.catalogSource).toBe("bundled");
   });
 
-  it("includes bundled Feishu with its install metadata", () => {
+  it("includes Feishu with its npm install metadata", () => {
     const entry = getChannelPluginCatalogEntry("feishu");
-    expect(entry?.install.npmSpec).toBeUndefined();
+    expect(entry?.install.npmSpec).toBe("@fased/feishu");
     expect(entry?.install.localPath).toBe("extensions/feishu");
-    expect(entry?.install.defaultChoice).toBe("local");
+    expect(entry?.install.defaultChoice).toBe("npm");
     expect(entry?.meta.aliases).toContain("lark");
     expect(entry?.catalogSource).toBe("bundled");
   });

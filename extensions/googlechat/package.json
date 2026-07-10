@@ -1,14 +1,27 @@
 {
   "name": "@fased/googlechat",
   "version": "0.1.36",
-  "private": true,
   "description": "FasedAgent Google Chat channel plugin",
+  "files": [
+    "index.ts",
+    "fased.plugin.json",
+    "src",
+    "!src/**/*.test.ts"
+  ],
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
     "google-auth-library": "^10.6.1"
   },
   "peerDependencies": {
     "@fased/fased": "^0.1.36"
+  },
+  "peerDependenciesMeta": {
+    "@fased/fased": {
+      "optional": true
+    }
   },
   "fased": {
     "extensions": [
@@ -31,7 +44,7 @@
     "install": {
       "npmSpec": "@fased/googlechat",
       "localPath": "extensions/googlechat",
-      "defaultChoice": "local"
+      "defaultChoice": "npm"
     }
   }
 }
