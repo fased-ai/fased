@@ -1,4 +1,6 @@
-import type { BedrockClient } from "@aws-sdk/client-bedrock";
+type BedrockClientLike = {
+  send(command: unknown): Promise<unknown>;
+};
 
 type BedrockModelSummary = {
   modelId?: string;
@@ -90,7 +92,7 @@ function mapSummary(
 export async function discoverBedrockModels(params: {
   region: string;
   config?: BedrockDiscoveryConfig;
-  clientFactory: () => BedrockClient;
+  clientFactory: () => BedrockClientLike;
   nowMs?: number;
 }): Promise<DiscoveredBedrockModel[]> {
   const now = params.nowMs ?? Date.now();

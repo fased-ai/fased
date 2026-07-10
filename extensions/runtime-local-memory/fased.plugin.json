@@ -1,0 +1,8 @@
+{
+  "id": "local-memory-runtime",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

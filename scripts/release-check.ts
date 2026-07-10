@@ -37,10 +37,7 @@ const requiredPathGroups = [
   "scripts/fased-launcher-runtime.mjs",
   "shared/sat-hash-v1.json",
 ];
-const requiredExactDependencies = new Map<string, string>([
-  ["@aws-sdk/client-bedrock", "3.1062.0"],
-  ["@aws-sdk/core", "3.974.17"],
-]);
+const requiredExactDependencies = new Map<string, string>();
 const forbiddenPrefixes = ["dist/FasedAgent.app/", "src/", "extensions/node_modules/"];
 const allowedDocsPrefixes = ["docs/reference/templates/"];
 const extensionSourceFileRe = /\.(?:c|m)?(?:t|j)sx?$/;
@@ -84,6 +81,46 @@ const channelAddonContracts = new Map<string, string[]>([
 ]);
 const excludedCoreChannelExtensionPrefixes = [...channelAddonContracts.keys()].map(
   (channelId) => `extensions/${channelId}/`,
+);
+const runtimeAddonContracts = new Map<
+  string,
+  { pluginId: string; packageName: string; runtimeDependencies: string[] }
+>([
+  [
+    "runtime-browser",
+    {
+      pluginId: "browser-runtime",
+      packageName: "@fased/browser-runtime",
+      runtimeDependencies: ["@mozilla/readability", "linkedom", "playwright-core"],
+    },
+  ],
+  [
+    "runtime-media",
+    {
+      pluginId: "media-runtime",
+      packageName: "@fased/media-runtime",
+      runtimeDependencies: ["@napi-rs/canvas", "file-type", "pdfjs-dist", "sharp"],
+    },
+  ],
+  [
+    "runtime-speech",
+    {
+      pluginId: "speech-runtime",
+      packageName: "@fased/speech-runtime",
+      runtimeDependencies: ["node-edge-tts"],
+    },
+  ],
+  [
+    "runtime-local-memory",
+    {
+      pluginId: "local-memory-runtime",
+      packageName: "@fased/local-memory-runtime",
+      runtimeDependencies: ["sqlite-vec"],
+    },
+  ],
+]);
+const excludedCoreRuntimeExtensionPrefixes = [...runtimeAddonContracts.keys()].map(
+  (directory) => `extensions/${directory}/`,
 );
 
 function normalizePluginSyncVersion(version: string): string {
@@ -358,6 +395,70 @@ function checkChannelAddonContracts() {
   }
 }
 
+function checkRuntimeAddonContracts() {
+  const rootPackage = JSON.parse(readFileSync(resolve("package.json"), "utf8")) as PackageJson;
+  const rootVersion = rootPackage.version;
+  if (!rootVersion) {
+    console.error("release-check: root package.json missing version.");
+    process.exit(1);
+  }
+
+  const failures: string[] = [];
+  for (const [directory, contract] of runtimeAddonContracts) {
+    const packagePath = resolve("extensions", directory, "package.json");
+    const pkg = JSON.parse(readFileSync(packagePath, "utf8")) as PackageJson;
+    if (pkg.name !== contract.packageName) {
+      failures.push(`${directory}: name must be ${contract.packageName}`);
+    }
+    if (pkg.private === true || pkg.publishConfig?.access !== "public") {
+      failures.push(`${directory}: package must be public`);
+    }
+    if (normalizePluginSyncVersion(pkg.version ?? "") !== normalizePluginSyncVersion(rootVersion)) {
+      failures.push(`${directory}: version ${pkg.version ?? "missing"} must match ${rootVersion}`);
+    }
+    if (pkg.peerDependencies?.["@fased/fased"] !== `^${rootVersion}`) {
+      failures.push(`${directory}: @fased/fased peer must be ^${rootVersion}`);
+    }
+    if (pkg.peerDependenciesMeta?.["@fased/fased"]?.optional !== true) {
+      failures.push(`${directory}: @fased/fased peer must be optional`);
+    }
+    if (!pkg.fased?.extensions?.includes("./index.ts")) {
+      failures.push(`${directory}: fased.extensions must include ./index.ts`);
+    }
+    if (pkg.fased?.install?.npmSpec !== contract.packageName) {
+      failures.push(`${directory}: fased.install.npmSpec must be ${contract.packageName}`);
+    }
+    if (pkg.fased?.install?.localPath !== `extensions/${directory}`) {
+      failures.push(`${directory}: fased.install.localPath must match its directory`);
+    }
+    if (pkg.fased?.install?.defaultChoice !== "npm") {
+      failures.push(`${directory}: fased.install.defaultChoice must be npm`);
+    }
+    for (const dependency of contract.runtimeDependencies) {
+      if (!pkg.dependencies?.[dependency]) {
+        failures.push(`${directory}: missing owned runtime dependency ${dependency}`);
+      }
+      if (
+        rootPackage.dependencies?.[dependency] ||
+        rootPackage.optionalDependencies?.[dependency]
+      ) {
+        failures.push(`${directory}: ${dependency} must not be owned by the core package`);
+      }
+    }
+    if (!pkg.files?.includes("index.ts") || !pkg.files.includes("fased.plugin.json")) {
+      failures.push(`${directory}: files must include index.ts and fased.plugin.json`);
+    }
+  }
+
+  if (failures.length > 0) {
+    console.error("release-check: runtime add-on package contracts are invalid:");
+    for (const failure of failures) {
+      console.error(`  - ${failure}`);
+    }
+    process.exit(1);
+  }
+}
+
 function checkBrandVersion() {
   const rootPackagePath = resolve("package.json");
   const rootPackage = JSON.parse(readFileSync(rootPackagePath, "utf8")) as PackageJson;
@@ -489,6 +590,7 @@ function checkBundledExtensionSrcImports(paths: Set<string>) {
 function main() {
   checkPluginVersions();
   checkChannelAddonContracts();
+  checkRuntimeAddonContracts();
   checkBrandVersion();
   checkExactReleaseDependencies();
   checkRuntimeBuildExports();
@@ -526,6 +628,9 @@ function main() {
   const bundledOptionalChannels = [...paths].filter((path) =>
     excludedCoreChannelExtensionPrefixes.some((prefix) => path.startsWith(prefix)),
   );
+  const bundledOptionalRuntimes = [...paths].filter((path) =>
+    excludedCoreRuntimeExtensionPrefixes.some((prefix) => path.startsWith(prefix)),
+  );
 
   if (
     missing.length > 0 ||
@@ -533,7 +638,8 @@ function main() {
     forbiddenDocs.length > 0 ||
     forbiddenSourceMaps.length > 0 ||
     forbiddenTestSupport.length > 0 ||
-    bundledOptionalChannels.length > 0
+    bundledOptionalChannels.length > 0 ||
+    bundledOptionalRuntimes.length > 0
   ) {
     if (missing.length > 0) {
       console.error("release-check: missing files in npm pack:");
@@ -568,6 +674,12 @@ function main() {
     if (bundledOptionalChannels.length > 0) {
       console.error("release-check: optional channel extensions shipped in the core npm pack:");
       for (const path of bundledOptionalChannels) {
+        console.error(`  - ${path}`);
+      }
+    }
+    if (bundledOptionalRuntimes.length > 0) {
+      console.error("release-check: optional runtime extensions shipped in the core npm pack:");
+      for (const path of bundledOptionalRuntimes) {
         console.error(`  - ${path}`);
       }
     }

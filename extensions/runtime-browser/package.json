@@ -1,0 +1,36 @@
+{
+  "name": "@fased/browser-runtime",
+  "version": "0.1.36",
+  "description": "Optional browser runtime for Fased Agent",
+  "files": [
+    "index.ts",
+    "fased.plugin.json"
+  ],
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@mozilla/readability": "^0.6.0",
+    "linkedom": "^0.18.12",
+    "playwright-core": "1.58.2"
+  },
+  "peerDependencies": {
+    "@fased/fased": "^0.1.36"
+  },
+  "peerDependenciesMeta": {
+    "@fased/fased": {
+      "optional": true
+    }
+  },
+  "fased": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "install": {
+      "npmSpec": "@fased/browser-runtime",
+      "localPath": "extensions/runtime-browser",
+      "defaultChoice": "npm"
+    }
+  }
+}

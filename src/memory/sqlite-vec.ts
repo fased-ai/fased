@@ -1,11 +1,16 @@
 import type { DatabaseSync } from "node:sqlite";
+import { importOptionalRuntimeDependency } from "../infra/optional-runtime-dependency.js";
 
 export async function loadSqliteVecExtension(params: {
   db: DatabaseSync;
   extensionPath?: string;
 }): Promise<{ ok: boolean; extensionPath?: string; error?: string }> {
   try {
-    const sqliteVec = await import("sqlite-vec");
+    const sqliteVec = await importOptionalRuntimeDependency<typeof import("sqlite-vec")>({
+      componentId: "local-memory-runtime",
+      packageName: "@fased/local-memory-runtime",
+      dependency: "sqlite-vec",
+    });
     const resolvedPath = params.extensionPath?.trim() ? params.extensionPath.trim() : undefined;
     const extensionPath = resolvedPath ?? sqliteVec.getLoadablePath();
 

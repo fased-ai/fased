@@ -1,5 +1,6 @@
 import { fetchWithSsrFGuard } from "../infra/net/fetch-guard.js";
 import type { SsrFPolicy } from "../infra/net/ssrf.js";
+import { importOptionalRuntimeDependency } from "../infra/optional-runtime-dependency.js";
 import { logWarn } from "../logger.js";
 import { canonicalizeBase64, estimateBase64DecodedBytes } from "./base64.js";
 import { readResponseWithLimit } from "./read-response-with-limit.js";
@@ -13,7 +14,11 @@ let pdfJsModulePromise: Promise<PdfJsModule> | null = null;
 // Lazy-load optional PDF/image deps so non-PDF paths don't require native installs.
 async function loadCanvasModule(): Promise<CanvasModule> {
   if (!canvasModulePromise) {
-    canvasModulePromise = import("@napi-rs/canvas").catch((err) => {
+    canvasModulePromise = importOptionalRuntimeDependency<CanvasModule>({
+      componentId: "media-runtime",
+      packageName: "@fased/media-runtime",
+      dependency: "@napi-rs/canvas",
+    }).catch((err) => {
       canvasModulePromise = null;
       throw new Error(
         `Optional dependency @napi-rs/canvas is required for PDF image extraction: ${String(err)}`,
@@ -25,7 +30,11 @@ async function loadCanvasModule(): Promise<CanvasModule> {
 
 async function loadPdfJsModule(): Promise<PdfJsModule> {
   if (!pdfJsModulePromise) {
-    pdfJsModulePromise = import("pdfjs-dist/legacy/build/pdf.mjs").catch((err) => {
+    pdfJsModulePromise = importOptionalRuntimeDependency<PdfJsModule>({
+      componentId: "media-runtime",
+      packageName: "@fased/media-runtime",
+      dependency: "pdfjs-dist/legacy/build/pdf.mjs",
+    }).catch((err) => {
       pdfJsModulePromise = null;
       throw new Error(
         `Optional dependency pdfjs-dist is required for PDF extraction: ${String(err)}`,

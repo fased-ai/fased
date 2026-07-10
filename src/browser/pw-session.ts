@@ -6,7 +6,6 @@ import type {
   Request,
   Response,
 } from "playwright-core";
-import { chromium } from "playwright-core";
 import { formatErrorMessage } from "../infra/errors.js";
 import type { SsrFPolicy } from "../infra/net/ssrf.js";
 import { appendCdpPath, fetchJson, getHeadersWithAuth, withCdpSocket } from "./cdp.helpers.js";
@@ -17,6 +16,7 @@ import {
   assertBrowserNavigationResultAllowed,
   withBrowserNavigationPolicy,
 } from "./navigation-guard.js";
+import { loadPlaywrightCore } from "./runtime-dependency.js";
 
 export type BrowserConsoleMessage = {
   type: string;
@@ -329,6 +329,7 @@ async function connectBrowser(cdpUrl: string): Promise<ConnectedBrowser> {
   }
 
   const connectWithRetry = async (): Promise<ConnectedBrowser> => {
+    const { chromium } = await loadPlaywrightCore();
     let lastErr: unknown;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {

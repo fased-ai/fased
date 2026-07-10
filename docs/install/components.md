@@ -31,7 +31,7 @@ A normal install includes:
 - Solana wallet controls and the singleton Mining wallet flow
 - the bundled `sat-mining` runtime, SAT shared specs, Mining UI, and mining CLI
 - Fased Network, offers, requests, trust, bond, and marketplace controls
-- browser-control code and the Fased browser extension files
+- browser-control interfaces and the Fased browser extension files
 - file-backed memory and remote embedding-provider support
 
 Creating or importing `@wallet:mining` through onboarding attaches the wallet
@@ -76,6 +76,28 @@ package. Follow the individual channel page instead of assuming the lightweight
 hosted runtime downloads every advanced channel dependency.
 </Note>
 
+## Optional runtime add-ons
+
+Install these only when the related feature is needed:
+
+```bash
+fased components install browser-runtime
+fased components install media-runtime
+fased components install speech-runtime
+fased components install local-memory-runtime
+fased gateway restart
+```
+
+- **Browser Runtime** adds Playwright control and readable-page extraction.
+- **Media Runtime** adds image transforms, file-type detection, and PDF extraction.
+- **Speech Runtime** adds the Edge TTS client. OpenAI and ElevenLabs API speech
+  do not require this local package.
+- **Local Vector Memory** adds native sqlite vector acceleration. File-backed
+  memory and remote embedding providers remain in core.
+
+These packages are tracked in the same install ledger as channel add-ons, so
+`fased update` can update them after the core update succeeds.
+
 ## Local models stay external
 
 Fased includes provider clients for Ollama, LM Studio, vLLM, LiteLLM, and custom
@@ -89,10 +111,17 @@ not download model weights.
 See [Local Models](/gateway/local-models), [Ollama](/providers/ollama), and
 [LM Studio](/providers/lmstudio).
 
-## Browser control does not include a browser binary
+## Browser control has two optional layers
 
-Fased includes browser control, `playwright-core`, and the extension files. It
-does not install Chrome, Brave, Edge, or Chromium as part of the core package.
+Fased includes the browser-control interfaces and extension files. Install the
+Browser Runtime component for Playwright control and readable-page extraction:
+
+```bash
+fased components install browser-runtime
+fased gateway restart
+```
+
+The component does not install Chrome, Brave, Edge, or Chromium.
 
 Use one of these paths:
 
@@ -104,6 +133,13 @@ Use one of these paths:
 See [Browser](/tools/browser).
 
 ## Local memory embeddings are optional
+
+Native sqlite vector acceleration is a separate component:
+
+```bash
+fased components install local-memory-runtime
+fased gateway restart
+```
 
 `memorySearch.provider = "local"` uses the native `node-llama-cpp` runtime and a
 GGUF embedding model. The lightweight hosted runtime does not include that

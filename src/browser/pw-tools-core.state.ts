@@ -1,6 +1,6 @@
 import type { CDPSession, Page } from "playwright-core";
-import { devices as playwrightDevices } from "playwright-core";
 import { ensurePageState, getPageForTargetId } from "./pw-session.js";
+import { loadPlaywrightCore } from "./runtime-dependency.js";
 
 async function withCdpSession<T>(page: Page, fn: (session: CDPSession) => Promise<T>): Promise<T> {
   const session = await page.context().newCDPSession(page);
@@ -162,6 +162,7 @@ export async function setDeviceViaPlaywright(opts: {
   if (!name) {
     throw new Error("device name is required");
   }
+  const { devices: playwrightDevices } = await loadPlaywrightCore();
   const descriptor = (playwrightDevices as Record<string, unknown>)[name] as
     | {
         userAgent?: string;

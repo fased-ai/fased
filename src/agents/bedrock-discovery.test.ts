@@ -1,8 +1,7 @@
-import type { BedrockClient } from "@aws-sdk/client-bedrock";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const sendMock = vi.fn();
-const clientFactory = () => ({ send: sendMock }) as unknown as BedrockClient;
+const clientFactory = () => ({ send: sendMock });
 
 const baseActiveAnthropicSummary = {
   modelId: "anthropic.claude-3-7-sonnet-20250219-v1:0",

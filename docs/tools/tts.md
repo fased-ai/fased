@@ -22,6 +22,15 @@ Agent > Models stays limited to LLM providers.
 - **OpenAI** (primary or fallback provider; also used for summaries)
 - **Edge TTS** (primary or fallback provider; uses `node-edge-tts`, default when no API keys)
 
+Edge TTS uses an optional runtime package. Install it before selecting Edge TTS:
+
+```bash
+fased components install speech-runtime
+fased gateway restart
+```
+
+OpenAI and ElevenLabs API speech do not require this package.
+
 ### Edge TTS notes
 
 Edge TTS uses Microsoft Edge's online neural TTS service via the `node-edge-tts`

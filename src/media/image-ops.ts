@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { importOptionalRuntimeDependency } from "../infra/optional-runtime-dependency.js";
 import { runExec } from "../process/exec.js";
 
 type Sharp = typeof import("sharp");
@@ -31,7 +32,11 @@ function prefersSips(): boolean {
 }
 
 async function loadSharp(): Promise<(buffer: Buffer) => ReturnType<Sharp>> {
-  const mod = (await import("sharp")) as unknown as { default?: Sharp };
+  const mod = await importOptionalRuntimeDependency<{ default?: Sharp }>({
+    componentId: "media-runtime",
+    packageName: "@fased/media-runtime",
+    dependency: "sharp",
+  });
   const sharp = mod.default ?? (mod as unknown as Sharp);
   return (buffer) => sharp(buffer, { failOnError: false });
 }
