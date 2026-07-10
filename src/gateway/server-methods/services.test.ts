@@ -3,10 +3,15 @@ import { ErrorCodes } from "../protocol/index.js";
 import { servicesHandlers } from "./services.js";
 
 const mocks = vi.hoisted(() => ({
+  buildCapabilityReadinessReport: vi.fn(),
   loadConfig: vi.fn(),
   listConfiguredWebSearchProviders: vi.fn(),
   runWebSearch: vi.fn(),
   runGmailSetup: vi.fn(),
+}));
+
+vi.mock("../../capabilities/catalog.js", () => ({
+  buildCapabilityReadinessReport: mocks.buildCapabilityReadinessReport,
 }));
 
 vi.mock("../../config/config.js", () => ({
@@ -101,6 +106,25 @@ describe("services.webSearch.test handler", () => {
         },
       ],
     });
+  });
+
+  it("returns the shared capability readiness report", async () => {
+    const report = {
+      entries: [{ id: "agent-core", state: "included" }],
+      summary: { total: 1, errors: 0 },
+    };
+    mocks.buildCapabilityReadinessReport.mockReturnValue(report);
+    const respond = vi.fn();
+    await servicesHandlers["services.capabilities"]({
+      params: {},
+      respond: respond as never,
+      context: {} as never,
+      frame: {} as never,
+      client: {} as never,
+      req: { type: "req", id: "req-1", method: "services.capabilities" },
+      isWebchatConnect: () => false,
+    });
+    expect(respond.mock.calls[0]).toEqual([true, report]);
   });
 
   it("returns unavailable when web_search is disabled", async () => {

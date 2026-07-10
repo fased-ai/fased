@@ -3363,6 +3363,8 @@ export function renderApp(state: AppViewState) {
                 skillsReport: state.skillsReport,
                 skillsLoading: state.skillsLoading,
                 pluginsMarketplace: state.pluginsMarketplaceList,
+                capabilities: state.servicesCapabilities,
+                capabilitiesLoading: state.servicesCapabilitiesLoading,
                 webSearchProviders: state.servicesWebSearchProviders,
                 webSearchProvidersLoading: state.servicesWebSearchProvidersLoading,
                 configSaving: state.configSaving,

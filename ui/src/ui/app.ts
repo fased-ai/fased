@@ -1252,6 +1252,8 @@ export class FasedAgentApp extends LitElement {
   @state() configActiveSubsection: string | null = null;
   @state() servicesWebSearchTesting = false;
   @state() servicesWebSearchTestMessage: string | null = null;
+  @state() servicesCapabilities: import("./types.ts").CapabilityReadinessReport | null = null;
+  @state() servicesCapabilitiesLoading = false;
   @state() servicesWebSearchProviders: import("./types.ts").WebSearchServiceProviderOption[] = [];
   @state() servicesWebSearchProvidersLoading = false;
   @state() servicesGmailProvisioning = false;

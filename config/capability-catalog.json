@@ -1,0 +1,176 @@
+{
+  "entries": [
+    {
+      "id": "agent-core",
+      "label": "Fased Agent",
+      "category": "core",
+      "delivery": "core",
+      "docsPath": "/start/fased",
+      "surface": "Agent > Models",
+      "description": "Dashboard chat, Agent execution, tools, and model-provider clients."
+    },
+    {
+      "id": "tasks",
+      "label": "Tasks",
+      "category": "core",
+      "delivery": "core",
+      "docsPath": "/automation",
+      "surface": "Agent > Tasks",
+      "description": "Scheduled and recurring Agent work."
+    },
+    {
+      "id": "solana-wallets",
+      "label": "Solana Wallets",
+      "category": "crypto",
+      "delivery": "core",
+      "docsPath": "/plugins/crypto/wallet-page",
+      "surface": "Wallets",
+      "description": "Wallet creation, custody, policy, balances, and Solana actions."
+    },
+    {
+      "id": "sat-mining",
+      "label": "SAT Mining",
+      "category": "crypto",
+      "delivery": "core",
+      "pluginId": "sat-mining",
+      "docsPath": "/plugins/crypto/mining-page",
+      "surface": "Mining",
+      "description": "Bundled Satcoin mining runtime, readiness, capital, cycles, and history."
+    },
+    {
+      "id": "fased-network",
+      "label": "Fased Network",
+      "category": "crypto",
+      "delivery": "core",
+      "pluginId": "fased-federation",
+      "docsPath": "/start/federation",
+      "surface": "Fased Network",
+      "description": "Offers, requests, trust, bond, and Agent marketplace controls."
+    },
+    {
+      "id": "telegram",
+      "label": "Telegram",
+      "category": "channel",
+      "delivery": "npm-addon",
+      "packageName": "@fased/telegram",
+      "pluginId": "telegram",
+      "channelId": "telegram",
+      "docsPath": "/channels/telegram",
+      "surface": "Agent > Channels",
+      "restartRequired": true,
+      "description": "Telegram bot transport."
+    },
+    {
+      "id": "whatsapp",
+      "label": "WhatsApp",
+      "category": "channel",
+      "delivery": "npm-addon",
+      "packageName": "@fased/whatsapp",
+      "pluginId": "whatsapp",
+      "channelId": "whatsapp",
+      "docsPath": "/channels/whatsapp",
+      "surface": "Agent > Channels",
+      "restartRequired": true,
+      "description": "WhatsApp QR-linked transport."
+    },
+    {
+      "id": "discord",
+      "label": "Discord",
+      "category": "channel",
+      "delivery": "npm-addon",
+      "packageName": "@fased/discord",
+      "pluginId": "discord",
+      "channelId": "discord",
+      "docsPath": "/channels/discord",
+      "surface": "Agent > Channels",
+      "restartRequired": true,
+      "description": "Discord bot transport."
+    },
+    {
+      "id": "slack",
+      "label": "Slack",
+      "category": "channel",
+      "delivery": "npm-addon",
+      "packageName": "@fased/slack",
+      "pluginId": "slack",
+      "channelId": "slack",
+      "docsPath": "/channels/slack",
+      "surface": "Agent > Channels",
+      "restartRequired": true,
+      "description": "Slack Socket Mode transport."
+    },
+    {
+      "id": "browser-runtime",
+      "label": "Browser Runtime",
+      "category": "runtime",
+      "delivery": "external-runtime",
+      "externalKind": "browser",
+      "docsPath": "/tools/browser",
+      "surface": "Services > Browser",
+      "description": "Chrome, Chromium, Brave, Edge, remote CDP, or the extension relay."
+    },
+    {
+      "id": "ollama",
+      "label": "Ollama",
+      "category": "provider",
+      "delivery": "external-runtime",
+      "providerId": "ollama",
+      "externalKind": "model-server",
+      "docsPath": "/providers/ollama",
+      "surface": "Agent > Models",
+      "description": "External Ollama server and model weights connected through the bundled client."
+    },
+    {
+      "id": "lmstudio",
+      "label": "LM Studio",
+      "category": "provider",
+      "delivery": "external-runtime",
+      "providerId": "lmstudio",
+      "externalKind": "model-server",
+      "docsPath": "/providers/lmstudio",
+      "surface": "Agent > Models",
+      "description": "External LM Studio server and model weights connected through the bundled client."
+    },
+    {
+      "id": "vllm",
+      "label": "vLLM",
+      "category": "provider",
+      "delivery": "external-runtime",
+      "providerId": "vllm",
+      "externalKind": "model-server",
+      "docsPath": "/gateway/local-models",
+      "surface": "Agent > Models",
+      "description": "External vLLM server connected through the bundled provider client."
+    },
+    {
+      "id": "litellm",
+      "label": "LiteLLM",
+      "category": "provider",
+      "delivery": "external-runtime",
+      "providerId": "litellm",
+      "externalKind": "model-server",
+      "docsPath": "/gateway/local-models",
+      "surface": "Agent > Models",
+      "description": "External LiteLLM proxy connected through the bundled provider client."
+    },
+    {
+      "id": "local-memory",
+      "label": "Local Memory Embeddings",
+      "category": "runtime",
+      "delivery": "external-runtime",
+      "externalKind": "local-embeddings",
+      "docsPath": "/concepts/memory",
+      "surface": "Agent > Memory",
+      "description": "Optional node-llama-cpp runtime and GGUF embedding model."
+    },
+    {
+      "id": "media-runtime",
+      "label": "Media Runtime",
+      "category": "runtime",
+      "delivery": "core",
+      "docsPath": "/nodes/media-understanding",
+      "surface": "Services > Media",
+      "description": "Current image, PDF, audio, and video processing foundations."
+    }
+  ]
+}

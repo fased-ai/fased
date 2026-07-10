@@ -1,5 +1,5 @@
 import type { AppViewState } from "../app-view-state.ts";
-import type { WebSearchServiceProvidersResult } from "../types.ts";
+import type { CapabilityReadinessReport, WebSearchServiceProvidersResult } from "../types.ts";
 import { loadConfig } from "./config.ts";
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -58,6 +58,23 @@ export async function loadWebSearchServiceProviders(state: AppViewState) {
     state.servicesWebSearchProviders = [];
   } finally {
     state.servicesWebSearchProvidersLoading = false;
+  }
+}
+
+export async function loadServiceCapabilities(state: AppViewState) {
+  if (!state.client) {
+    return;
+  }
+  state.servicesCapabilitiesLoading = true;
+  try {
+    state.servicesCapabilities = await state.client.request<CapabilityReadinessReport>(
+      "services.capabilities",
+      {},
+    );
+  } catch {
+    state.servicesCapabilities = null;
+  } finally {
+    state.servicesCapabilitiesLoading = false;
   }
 }
 

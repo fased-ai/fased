@@ -1450,6 +1450,7 @@
                   "cli/start",
                   "cli/configure",
                   "cli/config",
+                  "cli/components",
                   "cli/update",
                   "cli/uninstall",
                   "cli/reset",

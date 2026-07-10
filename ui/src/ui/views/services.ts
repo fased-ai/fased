@@ -1,6 +1,7 @@
 import { html, nothing } from "lit";
 import type { Tab } from "../navigation.ts";
 import type {
+  CapabilityReadinessReport,
   PluginsMarketplaceListResult,
   SkillStatusEntry,
   SkillStatusReport,
@@ -12,6 +13,8 @@ export type ServicesProps = {
   skillsReport: SkillStatusReport | null;
   skillsLoading: boolean;
   pluginsMarketplace: PluginsMarketplaceListResult | null;
+  capabilities?: CapabilityReadinessReport | null;
+  capabilitiesLoading?: boolean;
   webSearchProviders?: WebSearchServiceProviderOption[];
   webSearchProvidersLoading?: boolean;
   configSaving: boolean;
@@ -1758,6 +1761,50 @@ function renderServiceRow(card: ServiceCard) {
   `;
 }
 
+function capabilityTone(state: string): ServiceCard["tone"] {
+  if (state === "error") {
+    return "danger";
+  }
+  if (state === "ready" || state === "configured" || state === "included") {
+    return "ok";
+  }
+  return "warn";
+}
+
+function renderCapabilityReadiness(props: ServicesProps) {
+  if (props.capabilitiesLoading) {
+    return html`
+      <section class="services-list" aria-label="Component readiness">Loading components...</section>
+    `;
+  }
+  const entries = props.capabilities?.entries ?? [];
+  if (entries.length === 0) {
+    return nothing;
+  }
+  const rows: ServiceCard[] = entries.map((entry) => ({
+    id: `capability-${entry.id}`,
+    title: entry.label,
+    category: entry.delivery,
+    metric: entry.state,
+    status: entry.detail,
+    detail: `${entry.description} Surface: ${entry.surface}. Next action: ${entry.action}.`,
+    active: entry.state === "ready" || entry.state === "configured" || entry.state === "included",
+    tone: capabilityTone(entry.state),
+  }));
+  return html`
+    <section class="services-list" aria-label="Component readiness">
+      <div class="section-heading">
+        <div>
+          <div class="card-kicker">Lifecycle</div>
+          <h2>Components</h2>
+        </div>
+        <span class="agent-pill">${props.capabilities?.summary.total ?? entries.length}</span>
+      </div>
+      ${rows.map((row) => renderServiceRow(row))}
+    </section>
+  `;
+}
+
 export function renderServices(props: ServicesProps) {
   const config = props.configForm ?? {};
   const gmailConfigured = Boolean(
@@ -2410,6 +2457,8 @@ export function renderServices(props: ServicesProps) {
           </div>
         </div>
       </section>
+
+      ${renderCapabilityReadiness(props)}
 
       <section class="services-list" aria-label="Service connector setup">
         ${sortedServiceCards.map((card) => renderServiceRow(card))}
