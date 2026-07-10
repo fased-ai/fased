@@ -1107,7 +1107,7 @@ install_hosting_npm_prebuilt_runtime() {
   mkdir -p "$npm_prefix" "$npm_config_cache"
   spinner_start "Install prebuilt runtime"
   local artifact_result=0
-  "$FASED_DIR/scripts/install-hosted-runtime.sh" \
+  bash "$FASED_DIR/scripts/install-hosted-runtime.sh" \
     --package "$package_spec" \
     --prefix "$npm_prefix" \
     --cache "$INSTALL_CACHE_DIR" || artifact_result=$?

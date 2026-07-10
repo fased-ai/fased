@@ -1,6 +1,6 @@
 {
   "name": "@fased/feishu",
-  "version": "0.1.35",
+  "version": "0.1.36",
   "description": "FasedAgent Feishu/Lark channel plugin (community maintained by @m1heng)",
   "type": "module",
   "dependencies": {

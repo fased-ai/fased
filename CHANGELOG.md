@@ -4,6 +4,16 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.36
+
+- Ship verified hosted release artifacts for fast local and VPS installs and
+  updates without repeating the npm dependency graph on normal releases.
+- Keep dashboard chat, tasks, model providers, wallets, mining, Satcoin, and
+  Fased Network in core while moving Telegram, WhatsApp, Discord, and Slack
+  runtime stacks to installable add-ons.
+- Add packed-core and package-budget gates plus stable runtime SDK boundaries
+  so SAT mining and core startup work without optional channel packages.
+
 ## 0.1.35
 
 - Add a hosted npm update fast path that downloads the exact Fased package

@@ -91,15 +91,17 @@ export function formatUpdateStrategyLabel(result: UpdateRunResult): string | nul
   }
 
   const label =
-    strategy.kind === "artifact-swap"
-      ? "fast artifact swap"
-      : strategy.kind === "package-manager-fallback"
-        ? "package manager fallback"
-        : strategy.kind === "package-manager"
-          ? "package manager"
-          : strategy.kind === "git"
-            ? "git"
-            : "unknown";
+    strategy.kind === "hosted-artifact"
+      ? "fast hosted artifact"
+      : strategy.kind === "artifact-swap"
+        ? "fast artifact swap"
+        : strategy.kind === "package-manager-fallback"
+          ? "package manager fallback"
+          : strategy.kind === "package-manager"
+            ? "package manager"
+            : strategy.kind === "git"
+              ? "git"
+              : "unknown";
 
   return strategy.reason ? `${label}: ${strategy.reason}` : label;
 }

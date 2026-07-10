@@ -38,13 +38,7 @@ jobs:
       - name: Install build dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build runtime
-        run: pnpm build
-
-      - name: Check release package
-        run: pnpm release:check
-
-      - name: Build hosted runtime artifact
+      - name: Build, check, and package hosted runtime artifact
         run: pnpm hosted:artifact --output .artifacts/hosted-runtime
 
       - name: Verify tag matches package version
