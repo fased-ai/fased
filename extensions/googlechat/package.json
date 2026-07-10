@@ -1,6 +1,6 @@
 {
   "name": "@fased/googlechat",
-  "version": "0.1.37",
+  "version": "0.1.38",
   "description": "FasedAgent Google Chat channel plugin",
   "files": [
     "index.ts",
@@ -16,7 +16,7 @@
     "google-auth-library": "^10.6.1"
   },
   "peerDependencies": {
-    "@fased/fased": "^0.1.37"
+    "@fased/fased": "^0.1.38"
   },
   "peerDependenciesMeta": {
     "@fased/fased": {
