@@ -3,6 +3,8 @@ packages:
   - ui
   - extensions/*
 
+autoInstallPeers: false
+
 onlyBuiltDependencies:
   - "@discordjs/opus"
   - "@lydell/node-pty"
