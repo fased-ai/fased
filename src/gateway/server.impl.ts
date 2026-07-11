@@ -354,7 +354,7 @@ export async function startGatewayServer(
   let pluginRegistry = emptyPluginRegistry;
   let baseGatewayMethods = baseMethods;
   if (!minimalTestGateway && !managedFastStart) {
-    const loadedPlugins = startupTrace.measureSync("plugins.load", () =>
+    const loadedPlugins = await startupTrace.measure("plugins.load", () =>
       loadGatewayPlugins({
         cfg: cfgAtStart,
         workspaceDir: defaultWorkspaceDir,
@@ -566,7 +566,7 @@ export async function startGatewayServer(
     }),
   );
   if (managedFastStart && !minimalTestGateway) {
-    const loadedPlugins = startupTrace.measureSync("plugins.load.deferred", () =>
+    const loadedPlugins = await startupTrace.measure("plugins.load.deferred", () =>
       loadGatewayPlugins({
         cfg: cfgAtStart,
         workspaceDir: defaultWorkspaceDir,

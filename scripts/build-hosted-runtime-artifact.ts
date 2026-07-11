@@ -17,6 +17,12 @@ type PackageJson = {
   version?: string;
 };
 
+type RunResult = {
+  durationMs: number;
+  stdout: string;
+  stderr: string;
+};
+
 function parseOutputDir(): string {
   const outputFlag = process.argv.indexOf("--output");
   const value = outputFlag >= 0 ? process.argv[outputFlag + 1] : undefined;
@@ -38,7 +44,8 @@ async function run(
   args: string[],
   cwd: string,
   extraEnv: NodeJS.ProcessEnv = {},
-): Promise<void> {
+): Promise<RunResult> {
+  const startedAt = Date.now();
   let stdout = "";
   let stderr = "";
   try {
@@ -70,6 +77,7 @@ async function run(
   if (stderr.trim()) {
     process.stderr.write(stderr);
   }
+  return { durationMs: Date.now() - startedAt, stdout, stderr };
 }
 
 async function sha256(filePath: string): Promise<string> {
@@ -85,6 +93,22 @@ async function findPackedTarball(dir: string): Promise<string> {
     throw new Error("npm pack did not produce a tarball.");
   }
   return path.join(dir, filename);
+}
+
+async function listFiles(root: string): Promise<string[]> {
+  const files: string[] = [];
+  const visit = async (dir: string): Promise<void> => {
+    for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await visit(fullPath);
+      } else if (entry.isFile()) {
+        files.push(fullPath);
+      }
+    }
+  };
+  await visit(root);
+  return files.toSorted();
 }
 
 async function reserveLoopbackPort(): Promise<number> {
@@ -119,7 +143,10 @@ async function canConnect(port: number): Promise<boolean> {
   });
 }
 
-async function smokeGateway(packageRoot: string, smokeEnv: NodeJS.ProcessEnv): Promise<void> {
+async function smokeGateway(
+  packageRoot: string,
+  smokeEnv: NodeJS.ProcessEnv,
+): Promise<{ pluginLoadMs: number; output: string }> {
   const port = await reserveLoopbackPort();
   const output: string[] = [];
   const child = spawn(
@@ -147,20 +174,24 @@ async function smokeGateway(packageRoot: string, smokeEnv: NodeJS.ProcessEnv): P
   child.stderr.on("data", (chunk) => output.push(String(chunk)));
 
   try {
-    const deadline = Date.now() + 20_000;
+    const deadline = Date.now() + 30_000;
+    let listening = false;
     while (Date.now() < deadline) {
       if (child.exitCode !== null) {
         throw new Error(
           `Hosted runtime gateway exited before listening.\n${output.join("").slice(-8_000)}`,
         );
       }
-      if (await canConnect(port)) {
-        return;
+      listening ||= await canConnect(port);
+      const combinedOutput = output.join("");
+      const timingMatch = combinedOutput.match(/plugins\.load(?:\.deferred)?=(\d+)ms/);
+      if (listening && timingMatch?.[1]) {
+        return { pluginLoadMs: Number.parseInt(timingMatch[1], 10), output: combinedOutput };
       }
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
     throw new Error(
-      `Hosted runtime gateway did not listen within 20 seconds.\n${output.join("").slice(-8_000)}`,
+      `Hosted runtime gateway did not become ready with plugin timing within 30 seconds.\n${output.join("").slice(-8_000)}`,
     );
   } finally {
     child.kill("SIGTERM");
@@ -223,12 +254,54 @@ async function main(): Promise<void> {
       { npm_config_cache: path.join(tempRoot, "npm-cache") },
     );
 
+    console.log("hosted-artifact: compiling core runtime plugins");
+    await run(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        path.join(rootDir, "scripts", "compile-hosted-core-plugins.ts"),
+        "--root",
+        packageRoot,
+      ],
+      rootDir,
+    );
+
+    for (const pluginId of ["memory-core", "sat-mining"]) {
+      const pluginRoot = path.join(packageRoot, "extensions", pluginId);
+      await fs.access(path.join(pluginRoot, "index.js"));
+      const remainingTypeScript = (await listFiles(pluginRoot)).filter(
+        (filePath) => filePath.endsWith(".ts") && !filePath.endsWith(".d.ts"),
+      );
+      if (remainingTypeScript.length > 0) {
+        throw new Error(
+          `Hosted ${pluginId} plugin still contains runtime TypeScript: ${remainingTypeScript.join(", ")}`,
+        );
+      }
+    }
+
     const smokeHome = path.join(tempRoot, "smoke-home");
     await fs.mkdir(smokeHome, { recursive: true });
+    const smokeStateDir = path.join(smokeHome, ".fased");
+    await fs.mkdir(smokeStateDir, { recursive: true });
+    await fs.writeFile(
+      path.join(smokeStateDir, "fased.json"),
+      `${JSON.stringify(
+        {
+          plugins: {
+            allow: ["memory-core", "sat-mining"],
+            entries: { "sat-mining": { enabled: true } },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
     const smokeEnv = {
       HOME: smokeHome,
-      FASED_STATE_DIR: path.join(smokeHome, ".fased"),
-      FASED_CONFIG_PATH: path.join(smokeHome, ".fased", "fased.json"),
+      FASED_STATE_DIR: smokeStateDir,
+      FASED_CONFIG_PATH: path.join(smokeStateDir, "fased.json"),
     };
     await run(
       process.execPath,
@@ -236,14 +309,51 @@ async function main(): Promise<void> {
       packageRoot,
       smokeEnv,
     );
-    await run(
+    const pluginDoctor = await run(
       process.execPath,
       [path.join(packageRoot, "fased.mjs"), "plugins", "doctor"],
       packageRoot,
       smokeEnv,
     );
+    const pluginDoctorOutput = `${pluginDoctor.stdout}\n${pluginDoctor.stderr}`;
+    if (!pluginDoctorOutput.includes("No plugin issues detected.")) {
+      throw new Error(`Hosted core plugin doctor was not clean.\n${pluginDoctorOutput}`);
+    }
+    const satPluginInfo = await run(
+      process.execPath,
+      [path.join(packageRoot, "fased.mjs"), "plugins", "info", "sat-mining"],
+      packageRoot,
+      smokeEnv,
+    );
+    const satPluginOutput = `${satPluginInfo.stdout}\n${satPluginInfo.stderr}`;
+    if (!satPluginOutput.includes("Status: loaded")) {
+      throw new Error(`Hosted sat-mining plugin did not load.\n${satPluginOutput}`);
+    }
     console.log("hosted-artifact: starting isolated packaged gateway");
-    await smokeGateway(packageRoot, smokeEnv);
+    const gatewaySmoke = await smokeGateway(packageRoot, smokeEnv);
+    const pluginLoadMs = gatewaySmoke.pluginLoadMs;
+    for (const pluginId of ["memory-core", "sat-mining"]) {
+      if (!gatewaySmoke.output.includes(`[plugins] ${pluginId} native preload `)) {
+        throw new Error(
+          `Hosted ${pluginId} did not use native preload.\n${gatewaySmoke.output.slice(-8_000)}`,
+        );
+      }
+    }
+    if (gatewaySmoke.output.includes("native preload failed")) {
+      throw new Error(`Hosted native plugin preload failed.\n${gatewaySmoke.output.slice(-8_000)}`);
+    }
+    const corePluginBudgetMs = Number.parseInt(
+      process.env.FASED_HOSTED_CORE_PLUGIN_MAX_MS ?? "10000",
+      10,
+    );
+    if (pluginLoadMs > corePluginBudgetMs) {
+      throw new Error(
+        `Hosted core plugin smoke took ${pluginLoadMs}ms; budget is ${corePluginBudgetMs}ms.`,
+      );
+    }
+    console.log(
+      `hosted-artifact: core plugins loaded in ${pluginLoadMs}ms (budget ${corePluginBudgetMs}ms)`,
+    );
     console.log("hosted-artifact: packaged gateway smoke passed");
 
     const assetName = `fased-hosted-linux-${arch}-v${version}.tar.gz`;
