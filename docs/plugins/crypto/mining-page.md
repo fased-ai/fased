@@ -303,6 +303,12 @@ and [Advanced Satcoin mining](/plugins/crypto/mining-advanced).
 
 Mining supports both preset posture and execution mode.
 
+You do not need a model provider to mine. `Deterministic` execution runs the
+wallet, readiness, capital, commit, cycle submission, settlement, and claim
+path locally. A configured model is optional: it can guide `Auto` allocations
+or run guarded Mining strategy-review tasks, but it never replaces wallet
+policy or transaction approval.
+
 ### Strategy presets
 
 Current presets are:

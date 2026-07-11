@@ -41,6 +41,20 @@ export const SAT_INSTRUCTION_DISCRIMINATORS = {
   miningCrank: 33,
 } as const;
 
+export const SAT_BOND_INSTRUCTION_DISCRIMINATORS = {
+  initTierPolicy: 0,
+  updateTierPolicy: 1,
+  openBondPosition: 2,
+  increaseBondPosition: 3,
+  requestBondUnlock: 4,
+  cancelBondUnlock: 5,
+  finalizeBondUnlock: 6,
+  initStakingDistributor: 7,
+  syncStakingRewards: 8,
+  syncStakingPosition: 9,
+  claimStakingRewards: 10,
+} as const;
+
 export const SAT_PROTOCOL_CONSTANTS = {
   allocationBuckets: 25,
   cycleSeconds: 300,

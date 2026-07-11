@@ -175,6 +175,14 @@ vi.mock("../mining-api.js", () => ({
       },
     },
   })),
+  getMiningMainnetSync: vi.fn(async () => ({
+    ok: true,
+    sync: {
+      state: "not_live",
+      status: "not_live",
+      message: "Satcoin mainnet is not live yet.",
+    },
+  })),
   putMiningProfile: vi.fn(async ({ profile }) => ({ ok: true, profile })),
   postMiningStart: vi.fn(async () => ({
     ok: true,

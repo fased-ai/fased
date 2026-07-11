@@ -250,6 +250,10 @@ That is how the Agent moves from:
 Active stronger bonds can participate in SAT distributor rewards when that path
 is enabled and the position is eligible.
 
+This lane is available only when official network status enables it and the
+deployed staking distributor has been initialized and funded. An absent or
+inactive distributor is a readiness state, not a wallet failure.
+
 The user flow is:
 
 1. Select a Vault wallet for Fased Network bond.

@@ -30,7 +30,8 @@ const {
   inspectSatMinerCyclesByAddress: vi.fn(),
 }));
 
-vi.mock("../../src/config/config.js", () => ({
+vi.mock("../../src/config/config.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/config/config.js")>()),
   loadConfig,
 }));
 
@@ -65,7 +66,9 @@ vi.mock("./src/rpc-read.js", async () => {
 });
 
 import {
+  submitSatClaimBondStakingRewards,
   submitSatInitBondTierPolicy,
+  submitSatInitBondStakingDistributor,
   submitSatCancelBondUnlock,
   submitSatCloseResolvedCleanupBatch,
   submitSatCloseResolvedCycleArtifacts,
@@ -85,6 +88,8 @@ import {
   submitSatRequestBondUnlock,
   submitSatScoreCyclePage,
   submitSatSettleCyclePage,
+  submitSatSyncBondStakingPosition,
+  submitSatSyncBondStakingRewards,
 } from "./src/solana-submit.js";
 
 const SAT_PROGRAM_ID_TEXT = "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75";
@@ -285,6 +290,42 @@ describe("submitSatCycle", () => {
       { pubkey: bondTierPolicy.toBase58(), isSigner: false, isWritable: true },
       { pubkey: SystemProgram.programId.toBase58(), isSigner: false, isWritable: false },
     ]);
+  });
+
+  it.each([
+    ["sync rewards", submitSatSyncBondStakingRewards, 8],
+    ["sync position", submitSatSyncBondStakingPosition, 9],
+    ["claim rewards", submitSatClaimBondStakingRewards, 10],
+  ] as const)(
+    "submits bond staking %s against the dedicated bond program",
+    async (_name, submit, ix) => {
+      await submit({} as never);
+
+      expect(callLocalSocketSigner).toHaveBeenCalledTimes(2);
+      const request = callLocalSocketSigner.mock.calls[1]?.[1];
+      expect(request?.op).toBe("sendSolanaInstruction");
+      expect(request?.request?.programId).toBe(SAT_BOND_PROGRAM_ID_TEXT);
+      expect(Buffer.from(request?.request?.dataBase64 ?? "", "base64")[0]).toBe(ix);
+    },
+  );
+
+  it("submits bond staking distributor init with authority and minimum stake", async () => {
+    callLocalSocketSigner
+      .mockReset()
+      .mockResolvedValueOnce({ solana: SIGNER.toBase58() })
+      .mockResolvedValueOnce({ solana: SIGNER.toBase58() })
+      .mockResolvedValueOnce({ txHash: "tx-init-staking", signer: SIGNER.toBase58() });
+
+    await submitSatInitBondStakingDistributor({} as never, { minStakeRaw: 500_000_000 });
+
+    expect(callLocalSocketSigner).toHaveBeenCalledTimes(3);
+    const request = callLocalSocketSigner.mock.calls[2]?.[1];
+    const data = Buffer.from(request?.request?.dataBase64 ?? "", "base64");
+    expect(request?.op).toBe("sendSolanaInstruction");
+    expect(request?.request?.programId).toBe(SAT_BOND_PROGRAM_ID_TEXT);
+    expect(data[0]).toBe(7);
+    expect(data.subarray(1, 33)).toEqual(SIGNER.toBuffer());
+    expect(data.readBigUInt64LE(33)).toBe(500_000_000n);
   });
 
   it("marks the exact cycle state writable when closing resolved artifacts", async () => {

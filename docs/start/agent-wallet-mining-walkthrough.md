@@ -17,15 +17,18 @@ deeper docs for the same area.
 
 <Warning>
 Do not start with wallet funding, mining, or bond. First prove the runtime:
-install, open the dashboard, connect a model, and send one browser chat.
+install Fased, verify the Gateway, and open the dashboard. Connecting a model
+and sending a test chat proves the broader Agent path, but it is optional for
+deterministic mining.
 </Warning>
 
 ```mermaid
 flowchart TD
   install["Install Fased"] --> open["Open Control UI"]
   open --> agent["Select Agent"]
-  agent --> model["Connect Model"]
-  model --> wallets["Create Or Import Wallets<br/>Onboarding / CLI"]
+  agent --> model["Optional: Connect Model<br/>Chat / Auto Strategy / Tasks"]
+  agent --> wallets["Create Or Import Wallets<br/>Onboarding / CLI"]
+  model --> wallets
   wallets --> fund["Fund Mining Wallet"]
   fund --> mining["Open Mining"]
   mining --> ready["Run Readiness"]
@@ -235,12 +238,34 @@ Read next:
 - [Control UI Setup Model](/start/control-ui-setup)
 - [Models To Agents To Chat](/start/provider-agent-chat-flow)
 
-## 4. Connect A Model
+## 4. Connect A Model (Optional For Mining)
+
+Satcoin mining does not require a model provider. Fased can run the full wallet,
+readiness, capital, commit, cycle, settlement, claim, recovery, and stop/drain
+path with a deterministic strategy and no model configured.
+
+For the smallest mining-only setup, skip this section and start with
+**Balanced + Deterministic**. Other deterministic presets are Spread,
+Conviction, Swarm, Top-K, Ranked, Adaptive, Crowd-aware, and Safe fallback.
+They compile locally into the protocol's 25-bucket allocation and do not call a
+model.
+
+A model adds two optional capabilities:
+
+1. **Auto strategy** uses the selected Agent model to propose a cycle allocation.
+   Invalid, unavailable, or slow model output falls back to the configured
+   deterministic preset when fallback is enabled.
+2. **Mining tasks** can inspect status and settled history, recommend or change
+   strategy fields, and report results. The guarded `Mining strategy review`
+   template cannot change the wallet, capital, commit, funding, bond, or
+   start/stop state.
 
 Open **Agent > Models**.
 
 Add a model provider key or sign in, then choose a primary model. Send a first
-test message from **Chat** before moving into wallet or mining flows.
+test message from **Chat** if you want Agent chat, Auto strategy, or task-driven
+mining review. A failed chat test does not block deterministic mining, but it
+does mean model-guided strategy and model-run tasks are not ready.
 
 ![Model selection in the Control UI](/images/screenshots/web/agent-model-2.png)
 
@@ -253,6 +278,7 @@ Read next:
 
 - [Model Providers](/concepts/model-providers)
 - [Models](/concepts/models)
+- [Mining Chat And Automation](/plugins/crypto/mining-chat-and-automation)
 
 ## 5. Create Wallets
 
@@ -396,6 +422,11 @@ Read next:
 ## 11. Start Mining
 
 Click **Start** only after readiness is green and the fee warning is clear.
+
+No model is invoked when Execution is **Deterministic**. With **Auto**, the
+configured model may guide allocation; if model planning fails and deterministic
+fallback is enabled, the miner continues with the configured preset and records
+the fallback reason.
 
 Start writes the active commit on-chain before enabling mining workers. If that
 transaction fails, mining remains stopped and reports the transaction error.

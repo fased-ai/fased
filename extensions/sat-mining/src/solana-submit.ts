@@ -15,7 +15,10 @@ import {
 } from "fased/plugin-sdk/sat-runtime";
 import type { SatMiningConfig } from "./config.js";
 import { decodeHash32 } from "./hash-spec.js";
-import { SAT_INSTRUCTION_DISCRIMINATORS } from "./protocol-contract.js";
+import {
+  SAT_BOND_INSTRUCTION_DISCRIMINATORS,
+  SAT_INSTRUCTION_DISCRIMINATORS,
+} from "./protocol-contract.js";
 import { inspectSatCycleRegistryMeta, inspectSatMinerCyclesByAddress } from "./rpc-read.js";
 
 const require = createRequire(import.meta.url);
@@ -52,19 +55,7 @@ const ASSOCIATED_TOKEN_PROGRAM_ID = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8kn
 
 const IX = SAT_INSTRUCTION_DISCRIMINATORS;
 
-const BOND_IX = {
-  initTierPolicy: 0,
-  updateTierPolicy: 1,
-  openBondPosition: 2,
-  increaseBondPosition: 3,
-  requestBondUnlock: 4,
-  cancelBondUnlock: 5,
-  finalizeBondUnlock: 6,
-  initStakingDistributor: 7,
-  syncStakingRewards: 8,
-  syncStakingPosition: 9,
-  claimStakingRewards: 10,
-} as const;
+const BOND_IX = SAT_BOND_INSTRUCTION_DISCRIMINATORS;
 
 function satSubmitDebug(message: string) {
   if (String(process.env.FASED_SAT_SUBMIT_DEBUG ?? "").trim() === "1") {
