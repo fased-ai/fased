@@ -59,9 +59,10 @@ export function buildSystemdUnit({
     `ExecStart=${execStart}`,
     "Restart=always",
     "RestartSec=5",
-    // Kill the full control group so managed gateway wrappers do not leave stale
-    // tunnel/signer child processes behind on restart.
-    "KillMode=mixed",
+    // Signal the wrapper and every managed child together. With mixed mode,
+    // Bash can defer its TERM trap while waiting for the gateway child, leaving
+    // the old listener alive until the updater performs a second restart.
+    "KillMode=control-group",
     workingDirLine,
     ...envLines,
     "",

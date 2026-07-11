@@ -191,6 +191,12 @@ If the installed packaged version already matches the selected release,
 `fased update` returns `Already current: <version>` without downloading an
 artifact, changing plugins, or restarting the Gateway.
 
+Supported Linux artifacts are layered. A fresh install downloads the
+application and dependency layers once. Normal updates reuse the dependency
+layer when its build hash is unchanged and replace only the application layer.
+When the dependency recipe or lockfile changes, the next update replaces that
+layer once and later updates reuse it again.
+
 ## Legacy hosted updater repair
 
 Very old hosted releases may contain an updater that cannot install its own

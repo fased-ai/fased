@@ -170,5 +170,12 @@ fased plugins update --all --dry-run
 fased plugins update --all
 ```
 
+The first supported Linux install downloads both the application layer and a
+dependency layer. The installer prints separate timings for release resolution,
+download, archive safety checks, extraction, runtime verification, and
+activation. Later releases reuse the dependency layer whenever its build hash
+is unchanged, so normal updates download and activate only the smaller
+application layer.
+
 The Control UI currently reports update status under **Advanced > Debug >
 Update Status**. Run the actual update from the CLI.

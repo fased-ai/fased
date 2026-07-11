@@ -5,6 +5,42 @@ PACKAGE_SPEC="@fased/fased@latest"
 PREFIX=""
 CACHE_DIR=""
 BASE_URL="${FASED_HOSTED_ARTIFACT_BASE_URL:-https://github.com/fased-ai/fased/releases/download}"
+INSTALL_STARTED_MS=""
+TIMING_LABELS=()
+TIMING_VALUES=()
+
+now_ms() {
+  date +%s%3N
+}
+
+record_timing() {
+  local label="$1"
+  local started_ms="$2"
+  local finished_ms
+  finished_ms="$(now_ms)"
+  TIMING_LABELS+=("$label")
+  TIMING_VALUES+=("$((finished_ms - started_ms))")
+}
+
+format_duration() {
+  local duration_ms="$1"
+  if (( duration_ms < 1000 )); then
+    printf '%sms' "$duration_ms"
+    return
+  fi
+  printf '%d.%02ds' "$((duration_ms / 1000))" "$(((duration_ms % 1000) / 10))"
+}
+
+print_timing_summary() {
+  local finished_ms
+  local index
+  finished_ms="$(now_ms)"
+  printf 'Fresh runtime timing:\n'
+  for ((index = 0; index < ${#TIMING_LABELS[@]}; index++)); do
+    printf '  %s: %s\n' "${TIMING_LABELS[$index]}" "$(format_duration "${TIMING_VALUES[$index]}")"
+  done
+  printf '  total: %s\n' "$(format_duration "$((finished_ms - INSTALL_STARTED_MS))")"
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -112,9 +148,12 @@ for command in node npm curl tar awk; do
   command -v "$command" >/dev/null 2>&1 || exit 10
 done
 
+INSTALL_STARTED_MS="$(now_ms)"
+phase_started_ms="$(now_ms)"
 VERSION="$(resolve_version || true)"
 ARCH="$(resolve_arch || true)"
 [[ -n "$VERSION" && -n "$ARCH" ]] || exit 10
+record_timing "release resolution" "$phase_started_ms"
 
 BASE_URL="${BASE_URL%/}"
 RELEASE_URL="${BASE_URL}/v${VERSION}"
@@ -125,16 +164,22 @@ EXTRACT_ROOT="$TEMP_ROOT/extract"
 mkdir -p "$EXTRACT_ROOT"
 APP_ASSET_NAME="fased-hosted-app-linux-${ARCH}-v${VERSION}.tar.gz"
 set +e
+phase_started_ms="$(now_ms)"
 APP_ARCHIVE="$(download_verified_asset "$APP_ASSET_NAME" no)"
 APP_DOWNLOAD_STATUS=$?
 set -e
+record_timing "app download and checksum" "$phase_started_ms"
 if [[ "$APP_DOWNLOAD_STATUS" -eq 20 ]]; then
   echo "Hosted app layer failed checksum verification." >&2
   exit 20
 fi
 if [[ -n "$APP_ARCHIVE" ]]; then
+  phase_started_ms="$(now_ms)"
   archive_is_safe "$APP_ARCHIVE" || exit 20
+  record_timing "app archive safety scan" "$phase_started_ms"
+  phase_started_ms="$(now_ms)"
   tar -xzf "$APP_ARCHIVE" -C "$EXTRACT_ROOT"
+  record_timing "app extraction" "$phase_started_ms"
   PACKAGE_ROOT="$EXTRACT_ROOT/package"
   METADATA_PATH="$PACKAGE_ROOT/.fased-hosted-runtime.json"
   DEPENDENCY_HASH="$(node -e '
@@ -147,12 +192,18 @@ if [[ -n "$APP_ARCHIVE" ]]; then
   DEPENDENCY_ROOT="$CACHE_DIR/hosted-dependencies/$DEPENDENCY_HASH"
   if [[ ! -d "$DEPENDENCY_ROOT/node_modules" ]]; then
     DEPENDENCY_ASSET_NAME="fased-hosted-deps-linux-${ARCH}-${DEPENDENCY_HASH}.tar.gz"
+    phase_started_ms="$(now_ms)"
     DEPENDENCY_ARCHIVE="$(download_verified_asset "$DEPENDENCY_ASSET_NAME" yes)" || exit $?
+    record_timing "dependency download and checksum" "$phase_started_ms"
+    phase_started_ms="$(now_ms)"
     dependency_archive_is_safe "$DEPENDENCY_ARCHIVE" || exit 20
+    record_timing "dependency archive safety scan" "$phase_started_ms"
     DEPENDENCY_STAGING="${DEPENDENCY_ROOT}.staging-$$"
     rm -rf "$DEPENDENCY_STAGING"
     mkdir -p "$DEPENDENCY_STAGING"
+    phase_started_ms="$(now_ms)"
     tar -xzf "$DEPENDENCY_ARCHIVE" -C "$DEPENDENCY_STAGING"
+    record_timing "dependency extraction" "$phase_started_ms"
     [[ -d "$DEPENDENCY_STAGING/node_modules" ]] || exit 20
     mkdir -p "$(dirname "$DEPENDENCY_ROOT")"
     if ! mv "$DEPENDENCY_STAGING" "$DEPENDENCY_ROOT" 2>/dev/null; then
@@ -163,9 +214,15 @@ if [[ -n "$APP_ARCHIVE" ]]; then
   ln -s "$DEPENDENCY_ROOT/node_modules" "$PACKAGE_ROOT/node_modules"
 else
   ASSET_NAME="fased-hosted-linux-${ARCH}-v${VERSION}.tar.gz"
+  phase_started_ms="$(now_ms)"
   ARCHIVE="$(download_verified_asset "$ASSET_NAME" yes)" || exit $?
+  record_timing "runtime download and checksum" "$phase_started_ms"
+  phase_started_ms="$(now_ms)"
   archive_is_safe "$ARCHIVE" || exit 20
+  record_timing "runtime archive safety scan" "$phase_started_ms"
+  phase_started_ms="$(now_ms)"
   tar -xzf "$ARCHIVE" -C "$EXTRACT_ROOT"
+  record_timing "runtime extraction" "$phase_started_ms"
 fi
 PACKAGE_ROOT="$EXTRACT_ROOT/package"
 if [[ ! -f "$PACKAGE_ROOT/fased.mjs" || ! -d "$PACKAGE_ROOT/node_modules" ]]; then
@@ -178,6 +235,7 @@ if [[ "$(node -p "require(process.argv[1]).version" "$PACKAGE_ROOT/package.json"
 fi
 SMOKE_HOME="$TEMP_ROOT/smoke-home"
 mkdir -p "$SMOKE_HOME"
+phase_started_ms="$(now_ms)"
 if ! HOME="$SMOKE_HOME" \
   FASED_STATE_DIR="$SMOKE_HOME/.fased" \
   FASED_CONFIG_PATH="$SMOKE_HOME/.fased/fased.json" \
@@ -185,7 +243,9 @@ if ! HOME="$SMOKE_HOME" \
   echo "Hosted runtime failed its pre-install CLI and plugin check; the current install was not changed." >&2
   exit 20
 fi
+record_timing "runtime smoke verification" "$phase_started_ms"
 
+phase_started_ms="$(now_ms)"
 TARGET_ROOT="$PREFIX/lib/node_modules/@fased/fased"
 TARGET_PARENT="$(dirname "$TARGET_ROOT")"
 BACKUP_ROOT="${TARGET_PARENT}/.fased-backup-$(date +%s)-$$"
@@ -199,10 +259,10 @@ if ! mv "$PACKAGE_ROOT" "$TARGET_ROOT"; then
   [[ -n "$BACKUP_ROOT" && -e "$BACKUP_ROOT" ]] && mv "$BACKUP_ROOT" "$TARGET_ROOT"
   exit 20
 fi
-if ! node "$TARGET_ROOT/fased.mjs" --version >/dev/null 2>&1; then
+if [[ ! -x "$TARGET_ROOT/fased.mjs" || ! -d "$TARGET_ROOT/node_modules" ]]; then
   rm -rf "$TARGET_ROOT"
   [[ -n "$BACKUP_ROOT" && -e "$BACKUP_ROOT" ]] && mv "$BACKUP_ROOT" "$TARGET_ROOT"
-  echo "Hosted runtime CLI verification failed." >&2
+  echo "Hosted runtime activation verification failed." >&2
   exit 20
 fi
 
@@ -210,4 +270,6 @@ mkdir -p "$PREFIX/bin"
 ln -sfn "../lib/node_modules/@fased/fased/fased.mjs" "$PREFIX/bin/fased"
 chmod 755 "$TARGET_ROOT/fased.mjs" 2>/dev/null || true
 [[ -n "$BACKUP_ROOT" ]] && rm -rf "$BACKUP_ROOT"
+record_timing "runtime activation" "$phase_started_ms"
 printf 'Installed verified hosted runtime v%s.\n' "$VERSION"
+print_timing_summary

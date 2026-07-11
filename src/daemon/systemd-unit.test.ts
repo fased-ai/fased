@@ -12,13 +12,14 @@ describe("buildSystemdUnit", () => {
     expect(execStart).toBe('ExecStart=/usr/bin/fased gateway --name "My Bot"');
   });
 
-  it("uses mixed kill mode for managed child-process cleanup", () => {
+  it("stops the full managed process group on restart", () => {
     const unit = buildSystemdUnit({
       description: "FasedAgent Gateway",
       programArguments: ["/bin/bash", "/srv/fased/scripts/start-managed.sh"],
       environment: {},
     });
-    expect(unit).toContain("KillMode=mixed");
+    expect(unit).toContain("KillMode=control-group");
+    expect(unit).not.toContain("KillMode=mixed");
   });
 
   it("rejects environment values with line breaks", () => {
