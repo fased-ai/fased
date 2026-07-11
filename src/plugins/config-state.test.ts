@@ -185,6 +185,21 @@ describe("normalizePluginsConfig", () => {
 });
 
 describe("resolveEffectiveEnableState", () => {
+  it("enables the bundled SAT mining RPC runtime by default", () => {
+    const normalized = normalizePluginsConfig({
+      enabled: true,
+    });
+
+    expect(
+      resolveEffectiveEnableState({
+        id: "sat-mining",
+        origin: "bundled",
+        config: normalized,
+        rootConfig: {},
+      }),
+    ).toEqual({ enabled: true });
+  });
+
   it("keeps bundled chat channel plugins opt-in by default", () => {
     const normalized = normalizePluginsConfig({
       enabled: true,
