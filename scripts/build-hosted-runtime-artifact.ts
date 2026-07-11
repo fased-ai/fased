@@ -365,6 +365,39 @@ async function main(): Promise<void> {
     console.log(
       `hosted-artifact: core plugins loaded in ${pluginLoadMs}ms (budget ${corePluginBudgetMs}ms)`,
     );
+    const cachedPluginInfo = await run(
+      process.execPath,
+      [path.join(packageRoot, "fased.mjs"), "plugins", "info", "sat-mining"],
+      packageRoot,
+      smokeEnv,
+    );
+    const cachedPluginDoctor = await run(
+      process.execPath,
+      [path.join(packageRoot, "fased.mjs"), "plugins", "doctor"],
+      packageRoot,
+      smokeEnv,
+    );
+    const pluginInfoBudgetMs = Number.parseInt(
+      process.env.FASED_HOSTED_PLUGIN_INFO_MAX_MS ?? "3000",
+      10,
+    );
+    const pluginDoctorBudgetMs = Number.parseInt(
+      process.env.FASED_HOSTED_PLUGIN_DOCTOR_MAX_MS ?? "5000",
+      10,
+    );
+    if (cachedPluginInfo.durationMs > pluginInfoBudgetMs) {
+      throw new Error(
+        `Hosted cached plugin info took ${cachedPluginInfo.durationMs}ms; budget is ${pluginInfoBudgetMs}ms.`,
+      );
+    }
+    if (cachedPluginDoctor.durationMs > pluginDoctorBudgetMs) {
+      throw new Error(
+        `Hosted cached plugin doctor took ${cachedPluginDoctor.durationMs}ms; budget is ${pluginDoctorBudgetMs}ms.`,
+      );
+    }
+    console.log(
+      `hosted-artifact: cached plugin info ${cachedPluginInfo.durationMs}ms; doctor ${cachedPluginDoctor.durationMs}ms`,
+    );
     console.log("hosted-artifact: packaged gateway smoke passed");
 
     const dependencyHash = await sha256(path.join(rootDir, "pnpm-lock.yaml"));

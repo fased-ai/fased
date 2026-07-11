@@ -110,6 +110,23 @@ const preservedCoreConfig = {
   unbundle: true,
 };
 
+const lightweightCliConfigs = [
+  ["light-plugin-info", "src/cli/lightweight/plugin-info.ts"],
+  ["light-plugin-doctor", "src/cli/lightweight/plugin-doctor.ts"],
+  ["light-update-status", "src/cli/lightweight/update-status.ts"],
+  ["light-update-precheck", "src/cli/lightweight/update-precheck.ts"],
+].map(([name, entry]) => ({
+  entry: { [name]: entry },
+  clean: false,
+  env,
+  fixedExtension: false,
+  minify: true,
+  platform: "node" as const,
+  external: channelRuntimeExternals,
+  outputOptions: { codeSplitting: false },
+  treeshake: true,
+}));
+
 const defaultEntries = (
   isVpsBuild ? [...baseEntries] : [...baseEntries, ...pluginSdkEntries, ...fullRuntimeEntries]
 ).map((entry) => ({ ...entry, external: channelRuntimeExternals }));
@@ -122,7 +139,9 @@ const isolatedSdkEntries = pluginSdkEntries.map((entry) => ({
 export default defineConfig(
   buildGraph === "core"
     ? [preservedCoreConfig]
-    : buildGraph === "sdk"
-      ? isolatedSdkEntries
-      : defaultEntries,
+    : buildGraph === "light-cli"
+      ? lightweightCliConfigs
+      : buildGraph === "sdk"
+        ? isolatedSdkEntries
+        : defaultEntries,
 );

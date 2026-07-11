@@ -20,6 +20,7 @@ function runGraph(graph) {
 }
 
 runGraph("core");
+runGraph("light-cli");
 if (!isVpsBuild) {
   runGraph("sdk");
 }
