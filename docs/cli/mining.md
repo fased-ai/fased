@@ -48,9 +48,9 @@ interpretation, read [Advanced SAT mining](/plugins/crypto/mining-advanced).
 fased mining status
 fased mining readiness
 fased mining wallets
-fased mining start --wallet mining
 fased mining deposit-capital --sol 1
 fased mining set-commit --sol 0.75
+fased mining start --wallet mining
 fased mining claim-backlog
 fased mining keeper run
 fased mining stop

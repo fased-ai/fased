@@ -243,7 +243,10 @@ Read next:
 
 ## 5. Create Wallets
 
-Open **Wallets**.
+Open **Wallets** to create new local wallets. To import an existing Phantom or
+other Solana wallet, run `fased wallet setup --chain solana` and choose the
+import path in the guarded terminal wizard. The Control UI does not accept a
+private key directly.
 
 Create or import wallets in this order:
 
@@ -257,14 +260,16 @@ Create or import wallets in this order:
    Manual-first wallet for reserve storage and Fased Network bond authority.
    Agent and Vault can have multiple wallets; Mining is a singleton role.
 
-When importing a Solana wallet, use a base58 64-byte private key from your
-wallet/export tool. Fased also accepts Solana JSON byte array, base64/base64url,
-or hex imports. Do not paste seed phrases into wallet import.
+When importing a Solana wallet, use the exported base58 64-byte private key for
+that individual account. Fased also accepts a Solana JSON byte array,
+base64/base64url, or hex. Never paste a seed phrase or recovery phrase into
+Fased. Keep Agent, Mining, and Vault as separate accounts and import each under
+its matching role.
 
 ![Wallet cards after Agent, Mining, and Vault setup](/images/screenshots/web/wallet-1.png)
 
-Screenshot: wallet setup can create or import a Solana wallet, set the RPC URL,
-and confirm which Agent or Mining role should use it.
+Screenshot: terminal wallet setup can create or import a Solana wallet, set the
+RPC URL, and confirm which Agent, Mining, or Vault role should use it.
 
 ![Wallet role summary after local setup](/images/screenshots/local/wallet-ui-2.png)
 

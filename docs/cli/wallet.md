@@ -11,9 +11,10 @@ title: "wallet"
 Manage wallet setup, keystore state, local signer health, custody locks, wallet
 roles, and policy status.
 
-Browser equivalent: **Wallets**. Normal users should use the browser page for
-funding, balances, approvals, access policy, and skill grants. Use the CLI for
-headless setup, recovery, or automation.
+Browser equivalent: **Wallets**. Normal users should use the browser page to
+create new wallets and manage funding, balances, approvals, access policy, and
+skill grants. Existing private-key imports use onboarding or the guarded CLI;
+the browser page does not accept a private key directly.
 
 ## Common commands
 
@@ -23,8 +24,10 @@ fased wallet status
 fased wallet signer doctor --json
 ```
 
-`wallet setup` supports Solana wallet creation/import, embedded keystore,
-local-signer, and Turnkey modes depending on flags and installed components.
+`wallet setup` supports Solana wallet creation/import, role selection, embedded
+keystore, local-signer, and Turnkey modes depending on flags and installed
+components. Use it to import separate Phantom-exported Agent, Mining, and Vault
+accounts. Never provide a seed phrase or recovery phrase.
 
 ## Keystore
 
