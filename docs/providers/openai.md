@@ -72,7 +72,7 @@ fased onboard --openai-api-key "$OPENAI_API_KEY"
 ```json5
 {
   env: { OPENAI_API_KEY: "sk-..." },
-  agents: { defaults: { model: { primary: "openai/gpt-5.5" } } },
+  agents: { defaults: { model: { primary: "openai/gpt-5.6" } } },
 }
 ```
 
@@ -189,7 +189,7 @@ Responses models (for example Azure OpenAI Responses):
   agents: {
     defaults: {
       models: {
-        "openai/gpt-5.5": {
+        "openai/gpt-5.6": {
           params: {
             responsesServerCompaction: true,
             responsesCompactThreshold: 120000,
@@ -208,7 +208,7 @@ Responses models (for example Azure OpenAI Responses):
   agents: {
     defaults: {
       models: {
-        "openai/gpt-5.5": {
+        "openai/gpt-5.6": {
           params: {
             responsesServerCompaction: false,
           },
@@ -226,6 +226,10 @@ Direct OpenAI Responses models still force `store: true` unless compat sets
 ## Notes
 
 - Model refs always use `provider/model` (see [/concepts/models](/concepts/models)).
+- Direct API-key setup currently recommends `openai/gpt-5.6`; the curated
+  direct API list also includes `openai/gpt-5.6-terra` and
+  `openai/gpt-5.6-luna`. OpenAI sign-in remains a separate catalog, so choose
+  only models shown for the `openai-codex/*` route after signing in.
 - Auth details + reuse rules are in [/concepts/oauth](/concepts/oauth).
 - **Agent > Models** owns OpenAI credentials and that Agent's model roles. Chat
   can choose a session-level model from the authenticated provider catalog.

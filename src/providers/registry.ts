@@ -1,5 +1,9 @@
 import type { ModelCapabilityConfig } from "../config/types.models.js";
-import { BASE_THINKING_LEVELS, resolveModelThinkingCapability } from "../shared/model-thinking.js";
+import {
+  BASE_THINKING_LEVELS,
+  XHIGH_THINKING_LEVELS,
+  resolveModelThinkingCapability,
+} from "../shared/model-thinking.js";
 import {
   buildCloudflareAiGatewayModelCapabilityOverrides,
   CLOUDFLARE_AI_GATEWAY_DEFAULT_MODEL_REF,
@@ -226,7 +230,15 @@ export const LITELLM_ROUTE_ID = "litellm";
 export const CUSTOM_PROVIDER_BRAND_ID = "custom";
 export const CUSTOM_PROVIDER_ROUTE_ID = "custom";
 
-export const OPENAI_API_MODEL_IDS = ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"] as const;
+export const OPENAI_API_MODEL_IDS = [
+  "gpt-5.6",
+  "gpt-5.6-terra",
+  "gpt-5.6-luna",
+  "gpt-5.5",
+  "gpt-5.4",
+  "gpt-5.4-mini",
+  "gpt-5.4-nano",
+] as const;
 
 export const OPENAI_SIGN_IN_MODEL_IDS = [
   "gpt-5.5",
@@ -301,7 +313,7 @@ export const GOOGLE_GEMINI_CLI_MODEL_REFS = GOOGLE_GEMINI_MODEL_IDS.map(
   (id) => `${GOOGLE_GEMINI_CLI_ROUTE_ID}/${id}`,
 );
 
-export const XAI_MODEL_IDS = ["grok-4.3", "grok-build-0.1"] as const;
+export const XAI_MODEL_IDS = ["grok-4.5", "grok-4.3", "grok-build-0.1"] as const;
 export const XAI_MODEL_REFS = XAI_MODEL_IDS.map((id) => `${XAI_ROUTE_ID}/${id}`);
 
 export const MISTRAL_MODEL_IDS = [
@@ -368,6 +380,9 @@ export const BYTEPLUS_CODING_MODEL_REFS = BYTEPLUS_CODING_MODEL_IDS.flatMap((id)
 
 export const OPENROUTER_MODEL_IDS = [
   "openrouter/owl-alpha",
+  "openai/gpt-5.6-sol",
+  "openai/gpt-5.6-terra",
+  "openai/gpt-5.6-luna",
   "openai/gpt-5.5",
   "openai/gpt-5.4",
   "openai/gpt-5.4-mini",
@@ -380,6 +395,7 @@ export const OPENROUTER_MODEL_IDS = [
   "google/gemini-3.1-pro-preview",
   "google/gemini-3-flash-preview",
   "google/gemini-3.1-flash-lite",
+  "x-ai/grok-4.5",
   "x-ai/grok-4.3",
   "x-ai/grok-build-0.1",
   "mistralai/mistral-medium-3-5",
@@ -809,6 +825,14 @@ const GOOGLE_MODEL_CAPABILITY_OVERRIDES: Record<string, ModelCapabilityConfig> =
 );
 
 const XAI_MODEL_CAPABILITY_OVERRIDES: Record<string, ModelCapabilityConfig> = {
+  "xai/grok-4.5": {
+    tools: true,
+    json: true,
+    thinkingLevels: ["off", "low", "medium", "high"],
+    defaultThinkingLevel: "low",
+    thinkingMode: "xai-reasoning-effort",
+    reasoningBudgetSupported: false,
+  },
   "xai/grok-4.3": {
     tools: true,
     json: true,
@@ -950,6 +974,19 @@ const OPENROUTER_GENERIC_REASONING_MODEL_REFS = new Set([
   "openrouter/deepseek/deepseek-v4-pro",
   "openrouter/deepseek/deepseek-v4-flash",
 ]);
+const OPENROUTER_OPENAI_REASONING_MODEL_REFS = new Set([
+  "openrouter/openai/gpt-5.6-sol",
+  "openrouter/openai/gpt-5.6-terra",
+  "openrouter/openai/gpt-5.6-luna",
+  "openrouter/openai/gpt-5.5",
+  "openrouter/openai/gpt-5.4",
+  "openrouter/openai/gpt-5.4-mini",
+  "openrouter/openai/gpt-5.4-nano",
+]);
+const OPENROUTER_XAI_REASONING_MODEL_REFS = new Set([
+  "openrouter/x-ai/grok-4.5",
+  "openrouter/x-ai/grok-4.3",
+]);
 const OPENROUTER_MODEL_CAPABILITY_OVERRIDES: Record<string, ModelCapabilityConfig> =
   Object.fromEntries(
     OPENROUTER_MODEL_REFS.map((ref) => [
@@ -980,6 +1017,22 @@ const OPENROUTER_MODEL_CAPABILITY_OVERRIDES: Record<string, ModelCapabilityConfi
               thinkingLevels: [...BASE_THINKING_LEVELS],
               defaultThinkingLevel: "low",
               thinkingMode: "generic-reasoning",
+              reasoningBudgetSupported: false,
+            }
+          : {}),
+        ...(OPENROUTER_OPENAI_REASONING_MODEL_REFS.has(ref)
+          ? {
+              thinkingLevels: [...XHIGH_THINKING_LEVELS],
+              defaultThinkingLevel: "low",
+              thinkingMode: "openai-reasoning-effort",
+              reasoningBudgetSupported: false,
+            }
+          : {}),
+        ...(OPENROUTER_XAI_REASONING_MODEL_REFS.has(ref)
+          ? {
+              thinkingLevels: ["off", "low", "medium", "high"],
+              defaultThinkingLevel: "low",
+              thinkingMode: "xai-reasoning-effort",
               reasoningBudgetSupported: false,
             }
           : {}),
