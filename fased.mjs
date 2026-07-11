@@ -51,7 +51,35 @@ const tryImport = async (specifier) => {
   }
 };
 
-if (await tryImport("./dist/entry.js")) {
+const lightweightCommand = `${process.argv[2] ?? ""} ${process.argv[3] ?? ""}`.trim();
+const lightweightSpecifier =
+  lightweightCommand === "update status"
+    ? "./dist/light-update-status.js"
+    : lightweightCommand === "plugins info"
+      ? "./dist/light-plugin-info.js"
+      : lightweightCommand === "plugins doctor"
+        ? "./dist/light-plugin-doctor.js"
+        : process.argv[2] === "update" &&
+            (!process.argv[3] || process.argv[3] === "--json") &&
+            process.argv.length <= 4
+          ? "./dist/light-update-precheck.js"
+          : null;
+
+let handledByLightweightCli = false;
+if (lightweightSpecifier) {
+  try {
+    const mod = await import(lightweightSpecifier);
+    handledByLightweightCli = (await mod.run(process.argv)) === true;
+  } catch (err) {
+    if (!isModuleNotFoundError(err)) {
+      throw err;
+    }
+  }
+}
+
+if (handledByLightweightCli) {
+  // The dedicated status entrypoint avoids loading the full CLI graph.
+} else if (await tryImport("./dist/entry.js")) {
   // OK
 } else if (await tryImport("./dist/entry.mjs")) {
   // OK
