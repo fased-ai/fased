@@ -179,8 +179,8 @@ async function main() {
       throw new Error(`packed core plugin doctor failed:\n${doctor}`);
     }
     const satInfo = runCore(coreRoot, env, ["plugins", "info", "sat-mining"]);
-    if (!satInfo.includes("id: sat-mining") || satInfo.includes("Status: error")) {
-      throw new Error(`packed core SAT plugin discovery failed:\n${satInfo}`);
+    if (!satInfo.includes("id: sat-mining") || !satInfo.includes("Status: loaded")) {
+      throw new Error(`packed core SAT plugin readiness failed:\n${satInfo}`);
     }
     const federationInfo = runCore(coreRoot, env, ["plugins", "info", "fased-federation"]);
     if (
