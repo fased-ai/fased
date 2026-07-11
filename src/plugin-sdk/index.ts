@@ -271,7 +271,6 @@ export type { AcpxPushTestExecutionAdapterResult } from "../acp/acpx-push-test-e
 export { resolveEffectiveToolInventory } from "../agents/tools-effective-inventory.js";
 export { getPublicGatewayIdentity } from "../gateway/gateway-identity.js";
 export { getStatusSummary } from "../commands/status.js";
-export { loadConfig } from "../config/config.js";
 export { loadGatewayModelCatalog } from "../gateway/server-model-catalog.js";
 export { buildModelCatalogStatus } from "../agents/model-catalog-status.js";
 export { getGatewayUpdateStatus } from "../gateway/update-status.js";
