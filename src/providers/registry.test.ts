@@ -132,12 +132,16 @@ describe("provider registry", () => {
   });
 
   it("keeps OpenAI API-key and sign-in model routes separate", () => {
+    expect(OPENAI_API_MODEL_REFS).toContain("openai/gpt-5.6");
+    expect(OPENAI_API_MODEL_REFS).toContain("openai/gpt-5.6-terra");
+    expect(OPENAI_API_MODEL_REFS).toContain("openai/gpt-5.6-luna");
     expect(OPENAI_API_MODEL_REFS).toContain("openai/gpt-5.5");
     expect(OPENAI_API_MODEL_REFS).toContain("openai/gpt-5.4-nano");
     expect(OPENAI_API_MODEL_REFS).not.toContain("openai/gpt-5-codex");
     expect(OPENAI_API_MODEL_REFS).not.toContain("openai/gpt-5.5-pro");
     expect(OPENAI_API_MODEL_REFS).not.toContain("openai/gpt-5.4-pro");
     expect(OPENAI_SIGN_IN_MODEL_REFS).toContain("openai-codex/gpt-5.5");
+    expect(OPENAI_SIGN_IN_MODEL_REFS).not.toContain("openai-codex/gpt-5.6");
     expect(OPENAI_SIGN_IN_MODEL_REFS).toContain("openai-codex/gpt-5.3-codex-spark");
     expect(OPENAI_SIGN_IN_MODEL_REFS).not.toContain("openai-codex/gpt-5.1");
     expect(OPENAI_SIGN_IN_MODEL_REFS).not.toContain("openai-codex/gpt-5.2-codex");
@@ -146,6 +150,11 @@ describe("provider registry", () => {
   });
 
   it("exposes curated per-model thinking metadata from provider manifests", () => {
+    expect(lookupProviderManifestModelCapability("openai", "gpt-5.6")).toMatchObject({
+      thinkingLevels: ["off", "minimal", "low", "medium", "high", "xhigh"],
+      defaultThinkingLevel: "low",
+      thinkingMode: "openai-reasoning-effort",
+    });
     expect(lookupProviderManifestModelCapability("openai", "gpt-5.5")).toMatchObject({
       thinkingLevels: ["off", "minimal", "low", "medium", "high", "xhigh"],
       defaultThinkingLevel: "low",
@@ -181,7 +190,7 @@ describe("provider registry", () => {
         reasoningBudgetSupported: true,
       },
     );
-    expect(lookupProviderManifestModelCapability("xai", "grok-4.3")).toMatchObject({
+    expect(lookupProviderManifestModelCapability("xai", "grok-4.5")).toMatchObject({
       tools: true,
       json: true,
       thinkingLevels: ["off", "low", "medium", "high"],
@@ -493,9 +502,11 @@ describe("provider registry", () => {
       "xai-api-key",
     ]);
     expect(XAI_PROVIDER_MANIFEST.models.recommended).toEqual([
+      "xai/grok-4.5",
       "xai/grok-4.3",
       "xai/grok-build-0.1",
     ]);
+    expect(isStandardProviderModelRef("xai/grok-4.5")).toBe(true);
     expect(isStandardProviderModelRef("xai/grok-4.3")).toBe(true);
     expect(isStandardProviderModelRef("xai/grok-build-0.1")).toBe(true);
     expect(isStandardProviderModelRef("xai/grok-4")).toBe(false);
@@ -1196,6 +1207,9 @@ describe("provider registry", () => {
     expect(OPENROUTER_PROVIDER_MANIFEST.models.dynamic).toBe(true);
     expect(OPENROUTER_PROVIDER_MANIFEST.models.recommended).toEqual([
       "openrouter/openrouter/owl-alpha",
+      "openrouter/openai/gpt-5.6-sol",
+      "openrouter/openai/gpt-5.6-terra",
+      "openrouter/openai/gpt-5.6-luna",
       "openrouter/openai/gpt-5.5",
       "openrouter/openai/gpt-5.4",
       "openrouter/openai/gpt-5.4-mini",
@@ -1208,6 +1222,7 @@ describe("provider registry", () => {
       "openrouter/google/gemini-3.1-pro-preview",
       "openrouter/google/gemini-3-flash-preview",
       "openrouter/google/gemini-3.1-flash-lite",
+      "openrouter/x-ai/grok-4.5",
       "openrouter/x-ai/grok-4.3",
       "openrouter/x-ai/grok-build-0.1",
       "openrouter/mistralai/mistral-medium-3-5",
@@ -1224,8 +1239,24 @@ describe("provider registry", () => {
       "openrouter/moonshotai/kimi-k2.6",
     ]);
     expect(isStandardProviderModelRef("openrouter/openai/gpt-5.5")).toBe(true);
+    expect(isStandardProviderModelRef("openrouter/openai/gpt-5.6-sol")).toBe(true);
+    expect(isStandardProviderModelRef("openrouter/x-ai/grok-4.5")).toBe(true);
     expect(isStandardProviderModelRef("openrouter/qwen/qwen3.7-plus")).toBe(true);
     expect(isStandardProviderModelRef("openrouter/openai/gpt-4o")).toBe(true);
+    expect(
+      OPENROUTER_PROVIDER_MANIFEST.modelCapabilities?.["openrouter/openai/gpt-5.6-sol"],
+    ).toMatchObject({
+      tools: true,
+      json: true,
+      thinkingMode: "openai-reasoning-effort",
+    });
+    expect(
+      OPENROUTER_PROVIDER_MANIFEST.modelCapabilities?.["openrouter/x-ai/grok-4.5"],
+    ).toMatchObject({
+      tools: true,
+      json: true,
+      thinkingMode: "xai-reasoning-effort",
+    });
     expect(
       OPENROUTER_PROVIDER_MANIFEST.modelCapabilities?.["openrouter/qwen/qwen3.7-plus"],
     ).toMatchObject({

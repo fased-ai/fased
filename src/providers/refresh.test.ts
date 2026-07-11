@@ -227,7 +227,7 @@ describe("provider refresh", () => {
       brandId: "openai",
       route: "openai",
       missingSource: false,
-      additions: ["gpt-5.6", "gpt-5-codex"],
+      additions: ["gpt-5-codex"],
     });
     expect(openai?.removals).toContain("gpt-5.4-mini");
 
@@ -413,10 +413,18 @@ describe("provider refresh", () => {
 
   it("parses and curates OpenAI docs model ids for normal UI", () => {
     const ids = parseOpenAIModelIdsFromDocsHtml(`
-      gpt-4.1-mini gpt-5 gpt-5.2 gpt-5.4 gpt-5.4-mini gpt-5.5 gpt-5.6-pro gpt-5-codex
+      gpt-4.1-mini gpt-5 gpt-5.2 gpt-5.4 gpt-5.4-mini gpt-5.5 gpt-5.6
+      gpt-5.6-terra gpt-5.6-luna gpt-5.6-pro gpt-5-codex
     `);
 
-    expect(selectOpenAIApiModelsForNormalUi(ids)).toEqual(["gpt-5.5", "gpt-5.4", "gpt-5.4-mini"]);
+    expect(selectOpenAIApiModelsForNormalUi(ids)).toEqual([
+      "gpt-5.6",
+      "gpt-5.6-terra",
+      "gpt-5.6-luna",
+      "gpt-5.5",
+      "gpt-5.4",
+      "gpt-5.4-mini",
+    ]);
   });
 
   it("parses and curates Chutes model catalog ids for normal UI", () => {
@@ -545,7 +553,10 @@ describe("provider refresh", () => {
         "gemini-3.1-pro-preview",
       ]),
     ).toEqual(["gemini-3.5-flash", "gemini-3.1-pro-preview", "gemini-3-flash-preview"]);
-    expect(selectXaiModelsForNormalUi(["grok-3", "grok-4.3"])).toEqual(["grok-4.3"]);
+    expect(selectXaiModelsForNormalUi(["grok-3", "grok-4.3", "grok-4.5"])).toEqual([
+      "grok-4.5",
+      "grok-4.3",
+    ]);
     expect(
       selectMistralModelsForNormalUi([
         "mistral-large-2407",

@@ -1,7 +1,7 @@
 import type { FasedAgentConfig } from "../config/config.js";
 import { ensureModelAllowlistEntry } from "./model-allowlist.js";
 
-export const OPENAI_DEFAULT_MODEL = "openai/gpt-5.5";
+export const OPENAI_DEFAULT_MODEL = "openai/gpt-5.6";
 
 export function applyOpenAIProviderConfig(cfg: FasedAgentConfig): FasedAgentConfig {
   const next = ensureModelAllowlistEntry({

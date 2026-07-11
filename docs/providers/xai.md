@@ -31,16 +31,15 @@ Example default model:
 
 ```json5
 {
-  agents: { defaults: { model: { primary: "xai/grok-4.3" } } },
+  agents: { defaults: { model: { primary: "xai/grok-4.5" } } },
 }
 ```
 
 Normal first-run surfaces show the current Chat API models:
 
+- `xai/grok-4.5`
 - `xai/grok-4.3`
-- `xai/grok-4.20-multi-agent-0309`
-- `xai/grok-4.20-0309-reasoning`
-- `xai/grok-4.20-0309-non-reasoning`
+- `xai/grok-build-0.1`
 
 Older Grok 4, Grok 4 Fast, Grok 4.1 Fast, Grok 3, and Grok Code Fast models
 are hidden from normal setup after the May 15, 2026 retirement window. Existing

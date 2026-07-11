@@ -38,6 +38,9 @@ tab. OpenRouter does not have a separate first-party OAuth method in Fased.
 ## Notes
 
 - Model refs are `openrouter/<provider>/<model>`.
+- The curated current list includes OpenAI GPT-5.6 Sol, Terra, and Luna plus
+  xAI Grok 4.5. OpenRouter's live catalog remains authoritative for account
+  availability.
 - `openrouter/auto` is the guided setup default. Normal pickers show a curated current model list and
   can still use OpenRouter's dynamic model catalog when the runtime reports it.
 - For more model/provider options, see [/concepts/model-providers](/concepts/model-providers).
