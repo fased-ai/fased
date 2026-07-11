@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { createJiti } from "jiti";
 import type { FasedAgentConfig } from "../config/config.js";
 import type { GatewayRequestHandler } from "../gateway/server-methods/types.js";
@@ -40,6 +40,7 @@ export type PluginLoadOptions = {
   coreGatewayHandlers?: Record<string, GatewayRequestHandler>;
   cache?: boolean;
   mode?: "full" | "validate";
+  preloadedModules?: Map<string, FasedAgentPluginModule>;
 };
 
 const registryCache = new Map<string, PluginRegistry>();
@@ -229,6 +230,74 @@ function resolvePluginSdkAliases(): Record<string, string> {
     }
   }
   return aliases;
+}
+
+function isNativePluginEntry(source: string): boolean {
+  return [".js", ".mjs", ".cjs"].includes(path.extname(source).toLowerCase());
+}
+
+export async function preloadNativePluginModules(
+  options: PluginLoadOptions = {},
+): Promise<Map<string, FasedAgentPluginModule>> {
+  const cfg = applyTestPluginDefaults(options.config ?? {}, process.env);
+  const logger = options.logger ?? defaultLogger();
+  const normalized = normalizePluginsConfig(cfg.plugins);
+  const discovery = discoverFasedAgentPlugins({
+    workspaceDir: options.workspaceDir,
+    extraPaths: normalized.loadPaths,
+  });
+  const manifestRegistry = loadPluginManifestRegistry({
+    config: cfg,
+    workspaceDir: options.workspaceDir,
+    cache: options.cache,
+    candidates: discovery.candidates,
+    diagnostics: discovery.diagnostics,
+  });
+  const manifestByRoot = new Map(
+    manifestRegistry.plugins.map((record) => [record.rootDir, record]),
+  );
+  const modules = new Map<string, FasedAgentPluginModule>();
+
+  for (const candidate of discovery.candidates) {
+    const manifestRecord = manifestByRoot.get(candidate.rootDir);
+    if (!manifestRecord || !isNativePluginEntry(candidate.source)) {
+      continue;
+    }
+    const enableState = resolveEffectiveEnableState({
+      id: manifestRecord.id,
+      origin: candidate.origin,
+      config: normalized,
+      rootConfig: cfg,
+    });
+    if (!enableState.enabled) {
+      continue;
+    }
+    const pluginRoot = safeRealpathOrResolve(candidate.rootDir);
+    const opened = openBoundaryFileSync({
+      absolutePath: candidate.source,
+      rootPath: pluginRoot,
+      boundaryLabel: "plugin root",
+      skipLexicalRootCheck: true,
+    });
+    if (!opened.ok) {
+      continue;
+    }
+    const safeSource = opened.path;
+    fs.closeSync(opened.fd);
+    const startedAt = Date.now();
+    try {
+      const moduleUrl = pathToFileURL(safeSource).href;
+      const loaded = (await import(moduleUrl)) as FasedAgentPluginModule;
+      modules.set(safeSource, loaded);
+      logger.info(`[plugins] ${manifestRecord.id} native preload ${Date.now() - startedAt}ms`);
+    } catch (error) {
+      logger.warn(
+        `[plugins] ${manifestRecord.id} native preload failed after ${Date.now() - startedAt}ms; falling back to Jiti: ${String(error)}`,
+      );
+    }
+  }
+
+  return modules;
 }
 
 export const __testing = {
@@ -739,8 +808,13 @@ export function loadFasedAgentPlugins(options: PluginLoadOptions = {}): PluginRe
     });
 
     let mod: FasedAgentPluginModule | null = null;
+    const moduleLoadStartedAt = Date.now();
     try {
-      mod = getJiti()(safeSource) as FasedAgentPluginModule;
+      mod = options.preloadedModules?.get(safeSource) ?? null;
+      if (!mod) {
+        mod = getJiti()(safeSource) as FasedAgentPluginModule;
+        logger.debug?.(`[plugins] ${record.id} Jiti load ${Date.now() - moduleLoadStartedAt}ms`);
+      }
     } catch (err) {
       recordPluginError({
         logger,

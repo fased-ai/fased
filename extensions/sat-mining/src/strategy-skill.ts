@@ -1,4 +1,4 @@
-import { completeSimple } from "@mariozechner/pi-ai";
+import { completeSimple } from "@mariozechner/pi-ai/compat";
 import {
   DEFAULT_PROVIDER,
   buildModelAliasIndex,

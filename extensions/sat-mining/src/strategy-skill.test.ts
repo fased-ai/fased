@@ -12,7 +12,7 @@ const resolveModelRefFromString = vi.fn();
 const resolveModel = vi.fn();
 const logWarn = vi.fn();
 
-vi.mock("@mariozechner/pi-ai", () => ({
+vi.mock("@mariozechner/pi-ai/compat", () => ({
   completeSimple: (...args: unknown[]) => completeSimple(...args),
 }));
 

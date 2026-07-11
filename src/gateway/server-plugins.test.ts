@@ -4,9 +4,11 @@ import type { PluginDiagnostic } from "../plugins/types.js";
 import { loadGatewayPlugins } from "./server-plugins.js";
 
 const loadFasedAgentPlugins = vi.hoisted(() => vi.fn());
+const preloadNativePluginModules = vi.hoisted(() => vi.fn(async () => new Map()));
 
 vi.mock("../plugins/loader.js", () => ({
   loadFasedAgentPlugins,
+  preloadNativePluginModules,
 }));
 
 const createRegistry = (diagnostics: PluginDiagnostic[]): PluginRegistry => ({
@@ -28,7 +30,7 @@ const createRegistry = (diagnostics: PluginDiagnostic[]): PluginRegistry => ({
 });
 
 describe("loadGatewayPlugins", () => {
-  test("logs plugin errors with details", () => {
+  test("logs plugin errors with details", async () => {
     const diagnostics: PluginDiagnostic[] = [
       {
         level: "error",
@@ -46,7 +48,7 @@ describe("loadGatewayPlugins", () => {
       debug: vi.fn(),
     };
 
-    loadGatewayPlugins({
+    await loadGatewayPlugins({
       cfg: {},
       workspaceDir: "/tmp",
       log,

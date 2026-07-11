@@ -1,8 +1,8 @@
 import type { loadConfig } from "../config/config.js";
-import { loadFasedAgentPlugins } from "../plugins/loader.js";
+import { loadFasedAgentPlugins, preloadNativePluginModules } from "../plugins/loader.js";
 import type { GatewayRequestHandler } from "./server-methods/types.js";
 
-export function loadGatewayPlugins(params: {
+export async function loadGatewayPlugins(params: {
   cfg: ReturnType<typeof loadConfig>;
   workspaceDir: string;
   log: {
@@ -14,7 +14,7 @@ export function loadGatewayPlugins(params: {
   coreGatewayHandlers: Record<string, GatewayRequestHandler>;
   baseMethods: string[];
 }) {
-  const pluginRegistry = loadFasedAgentPlugins({
+  const loadOptions = {
     config: params.cfg,
     workspaceDir: params.workspaceDir,
     logger: {
@@ -24,7 +24,9 @@ export function loadGatewayPlugins(params: {
       debug: (msg) => params.log.debug(msg),
     },
     coreGatewayHandlers: params.coreGatewayHandlers,
-  });
+  };
+  const preloadedModules = await preloadNativePluginModules(loadOptions);
+  const pluginRegistry = loadFasedAgentPlugins({ ...loadOptions, preloadedModules });
   const pluginMethods = Object.keys(pluginRegistry.gatewayHandlers);
   const gatewayMethods = Array.from(new Set([...params.baseMethods, ...pluginMethods]));
   if (pluginRegistry.diagnostics.length > 0) {
