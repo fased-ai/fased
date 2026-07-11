@@ -15,6 +15,10 @@ export type HostedRuntimeArtifactDescriptor = {
   checksumUrl: string;
 };
 
+export type HostedRuntimeLayeredArtifactDescriptor = HostedRuntimeArtifactDescriptor & {
+  layer: "app" | "dependencies";
+};
+
 export type HostedRuntimeArtifactDownload =
   | {
       kind: "downloaded";
@@ -61,6 +65,44 @@ export function resolveHostedRuntimeArtifact(params: {
   };
 }
 
+export function resolveHostedRuntimeAppArtifact(params: {
+  version: string;
+  platform?: NodeJS.Platform;
+  arch?: string;
+  baseUrl?: string | null;
+}): HostedRuntimeLayeredArtifactDescriptor | null {
+  const base = resolveHostedRuntimeArtifact(params);
+  if (!base) {
+    return null;
+  }
+  const assetName = `fased-hosted-app-linux-${params.arch ?? process.arch}-v${base.version}.tar.gz`;
+  const assetUrl = `${normalizeBaseUrl(params.baseUrl)}/v${base.version}/${assetName}`;
+  return { ...base, layer: "app", assetName, assetUrl, checksumUrl: `${assetUrl}.sha256` };
+}
+
+export function resolveHostedRuntimeDependencyArtifact(params: {
+  version: string;
+  dependencyHash: string;
+  platform?: NodeJS.Platform;
+  arch?: string;
+  baseUrl?: string | null;
+}): HostedRuntimeLayeredArtifactDescriptor | null {
+  const base = resolveHostedRuntimeArtifact(params);
+  const dependencyHash = params.dependencyHash.trim().toLowerCase();
+  if (!base || !/^[a-f0-9]{64}$/.test(dependencyHash)) {
+    return null;
+  }
+  const assetName = `fased-hosted-deps-linux-${params.arch ?? process.arch}-${dependencyHash}.tar.gz`;
+  const assetUrl = `${normalizeBaseUrl(params.baseUrl)}/v${base.version}/${assetName}`;
+  return {
+    ...base,
+    layer: "dependencies",
+    assetName,
+    assetUrl,
+    checksumUrl: `${assetUrl}.sha256`,
+  };
+}
+
 function checksumForAsset(contents: string, assetName: string): string | null {
   for (const rawLine of contents.split(/\r?\n/)) {
     const line = rawLine.trim();
@@ -100,6 +142,19 @@ export async function downloadHostedRuntimeArtifact(params: {
   arch?: string;
 }): Promise<HostedRuntimeArtifactDownload> {
   const descriptor = resolveHostedRuntimeArtifact(params);
+  return await downloadHostedRuntimeDescriptor({
+    descriptor,
+    destinationDir: params.destinationDir,
+    fetchImpl: params.fetchImpl,
+  });
+}
+
+export async function downloadHostedRuntimeDescriptor(params: {
+  descriptor: HostedRuntimeArtifactDescriptor | null;
+  destinationDir: string;
+  fetchImpl: typeof fetch;
+}): Promise<HostedRuntimeArtifactDownload> {
+  const descriptor = params.descriptor;
   if (!descriptor) {
     return { kind: "unavailable", reason: "unsupported hosted runtime platform" };
   }

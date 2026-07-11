@@ -17,6 +17,11 @@ type PackageJson = {
   version?: string;
 };
 
+type HostedRuntimeMetadata = {
+  schemaVersion: 1;
+  dependencyHash: string;
+};
+
 type RunResult = {
   durationMs: number;
   stdout: string;
@@ -84,6 +89,12 @@ async function sha256(filePath: string): Promise<string> {
   const hash = createHash("sha256");
   await pipeline(createReadStream(filePath), hash);
   return hash.digest("hex");
+}
+
+async function writeChecksum(assetPath: string): Promise<string> {
+  const digest = await sha256(assetPath);
+  await fs.writeFile(`${assetPath}.sha256`, `${digest}  ${path.basename(assetPath)}\n`, "utf8");
+  return digest;
 }
 
 async function findPackedTarball(dir: string): Promise<string> {
@@ -356,18 +367,55 @@ async function main(): Promise<void> {
     );
     console.log("hosted-artifact: packaged gateway smoke passed");
 
+    const dependencyHash = await sha256(path.join(rootDir, "pnpm-lock.yaml"));
+    const runtimeMetadata: HostedRuntimeMetadata = { schemaVersion: 1, dependencyHash };
+    await fs.writeFile(
+      path.join(packageRoot, ".fased-hosted-runtime.json"),
+      `${JSON.stringify(runtimeMetadata, null, 2)}\n`,
+      "utf8",
+    );
+
     const assetName = `fased-hosted-linux-${arch}-v${version}.tar.gz`;
     const assetPath = path.join(outputDir, assetName);
     console.log(`hosted-artifact: writing ${assetName}`);
     await tar.c({ cwd: extractDir, file: assetPath, gzip: true, portable: true }, ["package"]);
 
-    const digest = await sha256(assetPath);
-    const checksumPath = `${assetPath}.sha256`;
-    await fs.writeFile(checksumPath, `${digest}  ${assetName}\n`, "utf8");
+    const digest = await writeChecksum(assetPath);
 
     const stat = await fs.stat(assetPath);
     console.log(
       `hosted-artifact: ready ${assetName} (${(stat.size / 1024 / 1024).toFixed(1)} MB, sha256 ${digest})`,
+    );
+
+    const appAssetName = `fased-hosted-app-linux-${arch}-v${version}.tar.gz`;
+    const appAssetPath = path.join(outputDir, appAssetName);
+    console.log(`hosted-artifact: writing ${appAssetName}`);
+    await tar.c(
+      {
+        cwd: extractDir,
+        file: appAssetPath,
+        gzip: true,
+        portable: true,
+        filter: (entryPath) => !entryPath.startsWith("package/node_modules"),
+      },
+      ["package"],
+    );
+    const appDigest = await writeChecksum(appAssetPath);
+    const appStat = await fs.stat(appAssetPath);
+    console.log(
+      `hosted-artifact: ready ${appAssetName} (${(appStat.size / 1024 / 1024).toFixed(1)} MB, sha256 ${appDigest})`,
+    );
+
+    const dependencyAssetName = `fased-hosted-deps-linux-${arch}-${dependencyHash}.tar.gz`;
+    const dependencyAssetPath = path.join(outputDir, dependencyAssetName);
+    console.log(`hosted-artifact: writing ${dependencyAssetName}`);
+    await tar.c({ cwd: packageRoot, file: dependencyAssetPath, gzip: true, portable: true }, [
+      "node_modules",
+    ]);
+    const dependencyDigest = await writeChecksum(dependencyAssetPath);
+    const dependencyStat = await fs.stat(dependencyAssetPath);
+    console.log(
+      `hosted-artifact: ready ${dependencyAssetName} (${(dependencyStat.size / 1024 / 1024).toFixed(1)} MB, sha256 ${dependencyDigest})`,
     );
   } finally {
     await fs.rm(tempRoot, { recursive: true, force: true });
