@@ -432,7 +432,11 @@ export function isSatRateLimitedError(error: unknown): boolean {
     message.includes("rate limited") ||
     message.includes("too many requests") ||
     message.includes("-32429") ||
-    message.includes("429")
+    message.includes("429") ||
+    message.includes("max usage") ||
+    message.includes("quota") ||
+    message.includes("resource exhausted") ||
+    message.includes("credits exhausted")
   );
 }
 

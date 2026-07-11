@@ -25,6 +25,7 @@ import {
 import {
   getOrCreateRoundExecutionState,
   isWorkerDue,
+  isSatRateLimitedError,
   markWorkerFailure,
   markWorkerIdle,
   markWorkerOverlap,
@@ -33,6 +34,7 @@ import {
   markWorkerSuccess,
   markWorkerTarget,
   markWorkerWaiting,
+  satRateLimitBackoffMs,
   scheduleWorkerNextRun,
   type SatMiningRuntimeState,
 } from "./runtime.js";
@@ -1288,6 +1290,25 @@ export function createSatRoundWatcherService(params: {
         scheduleWorkerNextRun(state, "roundWatcher", 1_000);
         api.logger.warn(
           `[sat-mining] cycle ${cycleId} watcher timed out on a chain read; retrying`,
+        );
+        return;
+      }
+      if (isSatRateLimitedError(error)) {
+        markWorkerFailure(
+          state,
+          "roundWatcher",
+          error,
+          cycleId != null ? `cycle ${cycleId}` : undefined,
+        );
+        const delayMs = satRateLimitBackoffMs(state.workers.roundWatcher.retryCount);
+        markWorkerWaiting(
+          state,
+          "roundWatcher",
+          `rate limited; backing off ${Math.ceil(delayMs / 1000)}s before retrying cycle reads`,
+        );
+        scheduleWorkerNextRun(state, "roundWatcher", delayMs);
+        api.logger.warn(
+          `[sat-mining] cycle watcher rate limited; backing off ${Math.ceil(delayMs / 1000)}s`,
         );
         return;
       }
