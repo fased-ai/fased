@@ -26,6 +26,10 @@ export function findHostedSystemdUnitPath(
   return candidates.find((candidate) => existsSync(candidate)) ?? null;
 }
 
+function buildHostedSystemctlControlArgs(action: "stop" | "restart"): string[] {
+  return [action, `${SERVICE_NAME}.service`];
+}
+
 async function readHostedSystemdCommand(unitPath: string) {
   try {
     const content = await fs.readFile(unitPath, "utf8");
@@ -68,10 +72,7 @@ export function resolveHostedSystemdService(): GatewayService | null {
   const runPrivilegedSystemctl = async (args: string[]) =>
     await execFileUtf8("sudo", ["-n", "systemctl", ...args]);
   const control = async (action: "stop" | "restart", stdout: NodeJS.WritableStream) => {
-    const args =
-      action === "restart"
-        ? [action, "--no-block", `${SERVICE_NAME}.service`]
-        : [action, `${SERVICE_NAME}.service`];
+    const args = buildHostedSystemctlControlArgs(action);
     const result = await runPrivilegedSystemctl(args);
     if (result.code !== 0) {
       throw new Error(result.stderr || result.stdout || `system service ${action} failed`);
@@ -233,4 +234,8 @@ async function spawnCommand(command: string, args: string[]): Promise<void> {
   });
 }
 
-export const __testing = { readHostedSystemdCommand, resolveRunAsUser };
+export const __testing = {
+  buildHostedSystemctlControlArgs,
+  readHostedSystemdCommand,
+  resolveRunAsUser,
+};
