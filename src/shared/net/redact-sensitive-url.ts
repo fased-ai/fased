@@ -2,6 +2,7 @@ const SENSITIVE_URL_QUERY_PARAM_NAMES = new Set([
   "token",
   "key",
   "api_key",
+  "api-key",
   "apikey",
   "secret",
   "access_token",

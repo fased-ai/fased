@@ -43,6 +43,7 @@ import {
   createWalletProviderAdapter,
   resolveWalletProviderId,
 } from "../wallet/wallet-provider-resolver.js";
+import { redactWalletDiagnosticText } from "../wallet/wallet-redaction.js";
 import {
   ensureWalletStateDir,
   resolveLocalSignerBackendSocketPath,
@@ -2988,7 +2989,12 @@ export async function collectWalletSignerDoctorReport(
   const wallet = resolveWalletConfigForRuntime(cfg, effectiveEnv);
   const checks: Array<{ check: string; ok: boolean; detail?: string }> = [];
 
-  const push = (check: string, ok: boolean, detail?: string) => checks.push({ check, ok, detail });
+  const push = (check: string, ok: boolean, detail?: string) =>
+    checks.push({
+      check,
+      ok,
+      detail: detail ? redactWalletDiagnosticText(detail) : undefined,
+    });
 
   const providerId = resolveWalletProviderId(cfg, effectiveEnv);
   const isLocalSigner = providerId === "local-socket-signer";

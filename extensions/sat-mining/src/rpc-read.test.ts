@@ -13,6 +13,7 @@ import {
   inspectSatChainUnixTime,
   inspectSatMinerCycleByAddress,
   inspectSatMinerCyclesByAddress,
+  inspectSatConnectionDetails,
   invalidateSatReadCaches,
   resolveDefaultSolanaPublicReadFallbackUrl,
 } from "./rpc-read.js";
@@ -58,6 +59,26 @@ afterEach(async () => {
         }),
     ),
   );
+});
+
+describe("SAT RPC diagnostic redaction", () => {
+  it("redacts credential-bearing primary and fallback URLs", () => {
+    process.env.FASED_SAT_PROGRAM_ID = "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75";
+    process.env.FASED_SAT_BOND_PROGRAM_ID = "8RYKuGb2k8hBcGX34QdYJXdXZkNvD3fKy85s63Pph2j7";
+    process.env.FASED_SAT_MINT_ADDRESS = "2AhikHhzJdv6uve1yUBSUmhRKWaSfa7exrsDsfKjVFKa";
+    process.env.FASED_SAT_MINT_PROGRAM_ID = "8fb3Mpowe4pD6ed89gwm6gLuh8csPSrLi3hypcesqs5C";
+    process.env.FASED_WALLET_SOLANA_READ_RPC_URL =
+      "https://primary.example/rpc?api-key=primary-secret";
+    process.env.FASED_WALLET_SOLANA_READ_RPC_FALLBACK_URL =
+      "https://fallback.example/rpc?token=fallback-secret";
+
+    const details = inspectSatConnectionDetails();
+
+    expect(details.rpcUrl).toBe("https://primary.example/rpc?api-key=***");
+    expect(details.readRpcFallbackUrl).toBe("https://fallback.example/rpc?token=***");
+    expect(JSON.stringify(details)).not.toContain("primary-secret");
+    expect(JSON.stringify(details)).not.toContain("fallback-secret");
+  });
 });
 
 async function startRpcServer(
