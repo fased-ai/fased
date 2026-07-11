@@ -70,4 +70,15 @@ describe("hosted systemd unit", () => {
       sourcePath: unitPath,
     });
   });
+
+  it("waits for the hosted service restart transaction to finish", () => {
+    expect(__testing.buildHostedSystemctlControlArgs("restart")).toEqual([
+      "restart",
+      "fased-gateway.service",
+    ]);
+    expect(__testing.buildHostedSystemctlControlArgs("stop")).toEqual([
+      "stop",
+      "fased-gateway.service",
+    ]);
+  });
 });
