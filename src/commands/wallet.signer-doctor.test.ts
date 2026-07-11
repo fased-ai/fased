@@ -116,7 +116,8 @@ describe("collectWalletSignerDoctorReport", () => {
           env: {
             vars: {
               FASED_WALLET_SOLANA_KEYSTORE_PATH__SOLANA_1: solanaKeystore,
-              FASED_WALLET_SOLANA_RPC_URL__SOLANA_1: "https://rpc.example/solana",
+              FASED_WALLET_SOLANA_RPC_URL__SOLANA_1:
+                "https://rpc.example/solana?api-key=private-rpc-key",
             },
           },
           wallet: {
@@ -137,8 +138,9 @@ describe("collectWalletSignerDoctorReport", () => {
       false,
     );
     expect(report.checks.find((check) => check.check === "rpc.configured.solana")?.detail).toBe(
-      "https://rpc.example/solana",
+      "https://rpc.example/solana?api-key=***",
     );
+    expect(JSON.stringify(report)).not.toContain("private-rpc-key");
     expect(
       report.checks.find((check) => check.check === "keystore.file.solana.solana_1")?.detail,
     ).toContain("keystore-solana-solana-1.v1.enc");

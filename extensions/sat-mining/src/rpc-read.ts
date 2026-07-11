@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import http from "node:http";
 import https from "node:https";
 import { createRequire } from "node:module";
+import { redactSensitiveUrlLikeString } from "fased/plugin-sdk";
 import {
   loadConfig,
   loadWalletProviderSecret,
@@ -3594,10 +3595,16 @@ export function inspectSatConnectionDetails() {
   return {
     programId: SAT_PROGRAM_ID(),
     bondProgramId: SAT_BOND_PROGRAM_ID(),
-    rpcUrl: rpc.primaryUrl,
-    readRpcFallbackUrl: rpc.secondaryUrl,
+    rpcUrl: redactSensitiveUrlLikeString(rpc.primaryUrl),
+    readRpcFallbackUrl: rpc.secondaryUrl ? redactSensitiveUrlLikeString(rpc.secondaryUrl) : null,
     rpcState: {
       ...satReadRpcRuntimeState,
+      lastError: satReadRpcRuntimeState.lastError
+        ? redactSensitiveUrlLikeString(satReadRpcRuntimeState.lastError)
+        : null,
+      lastRpcUrl: satReadRpcRuntimeState.lastRpcUrl
+        ? redactSensitiveUrlLikeString(satReadRpcRuntimeState.lastRpcUrl)
+        : null,
       quotaLikely:
         satReadRpcRuntimeState.quotaLikely ||
         looksLikeRpcQuotaFailure(satReadRpcRuntimeState.lastError),

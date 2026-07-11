@@ -8,6 +8,12 @@ describe("redactSensitiveUrl", () => {
     );
   });
 
+  it("redacts hyphenated API key query parameters used by RPC providers", () => {
+    expect(redactSensitiveUrl("https://rpc.example/?api-key=secret&ok=1")).toBe(
+      "https://rpc.example/?api-key=***&ok=1",
+    );
+  });
+
   it("redacts Telegram bot tokens embedded in file download paths", () => {
     expect(
       redactSensitiveUrl("https://api.telegram.org/file/bot123456:ABC_secret/photos/file.jpg"),

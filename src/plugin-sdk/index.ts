@@ -249,6 +249,10 @@ export type { DedupeCache } from "../infra/dedupe.js";
 export { waitForAbortSignal } from "../infra/abort-signal.js";
 export { formatErrorMessage } from "../infra/errors.js";
 export { redactSensitiveText } from "../logging/redact.js";
+export {
+  redactSensitiveUrl,
+  redactSensitiveUrlLikeString,
+} from "../shared/net/redact-sensitive-url.js";
 export { runEmbeddedPiAgent } from "../agents/pi-embedded-runner.js";
 export {
   DEFAULT_FEDERATION_BASE_URL,
