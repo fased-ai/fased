@@ -1,6 +1,6 @@
 {
   "name": "@fased/browser-runtime",
-  "version": "0.1.46",
+  "version": "0.1.47",
   "description": "Optional browser runtime for Fased Agent",
   "files": [
     "index.ts",
@@ -16,7 +16,7 @@
     "playwright-core": "1.58.2"
   },
   "peerDependencies": {
-    "@fased/fased": "^0.1.46"
+    "@fased/fased": "^0.1.47"
   },
   "peerDependenciesMeta": {
     "@fased/fased": {
