@@ -78,6 +78,36 @@ archive_is_safe() {
   done < <(tar -tzf "$archive")
 }
 
+dependency_archive_is_safe() {
+  local archive="$1"
+  local entry
+  while IFS= read -r entry; do
+    case "$entry" in
+      node_modules|node_modules/*) ;;
+      *) return 1 ;;
+    esac
+  done < <(tar -tzf "$archive")
+}
+
+download_verified_asset() {
+  local asset_name="$1"
+  local required="${2:-yes}"
+  local checksum_file="$TEMP_ROOT/${asset_name}.sha256"
+  local archive="$TEMP_ROOT/$asset_name"
+  if ! curl -fsSL "$RELEASE_URL/${asset_name}.sha256" -o "$checksum_file" 2>/dev/null; then
+    [[ "$required" == "yes" ]] && return 10
+    return 1
+  fi
+  local expected
+  expected="$(awk -v asset="$asset_name" '$2 == asset || $2 == "*" asset { print tolower($1); exit }' "$checksum_file")"
+  [[ "$expected" =~ ^[a-f0-9]{64}$ ]] || return 20
+  curl -fsSL "$RELEASE_URL/$asset_name" -o "$archive" 2>/dev/null || return 10
+  local actual
+  actual="$(sha256_file "$archive" || true)"
+  [[ "$actual" == "$expected" ]] || return 20
+  printf '%s\n' "$archive"
+}
+
 for command in node npm curl tar awk; do
   command -v "$command" >/dev/null 2>&1 || exit 10
 done
@@ -86,36 +116,57 @@ VERSION="$(resolve_version || true)"
 ARCH="$(resolve_arch || true)"
 [[ -n "$VERSION" && -n "$ARCH" ]] || exit 10
 
-ASSET_NAME="fased-hosted-linux-${ARCH}-v${VERSION}.tar.gz"
 BASE_URL="${BASE_URL%/}"
 RELEASE_URL="${BASE_URL}/v${VERSION}"
 mkdir -p "$CACHE_DIR" "$PREFIX"
 TEMP_ROOT="$(mktemp -d "$CACHE_DIR/hosted-runtime.XXXXXX")"
 trap 'rm -rf "$TEMP_ROOT"' EXIT
-
-CHECKSUM_FILE="$TEMP_ROOT/${ASSET_NAME}.sha256"
-ARCHIVE="$TEMP_ROOT/$ASSET_NAME"
 EXTRACT_ROOT="$TEMP_ROOT/extract"
-
-curl -fsSL "$RELEASE_URL/${ASSET_NAME}.sha256" -o "$CHECKSUM_FILE" 2>/dev/null || exit 10
-EXPECTED="$(awk -v asset="$ASSET_NAME" '$2 == asset || $2 == "*" asset { print tolower($1); exit }' "$CHECKSUM_FILE")"
-if [[ ! "$EXPECTED" =~ ^[a-f0-9]{64}$ ]]; then
-  echo "Hosted runtime checksum is invalid for $ASSET_NAME." >&2
-  exit 20
-fi
-curl -fsSL "$RELEASE_URL/$ASSET_NAME" -o "$ARCHIVE" 2>/dev/null || exit 10
-ACTUAL="$(sha256_file "$ARCHIVE" || true)"
-if [[ "$ACTUAL" != "$EXPECTED" ]]; then
-  echo "Hosted runtime checksum mismatch for $ASSET_NAME." >&2
-  exit 20
-fi
-if ! archive_is_safe "$ARCHIVE"; then
-  echo "Hosted runtime archive layout is invalid." >&2
-  exit 20
-fi
-
 mkdir -p "$EXTRACT_ROOT"
-tar -xzf "$ARCHIVE" -C "$EXTRACT_ROOT"
+APP_ASSET_NAME="fased-hosted-app-linux-${ARCH}-v${VERSION}.tar.gz"
+set +e
+APP_ARCHIVE="$(download_verified_asset "$APP_ASSET_NAME" no)"
+APP_DOWNLOAD_STATUS=$?
+set -e
+if [[ "$APP_DOWNLOAD_STATUS" -eq 20 ]]; then
+  echo "Hosted app layer failed checksum verification." >&2
+  exit 20
+fi
+if [[ -n "$APP_ARCHIVE" ]]; then
+  archive_is_safe "$APP_ARCHIVE" || exit 20
+  tar -xzf "$APP_ARCHIVE" -C "$EXTRACT_ROOT"
+  PACKAGE_ROOT="$EXTRACT_ROOT/package"
+  METADATA_PATH="$PACKAGE_ROOT/.fased-hosted-runtime.json"
+  DEPENDENCY_HASH="$(node -e '
+    const fs = require("node:fs");
+    const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+    if (value.schemaVersion !== 1 || !/^[a-f0-9]{64}$/.test(value.dependencyHash || "")) process.exit(1);
+    process.stdout.write(value.dependencyHash);
+  ' "$METADATA_PATH" 2>/dev/null || true)"
+  [[ "$DEPENDENCY_HASH" =~ ^[a-f0-9]{64}$ ]] || exit 20
+  DEPENDENCY_ROOT="$CACHE_DIR/hosted-dependencies/$DEPENDENCY_HASH"
+  if [[ ! -d "$DEPENDENCY_ROOT/node_modules" ]]; then
+    DEPENDENCY_ASSET_NAME="fased-hosted-deps-linux-${ARCH}-${DEPENDENCY_HASH}.tar.gz"
+    DEPENDENCY_ARCHIVE="$(download_verified_asset "$DEPENDENCY_ASSET_NAME" yes)" || exit $?
+    dependency_archive_is_safe "$DEPENDENCY_ARCHIVE" || exit 20
+    DEPENDENCY_STAGING="${DEPENDENCY_ROOT}.staging-$$"
+    rm -rf "$DEPENDENCY_STAGING"
+    mkdir -p "$DEPENDENCY_STAGING"
+    tar -xzf "$DEPENDENCY_ARCHIVE" -C "$DEPENDENCY_STAGING"
+    [[ -d "$DEPENDENCY_STAGING/node_modules" ]] || exit 20
+    mkdir -p "$(dirname "$DEPENDENCY_ROOT")"
+    if ! mv "$DEPENDENCY_STAGING" "$DEPENDENCY_ROOT" 2>/dev/null; then
+      [[ -d "$DEPENDENCY_ROOT/node_modules" ]] || exit 20
+      rm -rf "$DEPENDENCY_STAGING"
+    fi
+  fi
+  ln -s "$DEPENDENCY_ROOT/node_modules" "$PACKAGE_ROOT/node_modules"
+else
+  ASSET_NAME="fased-hosted-linux-${ARCH}-v${VERSION}.tar.gz"
+  ARCHIVE="$(download_verified_asset "$ASSET_NAME" yes)" || exit $?
+  archive_is_safe "$ARCHIVE" || exit 20
+  tar -xzf "$ARCHIVE" -C "$EXTRACT_ROOT"
+fi
 PACKAGE_ROOT="$EXTRACT_ROOT/package"
 if [[ ! -f "$PACKAGE_ROOT/fased.mjs" || ! -d "$PACKAGE_ROOT/node_modules" ]]; then
   echo "Hosted runtime archive is incomplete." >&2

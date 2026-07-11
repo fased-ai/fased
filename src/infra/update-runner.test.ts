@@ -261,6 +261,32 @@ describe("runGatewayUpdate", () => {
     return { bytes, checksum };
   }
 
+  async function buildHostedAppResponse(params: {
+    name: string;
+    version: string;
+    dependencyHash: string;
+  }) {
+    const workDir = await fs.mkdtemp(path.join(tempDir, "hosted-app-"));
+    const packageDir = path.join(workDir, "package");
+    await fs.mkdir(packageDir, { recursive: true });
+    await fs.writeFile(
+      path.join(packageDir, "package.json"),
+      JSON.stringify({ name: params.name, version: params.version }),
+      "utf-8",
+    );
+    await fs.writeFile(path.join(packageDir, "fased.mjs"), "export {};\n", "utf-8");
+    await fs.writeFile(
+      path.join(packageDir, ".fased-hosted-runtime.json"),
+      JSON.stringify({ schemaVersion: 1, dependencyHash: params.dependencyHash }),
+      "utf-8",
+    );
+    const archivePath = path.join(workDir, "app.tar.gz");
+    await tar.c({ cwd: workDir, file: archivePath, gzip: true }, ["package"]);
+    const bytes = await fs.readFile(archivePath);
+    const checksum = createHash("sha256").update(bytes).digest("hex");
+    return { bytes, checksum };
+  }
+
   function fetchInputUrl(input: string | URL | Request): string {
     if (typeof input === "string") {
       return input;
@@ -822,6 +848,7 @@ describe("runGatewayUpdate", () => {
     expect(await fs.stat(path.join(pkgRoot, "node_modules"))).toBeTruthy();
     expect(calls.some((call) => call.startsWith("npm "))).toBe(false);
     expect(result.steps.map((step) => step.name)).toEqual([
+      "hosted app download",
       "hosted artifact download",
       "hosted artifact extract",
       "hosted artifact verify",
@@ -832,6 +859,70 @@ describe("runGatewayUpdate", () => {
     expect(await fs.readFile(persistentConfig, "utf8")).toBe(
       '{"wallet":{"runtime":{"enabled":true}}}\n',
     );
+  });
+
+  it("reuses an existing hosted dependency layer for an app-only update", async () => {
+    const prefix = path.join(tempDir, ".fased", "install-cache", "npm-global");
+    const pkgRoot = path.join(prefix, "lib", "node_modules", "@fased", "fased");
+    const dependencyHash = "a".repeat(64);
+    const dependencyModules = path.join(
+      path.dirname(pkgRoot),
+      ".fased-dependencies",
+      dependencyHash,
+      "node_modules",
+    );
+    await fs.mkdir(dependencyModules, { recursive: true });
+    await fs.writeFile(path.join(dependencyModules, ".ready"), "ok\n", "utf8");
+    await seedGlobalPackageRoot(pkgRoot, "1.0.0", "@fased/fased");
+    const artifact = await buildHostedAppResponse({
+      name: "@fased/fased",
+      version: "2.0.0",
+      dependencyHash,
+    });
+    const appAssetName = "fased-hosted-app-linux-x64-v2.0.0.tar.gz";
+    const requested: string[] = [];
+    const fetchImpl = (async (input: string | URL | Request) => {
+      const url = fetchInputUrl(input);
+      requested.push(url);
+      if (url.endsWith(`${appAssetName}.sha256`)) {
+        return new Response(`${artifact.checksum}  ${appAssetName}\n`);
+      }
+      if (url.endsWith(appAssetName)) {
+        return new Response(artifact.bytes);
+      }
+      return new Response("not found", { status: 404 });
+    }) as typeof fetch;
+    const runCommand = async (argv: string[]) => {
+      if (argv[0] === "git" && argv.at(-2) === "rev-parse" && argv.at(-1) === "--show-toplevel") {
+        return { stdout: "", stderr: "not a git repository", code: 128 };
+      }
+      if (argv[0] === process.execPath && argv.at(-2) === "plugins" && argv.at(-1) === "doctor") {
+        return { stdout: "No plugin issues detected.", stderr: "", code: 0 };
+      }
+      throw new Error(`unexpected command: ${argv.join(" ")}`);
+    };
+
+    const result = await runWithCommand(runCommand, {
+      cwd: pkgRoot,
+      tag: "2.0.0",
+      hostedReleaseFetch: fetchImpl,
+      hostedReleaseBaseUrl: "https://releases.example.test",
+    });
+
+    expect(result.status).toBe("ok");
+    expect(result.after?.version).toBe("2.0.0");
+    expect(result.steps.map((step) => step.name)).toEqual([
+      "hosted app download",
+      "hosted app extract",
+      "hosted dependency reuse",
+      "hosted layered verify",
+      "hosted app swap",
+    ]);
+    expect(requested.some((url) => url.includes("fased-hosted-deps"))).toBe(false);
+    expect(await fs.realpath(path.join(pkgRoot, "node_modules"))).toBe(
+      await fs.realpath(dependencyModules),
+    );
+    await finalizeUpdateTransaction(result.transaction);
   });
 
   it("restores the previous package root when a post-swap verification rolls back", async () => {

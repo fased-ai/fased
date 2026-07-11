@@ -8,7 +8,12 @@ import {
   resolveControlUiDistIndexPathForRoot,
 } from "./control-ui-assets.js";
 import { detectPackageManager as detectPackageManagerImpl } from "./detect-package-manager.js";
-import { downloadHostedRuntimeArtifact } from "./hosted-runtime-artifact.js";
+import {
+  downloadHostedRuntimeArtifact,
+  downloadHostedRuntimeDescriptor,
+  resolveHostedRuntimeAppArtifact,
+  resolveHostedRuntimeDependencyArtifact,
+} from "./hosted-runtime-artifact.js";
 import { readPackageName, readPackageVersion } from "./package-json.js";
 import { trimLogTail } from "./restart-sentinel.js";
 import {
@@ -120,6 +125,25 @@ type HostedArtifactUpdateResult =
       reason: string;
       afterVersion: string | null;
     };
+
+type HostedRuntimeMetadata = {
+  schemaVersion: 1;
+  dependencyHash: string;
+};
+
+async function readHostedRuntimeMetadata(root: string): Promise<HostedRuntimeMetadata | null> {
+  try {
+    const parsed = JSON.parse(
+      await fs.readFile(path.join(root, ".fased-hosted-runtime.json"), "utf8"),
+    ) as Partial<HostedRuntimeMetadata>;
+    if (parsed.schemaVersion !== 1 || !/^[a-f0-9]{64}$/.test(parsed.dependencyHash ?? "")) {
+      return null;
+    }
+    return parsed as HostedRuntimeMetadata;
+  } catch {
+    return null;
+  }
+}
 
 export type UpdateStepInfo = {
   name: string;
@@ -672,7 +696,7 @@ async function pathExists(pathname: string): Promise<boolean> {
   }
 }
 
-async function runHostedReleaseArtifactUpdate(params: {
+async function runHostedLayeredArtifactUpdate(params: {
   fetchImpl: typeof fetch;
   baseUrl?: string;
   pkgRoot: string;
@@ -682,8 +706,243 @@ async function runHostedReleaseArtifactUpdate(params: {
   progress?: UpdateStepProgress;
 }): Promise<HostedArtifactUpdateResult> {
   const packageParent = path.dirname(params.pkgRoot);
-  const tempRoot = await fs.mkdtemp(path.join(packageParent, ".fased-release-update-"));
+  const tempRoot = await fs.mkdtemp(path.join(packageParent, ".fased-layered-update-"));
   const steps: UpdateStepResult[] = [];
+  let backupRoot: string | null = null;
+  let retainBackup = false;
+  const record = async <T>(name: string, command: string, run: () => Promise<T>): Promise<T> => {
+    const startedAt = Date.now();
+    const info: UpdateStepInfo = {
+      name,
+      command,
+      cwd: params.pkgRoot,
+      index: steps.length,
+      total: 6,
+    };
+    params.progress?.onStepStart?.(info);
+    try {
+      const result = await run();
+      const step = {
+        name,
+        command,
+        cwd: params.pkgRoot,
+        durationMs: Date.now() - startedAt,
+        exitCode: 0,
+      } satisfies UpdateStepResult;
+      steps.push(step);
+      params.progress?.onStepComplete?.({ ...info, durationMs: step.durationMs, exitCode: 0 });
+      return result;
+    } catch (error) {
+      const step = {
+        name,
+        command,
+        cwd: params.pkgRoot,
+        durationMs: Date.now() - startedAt,
+        exitCode: 1,
+        stderrTail: String(error),
+      } satisfies UpdateStepResult;
+      steps.push(step);
+      params.progress?.onStepComplete?.({
+        ...info,
+        durationMs: step.durationMs,
+        exitCode: 1,
+        stderrTail: step.stderrTail,
+      });
+      throw error;
+    }
+  };
+
+  try {
+    const appDescriptor = resolveHostedRuntimeAppArtifact({
+      version: params.expectedVersion,
+      baseUrl: params.baseUrl,
+    });
+    const appDownload = await record(
+      "hosted app download",
+      `download hosted app v${params.expectedVersion}`,
+      async () =>
+        await downloadHostedRuntimeDescriptor({
+          descriptor: appDescriptor,
+          destinationDir: tempRoot,
+          fetchImpl: params.fetchImpl,
+        }),
+    );
+    if (appDownload.kind === "unavailable") {
+      return { kind: "fallback", steps, reason: appDownload.reason };
+    }
+    if (appDownload.kind === "error") {
+      return {
+        kind: "error",
+        steps,
+        reason: appDownload.reason,
+        afterVersion: await readPackageVersion(params.pkgRoot),
+      };
+    }
+
+    const extractRoot = path.join(tempRoot, "app");
+    await fs.mkdir(extractRoot, { recursive: true });
+    await record("hosted app extract", `extract ${appDownload.descriptor.assetName}`, async () => {
+      await tar.x({ file: appDownload.archivePath, cwd: extractRoot });
+    });
+    const artifactRoot = path.join(extractRoot, "package");
+    const metadata = await readHostedRuntimeMetadata(artifactRoot);
+    if (!metadata) {
+      return { kind: "fallback", steps, reason: "hosted app dependency metadata missing" };
+    }
+
+    const dependencyParent = path.join(packageParent, ".fased-dependencies");
+    const dependencyRoot = path.join(dependencyParent, metadata.dependencyHash);
+    const dependencyModules = path.join(dependencyRoot, "node_modules");
+    if (!(await pathExists(dependencyModules))) {
+      const dependencyDescriptor = resolveHostedRuntimeDependencyArtifact({
+        version: params.expectedVersion,
+        dependencyHash: metadata.dependencyHash,
+        baseUrl: params.baseUrl,
+      });
+      const dependencyDownload = await record(
+        "hosted dependency download",
+        `download dependency layer ${metadata.dependencyHash.slice(0, 12)}`,
+        async () =>
+          await downloadHostedRuntimeDescriptor({
+            descriptor: dependencyDescriptor,
+            destinationDir: tempRoot,
+            fetchImpl: params.fetchImpl,
+          }),
+      );
+      if (dependencyDownload.kind !== "downloaded") {
+        return {
+          kind: dependencyDownload.kind === "error" ? "error" : "fallback",
+          steps,
+          reason: dependencyDownload.reason,
+          ...(dependencyDownload.kind === "error"
+            ? { afterVersion: await readPackageVersion(params.pkgRoot) }
+            : {}),
+        } as HostedArtifactUpdateResult;
+      }
+      await fs.mkdir(dependencyParent, { recursive: true });
+      const dependencyStaging = `${dependencyRoot}.staging-${process.pid}-${Date.now()}`;
+      await fs.mkdir(dependencyStaging, { recursive: true });
+      try {
+        await record(
+          "hosted dependency extract",
+          `extract ${dependencyDownload.descriptor.assetName}`,
+          async () => {
+            await tar.x({ file: dependencyDownload.archivePath, cwd: dependencyStaging });
+          },
+        );
+        if (!(await pathExists(path.join(dependencyStaging, "node_modules")))) {
+          throw new Error("dependency layer did not contain node_modules");
+        }
+        await fs.rename(dependencyStaging, dependencyRoot).catch(async (error) => {
+          if (!(await pathExists(dependencyModules))) {
+            throw error;
+          }
+        });
+      } finally {
+        await safeRemove(dependencyStaging);
+      }
+    } else {
+      steps.push({
+        name: "hosted dependency reuse",
+        command: `reuse ${metadata.dependencyHash}`,
+        cwd: params.pkgRoot,
+        durationMs: 0,
+        exitCode: 0,
+      });
+    }
+
+    await fs.symlink(dependencyModules, path.join(artifactRoot, "node_modules"), "dir");
+    const artifactVersion = await readPackageVersion(artifactRoot);
+    const runtimeShapeReady =
+      compareSemverStrings(artifactVersion, params.expectedVersion) === 0 &&
+      (await pathExists(path.join(artifactRoot, "fased.mjs"))) &&
+      (await pathExists(path.join(artifactRoot, "node_modules")));
+    if (!runtimeShapeReady) {
+      return {
+        kind: "error",
+        steps,
+        reason: "layered hosted runtime is incomplete",
+        afterVersion: await readPackageVersion(params.pkgRoot),
+      };
+    }
+
+    const smokeHome = path.join(tempRoot, "smoke-home");
+    const smokeStateDir = path.join(smokeHome, ".fased");
+    await fs.mkdir(smokeStateDir, { recursive: true });
+    const smokeArgv = [process.execPath, path.join(artifactRoot, "fased.mjs"), "plugins", "doctor"];
+    const smokeResult = await record(
+      "hosted layered verify",
+      smokeArgv.join(" "),
+      async () =>
+        await params.runCommand(smokeArgv, {
+          cwd: artifactRoot,
+          timeoutMs: params.timeoutMs,
+          env: {
+            ...process.env,
+            HOME: smokeHome,
+            FASED_STATE_DIR: smokeStateDir,
+            FASED_CONFIG_PATH: path.join(smokeStateDir, "fased.json"),
+          },
+        }),
+    );
+    if (smokeResult.code !== 0) {
+      return {
+        kind: "error",
+        steps,
+        reason: "layered hosted runtime verification failed",
+        afterVersion: await readPackageVersion(params.pkgRoot),
+      };
+    }
+
+    await record("hosted app swap", `replace ${params.pkgRoot}`, async () => {
+      const swapped = await swapPackageRoot({ pkgRoot: params.pkgRoot, artifactRoot });
+      backupRoot = swapped.backupRoot;
+    });
+    if (!backupRoot) {
+      throw new Error("hosted app swap did not retain a rollback runtime");
+    }
+    retainBackup = true;
+    return {
+      kind: "updated",
+      steps,
+      afterVersion: await readPackageVersion(params.pkgRoot),
+      transaction: {
+        kind: "package-root-swap",
+        packageRoot: params.pkgRoot,
+        backupRoot,
+      },
+    };
+  } catch (error) {
+    return {
+      kind: "error",
+      steps,
+      reason: `layered hosted update failed: ${String(error)}`,
+      afterVersion: await readPackageVersion(params.pkgRoot),
+    };
+  } finally {
+    if (backupRoot && !retainBackup) {
+      await safeRemove(backupRoot);
+    }
+    await safeRemove(tempRoot);
+  }
+}
+
+async function runHostedReleaseArtifactUpdate(params: {
+  fetchImpl: typeof fetch;
+  baseUrl?: string;
+  pkgRoot: string;
+  expectedVersion: string;
+  runCommand: CommandRunner;
+  timeoutMs: number;
+  progress?: UpdateStepProgress;
+}): Promise<HostedArtifactUpdateResult> {
+  const layeredResult = await runHostedLayeredArtifactUpdate(params);
+  if (layeredResult.kind !== "fallback") {
+    return layeredResult;
+  }
+  const packageParent = path.dirname(params.pkgRoot);
+  const tempRoot = await fs.mkdtemp(path.join(packageParent, ".fased-release-update-"));
+  const steps: UpdateStepResult[] = [...layeredResult.steps];
   let backupRoot: string | null = null;
   let retainBackup = false;
   let progressIndex = 0;
