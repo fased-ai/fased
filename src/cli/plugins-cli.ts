@@ -16,7 +16,6 @@ import {
   executePluginUninstallLifecycle,
   executePluginUpdateLifecycle,
   finalizeInstalledPluginConfig,
-  resolvePluginLifecycleEntry,
 } from "../plugins/lifecycle.js";
 import {
   buildPluginMarketplaceUpdateReview,
@@ -32,7 +31,6 @@ import {
   setPluginRuntimeSessionReadGrant,
 } from "../plugins/runtime-helper-grants.js";
 import { resolvePluginSourceRoots, formatPluginSourceForTable } from "../plugins/source-display.js";
-import { buildPluginStatusReport } from "../plugins/status.js";
 import { defaultRuntime } from "../runtime.js";
 import { formatDocsLink } from "../terminal/links.js";
 import { renderTable } from "../terminal/table.js";
@@ -40,6 +38,7 @@ import { theme } from "../terminal/theme.js";
 import { resolveUserPath, shortenHomeInString, shortenHomePath } from "../utils.js";
 import { resolvePinnedNpmInstallRecordForCli } from "./npm-resolution.js";
 import { setPluginEnabledInConfig } from "./plugins-config.js";
+import { pluginDoctorCommand, pluginInfoCommand } from "./plugins-status-cli.js";
 import { promptYesNo } from "./prompt.js";
 
 export type PluginsListOptions = {
@@ -324,83 +323,7 @@ export function registerPluginsCli(program: Command) {
     .description("Show plugin details")
     .argument("<id>", "Plugin id")
     .option("--json", "Print JSON")
-    .action((id: string, opts: PluginInfoOptions) => {
-      const report = buildPluginLifecycleReport();
-      const plugin = resolvePluginLifecycleEntry({
-        idOrName: id,
-        report,
-      });
-      if (!plugin) {
-        defaultRuntime.error(`Plugin not found: ${id}`);
-        process.exit(1);
-      }
-
-      if (opts.json) {
-        defaultRuntime.log(JSON.stringify(plugin, null, 2));
-        return;
-      }
-
-      const lines: string[] = [];
-      lines.push(theme.heading(plugin.name || plugin.id));
-      if (plugin.name && plugin.name !== plugin.id) {
-        lines.push(theme.muted(`id: ${plugin.id}`));
-      }
-      if (plugin.description) {
-        lines.push(plugin.description);
-      }
-      lines.push("");
-      lines.push(`${theme.muted("Status:")} ${plugin.status}`);
-      lines.push(`${theme.muted("Source:")} ${shortenHomeInString(plugin.source)}`);
-      lines.push(`${theme.muted("Origin:")} ${plugin.origin}`);
-      if (plugin.version) {
-        lines.push(`${theme.muted("Version:")} ${plugin.version}`);
-      }
-      if (plugin.toolNames.length > 0) {
-        lines.push(`${theme.muted("Tools:")} ${plugin.toolNames.join(", ")}`);
-      }
-      if (plugin.hookNames.length > 0) {
-        lines.push(`${theme.muted("Hooks:")} ${plugin.hookNames.join(", ")}`);
-      }
-      if (plugin.gatewayMethods.length > 0) {
-        lines.push(`${theme.muted("Gateway methods:")} ${plugin.gatewayMethods.join(", ")}`);
-      }
-      if (plugin.providerIds.length > 0) {
-        lines.push(`${theme.muted("Providers:")} ${plugin.providerIds.join(", ")}`);
-      }
-      if (plugin.cliCommands.length > 0) {
-        lines.push(`${theme.muted("CLI commands:")} ${plugin.cliCommands.join(", ")}`);
-      }
-      if (plugin.services.length > 0) {
-        lines.push(`${theme.muted("Services:")} ${plugin.services.join(", ")}`);
-      }
-      if (plugin.error) {
-        lines.push(`${theme.error("Error:")} ${plugin.error}`);
-      }
-      if (plugin.install) {
-        lines.push("");
-        lines.push(`${theme.muted("Install:")} ${plugin.install.source}`);
-        if (plugin.install.spec) {
-          lines.push(`${theme.muted("Spec:")} ${plugin.install.spec}`);
-        }
-        if (plugin.install.sourcePath) {
-          lines.push(
-            `${theme.muted("Source path:")} ${shortenHomePath(plugin.install.sourcePath)}`,
-          );
-        }
-        if (plugin.install.installPath) {
-          lines.push(
-            `${theme.muted("Install path:")} ${shortenHomePath(plugin.install.installPath)}`,
-          );
-        }
-        if (plugin.install.version) {
-          lines.push(`${theme.muted("Recorded version:")} ${plugin.install.version}`);
-        }
-        if (plugin.install.installedAt) {
-          lines.push(`${theme.muted("Installed at:")} ${plugin.install.installedAt}`);
-        }
-      }
-      defaultRuntime.log(lines.join("\n"));
-    });
+    .action((id: string, opts: PluginInfoOptions) => pluginInfoCommand(id, opts));
 
   plugins
     .command("enable")
@@ -929,36 +852,5 @@ export function registerPluginsCli(program: Command) {
   plugins
     .command("doctor")
     .description("Report plugin load issues")
-    .action(() => {
-      const report = buildPluginStatusReport();
-      const errors = report.plugins.filter((p) => p.status === "error");
-      const diags = report.diagnostics.filter((d) => d.level === "error");
-
-      if (errors.length === 0 && diags.length === 0) {
-        defaultRuntime.log("No plugin issues detected.");
-        return;
-      }
-
-      const lines: string[] = [];
-      if (errors.length > 0) {
-        lines.push(theme.error("Plugin errors:"));
-        for (const entry of errors) {
-          lines.push(`- ${entry.id}: ${entry.error ?? "failed to load"} (${entry.source})`);
-        }
-      }
-      if (diags.length > 0) {
-        if (lines.length > 0) {
-          lines.push("");
-        }
-        lines.push(theme.warn("Diagnostics:"));
-        for (const diag of diags) {
-          const target = diag.pluginId ? `${diag.pluginId}: ` : "";
-          lines.push(`- ${target}${diag.message}`);
-        }
-      }
-      const docs = formatDocsLink("/plugin", "docs.fased.ai/plugin");
-      lines.push("");
-      lines.push(`${theme.muted("Docs:")} ${docs}`);
-      defaultRuntime.log(lines.join("\n"));
-    });
+    .action(async () => await pluginDoctorCommand());
 }

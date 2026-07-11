@@ -45,6 +45,41 @@ const routeStatus: RouteSpec = {
   },
 };
 
+const routeUpdateStatus: RouteSpec = {
+  match: (path) => path[0] === "update" && path[1] === "status",
+  run: async (argv) => {
+    const timeout = getFlagValue(argv, "--timeout");
+    if (timeout === null) {
+      return false;
+    }
+    const { updateStatusCommand } = await import("../update-cli/status.js");
+    await updateStatusCommand({ json: hasFlag(argv, "--json"), timeout });
+    return true;
+  },
+};
+
+const routePluginInfo: RouteSpec = {
+  match: (path) => path[0] === "plugins" && path[1] === "info",
+  run: async (argv) => {
+    const id = getCommandPositionals(argv)[2];
+    if (!id) {
+      return false;
+    }
+    const { pluginInfoCommand } = await import("../plugins-status-cli.js");
+    pluginInfoCommand(id, { json: hasFlag(argv, "--json") });
+    return true;
+  },
+};
+
+const routePluginDoctor: RouteSpec = {
+  match: (path) => path[0] === "plugins" && path[1] === "doctor",
+  run: async (argv) => {
+    const { pluginDoctorCommand } = await import("../plugins-status-cli.js");
+    await pluginDoctorCommand({ json: hasFlag(argv, "--json") });
+    return true;
+  },
+};
+
 const routeSessions: RouteSpec = {
   // Fast-path only bare `sessions`; subcommands (e.g. `sessions cleanup`)
   // must fall through to Commander so nested handlers run.
@@ -280,6 +315,9 @@ const routeModelsStatus: RouteSpec = {
 const routes: RouteSpec[] = [
   routeHealth,
   routeStatus,
+  routeUpdateStatus,
+  routePluginInfo,
+  routePluginDoctor,
   routeSessions,
   routeAgentsList,
   routeMemoryStatus,

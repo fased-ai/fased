@@ -42,6 +42,17 @@ describe("program routes", () => {
     expect(findRoutedCommand(["definitely-not-real"])).toBeNull();
   });
 
+  it("fast-routes update and plugin status commands without plugin bootstrap", () => {
+    for (const path of [
+      ["update", "status"],
+      ["plugins", "info"],
+      ["plugins", "doctor"],
+    ]) {
+      const route = expectRoute(path);
+      expect(route?.loadPlugins).not.toBe(true);
+    }
+  });
+
   it("returns false for config get route when path argument is missing", async () => {
     await expectRunFalse(["config", "get"], ["node", "fased", "config", "get", "--json"]);
   });
