@@ -347,10 +347,11 @@ Read next:
 
 ## 7. Verify Official Mainnet Status
 
-The SAT mainnet manifest is signed by the project release key. That public key
-belongs to Fased releases; it is not your wallet public key and does not require
-you to create a wallet. A user with no wallet can still check whether mainnet is
-live and whether the official manifest is trusted.
+The SAT mainnet manifest is signed by the Satcoin project's manifest publisher.
+Its public verification key arrives inside Fased releases; it is not a miner's
+wallet key, a node key, or anything users create during wallet setup. A user
+with no wallet can still check whether mainnet is live and whether the official
+manifest is trusted.
 
 ```bash
 fased sat sync-mainnet --json

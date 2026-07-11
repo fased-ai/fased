@@ -18,7 +18,7 @@ type TrustedManifestKey = {
   publicKeyBase64Url: string;
 };
 
-// Populated only with public keys produced by the official launch key ceremony.
+// Populated only with public keys approved for the official SAT manifest publisher.
 // Never add a placeholder key here: live mainnet remains fail-closed until a
 // release contains an official trust anchor.
 const EMBEDDED_TRUSTED_KEYS: TrustedManifestKey[] = [];
