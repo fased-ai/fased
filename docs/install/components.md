@@ -34,10 +34,12 @@ A normal install includes:
 - browser-control interfaces and the Fased browser extension files
 - file-backed memory and remote embedding-provider support
 
-Creating or importing `@wallet:mining` through onboarding attaches the wallet
-and enables the bundled `sat-mining` runtime. Do not install a separate mining
+The bundled `sat-mining` runtime is included and loaded with core. Creating or
+importing `@wallet:mining` through onboarding attaches the dedicated Mining
+wallet and makes readiness checks available. Do not install a separate mining
 package and do not run `fased plugins enable sat-mining` as the normal mining
-setup path.
+setup path. Mining does not start until readiness, capital, and commit checks
+pass and the operator explicitly starts it.
 
 ## Official channel add-ons
 
