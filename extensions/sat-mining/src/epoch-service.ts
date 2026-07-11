@@ -24,6 +24,7 @@ import {
 import {
   getOrCreateRoundExecutionState,
   isWorkerDue,
+  isSatRateLimitedError,
   markWorkerFailure,
   markWorkerIdle,
   markWorkerOverlap,
@@ -32,6 +33,7 @@ import {
   markWorkerSuccess,
   markWorkerTarget,
   markWorkerWaiting,
+  satRateLimitBackoffMs,
   scheduleWorkerNextRun,
   type SatRoundExecutionState,
   type SatMiningRuntimeState,
@@ -1347,6 +1349,20 @@ export function createSatEpochService(params: {
         );
         scheduleWorkerNextRun(state, "epoch", 2_000);
         api.logger.warn("[sat-mining] epoch service timed out on a chain read; retrying");
+        return;
+      }
+      if (isSatRateLimitedError(error)) {
+        markWorkerFailure(state, "epoch", error);
+        const delayMs = satRateLimitBackoffMs(state.workers.epoch.retryCount);
+        markWorkerWaiting(
+          state,
+          "epoch",
+          `rate limited; backing off ${Math.ceil(delayMs / 1000)}s before retrying settlement`,
+        );
+        scheduleWorkerNextRun(state, "epoch", delayMs);
+        api.logger.warn(
+          `[sat-mining] cycle settlement service rate limited; backing off ${Math.ceil(delayMs / 1000)}s`,
+        );
         return;
       }
       if (activeTargetCycleId != null && isInvalidAccountOwnerError(error)) {

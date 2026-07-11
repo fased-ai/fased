@@ -755,6 +755,45 @@ describe("createSatRoundWatcherService", () => {
     await service.stop?.();
   });
 
+  it("backs off cycle reads when the RPC provider quota is exhausted", async () => {
+    const config = {
+      enabled: true,
+      network: "devnet" as const,
+      riskMode: "balanced" as const,
+      walletId: "wallet-a",
+    };
+    const state = createSatMiningRuntimeState(config);
+    state.activeWalletAddress = "authority-1";
+    runSatGatewayMethod.mockImplementation(async (args: unknown) => {
+      const method = (args as { method?: string })?.method;
+      if (method === "sat.submitCycle") {
+        throw new Error("RPC error -32429: max usage reached");
+      }
+      return { ok: true };
+    });
+    const api = {
+      config: {},
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    } as const;
+
+    const service = createSatRoundWatcherService({ api: api as never, config, state });
+    await service.start();
+
+    expect(state.workers.roundWatcher.retryCount).toBe(1);
+    expect(state.workers.roundWatcher.waitingReason).toContain("backing off 60s");
+    expect(Date.parse(state.workers.roundWatcher.nextScheduledAt ?? "") - Date.now()).toBe(60_000);
+    expect(
+      runSatGatewayMethod.mock.calls.filter((call) => call[0]?.method === "sat.submitCycle"),
+    ).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(55_000);
+    expect(
+      runSatGatewayMethod.mock.calls.filter((call) => call[0]?.method === "sat.submitCycle"),
+    ).toHaveLength(1);
+
+    await service.stop?.();
+  });
+
   it("reconciles a timed-out submit that later appears on-chain without sending a duplicate", async () => {
     const config = {
       enabled: true,

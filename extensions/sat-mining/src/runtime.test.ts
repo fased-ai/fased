@@ -2,11 +2,22 @@ import { describe, expect, it } from "vitest";
 import {
   createSatMiningRuntimeState,
   getOrCreateRoundExecutionState,
+  isSatRateLimitedError,
   resetSatRoundRuntimeState,
+  satRateLimitBackoffMs,
   satRoundKey,
 } from "./runtime.js";
 
 describe("sat mining runtime helpers", () => {
+  it("recognizes provider quota errors and applies bounded exponential backoff", () => {
+    expect(isSatRateLimitedError("RPC error -32429: max usage reached")).toBe(true);
+    expect(isSatRateLimitedError("RESOURCE_EXHAUSTED: project quota exceeded")).toBe(true);
+    expect(isSatRateLimitedError("connection reset by peer")).toBe(false);
+    expect(satRateLimitBackoffMs(1)).toBe(60_000);
+    expect(satRateLimitBackoffMs(2)).toBe(120_000);
+    expect(satRateLimitBackoffMs(20)).toBe(300_000);
+  });
+
   it("resets in-memory round runtime state", () => {
     const state = createSatMiningRuntimeState({
       enabled: true,
