@@ -68,12 +68,14 @@ vi.mock("../../src/wallet/wallet-provider-registry.js", () => ({
         name: "Wallet A",
         providerId: "embedded-keystore",
         addresses: { solana: "miner-wallet-1" },
+        metadata: { role: "mining", purpose: "mining" },
       },
       {
         id: "wallet-b",
         name: "Wallet B",
         providerId: "embedded-keystore",
         addresses: { solana: "miner-wallet-2" },
+        metadata: { role: "mining", purpose: "mining" },
       },
     ],
   })),
@@ -4542,6 +4544,7 @@ describe("sat-mining plugin config persistence", () => {
                 name: "Wallet A",
                 providerId: "local-socket-signer",
                 addresses: { solana: "stale-wallet-a" },
+                metadata: { role: "mining", purpose: "mining" },
               },
             ],
           }) as never,
@@ -4685,6 +4688,7 @@ describe("sat-mining plugin config persistence", () => {
                   name: "Wallet A",
                   providerId: "embedded-keystore",
                   addresses: { solana: "miner-wallet-1" },
+                  metadata: { role: "mining", purpose: "mining" },
                 },
                 {
                   id: "wallet-b",
@@ -5409,6 +5413,114 @@ describe("sat-mining plugin config persistence", () => {
     expect(writeConfigFile).not.toHaveBeenCalled();
   });
 
+  it("rejects an Agent wallet for SAT mining in readiness and start", async () => {
+    const { readWalletProviderRegistry } =
+      await import("../../src/wallet/wallet-provider-registry.js");
+    const registryMock = vi.mocked(readWalletProviderRegistry);
+    registryMock.mockReturnValue({
+      defaultWalletId: "wallet-a",
+      wallets: [
+        {
+          id: "wallet-a",
+          name: "Agent",
+          providerId: "embedded-keystore",
+          addresses: { solana: "agent-wallet-1" },
+          metadata: { role: "agent", purpose: "agent" },
+        },
+      ],
+    } as never);
+
+    try {
+      const { default: satMiningPlugin } = await import("./index.js");
+      const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
+      const configState = {
+        plugins: {
+          entries: {
+            "sat-mining": {
+              enabled: true,
+              config: { enabled: true, network: "devnet", walletId: "wallet-a" },
+            },
+          },
+        },
+      };
+
+      satMiningPlugin.register({
+        id: "sat-mining",
+        name: "SAT Mining",
+        source: "test",
+        config: {} as never,
+        pluginConfig: {
+          enabled: true,
+          network: "devnet",
+          riskMode: "balanced",
+          walletId: "wallet-a",
+        },
+        runtime: {
+          version: "test",
+          config: {
+            loadConfig: vi.fn(() => structuredClone(configState)),
+            writeConfigFile: vi.fn(async () => {}),
+          },
+        },
+        logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+        registerTool: vi.fn(),
+        registerHook: vi.fn(),
+        registerHttpHandler: vi.fn(),
+        registerHttpRoute: vi.fn(),
+        registerChannel: vi.fn(),
+        registerGatewayMethod: vi.fn(
+          (name: string, handler: RegisteredGatewayMethod["handler"]) => {
+            gatewayMethods.set(name, { handler });
+          },
+        ),
+        registerCli: vi.fn(),
+        registerService: vi.fn(),
+        registerProvider: vi.fn(),
+        registerCommand: vi.fn(),
+        resolvePath: vi.fn((input: string) => input),
+        on: vi.fn(),
+      } as never);
+
+      for (const method of ["sat.getMiningReadiness", "sat.startMining"]) {
+        let response: { ok: boolean; error?: unknown } | null = null;
+        await gatewayMethods.get(method)!.handler({
+          params: { walletId: "wallet-a" },
+          respond: (ok, _payload, error) => {
+            response = { ok, error };
+          },
+        });
+        expect(response).toMatchObject({
+          ok: false,
+          error: {
+            code: "UNAVAILABLE",
+            message:
+              "walletId wallet-a is not the dedicated Mining wallet; create or import @wallet:mining and use that wallet for SAT mining",
+          },
+        });
+      }
+    } finally {
+      registryMock.mockReturnValue({
+        defaultWalletId: "wallet-a",
+        wallets: [
+          {
+            id: "wallet-a",
+            name: "Wallet A",
+            providerId: "embedded-keystore",
+            addresses: { solana: "miner-wallet-1" },
+            metadata: { role: "mining", purpose: "mining" },
+          },
+          {
+            id: "wallet-b",
+            name: "Wallet B",
+            providerId: "embedded-keystore",
+            addresses: { solana: "miner-wallet-2" },
+            metadata: { role: "mining", purpose: "mining" },
+          },
+        ],
+      } as never);
+    }
+  });
+
   it("fails startMining when no configured or default wallet is available", async () => {
     const { readWalletProviderRegistry } =
       await import("../../src/wallet/wallet-provider-registry.js");
@@ -5420,6 +5532,7 @@ describe("sat-mining plugin config persistence", () => {
           name: "Wallet A",
           providerId: "embedded-keystore",
           addresses: { solana: "miner-wallet-1" },
+          metadata: { role: "mining", purpose: "mining" },
         },
       ],
     } as never);
@@ -5486,12 +5599,14 @@ describe("sat-mining plugin config persistence", () => {
           name: "Wallet A",
           providerId: "embedded-keystore",
           addresses: { solana: "miner-wallet-1" },
+          metadata: { role: "mining", purpose: "mining" },
         },
         {
           id: "wallet-b",
           name: "Wallet B",
           providerId: "embedded-keystore",
           addresses: { solana: "miner-wallet-2" },
+          metadata: { role: "mining", purpose: "mining" },
         },
       ],
     } as never);
@@ -5711,6 +5826,7 @@ describe("sat-mining plugin config persistence", () => {
                   name: "Wallet A",
                   providerId: "embedded-keystore",
                   addresses: { solana: "miner-wallet-1" },
+                  metadata: { role: "mining", purpose: "mining" },
                 },
               ]
             : [],
@@ -5834,12 +5950,14 @@ describe("sat-mining plugin config persistence", () => {
             name: "Wallet A",
             providerId: "embedded-keystore",
             addresses: { solana: "miner-wallet-1" },
+            metadata: { role: "mining", purpose: "mining" },
           },
           {
             id: "wallet-b",
             name: "Wallet B",
             providerId: "embedded-keystore",
             addresses: { solana: "miner-wallet-2" },
+            metadata: { role: "mining", purpose: "mining" },
           },
         ],
       } as never);
