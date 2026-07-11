@@ -74,8 +74,8 @@ export { createOrExecuteWalletSend } from "../wallet/wallet-send-approvals.js";
 export { readWalletStatusSnapshot } from "../wallet/wallet-status.js";
 
 export async function fetchWithSsrFGuard(
-  params: Parameters<typeof import("../infra/net/ssrf.js").fetchWithSsrFGuard>[0],
-): ReturnType<typeof import("../infra/net/ssrf.js").fetchWithSsrFGuard> {
-  const ssrf = await import("../infra/net/ssrf.js");
-  return ssrf.fetchWithSsrFGuard(params);
+  params: Parameters<typeof import("../infra/net/fetch-guard.js").fetchWithSsrFGuard>[0],
+): ReturnType<typeof import("../infra/net/fetch-guard.js").fetchWithSsrFGuard> {
+  const fetchGuard = await import("../infra/net/fetch-guard.js");
+  return fetchGuard.fetchWithSsrFGuard(params);
 }
