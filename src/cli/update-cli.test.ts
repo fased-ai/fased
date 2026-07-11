@@ -449,6 +449,22 @@ describe("update-cli", () => {
     expect(defaultRuntime.log).toHaveBeenCalled();
   });
 
+  it("skips plugin update discovery when no plugins are installed and reports stage timing", async () => {
+    vi.mocked(runGatewayUpdate).mockResolvedValue(makeOkUpdateResult());
+
+    await updateCommand({ restart: false });
+
+    expect(syncPluginsForUpdateChannel).not.toHaveBeenCalled();
+    expect(updateNpmInstalledPlugins).not.toHaveBeenCalled();
+    const logs = vi
+      .mocked(defaultRuntime.log)
+      .mock.calls.map(([value]) => String(value))
+      .join("\n");
+    expect(logs).toContain("Post-update timing");
+    expect(logs).toContain("plugin update check (none installed)");
+    expect(logs).toContain("transaction cleanup");
+  });
+
   it("returns immediately when a packaged install already matches the target version", async () => {
     const root = createCaseDir("fased-current-package");
     mockPackageInstallStatus(root);
