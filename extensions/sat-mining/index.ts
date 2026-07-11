@@ -3706,7 +3706,9 @@ const satMiningPlugin = {
           });
         }),
       );
-      return wallets.filter((wallet): wallet is SatMiningWalletSummary => wallet !== null);
+      return wallets.filter(
+        (wallet): wallet is SatMiningWalletSummary => wallet !== null && wallet.role === "mining",
+      );
     };
     const ensureSatCapitalActionSignerReady = async (): Promise<void> => {
       const selectedWalletId = state.activeConfig.walletId?.trim();

@@ -5498,6 +5498,17 @@ describe("sat-mining plugin config persistence", () => {
           },
         });
       }
+
+      let walletsResponse: { ok: boolean; payload: unknown } | null = null;
+      await gatewayMethods.get("sat.listMiningWallets")!.handler({
+        respond: (ok, payload) => {
+          walletsResponse = { ok, payload };
+        },
+      });
+      expect(walletsResponse).toMatchObject({
+        ok: true,
+        payload: { ok: true, payload: { wallets: [] } },
+      });
     } finally {
       registryMock.mockReturnValue({
         defaultWalletId: "wallet-a",
