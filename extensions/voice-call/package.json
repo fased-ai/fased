@@ -1,6 +1,6 @@
 {
   "name": "@fased/voice-call",
-  "version": "0.1.41",
+  "version": "0.1.42",
   "description": "FasedAgent voice-call plugin",
   "type": "module",
   "dependencies": {
