@@ -345,27 +345,46 @@ Read next:
 - [Wallets](/plugins/crypto/wallet-page)
 - [Solana RPC Setup](/plugins/crypto/wallet-rpc-setup)
 
-## 7. Verify Official Mainnet Status
+## 7. Verify And Sync Official Mainnet
 
-The SAT mainnet manifest is signed by the Satcoin project's manifest publisher.
-Its public verification key arrives inside Fased releases; it is not a miner's
-wallet key, a node key, or anything users create during wallet setup. A user
-with no wallet can still check whether mainnet is live and whether the official
+The SAT mainnet manifest is signed by the Satcoin project. Its public
+verification key arrives inside Fased releases; it is not a miner's wallet
+key, a node key, or anything users create during wallet setup. A user with no
+wallet can still check whether mainnet is live and whether the official
 manifest is trusted.
+
+Use either path:
+
+- **UI:** open **Mining**, then press **Sync** in the Mining toolbar.
+- **CLI:** run:
 
 ```bash
 fased sat sync-mainnet --json
 ```
 
-This command is safe before wallet setup. It reports `not_live` without writing
-wallet state; once a live signed manifest is available, it applies only the
-verified official runtime IDs.
+Both paths perform the same operation. They are safe before wallet setup and
+do not create a wallet, move funds, sign a Solana transaction, deposit miner
+capital, or start mining.
+
+Before launch, Sync reports `not_live` and changes no wallet or mining state.
+On mainnet day, use the same Sync control. Once the live signed manifest is
+published, Fased verifies it and writes the four matching public runtime IDs:
+
+- SAT mining program ID
+- SAT bond program ID
+- SAT mint address
+- SAT mint program ID
+
+`fased update` and **Sync** are different actions. Update installs a compatible
+Fased release. Sync receives the final Satcoin mainnet IDs. Complete any
+required Fased update during pre-launch preparation so that mainnet day only
+requires **Mining > Sync** or `fased sat sync-mainnet`.
 
 | State                   | Meaning                                       | Next action                               |
 | ----------------------- | --------------------------------------------- | ----------------------------------------- |
 | `not_live`              | Official mainnet launch is not active         | Keep learning; do not fund mainnet mining |
 | live, trust key missing | This Fased release cannot verify launch data  | Update Fased                              |
-| `available`             | Signed official IDs are verified              | Run the mainnet sync action               |
+| `available`             | Signed official IDs are verified              | Confirm and apply the mainnet sync        |
 | `synced`                | This agent matches the signed official IDs    | Continue to wallet readiness              |
 | verification failed     | Hash, signature, or trusted key did not match | Stop and verify official status           |
 
