@@ -796,6 +796,11 @@ const satMiningPlugin = {
       if (selectedWalletId && !wallet) {
         throw new Error(`walletId not found: ${selectedWalletId}`);
       }
+      if (wallet && wallet.role !== "mining") {
+        throw new Error(
+          `walletId ${selectedWalletId} is not the dedicated Mining wallet; create or import @wallet:mining and use that wallet for SAT mining`,
+        );
+      }
       if (opts?.requireResolvedWallet && !wallet) {
         throw new Error("no SAT mining wallet is attached; choose a mining wallet first");
       }
@@ -3701,7 +3706,9 @@ const satMiningPlugin = {
           });
         }),
       );
-      return wallets.filter((wallet): wallet is SatMiningWalletSummary => wallet !== null);
+      return wallets.filter(
+        (wallet): wallet is SatMiningWalletSummary => wallet !== null && wallet.role === "mining",
+      );
     };
     const ensureSatCapitalActionSignerReady = async (): Promise<void> => {
       const selectedWalletId = state.activeConfig.walletId?.trim();
@@ -3748,6 +3755,11 @@ const satMiningPlugin = {
       const activeWallet = await readMiningWalletById(nextWalletId);
       if (!activeWallet) {
         throw new Error(`walletId not found: ${nextWalletId}`);
+      }
+      if (activeWallet.role !== "mining") {
+        throw new Error(
+          `walletId ${nextWalletId} is not the dedicated Mining wallet; create or import @wallet:mining and use that wallet for SAT mining`,
+        );
       }
       if (previousWalletId !== nextWalletId) {
         state.running = false;
