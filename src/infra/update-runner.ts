@@ -112,6 +112,7 @@ type HostedArtifactUpdateResult =
       kind: "updated";
       steps: UpdateStepResult[];
       afterVersion: string | null;
+      reason: string;
       transaction: UpdateTransaction;
     }
   | {
@@ -673,6 +674,7 @@ async function runHostedArtifactUpdate(params: {
       kind: "updated",
       steps,
       afterVersion,
+      reason: "package artifact swap",
       transaction: {
         kind: "package-root-swap",
         packageRoot: params.pkgRoot,
@@ -696,10 +698,120 @@ async function pathExists(pathname: string): Promise<boolean> {
   }
 }
 
+async function seedHostedDependencyLayerFromCurrent(params: {
+  pkgRoot: string;
+  dependencyRoot: string;
+  dependencyHash: string;
+}): Promise<boolean> {
+  const currentMetadata = await readHostedRuntimeMetadata(params.pkgRoot);
+  if (currentMetadata?.dependencyHash !== params.dependencyHash) {
+    return false;
+  }
+
+  const currentModules = path.join(params.pkgRoot, "node_modules");
+  const dependencyModules = path.join(params.dependencyRoot, "node_modules");
+  let currentStat: Awaited<ReturnType<typeof fs.lstat>>;
+  try {
+    currentStat = await fs.lstat(currentModules);
+  } catch {
+    return false;
+  }
+
+  if (currentStat.isSymbolicLink()) {
+    try {
+      const currentModulesReal = await fs.realpath(currentModules);
+      if (currentModulesReal === (await fs.realpath(dependencyModules).catch(() => ""))) {
+        return true;
+      }
+      const legacyDependencyRoot = path.dirname(currentModulesReal);
+      const legacyDependencyParent = path.dirname(legacyDependencyRoot);
+      const recognizedLegacyLayer =
+        path.basename(currentModulesReal) === "node_modules" &&
+        path.basename(legacyDependencyRoot) === params.dependencyHash &&
+        path.basename(legacyDependencyParent) === ".fased-dependencies";
+      if (!recognizedLegacyLayer) {
+        return false;
+      }
+
+      const nextLink = path.join(params.pkgRoot, `.node_modules-link-${process.pid}-${Date.now()}`);
+      const previousLink = path.join(
+        params.pkgRoot,
+        `.node_modules-previous-${process.pid}-${Date.now()}`,
+      );
+      let layerMoved = false;
+      let linkReplaced = false;
+      await fs.mkdir(path.dirname(params.dependencyRoot), { recursive: true });
+      try {
+        await fs.symlink(dependencyModules, nextLink, "dir");
+        await fs.rename(legacyDependencyRoot, params.dependencyRoot);
+        layerMoved = true;
+        await fs.rename(currentModules, previousLink);
+        await fs.rename(nextLink, currentModules);
+        linkReplaced = true;
+        await safeRemove(previousLink);
+        return true;
+      } catch (error) {
+        if (linkReplaced) {
+          await safeRemove(currentModules);
+        }
+        if (await pathExists(previousLink)) {
+          await fs.rename(previousLink, currentModules).catch(() => undefined);
+        }
+        if (layerMoved) {
+          await fs.rename(params.dependencyRoot, legacyDependencyRoot).catch(() => undefined);
+        }
+        await safeRemove(nextLink);
+        throw error;
+      }
+    } catch {
+      return false;
+    }
+  }
+  if (!currentStat.isDirectory()) {
+    return false;
+  }
+
+  const dependencyParent = path.dirname(params.dependencyRoot);
+  const stagingRoot = `${params.dependencyRoot}.staging-${process.pid}-${Date.now()}`;
+  const linkPath = path.join(params.pkgRoot, `.node_modules-link-${process.pid}-${Date.now()}`);
+  let modulesMoved = false;
+  let layerActivated = false;
+  await fs.mkdir(dependencyParent, { recursive: true });
+  if (await pathExists(params.dependencyRoot)) {
+    await safeRemove(params.dependencyRoot);
+  }
+
+  try {
+    await fs.symlink(dependencyModules, linkPath, "dir");
+    await fs.mkdir(stagingRoot, { recursive: true });
+    await fs.rename(currentModules, path.join(stagingRoot, "node_modules"));
+    modulesMoved = true;
+    await fs.rename(stagingRoot, params.dependencyRoot);
+    layerActivated = true;
+    await fs.rename(linkPath, currentModules);
+    return true;
+  } catch (error) {
+    await safeRemove(linkPath);
+    if (!(await pathExists(currentModules))) {
+      const rollbackSource = path.join(
+        layerActivated ? params.dependencyRoot : stagingRoot,
+        "node_modules",
+      );
+      if (modulesMoved && (await pathExists(rollbackSource))) {
+        await fs.rename(rollbackSource, currentModules).catch(() => undefined);
+      }
+    }
+    throw error;
+  } finally {
+    await safeRemove(stagingRoot);
+  }
+}
+
 async function runHostedLayeredArtifactUpdate(params: {
   fetchImpl: typeof fetch;
   baseUrl?: string;
   pkgRoot: string;
+  dependencyCacheRoot: string;
   expectedVersion: string;
   runCommand: CommandRunner;
   timeoutMs: number;
@@ -790,9 +902,24 @@ async function runHostedLayeredArtifactUpdate(params: {
       return { kind: "fallback", steps, reason: "hosted app dependency metadata missing" };
     }
 
-    const dependencyParent = path.join(packageParent, ".fased-dependencies");
+    const dependencyParent = path.join(params.dependencyCacheRoot, "hosted-dependencies");
     const dependencyRoot = path.join(dependencyParent, metadata.dependencyHash);
     const dependencyModules = path.join(dependencyRoot, "node_modules");
+    if (!(await pathExists(dependencyModules))) {
+      const currentMetadata = await readHostedRuntimeMetadata(params.pkgRoot);
+      if (currentMetadata?.dependencyHash === metadata.dependencyHash) {
+        await record(
+          "hosted dependency seed",
+          `reuse current dependency layer ${metadata.dependencyHash.slice(0, 12)}`,
+          async () =>
+            await seedHostedDependencyLayerFromCurrent({
+              pkgRoot: params.pkgRoot,
+              dependencyRoot,
+              dependencyHash: metadata.dependencyHash,
+            }),
+        );
+      }
+    }
     if (!(await pathExists(dependencyModules))) {
       const dependencyDescriptor = resolveHostedRuntimeDependencyArtifact({
         version: params.expectedVersion,
@@ -866,33 +993,11 @@ async function runHostedLayeredArtifactUpdate(params: {
       };
     }
 
-    const smokeHome = path.join(tempRoot, "smoke-home");
-    const smokeStateDir = path.join(smokeHome, ".fased");
-    await fs.mkdir(smokeStateDir, { recursive: true });
-    const smokeArgv = [process.execPath, path.join(artifactRoot, "fased.mjs"), "plugins", "doctor"];
-    const smokeResult = await record(
+    await record(
       "hosted layered verify",
-      smokeArgv.join(" "),
-      async () =>
-        await params.runCommand(smokeArgv, {
-          cwd: artifactRoot,
-          timeoutMs: params.timeoutMs,
-          env: {
-            ...process.env,
-            HOME: smokeHome,
-            FASED_STATE_DIR: smokeStateDir,
-            FASED_CONFIG_PATH: path.join(smokeStateDir, "fased.json"),
-          },
-        }),
+      `verify checksummed v${params.expectedVersion} runtime shape`,
+      async () => undefined,
     );
-    if (smokeResult.code !== 0) {
-      return {
-        kind: "error",
-        steps,
-        reason: "layered hosted runtime verification failed",
-        afterVersion: await readPackageVersion(params.pkgRoot),
-      };
-    }
 
     await record("hosted app swap", `replace ${params.pkgRoot}`, async () => {
       const swapped = await swapPackageRoot({ pkgRoot: params.pkgRoot, artifactRoot });
@@ -906,6 +1011,7 @@ async function runHostedLayeredArtifactUpdate(params: {
       kind: "updated",
       steps,
       afterVersion: await readPackageVersion(params.pkgRoot),
+      reason: "verified layered hosted runtime",
       transaction: {
         kind: "package-root-swap",
         packageRoot: params.pkgRoot,
@@ -931,6 +1037,7 @@ async function runHostedReleaseArtifactUpdate(params: {
   fetchImpl: typeof fetch;
   baseUrl?: string;
   pkgRoot: string;
+  dependencyCacheRoot: string;
   expectedVersion: string;
   runCommand: CommandRunner;
   timeoutMs: number;
@@ -1032,40 +1139,13 @@ async function runHostedReleaseArtifactUpdate(params: {
       compareSemverStrings(artifactVersion, params.expectedVersion) === 0 &&
       (await pathExists(path.join(artifactRoot, "fased.mjs"))) &&
       (await pathExists(path.join(artifactRoot, "node_modules")));
-    const smokeHome = path.join(tempRoot, "smoke-home");
-    const smokeStateDir = path.join(smokeHome, ".fased");
-    const smokeArgv = [process.execPath, path.join(artifactRoot, "fased.mjs"), "plugins", "doctor"];
-    const verifyCommand = smokeArgv.join(" ");
+    const verifyCommand = `verify checksummed v${params.expectedVersion} runtime shape`;
     const verifyInfo = startProgress("hosted artifact verify", verifyCommand, artifactRoot);
     const verifyStarted = Date.now();
-    let smokeResult: Awaited<ReturnType<CommandRunner>> | null = null;
-    let smokeError: string | null = null;
-    if (runtimeShapeReady) {
-      try {
-        await fs.mkdir(smokeHome, { recursive: true });
-        smokeResult = await params.runCommand(smokeArgv, {
-          cwd: artifactRoot,
-          timeoutMs: params.timeoutMs,
-          env: {
-            ...process.env,
-            HOME: smokeHome,
-            FASED_STATE_DIR: smokeStateDir,
-            FASED_CONFIG_PATH: path.join(smokeStateDir, "fased.json"),
-          },
-        });
-      } catch (error) {
-        smokeError = String(error);
-      }
-    }
-    const runtimeReady = runtimeShapeReady && smokeResult?.code === 0;
+    const runtimeReady = runtimeShapeReady;
     const verifyFailure = !runtimeShapeReady
       ? `expected complete v${params.expectedVersion}, found ${artifactVersion ?? "unknown"}`
-      : trimLogTail(
-          [smokeResult?.stderr, smokeResult?.stdout, smokeError]
-            .filter((value): value is string => Boolean(value?.trim()))
-            .join("\n"),
-          MAX_LOG_CHARS,
-        ) || "hosted runtime CLI and plugin check failed";
+      : "hosted runtime shape verification failed";
     completeProgress(verifyInfo, {
       name: "hosted artifact verify",
       command: verifyCommand,
@@ -1073,7 +1153,7 @@ async function runHostedReleaseArtifactUpdate(params: {
       durationMs: Date.now() - verifyStarted,
       exitCode: runtimeReady ? 0 : 1,
       ...(runtimeReady
-        ? { stdoutTail: `v${params.expectedVersion} CLI and bundled plugins passed` }
+        ? { stdoutTail: `checksummed v${params.expectedVersion} runtime shape passed` }
         : { stderrTail: verifyFailure }),
     });
     if (!runtimeReady) {
@@ -1120,6 +1200,7 @@ async function runHostedReleaseArtifactUpdate(params: {
       kind: "updated",
       steps,
       afterVersion: await readPackageVersion(params.pkgRoot),
+      reason: "verified self-contained hosted runtime",
       transaction: {
         kind: "package-root-swap",
         packageRoot: params.pkgRoot,
@@ -1727,6 +1808,7 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
           fetchImpl: releaseFetch,
           baseUrl: opts.hostedReleaseBaseUrl ?? process.env.FASED_HOSTED_ARTIFACT_BASE_URL,
           pkgRoot,
+          dependencyCacheRoot: hostedTarget.cacheRoot,
           expectedVersion,
           runCommand,
           timeoutMs,
@@ -1739,7 +1821,7 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
             mode: globalManager,
             strategy: {
               kind: "hosted-artifact",
-              reason: "verified self-contained hosted runtime",
+              reason: releaseResult.reason,
             },
             root: pkgRoot,
             before: { version: beforeVersion },

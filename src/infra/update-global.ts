@@ -8,6 +8,7 @@ export type GlobalInstallManager = "npm" | "pnpm" | "bun";
 export type HostedNpmInstallTarget = {
   manager: "npm";
   globalRoot: string;
+  cacheRoot: string;
   env: NodeJS.ProcessEnv;
 };
 
@@ -74,6 +75,7 @@ export function resolveHostedNpmInstallTarget(pkgRoot: string): HostedNpmInstall
   return {
     manager: "npm",
     globalRoot,
+    cacheRoot: path.dirname(prefix),
     env: {
       npm_config_prefix: prefix,
       npm_config_cache: cache,

@@ -97,4 +97,28 @@ describe("inspectGatewayRestart", () => {
     expect(snapshot.healthy).toBe(false);
     expect(snapshot.staleGatewayPids).toEqual([9000]);
   });
+
+  it("returns a confirmed stale listener immediately instead of polling for a minute", async () => {
+    const service = {
+      readRuntime: vi.fn(async () => ({ status: "running", pid: 8000 })),
+    } as unknown as GatewayService;
+
+    inspectPortUsage.mockResolvedValue({
+      port: 18789,
+      status: "busy",
+      listeners: [{ pid: 9000, ppid: 8999, commandLine: "fased-gateway" }],
+      hints: [],
+    });
+
+    const { waitForGatewayHealthyRestart } = await import("./restart-health.js");
+    const snapshot = await waitForGatewayHealthyRestart({
+      service,
+      port: 18789,
+      attempts: 120,
+      delayMs: 500,
+    });
+
+    expect(snapshot.staleGatewayPids).toEqual([9000]);
+    expect(inspectPortUsage).toHaveBeenCalledTimes(1);
+  });
 });

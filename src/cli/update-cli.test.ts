@@ -723,6 +723,39 @@ describe("update-cli", () => {
     expect(runDaemonRestart).not.toHaveBeenCalled();
   });
 
+  it("cleans a stale hosted listener and performs only one recovery restart", async () => {
+    resolveUpdateGatewayServiceTarget.mockResolvedValue({
+      scope: "system",
+      service: {
+        isLoaded: (...args: unknown[]) => serviceLoaded(...args),
+        readRuntime: (...args: unknown[]) => serviceReadRuntime(...args),
+        restart: (...args: unknown[]) => serviceRestart(...args),
+      },
+    });
+    serviceLoaded.mockResolvedValue(true);
+    inspectPortUsage
+      .mockResolvedValueOnce({
+        port: 18789,
+        status: "busy",
+        listeners: [{ pid: 999_999, ppid: 999_998, commandLine: "fased-gateway" }],
+        hints: [],
+      })
+      .mockResolvedValue({
+        port: 18789,
+        status: "busy",
+        listeners: [{ pid: 4243, ppid: 4242, commandLine: "fased-gateway" }],
+        hints: [],
+      });
+    vi.mocked(runGatewayUpdate).mockResolvedValue(makeOkUpdateResult());
+
+    await updateCommand({});
+
+    expect(serviceRestart).toHaveBeenCalledTimes(2);
+    expect(inspectPortUsage).toHaveBeenCalledTimes(2);
+    expect(runDaemonInstall).not.toHaveBeenCalled();
+    expect(runDaemonRestart).not.toHaveBeenCalled();
+  });
+
   it("rolls back an artifact transaction when a JSON-mode hosted restart fails", async () => {
     const transaction = {
       kind: "package-root-swap" as const,
