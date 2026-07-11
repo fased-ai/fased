@@ -55,11 +55,18 @@ for layered_asset in "$APP_ASSET" "$DEPENDENCY_ASSET"; do
   fi
 done
 
-bash "$INSTALLER" \
+layered_output="$(bash "$INSTALLER" \
   --package "@fased/fased@${VERSION}" \
   --prefix "$TEMP_ROOT/layered-prefix" \
   --cache "$TEMP_ROOT/layered-cache" \
-  --base-url "file://$TEMP_ROOT/releases"
+  --base-url "file://$TEMP_ROOT/releases")"
+printf '%s\n' "$layered_output"
+grep -Fq "Fresh runtime timing:" <<<"$layered_output"
+grep -Fq "dependency archive safety scan:" <<<"$layered_output"
+grep -Fq "dependency extraction:" <<<"$layered_output"
+grep -Fq "runtime smoke verification:" <<<"$layered_output"
+grep -Fq "runtime activation:" <<<"$layered_output"
+grep -Fq "total:" <<<"$layered_output"
 
 [[ "$("$TEMP_ROOT/layered-prefix/bin/fased" --version)" == "$VERSION" ]]
 [[ -L "$TEMP_ROOT/layered-prefix/lib/node_modules/@fased/fased/node_modules" ]]

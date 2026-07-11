@@ -28,6 +28,10 @@ type RunResult = {
   stderr: string;
 };
 
+const HOSTED_DEPENDENCY_LAYER_SCHEMA = 2;
+const HOSTED_DEPENDENCY_FILE_BUDGET = 40_000;
+const HOSTED_DEPENDENCY_BYTE_BUDGET = 350 * 1024 * 1024;
+
 function parseOutputDir(): string {
   const outputFlag = process.argv.indexOf("--output");
   const value = outputFlag >= 0 ? process.argv[outputFlag + 1] : undefined;
@@ -89,6 +93,67 @@ async function sha256(filePath: string): Promise<string> {
   const hash = createHash("sha256");
   await pipeline(createReadStream(filePath), hash);
   return hash.digest("hex");
+}
+
+async function hostedDependencyHash(lockfilePath: string): Promise<string> {
+  const hash = createHash("sha256");
+  hash.update(`fased-hosted-dependencies-v${HOSTED_DEPENDENCY_LAYER_SCHEMA}\0`);
+  for await (const chunk of createReadStream(lockfilePath)) {
+    hash.update(chunk);
+  }
+  return hash.digest("hex");
+}
+
+async function pruneHostedDependencies(
+  nodeModulesRoot: string,
+  arch: string,
+): Promise<{ files: number; bytes: number }> {
+  const keepClipboardPackages = new Set([
+    `clipboard-linux-${arch}-gnu`,
+    `clipboard-linux-${arch}-musl`,
+  ]);
+  let removedFiles = 0;
+  let removedBytes = 0;
+  let removedDirectories = 0;
+  let retainedFiles = 0;
+  let retainedBytes = 0;
+
+  const visit = async (dir: string): Promise<void> => {
+    for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        const isForeignClipboardPackage =
+          path.basename(dir) === "@mariozechner" &&
+          entry.name.startsWith("clipboard-") &&
+          !keepClipboardPackages.has(entry.name);
+        if (isForeignClipboardPackage) {
+          await fs.rm(fullPath, { recursive: true, force: true });
+          removedDirectories += 1;
+          continue;
+        }
+        await visit(fullPath);
+        continue;
+      }
+      if (!entry.isFile() || (!entry.name.endsWith(".map") && !entry.name.endsWith(".d.ts"))) {
+        if (entry.isFile()) {
+          const stat = await fs.stat(fullPath);
+          retainedFiles += 1;
+          retainedBytes += stat.size;
+        }
+        continue;
+      }
+      const stat = await fs.stat(fullPath);
+      await fs.rm(fullPath, { force: true });
+      removedFiles += 1;
+      removedBytes += stat.size;
+    }
+  };
+
+  await visit(nodeModulesRoot);
+  console.log(
+    `hosted-artifact: pruned ${removedFiles} runtime-irrelevant files and ${removedDirectories} foreign-platform directories (${(removedBytes / 1024 / 1024).toFixed(1)} MB)`,
+  );
+  return { files: retainedFiles, bytes: retainedBytes };
 }
 
 async function writeChecksum(assetPath: string): Promise<string> {
@@ -265,6 +330,23 @@ async function main(): Promise<void> {
       { npm_config_cache: path.join(tempRoot, "npm-cache") },
     );
 
+    console.log("hosted-artifact: pruning runtime-irrelevant dependency files");
+    const dependencyBudget = await pruneHostedDependencies(
+      path.join(packageRoot, "node_modules"),
+      arch,
+    );
+    console.log(
+      `hosted-artifact: dependency budget ${dependencyBudget.files} files, ${(dependencyBudget.bytes / 1024 / 1024).toFixed(1)} MB`,
+    );
+    if (
+      dependencyBudget.files > HOSTED_DEPENDENCY_FILE_BUDGET ||
+      dependencyBudget.bytes > HOSTED_DEPENDENCY_BYTE_BUDGET
+    ) {
+      throw new Error(
+        `Hosted dependency layer exceeds budget (${dependencyBudget.files}/${HOSTED_DEPENDENCY_FILE_BUDGET} files, ${(dependencyBudget.bytes / 1024 / 1024).toFixed(1)}/${HOSTED_DEPENDENCY_BYTE_BUDGET / 1024 / 1024} MB).`,
+      );
+    }
+
     console.log("hosted-artifact: compiling core runtime plugins");
     await run(
       process.execPath,
@@ -400,7 +482,7 @@ async function main(): Promise<void> {
     );
     console.log("hosted-artifact: packaged gateway smoke passed");
 
-    const dependencyHash = await sha256(path.join(rootDir, "pnpm-lock.yaml"));
+    const dependencyHash = await hostedDependencyHash(path.join(rootDir, "pnpm-lock.yaml"));
     const runtimeMetadata: HostedRuntimeMetadata = { schemaVersion: 1, dependencyHash };
     await fs.writeFile(
       path.join(packageRoot, ".fased-hosted-runtime.json"),
