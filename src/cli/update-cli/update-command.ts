@@ -78,6 +78,39 @@ import { suppressDeprecations } from "./suppress-deprecations.js";
 const CLI_NAME = resolveCliName();
 const SERVICE_REFRESH_TIMEOUT_MS = 60_000;
 
+type UpdateLifecycleTiming = {
+  name: string;
+  durationMs: number;
+};
+
+function formatDuration(durationMs: number): string {
+  return durationMs >= 1000 ? `${(durationMs / 1000).toFixed(2)}s` : `${durationMs}ms`;
+}
+
+async function measureUpdateStage<T>(
+  timings: UpdateLifecycleTiming[],
+  name: string,
+  run: () => Promise<T>,
+): Promise<T> {
+  const startedAt = Date.now();
+  try {
+    return await run();
+  } finally {
+    timings.push({ name, durationMs: Date.now() - startedAt });
+  }
+}
+
+function printUpdateLifecycleTimings(timings: UpdateLifecycleTiming[], jsonMode: boolean): void {
+  if (jsonMode || timings.length === 0) {
+    return;
+  }
+  defaultRuntime.log(theme.heading("Post-update timing"));
+  for (const timing of timings) {
+    defaultRuntime.log(`  ${timing.name}: ${theme.muted(formatDuration(timing.durationMs))}`);
+  }
+  defaultRuntime.log("");
+}
+
 const UPDATE_QUIPS = [
   "Leveled up! New skills unlocked. You're welcome.",
   "Fresh code, same agent. Miss me?",
@@ -501,12 +534,24 @@ async function updatePluginsAfterCoreUpdate(params: {
   channel: "stable" | "beta" | "dev";
   configSnapshot: Awaited<ReturnType<typeof readConfigFileSnapshot>>;
   opts: UpdateCommandOptions;
-}): Promise<void> {
+}): Promise<{ changed: boolean; checked: boolean }> {
   if (!params.configSnapshot.valid) {
     if (!params.opts.json) {
       defaultRuntime.log(theme.warn("Skipping plugin updates: config is invalid."));
     }
-    return;
+    return { changed: false, checked: false };
+  }
+
+  const repairResult = runPostUpdateDoctorRepair({
+    config: params.configSnapshot.config,
+    updateCompleted: true,
+  });
+  const installs = repairResult.config.plugins?.installs ?? {};
+  if (Object.keys(installs).length === 0) {
+    if (repairResult.changed) {
+      await writeConfigFile(repairResult.config);
+    }
+    return { changed: repairResult.changed, checked: false };
   }
 
   const pluginLogger = params.opts.json
@@ -521,11 +566,6 @@ async function updatePluginsAfterCoreUpdate(params: {
     defaultRuntime.log("");
     defaultRuntime.log(theme.heading("Updating plugins..."));
   }
-
-  const repairResult = runPostUpdateDoctorRepair({
-    config: params.configSnapshot.config,
-    updateCompleted: true,
-  });
 
   const syncResult = await syncPluginsForUpdateChannel({
     config: repairResult.config,
@@ -548,7 +588,10 @@ async function updatePluginsAfterCoreUpdate(params: {
   }
 
   if (params.opts.json) {
-    return;
+    return {
+      changed: repairResult.changed || syncResult.changed || npmResult.changed,
+      checked: true,
+    };
   }
 
   const summarizeList = (list: string[]) => {
@@ -607,6 +650,10 @@ async function updatePluginsAfterCoreUpdate(params: {
     }
     defaultRuntime.log(theme.error(outcome.message));
   }
+  return {
+    changed: repairResult.changed || syncResult.changed || npmResult.changed,
+    checked: true,
+  };
 }
 
 async function maybeRestartService(params: {
@@ -625,8 +672,13 @@ async function maybeRestartService(params: {
     tlsFingerprint?: string;
     timeoutMs: number;
   };
-}): Promise<{ partial: boolean; healthy: boolean }> {
+}): Promise<{
+  partial: boolean;
+  healthy: boolean;
+  timings: UpdateLifecycleTiming[];
+}> {
   let partial = false;
+  const timings: UpdateLifecycleTiming[] = [];
   if (params.shouldRestart) {
     if (!params.opts.json) {
       defaultRuntime.log("");
@@ -638,10 +690,12 @@ async function maybeRestartService(params: {
       let restartInitiated = false;
       if (params.refreshServiceEnv) {
         try {
-          const refresh = await refreshGatewayServiceEnv({
-            result: params.result,
-            jsonMode: Boolean(params.opts.json),
-          });
+          const refresh = await measureUpdateStage(timings, "service environment refresh", () =>
+            refreshGatewayServiceEnv({
+              result: params.result,
+              jsonMode: Boolean(params.opts.json),
+            }),
+          );
           if (
             refresh.status === "daemon-install-fallback" &&
             refresh.failures.length > 0 &&
@@ -671,25 +725,31 @@ async function maybeRestartService(params: {
         }
       }
       if (params.serviceTarget.scope === "system" && params.serviceLoaded) {
-        await params.serviceTarget.service.restart({
-          env: process.env,
-          stdout: process.stdout,
-        });
+        await measureUpdateStage(timings, "service restart", () =>
+          params.serviceTarget.service.restart({
+            env: process.env,
+            stdout: process.stdout,
+          }),
+        );
         restartInitiated = true;
       } else if (params.restartScriptPath) {
-        await runRestartScript(params.restartScriptPath);
+        await measureUpdateStage(timings, "service restart", () =>
+          runRestartScript(params.restartScriptPath as string),
+        );
         restartInitiated = true;
       } else if (params.serviceTarget.scope === "platform") {
-        restarted = await runDaemonRestart();
+        restarted = await measureUpdateStage(timings, "service restart", () => runDaemonRestart());
         restartInitiated = restarted;
       }
 
       if (restartInitiated) {
-        let health = await waitForGatewayHealthyRestart({
-          service: params.serviceTarget.service,
-          port: params.gatewayPort,
-          rpc: params.rpc,
-        });
+        let health = await measureUpdateStage(timings, "gateway health verification", () =>
+          waitForGatewayHealthyRestart({
+            service: params.serviceTarget.service,
+            port: params.gatewayPort,
+            rpc: params.rpc,
+          }),
+        );
         if (!health.healthy && health.staleGatewayPids.length > 0) {
           if (!params.opts.json) {
             defaultRuntime.log(
@@ -698,16 +758,31 @@ async function maybeRestartService(params: {
               ),
             );
           }
-          await terminateStaleGatewayPids(health.staleGatewayPids);
-          await params.serviceTarget.service.restart({
-            env: process.env,
-            stdout: process.stdout,
-          });
-          health = await waitForGatewayHealthyRestart({
-            service: params.serviceTarget.service,
-            port: params.gatewayPort,
-            rpc: params.rpc,
-          });
+          await measureUpdateStage(timings, "stale process cleanup", () =>
+            terminateStaleGatewayPids(health.staleGatewayPids),
+          );
+          health = await measureUpdateStage(timings, "gateway health after cleanup", () =>
+            waitForGatewayHealthyRestart({
+              service: params.serviceTarget.service,
+              port: params.gatewayPort,
+              rpc: params.rpc,
+            }),
+          );
+          if (!health.healthy) {
+            await measureUpdateStage(timings, "service recovery restart", () =>
+              params.serviceTarget.service.restart({
+                env: process.env,
+                stdout: process.stdout,
+              }),
+            );
+            health = await measureUpdateStage(timings, "gateway recovery verification", () =>
+              waitForGatewayHealthyRestart({
+                service: params.serviceTarget.service,
+                port: params.gatewayPort,
+                rpc: params.rpc,
+              }),
+            );
+          }
         }
 
         if (health.healthy) {
@@ -757,7 +832,7 @@ async function maybeRestartService(params: {
         );
       }
     }
-    return { partial, healthy: !partial };
+    return { partial, healthy: !partial, timings };
   }
 
   if (!params.opts.json) {
@@ -776,7 +851,7 @@ async function maybeRestartService(params: {
       );
     }
   }
-  return { partial, healthy: true };
+  return { partial, healthy: true, timings };
 }
 
 export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
@@ -1122,20 +1197,37 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
     return;
   }
 
-  await finalizeUpdateTransaction(result.transaction);
+  const lifecycleTimings = [...restartResult.timings];
+  await measureUpdateStage(lifecycleTimings, "transaction cleanup", () =>
+    finalizeUpdateTransaction(result.transaction),
+  );
 
-  await updatePluginsAfterCoreUpdate({
-    root,
-    channel,
-    configSnapshot,
-    opts,
-  });
+  const pluginResult = await measureUpdateStage(lifecycleTimings, "plugin updates", () =>
+    updatePluginsAfterCoreUpdate({
+      root,
+      channel,
+      configSnapshot,
+      opts,
+    }),
+  );
+  if (!pluginResult.checked) {
+    const timing = lifecycleTimings.at(-1);
+    if (timing?.name === "plugin updates") {
+      timing.name = "plugin update check (none installed)";
+    }
+  }
 
-  await tryWriteCompletionCache(root, Boolean(opts.json));
-  await tryInstallShellCompletion({
-    jsonMode: Boolean(opts.json),
-    skipPrompt: Boolean(opts.yes),
-  });
+  await measureUpdateStage(lifecycleTimings, "completion cache", () =>
+    tryWriteCompletionCache(root, Boolean(opts.json)),
+  );
+  await measureUpdateStage(lifecycleTimings, "shell completion", () =>
+    tryInstallShellCompletion({
+      jsonMode: Boolean(opts.json),
+      skipPrompt: Boolean(opts.yes),
+    }),
+  );
+
+  printUpdateLifecycleTimings(lifecycleTimings, Boolean(opts.json));
 
   if (!opts.json && !restartResult.partial) {
     defaultRuntime.log(theme.muted(pickUpdateQuip()));
