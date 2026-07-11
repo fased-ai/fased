@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import type { GatewayServiceRuntime } from "../../daemon/service-runtime.js";
 import type { GatewayService } from "../../daemon/service.js";
 import {
@@ -26,11 +27,47 @@ export type GatewayRestartSnapshot = {
   staleGatewayPids: number[];
 };
 
-function listenerOwnedByRuntimePid(params: {
+async function readLinuxParentPid(pid: number): Promise<number | null> {
+  if (process.platform !== "linux" || !Number.isFinite(pid) || pid <= 1) {
+    return null;
+  }
+  try {
+    const stat = await fs.readFile(`/proc/${pid}/stat`, "utf8");
+    const commandEnd = stat.lastIndexOf(")");
+    const fields =
+      commandEnd >= 0
+        ? stat
+            .slice(commandEnd + 2)
+            .trim()
+            .split(/\s+/)
+        : [];
+    const parentPid = Number.parseInt(fields[1] ?? "", 10);
+    return Number.isFinite(parentPid) && parentPid > 0 ? parentPid : null;
+  } catch {
+    return null;
+  }
+}
+
+async function listenerOwnedByRuntimePid(params: {
   listener: PortUsage["listeners"][number];
   runtimePid: number;
-}): boolean {
-  return params.listener.pid === params.runtimePid || params.listener.ppid === params.runtimePid;
+}): Promise<boolean> {
+  if (params.listener.pid === params.runtimePid || params.listener.ppid === params.runtimePid) {
+    return true;
+  }
+  let candidate = params.listener.ppid ?? params.listener.pid ?? null;
+  const visited = new Set<number>();
+  for (let depth = 0; candidate != null && depth < 16; depth += 1) {
+    if (candidate === params.runtimePid) {
+      return true;
+    }
+    if (candidate <= 1 || visited.has(candidate)) {
+      break;
+    }
+    visited.add(candidate);
+    candidate = await readLinuxParentPid(candidate);
+  }
+  return false;
 }
 
 export async function inspectGatewayRestart(params: {
@@ -74,9 +111,17 @@ export async function inspectGatewayRestart(params: {
       : [];
   const running = runtime.status === "running";
   const runtimePid = runtime.pid;
+  const listenerOwnership = new Map<number, boolean>();
+  if (runtimePid != null) {
+    await Promise.all(
+      portUsage.listeners.map(async (listener, index) => {
+        listenerOwnership.set(index, await listenerOwnedByRuntimePid({ listener, runtimePid }));
+      }),
+    );
+  }
   const ownsPort =
     runtimePid != null
-      ? portUsage.listeners.some((listener) => listenerOwnedByRuntimePid({ listener, runtimePid }))
+      ? portUsage.listeners.some((_listener, index) => listenerOwnership.get(index) === true)
       : gatewayListeners.length > 0 ||
         (portUsage.status === "busy" && portUsage.listeners.length === 0);
   const shouldProbeRpc = running && ownsPort && params.rpc;
@@ -94,17 +139,18 @@ export async function inspectGatewayRestart(params: {
   const staleGatewayPids = Array.from(
     new Set(
       gatewayListeners
-        .filter((listener) => Number.isFinite(listener.pid))
-        .filter((listener) => {
+        .map((listener) => ({ listener, index: portUsage.listeners.indexOf(listener) }))
+        .filter(({ listener }) => Number.isFinite(listener.pid))
+        .filter(({ index }) => {
           if (!running) {
             return true;
           }
           if (runtimePid == null) {
             return true;
           }
-          return !listenerOwnedByRuntimePid({ listener, runtimePid });
+          return listenerOwnership.get(index) !== true;
         })
-        .map((listener) => listener.pid as number),
+        .map(({ listener }) => listener.pid as number),
     ),
   );
 
@@ -145,7 +191,7 @@ export async function waitForGatewayHealthyRestart(params: {
     if (snapshot.healthy) {
       return snapshot;
     }
-    if (snapshot.staleGatewayPids.length > 0 && snapshot.runtime.status !== "running") {
+    if (snapshot.staleGatewayPids.length > 0) {
       return snapshot;
     }
     await sleep(delayMs);

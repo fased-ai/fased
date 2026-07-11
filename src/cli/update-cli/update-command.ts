@@ -70,7 +70,6 @@ import {
   resolveTargetVersion,
   resolveUpdateRoot,
   runUpdateStep,
-  tryWriteCompletionCache,
   type UpdateCommandOptions,
 } from "./shared.js";
 import { suppressDeprecations } from "./suppress-deprecations.js";
@@ -761,28 +760,19 @@ async function maybeRestartService(params: {
           await measureUpdateStage(timings, "stale process cleanup", () =>
             terminateStaleGatewayPids(health.staleGatewayPids),
           );
-          health = await measureUpdateStage(timings, "gateway health after cleanup", () =>
+          await measureUpdateStage(timings, "service recovery restart", () =>
+            params.serviceTarget.service.restart({
+              env: process.env,
+              stdout: process.stdout,
+            }),
+          );
+          health = await measureUpdateStage(timings, "gateway recovery verification", () =>
             waitForGatewayHealthyRestart({
               service: params.serviceTarget.service,
               port: params.gatewayPort,
               rpc: params.rpc,
             }),
           );
-          if (!health.healthy) {
-            await measureUpdateStage(timings, "service recovery restart", () =>
-              params.serviceTarget.service.restart({
-                env: process.env,
-                stdout: process.stdout,
-              }),
-            );
-            health = await measureUpdateStage(timings, "gateway recovery verification", () =>
-              waitForGatewayHealthyRestart({
-                service: params.serviceTarget.service,
-                port: params.gatewayPort,
-                rpc: params.rpc,
-              }),
-            );
-          }
         }
 
         if (health.healthy) {
@@ -855,6 +845,7 @@ async function maybeRestartService(params: {
 }
 
 export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
+  const commandStartedAt = Date.now();
   suppressDeprecations();
 
   const timeoutMs = parseTimeoutMsOrExit(opts.timeout);
@@ -1157,7 +1148,7 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
     token: gatewayConfig?.auth?.token,
     password: gatewayConfig?.auth?.password,
     tlsFingerprint: tlsRuntime.enabled ? tlsRuntime.fingerprintSha256 : undefined,
-    timeoutMs: 5_000,
+    timeoutMs: 1_500,
   };
   const restartResult = await maybeRestartService({
     shouldRestart,
@@ -1217,15 +1208,17 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
     }
   }
 
-  await measureUpdateStage(lifecycleTimings, "completion cache", () =>
-    tryWriteCompletionCache(root, Boolean(opts.json)),
-  );
   await measureUpdateStage(lifecycleTimings, "shell completion", () =>
     tryInstallShellCompletion({
       jsonMode: Boolean(opts.json),
       skipPrompt: Boolean(opts.yes),
     }),
   );
+
+  lifecycleTimings.push({
+    name: "total command wall time",
+    durationMs: Date.now() - commandStartedAt,
+  });
 
   printUpdateLifecycleTimings(lifecycleTimings, Boolean(opts.json));
 

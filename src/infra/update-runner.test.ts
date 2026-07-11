@@ -244,7 +244,11 @@ describe("runGatewayUpdate", () => {
     return filename;
   }
 
-  async function buildHostedRuntimeResponse(params: { name: string; version: string }) {
+  async function buildHostedRuntimeResponse(params: {
+    name: string;
+    version: string;
+    includeEntrypoint?: boolean;
+  }) {
     const workDir = await fs.mkdtemp(path.join(tempDir, "hosted-runtime-"));
     const packageDir = path.join(workDir, "package");
     await fs.mkdir(path.join(packageDir, "node_modules"), { recursive: true });
@@ -253,7 +257,9 @@ describe("runGatewayUpdate", () => {
       JSON.stringify({ name: params.name, version: params.version }),
       "utf-8",
     );
-    await fs.writeFile(path.join(packageDir, "fased.mjs"), "export {};\n", "utf-8");
+    if (params.includeEntrypoint !== false) {
+      await fs.writeFile(path.join(packageDir, "fased.mjs"), "export {};\n", "utf-8");
+    }
     const archivePath = path.join(workDir, "runtime.tar.gz");
     await tar.c({ cwd: workDir, file: archivePath, gzip: true }, ["package"]);
     const bytes = await fs.readFile(archivePath);
@@ -866,8 +872,8 @@ describe("runGatewayUpdate", () => {
     const pkgRoot = path.join(prefix, "lib", "node_modules", "@fased", "fased");
     const dependencyHash = "a".repeat(64);
     const dependencyModules = path.join(
-      path.dirname(pkgRoot),
-      ".fased-dependencies",
+      path.dirname(prefix),
+      "hosted-dependencies",
       dependencyHash,
       "node_modules",
     );
@@ -910,6 +916,10 @@ describe("runGatewayUpdate", () => {
     });
 
     expect(result.status).toBe("ok");
+    expect(result.strategy).toEqual({
+      kind: "hosted-artifact",
+      reason: "verified layered hosted runtime",
+    });
     expect(result.after?.version).toBe("2.0.0");
     expect(result.steps.map((step) => step.name)).toEqual([
       "hosted app download",
@@ -922,6 +932,154 @@ describe("runGatewayUpdate", () => {
     expect(await fs.realpath(path.join(pkgRoot, "node_modules"))).toBe(
       await fs.realpath(dependencyModules),
     );
+    await finalizeUpdateTransaction(result.transaction);
+  });
+
+  it("seeds the canonical dependency cache from a matching self-contained runtime", async () => {
+    const prefix = path.join(tempDir, ".fased", "install-cache", "npm-global");
+    const pkgRoot = path.join(prefix, "lib", "node_modules", "@fased", "fased");
+    const dependencyHash = "b".repeat(64);
+    const dependencyModules = path.join(
+      path.dirname(prefix),
+      "hosted-dependencies",
+      dependencyHash,
+      "node_modules",
+    );
+    await seedGlobalPackageRoot(pkgRoot, "1.0.0", "@fased/fased");
+    await fs.mkdir(path.join(pkgRoot, "node_modules", "example"), { recursive: true });
+    await fs.writeFile(path.join(pkgRoot, "node_modules", "example", "index.js"), "ok\n");
+    await fs.writeFile(
+      path.join(pkgRoot, ".fased-hosted-runtime.json"),
+      `${JSON.stringify({ schemaVersion: 1, dependencyHash })}\n`,
+      "utf8",
+    );
+    const artifact = await buildHostedAppResponse({
+      name: "@fased/fased",
+      version: "2.0.0",
+      dependencyHash,
+    });
+    const appAssetName = "fased-hosted-app-linux-x64-v2.0.0.tar.gz";
+    const requested: string[] = [];
+    const fetchImpl = (async (input: string | URL | Request) => {
+      const url = fetchInputUrl(input);
+      requested.push(url);
+      if (url.endsWith(`${appAssetName}.sha256`)) {
+        return new Response(`${artifact.checksum}  ${appAssetName}\n`);
+      }
+      if (url.endsWith(appAssetName)) {
+        return new Response(artifact.bytes);
+      }
+      return new Response("not found", { status: 404 });
+    }) as typeof fetch;
+    const runCommand = async (argv: string[]) => {
+      if (argv[0] === "git" && argv.at(-2) === "rev-parse" && argv.at(-1) === "--show-toplevel") {
+        return { stdout: "", stderr: "not a git repository", code: 128 };
+      }
+      if (argv[0] === process.execPath && argv.at(-2) === "plugins" && argv.at(-1) === "doctor") {
+        return { stdout: "No plugin issues detected.", stderr: "", code: 0 };
+      }
+      throw new Error(`unexpected command: ${argv.join(" ")}`);
+    };
+
+    const result = await runWithCommand(runCommand, {
+      cwd: pkgRoot,
+      tag: "2.0.0",
+      hostedReleaseFetch: fetchImpl,
+      hostedReleaseBaseUrl: "https://releases.example.test",
+    });
+
+    expect(result.status).toBe("ok");
+    expect(result.strategy?.reason).toBe("verified layered hosted runtime");
+    expect(result.steps.map((step) => step.name)).toEqual([
+      "hosted app download",
+      "hosted app extract",
+      "hosted dependency seed",
+      "hosted dependency reuse",
+      "hosted layered verify",
+      "hosted app swap",
+    ]);
+    expect(requested.some((url) => url.includes("fased-hosted-deps"))).toBe(false);
+    expect(await fs.realpath(path.join(pkgRoot, "node_modules"))).toBe(
+      await fs.realpath(dependencyModules),
+    );
+    expect(await fs.readFile(path.join(dependencyModules, "example", "index.js"), "utf8")).toBe(
+      "ok\n",
+    );
+    await finalizeUpdateTransaction(result.transaction);
+  });
+
+  it("moves the legacy updater dependency layer into the canonical cache", async () => {
+    const prefix = path.join(tempDir, ".fased", "install-cache", "npm-global");
+    const pkgRoot = path.join(prefix, "lib", "node_modules", "@fased", "fased");
+    const dependencyHash = "c".repeat(64);
+    const legacyDependencyRoot = path.join(
+      path.dirname(pkgRoot),
+      ".fased-dependencies",
+      dependencyHash,
+    );
+    const canonicalDependencyModules = path.join(
+      path.dirname(prefix),
+      "hosted-dependencies",
+      dependencyHash,
+      "node_modules",
+    );
+    await seedGlobalPackageRoot(pkgRoot, "1.0.0", "@fased/fased");
+    await fs.mkdir(path.join(legacyDependencyRoot, "node_modules", "example"), {
+      recursive: true,
+    });
+    await fs.writeFile(
+      path.join(legacyDependencyRoot, "node_modules", "example", "index.js"),
+      "ok\n",
+    );
+    await fs.symlink(
+      path.join(legacyDependencyRoot, "node_modules"),
+      path.join(pkgRoot, "node_modules"),
+      "dir",
+    );
+    await fs.writeFile(
+      path.join(pkgRoot, ".fased-hosted-runtime.json"),
+      `${JSON.stringify({ schemaVersion: 1, dependencyHash })}\n`,
+      "utf8",
+    );
+    const artifact = await buildHostedAppResponse({
+      name: "@fased/fased",
+      version: "2.0.0",
+      dependencyHash,
+    });
+    const appAssetName = "fased-hosted-app-linux-x64-v2.0.0.tar.gz";
+    const requested: string[] = [];
+    const fetchImpl = (async (input: string | URL | Request) => {
+      const url = fetchInputUrl(input);
+      requested.push(url);
+      if (url.endsWith(`${appAssetName}.sha256`)) {
+        return new Response(`${artifact.checksum}  ${appAssetName}\n`);
+      }
+      if (url.endsWith(appAssetName)) {
+        return new Response(artifact.bytes);
+      }
+      return new Response("not found", { status: 404 });
+    }) as typeof fetch;
+    const runCommand = async (argv: string[]) => {
+      if (argv[0] === "git" && argv.at(-2) === "rev-parse" && argv.at(-1) === "--show-toplevel") {
+        return { stdout: "", stderr: "not a git repository", code: 128 };
+      }
+      throw new Error(`unexpected command: ${argv.join(" ")}`);
+    };
+
+    const result = await runWithCommand(runCommand, {
+      cwd: pkgRoot,
+      tag: "2.0.0",
+      hostedReleaseFetch: fetchImpl,
+      hostedReleaseBaseUrl: "https://releases.example.test",
+    });
+
+    expect(result.status).toBe("ok");
+    expect(result.steps.map((step) => step.name)).toContain("hosted dependency seed");
+    expect(requested.some((url) => url.includes("fased-hosted-deps"))).toBe(false);
+    expect(await fs.realpath(path.join(pkgRoot, "node_modules"))).toBe(
+      await fs.realpath(canonicalDependencyModules),
+    );
+    expect(await pathExists(legacyDependencyRoot)).toBe(false);
     await finalizeUpdateTransaction(result.transaction);
   });
 
@@ -977,13 +1135,14 @@ describe("runGatewayUpdate", () => {
     expect(result.after?.version).toBe("1.0.0");
   });
 
-  it("keeps the current hosted runtime when the extracted CLI smoke fails", async () => {
+  it("keeps the current hosted runtime when the extracted runtime shape is incomplete", async () => {
     const prefix = path.join(tempDir, ".fased", "install-cache", "npm-global");
     const pkgRoot = path.join(prefix, "lib", "node_modules", "@fased", "fased");
     await seedGlobalPackageRoot(pkgRoot, "1.0.0", "@fased/fased");
     const artifact = await buildHostedRuntimeResponse({
       name: "@fased/fased",
       version: "2.0.0",
+      includeEntrypoint: false,
     });
     const assetName = "fased-hosted-linux-x64-v2.0.0.tar.gz";
     const fetchImpl = (async (input: string | URL | Request) => {
@@ -999,9 +1158,6 @@ describe("runGatewayUpdate", () => {
     const runCommand = async (argv: string[]) => {
       if (argv[0] === "git" && argv.at(-2) === "rev-parse" && argv.at(-1) === "--show-toplevel") {
         return { stdout: "", stderr: "not a git repository", code: 128 };
-      }
-      if (argv[0] === process.execPath && argv.at(-2) === "plugins" && argv.at(-1) === "doctor") {
-        return { stdout: "", stderr: "missing runtime dependency", code: 1 };
       }
       throw new Error(`unexpected command: ${argv.join(" ")}`);
     };
@@ -1019,7 +1175,7 @@ describe("runGatewayUpdate", () => {
     expect(await fs.readFile(path.join(pkgRoot, "package.json"), "utf8")).toContain('"1.0.0"');
     expect(result.steps.find((step) => step.name === "hosted artifact verify")).toMatchObject({
       exitCode: 1,
-      stderrTail: "missing runtime dependency",
+      stderrTail: "expected complete v2.0.0, found 2.0.0",
     });
   });
 
