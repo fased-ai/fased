@@ -8,8 +8,9 @@ sidebarTitle: "Agent + Wallets + Mining"
 
 # Agent, Wallets, And Mining Walkthrough
 
-This is the browser-first path from a fresh Fased install to a working Agent,
-wallet setup, and Satcoin mining control.
+This is the guided path from a fresh Fased install to a working Agent, wallet
+setup, and Satcoin mining control. Wallet creation and private-key import stay
+in the guarded terminal wizard; the browser manages wallets after setup.
 
 Use this page when you want the shortest guided route. Each section links to the
 deeper docs for the same area.
@@ -24,7 +25,7 @@ flowchart TD
   install["Install Fased"] --> open["Open Control UI"]
   open --> agent["Select Agent"]
   agent --> model["Connect Model"]
-  model --> wallets["Create Wallets"]
+  model --> wallets["Create Or Import Wallets<br/>Onboarding / CLI"]
   wallets --> fund["Fund Mining Wallet"]
   fund --> mining["Open Mining"]
   mining --> ready["Run Readiness"]
@@ -165,6 +166,18 @@ fased dashboard
 fased health
 ```
 
+Before continuing, update and verify the Gateway:
+
+```bash
+fased update status
+fased update
+fased --version
+fased gateway status
+fased doctor --non-interactive
+```
+
+`fased gateway status` must report a running service and `RPC probe: ok`.
+
 Read next:
 
 - [Getting Started](/start/getting-started)
@@ -243,10 +256,15 @@ Read next:
 
 ## 5. Create Wallets
 
-Open **Wallets** to create new local wallets. To import an existing Phantom or
-other Solana wallet, run `fased wallet setup --chain solana` and choose the
-import path in the guarded terminal wizard. The Control UI does not accept a
-private key directly.
+Create or import wallets during onboarding, or run the guarded terminal wizard:
+
+```bash
+fased wallet setup --chain solana
+```
+
+The Control UI does not create or import wallets and never accepts a private
+key. After terminal setup, open **Wallets** to inspect addresses, balances,
+policy, approvals, and activity.
 
 Create or import wallets in this order:
 
@@ -301,7 +319,33 @@ Read next:
 - [Wallets](/plugins/crypto/wallet-page)
 - [Solana RPC Setup](/plugins/crypto/wallet-rpc-setup)
 
-## 7. Open Mining And Run Readiness
+## 7. Verify Official Mainnet Status
+
+The SAT mainnet manifest is signed by the project release key. That public key
+belongs to Fased releases; it is not your wallet public key and does not require
+you to create a wallet. A user with no wallet can still check whether mainnet is
+live and whether the official manifest is trusted.
+
+```bash
+fased sat sync-mainnet --json
+```
+
+This command is safe before wallet setup. It reports `not_live` without writing
+wallet state; once a live signed manifest is available, it applies only the
+verified official runtime IDs.
+
+| State                   | Meaning                                       | Next action                               |
+| ----------------------- | --------------------------------------------- | ----------------------------------------- |
+| `not_live`              | Official mainnet launch is not active         | Keep learning; do not fund mainnet mining |
+| live, trust key missing | This Fased release cannot verify launch data  | Update Fased                              |
+| `available`             | Signed official IDs are verified              | Run the mainnet sync action               |
+| `synced`                | This agent matches the signed official IDs    | Continue to wallet readiness              |
+| verification failed     | Hash, signature, or trusted key did not match | Stop and verify official status           |
+
+Normal users never supply the manifest verification key. The environment-key
+override is only for controlled launch rehearsals and key-rotation tests.
+
+## 8. Open Mining And Run Readiness
 
 Open **Mining**.
 
@@ -309,12 +353,17 @@ Confirm the active wallet is `@wallet:mining`, then run readiness before
 starting. Fix signer, RPC, SOL, token-account, or capital warnings before
 continuing.
 
+No-wallet readiness is expected to stop here and direct you to create or import
+the singleton `@wallet:mining`. A configured wallet can still be blocked by a
+missing signer, RPC, SOL fee reserve, or miner capital; resolve the exact item
+reported before continuing.
+
 Read next:
 
 - [Mining](/plugins/crypto/mining-page)
 - [Mining Troubleshooting](/plugins/crypto/mining-troubleshooting)
 
-## 8. Deposit Capital
+## 9. Deposit Capital
 
 On **Mining**, use the Mining Capital block.
 
@@ -328,7 +377,7 @@ Read next:
 - [Mining](/plugins/crypto/mining-page)
 - [Mining API](/plugins/crypto/mining-protocol)
 
-## 9. Set Commit
+## 10. Set Commit
 
 Set a conservative active commit amount lower than free capital and wallet fee
 reserve.
@@ -344,9 +393,15 @@ Read next:
 - [Mining](/plugins/crypto/mining-page)
 - [Advanced Mining](/plugins/crypto/mining-advanced)
 
-## 10. Start Mining
+## 11. Start Mining
 
 Click **Start** only after readiness is green and the fee warning is clear.
+
+Start writes the active commit on-chain before enabling mining workers. If that
+transaction fails, mining remains stopped and reports the transaction error.
+When the Mining wallet is below its required fee reserve but has enough free
+miner capital, Fased may withdraw only the missing reserve amount from free
+miner capital back to the same Mining wallet before starting.
 
 The Mining page shows whether the runtime is ready, running, blocked, or
 waiting.
@@ -358,7 +413,7 @@ Read next:
 - [Mining](/plugins/crypto/mining-page)
 - [Mining Chat And Automation](/plugins/crypto/mining-chat-and-automation)
 
-## 11. Review Activity And History
+## 12. Review Activity And History
 
 Use recent activity and history to confirm what the runtime did:
 
@@ -376,10 +431,14 @@ Read next:
 - [Advanced Mining](/plugins/crypto/mining-advanced)
 - [Mining Troubleshooting](/plugins/crypto/mining-troubleshooting)
 
-## 12. Stop, Claim, And Sweep
+## 13. Stop, Claim, And Sweep
 
 Click **Stop** when you want to stop new cycle submits. Claim and recovery can
 continue through already-submitted cycles.
+
+If capital is still locked or claims are pending, status enters drain mode.
+Drain mode stops new participation while settlement, claim, and recovery finish
+safely. Do not delete the wallet, signer state, or agent state while draining.
 
 When claimable SAT exists, claim it. If sweep is enabled and configured, review
 the sweep destination before using it.
@@ -389,7 +448,7 @@ Read next:
 - [Mining](/plugins/crypto/mining-page)
 - [Mining Chat And Automation](/plugins/crypto/mining-chat-and-automation)
 
-## 13. Review Wallet Ops
+## 14. Review Wallet Ops
 
 Return to **Wallets**.
 
@@ -402,7 +461,7 @@ Read next:
 - [Wallet Chat And Channels](/plugins/crypto/wallet-chat-and-channels)
 - [Wallet Production Flow](/plugins/crypto/wallet-production-flow)
 
-## 14. Optional Fased Network And Bond
+## 15. Optional Fased Network And Bond
 
 Open **Fased Network** after the base Agent, wallets, and mining path are clear.
 
@@ -415,3 +474,21 @@ Read next:
 
 - [Fased Network](/start/federation)
 - [SAT Bond Operator Overview](/start/bond-operator-economy)
+
+## Screenshot Checklist
+
+Keep screenshots aligned with the actual boundary between terminal setup and
+browser management. The most useful missing captures are:
+
+1. `fased gateway status` with the service running and `RPC probe: ok`.
+2. The first successful Chat reply after provider setup.
+3. `fased wallet setup --chain solana` at role selection, with no key visible.
+4. Wallets showing configured Agent, Mining, and Vault cards.
+5. Mining mainnet status before launch and after signed sync.
+6. Readiness with each required check green.
+7. Miner-capital deposit and confirmed active commit.
+8. The first running cycle and its history entry.
+9. Stop with both a clean stop and a drain-mode example.
+
+Never capture private keys, seed phrases, provider secrets, Gateway tokens, RPC
+credentials, signer paths, or personally identifying wallet history.

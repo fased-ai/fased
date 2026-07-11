@@ -79,6 +79,11 @@ Defaults by command:
 
 Notes:
 
+- Builtin memory can search indexed text with SQLite FTS when no embedding
+  provider is configured. Semantic/vector search requires a configured remote,
+  Ollama, or optional local embedding runtime.
+- If status reports `dirty: true`, run `fased memory index`, then confirm files
+  and chunks with `fased memory status --json` before calling memory ready.
 - `memory status --deep` probes vector + embedding availability.
 - `memory status --deep --index` runs a reindex if the store is dirty.
 - `memory doctor` is read-only. It reports inventory, validation findings, and

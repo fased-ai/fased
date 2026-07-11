@@ -37,6 +37,15 @@ config/sat-runtime.env
 The Mining page should only show a connected mainnet state after that signed
 manifest verifies.
 
+The signature is checked with an Ed25519 public key embedded in the Fased
+release. This is a project release trust key, not a user's Solana wallet public
+key. Mainnet status can be checked before any wallet exists. If a live manifest
+appears but the installed release has no trusted key, Fased fails closed and
+asks the user to update; it does not accept the manifest or start mining.
+
+The environment-key override exists for controlled launch rehearsals and key
+rotation tests. Normal users should never paste or configure a manifest key.
+
 ## Pre-launch
 
 Before launch:

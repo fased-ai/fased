@@ -18,6 +18,9 @@ type TrustedManifestKey = {
   publicKeyBase64Url: string;
 };
 
+// Populated only with public keys produced by the official launch key ceremony.
+// Never add a placeholder key here: live mainnet remains fail-closed until a
+// release contains an official trust anchor.
 const EMBEDDED_TRUSTED_KEYS: TrustedManifestKey[] = [];
 
 export type SatMainnetSyncState = "not_live" | "available" | "synced" | "failed";
@@ -41,6 +44,7 @@ export type SatMainnetSyncStatus = {
   needsSync?: boolean;
   runtimeFile?: string;
   verification: SatMainnetSyncVerification;
+  trustKeySource?: "embedded" | "environment" | "missing" | "not_required";
   error?: string;
 };
 
@@ -60,15 +64,27 @@ type RawManifest = {
 
 function trustedKeysFromEnv(env: NodeJS.ProcessEnv): TrustedManifestKey[] {
   const raw = String(env.FASED_SAT_MAINNET_MANIFEST_PUBLIC_KEY ?? "").trim();
-  if (!raw) {
-    return [];
-  }
   const id = String(env.FASED_SAT_MAINNET_MANIFEST_PUBLIC_KEY_ID ?? "env").trim() || "env";
-  return [{ id, publicKeyBase64Url: raw }];
+  const rotated = String(env.FASED_SAT_MAINNET_MANIFEST_PUBLIC_KEYS ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((publicKeyBase64Url, index) => ({
+      id: `${id}-${index + 1}`,
+      publicKeyBase64Url,
+    }));
+  return [...(raw ? [{ id, publicKeyBase64Url: raw }] : []), ...rotated];
 }
 
 function resolveTrustedKeys(env: NodeJS.ProcessEnv): TrustedManifestKey[] {
   return [...EMBEDDED_TRUSTED_KEYS, ...trustedKeysFromEnv(env)];
+}
+
+function resolveTrustKeySource(env: NodeJS.ProcessEnv): "embedded" | "environment" | "missing" {
+  if (EMBEDDED_TRUSTED_KEYS.length > 0) {
+    return "embedded";
+  }
+  return trustedKeysFromEnv(env).length > 0 ? "environment" : "missing";
 }
 
 function resolveManifestUrl(env: NodeJS.ProcessEnv): string {
@@ -266,6 +282,7 @@ export async function getSatMainnetSyncStatus(opts?: {
         officialIds: null,
         needsSync: false,
         verification: { hash: "not_required", signature: "not_required" },
+        trustKeySource: "not_required",
       };
     }
     const officialIds = readOfficialIds(manifest);
@@ -273,6 +290,7 @@ export async function getSatMainnetSyncStatus(opts?: {
       throw new Error("live manifest is missing the complete SAT runtime id tuple");
     }
     const verification = await verifyLiveManifest({ manifestUrl, raw, env });
+    const trustKeySource = resolveTrustKeySource(env);
     const localIds = readLocalIds(env);
     if (verification.hash !== "valid" || verification.signature !== "valid") {
       return {
@@ -288,7 +306,11 @@ export async function getSatMainnetSyncStatus(opts?: {
         officialIds,
         needsSync: false,
         verification,
-        error: "Signed manifest verification failed.",
+        trustKeySource,
+        error:
+          trustKeySource === "missing"
+            ? "This Fased release has no trusted SAT mainnet manifest key. Update Fased before syncing or mining."
+            : "Signed manifest verification failed.",
       };
     }
     const synced = idsEqual(localIds, officialIds);
@@ -308,6 +330,7 @@ export async function getSatMainnetSyncStatus(opts?: {
       needsSync: !synced,
       runtimeFile: resolveWritableSatRuntimeDefaultsFile(env),
       verification,
+      trustKeySource,
     };
   } catch (error) {
     return {

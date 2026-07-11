@@ -217,18 +217,27 @@ mining. Start from the Mining wallet and readiness flow below.
 
 Use this flow before pressing **Start** for the first time:
 
-1. Open **Wallets** and create or import a dedicated **Mining** wallet.
+1. Create or import a dedicated **Mining** wallet during onboarding or with
+   `fased wallet setup --chain solana`, then open **Wallets** to inspect it.
 2. Copy the Mining wallet address and fund it with enough SOL for fees, reserve,
    and the capital you intend to deposit.
 3. Open **Mining** and confirm the wallet shown is `@wallet:mining`.
-4. Run readiness. Fix signer, RPC, SOL, token-account, or capital warnings
+4. Check official mainnet status. The manifest verification public key belongs
+   to the Fased release, not to your wallet; no wallet is required to check it.
+5. Run readiness. Fix signer, RPC, SOL, token-account, or capital warnings
    before continuing.
-5. Deposit a small amount of SOL into miner capital. The Fund action creates
+6. Deposit a small amount of SOL into miner capital. The Fund action creates
    the wallet-scoped miner account on-chain when it is missing.
-6. Set a conservative commit amount lower than the free capital and wallet fee
+7. Set a conservative commit amount lower than the free capital and wallet fee
    reserve.
-7. Click **Update** to write the active commit.
-8. Click **Start** only after readiness is green and the fee warning is clear.
+8. Click **Update** to write the active commit.
+9. Click **Start** only after readiness is green and the fee warning is clear.
+
+Start must confirm the active commit transaction before mining workers run. If
+the wallet fee reserve is short but free miner capital can cover the exact
+shortfall, Fased may withdraw that amount from miner capital back to the same
+Mining wallet. A stop with locked or pending capital enters drain mode: no new
+cycle participation starts while settlement, claims, and recovery complete.
 
 Starting mining does not turn the Mining wallet into an Agent wallet. Ordinary
 sends, Marketplace order actions, wallet-capable skills, and Fased Network bond

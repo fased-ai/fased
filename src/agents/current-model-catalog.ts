@@ -188,6 +188,7 @@ const ANTHROPIC_MODELS: ModelDefinitionConfig[] = [
     input: ["text", "image"],
     contextWindow: 1_000_000,
     maxTokens: 128_000,
+    cost: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
   }),
   model({
     id: "claude-opus-4-8",
@@ -196,6 +197,7 @@ const ANTHROPIC_MODELS: ModelDefinitionConfig[] = [
     input: ["text", "image"],
     contextWindow: 1_000_000,
     maxTokens: 128_000,
+    cost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
   }),
   model({
     id: "claude-sonnet-5",
@@ -204,6 +206,8 @@ const ANTHROPIC_MODELS: ModelDefinitionConfig[] = [
     input: ["text", "image"],
     contextWindow: 1_000_000,
     maxTokens: 128_000,
+    // Introductory API pricing through 2026-08-31; review after that date.
+    cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
   }),
   model({
     id: "claude-haiku-4-5",

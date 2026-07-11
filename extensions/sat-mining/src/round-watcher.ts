@@ -9,6 +9,7 @@ import {
   hasSuccessfulClaimOrCloseRecord,
 } from "./cycle-progress.js";
 import { runSatGatewayMethod } from "./gateway-runner.js";
+import { SAT_PROTOCOL_CONSTANTS } from "./protocol-contract.js";
 import {
   inspectSatCycle,
   inspectSatCycleAccountExists,
@@ -41,12 +42,13 @@ import {
 import { computeMiningStrategy } from "./strategy-engine.js";
 import type { SatSkillLiveContext } from "./strategy-skill.js";
 
-const SAT_CYCLE_SECONDS = 300;
-const SAT_CYCLE_EROSION_PPM = 83n;
-const SAT_MIN_ENTRY_LAMPORTS = 250_000_000;
+const SAT_CYCLE_SECONDS = SAT_PROTOCOL_CONSTANTS.cycleSeconds;
+const SAT_CYCLE_EROSION_PPM = SAT_PROTOCOL_CONSTANTS.cycleErosionPpm;
+const SAT_MIN_ENTRY_LAMPORTS = SAT_PROTOCOL_CONSTANTS.minimumEntryLamports;
 const SAT_DEFAULT_RESERVE_LAMPORTS = 150_000_000n;
 const SAT_DEFAULT_FEE_BUFFER_LAMPORTS = 250_000n;
-const SAT_DEFAULT_REGISTRY_RESERVE_TARGET_LAMPORTS = 200_000_000n;
+const SAT_DEFAULT_REGISTRY_RESERVE_TARGET_LAMPORTS =
+  SAT_PROTOCOL_CONSTANTS.registryReserveTargetLamports;
 const SAT_MAX_PENDING_CYCLE_BACKLOG = 2;
 const SAT_CAPITAL_SAFETY_BUFFER_MIN_LAMPORTS = 100_000_000n;
 const SAT_CAPITAL_SAFETY_BUFFER_MAX_LAMPORTS = 1_000_000_000n;

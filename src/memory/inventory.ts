@@ -188,7 +188,7 @@ export async function buildMemoryInventory(params: {
   const qmdIndexPath = path.join(qmdDir, "xdg-cache", "qmd", "index.sqlite");
   const memoryDir = path.join(workspaceDir, "memory");
   const hookConfig = resolveHookConfig(cfg, "session-memory");
-  const activePlugin = resolveActiveMemoryPlugin(cfg);
+  const activePlugin = resolveActiveMemoryPlugin(cfg, providerStatus);
 
   const workspaceStatus = await summarizePath(workspaceDir, roots);
   const memoryRootSpecs = [
@@ -696,17 +696,42 @@ function validatePathStatus(params: {
 
 function resolveActiveMemoryPlugin(
   cfg: FasedAgentConfig,
+  providerStatus?: MemoryProviderStatus,
 ): DoctorMemoryInventoryPayload["memoryPlugin"] {
   const normalized = normalizePluginsConfig(cfg.plugins);
   const slot = normalized.slots.memory ?? null;
   const registry = getActivePluginRegistry();
-  const active = slot ? registry?.plugins.find((plugin) => plugin.id === slot) : undefined;
+  const registryActive = slot ? registry?.plugins.find((plugin) => plugin.id === slot) : undefined;
+  const providerBackedMemoryCore: PluginRecord | undefined =
+    slot === "memory-core" && providerStatus?.backend === "builtin"
+      ? {
+          id: "memory-core",
+          name: "Memory Core",
+          kind: "memory",
+          source: "builtin memory backend",
+          origin: "bundled",
+          status: "loaded" as const,
+          enabled: true,
+          toolNames: [],
+          hookNames: [],
+          channelIds: [],
+          providerIds: [],
+          gatewayMethods: [],
+          cliCommands: [],
+          services: [],
+          commands: [],
+          httpHandlers: 0,
+          hookCount: 0,
+          configSchema: false,
+        }
+      : undefined;
+  const active = registryActive ?? providerBackedMemoryCore;
 
   return {
     configuredSlot: slot,
     enabled:
       normalized.enabled && Boolean(slot) && active?.enabled === true && active.status === "loaded",
-    registryLoaded: Boolean(registry),
+    registryLoaded: Boolean(registry || providerBackedMemoryCore),
     ...(active
       ? {
           active: {

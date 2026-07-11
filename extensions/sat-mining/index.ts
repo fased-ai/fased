@@ -8035,7 +8035,7 @@ const satMiningPlugin = {
           await maybePrimeSatMinerCapitalAccount(activeWallet.address);
           await submitSatSetActiveCommit(state.activeConfig, {
             lamports: state.activeConfig.commitLamports ?? 250_000_000,
-          }).catch(() => {});
+          });
         }
         const payoutReadiness = activeWallet?.address
           ? await withSatServiceReadTimeout(

@@ -15,6 +15,7 @@ import {
 } from "fased/plugin-sdk/sat-runtime";
 import type { SatMiningConfig } from "./config.js";
 import { decodeHash32 } from "./hash-spec.js";
+import { SAT_INSTRUCTION_DISCRIMINATORS } from "./protocol-contract.js";
 import { inspectSatCycleRegistryMeta, inspectSatMinerCyclesByAddress } from "./rpc-read.js";
 
 const require = createRequire(import.meta.url);
@@ -49,45 +50,7 @@ const MINING_STAKE_SEED = "mining_stake";
 const TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const ASSOCIATED_TOKEN_PROGRAM_ID = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
 
-const IX = {
-  bootstrap: 34,
-  initializeCycle: 38,
-  finalizeEpoch: 43,
-  openRound: 44,
-  submitValidatorAttestation: 45,
-  openDispute: 46,
-  claim: 47,
-  resolveDispute: 48,
-  republishEpochRoots: 49,
-  submitParticipation: 52,
-  initMinerCapital: 36,
-  depositMinerCapital: 37,
-  openCycle: 56,
-  submitCycle: 57,
-  claimCycleRewards: 59,
-  retargetUnlock: 60,
-  claimCycleRewardsBatch: 62,
-  settleCyclePage: 63,
-  finalizeCycleSettlement: 64,
-  scoreCyclePage: 65,
-  distributeCyclePage: 66,
-  withdrawMinerCapital: 67,
-  setActiveCommit: 68,
-  closeResolvedMinerCycleState: 69,
-  closeResolvedCycleRegistryPage: 70,
-  closeResolvedCycleArtifacts: 71,
-  compactPendingCycleRange: 75,
-  setProtocolRecipients: 76,
-  claimProtocolTreasury: 77,
-  claimProtocolDistributorSat: 85,
-  refillRegistryReserveFromTreasury: 88,
-  openBondPosition: 79,
-  increaseBondPosition: 80,
-  requestBondUnlock: 81,
-  cancelBondUnlock: 82,
-  finalizeBondUnlock: 83,
-  miningCrank: 33,
-} as const;
+const IX = SAT_INSTRUCTION_DISCRIMINATORS;
 
 const BOND_IX = {
   initTierPolicy: 0,

@@ -11,9 +11,9 @@ title: "wallet"
 Manage wallet setup, keystore state, local signer health, custody locks, wallet
 roles, and policy status.
 
-Browser equivalent: **Wallets**. Normal users should use the browser page to
-create new wallets and manage funding, balances, approvals, access policy, and
-skill grants. Existing private-key imports use onboarding or the guarded CLI;
+Browser management surface: **Wallets**. Wallet creation and import use
+onboarding or the guarded CLI. The browser page manages configured wallet
+addresses, funding, balances, approvals, access policy, and skill grants;
 the browser page does not accept a private key directly.
 
 ## Common commands

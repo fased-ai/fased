@@ -68,13 +68,13 @@ Read it like this:
 
 For a first public setup, use this order:
 
-1. Open **Wallets**.
+1. Run onboarding or `fased wallet setup --chain solana` to create or import wallets.
 2. Create or import one **Agent** wallet for normal sends, Marketplace order actions,
    reviewed wallet actions, scheduled wallet work, and skill wallet actions.
 3. Create or import one **Mining** wallet only if you plan to run Satcoin mining.
 4. Create or import one **Vault** wallet if you need protected storage or Fased
    Network bond authority.
-5. Copy the address from the wallet card and fund the wallet from an external
+5. Open **Wallets**, copy the address from the wallet card, and fund the wallet from an external
    wallet or exchange.
 6. Refresh balances and confirm the SOL arrived before sending, mining, or
    scheduling wallet work.
