@@ -28,4 +28,16 @@ describe("managed gateway entry selection", () => {
     expect(resolver.indexOf("dist/entry.js")).toBeLessThan(resolver.indexOf("dist/index.js"));
     expect(resolver.indexOf("dist/entry.mjs")).toBeLessThan(resolver.indexOf("dist/index.mjs"));
   });
+
+  it("stamps the gateway version from the runtime selected by the launcher", () => {
+    const script = fs.readFileSync(path.resolve(import.meta.dirname, "start-managed.sh"), "utf8");
+    const runtimeVersion = script.indexOf('RUNTIME_VERSION="$("$NODE_BIN"');
+    const versionExport = script.indexOf('export FASED_VERSION="$RUNTIME_VERSION"');
+    const gatewayEntry = script.indexOf("resolve_gateway_cli_entry() {");
+
+    expect(runtimeVersion).toBeGreaterThanOrEqual(0);
+    expect(versionExport).toBeGreaterThan(runtimeVersion);
+    expect(gatewayEntry).toBeGreaterThan(versionExport);
+    expect(script).toContain('path.join(root, "package.json")');
+  });
 });

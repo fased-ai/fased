@@ -112,6 +112,20 @@ if [[ -z "$NODE_BIN" ]]; then
   exit 1
 fi
 
+# The service unit can outlive several application updates. Stamp the process
+# from the selected runtime so stale unit metadata cannot misreport its build.
+RUNTIME_VERSION="$("$NODE_BIN" -e '
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const root = process.argv[1];
+  const parsed = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+  if (typeof parsed.version !== "string" || !parsed.version.trim()) process.exit(1);
+  process.stdout.write(parsed.version.trim());
+' "$FASED_RUNTIME_ROOT" 2>/dev/null || true)"
+if [[ -n "$RUNTIME_VERSION" ]]; then
+  export FASED_VERSION="$RUNTIME_VERSION"
+fi
+
 # Config
 export PATH="$(dirname "$NODE_BIN"):$HOME/.zrok/bin:$PATH"
 export FASED_GATEWAY_MODE=managed

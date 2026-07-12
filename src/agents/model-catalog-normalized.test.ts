@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ModelProviderConfig } from "../config/types.models.js";
+import { OPENAI_API_MODEL_IDS, OPENAI_SIGN_IN_MODEL_IDS } from "../providers/registry.js";
 import { cloneCurrentModelProvider, listCurrentModelCatalogRows } from "./current-model-catalog.js";
 import {
   buildModelCatalogMergeKey,
@@ -101,6 +102,7 @@ describe("normalized model catalog rows", () => {
 
   it("exposes the current Fased overlay as preview rows", () => {
     const rows = listCurrentModelCatalogRows();
+    expect(rows.some((row) => row.provider === "openai" && row.id === "gpt-5.6")).toBe(true);
     expect(rows.some((row) => row.provider === "openai" && row.id === "gpt-5.5")).toBe(true);
     expect(rows.some((row) => row.provider === "anthropic" && row.id === "claude-opus-4-8")).toBe(
       true,
@@ -114,6 +116,15 @@ describe("normalized model catalog rows", () => {
     ).toBe(true);
     expect(new Set(rows.map((row) => row.source))).toEqual(new Set(["current-preview"]));
     expect(new Set(rows.map((row) => row.status))).toEqual(new Set(["preview"]));
+  });
+
+  it("keeps OpenAI registry routes and the UI runtime catalog aligned", () => {
+    const directModels = cloneCurrentModelProvider("openai")?.models.map((model) => model.id) ?? [];
+    const signInModels =
+      cloneCurrentModelProvider("openai-codex")?.models.map((model) => model.id) ?? [];
+
+    expect(directModels).toEqual(expect.arrayContaining([...OPENAI_API_MODEL_IDS]));
+    expect(signInModels).toEqual(expect.arrayContaining([...OPENAI_SIGN_IN_MODEL_IDS]));
   });
 
   it("does not report zero static cost for current Claude models", () => {

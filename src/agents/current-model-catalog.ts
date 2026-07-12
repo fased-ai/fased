@@ -99,6 +99,36 @@ function model(params: {
 
 const OPENAI_MODELS: ModelDefinitionConfig[] = [
   model({
+    id: "gpt-5.6",
+    name: "GPT-5.6 Sol",
+    reasoning: true,
+    input: ["text", "image"],
+    contextWindow: 1_050_000,
+    maxTokens: 128_000,
+    api: "openai-responses",
+    cost: { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 6.25 },
+  }),
+  model({
+    id: "gpt-5.6-terra",
+    name: "GPT-5.6 Terra",
+    reasoning: true,
+    input: ["text", "image"],
+    contextWindow: 1_050_000,
+    maxTokens: 128_000,
+    api: "openai-responses",
+    cost: { input: 2.5, output: 15, cacheRead: 0.25, cacheWrite: 3.125 },
+  }),
+  model({
+    id: "gpt-5.6-luna",
+    name: "GPT-5.6 Luna",
+    reasoning: true,
+    input: ["text", "image"],
+    contextWindow: 1_050_000,
+    maxTokens: 128_000,
+    api: "openai-responses",
+    cost: { input: 1, output: 6, cacheRead: 0.1, cacheWrite: 1.25 },
+  }),
+  model({
     id: "gpt-5.5",
     name: "GPT-5.5",
     reasoning: true,
