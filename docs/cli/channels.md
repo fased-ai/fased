@@ -42,7 +42,7 @@ catalog entry is integrity pinned before install.
 
 ## Install an official channel add-on
 
-Telegram, WhatsApp, Discord, and Slack are downloaded only when selected. Run
+Telegram, WhatsApp, Discord, Slack, Feishu, and Google Chat are downloaded only when selected. Run
 interactive setup and accept the npm install prompt:
 
 ```bash

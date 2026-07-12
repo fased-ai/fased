@@ -7,6 +7,7 @@ import {
   readVersionFromBuildInfoForModuleUrl,
   readVersionFromPackageJsonForModuleUrl,
   resolveRuntimeServiceVersion,
+  resolveRuntimeSource,
   resolveVersionFromModuleUrl,
 } from "./version.js";
 
@@ -140,5 +141,20 @@ describe("version resolution", () => {
         "fallback",
       ),
     ).toBe("fallback");
+  });
+
+  it("reports a sanitized runtime source", () => {
+    expect(resolveRuntimeSource({ FASED_RUNTIME_SOURCE: "source-checkout" })).toBe(
+      "source-checkout",
+    );
+    expect(
+      resolveRuntimeSource(
+        {},
+        "file:///home/app/.fased/install-cache/npm-global/node_modules/@fased/fased/dist/entry.js",
+      ),
+    ).toBe("managed-package");
+    expect(
+      resolveRuntimeSource({ FASED_GATEWAY_MODE: "managed" }, "file:///runtime/dist/entry.js"),
+    ).toBe("packaged-runtime");
   });
 });

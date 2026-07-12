@@ -46,7 +46,7 @@ fased plugins doctor
 Bundled plugins ship with Fased but start disabled unless a setup path enables
 them.
 
-Telegram, WhatsApp, Discord, and Slack are official add-ons rather than bundled
+Telegram, WhatsApp, Discord, Slack, Feishu, and Google Chat are official add-ons rather than bundled
 core plugins:
 
 ```bash
@@ -54,6 +54,8 @@ fased plugins install @fased/telegram
 fased plugins install @fased/whatsapp
 fased plugins install @fased/discord
 fased plugins install @fased/slack
+fased plugins install @fased/feishu
+fased plugins install @fased/googlechat
 fased gateway restart
 ```
 

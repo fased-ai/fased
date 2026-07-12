@@ -215,7 +215,7 @@ surface:
   grants.
 
 `Agent > Channels` exposes installed channels and official add-ons in the same
-order as onboarding. Telegram, WhatsApp, Discord, and Slack show an **Install**
+order as onboarding. Telegram, WhatsApp, Discord, Slack, Feishu, and Google Chat show an **Install**
 action on a fresh core install; setup fields appear after the package is
 installed and the Gateway restarts. The normal setup path is per Agent; any
 global channel page is an implementation/deep-link fallback, not the first-run

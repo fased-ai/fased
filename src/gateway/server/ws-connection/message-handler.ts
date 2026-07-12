@@ -23,7 +23,7 @@ import { rawDataToString } from "../../../infra/ws.js";
 import type { createSubsystemLogger } from "../../../logging/subsystem.js";
 import { roleScopesAllow } from "../../../shared/operator-scope-compat.js";
 import { isGatewayCliClient, isWebchatClient } from "../../../utils/message-channel.js";
-import { resolveRuntimeServiceVersion } from "../../../version.js";
+import { resolveRuntimeServiceVersion, resolveRuntimeSource } from "../../../version.js";
 import type { AuthRateLimiter } from "../../auth-rate-limit.js";
 import type { GatewayAuthResult, ResolvedGatewayAuth } from "../../auth.js";
 import { isLocalDirectRequest } from "../../auth.js";
@@ -1136,6 +1136,7 @@ export function attachGatewayWsMessageHandler(params: {
           protocol: PROTOCOL_VERSION,
           server: {
             version: resolveRuntimeServiceVersion(process.env, "dev"),
+            runtimeSource: resolveRuntimeSource(process.env),
             connId,
           },
           features: { methods: gatewayMethods, events },

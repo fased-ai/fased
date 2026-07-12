@@ -75,6 +75,29 @@ export type RuntimeVersionEnv = {
   [key: string]: string | undefined;
 };
 
+export type RuntimeSource = "source-checkout" | "managed-package" | "packaged-runtime";
+
+export function resolveRuntimeSource(
+  env: RuntimeVersionEnv = process.env as RuntimeVersionEnv,
+  moduleUrl = import.meta.url,
+): RuntimeSource {
+  const configured = env["FASED_RUNTIME_SOURCE"]?.trim();
+  if (
+    configured === "source-checkout" ||
+    configured === "managed-package" ||
+    configured === "packaged-runtime"
+  ) {
+    return configured;
+  }
+  if (
+    moduleUrl.includes("/install-cache/npm-global/") ||
+    moduleUrl.includes("/node_modules/@fased/fased/")
+  ) {
+    return "managed-package";
+  }
+  return env["FASED_GATEWAY_MODE"] === "managed" ? "packaged-runtime" : "source-checkout";
+}
+
 export function resolveRuntimeServiceVersion(
   env: RuntimeVersionEnv = process.env as RuntimeVersionEnv,
   fallback = "dev",

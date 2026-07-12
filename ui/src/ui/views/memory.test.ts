@@ -202,6 +202,8 @@ describe("renderMemory", () => {
     expect(text).toContain("Assistant");
     expect(text).toContain("Research");
     expect(text).toContain("Session Archives");
+    expect(text).toContain("Semantic Recall");
+    expect(text).toContain("FTS only");
     expect(text).toContain("Enabled");
     expect(text).toContain("Citations");
     expect(text).toContain("QMD");

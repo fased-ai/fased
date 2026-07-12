@@ -522,7 +522,7 @@ describe("renderChannels", () => {
     expect(onChannelInstall).toHaveBeenCalledWith("discord");
   });
 
-  it("shows bundled local channels as setup fields without install actions", () => {
+  it("requires bundled local channel installation before setup", () => {
     const container = document.createElement("div");
     const onChannelInstall = vi.fn();
     const snapshot = createSnapshot();
@@ -546,15 +546,18 @@ describe("renderChannels", () => {
     const feishuCard = container.querySelector('[data-channel-card="feishu"]');
     expect(feishuCard).not.toBeNull();
     const text = normalizeText(feishuCard!);
-    expect(text).toContain("Connect");
-    expect(text).not.toContain("Enable this channel, then restart the gateway.");
-    expect(text).toContain("App ID");
-    expect(text).not.toContain("fased plugins install extensions/feishu");
+    expect(text).toContain("Install");
+    expect(text).toContain("Install the channel plugin, then restart the gateway.");
+    expect(text).not.toContain("App ID");
+    expect(text).toContain("fased plugins install extensions/feishu");
     expect(text).not.toContain("@fased/feishu");
     expect(
       feishuCard!.querySelector<HTMLButtonElement>('[aria-label="Enable channel"]'),
     ).toBeNull();
-    expect(onChannelInstall).not.toHaveBeenCalled();
+    Array.from(feishuCard!.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent?.trim() === "Install")
+      ?.click();
+    expect(onChannelInstall).toHaveBeenCalledWith("feishu");
   });
 
   it("shows restart-required state after a channel plugin is installed but not loaded", () => {
@@ -576,12 +579,12 @@ describe("renderChannels", () => {
 
     const text = normalizeText(container);
     expect(text).toContain("Restart required");
-    expect(text).toContain("Enabled. Restart the gateway");
+    expect(text).toContain("Installed. Restart the gateway");
     expect(text).not.toContain("plugin missing");
     expect(container.querySelector('[aria-label="Install channel plugin"]')).toBeNull();
   });
 
-  it("shows bundled catalog-only channels as signup setup instead of enable actions", () => {
+  it("blocks catalog-only setup when no install source exists", () => {
     const container = document.createElement("div");
     const onChannelEnable = vi.fn();
     const onConfigPatch = vi.fn();
@@ -605,32 +608,21 @@ describe("renderChannels", () => {
     const signalCard = container.querySelector('[data-channel-card="signal"]');
     expect(signalCard).not.toBeNull();
     const text = normalizeText(signalCard!);
-    expect(text).toContain("signal-cli account.");
-    expect(text).not.toContain("Signal Signal REST");
-    expect(text).toContain("Signal number");
-    expect(text).toContain("CLI path");
+    expect(text).toContain("Source install required");
+    expect(text).not.toContain("Signal number");
+    expect(text).not.toContain("CLI path");
     expect(text).not.toContain("Install signal-cli if it is missing.");
     expect(text).not.toContain("plugin disabled");
     expect(text).not.toContain("plugin missing");
     expect(text).not.toContain("Route to Agent");
-    expect(text).toContain("Connect");
-    const notes = signalCard!.querySelector<HTMLElement>(".channel-signup-notes");
-    expect(notes?.getAttribute("data-tooltip")).toContain("Install signal-cli if it is missing.");
+    expect(text).not.toContain("Connect");
     const enable = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
       (button) => button.textContent?.trim() === "Enable",
     );
     expect(enable).toBeUndefined();
     expect(onChannelEnable).not.toHaveBeenCalled();
 
-    const accountInput = signalCard!.querySelector<HTMLInputElement>(
-      'input[placeholder="+15551234567"]',
-    );
-    expect(accountInput).not.toBeNull();
-    accountInput!.value = "+15555550123";
-    accountInput!.dispatchEvent(new Event("input", { bubbles: true }));
-
-    expect(onConfigPatch).toHaveBeenCalledWith(["channels", "signal", "enabled"], true);
-    expect(onConfigPatch).toHaveBeenCalledWith(["channels", "signal", "account"], "+15555550123");
+    expect(onConfigPatch).not.toHaveBeenCalled();
   });
 
   it("mirrors Telegram onboarding by enabling the channel when saving a bot token", () => {
@@ -675,7 +667,7 @@ describe("renderChannels", () => {
     snapshot.channelDetailLabels = { irc: "IRC" };
     snapshot.channelMeta = [{ id: "irc", label: "IRC", detailLabel: "IRC" }];
     snapshot.channels = {
-      irc: { configured: false, running: false, connected: false, catalogOnly: true } as never,
+      irc: { configured: false, running: false, connected: false, catalogOnly: false } as never,
     };
     snapshot.channelAccounts = { irc: [] };
 
@@ -732,7 +724,7 @@ describe("renderChannels", () => {
         configured: false,
         running: false,
         connected: false,
-        catalogOnly: true,
+        catalogOnly: false,
       } as never,
     };
     snapshot.channelAccounts = { googlechat: [] };
@@ -782,7 +774,7 @@ describe("renderChannels", () => {
         configured: false,
         running: false,
         connected: false,
-        catalogOnly: true,
+        catalogOnly: false,
         install: { localPath: "extensions/slack", defaultChoice: "local" },
       } as never,
     };
@@ -867,7 +859,7 @@ describe("renderChannels", () => {
         configured: false,
         running: false,
         connected: false,
-        catalogOnly: true,
+        catalogOnly: false,
         install: { localPath: "extensions/msteams", defaultChoice: "local" },
       } as never,
     };
@@ -978,7 +970,7 @@ describe("renderChannels", () => {
         configured: false,
         running: false,
         connected: false,
-        catalogOnly: true,
+        catalogOnly: false,
         install: { localPath: "extensions/nostr", defaultChoice: "local" },
       } as never,
     };
@@ -1052,7 +1044,7 @@ describe("renderChannels", () => {
         configured: false,
         running: false,
         connected: false,
-        catalogOnly: true,
+        catalogOnly: false,
         install: { localPath: "extensions/mattermost", defaultChoice: "local" },
       } as never,
     };
@@ -1138,7 +1130,7 @@ describe("renderChannels", () => {
         configured: false,
         running: false,
         connected: false,
-        catalogOnly: true,
+        catalogOnly: false,
         install: { localPath: "extensions/nextcloud-talk", defaultChoice: "local" },
       } as never,
     };
@@ -1229,7 +1221,7 @@ describe("renderChannels", () => {
         configured: false,
         running: false,
         connected: false,
-        catalogOnly: true,
+        catalogOnly: false,
         install: { localPath: "extensions/bluebubbles", defaultChoice: "local" },
       } as never,
     };
@@ -1320,7 +1312,7 @@ describe("renderChannels", () => {
         configured: false,
         running: false,
         connected: false,
-        catalogOnly: true,
+        catalogOnly: false,
         install: { localPath: "extensions/line", defaultChoice: "local" },
       } as never,
     };
@@ -1432,7 +1424,7 @@ describe("renderChannels", () => {
         configured: false,
         running: false,
         connected: false,
-        catalogOnly: true,
+        catalogOnly: false,
         install: { localPath: "extensions/synology-chat", defaultChoice: "local" },
       } as never,
     };
@@ -1542,7 +1534,7 @@ describe("renderChannels", () => {
         configured: false,
         running: false,
         connected: false,
-        catalogOnly: true,
+        catalogOnly: false,
         install: { localPath: "extensions/tlon", defaultChoice: "local" },
       } as never,
     };
@@ -1668,7 +1660,7 @@ describe("renderChannels", () => {
         configured: false,
         running: false,
         connected: false,
-        catalogOnly: true,
+        catalogOnly: false,
         install: { localPath: "extensions/zalo", defaultChoice: "local" },
       } as never,
     };
@@ -1768,7 +1760,7 @@ describe("renderChannels", () => {
         configured: false,
         running: false,
         connected: false,
-        catalogOnly: true,
+        catalogOnly: false,
         install: { localPath: "extensions/zalouser", defaultChoice: "local" },
       } as never,
     };
@@ -1924,7 +1916,7 @@ describe("renderChannels", () => {
         configured: false,
         running: false,
         connected: false,
-        catalogOnly: true,
+        catalogOnly: false,
         install: { localPath: "extensions/matrix", defaultChoice: "local" },
       } as never,
     };
@@ -2023,7 +2015,7 @@ describe("renderChannels", () => {
         configured: false,
         running: false,
         connected: false,
-        catalogOnly: true,
+        catalogOnly: false,
       } as never,
     };
     snapshot.channelAccounts = { feishu: [] };
@@ -2079,7 +2071,7 @@ describe("renderChannels", () => {
         configured: false,
         running: false,
         connected: false,
-        catalogOnly: true,
+        catalogOnly: false,
       } as never,
     };
     snapshot.channelAccounts = { imessage: [] };

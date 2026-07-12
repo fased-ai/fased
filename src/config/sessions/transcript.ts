@@ -93,25 +93,30 @@ export async function resolveSessionTranscriptFile(params: {
   });
 }
 
-async function ensureSessionHeader(params: {
-  sessionFile: string;
-  sessionId: string;
-}): Promise<void> {
+export function ensureSessionTranscriptHeader(params: { sessionFile: string; sessionId: string }): {
+  created: boolean;
+  error?: string;
+} {
   if (fs.existsSync(params.sessionFile)) {
-    return;
+    return { created: false };
   }
-  await fs.promises.mkdir(path.dirname(params.sessionFile), { recursive: true });
-  const header = {
-    type: "session",
-    version: CURRENT_SESSION_VERSION,
-    id: params.sessionId,
-    timestamp: new Date().toISOString(),
-    cwd: process.cwd(),
-  };
-  await fs.promises.writeFile(params.sessionFile, `${JSON.stringify(header)}\n`, {
-    encoding: "utf-8",
-    mode: 0o600,
-  });
+  try {
+    fs.mkdirSync(path.dirname(params.sessionFile), { recursive: true });
+    const header = {
+      type: "session",
+      version: CURRENT_SESSION_VERSION,
+      id: params.sessionId,
+      timestamp: new Date().toISOString(),
+      cwd: process.cwd(),
+    };
+    fs.writeFileSync(params.sessionFile, `${JSON.stringify(header)}\n`, {
+      encoding: "utf-8",
+      mode: 0o600,
+    });
+    return { created: true };
+  } catch (error) {
+    return { created: false, error: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 export async function appendAssistantMessageToSessionTranscript(params: {
@@ -161,7 +166,10 @@ export async function appendAssistantMessageToSessionTranscript(params: {
     };
   }
 
-  await ensureSessionHeader({ sessionFile, sessionId: entry.sessionId });
+  const ensured = ensureSessionTranscriptHeader({ sessionFile, sessionId: entry.sessionId });
+  if (ensured.error) {
+    return { ok: false, reason: ensured.error };
+  }
 
   const sessionManager = SessionManager.open(sessionFile);
   const message: AppendMessageArg & Record<string, unknown> = {

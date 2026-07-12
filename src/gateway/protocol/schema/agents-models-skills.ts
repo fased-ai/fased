@@ -445,6 +445,7 @@ export const ModelsAuthStatusParamsSchema = Type.Object({}, { additionalProperti
 export const ModelsAuthStatusKindSchema = Type.Union([
   Type.Literal("ok"),
   Type.Literal("expiring"),
+  Type.Literal("refresh-required"),
   Type.Literal("expired"),
   Type.Literal("missing"),
   Type.Literal("static"),

@@ -145,7 +145,8 @@ export function describeSelectedWalletSuitability(wallet: SatMiningWalletOption 
   if (!wallet) {
     return {
       title: "No wallet selected",
-      detail: "Attach a Solana wallet in onboarding first.",
+      detail:
+        "Create or import the dedicated Mining wallet in onboarding or with fased wallet setup --chain solana, then refresh.",
     };
   }
   if (wallet.signerCapability === "background-ready") {
@@ -3887,7 +3888,7 @@ export function renderMining(props: MiningViewProps) {
     : mainnetSyncBlocked
       ? mainnetSyncState.detail
       : !profile?.walletId || !walletSelected
-        ? "Configure"
+        ? "Create or select Mining wallet."
         : !rpcReady
           ? "Set RPC."
           : !walletFundingReady

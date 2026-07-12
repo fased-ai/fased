@@ -784,6 +784,17 @@ const satMiningPlugin = {
       const walletId = readWalletProviderRegistry(effectiveEnv).defaultWalletId?.trim();
       return walletId ? walletId : undefined;
     };
+    const readRegisteredWalletRole = (walletId: string | undefined) => {
+      const resolvedWalletId = walletId?.trim();
+      if (!resolvedWalletId) {
+        return undefined;
+      }
+      const { effectiveEnv } = resolveWalletRuntimeContext();
+      const wallet = readWalletProviderRegistry(effectiveEnv).wallets.find(
+        (entry) => entry.id === resolvedWalletId,
+      );
+      return wallet ? resolveWalletUserRole(wallet) : undefined;
+    };
     const resolveMiningWalletSelection = async (opts?: {
       walletId?: string;
       requireResolvedWallet?: boolean;
@@ -807,9 +818,46 @@ const satMiningPlugin = {
       return { wallets: wallet ? [wallet] : [], wallet, selectedWalletId };
     };
     const ensureStartupWalletBinding = async (opts?: { requireResolvedWallet?: boolean }) => {
-      const selection = await resolveMiningWalletSelection({
-        requireResolvedWallet: opts?.requireResolvedWallet,
-      });
+      let selection: Awaited<ReturnType<typeof resolveMiningWalletSelection>>;
+      try {
+        selection = await resolveMiningWalletSelection({
+          requireResolvedWallet: opts?.requireResolvedWallet,
+        });
+      } catch (error) {
+        const configuredWalletId = resolveConfiguredWalletId();
+        if (!configuredWalletId) {
+          throw error;
+        }
+        const configuredWalletRole = readRegisteredWalletRole(configuredWalletId);
+        if (!configuredWalletRole || configuredWalletRole === "mining") {
+          throw error;
+        }
+        const miningWallets = await listMiningWallets();
+        if (miningWallets.length === 1) {
+          await attachWallet(miningWallets[0]!.walletId);
+          api.logger.warn(
+            `[sat-mining] migrated invalid miner profile wallet ${configuredWalletId} to ${miningWallets[0]!.walletId}`,
+          );
+          selection = await resolveMiningWalletSelection({
+            requireResolvedWallet: opts?.requireResolvedWallet,
+          });
+        } else {
+          state.activeConfig.walletId = undefined;
+          state.activeConfig.enabled = false;
+          state.activeWalletAddress = null;
+          state.running = false;
+          await stopSatWorkerServices();
+          await persistActiveConfig({ includeEnabled: true });
+          if (opts?.requireResolvedWallet) {
+            throw new Error(
+              miningWallets.length === 0
+                ? "the saved mining profile referenced an invalid wallet and no dedicated Mining wallet exists; create or import @wallet:mining first"
+                : "the saved mining profile referenced an invalid wallet; select the dedicated Mining wallet before starting",
+            );
+          }
+          selection = { wallets: [], wallet: undefined, selectedWalletId: undefined };
+        }
+      }
       state.activeWalletAddress = selection.wallet?.address ?? null;
       await ensureSatCapitalActionSignerReady();
       return selection;
@@ -3288,8 +3336,20 @@ const satMiningPlugin = {
       options?: { syncActiveCommit?: boolean; freezeCommitMs?: number },
     ) => {
       const previousWalletId = resolveConfiguredWalletId();
-      state.activeConfig.walletId =
+      const requestedWalletId =
         typeof profile.walletId === "string" ? profile.walletId.trim() || undefined : undefined;
+      if (requestedWalletId) {
+        const requestedWalletRole = readRegisteredWalletRole(requestedWalletId);
+        if (!requestedWalletRole) {
+          throw new Error(`walletId not found: ${requestedWalletId}`);
+        }
+        if (requestedWalletRole !== "mining") {
+          throw new Error(
+            `walletId ${requestedWalletId} is not the dedicated Mining wallet; create or import @wallet:mining and use that wallet for SAT mining`,
+          );
+        }
+      }
+      state.activeConfig.walletId = requestedWalletId;
       state.activeConfig.role =
         profile.role === "validator" || profile.role === "admin" || profile.role === "miner"
           ? profile.role
@@ -3522,9 +3582,14 @@ const satMiningPlugin = {
         );
       }
       if (options?.syncActiveCommit !== false && state.activeWalletAddress) {
-        await submitSatSetActiveCommit(state.activeConfig, {
-          lamports: state.activeConfig.commitLamports ?? 250_000_000,
-        }).catch(() => {});
+        try {
+          await submitSatSetActiveCommit(state.activeConfig, {
+            lamports: state.activeConfig.commitLamports ?? 250_000_000,
+          });
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          throw new Error(`mining profile saved, but active commit was not confirmed: ${detail}`);
+        }
       }
       return readProfile();
     };
@@ -5830,6 +5895,40 @@ const satMiningPlugin = {
         updatedAt: source.updatedAt,
       };
     };
+    const uiMiningStatusPayload = (status: unknown) => {
+      const source =
+        status && typeof status === "object" && !Array.isArray(status)
+          ? (status as Record<string, unknown>)
+          : {};
+      const {
+        recentPlannerOutcomes: _recentPlannerOutcomes,
+        plannerRegimeBuckets: _plannerRegimeBuckets,
+        plannerTimeWindowStats: _plannerTimeWindowStats,
+        deterministicBaseline: _deterministicBaseline,
+        plannerPolicyContexts: _plannerPolicyContexts,
+        plannerCapitalTierStats: _plannerCapitalTierStats,
+        plannerLiveValidation: _plannerLiveValidation,
+        recentCycleFeeBuckets: _recentCycleFeeBuckets,
+        ...rest
+      } = source;
+      const settledHistory = Array.isArray(source.settledHistory) ? source.settledHistory : [];
+      const recentActions = Array.isArray(source.recentActions) ? source.recentActions : [];
+      const archivedFailures = Array.isArray(source.archivedFailures)
+        ? source.archivedFailures
+        : [];
+      return {
+        ...rest,
+        mode: "ui",
+        recentActions: recentActions.slice(0, 30),
+        archivedFailures: archivedFailures.slice(0, 20),
+        settledHistory: settledHistory.slice(0, 12),
+        historyPage: {
+          settledTotal: settledHistory.length,
+          settledReturned: Math.min(settledHistory.length, 12),
+          fullHistoryMethod: "sat.getMiningHistory",
+        },
+      };
+    };
     const resolveMiningAuthorityOrThrow = async () => {
       const { wallet } = await ensureStartupWalletBinding({ requireResolvedWallet: true });
       const authority = wallet?.address?.trim();
@@ -7712,9 +7811,15 @@ const satMiningPlugin = {
                     ? getMiningStatusResponsive({ forceFresh })
                     : getMiningStatus({ includeTxReceipts: false, forceFresh })),
                 )
-              : await (effectiveResponsive
-                  ? getMiningStatusResponsive({ forceFresh })
-                  : getMiningStatus({ includeTxReceipts, forceFresh })),
+              : statusMode === "ui"
+                ? uiMiningStatusPayload(
+                    await (effectiveResponsive
+                      ? getMiningStatusResponsive({ forceFresh })
+                      : getMiningStatus({ includeTxReceipts, forceFresh })),
+                  )
+                : await (effectiveResponsive
+                    ? getMiningStatusResponsive({ forceFresh })
+                    : getMiningStatus({ includeTxReceipts, forceFresh })),
           ),
         );
       } catch (error) {
@@ -7988,8 +8093,12 @@ const satMiningPlugin = {
           typeof (params as { walletId?: string })?.walletId === "string"
             ? String((params as { walletId?: string }).walletId).trim()
             : undefined;
-        if (walletId && walletId !== resolveConfiguredWalletId()) {
-          await attachWallet(walletId);
+        if (walletId) {
+          if (walletId !== resolveConfiguredWalletId()) {
+            await attachWallet(walletId);
+          } else {
+            await resolveMiningWalletSelection({ walletId, requireResolvedWallet: true });
+          }
         }
         const { wallet: activeWallet } = await ensureStartupWalletBinding({
           requireResolvedWallet: true,

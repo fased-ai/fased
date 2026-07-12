@@ -58,13 +58,33 @@ describe("buildAuthHealthSummary", () => {
     const statuses = profileStatuses(summary);
 
     expect(statuses["anthropic:ok"]).toBe("ok");
-    // OAuth credentials with refresh tokens are auto-renewable, so they report "ok"
-    expect(statuses["anthropic:expiring"]).toBe("ok");
-    expect(statuses["anthropic:expired"]).toBe("ok");
+    expect(statuses["anthropic:expiring"]).toBe("refresh-required");
+    expect(statuses["anthropic:expired"]).toBe("refresh-required");
     expect(statuses["anthropic:api"]).toBe("static");
 
     const provider = summary.providers.find((entry) => entry.provider === "anthropic");
     expect(provider?.status).toBe("ok");
+  });
+
+  it("does not call an untested OAuth refresh ready", () => {
+    vi.spyOn(Date, "now").mockReturnValue(now);
+    const summary = buildAuthHealthSummary({
+      store: {
+        version: 1,
+        profiles: {
+          "openai-codex:default": {
+            type: "oauth" as const,
+            provider: "openai-codex",
+            access: "expired-access",
+            refresh: "stored-refresh",
+            expires: now - 1,
+          },
+        },
+      },
+    });
+
+    expect(summary.profiles[0]?.status).toBe("refresh-required");
+    expect(summary.providers[0]?.status).toBe("refresh-required");
   });
 
   it("reports expired for OAuth without a refresh token", () => {

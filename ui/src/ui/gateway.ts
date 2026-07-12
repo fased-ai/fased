@@ -55,6 +55,7 @@ export type GatewayHelloOk = {
   protocol: number;
   server?: {
     version?: string;
+    runtimeSource?: "source-checkout" | "managed-package" | "packaged-runtime";
     connId?: string;
   };
   features?: { methods?: string[]; events?: string[] };

@@ -750,7 +750,7 @@ const ANTHROPIC_MODEL_CAPABILITY_OVERRIDES: Record<string, ModelCapabilityConfig
     thinkingLevels: ANTHROPIC_THINKING_LEVELS,
     defaultThinkingLevel: "low",
     thinkingMode: "anthropic-adaptive",
-    reasoningBudgetSupported: true,
+    reasoningBudgetSupported: false,
   },
   "anthropic/claude-haiku-4-5": {
     thinkingLevels: ANTHROPIC_THINKING_LEVELS,

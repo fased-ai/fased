@@ -148,8 +148,8 @@ The wizard gets a working baseline onto disk. Normal day-to-day setup now lives 
 Agent:
 
 - **Agent > Models**: provider accounts plus primary, fallback, and task model refs for that Agent.
-- **Agent > Channels**: install and configure the four public channel add-ons
-  (Telegram, Discord, WhatsApp, and Slack), plus configure source-maintained
+- **Agent > Channels**: install and configure the six public channel add-ons
+  (Telegram, Discord, WhatsApp, Slack, Feishu, and Google Chat), plus configure source-maintained
   bundled channel extensions already present in the runtime.
 - **Agent > Skills**: create, review/install, configure, test, and allow skills for that Agent.
 - **Agent > Tools**: per-Agent tool allow/deny policy only. Credentials belong in Services or Skills.
@@ -314,7 +314,7 @@ Typical fields in `~/.fased/fased.json`:
 WhatsApp credentials go under `~/.fased/credentials/whatsapp/<accountId>/`.
 Sessions are stored under `~/.fased/agents/<agentId>/sessions/`.
 
-Some channels are delivered as plugins. The wizard installs the four published
+Some channels are delivered as plugins. The wizard installs the six published
 official channel add-ons only when selected. Other advanced channels use their
 bundled source-maintained extension when present; their individual pages state
 any additional runtime dependency.

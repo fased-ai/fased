@@ -5481,7 +5481,7 @@ describe("sat-mining plugin config persistence", () => {
         on: vi.fn(),
       } as never);
 
-      for (const method of ["sat.getMiningReadiness", "sat.startMining"]) {
+      for (const method of ["sat.getMiningReadiness", "sat.startMining", "sat.setMinerProfile"]) {
         let response: { ok: boolean; error?: unknown } | null = null;
         await gatewayMethods.get(method)!.handler({
           params: { walletId: "wallet-a" },
@@ -5625,9 +5625,9 @@ describe("sat-mining plugin config persistence", () => {
 
   it("keeps mining stopped when the active commit transaction fails", async () => {
     const solanaSubmit = await import("./src/solana-submit.js");
-    vi.mocked(solanaSubmit.submitSatSetActiveCommit).mockRejectedValueOnce(
-      new Error("set active commit transaction failed"),
-    );
+    vi.mocked(solanaSubmit.submitSatSetActiveCommit)
+      .mockRejectedValueOnce(new Error("set active commit transaction failed"))
+      .mockRejectedValueOnce(new Error("profile commit transaction failed"));
     const { default: satMiningPlugin } = await import("./index.js");
     const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
     const writeConfigFile = vi.fn(async () => {});
@@ -5681,6 +5681,22 @@ describe("sat-mining plugin config persistence", () => {
       error: { message: "set active commit transaction failed" },
     });
     expect(writeConfigFile).toHaveBeenCalled();
+
+    response = null;
+    await gatewayMethods.get("sat.setMinerProfile")!.handler({
+      params: { profile: { walletId: "wallet-a" }, syncActiveCommit: true },
+      respond: (ok, payload, error) => {
+        response = { ok, payload, error };
+      },
+    });
+    expect(response).toMatchObject({
+      ok: false,
+      payload: undefined,
+      error: {
+        message:
+          "mining profile saved, but active commit was not confirmed: profile commit transaction failed",
+      },
+    });
   });
 
   it("keeps mining wallet attachment read-only through gateway methods", async () => {

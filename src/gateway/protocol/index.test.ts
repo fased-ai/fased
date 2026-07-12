@@ -103,6 +103,29 @@ describe("HelloOkSchema", () => {
       }),
     ).toBe(true);
   });
+
+  it("accepts only known sanitized gateway runtime sources", () => {
+    expect(
+      validate({
+        ...baseHelloOk,
+        server: {
+          ...baseHelloOk.server,
+          runtimeSource: "managed-package",
+        },
+        auth: { role: "operator", scopes: [] },
+      }),
+    ).toBe(true);
+    expect(
+      validate({
+        ...baseHelloOk,
+        server: {
+          ...baseHelloOk.server,
+          runtimeSource: "/home/app/private/runtime",
+        },
+        auth: { role: "operator", scopes: [] },
+      }),
+    ).toBe(false);
+  });
 });
 
 describe("channels runtime control params", () => {

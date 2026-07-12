@@ -1243,10 +1243,7 @@ export function renderChannels(props: ChannelsProps, options: ChannelsRenderOpti
                     : nothing
                 }
                 ${
-                  status.catalogOnly &&
-                  status.installAvailable &&
-                  !status.localInstall &&
-                  !status.installPendingRestart
+                  status.catalogOnly && status.installAvailable && !status.installPendingRestart
                     ? html`
                         <button
                           class="btn btn--sm"
@@ -1424,11 +1421,7 @@ function channelSummaryForRow(props: ChannelsProps, key: ChannelKey) {
   } else if (configured) {
     statusLabel = "configured";
   } else if (catalogOnly) {
-    statusLabel = installAvailable
-      ? localInstall
-        ? "setup needed"
-        : "install channel"
-      : "sign up";
+    statusLabel = installAvailable ? "install channel" : "source install required";
   } else if (key === "whatsapp") {
     statusLabel = "sign up";
   }
@@ -1446,7 +1439,7 @@ function channelSummaryForRow(props: ChannelsProps, key: ChannelKey) {
     installAvailable,
     localInstall,
     installPendingRestart,
-    needsSetup: !configured && (!catalogOnly || !installAvailable || localInstall),
+    needsSetup: !configured && !catalogOnly,
     setupLabel: "Connect",
   };
 }
@@ -1627,6 +1620,17 @@ function renderCatalogOnlyChannelCard(
   const installAvailable = hasChannelInstallMetadata(install);
   const installPendingRestart = status?.pendingRestart === true;
   void channelAccounts;
+  if (!installAvailable) {
+    return html`
+      <div class="card">
+        <div class="card-title">Source install required</div>
+        <div class="card-sub">
+          This channel runtime is not installed. Install its source-maintained extension before adding
+          account credentials.
+        </div>
+      </div>
+    `;
+  }
   return renderChannelSignupCard({
     channelId: key,
     label,

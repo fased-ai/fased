@@ -15,7 +15,9 @@ describe("sat mining runtime helpers", () => {
     expect(isSatRateLimitedError("connection reset by peer")).toBe(false);
     expect(satRateLimitBackoffMs(1)).toBe(60_000);
     expect(satRateLimitBackoffMs(2)).toBe(120_000);
-    expect(satRateLimitBackoffMs(20)).toBe(300_000);
+    expect(satRateLimitBackoffMs(7)).toBe(300_000);
+    expect(satRateLimitBackoffMs(8)).toBe(900_000);
+    expect(satRateLimitBackoffMs(20_000)).toBe(900_000);
   });
 
   it("resets in-memory round runtime state", () => {

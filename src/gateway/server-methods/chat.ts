@@ -1,6 +1,5 @@
 import fs from "node:fs";
 import path from "node:path";
-import { CURRENT_SESSION_VERSION } from "@mariozechner/pi-coding-agent";
 import { resolveSessionAgentId } from "../../agents/agent-scope.js";
 import { resolveThinkingDefault } from "../../agents/model-selection.js";
 import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
@@ -13,6 +12,7 @@ import {
   loadSessionStore,
   resolveSessionFilePath,
   resolveStorePath,
+  ensureSessionTranscriptHeader,
 } from "../../config/sessions.js";
 import { executeMiningChatCommand, parseMiningChatCommand } from "../../mining/chat-command.js";
 import { resolveSendPolicy } from "../../sessions/send-policy.js";
@@ -362,32 +362,6 @@ function resolveTranscriptPath(params: {
   }
 }
 
-function ensureTranscriptFile(params: { transcriptPath: string; sessionId: string }): {
-  ok: boolean;
-  error?: string;
-} {
-  if (fs.existsSync(params.transcriptPath)) {
-    return { ok: true };
-  }
-  try {
-    fs.mkdirSync(path.dirname(params.transcriptPath), { recursive: true });
-    const header = {
-      type: "session",
-      version: CURRENT_SESSION_VERSION,
-      id: params.sessionId,
-      timestamp: new Date().toISOString(),
-      cwd: process.cwd(),
-    };
-    fs.writeFileSync(params.transcriptPath, `${JSON.stringify(header)}\n`, {
-      encoding: "utf-8",
-      mode: 0o600,
-    });
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
-  }
-}
-
 function transcriptHasIdempotencyKey(transcriptPath: string, idempotencyKey: string): boolean {
   try {
     const lines = fs.readFileSync(transcriptPath, "utf-8").split(/\r?\n/);
@@ -436,11 +410,11 @@ function appendAssistantTranscriptMessage(params: {
     if (!params.createIfMissing) {
       return { ok: false, error: "transcript file not found" };
     }
-    const ensured = ensureTranscriptFile({
-      transcriptPath,
+    const ensured = ensureSessionTranscriptHeader({
+      sessionFile: transcriptPath,
       sessionId: params.sessionId,
     });
-    if (!ensured.ok) {
+    if (ensured.error) {
       return { ok: false, error: ensured.error ?? "failed to create transcript file" };
     }
   }

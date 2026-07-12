@@ -84,7 +84,7 @@ The wizard starts with **QuickStart** (defaults) vs **Advanced** (full control).
       [CLI Onboarding Reference](/start/wizard-cli-reference#outputs-and-internals)
     - Tailscale exposure **Off**
     - Chat app channels are connected later from `Agent > Channels`; official
-      Telegram, WhatsApp, Discord, and Slack add-ons are downloaded only when
+      Telegram, WhatsApp, Discord, Slack, Feishu, and Google Chat add-ons are downloaded only when
       selected
   </Tab>
   <Tab title="Advanced (full control)">

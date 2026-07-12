@@ -396,6 +396,14 @@ export function renderMemory(props: MemoryProps) {
   const sessionMemory = inventory?.sessionMemory;
   const qmd = inventory?.qmd;
   const plugin = inventory?.memoryPlugin;
+  const semanticReady = backend?.vector?.enabled === true && backend.vector.available === true;
+  const memoryIndexTone: Tone = backend?.error
+    ? "danger"
+    : backend?.dirty
+      ? "warn"
+      : semanticReady
+        ? "ok"
+        : "default";
   return html`
     <style>
       .memory-page {
@@ -727,7 +735,21 @@ export function renderMemory(props: MemoryProps) {
           detail: backend
             ? `${backend.files ?? 0} files, ${backend.chunks ?? 0} chunks, citations ${backend.citations}`
             : "Memory backend status has not loaded yet.",
-          tone: backend?.error ? "warn" : backend ? "ok" : "default",
+          tone: memoryIndexTone,
+        })}
+        ${renderStatusCard({
+          label: "Semantic Recall",
+          value: semanticReady ? "Ready" : backend ? "FTS only" : "Not loaded",
+          detail: backend
+            ? backend.dirty
+              ? "The memory index is stale and needs a rebuild."
+              : semanticReady
+                ? `${backend.provider ?? "configured"} embeddings and vector search are available.`
+                : (backend.error ??
+                  backend.fallback?.reason ??
+                  "Keyword search works; configure an embedding provider for semantic recall.")
+            : "Memory readiness has not loaded yet.",
+          tone: memoryIndexTone,
         })}
         ${renderStatusCard({
           label: "QMD",

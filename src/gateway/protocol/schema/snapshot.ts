@@ -6,6 +6,7 @@ export const PresenceEntrySchema = Type.Object(
     host: Type.Optional(NonEmptyString),
     ip: Type.Optional(NonEmptyString),
     version: Type.Optional(NonEmptyString),
+    runtimeSource: Type.Optional(NonEmptyString),
     platform: Type.Optional(NonEmptyString),
     deviceFamily: Type.Optional(NonEmptyString),
     modelIdentifier: Type.Optional(NonEmptyString),

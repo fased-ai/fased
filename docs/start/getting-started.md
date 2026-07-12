@@ -166,7 +166,7 @@ The macOS app is a Local setup surface, not a separate hosting profile.
     - `Agent > Models`: add a provider API key or sign in, then choose the Agent's primary and fallback models.
     - `Agent > Skills`: create, review, install, configure, edit, and allow skills for that Agent.
     - `Agent > Services`: connect Gmail, Calendar, GitHub, web/search, browser/media, or custom APIs.
-    - `Agent > Channels`: install the Telegram, Discord, WhatsApp, or Slack add-on you use, then connect its account. Other chat apps follow their channel page.
+    - `Agent > Channels`: install the Telegram, Discord, WhatsApp, Slack, Feishu, or Google Chat add-on you use, then connect its account. Other chat apps follow their channel page.
     - `Agent > Memory`: enable saved session context and review this Agent's archive state.
     - `Agent > Tasks`: schedule recurring work for this Agent when needed.
 
