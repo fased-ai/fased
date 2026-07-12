@@ -18,6 +18,19 @@ function sha256(raw: string): string {
   return createHash("sha256").update(raw).digest("hex");
 }
 
+async function readProductionKeyFixture() {
+  const fixturePath = path.join(
+    import.meta.dirname,
+    "fixtures",
+    "sat-mainnet-addresses.production-key-test.json",
+  );
+  return {
+    manifest: await readFile(fixturePath, "utf8"),
+    hash: await readFile(`${fixturePath}.sha256`, "utf8"),
+    signature: await readFile(`${fixturePath}.sig`, "utf8"),
+  };
+}
+
 async function withManifestServer(
   files: Record<string, string>,
   fn: (baseUrl: string) => Promise<void>,
@@ -90,6 +103,57 @@ describe("SAT mainnet sync", () => {
           trustKeySource: "embedded",
           verification: { hash: "valid", signature: "invalid" },
           error: "Signed manifest verification failed.",
+        });
+      },
+    );
+  });
+
+  it("verifies the rehearsal fixture with the approved embedded production key", async () => {
+    const fixture = await readProductionKeyFixture();
+
+    await withManifestServer(
+      {
+        "/sat-mainnet-addresses.json": fixture.manifest,
+        "/sat-mainnet-addresses.json.sha256": fixture.hash,
+        "/sat-mainnet-addresses.json.sig": fixture.signature,
+      },
+      async (baseUrl) => {
+        const status = await getSatMainnetSyncStatus({
+          env: {},
+          manifestUrl: `${baseUrl}/sat-mainnet-addresses.json`,
+        });
+        expect(status).toMatchObject({
+          ok: true,
+          state: "available",
+          trustKeySource: "embedded",
+          verification: { hash: "valid", signature: "valid" },
+        });
+      },
+    );
+  });
+
+  it("rejects a modified production-key fixture before signature verification", async () => {
+    const fixture = await readProductionKeyFixture();
+
+    await withManifestServer(
+      {
+        "/sat-mainnet-addresses.json": fixture.manifest.replace(
+          "test-only-sat-mint",
+          "modified-test-only-sat-mint",
+        ),
+        "/sat-mainnet-addresses.json.sha256": fixture.hash,
+        "/sat-mainnet-addresses.json.sig": fixture.signature,
+      },
+      async (baseUrl) => {
+        const status = await getSatMainnetSyncStatus({
+          env: {},
+          manifestUrl: `${baseUrl}/sat-mainnet-addresses.json`,
+        });
+        expect(status).toMatchObject({
+          ok: false,
+          state: "failed",
+          trustKeySource: "embedded",
+          verification: { hash: "invalid", signature: "missing" },
         });
       },
     );
