@@ -38,6 +38,7 @@ import { loadConfig, writeConfigFile } from "../../config/config.js";
 import type { FasedAgentConfig } from "../../config/types.js";
 import { probeConfiguredModelProviderHealth } from "../../providers/health.js";
 import {
+  isStandardProviderCatalogEntry,
   listProviderBrandManifests,
   type ProviderAuthMethodManifest,
   type ProviderBrandManifest,
@@ -1189,9 +1190,18 @@ export const modelsHandlers: GatewayRequestHandlers = {
           : allowedCatalog.length > 0
             ? allowedCatalog
             : usableCatalog;
+      const curatedModelSource =
+        params.all === true
+          ? modelSource
+          : modelSource.filter(
+              (model) =>
+                model.catalogSource === "configured" || isStandardProviderCatalogEntry(model),
+            );
       const models = providerFilter
-        ? modelSource.filter((model) => normalizeProviderId(model.provider) === providerFilter)
-        : modelSource;
+        ? curatedModelSource.filter(
+            (model) => normalizeProviderId(model.provider) === providerFilter,
+          )
+        : curatedModelSource;
       const payloadModels =
         params.includeMetadata === true
           ? models.map((model) => ({

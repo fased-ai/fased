@@ -607,8 +607,8 @@ describe("models.auth.status handler", () => {
     const context = createContext();
     context.loadGatewayModelCatalog.mockResolvedValue([
       {
-        id: "openrouter/auto",
-        name: "OpenRouter Auto",
+        id: "openai/gpt-5.6-sol",
+        name: "OpenAI GPT-5.6 Sol",
         provider: "openrouter",
       },
       {
@@ -640,7 +640,7 @@ describe("models.auth.status handler", () => {
     expect(ensureAuthProfileStore).toHaveBeenCalledWith("/tmp/agents/trader/agent");
     expect(call?.[1]).toMatchObject({
       models: expect.arrayContaining([
-        expect.objectContaining({ provider: "openrouter", id: "openrouter/auto" }),
+        expect.objectContaining({ provider: "openrouter", id: "openai/gpt-5.6-sol" }),
       ]),
     });
     const returnedProviders = new Set(
@@ -691,6 +691,60 @@ describe("models.auth.status handler", () => {
           },
         },
       ],
+    });
+  });
+
+  it("keeps SDK history out of normal model lists but exposes it with all=true", async () => {
+    listProvidersWithStoredCredentials.mockReturnValue(["openai"]);
+    const context = createContext();
+    context.loadGatewayModelCatalog.mockResolvedValue([
+      {
+        id: "gpt-5.6",
+        name: "GPT-5.6",
+        provider: "openai",
+        catalogSource: "manifest",
+      },
+      {
+        id: "gpt-4o",
+        name: "GPT-4o",
+        provider: "openai",
+        catalogSource: "runtime",
+      },
+    ]);
+
+    const normal = createInvoke("models.list", {}, context);
+    await normal.invoke();
+    expect(normal.respond.mock.calls[0]?.[1]).toMatchObject({
+      models: [expect.objectContaining({ id: "gpt-5.6" })],
+    });
+
+    const advanced = createInvoke("models.list", { all: true }, context);
+    await advanced.invoke();
+    expect(advanced.respond.mock.calls[0]?.[1]).toMatchObject({
+      models: expect.arrayContaining([
+        expect.objectContaining({ id: "gpt-5.6" }),
+        expect.objectContaining({ id: "gpt-4o" }),
+      ]),
+    });
+  });
+
+  it("retains explicit configured models in normal model lists", async () => {
+    listProvidersWithStoredCredentials.mockReturnValue(["custom-local"]);
+    const context = createContext();
+    context.loadGatewayModelCatalog.mockResolvedValue([
+      {
+        id: "my-model",
+        name: "My Model",
+        provider: "custom-local",
+        catalogSource: "configured",
+      },
+    ]);
+
+    const { respond, invoke } = createInvoke("models.list", {}, context);
+    await invoke();
+
+    expect(respond.mock.calls[0]?.[1]).toMatchObject({
+      models: [expect.objectContaining({ provider: "custom-local", id: "my-model" })],
     });
   });
 

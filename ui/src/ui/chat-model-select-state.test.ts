@@ -76,7 +76,9 @@ describe("chat-model-select-state", () => {
 
     const resolved = resolveChatModelSelectState(state);
     expect(resolved.options.map((option) => option.value)).toContain("openai/gpt-5.5");
-    expect(resolved.options.map((option) => option.value)).toContain("openrouter/openai/gpt-5.1");
+    expect(resolved.options.map((option) => option.value)).not.toContain(
+      "openrouter/openai/gpt-5.1",
+    );
     expect(resolved.options.map((option) => option.value)).not.toContain("openai/gpt-5.1");
     expect(resolved.options.map((option) => option.value)).not.toContain("openai-codex/gpt-5.1");
   });
@@ -136,7 +138,7 @@ describe("chat-model-select-state", () => {
       chatModelOverrides: {},
       chatModelCatalog: createModelCatalog(
         { id: "gpt-5.4-mini", name: "GPT-5.4 Mini", provider: "openai" },
-        { id: "claude-opus-4-7", name: "Claude Opus 4.7", provider: "anthropic" },
+        { id: "claude-opus-4-8", name: "Claude Opus 4.8", provider: "anthropic" },
       ),
       sessionsResult: createSessionsListResult({
         defaultsModel: "openai/gpt-5.4-mini",
@@ -154,7 +156,7 @@ describe("chat-model-select-state", () => {
     expect(resolved.defaultModel).toBe("openai/gpt-5.4-mini");
     expect(resolved.options.map((option) => option.value)).toEqual([
       "openai/gpt-5.4-mini",
-      "anthropic/claude-opus-4-7",
+      "anthropic/claude-opus-4-8",
     ]);
   });
 });

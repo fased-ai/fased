@@ -74,7 +74,7 @@ describe("model catalog metadata", () => {
         provider: "vllm",
         id: "local-model",
         metadata: expect.objectContaining({
-          features: ["text", "vision", "reasoning", "tools", "json"],
+          features: ["text", "vision", "reasoning"],
           authMode: "api-key",
           privateNetwork: true,
           privateNetworkAllowed: true,
@@ -109,13 +109,21 @@ describe("model catalog metadata", () => {
     expect(result).toContainEqual(
       expect.objectContaining({
         provider: "anthropic",
-        id: "claude-opus-4-6",
+        id: "claude-opus-4-8",
       }),
     );
     expect(result).toContainEqual(
       expect.objectContaining({
         provider: "google",
         id: "gemini-3.1-pro-preview",
+      }),
+    );
+    expect(result).toContainEqual(
+      expect.objectContaining({
+        provider: "openrouter",
+        id: "openai/gpt-5.6-sol",
+        catalogSource: "manifest",
+        metadata: expect.objectContaining({ recommended: true }),
       }),
     );
   });

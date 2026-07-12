@@ -373,7 +373,7 @@ describe("provider registry", () => {
       isStandardProviderCatalogEntry({ provider: "amazon-bedrock", id: "claude-sonnet-4" }),
     ).toBe(false);
     expect(isStandardProviderCatalogEntry({ provider: "openrouter", id: "openai/gpt-5.1" })).toBe(
-      true,
+      false,
     );
   });
 
@@ -423,6 +423,8 @@ describe("provider registry", () => {
       "chutes/Qwen/Qwen3.6-27B-TEE",
       "chutes/Qwen/Qwen3.5-397B-A17B-TEE",
       "chutes/zai-org/GLM-5-TEE",
+      "chutes/Qwen/Qwen3-235B-A22B-Thinking-2507-TEE",
+      "chutes/zai-org/GLM-5.2-TEE",
     ]);
     expect(isStandardProviderModelRef("chutes/deepseek-ai/DeepSeek-V3.2-TEE")).toBe(true);
     expect(isStandardProviderModelRef("chutes/Qwen/Qwen2.5-72B-Instruct")).toBe(false);
@@ -592,7 +594,7 @@ describe("provider registry", () => {
     expect(COPILOT_PROVIDER_MANIFEST.models.recommended).not.toContain(
       "github-copilot/gpt-5.4-nano",
     );
-    expect(isStandardProviderModelRef("github-copilot/gpt-4o")).toBe(true);
+    expect(isStandardProviderModelRef("github-copilot/gpt-4o")).toBe(false);
     expect(COPILOT_PROVIDER_MANIFEST.modelCapabilities?.["github-copilot/gpt-5.5"]).toMatchObject({
       tools: true,
       json: true,
@@ -681,7 +683,7 @@ describe("provider registry", () => {
       tools: false,
     });
     expect(isStandardProviderModelRef("vercel-ai-gateway/openai/gpt-5.5")).toBe(true);
-    expect(isStandardProviderModelRef("vercel-ai-gateway/openai/gpt-4o")).toBe(true);
+    expect(isStandardProviderModelRef("vercel-ai-gateway/openai/gpt-4o")).toBe(false);
     expect(providerRegistryPriorityForRoute("vercel-ai-gateway")).toBe(
       VERCEL_AI_GATEWAY_PROVIDER_MANIFEST.priority,
     );
@@ -733,7 +735,7 @@ describe("provider registry", () => {
       thinkingMode: "google-thinking-budget",
     });
     expect(isStandardProviderModelRef("opencode/gpt-5.5")).toBe(true);
-    expect(isStandardProviderModelRef("opencode/gpt-4")).toBe(true);
+    expect(isStandardProviderModelRef("opencode/gpt-4")).toBe(false);
     expect(providerRegistryPriorityForRoute("opencode")).toBe(
       OPENCODE_ZEN_PROVIDER_MANIFEST.priority,
     );
@@ -1242,7 +1244,7 @@ describe("provider registry", () => {
     expect(isStandardProviderModelRef("openrouter/openai/gpt-5.6-sol")).toBe(true);
     expect(isStandardProviderModelRef("openrouter/x-ai/grok-4.5")).toBe(true);
     expect(isStandardProviderModelRef("openrouter/qwen/qwen3.7-plus")).toBe(true);
-    expect(isStandardProviderModelRef("openrouter/openai/gpt-4o")).toBe(true);
+    expect(isStandardProviderModelRef("openrouter/openai/gpt-4o")).toBe(false);
     expect(
       OPENROUTER_PROVIDER_MANIFEST.modelCapabilities?.["openrouter/openai/gpt-5.6-sol"],
     ).toMatchObject({

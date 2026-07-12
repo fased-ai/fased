@@ -4,7 +4,11 @@ import {
   type ModelDefinitionConfig,
   type ModelProviderConfig,
 } from "../config/types.models.js";
-import { isOpenAISignInRuntimeModelSupported } from "../providers/registry.js";
+import {
+  isOpenAISignInRuntimeModelSupported,
+  isStandardProviderCatalogEntry,
+  listProviderBrandManifests,
+} from "../providers/registry.js";
 import {
   CURRENT_MODEL_PROVIDER_CATALOG,
   listCurrentModelCatalogRows,
@@ -150,6 +154,33 @@ function runtimeCatalogRows(params: {
   return rows;
 }
 
+function manifestCatalogRows(): NormalizedModelCatalogRow[] {
+  return listProviderBrandManifests().flatMap((manifest) =>
+    manifest.models.recommended.flatMap((ref) => {
+      const slash = ref.indexOf("/");
+      if (slash <= 0 || slash === ref.length - 1) {
+        return [];
+      }
+      const provider = normalizeModelCatalogProviderId(ref.slice(0, slash));
+      const id = normalizeModelCatalogModelId(ref.slice(slash + 1));
+      if (!provider || !id) {
+        return [];
+      }
+      return [
+        {
+          id,
+          name: id,
+          provider,
+          mergeKey: buildModelCatalogMergeKey(provider, id),
+          source: "manifest" as const,
+          status: "stable" as const,
+          input: ["text" as const],
+        },
+      ];
+    }),
+  );
+}
+
 function providerConfigForRow(
   cfg: FasedAgentConfig,
   row: NormalizedModelCatalogRow,
@@ -163,7 +194,7 @@ export function buildFasedModelCatalogRows(params: {
   providerPluginProviders?: Record<string, ModelProviderConfig>;
   onRuntimeEntryError?: (error: unknown) => void;
 }): NormalizedModelCatalogRow[] {
-  return mergeModelCatalogRowsByAuthority([
+  const discoveredRows = mergeModelCatalogRowsByAuthority([
     ...listCurrentModelCatalogRows(),
     ...providerPluginCatalogRows(params.providerPluginProviders),
     ...runtimeCatalogRows({
@@ -172,6 +203,11 @@ export function buildFasedModelCatalogRows(params: {
     }),
     ...configuredProviderCatalogRows(params.config),
   ]);
+  const discoveredKeys = new Set(discoveredRows.map((row) => row.mergeKey));
+  const missingManifestRows = manifestCatalogRows().filter(
+    (row) => !discoveredKeys.has(row.mergeKey),
+  );
+  return mergeModelCatalogRowsByAuthority([...discoveredRows, ...missingManifestRows]);
 }
 
 export function buildFasedModelCatalogEntries(params: {
@@ -208,7 +244,7 @@ export function buildFasedModelCatalogEntries(params: {
               model,
               cfg: params.config,
               providerConfig,
-              recommended: row.source === "current-preview",
+              recommended: isStandardProviderCatalogEntry(row),
             }),
           }
         : {}),
