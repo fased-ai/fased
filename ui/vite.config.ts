@@ -1,8 +1,14 @@
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin } from "vite";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+const packageVersion = (
+  JSON.parse(fs.readFileSync(path.resolve(here, "../package.json"), "utf8")) as {
+    version?: string;
+  }
+).version?.trim();
 
 function normalizeBase(input: string): string {
   const trimmed = input.trim();
@@ -39,16 +45,33 @@ function fasedBootWatchdogPlugin(): Plugin {
   };
 }
 
+function fasedBuildVersionPlugin(version: string): Plugin {
+  return {
+    name: "fased-build-version",
+    apply: "build",
+    generateBundle() {
+      this.emitFile({
+        type: "asset",
+        fileName: "version.json",
+        source: `${JSON.stringify({ version })}\n`,
+      });
+    },
+  };
+}
+
 export default defineConfig(() => {
   const envBase = process.env.FASED_CONTROL_UI_BASE_PATH?.trim();
   const base = envBase ? normalizeBase(envBase) : "./";
   return {
     base,
+    define: {
+      __FASED_UI_VERSION__: JSON.stringify(packageVersion || "dev"),
+    },
     publicDir: path.resolve(here, "public"),
     optimizeDeps: {
       include: ["lit/directives/repeat.js"],
     },
-    plugins: [fasedBootWatchdogPlugin()],
+    plugins: [fasedBootWatchdogPlugin(), fasedBuildVersionPlugin(packageVersion || "dev")],
     build: {
       outDir: path.resolve(here, "../dist/control-ui"),
       emptyOutDir: true,

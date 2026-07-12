@@ -156,7 +156,7 @@ describe("provider registry", () => {
 
   it("exposes curated per-model thinking metadata from provider manifests", () => {
     expect(lookupProviderManifestModelCapability("openai", "gpt-5.6")).toMatchObject({
-      thinkingLevels: ["off", "minimal", "low", "medium", "high", "xhigh"],
+      thinkingLevels: ["off", "low", "medium", "high", "xhigh", "max"],
       defaultThinkingLevel: "low",
       thinkingMode: "openai-reasoning-effort",
     });

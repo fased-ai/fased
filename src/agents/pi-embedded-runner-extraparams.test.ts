@@ -924,6 +924,29 @@ describe("applyExtraParamsToAgent", () => {
     });
   });
 
+  it("preserves GPT-5.6 max reasoning in native OpenAI response payloads", () => {
+    const payloads: Record<string, unknown>[] = [];
+    const baseStreamFn: StreamFn = (_model, _context, options) => {
+      const payload: Record<string, unknown> = { reasoning: { effort: "xhigh" } };
+      options?.onPayload?.(payload);
+      payloads.push(payload);
+      return {} as ReturnType<StreamFn>;
+    };
+    const agent = { streamFn: baseStreamFn };
+
+    applyExtraParamsToAgent(agent, undefined, "openai", "gpt-5.6-luna", undefined, "max");
+
+    const model = {
+      api: "openai-responses",
+      provider: "openai",
+      id: "gpt-5.6-luna",
+      baseUrl: "https://api.openai.com/v1",
+    } as Model<"openai-responses">;
+    void agent.streamFn?.(model, { messages: [] }, {});
+
+    expect(payloads[0]?.reasoning).toEqual({ effort: "max" });
+  });
+
   it("keeps disabled reasoning payloads for proxied OpenAI responses routes", () => {
     const payloads: Record<string, unknown>[] = [];
     const baseStreamFn: StreamFn = (_model, _context, options) => {

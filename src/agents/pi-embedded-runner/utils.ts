@@ -6,7 +6,9 @@ export function mapThinkingLevel(level?: ThinkLevel): ThinkingLevel {
   if (!level) {
     return "off";
   }
-  return level;
+  // pi-agent-core does not model GPT-5.6's `max` value yet. Build the
+  // upstream session as xhigh, then the OpenAI payload wrapper restores max.
+  return level === "max" ? "xhigh" : level;
 }
 
 export function describeUnknownError(error: unknown): string {

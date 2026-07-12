@@ -10,6 +10,7 @@ describe("loadControlUiBootstrapConfig", () => {
       ok: true,
       json: async () => ({
         basePath: "/fased",
+        serverVersion: "0.1.54",
         assistantName: "Ops",
         assistantAvatar: "O",
       }),
@@ -33,7 +34,7 @@ describe("loadControlUiBootstrapConfig", () => {
     expect(state.assistantName).toBe("Ops");
     expect(state.assistantAvatar).toBe("O");
     expect(state.assistantAgentId).toBeNull();
-    expect(state.serverVersion).toBeNull();
+    expect(state.serverVersion).toBe("0.1.54");
 
     vi.unstubAllGlobals();
   });

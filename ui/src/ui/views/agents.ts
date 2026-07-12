@@ -640,18 +640,31 @@ function renderProviderModelButtons(options: AgentCreateModelOption[]) {
   );
 }
 
+function updateAgentCreateLitTextPart(container: HTMLElement, value: string) {
+  const marker = Array.from(container.childNodes).find((node) => node.nodeType === 8);
+  const textNode =
+    marker?.nextSibling ?? Array.from(container.childNodes).find((node) => node.nodeType === 3);
+  if (textNode?.nodeType === 3) {
+    textNode.nodeValue = value;
+  }
+}
+
 function updateAgentCreateSelectLabels(form: HTMLFormElement) {
   const providerSelect = form.querySelector<HTMLSelectElement>('select[name="provider"]');
   const modelSelect = form.querySelector<HTMLSelectElement>('select[name="model"]');
   const providerLabel = form.querySelector<HTMLElement>('[data-agent-provider-selected="true"]');
   const modelLabel = form.querySelector<HTMLElement>('[data-agent-model-selected="true"]');
   if (providerSelect && providerLabel) {
-    providerLabel.textContent =
-      providerSelect.selectedOptions[0]?.textContent?.trim() || "Inherit default";
+    updateAgentCreateLitTextPart(
+      providerLabel,
+      providerSelect.selectedOptions[0]?.textContent?.trim() || "Inherit default",
+    );
   }
   if (modelSelect && modelLabel) {
-    modelLabel.textContent =
-      modelSelect.selectedOptions[0]?.textContent?.trim() || "Inherit default";
+    updateAgentCreateLitTextPart(
+      modelLabel,
+      modelSelect.selectedOptions[0]?.textContent?.trim() || "Inherit default",
+    );
   }
 }
 

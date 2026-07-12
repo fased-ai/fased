@@ -35,6 +35,7 @@ export type ModelMetadata = {
   label: string;
   contextWindow?: number;
   maxTokens?: number;
+  apiRoute?: string;
   features: ModelFeature[];
   thinkingLevels?: ModelThinkingLevel[];
   defaultThinkingLevel?: ModelThinkingLevel;
@@ -222,6 +223,7 @@ export function deriveModelMetadata(params: {
         : typeof params.model.maxTokens === "number" && params.model.maxTokens > 0
           ? params.model.maxTokens
           : undefined,
+    ...(typeof api === "string" && api.trim() ? { apiRoute: api.trim() } : {}),
     features,
     ...(thinking
       ? {

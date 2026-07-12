@@ -106,7 +106,8 @@ describe("model metadata", () => {
     });
 
     expect(metadata.thinkingMode).toBe("openai-reasoning-effort");
-    expect(metadata.thinkingLevels).toContain("xhigh");
+    expect(metadata.thinkingLevels).toEqual(["off", "low", "medium", "high", "xhigh", "max"]);
+    expect(metadata.apiRoute).toBe("openai-codex-responses");
     expect(metadata.authMode).toBe("oauth");
   });
 

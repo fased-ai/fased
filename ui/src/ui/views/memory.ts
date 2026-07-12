@@ -396,14 +396,24 @@ export function renderMemory(props: MemoryProps) {
   const sessionMemory = inventory?.sessionMemory;
   const qmd = inventory?.qmd;
   const plugin = inventory?.memoryPlugin;
-  const semanticReady = backend?.vector?.enabled === true && backend.vector.available === true;
+  const semanticState =
+    backend?.semantic?.state ??
+    (backend?.vector?.enabled === true && backend.vector.available === true
+      ? "ready"
+      : backend
+        ? "not-configured"
+        : undefined);
+  const semanticReady = semanticState === "ready";
+  const keywordReady = backend?.fts?.enabled === true && backend.fts.available;
   const memoryIndexTone: Tone = backend?.error
     ? "danger"
     : backend?.dirty
       ? "warn"
-      : semanticReady
-        ? "ok"
-        : "default";
+      : semanticState === "unavailable"
+        ? "warn"
+        : semanticReady
+          ? "ok"
+          : "default";
   return html`
     <style>
       .memory-page {
@@ -738,18 +748,40 @@ export function renderMemory(props: MemoryProps) {
           tone: memoryIndexTone,
         })}
         ${renderStatusCard({
-          label: "Semantic Recall",
-          value: semanticReady ? "Ready" : backend ? "FTS only" : "Not loaded",
+          label: "Keyword Recall",
+          value: keywordReady ? "Ready" : backend ? "Unavailable" : "Not loaded",
           detail: backend
             ? backend.dirty
-              ? "The memory index is stale and needs a rebuild."
-              : semanticReady
-                ? `${backend.provider ?? "configured"} embeddings and vector search are available.`
-                : (backend.error ??
+              ? "The keyword index is stale and needs a rebuild."
+              : keywordReady
+                ? `${backend.files ?? 0} files and ${backend.chunks ?? 0} searchable chunks are indexed.`
+                : (backend.fts?.error ?? "The keyword index is not available.")
+            : "Keyword readiness has not loaded yet.",
+          tone: backend?.dirty ? "warn" : keywordReady ? "ok" : backend ? "warn" : "default",
+        })}
+        ${renderStatusCard({
+          label: "Semantic Recall",
+          value:
+            semanticState === "ready"
+              ? "Ready"
+              : semanticState === "not-configured"
+                ? "Not configured"
+                : semanticState === "disabled"
+                  ? "Disabled"
+                  : backend
+                    ? "Unavailable"
+                    : "Not loaded",
+          detail: backend
+            ? semanticReady
+              ? `${backend.provider ?? "configured"} embeddings and vector search are available.`
+              : semanticState === "not-configured"
+                ? "Keyword recall works; configure an embedding provider to add semantic recall."
+                : (backend.semantic?.reason ??
+                  backend.error ??
                   backend.fallback?.reason ??
-                  "Keyword search works; configure an embedding provider for semantic recall.")
+                  "Semantic recall is not available.")
             : "Memory readiness has not loaded yet.",
-          tone: memoryIndexTone,
+          tone: semanticReady ? "ok" : semanticState === "unavailable" ? "warn" : "default",
         })}
         ${renderStatusCard({
           label: "QMD",

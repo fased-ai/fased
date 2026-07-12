@@ -751,6 +751,7 @@ export const AgentEntrySchema = z
         z.literal("medium"),
         z.literal("high"),
         z.literal("xhigh"),
+        z.literal("max"),
       ])
       .optional(),
     reasoningDefault: z
@@ -761,6 +762,7 @@ export const AgentEntrySchema = z
         z.literal("medium"),
         z.literal("high"),
         z.literal("xhigh"),
+        z.literal("max"),
       ])
       .optional(),
     fastModeDefault: z.boolean().optional(),

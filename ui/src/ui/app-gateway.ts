@@ -20,6 +20,7 @@ import {
 } from "./app-settings.ts";
 import { handleAgentEvent, resetToolStream, type AgentEventPayload } from "./app-tool-stream.ts";
 import type { FasedAgentApp } from "./app.ts";
+import { CONTROL_UI_BUILD_VERSION, controlUiVersionMismatch } from "./build-version.ts";
 import { shouldReloadHistoryForFinalEvent } from "./chat-event-reload.ts";
 import { formatConnectError } from "./connect-error.ts";
 import { loadAgents } from "./controllers/agents.ts";
@@ -104,6 +105,7 @@ type GatewayHost = {
   assistantAvatar: string | null;
   assistantAgentId: string | null;
   serverVersion?: string | null;
+  uiRuntimeError?: string | null;
   sessionKey: string;
   sessionsSubscriptionActive?: boolean;
   sessionsLastEventAt?: number | null;
@@ -166,11 +168,11 @@ type ConnectGatewayOptions = {
 
 export function resolveControlUiClientVersion(params: {
   gatewayUrl: string;
-  serverVersion: string | null | undefined;
+  uiVersion: string | null | undefined;
   pageUrl?: string;
 }): string | undefined {
-  const serverVersion = params.serverVersion?.trim();
-  if (!serverVersion) {
+  const uiVersion = params.uiVersion?.trim();
+  if (!uiVersion) {
     return undefined;
   }
   const pageUrl =
@@ -185,7 +187,7 @@ export function resolveControlUiClientVersion(params: {
     if (!allowedProtocols.has(gateway.protocol) || gateway.host !== page.host) {
       return undefined;
     }
-    return serverVersion;
+    return uiVersion;
   } catch {
     return undefined;
   }
@@ -271,7 +273,7 @@ export function connectGateway(host: GatewayHost, options?: ConnectGatewayOption
   const previousClient = host.client;
   const clientVersion = resolveControlUiClientVersion({
     gatewayUrl: host.settings.gatewayUrl,
-    serverVersion: host.serverVersion,
+    uiVersion: CONTROL_UI_BUILD_VERSION,
   });
   const client = new GatewayBrowserClient({
     url: host.settings.gatewayUrl,
@@ -291,6 +293,12 @@ export function connectGateway(host: GatewayHost, options?: ConnectGatewayOption
       host.lastError = null;
       host.lastErrorCode = null;
       host.hello = hello;
+      host.serverVersion = hello.server?.version?.trim() || null;
+      if (host.serverVersion && controlUiVersionMismatch(host.serverVersion)) {
+        host.uiRuntimeError = `Dashboard build ${CONTROL_UI_BUILD_VERSION} does not match gateway ${host.serverVersion}. Run fased update, restart the gateway, and reload this page.`;
+        client.stop();
+        return;
+      }
       applySnapshot(host, hello);
       host.chatRunId = null;
       (host as unknown as { chatStream: string | null }).chatStream = null;

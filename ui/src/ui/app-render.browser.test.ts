@@ -55,6 +55,21 @@ describe("app task model inheritance", () => {
     expect(app.textContent).toContain("hosted dashboard smoke failure");
   });
 
+  it("blocks an upgraded session when browser assets and gateway versions differ", async () => {
+    const app = mountApp("/");
+    (
+      app as unknown as {
+        uiRuntimeError: string | null;
+      }
+    ).uiRuntimeError =
+      "Dashboard build 0.1.53 does not match gateway 0.1.54. Run fased update, restart the gateway, and reload this page.";
+    app.requestUpdate();
+    await settleApp(app);
+
+    expect(app.textContent).toContain("Dashboard could not finish opening");
+    expect(app.textContent).toContain("Dashboard build 0.1.53 does not match gateway 0.1.54");
+  });
+
   it("renders the memory route as a normal SPA page", async () => {
     const app = mountApp("/memory");
     app.applySettings({ ...app.settings, token: "owner-token-for-memory-route" });

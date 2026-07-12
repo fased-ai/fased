@@ -50,14 +50,17 @@ type LifecycleHost = {
 export function handleConnected(host: LifecycleHost) {
   host.basePath = inferBasePath();
   host.authBootstrapPending = true;
-  void loadControlUiBootstrapConfig(host);
+  const bootstrap = loadControlUiBootstrapConfig(host);
   syncTabWithLocation(host as unknown as Parameters<typeof syncTabWithLocation>[0], true);
   syncThemeWithSettings(host as unknown as Parameters<typeof syncThemeWithSettings>[0]);
   attachThemeListener(host as unknown as Parameters<typeof attachThemeListener>[0]);
   window.addEventListener("popstate", host.popStateHandler);
   // Only connect if we already have a saved token — otherwise the login page
   // is shown and the user will call connect() after signing in.
-  void applySettingsFromUrl(host as unknown as Parameters<typeof applySettingsFromUrl>[0]).then(
+  void Promise.all([
+    bootstrap,
+    applySettingsFromUrl(host as unknown as Parameters<typeof applySettingsFromUrl>[0]),
+  ]).then(
     () => {
       host.authBootstrapPending = false;
       if (host.settings.token.trim() && !host.client) {

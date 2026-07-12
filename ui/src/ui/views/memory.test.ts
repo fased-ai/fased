@@ -66,6 +66,8 @@ function buildProps() {
         citations: "auto",
         files: 2,
         chunks: 8,
+        fts: { enabled: true, available: true },
+        semantic: { state: "not-configured" },
       },
       qmd: {
         enabled: true,
@@ -203,7 +205,8 @@ describe("renderMemory", () => {
     expect(text).toContain("Research");
     expect(text).toContain("Session Archives");
     expect(text).toContain("Semantic Recall");
-    expect(text).toContain("FTS only");
+    expect(text).toContain("Keyword Recall");
+    expect(text).toContain("Not configured");
     expect(text).toContain("Enabled");
     expect(text).toContain("Citations");
     expect(text).toContain("QMD");

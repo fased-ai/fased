@@ -28,6 +28,7 @@ describe("handleControlUiHttpRequest", () => {
   function parseBootstrapPayload(end: ReturnType<typeof makeMockHttpResponse>["end"]) {
     return JSON.parse(String(end.mock.calls[0]?.[0] ?? "")) as {
       basePath: string;
+      serverVersion: string;
       assistantName: string;
       assistantAvatar: string;
       assistantAgentId: string;

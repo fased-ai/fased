@@ -901,6 +901,61 @@ describe("runCronIsolatedAgentTurn — skill filter", () => {
     expect(result.policy?.modelSource).toBe("Agent coding role");
   });
 
+  it.each([
+    ["cheapCheck", "cheap"],
+    ["strong", "strong"],
+    ["escalation", "escalation"],
+    ["coding", "coding"],
+    ["summarizer", "summarizer"],
+  ] as const)("executes the persisted %s task role model", async (role, model) => {
+    resolveAllowedModelRefMock.mockImplementation(({ raw }: { raw: string }) => {
+      const [provider, ...modelParts] = raw.split("/");
+      return { ref: { provider, model: modelParts.join("/") } };
+    });
+    runWithModelFallbackMock.mockImplementationOnce(async (args) => {
+      const result = await args.run("openrouter", model);
+      return { result, provider: "openrouter", model } as never;
+    });
+
+    const result = await runCronIsolatedAgentTurn(
+      makeParams({
+        cfg: {
+          agents: {
+            defaults: { model: { primary: "openrouter/default" } },
+            list: [
+              {
+                id: "roles",
+                taskModels: {
+                  cheapCheck: "openrouter/cheap",
+                  strong: "openrouter/strong",
+                  escalation: "openrouter/escalation",
+                  coding: "openrouter/coding",
+                  summarizer: "openrouter/summarizer",
+                },
+              },
+            ],
+          },
+        },
+        job: makeJob({
+          agentId: "roles",
+          executionPolicy: {
+            executionMode: "agent-turn",
+            modelPolicy: { mode: "auto", role },
+          },
+        }),
+      }),
+    );
+
+    expect(result.status).toBe("ok");
+    expect(runWithModelFallbackMock.mock.calls[0]?.[0]).toMatchObject({
+      provider: "openrouter",
+      model,
+    });
+    expect(result.policy?.modelSource).toBe(
+      `Agent ${role === "cheapCheck" ? "cheap/check" : role} role`,
+    );
+  });
+
   it("uses the escalation model when source verification finds a conflict", async () => {
     resolveAllowedModelRefMock.mockImplementation(({ raw }: { raw: string }) => {
       const [provider, ...modelParts] = raw.split("/");

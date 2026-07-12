@@ -92,6 +92,7 @@ function metadataForModel(provider: string, id: string, runtime?: ModelCatalogEn
     label: runtime?.metadata?.label ?? runtime?.name ?? displayModelName(id),
     contextWindow: runtime?.metadata?.contextWindow ?? runtime?.contextWindow,
     maxTokens: runtime?.metadata?.maxTokens ?? runtime?.maxTokens,
+    apiRoute: runtime?.metadata?.apiRoute ?? runtime?.api,
     features: [...features],
     ...(capability.thinkingLevels ? { thinkingLevels: capability.thinkingLevels } : {}),
     ...(capability.defaultThinkingLevel

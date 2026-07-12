@@ -218,6 +218,7 @@ export const ModelCapabilitySchema = z
           z.literal("medium"),
           z.literal("high"),
           z.literal("xhigh"),
+          z.literal("max"),
         ]),
       )
       .optional(),
@@ -229,6 +230,7 @@ export const ModelCapabilitySchema = z
         z.literal("medium"),
         z.literal("high"),
         z.literal("xhigh"),
+        z.literal("max"),
       ])
       .optional(),
     thinkingMode: z
