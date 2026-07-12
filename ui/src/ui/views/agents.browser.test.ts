@@ -763,6 +763,41 @@ describe("Agents assembly UI", () => {
     });
   });
 
+  it("selects a model from the custom picker and rerenders without corrupting Lit parts", () => {
+    const props = createProps({
+      modelCatalog: [
+        { id: "gpt-5.5", name: "GPT-5.5", provider: "openai-codex" },
+        { id: "gpt-5.6-luna", name: "GPT-5.6 Luna", provider: "openai-codex" },
+      ],
+      providers: {
+        catalogStatus: null,
+        authStatus: {
+          storePath: "/tmp/auth-profiles.json",
+          warnAfterMs: 86_400_000,
+          providers: [
+            {
+              provider: "openai-codex",
+              status: "ok",
+              effective: { kind: "profiles", detail: "openai-codex:default" },
+              profiles: [],
+            },
+          ],
+        },
+      },
+    });
+    const container = document.createElement("div");
+    render(renderAgents(props), container);
+
+    const luna = container.querySelector<HTMLButtonElement>(
+      '[data-agent-model-option="true"][data-value="openai-codex/gpt-5.6-luna"]',
+    );
+    expect(luna).toBeInstanceOf(HTMLButtonElement);
+    luna!.click();
+    expect(props.onModelChange).toHaveBeenCalledWith("beta", "openai-codex/gpt-5.6-luna");
+
+    expect(() => render(renderAgents(props), container)).not.toThrow();
+  });
+
   it("preserves multiple Agent task model role edits before rerender", () => {
     const props = createProps({
       modelCatalog: [

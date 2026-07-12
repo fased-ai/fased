@@ -1052,6 +1052,7 @@ function providerModelOptionsForCard(params: {
   options: Array<{ value: string; label: string }>;
   providerCard: ProviderCardDefinition;
   current: string | null;
+  authoritative?: boolean;
 }) {
   const providerIds = params.providerCard.modelProviderIds ?? params.providerCard.routeIds;
   const byValue = new Map(params.options.map((option) => [option.value, option]));
@@ -1071,10 +1072,12 @@ function providerModelOptionsForCard(params: {
   }
 
   for (const modelRef of params.providerCard.modelRefs) {
-    addRef(modelRef);
+    if (!params.authoritative || byValue.has(modelRef)) {
+      addRef(modelRef);
+    }
   }
 
-  if (result.length === 0 && params.providerCard.modelRefs.length === 0) {
+  if (params.authoritative || (result.length === 0 && params.providerCard.modelRefs.length === 0)) {
     for (const option of providerModelOptionsForIds(params.options, providerIds)) {
       if (seen.has(option.value)) {
         continue;
@@ -2045,12 +2048,15 @@ export function renderProviders(props: ProvidersProps) {
                   options: modelOptions,
                   providerCard,
                   current: null,
+                  authoritative: ready,
                 });
                 const catalogProviders = resolveProviderCardCatalogProviders(
                   props.modelCatalogStatus,
                   providerCard,
                 );
-                const modelCount = providerCard.modelRefs.length || modelOptionsForProvider.length;
+                const modelCount = ready
+                  ? modelOptionsForProvider.length
+                  : providerCard.modelRefs.length || modelOptionsForProvider.length;
                 const clearProfileId =
                   runtimeProviders
                     .map((runtimeProvider) => clearableProviderProfileId({ runtimeProvider }))

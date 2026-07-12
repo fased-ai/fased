@@ -30,6 +30,7 @@ export const ModelChoiceSchema = Type.Object(
           label: NonEmptyString,
           contextWindow: Type.Optional(Type.Integer({ minimum: 1 })),
           maxTokens: Type.Optional(Type.Integer({ minimum: 1 })),
+          apiRoute: Type.Optional(NonEmptyString),
           features: Type.Array(
             Type.Union([
               Type.Literal("text"),
@@ -51,6 +52,7 @@ export const ModelChoiceSchema = Type.Object(
                 Type.Literal("medium"),
                 Type.Literal("high"),
                 Type.Literal("xhigh"),
+                Type.Literal("max"),
               ]),
             ),
           ),
@@ -62,6 +64,7 @@ export const ModelChoiceSchema = Type.Object(
               Type.Literal("medium"),
               Type.Literal("high"),
               Type.Literal("xhigh"),
+              Type.Literal("max"),
             ]),
           ),
           thinkingMode: Type.Optional(

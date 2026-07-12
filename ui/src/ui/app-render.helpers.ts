@@ -1275,6 +1275,9 @@ function formatThinkingOptionLabel(value: string, mode?: string) {
   if (mode === "zai-binary" && value === "low") {
     return "On";
   }
+  if (mode === "openai-reasoning-effort" && value === "off") {
+    return "None";
+  }
   return value
     .split(/[-_]/g)
     .map((part) => (part ? part[0].toUpperCase() + part.slice(1) : part))

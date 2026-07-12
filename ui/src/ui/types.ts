@@ -1451,11 +1451,12 @@ export type ModelCatalogEntry = {
     label: string;
     contextWindow?: number;
     maxTokens?: number;
+    apiRoute?: string;
     features: Array<
       "text" | "vision" | "reasoning" | "tools" | "json" | "audio" | "video" | "speech"
     >;
-    thinkingLevels?: Array<"off" | "minimal" | "low" | "medium" | "high" | "xhigh">;
-    defaultThinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+    thinkingLevels?: Array<"off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max">;
+    defaultThinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
     thinkingMode?:
       | "openai-reasoning-effort"
       | "anthropic-thinking-budget"

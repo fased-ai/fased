@@ -684,6 +684,7 @@ describe("models.auth.status handler", () => {
             label: "GPT-5.5",
             contextWindow: 160_000,
             maxTokens: 128_000,
+            apiRoute: "openai-responses",
             features: expect.arrayContaining(["text", "vision", "reasoning", "tools", "json"]),
             authMode: "oauth",
             privateNetwork: false,

@@ -132,6 +132,23 @@ type HostedRuntimeMetadata = {
   dependencyHash: string;
 };
 
+async function readControlUiBuildVersion(root: string): Promise<string | null> {
+  try {
+    const parsed = JSON.parse(
+      await fs.readFile(path.join(root, "dist", "control-ui", "version.json"), "utf8"),
+    ) as { version?: unknown };
+    return typeof parsed.version === "string" && parsed.version.trim()
+      ? parsed.version.trim()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+async function controlUiBuildMatches(root: string, expectedVersion: string): Promise<boolean> {
+  return compareSemverStrings(await readControlUiBuildVersion(root), expectedVersion) === 0;
+}
+
 async function readHostedRuntimeMetadata(root: string): Promise<HostedRuntimeMetadata | null> {
   try {
     const parsed = JSON.parse(
@@ -621,6 +638,25 @@ async function runHostedArtifactUpdate(params: {
       return { kind: "fallback", steps, reason: "artifact version mismatch" };
     }
 
+    if (!(await controlUiBuildMatches(artifactRoot, params.expectedVersion))) {
+      steps.push({
+        name: "artifact UI version check",
+        command: `verify dashboard build v${params.expectedVersion}`,
+        cwd: artifactRoot,
+        durationMs: 0,
+        exitCode: 1,
+        stderrTail: `expected dashboard v${params.expectedVersion}, found ${
+          (await readControlUiBuildVersion(artifactRoot)) ?? "unknown"
+        }`,
+      });
+      return {
+        kind: "error",
+        steps,
+        reason: "artifact dashboard version mismatch",
+        afterVersion: await readPackageVersion(params.pkgRoot),
+      };
+    }
+
     const dependenciesChanged = runtimeDependencyMetaChanged(params.beforeMeta, artifactMeta);
     steps.push({
       name: "artifact dependency check",
@@ -983,7 +1019,8 @@ async function runHostedLayeredArtifactUpdate(params: {
     const runtimeShapeReady =
       compareSemverStrings(artifactVersion, params.expectedVersion) === 0 &&
       (await pathExists(path.join(artifactRoot, "fased.mjs"))) &&
-      (await pathExists(path.join(artifactRoot, "node_modules")));
+      (await pathExists(path.join(artifactRoot, "node_modules"))) &&
+      (await controlUiBuildMatches(artifactRoot, params.expectedVersion));
     if (!runtimeShapeReady) {
       return {
         kind: "error",
@@ -1135,16 +1172,18 @@ async function runHostedReleaseArtifactUpdate(params: {
 
     const artifactRoot = path.join(extractDir, "package");
     const artifactVersion = await readPackageVersion(artifactRoot);
+    const controlUiVersion = await readControlUiBuildVersion(artifactRoot);
     const runtimeShapeReady =
       compareSemverStrings(artifactVersion, params.expectedVersion) === 0 &&
       (await pathExists(path.join(artifactRoot, "fased.mjs"))) &&
-      (await pathExists(path.join(artifactRoot, "node_modules")));
+      (await pathExists(path.join(artifactRoot, "node_modules"))) &&
+      compareSemverStrings(controlUiVersion, params.expectedVersion) === 0;
     const verifyCommand = `verify checksummed v${params.expectedVersion} runtime shape`;
     const verifyInfo = startProgress("hosted artifact verify", verifyCommand, artifactRoot);
     const verifyStarted = Date.now();
     const runtimeReady = runtimeShapeReady;
     const verifyFailure = !runtimeShapeReady
-      ? `expected complete v${params.expectedVersion}, found ${artifactVersion ?? "unknown"}`
+      ? `expected complete v${params.expectedVersion}, found runtime ${artifactVersion ?? "unknown"} and dashboard ${controlUiVersion ?? "unknown"}`
       : "hosted runtime shape verification failed";
     completeProgress(verifyInfo, {
       name: "hosted artifact verify",

@@ -77,7 +77,7 @@ export type SessionsProps = {
   onTaskCancel?: (job: CronJob) => void;
 };
 
-const THINK_LEVELS = ["", "off", "minimal", "low", "medium", "high", "xhigh"] as const;
+const THINK_LEVELS = ["", "off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 const BINARY_THINK_LEVELS = ["", "off", "on"] as const;
 const VERBOSE_LEVELS = [
   { value: "", label: "inherit" },

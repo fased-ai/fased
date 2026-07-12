@@ -1,7 +1,10 @@
 export const BASE_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high"] as const;
 export const XHIGH_THINKING_LEVELS = [...BASE_THINKING_LEVELS, "xhigh"] as const;
+export const MAX_THINKING_LEVELS = ["off", "low", "medium", "high", "xhigh", "max"] as const;
 
-export type ModelThinkingLevel = (typeof XHIGH_THINKING_LEVELS)[number];
+export type ModelThinkingLevel =
+  | (typeof XHIGH_THINKING_LEVELS)[number]
+  | (typeof MAX_THINKING_LEVELS)[number];
 
 export type ModelThinkingMode =
   | "openai-reasoning-effort"
@@ -60,6 +63,18 @@ const XHIGH_MODEL_IDS = new Set(
     (entry): entry is string => Boolean(entry),
   ),
 );
+const MAX_MODEL_REFS = new Set(
+  [
+    "openai/gpt-5.6",
+    "openai/gpt-5.6-sol",
+    "openai/gpt-5.6-terra",
+    "openai/gpt-5.6-luna",
+    "openai-codex/gpt-5.6-sol",
+    "openai-codex/gpt-5.6-terra",
+    "openai-codex/gpt-5.6-luna",
+  ].map((entry) => entry.toLowerCase()),
+);
+const MAX_MODEL_IDS = new Set(["gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]);
 
 function normalizeProviderId(provider?: string | null): string {
   if (!provider) {
@@ -85,6 +100,9 @@ export function normalizeThinkLevel(raw?: string | null): ModelThinkingLevel | u
   if (collapsed === "xhigh" || collapsed === "extrahigh") {
     return "xhigh";
   }
+  if (key === "max") {
+    return "max";
+  }
   if (key === "off") {
     return "off";
   }
@@ -100,15 +118,25 @@ export function normalizeThinkLevel(raw?: string | null): ModelThinkingLevel | u
   if (["mid", "med", "medium", "thinkharder", "think-harder", "harder"].includes(key)) {
     return "medium";
   }
-  if (
-    ["high", "ultra", "ultrathink", "think-hard", "thinkhardest", "highest", "max"].includes(key)
-  ) {
+  if (["high", "ultra", "ultrathink", "think-hard", "thinkhardest", "highest"].includes(key)) {
     return "high";
   }
   if (key === "think") {
     return "minimal";
   }
   return undefined;
+}
+
+export function supportsMaxThinking(provider?: string | null, model?: string | null): boolean {
+  const modelKey = model?.trim().toLowerCase();
+  if (!modelKey) {
+    return false;
+  }
+  const providerKey = provider?.trim().toLowerCase();
+  if (providerKey) {
+    return MAX_MODEL_REFS.has(`${providerKey}/${modelKey}`);
+  }
+  return MAX_MODEL_IDS.has(modelKey);
 }
 
 export function supportsXHighThinking(provider?: string | null, model?: string | null): boolean {
@@ -141,6 +169,9 @@ function listGenericThinkingLevels(
   provider?: string | null,
   model?: string | null,
 ): ModelThinkingLevel[] {
+  if (supportsMaxThinking(provider, model)) {
+    return [...MAX_THINKING_LEVELS];
+  }
   return supportsXHighThinking(provider, model)
     ? [...XHIGH_THINKING_LEVELS]
     : [...BASE_THINKING_LEVELS];

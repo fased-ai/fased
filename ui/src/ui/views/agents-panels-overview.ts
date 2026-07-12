@@ -219,6 +219,8 @@ function modelCapabilityDetail(entry: ModelCatalogEntry): string {
     return "capabilities unknown";
   }
   const parts = [
+    metadata.apiRoute ?? null,
+    metadata.contextWindow ? `${Math.round(metadata.contextWindow / 1000)}k context` : null,
     metadata.features.includes("vision") ? "vision" : null,
     metadata.features.includes("tools") ? "tools" : null,
     metadata.features.includes("reasoning") ? "reasoning" : null,
@@ -382,6 +384,14 @@ function findAgentModelControlSelect(root: HTMLElement, control: string) {
   return null;
 }
 
+function updateLitTextPart(container: HTMLElement, value: string) {
+  const marker = Array.from(container.childNodes).find((node) => node.nodeType === 8);
+  const textNode = marker?.nextSibling;
+  if (textNode?.nodeType === 3) {
+    textNode.nodeValue = value;
+  }
+}
+
 function updateAgentModelControlState(root: HTMLElement, control?: string) {
   const controls = control
     ? [control]
@@ -402,7 +412,7 @@ function updateAgentModelControlState(root: HTMLElement, control?: string) {
     for (const summary of Array.from(
       root.querySelectorAll<HTMLElement>("[data-agent-model-selected-for]"),
     ).filter((entry) => entry.dataset.agentModelSelectedFor === current)) {
-      summary.textContent = label;
+      updateLitTextPart(summary, label);
     }
     for (const button of Array.from(
       root.querySelectorAll<HTMLButtonElement>('[data-agent-model-option="true"]'),
@@ -505,7 +515,6 @@ function handleAgentModelSelectOption(event: Event) {
   select.value = button.dataset.value ?? "";
   select.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
   select.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
-  updateAgentModelControlState(root, control);
 }
 
 function renderAgentModelPicker(params: {
@@ -611,9 +620,10 @@ function updateAgentModelDependentDefaults(root: HTMLElement) {
   for (const option of Array.from(
     root.querySelectorAll<HTMLOptionElement>("[data-agent-role-default-option='true']"),
   )) {
-    option.textContent = primary
-      ? `Use Agent default model (${primary})`
-      : "Use Agent default model";
+    updateLitTextPart(
+      option,
+      primary ? `Use Agent default model (${primary})` : "Use Agent default model",
+    );
   }
   const fallbackSelect = root.querySelector<HTMLSelectElement>("[data-agent-fallback-model]");
   if (fallbackSelect && fallbackSelect.value === primary) {

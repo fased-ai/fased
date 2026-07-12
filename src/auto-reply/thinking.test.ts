@@ -33,24 +33,38 @@ describe("normalizeThinkLevel", () => {
   it("accepts on as low", () => {
     expect(normalizeThinkLevel("on")).toBe("low");
   });
+
+  it("keeps max distinct from high", () => {
+    expect(normalizeThinkLevel("max")).toBe("max");
+  });
 });
 
 describe("listThinkingLevels", () => {
   it("includes xhigh for codex models", () => {
-    expect(listThinkingLevels(undefined, "gpt-5.3-codex")).toContain("xhigh");
     expect(listThinkingLevels("openai-codex", "gpt-5.5")).toContain("xhigh");
     expect(listThinkingLevels("openai-codex", "gpt-5.4")).toContain("xhigh");
     expect(listThinkingLevels("openai-codex", "gpt-5.2-codex")).not.toContain("xhigh");
-    expect(listThinkingLevels("openai-codex", "gpt-5.3-codex-spark")).not.toContain("xhigh");
+    expect(listThinkingLevels("openai-codex", "gpt-5.3-codex-spark")).toContain("xhigh");
   });
 
-  it("includes xhigh for openai gpt-5.2", () => {
-    expect(listThinkingLevels("openai", "gpt-5.2")).toContain("xhigh");
+  it("does not infer xhigh for retired OpenAI catalog entries", () => {
+    expect(listThinkingLevels("openai", "gpt-5.2")).not.toContain("xhigh");
   });
 
-  it("includes xhigh for github-copilot gpt-5.2 refs", () => {
-    expect(listThinkingLevels("github-copilot", "gpt-5.2")).toContain("xhigh");
-    expect(listThinkingLevels("github-copilot", "gpt-5.2-codex")).toContain("xhigh");
+  it("uses the exact GPT-5.6 reasoning levels", () => {
+    expect(listThinkingLevels("openai", "gpt-5.6-luna")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
+  });
+
+  it("does not infer xhigh for retired GitHub Copilot catalog entries", () => {
+    expect(listThinkingLevels("github-copilot", "gpt-5.2")).not.toContain("xhigh");
+    expect(listThinkingLevels("github-copilot", "gpt-5.2-codex")).not.toContain("xhigh");
   });
 
   it("excludes xhigh for non-codex models", () => {
@@ -59,8 +73,8 @@ describe("listThinkingLevels", () => {
 });
 
 describe("listThinkingLevelLabels", () => {
-  it("returns on/off for ZAI", () => {
-    expect(listThinkingLevelLabels("zai", "glm-4.7")).toEqual(["off", "on"]);
+  it("returns canonical persisted values for ZAI", () => {
+    expect(listThinkingLevelLabels("zai", "glm-4.7")).toEqual(["off", "low"]);
   });
 
   it("returns full levels for non-ZAI", () => {

@@ -536,6 +536,38 @@ function createOpenAIResponsesContextManagementWrapper(
   };
 }
 
+function createOpenAIReasoningEffortWrapper(
+  baseStreamFn: StreamFn | undefined,
+  reasoningEffort: ThinkLevel | undefined,
+): StreamFn {
+  const underlying = baseStreamFn ?? streamSimple;
+  return (model, context, options) => {
+    const supportsReasoningEffort =
+      model.api === "openai-codex-responses" ||
+      (model.api === "openai-responses" &&
+        model.provider === "openai" &&
+        (model.baseUrl === undefined || isDirectOpenAIBaseUrl(model.baseUrl)));
+    if (!reasoningEffort || !supportsReasoningEffort) {
+      return underlying(model, context, options);
+    }
+    const originalOnPayload = options?.onPayload;
+    return underlying(model, context, {
+      ...options,
+      onPayload: (payload) => {
+        if (payload && typeof payload === "object") {
+          const payloadObj = payload as Record<string, unknown>;
+          const reasoning = payloadObj.reasoning;
+          payloadObj.reasoning = {
+            ...(reasoning && typeof reasoning === "object" ? reasoning : {}),
+            effort: reasoningEffort === "off" ? "none" : reasoningEffort,
+          };
+        }
+        originalOnPayload?.(payload);
+      },
+    });
+  };
+}
+
 function createCodexDefaultTransportWrapper(baseStreamFn: StreamFn | undefined): StreamFn {
   const underlying = baseStreamFn ?? streamSimple;
   return (model, context, options) =>
@@ -801,7 +833,7 @@ function createOpenRouterSystemCacheWrapper(baseStreamFn: StreamFn | undefined):
  */
 function mapThinkingLevelToOpenRouterReasoningEffort(
   thinkingLevel: ThinkLevel,
-): "none" | "minimal" | "low" | "medium" | "high" | "xhigh" {
+): "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" {
   if (thinkingLevel === "off") {
     return "none";
   }
@@ -1224,6 +1256,7 @@ export function applyExtraParamsToAgent(
   // Force `store=true` for direct OpenAI Responses models and auto-enable
   // server-side compaction for compatible OpenAI Responses payloads.
   agent.streamFn = createOpenAIResponsesContextManagementWrapper(agent.streamFn, merged);
+  agent.streamFn = createOpenAIReasoningEffortWrapper(agent.streamFn, thinkingLevel);
 }
 
 export { testing as __testing };

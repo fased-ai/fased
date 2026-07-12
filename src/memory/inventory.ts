@@ -62,6 +62,11 @@ export type DoctorMemoryInventoryPayload = {
     fts?: MemoryProviderStatus["fts"];
     vector?: MemoryProviderStatus["vector"];
     fallback?: MemoryProviderStatus["fallback"];
+    searchMode?: string;
+    semantic?: {
+      state: "ready" | "not-configured" | "unavailable" | "disabled";
+      reason?: string;
+    };
     db?: MemoryInventoryPathStatus;
     sources?: MemoryProviderStatus["sources"];
     sourceCounts?: MemoryProviderStatus["sourceCounts"];
@@ -192,6 +197,22 @@ export async function buildMemoryInventory(params: {
   const memoryDir = path.join(workspaceDir, "memory");
   const hookConfig = resolveHookConfig(cfg, "session-memory");
   const activePlugin = resolveActiveMemoryPlugin(cfg, providerStatus);
+  const providerCustom = providerStatus?.custom as
+    | { searchMode?: unknown; providerUnavailableReason?: unknown }
+    | undefined;
+  const searchMode =
+    typeof providerCustom?.searchMode === "string" ? providerCustom.searchMode : undefined;
+  const semanticReason =
+    typeof providerCustom?.providerUnavailableReason === "string"
+      ? providerCustom.providerUnavailableReason
+      : providerStatus?.vector?.loadError;
+  const semanticState = !providerStatus?.vector?.enabled
+    ? "disabled"
+    : providerStatus.vector.available === true
+      ? "ready"
+      : searchMode === "fts-only" && providerStatus.provider === "none"
+        ? "not-configured"
+        : "unavailable";
 
   const workspaceStatus = await summarizePath(workspaceDir, roots);
   const memoryRootSpecs = [
@@ -265,6 +286,15 @@ export async function buildMemoryInventory(params: {
       ...(providerStatus?.fts ? { fts: providerStatus.fts } : {}),
       ...(providerStatus?.vector ? { vector: providerStatus.vector } : {}),
       ...(providerStatus?.fallback ? { fallback: providerStatus.fallback } : {}),
+      ...(searchMode ? { searchMode } : {}),
+      ...(providerStatus
+        ? {
+            semantic: {
+              state: semanticState,
+              ...(semanticReason ? { reason: semanticReason } : {}),
+            },
+          }
+        : {}),
       ...(providerStatus?.dbPath ? { db: await summarizePath(providerStatus.dbPath, roots) } : {}),
       ...(providerStatus?.sources ? { sources: providerStatus.sources } : {}),
       ...(providerStatus?.sourceCounts ? { sourceCounts: providerStatus.sourceCounts } : {}),
@@ -348,14 +378,23 @@ export function validateMemoryInventory(
       message: "The memory index is stale and needs a rebuild before recall is current.",
     });
   }
-  if (inventory.backend.vector?.enabled && inventory.backend.vector.available !== true) {
+  if (inventory.backend.semantic?.state === "unavailable") {
     push({
       severity: "warn",
       code: "backend.semantic.unavailable",
       area: "backend",
       message:
-        inventory.backend.vector.loadError ??
+        inventory.backend.semantic.reason ??
         "Semantic recall is configured but vector search is not available.",
+    });
+  }
+  if (inventory.backend.semantic?.state === "not-configured") {
+    push({
+      severity: "info",
+      code: "backend.semantic.not-configured",
+      area: "backend",
+      message:
+        "Keyword recall is available. Configure an embedding provider to add semantic recall.",
     });
   }
   if (inventory.backend.configured !== inventory.backend.active && inventory.backend.active) {

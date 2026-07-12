@@ -833,41 +833,41 @@ describe("connectGateway", () => {
 });
 
 describe("resolveControlUiClientVersion", () => {
-  it("returns serverVersion for same-origin websocket targets", () => {
+  it("returns the UI build version for same-origin websocket targets", () => {
     expect(
       resolveControlUiClientVersion({
         gatewayUrl: "ws://localhost:8787",
-        serverVersion: "2026.3.7",
+        uiVersion: "2026.3.7",
         pageUrl: "http://localhost:8787/fased/",
       }),
     ).toBe("2026.3.7");
   });
 
-  it("returns serverVersion for same-origin relative targets", () => {
+  it("returns the UI build version for same-origin relative targets", () => {
     expect(
       resolveControlUiClientVersion({
         gatewayUrl: "/ws",
-        serverVersion: "2026.3.7",
+        uiVersion: "2026.3.7",
         pageUrl: "https://control.example.com/fased/",
       }),
     ).toBe("2026.3.7");
   });
 
-  it("returns serverVersion for same-origin http targets", () => {
+  it("returns the UI build version for same-origin http targets", () => {
     expect(
       resolveControlUiClientVersion({
         gatewayUrl: "https://control.example.com/ws",
-        serverVersion: "2026.3.7",
+        uiVersion: "2026.3.7",
         pageUrl: "https://control.example.com/fased/",
       }),
     ).toBe("2026.3.7");
   });
 
-  it("omits serverVersion for cross-origin targets", () => {
+  it("omits the UI build version for cross-origin targets", () => {
     expect(
       resolveControlUiClientVersion({
         gatewayUrl: "wss://gateway.example.com",
-        serverVersion: "2026.3.7",
+        uiVersion: "2026.3.7",
         pageUrl: "https://control.example.com/fased/",
       }),
     ).toBeUndefined();

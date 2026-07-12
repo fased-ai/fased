@@ -118,6 +118,40 @@ describe("Providers setup flow", () => {
     );
   });
 
+  it("uses the authenticated catalog count for ready providers", () => {
+    const container = document.createElement("div");
+    render(
+      renderProviders(
+        createProps({
+          authStatus: {
+            storePath: "/tmp/auth-profiles.json",
+            warnAfterMs: 86_400_000,
+            providers: [
+              {
+                provider: "openai-codex",
+                status: "ok",
+                effective: { kind: "profiles", detail: "openai-codex:default" },
+                profiles: [],
+              },
+            ],
+          },
+          modelCatalog: [
+            { id: "gpt-5.6-sol", name: "GPT-5.6 Sol", provider: "openai-codex" },
+            { id: "gpt-5.6-terra", name: "GPT-5.6 Terra", provider: "openai-codex" },
+            { id: "gpt-5.6-luna", name: "GPT-5.6 Luna", provider: "openai-codex" },
+            { id: "gpt-5.5", name: "GPT-5.5", provider: "openai-codex" },
+          ],
+        }),
+      ),
+      container,
+    );
+
+    const openaiRow = container.querySelector<HTMLElement>(
+      '[data-provider-card="openai"] .providers-provider__name-row',
+    );
+    expect(openaiRow?.textContent?.replace(/\s+/g, " ").trim()).toBe("OpenAI 4 models");
+  });
+
   it("hides local quick explainer cards when embedded in Agent Models", () => {
     const container = document.createElement("div");
     render(renderProviders(createProps({ surface: "agent" })), container);

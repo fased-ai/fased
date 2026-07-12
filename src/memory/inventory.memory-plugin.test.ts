@@ -34,4 +34,44 @@ describe("memory inventory plugin diagnosis", () => {
       expect.arrayContaining([expect.objectContaining({ code: "plugin.memory.unavailable" })]),
     );
   });
+
+  it("reports intentional FTS-only memory as ready without a semantic warning", async () => {
+    const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "fased-memory-inventory-"));
+    const inventory = await buildMemoryInventory({
+      cfg: {
+        agents: { list: [{ id: "main", default: true, workspace }] },
+        plugins: { enabled: true, slots: { memory: "memory-core" } },
+      },
+      agentId: "main",
+      providerStatus: {
+        backend: "builtin",
+        provider: "none",
+        requestedProvider: "auto",
+        dirty: false,
+        fts: { enabled: true, available: true },
+        vector: { enabled: true, available: false },
+        custom: {
+          searchMode: "fts-only",
+          providerUnavailableReason: "No embedding API key is configured.",
+        },
+      },
+    });
+
+    expect(inventory.backend).toMatchObject({
+      searchMode: "fts-only",
+      semantic: { state: "not-configured" },
+    });
+    const findings = validateMemoryInventory(inventory).findings;
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "info",
+          code: "backend.semantic.not-configured",
+        }),
+      ]),
+    );
+    expect(findings).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: "backend.semantic.unavailable" })]),
+    );
+  });
 });

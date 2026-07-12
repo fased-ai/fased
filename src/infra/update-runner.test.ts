@@ -223,6 +223,7 @@ describe("runGatewayUpdate", () => {
     name: string;
     version: string;
     dependencies?: Record<string, string>;
+    controlUiVersion?: string;
   }) {
     const workDir = await fs.mkdtemp(path.join(tempDir, "artifact-"));
     const packageDir = path.join(workDir, "package");
@@ -237,6 +238,7 @@ describe("runGatewayUpdate", () => {
       "utf-8",
     );
     await fs.writeFile(path.join(packageDir, "fased.mjs"), "export {};\n", "utf-8");
+    await writeControlUiVersion(packageDir, params.controlUiVersion ?? params.version);
     const filename = `${params.name.replace(/^@/, "").replace("/", "-")}-${params.version}.tgz`;
     const archivePath = path.join(params.destination, filename);
     await tar.c({ cwd: workDir, file: archivePath, gzip: true }, ["package"]);
@@ -248,6 +250,7 @@ describe("runGatewayUpdate", () => {
     name: string;
     version: string;
     includeEntrypoint?: boolean;
+    controlUiVersion?: string;
   }) {
     const workDir = await fs.mkdtemp(path.join(tempDir, "hosted-runtime-"));
     const packageDir = path.join(workDir, "package");
@@ -260,6 +263,7 @@ describe("runGatewayUpdate", () => {
     if (params.includeEntrypoint !== false) {
       await fs.writeFile(path.join(packageDir, "fased.mjs"), "export {};\n", "utf-8");
     }
+    await writeControlUiVersion(packageDir, params.controlUiVersion ?? params.version);
     const archivePath = path.join(workDir, "runtime.tar.gz");
     await tar.c({ cwd: workDir, file: archivePath, gzip: true }, ["package"]);
     const bytes = await fs.readFile(archivePath);
@@ -271,6 +275,7 @@ describe("runGatewayUpdate", () => {
     name: string;
     version: string;
     dependencyHash: string;
+    controlUiVersion?: string;
   }) {
     const workDir = await fs.mkdtemp(path.join(tempDir, "hosted-app-"));
     const packageDir = path.join(workDir, "package");
@@ -281,6 +286,7 @@ describe("runGatewayUpdate", () => {
       "utf-8",
     );
     await fs.writeFile(path.join(packageDir, "fased.mjs"), "export {};\n", "utf-8");
+    await writeControlUiVersion(packageDir, params.controlUiVersion ?? params.version);
     await fs.writeFile(
       path.join(packageDir, ".fased-hosted-runtime.json"),
       JSON.stringify({ schemaVersion: 1, dependencyHash: params.dependencyHash }),
@@ -291,6 +297,16 @@ describe("runGatewayUpdate", () => {
     const bytes = await fs.readFile(archivePath);
     const checksum = createHash("sha256").update(bytes).digest("hex");
     return { bytes, checksum };
+  }
+
+  async function writeControlUiVersion(packageDir: string, version: string) {
+    const controlUiDir = path.join(packageDir, "dist", "control-ui");
+    await fs.mkdir(controlUiDir, { recursive: true });
+    await fs.writeFile(
+      path.join(controlUiDir, "version.json"),
+      `${JSON.stringify({ version })}\n`,
+      "utf8",
+    );
   }
 
   function fetchInputUrl(input: string | URL | Request): string {
@@ -798,6 +814,41 @@ describe("runGatewayUpdate", () => {
     ]);
   });
 
+  it("rejects a package artifact whose dashboard build is stale", async () => {
+    const prefix = path.join(tempDir, ".fased", "install-cache", "npm-global");
+    const pkgRoot = path.join(prefix, "lib", "node_modules", "@fased", "fased");
+    await seedGlobalPackageRoot(pkgRoot, "1.0.0", "@fased/fased", { chalk: "^5.0.0" });
+
+    const runCommand = async (argv: string[]) => {
+      if (argv[0] === "git" && argv.at(-2) === "rev-parse" && argv.at(-1) === "--show-toplevel") {
+        return { stdout: "", stderr: "not a git repository", code: 128 };
+      }
+      if (argv[0] === "npm" && argv[1] === "pack") {
+        const destination = argv[argv.indexOf("--pack-destination") + 1];
+        const filename = await writePackageArtifact({
+          destination,
+          name: "@fased/fased",
+          version: "2.0.0",
+          controlUiVersion: "1.9.0",
+          dependencies: { chalk: "^5.0.0" },
+        });
+        return { stdout: `${filename}\n`, stderr: "", code: 0 };
+      }
+      throw new Error(`unexpected command: ${argv.join(" ")}`);
+    };
+
+    const result = await runWithCommand(runCommand, { cwd: pkgRoot, tag: "2.0.0" });
+
+    expect(result.status).toBe("error");
+    expect(result.reason).toBe("artifact dashboard version mismatch");
+    expect(result.after?.version).toBe("1.0.0");
+    expect(result.steps.at(-1)).toMatchObject({
+      name: "artifact UI version check",
+      exitCode: 1,
+      stderrTail: "expected dashboard v2.0.0, found 1.9.0",
+    });
+  });
+
   it("uses a verified self-contained hosted release artifact before npm", async () => {
     const prefix = path.join(tempDir, ".fased", "install-cache", "npm-global");
     const pkgRoot = path.join(prefix, "lib", "node_modules", "@fased", "fased");
@@ -933,6 +984,54 @@ describe("runGatewayUpdate", () => {
       await fs.realpath(dependencyModules),
     );
     await finalizeUpdateTransaction(result.transaction);
+  });
+
+  it("rejects a layered hosted artifact whose dashboard build is stale", async () => {
+    const prefix = path.join(tempDir, ".fased", "install-cache", "npm-global");
+    const pkgRoot = path.join(prefix, "lib", "node_modules", "@fased", "fased");
+    const dependencyHash = "d".repeat(64);
+    const dependencyModules = path.join(
+      path.dirname(prefix),
+      "hosted-dependencies",
+      dependencyHash,
+      "node_modules",
+    );
+    await fs.mkdir(dependencyModules, { recursive: true });
+    await seedGlobalPackageRoot(pkgRoot, "1.0.0", "@fased/fased");
+    const artifact = await buildHostedAppResponse({
+      name: "@fased/fased",
+      version: "2.0.0",
+      controlUiVersion: "1.9.0",
+      dependencyHash,
+    });
+    const appAssetName = "fased-hosted-app-linux-x64-v2.0.0.tar.gz";
+    const fetchImpl = (async (input: string | URL | Request) => {
+      const url = fetchInputUrl(input);
+      if (url.endsWith(`${appAssetName}.sha256`)) {
+        return new Response(`${artifact.checksum}  ${appAssetName}\n`);
+      }
+      if (url.endsWith(appAssetName)) {
+        return new Response(artifact.bytes);
+      }
+      return new Response("not found", { status: 404 });
+    }) as typeof fetch;
+    const runCommand = async (argv: string[]) => {
+      if (argv[0] === "git" && argv.at(-2) === "rev-parse" && argv.at(-1) === "--show-toplevel") {
+        return { stdout: "", stderr: "not a git repository", code: 128 };
+      }
+      throw new Error(`unexpected command: ${argv.join(" ")}`);
+    };
+
+    const result = await runWithCommand(runCommand, {
+      cwd: pkgRoot,
+      tag: "2.0.0",
+      hostedReleaseFetch: fetchImpl,
+      hostedReleaseBaseUrl: "https://releases.example.test",
+    });
+
+    expect(result.status).toBe("error");
+    expect(result.reason).toBe("layered hosted runtime is incomplete");
+    expect(result.after?.version).toBe("1.0.0");
   });
 
   it("seeds the canonical dependency cache from a matching self-contained runtime", async () => {
@@ -1175,7 +1274,7 @@ describe("runGatewayUpdate", () => {
     expect(await fs.readFile(path.join(pkgRoot, "package.json"), "utf8")).toContain('"1.0.0"');
     expect(result.steps.find((step) => step.name === "hosted artifact verify")).toMatchObject({
       exitCode: 1,
-      stderrTail: "expected complete v2.0.0, found 2.0.0",
+      stderrTail: "expected complete v2.0.0, found runtime 2.0.0 and dashboard 2.0.0",
     });
   });
 
