@@ -172,7 +172,8 @@ explicit CLI provider setup.
     Browser flow through OpenAI sign-in. Internally this still uses the legacy
     `openai-codex` compatibility route until the runtime route is renamed.
 
-    Sets `agents.defaults.model` to `openai-codex/gpt-5.6-sol` when model is unset
+    Sets `agents.defaults.model` to the first executable model returned by the
+    authenticated `openai-codex` runtime when the model is unset
     or `openai/*`.
 
   </Accordion>

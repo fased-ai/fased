@@ -234,6 +234,41 @@ This repair is only for VPS Hosting installs with the root-managed service.
 Local users should continue using `fased update`; they must not run
 `--repair-hosting`.
 
+## Update support contract
+
+Use this order for every existing installation:
+
+1. Run `fased update`.
+2. Confirm the version changed when an update was available and the Gateway RPC
+   probe is healthy.
+3. If an old CLI cannot start, fails the update, or reports success without
+   changing the version, bootstrap the runtime once with the matching Local or
+   Hosting installer command below.
+4. Return to `fased update` for every later release.
+
+The bootstrap replaces application/runtime files, not user state. Do not delete
+`~/.fased` or `/home/app/.fased`, and do not run fresh onboarding merely to fix
+an old updater.
+
+Local or WSL bootstrap:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+  | bash -s -- --local --no-onboard
+```
+
+VPS Hosting bootstrap, run as `root`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+  | bash -s -- --repair-hosting
+```
+
+An immutable old binary cannot execute updater logic that was introduced in a
+newer release. That one-time bootstrap is therefore unavoidable for a small set
+of broken historical builds. It preserves configuration, credentials, wallets,
+signer state, mining state, sessions, memory, and installed plugin records.
+
 `./install.sh`:
 
 - installs or repairs dependencies

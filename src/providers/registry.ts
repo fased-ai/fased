@@ -18,12 +18,6 @@ import {
   HUGGINGFACE_MODEL_REFS,
 } from "./huggingface-models.js";
 import {
-  buildLitellmModelCapabilityOverrides,
-  LITELLM_DEFAULT_MODEL_REF,
-  LITELLM_MODEL_IDS,
-  LITELLM_MODEL_REFS,
-} from "./litellm-models.js";
-import {
   buildOpencodeZenModelCapabilityOverrides,
   OPENCODE_ZEN_DEFAULT_MODEL_REF,
   OPENCODE_ZEN_MODEL_IDS,
@@ -628,8 +622,6 @@ const HUGGINGFACE_MODEL_CAPABILITY_OVERRIDES: Record<string, ModelCapabilityConf
 const VENICE_MODEL_CAPABILITY_OVERRIDES: Record<string, ModelCapabilityConfig> =
   buildVeniceModelCapabilityOverrides(VENICE_ROUTE_ID);
 
-const LITELLM_MODEL_CAPABILITY_OVERRIDES: Record<string, ModelCapabilityConfig> =
-  buildLitellmModelCapabilityOverrides(LITELLM_ROUTE_ID);
 const CLOUDFLARE_AI_GATEWAY_MODEL_CAPABILITY_OVERRIDES: Record<string, ModelCapabilityConfig> =
   buildCloudflareAiGatewayModelCapabilityOverrides(CLOUDFLARE_AI_GATEWAY_ROUTE_ID);
 export const CUSTOM_PROVIDER_MODEL_REFS: string[] = [];
@@ -1899,14 +1891,14 @@ export const LITELLM_PROVIDER_MANIFEST: ProviderBrandManifest = {
     },
   ],
   models: {
-    recommended: [...LITELLM_MODEL_REFS],
+    recommended: [],
     dynamic: true,
     operatorCatalog: true,
     routeRules: {
       [LITELLM_ROUTE_ID]: [`${LITELLM_ROUTE_ID}/*`],
     },
   },
-  modelCapabilities: LITELLM_MODEL_CAPABILITY_OVERRIDES,
+  modelCapabilities: {},
 };
 
 export const CLOUDFLARE_AI_GATEWAY_PROVIDER_MANIFEST: ProviderBrandManifest = {
@@ -2086,6 +2078,23 @@ export function isStandardProviderModelRef(ref: string): boolean {
     return true;
   }
   return STANDARD_PROVIDER_MODEL_REFS.has(value.toLowerCase());
+}
+
+export function providerModelRecommendationRank(
+  provider: string,
+  model: string,
+): number | undefined {
+  const manifest = getProviderBrandManifestForRoute(provider);
+  if (!manifest) {
+    return undefined;
+  }
+  const normalizedProvider = provider.trim().toLowerCase();
+  const normalizedRef = `${normalizedProvider}/${model.trim().toLowerCase()}`;
+  const routeRecommendations = manifest.models.recommended.filter((ref) =>
+    ref.trim().toLowerCase().startsWith(`${normalizedProvider}/`),
+  );
+  const index = routeRecommendations.findIndex((ref) => ref.trim().toLowerCase() === normalizedRef);
+  return index >= 0 ? index + 1 : undefined;
 }
 
 export function isStandardProviderCatalogEntry(entry: { provider: string; id: string }): boolean {

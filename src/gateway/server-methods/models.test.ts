@@ -224,6 +224,13 @@ vi.mock("../../commands/models/list.auth-overview.js", () => ({
   resolveProviderAuthOverview,
 }));
 
+vi.mock("../../providers/runtime-model-catalog.js", () => ({
+  applyRuntimeProviderModelDiscovery: vi.fn(
+    async ({ catalog }: { catalog: GatewayModelChoice[] }) => catalog,
+  ),
+  filterCatalogToAuthoritativeAvailability: vi.fn((catalog: GatewayModelChoice[]) => catalog),
+}));
+
 const resolvePluginProviders = vi.hoisted(() => vi.fn<() => unknown[]>(() => []));
 
 vi.mock("../../plugins/providers.js", () => ({
@@ -695,7 +702,7 @@ describe("models.auth.status handler", () => {
     });
   });
 
-  it("keeps SDK history out of normal model lists but exposes it with all=true", async () => {
+  it("uses the same authenticated route catalog for normal and all model lists", async () => {
     listProvidersWithStoredCredentials.mockReturnValue(["openai"]);
     const context = createContext();
     context.loadGatewayModelCatalog.mockResolvedValue([
@@ -716,7 +723,10 @@ describe("models.auth.status handler", () => {
     const normal = createInvoke("models.list", {}, context);
     await normal.invoke();
     expect(normal.respond.mock.calls[0]?.[1]).toMatchObject({
-      models: [expect.objectContaining({ id: "gpt-5.6" })],
+      models: expect.arrayContaining([
+        expect.objectContaining({ id: "gpt-5.6" }),
+        expect.objectContaining({ id: "gpt-4o" }),
+      ]),
     });
 
     const advanced = createInvoke("models.list", { all: true }, context);
@@ -729,7 +739,7 @@ describe("models.auth.status handler", () => {
     });
   });
 
-  it("returns the curated authenticated route with available=true", async () => {
+  it("returns the same authenticated route with available=true", async () => {
     loadConfig.mockImplementation(() => ({
       agents: {
         defaults: {
@@ -776,7 +786,7 @@ describe("models.auth.status handler", () => {
         expect.objectContaining({ id: "gpt-5.5" }),
       ]),
     });
-    expect(available.respond.mock.calls[0]?.[1]).not.toMatchObject({
+    expect(available.respond.mock.calls[0]?.[1]).toMatchObject({
       models: expect.arrayContaining([expect.objectContaining({ id: "gpt-4o" })]),
     });
   });

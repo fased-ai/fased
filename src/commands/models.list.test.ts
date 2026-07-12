@@ -47,6 +47,20 @@ vi.mock("../agents/auth-profiles.js", () => ({
   resolveProfileUnusableUntilForDisplay,
 }));
 
+vi.mock("../agents/authenticated-model-catalog.js", () => ({
+  resolveAuthenticatedModelCatalog: vi.fn(
+    async ({ catalog }: { catalog: Array<Record<string, unknown>> }) => ({
+      usableProviders: new Set(
+        catalog.map((model) => (typeof model.provider === "string" ? model.provider : "")),
+      ),
+      usableCatalog: catalog,
+      allowedCatalog: catalog,
+      allowedKeys: new Set(),
+      allowAny: true,
+    }),
+  ),
+}));
+
 vi.mock("../agents/model-auth.js", () => ({
   resolveEnvApiKey,
   resolveAwsSdkEnvVarName,

@@ -1,10 +1,16 @@
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { resolveFasedAgentAgentDir } from "../agents/agent-paths.js";
 import { ensureAuthProfileStore } from "../agents/auth-profiles.js";
 import { formatCliCommand } from "../cli/command-format.js";
 import { promptAuthChoiceGrouped } from "../commands/auth-choice-prompt.js";
-import { applyAuthChoice, warnIfModelConfigLooksOff } from "../commands/auth-choice.js";
+import {
+  applyAuthChoice,
+  resolvePreferredProviderForAuthChoice,
+  warnIfModelConfigLooksOff,
+} from "../commands/auth-choice.js";
+import { applyPrimaryModel, resolveAuthenticatedDefaultModel } from "../commands/model-picker.js";
 import { setupChannels } from "../commands/onboard-channels.js";
 import { applyOnboardingLocalWorkspaceConfig } from "../commands/onboard-config.js";
 import { promptCustomApiConfig } from "../commands/onboard-custom.js";
@@ -84,6 +90,36 @@ async function requireRiskAcknowledgement(params: {
   prompter: WizardPrompter;
 }) {
   void params;
+}
+
+async function applyOnboardingAuthChoice(params: {
+  authChoice: Exclude<OnboardOptions["authChoice"], "custom-api-key" | "skip" | undefined>;
+  config: FasedAgentConfig;
+  prompter: WizardPrompter;
+  runtime: RuntimeEnv;
+  opts?: Partial<OnboardOptions>;
+}): Promise<FasedAgentConfig> {
+  const agentDir = resolveFasedAgentAgentDir();
+  const authResult = await applyAuthChoice({
+    authChoice: params.authChoice,
+    config: params.config,
+    prompter: params.prompter,
+    runtime: params.runtime,
+    setDefaultModel: false,
+    agentDir,
+    opts: params.opts,
+  });
+  const preferredProvider = resolvePreferredProviderForAuthChoice(params.authChoice, {
+    config: authResult.config,
+  });
+  const authenticatedDefault = await resolveAuthenticatedDefaultModel({
+    config: authResult.config,
+    agentDir,
+    preferredProvider,
+  });
+  return authenticatedDefault
+    ? applyPrimaryModel(authResult.config, authenticatedDefault)
+    : authResult.config;
 }
 
 async function confirmOnboardingRepair(params: { prompter: WizardPrompter }): Promise<boolean> {
@@ -1099,18 +1135,16 @@ export async function runOnboardingWizard(
     nextConfig = customResult.config;
     await warnIfModelConfigLooksOff(nextConfig, prompter);
   } else if (authChoice && authChoice !== "skip") {
-    const authResult = await applyAuthChoice({
+    nextConfig = await applyOnboardingAuthChoice({
       authChoice,
       config: nextConfig,
       prompter,
       runtime,
-      setDefaultModel: true,
       opts: {
         tokenProvider: opts.tokenProvider,
         token: opts.authChoice === "apiKey" && opts.token ? opts.token : undefined,
       },
     });
-    nextConfig = authResult.config;
     await warnIfModelConfigLooksOff(nextConfig, prompter);
   }
 
@@ -2077,15 +2111,13 @@ export async function runOnboardingWizard(
           nextConfig = customResult.config;
           await warnIfModelConfigLooksOff(nextConfig, prompter);
         } else if (providerAuthChoice !== "skip") {
-          const authResult = await applyAuthChoice({
+          nextConfig = await applyOnboardingAuthChoice({
             authChoice: providerAuthChoice,
             config: nextConfig,
             prompter,
             runtime,
-            setDefaultModel: true,
             opts: {},
           });
-          nextConfig = authResult.config;
           await warnIfModelConfigLooksOff(nextConfig, prompter);
         }
       }

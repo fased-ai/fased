@@ -12,16 +12,32 @@ title: "Model Providers"
 This page covers model providers, not chat channels like Telegram, Discord, or
 WhatsApp. For model selection rules, see [/concepts/models](/concepts/models).
 
-## One provider registry
+## One authenticated catalog
 
-Normal setup uses one Fased provider registry. Onboarding, CLI, **Agent > Models**,
-Chat, and channel-routed Agents use the same list:
+Normal setup uses one Gateway-owned catalog. Onboarding, CLI, **Agent > Models**,
+Chat, Tasks, and channel-routed Agents consume the same authenticated payload:
 
 - same provider order
 - same provider names
 - same auth methods
 - same route-compatible model lists
 - same capability metadata
+
+The sources have separate jobs:
+
+1. The provider's authenticated model endpoint determines API-key route
+   availability. OAuth/device routes use the authenticated runtime catalog so
+   Fased does not offer a reviewed model that the signed-in account rejects.
+2. Official provider documentation supplies reviewed capability metadata when
+   the provider response does not include it.
+3. Fased's curated registry ranks recommendations and task roles. It does not
+   make an unavailable model available.
+4. Explicit custom models remain local configuration and are labeled as such.
+
+Each model payload records its availability source, capability source, retrieval
+date, auth route, and confidence. If authenticated discovery is temporarily
+unavailable, Fased does not claim the reviewed catalog is executable. Retry the
+provider connection or catalog refresh.
 
 Old upstream/runtime providers are compatibility inputs only. They should not
 appear as normal first-run choices unless they are added to the Fased provider
@@ -93,7 +109,7 @@ flowchart TD
   D --> G["Tasks"]
 ```
 
-## Model Metadata
+## Model Metadata And Provenance
 
 Each recommended model should have capability metadata. The UI uses this data
 to decide what to show in Chat:
@@ -109,11 +125,19 @@ to decide what to show in Chat:
 - default thinking level
 - private-network or manual setup requirements
 - auth mode hints
+- availability and capability source
+- catalog retrieval/review time
+- recommendation rank
 
 Some providers expose this cleanly from their model catalogs. Others do not.
 For local/manual providers, metadata can be curated or user-supplied. Unknown
 metadata must stay explicit; the UI should not pretend a model supports
 thinking, tools, images, speech, or video when the registry does not know.
+
+Local providers are always discovered from the configured Ollama, LM Studio,
+vLLM-compatible, or LiteLLM server. Fased does not invent a local model named
+`local` or `default`. Start the server and load a model there first, then refresh
+the Agent model page.
 
 ## Provider Registry Refresh
 
@@ -161,11 +185,12 @@ fased providers models remove --provider custom --model my-local-model
 installation. `providers refresh` updates the shared curated registry only after
 review or explicit apply.
 
-The Dashboard, Chat, Agent defaults, and ordinary `models.list` requests use
-that reviewed catalog. SDK-discovered historical models are available only to
-advanced/debug callers through `models.list` with `all: true`. Dynamic local
-providers and explicitly configured custom models remain selectable because
-their catalog belongs to the operator's own endpoint.
+The Dashboard, Chat, Agent defaults, Tasks, and `models.list` requests use the
+same authenticated catalog. The `all` flag can include every model available
+through the Agent's configured provider routes, but it does not bypass account
+availability or restore historical SDK entries. Dynamic local providers and
+explicitly configured custom models remain selectable because their catalog
+belongs to the operator's own endpoint.
 
 ## Local Models
 

@@ -1,3 +1,4 @@
+import { resolveFasedAgentAgentDir } from "../agents/agent-paths.js";
 import { ensureAuthProfileStore } from "../agents/auth-profiles.js";
 import type { FasedAgentConfig, GatewayAuthConfig } from "../config/config.js";
 import type { RuntimeEnv } from "../runtime.js";
@@ -7,6 +8,7 @@ import { applyAuthChoice, resolvePreferredProviderForAuthChoice } from "./auth-c
 import {
   applyModelAllowlist,
   applyModelFallbacksFromSelection,
+  applyPrimaryModel,
   promptModelAllowlist,
 } from "./model-picker.js";
 import { promptCustomApiConfig } from "./onboard-custom.js";
@@ -25,13 +27,6 @@ function sanitizeTokenValue(value: string | undefined): string | undefined {
   }
   return trimmed;
 }
-
-const ANTHROPIC_OAUTH_MODEL_KEYS = [
-  "anthropic/claude-fable-5",
-  "anthropic/claude-opus-4-8",
-  "anthropic/claude-sonnet-5",
-  "anthropic/claude-haiku-4-5",
-];
 
 export function buildGatewayAuthConfig(params: {
   existing?: GatewayAuthConfig;
@@ -73,9 +68,10 @@ export async function promptAuthConfig(
   runtime: RuntimeEnv,
   prompter: WizardPrompter,
 ): Promise<FasedAgentConfig> {
+  const agentDir = resolveFasedAgentAgentDir();
   const authChoice = await promptAuthChoiceGrouped({
     prompter,
-    store: ensureAuthProfileStore(undefined, {
+    store: ensureAuthProfileStore(agentDir, {
       allowKeychainPrompt: false,
     }),
     includeSkip: true,
@@ -93,16 +89,12 @@ export async function promptAuthConfig(
       config: next,
       prompter,
       runtime,
-      setDefaultModel: true,
+      setDefaultModel: false,
+      agentDir,
     });
     next = applied.config;
   }
 
-  const anthropicOAuth =
-    authChoice === "anthropic-oauth" ||
-    authChoice === "setup-token" ||
-    authChoice === "token" ||
-    authChoice === "oauth";
   const preferredProvider =
     authChoice !== "custom-api-key"
       ? resolvePreferredProviderForAuthChoice(authChoice, { config: next })
@@ -112,14 +104,16 @@ export async function promptAuthConfig(
     const allowlistSelection = await promptModelAllowlist({
       config: next,
       prompter,
-      allowedKeys: anthropicOAuth ? ANTHROPIC_OAUTH_MODEL_KEYS : undefined,
-      initialSelections: anthropicOAuth ? ["anthropic/claude-sonnet-5"] : undefined,
-      message: anthropicOAuth ? "Anthropic OAuth models" : undefined,
       preferredProvider,
+      agentDir,
     });
     if (allowlistSelection.models) {
-      next = applyModelAllowlist(next, allowlistSelection.models);
-      next = applyModelFallbacksFromSelection(next, allowlistSelection.models);
+      const selectedModels = allowlistSelection.models;
+      if (selectedModels[0]) {
+        next = applyPrimaryModel(next, selectedModels[0]);
+      }
+      next = applyModelAllowlist(next, selectedModels);
+      next = applyModelFallbacksFromSelection(next, selectedModels);
     }
   }
 

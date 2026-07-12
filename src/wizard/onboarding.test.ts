@@ -96,6 +96,9 @@ const resolvePreferredProviderForAuthChoice = vi.hoisted(() =>
 );
 const warnIfModelConfigLooksOff = vi.hoisted(() => vi.fn(async () => {}));
 const promptDefaultModel = vi.hoisted(() => vi.fn(async () => ({})));
+const resolveAuthenticatedDefaultModel = vi.hoisted(() =>
+  vi.fn<() => Promise<string | undefined>>(async () => undefined),
+);
 const setupChannels = vi.hoisted(() => vi.fn(async (config) => config));
 const setupSkills = vi.hoisted(() => vi.fn(async (config) => config));
 const setupInternalHooks = vi.hoisted(() => vi.fn(async (config) => config));
@@ -204,6 +207,7 @@ vi.mock("../commands/model-picker.js", async (importActual) => {
   return {
     ...actual,
     promptDefaultModel,
+    resolveAuthenticatedDefaultModel,
   };
 });
 

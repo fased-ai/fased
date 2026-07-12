@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { FasedAgentConfig } from "../config/config.js";
+import { OPENROUTER_MODEL_REFS, isStandardProviderModelRef } from "../providers/registry.js";
 import type { WizardPrompter } from "../wizard/prompts.js";
 import {
   applyModelAllowlist,
@@ -23,11 +24,13 @@ const ensureAuthProfileStore = vi.hoisted(() =>
   })),
 );
 const listProfilesForProvider = vi.hoisted(() => vi.fn(() => []));
+const listProvidersWithStoredCredentials = vi.hoisted(() => vi.fn(() => []));
 const upsertAuthProfile = vi.hoisted(() => vi.fn());
 const upsertAuthProfileWithLock = vi.hoisted(() => vi.fn(async () => {}));
 vi.mock("../agents/auth-profiles.js", () => ({
   ensureAuthProfileStore,
   listProfilesForProvider,
+  listProvidersWithStoredCredentials,
   upsertAuthProfile,
   upsertAuthProfileWithLock,
 }));
@@ -47,16 +50,14 @@ const OPENROUTER_CATALOG = [
   },
   {
     provider: "openrouter",
-    id: "meta-llama/llama-3.3-70b:free",
-    name: "Llama 3.3 70B",
+    id: "openai/gpt-5.5",
+    name: "GPT-5.5",
   },
 ] as const;
 
 function expectRouterModelFiltering(options: Array<{ value: string }>) {
   expect(options.some((opt) => opt.value === "openrouter/auto")).toBe(false);
-  expect(options.some((opt) => opt.value === "openrouter/meta-llama/llama-3.3-70b:free")).toBe(
-    true,
-  );
+  expect(options.some((opt) => opt.value === "openrouter/openai/gpt-5.5")).toBe(true);
 }
 
 function createSelectAllMultiselect() {
@@ -68,8 +69,8 @@ describe("promptDefaultModel", () => {
     loadModelCatalog.mockResolvedValue([
       {
         provider: "anthropic",
-        id: "claude-sonnet-4-6",
-        name: "Claude Sonnet 4.6",
+        id: "claude-sonnet-5",
+        name: "Claude Sonnet 5",
       },
     ]);
 
@@ -119,7 +120,7 @@ describe("promptDefaultModel", () => {
       const keep = params.options.find((opt: { value: string }) => opt.value === "__keep__");
       expect(keep).toBeUndefined();
       const firstRealModel = params.options.find(
-        (opt: { value: string }) => opt.value === "openrouter/meta-llama/llama-3.3-70b:free",
+        (opt: { value: string }) => opt.value === "openrouter/openai/gpt-5.5",
       );
       return (firstRealModel?.value ?? "") as never;
     });
@@ -139,15 +140,15 @@ describe("promptDefaultModel", () => {
       preferredProvider: "openrouter",
     });
 
-    expect(result.model).toBe("openrouter/meta-llama/llama-3.3-70b:free");
+    expect(result.model).toBe("openrouter/openai/gpt-5.5");
   });
 
   it("offers recommended current models before the full catalog in onboarding", async () => {
     loadModelCatalog.mockResolvedValue([
-      ...Array.from({ length: 31 }, (_, index) => ({
+      ...OPENROUTER_MODEL_REFS.map((ref) => ({
         provider: "openrouter",
-        id: `old-model-${index}`,
-        name: `Old Model ${index}`,
+        id: ref.slice("openrouter/".length),
+        name: ref.slice("openrouter/".length),
       })),
       {
         provider: "openai",
@@ -161,8 +162,8 @@ describe("promptDefaultModel", () => {
       },
       {
         provider: "anthropic",
-        id: "claude-opus-4-7",
-        name: "Claude Opus 4.7",
+        id: "claude-opus-4-8",
+        name: "Claude Opus 4.8",
       },
     ]);
 
@@ -180,14 +181,15 @@ describe("promptDefaultModel", () => {
       .mockImplementationOnce(async (params) => {
         expect(params.message).toBe("Default model");
         expect(params.initialValue).toBe("openai/gpt-5.5");
-        expect(params.options.map((opt: { value: string }) => opt.value)).toEqual([
+        const values = params.options.map((opt: { value: string }) => opt.value);
+        expect(values.slice(0, 5)).toEqual([
           "__keep__",
           "__manual__",
           "openai/gpt-5.5",
-          "anthropic/claude-opus-4-7",
+          "anthropic/claude-opus-4-8",
           "google/gemini-3.1-pro-preview",
-          "openrouter/google/gemini-2.5-flash-lite",
         ]);
+        expect(values).toContain("openrouter/google/gemini-2.5-flash-lite");
         return "openai/gpt-5.5";
       });
     const prompter = makePrompter({ select });
@@ -215,7 +217,9 @@ describe("promptDefaultModel", () => {
     const expectedOpenAiKeys = loadPreviewModelListSources({
       cfg: config,
       providerFilter: "openai",
-    }).map((entry) => `${entry.provider}/${entry.id}`);
+    })
+      .map((entry) => `${entry.provider}/${entry.id}`)
+      .filter(isStandardProviderModelRef);
     let selectedModel = "";
     const select = vi.fn(async (params) => {
       expect(params.message).toBe("Default model");
@@ -248,14 +252,14 @@ describe("promptDefaultModel", () => {
       },
       {
         provider: "anthropic",
-        id: "claude-opus-4-7",
-        name: "Claude Opus 4.7",
+        id: "claude-opus-4-8",
+        name: "Claude Opus 4.8",
         catalogSource: "provider-index",
       },
       {
         provider: "anthropic",
-        id: "claude-sonnet-4-6",
-        name: "Claude Sonnet 4.6",
+        id: "claude-sonnet-5",
+        name: "Claude Sonnet 5",
         catalogSource: "runtime",
       },
     ]);
@@ -265,8 +269,8 @@ describe("promptDefaultModel", () => {
       expect(params.options.map((opt: { value: string }) => opt.value)).toEqual([
         "__keep__",
         "__manual__",
-        "anthropic/claude-sonnet-4-6",
-        "anthropic/claude-opus-4-7",
+        "anthropic/claude-sonnet-5",
+        "anthropic/claude-opus-4-8",
         "openai/gpt-5.5",
         "anthropic/claude-custom",
       ]);
@@ -292,10 +296,10 @@ describe("promptDefaultModel", () => {
 
   it("ranks the current provider first in large catalog provider filters", async () => {
     loadModelCatalog.mockResolvedValue([
-      ...Array.from({ length: 31 }, (_, index) => ({
+      ...OPENROUTER_MODEL_REFS.map((ref) => ({
         provider: "openrouter",
-        id: `legacy-${index}`,
-        name: `Legacy ${index}`,
+        id: ref.slice("openrouter/".length),
+        name: ref.slice("openrouter/".length),
         catalogSource: "current-preview",
       })),
       {
@@ -402,8 +406,8 @@ describe("promptModelAllowlist", () => {
       },
       {
         provider: "openai",
-        id: "gpt-5.4-mini",
-        name: "GPT-5.4 Mini",
+        id: "gpt-5.6-terra",
+        name: "GPT-5.6 Terra",
       },
     ]);
 
@@ -420,8 +424,8 @@ describe("promptModelAllowlist", () => {
     const options = multiselect.mock.calls[0]?.[0]?.options ?? [];
     expect(options.map((opt: { value: string }) => opt.value)).toEqual([
       "xai/grok-4.3",
-      "openai/gpt-5.4-mini",
       "openai/gpt-5.5",
+      "openai/gpt-5.6-terra",
     ]);
   });
 

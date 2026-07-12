@@ -64,9 +64,22 @@ flowchart TD
 
 ## Catalog Maintenance
 
+The provider's authenticated model catalog is the availability authority.
+Fased's checked-in catalog supplies reviewed capabilities, recommendations, and
+role rankings; it is not a substitute for account access. **Providers**,
+**Agent > Models**, Chat, and Tasks use the same Gateway response, so their
+available counts and selectable model IDs should match for the selected Agent.
+
+Ollama, LM Studio, vLLM-compatible servers, and LiteLLM are discovered from the
+user's configured endpoint. They have no hard-coded placeholder model.
+
 Use `fased providers refresh` to compare the checked-in provider registry with
 live or reviewed source catalogs. Use `fased providers refresh --write-review`
 before applying model or capability changes.
+
+The repository also runs a nightly credentialed drift review. Drift creates a
+pull request for human review; it never changes a release or recommendation
+silently.
 
 Use `fased providers models add/remove` for local or custom model entries on the
 current machine.

@@ -6,11 +6,6 @@ import {
   getDefaultCopilotProxyModelIds,
 } from "../providers/github-copilot-models.js";
 import {
-  buildLitellmModelDefinition,
-  LITELLM_BASE_URL,
-  LITELLM_MODEL_CATALOG,
-} from "../providers/litellm-models.js";
-import {
   buildVercelAiGatewayModelDefinition,
   VERCEL_AI_GATEWAY_MODEL_IDS,
 } from "../providers/vercel-ai-gateway-models.js";
@@ -837,24 +832,16 @@ export const CURRENT_MODEL_PROVIDER_CATALOG: Readonly<Record<string, ModelProvid
     ),
   },
   litellm: {
-    baseUrl: LITELLM_BASE_URL,
+    baseUrl: "http://localhost:4000/v1",
     api: "openai-completions",
     request: { allowPrivateNetwork: true },
-    models: LITELLM_MODEL_CATALOG.map(buildLitellmModelDefinition),
+    models: [],
   },
   vllm: {
     baseUrl: "http://127.0.0.1:8000/v1",
     api: "openai-completions",
     request: { allowPrivateNetwork: true },
-    models: [
-      model({
-        id: "local",
-        name: "Local model",
-        input: ["text", "image"],
-        contextWindow: 128_000,
-        maxTokens: 8192,
-      }),
-    ],
+    models: [],
   },
   "github-copilot": {
     baseUrl: "https://api.individual.githubcopilot.com",

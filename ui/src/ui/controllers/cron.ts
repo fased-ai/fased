@@ -23,6 +23,7 @@ import type {
 } from "../types.ts";
 import { CRON_CHANNEL_LAST } from "../ui-types.ts";
 import type { CronFormState } from "../ui-types.ts";
+import { loadModels } from "./models.ts";
 import {
   formatMissingOperatorReadScopeMessage,
   isMissingOperatorReadScopeError,
@@ -546,6 +547,7 @@ export type CronModelSuggestionsState = {
   client: GatewayBrowserClient | null;
   connected: boolean;
   cronModelSuggestions: string[];
+  sessionKey?: string | null;
 };
 
 export function supportsAnnounceDelivery(
@@ -664,19 +666,15 @@ export async function loadCronModelSuggestions(state: CronModelSuggestionsState)
     return;
   }
   try {
-    const res = await state.client.request("models.list", {});
-    const models = (res as { models?: unknown[] } | null)?.models;
-    if (!Array.isArray(models)) {
-      state.cronModelSuggestions = [];
-      return;
-    }
+    const models = await loadModels(state.client, {
+      available: true,
+      sessionKey: state.sessionKey,
+    });
     const ids = models
       .map((entry) => {
-        if (!entry || typeof entry !== "object") {
-          return "";
-        }
-        const id = (entry as { id?: unknown }).id;
-        return typeof id === "string" ? id.trim() : "";
+        const provider = entry.provider?.trim();
+        const id = entry.id?.trim();
+        return provider && id ? `${provider}/${id}` : "";
       })
       .filter(Boolean);
     state.cronModelSuggestions = Array.from(new Set(ids)).toSorted((a, b) => a.localeCompare(b));

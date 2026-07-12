@@ -1,7 +1,9 @@
 import type { Api, Model } from "@mariozechner/pi-ai";
 import type { ModelRegistry } from "@mariozechner/pi-coding-agent";
 import { resolveFasedAgentAgentDir } from "../../agents/agent-paths.js";
-import type { AuthProfileStore } from "../../agents/auth-profiles.js";
+import { ensureAuthProfileStore, type AuthProfileStore } from "../../agents/auth-profiles.js";
+import { resolveAuthenticatedModelCatalog } from "../../agents/authenticated-model-catalog.js";
+import { DEFAULT_PROVIDER } from "../../agents/defaults.js";
 import { loadModelCatalog, type ModelCatalogEntry } from "../../agents/model-catalog.js";
 import {
   deriveModelMetadata,
@@ -100,35 +102,27 @@ function normalizeModelListSource(model: Model<Api> | ModelCatalogEntry): ModelL
   };
 }
 
-function mergeModelCatalogEntries(params: {
-  registryModels: Model<Api>[];
-  catalog: ModelCatalogEntry[];
-}): ModelListSource[] {
-  const models = params.registryModels.map((model) => normalizeModelListSource(model));
-  const seen = new Set(models.map((model) => modelKey(model.provider, model.id)));
-  for (const entry of params.catalog) {
-    const key = modelKey(entry.provider, entry.id);
-    if (seen.has(key)) {
-      continue;
-    }
-    models.push(normalizeModelListSource(entry));
-    seen.add(key);
-  }
-  return models;
-}
-
 export async function loadModelRegistry(cfg: FasedAgentConfig) {
   await ensureFasedAgentModelsJson(cfg);
   const agentDir = resolveFasedAgentAgentDir();
   const authStorage = discoverAuthStorage(agentDir);
   const registry = discoverModels(authStorage, agentDir);
-  const registryModels = registry.getAll();
+  // Keep discovery failures explicit even though authenticated catalog merging
+  // is now owned by the shared resolver below.
+  registry.getAll();
   const catalog = await loadModelCatalog({
     config: cfg,
     useCache: false,
     includeMetadata: true,
   });
-  const models = mergeModelCatalogEntries({ registryModels, catalog });
+  const store = ensureAuthProfileStore(agentDir, { allowKeychainPrompt: false });
+  const authenticated = await resolveAuthenticatedModelCatalog({
+    cfg,
+    store,
+    catalog,
+    defaultProvider: DEFAULT_PROVIDER,
+  });
+  const models = authenticated.usableCatalog.map((model) => normalizeModelListSource(model));
   let availableKeys: Set<string> | undefined;
   let availabilityErrorMessage: string | undefined;
 

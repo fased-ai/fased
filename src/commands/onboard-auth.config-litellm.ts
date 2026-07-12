@@ -1,47 +1,32 @@
 import type { FasedAgentConfig } from "../config/config.js";
-import type { ModelDefinitionConfig } from "../config/types.models.js";
-import {
-  buildLitellmModelDefinition as buildSharedLitellmModelDefinition,
-  LITELLM_BASE_URL,
-  LITELLM_DEFAULT_MODEL_ID,
-  LITELLM_DEFAULT_MODEL_REF,
-  LITELLM_MODEL_CATALOG,
-} from "../providers/litellm-models.js";
-import {
-  applyAgentDefaultModelPrimary,
-  applyProviderConfigWithDefaultModel,
-} from "./onboard-auth.config-shared.js";
+import { LITELLM_BASE_URL, LITELLM_DEFAULT_MODEL_ID } from "../providers/litellm-models.js";
 
 export { LITELLM_BASE_URL, LITELLM_DEFAULT_MODEL_ID };
 
-function buildLitellmModelDefinition(): ModelDefinitionConfig {
-  return buildSharedLitellmModelDefinition(LITELLM_MODEL_CATALOG[0]);
-}
-
 export function applyLitellmProviderConfig(cfg: FasedAgentConfig): FasedAgentConfig {
-  const models = { ...cfg.agents?.defaults?.models };
-  models[LITELLM_DEFAULT_MODEL_REF] = {
-    ...models[LITELLM_DEFAULT_MODEL_REF],
-    alias: models[LITELLM_DEFAULT_MODEL_REF]?.alias ?? "LiteLLM proxy default",
-  };
-
-  const defaultModel = buildLitellmModelDefinition();
-
-  const existingProvider = cfg.models?.providers?.litellm as { baseUrl?: unknown } | undefined;
+  const providers = { ...cfg.models?.providers };
+  const existingProvider = providers.litellm;
   const resolvedBaseUrl =
     typeof existingProvider?.baseUrl === "string" ? existingProvider.baseUrl.trim() : "";
-
-  return applyProviderConfigWithDefaultModel(cfg, {
-    agentModels: models,
-    providerId: "litellm",
-    api: "openai-completions",
+  providers.litellm = {
+    ...existingProvider,
+    ...(typeof existingProvider?.apiKey === "string" && existingProvider.apiKey.trim()
+      ? { apiKey: existingProvider.apiKey.trim() }
+      : {}),
     baseUrl: resolvedBaseUrl || LITELLM_BASE_URL,
-    defaultModel,
-    defaultModelId: LITELLM_DEFAULT_MODEL_ID,
-  });
+    api: "openai-completions",
+    request: { ...existingProvider?.request, allowPrivateNetwork: true },
+    models: existingProvider?.models ?? [],
+  };
+  return {
+    ...cfg,
+    models: {
+      mode: cfg.models?.mode ?? "merge",
+      providers,
+    },
+  };
 }
 
 export function applyLitellmConfig(cfg: FasedAgentConfig): FasedAgentConfig {
-  const next = applyLitellmProviderConfig(cfg);
-  return applyAgentDefaultModelPrimary(next, LITELLM_DEFAULT_MODEL_REF);
+  return applyLitellmProviderConfig(cfg);
 }

@@ -1,0 +1,91 @@
+name: Provider Catalog Refresh
+
+on:
+  schedule:
+    - cron: "23 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: provider-catalog-refresh
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node environment
+        uses: ./.github/actions/setup-node-env
+        with:
+          install-bun: "false"
+
+      - name: Refresh credentialed provider catalogs
+        env:
+          OPENAI_API_KEY: ${{ secrets.PROVIDER_REFRESH_OPENAI_API_KEY }}
+          CHUTES_API_KEY: ${{ secrets.PROVIDER_REFRESH_CHUTES_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.PROVIDER_REFRESH_ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.PROVIDER_REFRESH_GEMINI_API_KEY }}
+          XAI_API_KEY: ${{ secrets.PROVIDER_REFRESH_XAI_API_KEY }}
+          MISTRAL_API_KEY: ${{ secrets.PROVIDER_REFRESH_MISTRAL_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.PROVIDER_REFRESH_OPENROUTER_API_KEY }}
+          AI_GATEWAY_API_KEY: ${{ secrets.PROVIDER_REFRESH_AI_GATEWAY_API_KEY }}
+          OPENCODE_API_KEY: ${{ secrets.PROVIDER_REFRESH_OPENCODE_API_KEY }}
+          HUGGINGFACE_HUB_TOKEN: ${{ secrets.PROVIDER_REFRESH_HUGGINGFACE_HUB_TOKEN }}
+          VENICE_API_KEY: ${{ secrets.PROVIDER_REFRESH_VENICE_API_KEY }}
+          MINIMAX_API_KEY: ${{ secrets.PROVIDER_REFRESH_MINIMAX_API_KEY }}
+          MINIMAX_PORTAL_API_KEY: ${{ secrets.PROVIDER_REFRESH_MINIMAX_PORTAL_API_KEY }}
+          MOONSHOT_API_KEY: ${{ secrets.PROVIDER_REFRESH_MOONSHOT_API_KEY }}
+          KIMI_CODING_API_KEY: ${{ secrets.PROVIDER_REFRESH_KIMI_CODING_API_KEY }}
+          ZAI_API_KEY: ${{ secrets.PROVIDER_REFRESH_ZAI_API_KEY }}
+          QIANFAN_API_KEY: ${{ secrets.PROVIDER_REFRESH_QIANFAN_API_KEY }}
+          VOLCANO_ENGINE_API_KEY: ${{ secrets.PROVIDER_REFRESH_VOLCANO_ENGINE_API_KEY }}
+          BYTEPLUS_API_KEY: ${{ secrets.PROVIDER_REFRESH_BYTEPLUS_API_KEY }}
+          DASHSCOPE_API_KEY: ${{ secrets.PROVIDER_REFRESH_DASHSCOPE_API_KEY }}
+          BAILIAN_CODING_PLAN_API_KEY: ${{ secrets.PROVIDER_REFRESH_BAILIAN_CODING_PLAN_API_KEY }}
+          XIAOMI_API_KEY: ${{ secrets.PROVIDER_REFRESH_XIAOMI_API_KEY }}
+          SYNTHETIC_API_KEY: ${{ secrets.PROVIDER_REFRESH_SYNTHETIC_API_KEY }}
+          TOGETHER_API_KEY: ${{ secrets.PROVIDER_REFRESH_TOGETHER_API_KEY }}
+        run: pnpm fased providers refresh --apply --json
+
+      - name: Validate generated catalog
+        run: |
+          pnpm exec vitest run --config vitest.unit.config.ts \
+            src/providers/registry.test.ts \
+            src/providers/refresh.test.ts \
+            src/agents/model-metadata.test.ts
+          pnpm format:check
+
+      - name: Open review pull request when catalog drifts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- src/providers/registry.ts src/providers/refreshed-model-capabilities.ts; then
+            echo "Provider catalogs are current."
+            exit 0
+          fi
+
+          branch="automation/provider-catalog-refresh-${GITHUB_RUN_ID}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git add src/providers/registry.ts src/providers/refreshed-model-capabilities.ts
+          git commit -m "Review provider catalog drift"
+          git push origin "$branch"
+          gh pr create \
+            --base main \
+            --head "$branch" \
+            --title "Review provider catalog drift" \
+            --body "Automated credentialed provider catalog refresh. Review model availability, official capability metadata, recommendation rankings, and removals before merging."

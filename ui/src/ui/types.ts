@@ -1444,7 +1444,13 @@ export type ModelCatalogEntry = {
   input?: Array<"text" | "image" | "document">;
   baseUrl?: string;
   api?: string;
-  catalogSource?: "configured" | "runtime" | "current-preview" | "provider-index" | "manifest";
+  catalogSource?:
+    | "configured"
+    | "runtime"
+    | "provider-api"
+    | "current-preview"
+    | "provider-index"
+    | "manifest";
   metadata?: {
     provider: string;
     model: string;
@@ -1473,11 +1479,29 @@ export type ModelCatalogEntry = {
       | "generic-reasoning";
     reasoningBudgetSupported?: boolean;
     streaming: boolean;
-    capabilityConfidence: "declared" | "unknown";
+    capabilityConfidence: "verified" | "declared" | "inferred" | "unknown";
+    capabilitySource?:
+      | "provider-api"
+      | "official-docs"
+      | "runtime"
+      | "configured"
+      | "inferred"
+      | "unknown";
+    capabilityRetrievedAt?: string;
+    retrievedAt?: string;
+    availabilitySource?:
+      | "provider-api"
+      | "runtime-catalog"
+      | "configured"
+      | "provider-plugin"
+      | "reviewed-catalog"
+      | "curated-recommendation";
+    authRoute?: string;
     authMode: string;
     privateNetwork: boolean;
     privateNetworkAllowed: boolean;
     recommended?: boolean;
+    recommendationRank?: number;
     default?: boolean;
   };
 };

@@ -398,7 +398,11 @@ async function applyRegistryRefresh(
   } catch {
     existingCapabilities = "";
   }
-  const capabilitiesChanged = capabilitiesSource !== existingCapabilities;
+  const normalizeCapabilityTimestamps = (source: string) =>
+    source.replace(/refreshedAt: "[^"]+",/g, 'refreshedAt: "<reviewed-at>",');
+  const capabilitiesChanged =
+    normalizeCapabilityTimestamps(capabilitiesSource) !==
+    normalizeCapabilityTimestamps(existingCapabilities);
   if (capabilitiesChanged) {
     await writeFile(CAPABILITIES_PATH, capabilitiesSource, "utf8");
   }

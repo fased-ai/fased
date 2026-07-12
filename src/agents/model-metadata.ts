@@ -9,6 +9,7 @@ import { lookupRefreshedModelCapability } from "../providers/refreshed-model-cap
 import {
   getProviderBrandManifestForRoute,
   lookupProviderManifestModelCapability,
+  providerModelRecommendationRank,
 } from "../providers/registry.js";
 import {
   resolveModelThinkingCapability,
@@ -16,6 +17,7 @@ import {
   type ModelThinkingMode,
 } from "../shared/model-thinking.js";
 import { isPrivateNetworkBaseUrl } from "../utils/private-network-url.js";
+import type { ModelCatalogSource } from "./model-catalog-normalized.js";
 
 export type ModelFeature =
   | "text"
@@ -27,7 +29,23 @@ export type ModelFeature =
   | "video"
   | "speech";
 
-export type ModelCapabilityConfidence = "declared" | "unknown";
+export type ModelCapabilityConfidence = "verified" | "declared" | "inferred" | "unknown";
+
+export type ModelAvailabilitySource =
+  | "provider-api"
+  | "runtime-catalog"
+  | "configured"
+  | "provider-plugin"
+  | "reviewed-catalog"
+  | "curated-recommendation";
+
+export type ModelCapabilitySource =
+  | "provider-api"
+  | "official-docs"
+  | "runtime"
+  | "configured"
+  | "inferred"
+  | "unknown";
 
 export type ModelMetadata = {
   provider: string;
@@ -43,10 +61,16 @@ export type ModelMetadata = {
   reasoningBudgetSupported?: boolean;
   streaming: boolean;
   capabilityConfidence: ModelCapabilityConfidence;
+  capabilitySource: ModelCapabilitySource;
+  capabilityRetrievedAt?: string;
+  retrievedAt: string;
+  availabilitySource: ModelAvailabilitySource;
+  authRoute: string;
   authMode: ModelProviderAuthMode;
   privateNetwork: boolean;
   privateNetworkAllowed: boolean;
   recommended?: boolean;
+  recommendationRank?: number;
   default?: boolean;
 };
 
@@ -63,7 +87,28 @@ type ModelLike = Pick<
   | "maxTokens"
 > & {
   capabilities?: ModelCapabilityConfig;
+  catalogSource?: ModelCatalogSource;
 };
+
+function availabilitySourceForCatalogSource(
+  source: ModelCatalogSource | undefined,
+): ModelAvailabilitySource {
+  switch (source) {
+    case "provider-api":
+      return "provider-api";
+    case "runtime":
+      return "runtime-catalog";
+    case "configured":
+      return "configured";
+    case "provider-index":
+      return "provider-plugin";
+    case "manifest":
+      return "curated-recommendation";
+    case "current-preview":
+    default:
+      return "reviewed-catalog";
+  }
+}
 
 type CatalogModelLike = {
   id: string;
@@ -76,6 +121,7 @@ type CatalogModelLike = {
   contextWindow?: number;
   maxTokens?: number;
   capabilities?: ModelCapabilityConfig;
+  catalogSource?: ModelCatalogSource;
 };
 
 const FEATURE_LABELS: Record<ModelFeature, string> = {
@@ -106,7 +152,8 @@ const JSON_CAPABLE_APIS = new Set([
   "openai-responses",
 ]);
 
-const LOCAL_DYNAMIC_PROVIDERS = new Set(["ollama", "lmstudio", "vllm"]);
+const LOCAL_DYNAMIC_PROVIDERS = new Set(["ollama", "lmstudio", "vllm", "litellm"]);
+const CURATED_CATALOG_REVIEWED_AT = "2026-07-12T00:00:00.000Z";
 
 function resolveProviderConfig(
   cfg: FasedAgentConfig | undefined,
@@ -150,6 +197,8 @@ export function deriveModelMetadata(params: {
   providerConfig?: ModelProviderConfig;
   recommended?: boolean;
   default?: boolean;
+  capabilitySource?: ModelCapabilitySource;
+  capabilityRetrievedAt?: string;
 }): ModelMetadata {
   const provider = params.model.provider.trim();
   const modelId = params.model.id.trim();
@@ -167,11 +216,30 @@ export function deriveModelMetadata(params: {
           ...params.model.capabilities,
         }
       : undefined;
+  const capabilitySource: ModelCapabilitySource =
+    params.capabilitySource ??
+    (params.model.capabilities
+      ? params.model.catalogSource === "configured"
+        ? "configured"
+        : "runtime"
+      : refreshed
+        ? refreshed.source === "catalog" || refreshed.source === "provider-api"
+          ? "provider-api"
+          : "official-docs"
+        : manifestCapabilities
+          ? "official-docs"
+          : api && !LOCAL_DYNAMIC_PROVIDERS.has(provider)
+            ? "inferred"
+            : "unknown");
   const capabilityConfidence: ModelCapabilityConfidence =
-    capabilities || refreshed || manifestCapabilities ? "declared" : "unknown";
-  const shouldInferApiCapabilities = !(
-    LOCAL_DYNAMIC_PROVIDERS.has(provider) && capabilityConfidence === "unknown"
-  );
+    capabilitySource === "provider-api" || capabilitySource === "official-docs"
+      ? "verified"
+      : capabilitySource === "runtime" || capabilitySource === "configured"
+        ? "declared"
+        : capabilitySource === "inferred"
+          ? "inferred"
+          : "unknown";
+  const shouldInferApiCapabilities = !LOCAL_DYNAMIC_PROVIDERS.has(provider);
   const reasoning = params.model.reasoning ?? refreshed?.reasoning;
   const thinking = resolveModelThinkingCapability({
     provider,
@@ -235,12 +303,27 @@ export function deriveModelMetadata(params: {
       : {}),
     streaming: capabilities?.streaming !== false,
     capabilityConfidence,
+    capabilitySource,
+    ...((params.capabilityRetrievedAt ??
+    refreshed?.refreshedAt ??
+    (capabilitySource === "official-docs" ? CURATED_CATALOG_REVIEWED_AT : undefined))
+      ? {
+          capabilityRetrievedAt:
+            params.capabilityRetrievedAt ?? refreshed?.refreshedAt ?? CURATED_CATALOG_REVIEWED_AT,
+        }
+      : {}),
+    retrievedAt: refreshed?.refreshedAt ?? CURATED_CATALOG_REVIEWED_AT,
+    availabilitySource: availabilitySourceForCatalogSource(params.model.catalogSource),
+    authRoute: provider,
     authMode: resolveAuthMode({ provider, providerConfig }),
     privateNetwork,
     privateNetworkAllowed: privateNetwork
       ? providerConfig?.request?.allowPrivateNetwork === true
       : false,
     ...(params.recommended ? { recommended: true } : {}),
+    ...(providerModelRecommendationRank(provider, modelId)
+      ? { recommendationRank: providerModelRecommendationRank(provider, modelId) }
+      : {}),
     ...(params.default ? { default: true } : {}),
   };
 }

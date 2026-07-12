@@ -112,19 +112,18 @@ fased onboard --auth-choice openai-codex
 fased models auth login --provider openai-codex
 ```
 
-### Sign-in config snippet
+### Sign-in model selection
 
-```json5
-{
-  agents: { defaults: { model: { primary: "openai-codex/gpt-5.6-sol" } } },
-}
+```bash
+fased models list --all --provider openai-codex
 ```
 
-The curated sign-in catalog is route-specific. It currently includes GPT-5.6
-Sol, Terra, and Luna, GPT-5.5, GPT-5.4, GPT-5.4 Mini, and GPT-5.3 Codex Spark.
-Fased shows this list only after `openai-codex` sign-in is ready. An OpenAI API
-key does not unlock the sign-in route, and ChatGPT sign-in does not unlock the
-direct `openai/*` API route.
+The sign-in catalog is route-specific and comes from the authenticated runtime.
+Only select a model returned by that command. Fased's reviewed catalog can add
+capability labels and recommendation order, but it does not make a model
+available to the signed-in account. An OpenAI API key does not unlock the
+sign-in route, and ChatGPT sign-in does not unlock the direct `openai/*` API
+route.
 
 ### Sign-in transport default
 
@@ -142,9 +141,9 @@ force the streaming path:
 {
   agents: {
     defaults: {
-      model: { primary: "openai-codex/gpt-5.6-sol" },
+      model: { primary: "openai-codex/gpt-5.5" },
       models: {
-        "openai-codex/gpt-5.6-sol": {
+        "openai-codex/gpt-5.5": {
           params: {
             transport: "auto",
           },

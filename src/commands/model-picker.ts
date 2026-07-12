@@ -1,4 +1,5 @@
 import { ensureAuthProfileStore, listProfilesForProvider } from "../agents/auth-profiles.js";
+import { resolveAuthenticatedModelCatalog } from "../agents/authenticated-model-catalog.js";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "../agents/defaults.js";
 import { getCustomProviderApiKey, resolveEnvApiKey } from "../agents/model-auth.js";
 import { buildCredentialScopedAllowedModelSet } from "../agents/model-catalog-access.js";
@@ -346,10 +347,40 @@ function loadModelPickerPreviewCatalog(cfg: FasedAgentConfig): ModelPickerCatalo
   }));
 }
 
-async function loadModelPickerCatalog(cfg: FasedAgentConfig): Promise<ModelPickerCatalogEntry[]> {
+async function loadModelPickerCatalog(
+  cfg: FasedAgentConfig,
+  agentDir?: string,
+): Promise<ModelPickerCatalogEntry[]> {
   const catalog = await loadModelCatalog({ config: cfg, useCache: false, includeMetadata: true });
   const models = catalog.length > 0 ? catalog : loadModelPickerPreviewCatalog(cfg);
-  return models.filter(isStandardProviderCatalogEntry);
+  const standardModels = models.filter(isStandardProviderCatalogEntry);
+  if (!agentDir) {
+    return standardModels;
+  }
+  const store = ensureAuthProfileStore(agentDir, { allowKeychainPrompt: false });
+  const authenticated = await resolveAuthenticatedModelCatalog({
+    cfg,
+    store,
+    catalog: standardModels,
+    defaultProvider: DEFAULT_PROVIDER,
+  });
+  return authenticated.allowedCatalog.length > 0
+    ? authenticated.allowedCatalog
+    : authenticated.usableCatalog;
+}
+
+export async function resolveAuthenticatedDefaultModel(params: {
+  config: FasedAgentConfig;
+  agentDir: string;
+  preferredProvider?: string;
+}): Promise<string | undefined> {
+  const catalog = await loadModelPickerCatalog(params.config, params.agentDir);
+  const preferredProvider = normalizeProviderId(params.preferredProvider ?? "");
+  const candidate =
+    (preferredProvider
+      ? catalog.find((entry) => normalizeProviderId(entry.provider) === preferredProvider)
+      : undefined) ?? catalog[0];
+  return candidate ? modelKey(candidate.provider, candidate.id) : undefined;
 }
 
 async function promptManualModel(params: {
@@ -393,7 +424,10 @@ export async function promptDefaultModel(
   const configuredKey = configuredRaw ? resolvedKey : "";
   const allowKeep = allowKeepRequested && !isHiddenRouterModelRef(configuredRaw);
 
-  const catalog = await loadModelPickerCatalog(cfg);
+  const catalog = await loadModelPickerCatalog(
+    cfg,
+    params.ignoreAllowlist ? undefined : params.agentDir,
+  );
   if (catalog.length === 0) {
     return promptManualModel({
       prompter: params.prompter,
@@ -671,7 +705,7 @@ export async function promptModelAllowlist(params: {
     ? initialSeeds.filter((key) => allowedKeySet.has(key))
     : initialSeeds;
 
-  const catalog = await loadModelPickerCatalog(cfg);
+  const catalog = await loadModelPickerCatalog(cfg, params.agentDir);
   if (catalog.length === 0 && allowedKeys.length === 0) {
     const raw = await params.prompter.text({
       message:
@@ -724,7 +758,7 @@ export async function promptModelAllowlist(params: {
     addModelSelectOption({ entry, options, seen, aliasIndex, hasAuth });
   }
 
-  const supplementalKeys = allowedKeySet ? allowedKeys : existingKeys;
+  const supplementalKeys = allowedKeySet ? allowedKeys : params.agentDir ? [] : existingKeys;
   for (const key of supplementalKeys) {
     if (seen.has(key)) {
       continue;

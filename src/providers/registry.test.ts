@@ -33,10 +33,11 @@ import {
   XAI_PROVIDER_MANIFEST,
   XIAOMI_PROVIDER_MANIFEST,
   ZAI_PROVIDER_MANIFEST,
-  providerRegistryPriorityForRoute,
   isStandardProviderCatalogEntry,
   isStandardProviderModelRef,
   lookupProviderManifestModelCapability,
+  providerModelRecommendationRank,
+  providerRegistryPriorityForRoute,
   resolveProviderRouteModelCapability,
 } from "./registry.js";
 
@@ -152,6 +153,12 @@ describe("provider registry", () => {
     expect(OPENAI_SIGN_IN_MODEL_REFS).not.toContain("openai-codex/gpt-5.2-codex");
     expect(OPENAI_SIGN_IN_MODEL_REFS).not.toContain("openai-codex/gpt-5.5-pro");
     expect(OPENAI_SIGN_IN_MODEL_REFS).not.toContain("openai-codex/gpt-5.4-pro");
+  });
+
+  it("ranks recommendations within each authentication route", () => {
+    expect(providerModelRecommendationRank("openai", "gpt-5.6")).toBe(1);
+    expect(providerModelRecommendationRank("openai-codex", "gpt-5.6-sol")).toBe(1);
+    expect(providerModelRecommendationRank("openai-codex", "gpt-5.5")).toBe(4);
   });
 
   it("exposes curated per-model thinking metadata from provider manifests", () => {
@@ -976,10 +983,10 @@ describe("provider registry", () => {
     });
     expect(LITELLM_PROVIDER_MANIFEST.modelProviderIds).toEqual(["litellm"]);
     expect(LITELLM_PROVIDER_MANIFEST.models.dynamic).toBe(true);
-    expect(LITELLM_PROVIDER_MANIFEST.models.recommended).toEqual(["litellm/default"]);
+    expect(LITELLM_PROVIDER_MANIFEST.models.recommended).toEqual([]);
     expect(isStandardProviderModelRef("litellm/default")).toBe(true);
     expect(isStandardProviderModelRef("litellm/any-proxy-model")).toBe(true);
-    expect(LITELLM_PROVIDER_MANIFEST.modelCapabilities?.["litellm/default"]).toEqual({});
+    expect(LITELLM_PROVIDER_MANIFEST.modelCapabilities).toEqual({});
     expect(providerRegistryPriorityForRoute("litellm")).toBe(LITELLM_PROVIDER_MANIFEST.priority);
   });
 

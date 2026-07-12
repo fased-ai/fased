@@ -13,8 +13,8 @@ import {
   upsertAuthProfileWithLock,
 } from "../../agents/auth-profiles.js";
 import { updateAuthProfileStoreWithLock } from "../../agents/auth-profiles/store.js";
+import { resolveAuthenticatedModelCatalog } from "../../agents/authenticated-model-catalog.js";
 import { DEFAULT_PROVIDER } from "../../agents/defaults.js";
-import { buildCredentialScopedAllowedModelSet } from "../../agents/model-catalog-access.js";
 import { buildModelCatalogStatus } from "../../agents/model-catalog-status.js";
 import { deriveModelMetadata } from "../../agents/model-metadata.js";
 import { loadProviderExtensionCatalogIndex } from "../../agents/provider-extension-catalog-index.js";
@@ -38,7 +38,6 @@ import { loadConfig, writeConfigFile } from "../../config/config.js";
 import type { FasedAgentConfig } from "../../config/types.js";
 import { probeConfiguredModelProviderHealth } from "../../providers/health.js";
 import {
-  isStandardProviderCatalogEntry,
   listProviderBrandManifests,
   type ProviderAuthMethodManifest,
   type ProviderBrandManifest,
@@ -1174,11 +1173,11 @@ export const modelsHandlers: GatewayRequestHandlers = {
         : defaultAgentId;
       const agentDir = resolveAgentDir(cfg, authAgentId);
       const store = ensureAuthProfileStore(agentDir);
-      const { usableCatalog, allowedCatalog } = buildCredentialScopedAllowedModelSet({
+      const { usableCatalog, allowedCatalog } = await resolveAuthenticatedModelCatalog({
         cfg,
+        store,
         catalog,
         defaultProvider: DEFAULT_PROVIDER,
-        store,
       });
       const providerFilter =
         typeof params.provider === "string" && params.provider.trim()
@@ -1190,18 +1189,9 @@ export const modelsHandlers: GatewayRequestHandlers = {
           : allowedCatalog.length > 0
             ? allowedCatalog
             : usableCatalog;
-      const curatedModelSource =
-        params.all === true
-          ? modelSource
-          : modelSource.filter(
-              (model) =>
-                model.catalogSource === "configured" || isStandardProviderCatalogEntry(model),
-            );
       const models = providerFilter
-        ? curatedModelSource.filter(
-            (model) => normalizeProviderId(model.provider) === providerFilter,
-          )
-        : curatedModelSource;
+        ? modelSource.filter((model) => normalizeProviderId(model.provider) === providerFilter)
+        : modelSource;
       const payloadModels =
         params.includeMetadata === true
           ? models.map((model) => ({
@@ -1209,7 +1199,19 @@ export const modelsHandlers: GatewayRequestHandlers = {
               metadata: model.metadata ?? deriveModelMetadata({ model, cfg }),
             }))
           : models;
-      respond(true, { models: payloadModels }, undefined);
+      respond(
+        true,
+        {
+          models: payloadModels.toSorted(
+            (left, right) =>
+              left.provider.localeCompare(right.provider) ||
+              (left.metadata?.recommendationRank ?? Number.MAX_SAFE_INTEGER) -
+                (right.metadata?.recommendationRank ?? Number.MAX_SAFE_INTEGER) ||
+              left.name.localeCompare(right.name),
+          ),
+        },
+        undefined,
+      );
     } catch (err) {
       respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, String(err)));
     }

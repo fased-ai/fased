@@ -532,7 +532,7 @@ describe("onboard (non-interactive): provider auth", () => {
     });
   });
 
-  it("stores LiteLLM API key and sets default model", async () => {
+  it("stores the LiteLLM API key and waits for proxy model discovery", async () => {
     await withOnboardEnv("fased-onboard-litellm-", async (env) => {
       const cfg = await runOnboardingAndReadConfig(env, {
         authChoice: "litellm-api-key",
@@ -541,7 +541,7 @@ describe("onboard (non-interactive): provider auth", () => {
 
       expect(cfg.auth?.profiles?.["litellm:default"]?.provider).toBe("litellm");
       expect(cfg.auth?.profiles?.["litellm:default"]?.mode).toBe("api_key");
-      expect(cfg.agents?.defaults?.model?.primary).toBe("litellm/default");
+      expect(cfg.agents?.defaults?.model?.primary).toBeUndefined();
       await expectApiKeyProfile({
         profileId: "litellm:default",
         provider: "litellm",

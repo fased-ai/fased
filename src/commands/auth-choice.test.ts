@@ -465,7 +465,6 @@ describe("applyAuthChoice", () => {
         token: "sk-litellm-token-provider-test",
         profileId: "litellm:default",
         provider: "litellm",
-        expectedModelPrefix: "litellm/",
       },
     ];
     for (const scenario of scenarios) {

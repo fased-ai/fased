@@ -716,7 +716,7 @@ describe("allowlist provider helpers", () => {
 });
 
 describe("applyLitellmProviderConfig", () => {
-  it("preserves existing baseUrl and api key while adding the default model", () => {
+  it("preserves the endpoint, key, and discovered models without inventing a default", () => {
     const cfg = applyLitellmProviderConfig(
       createLegacyProviderConfig({
         providerId: "litellm",
@@ -731,10 +731,7 @@ describe("applyLitellmProviderConfig", () => {
     expect(cfg.models?.providers?.litellm?.baseUrl).toBe("https://litellm.example/v1");
     expect(cfg.models?.providers?.litellm?.api).toBe("openai-completions");
     expect(cfg.models?.providers?.litellm?.apiKey).toBe("old-key");
-    expect(cfg.models?.providers?.litellm?.models.map((m) => m.id)).toEqual([
-      "custom-model",
-      "default",
-    ]);
+    expect(cfg.models?.providers?.litellm?.models.map((m) => m.id)).toEqual(["custom-model"]);
   });
 });
 

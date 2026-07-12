@@ -4,6 +4,7 @@ import { normalizeProviderId } from "./provider-id.js";
 export type ModelCatalogSource =
   | "configured"
   | "runtime"
+  | "provider-api"
   | "current-preview"
   | "provider-index"
   | "manifest";
@@ -27,6 +28,7 @@ export type NormalizedModelCatalogRow = {
 
 const SOURCE_AUTHORITY: Record<ModelCatalogSource, number> = {
   configured: 500,
+  "provider-api": 450,
   runtime: 400,
   manifest: 300,
   "provider-index": 200,
