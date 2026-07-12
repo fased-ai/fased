@@ -647,6 +647,15 @@ export const CronTaskExecutionPolicySchema = Type.Object(
               Type.Literal("none"),
             ]),
           ),
+          role: Type.Optional(
+            Type.Union([
+              Type.Literal("cheapCheck"),
+              Type.Literal("strong"),
+              Type.Literal("escalation"),
+              Type.Literal("coding"),
+              Type.Literal("summarizer"),
+            ]),
+          ),
           model: Type.Optional(NonEmptyString),
           thinking: Type.Optional(NonEmptyString),
           escalationModel: Type.Optional(NonEmptyString),

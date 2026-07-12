@@ -5,7 +5,7 @@ import {
   type ModelProviderConfig,
 } from "../config/types.models.js";
 import {
-  isOpenAISignInRuntimeModelSupported,
+  isOpenAISignInCatalogModel,
   isStandardProviderCatalogEntry,
   listProviderBrandManifests,
 } from "../providers/registry.js";
@@ -80,7 +80,7 @@ function isSupportedRuntimeCatalogModel(provider: string, id: string): boolean {
   if (provider !== "openai-codex") {
     return true;
   }
-  return isOpenAISignInRuntimeModelSupported(id);
+  return isOpenAISignInCatalogModel(id);
 }
 
 function configuredProviderCatalogRows(cfg: FasedAgentConfig): NormalizedModelCatalogRow[] {
@@ -194,9 +194,12 @@ export function buildFasedModelCatalogRows(params: {
   providerPluginProviders?: Record<string, ModelProviderConfig>;
   onRuntimeEntryError?: (error: unknown) => void;
 }): NormalizedModelCatalogRow[] {
-  const discoveredRows = mergeModelCatalogRowsByAuthority([
+  const reviewedRows = [
     ...listCurrentModelCatalogRows(),
     ...providerPluginCatalogRows(params.providerPluginProviders),
+  ].filter((row) => isSupportedRuntimeCatalogModel(row.provider, row.id));
+  const discoveredRows = mergeModelCatalogRowsByAuthority([
+    ...reviewedRows,
     ...runtimeCatalogRows({
       models: params.runtimeModels ?? [],
       onEntryError: params.onRuntimeEntryError,

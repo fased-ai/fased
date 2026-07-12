@@ -186,7 +186,8 @@ export function toModelRow(params: {
   // Fall back to provider-level auth heuristics only if registry availability isn't available.
   const available =
     availableKeys !== undefined
-      ? availableKeys.has(modelKey(model.provider, model.id))
+      ? availableKeys.has(modelKey(model.provider, model.id)) ||
+        (model.catalogSource !== "runtime" && (authIndex?.hasProviderAuth(model.provider) ?? false))
       : (authIndex?.hasProviderAuth(model.provider) ?? false);
   const aliasTags = aliases.length > 0 ? [`alias:${aliases.join(",")}`] : [];
   const mergedTags = new Set(tags);

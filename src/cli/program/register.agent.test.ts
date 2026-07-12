@@ -7,6 +7,7 @@ const agentsBindingsCommandMock = vi.fn();
 const agentsBindCommandMock = vi.fn();
 const agentsDeleteCommandMock = vi.fn();
 const agentsListCommandMock = vi.fn();
+const agentsModelsSetCommandMock = vi.fn();
 const agentsSetIdentityCommandMock = vi.fn();
 const agentsUnbindCommandMock = vi.fn();
 const setVerboseMock = vi.fn();
@@ -28,6 +29,7 @@ vi.mock("../../commands/agents.js", () => ({
   agentsBindCommand: agentsBindCommandMock,
   agentsDeleteCommand: agentsDeleteCommandMock,
   agentsListCommand: agentsListCommandMock,
+  agentsModelsSetCommand: agentsModelsSetCommandMock,
   agentsSetIdentityCommand: agentsSetIdentityCommandMock,
   agentsUnbindCommand: agentsUnbindCommandMock,
 }));
@@ -65,6 +67,7 @@ describe("registerAgentCommands", () => {
     agentsBindCommandMock.mockResolvedValue(undefined);
     agentsDeleteCommandMock.mockResolvedValue(undefined);
     agentsListCommandMock.mockResolvedValue(undefined);
+    agentsModelsSetCommandMock.mockResolvedValue(undefined);
     agentsSetIdentityCommandMock.mockResolvedValue(undefined);
     agentsUnbindCommandMock.mockResolvedValue(undefined);
     createDefaultDepsMock.mockReturnValue({ deps: true });
@@ -161,6 +164,38 @@ describe("registerAgentCommands", () => {
     expect(agentsBindingsCommandMock).toHaveBeenCalledWith(
       {
         agent: "ops",
+        json: true,
+      },
+      runtime,
+    );
+  });
+
+  it("forwards canonical Agent model and task-role options", async () => {
+    await runCli([
+      "agents",
+      "models",
+      "set",
+      "--agent",
+      "ops",
+      "--primary",
+      "openai/gpt-5.6",
+      "--fallback",
+      "openai/gpt-5.6-terra",
+      "--coding",
+      "openai-codex/gpt-5.6-sol",
+      "--json",
+    ]);
+
+    expect(agentsModelsSetCommandMock).toHaveBeenCalledWith(
+      {
+        agent: "ops",
+        primary: "openai/gpt-5.6",
+        fallbacks: ["openai/gpt-5.6-terra"],
+        cheapCheck: undefined,
+        strong: undefined,
+        escalation: undefined,
+        coding: "openai-codex/gpt-5.6-sol",
+        summarizer: undefined,
         json: true,
       },
       runtime,

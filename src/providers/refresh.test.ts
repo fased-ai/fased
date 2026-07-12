@@ -1368,7 +1368,6 @@ describe("provider refresh", () => {
     });
 
     expect(selectOpenRouterModelsForNormalUi(ids)).toEqual([
-      "openrouter/owl-alpha",
       "openai/gpt-5.5",
       "openai/gpt-5.4-mini",
       "anthropic/claude-opus-4.8",
@@ -1499,12 +1498,10 @@ describe("provider refresh", () => {
       "openai/gpt-5.4-mini",
       "anthropic/claude-opus-4.8",
       "anthropic/claude-sonnet-5",
-      "google/gemini-3-flash-preview",
       "google/gemini-3.1-flash-lite",
       "xai/grok-4.3",
       "xai/grok-build-0.1",
       "mistral/mistral-medium-3.5",
-      "mistral/mistral-large-2512",
     ]);
   });
 
@@ -1537,7 +1534,6 @@ describe("provider refresh", () => {
     expect(routeIds(route)).toEqual([
       "openai/gpt-5.5",
       "anthropic/claude-sonnet-5",
-      "google/gemini-3-flash-preview",
       "moonshotai/kimi-k2.6",
     ]);
     expect(route?.[0]).toMatchObject({

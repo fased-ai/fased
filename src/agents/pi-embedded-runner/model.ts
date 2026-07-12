@@ -2,6 +2,7 @@ import type { Api, Model } from "@mariozechner/pi-ai";
 import type { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
 import type { FasedAgentConfig } from "../../config/config.js";
 import type { ModelDefinitionConfig } from "../../config/types.js";
+import { isOpenAISignInRuntimeModelSupported } from "../../providers/registry.js";
 import { isPrivateNetworkBaseUrl } from "../../utils/private-network-url.js";
 import { resolveFasedAgentAgentDir } from "../agent-paths.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../defaults.js";
@@ -34,13 +35,6 @@ type InlineProviderConfig = {
 export { buildModelAliasLines };
 
 const OPENAI_CODEX_PROVIDER_ID = "openai-codex";
-const OPENAI_CODEX_SUPPORTED_MODEL_IDS = new Set([
-  "gpt-5.5",
-  "gpt-5.4",
-  "gpt-5.4-mini",
-  "gpt-5.3-codex",
-]);
-
 export function buildInlineProviderModels(
   providers: Record<string, InlineProviderConfig>,
 ): InlineModelEntry[] {
@@ -112,7 +106,7 @@ export function resolveModel(
   const runtimeModelId = modelId.trim();
   if (
     normalizedProvider === OPENAI_CODEX_PROVIDER_ID &&
-    !OPENAI_CODEX_SUPPORTED_MODEL_IDS.has(runtimeModelId.toLowerCase())
+    !isOpenAISignInRuntimeModelSupported(runtimeModelId)
   ) {
     return {
       error: `Unsupported OpenAI-Codex sign-in model: ${runtimeModelId}`,

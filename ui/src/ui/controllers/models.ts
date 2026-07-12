@@ -3,6 +3,7 @@ import type { ModelCatalogEntry } from "../types.ts";
 
 export type LoadModelsOptions = {
   all?: boolean;
+  available?: boolean;
   provider?: string | null;
   sessionKey?: string | null;
 };
@@ -23,6 +24,7 @@ export async function loadModels(
     return await client.request<{ models: ModelCatalogEntry[] }>("models.list", {
       includeMetadata: true,
       ...(options.all ? { all: true } : {}),
+      ...(options.available ? { available: true } : {}),
       ...(provider ? { provider } : {}),
       ...(sessionKey ? { sessionKey } : {}),
     });

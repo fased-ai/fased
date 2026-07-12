@@ -70,12 +70,6 @@ export const VERCEL_AI_GATEWAY_MODEL_CATALOG = [
     tags: ["file-input", "tool-use", "reasoning", "vision", "web-search", "implicit-caching"],
   },
   {
-    id: "google/gemini-3-flash-preview",
-    contextWindow: 1_000_000,
-    maxTokens: 65_000,
-    tags: ["reasoning", "tool-use", "file-input", "vision", "web-search", "implicit-caching"],
-  },
-  {
     id: "google/gemini-3.1-flash-lite",
     contextWindow: 1_000_000,
     maxTokens: 65_000,
@@ -98,24 +92,6 @@ export const VERCEL_AI_GATEWAY_MODEL_CATALOG = [
     contextWindow: 256_000,
     maxTokens: 256_000,
     tags: ["reasoning", "tool-use", "vision"],
-  },
-  {
-    id: "mistral/mistral-small-2603",
-    contextWindow: 256_000,
-    maxTokens: 256_000,
-    tags: ["reasoning", "tool-use", "vision"],
-  },
-  {
-    id: "mistral/mistral-large-2512",
-    contextWindow: 256_000,
-    maxTokens: 256_000,
-    tags: ["vision"],
-  },
-  {
-    id: "mistral/devstral-2512",
-    contextWindow: 256_000,
-    maxTokens: 256_000,
-    tags: ["tool-use"],
   },
   {
     id: "minimax/minimax-m2.7",

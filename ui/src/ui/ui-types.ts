@@ -45,6 +45,7 @@ export type CronFormState = {
   skillToolName: string;
   skillToolInputJson: string;
   plannerStrategy: "" | "cheap-model" | "strong-model";
+  modelRole: "" | "cheapCheck" | "strong" | "escalation" | "coding" | "summarizer";
   policyModel: string;
   escalationModel: string;
   coordinationMode: "none" | "consult" | "parallel";

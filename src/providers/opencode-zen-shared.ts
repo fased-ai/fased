@@ -14,7 +14,6 @@ export const OPENCODE_ZEN_MODEL_IDS = [
   "gemini-3.5-flash",
   "gemini-3.1-pro",
   "gemini-3-flash",
-  "qwen3.7-plus",
   "minimax-m2.7",
   "glm-5.2",
   "kimi-k2.6",

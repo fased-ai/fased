@@ -106,6 +106,7 @@ describe("cron controller", () => {
         allowedSkills: "wallet, search, wallet",
         skillToolName: "wallet",
         skillToolInputJson: '{"action":"balance"}',
+        modelRole: "coding",
         policyModel: "openrouter/cheap",
         payloadThinking: "low",
         escalationModel: "openai/strong",
@@ -133,6 +134,7 @@ describe("cron controller", () => {
       },
       modelPolicy: {
         mode: "task-override",
+        role: "coding",
         model: "openrouter/cheap",
         thinking: "low",
         escalationModel: "openai/strong",

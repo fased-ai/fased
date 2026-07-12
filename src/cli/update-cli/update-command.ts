@@ -112,7 +112,7 @@ function printUpdateLifecycleTimings(timings: UpdateLifecycleTiming[], jsonMode:
   defaultRuntime.log("");
 }
 
-async function verifyGatewayRuntimeVersion(params: {
+export async function verifyGatewayRuntimeVersion(params: {
   expectedVersion: string;
   rpc: {
     url: string;

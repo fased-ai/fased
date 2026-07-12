@@ -99,6 +99,25 @@ describe("agents helpers", () => {
     });
   });
 
+  it("applyAgentConfig stores the canonical primary and fallback model object", () => {
+    const next = applyAgentConfig(
+      { agents: { list: [{ id: "work", modelProviders: { openai: { primary: "openai/old" } } }] } },
+      {
+        agentId: "work",
+        model: { primary: "openai/gpt-5.6", fallbacks: ["openai/gpt-5.6-terra"] },
+        activeModelProvider: null,
+        modelProviders: null,
+      },
+    );
+
+    const work = next.agents?.list?.find((agent) => agent.id === "work");
+    expect(work?.model).toEqual({
+      primary: "openai/gpt-5.6",
+      fallbacks: ["openai/gpt-5.6-terra"],
+    });
+    expect(work?.modelProviders).toBeUndefined();
+  });
+
   it("applyAgentConfig still normalizes legacy provider-scoped model settings", () => {
     const cfg: FasedAgentConfig = {
       agents: {

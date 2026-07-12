@@ -40,9 +40,31 @@ fased agents bind --agent work --bind telegram:ops
 fased agents unbind --agent work --bind telegram:ops
 fased agents set-identity --workspace ~/.fased/workspace --from-identity
 fased agents set-identity --agent main --avatar avatars/fased.png
+fased agents models set --agent main --primary openai/gpt-5.6
 fased agents delete work
 fased agents delete work --force
 ```
+
+## Agent models
+
+Provider setup and model assignment are separate operations. Authenticate a
+provider in onboarding or **Agent > Models**, then assign the selected Agent's
+canonical primary, fallback, and task-role models:
+
+```bash
+fased agents models set \
+  --agent main \
+  --primary openai/gpt-5.6 \
+  --fallback openai/gpt-5.6-terra \
+  --cheap-check openai/gpt-5.6-luna \
+  --strong openai/gpt-5.6 \
+  --coding openai-codex/gpt-5.6-sol \
+  --summarizer openai/gpt-5.6-luna
+```
+
+This writes `agents.list[].model` and `agents.list[].taskModels`, the same
+fields used by the Dashboard and task runtime. Legacy `activeModelProvider`
+and `modelProviders` fields remain readable only for migration compatibility.
 
 ## Routing bindings
 

@@ -452,6 +452,16 @@ function coerceExecutionPolicy(policy: UnknownRecord) {
     if (mode) {
       modelPolicy.mode = mode;
     }
+    const role = coerceEnum(policy.modelPolicy.role, [
+      "cheapCheck",
+      "strong",
+      "escalation",
+      "coding",
+      "summarizer",
+    ]);
+    if (role) {
+      modelPolicy.role = role;
+    }
     for (const field of ["model", "thinking", "escalationModel"] as const) {
       const value = policy.modelPolicy[field];
       if (typeof value === "string" && value.trim()) {

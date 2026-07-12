@@ -302,21 +302,6 @@ export const HUGGINGFACE_MODEL_CATALOG = [
     capabilities: HUGGINGFACE_TOOL_JSON_CAPABILITY,
   },
   {
-    id: "Qwen/Qwen3-Coder-Next-FP8",
-    name: "Qwen3 Coder Next FP8",
-    reasoning: false,
-    input: ["text"],
-    contextWindow: 262_144,
-    maxTokens: 8_192,
-    cost: {
-      input: 0.5,
-      output: 1.2,
-      cacheRead: 0,
-      cacheWrite: 0,
-    },
-    capabilities: HUGGINGFACE_TOOL_JSON_CAPABILITY,
-  },
-  {
     id: "google/gemma-3n-E4B-it",
     name: "Gemma 3N E4B Instruct",
     reasoning: false,
@@ -330,21 +315,6 @@ export const HUGGINGFACE_MODEL_CATALOG = [
       cacheWrite: 0,
     },
     capabilities: HUGGINGFACE_JSON_ONLY_CAPABILITY,
-  },
-  {
-    id: "EssentialAI/rnj-1-instruct",
-    name: "Rnj-1 Instruct",
-    reasoning: false,
-    input: ["text"],
-    contextWindow: 32_768,
-    maxTokens: 8_192,
-    cost: {
-      input: 0.15,
-      output: 0.15,
-      cacheRead: 0,
-      cacheWrite: 0,
-    },
-    capabilities: HUGGINGFACE_TOOL_JSON_CAPABILITY,
   },
   {
     id: "inclusionAI/Ling-2.6-1T",

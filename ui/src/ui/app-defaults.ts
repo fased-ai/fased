@@ -38,6 +38,7 @@ export const DEFAULT_CRON_FORM: CronFormState = {
   skillToolName: "",
   skillToolInputJson: "",
   plannerStrategy: "",
+  modelRole: "",
   policyModel: "",
   escalationModel: "",
   coordinationMode: "none",

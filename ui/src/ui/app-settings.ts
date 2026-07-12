@@ -53,7 +53,6 @@ import {
   tabFromPath,
   type Tab,
 } from "./navigation.ts";
-import { buildManifestModelCatalog } from "./provider-model-catalog.ts";
 import { resolveAgentIdFromSessionKey } from "./session-key.ts";
 import { loadSettings, saveSettings, type UiSettings } from "./storage.ts";
 import { startThemeTransition, type ThemeTransitionContext } from "./theme-transition.ts";
@@ -249,14 +248,8 @@ export function buildUiModelCatalogs(params: {
   authStatus: ModelsAuthStatusResult | null;
 }) {
   return {
-    chat: filterCatalogToSignedInProviders(
-      buildManifestModelCatalog(params.chatCatalog, { includeRuntimeModels: true }),
-      params.authStatus,
-    ),
-    provider: filterCatalogToSignedInProviders(
-      buildManifestModelCatalog(params.providerCatalog, { includeRuntimeModels: true }),
-      params.authStatus,
-    ),
+    chat: filterCatalogToSignedInProviders(params.chatCatalog, params.authStatus),
+    provider: filterCatalogToSignedInProviders(params.providerCatalog, params.authStatus),
   };
 }
 
@@ -715,7 +708,7 @@ export async function loadProviderModelCatalog(host: SettingsHost) {
     const [modelsResult, allModelsResult, authStatusResult, catalogStatusResult] =
       await Promise.allSettled([
         loadModels(app.client, { sessionKey: host.sessionKey }),
-        loadModels(app.client, { all: true }),
+        loadModels(app.client, { available: true, sessionKey: host.sessionKey }),
         app.client.request<ModelsAuthStatusResult>("models.auth.status", {}),
         app.client.request<ModelsCatalogStatusResult>("models.catalog.status", {}),
       ]);

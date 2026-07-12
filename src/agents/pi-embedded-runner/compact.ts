@@ -58,6 +58,7 @@ import {
   type SkillSnapshot,
 } from "../skills.js";
 import { resolveTranscriptPolicy } from "../transcript-policy.js";
+import { replaceAgentMessages } from "./agent-messages.js";
 import {
   compactWithSafetyTimeout,
   EMBEDDED_COMPACTION_TIMEOUT_MS,
@@ -615,7 +616,7 @@ export async function compactEmbeddedPiSessionDirect(
           ? sanitizeToolUseResultPairing(truncated)
           : truncated;
         if (limited.length > 0) {
-          session.agent.replaceMessages(limited);
+          replaceAgentMessages(session.agent, limited);
         }
         // Run before_compaction hooks (fire-and-forget).
         // The session JSONL already contains all messages on disk, so plugins

@@ -925,9 +925,17 @@ describe("Agents assembly UI", () => {
       },
       modelCatalog: [
         { id: "gpt-5.6", name: "GPT-5.6", provider: "openai" },
+        { id: "gpt-5.6-sol", name: "GPT-5.6 Sol", provider: "openai-codex" },
+        { id: "gpt-5.6-terra", name: "GPT-5.6 Terra", provider: "openai-codex" },
+        { id: "gpt-5.6-luna", name: "GPT-5.6 Luna", provider: "openai-codex" },
         { id: "gpt-5.5", name: "GPT-5.5", provider: "openai-codex" },
       ],
-      runnableModelCatalog: [{ id: "gpt-5.5", name: "GPT-5.5", provider: "openai-codex" }],
+      runnableModelCatalog: [
+        { id: "gpt-5.6-sol", name: "GPT-5.6 Sol", provider: "openai-codex" },
+        { id: "gpt-5.6-terra", name: "GPT-5.6 Terra", provider: "openai-codex" },
+        { id: "gpt-5.6-luna", name: "GPT-5.6 Luna", provider: "openai-codex" },
+        { id: "gpt-5.5", name: "GPT-5.5", provider: "openai-codex" },
+      ],
       providers: {
         catalogStatus: null,
         authStatus: {
@@ -959,10 +967,15 @@ describe("Agents assembly UI", () => {
     const signedIn = dialog?.querySelector<HTMLButtonElement>(
       'button[data-agent-model-option="true"][data-value="openai-codex/gpt-5.5"]',
     );
+    const signedInSol = dialog?.querySelector<HTMLButtonElement>(
+      'button[data-agent-model-option="true"][data-value="openai-codex/gpt-5.6-sol"]',
+    );
 
     expect(direct).toBeNull();
     expect(signedIn).toBeInstanceOf(HTMLButtonElement);
     expect(signedIn?.disabled).toBe(false);
+    expect(signedInSol).toBeInstanceOf(HTMLButtonElement);
+    expect(signedInSol?.disabled).toBe(false);
   });
 
   it("keeps the primary model when fallback is selected before rerender", async () => {

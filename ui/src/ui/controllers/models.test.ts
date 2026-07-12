@@ -47,6 +47,21 @@ describe("loadModels", () => {
     });
   });
 
+  it("requests the authenticated provider catalog independently of Agent allowlists", async () => {
+    const request = vi.fn(async () => ({ models: [] }));
+
+    await loadModels({ request } as unknown as Parameters<typeof loadModels>[0], {
+      available: true,
+      sessionKey: "agent:main:main",
+    });
+
+    expect(request).toHaveBeenCalledWith("models.list", {
+      includeMetadata: true,
+      available: true,
+      sessionKey: "agent:main:main",
+    });
+  });
+
   it("falls back to legacy models.list when the running gateway rejects sessionKey", async () => {
     const request = vi
       .fn()

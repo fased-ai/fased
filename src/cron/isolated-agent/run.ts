@@ -1186,6 +1186,10 @@ export async function runCronIsolatedAgentTurn(params: {
   }
   const modelOverrideResult = resolveTaskModelOverride(params.job);
   let modelSource = hooksGmailModelApplied ? "Gmail hook model" : "Agent default model";
+  const requestedTaskRole = params.job.executionPolicy?.modelPolicy?.role;
+  const requestedRoleSelection = requestedTaskRole
+    ? resolveTaskModelRole({ cfg: params.cfg, agentId, role: requestedTaskRole })
+    : undefined;
   const escalationSelection =
     resolveTaskModelRole({ cfg: params.cfg, agentId, role: "escalation" }) ??
     resolveTaskModelRole({ cfg: params.cfg, agentId, role: "strong" });
@@ -1199,9 +1203,14 @@ export async function runCronIsolatedAgentTurn(params: {
       ? taskEscalationModel || escalationSelection?.model
       : undefined;
   const modelOverride =
-    pendingEscalationModel || sourceConflictEscalationModel || modelOverrideResult.model?.trim();
+    pendingEscalationModel ||
+    sourceConflictEscalationModel ||
+    modelOverrideResult.model?.trim() ||
+    requestedRoleSelection?.model;
   const modelOverrideSource =
-    pendingEscalationModel || sourceConflictEscalationModel ? "policy" : modelOverrideResult.source;
+    pendingEscalationModel || sourceConflictEscalationModel || requestedRoleSelection
+      ? "policy"
+      : modelOverrideResult.source;
   const modelOverrideSourceLabel =
     pendingEscalationModel || sourceConflictEscalationModel
       ? taskEscalationModel
@@ -1213,7 +1222,9 @@ export async function runCronIsolatedAgentTurn(params: {
         ? "Task model override"
         : modelOverrideResult.source === "payload"
           ? "Task payload model"
-          : undefined;
+          : requestedRoleSelection
+            ? formatTaskModelSelectionSource(requestedRoleSelection)
+            : undefined;
   if (modelOverride !== undefined && modelOverride.length > 0) {
     const resolvedOverride = resolveAllowedModelRef({
       cfg: cfgWithAgentDefaults,

@@ -2059,7 +2059,26 @@ function renderAgentTaskDialog(state: AppViewState) {
               : nothing
           }
           <label class="field">
-            <span>Cheap/check model</span>
+            <span>Agent model role</span>
+            <select
+              data-test-id="agent-task-model-role"
+              .value=${form.modelRole}
+              ?disabled=${form.executionMode === "no-model"}
+              @change=${(event: Event) =>
+                patch({
+                  modelRole: (event.target as HTMLSelectElement).value as typeof form.modelRole,
+                })}
+            >
+              <option value="">Automatic / Agent default</option>
+              <option value="cheapCheck">Cheap/check</option>
+              <option value="strong">Strong</option>
+              <option value="escalation">Escalation</option>
+              <option value="coding">Coding</option>
+              <option value="summarizer">Summarizer</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Exact task model</span>
             <select
               class="agent-task-dialog__model-select"
               data-test-id="agent-task-policy-model"

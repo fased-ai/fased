@@ -1,7 +1,7 @@
 import type { FasedAgentConfig } from "../config/config.js";
 import type { AgentModelListConfig } from "../config/types.js";
 
-export const OPENAI_CODEX_DEFAULT_MODEL = "openai-codex/gpt-5.5";
+export const OPENAI_CODEX_DEFAULT_MODEL = "openai-codex/gpt-5.6-sol";
 
 function shouldSetOpenAICodexModel(model?: string): boolean {
   const trimmed = model?.trim();

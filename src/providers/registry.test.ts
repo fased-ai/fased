@@ -141,8 +141,13 @@ describe("provider registry", () => {
     expect(OPENAI_API_MODEL_REFS).not.toContain("openai/gpt-5.5-pro");
     expect(OPENAI_API_MODEL_REFS).not.toContain("openai/gpt-5.4-pro");
     expect(OPENAI_SIGN_IN_MODEL_REFS).toContain("openai-codex/gpt-5.5");
-    expect(OPENAI_SIGN_IN_MODEL_REFS).not.toContain("openai-codex/gpt-5.6");
+    expect(OPENAI_SIGN_IN_MODEL_REFS).toContain("openai-codex/gpt-5.6-sol");
+    expect(OPENAI_SIGN_IN_MODEL_REFS).toContain("openai-codex/gpt-5.6-terra");
+    expect(OPENAI_SIGN_IN_MODEL_REFS).toContain("openai-codex/gpt-5.6-luna");
     expect(OPENAI_SIGN_IN_MODEL_REFS).not.toContain("openai-codex/gpt-5.3-codex-spark");
+    expect(OPENAI_SIGN_IN_MODEL_REFS).not.toContain("openai-codex/gpt-5.4");
+    expect(OPENAI_SIGN_IN_MODEL_REFS).not.toContain("openai-codex/gpt-5.4-mini");
+    expect(OPENAI_SIGN_IN_MODEL_REFS).not.toContain("openai-codex/gpt-5.6");
     expect(OPENAI_SIGN_IN_MODEL_REFS).not.toContain("openai-codex/gpt-5.1");
     expect(OPENAI_SIGN_IN_MODEL_REFS).not.toContain("openai-codex/gpt-5.2-codex");
     expect(OPENAI_SIGN_IN_MODEL_REFS).not.toContain("openai-codex/gpt-5.5-pro");
@@ -641,14 +646,10 @@ describe("provider registry", () => {
       "vercel-ai-gateway/anthropic/claude-haiku-4.5",
       "vercel-ai-gateway/google/gemini-3.5-flash",
       "vercel-ai-gateway/google/gemini-3.1-pro-preview",
-      "vercel-ai-gateway/google/gemini-3-flash-preview",
       "vercel-ai-gateway/google/gemini-3.1-flash-lite",
       "vercel-ai-gateway/xai/grok-4.3",
       "vercel-ai-gateway/xai/grok-build-0.1",
       "vercel-ai-gateway/mistral/mistral-medium-3.5",
-      "vercel-ai-gateway/mistral/mistral-small-2603",
-      "vercel-ai-gateway/mistral/mistral-large-2512",
-      "vercel-ai-gateway/mistral/devstral-2512",
       "vercel-ai-gateway/minimax/minimax-m2.7",
       "vercel-ai-gateway/minimax/minimax-m2.7-highspeed",
       "vercel-ai-gateway/moonshotai/kimi-k2.6",
@@ -666,21 +667,6 @@ describe("provider registry", () => {
     ).toMatchObject({
       tools: true,
       thinkingMode: "anthropic-adaptive",
-    });
-    expect(
-      VERCEL_AI_GATEWAY_PROVIDER_MANIFEST.modelCapabilities?.[
-        "vercel-ai-gateway/google/gemini-3-flash-preview"
-      ],
-    ).toMatchObject({
-      tools: true,
-      thinkingMode: "google-thinking-budget",
-    });
-    expect(
-      VERCEL_AI_GATEWAY_PROVIDER_MANIFEST.modelCapabilities?.[
-        "vercel-ai-gateway/mistral/mistral-large-2512"
-      ],
-    ).toMatchObject({
-      tools: false,
     });
     expect(isStandardProviderModelRef("vercel-ai-gateway/openai/gpt-5.5")).toBe(true);
     expect(isStandardProviderModelRef("vercel-ai-gateway/openai/gpt-4o")).toBe(false);
@@ -708,7 +694,6 @@ describe("provider registry", () => {
       "opencode/gemini-3.5-flash",
       "opencode/gemini-3.1-pro",
       "opencode/gemini-3-flash",
-      "opencode/qwen3.7-plus",
       "opencode/minimax-m2.7",
       "opencode/glm-5.2",
       "opencode/kimi-k2.6",
@@ -894,9 +879,7 @@ describe("provider registry", () => {
       "huggingface/meta-llama/Llama-3.3-70B-Instruct",
       "huggingface/Qwen/Qwen3-VL-235B-A22B-Instruct",
       "huggingface/Qwen/Qwen3-235B-A22B-Instruct-2507",
-      "huggingface/Qwen/Qwen3-Coder-Next-FP8",
       "huggingface/google/gemma-3n-E4B-it",
-      "huggingface/EssentialAI/rnj-1-instruct",
       "huggingface/inclusionAI/Ling-2.6-1T",
     ]);
     expect(isStandardProviderModelRef("huggingface/openai/gpt-oss-120b")).toBe(true);
@@ -1208,7 +1191,6 @@ describe("provider registry", () => {
     ]);
     expect(OPENROUTER_PROVIDER_MANIFEST.models.dynamic).toBe(true);
     expect(OPENROUTER_PROVIDER_MANIFEST.models.recommended).toEqual([
-      "openrouter/openrouter/owl-alpha",
       "openrouter/openai/gpt-5.6-sol",
       "openrouter/openai/gpt-5.6-terra",
       "openrouter/openai/gpt-5.6-luna",

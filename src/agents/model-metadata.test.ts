@@ -98,8 +98,8 @@ describe("model metadata", () => {
     const metadata = deriveModelMetadata({
       model: {
         provider: "openai-codex",
-        id: "gpt-5.3-codex",
-        name: "GPT-5.3 Codex",
+        id: "gpt-5.6-sol",
+        name: "GPT-5.6 Sol",
         api: "openai-codex-responses",
         input: ["text"],
       },
@@ -107,14 +107,15 @@ describe("model metadata", () => {
 
     expect(metadata.thinkingMode).toBe("openai-reasoning-effort");
     expect(metadata.thinkingLevels).toContain("xhigh");
+    expect(metadata.authMode).toBe("oauth");
   });
 
   it("derives Anthropic adaptive thinking metadata for current Claude models", () => {
     const metadata = deriveModelMetadata({
       model: {
         provider: "anthropic",
-        id: "claude-sonnet-4-6",
-        name: "Claude Sonnet 4.6",
+        id: "claude-sonnet-5",
+        name: "Claude Sonnet 5",
         api: "anthropic-messages",
         input: ["text", "image"],
       },
@@ -123,7 +124,7 @@ describe("model metadata", () => {
     expect(metadata.thinkingMode).toBe("anthropic-adaptive");
     expect(metadata.defaultThinkingLevel).toBe("low");
     expect(metadata.thinkingLevels).toEqual(["off", "minimal", "low", "medium", "high"]);
-    expect(metadata.reasoningBudgetSupported).toBe(true);
+    expect(metadata.reasoningBudgetSupported).toBe(false);
   });
 
   it("derives xAI thinking metadata without exposing controls for fixed reasoning models", () => {
@@ -148,6 +149,7 @@ describe("model metadata", () => {
         api: "openai-responses",
         reasoning: true,
         input: ["text", "image"],
+        capabilities: { fixedReasoning: true },
       },
     });
     expect(fixed.features).toContain("reasoning");
@@ -178,6 +180,8 @@ describe("model metadata", () => {
         name: "Magistral Small 1.2",
         api: "openai-completions",
         input: ["text", "image"],
+        reasoning: true,
+        capabilities: { fixedReasoning: true },
       },
     });
 
@@ -341,8 +345,8 @@ describe("model metadata", () => {
     const claude = deriveModelMetadata({
       model: {
         provider: "github-copilot",
-        id: "claude-opus-4.7",
-        name: "Claude Opus 4.7",
+        id: "claude-opus-4.8",
+        name: "Claude Opus 4.8",
         api: "openai-responses",
         input: ["text", "image"],
       },
@@ -376,7 +380,7 @@ describe("model metadata", () => {
     const claude = deriveModelMetadata({
       model: {
         provider: "vercel-ai-gateway",
-        ...buildVercelAiGatewayModelDefinition("anthropic/claude-opus-4.7"),
+        ...buildVercelAiGatewayModelDefinition("anthropic/claude-opus-4.8"),
       },
     });
     expect(claude.thinkingMode).toBe("anthropic-adaptive");
@@ -384,12 +388,12 @@ describe("model metadata", () => {
     const mistral = deriveModelMetadata({
       model: {
         provider: "vercel-ai-gateway",
-        ...buildVercelAiGatewayModelDefinition("mistral/mistral-large-3"),
+        ...buildVercelAiGatewayModelDefinition("mistral/mistral-medium-3.5"),
       },
     });
     expect(mistral.features).toEqual(expect.arrayContaining(["vision", "json"]));
-    expect(mistral.features).not.toContain("tools");
-    expect(mistral.features).not.toContain("reasoning");
+    expect(mistral.features).toContain("tools");
+    expect(mistral.features).toContain("reasoning");
   });
 
   it("uses OpenCode Zen curated metadata for current model families", () => {
@@ -402,13 +406,13 @@ describe("model metadata", () => {
     });
     expect(gpt.contextWindow).toBe(400_000);
     expect(gpt.maxTokens).toBe(128_000);
-    expect(gpt.features).toEqual(expect.arrayContaining(["vision", "tools", "json", "reasoning"]));
+    expect(gpt.features).toEqual(expect.arrayContaining(["tools", "json", "reasoning"]));
     expect(gpt.thinkingMode).toBe("openai-reasoning-effort");
 
     const claude = deriveModelMetadata({
       model: {
         provider: "opencode",
-        ...models.get("claude-opus-4-7")!,
+        ...models.get("claude-opus-4-8")!,
       },
     });
     expect(claude.thinkingMode).toBe("anthropic-adaptive");
@@ -416,7 +420,7 @@ describe("model metadata", () => {
     const glm = deriveModelMetadata({
       model: {
         provider: "opencode",
-        ...models.get("glm-5.1")!,
+        ...models.get("glm-5.2")!,
       },
     });
     expect(glm.features).toEqual(expect.arrayContaining(["tools", "json", "reasoning"]));
@@ -594,7 +598,7 @@ describe("model metadata", () => {
       },
     });
 
-    expect(qwen.features).toEqual(["text", "tools"]);
+    expect(qwen.features).toEqual(["text", "reasoning", "tools"]);
 
     const gemma = deriveModelMetadata({
       model: {
