@@ -47,7 +47,7 @@ function createProps(overrides: Record<string, unknown> = {}): AgentsProps {
         },
         models: {
           providers: {
-            openai: { models: [{ id: "gpt-5.5" }, { id: "gpt-5.4-mini" }] },
+            openai: { models: [{ id: "gpt-5.5" }, { id: "gpt-5.6-terra" }] },
           },
         },
       },
@@ -101,7 +101,8 @@ function createProps(overrides: Record<string, unknown> = {}): AgentsProps {
     federation: { token: null, status: null },
     runtimeSessionKey: "main",
     runtimeSessionMatchesSelectedAgent: false,
-    modelCatalog: [{ id: "gpt-5.4-mini", name: "GPT-5.4 Mini", provider: "openai" }],
+    modelCatalog: [{ id: "gpt-5.6-terra", name: "GPT-5.6 Terra", provider: "openai" }],
+    runnableModelCatalog: [{ id: "gpt-5.6-terra", name: "GPT-5.6 Terra", provider: "openai" }],
     skillEdits: {},
     skillsBusyKey: null,
     onNavigate: vi.fn(),
@@ -301,13 +302,13 @@ describe("Agents assembly UI", () => {
     provider!.dispatchEvent(new Event("change", { bubbles: true }));
     const model = form!.querySelector<HTMLSelectElement>('select[name="model"]');
     expect(model).toBeInstanceOf(HTMLSelectElement);
-    model!.value = "openai/gpt-5.4-mini";
+    model!.value = "openai/gpt-5.6-terra";
     expect(container.textContent).not.toContain("Delete Agent");
     submit(form!);
     expect(props.onCreateAgent).toHaveBeenCalledWith({
       name: "Research Ops",
       workspace: "~/.fased/workspace/agents/research-ops",
-      model: "openai/gpt-5.4-mini",
+      model: "openai/gpt-5.6-terra",
       avatar: "avatars/research.png",
     });
   });
@@ -386,8 +387,12 @@ describe("Agents assembly UI", () => {
   it("filters create-agent models by the selected signed provider", () => {
     const props = createProps({
       modelCatalog: [
-        { id: "openrouter/auto", name: "OpenRouter Auto", provider: "openrouter" },
-        { id: "gpt-5.4", name: "GPT-5.4 Codex", provider: "openai-codex" },
+        { id: "openai/gpt-5.6-sol", name: "GPT-5.6 Sol", provider: "openrouter" },
+        { id: "gpt-5.5", name: "GPT-5.5 Codex", provider: "openai-codex" },
+      ],
+      runnableModelCatalog: [
+        { id: "openai/gpt-5.6-sol", name: "GPT-5.6 Sol", provider: "openrouter" },
+        { id: "gpt-5.5", name: "GPT-5.5 Codex", provider: "openai-codex" },
       ],
       providers: {
         catalogStatus: {
@@ -473,12 +478,12 @@ describe("Agents assembly UI", () => {
             providers: {
               openrouter: {
                 models: [
-                  { id: "openrouter/auto", name: "OpenRouter Auto" },
+                  { id: "openai/gpt-5.6-sol", name: "GPT-5.6 Sol" },
                   { id: "anthropic/claude-sonnet-4.5", name: "Claude Sonnet 4.5" },
                 ],
               },
               "openai-codex": {
-                models: [{ id: "gpt-5.4", name: "GPT-5.4 Codex" }],
+                models: [{ id: "gpt-5.5", name: "GPT-5.5 Codex" }],
               },
               anthropic: {
                 models: [{ id: "claude-sonnet-4.5", name: "Claude Sonnet 4.5" }],
@@ -502,37 +507,46 @@ describe("Agents assembly UI", () => {
     expect(model).toBeInstanceOf(HTMLSelectElement);
     expect(Array.from(provider!.options).map((option) => option.value)).toContain("openrouter");
     expect(Array.from(provider!.options).map((option) => option.value)).not.toContain("anthropic");
-    expect(Array.from(model!.options).map((option) => option.value)).toContain("openrouter/auto");
+    expect(Array.from(model!.options).map((option) => option.value)).toContain(
+      "openrouter/openai/gpt-5.6-sol",
+    );
 
     provider!.value = "openrouter";
     provider!.dispatchEvent(new Event("change", { bubbles: true }));
     expect(
-      model!.querySelector<HTMLOptionElement>('option[value="openrouter/auto"]')?.disabled,
+      model!.querySelector<HTMLOptionElement>('option[value="openrouter/openai/gpt-5.6-sol"]')
+        ?.disabled,
     ).toBe(false);
-    expect(model!.querySelector<HTMLOptionElement>('option[value="openrouter/auto"]')?.hidden).toBe(
-      false,
-    );
-    expect(model!.value).toBe("openrouter/auto");
     expect(
-      model!.querySelector<HTMLOptionElement>('option[value="openai-codex/gpt-5.4"]')?.disabled,
+      model!.querySelector<HTMLOptionElement>('option[value="openrouter/openai/gpt-5.6-sol"]')
+        ?.hidden,
+    ).toBe(false);
+    expect(model!.value).toBe("openrouter/openai/gpt-5.6-sol");
+    expect(
+      model!.querySelector<HTMLOptionElement>('option[value="openai-codex/gpt-5.5"]')?.disabled,
     ).toBe(true);
 
     provider!.value = "openai";
     provider!.dispatchEvent(new Event("change", { bubbles: true }));
-    expect(model!.value).toBe("openai-codex/gpt-5.4");
+    expect(model!.value).toBe("openai-codex/gpt-5.5");
     expect(
-      model!.querySelector<HTMLOptionElement>('option[value="openai-codex/gpt-5.4"]')?.disabled,
+      model!.querySelector<HTMLOptionElement>('option[value="openai-codex/gpt-5.5"]')?.disabled,
     ).toBe(false);
     expect(
-      model!.querySelector<HTMLOptionElement>('option[value="openrouter/auto"]')?.disabled,
+      model!.querySelector<HTMLOptionElement>('option[value="openrouter/openai/gpt-5.6-sol"]')
+        ?.disabled,
     ).toBe(true);
   });
 
   it("uses the chat-style modal dropdown and still selects the first provider model", () => {
     const props = createProps({
       modelCatalog: [
-        { id: "openrouter/auto", name: "OpenRouter Auto", provider: "openrouter" },
-        { id: "gpt-5.4", name: "GPT-5.4 Codex", provider: "openai-codex" },
+        { id: "openai/gpt-5.6-sol", name: "GPT-5.6 Sol", provider: "openrouter" },
+        { id: "gpt-5.5", name: "GPT-5.5 Codex", provider: "openai-codex" },
+      ],
+      runnableModelCatalog: [
+        { id: "openai/gpt-5.6-sol", name: "GPT-5.6 Sol", provider: "openrouter" },
+        { id: "gpt-5.5", name: "GPT-5.5 Codex", provider: "openai-codex" },
       ],
       providers: {
         catalogStatus: null,
@@ -580,12 +594,12 @@ describe("Agents assembly UI", () => {
     openRouter!.click();
 
     expect(provider!.value).toBe("openrouter");
-    expect(model!.value).toBe("openrouter/auto");
+    expect(model!.value).toBe("openrouter/openai/gpt-5.6-sol");
     expect(form?.querySelector('[data-agent-provider-selected="true"]')?.textContent?.trim()).toBe(
       "OpenRouter",
     );
     expect(form?.querySelector('[data-agent-model-selected="true"]')?.textContent?.trim()).toBe(
-      "OpenRouter Auto (openrouter/auto)",
+      "GPT-5.6 Sol (openai/gpt-5.6-sol)",
     );
   });
 
@@ -602,11 +616,11 @@ describe("Agents assembly UI", () => {
     );
     expect(modelSelect).toBeInstanceOf(HTMLSelectElement);
     expect(roleSelect).toBeInstanceOf(HTMLSelectElement);
-    modelSelect!.value = "openai/gpt-5.4-mini";
+    modelSelect!.value = "openai/gpt-5.6-terra";
     modelSelect!.dispatchEvent(new Event("change", { bubbles: true }));
-    expect(props.onModelChange).toHaveBeenCalledWith("beta", "openai/gpt-5.4-mini");
+    expect(props.onModelChange).toHaveBeenCalledWith("beta", "openai/gpt-5.6-terra");
     expect(props.onActiveModelProviderChange).toHaveBeenCalledWith("beta", null);
-    expect(roleSelect!.options[0]?.textContent).toContain("openai/gpt-5.4-mini");
+    expect(roleSelect!.options[0]?.textContent).toContain("openai/gpt-5.6-terra");
   });
 
   it("lets Agent model fields select provider/model refs directly", async () => {
@@ -620,13 +634,13 @@ describe("Agents assembly UI", () => {
                 id: "beta",
                 name: "Beta",
                 workspace: "/tmp/beta",
-                model: { primary: "openai/gpt-5.4-mini" },
+                model: { primary: "openai/gpt-5.6-terra" },
               },
             ],
           },
           models: {
             providers: {
-              openai: { models: [{ id: "gpt-5.4-mini" }] },
+              openai: { models: [{ id: "gpt-5.6-terra" }] },
               openrouter: { models: [{ id: "auto" }] },
             },
           },
@@ -636,8 +650,8 @@ describe("Agents assembly UI", () => {
         dirty: false,
       },
       modelCatalog: [
-        { id: "gpt-5.4-mini", name: "GPT-5.4 Mini", provider: "openai" },
-        { id: "openrouter/auto", name: "OpenRouter Auto", provider: "openrouter" },
+        { id: "gpt-5.6-terra", name: "GPT-5.6 Terra", provider: "openai" },
+        { id: "openai/gpt-5.6-sol", name: "GPT-5.6 Sol", provider: "openrouter" },
       ],
       providers: {
         catalogStatus: null,
@@ -677,42 +691,42 @@ describe("Agents assembly UI", () => {
     expect(modelSelect).toBeInstanceOf(HTMLSelectElement);
     expect(cheapRoleSelect).toBeInstanceOf(HTMLSelectElement);
     expect(escalationRoleSelect).toBeInstanceOf(HTMLSelectElement);
-    expect(modelSelect!.value).toBe("openai/gpt-5.4-mini");
+    expect(modelSelect!.value).toBe("openai/gpt-5.6-terra");
     const initialOpenrouterRoleOption = Array.from(cheapRoleSelect!.options).find(
-      (option) => option.value === "openrouter/auto",
+      (option) => option.value === "openrouter/openai/gpt-5.6-sol",
     );
     expect(initialOpenrouterRoleOption?.hidden).toBe(false);
     expect(initialOpenrouterRoleOption?.disabled).toBe(false);
 
-    modelSelect!.value = "openrouter/auto";
+    modelSelect!.value = "openrouter/openai/gpt-5.6-sol";
     modelSelect!.dispatchEvent(new Event("change", { bubbles: true }));
 
-    expect(modelSelect!.value).toBe("openrouter/auto");
-    expect(props.onModelChange).toHaveBeenCalledWith("beta", "openrouter/auto");
+    expect(modelSelect!.value).toBe("openrouter/openai/gpt-5.6-sol");
+    expect(props.onModelChange).toHaveBeenCalledWith("beta", "openrouter/openai/gpt-5.6-sol");
     expect(props.onActiveModelProviderChange).toHaveBeenCalledWith("beta", null);
     const openaiRoleOption = Array.from(cheapRoleSelect!.options).find(
-      (option) => option.value === "openai/gpt-5.4-mini",
+      (option) => option.value === "openai/gpt-5.6-terra",
     );
     const openrouterRoleOption = Array.from(cheapRoleSelect!.options).find(
-      (option) => option.value === "openrouter/auto",
+      (option) => option.value === "openrouter/openai/gpt-5.6-sol",
     );
     expect(openaiRoleOption?.hidden).toBe(false);
     expect(openaiRoleOption?.disabled).toBe(false);
     expect(openrouterRoleOption?.hidden).toBe(false);
     expect(openrouterRoleOption?.disabled).toBe(false);
-    cheapRoleSelect!.value = "openrouter/auto";
+    cheapRoleSelect!.value = "openrouter/openai/gpt-5.6-sol";
     cheapRoleSelect!.dispatchEvent(new Event("change", { bubbles: true }));
     expect(props.onTaskModelsChange).toHaveBeenCalledWith("beta", {
-      cheapCheck: "openrouter/auto",
+      cheapCheck: "openrouter/openai/gpt-5.6-sol",
     });
     await Promise.resolve();
     expect(props.onConfigSave).toHaveBeenCalled();
 
-    escalationRoleSelect!.value = "openai/gpt-5.4-mini";
+    escalationRoleSelect!.value = "openai/gpt-5.6-terra";
     escalationRoleSelect!.dispatchEvent(new Event("change", { bubbles: true }));
     expect(props.onTaskModelsChange).toHaveBeenLastCalledWith("beta", {
-      cheapCheck: "openrouter/auto",
-      escalation: "openai/gpt-5.4-mini",
+      cheapCheck: "openrouter/openai/gpt-5.6-sol",
+      escalation: "openai/gpt-5.6-terra",
     });
   });
 
@@ -741,11 +755,11 @@ describe("Agents assembly UI", () => {
       'select[aria-label="Cheap/check task model"]',
     );
     expect(roleSelect).toBeInstanceOf(HTMLSelectElement);
-    roleSelect!.value = "openai/gpt-5.4-mini";
+    roleSelect!.value = "openai/gpt-5.6-terra";
     roleSelect!.dispatchEvent(new Event("change", { bubbles: true }));
 
     expect(props.onTaskModelsChange).toHaveBeenCalledWith("beta", {
-      cheapCheck: "openai/gpt-5.4-mini",
+      cheapCheck: "openai/gpt-5.6-terra",
     });
   });
 
@@ -753,7 +767,7 @@ describe("Agents assembly UI", () => {
     const props = createProps({
       modelCatalog: [
         { id: "gpt-5.5", name: "GPT-5.5", provider: "openai" },
-        { id: "gpt-5.4-mini", name: "GPT-5.4 Mini", provider: "openai" },
+        { id: "gpt-5.6-terra", name: "GPT-5.6 Terra", provider: "openai" },
       ],
     });
     const container = document.createElement("div");
@@ -768,13 +782,13 @@ describe("Agents assembly UI", () => {
     expect(cheapSelect).toBeInstanceOf(HTMLSelectElement);
     expect(escalationSelect).toBeInstanceOf(HTMLSelectElement);
 
-    cheapSelect!.value = "openai/gpt-5.4-mini";
+    cheapSelect!.value = "openai/gpt-5.6-terra";
     cheapSelect!.dispatchEvent(new Event("change", { bubbles: true }));
     escalationSelect!.value = "openai/gpt-5.5";
     escalationSelect!.dispatchEvent(new Event("change", { bubbles: true }));
 
     expect(props.onTaskModelsChange).toHaveBeenLastCalledWith("beta", {
-      cheapCheck: "openai/gpt-5.4-mini",
+      cheapCheck: "openai/gpt-5.6-terra",
       escalation: "openai/gpt-5.5",
     });
   });
@@ -796,7 +810,7 @@ describe("Agents assembly UI", () => {
           },
           models: {
             providers: {
-              openai: { models: [{ id: "gpt-5.5" }, { id: "gpt-5.4-mini" }] },
+              openai: { models: [{ id: "gpt-5.5" }, { id: "gpt-5.6-terra" }] },
             },
           },
         },
@@ -806,8 +820,8 @@ describe("Agents assembly UI", () => {
       },
       modelCatalog: [
         { id: "gpt-5.5", name: "GPT-5.5", provider: "openai" },
-        { id: "gpt-5.4-mini", name: "GPT-5.4 Mini", provider: "openai" },
-        { id: "openrouter/auto", name: "OpenRouter Auto", provider: "openrouter" },
+        { id: "gpt-5.6-terra", name: "GPT-5.6 Terra", provider: "openai" },
+        { id: "openai/gpt-5.6-sol", name: "GPT-5.6 Sol", provider: "openrouter" },
       ],
       providers: {
         catalogStatus: null,
@@ -871,27 +885,86 @@ describe("Agents assembly UI", () => {
     );
     expect(fallbackDetails).toBeInstanceOf(HTMLDetailsElement);
     const fallbackOption = fallbackDetails!.querySelector<HTMLButtonElement>(
-      'button[data-agent-model-option="true"][data-value="openai/gpt-5.4-mini"]',
+      'button[data-agent-model-option="true"][data-value="openai/gpt-5.6-terra"]',
     );
     expect(fallbackOption).toBeInstanceOf(HTMLButtonElement);
     fallbackDetails!.open = true;
     fallbackOption!.click();
 
     expect(fallbackDetails!.open).toBe(false);
-    expect(fallbackSelect!.value).toBe("openai/gpt-5.4-mini");
-    expect(props.onModelFallbacksChange).toHaveBeenCalledWith("beta", ["openai/gpt-5.4-mini"]);
+    expect(fallbackSelect!.value).toBe("openai/gpt-5.6-terra");
+    expect(props.onModelFallbacksChange).toHaveBeenCalledWith("beta", ["openai/gpt-5.6-terra"]);
 
     const openrouterFallback = Array.from(fallbackSelect!.options).find(
-      (option) => option.value === "openrouter/auto",
+      (option) => option.value === "openrouter/openai/gpt-5.6-sol",
     );
     expect(openrouterFallback).toBeInstanceOf(HTMLOptionElement);
-    fallbackSelect!.value = "openrouter/auto";
+    fallbackSelect!.value = "openrouter/openai/gpt-5.6-sol";
     fallbackSelect!.dispatchEvent(new Event("change", { bubbles: true }));
 
-    expect(props.onModelFallbacksChange).toHaveBeenLastCalledWith("beta", ["openrouter/auto"]);
+    expect(props.onModelFallbacksChange).toHaveBeenLastCalledWith("beta", [
+      "openrouter/openai/gpt-5.6-sol",
+    ]);
 
     await Promise.resolve();
     expect(props.onConfigSave).toHaveBeenCalled();
+  });
+
+  it("shows reviewed OpenAI models without allowing an unconfigured auth route", () => {
+    const props = createProps({
+      config: {
+        form: {
+          agents: {
+            defaults: { model: "openai-codex/gpt-5.5" },
+            list: [{ id: "beta", name: "Beta", workspace: "/tmp/beta" }],
+          },
+        },
+        loading: false,
+        saving: false,
+        dirty: false,
+      },
+      modelCatalog: [
+        { id: "gpt-5.6", name: "GPT-5.6", provider: "openai" },
+        { id: "gpt-5.5", name: "GPT-5.5", provider: "openai-codex" },
+      ],
+      runnableModelCatalog: [{ id: "gpt-5.5", name: "GPT-5.5", provider: "openai-codex" }],
+      providers: {
+        catalogStatus: null,
+        authStatus: {
+          storePath: "/tmp/auth-profiles.json",
+          warnAfterMs: 86_400_000,
+          providers: [
+            {
+              provider: "openai-codex",
+              status: "ok",
+              effective: { kind: "profiles", detail: "openai-codex:default" },
+              profiles: [],
+            },
+          ],
+        },
+      },
+    });
+    const container = document.createElement("div");
+    document.body.append(container);
+    render(renderAgents(props), container);
+
+    const modelsButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent?.includes("Models"),
+    );
+    modelsButton?.click();
+    const dialog = container.querySelector<HTMLDialogElement>('[data-agent-model-dialog="true"]');
+    const direct = dialog?.querySelector<HTMLButtonElement>(
+      'button[data-agent-model-option="true"][data-value="openai/gpt-5.6"]',
+    );
+    const signedIn = dialog?.querySelector<HTMLButtonElement>(
+      'button[data-agent-model-option="true"][data-value="openai-codex/gpt-5.5"]',
+    );
+
+    expect(direct).toBeInstanceOf(HTMLButtonElement);
+    expect(direct?.disabled).toBe(true);
+    expect(direct?.textContent).toContain("API key required");
+    expect(signedIn).toBeInstanceOf(HTMLButtonElement);
+    expect(signedIn?.disabled).toBe(false);
   });
 
   it("keeps the primary model when fallback is selected before rerender", async () => {
@@ -903,7 +976,7 @@ describe("Agents assembly UI", () => {
           },
           models: {
             providers: {
-              openai: { models: [{ id: "gpt-5.5" }, { id: "gpt-5.4-mini" }] },
+              openai: { models: [{ id: "gpt-5.5" }, { id: "gpt-5.6-terra" }] },
               openrouter: { models: [{ id: "auto" }] },
             },
           },
@@ -914,8 +987,8 @@ describe("Agents assembly UI", () => {
       },
       modelCatalog: [
         { id: "gpt-5.5", name: "GPT-5.5", provider: "openai" },
-        { id: "gpt-5.4-mini", name: "GPT-5.4 Mini", provider: "openai" },
-        { id: "openrouter/auto", name: "Auto", provider: "openrouter" },
+        { id: "gpt-5.6-terra", name: "GPT-5.6 Terra", provider: "openai" },
+        { id: "openai/gpt-5.6-sol", name: "Auto", provider: "openrouter" },
       ],
       providers: {
         catalogStatus: null,
@@ -959,13 +1032,15 @@ describe("Agents assembly UI", () => {
     expect(primarySelect).toBeInstanceOf(HTMLSelectElement);
     expect(fallbackSelect).toBeInstanceOf(HTMLSelectElement);
 
-    primarySelect!.value = "openai/gpt-5.4-mini";
+    primarySelect!.value = "openai/gpt-5.6-terra";
     primarySelect!.dispatchEvent(new Event("change", { bubbles: true }));
-    fallbackSelect!.value = "openrouter/auto";
+    fallbackSelect!.value = "openrouter/openai/gpt-5.6-sol";
     fallbackSelect!.dispatchEvent(new Event("change", { bubbles: true }));
 
-    expect(props.onModelChange).toHaveBeenLastCalledWith("beta", "openai/gpt-5.4-mini");
-    expect(props.onModelFallbacksChange).toHaveBeenCalledWith("beta", ["openrouter/auto"]);
+    expect(props.onModelChange).toHaveBeenLastCalledWith("beta", "openai/gpt-5.6-terra");
+    expect(props.onModelFallbacksChange).toHaveBeenCalledWith("beta", [
+      "openrouter/openai/gpt-5.6-sol",
+    ]);
     await Promise.resolve();
     expect(props.onConfigSave).toHaveBeenCalled();
   });
@@ -990,7 +1065,7 @@ describe("Agents assembly UI", () => {
           models: {
             providers: {
               openai: {
-                models: [{ id: "gpt-5.5" }, { id: "gpt-5.4-mini" }, { id: "a" }, { id: "b" }],
+                models: [{ id: "gpt-5.5" }, { id: "gpt-5.6-terra" }, { id: "a" }, { id: "b" }],
               },
             },
           },
@@ -1001,7 +1076,7 @@ describe("Agents assembly UI", () => {
       },
       modelCatalog: [
         { id: "gpt-5.5", name: "GPT-5.5", provider: "openai" },
-        { id: "gpt-5.4-mini", name: "GPT-5.4 Mini", provider: "openai" },
+        { id: "gpt-5.6-terra", name: "GPT-5.6 Terra", provider: "openai" },
         { id: "a", name: "A", provider: "openai" },
         { id: "b", name: "B", provider: "openai" },
       ],
@@ -1042,13 +1117,13 @@ describe("Agents assembly UI", () => {
                 id: "beta",
                 name: "Beta",
                 workspace: "/tmp/beta",
-                model: { primary: "openai/gpt-5.4-mini" },
+                model: { primary: "openai/gpt-5.6-terra" },
               },
             ],
           },
           models: {
             providers: {
-              openai: { models: [{ id: "gpt-5.4-mini" }] },
+              openai: { models: [{ id: "gpt-5.6-terra" }] },
               openrouter: { models: [{ id: "auto" }] },
             },
           },
@@ -1058,8 +1133,8 @@ describe("Agents assembly UI", () => {
         dirty: false,
       },
       modelCatalog: [
-        { id: "gpt-5.4-mini", name: "GPT-5.4 Mini", provider: "openai" },
-        { id: "openrouter/auto", name: "OpenRouter Auto", provider: "openrouter" },
+        { id: "gpt-5.6-terra", name: "GPT-5.6 Terra", provider: "openai" },
+        { id: "openai/gpt-5.6-sol", name: "GPT-5.6 Sol", provider: "openrouter" },
       ],
       providers: {
         catalogStatus: null,
@@ -1091,7 +1166,7 @@ describe("Agents assembly UI", () => {
     );
     expect(openaiModel).toBeInstanceOf(HTMLElement);
     expect(openaiModel!.textContent).toContain("Primary:");
-    expect(openaiModel!.textContent).toContain("GPT-5.4 Mini");
+    expect(openaiModel!.textContent).toContain("GPT-5.6 Terra");
     expect(openaiModel!.title).toContain("Primary");
 
     const openrouterAdd = container.querySelector<HTMLButtonElement>(
@@ -1128,7 +1203,7 @@ describe("Agents assembly UI", () => {
               updatedAt: Date.now(),
               label: "Beta chat",
               modelProvider: "openai",
-              model: "gpt-5.4-mini",
+              model: "gpt-5.6-terra",
               totalTokens: 1200,
               lastMessagePreview: "last beta message",
             },
@@ -1160,7 +1235,7 @@ describe("Agents assembly UI", () => {
     render(renderAgents(props), container);
 
     expect(container.textContent).toContain("Beta chat");
-    expect(container.textContent).toContain("openai/gpt-5.4-mini");
+    expect(container.textContent).toContain("openai/gpt-5.6-terra");
     expect(container.textContent).toContain("1200 tokens");
     expect(container.textContent).toContain("1 task");
     expect(container.textContent).not.toContain("Last access:");

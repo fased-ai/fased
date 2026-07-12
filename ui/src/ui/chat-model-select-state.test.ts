@@ -46,15 +46,15 @@ describe("chat-model-select-state", () => {
       chatModelOverrides: {},
       chatModelCatalog: createModelCatalog(...DEFAULT_CHAT_MODEL_CATALOG),
       sessionsResult: createSessionsListResult({
-        model: "gpt-5.4-mini",
+        model: "gpt-5.5",
         modelProvider: "openai",
       }),
     };
 
     const resolved = resolveChatModelSelectState(state);
-    expect(resolved.currentOverride).toBe("openai/gpt-5.4-mini");
-    expect(resolved.options.map((option) => option.value)).toContain("openai/gpt-5.4-mini");
-    expect(resolved.options.map((option) => option.value)).not.toContain("gpt-5.4-mini");
+    expect(resolved.currentOverride).toBe("openai/gpt-5.5");
+    expect(resolved.options.map((option) => option.value)).toContain("openai/gpt-5.5");
+    expect(resolved.options.map((option) => option.value)).not.toContain("gpt-5.5");
   });
 
   it("does not offer old OpenAI API models as normal chat picker choices", () => {
@@ -137,25 +137,25 @@ describe("chat-model-select-state", () => {
       sessionKey: "agent:research:main",
       chatModelOverrides: {},
       chatModelCatalog: createModelCatalog(
-        { id: "gpt-5.4-mini", name: "GPT-5.4 Mini", provider: "openai" },
+        { id: "gpt-5.6", name: "GPT-5.6", provider: "openai" },
         { id: "claude-opus-4-8", name: "Claude Opus 4.8", provider: "anthropic" },
       ),
       sessionsResult: createSessionsListResult({
-        defaultsModel: "openai/gpt-5.4-mini",
+        defaultsModel: "openai/gpt-5.6",
         defaultsProvider: "openai",
         omitSessionFromList: true,
       }),
       configForm: {
         agents: {
-          list: [{ id: "research", model: { primary: "openai/gpt-5.4-mini" } }],
+          list: [{ id: "research", model: { primary: "openai/gpt-5.6" } }],
         },
       },
     };
 
     const resolved = resolveChatModelSelectState(state);
-    expect(resolved.defaultModel).toBe("openai/gpt-5.4-mini");
+    expect(resolved.defaultModel).toBe("openai/gpt-5.6");
     expect(resolved.options.map((option) => option.value)).toEqual([
-      "openai/gpt-5.4-mini",
+      "openai/gpt-5.6",
       "anthropic/claude-opus-4-8",
     ]);
   });

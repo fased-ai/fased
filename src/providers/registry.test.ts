@@ -136,13 +136,13 @@ describe("provider registry", () => {
     expect(OPENAI_API_MODEL_REFS).toContain("openai/gpt-5.6-terra");
     expect(OPENAI_API_MODEL_REFS).toContain("openai/gpt-5.6-luna");
     expect(OPENAI_API_MODEL_REFS).toContain("openai/gpt-5.5");
-    expect(OPENAI_API_MODEL_REFS).toContain("openai/gpt-5.4-nano");
+    expect(OPENAI_API_MODEL_REFS).not.toContain("openai/gpt-5.4-nano");
     expect(OPENAI_API_MODEL_REFS).not.toContain("openai/gpt-5-codex");
     expect(OPENAI_API_MODEL_REFS).not.toContain("openai/gpt-5.5-pro");
     expect(OPENAI_API_MODEL_REFS).not.toContain("openai/gpt-5.4-pro");
     expect(OPENAI_SIGN_IN_MODEL_REFS).toContain("openai-codex/gpt-5.5");
     expect(OPENAI_SIGN_IN_MODEL_REFS).not.toContain("openai-codex/gpt-5.6");
-    expect(OPENAI_SIGN_IN_MODEL_REFS).toContain("openai-codex/gpt-5.3-codex-spark");
+    expect(OPENAI_SIGN_IN_MODEL_REFS).not.toContain("openai-codex/gpt-5.3-codex-spark");
     expect(OPENAI_SIGN_IN_MODEL_REFS).not.toContain("openai-codex/gpt-5.1");
     expect(OPENAI_SIGN_IN_MODEL_REFS).not.toContain("openai-codex/gpt-5.2-codex");
     expect(OPENAI_SIGN_IN_MODEL_REFS).not.toContain("openai-codex/gpt-5.5-pro");
@@ -363,7 +363,7 @@ describe("provider registry", () => {
 
   it("filters old OpenAI runtime models from normal pickers", () => {
     expect(isStandardProviderModelRef("openai/gpt-5.5")).toBe(true);
-    expect(isStandardProviderModelRef("openai/gpt-5.4-nano")).toBe(true);
+    expect(isStandardProviderModelRef("openai/gpt-5.4-nano")).toBe(false);
     expect(isStandardProviderModelRef("openai/gpt-5-codex")).toBe(false);
     expect(isStandardProviderModelRef("openai/gpt-5.1")).toBe(false);
     expect(isStandardProviderModelRef("openai/gpt-4.1-mini")).toBe(false);

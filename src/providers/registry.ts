@@ -236,17 +236,9 @@ export const OPENAI_API_MODEL_IDS = [
   "gpt-5.6-terra",
   "gpt-5.6-luna",
   "gpt-5.5",
-  "gpt-5.4",
-  "gpt-5.4-mini",
-  "gpt-5.4-nano",
 ] as const;
 
-export const OPENAI_SIGN_IN_MODEL_IDS = [
-  "gpt-5.5",
-  "gpt-5.4",
-  "gpt-5.4-mini",
-  "gpt-5.3-codex-spark",
-] as const;
+export const OPENAI_SIGN_IN_MODEL_IDS = ["gpt-5.5"] as const;
 
 export const OPENAI_API_MODEL_REFS = OPENAI_API_MODEL_IDS.map(
   (id) => `${OPENAI_API_ROUTE_ID}/${id}`,
