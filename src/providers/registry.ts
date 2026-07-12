@@ -238,7 +238,19 @@ export const OPENAI_API_MODEL_IDS = [
   "gpt-5.5",
 ] as const;
 
-export const OPENAI_SIGN_IN_MODEL_IDS = ["gpt-5.5"] as const;
+export const OPENAI_SIGN_IN_MODEL_IDS = [
+  "gpt-5.6-sol",
+  "gpt-5.6-terra",
+  "gpt-5.6-luna",
+  "gpt-5.5",
+] as const;
+
+const OPENAI_SIGN_IN_LEGACY_RUNTIME_MODEL_IDS = [
+  "gpt-5.3-codex",
+  "gpt-5.3-codex-spark",
+  "gpt-5.4",
+  "gpt-5.4-mini",
+] as const;
 
 export const OPENAI_API_MODEL_REFS = OPENAI_API_MODEL_IDS.map(
   (id) => `${OPENAI_API_ROUTE_ID}/${id}`,
@@ -374,7 +386,6 @@ export const BYTEPLUS_CODING_MODEL_REFS = BYTEPLUS_CODING_MODEL_IDS.flatMap((id)
 ]);
 
 export const OPENROUTER_MODEL_IDS = [
-  "openrouter/owl-alpha",
   "openai/gpt-5.6-sol",
   "openai/gpt-5.6-terra",
   "openai/gpt-5.6-luna",
@@ -2000,6 +2011,10 @@ const PROVIDER_MODEL_CAPABILITY_BY_REF: ReadonlyMap<string, ModelCapabilityConfi
   ),
 );
 const OPENAI_SIGN_IN_MODEL_ID_SET: ReadonlySet<string> = new Set(OPENAI_SIGN_IN_MODEL_IDS);
+const OPENAI_SIGN_IN_RUNTIME_MODEL_ID_SET: ReadonlySet<string> = new Set([
+  ...OPENAI_SIGN_IN_MODEL_IDS,
+  ...OPENAI_SIGN_IN_LEGACY_RUNTIME_MODEL_IDS,
+]);
 
 export function listProviderBrandManifests(): ProviderBrandManifest[] {
   return [...PROVIDER_REGISTRY];
@@ -2031,6 +2046,10 @@ export function isOpenAIProviderRoute(provider: string): boolean {
 }
 
 export function isOpenAISignInRuntimeModelSupported(id: string): boolean {
+  return OPENAI_SIGN_IN_RUNTIME_MODEL_ID_SET.has(id.trim().toLowerCase());
+}
+
+export function isOpenAISignInCatalogModel(id: string): boolean {
   return OPENAI_SIGN_IN_MODEL_ID_SET.has(id.trim().toLowerCase());
 }
 

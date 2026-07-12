@@ -860,6 +860,47 @@ describe("runCronIsolatedAgentTurn — skill filter", () => {
     expect(result.policy?.modelSource).toBe("Agent cheap/check role");
   });
 
+  it("uses an explicitly requested coding role without an exact task model", async () => {
+    resolveAllowedModelRefMock.mockImplementation(({ raw }: { raw: string }) => {
+      const [provider, ...modelParts] = raw.split("/");
+      return { ref: { provider, model: modelParts.join("/") } };
+    });
+    runWithModelFallbackMock.mockImplementationOnce(async (args) => {
+      const result = await args.run("openai-codex", "gpt-5.6-sol");
+      return { result, provider: "openai-codex", model: "gpt-5.6-sol" } as never;
+    });
+
+    const result = await runCronIsolatedAgentTurn(
+      makeParams({
+        cfg: {
+          agents: {
+            defaults: { model: { primary: "openai/gpt-5.6" } },
+            list: [
+              {
+                id: "developer",
+                taskModels: { coding: "openai-codex/gpt-5.6-sol" },
+              },
+            ],
+          },
+        },
+        job: makeJob({
+          agentId: "developer",
+          executionPolicy: {
+            executionMode: "agent-turn",
+            modelPolicy: { mode: "auto", role: "coding" },
+          },
+        }),
+      }),
+    );
+
+    expect(result.status).toBe("ok");
+    expect(runWithModelFallbackMock.mock.calls[0]?.[0]).toMatchObject({
+      provider: "openai-codex",
+      model: "gpt-5.6-sol",
+    });
+    expect(result.policy?.modelSource).toBe("Agent coding role");
+  });
+
   it("uses the escalation model when source verification finds a conflict", async () => {
     resolveAllowedModelRefMock.mockImplementation(({ raw }: { raw: string }) => {
       const [provider, ...modelParts] = raw.split("/");

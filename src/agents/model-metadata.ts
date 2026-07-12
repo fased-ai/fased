@@ -6,7 +6,10 @@ import type {
   ModelProviderConfig,
 } from "../config/types.models.js";
 import { lookupRefreshedModelCapability } from "../providers/refreshed-model-capabilities.js";
-import { lookupProviderManifestModelCapability } from "../providers/registry.js";
+import {
+  getProviderBrandManifestForRoute,
+  lookupProviderManifestModelCapability,
+} from "../providers/registry.js";
 import {
   resolveModelThinkingCapability,
   type ModelThinkingLevel,
@@ -118,6 +121,19 @@ function resolveAuthMode(params: {
   if (params.providerConfig?.auth) {
     return params.providerConfig.auth;
   }
+  const providerRoute = params.provider.trim().toLowerCase();
+  const method = getProviderBrandManifestForRoute(providerRoute)?.methods.find(
+    (entry) =>
+      entry.route.trim().toLowerCase() === providerRoute ||
+      entry.statusRoute?.trim().toLowerCase() === providerRoute ||
+      entry.configProviderId?.trim().toLowerCase() === providerRoute,
+  );
+  if (method?.kind === "oauth" || method?.kind === "device") {
+    return "oauth";
+  }
+  if (method?.kind === "token") {
+    return "token";
+  }
   return "api-key";
 }
 
@@ -141,13 +157,13 @@ export function deriveModelMetadata(params: {
   const api = params.model.api ?? providerConfig?.api;
   const refreshed = lookupRefreshedModelCapability(provider, modelId);
   const manifestCapabilities = lookupProviderManifestModelCapability(provider, modelId);
-  const input = refreshed?.input ?? params.model.input ?? ["text"];
+  const input = params.model.input ?? refreshed?.input ?? ["text"];
   const capabilities =
     manifestCapabilities || params.model.capabilities || refreshed?.capabilities
       ? {
+          ...refreshed?.capabilities,
           ...manifestCapabilities,
           ...params.model.capabilities,
-          ...refreshed?.capabilities,
         }
       : undefined;
   const capabilityConfidence: ModelCapabilityConfidence =
@@ -155,7 +171,7 @@ export function deriveModelMetadata(params: {
   const shouldInferApiCapabilities = !(
     LOCAL_DYNAMIC_PROVIDERS.has(provider) && capabilityConfidence === "unknown"
   );
-  const reasoning = refreshed?.reasoning ?? params.model.reasoning;
+  const reasoning = params.model.reasoning ?? refreshed?.reasoning;
   const thinking = resolveModelThinkingCapability({
     provider,
     model: modelId,

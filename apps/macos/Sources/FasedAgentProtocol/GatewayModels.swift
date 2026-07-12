@@ -7,6 +7,7 @@ public let GATEWAY_PROTOCOL_VERSION = 3
 public enum ErrorCode: String, Codable, Sendable {
     case notLinked = "NOT_LINKED"
     case notPaired = "NOT_PAIRED"
+    case notFound = "NOT_FOUND"
     case agentTimeout = "AGENT_TIMEOUT"
     case invalidRequest = "INVALID_REQUEST"
     case unavailable = "UNAVAILABLE"
@@ -206,6 +207,7 @@ public struct PresenceEntry: Codable, Sendable {
     public let host: String?
     public let ip: String?
     public let version: String?
+    public let runtimesource: String?
     public let platform: String?
     public let devicefamily: String?
     public let modelidentifier: String?
@@ -224,6 +226,7 @@ public struct PresenceEntry: Codable, Sendable {
         host: String?,
         ip: String?,
         version: String?,
+        runtimesource: String?,
         platform: String?,
         devicefamily: String?,
         modelidentifier: String?,
@@ -241,6 +244,7 @@ public struct PresenceEntry: Codable, Sendable {
         self.host = host
         self.ip = ip
         self.version = version
+        self.runtimesource = runtimesource
         self.platform = platform
         self.devicefamily = devicefamily
         self.modelidentifier = modelidentifier
@@ -260,6 +264,7 @@ public struct PresenceEntry: Codable, Sendable {
         case host
         case ip
         case version
+        case runtimesource = "runtimeSource"
         case platform
         case devicefamily = "deviceFamily"
         case modelidentifier = "modelIdentifier"
@@ -1114,9 +1119,11 @@ public struct PushTestResult: Codable, Sendable {
 
 public struct SessionsListParams: Codable, Sendable {
     public let limit: Int?
+    public let offset: Int?
     public let activeminutes: Int?
     public let includeglobal: Bool?
     public let includeunknown: Bool?
+    public let configuredagentsonly: Bool?
     public let includederivedtitles: Bool?
     public let includelastmessage: Bool?
     public let label: String?
@@ -1126,9 +1133,11 @@ public struct SessionsListParams: Codable, Sendable {
 
     public init(
         limit: Int?,
+        offset: Int?,
         activeminutes: Int?,
         includeglobal: Bool?,
         includeunknown: Bool?,
+        configuredagentsonly: Bool?,
         includederivedtitles: Bool?,
         includelastmessage: Bool?,
         label: String?,
@@ -1137,9 +1146,11 @@ public struct SessionsListParams: Codable, Sendable {
         search: String?)
     {
         self.limit = limit
+        self.offset = offset
         self.activeminutes = activeminutes
         self.includeglobal = includeglobal
         self.includeunknown = includeunknown
+        self.configuredagentsonly = configuredagentsonly
         self.includederivedtitles = includederivedtitles
         self.includelastmessage = includelastmessage
         self.label = label
@@ -1150,9 +1161,11 @@ public struct SessionsListParams: Codable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case limit
+        case offset
         case activeminutes = "activeMinutes"
         case includeglobal = "includeGlobal"
         case includeunknown = "includeUnknown"
+        case configuredagentsonly = "configuredAgentsOnly"
         case includederivedtitles = "includeDerivedTitles"
         case includelastmessage = "includeLastMessage"
         case label
@@ -3079,7 +3092,8 @@ public struct ModelsCatalogStatusProvider: Codable, Sendable {
     public let capabilitycounts: [String: AnyCodable]
     public let authmodes: [String]
     public let privatenetwork: [String: AnyCodable]
-    public let probestatus: String
+    public let probestatus: AnyCodable
+    public let health: [String: AnyCodable]?
     public let maxcontextwindow: Int?
     public let maxoutputtokens: Int?
 
@@ -3094,7 +3108,8 @@ public struct ModelsCatalogStatusProvider: Codable, Sendable {
         capabilitycounts: [String: AnyCodable],
         authmodes: [String],
         privatenetwork: [String: AnyCodable],
-        probestatus: String,
+        probestatus: AnyCodable,
+        health: [String: AnyCodable]?,
         maxcontextwindow: Int?,
         maxoutputtokens: Int?)
     {
@@ -3109,6 +3124,7 @@ public struct ModelsCatalogStatusProvider: Codable, Sendable {
         self.authmodes = authmodes
         self.privatenetwork = privatenetwork
         self.probestatus = probestatus
+        self.health = health
         self.maxcontextwindow = maxcontextwindow
         self.maxoutputtokens = maxoutputtokens
     }
@@ -3125,6 +3141,7 @@ public struct ModelsCatalogStatusProvider: Codable, Sendable {
         case authmodes = "authModes"
         case privatenetwork = "privateNetwork"
         case probestatus = "probeStatus"
+        case health
         case maxcontextwindow = "maxContextWindow"
         case maxoutputtokens = "maxOutputTokens"
     }
@@ -3194,17 +3211,20 @@ public struct ModelsCatalogStatusResult: Codable, Sendable {
 
 public struct ModelsListParams: Codable, Sendable {
     public let all: Bool?
+    public let available: Bool?
     public let provider: String?
     public let sessionkey: String?
     public let includemetadata: Bool?
 
     public init(
         all: Bool?,
+        available: Bool?,
         provider: String?,
         sessionkey: String?,
         includemetadata: Bool?)
     {
         self.all = all
+        self.available = available
         self.provider = provider
         self.sessionkey = sessionkey
         self.includemetadata = includemetadata
@@ -3212,6 +3232,7 @@ public struct ModelsListParams: Codable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case all
+        case available
         case provider
         case sessionkey = "sessionKey"
         case includemetadata = "includeMetadata"
@@ -4412,21 +4433,25 @@ public struct SkillsCreateParams: Codable, Sendable {
     public let name: String
     public let description: String?
     public let agentid: String?
+    public let template: AnyCodable?
 
     public init(
         name: String,
         description: String?,
-        agentid: String?)
+        agentid: String?,
+        template: AnyCodable?)
     {
         self.name = name
         self.description = description
         self.agentid = agentid
+        self.template = template
     }
 
     private enum CodingKeys: String, CodingKey {
         case name
         case description
         case agentid = "agentId"
+        case template
     }
 }
 
@@ -4728,6 +4753,7 @@ public struct SkillsWalletGrantSetParams: Codable, Sendable {
     public let skillid: String
     public let actions: [String]
     public let registry: [String]?
+    public let walletid: [String]?
     public let chain: [String]?
     public let inputmint: [String]?
     public let outputmint: [String]?
@@ -4740,6 +4766,7 @@ public struct SkillsWalletGrantSetParams: Codable, Sendable {
         skillid: String,
         actions: [String],
         registry: [String]?,
+        walletid: [String]?,
         chain: [String]?,
         inputmint: [String]?,
         outputmint: [String]?,
@@ -4751,6 +4778,7 @@ public struct SkillsWalletGrantSetParams: Codable, Sendable {
         self.skillid = skillid
         self.actions = actions
         self.registry = registry
+        self.walletid = walletid
         self.chain = chain
         self.inputmint = inputmint
         self.outputmint = outputmint
@@ -4764,6 +4792,7 @@ public struct SkillsWalletGrantSetParams: Codable, Sendable {
         case skillid = "skillId"
         case actions
         case registry
+        case walletid = "walletId"
         case chain
         case inputmint = "inputMint"
         case outputmint = "outputMint"

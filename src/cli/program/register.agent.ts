@@ -6,6 +6,7 @@ import {
   agentsBindCommand,
   agentsDeleteCommand,
   agentsListCommand,
+  agentsModelsSetCommand,
   agentsSetIdentityCommand,
   agentsUnbindCommand,
 } from "../../commands/agents.js";
@@ -115,6 +116,39 @@ ${theme.muted("Docs:")} ${formatDocsLink("/cli/agent", "docs.fased.ai/cli/agent"
         await agentsBindingsCommand(
           {
             agent: opts.agent as string | undefined,
+            json: Boolean(opts.json),
+          },
+          defaultRuntime,
+        );
+      });
+    });
+
+  const agentModels = agents.command("models").description("Configure models for one Agent");
+
+  agentModels
+    .command("set")
+    .description("Set the Agent primary, fallback, and task-role models")
+    .option("--agent <id>", "Agent id (defaults to the current default Agent)")
+    .option("--primary <provider/model>", "Primary model")
+    .option("--fallback <provider/model>", "Fallback model (repeatable)", collectOption)
+    .option("--cheap-check <provider/model>", "Cheap/check task model")
+    .option("--strong <provider/model>", "Strong task model")
+    .option("--escalation <provider/model>", "Escalation task model")
+    .option("--coding <provider/model>", "Coding task model")
+    .option("--summarizer <provider/model>", "Summarizer task model")
+    .option("--json", "Output JSON summary", false)
+    .action(async (opts) => {
+      await runCommandWithRuntime(defaultRuntime, async () => {
+        await agentsModelsSetCommand(
+          {
+            agent: opts.agent as string | undefined,
+            primary: opts.primary as string | undefined,
+            fallbacks: Array.isArray(opts.fallback) ? (opts.fallback as string[]) : undefined,
+            cheapCheck: opts.cheapCheck as string | undefined,
+            strong: opts.strong as string | undefined,
+            escalation: opts.escalation as string | undefined,
+            coding: opts.coding as string | undefined,
+            summarizer: opts.summarizer as string | undefined,
             json: Boolean(opts.json),
           },
           defaultRuntime,

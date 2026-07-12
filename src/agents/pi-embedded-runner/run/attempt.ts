@@ -82,6 +82,7 @@ import { resolveEffectiveToolFsWorkspaceOnly } from "../../tool-fs-policy.js";
 import { resolveTranscriptPolicy } from "../../transcript-policy.js";
 import { DEFAULT_BOOTSTRAP_FILENAME } from "../../workspace.js";
 import { isRunnerAbortError } from "../abort.js";
+import { replaceAgentMessages } from "../agent-messages.js";
 import {
   appendCacheTtlTimestamp,
   shouldAppendCacheTtlTimestampAfterAttempt,
@@ -779,9 +780,9 @@ export async function runEmbeddedAttempt(
         workspaceDir: params.workspaceDir,
       });
 
-      // Force a stable streamFn reference so vitest can reliably mock @mariozechner/pi-ai.
-      activeSession.agent.streamFn = streamSimple;
-
+      // Keep the SDK stream function: it resolves OAuth/API credentials through
+      // the supplied ModelRegistry before delegating to pi-ai. Provider wrappers
+      // must decorate that authenticated transport, never replace it.
       applyExtraParamsToAgent(
         activeSession.agent,
         params.config,
@@ -899,7 +900,7 @@ export async function runEmbeddedAttempt(
           : truncated;
         cacheTrace?.recordStage("session:limited", { messages: limited });
         if (params.omitPriorMessages || limited.length > 0) {
-          activeSession.agent.replaceMessages(limited);
+          replaceAgentMessages(activeSession.agent, limited);
         }
       } catch (err) {
         await flushPendingToolResultsAfterIdle({
@@ -1142,7 +1143,7 @@ export async function runEmbeddedAttempt(
             sessionManager.resetLeaf();
           }
           const sessionContext = sessionManager.buildSessionContext();
-          activeSession.agent.replaceMessages(sessionContext.messages);
+          replaceAgentMessages(activeSession.agent, sessionContext.messages);
           log.warn(
             `Removed orphaned user message to prevent consecutive user turns. ` +
               `runId=${params.runId} sessionId=${params.sessionId}`,
@@ -1154,7 +1155,7 @@ export async function runEmbeddedAttempt(
           // Called each run; only mutates already-answered user turns that still carry image blocks.
           const didPruneImages = pruneProcessedHistoryImages(activeSession.messages);
           if (didPruneImages) {
-            activeSession.agent.replaceMessages(activeSession.messages);
+            replaceAgentMessages(activeSession.agent, activeSession.messages);
           }
 
           // Detect and load images referenced in the prompt for vision-capable models.

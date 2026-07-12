@@ -53,7 +53,7 @@ describe("pi embedded model e2e smoke", () => {
   it("keeps unknown-model errors for non-forward-compat IDs", () => {
     const result = resolveModel("openai-codex", "gpt-4.1-mini", "/tmp/agent");
     expect(result.model).toBeUndefined();
-    expect(result.error).toBe("Unknown model: openai-codex/gpt-4.1-mini");
+    expect(result.error).toBe("Unsupported OpenAI-Codex sign-in model: gpt-4.1-mini");
   });
 
   it("builds an OpenAI API forward-compat fallback for gpt-5-codex", () => {

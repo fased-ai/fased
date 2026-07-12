@@ -154,7 +154,7 @@ describe("normalized model catalog rows", () => {
         "minimax-cn",
         "minimax-portal",
         "moonshot",
-        "kimi",
+        "kimi-coding",
         "google",
         "google-gemini-cli",
         "openrouter",

@@ -62,4 +62,22 @@ describe("Fased model catalog source", () => {
       }),
     );
   });
+
+  it("hides legacy OpenAI sign-in models from the curated catalog", () => {
+    const entries = buildFasedModelCatalogEntries({
+      config: {} as FasedAgentConfig,
+      runtimeModels: [
+        {
+          id: "gpt-5.4",
+          name: "GPT-5.4",
+          provider: "openai-codex",
+          api: "openai-codex-responses",
+        },
+      ],
+    });
+
+    const refs = entries.map((entry) => `${entry.provider}/${entry.id}`);
+    expect(refs).toContain("openai-codex/gpt-5.6-sol");
+    expect(refs).not.toContain("openai-codex/gpt-5.4");
+  });
 });

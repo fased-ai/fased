@@ -152,7 +152,7 @@ export function applyAgentConfig(
     agentDir?: string;
     activeModelProvider?: string | null;
     modelProviders?: AgentModelProviders | null;
-    model?: string;
+    model?: AgentEntry["model"];
     taskModels?: AgentTaskModels | null;
   },
 ): FasedAgentConfig {

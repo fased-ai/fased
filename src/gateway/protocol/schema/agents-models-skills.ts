@@ -282,6 +282,7 @@ export const AgentsFilesSetResultSchema = Type.Object(
 export const ModelsListParamsSchema = Type.Object(
   {
     all: Type.Optional(Type.Boolean()),
+    available: Type.Optional(Type.Boolean()),
     provider: Type.Optional(NonEmptyString),
     sessionKey: Type.Optional(NonEmptyString),
     includeMetadata: Type.Optional(Type.Boolean()),

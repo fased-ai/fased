@@ -728,6 +728,58 @@ describe("models.auth.status handler", () => {
     });
   });
 
+  it("returns the curated authenticated route with available=true", async () => {
+    loadConfig.mockImplementation(() => ({
+      agents: {
+        defaults: {
+          model: { primary: "openai/gpt-5.5" },
+          models: { "openai/gpt-5.5": {} },
+        },
+      },
+      models: { providers: {} },
+    }));
+    listProvidersWithStoredCredentials.mockReturnValue(["openai"]);
+    const context = createContext();
+    context.loadGatewayModelCatalog.mockResolvedValue([
+      {
+        id: "gpt-5.6",
+        name: "GPT-5.6 Sol",
+        provider: "openai",
+        catalogSource: "manifest",
+      },
+      {
+        id: "gpt-5.5",
+        name: "GPT-5.5",
+        provider: "openai",
+        catalogSource: "manifest",
+      },
+      {
+        id: "gpt-4o",
+        name: "GPT-4o",
+        provider: "openai",
+        catalogSource: "runtime",
+      },
+    ]);
+
+    const normal = createInvoke("models.list", {}, context);
+    await normal.invoke();
+    expect(normal.respond.mock.calls[0]?.[1]).toMatchObject({
+      models: expect.arrayContaining([expect.objectContaining({ id: "gpt-5.5" })]),
+    });
+
+    const available = createInvoke("models.list", { available: true }, context);
+    await available.invoke();
+    expect(available.respond.mock.calls[0]?.[1]).toMatchObject({
+      models: expect.arrayContaining([
+        expect.objectContaining({ id: "gpt-5.6" }),
+        expect.objectContaining({ id: "gpt-5.5" }),
+      ]),
+    });
+    expect(available.respond.mock.calls[0]?.[1]).not.toMatchObject({
+      models: expect.arrayContaining([expect.objectContaining({ id: "gpt-4o" })]),
+    });
+  });
+
   it("retains explicit configured models in normal model lists", async () => {
     listProvidersWithStoredCredentials.mockReturnValue(["custom-local"]);
     const context = createContext();

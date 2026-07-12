@@ -803,6 +803,7 @@ export type CronTaskExecutionPolicy = {
   };
   modelPolicy?: {
     mode?: "agent-default" | "task-override" | "auto" | "none";
+    role?: "cheapCheck" | "strong" | "escalation" | "coding" | "summarizer";
     model?: string;
     thinking?: string;
     escalationModel?: string;

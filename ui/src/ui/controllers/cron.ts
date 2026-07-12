@@ -78,6 +78,7 @@ export type ChatScheduleDraft = {
   skillToolName: string;
   skillToolInputJson: string;
   plannerStrategy: "" | "cheap-model" | "strong-model";
+  modelRole: "" | "cheapCheck" | "strong" | "escalation" | "coding" | "summarizer";
   policyModel: string;
   escalationModel: string;
   coordinationMode: "none" | "consult" | "parallel";
@@ -321,6 +322,7 @@ export function buildCronTaskTemplatePatch(template: TaskTemplatePreset): Partia
     skillToolName: "",
     skillToolInputJson: "",
     plannerStrategy: "",
+    modelRole: "",
     policyModel: "",
     escalationModel: "",
     coordinationMode: "none",
@@ -353,6 +355,7 @@ type TaskPolicyPresetPatch = Partial<
     | "skillScope"
     | "allowedSkills"
     | "plannerStrategy"
+    | "modelRole"
     | "policyModel"
     | "escalationModel"
     | "evaluatorEscalateOnSignal"
@@ -383,6 +386,7 @@ export const DEFAULT_CHAT_SCHEDULE_DRAFT: ChatScheduleDraft = {
   skillToolName: "",
   skillToolInputJson: "",
   plannerStrategy: "",
+  modelRole: "",
   policyModel: "",
   escalationModel: "",
   coordinationMode: "none",
@@ -427,6 +431,7 @@ export function buildTaskPolicyPresetPatch(
       memoryScope: "session-summary",
       skillScope: "agent-default",
       plannerStrategy: "",
+      modelRole: "",
       policyModel: "",
       escalationModel: "",
       evaluatorEscalateOnSignal: true,
@@ -463,6 +468,7 @@ export function buildTaskPolicyPresetPatch(
       skillScope: allowedSkills ? "selected" : current?.skillScope || "agent-default",
       ...(allowedSkills ? { allowedSkills } : {}),
       plannerStrategy: "",
+      modelRole: "",
       policyModel: "",
       escalationModel: "",
       evaluatorEscalateOnSignal: false,
@@ -474,6 +480,7 @@ export function buildTaskPolicyPresetPatch(
       memoryScope: "none",
       skillScope: "none",
       plannerStrategy: "",
+      modelRole: "",
       policyModel: "",
       escalationModel: "",
       evaluatorEscalateOnSignal: false,
@@ -980,6 +987,7 @@ export function cronJobToForm(job: CronJob, prev: CronFormState): CronFormState 
         ? executionPolicy.planner.strategy
         : "",
     policyModel: executionPolicy?.modelPolicy?.model ?? "",
+    modelRole: executionPolicy?.modelPolicy?.role ?? "",
     escalationModel: executionPolicy?.modelPolicy?.escalationModel ?? "",
     coordinationMode: executionPolicy?.coordination?.mode ?? "none",
     coordinationAgents: Array.isArray(executionPolicy?.coordination?.agents)
@@ -1351,6 +1359,9 @@ export function buildCronExecutionPolicy(form: CronFormState): CronTaskExecution
   };
   if (form.policyModel.trim()) {
     modelPolicy.model = form.policyModel.trim();
+  }
+  if (form.modelRole) {
+    modelPolicy.role = form.modelRole;
   }
   if (form.payloadThinking.trim()) {
     modelPolicy.thinking = form.payloadThinking.trim();
@@ -2098,6 +2109,7 @@ export function createChatScheduleDraftFromJob(job: CronJob): ChatScheduleDraft 
         : "",
     policyModel:
       modelPolicy?.model ?? (job.payload.kind === "agentTurn" ? (job.payload.model ?? "") : ""),
+    modelRole: modelPolicy?.role ?? "",
     escalationModel: modelPolicy?.escalationModel ?? "",
     coordinationMode: coordination?.mode ?? "none",
     coordinationAgents: Array.isArray(coordination?.agents) ? coordination.agents.join(", ") : "",
@@ -2178,6 +2190,9 @@ function buildChatScheduleExecutionPolicy(draft: ChatScheduleDraft): CronTaskExe
   };
   if (draft.policyModel.trim()) {
     modelPolicy.model = draft.policyModel.trim();
+  }
+  if (draft.modelRole) {
+    modelPolicy.role = draft.modelRole;
   }
   if (draft.escalationModel.trim()) {
     modelPolicy.escalationModel = draft.escalationModel.trim();

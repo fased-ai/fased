@@ -51,6 +51,7 @@ export type CronTaskSkillScope = "none" | "selected" | "agent-default";
 
 export type CronTaskModelPolicy = {
   mode?: "agent-default" | "task-override" | "auto" | "none";
+  role?: "cheapCheck" | "strong" | "escalation" | "coding" | "summarizer";
   model?: string;
   thinking?: string;
   escalationModel?: string;

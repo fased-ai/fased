@@ -46,7 +46,7 @@ For a high-level overview, see [Onboarding Wizard](/start/wizard).
     - **OpenAI sign-in (existing local credential)**: if `~/.codex/auth.json`
       exists, the wizard can reuse the existing OpenAI sign-in credential.
     - **OpenAI sign-in (ChatGPT OAuth)**: browser flow through OpenAI sign-in through the OpenAI Codex provider route.
-      - Sets `agents.defaults.model` to `openai-codex/gpt-5.5` when model is unset or `openai/*`.
+      - Sets `agents.defaults.model` to `openai-codex/gpt-5.6-sol` when model is unset or `openai/*`.
     - **OpenAI API key**: uses `OPENAI_API_KEY` if present or prompts for a key, then stores it in auth profiles.
     - **xAI (Grok)**: use Agent > Models for browser sign-in, device-code sign-in, or `XAI_API_KEY`.
     - **OpenCode Zen (multi-model proxy)**: prompts for `OPENCODE_API_KEY` or

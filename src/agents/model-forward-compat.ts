@@ -1,5 +1,6 @@
 import type { Api, Model } from "@mariozechner/pi-ai";
 import type { ModelRegistry } from "@mariozechner/pi-coding-agent";
+import { cloneCurrentModelProvider } from "./current-model-catalog.js";
 import { DEFAULT_CONTEXT_TOKENS } from "./defaults.js";
 import { normalizeModelCompat } from "./model-compat.js";
 import { normalizeProviderId } from "./model-selection.js";
@@ -85,6 +86,29 @@ function cloneFirstTemplateModel(params: {
     } as Model<Api>);
   }
   return undefined;
+}
+
+function resolveCurrentOpenAIModel(provider: string, modelId: string): Model<Api> | undefined {
+  const normalizedProvider = normalizeProviderId(provider);
+  if (normalizedProvider !== "openai" && normalizedProvider !== "openai-codex") {
+    return undefined;
+  }
+  const trimmedModelId = modelId.trim();
+  const current = cloneCurrentModelProvider(normalizedProvider)?.models?.find(
+    (entry) => entry.id.toLowerCase() === trimmedModelId.toLowerCase(),
+  );
+  if (!current) {
+    return undefined;
+  }
+  return normalizeModelCompat({
+    ...current,
+    id: trimmedModelId,
+    provider: normalizedProvider,
+    baseUrl:
+      normalizedProvider === "openai-codex"
+        ? "https://chatgpt.com/backend-api"
+        : "https://api.openai.com/v1",
+  } as Model<Api>);
 }
 
 function buildOpenAIResponsesPatch(params: {
@@ -427,6 +451,7 @@ export function resolveForwardCompatModel(
   modelRegistry: ModelRegistry,
 ): Model<Api> | undefined {
   return (
+    resolveCurrentOpenAIModel(provider, modelId) ??
     resolveOpenAIGptForwardCompatModel(provider, modelId, modelRegistry) ??
     resolveOpenAICodexForwardCompatModel(provider, modelId, modelRegistry) ??
     resolveAnthropicOpus46ForwardCompatModel(provider, modelId, modelRegistry) ??

@@ -172,6 +172,33 @@ const OPENAI_MODELS: ModelDefinitionConfig[] = [
 
 const OPENAI_CODEX_MODELS: ModelDefinitionConfig[] = [
   model({
+    id: "gpt-5.6-sol",
+    name: "GPT-5.6 Sol",
+    reasoning: true,
+    input: ["text", "image"],
+    contextWindow: 1_050_000,
+    maxTokens: 128_000,
+    api: "openai-codex-responses",
+  }),
+  model({
+    id: "gpt-5.6-terra",
+    name: "GPT-5.6 Terra",
+    reasoning: true,
+    input: ["text", "image"],
+    contextWindow: 1_050_000,
+    maxTokens: 128_000,
+    api: "openai-codex-responses",
+  }),
+  model({
+    id: "gpt-5.6-luna",
+    name: "GPT-5.6 Luna",
+    reasoning: true,
+    input: ["text", "image"],
+    contextWindow: 1_050_000,
+    maxTokens: 128_000,
+    api: "openai-codex-responses",
+  }),
+  model({
     id: "gpt-5.5",
     name: "GPT-5.5 Codex",
     reasoning: true,

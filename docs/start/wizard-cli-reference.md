@@ -172,14 +172,14 @@ explicit CLI provider setup.
     Browser flow through OpenAI sign-in. Internally this still uses the legacy
     `openai-codex` compatibility route until the runtime route is renamed.
 
-    Sets `agents.defaults.model` to `openai-codex/gpt-5.5` when model is unset
+    Sets `agents.defaults.model` to `openai-codex/gpt-5.6-sol` when model is unset
     or `openai/*`.
 
   </Accordion>
   <Accordion title="OpenAI API key">
     Uses `OPENAI_API_KEY` if present or prompts for a key, then stores the credential in auth profiles.
 
-    Sets `agents.defaults.model` to `openai/gpt-5.5` when model is unset,
+    Sets `agents.defaults.model` to `openai/gpt-5.6` when model is unset,
     `openai/*`, or `openai-codex/*`.
 
   </Accordion>

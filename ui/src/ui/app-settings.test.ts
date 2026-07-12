@@ -252,13 +252,18 @@ describe("buildUiModelCatalogs", () => {
     expect(providerRefs).not.toContain("openai/gpt-5.4");
   });
 
-  it("expands the curated catalog for an authenticated API-key route only", () => {
+  it("uses the gateway provider catalog as the authenticated source of truth", () => {
     const authStatus = {
       providers: [{ provider: "openai", status: "ok", profiles: [] }],
     } as unknown as ModelsAuthStatusResult;
     const catalogs = buildUiModelCatalogs({
       chatCatalog: [{ provider: "openai", id: "gpt-5.6", name: "GPT-5.6" }],
-      providerCatalog: [{ provider: "openai", id: "gpt-5.6", name: "GPT-5.6" }],
+      providerCatalog: [
+        { provider: "openai", id: "gpt-5.6", name: "GPT-5.6" },
+        { provider: "openai", id: "gpt-5.6-terra", name: "GPT-5.6 Terra" },
+        { provider: "openai", id: "gpt-5.6-luna", name: "GPT-5.6 Luna" },
+        { provider: "openai", id: "gpt-5.5", name: "GPT-5.5" },
+      ],
       authStatus,
     });
     const providerRefs = catalogs.provider.map((entry) => `${entry.provider}/${entry.id}`);

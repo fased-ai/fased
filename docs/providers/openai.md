@@ -116,9 +116,15 @@ fased models auth login --provider openai-codex
 
 ```json5
 {
-  agents: { defaults: { model: { primary: "openai-codex/gpt-5.5" } } },
+  agents: { defaults: { model: { primary: "openai-codex/gpt-5.6-sol" } } },
 }
 ```
+
+The curated sign-in catalog is route-specific. It currently includes GPT-5.6
+Sol, Terra, and Luna, GPT-5.5, GPT-5.4, GPT-5.4 Mini, and GPT-5.3 Codex Spark.
+Fased shows this list only after `openai-codex` sign-in is ready. An OpenAI API
+key does not unlock the sign-in route, and ChatGPT sign-in does not unlock the
+direct `openai/*` API route.
 
 ### Sign-in transport default
 
@@ -136,9 +142,9 @@ force the streaming path:
 {
   agents: {
     defaults: {
-      model: { primary: "openai-codex/gpt-5.5" },
+      model: { primary: "openai-codex/gpt-5.6-sol" },
       models: {
-        "openai-codex/gpt-5.5": {
+        "openai-codex/gpt-5.6-sol": {
           params: {
             transport: "auto",
           },
@@ -230,6 +236,9 @@ Direct OpenAI Responses models still force `store: true` unless compat sets
   direct API list also includes `openai/gpt-5.6-terra` and
   `openai/gpt-5.6-luna`. OpenAI sign-in remains a separate catalog, so choose
   only models shown for the `openai-codex/*` route after signing in.
+- The Gateway owns the authenticated model catalog. **Agent > Models** and
+  Chat consume that catalog directly; they do not maintain separate static
+  lists.
 - Auth details + reuse rules are in [/concepts/oauth](/concepts/oauth).
 - **Agent > Models** owns OpenAI credentials and that Agent's model roles. Chat
   can choose a session-level model from the authenticated provider catalog.

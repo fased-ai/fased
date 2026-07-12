@@ -200,7 +200,7 @@ describe("resolveModel", () => {
     expect(result.model).toMatchObject(buildOpenAICodexForwardCompatExpectation("gpt-5.3-codex"));
   });
 
-  it.each(["gpt-5.2-codex", "gpt-5.5-pro", "gpt-5.4-pro", "gpt-5.3-codex-spark"])(
+  it.each(["gpt-5.2-codex", "gpt-5.5-pro", "gpt-5.4-pro"])(
     "rejects unsupported openai-codex/%s requests instead of silently remapping",
     (requestedModel) => {
       mockOpenAICodexTemplateModel();
@@ -212,6 +212,26 @@ describe("resolveModel", () => {
     },
   );
 
+  it.each([
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+    "gpt-5.5",
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    "gpt-5.3-codex-spark",
+  ])("runs every exposed openai-codex/%s model through the Codex transport", (modelId) => {
+    const result = resolveModel("openai-codex", modelId, "/tmp/agent");
+
+    expect(result.error).toBeUndefined();
+    expect(result.model).toMatchObject({
+      id: modelId,
+      provider: "openai-codex",
+      api: "openai-codex-responses",
+      baseUrl: "https://chatgpt.com/backend-api",
+    });
+  });
+
   it("builds an openai-codex fallback for gpt-5.5 without old gpt-5.2-codex remapping", () => {
     mockOpenAICodexTemplateModel();
 
@@ -220,7 +240,7 @@ describe("resolveModel", () => {
     expect(result.error).toBeUndefined();
     expect(result.model).toMatchObject({
       ...buildOpenAICodexForwardCompatExpectation("gpt-5.5"),
-      contextWindow: 400000,
+      contextWindow: 1000000,
     });
   });
 

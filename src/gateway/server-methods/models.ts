@@ -1185,7 +1185,7 @@ export const modelsHandlers: GatewayRequestHandlers = {
           ? normalizeProviderId(params.provider)
           : "";
       const modelSource =
-        params.all === true
+        params.all === true || params.available === true
           ? usableCatalog
           : allowedCatalog.length > 0
             ? allowedCatalog

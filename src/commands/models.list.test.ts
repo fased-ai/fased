@@ -235,7 +235,7 @@ describe("models list/status", () => {
     const payload = parseJsonLog(runtime);
     const keys = payload.models.map((model: { key: string }) => model.key);
     expect(keys).toContain("openai/gpt-5.5");
-    expect(keys).toContain("anthropic/claude-opus-4-6");
+    expect(keys).toContain("anthropic/claude-opus-4-8");
     expect(keys).toContain("google/gemini-3.1-pro-preview");
   });
 
@@ -359,6 +359,9 @@ describe("models list/status", () => {
     );
     const runtime = makeRuntime();
 
+    const checksBefore = resolveEnvApiKey.mock.calls.filter(
+      ([provider]) => provider === "openai",
+    ).length;
     await modelsListCommand({ all: true, json: true }, runtime);
 
     const payload = parseJsonLog(runtime);
@@ -366,9 +369,10 @@ describe("models list/status", () => {
     const targetRows = rows.filter((row) => row.key.startsWith("openai/fased-test-"));
     expect(targetRows.map((row) => row.key)).toEqual(repeatedIds.map((id) => `openai/${id}`));
     expect(targetRows.every((row) => row.available)).toBe(true);
-    expect(
-      resolveEnvApiKey.mock.calls.filter(([provider]) => provider === "openai").length,
-    ).toBeLessThan(targetRows.length);
+    const checksAfter = resolveEnvApiKey.mock.calls.filter(
+      ([provider]) => provider === "openai",
+    ).length;
+    expect(checksAfter - checksBefore).toBeLessThan(targetRows.length);
   });
 
   it("models list does not treat availability-unavailable code as discovery fallback", async () => {
@@ -419,5 +423,23 @@ describe("models list/status", () => {
 
     expect(row.missing).toBe(false);
     expect(row.available).toBe(false);
+  });
+
+  it("uses route auth for curated models newer than the SDK registry", () => {
+    const row = toModelRow({
+      model: {
+        provider: "openai-codex",
+        id: "gpt-5.6-sol",
+        name: "GPT-5.6 Sol",
+        input: ["text", "image"],
+        catalogSource: "current-preview",
+      } as never,
+      key: "openai-codex/gpt-5.6-sol",
+      tags: [],
+      availableKeys: new Set(),
+      authIndex: { hasProviderAuth: (provider: string) => provider === "openai-codex" } as never,
+    });
+
+    expect(row.available).toBe(true);
   });
 });

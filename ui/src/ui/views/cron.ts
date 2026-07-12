@@ -3271,7 +3271,27 @@ export function renderCron(props: CronProps) {
                   : nothing
               }
               <label class="field">
-                ${renderFieldLabel("Cheap/check model")}
+                ${renderFieldLabel("Agent model role")}
+                <select
+                  .value=${props.form.modelRole}
+                  ?disabled=${props.form.executionMode === "no-model"}
+                  @change=${(e: Event) =>
+                    props.onFormChange({
+                      modelRole: (e.target as HTMLSelectElement)
+                        .value as CronFormState["modelRole"],
+                    })}
+                >
+                  <option value="">Automatic / Agent default</option>
+                  <option value="cheapCheck">Cheap/check</option>
+                  <option value="strong">Strong</option>
+                  <option value="escalation">Escalation</option>
+                  <option value="coding">Coding</option>
+                  <option value="summarizer">Summarizer</option>
+                </select>
+                <div class="cron-help">Uses the selected Agent's configured role model.</div>
+              </label>
+              <label class="field">
+                ${renderFieldLabel("Exact task model")}
                 <input
                   .value=${props.form.policyModel}
                   list="cron-model-suggestions"
