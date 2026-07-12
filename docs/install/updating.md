@@ -53,9 +53,14 @@ For hosted VPS installs, the recommended setup path is the hosted installer:
 curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
 ```
 
-That path sets up the non-root `app` runtime, private Tailscale access, and the
-hosted security posture. A manual global npm install is an advanced local/dev or
-self-managed-host path; it is not the normal VPS hosting path.
+Run the first Hosting install from the VPS provider's root shell. That path
+creates the non-root `app` runtime, private Tailscale access, and the hosted
+security posture. After the installer hands off to `app`, use the Tailscale
+hostname and the `app` account for normal operation and every normal update. A
+successful fresh install does not require `--repair-hosting` afterward.
+
+A manual global npm install is an advanced local/dev or self-managed-host path;
+it is not the normal VPS Hosting path.
 
 ## CLI update
 
@@ -204,13 +209,22 @@ replacement. A typical symptom is an update that reports success while
 `fased --version` remains unchanged. Code added in a newer release cannot run
 inside that already-installed old binary.
 
-Use the hosted installer once to repair that legacy runtime and service without
-rerunning onboarding:
+This is not a normal update and is not a follow-up step after a successful fresh
+install. First log in as `app` over Tailscale and try `fased update`. Use this
+repair only when that command cannot start, fails, or leaves the old version in
+place.
+
+The repair must restore root-owned service helpers and the system service. Open
+the VPS provider's web/recovery console as `root` (or use root SSH only when the
+provider still permits it), then run:
 
 ```bash
-ssh root@YOUR_VPS_PUBLIC_IP
 curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --repair-hosting
 ```
+
+Do not run this command from the normal `app` Tailscale shell. The restricted
+`app` account intentionally cannot replace arbitrary root-owned installer
+helpers.
 
 The repair keeps the existing `/home/app/fased` checkout and persistent
 `/home/app/.fased` state. It refreshes the managed runtime, replaces a legacy
@@ -227,7 +241,12 @@ After this one repair, return to the normal command:
 
 ```bash
 ssh app@YOUR_VPS_TAILSCALE_NAME
+cd ~/fased
+fased update status
 fased update
+fased --version
+fased gateway status
+fased plugins doctor
 ```
 
 This repair is only for VPS Hosting installs with the root-managed service.
@@ -257,7 +276,7 @@ curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
   | bash -s -- --local --no-onboard
 ```
 
-VPS Hosting bootstrap, run as `root`:
+VPS Hosting bootstrap, run from the provider's root console:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
