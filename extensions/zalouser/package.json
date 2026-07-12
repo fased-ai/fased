@@ -1,6 +1,6 @@
 {
   "name": "@fased/zalouser",
-  "version": "0.1.51",
+  "version": "0.1.52",
   "description": "FasedAgent Zalo Personal Account plugin via zca-cli",
   "type": "module",
   "dependencies": {
