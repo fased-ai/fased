@@ -161,6 +161,12 @@ fased providers models remove --provider custom --model my-local-model
 installation. `providers refresh` updates the shared curated registry only after
 review or explicit apply.
 
+The Dashboard, Chat, Agent defaults, and ordinary `models.list` requests use
+that reviewed catalog. SDK-discovered historical models are available only to
+advanced/debug callers through `models.list` with `all: true`. Dynamic local
+providers and explicitly configured custom models remain selectable because
+their catalog belongs to the operator's own endpoint.
+
 ## Local Models
 
 Use one of the registry-supported local/manual routes:

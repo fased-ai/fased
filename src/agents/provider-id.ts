@@ -10,7 +10,7 @@ export function normalizeProviderId(provider: string): string {
     return "opencode";
   }
   if (normalized === "kimi" || normalized === "kimi-code" || normalized === "kimi-coding") {
-    return "kimi";
+    return "kimi-coding";
   }
   if (normalized === "moonshotai" || normalized === "moonshot-ai") {
     return "moonshot";

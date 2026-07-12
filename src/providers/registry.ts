@@ -125,6 +125,7 @@ export type ProviderBrandManifest = {
     recommended: string[];
     routeRules: Record<string, string[]>;
     dynamic?: boolean;
+    operatorCatalog?: boolean;
   };
   modelCapabilities?: Record<string, ModelCapabilityConfig>;
 };
@@ -272,6 +273,8 @@ export const CHUTES_MODEL_IDS = [
   "Qwen/Qwen3.6-27B-TEE",
   "Qwen/Qwen3.5-397B-A17B-TEE",
   "zai-org/GLM-5-TEE",
+  "Qwen/Qwen3-235B-A22B-Thinking-2507-TEE",
+  "zai-org/GLM-5.2-TEE",
 ] as const;
 export const CHUTES_MODEL_REFS = CHUTES_MODEL_IDS.map((id) => `${CHUTES_ROUTE_ID}/${id}`);
 
@@ -1189,6 +1192,7 @@ export const OLLAMA_PROVIDER_MANIFEST: ProviderBrandManifest = {
   models: {
     recommended: OLLAMA_MODEL_REFS,
     dynamic: true,
+    operatorCatalog: true,
     routeRules: {
       [OLLAMA_ROUTE_ID]: [`${OLLAMA_ROUTE_ID}/*`],
     },
@@ -1215,6 +1219,7 @@ export const LMSTUDIO_PROVIDER_MANIFEST: ProviderBrandManifest = {
   models: {
     recommended: LMSTUDIO_MODEL_REFS,
     dynamic: true,
+    operatorCatalog: true,
     routeRules: {
       [LMSTUDIO_ROUTE_ID]: [`${LMSTUDIO_ROUTE_ID}/*`],
     },
@@ -1241,6 +1246,7 @@ export const VLLM_PROVIDER_MANIFEST: ProviderBrandManifest = {
   models: {
     recommended: VLLM_MODEL_REFS,
     dynamic: true,
+    operatorCatalog: true,
     routeRules: {
       [VLLM_ROUTE_ID]: [`${VLLM_ROUTE_ID}/*`],
     },
@@ -1892,6 +1898,7 @@ export const LITELLM_PROVIDER_MANIFEST: ProviderBrandManifest = {
   models: {
     recommended: [...LITELLM_MODEL_REFS],
     dynamic: true,
+    operatorCatalog: true,
     routeRules: {
       [LITELLM_ROUTE_ID]: [`${LITELLM_ROUTE_ID}/*`],
     },
@@ -1943,6 +1950,7 @@ export const CUSTOM_PROVIDER_MANIFEST: ProviderBrandManifest = {
   models: {
     recommended: CUSTOM_PROVIDER_MODEL_REFS,
     dynamic: true,
+    operatorCatalog: true,
     routeRules: {
       [CUSTOM_PROVIDER_ROUTE_ID]: [`${CUSTOM_PROVIDER_ROUTE_ID}/*`],
     },
@@ -2059,7 +2067,11 @@ export function isStandardProviderModelRef(ref: string): boolean {
   if (!getProviderBrandManifestForRoute(provider)) {
     return false;
   }
-  if (getProviderBrandManifestForRoute(provider)?.models.dynamic) {
+  const manifest = getProviderBrandManifestForRoute(provider);
+  if (!manifest) {
+    return false;
+  }
+  if (manifest.models.operatorCatalog) {
     return true;
   }
   return STANDARD_PROVIDER_MODEL_REFS.has(value.toLowerCase());
