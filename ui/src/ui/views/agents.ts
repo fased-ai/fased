@@ -293,6 +293,7 @@ export type AgentsProps = {
   runtimeSessionKey: string;
   runtimeSessionMatchesSelectedAgent: boolean;
   modelCatalog: ModelCatalogEntry[];
+  runnableModelCatalog: ModelCatalogEntry[];
   skillEdits: Record<string, string>;
   skillsBusyKey: string | null;
   skillsLibrary?: SkillsProps;
@@ -523,7 +524,7 @@ function addAgentCreateModelOption(
 
 function buildAgentCreateModelOptions(props: AgentsProps) {
   const options = new Map<string, AgentCreateModelOption>();
-  for (const entry of props.modelCatalog) {
+  for (const entry of props.runnableModelCatalog) {
     const provider = entry.provider?.trim();
     if (!provider) {
       continue;

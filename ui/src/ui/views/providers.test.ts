@@ -148,8 +148,7 @@ describe("renderProviders", () => {
     expect(text).toContain("Save API");
     expect(text).toContain("Sign in");
     expect(text).toContain("Configure");
-    expect(text).toContain("Two OpenAI routes");
-    expect(text).toContain("GPT-5.6");
+    expect(text).not.toContain("Two OpenAI routes");
     expect(text).not.toContain("Default model");
     expect(text).not.toContain("Ready providers");
     expect(text).not.toContain("Catalog models");

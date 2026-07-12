@@ -67,6 +67,8 @@ type AgentModelOption = {
   brandId: string;
   value: string;
   label: string;
+  available: boolean;
+  setupLabel?: string;
   capabilityDetail?: string;
 };
 
@@ -130,9 +132,60 @@ function modelProviderFromValue(value: string | null | undefined): string {
   return index > 0 ? trimmed.slice(0, index) : "";
 }
 
+function readyModelProviderRoutes(authStatus: ModelsAuthStatusResult | null): Set<string> {
+  const routes = new Set<string>();
+  for (const provider of authStatus?.providers ?? []) {
+    if (!isAuthReadyProviderStatus(provider.status)) {
+      continue;
+    }
+    const route = provider.provider.trim().toLowerCase();
+    if (!route) {
+      continue;
+    }
+    routes.add(route);
+    const manifest = getProviderBrandManifestForRoute(route);
+    const method = manifest?.methods.find((entry) =>
+      [entry.route, entry.statusRoute, entry.configProviderId]
+        .map((value) => value?.trim().toLowerCase())
+        .includes(route),
+    );
+    for (const alias of [method?.route, method?.statusRoute, method?.configProviderId]) {
+      const normalized = alias?.trim().toLowerCase();
+      if (normalized) {
+        routes.add(normalized);
+      }
+    }
+  }
+  return routes;
+}
+
+function modelRouteSetupLabel(provider: string): string {
+  const route = provider.trim().toLowerCase();
+  const manifest = getProviderBrandManifestForRoute(route);
+  const method = manifest?.methods.find((entry) =>
+    [entry.route, entry.statusRoute, entry.configProviderId]
+      .map((value) => value?.trim().toLowerCase())
+      .includes(route),
+  );
+  if (method?.kind === "api-key") {
+    return "API key required";
+  }
+  if (method?.kind === "oauth") {
+    return "Sign-in required";
+  }
+  return "Provider setup required";
+}
+
 function addAgentModelOption(
   options: Map<string, AgentModelOption>,
-  params: { provider: string; id: string; label?: string; capabilityDetail?: string },
+  params: {
+    provider: string;
+    id: string;
+    label?: string;
+    available: boolean;
+    setupLabel?: string;
+    capabilityDetail?: string;
+  },
 ) {
   const provider = params.provider.trim();
   const id = params.id.trim();
@@ -150,6 +203,8 @@ function addAgentModelOption(
     brandId: providerBrandId(provider),
     value,
     label: params.label?.trim() || id,
+    available: params.available,
+    ...(params.setupLabel ? { setupLabel: params.setupLabel } : {}),
     ...(params.capabilityDetail ? { capabilityDetail: params.capabilityDetail } : {}),
   });
 }
@@ -176,8 +231,12 @@ function modelCapabilityDetail(entry: ModelCatalogEntry): string {
   return parts.length > 0 ? parts.join(" · ") : "text";
 }
 
-function buildAgentModelOptions(catalog: ModelCatalogEntry[]) {
+function buildAgentModelOptions(
+  catalog: ModelCatalogEntry[],
+  authStatus: ModelsAuthStatusResult | null,
+) {
   const options = new Map<string, AgentModelOption>();
+  const readyRoutes = readyModelProviderRoutes(authStatus);
   for (const entry of catalog) {
     const provider = entry.provider?.trim();
     if (!provider) {
@@ -190,6 +249,10 @@ function buildAgentModelOptions(catalog: ModelCatalogEntry[]) {
       provider,
       id: entry.id,
       label: modelCatalogLabel(entry),
+      available: readyRoutes.has(provider.toLowerCase()),
+      ...(!readyRoutes.has(provider.toLowerCase())
+        ? { setupLabel: modelRouteSetupLabel(provider) }
+        : {}),
       capabilityDetail: modelCapabilityDetail(entry),
     });
   }
@@ -252,8 +315,9 @@ function renderAgentProviderModelOptions(options: AgentModelOption[], selectedMo
                 value=${entry.value}
                 data-provider=${provider}
                 ?selected=${selectedModel === entry.value}
+                ?disabled=${!entry.available}
               >
-                ${entry.label}
+                ${entry.label}${entry.setupLabel ? ` · ${entry.setupLabel}` : ""}
               </option>
             `,
           )}
@@ -286,8 +350,9 @@ function renderTaskRoleModelOptions(options: AgentModelOption[], selectedModel =
                 value=${entry.value}
                 data-provider=${entry.brandId}
                 ?selected=${selectedModel === entry.value}
+                ?disabled=${!entry.available}
               >
-                ${entry.label}
+                ${entry.label}${entry.setupLabel ? ` · ${entry.setupLabel}` : ""}
               </option>
             `,
           )}
@@ -381,9 +446,11 @@ function renderAgentModelSelectButtons(params: {
                 type="button"
                 role="option"
                 aria-selected=${String(params.selectedValue === entry.value)}
+                aria-disabled=${String(!entry.available)}
+                ?disabled=${!entry.available}
                 title=${`${entry.label} · ${providerLabel(entry.brandId)}${
                   entry.capabilityDetail ? ` · ${entry.capabilityDetail}` : ""
-                }`}
+                }${entry.setupLabel ? ` · ${entry.setupLabel}` : ""}`}
                 data-agent-model-option="true"
                 data-agent-model-control=${params.control}
                 data-provider=${entry.brandId}
@@ -391,6 +458,11 @@ function renderAgentModelSelectButtons(params: {
                 @click=${handleAgentModelSelectOption}
               >
                 ${entry.label} · ${providerLabel(entry.brandId)}
+                ${
+                  entry.setupLabel
+                    ? html`<span class="agent-model-select__capabilities">${entry.setupLabel}</span>`
+                    : nothing
+                }
                 ${
                   entry.capabilityDetail
                     ? html`<span class="agent-model-select__capabilities">${entry.capabilityDetail}</span>`
@@ -2426,7 +2498,11 @@ export function renderAgentOverview(params: {
   const selectedModelValue = effectivePrimary ?? "";
   const identityAvatar =
     config.entry?.identity?.avatar?.trim() || agent.identity?.avatar?.trim() || "";
-  const agentModelOptions = buildAgentModelOptions(params.modelCatalog);
+  const readyModelRoutes = readyModelProviderRoutes(params.providers.authStatus);
+  const agentModelOptions = buildAgentModelOptions(
+    params.modelCatalog,
+    params.providers.authStatus,
+  );
   const discoveredAgentModelValues = new Set(agentModelOptions.map((option) => option.value));
   for (const currentTaskModel of [
     ...Object.values(defaultTaskModels),
@@ -2450,6 +2526,10 @@ export function renderAgentOverview(params: {
         brandId: providerBrandId(currentProvider),
         value: currentTaskModel,
         label: `Current (${currentTaskModel})`,
+        available: readyModelRoutes.has(currentProvider.toLowerCase()),
+        ...(!readyModelRoutes.has(currentProvider.toLowerCase())
+          ? { setupLabel: modelRouteSetupLabel(currentProvider) }
+          : {}),
       });
     }
   }
@@ -2464,6 +2544,10 @@ export function renderAgentOverview(params: {
         brandId: providerBrandId(currentProvider),
         value: selectedModelValue,
         label: `Current (${selectedModelValue})`,
+        available: readyModelRoutes.has(currentProvider.toLowerCase()),
+        ...(!readyModelRoutes.has(currentProvider.toLowerCase())
+          ? { setupLabel: modelRouteSetupLabel(currentProvider) }
+          : {}),
       });
     }
   }
@@ -2478,6 +2562,10 @@ export function renderAgentOverview(params: {
         brandId: providerBrandId(currentProvider),
         value: currentFallback,
         label: `Current (${currentFallback})`,
+        available: readyModelRoutes.has(currentProvider.toLowerCase()),
+        ...(!readyModelRoutes.has(currentProvider.toLowerCase())
+          ? { setupLabel: modelRouteSetupLabel(currentProvider) }
+          : {}),
       });
     }
   }

@@ -243,6 +243,23 @@ function filterCatalogToSignedInProviders(
   return catalog.filter((entry) => readyRoutes.has(normalizeProviderRoute(entry.provider)));
 }
 
+export function buildUiModelCatalogs(params: {
+  chatCatalog: ModelCatalogEntry[];
+  providerCatalog: ModelCatalogEntry[];
+  authStatus: ModelsAuthStatusResult | null;
+}) {
+  return {
+    chat: filterCatalogToSignedInProviders(
+      buildManifestModelCatalog(params.chatCatalog, { includeRuntimeModels: true }),
+      params.authStatus,
+    ),
+    provider: buildManifestModelCatalog(params.providerCatalog, {
+      includeAllManifest: true,
+      includeRuntimeModels: true,
+    }),
+  };
+}
+
 function resolveTabForManagedMode(host: SettingsHost, tab: Tab): Tab {
   if (host.federationManagedMode && tab === "federation") {
     return "overview";
@@ -697,7 +714,7 @@ export async function loadProviderModelCatalog(host: SettingsHost) {
   try {
     const [modelsResult, allModelsResult, authStatusResult, catalogStatusResult] =
       await Promise.allSettled([
-        loadModels(app.client, { sessionKey: host.sessionKey, all: true }),
+        loadModels(app.client, { sessionKey: host.sessionKey }),
         loadModels(app.client, { all: true }),
         app.client.request<ModelsAuthStatusResult>("models.auth.status", {}),
         app.client.request<ModelsCatalogStatusResult>("models.catalog.status", {}),
@@ -706,16 +723,9 @@ export async function loadProviderModelCatalog(host: SettingsHost) {
     const chatCatalog = modelsResult.status === "fulfilled" ? modelsResult.value : [];
     const providerCatalog =
       allModelsResult.status === "fulfilled" ? allModelsResult.value : chatCatalog;
-    host.chatModelCatalog = filterCatalogToSignedInProviders(
-      buildManifestModelCatalog(chatCatalog),
-      authStatus,
-    );
-    host.providerModelCatalog = filterCatalogToSignedInProviders(
-      buildManifestModelCatalog(providerCatalog, {
-        includeAllManifest: true,
-      }),
-      authStatus,
-    );
+    const catalogs = buildUiModelCatalogs({ chatCatalog, providerCatalog, authStatus });
+    host.chatModelCatalog = catalogs.chat;
+    host.providerModelCatalog = catalogs.provider;
     if (authStatus) {
       host.configAuthStatus = authStatus;
     }

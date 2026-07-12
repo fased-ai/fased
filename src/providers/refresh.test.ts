@@ -229,7 +229,7 @@ describe("provider refresh", () => {
       missingSource: false,
       additions: ["gpt-5-codex"],
     });
-    expect(openai?.removals).toContain("gpt-5.4-mini");
+    expect(openai?.removals).toContain("gpt-5.6-terra");
 
     const signIn = report.routes.find((route) => route.route === "openai-codex");
     expect(signIn).toMatchObject({

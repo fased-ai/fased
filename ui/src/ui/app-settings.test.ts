@@ -35,10 +35,12 @@ import {
   applySettings,
   applySettingsFromUrl,
   attachThemeListener,
+  buildUiModelCatalogs,
   setTabFromRoute,
   syncThemeWithSettings,
 } from "./app-settings.ts";
 import type { ThemeMode } from "./theme.ts";
+import type { ModelsAuthStatusResult } from "./types.ts";
 
 type Tab =
   | "agents"
@@ -220,6 +222,36 @@ const createHost = (tab: Tab): SettingsHost => ({
 function asAppSettingsHost(host: SettingsHost): Parameters<typeof applySettings>[0] {
   return host as unknown as Parameters<typeof applySettings>[0];
 }
+
+describe("buildUiModelCatalogs", () => {
+  it("keeps chat executable while exposing the full reviewed provider catalog", () => {
+    const authStatus = {
+      providers: [
+        {
+          provider: "openai-codex",
+          status: "ok",
+          profiles: [],
+        },
+      ],
+    } as unknown as ModelsAuthStatusResult;
+    const catalogs = buildUiModelCatalogs({
+      chatCatalog: [
+        { provider: "openai-codex", id: "gpt-5.5", name: "GPT-5.5" },
+        { provider: "openai", id: "gpt-5.6", name: "GPT-5.6" },
+      ],
+      providerCatalog: [],
+      authStatus,
+    });
+    const chatRefs = catalogs.chat.map((entry) => `${entry.provider}/${entry.id}`);
+    const providerRefs = catalogs.provider.map((entry) => `${entry.provider}/${entry.id}`);
+
+    expect(chatRefs).toContain("openai-codex/gpt-5.5");
+    expect(chatRefs).not.toContain("openai/gpt-5.6");
+    expect(providerRefs).toContain("openai/gpt-5.6");
+    expect(providerRefs).toContain("openai-codex/gpt-5.5");
+    expect(providerRefs).not.toContain("openai/gpt-5.4");
+  });
+});
 
 describe("setTabFromRoute", () => {
   beforeEach(() => {
