@@ -2,6 +2,7 @@ import { html, nothing } from "lit";
 import { FASED_AGENT_NAME, FASED_BRAND_NAME } from "../../../src/brand.js";
 import { normalizeAgentModelFallbackValues } from "../../../src/config/model-input.js";
 import { parseAgentSessionKey } from "../../../src/routing/session-key.js";
+import { materializeAgentConfigList } from "./agent-config-entry.ts";
 import { formatAgentDisplayLabel } from "./agent-display.ts";
 import { refreshChatAvatar } from "./app-chat.ts";
 import { DEFAULT_CRON_FORM } from "./app-defaults.ts";
@@ -872,6 +873,23 @@ function readAgentConfigEntry(state: AppViewState, agentId: string) {
     index: -1,
     entry: null,
   };
+}
+
+function ensureAgentConfigEntry(state: AppViewState, agentId: string) {
+  const existing = readAgentConfigEntry(state, agentId);
+  if (existing.basePath) {
+    return existing;
+  }
+  const config =
+    state.configForm ?? (state.configSnapshot?.config as Record<string, unknown> | null);
+  const materialized = materializeAgentConfigList(config, agentId);
+  if (!materialized) {
+    return existing;
+  }
+  if (materialized.changed) {
+    updateConfigFormValue(state, ["agents", "list"], materialized.list);
+  }
+  return readAgentConfigEntry(state, agentId.trim());
 }
 
 async function attachSkillToAgent(state: AppViewState, skillKey: string, agentId: string) {
@@ -4325,7 +4343,10 @@ export function renderApp(state: AppViewState) {
                   state.requestUpdate();
                 },
                 onModelChange: (agentId, modelId) => {
-                  const { basePath, entry } = readAgentConfigEntry(state, agentId);
+                  const current = readAgentConfigEntry(state, agentId);
+                  const { basePath, entry } = modelId
+                    ? ensureAgentConfigEntry(state, agentId)
+                    : current;
                   if (!basePath) {
                     return;
                   }
@@ -4349,12 +4370,14 @@ export function renderApp(state: AppViewState) {
                   }
                 },
                 onModelFallbacksChange: (agentId, fallbacks) => {
-                  const { basePath, entry } = readAgentConfigEntry(state, agentId);
+                  const normalized = normalizeAgentModelFallbackValues(fallbacks) ?? [];
+                  const current = readAgentConfigEntry(state, agentId);
+                  const { basePath, entry } =
+                    normalized.length > 0 ? ensureAgentConfigEntry(state, agentId) : current;
                   if (!basePath) {
                     return;
                   }
                   const modelPath = [...basePath, "model"];
-                  const normalized = normalizeAgentModelFallbackValues(fallbacks) ?? [];
                   const existing = entry?.model;
                   const resolvePrimary = () => {
                     if (typeof existing === "string") {
@@ -4384,15 +4407,19 @@ export function renderApp(state: AppViewState) {
                   updateConfigFormValue(state, modelPath, next);
                 },
                 onTaskModelsChange: (agentId, taskModels) => {
-                  const { basePath } = readAgentConfigEntry(state, agentId);
-                  if (!basePath) {
-                    return;
-                  }
                   const normalized = Object.fromEntries(
                     Object.entries(taskModels)
                       .map(([key, value]) => [key, value?.trim?.() ?? ""] as const)
                       .filter(([, value]) => Boolean(value)),
                   );
+                  const current = readAgentConfigEntry(state, agentId);
+                  const { basePath } =
+                    Object.keys(normalized).length > 0
+                      ? ensureAgentConfigEntry(state, agentId)
+                      : current;
+                  if (!basePath) {
+                    return;
+                  }
                   const taskModelsPath = [...basePath, "taskModels"];
                   if (Object.keys(normalized).length === 0) {
                     removeConfigFormValue(state, taskModelsPath);
@@ -4435,12 +4462,15 @@ export function renderApp(state: AppViewState) {
                   };
                 },
                 onActiveModelProviderChange: (agentId, providerId) => {
-                  const { basePath } = readAgentConfigEntry(state, agentId);
+                  const normalized =
+                    typeof providerId === "string" ? providerId.trim().toLowerCase() : "";
+                  const current = readAgentConfigEntry(state, agentId);
+                  const { basePath } = normalized
+                    ? ensureAgentConfigEntry(state, agentId)
+                    : current;
                   if (!basePath) {
                     return;
                   }
-                  const normalized =
-                    typeof providerId === "string" ? providerId.trim().toLowerCase() : "";
                   const activeProviderPath = [...basePath, "activeModelProvider"];
                   if (!normalized) {
                     removeConfigFormValue(state, activeProviderPath);
@@ -4449,10 +4479,6 @@ export function renderApp(state: AppViewState) {
                   updateConfigFormValue(state, activeProviderPath, normalized);
                 },
                 onModelProviderChange: (agentId, providerId, providerConfig) => {
-                  const { basePath } = readAgentConfigEntry(state, agentId);
-                  if (!basePath) {
-                    return;
-                  }
                   const provider = providerId.trim().toLowerCase();
                   if (!provider) {
                     return;
@@ -4483,6 +4509,14 @@ export function renderApp(state: AppViewState) {
                           : {}),
                       }
                     : null;
+                  const current = readAgentConfigEntry(state, agentId);
+                  const { basePath } =
+                    normalized && Object.keys(normalized).length > 0
+                      ? ensureAgentConfigEntry(state, agentId)
+                      : current;
+                  if (!basePath) {
+                    return;
+                  }
                   const providerPath = [...basePath, "modelProviders", provider];
                   if (!normalized || Object.keys(normalized).length === 0) {
                     removeConfigFormValue(state, providerPath);

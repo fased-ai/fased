@@ -253,10 +253,10 @@ export function buildUiModelCatalogs(params: {
       buildManifestModelCatalog(params.chatCatalog, { includeRuntimeModels: true }),
       params.authStatus,
     ),
-    provider: buildManifestModelCatalog(params.providerCatalog, {
-      includeAllManifest: true,
-      includeRuntimeModels: true,
-    }),
+    provider: filterCatalogToSignedInProviders(
+      buildManifestModelCatalog(params.providerCatalog, { includeRuntimeModels: true }),
+      params.authStatus,
+    ),
   };
 }
 
