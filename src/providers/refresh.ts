@@ -194,7 +194,7 @@ type ProviderRefreshModelProviderSource = Record<
   }
 >;
 
-const OPENAI_DOCS_MODELS_URL = "https://developers.openai.com/api/docs/models";
+const OPENAI_DOCS_MODELS_URL = "https://developers.openai.com/api/docs/models/all";
 const CHUTES_MODELS_URL = "https://llm.chutes.ai/v1/models";
 const OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models";
 const VERCEL_AI_GATEWAY_MODELS_URL = "https://ai-gateway.vercel.sh/v1/models";

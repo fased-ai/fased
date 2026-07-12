@@ -1835,6 +1835,7 @@ describe("provider refresh", () => {
   it("fetches official OpenAI and Chutes snapshots together", async () => {
     const fetchMock = async (url: string | URL | Request) => {
       if (fetchUrlText(url).includes("developers.openai.com")) {
+        expect(fetchUrlText(url)).toBe("https://developers.openai.com/api/docs/models/all");
         return {
           ok: true,
           text: async () => "gpt-5.5 gpt-5.4-mini gpt-4.1-mini",
