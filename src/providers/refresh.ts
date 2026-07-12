@@ -40,7 +40,6 @@ import {
   LMSTUDIO_PROVIDER_BRAND_ID,
   LMSTUDIO_ROUTE_ID,
   LITELLM_BASE_URL,
-  LITELLM_MODEL_IDS,
   LITELLM_PROVIDER_BRAND_ID,
   LITELLM_ROUTE_ID,
   MINIMAX_API_ROUTE_ID,
@@ -195,15 +194,17 @@ type ProviderRefreshModelProviderSource = Record<
 >;
 
 const OPENAI_DOCS_MODELS_URL = "https://developers.openai.com/api/docs/models/all";
+const OPENAI_API_MODELS_URL = "https://api.openai.com/v1/models";
 const CHUTES_MODELS_URL = "https://llm.chutes.ai/v1/models";
 const OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models";
 const VERCEL_AI_GATEWAY_MODELS_URL = "https://ai-gateway.vercel.sh/v1/models";
 const OPENCODE_ZEN_MODELS_URL = "https://opencode.ai/zen/v1/models";
 const HUGGINGFACE_MODELS_URL = "https://router.huggingface.co/v1/models";
 const VENICE_MODELS_URL = "https://api.venice.ai/api/v1/models";
+const PROVIDER_CATALOG_TIMEOUT_MS = 8_000;
 const ANTHROPIC_MODELS_URL = "https://api.anthropic.com/v1/models";
 const GOOGLE_GEMINI_MODELS_URL = "https://generativelanguage.googleapis.com/v1beta/models";
-const XAI_MODELS_URL = "https://api.x.ai/v1/models";
+const XAI_LANGUAGE_MODELS_URL = "https://api.x.ai/v1/language-models";
 const MISTRAL_MODELS_URL = "https://api.mistral.ai/v1/models";
 const MINIMAX_MODELS_URL = "https://api.minimax.io/v1/models";
 const MINIMAX_PORTAL_DEFAULT_BASE_URL = "https://api.minimax.io/anthropic";
@@ -226,12 +227,6 @@ const VLLM_DEFAULT_BASE_URL = "http://127.0.0.1:8000/v1";
 const OLLAMA_DEFAULT_BASE_URL = "http://127.0.0.1:11434";
 const LMSTUDIO_DEFAULT_BASE_URL = "http://127.0.0.1:1234/v1";
 const LITELLM_DEFAULT_BASE_URL = LITELLM_BASE_URL;
-
-const OPENAI_CURRENT_API_MODEL_RE = /^gpt-5\.(?:[4-9]|\d{2,})(?:-(?:mini|nano|terra|luna))?$/;
-const OPENAI_CURRENT_SIGN_IN_MODEL_RE =
-  /^gpt-(?:5\.6-(?:sol|terra|luna)|5\.(?:[4-9]|\d{2,})(?:-mini)?|5\.3-codex-spark)$/;
-const CHUTES_CURRENT_NORMAL_UI_MODEL_RE =
-  /^(?:google\/gemma-4-[^/]+-TEE|Qwen\/Qwen3(?:\.\d+)?-[^/]+-TEE|deepseek-ai\/DeepSeek-V3\.2-TEE|zai-org\/GLM-5(?:\.\d+)?-TEE|moonshotai\/Kimi-K2\.6-TEE)$/;
 
 function normalizeModelIds(
   values: Iterable<string>,
@@ -327,6 +322,12 @@ function setProviderRefreshEnvFromProfile(params: {
   const provider = params.profile.provider.trim();
   const apiKey = resolveApiKeyProfileValue(params.profile, params.env);
   switch (provider) {
+    case "openai":
+      setProviderRefreshEnvValue(params.target, "OPENAI_API_KEY", apiKey);
+      break;
+    case "chutes":
+      setProviderRefreshEnvValue(params.target, "CHUTES_API_KEY", apiKey);
+      break;
     case "anthropic":
       setProviderRefreshEnvValue(params.target, "ANTHROPIC_API_KEY", apiKey);
       break;
@@ -433,6 +434,23 @@ function setProviderRefreshEnvFromProfile(params: {
     case "together":
       setProviderRefreshEnvValue(params.target, "TOGETHER_API_KEY", apiKey);
       break;
+    case "openrouter":
+      setProviderRefreshEnvValue(params.target, "OPENROUTER_API_KEY", apiKey);
+      break;
+    case "vercel-ai-gateway":
+    case "ai-gateway":
+      setProviderRefreshEnvValue(params.target, "AI_GATEWAY_API_KEY", apiKey);
+      break;
+    case "opencode":
+    case "opencode-zen":
+      setProviderRefreshEnvValue(params.target, "OPENCODE_API_KEY", apiKey);
+      break;
+    case "huggingface":
+      setProviderRefreshEnvValue(params.target, "HUGGINGFACE_HUB_TOKEN", apiKey);
+      break;
+    case "venice":
+      setProviderRefreshEnvValue(params.target, "VENICE_API_KEY", apiKey);
+      break;
     default:
       if (provider.startsWith("custom-")) {
         setProviderRefreshEnvValue(params.target, "CUSTOM_PROVIDER_API_KEY", apiKey);
@@ -451,6 +469,28 @@ function setProviderRefreshEnvFromModelProvider(params: {
   const baseUrl =
     typeof params.provider.baseUrl === "string" ? params.provider.baseUrl.trim() : undefined;
   switch (params.providerId) {
+    case "openai":
+      setProviderRefreshEnvValue(params.target, "OPENAI_API_KEY", apiKey);
+      break;
+    case "chutes":
+      setProviderRefreshEnvValue(params.target, "CHUTES_API_KEY", apiKey);
+      break;
+    case "openrouter":
+      setProviderRefreshEnvValue(params.target, "OPENROUTER_API_KEY", apiKey);
+      break;
+    case "vercel-ai-gateway":
+    case "ai-gateway":
+      setProviderRefreshEnvValue(params.target, "AI_GATEWAY_API_KEY", apiKey);
+      break;
+    case "opencode":
+      setProviderRefreshEnvValue(params.target, "OPENCODE_API_KEY", apiKey);
+      break;
+    case "huggingface":
+      setProviderRefreshEnvValue(params.target, "HUGGINGFACE_HUB_TOKEN", apiKey);
+      break;
+    case "venice":
+      setProviderRefreshEnvValue(params.target, "VENICE_API_KEY", apiKey);
+      break;
     case "vllm":
       setProviderRefreshEnvValue(params.target, "VLLM_API_KEY", apiKey);
       setProviderRefreshEnvValue(params.target, "VLLM_BASE_URL", baseUrl);
@@ -1672,28 +1712,15 @@ function selectManifestModelsForNormalUi(
 }
 
 export function selectOpenAIApiModelsForNormalUi(modelIds: Iterable<string>): string[] {
-  return sortWithPreferredOrder(
-    normalizeModelIds(modelIds, { lowercase: true }).filter((id) =>
-      OPENAI_CURRENT_API_MODEL_RE.test(id),
-    ),
-    OPENAI_API_MODEL_IDS,
-  );
+  return selectManifestModelsForNormalUi(modelIds, OPENAI_API_MODEL_IDS);
 }
 
 export function selectOpenAISignInModelsForNormalUi(modelIds: Iterable<string>): string[] {
-  return sortWithPreferredOrder(
-    normalizeModelIds(modelIds, { lowercase: true }).filter((id) =>
-      OPENAI_CURRENT_SIGN_IN_MODEL_RE.test(id),
-    ),
-    OPENAI_SIGN_IN_MODEL_IDS,
-  );
+  return selectManifestModelsForNormalUi(modelIds, OPENAI_SIGN_IN_MODEL_IDS);
 }
 
 export function selectChutesModelsForNormalUi(modelIds: Iterable<string>): string[] {
-  return sortWithPreferredOrder(
-    normalizeModelIds(modelIds).filter((id) => CHUTES_CURRENT_NORMAL_UI_MODEL_RE.test(id)),
-    CHUTES_MODEL_IDS,
-  );
+  return selectManifestModelsForNormalUi(modelIds, CHUTES_MODEL_IDS);
 }
 
 export function selectAnthropicModelsForNormalUi(modelIds: Iterable<string>): string[] {
@@ -1781,8 +1808,7 @@ export function selectDynamicProviderModelsForNormalUi(modelIds: Iterable<string
 }
 
 export function selectLitellmModelsForNormalUi(modelIds: Iterable<string>): string[] {
-  const discovered = selectDynamicProviderModelsForNormalUi(modelIds);
-  return discovered.length > 0 ? discovered : [...LITELLM_MODEL_IDS];
+  return selectDynamicProviderModelsForNormalUi(modelIds);
 }
 
 export function selectOpenRouterModelsForNormalUi(modelIds: Iterable<string>): string[] {
@@ -1831,6 +1857,7 @@ async function fetchJsonCatalog(params: {
 }): Promise<unknown> {
   const response = await params.fetch(params.url, {
     headers: params.headers,
+    signal: AbortSignal.timeout(PROVIDER_CATALOG_TIMEOUT_MS),
   });
   if (!response.ok) {
     throw new Error(`${params.label} model catalog fetch failed: HTTP ${response.status}`);
@@ -1922,10 +1949,39 @@ function cloudflareAiGatewayHeaders(env: ProviderRefreshEnv, providerKey: string
 export async function fetchOpenAIProviderRefreshSnapshot(
   params: {
     fetch?: typeof fetch;
+    env?: ProviderRefreshEnv;
   } = {},
 ): Promise<ProviderRefreshSnapshot> {
   const fetchImpl = params.fetch ?? fetch;
-  const response = await fetchImpl(OPENAI_DOCS_MODELS_URL);
+  const token = readEnv(params.env ?? process.env, ["OPENAI_API_KEY"]);
+  if (token) {
+    const payload = await fetchJsonCatalog({
+      fetch: fetchImpl,
+      url: OPENAI_API_MODELS_URL,
+      headers: bearerHeaders(token),
+      label: "OpenAI",
+    });
+    const models = parseGenericModelSnapshotsFromModelsResponse(payload);
+    const ids = selectOpenAIApiModelsForNormalUi(models.map((model) => model.id));
+    return {
+      providers: {
+        [OPENAI_PROVIDER_BRAND_ID]: {
+          missing: {
+            [OPENAI_CODEX_ROUTE_ID]: {
+              reason: "catalog-unsupported",
+              detail: "ChatGPT sign-in models are discovered from the authenticated runtime.",
+            },
+          },
+          routes: {
+            [OPENAI_API_ROUTE_ID]: selectModelSnapshotsByIds(models, ids, OPENAI_API_ROUTE_ID),
+          },
+        },
+      },
+    };
+  }
+  const response = await fetchImpl(OPENAI_DOCS_MODELS_URL, {
+    signal: AbortSignal.timeout(PROVIDER_CATALOG_TIMEOUT_MS),
+  });
   if (!response.ok) {
     throw new Error(`OpenAI docs model fetch failed: HTTP ${response.status}`);
   }
@@ -1941,7 +1997,10 @@ export async function fetchOpenAIProviderRefreshSnapshot(
           },
         },
         routes: {
-          [OPENAI_API_ROUTE_ID]: selectOpenAIApiModelsForNormalUi(ids),
+          [OPENAI_API_ROUTE_ID]: selectOpenAIApiModelsForNormalUi(ids).map((id) => ({
+            id,
+            source: "official-docs",
+          })),
         },
       },
     },
@@ -1951,14 +2010,16 @@ export async function fetchOpenAIProviderRefreshSnapshot(
 export async function fetchChutesProviderRefreshSnapshot(
   params: {
     fetch?: typeof fetch;
+    env?: ProviderRefreshEnv;
   } = {},
 ): Promise<ProviderRefreshSnapshot> {
-  const fetchImpl = params.fetch ?? fetch;
-  const response = await fetchImpl(CHUTES_MODELS_URL);
-  if (!response.ok) {
-    throw new Error(`Chutes model catalog fetch failed: HTTP ${response.status}`);
-  }
-  const payload = await response.json();
+  const token = readEnv(params.env ?? process.env, ["CHUTES_API_KEY"]);
+  const payload = await fetchJsonCatalog({
+    fetch: params.fetch ?? fetch,
+    url: CHUTES_MODELS_URL,
+    headers: optionalBearerHeaders(token),
+    label: "Chutes",
+  });
   const models = parseGenericModelSnapshotsFromModelsResponse(payload);
   const ids = models.map((model) => model.id);
   return {
@@ -2089,7 +2150,7 @@ export async function fetchXaiProviderRefreshSnapshot(
   }
   const payload = await fetchJsonCatalog({
     fetch: params.fetch ?? fetch,
-    url: XAI_MODELS_URL,
+    url: XAI_LANGUAGE_MODELS_URL,
     headers: bearerHeaders(token),
     label: "xAI",
   });
@@ -2909,14 +2970,16 @@ export async function fetchTogetherProviderRefreshSnapshot(
 export async function fetchOpenRouterProviderRefreshSnapshot(
   params: {
     fetch?: typeof fetch;
+    env?: ProviderRefreshEnv;
   } = {},
 ): Promise<ProviderRefreshSnapshot> {
-  const fetchImpl = params.fetch ?? fetch;
-  const response = await fetchImpl(OPENROUTER_MODELS_URL);
-  if (!response.ok) {
-    throw new Error(`OpenRouter model catalog fetch failed: HTTP ${response.status}`);
-  }
-  const payload = await response.json();
+  const token = readEnv(params.env ?? process.env, ["OPENROUTER_API_KEY"]);
+  const payload = await fetchJsonCatalog({
+    fetch: params.fetch ?? fetch,
+    url: OPENROUTER_MODELS_URL,
+    headers: optionalBearerHeaders(token),
+    label: "OpenRouter",
+  });
   const models = parseOpenRouterModelSnapshotsFromModelsResponse(payload);
   const ids = selectOpenRouterModelsForNormalUi(models.map((model) => model.id));
   return {
@@ -2933,14 +2996,16 @@ export async function fetchOpenRouterProviderRefreshSnapshot(
 export async function fetchVercelAiGatewayProviderRefreshSnapshot(
   params: {
     fetch?: typeof fetch;
+    env?: ProviderRefreshEnv;
   } = {},
 ): Promise<ProviderRefreshSnapshot> {
-  const fetchImpl = params.fetch ?? fetch;
-  const response = await fetchImpl(VERCEL_AI_GATEWAY_MODELS_URL);
-  if (!response.ok) {
-    throw new Error(`Vercel AI Gateway model catalog fetch failed: HTTP ${response.status}`);
-  }
-  const payload = await response.json();
+  const token = readEnv(params.env ?? process.env, ["AI_GATEWAY_API_KEY"]);
+  const payload = await fetchJsonCatalog({
+    fetch: params.fetch ?? fetch,
+    url: VERCEL_AI_GATEWAY_MODELS_URL,
+    headers: optionalBearerHeaders(token),
+    label: "Vercel AI Gateway",
+  });
   const models = parseOpenRouterModelSnapshotsFromModelsResponse(payload);
   const ids = selectVercelAiGatewayModelsForNormalUi(models.map((model) => model.id));
   return {
@@ -2961,14 +3026,16 @@ export async function fetchVercelAiGatewayProviderRefreshSnapshot(
 export async function fetchOpencodeZenProviderRefreshSnapshot(
   params: {
     fetch?: typeof fetch;
+    env?: ProviderRefreshEnv;
   } = {},
 ): Promise<ProviderRefreshSnapshot> {
-  const fetchImpl = params.fetch ?? fetch;
-  const response = await fetchImpl(OPENCODE_ZEN_MODELS_URL);
-  if (!response.ok) {
-    throw new Error(`OpenCode Zen model catalog fetch failed: HTTP ${response.status}`);
-  }
-  const payload = await response.json();
+  const token = readEnv(params.env ?? process.env, ["OPENCODE_API_KEY"]);
+  const payload = await fetchJsonCatalog({
+    fetch: params.fetch ?? fetch,
+    url: OPENCODE_ZEN_MODELS_URL,
+    headers: optionalBearerHeaders(token),
+    label: "OpenCode Zen",
+  });
   const models = parseOpenRouterModelSnapshotsFromModelsResponse(payload);
   const ids = selectOpencodeZenModelsForNormalUi(models.map((model) => model.id));
   return {
@@ -2985,14 +3052,24 @@ export async function fetchOpencodeZenProviderRefreshSnapshot(
 export async function fetchHuggingfaceProviderRefreshSnapshot(
   params: {
     fetch?: typeof fetch;
+    env?: ProviderRefreshEnv;
   } = {},
 ): Promise<ProviderRefreshSnapshot> {
-  const fetchImpl = params.fetch ?? fetch;
-  const response = await fetchImpl(HUGGINGFACE_MODELS_URL);
-  if (!response.ok) {
-    throw new Error(`Hugging Face model catalog fetch failed: HTTP ${response.status}`);
+  const token = readEnv(params.env ?? process.env, ["HUGGINGFACE_HUB_TOKEN", "HF_TOKEN"]);
+  if (!token) {
+    return missingProviderRoutes(HUGGINGFACE_PROVIDER_BRAND_ID, {
+      [HUGGINGFACE_ROUTE_ID]: {
+        reason: "credential-missing",
+        detail: "Set HUGGINGFACE_HUB_TOKEN/HF_TOKEN or configure a Hugging Face token profile.",
+      },
+    });
   }
-  const payload = await response.json();
+  const payload = await fetchJsonCatalog({
+    fetch: params.fetch ?? fetch,
+    url: HUGGINGFACE_MODELS_URL,
+    headers: bearerHeaders(token),
+    label: "Hugging Face",
+  });
   const models = parseHuggingfaceModelSnapshotsFromModelsResponse(payload);
   const ids = selectHuggingfaceModelsForNormalUi(models.map((model) => model.id));
   return {
@@ -3009,14 +3086,24 @@ export async function fetchHuggingfaceProviderRefreshSnapshot(
 export async function fetchVeniceProviderRefreshSnapshot(
   params: {
     fetch?: typeof fetch;
+    env?: ProviderRefreshEnv;
   } = {},
 ): Promise<ProviderRefreshSnapshot> {
-  const fetchImpl = params.fetch ?? fetch;
-  const response = await fetchImpl(VENICE_MODELS_URL);
-  if (!response.ok) {
-    throw new Error(`Venice AI model catalog fetch failed: HTTP ${response.status}`);
+  const token = readEnv(params.env ?? process.env, ["VENICE_API_KEY"]);
+  if (!token) {
+    return missingProviderRoutes(VENICE_PROVIDER_BRAND_ID, {
+      [VENICE_ROUTE_ID]: {
+        reason: "credential-missing",
+        detail: "Set VENICE_API_KEY or configure a Venice API-key auth profile.",
+      },
+    });
   }
-  const payload = await response.json();
+  const payload = await fetchJsonCatalog({
+    fetch: params.fetch ?? fetch,
+    url: VENICE_MODELS_URL,
+    headers: bearerHeaders(token),
+    label: "Venice AI",
+  });
   const models = parseVeniceModelSnapshotsFromModelsResponse(payload);
   const ids = selectVeniceModelsForNormalUi(models.map((model) => model.id));
   return {
@@ -3040,6 +3127,105 @@ function fetchStaticUnsupportedProviderRefreshSnapshot(): ProviderRefreshSnapsho
       },
     }),
   ]);
+}
+
+type ProviderRefreshFetcher = (params: {
+  fetch?: typeof fetch;
+  env?: ProviderRefreshEnv;
+}) => Promise<ProviderRefreshSnapshot>;
+
+function providerRefreshFetcherForBrand(brandId: string): ProviderRefreshFetcher | undefined {
+  switch (brandId) {
+    case OPENAI_PROVIDER_BRAND_ID:
+      return fetchOpenAIProviderRefreshSnapshot;
+    case CHUTES_PROVIDER_BRAND_ID:
+      return fetchChutesProviderRefreshSnapshot;
+    case ANTHROPIC_PROVIDER_BRAND_ID:
+      return fetchAnthropicProviderRefreshSnapshot;
+    case GOOGLE_PROVIDER_BRAND_ID:
+      return fetchGoogleGeminiProviderRefreshSnapshot;
+    case XAI_PROVIDER_BRAND_ID:
+      return fetchXaiProviderRefreshSnapshot;
+    case MISTRAL_PROVIDER_BRAND_ID:
+      return fetchMistralProviderRefreshSnapshot;
+    case VOLCENGINE_PROVIDER_BRAND_ID:
+      return fetchVolcengineProviderRefreshSnapshot;
+    case BYTEPLUS_PROVIDER_BRAND_ID:
+      return fetchBytePlusProviderRefreshSnapshot;
+    case MINIMAX_PROVIDER_BRAND_ID:
+      return fetchMinimaxProviderRefreshSnapshot;
+    case MOONSHOT_PROVIDER_BRAND_ID:
+      return fetchMoonshotProviderRefreshSnapshot;
+    case QWEN_PROVIDER_BRAND_ID:
+      return fetchQwenProviderRefreshSnapshot;
+    case COPILOT_PROVIDER_BRAND_ID:
+      return fetchCopilotProviderRefreshSnapshot;
+    case XIAOMI_PROVIDER_BRAND_ID:
+      return fetchXiaomiProviderRefreshSnapshot;
+    case SYNTHETIC_PROVIDER_BRAND_ID:
+      return fetchSyntheticProviderRefreshSnapshot;
+    case TOGETHER_PROVIDER_BRAND_ID:
+      return fetchTogetherProviderRefreshSnapshot;
+    case OPENROUTER_PROVIDER_BRAND_ID:
+      return fetchOpenRouterProviderRefreshSnapshot;
+    case ZAI_PROVIDER_BRAND_ID:
+      return fetchZaiProviderRefreshSnapshot;
+    case QIANFAN_PROVIDER_BRAND_ID:
+      return fetchQianfanProviderRefreshSnapshot;
+    case VERCEL_AI_GATEWAY_PROVIDER_BRAND_ID:
+      return fetchVercelAiGatewayProviderRefreshSnapshot;
+    case OPENCODE_ZEN_PROVIDER_BRAND_ID:
+      return fetchOpencodeZenProviderRefreshSnapshot;
+    case OLLAMA_PROVIDER_BRAND_ID:
+      return fetchOllamaProviderRefreshSnapshot;
+    case LMSTUDIO_PROVIDER_BRAND_ID:
+      return fetchLmStudioProviderRefreshSnapshot;
+    case VLLM_PROVIDER_BRAND_ID:
+      return fetchVllmProviderRefreshSnapshot;
+    case LITELLM_PROVIDER_BRAND_ID:
+      return fetchLitellmProviderRefreshSnapshot;
+    case CLOUDFLARE_AI_GATEWAY_PROVIDER_BRAND_ID:
+      return fetchCloudflareAiGatewayProviderRefreshSnapshot;
+    case CUSTOM_PROVIDER_BRAND_ID:
+      return fetchCustomProviderRefreshSnapshot;
+    case HUGGINGFACE_PROVIDER_BRAND_ID:
+      return fetchHuggingfaceProviderRefreshSnapshot;
+    case VENICE_PROVIDER_BRAND_ID:
+      return fetchVeniceProviderRefreshSnapshot;
+    default:
+      return undefined;
+  }
+}
+
+export async function fetchProviderRefreshSnapshotForRoutes(params: {
+  routes: Iterable<string>;
+  fetch?: typeof fetch;
+  env?: ProviderRefreshEnv;
+}): Promise<ProviderRefreshSnapshot> {
+  const requestedRoutes = new Set(
+    [...params.routes].map((route) => route.trim().toLowerCase()).filter(Boolean),
+  );
+  const fetchers = new Set<ProviderRefreshFetcher>();
+  for (const manifest of listProviderBrandManifests()) {
+    const routes = new Set([
+      ...manifest.methods.map((method) => method.route.trim().toLowerCase()),
+      ...(manifest.modelProviderIds ?? []).map((route) => route.trim().toLowerCase()),
+      ...(manifest.routeAliases ?? []).map((route) => route.trim().toLowerCase()),
+    ]);
+    if (![...routes].some((route) => requestedRoutes.has(route))) {
+      continue;
+    }
+    const fetcher = providerRefreshFetcherForBrand(manifest.id);
+    if (fetcher) {
+      fetchers.add(fetcher);
+    }
+  }
+  const results = await Promise.allSettled(
+    [...fetchers].map((fetcher) => fetcher({ fetch: params.fetch, env: params.env })),
+  );
+  return mergeProviderRefreshSnapshots(
+    results.flatMap((result) => (result.status === "fulfilled" ? [result.value] : [])),
+  );
 }
 
 function mergeProviderRefreshSnapshots(
@@ -3108,8 +3294,8 @@ export async function fetchOfficialProviderRefreshSnapshot(
     venice,
     staticUnsupported,
   ] = await Promise.all([
-    fetchOpenAIProviderRefreshSnapshot({ fetch: fetchImpl }),
-    fetchChutesProviderRefreshSnapshot({ fetch: fetchImpl }),
+    fetchOpenAIProviderRefreshSnapshot({ fetch: fetchImpl, env: params.env }),
+    fetchChutesProviderRefreshSnapshot({ fetch: fetchImpl, env: params.env }),
     fetchAnthropicProviderRefreshSnapshot({ fetch: fetchImpl, env: params.env }),
     fetchGoogleGeminiProviderRefreshSnapshot({ fetch: fetchImpl, env: params.env }),
     fetchXaiProviderRefreshSnapshot({ fetch: fetchImpl, env: params.env }),
@@ -3123,19 +3309,19 @@ export async function fetchOfficialProviderRefreshSnapshot(
     fetchXiaomiProviderRefreshSnapshot({ fetch: fetchImpl, env: params.env }),
     fetchSyntheticProviderRefreshSnapshot({ fetch: fetchImpl, env: params.env }),
     fetchTogetherProviderRefreshSnapshot({ fetch: fetchImpl, env: params.env }),
-    fetchOpenRouterProviderRefreshSnapshot({ fetch: fetchImpl }),
+    fetchOpenRouterProviderRefreshSnapshot({ fetch: fetchImpl, env: params.env }),
     fetchZaiProviderRefreshSnapshot({ fetch: fetchImpl, env: params.env }),
     fetchQianfanProviderRefreshSnapshot({ fetch: fetchImpl, env: params.env }),
-    fetchVercelAiGatewayProviderRefreshSnapshot({ fetch: fetchImpl }),
-    fetchOpencodeZenProviderRefreshSnapshot({ fetch: fetchImpl }),
+    fetchVercelAiGatewayProviderRefreshSnapshot({ fetch: fetchImpl, env: params.env }),
+    fetchOpencodeZenProviderRefreshSnapshot({ fetch: fetchImpl, env: params.env }),
     fetchOllamaProviderRefreshSnapshot({ fetch: fetchImpl, env: params.env }),
     fetchLmStudioProviderRefreshSnapshot({ fetch: fetchImpl, env: params.env }),
     fetchVllmProviderRefreshSnapshot({ fetch: fetchImpl, env: params.env }),
     fetchLitellmProviderRefreshSnapshot({ fetch: fetchImpl, env: params.env }),
     fetchCloudflareAiGatewayProviderRefreshSnapshot({ fetch: fetchImpl, env: params.env }),
     fetchCustomProviderRefreshSnapshot({ fetch: fetchImpl, env: params.env }),
-    fetchHuggingfaceProviderRefreshSnapshot({ fetch: fetchImpl }),
-    fetchVeniceProviderRefreshSnapshot({ fetch: fetchImpl }),
+    fetchHuggingfaceProviderRefreshSnapshot({ fetch: fetchImpl, env: params.env }),
+    fetchVeniceProviderRefreshSnapshot({ fetch: fetchImpl, env: params.env }),
     Promise.resolve(fetchStaticUnsupportedProviderRefreshSnapshot()),
   ]);
   return mergeProviderRefreshSnapshots([

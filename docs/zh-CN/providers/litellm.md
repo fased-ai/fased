@@ -29,7 +29,7 @@ export LITELLM_API_KEY="your-litellm-key"
 fased
 ```
 
-Fased 注册 `litellm/default` 作为默认初始引用，然后可以刷新或使用 proxy 暴露的模型 ID。
+Fased 从已配置的 proxy 动态发现模型 ID，不会虚构 `litellm/default` 模型。连接 proxy 后，请在 **Agent > Models** 中选择 proxy 返回的模型。
 
 ## 配置
 
@@ -47,7 +47,7 @@ Fased 注册 `litellm/default` 作为默认初始引用，然后可以刷新或�
   },
   agents: {
     defaults: {
-      model: { primary: "litellm/default" },
+      model: { primary: "litellm/your-proxy-model" },
     },
   },
 }

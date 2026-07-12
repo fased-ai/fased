@@ -11,7 +11,7 @@ import { applyAuthProfileConfig, setOpenaiApiKey, writeOAuthCredentials } from "
 import { openUrl } from "./onboard-helpers.js";
 import {
   applyOpenAICodexModelDefault,
-  OPENAI_CODEX_DEFAULT_MODEL,
+  discoverOpenAICodexDefaultModel,
 } from "./openai-codex-model-default.js";
 import { loginOpenAICodexOAuth } from "./openai-codex-oauth.js";
 import {
@@ -104,18 +104,24 @@ export async function applyAuthChoiceOpenAI(
         provider: "openai-codex",
         mode: "oauth",
       });
-      if (params.setDefaultModel) {
-        const applied = applyOpenAICodexModelDefault(nextConfig);
+      const discoveredModel = await discoverOpenAICodexDefaultModel({
+        config: nextConfig,
+        agentDir: params.agentDir,
+      });
+      if (params.setDefaultModel && discoveredModel) {
+        const applied = applyOpenAICodexModelDefault(nextConfig, discoveredModel);
         nextConfig = applied.next;
         if (applied.changed) {
-          await params.prompter.note(
-            `Default model set to ${OPENAI_CODEX_DEFAULT_MODEL}`,
-            "Model configured",
-          );
+          await params.prompter.note(`Default model set to ${discoveredModel}`, "Model configured");
         }
-      } else {
-        agentModelOverride = OPENAI_CODEX_DEFAULT_MODEL;
-        await noteAgentModel(OPENAI_CODEX_DEFAULT_MODEL);
+      } else if (!params.setDefaultModel && discoveredModel) {
+        agentModelOverride = discoveredModel;
+        await noteAgentModel(discoveredModel);
+      } else if (!discoveredModel) {
+        await params.prompter.note(
+          "Sign-in completed, but the authenticated runtime did not return an executable model. Refresh Agent > Models or run `fased models list --all --provider openai-codex`.",
+          "No sign-in model available",
+        );
       }
     }
     return { config: nextConfig, agentModelOverride };

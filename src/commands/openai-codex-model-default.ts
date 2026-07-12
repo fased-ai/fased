@@ -1,7 +1,38 @@
+import { ensureAuthProfileStore } from "../agents/auth-profiles.js";
+import { resolveAuthenticatedModelCatalog } from "../agents/authenticated-model-catalog.js";
+import { DEFAULT_PROVIDER } from "../agents/defaults.js";
+import { loadModelCatalog } from "../agents/model-catalog.js";
 import type { FasedAgentConfig } from "../config/config.js";
 import type { AgentModelListConfig } from "../config/types.js";
 
-export const OPENAI_CODEX_DEFAULT_MODEL = "openai-codex/gpt-5.6-sol";
+export const OPENAI_CODEX_DEFAULT_MODEL = "openai-codex/gpt-5.5";
+
+export async function discoverOpenAICodexDefaultModel(params: {
+  config: FasedAgentConfig;
+  agentDir?: string;
+}): Promise<string | undefined> {
+  const catalog = await loadModelCatalog({
+    config: params.config,
+    useCache: false,
+    includeMetadata: true,
+  });
+  const store = ensureAuthProfileStore(params.agentDir, { allowKeychainPrompt: false });
+  const authenticated = await resolveAuthenticatedModelCatalog({
+    cfg: params.config,
+    store,
+    catalog,
+    defaultProvider: DEFAULT_PROVIDER,
+  });
+  const model = authenticated.usableCatalog
+    .filter((entry) => entry.provider === "openai-codex")
+    .toSorted(
+      (left, right) =>
+        (left.metadata?.recommendationRank ?? Number.MAX_SAFE_INTEGER) -
+          (right.metadata?.recommendationRank ?? Number.MAX_SAFE_INTEGER) ||
+        left.name.localeCompare(right.name),
+    )[0];
+  return model ? `${model.provider}/${model.id}` : undefined;
+}
 
 function shouldSetOpenAICodexModel(model?: string): boolean {
   const trimmed = model?.trim();
@@ -28,7 +59,10 @@ function resolvePrimaryModel(model?: AgentModelListConfig | string): string | un
   return undefined;
 }
 
-export function applyOpenAICodexModelDefault(cfg: FasedAgentConfig): {
+export function applyOpenAICodexModelDefault(
+  cfg: FasedAgentConfig,
+  model = OPENAI_CODEX_DEFAULT_MODEL,
+): {
   next: FasedAgentConfig;
   changed: boolean;
 } {
@@ -47,9 +81,9 @@ export function applyOpenAICodexModelDefault(cfg: FasedAgentConfig): {
             cfg.agents?.defaults?.model && typeof cfg.agents.defaults.model === "object"
               ? {
                   ...cfg.agents.defaults.model,
-                  primary: OPENAI_CODEX_DEFAULT_MODEL,
+                  primary: model,
                 }
-              : { primary: OPENAI_CODEX_DEFAULT_MODEL },
+              : { primary: model },
         },
       },
     },

@@ -4,6 +4,7 @@ import {
   resetModelCatalogCacheForTest,
 } from "../agents/model-catalog.js";
 import { type FasedAgentConfig, loadConfig } from "../config/config.js";
+import { resetRuntimeProviderModelCatalogCache } from "../providers/runtime-model-catalog.js";
 
 export type GatewayModelChoice = ModelCatalogEntry;
 
@@ -90,6 +91,7 @@ function startGatewayModelCatalogRefresh(
 export function markGatewayModelCatalogStaleForReload(): void {
   readOnlyModelCatalogCache.staleGeneration += 1;
   fullModelCatalogCache.staleGeneration += 1;
+  resetRuntimeProviderModelCatalogCache();
 }
 
 // Test-only escape hatch: model catalog is cached at module scope for the
@@ -99,6 +101,7 @@ export function __resetModelCatalogCacheForTest() {
   resetGatewayModelCatalogCache(readOnlyModelCatalogCache);
   resetGatewayModelCatalogCache(fullModelCatalogCache);
   resetModelCatalogCacheForTest();
+  resetRuntimeProviderModelCatalogCache();
 }
 
 export async function loadGatewayModelCatalog(

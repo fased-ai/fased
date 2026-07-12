@@ -53,8 +53,9 @@ fased
 That's it. Fased now routes through LiteLLM.
 
 LiteLLM is a proxy, so the available model IDs are whatever your proxy exposes.
-Fased registers `litellm/default` as the default initial ref, then refreshes or
-accepts the model IDs exposed by your proxy.
+Fased discovers those IDs from the configured proxy and does not invent a
+`litellm/default` model. Connect the proxy, then choose one of its returned
+models in **Agent > Models**.
 
 ## Configuration
 
@@ -77,14 +78,6 @@ export LITELLM_API_KEY="sk-litellm-key"
         request: { allowPrivateNetwork: true },
         models: [
           {
-            id: "default",
-            name: "LiteLLM Default",
-            reasoning: true,
-            input: ["text", "image"],
-            contextWindow: 200000,
-            maxTokens: 32000,
-          },
-          {
             id: "gpt-5.5",
             name: "GPT-5.5",
             reasoning: true,
@@ -98,7 +91,7 @@ export LITELLM_API_KEY="sk-litellm-key"
   },
   agents: {
     defaults: {
-      model: { primary: "litellm/default" },
+      model: { primary: "litellm/gpt-5.5" },
     },
   },
 }

@@ -589,7 +589,7 @@ describe("applyOpenrouterProviderConfig", () => {
 });
 
 describe("applyLitellmProviderConfig", () => {
-  it("preserves existing baseUrl and api key while adding the default model", () => {
+  it("preserves existing baseUrl, api key, and discovered model ids", () => {
     const cfg = applyLitellmProviderConfig({
       models: {
         providers: {
@@ -616,10 +616,7 @@ describe("applyLitellmProviderConfig", () => {
     expect(cfg.models?.providers?.litellm?.baseUrl).toBe("https://litellm.example/v1");
     expect(cfg.models?.providers?.litellm?.api).toBe("openai-completions");
     expect(cfg.models?.providers?.litellm?.apiKey).toBe("old-key");
-    expect(cfg.models?.providers?.litellm?.models.map((m) => m.id)).toEqual([
-      "custom-model",
-      "default",
-    ]);
+    expect(cfg.models?.providers?.litellm?.models.map((m) => m.id)).toEqual(["custom-model"]);
   });
 });
 

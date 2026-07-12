@@ -204,7 +204,7 @@ describe("loadModelCatalog", () => {
     );
   });
 
-  it("keeps the curated openai-codex/gpt-5.3-codex-spark entry with gpt-5.4", async () => {
+  it("keeps only current OpenAI sign-in models when the runtime reports legacy ids", async () => {
     mockPiDiscoveryModels([
       {
         id: "gpt-5.4",
@@ -222,7 +222,7 @@ describe("loadModelCatalog", () => {
     ]);
 
     const result = await loadModelCatalog({ config: {} as FasedAgentConfig });
-    expect(result).toContainEqual(
+    expect(result).not.toContainEqual(
       expect.objectContaining({
         provider: "openai-codex",
         id: "gpt-5.3-codex-spark",
@@ -234,16 +234,18 @@ describe("loadModelCatalog", () => {
         id: "gpt-5.2-codex",
       }),
     );
-    expect(result).toContainEqual(
+    expect(result).not.toContainEqual(
       expect.objectContaining({
         provider: "openai-codex",
         id: "gpt-5.4",
-        name: "GPT-5.3 Codex",
       }),
+    );
+    expect(result).toContainEqual(
+      expect.objectContaining({ provider: "openai-codex", id: "gpt-5.6-sol" }),
     );
   });
 
-  it("keeps gpt-5.3-codex-spark only on the openai-codex catalog", async () => {
+  it("filters legacy gpt-5.3-codex-spark from every OpenAI route", async () => {
     mockPiDiscoveryModels([
       {
         id: "gpt-5.3-codex-spark",
@@ -284,7 +286,7 @@ describe("loadModelCatalog", () => {
         id: "gpt-5.3-codex-spark",
       }),
     );
-    expect(result).toContainEqual(
+    expect(result).not.toContainEqual(
       expect.objectContaining({
         provider: "openai-codex",
         id: "gpt-5.3-codex-spark",
@@ -333,11 +335,14 @@ describe("loadModelCatalog", () => {
         id: "gpt-4.1-mini",
       }),
     );
-    expect(result).toContainEqual(
+    expect(result).not.toContainEqual(
       expect.objectContaining({
         provider: "openai-codex",
         id: "gpt-5.4",
       }),
+    );
+    expect(result).toContainEqual(
+      expect.objectContaining({ provider: "openai-codex", id: "gpt-5.6-sol" }),
     );
   });
 
@@ -360,7 +365,8 @@ describe("loadModelCatalog", () => {
     expect(openaiIds).not.toContain("gpt-5.1");
     expect(openaiIds).not.toContain("gpt-4.1-mini");
     expect(openaiCodexIds).toContain("gpt-5.5");
-    expect(openaiCodexIds).toContain("gpt-5.3-codex-spark");
+    expect(openaiCodexIds).toContain("gpt-5.6-sol");
+    expect(openaiCodexIds).not.toContain("gpt-5.3-codex-spark");
     expect(openaiCodexIds).not.toContain("gpt-5.2-codex");
     expect(openaiCodexIds).not.toContain("gpt-5.5-pro");
     expect(openaiCodexIds).not.toContain("gpt-5.4-pro");
@@ -419,18 +425,20 @@ describe("loadModelCatalog", () => {
         name: "GPT-5.4",
       }),
     );
-    expect(result).toContainEqual(
+    expect(result).not.toContainEqual(
       expect.objectContaining({
         provider: "openai-codex",
         id: "gpt-5.4",
-        name: "GPT-5.3 Codex",
       }),
     );
-    expect(result).toContainEqual(
+    expect(result).not.toContainEqual(
       expect.objectContaining({
         provider: "openai-codex",
         id: "gpt-5.4-mini",
       }),
+    );
+    expect(result).toContainEqual(
+      expect.objectContaining({ provider: "openai-codex", id: "gpt-5.6-sol" }),
     );
   });
 

@@ -17,6 +17,7 @@ import {
   fetchMinimaxProviderRefreshSnapshot,
   fetchMistralProviderRefreshSnapshot,
   fetchMoonshotProviderRefreshSnapshot,
+  fetchOpenAIProviderRefreshSnapshot,
   fetchOpenRouterProviderRefreshSnapshot,
   fetchOpencodeZenProviderRefreshSnapshot,
   fetchOfficialProviderRefreshSnapshot,
@@ -87,6 +88,28 @@ function fetchUrlText(url: string | URL | Request): string {
 }
 
 describe("provider refresh", () => {
+  it("uses the authenticated OpenAI models endpoint when an API key is available", async () => {
+    const calls: Array<{ url: string; authorization?: string }> = [];
+    const snapshot = await fetchOpenAIProviderRefreshSnapshot({
+      env: { OPENAI_API_KEY: "sk-account" },
+      fetch: async (url, init) => {
+        calls.push({
+          url: fetchUrlText(url),
+          authorization: (init?.headers as Record<string, string> | undefined)?.Authorization,
+        });
+        return {
+          ok: true,
+          json: async () => ({ data: [{ id: "gpt-5.6" }, { id: "gpt-4o" }] }),
+        } as Response;
+      },
+    });
+
+    expect(calls).toEqual([
+      { url: "https://api.openai.com/v1/models", authorization: "Bearer sk-account" },
+    ]);
+    expect(routeIds(snapshot.providers?.openai?.routes?.openai)).toEqual(["gpt-5.6"]);
+  });
+
   it("builds refresh env from auth profile stores and model provider config", () => {
     const env = buildProviderRefreshEnvFromCredentials({
       env: {
@@ -99,6 +122,16 @@ describe("provider refresh", () => {
         {
           version: 1,
           profiles: {
+            "openai:default": {
+              type: "api_key",
+              provider: "openai",
+              key: "openai-key",
+            },
+            "chutes:default": {
+              type: "api_key",
+              provider: "chutes",
+              key: "chutes-key",
+            },
             "anthropic:default": {
               type: "api_key",
               provider: "anthropic",
@@ -160,6 +193,31 @@ describe("provider refresh", () => {
               provider: "together",
               key: "together-key",
             },
+            "openrouter:default": {
+              type: "api_key",
+              provider: "openrouter",
+              key: "openrouter-key",
+            },
+            "vercel-ai-gateway:default": {
+              type: "api_key",
+              provider: "vercel-ai-gateway",
+              key: "vercel-key",
+            },
+            "opencode:default": {
+              type: "api_key",
+              provider: "opencode",
+              key: "opencode-key",
+            },
+            "huggingface:default": {
+              type: "api_key",
+              provider: "huggingface",
+              key: "huggingface-key",
+            },
+            "venice:default": {
+              type: "api_key",
+              provider: "venice",
+              key: "venice-key",
+            },
           },
         },
       ],
@@ -184,6 +242,8 @@ describe("provider refresh", () => {
     });
 
     expect(env.EXISTING).toBe("keep");
+    expect(env.OPENAI_API_KEY).toBe("openai-key");
+    expect(env.CHUTES_API_KEY).toBe("chutes-key");
     expect(env.ANTHROPIC_API_KEY).toBe("env-anthropic");
     expect(env.GEMINI_API_KEY).toBe("gemini-ref");
     expect(env.GOOGLE_GEMINI_CLI_OAUTH_TOKEN).toBe("gemini-cli-access");
@@ -205,6 +265,11 @@ describe("provider refresh", () => {
     expect(env.CUSTOM_PROVIDER_API_KEY).toBe("custom-env-ref");
     expect(env.CUSTOM_PROVIDER_BASE_URL).toBe("https://custom.example.com/v1");
     expect(env.TOGETHER_API_KEY).toBe("together-key");
+    expect(env.OPENROUTER_API_KEY).toBe("openrouter-key");
+    expect(env.AI_GATEWAY_API_KEY).toBe("vercel-key");
+    expect(env.OPENCODE_API_KEY).toBe("opencode-key");
+    expect(env.HUGGINGFACE_HUB_TOKEN).toBe("huggingface-key");
+    expect(env.VENICE_API_KEY).toBe("venice-key");
   });
 
   it("compares snapshot models against registry route lists", () => {
@@ -422,8 +487,6 @@ describe("provider refresh", () => {
       "gpt-5.6-terra",
       "gpt-5.6-luna",
       "gpt-5.5",
-      "gpt-5.4",
-      "gpt-5.4-mini",
     ]);
   });
 
@@ -447,8 +510,9 @@ describe("provider refresh", () => {
   });
 
   it("fetches Chutes official catalog into a refresh snapshot", async () => {
-    const fetchMock = async (url: string | URL | Request) => {
+    const fetchMock = async (url: string | URL | Request, init?: RequestInit) => {
       expect(fetchUrlText(url)).toBe("https://llm.chutes.ai/v1/models");
+      expect((init?.headers as Record<string, string>)?.Authorization).toBe("Bearer chutes-key");
       return {
         ok: true,
         json: async () => ({
@@ -480,7 +544,10 @@ describe("provider refresh", () => {
       } as Response;
     };
 
-    const snapshot = await fetchChutesProviderRefreshSnapshot({ fetch: fetchMock as typeof fetch });
+    const snapshot = await fetchChutesProviderRefreshSnapshot({
+      fetch: fetchMock as typeof fetch,
+      env: { CHUTES_API_KEY: "chutes-key" },
+    });
     const chutes = snapshot.providers?.chutes?.routes?.chutes;
     expect(routeIds(chutes)).toEqual([
       "google/gemma-4-31B-turbo-TEE",
@@ -715,7 +782,7 @@ describe("provider refresh", () => {
     const fetchMock = async (url: string | URL | Request, init?: RequestInit) => {
       calls.push({ url: fetchUrlText(url), headers: init?.headers });
       const idByUrl = new Map<string, string>([
-        ["https://api.x.ai/v1/models", "grok-4.3"],
+        ["https://api.x.ai/v1/language-models", "grok-4.3"],
         ["https://api.mistral.ai/v1/models", "mistral-medium-3.5"],
         ["https://api.minimax.io/v1/models", "MiniMax-M2.7"],
         ["https://api.moonshot.ai/v1/models", "kimi-k2.6"],
@@ -801,7 +868,7 @@ describe("provider refresh", () => {
     expect(calls).toEqual(
       expect.arrayContaining([
         {
-          url: "https://api.x.ai/v1/models",
+          url: "https://api.x.ai/v1/language-models",
           headers: { Authorization: "Bearer xai-test" },
         },
         {
@@ -1384,8 +1451,11 @@ describe("provider refresh", () => {
   });
 
   it("fetches OpenRouter official catalog into a refresh snapshot", async () => {
-    const fetchMock = async (url: string | URL | Request) => {
+    const fetchMock = async (url: string | URL | Request, init?: RequestInit) => {
       expect(fetchUrlText(url)).toBe("https://openrouter.ai/api/v1/models");
+      expect((init?.headers as Record<string, string>)?.Authorization).toBe(
+        "Bearer openrouter-key",
+      );
       return {
         ok: true,
         json: async () => ({
@@ -1437,6 +1507,7 @@ describe("provider refresh", () => {
 
     const snapshot = await fetchOpenRouterProviderRefreshSnapshot({
       fetch: fetchMock as typeof fetch,
+      env: { OPENROUTER_API_KEY: "openrouter-key" },
     });
     expect(routeIds(snapshot.providers?.openrouter?.routes?.openrouter)).toEqual([
       "openai/gpt-5.5",
@@ -1506,8 +1577,9 @@ describe("provider refresh", () => {
   });
 
   it("fetches Vercel AI Gateway official catalog into a refresh snapshot", async () => {
-    const fetchMock = async (url: string | URL | Request) => {
+    const fetchMock = async (url: string | URL | Request, init?: RequestInit) => {
       expect(fetchUrlText(url)).toBe("https://ai-gateway.vercel.sh/v1/models");
+      expect((init?.headers as Record<string, string>)?.Authorization).toBe("Bearer vercel-key");
       return {
         ok: true,
         json: async () => ({
@@ -1529,6 +1601,7 @@ describe("provider refresh", () => {
 
     const snapshot = await fetchVercelAiGatewayProviderRefreshSnapshot({
       fetch: fetchMock as typeof fetch,
+      env: { AI_GATEWAY_API_KEY: "vercel-key" },
     });
     const route = snapshot.providers?.["ai-gateway"]?.routes?.["vercel-ai-gateway"];
     expect(routeIds(route)).toEqual([
@@ -1576,8 +1649,9 @@ describe("provider refresh", () => {
   });
 
   it("fetches OpenCode Zen official catalog into a refresh snapshot", async () => {
-    const fetchMock = async (url: string | URL | Request) => {
+    const fetchMock = async (url: string | URL | Request, init?: RequestInit) => {
       expect(fetchUrlText(url)).toBe("https://opencode.ai/zen/v1/models");
+      expect((init?.headers as Record<string, string>)?.Authorization).toBe("Bearer opencode-key");
       return {
         ok: true,
         json: async () => ({
@@ -1595,6 +1669,7 @@ describe("provider refresh", () => {
 
     const snapshot = await fetchOpencodeZenProviderRefreshSnapshot({
       fetch: fetchMock as typeof fetch,
+      env: { OPENCODE_API_KEY: "opencode-key" },
     });
     expect(routeIds(snapshot.providers?.["opencode-zen"]?.routes?.opencode)).toEqual([
       "gpt-5.5",
@@ -1659,8 +1734,11 @@ describe("provider refresh", () => {
   });
 
   it("fetches Hugging Face official catalog into a refresh snapshot", async () => {
-    const fetchMock = async (url: string | URL | Request) => {
+    const fetchMock = async (url: string | URL | Request, init?: RequestInit) => {
       expect(fetchUrlText(url)).toBe("https://router.huggingface.co/v1/models");
+      expect((init?.headers as Record<string, string>)?.Authorization).toBe(
+        "Bearer huggingface-key",
+      );
       return {
         ok: true,
         json: async () => ({
@@ -1689,6 +1767,7 @@ describe("provider refresh", () => {
 
     const snapshot = await fetchHuggingfaceProviderRefreshSnapshot({
       fetch: fetchMock as typeof fetch,
+      env: { HUGGINGFACE_HUB_TOKEN: "huggingface-key" },
     });
     expect(routeIds(snapshot.providers?.huggingface?.routes?.huggingface)).toEqual([
       "openai/gpt-oss-120b",
@@ -1805,8 +1884,9 @@ describe("provider refresh", () => {
   });
 
   it("fetches Venice AI official catalog into a refresh snapshot", async () => {
-    const fetchMock = async (url: string | URL | Request) => {
+    const fetchMock = async (url: string | URL | Request, init?: RequestInit) => {
       expect(fetchUrlText(url)).toBe("https://api.venice.ai/api/v1/models");
+      expect((init?.headers as Record<string, string>)?.Authorization).toBe("Bearer venice-key");
       return {
         ok: true,
         json: async () => ({
@@ -1821,6 +1901,7 @@ describe("provider refresh", () => {
 
     const snapshot = await fetchVeniceProviderRefreshSnapshot({
       fetch: fetchMock as typeof fetch,
+      env: { VENICE_API_KEY: "venice-key" },
     });
     expect(routeIds(snapshot.providers?.venice?.routes?.venice)).toEqual([
       "zai-org-glm-5-1",
@@ -1898,9 +1979,14 @@ describe("provider refresh", () => {
 
     const snapshot = await fetchOfficialProviderRefreshSnapshot({
       fetch: fetchMock as typeof fetch,
-      env: {},
+      env: {
+        HUGGINGFACE_HUB_TOKEN: "huggingface-key",
+        VENICE_API_KEY: "venice-key",
+      },
     });
-    expect(snapshot.providers?.openai?.routes?.openai).toEqual(["gpt-5.5", "gpt-5.4-mini"]);
+    expect(snapshot.providers?.openai?.routes?.openai).toEqual([
+      { id: "gpt-5.5", source: "official-docs" },
+    ]);
     expect(routeIds(snapshot.providers?.chutes?.routes?.chutes)).toEqual([
       "google/gemma-4-31B-turbo-TEE",
     ]);

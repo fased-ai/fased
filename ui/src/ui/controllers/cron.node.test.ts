@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_CRON_FORM } from "../app-defaults.ts";
-import { addCronJob, type CronState } from "./cron.ts";
+import { addCronJob, loadCronModelSuggestions, type CronState } from "./cron.ts";
 
 function createState(overrides: Partial<CronState> = {}): CronState {
   return {
@@ -47,6 +47,32 @@ function createState(overrides: Partial<CronState> = {}): CronState {
 }
 
 describe("cron controller task creation", () => {
+  it("loads task suggestions from the shared authenticated model payload", async () => {
+    const request = vi.fn(async () => ({
+      models: [
+        { provider: "openai-codex", id: "gpt-5.6-sol", name: "GPT-5.6 Sol" },
+        { provider: "openai-codex", id: "gpt-5.6-luna", name: "GPT-5.6 Luna" },
+      ],
+    }));
+    const state = createState({
+      client: { request } as unknown as CronState["client"],
+      cronModelSuggestions: [],
+      sessionKey: "agent:main:main",
+    });
+
+    await loadCronModelSuggestions(state);
+
+    expect(request).toHaveBeenCalledWith("models.list", {
+      includeMetadata: true,
+      available: true,
+      sessionKey: "agent:main:main",
+    });
+    expect(state.cronModelSuggestions).toEqual([
+      "openai-codex/gpt-5.6-luna",
+      "openai-codex/gpt-5.6-sol",
+    ]);
+  });
+
   it("creates a selected-Agent Task through cron.add and refreshes the saved row", async () => {
     const savedJob = {
       id: "agent-main-task",

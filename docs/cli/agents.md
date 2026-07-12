@@ -58,7 +58,7 @@ fased agents models set \
   --fallback openai/gpt-5.6-terra \
   --cheap-check openai/gpt-5.6-luna \
   --strong openai/gpt-5.6 \
-  --coding openai-codex/gpt-5.6-sol \
+  --coding openai-codex/gpt-5.5 \
   --summarizer openai/gpt-5.6-luna
 ```
 

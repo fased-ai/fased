@@ -28,7 +28,6 @@ import {
   applyQianfanProviderConfig,
   applyKimiCodeConfig,
   applyKimiCodeProviderConfig,
-  applyLitellmConfig,
   applyLitellmProviderConfig,
   applyMistralConfig,
   applyMistralProviderConfig,
@@ -55,7 +54,6 @@ import {
   applyZaiConfig,
   applyZaiProviderConfig,
   CLOUDFLARE_AI_GATEWAY_DEFAULT_MODEL_REF,
-  LITELLM_DEFAULT_MODEL_REF,
   QIANFAN_DEFAULT_MODEL_REF,
   KIMI_CODING_MODEL_REF,
   MOONSHOT_DEFAULT_MODEL_REF,
@@ -500,12 +498,11 @@ export async function applyAuthChoiceApiProviders(
         mode: "api_key",
       });
     }
-    await applyProviderDefaultModel({
-      defaultModel: LITELLM_DEFAULT_MODEL_REF,
-      applyDefaultConfig: applyLitellmConfig,
-      applyProviderConfig: applyLitellmProviderConfig,
-      noteDefault: LITELLM_DEFAULT_MODEL_REF,
-    });
+    nextConfig = applyLitellmProviderConfig(nextConfig);
+    await params.prompter.note(
+      "LiteLLM is connected. Choose a model returned by this proxy after discovery completes.",
+      "LiteLLM model discovery",
+    );
     return { config: nextConfig, agentModelOverride };
   }
 

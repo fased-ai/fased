@@ -47,16 +47,23 @@ Notes:
 - If you omit the provider, Fased treats the input as an alias or a model for
   the **default provider**. That only works when there is no `/` in the model ID.
 
-### Catalog source order
+### Catalog authority and source order
 
-`fased models list --all`, onboarding model selection, and provider-filtered
-fallback lists use the same Fased catalog merge order:
+`fased models list --all`, onboarding model selection, Agent model roles, Chat,
+and Tasks use the same Gateway catalog:
 
-1. `models.providers` in your config wins for matching provider/model ids.
-2. Runtime-discovered models from the local agent catalog fill in installed
-   provider data.
-3. Fased's bundled current-model overlay fills in new model names when the
-   runtime catalog is stale.
+1. An authenticated provider model endpoint is authoritative for API-key and
+   local/manual routes that expose model discovery.
+2. Sign-in routes use the authenticated OAuth/device runtime catalog so Fased
+   does not offer a reviewed model that the signed-in account rejects.
+3. Explicit `models.providers` entries are authoritative for custom models.
+4. Fased's reviewed catalog supplies capability metadata and recommendation
+   order. It does not become an availability fallback when authenticated
+   discovery fails.
+
+Model metadata includes availability source, capability source, retrieval date,
+auth route, confidence, and recommendation rank. Local providers are discovered
+from their configured server and do not receive invented placeholder models.
 
 Provider aliases such as `z.ai` and `z-ai` normalize to the same provider key.
 
