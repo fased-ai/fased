@@ -11,6 +11,7 @@ import {
   resolveGatewayPort,
   writeConfigFile,
 } from "../../config/config.js";
+import { probeGateway } from "../../gateway/probe.js";
 import { loadGatewayTlsRuntime } from "../../infra/tls/gateway.js";
 import {
   channelToNpmTag,
@@ -50,6 +51,7 @@ import {
   terminateStaleGatewayPids,
   waitForGatewayHealthyRestart,
 } from "../daemon-cli/restart-health.js";
+import { probeRunningGatewayRuntimeIdentity } from "../lightweight/gateway-runtime-probe.js";
 import { createUpdateProgress, printResult } from "./progress.js";
 import { prepareRestartScript, runRestartScript } from "./restart-helper.js";
 import {
@@ -108,6 +110,39 @@ function printUpdateLifecycleTimings(timings: UpdateLifecycleTiming[], jsonMode:
     defaultRuntime.log(`  ${timing.name}: ${theme.muted(formatDuration(timing.durationMs))}`);
   }
   defaultRuntime.log("");
+}
+
+async function verifyGatewayRuntimeVersion(params: {
+  expectedVersion: string;
+  rpc: {
+    url: string;
+    token?: string;
+    password?: string;
+    tlsFingerprint?: string;
+    timeoutMs: number;
+  };
+}): Promise<{ ok: boolean; actualVersion: string | null; error?: string }> {
+  const probe = await probeGateway({
+    url: params.rpc.url,
+    auth: {
+      token: params.rpc.token,
+      password: params.rpc.password,
+    },
+    tlsFingerprint: params.rpc.tlsFingerprint,
+    timeoutMs: Math.max(params.rpc.timeoutMs, 3_000),
+  });
+  const actualVersion = probe.server?.version?.trim() || null;
+  if (!probe.ok) {
+    return { ok: false, actualVersion, error: probe.error ?? "gateway probe failed" };
+  }
+  if (actualVersion !== params.expectedVersion) {
+    return {
+      ok: false,
+      actualVersion,
+      error: `running gateway version ${actualVersion ?? "unknown"} does not match installed version ${params.expectedVersion}`,
+    };
+  }
+  return { ok: true, actualVersion };
 }
 
 const UPDATE_QUIPS = [
@@ -664,6 +699,7 @@ async function maybeRestartService(params: {
   restartScriptPath?: string | null;
   serviceTarget: UpdateGatewayServiceTarget;
   serviceLoaded: boolean;
+  expectedVersion?: string | null;
   rpc: {
     url: string;
     token?: string;
@@ -773,6 +809,24 @@ async function maybeRestartService(params: {
               rpc: params.rpc,
             }),
           );
+        }
+
+        if (health.healthy && params.expectedVersion) {
+          const identity = await measureUpdateStage(timings, "gateway version verification", () =>
+            verifyGatewayRuntimeVersion({
+              expectedVersion: params.expectedVersion as string,
+              rpc: params.rpc,
+            }),
+          );
+          if (!identity.ok) {
+            health = { ...health, healthy: false };
+            partial = true;
+            if (!params.opts.json) {
+              defaultRuntime.log(
+                theme.warn(`Gateway runtime verification failed: ${identity.error}`),
+              );
+            }
+          }
         }
 
         if (health.healthy) {
@@ -1039,6 +1093,86 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
   }
 
   if (alreadyCurrent && currentVersion && targetVersion) {
+    const runningRuntime = await probeRunningGatewayRuntimeIdentity({ timeoutMs: 750 });
+    if (runningRuntime.reachable && runningRuntime.version !== currentVersion) {
+      if (!shouldRestart) {
+        defaultRuntime.error(
+          `Installed version is ${currentVersion}, but the running gateway reports ${runningRuntime.version ?? "an older runtime without identity"}. Re-run without --no-restart.`,
+        );
+        defaultRuntime.exit(1);
+        return;
+      }
+      const serviceTarget = await resolveUpdateGatewayServiceTarget();
+      const serviceLoaded = await serviceTarget.service.isLoaded({ env: process.env });
+      if (!serviceLoaded) {
+        defaultRuntime.error(
+          `Installed version is ${currentVersion}, but a different unmanaged gateway is running. Stop it, then run ${formatCliCommand("fased gateway install --force")} and ${formatCliCommand("fased gateway restart")}.`,
+        );
+        defaultRuntime.exit(1);
+        return;
+      }
+      if (!opts.json) {
+        defaultRuntime.log(
+          theme.warn(
+            `Installed files are current, but gateway runtime is ${runningRuntime.version ?? "legacy/unknown"}. Refreshing the managed service...`,
+          ),
+        );
+      }
+      if (serviceTarget.scope === "system") {
+        await serviceTarget.service.restart({ env: process.env, stdout: process.stdout });
+      } else {
+        const restarted = await runDaemonRestart();
+        if (!restarted) {
+          defaultRuntime.error("Gateway service restart did not start.");
+          defaultRuntime.exit(1);
+          return;
+        }
+      }
+
+      const gatewayPort = resolveGatewayPort(
+        configSnapshot.valid ? configSnapshot.config : undefined,
+      );
+      const gatewayConfig = configSnapshot.valid ? configSnapshot.config.gateway : undefined;
+      const tlsRuntime = await loadGatewayTlsRuntime(gatewayConfig?.tls);
+      const rpc = {
+        url: `${tlsRuntime.enabled ? "wss" : "ws"}://127.0.0.1:${gatewayPort}`,
+        token: gatewayConfig?.auth?.token,
+        password: gatewayConfig?.auth?.password,
+        tlsFingerprint: tlsRuntime.enabled ? tlsRuntime.fingerprintSha256 : undefined,
+        timeoutMs: 1_500,
+      };
+      const health = await waitForGatewayHealthyRestart({
+        service: serviceTarget.service,
+        port: gatewayPort,
+        rpc,
+      });
+      const identity = health.healthy
+        ? await verifyGatewayRuntimeVersion({ expectedVersion: currentVersion, rpc })
+        : { ok: false, actualVersion: null, error: "gateway did not become healthy" };
+      if (!identity.ok) {
+        defaultRuntime.error(`Gateway runtime refresh failed: ${identity.error}`);
+        defaultRuntime.exit(1);
+        return;
+      }
+      if (opts.json) {
+        defaultRuntime.log(
+          JSON.stringify(
+            {
+              status: "repaired",
+              currentVersion,
+              targetVersion,
+              gatewayVersion: identity.actualVersion,
+              channel,
+            },
+            null,
+            2,
+          ),
+        );
+      } else {
+        defaultRuntime.log(`Gateway runtime refreshed: ${identity.actualVersion}`);
+      }
+      return;
+    }
     if (opts.json) {
       defaultRuntime.log(
         JSON.stringify(
@@ -1159,6 +1293,7 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
     restartScriptPath,
     serviceTarget,
     serviceLoaded,
+    expectedVersion: result.after?.version ?? targetVersion,
     rpc: restartRpc,
   });
 

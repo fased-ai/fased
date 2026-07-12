@@ -219,6 +219,7 @@ import {
   resolveGatewayClientIp,
 } from "./net.js";
 import { handleOpenAiHttpRequest } from "./openai-http.js";
+import { buildGatewayProbePayload } from "./probe-payload.js";
 import { canonicalizePathVariant } from "./security-path.js";
 import type { ReadinessChecker } from "./server/readiness.js";
 import type { GatewayWsClient } from "./server/ws-types.js";
@@ -3874,7 +3875,7 @@ async function handleGatewayProbeRequest(params: {
       );
     }
   } else {
-    body = JSON.stringify({ ok: true, status });
+    body = JSON.stringify(buildGatewayProbePayload(status));
   }
 
   params.res.statusCode = statusCode;

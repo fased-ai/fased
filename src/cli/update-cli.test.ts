@@ -31,6 +31,8 @@ const installCompletion = vi.fn();
 const probeGatewayStatus = vi.fn();
 const finalizeUpdateTransaction = vi.fn();
 const rollbackUpdateTransaction = vi.fn();
+const probeGateway = vi.fn();
+const probeRunningGatewayRuntimeIdentity = vi.fn();
 
 vi.mock("@clack/prompts", () => ({
   confirm,
@@ -133,6 +135,14 @@ vi.mock("./update-cli/service-target.js", () => ({
 
 vi.mock("./daemon-cli/probe.js", () => ({
   probeGatewayStatus,
+}));
+
+vi.mock("../gateway/probe.js", () => ({
+  probeGateway,
+}));
+
+vi.mock("./lightweight/gateway-runtime-probe.js", () => ({
+  probeRunningGatewayRuntimeIdentity,
 }));
 
 // Mock doctor (heavy module; should not run in unit tests)
@@ -270,6 +280,11 @@ describe("update-cli", () => {
       steps: [],
       durationMs: 100,
     });
+    probeGateway.mockResolvedValue({
+      ok: true,
+      error: null,
+      server: { version: "0.0.1", runtimeSource: "managed-package" },
+    });
     vi.mocked(defaultRuntime.error).mockClear();
     vi.mocked(defaultRuntime.exit).mockClear();
 
@@ -311,6 +326,8 @@ describe("update-cli", () => {
     ensureCompletionCacheExists.mockReset();
     installCompletion.mockReset();
     probeGatewayStatus.mockReset();
+    probeGateway.mockReset();
+    probeRunningGatewayRuntimeIdentity.mockReset();
     vi.mocked(resolveFasedAgentPackageRoot).mockResolvedValue(process.cwd());
     vi.mocked(readConfigFileSnapshot).mockResolvedValue(baseSnapshot);
     vi.mocked(fetchNpmTagVersion).mockResolvedValue({
@@ -409,6 +426,16 @@ describe("update-cli", () => {
     });
     ensureCompletionCacheExists.mockResolvedValue(true);
     probeGatewayStatus.mockResolvedValue({ ok: true });
+    probeGateway.mockResolvedValue({
+      ok: true,
+      error: null,
+      server: { version: "9999.0.0", runtimeSource: "managed-package" },
+    });
+    probeRunningGatewayRuntimeIdentity.mockResolvedValue({
+      reachable: false,
+      version: null,
+      runtimeSource: null,
+    });
     confirm.mockResolvedValue(false);
     select.mockResolvedValue("stable");
     vi.mocked(runGatewayUpdate).mockResolvedValue(makeOkUpdateResult());
@@ -511,6 +538,81 @@ describe("update-cli", () => {
     expect(currentResult).toMatchObject({ status: "current", currentVersion: "0.1.40" });
     expect(runGatewayUpdate).not.toHaveBeenCalled();
     expect(resolveUpdateGatewayServiceTarget).not.toHaveBeenCalled();
+  });
+
+  it("repairs a stale running gateway even when installed files are already current", async () => {
+    const root = createCaseDir("fased-current-stale-gateway");
+    mockPackageInstallStatus(root);
+    readPackageVersion.mockResolvedValue("0.1.40");
+    vi.mocked(resolveNpmChannelTag).mockResolvedValue({
+      tag: "latest",
+      version: "0.1.40",
+    });
+    probeRunningGatewayRuntimeIdentity.mockResolvedValue({
+      reachable: true,
+      version: "0.1.39",
+      runtimeSource: "managed-package",
+    });
+    probeGateway.mockResolvedValue({
+      ok: true,
+      error: null,
+      server: { version: "0.1.40", runtimeSource: "managed-package" },
+    });
+    serviceLoaded.mockResolvedValue(true);
+    resolveUpdateGatewayServiceTarget.mockResolvedValue({
+      scope: "system",
+      service: {
+        isLoaded: (...args: unknown[]) => serviceLoaded(...args),
+        readRuntime: (...args: unknown[]) => serviceReadRuntime(...args),
+        restart: (...args: unknown[]) => serviceRestart(...args),
+      },
+    });
+
+    await updateCommand({});
+
+    expect(runGatewayUpdate).not.toHaveBeenCalled();
+    expect(serviceRestart).toHaveBeenCalledTimes(1);
+    expect(probeGateway).toHaveBeenCalled();
+    expect(defaultRuntime.log).toHaveBeenCalledWith("Gateway runtime refreshed: 0.1.40");
+    expect(defaultRuntime.exit).not.toHaveBeenCalledWith(1);
+  });
+
+  it("does not report success when a managed gateway remains on the stale version", async () => {
+    const root = createCaseDir("fased-current-unrepaired-gateway");
+    mockPackageInstallStatus(root);
+    readPackageVersion.mockResolvedValue("0.1.40");
+    vi.mocked(resolveNpmChannelTag).mockResolvedValue({
+      tag: "latest",
+      version: "0.1.40",
+    });
+    probeRunningGatewayRuntimeIdentity.mockResolvedValue({
+      reachable: true,
+      version: null,
+      runtimeSource: null,
+    });
+    probeGateway.mockResolvedValue({
+      ok: true,
+      error: null,
+      server: { version: "0.1.39", runtimeSource: "managed-package" },
+    });
+    serviceLoaded.mockResolvedValue(true);
+    resolveUpdateGatewayServiceTarget.mockResolvedValue({
+      scope: "system",
+      service: {
+        isLoaded: (...args: unknown[]) => serviceLoaded(...args),
+        readRuntime: (...args: unknown[]) => serviceReadRuntime(...args),
+        restart: (...args: unknown[]) => serviceRestart(...args),
+      },
+    });
+
+    await updateCommand({});
+
+    expect(defaultRuntime.error).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "running gateway version 0.1.39 does not match installed version 0.1.40",
+      ),
+    );
+    expect(defaultRuntime.exit).toHaveBeenCalledWith(1);
   });
 
   it("accepts the default shell completion install without prompting when --yes is set", async () => {
