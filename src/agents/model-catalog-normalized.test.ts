@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ModelProviderConfig } from "../config/types.models.js";
-import { listCurrentModelCatalogRows } from "./current-model-catalog.js";
+import { cloneCurrentModelProvider, listCurrentModelCatalogRows } from "./current-model-catalog.js";
 import {
   buildModelCatalogMergeKey,
   mergeModelCatalogRowsByAuthority,
@@ -102,7 +102,7 @@ describe("normalized model catalog rows", () => {
   it("exposes the current Fased overlay as preview rows", () => {
     const rows = listCurrentModelCatalogRows();
     expect(rows.some((row) => row.provider === "openai" && row.id === "gpt-5.5")).toBe(true);
-    expect(rows.some((row) => row.provider === "anthropic" && row.id === "claude-opus-4-6")).toBe(
+    expect(rows.some((row) => row.provider === "anthropic" && row.id === "claude-opus-4-8")).toBe(
       true,
     );
     expect(rows.some((row) => row.provider === "moonshot" && row.id === "kimi-k2.6")).toBe(true);
@@ -114,6 +114,22 @@ describe("normalized model catalog rows", () => {
     ).toBe(true);
     expect(new Set(rows.map((row) => row.source))).toEqual(new Set(["current-preview"]));
     expect(new Set(rows.map((row) => row.status))).toEqual(new Set(["preview"]));
+  });
+
+  it("does not report zero static cost for current Claude models", () => {
+    const models = cloneCurrentModelProvider("anthropic")?.models ?? [];
+    expect(models.find((model) => model.id === "claude-fable-5")?.cost).toEqual({
+      input: 10,
+      output: 50,
+      cacheRead: 1,
+      cacheWrite: 12.5,
+    });
+    expect(models.find((model) => model.id === "claude-sonnet-5")?.cost).toEqual({
+      input: 2,
+      output: 10,
+      cacheRead: 0.2,
+      cacheWrite: 2.5,
+    });
   });
 
   it("covers provider choices surfaced by onboarding auth flows", () => {

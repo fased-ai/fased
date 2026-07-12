@@ -1,6 +1,5 @@
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { mkdtemp, readFile } from "node:fs/promises";
-import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -8,6 +7,7 @@ import { getSatMainnetSyncStatus, syncSatMainnetRuntimeIds } from "./mainnet-syn
 
 afterEach(() => {
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
 });
 
 function jsonDataUrl(value: unknown): string {
@@ -18,37 +18,40 @@ function sha256(raw: string): string {
   return createHash("sha256").update(raw).digest("hex");
 }
 
+async function readProductionKeyFixture() {
+  const fixturePath = path.join(
+    import.meta.dirname,
+    "fixtures",
+    "sat-mainnet-addresses.production-key-test.json",
+  );
+  return {
+    manifest: await readFile(fixturePath, "utf8"),
+    hash: await readFile(`${fixturePath}.sha256`, "utf8"),
+    signature: await readFile(`${fixturePath}.sig`, "utf8"),
+  };
+}
+
 async function withManifestServer(
   files: Record<string, string>,
   fn: (baseUrl: string) => Promise<void>,
 ) {
-  const server = http.createServer((req, res) => {
-    const requestPath = req.url ?? "/";
-    const body = files[requestPath];
-    if (body == null) {
-      res.statusCode = 404;
-      res.end("not found");
-      return;
-    }
-    res.statusCode = 200;
-    res.setHeader(
-      "content-type",
-      requestPath.endsWith(".json") ? "application/json" : "text/plain",
-    );
-    res.end(body);
-  });
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  try {
-    const address = server.address();
-    if (!address || typeof address === "string") {
-      throw new Error("test server did not bind to a TCP port");
-    }
-    await fn(`http://127.0.0.1:${address.port}`);
-  } finally {
-    await new Promise<void>((resolve, reject) =>
-      server.close((error) => (error ? reject(error) : resolve())),
-    );
-  }
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: string | URL | Request) => {
+      const requestUrl = input instanceof Request ? input.url : input;
+      const requestPath = new URL(requestUrl).pathname;
+      const body = files[requestPath];
+      return body == null
+        ? new Response("not found", { status: 404 })
+        : new Response(body, {
+            status: 200,
+            headers: {
+              "content-type": requestPath.endsWith(".json") ? "application/json" : "text/plain",
+            },
+          });
+    }),
+  );
+  await fn("https://manifest.test");
 }
 
 describe("SAT mainnet sync", () => {
@@ -65,6 +68,95 @@ describe("SAT mainnet sync", () => {
     expect(status.ok).toBe(true);
     expect(status.state).toBe("not_live");
     expect(status.verification).toEqual({ hash: "not_required", signature: "not_required" });
+    expect(status.trustKeySource).toBe("not_required");
+  });
+
+  it("rejects a live manifest signed by an untrusted key", async () => {
+    const { privateKey } = generateKeyPairSync("ed25519");
+    const manifest = JSON.stringify({
+      schema: "sat-mainnet-addresses.v1",
+      network: "mainnet-beta",
+      status: "live",
+      sat: {
+        mint: "sat-mint-mainnet",
+        programId: "sat-program-mainnet",
+        mintProgramId: "sat-mint-program-mainnet",
+        bondProgramId: "sat-bond-program-mainnet",
+      },
+    });
+    const signature = sign(null, Buffer.from(manifest), privateKey).toString("base64");
+
+    await withManifestServer(
+      {
+        "/sat-mainnet-addresses.json": manifest,
+        "/sat-mainnet-addresses.json.sha256": sha256(manifest),
+        "/sat-mainnet-addresses.json.sig": signature,
+      },
+      async (baseUrl) => {
+        const status = await getSatMainnetSyncStatus({
+          env: {},
+          manifestUrl: `${baseUrl}/sat-mainnet-addresses.json`,
+        });
+        expect(status).toMatchObject({
+          ok: false,
+          state: "failed",
+          trustKeySource: "embedded",
+          verification: { hash: "valid", signature: "invalid" },
+          error: "Signed manifest verification failed.",
+        });
+      },
+    );
+  });
+
+  it("verifies the rehearsal fixture with the approved embedded production key", async () => {
+    const fixture = await readProductionKeyFixture();
+
+    await withManifestServer(
+      {
+        "/sat-mainnet-addresses.json": fixture.manifest,
+        "/sat-mainnet-addresses.json.sha256": fixture.hash,
+        "/sat-mainnet-addresses.json.sig": fixture.signature,
+      },
+      async (baseUrl) => {
+        const status = await getSatMainnetSyncStatus({
+          env: {},
+          manifestUrl: `${baseUrl}/sat-mainnet-addresses.json`,
+        });
+        expect(status).toMatchObject({
+          ok: true,
+          state: "available",
+          trustKeySource: "embedded",
+          verification: { hash: "valid", signature: "valid" },
+        });
+      },
+    );
+  });
+
+  it("rejects a modified production-key fixture before signature verification", async () => {
+    const fixture = await readProductionKeyFixture();
+
+    await withManifestServer(
+      {
+        "/sat-mainnet-addresses.json": fixture.manifest.replace(
+          "test-only-sat-mint",
+          "modified-test-only-sat-mint",
+        ),
+        "/sat-mainnet-addresses.json.sha256": fixture.hash,
+        "/sat-mainnet-addresses.json.sig": fixture.signature,
+      },
+      async (baseUrl) => {
+        const status = await getSatMainnetSyncStatus({
+          env: {},
+          manifestUrl: `${baseUrl}/sat-mainnet-addresses.json`,
+        });
+        expect(status).toMatchObject({
+          ok: false,
+          state: "failed",
+          trustKeySource: "embedded",
+          verification: { hash: "invalid", signature: "missing" },
+        });
+      },
+    );
   });
 
   it("applies a live manifest only after hash and detached signature verify", async () => {
@@ -109,10 +201,63 @@ describe("SAT mainnet sync", () => {
 
         expect(status.state).toBe("synced");
         expect(status.verification).toEqual({ hash: "valid", signature: "valid" });
+        expect(status.trustKeySource).toBe("environment");
         expect(await readFile(runtimeFile, "utf8")).toContain(
           "FASED_SAT_PROGRAM_ID=sat-program-mainnet",
         );
         expect(env.FASED_SAT_MINT_ADDRESS).toBe("sat-mint-mainnet");
+      },
+    );
+  });
+
+  it("rejects an invalid rehearsal key and accepts a rotated valid key", async () => {
+    const signer = generateKeyPairSync("ed25519");
+    const wrong = generateKeyPairSync("ed25519");
+    const signerJwk = signer.publicKey.export({ format: "jwk" }) as JsonWebKey;
+    const wrongJwk = wrong.publicKey.export({ format: "jwk" }) as JsonWebKey;
+    const manifest = JSON.stringify({
+      schema: "sat-mainnet-addresses.v1",
+      network: "mainnet-beta",
+      status: "live",
+      sat: {
+        mint: "sat-mint-mainnet",
+        programId: "sat-program-mainnet",
+        mintProgramId: "sat-mint-program-mainnet",
+        bondProgramId: "sat-bond-program-mainnet",
+      },
+    });
+    const signature = sign(null, Buffer.from(manifest), signer.privateKey).toString("base64");
+
+    await withManifestServer(
+      {
+        "/sat-mainnet-addresses.json": manifest,
+        "/sat-mainnet-addresses.json.sha256": sha256(manifest),
+        "/sat-mainnet-addresses.json.sig": signature,
+      },
+      async (baseUrl) => {
+        const manifestUrl = `${baseUrl}/sat-mainnet-addresses.json`;
+        const invalid = await getSatMainnetSyncStatus({
+          env: { FASED_SAT_MAINNET_MANIFEST_PUBLIC_KEY: String(wrongJwk.x) },
+          manifestUrl,
+        });
+        expect(invalid).toMatchObject({
+          ok: false,
+          trustKeySource: "embedded",
+          verification: { hash: "valid", signature: "invalid" },
+        });
+
+        const rotated = await getSatMainnetSyncStatus({
+          env: {
+            FASED_SAT_MAINNET_MANIFEST_PUBLIC_KEYS: `${String(wrongJwk.x)},${String(signerJwk.x)}`,
+          },
+          manifestUrl,
+        });
+        expect(rotated).toMatchObject({
+          ok: true,
+          state: "available",
+          trustKeySource: "environment",
+          verification: { hash: "valid", signature: "valid" },
+        });
       },
     );
   });

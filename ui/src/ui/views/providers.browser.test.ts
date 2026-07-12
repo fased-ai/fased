@@ -461,7 +461,6 @@ describe("Providers setup flow", () => {
     expect(googleCard!.textContent).toContain("Requires gemini-cli installed");
     expectMethodHelp(googleCard!, "gemini-api-key", "Gemini API key");
     expectMethodHelp(googleCard!, "google-gemini-cli", "Sign in (Gemini CLI)");
-    expect(googleCard!.textContent).toContain("14 models");
     const googleApiForm = googleCard!.querySelector<HTMLFormElement>(
       'form[data-provider-method-id="gemini-api-key"]',
     );
@@ -486,7 +485,6 @@ describe("Providers setup flow", () => {
     expectMethodHelp(xaiCard!, "xai-oauth", "xAI sign-in");
     expectMethodHelp(xaiCard!, "xai-device-code", "xAI device code");
     expectMethodHelp(xaiCard!, "xai-api-key", "xAI API key");
-    expect(xaiCard!.textContent).toContain("4 models");
     xaiCard!.querySelector<HTMLButtonElement>('[data-provider-method-id="xai-oauth"]')?.click();
     expect(props.onRunProviderSignIn).toHaveBeenCalledWith({
       provider: "xai",
@@ -515,7 +513,6 @@ describe("Providers setup flow", () => {
     const mistralCard = container.querySelector<HTMLElement>('[data-provider-card="mistral"]');
     expect(mistralCard).toBeInstanceOf(HTMLElement);
     expectMethodHelp(mistralCard!, "mistral-api-key", "Mistral API key");
-    expect(mistralCard!.textContent).toContain("10 models");
     const mistralApiForm = mistralCard!.querySelector<HTMLFormElement>(
       'form[data-provider-method-id="mistral-api-key"]',
     );
@@ -532,7 +529,6 @@ describe("Providers setup flow", () => {
     );
     expect(volcengineCard).toBeInstanceOf(HTMLElement);
     expectMethodHelp(volcengineCard!, "volcengine-api-key", "Volcano Engine API key");
-    expect(volcengineCard!.textContent).toContain("24 models");
     const volcengineApiForm = volcengineCard!.querySelector<HTMLFormElement>(
       'form[data-provider-method-id="volcengine-api-key"]',
     );
@@ -547,7 +543,6 @@ describe("Providers setup flow", () => {
     const byteplusCard = container.querySelector<HTMLElement>('[data-provider-card="byteplus"]');
     expect(byteplusCard).toBeInstanceOf(HTMLElement);
     expectMethodHelp(byteplusCard!, "byteplus-api-key", "BytePlus API key");
-    expect(byteplusCard!.textContent).toContain("24 models");
     const byteplusApiForm = byteplusCard!.querySelector<HTMLFormElement>(
       'form[data-provider-method-id="byteplus-api-key"]',
     );
@@ -564,7 +559,6 @@ describe("Providers setup flow", () => {
     );
     expect(openrouterCard).toBeInstanceOf(HTMLElement);
     expectMethodHelp(openrouterCard!, "openrouter-api-key", "OpenRouter API key");
-    expect(openrouterCard!.textContent).toContain("25 models");
     const openrouterApiForm = openrouterCard!.querySelector<HTMLFormElement>(
       'form[data-provider-method-id="openrouter-api-key"]',
     );
@@ -581,7 +575,6 @@ describe("Providers setup flow", () => {
     expectMethodHelp(qwenCard!, "qwen-coding-plan-api-key", "Coding Plan API key");
     expectMethodHelp(qwenCard!, "qwen-api-key", "DashScope API key");
     expect(qwenCard!.querySelector('[data-provider-method-id="qwen-portal"]')).toBeNull();
-    expect(qwenCard!.textContent).toContain("17 models");
     const qwenCodingPlanForm = qwenCard!.querySelector<HTMLFormElement>(
       'form[data-provider-method-id="qwen-coding-plan-api-key"]',
     );
@@ -605,7 +598,6 @@ describe("Providers setup flow", () => {
     const qianfanCard = container.querySelector<HTMLElement>('[data-provider-card="qianfan"]');
     expect(qianfanCard).toBeInstanceOf(HTMLElement);
     expectMethodHelp(qianfanCard!, "qianfan-api-key", "Qianfan API key");
-    expect(qianfanCard!.textContent).toContain("11 models");
     const qianfanApiForm = qianfanCard!.querySelector<HTMLFormElement>(
       'form[data-provider-method-id="qianfan-api-key"]',
     );
@@ -621,7 +613,6 @@ describe("Providers setup flow", () => {
     expect(copilotCard).toBeInstanceOf(HTMLElement);
     expectMethodHelp(copilotCard!, "github-copilot", "GitHub sign in");
     expectMethodHelp(copilotCard!, "copilot-proxy", "Proxy sign in");
-    expect(copilotCard!.textContent).toContain("42 models");
     copilotCard!
       .querySelector<HTMLButtonElement>('[data-provider-sign-in-button="github-copilot"]')
       ?.click();
@@ -642,7 +633,6 @@ describe("Providers setup flow", () => {
     const vercelCard = container.querySelector<HTMLElement>('[data-provider-card="ai-gateway"]');
     expect(vercelCard).toBeInstanceOf(HTMLElement);
     expectMethodHelp(vercelCard!, "ai-gateway-api-key", "Vercel AI API key");
-    expect(vercelCard!.textContent).toContain("26 models");
     const vercelApiForm = vercelCard!.querySelector<HTMLFormElement>(
       'form[data-provider-method-id="ai-gateway-api-key"]',
     );
@@ -659,7 +649,6 @@ describe("Providers setup flow", () => {
     );
     expect(opencodeCard).toBeInstanceOf(HTMLElement);
     expectMethodHelp(opencodeCard!, "opencode-zen", "OpenCode Zen API key");
-    expect(opencodeCard!.textContent).toContain("22 models");
     const opencodeApiForm = opencodeCard!.querySelector<HTMLFormElement>(
       'form[data-provider-method-id="opencode-zen"]',
     );

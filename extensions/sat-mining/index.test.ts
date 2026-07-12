@@ -5623,6 +5623,66 @@ describe("sat-mining plugin config persistence", () => {
     } as never);
   });
 
+  it("keeps mining stopped when the active commit transaction fails", async () => {
+    const solanaSubmit = await import("./src/solana-submit.js");
+    vi.mocked(solanaSubmit.submitSatSetActiveCommit).mockRejectedValueOnce(
+      new Error("set active commit transaction failed"),
+    );
+    const { default: satMiningPlugin } = await import("./index.js");
+    const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
+    const writeConfigFile = vi.fn(async () => {});
+
+    satMiningPlugin.register({
+      id: "sat-mining",
+      name: "SAT Mining",
+      source: "test",
+      config: {} as never,
+      pluginConfig: {
+        enabled: true,
+        network: "devnet",
+        riskMode: "balanced",
+        walletId: "wallet-a",
+      },
+      runtime: {
+        version: "test",
+        config: {
+          loadConfig: vi.fn(() => ({ plugins: { entries: {} } })),
+          writeConfigFile,
+        },
+      },
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+      registerTool: vi.fn(),
+      registerHook: vi.fn(),
+      registerHttpHandler: vi.fn(),
+      registerHttpRoute: vi.fn(),
+      registerChannel: vi.fn(),
+      registerGatewayMethod: vi.fn((name: string, handler: RegisteredGatewayMethod["handler"]) => {
+        gatewayMethods.set(name, { handler });
+      }),
+      registerCli: vi.fn(),
+      registerService: vi.fn(),
+      registerProvider: vi.fn(),
+      registerCommand: vi.fn(),
+      resolvePath: vi.fn((input: string) => input),
+      on: vi.fn(),
+    } as never);
+
+    let response: { ok: boolean; payload: unknown; error: unknown } | null = null;
+    await gatewayMethods.get("sat.startMining")!.handler({
+      params: { walletId: "wallet-a" },
+      respond: (ok, payload, error) => {
+        response = { ok, payload, error };
+      },
+    });
+
+    expect(response).toMatchObject({
+      ok: false,
+      payload: undefined,
+      error: { message: "set active commit transaction failed" },
+    });
+    expect(writeConfigFile).toHaveBeenCalled();
+  });
+
   it("keeps mining wallet attachment read-only through gateway methods", async () => {
     const { default: satMiningPlugin } = await import("./index.js");
     const gatewayMethods = new Map<string, RegisteredGatewayMethod>();

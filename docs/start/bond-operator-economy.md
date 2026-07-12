@@ -260,9 +260,9 @@ Owns:
 - seller, routing, hosted-edge, directory, and artifact trust status
 - service evidence, review/dispute state, and reconciliation reports
 
-## What is live today
+## What is implemented today
 
-The current tranche is already real in these areas:
+The current stack implements and tests these areas:
 
 - mining issuance
 - bond lifecycle
@@ -274,6 +274,11 @@ The current tranche is already real in these areas:
 - directory or indexer lane
 - artifact-availability lane
 - trust status storage and read-only reporting
+
+Implemented does not mean that every lane is active on public mainnet. Public
+availability still requires the signed mainnet manifest, deployed and verified
+program IDs, funded protocol and staking distributor accounts, and an official
+launch status that enables the relevant lane.
 
 ## What is still gated
 

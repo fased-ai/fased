@@ -1,0 +1,13 @@
+{
+  "schema": "sat-mainnet-addresses.v1",
+  "network": "mainnet-beta",
+  "status": "live",
+  "releaseTag": "test-only-manifest-signing-rehearsal",
+  "sourceCommit": "test-only",
+  "sat": {
+    "mint": "test-only-sat-mint",
+    "programId": "test-only-sat-program",
+    "mintProgramId": "test-only-sat-mint-program",
+    "bondProgramId": "test-only-sat-bond-program"
+  }
+}

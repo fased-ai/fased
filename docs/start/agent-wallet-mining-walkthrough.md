@@ -8,23 +8,27 @@ sidebarTitle: "Agent + Wallets + Mining"
 
 # Agent, Wallets, And Mining Walkthrough
 
-This is the browser-first path from a fresh Fased install to a working Agent,
-wallet setup, and Satcoin mining control.
+This is the guided path from a fresh Fased install to a working Agent, wallet
+setup, and Satcoin mining control. Wallet creation and private-key import stay
+in the guarded terminal wizard; the browser manages wallets after setup.
 
 Use this page when you want the shortest guided route. Each section links to the
 deeper docs for the same area.
 
 <Warning>
 Do not start with wallet funding, mining, or bond. First prove the runtime:
-install, open the dashboard, connect a model, and send one browser chat.
+install Fased, verify the Gateway, and open the dashboard. Connecting a model
+and sending a test chat proves the broader Agent path, but it is optional for
+deterministic mining.
 </Warning>
 
 ```mermaid
 flowchart TD
   install["Install Fased"] --> open["Open Control UI"]
   open --> agent["Select Agent"]
-  agent --> model["Connect Model"]
-  model --> wallets["Create Wallets"]
+  agent --> model["Optional: Connect Model<br/>Chat / Auto Strategy / Tasks"]
+  agent --> wallets["Create Or Import Wallets<br/>Onboarding / CLI"]
+  model --> wallets
   wallets --> fund["Fund Mining Wallet"]
   fund --> mining["Open Mining"]
   mining --> ready["Run Readiness"]
@@ -165,6 +169,18 @@ fased dashboard
 fased health
 ```
 
+Before continuing, update and verify the Gateway:
+
+```bash
+fased update status
+fased update
+fased --version
+fased gateway status
+fased doctor --non-interactive
+```
+
+`fased gateway status` must report a running service and `RPC probe: ok`.
+
 Read next:
 
 - [Getting Started](/start/getting-started)
@@ -222,12 +238,34 @@ Read next:
 - [Control UI Setup Model](/start/control-ui-setup)
 - [Models To Agents To Chat](/start/provider-agent-chat-flow)
 
-## 4. Connect A Model
+## 4. Connect A Model (Optional For Mining)
+
+Satcoin mining does not require a model provider. Fased can run the full wallet,
+readiness, capital, commit, cycle, settlement, claim, recovery, and stop/drain
+path with a deterministic strategy and no model configured.
+
+For the smallest mining-only setup, skip this section and start with
+**Balanced + Deterministic**. Other deterministic presets are Spread,
+Conviction, Swarm, Top-K, Ranked, Adaptive, Crowd-aware, and Safe fallback.
+They compile locally into the protocol's 25-bucket allocation and do not call a
+model.
+
+A model adds two optional capabilities:
+
+1. **Auto strategy** uses the selected Agent model to propose a cycle allocation.
+   Invalid, unavailable, or slow model output falls back to the configured
+   deterministic preset when fallback is enabled.
+2. **Mining tasks** can inspect status and settled history, recommend or change
+   strategy fields, and report results. The guarded `Mining strategy review`
+   template cannot change the wallet, capital, commit, funding, bond, or
+   start/stop state.
 
 Open **Agent > Models**.
 
 Add a model provider key or sign in, then choose a primary model. Send a first
-test message from **Chat** before moving into wallet or mining flows.
+test message from **Chat** if you want Agent chat, Auto strategy, or task-driven
+mining review. A failed chat test does not block deterministic mining, but it
+does mean model-guided strategy and model-run tasks are not ready.
 
 ![Model selection in the Control UI](/images/screenshots/web/agent-model-2.png)
 
@@ -240,13 +278,19 @@ Read next:
 
 - [Model Providers](/concepts/model-providers)
 - [Models](/concepts/models)
+- [Mining Chat And Automation](/plugins/crypto/mining-chat-and-automation)
 
 ## 5. Create Wallets
 
-Open **Wallets** to create new local wallets. To import an existing Phantom or
-other Solana wallet, run `fased wallet setup --chain solana` and choose the
-import path in the guarded terminal wizard. The Control UI does not accept a
-private key directly.
+Create or import wallets during onboarding, or run the guarded terminal wizard:
+
+```bash
+fased wallet setup --chain solana
+```
+
+The Control UI does not create or import wallets and never accepts a private
+key. After terminal setup, open **Wallets** to inspect addresses, balances,
+policy, approvals, and activity.
 
 Create or import wallets in this order:
 
@@ -301,7 +345,53 @@ Read next:
 - [Wallets](/plugins/crypto/wallet-page)
 - [Solana RPC Setup](/plugins/crypto/wallet-rpc-setup)
 
-## 7. Open Mining And Run Readiness
+## 7. Verify And Sync Official Mainnet
+
+The SAT mainnet manifest is signed by the Satcoin project. Its public
+verification key arrives inside Fased releases; it is not a miner's wallet
+key, a node key, or anything users create during wallet setup. A user with no
+wallet can still check whether mainnet is live and whether the official
+manifest is trusted.
+
+Use either path:
+
+- **UI:** open **Mining**, then press **Sync** in the Mining toolbar.
+- **CLI:** run:
+
+```bash
+fased sat sync-mainnet --json
+```
+
+Both paths perform the same operation. They are safe before wallet setup and
+do not create a wallet, move funds, sign a Solana transaction, deposit miner
+capital, or start mining.
+
+Before launch, Sync reports `not_live` and changes no wallet or mining state.
+On mainnet day, use the same Sync control. Once the live signed manifest is
+published, Fased verifies it and writes the four matching public runtime IDs:
+
+- SAT mining program ID
+- SAT bond program ID
+- SAT mint address
+- SAT mint program ID
+
+`fased update` and **Sync** are different actions. Update installs a compatible
+Fased release. Sync receives the final Satcoin mainnet IDs. Complete any
+required Fased update during pre-launch preparation so that mainnet day only
+requires **Mining > Sync** or `fased sat sync-mainnet`.
+
+| State                   | Meaning                                       | Next action                               |
+| ----------------------- | --------------------------------------------- | ----------------------------------------- |
+| `not_live`              | Official mainnet launch is not active         | Keep learning; do not fund mainnet mining |
+| live, trust key missing | This Fased release cannot verify launch data  | Update Fased                              |
+| `available`             | Signed official IDs are verified              | Confirm and apply the mainnet sync        |
+| `synced`                | This agent matches the signed official IDs    | Continue to wallet readiness              |
+| verification failed     | Hash, signature, or trusted key did not match | Stop and verify official status           |
+
+Normal users never supply the manifest verification key. The environment-key
+override is only for controlled launch rehearsals and key-rotation tests.
+
+## 8. Open Mining And Run Readiness
 
 Open **Mining**.
 
@@ -309,12 +399,17 @@ Confirm the active wallet is `@wallet:mining`, then run readiness before
 starting. Fix signer, RPC, SOL, token-account, or capital warnings before
 continuing.
 
+No-wallet readiness is expected to stop here and direct you to create or import
+the singleton `@wallet:mining`. A configured wallet can still be blocked by a
+missing signer, RPC, SOL fee reserve, or miner capital; resolve the exact item
+reported before continuing.
+
 Read next:
 
 - [Mining](/plugins/crypto/mining-page)
 - [Mining Troubleshooting](/plugins/crypto/mining-troubleshooting)
 
-## 8. Deposit Capital
+## 9. Deposit Capital
 
 On **Mining**, use the Mining Capital block.
 
@@ -328,7 +423,7 @@ Read next:
 - [Mining](/plugins/crypto/mining-page)
 - [Mining API](/plugins/crypto/mining-protocol)
 
-## 9. Set Commit
+## 10. Set Commit
 
 Set a conservative active commit amount lower than free capital and wallet fee
 reserve.
@@ -344,9 +439,20 @@ Read next:
 - [Mining](/plugins/crypto/mining-page)
 - [Advanced Mining](/plugins/crypto/mining-advanced)
 
-## 10. Start Mining
+## 11. Start Mining
 
 Click **Start** only after readiness is green and the fee warning is clear.
+
+No model is invoked when Execution is **Deterministic**. With **Auto**, the
+configured model may guide allocation; if model planning fails and deterministic
+fallback is enabled, the miner continues with the configured preset and records
+the fallback reason.
+
+Start writes the active commit on-chain before enabling mining workers. If that
+transaction fails, mining remains stopped and reports the transaction error.
+When the Mining wallet is below its required fee reserve but has enough free
+miner capital, Fased may withdraw only the missing reserve amount from free
+miner capital back to the same Mining wallet before starting.
 
 The Mining page shows whether the runtime is ready, running, blocked, or
 waiting.
@@ -358,7 +464,7 @@ Read next:
 - [Mining](/plugins/crypto/mining-page)
 - [Mining Chat And Automation](/plugins/crypto/mining-chat-and-automation)
 
-## 11. Review Activity And History
+## 12. Review Activity And History
 
 Use recent activity and history to confirm what the runtime did:
 
@@ -376,10 +482,14 @@ Read next:
 - [Advanced Mining](/plugins/crypto/mining-advanced)
 - [Mining Troubleshooting](/plugins/crypto/mining-troubleshooting)
 
-## 12. Stop, Claim, And Sweep
+## 13. Stop, Claim, And Sweep
 
 Click **Stop** when you want to stop new cycle submits. Claim and recovery can
 continue through already-submitted cycles.
+
+If capital is still locked or claims are pending, status enters drain mode.
+Drain mode stops new participation while settlement, claim, and recovery finish
+safely. Do not delete the wallet, signer state, or agent state while draining.
 
 When claimable SAT exists, claim it. If sweep is enabled and configured, review
 the sweep destination before using it.
@@ -389,7 +499,7 @@ Read next:
 - [Mining](/plugins/crypto/mining-page)
 - [Mining Chat And Automation](/plugins/crypto/mining-chat-and-automation)
 
-## 13. Review Wallet Ops
+## 14. Review Wallet Ops
 
 Return to **Wallets**.
 
@@ -402,7 +512,7 @@ Read next:
 - [Wallet Chat And Channels](/plugins/crypto/wallet-chat-and-channels)
 - [Wallet Production Flow](/plugins/crypto/wallet-production-flow)
 
-## 14. Optional Fased Network And Bond
+## 15. Optional Fased Network And Bond
 
 Open **Fased Network** after the base Agent, wallets, and mining path are clear.
 
@@ -415,3 +525,21 @@ Read next:
 
 - [Fased Network](/start/federation)
 - [SAT Bond Operator Overview](/start/bond-operator-economy)
+
+## Screenshot Checklist
+
+Keep screenshots aligned with the actual boundary between terminal setup and
+browser management. The most useful missing captures are:
+
+1. `fased gateway status` with the service running and `RPC probe: ok`.
+2. The first successful Chat reply after provider setup.
+3. `fased wallet setup --chain solana` at role selection, with no key visible.
+4. Wallets showing configured Agent, Mining, and Vault cards.
+5. Mining mainnet status before launch and after signed sync.
+6. Readiness with each required check green.
+7. Miner-capital deposit and confirmed active commit.
+8. The first running cycle and its history entry.
+9. Stop with both a clean stop and a drain-mode example.
+
+Never capture private keys, seed phrases, provider secrets, Gateway tokens, RPC
+credentials, signer paths, or personally identifying wallet history.
