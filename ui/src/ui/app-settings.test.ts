@@ -224,7 +224,7 @@ function asAppSettingsHost(host: SettingsHost): Parameters<typeof applySettings>
 }
 
 describe("buildUiModelCatalogs", () => {
-  it("keeps chat executable while exposing the full reviewed provider catalog", () => {
+  it("keeps both catalogs scoped to authenticated provider routes", () => {
     const authStatus = {
       providers: [
         {
@@ -239,7 +239,7 @@ describe("buildUiModelCatalogs", () => {
         { provider: "openai-codex", id: "gpt-5.5", name: "GPT-5.5" },
         { provider: "openai", id: "gpt-5.6", name: "GPT-5.6" },
       ],
-      providerCatalog: [],
+      providerCatalog: [{ provider: "openai-codex", id: "gpt-5.5", name: "GPT-5.5" }],
       authStatus,
     });
     const chatRefs = catalogs.chat.map((entry) => `${entry.provider}/${entry.id}`);
@@ -247,9 +247,31 @@ describe("buildUiModelCatalogs", () => {
 
     expect(chatRefs).toContain("openai-codex/gpt-5.5");
     expect(chatRefs).not.toContain("openai/gpt-5.6");
-    expect(providerRefs).toContain("openai/gpt-5.6");
     expect(providerRefs).toContain("openai-codex/gpt-5.5");
+    expect(providerRefs).not.toContain("openai/gpt-5.6");
     expect(providerRefs).not.toContain("openai/gpt-5.4");
+  });
+
+  it("expands the curated catalog for an authenticated API-key route only", () => {
+    const authStatus = {
+      providers: [{ provider: "openai", status: "ok", profiles: [] }],
+    } as unknown as ModelsAuthStatusResult;
+    const catalogs = buildUiModelCatalogs({
+      chatCatalog: [{ provider: "openai", id: "gpt-5.6", name: "GPT-5.6" }],
+      providerCatalog: [{ provider: "openai", id: "gpt-5.6", name: "GPT-5.6" }],
+      authStatus,
+    });
+    const providerRefs = catalogs.provider.map((entry) => `${entry.provider}/${entry.id}`);
+
+    expect(providerRefs).toEqual(
+      expect.arrayContaining([
+        "openai/gpt-5.6",
+        "openai/gpt-5.6-terra",
+        "openai/gpt-5.6-luna",
+        "openai/gpt-5.5",
+      ]),
+    );
+    expect(providerRefs).not.toContain("openai-codex/gpt-5.5");
   });
 });
 

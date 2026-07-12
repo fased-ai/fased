@@ -245,14 +245,14 @@ function buildAgentModelOptions(
     if (!isStandardProviderCatalogEntry(entry)) {
       continue;
     }
+    if (!readyRoutes.has(provider.toLowerCase())) {
+      continue;
+    }
     addAgentModelOption(options, {
       provider,
       id: entry.id,
       label: modelCatalogLabel(entry),
-      available: readyRoutes.has(provider.toLowerCase()),
-      ...(!readyRoutes.has(provider.toLowerCase())
-        ? { setupLabel: modelRouteSetupLabel(provider) }
-        : {}),
+      available: true,
       capabilityDetail: modelCapabilityDetail(entry),
     });
   }

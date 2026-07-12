@@ -910,7 +910,7 @@ describe("Agents assembly UI", () => {
     expect(props.onConfigSave).toHaveBeenCalled();
   });
 
-  it("shows reviewed OpenAI models without allowing an unconfigured auth route", () => {
+  it("shows only models from authenticated provider routes", () => {
     const props = createProps({
       config: {
         form: {
@@ -960,9 +960,7 @@ describe("Agents assembly UI", () => {
       'button[data-agent-model-option="true"][data-value="openai-codex/gpt-5.5"]',
     );
 
-    expect(direct).toBeInstanceOf(HTMLButtonElement);
-    expect(direct?.disabled).toBe(true);
-    expect(direct?.textContent).toContain("API key required");
+    expect(direct).toBeNull();
     expect(signedIn).toBeInstanceOf(HTMLButtonElement);
     expect(signedIn?.disabled).toBe(false);
   });
