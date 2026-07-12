@@ -58,7 +58,7 @@ describe("SAT mainnet sync", () => {
     expect(status.trustKeySource).toBe("not_required");
   });
 
-  it("fails a live manifest clearly when this release has no trusted key", async () => {
+  it("rejects a live manifest signed by an untrusted key", async () => {
     const { privateKey } = generateKeyPairSync("ed25519");
     const manifest = JSON.stringify({
       schema: "sat-mainnet-addresses.v1",
@@ -87,10 +87,9 @@ describe("SAT mainnet sync", () => {
         expect(status).toMatchObject({
           ok: false,
           state: "failed",
-          trustKeySource: "missing",
+          trustKeySource: "embedded",
           verification: { hash: "valid", signature: "invalid" },
-          error:
-            "This Fased release has no trusted SAT mainnet manifest key. Update Fased before syncing or mining.",
+          error: "Signed manifest verification failed.",
         });
       },
     );
@@ -179,7 +178,7 @@ describe("SAT mainnet sync", () => {
         });
         expect(invalid).toMatchObject({
           ok: false,
-          trustKeySource: "environment",
+          trustKeySource: "embedded",
           verification: { hash: "valid", signature: "invalid" },
         });
 

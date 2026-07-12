@@ -18,10 +18,32 @@ type TrustedManifestKey = {
   publicKeyBase64Url: string;
 };
 
+type EmbeddedTrustedManifestKey = TrustedManifestKey & {
+  fingerprintSha256: string;
+};
+
+type ResolvedTrustedManifestKey = TrustedManifestKey & {
+  source: "embedded" | "environment";
+};
+
 // Populated only with public keys approved for the official SAT manifest publisher.
 // Never add a placeholder key here: live mainnet remains fail-closed until a
 // release contains an official trust anchor.
-const EMBEDDED_TRUSTED_KEYS: TrustedManifestKey[] = [];
+const EMBEDDED_TRUSTED_KEYS: EmbeddedTrustedManifestKey[] = [
+  {
+    id: "sat-mainnet-2026-01",
+    publicKeyBase64Url: "F-Kv6SBcZHvs1LQ0LNHwYQ6VuKidpkv1nkgRqggn1kk",
+    fingerprintSha256: "7fc6f335e13fbba3cee2f833e4ab656a19fd8c0715b9d9097a3e196f0e3a0ebd",
+  },
+];
+
+for (const key of EMBEDDED_TRUSTED_KEYS) {
+  const publicKeyBytes = Buffer.from(key.publicKeyBase64Url, "base64url");
+  const fingerprint = createHash("sha256").update(publicKeyBytes).digest("hex");
+  if (publicKeyBytes.length !== 32 || fingerprint !== key.fingerprintSha256) {
+    throw new Error(`Invalid embedded SAT mainnet manifest key: ${key.id}`);
+  }
+}
 
 export type SatMainnetSyncState = "not_live" | "available" | "synced" | "failed";
 
@@ -62,7 +84,7 @@ type RawManifest = {
   };
 };
 
-function trustedKeysFromEnv(env: NodeJS.ProcessEnv): TrustedManifestKey[] {
+function trustedKeysFromEnv(env: NodeJS.ProcessEnv): ResolvedTrustedManifestKey[] {
   const raw = String(env.FASED_SAT_MAINNET_MANIFEST_PUBLIC_KEY ?? "").trim();
   const id = String(env.FASED_SAT_MAINNET_MANIFEST_PUBLIC_KEY_ID ?? "env").trim() || "env";
   const rotated = String(env.FASED_SAT_MAINNET_MANIFEST_PUBLIC_KEYS ?? "")
@@ -72,15 +94,24 @@ function trustedKeysFromEnv(env: NodeJS.ProcessEnv): TrustedManifestKey[] {
     .map((publicKeyBase64Url, index) => ({
       id: `${id}-${index + 1}`,
       publicKeyBase64Url,
+      source: "environment" as const,
     }));
-  return [...(raw ? [{ id, publicKeyBase64Url: raw }] : []), ...rotated];
+  return [
+    ...(raw ? [{ id, publicKeyBase64Url: raw, source: "environment" as const }] : []),
+    ...rotated,
+  ];
 }
 
-function resolveTrustedKeys(env: NodeJS.ProcessEnv): TrustedManifestKey[] {
-  return [...EMBEDDED_TRUSTED_KEYS, ...trustedKeysFromEnv(env)];
+function resolveTrustedKeys(env: NodeJS.ProcessEnv): ResolvedTrustedManifestKey[] {
+  return [
+    ...EMBEDDED_TRUSTED_KEYS.map((key) => ({ ...key, source: "embedded" as const })),
+    ...trustedKeysFromEnv(env),
+  ];
 }
 
-function resolveTrustKeySource(env: NodeJS.ProcessEnv): "embedded" | "environment" | "missing" {
+function resolveConfiguredTrustKeySource(
+  env: NodeJS.ProcessEnv,
+): "embedded" | "environment" | "missing" {
   if (EMBEDDED_TRUSTED_KEYS.length > 0) {
     return "embedded";
   }
@@ -154,8 +185,8 @@ function normalizeBase64Url(raw: string): string {
 function verifyDetachedEd25519Signature(params: {
   payload: string;
   signatureBase64: string;
-  trustedKeys: TrustedManifestKey[];
-}): boolean {
+  trustedKeys: ResolvedTrustedManifestKey[];
+}): ResolvedTrustedManifestKey | null {
   const signature = Buffer.from(params.signatureBase64, "base64");
   for (const trustedKey of params.trustedKeys) {
     try {
@@ -168,45 +199,62 @@ function verifyDetachedEd25519Signature(params: {
         },
       });
       if (verify(null, Buffer.from(params.payload), publicKey, signature)) {
-        return true;
+        return trustedKey;
       }
     } catch {}
   }
-  return false;
+  return null;
 }
 
 async function verifyLiveManifest(params: {
   manifestUrl: string;
   raw: string;
   env: NodeJS.ProcessEnv;
-}): Promise<SatMainnetSyncVerification> {
+}): Promise<{
+  verification: SatMainnetSyncVerification;
+  trustKeySource: "embedded" | "environment" | "missing";
+}> {
+  const configuredTrustKeySource = resolveConfiguredTrustKeySource(params.env);
   const expectedHash = parseSha256(
     await fetchText(`${params.manifestUrl}.sha256`, { required: false }).catch(() => null),
   );
   if (!expectedHash) {
-    return { hash: "missing", signature: "missing" };
+    return {
+      verification: { hash: "missing", signature: "missing" },
+      trustKeySource: configuredTrustKeySource,
+    };
   }
   if (sha256Hex(params.raw) !== expectedHash) {
-    return { hash: "invalid", signature: "missing" };
+    return {
+      verification: { hash: "invalid", signature: "missing" },
+      trustKeySource: configuredTrustKeySource,
+    };
   }
   const signature = await fetchText(`${params.manifestUrl}.sig`, { required: false }).catch(
     () => null,
   );
   if (!signature?.trim()) {
-    return { hash: "valid", signature: "missing" };
+    return {
+      verification: { hash: "valid", signature: "missing" },
+      trustKeySource: configuredTrustKeySource,
+    };
   }
   const trustedKeys = resolveTrustedKeys(params.env);
-  if (
-    !trustedKeys.length ||
-    !verifyDetachedEd25519Signature({
-      payload: params.raw,
-      signatureBase64: signature.trim(),
-      trustedKeys,
-    })
-  ) {
-    return { hash: "valid", signature: "invalid" };
+  const verifiedKey = verifyDetachedEd25519Signature({
+    payload: params.raw,
+    signatureBase64: signature.trim(),
+    trustedKeys,
+  });
+  if (!verifiedKey) {
+    return {
+      verification: { hash: "valid", signature: "invalid" },
+      trustKeySource: configuredTrustKeySource,
+    };
   }
-  return { hash: "valid", signature: "valid" };
+  return {
+    verification: { hash: "valid", signature: "valid" },
+    trustKeySource: verifiedKey.source,
+  };
 }
 
 function readLocalIds(env: NodeJS.ProcessEnv): SatRuntimeIds | null {
@@ -289,8 +337,8 @@ export async function getSatMainnetSyncStatus(opts?: {
     if (!officialIds) {
       throw new Error("live manifest is missing the complete SAT runtime id tuple");
     }
-    const verification = await verifyLiveManifest({ manifestUrl, raw, env });
-    const trustKeySource = resolveTrustKeySource(env);
+    const verifiedManifest = await verifyLiveManifest({ manifestUrl, raw, env });
+    const { verification, trustKeySource } = verifiedManifest;
     const localIds = readLocalIds(env);
     if (verification.hash !== "valid" || verification.signature !== "valid") {
       return {
