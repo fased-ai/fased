@@ -164,7 +164,7 @@ describe("provider registry", () => {
       thinkingLevels: ["off", "minimal", "low", "medium", "high"],
       defaultThinkingLevel: "low",
       thinkingMode: "anthropic-adaptive",
-      reasoningBudgetSupported: true,
+      reasoningBudgetSupported: false,
     });
     expect(lookupProviderManifestModelCapability("anthropic", "claude-opus-4-8")).toMatchObject({
       thinkingLevels: ["off", "minimal", "low", "medium", "high"],

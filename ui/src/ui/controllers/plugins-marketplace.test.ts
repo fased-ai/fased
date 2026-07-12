@@ -734,7 +734,8 @@ describe("plugins marketplace controller", () => {
     const { state, request } = createState();
     state.pluginsMarketplaceSelectedId = "demo-plugin";
 
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const confirm = vi.fn(() => true);
+    vi.stubGlobal("window", { confirm });
 
     request
       .mockResolvedValueOnce({
@@ -765,7 +766,7 @@ describe("plugins marketplace controller", () => {
       expect(state.pluginsMarketplaceSelectedId).toBeNull();
       expect(state.pluginsMarketplaceDetail).toBeNull();
     } finally {
-      confirm.mockRestore();
+      vi.unstubAllGlobals();
     }
   });
 

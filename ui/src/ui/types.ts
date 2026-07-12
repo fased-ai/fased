@@ -553,6 +553,7 @@ export type PresenceEntry = {
   host?: string | null;
   ip?: string | null;
   version?: string | null;
+  runtimeSource?: string | null;
   platform?: string | null;
   deviceFamily?: string | null;
   modelIdentifier?: string | null;

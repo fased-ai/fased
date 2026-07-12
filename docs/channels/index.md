@@ -101,7 +101,7 @@ Optional and legacy:
 
 - **Agent > Channels** shows available channels, including official add-ons
   that are not downloaded yet.
-- Telegram, WhatsApp, Discord, and Slack show **Install** on a fresh core
+- Telegram, WhatsApp, Discord, Slack, Feishu, and Google Chat show **Install** on a fresh core
   install. The Control UI downloads the matching official npm package.
 - Saving credentials enables that channel for the selected Agent.
 - Installed channel add-ons need a Gateway restart before their credential and
@@ -120,7 +120,7 @@ Optional and legacy:
 ## Notes
 
 - multiple channels can run at the same time
-- Telegram, WhatsApp, Discord, and Slack are official add-ons; install only the
+- Telegram, WhatsApp, Discord, Slack, Feishu, and Google Chat are official add-ons; install only the
   channels you use
 - other advanced channel extensions may need a source install or
   channel-specific dependencies until a published add-on exists

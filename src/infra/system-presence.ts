@@ -1,12 +1,13 @@
 import { spawnSync } from "node:child_process";
 import os from "node:os";
 import { pickPrimaryLanIPv4 } from "../gateway/net.js";
-import { resolveRuntimeServiceVersion } from "../version.js";
+import { resolveRuntimeServiceVersion, resolveRuntimeSource } from "../version.js";
 
 export type SystemPresence = {
   host?: string;
   ip?: string;
   version?: string;
+  runtimeSource?: string;
   platform?: string;
   deviceFamily?: string;
   modelIdentifier?: string;
@@ -52,6 +53,7 @@ function initSelfPresence() {
   const host = os.hostname();
   const ip = resolvePrimaryIPv4() ?? undefined;
   const version = resolveRuntimeServiceVersion(process.env, "unknown");
+  const runtimeSource = resolveRuntimeSource(process.env);
   const modelIdentifier = (() => {
     const p = os.platform();
     if (p === "darwin") {
@@ -94,11 +96,12 @@ function initSelfPresence() {
     }
     return p;
   })();
-  const text = `Gateway: ${host}${ip ? ` (${ip})` : ""} · app ${version} · mode gateway · reason self`;
+  const text = `Gateway: ${host}${ip ? ` (${ip})` : ""} · app ${version} · ${runtimeSource} · mode gateway · reason self`;
   const selfEntry: SystemPresence = {
     host,
     ip,
     version,
+    runtimeSource,
     platform,
     deviceFamily,
     modelIdentifier,

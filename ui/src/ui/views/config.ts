@@ -1477,6 +1477,8 @@ export function formatProviderAuthRuntimeStatus(
       const duration = formatProviderAuthRuntimeDuration(profile.remainingMs);
       return duration ? `expiring · ${duration}` : "expiring";
     }
+    case "refresh-required":
+      return "refresh required · sign in or test the provider";
     case "expired":
       return "expired";
     case "missing":

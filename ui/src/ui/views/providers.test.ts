@@ -148,6 +148,8 @@ describe("renderProviders", () => {
     expect(text).toContain("Save API");
     expect(text).toContain("Sign in");
     expect(text).toContain("Configure");
+    expect(text).toContain("Two OpenAI routes");
+    expect(text).toContain("GPT-5.6");
     expect(text).not.toContain("Default model");
     expect(text).not.toContain("Ready providers");
     expect(text).not.toContain("Catalog models");
@@ -466,6 +468,39 @@ describe("renderProviders", () => {
     expect(text).not.toContain("Live catalog probe not available");
     expect(text).not.toContain("curated models stay available");
     expect(text).not.toContain("Catalog source missing: add API key or sign in");
+  });
+
+  it("does not present an untested OAuth refresh as ready", async () => {
+    const { renderProviders } = await import("./providers.ts");
+    const text = flattenTemplateText(
+      renderProviders(
+        createBaseProps({
+          authStatus: {
+            storePath: "/tmp/fased/auth.json",
+            warnAfterMs: 3600000,
+            providers: [
+              {
+                provider: "openai-codex",
+                status: "refresh-required",
+                effective: { kind: "profiles", detail: "openai-codex:default" },
+                profiles: [
+                  {
+                    profileId: "openai-codex:default",
+                    provider: "openai-codex",
+                    type: "oauth",
+                    status: "refresh-required",
+                    label: "openai-codex:default",
+                    source: "store",
+                  },
+                ],
+              },
+            ],
+          },
+        }),
+      ),
+    );
+
+    expect(text).toContain("Refresh sign-in");
   });
 
   it("renders compact OAuth sign-in link affordances in the included provider test shard", async () => {

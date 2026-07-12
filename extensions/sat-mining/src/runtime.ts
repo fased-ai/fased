@@ -212,6 +212,9 @@ export type SatMiningRuntimeState = {
 
 const SAT_RATE_LIMIT_BASE_DELAY_MS = 60_000;
 const SAT_RATE_LIMIT_MAX_DELAY_MS = 5 * 60_000;
+const SAT_RATE_LIMIT_CIRCUIT_BREAKER_DELAY_MS = 15 * 60_000;
+const SAT_RATE_LIMIT_CIRCUIT_BREAKER_RETRY_COUNT = 8;
+const SAT_RETRY_COUNT_MAX = 1_000;
 const SAT_CHAIN_TIME_FRESH_MS = 15_000;
 const SAT_CHAIN_TIME_STALE_MS = 60_000;
 const SAT_CLAIM_BATCH_DEFAULT_CYCLES = 5;
@@ -351,7 +354,7 @@ export function markWorkerFailure(
 ) {
   const entry = state.workers[worker];
   entry.running = false;
-  entry.retryCount += 1;
+  entry.retryCount = Math.min(SAT_RETRY_COUNT_MAX, entry.retryCount + 1);
   entry.lastFailureAt = new Date().toISOString();
   entry.lastError = error instanceof Error ? error.message : String(error);
   entry.lastDetail = detail ?? entry.lastDetail;
@@ -442,6 +445,9 @@ export function isSatRateLimitedError(error: unknown): boolean {
 
 export function satRateLimitBackoffMs(retryCount: number): number {
   const normalizedRetryCount = Math.max(1, Math.floor(retryCount));
+  if (normalizedRetryCount >= SAT_RATE_LIMIT_CIRCUIT_BREAKER_RETRY_COUNT) {
+    return SAT_RATE_LIMIT_CIRCUIT_BREAKER_DELAY_MS;
+  }
   return Math.min(
     SAT_RATE_LIMIT_MAX_DELAY_MS,
     SAT_RATE_LIMIT_BASE_DELAY_MS * 2 ** Math.max(0, normalizedRetryCount - 1),
@@ -503,7 +509,7 @@ export function upsertSatClaimBacklogEntry(
     stage: patch.stage ?? existing?.stage ?? "pending",
     retryCount:
       typeof patch.retryCount === "number" && Number.isFinite(patch.retryCount)
-        ? Math.max(0, Math.floor(patch.retryCount))
+        ? Math.min(SAT_RETRY_COUNT_MAX, Math.max(0, Math.floor(patch.retryCount)))
         : (existing?.retryCount ?? 0),
     firstSeenAt: existing?.firstSeenAt ?? now,
     lastUpdatedAt: patch.lastUpdatedAt ?? now,
@@ -567,7 +573,7 @@ export function markSatClaimBacklogFailure(
     const existing = state.claimBacklog.get(cycleId);
     upsertSatClaimBacklogEntry(state, cycleId, {
       stage: "failed",
-      retryCount: (existing?.retryCount ?? 0) + 1,
+      retryCount: Math.min(SAT_RETRY_COUNT_MAX, (existing?.retryCount ?? 0) + 1),
       lastError: message,
       reason: "claim batch failed; retry will keep the same oldest cycles first",
     });

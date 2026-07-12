@@ -8,7 +8,13 @@ import { normalizeProviderId } from "./model-selection.js";
 
 export type AuthProfileSource = "store";
 
-export type AuthProfileHealthStatus = "ok" | "expiring" | "expired" | "missing" | "static";
+export type AuthProfileHealthStatus =
+  | "ok"
+  | "expiring"
+  | "refresh-required"
+  | "expired"
+  | "missing"
+  | "static";
 
 export type AuthProfileHealth = {
   profileId: string;
@@ -22,7 +28,7 @@ export type AuthProfileHealth = {
   label: string;
 };
 
-export type AuthProviderHealthStatus = "ok" | "expiring" | "expired" | "missing" | "static";
+export type AuthProviderHealthStatus = AuthProfileHealthStatus;
 
 export type AuthProviderHealth = {
   provider: string;
@@ -172,10 +178,12 @@ function buildProfileHealth(params: {
     now,
     warnAfterMs,
   );
-  // OAuth credentials with a valid refresh token auto-renew on first API call,
-  // so don't warn about access token expiration.
+  // A stored refresh token makes renewal possible, not proven. Report the
+  // transition honestly until a real provider request refreshes the profile.
   const status =
-    hasRefreshToken && (rawStatus === "expired" || rawStatus === "expiring") ? "ok" : rawStatus;
+    hasRefreshToken && (rawStatus === "expired" || rawStatus === "expiring")
+      ? "refresh-required"
+      : rawStatus;
   return {
     profileId,
     provider,
@@ -271,13 +279,19 @@ export function buildAuthHealthSummary(params: {
       provider.remainingMs = provider.expiresAt - now;
     }
 
-    const statuses = new Set(expirable.map((p) => p.status));
-    if (statuses.has("expired") || statuses.has("missing")) {
-      provider.status = "expired";
+    const statuses = new Set(provider.profiles.map((p) => p.status));
+    if (statuses.has("ok")) {
+      provider.status = "ok";
+    } else if (statuses.has("static")) {
+      provider.status = "static";
     } else if (statuses.has("expiring")) {
       provider.status = "expiring";
+    } else if (statuses.has("refresh-required")) {
+      provider.status = "refresh-required";
+    } else if (statuses.has("expired")) {
+      provider.status = "expired";
     } else {
-      provider.status = "ok";
+      provider.status = "missing";
     }
   }
 

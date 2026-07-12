@@ -167,12 +167,40 @@ describe("doctor state integrity oauth dir checks", () => {
     const text = stateIntegrityText();
     expect(text).toContain("recent sessions are missing transcripts");
     expect(text).toMatch(/fased sessions --store ".*sessions\.json"/);
-    expect(text).toMatch(/fased sessions cleanup --store ".*sessions\.json" --dry-run/);
-    expect(text).toMatch(
-      /fased sessions cleanup --store ".*sessions\.json" --enforce --fix-missing/,
-    );
+    expect(text).toContain("fased doctor --fix");
+    expect(text).toContain("cannot be reconstructed");
     expect(text).not.toContain("--active");
     expect(text).not.toContain(" ls ");
+  });
+
+  it("repairs missing transcript headers without deleting session metadata", async () => {
+    const cfg: FasedAgentConfig = {};
+    setupSessionState(cfg, process.env, process.env.HOME ?? "");
+    const storePath = resolveStorePath(cfg.session?.store, { agentId: "main" });
+    const sessionsDir = resolveSessionTranscriptsDirForAgent("main", process.env, () => tempHome);
+    fs.writeFileSync(
+      storePath,
+      JSON.stringify({
+        "agent:main:main": { sessionId: "repair-me", updatedAt: Date.now() },
+      }),
+    );
+    const confirmSkipInNonInteractive = vi.fn(async () => false);
+
+    await noteStateIntegrity(cfg, { shouldRepair: true, confirmSkipInNonInteractive });
+
+    const transcriptPath = path.join(sessionsDir, "repair-me.jsonl");
+    expect(fs.existsSync(transcriptPath)).toBe(true);
+    expect(JSON.parse(fs.readFileSync(transcriptPath, "utf8").trim())).toMatchObject({
+      type: "session",
+      id: "repair-me",
+    });
+    expect(JSON.parse(fs.readFileSync(storePath, "utf8"))).toHaveProperty(
+      "agent:main:main.sessionId",
+      "repair-me",
+    );
+    expect(confirmSkipInNonInteractive).not.toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringContaining("Recreate missing") }),
+    );
   });
 
   it("ignores slash-routing sessions for recent missing transcript warnings", async () => {

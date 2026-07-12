@@ -1005,6 +1005,18 @@ export function renderOverview(props: OverviewProps) {
 
   return html`
     <section class="dashboard-shell">
+      ${
+        props.hello?.server?.version
+          ? html`<div class="muted" data-testid="gateway-runtime-identity">
+            Gateway ${props.hello.server.version}
+            ${
+              props.hello.server.runtimeSource
+                ? ` · ${props.hello.server.runtimeSource.replaceAll("-", " ")}`
+                : ""
+            }
+          </div>`
+          : nothing
+      }
       <div
         class="dashboard-board"
         aria-label="Dashboard widget board"

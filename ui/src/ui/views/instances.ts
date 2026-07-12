@@ -248,6 +248,7 @@ function renderEntry(entry: PresenceEntry, masked: boolean) {
           <div class="instances-entry-card__sub">
             ${ip ? html`<span class="${masked ? "redacted" : ""}">${ip}</span> ` : nothing}${mode}
             ${entry.version ?? ""}
+            ${entry.runtimeSource ? ` · ${entry.runtimeSource.replaceAll("-", " ")}` : ""}
           </div>
         </div>
         <div class="instances-entry-card__age">${formatPresenceAge(entry)}</div>
@@ -274,6 +275,11 @@ function renderEntry(entry: PresenceEntry, masked: boolean) {
         ${entry.deviceFamily ? html`<span class="chip">${entry.deviceFamily}</span>` : nothing}
         ${entry.modelIdentifier ? html`<span class="chip">${entry.modelIdentifier}</span>` : nothing}
         ${entry.version ? html`<span class="chip">${entry.version}</span>` : nothing}
+        ${
+          entry.runtimeSource
+            ? html`<span class="chip">${entry.runtimeSource.replaceAll("-", " ")}</span>`
+            : nothing
+        }
       </div>
     </div>
   `;

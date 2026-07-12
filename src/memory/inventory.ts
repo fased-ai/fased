@@ -59,6 +59,9 @@ export type DoctorMemoryInventoryPayload = {
     files?: number;
     chunks?: number;
     dirty?: boolean;
+    fts?: MemoryProviderStatus["fts"];
+    vector?: MemoryProviderStatus["vector"];
+    fallback?: MemoryProviderStatus["fallback"];
     db?: MemoryInventoryPathStatus;
     sources?: MemoryProviderStatus["sources"];
     sourceCounts?: MemoryProviderStatus["sourceCounts"];
@@ -259,6 +262,9 @@ export async function buildMemoryInventory(params: {
       ...(typeof providerStatus?.files === "number" ? { files: providerStatus.files } : {}),
       ...(typeof providerStatus?.chunks === "number" ? { chunks: providerStatus.chunks } : {}),
       ...(typeof providerStatus?.dirty === "boolean" ? { dirty: providerStatus.dirty } : {}),
+      ...(providerStatus?.fts ? { fts: providerStatus.fts } : {}),
+      ...(providerStatus?.vector ? { vector: providerStatus.vector } : {}),
+      ...(providerStatus?.fallback ? { fallback: providerStatus.fallback } : {}),
       ...(providerStatus?.dbPath ? { db: await summarizePath(providerStatus.dbPath, roots) } : {}),
       ...(providerStatus?.sources ? { sources: providerStatus.sources } : {}),
       ...(providerStatus?.sourceCounts ? { sourceCounts: providerStatus.sourceCounts } : {}),
@@ -332,6 +338,24 @@ export function validateMemoryInventory(
       code: "backend.status.unavailable",
       area: "backend",
       message: inventory.backend.error,
+    });
+  }
+  if (inventory.backend.dirty) {
+    push({
+      severity: "warn",
+      code: "backend.index.dirty",
+      area: "backend",
+      message: "The memory index is stale and needs a rebuild before recall is current.",
+    });
+  }
+  if (inventory.backend.vector?.enabled && inventory.backend.vector.available !== true) {
+    push({
+      severity: "warn",
+      code: "backend.semantic.unavailable",
+      area: "backend",
+      message:
+        inventory.backend.vector.loadError ??
+        "Semantic recall is configured but vector search is not available.",
     });
   }
   if (inventory.backend.configured !== inventory.backend.active && inventory.backend.active) {

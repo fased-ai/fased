@@ -235,6 +235,23 @@ describe("renderOverview dashboard", () => {
     expect(text).not.toContain("Plugin runtime detail");
   });
 
+  it("shows the gateway version and sanitized runtime source", async () => {
+    const { renderOverview } = await import("./overview.ts");
+    const text = flattenTemplateText(
+      renderOverview(
+        createOverviewProps({
+          hello: {
+            server: { version: "0.1.48", runtimeSource: "source-checkout" },
+          },
+        }) as never,
+      ),
+    );
+
+    expect(text).toContain("Gateway");
+    expect(text).toContain("0.1.48");
+    expect(text).toContain("source checkout");
+  });
+
   it("renders dashboard usage from 7 day daily ledger data", async () => {
     const { renderOverview } = await import("./overview.ts");
     const text = flattenTemplateText(

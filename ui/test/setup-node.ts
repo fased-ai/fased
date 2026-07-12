@@ -56,6 +56,7 @@ const nodeWindow = {
     globalThis.setTimeout(() => handler(...args), timeout),
   clearTimeout: (timeoutId: ReturnType<typeof globalThis.setTimeout> | undefined) =>
     globalThis.clearTimeout(timeoutId),
+  confirm: vi.fn(() => true),
 };
 
 vi.stubGlobal("window", nodeWindow);

@@ -75,6 +75,13 @@ export const HelloOkSchema = Type.Object(
     server: Type.Object(
       {
         version: NonEmptyString,
+        runtimeSource: Type.Optional(
+          Type.Union([
+            Type.Literal("source-checkout"),
+            Type.Literal("managed-package"),
+            Type.Literal("packaged-runtime"),
+          ]),
+        ),
         connId: NonEmptyString,
       },
       { additionalProperties: false },

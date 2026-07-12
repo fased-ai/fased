@@ -14,8 +14,19 @@ runtime_root_has_build() {
 
 resolve_managed_runtime_root() {
   local root
+  if runtime_root_has_build "${FASED_MANAGED_RUNTIME_ROOT:-}"; then
+    printf '%s\n' "$FASED_MANAGED_RUNTIME_ROOT"
+    return 0
+  fi
+
+  # A service script owned by a source checkout must run that checkout. This
+  # prevents an old managed package cache from silently replacing current code.
+  if [[ -d "$FASED_ROOT/.git" ]] && runtime_root_has_build "$FASED_ROOT"; then
+    printf '%s\n' "$FASED_ROOT"
+    return 0
+  fi
+
   for root in \
-    "${FASED_MANAGED_RUNTIME_ROOT:-}" \
     "$HOME/.fased/install-cache/npm-global/lib/node_modules/@fased/fased" \
     "$FASED_ROOT"; do
     if runtime_root_has_build "$root"; then
@@ -28,6 +39,15 @@ resolve_managed_runtime_root() {
 
 FASED_RUNTIME_ROOT="$(resolve_managed_runtime_root)"
 RUN_NODE_SCRIPT="$FASED_RUNTIME_ROOT/scripts/run-node.mjs"
+if [[ -z "${FASED_RUNTIME_SOURCE:-}" ]]; then
+  if [[ "$FASED_RUNTIME_ROOT" == "$FASED_ROOT" && -d "$FASED_ROOT/.git" ]]; then
+    export FASED_RUNTIME_SOURCE="source-checkout"
+  elif [[ "$FASED_RUNTIME_ROOT" == *"/node_modules/@fased/fased" ]]; then
+    export FASED_RUNTIME_SOURCE="managed-package"
+  else
+    export FASED_RUNTIME_SOURCE="packaged-runtime"
+  fi
+fi
 
 node_runtime_ok_for() {
   local node_bin="$1"

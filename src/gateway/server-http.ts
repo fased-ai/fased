@@ -7055,7 +7055,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
         );
         const result = await callSatMiningGateway<{ payload?: unknown }>(
           "sat.getMiningStatus",
-          { responsive: true, ...(forceFresh ? { forceFresh: true } : {}) },
+          { statusMode: "ui", responsive: true, ...(forceFresh ? { forceFresh: true } : {}) },
           { timeoutMs: 60_000 },
         );
         sendLoginResponse(200, { ok: true, status: result.payload ?? null });

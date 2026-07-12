@@ -556,10 +556,6 @@ async function promptForWizardStep(
     return { cancelled: false as const, value: null };
   }
 
-  if (typeof window === "undefined") {
-    throw new Error("Interactive provider auth requires a browser environment.");
-  }
-
   if (mode === "modal") {
     return await new Promise<ConfigAuthPromptAnswer>((resolve) => {
       state.configAuthPromptResolver = resolve;
@@ -590,6 +586,10 @@ async function promptForWizardStep(
         }),
       );
     });
+  }
+
+  if (typeof window === "undefined") {
+    throw new Error("Interactive provider auth requires a browser environment.");
   }
 
   if (step.type === "confirm") {

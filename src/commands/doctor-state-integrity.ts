@@ -14,6 +14,7 @@ import {
   resolveSessionFilePathOptions,
   resolveSessionTranscriptsDirForAgent,
   resolveStorePath,
+  ensureSessionTranscriptHeader,
 } from "../config/sessions.js";
 import { resolveRequiredHomeDir } from "../infra/home-dir.js";
 import { parseAgentSessionKey } from "../sessions/session-key-utils.js";
@@ -21,6 +22,7 @@ import { note } from "../terminal/note.js";
 import { shortenHomePath } from "../utils.js";
 
 type DoctorPrompterLike = {
+  shouldRepair?: boolean;
   confirmSkipInNonInteractive: (params: {
     message: string;
     initialValue?: boolean;
@@ -437,10 +439,35 @@ export async function noteStateIntegrity(
         [
           `- ${missing.length}/${recentTranscriptCandidates.length} recent sessions are missing transcripts.`,
           `  Verify sessions in store: ${formatCliCommand(`fased sessions --store "${absoluteStorePath}"`)}`,
-          `  Preview cleanup impact: ${formatCliCommand(`fased sessions cleanup --store "${absoluteStorePath}" --dry-run`)}`,
-          `  Prune missing entries: ${formatCliCommand(`fased sessions cleanup --store "${absoluteStorePath}" --enforce --fix-missing`)}`,
+          `  Preserve entries and rebuild empty transcript headers: ${formatCliCommand("fased doctor --fix")}`,
+          "  Earlier missing transcript content cannot be reconstructed.",
         ].join("\n"),
       );
+      const repairMissing =
+        prompter.shouldRepair === true ||
+        (await prompter.confirmSkipInNonInteractive({
+          message: "Recreate missing transcript headers while preserving session entries?",
+          initialValue: true,
+        }));
+      if (repairMissing) {
+        for (const [, entry] of missing) {
+          const sessionId = entry.sessionId;
+          if (!sessionId) {
+            continue;
+          }
+          const transcriptPath = resolveSessionFilePath(sessionId, entry, sessionPathOpts);
+          const repair = ensureSessionTranscriptHeader({ sessionFile: transcriptPath, sessionId });
+          if (repair.error) {
+            warnings.push(
+              `- Failed to recreate transcript header ${shortenHomePath(transcriptPath)}: ${repair.error}`,
+            );
+          } else if (repair.created) {
+            changes.push(
+              `- Recreated missing transcript header for session ${sessionId}; prior transcript content was unavailable`,
+            );
+          }
+        }
+      }
     }
 
     const mainKey = resolveMainSessionKey(cfg);

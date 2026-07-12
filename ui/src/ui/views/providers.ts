@@ -306,6 +306,9 @@ function runtimeStatusClass(status: string | null | undefined) {
   if (status === "missing" || status === "unauthenticated" || status === "unconfigured") {
     return "chip warn";
   }
+  if (status === "refresh-required") {
+    return "chip warn";
+  }
   if (status === "error") {
     return "chip danger";
   }
@@ -2094,7 +2097,13 @@ export function renderProviders(props: ProvidersProps) {
                           ${
                             ready
                               ? nothing
-                              : html`<span class=${runtimeStatusClass(runtimeStatus)}>Sign in</span>`
+                              : html`<span class=${runtimeStatusClass(runtimeStatus)}>
+                                  ${
+                                    runtimeStatus === "refresh-required"
+                                      ? "Refresh sign-in"
+                                      : "Sign in"
+                                  }
+                                </span>`
                           }
                           ${
                             catalogGap
@@ -2132,6 +2141,19 @@ export function renderProviders(props: ProvidersProps) {
                       </div>
                     </summary>
                     <div class="providers-provider__body">
+                      ${
+                        providerCard.id === "openai"
+                          ? html`
+                              <div class="providers-catalog-gap is-info" role="note">
+                                <div class="providers-catalog-gap__title">Two OpenAI routes</div>
+                                <div class="providers-catalog-gap__detail">
+                                  ChatGPT sign-in unlocks <code>openai-codex</code> models. OpenAI API keys unlock the direct
+                                  <code>openai</code> catalog, including GPT-5.6.
+                                </div>
+                              </div>
+                            `
+                          : nothing
+                      }
                       ${renderProviderHealth(catalogProviders)}
                       ${renderProviderCapabilitySummary({
                         providerIds: providerCard.modelProviderIds ?? providerCard.routeIds,

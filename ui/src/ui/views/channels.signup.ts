@@ -138,8 +138,7 @@ function renderSignupActions(params: {
 }) {
   const { channelId, props } = params;
   const disabled = props.configSaving || props.configSchemaLoading || !props.connected;
-  const localEnable = isLocalChannelInstall(params.install);
-  const externalInstall = params.installAvailable && !localEnable && !params.installPendingRestart;
+  const externalInstall = params.installAvailable && !params.installPendingRestart;
   if (externalInstall) {
     return nothing;
   }
@@ -392,8 +391,7 @@ export function renderChannelSignupCard(params: {
     });
   }
   const spec = resolveSignupSpec(props, channelId, params.label);
-  const localEnable = isLocalChannelInstall(params.install);
-  const externalInstall = params.installAvailable && !localEnable;
+  const externalInstall = params.installAvailable === true;
   return html`
     <div class="card channel-signup-card">
       <div class="channel-signup-header">
@@ -447,27 +445,16 @@ function installCommand(channelId: string, install: unknown): string {
   return `fased plugins install ${typeof spec === "string" && spec.trim() ? spec.trim() : channelId}`;
 }
 
-function isLocalChannelInstall(install: unknown): boolean {
-  return (
-    isRecord(install) &&
-    typeof install.localPath === "string" &&
-    install.localPath.trim().length > 0
-  );
-}
-
 function renderInstallHelp(channelId: string, install: unknown, pendingRestart?: boolean) {
-  const localEnable = isLocalChannelInstall(install);
   const command = installCommand(channelId, install);
   return html`
     <div class="card-sub">
       ${
         pendingRestart
-          ? "Enabled. Restart the gateway so the channel runtime loads."
-          : localEnable
-            ? "Enable this channel, then restart the gateway."
-            : "Install the channel plugin, then restart the gateway."
+          ? "Installed. Restart the gateway so the channel runtime loads."
+          : "Install the channel plugin, then restart the gateway."
       }
-      ${localEnable ? nothing : html`<span class="mono">${command}</span>`}
+      <span class="mono">${command}</span>
     </div>
   `;
 }
