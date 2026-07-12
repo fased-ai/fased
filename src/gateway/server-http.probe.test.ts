@@ -126,7 +126,12 @@ describe("gateway probe endpoints", () => {
         await dispatchRequest(server, req, res);
 
         expect(res.statusCode).toBe(200);
-        expect(getBody()).toBe(JSON.stringify({ ok: true, status: "live" }));
+        expect(JSON.parse(getBody())).toMatchObject({
+          ok: true,
+          status: "live",
+          version: expect.any(String),
+          runtimeSource: expect.any(String),
+        });
       },
     });
   });

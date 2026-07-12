@@ -67,7 +67,12 @@ describe("server-http-lazy", () => {
     const response = await get(port, "/health");
 
     expect(response.status).toBe(200);
-    expect(JSON.parse(response.body)).toEqual({ ok: true, status: "live" });
+    expect(JSON.parse(response.body)).toMatchObject({
+      ok: true,
+      status: "live",
+      version: expect.any(String),
+      runtimeSource: expect.any(String),
+    });
     expect(__testing.isServerHttpModuleLoaded()).toBe(false);
   });
 

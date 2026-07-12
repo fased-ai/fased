@@ -4,6 +4,10 @@ import {
   readCurrentPackageVersion,
   resolvePluginStatusConfigPath,
 } from "../../plugins/status-cache.js";
+import {
+  probeRunningGatewayRuntimeIdentity,
+  type RunningGatewayRuntimeIdentity,
+} from "./gateway-runtime-probe.js";
 
 type FetchLike = typeof fetch;
 
@@ -46,6 +50,7 @@ export async function resolveAlreadyCurrent(params: {
   fetchImpl?: FetchLike;
   stableChannel?: boolean;
   timeoutMs?: number;
+  runtimeProbe?: () => Promise<RunningGatewayRuntimeIdentity>;
 }): Promise<{ current: string; target: string } | null> {
   const current = params.currentVersion ?? readCurrentPackageVersion(params.argv1);
   const stableChannel = params.stableChannel ?? usesStableChannel(resolvePluginStatusConfigPath());
@@ -65,7 +70,14 @@ export async function resolveAlreadyCurrent(params: {
     }
     const payload = (await response.json()) as { version?: unknown };
     const target = typeof payload.version === "string" ? payload.version : null;
-    return target && isCurrentAtLeastTarget(current, target) ? { current, target } : null;
+    if (!target || !isCurrentAtLeastTarget(current, target)) {
+      return null;
+    }
+    const runtime = await (params.runtimeProbe ?? (() => probeRunningGatewayRuntimeIdentity()))();
+    if (runtime.reachable && runtime.version !== current) {
+      return null;
+    }
+    return { current, target };
   } catch {
     return null;
   }

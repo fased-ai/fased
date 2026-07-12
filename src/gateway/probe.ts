@@ -4,6 +4,7 @@ import type { SystemPresence } from "../infra/system-presence.js";
 import { GATEWAY_CLIENT_MODES, GATEWAY_CLIENT_NAMES } from "../utils/message-channel.js";
 import { GatewayClient } from "./client.js";
 import { READ_SCOPE } from "./method-scopes.js";
+import type { HelloOk } from "./protocol/index.js";
 
 export type GatewayProbeAuth = {
   token?: string;
@@ -26,11 +27,13 @@ export type GatewayProbeResult = {
   status: unknown;
   presence: SystemPresence[] | null;
   configSnapshot: unknown;
+  server?: HelloOk["server"] | null;
 };
 
 export async function probeGateway(opts: {
   url: string;
   auth?: GatewayProbeAuth;
+  tlsFingerprint?: string;
   timeoutMs: number;
 }): Promise<GatewayProbeResult> {
   const startedAt = Date.now();
@@ -66,7 +69,8 @@ export async function probeGateway(opts: {
       onClose: (code, reason) => {
         close = { code, reason };
       },
-      onHelloOk: async () => {
+      tlsFingerprint: opts.tlsFingerprint,
+      onHelloOk: async (hello) => {
         connectLatencyMs = Date.now() - startedAt;
         try {
           const [health, status, presence, configSnapshot] = await Promise.all([
@@ -84,6 +88,7 @@ export async function probeGateway(opts: {
             status,
             presence: Array.isArray(presence) ? (presence as SystemPresence[]) : null,
             configSnapshot,
+            server: hello.server,
           });
         } catch (err) {
           settle({
@@ -95,6 +100,7 @@ export async function probeGateway(opts: {
             status: null,
             presence: null,
             configSnapshot: null,
+            server: hello.server,
           });
         }
       },
@@ -111,6 +117,7 @@ export async function probeGateway(opts: {
           status: null,
           presence: null,
           configSnapshot: null,
+          server: null,
         });
       },
       Math.max(250, opts.timeoutMs),

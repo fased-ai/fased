@@ -17,7 +17,13 @@ class MockGatewayClient {
       .then(async () => {
         const onHelloOk = this.opts.onHelloOk;
         if (typeof onHelloOk === "function") {
-          await onHelloOk();
+          await onHelloOk({
+            server: {
+              version: "1.2.3",
+              runtimeSource: "managed-package",
+              connId: "test",
+            },
+          });
         }
       })
       .catch(() => {});
@@ -49,5 +55,9 @@ describe("probeGateway", () => {
 
     expect(gatewayClientState.options?.scopes).toEqual(["operator.read"]);
     expect(result.ok).toBe(true);
+    expect(result.server).toMatchObject({
+      version: "1.2.3",
+      runtimeSource: "managed-package",
+    });
   });
 });
