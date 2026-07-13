@@ -1235,8 +1235,10 @@ function renderChatModelSelect(state: AppViewState) {
                 title=${entry.label}
                 ?disabled=${disabled}
                 @click=${async (event: Event) => {
+                  const trigger = event.currentTarget;
                   await switchChatModel(state, entry.value);
-                  const details = (event.currentTarget as HTMLElement).closest("details");
+                  const details =
+                    trigger instanceof HTMLElement ? trigger.closest("details") : null;
                   if (details instanceof HTMLDetailsElement) {
                     details.open = false;
                   }
@@ -1459,8 +1461,10 @@ function renderChatThinkingSelect(
                 title=${entry.label}
                 ?disabled=${disabled}
                 @click=${async (event: Event) => {
+                  const trigger = event.currentTarget;
                   await switchChatThinkingLevel(state, entry.value);
-                  const details = (event.currentTarget as HTMLElement).closest("details");
+                  const details =
+                    trigger instanceof HTMLElement ? trigger.closest("details") : null;
                   if (details instanceof HTMLDetailsElement) {
                     details.open = false;
                   }
