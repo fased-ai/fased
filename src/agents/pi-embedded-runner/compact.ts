@@ -41,6 +41,7 @@ import {
 } from "../pi-embedded-helpers.js";
 import { createPreparedEmbeddedPiSettingsManager } from "../pi-project-settings.js";
 import { createFasedAgentCodingTools } from "../pi-tools.js";
+import { registerProviderStreamForModel } from "../provider-stream.js";
 import { resolveSandboxContext } from "../sandbox.js";
 import { repairSessionFileIfNeeded } from "../session-file-repair.js";
 import { guardSessionManager } from "../session-tool-result-guard-wrapper.js";
@@ -569,6 +570,15 @@ export async function compactEmbeddedPiSessionDirect(
         tools,
         sandboxEnabled: !!sandbox?.enabled,
       });
+
+      if (model.api === "ollama") {
+        registerProviderStreamForModel({
+          model,
+          cfg: params.config,
+          agentDir,
+          workspaceDir: params.workspaceDir,
+        });
+      }
 
       const { session } = await createAgentSession({
         cwd: resolvedWorkspace,

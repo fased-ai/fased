@@ -145,7 +145,8 @@ export async function ensureFasedModelsJson(
               baseUrl?: string;
             })
           | undefined;
-        if (existing) {
+        const explicitlyConfigured = Object.hasOwn(explicitProviders, key);
+        if (existing && !explicitlyConfigured) {
           const preserved: Record<string, unknown> = {};
           if (typeof existing.apiKey === "string" && existing.apiKey) {
             preserved.apiKey = existing.apiKey;

@@ -2231,7 +2231,7 @@ export function renderProviders(props: ProvidersProps) {
                                     <div class="providers-setup-card__sub">
                                       ${
                                         isOllama
-                                          ? "Native Ollama. Do not add /v1."
+                                          ? "Built-in Ollama transport; no Fased plugin is required. Do not add /v1."
                                           : isLmStudio
                                             ? "LM Studio local server. Discovery reads /api/v1/models."
                                             : "OpenAI-compatible local servers: vLLM, SGLang, TGI, LocalAI, FastChat."
@@ -2250,7 +2250,13 @@ export function renderProviders(props: ProvidersProps) {
                                     />
                                   </label>
                                   <label class="providers-field">
-                                    Model ID
+                                    ${
+                                      isOllama
+                                        ? "Model ID (for example qwen3:4b; ollama/ is optional)"
+                                        : isLmStudio
+                                          ? "Model ID (lmstudio/ prefix is optional)"
+                                          : "Model ID (vllm/ prefix is optional)"
+                                    }
                                     <input
                                       name="modelId"
                                       type="text"

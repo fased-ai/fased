@@ -427,6 +427,12 @@ function setProviderRefreshEnvFromProfile(params: {
     case "vllm":
       setProviderRefreshEnvValue(params.target, "VLLM_API_KEY", apiKey);
       break;
+    case "ollama":
+      setProviderRefreshEnvValue(params.target, "OLLAMA_API_KEY", apiKey);
+      break;
+    case "lmstudio":
+      setProviderRefreshEnvValue(params.target, "LMSTUDIO_API_KEY", apiKey);
+      break;
     case "litellm":
       setProviderRefreshEnvValue(params.target, "LITELLM_API_KEY", apiKey);
       break;
@@ -508,6 +514,14 @@ function setProviderRefreshEnvFromModelProvider(params: {
     case "vllm":
       setProviderRefreshEnvValue(params.target, "VLLM_API_KEY", apiKey);
       setProviderRefreshEnvValue(params.target, "VLLM_BASE_URL", baseUrl);
+      break;
+    case "ollama":
+      setProviderRefreshEnvValue(params.target, "OLLAMA_API_KEY", apiKey);
+      setProviderRefreshEnvValue(params.target, "OLLAMA_BASE_URL", baseUrl);
+      break;
+    case "lmstudio":
+      setProviderRefreshEnvValue(params.target, "LMSTUDIO_API_KEY", apiKey);
+      setProviderRefreshEnvValue(params.target, "LMSTUDIO_BASE_URL", baseUrl);
       break;
     case "litellm":
       setProviderRefreshEnvValue(params.target, "LITELLM_API_KEY", apiKey);

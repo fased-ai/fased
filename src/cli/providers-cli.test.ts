@@ -10,11 +10,14 @@ const configMocks = vi.hoisted(() => ({
   loadConfig: vi.fn(),
   writeConfigFile: vi.fn(),
 }));
+const ensureFasedModelsJson = vi.hoisted(() => vi.fn(async () => ({ wrote: true })));
 
 vi.mock("../config/config.js", () => ({
   loadConfig: configMocks.loadConfig,
   writeConfigFile: configMocks.writeConfigFile,
 }));
+
+vi.mock("../agents/models-config.js", () => ({ ensureFasedModelsJson }));
 
 describe("providers cli", () => {
   let output: string[];
@@ -23,6 +26,7 @@ describe("providers cli", () => {
     output = [];
     configMocks.loadConfig.mockReset().mockReturnValue({ models: { providers: {} } });
     configMocks.writeConfigFile.mockReset().mockResolvedValue(undefined);
+    ensureFasedModelsJson.mockClear();
     vi.spyOn(console, "log").mockImplementation((line = "") => {
       output.push(String(line));
     });
@@ -209,6 +213,7 @@ describe("providers cli", () => {
       },
     });
     expect(output.join("\n")).toContain("Model saved: openai/gpt-new");
+    expect(ensureFasedModelsJson).toHaveBeenLastCalledWith(added);
 
     configMocks.loadConfig.mockReturnValue(added);
     await runRegisteredCli({
@@ -220,6 +225,7 @@ describe("providers cli", () => {
       models?: { providers?: Record<string, { models?: Array<Record<string, unknown>> }> };
     };
     expect(removed.models?.providers?.openai?.models).toEqual([]);
+    expect(ensureFasedModelsJson).toHaveBeenLastCalledWith(removed);
     expect(output.join("\n")).toContain("Model removed: openai/gpt-new");
   });
 });

@@ -32,7 +32,10 @@ import {
 } from "../chat-abort.js";
 import { type ChatImageContent, parseMessageWithAttachments } from "../chat-attachments.js";
 import { stripEnvelopeFromMessage, stripEnvelopeFromMessages } from "../chat-sanitize.js";
-import { isSuppressedControlReplyText } from "../control-reply-text.js";
+import {
+  isSuppressedControlReplyText,
+  stripTrailingSuppressedControlReplyToken,
+} from "../control-reply-text.js";
 import { GATEWAY_CLIENT_CAPS, hasGatewayClientCap } from "../protocol/client-info.js";
 import {
   ErrorCodes,
@@ -110,17 +113,24 @@ function truncateChatHistoryText(text: string): { text: string; truncated: boole
   };
 }
 
-function sanitizeChatHistoryContentBlock(block: unknown): { block: unknown; changed: boolean } {
+function sanitizeChatHistoryContentBlock(
+  block: unknown,
+  stripControlToken = false,
+): { block: unknown; changed: boolean } {
   if (!block || typeof block !== "object") {
     return { block, changed: false };
   }
   const entry = { ...(block as Record<string, unknown>) };
   let changed = false;
   if (typeof entry.text === "string") {
-    const stripped = stripInlineDirectiveTagsForDisplay(entry.text);
+    const originalText = entry.text;
+    const controlSafe = stripControlToken
+      ? stripTrailingSuppressedControlReplyToken(originalText)
+      : originalText;
+    const stripped = stripInlineDirectiveTagsForDisplay(controlSafe);
     const res = truncateChatHistoryText(stripped.text);
     entry.text = res.text;
-    changed ||= stripped.changed || res.truncated;
+    changed ||= controlSafe !== originalText || stripped.changed || res.truncated;
   }
   if (typeof entry.partialJson === "string") {
     const res = truncateChatHistoryText(entry.partialJson);
@@ -158,6 +168,7 @@ function sanitizeChatHistoryMessage(message: unknown): { message: unknown; chang
   }
   const entry = { ...(message as Record<string, unknown>) };
   let changed = false;
+  const isAssistant = entry.role === "assistant";
 
   if ("details" in entry) {
     delete entry.details;
@@ -173,12 +184,18 @@ function sanitizeChatHistoryMessage(message: unknown): { message: unknown; chang
   }
 
   if (typeof entry.content === "string") {
-    const stripped = stripInlineDirectiveTagsForDisplay(entry.content);
+    const originalContent = entry.content;
+    const controlSafe = isAssistant
+      ? stripTrailingSuppressedControlReplyToken(originalContent)
+      : originalContent;
+    const stripped = stripInlineDirectiveTagsForDisplay(controlSafe);
     const res = truncateChatHistoryText(stripped.text);
     entry.content = res.text;
-    changed ||= stripped.changed || res.truncated;
+    changed ||= controlSafe !== originalContent || stripped.changed || res.truncated;
   } else if (Array.isArray(entry.content)) {
-    const updated = entry.content.map((block) => sanitizeChatHistoryContentBlock(block));
+    const updated = entry.content.map((block) =>
+      sanitizeChatHistoryContentBlock(block, isAssistant),
+    );
     if (updated.some((item) => item.changed)) {
       entry.content = updated.map((item) => item.block);
       changed = true;
@@ -186,10 +203,14 @@ function sanitizeChatHistoryMessage(message: unknown): { message: unknown; chang
   }
 
   if (typeof entry.text === "string") {
-    const stripped = stripInlineDirectiveTagsForDisplay(entry.text);
+    const originalText = entry.text;
+    const controlSafe = isAssistant
+      ? stripTrailingSuppressedControlReplyToken(originalText)
+      : originalText;
+    const stripped = stripInlineDirectiveTagsForDisplay(controlSafe);
     const res = truncateChatHistoryText(stripped.text);
     entry.text = res.text;
-    changed ||= stripped.changed || res.truncated;
+    changed ||= controlSafe !== originalText || stripped.changed || res.truncated;
   }
 
   return { message: changed ? entry : message, changed };
@@ -202,12 +223,12 @@ function sanitizeChatHistoryMessages(messages: unknown[]): unknown[] {
   let changed = false;
   const next: unknown[] = [];
   for (const message of messages) {
-    const res = sanitizeChatHistoryMessage(message);
-    changed ||= res.changed;
-    if (shouldDropAssistantHistoryMessage(res.message)) {
+    if (shouldDropAssistantHistoryMessage(message)) {
       changed = true;
       continue;
     }
+    const res = sanitizeChatHistoryMessage(message);
+    changed ||= res.changed;
     next.push(res.message);
   }
   return changed ? next : messages;

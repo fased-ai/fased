@@ -1,6 +1,9 @@
 import { stripInlineDirectiveTagsForDisplay } from "../utils/directive-tags.js";
 import { stripEnvelopeFromMessage } from "./chat-sanitize.js";
-import { isSuppressedControlReplyText } from "./control-reply-text.js";
+import {
+  isSuppressedControlReplyText,
+  stripTrailingSuppressedControlReplyToken,
+} from "./control-reply-text.js";
 
 const SESSION_EVENT_TEXT_MAX_CHARS = 12_000;
 
@@ -14,7 +17,10 @@ function truncateSessionEventText(text: string): { text: string; truncated: bool
   };
 }
 
-function sanitizeSessionEventContentBlock(block: unknown): { block: unknown; changed: boolean } {
+function sanitizeSessionEventContentBlock(
+  block: unknown,
+  stripControlToken = false,
+): { block: unknown; changed: boolean } {
   if (!block || typeof block !== "object" || Array.isArray(block)) {
     return { block, changed: false };
   }
@@ -22,10 +28,14 @@ function sanitizeSessionEventContentBlock(block: unknown): { block: unknown; cha
   let changed = false;
 
   if (typeof entry.text === "string") {
-    const stripped = stripInlineDirectiveTagsForDisplay(entry.text);
+    const originalText = entry.text;
+    const controlSafe = stripControlToken
+      ? stripTrailingSuppressedControlReplyToken(originalText)
+      : originalText;
+    const stripped = stripInlineDirectiveTagsForDisplay(controlSafe);
     const truncated = truncateSessionEventText(stripped.text);
     entry.text = truncated.text;
-    changed ||= stripped.changed || truncated.truncated;
+    changed ||= controlSafe !== originalText || stripped.changed || truncated.truncated;
   }
   if (typeof entry.content === "string") {
     const stripped = stripInlineDirectiveTagsForDisplay(entry.content);
@@ -120,6 +130,11 @@ export function projectSessionMessageForEvent(
   }
   const entry = { ...(stripped as Record<string, unknown>) };
   let changed = false;
+  const originalAssistantText = extractAssistantText(entry);
+  if (originalAssistantText !== undefined && isSuppressedControlReplyText(originalAssistantText)) {
+    return undefined;
+  }
+  const isAssistant = entry.role === "assistant";
 
   if ("details" in entry) {
     delete entry.details;
@@ -135,12 +150,18 @@ export function projectSessionMessageForEvent(
   }
 
   if (typeof entry.content === "string") {
-    const strippedContent = stripInlineDirectiveTagsForDisplay(entry.content);
+    const originalContent = entry.content;
+    const controlSafe = isAssistant
+      ? stripTrailingSuppressedControlReplyToken(originalContent)
+      : originalContent;
+    const strippedContent = stripInlineDirectiveTagsForDisplay(controlSafe);
     const truncated = truncateSessionEventText(strippedContent.text);
     entry.content = truncated.text;
-    changed ||= strippedContent.changed || truncated.truncated;
+    changed ||= controlSafe !== originalContent || strippedContent.changed || truncated.truncated;
   } else if (Array.isArray(entry.content)) {
-    const updated = entry.content.map((block) => sanitizeSessionEventContentBlock(block));
+    const updated = entry.content.map((block) =>
+      sanitizeSessionEventContentBlock(block, isAssistant),
+    );
     if (updated.some((item) => item.changed)) {
       entry.content = updated.map((item) => item.block);
       changed = true;
@@ -148,10 +169,14 @@ export function projectSessionMessageForEvent(
   }
 
   if (typeof entry.text === "string") {
-    const strippedText = stripInlineDirectiveTagsForDisplay(entry.text);
+    const originalText = entry.text;
+    const controlSafe = isAssistant
+      ? stripTrailingSuppressedControlReplyToken(originalText)
+      : originalText;
+    const strippedText = stripInlineDirectiveTagsForDisplay(controlSafe);
     const truncated = truncateSessionEventText(strippedText.text);
     entry.text = truncated.text;
-    changed ||= strippedText.changed || truncated.truncated;
+    changed ||= controlSafe !== originalText || strippedText.changed || truncated.truncated;
   }
 
   const projected = changed ? entry : (stripped as Record<string, unknown>);

@@ -31,6 +31,18 @@ describe("session event payload projection", () => {
     expect(projected).not.toHaveProperty("cost");
   });
 
+  it("removes a trailing control-token line from substantive assistant text", () => {
+    expect(
+      projectSessionMessageForEvent({
+        role: "assistant",
+        content: [{ type: "text", text: "Fased local model is working.\nNO_REPLY" }],
+      }),
+    ).toMatchObject({
+      role: "assistant",
+      content: [{ type: "text", text: "Fased local model is working." }],
+    });
+  });
+
   it("redacts tool results unless full verbosity is active", () => {
     const payload = {
       runId: "run-1",

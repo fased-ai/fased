@@ -59,6 +59,7 @@ import {
   filterToolsByDisabledToolNames,
   resolveToolLoopDetectionConfig,
 } from "../../pi-tools.js";
+import { registerProviderStreamForModel } from "../../provider-stream.js";
 import { resolveSandboxContext } from "../../sandbox.js";
 import { resolveSandboxRuntimeStatus } from "../../sandbox/runtime-status.js";
 import { repairSessionFileIfNeeded } from "../../session-file-repair.js";
@@ -734,6 +735,15 @@ export async function runEmbeddedAttempt(
         : [];
 
       const allCustomTools = [...customTools, ...clientToolDefs];
+
+      if (params.model.api === "ollama") {
+        registerProviderStreamForModel({
+          model: params.model,
+          cfg: params.config,
+          agentDir,
+          workspaceDir: params.workspaceDir,
+        });
+      }
 
       ({ session } = await createAgentSession({
         cwd: resolvedWorkspace,

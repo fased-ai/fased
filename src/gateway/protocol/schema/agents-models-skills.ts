@@ -597,6 +597,7 @@ export const ModelsAuthStatusEffectiveSchema = Type.Object(
       Type.Literal("profiles"),
       Type.Literal("env"),
       Type.Literal("models.json"),
+      Type.Literal("local"),
       Type.Literal("missing"),
     ]),
     detail: Type.String(),

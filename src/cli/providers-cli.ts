@@ -7,6 +7,7 @@ import {
   loadAuthProfileStoreForRuntime,
   type AuthProfileStore,
 } from "../agents/auth-profiles.js";
+import { ensureFasedModelsJson } from "../agents/models-config.js";
 import { buildAuthChoiceGroups } from "../commands/auth-choice-options.js";
 import { loadConfig, writeConfigFile } from "../config/config.js";
 import type {
@@ -184,9 +185,13 @@ export async function providersModelsAddCommand(options: ProvidersModelsAddOptio
     ...(options.api?.trim() ? { api: options.api.trim() as ModelProviderConfig["api"] } : {}),
     models: nextModels,
   };
-  await writeConfigFile(
-    upsertProviderModelConfig({ cfg, providerId, providerConfig: nextProvider }),
-  );
+  const nextConfig = upsertProviderModelConfig({
+    cfg,
+    providerId,
+    providerConfig: nextProvider,
+  });
+  await writeConfigFile(nextConfig);
+  await ensureFasedModelsJson(nextConfig);
   console.log(`${theme.success("Model saved:")} ${providerId}/${model.id}`);
 }
 
@@ -206,16 +211,16 @@ export async function providersModelsRemoveCommand(
   if (nextModels.length === (existing.models ?? []).length) {
     throw new Error(`Model "${providerId}/${modelId}" is not configured.`);
   }
-  await writeConfigFile(
-    upsertProviderModelConfig({
-      cfg,
-      providerId,
-      providerConfig: {
-        ...existing,
-        models: nextModels,
-      },
-    }),
-  );
+  const nextConfig = upsertProviderModelConfig({
+    cfg,
+    providerId,
+    providerConfig: {
+      ...existing,
+      models: nextModels,
+    },
+  });
+  await writeConfigFile(nextConfig);
+  await ensureFasedModelsJson(nextConfig);
   console.log(`${theme.success("Model removed:")} ${providerId}/${modelId}`);
 }
 
@@ -665,5 +670,6 @@ export async function providersConnectCommand(options: {
     opts: {},
   });
   await writeConfigFile(result.config);
+  await ensureFasedModelsJson(result.config, agentDir);
   defaultRuntime.log(`${theme.success("Provider connected:")} ${selectedGroup.label}`);
 }
