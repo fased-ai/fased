@@ -299,6 +299,8 @@ export type AppViewState = {
   servicesWebSearchTestMessage: string | null;
   servicesCapabilities: import("./types.ts").CapabilityReadinessReport | null;
   servicesCapabilitiesLoading: boolean;
+  servicesComponentBusy: Record<string, boolean>;
+  servicesComponentMessage: string | null;
   servicesWebSearchProviders: import("./types.ts").WebSearchServiceProviderOption[];
   servicesWebSearchProvidersLoading: boolean;
   servicesGmailProvisioning: boolean;

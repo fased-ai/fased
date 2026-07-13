@@ -37,21 +37,23 @@ export function registerComponentsCli(program: Command) {
     .description("Install a cataloged optional component")
     .argument("<id>", "Component id from `fased components`")
     .action(async (id: string) => {
-      const result = await installCapabilityComponent({ id, config: loadConfig() });
-      await writeConfigFile(result.config);
-      for (const warning of result.slotWarnings) {
-        defaultRuntime.log(theme.warn(warning));
-      }
-      defaultRuntime.log(
-        `Installed component: ${result.entry.label} (${result.entry.packageName})`,
-      );
-      if (result.entry.restartRequired !== false) {
-        defaultRuntime.log("Restart the gateway to apply the component.");
-      }
+      await installComponentCommand(id);
     });
 }
 
-function renderComponentReport(options: { json?: boolean }) {
+export async function installComponentCommand(id: string) {
+  const result = await installCapabilityComponent({ id, config: loadConfig() });
+  await writeConfigFile(result.config);
+  for (const warning of result.slotWarnings) {
+    defaultRuntime.log(theme.warn(warning));
+  }
+  defaultRuntime.log(`Installed component: ${result.entry.label} (${result.entry.packageName})`);
+  if (result.entry.restartRequired !== false) {
+    defaultRuntime.log("Restart the gateway to apply the component.");
+  }
+}
+
+export function renderComponentReport(options: { json?: boolean }) {
   const report = buildCapabilityReadinessReport();
   if (options.json) {
     defaultRuntime.log(JSON.stringify(report, null, 2));

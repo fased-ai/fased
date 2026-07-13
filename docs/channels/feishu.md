@@ -8,6 +8,8 @@ title: Feishu
 
 # Feishu
 
+**Delivery:** Official add-on.
+
 Use Feishu when your team already works in Feishu or Lark and you want Fased to
 join those conversations through the platform's bot APIs.
 

@@ -32,20 +32,18 @@ describe("channel plugin catalog", () => {
     expect(entry?.catalogSource).toBe("bundled");
   });
 
-  it("includes bundled Nostr with local and npm install metadata", () => {
+  it("keeps source-only Nostr visible without npm or local install actions", () => {
     const entry = getChannelPluginCatalogEntry("nostr");
-    expect(entry?.install.npmSpec).toBe("@fased/nostr");
-    expect(entry?.install.localPath).toBe("extensions/nostr");
-    expect(entry?.install.defaultChoice).toBe("local");
+    expect(entry?.delivery).toBe("source-only");
+    expect(entry?.install).toEqual({});
     expect(entry?.meta.label).toBe("Nostr");
     expect(entry?.catalogSource).toBe("bundled");
   });
 
-  it("includes bundled Matrix with local install metadata", () => {
+  it("keeps source-only Matrix visible without npm or local install actions", () => {
     const entry = getChannelPluginCatalogEntry("matrix");
-    expect(entry?.install.npmSpec).toBe("@fased/matrix");
-    expect(entry?.install.localPath).toBe("extensions/matrix");
-    expect(entry?.install.defaultChoice).toBe("local");
+    expect(entry?.delivery).toBe("source-only");
+    expect(entry?.install).toEqual({});
     expect(entry?.meta.blurb).toBe("open protocol; configure a homeserver + access token.");
     expect(entry?.catalogSource).toBe("bundled");
   });
@@ -70,11 +68,10 @@ describe("channel plugin catalog", () => {
     expect(entry?.catalogSource).toBe("bundled");
   });
 
-  it("includes bundled BlueBubbles with local install metadata", () => {
+  it("keeps BlueBubbles behind its external prerequisite without an install action", () => {
     const entry = getChannelPluginCatalogEntry("bluebubbles");
-    expect(entry?.install.npmSpec).toBe("@fased/bluebubbles");
-    expect(entry?.install.localPath).toBe("extensions/bluebubbles");
-    expect(entry?.install.defaultChoice).toBe("local");
+    expect(entry?.delivery).toBe("external-prerequisite");
+    expect(entry?.install).toEqual({});
     expect(entry?.meta.blurb).toBe("iMessage via the BlueBubbles mac app + REST API.");
     expect(entry?.catalogSource).toBe("bundled");
   });
@@ -99,11 +96,10 @@ describe("channel plugin catalog", () => {
     expect(entry?.catalogSource).toBe("bundled");
   });
 
-  it("includes bundled Tlon with local install metadata", () => {
+  it("keeps source-only Tlon visible without npm or local install actions", () => {
     const entry = getChannelPluginCatalogEntry("tlon");
-    expect(entry?.install.npmSpec).toBe("@fased/tlon");
-    expect(entry?.install.localPath).toBe("extensions/tlon");
-    expect(entry?.install.defaultChoice).toBe("local");
+    expect(entry?.delivery).toBe("source-only");
+    expect(entry?.install).toEqual({});
     expect(entry?.meta.blurb).toBe(
       "decentralized messaging on Urbit; configure a ship URL and login code.",
     );

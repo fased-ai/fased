@@ -9,6 +9,8 @@ title: "BlueBubbles"
 
 # BlueBubbles (macOS REST)
 
+**Delivery:** External prerequisite.
+
 Use BlueBubbles when you want the supported iMessage bridge in Fased. The
 gateway talks to the BlueBubbles macOS server over HTTP, receives inbound
 webhook events, and uses the normal Fased DM and group access model.

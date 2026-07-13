@@ -8,6 +8,8 @@ title: "Zalo Personal"
 
 # Zalo Personal (unofficial)
 
+**Delivery:** Bundled.
+
 This channel is the unofficial fallback when you need Zalo access from a
 personal account instead of the official bot platform. Fased drives `zca-cli`,
 listens for inbound messages, and keeps the usual DM and group policy model on

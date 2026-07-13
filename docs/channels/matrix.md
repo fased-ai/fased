@@ -7,6 +7,8 @@ title: "Matrix"
 
 # Matrix
 
+**Delivery:** Source-only.
+
 Matrix is the right channel when you want federated messaging, self-hosted
 homeservers, and optional end-to-end encryption. The gateway logs in as a
 Matrix user, handles DMs and rooms, and keeps per-room policy separate from DM

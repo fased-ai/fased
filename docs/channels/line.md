@@ -9,6 +9,8 @@ title: LINE
 
 # LINE
 
+**Delivery:** Bundled.
+
 Use LINE when you need a supported bot path for direct chats, groups, and richer
 message cards in the LINE ecosystem. The gateway receives inbound events on a
 webhook endpoint and signs outbound calls with your channel credentials.

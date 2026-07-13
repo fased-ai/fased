@@ -1,5 +1,6 @@
 import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../../agents/agent-scope.js";
 import { normalizeChatType } from "../../channels/chat-type.js";
+import { getChannelDelivery, type ChannelDelivery } from "../../channels/delivery.js";
 import {
   buildChannelUiCatalog,
   listChannelPluginCatalogEntries,
@@ -56,17 +57,38 @@ function channelCatalogSortOrder(id: string, meta: ChannelMeta): number {
 function buildStatusChannelCatalog(params: {
   cfg: FasedAgentConfig;
   plugins: ChannelPlugin[];
-}): Array<{ id: ChannelId; meta: ChannelMeta; catalogOnly?: boolean; install?: unknown }> {
+}): Array<{
+  id: ChannelId;
+  meta: ChannelMeta;
+  delivery: ChannelDelivery;
+  catalogOnly?: boolean;
+  install?: unknown;
+}> {
   const pluginIds = new Set(params.plugins.map((plugin) => plugin.id));
   const resolved = new Map<
     string,
-    { id: ChannelId; meta: ChannelMeta; catalogOnly?: boolean; install?: unknown }
+    {
+      id: ChannelId;
+      meta: ChannelMeta;
+      delivery: ChannelDelivery;
+      catalogOnly?: boolean;
+      install?: unknown;
+    }
   >();
   for (const meta of listChatChannels()) {
-    resolved.set(meta.id, { id: meta.id, meta, catalogOnly: !pluginIds.has(meta.id) });
+    resolved.set(meta.id, {
+      id: meta.id,
+      meta,
+      delivery: getChannelDelivery(meta.id),
+      catalogOnly: !pluginIds.has(meta.id),
+    });
   }
   for (const plugin of params.plugins) {
-    resolved.set(plugin.id, { id: plugin.id, meta: plugin.meta });
+    resolved.set(plugin.id, {
+      id: plugin.id,
+      meta: plugin.meta,
+      delivery: getChannelDelivery(plugin.id),
+    });
   }
   const workspaceDir = resolveAgentWorkspaceDir(params.cfg, resolveDefaultAgentId(params.cfg));
   for (const entry of listChannelPluginCatalogEntries({ workspaceDir })) {
@@ -81,6 +103,7 @@ function buildStatusChannelCatalog(params: {
     resolved.set(entry.id, {
       id: entry.id as ChannelId,
       meta: entry.meta,
+      delivery: entry.delivery,
       catalogOnly: true,
       install: entry.install,
     });
@@ -551,6 +574,7 @@ export const channelsHandlers: GatewayRequestHandlers = {
           running: false,
           connected: false,
           catalogOnly: true,
+          delivery: entry.delivery,
           ...(pendingRestart ? { pendingRestart: true } : {}),
           install: catalogEntry?.install,
         };
@@ -576,7 +600,10 @@ export const channelsHandlers: GatewayRequestHandlers = {
         : {
             configured: defaultAccount?.configured ?? false,
           };
-      channelsMap[plugin.id] = summary;
+      channelsMap[plugin.id] = {
+        ...(summary && typeof summary === "object" ? summary : {}),
+        delivery: entry.delivery,
+      };
       accountsMap[plugin.id] = accounts;
       defaultAccountIdMap[plugin.id] = defaultAccountId;
     }

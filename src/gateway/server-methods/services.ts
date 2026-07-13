@@ -1,6 +1,11 @@
-import { buildCapabilityReadinessReport } from "../../capabilities/catalog.js";
-import { loadConfig } from "../../config/config.js";
+import {
+  buildCapabilityReadinessReport,
+  loadCapabilityCatalog,
+} from "../../capabilities/catalog.js";
+import { installCapabilityComponent } from "../../capabilities/install.js";
+import { loadConfig, writeConfigFile } from "../../config/config.js";
 import { runGmailSetup, type GmailSetupOptions } from "../../hooks/gmail-ops.js";
+import { scheduleGatewaySigusr1Restart } from "../../infra/restart.js";
 import { listConfiguredWebSearchProviders, runWebSearch } from "../../web-search/runtime.js";
 import { ErrorCodes, errorShape } from "../protocol/index.js";
 import { formatForLog } from "../ws-log.js";
@@ -61,6 +66,58 @@ export const servicesHandlers: GatewayRequestHandlers = {
   "services.capabilities": async ({ respond }) => {
     try {
       respond(true, buildCapabilityReadinessReport());
+    } catch (err) {
+      respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, formatForLog(err)));
+    }
+  },
+  "services.component.install": async ({ respond, params }) => {
+    try {
+      const id = stringParam(params, "id");
+      if (!id) {
+        respond(
+          false,
+          undefined,
+          errorShape(ErrorCodes.INVALID_REQUEST, "Component id is required"),
+        );
+        return;
+      }
+      const result = await installCapabilityComponent({ id, config: loadConfig() });
+      await writeConfigFile(result.config);
+      respond(true, {
+        ok: true,
+        id,
+        pluginId: result.pluginId,
+        message: `Installed ${result.entry.label}.`,
+        restartRequired: result.entry.restartRequired !== false,
+        warnings: result.slotWarnings,
+        report: buildCapabilityReadinessReport({ config: result.config }),
+      });
+    } catch (err) {
+      respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, formatForLog(err)));
+    }
+  },
+  "services.component.restart": async ({ respond, params }) => {
+    try {
+      const id = stringParam(params, "id");
+      const entry = id ? loadCapabilityCatalog().find((candidate) => candidate.id === id) : null;
+      if (!entry) {
+        respond(
+          false,
+          undefined,
+          errorShape(ErrorCodes.INVALID_REQUEST, "Known component id is required"),
+        );
+        return;
+      }
+      const restart = scheduleGatewaySigusr1Restart({
+        reason: `services.component.restart:${entry.id}`,
+      });
+      respond(true, {
+        ok: true,
+        id: entry.id,
+        message: restart.coalesced
+          ? `Gateway restart already pending for ${entry.label}.`
+          : `Scheduled Gateway restart for ${entry.label}.`,
+      });
     } catch (err) {
       respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, formatForLog(err)));
     }

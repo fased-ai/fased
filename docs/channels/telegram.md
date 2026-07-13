@@ -8,6 +8,8 @@ title: "Telegram"
 
 # Telegram
 
+**Delivery:** Official add-on.
+
 Telegram is the fastest public bot surface for many Fased setups. The gateway
 owns the bot token, receives updates through long polling by default, and keeps
 DM and group access separate.

@@ -1,6 +1,7 @@
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { Command } from "commander";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runRegisteredCli } from "../test-utils/command-runner.js";
 import { registerProvidersCli } from "./providers-cli.js";
@@ -29,6 +30,13 @@ describe("providers cli", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("exposes one provider connect entry point", () => {
+    const program = new Command().name("fased");
+    registerProvidersCli(program);
+    const providers = program.commands.find((command) => command.name() === "providers");
+    expect(providers?.commands.some((command) => command.name() === "connect")).toBe(true);
   });
 
   it("reports provider refresh changes from a snapshot file", async () => {

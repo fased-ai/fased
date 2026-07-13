@@ -7,6 +7,8 @@ title: "Zalo"
 
 # Zalo (Bot API)
 
+**Delivery:** Bundled.
+
 Zalo is the official bot path for teams or businesses that need to meet users
 inside the Zalo ecosystem. The plugin can long-poll by default or switch to a
 webhook model, while Fased keeps DM policy and group policy separate.

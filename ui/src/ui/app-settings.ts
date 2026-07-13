@@ -522,6 +522,7 @@ export async function refreshActiveTab(host: SettingsHost) {
       loadWebSearchServiceProviders(
         host as unknown as Parameters<typeof loadWebSearchServiceProviders>[0],
       ),
+      loadServiceCapabilities(host as unknown as Parameters<typeof loadServiceCapabilities>[0]),
     ]);
   }
   if (host.tab === "notifications") {
@@ -595,6 +596,11 @@ export async function refreshActiveTab(host: SettingsHost) {
       }
       if (host.agentsPanel === "channels") {
         void loadChannels(host as unknown as FasedAgentApp, false);
+      }
+      if (host.agentsPanel === "services") {
+        void loadServiceCapabilities(
+          host as unknown as Parameters<typeof loadServiceCapabilities>[0],
+        );
       }
       if (host.agentsPanel === "coordination") {
         void loadConfig(host as unknown as FasedAgentApp);

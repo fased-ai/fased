@@ -166,6 +166,7 @@ function createChannelCatalog(): ChannelPluginCatalogEntry[] {
     {
       id: "zalo",
       catalogSource: "bundled",
+      delivery: "bundled",
       meta: {
         id: "zalo",
         label: "Zalo",

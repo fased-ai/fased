@@ -200,6 +200,8 @@ const METHOD_SCOPE_GROUPS: Record<OperatorScope, readonly string[]> = {
     "webhookTriggers.remove",
     "hooks.setEnabled",
     "services.gmail.setup",
+    "services.component.install",
+    "services.component.restart",
     "skills.create",
     "skills.copy",
     "skills.install",

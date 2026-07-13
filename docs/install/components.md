@@ -17,11 +17,27 @@ Inspect the current machine from the CLI:
 
 ```bash
 fased components
+fased services status
 ```
 
 The Control UI shows the same lifecycle report under **Services > Components**.
 `included`, `installed`, `configured`, and `ready` are separate states. A
 configuration field does not mean its runtime is installed or healthy.
+
+Each component row exposes only applicable actions:
+
+- **Install** downloads an official npm add-on.
+- **Restart** reloads an installed component through the Gateway service.
+- **Connect** opens the owning setup surface.
+- **Open docs** opens the canonical setup page.
+
+The matching CLI entry points are:
+
+```bash
+fased services status
+fased services connect <component-id>
+fased services install <component-id>
+```
 
 ## Included in core
 

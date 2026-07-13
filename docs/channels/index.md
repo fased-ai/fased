@@ -43,6 +43,15 @@ The Control UI Channels tab is split into:
 Account cards are grouped as Major, Enterprise, Self-hosted/protocol, and
 Optional/plugin so first-run setup stays focused on the common channels.
 
+Every integration page uses one delivery label:
+
+| Delivery label            | Meaning                                                                                      |
+| ------------------------- | -------------------------------------------------------------------------------------------- |
+| **Official add-on**       | Published by Fased and installable from the UI, onboarding, or npm-backed CLI flow.          |
+| **Bundled**               | Shipped with the Fased runtime; connect credentials without downloading a channel package.   |
+| **Source-only**           | Maintained in the repository for source operators; no npm-style Install action is offered.   |
+| **External prerequisite** | The Fased integration is present, but a separate app or system tool must be installed first. |
+
 ## Channel map
 
 <CardGroup cols={2}>
@@ -122,8 +131,10 @@ Optional and legacy:
 - multiple channels can run at the same time
 - Telegram, WhatsApp, Discord, Slack, Feishu, and Google Chat are official add-ons; install only the
   channels you use
-- other advanced channel extensions may need a source install or
-  channel-specific dependencies until a published add-on exists
+- source-only channels never show an npm Install action; follow their channel
+  page from **Open docs**
+- external-prerequisite channels require the named app or system tool before
+  **Connect** can succeed
 - if a channel shows restart required, restart the Gateway before testing live
   messages
 - routing is deterministic per peer and per channel; see
