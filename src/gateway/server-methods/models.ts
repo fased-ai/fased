@@ -17,6 +17,7 @@ import { DEFAULT_PROVIDER } from "../../agents/defaults.js";
 import { resolveCanonicalModelCatalogSnapshot } from "../../agents/model-catalog-snapshot.js";
 import { buildModelCatalogStatus } from "../../agents/model-catalog-status.js";
 import { deriveModelMetadata } from "../../agents/model-metadata.js";
+import { ensureFasedModelsJson } from "../../agents/models-config.js";
 import { loadProviderExtensionCatalogIndex } from "../../agents/provider-extension-catalog-index.js";
 import { normalizeProviderId } from "../../agents/provider-id.js";
 import { normalizeLegacyOnboardAuthChoice } from "../../commands/auth-choice-legacy.js";
@@ -58,6 +59,7 @@ import {
   validateModelsListParams,
   validateModelsCatalogStatusParams,
 } from "../protocol/index.js";
+import { markGatewayModelCatalogStaleForReload } from "../server-model-catalog.js";
 import type { GatewayRequestHandler, GatewayRequestHandlers } from "./types.js";
 
 type ProviderConfigurePlan = {
@@ -929,6 +931,8 @@ export const modelsHandlers: GatewayRequestHandlers = {
                     opts: plan.opts,
                   });
       await writeConfigFile(result.config);
+      await ensureFasedModelsJson(result.config, agentDir);
+      markGatewayModelCatalogStaleForReload();
       respond(
         true,
         {

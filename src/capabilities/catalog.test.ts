@@ -4,9 +4,10 @@ import type { PluginMarketplaceEntry, PluginMarketplaceReport } from "../plugins
 import { buildCapabilityReadinessReport, loadCapabilityCatalog } from "./catalog.js";
 
 function plugin(params: Partial<PluginMarketplaceEntry> & Pick<PluginMarketplaceEntry, "id">) {
+  const { id, ...overrides } = params;
   return {
-    id: params.id,
-    name: params.name ?? params.id,
+    id,
+    name: params.name ?? id,
     status: params.status ?? "loaded",
     discovered: true,
     managed: params.managed ?? true,
@@ -25,7 +26,7 @@ function plugin(params: Partial<PluginMarketplaceEntry> & Pick<PluginMarketplace
     hookCount: 0,
     installOptions: {},
     actions: ["status"],
-    ...params,
+    ...overrides,
   } satisfies PluginMarketplaceEntry;
 }
 
@@ -36,13 +37,20 @@ function report(plugins: PluginMarketplaceEntry[] = []): PluginMarketplaceReport
 describe("capability catalog", () => {
   it("loads one stable catalog without duplicate ids", () => {
     const entries = loadCapabilityCatalog();
-    expect(entries).toHaveLength(21);
+    expect(entries).toHaveLength(22);
     expect(new Set(entries.map((entry) => entry.id)).size).toBe(entries.length);
     expect(entries.find((entry) => entry.id === "sat-mining")?.delivery).toBe("core");
     expect(entries.find((entry) => entry.id === "telegram")?.packageName).toBe("@fased/telegram");
     expect(entries.find((entry) => entry.id === "googlechat")?.packageName).toBe(
       "@fased/googlechat",
     );
+    expect(entries.find((entry) => entry.id === "openai-runtime")).toMatchObject({
+      category: "provider",
+      delivery: "npm-addon",
+      packageName: "@fased/openai-runtime",
+      pluginId: "openai-runtime",
+    });
+    expect(entries.find((entry) => entry.id === "openai-runtime")?.restartRequired).toBeUndefined();
   });
 
   it("keeps missing optional and external components out of the error count", () => {
@@ -51,7 +59,7 @@ describe("capability catalog", () => {
       pluginReport: report(),
     });
     expect(capabilities.summary).toMatchObject({
-      total: 21,
+      total: 22,
       coreIncluded: 5,
       optionalInstalled: 0,
       externalRequired: 6,
@@ -69,7 +77,7 @@ describe("capability catalog", () => {
     const config = {
       channels: { telegram: { enabled: true, botToken: "token" } },
       models: { providers: { ollama: { baseUrl: "http://127.0.0.1:11434" } } },
-    } as FasedAgentConfig;
+    } as unknown as FasedAgentConfig;
     const capabilities = buildCapabilityReadinessReport({
       config,
       pluginReport: report([

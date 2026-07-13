@@ -4,7 +4,11 @@ import { servicesHandlers } from "./services.js";
 
 const mocks = vi.hoisted(() => ({
   buildCapabilityReadinessReport: vi.fn(),
+  loadCapabilityCatalog: vi.fn(),
+  installCapabilityComponent: vi.fn(),
   loadConfig: vi.fn(),
+  writeConfigFile: vi.fn(),
+  scheduleGatewaySigusr1Restart: vi.fn(),
   listConfiguredWebSearchProviders: vi.fn(),
   runWebSearch: vi.fn(),
   runGmailSetup: vi.fn(),
@@ -12,10 +16,20 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("../../capabilities/catalog.js", () => ({
   buildCapabilityReadinessReport: mocks.buildCapabilityReadinessReport,
+  loadCapabilityCatalog: mocks.loadCapabilityCatalog,
+}));
+
+vi.mock("../../capabilities/install.js", () => ({
+  installCapabilityComponent: mocks.installCapabilityComponent,
 }));
 
 vi.mock("../../config/config.js", () => ({
   loadConfig: mocks.loadConfig,
+  writeConfigFile: mocks.writeConfigFile,
+}));
+
+vi.mock("../../infra/restart.js", () => ({
+  scheduleGatewaySigusr1Restart: mocks.scheduleGatewaySigusr1Restart,
 }));
 
 vi.mock("../../web-search/runtime.js", () => ({
@@ -125,6 +139,55 @@ describe("services.webSearch.test handler", () => {
       isWebchatConnect: () => false,
     });
     expect(respond.mock.calls[0]).toEqual([true, report]);
+  });
+
+  it("installs a component, persists config, and returns refreshed readiness", async () => {
+    const config = { plugins: { entries: { telegram: { enabled: true } } } };
+    const report = { entries: [{ id: "telegram", state: "installed" }], summary: { total: 1 } };
+    mocks.loadConfig.mockReturnValue({});
+    mocks.installCapabilityComponent.mockResolvedValue({
+      config,
+      entry: { id: "telegram", label: "Telegram", restartRequired: true },
+      pluginId: "telegram",
+      slotWarnings: [],
+    });
+    mocks.buildCapabilityReadinessReport.mockReturnValue(report);
+    const respond = vi.fn();
+    await servicesHandlers["services.component.install"]({
+      params: { id: "telegram" },
+      respond: respond as never,
+      context: {} as never,
+      frame: {} as never,
+      client: {} as never,
+      req: { type: "req", id: "req-1", method: "services.component.install" },
+      isWebchatConnect: () => false,
+    });
+    expect(mocks.writeConfigFile).toHaveBeenCalledWith(config);
+    expect(respond.mock.calls[0]?.[0]).toBe(true);
+    expect(respond.mock.calls[0]?.[1]).toMatchObject({
+      id: "telegram",
+      restartRequired: true,
+      report,
+    });
+  });
+
+  it("restarts only a known catalog component", async () => {
+    mocks.loadCapabilityCatalog.mockReturnValue([{ id: "media-runtime", label: "Media Runtime" }]);
+    mocks.scheduleGatewaySigusr1Restart.mockReturnValue({ scheduled: true, coalesced: false });
+    const respond = vi.fn();
+    await servicesHandlers["services.component.restart"]({
+      params: { id: "media-runtime" },
+      respond: respond as never,
+      context: {} as never,
+      frame: {} as never,
+      client: {} as never,
+      req: { type: "req", id: "req-1", method: "services.component.restart" },
+      isWebchatConnect: () => false,
+    });
+    expect(mocks.scheduleGatewaySigusr1Restart).toHaveBeenCalledWith({
+      reason: "services.component.restart:media-runtime",
+    });
+    expect(respond.mock.calls[0]?.[0]).toBe(true);
   });
 
   it("returns unavailable when web_search is disabled", async () => {

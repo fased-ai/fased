@@ -78,6 +78,46 @@ export async function loadServiceCapabilities(state: AppViewState) {
   }
 }
 
+type ComponentMutationResult = {
+  message?: string;
+  report?: CapabilityReadinessReport;
+};
+
+async function mutateServiceComponent(
+  state: AppViewState,
+  method: "services.component.install" | "services.component.restart",
+  id: string,
+) {
+  if (!state.client || state.servicesComponentBusy[id]) {
+    return;
+  }
+  state.servicesComponentBusy = { ...state.servicesComponentBusy, [id]: true };
+  state.servicesComponentMessage = null;
+  try {
+    const result = await state.client.request<ComponentMutationResult>(method, { id });
+    state.servicesComponentMessage = result?.message ?? "Component action completed.";
+    if (result?.report) {
+      state.servicesCapabilities = result.report;
+    } else {
+      await loadServiceCapabilities(state);
+    }
+  } catch (err) {
+    state.servicesComponentMessage = `Component action failed: ${String(err)}`;
+  } finally {
+    const next = { ...state.servicesComponentBusy };
+    delete next[id];
+    state.servicesComponentBusy = next;
+  }
+}
+
+export async function installServiceComponent(state: AppViewState, id: string) {
+  await mutateServiceComponent(state, "services.component.install", id);
+}
+
+export async function restartServiceComponent(state: AppViewState, id: string) {
+  await mutateServiceComponent(state, "services.component.restart", id);
+}
+
 export async function testWebSearchService(state: AppViewState) {
   if (!state.client) {
     return;

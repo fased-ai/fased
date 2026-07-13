@@ -156,4 +156,9 @@ Base URL: http://127.0.0.1:11434
 Model: llama3.3
 ```
 
+Ollama's transport is built into Fased; do not look for or install an Ollama
+plugin. On Windows with Fased inside WSL2, the Windows Ollama service must be
+reachable from that WSL2 distribution. See [Ollama](/providers/ollama) for the
+private-network and firewall-safe setup.
+
 For more local runtime setup details, see [Local models](/gateway/local-models).

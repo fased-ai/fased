@@ -1,4 +1,5 @@
 import { html, nothing } from "lit";
+import { getChannelDelivery } from "../../../../src/channels/delivery.ts";
 import { formatRelativeTimestamp } from "../format.ts";
 import { icons } from "../icons.ts";
 import type {
@@ -1215,6 +1216,7 @@ export function renderChannels(props: ChannelsProps, options: ChannelsRenderOpti
                 </div>
               </div>
               <div class="channels-channel__status">
+                <span class="chip">${formatChannelDelivery(status.delivery)}</span>
                 ${
                   status.needsSetup
                     ? html`
@@ -1257,7 +1259,7 @@ export function renderChannels(props: ChannelsProps, options: ChannelsRenderOpti
                             props.onChannelInstall(channel.key);
                           }}
                         >
-                          Install
+                          ${status.delivery === "bundled" ? "Enable bundled" : "Install"}
                         </button>
                       `
                     : nothing
@@ -1396,8 +1398,9 @@ function channelSummaryForRow(props: ChannelsProps, key: ChannelKey) {
       ? accounts.some((account) => account.connected)
       : status?.connected === true;
   const catalogOnly = status?.catalogOnly === true;
+  const delivery = readChannelDelivery(status, key);
   const install = status?.install;
-  const installAvailable = hasChannelInstallMetadata(install);
+  const installAvailable = channelDeliveryAllowsInstall(delivery, install);
   const localInstall = isLocalChannelInstall(install);
   const installPendingRestart = status?.pendingRestart === true;
   const label = resolveChannelLabel(props.snapshot, key);
@@ -1421,7 +1424,14 @@ function channelSummaryForRow(props: ChannelsProps, key: ChannelKey) {
   } else if (configured) {
     statusLabel = "configured";
   } else if (catalogOnly) {
-    statusLabel = installAvailable ? "install channel" : "source install required";
+    statusLabel =
+      delivery === "source-only"
+        ? "source-only"
+        : delivery === "external-prerequisite"
+          ? "external prerequisite"
+          : installAvailable
+            ? "install channel"
+            : "unavailable";
   } else if (key === "whatsapp") {
     statusLabel = "sign up";
   }
@@ -1436,6 +1446,7 @@ function channelSummaryForRow(props: ChannelsProps, key: ChannelKey) {
     busy,
     statusLabel,
     catalogOnly,
+    delivery,
     installAvailable,
     localInstall,
     installPendingRestart,
@@ -1604,6 +1615,40 @@ function hasChannelInstallMetadata(value: unknown): boolean {
   );
 }
 
+type ChannelDelivery = "official-addon" | "bundled" | "source-only" | "external-prerequisite";
+
+function readChannelDelivery(
+  status: Record<string, unknown> | undefined,
+  channelId: string,
+): ChannelDelivery {
+  const value = status?.delivery;
+  return value === "official-addon" ||
+    value === "bundled" ||
+    value === "source-only" ||
+    value === "external-prerequisite"
+    ? value
+    : getChannelDelivery(channelId);
+}
+
+function channelDeliveryAllowsInstall(delivery: ChannelDelivery, install: unknown): boolean {
+  return (
+    (delivery === "official-addon" || delivery === "bundled") && hasChannelInstallMetadata(install)
+  );
+}
+
+function formatChannelDelivery(delivery: ChannelDelivery): string {
+  switch (delivery) {
+    case "official-addon":
+      return "Official add-on";
+    case "bundled":
+      return "Bundled";
+    case "source-only":
+      return "Source-only";
+    case "external-prerequisite":
+      return "External prerequisite";
+  }
+}
+
 function isCatalogOnlyChannel(props: ChannelsProps, key: ChannelKey): boolean {
   const status = props.snapshot?.channels?.[key] as Record<string, unknown> | undefined;
   return status?.catalogOnly === true;
@@ -1617,16 +1662,20 @@ function renderCatalogOnlyChannelCard(
   const label = resolveChannelLabel(props.snapshot, key);
   const status = props.snapshot?.channels?.[key] as Record<string, unknown> | undefined;
   const install = isRecord(status?.install) ? status.install : null;
-  const installAvailable = hasChannelInstallMetadata(install);
+  const delivery = readChannelDelivery(status, key);
+  const installAvailable = channelDeliveryAllowsInstall(delivery, install);
   const installPendingRestart = status?.pendingRestart === true;
   void channelAccounts;
   if (!installAvailable) {
     return html`
       <div class="card">
-        <div class="card-title">Source install required</div>
+        <div class="card-title">${formatChannelDelivery(delivery)}</div>
         <div class="card-sub">
-          This channel runtime is not installed. Install its source-maintained extension before adding
-          account credentials.
+          ${
+            delivery === "external-prerequisite"
+              ? "Install and configure the external service described in the channel docs."
+              : "This channel is maintained in source and is not available through the npm add-on installer."
+          }
         </div>
       </div>
     `;
@@ -1654,6 +1703,7 @@ function renderGenericChannelCard(
   const connected = typeof status?.connected === "boolean" ? status.connected : undefined;
   const lastError = typeof status?.lastError === "string" ? status.lastError : undefined;
   const catalogOnly = status?.catalogOnly === true;
+  const delivery = readChannelDelivery(status, key);
   const install =
     (status?.install && typeof status.install === "object"
       ? (status.install as Record<string, unknown>)
@@ -1666,7 +1716,7 @@ function renderGenericChannelCard(
       label,
       props,
       catalogOnly,
-      installAvailable: hasChannelInstallMetadata(install),
+      installAvailable: channelDeliveryAllowsInstall(delivery, install),
       install,
     });
   }

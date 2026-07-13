@@ -74,6 +74,8 @@ const BASE_METHODS = [
   "tools.catalog",
   "tools.effective",
   "services.capabilities",
+  "services.component.install",
+  "services.component.restart",
   "services.gmail.setup",
   "services.webSearch.test",
   "services.webSearch.providers",

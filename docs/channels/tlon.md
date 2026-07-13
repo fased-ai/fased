@@ -7,6 +7,8 @@ title: "Tlon"
 
 # Tlon
 
+**Delivery:** Source-only.
+
 Tlon gives Fased an Urbit-native chat surface without a separate hosted
 backend. The plugin connects to your ship, handles DMs and group channels, and
 keeps the same allowlist and mention gates that the rest of the gateway uses.

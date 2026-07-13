@@ -23,6 +23,16 @@ function resolveLmStudioBaseUrl(value: string): string {
   return /\/v1$/i.test(trimmed) ? trimmed : `${trimmed}/v1`;
 }
 
+export function normalizeLocalProviderModelId(provider: string, value: string): string {
+  const normalizedProvider = provider.trim().toLowerCase();
+  let modelId = value.trim();
+  const prefix = `${normalizedProvider}/`;
+  while (normalizedProvider && modelId.toLowerCase().startsWith(prefix)) {
+    modelId = modelId.slice(prefix.length).trim();
+  }
+  return modelId;
+}
+
 function localModelDefinition(params: { id: string; contextWindow?: number; maxTokens?: number }) {
   const modelId = params.id.trim();
   const lower = modelId.toLowerCase();
@@ -47,7 +57,7 @@ export async function configureVllmProvider(params: {
 }): Promise<{ config: FasedAgentConfig; modelId: string; modelRef: string }> {
   const baseUrl = params.baseUrl.trim().replace(/\/+$/, "");
   const apiKey = params.apiKey.trim();
-  const modelId = params.modelId.trim();
+  const modelId = normalizeLocalProviderModelId("vllm", params.modelId);
   if (!baseUrl || !apiKey || !modelId) {
     throw new Error("vLLM setup requires base URL, API key or placeholder, and model ID.");
   }
@@ -90,7 +100,7 @@ export async function configureOllamaProvider(params: {
 }): Promise<{ config: FasedAgentConfig; modelId: string; modelRef: string }> {
   const baseUrl = resolveOllamaBaseUrl(params.baseUrl || OLLAMA_DEFAULT_BASE_URL);
   const apiKey = params.apiKey?.trim() || "ollama-local";
-  const modelId = params.modelId.trim();
+  const modelId = normalizeLocalProviderModelId("ollama", params.modelId);
   if (!baseUrl || !modelId) {
     throw new Error("Ollama setup requires base URL and model ID.");
   }
@@ -133,7 +143,7 @@ export async function configureLmStudioProvider(params: {
 }): Promise<{ config: FasedAgentConfig; modelId: string; modelRef: string }> {
   const baseUrl = resolveLmStudioBaseUrl(params.baseUrl || LMSTUDIO_DEFAULT_BASE_URL);
   const apiKey = params.apiKey?.trim() || "lmstudio-local";
-  const modelId = params.modelId.trim();
+  const modelId = normalizeLocalProviderModelId("lmstudio", params.modelId);
   if (!baseUrl || !modelId) {
     throw new Error("LM Studio setup requires base URL and model ID.");
   }

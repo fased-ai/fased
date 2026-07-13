@@ -12,6 +12,13 @@ Models are configured per Agent. Open **Agents**, select an Agent, then use
 **Agent > Models** to connect provider credentials, choose model roles, and test
 the route.
 
+The same connection flow is available from the CLI:
+
+```bash
+fased providers connect
+fased providers connect openai
+```
+
 There is one provider registry shared by onboarding, CLI, Agent setup, Chat,
 tasks, and channel-routed Agents. Channels such as Telegram or Discord are
 separate from model providers; configure those from **Agent > Channels**.

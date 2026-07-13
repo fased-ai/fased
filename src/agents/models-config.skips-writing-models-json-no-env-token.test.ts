@@ -90,6 +90,65 @@ describe("models-config", () => {
     });
   });
 
+  it("replaces stale generated settings for explicitly configured local providers", async () => {
+    await withTempHome(async () => {
+      const agentDir = resolveFasedAgentAgentDir();
+      await fs.mkdir(agentDir, { recursive: true });
+      await fs.writeFile(
+        path.join(agentDir, "models.json"),
+        JSON.stringify({
+          providers: {
+            ollama: {
+              baseUrl: "http://127.0.0.1:11434/v1",
+              api: "openai-completions",
+              apiKey: "OLD_KEY",
+              models: [{ id: "old-model" }],
+            },
+          },
+        }),
+        "utf8",
+      );
+
+      await ensureFasedAgentModelsJson({
+        models: {
+          mode: "merge",
+          providers: {
+            ollama: {
+              baseUrl: "http://172.28.64.1:11434",
+              api: "ollama",
+              apiKey: "ollama-local",
+              request: { allowPrivateNetwork: true },
+              models: [
+                {
+                  id: "qwen3:4b",
+                  name: "qwen3:4b",
+                  reasoning: false,
+                  input: ["text"],
+                  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                  contextWindow: 32_768,
+                  maxTokens: 4_096,
+                },
+              ],
+            },
+          },
+        },
+      });
+
+      const parsed = JSON.parse(await fs.readFile(path.join(agentDir, "models.json"), "utf8")) as {
+        providers: Record<
+          string,
+          { baseUrl?: string; api?: string; apiKey?: string; models?: Array<{ id: string }> }
+        >;
+      };
+      expect(parsed.providers.ollama).toMatchObject({
+        baseUrl: "http://172.28.64.1:11434",
+        api: "ollama",
+        apiKey: "ollama-local",
+        models: [{ id: "qwen3:4b" }],
+      });
+    });
+  });
+
   it("adds minimax provider when MINIMAX_API_KEY is set", async () => {
     await withTempHome(async () => {
       await runEnvProviderCase({

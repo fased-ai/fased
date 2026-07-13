@@ -8,6 +8,8 @@ title: "Discord"
 
 # Discord
 
+**Delivery:** Official add-on.
+
 Discord connects Fased through the official Discord bot APIs. Use it when you
 want a public bot identity, DMs, server channels, slash commands, and
 mention-gated team routing.

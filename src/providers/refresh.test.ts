@@ -283,6 +283,14 @@ describe("provider refresh", () => {
           baseUrl: "https://litellm.example.com",
           apiKey: "litellm-key",
         },
+        ollama: {
+          baseUrl: "http://172.28.64.1:11434",
+          apiKey: "ollama-local",
+        },
+        lmstudio: {
+          baseUrl: "http://172.28.64.1:1234/v1",
+          apiKey: "lmstudio-local",
+        },
         "custom-local": {
           baseUrl: "https://custom.example.com/v1",
           apiKey: { source: "env", provider: "default", id: "CUSTOM_API_KEY" },
@@ -312,6 +320,10 @@ describe("provider refresh", () => {
     expect(env.CLOUDFLARE_AI_GATEWAY_GATEWAY_ID).toBe("cf-gateway");
     expect(env.LITELLM_API_KEY).toBe("litellm-key");
     expect(env.LITELLM_BASE_URL).toBe("https://litellm.example.com");
+    expect(env.OLLAMA_API_KEY).toBe("ollama-local");
+    expect(env.OLLAMA_BASE_URL).toBe("http://172.28.64.1:11434");
+    expect(env.LMSTUDIO_API_KEY).toBe("lmstudio-local");
+    expect(env.LMSTUDIO_BASE_URL).toBe("http://172.28.64.1:1234/v1");
     expect(env.CUSTOM_PROVIDER_API_KEY).toBe("custom-env-ref");
     expect(env.CUSTOM_PROVIDER_BASE_URL).toBe("https://custom.example.com/v1");
     expect(env.TOGETHER_API_KEY).toBe("together-key");

@@ -12,6 +12,8 @@ import { shortenHomePath } from "../../utils.js";
 import { maskApiKey } from "./list.format.js";
 import type { ProviderAuthOverview } from "./list.types.js";
 
+const LOCAL_PROVIDER_IDS = new Set(["ollama", "lmstudio", "vllm"]);
+
 function formatProfileSecretLabel(params: {
   value: string | undefined;
   ref: { source: string; id: string } | undefined;
@@ -93,6 +95,10 @@ export function resolveProviderAuthOverview(params: {
   const customKey = getCustomProviderApiKey(cfg, provider);
 
   const effective: ProviderAuthOverview["effective"] = (() => {
+    const providerConfig = cfg.models?.providers?.[provider];
+    if (LOCAL_PROVIDER_IDS.has(provider) && providerConfig?.baseUrl?.trim()) {
+      return { kind: "local", detail: providerConfig.baseUrl.trim() };
+    }
     if (profiles.length > 0) {
       return {
         kind: "profiles",

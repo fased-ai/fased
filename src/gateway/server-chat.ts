@@ -7,6 +7,7 @@ import { stripInlineDirectiveTagsForDisplay } from "../utils/directive-tags.js";
 import {
   isSuppressedControlReplyLeadFragment,
   isSuppressedControlReplyText,
+  stripTrailingSuppressedControlReplyToken,
 } from "./control-reply-text.js";
 import {
   broadcastSessionLifecycleEvent,
@@ -294,7 +295,9 @@ export function createAgentEventHandler({
     seq: number,
     text: string,
   ) => {
-    const cleaned = stripInlineDirectiveTagsForDisplay(text).text;
+    const cleaned = stripTrailingSuppressedControlReplyToken(
+      stripInlineDirectiveTagsForDisplay(text).text,
+    );
     if (!cleaned) {
       return;
     }
@@ -337,9 +340,9 @@ export function createAgentEventHandler({
     jobState: "done" | "error",
     error?: unknown,
   ) => {
-    const bufferedText = stripInlineDirectiveTagsForDisplay(
-      chatRunState.buffers.get(clientRunId) ?? "",
-    ).text.trim();
+    const bufferedText = stripTrailingSuppressedControlReplyToken(
+      stripInlineDirectiveTagsForDisplay(chatRunState.buffers.get(clientRunId) ?? "").text,
+    ).trim();
     const normalizedHeartbeatText = normalizeHeartbeatChatFinalText({
       runId: clientRunId,
       sourceRunId,

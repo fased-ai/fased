@@ -15,6 +15,8 @@ export type ServicesProps = {
   pluginsMarketplace: PluginsMarketplaceListResult | null;
   capabilities?: CapabilityReadinessReport | null;
   capabilitiesLoading?: boolean;
+  componentBusy?: Record<string, boolean>;
+  componentMessage?: string | null;
   webSearchProviders?: WebSearchServiceProviderOption[];
   webSearchProvidersLoading?: boolean;
   configSaving: boolean;
@@ -30,6 +32,8 @@ export type ServicesProps = {
   onWebSearchTest?: () => void;
   webSearchTestBusy?: boolean;
   webSearchTestMessage?: string | null;
+  onComponentInstall?: (id: string) => void;
+  onComponentRestart?: (id: string) => void;
 };
 
 type ConfigRecord = Record<string, unknown>;
@@ -1771,6 +1775,88 @@ function capabilityTone(state: string): ServiceCard["tone"] {
   return "warn";
 }
 
+function capabilityConnectTab(entry: CapabilityReadinessReport["entries"][number]): Tab {
+  if (entry.category === "channel") {
+    return "channels";
+  }
+  if (entry.category === "provider" || entry.id === "agent-core") {
+    return "providers";
+  }
+  if (entry.id === "tasks") {
+    return "cron";
+  }
+  if (entry.id === "solana-wallets") {
+    return "wallet";
+  }
+  if (entry.id === "sat-mining") {
+    return "mining";
+  }
+  if (entry.id === "fased-network") {
+    return "federation";
+  }
+  if (entry.id.includes("memory")) {
+    return "memory";
+  }
+  return "services";
+}
+
+function capabilityDocsHref(docsPath: string): string {
+  return /^https?:\/\//i.test(docsPath)
+    ? docsPath
+    : `https://docs.fased.ai${docsPath.startsWith("/") ? docsPath : `/${docsPath}`}`;
+}
+
+function renderCapabilityActions(
+  props: ServicesProps,
+  entry: CapabilityReadinessReport["entries"][number],
+) {
+  const busy = props.componentBusy?.[entry.id] === true;
+  const canInstall = entry.delivery === "npm-addon" && entry.state === "not-installed";
+  const canRestart =
+    entry.restartRequired === true &&
+    entry.state !== "not-installed" &&
+    entry.state !== "external-required";
+  return html`
+    ${
+      canInstall
+        ? html`<button
+            type="button"
+            class="btn btn--sm"
+            ?disabled=${busy || !props.onComponentInstall}
+            @click=${() => props.onComponentInstall?.(entry.id)}
+          >
+            ${busy ? "Installing..." : "Install"}
+          </button>`
+        : nothing
+    }
+    ${
+      canRestart
+        ? html`<button
+            type="button"
+            class="btn btn--sm"
+            ?disabled=${busy || !props.onComponentRestart}
+            @click=${() => props.onComponentRestart?.(entry.id)}
+          >
+            ${busy ? "Restarting..." : "Restart"}
+          </button>`
+        : nothing
+    }
+    <button
+      type="button"
+      class="btn btn--sm"
+      @click=${() => props.onNavigate(capabilityConnectTab(entry))}
+    >
+      Connect
+    </button>
+    <a
+      class="btn btn--sm"
+      href=${capabilityDocsHref(entry.docsPath)}
+      target="_blank"
+      rel="noopener noreferrer"
+    >Open docs</a>
+  `;
+}
+
 function renderCapabilityReadiness(props: ServicesProps) {
   if (props.capabilitiesLoading) {
     return html`
@@ -1790,6 +1876,7 @@ function renderCapabilityReadiness(props: ServicesProps) {
     detail: `${entry.description} Surface: ${entry.surface}. Next action: ${entry.action}.`,
     active: entry.state === "ready" || entry.state === "configured" || entry.state === "included",
     tone: capabilityTone(entry.state),
+    actions: renderCapabilityActions(props, entry),
   }));
   return html`
     <section class="services-list" aria-label="Component readiness">
@@ -1800,6 +1887,11 @@ function renderCapabilityReadiness(props: ServicesProps) {
         </div>
         <span class="agent-pill">${props.capabilities?.summary.total ?? entries.length}</span>
       </div>
+      ${
+        props.componentMessage
+          ? html`<div class="callout info">${props.componentMessage}</div>`
+          : nothing
+      }
       ${rows.map((row) => renderServiceRow(row))}
     </section>
   `;

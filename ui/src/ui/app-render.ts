@@ -114,7 +114,13 @@ import {
   updatePluginMarketplaceEntry,
 } from "./controllers/plugins-marketplace.ts";
 import { loadPresence } from "./controllers/presence.ts";
-import { provisionGmailService, testWebSearchService } from "./controllers/services.ts";
+import {
+  installServiceComponent,
+  loadServiceCapabilities,
+  provisionGmailService,
+  restartServiceComponent,
+  testWebSearchService,
+} from "./controllers/services.ts";
 import {
   branchSessionCheckpoint,
   deleteSessionAndRefresh,
@@ -3402,6 +3408,8 @@ export function renderApp(state: AppViewState) {
                 pluginsMarketplace: state.pluginsMarketplaceList,
                 capabilities: state.servicesCapabilities,
                 capabilitiesLoading: state.servicesCapabilitiesLoading,
+                componentBusy: state.servicesComponentBusy,
+                componentMessage: state.servicesComponentMessage,
                 webSearchProviders: state.servicesWebSearchProviders,
                 webSearchProvidersLoading: state.servicesWebSearchProvidersLoading,
                 configSaving: state.configSaving,
@@ -3417,6 +3425,8 @@ export function renderApp(state: AppViewState) {
                 onWebSearchTest: () => testWebSearchService(state),
                 webSearchTestBusy: state.servicesWebSearchTesting,
                 webSearchTestMessage: state.servicesWebSearchTestMessage,
+                onComponentInstall: (id) => void installServiceComponent(state, id),
+                onComponentRestart: (id) => void restartServiceComponent(state, id),
               })
             : nothing
         }
@@ -3800,6 +3810,12 @@ export function renderApp(state: AppViewState) {
                   marketplace: state.debugPluginsMarketplace,
                 },
                 services: {
+                  capabilities: state.servicesCapabilities,
+                  capabilitiesLoading: state.servicesCapabilitiesLoading,
+                  componentBusy: state.servicesComponentBusy,
+                  componentMessage: state.servicesComponentMessage,
+                  onComponentInstall: (id) => void installServiceComponent(state, id),
+                  onComponentRestart: (id) => void restartServiceComponent(state, id),
                   gmailProvisioning: state.servicesGmailProvisioning,
                   gmailProvisionMessage: state.servicesGmailProvisionMessage,
                   webSearchTesting: state.servicesWebSearchTesting,
@@ -3932,6 +3948,9 @@ export function renderApp(state: AppViewState) {
                   }
                   if (panel === "channels") {
                     void loadChannels(state, false);
+                  }
+                  if (panel === "services") {
+                    void loadServiceCapabilities(state);
                   }
                   if (panel === "cron") {
                     void state.loadCron();

@@ -7,6 +7,8 @@ title: "Nextcloud Talk"
 
 # Nextcloud Talk
 
+**Delivery:** Bundled.
+
 Nextcloud Talk is the self-hosted path when you already run Nextcloud and want
 a bot alongside the rest of your internal collaboration stack. Fased receives
 webhook events from the Talk bot API and sends replies back through the same

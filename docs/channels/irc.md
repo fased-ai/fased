@@ -7,6 +7,8 @@ read_when:
   - You are configuring IRC allowlists, group policy, or mention gating
 ---
 
+**Delivery:** Bundled.
+
 IRC is still a good fit when you want a small, always-on chat surface without a
 hosted control plane. Fased joins as a normal IRC client, keeps DMs and
 channels separate, and applies the same allowlist and mention controls used

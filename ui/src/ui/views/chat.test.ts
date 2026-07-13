@@ -1952,6 +1952,27 @@ describe("chat view", () => {
     expect(container.textContent).toContain("selected Agent");
   });
 
+  it("does not describe a local provider endpoint as a missing signed-in provider", () => {
+    const { state } = createChatHeaderState({ models: [] });
+    state.configAuthStatus = {
+      storePath: "/tmp/auth-profiles.json",
+      warnAfterMs: 1,
+      providers: [
+        {
+          provider: "ollama",
+          status: "static",
+          effective: { kind: "local", detail: "http://172.28.64.1:11434" },
+          profiles: [],
+        },
+      ],
+    } as AppViewState["configAuthStatus"];
+    const container = document.createElement("div");
+    render(renderChatComposerControls(state), container);
+
+    expect(container.textContent).not.toContain("Signed-in provider missing from Chat: ollama");
+    expect(container.textContent).toContain("No usable models loaded for this Agent");
+  });
+
   it("keeps the selected model visible when the active session is absent from sessions.list", async () => {
     vi.stubGlobal(
       "fetch",

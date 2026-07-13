@@ -8,6 +8,8 @@ title: "Synology Chat"
 
 # Synology Chat
 
+**Delivery:** Bundled.
+
 Synology Chat is useful when the NAS is already part of your internal
 collaboration stack and you want a lightweight webhook bridge instead of a full
 separate chat server. Fased accepts inbound events from Synology Chat outgoing

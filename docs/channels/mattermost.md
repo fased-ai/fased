@@ -8,6 +8,8 @@ title: "Mattermost"
 
 # Mattermost
 
+**Delivery:** Bundled.
+
 Mattermost is the self-hosted Slack-like option when you want familiar team chat
 but keep the server in your own environment. Fased connects with a bot token,
 listens over Mattermost's event stream, and applies the standard DM, channel,

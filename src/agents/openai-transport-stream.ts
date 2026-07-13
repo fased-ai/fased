@@ -1,13 +1,13 @@
 import { randomUUID } from "node:crypto";
 import type { StreamFn } from "@mariozechner/pi-agent-core";
 import type { Api, Context, Model } from "@mariozechner/pi-ai";
+import { convertMessages } from "@mariozechner/pi-ai/api/openai-completions";
 import {
   calculateCost,
   createAssistantMessageEventStream,
   getEnvApiKey,
   parseStreamingJson,
 } from "@mariozechner/pi-ai/compat";
-import { convertMessages } from "@mariozechner/pi-ai/dist/providers/openai-completions.js";
 import { resolveProviderTransportTurnStateWithPlugin } from "../plugins/provider-runtime.js";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./copilot-dynamic-headers.js";
 import { detectOpenAICompletionsCompat } from "./openai-completions-compat.js";

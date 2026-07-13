@@ -14,6 +14,7 @@ vi.hoisted(() => {
   });
 });
 
+import { extractText } from "../chat/message-extract.ts";
 import { GatewayRequestError } from "../gateway.ts";
 import {
   abortChatRun,
@@ -444,6 +445,27 @@ describe("handleChatEvent", () => {
     expect(state.chatMessages).toEqual([]);
     expect(state.chatRunId).toBe(null);
     expect(state.chatStream).toBe(null);
+  });
+
+  it("keeps substantive local-model text and removes a trailing NO_REPLY line", () => {
+    const state = createState({
+      sessionKey: "main",
+      chatRunId: "run-1",
+      chatStream: "Fased local model is working.\nNO_REPLY",
+      chatStreamStartedAt: 100,
+    });
+    const payload: ChatEventPayload = {
+      runId: "run-1",
+      sessionKey: "main",
+      state: "final",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Fased local model is working.\nNO_REPLY" }],
+      },
+    };
+
+    expect(handleChatEvent(state, payload)).toBe("final");
+    expect(extractText(state.chatMessages[0])).toBe("Fased local model is working.");
   });
 
   it("does not persist NO_REPLY stream text on final without message", () => {

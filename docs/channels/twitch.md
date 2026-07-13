@@ -7,6 +7,8 @@ title: "Twitch"
 
 # Twitch
 
+**Delivery:** Source-only.
+
 Twitch is best treated as a live-channel companion. Fased joins Twitch chat
 through the IRC bridge, speaks as a Twitch bot account, and relies on
 allowlists or moderator roles to control who can trigger it.

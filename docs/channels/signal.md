@@ -8,6 +8,8 @@ title: "Signal"
 
 # Signal (signal-cli)
 
+**Delivery:** External prerequisite.
+
 Signal in Fased is powered by `signal-cli`. The gateway either links to an
 existing Signal device or registers a dedicated number, then talks to the
 `signal-cli` daemon over JSON-RPC and SSE.

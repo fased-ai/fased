@@ -60,6 +60,8 @@ describe("renderServices", () => {
         onConfigPatch: vi.fn(),
         onConfigSave: vi.fn(),
         onConfigReload: vi.fn(),
+        onComponentInstall: vi.fn(),
+        onComponentRestart: vi.fn(),
       }),
     );
     expect(text).toContain("Components");
@@ -67,6 +69,9 @@ describe("renderServices", () => {
     expect(text).toContain("npm-addon");
     expect(text).toContain("not-installed");
     expect(text).toContain("Next action: install");
+    expect(text).toContain("Install");
+    expect(text).toContain("Connect");
+    expect(text).toContain("Open docs");
   });
 
   it("explains services as APIs separate from channels and extensions", async () => {

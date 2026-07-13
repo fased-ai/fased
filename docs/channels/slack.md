@@ -8,6 +8,8 @@ title: "Slack"
 
 # Slack
 
+**Delivery:** Official add-on.
+
 Slack connects Fased to a hosted workspace through a Slack app. Fased supports
 Socket Mode and HTTP Events API mode, then applies the same pairing, allowlist,
 mention, and task ownership rules as other channels.

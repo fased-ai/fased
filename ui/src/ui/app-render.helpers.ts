@@ -659,7 +659,7 @@ function renderChatModelTrustNotice(state: AppViewState) {
     `;
   }
   const readyMissingProviders = (state.configAuthStatus?.providers ?? [])
-    .filter((entry) => isUsableAuthStatus(entry.status))
+    .filter((entry) => isUsableAuthStatus(entry.status) && entry.effective.kind !== "local")
     .map((entry) => normalizeProviderKey(entry.provider))
     .filter((provider) => provider && !catalogProviders.has(provider));
   if (readyMissingProviders.length > 0) {

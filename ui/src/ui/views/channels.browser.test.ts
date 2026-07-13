@@ -498,6 +498,7 @@ describe("renderChannels", () => {
       running: false,
       connected: false,
       catalogOnly: true,
+      delivery: "official-addon",
       install: { npmSpec: "@fased/discord" },
     };
     snapshot.channelAccounts.discord = [];
@@ -536,6 +537,7 @@ describe("renderChannels", () => {
         running: false,
         connected: false,
         catalogOnly: true,
+        delivery: "official-addon",
         install: { localPath: "extensions/feishu", defaultChoice: "local" },
       } as never,
     };
@@ -570,6 +572,7 @@ describe("renderChannels", () => {
       running: false,
       connected: false,
       catalogOnly: true,
+      delivery: "official-addon",
       pendingRestart: true,
       install: { npmSpec: "@fased/discord" },
     } as never;
@@ -599,6 +602,7 @@ describe("renderChannels", () => {
         running: false,
         connected: false,
         catalogOnly: true,
+        delivery: "external-prerequisite",
       } as never,
     };
     snapshot.channelAccounts = { signal: [] };
@@ -608,7 +612,7 @@ describe("renderChannels", () => {
     const signalCard = container.querySelector('[data-channel-card="signal"]');
     expect(signalCard).not.toBeNull();
     const text = normalizeText(signalCard!);
-    expect(text).toContain("Source install required");
+    expect(text).toContain("External prerequisite");
     expect(text).not.toContain("Signal number");
     expect(text).not.toContain("CLI path");
     expect(text).not.toContain("Install signal-cli if it is missing.");

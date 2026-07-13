@@ -20,6 +20,7 @@ import type {
   AgentsFilesListResult,
   AgentsListResult,
   ChannelsStatusSnapshot,
+  CapabilityReadinessReport,
   ConfigUiHints,
   CronJob,
   CronStatus,
@@ -267,6 +268,12 @@ export type AgentsProps = {
     marketplace: PluginsMarketplaceListResult | null;
   };
   services?: {
+    capabilities?: CapabilityReadinessReport | null;
+    capabilitiesLoading?: boolean;
+    componentBusy?: Record<string, boolean>;
+    componentMessage?: string | null;
+    onComponentInstall?: (id: string) => void;
+    onComponentRestart?: (id: string) => void;
     gmailProvisioning?: boolean;
     gmailProvisionMessage?: string | null;
     webSearchTesting?: boolean;
@@ -1981,6 +1988,10 @@ export function renderAgents(props: AgentsProps) {
                         skillsReport: props.agentSkills.report,
                         skillsLoading: props.agentSkills.loading,
                         pluginsMarketplace: props.plugins.marketplace,
+                        capabilities: props.services?.capabilities,
+                        capabilitiesLoading: props.services?.capabilitiesLoading,
+                        componentBusy: props.services?.componentBusy,
+                        componentMessage: props.services?.componentMessage,
                         webSearchProviders: props.services?.webSearchProviders,
                         webSearchProvidersLoading: props.services?.webSearchProvidersLoading,
                         configSaving: props.config.saving,
@@ -1996,6 +2007,8 @@ export function renderAgents(props: AgentsProps) {
                         onWebSearchTest: props.onWebSearchTest,
                         webSearchTestBusy: props.services?.webSearchTesting ?? false,
                         webSearchTestMessage: props.services?.webSearchTestMessage ?? null,
+                        onComponentInstall: props.services?.onComponentInstall,
+                        onComponentRestart: props.services?.onComponentRestart,
                       })}
                     `
                   : nothing

@@ -9,6 +9,11 @@ import {
 } from "../../plugins/manifest.js";
 import type { PluginOrigin } from "../../plugins/types.js";
 import { CONFIG_DIR, isRecord, resolveUserPath } from "../../utils.js";
+import {
+  channelDeliveryAllowsInstall,
+  getChannelDelivery,
+  type ChannelDelivery,
+} from "../delivery.js";
 import type { ChannelMeta } from "./types.js";
 
 export type ChannelUiMetaEntry = {
@@ -32,6 +37,7 @@ export type ChannelPluginCatalogSource = PluginOrigin | "external-catalog" | "of
 export type ChannelPluginCatalogEntry = {
   id: string;
   meta: ChannelMeta;
+  delivery: ChannelDelivery;
   catalogSource: ChannelPluginCatalogSource;
   install: {
     npmSpec?: string;
@@ -245,16 +251,24 @@ function buildCatalogEntry(candidate: {
   if (!meta) {
     return null;
   }
+  const delivery =
+    candidate.catalogSource === "official-catalog" ? "official-addon" : getChannelDelivery(id);
   const install = resolveInstallInfo({
     manifest,
     packageName: candidate.packageName,
     packageDir: candidate.packageDir,
     workspaceDir: candidate.workspaceDir,
   });
-  if (!install) {
+  if (!install && channelDeliveryAllowsInstall(delivery)) {
     return null;
   }
-  return { id, meta, catalogSource: candidate.catalogSource, install };
+  return {
+    id,
+    meta,
+    delivery,
+    catalogSource: candidate.catalogSource,
+    install: channelDeliveryAllowsInstall(delivery) ? (install ?? {}) : {},
+  };
 }
 
 function buildExternalCatalogEntry(
@@ -307,7 +321,7 @@ export function formatChannelPluginCatalogSource(source: ChannelPluginCatalogSou
 }
 
 export function formatChannelPluginCatalogInstallBits(entry: ChannelPluginCatalogEntry): string[] {
-  const bits = [formatChannelPluginCatalogSource(entry.catalogSource)];
+  const bits = [entry.delivery, formatChannelPluginCatalogSource(entry.catalogSource)];
   if (entry.install.expectedIntegrity) {
     bits.push("integrity pinned");
   }
@@ -318,11 +332,23 @@ export function formatChannelPluginCatalogInstallBits(entry: ChannelPluginCatalo
 }
 
 export function formatChannelPluginCatalogSelectionHint(entry: ChannelPluginCatalogEntry): string {
-  return [...formatChannelPluginCatalogInstallBits(entry), "install"].join(" · ");
+  const action =
+    entry.delivery === "official-addon"
+      ? "install"
+      : entry.delivery === "bundled"
+        ? "enable bundled"
+        : "docs required";
+  return [...formatChannelPluginCatalogInstallBits(entry), action].join(" · ");
 }
 
 export function formatChannelPluginCatalogStatusLine(entry: ChannelPluginCatalogEntry): string {
-  return `${entry.meta.label}: ${formatChannelPluginCatalogInstallBits(entry).join(", ")}, install plugin to enable`;
+  const next =
+    entry.delivery === "official-addon"
+      ? "install add-on to enable"
+      : entry.delivery === "bundled"
+        ? "enable bundled integration"
+        : `follow ${entry.meta.docsPath}`;
+  return `${entry.meta.label}: ${formatChannelPluginCatalogInstallBits(entry).join(", ")}, ${next}`;
 }
 
 export function buildChannelUiCatalog(

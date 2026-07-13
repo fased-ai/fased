@@ -1,8 +1,14 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Command } from "commander";
-import { listAgentIds, resolveAgentDir } from "../agents/agent-scope.js";
-import { loadAuthProfileStoreForRuntime, type AuthProfileStore } from "../agents/auth-profiles.js";
+import { listAgentIds, resolveAgentDir, resolveDefaultAgentId } from "../agents/agent-scope.js";
+import {
+  ensureAuthProfileStore,
+  loadAuthProfileStoreForRuntime,
+  type AuthProfileStore,
+} from "../agents/auth-profiles.js";
+import { ensureFasedModelsJson } from "../agents/models-config.js";
+import { buildAuthChoiceGroups } from "../commands/auth-choice-options.js";
 import { loadConfig, writeConfigFile } from "../config/config.js";
 import type {
   FasedAgentConfig,
@@ -20,6 +26,7 @@ import {
   type ProviderRefreshReport,
 } from "../providers/refresh.js";
 import { getProviderBrandManifestForRoute } from "../providers/registry.js";
+import { defaultRuntime } from "../runtime.js";
 import { theme } from "../terminal/theme.js";
 import { createClackPrompter } from "../wizard/clack-prompter.js";
 
@@ -178,9 +185,13 @@ export async function providersModelsAddCommand(options: ProvidersModelsAddOptio
     ...(options.api?.trim() ? { api: options.api.trim() as ModelProviderConfig["api"] } : {}),
     models: nextModels,
   };
-  await writeConfigFile(
-    upsertProviderModelConfig({ cfg, providerId, providerConfig: nextProvider }),
-  );
+  const nextConfig = upsertProviderModelConfig({
+    cfg,
+    providerId,
+    providerConfig: nextProvider,
+  });
+  await writeConfigFile(nextConfig);
+  await ensureFasedModelsJson(nextConfig);
   console.log(`${theme.success("Model saved:")} ${providerId}/${model.id}`);
 }
 
@@ -200,16 +211,16 @@ export async function providersModelsRemoveCommand(
   if (nextModels.length === (existing.models ?? []).length) {
     throw new Error(`Model "${providerId}/${modelId}" is not configured.`);
   }
-  await writeConfigFile(
-    upsertProviderModelConfig({
-      cfg,
-      providerId,
-      providerConfig: {
-        ...existing,
-        models: nextModels,
-      },
-    }),
-  );
+  const nextConfig = upsertProviderModelConfig({
+    cfg,
+    providerId,
+    providerConfig: {
+      ...existing,
+      models: nextModels,
+    },
+  });
+  await writeConfigFile(nextConfig);
+  await ensureFasedModelsJson(nextConfig);
   console.log(`${theme.success("Model removed:")} ${providerId}/${modelId}`);
 }
 
@@ -484,6 +495,22 @@ export function registerProvidersCli(program: Command) {
     .description("Review provider manifests and model catalogs");
 
   providers
+    .command("connect")
+    .description("Connect a model provider using the same auth flow as onboarding and the UI")
+    .argument("[provider]", "Public provider id, for example openai or anthropic")
+    .option("--method <id>", "Credential method id")
+    .option("--set-default", "Apply the provider's recommended default model", false)
+    .action(
+      async (provider: string | undefined, options: { method?: string; setDefault?: boolean }) => {
+        await providersConnectCommand({
+          provider,
+          method: options.method,
+          setDefault: options.setDefault === true,
+        });
+      },
+    );
+
+  providers
     .command("refresh")
     .description("Compare provider registry against official/source catalogs")
     .option("--from-file <path>", "Use a provider refresh snapshot JSON file")
@@ -563,4 +590,86 @@ export function registerProvidersCli(program: Command) {
         model: opts.model as string | undefined,
       });
     });
+}
+
+export async function providersConnectCommand(options: {
+  provider?: string;
+  method?: string;
+  setDefault?: boolean;
+}) {
+  if (!process.stdin.isTTY) {
+    throw new Error("providers connect requires an interactive TTY.");
+  }
+  const config = loadConfig();
+  const [{ applyAuthChoice }, { openUrl }] = await Promise.all([
+    import("../commands/auth-choice.js"),
+    import("../commands/onboard-helpers.js"),
+  ]);
+  const agentId = resolveDefaultAgentId(config);
+  const agentDir = resolveAgentDir(config, agentId);
+  const store = ensureAuthProfileStore(agentDir, { allowKeychainPrompt: false });
+  const { groups } = buildAuthChoiceGroups({ store, includeSkip: false });
+  const requestedProvider = options.provider?.trim().toLowerCase();
+  const prompter = createClackPrompter();
+  let selectedGroup = requestedProvider
+    ? groups.find(
+        (candidate) =>
+          String(candidate.value).toLowerCase() === requestedProvider ||
+          candidate.label.toLowerCase() === requestedProvider,
+      )
+    : undefined;
+  if (!requestedProvider) {
+    const selectedProvider = await prompter.select({
+      message: "Model provider",
+      options: groups.map((candidate) => ({
+        value: candidate.value,
+        label: candidate.label,
+        hint: candidate.hint,
+      })),
+    });
+    selectedGroup = groups.find(
+      (candidate) => String(candidate.value) === String(selectedProvider),
+    );
+  }
+  if (!selectedGroup) {
+    throw new Error(
+      `Unknown provider: ${options.provider}. Run \`fased providers connect\` to choose.`,
+    );
+  }
+  const requestedMethod = options.method?.trim();
+  let method = requestedMethod
+    ? selectedGroup.options.find((candidate) => String(candidate.value) === requestedMethod)
+    : selectedGroup.options.length === 1
+      ? selectedGroup.options[0]
+      : undefined;
+  if (!requestedMethod && selectedGroup.options.length > 1) {
+    const selectedMethod = await prompter.select({
+      message: `${selectedGroup.label} auth method`,
+      options: selectedGroup.options,
+    });
+    method = selectedGroup.options.find(
+      (candidate) => String(candidate.value) === String(selectedMethod),
+    );
+  }
+  if (!method) {
+    throw new Error(
+      `Unknown auth method for ${selectedGroup.label}: ${options.method ?? "(none)"}`,
+    );
+  }
+  const result = await applyAuthChoice({
+    authChoice: method.value,
+    config,
+    prompter,
+    runtime: defaultRuntime,
+    openUrl: async (url) => {
+      await openUrl(url);
+    },
+    agentDir,
+    agentId,
+    setDefaultModel: options.setDefault === true,
+    opts: {},
+  });
+  await writeConfigFile(result.config);
+  await ensureFasedModelsJson(result.config, agentDir);
+  defaultRuntime.log(`${theme.success("Provider connected:")} ${selectedGroup.label}`);
 }

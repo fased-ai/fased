@@ -241,8 +241,10 @@ describe("setupChannels", () => {
     });
 
     const status = note.mock.calls.find(([, title]) => title === "Channel status")?.[0] ?? "";
-    expect(String(status)).toContain("Feishu: bundled plugin, local path available");
-    expect(String(status)).toContain("install plugin to enable");
+    expect(String(status)).toContain(
+      "Feishu: official-addon, bundled plugin, local path available",
+    );
+    expect(String(status)).toContain("install add-on to enable");
 
     const quickstartCall = (
       select.mock.calls as unknown as Array<[params: { message?: string; options?: unknown[] }]>

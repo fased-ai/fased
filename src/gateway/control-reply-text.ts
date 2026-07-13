@@ -31,6 +31,16 @@ export function isSuppressedControlReplyText(text: string): boolean {
   return SUPPRESSED_CONTROL_REPLY_TOKENS.some((token) => isSilentReplyText(normalized, token));
 }
 
+export function stripTrailingSuppressedControlReplyToken(text: string): string {
+  const tokens = SUPPRESSED_CONTROL_REPLY_TOKENS.join("|");
+  const trailingToken = new RegExp(`(?:^|\\r?\\n)[\\t ]*(?:${tokens})[\\t ]*$`, "i");
+  const match = trailingToken.exec(text);
+  if (!match) {
+    return text;
+  }
+  return text.slice(0, match.index).trimEnd();
+}
+
 export function isSuppressedControlReplyLeadFragment(text: string): boolean {
   const trimmed = text.trim();
   const normalized = normalizeSuppressedControlReplyFragment(text);

@@ -8,6 +8,8 @@ title: "iMessage"
 
 # iMessage (legacy: imsg)
 
+**Delivery:** External prerequisite.
+
 <Warning>
 For new iMessage deployments, use <a href="/channels/bluebubbles">BlueBubbles</a>.
 

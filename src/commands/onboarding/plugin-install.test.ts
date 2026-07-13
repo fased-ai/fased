@@ -26,6 +26,7 @@ import { ensureOnboardingPluginInstalled } from "./plugin-install.js";
 const baseEntry: ChannelPluginCatalogEntry = {
   id: "zalo",
   catalogSource: "external-catalog",
+  delivery: "official-addon",
   meta: {
     id: "zalo",
     label: "Zalo",

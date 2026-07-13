@@ -36,6 +36,69 @@ function shouldApplyChatHistoryResult(
 function isSilentReplyStream(text: string): boolean {
   return SILENT_REPLY_PATTERN.test(text);
 }
+
+function stripTrailingControlReplyToken(text: string): string {
+  if (isSilentReplyStream(text)) {
+    return text;
+  }
+  return text
+    .replace(/(?:^|\r?\n)[\t ]*(?:NO_REPLY|ANNOUNCE_SKIP|REPLY_SKIP)[\t ]*$/i, "")
+    .trimEnd();
+}
+
+function sanitizeAssistantMessageControlToken(message: unknown): unknown {
+  if (!message || typeof message !== "object") {
+    return message;
+  }
+  const candidate = message as Record<string, unknown>;
+  if (typeof candidate.role === "string" && candidate.role.toLowerCase() !== "assistant") {
+    return message;
+  }
+  let changed = false;
+  const next = { ...candidate };
+  if (typeof next.text === "string") {
+    const text = stripTrailingControlReplyToken(next.text);
+    changed ||= text !== next.text;
+    next.text = text;
+  }
+  if (typeof next.content === "string") {
+    const content = stripTrailingControlReplyToken(next.content);
+    changed ||= content !== next.content;
+    next.content = content;
+  } else if (Array.isArray(next.content)) {
+    const content = [...next.content];
+    for (let index = content.length - 1; index >= 0; index -= 1) {
+      const block = content[index];
+      if (
+        !block ||
+        typeof block !== "object" ||
+        typeof (block as { text?: unknown }).text !== "string"
+      ) {
+        continue;
+      }
+      const entry = { ...(block as Record<string, unknown>) };
+      const originalText = entry.text as string;
+      const hasEarlierVisibleText = content.slice(0, index).some((candidate) => {
+        return (
+          candidate &&
+          typeof candidate === "object" &&
+          typeof (candidate as { text?: unknown }).text === "string" &&
+          Boolean(((candidate as { text: string }).text ?? "").trim())
+        );
+      });
+      const text =
+        hasEarlierVisibleText && isSilentReplyStream(originalText)
+          ? ""
+          : stripTrailingControlReplyToken(originalText);
+      changed ||= text !== entry.text;
+      entry.text = text;
+      content[index] = entry;
+      break;
+    }
+    next.content = content;
+  }
+  return changed ? next : message;
+}
 /** Client-side defense-in-depth: detect assistant messages whose text is purely NO_REPLY. */
 function isAssistantSilentReply(message: unknown): boolean {
   if (!message || typeof message !== "object") {
@@ -125,7 +188,9 @@ export async function loadChatHistory(state: ChatState) {
       return;
     }
     const messages = Array.isArray(res.messages) ? res.messages : [];
-    state.chatMessages = messages.filter((message) => !isAssistantSilentReply(message));
+    state.chatMessages = messages
+      .filter((message) => !isAssistantSilentReply(message))
+      .map((message) => sanitizeAssistantMessageControlToken(message));
     state.chatThinkingLevel = res.thinkingLevel ?? null;
     // Clear all streaming state — history includes tool results and text
     // inline, so keeping streaming artifacts would cause duplicates.
@@ -237,10 +302,13 @@ function normalizeAbortedAssistantMessage(message: unknown): Record<string, unkn
 }
 
 function normalizeFinalAssistantMessage(message: unknown): Record<string, unknown> | null {
-  return normalizeAssistantMessage(message, {
+  const normalized = normalizeAssistantMessage(message, {
     roleRequirement: "optional",
     allowTextField: true,
   });
+  return normalized
+    ? (sanitizeAssistantMessageControlToken(normalized) as Record<string, unknown>)
+    : null;
 }
 
 function formatChatEventErrorMessage(errorMessage: string | undefined): string {

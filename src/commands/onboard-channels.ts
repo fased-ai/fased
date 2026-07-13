@@ -1,4 +1,5 @@
 import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../agents/agent-scope.js";
+import { channelDeliveryAllowsInstall, formatChannelDelivery } from "../channels/delivery.js";
 import {
   formatChannelPluginCatalogSelectionHint,
   formatChannelPluginCatalogStatusLine,
@@ -628,6 +629,13 @@ export async function setupChannels(
     const { catalogById } = getChannelEntries();
     const catalogEntry = catalogById.get(channel);
     if (catalogEntry) {
+      if (!channelDeliveryAllowsInstall(catalogEntry.delivery)) {
+        await prompter.note(
+          `${catalogEntry.meta.label} is ${formatChannelDelivery(catalogEntry.delivery).toLowerCase()}. Follow ${catalogEntry.meta.docsPath}; onboarding cannot install it from npm.`,
+          "Channel delivery",
+        );
+        return;
+      }
       const workspaceDir = resolveAgentWorkspaceDir(next, resolveDefaultAgentId(next));
       const result = await ensureOnboardingPluginInstalled({
         cfg: next,

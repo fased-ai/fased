@@ -8,6 +8,8 @@ title: "WhatsApp"
 
 # WhatsApp
 
+**Delivery:** Official add-on.
+
 WhatsApp in Fased uses linked WhatsApp Web sessions. The gateway owns the socket
 state, routes DMs and groups separately, and lets you choose a personal-number
 or dedicated-number operating model.

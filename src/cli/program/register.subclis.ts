@@ -347,6 +347,15 @@ const entries: SubCliEntry[] = [
     },
   },
   {
+    name: "services",
+    description: "Inspect and connect optional services and runtimes",
+    hasSubcommands: true,
+    register: async (program) => {
+      const mod = await import("../services-cli.js");
+      mod.registerServicesCli(program);
+    },
+  },
+  {
     name: "update",
     description: "Update FasedAgent and inspect update channel status",
     hasSubcommands: true,

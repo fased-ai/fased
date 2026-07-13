@@ -7,6 +7,8 @@ title: "Google Chat"
 
 # Google Chat (Chat API)
 
+**Delivery:** Official add-on.
+
 Google Chat in Fased is an HTTP-only integration. The gateway verifies
 Google-signed webhook requests, routes DMs and spaces into the normal session
 model, and sends replies through the Chat API using your service account.

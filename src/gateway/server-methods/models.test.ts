@@ -90,6 +90,21 @@ vi.mock("../../agents/agent-scope.js", () => ({
   listAgentEntries: vi.fn(() => []),
 }));
 
+const ensureFasedModelsJson = vi.hoisted(() => vi.fn(async () => ({ wrote: true })));
+
+vi.mock("../../agents/models-config.js", () => ({
+  ensureFasedModelsJson,
+}));
+
+const markGatewayModelCatalogStaleForReload = vi.hoisted(() => vi.fn());
+
+vi.mock("../server-model-catalog.js", async () => {
+  const actual = await vi.importActual<typeof import("../server-model-catalog.js")>(
+    "../server-model-catalog.js",
+  );
+  return { ...actual, markGatewayModelCatalogStaleForReload };
+});
+
 const upsertAuthProfile = vi.hoisted(() => vi.fn(() => {}));
 const upsertAuthProfileWithLock = vi.hoisted(() => vi.fn(async () => ({ profiles: {} })));
 const ensureAuthProfileStore = vi.hoisted(() =>
@@ -332,6 +347,8 @@ describe("models.auth.status handler", () => {
     resolveProviderAuthOverview.mockClear();
     resolvePluginProviders.mockReset();
     applyAuthChoice.mockClear();
+    ensureFasedModelsJson.mockClear();
+    markGatewayModelCatalogStaleForReload.mockClear();
     __setProviderExtensionCatalogEntriesForTest();
   });
 
@@ -884,6 +901,15 @@ describe("models.auth.status handler", () => {
         }),
       }),
     );
+    expect(ensureFasedModelsJson).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agents: expect.objectContaining({
+          defaults: expect.objectContaining({ model: "openai/gpt-5" }),
+        }),
+      }),
+      "/tmp/agents/main/agent",
+    );
+    expect(markGatewayModelCatalogStaleForReload).toHaveBeenCalledTimes(1);
   });
 
   it("configures Chutes API keys through the same provider setup path as onboarding", async () => {

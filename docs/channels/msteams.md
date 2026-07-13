@@ -8,6 +8,8 @@ title: "Microsoft Teams"
 
 # Microsoft Teams
 
+**Delivery:** Bundled.
+
 Microsoft Teams is an enterprise channel integration that uses Azure Bot
 credentials, a Teams app package, and optional Microsoft Graph permissions.
 
