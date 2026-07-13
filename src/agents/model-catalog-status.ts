@@ -1,5 +1,6 @@
 import type { FasedAgentConfig } from "../config/config.js";
 import type { ProviderHealth } from "../providers/health.js";
+import { listCurrentModelCatalogProviderIds } from "./current-model-catalog.js";
 import type { ModelCatalogEntry } from "./model-catalog.js";
 import { deriveModelMetadata, type ModelFeature, type ModelMetadata } from "./model-metadata.js";
 import type { ProviderExtensionCatalogIndex } from "./provider-extension-catalog-index.js";
@@ -215,7 +216,11 @@ export function buildModelCatalogStatus(params: {
   ]
     .filter(Boolean)
     .toSorted((left, right) => left.localeCompare(right));
-  const catalogProviderIds = new Set(providerRows.map((provider) => provider.provider));
+  const catalogProviderIds = new Set([
+    ...listCurrentModelCatalogProviderIds(),
+    ...providerRows.map((provider) => provider.provider),
+    ...Object.keys(params.providerExtensionCatalog?.providers ?? {}).map(normalizeProviderId),
+  ]);
   const deferredProviderIds = manifestEntries
     .filter((entry) => entry.status === "deferred")
     .map((entry) => normalizeProviderId(entry.upstreamProviderId))

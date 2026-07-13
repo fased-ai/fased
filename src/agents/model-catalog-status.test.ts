@@ -97,6 +97,8 @@ describe("buildModelCatalogStatus", () => {
           toolsModels: 0,
           jsonModels: 0,
           audioModels: 0,
+          videoModels: 0,
+          speechModels: 0,
         },
         probeStatus: "not-run",
         maxContextWindow: 128_000,
@@ -131,5 +133,7 @@ describe("buildModelCatalogStatus", () => {
         },
       }),
     );
+
+    expect(status.providerExtensionManifest.missingMappedProviderIds).toEqual([]);
   });
 });

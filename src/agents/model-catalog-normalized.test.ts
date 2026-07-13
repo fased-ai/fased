@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { ModelProviderConfig } from "../config/types.models.js";
 import { OPENAI_API_MODEL_IDS, OPENAI_SIGN_IN_MODEL_IDS } from "../providers/registry.js";
-import { cloneCurrentModelProvider, listCurrentModelCatalogRows } from "./current-model-catalog.js";
+import {
+  cloneCurrentModelProvider,
+  listCurrentModelCatalogProviderIds,
+  listCurrentModelCatalogRows,
+} from "./current-model-catalog.js";
 import {
   buildModelCatalogMergeKey,
   mergeModelCatalogRowsByAuthority,
@@ -144,7 +148,7 @@ describe("normalized model catalog rows", () => {
   });
 
   it("covers provider choices surfaced by onboarding auth flows", () => {
-    const providerIds = new Set(listCurrentModelCatalogRows().map((row) => row.provider));
+    const providerIds = new Set(listCurrentModelCatalogProviderIds());
     expect([...providerIds]).toEqual(
       expect.arrayContaining([
         "openai",
