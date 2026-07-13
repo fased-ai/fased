@@ -139,14 +139,25 @@ describe("OpenAI ChatGPT account model discovery", () => {
         defaultReasoningEffort: "medium",
       },
     ]);
+    const ensureRuntime = vi.fn(async () => ({
+      config: {} as FasedAgentConfig,
+      executable: "/managed/openai-runtime/codex",
+      installed: false,
+      slotWarnings: [],
+    }));
 
     const models = await discoverOpenAICodexModels({
       cfg: {} as FasedAgentConfig,
       store,
       listAppServerModels,
+      ensureRuntime,
     });
 
-    expect(listAppServerModels).toHaveBeenCalledWith({ token: access });
+    expect(ensureRuntime).toHaveBeenCalledOnce();
+    expect(listAppServerModels).toHaveBeenCalledWith({
+      token: access,
+      executable: "/managed/openai-runtime/codex",
+    });
     expect(models).toEqual([
       expect.objectContaining({
         id: "gpt-5.6-sol",

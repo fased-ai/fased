@@ -6,6 +6,7 @@ import readline from "node:readline";
 import type { StreamFn } from "@mariozechner/pi-agent-core";
 import type { Api, Context, Model, Usage } from "@mariozechner/pi-ai";
 import { createAssistantMessageEventStream } from "@mariozechner/pi-ai/compat";
+import { resolveFasedAgentPackageRootSync } from "../infra/fased-root.js";
 import { resolvePluginInstallDir } from "../plugins/install.js";
 
 export const OPENAI_CODEX_APP_SERVER_VERSION = "0.144.1";
@@ -77,26 +78,63 @@ function executableName(): string {
 export function codexExecutableCandidates(): string[] {
   const configured = process.env.FASED_CODEX_BIN?.trim();
   const componentRoot = resolvePluginInstallDir("openai-runtime");
+  const packageRoot = resolveFasedAgentPackageRootSync({
+    moduleUrl: import.meta.url,
+    argv1: process.argv[1],
+    cwd: process.cwd(),
+  });
   const candidates = [
     configured,
     path.join(componentRoot, "node_modules", ".bin", executableName()),
     path.join(componentRoot, "node_modules", "@openai", "codex", "bin", executableName()),
-    "codex",
+    packageRoot
+      ? path.join(
+          packageRoot,
+          "extensions",
+          "runtime-openai",
+          "node_modules",
+          ".bin",
+          executableName(),
+        )
+      : undefined,
   ].filter((value): value is string => Boolean(value));
   return [...new Set(candidates)];
 }
 
 export function resolveOpenAICodexExecutable(): string | null {
+  const explicitlyConfigured = process.env.FASED_CODEX_BIN?.trim();
   for (const candidate of codexExecutableCandidates()) {
-    if (candidate === "codex") {
-      return candidate;
-    }
     try {
-      if (fs.statSync(candidate).isFile()) {
+      if (!fs.statSync(candidate).isFile()) {
+        continue;
+      }
+      if (explicitlyConfigured && candidate === explicitlyConfigured) {
         return candidate;
       }
+      const resolved = fs.realpathSync(candidate);
+      let current = path.dirname(resolved);
+      for (let depth = 0; depth < 6; depth += 1) {
+        try {
+          const parsed = JSON.parse(
+            fs.readFileSync(path.join(current, "package.json"), "utf8"),
+          ) as { name?: unknown; version?: unknown };
+          if (parsed.name === "@openai/codex") {
+            if (parsed.version === OPENAI_CODEX_APP_SERVER_VERSION) {
+              return candidate;
+            }
+            break;
+          }
+        } catch {
+          // Keep walking toward the owning package root.
+        }
+        const parent = path.dirname(current);
+        if (parent === current) {
+          break;
+        }
+        current = parent;
+      }
     } catch {
-      // Keep checking managed and PATH candidates.
+      // Keep checking Fased-owned candidates.
     }
   }
   return null;
@@ -290,8 +328,11 @@ function parseAppServerModels(value: unknown): CodexAppServerModel[] {
 export async function listOpenAICodexAppServerModels(params: {
   token: string;
   executable?: string;
+  resolveExecutable?: () => Promise<string | null> | string | null;
 }): Promise<CodexAppServerModel[]> {
-  const executable = params.executable ?? resolveOpenAICodexExecutable();
+  const executable =
+    params.executable ??
+    (params.resolveExecutable ? await params.resolveExecutable() : resolveOpenAICodexExecutable());
   if (!executable) {
     throw new Error(
       "OpenAI sign-in runtime is not installed. Run `fased components install openai-runtime`.",
@@ -388,6 +429,7 @@ function parseThreadTokenUsage(value: unknown): Usage | null {
 
 export function createOpenAICodexAppServerStreamFn(params?: {
   resolveToken?: () => Promise<string | undefined>;
+  resolveExecutable?: () => Promise<string | null> | string | null;
 }): StreamFn {
   return (model, context, options) => {
     const eventStream = createAssistantMessageEventStream();
@@ -409,7 +451,9 @@ export function createOpenAICodexAppServerStreamFn(params?: {
         if (!token) {
           throw new Error("OpenAI ChatGPT sign-in is required");
         }
-        const executable = resolveOpenAICodexExecutable();
+        const executable = params?.resolveExecutable
+          ? await params.resolveExecutable()
+          : resolveOpenAICodexExecutable();
         if (!executable) {
           throw new Error(
             "OpenAI sign-in runtime is not installed. Run `fased components install openai-runtime`.",

@@ -1,5 +1,5 @@
 import type { GatewayBrowserClient } from "../gateway.ts";
-import type { ModelCatalogEntry } from "../types.ts";
+import type { ModelCatalogEntry, ModelCatalogSnapshot } from "../types.ts";
 
 export type LoadModelsOptions = {
   all?: boolean;
@@ -19,9 +19,16 @@ export async function loadModels(
   client: GatewayBrowserClient,
   options: LoadModelsOptions = {},
 ): Promise<ModelCatalogEntry[]> {
+  return (await loadModelCatalogSnapshot(client, options)).models;
+}
+
+export async function loadModelCatalogSnapshot(
+  client: GatewayBrowserClient,
+  options: LoadModelsOptions = {},
+): Promise<ModelCatalogSnapshot> {
   const requestModels = async (sessionKey?: string) => {
     const provider = options.provider?.trim();
-    return await client.request<{ models: ModelCatalogEntry[] }>("models.list", {
+    return await client.request<ModelCatalogSnapshot>("models.list", {
       includeMetadata: true,
       ...(options.all ? { all: true } : {}),
       ...(options.available ? { available: true } : {}),
@@ -32,17 +39,17 @@ export async function loadModels(
   try {
     const sessionKey = options.sessionKey?.trim();
     const result = await requestModels(sessionKey);
-    return result?.models ?? [];
+    return result ?? { models: [] };
   } catch (err) {
     const sessionKey = options.sessionKey?.trim();
     if (sessionKey && String(err).includes("sessionKey")) {
       try {
         const result = await requestModels();
-        return result?.models ?? [];
+        return result ?? { models: [] };
       } catch {
-        return [];
+        return { models: [] };
       }
     }
-    return [];
+    return { models: [] };
   }
 }

@@ -69,8 +69,7 @@ function credentialRoutesForProvider(
     if (!profileProvider) {
       continue;
     }
-    const profileManifest = getProviderBrandManifestForRoute(profileProvider);
-    if (profileProvider !== normalizedRoute && profileManifest?.id !== manifest?.id) {
+    if (profileProvider !== normalizedRoute) {
       continue;
     }
     const authMode = authModeForProfileType(profile.type);
@@ -385,3 +384,7 @@ export function filterCatalogToAuthoritativeAvailability(
     return models;
   });
 }
+
+export const testing = {
+  credentialRoutesForProvider,
+};

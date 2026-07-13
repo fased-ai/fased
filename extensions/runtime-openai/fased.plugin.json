@@ -1,5 +1,6 @@
 {
   "id": "openai-runtime",
+  "runtimeOnly": true,
   "configSchema": {
     "type": "object",
     "additionalProperties": false,

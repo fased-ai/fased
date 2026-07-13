@@ -1,3 +1,4 @@
+import { ensureOpenAICodexRuntimeComponent } from "../agents/openai-codex-runtime-component.js";
 import { normalizeApiKeyInput, validateApiKeyInput } from "./auth-choice.api-key.js";
 import {
   createAuthChoiceAgentModelNoter,
@@ -96,6 +97,17 @@ export async function applyAuthChoiceOpenAI(
       return { config: nextConfig, agentModelOverride };
     }
     if (creds) {
+      const runtimeComponent = await ensureOpenAICodexRuntimeComponent({ config: nextConfig });
+      nextConfig = runtimeComponent.config;
+      for (const warning of runtimeComponent.slotWarnings) {
+        await params.prompter.note(warning, "OpenAI runtime warning");
+      }
+      if (runtimeComponent.installed) {
+        await params.prompter.note(
+          "Installed the managed OpenAI sign-in runtime for authenticated model discovery and execution.",
+          "OpenAI runtime ready",
+        );
+      }
       const profileId = await writeOAuthCredentials("openai-codex", creds, params.agentDir, {
         syncSiblingAgents: true,
       });

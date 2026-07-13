@@ -4,6 +4,8 @@ import {
   listOpenAICodexAppServerModels,
   type CodexAppServerModel,
 } from "../agents/openai-codex-app-server.js";
+import { ensureOpenAICodexRuntimeComponent } from "../agents/openai-codex-runtime-component.js";
+import { writeConfigFile } from "../config/config.js";
 import type { FasedAgentConfig } from "../config/types.js";
 import type { ModelCapabilityConfig } from "../config/types.models.js";
 import { normalizeThinkLevel } from "../shared/model-thinking.js";
@@ -172,6 +174,7 @@ export async function discoverOpenAICodexModels(params: {
   agentDir?: string;
   fetchImpl?: typeof fetch;
   listAppServerModels?: typeof listOpenAICodexAppServerModels;
+  ensureRuntime?: typeof ensureOpenAICodexRuntimeComponent;
 }): Promise<ProviderRefreshModelSnapshot[]> {
   const profileId = listProfilesForProvider(params.store, OPENAI_CODEX_ROUTE)[0];
   if (!profileId) {
@@ -191,9 +194,16 @@ export async function discoverOpenAICodexModels(params: {
     throw new Error("OpenAI sign-in token does not contain a ChatGPT account ID");
   }
   if (!params.fetchImpl) {
+    const runtime = await (params.ensureRuntime ?? ensureOpenAICodexRuntimeComponent)({
+      config: params.cfg,
+    });
+    if (runtime.installed) {
+      await writeConfigFile(runtime.config);
+    }
     return parseAppServerModels(
       await (params.listAppServerModels ?? listOpenAICodexAppServerModels)({
         token: resolved.apiKey,
+        executable: runtime.executable,
       }),
     );
   }

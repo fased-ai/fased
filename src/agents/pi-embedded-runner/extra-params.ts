@@ -3,7 +3,7 @@ import type { SimpleStreamOptions } from "@mariozechner/pi-ai";
 import { streamSimple } from "@mariozechner/pi-ai/compat";
 import WebSocket from "ws";
 import type { ThinkLevel } from "../../auto-reply/thinking.js";
-import type { FasedAgentConfig } from "../../config/config.js";
+import { loadConfig, writeConfigFile, type FasedAgentConfig } from "../../config/config.js";
 import { resolveFasedAgentAgentDir } from "../agent-paths.js";
 import {
   ensureAuthProfileStore,
@@ -11,6 +11,7 @@ import {
   resolveApiKeyForProfile,
 } from "../auth-profiles.js";
 import { createOpenAICodexAppServerStreamFn } from "../openai-codex-app-server.js";
+import { ensureOpenAICodexRuntimeComponent } from "../openai-codex-runtime-component.js";
 import { log } from "./logger.js";
 import {
   createMoonshotThinkingWrapper,
@@ -601,6 +602,15 @@ function createCodexResponsesLiteWrapper(
 ): StreamFn {
   const underlying = baseStreamFn ?? streamSimple;
   const appServer = createOpenAICodexAppServerStreamFn({
+    resolveExecutable: async () => {
+      const runtime = await ensureOpenAICodexRuntimeComponent({
+        config: params?.cfg ?? loadConfig(),
+      });
+      if (runtime.installed) {
+        await writeConfigFile(runtime.config);
+      }
+      return runtime.executable;
+    },
     resolveToken: async () => {
       if (params?.resolvedApiKey?.trim()) {
         return params.resolvedApiKey.trim();

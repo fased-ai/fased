@@ -1,6 +1,11 @@
 import path from "node:path";
 import { confirm, isCancel } from "@clack/prompts";
 import {
+  ensureOpenAICodexRuntimeComponent,
+  hasConfiguredOpenAICodexProfile,
+  OPENAI_RUNTIME_COMPONENT_ID,
+} from "../../agents/openai-codex-runtime-component.js";
+import {
   checkShellCompletionStatus,
   ensureCompletionCacheExists,
 } from "../../commands/doctor-completion.js";
@@ -566,6 +571,7 @@ async function runGitUpdate(params: {
 async function updatePluginsAfterCoreUpdate(params: {
   root: string;
   channel: "stable" | "beta" | "dev";
+  targetVersion?: string;
   configSnapshot: Awaited<ReturnType<typeof readConfigFileSnapshot>>;
   opts: UpdateCommandOptions;
 }): Promise<{ changed: boolean; checked: boolean }> {
@@ -580,12 +586,38 @@ async function updatePluginsAfterCoreUpdate(params: {
     config: params.configSnapshot.config,
     updateCompleted: true,
   });
-  const installs = repairResult.config.plugins?.installs ?? {};
-  if (Object.keys(installs).length === 0) {
-    if (repairResult.changed) {
-      await writeConfigFile(repairResult.config);
+  let pluginConfig = repairResult.config;
+  let installedOpenAIRuntime = false;
+  if (hasConfiguredOpenAICodexProfile(pluginConfig)) {
+    const runtimeComponent = await ensureOpenAICodexRuntimeComponent({
+      config: pluginConfig,
+      version: params.targetVersion,
+    });
+    pluginConfig = runtimeComponent.config;
+    installedOpenAIRuntime = runtimeComponent.installed;
+    if (runtimeComponent.installed && !params.opts.json) {
+      defaultRuntime.log(
+        theme.muted(
+          "Installed the managed OpenAI sign-in runtime required by the existing ChatGPT credential.",
+        ),
+      );
     }
-    return { changed: repairResult.changed, checked: false };
+    for (const warning of runtimeComponent.slotWarnings) {
+      if (!params.opts.json) {
+        defaultRuntime.log(theme.warn(warning));
+      }
+    }
+  }
+
+  const installs = pluginConfig.plugins?.installs ?? {};
+  if (Object.keys(installs).length === 0) {
+    if (repairResult.changed || installedOpenAIRuntime) {
+      await writeConfigFile(pluginConfig);
+    }
+    return {
+      changed: repairResult.changed || installedOpenAIRuntime,
+      checked: installedOpenAIRuntime,
+    };
   }
 
   const pluginLogger = params.opts.json
@@ -602,28 +634,32 @@ async function updatePluginsAfterCoreUpdate(params: {
   }
 
   const syncResult = await syncPluginsForUpdateChannel({
-    config: repairResult.config,
+    config: pluginConfig,
     channel: params.channel,
     workspaceDir: params.root,
     logger: pluginLogger,
   });
-  let pluginConfig = syncResult.config;
+  pluginConfig = syncResult.config;
 
   const npmResult = await updateNpmInstalledPlugins({
     config: pluginConfig,
-    skipIds: new Set(syncResult.summary.switchedToNpm),
+    skipIds: new Set([
+      ...syncResult.summary.switchedToNpm,
+      ...(installedOpenAIRuntime ? [OPENAI_RUNTIME_COMPONENT_ID] : []),
+    ]),
     updateChannel: params.channel,
     logger: pluginLogger,
   });
   pluginConfig = npmResult.config;
 
-  if (repairResult.changed || syncResult.changed || npmResult.changed) {
+  if (repairResult.changed || installedOpenAIRuntime || syncResult.changed || npmResult.changed) {
     await writeConfigFile(pluginConfig);
   }
 
   if (params.opts.json) {
     return {
-      changed: repairResult.changed || syncResult.changed || npmResult.changed,
+      changed:
+        repairResult.changed || installedOpenAIRuntime || syncResult.changed || npmResult.changed,
       checked: true,
     };
   }
@@ -685,7 +721,8 @@ async function updatePluginsAfterCoreUpdate(params: {
     defaultRuntime.log(theme.error(outcome.message));
   }
   return {
-    changed: repairResult.changed || syncResult.changed || npmResult.changed,
+    changed:
+      repairResult.changed || installedOpenAIRuntime || syncResult.changed || npmResult.changed,
     checked: true,
   };
 }
@@ -1093,6 +1130,28 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
   }
 
   if (alreadyCurrent && currentVersion && targetVersion) {
+    if (configSnapshot.valid && hasConfiguredOpenAICodexProfile(configSnapshot.config)) {
+      try {
+        const runtimeComponent = await ensureOpenAICodexRuntimeComponent({
+          config: configSnapshot.config,
+          version: targetVersion,
+        });
+        if (runtimeComponent.installed) {
+          await writeConfigFile(runtimeComponent.config);
+          if (!opts.json) {
+            defaultRuntime.log(
+              theme.muted(
+                "Installed the version-matched OpenAI sign-in runtime required by the current release.",
+              ),
+            );
+          }
+        }
+      } catch (error) {
+        defaultRuntime.error(`OpenAI sign-in runtime update failed: ${String(error)}`);
+        defaultRuntime.exit(1);
+        return;
+      }
+    }
     const runningRuntime = await probeRunningGatewayRuntimeIdentity({ timeoutMs: 750 });
     if (runningRuntime.reachable && runningRuntime.version !== currentVersion) {
       if (!shouldRestart) {
@@ -1332,6 +1391,7 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
     updatePluginsAfterCoreUpdate({
       root,
       channel,
+      targetVersion: result.after?.version ?? targetVersion ?? undefined,
       configSnapshot,
       opts,
     }),

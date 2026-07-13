@@ -23,6 +23,18 @@ Chat, Tasks, and channel-routed Agents consume the same authenticated payload:
 - same route-compatible model lists
 - same capability metadata
 
+That payload keeps three lists separate:
+
+- **Available** is everything the authenticated credential or local endpoint
+  reports as usable.
+- **Recommended** is Fased's ranked subset of the available list.
+- **Assigned** is the exact model record saved for an Agent role.
+
+Recommendations never act as an entitlement filter. A saved assignment keeps
+the public provider, credential route, transport, model ID, and capability
+record together so Chat and scheduled Tasks cannot silently reconstruct a
+different route from a model-name string.
+
 The sources have separate jobs:
 
 1. The provider's authenticated model endpoint determines API-key route
@@ -33,6 +45,12 @@ The sources have separate jobs:
 3. Fased's curated registry ranks recommendations and task roles. It does not
    make an unavailable model available.
 4. Explicit custom models remain local configuration and are labeled as such.
+
+Provider brands can have more than one credential route. OpenAI, for example,
+appears once while ChatGPT sign-in and OpenAI API-key access remain independent
+underneath it. Fased-managed optional transports are installed during the
+relevant sign-in flow and reconciled to the target release by `fased update`;
+the application never selects an arbitrary executable from the system `PATH`.
 
 Each model payload records its availability source, capability source, retrieval
 date, auth route, and confidence. If authenticated discovery is temporarily

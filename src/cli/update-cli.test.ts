@@ -33,12 +33,20 @@ const finalizeUpdateTransaction = vi.fn();
 const rollbackUpdateTransaction = vi.fn();
 const probeGateway = vi.fn();
 const probeRunningGatewayRuntimeIdentity = vi.fn();
+const ensureOpenAICodexRuntimeComponent = vi.fn();
+const hasConfiguredOpenAICodexProfile = vi.fn();
 
 vi.mock("@clack/prompts", () => ({
   confirm,
   select,
   isCancel,
   spinner,
+}));
+
+vi.mock("../agents/openai-codex-runtime-component.js", () => ({
+  ensureOpenAICodexRuntimeComponent,
+  hasConfiguredOpenAICodexProfile,
+  OPENAI_RUNTIME_COMPONENT_ID: "openai-runtime",
 }));
 
 // Mock the update-runner module
@@ -328,6 +336,9 @@ describe("update-cli", () => {
     probeGatewayStatus.mockReset();
     probeGateway.mockReset();
     probeRunningGatewayRuntimeIdentity.mockReset();
+    ensureOpenAICodexRuntimeComponent.mockReset();
+    hasConfiguredOpenAICodexProfile.mockReset();
+    hasConfiguredOpenAICodexProfile.mockReturnValue(false);
     vi.mocked(resolveFasedAgentPackageRoot).mockResolvedValue(process.cwd());
     vi.mocked(readConfigFileSnapshot).mockResolvedValue(baseSnapshot);
     vi.mocked(fetchNpmTagVersion).mockResolvedValue({
@@ -492,6 +503,39 @@ describe("update-cli", () => {
     expect(logs).toContain("transaction cleanup");
   });
 
+  it("reconciles the OpenAI sign-in runtime to the completed core version", async () => {
+    const config = {
+      auth: {
+        profiles: {
+          "openai-codex:test": { provider: "openai-codex", mode: "oauth" },
+        },
+      },
+    } as FasedAgentConfig;
+    vi.mocked(readConfigFileSnapshot).mockResolvedValue({
+      ...baseSnapshot,
+      parsed: config,
+      resolved: config,
+      config,
+    });
+    hasConfiguredOpenAICodexProfile.mockReturnValue(true);
+    ensureOpenAICodexRuntimeComponent.mockResolvedValue({
+      config,
+      executable: "/managed/openai-runtime/codex",
+      installed: false,
+      slotWarnings: [],
+    });
+    vi.mocked(runGatewayUpdate).mockResolvedValue(
+      makeOkUpdateResult({ after: { version: "0.1.57" } }),
+    );
+
+    await updateCommand({ restart: false });
+
+    expect(ensureOpenAICodexRuntimeComponent).toHaveBeenCalledWith({
+      config,
+      version: "0.1.57",
+    });
+  });
+
   it("returns immediately when a packaged install already matches the target version", async () => {
     const root = createCaseDir("fased-current-package");
     mockPackageInstallStatus(root);
@@ -511,6 +555,53 @@ describe("update-cli", () => {
     expect(runDaemonInstall).not.toHaveBeenCalled();
     expect(runDaemonRestart).not.toHaveBeenCalled();
     expect(serviceRestart).not.toHaveBeenCalled();
+  });
+
+  it("repairs a missing version-matched provider runtime on a same-version update", async () => {
+    const root = createCaseDir("fased-current-provider-runtime");
+    mockPackageInstallStatus(root);
+    readPackageVersion.mockResolvedValue("0.1.40");
+    vi.mocked(resolveNpmChannelTag).mockResolvedValue({
+      tag: "latest",
+      version: "0.1.40",
+    });
+    const config = {
+      auth: {
+        profiles: {
+          "openai-codex:test": { provider: "openai-codex", mode: "oauth" },
+        },
+      },
+    } as FasedAgentConfig;
+    vi.mocked(readConfigFileSnapshot).mockResolvedValue({
+      ...baseSnapshot,
+      parsed: config,
+      resolved: config,
+      config,
+    });
+    hasConfiguredOpenAICodexProfile.mockReturnValue(true);
+    ensureOpenAICodexRuntimeComponent.mockResolvedValue({
+      config: {
+        ...config,
+        plugins: { entries: { "openai-runtime": { enabled: true } } },
+      },
+      executable: "/managed/openai-runtime/codex",
+      installed: true,
+      slotWarnings: [],
+    });
+
+    await updateCommand({});
+
+    expect(ensureOpenAICodexRuntimeComponent).toHaveBeenCalledWith({
+      config,
+      version: "0.1.40",
+    });
+    expect(writeConfigFile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        plugins: { entries: { "openai-runtime": { enabled: true } } },
+      }),
+    );
+    expect(defaultRuntime.log).toHaveBeenCalledWith("Already current: 0.1.40");
+    expect(runGatewayUpdate).not.toHaveBeenCalled();
   });
 
   it("reports an already-current packaged install as JSON without mutations", async () => {

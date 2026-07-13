@@ -6,6 +6,7 @@ import {
   applyRuntimeProviderModelDiscovery,
   filterCatalogToAuthoritativeAvailability,
   resetRuntimeProviderModelCatalogCache,
+  testing,
 } from "./runtime-model-catalog.js";
 
 const fetchProviderRefreshSnapshotForRoutes = vi.hoisted(() => vi.fn());
@@ -42,6 +43,33 @@ describe("runtime provider model catalog", () => {
   beforeEach(() => {
     resetRuntimeProviderModelCatalogCache();
     fetchProviderRefreshSnapshotForRoutes.mockReset();
+  });
+
+  it("keeps credentials attached to their exact route within a public provider brand", () => {
+    const routeStore = {
+      version: 1,
+      profiles: {
+        "openai:api": {
+          type: "api_key",
+          provider: "openai",
+          key: "test-api-key",
+        },
+        "openai-codex:chatgpt": {
+          type: "oauth",
+          provider: "openai-codex",
+          access: "test-access",
+          refresh: "test-refresh",
+          expires: Date.now() + 60_000,
+        },
+      },
+    } as AuthProfileStore;
+
+    expect(testing.credentialRoutesForProvider(routeStore, "openai")).toEqual([
+      expect.objectContaining({ id: "openai-api-key", authMode: "api-key" }),
+    ]);
+    expect(testing.credentialRoutesForProvider(routeStore, "openai-codex")).toEqual([
+      expect.objectContaining({ id: "openai-codex", authMode: "oauth" }),
+    ]);
   });
 
   it("replaces reviewed fallback entries with the authenticated provider route", async () => {

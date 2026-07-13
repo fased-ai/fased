@@ -13,8 +13,8 @@ import {
   upsertAuthProfileWithLock,
 } from "../../agents/auth-profiles.js";
 import { updateAuthProfileStoreWithLock } from "../../agents/auth-profiles/store.js";
-import { resolveAuthenticatedModelCatalog } from "../../agents/authenticated-model-catalog.js";
 import { DEFAULT_PROVIDER } from "../../agents/defaults.js";
+import { resolveCanonicalModelCatalogSnapshot } from "../../agents/model-catalog-snapshot.js";
 import { buildModelCatalogStatus } from "../../agents/model-catalog-status.js";
 import { deriveModelMetadata } from "../../agents/model-metadata.js";
 import { loadProviderExtensionCatalogIndex } from "../../agents/provider-extension-catalog-index.js";
@@ -1173,11 +1173,12 @@ export const modelsHandlers: GatewayRequestHandlers = {
         : defaultAgentId;
       const agentDir = resolveAgentDir(cfg, authAgentId);
       const store = ensureAuthProfileStore(agentDir);
-      const { usableCatalog, allowedCatalog } = await resolveAuthenticatedModelCatalog({
+      const snapshot = await resolveCanonicalModelCatalogSnapshot({
         cfg,
         store,
         catalog,
         defaultProvider: DEFAULT_PROVIDER,
+        agentId: authAgentId,
         agentDir,
       });
       const providerFilter =
@@ -1186,12 +1187,14 @@ export const modelsHandlers: GatewayRequestHandlers = {
           : "";
       const modelSource =
         params.all === true || params.available === true
-          ? usableCatalog
-          : allowedCatalog.length > 0
-            ? allowedCatalog
-            : usableCatalog;
+          ? snapshot.models
+          : snapshot.models.filter((model) => model.runnable);
       const models = providerFilter
-        ? modelSource.filter((model) => normalizeProviderId(model.provider) === providerFilter)
+        ? modelSource.filter(
+            (model) =>
+              normalizeProviderId(model.provider) === providerFilter ||
+              normalizeProviderId(model.metadata.publicProviderId) === providerFilter,
+          )
         : modelSource;
       const payloadModels =
         params.includeMetadata === true
@@ -1210,6 +1213,18 @@ export const modelsHandlers: GatewayRequestHandlers = {
                 (right.metadata?.recommendationRank ?? Number.MAX_SAFE_INTEGER) ||
               left.name.localeCompare(right.name),
           ),
+          generatedAt: snapshot.generatedAt,
+          agentId: snapshot.agentId,
+          providers: providerFilter
+            ? snapshot.providers.filter((provider) =>
+                [provider.id, ...provider.routes].map(normalizeProviderId).includes(providerFilter),
+              )
+            : snapshot.providers,
+          assignments: providerFilter
+            ? snapshot.assignments.filter((assignment) =>
+                models.some((model) => `${model.provider}/${model.id}` === assignment.ref),
+              )
+            : snapshot.assignments,
         },
         undefined,
       );

@@ -53,10 +53,10 @@ describe("OpenAI Codex app-server adapter", () => {
     ]);
   });
 
-  it("keeps managed component and explicit binary candidates ahead of PATH", () => {
+  it("uses only explicit, managed, or source-owned runtimes", () => {
     const candidates = codexExecutableCandidates();
-    expect(candidates.at(-1)).toBe("codex");
     expect(candidates.some((candidate) => candidate.includes("openai-runtime"))).toBe(true);
+    expect(candidates).not.toContain("codex");
   });
 
   it("maps official thread usage into the shared Fased usage contract", () => {
