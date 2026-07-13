@@ -174,6 +174,7 @@ const OPENAI_CODEX_MODELS: ModelDefinitionConfig[] = [
     contextWindow: 1_050_000,
     maxTokens: 128_000,
     api: "openai-codex-responses",
+    compat: { responsesLite: true },
   }),
   model({
     id: "gpt-5.6-terra",
@@ -183,6 +184,7 @@ const OPENAI_CODEX_MODELS: ModelDefinitionConfig[] = [
     contextWindow: 1_050_000,
     maxTokens: 128_000,
     api: "openai-codex-responses",
+    compat: { responsesLite: true },
   }),
   model({
     id: "gpt-5.6-luna",
@@ -192,6 +194,7 @@ const OPENAI_CODEX_MODELS: ModelDefinitionConfig[] = [
     contextWindow: 1_050_000,
     maxTokens: 128_000,
     api: "openai-codex-responses",
+    compat: { responsesLite: true },
   }),
   model({
     id: "gpt-5.5",

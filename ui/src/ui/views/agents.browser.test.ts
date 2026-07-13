@@ -620,7 +620,8 @@ describe("Agents assembly UI", () => {
     modelSelect!.dispatchEvent(new Event("change", { bubbles: true }));
     expect(props.onModelChange).toHaveBeenCalledWith("beta", "openai/gpt-5.6-terra");
     expect(props.onActiveModelProviderChange).toHaveBeenCalledWith("beta", null);
-    expect(roleSelect!.options[0]?.textContent).toContain("openai/gpt-5.6-terra");
+    expect(roleSelect!.options[0]?.textContent).toContain("GPT-5.6 Terra");
+    expect(roleSelect!.options[0]?.textContent).not.toContain("openai/gpt-5.6-terra");
   });
 
   it("lets Agent model fields select provider/model refs directly", async () => {
@@ -964,12 +965,26 @@ describe("Agents assembly UI", () => {
         { id: "gpt-5.6-terra", name: "GPT-5.6 Terra", provider: "openai-codex" },
         { id: "gpt-5.6-luna", name: "GPT-5.6 Luna", provider: "openai-codex" },
         { id: "gpt-5.5", name: "GPT-5.5", provider: "openai-codex" },
+        { id: "gpt-5.4", name: "GPT-5.4", provider: "openai-codex" },
+        { id: "gpt-5.4-mini", name: "GPT-5.4 Mini", provider: "openai-codex" },
+        {
+          id: "gpt-5.3-codex-spark",
+          name: "GPT-5.3 Codex Spark",
+          provider: "openai-codex",
+        },
       ],
       runnableModelCatalog: [
         { id: "gpt-5.6-sol", name: "GPT-5.6 Sol", provider: "openai-codex" },
         { id: "gpt-5.6-terra", name: "GPT-5.6 Terra", provider: "openai-codex" },
         { id: "gpt-5.6-luna", name: "GPT-5.6 Luna", provider: "openai-codex" },
         { id: "gpt-5.5", name: "GPT-5.5", provider: "openai-codex" },
+        { id: "gpt-5.4", name: "GPT-5.4", provider: "openai-codex" },
+        { id: "gpt-5.4-mini", name: "GPT-5.4 Mini", provider: "openai-codex" },
+        {
+          id: "gpt-5.3-codex-spark",
+          name: "GPT-5.3 Codex Spark",
+          provider: "openai-codex",
+        },
       ],
       providers: {
         catalogStatus: null,
@@ -1011,6 +1026,73 @@ describe("Agents assembly UI", () => {
     expect(signedIn?.disabled).toBe(false);
     expect(signedInSol).toBeInstanceOf(HTMLButtonElement);
     expect(signedInSol?.disabled).toBe(false);
+    const visibleModelValues = new Set(
+      Array.from(
+        dialog?.querySelectorAll<HTMLButtonElement>('[data-agent-model-option="true"]') ?? [],
+      )
+        .map((entry) => entry.dataset.value)
+        .filter((entry): entry is string => entry?.startsWith("openai-codex/") === true),
+    );
+    expect(visibleModelValues).toEqual(
+      new Set([
+        "openai-codex/gpt-5.6-sol",
+        "openai-codex/gpt-5.6-terra",
+        "openai-codex/gpt-5.6-luna",
+        "openai-codex/gpt-5.5",
+        "openai-codex/gpt-5.4",
+        "openai-codex/gpt-5.4-mini",
+        "openai-codex/gpt-5.3-codex-spark",
+      ]),
+    );
+    expect(dialog?.textContent).toContain("All available");
+    expect(dialog?.textContent).not.toContain("openai-codex");
+  });
+
+  it("labels the persisted-model-only state as authenticated discovery in progress", () => {
+    const props = createProps({
+      activePanel: "providers",
+      modelCatalogLoading: true,
+      config: {
+        form: {
+          agents: {
+            defaults: { model: "openai-codex/gpt-5.5" },
+          },
+        },
+        loading: false,
+        saving: false,
+        dirty: false,
+      },
+      modelCatalog: [],
+      runnableModelCatalog: [],
+      providers: {
+        catalogStatus: null,
+        authStatus: {
+          storePath: "/tmp/auth-profiles.json",
+          warnAfterMs: 86_400_000,
+          providers: [
+            {
+              provider: "openai-codex",
+              status: "ok",
+              effective: { kind: "profiles", detail: "openai-codex:default" },
+              profiles: [],
+            },
+          ],
+        },
+      },
+    });
+    const container = document.createElement("div");
+    document.body.append(container);
+    render(renderAgents(props), container);
+
+    expect(container.textContent).toContain("discovering models...");
+    const modelsButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent?.includes("Models"),
+    );
+    modelsButton?.click();
+    const dialog = container.querySelector<HTMLDialogElement>('[data-agent-model-dialog="true"]');
+    expect(dialog?.textContent).toContain(
+      "Discovering models available to your connected accounts...",
+    );
   });
 
   it("keeps the primary model when fallback is selected before rerender", async () => {

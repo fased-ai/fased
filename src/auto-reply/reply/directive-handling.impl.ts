@@ -10,7 +10,12 @@ import type { ExecAsk, ExecHost, ExecSecurity } from "../../infra/exec-approvals
 import { enqueueSystemEvent } from "../../infra/system-events.js";
 import { applyVerboseOverride } from "../../sessions/level-overrides.js";
 import { applyModelOverrideToSessionEntry } from "../../sessions/model-overrides.js";
-import { formatThinkingLevels, formatXHighModelHint, supportsXHighThinking } from "../thinking.js";
+import {
+  formatThinkingLevels,
+  formatXHighModelHint,
+  supportsThinkingLevel,
+  supportsXHighThinking,
+} from "../thinking.js";
 import type { ReplyPayload } from "../types.js";
 import {
   maybeHandleModelDirectiveInfo,
@@ -257,6 +262,15 @@ export async function handleDirectiveOnly(
   ) {
     return {
       text: `Thinking level "xhigh" is only supported for ${formatXHighModelHint()}.`,
+    };
+  }
+  if (
+    directives.hasThinkDirective &&
+    (directives.thinkLevel === "max" || directives.thinkLevel === "ultra") &&
+    !supportsThinkingLevel(resolvedProvider, resolvedModel, directives.thinkLevel)
+  ) {
+    return {
+      text: `Thinking level "${directives.thinkLevel}" is not supported for ${resolvedProvider}/${resolvedModel}. Supported levels: ${formatThinkingLevels(resolvedProvider, resolvedModel)}.`,
     };
   }
 

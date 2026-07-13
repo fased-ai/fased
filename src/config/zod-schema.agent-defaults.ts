@@ -130,6 +130,7 @@ export const AgentDefaultsSchema = z
         z.literal("high"),
         z.literal("xhigh"),
         z.literal("max"),
+        z.literal("ultra"),
       ])
       .optional(),
     reasoningDefault: z
@@ -141,6 +142,7 @@ export const AgentDefaultsSchema = z
         z.literal("high"),
         z.literal("xhigh"),
         z.literal("max"),
+        z.literal("ultra"),
       ])
       .optional(),
     fastModeDefault: z.boolean().optional(),

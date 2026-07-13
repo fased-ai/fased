@@ -219,6 +219,7 @@ export const ModelCapabilitySchema = z
           z.literal("high"),
           z.literal("xhigh"),
           z.literal("max"),
+          z.literal("ultra"),
         ]),
       )
       .optional(),
@@ -231,6 +232,7 @@ export const ModelCapabilitySchema = z
         z.literal("high"),
         z.literal("xhigh"),
         z.literal("max"),
+        z.literal("ultra"),
       ])
       .optional(),
     thinkingMode: z

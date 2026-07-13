@@ -13,6 +13,20 @@ import { deriveModelMetadata, formatModelFeatureList } from "./model-metadata.js
 import { getOpencodeZenStaticFallbackModels } from "./opencode-zen-models.js";
 
 describe("model metadata", () => {
+  it("marks ranked provider recommendations for the shared UI contract", () => {
+    const metadata = deriveModelMetadata({
+      model: {
+        provider: "openai-codex",
+        id: "gpt-5.6-sol",
+        name: "GPT-5.6 Sol",
+        catalogSource: "provider-api",
+      },
+    });
+
+    expect(metadata.recommended).toBe(true);
+    expect(metadata.recommendationRank).toBe(1);
+  });
+
   it("derives capability and private-network metadata without changing model config", () => {
     const cfg = {
       models: {
@@ -106,7 +120,15 @@ describe("model metadata", () => {
     });
 
     expect(metadata.thinkingMode).toBe("openai-reasoning-effort");
-    expect(metadata.thinkingLevels).toEqual(["off", "low", "medium", "high", "xhigh", "max"]);
+    expect(metadata.thinkingLevels).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+      "ultra",
+    ]);
     expect(metadata.apiRoute).toBe("openai-codex-responses");
     expect(metadata.authMode).toBe("oauth");
   });

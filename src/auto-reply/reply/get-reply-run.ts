@@ -24,9 +24,11 @@ import { buildInboundMediaNote } from "../media-note.js";
 import type { MsgContext, TemplateContext } from "../templating.js";
 import {
   type ElevatedLevel,
+  formatThinkingLevels,
   formatXHighModelHint,
   normalizeThinkLevel,
   type ReasoningLevel,
+  supportsThinkingLevel,
   supportsXHighThinking,
   type ThinkLevel,
   type VerboseLevel,
@@ -376,6 +378,29 @@ export async function runPreparedReply(
   }
   if (!resolvedThinkLevel) {
     resolvedThinkLevel = await modelState.resolveDefaultThinkingLevel();
+  }
+  if (
+    (resolvedThinkLevel === "max" || resolvedThinkLevel === "ultra") &&
+    !supportsThinkingLevel(provider, model, resolvedThinkLevel)
+  ) {
+    const explicitThink = directives.hasThinkDirective && directives.thinkLevel !== undefined;
+    if (explicitThink) {
+      typing.cleanup();
+      return {
+        text: `Thinking level "${resolvedThinkLevel}" is not supported for ${provider}/${model}. Supported levels: ${formatThinkingLevels(provider, model)}.`,
+      };
+    }
+    resolvedThinkLevel = "high";
+    if (sessionEntry && sessionStore && sessionKey) {
+      sessionEntry.thinkingLevel = "high";
+      sessionEntry.updatedAt = Date.now();
+      sessionStore[sessionKey] = sessionEntry;
+      if (storePath) {
+        await updateSessionStore(storePath, (store) => {
+          store[sessionKey] = sessionEntry;
+        });
+      }
+    }
   }
   if (resolvedThinkLevel === "xhigh" && !supportsXHighThinking(provider, model)) {
     const explicitThink = directives.hasThinkDirective && directives.thinkLevel !== undefined;

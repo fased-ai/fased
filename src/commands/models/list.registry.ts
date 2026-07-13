@@ -121,6 +121,7 @@ export async function loadModelRegistry(cfg: FasedAgentConfig) {
     store,
     catalog,
     defaultProvider: DEFAULT_PROVIDER,
+    agentDir,
   });
   const models = authenticated.usableCatalog.map((model) => normalizeModelListSource(model));
   let availableKeys: Set<string> | undefined;

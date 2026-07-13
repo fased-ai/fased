@@ -1,4 +1,3 @@
-import { isStandardProviderCatalogEntry } from "../../../src/providers/registry.ts";
 import type { AppViewState } from "./app-view-state.ts";
 import {
   buildChatModelOption,
@@ -127,7 +126,7 @@ function buildChatModelOptions(catalog: ModelCatalogEntry[]): ChatModelSelectOpt
     options.push({ value: trimmed, label: label ?? trimmed });
   };
 
-  for (const entry of catalog.filter(isStandardProviderCatalogEntry)) {
+  for (const entry of catalog) {
     const option = buildChatModelOption(entry);
     addOption(option.value, option.label);
   }

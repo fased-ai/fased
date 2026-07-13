@@ -1,0 +1,8 @@
+{
+  "id": "openai-runtime",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

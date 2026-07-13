@@ -30,8 +30,10 @@ import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
 import { deriveSessionTotalTokens, hasNonzeroUsage } from "../../agents/usage.js";
 import { ensureAgentWorkspace } from "../../agents/workspace.js";
 import {
+  formatThinkingLevels,
   normalizeThinkLevel,
   normalizeVerboseLevel,
+  supportsThinkingLevel,
   supportsXHighThinking,
 } from "../../auto-reply/thinking.js";
 import type { CliDeps } from "../../cli/outbound-send-deps.js";
@@ -1398,6 +1400,15 @@ export async function runCronIsolatedAgentTurn(params: {
   if (thinkLevel === "xhigh" && !supportsXHighThinking(provider, model)) {
     logWarn(
       `[cron:${params.job.id}] Thinking level "xhigh" is not supported for ${provider}/${model}; downgrading to "high".`,
+    );
+    thinkLevel = "high";
+  }
+  if (
+    (thinkLevel === "max" || thinkLevel === "ultra") &&
+    !supportsThinkingLevel(provider, model, thinkLevel)
+  ) {
+    logWarn(
+      `[cron:${params.job.id}] Thinking level "${thinkLevel}" is not supported for ${provider}/${model}; supported levels are ${formatThinkingLevels(provider, model)}; downgrading to "high".`,
     );
     thinkLevel = "high";
   }

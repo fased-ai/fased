@@ -11,12 +11,10 @@ import {
 import { normalizeGroupActivation } from "../auto-reply/group-activation.js";
 import {
   formatThinkingLevels,
-  formatXHighModelHint,
   normalizeElevatedLevel,
   normalizeReasoningLevel,
   normalizeThinkLevel,
   normalizeUsageDisplay,
-  supportsXHighThinking,
 } from "../auto-reply/thinking.js";
 import type { FasedAgentConfig } from "../config/config.js";
 import type { SessionEntry } from "../config/sessions.js";
@@ -90,6 +88,13 @@ export async function applySessionsPatchToStore(params: {
         updatedAt: Math.max(existing.updatedAt ?? 0, now),
       }
     : { sessionId: randomUUID(), updatedAt: now };
+  let gatewayModelCatalog: ModelCatalogEntry[] | undefined;
+  const loadGatewayModelCatalog = async (): Promise<ModelCatalogEntry[]> => {
+    if (!gatewayModelCatalog) {
+      gatewayModelCatalog = (await params.loadGatewayModelCatalog?.()) ?? [];
+    }
+    return gatewayModelCatalog;
+  };
 
   if ("spawnedBy" in patch) {
     const raw = patch.spawnedBy;
@@ -167,33 +172,6 @@ export async function applySessionsPatchToStore(params: {
       if (!normalized) {
         return invalid(
           `invalid thinkingLevel (use ${formatThinkingLevels(hintProvider, hintModel, "|")})`,
-        );
-      }
-      let catalogEntry: ModelCatalogEntry | undefined;
-      if (params.loadGatewayModelCatalog) {
-        const catalog = await params.loadGatewayModelCatalog();
-        catalogEntry = catalog.find(
-          (entry) =>
-            entry.provider.trim().toLowerCase() === hintProvider.trim().toLowerCase() &&
-            entry.id.trim().toLowerCase() === hintModel.trim().toLowerCase(),
-        );
-      }
-      const capability = resolveModelThinkingCapability({
-        provider: hintProvider,
-        model: hintModel,
-        reasoning: catalogEntry?.metadata?.features?.includes("reasoning")
-          ? true
-          : catalogEntry?.reasoning,
-        capabilities: catalogEntry?.metadata ?? catalogEntry?.capabilities,
-      });
-      if (!capability) {
-        return invalid(`thinkingLevel is not supported for ${hintProvider}/${hintModel}`);
-      }
-      if (!capability.thinkingLevels.includes(normalized)) {
-        return invalid(
-          `invalid thinkingLevel for ${hintProvider}/${hintModel} (use ${capability.thinkingLevels.join(
-            "|",
-          )})`,
         );
       }
       next.thinkingLevel = normalized;
@@ -330,7 +308,7 @@ export async function applySessionsPatchToStore(params: {
           error: errorShape(ErrorCodes.UNAVAILABLE, "model catalog unavailable"),
         };
       }
-      const rawCatalog = await params.loadGatewayModelCatalog();
+      const rawCatalog = await loadGatewayModelCatalog();
       const catalog = params.additionalAllowedModelProviders
         ? filterModelCatalogByProviders(rawCatalog, params.additionalAllowedModelProviders)
         : rawCatalog;
@@ -371,14 +349,37 @@ export async function applySessionsPatchToStore(params: {
     }
   }
 
-  if (next.thinkingLevel === "xhigh") {
+  if (next.thinkingLevel) {
     const effectiveProvider = next.providerOverride ?? resolvedDefault.provider;
     const effectiveModel = next.modelOverride ?? resolvedDefault.model;
-    if (!supportsXHighThinking(effectiveProvider, effectiveModel)) {
+    const catalog = params.loadGatewayModelCatalog ? await loadGatewayModelCatalog() : [];
+    const catalogEntry = catalog.find(
+      (entry) =>
+        entry.provider.trim().toLowerCase() === effectiveProvider.trim().toLowerCase() &&
+        entry.id.trim().toLowerCase() === effectiveModel.trim().toLowerCase(),
+    );
+    const capability = resolveModelThinkingCapability({
+      provider: effectiveProvider,
+      model: effectiveModel,
+      reasoning: catalogEntry?.metadata?.features?.includes("reasoning")
+        ? true
+        : catalogEntry?.reasoning,
+      capabilities: catalogEntry?.metadata ?? catalogEntry?.capabilities,
+    });
+    if (!capability) {
       if ("thinkingLevel" in patch) {
-        return invalid(`thinkingLevel "xhigh" is only supported for ${formatXHighModelHint()}`);
+        return invalid(`thinkingLevel is not supported for ${effectiveProvider}/${effectiveModel}`);
       }
-      next.thinkingLevel = "high";
+      delete next.thinkingLevel;
+    } else if (!capability.thinkingLevels.includes(next.thinkingLevel)) {
+      if ("thinkingLevel" in patch) {
+        return invalid(
+          `invalid thinkingLevel for ${effectiveProvider}/${effectiveModel} (use ${capability.thinkingLevels.join("|")})`,
+        );
+      }
+      next.thinkingLevel = capability.thinkingLevels.includes("high")
+        ? "high"
+        : capability.defaultThinkingLevel;
     }
   }
 

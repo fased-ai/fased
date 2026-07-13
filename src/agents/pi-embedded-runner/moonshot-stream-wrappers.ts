@@ -8,6 +8,16 @@ export function resolveMoonshotThinkingType(params: {
   configuredThinking?: unknown;
   thinkingLevel?: ThinkLevel;
 }): MoonshotThinkingType {
+  if (
+    params.configuredThinking &&
+    typeof params.configuredThinking === "object" &&
+    !Array.isArray(params.configuredThinking)
+  ) {
+    const type = (params.configuredThinking as { type?: unknown }).type;
+    if (type === "enabled" || type === "disabled") {
+      return type;
+    }
+  }
   if (params.configuredThinking === "enabled" || params.configuredThinking === true) {
     return "enabled";
   }
@@ -28,16 +38,26 @@ export function createMoonshotThinkingWrapper(
       onPayload: (payload: unknown) => {
         if (payload && typeof payload === "object") {
           const payloadObj = payload as Record<string, unknown>;
-          payloadObj.thinking = { type: thinkingType };
-          if (
-            thinkingType === "enabled" &&
+          const pinnedToolChoice =
             payloadObj.tool_choice &&
             typeof payloadObj.tool_choice === "object" &&
-            !Array.isArray(payloadObj.tool_choice)
+            !Array.isArray(payloadObj.tool_choice);
+          const effectiveThinkingType = pinnedToolChoice ? "disabled" : thinkingType;
+          payloadObj.thinking = { type: effectiveThinkingType };
+          if (
+            effectiveThinkingType === "enabled" &&
+            (payloadObj.tool_choice === "required" ||
+              (payloadObj.tool_choice &&
+                typeof payloadObj.tool_choice === "object" &&
+                !Array.isArray(payloadObj.tool_choice)))
           ) {
-            const toolChoice = payloadObj.tool_choice as Record<string, unknown>;
-            if (toolChoice.type === "any" || toolChoice.type === "auto") {
+            if (payloadObj.tool_choice === "required") {
               payloadObj.tool_choice = "auto";
+            } else {
+              const toolChoice = payloadObj.tool_choice as Record<string, unknown>;
+              if (toolChoice.type === "any" || toolChoice.type === "auto") {
+                payloadObj.tool_choice = "auto";
+              }
             }
           }
         }

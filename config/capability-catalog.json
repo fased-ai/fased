@@ -148,6 +148,18 @@
       "description": "Chrome, Chromium, Brave, Edge, remote CDP, or the extension relay."
     },
     {
+      "id": "openai-runtime",
+      "label": "OpenAI Sign-In Runtime",
+      "category": "provider",
+      "delivery": "npm-addon",
+      "packageName": "@fased/openai-runtime",
+      "pluginId": "openai-runtime",
+      "restartRequired": false,
+      "docsPath": "/providers/openai",
+      "surface": "Agent > Models",
+      "description": "Official Codex app-server runtime for ChatGPT sign-in model discovery and execution."
+    },
+    {
       "id": "ollama",
       "label": "Ollama",
       "category": "provider",

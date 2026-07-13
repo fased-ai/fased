@@ -12,6 +12,7 @@ export async function resolveAuthenticatedModelCatalog(params: {
   store: AuthProfileStore;
   catalog: ModelCatalogEntry[];
   defaultProvider: string;
+  agentDir?: string;
 }) {
   const initialScope = buildCredentialScopedAllowedModelSet({
     cfg: params.cfg,
@@ -25,6 +26,7 @@ export async function resolveAuthenticatedModelCatalog(params: {
       store: params.store,
       routes: initialScope.usableProviders,
       catalog: initialScope.usableCatalog,
+      agentDir: params.agentDir,
     }),
     params.store,
   );

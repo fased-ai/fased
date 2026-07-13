@@ -26,7 +26,7 @@ export type AgentConfig = {
   /** Default thinking level when no /think directive is present. */
   thinkingDefault?: AgentDefaultsConfig["thinkingDefault"];
   /** Legacy elevated/reasoning default. Prefer thinkingDefault for new configs. */
-  reasoningDefault?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  reasoningDefault?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
   /** Default fast-mode preference when no runtime override is present. */
   fastModeDefault?: boolean;
   /** Optional allowlist of skills for this agent (omit = all skills; empty = none). */

@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { readFile } from "node:fs/promises";
 import type { AuthProfileStore } from "../agents/auth-profiles.js";
 import type { ModelCapabilityConfig } from "../config/types.models.js";
@@ -111,6 +112,7 @@ import {
 
 export type ProviderRefreshModelSnapshot = {
   id: string;
+  name?: string;
   input?: Array<"text" | "image">;
   reasoning?: boolean;
   tools?: boolean;
@@ -124,6 +126,13 @@ export type ProviderRefreshModelSnapshot = {
   reasoningBudgetSupported?: boolean;
   contextWindow?: number;
   maxTokens?: number;
+  responsesLite?: boolean;
+  price?: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+  };
   source?: string;
 };
 
@@ -227,6 +236,7 @@ const VLLM_DEFAULT_BASE_URL = "http://127.0.0.1:8000/v1";
 const OLLAMA_DEFAULT_BASE_URL = "http://127.0.0.1:11434";
 const LMSTUDIO_DEFAULT_BASE_URL = "http://127.0.0.1:1234/v1";
 const LITELLM_DEFAULT_BASE_URL = LITELLM_BASE_URL;
+const providerCatalogView = new AsyncLocalStorage<"recommended" | "available">();
 
 function normalizeModelIds(
   values: Iterable<string>,
@@ -321,15 +331,19 @@ function setProviderRefreshEnvFromProfile(params: {
 }): void {
   const provider = params.profile.provider.trim();
   const apiKey = resolveApiKeyProfileValue(params.profile, params.env);
+  const token = resolveTokenProfileValue(params.profile, params.env);
   switch (provider) {
     case "openai":
       setProviderRefreshEnvValue(params.target, "OPENAI_API_KEY", apiKey);
       break;
     case "chutes":
-      setProviderRefreshEnvValue(params.target, "CHUTES_API_KEY", apiKey);
+      setProviderRefreshEnvValue(params.target, "CHUTES_API_KEY", token);
       break;
     case "anthropic":
       setProviderRefreshEnvValue(params.target, "ANTHROPIC_API_KEY", apiKey);
+      if (params.profile.type !== "api_key") {
+        setProviderRefreshEnvValue(params.target, "ANTHROPIC_OAUTH_TOKEN", token);
+      }
       break;
     case "google":
     case "gemini":
@@ -355,7 +369,7 @@ function setProviderRefreshEnvFromProfile(params: {
       break;
     }
     case "xai":
-      setProviderRefreshEnvValue(params.target, "XAI_API_KEY", apiKey);
+      setProviderRefreshEnvValue(params.target, "XAI_API_KEY", token);
       break;
     case "mistral":
       setProviderRefreshEnvValue(params.target, "MISTRAL_API_KEY", apiKey);
@@ -435,7 +449,7 @@ function setProviderRefreshEnvFromProfile(params: {
       setProviderRefreshEnvValue(params.target, "TOGETHER_API_KEY", apiKey);
       break;
     case "openrouter":
-      setProviderRefreshEnvValue(params.target, "OPENROUTER_API_KEY", apiKey);
+      setProviderRefreshEnvValue(params.target, "OPENROUTER_API_KEY", token);
       break;
     case "vercel-ai-gateway":
     case "ai-gateway":
@@ -578,6 +592,7 @@ function normalizeProviderRefreshModelEntry(
   }
   return {
     id,
+    ...(entry.name ? { name: entry.name } : {}),
     ...(entry.input ? { input: entry.input } : {}),
     ...(entry.reasoning !== undefined ? { reasoning: entry.reasoning } : {}),
     ...(entry.tools !== undefined ? { tools: entry.tools } : {}),
@@ -597,6 +612,7 @@ function normalizeProviderRefreshModelEntry(
     ...(typeof entry.maxTokens === "number" && entry.maxTokens > 0
       ? { maxTokens: entry.maxTokens }
       : {}),
+    ...(entry.price ? { price: entry.price } : {}),
     ...(entry.source ? { source: entry.source } : {}),
   };
 }
@@ -1197,6 +1213,72 @@ function readPositiveNumber(value: unknown): number | undefined {
   return undefined;
 }
 
+function readNonNegativeNumber(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+  }
+  return undefined;
+}
+
+function readNonNegativeNumberFrom(
+  record: Record<string, unknown>,
+  keys: string[],
+): number | undefined {
+  for (const key of keys) {
+    const value = readNonNegativeNumber(record[key]);
+    if (value !== undefined) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function readModelPrice(record: Record<string, unknown>): ProviderRefreshModelSnapshot["price"] {
+  const pricing = asRecord(record.pricing);
+  const perTokenInput = readNonNegativeNumberFrom(pricing, ["prompt", "input"]);
+  const perTokenOutput = readNonNegativeNumberFrom(pricing, ["completion", "output"]);
+  if (perTokenInput !== undefined || perTokenOutput !== undefined) {
+    return {
+      input: (perTokenInput ?? 0) * 1_000_000,
+      output: (perTokenOutput ?? 0) * 1_000_000,
+      cacheRead:
+        (readNonNegativeNumberFrom(pricing, ["input_cache_read", "cache_read"]) ?? 0) * 1_000_000,
+      cacheWrite:
+        (readNonNegativeNumberFrom(pricing, ["input_cache_write", "cache_write"]) ?? 0) * 1_000_000,
+    };
+  }
+
+  const input = readNonNegativeNumberFrom(record, [
+    "input_price_per_million",
+    "inputPricePerMillion",
+    "prompt_price_per_million",
+  ]);
+  const output = readNonNegativeNumberFrom(record, [
+    "output_price_per_million",
+    "outputPricePerMillion",
+    "completion_price_per_million",
+  ]);
+  if (input === undefined && output === undefined) {
+    return undefined;
+  }
+  return {
+    input: input ?? 0,
+    output: output ?? 0,
+    cacheRead:
+      readNonNegativeNumberFrom(record, ["cache_read_price_per_million", "cacheReadPerMillion"]) ??
+      0,
+    cacheWrite:
+      readNonNegativeNumberFrom(record, [
+        "cache_write_price_per_million",
+        "cacheWritePerMillion",
+      ]) ?? 0,
+  };
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
 }
@@ -1382,9 +1464,11 @@ export function parseOpenRouterModelSnapshotsFromModelsResponse(
         readPositiveNumber(topProvider.max_completion_tokens) ??
         readPositiveNumber(record.max_tokens) ??
         readPositiveNumber(record.maxTokens);
+      const price = readModelPrice(record);
       return [
         {
           id: (entry as { id: string }).id,
+          ...(readString(record.name) ? { name: readString(record.name) } : {}),
           ...(input.length > 0 ? { input } : {}),
           ...(reasoning ? { reasoning } : {}),
           ...(tools ? { tools } : {}),
@@ -1394,6 +1478,7 @@ export function parseOpenRouterModelSnapshotsFromModelsResponse(
           ...(speech ? { speech } : {}),
           ...(contextWindow ? { contextWindow } : {}),
           ...(maxTokens ? { maxTokens } : {}),
+          ...(price ? { price } : {}),
           source: "catalog",
         },
       ];
@@ -1526,9 +1611,17 @@ export function parseGenericModelSnapshotsFromModelsResponse(
       "outputTokenLimit",
       "max_completion_tokens",
     ]);
+    const price = readModelPrice(record);
+    const displayName =
+      readString(record.display_name) ??
+      readString(record.displayName) ??
+      (readString(record.id) || readString(record.key) || readString(record.model)
+        ? readString(record.name)
+        : undefined);
     return [
       {
         id: normalizeProviderModelId(id),
+        ...(displayName ? { name: displayName } : {}),
         ...(input ? { input } : {}),
         ...(reasoning !== undefined ? { reasoning } : {}),
         ...(tools !== undefined ? { tools } : {}),
@@ -1546,6 +1639,7 @@ export function parseGenericModelSnapshotsFromModelsResponse(
           : {}),
         ...(contextWindow ? { contextWindow } : {}),
         ...(maxTokens ? { maxTokens } : {}),
+        ...(price ? { price } : {}),
         source: "catalog",
       },
     ];
@@ -1704,9 +1798,13 @@ function selectManifestModelsForNormalUi(
   modelIds: Iterable<string>,
   preferred: readonly string[],
 ): string[] {
-  const allowed = new Set<string>(preferred.map((id) => id.toLowerCase()));
+  const normalized = normalizeModelIds(modelIds);
+  if (providerCatalogView.getStore() === "available") {
+    return sortWithPreferredOrder(normalized, preferred);
+  }
+  const recommended = new Set(preferred.map((id) => id.toLowerCase()));
   return sortWithPreferredOrder(
-    normalizeModelIds(modelIds).filter((id) => allowed.has(id.toLowerCase())),
+    normalized.filter((id) => recommended.has(id.toLowerCase())),
     preferred,
   );
 }
@@ -1824,19 +1922,11 @@ export function selectOpencodeZenModelsForNormalUi(modelIds: Iterable<string>): 
 }
 
 export function selectHuggingfaceModelsForNormalUi(modelIds: Iterable<string>): string[] {
-  const allowed = new Set<string>(HUGGINGFACE_MODEL_IDS);
-  return sortWithPreferredOrder(
-    normalizeModelIds(modelIds).filter((id) => allowed.has(id)),
-    HUGGINGFACE_MODEL_IDS,
-  );
+  return selectManifestModelsForNormalUi(modelIds, HUGGINGFACE_MODEL_IDS);
 }
 
 export function selectVeniceModelsForNormalUi(modelIds: Iterable<string>): string[] {
-  const allowed = new Set<string>(VENICE_MODEL_IDS);
-  return sortWithPreferredOrder(
-    normalizeModelIds(modelIds).filter((id) => allowed.has(id)),
-    VENICE_MODEL_IDS,
-  );
+  return selectManifestModelsForNormalUi(modelIds, VENICE_MODEL_IDS);
 }
 
 function readEnv(env: ProviderRefreshEnv, names: readonly string[]): string | undefined {
@@ -2043,22 +2133,34 @@ export async function fetchAnthropicProviderRefreshSnapshot(
     env?: ProviderRefreshEnv;
   } = {},
 ): Promise<ProviderRefreshSnapshot> {
-  const token = readEnv(params.env ?? process.env, ["ANTHROPIC_API_KEY"]);
+  const env = params.env ?? process.env;
+  const apiKey = readEnv(env, ["ANTHROPIC_API_KEY"]);
+  const oauthToken = readEnv(env, ["ANTHROPIC_OAUTH_TOKEN"]);
+  const token = apiKey ?? oauthToken;
   if (!token) {
     return missingProviderRoutes(ANTHROPIC_PROVIDER_BRAND_ID, {
       [ANTHROPIC_ROUTE_ID]: {
         reason: "credential-missing",
-        detail: "Set ANTHROPIC_API_KEY or configure an Anthropic API-key auth profile.",
+        detail:
+          "Configure Anthropic sign-in, setup-token, or API-key credentials before model discovery.",
       },
     });
   }
   const payload = await fetchJsonCatalog({
     fetch: params.fetch ?? fetch,
     url: ANTHROPIC_MODELS_URL,
-    headers: {
-      "x-api-key": token,
-      "anthropic-version": "2023-06-01",
-    },
+    headers: apiKey
+      ? {
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+        }
+      : {
+          Authorization: `Bearer ${oauthToken}`,
+          "anthropic-version": "2023-06-01",
+          "anthropic-beta": "claude-code-20250219,oauth-2025-04-20",
+          "user-agent": "fased-agent",
+          "x-app": "cli",
+        },
     label: "Anthropic",
   });
   const models = parseGenericModelSnapshotsFromModelsResponse(payload);
@@ -3197,35 +3299,47 @@ function providerRefreshFetcherForBrand(brandId: string): ProviderRefreshFetcher
   }
 }
 
+export function listProviderRefreshContractGaps(
+  manifests: readonly ProviderBrandManifest[] = listProviderBrandManifests(),
+): string[] {
+  return manifests.flatMap((manifest) =>
+    providerRefreshFetcherForBrand(manifest.id)
+      ? []
+      : [`${manifest.id}: no authenticated or operator catalog fetcher`],
+  );
+}
+
 export async function fetchProviderRefreshSnapshotForRoutes(params: {
   routes: Iterable<string>;
   fetch?: typeof fetch;
   env?: ProviderRefreshEnv;
 }): Promise<ProviderRefreshSnapshot> {
-  const requestedRoutes = new Set(
-    [...params.routes].map((route) => route.trim().toLowerCase()).filter(Boolean),
-  );
-  const fetchers = new Set<ProviderRefreshFetcher>();
-  for (const manifest of listProviderBrandManifests()) {
-    const routes = new Set([
-      ...manifest.methods.map((method) => method.route.trim().toLowerCase()),
-      ...(manifest.modelProviderIds ?? []).map((route) => route.trim().toLowerCase()),
-      ...(manifest.routeAliases ?? []).map((route) => route.trim().toLowerCase()),
-    ]);
-    if (![...routes].some((route) => requestedRoutes.has(route))) {
-      continue;
+  return await providerCatalogView.run("available", async () => {
+    const requestedRoutes = new Set(
+      [...params.routes].map((route) => route.trim().toLowerCase()).filter(Boolean),
+    );
+    const fetchers = new Set<ProviderRefreshFetcher>();
+    for (const manifest of listProviderBrandManifests()) {
+      const routes = new Set([
+        ...manifest.methods.map((method) => method.route.trim().toLowerCase()),
+        ...(manifest.modelProviderIds ?? []).map((route) => route.trim().toLowerCase()),
+        ...(manifest.routeAliases ?? []).map((route) => route.trim().toLowerCase()),
+      ]);
+      if (![...routes].some((route) => requestedRoutes.has(route))) {
+        continue;
+      }
+      const fetcher = providerRefreshFetcherForBrand(manifest.id);
+      if (fetcher) {
+        fetchers.add(fetcher);
+      }
     }
-    const fetcher = providerRefreshFetcherForBrand(manifest.id);
-    if (fetcher) {
-      fetchers.add(fetcher);
-    }
-  }
-  const results = await Promise.allSettled(
-    [...fetchers].map((fetcher) => fetcher({ fetch: params.fetch, env: params.env })),
-  );
-  return mergeProviderRefreshSnapshots(
-    results.flatMap((result) => (result.status === "fulfilled" ? [result.value] : [])),
-  );
+    const results = await Promise.allSettled(
+      [...fetchers].map((fetcher) => fetcher({ fetch: params.fetch, env: params.env })),
+    );
+    return mergeProviderRefreshSnapshots(
+      results.flatMap((result) => (result.status === "fulfilled" ? [result.value] : [])),
+    );
+  });
 }
 
 function mergeProviderRefreshSnapshots(

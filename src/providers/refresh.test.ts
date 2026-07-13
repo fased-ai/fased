@@ -18,9 +18,11 @@ import {
   fetchMistralProviderRefreshSnapshot,
   fetchMoonshotProviderRefreshSnapshot,
   fetchOpenAIProviderRefreshSnapshot,
+  fetchProviderRefreshSnapshotForRoutes,
   fetchOpenRouterProviderRefreshSnapshot,
   fetchOpencodeZenProviderRefreshSnapshot,
   fetchOfficialProviderRefreshSnapshot,
+  listProviderRefreshContractGaps,
   fetchQianfanProviderRefreshSnapshot,
   fetchQwenProviderRefreshSnapshot,
   fetchSyntheticProviderRefreshSnapshot,
@@ -88,6 +90,32 @@ function fetchUrlText(url: string | URL | Request): string {
 }
 
 describe("provider refresh", () => {
+  it("has an availability contract for every public provider brand", () => {
+    expect(listProviderRefreshContractGaps()).toEqual([]);
+  });
+  it("keeps all authenticated models for runtime availability while recommendations stay curated", async () => {
+    const fetch = async () =>
+      Response.json({
+        data: [{ id: "gpt-5.6" }, { id: "gpt-account-only" }],
+      });
+
+    const recommended = await fetchOpenAIProviderRefreshSnapshot({
+      fetch,
+      env: { OPENAI_API_KEY: "openai-key" },
+    });
+    const available = await fetchProviderRefreshSnapshotForRoutes({
+      routes: ["openai"],
+      fetch,
+      env: { OPENAI_API_KEY: "openai-key" },
+    });
+
+    expect(routeIds(recommended.providers?.openai?.routes?.openai)).toEqual(["gpt-5.6"]);
+    expect(routeIds(available.providers?.openai?.routes?.openai)).toEqual([
+      "gpt-5.6",
+      "gpt-account-only",
+    ]);
+  });
+
   it("uses the authenticated OpenAI models endpoint when an API key is available", async () => {
     const calls: Array<{ url: string; authorization?: string }> = [];
     const snapshot = await fetchOpenAIProviderRefreshSnapshot({
@@ -132,10 +160,24 @@ describe("provider refresh", () => {
               provider: "chutes",
               key: "chutes-key",
             },
+            "chutes:oauth": {
+              type: "oauth",
+              provider: "chutes",
+              access: "chutes-oauth-token",
+              refresh: "chutes-refresh",
+              expires: Date.now() + 60_000,
+            },
             "anthropic:default": {
               type: "api_key",
               provider: "anthropic",
               key: "profile-anthropic",
+            },
+            "anthropic:oauth": {
+              type: "oauth",
+              provider: "anthropic",
+              access: "anthropic-oauth-token",
+              refresh: "anthropic-refresh",
+              expires: Date.now() + 60_000,
             },
             "google:default": {
               type: "api_key",
@@ -198,6 +240,13 @@ describe("provider refresh", () => {
               provider: "openrouter",
               key: "openrouter-key",
             },
+            "xai:oauth": {
+              type: "oauth",
+              provider: "xai",
+              access: "xai-oauth-token",
+              refresh: "xai-refresh",
+              expires: Date.now() + 60_000,
+            },
             "vercel-ai-gateway:default": {
               type: "api_key",
               provider: "vercel-ai-gateway",
@@ -245,6 +294,7 @@ describe("provider refresh", () => {
     expect(env.OPENAI_API_KEY).toBe("openai-key");
     expect(env.CHUTES_API_KEY).toBe("chutes-key");
     expect(env.ANTHROPIC_API_KEY).toBe("env-anthropic");
+    expect(env.ANTHROPIC_OAUTH_TOKEN).toBe("anthropic-oauth-token");
     expect(env.GEMINI_API_KEY).toBe("gemini-ref");
     expect(env.GOOGLE_GEMINI_CLI_OAUTH_TOKEN).toBe("gemini-cli-access");
     expect(env.GOOGLE_CLOUD_PROJECT).toBe("gemini-project");
@@ -266,10 +316,55 @@ describe("provider refresh", () => {
     expect(env.CUSTOM_PROVIDER_BASE_URL).toBe("https://custom.example.com/v1");
     expect(env.TOGETHER_API_KEY).toBe("together-key");
     expect(env.OPENROUTER_API_KEY).toBe("openrouter-key");
+    expect(env.XAI_API_KEY).toBe("xai-oauth-token");
     expect(env.AI_GATEWAY_API_KEY).toBe("vercel-key");
     expect(env.OPENCODE_API_KEY).toBe("opencode-key");
     expect(env.HUGGINGFACE_HUB_TOKEN).toBe("huggingface-key");
     expect(env.VENICE_API_KEY).toBe("venice-key");
+  });
+
+  it("maps OAuth and token profiles into authenticated provider discovery", () => {
+    const env = buildProviderRefreshEnvFromCredentials({
+      env: {},
+      authStores: [
+        {
+          version: 1,
+          profiles: {
+            "chutes:oauth": {
+              type: "oauth",
+              provider: "chutes",
+              access: "chutes-oauth-token",
+              refresh: "chutes-refresh",
+              expires: Date.now() + 60_000,
+            },
+            "anthropic:oauth": {
+              type: "oauth",
+              provider: "anthropic",
+              access: "anthropic-oauth-token",
+              refresh: "anthropic-refresh",
+              expires: Date.now() + 60_000,
+            },
+            "xai:oauth": {
+              type: "oauth",
+              provider: "xai",
+              access: "xai-oauth-token",
+              refresh: "xai-refresh",
+              expires: Date.now() + 60_000,
+            },
+            "openrouter:token": {
+              type: "token",
+              provider: "openrouter",
+              token: "openrouter-token",
+            },
+          },
+        },
+      ],
+    });
+
+    expect(env.CHUTES_API_KEY).toBe("chutes-oauth-token");
+    expect(env.ANTHROPIC_OAUTH_TOKEN).toBe("anthropic-oauth-token");
+    expect(env.XAI_API_KEY).toBe("xai-oauth-token");
+    expect(env.OPENROUTER_API_KEY).toBe("openrouter-token");
   });
 
   it("compares snapshot models against registry route lists", () => {
@@ -697,6 +792,28 @@ describe("provider refresh", () => {
       contextWindow: 1000000,
       maxTokens: 128000,
     });
+  });
+
+  it("fetches Anthropic account catalog with an OAuth bearer token", async () => {
+    const snapshot = await fetchAnthropicProviderRefreshSnapshot({
+      fetch: (async (url, init) => {
+        expect(fetchUrlText(url)).toBe("https://api.anthropic.com/v1/models");
+        expect(init?.headers).toMatchObject({
+          Authorization: "Bearer anthropic-oauth",
+          "anthropic-version": "2023-06-01",
+          "anthropic-beta": "claude-code-20250219,oauth-2025-04-20",
+          "user-agent": "fased-agent",
+          "x-app": "cli",
+        });
+        return {
+          ok: true,
+          json: async () => ({ data: [{ id: "claude-sonnet-5" }] }),
+        } as Response;
+      }) as typeof fetch,
+      env: { ANTHROPIC_OAUTH_TOKEN: "anthropic-oauth" },
+    });
+
+    expect(routeIds(snapshot.providers?.anthropic?.routes?.anthropic)).toEqual(["claude-sonnet-5"]);
   });
 
   it("fetches Google Gemini official catalog when API key is available", async () => {
@@ -1462,6 +1579,12 @@ describe("provider refresh", () => {
           data: [
             {
               id: "openai/gpt-5.5",
+              name: "GPT-5.5",
+              pricing: {
+                prompt: "0.00000125",
+                completion: "0.00001",
+                input_cache_read: "0.000000125",
+              },
               supported_parameters: ["tools", "response_format", "reasoning_effort"],
               architecture: { input_modalities: ["text", "image"], output_modalities: ["text"] },
               context_length: 1_000_000,
@@ -1520,12 +1643,19 @@ describe("provider refresh", () => {
     const models = snapshot.providers?.openrouter?.routes?.openrouter ?? [];
     expect(models[0]).toMatchObject({
       id: "openai/gpt-5.5",
+      name: "GPT-5.5",
       input: ["text", "image"],
       tools: true,
       json: true,
       thinkingMode: "openai-reasoning-effort",
       contextWindow: 1_000_000,
       maxTokens: 128_000,
+      price: {
+        input: 1.25,
+        output: 10,
+        cacheRead: 0.125,
+        cacheWrite: 0,
+      },
     });
     expect(models[2]).toMatchObject({
       id: "anthropic/claude-sonnet-5",

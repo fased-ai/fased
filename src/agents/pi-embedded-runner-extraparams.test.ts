@@ -1,6 +1,7 @@
 import type { StreamFn } from "@mariozechner/pi-agent-core";
 import type { Context, Model, SimpleStreamOptions } from "@mariozechner/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import NodeWebSocket from "ws";
 import {
   createAnthropicBetaHeadersWrapper,
   createAnthropicFastModeWrapper,
@@ -1810,6 +1811,28 @@ describe("applyExtraParamsToAgent", () => {
 
     expect(calls).toHaveLength(1);
     expect(calls[0]?.transport).toBe("auto");
+  });
+
+  it("routes authenticated GPT-5.6 Responses Lite turns through the official app-server", () => {
+    const originalWebSocket = globalThis.WebSocket;
+    const { calls, agent } = createOptionsCaptureAgent();
+    try {
+      applyExtraParamsToAgent(agent, undefined, "openai-codex", "gpt-5.6-luna");
+
+      const model = {
+        api: "openai-codex-responses",
+        provider: "openai-codex",
+        id: "gpt-5.6-luna",
+        compat: { responsesLite: true },
+      } as Model<"openai-codex-responses">;
+      const context: Context = { messages: [] };
+      void agent.streamFn?.(model, context, {});
+
+      expect(globalThis.WebSocket).toBe(NodeWebSocket);
+      expect(calls).toHaveLength(0);
+    } finally {
+      globalThis.WebSocket = originalWebSocket;
+    }
   });
 
   it("defaults OpenAI transport to auto with websocket warm-up", () => {

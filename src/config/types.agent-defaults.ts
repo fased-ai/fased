@@ -199,9 +199,9 @@ export type AgentDefaultsConfig = {
   /** Optional default allowlist of skills for agents that do not define their own list. */
   skills?: string[];
   /** Default thinking level when no /think directive is present. */
-  thinkingDefault?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  thinkingDefault?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
   /** Legacy elevated/reasoning default. Prefer thinkingDefault for new configs. */
-  reasoningDefault?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  reasoningDefault?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
   /** Default fast-mode preference when no runtime override is present. */
   fastModeDefault?: boolean;
   /** Default verbose level when no /verbose directive is present. */

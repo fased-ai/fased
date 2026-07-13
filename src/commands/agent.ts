@@ -34,6 +34,7 @@ import {
   formatXHighModelHint,
   normalizeThinkLevel,
   normalizeVerboseLevel,
+  supportsThinkingLevel,
   supportsXHighThinking,
   type VerboseLevel,
 } from "../auto-reply/thinking.js";
@@ -620,6 +621,35 @@ export async function agentCommand(
       }
       resolvedThinkLevel = "high";
       if (sessionEntry && sessionStore && sessionKey && sessionEntry.thinkingLevel === "xhigh") {
+        const entry = sessionEntry;
+        entry.thinkingLevel = "high";
+        entry.updatedAt = Date.now();
+        await persistSessionEntry({
+          sessionStore,
+          sessionKey,
+          storePath,
+          entry,
+        });
+      }
+    }
+    if (
+      (resolvedThinkLevel === "max" || resolvedThinkLevel === "ultra") &&
+      !supportsThinkingLevel(provider, model, resolvedThinkLevel)
+    ) {
+      const explicitThink = Boolean(thinkOnce || thinkOverride);
+      if (explicitThink) {
+        throw new Error(
+          `Thinking level "${resolvedThinkLevel}" is not supported for ${provider}/${model}. Supported levels: ${formatThinkingLevels(provider, model)}.`,
+        );
+      }
+      const unsupportedLevel = resolvedThinkLevel;
+      resolvedThinkLevel = "high";
+      if (
+        sessionEntry &&
+        sessionStore &&
+        sessionKey &&
+        sessionEntry.thinkingLevel === unsupportedLevel
+      ) {
         const entry = sessionEntry;
         entry.thinkingLevel = "high";
         entry.updatedAt = Date.now();

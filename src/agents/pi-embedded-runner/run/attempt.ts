@@ -415,7 +415,11 @@ export async function runEmbeddedAttempt(
     });
     // Check if the model supports native image input
     const modelHasVision = params.model.input?.includes("image") ?? false;
-    let toolsRaw = params.disableTools
+    const responsesLite =
+      params.model.api === "openai-codex-responses" &&
+      (params.model.compat as { responsesLite?: unknown } | undefined)?.responsesLite === true;
+    const toolsDisabled = params.disableTools === true || responsesLite;
+    let toolsRaw = toolsDisabled
       ? []
       : createFasedAgentCodingTools({
           agentId: sessionAgentId,
@@ -457,7 +461,7 @@ export async function runEmbeddedAttempt(
           disableMessageTool: params.disableMessageTool,
           disabledToolNames: params.disabledToolNames,
         });
-    if (!params.disableTools) {
+    if (!toolsDisabled) {
       bundleMcpRuntime = await createBundleMcpToolRuntime({
         workspaceDir: effectiveWorkspace,
         cfg: params.config,
@@ -791,6 +795,9 @@ export async function runEmbeddedAttempt(
         params.streamParams,
         params.thinkLevel,
         sessionAgentId,
+        agentDir,
+        params.model,
+        params.resolvedApiKey,
       );
 
       if (cacheTrace) {

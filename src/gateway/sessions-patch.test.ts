@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import type { ModelCatalogEntry } from "../agents/model-catalog.js";
 import type { FasedAgentConfig } from "../config/config.js";
 import type { SessionEntry } from "../config/sessions.js";
 import { applySessionsPatchToStore } from "./sessions-patch.js";
@@ -241,6 +242,82 @@ describe("gateway sessions patch", () => {
     }
     expect(res.entry.providerOverride).toBe("anthropic");
     expect(res.entry.modelOverride).toBe("claude-sonnet-4-6");
+  });
+
+  test("validates a simultaneous model and thinking patch against the requested model", async () => {
+    const store: Record<string, SessionEntry> = {};
+    const cfg = {
+      agents: {
+        defaults: {
+          model: { primary: "openai-codex/gpt-5.5" },
+          models: { "openai-codex/gpt-5.5": {} },
+        },
+      },
+    } as FasedAgentConfig;
+    const catalog = [
+      {
+        provider: "openai-codex",
+        id: "gpt-5.5",
+        name: "GPT-5.5",
+        reasoning: true,
+        capabilities: {
+          thinkingLevels: ["low", "medium", "high", "xhigh"],
+          defaultThinkingLevel: "medium",
+          thinkingMode: "openai-reasoning-effort",
+        },
+      },
+      {
+        provider: "openai-codex",
+        id: "gpt-5.6-luna",
+        name: "GPT-5.6 Luna",
+        reasoning: true,
+        capabilities: {
+          thinkingLevels: ["low", "medium", "high", "xhigh", "max"],
+          defaultThinkingLevel: "medium",
+          thinkingMode: "openai-reasoning-effort",
+        },
+      },
+    ] satisfies ModelCatalogEntry[];
+
+    const accepted = await applySessionsPatchToStore({
+      cfg,
+      store,
+      storeKey: "agent:main:luna",
+      patch: {
+        key: "agent:main:luna",
+        model: "openai-codex/gpt-5.6-luna",
+        thinkingLevel: "max",
+      },
+      loadGatewayModelCatalog: async () => catalog,
+      additionalAllowedModelProviders: ["openai-codex"],
+    });
+
+    expect(accepted.ok).toBe(true);
+    if (!accepted.ok) {
+      return;
+    }
+    expect(accepted.entry).toMatchObject({
+      providerOverride: "openai-codex",
+      modelOverride: "gpt-5.6-luna",
+      thinkingLevel: "max",
+    });
+
+    const rejected = await applySessionsPatchToStore({
+      cfg,
+      store: {},
+      storeKey: "agent:main:luna-ultra",
+      patch: {
+        key: "agent:main:luna-ultra",
+        model: "openai-codex/gpt-5.6-luna",
+        thinkingLevel: "ultra",
+      },
+      loadGatewayModelCatalog: async () => catalog,
+      additionalAllowedModelProviders: ["openai-codex"],
+    });
+    expect(rejected.ok).toBe(false);
+    if (!rejected.ok) {
+      expect(rejected.error.message).toContain("use low|medium|high|xhigh|max");
+    }
   });
 
   test("accepts model refs from authenticated providers even when the model allowlist is narrow", async () => {

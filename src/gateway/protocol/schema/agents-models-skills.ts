@@ -17,6 +17,7 @@ export const ModelChoiceSchema = Type.Object(
       Type.Union([
         Type.Literal("configured"),
         Type.Literal("runtime"),
+        Type.Literal("provider-api"),
         Type.Literal("current-preview"),
         Type.Literal("provider-index"),
         Type.Literal("manifest"),
@@ -25,7 +26,10 @@ export const ModelChoiceSchema = Type.Object(
     metadata: Type.Optional(
       Type.Object(
         {
+          ref: NonEmptyString,
           provider: NonEmptyString,
+          publicProviderId: NonEmptyString,
+          publicProviderLabel: NonEmptyString,
           model: NonEmptyString,
           label: NonEmptyString,
           contextWindow: Type.Optional(Type.Integer({ minimum: 1 })),
@@ -53,6 +57,7 @@ export const ModelChoiceSchema = Type.Object(
                 Type.Literal("high"),
                 Type.Literal("xhigh"),
                 Type.Literal("max"),
+                Type.Literal("ultra"),
               ]),
             ),
           ),
@@ -65,6 +70,7 @@ export const ModelChoiceSchema = Type.Object(
               Type.Literal("high"),
               Type.Literal("xhigh"),
               Type.Literal("max"),
+              Type.Literal("ultra"),
             ]),
           ),
           thinkingMode: Type.Optional(
@@ -86,15 +92,82 @@ export const ModelChoiceSchema = Type.Object(
           ),
           reasoningBudgetSupported: Type.Optional(Type.Boolean()),
           streaming: Type.Boolean(),
-          capabilityConfidence: Type.Union([Type.Literal("declared"), Type.Literal("unknown")]),
+          capabilityConfidence: Type.Union([
+            Type.Literal("verified"),
+            Type.Literal("declared"),
+            Type.Literal("inferred"),
+            Type.Literal("unknown"),
+          ]),
+          capabilitySource: Type.Union([
+            Type.Literal("provider-api"),
+            Type.Literal("official-docs"),
+            Type.Literal("runtime"),
+            Type.Literal("configured"),
+            Type.Literal("inferred"),
+            Type.Literal("unknown"),
+          ]),
+          capabilityRetrievedAt: Type.Optional(NonEmptyString),
+          retrievedAt: NonEmptyString,
+          availabilitySource: Type.Union([
+            Type.Literal("provider-api"),
+            Type.Literal("runtime-catalog"),
+            Type.Literal("configured"),
+            Type.Literal("provider-plugin"),
+            Type.Literal("reviewed-catalog"),
+            Type.Literal("curated-recommendation"),
+          ]),
+          authRoute: NonEmptyString,
           authMode: Type.Union([
             Type.Literal("api-key"),
             Type.Literal("oauth"),
             Type.Literal("token"),
+            Type.Literal("aws-sdk"),
           ]),
+          credentialRoute: Type.Object(
+            {
+              id: NonEmptyString,
+              label: NonEmptyString,
+              authMode: Type.Union([
+                Type.Literal("api-key"),
+                Type.Literal("oauth"),
+                Type.Literal("token"),
+                Type.Literal("aws-sdk"),
+              ]),
+            },
+            { additionalProperties: false },
+          ),
+          credentialRoutes: Type.Array(
+            Type.Object(
+              {
+                id: NonEmptyString,
+                label: NonEmptyString,
+                authMode: Type.Union([
+                  Type.Literal("api-key"),
+                  Type.Literal("oauth"),
+                  Type.Literal("token"),
+                  Type.Literal("aws-sdk"),
+                ]),
+              },
+              { additionalProperties: false },
+            ),
+            { minItems: 1 },
+          ),
+          price: Type.Optional(
+            Type.Object(
+              {
+                input: Type.Number({ minimum: 0 }),
+                output: Type.Number({ minimum: 0 }),
+                cacheRead: Type.Number({ minimum: 0 }),
+                cacheWrite: Type.Number({ minimum: 0 }),
+                unit: Type.Literal("usd-per-million-tokens"),
+              },
+              { additionalProperties: false },
+            ),
+          ),
           privateNetwork: Type.Boolean(),
           privateNetworkAllowed: Type.Boolean(),
           recommended: Type.Optional(Type.Boolean()),
+          recommendationRank: Type.Optional(Type.Integer({ minimum: 1 })),
           default: Type.Optional(Type.Boolean()),
         },
         { additionalProperties: false },

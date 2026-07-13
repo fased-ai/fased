@@ -301,6 +301,33 @@ describe("cron stagger defaults", () => {
     });
   });
 
+  it("keeps an explicit task model as the executable route", () => {
+    const now = Date.parse("2026-02-08T10:00:00.000Z");
+    const state = createMockState(now);
+
+    const job = createJob(state, {
+      name: "Authenticated model task",
+      enabled: false,
+      schedule: { kind: "at", at: "2026-02-08T11:00:00.000Z" },
+      sessionTarget: "isolated",
+      wakeMode: "now",
+      payload: {
+        kind: "agentTurn",
+        message: "Write one sentence.",
+        model: "openai-codex/gpt-5.6-sol",
+      },
+      delivery: { mode: "none" },
+    });
+
+    expect(job.executionPolicy).toMatchObject({
+      executionMode: "agent-turn",
+      modelPolicy: {
+        mode: "task-override",
+        model: "openai-codex/gpt-5.6-sol",
+      },
+    });
+  });
+
   it("defaults top-of-hour cron jobs to 5m stagger", () => {
     const now = Date.parse("2026-02-08T10:00:00.000Z");
     const state = createMockState(now);

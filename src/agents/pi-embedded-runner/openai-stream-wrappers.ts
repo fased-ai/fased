@@ -81,8 +81,15 @@ function supportsStore(model: { compat?: unknown }): boolean {
 
 function directResponsesRoute(model: { api?: unknown; provider?: unknown; baseUrl?: unknown }) {
   return (
-    (model.api === "openai-responses" && isDirectOpenAI(model)) ||
+    (model.api === "openai-responses" && (isDirectOpenAI(model) || isDirectAzureOpenAI(model))) ||
     (model.api === "azure-openai-responses" && isDirectAzureOpenAI(model))
+  );
+}
+
+function serviceTierRoute(model: { api?: unknown; provider?: unknown; baseUrl?: unknown }) {
+  return (
+    isCodexResponsesApi(model) ||
+    (model.api === "openai-responses" && model.provider === "openai" && isDirectOpenAI(model))
   );
 }
 
@@ -157,7 +164,7 @@ export function createOpenAIServiceTierWrapper(
   serviceTier: OpenAIServiceTier,
 ): StreamFn {
   return withPayloadPatch(baseStreamFn, (payload, model) => {
-    if (!directResponsesRoute(model) && !isCodexResponsesApi(model)) {
+    if (!serviceTierRoute(model)) {
       return;
     }
     if (!("service_tier" in payload)) {
@@ -168,7 +175,7 @@ export function createOpenAIServiceTierWrapper(
 
 export function createOpenAIFastModeWrapper(baseStreamFn: StreamFn | undefined): StreamFn {
   return withPayloadPatch(baseStreamFn, (payload, model) => {
-    if (!directResponsesRoute(model) && !isCodexResponsesApi(model)) {
+    if (!serviceTierRoute(model)) {
       return;
     }
     if (!("service_tier" in payload)) {
@@ -178,7 +185,6 @@ export function createOpenAIFastModeWrapper(baseStreamFn: StreamFn | undefined):
     if (!text || typeof text !== "object" || !("verbosity" in text)) {
       payload.text = { ...(text && typeof text === "object" ? text : {}), verbosity: "low" };
     }
-    delete payload.reasoning;
   });
 }
 
@@ -191,7 +197,7 @@ export function createOpenAITextVerbosityWrapper(
       return;
     }
     const text = payload.text;
-    if (text && typeof text === "object" && "verbosity" in text) {
+    if (!isCodexResponsesApi(model) && text && typeof text === "object" && "verbosity" in text) {
       return;
     }
     payload.text = {

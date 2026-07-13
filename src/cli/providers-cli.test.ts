@@ -71,7 +71,7 @@ describe("providers cli", () => {
         providers: {
           openai: {
             routes: {
-              openai: ["gpt-5.6"],
+              openai: ["gpt-account-new"],
             },
           },
         },
@@ -85,7 +85,7 @@ describe("providers cli", () => {
 
     const text = await readFile(patch, "utf8");
     expect(text).toContain("*** Begin Patch");
-    expect(text).toContain('"gpt-5.6"');
+    expect(text).toContain('"gpt-account-new"');
   });
 
   it("prints actionable setup hints for missing provider refresh sources", async () => {

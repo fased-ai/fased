@@ -1,9 +1,22 @@
 import type { StreamFn } from "@mariozechner/pi-agent-core";
 import type { SimpleStreamOptions } from "@mariozechner/pi-ai";
 import { streamSimple } from "@mariozechner/pi-ai/compat";
+import WebSocket from "ws";
 import type { ThinkLevel } from "../../auto-reply/thinking.js";
 import type { FasedAgentConfig } from "../../config/config.js";
+import { resolveFasedAgentAgentDir } from "../agent-paths.js";
+import {
+  ensureAuthProfileStore,
+  listProfilesForProvider,
+  resolveApiKeyForProfile,
+} from "../auth-profiles.js";
+import { createOpenAICodexAppServerStreamFn } from "../openai-codex-app-server.js";
 import { log } from "./logger.js";
+import {
+  createMoonshotThinkingWrapper,
+  resolveMoonshotThinkingType,
+} from "./moonshot-stream-wrappers.js";
+import { createOpenAIResponsesContextManagementWrapper as createRouteOpenAIResponsesContextManagementWrapper } from "./openai-stream-wrappers.js";
 
 const OPENROUTER_APP_HEADERS: Record<string, string> = {
   "HTTP-Referer": "https://fased.ai",
@@ -13,8 +26,6 @@ const ANTHROPIC_CONTEXT_1M_BETA = "context-1m-2025-08-07";
 const ANTHROPIC_1M_MODEL_PREFIXES = ["claude-opus-4", "claude-sonnet-4"] as const;
 // NOTE: We only force `store=true` for *direct* OpenAI Responses.
 // Codex responses (chatgpt.com/backend-api/codex/responses) require `store=false`.
-const OPENAI_RESPONSES_APIS = new Set(["openai-responses"]);
-const OPENAI_RESPONSES_PROVIDERS = new Set(["openai"]);
 
 type ProviderRuntimeDeps = {
   prepareProviderExtraParams: (params: {
@@ -66,6 +77,34 @@ function sanitizeExtraParams(input: Record<string, unknown> | undefined): Record
   );
 }
 
+function normalizeExtraParamAliases(
+  input: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  const normalized = sanitizeExtraParams(input);
+  if (Object.hasOwn(normalized, "parallelToolCalls")) {
+    normalized.parallel_tool_calls = normalized.parallelToolCalls;
+    delete normalized.parallelToolCalls;
+  }
+  if (Object.hasOwn(normalized, "textVerbosity")) {
+    normalized.text_verbosity = normalized.textVerbosity;
+    delete normalized.textVerbosity;
+  }
+  return normalized;
+}
+
+function defaultExtraParams(provider: string, modelId: string): Record<string, unknown> {
+  const normalizedProvider = provider.trim().toLowerCase();
+  const normalizedModel = modelId.trim().toLowerCase();
+  if (normalizedProvider === "openai" && /^gpt-5(?:\.|$|-)/.test(normalizedModel)) {
+    return {
+      parallel_tool_calls: true,
+      text_verbosity: "low",
+      openaiWsWarmup: true,
+    };
+  }
+  return {};
+}
+
 const testing = {
   setProviderRuntimeDepsForTest(deps: Partial<ProviderRuntimeDeps> | undefined): void {
     providerRuntimeDeps.prepareProviderExtraParams =
@@ -86,7 +125,7 @@ const testing = {
  *
  * @internal Exported for testing only
  */
-export function resolveExtraParams(params: {
+function resolveConfiguredExtraParams(params: {
   cfg: FasedAgentConfig | undefined;
   provider: string;
   modelId: string;
@@ -94,17 +133,43 @@ export function resolveExtraParams(params: {
 }): Record<string, unknown> | undefined {
   const modelKey = `${params.provider}/${params.modelId}`;
   const modelConfig = params.cfg?.agents?.defaults?.models?.[modelKey];
-  const globalParams = modelConfig?.params ? { ...modelConfig.params } : undefined;
-  const agentParams =
+  const globalParams = modelConfig?.params
+    ? normalizeExtraParamAliases(modelConfig.params)
+    : undefined;
+  const rawAgentParams =
     params.agentId && params.cfg?.agents?.list
       ? params.cfg.agents.list.find((agent) => agent.id === params.agentId)?.params
       : undefined;
+  const agentParams = rawAgentParams ? normalizeExtraParamAliases(rawAgentParams) : undefined;
 
-  if (!globalParams && !agentParams) {
+  const defaults = defaultExtraParams(params.provider, params.modelId);
+
+  if (Object.keys(defaults).length === 0 && !globalParams && !agentParams) {
     return undefined;
   }
 
-  return Object.assign({}, globalParams, agentParams);
+  return Object.assign({}, defaults, globalParams, agentParams);
+}
+
+export function resolveExtraParams(params: {
+  cfg: FasedAgentConfig | undefined;
+  provider: string;
+  modelId: string;
+  agentId?: string;
+}): Record<string, unknown> | undefined {
+  const configured = resolveConfiguredExtraParams(params);
+  const prepared = providerRuntimeDeps.prepareProviderExtraParams({
+    provider: params.provider,
+    modelId: params.modelId,
+    config: params.cfg,
+    context: {
+      config: params.cfg,
+      provider: params.provider,
+      modelId: params.modelId,
+      extraParams: configured,
+    },
+  });
+  return prepared ?? configured;
 }
 
 export function resolvePreparedExtraParams(params: {
@@ -117,7 +182,7 @@ export function resolvePreparedExtraParams(params: {
   model?: object;
   streamFn?: StreamFn;
 }): Record<string, unknown> {
-  const extraParams = resolveExtraParams({
+  const extraParams = resolveConfiguredExtraParams({
     cfg: params.cfg,
     provider: params.provider,
     modelId: params.modelId,
@@ -125,7 +190,7 @@ export function resolvePreparedExtraParams(params: {
   });
   const merged = {
     ...sanitizeExtraParams(extraParams),
-    ...sanitizeExtraParams(params.extraParamsOverride),
+    ...normalizeExtraParamAliases(params.extraParamsOverride),
   };
   const prepared = providerRuntimeDeps.prepareProviderExtraParams({
     provider: params.provider,
@@ -193,12 +258,6 @@ function resolveCacheRetention(
   extraParams: Record<string, unknown> | undefined,
   provider: string,
 ): CacheRetention | undefined {
-  const isAnthropicDirect = provider === "anthropic";
-
-  if (!isAnthropicDirect) {
-    return undefined;
-  }
-
   // Prefer new cacheRetention if present
   const newVal = extraParams?.cacheRetention;
   if (newVal === "none" || newVal === "short" || newVal === "long") {
@@ -216,12 +275,8 @@ function resolveCacheRetention(
 
   // Default to "short" only for direct Anthropic when not explicitly configured.
   // Bedrock retains upstream provider defaults unless explicitly set.
-  if (!isAnthropicDirect) {
-    return undefined;
-  }
-
   // Default to "short" for direct Anthropic when not explicitly configured
-  return "short";
+  return provider === "anthropic" ? "short" : undefined;
 }
 
 function createStreamFnWithExtraParams(
@@ -239,6 +294,10 @@ function createStreamFnWithExtraParams(
   }
   if (typeof extraParams.maxTokens === "number") {
     streamParams.maxTokens = extraParams.maxTokens;
+  }
+  if (typeof extraParams.openaiWsWarmup === "boolean") {
+    (streamParams as CacheRetentionStreamOptions & { openaiWsWarmup?: boolean }).openaiWsWarmup =
+      extraParams.openaiWsWarmup;
   }
   const transport = extraParams.transport;
   if (transport === "sse" || transport === "websocket" || transport === "auto") {
@@ -293,6 +352,47 @@ function createStreamFnWithExtraParams(
   return wrappedStreamFn;
 }
 
+function createParallelToolCallsWrapper(
+  baseStreamFn: StreamFn | undefined,
+  value: unknown,
+): StreamFn | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (typeof value !== "boolean") {
+    const rendered =
+      typeof value === "string" || typeof value === "number" || typeof value === "bigint"
+        ? String(value)
+        : (JSON.stringify(value) ?? typeof value);
+    log.warn(`ignoring invalid parallel_tool_calls param: ${rendered}`);
+    return undefined;
+  }
+  const underlying = baseStreamFn ?? streamSimple;
+  return (model, context, options) => {
+    const supported =
+      model.api === "openai-completions" ||
+      model.api === "openai-responses" ||
+      model.api === "azure-openai-responses";
+    if (!supported) {
+      return underlying(model, context, options);
+    }
+    const originalOnPayload = options?.onPayload;
+    return underlying(model, context, {
+      ...options,
+      onPayload: (payload) => {
+        if (payload && typeof payload === "object") {
+          (payload as Record<string, unknown>).parallel_tool_calls = value;
+        }
+        return originalOnPayload?.(payload);
+      },
+    });
+  };
+}
+
+function isOllamaKimiCloudModel(provider: string, modelId: string): boolean {
+  return provider === "ollama" && /^kimi(?:[-:]|$)/i.test(modelId) && /:cloud$/i.test(modelId);
+}
+
 function isDirectOpenAIBaseUrl(baseUrl: unknown): boolean {
   if (typeof baseUrl !== "string" || !baseUrl.trim()) {
     return false;
@@ -311,29 +411,6 @@ function isDirectOpenAIBaseUrl(baseUrl: unknown): boolean {
       normalized.includes(".openai.azure.com")
     );
   }
-}
-
-function shouldForceResponsesStore(model: {
-  api?: unknown;
-  provider?: unknown;
-  baseUrl?: unknown;
-  compat?: { supportsStore?: boolean };
-}): boolean {
-  // Never force store=true when the model explicitly declares supportsStore=false
-  // (e.g. Azure OpenAI Responses API without server-side persistence).
-  if (model.compat?.supportsStore === false) {
-    return false;
-  }
-  if (typeof model.api !== "string" || typeof model.provider !== "string") {
-    return false;
-  }
-  if (!OPENAI_RESPONSES_APIS.has(model.api)) {
-    return false;
-  }
-  if (!OPENAI_RESPONSES_PROVIDERS.has(model.provider)) {
-    return false;
-  }
-  return isDirectOpenAIBaseUrl(model.baseUrl);
 }
 
 function parsePositiveInteger(value: unknown): number | undefined {
@@ -466,76 +543,6 @@ function resolveOpenRouterResponseCacheHeaders(params: {
   return Object.keys(headers).length > 0 ? headers : undefined;
 }
 
-function resolveOpenAIResponsesCompactThreshold(model: { contextWindow?: unknown }): number {
-  const contextWindow = parsePositiveInteger(model.contextWindow);
-  if (contextWindow) {
-    return Math.max(1_000, Math.floor(contextWindow * 0.7));
-  }
-  return 80_000;
-}
-
-function shouldEnableOpenAIResponsesServerCompaction(
-  model: {
-    api?: unknown;
-    provider?: unknown;
-    baseUrl?: unknown;
-    compat?: { supportsStore?: boolean };
-  },
-  extraParams: Record<string, unknown> | undefined,
-): boolean {
-  const configured = extraParams?.responsesServerCompaction;
-  if (configured === false) {
-    return false;
-  }
-  if (!shouldForceResponsesStore(model)) {
-    return false;
-  }
-  if (configured === true) {
-    return true;
-  }
-  // Auto-enable for direct OpenAI Responses models.
-  return model.provider === "openai";
-}
-
-function createOpenAIResponsesContextManagementWrapper(
-  baseStreamFn: StreamFn | undefined,
-  extraParams: Record<string, unknown> | undefined,
-): StreamFn {
-  const underlying = baseStreamFn ?? streamSimple;
-  return (model, context, options) => {
-    const forceStore = shouldForceResponsesStore(model);
-    const useServerCompaction = shouldEnableOpenAIResponsesServerCompaction(model, extraParams);
-    if (!forceStore && !useServerCompaction) {
-      return underlying(model, context, options);
-    }
-
-    const compactThreshold =
-      parsePositiveInteger(extraParams?.responsesCompactThreshold) ??
-      resolveOpenAIResponsesCompactThreshold(model);
-    const originalOnPayload = options?.onPayload;
-    return underlying(model, context, {
-      ...options,
-      onPayload: (payload) => {
-        if (payload && typeof payload === "object") {
-          const payloadObj = payload as Record<string, unknown>;
-          if (forceStore) {
-            payloadObj.store = true;
-          }
-          if (useServerCompaction && payloadObj.context_management === undefined) {
-            payloadObj.context_management = [
-              {
-                type: "compaction",
-                compact_threshold: compactThreshold,
-              },
-            ];
-          }
-        }
-        originalOnPayload?.(payload);
-      },
-    });
-  };
-}
-
 function createOpenAIReasoningEffortWrapper(
   baseStreamFn: StreamFn | undefined,
   reasoningEffort: ThinkLevel | undefined,
@@ -570,11 +577,56 @@ function createOpenAIReasoningEffortWrapper(
 
 function createCodexDefaultTransportWrapper(baseStreamFn: StreamFn | undefined): StreamFn {
   const underlying = baseStreamFn ?? streamSimple;
-  return (model, context, options) =>
-    underlying(model, context, {
+  return (model, context, options) => {
+    // pi-ai needs a Node WebSocket implementation that accepts handshake headers.
+    // Node's browser-compatible global WebSocket ignores that constructor option.
+    if (typeof process !== "undefined" && process.versions?.node) {
+      globalThis.WebSocket = WebSocket as unknown as typeof globalThis.WebSocket;
+    }
+    return underlying(model, context, {
       ...options,
       transport: options?.transport ?? "auto",
     });
+  };
+}
+
+function usesCodexResponsesLite(model: object): boolean {
+  const candidate = model as { api?: unknown; compat?: { responsesLite?: unknown } };
+  return candidate.api === "openai-codex-responses" && candidate.compat?.responsesLite === true;
+}
+
+function createCodexResponsesLiteWrapper(
+  baseStreamFn: StreamFn | undefined,
+  params?: { cfg?: FasedAgentConfig; agentDir?: string; resolvedApiKey?: string },
+): StreamFn {
+  const underlying = baseStreamFn ?? streamSimple;
+  const appServer = createOpenAICodexAppServerStreamFn({
+    resolveToken: async () => {
+      if (params?.resolvedApiKey?.trim()) {
+        return params.resolvedApiKey.trim();
+      }
+      const agentDir = params?.agentDir ?? resolveFasedAgentAgentDir();
+      const store = ensureAuthProfileStore(agentDir, { allowKeychainPrompt: false });
+      const profileId = listProfilesForProvider(store, "openai-codex")[0];
+      if (!profileId) {
+        return undefined;
+      }
+      return (
+        await resolveApiKeyForProfile({
+          cfg: params?.cfg ?? {},
+          store,
+          profileId,
+          agentDir,
+        })
+      )?.apiKey;
+    },
+  });
+  return (model, context, options) => {
+    if (!usesCodexResponsesLite(model)) {
+      return underlying(model, context, options);
+    }
+    return appServer(model, context, options);
+  };
 }
 
 function isAnthropic1MModel(modelId: string): boolean {
@@ -833,7 +885,7 @@ function createOpenRouterSystemCacheWrapper(baseStreamFn: StreamFn | undefined):
  */
 function mapThinkingLevelToOpenRouterReasoningEffort(
   thinkingLevel: ThinkLevel,
-): "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" {
+): "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra" {
   if (thinkingLevel === "off") {
     return "none";
   }
@@ -1146,8 +1198,9 @@ export function applyExtraParamsToAgent(
   agentId?: string,
   agentDir?: string,
   model?: object,
+  resolvedApiKey?: string,
 ): void {
-  const extraParams = resolveExtraParams({
+  const extraParams = resolveConfiguredExtraParams({
     cfg,
     provider,
     modelId,
@@ -1156,11 +1209,16 @@ export function applyExtraParamsToAgent(
   if (provider === "openai-codex") {
     // Default Codex to WebSocket-first when nothing else specifies transport.
     agent.streamFn = createCodexDefaultTransportWrapper(agent.streamFn);
+    agent.streamFn = createCodexResponsesLiteWrapper(agent.streamFn, {
+      cfg,
+      agentDir,
+      resolvedApiKey,
+    });
   }
   const merged = Object.assign(
     {},
     sanitizeExtraParams(extraParams),
-    sanitizeExtraParams(extraParamsOverride),
+    normalizeExtraParamAliases(extraParamsOverride),
   );
   const preparedProviderExtraParams = providerRuntimeDeps.prepareProviderExtraParams({
     provider,
@@ -1177,6 +1235,7 @@ export function applyExtraParamsToAgent(
     },
   });
   const effectiveProviderExtraParams = preparedProviderExtraParams ?? merged;
+  const streamFnBeforeProviderHook = agent.streamFn;
   const providerWrappedStreamFn = providerRuntimeDeps.wrapProviderStreamFn({
     provider,
     config: cfg,
@@ -1199,14 +1258,28 @@ export function applyExtraParamsToAgent(
   if (providerWrappedStreamFn) {
     agent.streamFn = providerWrappedStreamFn;
   }
-  const wrappedStreamFn = createStreamFnWithExtraParams(agent.streamFn, merged, provider);
+  const providerRuntimeHandled =
+    providerWrappedStreamFn !== undefined && providerWrappedStreamFn !== streamFnBeforeProviderHook;
+  const wrappedStreamFn = createStreamFnWithExtraParams(
+    agent.streamFn,
+    effectiveProviderExtraParams,
+    provider,
+  );
 
   if (wrappedStreamFn) {
     log.debug(`applying extraParams to agent streamFn for ${provider}/${modelId}`);
     agent.streamFn = wrappedStreamFn;
   }
 
-  const anthropicBetas = resolveAnthropicBetas(merged, provider, modelId);
+  const parallelToolCalls = createParallelToolCallsWrapper(
+    agent.streamFn,
+    effectiveProviderExtraParams.parallel_tool_calls,
+  );
+  if (parallelToolCalls) {
+    agent.streamFn = parallelToolCalls;
+  }
+
+  const anthropicBetas = resolveAnthropicBetas(effectiveProviderExtraParams, provider, modelId);
   if (anthropicBetas?.length) {
     log.debug(
       `applying Anthropic beta header for ${provider}/${modelId}: ${anthropicBetas.join(",")}`,
@@ -1221,7 +1294,7 @@ export function applyExtraParamsToAgent(
     agent.streamFn = createSiliconFlowThinkingWrapper(agent.streamFn);
   }
 
-  if (provider === "openrouter") {
+  if (provider === "openrouter" && !providerRuntimeHandled) {
     log.debug(`applying OpenRouter app attribution headers for ${provider}/${modelId}`);
     // "auto" is a dynamic routing model — we don't know which underlying model
     // OpenRouter will select, and it may be a reasoning-required endpoint.
@@ -1233,9 +1306,22 @@ export function applyExtraParamsToAgent(
     agent.streamFn = createOpenRouterWrapper(
       agent.streamFn,
       openRouterThinkingLevel,
-      resolveOpenRouterResponseCacheConfig(merged),
+      resolveOpenRouterResponseCacheConfig(effectiveProviderExtraParams),
     );
     agent.streamFn = createOpenRouterSystemCacheWrapper(agent.streamFn);
+  }
+
+  if (provider === "moonshot" || isOllamaKimiCloudModel(provider, modelId)) {
+    const configuredThinking = effectiveProviderExtraParams.thinking;
+    const hasPinnedToolChoice =
+      model &&
+      typeof model === "object" &&
+      "tool_choice" in model &&
+      typeof (model as Record<string, unknown>).tool_choice === "object";
+    const thinkingType = hasPinnedToolChoice
+      ? "disabled"
+      : resolveMoonshotThinkingType({ configuredThinking, thinkingLevel });
+    agent.streamFn = createMoonshotThinkingWrapper(agent.streamFn, thinkingType);
   }
 
   // Enable Z.AI tool_stream for real-time tool call streaming.
@@ -1255,7 +1341,10 @@ export function applyExtraParamsToAgent(
   // Work around upstream pi-ai hardcoding `store: false` for Responses API.
   // Force `store=true` for direct OpenAI Responses models and auto-enable
   // server-side compaction for compatible OpenAI Responses payloads.
-  agent.streamFn = createOpenAIResponsesContextManagementWrapper(agent.streamFn, merged);
+  agent.streamFn = createRouteOpenAIResponsesContextManagementWrapper(
+    agent.streamFn,
+    effectiveProviderExtraParams,
+  );
   agent.streamFn = createOpenAIReasoningEffortWrapper(agent.streamFn, thinkingLevel);
 }
 

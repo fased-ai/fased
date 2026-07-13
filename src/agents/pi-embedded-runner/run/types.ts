@@ -17,6 +17,8 @@ export type EmbeddedRunAttemptParams = EmbeddedRunAttemptBase & {
   provider: string;
   modelId: string;
   model: Model<Api>;
+  /** Credential already selected by the run-level auth/failover contract. */
+  resolvedApiKey?: string;
   authStorage: AuthStorage;
   modelRegistry: ModelRegistry;
   thinkLevel: ThinkLevel;

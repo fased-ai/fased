@@ -1,5 +1,9 @@
 import { type FasedAgentConfig, loadConfig } from "../config/config.js";
-import type { ModelCapabilityConfig, ModelProviderConfig } from "../config/types.js";
+import type {
+  ModelCapabilityConfig,
+  ModelCompatConfig,
+  ModelProviderConfig,
+} from "../config/types.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { augmentModelCatalogWithProviderPlugins } from "../plugins/provider-runtime.runtime.js";
 import { resolveFasedAgentAgentDir } from "./agent-paths.js";
@@ -29,10 +33,17 @@ export type ModelCatalogEntry = {
   reasoning?: boolean;
   input?: Array<"text" | "image">;
   capabilities?: ModelCapabilityConfig;
+  compat?: ModelCompatConfig;
   baseUrl?: string;
   api?: string;
   catalogSource?: ModelCatalogSource;
   metadata?: ModelMetadata;
+  cost?: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+  };
 };
 
 type DiscoveredModel = {
