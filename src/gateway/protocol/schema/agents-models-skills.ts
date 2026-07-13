@@ -23,6 +23,22 @@ export const ModelChoiceSchema = Type.Object(
         Type.Literal("manifest"),
       ]),
     ),
+    available: Type.Optional(Type.Boolean()),
+    runnable: Type.Optional(Type.Boolean()),
+    recommended: Type.Optional(Type.Boolean()),
+    assignedRoles: Type.Optional(
+      Type.Array(
+        Type.Union([
+          Type.Literal("primary"),
+          Type.Literal("fallback"),
+          Type.Literal("cheapCheck"),
+          Type.Literal("strong"),
+          Type.Literal("escalation"),
+          Type.Literal("coding"),
+          Type.Literal("summarizer"),
+        ]),
+      ),
+    ),
     metadata: Type.Optional(
       Type.Object(
         {
@@ -369,6 +385,53 @@ export const ModelsListParamsSchema = Type.Object(
 export const ModelsListResultSchema = Type.Object(
   {
     models: Type.Array(ModelChoiceSchema),
+    generatedAt: Type.Optional(NonEmptyString),
+    agentId: Type.Optional(NonEmptyString),
+    providers: Type.Optional(
+      Type.Array(
+        Type.Object(
+          {
+            id: NonEmptyString,
+            label: NonEmptyString,
+            routes: Type.Array(NonEmptyString),
+            credentialRoutes: Type.Array(
+              Type.Object(
+                {
+                  id: NonEmptyString,
+                  label: NonEmptyString,
+                  authMode: NonEmptyString,
+                },
+                { additionalProperties: false },
+              ),
+            ),
+            available: Type.Integer({ minimum: 0 }),
+            recommended: Type.Integer({ minimum: 0 }),
+            assigned: Type.Integer({ minimum: 0 }),
+          },
+          { additionalProperties: false },
+        ),
+      ),
+    ),
+    assignments: Type.Optional(
+      Type.Array(
+        Type.Object(
+          {
+            role: Type.Union([
+              Type.Literal("primary"),
+              Type.Literal("fallback"),
+              Type.Literal("cheapCheck"),
+              Type.Literal("strong"),
+              Type.Literal("escalation"),
+              Type.Literal("coding"),
+              Type.Literal("summarizer"),
+            ]),
+            ref: NonEmptyString,
+            available: Type.Boolean(),
+          },
+          { additionalProperties: false },
+        ),
+      ),
+    ),
   },
   { additionalProperties: false },
 );

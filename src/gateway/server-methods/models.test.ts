@@ -78,8 +78,16 @@ const resolveSessionAgentId = vi.hoisted(() =>
 vi.mock("../../agents/agent-scope.js", () => ({
   resolveDefaultAgentId,
   resolveAgentDir,
+  resolveAgentEffectiveModelPrimary: vi.fn(
+    (cfg: { agents?: { defaults?: { model?: string | { primary?: string } } } }) => {
+      const model = cfg.agents?.defaults?.model;
+      return typeof model === "string" ? model : model?.primary;
+    },
+  ),
+  resolveAgentModelFallbacksOverride: vi.fn(() => undefined),
   resolveAgentWorkspaceDir: vi.fn(() => "/tmp/workspace"),
   resolveSessionAgentId,
+  listAgentEntries: vi.fn(() => []),
 }));
 
 const upsertAuthProfile = vi.hoisted(() => vi.fn(() => {}));
@@ -577,6 +585,7 @@ describe("models.auth.status handler", () => {
     await invoke();
 
     const call = respond.mock.calls[0] as RespondCall | undefined;
+    expect(call?.[2]).toBeUndefined();
     expect(call?.[0]).toBe(true);
     expect(call?.[1]).toMatchObject({
       models: [

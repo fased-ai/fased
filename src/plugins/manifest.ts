@@ -58,6 +58,7 @@ export type PluginManifestProviderAuthChoice = {
 export type PluginManifest = {
   id: string;
   configSchema: Record<string, unknown>;
+  runtimeOnly?: boolean;
   enabledByDefault?: boolean;
   legacyPluginIds?: string[];
   autoEnableWhenConfiguredProviders?: string[];
@@ -318,6 +319,7 @@ export function loadPluginManifest(rootDir: string): PluginManifestLoadResult {
   }
 
   const enabledByDefault = raw.enabledByDefault === true;
+  const runtimeOnly = raw.runtimeOnly === true;
   const legacyPluginIds = normalizeStringList(raw.legacyPluginIds);
   const autoEnableWhenConfiguredProviders = normalizeStringList(
     raw.autoEnableWhenConfiguredProviders,
@@ -346,6 +348,7 @@ export function loadPluginManifest(rootDir: string): PluginManifestLoadResult {
     manifest: {
       id,
       configSchema,
+      ...(runtimeOnly ? { runtimeOnly: true } : {}),
       ...(enabledByDefault ? { enabledByDefault } : {}),
       ...(legacyPluginIds.length > 0 ? { legacyPluginIds } : {}),
       ...(autoEnableWhenConfiguredProviders.length > 0

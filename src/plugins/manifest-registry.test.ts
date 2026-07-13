@@ -24,6 +24,7 @@ function createPluginCandidate(params: {
   rootDir: string;
   sourceName?: string;
   origin: "bundled" | "global" | "workspace" | "config";
+  packageName?: string;
   packageDir?: string;
   packageManifest?: PluginCandidate["packageManifest"];
 }): PluginCandidate {
@@ -32,6 +33,7 @@ function createPluginCandidate(params: {
     source: path.join(params.rootDir, params.sourceName ?? "index.ts"),
     rootDir: params.rootDir,
     origin: params.origin,
+    packageName: params.packageName,
     packageDir: params.packageDir,
     packageManifest: params.packageManifest,
   };
@@ -87,6 +89,94 @@ describe("loadPluginManifestRegistry", () => {
     ];
 
     expect(countDuplicateWarnings(loadRegistry(candidates))).toBe(1);
+  });
+
+  it("deduplicates runtime-only component manifests without loading two plugin records", () => {
+    const workspaceDir = makeTempDir();
+    const installedDir = makeTempDir();
+    const manifest = {
+      id: "openai-runtime",
+      runtimeOnly: true,
+      configSchema: { type: "object" },
+    };
+    writeManifest(workspaceDir, manifest);
+    writeManifest(installedDir, manifest);
+
+    const registry = loadRegistry([
+      createPluginCandidate({
+        idHint: "openai-runtime",
+        rootDir: workspaceDir,
+        origin: "workspace",
+      }),
+      createPluginCandidate({
+        idHint: "openai-runtime",
+        rootDir: installedDir,
+        origin: "config",
+      }),
+    ]);
+
+    expect(countDuplicateWarnings(registry)).toBe(0);
+    expect(registry.plugins).toHaveLength(1);
+    expect(registry.plugins[0]).toMatchObject({
+      id: "openai-runtime",
+      runtimeOnly: true,
+      origin: "config",
+    });
+  });
+
+  it("deduplicates a legacy installed OpenAI runtime manifest by official package identity", () => {
+    const workspaceDir = makeTempDir();
+    const installedDir = makeTempDir();
+    writeManifest(workspaceDir, {
+      id: "openai-runtime",
+      runtimeOnly: true,
+      configSchema: { type: "object" },
+    });
+    writeManifest(installedDir, {
+      id: "openai-runtime",
+      configSchema: { type: "object" },
+    });
+
+    const registry = loadRegistry([
+      createPluginCandidate({
+        idHint: "openai-runtime",
+        rootDir: workspaceDir,
+        origin: "workspace",
+        packageName: "@fased/openai-runtime",
+      }),
+      createPluginCandidate({
+        idHint: "openai-runtime",
+        rootDir: installedDir,
+        origin: "config",
+        packageName: "@fased/openai-runtime",
+      }),
+    ]);
+
+    expect(countDuplicateWarnings(registry)).toBe(0);
+    expect(registry.plugins).toHaveLength(1);
+    expect(registry.plugins[0]).toMatchObject({
+      id: "openai-runtime",
+      runtimeOnly: true,
+      origin: "config",
+    });
+  });
+
+  it("does not let a runtime-only manifest suppress a normal duplicate-id warning", () => {
+    const normalDir = makeTempDir();
+    const runtimeDir = makeTempDir();
+    writeManifest(normalDir, { id: "shared-id", configSchema: { type: "object" } });
+    writeManifest(runtimeDir, {
+      id: "shared-id",
+      runtimeOnly: true,
+      configSchema: { type: "object" },
+    });
+
+    const registry = loadRegistry([
+      createPluginCandidate({ idHint: "shared-id", rootDir: normalDir, origin: "workspace" }),
+      createPluginCandidate({ idHint: "shared-id", rootDir: runtimeDir, origin: "config" }),
+    ]);
+
+    expect(countDuplicateWarnings(registry)).toBe(1);
   });
 
   it("suppresses duplicate warning when candidates share the same physical directory via symlink", () => {

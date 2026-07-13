@@ -10,8 +10,8 @@ title: "OpenAI"
 
 OpenAI provides developer APIs for GPT models. Fased exposes one OpenAI brand
 with two auth methods: **OpenAI API key** for Platform API access and **OpenAI
-sign-in** for ChatGPT OAuth access through the legacy internal `openai-codex`
-compatibility route.
+sign-in** for ChatGPT account access. Internal transport route names are not
+separate providers and are not shown in normal model pickers.
 
 ## Where to set it up
 
@@ -27,15 +27,22 @@ Use the same two OpenAI methods in every setup surface:
   `fased onboard --auth-choice openai-api-key`, or
   `fased onboard --openai-api-key "$OPENAI_API_KEY"` for API key setup.
 
-The two auth methods use different internal routes:
+The two auth methods have independent credentials and model availability:
 
-- **Sign in** stores OAuth credentials for `openai-codex` and exposes
-  `openai-codex/*` model refs.
-- **API key** stores an API-key profile for `openai` and exposes `openai/*`
-  model refs.
+- **Sign in** uses the Fased-managed, version-matched OpenAI sign-in runtime.
+- **API key** uses the direct OpenAI API route and account model discovery.
 
-Do not mix the route prefix manually. Pick the method first, then choose a model
-from that method's model list in **Agent > Models** or Chat.
+Pick the credential method first, then choose from the models that credential
+can actually access. Fased keeps the exact route in the saved model record so
+Chat and Tasks execute with the same credential and transport selected in
+**Agent > Models**.
+
+The picker has three distinct concepts:
+
+- **Available:** models reported for the authenticated account or endpoint.
+- **Recommended:** Fased's ranked subset of those available models.
+- **Assigned:** models saved for this Agent's primary, fallback, cheap, strong,
+  escalation, coding, and summarizer roles.
 
 ## Option A: OpenAI API key (OpenAI Platform)
 
@@ -84,23 +91,21 @@ fased onboard --openai-api-key "$OPENAI_API_KEY"
 
 1. Open **Agents** and select the Agent.
 2. Open **Agent > Models**.
-3. If **OpenAI Sign-In Runtime** is not installed, install it from **Services >
-   Components** or run `fased components install openai-runtime`.
-4. Open **OpenAI**.
-5. Choose **Sign in**.
-6. Open or copy the sign-in URL shown in the modal.
-7. Finish OpenAI login in the browser.
-8. Return to **Agent > Models** after the modal reports success, then choose a
+3. Open **OpenAI**.
+4. Choose **Sign in**.
+5. Open or copy the sign-in URL shown in the modal.
+6. Finish OpenAI login in the browser.
+7. Return to **Agent > Models** after the modal reports success, then choose a
    model role for the Agent or use Chat to override a single session.
 
-The credential is stored under the `openai-codex` compatibility route. This is
-why the model refs are `openai-codex/...` even though the user-facing provider
-brand is OpenAI.
+Fased installs and verifies its matching sign-in runtime during authentication.
+Normal `fased update` updates core, Gateway, dashboard assets, and the managed
+runtime together. If a matching runtime is missing, authenticated discovery or
+execution repairs it before listing or running a sign-in model.
 
 ### Sign-in onboarding setup
 
 ```bash
-fased components install openai-runtime
 fased onboard
 # choose: Set up model providers -> OpenAI -> OpenAI sign-in
 ```
@@ -108,9 +113,6 @@ fased onboard
 ### Sign-in CLI setup
 
 ```bash
-# Install the optional official runtime once on this Fased installation.
-fased components install openai-runtime
-
 # Run OpenAI sign-in in the wizard
 fased onboard --auth-choice openai-codex
 
@@ -124,12 +126,11 @@ fased models auth login --provider openai-codex
 fased models list --all --provider openai-codex
 ```
 
-The sign-in catalog is route-specific and comes from the authenticated runtime.
-Only select a model returned by that command. Fased's reviewed catalog can add
-capability labels and recommendation order, but it does not make a model
-available to the signed-in account. An OpenAI API key does not unlock the
-sign-in route, and ChatGPT sign-in does not unlock the direct `openai/*` API
-route.
+The sign-in catalog comes from the authenticated, Fased-owned runtime. Only
+select a model returned by that command. Fased's reviewed catalog adds
+capability metadata and recommendation order, but it does not turn an
+unavailable model into an available one. An OpenAI API key does not unlock the
+ChatGPT route, and ChatGPT sign-in does not unlock direct API billing.
 
 ### Sign-in transport default
 
@@ -237,13 +238,12 @@ Direct OpenAI Responses models still force `store: true` unless compat sets
 ## Notes
 
 - Model refs always use `provider/model` (see [/concepts/models](/concepts/models)).
-- Direct API-key setup currently recommends `openai/gpt-5.6`; the curated
-  direct API list also includes `openai/gpt-5.6-terra` and
-  `openai/gpt-5.6-luna`. OpenAI sign-in remains a separate catalog, so choose
-  only models shown for the `openai-codex/*` route after signing in.
+- Model availability can differ between ChatGPT sign-in and an OpenAI API key.
+  The UI groups both under OpenAI while preserving the exact credential route
+  internally.
 - The Gateway owns the authenticated model catalog. **Agent > Models** and
-  Chat consume that catalog directly; they do not maintain separate static
-  lists.
+  Chat and Tasks consume that same canonical catalog and persisted assignment
+  records; they do not maintain separate entitlement lists.
 - Auth details + reuse rules are in [/concepts/oauth](/concepts/oauth).
 - **Agent > Models** owns OpenAI credentials and that Agent's model roles. Chat
   can choose a session-level model from the authenticated provider catalog.

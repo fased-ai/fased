@@ -31,6 +31,7 @@ const PLUGIN_ORIGIN_RANK: Readonly<Record<PluginOrigin, number>> = {
 
 export type PluginManifestRecord = {
   id: string;
+  runtimeOnly?: boolean;
   name?: string;
   description?: string;
   version?: string;
@@ -75,6 +76,22 @@ const registryCache = new Map<string, { expiresAt: number; registry: PluginManif
 
 const DEFAULT_MANIFEST_CACHE_MS = 200;
 const LEGACY_REMOVED_PLUGIN_IDS = new Set<string>();
+
+function isRuntimeOnlyComponent(params: {
+  manifest: PluginManifest;
+  candidate: PluginCandidate;
+}): boolean {
+  if (params.manifest.runtimeOnly === true) {
+    return true;
+  }
+  // @fased/openai-runtime releases before the runtimeOnly manifest field was
+  // introduced still need to coexist with the source-tree component during
+  // an upgrade. Restrict compatibility to the official package identity.
+  return (
+    params.manifest.id === "openai-runtime" &&
+    params.candidate.packageName === "@fased/openai-runtime"
+  );
+}
 
 export function clearPluginManifestRegistryCache(): void {
   registryCache.clear();
@@ -189,6 +206,7 @@ function buildRecord(params: {
   });
   return {
     id: params.manifest.id,
+    runtimeOnly: isRuntimeOnlyComponent(params) ? true : undefined,
     name: normalizeManifestLabel(params.manifest.name) ?? params.candidate.packageName,
     description:
       normalizeManifestLabel(params.manifest.description) ?? params.candidate.packageDescription,
@@ -339,6 +357,22 @@ export function loadPluginManifestRegistry(params: {
       if (samePlugin) {
         // Prefer higher-precedence origins even if candidates are passed in
         // an unexpected order (config > workspace > global > bundled).
+        if (PLUGIN_ORIGIN_RANK[candidate.origin] < PLUGIN_ORIGIN_RANK[existing.candidate.origin]) {
+          records[existing.recordIndex] = buildRecord({
+            manifest,
+            candidate,
+            manifestPath: manifestRes.manifestPath,
+            schemaCacheKey,
+            configSchema,
+          });
+          seenIds.set(manifest.id, { candidate, recordIndex: existing.recordIndex });
+        }
+        continue;
+      }
+      if (
+        isRuntimeOnlyComponent({ manifest, candidate }) &&
+        records[existing.recordIndex]?.runtimeOnly === true
+      ) {
         if (PLUGIN_ORIGIN_RANK[candidate.origin] < PLUGIN_ORIGIN_RANK[existing.candidate.origin]) {
           records[existing.recordIndex] = buildRecord({
             manifest,

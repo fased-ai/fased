@@ -1451,6 +1451,12 @@ export type ModelCatalogEntry = {
     | "current-preview"
     | "provider-index"
     | "manifest";
+  available?: boolean;
+  runnable?: boolean;
+  recommended?: boolean;
+  assignedRoles?: Array<
+    "primary" | "fallback" | "cheapCheck" | "strong" | "escalation" | "coding" | "summarizer"
+  >;
   metadata?: {
     ref?: string;
     provider: string;
@@ -1529,6 +1535,26 @@ export type ModelCatalogEntry = {
     recommendationRank?: number;
     default?: boolean;
   };
+};
+
+export type ModelCatalogSnapshot = {
+  generatedAt?: string;
+  agentId?: string;
+  models: ModelCatalogEntry[];
+  providers?: Array<{
+    id: string;
+    label: string;
+    routes: string[];
+    credentialRoutes: Array<{ id: string; label: string; authMode: string }>;
+    available: number;
+    recommended: number;
+    assigned: number;
+  }>;
+  assignments?: Array<{
+    role: "primary" | "fallback" | "cheapCheck" | "strong" | "escalation" | "coding" | "summarizer";
+    ref: string;
+    available: boolean;
+  }>;
 };
 
 export type ToolCatalogProfile =

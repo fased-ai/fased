@@ -1,4 +1,3 @@
-import { getProviderBrandManifestForRoute } from "../../../src/providers/registry.ts";
 import { refreshChat } from "./app-chat.ts";
 import {
   startLogsPolling,
@@ -32,7 +31,7 @@ import { loadFederation } from "./controllers/federation.ts";
 import { loadLogs } from "./controllers/logs.ts";
 import { loadMemory } from "./controllers/memory.ts";
 import { loadMining } from "./controllers/mining.ts";
-import { loadModels } from "./controllers/models.ts";
+import { loadModelCatalogSnapshot } from "./controllers/models.ts";
 import { loadNodes } from "./controllers/nodes.ts";
 import { loadOperationsStatus } from "./controllers/operations-status.ts";
 import { loadOverviewHealth } from "./controllers/overview-health.ts";
@@ -186,70 +185,15 @@ function buildSameOriginGatewayUrl(basePath?: string | null): string {
   return `${protocol}//${window.location.host}${normalizedBasePath}`;
 }
 
-function isUsableModelAuthStatus(status: string | null | undefined) {
-  return status === "ok" || status === "static" || status === "expiring";
-}
-
-function normalizeProviderRoute(value: string | null | undefined) {
-  return value?.trim().toLowerCase() ?? "";
-}
-
-function providerRouteAliases(provider: string | null | undefined): string[] {
-  const route = normalizeProviderRoute(provider);
-  if (!route) {
-    return [];
-  }
-  const manifest = getProviderBrandManifestForRoute(route);
-  const aliases = new Set<string>([route]);
-  const method = manifest?.methods.find((entry) =>
-    [entry.route, entry.statusRoute, entry.configProviderId]
-      .map((value) => normalizeProviderRoute(value))
-      .includes(route),
-  );
-  for (const alias of [method?.route, method?.statusRoute, method?.configProviderId]) {
-    const normalized = normalizeProviderRoute(alias);
-    if (normalized) {
-      aliases.add(normalized);
-    }
-  }
-  return [...aliases];
-}
-
-function signedInProviderRoutes(authStatus: ModelsAuthStatusResult | null | undefined) {
-  const routes = new Set<string>();
-  for (const provider of authStatus?.providers ?? []) {
-    if (!isUsableModelAuthStatus(provider.status)) {
-      continue;
-    }
-    for (const alias of providerRouteAliases(provider.provider)) {
-      routes.add(alias);
-    }
-  }
-  return routes;
-}
-
-function filterCatalogToSignedInProviders(
-  catalog: ModelCatalogEntry[],
-  authStatus: ModelsAuthStatusResult | null | undefined,
-) {
-  if (!authStatus) {
-    return [];
-  }
-  const readyRoutes = signedInProviderRoutes(authStatus);
-  if (readyRoutes.size === 0) {
-    return [];
-  }
-  return catalog.filter((entry) => readyRoutes.has(normalizeProviderRoute(entry.provider)));
-}
-
 export function buildUiModelCatalogs(params: {
   chatCatalog: ModelCatalogEntry[];
   providerCatalog: ModelCatalogEntry[];
   authStatus: ModelsAuthStatusResult | null;
 }) {
+  const canonical = params.providerCatalog.length > 0 ? params.providerCatalog : params.chatCatalog;
   return {
-    chat: filterCatalogToSignedInProviders(params.chatCatalog, params.authStatus),
-    provider: filterCatalogToSignedInProviders(params.providerCatalog, params.authStatus),
+    chat: canonical,
+    provider: canonical,
   };
 }
 
@@ -705,18 +649,19 @@ export async function loadProviderModelCatalog(host: SettingsHost) {
   }
   host.chatModelsLoading = true;
   try {
-    const [modelsResult, allModelsResult, authStatusResult, catalogStatusResult] =
-      await Promise.allSettled([
-        loadModels(app.client, { sessionKey: host.sessionKey }),
-        loadModels(app.client, { available: true, sessionKey: host.sessionKey }),
-        app.client.request<ModelsAuthStatusResult>("models.auth.status", {}),
-        app.client.request<ModelsCatalogStatusResult>("models.catalog.status", {}),
-      ]);
+    const [snapshotResult, authStatusResult, catalogStatusResult] = await Promise.allSettled([
+      loadModelCatalogSnapshot(app.client, { all: true, sessionKey: host.sessionKey }),
+      app.client.request<ModelsAuthStatusResult>("models.auth.status", {}),
+      app.client.request<ModelsCatalogStatusResult>("models.catalog.status", {}),
+    ]);
     const authStatus = authStatusResult.status === "fulfilled" ? authStatusResult.value : null;
-    const chatCatalog = modelsResult.status === "fulfilled" ? modelsResult.value : [];
-    const providerCatalog =
-      allModelsResult.status === "fulfilled" ? allModelsResult.value : chatCatalog;
-    const catalogs = buildUiModelCatalogs({ chatCatalog, providerCatalog, authStatus });
+    const canonicalCatalog =
+      snapshotResult.status === "fulfilled" ? snapshotResult.value.models : [];
+    const catalogs = buildUiModelCatalogs({
+      chatCatalog: canonicalCatalog,
+      providerCatalog: canonicalCatalog,
+      authStatus,
+    });
     host.chatModelCatalog = catalogs.chat;
     host.providerModelCatalog = catalogs.provider;
     if (authStatus) {

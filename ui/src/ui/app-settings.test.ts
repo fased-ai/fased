@@ -224,7 +224,7 @@ function asAppSettingsHost(host: SettingsHost): Parameters<typeof applySettings>
 }
 
 describe("buildUiModelCatalogs", () => {
-  it("keeps both catalogs scoped to authenticated provider routes", () => {
+  it("uses the same gateway-owned authenticated catalog for Chat and provider setup", () => {
     const authStatus = {
       providers: [
         {
@@ -235,20 +235,20 @@ describe("buildUiModelCatalogs", () => {
       ],
     } as unknown as ModelsAuthStatusResult;
     const catalogs = buildUiModelCatalogs({
-      chatCatalog: [
+      chatCatalog: [{ provider: "openai-codex", id: "gpt-5.5", name: "GPT-5.5" }],
+      providerCatalog: [
         { provider: "openai-codex", id: "gpt-5.5", name: "GPT-5.5" },
         { provider: "openai", id: "gpt-5.6", name: "GPT-5.6" },
       ],
-      providerCatalog: [{ provider: "openai-codex", id: "gpt-5.5", name: "GPT-5.5" }],
       authStatus,
     });
     const chatRefs = catalogs.chat.map((entry) => `${entry.provider}/${entry.id}`);
     const providerRefs = catalogs.provider.map((entry) => `${entry.provider}/${entry.id}`);
 
     expect(chatRefs).toContain("openai-codex/gpt-5.5");
-    expect(chatRefs).not.toContain("openai/gpt-5.6");
+    expect(chatRefs).toContain("openai/gpt-5.6");
     expect(providerRefs).toContain("openai-codex/gpt-5.5");
-    expect(providerRefs).not.toContain("openai/gpt-5.6");
+    expect(providerRefs).toContain("openai/gpt-5.6");
     expect(providerRefs).not.toContain("openai/gpt-5.4");
   });
 
