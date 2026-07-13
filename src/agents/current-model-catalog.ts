@@ -39,6 +39,7 @@ import {
   HUGGINGFACE_MODEL_CATALOG,
 } from "./huggingface-models.js";
 import {
+  normalizeModelCatalogProviderId,
   normalizeProviderCatalogRows,
   type NormalizedModelCatalogRow,
 } from "./model-catalog-normalized.js";
@@ -899,6 +900,13 @@ export function cloneCurrentModelProvider(provider: string): ModelProviderConfig
     ...entry,
     models: entry.models.map((model) => ({ ...model, cost: { ...model.cost } })),
   };
+}
+
+export function listCurrentModelCatalogProviderIds(): string[] {
+  return Object.keys(CURRENT_MODEL_PROVIDER_CATALOG)
+    .map(normalizeModelCatalogProviderId)
+    .filter(Boolean)
+    .toSorted((left, right) => left.localeCompare(right));
 }
 
 export function listCurrentModelCatalogRows(): NormalizedModelCatalogRow[] {

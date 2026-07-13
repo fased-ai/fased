@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { formatAuthChoiceChoicesForCli } from "../commands/auth-choice-options.js";
-import { listCurrentModelCatalogRows } from "./current-model-catalog.js";
+import { listCurrentModelCatalogProviderIds } from "./current-model-catalog.js";
 import {
   listDeferredProviderExtensionCatalogProviderIds,
   listMappedProviderExtensionCatalogProviderIds,
@@ -66,7 +66,7 @@ describe("provider extension catalog manifest", () => {
         "byteplus-plan",
         "chutes",
         "huggingface",
-        "kimi",
+        "kimi-coding",
         "litellm",
         "minimax",
         "minimax-cn",
@@ -103,7 +103,7 @@ describe("provider extension catalog manifest", () => {
 
   it("validates mapped entries against Fased catalog, docs, and auth surfaces", () => {
     const issues = validateProviderExtensionCatalogManifest({
-      catalogProviderIds: new Set(listCurrentModelCatalogRows().map((row) => row.provider)),
+      catalogProviderIds: listCurrentModelCatalogProviderIds(),
       docsPaths: docsProviderPaths(),
       authChoiceIds: authChoiceIds(),
     });
@@ -114,7 +114,7 @@ describe("provider extension catalog manifest", () => {
   it("resolves entries by normalized upstream provider id", () => {
     expect(resolveProviderExtensionCatalogManifestEntry("KIMI-CODING")).toMatchObject({
       upstreamProviderId: "kimi-coding",
-      fasedProviderIds: ["kimi"],
+      fasedProviderIds: ["kimi-coding"],
     });
     expect(resolveProviderExtensionCatalogManifestEntry("missing-provider")).toBeUndefined();
   });
