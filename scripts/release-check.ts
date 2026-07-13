@@ -120,6 +120,14 @@ const runtimeAddonContracts = new Map<
       runtimeDependencies: ["sqlite-vec"],
     },
   ],
+  [
+    "runtime-openai",
+    {
+      pluginId: "openai-runtime",
+      packageName: "@fased/openai-runtime",
+      runtimeDependencies: ["@openai/codex"],
+    },
+  ],
 ]);
 const excludedCoreRuntimeExtensionPrefixes = [...runtimeAddonContracts.keys()].map(
   (directory) => `extensions/${directory}/`,

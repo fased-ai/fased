@@ -1071,7 +1071,7 @@ export const OPENAI_PROVIDER_MANIFEST: ProviderBrandManifest = {
       id: "openai-codex",
       route: OPENAI_CODEX_ROUTE_ID,
       kind: "oauth",
-      label: "Sign in",
+      label: "ChatGPT sign-in",
       hint: "Open the OpenAI sign-in URL, finish login in the browser, then Fased completes the OAuth flow.",
     },
     {

@@ -89,6 +89,7 @@ fased components install browser-runtime
 fased components install media-runtime
 fased components install speech-runtime
 fased components install local-memory-runtime
+fased components install openai-runtime
 fased gateway restart
 ```
 
@@ -98,6 +99,9 @@ fased gateway restart
   do not require this local package.
 - **Local Vector Memory** adds native sqlite vector acceleration. File-backed
   memory and remote embedding providers remain in core.
+- **OpenAI Sign-In Runtime** adds the official OpenAI Codex app-server used to
+  discover and execute models available to a ChatGPT sign-in. Direct OpenAI API
+  key models do not require this component.
 
 These packages are tracked in the same install ledger as channel add-ons, so
 `fased update` can update them after the core update succeeds.

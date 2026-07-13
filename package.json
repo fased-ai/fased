@@ -62,6 +62,7 @@
     "!extensions/runtime-browser/",
     "!extensions/runtime-local-memory/",
     "!extensions/runtime-media/",
+    "!extensions/runtime-openai/",
     "!extensions/runtime-speech/"
   ],
   "type": "module",

@@ -53,7 +53,7 @@ import { redactRunIdentifier, resolveRunWorkspaceDir } from "../workspace-run.js
 import { compactEmbeddedPiSessionDirect } from "./compact.js";
 import { resolveGlobalLane, resolveSessionLane } from "./lanes.js";
 import { log } from "./logger.js";
-import { resolveModel } from "./model.js";
+import { resolveModelForExecution } from "./model.js";
 import { runEmbeddedAttempt } from "./run/attempt.js";
 import type { RunEmbeddedPiAgentParams } from "./run/params.js";
 import { buildEmbeddedRunPayloads } from "./run/payloads.js";
@@ -366,7 +366,7 @@ export async function runEmbeddedPiAgent(
         log.info(`[hooks] model overridden to ${modelId}`);
       }
 
-      const { model, error, authStorage, modelRegistry } = resolveModel(
+      const { model, error, authStorage, modelRegistry } = await resolveModelForExecution(
         provider,
         modelId,
         agentDir,
@@ -439,6 +439,7 @@ export async function runEmbeddedPiAgent(
       let thinkLevel = initialThinkLevel;
       const attemptedThinking = new Set<ThinkLevel>();
       let apiKeyInfo: ApiKeyInfo | null = null;
+      let resolvedApiKey: string | undefined;
       let lastProfileId: string | undefined;
 
       const resolveAuthProfileFailoverReason = (params: {
@@ -508,6 +509,7 @@ export async function runEmbeddedPiAgent(
             `No API key resolved for provider "${model.provider}" (auth mode: ${apiKeyInfo.mode}).`,
           );
         }
+        resolvedApiKey = apiKeyInfo.apiKey;
         if (model.provider === "github-copilot") {
           const { resolveCopilotApiToken } =
             await import("../../providers/github-copilot-token.js");
@@ -687,6 +689,7 @@ export async function runEmbeddedPiAgent(
             provider,
             modelId,
             model,
+            resolvedApiKey,
             authStorage,
             modelRegistry,
             agentId: workspaceResolution.agentId,

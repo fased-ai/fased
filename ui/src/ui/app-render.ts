@@ -3825,6 +3825,7 @@ export function renderApp(state: AppViewState) {
                 runtimeSessionKey,
                 runtimeSessionMatchesSelectedAgent,
                 modelCatalog: providerModelCatalogForSetup,
+                modelCatalogLoading: state.chatModelsLoading,
                 runnableModelCatalog: state.chatModelCatalog ?? [],
                 skillEdits: state.skillEdits,
                 skillsBusyKey: state.skillsBusyKey,

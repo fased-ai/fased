@@ -5,8 +5,11 @@ import type { ModelDefinitionConfig } from "../../config/types.js";
 import { isOpenAISignInRuntimeModelSupported } from "../../providers/registry.js";
 import { isPrivateNetworkBaseUrl } from "../../utils/private-network-url.js";
 import { resolveFasedAgentAgentDir } from "../agent-paths.js";
+import { ensureAuthProfileStore } from "../auth-profiles.js";
+import { resolveAuthenticatedModelCatalog } from "../authenticated-model-catalog.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../defaults.js";
 import { buildModelAliasLines } from "../model-alias-lines.js";
+import { loadModelCatalog } from "../model-catalog.js";
 import { normalizeModelCompat } from "../model-compat.js";
 import { resolveForwardCompatModel } from "../model-forward-compat.js";
 import { normalizeProviderId } from "../model-selection.js";
@@ -190,6 +193,68 @@ export function resolveModel(
     authStorage,
     modelRegistry,
   };
+}
+
+export async function resolveModelForExecution(
+  provider: string,
+  modelId: string,
+  agentDir?: string,
+  cfg?: FasedAgentConfig,
+): Promise<ReturnType<typeof resolveModel>> {
+  const resolvedAgentDir = agentDir ?? resolveFasedAgentAgentDir();
+  const fallback = resolveModel(provider, modelId, resolvedAgentDir, cfg);
+  if (!cfg) {
+    return fallback;
+  }
+  try {
+    const store = ensureAuthProfileStore(resolvedAgentDir, { allowKeychainPrompt: false });
+    const catalog = await loadModelCatalog({
+      config: cfg,
+      includeMetadata: true,
+    });
+    const authenticated = await resolveAuthenticatedModelCatalog({
+      cfg,
+      store,
+      catalog,
+      defaultProvider: provider,
+      agentDir: resolvedAgentDir,
+    });
+    const normalizedProvider = normalizeProviderId(provider);
+    const normalizedModelId = modelId.trim().toLowerCase();
+    const entry = authenticated.usableCatalog.find(
+      (candidate) =>
+        normalizeProviderId(candidate.provider) === normalizedProvider &&
+        candidate.id.trim().toLowerCase() === normalizedModelId,
+    );
+    if (!entry) {
+      return fallback;
+    }
+    const template = fallback.model;
+    const model = normalizeModelCompat({
+      ...template,
+      id: entry.id,
+      name: entry.name,
+      provider: entry.provider,
+      api: entry.api ?? template?.api,
+      baseUrl: entry.baseUrl ?? template?.baseUrl,
+      reasoning: entry.reasoning ?? template?.reasoning ?? false,
+      input: entry.input ?? template?.input ?? ["text"],
+      contextWindow: entry.contextWindow ?? template?.contextWindow ?? DEFAULT_CONTEXT_TOKENS,
+      maxTokens: entry.maxTokens ?? template?.maxTokens ?? DEFAULT_CONTEXT_TOKENS,
+      cost: entry.cost ?? template?.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      compat: {
+        ...template?.compat,
+        ...entry.compat,
+      },
+    } as Model<Api>);
+    return {
+      ...fallback,
+      model: attachConfiguredProviderRequest(model, cfg),
+      error: undefined,
+    };
+  } catch {
+    return fallback;
+  }
 }
 
 export function resolveModelWithRegistry(params: {

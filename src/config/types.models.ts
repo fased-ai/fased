@@ -14,6 +14,7 @@ export const MODEL_APIS = [
 export type ModelApi = (typeof MODEL_APIS)[number];
 
 export type ModelCompatConfig = {
+  responsesLite?: boolean;
   supportsStore?: boolean;
   supportsDeveloperRole?: boolean;
   supportsReasoningEffort?: boolean;

@@ -47,8 +47,25 @@ export type ModelCapabilitySource =
   | "inferred"
   | "unknown";
 
+export type ModelPriceMetadata = {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  unit: "usd-per-million-tokens";
+};
+
+export type ModelCredentialRouteMetadata = {
+  id: string;
+  label: string;
+  authMode: ModelProviderAuthMode;
+};
+
 export type ModelMetadata = {
+  ref: string;
   provider: string;
+  publicProviderId: string;
+  publicProviderLabel: string;
   model: string;
   label: string;
   contextWindow?: number;
@@ -67,6 +84,9 @@ export type ModelMetadata = {
   availabilitySource: ModelAvailabilitySource;
   authRoute: string;
   authMode: ModelProviderAuthMode;
+  credentialRoute: ModelCredentialRouteMetadata;
+  credentialRoutes: ModelCredentialRouteMetadata[];
+  price?: ModelPriceMetadata;
   privateNetwork: boolean;
   privateNetworkAllowed: boolean;
   recommended?: boolean;
@@ -88,6 +108,7 @@ type ModelLike = Pick<
 > & {
   capabilities?: ModelCapabilityConfig;
   catalogSource?: ModelCatalogSource;
+  cost?: Omit<ModelPriceMetadata, "unit">;
 };
 
 function availabilitySourceForCatalogSource(
@@ -122,6 +143,7 @@ type CatalogModelLike = {
   maxTokens?: number;
   capabilities?: ModelCapabilityConfig;
   catalogSource?: ModelCatalogSource;
+  cost?: Omit<ModelPriceMetadata, "unit">;
 };
 
 const FEATURE_LABELS: Record<ModelFeature, string> = {
@@ -199,10 +221,17 @@ export function deriveModelMetadata(params: {
   default?: boolean;
   capabilitySource?: ModelCapabilitySource;
   capabilityRetrievedAt?: string;
+  credentialRoutes?: ModelCredentialRouteMetadata[];
 }): ModelMetadata {
   const provider = params.model.provider.trim();
   const modelId = params.model.id.trim();
   const providerConfig = params.providerConfig ?? resolveProviderConfig(params.cfg, provider);
+  const providerManifest = getProviderBrandManifestForRoute(provider);
+  const credentialMethod = providerManifest?.methods.find((entry) =>
+    [entry.route, entry.statusRoute, entry.configProviderId]
+      .map((value) => value?.trim().toLowerCase())
+      .includes(provider.toLowerCase()),
+  );
   const baseUrl = params.model.baseUrl ?? providerConfig?.baseUrl ?? "";
   const api = params.model.api ?? providerConfig?.api;
   const refreshed = lookupRefreshedModelCapability(provider, modelId);
@@ -275,8 +304,27 @@ export function deriveModelMetadata(params: {
   addFeature(features, "speech", capabilities?.speech === true);
 
   const privateNetwork = baseUrl ? isPrivateNetworkBaseUrl(baseUrl) : false;
+  const authMode = resolveAuthMode({ provider, providerConfig });
+  const credentialRoutes = params.credentialRoutes?.length
+    ? params.credentialRoutes
+    : [
+        {
+          id: credentialMethod?.id ?? provider,
+          label: credentialMethod?.label ?? providerManifest?.label ?? provider,
+          authMode,
+        },
+      ];
+  const credentialRoute = credentialRoutes[0];
+  const configuredCost = providerConfig?.models?.find(
+    (entry) => entry.id.trim().toLowerCase() === modelId.toLowerCase(),
+  )?.cost;
+  const cost = params.model.cost ?? configuredCost;
+  const recommendationRank = providerModelRecommendationRank(provider, modelId);
   return {
+    ref: `${provider}/${modelId}`,
     provider,
+    publicProviderId: providerManifest?.id ?? provider,
+    publicProviderLabel: providerManifest?.label ?? provider,
     model: modelId,
     label: params.model.name?.trim() || modelId,
     contextWindow:
@@ -315,15 +363,26 @@ export function deriveModelMetadata(params: {
     retrievedAt: refreshed?.refreshedAt ?? CURATED_CATALOG_REVIEWED_AT,
     availabilitySource: availabilitySourceForCatalogSource(params.model.catalogSource),
     authRoute: provider,
-    authMode: resolveAuthMode({ provider, providerConfig }),
+    authMode: credentialRoute.authMode,
+    credentialRoute,
+    credentialRoutes,
+    ...(cost
+      ? {
+          price: {
+            input: cost.input,
+            output: cost.output,
+            cacheRead: cost.cacheRead,
+            cacheWrite: cost.cacheWrite,
+            unit: "usd-per-million-tokens" as const,
+          },
+        }
+      : {}),
     privateNetwork,
     privateNetworkAllowed: privateNetwork
       ? providerConfig?.request?.allowPrivateNetwork === true
       : false,
-    ...(params.recommended ? { recommended: true } : {}),
-    ...(providerModelRecommendationRank(provider, modelId)
-      ? { recommendationRank: providerModelRecommendationRank(provider, modelId) }
-      : {}),
+    ...(params.recommended || recommendationRank !== undefined ? { recommended: true } : {}),
+    ...(recommendationRank !== undefined ? { recommendationRank } : {}),
     ...(params.default ? { default: true } : {}),
   };
 }

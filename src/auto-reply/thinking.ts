@@ -5,6 +5,7 @@ import {
   listThinkingLevelLabels,
   listThinkingLevels,
   normalizeThinkLevel,
+  supportsThinkingLevel,
   supportsXHighThinking,
   type ModelThinkingLevel,
 } from "../shared/model-thinking.js";
@@ -24,6 +25,7 @@ export {
   listThinkingLevelLabels,
   listThinkingLevels,
   normalizeThinkLevel,
+  supportsThinkingLevel,
   supportsXHighThinking,
 };
 

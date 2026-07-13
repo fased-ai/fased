@@ -1,10 +1,12 @@
 export const BASE_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high"] as const;
 export const XHIGH_THINKING_LEVELS = [...BASE_THINKING_LEVELS, "xhigh"] as const;
 export const MAX_THINKING_LEVELS = ["off", "low", "medium", "high", "xhigh", "max"] as const;
+export const ULTRA_THINKING_LEVELS = [...MAX_THINKING_LEVELS, "ultra"] as const;
 
 export type ModelThinkingLevel =
   | (typeof XHIGH_THINKING_LEVELS)[number]
-  | (typeof MAX_THINKING_LEVELS)[number];
+  | (typeof MAX_THINKING_LEVELS)[number]
+  | (typeof ULTRA_THINKING_LEVELS)[number];
 
 export type ModelThinkingMode =
   | "openai-reasoning-effort"
@@ -103,6 +105,9 @@ export function normalizeThinkLevel(raw?: string | null): ModelThinkingLevel | u
   if (key === "max") {
     return "max";
   }
+  if (key === "ultra") {
+    return "ultra";
+  }
   if (key === "off") {
     return "off";
   }
@@ -118,7 +123,7 @@ export function normalizeThinkLevel(raw?: string | null): ModelThinkingLevel | u
   if (["mid", "med", "medium", "thinkharder", "think-harder", "harder"].includes(key)) {
     return "medium";
   }
-  if (["high", "ultra", "ultrathink", "think-hard", "thinkhardest", "highest"].includes(key)) {
+  if (["high", "ultrathink", "think-hard", "thinkhardest", "highest"].includes(key)) {
     return "high";
   }
   if (key === "think") {
@@ -169,6 +174,14 @@ function listGenericThinkingLevels(
   provider?: string | null,
   model?: string | null,
 ): ModelThinkingLevel[] {
+  const normalizedProvider = normalizeProviderId(provider);
+  const normalizedModel = model?.trim().toLowerCase();
+  if (
+    normalizedProvider === "openai-codex" &&
+    (normalizedModel === "gpt-5.6-sol" || normalizedModel === "gpt-5.6-terra")
+  ) {
+    return [...ULTRA_THINKING_LEVELS];
+  }
   if (supportsMaxThinking(provider, model)) {
     return [...MAX_THINKING_LEVELS];
   }
@@ -342,6 +355,14 @@ export function listThinkingLevelLabels(
   model?: string | null,
 ): ModelThinkingLevel[] {
   return listThinkingLevels(provider, model);
+}
+
+export function supportsThinkingLevel(
+  provider: string | null | undefined,
+  model: string | null | undefined,
+  level: ModelThinkingLevel,
+): boolean {
+  return listThinkingLevels(provider, model).includes(level);
 }
 
 export function formatThinkingLevels(

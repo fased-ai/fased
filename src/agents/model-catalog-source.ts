@@ -5,7 +5,7 @@ import {
   type ModelProviderConfig,
 } from "../config/types.models.js";
 import {
-  isOpenAISignInCatalogModel,
+  isOpenAISignInRuntimeModelSupported,
   isStandardProviderCatalogEntry,
   listProviderBrandManifests,
 } from "../providers/registry.js";
@@ -80,7 +80,7 @@ function isSupportedRuntimeCatalogModel(provider: string, id: string): boolean {
   if (provider !== "openai-codex") {
     return true;
   }
-  return isOpenAISignInCatalogModel(id);
+  return isOpenAISignInRuntimeModelSupported(id);
 }
 
 function configuredProviderCatalogRows(cfg: FasedAgentConfig): NormalizedModelCatalogRow[] {

@@ -59,7 +59,7 @@ but the default ordering is:
 | 7     | MiniMax         | Sign in, API key, API key CN, Highspeed API key                |
 | 8     | Moonshot AI     | Kimi API key, Kimi CN API key, Kimi Code API key               |
 | 9     | Google          | Gemini API key, Sign in                                        |
-| 10    | xAI             | API key                                                        |
+| 10    | xAI             | Sign in, device code, API key                                  |
 | 11    | Mistral AI      | API key                                                        |
 | 12    | Volcano Engine  | API key                                                        |
 | 13    | BytePlus        | API key                                                        |

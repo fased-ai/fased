@@ -2,7 +2,6 @@ import { html, nothing } from "lit";
 import {
   getProviderBrandManifest,
   getProviderBrandManifestForRoute,
-  isStandardProviderCatalogEntry,
 } from "../../../../src/providers/registry.ts";
 import type {
   CronJobsAdaptiveRouteFilter,
@@ -293,6 +292,7 @@ export type AgentsProps = {
   runtimeSessionKey: string;
   runtimeSessionMatchesSelectedAgent: boolean;
   modelCatalog: ModelCatalogEntry[];
+  modelCatalogLoading?: boolean;
   runnableModelCatalog: ModelCatalogEntry[];
   skillEdits: Record<string, string>;
   skillsBusyKey: string | null;
@@ -527,9 +527,6 @@ function buildAgentCreateModelOptions(props: AgentsProps) {
   for (const entry of props.runnableModelCatalog) {
     const provider = entry.provider?.trim();
     if (!provider) {
-      continue;
-    }
-    if (!isStandardProviderCatalogEntry(entry)) {
       continue;
     }
     addAgentCreateModelOption(options, {
@@ -1702,6 +1699,7 @@ export function renderAgents(props: AgentsProps) {
                       mining: props.mining,
                       federation: props.federation,
                       modelCatalog: props.modelCatalog,
+                      modelCatalogLoading: props.modelCatalogLoading,
                       skillEdits: props.skillEdits,
                       skillsBusyKey: props.skillsBusyKey,
                       onConfigReload: props.onConfigReload,
@@ -1778,6 +1776,7 @@ export function renderAgents(props: AgentsProps) {
                         mining: props.mining,
                         federation: props.federation,
                         modelCatalog: props.modelCatalog,
+                        modelCatalogLoading: props.modelCatalogLoading,
                         skillEdits: props.skillEdits,
                         skillsBusyKey: props.skillsBusyKey,
                         onConfigReload: props.onConfigReload,

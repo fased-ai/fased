@@ -363,6 +363,7 @@ async function loadModelPickerCatalog(
     store,
     catalog: standardModels,
     defaultProvider: DEFAULT_PROVIDER,
+    agentDir,
   });
   return authenticated.allowedCatalog.length > 0
     ? authenticated.allowedCatalog

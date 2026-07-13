@@ -2,14 +2,24 @@ import { createHash } from "node:crypto";
 import type { AuthProfileStore } from "../agents/auth-profiles.js";
 import { buildModelCatalogMergeKey } from "../agents/model-catalog-normalized.js";
 import type { ModelCatalogEntry } from "../agents/model-catalog.js";
-import { deriveModelMetadata } from "../agents/model-metadata.js";
-import type { FasedAgentConfig, ModelCapabilityConfig } from "../config/types.js";
+import {
+  deriveModelMetadata,
+  type ModelCredentialRouteMetadata,
+} from "../agents/model-metadata.js";
+import type {
+  FasedAgentConfig,
+  ModelCapabilityConfig,
+  ModelProviderAuthMode,
+} from "../config/types.js";
+import { discoverGitHubCopilotModels } from "./github-copilot-model-discovery.js";
+import { discoverOpenAICodexModels } from "./openai-codex-model-discovery.js";
 import {
   buildProviderRefreshEnvFromCredentials,
   fetchProviderRefreshSnapshotForRoutes,
   type ProviderRefreshModelSnapshot,
   type ProviderRefreshSnapshot,
 } from "./refresh.js";
+import { getProviderBrandManifestForRoute, type ProviderAuthMethodManifest } from "./registry.js";
 
 const DISCOVERY_TTL_MS = 5 * 60_000;
 
@@ -21,22 +31,68 @@ type RuntimeDiscoveryCache = {
 
 let cache: RuntimeDiscoveryCache | null = null;
 
-function interactiveRuntimeProviders(store: AuthProfileStore): Set<string> {
-  const credentialTypesByProvider = new Map<string, Set<string>>();
-  for (const credential of Object.values(store.profiles ?? {})) {
-    const provider = credential.provider.trim().toLowerCase();
-    if (!provider) {
+const SPECIALIZED_DISCOVERY_ROUTES = new Set(["openai-codex", "github-copilot"]);
+
+function authModeForProfileType(type: "api_key" | "oauth" | "token"): ModelProviderAuthMode {
+  return type === "api_key" ? "api-key" : type;
+}
+
+function methodMatchesAuthMode(
+  method: ProviderAuthMethodManifest,
+  authMode: ModelProviderAuthMode,
+): boolean {
+  const methodMode: ModelProviderAuthMode =
+    method.kind === "api-key" || method.kind === "manual"
+      ? "api-key"
+      : method.kind === "token"
+        ? "token"
+        : "oauth";
+  return methodMode === authMode;
+}
+
+function methodRouteIds(method: ProviderAuthMethodManifest): string[] {
+  return [method.route, method.statusRoute, method.configProviderId]
+    .map((value) => value?.trim().toLowerCase())
+    .filter((value): value is string => Boolean(value));
+}
+
+function credentialRoutesForProvider(
+  store: AuthProfileStore,
+  route: string,
+): ModelCredentialRouteMetadata[] {
+  const normalizedRoute = route.trim().toLowerCase();
+  const manifest = getProviderBrandManifestForRoute(normalizedRoute);
+  const routes: ModelCredentialRouteMetadata[] = [];
+  const seen = new Set<string>();
+  for (const profile of Object.values(store.profiles ?? {})) {
+    const profileProvider = profile.provider.trim().toLowerCase();
+    if (!profileProvider) {
       continue;
     }
-    const types = credentialTypesByProvider.get(provider) ?? new Set<string>();
-    types.add(credential.type);
-    credentialTypesByProvider.set(provider, types);
+    const profileManifest = getProviderBrandManifestForRoute(profileProvider);
+    if (profileProvider !== normalizedRoute && profileManifest?.id !== manifest?.id) {
+      continue;
+    }
+    const authMode = authModeForProfileType(profile.type);
+    const method = manifest?.methods.find(
+      (candidate) =>
+        methodMatchesAuthMode(candidate, authMode) &&
+        (methodRouteIds(candidate).includes(profileProvider) ||
+          methodRouteIds(candidate).includes(normalizedRoute)),
+    );
+    const id = method?.id ?? `${normalizedRoute}:${authMode}`;
+    const key = `${id}:${authMode}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    routes.push({
+      id,
+      label: method?.label ?? manifest?.label ?? normalizedRoute,
+      authMode,
+    });
   }
-  return new Set(
-    [...credentialTypesByProvider.entries()].flatMap(([provider, types]) =>
-      !types.has("api_key") && (types.has("oauth") || types.has("token")) ? [provider] : [],
-    ),
-  );
+  return routes;
 }
 
 export function resetRuntimeProviderModelCatalogCache(): void {
@@ -86,6 +142,36 @@ async function loadSnapshot(params: {
     }
     throw error;
   }
+}
+
+async function discoverInteractiveRoutes(params: {
+  routes: Set<string>;
+  cfg: FasedAgentConfig;
+  store: AuthProfileStore;
+  agentDir?: string;
+}): Promise<Map<string, ProviderRefreshModelSnapshot[]>> {
+  const discovered = new Map<string, ProviderRefreshModelSnapshot[]>();
+  if (params.routes.has("openai-codex")) {
+    discovered.set(
+      "openai-codex",
+      await discoverOpenAICodexModels({
+        cfg: params.cfg,
+        store: params.store,
+        agentDir: params.agentDir,
+      }),
+    );
+  }
+  if (params.routes.has("github-copilot")) {
+    discovered.set(
+      "github-copilot",
+      await discoverGitHubCopilotModels({
+        cfg: params.cfg,
+        store: params.store,
+        agentDir: params.agentDir,
+      }),
+    );
+  }
+  return discovered;
 }
 
 function snapshotCapabilities(model: ProviderRefreshModelSnapshot): ModelCapabilityConfig {
@@ -144,18 +230,20 @@ function mergeDiscoveredRoute(params: {
   discovered: ProviderRefreshModelSnapshot[];
   catalog: ModelCatalogEntry[];
   cfg: FasedAgentConfig;
+  store: AuthProfileStore;
   retrievedAt: string;
 }): ModelCatalogEntry[] {
   const baseByKey = new Map(
     params.catalog.map((model) => [buildModelCatalogMergeKey(model.provider, model.id), model]),
   );
   const providerConfig = params.cfg.models?.providers?.[params.route];
+  const credentialRoutes = credentialRoutesForProvider(params.store, params.route);
   return params.discovered.map((model) => {
     const base = baseByKey.get(buildModelCatalogMergeKey(params.route, model.id));
     const capabilities = snapshotCapabilities(model);
     const entry: ModelCatalogEntry = {
       id: model.id,
-      name: base?.name ?? model.id,
+      name: model.name ?? base?.name ?? model.id,
       provider: params.route,
       ...((model.contextWindow ?? base?.contextWindow)
         ? { contextWindow: model.contextWindow ?? base?.contextWindow }
@@ -171,16 +259,24 @@ function mergeDiscoveredRoute(params: {
         ? { baseUrl: base?.baseUrl ?? providerConfig?.baseUrl }
         : {}),
       ...((base?.api ?? providerConfig?.api) ? { api: base?.api ?? providerConfig?.api } : {}),
+      ...((model.price ?? base?.cost) ? { cost: model.price ?? base?.cost } : {}),
       ...(Object.keys(capabilities).length > 0 ? { capabilities } : {}),
+      ...(model.responsesLite !== undefined
+        ? { compat: { ...base?.compat, responsesLite: model.responsesLite } }
+        : base?.compat
+          ? { compat: base.compat }
+          : {}),
       catalogSource: "provider-api",
     };
     return {
       ...entry,
       metadata: {
+        ...base?.metadata,
         ...deriveModelMetadata({
           model: entry,
           cfg: params.cfg,
           providerConfig,
+          ...(credentialRoutes.length > 0 ? { credentialRoutes } : {}),
           ...(snapshotHasCapabilityMetadata(model)
             ? {
                 capabilitySource: "provider-api" as const,
@@ -199,6 +295,7 @@ export async function applyRuntimeProviderModelDiscovery(params: {
   store: AuthProfileStore;
   routes: Iterable<string>;
   catalog: ModelCatalogEntry[];
+  agentDir?: string;
 }): Promise<ModelCatalogEntry[]> {
   const requestedRoutes = new Set(
     [...params.routes].map((route) => route.trim().toLowerCase()).filter(Boolean),
@@ -206,29 +303,40 @@ export async function applyRuntimeProviderModelDiscovery(params: {
   if (requestedRoutes.size === 0) {
     return [];
   }
-  const runtimeProviders = interactiveRuntimeProviders(params.store);
-  const providerApiRoutes = [...requestedRoutes].filter((route) => !runtimeProviders.has(route));
-  if (providerApiRoutes.length === 0) {
-    return params.catalog;
+  const specializedRoutes = new Set(
+    [...requestedRoutes].filter((route) => SPECIALIZED_DISCOVERY_ROUTES.has(route)),
+  );
+  const providerApiRoutes = [...requestedRoutes].filter((route) => !specializedRoutes.has(route));
+  const interactiveRoutes = await discoverInteractiveRoutes({
+    routes: requestedRoutes,
+    cfg: params.cfg,
+    store: params.store,
+    agentDir: params.agentDir,
+  }).catch(() => new Map<string, ProviderRefreshModelSnapshot[]>());
+  let discoveredRoutes = new Map<string, ProviderRefreshModelSnapshot[]>(interactiveRoutes);
+  if (providerApiRoutes.length > 0) {
+    try {
+      const snapshot = await loadSnapshot({
+        ...params,
+        routes: providerApiRoutes,
+      });
+      discoveredRoutes = new Map([...discoveredRoutes, ...snapshotRoutes(snapshot)]);
+    } catch {
+      // Authenticated route discovery remains usable when another provider is offline.
+    }
   }
-  let snapshot: ProviderRefreshSnapshot;
-  try {
-    snapshot = await loadSnapshot({
-      ...params,
-      routes: providerApiRoutes,
-    });
-  } catch {
-    return params.catalog.filter(
-      (model) => !providerApiRoutes.includes(model.provider.trim().toLowerCase()),
-    );
-  }
-  const discoveredRoutes = snapshotRoutes(snapshot);
   const retrievedAt = new Date().toISOString();
   const authoritativeRoutes = new Set(
     [...discoveredRoutes.keys()].filter((route) => requestedRoutes.has(route)),
   );
+  // Authenticated availability fails closed. A reviewed recommendation is not
+  // proof that the selected credential can execute that model.
+  const replacedRoutes = new Set(providerApiRoutes);
+  for (const route of specializedRoutes) {
+    replacedRoutes.add(route);
+  }
   const retained = params.catalog.filter(
-    (model) => !providerApiRoutes.includes(model.provider.trim().toLowerCase()),
+    (model) => !replacedRoutes.has(model.provider.trim().toLowerCase()),
   );
   const discovered = [...authoritativeRoutes].flatMap((route) =>
     mergeDiscoveredRoute({
@@ -236,6 +344,7 @@ export async function applyRuntimeProviderModelDiscovery(params: {
       discovered: discoveredRoutes.get(route) ?? [],
       catalog: params.catalog,
       cfg: params.cfg,
+      store: params.store,
       retrievedAt,
     }),
   );
@@ -252,7 +361,13 @@ export function filterCatalogToAuthoritativeAvailability(
   catalog: ModelCatalogEntry[],
   store?: AuthProfileStore,
 ): ModelCatalogEntry[] {
-  const runtimeProviders = store ? interactiveRuntimeProviders(store) : new Set<string>();
+  const specializedProviders = store
+    ? new Set(
+        Object.values(store.profiles ?? {})
+          .map((profile) => profile.provider.trim().toLowerCase())
+          .filter((provider) => SPECIALIZED_DISCOVERY_ROUTES.has(provider)),
+      )
+    : new Set<string>();
   const byProvider = new Map<string, ModelCatalogEntry[]>();
   for (const model of catalog) {
     const provider = model.provider.trim().toLowerCase();
@@ -262,8 +377,10 @@ export function filterCatalogToAuthoritativeAvailability(
     if (models.some((model) => model.catalogSource === "provider-api")) {
       return models.filter((model) => model.catalogSource === "provider-api");
     }
-    if (runtimeProviders.has(provider)) {
-      return models.filter((model) => model.catalogSource === "runtime");
+    if (specializedProviders.has(provider)) {
+      return models.filter(
+        (model) => model.catalogSource === "runtime" || model.catalogSource === "provider-api",
+      );
     }
     return models;
   });

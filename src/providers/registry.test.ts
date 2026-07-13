@@ -35,6 +35,7 @@ import {
   ZAI_PROVIDER_MANIFEST,
   isStandardProviderCatalogEntry,
   isStandardProviderModelRef,
+  listProviderBrandManifests,
   lookupProviderManifestModelCapability,
   providerModelRecommendationRank,
   providerRegistryPriorityForRoute,
@@ -44,6 +45,35 @@ import {
 const EMPTY_STORE: AuthProfileStore = { version: 1, profiles: {} };
 
 describe("provider registry", () => {
+  it("keeps every recommendation and route rule inside its public provider contract", () => {
+    for (const manifest of listProviderBrandManifests()) {
+      const declaredRoutes = new Set(
+        [
+          ...manifest.methods.flatMap((method) => [
+            method.route,
+            method.statusRoute,
+            method.configProviderId,
+          ]),
+          ...(manifest.routeAliases ?? []),
+          ...(manifest.modelProviderIds ?? []),
+        ].filter((value): value is string => Boolean(value)),
+      );
+
+      for (const route of Object.keys(manifest.models.routeRules)) {
+        expect(declaredRoutes.has(route), `${manifest.id}/${route}`).toBe(true);
+      }
+      for (const ref of manifest.models.recommended) {
+        const matched = Object.entries(manifest.models.routeRules).some(([route, patterns]) =>
+          patterns.some((pattern) =>
+            pattern.endsWith("/*")
+              ? ref.startsWith(`${route}/`)
+              : ref.toLowerCase() === pattern.toLowerCase(),
+          ),
+        );
+        expect(matched, `${manifest.id}: ${ref}`).toBe(true);
+      }
+    }
+  });
   it("keeps onboarding auth methods aligned with the shared manifests", () => {
     const { groups } = buildAuthChoiceGroups({ store: EMPTY_STORE, includeSkip: false });
 

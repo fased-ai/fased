@@ -1178,6 +1178,7 @@ export const modelsHandlers: GatewayRequestHandlers = {
         store,
         catalog,
         defaultProvider: DEFAULT_PROVIDER,
+        agentDir,
       });
       const providerFilter =
         typeof params.provider === "string" && params.provider.trim()

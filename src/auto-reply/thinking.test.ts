@@ -4,6 +4,7 @@ import {
   listThinkingLevels,
   normalizeReasoningLevel,
   normalizeThinkLevel,
+  supportsThinkingLevel,
 } from "./thinking.js";
 
 describe("normalizeThinkLevel", () => {
@@ -60,6 +61,13 @@ describe("listThinkingLevels", () => {
       "xhigh",
       "max",
     ]);
+  });
+
+  it("validates max and ultra against the selected route", () => {
+    expect(supportsThinkingLevel("openai-codex", "gpt-5.6-sol", "ultra")).toBe(true);
+    expect(supportsThinkingLevel("openai-codex", "gpt-5.6-luna", "max")).toBe(true);
+    expect(supportsThinkingLevel("openai-codex", "gpt-5.6-luna", "ultra")).toBe(false);
+    expect(supportsThinkingLevel("anthropic", "claude-sonnet-5", "max")).toBe(false);
   });
 
   it("does not infer xhigh for retired GitHub Copilot catalog entries", () => {

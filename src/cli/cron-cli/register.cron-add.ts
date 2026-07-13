@@ -89,7 +89,10 @@ export function registerCronAddCommand(cron: Command) {
       .option("--exact", "Disable cron staggering (set stagger to 0)", false)
       .option("--system-event <text>", "System event payload (main session)")
       .option("--message <text>", "Agent message payload")
-      .option("--thinking <level>", "Thinking level for agent tasks (off|minimal|low|medium|high)")
+      .option(
+        "--thinking <level>",
+        "Thinking level for agent tasks (off|minimal|low|medium|high|xhigh|max|ultra)",
+      )
       .option("--model <model>", "Model override for agent tasks (provider/model or alias)")
       .option("--timeout-seconds <n>", "Timeout seconds for agent tasks")
       .option("--announce", "Announce summary to a chat (subagent-style)", false)

@@ -1452,7 +1452,10 @@ export type ModelCatalogEntry = {
     | "provider-index"
     | "manifest";
   metadata?: {
+    ref?: string;
     provider: string;
+    publicProviderId?: string;
+    publicProviderLabel?: string;
     model: string;
     label: string;
     contextWindow?: number;
@@ -1461,8 +1464,18 @@ export type ModelCatalogEntry = {
     features: Array<
       "text" | "vision" | "reasoning" | "tools" | "json" | "audio" | "video" | "speech"
     >;
-    thinkingLevels?: Array<"off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max">;
-    defaultThinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+    thinkingLevels?: Array<
+      "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra"
+    >;
+    defaultThinkingLevel?:
+      | "off"
+      | "minimal"
+      | "low"
+      | "medium"
+      | "high"
+      | "xhigh"
+      | "max"
+      | "ultra";
     thinkingMode?:
       | "openai-reasoning-effort"
       | "anthropic-thinking-budget"
@@ -1498,6 +1511,18 @@ export type ModelCatalogEntry = {
       | "curated-recommendation";
     authRoute?: string;
     authMode: string;
+    credentialRoute?: {
+      id: string;
+      label: string;
+      authMode: string;
+    };
+    price?: {
+      input: number;
+      output: number;
+      cacheRead: number;
+      cacheWrite: number;
+      unit: "usd-per-million-tokens";
+    };
     privateNetwork: boolean;
     privateNetworkAllowed: boolean;
     recommended?: boolean;

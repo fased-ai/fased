@@ -4,7 +4,6 @@ import { normalizeAgentModelFallbackValues } from "../../../../src/config/model-
 import {
   getProviderBrandManifest,
   getProviderBrandManifestForRoute,
-  isStandardProviderCatalogEntry,
 } from "../../../../src/providers/registry.ts";
 import { closeDialogOnBackdropClick, openDialogSafely } from "../dialog.ts";
 import type { FederationStatus, FederationToken } from "../federation-api.ts";
@@ -70,6 +69,7 @@ type AgentModelOption = {
   available: boolean;
   setupLabel?: string;
   capabilityDetail?: string;
+  recommended?: boolean;
 };
 
 type AgentTaskModelRole = keyof AgentTaskModelSlots;
@@ -132,6 +132,12 @@ function modelProviderFromValue(value: string | null | undefined): string {
   return index > 0 ? trimmed.slice(0, index) : "";
 }
 
+function modelNameFromValue(value: string | null | undefined): string {
+  const trimmed = value?.trim() ?? "";
+  const index = trimmed.indexOf("/");
+  return index > 0 && index < trimmed.length - 1 ? trimmed.slice(index + 1) : trimmed;
+}
+
 function readyModelProviderRoutes(authStatus: ModelsAuthStatusResult | null): Set<string> {
   const routes = new Set<string>();
   for (const provider of authStatus?.providers ?? []) {
@@ -185,6 +191,7 @@ function addAgentModelOption(
     available: boolean;
     setupLabel?: string;
     capabilityDetail?: string;
+    recommended?: boolean;
   },
 ) {
   const provider = params.provider.trim();
@@ -204,6 +211,7 @@ function addAgentModelOption(
     value,
     label: params.label?.trim() || id,
     available: params.available,
+    recommended: params.recommended === true,
     ...(params.setupLabel ? { setupLabel: params.setupLabel } : {}),
     ...(params.capabilityDetail ? { capabilityDetail: params.capabilityDetail } : {}),
   });
@@ -219,7 +227,7 @@ function modelCapabilityDetail(entry: ModelCatalogEntry): string {
     return "capabilities unknown";
   }
   const parts = [
-    metadata.apiRoute ?? null,
+    metadata.credentialRoute?.label ?? null,
     metadata.contextWindow ? `${Math.round(metadata.contextWindow / 1000)}k context` : null,
     metadata.features.includes("vision") ? "vision" : null,
     metadata.features.includes("tools") ? "tools" : null,
@@ -244,9 +252,6 @@ function buildAgentModelOptions(
     if (!provider) {
       continue;
     }
-    if (!isStandardProviderCatalogEntry(entry)) {
-      continue;
-    }
     if (!readyRoutes.has(provider.toLowerCase())) {
       continue;
     }
@@ -256,6 +261,7 @@ function buildAgentModelOptions(
       label: modelCatalogLabel(entry),
       available: true,
       capabilityDetail: modelCapabilityDetail(entry),
+      recommended: entry.metadata?.recommended === true,
     });
   }
   return Array.from(options.values()).toSorted(
@@ -367,7 +373,7 @@ function agentModelOptionLabel(options: AgentModelOption[], value: string, empty
   if (!value) {
     return emptyLabel;
   }
-  return options.find((option) => option.value === value)?.label ?? value;
+  return options.find((option) => option.value === value)?.label ?? modelNameFromValue(value);
 }
 
 function findAgentModelControlSelect(root: HTMLElement, control: string) {
@@ -430,59 +436,63 @@ function renderAgentModelSelectButtons(params: {
   options: AgentModelOption[];
   selectedValue: string;
 }) {
-  const grouped = new Map<string, AgentModelOption[]>();
-  for (const option of params.options) {
-    const current = grouped.get(option.brandId) ?? [];
-    current.push(option);
-    grouped.set(option.brandId, current);
-  }
-  const modelButtons = Array.from(grouped.entries())
-    .toSorted((a, b) => providerLabel(a[0]).localeCompare(providerLabel(b[0])))
-    .map(
-      ([provider, options]) => html`
-        <div class="agent-model-select__group">${providerLabel(provider)}</div>
-        ${options
-          .slice()
-          .toSorted(
-            (a, b) =>
-              prioritizeModelOption(a) - prioritizeModelOption(b) || a.label.localeCompare(b.label),
-          )
-          .map(
-            (entry) => html`
-              <button
-                class="chat-select__option agent-model-select__model-option ${
-                  params.selectedValue === entry.value ? "active" : ""
-                }"
-                type="button"
-                role="option"
-                aria-selected=${String(params.selectedValue === entry.value)}
-                aria-disabled=${String(!entry.available)}
-                ?disabled=${!entry.available}
-                title=${`${entry.label} · ${providerLabel(entry.brandId)}${
-                  entry.capabilityDetail ? ` · ${entry.capabilityDetail}` : ""
-                }${entry.setupLabel ? ` · ${entry.setupLabel}` : ""}`}
-                data-agent-model-option="true"
-                data-agent-model-control=${params.control}
-                data-provider=${entry.brandId}
-                data-value=${entry.value}
-                @click=${handleAgentModelSelectOption}
-              >
-                ${entry.label} · ${providerLabel(entry.brandId)}
-                ${
-                  entry.setupLabel
-                    ? html`<span class="agent-model-select__capabilities">${entry.setupLabel}</span>`
-                    : nothing
-                }
-                ${
-                  entry.capabilityDetail
-                    ? html`<span class="agent-model-select__capabilities">${entry.capabilityDetail}</span>`
-                    : nothing
-                }
-              </button>
-            `,
-          )}
-      `,
-    );
+  const renderGroups = (optionsToRender: AgentModelOption[]) => {
+    const grouped = new Map<string, AgentModelOption[]>();
+    for (const option of optionsToRender) {
+      const current = grouped.get(option.brandId) ?? [];
+      current.push(option);
+      grouped.set(option.brandId, current);
+    }
+    return Array.from(grouped.entries())
+      .toSorted((a, b) => providerLabel(a[0]).localeCompare(providerLabel(b[0])))
+      .map(
+        ([provider, options]) => html`
+          <div class="agent-model-select__group">${providerLabel(provider)}</div>
+          ${options
+            .slice()
+            .toSorted(
+              (a, b) =>
+                prioritizeModelOption(a) - prioritizeModelOption(b) ||
+                a.label.localeCompare(b.label),
+            )
+            .map(
+              (entry) => html`
+                <button
+                  class="chat-select__option agent-model-select__model-option ${
+                    params.selectedValue === entry.value ? "active" : ""
+                  }"
+                  type="button"
+                  role="option"
+                  aria-selected=${String(params.selectedValue === entry.value)}
+                  aria-disabled=${String(!entry.available)}
+                  ?disabled=${!entry.available}
+                  title=${`${entry.label} · ${providerLabel(entry.brandId)}${
+                    entry.capabilityDetail ? ` · ${entry.capabilityDetail}` : ""
+                  }${entry.setupLabel ? ` · ${entry.setupLabel}` : ""}`}
+                  data-agent-model-option="true"
+                  data-agent-model-control=${params.control}
+                  data-provider=${entry.brandId}
+                  data-value=${entry.value}
+                  @click=${handleAgentModelSelectOption}
+                >
+                  ${entry.label} · ${providerLabel(entry.brandId)}
+                  ${
+                    entry.setupLabel
+                      ? html`<span class="agent-model-select__capabilities">${entry.setupLabel}</span>`
+                      : nothing
+                  }
+                  ${
+                    entry.capabilityDetail
+                      ? html`<span class="agent-model-select__capabilities">${entry.capabilityDetail}</span>`
+                      : nothing
+                  }
+                </button>
+              `,
+            )}
+        `,
+      );
+  };
+  const recommended = params.options.filter((entry) => entry.recommended);
   return html`
     <button
       class="chat-select__option ${params.selectedValue ? "" : "active"}"
@@ -496,7 +506,13 @@ function renderAgentModelSelectButtons(params: {
     >
       ${params.emptyLabel}
     </button>
-    ${modelButtons}
+    ${
+      recommended.length > 0
+        ? html`<div class="agent-model-select__group">Recommended</div>${renderGroups(recommended)}`
+        : nothing
+    }
+    <div class="agent-model-select__group">All available</div>
+    ${renderGroups(params.options)}
   `;
 }
 
@@ -617,12 +633,14 @@ function writeAgentFallbackDraft(root: HTMLElement, fallbacks: string[]) {
 function updateAgentModelDependentDefaults(root: HTMLElement) {
   const modelSelect = root.querySelector<HTMLSelectElement>('[data-agent-model-select="true"]');
   const primary = modelSelect?.value?.trim() ?? "";
+  const primaryLabel =
+    modelSelect?.selectedOptions[0]?.textContent?.trim() || modelNameFromValue(primary);
   for (const option of Array.from(
     root.querySelectorAll<HTMLOptionElement>("[data-agent-role-default-option='true']"),
   )) {
     updateLitTextPart(
       option,
-      primary ? `Use Agent default model (${primary})` : "Use Agent default model",
+      primaryLabel ? `Use Agent default model (${primaryLabel})` : "Use Agent default model",
     );
   }
   const fallbackSelect = root.querySelector<HTMLSelectElement>("[data-agent-fallback-model]");
@@ -2327,6 +2345,7 @@ export function renderAgentOverview(params: {
     status: FederationStatus | null;
   };
   modelCatalog: ModelCatalogEntry[];
+  modelCatalogLoading?: boolean;
   skillEdits: Record<string, string>;
   skillsBusyKey: string | null;
   onConfigReload: () => void;
@@ -2591,6 +2610,16 @@ export function renderAgentOverview(params: {
   const fallbackModelOptions = agentModelOptions.filter(
     (option) => option.value !== selectedModelValue,
   );
+  const publicDefaultPrimary = agentModelOptionLabel(
+    agentModelOptions,
+    defaultPrimary,
+    modelNameFromValue(defaultPrimary),
+  );
+  const publicEffectivePrimary = agentModelOptionLabel(
+    agentModelOptions,
+    effectivePrimary,
+    modelNameFromValue(effectivePrimary),
+  );
   const discoveredModelOptions = agentModelOptions.filter((option) =>
     discoveredAgentModelValues.has(option.value),
   );
@@ -2646,7 +2675,9 @@ export function renderAgentOverview(params: {
       return;
     }
     const existing = selectedAgentModelMap.get(modelId);
-    const label = agentModelOptions.find((option) => option.value === modelId)?.label ?? modelId;
+    const label =
+      agentModelOptions.find((option) => option.value === modelId)?.label ??
+      modelNameFromValue(modelId);
     if (existing) {
       if (!existing.roles.includes(role)) {
         existing.roles.push(role);
@@ -4016,7 +4047,11 @@ export function renderAgentOverview(params: {
                                   <div class="agent-provider-model-card__name">
                                     ${provider.label}
                                     <span class="agent-provider-model-card__meta">
-                                      ${availableCount} ${availableCount === 1 ? "model" : "models"}
+                                      ${
+                                        params.modelCatalogLoading
+                                          ? "discovering models..."
+                                          : `${availableCount} ${availableCount === 1 ? "model" : "models"}`
+                                      }
                                     </span>
                                   </div>
                                 </div>
@@ -4033,7 +4068,7 @@ export function renderAgentOverview(params: {
                                                 ? ""
                                                 : "is-missing"
                                             }"
-                                            title=${`${entry.roles.join(", ")} · ${entry.label} · ${modelId}`}
+                                            title=${`${entry.roles.join(", ")} · ${entry.label} · ${provider.label}`}
                                             @click=${(event: Event) =>
                                               openAgentModelDropdown(
                                                 event,
@@ -4115,6 +4150,15 @@ export function renderAgentOverview(params: {
             data-agent-model-fallbacks=${JSON.stringify(fallbackChips)}
             data-agent-task-models=${JSON.stringify(entryTaskModels)}
           >
+          ${
+            params.modelCatalogLoading
+              ? html`
+                  <div class="callout info" role="status">
+                    Discovering models available to your connected accounts...
+                  </div>
+                `
+              : nothing
+          }
           <label class="field agent-model-select-field">
             <span>Primary</span>
             ${renderAgentModelPicker({
@@ -4123,8 +4167,8 @@ export function renderAgentOverview(params: {
               disabled: disabled || agentModelOptions.length === 0,
               emptyLabel: isDefault
                 ? "Not set"
-                : defaultPrimary
-                  ? `Inherit default (${defaultPrimary})`
+                : publicDefaultPrimary
+                  ? `Inherit default (${publicDefaultPrimary})`
                   : "Inherit default",
               nativeOptions: renderAgentProviderModelOptions(agentModelOptions, selectedModelValue),
               onChange: (event: Event) => {
@@ -4197,10 +4241,15 @@ export function renderAgentOverview(params: {
               ${AGENT_TASK_MODEL_ROLES.map((role) => {
                 const entryValue = entryTaskModels[role.key] ?? "";
                 const inheritedValue = defaultTaskModels[role.key] ?? "";
-                const inheritedLabel = inheritedValue
-                  ? `Inherit default (${inheritedValue})`
-                  : effectivePrimary
-                    ? `Use Agent default model (${effectivePrimary})`
+                const publicInheritedValue = agentModelOptionLabel(
+                  agentModelOptions,
+                  inheritedValue,
+                  modelNameFromValue(inheritedValue),
+                );
+                const inheritedLabel = publicInheritedValue
+                  ? `Inherit default (${publicInheritedValue})`
+                  : publicEffectivePrimary
+                    ? `Use Agent default model (${publicEffectivePrimary})`
                     : "Use Agent default model";
                 return html`
                   <label class="agent-model-role">

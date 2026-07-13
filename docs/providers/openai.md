@@ -84,11 +84,13 @@ fased onboard --openai-api-key "$OPENAI_API_KEY"
 
 1. Open **Agents** and select the Agent.
 2. Open **Agent > Models**.
-3. Open **OpenAI**.
-4. Choose **Sign in**.
-5. Open or copy the sign-in URL shown in the modal.
-6. Finish OpenAI login in the browser.
-7. Return to **Agent > Models** after the modal reports success, then choose a
+3. If **OpenAI Sign-In Runtime** is not installed, install it from **Services >
+   Components** or run `fased components install openai-runtime`.
+4. Open **OpenAI**.
+5. Choose **Sign in**.
+6. Open or copy the sign-in URL shown in the modal.
+7. Finish OpenAI login in the browser.
+8. Return to **Agent > Models** after the modal reports success, then choose a
    model role for the Agent or use Chat to override a single session.
 
 The credential is stored under the `openai-codex` compatibility route. This is
@@ -98,6 +100,7 @@ brand is OpenAI.
 ### Sign-in onboarding setup
 
 ```bash
+fased components install openai-runtime
 fased onboard
 # choose: Set up model providers -> OpenAI -> OpenAI sign-in
 ```
@@ -105,6 +108,9 @@ fased onboard
 ### Sign-in CLI setup
 
 ```bash
+# Install the optional official runtime once on this Fased installation.
+fased components install openai-runtime
+
 # Run OpenAI sign-in in the wizard
 fased onboard --auth-choice openai-codex
 

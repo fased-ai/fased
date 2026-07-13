@@ -31,6 +31,7 @@ const optionalRuntimeExtensions = [
   "runtime-browser",
   "runtime-local-memory",
   "runtime-media",
+  "runtime-openai",
   "runtime-speech",
 ] as const;
 const optionalChannelDependencies = [
@@ -50,6 +51,7 @@ const optionalChannelDependencies = [
 const optionalRuntimeDependencies = [
   "@mozilla/readability",
   "@napi-rs/canvas",
+  "@openai/codex",
   "file-type",
   "linkedom",
   "node-edge-tts",

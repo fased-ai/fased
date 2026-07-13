@@ -22,6 +22,7 @@ export async function discoverOpenAICodexDefaultModel(params: {
     store,
     catalog,
     defaultProvider: DEFAULT_PROVIDER,
+    agentDir: params.agentDir,
   });
   const model = authenticated.usableCatalog
     .filter((entry) => entry.provider === "openai-codex")

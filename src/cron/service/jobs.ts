@@ -51,10 +51,23 @@ function planJobTaskPolicy(params: {
   if (!params.executionPolicy && params.payload.kind !== "agentTurn") {
     return undefined;
   }
+  const explicitModel =
+    params.payload.kind === "agentTurn" ? params.payload.model?.trim() : undefined;
+  const policy = explicitModel
+    ? {
+        ...params.executionPolicy,
+        executionMode: "agent-turn" as const,
+        modelPolicy: {
+          ...params.executionPolicy?.modelPolicy,
+          mode: "task-override" as const,
+          model: explicitModel,
+        },
+      }
+    : params.executionPolicy;
   return planTaskExecutionPolicy({
     name: params.name,
     message: payloadTaskText(params.payload),
-    policy: params.executionPolicy,
+    policy,
     trustedSources: matchingTrustedSourcesForTask({
       store: params.state?.store,
       agentId: params.agentId,

@@ -27,6 +27,11 @@ const cfg = {
         baseUrl: "https://api.openai.com/v1",
         models: [],
       },
+      anthropic: {
+        api: "anthropic-messages",
+        baseUrl: "https://api.anthropic.com",
+        models: [],
+      },
     },
   },
 } as FasedAgentConfig;
@@ -136,6 +141,86 @@ describe("runtime provider model catalog", () => {
         capabilityConfidence: "verified",
       },
     });
+  });
+
+  it("discovers OAuth provider routes and preserves credential and pricing metadata", async () => {
+    fetchProviderRefreshSnapshotForRoutes.mockResolvedValue({
+      providers: {
+        anthropic: {
+          routes: {
+            anthropic: [
+              {
+                id: "claude-account-model",
+                name: "Claude Account Model",
+                input: ["text", "image"],
+                reasoning: true,
+                tools: true,
+                contextWindow: 250_000,
+                price: {
+                  input: 3,
+                  output: 15,
+                  cacheRead: 0.3,
+                  cacheWrite: 3.75,
+                },
+                source: "provider-api",
+              },
+            ],
+          },
+        },
+      },
+    });
+    const oauthStore = {
+      version: 1,
+      profiles: {
+        "anthropic:oauth": {
+          type: "oauth",
+          provider: "anthropic",
+          access: "oauth-access",
+          refresh: "oauth-refresh",
+          expires: Date.now() + 60_000,
+        },
+      },
+    } satisfies AuthProfileStore;
+
+    const result = await applyRuntimeProviderModelDiscovery({
+      cfg,
+      store: oauthStore,
+      routes: ["anthropic"],
+      catalog: [],
+    });
+
+    expect(fetchProviderRefreshSnapshotForRoutes).toHaveBeenCalledWith(
+      expect.objectContaining({ routes: ["anthropic"] }),
+    );
+    expect(result).toEqual([
+      expect.objectContaining({
+        provider: "anthropic",
+        id: "claude-account-model",
+        metadata: expect.objectContaining({
+          authRoute: "anthropic",
+          authMode: "oauth",
+          credentialRoute: {
+            id: "anthropic-oauth",
+            label: "Sign in (Claude Code)",
+            authMode: "oauth",
+          },
+          credentialRoutes: [
+            {
+              id: "anthropic-oauth",
+              label: "Sign in (Claude Code)",
+              authMode: "oauth",
+            },
+          ],
+          price: {
+            input: 3,
+            output: 15,
+            cacheRead: 0.3,
+            cacheWrite: 3.75,
+            unit: "usd-per-million-tokens",
+          },
+        }),
+      }),
+    ]);
   });
 
   it("uses the authenticated runtime as authority for OAuth availability", () => {
