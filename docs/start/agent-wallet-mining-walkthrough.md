@@ -426,6 +426,12 @@ On **Mining**, use the Mining Capital block.
 Deposit a small amount of SOL into miner capital. The Fund action creates the
 wallet-scoped miner account on-chain when it is missing.
 
+`0.25 SOL` is minimum eligibility only. It is not a recommended always-on
+balance: the runtime also reserves reveal collateral, while the Mining wallet
+must retain separate SOL for transaction fees and rent. Use the runway estimate
+and choose every second, sixth, or twelfth cycle if you want a lower-cost
+economy schedule.
+
 ![Mining funding and capital controls](/images/screenshots/web/mining-funding-1.png)
 
 Read next:
@@ -467,6 +473,11 @@ miner capital back to the same Mining wallet before starting.
 The Mining page shows whether the runtime is ready, running, blocked, or
 waiting.
 
+For each selected cycle, Fased first submits a hidden allocation commitment,
+then reveals the saved allocation after all commits close. The protocol seals
+future entropy only after reveal. This requires two miner transactions per
+participation and prevents another miner from copying a live allocation.
+
 ![Mining runtime activity after start](/images/screenshots/web/mining-activity-3.png)
 
 Read next:
@@ -478,7 +489,8 @@ Read next:
 
 Use recent activity and history to confirm what the runtime did:
 
-- participation
+- commit and reveal
+- entropy and settlement
 - finalization
 - claim
 - missed cycles
@@ -501,8 +513,9 @@ If capital is still locked or claims are pending, status enters drain mode.
 Drain mode stops new participation while settlement, claim, and recovery finish
 safely. Do not delete the wallet, signer state, or agent state while draining.
 
-When claimable SAT exists, claim it. If sweep is enabled and configured, review
-the sweep destination before using it.
+When claimable SAT exists, claim it. Claims above `10,000 SAT` are submitted in
+bounded chunks and remain pending until every chunk confirms. If sweep is
+enabled and configured, review the sweep destination before using it.
 
 Read next:
 

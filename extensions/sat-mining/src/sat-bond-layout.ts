@@ -87,6 +87,8 @@ export type SatBondStakingDistributorLayoutSpec = {
     rewardIndexFp: number;
     observedRewardVaultRaw: number;
     lastSyncedSlot: number;
+    unallocatedRewardRaw: number;
+    fractionalRemainderFp: number;
   };
 };
 
@@ -108,6 +110,7 @@ export type SatBondStakingPositionLayoutSpec = {
     claimableRewardRaw: number;
     rewardDebtFp: number;
     lastSyncedSlot: number;
+    fractionalRemainderFp: number;
   };
 };
 
@@ -236,6 +239,8 @@ const DEDICATED_FALLBACK_STAKING_DISTRIBUTOR_LAYOUT: SatBondStakingDistributorLa
     rewardIndexFp: 128,
     observedRewardVaultRaw: 144,
     lastSyncedSlot: 152,
+    unallocatedRewardRaw: 160,
+    fractionalRemainderFp: 168,
   },
 };
 
@@ -257,6 +262,7 @@ const DEDICATED_FALLBACK_STAKING_POSITION_LAYOUT: SatBondStakingPositionLayoutSp
     claimableRewardRaw: 88,
     rewardDebtFp: 96,
     lastSyncedSlot: 112,
+    fractionalRemainderFp: 120,
   },
 };
 

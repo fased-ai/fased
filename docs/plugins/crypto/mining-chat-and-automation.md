@@ -178,6 +178,11 @@ Use `conservative`, `balanced`, `aggressive`, or `swarm`.
 
 Use `auto`, `prompt`, or `manual`.
 
+**`cycleCadence`**
+
+Use `1`, `2`, `6`, or `12` to enter every cycle, every second, every sixth, or
+every twelfth cycle. A strategy-only task must not change cadence or capital.
+
 **`autoClaim`**
 
 Enable or disable automatic miner claim.
@@ -197,7 +202,8 @@ with the chosen fields.
 
 Useful strategy-analysis inputs are:
 
-- current cycle participation, page count, and crowding
+- public current-cycle phase, committed capital, and aggregate commitment count
+- settled historical participation, revealed crowd distributions, and outcomes
 - free, locked, funded, safe commit, and target max
 - recent SAT earned
 - deterministic rebate and performance rebate
@@ -205,9 +211,13 @@ Useful strategy-analysis inputs are:
 - missed cycles, failed actions, and claim backlog
 - previous strategy intent, execution mode, and fallback reason
 
+Current allocations are not available during commit. A model can use settled
+history and public capital commitments, but it cannot inspect another miner's
+sealed current-cycle strategy before choosing its own.
+
 Strategy analysis proves decision hygiene, not performance. A single
 miner can prove that a preset runs, but strategy quality needs competitive
-cycles where several miners submit different allocations into the same cycle
+cycles where several miners commit and later reveal different allocations
 and the result is compared by SAT earned, deterministic rebate, performance
 rebate, net SOL cost, score versus benchmark, and fallback reason.
 
@@ -409,8 +419,12 @@ For channel commands, prefer explicit wording:
 ```text
 @fased check @mining status only.
 @fased stop @mining now.
-@fased set @mining commit to 0.25 SOL and report readiness.
+@fased set @mining commit to 1 SOL and report readiness plus estimated runway.
 ```
+
+The amount above is a command example, not a recommendation. `0.25 SOL` is only
+the eligibility minimum; choose capital and cadence from your own fee budget and
+runway estimate.
 
 Avoid vague commands such as "fix mining" when the action could move capital or
 change strategy.

@@ -24,6 +24,13 @@ export type SatCycleContext = {
 
 export type SatRoundExecutionState = {
   openRoundSubmitted: boolean;
+  commitSubmitted?: boolean;
+  commitmentHex?: string | null;
+  revealNonceBase64?: string | null;
+  allocationFp?: number[] | null;
+  commitLamports?: number | null;
+  entropyTargetPinned?: boolean;
+  entropySealed?: boolean;
   participationSubmitted: boolean;
   epochFinalized: boolean;
   crankSubmitted: boolean;
@@ -470,6 +477,13 @@ export function getOrCreateRoundExecutionState(
   }
   const created: SatRoundExecutionState = {
     openRoundSubmitted: false,
+    commitSubmitted: false,
+    commitmentHex: null,
+    revealNonceBase64: null,
+    allocationFp: null,
+    commitLamports: null,
+    entropyTargetPinned: false,
+    entropySealed: false,
     participationSubmitted: false,
     epochFinalized: false,
     crankSubmitted: false,

@@ -83,20 +83,22 @@ flow.
 
 ## Constants
 
-| Constant                 | Value            |
-| ------------------------ | ---------------- |
-| SAT decimals             | `11`             |
-| hard cap                 | `21,000,000 SAT` |
-| cycle seconds            | `300`            |
-| minimum entry            | `0.25 SOL`       |
-| allocation buckets       | `25`             |
-| erosion                  | `83 ppm`         |
-| miner SAT route          | `90%`            |
-| SAT distributor route    | `5%`             |
-| treasury SAT route       | `5%`             |
-| SOL deterministic rebate | `30%`            |
-| SOL performance rebate   | `50%`            |
-| SOL treasury route       | `20%`            |
+| Constant                 | Value              |
+| ------------------------ | ------------------ |
+| SAT decimals             | `11`               |
+| hard cap                 | `21,000,000 SAT`   |
+| cycle seconds            | `300`              |
+| minimum eligibility      | `0.25 SOL`         |
+| allocation buckets       | `25`               |
+| erosion                  | `83 ppm`           |
+| non-reveal penalty       | `1%`               |
+| entropy hash inputs      | `8` produced slots |
+| miner SAT route          | `90%`              |
+| SAT distributor route    | `5%`               |
+| treasury SAT route       | `5%`               |
+| SOL deterministic rebate | `30%`              |
+| SOL performance rebate   | `50%`              |
+| SOL treasury route       | `20%`              |
 
 ## Control UI routes
 
@@ -216,31 +218,61 @@ running; if locked capital or pending cycles remain, the CLI reports drain mode.
 
 ### Capital methods
 
-| Method                         | Purpose                                                  |
-| ------------------------------ | -------------------------------------------------------- |
-| `sat.initMinerCapital`         | initialize miner capital account                         |
-| `sat.depositMinerCapital`      | move wallet SOL into miner capital                       |
-| `sat.withdrawMinerCapital`     | withdraw free capital back to the wallet                 |
-| `sat.setActiveCommit`          | set on-chain active commit and optionally persist config |
-| `sat.bootstrapRegistryReserve` | initialize or top up shared reserve support              |
+| Method                     | Purpose                                                  |
+| -------------------------- | -------------------------------------------------------- |
+| `sat.initMinerCapital`     | initialize miner capital account                         |
+| `sat.depositMinerCapital`  | move wallet SOL into miner capital                       |
+| `sat.withdrawMinerCapital` | withdraw free capital back to the wallet                 |
+| `sat.setActiveCommit`      | set on-chain active commit and optionally persist config |
+| `sat.topUpRegistryReserve` | top up shared cycle-account reserve support              |
 
 ### Cycle methods
 
-| Method                           | Purpose                                         |
-| -------------------------------- | ----------------------------------------------- |
-| `sat.openCycle`                  | open shared cycle state                         |
-| `sat.submitCycle`                | submit miner allocation for a cycle             |
-| `sat.settleCyclePage`            | settle a registry page chunk                    |
-| `sat.finalizeCycleSettlement`    | finalize page settlement for a cycle            |
-| `sat.scoreCyclePage`             | score participants on a page                    |
-| `sat.distributeCyclePage`        | distribute miner SAT and rebates for a page     |
-| `sat.runKeeperOnce`              | run one keeper/cranker tick                     |
-| `sat.claimCycleRewards`          | claim one cycle                                 |
-| `sat.claimCycleRewardsBatch`     | claim several cycles                            |
-| `sat.claimBacklog`               | claim oldest ready backlog batch                |
-| `sat.retargetUnlock`             | adjust unlock target on cadence                 |
-| `sat.closeResolvedCycleAccounts` | close resolved cycle artifacts and reclaim rent |
-| `sat.compactPendingCycleRange`   | compact local pending-cycle tracking            |
+| Method                           | Purpose                                                                                                   |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `sat.openCycle`                  | open shared cycle state                                                                                   |
+| `sat.commitCycle`                | commit a hidden allocation digest                                                                         |
+| `sat.closeCommitPhase`           | close commits before any allocation is revealed                                                           |
+| `sat.revealCycle`                | reveal and verify the committed allocation before future entropy is known                                 |
+| `sat.sealCycleEntropy`           | seal the first eight provable produced slots at/after the fixed target, or cancel if proof is unavailable |
+| `sat.releaseUnrevealedCommit`    | release capital for a commitment that missed reveal                                                       |
+| `sat.abortEmptyCycle`            | settle a fully resolved zero-reveal/cancelled cycle with zero issuance                                    |
+| `sat.settleCyclePage`            | settle a registry page chunk                                                                              |
+| `sat.finalizeCycleSettlement`    | finalize page settlement for a cycle                                                                      |
+| `sat.scoreCyclePage`             | score participants on a page                                                                              |
+| `sat.distributeCyclePage`        | distribute miner SAT and rebates for a page                                                               |
+| `sat.runKeeperOnce`              | run one keeper/cranker tick                                                                               |
+| `sat.claimCycleRewards`          | claim one cycle                                                                                           |
+| `sat.claimCycleRewardsBatch`     | claim several cycles                                                                                      |
+| `sat.claimBacklog`               | claim oldest ready backlog batch                                                                          |
+| `sat.retargetUnlock`             | adjust unlock target on cadence                                                                           |
+| `sat.closeResolvedCycleAccounts` | close resolved cycle artifacts and reclaim rent                                                           |
+| `sat.compactPendingCycleRange`   | compact local pending-cycle tracking                                                                      |
+
+The runtime carries commit, close, reveal, entropy, and settlement through the normal
+Start/Stop workflow and persists the private nonce/allocation before submission
+so a Gateway restart can resume safely. The legacy `sat.submitCycle` public-
+allocation path is retired and returns an error. A normal missed reveal receives
+no allocation score, pays `1%` of committed capital into the fixed treasury lane,
+and then releases the remaining committed capital. An entropy-unavailable cycle
+is different: it unlocks without penalty and issues zero SAT.
+
+The entropy target is fixed when the cycle opens. Commitments close, miners
+reveal without knowing the outcome, and only then can the program seal entropy
+from the first eight produced slots at or after the target. Entropy does not
+re-roll. If retained SlotHashes can no longer prove that ordered set, the cycle
+becomes entropy-unavailable: commitments unlock without erosion, no late reveal
+is accepted, the empty cycle aborts, and zero SAT is issued.
+
+Cycle issuance uses a fixed nominal ceiling for the active schedule year. Empty,
+under-filled, cancelled, or missed cycles do not increase a later cycle's cap.
+Unissued SAT remains under the `21,000,000 SAT` hard cap and may extend the
+bounded year-ten rate beyond year ten; it never becomes a catch-up jackpot.
+
+One mint claim is bounded to `10,000 SAT`. Fased repeats claim chunks until the
+cycle is fully claimed and keeps partial claims in the recovery queue. Miner
+distribution rounding dust is assigned to the fixed treasury lane so global
+issuance and account balances stay reconcilable.
 
 ### Recovery and dispute methods
 
@@ -261,13 +293,14 @@ running; if locked capital or pending cycles remain, the CLI reports drain mode.
 
 | Method                                  | Purpose                                                                 |
 | --------------------------------------- | ----------------------------------------------------------------------- |
-| `sat.setProtocolRecipients`             | set treasury and SAT distributor recipients                             |
 | `sat.refillRegistryReserveFromTreasury` | refill the registry reserve from protocol treasury SOL shortfall        |
 | `sat.claimProtocolTreasury`             | claim treasury lane, leaving reserve-aware maintenance first            |
 | `sat.claimProtocolDistributorSat`       | claim SAT distributor lane to the bond distributor                      |
 | `sat.runProtocolMaintenanceOnce`        | one bounded operator pass over reserve, treasury, and distributor lanes |
 
-These are protocol maintenance operations. They are not normal miner day-to-day
+Treasury and distributor recipients are fixed by the approved genesis profile
+when the protocol is initialized; Fased does not expose a recipient mutation
+method. The remaining methods are protocol maintenance operations, not normal miner day-to-day
 actions, and they are not shown on the Mining page. Launch operators run them
 from internal maintenance tooling.
 
@@ -372,6 +405,12 @@ Legacy mode: `base` or `skill`.
 **`commitLamports`**
 
 Configured active commit in lamports.
+
+**`cycleCadence`**
+
+Entry schedule for new cycles: `1`, `2`, `6`, or `12`. Existing commitments
+always reveal and settle. `0.25 SOL` remains minimum eligibility rather than a
+recommended continuous balance.
 
 **`minSolBalanceLamports`**
 
@@ -486,14 +525,14 @@ instruction path allows it.
 
 Satcoin authority surfaces:
 
-| Surface                            | Meaning                                                  |
-| ---------------------------------- | -------------------------------------------------------- |
-| SAT program upgrade authority      | can upgrade SAT mining program code while retained       |
-| SAT mint program upgrade authority | can upgrade mint-program code while retained             |
-| SPL mint authority                 | should be the SAT mint-authority PDA after init          |
-| SPL freeze authority               | should be none for the public mint posture               |
-| SAT `program_admin`                | can set treasury and SAT distributor recipient addresses |
-| bond policy update authority       | can update bond tier thresholds and unlock delay         |
+| Surface                            | Meaning                                                                                 |
+| ---------------------------------- | --------------------------------------------------------------------------------------- |
+| SAT program upgrade authority      | can upgrade SAT mining program code while retained                                      |
+| SAT mint program upgrade authority | can upgrade mint-program code while retained                                            |
+| SPL mint authority                 | should be the SAT mint-authority PDA after init                                         |
+| SPL freeze authority               | should be none for the public mint posture                                              |
+| SAT genesis authority              | proves the approved genesis profile; recipient mutation is retired after initialization |
+| bond policy update authority       | can update bond tier thresholds and unlock delay                                        |
 
 The miner runtime does not hold admin keys. It uses the singleton
 `@wallet:mining` wallet for operator actions and reads the configured program
@@ -511,10 +550,12 @@ Satcoin mining has three separate SOL concepts:
 
 Per-cycle flow:
 
-- the miner wallet pays submit, settlement, claim, and recovery transaction fees
-- the miner wallet pays miner-cycle PDA rent when it first submits that cycle
-- active commit is locked inside miner capital until distribute releases it
-- erosion is charged from miner capital and routed into miner rebate and treasury lanes
+- the miner wallet pays commit, reveal, claim, and recovery transaction fees
+- the miner wallet pays miner-cycle PDA rent when it first commits to that cycle
+- keepers pay close, settlement, score, and distribution transaction fees; eligible steps may earn a bounded keeper bounty
+- active commit plus worst-case reveal collateral is locked until the commitment resolves
+- normal erosion is charged only for valid revealed participation during distribution
+- an avoidable missed reveal pays the `1%` penalty; entropy-unavailable cycles refund without penalty
 - keeper bounty comes from the performance rebate lane when the cycle can fund it
 - claim mints Satcoin to the miner ATA and moves SOL rebate back into miner capital
 

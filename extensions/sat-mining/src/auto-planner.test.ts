@@ -464,6 +464,6 @@ describe("computeAutoPlannerDecision", () => {
     });
 
     expect(decision.commitLamports).toBe(250_000_000);
-    expect(decision.rationale).toContain("configured max");
+    expect(decision.rationale).toContain("configured baseline");
   });
 });

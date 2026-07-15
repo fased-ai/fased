@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import http from "node:http";
 import https from "node:https";
 import { createRequire } from "node:module";
-import { redactSensitiveUrlLikeString } from "fased/plugin-sdk";
+import { fetchWithSsrFGuard, redactSensitiveUrlLikeString } from "fased/plugin-sdk";
 import {
   loadConfig,
   loadWalletProviderSecret,
@@ -14,6 +14,7 @@ import {
   type FasedAgentConfig,
 } from "fased/plugin-sdk/sat-runtime";
 import type { SatMiningConfig } from "./config.js";
+import { resolveSatGenesisProfileContract, SAT_PROTOCOL_CONSTANTS } from "./protocol-contract.js";
 import {
   loadSatBondLayout,
   loadSatBondPolicyLayout,
@@ -225,6 +226,21 @@ export type SatCycleView = {
   openTs: number;
   closeTs: number;
   status: number;
+  cycleSeed?: string;
+  entropyUnavailable?: boolean;
+  commitDeadlineTs?: number;
+  revealDeadlineTs?: number;
+  entropyTargetSlot?: number;
+  openSlot?: number;
+  commitDeadlineSlot?: number;
+  revealDeadlineSlot?: number;
+  entropyHashCount?: number;
+  unlockIntervalStartCycleId?: number;
+  committedMinerCount?: string;
+  revealedMinerCount?: string;
+  resolvedCommitCount?: string;
+  releasedCommitCount?: string;
+  entropySealedSlot?: number;
   unlockTargetLamports: string;
   totalCommittedLamports: string;
   validMinerCount: string;
@@ -258,6 +274,10 @@ export type SatMinerCycleView = {
   claimedPerfRebateLamports: string;
   validParticipation: boolean;
   capitalLockReleased?: boolean;
+  commitment?: string;
+  commitSlot?: number;
+  revealSlot?: number;
+  lockedCollateralLamports?: string;
 };
 
 export type SatMinerCapitalView = {
@@ -320,6 +340,8 @@ export type SatBondStakingDistributorView = {
   totalActiveStakeRaw: string;
   rewardIndexFp: string;
   observedRewardVaultRaw: string;
+  unallocatedRewardRaw: string;
+  fractionalRemainderFp: string;
   rewardVaultBalanceRaw?: string;
   lastSyncedSlot: number;
   mintMatchesRuntime: boolean;
@@ -338,6 +360,7 @@ export type SatBondStakingPositionView = {
   activeStakeRaw: string;
   claimableRewardRaw: string;
   rewardDebtFp: string;
+  fractionalRemainderFp: string;
   lastSyncedSlot: number;
 };
 
@@ -800,17 +823,21 @@ export function decodeSatGlobalState(data: Buffer, address: string): SatGlobalSt
   };
 }
 
-function decodeSatCycle(data: Buffer, address: string): SatCycleView {
+export function decodeSatCycle(data: Buffer, address: string): SatCycleView {
   const body = expectAccountData(data, ACCOUNT_DISCRIMINATOR.satCycleState, "SAT cycle state");
+  const validMinerCount = readU64String(body, 192);
+  const cycleSeed = readHash32(body, 40);
   return {
     address,
     cycleId: readU64Number(body, 0),
     openTs: readI64Number(body, 8),
     closeTs: readI64Number(body, 16),
     status: body.readUInt8(24),
+    cycleSeed,
+    entropyUnavailable: cycleSeed === SAT_PROTOCOL_CONSTANTS.entropyUnavailableSeedHex,
     unlockTargetLamports: readU64String(body, 176),
     totalCommittedLamports: readU64String(body, 184),
-    validMinerCount: readU64String(body, 192),
+    validMinerCount,
     unlockRatioFp: readU64String(body, 200),
     issuedCycleMinerSatRaw: readU64String(body, 208),
     unissuedCycleMinerSatRaw: readU64String(body, 216),
@@ -820,6 +847,23 @@ function decodeSatCycle(data: Buffer, address: string): SatCycleView {
     treasurySolLamports: readU64String(body, 248),
     submittedSolErosionPoolLamports: readU64String(body, 256),
     keeperBountyPaidLamports: readU64String(body, 264),
+    commitDeadlineTs: readI64Number(body, 272),
+    revealDeadlineTs: readI64Number(body, 280),
+    entropyTargetSlot: readU64Number(body, 288),
+    committedMinerCount: readU64String(body, 296),
+    revealedMinerCount: validMinerCount,
+    resolvedCommitCount: readU64String(body, 304),
+    entropySealedSlot: readU64Number(body, 312),
+    ...(body.length >= 368
+      ? {
+          openSlot: readU64Number(body, 320),
+          commitDeadlineSlot: readU64Number(body, 328),
+          revealDeadlineSlot: readU64Number(body, 336),
+          entropyHashCount: readU64Number(body, 344),
+          unlockIntervalStartCycleId: readU64Number(body, 352),
+          releasedCommitCount: readU64String(body, 360),
+        }
+      : {}),
   };
 }
 
@@ -848,6 +892,18 @@ export function decodeSatMinerCycle(data: Buffer, address: string): SatMinerCycl
     claimedPerfRebateLamports: readU64String(body, 168),
     validParticipation: body.readUInt8(176) === 1,
     capitalLockReleased: body.readUInt8(177) === 1,
+    ...(body.length >= 336
+      ? {
+          commitment: readHash32(body, 184),
+          commitSlot: readU64Number(body, 216),
+          revealSlot: readU64Number(body, 224),
+        }
+      : {}),
+    ...(body.length >= 344
+      ? {
+          lockedCollateralLamports: readU64String(body, 232),
+        }
+      : {}),
   };
 }
 
@@ -969,7 +1025,7 @@ function decodeSatBondTierPolicy(data: Buffer, address: string): SatBondTierPoli
   };
 }
 
-function decodeSatBondStakingDistributor(
+export function decodeSatBondStakingDistributor(
   data: Buffer,
   address: string,
 ): SatBondStakingDistributorView {
@@ -999,6 +1055,8 @@ function decodeSatBondStakingDistributor(
     totalActiveStakeRaw: readU64String(body, layout.offsets.totalActiveStakeRaw),
     rewardIndexFp: readU128String(body, layout.offsets.rewardIndexFp),
     observedRewardVaultRaw: readU64String(body, layout.offsets.observedRewardVaultRaw),
+    unallocatedRewardRaw: readU64String(body, layout.offsets.unallocatedRewardRaw),
+    fractionalRemainderFp: readU64String(body, layout.offsets.fractionalRemainderFp),
     lastSyncedSlot: readU64Number(body, layout.offsets.lastSyncedSlot),
     mintMatchesRuntime: rewardMint === SAT_MINT_ADDRESS(),
     vaultMatchesExpected: rewardVault === expectedRewardVault,
@@ -1021,6 +1079,7 @@ function decodeSatBondStakingPosition(data: Buffer, address: string): SatBondSta
     activeStakeRaw: readU64String(body, layout.offsets.activeStakeRaw),
     claimableRewardRaw: readU64String(body, layout.offsets.claimableRewardRaw),
     rewardDebtFp: readU128String(body, layout.offsets.rewardDebtFp),
+    fractionalRemainderFp: readU64String(body, layout.offsets.fractionalRemainderFp),
     lastSyncedSlot: readU64Number(body, layout.offsets.lastSyncedSlot),
   };
 }
@@ -1336,6 +1395,15 @@ type SatReadRpcRuntimeState = {
   quotaLikely: boolean;
 };
 
+type SatReadRpcEndpointState = {
+  consecutiveFailures: number;
+  backoffUntilMs: number;
+  quotaLikely: boolean;
+  lastError: string | null;
+  lastFailureAt: string | null;
+  lastSuccessAt: string | null;
+};
+
 type SatRpcMethodBucket = {
   requests: number;
   successes: number;
@@ -1372,6 +1440,7 @@ const satReadRpcRuntimeState: SatReadRpcRuntimeState = {
   lastRpcUrl: null,
   quotaLikely: false,
 };
+const satReadRpcEndpointStates = new Map<string, SatReadRpcEndpointState>();
 
 type SatReadConnectionLike = {
   rpcEndpoint: string;
@@ -1416,6 +1485,14 @@ const SAT_RPC_RENT_EXEMPTION_CACHE_TTL_MS = 5 * 60_000;
 const SAT_RPC_METHOD_METRIC_BUCKET_MS = 60 * 60_000;
 const SAT_RPC_METHOD_METRIC_RETENTION_MS = 24 * 60 * 60_000;
 const SAT_RPC_QUOTA_BACKOFF_MS = 30_000;
+const SAT_RPC_FAILURE_BACKOFF_THRESHOLD = 2;
+const SAT_RPC_FAILURE_BACKOFF_BASE_MS = 5_000;
+const SAT_RPC_FAILURE_BACKOFF_MAX_MS = 30_000;
+const SAT_RPC_MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
+
+function satRpcRequestTimeoutMs(): number {
+  return readPositiveIntEnv("FASED_SAT_RPC_REQUEST_TIMEOUT_MS", 10_000);
+}
 
 const satRpcReadCache = new Map<string, { expiresAt: number; value: unknown }>();
 const satRpcReadInFlight = new Map<string, Promise<unknown>>();
@@ -1604,41 +1681,86 @@ function looksLikeRpcQuotaFailure(value: unknown): boolean {
   );
 }
 
-function currentReadRpcQuotaBackoffMs(nowMs = Date.now()): number {
-  if (!satReadRpcRuntimeState.quotaLikely || !satReadRpcRuntimeState.lastFailureAt) {
-    return 0;
+function getOrCreateReadRpcEndpointState(rpcUrl: string): SatReadRpcEndpointState {
+  const key = normalizeRpcUrlForComparison(rpcUrl);
+  const existing = satReadRpcEndpointStates.get(key);
+  if (existing) {
+    return existing;
   }
-  const failedAtMs = Date.parse(satReadRpcRuntimeState.lastFailureAt);
-  if (!Number.isFinite(failedAtMs)) {
-    return 0;
-  }
-  const remainingMs = SAT_RPC_QUOTA_BACKOFF_MS - (nowMs - failedAtMs);
-  return remainingMs > 0 ? remainingMs : 0;
+  const created: SatReadRpcEndpointState = {
+    consecutiveFailures: 0,
+    backoffUntilMs: 0,
+    quotaLikely: false,
+    lastError: null,
+    lastFailureAt: null,
+    lastSuccessAt: null,
+  };
+  satReadRpcEndpointStates.set(key, created);
+  return created;
 }
 
-function makeReadRpcQuotaBackoffError(method: string, remainingMs: number): Error {
+function currentReadRpcBackoffMs(rpcUrl: string, nowMs = Date.now()): number {
+  const state = satReadRpcEndpointStates.get(normalizeRpcUrlForComparison(rpcUrl));
+  if (!state) {
+    return 0;
+  }
+  return Math.max(0, state.backoffUntilMs - nowMs);
+}
+
+function makeReadRpcBackoffError(method: string, remainingMs: number): Error {
   return new Error(
-    `rpc ${method} skipped during provider quota backoff; retry in ${Math.ceil(remainingMs / 1000)}s`,
+    `rpc ${method} skipped during endpoint circuit backoff; retry in ${Math.ceil(remainingMs / 1000)}s`,
   );
 }
 
+function markReadRpcEndpointSuccess(rpcUrl: string) {
+  const state = getOrCreateReadRpcEndpointState(rpcUrl);
+  state.consecutiveFailures = 0;
+  state.backoffUntilMs = 0;
+  state.quotaLikely = false;
+  state.lastError = null;
+  state.lastSuccessAt = new Date().toISOString();
+}
+
+function markReadRpcEndpointFailure(rpcUrl: string, error: unknown) {
+  const state = getOrCreateReadRpcEndpointState(rpcUrl);
+  const message = error instanceof Error ? error.message : String(error);
+  const quotaLikely = looksLikeRpcQuotaFailure(message);
+  state.consecutiveFailures += 1;
+  state.quotaLikely = quotaLikely;
+  state.lastError = message;
+  state.lastFailureAt = new Date().toISOString();
+  if (quotaLikely) {
+    state.backoffUntilMs = Date.now() + SAT_RPC_QUOTA_BACKOFF_MS;
+  } else if (state.consecutiveFailures >= SAT_RPC_FAILURE_BACKOFF_THRESHOLD) {
+    const exponent = state.consecutiveFailures - SAT_RPC_FAILURE_BACKOFF_THRESHOLD;
+    state.backoffUntilMs =
+      Date.now() +
+      Math.min(SAT_RPC_FAILURE_BACKOFF_MAX_MS, SAT_RPC_FAILURE_BACKOFF_BASE_MS * 2 ** exponent);
+  }
+}
+
 function markReadRpcSuccess(mode: "primary" | "fallback", rpcUrl: string) {
+  markReadRpcEndpointSuccess(rpcUrl);
   satReadRpcRuntimeState.lastMode = mode;
   satReadRpcRuntimeState.lastRpcUrl = rpcUrl;
-  satReadRpcRuntimeState.lastError = null;
   satReadRpcRuntimeState.lastSuccessAt = new Date().toISOString();
-  satReadRpcRuntimeState.quotaLikely = false;
-  if (mode === "fallback") {
+  if (mode === "primary") {
+    satReadRpcRuntimeState.lastError = null;
+    satReadRpcRuntimeState.quotaLikely = false;
+  } else {
     satReadRpcRuntimeState.fallbackCount += 1;
   }
 }
 
-function markReadRpcFailure(error: unknown) {
+function markReadRpcFailure(error: unknown, rpcUrl: string) {
   const message = error instanceof Error ? error.message : String(error);
+  markReadRpcEndpointFailure(rpcUrl, error);
   satReadRpcRuntimeState.lastMode = "unavailable";
   satReadRpcRuntimeState.lastError = message;
   satReadRpcRuntimeState.lastFailureAt = new Date().toISOString();
-  satReadRpcRuntimeState.quotaLikely = looksLikeRpcQuotaFailure(message);
+  satReadRpcRuntimeState.quotaLikely =
+    satReadRpcRuntimeState.quotaLikely || looksLikeRpcQuotaFailure(message);
 }
 
 function firstNonEmpty(...values: Array<string | null | undefined>): string {
@@ -1893,68 +2015,142 @@ export function resolveEffectiveReadRpcConfig(): SatReadRpcConfig {
   return resolveReadRpcConfig(cfg, mergedEnv);
 }
 
+function createAbortableReadRpcFetch(): typeof globalThis.fetch {
+  return (async (input, init) => {
+    const timeoutMs = satRpcRequestTimeoutMs();
+    const requestUrl =
+      typeof input === "string" || input instanceof URL ? input.toString() : input.url;
+    let guardedFetch: Awaited<ReturnType<typeof fetchWithSsrFGuard>>;
+    try {
+      guardedFetch = await fetchWithSsrFGuard({
+        url: requestUrl,
+        init,
+        timeoutMs,
+        signal: init?.signal ?? (input instanceof Request ? input.signal : undefined),
+        policy: { allowPrivateNetwork: true },
+        auditContext: "sat-mining-read-rpc",
+      });
+    } catch (error) {
+      const reason = redactSensitiveUrlLikeString(
+        error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+      );
+      throw new Error(
+        `rpc fetch failed after at most ${timeoutMs}ms (${redactSensitiveUrlLikeString(requestUrl)}): ${reason}`,
+      );
+    }
+    const { response, release } = guardedFetch;
+    try {
+      const body = await response.arrayBuffer();
+      return new Response(body, {
+        headers: response.headers,
+        status: response.status,
+        statusText: response.statusText,
+      });
+    } finally {
+      await release();
+    }
+  }) as typeof globalThis.fetch;
+}
+
+async function withReadRpcTimeout<T>(task: Promise<T>, method: string, rpcUrl: string): Promise<T> {
+  const timeoutMs = satRpcRequestTimeoutMs();
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      task,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(
+              new Error(
+                `rpc ${method} timed out after ${timeoutMs}ms (${redactSensitiveUrlLikeString(rpcUrl)})`,
+              ),
+            ),
+          timeoutMs,
+        );
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+}
+
 export function createReadConnection(
   solana: SolanaModuleLike,
   rpc: SatReadRpcConfig,
 ): SatReadConnectionLike {
-  const primary = new solana.Connection(rpc.primaryUrl);
-  const secondary = rpc.secondaryUrl ? new solana.Connection(rpc.secondaryUrl) : null;
+  const primary = new solana.Connection(rpc.primaryUrl, {
+    disableRetryOnRateLimit: true,
+    fetch: createAbortableReadRpcFetch(),
+  });
+  const secondary = rpc.secondaryUrl
+    ? new solana.Connection(rpc.secondaryUrl, {
+        disableRetryOnRateLimit: true,
+        fetch: createAbortableReadRpcFetch(),
+      })
+    : null;
 
   const withFallback = <TMethod extends SatReadMethodName>(
     method: TMethod,
   ): SatReadConnectionLike[TMethod] => {
     return (async (...args: unknown[]): Promise<unknown> => {
-      const quotaBackoffMs = currentReadRpcQuotaBackoffMs();
-      if (quotaBackoffMs > 0) {
-        if (!secondary) {
-          throw makeReadRpcQuotaBackoffError(method, quotaBackoffMs);
-        }
-        try {
-          updateSatRpcMethodMetric(method, "request");
-          const result = (await (
-            secondary[method] as unknown as (...inner: unknown[]) => Promise<unknown>
-          )(...args)) as unknown;
-          updateSatRpcMethodMetric(method, "success");
-          markReadRpcSuccess("fallback", rpc.secondaryUrl ?? rpc.primaryUrl);
-          return result;
-        } catch (secondaryError) {
-          updateSatRpcMethodMetric(method, "failure");
-          markReadRpcFailure(secondaryError);
-          throw secondaryError;
-        }
-      }
-      try {
+      const primaryBackoffMs = currentReadRpcBackoffMs(rpc.primaryUrl);
+      const secondaryBackoffMs = rpc.secondaryUrl ? currentReadRpcBackoffMs(rpc.secondaryUrl) : 0;
+      const callEndpoint = async (
+        connection: InstanceType<SolanaModuleLike["Connection"]>,
+        mode: "primary" | "fallback",
+        rpcUrl: string,
+      ) => {
         updateSatRpcMethodMetric(method, "request");
-        const result = (await (
-          primary[method] as unknown as (...inner: unknown[]) => Promise<unknown>
-        )(...args)) as unknown;
-        updateSatRpcMethodMetric(method, "success");
-        markReadRpcSuccess("primary", rpc.primaryUrl);
-        return result;
-      } catch (primaryError) {
-        updateSatRpcMethodMetric(method, "failure");
-        if (!secondary) {
-          markReadRpcFailure(primaryError);
-          throw primaryError;
-        }
         try {
-          updateSatRpcMethodMetric(method, "request");
-          const result = (await (
-            secondary[method] as unknown as (...inner: unknown[]) => Promise<unknown>
-          )(...args)) as unknown;
+          const task = (connection[method] as unknown as (...inner: unknown[]) => Promise<unknown>)(
+            ...args,
+          );
+          const result = await withReadRpcTimeout(task, method, rpcUrl);
           updateSatRpcMethodMetric(method, "success");
-          markReadRpcSuccess("fallback", rpc.secondaryUrl ?? rpc.primaryUrl);
+          markReadRpcSuccess(mode, rpcUrl);
           return result;
-        } catch (secondaryError) {
+        } catch (error) {
           updateSatRpcMethodMetric(method, "failure");
-          markReadRpcFailure(
-            new Error(
-              `${String(primaryError instanceof Error ? primaryError.message : primaryError)}; ${String(
-                secondaryError instanceof Error ? secondaryError.message : secondaryError,
-              )}`,
+          markReadRpcFailure(error, rpcUrl);
+          throw error;
+        }
+      };
+      if (primaryBackoffMs > 0) {
+        if (!secondary || !rpc.secondaryUrl || secondaryBackoffMs > 0) {
+          throw makeReadRpcBackoffError(
+            method,
+            Math.min(
+              primaryBackoffMs,
+              secondaryBackoffMs > 0 ? secondaryBackoffMs : primaryBackoffMs,
             ),
           );
-          throw secondaryError;
+        }
+        return await callEndpoint(secondary, "fallback", rpc.secondaryUrl);
+      }
+      try {
+        return await callEndpoint(primary, "primary", rpc.primaryUrl);
+      } catch (primaryError) {
+        if (!secondary || !rpc.secondaryUrl) {
+          throw primaryError;
+        }
+        const fallbackBackoffMs = currentReadRpcBackoffMs(rpc.secondaryUrl);
+        if (fallbackBackoffMs > 0) {
+          throw makeReadRpcBackoffError(method, fallbackBackoffMs);
+        }
+        try {
+          return await callEndpoint(secondary, "fallback", rpc.secondaryUrl);
+        } catch (secondaryError) {
+          throw new Error(
+            `rpc ${method} failed on primary (${String(
+              primaryError instanceof Error ? primaryError.message : primaryError,
+            )}) and fallback (${String(
+              secondaryError instanceof Error ? secondaryError.message : secondaryError,
+            )})`,
+          );
         }
       }
     }) as unknown as SatReadConnectionLike[TMethod];
@@ -2002,7 +2198,6 @@ async function resolveBondProgramContext(env: NodeJS.ProcessEnv) {
   };
 }
 
-const SAT_REGISTRY_RESERVE_TARGET_LAMPORTS = 200_000_000;
 const SAT_PROTOCOL_VAULT_ACCOUNT_SPACE = 0;
 const SAT_CYCLE_STATE_ACCOUNT_SPACE = 336;
 const SAT_CYCLE_REGISTRY_META_ACCOUNT_SPACE = 88;
@@ -2021,6 +2216,14 @@ async function rpcRequestOnce<T>(rpcUrl: string, method: string, params: unknown
     const target = new URL(rpcUrl);
     const transport = target.protocol === "https:" ? https : http;
     const payload = await new Promise<string>((resolve, reject) => {
+      let settled = false;
+      const finishReject = (error: Error) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        reject(error);
+      };
       const req = transport.request(
         target,
         {
@@ -2032,20 +2235,36 @@ async function rpcRequestOnce<T>(rpcUrl: string, method: string, params: unknown
         },
         (res) => {
           const chunks: Buffer[] = [];
-          res.on("data", (chunk) =>
-            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)),
-          );
-          res.on("end", () => {
-            const text = Buffer.concat(chunks).toString("utf8");
-            if ((res.statusCode ?? 500) >= 400) {
-              reject(new Error(text || `rpc ${method} failed`));
+          let responseBytes = 0;
+          res.on("data", (chunk) => {
+            const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+            responseBytes += buffer.length;
+            if (responseBytes > SAT_RPC_MAX_RESPONSE_BYTES) {
+              req.destroy(new Error(`rpc ${method} response exceeded size limit`));
               return;
             }
+            chunks.push(buffer);
+          });
+          res.on("end", () => {
+            if (settled) {
+              return;
+            }
+            const text = Buffer.concat(chunks).toString("utf8");
+            if ((res.statusCode ?? 500) >= 400) {
+              finishReject(new Error(text || `rpc ${method} failed`));
+              return;
+            }
+            settled = true;
             resolve(text);
           });
         },
       );
-      req.on("error", reject);
+      req.setTimeout(satRpcRequestTimeoutMs(), () => {
+        req.destroy(
+          new Error(`rpc ${method} timed out after ${satRpcRequestTimeoutMs()}ms (${rpcUrl})`),
+        );
+      });
+      req.on("error", (error) => finishReject(error));
       req.write(body);
       req.end();
     });
@@ -2067,41 +2286,51 @@ async function rpcRequest<T>(
   params: unknown[],
 ): Promise<T> {
   const normalized = normalizeReadRpcConfig(rpc);
-  const quotaBackoffMs = currentReadRpcQuotaBackoffMs();
-  if (quotaBackoffMs > 0 && !normalized.secondaryUrl) {
-    throw makeReadRpcQuotaBackoffError(method, quotaBackoffMs);
+  const primaryBackoffMs = currentReadRpcBackoffMs(normalized.primaryUrl);
+  const secondaryBackoffMs = normalized.secondaryUrl
+    ? currentReadRpcBackoffMs(normalized.secondaryUrl)
+    : 0;
+  if (primaryBackoffMs > 0 && (!normalized.secondaryUrl || secondaryBackoffMs > 0)) {
+    throw makeReadRpcBackoffError(
+      method,
+      Math.min(primaryBackoffMs, secondaryBackoffMs > 0 ? secondaryBackoffMs : primaryBackoffMs),
+    );
   }
-  const useFallbackDueToQuota = quotaBackoffMs > 0 && Boolean(normalized.secondaryUrl);
+  const useFallbackDueToBackoff = primaryBackoffMs > 0 && Boolean(normalized.secondaryUrl);
   try {
     const rpcUrl =
-      useFallbackDueToQuota && normalized.secondaryUrl
+      useFallbackDueToBackoff && normalized.secondaryUrl
         ? normalized.secondaryUrl
         : normalized.primaryUrl;
     const result = await rpcRequestOnce<T>(rpcUrl, method, params);
     markReadRpcSuccess(
-      useFallbackDueToQuota && normalized.secondaryUrl ? "fallback" : "primary",
+      useFallbackDueToBackoff && normalized.secondaryUrl ? "fallback" : "primary",
       rpcUrl,
     );
     return result;
   } catch (primaryError) {
-    if (!normalized.secondaryUrl || useFallbackDueToQuota) {
-      markReadRpcFailure(primaryError);
+    const failedRpcUrl =
+      useFallbackDueToBackoff && normalized.secondaryUrl
+        ? normalized.secondaryUrl
+        : normalized.primaryUrl;
+    markReadRpcFailure(primaryError, failedRpcUrl);
+    if (!normalized.secondaryUrl || useFallbackDueToBackoff) {
       throw primaryError;
+    }
+    const fallbackBackoffMs = currentReadRpcBackoffMs(normalized.secondaryUrl);
+    if (fallbackBackoffMs > 0) {
+      throw makeReadRpcBackoffError(method, fallbackBackoffMs);
     }
     try {
       const result = await rpcRequestOnce<T>(normalized.secondaryUrl, method, params);
       markReadRpcSuccess("fallback", normalized.secondaryUrl);
       return result;
     } catch (secondaryError) {
+      markReadRpcFailure(secondaryError, normalized.secondaryUrl);
       const primaryMessage =
         primaryError instanceof Error ? primaryError.message : String(primaryError);
       const secondaryMessage =
         secondaryError instanceof Error ? secondaryError.message : String(secondaryError);
-      markReadRpcFailure(
-        new Error(
-          `rpc ${method} failed on primary (${primaryMessage}) and fallback (${secondaryMessage})`,
-        ),
-      );
       throw new Error(
         `rpc ${method} failed on primary (${primaryMessage}) and fallback (${secondaryMessage})`,
       );
@@ -3343,7 +3572,7 @@ export async function inspectSatTreasuryVaultLamports(
   };
 }
 
-export async function inspectSatRentExemptionLamports(_config: SatMiningConfig): Promise<{
+export async function inspectSatRentExemptionLamports(config: SatMiningConfig): Promise<{
   registryReserveTargetLamports: string;
   protocolVaultLamports: string;
   cycleStateLamports: string;
@@ -3357,8 +3586,11 @@ export async function inspectSatRentExemptionLamports(_config: SatMiningConfig):
 }> {
   const { connection } = await resolveConnection(process.env);
   const rpc = resolveEffectiveReadRpcConfig();
+  const registryReserveTargetLamports = resolveSatGenesisProfileContract(
+    config.network,
+  ).registryReserveTargetLamports;
   return await getOrLoadRpcCacheValue(
-    `view:rent-exemption:${rpcCacheScope(rpc)}`,
+    `view:rent-exemption:${rpcCacheScope(rpc)}:${registryReserveTargetLamports}`,
     SAT_RPC_RENT_EXEMPTION_CACHE_TTL_MS,
     async () => {
       const [
@@ -3381,7 +3613,7 @@ export async function inspectSatRentExemptionLamports(_config: SatMiningConfig):
       const openCycleLamports = cycleStateLamports + cycleRegistryMetaLamports;
       const submitCycleSharedLamports = cycleSettlementProgressLamports + cycleRegistryPageLamports;
       return {
-        registryReserveTargetLamports: String(SAT_REGISTRY_RESERVE_TARGET_LAMPORTS),
+        registryReserveTargetLamports: String(registryReserveTargetLamports),
         protocolVaultLamports: String(protocolVaultLamports),
         cycleStateLamports: String(cycleStateLamports),
         cycleRegistryMetaLamports: String(cycleRegistryMetaLamports),
@@ -3592,6 +3824,20 @@ export async function inspectSatRoundState(
 
 export function inspectSatConnectionDetails() {
   const rpc = resolveEffectiveReadRpcConfig();
+  const endpointStates = [rpc.primaryUrl, rpc.secondaryUrl]
+    .filter((rpcUrl): rpcUrl is string => Boolean(rpcUrl))
+    .map((rpcUrl) => {
+      const state = satReadRpcEndpointStates.get(normalizeRpcUrlForComparison(rpcUrl));
+      return {
+        rpcUrl: redactSensitiveUrlLikeString(rpcUrl),
+        consecutiveFailures: state?.consecutiveFailures ?? 0,
+        backoffRemainingMs: currentReadRpcBackoffMs(rpcUrl),
+        quotaLikely: state?.quotaLikely ?? false,
+        lastError: state?.lastError ? redactSensitiveUrlLikeString(state.lastError) : null,
+        lastFailureAt: state?.lastFailureAt ?? null,
+        lastSuccessAt: state?.lastSuccessAt ?? null,
+      };
+    });
   return {
     programId: SAT_PROGRAM_ID(),
     bondProgramId: SAT_BOND_PROGRAM_ID(),
@@ -3608,6 +3854,7 @@ export function inspectSatConnectionDetails() {
       quotaLikely:
         satReadRpcRuntimeState.quotaLikely ||
         looksLikeRpcQuotaFailure(satReadRpcRuntimeState.lastError),
+      endpoints: endpointStates,
     },
     rpcMetrics: summarizeSatRpcMethodMetrics(),
   };

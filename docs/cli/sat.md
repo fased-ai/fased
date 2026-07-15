@@ -16,6 +16,21 @@ gateway and understand the SAT wallet, signer, and RPC setup already in place.
 
 ## Command
 
+### `fased sat sync-mainnet`
+
+Fetch the official SAT mainnet manifest, verify its checksum and signature, and
+apply the verified program IDs only when the manifest is live.
+
+```bash
+fased sat sync-mainnet
+fased sat sync-mainnet --json
+```
+
+Before launch, a valid `not_live` response is expected and does not activate
+mainnet mining. Normal users can perform the same action from **Mining > Sync**.
+Do not paste program IDs from chat or use `--manifest-url` unless following an
+official diagnostic runbook.
+
 ### `fased sat maintain`
 
 Run one SAT protocol maintenance pass through the gateway.

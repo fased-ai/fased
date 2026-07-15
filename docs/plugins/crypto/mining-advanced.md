@@ -25,8 +25,10 @@ flowchart TD
   Capital --> Safe["Safe commit"]
   Safe --> Active["Active commit"]
   Active --> Planner["Strategy planner"]
-  Planner --> Submit["Cycle submit"]
-  Submit --> Settle["Settlement"]
+  Planner --> Commit["Commit hash"]
+  Commit --> Reveal["Reveal allocation"]
+  Reveal --> Entropy["Future entropy"]
+  Entropy --> Settle["Settlement"]
   Settle --> Claim["Claim Satcoin + rebate"]
   Claim --> Sweep["Optional sweep"]
   Sweep --> Bond["Bond Vault or reserve"]
@@ -40,8 +42,8 @@ Read it like this:
 - target max is the user's saved upper limit for later
 - safe commit is the amount the runtime can safely submit right now
 - active commit is the amount stored in the miner capital PDA
-- submitted commit is locked until distribute releases that cycle
-- erosion is charged from miner capital when the cycle is submitted
+- committed capital plus worst-case reveal collateral is locked until the cycle resolves
+- a valid reveal pays normal erosion during distribution; an avoidable missed reveal pays the larger `1%` non-reveal penalty
 - the planner decides whether and how to submit
 - settlement must finish before claim is meaningful
 - claim mints Satcoin and accounts for SOL rebate
@@ -58,8 +60,10 @@ that the runtime reads, submits into, settles, and later claims from.
 flowchart TD
   Readiness["Readiness"] --> Capital["Capital"]
   Capital --> Plan["Plan"]
-  Plan --> Submit["Submit"]
-  Submit --> Settle["Settle"]
+  Plan --> Commit["Commit hash"]
+  Commit --> Reveal["Reveal allocation"]
+  Reveal --> Entropy["Seal future entropy"]
+  Entropy --> Settle["Settle"]
   Settle --> Claim["Claim"]
   Claim --> History["Close + history"]
 ```
@@ -110,12 +114,33 @@ whole funded balance so recovery and missed-cycle work still have room.
 
 Current runtime defaults:
 
-| Value                 | Default                                  |
-| --------------------- | ---------------------------------------- |
-| minimum entry         | `0.25 SOL`                               |
-| cycle cadence         | `300 seconds`                            |
-| wallet reserve target | `0.15 SOL`                               |
-| erosion               | `83 ppm` of committed lamports per cycle |
+| Value                        | Default                        |
+| ---------------------------- | ------------------------------ |
+| minimum eligibility capital  | `0.25 SOL`                     |
+| cycle length                 | `300 seconds`                  |
+| participation cadence        | every cycle                    |
+| wallet reserve target        | `0.15 SOL`                     |
+| successful-cycle erosion     | `83 ppm` of committed lamports |
+| avoidable non-reveal penalty | `1%` of committed lamports     |
+
+`0.25 SOL` is the minimum eligible commit, not a recommended always-on mining
+balance. A miner also needs reveal collateral and separate wallet SOL for rent
+and transaction fees. Start with additional reserve, read the estimated runway,
+and reduce cadence before increasing capital.
+
+Economy cadence controls entry into new cycles only:
+
+| Economy setting | New participation                              |
+| --------------- | ---------------------------------------------- |
+| every cycle     | all eligible cycles                            |
+| every 2nd       | one out of every two launch-relative cycles    |
+| every 6th       | one out of every six launch-relative cycles    |
+| every 12th      | one out of every twelve launch-relative cycles |
+
+Existing commitments always continue through reveal, entropy, settlement, and
+claim even when cadence skips the next cycle. The Mining page runway estimate
+uses current capital, commit, normal erosion, and cadence; network fees remain a
+separate cost.
 
 The runtime computes safe spend from:
 
@@ -174,7 +199,8 @@ Good posture:
 
 Shared cycle accounts are not paid by the miner wallet directly. They are paid
 from the protocol registry reserve. The miner still pays signer fees and miner
-state costs, and miner capital still pays erosion.
+state costs, and miner capital pays erosion after a valid reveal is distributed.
+An entropy-unavailable cycle unwinds without erosion or non-reveal penalty.
 
 For common operator symptoms, see [Mining troubleshooting](/plugins/crypto/mining-troubleshooting).
 
@@ -212,7 +238,7 @@ recovery-oriented setups; they are not a separate protocol claim path.
 
 Auto mode does not make mining uncontrolled. It changes how the next strategy
 path is selected; the Mining wallet, signer policy, reserve checks, active
-commit, cycle submit, settlement, and claim rules still apply.
+commit, cycle commit/reveal, settlement, and claim rules still apply.
 
 A strategy-only mining task is narrower than full Auto mining. It may read mining
 status/history and update strategy fields, but it must not change active commit,
@@ -249,14 +275,19 @@ preset, and result before changing mode.
 
 **Crowd-Aware Allocation**
 
-Avoid likely overcrowded buckets and spread into underweighted buckets.
+Use settled historical crowd distributions to forecast crowding risk and keep
+broader tail exposure. Current-cycle allocations remain hidden through commit
+close. They become public only during reveal, after every commitment is fixed,
+so this mode cannot copy another miner's current allocation.
 
 **Safe Fallback**
 
 Use deterministic balanced preset if planner, model, signer, or RPC checks fail.
 
 These are strategy intents, not protocol changes. Each mode still compiles to
-one valid dense 25-bucket allocation vector before `sat_submit_cycle`.
+one valid dense 25-bucket allocation vector before `sat.commitCycle`; Fased
+stores the private allocation and nonce locally, then submits them through
+`sat.revealCycle` after commits close.
 
 Example compiler path:
 
@@ -264,7 +295,8 @@ Example compiler path:
 strategy intent
 -> Fased allocation compiler
 -> 25-bucket allocation vector
--> sat_submit_cycle
+-> sat.commitCycle (hash only)
+-> sat.revealCycle (allocation + nonce after commit close)
 -> on-chain score/rebate
 ```
 
@@ -288,9 +320,10 @@ A one-miner run proves runtime wiring only. It shows that the selected strategy
 compiled into a valid 25-bucket vector, submitted, settled, claimed, and
 recorded. It does not prove the strategy is better.
 
-Strategy quality is competitive. The on-chain program compares each miner's
-allocation against the cycle benchmark and the other miners' positive skill
-scores. To prove a strategy helps, run several miners through the same cycles:
+Strategy quality is competitive. The on-chain program converts each miner's
+full placement return into a capital-weighted reward value. This keeps wallet
+splitting neutral while still rewarding better allocation. To prove a strategy
+helps, run several miners through the same cycles:
 
 1. assign equal submitted commit targets;
 2. assign different strategies to different miners;
@@ -333,6 +366,11 @@ separate maintenance instructions and are outside the Mining page claim flow.
 
 Claim does not unlock committed capital. Distribute unlocks committed capital
 first; claim then collects Satcoin and rebate after the cycle is settled.
+
+The mint path caps one claim instruction at `10,000 SAT`. Fased automatically
+submits bounded claim chunks and leaves the cycle pending until its full
+claimable amount is confirmed. A successful first chunk is not treated as a
+fully claimed cycle.
 
 Watch:
 

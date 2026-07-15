@@ -4837,6 +4837,13 @@ export class FasedAgentApp extends LitElement {
     }));
   }
 
+  handleMiningCycleCadenceChange(cycleCadence: SatMinerProfile["cycleCadence"]) {
+    void this.persistMiningProfileUpdate((current) => ({
+      ...current,
+      cycleCadence,
+    }));
+  }
+
   handleMiningStrategyModeChange(mode: SatMinerProfile["strategyMode"]) {
     void this.persistMiningProfileUpdate((current) => ({
       ...current,

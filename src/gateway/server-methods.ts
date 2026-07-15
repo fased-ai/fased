@@ -57,10 +57,9 @@ const CONTROL_PLANE_WRITE_METHODS = new Set([
 ]);
 const SAT_MINING_MUTATION_METHODS = new Set([
   "sat.openCycle",
-  "sat.bootstrapRegistryReserve",
+  "sat.topUpRegistryReserve",
   "sat.refillRegistryReserveFromTreasury",
   "sat.runProtocolMaintenanceOnce",
-  "sat.setProtocolRecipients",
   "sat.claimProtocolTreasury",
   "sat.claimProtocolDistributorSat",
   "sat.initMinerCapital",

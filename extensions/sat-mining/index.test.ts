@@ -129,12 +129,35 @@ vi.mock("./src/solana-submit.js", () => ({
     txHash: "tx-withdraw-miner-capital",
   })),
   submitSatSetActiveCommit: vi.fn(async () => ({ ok: true, txHash: "tx-set-active-commit" })),
+  submitSatTopUpRegistryReserve: vi.fn(async () => ({
+    ok: true,
+    txHash: "tx-top-up-registry-reserve",
+  })),
   submitSatOpenCycle: vi.fn(async () => ({ ok: true, txHash: "tx-open-cycle" })),
-  submitSatCycle: vi.fn(async () => ({ ok: true, txHash: "tx-submit-cycle" })),
+  submitSatCommitCycle: vi.fn(async () => ({ ok: true, txHash: "tx-commit-cycle" })),
+  submitSatCloseCommitPhase: vi.fn(async () => ({ ok: true, txHash: "tx-close-commit" })),
+  submitSatSealCycleEntropy: vi.fn(async () => ({ ok: true, txHash: "tx-seal-entropy" })),
+  submitSatRevealCycle: vi.fn(async () => ({ ok: true, txHash: "tx-reveal-cycle" })),
+  submitSatReleaseUnrevealedCommit: vi.fn(async () => ({
+    ok: true,
+    txHash: "tx-release-commit",
+  })),
+  submitSatAbortEmptyCycle: vi.fn(async () => ({
+    ok: true,
+    txHash: "tx-abort-empty-cycle",
+  })),
   submitSatClaimCycleRewards: vi.fn(async () => ({ ok: true, txHash: "tx-claim-cycle" })),
   submitSatClaimCycleRewardsBatch: vi.fn(async () => ({
     ok: true,
     txHash: "tx-claim-cycle-batch",
+  })),
+  submitSatClaimUnallocatedStakingRewards: vi.fn(async () => ({
+    ok: true,
+    txHash: "tx-claim-unallocated-staking",
+  })),
+  submitSatSyncBondStakingRewards: vi.fn(async () => ({
+    ok: true,
+    txHash: "tx-sync-bond-staking",
   })),
   submitSatRetargetUnlock: vi.fn(async () => ({ ok: true, txHash: "tx-retarget" })),
   submitSatValidatorAttestation: vi.fn(async () => ({ ok: true })),
@@ -2485,7 +2508,7 @@ describe("sat-mining plugin config persistence", () => {
         },
       });
     } finally {
-      inspectSatChainUnixTimeMock.mockResolvedValue(Math.floor(Date.now() / 1000));
+      inspectSatChainUnixTimeMock.mockImplementation(async () => Math.floor(Date.now() / 1000));
     }
   });
 
@@ -3947,6 +3970,7 @@ describe("sat-mining plugin config persistence", () => {
   it("hides internal maintenance actions from user-facing mining status", async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "sat-public-actions-"));
     try {
+      const actionAt = new Date().toISOString();
       await writeSatRecentActions(
         resolveSatRuntimeStorePath(tempDir, "wallet-a"),
         [
@@ -3955,27 +3979,27 @@ describe("sat-mining plugin config persistence", () => {
             cycleId: 320,
             status: "success",
             txHash: "tx-claim",
-            at: new Date().toISOString(),
+            at: actionAt,
           },
           {
             action: "submitCycle",
             cycleId: 321,
             status: "success",
             txHash: "tx-submit",
-            at: new Date().toISOString(),
+            at: actionAt,
           },
           {
             action: "bootstrapRegistryReserve",
             status: "success",
             txHash: "tx-bootstrap",
-            at: new Date().toISOString(),
+            at: actionAt,
           },
           {
             action: "openCycle",
             cycleId: 321,
             status: "success",
             txHash: "tx-open",
-            at: new Date().toISOString(),
+            at: actionAt,
           },
         ],
         {
@@ -5149,7 +5173,7 @@ describe("sat-mining plugin config persistence", () => {
     });
   });
 
-  it("persists round execution immediately after openCycle and submitCycle succeed", async () => {
+  it("persists round execution immediately after openCycle and commitCycle succeed", async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "sat-submit-persist-"));
     try {
       const { default: satMiningPlugin } = await import("./index.js");
@@ -5218,8 +5242,8 @@ describe("sat-mining plugin config persistence", () => {
         params: { cycleId: 123 },
         respond: () => {},
       });
-      await gatewayMethods.get("sat.submitCycle")!.handler({
-        params: { cycleId: 123, allocationFp: [] },
+      await gatewayMethods.get("sat.commitCycle")!.handler({
+        params: { cycleId: 123, commitmentHex: "11".repeat(32) },
         respond: () => {},
       });
 
@@ -5229,6 +5253,7 @@ describe("sat-mining plugin config persistence", () => {
           roundKey: string;
           execution: {
             openRoundSubmitted: boolean;
+            commitSubmitted: boolean;
             participationSubmitted: boolean;
           };
         }>;
@@ -5239,7 +5264,8 @@ describe("sat-mining plugin config persistence", () => {
             roundKey: "123:0",
             execution: expect.objectContaining({
               openRoundSubmitted: true,
-              participationSubmitted: true,
+              commitSubmitted: true,
+              participationSubmitted: false,
             }),
           }),
         ]),
@@ -5249,12 +5275,12 @@ describe("sat-mining plugin config persistence", () => {
     }
   });
 
-  it("does not record submitCycle rollover as a hard recent-action failure", async () => {
+  it("does not record commitCycle rollover as a hard recent-action failure", async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "sat-submit-rollover-"));
     const solanaSubmit = await import("./src/solana-submit.js");
-    vi.mocked(solanaSubmit.submitSatCycle).mockRejectedValueOnce(
+    vi.mocked(solanaSubmit.submitSatCommitCycle).mockRejectedValueOnce(
       new Error(
-        "Transaction simulation failed: Error processing Instruction 0: InvalidInstructionData Program log: submit_cycle cycle mismatch: requested=123, current=124",
+        "Transaction simulation failed: Error processing Instruction 0: InvalidInstructionData Program log: commit_cycle cycle mismatch: requested=123, current=124",
       ),
     );
     try {
@@ -5321,8 +5347,8 @@ describe("sat-mining plugin config persistence", () => {
       });
 
       let response: { ok: boolean; payload: unknown; error?: unknown } | null = null;
-      await gatewayMethods.get("sat.submitCycle")!.handler({
-        params: { cycleId: 123, allocationFp: [] },
+      await gatewayMethods.get("sat.commitCycle")!.handler({
+        params: { cycleId: 123, commitmentHex: "11".repeat(32) },
         respond: (ok, payload, error) => {
           response = { ok, payload, error };
         },
@@ -5342,7 +5368,7 @@ describe("sat-mining plugin config persistence", () => {
       expect(
         (persisted.recentActions ?? []).some(
           (entry) =>
-            entry.action === "submitCycle" && entry.cycleId === 123 && entry.status === "failure",
+            entry.action === "commitCycle" && entry.cycleId === 123 && entry.status === "failure",
         ),
       ).toBe(false);
     } finally {
@@ -6211,6 +6237,13 @@ describe("sat-mining cycle gateway integration", () => {
 
     for (const method of [
       "sat.openCycle",
+      "sat.topUpRegistryReserve",
+      "sat.commitCycle",
+      "sat.closeCommitPhase",
+      "sat.sealCycleEntropy",
+      "sat.revealCycle",
+      "sat.releaseUnrevealedCommit",
+      "sat.abortEmptyCycle",
       "sat.submitCycle",
       "sat.settleCyclePage",
       "sat.claimCycleRewards",
@@ -6218,6 +6251,8 @@ describe("sat-mining cycle gateway integration", () => {
     ]) {
       expect(gatewayMethods.has(method)).toBe(true);
     }
+    expect(gatewayMethods.has("sat.bootstrapRegistryReserve")).toBe(false);
+    expect(gatewayMethods.has("sat.setProtocolRecipients")).toBe(false);
 
     let response: { ok: boolean; payload: unknown } | null = null;
     await gatewayMethods.get("sat.openCycle")!.handler({

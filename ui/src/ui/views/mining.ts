@@ -102,6 +102,7 @@ export type MiningViewProps = {
   onSaveProfileNameChange: (value: string) => void;
   onStrategyPresetChange: (preset: SatMinerProfile["strategyPreset"]) => void;
   onStrategyExecutionChange: (execution: SatMinerProfile["strategyExecution"]) => void;
+  onCycleCadenceChange: (cadence: SatMinerProfile["cycleCadence"]) => void;
   onOpenAomStrategyTask: () => void;
   onStrategyModeChange: (mode: SatMinerProfile["strategyMode"]) => void;
   onSkillConfigChange: (patch: Partial<NonNullable<SatMinerProfile["skillConfig"]>>) => void;
@@ -3711,6 +3712,14 @@ export function renderMining(props: MiningViewProps) {
     profile?.strategyExecution ??
     status?.strategyExecution ??
     strategyModeToExecution(profile?.strategyMode ?? status?.strategyMode);
+  const cycleCadence = profile?.cycleCadence ?? status?.cycleCadence ?? 1;
+  const runwayDays = status?.runway?.estimatedDays ?? null;
+  const runwayLabel =
+    runwayDays == null
+      ? "Runway unavailable"
+      : runwayDays < 1
+        ? `~${Math.max(0, runwayDays * 24).toFixed(1)} hours`
+        : `~${runwayDays < 10 ? runwayDays.toFixed(1) : Math.floor(runwayDays)} days`;
   const autoExecution = strategyExecution === "auto";
   const lockedNowLabel = "Locked";
   const withdrawableNowLabel = "Withdraw";
@@ -3786,7 +3795,7 @@ export function renderMining(props: MiningViewProps) {
     (check) => check.key === "fundingReady",
   )?.ok;
   const belowMinimumCapitalReason = capitalBelowMinimumDustOnly
-    ? `Withdraw ${formatMetricAmount(capitalFreeLamports.toString(), "SOL")} SOL or deposit enough to reach the 0.25 SOL miner-capital minimum.`
+    ? `Withdraw ${formatMetricAmount(capitalFreeLamports.toString(), "SOL")} SOL or deposit enough to reach the 0.25 SOL miner-capital eligibility minimum.`
     : "Deposit to Mining.";
   const controlDisabled = props.actionBusy;
   const signerRentShortfall =
@@ -3901,7 +3910,7 @@ export function renderMining(props: MiningViewProps) {
                   ? commitExceedsSafeCapitalNow
                     ? commitSafety.safeMaxCommitLamports >= minCommitLamports
                       ? `Target can be saved. Safe commit is ${formatMetricAmount(commitSafety.safeMaxCommitLamports.toString(), "SOL")} SOL.`
-                      : `Need ${minimumCapitalForMinimumCommitLabel} SOL free for the minimum 0.25 SOL commit.`
+                      : `Need ${minimumCapitalForMinimumCommitLabel} SOL free for the 0.25 SOL eligibility commit plus collateral.`
                     : "Lower target."
                   : minerEnabled
                     ? "Mining is already enabled"
@@ -6642,6 +6651,33 @@ export function renderMining(props: MiningViewProps) {
                       </option>`,
                     )}
                   </select>
+                </div>
+                <div class="mining-stack">
+                  <div class="mining-section-label">
+                    Economy
+                    ${renderMiningHelp(
+                      "Participation cadence. Existing commitments always reveal and settle; this only controls entry into new cycles. 0.25 SOL is minimum eligibility, not a recommended always-on balance.",
+                    )}
+                  </div>
+                  <select
+                    class="mining-select"
+                    ?disabled=${controlDisabled}
+                    @change=${(event: Event) =>
+                      props.onCycleCadenceChange(
+                        Number(
+                          (event.currentTarget as HTMLSelectElement).value,
+                        ) as SatMinerProfile["cycleCadence"],
+                      )}
+                    title=${`${runwayLabel}; network fees are separate`}
+                  >
+                    <option value="1" ?selected=${cycleCadence === 1}>Every cycle</option>
+                    <option value="2" ?selected=${cycleCadence === 2}>Every 2nd</option>
+                    <option value="6" ?selected=${cycleCadence === 6}>Every 6th</option>
+                    <option value="12" ?selected=${cycleCadence === 12}>Every 12th</option>
+                  </select>
+                  <div class="mining-commit-status" title="Estimate excludes transaction fees.">
+                    Estimated runway ${runwayLabel}
+                  </div>
                 </div>
                 <div class="mining-stack">
                   <div class="mining-section-label">

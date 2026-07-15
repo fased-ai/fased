@@ -5,6 +5,7 @@ import { createSatMiningRuntimeState, getOrCreateRoundExecutionState } from "./r
 const runSatGatewayMethod = vi.fn(async (..._args: unknown[]): Promise<unknown> => ({ ok: true }));
 const inspectSatChainUnixTime = vi.fn(async () => Math.floor(Date.now() / 1000));
 const inspectSatMinerCapital = vi.fn(async (..._args: unknown[]): Promise<unknown> => null);
+const inspectSatCycle = vi.fn(async (..._args: unknown[]): Promise<unknown> => null);
 const inspectSatMinerCycle = vi.fn(async (..._args: unknown[]): Promise<unknown> => null);
 const inspectSatCycleSettlementProgressV2 = vi.fn(
   async (..._args: unknown[]): Promise<unknown> => null,
@@ -17,6 +18,7 @@ vi.mock("./gateway-runner.js", () => ({
 vi.mock("./rpc-read.js", () => ({
   inspectSatChainUnixTime: () => inspectSatChainUnixTime(),
   inspectSatMinerCapital: (...args: unknown[]) => inspectSatMinerCapital(...args),
+  inspectSatCycle: (...args: unknown[]) => inspectSatCycle(...args),
   inspectSatMinerCycle: (...args: unknown[]) => inspectSatMinerCycle(...args),
   inspectSatCycleSettlementProgressV2: (...args: unknown[]) =>
     inspectSatCycleSettlementProgressV2(...args),
@@ -32,6 +34,8 @@ describe("createSatRecoveryService", () => {
     inspectSatChainUnixTime.mockImplementation(async () => Math.floor(Date.now() / 1000));
     inspectSatMinerCapital.mockReset();
     inspectSatMinerCapital.mockResolvedValue(null);
+    inspectSatCycle.mockReset();
+    inspectSatCycle.mockResolvedValue(null);
     inspectSatMinerCycle.mockReset();
     inspectSatMinerCycle.mockResolvedValue(null);
     inspectSatCycleSettlementProgressV2.mockReset();
@@ -389,6 +393,250 @@ describe("createSatRecoveryService", () => {
     );
     expect(api.logger.warn).toHaveBeenCalledWith(
       expect.stringContaining("recovery service rate limited; backing off 60s"),
+    );
+
+    await service.stop?.();
+  });
+
+  it("recovers prior-cycle entropy before considering an expired reveal deadline", async () => {
+    const config = {
+      enabled: true,
+      network: "devnet" as const,
+      riskMode: "balanced" as const,
+      walletId: "wallet-a",
+    };
+    const state = createSatMiningRuntimeState(config);
+    state.activeWalletAddress = "authority-1";
+    const nowSec = Math.floor(Date.now() / 1000);
+    const cycleId = Math.floor(nowSec / 300) - 1;
+    getOrCreateRoundExecutionState(state, cycleId, 0).commitSubmitted = true;
+    inspectSatMinerCapital.mockResolvedValue({
+      lockedLamports: "300000000",
+      firstPendingCycleId: cycleId,
+      lastPendingCycleId: cycleId,
+    });
+    inspectSatCycle.mockResolvedValue({
+      cycleId,
+      status: 1,
+      cycleSeed: "0".repeat(64),
+      commitDeadlineTs: nowSec - 180,
+      revealDeadlineTs: nowSec - 60,
+      entropyTargetSlot: 123,
+      committedMinerCount: "1",
+      resolvedCommitCount: "0",
+      validMinerCount: "0",
+    });
+    inspectSatMinerCycle.mockResolvedValue({
+      authority: "authority-1",
+      cycleId,
+      validParticipation: false,
+      capitalLockReleased: false,
+    });
+    const api = {
+      logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    } as const;
+
+    const service = createSatRecoveryService({ api: api as never, config, state });
+    await service.start();
+    await vi.advanceTimersByTimeAsync(20_000);
+
+    expect(runSatGatewayMethod).toHaveBeenCalledTimes(1);
+    expect(runSatGatewayMethod).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "sat.sealCycleEntropy",
+        payload: { cycleId },
+      }),
+    );
+    expect(state.workers.recovery.waitingReason).toContain("sealing post-reveal entropy");
+
+    await service.stop?.();
+  });
+
+  it("releases a missed prior reveal and aborts a fully resolved empty cycle", async () => {
+    const config = {
+      enabled: true,
+      network: "devnet" as const,
+      riskMode: "balanced" as const,
+      walletId: "wallet-a",
+    };
+    const state = createSatMiningRuntimeState(config);
+    state.activeWalletAddress = "authority-1";
+    const nowSec = Math.floor(Date.now() / 1000);
+    const cycleId = Math.floor(nowSec / 300) - 1;
+    getOrCreateRoundExecutionState(state, cycleId, 0).commitSubmitted = true;
+    inspectSatMinerCapital.mockResolvedValue({
+      lockedLamports: "300000000",
+      firstPendingCycleId: cycleId,
+      lastPendingCycleId: cycleId,
+    });
+    inspectSatCycle
+      .mockResolvedValueOnce({
+        cycleId,
+        status: 1,
+        cycleSeed: "7".repeat(64),
+        commitDeadlineTs: nowSec - 180,
+        revealDeadlineTs: nowSec - 60,
+        entropyTargetSlot: 123,
+        committedMinerCount: "1",
+        resolvedCommitCount: "0",
+        validMinerCount: "0",
+      })
+      .mockResolvedValueOnce({
+        cycleId,
+        status: 1,
+        cycleSeed: "7".repeat(64),
+        committedMinerCount: "1",
+        resolvedCommitCount: "1",
+        validMinerCount: "0",
+      });
+    inspectSatMinerCycle.mockResolvedValue({
+      authority: "authority-1",
+      cycleId,
+      validParticipation: false,
+      capitalLockReleased: false,
+    });
+    const api = {
+      logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    } as const;
+
+    const service = createSatRecoveryService({ api: api as never, config, state });
+    await service.start();
+    await vi.advanceTimersByTimeAsync(20_000);
+
+    expect(
+      runSatGatewayMethod.mock.calls.map(
+        (call) => (call[0] as { method?: string } | undefined)?.method,
+      ),
+    ).toEqual([
+      "sat.releaseUnrevealedCommit",
+      "sat.abortEmptyCycle",
+      "sat.closeResolvedCycleAccounts",
+    ]);
+    expect(state.roundExecution.has(`${cycleId}:0`)).toBe(false);
+    expect(state.workers.recovery.lastDetail).toContain(
+      `released missed reveal and aborted empty cycle ${cycleId}`,
+    );
+
+    await service.stop?.();
+  });
+
+  it("unwinds an unprovable prior-cycle commitment without a missed-reveal penalty", async () => {
+    const config = {
+      enabled: true,
+      network: "devnet" as const,
+      riskMode: "balanced" as const,
+      walletId: "wallet-a",
+    };
+    const state = createSatMiningRuntimeState(config);
+    state.activeWalletAddress = "authority-1";
+    const nowSec = Math.floor(Date.now() / 1000);
+    const cycleId = Math.floor(nowSec / 300) - 1;
+    getOrCreateRoundExecutionState(state, cycleId, 0).commitSubmitted = true;
+    inspectSatMinerCapital.mockResolvedValue({
+      lockedLamports: "300000000",
+      firstPendingCycleId: cycleId,
+      lastPendingCycleId: cycleId,
+    });
+    inspectSatCycle
+      .mockResolvedValueOnce({
+        cycleId,
+        status: 1,
+        cycleSeed: "ff".repeat(32),
+        entropyUnavailable: true,
+        commitDeadlineTs: nowSec - 180,
+        revealDeadlineTs: nowSec + 60,
+        entropyTargetSlot: 123,
+        committedMinerCount: "1",
+        resolvedCommitCount: "0",
+        validMinerCount: "0",
+      })
+      .mockResolvedValueOnce({
+        cycleId,
+        status: 1,
+        cycleSeed: "ff".repeat(32),
+        entropyUnavailable: true,
+        committedMinerCount: "1",
+        resolvedCommitCount: "1",
+        validMinerCount: "0",
+      });
+    inspectSatMinerCycle.mockResolvedValue({
+      authority: "authority-1",
+      cycleId,
+      validParticipation: false,
+      capitalLockReleased: false,
+    });
+    const api = {
+      logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    } as const;
+
+    const service = createSatRecoveryService({ api: api as never, config, state });
+    await service.start();
+    await vi.advanceTimersByTimeAsync(20_000);
+
+    expect(
+      runSatGatewayMethod.mock.calls.map(
+        (call) => (call[0] as { method?: string } | undefined)?.method,
+      ),
+    ).toEqual([
+      "sat.releaseUnrevealedCommit",
+      "sat.abortEmptyCycle",
+      "sat.closeResolvedCycleAccounts",
+    ]);
+    expect(state.roundExecution.has(`${cycleId}:0`)).toBe(false);
+    expect(state.workers.recovery.lastDetail).toContain("without penalty");
+
+    await service.stop?.();
+  });
+
+  it("closes its own resolved commitment after another keeper aborts the empty cycle", async () => {
+    const config = {
+      enabled: true,
+      network: "devnet" as const,
+      riskMode: "balanced" as const,
+      walletId: "wallet-a",
+    };
+    const state = createSatMiningRuntimeState(config);
+    state.activeWalletAddress = "authority-1";
+    const cycleId = Math.floor(Date.now() / 1000 / 300) - 1;
+    getOrCreateRoundExecutionState(state, cycleId, 0).commitSubmitted = true;
+    inspectSatMinerCapital.mockResolvedValue({
+      lockedLamports: "0",
+      firstPendingCycleId: cycleId,
+      lastPendingCycleId: cycleId,
+    });
+    inspectSatCycle.mockResolvedValue({
+      cycleId,
+      status: 2,
+      committedMinerCount: "2",
+      resolvedCommitCount: "2",
+      validMinerCount: "0",
+    });
+    inspectSatMinerCycle.mockResolvedValue({
+      authority: "authority-1",
+      cycleId,
+      validParticipation: false,
+      capitalLockReleased: true,
+      claimableSatRaw: "0",
+      claimableDetRebateLamports: "0",
+      claimablePerfRebateLamports: "0",
+    });
+    const api = {
+      logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    } as const;
+
+    const service = createSatRecoveryService({ api: api as never, config, state });
+    await service.start();
+    await vi.advanceTimersByTimeAsync(20_000);
+
+    expect(runSatGatewayMethod).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "sat.closeResolvedCycleAccounts",
+        payload: { cycleId },
+      }),
+    );
+    expect(state.roundExecution.has(`${cycleId}:0`)).toBe(false);
+    expect(state.workers.recovery.lastDetail).toContain(
+      `closed resolved commitment cycle ${cycleId}`,
     );
 
     await service.stop?.();

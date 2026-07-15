@@ -247,6 +247,7 @@ describe("local signer env file helpers", () => {
             "keystore-solana-wallet-1.v1.enc",
           ),
           FASED_WALLET_SOLANA_RPC_URL__WALLET_1: "https://rpc.example/solana",
+          FASED_WALLET_SOLANA_WRITE_RPC_FALLBACK_URL__WALLET_1: "https://rpc-backup.example/solana",
           FASED_WALLET_CUSTODY_MODE: "split-key",
           FASED_WALLET_CUSTODY_WALLETS: "wallet_1",
           FASED_WALLET_CUSTODY_PASSKEY_CEREMONY: "1",
@@ -293,6 +294,9 @@ describe("local signer env file helpers", () => {
     expect(content).not.toContain("export FASED_WALLET_SOLANA_KEYSTORE_PATH=");
     expect(content).toContain(
       'export FASED_WALLET_SOLANA_RPC_URL__WALLET_1="https://rpc.example/solana"',
+    );
+    expect(content).toContain(
+      'export FASED_WALLET_SOLANA_WRITE_RPC_FALLBACK_URL__WALLET_1="https://rpc-backup.example/solana"',
     );
     expect(content).toContain('export FASED_WALLET_CUSTODY_MODE="split-key"');
     expect(content).toContain('export FASED_WALLET_CUSTODY_WALLETS="wallet_1"');
@@ -503,5 +507,13 @@ describe("local signer env file helpers", () => {
     expect(content).not.toContain(
       `export FASED_WALLET_SOLANA_KEYSTORE_PATH="${path.join(walletDir, "keystore-solana.v1.enc")}"`,
     );
+    expect(content).toContain('export FASED_WALLET_LOCAL_SIGNER_ROLE="agent"');
+    expect(content).toContain('export FASED_WALLET_LOCAL_SIGNER_DIRECT_SIGNING="1"');
+    expect(content).toContain('export FASED_WALLET_LOCAL_SIGNER_CAPS_ENABLED="0"');
+    expect(content).toContain('export FASED_WALLET_LOCAL_SIGNER_ROLE__WALLET_1="agent"');
+    expect(content).toContain('export FASED_WALLET_LOCAL_SIGNER_DIRECT_SIGNING__WALLET_1="1"');
+    expect(content).toContain('export FASED_WALLET_LOCAL_SIGNER_CAPS_ENABLED__WALLET_1="0"');
+    expect(content).toMatch(/FASED_WALLET_LOCAL_SIGNER_SOLANA_MAX_PER_TX__WALLET_1="[0-9]+"/);
+    expect(content).toMatch(/FASED_WALLET_LOCAL_SIGNER_SOLANA_MAX_DAILY__WALLET_1="[0-9]+"/);
   });
 });

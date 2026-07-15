@@ -122,29 +122,32 @@ type envelope struct {
 }
 
 type signerConfig struct {
-	socketPath          string
-	pidFile             string
-	auditLog            string
-	readOnly            bool
-	rateWindow          time.Duration
-	rateLimit           map[string]int
-	auditMax            int64
-	dropUID             int
-	dropGID             int
-	backendMode         string
-	chains              []string
-	keystorePath        string
-	solanaKeystorePath  string
-	solanaKeystorePaths map[string]string
-	rpcURL              string
-	solanaRPCURL        string
-	solanaRPCURLs       map[string]string
-	walletRoles         map[string]string
-	walletDirectSigning map[string]bool
-	walletCapsEnabled   map[string]bool
-	solanaAllowPrograms map[string]map[string]bool
-	solanaMaxPerTx      map[string]*big.Int
-	solanaMaxDaily      map[string]*big.Int
+	socketPath                 string
+	pidFile                    string
+	auditLog                   string
+	readOnly                   bool
+	rateWindow                 time.Duration
+	rateLimit                  map[string]int
+	auditMax                   int64
+	dropUID                    int
+	dropGID                    int
+	backendMode                string
+	chains                     []string
+	keystorePath               string
+	solanaKeystorePath         string
+	solanaKeystorePaths        map[string]string
+	rpcURL                     string
+	solanaRPCURL               string
+	solanaRPCURLs              map[string]string
+	solanaWriteRPCFallbackURL  string
+	solanaWriteRPCFallbackURLs map[string]string
+	walletRoles                map[string]string
+	walletDirectSigning        map[string]bool
+	walletCapsEnabled          map[string]bool
+	walletPolicyConfigErrors   map[string]string
+	solanaAllowPrograms        map[string]map[string]bool
+	solanaMaxPerTx             map[string]*big.Int
+	solanaMaxDaily             map[string]*big.Int
 }
 
 type opBucket struct {
@@ -578,14 +581,32 @@ func parseScopedStringEnv(name string) map[string]string {
 	return out
 }
 
-func parseScopedBoolEnv(name string) map[string]bool {
+func parseScopedBoolEnv(name string) (map[string]bool, map[string]string) {
 	raw := parseScopedStringEnv(name)
 	out := map[string]bool{}
+	errorsByWallet := map[string]string{}
 	for walletID, value := range raw {
 		normalized := strings.TrimSpace(strings.ToLower(value))
-		out[walletID] = normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on"
+		switch normalized {
+		case "1", "true", "yes", "on":
+			out[walletID] = true
+		case "0", "false", "no", "off":
+			out[walletID] = false
+		default:
+			errorsByWallet[walletID] = fmt.Sprintf("%s must be an explicit boolean", name)
+		}
 	}
-	return out
+	return out, errorsByWallet
+}
+
+func mergePolicyConfigErrors(target map[string]string, source map[string]string) {
+	for walletID, message := range source {
+		if existing := target[walletID]; existing != "" {
+			target[walletID] = existing + "; " + message
+		} else {
+			target[walletID] = message
+		}
+	}
 }
 
 func parseScopedBigIntEnv(name string) map[string]*big.Int {
@@ -834,12 +855,22 @@ func parseArgs() signerConfig {
 				strings.TrimSpace(os.Getenv("FASED_WALLET_RPC_URL")),
 			),
 		),
+		solanaWriteRPCFallbackURL: firstNonEmpty(
+			strings.TrimSpace(os.Getenv("FASED_WALLET_SOLANA_WRITE_RPC_FALLBACK_URL")),
+			strings.TrimSpace(os.Getenv("FASED_WALLET_SOLANA_RPC_FALLBACK_URL")),
+		),
 	}
 	cfg.solanaKeystorePaths = parseWalletMapEnv("FASED_WALLET_SOLANA_KEYSTORE_PATH__")
 	cfg.solanaRPCURLs = parseWalletMapEnv("FASED_WALLET_SOLANA_RPC_URL__")
+	cfg.solanaWriteRPCFallbackURLs = parseWalletMapEnv("FASED_WALLET_SOLANA_WRITE_RPC_FALLBACK_URL__")
 	cfg.walletRoles = parseScopedStringEnv("FASED_WALLET_LOCAL_SIGNER_ROLE")
-	cfg.walletDirectSigning = parseScopedBoolEnv("FASED_WALLET_LOCAL_SIGNER_DIRECT_SIGNING")
-	cfg.walletCapsEnabled = parseScopedBoolEnv("FASED_WALLET_LOCAL_SIGNER_CAPS_ENABLED")
+	cfg.walletPolicyConfigErrors = map[string]string{}
+	var directSigningErrors map[string]string
+	cfg.walletDirectSigning, directSigningErrors = parseScopedBoolEnv("FASED_WALLET_LOCAL_SIGNER_DIRECT_SIGNING")
+	mergePolicyConfigErrors(cfg.walletPolicyConfigErrors, directSigningErrors)
+	var capsEnabledErrors map[string]string
+	cfg.walletCapsEnabled, capsEnabledErrors = parseScopedBoolEnv("FASED_WALLET_LOCAL_SIGNER_CAPS_ENABLED")
+	mergePolicyConfigErrors(cfg.walletPolicyConfigErrors, capsEnabledErrors)
 	cfg.solanaAllowPrograms = parseScopedProgramAllowlistEnv("FASED_WALLET_LOCAL_SIGNER_SOLANA_ALLOW_PROGRAMS")
 	cfg.solanaMaxPerTx = parseScopedBigIntEnv("FASED_WALLET_LOCAL_SIGNER_SOLANA_MAX_PER_TX")
 	cfg.solanaMaxDaily = parseScopedBigIntEnv("FASED_WALLET_LOCAL_SIGNER_SOLANA_MAX_DAILY")
@@ -987,6 +1018,46 @@ func (cfg signerConfig) rpcURLForWallet(chain, walletID string) string {
 	default:
 		return cfg.rpcURL
 	}
+}
+
+func (cfg signerConfig) solanaWriteRPCFallbackURLForWallet(walletID string) string {
+	wid := normalizeWalletID(walletID)
+	if u := strings.TrimSpace(cfg.solanaWriteRPCFallbackURLs[wid]); u != "" {
+		return u
+	}
+	if wid != "default" {
+		if u := strings.TrimSpace(cfg.solanaWriteRPCFallbackURLs["default"]); u != "" {
+			return u
+		}
+	}
+	if wid == "default" {
+		if u := singleScopedValue(cfg.solanaWriteRPCFallbackURLs); u != "" {
+			return u
+		}
+	}
+	return strings.TrimSpace(cfg.solanaWriteRPCFallbackURL)
+}
+
+func (cfg signerConfig) solanaWriteRPCURLsForWallet(walletID string) []string {
+	primary := strings.TrimSpace(cfg.rpcURLForWallet("solana", walletID))
+	fallback := strings.TrimSpace(cfg.solanaWriteRPCFallbackURLForWallet(walletID))
+	urls := make([]string, 0, 2)
+	for _, candidate := range []string{primary, fallback} {
+		if candidate == "" {
+			continue
+		}
+		duplicate := false
+		for _, existing := range urls {
+			if existing == candidate {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			urls = append(urls, candidate)
+		}
+	}
+	return urls
 }
 
 func parseChainsEnv(raw string) []string {
@@ -1699,24 +1770,48 @@ func recordCustodyUsage(walletID, chain string, amount *big.Int) {
 }
 
 type resolvedSignerPolicy struct {
-	WalletID       string
-	Role           string
-	DirectSigning  bool
-	CapsEnabled    bool
-	AllowPrograms  map[string]bool
-	SolanaMaxPerTx *big.Int
-	SolanaMaxDaily *big.Int
+	WalletID                string
+	Role                    string
+	RoleConfigured          bool
+	DirectSigning           bool
+	DirectSigningConfigured bool
+	CapsEnabled             bool
+	CapsConfigured          bool
+	ConfigError             string
+	AllowPrograms           map[string]bool
+	SolanaMaxPerTx          *big.Int
+	SolanaMaxDaily          *big.Int
 }
 
 func normalizeSignerRole(raw string) string {
 	switch strings.TrimSpace(strings.ToLower(raw)) {
+	case "agent":
+		return "agent"
 	case "mining":
 		return "mining"
 	case "vault":
 		return "vault"
 	default:
-		return "agent"
+		return ""
 	}
+}
+
+func hasStringPolicy(values map[string]string, walletID string) bool {
+	wid := normalizeWalletID(walletID)
+	if value, ok := values[wid]; ok && strings.TrimSpace(value) != "" {
+		return true
+	}
+	value, ok := values["default"]
+	return ok && strings.TrimSpace(value) != ""
+}
+
+func hasBoolPolicy(values map[string]bool, walletID string) bool {
+	wid := normalizeWalletID(walletID)
+	if _, ok := values[wid]; ok {
+		return true
+	}
+	_, ok := values["default"]
+	return ok
 }
 
 func lookupStringPolicy(values map[string]string, walletID string, fallback string) string {
@@ -1763,16 +1858,52 @@ func lookupProgramPolicy(values map[string]map[string]bool, walletID string) map
 	return nil
 }
 
+func lookupPolicyConfigError(values map[string]string, walletID string) string {
+	wid := normalizeWalletID(walletID)
+	if value := strings.TrimSpace(values[wid]); value != "" {
+		return value
+	}
+	return strings.TrimSpace(values["default"])
+}
+
 func resolveSignerPolicy(cfg signerConfig, walletID string) resolvedSignerPolicy {
 	return resolvedSignerPolicy{
-		WalletID:       normalizeWalletID(walletID),
-		Role:           normalizeSignerRole(lookupStringPolicy(cfg.walletRoles, walletID, "agent")),
-		DirectSigning:  lookupBoolPolicy(cfg.walletDirectSigning, walletID, true),
-		CapsEnabled:    lookupBoolPolicy(cfg.walletCapsEnabled, walletID, false),
-		AllowPrograms:  lookupProgramPolicy(cfg.solanaAllowPrograms, walletID),
-		SolanaMaxPerTx: lookupBigIntPolicy(cfg.solanaMaxPerTx, walletID),
-		SolanaMaxDaily: lookupBigIntPolicy(cfg.solanaMaxDaily, walletID),
+		WalletID:                normalizeWalletID(walletID),
+		Role:                    normalizeSignerRole(lookupStringPolicy(cfg.walletRoles, walletID, "")),
+		RoleConfigured:          hasStringPolicy(cfg.walletRoles, walletID),
+		DirectSigning:           lookupBoolPolicy(cfg.walletDirectSigning, walletID, false),
+		DirectSigningConfigured: hasBoolPolicy(cfg.walletDirectSigning, walletID),
+		CapsEnabled:             lookupBoolPolicy(cfg.walletCapsEnabled, walletID, false),
+		CapsConfigured:          hasBoolPolicy(cfg.walletCapsEnabled, walletID),
+		ConfigError:             lookupPolicyConfigError(cfg.walletPolicyConfigErrors, walletID),
+		AllowPrograms:           lookupProgramPolicy(cfg.solanaAllowPrograms, walletID),
+		SolanaMaxPerTx:          lookupBigIntPolicy(cfg.solanaMaxPerTx, walletID),
+		SolanaMaxDaily:          lookupBigIntPolicy(cfg.solanaMaxDaily, walletID),
 	}
+}
+
+func validateSignerPolicyConfigured(policy resolvedSignerPolicy) error {
+	if policy.ConfigError != "" {
+		return fmt.Errorf("signer policy configuration is invalid for wallet %s: %s", policy.WalletID, policy.ConfigError)
+	}
+	if !policy.RoleConfigured || policy.Role == "" {
+		return fmt.Errorf("signer policy role is not configured for wallet %s", policy.WalletID)
+	}
+	if !policy.DirectSigningConfigured {
+		return fmt.Errorf("signer policy direct-signing setting is not configured for wallet %s", policy.WalletID)
+	}
+	if !policy.CapsConfigured {
+		return fmt.Errorf("signer policy caps setting is not configured for wallet %s", policy.WalletID)
+	}
+	if policy.CapsEnabled {
+		if policy.SolanaMaxPerTx == nil || policy.SolanaMaxPerTx.Sign() <= 0 {
+			return fmt.Errorf("signer policy solana per-tx cap is not configured for wallet %s", policy.WalletID)
+		}
+		if policy.SolanaMaxDaily == nil || policy.SolanaMaxDaily.Sign() <= 0 {
+			return fmt.Errorf("signer policy solana daily cap is not configured for wallet %s", policy.WalletID)
+		}
+	}
+	return nil
 }
 
 func parsePolicyAmount(raw string, required bool) (*big.Int, error) {
@@ -1837,7 +1968,7 @@ func validateSignerPolicyAmount(policy resolvedSignerPolicy, chain string, amoun
 
 func validateSignerPolicyProgram(policy resolvedSignerPolicy, programID string) error {
 	if len(policy.AllowPrograms) == 0 {
-		return nil
+		return fmt.Errorf("signer policy program allowlist is not configured for wallet %s", policy.WalletID)
 	}
 	normalized := normalizeProgramID(programID)
 	if normalized == "" || !policy.AllowPrograms[normalized] {
@@ -2073,6 +2204,9 @@ func validateAgentSerializedSPLSemantics(txReq signerTxRequest, tx *solana.Trans
 
 func validateSignerPolicyForNativeSend(cfg signerConfig, txReq signerTxRequest) (*big.Int, resolvedSignerPolicy, error) {
 	policy := resolveSignerPolicy(cfg, txReq.WalletID)
+	if err := validateSignerPolicyConfigured(policy); err != nil {
+		return nil, policy, err
+	}
 	if !policy.DirectSigning {
 		return nil, policy, errors.New("signer policy direct signing disabled")
 	}
@@ -2091,6 +2225,9 @@ func validateSignerPolicyForNativeSend(cfg signerConfig, txReq signerTxRequest) 
 
 func validateSignerPolicyForProgramSend(cfg signerConfig, walletID string, programID string, amount *big.Int) (resolvedSignerPolicy, error) {
 	policy := resolveSignerPolicy(cfg, walletID)
+	if err := validateSignerPolicyConfigured(policy); err != nil {
+		return policy, err
+	}
 	if !policy.DirectSigning {
 		return policy, errors.New("signer policy direct signing disabled")
 	}
@@ -2105,6 +2242,9 @@ func validateSignerPolicyForProgramSend(cfg signerConfig, walletID string, progr
 
 func validateSignerPolicyForProgramBatchSend(cfg signerConfig, walletID string, requests []solanaInstructionRequest, amount *big.Int) (resolvedSignerPolicy, error) {
 	policy := resolveSignerPolicy(cfg, walletID)
+	if err := validateSignerPolicyConfigured(policy); err != nil {
+		return policy, err
+	}
 	if !policy.DirectSigning {
 		return policy, errors.New("signer policy direct signing disabled")
 	}
@@ -2121,8 +2261,14 @@ func validateSignerPolicyForProgramBatchSend(cfg signerConfig, walletID string, 
 
 func validateSignerPolicyForSerializedTx(cfg signerConfig, txReq signerTxRequest, tx *solana.Transaction, signer string) (*big.Int, resolvedSignerPolicy, error) {
 	policy := resolveSignerPolicy(cfg, txReq.WalletID)
+	if err := validateSignerPolicyConfigured(policy); err != nil {
+		return nil, policy, err
+	}
 	if !policy.DirectSigning {
 		return nil, policy, errors.New("signer policy direct signing disabled")
+	}
+	if len(policy.AllowPrograms) == 0 {
+		return nil, policy, fmt.Errorf("signer policy program allowlist is not configured for wallet %s", policy.WalletID)
 	}
 	requiredSigner := false
 	for _, signerKey := range tx.Message.Signers() {
@@ -2137,10 +2283,7 @@ func validateSignerPolicyForSerializedTx(cfg signerConfig, txReq signerTxRequest
 	for _, inst := range tx.Message.Instructions {
 		programID, err := tx.ResolveProgramIDIndex(inst.ProgramIDIndex)
 		if err != nil {
-			if len(policy.AllowPrograms) > 0 {
-				return nil, policy, fmt.Errorf("cannot resolve serialized solana program id: %w", err)
-			}
-			continue
+			return nil, policy, fmt.Errorf("cannot resolve serialized solana program id: %w", err)
 		}
 		if err := validateSignerPolicyProgram(policy, programID.String()); err != nil {
 			return nil, policy, err
@@ -2161,12 +2304,208 @@ func validateSignerPolicyForSerializedTx(cfg signerConfig, txReq signerTxRequest
 	return amount, policy, nil
 }
 
-func solanaSendNativeTransferAndConfirm(rpcURL, keystorePath string, txReq signerTxRequest, cfg signerConfig) (string, string, *big.Int, resolvedSignerPolicy, error) {
+type solanaWriteRPCEndpointState struct {
+	ConsecutiveFailures int
+	BackoffUntil        time.Time
+	QuotaLikely         bool
+}
+
+var solanaWriteRPCCircuits = struct {
+	sync.Mutex
+	Endpoints map[string]solanaWriteRPCEndpointState
+}{Endpoints: map[string]solanaWriteRPCEndpointState{}}
+
+func solanaWriteRPCRequestTimeout() time.Duration {
+	return time.Duration(getenvInt("FASED_WALLET_SOLANA_WRITE_RPC_TIMEOUT_MS", 12_000)) * time.Millisecond
+}
+
+func solanaWriteRPCConfirmTimeout() time.Duration {
+	return time.Duration(getenvInt("FASED_WALLET_SOLANA_CONFIRM_TIMEOUT_MS", 45_000)) * time.Millisecond
+}
+
+func looksLikeSolanaRPCQuotaFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "429") ||
+		strings.Contains(message, "rate limit") ||
+		strings.Contains(message, "too many requests") ||
+		strings.Contains(message, "quota") ||
+		strings.Contains(message, "credit") ||
+		strings.Contains(message, "resource exhausted")
+}
+
+func markSolanaWriteRPCSuccess(rpcURL string) {
+	solanaWriteRPCCircuits.Lock()
+	defer solanaWriteRPCCircuits.Unlock()
+	delete(solanaWriteRPCCircuits.Endpoints, strings.TrimSpace(rpcURL))
+}
+
+func markSolanaWriteRPCFailure(rpcURL string, err error) {
+	key := strings.TrimSpace(rpcURL)
+	if key == "" {
+		return
+	}
+	solanaWriteRPCCircuits.Lock()
+	defer solanaWriteRPCCircuits.Unlock()
+	state := solanaWriteRPCCircuits.Endpoints[key]
+	state.ConsecutiveFailures++
+	state.QuotaLikely = looksLikeSolanaRPCQuotaFailure(err)
+	if state.QuotaLikely {
+		state.BackoffUntil = time.Now().Add(30 * time.Second)
+	} else if state.ConsecutiveFailures >= 2 {
+		backoff := 5 * time.Second * time.Duration(1<<(state.ConsecutiveFailures-2))
+		if backoff > 30*time.Second {
+			backoff = 30 * time.Second
+		}
+		state.BackoffUntil = time.Now().Add(backoff)
+	}
+	solanaWriteRPCCircuits.Endpoints[key] = state
+}
+
+func activeSolanaWriteRPCURLs(rpcURLs []string) ([]string, error) {
+	now := time.Now()
+	solanaWriteRPCCircuits.Lock()
+	defer solanaWriteRPCCircuits.Unlock()
+	active := make([]string, 0, len(rpcURLs))
+	shortestBackoff := time.Duration(0)
+	for _, rpcURL := range rpcURLs {
+		trimmed := strings.TrimSpace(rpcURL)
+		if trimmed == "" {
+			continue
+		}
+		state := solanaWriteRPCCircuits.Endpoints[trimmed]
+		if state.BackoffUntil.After(now) {
+			remaining := state.BackoffUntil.Sub(now)
+			if shortestBackoff == 0 || remaining < shortestBackoff {
+				shortestBackoff = remaining
+			}
+			continue
+		}
+		active = append(active, trimmed)
+	}
+	if len(active) > 0 {
+		return active, nil
+	}
+	if len(rpcURLs) == 0 {
+		return nil, errors.New("missing Solana write RPC URL")
+	}
+	return nil, fmt.Errorf(
+		"all Solana write RPC endpoints are in circuit cooldown; retry in %s",
+		shortestBackoff.Round(time.Second),
+	)
+}
+
+func solanaLatestBlockhashWithFallback(rpcURLs []string) (solana.Hash, error) {
+	active, err := activeSolanaWriteRPCURLs(rpcURLs)
+	if err != nil {
+		return solana.Hash{}, err
+	}
+	var failures []string
+	for index, rpcURL := range active {
+		client := rpc.New(rpcURL)
+		ctx, cancel := context.WithTimeout(context.Background(), solanaWriteRPCRequestTimeout())
+		result, requestErr := client.GetLatestBlockhash(ctx, rpc.CommitmentFinalized)
+		cancel()
+		if requestErr == nil {
+			markSolanaWriteRPCSuccess(rpcURL)
+			return result.Value.Blockhash, nil
+		}
+		markSolanaWriteRPCFailure(rpcURL, requestErr)
+		failures = append(failures, fmt.Sprintf("endpoint %d: %v", index+1, requestErr))
+	}
+	return solana.Hash{}, fmt.Errorf("Solana latest-blockhash failed: %s", strings.Join(failures, "; "))
+}
+
+func confirmSolanaSignatureAcrossRPCs(rpcURLs []string, signature solana.Signature) error {
+	confirmCtx, cancel := context.WithTimeout(context.Background(), solanaWriteRPCConfirmTimeout())
+	defer cancel()
+	tick := time.NewTicker(750 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		active, activeErr := activeSolanaWriteRPCURLs(rpcURLs)
+		if activeErr == nil {
+			for _, rpcURL := range active {
+				client := rpc.New(rpcURL)
+				requestCtx, requestCancel := context.WithTimeout(confirmCtx, solanaWriteRPCRequestTimeout())
+				status, err := client.GetSignatureStatuses(requestCtx, true, signature)
+				requestCancel()
+				if err != nil {
+					markSolanaWriteRPCFailure(rpcURL, err)
+					continue
+				}
+				markSolanaWriteRPCSuccess(rpcURL)
+				if status == nil || status.Value == nil || len(status.Value) == 0 || status.Value[0] == nil {
+					continue
+				}
+				if status.Value[0].Err != nil {
+					return fmt.Errorf("Solana transaction failed: %v", status.Value[0].Err)
+				}
+				if status.Value[0].ConfirmationStatus == rpc.ConfirmationStatusConfirmed ||
+					status.Value[0].ConfirmationStatus == rpc.ConfirmationStatusFinalized {
+					return nil
+				}
+			}
+		}
+		select {
+		case <-confirmCtx.Done():
+			return fmt.Errorf("Solana confirmation timeout for %s", signature.String())
+		case <-tick.C:
+		}
+	}
+}
+
+func sendRawSolanaTransactionAndConfirm(rpcURLs []string, signedRaw []byte) (string, error) {
+	active, err := activeSolanaWriteRPCURLs(rpcURLs)
+	if err != nil {
+		return "", err
+	}
+	var signature *solana.Signature
+	var failures []string
+	for index, rpcURL := range active {
+		client := rpc.New(rpcURL)
+		ctx, cancel := context.WithTimeout(context.Background(), solanaWriteRPCRequestTimeout())
+		sentSignature, requestErr := client.SendRawTransactionWithOpts(ctx, signedRaw, rpc.TransactionOpts{
+			SkipPreflight:       false,
+			PreflightCommitment: rpc.CommitmentConfirmed,
+		})
+		cancel()
+		if requestErr != nil {
+			markSolanaWriteRPCFailure(rpcURL, requestErr)
+			failures = append(failures, fmt.Sprintf("endpoint %d: %v", index+1, requestErr))
+			continue
+		}
+		markSolanaWriteRPCSuccess(rpcURL)
+		if signature == nil {
+			signature = &sentSignature
+		} else if *signature != sentSignature {
+			return "", errors.New("Solana RPC endpoints returned different signatures for identical transaction bytes")
+		}
+	}
+	if signature == nil {
+		return "", fmt.Errorf("Solana transaction broadcast failed: %s", strings.Join(failures, "; "))
+	}
+	if err := confirmSolanaSignatureAcrossRPCs(rpcURLs, *signature); err != nil {
+		return signature.String(), err
+	}
+	return signature.String(), nil
+}
+
+func sendSignedSolanaTransactionAndConfirm(rpcURLs []string, tx *solana.Transaction) (string, error) {
+	signedRaw, err := tx.MarshalBinary()
+	if err != nil {
+		return "", err
+	}
+	return sendRawSolanaTransactionAndConfirm(rpcURLs, signedRaw)
+}
+
+func solanaSendNativeTransferAndConfirm(rpcURLs []string, keystorePath string, txReq signerTxRequest, cfg signerConfig) (string, string, *big.Int, resolvedSignerPolicy, error) {
 	if txReq.Chain != "solana" {
 		return "", "", nil, resolvedSignerPolicy{}, errors.New("invalid chain for native solana send")
 	}
 	if strings.TrimSpace(txReq.SerializedTxBase64) != "" {
-		return solanaSendSerializedTransactionAndConfirm(rpcURL, keystorePath, txReq, cfg)
+		return solanaSendSerializedTransactionAndConfirm(rpcURLs, keystorePath, txReq, cfg)
 	}
 	usageAmount, policy, err := validateSignerPolicyForNativeSend(cfg, txReq)
 	if err != nil {
@@ -2191,17 +2530,14 @@ func solanaSendNativeTransferAndConfirm(rpcURL, keystorePath string, txReq signe
 	if err != nil {
 		return "", "", nil, policy, err
 	}
-	client := rpc.New(strings.TrimSpace(rpcURL))
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	bh, err := client.GetLatestBlockhash(ctx, rpc.CommitmentFinalized)
+	blockhash, err := solanaLatestBlockhashWithFallback(rpcURLs)
 	if err != nil {
 		return "", "", nil, policy, err
 	}
 	ix := system.NewTransferInstruction(lamports, fromPub, toPub).Build()
 	tx, err := solana.NewTransaction(
 		[]solana.Instruction{ix},
-		bh.Value.Blockhash,
+		blockhash,
 		solana.TransactionPayer(fromPub),
 	)
 	if err != nil {
@@ -2217,43 +2553,14 @@ func solanaSendNativeTransferAndConfirm(rpcURL, keystorePath string, txReq signe
 	if err != nil {
 		return "", "", nil, policy, err
 	}
-	sig, err := client.SendTransactionWithOpts(ctx, tx, rpc.TransactionOpts{
-		SkipPreflight:       false,
-		PreflightCommitment: rpc.CommitmentConfirmed,
-	})
+	sig, err := sendSignedSolanaTransactionAndConfirm(rpcURLs, tx)
 	if err != nil {
-		return "", "", nil, policy, err
+		return sig, fromPub.String(), usageAmount, policy, err
 	}
-
-	// Simple confirm polling loop
-	confirmCtx, confirmCancel := context.WithTimeout(context.Background(), 45*time.Second)
-	defer confirmCancel()
-	tick := time.NewTicker(1500 * time.Millisecond)
-	defer tick.Stop()
-	for {
-		select {
-		case <-confirmCtx.Done():
-			return sig.String(), fromPub.String(), usageAmount, policy, fmt.Errorf("solana confirm timeout for %s", sig.String())
-		case <-tick.C:
-			st, err := client.GetSignatureStatuses(confirmCtx, true, sig)
-			if err != nil {
-				continue
-			}
-			if st == nil || st.Value == nil || len(st.Value) == 0 || st.Value[0] == nil {
-				continue
-			}
-			if st.Value[0].Err != nil {
-				return sig.String(), fromPub.String(), usageAmount, policy, fmt.Errorf("solana tx failed: %v", st.Value[0].Err)
-			}
-			if st.Value[0].ConfirmationStatus == rpc.ConfirmationStatusConfirmed ||
-				st.Value[0].ConfirmationStatus == rpc.ConfirmationStatusFinalized {
-				return sig.String(), fromPub.String(), usageAmount, policy, nil
-			}
-		}
-	}
+	return sig, fromPub.String(), usageAmount, policy, nil
 }
 
-func solanaSendSerializedTransactionAndConfirm(rpcURL, keystorePath string, txReq signerTxRequest, cfg signerConfig) (string, string, *big.Int, resolvedSignerPolicy, error) {
+func solanaSendSerializedTransactionAndConfirm(rpcURLs []string, keystorePath string, txReq signerTxRequest, cfg signerConfig) (string, string, *big.Int, resolvedSignerPolicy, error) {
 	signedTxBase64, signer, usageAmount, policy, err := solanaSignSerializedTransaction(keystorePath, txReq, cfg)
 	if err != nil {
 		return "", signer, nil, policy, err
@@ -2262,41 +2569,11 @@ func solanaSendSerializedTransactionAndConfirm(rpcURL, keystorePath string, txRe
 	if err != nil {
 		return "", signer, nil, policy, err
 	}
-	client := rpc.New(strings.TrimSpace(rpcURL))
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	sig, err := client.SendRawTransactionWithOpts(ctx, signedRaw, rpc.TransactionOpts{
-		SkipPreflight:       false,
-		PreflightCommitment: rpc.CommitmentConfirmed,
-	})
+	sig, err := sendRawSolanaTransactionAndConfirm(rpcURLs, signedRaw)
 	if err != nil {
-		return "", "", nil, policy, err
+		return sig, signer, usageAmount, policy, err
 	}
-	confirmCtx, confirmCancel := context.WithTimeout(context.Background(), 45*time.Second)
-	defer confirmCancel()
-	tick := time.NewTicker(1500 * time.Millisecond)
-	defer tick.Stop()
-	for {
-		select {
-		case <-confirmCtx.Done():
-			return sig.String(), signer, usageAmount, policy, fmt.Errorf("solana confirm timeout for %s", sig.String())
-		case <-tick.C:
-			st, err := client.GetSignatureStatuses(confirmCtx, true, sig)
-			if err != nil {
-				continue
-			}
-			if st == nil || st.Value == nil || len(st.Value) == 0 || st.Value[0] == nil {
-				continue
-			}
-			if st.Value[0].Err != nil {
-				return sig.String(), signer, usageAmount, policy, fmt.Errorf("solana tx failed: %v", st.Value[0].Err)
-			}
-			if st.Value[0].ConfirmationStatus == rpc.ConfirmationStatusConfirmed ||
-				st.Value[0].ConfirmationStatus == rpc.ConfirmationStatusFinalized {
-				return sig.String(), signer, usageAmount, policy, nil
-			}
-		}
-	}
+	return sig, signer, usageAmount, policy, nil
 }
 
 func solanaSignSerializedTransaction(keystorePath string, txReq signerTxRequest, cfg signerConfig) (string, string, *big.Int, resolvedSignerPolicy, error) {
@@ -2366,7 +2643,7 @@ func buildSolanaInstruction(req solanaInstructionRequest) (solana.Instruction, e
 	return solana.NewInstruction(programID, accounts, data), nil
 }
 
-func solanaSendInstructionAndConfirm(rpcURL, keystorePath string, req solanaInstructionRequest, cfg signerConfig) (string, string, *big.Int, resolvedSignerPolicy, error) {
+func solanaSendInstructionAndConfirm(rpcURLs []string, keystorePath string, req solanaInstructionRequest, cfg signerConfig) (string, string, *big.Int, resolvedSignerPolicy, error) {
 	usageAmount := extractSolanaInstructionAmount(req)
 	policy, err := validateSignerPolicyForProgramSend(cfg, req.WalletID, req.ProgramID, usageAmount)
 	if err != nil {
@@ -2384,16 +2661,13 @@ func solanaSendInstructionAndConfirm(rpcURL, keystorePath string, req solanaInst
 	if err != nil {
 		return "", "", nil, policy, err
 	}
-	client := rpc.New(strings.TrimSpace(rpcURL))
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	bh, err := client.GetLatestBlockhash(ctx, rpc.CommitmentFinalized)
+	blockhash, err := solanaLatestBlockhashWithFallback(rpcURLs)
 	if err != nil {
 		return "", "", nil, policy, err
 	}
 	tx, err := solana.NewTransaction(
 		[]solana.Instruction{ix},
-		bh.Value.Blockhash,
+		blockhash,
 		solana.TransactionPayer(fromPub),
 	)
 	if err != nil {
@@ -2409,41 +2683,14 @@ func solanaSendInstructionAndConfirm(rpcURL, keystorePath string, req solanaInst
 	if err != nil {
 		return "", "", nil, policy, err
 	}
-	sig, err := client.SendTransactionWithOpts(ctx, tx, rpc.TransactionOpts{
-		SkipPreflight:       false,
-		PreflightCommitment: rpc.CommitmentConfirmed,
-	})
+	sig, err := sendSignedSolanaTransactionAndConfirm(rpcURLs, tx)
 	if err != nil {
-		return "", "", nil, policy, err
+		return sig, fromPub.String(), usageAmount, policy, err
 	}
-	confirmCtx, confirmCancel := context.WithTimeout(context.Background(), 45*time.Second)
-	defer confirmCancel()
-	tick := time.NewTicker(1500 * time.Millisecond)
-	defer tick.Stop()
-	for {
-		select {
-		case <-confirmCtx.Done():
-			return sig.String(), fromPub.String(), usageAmount, policy, fmt.Errorf("solana confirm timeout for %s", sig.String())
-		case <-tick.C:
-			st, err := client.GetSignatureStatuses(confirmCtx, true, sig)
-			if err != nil {
-				continue
-			}
-			if st == nil || st.Value == nil || len(st.Value) == 0 || st.Value[0] == nil {
-				continue
-			}
-			if st.Value[0].Err != nil {
-				return sig.String(), fromPub.String(), usageAmount, policy, fmt.Errorf("solana tx failed: %v", st.Value[0].Err)
-			}
-			if st.Value[0].ConfirmationStatus == rpc.ConfirmationStatusConfirmed ||
-				st.Value[0].ConfirmationStatus == rpc.ConfirmationStatusFinalized {
-				return sig.String(), fromPub.String(), usageAmount, policy, nil
-			}
-		}
-	}
+	return sig, fromPub.String(), usageAmount, policy, nil
 }
 
-func solanaSendInstructionsAndConfirm(rpcURL, keystorePath string, requests []solanaInstructionRequest, cfg signerConfig) (string, string, *big.Int, resolvedSignerPolicy, error) {
+func solanaSendInstructionsAndConfirm(rpcURLs []string, keystorePath string, requests []solanaInstructionRequest, cfg signerConfig) (string, string, *big.Int, resolvedSignerPolicy, error) {
 	if len(requests) == 0 {
 		return "", "", nil, resolvedSignerPolicy{}, errors.New("invalid solana instruction batch")
 	}
@@ -2476,16 +2723,13 @@ func solanaSendInstructionsAndConfirm(rpcURL, keystorePath string, requests []so
 		}
 		instructions = append(instructions, ix)
 	}
-	client := rpc.New(strings.TrimSpace(rpcURL))
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	bh, err := client.GetLatestBlockhash(ctx, rpc.CommitmentFinalized)
+	blockhash, err := solanaLatestBlockhashWithFallback(rpcURLs)
 	if err != nil {
 		return "", "", nil, policy, err
 	}
 	tx, err := solana.NewTransaction(
 		instructions,
-		bh.Value.Blockhash,
+		blockhash,
 		solana.TransactionPayer(fromPub),
 	)
 	if err != nil {
@@ -2501,38 +2745,11 @@ func solanaSendInstructionsAndConfirm(rpcURL, keystorePath string, requests []so
 	if err != nil {
 		return "", "", nil, policy, err
 	}
-	sig, err := client.SendTransactionWithOpts(ctx, tx, rpc.TransactionOpts{
-		SkipPreflight:       false,
-		PreflightCommitment: rpc.CommitmentConfirmed,
-	})
+	sig, err := sendSignedSolanaTransactionAndConfirm(rpcURLs, tx)
 	if err != nil {
-		return "", "", nil, policy, err
+		return sig, fromPub.String(), usageAmount, policy, err
 	}
-	confirmCtx, confirmCancel := context.WithTimeout(context.Background(), 45*time.Second)
-	defer confirmCancel()
-	tick := time.NewTicker(1500 * time.Millisecond)
-	defer tick.Stop()
-	for {
-		select {
-		case <-confirmCtx.Done():
-			return sig.String(), fromPub.String(), usageAmount, policy, fmt.Errorf("solana confirm timeout for %s", sig.String())
-		case <-tick.C:
-			st, err := client.GetSignatureStatuses(confirmCtx, true, sig)
-			if err != nil {
-				continue
-			}
-			if st == nil || st.Value == nil || len(st.Value) == 0 || st.Value[0] == nil {
-				continue
-			}
-			if st.Value[0].Err != nil {
-				return sig.String(), fromPub.String(), usageAmount, policy, fmt.Errorf("solana tx failed: %v", st.Value[0].Err)
-			}
-			if st.Value[0].ConfirmationStatus == rpc.ConfirmationStatusConfirmed ||
-				st.Value[0].ConfirmationStatus == rpc.ConfirmationStatusFinalized {
-				return sig.String(), fromPub.String(), usageAmount, policy, nil
-			}
-		}
-	}
+	return sig, fromPub.String(), usageAmount, policy, nil
 }
 
 func randomPreparedID() string {
@@ -2680,7 +2897,7 @@ func handleHybridNative(req request, raw map[string]any, cfg signerConfig) ([]by
 			return nil, errors.New("unsupported hybrid native op")
 		}
 		txHash, signer, policyUsageAmount, signerPolicy, err := solanaSendNativeTransferAndConfirm(
-			cfg.rpcURLForWallet("solana", txReq.WalletID),
+			cfg.solanaWriteRPCURLsForWallet(txReq.WalletID),
 			cfg.keystorePathForWallet("solana", txReq.WalletID),
 			txReq,
 			cfg,
@@ -2757,7 +2974,7 @@ func handleHybridNative(req request, raw map[string]any, cfg signerConfig) ([]by
 			return nil, err
 		}
 		txHash, signer, policyUsageAmount, signerPolicy, err := solanaSendInstructionAndConfirm(
-			cfg.rpcURLForWallet("solana", instructionReq.WalletID),
+			cfg.solanaWriteRPCURLsForWallet(instructionReq.WalletID),
 			cfg.keystorePathForWallet("solana", instructionReq.WalletID),
 			instructionReq,
 			cfg,
@@ -2799,7 +3016,7 @@ func handleHybridNative(req request, raw map[string]any, cfg signerConfig) ([]by
 			return nil, err
 		}
 		txHash, signer, policyUsageAmount, signerPolicy, err := solanaSendInstructionsAndConfirm(
-			cfg.rpcURLForWallet("solana", instructions[0].WalletID),
+			cfg.solanaWriteRPCURLsForWallet(instructions[0].WalletID),
 			cfg.keystorePathForWallet("solana", instructions[0].WalletID),
 			instructions,
 			cfg,

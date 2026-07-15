@@ -1,6 +1,8 @@
 const SAT_MIN_COMMIT_LAMPORTS = 250_000_000n;
 const SAT_CYCLE_EROSION_PPM = 83n;
+const SAT_NON_REVEAL_PENALTY_BPS = 100n;
 const SAT_RATIO_FP_SCALE = 1_000_000n;
+const SAT_BPS_SCALE = 10_000n;
 const SAT_CAPITAL_SAFETY_BUFFER_MIN_LAMPORTS = 100_000_000n;
 const SAT_CAPITAL_SAFETY_BUFFER_MAX_LAMPORTS = 1_000_000_000n;
 
@@ -50,6 +52,13 @@ export function computeMiningCommitErosionLamports(committedLamports: bigint): b
     return 0n;
   }
   return (committedLamports * SAT_CYCLE_EROSION_PPM) / SAT_RATIO_FP_SCALE;
+}
+
+export function computeMiningCommitCollateralLamports(committedLamports: bigint): bigint {
+  const erosion = computeMiningCommitErosionLamports(committedLamports);
+  const nonRevealPenalty =
+    committedLamports > 0n ? (committedLamports * SAT_NON_REVEAL_PENALTY_BPS) / SAT_BPS_SCALE : 0n;
+  return nonRevealPenalty > erosion ? nonRevealPenalty : erosion;
 }
 
 export function computeMiningCapitalSafetyBufferLamports(params: {
@@ -105,14 +114,14 @@ export function computeMiningCommitSafety(params: {
       : 0n;
   const minimumCapitalForMinimumCommitLamports =
     SAT_MIN_COMMIT_LAMPORTS +
-    computeMiningCommitErosionLamports(SAT_MIN_COMMIT_LAMPORTS) +
+    computeMiningCommitCollateralLamports(SAT_MIN_COMMIT_LAMPORTS) +
     retainedFreeLamports +
     walletReserveShortfallLamports;
   let safeMaxCommitLamports = 0n;
   if (usableFreeCapitalLamports > retainedFreeLamports) {
     const usableForCommit = usableFreeCapitalLamports - retainedFreeLamports;
     safeMaxCommitLamports =
-      (usableForCommit * SAT_RATIO_FP_SCALE) / (SAT_RATIO_FP_SCALE + SAT_CYCLE_EROSION_PPM);
+      (usableForCommit * SAT_BPS_SCALE) / (SAT_BPS_SCALE + SAT_NON_REVEAL_PENALTY_BPS);
   }
   if (safeMaxCommitLamports < SAT_MIN_COMMIT_LAMPORTS) {
     safeMaxCommitLamports = 0n;

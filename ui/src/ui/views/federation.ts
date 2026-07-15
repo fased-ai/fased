@@ -6477,15 +6477,7 @@ export function renderFederation(props: FederationProps) {
                       ${
                         !bondStakingDistributor?.exists
                           ? html`
-                              <button
-                                class="btn"
-                                type="button"
-                                ?disabled=${stakingBondBusy || !bondWalletDraft}
-                                @click=${(event: Event) =>
-                                  runFederationButton(event, props.onInitBondStaking)}
-                              >
-                                Initialize staking
-                              </button>
+                              <span class="muted">Protocol initialization pending</span>
                             `
                           : html`
                               <button

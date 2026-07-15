@@ -36,8 +36,15 @@ export const SAT_INSTRUCTION_DISCRIMINATORS = {
   requestBondUnlock: 81,
   cancelBondUnlock: 82,
   finalizeBondUnlock: 83,
+  topUpRegistryReserve: 84,
   claimProtocolDistributorSat: 85,
   refillRegistryReserveFromTreasury: 88,
+  commitCycle: 89,
+  closeCommitPhase: 90,
+  sealCycleEntropy: 91,
+  revealCycle: 92,
+  releaseUnrevealedCommit: 93,
+  abortEmptyCycle: 94,
   miningCrank: 33,
 } as const;
 
@@ -53,12 +60,47 @@ export const SAT_BOND_INSTRUCTION_DISCRIMINATORS = {
   syncStakingRewards: 8,
   syncStakingPosition: 9,
   claimStakingRewards: 10,
+  claimUnallocatedStakingRewards: 11,
+  recordProtocolStakingRewards: 12,
 } as const;
 
 export const SAT_PROTOCOL_CONSTANTS = {
   allocationBuckets: 25,
   cycleSeconds: 300,
+  cycleOpenGraceSeconds: 30,
+  cycleCommitSeconds: 120,
+  cycleCommitSlots: 300,
+  cycleRevealSlots: 375,
+  cycleSettlementBufferSeconds: 30,
+  cycleEntropyDelaySlots: 8,
+  cycleEntropyHashCount: 8,
+  cycleRecoveryRevealSeconds: 120,
   cycleErosionPpm: 83n,
+  cycleNonRevealPenaltyBps: 100,
+  cycleUnlockRetargetIntervalCycles: 12,
+  cycleUnlockWindowIntervals: 24,
+  cycleUnlockMaxStepBps: 1_000,
   minimumEntryLamports: 250_000_000,
-  registryReserveTargetLamports: 200_000_000n,
+  entropyUnavailableSeedHex: "ff".repeat(32),
 } as const;
+
+export const SAT_GENESIS_PROFILE_CONTRACTS = {
+  devnet: {
+    cluster: "devnet",
+    configSha256: "365767d2e4dc1645791fd1c1fc72cbf5f56b2d0c81e80dc0acaf40d59cc5b738",
+    registryReserveTargetLamports: 200_000_000n,
+    registryReserveMaxLamports: 200_000_000n,
+  },
+  "mainnet-beta": {
+    cluster: "mainnet-beta",
+    configSha256: "67f3a9b072bce1e8e1c3444363a4019083ef886be34e3ca34ee61ef249e55edd",
+    registryReserveTargetLamports: 500_000_000n,
+    registryReserveMaxLamports: 1_000_000_000n,
+  },
+} as const;
+
+export function resolveSatGenesisProfileContract(network: string | null | undefined) {
+  return network === "mainnet-beta"
+    ? SAT_GENESIS_PROFILE_CONTRACTS["mainnet-beta"]
+    : SAT_GENESIS_PROFILE_CONTRACTS.devnet;
+}

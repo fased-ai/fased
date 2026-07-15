@@ -8,6 +8,7 @@ export type SatClaimMode = "auto" | "prompt" | "manual";
 
 export type SatMiningStrategyMode = "base" | "skill";
 export type SatMiningStrategyExecution = "deterministic" | "auto";
+export type SatMiningCycleCadence = 1 | 2 | 6 | 12;
 export type SatMiningStrategyPreset =
   | "spread"
   | "balanced"
@@ -44,6 +45,7 @@ export type SatMinerProfile = {
   riskMode: SatRiskMode;
   strategyPreset: SatMiningStrategyPreset;
   strategyExecution: SatMiningStrategyExecution;
+  cycleCadence: SatMiningCycleCadence;
   claimMode: SatClaimMode;
   payout: boolean;
   strategyMode: SatMiningStrategyMode;
@@ -171,6 +173,14 @@ export type SatMiningRuntimeStatus = {
   role?: SatMinerRole;
   strategyPreset?: SatMiningStrategyPreset;
   strategyExecution?: SatMiningStrategyExecution;
+  cycleCadence?: SatMiningCycleCadence;
+  runway?: {
+    commitCollateralLamports: string;
+    estimatedParticipations: string | null;
+    estimatedCalendarCycles: string | null;
+    estimatedDays: number | null;
+    excludesNetworkFees: boolean;
+  } | null;
   strategyMode?: SatMiningStrategyMode;
   network: SatMiningNetwork;
   riskMode: SatRiskMode;
@@ -897,6 +907,7 @@ export function createDefaultMinerProfile(walletId = ""): SatMinerProfile {
     riskMode: strategyPresetToRiskMode(strategyPreset),
     strategyPreset,
     strategyExecution,
+    cycleCadence: 1,
     claimMode: "auto",
     payout: true,
     strategyMode: strategyExecutionToMode(strategyExecution),

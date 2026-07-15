@@ -3,8 +3,11 @@ import { refreshSatChainTime } from "./chain-time.js";
 import type { SatMiningConfig } from "./config.js";
 import { deriveExactPendingCycle } from "./cycle-progress.js";
 import { runSatGatewayMethod } from "./gateway-runner.js";
+import { SAT_PROTOCOL_CONSTANTS } from "./protocol-contract.js";
 import {
+  inspectSatCycle,
   inspectSatCycleSettlementProgressV2,
+  inspectSatChainSlot,
   inspectSatMinerCapital,
   inspectSatMinerCycle,
 } from "./rpc-read.js";
@@ -20,6 +23,7 @@ import {
   satRateLimitBackoffMs,
   scheduleWorkerNextRun,
   type SatMiningRuntimeState,
+  type SatRoundExecutionState,
 } from "./runtime.js";
 import {
   isSatServiceReadTimeoutError,
@@ -94,6 +98,53 @@ function hasPendingCapitalRange(firstPendingCycleId?: number, lastPendingCycleId
     Number.isFinite(lastPendingCycleId) &&
     firstPendingCycleId > 0 &&
     lastPendingCycleId >= firstPendingCycleId
+  );
+}
+
+function isZeroCycleSeed(value: string | undefined): boolean {
+  return !value || /^0+$/.test(value);
+}
+
+function isEntropyUnavailable(cycle: {
+  cycleSeed?: string;
+  entropyUnavailable?: boolean;
+}): boolean {
+  return (
+    cycle.entropyUnavailable === true ||
+    cycle.cycleSeed === SAT_PROTOCOL_CONSTANTS.entropyUnavailableSeedHex
+  );
+}
+
+function hasDurableRevealMaterial(execution: SatRoundExecutionState): boolean {
+  return (
+    typeof execution.revealNonceBase64 === "string" &&
+    execution.revealNonceBase64.length > 0 &&
+    Array.isArray(execution.allocationFp) &&
+    execution.allocationFp.length > 0
+  );
+}
+
+function isFullyResolvedEmptyCycle(
+  cycle: Awaited<ReturnType<typeof inspectSatCycle>> | null,
+): boolean {
+  if (!cycle || cycle.status !== 1 || BigInt(cycle.validMinerCount ?? "0") !== 0n) {
+    return false;
+  }
+  const committed = BigInt(cycle.committedMinerCount ?? "0");
+  const resolved = BigInt(cycle.resolvedCommitCount ?? "0");
+  const released = BigInt(cycle.releasedCommitCount ?? committed);
+  return committed > 0n && resolved === committed && released === committed;
+}
+
+function isMinerCycleResolvedForCleanup(
+  minerCycle: Awaited<ReturnType<typeof inspectSatMinerCycle>> | null,
+): boolean {
+  return Boolean(
+    minerCycle &&
+    minerCycle.capitalLockReleased === true &&
+    BigInt(minerCycle.claimableSatRaw ?? "0") === 0n &&
+    BigInt(minerCycle.claimableDetRebateLamports ?? "0") === 0n &&
+    BigInt(minerCycle.claimablePerfRebateLamports ?? "0") === 0n,
   );
 }
 
@@ -173,6 +224,248 @@ export function createSatRecoveryService(params: {
   let timer: ReturnType<typeof setInterval> | null = null;
   let tickInFlight = false;
   let lastPendingRangeCompactAt = 0;
+
+  const recoverPendingCommit = async (params: {
+    cycleId: number;
+    authority: string;
+    nowSec: number;
+    currentSlot: number | null;
+    anchor: string;
+    backlogDetail: string;
+  }): Promise<boolean> => {
+    const execution = state.roundExecution.get(`${params.cycleId}:0`) ?? null;
+    const [cycle, minerCycle] = await Promise.all([
+      withRecoveryReadTimeout("commit/reveal cycle", () =>
+        inspectSatCycle(state.activeConfig, { cycleId: params.cycleId }),
+      ).catch(swallowSatReadErrorUnlessTimeout),
+      withRecoveryReadTimeout("commit/reveal miner cycle", () =>
+        inspectSatMinerCycle(state.activeConfig, {
+          authority: params.authority,
+          cycleId: params.cycleId,
+        }),
+      ).catch(swallowSatReadErrorUnlessTimeout),
+    ]);
+    if (!cycle || !minerCycle) {
+      return false;
+    }
+    if (cycle.status === 2 && isMinerCycleResolvedForCleanup(minerCycle)) {
+      await runSatGatewayMethod({
+        api,
+        method: "sat.closeResolvedCycleAccounts",
+        payload: { cycleId: params.cycleId },
+      });
+      state.roundExecution.delete(`${params.cycleId}:0`);
+      await persistRuntimeState?.();
+      markWorkerSuccess(
+        state,
+        "recovery",
+        `${params.anchor}${params.backlogDetail} closed resolved commitment cycle ${params.cycleId}`,
+      );
+      scheduleWorkerNextRun(state, "recovery", RECOVERY_TICK_INTERVAL_MS);
+      return true;
+    }
+    if (cycle.status !== 1) {
+      return false;
+    }
+    if (minerCycle.validParticipation) {
+      if (execution) {
+        execution.participationSubmitted = true;
+        execution.entropySealed = !isZeroCycleSeed(cycle.cycleSeed) && !isEntropyUnavailable(cycle);
+        await persistRuntimeState?.();
+      }
+    }
+
+    const detailPrefix = `${params.anchor}${params.backlogDetail}`;
+    const commitDeadlineTs = cycle.commitDeadlineTs ?? 0;
+    const revealDeadlineTs = cycle.revealDeadlineTs ?? 0;
+    const commitPhaseOpen =
+      params.currentSlot != null && cycle.commitDeadlineSlot != null
+        ? params.currentSlot < cycle.commitDeadlineSlot
+        : params.nowSec < commitDeadlineTs;
+    const revealPhaseOpen =
+      params.currentSlot != null && cycle.revealDeadlineSlot != null
+        ? params.currentSlot < cycle.revealDeadlineSlot
+        : params.nowSec < revealDeadlineTs;
+    if (commitPhaseOpen) {
+      markWorkerWaiting(
+        state,
+        "recovery",
+        `cycle ${params.cycleId} commitment is waiting for the commit window to close`,
+      );
+      scheduleWorkerNextRun(
+        state,
+        "recovery",
+        Math.max(1_000, Math.min(10_000, (commitDeadlineTs - params.nowSec) * 1_000 + 500)),
+      );
+      return true;
+    }
+
+    if (execution?.entropyTargetPinned !== true) {
+      if (execution) {
+        execution.entropyTargetPinned = true;
+        await persistRuntimeState?.();
+      }
+    }
+
+    if (isEntropyUnavailable(cycle)) {
+      if (!minerCycle.capitalLockReleased) {
+        await runSatGatewayMethod({
+          api,
+          method: "sat.releaseUnrevealedCommit",
+          payload: { cycleId: params.cycleId, minerAuthority: params.authority },
+        });
+      }
+      const refreshedCycle = await withRecoveryReadTimeout("cancelled entropy cycle", () =>
+        inspectSatCycle(state.activeConfig, { cycleId: params.cycleId }),
+      ).catch(swallowSatReadErrorUnlessTimeout);
+      if (isFullyResolvedEmptyCycle(refreshedCycle)) {
+        await runSatGatewayMethod({
+          api,
+          method: "sat.abortEmptyCycle",
+          payload: { cycleId: params.cycleId },
+        });
+        await runSatGatewayMethod({
+          api,
+          method: "sat.closeResolvedCycleAccounts",
+          payload: { cycleId: params.cycleId },
+        });
+        state.roundExecution.delete(`${params.cycleId}:0`);
+        await persistRuntimeState?.();
+        markWorkerSuccess(
+          state,
+          "recovery",
+          `${detailPrefix} unwound unprovable entropy without penalty and aborted cycle ${params.cycleId}`,
+        );
+      } else {
+        markWorkerWaiting(
+          state,
+          "recovery",
+          `cycle ${params.cycleId} cancelled without penalty; waiting for remaining commitments to unwind`,
+        );
+      }
+      scheduleWorkerNextRun(state, "recovery", RECOVERY_TICK_INTERVAL_MS);
+      return true;
+    }
+
+    if (isZeroCycleSeed(cycle.cycleSeed) && revealPhaseOpen) {
+      if (minerCycle.validParticipation) {
+        markWorkerWaiting(
+          state,
+          "recovery",
+          `cycle ${params.cycleId} reveal is recorded; waiting for the sealed-strategy window to close`,
+        );
+        scheduleWorkerNextRun(state, "recovery", 1_000);
+        return true;
+      }
+      if (!execution || !hasDurableRevealMaterial(execution)) {
+        markWorkerWaiting(
+          state,
+          "recovery",
+          `cycle ${params.cycleId} cannot reveal safely because its durable nonce or allocation is unavailable`,
+        );
+        scheduleWorkerNextRun(state, "recovery", RECOVERY_TICK_INTERVAL_MS);
+        return true;
+      }
+      await runSatGatewayMethod({
+        api,
+        method: "sat.revealCycle",
+        payload: {
+          cycleId: params.cycleId,
+          nonceBase64: execution.revealNonceBase64,
+          allocationFp: execution.allocationFp,
+        },
+      });
+      execution.participationSubmitted = true;
+      await persistRuntimeState?.();
+      markWorkerSuccess(
+        state,
+        "recovery",
+        `${detailPrefix} recovered reveal for cycle ${params.cycleId}`,
+      );
+      scheduleWorkerNextRun(state, "recovery", 1_000);
+      return true;
+    }
+
+    if (isZeroCycleSeed(cycle.cycleSeed)) {
+      if (
+        params.currentSlot != null &&
+        cycle.entropyTargetSlot != null &&
+        params.currentSlot <= cycle.entropyTargetSlot
+      ) {
+        markWorkerWaiting(
+          state,
+          "recovery",
+          `cycle ${params.cycleId} reveal window closed; waiting for future entropy slots`,
+        );
+        scheduleWorkerNextRun(state, "recovery", 1_000);
+        return true;
+      }
+      try {
+        await runSatGatewayMethod({
+          api,
+          method: "sat.sealCycleEntropy",
+          payload: { cycleId: params.cycleId },
+        });
+      } catch (error) {
+        api.logger.debug?.(
+          `[sat-mining] recovery is waiting for cycle ${params.cycleId} entropy: ${String(error)}`,
+        );
+      }
+      markWorkerWaiting(
+        state,
+        "recovery",
+        `cycle ${params.cycleId} is sealing post-reveal entropy`,
+      );
+      scheduleWorkerNextRun(state, "recovery", 1_000);
+      return true;
+    }
+
+    if (execution) {
+      execution.entropySealed = true;
+      await persistRuntimeState?.();
+    }
+    if (minerCycle.validParticipation) {
+      return false;
+    }
+
+    if (!minerCycle.capitalLockReleased) {
+      await runSatGatewayMethod({
+        api,
+        method: "sat.releaseUnrevealedCommit",
+        payload: { cycleId: params.cycleId, minerAuthority: params.authority },
+      });
+    }
+    const refreshedCycle = await withRecoveryReadTimeout("released commit cycle", () =>
+      inspectSatCycle(state.activeConfig, { cycleId: params.cycleId }),
+    ).catch(swallowSatReadErrorUnlessTimeout);
+    if (isFullyResolvedEmptyCycle(refreshedCycle)) {
+      await runSatGatewayMethod({
+        api,
+        method: "sat.abortEmptyCycle",
+        payload: { cycleId: params.cycleId },
+      });
+      await runSatGatewayMethod({
+        api,
+        method: "sat.closeResolvedCycleAccounts",
+        payload: { cycleId: params.cycleId },
+      });
+      state.roundExecution.delete(`${params.cycleId}:0`);
+      await persistRuntimeState?.();
+      markWorkerSuccess(
+        state,
+        "recovery",
+        `${detailPrefix} released missed reveal and aborted empty cycle ${params.cycleId}`,
+      );
+    } else {
+      markWorkerSuccess(
+        state,
+        "recovery",
+        `${detailPrefix} released missed reveal for cycle ${params.cycleId}`,
+      );
+    }
+    scheduleWorkerNextRun(state, "recovery", RECOVERY_TICK_INTERVAL_MS);
+    return true;
+  };
 
   const collectPrioritizedCloseCycleIds = (params: {
     current: number;
@@ -273,6 +566,25 @@ export function createSatRecoveryService(params: {
               backlogDetail = backlogDetail || ` ${exactPendingCycle.reason}`;
             }
             markWorkerRun(state, "recovery", `${anchor}${backlogDetail}`);
+            const currentSlot = exactPendingCycle
+              ? await withRecoveryReadTimeout("chain slot", () =>
+                  inspectSatChainSlot(state.activeConfig),
+                ).catch(swallowSatReadErrorUnlessTimeout)
+              : null;
+            if (
+              exactPendingCycle?.stage === "submitted" &&
+              chainTime.chainUnixTime != null &&
+              (await recoverPendingCommit({
+                cycleId: exactPendingCycle.cycleId,
+                authority: activeWalletAddress,
+                nowSec: chainTime.chainUnixTime,
+                currentSlot,
+                anchor,
+                backlogDetail,
+              }))
+            ) {
+              return;
+            }
             const pendingCapitalRangeExists = hasPendingCapitalRange(
               minerCapital?.firstPendingCycleId,
               minerCapital?.lastPendingCycleId,
