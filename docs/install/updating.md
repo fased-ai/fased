@@ -274,7 +274,21 @@ Local or WSL bootstrap:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
   | bash -s -- --local --no-onboard
+
+fased update status
+fased update
+fased --version
+fased doctor
+fased gateway restart
+fased gateway status
+fased plugins doctor
 ```
+
+The Local/WSL bootstrap installs the current managed runtime, replaces only a
+recognized installer-owned `fased` launcher, refreshes an existing user
+service, and verifies that the running Gateway reports the same version. It
+does not overwrite an unrelated user-managed command and does not rerun
+onboarding.
 
 VPS Hosting bootstrap, run from the provider's root console:
 
@@ -287,6 +301,11 @@ An immutable old binary cannot execute updater logic that was introduced in a
 newer release. That one-time bootstrap is therefore unavoidable for a small set
 of broken historical builds. It preserves configuration, credentials, wallets,
 signer state, mining state, sessions, memory, and installed plugin records.
+
+The bootstrap is complete only when `fased --version`, the Doctor header, and
+the Gateway runtime agree, `RPC probe: ok` is reported, and plugin doctor is
+clean. A CLI version alone is not sufficient proof because a legacy service can
+still be running from an older source checkout.
 
 `./install.sh`:
 

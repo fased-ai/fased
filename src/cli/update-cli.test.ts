@@ -662,10 +662,84 @@ describe("update-cli", () => {
     await updateCommand({});
 
     expect(runGatewayUpdate).not.toHaveBeenCalled();
+    expect(runDaemonInstall).toHaveBeenCalledWith({
+      force: true,
+      json: undefined,
+    });
     expect(serviceRestart).toHaveBeenCalledTimes(1);
     expect(probeGateway).toHaveBeenCalled();
     expect(defaultRuntime.log).toHaveBeenCalledWith("Gateway runtime refreshed: 0.1.40");
     expect(defaultRuntime.exit).not.toHaveBeenCalledWith(1);
+  });
+
+  it("repairs a source-checkout gateway even when its reported version matches", async () => {
+    const root = createCaseDir("fased-current-source-gateway");
+    mockPackageInstallStatus(root);
+    readPackageVersion.mockResolvedValue("0.1.40");
+    vi.mocked(resolveNpmChannelTag).mockResolvedValue({
+      tag: "latest",
+      version: "0.1.40",
+    });
+    probeRunningGatewayRuntimeIdentity.mockResolvedValue({
+      reachable: true,
+      version: "0.1.40",
+      runtimeSource: "source-checkout",
+    });
+    probeGateway.mockResolvedValue({
+      ok: true,
+      error: null,
+      server: { version: "0.1.40", runtimeSource: "managed-package" },
+    });
+    serviceLoaded.mockResolvedValue(true);
+    resolveUpdateGatewayServiceTarget.mockResolvedValue({
+      scope: "system",
+      service: {
+        isLoaded: (...args: unknown[]) => serviceLoaded(...args),
+        readRuntime: (...args: unknown[]) => serviceReadRuntime(...args),
+        restart: (...args: unknown[]) => serviceRestart(...args),
+      },
+    });
+
+    await updateCommand({});
+
+    expect(runDaemonInstall).toHaveBeenCalledWith({ force: true, json: undefined });
+    expect(serviceRestart).toHaveBeenCalledTimes(1);
+    expect(defaultRuntime.log).toHaveBeenCalledWith("Gateway runtime refreshed: 0.1.40");
+    expect(defaultRuntime.log).not.toHaveBeenCalledWith("Already current: 0.1.40");
+  });
+
+  it("does not restart a same-version stale gateway when service refresh fails", async () => {
+    const root = createCaseDir("fased-current-stale-service-refresh-failed");
+    mockPackageInstallStatus(root);
+    readPackageVersion.mockResolvedValue("0.1.40");
+    vi.mocked(resolveNpmChannelTag).mockResolvedValue({
+      tag: "latest",
+      version: "0.1.40",
+    });
+    probeRunningGatewayRuntimeIdentity.mockResolvedValue({
+      reachable: true,
+      version: "0.1.23",
+      runtimeSource: "source-checkout",
+    });
+    serviceLoaded.mockResolvedValue(true);
+    vi.mocked(runDaemonInstall).mockRejectedValueOnce(new Error("service refresh failed"));
+    resolveUpdateGatewayServiceTarget.mockResolvedValue({
+      scope: "system",
+      service: {
+        isLoaded: (...args: unknown[]) => serviceLoaded(...args),
+        readRuntime: (...args: unknown[]) => serviceReadRuntime(...args),
+        restart: (...args: unknown[]) => serviceRestart(...args),
+      },
+    });
+
+    await updateCommand({});
+
+    expect(runDaemonInstall).toHaveBeenCalledWith({ force: true, json: undefined });
+    expect(serviceRestart).not.toHaveBeenCalled();
+    expect(defaultRuntime.error).toHaveBeenCalledWith(
+      expect.stringContaining("Gateway service refresh failed"),
+    );
+    expect(defaultRuntime.exit).toHaveBeenCalledWith(1);
   });
 
   it("does not report success when a managed gateway remains on the stale version", async () => {

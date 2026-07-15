@@ -111,6 +111,8 @@ SOURCE_INSTALL_REQUESTED=0
 REQUESTED_SWAP_GB=""
 TEMP_SUDOERS=""
 FASED_CLI_PATH=""
+PREBUILT_RUNTIME_INSTALLED=0
+GATEWAY_SERVICE_REFRESHED=0
 LOW_MEMORY_SWAP_THRESHOLD_MB=2304
 LOW_MEMORY_SWAP_GB=4
 HOSTING_SWAP_GB=2
@@ -1160,6 +1162,14 @@ install_prebuilt_release_runtime() {
   hash -r 2>/dev/null || true
   FASED_CLI_PATH="$target"
 
+  if ! node "$FASED_DIR/scripts/install-managed-cli-alias.mjs" \
+    --target "$target" \
+    --source-launcher "$FASED_DIR/fased.mjs"; then
+    spinner_failed "Install prebuilt runtime"
+    echo "Failed to reconcile the managed Fased CLI launcher." >&2
+    return 1
+  fi
+
   install_user_cli_path_snippet "$bin_dir" "$HOME/.profile"
   install_user_cli_path_snippet "$bin_dir" "$HOME/.bashrc"
   install_user_cli_path_snippet "$bin_dir" "$HOME/.zshrc"
@@ -1171,6 +1181,7 @@ install_prebuilt_release_runtime() {
     return 1
   fi
 
+  PREBUILT_RUNTIME_INSTALLED=1
   spinner_done "Prebuilt runtime ready"
 }
 
@@ -1439,6 +1450,39 @@ restart_existing_gateway_service_after_install() {
   fi
 
   return 1
+}
+
+refresh_existing_local_gateway_service_after_install() {
+  local profile
+  profile="$(resolved_host_profile)"
+
+  if [[ "$profile" == "hosting" || "$PREBUILT_RUNTIME_INSTALLED" -ne 1 ]]; then
+    return 0
+  fi
+  if ! has_user_gateway_service && ! has_system_gateway_service; then
+    return 0
+  fi
+
+  echo "Refreshing the existing Gateway service to the managed runtime..."
+  if ! "$FASED_CLI_PATH" gateway install --force; then
+    echo "Gateway service refresh failed; the previous service was left in place." >&2
+    echo "Persistent state under $FASED_CONFIG_DIR was not removed." >&2
+    return 1
+  fi
+  GATEWAY_SERVICE_REFRESHED=1
+}
+
+verify_gateway_runtime_identity_after_install() {
+  local expected_version=""
+  expected_version="$("$FASED_CLI_PATH" --version 2>/dev/null | head -n 1 | tr -d '\r')"
+  if [[ -z "$expected_version" ]]; then
+    echo "Could not read the installed Fased CLI version." >&2
+    return 1
+  fi
+
+  node "$FASED_DIR/scripts/verify-gateway-runtime-identity.mjs" \
+    --expected-version "$expected_version" \
+    --config "${FASED_CONFIG_PATH:-$FASED_CONFIG_DIR/fased.json}"
 }
 
 wait_for_gateway_health_after_restart() {
@@ -3332,6 +3376,9 @@ if [[ "$RUN_ONBOARD" -eq 0 ]]; then
       echo "Persistent state under $FASED_CONFIG_DIR was not removed." >&2
       exit 1
     fi
+    GATEWAY_SERVICE_REFRESHED=1
+  elif ! refresh_existing_local_gateway_service_after_install; then
+    exit 1
   fi
   no_onboard_profile="$(resolved_host_profile)"
   marker_onboarding_completed="$(read_marker_onboarding_completed || true)"
@@ -3344,8 +3391,18 @@ if [[ "$RUN_ONBOARD" -eq 0 ]]; then
   if restart_existing_gateway_service_after_install; then
     step_done "Gateway restart requested"
     if wait_for_gateway_health_after_restart; then
+      if [[ "$GATEWAY_SERVICE_REFRESHED" -eq 1 ]] && ! verify_gateway_runtime_identity_after_install; then
+        echo "Gateway restarted, but runtime identity verification failed." >&2
+        echo "Persistent state under $FASED_CONFIG_DIR was not removed." >&2
+        exit 1
+      fi
       step_done "Gateway online"
     else
+      if [[ "$GATEWAY_SERVICE_REFRESHED" -eq 1 ]]; then
+        echo "Gateway service was refreshed but did not become healthy." >&2
+        echo "Check: $FASED_CLI_PATH gateway status" >&2
+        exit 1
+      fi
       echo "Gateway restart requested; still warming up."
       echo "Check: fased health"
     fi

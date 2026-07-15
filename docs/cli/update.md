@@ -96,9 +96,11 @@ Use `install.sh --hosting` for first VPS setup or hosted repair. Use
 `fased update` for normal stable app releases.
 
 An already-installed legacy updater that cannot replace itself requires the
-one-time `install.sh --repair-hosting` procedure documented in
-[Updating](/install/updating#legacy-hosted-updater-repair). After that repair,
-normal updates use `fased update` alone.
+one-time Local/WSL or Hosting bootstrap documented in
+[Updating](/install/updating#update-support-contract). Local and WSL use
+`--local --no-onboard`; VPS Hosting uses `--repair-hosting` from the provider's
+root recovery console. After that bootstrap, normal updates use `fased update`
+alone.
 
 ## Options
 
