@@ -308,7 +308,7 @@ function printDryRunPreview(preview: UpdateDryRunPreview, jsonMode: boolean): vo
 }
 
 async function refreshGatewayServiceEnv(params: {
-  result: UpdateRunResult;
+  root?: string;
   jsonMode: boolean;
 }): Promise<GatewayServiceRefreshResult> {
   const args = ["gateway", "install", "--force"];
@@ -317,12 +317,12 @@ async function refreshGatewayServiceEnv(params: {
   }
 
   const failures: GatewayServiceRefreshFailure[] = [];
-  for (const candidate of resolveGatewayInstallEntrypointCandidates(params.result.root)) {
+  for (const candidate of resolveGatewayInstallEntrypointCandidates(params.root)) {
     if (!(await pathExists(candidate))) {
       continue;
     }
     const res = await runCommandWithTimeout([resolveNodeRunner(), candidate, ...args], {
-      cwd: params.result.root,
+      cwd: params.root,
       timeoutMs: SERVICE_REFRESH_TIMEOUT_MS,
     });
     if (res.code === 0) {
@@ -764,7 +764,7 @@ async function maybeRestartService(params: {
         try {
           const refresh = await measureUpdateStage(timings, "service environment refresh", () =>
             refreshGatewayServiceEnv({
-              result: params.result,
+              root: params.result.root,
               jsonMode: Boolean(params.opts.json),
             }),
           );
@@ -1153,7 +1153,12 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
       }
     }
     const runningRuntime = await probeRunningGatewayRuntimeIdentity({ timeoutMs: 750 });
-    if (runningRuntime.reachable && runningRuntime.version !== currentVersion) {
+    const managedRuntimeSources = new Set(["managed-package", "packaged-runtime"]);
+    const gatewayRuntimeNeedsRepair =
+      runningRuntime.reachable &&
+      (runningRuntime.version !== currentVersion ||
+        !managedRuntimeSources.has(runningRuntime.runtimeSource ?? ""));
+    if (gatewayRuntimeNeedsRepair) {
       if (!shouldRestart) {
         defaultRuntime.error(
           `Installed version is ${currentVersion}, but the running gateway reports ${runningRuntime.version ?? "an older runtime without identity"}. Re-run without --no-restart.`,
@@ -1176,6 +1181,21 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
             `Installed files are current, but gateway runtime is ${runningRuntime.version ?? "legacy/unknown"}. Refreshing the managed service...`,
           ),
         );
+      }
+      try {
+        await refreshGatewayServiceEnv({
+          root,
+          jsonMode: Boolean(opts.json),
+        });
+      } catch (error) {
+        const repairCommand =
+          error instanceof GatewayServiceRefreshError
+            ? error.repairCommand
+            : `${formatCliCommand("fased gateway install --force")} && ${formatCliCommand("fased gateway restart")}`;
+        defaultRuntime.error(`Gateway service refresh failed: ${String(error)}`);
+        defaultRuntime.error(`Repair command: ${repairCommand}`);
+        defaultRuntime.exit(1);
+        return;
       }
       if (serviceTarget.scope === "system") {
         await serviceTarget.service.restart({ env: process.env, stdout: process.stdout });
@@ -1261,7 +1281,7 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
   const startedAt = Date.now();
 
   let restartScriptPath: string | null = null;
-  let refreshGatewayServiceEnv = false;
+  let shouldRefreshGatewayServiceEnv = false;
   let serviceLoaded = false;
   const serviceTarget = await resolveUpdateGatewayServiceTarget();
   if (shouldRestart) {
@@ -1270,7 +1290,7 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
       if (serviceLoaded) {
         if (serviceTarget.scope === "platform") {
           restartScriptPath = await prepareRestartScript(process.env);
-          refreshGatewayServiceEnv = true;
+          shouldRefreshGatewayServiceEnv = true;
         }
       }
     } catch {
@@ -1347,7 +1367,7 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
     shouldRestart,
     result,
     opts,
-    refreshServiceEnv: refreshGatewayServiceEnv,
+    refreshServiceEnv: shouldRefreshGatewayServiceEnv,
     gatewayPort,
     restartScriptPath,
     serviceTarget,
