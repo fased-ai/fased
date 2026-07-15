@@ -107,6 +107,7 @@ AUTO_INSTALL=1
 RUN_ONBOARD=1
 HOSTING_REQUESTED=0
 HOSTING_REPAIR_REQUESTED=0
+LOCAL_REPAIR_REQUESTED=0
 SOURCE_INSTALL_REQUESTED=0
 REQUESTED_SWAP_GB=""
 TEMP_SUDOERS=""
@@ -283,6 +284,8 @@ Options:
                   onboarding defaults and may change SSH/firewall behavior.
   --repair-hosting  Repair an existing VPS runtime and root-managed gateway service
                   without rerunning onboarding or changing persistent user state.
+  --repair-local  Repair an existing Linux Local or WSL runtime and user Gateway
+                  service without rerunning onboarding or changing user state.
   --local         Laptop/desktop profile. Tailscale is optional; on a VPS this does
                   not apply hosting SSH/firewall hardening.
   --source-install  Build from the checkout instead of using the verified Linux
@@ -326,6 +329,11 @@ while [[ $# -gt 0 ]]; do
       HOSTING_REPAIR_REQUESTED=1
       RUN_ONBOARD=0
       pass_args+=(--mode local --host-profile hosting --gateway-bind loopback --tailscale serve)
+      ;;
+    --repair-local)
+      LOCAL_REPAIR_REQUESTED=1
+      RUN_ONBOARD=0
+      pass_args+=(--mode local --host-profile local --tailscale off)
       ;;
     --local)
       pass_args+=(--mode local --host-profile local --tailscale off)
@@ -1135,7 +1143,9 @@ install_prebuilt_release_runtime() {
   bash "$FASED_DIR/scripts/install-hosted-runtime.sh" \
     --package "$package_spec" \
     --prefix "$npm_prefix" \
-    --cache "$INSTALL_CACHE_DIR" || artifact_result=$?
+    --cache "$INSTALL_CACHE_DIR" \
+    --state-dir "$FASED_CONFIG_DIR" \
+    --profile "$(resolved_host_profile)" || artifact_result=$?
   if [[ "$artifact_result" -eq 20 ]]; then
     spinner_failed "Install prebuilt runtime"
     return 1
@@ -1154,9 +1164,20 @@ install_prebuilt_release_runtime() {
           echo "Log: $install_log" >&2
           tail -n 80 "$install_log" >&2 || true
           return 1
-        }
+      }
     fi
   fi
+
+  local installed_package_root="$npm_prefix/lib/node_modules/@fased/fased"
+  node "$installed_package_root/scripts/install-managed-runtime.mjs" \
+    --package-root "$installed_package_root" \
+    --state-dir "$FASED_CONFIG_DIR" \
+    --prefix "$npm_prefix" \
+    --profile "$(resolved_host_profile)" || {
+      spinner_failed "Install prebuilt runtime"
+      echo "Failed to install the stable Fased updater layout." >&2
+      return 1
+    }
 
   export PATH="$bin_dir:$PATH"
   hash -r 2>/dev/null || true
@@ -1483,6 +1504,31 @@ verify_gateway_runtime_identity_after_install() {
   node "$FASED_DIR/scripts/verify-gateway-runtime-identity.mjs" \
     --expected-version "$expected_version" \
     --config "${FASED_CONFIG_PATH:-$FASED_CONFIG_DIR/fased.json}"
+}
+
+rollback_managed_runtime_after_failed_install() {
+  local current_root
+  local rollback_script
+  current_root="$(readlink -f "$FASED_CONFIG_DIR/runtime/current" 2>/dev/null || true)"
+  rollback_script="$current_root/scripts/install-managed-runtime.mjs"
+  if [[ -z "$current_root" || ! -f "$rollback_script" || ! -e "$FASED_CONFIG_DIR/runtime/previous" ]]; then
+    return 1
+  fi
+  echo "Managed runtime verification failed; restoring the previous release..." >&2
+  if ! node "$rollback_script" \
+    --rollback \
+    --state-dir "$FASED_CONFIG_DIR" \
+    --prefix "${FASED_NPM_GLOBAL_PREFIX:-$INSTALL_CACHE_DIR/npm-global}"; then
+    return 1
+  fi
+  FASED_CLI_PATH="$FASED_CONFIG_DIR/bin/fased"
+  if [[ "$(resolved_host_profile)" == "hosting" ]]; then
+    "$FASED_CLI_PATH" gateway install --force --system >/dev/null 2>&1 || true
+  else
+    "$FASED_CLI_PATH" gateway install --force >/dev/null 2>&1 || true
+  fi
+  restart_existing_gateway_service_after_install >/dev/null 2>&1 || true
+  return 0
 }
 
 wait_for_gateway_health_after_restart() {
@@ -1990,6 +2036,8 @@ reexec_as_app_user() {
   done
   if [[ "$HOSTING_REPAIR_REQUESTED" -eq 1 ]]; then
     cmd+=" --repair-hosting"
+  elif [[ "$LOCAL_REPAIR_REQUESTED" -eq 1 ]]; then
+    cmd+=" --repair-local"
   fi
 
   if [[ "$RUN_ONBOARD" -eq 1 ]]; then
@@ -3142,8 +3190,8 @@ require_line '^\[Service\]$' "[Service]"
 require_line '^\[Install\]$' "[Install]"
 require_line "^User=${run_as_user}$" "User=${run_as_user}"
 require_line "^Group=${run_as_user}$" "Group=${run_as_user}"
-require_line "^ExecStart=/bin/bash (/home/${run_as_user}/fased/scripts/start-managed\\.sh|/home/${run_as_user}/\\.fased/install-cache/npm-global/lib/node_modules/@fased/fased/scripts/start-managed\\.sh)$" "managed ExecStart"
-require_line "^WorkingDirectory=(/home/${run_as_user}/fased|/home/${run_as_user}/\\.fased/install-cache/npm-global/lib/node_modules/@fased/fased)$" "hosted WorkingDirectory"
+require_line "^ExecStart=/bin/bash (/home/${run_as_user}/\\.fased/bin/fased-service managed|/home/${run_as_user}/fased/scripts/start-managed\\.sh|/home/${run_as_user}/\\.fased/install-cache/npm-global/lib/node_modules/@fased/fased/scripts/start-managed\\.sh)$" "managed ExecStart"
+require_line "^WorkingDirectory=(/home/${run_as_user}/\\.fased/runtime/current|/home/${run_as_user}/fased|/home/${run_as_user}/\\.fased/install-cache/npm-global/lib/node_modules/@fased/fased)$" "hosted WorkingDirectory"
 require_line '^Environment=FASED_GATEWAY_MODE=managed$' "managed mode"
 require_line '^Environment=FASED_MANAGED_INTERNAL=1$' "managed internal flag"
 require_line '^Environment=FASED_GATEWAY_PORT=18789$' "loopback gateway port"
@@ -3374,10 +3422,12 @@ if [[ "$RUN_ONBOARD" -eq 0 ]]; then
     if ! "$FASED_CLI_PATH" gateway install --force --system; then
       echo "Hosted gateway service repair failed." >&2
       echo "Persistent state under $FASED_CONFIG_DIR was not removed." >&2
+      rollback_managed_runtime_after_failed_install || true
       exit 1
     fi
     GATEWAY_SERVICE_REFRESHED=1
   elif ! refresh_existing_local_gateway_service_after_install; then
+    rollback_managed_runtime_after_failed_install || true
     exit 1
   fi
   no_onboard_profile="$(resolved_host_profile)"
@@ -3394,6 +3444,7 @@ if [[ "$RUN_ONBOARD" -eq 0 ]]; then
       if [[ "$GATEWAY_SERVICE_REFRESHED" -eq 1 ]] && ! verify_gateway_runtime_identity_after_install; then
         echo "Gateway restarted, but runtime identity verification failed." >&2
         echo "Persistent state under $FASED_CONFIG_DIR was not removed." >&2
+        rollback_managed_runtime_after_failed_install || true
         exit 1
       fi
       step_done "Gateway online"
@@ -3401,6 +3452,7 @@ if [[ "$RUN_ONBOARD" -eq 0 ]]; then
       if [[ "$GATEWAY_SERVICE_REFRESHED" -eq 1 ]]; then
         echo "Gateway service was refreshed but did not become healthy." >&2
         echo "Check: $FASED_CLI_PATH gateway status" >&2
+        rollback_managed_runtime_after_failed_install || true
         exit 1
       fi
       echo "Gateway restart requested; still warming up."
@@ -3416,6 +3468,8 @@ if [[ "$RUN_ONBOARD" -eq 0 ]]; then
   fi
   if [[ "$HOSTING_REPAIR_REQUESTED" -eq 1 ]]; then
     echo "Hosted runtime and gateway service repair complete. Onboarding was not rerun."
+  elif [[ "$LOCAL_REPAIR_REQUESTED" -eq 1 ]]; then
+    echo "Local runtime and gateway service repair complete. Onboarding was not rerun."
   else
     echo "Onboarding skipped (--no-onboard)."
   fi

@@ -14,6 +14,8 @@ active runtime depends on the install profile:
 
 - Supported Linux Local and VPS Hosting installs normally run a verified
   prebuilt release artifact.
+- Their CLI and Gateway service resolve the active version through a stable
+  launcher outside the versioned application directory.
 - macOS and explicit `--source-install` installs run from the source checkout.
 - `fased update` is the normal update command for both profiles.
 - The Control UI currently reports update status; it does not start the update.
@@ -28,13 +30,14 @@ the primary version-update command.
 
 ## Recommended path
 
-For a local install, open a terminal in the Fased install directory first:
+For a managed Linux Local or WSL install, updates work from any directory:
 
 ```bash
-cd ~/fased
 fased update status
 fased update
 ```
+
+Source/developer checkouts should still run from their checkout directory.
 
 On a hosted VPS, use the `app` user through Tailscale:
 
@@ -73,10 +76,15 @@ fased update --no-restart
 
 Use this for the gateway-aware update flow on an existing install.
 
+Managed artifact updates require a Gateway restart and health verification;
+`--no-restart` is accepted only when no runtime change is needed. Source and
+manual package-manager profiles retain their existing restart option.
+
 By default, `fased update` uses the **stable** channel. On a git checkout,
 stable means the newest stable `v*` release tag. It does **not** mean the moving
-head of `main`. On package installs, stable uses npm `latest` when the package
-manager path is active and detected.
+head of `main`. On managed package installs, npm `latest` resolves the exact
+version; the update downloads verified GitHub release layers and does not run a
+global npm dependency reconciliation.
 
 | Command                                                 | What it gets                                      |
 | ------------------------------------------------------- | ------------------------------------------------- |
@@ -202,6 +210,26 @@ layer when its build hash is unchanged and replace only the application layer.
 When the dependency recipe or lockfile changes, the next update replaces that
 layer once and later updates reuse it again.
 
+The managed launcher and updater are deliberately outside each application
+version:
+
+```text
+~/.fased/bin/fased
+~/.fased/bin/fased-service
+~/.fased/updater/fased-managed-updater.mjs
+~/.fased/runtime/current
+~/.fased/runtime/previous
+~/.fased/runtime/releases/<version-or-repair-generation>/
+~/.fased/install.json
+```
+
+`fased update` resolves the target online without stale npm cache metadata,
+verifies checksums and archive paths, stages and smoke-tests the candidate,
+switches `current` atomically, verifies Gateway identity and plugins, and rolls
+back automatically on failure. Configuration, credentials, wallets, signer
+state, mining data, sessions, and memory remain under the state directory and
+are never part of the release swap.
+
 ## Legacy hosted updater repair
 
 Very old hosted releases may contain an updater that cannot install its own
@@ -250,8 +278,9 @@ fased plugins doctor
 ```
 
 This repair is only for VPS Hosting installs with the root-managed service.
-Local users should continue using `fased update`; they must not run
-`--repair-hosting`.
+Local users must not run `--repair-hosting`. If their historical Local/WSL
+binary cannot complete `fased update`, use the Local repair command in the
+support contract below.
 
 ## Update support contract
 
@@ -273,8 +302,9 @@ Local or WSL bootstrap:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
-  | bash -s -- --local --no-onboard
+  | bash -s -- --repair-local
 
+hash -r
 fased update status
 fased update
 fased --version
@@ -285,7 +315,7 @@ fased plugins doctor
 ```
 
 The Local/WSL bootstrap installs the current managed runtime, replaces only a
-recognized installer-owned `fased` launcher, refreshes an existing user
+recognized installer-owned `fased` launcher, installs or refreshes the user
 service, and verifies that the running Gateway reports the same version. It
 does not overwrite an unrelated user-managed command and does not rerun
 onboarding.
@@ -301,6 +331,8 @@ An immutable old binary cannot execute updater logic that was introduced in a
 newer release. That one-time bootstrap is therefore unavoidable for a small set
 of broken historical builds. It preserves configuration, credentials, wallets,
 signer state, mining state, sessions, memory, and installed plugin records.
+After the bootstrap installs the stable external updater, later application
+versions cannot strand the update command inside an old release directory.
 
 The bootstrap is complete only when `fased --version`, the Doctor header, and
 the Gateway runtime agree, `RPC probe: ok` is reported, and plugin doctor is

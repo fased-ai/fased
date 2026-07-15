@@ -35,6 +35,7 @@ const probeGateway = vi.fn();
 const probeRunningGatewayRuntimeIdentity = vi.fn();
 const ensureOpenAICodexRuntimeComponent = vi.fn();
 const hasConfiguredOpenAICodexProfile = vi.fn();
+const ensureManagedRuntimeBootstrap = vi.fn();
 
 vi.mock("@clack/prompts", () => ({
   confirm,
@@ -58,6 +59,10 @@ vi.mock("../infra/update-runner.js", () => ({
 
 vi.mock("../infra/fased-root.js", () => ({
   resolveFasedAgentPackageRoot: vi.fn(),
+}));
+
+vi.mock("../infra/managed-runtime-bootstrap.js", () => ({
+  ensureManagedRuntimeBootstrap,
 }));
 
 vi.mock("../config/config.js", () => ({
@@ -338,7 +343,13 @@ describe("update-cli", () => {
     probeRunningGatewayRuntimeIdentity.mockReset();
     ensureOpenAICodexRuntimeComponent.mockReset();
     hasConfiguredOpenAICodexProfile.mockReset();
+    ensureManagedRuntimeBootstrap.mockReset();
     hasConfiguredOpenAICodexProfile.mockReturnValue(false);
+    ensureManagedRuntimeBootstrap.mockResolvedValue({
+      installed: false,
+      manifestPath: null,
+      updaterPath: null,
+    });
     vi.mocked(resolveFasedAgentPackageRoot).mockResolvedValue(process.cwd());
     vi.mocked(readConfigFileSnapshot).mockResolvedValue(baseSnapshot);
     vi.mocked(fetchNpmTagVersion).mockResolvedValue({
@@ -555,6 +566,37 @@ describe("update-cli", () => {
     expect(runDaemonInstall).not.toHaveBeenCalled();
     expect(runDaemonRestart).not.toHaveBeenCalled();
     expect(serviceRestart).not.toHaveBeenCalled();
+  });
+
+  it("hands a packaged update to the stable updater immediately after bootstrap", async () => {
+    const root = createCaseDir("fased-managed-transition");
+    mockPackageInstallStatus(root);
+    ensureManagedRuntimeBootstrap.mockResolvedValue({
+      installed: true,
+      manifestPath: "/home/test/.fased/install.json",
+      updaterPath: "/home/test/.fased/updater/fased-managed-updater.mjs",
+    });
+
+    await updateCommand({ channel: "stable", timeout: "45", yes: true });
+
+    expect(runCommandWithTimeout).toHaveBeenCalledWith(
+      [
+        process.execPath,
+        "/home/test/.fased/updater/fased-managed-updater.mjs",
+        "update",
+        "--channel",
+        "stable",
+        "--timeout",
+        "45",
+        "--yes",
+      ],
+      expect.objectContaining({
+        cwd: "/home/test/.fased/updater",
+        timeoutMs: 45_000,
+      }),
+    );
+    expect(runGatewayUpdate).not.toHaveBeenCalled();
+    expect(resolveNpmChannelTag).not.toHaveBeenCalled();
   });
 
   it("repairs a missing version-matched provider runtime on a same-version update", async () => {

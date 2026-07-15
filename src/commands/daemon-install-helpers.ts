@@ -83,6 +83,7 @@ export async function buildGatewayInstallPlan(params: {
     runtime: params.runtime,
     nodePath,
     startupMode,
+    env: params.env,
   });
   await emitNodeRuntimeWarning({
     env: params.env,

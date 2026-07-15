@@ -10,20 +10,21 @@ title: "update"
 
 Update an installed Fased runtime and optionally switch channels.
 
-On supported packaged Linux installs, Fased verifies and activates the exact
-release artifact in the existing managed runtime location. It then restarts
+On supported packaged Linux installs, a stable updater outside the versioned
+application verifies and activates the exact release artifact. It then restarts
 the correct Gateway service and checks health. VPS Hosting uses the
 root-managed system service; Local Linux uses the user service. If the new
 packaged runtime does not become healthy, Fased restores the previous runtime
 automatically.
 
-For local installs, run it from the Fased install directory, usually `~/fased`:
+For managed Linux Local and WSL installs, it works from any directory:
 
 ```bash
-cd ~/fased
 fased update status
 fased update
 ```
+
+Source/developer checkouts should run it from the checkout.
 
 <Note>
 `fased onboard --install-daemon` installs or reconfigures the runtime service.
@@ -98,7 +99,7 @@ Use `install.sh --hosting` for first VPS setup or hosted repair. Use
 An already-installed legacy updater that cannot replace itself requires the
 one-time Local/WSL or Hosting bootstrap documented in
 [Updating](/install/updating#update-support-contract). Local and WSL use
-`--local --no-onboard`; VPS Hosting uses `--repair-hosting` from the provider's
+`--repair-local`; VPS Hosting uses `--repair-hosting` from the provider's
 root recovery console. After that bootstrap, normal updates use `fased update`
 alone.
 
@@ -116,6 +117,11 @@ alone.
 
 Downgrades require confirmation because older versions can break the current
 config or runtime state.
+
+Managed runtime changes cannot use `--no-restart`: activation succeeds only
+after the correct service restarts and reports the target runtime identity.
+Same-version checks remain mutation-free when the files and Gateway are
+already healthy.
 
 ## `update status`
 
@@ -143,10 +149,12 @@ Interactive flow to:
 
 The exact path depends on the install:
 
-- **VPS Hosting:** download the exact release artifact, verify its checksum and
-  version, run a pre-swap CLI/plugin check, activate it, sync installed plugins,
-  and refresh the service. Package-manager fallback is used only when the
-  artifact path is unavailable or unsupported.
+- **Managed Linux Local and VPS Hosting:** resolve the exact target online,
+  download architecture-matched application/dependency layers, verify checksums
+  and archive paths, smoke-test before activation, atomically switch the active
+  runtime, and verify the service, Gateway version, and plugins. A failed
+  candidate rolls back automatically. Normal managed updates never reconcile
+  the full npm dependency graph.
 - **Local source checkout:** require a clean worktree, select the release tag or
   branch, refresh dependencies, rebuild runtime and Control UI assets, run
   doctor checks, sync plugins, and restart when requested.

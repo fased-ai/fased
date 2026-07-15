@@ -1,6 +1,8 @@
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { resolveManagedScriptPath } from "../commands/managed-up.js";
+import { resolveStateDir } from "../config/paths.js";
 import { isBunRuntime, isNodeRuntime } from "./runtime-binary.js";
 
 type GatewayProgramArgs = {
@@ -238,8 +240,39 @@ export async function resolveGatewayProgramArguments(params: {
   runtime?: GatewayRuntimePreference;
   nodePath?: string;
   startupMode?: GatewayStartupMode;
+  env?: Record<string, string | undefined>;
 }): Promise<GatewayProgramArgs> {
   const startupMode = params.startupMode ?? "gateway";
+  const env = params.env ?? process.env;
+  const stateDir = resolveStateDir(env, os.homedir);
+  const manifestPath = env.FASED_MANAGED_INSTALL_MANIFEST || path.join(stateDir, "install.json");
+  try {
+    const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8")) as {
+      schemaVersion?: unknown;
+      service?: { launcher?: unknown };
+      runtime?: { currentLink?: unknown };
+    };
+    const launcher =
+      typeof manifest.service?.launcher === "string" ? manifest.service.launcher : "";
+    const currentLink =
+      typeof manifest.runtime?.currentLink === "string" ? manifest.runtime.currentLink : "";
+    if (manifest.schemaVersion === 1 && launcher && currentLink) {
+      await fs.access(launcher);
+      await fs.access(currentLink);
+      if (startupMode === "managed-up") {
+        return {
+          programArguments: ["/bin/bash", launcher, "managed"],
+          workingDirectory: currentLink,
+        };
+      }
+      return {
+        programArguments: ["/bin/bash", launcher, "gateway", "--port", String(params.port)],
+        workingDirectory: currentLink,
+      };
+    }
+  } catch {
+    // Legacy and source installs retain their existing service arguments.
+  }
   if (startupMode === "managed-up") {
     const scriptPath = resolveManagedScriptPath();
     return {
