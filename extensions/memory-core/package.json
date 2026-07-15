@@ -1,11 +1,11 @@
 {
   "name": "@fased/memory-core",
-  "version": "0.1.59",
+  "version": "0.1.60",
   "private": true,
   "description": "FasedAgent core memory search plugin",
   "type": "module",
   "peerDependencies": {
-    "@fased/fased": "^0.1.59"
+    "@fased/fased": "^0.1.60"
   },
   "fased": {
     "extensions": [
