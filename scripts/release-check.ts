@@ -34,7 +34,12 @@ const requiredPathGroups = [
   "dist/build-info.json",
   "docs/reference/templates/AGENTS.md",
   "scripts/clean-package-dist.mjs",
+  "scripts/fased-managed-launcher.sh",
+  "scripts/fased-managed-service.sh",
+  "scripts/fased-managed-updater.mjs",
   "scripts/fased-launcher-runtime.mjs",
+  "scripts/install-managed-runtime.mjs",
+  "scripts/managed-runtime-layout.mjs",
   "shared/sat-hash-v1.json",
 ];
 const requiredExactDependencies = new Map<string, string>();

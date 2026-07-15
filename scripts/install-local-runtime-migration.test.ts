@@ -37,5 +37,7 @@ describe("Local and WSL managed runtime migration", () => {
     expect(installer).toContain("verify_gateway_runtime_identity_after_install");
     expect(installer).toContain("verify-gateway-runtime-identity.mjs");
     expect(installer).toContain("Gateway restarted, but runtime identity verification failed.");
+    expect(installer).toContain("rollback_managed_runtime_after_failed_install");
+    expect(installer).toContain("--rollback");
   });
 });

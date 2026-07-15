@@ -4,6 +4,8 @@ set -euo pipefail
 PACKAGE_SPEC="@fased/fased@latest"
 PREFIX=""
 CACHE_DIR=""
+STATE_DIR=""
+PROFILE="local"
 BASE_URL="${FASED_HOSTED_ARTIFACT_BASE_URL:-https://github.com/fased-ai/fased/releases/download}"
 INSTALL_STARTED_MS=""
 TIMING_LABELS=()
@@ -56,6 +58,14 @@ while [[ $# -gt 0 ]]; do
       CACHE_DIR="${2:-}"
       shift 2
       ;;
+    --state-dir)
+      STATE_DIR="${2:-}"
+      shift 2
+      ;;
+    --profile)
+      PROFILE="${2:-}"
+      shift 2
+      ;;
     --base-url)
       BASE_URL="${2:-}"
       shift 2
@@ -71,6 +81,13 @@ if [[ -z "$PREFIX" || -z "$CACHE_DIR" ]]; then
   echo "Hosted runtime installer requires --prefix and --cache." >&2
   exit 20
 fi
+if [[ -z "$STATE_DIR" ]]; then
+  STATE_DIR="$(cd "$(dirname "$CACHE_DIR")" && pwd)"
+fi
+case "$PROFILE" in
+  local|hosting|source) ;;
+  *) echo "Invalid managed runtime profile: $PROFILE" >&2; exit 20 ;;
+esac
 
 sha256_file() {
   local file="$1"
@@ -103,14 +120,24 @@ resolve_version() {
   npm view "$PACKAGE_SPEC" version --loglevel=error 2>/dev/null | tail -n 1 | tr -d '[:space:]'
 }
 
+archive_entry_is_safe() {
+  local entry="${1%/}"
+  local allowed_root="$2"
+  local part
+  local -a parts=()
+  [[ -n "$entry" && "$entry" != /* && "$entry" != *\\* ]] || return 1
+  [[ "$entry" == "$allowed_root" || "$entry" == "$allowed_root/"* ]] || return 1
+  IFS='/' read -r -a parts <<<"$entry"
+  for part in "${parts[@]}"; do
+    [[ -n "$part" && "$part" != "." && "$part" != ".." ]] || return 1
+  done
+}
+
 archive_is_safe() {
   local archive="$1"
   local entry
   while IFS= read -r entry; do
-    case "$entry" in
-      package|package/*) ;;
-      *) return 1 ;;
-    esac
+    archive_entry_is_safe "$entry" package || return 1
   done < <(tar -tzf "$archive")
 }
 
@@ -118,10 +145,7 @@ dependency_archive_is_safe() {
   local archive="$1"
   local entry
   while IFS= read -r entry; do
-    case "$entry" in
-      node_modules|node_modules/*) ;;
-      *) return 1 ;;
-    esac
+    archive_entry_is_safe "$entry" node_modules || return 1
   done < <(tar -tzf "$archive")
 }
 
@@ -269,7 +293,17 @@ fi
 mkdir -p "$PREFIX/bin"
 ln -sfn "../lib/node_modules/@fased/fased/fased.mjs" "$PREFIX/bin/fased"
 chmod 755 "$TARGET_ROOT/fased.mjs" 2>/dev/null || true
-[[ -n "$BACKUP_ROOT" ]] && rm -rf "$BACKUP_ROOT"
+MANAGED_INSTALL_ARGS=(
+  --package-root "$TARGET_ROOT"
+  --state-dir "$STATE_DIR"
+  --prefix "$PREFIX"
+  --profile "$PROFILE"
+)
+if [[ -n "$BACKUP_ROOT" ]]; then
+  MANAGED_INSTALL_ARGS+=(--previous-package-root "$BACKUP_ROOT")
+fi
+node "$TARGET_ROOT/scripts/install-managed-runtime.mjs" "${MANAGED_INSTALL_ARGS[@]}"
+[[ -n "$BACKUP_ROOT" && -e "$BACKUP_ROOT" ]] && rm -rf "$BACKUP_ROOT"
 record_timing "runtime activation" "$phase_started_ms"
 printf 'Installed verified hosted runtime v%s.\n' "$VERSION"
 print_timing_summary

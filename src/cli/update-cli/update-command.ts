@@ -17,6 +17,7 @@ import {
   writeConfigFile,
 } from "../../config/config.js";
 import { probeGateway } from "../../gateway/probe.js";
+import { ensureManagedRuntimeBootstrap } from "../../infra/managed-runtime-bootstrap.js";
 import { loadGatewayTlsRuntime } from "../../infra/tls/gateway.js";
 import {
   channelToNpmTag,
@@ -971,6 +972,57 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
   }
 
   const installKind = updateStatus.installKind;
+  if (installKind === "package" && !opts.dryRun && requestedChannel !== "dev") {
+    try {
+      const managed = await ensureManagedRuntimeBootstrap({
+        packageRoot: root,
+        env: process.env,
+      });
+      if (managed.updaterPath) {
+        const managedArgs = [managed.updaterPath, "update"];
+        if (opts.json) {
+          managedArgs.push("--json");
+        }
+        if (opts.restart === false) {
+          managedArgs.push("--no-restart");
+        }
+        if (opts.channel) {
+          managedArgs.push("--channel", opts.channel);
+        }
+        if (opts.tag) {
+          managedArgs.push("--tag", opts.tag);
+        }
+        if (opts.timeout) {
+          managedArgs.push("--timeout", opts.timeout);
+        }
+        if (opts.yes) {
+          managedArgs.push("--yes");
+        }
+        if (opts.safeFallback) {
+          managedArgs.push("--safe-fallback");
+        }
+        const result = await runCommandWithTimeout([process.execPath, ...managedArgs], {
+          cwd: path.dirname(managed.updaterPath),
+          env: process.env,
+          timeoutMs: timeoutMs ?? 20 * 60_000,
+        });
+        if (result.stdout) {
+          process.stdout.write(result.stdout);
+        }
+        if (result.stderr) {
+          process.stderr.write(result.stderr);
+        }
+        if (result.code !== 0) {
+          defaultRuntime.exit(result.code ?? 1);
+        }
+        return;
+      }
+    } catch (error) {
+      defaultRuntime.error(`Managed updater bootstrap failed: ${String(error)}`);
+      defaultRuntime.exit(1);
+      return;
+    }
+  }
   const switchToGit = requestedChannel === "dev" && installKind !== "git";
   const switchToPackage =
     requestedChannel !== null && requestedChannel !== "dev" && installKind === "git";

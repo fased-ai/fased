@@ -241,6 +241,15 @@ Native signer note:
     ./install.sh --local
     ```
   </Tab>
+  <Tab title="Repair Local or WSL">
+    ```bash
+    ./install.sh --repair-local
+    ```
+
+    Repairs the managed Local/WSL runtime and user Gateway service without
+    rerunning onboarding or resetting persistent state.
+
+  </Tab>
   <Tab title="Verbose">
     ```bash
     ./install.sh --verbose
@@ -259,6 +268,7 @@ These are the flags that matter for the current public repo-backed flow.
 | `--install-dir <path>` | Bootstrap or resolve the checkout under a specific directory.     |
 | `--hosting`            | Use hosted/VPS onboarding defaults.                               |
 | `--repair-hosting`     | Repair hosted runtime/service state without rerunning onboarding. |
+| `--repair-local`       | Repair Local/WSL runtime and user service without onboarding.     |
 | `--local`              | Use local-machine onboarding defaults.                            |
 | `--source-install`     | Build from source instead of using the verified Linux runtime.    |
 | `--swap-gb <n>`        | Override automatic install-time swap sizing on small Linux hosts. |
