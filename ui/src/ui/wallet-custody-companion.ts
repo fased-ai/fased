@@ -1,4 +1,4 @@
-export const WALLET_CUSTODY_COMPANION_PROTOCOL_VERSION = 1;
+export const WALLET_CUSTODY_COMPANION_PROTOCOL_VERSION = 2;
 export const WALLET_CUSTODY_COMPANION_PORT = 18795;
 export const WALLET_CUSTODY_COMPANION_BASE_URL = `http://127.0.0.1:${WALLET_CUSTODY_COMPANION_PORT}`;
 export const WALLET_CUSTODY_COMPANION_HEALTH_PATH = "/v1/custody/health";
@@ -46,7 +46,7 @@ function isHealthResponse(value: unknown): value is WalletCustodyCompanionHealth
   const candidate = value as Partial<WalletCustodyCompanionHealthResponse>;
   return (
     candidate.ok === true &&
-    typeof candidate.protocolVersion === "number" &&
+    candidate.protocolVersion === WALLET_CUSTODY_COMPANION_PROTOCOL_VERSION &&
     typeof candidate.helper === "string" &&
     (candidate.platform === "macos" ||
       candidate.platform === "linux" ||
@@ -65,11 +65,18 @@ function isHealthResponse(value: unknown): value is WalletCustodyCompanionHealth
 
 export function walletCustodyCompanionSupportsSecureStorage(
   health:
-    | Pick<WalletCustodyCompanionHealthResponse, "storageMode" | "availableRoutes">
+    | Pick<
+        WalletCustodyCompanionHealthResponse,
+        "protocolVersion" | "storageMode" | "availableRoutes"
+      >
     | null
     | undefined,
 ): boolean {
-  if (!health || health.storageMode === "unavailable") {
+  if (
+    !health ||
+    health.protocolVersion !== WALLET_CUSTODY_COMPANION_PROTOCOL_VERSION ||
+    health.storageMode === "unavailable"
+  ) {
     return false;
   }
   const requiredRoutes = [

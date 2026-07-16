@@ -6,8 +6,17 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
+
+const testGatewayOrigin = "https://agent.example"
+
+func authorizedRequest(method, target string, body *bytes.Reader) *http.Request {
+	request := httptest.NewRequest(method, target, body)
+	request.Header.Set("Origin", testGatewayOrigin)
+	return request
+}
 
 type memoryStorage struct {
 	platform    Platform
@@ -57,7 +66,10 @@ func (s *memoryStorage) Delete(_ context.Context, origin string, walletID string
 
 func TestServerHealthAndLifecycle(t *testing.T) {
 	store := newMemoryStorage()
-	handler := NewHandler(store)
+	handler, err := NewHandlerWithOrigins(store, []string{testGatewayOrigin})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	health := httptest.NewRecorder()
 	handler.ServeHTTP(health, httptest.NewRequest(http.MethodGet, HealthPath, nil))
@@ -76,7 +88,7 @@ func TestServerHealthAndLifecycle(t *testing.T) {
 	}
 
 	storeReq := DeviceShareStoreRequest{
-		GatewayOrigin: "https://agent.example",
+		GatewayOrigin: testGatewayOrigin,
 		WalletID:      "wallet-payment",
 		DeviceShare:   "device-share-secret",
 	}
@@ -84,7 +96,7 @@ func TestServerHealthAndLifecycle(t *testing.T) {
 	storeRes := httptest.NewRecorder()
 	handler.ServeHTTP(
 		storeRes,
-		httptest.NewRequest(http.MethodPost, DeviceShareStorePath, bytes.NewReader(storeBody)),
+		authorizedRequest(http.MethodPost, DeviceShareStorePath, bytes.NewReader(storeBody)),
 	)
 	if storeRes.Code != http.StatusOK {
 		t.Fatalf("expected store ok, got %d: %s", storeRes.Code, storeRes.Body.String())
@@ -93,10 +105,10 @@ func TestServerHealthAndLifecycle(t *testing.T) {
 	statusRes := httptest.NewRecorder()
 	handler.ServeHTTP(
 		statusRes,
-		httptest.NewRequest(
+		authorizedRequest(
 			http.MethodGet,
 			DeviceShareStatusPath+"?gatewayOrigin=https%3A%2F%2Fagent.example&walletId=wallet-payment",
-			nil,
+			bytes.NewReader(nil),
 		),
 	)
 	if statusRes.Code != http.StatusOK {
@@ -111,13 +123,13 @@ func TestServerHealthAndLifecycle(t *testing.T) {
 	}
 
 	loadBody, _ := json.Marshal(DeviceShareLoadRequest{
-		GatewayOrigin: "https://agent.example",
+		GatewayOrigin: testGatewayOrigin,
 		WalletID:      "wallet-payment",
 	})
 	loadRes := httptest.NewRecorder()
 	handler.ServeHTTP(
 		loadRes,
-		httptest.NewRequest(http.MethodPost, DeviceShareLoadPath, bytes.NewReader(loadBody)),
+		authorizedRequest(http.MethodPost, DeviceShareLoadPath, bytes.NewReader(loadBody)),
 	)
 	if loadRes.Code != http.StatusOK {
 		t.Fatalf("expected load ok, got %d: %s", loadRes.Code, loadRes.Body.String())
@@ -131,13 +143,13 @@ func TestServerHealthAndLifecycle(t *testing.T) {
 	}
 
 	deleteBody, _ := json.Marshal(DeviceShareDeleteRequest{
-		GatewayOrigin: "https://agent.example",
+		GatewayOrigin: testGatewayOrigin,
 		WalletID:      "wallet-payment",
 	})
 	deleteRes := httptest.NewRecorder()
 	handler.ServeHTTP(
 		deleteRes,
-		httptest.NewRequest(http.MethodPost, DeviceShareDeletePath, bytes.NewReader(deleteBody)),
+		authorizedRequest(http.MethodPost, DeviceShareDeletePath, bytes.NewReader(deleteBody)),
 	)
 	if deleteRes.Code != http.StatusOK {
 		t.Fatalf("expected delete ok, got %d", deleteRes.Code)
@@ -145,10 +157,13 @@ func TestServerHealthAndLifecycle(t *testing.T) {
 }
 
 func TestUnavailableStorageHealth(t *testing.T) {
-	handler := NewHandler(&unavailableStorage{
+	handler, err := NewHandlerWithOrigins(&unavailableStorage{
 		platform: PlatformLinux,
 		warning:  "secret-tool not found",
-	})
+	}, []string{testGatewayOrigin})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	health := httptest.NewRecorder()
 	handler.ServeHTTP(health, httptest.NewRequest(http.MethodGet, HealthPath, nil))
@@ -167,16 +182,102 @@ func TestUnavailableStorageHealth(t *testing.T) {
 	}
 
 	storeBody, _ := json.Marshal(DeviceShareStoreRequest{
-		GatewayOrigin: "https://agent.example",
+		GatewayOrigin: testGatewayOrigin,
 		WalletID:      "wallet-payment",
 		DeviceShare:   "device-share-secret",
 	})
 	storeRes := httptest.NewRecorder()
 	handler.ServeHTTP(
 		storeRes,
-		httptest.NewRequest(http.MethodPost, DeviceShareStorePath, bytes.NewReader(storeBody)),
+		authorizedRequest(http.MethodPost, DeviceShareStorePath, bytes.NewReader(storeBody)),
 	)
 	if storeRes.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected store to fail when storage unavailable, got %d", storeRes.Code)
+	}
+}
+
+func TestStorageRoutesFailClosedWithoutConfiguredOrigin(t *testing.T) {
+	store := newMemoryStorage()
+	handler := NewHandler(store)
+	body, _ := json.Marshal(DeviceShareStoreRequest{
+		GatewayOrigin: testGatewayOrigin,
+		WalletID:      "vault",
+		DeviceShare:   "must-not-be-stored",
+	})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(
+		response,
+		authorizedRequest(http.MethodPost, DeviceShareStorePath, bytes.NewReader(body)),
+	)
+	if response.Code != http.StatusForbidden || len(store.records) != 0 {
+		t.Fatalf("unconfigured helper accepted storage request: status=%d records=%d", response.Code, len(store.records))
+	}
+
+	health := httptest.NewRecorder()
+	handler.ServeHTTP(health, httptest.NewRequest(http.MethodGet, HealthPath, nil))
+	var payload HealthResponse
+	if err := json.Unmarshal(health.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.AvailableRoutes) != 1 || payload.AvailableRoutes[0] != HealthPath || !strings.Contains(payload.Warning, "disabled") {
+		t.Fatalf("diagnostics-only health did not disclose the fail-closed state: %#v", payload)
+	}
+}
+
+func TestStorageRoutesBindClaimedGatewayToBrowserOrigin(t *testing.T) {
+	store := newMemoryStorage()
+	handler, err := NewHandlerWithOrigins(store, []string{testGatewayOrigin})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(DeviceShareStoreRequest{
+		GatewayOrigin: "https://different.example",
+		WalletID:      "vault",
+		DeviceShare:   "must-not-be-stored",
+	})
+	mismatch := httptest.NewRecorder()
+	handler.ServeHTTP(
+		mismatch,
+		authorizedRequest(http.MethodPost, DeviceShareStorePath, bytes.NewReader(body)),
+	)
+	if mismatch.Code != http.StatusForbidden || len(store.records) != 0 {
+		t.Fatalf("helper accepted mismatched claimed origin: status=%d records=%d", mismatch.Code, len(store.records))
+	}
+
+	foreign := httptest.NewRequest(http.MethodPost, DeviceShareStorePath, bytes.NewReader(body))
+	foreign.Header.Set("Origin", "https://evil.example")
+	foreignResponse := httptest.NewRecorder()
+	handler.ServeHTTP(foreignResponse, foreign)
+	if foreignResponse.Code != http.StatusForbidden || foreignResponse.Header().Get("Access-Control-Allow-Origin") != "" {
+		t.Fatalf("helper authorized a foreign browser origin: status=%d cors=%q", foreignResponse.Code, foreignResponse.Header().Get("Access-Control-Allow-Origin"))
+	}
+
+	preflight := httptest.NewRequest(http.MethodOptions, DeviceShareStorePath, nil)
+	preflight.Header.Set("Origin", testGatewayOrigin)
+	preflightResponse := httptest.NewRecorder()
+	handler.ServeHTTP(preflightResponse, preflight)
+	if preflightResponse.Code != http.StatusNoContent || preflightResponse.Header().Get("Access-Control-Allow-Origin") != testGatewayOrigin {
+		t.Fatalf("trusted preflight failed: status=%d cors=%q", preflightResponse.Code, preflightResponse.Header().Get("Access-Control-Allow-Origin"))
+	}
+}
+
+func TestCustodyHelperRejectsInvalidOriginsAndRequestShapes(t *testing.T) {
+	store := newMemoryStorage()
+	for _, origin := range []string{"", "file:///tmp/x", "https://agent.example/path", "https://agent.example?x=1", "https://a.example,https://b.example"} {
+		if _, err := NewHandlerWithOrigins(store, []string{origin}); err == nil {
+			t.Fatalf("accepted invalid configured origin %q", origin)
+		}
+	}
+	handler, err := NewHandlerWithOrigins(store, []string{testGatewayOrigin})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unknownBody := bytes.NewBufferString(`{"gatewayOrigin":"https://agent.example","walletId":"vault","deviceShare":"secret","extra":true}`)
+	request := httptest.NewRequest(http.MethodPost, DeviceShareStorePath, unknownBody)
+	request.Header.Set("Origin", testGatewayOrigin)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest || len(store.records) != 0 {
+		t.Fatalf("accepted non-strict storage request: status=%d records=%d", response.Code, len(store.records))
 	}
 }

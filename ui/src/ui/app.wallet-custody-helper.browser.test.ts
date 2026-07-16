@@ -84,7 +84,7 @@ function createMockCompanionHelper() {
     if (method === "GET" && url.pathname === "/v1/custody/health") {
       return json(200, {
         ok: true,
-        protocolVersion: 1,
+        protocolVersion: 2,
         helper: "fased-wallet-custody-companion-mock",
         platform: "mock",
         storageMode: "mock-memory",
@@ -304,7 +304,7 @@ describe("wallet custody helper path (browser)", () => {
         helper: "fased-wallet-custody-companion-mock",
         platform: "mock",
         storageMode: "mock-memory",
-        protocolVersion: 1,
+        protocolVersion: 2,
         storedWalletCount: 0,
         availableRoutes: [
           "/v1/custody/health",
@@ -518,7 +518,7 @@ describe("wallet custody helper path (browser)", () => {
         helper: "fased-wallet-custody-companion-mock",
         platform: "mock",
         storageMode: "mock-memory",
-        protocolVersion: 1,
+        protocolVersion: 2,
         storedWalletCount: 0,
         availableRoutes: [
           "/v1/custody/health",

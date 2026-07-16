@@ -1,7 +1,7 @@
 package custodyhelper
 
 const (
-	ProtocolVersion = 1
+	ProtocolVersion = 2
 	Host            = "127.0.0.1"
 	Port            = 18795
 	HelperName      = "fased-native-custody-helper"

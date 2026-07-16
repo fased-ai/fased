@@ -34,6 +34,10 @@ function stubBrowserCapabilities(params: {
   publicKeyCredential?: unknown;
   credentials?: unknown;
 }) {
+  vi.stubGlobal("window", {
+    isSecureContext: params.secureContext,
+    PublicKeyCredential: params.publicKeyCredential,
+  });
   vi.stubGlobal("isSecureContext", params.secureContext);
   vi.stubGlobal("PublicKeyCredential", params.publicKeyCredential);
   vi.stubGlobal(
@@ -130,7 +134,7 @@ describe("detectWalletCustodyClientCompatibility", () => {
         ok: true,
         json: async () => ({
           ok: true,
-          protocolVersion: 1,
+          protocolVersion: 2,
           helper: "fased-macos-custody-companion",
           platform: "macos",
           storageMode: "os-keychain",
@@ -147,10 +151,39 @@ describe("detectWalletCustodyClientCompatibility", () => {
       helper: "fased-macos-custody-companion",
       platform: "macos",
       storageMode: "os-keychain",
-      protocolVersion: 1,
+      protocolVersion: 2,
       availableRoutes: ["/v1/custody/health"],
       storedWalletCount: 2,
     });
+  });
+
+  it("rejects the unauthenticated protocol-v1 helper", async () => {
+    stubBrowserCapabilities({ secureContext: false });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({
+          ok: true,
+          protocolVersion: 1,
+          helper: "fased-native-custody-helper",
+          platform: "linux",
+          storageMode: "secret-service",
+          availableRoutes: [
+            "/v1/custody/health",
+            "/v1/custody/device-share/status",
+            "/v1/custody/device-share/store",
+            "/v1/custody/device-share/load",
+            "/v1/custody/device-share/delete",
+          ],
+          storedWalletCount: 1,
+        }),
+      })),
+    );
+
+    const result = await detectWalletCustodyClientCompatibility();
+
+    expect(result.nativeHelper).toEqual({ status: "unreachable" });
   });
 
   it("reports mock helper availability distinctly from the real macOS helper", async () => {
@@ -169,7 +202,7 @@ describe("detectWalletCustodyClientCompatibility", () => {
         ok: true,
         json: async () => ({
           ok: true,
-          protocolVersion: 1,
+          protocolVersion: 2,
           helper: "fased-wallet-custody-companion-mock",
           platform: "mock",
           storageMode: "mock-memory",
@@ -186,7 +219,7 @@ describe("detectWalletCustodyClientCompatibility", () => {
       helper: "fased-wallet-custody-companion-mock",
       platform: "mock",
       storageMode: "mock-memory",
-      protocolVersion: 1,
+      protocolVersion: 2,
       availableRoutes: ["/v1/custody/health", "/v1/custody/device-share/load"],
       storedWalletCount: 1,
     });
@@ -209,7 +242,7 @@ describe("detectWalletCustodyClientCompatibility", () => {
         ok: true,
         json: async () => ({
           ok: true,
-          protocolVersion: 1,
+          protocolVersion: 2,
           helper: "fased-native-custody-helper",
           platform: "windows",
           storageMode: "windows-dpapi",
@@ -232,7 +265,7 @@ describe("detectWalletCustodyClientCompatibility", () => {
       helper: "fased-native-custody-helper",
       platform: "windows",
       storageMode: "windows-dpapi",
-      protocolVersion: 1,
+      protocolVersion: 2,
       availableRoutes: [
         "/v1/custody/health",
         "/v1/custody/device-share/status",
