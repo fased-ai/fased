@@ -1445,7 +1445,7 @@ TAILSCALE_ADMIN_URL="N/A"
 TAILSCALE_SSH_CMD="N/A"
 TAILSCALE_SERVE_READY=0
 if command -v tailscale >/dev/null 2>&1; then
-  if [[ "${FASED_TAILSCALE_AUTO_SERVE:-1}" == "1" ]]; then
+  if [[ "${FASED_TAILSCALE_AUTO_SERVE:-1}" == "1" && "${FASED_HOST_PROFILE:-}" != "hosting" ]]; then
     tailscale serve --bg "http://127.0.0.1:${FASED_GATEWAY_PORT}" >/dev/null 2>&1 || \
       tailscale serve https / "http://127.0.0.1:${FASED_GATEWAY_PORT}" >/dev/null 2>&1 || true
   fi

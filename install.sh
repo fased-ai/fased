@@ -2598,7 +2598,6 @@ ${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance tails
 ${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance tailscale-serve
 ${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance tailscale-serve-status
 ${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance tailscale-install-start
-${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance tailscale-set-operator-self
 ${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance tailnet-ssh-ingress
 ${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance firewall-baseline
 ${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance fail2ban-enable
@@ -2805,11 +2804,6 @@ SSHD_CONF
     install_tailscale_if_needed
     enable_tailscaled_if_present
     command -v tailscale >/dev/null 2>&1
-    ;;
-  tailscale-set-operator-self)
-    operator_user="${SUDO_USER:-}"
-    [[ -n "$operator_user" && "$operator_user" != "root" && "$operator_user" =~ ^[A-Za-z0-9_.@-]+$ ]] || exit 0
-    tailscale set --operator="$operator_user"
     ;;
   tailnet-ssh-ingress)
     tailnet_ssh_ingress

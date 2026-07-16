@@ -65,6 +65,14 @@ describe("hosted signer security boundary", () => {
     expect(cleanup).toContain('if [[ "${HOSTED_ROOT_SIGNER:-0}" != "1" ]]');
   });
 
+  it("keeps hosted Tailscale administration in the temporary root bootstrap", () => {
+    expect(install).not.toContain("tailscale-set-operator-self");
+    expect(install).not.toContain("tailscale set --operator");
+    expect(managed).toContain(
+      '[[ "${FASED_TAILSCALE_AUTO_SERVE:-1}" == "1" && "${FASED_HOST_PROFILE:-}" != "hosting" ]]',
+    );
+  });
+
   it("installs a hardened external signer with only the application socket group shared", () => {
     const service = sliceBetween(
       install,

@@ -604,10 +604,14 @@ async function verifyStrictVpsMaintenanceReadiness(params: {
     throw new Error(`Hosting requires ${configDir} to be owned by ${runAsUser} before completion.`);
   }
 
-  const tailscaleOperator = await runShell("tailscale serve status >/dev/null 2>&1");
-  if (!tailscaleOperator.ok) {
+  const bootstrapCtl = process.env.FASED_HOST_BOOTSTRAP_CTL?.trim();
+  const tailscaleStatusCommand = bootstrapCtl
+    ? `${shellQuote(process.execPath)} ${shellQuote(bootstrapCtl)} tailscale-serve-status >/dev/null 2>&1`
+    : "tailscale serve status >/dev/null 2>&1";
+  const tailscaleStatus = await runShell(tailscaleStatusCommand);
+  if (!tailscaleStatus.ok) {
     throw new Error(
-      "Hosting requires unprivileged tailscale serve status access for the app maintenance user before completion.",
+      "Hosting requires the root bootstrap to verify the configured Tailscale Serve route before completion.",
     );
   }
 

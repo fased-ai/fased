@@ -213,7 +213,30 @@ export function buildHostedSystemdUnit(params: {
   }
   const installIndex = lines.findIndex((line) => line.trim() === "[Install]");
   if (installIndex !== -1) {
-    lines.splice(installIndex, 0, "NoNewPrivileges=true", "PrivateTmp=true");
+    lines.splice(
+      installIndex,
+      0,
+      "UMask=0077",
+      "NoNewPrivileges=true",
+      "PrivateTmp=true",
+      "PrivateDevices=true",
+      "ProtectSystem=strict",
+      "ProtectHome=read-only",
+      `ReadWritePaths=/home/${params.runAsUser}/.fased`,
+      "ProtectKernelTunables=true",
+      "ProtectKernelModules=true",
+      "ProtectKernelLogs=true",
+      "ProtectControlGroups=true",
+      "ProtectClock=true",
+      "ProtectHostname=true",
+      "LockPersonality=true",
+      "RestrictSUIDSGID=true",
+      "RestrictRealtime=true",
+      "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
+      "SystemCallArchitectures=native",
+      "CapabilityBoundingSet=",
+      "AmbientCapabilities=",
+    );
   }
   const wantedByIndex = lines.findIndex((line) => line.trim() === "WantedBy=default.target");
   if (wantedByIndex !== -1) {

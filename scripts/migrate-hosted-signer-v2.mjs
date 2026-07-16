@@ -4,6 +4,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const CONTROL_SOCKET = "/run/fased-signerd/control.sock";
 const APP_SOCKET = "/run/fased-signerd/app.sock";
@@ -92,20 +93,37 @@ function assertWalletEntry(value) {
   return { walletId, expectedPublicKey, keystorePath, passphrasePath, policy };
 }
 
-async function assertSourceFile(filePath, allowedRoots, label) {
+async function openVerifiedSourceFile(filePath, allowedRoots, allowedUids, label) {
   if (
     !allowedRoots.some((root) => filePath === root || filePath.startsWith(`${root}${path.sep}`))
   ) {
     fail(`${label} is outside an approved legacy wallet directory: ${filePath}`);
   }
-  const stat = await fsp.lstat(filePath);
-  if (!stat.isFile() || stat.isSymbolicLink()) {
-    fail(`${label} must be a regular non-symlink file: ${filePath}`);
+  const noFollow = Number(fs.constants.O_NOFOLLOW ?? 0);
+  let handle;
+  try {
+    handle = await fsp.open(filePath, fs.constants.O_RDONLY | noFollow);
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.nlink !== 1) {
+      fail(`${label} must be a regular single-link file: ${filePath}`);
+    }
+    if ((stat.mode & 0o077) !== 0) {
+      fail(`${label} must not be accessible by group or others: ${filePath}`);
+    }
+    if (!allowedUids.has(stat.uid)) {
+      fail(`${label} has an unexpected owner uid ${stat.uid}: ${filePath}`);
+    }
+    return handle;
+  } catch (error) {
+    await handle?.close().catch(() => undefined);
+    throw error;
   }
 }
 
-async function copySignerOwned(source, destination, signerUid, signerGid) {
-  await fsp.copyFile(source, destination, fs.constants.COPYFILE_EXCL);
+async function copySignerOwned(sourceHandle, destination, signerUid, signerGid) {
+  // Copy from the already verified descriptor so an app-owned path cannot be
+  // swapped for a symlink between validation and the privileged copy.
+  await fsp.copyFile(`/proc/self/fd/${sourceHandle.fd}`, destination, fs.constants.COPYFILE_EXCL);
   await fsp.chmod(destination, 0o600);
   await fsp.chown(destination, signerUid, signerGid);
   const handle = await fsp.open(destination, "r");
@@ -114,6 +132,48 @@ async function copySignerOwned(source, destination, signerUid, signerGid) {
   } finally {
     await handle.close();
   }
+}
+
+function comparablePolicy(policy) {
+  return JSON.stringify({
+    role: String(policy?.role ?? "")
+      .trim()
+      .toLowerCase(),
+    operations: [...(policy?.operations ?? [])].map(String).toSorted(),
+    programs: [...(policy?.programs ?? [])].map(String).toSorted(),
+    assets: [...(policy?.assets ?? [])]
+      .map((asset) => ({
+        asset: String(asset?.asset ?? "").trim(),
+        destinations: [...(asset?.destinations ?? [])].map(String).toSorted(),
+        maxPerTx: String(asset?.maxPerTx ?? "").trim(),
+        maxDaily: String(asset?.maxDaily ?? "").trim(),
+      }))
+      .toSorted((left, right) => left.asset.localeCompare(right.asset)),
+  });
+}
+
+async function readExistingWallet(entry) {
+  const walletResponse = await socketRequest(CONTROL_SOCKET, {
+    op: "v2.wallet.get",
+    walletId: entry.walletId,
+  });
+  if (walletResponse?.ok !== true) {
+    return null;
+  }
+  const policyResponse = await socketRequest(CONTROL_SOCKET, {
+    op: "v2.policy.get",
+    walletId: entry.walletId,
+  });
+  if (policyResponse?.ok !== true) {
+    fail(`existing signer wallet has no explicit policy: ${entry.walletId}`);
+  }
+  if (walletResponse.result?.publicKey !== entry.expectedPublicKey) {
+    fail(`existing signer wallet address does not match migration policy: ${entry.walletId}`);
+  }
+  if (comparablePolicy(policyResponse.result) !== comparablePolicy(entry.policy)) {
+    fail(`existing signer wallet policy does not match migration policy: ${entry.walletId}`);
+  }
+  return { wallet: walletResponse.result, policy: policyResponse.result };
 }
 
 async function socketRequest(socketPath, request) {
@@ -164,11 +224,9 @@ async function main() {
     !policyStat.isFile() ||
     policyStat.isSymbolicLink() ||
     policyStat.uid !== 0 ||
-    (policyStat.mode & 0o022) !== 0
+    (policyStat.mode & 0o777) !== 0o600
   ) {
-    fail(
-      "migration policy must be a root-owned, non-symlink regular file not writable by group or others",
-    );
+    fail("migration policy must be a root-owned, non-symlink regular file with mode 0600");
   }
   const parsed = JSON.parse(await fsp.readFile(policyPath, "utf8"));
   assertExactKeys(
@@ -198,59 +256,95 @@ async function main() {
   await fsp.chown(IMPORT_DIR, signer.uid, signer.gid);
   const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "");
   const verified = [];
-
-  for (const entry of entries) {
-    await assertSourceFile(entry.keystorePath, allowedRoots, "legacy keystore");
-    await assertSourceFile(entry.passphrasePath, allowedRoots, "legacy passphrase");
-    const stagedKeystore = path.join(IMPORT_DIR, `keystore-${entry.walletId}-${stamp}.v1.enc`);
-    const stagedPassphrase = path.join(IMPORT_DIR, `passphrase-${entry.walletId}-${stamp}`);
-    try {
-      await copySignerOwned(entry.keystorePath, stagedKeystore, signer.uid, signer.gid);
-      await copySignerOwned(entry.passphrasePath, stagedPassphrase, signer.uid, signer.gid);
-      const imported = await socketRequest(CONTROL_SOCKET, {
-        op: "v2.wallet.importLegacy",
-        walletId: entry.walletId,
-        request: {
-          expectedPolicyVersion: 0,
-          path: stagedKeystore,
-          passphrasePath: stagedPassphrase,
-          policy: entry.policy,
-        },
-      });
-      const wallet = imported?.result?.wallet;
-      const policy = imported?.result?.policy;
-      if (
-        imported?.ok !== true ||
-        wallet?.walletId !== entry.walletId ||
-        wallet?.publicKey !== entry.expectedPublicKey ||
-        !/^sha256:[a-f0-9]{64}$/.test(policy?.hash ?? "")
-      ) {
-        fail(`signer did not verify the expected address and policy for ${entry.walletId}`);
-      }
-      const health = await socketRequest(APP_SOCKET, { op: "health" });
-      const acknowledged = health?.result?.policies?.some(
-        (candidate) =>
-          candidate?.walletId === entry.walletId &&
-          candidate?.version === policy.version &&
-          candidate?.hash === policy.hash,
-      );
-      if (
-        health?.ok !== true ||
-        health?.result?.ready !== true ||
-        health?.result?.capabilities?.protocol?.current !== 2 ||
-        !acknowledged
-      ) {
-        fail(`signer health did not acknowledge the imported policy for ${entry.walletId}`);
-      }
-      verified.push({ entry, policyHash: policy.hash });
-    } finally {
-      await fsp.rm(stagedKeystore, { force: true });
-      await fsp.rm(stagedPassphrase, { force: true });
+  const sourceHandles = new Map();
+  const ownerUids = new Set([0, signer.uid]);
+  for (const home of [appHome, legacySignerHome]) {
+    const owner = await fsp.stat(home).catch(() => null);
+    if (owner) {
+      ownerUids.add(owner.uid);
     }
   }
+
   const sources = [
     ...new Set(entries.flatMap((entry) => [entry.keystorePath, entry.passphrasePath])),
   ];
+  try {
+    for (const source of sources) {
+      sourceHandles.set(
+        source,
+        await openVerifiedSourceFile(source, allowedRoots, ownerUids, "legacy wallet material"),
+      );
+    }
+
+    for (const entry of entries) {
+      const stagedKeystore = path.join(IMPORT_DIR, `keystore-${entry.walletId}-${stamp}.v1.enc`);
+      const stagedPassphrase = path.join(IMPORT_DIR, `passphrase-${entry.walletId}-${stamp}`);
+      try {
+        const existing = await readExistingWallet(entry);
+        let wallet = existing?.wallet;
+        let policy = existing?.policy;
+        if (!existing) {
+          await copySignerOwned(
+            sourceHandles.get(entry.keystorePath),
+            stagedKeystore,
+            signer.uid,
+            signer.gid,
+          );
+          await copySignerOwned(
+            sourceHandles.get(entry.passphrasePath),
+            stagedPassphrase,
+            signer.uid,
+            signer.gid,
+          );
+          const imported = await socketRequest(CONTROL_SOCKET, {
+            op: "v2.wallet.importLegacy",
+            walletId: entry.walletId,
+            request: {
+              expectedPolicyVersion: 0,
+              path: stagedKeystore,
+              passphrasePath: stagedPassphrase,
+              policy: entry.policy,
+            },
+          });
+          wallet = imported?.result?.wallet;
+          policy = imported?.result?.policy;
+          if (imported?.ok !== true) {
+            fail(
+              `signer import failed for ${entry.walletId}: ${imported?.error ?? "unknown error"}`,
+            );
+          }
+        }
+        if (
+          wallet?.walletId !== entry.walletId ||
+          wallet?.publicKey !== entry.expectedPublicKey ||
+          !/^sha256:[a-f0-9]{64}$/.test(policy?.hash ?? "")
+        ) {
+          fail(`signer did not verify the expected address and policy for ${entry.walletId}`);
+        }
+        const health = await socketRequest(APP_SOCKET, { op: "health" });
+        const acknowledged = health?.result?.policies?.some(
+          (candidate) =>
+            candidate?.walletId === entry.walletId &&
+            candidate?.version === policy.version &&
+            candidate?.hash === policy.hash,
+        );
+        if (
+          health?.ok !== true ||
+          health?.result?.ready !== true ||
+          health?.result?.capabilities?.protocol?.current !== 2 ||
+          !acknowledged
+        ) {
+          fail(`signer health did not acknowledge the imported policy for ${entry.walletId}`);
+        }
+        verified.push({ entry, policyHash: policy.hash });
+      } finally {
+        await fsp.rm(stagedKeystore, { force: true });
+        await fsp.rm(stagedPassphrase, { force: true });
+      }
+    }
+  } finally {
+    await Promise.all([...sourceHandles.values()].map((handle) => handle.close()));
+  }
   const quarantined = new Map();
   for (const source of sources) {
     quarantined.set(source, await quarantineLegacyFile(source, stamp));
@@ -265,4 +359,18 @@ async function main() {
   }
 }
 
-await main();
+const isMain = process.argv[1]
+  ? pathToFileURL(path.resolve(process.argv[1])).href ===
+    pathToFileURL(fileURLToPath(import.meta.url)).href
+  : false;
+if (isMain) {
+  await main();
+}
+
+export const __testing = {
+  assertPolicy,
+  assertWalletEntry,
+  comparablePolicy,
+  copySignerOwned,
+  openVerifiedSourceFile,
+};

@@ -107,8 +107,13 @@ function releaseArchitecture() {
 async function fixedExecutable(candidates, label) {
   for (const candidate of candidates) {
     try {
-      await fsp.access(candidate, fs.constants.X_OK);
-      return candidate;
+      const resolved = await fsp.realpath(candidate);
+      const stat = await fsp.stat(resolved);
+      if (!stat.isFile() || stat.uid !== 0 || (stat.mode & 0o022) !== 0) {
+        continue;
+      }
+      await fsp.access(resolved, fs.constants.X_OK);
+      return resolved;
     } catch {
       // Try the next root-controlled system path.
     }
@@ -190,7 +195,20 @@ function releaseAllowedForChannel(version, channel) {
 }
 
 async function assertReleaseChannelAllowed(version) {
-  const channel = await fsp.readFile(CHANNEL_PATH, "utf8").catch(() => "stable");
+  let channel = "stable";
+  try {
+    const stat = await fsp.lstat(CHANNEL_PATH);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.uid !== 0 || (stat.mode & 0o022) !== 0) {
+      throw new Error(
+        "host updater channel file must be root-owned and not writable by group/others",
+      );
+    }
+    channel = await fsp.readFile(CHANNEL_PATH, "utf8");
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+  }
   if (!releaseAllowedForChannel(version, channel)) {
     throw new Error(
       "prerelease signer updates require root to set /etc/fased/host-updater-channel to beta",
@@ -299,6 +317,12 @@ async function installSignerRelease(version) {
 
     await fsp.copyFile(assetPath, candidatePath);
     await fsp.chmod(candidatePath, 0o755);
+    const candidate = await fsp.open(candidatePath, "r");
+    try {
+      await candidate.sync();
+    } finally {
+      await candidate.close();
+    }
     await fsp.rm(previousPath, { force: true });
     try {
       await fsp.rename(SIGNER_PATH, previousPath);
@@ -308,6 +332,12 @@ async function installSignerRelease(version) {
       }
     }
     await fsp.rename(candidatePath, SIGNER_PATH);
+    const signerDirectory = await fsp.open(path.dirname(SIGNER_PATH), "r");
+    try {
+      await signerDirectory.sync();
+    } finally {
+      await signerDirectory.close();
+    }
     replaced = true;
     try {
       await restartSigner();
@@ -324,8 +354,20 @@ async function installSignerRelease(version) {
       });
     }
     const versionTemp = `${VERSION_PATH}.tmp`;
-    await fsp.writeFile(versionTemp, `${version}\n`, { mode: 0o600 });
+    const versionFile = await fsp.open(versionTemp, "w", 0o600);
+    try {
+      await versionFile.writeFile(`${version}\n`, "utf8");
+      await versionFile.sync();
+    } finally {
+      await versionFile.close();
+    }
     await fsp.rename(versionTemp, VERSION_PATH);
+    const stateDirectory = await fsp.open(STATE_DIR, "r");
+    try {
+      await stateDirectory.sync();
+    } finally {
+      await stateDirectory.close();
+    }
     await fsp.rm(previousPath, { force: true });
     return { changed: true, version };
   } finally {

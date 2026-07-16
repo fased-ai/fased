@@ -1385,12 +1385,6 @@ export async function applyHostingSecurity(params: {
   const operatorUser = run("id -u app >/dev/null 2>&1", logPath).ok
     ? "app"
     : process.env.SUDO_USER?.trim() || process.env.USER?.trim() || process.env.LOGNAME?.trim();
-  if (operatorUser) {
-    run(
-      `${hostMaintenanceCommand("tailscale-set-operator-self")} >/dev/null 2>&1 || true`,
-      logPath,
-    );
-  }
 
   const tailnetSshTarget = resolveTailnetSshTarget({
     user: operatorUser || "app",
