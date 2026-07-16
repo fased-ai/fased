@@ -28,6 +28,13 @@ export function isHostedSecurityCapableSession(explicitFlag = false): boolean {
     return false;
   }
 
+  const bootstrapCtl = process.env.FASED_HOST_BOOTSTRAP_CTL?.trim();
+  const bootstrapSocket =
+    process.env.FASED_HOST_BOOTSTRAP_SOCKET?.trim() || "/run/fased-host-bootstrap/control.sock";
+  if (bootstrapCtl && fs.existsSync(bootstrapCtl) && fs.existsSync(bootstrapSocket)) {
+    return true;
+  }
+
   const currentUser = currentUserName();
   if (currentUser) {
     const sudoersPath = path.join("/etc/sudoers.d", `fased-host-maintenance-${currentUser}`);

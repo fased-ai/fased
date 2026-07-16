@@ -221,21 +221,6 @@ abs_int() {
   printf '%s\n' "$value"
 }
 
-can_run_privileged_time_sync_command() {
-  if [[ "$(id -u)" -eq 0 ]]; then
-    return 0
-  fi
-  command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1
-}
-
-run_privileged_time_sync_command() {
-  if [[ "$(id -u)" -eq 0 ]]; then
-    "$@"
-    return $?
-  fi
-  sudo -n "$@"
-}
-
 fetch_remote_epoch_from_http_date() {
   local url="$1"
   local date_header=""
@@ -280,17 +265,9 @@ zrok_log_indicates_clock_skew() {
 }
 
 attempt_managed_clock_sync_repair() {
-  if ! can_run_privileged_time_sync_command; then
-    return 1
-  fi
-  echo "[tunnel] Attempting automatic host clock sync repair..."
-  run_privileged_time_sync_command timedatectl set-ntp true >/dev/null 2>&1 || true
-  run_privileged_time_sync_command systemctl restart systemd-timesyncd >/dev/null 2>&1 || \
-    run_privileged_time_sync_command systemctl restart chronyd >/dev/null 2>&1 || true
-  if command -v chronyc >/dev/null 2>&1; then
-    run_privileged_time_sync_command chronyc -a makestep >/dev/null 2>&1 || true
-  fi
-  sleep 2
+  # Host time synchronization is installed during root bootstrap. The running
+  # Gateway intentionally has no privilege path for changing the host clock.
+  return 1
 }
 
 ensure_managed_clock_sync() {
@@ -308,7 +285,7 @@ ensure_managed_clock_sync() {
 
   echo "[tunnel] WARNING: Host clock skew detected (${skew_seconds}s versus public control plane)."
   if ! attempt_managed_clock_sync_repair; then
-    echo "[tunnel] WARNING: Automatic host clock repair requires root or passwordless sudo."
+    echo "[tunnel] WARNING: Rerun ./install.sh --repair-hosting as root to repair host time sync."
     return 1
   fi
 
@@ -935,7 +912,21 @@ if [[ -n "${FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER:-}" ]]; then
   SIGNERD_BROKER_LOG="$(dirname "${FASED_WALLET_LOCAL_SIGNER_SOCKET:-$SIGNERD_SOCKET}")/local-signer-broker.log"
 fi
 hydrate_scoped_wallet_keystore_env_from_registry "$SIGNERD_MATERIAL_DIR"
-if should_start_signerd; then
+HOSTED_ROOT_SIGNER=0
+if [[ "${FASED_HOST_PROFILE:-}" == "hosting" ]]; then
+  HOSTED_ROOT_SIGNER=1
+  SIGNERD_SOCKET="/run/fased-signerd/app.sock"
+  SIGNERD_BACKEND_SOCKET="$SIGNERD_SOCKET"
+  export FASED_WALLET_LOCAL_SIGNER_SOCKET="$SIGNERD_SOCKET"
+  export FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET="$SIGNERD_SOCKET"
+  unset FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER
+  if [[ -S "$SIGNERD_SOCKET" ]]; then
+    SIGNERD_STARTUP_MODE="external"
+    echo "==> Using root-managed fased-signerd service (socket: $SIGNERD_SOCKET)"
+  else
+    mark_signerd_degraded "root-managed fased-signerd socket is unavailable. Run ./install.sh --repair-hosting as root."
+  fi
+elif should_start_signerd; then
   SIGNERD_STARTUP_MODE="healthy"
   SIGNERD_SOCKET="${FASED_WALLET_LOCAL_SIGNER_SOCKET:-$SIGNERD_SOCKET}"
   SIGNERD_BACKEND_SOCKET="${FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET:-$SIGNERD_SOCKET}"
@@ -1456,11 +1447,9 @@ TAILSCALE_SERVE_READY=0
 if command -v tailscale >/dev/null 2>&1; then
   if [[ "${FASED_TAILSCALE_AUTO_SERVE:-1}" == "1" ]]; then
     tailscale serve --bg "http://127.0.0.1:${FASED_GATEWAY_PORT}" >/dev/null 2>&1 || \
-      printf '%s\n' "${FASED_GATEWAY_PORT}" | sudo -n /usr/local/sbin/fased-host-maintenance tailscale-serve >/dev/null 2>&1 || \
       tailscale serve https / "http://127.0.0.1:${FASED_GATEWAY_PORT}" >/dev/null 2>&1 || true
   fi
-  if tailscale serve status 2>/dev/null | grep -q "127.0.0.1:${FASED_GATEWAY_PORT}" || \
-     sudo -n /usr/local/sbin/fased-host-maintenance tailscale-serve-status 2>/dev/null | grep -q "127.0.0.1:${FASED_GATEWAY_PORT}"; then
+  if tailscale serve status 2>/dev/null | grep -q "127.0.0.1:${FASED_GATEWAY_PORT}"; then
     TAILSCALE_SERVE_READY=1
   fi
   if command -v jq >/dev/null 2>&1; then
@@ -1598,7 +1587,9 @@ cleanup_managed_runtime() {
     kill "$ZROK_MONITOR_PID" 2>/dev/null || true
   fi
   rm -f "$FASED_CONFIG_DIR/.zrok-pid" "$ZROK_MONITOR_PID_FILE" 2>/dev/null || true
-  stop_existing_signerd >/dev/null 2>&1 || true
+  if [[ "${HOSTED_ROOT_SIGNER:-0}" != "1" ]]; then
+    stop_existing_signerd >/dev/null 2>&1 || true
+  fi
   force_stop_local_gateway
 }
 

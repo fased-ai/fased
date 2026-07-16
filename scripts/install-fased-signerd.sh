@@ -135,6 +135,26 @@ if [[ "$ACTUAL" != "$EXPECTED" ]]; then
   exit 1
 fi
 echo "Checksum OK: $ACTUAL"
+
+if [[ "$BASE_URL" == "$DEFAULT_RELEASE_DOWNLOAD_BASE" ]]; then
+  if ! command -v gh >/dev/null 2>&1; then
+    cat >&2 <<'EOF'
+GitHub CLI with `gh attestation verify` is required for official signer installs.
+The adjacent checksum is not an independent authenticity proof.
+Install GitHub CLI, then rerun the Fased installer.
+EOF
+    exit 1
+  fi
+  echo "Verifying GitHub/Sigstore build provenance for ${VERSION_TAG}..."
+  GH_PROMPT_DISABLED=1 gh attestation verify "${TMP}/fased-signerd" \
+    --repo fased-ai/fased \
+    --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
+    --source-ref "refs/tags/${VERSION_TAG}" \
+    --deny-self-hosted-runners >/dev/null
+  echo "Build provenance OK"
+else
+  echo "Custom signer source: checksum verified; GitHub release provenance not applicable."
+fi
 install -m 0755 "${TMP}/fased-signerd" "$BIN_PATH"
 
 echo "Installed: $BIN_PATH"

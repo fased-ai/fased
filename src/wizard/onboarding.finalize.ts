@@ -302,38 +302,13 @@ async function installRootServiceMaintenanceAccess(params: {
   serviceName: string;
   runAsUser: string;
 }): Promise<{ ok: boolean; detail?: string }> {
-  const safeServiceName = params.serviceName.replace(/[^A-Za-z0-9@_.-]/g, "");
-  const safeUser = params.runAsUser.replace(/[^A-Za-z0-9@_.-]/g, "");
-  const existingAccess = await runShell(
-    `sudo -n systemctl show ${safeServiceName}.service -p ActiveState --value >/dev/null`,
-  );
-  if (existingAccess.ok) {
-    return { ok: true };
+  if (process.env.FASED_HOST_BOOTSTRAP_CTL?.trim()) {
+    return { ok: true, detail: "temporary root bootstrap channel active" };
   }
-  const sudoersPath = `/etc/sudoers.d/${safeServiceName}-${safeUser}-maintenance`;
-  const sudoers = [
-    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl restart ${safeServiceName}.service`,
-    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl restart --no-block ${safeServiceName}.service`,
-    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl start --no-block ${safeServiceName}.service`,
-    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now ${safeServiceName}.service`,
-    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl status ${safeServiceName}.service`,
-    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl status ${safeServiceName}.service --no-pager`,
-    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl is-active ${safeServiceName}.service`,
-    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl is-active ${safeServiceName}`,
-    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl show ${safeServiceName}.service -p ActiveState --value`,
-    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl cat ${safeServiceName}.service`,
-    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/journalctl -u ${safeServiceName}.service -n 50 --no-pager`,
-    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/journalctl -u ${safeServiceName}.service -n 120 --no-pager`,
-    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/journalctl -u ${safeServiceName} -n 50 --no-pager`,
-    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/journalctl -u ${safeServiceName} -n 120 --no-pager`,
-  ].join("\n");
-  const b64 = Buffer.from(`${sudoers}\n`, "utf8").toString("base64");
-  const installCommand = [
-    `echo '${b64}' | base64 -d | sudo -n tee '${sudoersPath}' >/dev/null`,
-    `sudo -n chmod 440 '${sudoersPath}'`,
-    `if command -v visudo >/dev/null 2>&1; then sudo -n visudo -cf '${sudoersPath}' >/dev/null; fi`,
-  ].join(" && ");
-  return await runShell(installCommand);
+  return {
+    ok: false,
+    detail: `${params.runAsUser} is intentionally not granted sudo access to ${params.serviceName}`,
+  };
 }
 
 async function installRootSystemdFallback(params: {
@@ -343,17 +318,28 @@ async function installRootSystemdFallback(params: {
   workingDirectory?: string;
   environment?: Record<string, string | undefined>;
 }): Promise<{ ok: boolean; detail?: string }> {
-  const safeServiceName = params.serviceName.replace(/[^A-Za-z0-9@_.-]/g, "");
-  const safeRunAsUser = params.runAsUser.replace(/[^A-Za-z0-9@_.-]/g, "");
-  const unitPath = `/etc/systemd/system/${safeServiceName}.service`;
   const escapedUser = params.runAsUser.replace(/"/g, '\\"');
   const baseUnit = buildSystemdUnit({
     description: "Fased Gateway (managed)",
     programArguments: params.programArguments,
     workingDirectory: params.workingDirectory,
-    environment: params.environment,
+    environment: {
+      ...params.environment,
+      FASED_HOST_PROFILE: "hosting",
+      FASED_WALLET_LOCAL_SIGNER_SOCKET: "/run/fased-signerd/app.sock",
+      FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET: "/run/fased-signerd/app.sock",
+    },
   });
   const unitLines = baseUnit.split("\n");
+  const unitIndex = unitLines.findIndex((line) => line.trim() === "[Unit]");
+  if (unitIndex !== -1) {
+    unitLines.splice(
+      unitIndex + 1,
+      0,
+      "After=fased-signerd.service",
+      "Wants=fased-signerd.service",
+    );
+  }
   const installIndex = unitLines.findIndex((line) => line.trim() === "[Install]");
   const wantedByIndex = unitLines.findIndex((line) => line.trim() === "WantedBy=default.target");
   if (wantedByIndex !== -1) {
@@ -374,21 +360,19 @@ async function installRootSystemdFallback(params: {
   }
   const unit = unitLines.join("\n");
   const b64 = Buffer.from(unit, "utf8").toString("base64");
-  const helperInstallCommand = `printf '%s' '${b64}' | base64 -d | sudo -n /usr/local/sbin/fased-install-gateway-service '${safeServiceName}' '${safeRunAsUser}'`;
+  const bootstrapCtl = process.env.FASED_HOST_BOOTSTRAP_CTL?.trim();
+  const helperInstallCommand = bootstrapCtl
+    ? `printf '%s' '${b64}' | base64 -d | ${shellQuote(process.execPath)} ${shellQuote(bootstrapCtl)} gateway-install`
+    : "false";
   const helperResult = await runShell(helperInstallCommand);
-  const installCommand = [
-    `echo '${b64}' | base64 -d | sudo -n tee '${unitPath}' >/dev/null`,
-    "sudo -n systemctl daemon-reload",
-    `sudo -n systemctl enable --now '${safeServiceName}.service'`,
-  ].join(" && ");
-  const result = helperResult.ok ? helperResult : await runShell(installCommand);
+  const result = helperResult;
   if (!result.ok) {
     return {
       ok: false,
       detail:
         `systemd install failed (${result.detail ?? "unknown error"}). ` +
         `Installer helper result: ${helperResult.detail ?? (helperResult.ok ? "ok" : "unavailable")}. ` +
-        "Rerun ./install.sh --hosting from root so the hosted service helper and sudoers are refreshed.",
+        "Rerun ./install.sh --repair-hosting as root so the temporary bootstrap channel can repair it.",
     };
   }
   if (params.runAsUser !== "root") {
@@ -401,7 +385,7 @@ async function installRootSystemdFallback(params: {
         ok: false,
         detail:
           `systemd install succeeded, but post-install maintenance access failed (${maintenanceAccess.detail ?? "unknown error"}). ` +
-          `Without this, ${params.runAsUser} cannot restart ${params.serviceName}.service after updates.`,
+          "The hosted app must remain unable to elevate after installation.",
       };
     }
   }
@@ -519,13 +503,17 @@ export function formatHostedRootServiceRequiredFailure(params: {
     `Hosting requires the root-managed fased-gateway.service running as User=${runAsUser}.`,
     "The installer will not fall back to an app-managed user service for the hosting profile.",
     `Root service repair failed: ${detail}`,
-    "Repair: rerun ./install.sh --hosting from root on the VPS, or restore the installer sudoers for the app user and rerun ./install.sh --hosting.",
+    "Repair: rerun ./install.sh --repair-hosting as root on the VPS.",
     "Inspect: sudo systemctl status fased-gateway --no-pager",
     "Inspect logs: sudo journalctl -u fased-gateway -n 120 --no-pager",
   ].join("\n");
 }
 
 async function migrateStrictVpsGatewayServices(): Promise<{ ok: boolean; detail?: string }> {
+  const bootstrapCtl = process.env.FASED_HOST_BOOTSTRAP_CTL?.trim();
+  const rootCleanup = bootstrapCtl
+    ? `${shellQuote(process.execPath)} ${shellQuote(bootstrapCtl)} gateway-remove-legacy`
+    : "sudo -n systemctl disable --now fased-gateway 2>/dev/null || true";
   return await runShell(
     [
       "systemctl --user disable --now fased-gateway 2>/dev/null || true",
@@ -533,7 +521,7 @@ async function migrateStrictVpsGatewayServices(): Promise<{ ok: boolean; detail?
       "rm -f ~/.config/systemd/user/fased-gateway.service 2>/dev/null || true",
       "rm -rf ~/.config/systemd/user/fased-gateway.service.d 2>/dev/null || true",
       "systemctl --user daemon-reload 2>/dev/null || true",
-      "sudo -n systemctl disable --now fased-gateway 2>/dev/null || true",
+      rootCleanup,
       "sudo -n systemctl reset-failed fased-gateway 2>/dev/null || true",
       "sudo -n rm -rf /etc/systemd/system/fased-gateway.service.d 2>/dev/null || true",
       "sudo -n pkill -f 'start-managed.sh|start-vps.sh|run-node.mjs managed up|run-node.mjs gateway|dist/index.js managed up|fased.mjs start --mode managed|zrok share' 2>/dev/null || true",
@@ -553,12 +541,12 @@ async function verifyStrictRootGatewayExecStart(
   return await runShell(
     [
       startupMode === "managed-up"
-        ? `sudo -n systemctl cat ${serviceName}.service 2>/dev/null | grep -E '^ExecStart=' | grep -E ' managed up|start-(managed|vps)\\.sh' >/dev/null`
-        : `sudo -n systemctl cat ${serviceName}.service 2>/dev/null | grep -E '^ExecStart=' | grep -F ' gateway ' >/dev/null`,
-      `sudo -n systemctl cat ${serviceName}.service 2>/dev/null | grep -F 'Environment=FASED_GATEWAY_PORT=' >/dev/null`,
+        ? `systemctl cat ${serviceName}.service 2>/dev/null | grep -E '^ExecStart=' | grep -E ' managed up|start-(managed|vps)\\.sh' >/dev/null`
+        : `systemctl cat ${serviceName}.service 2>/dev/null | grep -E '^ExecStart=' | grep -F ' gateway ' >/dev/null`,
+      `systemctl cat ${serviceName}.service 2>/dev/null | grep -F 'Environment=FASED_GATEWAY_PORT=' >/dev/null`,
       ...(safeRunAsUser
         ? [
-            `sudo -n systemctl cat ${serviceName}.service 2>/dev/null | grep -F 'User=${safeRunAsUser}' >/dev/null`,
+            `systemctl cat ${serviceName}.service 2>/dev/null | grep -F 'User=${safeRunAsUser}' >/dev/null`,
           ]
         : []),
       "true",
@@ -572,7 +560,7 @@ async function isSystemdServiceActive(params: {
 }): Promise<{ ok: boolean; detail?: string }> {
   const command =
     params.scope === "root"
-      ? `sudo -n systemctl is-active ${params.name} 2>/dev/null`
+      ? `systemctl is-active ${params.name} 2>/dev/null`
       : `systemctl --user is-active ${params.name} 2>/dev/null`;
   const result = await runShell(command, { timeoutMs: 5_000 });
   return result;
@@ -635,7 +623,7 @@ async function isSystemdServiceRunningOrStarting(params: {
 }): Promise<boolean> {
   const command =
     params.scope === "root"
-      ? `sudo -n systemctl show ${params.name}.service -p ActiveState --value 2>/dev/null | grep -E '^(active|activating|deactivating)$' >/dev/null 2>&1`
+      ? `systemctl show ${params.name}.service -p ActiveState --value 2>/dev/null | grep -E '^(active|activating|deactivating)$' >/dev/null 2>&1`
       : `systemctl --user show ${params.name}.service -p ActiveState --value 2>/dev/null | grep -E '^(active|activating|deactivating)$' >/dev/null 2>&1`;
   const result = await runShell(command, { timeoutMs: 5_000 });
   return result.ok;
@@ -725,26 +713,42 @@ export function buildGatewayServiceRestartAttempts(
       timeoutIsProgress: true,
     },
   ];
-  const rootAttempts = [
-    {
-      label: "root restart",
-      command: `sudo -n systemctl restart --no-block ${serviceName}.service >/dev/null 2>&1`,
-      timeoutMs: 8_000,
-      timeoutIsProgress: true,
-    },
-    {
-      label: "root start",
-      command: `sudo -n systemctl start --no-block ${serviceName}.service >/dev/null 2>&1`,
-      timeoutMs: 8_000,
-      timeoutIsProgress: true,
-    },
-    {
-      label: "root enable+start",
-      command: `sudo -n systemctl enable --now ${serviceName}.service >/dev/null 2>&1`,
-      timeoutMs: 12_000,
-      timeoutIsProgress: true,
-    },
-  ];
+  const bootstrapCtl = process.env.FASED_HOST_BOOTSTRAP_CTL?.trim();
+  const rootAttempts = bootstrapCtl
+    ? [
+        {
+          label: "root bootstrap restart",
+          command: `${shellQuote(process.execPath)} ${shellQuote(bootstrapCtl)} gateway-restart >/dev/null 2>&1`,
+          timeoutMs: 8_000,
+          timeoutIsProgress: true,
+        },
+        {
+          label: "root bootstrap start",
+          command: `${shellQuote(process.execPath)} ${shellQuote(bootstrapCtl)} gateway-start >/dev/null 2>&1`,
+          timeoutMs: 8_000,
+          timeoutIsProgress: true,
+        },
+      ]
+    : [
+        {
+          label: "root restart",
+          command: `sudo -n systemctl restart --no-block ${serviceName}.service >/dev/null 2>&1`,
+          timeoutMs: 8_000,
+          timeoutIsProgress: true,
+        },
+        {
+          label: "root start",
+          command: `sudo -n systemctl start --no-block ${serviceName}.service >/dev/null 2>&1`,
+          timeoutMs: 8_000,
+          timeoutIsProgress: true,
+        },
+        {
+          label: "root enable+start",
+          command: `sudo -n systemctl enable --now ${serviceName}.service >/dev/null 2>&1`,
+          timeoutMs: 12_000,
+          timeoutIsProgress: true,
+        },
+      ];
   return [
     ...(profile === "hosting" ? rootAttempts : userAttempts),
     ...(profile === "hosting" ? [] : rootAttempts),

@@ -801,6 +801,59 @@ install_linux_system_dependencies() {
   fi
 }
 
+github_cli_supports_attestations() {
+  need_cmd gh && gh attestation verify --help >/dev/null 2>&1
+}
+
+install_github_cli_for_attestations() {
+  if github_cli_supports_attestations; then
+    return 0
+  fi
+  if [[ "$AUTO_INSTALL" -ne 1 || "$(uname -s)" != "Linux" ]]; then
+    echo "GitHub CLI with 'gh attestation verify' is required for official release assets." >&2
+    echo "Install a current GitHub CLI, then rerun the installer." >&2
+    return 1
+  fi
+
+  echo "Installing GitHub CLI for release attestation verification..."
+  if need_cmd apt-get; then
+    local keyring_tmp
+    keyring_tmp="$(mktemp)"
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o "$keyring_tmp"
+    run_as_root install -d -m 0755 /etc/apt/keyrings
+    run_as_root install -m 0644 "$keyring_tmp" /etc/apt/keyrings/githubcli-archive-keyring.gpg
+    rm -f "$keyring_tmp"
+    printf 'deb [arch=%s signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main\n' "$(dpkg --print-architecture)" \
+      | run_as_root tee /etc/apt/sources.list.d/github-cli.list >/dev/null
+    run_as_root apt-get update
+    run_as_root apt-get install -y gh
+  elif need_cmd dnf || need_cmd dnf5; then
+    local dnf_cmd="dnf"
+    need_cmd dnf || dnf_cmd="dnf5"
+    run_as_root "$dnf_cmd" install -y 'dnf-command(config-manager)' >/dev/null 2>&1 || true
+    run_as_root "$dnf_cmd" config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo >/dev/null 2>&1 || true
+    run_as_root "$dnf_cmd" install -y gh
+  elif need_cmd yum; then
+    run_as_root yum install -y yum-utils >/dev/null 2>&1 || true
+    run_as_root yum-config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo >/dev/null 2>&1 || true
+    run_as_root yum install -y gh
+  elif need_cmd pacman; then
+    run_as_root pacman -Sy --needed --noconfirm github-cli
+  elif need_cmd apk; then
+    run_as_root apk add --no-cache github-cli
+  elif need_cmd zypper; then
+    run_as_root zypper --non-interactive install --no-recommends gh
+  else
+    echo "Automatic GitHub CLI installation is unavailable on this distribution." >&2
+    return 1
+  fi
+  hash -r 2>/dev/null || true
+  github_cli_supports_attestations || {
+    echo "Installed GitHub CLI does not support attestation verification." >&2
+    return 1
+  }
+}
+
 install_freebsd_system_dependencies() {
   if [[ "$(uname -s)" != "FreeBSD" ]]; then
     return 1
@@ -2000,16 +2053,12 @@ reexec_as_app_user() {
     else
       adduser --disabled-password --gecos "" --shell /bin/bash "$target_user"
     fi
-    usermod -aG sudo "$target_user" 2>/dev/null || true
   fi
   usermod -s /bin/bash "$target_user" 2>/dev/null || true
 
   target_home="$(getent passwd "$target_user" | cut -d: -f6)"
   if [[ -z "$target_home" ]]; then
     target_home="/home/$target_user"
-  fi
-  if [[ "$HOSTING_REQUESTED" -eq 1 ]]; then
-    ensure_host_signer_isolation_user "$target_user"
   fi
   local target_install_dir="${FASED_INSTALL_DIR:-$INSTALL_BASE_DIR}"
   if [[ -z "${FASED_INSTALL_DIR:-}" && "$target_install_dir" == "$HOME/fased" && "$target_home" != "$HOME" ]]; then
@@ -2029,7 +2078,11 @@ reexec_as_app_user() {
   configure_target_user_fased_shell_dir "$target_user" "$target_home" "$target_repo_dir"
   copy_bootstrap_ssh_keys_for_target_user "$target_user" "$target_home"
 
-  local cmd="cd $(shell_quote "$target_repo_dir") && ./install.sh"
+  local cmd="cd $(shell_quote "$target_repo_dir") && "
+  if [[ "$HOSTING_REQUESTED" -eq 1 ]]; then
+    cmd+="env FASED_HOST_PROFILE=hosting FASED_HOST_BOOTSTRAP_CTL=/usr/local/libexec/fased-host-bootstrapctl.mjs FASED_HOST_BOOTSTRAP_SOCKET=/run/fased-host-bootstrap/control.sock FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/app.sock FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET=/run/fased-signerd/app.sock "
+  fi
+  cmd+="./install.sh"
   cmd+=" --host-security-capable"
   for arg in "${pass_args[@]}"; do
     cmd+=" $(shell_quote "$arg")"
@@ -2040,17 +2093,15 @@ reexec_as_app_user() {
     cmd+=" --repair-local"
   fi
 
-  if [[ "$RUN_ONBOARD" -eq 1 ]]; then
-    TEMP_SUDOERS="/etc/sudoers.d/fased-install-${target_user}"
-    echo "== Root bootstrap: granting temporary passwordless sudo to '$target_user' for onboarding =="
-    printf '%s ALL=(ALL) NOPASSWD:ALL\n' "$target_user" >"$TEMP_SUDOERS"
-    chmod 440 "$TEMP_SUDOERS"
-  fi
-
   cleanup_temp_sudoers() {
     if [[ -n "${TEMP_SUDOERS:-}" && -f "$TEMP_SUDOERS" ]]; then
       rm -f "$TEMP_SUDOERS"
     fi
+    if [[ -n "${HOST_BOOTSTRAP_PID:-}" ]]; then
+      kill "$HOST_BOOTSTRAP_PID" >/dev/null 2>&1 || true
+      wait "$HOST_BOOTSTRAP_PID" 2>/dev/null || true
+    fi
+    rm -rf /run/fased-host-bootstrap
   }
   trap cleanup_temp_sudoers EXIT
 
@@ -2067,6 +2118,16 @@ reexec_as_app_user() {
       child_status=0
     else
       child_status=$?
+    fi
+  fi
+
+  if [[ "$child_status" -eq 0 && "$HOSTING_REQUESTED" -eq 1 ]]; then
+    systemctl is-active --quiet fased-signerd.service || child_status=1
+    systemctl is-active --quiet fased-host-updater.service || child_status=1
+    systemctl is-active --quiet fased-gateway.service || child_status=1
+    if need_cmd sudo && runuser -u "$target_user" -- sudo -n true >/dev/null 2>&1; then
+      echo "Hosted repair left passwordless sudo available to $target_user; refusing completion." >&2
+      child_status=1
     fi
   fi
 
@@ -2383,19 +2444,19 @@ install_missing_deps_as_root_if_needed() {
     missing+=("node")
   fi
 
-  if [[ ${#missing[@]} -eq 0 ]] && node_runtime_ok; then
-    return 0
+  if [[ ${#missing[@]} -gt 0 ]] || ! node_runtime_ok; then
+    echo "== Root bootstrap: installing missing system dependencies =="
+    if [[ ${#missing[@]} -gt 0 ]]; then
+      echo "Installing missing dependencies: ${missing[*]}"
+    fi
+    if ! node_runtime_ok; then
+      echo "Installing or selecting compatible Node runtime: $(node_runtime_issue)"
+    fi
+    install_linux_system_dependencies 0
   fi
-
-  echo "== Root bootstrap: installing missing system dependencies =="
-  if [[ ${#missing[@]} -gt 0 ]]; then
-    echo "Installing missing dependencies: ${missing[*]}"
+  if [[ "$HOSTING_REQUESTED" -eq 1 ]]; then
+    install_github_cli_for_attestations
   fi
-  if ! node_runtime_ok; then
-    echo "Installing or selecting compatible Node runtime: $(node_runtime_issue)"
-  fi
-
-  install_linux_system_dependencies 0
 }
 
 bootstrap_repo_for_target_user() {
@@ -3195,6 +3256,10 @@ require_line "^WorkingDirectory=(/home/${run_as_user}/\\.fased/runtime/current|/
 require_line '^Environment=FASED_GATEWAY_MODE=managed$' "managed mode"
 require_line '^Environment=FASED_MANAGED_INTERNAL=1$' "managed internal flag"
 require_line '^Environment=FASED_GATEWAY_PORT=18789$' "loopback gateway port"
+require_line '^Environment=FASED_HOST_PROFILE=hosting$' "hosting profile"
+require_line '^Environment=FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/app.sock$' "native signer socket"
+require_line '^After=fased-signerd.service$' "signer ordering"
+require_line '^Wants=fased-signerd.service$' "signer dependency"
 require_line '^NoNewPrivileges=true$' "NoNewPrivileges"
 require_line '^PrivateTmp=true$' "PrivateTmp"
 require_line '^WantedBy=multi-user\.target$' "multi-user target"
@@ -3213,15 +3278,247 @@ EOF
   chmod 755 "$helper_path"
 }
 
+ensure_host_boundary_accounts() {
+  local target_user="${FASED_INSTALL_USER:-app}"
+  local signer_user="${FASED_SIGNER_USER:-fased-signer}"
+  local gateway_group="${FASED_GATEWAY_GROUP:-fased-gateway}"
+  if ! id -u "$target_user" >/dev/null 2>&1; then
+    if need_cmd useradd; then
+      useradd -m -s /bin/bash "$target_user"
+    else
+      adduser --disabled-password --gecos "" --shell /bin/bash "$target_user"
+    fi
+  fi
+  getent group "$gateway_group" >/dev/null 2>&1 || groupadd --system "$gateway_group"
+  if ! id -u "$signer_user" >/dev/null 2>&1; then
+    if need_cmd useradd; then
+      useradd --system --home-dir /var/lib/fased-signerd --shell /usr/sbin/nologin "$signer_user"
+    else
+      adduser --system --home /var/lib/fased-signerd --shell /usr/sbin/nologin "$signer_user"
+    fi
+  fi
+  passwd -l "$signer_user" >/dev/null 2>&1 || true
+  usermod -aG "$gateway_group" "$target_user"
+  for admin_group in sudo wheel; do
+    if getent group "$admin_group" >/dev/null 2>&1; then
+      gpasswd -d "$target_user" "$admin_group" >/dev/null 2>&1 || true
+    fi
+  done
+  rm -f \
+    "/etc/sudoers.d/fased-install-${target_user}" \
+    "/etc/sudoers.d/fased-host-maintenance-${target_user}" \
+    "/etc/sudoers.d/fased-gateway-${target_user}-maintenance"
+  if need_cmd sudo && runuser -u "$target_user" -- sudo -n true >/dev/null 2>&1; then
+    echo "Hosting security boundary cannot use an app account with passwordless sudo: $target_user" >&2
+    echo "Remove custom sudoers access for this dedicated account, then rerun --repair-hosting." >&2
+    exit 1
+  fi
+}
+
+install_host_signer_and_updater_services() {
+  local target_user="${FASED_INSTALL_USER:-app}"
+  local signer_user="${FASED_SIGNER_USER:-fased-signer}"
+  local gateway_group="${FASED_GATEWAY_GROUP:-fased-gateway}"
+  local gateway_gid
+  local version
+  gateway_gid="$(getent group "$gateway_group" | cut -d: -f3)"
+  version="$(node -p "require(process.argv[1]).version" "$FASED_DIR/package.json" 2>/dev/null || true)"
+  [[ "$gateway_gid" =~ ^[0-9]+$ && "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || {
+    echo "Could not resolve hosted signer group or release version." >&2
+    exit 1
+  }
+
+  install -d -m 0755 -o root -g root /usr/local/libexec
+  install -d -m 0755 -o root -g root /opt/fased/signer
+  install -m 0755 -o root -g root "$FASED_DIR/scripts/fased-host-updater.mjs" /usr/local/libexec/fased-host-updater.mjs
+  install -m 0755 -o root -g root "$FASED_DIR/scripts/fased-host-updaterctl.mjs" /usr/local/libexec/fased-host-updaterctl.mjs
+  install -m 0755 -o root -g root "$FASED_DIR/scripts/fased-host-bootstrapd.mjs" /usr/local/libexec/fased-host-bootstrapd.mjs
+  install -m 0755 -o root -g root "$FASED_DIR/scripts/fased-host-bootstrapctl.mjs" /usr/local/libexec/fased-host-bootstrapctl.mjs
+  install -m 0755 -o root -g root "$FASED_DIR/scripts/migrate-hosted-signer-v2.mjs" /usr/local/libexec/migrate-hosted-signer-v2.mjs
+  install -d -m 0700 -o root -g root /var/lib/fased-host-updater
+  install -d -m 0700 -o "$signer_user" -g "$signer_user" /var/lib/fased-signerd
+  install -d -m 0755 -o root -g root /etc/fased
+  if [[ ! -f /etc/fased/host-updater-channel ]]; then
+    printf 'stable\n' >/etc/fased/host-updater-channel
+    chmod 0644 /etc/fased/host-updater-channel
+  fi
+
+  cat >/etc/systemd/system/fased-signerd.service <<EOF
+[Unit]
+Description=Fased native wallet signer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=${signer_user}
+Group=${signer_user}
+SupplementaryGroups=${gateway_group}
+RuntimeDirectory=fased-signerd
+RuntimeDirectoryMode=0755
+StateDirectory=fased-signerd
+StateDirectoryMode=0700
+UMask=0077
+Environment=HOME=/var/lib/fased-signerd
+ExecStart=/opt/fased/signer/fased-signerd -socket /run/fased-signerd/app.sock -control-socket /run/fased-signerd/control.sock -socket-mode 0660 -socket-group ${gateway_group} -state-db /var/lib/fased-signerd/state.db -master-key /var/lib/fased-signerd/master.key -pid-file /run/fased-signerd/fased-signerd.pid -audit-log /var/lib/fased-signerd/audit.jsonl
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  cat >/etc/systemd/system/fased-host-updater.service <<EOF
+[Unit]
+Description=Fased verified native signer updater
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+RuntimeDirectory=fased-host-updater
+RuntimeDirectoryMode=0755
+StateDirectory=fased-host-updater
+StateDirectoryMode=0700
+UMask=0117
+Environment=HOME=/var/lib/fased-host-updater
+ExecStart=$(command -v node) /usr/local/libexec/fased-host-updater.mjs --socket-gid ${gateway_gid}
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/fased/signer /var/lib/fased-host-updater /run/fased-host-updater
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  chmod 0644 /etc/systemd/system/fased-signerd.service /etc/systemd/system/fased-host-updater.service
+  systemctl daemon-reload
+  systemctl enable fased-signerd.service >/dev/null
+  systemctl enable --now fased-host-updater.service
+
+  if [[ -n "${FASED_HOST_SIGNER_BINARY:-}" ]]; then
+    [[ -x "$FASED_HOST_SIGNER_BINARY" ]] || {
+      echo "FASED_HOST_SIGNER_BINARY is not executable." >&2
+      exit 1
+    }
+    install -m 0755 -o root -g root "$FASED_HOST_SIGNER_BINARY" /opt/fased/signer/fased-signerd
+    printf '%s\n' "$version" >/var/lib/fased-host-updater/signer-version
+    systemctl restart fased-signerd.service
+  else
+    node /usr/local/libexec/fased-host-updaterctl.mjs "$version" >/dev/null
+  fi
+  systemctl is-active --quiet fased-signerd.service || {
+    echo "Root-managed fased-signerd did not become active." >&2
+    journalctl -u fased-signerd.service -n 40 --no-pager >&2 || true
+    exit 1
+  }
+  node --input-type=module --eval \
+    'const { probeSignerV2 } = await import("file:///usr/local/libexec/fased-host-updater.mjs"); await probeSignerV2();' || {
+    echo "Root-managed fased-signerd did not acknowledge protocol v2 and signer-owned custody." >&2
+    journalctl -u fased-signerd.service -n 40 --no-pager >&2 || true
+    exit 1
+  }
+}
+
+migrate_legacy_hosted_signer_if_needed() {
+  local target_user="${FASED_INSTALL_USER:-app}"
+  local signer_user="${FASED_SIGNER_USER:-fased-signer}"
+  local target_home
+  local signer_home="/home/${signer_user}"
+  local policy_file="/etc/fased/signer-migration-policies.json"
+  local -a legacy_keystores=()
+  target_home="$(getent passwd "$target_user" | cut -d: -f6)"
+  [[ -n "$target_home" ]] || target_home="/home/${target_user}"
+
+  shopt -s nullglob
+  legacy_keystores+=("${target_home}/.fased/wallet"/keystore-*.enc)
+  legacy_keystores+=("${signer_home}/.fased/wallet"/keystore-*.enc)
+  shopt -u nullglob
+  if [[ "${#legacy_keystores[@]}" -gt 0 ]]; then
+    if [[ ! -f "$policy_file" ]]; then
+      echo "A previous hosted wallet requires a fail-closed signer-v2 migration." >&2
+      echo "Create root-owned ${policy_file} (mode 0600) with each expected wallet address and explicit policy, then rerun:" >&2
+      echo "  sudo ./install.sh --repair-hosting" >&2
+      echo "Legacy key files were not changed." >&2
+      exit 1
+    fi
+    FASED_APP_HOME="$target_home" \
+      FASED_LEGACY_SIGNER_HOME="$signer_home" \
+      node /usr/local/libexec/migrate-hosted-signer-v2.mjs "$policy_file"
+  fi
+
+  if need_cmd pkill; then
+    pkill -u "$signer_user" -f "${signer_home}/.fased/bin/fased-signerd" >/dev/null 2>&1 || true
+  fi
+  rm -f \
+    "${target_home}/.fased/wallet/local-signer.sock" \
+    "${signer_home}/.fased/wallet/local-signer.sock" \
+    /usr/local/sbin/fased-signer-maintenance \
+    /usr/local/sbin/fased-signer-isolation
+}
+
+start_host_bootstrap_channel() {
+  local target_user="${FASED_INSTALL_USER:-app}"
+  local gateway_group="${FASED_GATEWAY_GROUP:-fased-gateway}"
+  local gateway_gid
+  gateway_gid="$(getent group "$gateway_group" | cut -d: -f3)"
+  install -d -m 0750 -o root -g "$gateway_group" /run/fased-host-bootstrap
+  rm -f /run/fased-host-bootstrap/control.sock
+  node /usr/local/libexec/fased-host-bootstrapd.mjs \
+    --app-user "$target_user" \
+    --socket-gid "$gateway_gid" \
+    >/var/log/fased-host-bootstrap.log 2>&1 &
+  HOST_BOOTSTRAP_PID=$!
+  local attempt
+  for attempt in {1..50}; do
+    [[ -S /run/fased-host-bootstrap/control.sock ]] && return 0
+    kill -0 "$HOST_BOOTSTRAP_PID" >/dev/null 2>&1 || break
+    sleep 0.1
+  done
+  echo "Temporary root bootstrap channel failed to start." >&2
+  tail -n 40 /var/log/fased-host-bootstrap.log >&2 || true
+  exit 1
+}
+
 if [[ "$(id -u)" -eq 0 ]]; then
-  install_host_gateway_service_helper
-  install_host_maintenance_helper
-  install_host_signer_isolation_helper
-  install_host_signer_maintenance_wrapper "${FASED_INSTALL_USER:-app}"
-  install_host_maintenance_sudoers "${FASED_INSTALL_USER:-app}"
+  if [[ "$HOSTING_REQUESTED" -eq 1 ]]; then
+    ensure_host_boundary_accounts
+    install_host_gateway_service_helper
+    install_host_maintenance_helper
+  fi
   ensure_early_swap_for_hosting
   install_missing_deps_as_root_if_needed
   best_effort_enable_root_host_time_sync
+  if [[ "$HOSTING_REQUESTED" -eq 1 ]]; then
+    install_host_signer_and_updater_services
+    migrate_legacy_hosted_signer_if_needed
+    start_host_bootstrap_channel
+  fi
   reexec_as_app_user
 fi
 
@@ -3337,6 +3634,9 @@ fi
 if ! node_runtime_ok; then
   print_node_runtime_help
   exit 1
+fi
+if use_prebuilt_release_runtime; then
+  install_github_cli_for_attestations
 fi
 
 FASED_INSTALL_VERSION="$(node -e 'const fs=require("fs");try{const p=process.argv[1];const o=JSON.parse(fs.readFileSync(p,"utf8"));process.stdout.write(o.version||"0.0.0")}catch{process.stdout.write("0.0.0")}' "$FASED_DIR/package.json" 2>/dev/null || printf '0.0.0')"

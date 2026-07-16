@@ -367,6 +367,10 @@ function shellQuote(value: string): string {
 }
 
 function hostMaintenanceCommand(action: string): string {
+  const bootstrapCtl = process.env.FASED_HOST_BOOTSTRAP_CTL?.trim();
+  if (bootstrapCtl) {
+    return `${shellQuote(process.execPath)} ${shellQuote(bootstrapCtl)} ${shellQuote(action)}`;
+  }
   return `sudo -n ${HOST_MAINTENANCE_HELPER} ${action}`;
 }
 

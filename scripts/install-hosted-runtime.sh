@@ -6,7 +6,8 @@ PREFIX=""
 CACHE_DIR=""
 STATE_DIR=""
 PROFILE="local"
-BASE_URL="${FASED_HOSTED_ARTIFACT_BASE_URL:-https://github.com/fased-ai/fased/releases/download}"
+DEFAULT_BASE_URL="https://github.com/fased-ai/fased/releases/download"
+BASE_URL="${FASED_HOSTED_ARTIFACT_BASE_URL:-$DEFAULT_BASE_URL}"
 INSTALL_STARTED_MS=""
 TIMING_LABELS=()
 TIMING_VALUES=()
@@ -165,6 +166,17 @@ download_verified_asset() {
   local actual
   actual="$(sha256_file "$archive" || true)"
   [[ "$actual" == "$expected" ]] || return 20
+  if [[ "$BASE_URL" == "$DEFAULT_BASE_URL" ]]; then
+    command -v gh >/dev/null 2>&1 || {
+      echo "GitHub CLI with attestation verification is required for official runtime installs." >&2
+      return 20
+    }
+    GH_PROMPT_DISABLED=1 gh attestation verify "$archive" \
+      --repo fased-ai/fased \
+      --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
+      --source-ref "refs/tags/v${VERSION}" \
+      --deny-self-hosted-runners >/dev/null || return 20
+  fi
   printf '%s\n' "$archive"
 }
 

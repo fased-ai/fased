@@ -5,6 +5,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import http from "node:http";
 import https from "node:https";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
@@ -28,6 +29,9 @@ const execFileAsync = promisify(execFile);
 const DEFAULT_RELEASE_BASE_URL = "https://github.com/fased-ai/fased/releases/download";
 const DEFAULT_REGISTRY = "https://registry.npmjs.org";
 const DEFAULT_TIMEOUT_MS = 20 * 60_000;
+const RELEASE_REPOSITORY = "fased-ai/fased";
+const RELEASE_WORKFLOW = "fased-ai/fased/.github/workflows/hosted-runtime-release.yml";
+const HOST_UPDATER_SOCKET = "/run/fased-host-updater/request.sock";
 
 async function measureStage(timings, name, operation) {
   const startedAt = Date.now();
@@ -250,7 +254,48 @@ async function downloadToFile(url, destination, timeoutMs) {
   );
 }
 
-async function downloadVerifiedAsset({ releaseUrl, assetName, destinationDir, timeoutMs }) {
+async function verifyOfficialAsset(assetPath, version, timeoutMs) {
+  const gh = ["/usr/bin/gh", "/usr/local/bin/gh"].find((candidate) => fs.existsSync(candidate));
+  if (!gh) {
+    throw new Error(
+      "GitHub CLI with attestation verification is required; rerun ./install.sh --repair-hosting as root.",
+    );
+  }
+  const result = await runFile(
+    gh,
+    [
+      "attestation",
+      "verify",
+      assetPath,
+      "--repo",
+      RELEASE_REPOSITORY,
+      "--signer-workflow",
+      RELEASE_WORKFLOW,
+      "--source-ref",
+      `refs/tags/v${version}`,
+      "--deny-self-hosted-runners",
+    ],
+    {
+      env: {
+        HOME: process.env.HOME,
+        PATH: "/usr/local/bin:/usr/bin:/bin",
+        GH_PROMPT_DISABLED: "1",
+      },
+      timeoutMs,
+    },
+  );
+  if (!result.ok) {
+    throw new Error(`Release attestation verification failed: ${result.stderr.trim()}`);
+  }
+}
+
+async function downloadVerifiedAsset({
+  releaseUrl,
+  assetName,
+  destinationDir,
+  timeoutMs,
+  officialVersion,
+}) {
   const checksum = await fetchText(`${releaseUrl}/${assetName}.sha256`, timeoutMs);
   const expected = checksum
     .split(/\r?\n/)
@@ -265,6 +310,9 @@ async function downloadVerifiedAsset({ releaseUrl, assetName, destinationDir, ti
   const actual = await sha256File(destination);
   if (actual !== expected) {
     throw new Error(`Checksum mismatch for ${assetName}.`);
+  }
+  if (officialVersion) {
+    await verifyOfficialAsset(destination, officialVersion, timeoutMs);
   }
   return destination;
 }
@@ -328,6 +376,7 @@ async function ensureDependencyLayer({
   paths,
   temporaryRoot,
   timeoutMs,
+  officialVersion,
 }) {
   const dependencyRoot = path.join(
     paths.stateDir,
@@ -348,6 +397,7 @@ async function ensureDependencyLayer({
     assetName,
     destinationDir: temporaryRoot,
     timeoutMs,
+    officialVersion,
   });
   await assertArchiveSafe(archive, "node_modules");
   const staging = `${dependencyRoot}.staging-${process.pid}-${Date.now()}`;
@@ -446,6 +496,68 @@ async function probeGatewayIdentity(configPath, expectedVersion, timeoutMs = 500
   });
 }
 
+async function requestHostedSignerRelease(version, timeoutMs) {
+  const socketPath = process.env.FASED_HOST_UPDATER_SOCKET || HOST_UPDATER_SOCKET;
+  return await new Promise((resolve, reject) => {
+    const socket = net.createConnection({ path: socketPath });
+    socket.setEncoding("utf8");
+    socket.setTimeout(timeoutMs);
+    let body = "";
+    socket.once("connect", () => {
+      socket.write(`${JSON.stringify({ schemaVersion: 1, op: "prepareRelease", version })}\n`);
+    });
+    socket.on("data", (chunk) => {
+      body += chunk;
+      const newline = body.indexOf("\n");
+      if (newline < 0) {
+        return;
+      }
+      socket.destroy();
+      try {
+        const response = JSON.parse(body.slice(0, newline));
+        if (!response?.ok || response.version !== version) {
+          reject(new Error(response?.error || "host signer updater rejected the release"));
+          return;
+        }
+        resolve(response);
+      } catch (error) {
+        reject(error);
+      }
+    });
+    socket.once("timeout", () => reject(new Error("host signer updater timed out")));
+    socket.once("error", (error) =>
+      reject(
+        new Error(
+          `root-managed signer updater is unavailable (${error.message}); run ./install.sh --repair-hosting as root`,
+          { cause: error },
+        ),
+      ),
+    );
+  });
+}
+
+async function restartHostedGateway() {
+  const systemctl = fs.existsSync("/usr/bin/systemctl") ? "/usr/bin/systemctl" : "/bin/systemctl";
+  const shown = await runFile(systemctl, [
+    "show",
+    "fased-gateway.service",
+    "--property",
+    "MainPID",
+    "--value",
+  ]);
+  const pid = Number.parseInt(shown.stdout.trim(), 10);
+  if (!shown.ok || !Number.isSafeInteger(pid) || pid <= 1) {
+    throw new Error(`Hosted Gateway MainPID unavailable: ${shown.stderr.trim()}`);
+  }
+  const status = await fsp.readFile(`/proc/${pid}/status`, "utf8");
+  const ownerUid = Number.parseInt(status.match(/^Uid:\s+(\d+)/m)?.[1] ?? "", 10);
+  const currentUid = typeof process.getuid === "function" ? process.getuid() : -1;
+  if (!Number.isSafeInteger(ownerUid) || ownerUid !== currentUid) {
+    throw new Error("Hosted Gateway process is not owned by the Fased app account.");
+  }
+  process.kill(pid, "SIGTERM");
+}
+
 async function refreshGateway(runtimeRoot, manifest, timeoutMs) {
   const cli = path.join(runtimeRoot, "fased.mjs");
   const env = {
@@ -456,22 +568,25 @@ async function refreshGateway(runtimeRoot, manifest, timeoutMs) {
     FASED_MANAGED_RUNTIME_ROOT: runtimeRoot,
     FASED_RUNTIME_SOURCE: "managed-package",
   };
-  const installArgs = [cli, "gateway", "install", "--force"];
   if (manifest.profile === "hosting") {
-    installArgs.push("--system");
-  }
-  const installed = await runFile(process.execPath, installArgs, { env, timeoutMs });
-  if (!installed.ok) {
-    throw new Error(
-      `Gateway service installation failed: ${(installed.stderr || installed.stdout).trim()}`,
-    );
-  }
-  const restarted = await runFile(process.execPath, [cli, "gateway", "restart"], {
-    env,
-    timeoutMs,
-  });
-  if (!restarted.ok) {
-    throw new Error(`Gateway restart failed: ${(restarted.stderr || restarted.stdout).trim()}`);
+    await restartHostedGateway();
+  } else {
+    const installed = await runFile(process.execPath, [cli, "gateway", "install", "--force"], {
+      env,
+      timeoutMs,
+    });
+    if (!installed.ok) {
+      throw new Error(
+        `Gateway service installation failed: ${(installed.stderr || installed.stdout).trim()}`,
+      );
+    }
+    const restarted = await runFile(process.execPath, [cli, "gateway", "restart"], {
+      env,
+      timeoutMs,
+    });
+    if (!restarted.ok) {
+      throw new Error(`Gateway restart failed: ${(restarted.stderr || restarted.stdout).trim()}`);
+    }
   }
   const deadline = Date.now() + Math.min(timeoutMs, 60_000);
   let last = null;
@@ -683,6 +798,7 @@ async function updateManagedRuntime(options) {
     const baseUrl = (
       process.env.FASED_HOSTED_ARTIFACT_BASE_URL || DEFAULT_RELEASE_BASE_URL
     ).replace(/\/$/, "");
+    const officialVersion = baseUrl === DEFAULT_RELEASE_BASE_URL ? targetVersion : null;
     const releaseUrl = `${baseUrl}/v${targetVersion}`;
     const updateCacheRoot = path.join(paths.stateDir, "install-cache");
     await fsp.mkdir(updateCacheRoot, { recursive: true });
@@ -693,6 +809,11 @@ async function updateManagedRuntime(options) {
     let previousRoot = currentRoot;
     let previousManifest = existingManifest;
     try {
+      if (existingManifest.profile === "hosting") {
+        await measureStage(timings, "root signer verification and activation", () =>
+          requestHostedSignerRelease(targetVersion, options.timeoutMs),
+        );
+      }
       const assetName = `fased-hosted-app-linux-${arch}-v${targetVersion}.tar.gz`;
       const archive = await measureStage(timings, "application download and checksum", () =>
         downloadVerifiedAsset({
@@ -700,6 +821,7 @@ async function updateManagedRuntime(options) {
           assetName,
           destinationDir: temporaryRoot,
           timeoutMs: options.timeoutMs,
+          officialVersion,
         }),
       );
       await measureStage(timings, "application archive verification", () =>
@@ -722,6 +844,7 @@ async function updateManagedRuntime(options) {
           paths,
           temporaryRoot,
           timeoutMs: options.timeoutMs,
+          officialVersion,
         }),
       );
       await fsp.symlink(nodeModules, path.join(stagedRoot, "node_modules"), "dir");
@@ -876,4 +999,6 @@ export const __testing = {
   archiveEntryIsSafe,
   assertArchiveSafe,
   probeGatewayIdentity,
+  requestHostedSignerRelease,
+  restartHostedGateway,
 };

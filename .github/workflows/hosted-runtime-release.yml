@@ -7,7 +7,9 @@ on:
   workflow_dispatch:
 
 permissions:
+  attestations: write
   contents: write
+  id-token: write
 
 concurrency:
   group: hosted-runtime-release-${{ github.ref }}
@@ -59,6 +61,12 @@ jobs:
           tag_version="${GITHUB_REF#refs/tags/v}"
           test "$package_version" = "$tag_version"
 
+      - name: Attest hosted runtime release assets
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/attest@v4
+        with:
+          subject-path: .artifacts/hosted-runtime/*
+
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
@@ -98,6 +106,12 @@ jobs:
       - name: Verify native signer checksums
         working-directory: dist-native/release
         run: sha256sum --check fased-signerd-checksums.txt
+
+      - name: Attest native signer release assets
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/attest@v4
+        with:
+          subject-path: dist-native/release/fased-signerd-*
 
       - name: Upload verified signer assets
         uses: actions/upload-artifact@v4
