@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { parse } from "yaml";
 
 const repoRoot = resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
 
@@ -12,6 +13,20 @@ type DockerSetupSandbox = {
   scriptPath: string;
   logPath: string;
   binDir: string;
+};
+
+type ComposeService = {
+  ports?: string[];
+  volumes?: string[];
+  cap_drop?: string[];
+  security_opt?: string[];
+  privileged?: boolean;
+  network_mode?: string;
+  healthcheck?: { test?: string[] };
+};
+
+type ComposeConfig = {
+  services?: Record<string, ComposeService>;
 };
 
 async function writeDockerStub(binDir: string, logPath: string) {
@@ -142,6 +157,8 @@ describe("docker-setup.sh", () => {
     expect(envFile).toContain("FASED_DOCKER_APT_PACKAGES=ffmpeg build-essential");
     expect(envFile).toContain("FASED_EXTRA_MOUNTS=");
     expect(envFile).toContain("FASED_HOME_VOLUME=fased-home");
+    const envFileStat = await stat(join(activeSandbox.rootDir, ".env"));
+    expect(envFileStat.mode & 0o777).toBe(0o600);
     const extraCompose = await readFile(
       join(activeSandbox.rootDir, "docker-compose.extra.yml"),
       "utf8",
@@ -222,6 +239,39 @@ describe("docker-setup.sh", () => {
     expect(result.stderr).toContain("FASED_HOME_VOLUME must match");
   });
 
+  it("rejects invalid host ports", async () => {
+    const activeSandbox = requireSandbox(sandbox);
+
+    const result = runDockerSetup(activeSandbox, {
+      FASED_GATEWAY_PORT: "0",
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("FASED_GATEWAY_PORT must be an integer between 1 and 65535");
+  });
+
+  it("rejects gateway tokens that can alter the generated env file", async () => {
+    const activeSandbox = requireSandbox(sandbox);
+
+    const result = runDockerSetup(activeSandbox, {
+      FASED_GATEWAY_TOKEN: "token\nFASED_IMAGE=attacker/image",
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("FASED_GATEWAY_TOKEN must be a non-empty token");
+  });
+
+  it("rejects container-engine socket mounts", async () => {
+    const activeSandbox = requireSandbox(sandbox);
+
+    const result = runDockerSetup(activeSandbox, {
+      FASED_EXTRA_MOUNTS: "/var/run/docker.sock:/var/run/docker.sock",
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Container-engine sockets cannot be mounted");
+  });
+
   it("avoids associative arrays so the script remains Bash 3.2-compatible", async () => {
     const script = await readFile(join(repoRoot, "docker-setup.sh"), "utf8");
     expect(script).not.toMatch(/^\s*declare -A\b/m);
@@ -252,5 +302,28 @@ describe("docker-setup.sh", () => {
     const compose = await readFile(join(repoRoot, "docker-compose.yml"), "utf8");
     expect(compose).not.toContain("gateway-daemon");
     expect(compose).toContain('"gateway"');
+  });
+
+  it("keeps Docker services local-only and drops unnecessary privileges", async () => {
+    const compose = parse(await readFile(join(repoRoot, "docker-compose.yml"), "utf8")) as
+      | ComposeConfig
+      | undefined;
+    const gateway = compose?.services?.["fased-gateway"];
+    const cli = compose?.services?.["fased-cli"];
+
+    expect(gateway?.ports).toEqual([
+      "127.0.0.1:${FASED_GATEWAY_PORT:-18789}:18789",
+      "127.0.0.1:${FASED_BRIDGE_PORT:-18790}:18790",
+    ]);
+    expect(gateway?.cap_drop).toContain("ALL");
+    expect(cli?.cap_drop).toContain("ALL");
+    expect(gateway?.security_opt).toContain("no-new-privileges:true");
+    expect(cli?.security_opt).toContain("no-new-privileges:true");
+    expect(gateway?.privileged).not.toBe(true);
+    expect(cli?.privileged).not.toBe(true);
+    expect(gateway?.network_mode).not.toBe("host");
+    expect(cli?.network_mode).not.toBe("host");
+    expect(JSON.stringify([gateway?.volumes, cli?.volumes])).not.toContain("docker.sock");
+    expect(gateway?.healthcheck?.test).toEqual(["CMD", "node", "dist/index.js", "health"]);
   });
 });

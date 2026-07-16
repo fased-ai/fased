@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPOSE_FILE="$ROOT_DIR/docker-compose.yml"
@@ -75,7 +76,10 @@ ensure_control_ui_allowed_origins() {
 
   local allowed_origin_json
   local current_allowed_origins
-  allowed_origin_json="$(printf '["http://127.0.0.1:%s"]' "$FASED_GATEWAY_PORT")"
+  allowed_origin_json="$(
+    printf '["http://127.0.0.1:%s","http://localhost:%s"]' \
+      "$FASED_GATEWAY_PORT" "$FASED_GATEWAY_PORT"
+  )"
   current_allowed_origins="$(
     docker compose "${COMPOSE_ARGS[@]}" run --rm fased-cli \
       config get gateway.controlUi.allowedOrigins 2>/dev/null || true
@@ -111,6 +115,38 @@ validate_mount_path_value() {
   fi
 }
 
+validate_port() {
+  local label="$1"
+  local value="$2"
+  if [[ ! "$value" =~ ^[0-9]+$ ]] || ((10#$value < 1 || 10#$value > 65535)); then
+    fail "$label must be an integer between 1 and 65535."
+  fi
+}
+
+validate_image_name() {
+  local value="$1"
+  if [[ -z "$value" || ! "$value" =~ ^[A-Za-z0-9][A-Za-z0-9._/:@-]*$ ]]; then
+    fail "FASED_IMAGE contains unsupported characters."
+  fi
+}
+
+validate_gateway_token() {
+  local value="$1"
+  if [[ -z "$value" || ! "$value" =~ ^[A-Za-z0-9._~+/=-]+$ ]]; then
+    fail "FASED_GATEWAY_TOKEN must be a non-empty token without whitespace or shell/env-file metacharacters."
+  fi
+}
+
+validate_apt_packages() {
+  local value="$1"
+  if contains_disallowed_chars "$value"; then
+    fail "FASED_DOCKER_APT_PACKAGES cannot contain control characters."
+  fi
+  if [[ -n "$value" && ! "$value" =~ ^[A-Za-z0-9+.:=~_-]+([[:space:]]+[A-Za-z0-9+.:=~_-]+)*$ ]]; then
+    fail "FASED_DOCKER_APT_PACKAGES must be a space-separated list of Debian package names."
+  fi
+}
+
 validate_named_volume() {
   local value="$1"
   if [[ ! "$value" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]]; then
@@ -128,6 +164,9 @@ validate_mount_spec() {
   if [[ ! "$mount" =~ ^[^[:space:],:]+:[^[:space:],:]+(:[^[:space:],:]+)?$ ]]; then
     fail "Invalid mount format '$mount'. Expected source:target[:options] without spaces."
   fi
+  if [[ "$mount" =~ (^|/)(docker|podman|containerd)\.sock(:|$) ]]; then
+    fail "Container-engine sockets cannot be mounted with FASED_EXTRA_MOUNTS."
+  fi
 }
 
 require_cmd docker
@@ -138,9 +177,20 @@ fi
 
 FASED_CONFIG_DIR="${FASED_CONFIG_DIR:-$HOME/.fased}"
 FASED_WORKSPACE_DIR="${FASED_WORKSPACE_DIR:-$HOME/.fased/workspace}"
+FASED_GATEWAY_PORT="${FASED_GATEWAY_PORT:-18789}"
+FASED_BRIDGE_PORT="${FASED_BRIDGE_PORT:-18790}"
+FASED_GATEWAY_BIND="${FASED_GATEWAY_BIND:-lan}"
+FASED_DOCKER_APT_PACKAGES="${FASED_DOCKER_APT_PACKAGES:-}"
 
 validate_mount_path_value "FASED_CONFIG_DIR" "$FASED_CONFIG_DIR"
 validate_mount_path_value "FASED_WORKSPACE_DIR" "$FASED_WORKSPACE_DIR"
+validate_port "FASED_GATEWAY_PORT" "$FASED_GATEWAY_PORT"
+validate_port "FASED_BRIDGE_PORT" "$FASED_BRIDGE_PORT"
+validate_image_name "$IMAGE_NAME"
+validate_apt_packages "$FASED_DOCKER_APT_PACKAGES"
+if [[ "$FASED_GATEWAY_BIND" != "lan" ]]; then
+  fail "Local Docker requires FASED_GATEWAY_BIND=lan inside the container; host ports remain loopback-only."
+fi
 if [[ -n "$HOME_VOLUME_NAME" ]]; then
   if [[ "$HOME_VOLUME_NAME" == *"/"* ]]; then
     validate_mount_path_value "FASED_HOME_VOLUME" "$HOME_VOLUME_NAME"
@@ -160,11 +210,11 @@ mkdir -p "$FASED_CONFIG_DIR/identity"
 
 export FASED_CONFIG_DIR
 export FASED_WORKSPACE_DIR
-export FASED_GATEWAY_PORT="${FASED_GATEWAY_PORT:-18789}"
-export FASED_BRIDGE_PORT="${FASED_BRIDGE_PORT:-18790}"
-export FASED_GATEWAY_BIND="${FASED_GATEWAY_BIND:-lan}"
+export FASED_GATEWAY_PORT
+export FASED_BRIDGE_PORT
+export FASED_GATEWAY_BIND
 export FASED_IMAGE="$IMAGE_NAME"
-export FASED_DOCKER_APT_PACKAGES="${FASED_DOCKER_APT_PACKAGES:-}"
+export FASED_DOCKER_APT_PACKAGES
 export FASED_EXTRA_MOUNTS="$EXTRA_MOUNTS"
 export FASED_HOME_VOLUME="$HOME_VOLUME_NAME"
 
@@ -183,6 +233,7 @@ PY
 )"
   fi
 fi
+validate_gateway_token "$FASED_GATEWAY_TOKEN"
 export FASED_GATEWAY_TOKEN
 
 COMPOSE_FILES=("$COMPOSE_FILE")
@@ -322,6 +373,7 @@ upsert_env "$ENV_FILE" \
   FASED_EXTRA_MOUNTS \
   FASED_HOME_VOLUME \
   FASED_DOCKER_APT_PACKAGES
+chmod 600 "$ENV_FILE"
 
 if [[ "$IMAGE_NAME" == "fased:local" ]]; then
   echo "==> Building Docker image: $IMAGE_NAME"
@@ -368,12 +420,12 @@ echo "==> Starting gateway"
 docker compose "${COMPOSE_ARGS[@]}" up -d fased-gateway
 
 echo ""
-echo "Gateway running with host port mapping."
-echo "Access from tailnet devices via the host's tailnet IP."
+echo "Gateway running with loopback-only host port mappings."
+echo "Open http://localhost:${FASED_GATEWAY_PORT}/ from this computer."
 echo "Config: $FASED_CONFIG_DIR"
 echo "Workspace: $FASED_WORKSPACE_DIR"
 echo "Token: $FASED_GATEWAY_TOKEN"
 echo ""
 echo "Commands:"
 echo "  ${COMPOSE_HINT} logs -f fased-gateway"
-echo "  ${COMPOSE_HINT} exec fased-gateway node dist/index.js health --token \"$FASED_GATEWAY_TOKEN\""
+echo "  ${COMPOSE_HINT} exec fased-gateway node dist/index.js health"

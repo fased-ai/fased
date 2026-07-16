@@ -4,6 +4,33 @@
 .bun
 .tmp
 **/.tmp
+
+# Never send local credentials or Fased operator state to the Docker daemon.
+# Docker images are immutable archives: deleting a secret in a later layer does
+# not remove it from earlier layers.
+.env
+.env.*
+**/.env
+**/.env.*
+.fased
+**/.fased
+**/.ssh
+**/.aws
+**/.azure
+**/.gnupg
+**/.kube
+**/.docker/config.json
+**/.git-credentials
+**/.netrc
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+**/id_dsa
+**/id_ecdsa
+**/id_ed25519
+**/id_rsa
+
 .DS_Store
 **/.DS_Store
 *.png

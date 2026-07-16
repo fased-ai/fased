@@ -1,22 +1,36 @@
 ---
-summary: "Optional Docker-based setup and onboarding for Fased"
+summary: "Supported local Docker setup and onboarding for Fased"
 read_when:
-  - You want a containerized gateway instead of local installs
+  - You want a containerized gateway on your local computer
   - You are validating the Docker flow
 title: "Docker"
 ---
 
-# Docker (optional)
+# Local Docker (optional)
 
-Docker is **optional**. Use it when you want a containerized gateway or need to
-validate the Docker flow.
+Docker is **optional** and the full Docker Gateway is supported only on a local
+computer. Fased does not currently support a Docker-hosted Gateway on a VPS or
+cloud server, and there is no `install.sh --hosting-docker` mode.
+
+For a maintained VPS deployment, use the non-Docker hosted installer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+  | bash -s -- --hosting
+```
+
+The hosted installer manages the `app` account, Tailscale, firewall and SSH
+hardening, systemd service, updates, and rollback. The local Docker setup does
+not provide those hosting controls and must not be substituted for it.
 
 ## Is Docker right for me?
 
-- **Yes**: you want an isolated, throwaway gateway environment or a host without
-  local installs.
+- **Yes**: you want an isolated Gateway on your own local computer without a
+  native Fased installation.
 - **No**: you are running on your own machine and want the fastest dev loop. Use
   the normal install flow instead.
+- **No for VPS/cloud hosting**: use `install.sh --hosting`; full Docker hosting
+  is not a supported deployment path.
 - **Sandboxing note**: agent sandboxing uses Docker too, but it does **not**
   require the full gateway to run in Docker. See [Sandboxing](/gateway/sandboxing).
 
@@ -36,7 +50,16 @@ Sandboxing details: [Sandboxing](/gateway/sandboxing)
 
 ## Containerized Gateway (Docker Compose)
 
-### Quick start (recommended)
+The curl installers and Docker are separate installation paths:
+
+| Goal                                      | Installation path      | Runs in Docker |
+| ----------------------------------------- | ---------------------- | -------------- |
+| Fased on your computer                    | `install.sh --local`   | No             |
+| Fased in Docker on your computer          | This guide             | Yes            |
+| Maintained VPS hosting with Tailscale     | `install.sh --hosting` | No             |
+| Full Docker Gateway on a VPS/cloud server | Not supported          | —              |
+
+### Build locally from source (recommended now)
 
 Clone the repo, then run from repo root:
 
@@ -48,7 +71,7 @@ cd fased
 
 This script:
 
-- builds the gateway image
+- builds the local `fased:local` Gateway image
 - runs CLI onboarding
 - prints dashboard, token, and pairing hints
 - starts the gateway via Docker Compose
@@ -56,6 +79,7 @@ This script:
 
 Optional env vars:
 
+- `FASED_IMAGE` — use a selected image instead of building `fased:local`
 - `FASED_DOCKER_APT_PACKAGES` — install extra apt packages during build
 - `FASED_EXTRA_MOUNTS` — add extra host bind mounts
 - `FASED_HOME_VOLUME` — persist `/home/node` in a named volume
@@ -72,7 +96,44 @@ It writes config/workspace on the host:
 - `~/.fased/`
 - `~/.fased/workspace`
 
-Running on a VPS? See [Hetzner (Docker VPS)](/install/hetzner).
+### Use a published image after public availability
+
+The official GHCR package remains an owner/testing path until a clean tagged
+image passes the Docker security checks and anonymous pulling is enabled. Until
+that announcement, public users should use the source-build path above.
+
+After the package is public, select an immutable release tag when possible:
+
+```bash
+FASED_IMAGE=ghcr.io/fased-ai/fased:X.Y.Z ./docker-setup.sh
+```
+
+`docker-setup.sh` pulls a `FASED_IMAGE` other than `fased:local`, records the
+selection in `.env`, runs onboarding, and starts the local Gateway. `latest`
+will be available for convenience after public release, but a version tag or
+digest is safer when reproducibility matters.
+
+Public GHCR images support anonymous pulls; users do not need a Docker Hub
+account, GitHub account, or package token. An `unauthorized` or `denied` error
+means the package is not public yet or the requested tag does not exist.
+
+### Local security boundary
+
+The supplied local Compose configuration:
+
+- publishes Gateway and bridge ports on `127.0.0.1` only
+- runs as the non-root `node` user
+- drops all Linux capabilities and enables `no-new-privileges`
+- does not use host networking, privileged mode, or a container-engine socket
+- health-checks the running Gateway
+- stores the generated `.env` with user-only permissions
+- excludes local `.env*`, `.fased`, SSH/private keys, and common credential
+  directories from the image build context
+
+Do not change the port mappings to `0.0.0.0`, add `network_mode: host`, mount
+`docker.sock`, or enable `privileged`. Those changes cross the supported local
+security boundary. Remote access and Docker VPS hosting are not covered by this
+guide.
 
 ### Manual flow (compose)
 
@@ -135,6 +196,9 @@ Notes:
 
 - Paths must be shared with Docker Desktop on macOS/Windows.
 - Each entry must be `source:target[:options]` with no spaces, tabs, or newlines.
+- Prefer `:ro` unless the container must write to the mounted directory.
+- Container-engine sockets such as `docker.sock` are rejected because they
+  provide host-level control.
 - If you edit `FASED_EXTRA_MOUNTS`, rerun `docker-setup.sh` to regenerate the
   extra compose file.
 - `docker-compose.extra.yml` is generated. Don’t hand-edit it.
@@ -305,6 +369,37 @@ docker compose exec fased-gateway node dist/index.js health
 The Compose service already receives `FASED_GATEWAY_TOKEN` from `.env`; the
 `health` command reads runtime config/env and does not take a `--token` flag.
 
+### Update local Docker
+
+Do not run `fased update` inside a container. Update the selected image or
+source revision, then recreate the Gateway while preserving the same config and
+workspace mounts.
+
+For a published image already recorded in `.env`:
+
+```bash
+cd /path/to/fased
+docker compose pull
+docker compose up -d fased-gateway
+docker compose exec fased-gateway fased --version
+docker compose exec fased-gateway node dist/index.js health
+```
+
+For a source-built image, select the intended stable tag, rebuild, and recreate:
+
+```bash
+cd /path/to/fased
+git fetch origin --tags
+git switch --detach vX.Y.Z
+docker build --pull -t fased:local -f Dockerfile .
+docker compose up -d fased-gateway
+docker compose exec fased-gateway fased --version
+docker compose exec fased-gateway node dist/index.js health
+```
+
+State survives only while `FASED_CONFIG_DIR` and `FASED_WORKSPACE_DIR` keep
+pointing to the same host directories or durable volumes.
+
 ### E2E smoke test (Docker)
 
 ```bash
@@ -319,7 +414,8 @@ pnpm test:docker:qr
 
 ### Notes
 
-- Gateway bind defaults to `lan` for container use.
+- Gateway bind inside the container is `lan` so Docker port forwarding works;
+  the host-side port remains loopback-only.
 - Dockerfile CMD uses `--allow-unconfigured`; mounted config with
   `gateway.mode` not `local` will still start. Override CMD to enforce the
   guard.
