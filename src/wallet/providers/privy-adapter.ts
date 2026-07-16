@@ -39,12 +39,15 @@ export class PrivyAdapter implements WalletProviderAdapter {
     this.credentials = options.credentials;
     this.capabilities = {
       custodyModel: "provider-managed",
-      supportsCreateWallet: true,
+      supportsCreateWallet: false,
       supportsPrepare: false,
       supportsSend: false,
       supportsRotateKeys: false,
       supportsResetKeys: false,
       supportsPasskeyGate: false,
+      signingLocation: "unavailable",
+      supportsSignTransaction: false,
+      supportsSignMessage: false,
       supportedExecutionModes: ["manual"],
       supportedChains: ["solana"],
     };
@@ -57,13 +60,13 @@ export class PrivyAdapter implements WalletProviderAdapter {
   async health(): Promise<WalletProviderHealth> {
     const configured = Boolean(this.credentials.appId && this.credentials.appSecret);
     return {
-      ok: configured,
+      ok: false,
       provider: this.id,
       configured,
       checkedAt: new Date().toISOString(),
       details: configured
-        ? "Privy adapter configured for Solana wallet discovery."
-        : "Privy adapter is missing app credentials.",
+        ? "Privy credentials are stored, but FasedAgent does not yet implement Privy wallet creation, balance, or signing."
+        : "Privy integration is unavailable; credentials alone do not enable wallet operations.",
     };
   }
 
@@ -94,7 +97,10 @@ export class PrivyAdapter implements WalletProviderAdapter {
         message: "Privy wallet has no Solana address configured",
       });
     }
-    return { ok: true, chain: "solana", address, balance: "0", unit: "lamports" };
+    throw new WalletProviderError({
+      code: "wallet_provider_not_implemented",
+      message: `Privy balance lookup is not implemented for ${address}`,
+    });
   }
 
   async prepareTx(

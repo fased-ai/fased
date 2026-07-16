@@ -330,7 +330,13 @@ export type FederationProps = {
   walletNamedWallets: Array<{
     id: string;
     name: string;
-    providerId: "embedded-keystore" | "local-socket-signer" | "alchemy" | "turnkey" | "privy";
+    providerId:
+      | "embedded-keystore"
+      | "local-socket-signer"
+      | "alchemy"
+      | "turnkey"
+      | "wallet-standard"
+      | "privy";
     addresses?: { solana?: string };
     balances?: { solana?: string };
     metadata?: Record<string, unknown>;

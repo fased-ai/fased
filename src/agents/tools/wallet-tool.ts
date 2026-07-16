@@ -60,6 +60,7 @@ const WALLET_PROVIDERS = [
   "local-socket-signer",
   "alchemy",
   "turnkey",
+  "wallet-standard",
   "privy",
 ] as const;
 
@@ -150,6 +151,7 @@ function parseWalletProviderId(value: string | undefined): WalletProviderId | un
     case "local-socket-signer":
     case "alchemy":
     case "turnkey":
+    case "wallet-standard":
     case "privy":
       return value;
     default:

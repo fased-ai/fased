@@ -71,6 +71,29 @@ fased wallet status --json
 
 For the full file layout and signer boundary, see [Self-hosted wallet signer](/plugins/crypto/wallet-self-hosted).
 
+## 2a. Provider-managed and hardware-backed Vault options
+
+Turnkey is the implemented provider-managed signing option. Use a dedicated API
+user and a Turnkey organization policy whose condition applies to that user.
+Fased verifies that the configured reference resolves to an `ALLOW` policy with
+a non-empty condition, but cannot prove that the selector covers the API user.
+Turnkey's policy engine—not the Fased config field—authorizes each signing
+activity. Turnkey sends are manual-only typed SOL/SPL transfers: the Gateway
+builds, simulates, and durably records the immutable review; Turnkey signs it;
+Fased verifies byte-for-byte message equality; and the RPC broadcast is
+attempted once. Unknown broadcast state is terminal until reconciled.
+
+For a hardware-backed Vault, open **Wallets** and select **Attach hardware
+Vault** in a browser with a Solana Wallet Standard wallet. Select the account on
+your hardware-backed wallet. Fased stores its public address only. Each send is
+prepared and simulated by the Gateway, signed in the browser against a
+short-lived immutable review, verified by the Gateway, and broadcast once.
+Wallet Standard discovery does not prove that an account is hardware-backed, so
+confirm the account and transaction on the device itself.
+
+Privy is listed only as an unavailable integration placeholder. Credentials do
+not make its creation, balance, or signing operations available.
+
 ## 3. Funding and working balances
 
 Runtime wallets should be sized as working wallets.

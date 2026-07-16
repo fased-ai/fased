@@ -5732,6 +5732,7 @@ export function renderApp(state: AppViewState) {
                     void state.handleWalletBalanceWalletChange(walletId),
                   onPolicyPanelChange: (panel) => state.handleWalletPolicyPanelChange(panel),
                   onApprovalsFilterChange: (filter) => state.handleWalletSetApprovalsFilter(filter),
+                  onAttachWalletStandardVault: () => state.handleWalletAttachStandardVault(),
                   onApproveRequest: (requestId) => state.handleWalletApproveRequest(requestId),
                   onRejectRequest: (requestId) => state.handleWalletRejectRequest(requestId),
                   onSetDefaultWallet: (walletId) => state.handleWalletSetDefaultWallet(walletId),

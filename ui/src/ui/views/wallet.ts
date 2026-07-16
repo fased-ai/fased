@@ -40,7 +40,13 @@ export type WalletViewProps = {
   namedWallets: Array<{
     id: string;
     name: string;
-    providerId: "embedded-keystore" | "local-socket-signer" | "alchemy" | "turnkey" | "privy";
+    providerId:
+      | "embedded-keystore"
+      | "local-socket-signer"
+      | "alchemy"
+      | "turnkey"
+      | "wallet-standard"
+      | "privy";
     addresses?: { solana?: string };
     balances?: { solana?: string };
     metadata?: Record<string, unknown>;
@@ -136,6 +142,7 @@ export type WalletViewProps = {
   onWalletBalanceWalletChange?: (walletId: string) => void;
   onPolicyPanelChange?: (panel: WalletPolicyPanel) => void;
   onApprovalsFilterChange: (filter: WalletApprovalFilter) => void;
+  onAttachWalletStandardVault?: () => void;
   onApproveRequest: (requestId: string) => void;
   onRejectRequest: (requestId: string) => void;
   onSetDefaultWallet: (walletId: string | null) => void;
@@ -5025,6 +5032,14 @@ export function renderWallet(props: WalletViewProps) {
             activeMainPanel === "wallets"
               ? html`
                   <span class="wallet-main-tabs__spacer"></span>
+                  <button
+                    class="btn small"
+                    ?disabled=${props.settingsBusy}
+                    @click=${props.onAttachWalletStandardVault}
+                    title="Attach a Solana Wallet Standard account. Use a hardware-backed account for Vault custody."
+                  >
+                    Attach hardware Vault
+                  </button>
                   <button
                     class="btn small"
                     ?disabled=${props.loading || props.balancesLoading}

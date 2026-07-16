@@ -1461,6 +1461,7 @@ function normalizeProviderId(value: string | undefined): WalletProviderId | null
     case "local-socket-signer":
     case "alchemy":
     case "turnkey":
+    case "wallet-standard":
     case "privy":
       return value as WalletProviderId;
     default:
@@ -1478,6 +1479,8 @@ function providerLabel(providerId: WalletProviderId): string {
       return "Alchemy";
     case "turnkey":
       return "Turnkey";
+    case "wallet-standard":
+      return "Hardware / Wallet Standard";
     case "privy":
       return "Privy";
     default:

@@ -359,6 +359,7 @@ export function normalizeLegacyConfigValues(cfg: FasedAgentConfig): {
     "local-socket-signer",
     "alchemy",
     "turnkey",
+    "wallet-standard",
     "privy",
   ]);
   if (rawWalletProviderId && !allowedProviderIds.has(rawWalletProviderId)) {

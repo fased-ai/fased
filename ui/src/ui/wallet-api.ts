@@ -3,6 +3,7 @@ export type WalletProviderId =
   | "local-socket-signer"
   | "alchemy"
   | "turnkey"
+  | "wallet-standard"
   | "privy";
 
 export type WalletStatus = {
@@ -203,6 +204,7 @@ export type WalletSendApprovalRequest = {
     assetDecimals?: number;
     amountDisplay?: string;
     walletHandle?: string;
+    providerId?: WalletProviderId;
     walletId?: string;
     walletName?: string;
     to?: string;
@@ -438,6 +440,12 @@ export type WalletProviderCapabilities = {
   providerId: WalletProviderId;
   supportedChains: Array<"solana">;
   integrationMode: "native" | "bridge";
+  signingLocation: "server" | "browser" | "unavailable";
+  signing: {
+    transaction: boolean;
+    message: boolean;
+    interactiveSend: boolean;
+  };
   operations: {
     createWallet: boolean;
     receiveAddress: boolean;
@@ -1478,6 +1486,7 @@ export async function createWalletNamedWallet(input: {
   walletId?: string;
   providerId?: WalletProviderId;
   role?: "agent" | "vault";
+  address?: string;
 }): Promise<{ ok: true; wallet: WalletNamedWallet }> {
   return await fetchJson<{ ok: true; wallet: WalletNamedWallet }>("/api/wallet/wallets", {
     method: "POST",
@@ -1734,11 +1743,37 @@ export async function resetWalletKeys(
   });
 }
 
+export type WalletStandardBrowserReview = {
+  requestId: string;
+  preparedId: string;
+  signer: string;
+  unsignedTxBase64: string;
+  messageBase64: string;
+  intentDigest: string;
+  expiresAt: string;
+  chain: "solana:mainnet" | "solana:devnet";
+  simulation: { ok: true; unitsConsumed?: number };
+};
+
+export type WalletApproveSendResponse = {
+  ok: true;
+  mode?: "browser";
+  request: WalletSendApprovalRequest;
+  browserReview?: WalletStandardBrowserReview;
+  tx?: {
+    ok: boolean;
+    chain: "solana";
+    txHash: string;
+    signer?: string;
+    idempotent?: boolean;
+  };
+};
+
 export async function approveWalletSend(
   requestId: string,
   approvalToken?: string,
-): Promise<{ ok: true; request: unknown; tx?: unknown }> {
-  return await fetchJson<{ ok: true; request: unknown; tx?: unknown }>(
+): Promise<WalletApproveSendResponse> {
+  return await fetchJson<WalletApproveSendResponse>(
     `/api/wallet/approvals/${encodeURIComponent(requestId)}/approve`,
     {
       method: "POST",
@@ -1751,6 +1786,28 @@ export async function approveWalletSend(
           : {}),
       },
       body: "{}",
+    },
+  );
+}
+
+export async function executeWalletStandardSend(input: {
+  requestId: string;
+  preparedId: string;
+  intentDigest: string;
+  signedTxBase64: string;
+}): Promise<WalletApproveSendResponse> {
+  return await fetchJson<WalletApproveSendResponse>(
+    `/api/wallet/approvals/${encodeURIComponent(input.requestId)}/execute`,
+    {
+      method: "POST",
+      credentials: "include",
+      cache: "no-store",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        preparedId: input.preparedId,
+        intentDigest: input.intentDigest,
+        signedTxBase64: input.signedTxBase64,
+      }),
     },
   );
 }

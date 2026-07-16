@@ -151,6 +151,7 @@ import {
   resolveScopedRpcUrlForWallet,
   resolveWalletProviderId,
 } from "../wallet/wallet-provider-resolver.js";
+import { walletDiagnosticErrorMessage } from "../wallet/wallet-redaction.js";
 import { resolveWalletRuntimeConfig } from "../wallet/wallet-runtime-config.js";
 import {
   deleteWalletProviderSecret,
@@ -161,11 +162,19 @@ import {
 import {
   approveWalletSendRequest,
   createOrExecuteWalletSend,
+  getWalletSendApprovalRequest,
   listWalletSendApprovalRequests,
+  markWalletSendRequestBroadcastUnknown,
+  markWalletSendRequestExecutedExternally,
   rejectWalletSendRequest,
   sanitizeWalletSendApprovalPayload,
   sanitizeWalletSendApprovalRequest,
 } from "../wallet/wallet-send-approvals.js";
+import {
+  executeWalletStandardReview,
+  prepareWalletStandardReview,
+  readWalletStandardReviewTxHash,
+} from "../wallet/wallet-standard-review.js";
 import { readWalletStatusSnapshot } from "../wallet/wallet-status.js";
 import { createA2aHandler } from "./a2a-http.js";
 import type { AuthRateLimiter } from "./auth-rate-limit.js";
@@ -1192,6 +1201,7 @@ function parseWalletSettingsPatchInput(input: unknown): WalletSettingsPatchInput
       payload.providerId === "local-socket-signer" ||
       payload.providerId === "alchemy" ||
       payload.providerId === "turnkey" ||
+      payload.providerId === "wallet-standard" ||
       payload.providerId === "privy"
         ? payload.providerId
         : undefined,
@@ -1258,17 +1268,26 @@ function resolveProviderCredentialStatus(params: {
   return readWalletProviderSecretStatus(params.providerId, env);
 }
 
-function hasTurnkeySigningStampConfigured(env: NodeJS.ProcessEnv = process.env): boolean {
+function hasTurnkeyPolicyCredentialsConfigured(env: NodeJS.ProcessEnv = process.env): boolean {
   const status = readWalletProviderSecretStatus("turnkey", env);
-  if (
-    status.fields.includes("stamp") ||
-    status.fields.includes("xStamp") ||
-    status.fields.includes("x_stamp") ||
-    status.fields.includes("apiStamp")
-  ) {
-    return true;
-  }
-  return Boolean(String(env.FASED_WALLET_TURNKEY_STAMP ?? "").trim());
+  const configuredFields = new Set(status.fields);
+  const hasApiPublicKey =
+    configuredFields.has("apiPublicKey") ||
+    Boolean(String(env.FASED_WALLET_TURNKEY_API_PUBLIC_KEY ?? "").trim());
+  const hasApiPrivateKey =
+    configuredFields.has("apiPrivateKey") ||
+    Boolean(String(env.FASED_WALLET_TURNKEY_API_PRIVATE_KEY ?? "").trim());
+  const hasOrganizationId =
+    configuredFields.has("organizationId") ||
+    Boolean(String(env.FASED_WALLET_TURNKEY_ORGANIZATION_ID ?? "").trim());
+  const hasPolicyId =
+    configuredFields.has("policyId") ||
+    Boolean(String(env.FASED_WALLET_TURNKEY_POLICY_ID ?? "").trim());
+  const hasRpcUrl =
+    configuredFields.has("rpcUrl") ||
+    Boolean(String(env.FASED_WALLET_TURNKEY_RPC_URL ?? "").trim()) ||
+    Boolean(String(env.FASED_WALLET_SOLANA_RPC_URL ?? "").trim());
+  return hasApiPublicKey && hasApiPrivateKey && hasOrganizationId && hasPolicyId && hasRpcUrl;
 }
 
 function buildWalletSettingsPayload(
@@ -1295,9 +1314,11 @@ function buildWalletSettingsPayload(
     provider: {
       id: providerId,
       operationsImplemented:
-        providerAdapter.capabilities.supportsPrepare && providerAdapter.capabilities.supportsSend,
+        (providerAdapter.capabilities.supportsPrepare &&
+          providerAdapter.capabilities.supportsSend) ||
+        providerCapabilities.signing.interactiveSend,
       supportedChains: providerAdapter.capabilities.supportedChains,
-      requiresCredentials: providerId !== "embedded-keystore",
+      requiresCredentials: providerCapabilities.requiresCredentials,
       capabilities: providerCapabilities,
     },
     runtime: {
@@ -1354,6 +1375,7 @@ function parseWalletProviderId(value: unknown): WalletProviderId | null {
     case "local-socket-signer":
     case "alchemy":
     case "turnkey":
+    case "wallet-standard":
     case "privy":
       return value as WalletProviderId;
     default:
@@ -1778,6 +1800,12 @@ async function buildWalletProviderPayload(params: {
         providerId,
         supportedChains: [],
         integrationMode: "native",
+        signingLocation: "unavailable",
+        signing: {
+          transaction: false,
+          message: false,
+          interactiveSend: false,
+        },
         operations: {
           createWallet: false,
           receiveAddress: false,
@@ -1792,7 +1820,10 @@ async function buildWalletProviderPayload(params: {
         chains: {
           solana: { receiveAddress: false, getBalance: false, prepare: false, send: false },
         },
-        requiresCredentials: providerId !== "embedded-keystore",
+        requiresCredentials:
+          providerId !== "embedded-keystore" &&
+          providerId !== "local-socket-signer" &&
+          providerId !== "wallet-standard",
         requiresRpcSecret: false,
       };
       let health: WalletProviderSummary["health"] = {
@@ -1806,9 +1837,10 @@ async function buildWalletProviderPayload(params: {
           env,
           providerIdOverride: providerId,
         });
-        operationsImplemented =
-          adapter.capabilities.supportsPrepare && adapter.capabilities.supportsSend;
         capabilities = buildWalletProviderCapabilityMatrix(adapter);
+        operationsImplemented =
+          (adapter.capabilities.supportsPrepare && adapter.capabilities.supportsSend) ||
+          capabilities.signing.interactiveSend;
         const healthResult = await withWalletProbeTimeout(
           adapter.health(),
           probeTimeoutMs,
@@ -5090,13 +5122,16 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
             });
             return;
           }
-          if (patch.providerId === "turnkey" && !hasTurnkeySigningStampConfigured(process.env)) {
+          if (
+            patch.providerId === "turnkey" &&
+            !hasTurnkeyPolicyCredentialsConfigured(process.env)
+          ) {
             sendLoginResponse(400, {
               ok: false,
               error: {
                 code: "provider_prerequisite_missing",
                 message:
-                  "turnkey cannot be set as default provider until signing stamp is configured (set FASED_WALLET_TURNKEY_STAMP or provider credential `stamp`)",
+                  "turnkey cannot be set as default until its dedicated API key, organization, policy, and Solana RPC are configured",
               },
             });
             return;
@@ -5334,13 +5369,13 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
             });
           }
           if (payload.setDefault === true) {
-            if (providerId === "turnkey" && !hasTurnkeySigningStampConfigured(process.env)) {
+            if (providerId === "turnkey" && !hasTurnkeyPolicyCredentialsConfigured(process.env)) {
               sendLoginResponse(400, {
                 ok: false,
                 error: {
                   code: "provider_prerequisite_missing",
                   message:
-                    "turnkey cannot be set as default provider until signing stamp is configured (set FASED_WALLET_TURNKEY_STAMP or provider credential `stamp`)",
+                    "turnkey cannot be set as default until its dedicated API key, organization, policy, and Solana RPC are configured",
                 },
               });
               return;
@@ -5461,6 +5496,65 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
               ok: false,
               error: { code: "invalid_request", message: "name is required" },
             });
+            return;
+          }
+          if (providerId === "wallet-standard") {
+            const address = typeof payload.address === "string" ? payload.address.trim() : "";
+            if (!address || !isValidSolanaAddress(address)) {
+              sendLoginResponse(400, {
+                ok: false,
+                error: {
+                  code: "invalid_solana_address",
+                  message: "a valid browser-selected Solana account is required",
+                },
+              });
+              return;
+            }
+            if (requestedRole && requestedRole !== "vault") {
+              sendLoginResponse(400, {
+                ok: false,
+                error: {
+                  code: "invalid_wallet_role",
+                  message: "Wallet Standard accounts are supported as reviewed Vault wallets only",
+                },
+              });
+              return;
+            }
+            try {
+              const wallet = upsertNamedWallet({
+                walletId: requestedWalletId || undefined,
+                name: walletName,
+                providerId,
+                addresses: { solana: address },
+                metadata: {
+                  role: "vault",
+                  purpose: "vault",
+                  browserSigner: true,
+                  selfHosted: false,
+                },
+                env: process.env,
+              });
+              appendWalletAuditEntry({
+                action: "wallet_named_created",
+                actor: "control-ui",
+                details: {
+                  walletId: wallet.id,
+                  walletName: wallet.name,
+                  providerId: wallet.providerId,
+                  addresses: wallet.addresses,
+                },
+                env: process.env,
+              });
+              sendLoginResponse(200, { ok: true, wallet });
+            } catch (err) {
+              sendLoginResponse(400, {
+                ok: false,
+                error: {
+                  code: "invalid_request",
+                  message: err instanceof Error ? err.message : String(err),
+                },
+              });
+            }
             return;
           }
           if (providerId === "local-socket-signer") {
@@ -6103,15 +6197,42 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
               return;
             }
             if (providerId === "turnkey") {
+              const allowedTurnkeyFields = new Set([
+                "apiPublicKey",
+                "apiPrivateKey",
+                "organizationId",
+                "policyId",
+                "baseUrl",
+                "rpcUrl",
+                "defaultSolanaAddress",
+                "providerWalletId",
+              ]);
+              const unsupportedField = Object.keys(credentials).find(
+                (field) => !allowedTurnkeyFields.has(field),
+              );
+              if (unsupportedField) {
+                sendLoginResponse(400, {
+                  ok: false,
+                  error: {
+                    code: "invalid_request",
+                    message: `unsupported turnkey credential field: ${unsupportedField}`,
+                  },
+                });
+                return;
+              }
               if (
                 typeof credentials.apiPublicKey !== "string" ||
-                typeof credentials.apiPrivateKey !== "string"
+                typeof credentials.apiPrivateKey !== "string" ||
+                typeof credentials.organizationId !== "string" ||
+                typeof credentials.policyId !== "string" ||
+                typeof credentials.rpcUrl !== "string"
               ) {
                 sendLoginResponse(400, {
                   ok: false,
                   error: {
                     code: "invalid_request",
-                    message: "turnkey credentials must include apiPublicKey and apiPrivateKey",
+                    message:
+                      "turnkey credentials must include apiPublicKey, apiPrivateKey, organizationId, policyId, and rpcUrl",
                   },
                 });
                 return;
@@ -6236,18 +6357,13 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
                 : `${providerId} provider credentials are missing`,
         });
         if (providerId === "turnkey") {
-          const hasTurnkeyStamp =
-            providerSecret.fields.includes("stamp") ||
-            providerSecret.fields.includes("xStamp") ||
-            providerSecret.fields.includes("x_stamp") ||
-            providerSecret.fields.includes("apiStamp") ||
-            Boolean(String(process.env.FASED_WALLET_TURNKEY_STAMP ?? "").trim());
+          const hasTurnkeyPolicyCredentials = hasTurnkeyPolicyCredentialsConfigured(process.env);
           checks.push({
-            id: "wallet.provider.turnkey.signing_prereq",
-            ok: hasTurnkeyStamp,
-            message: hasTurnkeyStamp
-              ? "turnkey signing stamp configured"
-              : "turnkey signing stamp missing: create/prepare/send are hard-blocked until stamp is configured",
+            id: "wallet.provider.turnkey.policy_credentials",
+            ok: hasTurnkeyPolicyCredentials,
+            message: hasTurnkeyPolicyCredentials
+              ? "turnkey dedicated API credential, organization, policy, and Solana RPC are configured"
+              : "turnkey requires a dedicated API user covered by a restrictive organization policy, plus organizationId, policyId, and rpcUrl",
           });
         }
         try {
@@ -9528,25 +9644,27 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           providerIdOverride: selectedProviderId,
           walletId: walletSelection?.walletId ?? payload.walletId,
         });
-        if (selectedProviderId === "turnkey" && !hasTurnkeySigningStampConfigured(process.env)) {
+        if (
+          selectedProviderId === "turnkey" &&
+          !hasTurnkeyPolicyCredentialsConfigured(process.env)
+        ) {
           sendLoginResponse(400, {
             ok: false,
             error: {
               code: "provider_prerequisite_missing",
               message:
-                "turnkey signing stamp is required before prepare/send. Configure credential `stamp` (or FASED_WALLET_TURNKEY_STAMP).",
+                "turnkey requires a dedicated API user covered by a restrictive organization policy, plus organizationId, policyId, and rpcUrl before prepare/send",
             },
           });
           return;
         }
         const selectedProviderCapabilities = buildWalletProviderCapabilityMatrix(selectedProvider);
-        if (
-          !providerSupportsChainOperation({
-            matrix: selectedProviderCapabilities,
-            chain,
-            operation: "send",
-          })
-        ) {
+        const supportsServerSend = providerSupportsChainOperation({
+          matrix: selectedProviderCapabilities,
+          chain,
+          operation: "send",
+        });
+        if (!supportsServerSend && !selectedProviderCapabilities.signing.interactiveSend) {
           sendLoginResponse(400, {
             ok: false,
             error: {
@@ -9679,8 +9797,120 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
         }
         const requestId = parts[3] ?? "";
         const action = parts[4] ?? "";
-        if (!requestId || (action !== "approve" && action !== "reject")) {
+        if (!requestId || (action !== "approve" && action !== "reject" && action !== "execute")) {
           sendLoginResponse(404, { ok: false, error: { code: "not_found", message: "not found" } });
+          return;
+        }
+        if (action === "execute") {
+          const request = getWalletSendApprovalRequest({ requestId, env: process.env });
+          if (!request || request.payload.providerId !== "wallet-standard") {
+            sendLoginResponse(404, {
+              ok: false,
+              error: { code: "not_found", message: "hardware-wallet approval not found" },
+            });
+            return;
+          }
+          if (
+            request.status !== "pending" &&
+            request.status !== "approved" &&
+            request.status !== "executed"
+          ) {
+            sendLoginResponse(409, {
+              ok: false,
+              error: {
+                code: "invalid_state",
+                message: `hardware-wallet approval is ${request.status}`,
+              },
+            });
+            return;
+          }
+          const body = await readJsonBody(req, 256 * 1024);
+          if (!body.ok) {
+            sendLoginResponse(400, {
+              ok: false,
+              error: { code: "invalid_request", message: body.error },
+            });
+            return;
+          }
+          const payload = (body.value ?? {}) as Record<string, unknown>;
+          const preparedId = toOptionalString(payload.preparedId);
+          const intentDigest = toOptionalString(payload.intentDigest);
+          const signedTxBase64 = toOptionalString(payload.signedTxBase64);
+          if (!preparedId || !intentDigest || !signedTxBase64) {
+            sendLoginResponse(400, {
+              ok: false,
+              error: {
+                code: "invalid_request",
+                message: "preparedId, intentDigest, and signedTxBase64 are required",
+              },
+            });
+            return;
+          }
+          const cfg = loadConfig();
+          const effectiveEnv = { ...process.env, ...cfg.env?.vars } as NodeJS.ProcessEnv;
+          const walletId = request.payload.walletId?.trim() || "";
+          const rpcUrl = resolveScopedRpcUrlForWallet({
+            env: effectiveEnv,
+            chains: ["solana"],
+            walletId: walletId || undefined,
+          });
+          if (!rpcUrl) {
+            sendLoginResponse(400, {
+              ok: false,
+              error: {
+                code: "wallet_provider_invalid_config",
+                message: "hardware Vault requires a configured Solana RPC URL",
+              },
+            });
+            return;
+          }
+          try {
+            const executed = await executeWalletStandardReview({
+              requestId,
+              preparedId,
+              intentDigest,
+              signedTxBase64,
+              rpcUrl,
+              env: process.env,
+            });
+            const updated = await markWalletSendRequestExecutedExternally({
+              requestId,
+              txHash: executed.txHash,
+              signer: executed.signer,
+              actor: "control-ui",
+              env: process.env,
+            });
+            sendLoginResponse(200, {
+              ok: true,
+              request: sanitizeWalletSendApprovalRequest(updated),
+              tx: {
+                ok: true,
+                chain: "solana",
+                txHash: executed.txHash,
+                signer: executed.signer,
+                idempotent: executed.idempotent,
+              },
+            });
+          } catch (error) {
+            const code =
+              error instanceof Error && "code" in error && typeof error.code === "string"
+                ? error.code
+                : "wallet_provider_error";
+            const message = walletDiagnosticErrorMessage(error);
+            if (code === "wallet_provider_ambiguous") {
+              markWalletSendRequestBroadcastUnknown({
+                requestId,
+                txHash: readWalletStandardReviewTxHash({ requestId, env: process.env }),
+                reason: message,
+                actor: "control-ui",
+                env: process.env,
+              });
+            }
+            sendLoginResponse(code === "wallet_provider_ambiguous" ? 409 : 400, {
+              ok: false,
+              error: { code, message },
+            });
+          }
           return;
         }
         if (action === "reject") {
@@ -9722,6 +9952,80 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
         const cfg = loadConfig();
         const walletCfg = resolveWalletRuntimeConfig(cfg, process.env);
         if (!ensureWalletApprovalAuthorized({ operation: "wallet.approve", requestId, cfg })) {
+          return;
+        }
+        const pendingRequest = getWalletSendApprovalRequest({ requestId, env: process.env });
+        if (pendingRequest?.payload.providerId === "wallet-standard") {
+          if (pendingRequest.status !== "pending") {
+            sendLoginResponse(400, {
+              ok: false,
+              error: {
+                code: "invalid_state",
+                message: `approval request is ${pendingRequest.status}`,
+              },
+            });
+            return;
+          }
+          const effectiveEnv = { ...process.env, ...cfg.env?.vars } as NodeJS.ProcessEnv;
+          const walletId = pendingRequest.payload.walletId?.trim() || "";
+          const registry = readWalletProviderRegistry(effectiveEnv);
+          const selectedWallet = registry.wallets.find((wallet) => wallet.id === walletId);
+          const signerAddress = selectedWallet?.addresses?.solana?.trim() || "";
+          const rpcUrl = resolveScopedRpcUrlForWallet({
+            env: effectiveEnv,
+            chains: ["solana"],
+            walletId: walletId || undefined,
+          });
+          if (
+            !selectedWallet ||
+            selectedWallet.providerId !== "wallet-standard" ||
+            !signerAddress
+          ) {
+            sendLoginResponse(400, {
+              ok: false,
+              error: {
+                code: "wallet_provider_invalid_config",
+                message: "hardware Vault account is not registered for this approval",
+              },
+            });
+            return;
+          }
+          if (!rpcUrl) {
+            sendLoginResponse(400, {
+              ok: false,
+              error: {
+                code: "wallet_provider_invalid_config",
+                message: "hardware Vault requires a configured Solana RPC URL",
+              },
+            });
+            return;
+          }
+          try {
+            const browserReview = await prepareWalletStandardReview({
+              requestId,
+              payload: pendingRequest.payload,
+              signerAddress,
+              rpcUrl,
+              env: process.env,
+            });
+            sendLoginResponse(200, {
+              ok: true,
+              mode: "browser",
+              request: sanitizeWalletSendApprovalRequest(pendingRequest),
+              browserReview,
+            });
+          } catch (error) {
+            sendLoginResponse(400, {
+              ok: false,
+              error: {
+                code:
+                  error instanceof Error && "code" in error && typeof error.code === "string"
+                    ? error.code
+                    : "wallet_provider_error",
+                message: walletDiagnosticErrorMessage(error),
+              },
+            });
+          }
           return;
         }
         const approved = await approveWalletSendRequest({

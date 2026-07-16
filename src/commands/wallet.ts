@@ -37,6 +37,7 @@ import {
   resolveWalletUserRole,
   setDefaultWallet,
   setNamedWalletRole,
+  setWalletProviderEnabled,
   upsertNamedWallet,
 } from "../wallet/wallet-provider-registry.js";
 import {
@@ -87,8 +88,8 @@ export type WalletSetupOptions = {
   turnkeyApiPublicKey?: string;
   turnkeyApiPrivateKey?: string;
   turnkeyOrganizationId?: string;
+  turnkeyPolicyId?: string;
   turnkeyBaseUrl?: string;
-  turnkeyStamp?: string;
   showPrivateKeyOnce?: boolean;
   confirmPrivateKeyPrint?: string;
   role?: string;
@@ -1982,7 +1983,12 @@ export async function walletSetupCommand(
     if (providerId === "turnkey") {
       runtime.log("Turnkey readiness validation will run after save.");
     }
-    if (providerId === "alchemy" || providerId === "privy") {
+    if (providerId === "privy") {
+      throw new Error(
+        "Privy wallet creation and signing are not implemented. Fased will not save credentials for an unavailable provider.",
+      );
+    }
+    if (providerId === "alchemy") {
       const apiKey = (
         options.apiKey ??
         options.privateKey ??
@@ -2004,45 +2010,55 @@ export async function walletSetupCommand(
     const apiPublicKey = (
       options.turnkeyApiPublicKey ??
       env.TURNKEY_API_PUBLIC_KEY ??
+      env.FASED_WALLET_TURNKEY_API_PUBLIC_KEY ??
       (await prompt("Turnkey API public key", ""))
     ).trim();
     const apiPrivateKey = (
       options.turnkeyApiPrivateKey ??
       env.TURNKEY_API_PRIVATE_KEY ??
+      env.FASED_WALLET_TURNKEY_API_PRIVATE_KEY ??
       (await promptSecret("Turnkey API private key", ""))
     ).trim();
     const organizationId = (
       options.turnkeyOrganizationId ??
       env.TURNKEY_ORGANIZATION_ID ??
-      (await prompt("Turnkey organization ID (optional)", ""))
+      env.FASED_WALLET_TURNKEY_ORGANIZATION_ID ??
+      (await prompt("Turnkey organization ID", ""))
+    ).trim();
+    const policyId = (
+      options.turnkeyPolicyId ??
+      env.TURNKEY_POLICY_ID ??
+      env.FASED_WALLET_TURNKEY_POLICY_ID ??
+      (await prompt("Turnkey policy ID for this dedicated API user", ""))
     ).trim();
     const baseUrl = (
       options.turnkeyBaseUrl ??
       env.TURNKEY_BASE_URL ??
+      env.FASED_WALLET_TURNKEY_BASE_URL ??
       (await prompt("Turnkey base URL (optional)", ""))
     ).trim();
-    const stamp = (
-      options.turnkeyStamp ??
-      env.TURNKEY_STAMP ??
-      env.FASED_WALLET_TURNKEY_STAMP ??
-      (await prompt("Turnkey signing stamp (optional, required for live send)", ""))
+    const turnkeyRpcUrl = (
+      options.rpcUrl ??
+      env.FASED_WALLET_TURNKEY_RPC_URL ??
+      env.FASED_WALLET_SOLANA_RPC_URL ??
+      (await prompt("Solana RPC URL", ""))
     ).trim();
-    if (!apiPublicKey || !apiPrivateKey) {
+    if (!apiPublicKey || !apiPrivateKey || !organizationId || !policyId || !turnkeyRpcUrl) {
       throw new Error(
-        "Turnkey setup requires API public key and API private key. " +
-          "Set TURNKEY_API_PUBLIC_KEY and TURNKEY_API_PRIVATE_KEY " +
-          "or pass --turnkey-api-public-key/--turnkey-api-private-key for non-interactive use.",
+        "Turnkey setup requires a dedicated API public/private key, organization ID, policy ID, and Solana RPC URL. " +
+          "Pass --turnkey-api-public-key, --turnkey-api-private-key, --turnkey-organization-id, " +
+          "--turnkey-policy-id, and --rpc-url for non-interactive use.",
       );
     }
-    const values = [`apiPublicKey=${apiPublicKey}`, `apiPrivateKey=${apiPrivateKey}`];
-    if (organizationId) {
-      values.push(`organizationId=${organizationId}`);
-    }
+    const values = [
+      `apiPublicKey=${apiPublicKey}`,
+      `apiPrivateKey=${apiPrivateKey}`,
+      `organizationId=${organizationId}`,
+      `policyId=${policyId}`,
+      `rpcUrl=${turnkeyRpcUrl}`,
+    ];
     if (baseUrl) {
       values.push(`baseUrl=${baseUrl}`);
-    }
-    if (stamp) {
-      values.push(`stamp=${stamp}`);
     }
     await walletProviderConfigureCommand(runtime, {
       providerId: "turnkey",
@@ -2071,9 +2087,9 @@ export async function walletSetupCommand(
       runtime.log(
         `  Ready: ${health.ok && caps.operations.prepare && caps.operations.send ? "yes" : "needs fixes"}`,
       );
-      if (!caps.operations.prepare || !caps.operations.send) {
+      if (!health.ok || !caps.operations.prepare || !caps.operations.send) {
         runtime.log(
-          "  Turnkey signing is not ready. Add signing stamp: `fased wallet provider configure turnkey stamp=<STAMP>`",
+          "  Turnkey is not ready. Verify the dedicated API user's policy scope, organization/policy IDs, RPC URL, and connectivity.",
         );
       }
       if (
@@ -2790,6 +2806,32 @@ export async function walletProviderConfigureCommand(
   if (Object.keys(credentials).length === 0) {
     throw new Error("no credentials supplied; pass one or more --set key=value");
   }
+  if (providerId === "turnkey") {
+    const allowed = new Set([
+      "apiPublicKey",
+      "apiPrivateKey",
+      "organizationId",
+      "policyId",
+      "baseUrl",
+      "rpcUrl",
+      "defaultSolanaAddress",
+      "providerWalletId",
+    ]);
+    const unsupported = Object.keys(credentials).find((field) => !allowed.has(field));
+    if (unsupported) {
+      throw new Error(`unsupported Turnkey credential field: ${unsupported}`);
+    }
+    const missing = [
+      "apiPublicKey",
+      "apiPrivateKey",
+      "organizationId",
+      "policyId",
+      "rpcUrl",
+    ].filter((field) => !credentials[field]?.trim());
+    if (missing.length > 0) {
+      throw new Error(`Turnkey credentials are incomplete; missing ${missing.join(", ")}`);
+    }
+  }
   const saved = saveWalletProviderSecret({ providerId, credentials }, process.env);
 
   let nextCfg: FasedAgentConfig = {
@@ -2831,6 +2873,9 @@ export async function walletProviderConfigureCommand(
   }
 
   await writeConfigFile(nextCfg, { envSnapshotForRestore: process.env });
+  if (providerId !== "privy") {
+    setWalletProviderEnabled({ providerId, enabled: true, env: process.env });
+  }
   const status = readWalletProviderSecretStatus(providerId, process.env);
 
   if (options.json) {

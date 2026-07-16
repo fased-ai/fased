@@ -265,6 +265,8 @@
     "@modelcontextprotocol/sdk": "1.29.0",
     "@sinclair/typebox": "0.34.48",
     "@solana/web3.js": "^1.98.0",
+    "@turnkey/sdk-server": "6.1.1",
+    "@turnkey/solana": "1.1.31",
     "ajv": "^8.18.0",
     "chalk": "^5.6.2",
     "chokidar": "^5.0.0",

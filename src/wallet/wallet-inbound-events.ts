@@ -90,6 +90,7 @@ function normalizeProviderId(value: unknown): WalletProviderId | null {
     case "local-socket-signer":
     case "alchemy":
     case "turnkey":
+    case "wallet-standard":
     case "privy":
       return value as WalletProviderId;
     default:

@@ -296,6 +296,7 @@ import {
   deleteWalletProviderCredentialsFor,
   deleteWalletRpcSettingsFor,
   enrollWalletCustodyDevice,
+  executeWalletStandardSend,
   initializeWalletCustody,
   lockWalletCustody,
   revokeWalletCustodyDevice,
@@ -356,6 +357,11 @@ import {
   toRawTokenPolicyAmount,
   toRawPolicyAmount,
 } from "./wallet-policy.ts";
+import {
+  connectWalletStandardAccount,
+  signWalletStandardTransaction,
+  type WalletStandardChooser,
+} from "./wallet-standard.ts";
 
 declare global {
   interface Window {
@@ -941,6 +947,18 @@ function formatWalletApproveError(error: unknown, request?: WalletSendApprovalRe
   }
   return `Approve failed: ${error instanceof Error ? error.message : String(error)}`;
 }
+
+const chooseWalletStandardOption: WalletStandardChooser = ({ title, options }) => {
+  const answer = window.prompt(
+    `${title}\n\n${options.map((option, index) => `${index + 1}. ${option}`).join("\n")}\n\nEnter a number:`,
+    "1",
+  );
+  if (answer == null) {
+    return null;
+  }
+  const index = Number.parseInt(answer.trim(), 10) - 1;
+  return Number.isInteger(index) && index >= 0 && index < options.length ? index : null;
+};
 
 function printHtmlDocument(title: string, bodyHtml: string) {
   const printWindow = openBlankWindowSafe("noopener,noreferrer,width=900,height=720");
@@ -5843,6 +5861,11 @@ export class FasedAgentApp extends LitElement {
     this.walletSettingsMessage = null;
     try {
       const providerId = this.walletCreateProvider || this.walletProviderTab;
+      if (providerId === "wallet-standard") {
+        throw new Error(
+          "Use Attach hardware Vault so the browser wallet supplies and confirms the public account.",
+        );
+      }
       const walletId = this.walletCreateId.trim() || undefined;
       const created = await createWalletNamedWallet({
         name,
@@ -5860,6 +5883,44 @@ export class FasedAgentApp extends LitElement {
       await this.handleWalletLoad();
     } catch (err) {
       this.walletSettingsError = `Creating wallet failed: ${String(err)}`;
+    } finally {
+      this.walletSettingsBusy = false;
+    }
+  }
+
+  async handleWalletAttachStandardVault() {
+    if (this.walletSettingsBusy) {
+      return;
+    }
+    this.walletSettingsBusy = true;
+    this.walletSettingsError = null;
+    this.walletSettingsMessage = null;
+    try {
+      const selection = await connectWalletStandardAccount({
+        chooser: chooseWalletStandardOption,
+      });
+      const suggestedName = `${selection.wallet.name} Vault`;
+      const name = window.prompt("Name this hardware-backed Vault", suggestedName)?.trim();
+      if (!name) {
+        throw new Error("Hardware Vault attachment was cancelled");
+      }
+      const created = await createWalletNamedWallet({
+        name,
+        providerId: "wallet-standard",
+        role: "vault",
+        address: selection.account.address,
+      });
+      this.walletProviderTab = "wallet-standard";
+      this.walletSendCreateForm = {
+        ...this.walletSendCreateForm,
+        walletId: created.wallet.id,
+      };
+      this.walletSettingsMessage =
+        `Attached ${created.wallet.name}. Fased stores only its public address; ` +
+        "each send still requires the connected wallet to review and sign.";
+      await this.handleWalletLoad();
+    } catch (err) {
+      this.walletSettingsError = `Attaching hardware Vault failed: ${String(err)}`;
     } finally {
       this.walletSettingsBusy = false;
     }
@@ -6190,7 +6251,28 @@ export class FasedAgentApp extends LitElement {
         operation: "wallet.approve",
         requestId,
       });
-      const response = await approveWalletSend(requestId, approvalToken ?? undefined);
+      let response = await approveWalletSend(requestId, approvalToken ?? undefined);
+      if (response.mode === "browser") {
+        const review = response.browserReview;
+        if (!review) {
+          throw new Error("Gateway returned an incomplete browser signing review");
+        }
+        if (Date.parse(review.expiresAt) <= Date.now()) {
+          throw new Error("The reviewed transaction expired before signing; approve it again");
+        }
+        const signed = await signWalletStandardTransaction({
+          unsignedTxBase64: review.unsignedTxBase64,
+          expectedAddress: review.signer,
+          chain: review.chain,
+          chooser: chooseWalletStandardOption,
+        });
+        response = await executeWalletStandardSend({
+          requestId,
+          preparedId: review.preparedId,
+          intentDigest: review.intentDigest,
+          signedTxBase64: signed.signedTxBase64,
+        });
+      }
       const txHash =
         typeof (response.tx as { txHash?: unknown } | undefined)?.txHash === "string"
           ? (response.tx as { txHash: string }).txHash

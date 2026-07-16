@@ -1126,6 +1126,7 @@ export type AppViewState = {
   handleWalletRotateKeys: () => Promise<void>;
   handleWalletResetKeys: () => Promise<void>;
   handleWalletSetApprovalsFilter: (filter: WalletApprovalFilter) => Promise<void>;
+  handleWalletAttachStandardVault: () => Promise<void>;
   handleWalletApproveRequest: (requestId: string) => Promise<void>;
   handleWalletRejectRequest: (requestId: string) => Promise<void>;
   handleWalletSendCreatePatch: (patch: Partial<WalletSendCreateInput>) => void;

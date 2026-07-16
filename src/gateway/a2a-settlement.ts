@@ -41,6 +41,7 @@ function normalizeProviderId(value: unknown): WalletProviderId | undefined {
     normalized === "local-socket-signer" ||
     normalized === "alchemy" ||
     normalized === "turnkey" ||
+    normalized === "wallet-standard" ||
     normalized === "privy"
   ) {
     return normalized;

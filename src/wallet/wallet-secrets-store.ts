@@ -206,6 +206,7 @@ function decryptProviderPayload(
         case "local-socket-signer":
         case "alchemy":
         case "turnkey":
+        case "wallet-standard":
         case "privy":
           return parsed.providerId as WalletProviderId;
         default:

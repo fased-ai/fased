@@ -401,6 +401,7 @@ function resolveSendProviderForPayload(params: {
   wallet: ResolvedWalletRuntimeConfig;
   payload: WalletSendApprovalPayload;
   providerIdOverride?: WalletProviderId;
+  allowInteractiveBrowser?: boolean;
   env?: NodeJS.ProcessEnv;
 }):
   | {
@@ -427,13 +428,14 @@ function resolveSendProviderForPayload(params: {
     };
   }
   const matrix = buildWalletProviderCapabilityMatrix(provider);
-  if (
-    !providerSupportsChainOperation({
-      matrix,
-      chain: params.payload.chain,
-      operation: "send",
-    })
-  ) {
+  const supportsServerSend = providerSupportsChainOperation({
+    matrix,
+    chain: params.payload.chain,
+    operation: "send",
+  });
+  const supportsInteractiveBrowser =
+    params.allowInteractiveBrowser === true && matrix.signing.interactiveSend;
+  if (!supportsServerSend && !supportsInteractiveBrowser) {
     return {
       ok: false,
       code: "wallet_provider_unsupported_chain",
@@ -519,12 +521,13 @@ function withSendAttemptMetadata<T extends { metadata?: Record<string, unknown> 
 
 async function executeWalletSendWithRetry(params: {
   env?: NodeJS.ProcessEnv;
+  providerId?: WalletProviderId;
   execute: () => Promise<
     Awaited<ReturnType<ReturnType<typeof createWalletProviderAdapter>["sendTx"]>>
   >;
 }): Promise<WalletSendExecutionResult> {
   const env = params.env ?? process.env;
-  const maxAttempts = resolveSendRetryAttempts(env);
+  const maxAttempts = params.providerId === "turnkey" ? 1 : resolveSendRetryAttempts(env);
   const baseDelayMs = resolveSendRetryDelayMs(env);
   let attempts = 0;
   while (attempts < maxAttempts) {
@@ -547,6 +550,20 @@ async function executeWalletSendWithRetry(params: {
     error: new Error("wallet send failed after retry attempts"),
     attempts: maxAttempts,
   };
+}
+
+async function prepareAndSendProviderTransaction(params: {
+  provider: ReturnType<typeof createWalletProviderAdapter>;
+  payload: WalletSendApprovalPayload;
+}) {
+  if (params.provider.id !== "turnkey") {
+    return await params.provider.sendTx(params.payload);
+  }
+  const prepared = await params.provider.prepareTx(params.payload);
+  return await params.provider.sendTx({
+    ...params.payload,
+    preparedId: prepared.preparedId,
+  });
 }
 
 function loadFile(env: NodeJS.ProcessEnv = process.env): WalletSendApprovalsFile {
@@ -719,6 +736,7 @@ export async function createOrExecuteWalletSend(params: {
     wallet: params.config,
     payload: params.payload,
     providerIdOverride: params.providerIdOverride,
+    allowInteractiveBrowser: resolvedMode !== "autonomous",
     env,
   });
   if (!providerResolution.ok) {
@@ -945,19 +963,21 @@ export async function createOrExecuteWalletSend(params: {
     });
     const sent = await executeWalletSendWithRetry({
       env,
+      providerId: selectedProviderId,
       execute: async () => {
         if (custodyGate.custodyMode === "split-key-active" && custodyGate.session) {
           const guarded = await withWalletCustodySigningMaterial({
             sessionId: custodyGate.session.id,
             host: custodyGate.session.host,
-            handler: async () => await provider.sendTx(params.payload),
+            handler: async () =>
+              await prepareAndSendProviderTransaction({ provider, payload: params.payload }),
           });
           if (!guarded.ok) {
             throw new Error(guarded.message);
           }
           return guarded.value;
         }
-        return await provider.sendTx(params.payload);
+        return await prepareAndSendProviderTransaction({ provider, payload: params.payload });
       },
     });
     if (!sent.ok) {
@@ -1046,6 +1066,129 @@ export function listWalletSendApprovalRequests(params?: {
     .filter((request) => (status === "all" ? true : request.status === status))
     .slice(0, limit);
   return requests;
+}
+
+export function getWalletSendApprovalRequest(params: {
+  requestId: string;
+  env?: NodeJS.ProcessEnv;
+}): WalletSendApprovalRequest | null {
+  const env = params.env ?? process.env;
+  const file = loadFile(env);
+  if (markExpired(file)) {
+    saveFile(file, env);
+  }
+  return findRequest(file, params.requestId) ?? null;
+}
+
+export async function markWalletSendRequestExecutedExternally(params: {
+  requestId: string;
+  txHash: string;
+  signer?: string;
+  actor?: string;
+  env?: NodeJS.ProcessEnv;
+}): Promise<WalletSendApprovalRequest> {
+  const env = params.env ?? process.env;
+  const file = loadFile(env);
+  const request = findRequest(file, params.requestId);
+  if (!request) {
+    throw new Error("approval request not found");
+  }
+  if (request.status === "executed" && request.result?.txHash === params.txHash) {
+    return request;
+  }
+  if (request.status !== "pending" && request.status !== "approved") {
+    throw new Error(`approval request is ${request.status}`);
+  }
+  const actor = params.actor?.trim() || "control-ui";
+  const settlementLinkBefore = getWalletSettlementLinkByRequestId({ requestId: request.id, env });
+  if (request.status === "pending") {
+    request.status = "approved";
+    request.approvedBy = actor;
+    request.decisionAt = new Date().toISOString();
+    appendWalletAuditEntry({
+      action: "send_approved",
+      actor,
+      details: buildWalletSendAuditDetails({
+        payload: request.payload,
+        requestId: request.id,
+        mode: "manual",
+        providerId: request.payload.providerId,
+        taskId: settlementLinkBefore?.taskId,
+        invoiceId: settlementLinkBefore?.invoiceId,
+        senderHandle: settlementLinkBefore?.senderHandle,
+      }),
+      env,
+    });
+  }
+  request.status = "executed";
+  request.result = { txHash: params.txHash };
+  request.reason = undefined;
+  const settlementLink = markWalletSettlementLinkOutcome({
+    requestId: request.id,
+    status: "executed",
+    txHash: params.txHash,
+    env,
+  });
+  appendWalletAuditEntry({
+    action: "send_executed",
+    actor,
+    details: buildWalletSendAuditDetails({
+      payload: request.payload,
+      requestId: request.id,
+      mode: "manual",
+      providerId: request.payload.providerId,
+      txHash: params.txHash,
+      taskId: settlementLink?.taskId,
+      invoiceId: settlementLink?.invoiceId,
+      senderHandle: settlementLink?.senderHandle,
+    }),
+    env,
+  });
+  saveFile(file, env);
+  syncApprovalTaskForRequest({ request, settlementLink });
+  await publishSettlementEvidenceForLink({ settlementLink, env });
+  return request;
+}
+
+export function markWalletSendRequestBroadcastUnknown(params: {
+  requestId: string;
+  txHash?: string;
+  reason: string;
+  actor?: string;
+  env?: NodeJS.ProcessEnv;
+}): WalletSendApprovalRequest {
+  const env = params.env ?? process.env;
+  const file = loadFile(env);
+  const request = findRequest(file, params.requestId);
+  if (!request) {
+    throw new Error("approval request not found");
+  }
+  if (request.status !== "pending" && request.status !== "approved") {
+    return request;
+  }
+  request.status = "approved";
+  request.approvedBy = params.actor?.trim() || "control-ui";
+  request.decisionAt = request.decisionAt ?? new Date().toISOString();
+  request.reason = params.reason;
+  request.result = params.txHash
+    ? { txHash: params.txHash, error: params.reason }
+    : { error: params.reason };
+  appendWalletAuditEntry({
+    action: "send_failed",
+    actor: request.approvedBy,
+    details: buildWalletSendAuditDetails({
+      payload: request.payload,
+      requestId: request.id,
+      mode: "manual",
+      providerId: request.payload.providerId,
+      txHash: params.txHash,
+      reason: params.reason,
+    }),
+    env,
+  });
+  saveFile(file, env);
+  syncApprovalTaskForRequest({ request });
+  return request;
 }
 
 function findRequest(file: WalletSendApprovalsFile, requestId: string) {
@@ -1399,19 +1542,21 @@ export async function approveWalletSendRequest(params: {
   try {
     const sent = await executeWalletSendWithRetry({
       env,
+      providerId: selectedProviderId,
       execute: async () => {
         if (custodyGate.custodyMode === "split-key-active" && custodyGate.session) {
           const guarded = await withWalletCustodySigningMaterial({
             sessionId: custodyGate.session.id,
             host: custodyGate.session.host,
-            handler: async () => await provider.sendTx(request.payload),
+            handler: async () =>
+              await prepareAndSendProviderTransaction({ provider, payload: request.payload }),
           });
           if (!guarded.ok) {
             throw new Error(guarded.message);
           }
           return guarded.value;
         }
-        return await provider.sendTx(request.payload);
+        return await prepareAndSendProviderTransaction({ provider, payload: request.payload });
       },
     });
     if (!sent.ok) {

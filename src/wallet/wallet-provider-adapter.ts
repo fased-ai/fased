@@ -1,6 +1,7 @@
 import type { WalletChain, WalletExecutionMode, WalletProviderId } from "../config/types.wallet.js";
 
 export type WalletProviderCustodyModel = "self-hosted" | "provider-managed";
+export type WalletProviderSigningLocation = "server" | "browser" | "unavailable";
 
 export type WalletProviderCapabilities = {
   custodyModel: WalletProviderCustodyModel;
@@ -10,6 +11,11 @@ export type WalletProviderCapabilities = {
   supportsRotateKeys: boolean;
   supportsResetKeys: boolean;
   supportsPasskeyGate: boolean;
+  /** Where transaction signatures are produced. Browser signers never expose keys to Gateway. */
+  /** Omitted by legacy adapters; capability negotiation treats omission as unavailable. */
+  signingLocation?: WalletProviderSigningLocation;
+  supportsSignTransaction?: boolean;
+  supportsSignMessage?: boolean;
   supportedExecutionModes: WalletExecutionMode[];
   supportedChains: WalletChain[];
 };
@@ -57,6 +63,10 @@ export type WalletProviderPrepareTxResult = {
   chain: WalletChain;
   preparedId: string;
   signer?: string;
+  unsignedTxBase64?: string;
+  messageBase64?: string;
+  intentDigest?: string;
+  expiresAt?: string;
   metadata?: Record<string, unknown>;
 };
 
@@ -92,6 +102,8 @@ export type WalletProviderBalanceResult = {
 export type WalletProviderErrorCode =
   | "wallet_provider_invalid_config"
   | "wallet_provider_not_implemented"
+  | "wallet_provider_browser_required"
+  | "wallet_provider_ambiguous"
   | "wallet_provider_unsupported_chain"
   | "wallet_provider_unavailable";
 

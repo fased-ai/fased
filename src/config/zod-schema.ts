@@ -737,6 +737,7 @@ const WalletSchema = z
             z.literal("local-socket-signer"),
             z.literal("alchemy"),
             z.literal("turnkey"),
+            z.literal("wallet-standard"),
             z.literal("privy"),
           ])
           .optional(),

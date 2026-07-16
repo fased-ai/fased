@@ -211,6 +211,9 @@ export class EmbeddedKeystoreAdapter implements WalletProviderAdapter {
       supportsRotateKeys: false,
       supportsResetKeys: false,
       supportsPasskeyGate: false,
+      signingLocation: "server",
+      supportsSignTransaction: true,
+      supportsSignMessage: false,
       supportedExecutionModes: ["manual", "autonomous"],
       supportedChains: [...this.chains],
     };

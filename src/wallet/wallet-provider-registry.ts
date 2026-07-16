@@ -13,6 +13,7 @@ export const WALLET_PROVIDER_IDS: WalletProviderId[] = [
   "local-socket-signer",
   "alchemy",
   "turnkey",
+  "wallet-standard",
   "privy",
 ];
 
@@ -64,7 +65,9 @@ export type WalletProviderConfigEntry = {
 
 export type WalletProviderRegistry = {
   version: 1;
-  providers: Record<WalletProviderId, WalletProviderConfigEntry>;
+  /** Wallet Standard is optional in legacy in-memory fixtures; disk reads always normalize it. */
+  providers: Record<Exclude<WalletProviderId, "wallet-standard">, WalletProviderConfigEntry> &
+    Partial<Record<"wallet-standard", WalletProviderConfigEntry>>;
   wallets: WalletNamedWallet[];
   assignments: Record<string, string>;
   defaultWalletId?: string;
@@ -124,6 +127,7 @@ function normalizeProviderId(value: unknown): WalletProviderId | null {
     case "local-socket-signer":
     case "alchemy":
     case "turnkey":
+    case "wallet-standard":
     case "privy":
       return raw;
     default:
@@ -401,8 +405,9 @@ function makeDefaultRegistry(): WalletProviderRegistry {
       "embedded-keystore": { enabled: true, updatedAt: ts, label: "Self-hosted" },
       "local-socket-signer": { enabled: false, updatedAt: ts, label: "Local signer" },
       alchemy: { enabled: false, updatedAt: ts },
-      turnkey: { enabled: true, updatedAt: ts, label: "Turnkey (recommended hosted)" },
-      privy: { enabled: true, updatedAt: ts },
+      turnkey: { enabled: false, updatedAt: ts, label: "Turnkey (policy-managed)" },
+      "wallet-standard": { enabled: true, updatedAt: ts, label: "Hardware wallet" },
+      privy: { enabled: false, updatedAt: ts, label: "Privy (integration unavailable)" },
     },
     wallets: [],
     assignments: {},
@@ -422,7 +427,12 @@ function normalizeRegistry(raw: unknown): { registry: WalletProviderRegistry; ch
       ? (value.providers as Record<string, unknown>)
       : {};
   const providers: Record<WalletProviderId, WalletProviderConfigEntry> = {
-    ...defaults.providers,
+    "embedded-keystore": defaults.providers["embedded-keystore"],
+    "local-socket-signer": defaults.providers["local-socket-signer"],
+    alchemy: defaults.providers.alchemy,
+    turnkey: defaults.providers.turnkey,
+    "wallet-standard": defaults.providers["wallet-standard"]!,
+    privy: defaults.providers.privy,
   };
   for (const providerId of WALLET_PROVIDER_IDS) {
     const entryRaw = providersRaw[providerId];

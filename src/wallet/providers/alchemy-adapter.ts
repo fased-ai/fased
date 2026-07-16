@@ -48,6 +48,9 @@ export class AlchemyAdapter implements WalletProviderAdapter {
       supportsRotateKeys: false,
       supportsResetKeys: false,
       supportsPasskeyGate: false,
+      signingLocation: "unavailable",
+      supportsSignTransaction: false,
+      supportsSignMessage: false,
       supportedExecutionModes: ["manual"],
       supportedChains: chains,
     };

@@ -73,6 +73,7 @@ export function registerWalletCommands(program: Command) {
     .option("--turnkey-api-public-key <value>", "Turnkey API public key (turnkey mode)")
     .option("--turnkey-api-private-key <value>", "Turnkey API private key (turnkey mode)")
     .option("--turnkey-organization-id <value>", "Turnkey organization ID (turnkey mode)")
+    .option("--turnkey-policy-id <value>", "Turnkey policy ID (turnkey mode)")
     .option("--turnkey-base-url <value>", "Turnkey base URL override (turnkey mode)")
     .option(
       "--enable-limit-orders",
@@ -110,6 +111,8 @@ export function registerWalletCommands(program: Command) {
             typeof opts.turnkeyApiPrivateKey === "string" ? opts.turnkeyApiPrivateKey : undefined,
           turnkeyOrganizationId:
             typeof opts.turnkeyOrganizationId === "string" ? opts.turnkeyOrganizationId : undefined,
+          turnkeyPolicyId:
+            typeof opts.turnkeyPolicyId === "string" ? opts.turnkeyPolicyId : undefined,
           turnkeyBaseUrl: typeof opts.turnkeyBaseUrl === "string" ? opts.turnkeyBaseUrl : undefined,
           enableLimitOrders: Boolean(opts.enableLimitOrders),
           disableLimitOrders: Boolean(opts.disableLimitOrders),

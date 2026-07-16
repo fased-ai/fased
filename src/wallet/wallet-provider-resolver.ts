@@ -8,6 +8,7 @@ import {
 } from "./providers/local-socket-signer-adapter.js";
 import { PrivyAdapter } from "./providers/privy-adapter.js";
 import { TurnkeyAdapter } from "./providers/turnkey-adapter.js";
+import { WalletStandardAdapter } from "./providers/wallet-standard-adapter.js";
 import type { WalletProviderAdapter } from "./wallet-provider-adapter.js";
 import { readWalletProviderRegistry } from "./wallet-provider-registry.js";
 import {
@@ -22,6 +23,7 @@ function parseProviderId(input: string | undefined): WalletProviderId | null {
     case "local-socket-signer":
     case "alchemy":
     case "turnkey":
+    case "wallet-standard":
     case "privy":
       return input as WalletProviderId;
     default:
@@ -273,9 +275,18 @@ export function createWalletProviderAdapter(params: {
   if (providerId === "turnkey") {
     const secret = loadWalletProviderSecret(providerId, env);
     const secretCredentials = secret?.credentials ?? {};
+    const registeredWallet = params.walletId
+      ? readWalletProviderRegistry(env).wallets.find((entry) => entry.id === params.walletId)
+      : undefined;
+    const registeredProviderWalletId =
+      typeof registeredWallet?.metadata?.turnkeyWalletId === "string"
+        ? registeredWallet.metadata.turnkeyWalletId.trim()
+        : "";
     return new TurnkeyAdapter({
       chains: params.wallet.chains,
       service: params.wallet.service,
+      walletName: registeredWallet?.name,
+      stateEnv: env,
       credentials: {
         apiPublicKey:
           pickCredentialValue(secretCredentials, ["apiPublicKey", "api_public_key", "publicKey"]) ||
@@ -290,19 +301,46 @@ export function createWalletProviderAdapter(params: {
           pickCredentialValue(secretCredentials, ["organizationId", "organizationID", "orgId"]) ||
           String(env.FASED_WALLET_TURNKEY_ORGANIZATION_ID ?? "").trim() ||
           undefined,
-        stamp:
-          pickCredentialValue(secretCredentials, ["stamp", "xStamp", "x_stamp", "apiStamp"]) ||
-          String(env.FASED_WALLET_TURNKEY_STAMP ?? "").trim() ||
+        policyId:
+          pickCredentialValue(secretCredentials, ["policyId", "policyID"]) ||
+          String(env.FASED_WALLET_TURNKEY_POLICY_ID ?? "").trim() ||
           undefined,
         baseUrl:
           pickCredentialValue(secretCredentials, ["baseUrl", "url", "endpoint"]) ||
           String(env.FASED_WALLET_TURNKEY_BASE_URL ?? "").trim() ||
           undefined,
+        rpcUrl:
+          pickCredentialValue(secretCredentials, ["rpcUrl", "rpc_url"]) ||
+          resolveScopedRpcUrlForWallet({
+            env,
+            chains: params.wallet.chains,
+            walletId: params.walletId,
+          }) ||
+          undefined,
         defaultSolanaAddress:
           pickCredentialValue(secretCredentials, ["defaultSolanaAddress", "solanaAddress"]) ||
+          registeredWallet?.addresses?.solana?.trim() ||
           String(env.FASED_WALLET_TURNKEY_DEFAULT_SOLANA_ADDRESS ?? "").trim() ||
           undefined,
+        providerWalletId:
+          pickCredentialValue(secretCredentials, ["providerWalletId", "turnkeyWalletId"]) ||
+          registeredProviderWalletId ||
+          undefined,
       },
+    });
+  }
+
+  if (providerId === "wallet-standard") {
+    const registeredWallet = params.walletId
+      ? readWalletProviderRegistry(env).wallets.find((entry) => entry.id === params.walletId)
+      : undefined;
+    return new WalletStandardAdapter({
+      address: registeredWallet?.addresses?.solana,
+      rpcUrl: resolveScopedRpcUrlForWallet({
+        env,
+        chains: params.wallet.chains,
+        walletId: params.walletId,
+      }),
     });
   }
 

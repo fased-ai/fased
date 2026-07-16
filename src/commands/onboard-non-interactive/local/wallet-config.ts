@@ -110,6 +110,7 @@ function parseWalletProviderId(raw: string | undefined): WalletProviderId | null
     case "local-socket-signer":
     case "alchemy":
     case "turnkey":
+    case "wallet-standard":
     case "privy":
       return raw as WalletProviderId;
     default:
