@@ -266,6 +266,20 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 			return nil, err
 		}
 		return marshalSignerResultV2(policy)
+	case "v2.policy.tighten":
+		if cfg.readOnly {
+			return nil, errors.New("read-only signer mode")
+		}
+		var body signerPolicyPutRequestV2
+		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
+			return nil, err
+		}
+		body.Policy.WalletID = req.WalletID
+		policy, err := s.store.tightenPolicy(body.Policy, body.ExpectedVersion)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(policy)
 	case "v2.wallet.get":
 		wallet, err := s.keys.PublicRecord(req.WalletID)
 		if err != nil {
@@ -419,6 +433,10 @@ func (s *signerServiceV2) execute(req signerExecuteRequestV2) (signerOperationV2
 	if err != nil {
 		return signerOperationV2{}, err
 	}
+	policy, err := s.store.getPolicy(req.IntentWalletID())
+	if err != nil {
+		return signerOperationV2{}, err
+	}
 	operation, lookupErr := s.store.getOperation(req.RequestID)
 	existing := lookupErr == nil
 	if lookupErr != nil && !errors.Is(lookupErr, errSignerOperationNotFoundV2) {
@@ -434,6 +452,12 @@ func (s *signerServiceV2) execute(req signerExecuteRequestV2) (signerOperationV2
 		}
 	} else if err := s.store.preflightPolicyForIntentV2(req, intent); err != nil {
 		return signerOperationV2{}, err
+	}
+	if roleErr := requireAutonomousRoleV2(policy, intent); roleErr != nil {
+		if existing && operation.State == operationReserved {
+			_, _ = s.store.markFailed(operation.RequestID, roleErr)
+		}
+		return signerOperationV2{}, roleErr
 	}
 	rpcURLs, err := s.keys.SolanaRPCURLsV2(req.IntentWalletID())
 	if err != nil {

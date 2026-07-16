@@ -58,6 +58,8 @@ var signerV2Capabilities = signerCapabilitiesV2{
 	Features: []string{
 		"failClosedPolicies",
 		"policyHashes",
+		"applicationPolicyTightening",
+		"vaultReviewedOnly",
 		"durableCaps",
 		"atomicIdempotency",
 		"ambiguousBroadcastReconciliation",
