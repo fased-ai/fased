@@ -110,7 +110,7 @@ func TestSignerV2PolicyIsDeterministicAndFailClosed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("normalize intent: %v", err)
 	}
-	if _, err := policyAssetForIntentV2(empty, intent); err == nil || !strings.Contains(err.Error(), "denies operation") {
+	if _, err := policyAssetForIntentV2(empty, intent); err == nil || !strings.Contains(err.Error(), "operations are empty") {
 		t.Fatalf("expected empty policy to deny operation, got %v", err)
 	}
 
@@ -177,7 +177,7 @@ func TestSignerV2ApplicationSocketCreatesOnlyExplicitlyLockedWallet(t *testing.T
 		Intent:         signerIntentV2{Type: intentSolanaNativeTransfer, Destination: destination, Lamports: "1"},
 		intentWalletID: "locked-mining",
 	})
-	if err == nil || !strings.Contains(err.Error(), "policy denies operation") {
+	if err == nil || !strings.Contains(err.Error(), "policy operations are empty") {
 		t.Fatalf("locked wallet execute must fail closed before RPC, got %v", err)
 	}
 

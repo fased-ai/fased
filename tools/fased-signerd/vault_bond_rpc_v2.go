@@ -284,11 +284,18 @@ func signerOwnedAccountSnapshotDigestV2(addresses []solana.PublicKey, accounts [
 	hash := sha256.New()
 	for index, address := range addresses {
 		account := accounts[index]
-		if account == nil || account.Data == nil {
-			return "", fmt.Errorf("signer-owned account snapshot is missing %s", address)
+		hash.Write(address[:])
+		if account == nil {
+			// Missing accounts are meaningful for create-style instructions. Bind
+			// the absence so execute rejects an account created after review.
+			hash.Write([]byte{0})
+			continue
+		}
+		hash.Write([]byte{1})
+		if account.Data == nil {
+			return "", fmt.Errorf("signer-owned account snapshot has invalid data for %s", address)
 		}
 		data := account.Data.GetBinary()
-		hash.Write(address[:])
 		hash.Write(account.Owner[:])
 		var number [8]byte
 		binary.LittleEndian.PutUint64(number[:], account.Lamports)

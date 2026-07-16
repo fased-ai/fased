@@ -78,6 +78,10 @@ var signerV2Capabilities = signerCapabilitiesV2{
 		"typedJupiterSemantics",
 		"signerOwnedReviewPrepareExecute",
 		"exactPreparedTransactions",
+		"reviewedVaultBondActions",
+		"reviewedFederationBondChallenges",
+		"signerOwnedStateRecheck",
+		"durableReviewAuthorization",
 		"verifiedAddressLookupTables",
 	},
 }
@@ -201,6 +205,8 @@ type signerOperationV2 struct {
 	Error               string `json:"error,omitempty"`
 	ExecutionAttempt    uint64 `json:"executionAttempt,omitempty"`
 	ExecutionLeaseUntil string `json:"executionLeaseUntil,omitempty"`
+	AuthorizationProof  string `json:"authorizationProof,omitempty"`
+	AuthorizedAt        string `json:"authorizedAt,omitempty"`
 }
 
 type normalizedIntentV2 struct {
@@ -388,6 +394,9 @@ func normalizeSignerPolicyV2(input signerPolicyV2) (signerPolicyV2, error) {
 		return signerPolicyV2{}, err
 	}
 	policy.Programs, err = normalizeSortedStringsV2(input.Programs, func(raw string) (string, error) {
+		if strings.TrimSpace(raw) == federationBondPolicyDomainV2 {
+			return federationBondPolicyDomainV2, nil
+		}
 		return normalizePublicKeyV2(raw, "policy program")
 	})
 	if err != nil {
@@ -449,6 +458,15 @@ func normalizeSignerPolicyV2(input signerPolicyV2) (signerPolicyV2, error) {
 }
 
 func policyAssetForIntentV2(policy signerPolicyV2, intent normalizedIntentV2) (signerPolicyAssetV2, error) {
+	if len(policy.Operations) == 0 {
+		return signerPolicyAssetV2{}, errors.New("policy operations are empty; signing is denied")
+	}
+	if len(policy.Programs) == 0 {
+		return signerPolicyAssetV2{}, errors.New("policy programs are empty; signing is denied")
+	}
+	if len(intent.RequiredPrograms) == 0 {
+		return signerPolicyAssetV2{}, errors.New("intent has no explicit required program or signer domain")
+	}
 	if intent.RequiredRole != "" && policy.Role != intent.RequiredRole {
 		return signerPolicyAssetV2{}, fmt.Errorf("policy role %s cannot authorize %s intent", policy.Role, intent.RequiredRole)
 	}

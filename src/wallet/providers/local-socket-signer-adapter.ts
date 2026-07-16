@@ -22,6 +22,7 @@ import {
   type WalletProviderSignerReviewAuthorizationBeginV2,
   type WalletProviderSignerReviewAuthorizationFinishV2,
   type WalletProviderSignerReviewAuthorizationV2,
+  type WalletProviderSignerIntentV2,
   type WalletProviderSignerTransactionEnvelopeV2,
   type WalletProviderTypedTransferIntentV2,
   type WalletProviderPrepareTxRequest,
@@ -306,6 +307,15 @@ export class LocalSocketSignerAdapter implements WalletProviderAdapter {
     const missingFeatures = REQUIRED_PROTOCOL_V2_FEATURES.filter(
       (feature) => !capabilities?.features.includes(feature),
     );
+    const intentReviewFeatures =
+      intentType === "solana.vaultBondAction"
+        ? ["reviewedVaultBondActions", "signerOwnedStateRecheck", "durableReviewAuthorization"]
+        : intentType === "federation.bondChallenge"
+          ? ["reviewedFederationBondChallenges", "durableReviewAuthorization"]
+          : [];
+    const missingIntentFeatures = intentReviewFeatures.filter(
+      (feature) => !capabilities?.features.includes(feature),
+    );
     if (
       result.ready !== true ||
       !protocol ||
@@ -313,11 +323,12 @@ export class LocalSocketSignerAdapter implements WalletProviderAdapter {
       protocol.min > 2 ||
       protocol.max < 2 ||
       missingFeatures.length > 0 ||
+      missingIntentFeatures.length > 0 ||
       (intentType && !capabilities?.intentTypes.includes(intentType))
     ) {
       throw new WalletProviderError({
         code: "wallet_provider_unavailable",
-        message: `local-socket-signer protocol-v2 capability negotiation failed${missingFeatures.length > 0 ? `; missing ${missingFeatures.join(",")}` : ""}${intentType && !capabilities?.intentTypes.includes(intentType) ? `; unsupported intent ${intentType}` : ""}`,
+        message: `local-socket-signer protocol-v2 capability negotiation failed${missingFeatures.length > 0 ? `; missing ${missingFeatures.join(",")}` : ""}${missingIntentFeatures.length > 0 ? `; missing intent features ${missingIntentFeatures.join(",")}` : ""}${intentType && !capabilities?.intentTypes.includes(intentType) ? `; unsupported intent ${intentType}` : ""}`,
       });
     }
   }
@@ -446,6 +457,16 @@ export class LocalSocketSignerAdapter implements WalletProviderAdapter {
     intent: WalletProviderJupiterIntentV2;
     transaction: WalletProviderSignerTransactionEnvelopeV2;
   }): Promise<WalletProviderJupiterReviewV2> {
+    return await this.prepareSignerReview(request);
+  }
+
+  async prepareSignerReview(request: {
+    walletId: string;
+    requestId: string;
+    mode: "autonomous" | "reviewed";
+    intent: WalletProviderSignerIntentV2;
+    transaction?: WalletProviderSignerTransactionEnvelopeV2;
+  }): Promise<WalletProviderJupiterReviewV2> {
     assertSecureLocalSignerSocket(this.socketPath);
     await this.requireProtocolV2(request.intent.type);
     const policy = await callSocket<LocalSocketSignerPolicyV2>(this.socketPath, {
@@ -460,7 +481,7 @@ export class LocalSocketSignerAdapter implements WalletProviderAdapter {
         policyHash: policy.hash,
         mode: request.mode,
         intent: request.intent,
-        transaction: request.transaction,
+        ...(request.transaction ? { transaction: request.transaction } : {}),
       },
     });
   }

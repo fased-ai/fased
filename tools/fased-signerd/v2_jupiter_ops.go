@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -24,14 +25,15 @@ func (s *signerServiceV2) prepareJupiterReviewV2(walletID string, req signerRevi
 	if err != nil {
 		return signerReviewV2{}, err
 	}
-	rpcURLs, err := s.keys.SolanaRPCURLsV2(walletID)
-	if err != nil {
-		return signerReviewV2{}, errSignerNetworkPendingV2
-	}
 	var validated jupiterValidatedTransactionV2
 	var transaction signerSolanaTransactionEnvelopeV2
+	var artifact signerReviewArtifactInputV2
 	switch {
 	case isJupiterIntentTypeV2(intent.Intent.Type):
+		rpcURLs, networkErr := s.keys.SolanaRPCURLsV2(walletID)
+		if networkErr != nil {
+			return signerReviewV2{}, errSignerNetworkPendingV2
+		}
 		if intent.Intent.Jupiter == nil || wallet.PublicKey != intent.Intent.Jupiter.Owner {
 			return signerReviewV2{}, errors.New("review intent owner does not match signer-owned wallet")
 		}
@@ -42,7 +44,18 @@ func (s *signerServiceV2) prepareJupiterReviewV2(walletID string, req signerRevi
 		if err == nil {
 			transaction, err = normalizeTransactionEnvelopeV2(*req.Transaction)
 		}
+		if err == nil {
+			digest := sha256.Sum256(validated.RawUnsigned)
+			artifact = signerReviewArtifactInputV2{
+				WalletPublicKey: wallet.PublicKey, Kind: signerReviewArtifactSolanaTransactionV2,
+				Digest: "sha256:" + hex.EncodeToString(digest[:]), Transaction: &transaction,
+			}
+		}
 	case isTypedTransferIntentV2(intent.Intent.Type):
+		rpcURLs, networkErr := s.keys.SolanaRPCURLsV2(walletID)
+		if networkErr != nil {
+			return signerReviewV2{}, errSignerNetworkPendingV2
+		}
 		if req.Transaction != nil {
 			return signerReviewV2{}, errors.New("reviewed SOL/SPL transfers are built only by the signer")
 		}
@@ -57,21 +70,97 @@ func (s *signerServiceV2) prepareJupiterReviewV2(walletID string, req signerRevi
 		if err == nil {
 			validated, err = validateAndSimulateTypedTransferReviewV2(rpcURLs, walletPublicKey, intent, transaction)
 		}
+		if err == nil {
+			digest := sha256.Sum256(validated.RawUnsigned)
+			artifact = signerReviewArtifactInputV2{
+				WalletPublicKey: wallet.PublicKey, Kind: signerReviewArtifactSolanaTransactionV2,
+				Digest: "sha256:" + hex.EncodeToString(digest[:]), Transaction: &transaction,
+			}
+		}
+	case intent.Intent.Type == intentSolanaVaultBondAction:
+		if req.Transaction != nil {
+			return signerReviewV2{}, errors.New("reviewed Vault bond transactions are built only by the signer")
+		}
+		if mode, modeErr := normalizeReviewModeV2(req.Mode); modeErr != nil || mode != jupiterReviewModeReviewedV2 {
+			return signerReviewV2{}, errors.New("Vault bond actions require reviewed mode")
+		}
+		rpcURLs, networkErr := s.keys.SolanaRPCURLsV2(walletID)
+		if networkErr != nil {
+			return signerReviewV2{}, errSignerNetworkPendingV2
+		}
+		var snapshot signerOwnedAccountSnapshotV2
+		var verifiedRPCs []string
+		intent, snapshot, verifiedRPCs, err = resolveVaultBondReviewStateV2(rpcURLs, walletPublicKey, intent)
+		if err == nil {
+			var unsigned *solana.Transaction
+			unsigned, err = buildVaultBondUnsignedTransactionV2(verifiedRPCs, walletPublicKey, intent, nil)
+			if err == nil {
+				transaction, _, err = typedTransactionEnvelopeV2(unsigned)
+			}
+		}
+		if err == nil {
+			validated, err = validateAndSimulateVaultBondReviewV2(verifiedRPCs, walletPublicKey, intent, transaction)
+		}
+		if err == nil {
+			artifact = signerReviewArtifactInputV2{
+				WalletPublicKey: wallet.PublicKey, Kind: signerReviewArtifactSolanaTransactionV2,
+				Digest: vaultBondReviewArtifactDigestV2(validated), Transaction: &transaction,
+				StateDigest: snapshot.Digest, StateSlot: snapshot.Slot,
+			}
+		}
+	case intent.Intent.Type == intentFederationBondChallenge:
+		if req.Transaction != nil {
+			return signerReviewV2{}, errors.New("federation bond challenge rejects transaction artifacts")
+		}
+		if mode, modeErr := normalizeReviewModeV2(req.Mode); modeErr != nil || mode != jupiterReviewModeReviewedV2 {
+			return signerReviewV2{}, errors.New("federation bond challenges require reviewed mode")
+		}
+		if intent.Intent.Federation == nil || req.RequestID != federationBondChallengeRequestIDV2(intent.Intent.Federation.ChallengeID) {
+			return signerReviewV2{}, errors.New("federation bond review requestId must be derived from the exact challengeId")
+		}
+		payload, decodeErr := decodeFederationBondChallengePayloadV2(intent.Message)
+		if decodeErr != nil {
+			return signerReviewV2{}, decodeErr
+		}
+		if err = validateFederationBondChallengeTimeV2(payload, s.store.now()); err == nil {
+			artifact, err = federationMessageArtifactV2(intent)
+			artifact.WalletPublicKey = wallet.PublicKey
+		}
 	default:
-		return signerReviewV2{}, errors.New("review.prepare supports typed Jupiter and signer-built SOL/SPL transfers")
+		return signerReviewV2{}, errors.New("review.prepare supports typed Jupiter, signer-built SOL/SPL transfers, Vault bond actions, and federation bond challenges")
 	}
 	if err != nil {
 		return signerReviewV2{}, err
 	}
-	unsignedDigestBytes := sha256.Sum256(validated.RawUnsigned)
-	unsignedDigest := "sha256:" + hex.EncodeToString(unsignedDigestBytes[:])
-	return s.store.prepareReviewV2(walletID, req, intent, transaction, unsignedDigest)
+	return s.store.prepareArtifactReviewV2(walletID, req, intent, artifact)
 }
 
 func (s *signerServiceV2) executeJupiterReviewV2(
 	walletID string,
 	req signerReviewExecuteRequestV2,
 ) (signerReviewExecutionResultV2, error) {
+	if terminal, lookupErr := s.store.getOperation(req.RequestID); lookupErr == nil && terminal.State != operationReserved {
+		review, intent, reviewErr := s.store.getReviewV2(walletID, req.RequestID)
+		if reviewErr != nil {
+			return signerReviewExecutionResultV2{}, reviewErr
+		}
+		if terminal.WalletID != normalizeWalletID(walletID) || terminal.IntentType != intent.Intent.Type ||
+			terminal.IntentDigest != intent.Digest || terminal.PolicyHash != review.PolicyHash ||
+			terminal.Asset != intent.Asset || terminal.Amount != intent.Amount.String() {
+			return signerReviewExecutionResultV2{}, errors.New("terminal signer operation does not match its immutable review")
+		}
+		wallet, walletErr := s.keys.PublicRecord(walletID)
+		if walletErr != nil {
+			return signerReviewExecutionResultV2{}, walletErr
+		}
+		result := signerReviewExecutionResultV2{Review: review, Operation: &terminal, Signer: wallet.PublicKey}
+		if review.IntentType == intentFederationBondChallenge {
+			result.SignatureBase64 = terminal.Signature
+		}
+		return result, nil
+	} else if lookupErr != nil && !errors.Is(lookupErr, errSignerOperationNotFoundV2) {
+		return signerReviewExecutionResultV2{}, lookupErr
+	}
 	review, intent, policy, err := s.store.requirePreparedReviewV2(walletID, req.RequestID)
 	if err != nil {
 		return signerReviewExecutionResultV2{}, err
@@ -84,30 +173,85 @@ func (s *signerServiceV2) executeJupiterReviewV2(
 	if err != nil {
 		return signerReviewExecutionResultV2{}, err
 	}
-	rpcURLs, err := s.keys.SolanaRPCURLsV2(walletID)
-	if err != nil {
-		return signerReviewExecutionResultV2{}, errSignerNetworkPendingV2
+	if review.WalletPublicKey != "" && review.WalletPublicKey != wallet.PublicKey {
+		return signerReviewExecutionResultV2{}, errors.New("prepared signer review wallet key is no longer current")
 	}
 	walletPublicKey := solana.MustPublicKeyFromBase58(walletKey)
+	artifact, err := normalizeStoredReviewArtifactV2(review)
+	if err != nil {
+		return signerReviewExecutionResultV2{}, err
+	}
 	var validated jupiterValidatedTransactionV2
+	var rpcURLs []string
+	var message []byte
 	switch {
 	case isJupiterIntentTypeV2(intent.Intent.Type):
+		rpcURLs, err = s.keys.SolanaRPCURLsV2(walletID)
+		if err != nil {
+			return signerReviewExecutionResultV2{}, errSignerNetworkPendingV2
+		}
 		if intent.Intent.Jupiter == nil || wallet.PublicKey != intent.Intent.Jupiter.Owner {
 			return signerReviewExecutionResultV2{}, errors.New("review intent owner does not match signer-owned wallet")
 		}
-		validated, err = validateAndSimulateJupiterTransactionV2(rpcURLs, walletPublicKey, intent, review.Transaction)
+		if artifact.Transaction == nil {
+			return signerReviewExecutionResultV2{}, errors.New("stored signer review transaction is missing")
+		}
+		validated, err = validateAndSimulateJupiterTransactionV2(rpcURLs, walletPublicKey, intent, *artifact.Transaction)
 	case isTypedTransferIntentV2(intent.Intent.Type):
-		validated, err = validateAndSimulateTypedTransferReviewV2(rpcURLs, walletPublicKey, intent, review.Transaction)
+		rpcURLs, err = s.keys.SolanaRPCURLsV2(walletID)
+		if err != nil {
+			return signerReviewExecutionResultV2{}, errSignerNetworkPendingV2
+		}
+		if artifact.Transaction == nil {
+			return signerReviewExecutionResultV2{}, errors.New("stored signer review transaction is missing")
+		}
+		validated, err = validateAndSimulateTypedTransferReviewV2(rpcURLs, walletPublicKey, intent, *artifact.Transaction)
+	case intent.Intent.Type == intentSolanaVaultBondAction:
+		configuredRPCs, networkErr := s.keys.SolanaRPCURLsV2(walletID)
+		if networkErr != nil {
+			return signerReviewExecutionResultV2{}, errSignerNetworkPendingV2
+		}
+		var currentIntent normalizedIntentV2
+		var snapshot signerOwnedAccountSnapshotV2
+		currentIntent, snapshot, rpcURLs, err = resolveVaultBondReviewStateV2(configuredRPCs, walletPublicKey, intent)
+		if err == nil {
+			err = compareVaultBondReviewStateV2(review, currentIntent, snapshot)
+		}
+		if err == nil {
+			intent = currentIntent
+			if artifact.Transaction == nil {
+				err = errors.New("stored Vault bond review transaction is missing")
+			} else {
+				validated, err = validateAndSimulateVaultBondReviewV2(rpcURLs, walletPublicKey, intent, *artifact.Transaction)
+			}
+		}
+	case intent.Intent.Type == intentFederationBondChallenge:
+		if artifact.Kind != signerReviewArtifactDomainMessageV2 {
+			return signerReviewExecutionResultV2{}, errors.New("federation review is not bound to a domain message")
+		}
+		message, err = decodeFederationReviewMessageV2(review)
+		if err == nil && (len(message) != len(intent.Message) || subtle.ConstantTimeCompare(message, intent.Message) != 1) {
+			err = errors.New("stored federation review payload does not match the exact semantic challenge")
+		}
+		if err == nil {
+			payload, decodeErr := decodeFederationBondChallengePayloadV2(message)
+			if decodeErr != nil {
+				err = decodeErr
+			} else {
+				err = validateFederationBondChallengeTimeV2(payload, s.store.now())
+			}
+		}
 	default:
 		return signerReviewExecutionResultV2{}, errors.New("stored signer review intent is unsupported")
 	}
 	if err != nil {
 		return signerReviewExecutionResultV2{}, err
 	}
-	unsignedDigestBytes := sha256.Sum256(validated.RawUnsigned)
-	unsignedDigest := "sha256:" + hex.EncodeToString(unsignedDigestBytes[:])
-	if review.TransactionDigest != unsignedDigest {
-		return signerReviewExecutionResultV2{}, errors.New("stored signer review transaction digest mismatch")
+	if artifact.Kind == signerReviewArtifactSolanaTransactionV2 {
+		unsignedDigestBytes := sha256.Sum256(validated.RawUnsigned)
+		if artifact.Digest != "sha256:"+hex.EncodeToString(unsignedDigestBytes[:]) {
+			return signerReviewExecutionResultV2{}, errors.New("stored signer review transaction digest mismatch")
+		}
 	}
 	var reviewedBinding signerReviewBindingV2
 	if review.Mode == jupiterReviewModeAutonomousV2 {
@@ -140,7 +284,7 @@ func (s *signerServiceV2) executeJupiterReviewV2(
 		return signerReviewExecutionResultV2{}, err
 	}
 	if existing && operation.State != operationReserved {
-		return signerReviewExecutionResultV2{}, fmt.Errorf("signer operation is already %s; transaction will not be signed or submitted again", operation.State)
+		return signerReviewExecutionResultV2{Review: review, Operation: &operation, Signer: wallet.PublicKey}, nil
 	}
 	operation, attempt, claimed, err := s.store.claimReservedOperation(operation.RequestID)
 	if err != nil {
@@ -157,10 +301,56 @@ func (s *signerServiceV2) executeJupiterReviewV2(
 	}
 	defer zeroBytes(privateKey)
 	if review.Mode == jupiterReviewModeReviewedV2 {
-		if proofErr := s.webauthn.verifyAndConsumeReviewProofV2(reviewedBinding, &req.Authorization.Proof); proofErr != nil {
+		if proofErr := s.webauthn.authorizeReviewOperationV2(reviewedBinding, &req.Authorization.Proof, operation.RequestID, attempt); proofErr != nil {
 			_, _ = s.store.markFailedClaim(operation.RequestID, attempt, proofErr)
 			return signerReviewExecutionResultV2{}, proofErr
 		}
+	}
+	if intent.Intent.Type == intentSolanaVaultBondAction {
+		configuredRPCs, networkErr := s.keys.SolanaRPCURLsV2(walletID)
+		if networkErr != nil {
+			_, _ = s.store.markFailedClaim(operation.RequestID, attempt, errSignerNetworkPendingV2)
+			return signerReviewExecutionResultV2{}, errSignerNetworkPendingV2
+		}
+		currentIntent, snapshot, verifiedRPCs, stateErr := resolveVaultBondReviewStateV2(configuredRPCs, walletPublicKey, intent)
+		if stateErr == nil {
+			stateErr = compareVaultBondReviewStateV2(review, currentIntent, snapshot)
+		}
+		if stateErr == nil && artifact.Transaction != nil {
+			validated, stateErr = validateAndSimulateVaultBondReviewV2(verifiedRPCs, walletPublicKey, currentIntent, *artifact.Transaction)
+		}
+		if stateErr != nil {
+			_, _ = s.store.markFailedClaim(operation.RequestID, attempt, stateErr)
+			return signerReviewExecutionResultV2{}, stateErr
+		}
+		intent, rpcURLs = currentIntent, verifiedRPCs
+	}
+	if intent.Intent.Type == intentFederationBondChallenge {
+		payload, payloadErr := decodeFederationBondChallengePayloadV2(message)
+		if payloadErr == nil {
+			payloadErr = validateFederationBondChallengeTimeV2(payload, s.store.now())
+		}
+		if payloadErr != nil {
+			_, _ = s.store.markFailedClaim(operation.RequestID, attempt, payloadErr)
+			return signerReviewExecutionResultV2{}, payloadErr
+		}
+		signature, signErr := privateKey.Sign(message)
+		if signErr != nil {
+			failed, markErr := s.store.markFailedClaim(operation.RequestID, attempt, signErr)
+			if markErr != nil {
+				return signerReviewExecutionResultV2{}, fmt.Errorf("%v; persist signer failure: %w", signErr, markErr)
+			}
+			return signerReviewExecutionResultV2{Operation: &failed}, signErr
+		}
+		signatureBase64 := base64.StdEncoding.EncodeToString(signature[:])
+		operation, err = s.store.markCompletedClaim(operation.RequestID, attempt, signatureBase64, artifact.Digest)
+		if err != nil {
+			return signerReviewExecutionResultV2{}, err
+		}
+		review, err = s.store.markReviewSignedV2(review.RequestID, artifact.Digest, signatureBase64)
+		return signerReviewExecutionResultV2{
+			Review: review, Operation: &operation, SignatureBase64: signatureBase64, Signer: wallet.PublicKey,
+		}, err
 	}
 	signedRaw, signature, err := signValidatedJupiterTransactionV2(validated, privateKey)
 	if err != nil {
@@ -176,7 +366,7 @@ func (s *signerServiceV2) executeJupiterReviewV2(
 	if err != nil {
 		return signerReviewExecutionResultV2{}, err
 	}
-	review, err = s.store.markReviewSignedV2(review.RequestID, unsignedDigest, signature.String())
+	review, err = s.store.markReviewSignedV2(review.RequestID, artifact.Digest, signature.String())
 	if err != nil {
 		return signerReviewExecutionResultV2{Operation: &operation}, err
 	}
@@ -187,6 +377,9 @@ func (s *signerServiceV2) executeJupiterReviewV2(
 	}
 
 	envelope := review.Transaction
+	if envelope == nil {
+		return result, errors.New("signed signer review transaction envelope is missing")
+	}
 	if envelope.Submission == jupiterSubmissionReturnV2 {
 		// The operation is durably marked broadcast before signed bytes cross the
 		// signer boundary. A lost/ambiguous Jupiter API response must be

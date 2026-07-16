@@ -20,6 +20,7 @@ import (
 
 const (
 	federationBondChallengeSchemaV2   = "https://schemas.fased.ai/fased-bond-challenge-v1.json"
+	federationBondPolicyDomainV2      = "domain:fased:federation-bond-challenge-v1"
 	federationBondChallengeMaxBytesV2 = 16 << 10
 	federationBondChallengeMaxTTL     = 10 * time.Minute
 )
@@ -262,7 +263,8 @@ func normalizeFederationBondChallengeIntentV2(input signerIntentV2, wallet solan
 	return normalizedIntentV2{
 		Intent: canonicalIntent, Digest: "sha256:" + hex.EncodeToString(digest[:]),
 		Asset: "federation:bond-challenge", Amount: big.NewInt(1), Destination: wallet.String(),
-		PolicyOperation: intentFederationBondChallenge, RequiredRole: "vault", Message: payloadBytes,
+		PolicyOperation: intentFederationBondChallenge, RequiredPrograms: []string{federationBondPolicyDomainV2},
+		RequiredRole: "vault", Message: payloadBytes,
 	}, nil
 }
 

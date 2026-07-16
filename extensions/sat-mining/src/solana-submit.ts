@@ -427,6 +427,16 @@ async function requireTypedSatSignerCapabilities(
   const missingStates = ["reserved", "broadcast", "confirmed", "failed", "unknown"].filter(
     (state) => !states.has(state),
   );
+  const missingVaultReviewFeatures =
+    intentType === "solana.vaultBondAction"
+      ? [
+          "signerOwnedReviewPrepareExecute",
+          "exactPreparedTransactions",
+          "reviewedVaultBondActions",
+          "signerOwnedStateRecheck",
+          "durableReviewAuthorization",
+        ].filter((feature) => !features.has(feature))
+      : [];
   if (
     result.ready !== true ||
     protocol?.current !== 2 ||
@@ -437,12 +447,15 @@ async function requireTypedSatSignerCapabilities(
     !capabilities?.intentTypes?.includes(intentType) ||
     missingFeatures.length > 0 ||
     (intentType === "solana.vaultBondAction" && !features.has("typedVaultBondActions")) ||
+    missingVaultReviewFeatures.length > 0 ||
     missingStates.length > 0
   ) {
     throw new Error(
       `local-socket-signer does not support the required typed SAT protocol-v2 contract${
         missingFeatures.length > 0 ? `; missing features: ${missingFeatures.join(", ")}` : ""
-      }${missingStates.length > 0 ? `; missing states: ${missingStates.join(", ")}` : ""}`,
+      }${missingVaultReviewFeatures.length > 0 ? `; missing reviewed Vault features: ${missingVaultReviewFeatures.join(", ")}` : ""}${
+        missingStates.length > 0 ? `; missing states: ${missingStates.join(", ")}` : ""
+      }`,
     );
   }
 }
@@ -503,16 +516,32 @@ async function executeTypedSatIntent(params: {
         ...(params.instruction ?? {}),
         ...(params.instructions ? { instructions: params.instructions } : {}),
       };
-  if (intent.type === "solana.vaultBondAction") {
-    throw new Error(
-      `Vault bond action ${intent.action} requires signer-owned reviewed authorization; direct execution is disabled`,
-    );
-  }
   const policy = await callLocalSocketSigner<{ hash: string }>(params.socketPath, {
     op: "v2.policy.get",
     walletId: params.walletId,
   });
   const requestId = `sat-${randomUUID()}`;
+  if (intent.type === "solana.vaultBondAction") {
+    const review = await callLocalSocketSigner<{
+      requestId: string;
+      artifactKind: "solana-transaction";
+      artifactDigest: string;
+      stateDigest: string;
+      policyHash: string;
+    }>(params.socketPath, {
+      op: "v2.review.prepare",
+      walletId: params.walletId,
+      request: {
+        requestId,
+        policyHash: policy.hash,
+        mode: "reviewed",
+        intent,
+      },
+    });
+    throw new Error(
+      `Vault bond review ${review.requestId} is prepared for ${intent.action} and requires signer-owned WebAuthn authorization before review.execute`,
+    );
+  }
   let operation: SatSignerOperation;
   try {
     operation = await callLocalSocketSigner<SatSignerOperation>(params.socketPath, {

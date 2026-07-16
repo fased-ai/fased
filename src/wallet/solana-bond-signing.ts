@@ -7,9 +7,15 @@ import {
   callLocalSocketSigner,
   requireLocalSocketSignerPath,
 } from "./providers/local-socket-signer-adapter.js";
+import type {
+  WalletProviderJupiterExecutionV2,
+  WalletProviderJupiterReviewV2,
+  WalletProviderSignerReviewAuthorizationV2,
+} from "./wallet-provider-adapter.js";
 import { readWalletProviderRegistry } from "./wallet-provider-registry.js";
 
 const FEDERATION_BOND_INTENT = "federation.bondChallenge" as const;
+export const FEDERATION_BOND_POLICY_DOMAIN = "domain:fased:federation-bond-challenge-v1";
 const REQUIRED_FEDERATION_SIGNER_FEATURES = [
   "failClosedPolicies",
   "policyHashes",
@@ -19,7 +25,23 @@ const REQUIRED_FEDERATION_SIGNER_FEATURES = [
   "domainSeparatedFederationBondChallenges",
   "signerOwnedWebAuthn",
   "singleUseReviewedAuthorization",
+  "signerOwnedReviewPrepareExecute",
+  "exactPreparedTransactions",
+  "reviewedFederationBondChallenges",
+  "durableReviewAuthorization",
 ] as const;
+
+export class FederationBondReviewAuthorizationRequiredError extends Error {
+  readonly review: WalletProviderJupiterReviewV2;
+
+  constructor(review: WalletProviderJupiterReviewV2) {
+    super(
+      `federation signer review ${review.requestId} is prepared and requires signer-owned WebAuthn authorization`,
+    );
+    this.name = "FederationBondReviewAuthorizationRequiredError";
+    this.review = review;
+  }
+}
 
 export type ResolvedBondWallet = {
   walletId: string;
@@ -175,6 +197,7 @@ export async function signFederationBondChallenge(params: {
   env?: NodeJS.ProcessEnv;
   cfg?: FasedAgentConfig;
   walletId?: string;
+  authorization?: WalletProviderSignerReviewAuthorizationV2;
 }): Promise<ResolvedBondWallet & { signatureBase64: string; requestId: string }> {
   const env = params.env ?? process.env;
   const resolved = await resolveFederationBondWallet({
@@ -190,14 +213,44 @@ export async function signFederationBondChallenge(params: {
   if (
     policy.role !== "vault" ||
     !policy.operations.includes(FEDERATION_BOND_INTENT) ||
+    !policy.programs.includes(FEDERATION_BOND_POLICY_DOMAIN) ||
     !policy.hash.startsWith("sha256:")
   ) {
     throw new Error(
       `bond Vault ${resolved.walletId} does not have an explicit reviewed federation challenge policy`,
     );
   }
-  buildFederationBondChallengeIntent(params);
-  throw new Error(
-    `federation signer request ${requestId} requires signer-owned reviewed authorization; direct signing is disabled`,
+  const intent = buildFederationBondChallengeIntent(params);
+  const review = await callLocalSocketSigner<WalletProviderJupiterReviewV2>(resolved.socketPath, {
+    op: "v2.review.prepare",
+    walletId: resolved.walletId,
+    request: {
+      requestId,
+      policyHash: policy.hash,
+      mode: "reviewed",
+      intent,
+    },
+  });
+  if (!params.authorization) {
+    throw new FederationBondReviewAuthorizationRequiredError(review);
+  }
+  const executed = await callLocalSocketSigner<WalletProviderJupiterExecutionV2>(
+    resolved.socketPath,
+    {
+      op: "v2.review.execute",
+      walletId: resolved.walletId,
+      request: { requestId, authorization: params.authorization },
+    },
   );
+  if (
+    executed.operation.state !== "confirmed" ||
+    !executed.signatureBase64 ||
+    executed.review.artifactKind !== "domain-separated-message" ||
+    executed.review.artifactDigest !== review.artifactDigest
+  ) {
+    throw new Error(
+      `federation signer request ${requestId} did not complete one exact reviewed message signature`,
+    );
+  }
+  return { ...resolved, requestId, signatureBase64: executed.signatureBase64 };
 }

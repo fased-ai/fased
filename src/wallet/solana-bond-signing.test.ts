@@ -24,6 +24,8 @@ vi.mock("./wallet-provider-registry.js", () => ({ readWalletProviderRegistry }))
 
 import {
   buildFederationBondChallengeIntent,
+  FEDERATION_BOND_POLICY_DOMAIN,
+  FederationBondReviewAuthorizationRequiredError,
   federationBondChallengeRequestId,
   resolveFederationBondWallet,
   signFederationBondChallenge,
@@ -51,6 +53,10 @@ function configureSigner() {
                 "domainSeparatedFederationBondChallenges",
                 "signerOwnedWebAuthn",
                 "singleUseReviewedAuthorization",
+                "signerOwnedReviewPrepareExecute",
+                "exactPreparedTransactions",
+                "reviewedFederationBondChallenges",
+                "durableReviewAuthorization",
               ],
             },
           };
@@ -67,7 +73,7 @@ function configureSigner() {
             role: "vault",
             version: 2,
             operations: ["federation.bondChallenge"],
-            programs: [],
+            programs: [FEDERATION_BOND_POLICY_DOMAIN],
             assets: [
               {
                 asset: "federation:bond-challenge",
@@ -77,6 +83,34 @@ function configureSigner() {
               },
             ],
             hash: POLICY_HASH,
+          };
+        case "v2.review.prepare":
+          return {
+            requestId: request.request?.requestId,
+            walletId: "bond_vault",
+            intentType: "federation.bondChallenge",
+            intentDigest: `sha256:${"b".repeat(64)}`,
+            policyHash: POLICY_HASH,
+            mode: "reviewed",
+            nonce: "c".repeat(64),
+            semanticIntent: {},
+            artifactKind: "domain-separated-message",
+            artifactDigest: `sha256:${"d".repeat(64)}`,
+            asset: "federation:bond-challenge",
+            amount: "1",
+            destination: ADDRESS,
+            policyOperation: "federation.bondChallenge",
+            requiredPrograms: [FEDERATION_BOND_POLICY_DOMAIN],
+            state: "prepared",
+          };
+        case "v2.review.execute":
+          return {
+            review: {
+              artifactKind: "domain-separated-message",
+              artifactDigest: `sha256:${"d".repeat(64)}`,
+            },
+            operation: { state: "confirmed" },
+            signatureBase64: Buffer.alloc(64, 7).toString("base64"),
           };
         default:
           throw new Error(`unexpected signer op ${request.op}`);
@@ -160,16 +194,47 @@ describe("native federation bond signing", () => {
         walletId: "bond-vault",
         env: { FASED_WALLET_LOCAL_SIGNER_SOCKET: "/tmp/fased-bond-signer.sock" },
       }),
-    ).rejects.toThrow("requires signer-owned reviewed authorization; direct signing is disabled");
+    ).rejects.toBeInstanceOf(FederationBondReviewAuthorizationRequiredError);
     expect(callLocalSocketSigner.mock.calls.map((call) => call[1].op)).toEqual([
       "v2.capabilities",
       "v2.wallet.get",
       "v2.policy.get",
+      "v2.review.prepare",
     ]);
     expect(callLocalSocketSigner).not.toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ op: "v2.execute" }),
     );
+  });
+
+  it("executes only the prepared federation artifact with a signer WebAuthn proof", async () => {
+    await expect(
+      signFederationBondChallenge({
+        challengeId: "bond-challenge-reviewed",
+        federationOrigin: "https://ff1.fased.app",
+        payloadBase64: Buffer.from("{}").toString("base64"),
+        handle: "@bonded@ff1.fased.app",
+        nodeId: "node-1",
+        tokenId: "token-1",
+        bondId: "bond-1",
+        tier: "basic-bond",
+        amountRaw: "100",
+        expiresAt: "2026-07-16T12:05:00Z",
+        walletId: "bond-vault",
+        authorization: { type: "webauthn", proof: { proofId: "proof-1" } },
+        env: { FASED_WALLET_LOCAL_SIGNER_SOCKET: "/tmp/fased-bond-signer.sock" },
+      }),
+    ).resolves.toMatchObject({
+      requestId: federationBondChallengeRequestId("bond-challenge-reviewed"),
+      signatureBase64: Buffer.alloc(64, 7).toString("base64"),
+    });
+    expect(callLocalSocketSigner.mock.calls.map((call) => call[1].op)).toEqual([
+      "v2.capabilities",
+      "v2.wallet.get",
+      "v2.policy.get",
+      "v2.review.prepare",
+      "v2.review.execute",
+    ]);
   });
 
   it("fails closed when the signer lacks the challenge capability", async () => {

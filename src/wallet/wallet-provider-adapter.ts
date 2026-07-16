@@ -137,9 +137,45 @@ export type WalletProviderTypedTransferIntentV2 =
       amount: string;
     };
 
+export type WalletProviderVaultBondIntentV2 = {
+  type: "solana.vaultBondAction";
+  cluster: "local" | "devnet" | "mainnet-beta";
+  action: string;
+  programId: string;
+  dataBase64: string;
+  keys: Array<{ pubkey: string; isSigner: boolean; isWritable: boolean }>;
+  context?: {
+    targetAuthority?: string;
+    disputeAuthority?: string;
+    intervalStartCycleId?: string;
+    registryPageIndex?: string;
+    minerAuthorities?: string[];
+    frontCycleIds?: string[];
+    backCycleIds?: string[];
+  };
+};
+
+export type WalletProviderFederationBondChallengeIntentV2 = {
+  type: "federation.bondChallenge";
+  federation: {
+    challengeId: string;
+    federationOrigin: string;
+    handle: string;
+    nodeId: string;
+    tokenId: string;
+    bondId: string;
+    tier: "none" | "basic-bond" | "operator-bond";
+    amountRaw?: string;
+    expiresAt: string;
+    payloadBase64: string;
+  };
+};
+
 export type WalletProviderSignerIntentV2 =
   | WalletProviderJupiterIntentV2
-  | WalletProviderTypedTransferIntentV2;
+  | WalletProviderTypedTransferIntentV2
+  | WalletProviderVaultBondIntentV2
+  | WalletProviderFederationBondChallengeIntentV2;
 
 export type WalletProviderSignerIntentType = WalletProviderSignerIntentV2["type"];
 
@@ -152,13 +188,25 @@ export type WalletProviderJupiterReviewV2 = {
   mode: "autonomous" | "reviewed";
   nonce: string;
   semanticIntent: WalletProviderSignerIntentV2;
-  transaction: WalletProviderSignerTransactionEnvelopeV2;
+  walletPublicKey?: string;
+  artifactKind: "solana-transaction" | "domain-separated-message";
+  artifactDigest: string;
+  transaction?: WalletProviderSignerTransactionEnvelopeV2;
+  messageBase64?: string;
+  stateDigest?: string;
+  stateSlot?: number;
+  asset: string;
+  amount: string;
+  destination: string;
+  policyOperation: string;
+  requiredPrograms: string[];
+  requiredRole?: "agent" | "mining" | "vault";
   issuedAt: string;
   state: "prepared" | "signed";
   preparedAt: string;
   expiresAt: string;
   updatedAt: string;
-  transactionDigest: string;
+  transactionDigest?: string;
   signature?: string;
 };
 
@@ -181,7 +229,17 @@ export type WalletProviderSignerReviewBindingV2 = {
   intentType: WalletProviderSignerIntentType;
   intentDigest: string;
   semanticIntent: WalletProviderSignerIntentV2;
-  transactionDigest: string;
+  walletPublicKey?: string;
+  artifactKind: "solana-transaction" | "domain-separated-message";
+  artifactDigest: string;
+  transactionDigest?: string;
+  stateDigest?: string;
+  stateSlot?: number;
+  asset: string;
+  amount: string;
+  destination: string;
+  policyOperation: string;
+  requiredPrograms: string[];
   policyHash: string;
   nonce: string;
   issuedAt: string;
@@ -216,8 +274,11 @@ export type WalletProviderJupiterExecutionV2 = {
     state: "reserved" | "broadcast" | "confirmed" | "failed" | "unknown";
     signature?: string;
     error?: string;
+    authorizationProof?: string;
+    authorizedAt?: string;
   };
   signedTxBase64?: string;
+  signatureBase64?: string;
   signer: string;
 };
 
@@ -278,6 +339,13 @@ export interface WalletProviderAdapter {
     mode: "autonomous" | "reviewed";
     intent: WalletProviderJupiterIntentV2;
     transaction: WalletProviderSignerTransactionEnvelopeV2;
+  }): Promise<WalletProviderJupiterReviewV2>;
+  prepareSignerReview?(request: {
+    walletId: string;
+    requestId: string;
+    mode: "autonomous" | "reviewed";
+    intent: WalletProviderSignerIntentV2;
+    transaction?: WalletProviderSignerTransactionEnvelopeV2;
   }): Promise<WalletProviderJupiterReviewV2>;
   prepareTypedTransferReview?(request: {
     walletId: string;

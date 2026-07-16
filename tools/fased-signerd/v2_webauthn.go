@@ -94,11 +94,21 @@ type signerWebAuthnCredentialMetadataV2 struct {
 type signerReviewBindingV2 struct {
 	RequestID         string          `json:"requestId"`
 	WalletID          string          `json:"walletId"`
+	WalletPublicKey   string          `json:"walletPublicKey,omitempty"`
 	Role              string          `json:"role"`
 	IntentType        string          `json:"intentType"`
 	IntentDigest      string          `json:"intentDigest"`
 	SemanticIntent    json.RawMessage `json:"semanticIntent"`
-	TransactionDigest string          `json:"transactionDigest"`
+	ArtifactKind      string          `json:"artifactKind"`
+	ArtifactDigest    string          `json:"artifactDigest"`
+	TransactionDigest string          `json:"transactionDigest,omitempty"`
+	StateDigest       string          `json:"stateDigest,omitempty"`
+	StateSlot         uint64          `json:"stateSlot,omitempty"`
+	Asset             string          `json:"asset"`
+	Amount            string          `json:"amount"`
+	Destination       string          `json:"destination"`
+	PolicyOperation   string          `json:"policyOperation"`
+	RequiredPrograms  []string        `json:"requiredPrograms"`
 	PolicyHash        string          `json:"policyHash"`
 	Nonce             string          `json:"nonce"`
 	IssuedAt          string          `json:"issuedAt"`
@@ -745,16 +755,12 @@ func reviewBindingFromStoredReviewV2(review signerReviewV2, policy signerPolicyV
 	if review.PolicyHash != policy.Hash || review.WalletID != policy.WalletID {
 		return signerReviewBindingV2{}, errors.New("prepared signer review policy is no longer current")
 	}
-	canonicalStoredIntent, _, _, err := normalizeSignerReviewIntentV2(review.SemanticIntent)
+	_, storedType, _, err := normalizeSignerReviewIntentV2(review.SemanticIntent)
+	if err != nil || storedType != review.IntentType {
+		return signerReviewBindingV2{}, errors.New("stored signer review semantic intent is invalid")
+	}
+	normalizedIntent, err := normalizedIntentFromStoredReviewV2(review)
 	if err != nil {
-		return signerReviewBindingV2{}, errors.New("stored signer review semantic intent is invalid")
-	}
-	var storedIntent signerIntentV2
-	if err := decodeSignerRequestV2(canonicalStoredIntent, &storedIntent); err != nil {
-		return signerReviewBindingV2{}, errors.New("stored signer review semantic intent is invalid")
-	}
-	normalizedIntent, err := normalizeSignerIntentV2(storedIntent)
-	if err != nil || normalizedIntent.Intent.Type != review.IntentType || normalizedIntent.Digest != review.IntentDigest {
 		return signerReviewBindingV2{}, errors.New("stored signer review semantic intent is inconsistent")
 	}
 	if err := validateReviewPolicyV2(policy, normalizedIntent); err != nil {
@@ -764,12 +770,9 @@ func reviewBindingFromStoredReviewV2(review signerReviewV2, policy signerPolicyV
 	if err != nil {
 		return signerReviewBindingV2{}, errors.New("stored signer review semantic intent is invalid")
 	}
-	transactionDigest, err := normalizeSHA256DigestV2(review.TransactionDigest, "transactionDigest")
+	artifact, err := normalizeStoredReviewArtifactV2(review)
 	if err != nil {
-		return signerReviewBindingV2{}, errors.New("stored signer review transaction digest is invalid")
-	}
-	if _, err := normalizeTransactionEnvelopeV2(review.Transaction); err != nil {
-		return signerReviewBindingV2{}, errors.New("stored signer review transaction envelope is invalid")
+		return signerReviewBindingV2{}, err
 	}
 	if strings.TrimSpace(review.Nonce) == "" || strings.TrimSpace(review.IssuedAt) == "" || strings.TrimSpace(review.ExpiresAt) == "" {
 		return signerReviewBindingV2{}, errors.New("stored signer review binding is incomplete")
@@ -777,11 +780,21 @@ func reviewBindingFromStoredReviewV2(review signerReviewV2, policy signerPolicyV
 	return signerReviewBindingV2{
 		RequestID:         review.RequestID,
 		WalletID:          review.WalletID,
+		WalletPublicKey:   review.WalletPublicKey,
 		Role:              policy.Role,
 		IntentType:        normalizedIntent.Intent.Type,
 		IntentDigest:      normalizedIntent.Digest,
 		SemanticIntent:    semanticIntent,
-		TransactionDigest: transactionDigest,
+		ArtifactKind:      artifact.Kind,
+		ArtifactDigest:    artifact.Digest,
+		TransactionDigest: review.TransactionDigest,
+		StateDigest:       artifact.StateDigest,
+		StateSlot:         artifact.StateSlot,
+		Asset:             normalizedIntent.Asset,
+		Amount:            normalizedIntent.Amount.String(),
+		Destination:       normalizedIntent.Destination,
+		PolicyOperation:   normalizedIntent.PolicyOperation,
+		RequiredPrograms:  append([]string(nil), normalizedIntent.RequiredPrograms...),
 		PolicyHash:        policy.Hash,
 		Nonce:             review.Nonce,
 		IssuedAt:          review.IssuedAt,
@@ -846,8 +859,8 @@ func (s *signerWebAuthnServiceV2) beginReviewAuthorization(walletID string, body
 		if err != nil {
 			return err
 		}
-		if !containsStringV2(policy.Operations, binding.IntentType) {
-			return fmt.Errorf("policy denies reviewed operation %s", binding.IntentType)
+		if !containsStringV2(policy.Operations, binding.PolicyOperation) {
+			return fmt.Errorf("policy denies reviewed operation %s", binding.PolicyOperation)
 		}
 		user, records, err := signerWebAuthnUserFromTxV2(tx)
 		if err != nil {
@@ -1083,5 +1096,96 @@ func (s *signerWebAuthnServiceV2) verifyAndConsumeReviewProofV2(expected signerR
 			return err
 		}
 		return bucket.Put([]byte(proof.ID), encoded)
+	})
+}
+
+// authorizeReviewOperationV2 consumes the single-use WebAuthn proof and records
+// authorization on the exact reserved operation in one bbolt transaction. If
+// the process stops after this commit but before signing, the fenced operation
+// can resume without weakening or repeating the browser ceremony.
+func (s *signerWebAuthnServiceV2) authorizeReviewOperationV2(
+	expected signerReviewBindingV2,
+	authorization *signerWebAuthnProofReferenceV2,
+	requestID string,
+	attempt uint64,
+) error {
+	if err := s.requireEnabled(); err != nil {
+		return err
+	}
+	return s.store.db.Update(func(tx *bolt.Tx) error {
+		operations := tx.Bucket(bucketSignerOperationsV2)
+		rawOperation := operations.Get([]byte(requestID))
+		if rawOperation == nil {
+			return errors.New("signer operation not found")
+		}
+		var operation signerOperationV2
+		if err := json.Unmarshal(rawOperation, &operation); err != nil {
+			return errors.New("invalid stored signer operation")
+		}
+		if operation.State != operationReserved || operation.ExecutionAttempt != attempt ||
+			operation.RequestID != expected.RequestID || operation.WalletID != expected.WalletID ||
+			operation.IntentType != expected.IntentType || operation.IntentDigest != expected.IntentDigest ||
+			operation.PolicyHash != expected.PolicyHash || operation.Asset != expected.Asset ||
+			operation.Amount != expected.Amount {
+			return errors.New("reserved signer operation does not match the reviewed authorization")
+		}
+		if operation.AuthorizationProof != "" && operation.AuthorizedAt != "" {
+			return nil
+		}
+		if authorization == nil || strings.TrimSpace(authorization.ProofID) == "" {
+			return errors.New("reviewed signing requires a signer-owned WebAuthn authorization proof")
+		}
+		proofID := strings.TrimSpace(authorization.ProofID)
+		if len(proofID) > 128 {
+			return errors.New("invalid review authorization proof identifier")
+		}
+		proofBucket := tx.Bucket(bucketSignerReviewProofsV2)
+		rawProof := proofBucket.Get([]byte(proofID))
+		if rawProof == nil {
+			return errors.New("review authorization proof not found")
+		}
+		var proof signerReviewProofRecordV2
+		if err := json.Unmarshal(rawProof, &proof); err != nil {
+			return errors.New("invalid stored review authorization proof")
+		}
+		if proof.State != signerReviewProofPending {
+			return errors.New("review authorization proof is not pending")
+		}
+		now := s.store.now().UTC()
+		expiresAt, err := time.Parse(time.RFC3339Nano, proof.ExpiresAt)
+		if err != nil || !expiresAt.After(now) {
+			return errors.New("review authorization proof expired")
+		}
+		if !equalSignerReviewBindingV2(proof.Binding, expected) {
+			return errors.New("review authorization proof binding mismatch")
+		}
+		rawPolicy := tx.Bucket(bucketSignerPoliciesV2).Get([]byte(expected.WalletID))
+		if rawPolicy == nil {
+			return errors.New("explicit signer policy required")
+		}
+		var currentPolicy signerPolicyV2
+		if err := json.Unmarshal(rawPolicy, &currentPolicy); err != nil {
+			return errors.New("invalid stored signer policy")
+		}
+		if currentPolicy.Role != expected.Role || subtle.ConstantTimeCompare([]byte(currentPolicy.Hash), []byte(expected.PolicyHash)) != 1 {
+			return errors.New("review authorization policy is no longer current")
+		}
+		proof.State = signerReviewProofConsumed
+		proof.ConsumedAt = timestampV2(now)
+		encodedProof, err := json.Marshal(proof)
+		if err != nil {
+			return err
+		}
+		if err := proofBucket.Put([]byte(proof.ID), encodedProof); err != nil {
+			return err
+		}
+		operation.AuthorizationProof = proof.ID
+		operation.AuthorizedAt = timestampV2(now)
+		operation.UpdatedAt = timestampV2(now)
+		encodedOperation, err := json.Marshal(operation)
+		if err != nil {
+			return err
+		}
+		return operations.Put([]byte(operation.RequestID), encodedOperation)
 	})
 }

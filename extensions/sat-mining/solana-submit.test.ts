@@ -133,6 +133,11 @@ function configureLocalSignerMock(addresses: { solana?: string } = { solana: SIG
                 "typedSolanaTransactions",
                 "typedSATActions",
                 "typedVaultBondActions",
+                "signerOwnedReviewPrepareExecute",
+                "exactPreparedTransactions",
+                "reviewedVaultBondActions",
+                "signerOwnedStateRecheck",
+                "durableReviewAuthorization",
               ],
             },
           };
@@ -143,6 +148,14 @@ function configureLocalSignerMock(addresses: { solana?: string } = { solana: SIG
             requestId: payload.request?.requestId ?? "sat-test-request",
             state: "confirmed",
             signature: "tx-submit-cycle",
+          };
+        case "v2.review.prepare":
+          return {
+            requestId: payload.request?.requestId ?? "vault-bond-review",
+            artifactKind: "solana-transaction",
+            artifactDigest: `sha256:${"cd".repeat(32)}`,
+            stateDigest: `sha256:${"ef".repeat(32)}`,
+            policyHash: TEST_POLICY_HASH,
           };
         default:
           throw new Error(`unexpected signer test op ${payload.op}`);
@@ -556,11 +569,13 @@ describe("SAT cycle transaction builders", () => {
     "keeps Vault bond %s reviewed-only and never calls direct execute",
     async (_name, submit) => {
       await expect(submit()).rejects.toThrow(
-        "requires signer-owned reviewed authorization; direct execution is disabled",
+        "requires signer-owned WebAuthn authorization before review.execute",
       );
       expect(callLocalSocketSigner.mock.calls.map((call) => call[1].op)).toEqual([
         "getAddresses",
         "v2.capabilities",
+        "v2.policy.get",
+        "v2.review.prepare",
       ]);
       expect(callLocalSocketSigner).not.toHaveBeenCalledWith(
         expect.anything(),

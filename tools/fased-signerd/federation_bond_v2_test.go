@@ -60,7 +60,7 @@ func TestSignerV2FederationChallengeBindsExactDomainPayload(t *testing.T) {
 	if normalized.Intent.Federation.FederationOrigin != "https://ff1.fased.app" {
 		t.Fatalf("federation origin was not canonicalized: %q", normalized.Intent.Federation.FederationOrigin)
 	}
-	if normalized.RequiredRole != "vault" || normalized.PolicyOperation != intentFederationBondChallenge || normalized.Asset != "federation:bond-challenge" || normalized.Amount.String() != "1" || normalized.Destination != wallet.String() {
+	if normalized.RequiredRole != "vault" || normalized.PolicyOperation != intentFederationBondChallenge || normalized.Asset != "federation:bond-challenge" || normalized.Amount.String() != "1" || normalized.Destination != wallet.String() || len(normalized.RequiredPrograms) != 1 || normalized.RequiredPrograms[0] != federationBondPolicyDomainV2 {
 		t.Fatalf("federation intent omitted its Vault policy binding: %#v", normalized)
 	}
 	decoded, err := decodeFederationBondChallengePayloadV2(normalized.Message)
@@ -125,7 +125,7 @@ func TestSignerV2FederationChallengeFailsClosedOnRolePolicyCapsAndTime(t *testin
 		t.Fatalf("create locked federation Vault: %v", err)
 	}
 	policy, err := store.putPolicy(signerPolicyV2{
-		WalletID: walletRecord.WalletID, Role: "vault", Operations: []string{intentFederationBondChallenge}, Programs: []string{},
+		WalletID: walletRecord.WalletID, Role: "vault", Operations: []string{intentFederationBondChallenge}, Programs: []string{federationBondPolicyDomainV2},
 		Assets: []signerPolicyAssetV2{{
 			Asset: "federation:bond-challenge", Destinations: []string{walletRecord.PublicKey}, MaxPerTx: "1", MaxDaily: "1",
 		}},
@@ -147,8 +147,13 @@ func TestSignerV2FederationChallengeFailsClosedOnRolePolicyCapsAndTime(t *testin
 	}
 	emptyPolicy := policy
 	emptyPolicy.Operations = nil
-	if _, err := policyAssetForIntentV2(emptyPolicy, normalized); err == nil || !strings.Contains(err.Error(), "denies operation") {
+	if _, err := policyAssetForIntentV2(emptyPolicy, normalized); err == nil || !strings.Contains(err.Error(), "operations are empty") {
 		t.Fatalf("empty federation policy did not fail closed: %v", err)
+	}
+	emptyPrograms := policy
+	emptyPrograms.Programs = nil
+	if _, err := policyAssetForIntentV2(emptyPrograms, normalized); err == nil || !strings.Contains(err.Error(), "programs are empty") {
+		t.Fatalf("empty federation signer-domain policy did not fail closed: %v", err)
 	}
 	first := signerExecuteRequestV2{
 		RequestID: federationBondChallengeRequestIDV2(valid.Federation.ChallengeID), PolicyHash: policy.Hash,

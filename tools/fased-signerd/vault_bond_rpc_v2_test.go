@@ -54,8 +54,12 @@ func cloneRPCAccountV2(account *rpc.Account) *rpc.Account {
 }
 
 func makeVaultBondRPCFixtureV2(t *testing.T) vaultBondRPCFixtureV2 {
+	return makeVaultBondRPCFixtureForWalletV2(t, solana.NewWallet().PublicKey())
+}
+
+func makeVaultBondRPCFixtureForWalletV2(t *testing.T, wallet solana.PublicKey) vaultBondRPCFixtureV2 {
 	t.Helper()
-	wallet, program, mint := solana.NewWallet().PublicKey(), solana.NewWallet().PublicKey(), solana.NewWallet().PublicKey()
+	program, mint := solana.NewWallet().PublicKey(), solana.NewWallet().PublicKey()
 	policy, policyBump := vaultBondTestPDA(t, program, []byte("sat_bond_tier_policy"))
 	position, positionBump := vaultBondTestPDA(t, program, []byte("sat_bond_position"), wallet[:])
 	distributor, distributorBump := vaultBondTestPDA(t, program, []byte("sat_bond_staking_distributor"))

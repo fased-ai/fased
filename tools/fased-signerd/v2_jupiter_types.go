@@ -22,6 +22,9 @@ const (
 	jupiterReviewSignedV2         = "signed"
 	jupiterReviewModeAutonomousV2 = "autonomous"
 	jupiterReviewModeReviewedV2   = "reviewed"
+
+	signerReviewArtifactSolanaTransactionV2 = "solana-transaction"
+	signerReviewArtifactDomainMessageV2     = "domain-separated-message"
 )
 
 // signerJupiterIntentV2 is the stable, human-reviewable semantic intent. The
@@ -69,29 +72,42 @@ type signerReviewExecuteRequestV2 struct {
 }
 
 type signerReviewV2 struct {
-	RequestID         string                            `json:"requestId"`
-	WalletID          string                            `json:"walletId"`
-	IntentType        string                            `json:"intentType"`
-	IntentDigest      string                            `json:"intentDigest"`
-	PolicyHash        string                            `json:"policyHash"`
-	Mode              string                            `json:"mode"`
-	Nonce             string                            `json:"nonce"`
-	SemanticIntent    json.RawMessage                   `json:"semanticIntent"`
-	Transaction       signerSolanaTransactionEnvelopeV2 `json:"transaction"`
-	IssuedAt          string                            `json:"issuedAt"`
-	State             string                            `json:"state"`
-	PreparedAt        string                            `json:"preparedAt"`
-	ExpiresAt         string                            `json:"expiresAt"`
-	UpdatedAt         string                            `json:"updatedAt"`
-	TransactionDigest string                            `json:"transactionDigest"`
-	Signature         string                            `json:"signature,omitempty"`
+	RequestID         string                             `json:"requestId"`
+	WalletID          string                             `json:"walletId"`
+	WalletPublicKey   string                             `json:"walletPublicKey,omitempty"`
+	IntentType        string                             `json:"intentType"`
+	IntentDigest      string                             `json:"intentDigest"`
+	PolicyHash        string                             `json:"policyHash"`
+	Mode              string                             `json:"mode"`
+	Nonce             string                             `json:"nonce"`
+	SemanticIntent    json.RawMessage                    `json:"semanticIntent"`
+	ArtifactKind      string                             `json:"artifactKind"`
+	ArtifactDigest    string                             `json:"artifactDigest"`
+	Transaction       *signerSolanaTransactionEnvelopeV2 `json:"transaction,omitempty"`
+	MessageBase64     string                             `json:"messageBase64,omitempty"`
+	StateDigest       string                             `json:"stateDigest,omitempty"`
+	StateSlot         uint64                             `json:"stateSlot,omitempty"`
+	Asset             string                             `json:"asset"`
+	Amount            string                             `json:"amount"`
+	Destination       string                             `json:"destination"`
+	PolicyOperation   string                             `json:"policyOperation"`
+	RequiredPrograms  []string                           `json:"requiredPrograms"`
+	RequiredRole      string                             `json:"requiredRole,omitempty"`
+	IssuedAt          string                             `json:"issuedAt"`
+	State             string                             `json:"state"`
+	PreparedAt        string                             `json:"preparedAt"`
+	ExpiresAt         string                             `json:"expiresAt"`
+	UpdatedAt         string                             `json:"updatedAt"`
+	TransactionDigest string                             `json:"transactionDigest,omitempty"`
+	Signature         string                             `json:"signature,omitempty"`
 }
 
 type signerReviewExecutionResultV2 struct {
-	Review         signerReviewV2     `json:"review"`
-	Operation      *signerOperationV2 `json:"operation,omitempty"`
-	SignedTxBase64 string             `json:"signedTxBase64,omitempty"`
-	Signer         string             `json:"signer"`
+	Review          signerReviewV2     `json:"review"`
+	Operation       *signerOperationV2 `json:"operation,omitempty"`
+	SignedTxBase64  string             `json:"signedTxBase64,omitempty"`
+	SignatureBase64 string             `json:"signatureBase64,omitempty"`
+	Signer          string             `json:"signer"`
 }
 
 func isJupiterIntentTypeV2(intentType string) bool {

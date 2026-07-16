@@ -244,7 +244,7 @@ func newTestSignerWebAuthnFixtureV2(t *testing.T) *testSignerWebAuthnFixtureV2 {
 	destination := solanaNativeMintV2
 	policyInput := testSignerPolicyV2(fixture.walletID, destination, 10_000, 100_000)
 	policyInput.Role = "vault"
-	_, fixture.policy, err = keys.CreateWithPolicy(signerWalletCreateRequestV2{
+	walletRecord, createdPolicy, err := keys.CreateWithPolicy(signerWalletCreateRequestV2{
 		WalletID:        fixture.walletID,
 		ExpectedVersion: 0,
 		Policy:          policyInput,
@@ -254,6 +254,7 @@ func newTestSignerWebAuthnFixtureV2(t *testing.T) *testSignerWebAuthnFixtureV2 {
 		_ = store.Close()
 		t.Fatalf("create signer wallet: %v", err)
 	}
+	fixture.policy = createdPolicy
 	var fixtureIntent signerIntentV2
 	if err := decodeSignerRequestV2(fixture.semantic, &fixtureIntent); err != nil {
 		t.Fatalf("decode fixture review intent: %v", err)
@@ -266,21 +267,30 @@ func newTestSignerWebAuthnFixtureV2(t *testing.T) *testSignerWebAuthnFixtureV2 {
 	if err != nil {
 		t.Fatalf("encode fixture review intent: %v", err)
 	}
+	reviewTransaction := &signerSolanaTransactionEnvelopeV2{
+		SerializedTxBase64: "AQ==",
+		Programs:           []string{solana.SystemProgramID.String()},
+		WritableAccounts:   []string{destination},
+		Submission:         jupiterSubmissionRPCV2,
+	}
 	review := signerReviewV2{
-		RequestID:      "review-request-001",
-		WalletID:       fixture.walletID,
-		IntentType:     normalizedFixtureIntent.Intent.Type,
-		IntentDigest:   normalizedFixtureIntent.Digest,
-		PolicyHash:     fixture.policy.Hash,
-		Mode:           jupiterReviewModeReviewedV2,
-		Nonce:          strings.Repeat("c", 64),
-		SemanticIntent: fixture.semantic,
-		Transaction: signerSolanaTransactionEnvelopeV2{
-			SerializedTxBase64: "AQ==",
-			Programs:           []string{solana.SystemProgramID.String()},
-			WritableAccounts:   []string{destination},
-			Submission:         jupiterSubmissionRPCV2,
-		},
+		RequestID:         "review-request-001",
+		WalletID:          fixture.walletID,
+		WalletPublicKey:   walletRecord.PublicKey,
+		IntentType:        normalizedFixtureIntent.Intent.Type,
+		IntentDigest:      normalizedFixtureIntent.Digest,
+		PolicyHash:        fixture.policy.Hash,
+		Mode:              jupiterReviewModeReviewedV2,
+		Nonce:             strings.Repeat("c", 64),
+		SemanticIntent:    fixture.semantic,
+		ArtifactKind:      signerReviewArtifactSolanaTransactionV2,
+		ArtifactDigest:    fixture.txDigest,
+		Transaction:       reviewTransaction,
+		Asset:             normalizedFixtureIntent.Asset,
+		Amount:            normalizedFixtureIntent.Amount.String(),
+		Destination:       normalizedFixtureIntent.Destination,
+		PolicyOperation:   normalizedFixtureIntent.Intent.Type,
+		RequiredPrograms:  normalizedFixtureIntent.RequiredPrograms,
 		IssuedAt:          timestampV2(fixture.now),
 		State:             jupiterReviewPreparedV2,
 		PreparedAt:        timestampV2(fixture.now),
@@ -500,7 +510,7 @@ func TestSignerReviewedVaultTransferBuildsExactTransactionAndExecutesWithWebAuth
 	if err != nil {
 		t.Fatalf("prepare signer-built reviewed transfer: %v", err)
 	}
-	if review.Transaction.SerializedTxBase64 == "" || review.TransactionDigest == "" || review.Transaction.Submission != jupiterSubmissionRPCV2 {
+	if review.Transaction == nil || review.Transaction.SerializedTxBase64 == "" || review.TransactionDigest == "" || review.Transaction.Submission != jupiterSubmissionRPCV2 {
 		t.Fatalf("signer did not persist exact reviewed transaction: %#v", review)
 	}
 	callerTransaction := review.Transaction
@@ -509,7 +519,7 @@ func TestSignerReviewedVaultTransferBuildsExactTransactionAndExecutesWithWebAuth
 		PolicyHash:  fixture.policy.Hash,
 		Mode:        jupiterReviewModeReviewedV2,
 		Intent:      intent,
-		Transaction: &callerTransaction,
+		Transaction: callerTransaction,
 	}); err == nil || !strings.Contains(err.Error(), "built only by the signer") {
 		t.Fatalf("reviewed transfer accepted caller transaction substitution: %v", err)
 	}

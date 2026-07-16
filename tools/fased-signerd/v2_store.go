@@ -467,6 +467,37 @@ func (s *signerStoreV2) markConfirmed(requestID string) (signerOperationV2, erro
 	})
 }
 
+// markCompletedClaim atomically records a deterministic, non-broadcast
+// reviewed result such as a domain-separated federation signature. It keeps
+// the same durable cap reservation semantics without pretending an off-chain
+// signature was submitted to Solana.
+func (s *signerStoreV2) markCompletedClaim(requestID string, attempt uint64, signature, artifactDigest string) (signerOperationV2, error) {
+	return s.updateOperation(requestID, func(operation *signerOperationV2, now string) error {
+		if operation.State != operationReserved {
+			return fmt.Errorf("cannot complete signer operation in state %s", operation.State)
+		}
+		if operation.ExecutionAttempt != attempt {
+			return errors.New("stale signer execution attempt cannot complete")
+		}
+		if operation.AuthorizationProof == "" || operation.AuthorizedAt == "" {
+			return errors.New("reviewed signer operation has no durable authorization")
+		}
+		if strings.TrimSpace(signature) == "" {
+			return errors.New("reviewed signature is required before completion")
+		}
+		if _, err := normalizeSHA256DigestV2(artifactDigest, "artifactDigest"); err != nil {
+			return err
+		}
+		operation.State = operationConfirmed
+		operation.Signature = strings.TrimSpace(signature)
+		operation.TransactionDigest = strings.TrimSpace(artifactDigest)
+		operation.ConfirmedAt = now
+		operation.UpdatedAt = now
+		operation.ExecutionLeaseUntil = ""
+		return nil
+	})
+}
+
 func (s *signerStoreV2) markUnknown(requestID string, cause error) (signerOperationV2, error) {
 	return s.updateOperation(requestID, func(operation *signerOperationV2, now string) error {
 		if operation.State != operationBroadcast && operation.State != operationUnknown {
