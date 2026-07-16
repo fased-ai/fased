@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { computeMiningCommitSafety, normalizeMiningCommitLamports } from "./mining-commit.js";
 
 describe("computeMiningCommitSafety", () => {
-  it("does not allow a full-capital commit when erosion must still be paid", () => {
+  it("does not allow a full-capital commit when reveal collateral must still be locked", () => {
     const result = computeMiningCommitSafety({
       walletLamports: "150250000",
       capitalFundedLamports: "8000000000",
@@ -13,8 +13,8 @@ describe("computeMiningCommitSafety", () => {
       signerFeeBufferLamports: "250000",
     });
 
-    expect(result.safeMaxCommitLamports.toString()).toBe("7999336055");
-    expect(result.minimumCapitalForMinimumCommitLamports.toString()).toBe("250020750");
+    expect(result.safeMaxCommitLamports.toString()).toBe("7920792079");
+    expect(result.minimumCapitalForMinimumCommitLamports.toString()).toBe("252500000");
   });
 
   it("reduces safe commit when capital must first top up the wallet reserve", () => {
@@ -29,8 +29,8 @@ describe("computeMiningCommitSafety", () => {
     });
 
     expect(result.walletReserveShortfallLamports.toString()).toBe("150250000");
-    expect(result.safeMaxCommitLamports.toString()).toBe("7849098524");
-    expect(result.minimumCapitalForMinimumCommitLamports.toString()).toBe("400270750");
+    expect(result.safeMaxCommitLamports.toString()).toBe("7772029702");
+    expect(result.minimumCapitalForMinimumCommitLamports.toString()).toBe("402750000");
   });
 });
 
@@ -48,8 +48,8 @@ describe("normalizeMiningCommitLamports", () => {
     });
 
     expect(result.kind).toBe("clamped");
-    expect(result.commitLamports).toBe("3135739733");
-    expect(result.safeMaxCommitLamports.toString()).toBe("3135739733");
+    expect(result.commitLamports).toBe("3104950495");
+    expect(result.safeMaxCommitLamports.toString()).toBe("3104950495");
   });
 
   it("can save a future target above the current safe commit", () => {
@@ -67,7 +67,7 @@ describe("normalizeMiningCommitLamports", () => {
 
     expect(result.kind).toBe("accepted");
     expect(result.commitLamports).toBe("5000000000");
-    expect(result.safeMaxCommitLamports.toString()).toBe("3135739733");
+    expect(result.safeMaxCommitLamports.toString()).toBe("3104950495");
   });
 
   it("blocks commit changes when free capital cannot cover the minimum entry", () => {
@@ -84,6 +84,6 @@ describe("normalizeMiningCommitLamports", () => {
 
     expect(result.kind).toBe("blocked");
     expect(result.safeMaxCommitLamports.toString()).toBe("0");
-    expect(result.minimumCapitalForMinimumCommitLamports.toString()).toBe("1250270750");
+    expect(result.minimumCapitalForMinimumCommitLamports.toString()).toBe("1252750000");
   });
 });

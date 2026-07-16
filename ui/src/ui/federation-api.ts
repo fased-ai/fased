@@ -1160,6 +1160,8 @@ export type FederationBondStatus = {
       totalActiveStakeRaw?: string;
       rewardIndexFp?: string;
       observedRewardVaultRaw?: string;
+      unallocatedRewardRaw?: string;
+      fractionalRemainderFp?: string;
       rewardVaultBalanceRaw?: string;
       lastSyncedSlot?: number;
       mintMatchesRuntime?: boolean;
@@ -1171,6 +1173,7 @@ export type FederationBondStatus = {
       status?: "inactive" | "active";
       activeStakeRaw?: string;
       claimableRewardRaw?: string;
+      fractionalRemainderFp?: string;
       rewardDebtFp?: string;
       estimatedClaimableRewardRaw?: string;
       lastSyncedSlot?: number;

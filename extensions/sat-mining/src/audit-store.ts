@@ -77,6 +77,7 @@ export type SatMiningRecentAction = {
   cycleId?: number | null;
   txHash: string | null;
   status: "success" | "failure";
+  complete?: boolean;
   message?: string | null;
   at: string;
 };
@@ -316,7 +317,7 @@ export type SatPersistedLastKnownStatus = {
 export type SatPersistedChainTime = SatChainTimeState;
 
 type SatRuntimeStoreFile = {
-  version: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
+  version: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11;
   recentActions: SatMiningRecentAction[];
   archivedFailures?: SatMiningRecentAction[];
   plannerHistory?: SatPlannerOutcomeMemory[];
@@ -617,6 +618,7 @@ function isValidSatRecentAction(entry: unknown): entry is SatMiningRecentAction 
       (typeof candidate.cycleId === "number" && Number.isFinite(candidate.cycleId))) &&
     (candidate.txHash == null || typeof candidate.txHash === "string") &&
     (candidate.status === "success" || candidate.status === "failure") &&
+    (candidate.complete == null || typeof candidate.complete === "boolean") &&
     Number.isFinite(atMs)
   );
 }
@@ -727,8 +729,46 @@ function normalizeSatRoundExecutionState(
   if (!execution || typeof execution !== "object") {
     return null;
   }
+  const commitmentHex =
+    typeof execution.commitmentHex === "string" && /^[0-9a-f]{64}$/i.test(execution.commitmentHex)
+      ? execution.commitmentHex.toLowerCase()
+      : null;
+  const revealNonceBase64 = (() => {
+    if (typeof execution.revealNonceBase64 !== "string") {
+      return null;
+    }
+    try {
+      return Buffer.from(execution.revealNonceBase64, "base64").length === 32
+        ? execution.revealNonceBase64
+        : null;
+    } catch {
+      return null;
+    }
+  })();
+  const allocationFp =
+    Array.isArray(execution.allocationFp) &&
+    execution.allocationFp.length === 25 &&
+    execution.allocationFp.every(
+      (value) => Number.isSafeInteger(value) && value >= 0 && value <= 0xffff_ffff,
+    ) &&
+    execution.allocationFp.reduce((sum, value) => sum + value, 0) === 1_000_000
+      ? [...execution.allocationFp]
+      : null;
+  const commitLamports =
+    typeof execution.commitLamports === "number" &&
+    Number.isSafeInteger(execution.commitLamports) &&
+    execution.commitLamports > 0
+      ? execution.commitLamports
+      : null;
   return {
     openRoundSubmitted: execution.openRoundSubmitted === true,
+    commitSubmitted: execution.commitSubmitted === true,
+    commitmentHex,
+    revealNonceBase64,
+    allocationFp,
+    commitLamports,
+    entropyTargetPinned: execution.entropyTargetPinned === true,
+    entropySealed: execution.entropySealed === true,
     participationSubmitted: execution.participationSubmitted === true,
     epochFinalized: execution.epochFinalized === true,
     crankSubmitted: execution.crankSubmitted === true,
@@ -752,7 +792,10 @@ function trimSatRoundExecution(
     if (!parsedRoundKey || !execution) {
       continue;
     }
-    if (!execution.participationSubmitted || execution.claimSubmitted) {
+    if (
+      (!execution.commitSubmitted && !execution.participationSubmitted) ||
+      execution.claimSubmitted
+    ) {
       continue;
     }
     deduped.set(entry.roundKey, {
@@ -930,7 +973,7 @@ async function persistSatRuntimeSummary(
   summary: SatRuntimeSummary,
 ): Promise<void> {
   const payload: SatRuntimeStoreFile = {
-    version: 10,
+    version: 11,
     recentActions: summary.recentActions,
     archivedFailures: [],
     plannerHistory: summary.plannerHistory,
@@ -1051,7 +1094,8 @@ export async function readSatRecentActions(filePath: string): Promise<SatMiningR
         parsed.version !== 7 &&
         parsed.version !== 8 &&
         parsed.version !== 9 &&
-        parsed.version !== 10) ||
+        parsed.version !== 10 &&
+        parsed.version !== 11) ||
       !Array.isArray(parsed.recentActions)
     ) {
       return [];
@@ -1076,7 +1120,8 @@ export async function readSatRuntimeSummary(filePath: string): Promise<SatRuntim
         parsed.version !== 7 &&
         parsed.version !== 8 &&
         parsed.version !== 9 &&
-        parsed.version !== 10) ||
+        parsed.version !== 10 &&
+        parsed.version !== 11) ||
       !Array.isArray(parsed.recentActions)
     ) {
       return emptySatRuntimeSummary();

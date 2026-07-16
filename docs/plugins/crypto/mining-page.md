@@ -376,8 +376,13 @@ There are two separate SOL pools to understand:
 
 Defaults in the runtime profile are:
 
-- minimum commit target: `0.25 SOL`
+- minimum eligibility commit: `0.25 SOL`
 - minimum wallet reserve target: `0.15 SOL`
+
+The eligibility minimum is not a recommended always-on capital balance. Keep
+additional miner capital for reveal collateral, read the estimated runway, and
+use every-second, every-sixth, or every-twelfth-cycle economy mode when you want
+lower cost frequency.
 
 The UI also calculates a fee warning based on the next cycle open or submit requirement. If the page warns:
 

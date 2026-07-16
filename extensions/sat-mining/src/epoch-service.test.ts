@@ -70,7 +70,12 @@ const inspectSatMinerCycle = vi.fn(
   async (
     _config: unknown,
     _args: CycleLookupArgs,
-  ): Promise<{ address: string; authority: string; cycleId: number } | null> => null,
+  ): Promise<{
+    address: string;
+    authority: string;
+    cycleId: number;
+    validParticipation?: boolean;
+  } | null> => null,
 );
 const deriveSatMinerCycleAddress = vi.fn(
   async (_config: unknown, args: CycleLookupArgs): Promise<string> =>
@@ -147,7 +152,16 @@ describe("createSatEpochService", () => {
     inspectSatCycleSettlementProgressV2.mockImplementation(async (_config, { cycleId }) =>
       progressFromSubmittedGatewayCalls(cycleId),
     );
-    inspectSatMinerCycle.mockResolvedValue(null);
+    inspectSatMinerCycle.mockImplementation(async (config, args) =>
+      (await inspectSatMinerCycleAccountExists(config, args))
+        ? {
+            address: derivedMinerCycleAddress(args.authority ?? ACTIVE_AUTHORITY, args.cycleId),
+            authority: args.authority ?? ACTIVE_AUTHORITY,
+            cycleId: args.cycleId,
+            validParticipation: true,
+          }
+        : null,
+    );
     deriveSatMinerCycleAddress.mockImplementation(async (_config, args) => {
       return `derived-${args.authority}-${args.cycleId}`;
     });
@@ -323,6 +337,43 @@ describe("createSatEpochService", () => {
       "sat.scoreCyclePage",
       "sat.distributeCyclePage",
     ]);
+
+    await service.stop?.();
+  });
+
+  it("does not settle a commitment account before it has a valid reveal", async () => {
+    const config = {
+      enabled: true,
+      network: "devnet" as const,
+      riskMode: "balanced" as const,
+      walletId: "wallet-a",
+    };
+    const state = createSatMiningRuntimeState(config);
+    state.activeWalletAddress = ACTIVE_AUTHORITY;
+    const previousCycleId = Math.floor(Date.now() / 1000 / 300) - 1;
+    inspectSatMinerCycle.mockImplementation(async (_config, { cycleId, authority }) =>
+      cycleId === previousCycleId
+        ? {
+            address: derivedMinerCycleAddress(authority ?? ACTIVE_AUTHORITY, cycleId),
+            authority: authority ?? ACTIVE_AUTHORITY,
+            cycleId,
+            validParticipation: false,
+          }
+        : null,
+    );
+    const api = {
+      config: {},
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    } as const;
+
+    const service = createSatEpochService({ api: api as never, config, state });
+    await service.start();
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(runSatGatewayMethod).not.toHaveBeenCalled();
+    const execution = getOrCreateRoundExecutionState(state, previousCycleId, 0);
+    expect(execution.commitSubmitted).toBe(true);
+    expect(execution.participationSubmitted).toBe(false);
 
     await service.stop?.();
   });

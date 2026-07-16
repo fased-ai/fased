@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createReadConnection,
   decodeSatBondPosition,
+  decodeSatBondStakingDistributor,
+  decodeSatCycle,
   decodeSatRoundBucket,
   decodeSatCycleRegistryPage,
   decodeSatGlobalState,
@@ -27,6 +29,7 @@ const READ_RPC_ENV_KEYS = [
   "FASED_SAT_BOND_PROGRAM_ID",
   "FASED_SAT_MINT_ADDRESS",
   "FASED_SAT_MINT_PROGRAM_ID",
+  "FASED_SAT_RPC_REQUEST_TIMEOUT_MS",
 ] as const;
 
 const readRpcEnvSnapshot = new Map<string, string | undefined>();
@@ -41,6 +44,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   invalidateSatReadCaches();
   for (const key of READ_RPC_ENV_KEYS) {
     const original = readRpcEnvSnapshot.get(key);
@@ -55,6 +59,7 @@ afterEach(async () => {
     startedServers.splice(0).map(
       (server) =>
         new Promise<void>((resolve, reject) => {
+          server.closeAllConnections?.();
           server.close((error) => (error ? reject(error) : resolve()));
         }),
     ),
@@ -81,12 +86,74 @@ describe("SAT RPC diagnostic redaction", () => {
   });
 });
 
+describe("decodeSatBondStakingDistributor", () => {
+  it("exposes rewards quarantined while no stake was active", () => {
+    const bondProgram = new PublicKey("D1ySMMiJmvJRhJJKwYnc171w3g2JDPQnkgD8kGhaG4Vq");
+    const mint = new PublicKey("2AhikHhzJdv6uve1yUBSUmhRKWaSfa7exrsDsfKjVFKa");
+    const [distributor] = PublicKey.findProgramAddressSync(
+      [Buffer.from("sat_bond_staking_distributor")],
+      bondProgram,
+    );
+    const tokenProgram = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+    const associatedTokenProgram = new PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
+    const [rewardVault] = PublicKey.findProgramAddressSync(
+      [distributor.toBuffer(), tokenProgram.toBuffer(), mint.toBuffer()],
+      associatedTokenProgram,
+    );
+    process.env.FASED_SAT_PROGRAM_ID = "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75";
+    process.env.FASED_SAT_BOND_PROGRAM_ID = bondProgram.toBase58();
+    process.env.FASED_SAT_MINT_ADDRESS = mint.toBase58();
+    process.env.FASED_SAT_MINT_PROGRAM_ID = "8fb3Mpowe4pD6ed89gwm6gLuh8csPSrLi3hypcesqs5C";
+
+    const data = Buffer.alloc(232);
+    data[0] = 142;
+    const body = data.subarray(8);
+    body[0] = 1;
+    body[2] = 1;
+    body.writeBigUInt64LE(1n, 8);
+    mint.toBuffer().copy(body, 16);
+    rewardVault.toBuffer().copy(body, 48);
+    new PublicKey("AB3FQHskSYuWVw4M9EpGdxNzrAjBNiYGpbH4CVzLFene").toBuffer().copy(body, 80);
+    body.writeBigUInt64LE(500_000_000_000n, 112);
+    body.writeBigUInt64LE(0n, 120);
+    body.writeBigUInt64LE(900_000_000_000n, 144);
+    body.writeBigUInt64LE(77n, 152);
+    body.writeBigUInt64LE(125_000_000_000n, 160);
+    body.writeBigUInt64LE(500_000_000_000_000_000n, 168);
+
+    const decoded = decodeSatBondStakingDistributor(data, distributor.toBase58());
+
+    expect(decoded.unallocatedRewardRaw).toBe("125000000000");
+    expect(decoded.totalActiveStakeRaw).toBe("0");
+    expect(decoded.fractionalRemainderFp).toBe("500000000000000000");
+    expect(decoded.vaultMatchesExpected).toBe(true);
+  });
+});
+
+describe("decodeSatCycle", () => {
+  it("marks the reserved entropy-unavailable seed as a cancelled cycle", () => {
+    const data = Buffer.alloc(328);
+    data[0] = 131;
+    const body = data.subarray(8);
+    body.writeBigUInt64LE(77n, 0);
+    body.fill(0xff, 40, 72);
+
+    expect(decodeSatCycle(data, "cycle-address")).toMatchObject({
+      address: "cycle-address",
+      cycleId: 77,
+      cycleSeed: "ff".repeat(32),
+      entropyUnavailable: true,
+    });
+  });
+});
+
 async function startRpcServer(
   handler: (payload: { method?: string; params?: unknown[] }) => {
     statusCode?: number;
     body?: string;
     result?: unknown;
     error?: { message?: string };
+    hang?: boolean;
   },
 ): Promise<string> {
   const server = http.createServer((req, res) => {
@@ -98,6 +165,9 @@ async function startRpcServer(
         params?: unknown[];
       };
       const response = handler(payload);
+      if (response.hang) {
+        return;
+      }
       res.statusCode = response.statusCode ?? 200;
       if (response.body != null) {
         res.end(response.body);
@@ -117,6 +187,34 @@ async function startRpcServer(
   startedServers.push(server);
   const address = server.address() as AddressInfo;
   return `http://127.0.0.1:${address.port}`;
+}
+
+class FetchBackedConnection {
+  readonly rpcEndpoint: string;
+  readonly fetchFn: typeof globalThis.fetch;
+
+  constructor(rpcEndpoint: string, config?: { fetch?: typeof globalThis.fetch }) {
+    this.rpcEndpoint = rpcEndpoint;
+    this.fetchFn = config?.fetch ?? globalThis.fetch;
+  }
+
+  getAccountInfo = vi.fn();
+  getProgramAccounts = vi.fn();
+  getMinimumBalanceForRentExemption = async (_space: number): Promise<number> => {
+    const response = await this.fetchFn(this.rpcEndpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getMinimumBalanceForRentExemption" }),
+    });
+    const payload = (await response.json()) as {
+      result?: number;
+      error?: { message?: string };
+    };
+    if (payload.error) {
+      throw new Error(payload.error.message ?? "RPC failed");
+    }
+    return Number(payload.result ?? 0);
+  };
 }
 
 function configureReadRpc(primaryUrl: string, fallbackUrl?: string) {
@@ -432,7 +530,7 @@ describe("secondary read rpc fallback", () => {
     const fallbackGetAccountInfo = vi
       .fn()
       .mockRejectedValueOnce(new Error("fallback temporarily unavailable"))
-      .mockResolvedValueOnce({
+      .mockResolvedValue({
         owner: { toBase58: () => "owner-address" },
         data: Buffer.alloc(0),
       });
@@ -476,8 +574,87 @@ describe("secondary read rpc fallback", () => {
     expect(result).toMatchObject({
       owner: { toBase58: expect.any(Function) },
     });
+    await expect(
+      connection.getAccountInfo("account-address" as never, "confirmed" as never),
+    ).resolves.toMatchObject({ owner: { toBase58: expect.any(Function) } });
     expect(primaryGetAccountInfo).toHaveBeenCalledTimes(1);
-    expect(fallbackGetAccountInfo).toHaveBeenCalledTimes(2);
+    expect(fallbackGetAccountInfo).toHaveBeenCalledTimes(3);
+  });
+
+  it("aborts a hung raw JSON-RPC request and falls back within the configured timeout", async () => {
+    const primaryUrl = await startRpcServer(() => ({ hang: true }));
+    const fallbackUrl = await startRpcServer((payload) => {
+      if (payload.method === "getSlot") {
+        return { result: 123 };
+      }
+      if (payload.method === "getBlockTime") {
+        return { result: 1_775_487_000 };
+      }
+      return { error: { message: `unexpected ${payload.method}` } };
+    });
+    process.env.FASED_SAT_RPC_REQUEST_TIMEOUT_MS = "50";
+    configureReadRpc(primaryUrl, fallbackUrl);
+
+    const startedAt = Date.now();
+    await expect(inspectSatChainUnixTime({} as never)).resolves.toBe(1_775_487_000);
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+  });
+
+  it("aborts a hung web3 read and falls back without waiting for the abandoned fetch", async () => {
+    const primaryUrl = "http://127.0.0.1:19001/rpc";
+    const fallbackUrl = "http://127.0.0.1:19002/rpc";
+    let primaryAborted = false;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      if (String(input) === fallbackUrl) {
+        return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: 456 }), {
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return await new Promise<Response>((_resolve, reject) => {
+        const rejectAborted = () => {
+          primaryAborted = true;
+          reject(new DOMException("Aborted", "AbortError"));
+        };
+        if (init?.signal?.aborted) {
+          rejectAborted();
+          return;
+        }
+        init?.signal?.addEventListener("abort", rejectAborted, { once: true });
+      });
+    });
+    process.env.FASED_SAT_RPC_REQUEST_TIMEOUT_MS = "50";
+    const connection = createReadConnection({ Connection: FetchBackedConnection } as never, {
+      primaryUrl,
+      secondaryUrl: fallbackUrl,
+    });
+
+    const startedAt = Date.now();
+    await expect(connection.getMinimumBalanceForRentExemption(0)).resolves.toBe(456);
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+    expect(primaryAborted).toBe(true);
+  });
+
+  it("redacts credentials from a timed-out web3 read", async () => {
+    const rpcUrl = "http://127.0.0.1:19001/rpc?api-key=timeout-secret";
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      async (_input, init) =>
+        await new Promise<Response>((_resolve, reject) => {
+          const rejectAborted = () => reject(new DOMException("Aborted", "AbortError"));
+          if (init?.signal?.aborted) {
+            rejectAborted();
+            return;
+          }
+          init?.signal?.addEventListener("abort", rejectAborted, { once: true });
+        }),
+    );
+    process.env.FASED_SAT_RPC_REQUEST_TIMEOUT_MS = "50";
+    const connection = createReadConnection({ Connection: FetchBackedConnection } as never, {
+      primaryUrl: rpcUrl,
+    });
+
+    const error = await connection.getMinimumBalanceForRentExemption(0).catch((caught) => caught);
+    expect(String(error)).toContain("api-key=***");
+    expect(String(error)).not.toContain("timeout-secret");
   });
 
   it("caches missing account reads so absent cycle PDAs do not poll every refresh", async () => {

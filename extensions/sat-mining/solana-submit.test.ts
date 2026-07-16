@@ -66,9 +66,11 @@ vi.mock("./src/rpc-read.js", async () => {
 });
 
 import {
+  buildSatCycleCommitment,
+  submitSatAbortEmptyCycle,
   submitSatClaimBondStakingRewards,
-  submitSatInitBondTierPolicy,
-  submitSatInitBondStakingDistributor,
+  submitSatClaimProtocolDistributorSat,
+  submitSatClaimUnallocatedStakingRewards,
   submitSatCancelBondUnlock,
   submitSatCloseResolvedCleanupBatch,
   submitSatCloseResolvedCycleArtifacts,
@@ -76,7 +78,7 @@ import {
   submitSatCloseResolvedMinerCycleState,
   resolveSatValidatorAuthority,
   submitSatDepositMinerCapital,
-  submitSatCycle,
+  submitSatCommitCycle,
   submitSatDistributeCyclePage,
   submitSatFinalizeBondUnlock,
   submitSatFinalizeCycleSettlement,
@@ -84,12 +86,16 @@ import {
   submitSatOpenBondPosition,
   submitSatSetActiveCommit,
   submitSatOpenCycle,
+  submitSatRevealCycle,
   submitSatRefillRegistryReserveFromTreasury,
+  submitSatReleaseUnrevealedCommit,
   submitSatRequestBondUnlock,
   submitSatScoreCyclePage,
+  submitSatSealCycleEntropy,
   submitSatSettleCyclePage,
   submitSatSyncBondStakingPosition,
   submitSatSyncBondStakingRewards,
+  submitSatTopUpRegistryReserve,
 } from "./src/solana-submit.js";
 
 const SAT_PROGRAM_ID_TEXT = "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75";
@@ -123,7 +129,7 @@ function findAta(owner: PublicKey, mint: PublicKey): string {
   )[0].toBase58();
 }
 
-describe("submitSatCycle", () => {
+describe("SAT cycle transaction builders", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.FASED_SAT_PROGRAM_ID = SAT_PROGRAM_ID_TEXT;
@@ -158,10 +164,13 @@ describe("submitSatCycle", () => {
       .mockResolvedValueOnce({ txHash: "tx-submit-cycle", signer: SIGNER.toBase58() });
   });
 
-  it("uses the upgraded submit account order", async () => {
+  it("uses the reveal account order", async () => {
     const cycleId = 9_859_137;
-    await submitSatCycle({} as never, {
+    const intervalStartCycleId = 9_859_128;
+    await submitSatRevealCycle({} as never, {
       cycleId,
+      intervalStartCycleId,
+      nonceBase64: Buffer.alloc(32, 7).toString("base64"),
       allocationFp: new Array(25).fill(40_000),
     });
 
@@ -171,7 +180,6 @@ describe("submitSatCycle", () => {
 
     expect(request?.request?.keys).toEqual([
       { pubkey: SIGNER.toBase58(), isSigner: true, isWritable: true },
-      { pubkey: findPda(Buffer.from("sat_global_state")), isSigner: false, isWritable: true },
       {
         pubkey: findPda(Buffer.from("sat_cycle_state"), encodeU64(cycleId)),
         isSigner: false,
@@ -207,7 +215,79 @@ describe("submitSatCycle", () => {
         isWritable: true,
       },
       {
+        pubkey: findPda(Buffer.from("sat_unlock_interval_state"), encodeU64(intervalStartCycleId)),
+        isSigner: false,
+        isWritable: true,
+      },
+      {
         pubkey: findPda(Buffer.from("sat_registry_reserve")),
+        isSigner: false,
+        isWritable: true,
+      },
+      {
+        pubkey: SystemProgram.programId.toBase58(),
+        isSigner: false,
+        isWritable: false,
+      },
+    ]);
+  });
+
+  it("passes the canonical SlotHashes sysvar when sealing cycle entropy", async () => {
+    const cycleId = 9_859_137;
+    const intervalStartCycleId = 9_859_128;
+    await submitSatSealCycleEntropy({} as never, { cycleId, intervalStartCycleId });
+
+    expect(callLocalSocketSigner).toHaveBeenCalledTimes(2);
+    const request = callLocalSocketSigner.mock.calls[1]?.[1];
+    expect(request?.op).toBe("sendSolanaInstruction");
+    expect(request?.request?.keys).toEqual([
+      { pubkey: SIGNER.toBase58(), isSigner: true, isWritable: false },
+      {
+        pubkey: findPda(Buffer.from("sat_cycle_state"), encodeU64(cycleId)),
+        isSigner: false,
+        isWritable: true,
+      },
+      {
+        pubkey: findPda(Buffer.from("sat_unlock_interval_state"), encodeU64(intervalStartCycleId)),
+        isSigner: false,
+        isWritable: true,
+      },
+      {
+        pubkey: "SysvarS1otHashes111111111111111111111111111",
+        isSigner: false,
+        isWritable: false,
+      },
+    ]);
+  });
+
+  it("routes missed-reveal penalties through the fixed treasury accounts", async () => {
+    const cycleId = 9_859_137;
+    await submitSatReleaseUnrevealedCommit({} as never, {
+      cycleId,
+      minerAuthority: SIGNER.toBase58(),
+    });
+
+    expect(callLocalSocketSigner).toHaveBeenCalledTimes(2);
+    const request = callLocalSocketSigner.mock.calls[1]?.[1];
+    expect(request?.op).toBe("sendSolanaInstruction");
+    expect(request?.request?.keys).toEqual([
+      { pubkey: SIGNER.toBase58(), isSigner: true, isWritable: false },
+      {
+        pubkey: findPda(Buffer.from("sat_cycle_state"), encodeU64(cycleId)),
+        isSigner: false,
+        isWritable: true,
+      },
+      {
+        pubkey: findPda(
+          Buffer.from("sat_miner_cycle_state"),
+          SIGNER.toBuffer(),
+          encodeU64(cycleId),
+        ),
+        isSigner: false,
+        isWritable: true,
+      },
+      {
+        pubkey: findPda(Buffer.from("sat_miner_capital_state"), SIGNER.toBuffer()),
         isSigner: false,
         isWritable: true,
       },
@@ -217,21 +297,59 @@ describe("submitSatCycle", () => {
         isWritable: true,
       },
       {
-        pubkey: SystemProgram.programId.toBase58(),
-        isSigner: false,
-        isWritable: false,
-      },
-      {
-        pubkey: findPda(Buffer.from("sat_rebate_vault")),
-        isSigner: false,
-        isWritable: true,
-      },
-      {
         pubkey: findPda(Buffer.from("sat_treasury_vault")),
         isSigner: false,
         isWritable: true,
       },
     ]);
+  });
+
+  it("builds the permissionless empty-cycle abort with writable cycle state", async () => {
+    const cycleId = 9_859_137;
+    await submitSatAbortEmptyCycle({} as never, { cycleId });
+
+    expect(callLocalSocketSigner).toHaveBeenCalledTimes(2);
+    const request = callLocalSocketSigner.mock.calls[1]?.[1];
+    expect(request?.op).toBe("sendSolanaInstruction");
+    expect(Buffer.from(request?.request?.dataBase64 ?? "", "base64")).toEqual(
+      Buffer.concat([Buffer.from([94]), encodeU64(cycleId)]),
+    );
+    expect(request?.request?.keys).toEqual([
+      { pubkey: SIGNER.toBase58(), isSigner: true, isWritable: false },
+      {
+        pubkey: findPda(Buffer.from("sat_cycle_state"), encodeU64(cycleId)),
+        isSigner: false,
+        isWritable: true,
+      },
+      {
+        pubkey: findPda(Buffer.from("sat_cycle_registry_meta"), encodeU64(cycleId)),
+        isSigner: false,
+        isWritable: true,
+      },
+    ]);
+  });
+
+  it("builds the protocol-domain commitment deterministically", () => {
+    const commitment = buildSatCycleCommitment({
+      authority: SIGNER.toBase58(),
+      cycleId: 9_859_137,
+      committedLamports: 250_000_000,
+      nonce: Buffer.alloc(32, 7),
+      allocationFp: new Array(25).fill(40_000),
+      programId: SAT_PROGRAM_ID_TEXT,
+    });
+
+    expect(commitment).toHaveLength(32);
+    expect(commitment.toString("hex")).toBe(
+      buildSatCycleCommitment({
+        authority: SIGNER.toBase58(),
+        cycleId: 9_859_137,
+        committedLamports: 250_000_000,
+        nonce: Buffer.alloc(32, 7),
+        allocationFp: new Array(25).fill(40_000),
+        programId: SAT_PROGRAM_ID_TEXT,
+      }).toString("hex"),
+    );
   });
 
   it("uses the dedicated bond program and policy account by default", async () => {
@@ -263,35 +381,6 @@ describe("submitSatCycle", () => {
     ]);
   });
 
-  it("submits bond tier policy init against the dedicated bond program", async () => {
-    const bondTierPolicy = new PublicKey(findBondPda(Buffer.from("sat_bond_tier_policy")));
-
-    await submitSatInitBondTierPolicy({} as never, {
-      basicMinRaw: 1_000_000_000,
-      operatorMinRaw: 100_000_000_000,
-      unlockDelaySlots: 17_280,
-    });
-
-    expect(callLocalSocketSigner).toHaveBeenCalledTimes(2);
-    const request = callLocalSocketSigner.mock.calls[1]?.[1];
-    expect(request?.request?.programId).toBe(SAT_BOND_PROGRAM_ID_TEXT);
-    expect(Buffer.from(request?.request?.dataBase64 ?? "", "base64")).toEqual(
-      Buffer.concat([
-        Buffer.from([0]),
-        SIGNER.toBuffer(),
-        encodeU64(1_000_000_000),
-        encodeU64(100_000_000_000),
-        encodeU64(17_280),
-        encodeU64(0),
-      ]),
-    );
-    expect(request?.request?.keys).toEqual([
-      { pubkey: SIGNER.toBase58(), isSigner: true, isWritable: true },
-      { pubkey: bondTierPolicy.toBase58(), isSigner: false, isWritable: true },
-      { pubkey: SystemProgram.programId.toBase58(), isSigner: false, isWritable: false },
-    ]);
-  });
-
   it.each([
     ["sync rewards", submitSatSyncBondStakingRewards, 8],
     ["sync position", submitSatSyncBondStakingPosition, 9],
@@ -309,23 +398,118 @@ describe("submitSatCycle", () => {
     },
   );
 
-  it("submits bond staking distributor init with authority and minimum stake", async () => {
-    callLocalSocketSigner
-      .mockReset()
-      .mockResolvedValueOnce({ solana: SIGNER.toBase58() })
-      .mockResolvedValueOnce({ solana: SIGNER.toBase58() })
-      .mockResolvedValueOnce({ txHash: "tx-init-staking", signer: SIGNER.toBase58() });
+  it("updates staking weight in the same request-unlock instruction", async () => {
+    await submitSatRequestBondUnlock({} as never);
 
-    await submitSatInitBondStakingDistributor({} as never, { minStakeRaw: 500_000_000 });
+    const request = callLocalSocketSigner.mock.calls[1]?.[1];
+    expect(request?.request?.keys).toEqual([
+      { pubkey: SIGNER.toBase58(), isSigner: true, isWritable: true },
+      {
+        pubkey: findBondPda(Buffer.from("sat_bond_tier_policy")),
+        isSigner: false,
+        isWritable: false,
+      },
+      {
+        pubkey: findBondPda(Buffer.from("sat_bond_position"), SIGNER.toBuffer()),
+        isSigner: false,
+        isWritable: true,
+      },
+      {
+        pubkey: findBondPda(Buffer.from("sat_bond_staking_distributor")),
+        isSigner: false,
+        isWritable: true,
+      },
+      {
+        pubkey: findBondPda(Buffer.from("sat_bond_staking_position"), SIGNER.toBuffer()),
+        isSigner: false,
+        isWritable: true,
+      },
+    ]);
+  });
 
-    expect(callLocalSocketSigner).toHaveBeenCalledTimes(3);
-    const request = callLocalSocketSigner.mock.calls[2]?.[1];
-    const data = Buffer.from(request?.request?.dataBase64 ?? "", "base64");
+  it("updates staking weight in the same cancel-unlock instruction", async () => {
+    await submitSatCancelBondUnlock({} as never);
+
+    const request = callLocalSocketSigner.mock.calls[1]?.[1];
+    expect(request?.request?.keys?.map((key: { pubkey: string }) => key.pubkey)).toEqual([
+      SIGNER.toBase58(),
+      findBondPda(Buffer.from("sat_bond_tier_policy")),
+      findBondPda(Buffer.from("sat_bond_position"), SIGNER.toBuffer()),
+      findBondPda(Buffer.from("sat_bond_staking_distributor")),
+      findBondPda(Buffer.from("sat_bond_staking_position"), SIGNER.toBuffer()),
+    ]);
+  });
+
+  it("verifies zero staking weight before finalizing a bond unlock", async () => {
+    await submitSatFinalizeBondUnlock({} as never);
+
+    const request = callLocalSocketSigner.mock.calls[1]?.[1];
+    expect(request?.request?.keys?.slice(0, 5)).toEqual([
+      { pubkey: SIGNER.toBase58(), isSigner: true, isWritable: true },
+      {
+        pubkey: findBondPda(Buffer.from("sat_bond_tier_policy")),
+        isSigner: false,
+        isWritable: false,
+      },
+      {
+        pubkey: findBondPda(Buffer.from("sat_bond_position"), SIGNER.toBuffer()),
+        isSigner: false,
+        isWritable: true,
+      },
+      {
+        pubkey: findBondPda(Buffer.from("sat_bond_staking_distributor")),
+        isSigner: false,
+        isWritable: true,
+      },
+      {
+        pubkey: findBondPda(Buffer.from("sat_bond_staking_position"), SIGNER.toBuffer()),
+        isSigner: false,
+        isWritable: true,
+      },
+    ]);
+  });
+
+  it("passes the bond program to the atomic protocol distributor claim", async () => {
+    const distributor = findBondPda(Buffer.from("sat_bond_staking_distributor"));
+    await submitSatClaimProtocolDistributorSat({} as never, { recipientOwner: distributor });
+
+    const request = callLocalSocketSigner.mock.calls[1]?.[1];
+    expect(request?.request?.programId).toBe(SAT_PROGRAM_ID_TEXT);
+    expect(Buffer.from(request?.request?.dataBase64 ?? "", "base64")).toEqual(Buffer.from([85]));
+    expect(request?.request?.keys).toHaveLength(13);
+    expect(request?.request?.keys?.[4]?.pubkey).toBe(distributor);
+    expect(request?.request?.keys?.[12]).toEqual({
+      pubkey: SAT_BOND_PROGRAM_ID_TEXT,
+      isSigner: false,
+      isWritable: false,
+    });
+  });
+
+  it("claims quarantined zero-stake rewards only to the supplied treasury account", async () => {
+    const mint = new PublicKey(SAT_MINT_ADDRESS_TEXT);
+    const treasuryOwner = new PublicKey("AzXW61LgzhJTXN1so7rBR5auU2oCSzRyNEqFxPkZct3G");
+    const distributor = new PublicKey(findBondPda(Buffer.from("sat_bond_staking_distributor")));
+
+    await submitSatClaimUnallocatedStakingRewards({} as never, {
+      recipientOwner: treasuryOwner.toBase58(),
+    });
+
+    expect(callLocalSocketSigner).toHaveBeenCalledTimes(2);
+    const request = callLocalSocketSigner.mock.calls[1]?.[1];
     expect(request?.op).toBe("sendSolanaInstruction");
     expect(request?.request?.programId).toBe(SAT_BOND_PROGRAM_ID_TEXT);
-    expect(data[0]).toBe(7);
-    expect(data.subarray(1, 33)).toEqual(SIGNER.toBuffer());
-    expect(data.readBigUInt64LE(33)).toBe(500_000_000n);
+    expect(Buffer.from(request?.request?.dataBase64 ?? "", "base64")).toEqual(Buffer.from([11]));
+    expect(request?.request?.keys).toEqual([
+      { pubkey: SIGNER.toBase58(), isSigner: true, isWritable: true },
+      { pubkey: distributor.toBase58(), isSigner: false, isWritable: true },
+      { pubkey: findAta(distributor, mint), isSigner: false, isWritable: true },
+      { pubkey: findAta(treasuryOwner, mint), isSigner: false, isWritable: true },
+      { pubkey: treasuryOwner.toBase58(), isSigner: false, isWritable: false },
+      { pubkey: mint.toBase58(), isSigner: false, isWritable: true },
+      { pubkey: SystemProgram.programId.toBase58(), isSigner: false, isWritable: false },
+      { pubkey: TOKEN_PROGRAM_ID.toBase58(), isSigner: false, isWritable: false },
+      { pubkey: ASSOCIATED_TOKEN_PROGRAM_ID.toBase58(), isSigner: false, isWritable: false },
+    ]);
   });
 
   it("marks the exact cycle state writable when closing resolved artifacts", async () => {
@@ -422,15 +606,42 @@ describe("submitSatCycle", () => {
     ]);
   });
 
+  it("tops up the registry reserve without invoking protocol genesis", async () => {
+    await submitSatTopUpRegistryReserve({} as never, {
+      targetBalanceLamports: 200_000_000,
+    });
+
+    expect(callLocalSocketSigner).toHaveBeenCalledTimes(2);
+    const request = callLocalSocketSigner.mock.calls[1]?.[1];
+    expect(request?.op).toBe("sendSolanaInstruction");
+    expect(Buffer.from(request?.request?.dataBase64 ?? "", "base64")).toEqual(
+      Buffer.concat([Buffer.from([84]), encodeU64(200_000_000)]),
+    );
+    expect(request?.request?.keys).toEqual([
+      { pubkey: SIGNER.toBase58(), isSigner: true, isWritable: true },
+      { pubkey: findPda(Buffer.from("sat_registry_reserve")), isSigner: false, isWritable: true },
+      { pubkey: SystemProgram.programId.toBase58(), isSigner: false, isWritable: false },
+    ]);
+  });
+
+  it("rejects reserve targets above the selected genesis profile", async () => {
+    await expect(
+      submitSatTopUpRegistryReserve({ network: "mainnet-beta" } as never, {
+        targetBalanceLamports: 1_000_000_001,
+      }),
+    ).rejects.toThrow("mainnet-beta genesis maximum 1000000000");
+    expect(callLocalSocketSigner).not.toHaveBeenCalled();
+  });
+
   it("falls back to the registry Solana address when local signer getAddresses returns empty", async () => {
     const cycleId = 9_859_143;
     callLocalSocketSigner
       .mockResolvedValueOnce({})
       .mockResolvedValueOnce({ txHash: "tx-submit-cycle", signer: SIGNER.toBase58() });
 
-    await submitSatCycle({} as never, {
+    await submitSatCommitCycle({} as never, {
       cycleId,
-      allocationFp: new Array(25).fill(40_000),
+      commitmentHex: "11".repeat(32),
     });
 
     expect(callLocalSocketSigner).toHaveBeenCalledTimes(2);
@@ -979,7 +1190,7 @@ describe("submitSatCycle", () => {
       {
         pubkey: findPda(Buffer.from("sat_global_state")),
         isSigner: false,
-        isWritable: true,
+        isWritable: false,
       },
       {
         pubkey: findPda(Buffer.from("sat_treasury_state")),
@@ -1002,6 +1213,11 @@ describe("submitSatCycle", () => {
       },
       {
         pubkey: findPda(Buffer.from("sat_rebate_vault")),
+        isSigner: false,
+        isWritable: true,
+      },
+      {
+        pubkey: findPda(Buffer.from("sat_treasury_vault")),
         isSigner: false,
         isWritable: true,
       },

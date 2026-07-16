@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createSatRoundWatcherService } from "./round-watcher.js";
+import { createSatRoundWatcherService, shouldParticipateInSatCycle } from "./round-watcher.js";
 import { createSatMiningRuntimeState, getOrCreateRoundExecutionState } from "./runtime.js";
 
 type GatewayMethodArgs = { method: string; payload: { cycleId?: number; [key: string]: unknown } };
@@ -32,8 +32,45 @@ type CycleView = {
   unissuedCycleMinerSatRaw?: string;
   unissuedCycleTreasurySatRaw?: string;
   solErosionPoolLamports?: string;
+  cycleSeed?: string;
+  entropyUnavailable?: boolean;
+  commitDeadlineTs?: number;
+  revealDeadlineTs?: number;
+  entropyTargetSlot?: number;
+  committedMinerCount?: string;
+  revealedMinerCount?: string;
+  resolvedCommitCount?: string;
+  entropySealedSlot?: number;
 };
-type MinerCycleView = { address: string; cycleId: number };
+type MinerCycleView = {
+  address: string;
+  cycleId: number;
+  commitment?: string;
+  validParticipation?: boolean;
+};
+
+function createOpenCycleView(cycleId: number): CycleView {
+  const openTs = cycleId * 300;
+  return {
+    address: `cycle-${cycleId}`,
+    cycleId,
+    openTs,
+    closeTs: openTs + 300,
+    status: 0,
+    unlockTargetLamports: "0",
+    totalCommittedLamports: "0",
+    validMinerCount: "0",
+    unlockRatioFp: "0",
+    cycleSeed: "0".repeat(64),
+    commitDeadlineTs: openTs + 120,
+    revealDeadlineTs: openTs + 270,
+    entropyTargetSlot: 0,
+    committedMinerCount: "0",
+    revealedMinerCount: "0",
+    resolvedCommitCount: "0",
+    entropySealedSlot: 0,
+  };
+}
 
 const runSatGatewayMethod = vi.fn(
   async (_args: GatewayMethodArgs): Promise<{ ok: boolean }> => ({
@@ -85,7 +122,7 @@ const inspectSatCycleRegistryMeta = vi.fn(
 const inspectSatMinerCapital = vi.fn(
   async (..._args: unknown[]): Promise<unknown> => ({
     address: "capital",
-    authority: "authority-1",
+    authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
     fundedLamports: "3000000000",
     lockedLamports: "0",
     freeLamports: "3000000000",
@@ -142,6 +179,23 @@ vi.mock("./strategy-engine.js", () => ({
   computeMiningStrategy: (args: unknown) => computeMiningStrategy(args as never),
 }));
 
+describe("SAT economy cadence", () => {
+  it("selects cycles relative to the immutable launch cycle", () => {
+    expect(shouldParticipateInSatCycle({ cycleId: 100, launchCycleId: 100, cadence: 12 })).toBe(
+      true,
+    );
+    expect(shouldParticipateInSatCycle({ cycleId: 111, launchCycleId: 100, cadence: 12 })).toBe(
+      false,
+    );
+    expect(shouldParticipateInSatCycle({ cycleId: 112, launchCycleId: 100, cadence: 12 })).toBe(
+      true,
+    );
+    expect(shouldParticipateInSatCycle({ cycleId: 99, launchCycleId: 100, cadence: 1 })).toBe(
+      false,
+    );
+  });
+});
+
 describe("createSatRoundWatcherService", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -188,25 +242,44 @@ describe("createSatRoundWatcherService", () => {
       minimumEntryLamports: "250000000",
       cycleErosionPpm: 50,
     });
+    process.env.FASED_SAT_PROGRAM_ID = "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75";
+    process.env.FASED_SAT_BOND_PROGRAM_ID = "D1ySMMiJmvJRhJJKwYnc171w3g2JDPQnkgD8kGhaG4Vq";
+    process.env.FASED_SAT_MINT_ADDRESS = "2AhikHhzJdv6uve1yUBSUmhRKWaSfa7exrsDsfKjVFKa";
+    process.env.FASED_SAT_MINT_PROGRAM_ID = "8fb3Mpowe4pD6ed89gwm6gLuh8csPSrLi3hypcesqs5C";
     inspectSatCycle.mockReset();
-    inspectSatCycle.mockResolvedValue(null);
+    inspectSatCycle.mockImplementation(async (config, args) =>
+      (await inspectSatCycleAccountExists(config, args)) ? createOpenCycleView(args.cycleId) : null,
+    );
     inspectSatCycleRegistryMeta.mockReset();
     inspectSatCycleRegistryMeta.mockResolvedValue(null);
     inspectSatMinerCapital.mockReset();
     inspectSatMinerCapital.mockResolvedValue({
       address: "capital",
-      authority: "authority-1",
+      authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
       fundedLamports: "3000000000",
       lockedLamports: "0",
       freeLamports: "3000000000",
       activeCommitLamports: "250000000",
     });
     inspectSatMinerCycle.mockReset();
-    inspectSatMinerCycle.mockResolvedValue(null);
+    inspectSatMinerCycle.mockImplementation(async (config, args) =>
+      (await inspectSatMinerCycleAccountExists(config, args))
+        ? {
+            address: `miner-cycle-${args.cycleId}`,
+            cycleId: args.cycleId,
+            commitment: "11".repeat(32),
+            validParticipation: true,
+          }
+        : null,
+    );
     computeMiningStrategy.mockClear();
   });
 
   afterEach(() => {
+    delete process.env.FASED_SAT_PROGRAM_ID;
+    delete process.env.FASED_SAT_BOND_PROGRAM_ID;
+    delete process.env.FASED_SAT_MINT_ADDRESS;
+    delete process.env.FASED_SAT_MINT_PROGRAM_ID;
     vi.useRealTimers();
   });
 
@@ -218,7 +291,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     const api = {
       config: {},
       logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -230,7 +303,7 @@ describe("createSatRoundWatcherService", () => {
 
     expect(runSatGatewayMethod.mock.calls.map((call) => call[0]?.method)).toEqual([
       "sat.setActiveCommit",
-      "sat.submitCycle",
+      "sat.commitCycle",
     ]);
 
     await service.stop?.();
@@ -244,7 +317,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     const cycleId = Math.floor(Date.now() / 1000 / 300);
     const api = {
       config: {},
@@ -256,7 +329,10 @@ describe("createSatRoundWatcherService", () => {
     runSatGatewayMethod.mockClear();
     const execution = getOrCreateRoundExecutionState(state, cycleId, 0);
     execution.openRoundSubmitted = false;
+    execution.commitSubmitted = false;
     execution.participationSubmitted = false;
+    state.recentActions = [];
+    state.workers.roundWatcher.nextScheduledAt = new Date().toISOString();
     let releaseFirstCall: (() => void) | null = null;
     runSatGatewayMethod.mockImplementationOnce(
       () =>
@@ -286,7 +362,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     let firstRead = true;
     inspectSatChainUnixTime.mockImplementation(async () => {
       if (firstRead) {
@@ -308,7 +384,7 @@ describe("createSatRoundWatcherService", () => {
 
     expect(runSatGatewayMethod.mock.calls.map((call) => call[0]?.method)).toEqual([
       "sat.setActiveCommit",
-      "sat.submitCycle",
+      "sat.commitCycle",
     ]);
     expect(state.workers.roundWatcher.retryCount).toBe(0);
     expect(state.workers.roundWatcher.lastSuccessAt).not.toBeNull();
@@ -324,7 +400,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     const api = {
       config: {},
       logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -335,7 +411,7 @@ describe("createSatRoundWatcherService", () => {
     await vi.advanceTimersByTimeAsync(5_000);
 
     const participationCall = runSatGatewayMethod.mock.calls.find(
-      (call) => call[0]?.method === "sat.submitCycle",
+      (call) => call[0]?.method === "sat.commitCycle",
     );
 
     const setCommitCall = runSatGatewayMethod.mock.calls.find(
@@ -346,10 +422,11 @@ describe("createSatRoundWatcherService", () => {
     });
     expect(participationCall?.[0]?.payload).toMatchObject({
       cycleId: expect.any(Number),
+      commitmentHex: expect.stringMatching(/^[0-9a-f]{64}$/),
     });
-    expect(
-      (participationCall?.[0]?.payload as { allocationFp?: unknown[] } | undefined)?.allocationFp,
-    ).toHaveLength(25);
+    const cycleId = (participationCall?.[0]?.payload as { cycleId?: number } | undefined)?.cycleId;
+    expect(cycleId).toEqual(expect.any(Number));
+    expect(getOrCreateRoundExecutionState(state, cycleId!, 0).allocationFp).toHaveLength(25);
 
     await service.stop?.();
   });
@@ -364,7 +441,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     state.commitFreezeUntilMs = Date.now() + 600_000;
     const api = {
       config: {},
@@ -376,7 +453,7 @@ describe("createSatRoundWatcherService", () => {
     await vi.advanceTimersByTimeAsync(5_000);
 
     expect(runSatGatewayMethod.mock.calls.map((call) => call[0]?.method)).toEqual([
-      "sat.submitCycle",
+      "sat.commitCycle",
     ]);
     expect(runSatGatewayMethod.mock.calls[0]?.[0]?.payload).toMatchObject({
       cycleId: expect.any(Number),
@@ -395,11 +472,11 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     state.commitFreezeUntilMs = Date.now() + 600_000;
     inspectSatMinerCapital.mockResolvedValue({
       address: "capital",
-      authority: "authority-1",
+      authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
       fundedLamports: "1200000000",
       lockedLamports: "0",
       freeLamports: "900000000",
@@ -430,7 +507,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     const cycleId = Math.floor(Date.now() / 1000 / 300);
     getOrCreateRoundExecutionState(state, cycleId, 0).participationSubmitted = true;
     getOrCreateRoundExecutionState(state, cycleId, 0).openRoundSubmitted = true;
@@ -447,8 +524,144 @@ describe("createSatRoundWatcherService", () => {
     await vi.advanceTimersByTimeAsync(5_000);
 
     expect(
-      runSatGatewayMethod.mock.calls.filter((call) => call[0]?.method === "sat.submitCycle"),
+      runSatGatewayMethod.mock.calls.filter((call) => call[0]?.method === "sat.commitCycle"),
     ).toHaveLength(0);
+
+    await service.stop?.();
+  });
+
+  it("seals entropy before applying the missed-reveal penalty after an expired deadline", async () => {
+    const config = {
+      enabled: true,
+      network: "devnet" as const,
+      riskMode: "balanced" as const,
+      walletId: "wallet-a",
+    };
+    const state = createSatMiningRuntimeState(config);
+    const authority = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = authority;
+    const cycleId = Math.floor(Date.now() / 1000 / 300);
+    const nowSec = cycleId * 300 + 280;
+    inspectSatChainUnixTime.mockResolvedValue(nowSec);
+    const execution = getOrCreateRoundExecutionState(state, cycleId, 0);
+    execution.openRoundSubmitted = true;
+    execution.commitSubmitted = true;
+    execution.commitmentHex = "11".repeat(32);
+    execution.revealNonceBase64 = Buffer.alloc(32, 7).toString("base64");
+    execution.allocationFp = new Array(25).fill(40_000);
+    execution.commitLamports = 250_000_000;
+    state.recentActions.push({
+      action: "commitCycle",
+      status: "success",
+      at: new Date().toISOString(),
+      cycleId,
+      txHash: "tx-commit",
+    });
+    inspectSatMinerCycle.mockResolvedValue({
+      address: `miner-cycle-${cycleId}`,
+      cycleId,
+      commitment: execution.commitmentHex,
+      validParticipation: false,
+    });
+    inspectSatCycle
+      .mockResolvedValueOnce({
+        ...createOpenCycleView(cycleId),
+        status: 1,
+        cycleSeed: "0".repeat(64),
+        entropyTargetSlot: 123,
+        revealDeadlineTs: nowSec - 10,
+        committedMinerCount: "1",
+      })
+      .mockResolvedValueOnce({
+        ...createOpenCycleView(cycleId),
+        status: 1,
+        cycleSeed: "7".repeat(64),
+        entropyTargetSlot: 125,
+        revealDeadlineTs: nowSec - 10,
+        committedMinerCount: "1",
+      });
+    const api = {
+      config: {},
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+    } as const;
+
+    const service = createSatRoundWatcherService({ api: api as never, config, state });
+    await service.start();
+
+    expect(runSatGatewayMethod.mock.calls.map((call) => call[0]?.method)).toEqual([
+      "sat.sealCycleEntropy",
+    ]);
+    expect(execution.entropySealed).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(runSatGatewayMethod.mock.calls.map((call) => call[0]?.method)).toEqual([
+      "sat.sealCycleEntropy",
+      "sat.releaseUnrevealedCommit",
+    ]);
+    expect(execution.entropySealed).toBe(true);
+    expect(execution.participationSubmitted).toBe(false);
+
+    await service.stop?.();
+  });
+
+  it("unwinds an unprovable entropy cycle without attempting a reveal", async () => {
+    const config = {
+      enabled: true,
+      network: "devnet" as const,
+      riskMode: "balanced" as const,
+      walletId: "wallet-a",
+    };
+    const state = createSatMiningRuntimeState(config);
+    const authority = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = authority;
+    const cycleId = Math.floor(Date.now() / 1000 / 300);
+    const nowSec = cycleId * 300 + 180;
+    inspectSatChainUnixTime.mockResolvedValue(nowSec);
+    const execution = getOrCreateRoundExecutionState(state, cycleId, 0);
+    execution.openRoundSubmitted = true;
+    execution.commitSubmitted = true;
+    execution.commitmentHex = "11".repeat(32);
+    execution.revealNonceBase64 = Buffer.alloc(32, 7).toString("base64");
+    execution.allocationFp = new Array(25).fill(40_000);
+    execution.commitLamports = 250_000_000;
+    state.recentActions.push({
+      action: "commitCycle",
+      status: "success",
+      at: new Date().toISOString(),
+      cycleId,
+      txHash: "tx-commit",
+    });
+    inspectSatMinerCycle.mockResolvedValue({
+      address: `miner-cycle-${cycleId}`,
+      cycleId,
+      commitment: execution.commitmentHex,
+      validParticipation: false,
+    });
+    inspectSatCycle.mockResolvedValue({
+      ...createOpenCycleView(cycleId),
+      status: 1,
+      cycleSeed: "ff".repeat(32),
+      entropyUnavailable: true,
+      entropyTargetSlot: 123,
+      commitDeadlineTs: nowSec - 10,
+      revealDeadlineTs: nowSec + 100,
+      committedMinerCount: "1",
+    });
+    const api = {
+      config: {},
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+    } as const;
+
+    const service = createSatRoundWatcherService({ api: api as never, config, state });
+    await service.start();
+
+    expect(runSatGatewayMethod.mock.calls.map((call) => call[0]?.method)).toEqual([
+      "sat.releaseUnrevealedCommit",
+    ]);
+    expect(execution.entropySealed).toBe(false);
+    expect(execution.participationSubmitted).toBe(false);
+    expect(state.workers.roundWatcher.lastDetail).toContain("released without penalty");
 
     await service.stop?.();
   });
@@ -461,7 +674,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     let firstRead = true;
     inspectSatChainUnixTime.mockImplementation(async () => {
       if (firstRead) {
@@ -490,7 +703,7 @@ describe("createSatRoundWatcherService", () => {
 
     expect(runSatGatewayMethod.mock.calls.map((call) => call[0]?.method)).toEqual([
       "sat.setActiveCommit",
-      "sat.submitCycle",
+      "sat.commitCycle",
     ]);
     expect(state.workers.roundWatcher.lastSuccessAt).not.toBeNull();
 
@@ -505,14 +718,14 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     const cycleId = Math.floor(Date.now() / 1000 / 300);
     const execution = getOrCreateRoundExecutionState(state, cycleId, 0);
     execution.openRoundSubmitted = true;
     execution.participationSubmitted = true;
     state.recentActions = [
       {
-        action: "submitCycle",
+        action: "commitCycle",
         cycleId,
         txHash: "tx-submit",
         status: "success",
@@ -537,9 +750,9 @@ describe("createSatRoundWatcherService", () => {
     expect(
       runSatGatewayMethod.mock.calls.filter(
         (call) =>
-          call[0]?.method === "sat.bootstrapRegistryReserve" ||
+          call[0]?.method === "sat.topUpRegistryReserve" ||
           call[0]?.method === "sat.openCycle" ||
-          call[0]?.method === "sat.submitCycle",
+          call[0]?.method === "sat.commitCycle",
       ),
     ).toHaveLength(0);
 
@@ -554,7 +767,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     const cycleId = Math.floor(Date.now() / 1000 / 300);
     const execution = getOrCreateRoundExecutionState(state, cycleId, 0);
     execution.openRoundSubmitted = true;
@@ -571,9 +784,10 @@ describe("createSatRoundWatcherService", () => {
 
     expect(runSatGatewayMethod.mock.calls.map((call) => call[0]?.method)).toEqual([
       "sat.setActiveCommit",
-      "sat.submitCycle",
+      "sat.commitCycle",
     ]);
-    expect(getOrCreateRoundExecutionState(state, cycleId, 0).participationSubmitted).toBe(true);
+    expect(getOrCreateRoundExecutionState(state, cycleId, 0).commitSubmitted).toBe(true);
+    expect(getOrCreateRoundExecutionState(state, cycleId, 0).participationSubmitted).toBe(false);
     expect(state.workers.roundWatcher.retryCount).toBe(0);
 
     await service.stop?.();
@@ -587,7 +801,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     inspectSatMinerCycleAccountExists.mockResolvedValueOnce(true);
     const api = {
       config: {},
@@ -611,7 +825,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     const localNowSec = Math.floor(Date.now() / 1000);
     inspectSatChainUnixTime.mockResolvedValue(localNowSec - 300);
     const api = {
@@ -624,7 +838,7 @@ describe("createSatRoundWatcherService", () => {
     await vi.advanceTimersByTimeAsync(5_000);
 
     const participationCall = runSatGatewayMethod.mock.calls.find(
-      (call) => call[0]?.method === "sat.submitCycle",
+      (call) => call[0]?.method === "sat.commitCycle",
     );
     expect(participationCall?.[0]?.payload).toMatchObject({
       cycleId: Math.floor((localNowSec - 300) / 300),
@@ -641,7 +855,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     inspectSatMinerCycleAccountExists.mockResolvedValueOnce(true);
     const api = {
       config: {},
@@ -654,6 +868,7 @@ describe("createSatRoundWatcherService", () => {
     const cycleId = Math.floor(Date.now() / 1000 / 300);
     const execution = getOrCreateRoundExecutionState(state, cycleId, 0);
     expect(execution.openRoundSubmitted).toBe(true);
+    expect(execution.commitSubmitted).toBe(true);
     expect(execution.participationSubmitted).toBe(true);
     expect(runSatGatewayMethod.mock.calls.map((call) => call[0]?.method)).toEqual([]);
 
@@ -668,7 +883,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     const api = {
       config: {},
       logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -680,7 +895,7 @@ describe("createSatRoundWatcherService", () => {
 
     expect(runSatGatewayMethod.mock.calls.map((call) => call[0]?.method)).toEqual([
       "sat.setActiveCommit",
-      "sat.submitCycle",
+      "sat.commitCycle",
     ]);
 
     await service.stop?.();
@@ -694,10 +909,11 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    inspectSatMinerCycleAccountExists.mockResolvedValueOnce(false).mockResolvedValue(true);
     runSatGatewayMethod.mockImplementation(async (args: unknown) => {
       const method = (args as { method?: string })?.method;
-      if (method === "sat.submitCycle") {
+      if (method === "sat.commitCycle") {
         throw new Error("AccountAlreadyInitialized: instruction requires an uninitialized account");
       }
       return { ok: true };
@@ -714,6 +930,7 @@ describe("createSatRoundWatcherService", () => {
     const cycleId = Math.floor(Date.now() / 1000 / 300);
     const execution = getOrCreateRoundExecutionState(state, cycleId, 0);
     expect(execution.openRoundSubmitted).toBe(true);
+    expect(execution.commitSubmitted).toBe(true);
     expect(execution.participationSubmitted).toBe(true);
     expect(state.workers.roundWatcher.retryCount).toBe(0);
     expect(runSatGatewayMethod).toHaveBeenCalledTimes(2);
@@ -729,10 +946,10 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     runSatGatewayMethod.mockImplementation(async (args: unknown) => {
       const method = (args as { method?: string })?.method;
-      if (method === "sat.submitCycle") {
+      if (method === "sat.commitCycle") {
         throw new Error("InvalidAccountData: miner slot still has unclaimed rewards");
       }
       return { ok: true };
@@ -763,10 +980,10 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     runSatGatewayMethod.mockImplementation(async (args: unknown) => {
       const method = (args as { method?: string })?.method;
-      if (method === "sat.submitCycle") {
+      if (method === "sat.commitCycle") {
         throw new Error("RPC error -32429: max usage reached");
       }
       return { ok: true };
@@ -783,12 +1000,12 @@ describe("createSatRoundWatcherService", () => {
     expect(state.workers.roundWatcher.waitingReason).toContain("backing off 60s");
     expect(Date.parse(state.workers.roundWatcher.nextScheduledAt ?? "") - Date.now()).toBe(60_000);
     expect(
-      runSatGatewayMethod.mock.calls.filter((call) => call[0]?.method === "sat.submitCycle"),
+      runSatGatewayMethod.mock.calls.filter((call) => call[0]?.method === "sat.commitCycle"),
     ).toHaveLength(1);
 
     await vi.advanceTimersByTimeAsync(55_000);
     expect(
-      runSatGatewayMethod.mock.calls.filter((call) => call[0]?.method === "sat.submitCycle"),
+      runSatGatewayMethod.mock.calls.filter((call) => call[0]?.method === "sat.commitCycle"),
     ).toHaveLength(1);
 
     await service.stop?.();
@@ -802,13 +1019,13 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     const cycleId = Math.floor(Date.now() / 1000 / 300);
     let landedAfterTimeout = false;
     inspectSatMinerCycleAccountExists.mockImplementation(async () => landedAfterTimeout);
     runSatGatewayMethod.mockImplementation(async (args: unknown) => {
       const method = (args as { method?: string })?.method;
-      if (method === "sat.submitCycle") {
+      if (method === "sat.commitCycle") {
         landedAfterTimeout = true;
         throw new Error("gateway timeout waiting for submit confirmation");
       }
@@ -823,7 +1040,7 @@ describe("createSatRoundWatcherService", () => {
     await service.start();
 
     expect(
-      runSatGatewayMethod.mock.calls.filter((call) => call[0]?.method === "sat.submitCycle"),
+      runSatGatewayMethod.mock.calls.filter((call) => call[0]?.method === "sat.commitCycle"),
     ).toHaveLength(1);
     expect(getOrCreateRoundExecutionState(state, cycleId, 0).participationSubmitted).toBe(false);
     expect(state.workers.roundWatcher.retryCount).toBe(1);
@@ -831,8 +1048,9 @@ describe("createSatRoundWatcherService", () => {
     await vi.advanceTimersByTimeAsync(5_000);
 
     expect(
-      runSatGatewayMethod.mock.calls.filter((call) => call[0]?.method === "sat.submitCycle"),
+      runSatGatewayMethod.mock.calls.filter((call) => call[0]?.method === "sat.commitCycle"),
     ).toHaveLength(1);
+    expect(getOrCreateRoundExecutionState(state, cycleId, 0).commitSubmitted).toBe(true);
     expect(getOrCreateRoundExecutionState(state, cycleId, 0).participationSubmitted).toBe(true);
     expect(state.workers.roundWatcher.retryCount).toBe(0);
     expect(state.workers.roundWatcher.lastError).toBeNull();
@@ -848,14 +1066,14 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     const cycleId = Math.floor(Date.now() / 1000 / 300);
     inspectSatMinerCycleAccountExists.mockResolvedValue(false);
     runSatGatewayMethod.mockImplementation(async (args: unknown) => {
       const method = (args as { method?: string })?.method;
       if (
-        method === "sat.submitCycle" &&
-        runSatGatewayMethod.mock.calls.filter((call) => call[0]?.method === "sat.submitCycle")
+        method === "sat.commitCycle" &&
+        runSatGatewayMethod.mock.calls.filter((call) => call[0]?.method === "sat.commitCycle")
           .length === 1
       ) {
         throw new Error("TransactionExpiredBlockheightExceededError: blockhash expired");
@@ -877,9 +1095,10 @@ describe("createSatRoundWatcherService", () => {
     await vi.advanceTimersByTimeAsync(5_000);
 
     expect(
-      runSatGatewayMethod.mock.calls.filter((call) => call[0]?.method === "sat.submitCycle"),
+      runSatGatewayMethod.mock.calls.filter((call) => call[0]?.method === "sat.commitCycle"),
     ).toHaveLength(2);
-    expect(getOrCreateRoundExecutionState(state, cycleId, 0).participationSubmitted).toBe(true);
+    expect(getOrCreateRoundExecutionState(state, cycleId, 0).commitSubmitted).toBe(true);
+    expect(getOrCreateRoundExecutionState(state, cycleId, 0).participationSubmitted).toBe(false);
     expect(state.workers.roundWatcher.retryCount).toBe(0);
 
     await service.stop?.();
@@ -893,7 +1112,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     inspectSatCycleAccountExists.mockResolvedValue(false);
     const api = {
       config: {},
@@ -908,11 +1127,11 @@ describe("createSatRoundWatcherService", () => {
     expect(runSatGatewayMethod.mock.calls.map((call) => call[0]?.method)).toEqual([
       "sat.openCycle",
       "sat.setActiveCommit",
-      "sat.submitCycle",
+      "sat.commitCycle",
     ]);
     expect(execution.openRoundSubmitted).toBe(true);
-    expect(execution.participationSubmitted).toBe(true);
-    expect(state.workers.roundWatcher.waitingReason).toBeNull();
+    expect(execution.commitSubmitted).toBe(true);
+    expect(execution.participationSubmitted).toBe(false);
 
     await service.stop?.();
   });
@@ -926,7 +1145,7 @@ describe("createSatRoundWatcherService", () => {
       commitLamports: 250_000_000,
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     inspectSatCycleAccountExists.mockResolvedValue(false);
     inspectSatGlobalState.mockResolvedValue({
       address: "global",
@@ -937,7 +1156,7 @@ describe("createSatRoundWatcherService", () => {
     });
     inspectSatMinerCapital.mockResolvedValue({
       address: "capital",
-      authority: "authority-1",
+      authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
       fundedLamports: "3000000000",
       lockedLamports: "0",
       freeLamports: "250015000",
@@ -952,9 +1171,11 @@ describe("createSatRoundWatcherService", () => {
     await service.start();
 
     expect(runSatGatewayMethod).not.toHaveBeenCalledWith(
-      expect.objectContaining({ method: "sat.submitCycle" }),
+      expect.objectContaining({ method: "sat.commitCycle" }),
     );
-    expect(state.workers.roundWatcher.waitingReason).toContain("cannot cover commit plus erosion");
+    expect(state.workers.roundWatcher.waitingReason).toContain(
+      "cannot cover commit plus worst-case reveal collateral",
+    );
 
     await service.stop?.();
   });
@@ -968,13 +1189,13 @@ describe("createSatRoundWatcherService", () => {
       commitLamports: 9_275_000_000,
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     inspectSatMinerCapital.mockResolvedValue({
       address: "capital",
-      authority: "authority-1",
+      authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
       fundedLamports: "10493000000",
       lockedLamports: "0",
-      freeLamports: "250100000",
+      freeLamports: "252600000",
       activeCommitLamports: "6075000000",
     });
     const api = {
@@ -987,7 +1208,7 @@ describe("createSatRoundWatcherService", () => {
 
     expect(runSatGatewayMethod.mock.calls.map((call) => call[0]?.method)).toEqual([
       "sat.setActiveCommit",
-      "sat.submitCycle",
+      "sat.commitCycle",
     ]);
     const setCommitCall = runSatGatewayMethod.mock.calls.find(
       (call) => call[0]?.method === "sat.setActiveCommit",
@@ -1009,7 +1230,7 @@ describe("createSatRoundWatcherService", () => {
       commitLamports: 9_970_000_000,
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     inspectSatGlobalState.mockResolvedValue({
       address: "global",
       cycleSeconds: 180,
@@ -1019,7 +1240,7 @@ describe("createSatRoundWatcherService", () => {
     });
     inspectSatMinerCapital.mockResolvedValue({
       address: "capital",
-      authority: "authority-1",
+      authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
       fundedLamports: "9969867331",
       lockedLamports: "0",
       freeLamports: "9969867331",
@@ -1035,13 +1256,13 @@ describe("createSatRoundWatcherService", () => {
 
     expect(runSatGatewayMethod.mock.calls.map((call) => call[0]?.method)).toEqual([
       "sat.setActiveCommit",
-      "sat.submitCycle",
+      "sat.commitCycle",
     ]);
     const setCommitCall = runSatGatewayMethod.mock.calls.find(
       (call) => call[0]?.method === "sat.setActiveCommit",
     );
     expect(setCommitCall?.[0]?.payload).toMatchObject({
-      lamports: 9695000000,
+      lamports: 9620000000,
       persistConfig: false,
     });
 
@@ -1057,7 +1278,7 @@ describe("createSatRoundWatcherService", () => {
       commitLamports: 10_000_000_000,
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     inspectSatGlobalState.mockResolvedValue({
       address: "global",
       cycleSeconds: 300,
@@ -1067,7 +1288,7 @@ describe("createSatRoundWatcherService", () => {
     });
     inspectSatMinerCapital.mockResolvedValue({
       address: "capital",
-      authority: "authority-1",
+      authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
       fundedLamports: "10000000000",
       lockedLamports: "0",
       freeLamports: "10000000000",
@@ -1083,13 +1304,13 @@ describe("createSatRoundWatcherService", () => {
 
     expect(runSatGatewayMethod.mock.calls.map((call) => call[0]?.method)).toEqual([
       "sat.setActiveCommit",
-      "sat.submitCycle",
+      "sat.commitCycle",
     ]);
     const setCommitCall = runSatGatewayMethod.mock.calls.find(
       (call) => call[0]?.method === "sat.setActiveCommit",
     );
     expect(setCommitCall?.[0]?.payload).toMatchObject({
-      lamports: 9725000000,
+      lamports: 9650000000,
       persistConfig: false,
     });
 
@@ -1104,7 +1325,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     inspectSatCycleAccountExists.mockResolvedValue(false);
     inspectSatMinerCycleAccountExists.mockResolvedValue(false);
     const api = {
@@ -1118,7 +1339,7 @@ describe("createSatRoundWatcherService", () => {
     await vi.advanceTimersByTimeAsync(15_000);
 
     expect(
-      runSatGatewayMethod.mock.calls.filter((call) => call[0]?.method === "sat.submitCycle"),
+      runSatGatewayMethod.mock.calls.filter((call) => call[0]?.method === "sat.commitCycle"),
     ).toHaveLength(1);
 
     await service.stop?.();
@@ -1132,7 +1353,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     inspectSatCycleAccountExists.mockResolvedValue(false);
     inspectSatRegistryReserveLamports.mockResolvedValue({
       address: "reserve",
@@ -1147,10 +1368,10 @@ describe("createSatRoundWatcherService", () => {
     await service.start();
 
     expect(runSatGatewayMethod.mock.calls.map((call) => call[0]?.method)).toEqual([
-      "sat.bootstrapRegistryReserve",
+      "sat.topUpRegistryReserve",
       "sat.openCycle",
       "sat.setActiveCommit",
-      "sat.submitCycle",
+      "sat.commitCycle",
     ]);
 
     await service.stop?.();
@@ -1164,7 +1385,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     inspectSatCycleAccountExists.mockResolvedValue(false);
     inspectSatRegistryReserveLamports.mockResolvedValue({
       address: "reserve",
@@ -1186,7 +1407,7 @@ describe("createSatRoundWatcherService", () => {
       "sat.refillRegistryReserveFromTreasury",
       "sat.openCycle",
       "sat.setActiveCommit",
-      "sat.submitCycle",
+      "sat.commitCycle",
     ]);
 
     await service.stop?.();
@@ -1200,7 +1421,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     inspectSatCycleAccountExists.mockResolvedValue(false);
     inspectSatLamportBalance.mockResolvedValue("160000000");
     inspectSatRegistryReserveLamports.mockResolvedValue({
@@ -1217,10 +1438,10 @@ describe("createSatRoundWatcherService", () => {
 
     expect(runSatGatewayMethod.mock.calls.map((call) => call[0]?.method)).toEqual([
       "sat.withdrawMinerCapital",
-      "sat.bootstrapRegistryReserve",
+      "sat.topUpRegistryReserve",
       "sat.openCycle",
       "sat.setActiveCommit",
-      "sat.submitCycle",
+      "sat.commitCycle",
     ]);
 
     await service.stop?.();
@@ -1234,7 +1455,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     inspectSatCycleAccountExists.mockResolvedValue(false);
     inspectSatLamportBalance.mockResolvedValue("160000000");
     inspectSatRegistryReserveLamports.mockResolvedValue({
@@ -1255,7 +1476,7 @@ describe("createSatRoundWatcherService", () => {
     });
     inspectSatMinerCapital.mockResolvedValue({
       address: "capital",
-      authority: "authority-1",
+      authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
       fundedLamports: "3000000000",
       lockedLamports: "2700000000",
       freeLamports: "300000000",
@@ -1285,7 +1506,7 @@ describe("createSatRoundWatcherService", () => {
       commitLamports: 300_000_000,
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     runSatGatewayMethod.mockImplementation(async (args: unknown) => {
       const method = (args as { method?: string })?.method;
       if (method === "sat.setActiveCommit") {
@@ -1307,7 +1528,7 @@ describe("createSatRoundWatcherService", () => {
       runSatGatewayMethod.mock.calls.filter((call) => call[0]?.method === "sat.setActiveCommit"),
     ).toHaveLength(1);
     expect(
-      runSatGatewayMethod.mock.calls.filter((call) => call[0]?.method === "sat.submitCycle"),
+      runSatGatewayMethod.mock.calls.filter((call) => call[0]?.method === "sat.commitCycle"),
     ).toHaveLength(0);
     expect(execution.openRoundSubmitted).toBe(true);
     expect(execution.participationSubmitted).toBe(false);
@@ -1325,7 +1546,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     const api = {
       config: {},
       logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -1336,7 +1557,7 @@ describe("createSatRoundWatcherService", () => {
     await vi.advanceTimersByTimeAsync(5_000);
 
     const participationCall = runSatGatewayMethod.mock.calls.find(
-      (call) => call[0]?.method === "sat.submitCycle",
+      (call) => call[0]?.method === "sat.commitCycle",
     );
     const expectedCycleId = Math.floor(Date.now() / 1000 / 300);
     expect(participationCall?.[0]?.payload).toMatchObject({
@@ -1354,7 +1575,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     const api = {
       config: {},
       logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -1381,10 +1602,10 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     runSatGatewayMethod.mockImplementation(async (args: unknown) => {
       const method = (args as { method?: string })?.method;
-      if (method === "sat.submitCycle") {
+      if (method === "sat.commitCycle") {
         throw new Error(
           "Transaction simulation failed: Program log: submit_cycle cycle mismatch: requested=1, current=2",
         );
@@ -1440,7 +1661,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     const api = {
       config: {},
       logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -1452,7 +1673,7 @@ describe("createSatRoundWatcherService", () => {
 
     expect(runSatGatewayMethod.mock.calls.map((call) => call[0]?.method)).toEqual([
       "sat.setActiveCommit",
-      "sat.submitCycle",
+      "sat.commitCycle",
     ]);
     expect(state.workers.roundWatcher.lastDetail ?? "").toContain("cycle");
 
@@ -1472,7 +1693,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     inspectSatCycle.mockResolvedValueOnce({
       address: "cycle",
       cycleId: 0,
@@ -1498,7 +1719,7 @@ describe("createSatRoundWatcherService", () => {
     });
     inspectSatMinerCapital.mockResolvedValueOnce({
       address: "capital",
-      authority: "authority-1",
+      authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
       fundedLamports: "1000000000",
       lockedLamports: "0",
       freeLamports: "1000000000",
@@ -1517,7 +1738,7 @@ describe("createSatRoundWatcherService", () => {
       (call) => call[0]?.method === "sat.setActiveCommit",
     );
     const submitCall = runSatGatewayMethod.mock.calls.find(
-      (call) => call[0]?.method === "sat.submitCycle",
+      (call) => call[0]?.method === "sat.commitCycle",
     );
     expect(setCommitCall?.[0]?.payload).toMatchObject({
       lamports: 250000000,
@@ -1554,7 +1775,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     inspectSatCycle.mockResolvedValueOnce({
       address: "cycle",
       cycleId: 0,
@@ -1581,7 +1802,7 @@ describe("createSatRoundWatcherService", () => {
     inspectSatMinerCapital
       .mockResolvedValueOnce({
         address: "capital",
-        authority: "authority-1",
+        authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
         fundedLamports: "1000000000",
         lockedLamports: "0",
         freeLamports: "1000000000",
@@ -1589,7 +1810,7 @@ describe("createSatRoundWatcherService", () => {
       })
       .mockResolvedValueOnce({
         address: "capital",
-        authority: "authority-1",
+        authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
         fundedLamports: "340000000",
         lockedLamports: "0",
         freeLamports: "340000000",
@@ -1628,11 +1849,11 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     inspectSatLamportBalance.mockResolvedValue("1000000000");
     inspectSatMinerCapital.mockResolvedValueOnce({
       address: "capital",
-      authority: "authority-1",
+      authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
       fundedLamports: "1000000000",
       lockedLamports: "0",
       freeLamports: "1000000000",
@@ -1651,7 +1872,7 @@ describe("createSatRoundWatcherService", () => {
       "sat.withdrawMinerCapital",
     );
     expect(runSatGatewayMethod.mock.calls.map((call) => call[0]?.method)).toContain(
-      "sat.submitCycle",
+      "sat.commitCycle",
     );
     expect(state.lastPlannerDecision).toMatchObject({
       shouldSubmit: true,
@@ -1668,10 +1889,10 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     inspectSatMinerCapital.mockResolvedValue({
       address: "capital",
-      authority: "authority-1",
+      authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
       fundedLamports: "200000000",
       lockedLamports: "0",
       freeLamports: "200000000",
@@ -1686,7 +1907,7 @@ describe("createSatRoundWatcherService", () => {
     await service.start();
 
     expect(
-      runSatGatewayMethod.mock.calls.filter((call) => call[0]?.method === "sat.submitCycle"),
+      runSatGatewayMethod.mock.calls.filter((call) => call[0]?.method === "sat.commitCycle"),
     ).toHaveLength(0);
     expect(state.workers.roundWatcher.waitingReason).toContain("below minimum entry");
 
@@ -1702,10 +1923,10 @@ describe("createSatRoundWatcherService", () => {
       commitLamports: 300_000_000,
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     inspectSatMinerCapital.mockResolvedValue({
       address: "capital",
-      authority: "authority-1",
+      authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
       fundedLamports: "510000000",
       lockedLamports: "250000000",
       freeLamports: "260000000",
@@ -1721,7 +1942,7 @@ describe("createSatRoundWatcherService", () => {
 
     expect(runSatGatewayMethod.mock.calls.map((call) => call[0]?.method)).toEqual([
       "sat.setActiveCommit",
-      "sat.submitCycle",
+      "sat.commitCycle",
     ]);
     const setCommitCall = runSatGatewayMethod.mock.calls.find(
       (call) => call[0]?.method === "sat.setActiveCommit",
@@ -1743,10 +1964,10 @@ describe("createSatRoundWatcherService", () => {
       commitLamports: 300_000_000,
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     inspectSatMinerCapital.mockResolvedValue({
       address: "capital",
-      authority: "authority-1",
+      authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
       fundedLamports: "13887000000",
       lockedLamports: "13850000000",
       freeLamports: "37000000",
@@ -1763,7 +1984,7 @@ describe("createSatRoundWatcherService", () => {
     await service.start();
 
     expect(
-      runSatGatewayMethod.mock.calls.filter((call) => call[0]?.method === "sat.submitCycle"),
+      runSatGatewayMethod.mock.calls.filter((call) => call[0]?.method === "sat.commitCycle"),
     ).toHaveLength(0);
     expect(state.workers.roundWatcher.waitingReason).toContain(
       "pending cycle range 9862636-9862637 still leaves 13.850 SOL locked",
@@ -1781,10 +2002,10 @@ describe("createSatRoundWatcherService", () => {
       commitLamports: 4_090_000_000,
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     inspectSatMinerCapital.mockResolvedValue({
       address: "capital",
-      authority: "authority-1",
+      authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
       fundedLamports: "5600000000",
       lockedLamports: "0",
       freeLamports: "5600000000",
@@ -1801,7 +2022,7 @@ describe("createSatRoundWatcherService", () => {
     await service.start();
 
     expect(
-      runSatGatewayMethod.mock.calls.some((call) => call[0]?.method === "sat.submitCycle"),
+      runSatGatewayMethod.mock.calls.some((call) => call[0]?.method === "sat.commitCycle"),
     ).toBe(true);
     expect(state.workers.roundWatcher.waitingReason ?? "").not.toContain(
       "recovery is draining the backlog before new submits",
@@ -1819,11 +2040,11 @@ describe("createSatRoundWatcherService", () => {
       commitLamports: 4_090_000_000,
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     const currentCycleId = Math.floor(Date.now() / 1000 / 300);
     const submittedCycleId = currentCycleId - 1;
     state.recentActions.unshift({
-      action: "submitCycle",
+      action: "commitCycle",
       cycleId: submittedCycleId,
       txHash: "tx-submit",
       status: "success",
@@ -1831,7 +2052,7 @@ describe("createSatRoundWatcherService", () => {
     });
     inspectSatMinerCapital.mockResolvedValue({
       address: "capital",
-      authority: "authority-1",
+      authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
       fundedLamports: "8200000000",
       lockedLamports: "3050000000",
       freeLamports: "5150000000",
@@ -1848,7 +2069,7 @@ describe("createSatRoundWatcherService", () => {
     await service.start();
 
     expect(
-      runSatGatewayMethod.mock.calls.some((call) => call[0]?.method === "sat.submitCycle"),
+      runSatGatewayMethod.mock.calls.some((call) => call[0]?.method === "sat.commitCycle"),
     ).toBe(true);
     expect(state.workers.roundWatcher.waitingReason ?? "").not.toContain(
       "recovery is draining the backlog before new submits",
@@ -1866,10 +2087,10 @@ describe("createSatRoundWatcherService", () => {
       commitLamports: 250_000_000,
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     inspectSatMinerCapital.mockResolvedValue({
       address: "capital",
-      authority: "authority-1",
+      authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
       fundedLamports: "550000000",
       lockedLamports: "250000000",
       freeLamports: "260000000",
@@ -1885,7 +2106,7 @@ describe("createSatRoundWatcherService", () => {
 
     expect(runSatGatewayMethod.mock.calls.map((call) => call[0]?.method)).toEqual([
       "sat.setActiveCommit",
-      "sat.submitCycle",
+      "sat.commitCycle",
     ]);
     const setCommitCall = runSatGatewayMethod.mock.calls.find(
       (call) => call[0]?.method === "sat.setActiveCommit",
@@ -1906,11 +2127,11 @@ describe("createSatRoundWatcherService", () => {
       commitLamports: 400_000_000,
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     inspectSatMinerCapital
       .mockResolvedValueOnce({
         address: "capital",
-        authority: "authority-1",
+        authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
         fundedLamports: "1000000000",
         lockedLamports: "0",
         freeLamports: "1000000000",
@@ -1918,7 +2139,7 @@ describe("createSatRoundWatcherService", () => {
       })
       .mockResolvedValueOnce({
         address: "capital",
-        authority: "authority-1",
+        authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
         fundedLamports: "1000000000",
         lockedLamports: "0",
         freeLamports: "1000000000",
@@ -1926,7 +2147,7 @@ describe("createSatRoundWatcherService", () => {
       })
       .mockResolvedValueOnce({
         address: "capital",
-        authority: "authority-1",
+        authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
         fundedLamports: "340000000",
         lockedLamports: "0",
         freeLamports: "340000000",
@@ -1934,7 +2155,7 @@ describe("createSatRoundWatcherService", () => {
       })
       .mockResolvedValueOnce({
         address: "capital",
-        authority: "authority-1",
+        authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
         fundedLamports: "340000000",
         lockedLamports: "0",
         freeLamports: "340000000",
@@ -1951,7 +2172,7 @@ describe("createSatRoundWatcherService", () => {
 
     expect(runSatGatewayMethod.mock.calls.map((call) => call[0]?.method)).toEqual([
       "sat.setActiveCommit",
-      "sat.submitCycle",
+      "sat.commitCycle",
     ]);
     const setCommitCall = runSatGatewayMethod.mock.calls.find(
       (call) => call[0]?.method === "sat.setActiveCommit",
@@ -1963,7 +2184,7 @@ describe("createSatRoundWatcherService", () => {
     await service.stop?.();
   });
 
-  it("skips submit when live free capital cannot cover commit plus erosion", async () => {
+  it("skips submit when live free capital cannot cover commit plus reveal collateral", async () => {
     const config = {
       enabled: true,
       network: "devnet" as const,
@@ -1972,11 +2193,11 @@ describe("createSatRoundWatcherService", () => {
       commitLamports: 250_000_000,
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     inspectSatMinerCapital
       .mockResolvedValueOnce({
         address: "capital",
-        authority: "authority-1",
+        authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
         fundedLamports: "300000000",
         lockedLamports: "0",
         freeLamports: "300000000",
@@ -1984,7 +2205,7 @@ describe("createSatRoundWatcherService", () => {
       })
       .mockResolvedValueOnce({
         address: "capital",
-        authority: "authority-1",
+        authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
         fundedLamports: "300000000",
         lockedLamports: "0",
         freeLamports: "300000000",
@@ -1992,7 +2213,7 @@ describe("createSatRoundWatcherService", () => {
       })
       .mockResolvedValueOnce({
         address: "capital",
-        authority: "authority-1",
+        authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
         fundedLamports: "250000000",
         lockedLamports: "0",
         freeLamports: "250000000",
@@ -2000,7 +2221,7 @@ describe("createSatRoundWatcherService", () => {
       })
       .mockResolvedValueOnce({
         address: "capital",
-        authority: "authority-1",
+        authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
         fundedLamports: "250000000",
         lockedLamports: "0",
         freeLamports: "250000000",
@@ -2015,9 +2236,11 @@ describe("createSatRoundWatcherService", () => {
     await service.start();
 
     expect(
-      runSatGatewayMethod.mock.calls.filter((call) => call[0]?.method === "sat.submitCycle"),
+      runSatGatewayMethod.mock.calls.filter((call) => call[0]?.method === "sat.commitCycle"),
     ).toHaveLength(0);
-    expect(state.workers.roundWatcher.waitingReason).toContain("cover commit plus erosion");
+    expect(state.workers.roundWatcher.waitingReason).toContain(
+      "cover commit plus worst-case reveal collateral",
+    );
 
     await service.stop?.();
   });
@@ -2031,11 +2254,11 @@ describe("createSatRoundWatcherService", () => {
       commitLamports: 5_650_000_000,
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     inspectSatMinerCapital
       .mockResolvedValueOnce({
         address: "capital",
-        authority: "authority-1",
+        authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
         fundedLamports: "13887000000",
         lockedLamports: "8225000000",
         freeLamports: "5662000000",
@@ -2045,7 +2268,7 @@ describe("createSatRoundWatcherService", () => {
       })
       .mockResolvedValueOnce({
         address: "capital",
-        authority: "authority-1",
+        authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
         fundedLamports: "13887000000",
         lockedLamports: "8225000000",
         freeLamports: "5662000000",
@@ -2055,7 +2278,7 @@ describe("createSatRoundWatcherService", () => {
       })
       .mockResolvedValueOnce({
         address: "capital",
-        authority: "authority-1",
+        authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
         fundedLamports: "13887000000",
         lockedLamports: "8225000000",
         freeLamports: "5662000000",
@@ -2065,7 +2288,7 @@ describe("createSatRoundWatcherService", () => {
       })
       .mockResolvedValueOnce({
         address: "capital",
-        authority: "authority-1",
+        authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
         fundedLamports: "13887000000",
         lockedLamports: "8225000000",
         freeLamports: "5662000000",
@@ -2083,13 +2306,13 @@ describe("createSatRoundWatcherService", () => {
 
     expect(runSatGatewayMethod.mock.calls.map((call) => call[0]?.method)).toEqual([
       "sat.setActiveCommit",
-      "sat.submitCycle",
+      "sat.commitCycle",
     ]);
     const setCommitCall = runSatGatewayMethod.mock.calls.find(
       (call) => call[0]?.method === "sat.setActiveCommit",
     );
     expect(setCommitCall?.[0]?.payload).toMatchObject({
-      lamports: 5400000000,
+      lamports: 5350000000,
       persistConfig: false,
     });
 
@@ -2105,10 +2328,10 @@ describe("createSatRoundWatcherService", () => {
       commitLamports: 9_970_000_000,
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     inspectSatMinerCapital.mockResolvedValue({
       address: "capital",
-      authority: "authority-1",
+      authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
       fundedLamports: "9968550788",
       lockedLamports: "250000000",
       freeLamports: "9718550788",
@@ -2126,13 +2349,13 @@ describe("createSatRoundWatcherService", () => {
 
     expect(runSatGatewayMethod.mock.calls.map((call) => call[0]?.method)).toEqual([
       "sat.setActiveCommit",
-      "sat.submitCycle",
+      "sat.commitCycle",
     ]);
     const setCommitCall = runSatGatewayMethod.mock.calls.find(
       (call) => call[0]?.method === "sat.setActiveCommit",
     );
     expect(setCommitCall?.[0]?.payload).toMatchObject({
-      lamports: 9445000000,
+      lamports: 9370000000,
       persistConfig: false,
     });
 
@@ -2148,10 +2371,10 @@ describe("createSatRoundWatcherService", () => {
       commitLamports: 9_695_000_000,
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "authority-1";
+    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
     inspectSatMinerCapital.mockResolvedValue({
       address: "capital",
-      authority: "authority-1",
+      authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
       fundedLamports: "9968897560",
       lockedLamports: "9695000000",
       freeLamports: "273897560",
@@ -2169,7 +2392,7 @@ describe("createSatRoundWatcherService", () => {
 
     expect(runSatGatewayMethod.mock.calls.map((call) => call[0]?.method)).toEqual([
       "sat.setActiveCommit",
-      "sat.submitCycle",
+      "sat.commitCycle",
     ]);
     const setCommitCall = runSatGatewayMethod.mock.calls.find(
       (call) => call[0]?.method === "sat.setActiveCommit",

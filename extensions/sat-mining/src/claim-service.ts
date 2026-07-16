@@ -51,6 +51,41 @@ const SAT_CLAIM_IDLE_INTERVAL_MS = 60_000;
 const SAT_CLAIM_ACTIVE_INTERVAL_MS = 15_000;
 const SAT_CLAIM_PENDING_WAIT_INTERVAL_MS = 45_000;
 const SAT_TOKEN_DECIMALS = 11;
+
+type SatClaimGatewayResult = {
+  ok?: boolean;
+  payload?: {
+    resolvedCycleIds?: number[];
+    pendingCycleIds?: number[];
+  };
+};
+
+function resolveClaimGatewayCompletion(
+  result: SatClaimGatewayResult,
+  requestedCycleIds: readonly number[],
+): { resolvedCycleIds: number[]; pendingCycleIds: number[] } {
+  const requested = new Set(requestedCycleIds);
+  const hasExplicitCompletion =
+    Array.isArray(result.payload?.resolvedCycleIds) ||
+    Array.isArray(result.payload?.pendingCycleIds);
+  if (!hasExplicitCompletion) {
+    return { resolvedCycleIds: [...requested], pendingCycleIds: [] };
+  }
+  const resolvedCycleIds = [
+    ...new Set(
+      (result.payload?.resolvedCycleIds ?? []).filter((cycleId) => requested.has(cycleId)),
+    ),
+  ];
+  const resolved = new Set(resolvedCycleIds);
+  const explicitPending = new Set(
+    (result.payload?.pendingCycleIds ?? []).filter((cycleId) => requested.has(cycleId)),
+  );
+  const pendingCycleIds = [...requested].filter(
+    (cycleId) => !resolved.has(cycleId) || explicitPending.has(cycleId),
+  );
+  return { resolvedCycleIds, pendingCycleIds };
+}
+
 function resolveClaimNextDelayMs(hasPendingWork: boolean): number {
   return hasPendingWork ? SAT_CLAIM_PENDING_WAIT_INTERVAL_MS : SAT_CLAIM_IDLE_INTERVAL_MS;
 }
@@ -520,11 +555,11 @@ async function collectResolvedInvalidOwnerClaimCycles(params: {
       resolved.push(cycleId);
       continue;
     }
-    const claimedSat = BigInt(minerCycle.claimedSatRaw ?? "0");
-    const claimedRebate =
-      BigInt(minerCycle.claimedDetRebateLamports ?? "0") +
-      BigInt(minerCycle.claimedPerfRebateLamports ?? "0");
-    if (minerCycle.capitalLockReleased && (claimedSat > 0n || claimedRebate > 0n)) {
+    const claimableSat = BigInt(minerCycle.claimableSatRaw ?? "0");
+    const claimableRebate =
+      BigInt(minerCycle.claimableDetRebateLamports ?? "0") +
+      BigInt(minerCycle.claimablePerfRebateLamports ?? "0");
+    if (minerCycle.capitalLockReleased && claimableSat === 0n && claimableRebate === 0n) {
       resolved.push(cycleId);
     }
   }
@@ -766,18 +801,34 @@ export function createSatClaimService(params: {
         return;
       }
       markSatClaimBacklogClaiming(state, readyCycleIds);
-      await runSatGatewayMethod({
+      const result = await runSatGatewayMethod<SatClaimGatewayResult>({
         api,
         method: "sat.claimCycleRewardsBatch",
         payload: { cycleIds: readyCycleIds },
       });
-      for (const cycleId of readyCycleIds) {
+      const completion = resolveClaimGatewayCompletion(result, readyCycleIds);
+      for (const cycleId of completion.resolvedCycleIds) {
         const execution = getOrCreateRoundExecutionState(state, cycleId, 0);
         execution.claimSubmitted = true;
       }
-      markSatClaimBacklogClaimed(state, readyCycleIds);
+      for (const cycleId of completion.pendingCycleIds) {
+        const execution = getOrCreateRoundExecutionState(state, cycleId, 0);
+        execution.claimSubmitted = false;
+      }
+      markSatClaimBacklogClaimed(state, completion.resolvedCycleIds);
+      markSatClaimBacklogReady(
+        state,
+        completion.pendingCycleIds,
+        "bounded SAT claim chunk submitted; rewards remain claimable",
+      );
       await maybeAutoSweepClaimedSat({ api, state });
-      markWorkerSuccess(state, "claim", `cycles ${readyCycleIds.join(",")} claimed`);
+      markWorkerSuccess(
+        state,
+        "claim",
+        completion.pendingCycleIds.length > 0
+          ? `claim chunk confirmed; cycles ${completion.pendingCycleIds.join(",")} still have rewards`
+          : `cycles ${completion.resolvedCycleIds.join(",")} claimed`,
+      );
       scheduleWorkerNextRun(state, "claim", SAT_CLAIM_ACTIVE_INTERVAL_MS);
     } catch (error) {
       if (isSatServiceReadTimeoutError(error)) {

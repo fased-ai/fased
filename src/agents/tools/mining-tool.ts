@@ -556,7 +556,11 @@ For scheduled or conditional automation, create a scheduled task whose isolated 
             }),
           );
         case "reserve_top_up":
-          return jsonResult(await callGateway("sat.bootstrapRegistryReserve", gatewayOpts, {}));
+          return jsonResult(
+            await callGateway("sat.topUpRegistryReserve", gatewayOpts, {
+              targetBalanceLamports: 0,
+            }),
+          );
         case "deposit_capital":
           return jsonResult(
             await callGateway("sat.depositMinerCapital", gatewayOpts, {

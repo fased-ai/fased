@@ -90,13 +90,16 @@ import {
   plannerPolicyVersion,
   scorePlannerOutcome,
 } from "./src/planner-policy.js";
+import { SAT_PROTOCOL_CONSTANTS } from "./src/protocol-contract.js";
 import { createSatRecoveryService } from "./src/recovery-service.js";
 import { readSatValidatorArtifact, recomputeSatValidatorArtifact } from "./src/replay.js";
 import { createSatRoundWatcherService } from "./src/round-watcher.js";
 import {
   invalidateSatReadCaches,
+  inspectSatCycle,
   inspectSatEpoch,
   inspectSatClaimReceipt,
+  inspectSatBondStakingDistributor,
   inspectCurrentSatRoundBucket,
   inspectSatMinerCapitalAccountStatus,
   inspectSatMinerCycleByAddress,
@@ -133,31 +136,37 @@ import {
   withSatServiceReadTimeout,
 } from "./src/service-read-timeout.js";
 import {
-  submitSatBootstrap,
   submitSatClaimProtocolDistributorSat,
   submitSatClaimProtocolTreasury,
+  submitSatClaimUnallocatedStakingRewards,
   submitSatClaimCycleRewards,
   submitSatClaimCycleRewardsBatch,
+  submitSatAbortEmptyCycle,
   submitSatCompactPendingCycleRange,
   submitSatCloseResolvedCycleArtifacts,
   submitSatCloseResolvedCleanupBatch,
   submitSatCloseResolvedCycleRegistryPage,
   submitSatCloseResolvedMinerCycleState,
-  submitSatCycle,
+  submitSatCloseCommitPhase,
+  submitSatCommitCycle,
   submitSatDepositMinerCapital,
   submitSatFinalizeCycleSettlement,
   submitSatInitMinerCapital,
   submitSatOpenCycle,
   submitSatOpenDispute,
+  submitSatReleaseUnrevealedCommit,
   submitSatRepublishEpochRoots,
+  submitSatRevealCycle,
   submitSatRefillRegistryReserveFromTreasury,
   submitSatScoreCyclePage,
   submitSatSetActiveCommit,
-  submitSatSetProtocolRecipients,
+  submitSatSealCycleEntropy,
+  submitSatTopUpRegistryReserve,
   submitSatRetargetUnlock,
   submitSatResolveDispute,
   submitSatDistributeCyclePage,
   submitSatSettleCyclePage,
+  submitSatSyncBondStakingRewards,
   submitSatWithdrawMinerCapital,
   resolveSatValidatorAuthority,
   submitSatValidatorAttestation,
@@ -2037,7 +2046,7 @@ const satMiningPlugin = {
         "depositMinerCapital",
         "withdrawMinerCapital",
         "setActiveCommit",
-        "bootstrapRegistryReserve",
+        "topUpRegistryReserve",
         "openCycle",
         "submitCycle",
         "claimCycleRewards",
@@ -2051,6 +2060,7 @@ const satMiningPlugin = {
     const isInternalSatMaintenanceAction = (action: string | null | undefined) =>
       new Set([
         "bootstrapRegistryReserve",
+        "topUpRegistryReserve",
         "openCycle",
         "setActiveCommit",
         "closeResolvedMinerCycleState",
@@ -2928,6 +2938,7 @@ const satMiningPlugin = {
       cycleId?: number | null;
       txHash: string | null;
       status: "success" | "failure";
+      complete?: boolean;
       message?: string | null;
     }) => {
       mergeRecentActionTail([
@@ -2985,6 +2996,34 @@ const satMiningPlugin = {
         })),
       );
       void persistRecentActions();
+    };
+    const markClaimActionResult = (params: {
+      action: "claimCycleRewards" | "claimCycleRewardsBatch";
+      txHash: string | null | undefined;
+      cycleIds: readonly number[];
+      resolvedCycleIds: readonly number[];
+    }) => {
+      invalidateMiningReadCaches();
+      state.lastAction = params.action;
+      state.lastActionTxHash = params.txHash ?? null;
+      state.lastFailure = null;
+      const resolved = new Set(params.resolvedCycleIds);
+      const actionAt = new Date().toISOString();
+      mergeRecentActionTail(
+        [...new Set(params.cycleIds)]
+          .filter((cycleId) => Number.isFinite(cycleId) && cycleId >= 0)
+          .map((cycleId) => ({
+            action: params.action,
+            cycleId,
+            txHash: params.txHash ?? null,
+            status: "success" as const,
+            complete: resolved.has(cycleId),
+            message: resolved.has(cycleId)
+              ? "Cycle rewards fully claimed."
+              : "Bounded SAT claim chunk submitted; rewards remain claimable.",
+            at: actionAt,
+          })),
+      );
     };
     const markActionFailure = (action: string, error: unknown, cycleId?: number | null) => {
       const message = sanitizeMiningActionMessage(error);
@@ -3121,18 +3160,60 @@ const satMiningPlugin = {
         const claimableRebate =
           BigInt(minerCycle.claimableDetRebateLamports ?? "0") +
           BigInt(minerCycle.claimablePerfRebateLamports ?? "0");
-        const claimedSat = BigInt(minerCycle.claimedSatRaw ?? "0");
-        const claimedRebate =
-          BigInt(minerCycle.claimedDetRebateLamports ?? "0") +
-          BigInt(minerCycle.claimedPerfRebateLamports ?? "0");
-        if (
-          minerCycle.capitalLockReleased &&
-          (claimedSat > 0n || claimedRebate > 0n || (claimableSat === 0n && claimableRebate === 0n))
-        ) {
+        if (minerCycle.capitalLockReleased && claimableSat === 0n && claimableRebate === 0n) {
           resolved.push(cycleId);
         }
       }
       return resolved;
+    };
+    const resolveClaimCompletion = async (cycleIds: readonly number[]) => {
+      const authority = state.activeWalletAddress;
+      if (!authority) {
+        throw new Error("Mining wallet authority is unavailable after claim confirmation.");
+      }
+      invalidateMiningReadCaches();
+      const resolvedCycleIds: number[] = [];
+      const pendingCycleIds: number[] = [];
+      for (const cycleId of [...new Set(cycleIds)]) {
+        const minerCycle = await satOps
+          .inspectSatMinerCycle(state.activeConfig, { authority, cycleId })
+          .catch(() => null);
+        const claimableSat = BigInt(minerCycle?.claimableSatRaw ?? "0");
+        const claimableRebate =
+          BigInt(minerCycle?.claimableDetRebateLamports ?? "0") +
+          BigInt(minerCycle?.claimablePerfRebateLamports ?? "0");
+        if (
+          minerCycle?.capitalLockReleased === true &&
+          claimableSat === 0n &&
+          claimableRebate === 0n
+        ) {
+          resolvedCycleIds.push(cycleId);
+        } else {
+          pendingCycleIds.push(cycleId);
+        }
+      }
+      return { resolvedCycleIds, pendingCycleIds };
+    };
+    const applyClaimCompletion = (params: {
+      action: "claimCycleRewards" | "claimCycleRewardsBatch";
+      txHash: string | null | undefined;
+      cycleIds: readonly number[];
+      resolvedCycleIds: readonly number[];
+      pendingCycleIds: readonly number[];
+    }) => {
+      for (const cycleId of params.resolvedCycleIds) {
+        getOrCreateRoundExecutionState(state, cycleId, 0).claimSubmitted = true;
+      }
+      for (const cycleId of params.pendingCycleIds) {
+        getOrCreateRoundExecutionState(state, cycleId, 0).claimSubmitted = false;
+      }
+      markSatClaimBacklogClaimed(state, params.resolvedCycleIds, params.txHash);
+      markSatClaimBacklogReady(
+        state,
+        params.pendingCycleIds,
+        "bounded SAT claim chunk submitted; rewards remain claimable",
+      );
+      markClaimActionResult(params);
     };
     const capturePendingPlannerCycle = async (cycleId: number): Promise<void> => {
       const plannerSnapshot =
@@ -3234,7 +3315,10 @@ const satMiningPlugin = {
         }
       }
       for (const execution of state.roundExecution.values()) {
-        if (execution.participationSubmitted && !execution.claimSubmitted) {
+        if (
+          (execution.commitSubmitted || execution.participationSubmitted) &&
+          !execution.claimSubmitted
+        ) {
           return true;
         }
       }
@@ -3242,7 +3326,12 @@ const satMiningPlugin = {
         if (entry.status !== "success" || typeof entry.cycleId !== "number" || entry.cycleId <= 0) {
           return false;
         }
-        if (entry.action !== "openCycle" && entry.action !== "submitCycle") {
+        if (
+          entry.action !== "openCycle" &&
+          entry.action !== "submitCycle" &&
+          entry.action !== "commitCycle" &&
+          entry.action !== "revealCycle"
+        ) {
           return false;
         }
         return !hasSuccessfulClaimOrCloseRecentAction(entry.cycleId);
@@ -3288,6 +3377,7 @@ const satMiningPlugin = {
         strategyExecution:
           state.activeConfig.strategyExecution ??
           strategyModeToExecution(state.activeConfig.strategyMode),
+        cycleCadence: state.activeConfig.cycleCadence ?? 1,
         claimMode: "auto",
         payout: state.activeConfig.payout ?? true,
         strategyMode: state.activeConfig.strategyMode ?? "base",
@@ -3392,6 +3482,10 @@ const satMiningPlugin = {
       state.activeConfig.strategyExecution = strategyModeToExecution(
         state.activeConfig.strategyMode,
       );
+      state.activeConfig.cycleCadence =
+        profile.cycleCadence === 2 || profile.cycleCadence === 6 || profile.cycleCadence === 12
+          ? profile.cycleCadence
+          : 1;
       state.activeConfig.claimMode = "auto";
       state.activeConfig.payout =
         typeof profile.payout === "boolean" ? profile.payout : state.activeConfig.payout;
@@ -4235,13 +4329,13 @@ const satMiningPlugin = {
               ? "SAT miner capital account has an invalid owner"
               : "Fund Mining capital first"
             : capitalFreeLamports >= capitalEntryThreshold
-              ? "Meets 0.25 SOL funded minimum entry"
-              : "Below 0.25 SOL funded minimum entry",
+              ? "Meets 0.25 SOL minimum eligibility capital"
+              : "Below 0.25 SOL minimum eligibility capital",
           remediation: !minerCapitalInitialized
             ? minerCapitalRemediation
             : capitalFreeLamports >= capitalEntryThreshold
               ? undefined
-              : "Deposit at least 0.25 SOL into miner capital to participate in SAT cycles.",
+              : "Deposit at least 0.25 SOL plus reveal collateral into miner capital to participate in SAT cycles.",
         },
         {
           key: "ataReady",
@@ -4471,7 +4565,9 @@ const satMiningPlugin = {
           return undefined;
         }
       })();
-      const totalCommittedLamports = currentExecution?.participationSubmitted ? 250_000_000 : 0;
+      const totalCommittedLamports = currentExecution?.commitSubmitted
+        ? (currentExecution.commitLamports ?? 250_000_000)
+        : 0;
       const unlockRatio = Math.min(1, totalCommittedLamports / currentUnlockTargetLamports);
       const claimableSatRaw = snapshot.walletEpoch
         ? (
@@ -4481,7 +4577,11 @@ const satMiningPlugin = {
         : undefined;
       const slashPenaltyOwed = BigInt(snapshot.stake?.slashPenaltyOwed ?? "0");
       const hasClaimableSat = claimableSatRaw ? BigInt(claimableSatRaw) > 0n : false;
-      const lastParticipation = latestRecentAction("submitCycle");
+      const lastParticipation = latestRecentActionAny([
+        "revealCycle",
+        "commitCycle",
+        "submitCycle",
+      ]);
       const lastMiningCrank =
         latestRecentAction("distributeCyclePage") ??
         latestRecentAction("scoreCyclePage") ??
@@ -4620,6 +4720,8 @@ const satMiningPlugin = {
         (action) =>
           action.status === "success" &&
           (action.action === "submitCycle" ||
+            action.action === "commitCycle" ||
+            action.action === "revealCycle" ||
             action.action === "setActiveCommit" ||
             action.action === "depositCapital" ||
             action.action === "withdrawCapital" ||
@@ -4636,6 +4738,8 @@ const satMiningPlugin = {
         (state.running ||
           state.activeConfig.enabled ||
           state.activeConfig.drainOnly ||
+          currentExecution?.commitSubmitted ||
+          previousExecution?.commitSubmitted ||
           currentExecution?.participationSubmitted ||
           previousExecution?.participationSubmitted ||
           hasPositiveLamportsValue(cachedStatus?.currentCapitalFundedLamports) ||
@@ -4654,6 +4758,39 @@ const satMiningPlugin = {
         globalState?.minimumEntryLamports ??
         "250000000";
       const cycleErosionPpm = resolveSatEffectiveCycleErosionPpm(globalState);
+      const cycleCadence = state.activeConfig.cycleCadence ?? 1;
+      const runway = (() => {
+        try {
+          const funded = BigInt(currentCapitalFundedLamports);
+          const commit = BigInt(activeCommitLamports);
+          const erosion = (commit * cycleErosionPpm) / 1_000_000n;
+          const missedRevealPenalty =
+            (commit * BigInt(SAT_PROTOCOL_CONSTANTS.cycleNonRevealPenaltyBps)) / 10_000n;
+          const collateral = missedRevealPenalty > erosion ? missedRevealPenalty : erosion;
+          const requiredToEnter = commit + collateral;
+          const participations =
+            funded < requiredToEnter
+              ? 0n
+              : erosion === 0n
+                ? null
+                : (funded - requiredToEnter) / erosion + 1n;
+          const calendarCycles =
+            participations == null ? null : participations * BigInt(cycleCadence);
+          const days =
+            calendarCycles == null
+              ? null
+              : Number(calendarCycles * BigInt(SAT_CYCLE_SECONDS)) / 86_400;
+          return {
+            commitCollateralLamports: collateral.toString(),
+            estimatedParticipations: participations?.toString() ?? null,
+            estimatedCalendarCycles: calendarCycles?.toString() ?? null,
+            estimatedDays: days,
+            excludesNetworkFees: true,
+          };
+        } catch {
+          return null;
+        }
+      })();
       const liveCycleErosionLamports = (() => {
         try {
           return ((BigInt(liveCycleCommittedLamports) * cycleErosionPpm) / 1_000_000n).toString();
@@ -4776,7 +4913,7 @@ const satMiningPlugin = {
       const liveCycleTotalCommittedLamports =
         currentCycleState?.totalCommittedLamports ??
         currentMinerCycleState?.committedLamports ??
-        (currentExecution?.participationSubmitted ? liveCycleCommittedLamports : null);
+        (currentExecution?.commitSubmitted ? liveCycleCommittedLamports : null);
       const liveCycleUnlockTargetLamports =
         currentCycleState?.unlockTargetLamports ?? globalState?.currentUnlockSolLamports ?? null;
       const liveCycleUnlockRatioFp =
@@ -4830,10 +4967,10 @@ const satMiningPlugin = {
       const latestSettledCycleId = settledHistory[0]?.cycleId ?? null;
       const latestSubmittedCycleId = (() => {
         const cycleIds = new Set<number>();
-        if (currentExecution?.participationSubmitted) {
+        if (currentExecution?.commitSubmitted || currentExecution?.participationSubmitted) {
           cycleIds.add(currentCycleId);
         }
-        if (previousExecution?.participationSubmitted) {
+        if (previousExecution?.commitSubmitted || previousExecution?.participationSubmitted) {
           cycleIds.add(previousCycleId);
         }
         for (const pendingCycleId of pendingCycleIds) {
@@ -4842,7 +4979,9 @@ const satMiningPlugin = {
         for (const entry of allUserFacingRecentActions) {
           if (
             entry.status === "success" &&
-            entry.action === "submitCycle" &&
+            (entry.action === "submitCycle" ||
+              entry.action === "commitCycle" ||
+              entry.action === "revealCycle") &&
             typeof entry.cycleId === "number" &&
             Number.isFinite(entry.cycleId)
           ) {
@@ -5092,6 +5231,8 @@ const satMiningPlugin = {
         strategyExecution:
           state.activeConfig.strategyExecution ??
           strategyModeToExecution(state.activeConfig.strategyMode),
+        cycleCadence,
+        runway,
         strategyMode: state.activeConfig.strategyMode ?? "base",
         network: state.activeConfig.network,
         riskMode: state.activeConfig.riskMode,
@@ -6679,46 +6820,18 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.bootstrapRegistryReserve", async ({ params, respond }) => {
+    api.registerGatewayMethod("sat.topUpRegistryReserve", async ({ params, respond }) => {
       try {
-        const authority =
-          typeof (params as { authority?: string })?.authority === "string"
-            ? String((params as { authority?: string }).authority).trim()
-            : (state.activeWalletAddress ?? "");
-        const initialStake =
-          typeof (params as { initialStake?: number })?.initialStake === "number"
-            ? Number((params as { initialStake?: number }).initialStake)
-            : 0;
-        const submitted = await submitSatBootstrap(state.activeConfig, {
-          authority,
-          initialStake,
+        const targetBalanceLamports = Number(
+          (params as { targetBalanceLamports?: number })?.targetBalanceLamports ?? 0,
+        );
+        const submitted = await submitSatTopUpRegistryReserve(state.activeConfig, {
+          targetBalanceLamports,
         });
-        markActionSuccess("bootstrapRegistryReserve", submitted.txHash, null);
+        markActionSuccess("topUpRegistryReserve", submitted.txHash, null);
         respond(true, jsonOk({ submitted, status: await getMiningStatus() }));
       } catch (error) {
-        markActionFailure("bootstrapRegistryReserve", error, null);
-        respondGatewayError(respond, error);
-      }
-    });
-
-    api.registerGatewayMethod("sat.setProtocolRecipients", async ({ params, respond }) => {
-      try {
-        const treasuryRecipient =
-          typeof (params as { treasuryRecipient?: string })?.treasuryRecipient === "string"
-            ? String((params as { treasuryRecipient?: string }).treasuryRecipient).trim()
-            : "";
-        const distributorRecipient =
-          typeof (params as { distributorRecipient?: string })?.distributorRecipient === "string"
-            ? String((params as { distributorRecipient?: string }).distributorRecipient).trim()
-            : "";
-        const submitted = await submitSatSetProtocolRecipients(state.activeConfig, {
-          treasuryRecipient,
-          distributorRecipient,
-        });
-        markActionSuccess("setProtocolRecipients", submitted.txHash, null);
-        respond(true, jsonOk({ submitted, status: await getMiningStatus() }));
-      } catch (error) {
-        markActionFailure("setProtocolRecipients", error, null);
+        markActionFailure("topUpRegistryReserve", error, null);
         respondGatewayError(respond, error);
       }
     });
@@ -6891,18 +7004,20 @@ const satMiningPlugin = {
       };
       const readFresh = async () => {
         invalidateSatReadCaches();
-        const [global, treasuryState, registryReserve, rent] = await Promise.all([
-          satOps.inspectSatGlobalState(state.activeConfig).catch(() => null),
-          satOps.inspectSatTreasuryState(state.activeConfig).catch(() => null),
-          satOps.inspectSatRegistryReserveLamports(state.activeConfig).catch(() => null),
-          satOps.inspectSatRentExemptionLamports(state.activeConfig).catch(() => null),
-        ]);
+        const [global, treasuryState, registryReserve, rent, stakingDistributor] =
+          await Promise.all([
+            satOps.inspectSatGlobalState(state.activeConfig).catch(() => null),
+            satOps.inspectSatTreasuryState(state.activeConfig).catch(() => null),
+            satOps.inspectSatRegistryReserveLamports(state.activeConfig).catch(() => null),
+            satOps.inspectSatRentExemptionLamports(state.activeConfig).catch(() => null),
+            inspectSatBondStakingDistributor(state.activeConfig).catch(() => null),
+          ]);
         const target =
           targetBalanceLamports !== undefined
             ? BigInt(targetBalanceLamports)
             : BigInt(rent?.registryReserveTargetLamports ?? "200000000");
         const reserve = BigInt(registryReserve?.lamports ?? "0");
-        return { global, treasuryState, registryReserve, target, reserve };
+        return { global, treasuryState, registryReserve, stakingDistributor, target, reserve };
       };
       const buildLaneSummary = () => {
         const lanes: Record<
@@ -6955,6 +7070,7 @@ const satMiningPlugin = {
           pendingTreasurySatRaw: snapshot.treasuryState?.pendingTreasurySatRaw ?? "0",
           pendingTreasurySolLamports: snapshot.treasuryState?.pendingTreasurySolLamports ?? "0",
           pendingDistributorSatRaw: snapshot.treasuryState?.pendingDistributorSatRaw ?? "0",
+          unallocatedStakingRewardRaw: snapshot.stakingDistributor?.unallocatedRewardRaw ?? "0",
           cleanup: cleanupSummary,
           lanes: buildLaneSummary(),
           updatedAt: new Date().toISOString(),
@@ -7025,6 +7141,60 @@ const satMiningPlugin = {
           pushSubmitted({
             lane: "distributor",
             action: "claimProtocolDistributorSat",
+            skipped: "no-recipient-or-below-threshold",
+          });
+        }
+
+        // Protocol rewards are recorded atomically by the mining claim CPI.
+        // Any remaining vault delta is an unsolicited transfer and must be
+        // quarantined for the fixed treasury, never allocated to stakers.
+        const stakingRewardVaultRaw = BigInt(
+          snapshot.stakingDistributor?.rewardVaultBalanceRaw ?? "0",
+        );
+        const observedStakingRewardRaw = BigInt(
+          snapshot.stakingDistributor?.observedRewardVaultRaw ?? "0",
+        );
+        if (
+          snapshot.stakingDistributor?.statusLabel === "active" &&
+          stakingRewardVaultRaw > observedStakingRewardRaw &&
+          stakingRewardVaultRaw - observedStakingRewardRaw >= minSatRaw
+        ) {
+          const tx = await submitSatSyncBondStakingRewards(state.activeConfig);
+          pushSubmitted({
+            lane: "distributor",
+            action: "syncBondStakingRewards",
+            txHash: tx.txHash,
+          });
+          markActionSuccess("syncBondStakingRewards", tx.txHash, null);
+          snapshot = await readFresh();
+        } else {
+          pushSubmitted({
+            lane: "distributor",
+            action: "syncBondStakingRewards",
+            skipped: "no-unexpected-vault-balance-or-below-threshold",
+          });
+        }
+
+        const unallocatedTreasuryRecipient = snapshot.global?.treasuryRecipient;
+        if (
+          unallocatedTreasuryRecipient &&
+          unallocatedTreasuryRecipient !== defaultPubkey &&
+          BigInt(snapshot.stakingDistributor?.unallocatedRewardRaw ?? "0") >= minSatRaw
+        ) {
+          const tx = await submitSatClaimUnallocatedStakingRewards(state.activeConfig, {
+            recipientOwner: unallocatedTreasuryRecipient,
+          });
+          pushSubmitted({
+            lane: "treasury",
+            action: "claimUnallocatedStakingRewards",
+            txHash: tx.txHash,
+          });
+          markActionSuccess("claimUnallocatedStakingRewards", tx.txHash, null);
+          snapshot = await readFresh();
+        } else {
+          pushSubmitted({
+            lane: "treasury",
+            action: "claimUnallocatedStakingRewards",
             skipped: "no-recipient-or-below-threshold",
           });
         }
@@ -7253,35 +7423,144 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.submitCycle", async ({ params, respond }) => {
+    api.registerGatewayMethod("sat.commitCycle", async ({ params, respond }) => {
       const cycleId = Number((params as { cycleId?: number })?.cycleId ?? 0);
       try {
-        const allocationFp = Array.isArray((params as { allocationFp?: number[] })?.allocationFp)
-          ? ((params as { allocationFp?: number[] }).allocationFp ?? [])
-          : [];
-        const request = state.client.buildSubmitCycleRequest({
+        const commitmentHex = String(
+          (params as { commitmentHex?: string })?.commitmentHex ?? "",
+        ).trim();
+        if (!/^[0-9a-f]{64}$/i.test(commitmentHex)) {
+          throw new Error("cycle commitment must be a 32-byte hexadecimal digest");
+        }
+        const submitted = await submitSatCommitCycle(state.activeConfig, {
           cycleId,
-          allocationFp,
+          commitmentHex,
         });
-        const submitted = await submitSatCycle(state.activeConfig, request.params);
-        await capturePendingPlannerCycle(cycleId);
         if (Number.isFinite(cycleId) && cycleId >= 0) {
           const execution = getOrCreateRoundExecutionState(state, cycleId, 0);
           execution.openRoundSubmitted = true;
-          execution.participationSubmitted = true;
+          execution.commitSubmitted = true;
+          execution.commitmentHex = commitmentHex.toLowerCase();
         }
-        markActionSuccess("submitCycle", submitted.txHash, cycleId);
+        markActionSuccess("commitCycle", submitted.txHash, cycleId);
         await persistRecentActions();
-        respond(true, jsonOk({ request, submitted }));
+        respond(true, jsonOk({ submitted }));
       } catch (error) {
-        state.pendingPlannerCycles.delete(cycleId);
-        if (isCycleMismatchError(error)) {
-          respondGatewayError(respond, error);
-          return;
+        if (!isCycleMismatchError(error)) {
+          markActionFailure("commitCycle", error, cycleId);
         }
-        markActionFailure("submitCycle", error, cycleId);
         respondGatewayError(respond, error);
       }
+    });
+
+    api.registerGatewayMethod("sat.closeCommitPhase", async ({ params, respond }) => {
+      const cycleId = Number((params as { cycleId?: number })?.cycleId ?? 0);
+      try {
+        const submitted = await submitSatCloseCommitPhase(state.activeConfig, { cycleId });
+        invalidateMiningReadCaches();
+        getOrCreateRoundExecutionState(state, cycleId, 0).entropyTargetPinned = true;
+        markActionSuccess("closeCommitPhase", submitted.txHash, cycleId);
+        await persistRecentActions();
+        respond(true, jsonOk({ submitted }));
+      } catch (error) {
+        markActionFailure("closeCommitPhase", error, cycleId);
+        respondGatewayError(respond, error);
+      }
+    });
+
+    api.registerGatewayMethod("sat.sealCycleEntropy", async ({ params, respond }) => {
+      const cycleId = Number((params as { cycleId?: number })?.cycleId ?? 0);
+      try {
+        const cycle = await inspectSatCycle(state.activeConfig, { cycleId });
+        if (cycle.unlockIntervalStartCycleId == null) {
+          throw new Error(`cycle ${cycleId} does not expose its unlock interval start`);
+        }
+        const submitted = await submitSatSealCycleEntropy(state.activeConfig, {
+          cycleId,
+          intervalStartCycleId: cycle.unlockIntervalStartCycleId,
+        });
+        invalidateMiningReadCaches();
+        markActionSuccess("sealCycleEntropy", submitted.txHash, cycleId);
+        await persistRecentActions();
+        respond(true, jsonOk({ submitted }));
+      } catch (error) {
+        markActionFailure("sealCycleEntropy", error, cycleId);
+        respondGatewayError(respond, error);
+      }
+    });
+
+    api.registerGatewayMethod("sat.revealCycle", async ({ params, respond }) => {
+      const cycleId = Number((params as { cycleId?: number })?.cycleId ?? 0);
+      try {
+        const nonceBase64 = String((params as { nonceBase64?: string })?.nonceBase64 ?? "").trim();
+        const allocationFp = Array.isArray((params as { allocationFp?: number[] })?.allocationFp)
+          ? ((params as { allocationFp?: number[] }).allocationFp ?? [])
+          : [];
+        const cycle = await inspectSatCycle(state.activeConfig, { cycleId });
+        if (cycle.unlockIntervalStartCycleId == null) {
+          throw new Error(`cycle ${cycleId} does not expose its unlock interval start`);
+        }
+        const submitted = await submitSatRevealCycle(state.activeConfig, {
+          cycleId,
+          intervalStartCycleId: cycle.unlockIntervalStartCycleId,
+          nonceBase64,
+          allocationFp,
+        });
+        invalidateMiningReadCaches();
+        await capturePendingPlannerCycle(cycleId);
+        const execution = getOrCreateRoundExecutionState(state, cycleId, 0);
+        execution.openRoundSubmitted = true;
+        execution.commitSubmitted = true;
+        execution.participationSubmitted = true;
+        markActionSuccess("revealCycle", submitted.txHash, cycleId);
+        await persistRecentActions();
+        respond(true, jsonOk({ submitted }));
+      } catch (error) {
+        state.pendingPlannerCycles.delete(cycleId);
+        markActionFailure("revealCycle", error, cycleId);
+        respondGatewayError(respond, error);
+      }
+    });
+
+    api.registerGatewayMethod("sat.releaseUnrevealedCommit", async ({ params, respond }) => {
+      const cycleId = Number((params as { cycleId?: number })?.cycleId ?? 0);
+      try {
+        const minerAuthority = String(
+          (params as { minerAuthority?: string })?.minerAuthority ?? "",
+        ).trim();
+        const submitted = await submitSatReleaseUnrevealedCommit(state.activeConfig, {
+          cycleId,
+          minerAuthority,
+        });
+        invalidateMiningReadCaches();
+        markActionSuccess("releaseUnrevealedCommit", submitted.txHash, cycleId);
+        await persistRecentActions();
+        respond(true, jsonOk({ submitted }));
+      } catch (error) {
+        markActionFailure("releaseUnrevealedCommit", error, cycleId);
+        respondGatewayError(respond, error);
+      }
+    });
+
+    api.registerGatewayMethod("sat.abortEmptyCycle", async ({ params, respond }) => {
+      const cycleId = Number((params as { cycleId?: number })?.cycleId ?? 0);
+      try {
+        const submitted = await submitSatAbortEmptyCycle(state.activeConfig, { cycleId });
+        invalidateMiningReadCaches();
+        markActionSuccess("abortEmptyCycle", submitted.txHash, cycleId);
+        await persistRecentActions();
+        respond(true, jsonOk({ submitted }));
+      } catch (error) {
+        markActionFailure("abortEmptyCycle", error, cycleId);
+        respondGatewayError(respond, error);
+      }
+    });
+
+    api.registerGatewayMethod("sat.submitCycle", async ({ respond }) => {
+      respondGatewayError(
+        respond,
+        new Error("public allocation submission is retired; update Fased to use commit/reveal"),
+      );
     });
 
     api.registerGatewayMethod("sat.settleCyclePage", async ({ params, respond }) => {
@@ -7411,15 +7690,16 @@ const satMiningPlugin = {
       try {
         const request = state.client.buildClaimCycleRewardsRequest({ cycleId });
         const submitted = await submitSatClaimCycleRewards(state.activeConfig, request.params);
-        if (Number.isFinite(cycleId) && cycleId >= 0) {
-          const execution = getOrCreateRoundExecutionState(state, cycleId, 0);
-          execution.claimSubmitted = true;
-        }
-        markSatClaimBacklogClaimed(state, [cycleId], submitted.txHash);
-        markActionSuccess("claimCycleRewards", submitted.txHash, cycleId);
+        const completion = await resolveClaimCompletion([cycleId]);
+        applyClaimCompletion({
+          action: "claimCycleRewards",
+          txHash: submitted.txHash,
+          cycleIds: [cycleId],
+          ...completion,
+        });
         await persistRecentActions();
-        void capturePlannerOutcomesForCycles([cycleId], submitted.txHash);
-        respond(true, jsonOk({ request, submitted }));
+        void capturePlannerOutcomesForCycles(completion.resolvedCycleIds, submitted.txHash);
+        respond(true, jsonOk({ request, submitted, ...completion }));
       } catch (error) {
         markSatClaimBacklogFailure(state, [cycleId], error);
         markActionFailure("claimCycleRewards", error, cycleId);
@@ -7437,15 +7717,16 @@ const satMiningPlugin = {
       try {
         markSatClaimBacklogReady(state, cycleIds, "manual claim batch action");
         const submitted = await submitSatClaimCycleRewardsBatch(state.activeConfig, request.params);
-        for (const cycleId of cycleIds) {
-          const execution = getOrCreateRoundExecutionState(state, cycleId, 0);
-          execution.claimSubmitted = true;
-        }
-        markSatClaimBacklogClaimed(state, cycleIds, submitted.txHash);
-        markBatchActionSuccess("claimCycleRewardsBatch", submitted.txHash, cycleIds);
+        const completion = await resolveClaimCompletion(cycleIds);
+        applyClaimCompletion({
+          action: "claimCycleRewardsBatch",
+          txHash: submitted.txHash,
+          cycleIds,
+          ...completion,
+        });
         await persistRecentActions();
-        void capturePlannerOutcomesForCycles(cycleIds, submitted.txHash);
-        respond(true, jsonOk({ request, submitted }));
+        void capturePlannerOutcomesForCycles(completion.resolvedCycleIds, submitted.txHash);
+        respond(true, jsonOk({ request, submitted, ...completion }));
       } catch (error) {
         if (cycleIds.length > 0 && isInvalidAccountOwnerError(error)) {
           const resolvedCycleIds = await resolveClaimBatchInvalidOwnerCycles(cycleIds);
@@ -7512,19 +7793,21 @@ const satMiningPlugin = {
         }
         markSatClaimBacklogReady(state, cycleIds, "manual claim backlog action");
         const submitted = await submitSatClaimCycleRewardsBatch(state.activeConfig, request.params);
-        for (const cycleId of cycleIds) {
-          const execution = getOrCreateRoundExecutionState(state, cycleId, 0);
-          execution.claimSubmitted = true;
-        }
-        markSatClaimBacklogClaimed(state, cycleIds, submitted.txHash);
-        markBatchActionSuccess("claimCycleRewardsBatch", submitted.txHash, cycleIds);
+        const completion = await resolveClaimCompletion(cycleIds);
+        applyClaimCompletion({
+          action: "claimCycleRewardsBatch",
+          txHash: submitted.txHash,
+          cycleIds,
+          ...completion,
+        });
         await persistRecentActions();
-        void capturePlannerOutcomesForCycles(cycleIds, submitted.txHash);
+        void capturePlannerOutcomesForCycles(completion.resolvedCycleIds, submitted.txHash);
         respond(
           true,
           jsonOk({
             request,
             submitted,
+            ...completion,
             claimBacklog: buildSatClaimBacklogSummary(state),
           }),
         );

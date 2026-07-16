@@ -1,5 +1,5 @@
 {
-  "programId": "D1ySMMiJmvJRhJJKwYnc171w3g2JDPQnkgD8kGhaG4Vq",
+  "programId": "66pQjRgCB19xRQMgqepqRaHQMNnoTzKm7x2Thr7WcgRu",
   "accountName": "BondStakingPositionState",
   "accountHeaderSize": 8,
   "bodySize": 192,
@@ -16,6 +16,7 @@
     "activeStakeRaw": 80,
     "claimableRewardRaw": 88,
     "rewardDebtFp": 96,
-    "lastSyncedSlot": 112
+    "lastSyncedSlot": 112,
+    "fractionalRemainderFp": 120
   }
 }

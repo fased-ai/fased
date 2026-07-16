@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import type { FasedAgentPluginApi } from "fased/plugin-sdk";
 import { computeAutoPlannerDecision } from "./auto-planner.js";
 import { refreshSatChainTime } from "./chain-time.js";
@@ -9,16 +10,15 @@ import {
   hasSuccessfulClaimOrCloseRecord,
 } from "./cycle-progress.js";
 import { runSatGatewayMethod } from "./gateway-runner.js";
-import { SAT_PROTOCOL_CONSTANTS } from "./protocol-contract.js";
+import { resolveSatGenesisProfileContract, SAT_PROTOCOL_CONSTANTS } from "./protocol-contract.js";
 import {
   inspectSatCycle,
-  inspectSatCycleAccountExists,
   inspectSatCycleRegistryMeta,
+  inspectSatChainSlot,
   inspectSatGlobalState,
   inspectSatLamportBalance,
   inspectSatMinerCapital,
   inspectSatMinerCycle,
-  inspectSatMinerCycleAccountExists,
   inspectSatRegistryReserveLamports,
   inspectSatRentExemptionLamports,
   inspectSatTreasuryVaultLamports,
@@ -39,6 +39,7 @@ import {
   scheduleWorkerNextRun,
   type SatMiningRuntimeState,
 } from "./runtime.js";
+import { buildSatCycleCommitment } from "./solana-submit.js";
 import { computeMiningStrategy } from "./strategy-engine.js";
 import type { SatSkillLiveContext } from "./strategy-skill.js";
 
@@ -47,8 +48,6 @@ const SAT_CYCLE_EROSION_PPM = SAT_PROTOCOL_CONSTANTS.cycleErosionPpm;
 const SAT_MIN_ENTRY_LAMPORTS = SAT_PROTOCOL_CONSTANTS.minimumEntryLamports;
 const SAT_DEFAULT_RESERVE_LAMPORTS = 150_000_000n;
 const SAT_DEFAULT_FEE_BUFFER_LAMPORTS = 250_000n;
-const SAT_DEFAULT_REGISTRY_RESERVE_TARGET_LAMPORTS =
-  SAT_PROTOCOL_CONSTANTS.registryReserveTargetLamports;
 const SAT_MAX_PENDING_CYCLE_BACKLOG = 2;
 const SAT_CAPITAL_SAFETY_BUFFER_MIN_LAMPORTS = 100_000_000n;
 const SAT_CAPITAL_SAFETY_BUFFER_MAX_LAMPORTS = 1_000_000_000n;
@@ -258,6 +257,22 @@ function cycleErosionLamports(committedLamports: bigint, cycleErosionPpm: bigint
   return (committedLamports * cycleErosionPpm) / SAT_RATIO_FP_SCALE;
 }
 
+function cycleCommitCollateralLamports(committedLamports: bigint, cycleErosionPpm: bigint): bigint {
+  const erosion = cycleErosionLamports(committedLamports, cycleErosionPpm);
+  const nonRevealPenalty =
+    (committedLamports * BigInt(SAT_PROTOCOL_CONSTANTS.cycleNonRevealPenaltyBps)) / 10_000n;
+  return nonRevealPenalty > erosion ? nonRevealPenalty : erosion;
+}
+
+export function shouldParticipateInSatCycle(params: {
+  cycleId: number;
+  launchCycleId: number;
+  cadence: 1 | 2 | 6 | 12;
+}): boolean {
+  if (params.cycleId < params.launchCycleId) return false;
+  return (params.cycleId - params.launchCycleId) % params.cadence === 0;
+}
+
 function floorCommitToUsableFreeCapital(params: {
   desiredCommitLamports: bigint;
   freeCapitalLamports: bigint;
@@ -269,7 +284,7 @@ function floorCommitToUsableFreeCapital(params: {
   const retainedFreeLamports = params.retainedFreeLamports ?? 0n;
   while (commitLamports >= params.minimumEntryLamports) {
     const requiredLamports =
-      commitLamports + cycleErosionLamports(commitLamports, params.cycleErosionPpm);
+      commitLamports + cycleCommitCollateralLamports(commitLamports, params.cycleErosionPpm);
     if (requiredLamports + retainedFreeLamports <= params.freeCapitalLamports) {
       return commitLamports;
     }
@@ -324,13 +339,13 @@ function computeCapitalContinuityReserveLamports(params: {
   ) {
     return 0n;
   }
-  const minimumEntryWithErosion =
+  const minimumEntryWithCollateral =
     params.minimumEntryLamports +
-    cycleErosionLamports(params.minimumEntryLamports, params.cycleErosionPpm);
-  if (params.freeCapitalLamports < minimumEntryWithErosion * 2n) {
+    cycleCommitCollateralLamports(params.minimumEntryLamports, params.cycleErosionPpm);
+  if (params.freeCapitalLamports < minimumEntryWithCollateral * 2n) {
     return 0n;
   }
-  return minimumEntryWithErosion;
+  return minimumEntryWithCollateral;
 }
 
 export function createSatRoundWatcherService(params: {
@@ -370,7 +385,7 @@ export function createSatRoundWatcherService(params: {
     const treasuryVaultBalance = BigInt(treasuryVault?.lamports ?? "0");
     const reserveTarget = BigInt(
       rentExemption?.registryReserveTargetLamports ??
-        SAT_DEFAULT_REGISTRY_RESERVE_TARGET_LAMPORTS.toString(),
+        resolveSatGenesisProfileContract(state.activeConfig.network).registryReserveTargetLamports,
     );
     const protocolVaultLamports = BigInt(rentExemption?.protocolVaultLamports ?? "0");
     const openCycleLamports = params.needsOpenCycle
@@ -493,8 +508,8 @@ export function createSatRoundWatcherService(params: {
       try {
         await runSatGatewayMethod({
           api,
-          method: "sat.bootstrapRegistryReserve",
-          payload: {},
+          method: "sat.topUpRegistryReserve",
+          payload: { targetBalanceLamports: Number(targetReserveBalance) },
         });
       } catch (error) {
         if (isInsufficientLamportsError(error)) {
@@ -572,7 +587,7 @@ export function createSatRoundWatcherService(params: {
       markWorkerTarget(state, "roundWatcher", activeCycleId, "participation");
 
       const secondsUntilClose = cycleCloseTs(activeCycleId) - nowSec;
-      if (secondsUntilClose <= SUBMISSION_GUARD_SECONDS) {
+      if (secondsUntilClose <= SUBMISSION_GUARD_SECONDS && execution.commitSubmitted !== true) {
         markWorkerWaiting(
           state,
           "roundWatcher",
@@ -583,56 +598,141 @@ export function createSatRoundWatcherService(params: {
       }
 
       const authority = state.activeWalletAddress;
-      const localWatcherConfirmed = state.workers.roundWatcher.lastSuccessAt != null;
-      const localOpenRecorded =
-        localWatcherConfirmed ||
-        state.recentActions.some(
-          (entry) =>
-            entry.status === "success" &&
-            typeof entry.cycleId === "number" &&
-            entry.cycleId === activeCycleId &&
-            (entry.action === "openCycle" || entry.action === "submitCycle"),
-        );
-      const localSubmitRecorded =
-        localWatcherConfirmed ||
-        state.recentActions.some(
-          (entry) =>
-            entry.status === "success" &&
-            typeof entry.cycleId === "number" &&
-            entry.cycleId === activeCycleId &&
-            entry.action === "submitCycle",
-        );
+      const localOpenRecorded = state.recentActions.some(
+        (entry) =>
+          entry.status === "success" &&
+          typeof entry.cycleId === "number" &&
+          entry.cycleId === activeCycleId &&
+          (entry.action === "openCycle" ||
+            entry.action === "commitCycle" ||
+            entry.action === "revealCycle"),
+      );
+      const localCommitRecorded = state.recentActions.some(
+        (entry) =>
+          entry.status === "success" &&
+          typeof entry.cycleId === "number" &&
+          entry.cycleId === activeCycleId &&
+          (entry.action === "commitCycle" || entry.action === "revealCycle"),
+      );
       let cycleExists = execution.openRoundSubmitted && localOpenRecorded;
+      let onChainCycle = null;
       if (!cycleExists) {
-        cycleExists = await withRoundWatcherTimeout("cycle account existence", () =>
-          inspectSatCycleAccountExists(state.activeConfig, {
+        onChainCycle = await withRoundWatcherTimeout("cycle account", () =>
+          inspectSatCycle(state.activeConfig, {
             cycleId: activeCycleId,
           }),
-        ).catch(() => false);
+        ).catch(() => null);
+        cycleExists = onChainCycle != null;
       }
-      let minerCycleExists = execution.participationSubmitted && localSubmitRecorded;
-      if (authority != null && !minerCycleExists) {
-        minerCycleExists = await withRoundWatcherTimeout("miner-cycle account existence", () =>
-          inspectSatMinerCycleAccountExists(state.activeConfig, {
+      let onChainMinerCycle = null;
+      if (authority != null) {
+        onChainMinerCycle = await withRoundWatcherTimeout("miner-cycle account", () =>
+          inspectSatMinerCycle(state.activeConfig, {
             authority,
             cycleId: activeCycleId,
           }),
-        ).catch(() => false);
+        ).catch(() => null);
       }
+      let minerCycleExists = onChainMinerCycle != null;
+      let cycleRentFundingPrepared = false;
       if (authority) {
         execution.openRoundSubmitted = execution.openRoundSubmitted || cycleExists;
-        if (minerCycleExists) {
+        if (minerCycleExists || localCommitRecorded) {
           execution.openRoundSubmitted = true;
+          execution.commitSubmitted = true;
+        }
+        if (onChainMinerCycle?.validParticipation === true) {
           execution.participationSubmitted = true;
-        } else if (
-          execution.participationSubmitted &&
-          state.workers.roundWatcher.lastSuccessAt == null
-        ) {
+          markWorkerSuccess(
+            state,
+            "roundWatcher",
+            `cycle ${activeCycleId} reveal confirmed on-chain`,
+          );
+        } else if (execution.participationSubmitted && onChainMinerCycle == null) {
           execution.participationSubmitted = false;
         }
       }
 
-      if (!execution.participationSubmitted) {
+      const cycleCadence = state.activeConfig.cycleCadence ?? 1;
+      if (execution.commitSubmitted !== true && cycleCadence > 1) {
+        const cadenceGlobalState = await withRoundWatcherTimeout("cadence launch cycle", () =>
+          inspectSatGlobalState(state.activeConfig),
+        ).catch(() => null);
+        const launchCycleId = parseOptionalCount(cadenceGlobalState?.launchCycleId);
+        if (launchCycleId == null) {
+          markWorkerWaiting(
+            state,
+            "roundWatcher",
+            `cycle ${activeCycleId} waiting: launch cycle is unavailable for the every-${cycleCadence}-cycle schedule`,
+          );
+          scheduleWorkerNextRun(state, "roundWatcher", SAT_ROUND_WATCHER_APPROACH_DELAY_MS);
+          return;
+        }
+        if (
+          !shouldParticipateInSatCycle({
+            cycleId: activeCycleId,
+            launchCycleId,
+            cadence: cycleCadence,
+          })
+        ) {
+          markWorkerWaiting(
+            state,
+            "roundWatcher",
+            `economy schedule skips cycle ${activeCycleId}; participating every ${cycleCadence} cycles`,
+          );
+          scheduleWorkerNextRun(state, "roundWatcher", delayUntilNextCycleMs(secondsUntilClose));
+          return;
+        }
+      }
+
+      if (!cycleExists) {
+        const cycleOpenDeadline =
+          activeCycleId * SAT_CYCLE_SECONDS + SAT_PROTOCOL_CONSTANTS.cycleOpenGraceSeconds;
+        if (nowSec >= cycleOpenDeadline) {
+          markWorkerWaiting(
+            state,
+            "roundWatcher",
+            `cycle ${activeCycleId} was not opened during its protected opening window; waiting for the next cycle`,
+          );
+          scheduleWorkerNextRun(state, "roundWatcher", delayUntilNextCycleMs(secondsUntilClose));
+          return;
+        }
+        const walletBalanceLamports = authority
+          ? await withRoundWatcherTimeout("signer wallet balance", () =>
+              inspectSatLamportBalance(state.activeConfig, { address: authority }),
+            ).catch(() => null)
+          : null;
+        const rentFunding = await ensureCycleRentFunding({
+          cycleId: activeCycleId,
+          walletBalanceLamports,
+          needsOpenCycle: true,
+          needsSubmit: authority != null && !minerCycleExists,
+        });
+        if (!rentFunding.ok) {
+          markWorkerWaiting(state, "roundWatcher", rentFunding.reason);
+          scheduleWorkerNextRun(state, "roundWatcher", SAT_RENT_WAIT_DELAY_MS);
+          return;
+        }
+        cycleRentFundingPrepared = true;
+        try {
+          await runSatGatewayMethod({
+            api,
+            method: "sat.openCycle",
+            payload: { cycleId: activeCycleId },
+          });
+        } catch (error) {
+          if (!isAlreadyInitializedCycleError(error)) {
+            throw error;
+          }
+        }
+        cycleExists = true;
+        execution.openRoundSubmitted = true;
+        onChainCycle = await withRoundWatcherTimeout("opened cycle", () =>
+          inspectSatCycle(state.activeConfig, { cycleId: activeCycleId }),
+        ).catch(() => null);
+      }
+
+      if (execution.commitSubmitted !== true) {
         const round = {
           epochId: activeCycleId,
           microRoundId: 0,
@@ -992,7 +1092,7 @@ export function createSatRoundWatcherService(params: {
           markWorkerWaiting(
             state,
             "roundWatcher",
-            `cycle ${cycleId} skipped: free miner capital cannot cover commit plus erosion while keeping ${formatLamportsAsSol(retainedFreeLamports)} uncommitted for recovery`,
+            `cycle ${cycleId} skipped: free miner capital cannot cover commit plus worst-case reveal collateral while keeping ${formatLamportsAsSol(retainedFreeLamports)} uncommitted for recovery`,
           );
           scheduleWorkerNextRun(
             state,
@@ -1096,12 +1196,14 @@ export function createSatRoundWatcherService(params: {
                 inspectSatLamportBalance(state.activeConfig, { address: authority }),
               ).catch(() => null)
             : null;
-        const rentFunding = await ensureCycleRentFunding({
-          cycleId,
-          walletBalanceLamports: preflightWalletBalanceLamports,
-          needsOpenCycle: !cycleExists,
-          needsSubmit: authority != null && !minerCycleExists,
-        });
+        const rentFunding = cycleRentFundingPrepared
+          ? ({ ok: true } as const)
+          : await ensureCycleRentFunding({
+              cycleId,
+              walletBalanceLamports: preflightWalletBalanceLamports,
+              needsOpenCycle: !cycleExists,
+              needsSubmit: authority != null && !minerCycleExists,
+            });
         if (!rentFunding.ok) {
           state.workers.roundWatcher.lastError = null;
           markWorkerWaiting(state, "roundWatcher", rentFunding.reason);
@@ -1187,7 +1289,7 @@ export function createSatRoundWatcherService(params: {
           markWorkerWaiting(
             state,
             "roundWatcher",
-            `cycle ${cycleId} skipped: free miner capital cannot cover commit plus erosion while keeping ${formatLamportsAsSol(finalRetainedFreeLamports)} uncommitted for recovery`,
+            `cycle ${cycleId} skipped: free miner capital cannot cover commit plus worst-case reveal collateral while keeping ${formatLamportsAsSol(finalRetainedFreeLamports)} uncommitted for recovery`,
           );
           scheduleWorkerNextRun(
             state,
@@ -1238,43 +1340,243 @@ export function createSatRoundWatcherService(params: {
               state.lastPlannerDecision.snapshot.capitalFreeLamports;
           }
         }
-        const allocationFp = strategyDecision.allocationFp;
+        const plannedCommitLamports = Math.max(
+          SAT_MIN_ENTRY_LAMPORTS,
+          Math.floor(effectiveConfig.commitLamports ?? SAT_MIN_ENTRY_LAMPORTS),
+        );
+        const hasDurableCommitPlan =
+          Array.isArray(execution.allocationFp) &&
+          execution.allocationFp.length === SAT_PROTOCOL_CONSTANTS.allocationBuckets &&
+          typeof execution.revealNonceBase64 === "string" &&
+          Buffer.from(execution.revealNonceBase64, "base64").length === 32 &&
+          typeof execution.commitmentHex === "string" &&
+          /^[0-9a-f]{64}$/i.test(execution.commitmentHex) &&
+          typeof execution.commitLamports === "number" &&
+          Number.isSafeInteger(execution.commitLamports);
+        if (!hasDurableCommitPlan) {
+          if (!authority) {
+            throw new Error("SAT mining wallet authority is unavailable before cycle commit");
+          }
+          const nonce = randomBytes(32);
+          const allocationFp = [...strategyDecision.allocationFp];
+          execution.revealNonceBase64 = nonce.toString("base64");
+          execution.allocationFp = allocationFp;
+          execution.commitLamports = plannedCommitLamports;
+          execution.commitmentHex = buildSatCycleCommitment({
+            authority,
+            cycleId,
+            committedLamports: plannedCommitLamports,
+            nonce,
+            allocationFp,
+          }).toString("hex");
+          await persistRuntimeState?.();
+        }
+        const commitLamports = execution.commitLamports ?? plannedCommitLamports;
         if (resolveFrozenActiveCommitLamports(state, finalMinerCapital) == null) {
           await runSatGatewayMethod({
             api,
             method: "sat.setActiveCommit",
             payload: {
-              lamports: Math.max(
-                SAT_MIN_ENTRY_LAMPORTS,
-                Math.floor(effectiveConfig.commitLamports ?? SAT_MIN_ENTRY_LAMPORTS),
-              ),
+              lamports: commitLamports,
               persistConfig: false,
             },
           });
         }
         await runSatGatewayMethod({
           api,
-          method: "sat.submitCycle",
+          method: "sat.commitCycle",
           payload: {
             cycleId,
-            allocationFp,
+            commitmentHex: execution.commitmentHex,
           },
         });
         execution.openRoundSubmitted = true;
-        execution.participationSubmitted = true;
+        execution.commitSubmitted = true;
         state.cycleContext = round;
+        await persistRuntimeState?.();
+        markWorkerSuccess(state, "roundWatcher", `cycle ${cycleId} committed`);
       }
 
-      markWorkerSuccess(state, "roundWatcher", `cycle ${cycleId} submitted`);
+      onChainCycle ??= await withRoundWatcherTimeout("commit/reveal cycle", () =>
+        inspectSatCycle(state.activeConfig, { cycleId: activeCycleId }),
+      ).catch(() => null);
+      if (!onChainCycle) {
+        markWorkerWaiting(state, "roundWatcher", `cycle ${cycleId} state is not readable yet`);
+        scheduleWorkerNextRun(state, "roundWatcher", 1_000);
+        return;
+      }
+      const commitDeadlineTs =
+        onChainCycle.commitDeadlineTs ??
+        cycleId * SAT_CYCLE_SECONDS + SAT_PROTOCOL_CONSTANTS.cycleCommitSeconds;
+      const revealDeadlineTs =
+        onChainCycle.revealDeadlineTs ??
+        cycleCloseTs(cycleId) - SAT_PROTOCOL_CONSTANTS.cycleSettlementBufferSeconds;
+      const currentSlot = await withRoundWatcherTimeout("chain slot", () =>
+        inspectSatChainSlot(state.activeConfig),
+      ).catch(() => null);
+      const commitPhaseOpen =
+        currentSlot != null && onChainCycle.commitDeadlineSlot != null
+          ? currentSlot < onChainCycle.commitDeadlineSlot
+          : nowSec < commitDeadlineTs;
+      const revealPhaseOpen =
+        currentSlot != null && onChainCycle.revealDeadlineSlot != null
+          ? currentSlot < onChainCycle.revealDeadlineSlot
+          : nowSec < revealDeadlineTs;
+      if (commitPhaseOpen) {
+        markWorkerWaiting(
+          state,
+          "roundWatcher",
+          `cycle ${cycleId} committed; reveal material is sealed until the commit window closes`,
+        );
+        scheduleWorkerNextRun(
+          state,
+          "roundWatcher",
+          Math.max(1_000, Math.min(10_000, (commitDeadlineTs - nowSec) * 1_000 + 500)),
+        );
+        return;
+      }
+      if (execution.entropyTargetPinned !== true) {
+        execution.entropyTargetPinned = true;
+        await persistRuntimeState?.();
+      }
+      if (
+        onChainCycle.entropyUnavailable === true ||
+        onChainCycle.cycleSeed === SAT_PROTOCOL_CONSTANTS.entropyUnavailableSeedHex
+      ) {
+        if (authority && onChainMinerCycle?.capitalLockReleased !== true) {
+          await runSatGatewayMethod({
+            api,
+            method: "sat.releaseUnrevealedCommit",
+            payload: { cycleId, minerAuthority: authority },
+          });
+        }
+        execution.entropySealed = false;
+        await persistRuntimeState?.();
+        markWorkerSuccess(
+          state,
+          "roundWatcher",
+          `cycle ${cycleId} cancelled because pinned entropy became unprovable; capital released without penalty`,
+        );
+        scheduleWorkerNextRun(state, "roundWatcher", delayUntilNextCycleMs(secondsUntilClose));
+        return;
+      }
+      const cycleSeedIsZero = !onChainCycle.cycleSeed || /^0+$/.test(onChainCycle.cycleSeed);
+      if (cycleSeedIsZero && revealPhaseOpen) {
+        if (execution.participationSubmitted) {
+          markWorkerSuccess(
+            state,
+            "roundWatcher",
+            `cycle ${cycleId} revealed; waiting for the sealed-strategy window to close`,
+          );
+          scheduleWorkerNextRun(state, "roundWatcher", 1_000);
+          return;
+        }
+        if (
+          !authority ||
+          !execution.commitmentHex ||
+          !execution.revealNonceBase64 ||
+          !execution.allocationFp ||
+          execution.commitLamports == null
+        ) {
+          markWorkerFailure(
+            state,
+            "roundWatcher",
+            new Error("committed cycle is missing its durable reveal material"),
+            `cycle ${cycleId}`,
+          );
+          markWorkerWaiting(
+            state,
+            "roundWatcher",
+            `cycle ${cycleId} cannot be revealed safely because its persisted nonce or allocation is missing`,
+          );
+          scheduleWorkerNextRun(state, "roundWatcher", SAT_ROUND_WATCHER_IDLE_DELAY_MS);
+          return;
+        }
+        await runSatGatewayMethod({
+          api,
+          method: "sat.revealCycle",
+          payload: {
+            cycleId,
+            nonceBase64: execution.revealNonceBase64,
+            allocationFp: execution.allocationFp,
+          },
+        });
+        execution.participationSubmitted = true;
+        await persistRuntimeState?.();
+        markWorkerSuccess(state, "roundWatcher", `cycle ${cycleId} revealed sealed allocation`);
+        scheduleWorkerNextRun(state, "roundWatcher", 1_000);
+        api.logger.info(
+          `[sat-mining] cycle watcher revealed committed participation (riskMode=${state.activeConfig.riskMode}, cycle=${cycleId})`,
+        );
+        return;
+      }
+      if (cycleSeedIsZero) {
+        if (
+          currentSlot != null &&
+          onChainCycle.entropyTargetSlot != null &&
+          currentSlot <= onChainCycle.entropyTargetSlot
+        ) {
+          markWorkerWaiting(
+            state,
+            "roundWatcher",
+            `cycle ${cycleId} reveal window closed; waiting for future entropy slots`,
+          );
+          scheduleWorkerNextRun(state, "roundWatcher", 1_000);
+          return;
+        }
+        try {
+          await runSatGatewayMethod({
+            api,
+            method: "sat.sealCycleEntropy",
+            payload: { cycleId },
+          });
+        } catch (error) {
+          markWorkerWaiting(
+            state,
+            "roundWatcher",
+            `cycle ${cycleId} is waiting for all future entropy hashes`,
+          );
+          scheduleWorkerNextRun(state, "roundWatcher", 1_000);
+          api.logger.debug?.(`[sat-mining] entropy not sealable yet: ${String(error)}`);
+          return;
+        }
+        markWorkerWaiting(
+          state,
+          "roundWatcher",
+          `cycle ${cycleId} submitted its post-reveal entropy seal`,
+        );
+        scheduleWorkerNextRun(state, "roundWatcher", 500);
+        return;
+      }
+      execution.entropySealed = true;
+      await persistRuntimeState?.();
+      if (!execution.participationSubmitted) {
+        if (!authority) {
+          throw new Error("SAT mining wallet authority is unavailable for missed-reveal release");
+        }
+        await runSatGatewayMethod({
+          api,
+          method: "sat.releaseUnrevealedCommit",
+          payload: { cycleId, minerAuthority: authority },
+        });
+        markWorkerFailure(
+          state,
+          "roundWatcher",
+          new Error(
+            `cycle reveal deadline elapsed; capital was released after the ${SAT_PROTOCOL_CONSTANTS.cycleNonRevealPenaltyBps / 100}% non-reveal penalty`,
+          ),
+          `cycle ${cycleId}`,
+        );
+        scheduleWorkerNextRun(state, "roundWatcher", delayUntilNextCycleMs(secondsUntilClose));
+        return;
+      }
+      markWorkerSuccess(state, "roundWatcher", `cycle ${cycleId} reveal and entropy sealed`);
       scheduleWorkerNextRun(
         state,
         "roundWatcher",
         watcherHadPriorSuccess
           ? delayUntilNextCycleMs(cycleCloseTs(cycleId) - nextCycleDelayAnchorSec)
           : SAT_ROUND_WATCHER_EDGE_DELAY_MS,
-      );
-      api.logger.info(
-        `[sat-mining] cycle watcher executed (riskMode=${state.activeConfig.riskMode}, cycle=${cycleId})`,
       );
     } catch (error) {
       if (cycleId != null && isRoundWatcherTimeoutError(error)) {
@@ -1335,20 +1637,24 @@ export function createSatRoundWatcherService(params: {
       }
       if (cycleId != null && isAlreadyParticipatingError(error)) {
         const execution = getOrCreateRoundExecutionState(state, cycleId, 0);
-        execution.openRoundSubmitted = true;
-        execution.participationSubmitted = true;
-        markWorkerSuccess(state, "roundWatcher", `cycle ${cycleId} already submitted`);
-        scheduleWorkerNextRun(
-          state,
-          "roundWatcher",
-          state.workers.roundWatcher.lastSuccessAt != null
-            ? delayUntilNextCycleMs(cycleCloseTs(cycleId) - Math.floor(Date.now() / 1000))
-            : SAT_ROUND_WATCHER_EDGE_DELAY_MS,
-        );
-        api.logger.warn(
-          `[sat-mining] cycle watcher detected existing participation for cycle ${cycleId}; reconciling local state`,
-        );
-        return;
+        const authority = state.activeWalletAddress;
+        const minerCycle = authority
+          ? await inspectSatMinerCycle(state.activeConfig, { authority, cycleId }).catch(() => null)
+          : null;
+        if (minerCycle) {
+          execution.openRoundSubmitted = true;
+          execution.commitSubmitted = true;
+          execution.participationSubmitted = minerCycle.validParticipation;
+          markWorkerWaiting(
+            state,
+            "roundWatcher",
+            minerCycle.validParticipation
+              ? `cycle ${cycleId} reveal already exists; local state reconciled`
+              : `cycle ${cycleId} commitment already exists; continuing its reveal phases`,
+          );
+          scheduleWorkerNextRun(state, "roundWatcher", 1_000);
+          return;
+        }
       }
       if (cycleId != null && isInsufficientLamportsError(error)) {
         state.workers.roundWatcher.lastError = null;

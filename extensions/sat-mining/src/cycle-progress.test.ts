@@ -223,4 +223,30 @@ describe("cycle-progress pending-cycle inference", () => {
       })?.stage,
     ).toBe("claiming");
   });
+
+  it("does not treat a successful bounded claim chunk as a fully resolved cycle", () => {
+    const state = createSatMiningRuntimeState({
+      enabled: true,
+      network: "devnet",
+      riskMode: "balanced",
+      walletId: "wallet-a",
+    });
+    const currentCycleId = Math.floor(Date.now() / 1000 / 300);
+    const pendingCycleId = currentCycleId - 1;
+    const execution = getOrCreateRoundExecutionState(state, pendingCycleId, 0);
+    execution.participationSubmitted = true;
+    execution.crankSubmitted = true;
+    state.recentActions.unshift({
+      action: "claimCycleRewardsBatch",
+      cycleId: pendingCycleId,
+      txHash: "tx-partial-claim",
+      status: "success",
+      complete: false,
+      message: "Bounded SAT claim chunk submitted; rewards remain claimable.",
+      at: new Date().toISOString(),
+    });
+
+    expect(hasSuccessfulClaimOrCloseRecord(state, pendingCycleId)).toBe(false);
+    expect(collectRuntimePendingCycleIds({ state, currentCycleId })).toEqual([pendingCycleId]);
+  });
 });

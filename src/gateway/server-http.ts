@@ -15,7 +15,6 @@ import {
   inspectSatBondPosition,
   inspectSatBondStakingDistributor,
   inspectSatBondStakingPosition,
-  inspectSatBondTierPolicy,
   inspectSatChainSlot,
 } from "../../extensions/sat-mining/src/rpc-read.js";
 import {
@@ -23,7 +22,6 @@ import {
   submitSatClaimBondStakingRewards,
   submitSatFinalizeBondUnlock,
   submitSatIncreaseBondPosition,
-  submitSatInitBondStakingDistributor,
   submitSatOpenBondPosition,
   submitSatRequestBondUnlock,
   submitSatSyncBondStakingPosition,
@@ -776,6 +774,7 @@ type FederationStatusBond = {
       totalActiveStakeRaw?: string;
       rewardIndexFp?: string;
       observedRewardVaultRaw?: string;
+      unallocatedRewardRaw?: string;
       rewardVaultBalanceRaw?: string;
       lastSyncedSlot?: number;
       mintMatchesRuntime?: boolean;
@@ -2386,20 +2385,6 @@ function parseSatAmountToRawNumber(amountSatInput: string): {
   };
 }
 
-function parseSatRawToSafeNumber(rawInput: string): {
-  amountRaw: string;
-  safeInteger: number;
-} {
-  const raw = BigInt(rawInput || "0");
-  if (raw <= 0n) {
-    throw new Error("amountRaw must be greater than zero");
-  }
-  if (raw > BigInt(Number.MAX_SAFE_INTEGER)) {
-    throw new Error("amountRaw is too large for the current gateway bond action path");
-  }
-  return { amountRaw: raw.toString(), safeInteger: Number(raw) };
-}
-
 async function runFederationBondProof(params: {
   cfg: ReturnType<typeof loadConfig>;
   walletId: string;
@@ -3422,6 +3407,7 @@ async function readLocalFederationStatus(
           totalActiveStakeRaw: liveBondStakingDistributor?.totalActiveStakeRaw,
           rewardIndexFp: liveBondStakingDistributor?.rewardIndexFp,
           observedRewardVaultRaw: liveBondStakingDistributor?.observedRewardVaultRaw,
+          unallocatedRewardRaw: liveBondStakingDistributor?.unallocatedRewardRaw,
           rewardVaultBalanceRaw: liveBondStakingDistributor?.rewardVaultBalanceRaw,
           lastSyncedSlot: liveBondStakingDistributor?.lastSyncedSlot,
           mintMatchesRuntime: liveBondStakingDistributor?.mintMatchesRuntime,
@@ -4913,20 +4899,9 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
             proofSubmitted = true;
             liveBond = await readBond();
           } else if (requestPath === "/api/federation/bond/staking/init") {
-            const policy = await inspectSatBondTierPolicy(bondCfg as never).catch(() => null);
-            const amount = parsed.amountSat
-              ? parseSatAmountToRawNumber(parsed.amountSat)
-              : policy?.operatorMinRaw
-                ? parseSatRawToSafeNumber(policy.operatorMinRaw)
-                : parseSatAmountToRawNumber(resolveDefaultBondAmountSat("operator-bond"));
-            if (!Number.isSafeInteger(amount.safeInteger) || amount.safeInteger <= 0) {
-              throw new Error("staking distributor minimum could not be resolved from bond policy");
-            }
-            tx = await submitSatInitBondStakingDistributor(bondCfg as never, {
-              minStakeRaw: amount.safeInteger,
-            });
-            invalidateSatReadCaches({ preserveStable: true });
-            liveBond = await readBond();
+            throw new Error(
+              "SAT bond staking distributor initialization is a protocol-genesis operation; use the approved token/sat operator workflow",
+            );
           } else if (requestPath === "/api/federation/bond/staking/sync") {
             tx = await retrySolanaRateLimit(
               "sync bond staking rewards",
@@ -7313,7 +7288,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
         try {
           result = await callSatMiningGateway<{
             payload?: { submitted?: unknown; status?: unknown };
-          }>("sat.bootstrapRegistryReserve", {});
+          }>("sat.topUpRegistryReserve", { targetBalanceLamports: 0 });
         } catch (error) {
           sendSatMiningGatewayError(error);
           return;

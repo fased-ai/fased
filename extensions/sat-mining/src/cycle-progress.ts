@@ -23,7 +23,7 @@ const SAT_SETTLEMENT_ACTIONS = new Set([
   "distributeCyclePage",
 ]);
 const SAT_CLOSE_ACTIONS = new Set(["closeResolvedCycleAccounts", "closeResolvedCycleArtifacts"]);
-const SAT_SUBMIT_ACTIONS = new Set(["submitCycle", "openCycle"]);
+const SAT_PARTICIPATION_ACTIONS = new Set(["commitCycle", "revealCycle", "submitCycle"]);
 const SAT_RUNTIME_PENDING_CYCLE_WINDOW = 12;
 
 function actionTimeMs(entry: { at?: string }) {
@@ -86,8 +86,13 @@ export function hasSuccessfulClaimOrCloseRecord(
   cycleId: number,
 ): boolean {
   return (
-    hasSuccessfulCycleAction(state, cycleId, ["claimCycleRewards", "claimCycleRewardsBatch"]) ||
-    hasAuthoritativeCloseRecord(state, cycleId)
+    state.recentActions.some(
+      (entry) =>
+        entry.status === "success" &&
+        entry.complete !== false &&
+        entry.cycleId === cycleId &&
+        (entry.action === "claimCycleRewards" || entry.action === "claimCycleRewardsBatch"),
+    ) || hasAuthoritativeCloseRecord(state, cycleId)
   );
 }
 
@@ -112,7 +117,7 @@ export function hasAuthoritativeCloseRecord(
     return false;
   }
   const latestSettlementAt = latestSuccessfulActionTimeMs(state, cycleId, SAT_SETTLEMENT_ACTIONS);
-  const latestSubmitAt = latestSuccessfulActionTimeMs(state, cycleId, SAT_SUBMIT_ACTIONS);
+  const latestSubmitAt = latestSuccessfulActionTimeMs(state, cycleId, SAT_PARTICIPATION_ACTIONS);
   const latestProgressAt = Math.max(latestSettlementAt ?? 0, latestSubmitAt ?? 0);
   return latestCloseAt >= latestProgressAt;
 }
@@ -152,7 +157,7 @@ export function collectRuntimePendingCycleIds(params: {
       cycleId == null ||
       cycleId < minRuntimePendingCycleId ||
       cycleId >= params.currentCycleId ||
-      !execution.participationSubmitted ||
+      (!execution.commitSubmitted && !execution.participationSubmitted) ||
       execution.claimSubmitted ||
       hasSuccessfulClaimOrCloseRecord(params.state, cycleId)
     ) {
@@ -163,7 +168,7 @@ export function collectRuntimePendingCycleIds(params: {
   for (const entry of params.state.recentActions) {
     if (
       entry.status === "success" &&
-      entry.action === "submitCycle" &&
+      SAT_PARTICIPATION_ACTIONS.has(entry.action) &&
       typeof entry.cycleId === "number" &&
       Number.isFinite(entry.cycleId) &&
       entry.cycleId > 0 &&
@@ -213,7 +218,7 @@ export function derivePendingCycleStage(
     return "stale-closed";
   }
   const execution = state.roundExecution.get(`${cycleId}:0`) ?? null;
-  if (hasSuccessfulCycleAction(state, cycleId, ["claimCycleRewards", "claimCycleRewardsBatch"])) {
+  if (hasSuccessfulClaimOrCloseRecord(state, cycleId)) {
     return "closing";
   }
   if (execution?.claimSubmitted) {
@@ -230,9 +235,12 @@ export function derivePendingCycleStage(
   }
   if (
     execution?.participationSubmitted ||
-    hasSuccessfulCycleAction(state, cycleId, ["submitCycle", "openCycle"])
+    hasSuccessfulCycleAction(state, cycleId, ["revealCycle", "submitCycle"])
   ) {
     return "settling";
+  }
+  if (execution?.commitSubmitted || hasSuccessfulCycleAction(state, cycleId, ["commitCycle"])) {
+    return "submitted";
   }
   return "unknown";
 }

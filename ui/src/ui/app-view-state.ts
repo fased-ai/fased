@@ -1160,6 +1160,7 @@ export type AppViewState = {
   handleMiningSaveProfileNameChange: (value: string) => void;
   handleMiningStrategyPresetChange: (preset: SatMinerProfile["strategyPreset"]) => void;
   handleMiningStrategyExecutionChange: (execution: SatMinerProfile["strategyExecution"]) => void;
+  handleMiningCycleCadenceChange: (cadence: SatMinerProfile["cycleCadence"]) => void;
   handleMiningStrategyModeChange: (mode: SatMinerProfile["strategyMode"]) => void;
   handleMiningSkillConfigChange: (
     patch: Partial<NonNullable<SatMinerProfile["skillConfig"]>>,

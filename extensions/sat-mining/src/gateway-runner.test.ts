@@ -6,13 +6,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const resolveGatewayPort = vi.fn();
 const callGatewayScoped = vi.fn();
 
-vi.mock("../../../src/config/config.js", () => ({
-  resolveGatewayPort: (...args: unknown[]) => resolveGatewayPort(...args),
-}));
+vi.mock("../../../src/config/config.js", async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  return {
+    ...actual,
+    resolveGatewayPort: (...args: unknown[]) => resolveGatewayPort(...args),
+  };
+});
 
-vi.mock("../../../src/gateway/call.js", () => ({
-  callGatewayScoped: (...args: unknown[]) => callGatewayScoped(...args),
-}));
+vi.mock("../../../src/gateway/call.js", async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  return {
+    ...actual,
+    callGatewayScoped: (...args: unknown[]) => callGatewayScoped(...args),
+  };
+});
 
 describe("runSatGatewayMethod", () => {
   let markerDir: string;

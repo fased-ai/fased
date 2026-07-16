@@ -791,6 +791,7 @@ describe("mining controller", () => {
       riskMode: "balanced",
       strategyPreset: "balanced",
       strategyExecution: "deterministic",
+      cycleCadence: 1,
       strategyMode: "base",
       claimMode: "auto",
       payout: true,

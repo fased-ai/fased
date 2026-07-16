@@ -359,7 +359,7 @@ describe("computeAutoPlannerDecision", () => {
     expect(decision.rationale).toContain("recent realized net cost");
   });
 
-  it("uses contextual bandit samples while keeping the configured baseline", () => {
+  it("uses contextual bandit samples while respecting the configured commit cap", () => {
     const decision = computeAutoPlannerDecision({
       config: {
         enabled: true,
@@ -370,6 +370,10 @@ describe("computeAutoPlannerDecision", () => {
         strategyMode: "skill",
         commitLamports: 250_000_000,
         minSolBalanceLamports: 150_000_000,
+        plannerConfig: {
+          policyMode: "ucb",
+          explorationRatePpm: 0,
+        },
       },
       cycleId: 100,
       walletBalanceLamports: "1000000000",
@@ -464,6 +468,7 @@ describe("computeAutoPlannerDecision", () => {
     });
 
     expect(decision.commitLamports).toBe(250_000_000);
+    expect(decision.rationale).toContain("ucb policy chose conviction:push");
     expect(decision.rationale).toContain("configured max");
   });
 });

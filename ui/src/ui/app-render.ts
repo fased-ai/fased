@@ -5865,6 +5865,7 @@ export function renderApp(state: AppViewState) {
                     state.handleMiningStrategyPresetChange(preset),
                   onStrategyExecutionChange: (execution) =>
                     state.handleMiningStrategyExecutionChange(execution),
+                  onCycleCadenceChange: (cadence) => state.handleMiningCycleCadenceChange(cadence),
                   onOpenAomStrategyTask: () => openMiningAomStrategyTask(state),
                   onStrategyModeChange: (mode) => state.handleMiningStrategyModeChange(mode),
                   onSkillConfigChange: (patch) => state.handleMiningSkillConfigChange(patch),

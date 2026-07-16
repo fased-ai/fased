@@ -619,17 +619,21 @@ async function selectEpochTargetCycle(params: {
       execution.openRoundSubmitted = true;
     }
     if (!execution.participationSubmitted && authority) {
-      minerCycleExists = await Promise.resolve(
-        withEpochReadTimeout("miner-cycle existence", () =>
-          inspectSatMinerCycleAccountExists(state.activeConfig, {
+      const minerCycle = await Promise.resolve(
+        withEpochReadTimeout("miner-cycle participation", () =>
+          inspectSatMinerCycle(state.activeConfig, {
             authority,
             cycleId,
           }),
         ),
-      ).catch(() => false);
-      if (minerCycleExists) {
+      ).catch(swallowSatReadErrorUnlessTimeout);
+      minerCycleExists = minerCycle != null;
+      if (minerCycle?.validParticipation === true) {
         execution.openRoundSubmitted = true;
         execution.participationSubmitted = true;
+      } else if (minerCycle) {
+        execution.openRoundSubmitted = true;
+        execution.commitSubmitted = true;
       }
     }
     if (!execution.participationSubmitted) {

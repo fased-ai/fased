@@ -25,6 +25,7 @@ export type SatMiningConfig = {
     | "safe_fallback";
   strategyExecution?: "deterministic" | "auto";
   strategyMode?: "base" | "skill";
+  cycleCadence?: 1 | 2 | 6 | 12;
   commitLamports?: number;
   minSolBalanceLamports?: number;
   walletId?: string;
@@ -103,6 +104,9 @@ export const satMiningConfigJsonSchema = Type.Object(
       Type.Union([Type.Literal("deterministic"), Type.Literal("auto")]),
     ),
     strategyMode: Type.Optional(Type.Union([Type.Literal("base"), Type.Literal("skill")])),
+    cycleCadence: Type.Optional(
+      Type.Union([Type.Literal(1), Type.Literal(2), Type.Literal(6), Type.Literal(12)]),
+    ),
     commitLamports: Type.Optional(Type.Number()),
     minSolBalanceLamports: Type.Optional(Type.Number()),
     walletId: Type.Optional(Type.String()),
@@ -326,6 +330,10 @@ export function parseSatMiningConfig(value: unknown): SatMiningConfig {
       : raw.strategyMode === "skill"
         ? "skill"
         : "base";
+  const cycleCadence =
+    raw.cycleCadence === 2 || raw.cycleCadence === 6 || raw.cycleCadence === 12
+      ? raw.cycleCadence
+      : 1;
   const commitLamports =
     typeof raw.commitLamports === "number" &&
     Number.isFinite(raw.commitLamports) &&
@@ -486,6 +494,7 @@ export function parseSatMiningConfig(value: unknown): SatMiningConfig {
     strategyPreset: strategyPreset ?? riskModeToStrategyPreset(riskMode),
     strategyExecution: strategyExecution ?? strategyModeToExecution(strategyMode),
     strategyMode,
+    cycleCadence,
     commitLamports,
     minSolBalanceLamports,
     walletId,

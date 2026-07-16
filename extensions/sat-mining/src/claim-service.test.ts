@@ -5,7 +5,12 @@ import { createSatMiningRuntimeState, getOrCreateRoundExecutionState } from "./r
 type GatewayMethodArgs = { method: string; payload: { cycleId?: number; [key: string]: unknown } };
 
 const runSatGatewayMethod = vi.fn(
-  async (_args: GatewayMethodArgs): Promise<{ ok: boolean }> => ({
+  async (
+    _args: GatewayMethodArgs,
+  ): Promise<{
+    ok: boolean;
+    payload?: { resolvedCycleIds?: number[]; pendingCycleIds?: number[] };
+  }> => ({
     ok: true,
   }),
 );
@@ -207,6 +212,48 @@ describe("createSatClaimService", () => {
     });
     expect(getOrCreateRoundExecutionState(state, readyCycleId, 0).claimSubmitted).toBe(true);
     expect(getOrCreateRoundExecutionState(state, notReadyCycleId, 0).claimSubmitted).toBe(false);
+
+    await service.stop?.();
+  });
+
+  it("keeps a bounded partial SAT claim queued until a later chunk drains the cycle", async () => {
+    const config = {
+      enabled: true,
+      network: "devnet" as const,
+      riskMode: "balanced" as const,
+      walletId: "wallet-a",
+      automation: { autoClaim: true },
+    };
+    const state = createSatMiningRuntimeState(config);
+    const currentCycleId = Math.floor(Date.now() / 1000 / 300);
+    const cycleId = currentCycleId - 5;
+    getOrCreateRoundExecutionState(state, cycleId, 0).crankSubmitted = true;
+    runSatGatewayMethod
+      .mockResolvedValueOnce({
+        ok: true,
+        payload: { resolvedCycleIds: [], pendingCycleIds: [cycleId] },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        payload: { resolvedCycleIds: [cycleId], pendingCycleIds: [] },
+      });
+    const api = {
+      config: {},
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    } as const;
+
+    const service = createSatClaimService({ api: api as never, config, state });
+    await service.start();
+
+    expect(getOrCreateRoundExecutionState(state, cycleId, 0).claimSubmitted).toBe(false);
+    expect(state.claimBacklog.get(cycleId)?.stage).toBe("ready");
+    expect(state.workers.claim.lastDetail).toContain("still have rewards");
+
+    await vi.advanceTimersByTimeAsync(15_000);
+
+    expect(runSatGatewayMethod).toHaveBeenCalledTimes(2);
+    expect(getOrCreateRoundExecutionState(state, cycleId, 0).claimSubmitted).toBe(true);
+    expect(state.claimBacklog.get(cycleId)?.stage).toBe("claimed");
 
     await service.stop?.();
   });

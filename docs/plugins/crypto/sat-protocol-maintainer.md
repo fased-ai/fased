@@ -20,6 +20,8 @@ move forward:
 - refill registry reserve up to the configured target;
 - claim treasury SAT/SOL to fixed treasury recipients;
 - claim distributor SAT into the bond distributor;
+- quarantine zero-stake protocol rewards and unsolicited reward-vault transfers,
+  then sweep only those amounts to the fixed treasury recipient;
 - clean up resolved accounts so rent returns to the expected owner/PDA;
 - record logs and monitor alert state.
 
@@ -53,6 +55,19 @@ Source: protocol pending lanes. Destination: configured treasury recipient.
 **SAT distributor feed**
 
 Source: protocol pending distributor SAT. Destination: bond distributor vault.
+The mining claim mints and records the exact reward in bond accounting in one
+transaction. If bond accounting fails, the mint and pending-lane debit roll back.
+
+**Reward quarantine**
+
+When protocol distributor SAT arrives while active stake is zero, the atomic
+claim records it as unallocated instead of advancing the staking index. Generic
+token transfers into the reward vault are also unallocated; the public sync
+instruction only detects and quarantines those unexpected balances. It never
+converts them into staker rewards. The maintainer then uses the permissionless
+bond instruction to move only quarantined whole-token amounts to the treasury
+recipient fixed by the active genesis profile. A later first staker cannot
+capture them, and the maintainer cannot redirect them.
 
 **Cleanup/reclaim rent**
 
@@ -134,6 +149,18 @@ The maintainer should run with:
 - compact status mode for the regular loop and debug status mode only during
   investigations.
 
+Configure write failover explicitly when two transaction-capable RPC providers
+are approved:
+
+```text
+FASED_WALLET_SOLANA_WRITE_RPC_URL=<primary>
+FASED_WALLET_SOLANA_WRITE_RPC_FALLBACK_URL=<independent fallback>
+```
+
+Fased signs once and may submit the exact same raw transaction bytes to the
+active endpoints. A read-only public fallback is never promoted implicitly to
+a write endpoint.
+
 Runner batch knobs:
 
 ```bash
@@ -208,6 +235,8 @@ For a real launch drill, record:
 - reserve refill transaction or no-op proof when reserve is full;
 - treasury claim transaction or no-op proof when pending lanes are empty;
 - SAT distributor feed transaction or no-op proof;
+- atomic zero-stake quarantine proof, unexpected-vault sync proof, and
+  fixed-treasury sweep transaction or no-op proof;
 - cleanup/reclaim transaction or no-op proof;
 - monitor alert state before and after the drill.
 
