@@ -114,6 +114,7 @@ FASED_CLI_PATH=""
 PREBUILT_RUNTIME_INSTALLED=0
 GATEWAY_SERVICE_REFRESHED=0
 HOST_SIGNER_TRANSACTION_ACTIVE=0
+HOST_SIGNER_DURABLE_COMMIT_DECISION=0
 HOST_SIGNER_TRANSACTION_ID=""
 HOST_SIGNER_TRANSACTION_VERSION=""
 LOW_MEMORY_SWAP_THRESHOLD_MB=2304
@@ -125,19 +126,30 @@ rollback_pending_host_signer_transaction_on_exit() {
   local status="${1:-$captured_status}"
   trap - EXIT
   if [[ "$HOST_SIGNER_TRANSACTION_ACTIVE" -eq 1 && -n "$HOST_SIGNER_TRANSACTION_VERSION" ]]; then
-    echo "Hosted install did not commit; restoring the previous signer transaction..." >&2
-    if ! node /usr/local/libexec/fased-host-updaterctl.mjs \
-      "$HOST_SIGNER_TRANSACTION_VERSION" --rollback-only >/dev/null; then
-      echo "Signer rollback remains pending. Rerun sudo ./install.sh --repair-hosting." >&2
-      status=1
-    fi
-    local target_user="${FASED_INSTALL_USER:-app}"
-    local target_home
-    target_home="$(getent passwd "$target_user" 2>/dev/null | cut -d: -f6)"
-    [[ -n "$target_home" ]] || target_home="/home/$target_user"
-    if [[ ! -f "$target_home/.fased/hosted-update-transaction.json" ]] && \
-      systemctl list-unit-files fased-gateway.service --no-legend 2>/dev/null | grep -q '^fased-gateway.service'; then
-      systemctl start fased-gateway.service >/dev/null 2>&1 || status=1
+    if [[ "$HOST_SIGNER_DURABLE_COMMIT_DECISION" -eq 1 ]]; then
+      echo "Hosted health passed; completing the durable signer commit decision..." >&2
+      if node /usr/local/libexec/fased-host-updaterctl.mjs \
+        "$HOST_SIGNER_TRANSACTION_VERSION" --commit-only >/dev/null; then
+        HOST_SIGNER_TRANSACTION_ACTIVE=0
+      else
+        echo "Signer commit cleanup remains pending. Rerun sudo ./install.sh --repair-hosting." >&2
+        status=1
+      fi
+    else
+      echo "Hosted install did not commit; restoring the previous signer transaction..." >&2
+      if ! node /usr/local/libexec/fased-host-updaterctl.mjs \
+        "$HOST_SIGNER_TRANSACTION_VERSION" --rollback-only >/dev/null; then
+        echo "Signer rollback remains pending. Rerun sudo ./install.sh --repair-hosting." >&2
+        status=1
+      fi
+      local target_user="${FASED_INSTALL_USER:-app}"
+      local target_home
+      target_home="$(getent passwd "$target_user" 2>/dev/null | cut -d: -f6)"
+      [[ -n "$target_home" ]] || target_home="/home/$target_user"
+      if [[ ! -f "$target_home/.fased/hosted-update-transaction.json" ]] && \
+        systemctl list-unit-files fased-gateway.service --no-legend 2>/dev/null | grep -q '^fased-gateway.service'; then
+        systemctl start fased-gateway.service >/dev/null 2>&1 || status=1
+      fi
     fi
   fi
   exit "$status"
@@ -2273,6 +2285,29 @@ reexec_as_app_user() {
         child_status=1
       fi
     fi
+    if [[ "$child_status" -ne 0 && -f "$app_state_dir/hosted-update-transaction.json" ]]; then
+      local app_transaction_phase
+      app_transaction_phase="$(node -e '
+        const fs = require("node:fs");
+        try {
+          const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+          process.stdout.write(String(value.phase || ""));
+        } catch {}
+      ' "$app_state_dir/hosted-update-transaction.json")"
+      if [[ "$app_transaction_phase" == "gateway-verified" ]]; then
+        HOST_SIGNER_DURABLE_COMMIT_DECISION=1
+        echo "A durable hosted health decision is pending commit cleanup; resuming forward..." >&2
+        if runuser -u "$target_user" -- env \
+          HOME="$target_home" \
+          FASED_STATE_DIR="$app_state_dir" \
+          FASED_CONFIG_PATH="$app_state_dir/fased.json" \
+          FASED_HOST_UPDATER_SOCKET=/run/fased-host-updater/request.sock \
+          FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/app.sock \
+          node "$app_transaction_updater" hosted-transaction finalize; then
+          child_status=0
+        fi
+      fi
+    fi
     if [[ "$child_status" -eq 0 ]]; then
       if node /usr/local/libexec/fased-host-updaterctl.mjs \
         "$HOST_SIGNER_TRANSACTION_VERSION" --commit-only >/dev/null; then
@@ -2285,7 +2320,7 @@ reexec_as_app_user() {
         echo "Hosted health passed, but the root signer commit is pending; rerun --repair-hosting." >&2
         child_status=1
       fi
-    else
+    elif [[ "$HOST_SIGNER_DURABLE_COMMIT_DECISION" -eq 0 ]]; then
       systemctl stop fased-gateway.service >/dev/null 2>&1 || true
       if [[ -f "$app_transaction_updater" ]]; then
         runuser -u "$target_user" -- env \
@@ -2300,6 +2335,8 @@ reexec_as_app_user() {
         "$HOST_SIGNER_TRANSACTION_VERSION" --rollback-only >/dev/null; then
         HOST_SIGNER_TRANSACTION_ACTIVE=0
       fi
+    else
+      echo "Hosted health passed; leaving the target app and signer active for forward recovery." >&2
     fi
   fi
 
