@@ -1,17 +1,20 @@
 name: Docker Release
 
 on:
+  pull_request:
+    paths:
+      - ".dockerignore"
+      - "Dockerfile"
+      - "docker-compose.yml"
+      - "docker-setup.sh"
+      - "scripts/scan-docker-image.sh"
+      - "src/docker-image-digests.test.ts"
+      - "src/docker-setup.test.ts"
+      - "src/dockerfile.test.ts"
+      - ".github/workflows/docker-release.yml"
   push:
-    branches:
-      - main
     tags:
       - "v*"
-    paths-ignore:
-      - "docs/**"
-      - "**/*.md"
-      - "**/*.mdx"
-      - ".agents/**"
-      - "skills/**"
 
 concurrency:
   group: docker-release-${{ github.workflow }}-${{ github.ref }}
@@ -23,8 +26,41 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  validate-local-image:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build local validation image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          tags: fased-local-ci:${{ github.sha }}
+          load: true
+          provenance: false
+          sbom: false
+
+      - name: Verify non-root runtime user
+        env:
+          IMAGE: fased-local-ci:${{ github.sha }}
+        run: test "$(docker image inspect "$IMAGE" --format '{{.Config.User}}')" = "node"
+
+      - name: Scan local validation image
+        env:
+          IMAGE: fased-local-ci:${{ github.sha }}
+        run: scripts/scan-docker-image.sh "$IMAGE" linux/amd64
+
   # Build amd64 image
   build-amd64:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       packages: write
@@ -53,9 +89,6 @@ jobs:
         run: |
           set -euo pipefail
           tags=()
-          if [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
-            tags+=("${IMAGE}:main-amd64")
-          fi
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
             version="${GITHUB_REF#refs/tags/v}"
             tags+=("${IMAGE}:${version}-amd64")
@@ -79,11 +112,18 @@ jobs:
           tags: ${{ steps.tags.outputs.value }}
           cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-cache:amd64
           cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-cache:amd64,mode=max
-          provenance: false
+          provenance: mode=max
+          sbom: true
           push: true
+
+      - name: Scan pushed amd64 image
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+        run: scripts/scan-docker-image.sh "$IMAGE" linux/amd64
 
   # Build arm64 image
   build-arm64:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       packages: write
@@ -115,9 +155,6 @@ jobs:
         run: |
           set -euo pipefail
           tags=()
-          if [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
-            tags+=("${IMAGE}:main-arm64")
-          fi
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
             version="${GITHUB_REF#refs/tags/v}"
             tags+=("${IMAGE}:${version}-arm64")
@@ -141,11 +178,18 @@ jobs:
           tags: ${{ steps.tags.outputs.value }}
           cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-cache:arm64
           cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-cache:arm64,mode=max
-          provenance: false
+          provenance: mode=max
+          sbom: true
           push: true
+
+      - name: Scan pushed arm64 image
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+        run: scripts/scan-docker-image.sh "$IMAGE" linux/arm64
 
   # Create multi-platform manifest
   create-manifest:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       packages: write
@@ -170,13 +214,10 @@ jobs:
         run: |
           set -euo pipefail
           tags=()
-          if [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
-            tags+=("${IMAGE}:main")
-          fi
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
             version="${GITHUB_REF#refs/tags/v}"
             tags+=("${IMAGE}:${version}")
-            if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?$ ]]; then
+            if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
               tags+=("${IMAGE}:latest")
             fi
           fi
