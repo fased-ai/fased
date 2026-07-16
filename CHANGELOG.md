@@ -4,6 +4,17 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.62
+
+- Install a version-matched, checksum-verified local wallet signer automatically
+  when first-time wallet setup selects the local socket signer path; normal
+  installs no longer require Go.
+- Show automatic signer installation in both Local and Hosting QuickStart while
+  keeping the redundant wallet-backend prompt hidden in the hosting profile.
+- Publish static Linux and macOS signer assets for x64 and arm64 with release
+  checksums, module-relative installer resolution, and clear WSL2 guidance for
+  Windows users.
+
 ## 0.1.61
 
 - Harden local Docker deployments with loopback-only published ports, dropped
