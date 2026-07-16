@@ -438,7 +438,9 @@ func TestSignerV2ExecutionUsesOnlySignerOwnedNetwork(t *testing.T) {
 		writer.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer gatewayRPC.Close()
-	gatewayConfig := signerConfig{solanaRPCURL: gatewayRPC.URL, rpcURL: gatewayRPC.URL}
+	t.Setenv("FASED_WALLET_SOLANA_RPC_URL", gatewayRPC.URL)
+	t.Setenv("FASED_WALLET_RPC_URL", gatewayRPC.URL)
+	gatewayConfig := signerConfig{}
 	pendingBody, err := json.Marshal(signerExecuteRequestV2{
 		RequestID: "network-pending-request", PolicyHash: policy.Hash, Intent: intent,
 	})
@@ -572,13 +574,15 @@ func TestSignerV2ReconcileUsesOnlySignerOwnedNetwork(t *testing.T) {
 		writer.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer gatewayRPC.Close()
+	t.Setenv("FASED_WALLET_SOLANA_RPC_URL", gatewayRPC.URL)
+	t.Setenv("FASED_WALLET_RPC_URL", gatewayRPC.URL)
 	body, err := json.Marshal(signerOperationLookupV2{RequestID: operation.RequestID})
 	if err != nil {
 		t.Fatal(err)
 	}
 	response, err := service.handle(
 		request{Op: "v2.operation.reconcile", WalletID: "agent", Request: body},
-		signerConfig{solanaRPCURL: gatewayRPC.URL, rpcURL: gatewayRPC.URL},
+		signerConfig{},
 		false,
 	)
 	if err != nil || signerRequests.Load() == 0 || gatewayRequests.Load() != 0 {

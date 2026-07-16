@@ -8,7 +8,6 @@ require github.com/gagliardetto/solana-go v1.12.0
 
 require (
 	github.com/fxamacker/cbor/v2 v2.9.2
-	github.com/gagliardetto/binary v0.8.0
 	github.com/go-webauthn/webauthn v0.17.4
 	go.etcd.io/bbolt v1.4.3
 )
@@ -19,6 +18,7 @@ require (
 	github.com/blendle/zapdriver v1.3.1 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/fatih/color v1.16.0 // indirect
+	github.com/gagliardetto/binary v0.8.0 // indirect
 	github.com/gagliardetto/treeout v0.1.4 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/go-webauthn/x v0.2.6 // indirect

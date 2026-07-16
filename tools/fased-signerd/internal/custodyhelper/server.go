@@ -87,7 +87,9 @@ func (s *Server) handleStore(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "gatewayOrigin, walletId, and deviceShare are required", http.StatusBadRequest)
 		return
 	}
-	if err := s.store.Save(withTimeout(r.Context()), record); err != nil {
+	ctx, cancel := withTimeout(r.Context())
+	defer cancel()
+	if err := s.store.Save(ctx, record); err != nil {
 		writeStorageError(w, err)
 		return
 	}
@@ -108,8 +110,10 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "gatewayOrigin and walletId are required", http.StatusBadRequest)
 		return
 	}
+	ctx, cancel := withTimeout(r.Context())
+	defer cancel()
 	record, err := s.store.Load(
-		withTimeout(r.Context()),
+		ctx,
 		request.GatewayOrigin,
 		request.WalletID,
 		derefString(request.Prompt),
@@ -134,7 +138,9 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "gatewayOrigin and walletId are required", http.StatusBadRequest)
 		return
 	}
-	removed, err := s.store.Delete(withTimeout(r.Context()), request.GatewayOrigin, request.WalletID)
+	ctx, cancel := withTimeout(r.Context())
+	defer cancel()
+	removed, err := s.store.Delete(ctx, request.GatewayOrigin, request.WalletID)
 	if err != nil {
 		writeStorageError(w, err)
 		return
@@ -145,9 +151,8 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func withTimeout(ctx context.Context) context.Context {
-	timeoutCtx, _ := context.WithTimeout(ctx, 30*time.Second)
-	return timeoutCtx
+func withTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, 30*time.Second)
 }
 
 func writeStorageError(w http.ResponseWriter, err error) {

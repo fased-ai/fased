@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 
@@ -120,6 +121,36 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 			return nil, err
 		}
 		return marshalSignerResultV2(health)
+	case "getAddresses":
+		wallet, err := s.keys.PublicRecord(req.WalletID)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(map[string]string{"solana": wallet.PublicKey})
+	case "getBalance":
+		wallet, err := s.keys.PublicRecord(req.WalletID)
+		if err != nil {
+			return nil, err
+		}
+		address, err := solana.PublicKeyFromBase58(wallet.PublicKey)
+		if err != nil {
+			return nil, errors.New("signer-owned wallet record has an invalid public key")
+		}
+		rpcURLs, err := s.keys.SolanaRPCURLsV2(req.WalletID)
+		if err != nil {
+			return nil, errSignerNetworkPendingV2
+		}
+		lamports, err := signerOwnedSolanaBalanceV2(rpcURLs, address)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(map[string]any{
+			"ok":      true,
+			"chain":   "solana",
+			"address": wallet.PublicKey,
+			"balance": strconv.FormatUint(lamports, 10),
+			"unit":    "lamports",
+		})
 	case "v2.webauthn.registration.begin":
 		if cfg.readOnly {
 			return nil, errors.New("read-only signer mode")
@@ -641,6 +672,29 @@ func resolveMintDecimalsV2(rpcURLs []string, mint, tokenProgram solana.PublicKey
 		return data[44], nil
 	}
 	return 0, fmt.Errorf("resolve SPL mint metadata failed: %s", strings.Join(failures, "; "))
+}
+
+func signerOwnedSolanaBalanceV2(rpcURLs []string, address solana.PublicKey) (uint64, error) {
+	active, err := activeSolanaWriteRPCURLs(rpcURLs)
+	if err != nil {
+		return 0, err
+	}
+	for _, rpcURL := range active {
+		client := newSignerOwnedSolanaRPCClientV2(rpcURL)
+		ctx, cancel := context.WithTimeout(context.Background(), solanaWriteRPCRequestTimeout())
+		result, requestErr := client.GetBalance(ctx, address, rpc.CommitmentConfirmed)
+		cancel()
+		if requestErr != nil || result == nil {
+			if requestErr == nil {
+				requestErr = errors.New("missing Solana balance result")
+			}
+			markSolanaWriteRPCFailure(rpcURL, requestErr)
+			continue
+		}
+		markSolanaWriteRPCSuccess(rpcURL)
+		return result.Value, nil
+	}
+	return 0, errors.New("signer-owned Solana RPC balance lookup failed")
 }
 
 func broadcastSignedOnceV2(rpcURLs []string, signedRaw []byte, expectedSignature solana.Signature) error {

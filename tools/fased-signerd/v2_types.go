@@ -204,6 +204,10 @@ type normalizedIntentV2 struct {
 	CapExempt        bool
 }
 
+func isSPLTokenProgram(programID string) bool {
+	return programID == solana.TokenProgramID.String() || programID == solana.Token2022ProgramID.String()
+}
+
 func normalizePublicKeyV2(raw, field string) (string, error) {
 	value := strings.TrimSpace(raw)
 	if value == "" {

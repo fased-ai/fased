@@ -138,7 +138,7 @@ func (s *signerServiceV2) executeJupiterReviewV2(
 		}
 		return result, nil
 	}
-	if err := confirmSolanaSignatureAcrossRPCs(rpcURLs, signature); err != nil {
+	if err := confirmSignerSolanaSignatureAcrossRPCsV2(rpcURLs, signature); err != nil {
 		status, statusErr := lookupSignatureStatusV2(rpcURLs, signature)
 		if statusErr == nil && status == "confirmed" {
 			confirmed, markErr := s.store.markConfirmed(operation.RequestID)
