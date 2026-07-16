@@ -64,6 +64,11 @@ func runSignerAdminCLI(args []string, stdin io.Reader, stdout io.Writer, environ
 	if err := rejectSignerAdminSecretInputs(args, environ); err != nil {
 		return err
 	}
+	if len(args) >= 2 && args[0] == "network" && args[1] == "put" {
+		if err := rejectSignerAdminNetworkEnvironmentV2(environ); err != nil {
+			return err
+		}
+	}
 	if len(args) < 2 {
 		return signerAdminUsageError()
 	}
@@ -89,6 +94,15 @@ func runSignerAdminCLI(args []string, stdin io.Reader, stdout io.Writer, environ
 		default:
 			return errors.New("unknown signer admin policy command")
 		}
+	case "network":
+		switch args[1] {
+		case "get":
+			return runSignerAdminNetworkGet(args[2:], stdout)
+		case "put":
+			return runSignerAdminNetworkPut(args[2:], stdin, stdout)
+		default:
+			return errors.New("unknown signer admin network command")
+		}
 	case "webauthn":
 		if len(args) < 3 {
 			return errors.New("signer admin webauthn requires registration or credentials command")
@@ -109,7 +123,21 @@ func runSignerAdminCLI(args []string, stdin io.Reader, stdout io.Writer, environ
 }
 
 func signerAdminUsageError() error {
-	return errors.New("usage: fased-signerd admin {wallet|policy|webauthn} <command> [flags]")
+	return errors.New("usage: fased-signerd admin {wallet|policy|network|webauthn} <command> [flags]")
+}
+
+func rejectSignerAdminNetworkEnvironmentV2(environ []string) error {
+	for _, entry := range environ {
+		name, _, found := strings.Cut(entry, "=")
+		upper := strings.ToUpper(name)
+		if !found || !strings.HasPrefix(upper, "FASED_") {
+			continue
+		}
+		if strings.Contains(upper, "RPC") || strings.Contains(upper, "ENDPOINT") {
+			return errors.New("Fased RPC environment variables are not accepted by signer admin network put; provide strict JSON on stdin")
+		}
+	}
+	return nil
 }
 
 func rejectSignerAdminSecretInputs(args, environ []string) error {
@@ -390,6 +418,88 @@ func runSignerAdminPolicyPut(args []string, stdout io.Writer) error {
 	return callAndWriteSignerAdmin(common.controlSocket, "v2.policy.put", walletID, body, stdout)
 }
 
+func runSignerAdminNetworkGet(args []string, stdout io.Writer) error {
+	fs, common := newSignerAdminFlagSet("network get")
+	var walletID string
+	fs.StringVar(&walletID, "wallet-id", "", "normalized wallet identifier")
+	if err := parseSignerAdminFlags(fs, args); err != nil {
+		return err
+	}
+	if _, err := requireSignerAdminControlSocket(common.controlSocket); err != nil {
+		return err
+	}
+	walletID, err := validateSignerAdminWalletID(walletID)
+	if err != nil {
+		return err
+	}
+	result, err := callSignerAdmin(common.controlSocket, "v2.network.get", walletID, nil)
+	if err != nil {
+		return err
+	}
+	return writeSignerAdminNetworkSummaryV2(result, walletID, stdout)
+}
+
+func runSignerAdminNetworkPut(args []string, stdin io.Reader, stdout io.Writer) error {
+	fs, common := newSignerAdminFlagSet("network put")
+	var walletID string
+	fs.StringVar(&walletID, "wallet-id", "", "normalized wallet identifier")
+	if err := parseSignerAdminFlags(fs, args); err != nil {
+		return err
+	}
+	if _, err := requireSignerAdminControlSocket(common.controlSocket); err != nil {
+		return err
+	}
+	walletID, err := validateSignerAdminWalletID(walletID)
+	if err != nil {
+		return err
+	}
+	raw, err := io.ReadAll(io.LimitReader(stdin, maxSignerNetworkInputBytesV2+1))
+	if err != nil {
+		return errors.New("read signer network configuration from stdin")
+	}
+	defer zeroBytes(raw)
+	if len(raw) == 0 || len(raw) > maxSignerNetworkInputBytesV2 {
+		return errors.New("stdin must contain one strict signer network JSON object within the size limit")
+	}
+	var body signerNetworkPutRequestV2
+	if err := decodeSignerNetworkPutRequestV2(raw, &body); err != nil {
+		return errors.New("stdin must contain one strict signer network JSON object")
+	}
+	if body.ExpectedVersion == nil {
+		return errors.New("signer network expectedVersion is required on stdin")
+	}
+	normalized, err := normalizeSignerNetworkInputV2(body)
+	if err != nil {
+		return err
+	}
+	body.PrimaryRPCURL = normalized.PrimaryRPCURL
+	body.FallbackRPCURL = normalized.FallbackRPCURL
+	defer func() {
+		body.PrimaryRPCURL = ""
+		body.FallbackRPCURL = ""
+	}()
+	result, err := callSignerAdminSensitiveV2(common.controlSocket, "v2.network.put", walletID, body)
+	if err != nil {
+		return err
+	}
+	return writeSignerAdminNetworkSummaryV2(result, walletID, stdout)
+}
+
+func writeSignerAdminNetworkSummaryV2(result json.RawMessage, walletID string, stdout io.Writer) error {
+	var summary signerNetworkSummaryV2
+	if err := decodeSignerAdminStrictJSON(result, &summary); err != nil {
+		return errors.New("signer returned an invalid network summary")
+	}
+	if err := validateSignerNetworkSummaryV2(summary, walletID); err != nil {
+		return errors.New("signer returned an invalid network summary")
+	}
+	encoded, err := json.Marshal(summary)
+	if err != nil {
+		return errors.New("encode signer network summary")
+	}
+	return writeSignerAdminResult(encoded, stdout)
+}
+
 func runSignerAdminWebAuthnRegistrationBegin(args []string, stdout io.Writer) error {
 	fs, common := newSignerAdminFlagSet("webauthn registration begin")
 	var label string
@@ -649,6 +759,14 @@ func writeSignerAdminResult(result json.RawMessage, stdout io.Writer) error {
 }
 
 func callSignerAdmin(controlSocket, op, walletID string, body any) (json.RawMessage, error) {
+	return callSignerAdminWithSensitivityV2(controlSocket, op, walletID, body, false)
+}
+
+func callSignerAdminSensitiveV2(controlSocket, op, walletID string, body any) (json.RawMessage, error) {
+	return callSignerAdminWithSensitivityV2(controlSocket, op, walletID, body, true)
+}
+
+func callSignerAdminWithSensitivityV2(controlSocket, op, walletID string, body any, sensitive bool) (json.RawMessage, error) {
 	socket, err := requireSignerAdminControlSocket(controlSocket)
 	if err != nil {
 		return nil, err
@@ -659,6 +777,9 @@ func callSignerAdmin(controlSocket, op, walletID string, body any) (json.RawMess
 		if err != nil {
 			return nil, errors.New("encode signer admin request")
 		}
+		if sensitive {
+			defer zeroBytes(encoded)
+		}
 		req.Request = encoded
 	}
 	encoded, err := json.Marshal(req)
@@ -667,6 +788,9 @@ func callSignerAdmin(controlSocket, op, walletID string, body any) (json.RawMess
 	}
 	if len(encoded) > maxSignerRequestBytes {
 		return nil, errors.New("signer admin request is too large")
+	}
+	if sensitive {
+		defer zeroBytes(encoded)
 	}
 
 	dialer := net.Dialer{Timeout: signerAdminSocketTimeout}
@@ -677,6 +801,9 @@ func callSignerAdmin(controlSocket, op, walletID string, body any) (json.RawMess
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(signerAdminSocketTimeout))
 	payload := append(encoded, '\n')
+	if sensitive {
+		defer zeroBytes(payload)
+	}
 	if err := writeSignerAdminAll(conn, payload); err != nil {
 		return nil, errors.New("write signer control request")
 	}

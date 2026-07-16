@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
@@ -8,7 +9,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
+	"time"
 
 	solana "github.com/gagliardetto/solana-go"
 	rpc "github.com/gagliardetto/solana-go/rpc"
@@ -38,6 +41,8 @@ type signerHealthResultV2 struct {
 	KeystoreType string                  `json:"keystoreType"`
 	Chains       []string                `json:"chains"`
 	Ready        bool                    `json:"ready"`
+	Schema       signerSchemaHealthV2    `json:"schema"`
+	Network      signerNetworkHealthV2   `json:"network"`
 	Capabilities signerCapabilitiesV2    `json:"capabilities"`
 	Policies     []signerPolicySummaryV2 `json:"policies"`
 	WebAuthn     signerWebAuthnHealthV2  `json:"webAuthn"`
@@ -65,12 +70,19 @@ func (s *signerServiceV2) health(cfg signerConfig) (signerHealthResultV2, error)
 	if err != nil {
 		return signerHealthResultV2{}, err
 	}
+	networkHealth, err := s.keys.NetworkHealthV2()
+	if err != nil {
+		return signerHealthResultV2{}, err
+	}
+	schemaHealth := s.store.schemaHealth()
 	return signerHealthResultV2{
 		Details:      "fased-signerd protocol-v2 ready",
 		ReadOnly:     cfg.readOnly,
 		KeystoreType: "signer-owned-v2",
 		Chains:       cfg.chains,
-		Ready:        true,
+		Ready:        schemaHealth.Ready,
+		Schema:       schemaHealth,
+		Network:      networkHealth,
 		Capabilities: signerV2Capabilities,
 		Policies:     summaries,
 		WebAuthn:     webauthnHealth,
@@ -88,9 +100,13 @@ func decodeSignerRequestV2(raw json.RawMessage, out any) error {
 	if len(raw) == 0 {
 		return errors.New("signer-v2 request body is required")
 	}
-	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(out); err != nil {
+		return errors.New("invalid signer-v2 request")
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
 		return errors.New("invalid signer-v2 request")
 	}
 	return nil
@@ -171,6 +187,31 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 			return nil, err
 		}
 		return marshalSignerResultV2(result)
+	case "v2.network.get":
+		if err := requireControlSocketV2(control); err != nil {
+			return nil, err
+		}
+		summary, err := s.keys.NetworkSummaryV2(req.WalletID)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(summary)
+	case "v2.network.put":
+		if cfg.readOnly {
+			return nil, errors.New("read-only signer mode")
+		}
+		if err := requireControlSocketV2(control); err != nil {
+			return nil, err
+		}
+		var body signerNetworkPutRequestV2
+		if err := decodeSignerNetworkPutRequestV2(req.Request, &body); err != nil {
+			return nil, errors.New("invalid signer-v2 request")
+		}
+		summary, err := s.keys.PutNetworkV2(req.WalletID, body)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(summary)
 	case "v2.policy.get":
 		policy, err := s.store.getPolicy(req.WalletID)
 		if err != nil {
@@ -275,7 +316,7 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 			return nil, err
 		}
 		body.intentWalletID = req.WalletID
-		operation, err := s.execute(body, cfg)
+		operation, err := s.execute(body)
 		if err != nil {
 			return nil, err
 		}
@@ -301,7 +342,7 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
 			return nil, err
 		}
-		result, err := s.executeJupiterReviewV2(req.WalletID, body, cfg)
+		result, err := s.executeJupiterReviewV2(req.WalletID, body)
 		if err != nil {
 			return nil, err
 		}
@@ -324,7 +365,7 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
 			return nil, err
 		}
-		operation, err := s.reconcile(body.RequestID, req.WalletID, cfg)
+		operation, err := s.reconcile(body.RequestID, req.WalletID)
 		if err != nil {
 			return nil, err
 		}
@@ -334,7 +375,7 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 	}
 }
 
-func (s *signerServiceV2) execute(req signerExecuteRequestV2, cfg signerConfig) (signerOperationV2, error) {
+func (s *signerServiceV2) execute(req signerExecuteRequestV2) (signerOperationV2, error) {
 	walletRecord, err := s.keys.PublicRecord(req.IntentWalletID())
 	if err != nil {
 		return signerOperationV2{}, err
@@ -347,9 +388,31 @@ func (s *signerServiceV2) execute(req signerExecuteRequestV2, cfg signerConfig) 
 	if err != nil {
 		return signerOperationV2{}, err
 	}
-	operation, _, err := s.store.reserveOperation(req, intent)
-	if err != nil {
+	operation, lookupErr := s.store.getOperation(req.RequestID)
+	existing := lookupErr == nil
+	if lookupErr != nil && !errors.Is(lookupErr, errSignerOperationNotFoundV2) {
+		return signerOperationV2{}, lookupErr
+	}
+	if existing {
+		operation, _, err = s.store.reserveOperation(req, intent)
+		if err != nil {
+			return signerOperationV2{}, err
+		}
+		if operation.State != operationReserved {
+			return operation, nil
+		}
+	} else if err := s.store.preflightPolicyForIntentV2(req, intent); err != nil {
 		return signerOperationV2{}, err
+	}
+	rpcURLs, err := s.keys.SolanaRPCURLsV2(req.IntentWalletID())
+	if err != nil {
+		return signerOperationV2{}, errSignerNetworkPendingV2
+	}
+	if !existing {
+		operation, _, err = s.store.reserveOperation(req, intent)
+		if err != nil {
+			return signerOperationV2{}, err
+		}
 	}
 	operation, executionAttempt, claimed, err := s.store.claimReservedOperation(operation.RequestID)
 	if err != nil {
@@ -365,14 +428,14 @@ func (s *signerServiceV2) execute(req signerExecuteRequestV2, cfg signerConfig) 
 		return signerOperationV2{}, err
 	}
 	defer zeroBytes(privateKey)
-	rpcURLs := cfg.solanaWriteRPCURLsForWallet(req.IntentWalletID())
 	tx, err := buildTypedTransactionV2(rpcURLs, privateKey, intent)
 	if err != nil {
-		failed, markErr := s.store.markFailedClaim(operation.RequestID, executionAttempt, err)
+		safeErr := errors.New("signer-owned Solana RPC transaction preparation failed")
+		failed, markErr := s.store.markFailedClaim(operation.RequestID, executionAttempt, safeErr)
 		if markErr != nil {
-			return signerOperationV2{}, fmt.Errorf("%v; persist signer failure: %w", err, markErr)
+			return signerOperationV2{}, fmt.Errorf("%v; persist signer failure: %w", safeErr, markErr)
 		}
-		return failed, err
+		return failed, safeErr
 	}
 	raw, err := tx.MarshalBinary()
 	if err != nil {
@@ -392,27 +455,28 @@ func (s *signerServiceV2) execute(req signerExecuteRequestV2, cfg signerConfig) 
 	}
 
 	if err := broadcastSignedOnceV2(rpcURLs, raw, tx.Signatures[0]); err != nil {
-		unknown, markErr := s.store.markUnknown(operation.RequestID, err)
+		safeErr := errors.New("signer-owned Solana RPC broadcast result is ambiguous")
+		unknown, markErr := s.store.markUnknown(operation.RequestID, safeErr)
 		if markErr != nil {
-			return operation, fmt.Errorf("%v; persist ambiguous signer result: %w", err, markErr)
+			return operation, fmt.Errorf("%v; persist ambiguous signer result: %w", safeErr, markErr)
 		}
 		return unknown, nil
 	}
-	if err := confirmSolanaSignatureAcrossRPCs(rpcURLs, tx.Signatures[0]); err != nil {
+	if err := confirmSignerSolanaSignatureAcrossRPCsV2(rpcURLs, tx.Signatures[0]); err != nil {
 		status, statusErr := lookupSignatureStatusV2(rpcURLs, tx.Signatures[0])
 		if statusErr == nil {
 			switch status {
 			case "confirmed":
 				return s.store.markConfirmed(operation.RequestID)
 			case "failed":
-				failed, markErr := s.store.markFailed(operation.RequestID, err)
+				failed, markErr := s.store.markFailed(operation.RequestID, errors.New("Solana transaction failed on chain"))
 				if markErr != nil {
 					return operation, markErr
 				}
 				return failed, nil
 			}
 		}
-		unknown, markErr := s.store.markUnknown(operation.RequestID, err)
+		unknown, markErr := s.store.markUnknown(operation.RequestID, errors.New("signer-owned Solana RPC confirmation remains ambiguous"))
 		if markErr != nil {
 			return operation, markErr
 		}
@@ -442,7 +506,7 @@ func buildTypedTransactionV2(
 		return nil, err
 	}
 
-	blockhash, err := solanaLatestBlockhashWithFallback(rpcURLs)
+	blockhash, err := signerLatestBlockhashWithFallbackV2(rpcURLs)
 	if err != nil {
 		return nil, err
 	}
@@ -557,7 +621,7 @@ func resolveMintDecimalsV2(rpcURLs []string, mint, tokenProgram solana.PublicKey
 	}
 	var failures []string
 	for index, rpcURL := range active {
-		client := rpc.New(rpcURL)
+		client := newSignerOwnedSolanaRPCClientV2(rpcURL)
 		ctx, cancel := context.WithTimeout(context.Background(), solanaWriteRPCRequestTimeout())
 		result, requestErr := client.GetAccountInfo(ctx, mint)
 		cancel()
@@ -585,7 +649,7 @@ func broadcastSignedOnceV2(rpcURLs []string, signedRaw []byte, expectedSignature
 		return err
 	}
 	rpcURL := active[0]
-	client := rpc.New(rpcURL)
+	client := newSignerOwnedSolanaRPCClientV2(rpcURL)
 	ctx, cancel := context.WithTimeout(context.Background(), solanaWriteRPCRequestTimeout())
 	defer cancel()
 	signature, err := client.SendRawTransactionWithOpts(ctx, signedRaw, rpc.TransactionOpts{
@@ -609,7 +673,7 @@ func lookupSignatureStatusV2(rpcURLs []string, signature solana.Signature) (stri
 		return "unknown", err
 	}
 	for _, rpcURL := range active {
-		client := rpc.New(rpcURL)
+		client := newSignerOwnedSolanaRPCClientV2(rpcURL)
 		ctx, cancel := context.WithTimeout(context.Background(), solanaWriteRPCRequestTimeout())
 		status, requestErr := client.GetSignatureStatuses(ctx, true, signature)
 		cancel()
@@ -633,7 +697,64 @@ func lookupSignatureStatusV2(rpcURLs []string, signature solana.Signature) (stri
 	return "unknown", nil
 }
 
-func (s *signerServiceV2) reconcile(requestID, walletID string, cfg signerConfig) (signerOperationV2, error) {
+func signerLatestBlockhashWithFallbackV2(rpcURLs []string) (solana.Hash, error) {
+	active, err := activeSolanaWriteRPCURLs(rpcURLs)
+	if err != nil {
+		return solana.Hash{}, err
+	}
+	for _, rpcURL := range active {
+		client := newSignerOwnedSolanaRPCClientV2(rpcURL)
+		ctx, cancel := context.WithTimeout(context.Background(), solanaWriteRPCRequestTimeout())
+		result, requestErr := client.GetLatestBlockhash(ctx, rpc.CommitmentFinalized)
+		cancel()
+		if requestErr == nil {
+			markSolanaWriteRPCSuccess(rpcURL)
+			return result.Value.Blockhash, nil
+		}
+		markSolanaWriteRPCFailure(rpcURL, requestErr)
+	}
+	return solana.Hash{}, errors.New("signer-owned Solana RPC latest-blockhash lookup failed")
+}
+
+func confirmSignerSolanaSignatureAcrossRPCsV2(rpcURLs []string, signature solana.Signature) error {
+	confirmCtx, cancel := context.WithTimeout(context.Background(), solanaWriteRPCConfirmTimeout())
+	defer cancel()
+	tick := time.NewTicker(750 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		active, activeErr := activeSolanaWriteRPCURLs(rpcURLs)
+		if activeErr == nil {
+			for _, rpcURL := range active {
+				client := newSignerOwnedSolanaRPCClientV2(rpcURL)
+				requestCtx, requestCancel := context.WithTimeout(confirmCtx, solanaWriteRPCRequestTimeout())
+				status, err := client.GetSignatureStatuses(requestCtx, true, signature)
+				requestCancel()
+				if err != nil {
+					markSolanaWriteRPCFailure(rpcURL, err)
+					continue
+				}
+				markSolanaWriteRPCSuccess(rpcURL)
+				if status == nil || status.Value == nil || len(status.Value) == 0 || status.Value[0] == nil {
+					continue
+				}
+				if status.Value[0].Err != nil {
+					return errors.New("Solana transaction failed on chain")
+				}
+				if status.Value[0].ConfirmationStatus == rpc.ConfirmationStatusConfirmed ||
+					status.Value[0].ConfirmationStatus == rpc.ConfirmationStatusFinalized {
+					return nil
+				}
+			}
+		}
+		select {
+		case <-confirmCtx.Done():
+			return errors.New("signer-owned Solana RPC confirmation timed out")
+		case <-tick.C:
+		}
+	}
+}
+
+func (s *signerServiceV2) reconcile(requestID, walletID string) (signerOperationV2, error) {
 	operation, err := s.store.getOperation(requestID)
 	if err != nil {
 		return signerOperationV2{}, err
@@ -648,9 +769,13 @@ func (s *signerServiceV2) reconcile(requestID, walletID string, cfg signerConfig
 	if err != nil {
 		return signerOperationV2{}, errors.New("stored signer operation signature is invalid")
 	}
-	status, err := lookupSignatureStatusV2(cfg.solanaWriteRPCURLsForWallet(walletID), signature)
+	rpcURLs, err := s.keys.SolanaRPCURLsV2(walletID)
 	if err != nil {
-		return operation, err
+		return operation, errSignerNetworkPendingV2
+	}
+	status, err := lookupSignatureStatusV2(rpcURLs, signature)
+	if err != nil {
+		return operation, errors.New("signer-owned Solana RPC reconciliation failed")
 	}
 	switch status {
 	case "confirmed":

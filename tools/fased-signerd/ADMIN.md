@@ -1,9 +1,10 @@
 # Native signer administration
 
-`fased-signerd admin` performs wallet lifecycle and WebAuthn enrollment through
-the signer-only `0600` control socket. Every command requires the absolute
-control-socket path. The client rejects unknown flags, positional data, secret
-flags and secret-bearing Fased environment variables.
+`fased-signerd admin` performs wallet lifecycle, policy and network management,
+and WebAuthn enrollment through the signer-only `0600` control socket. Every
+command requires the absolute control-socket path. The client rejects unknown
+flags, positional data, secret flags and secret-bearing Fased environment
+variables.
 
 On a hosted installation, run these commands only from an authenticated host
 administrator session as the dedicated signer user:
@@ -114,6 +115,79 @@ The signer normalizes the policy, increments its version, computes the policy
 hash, and invalidates incompatible pending reservations. Empty operations,
 programs, or assets grant nothing.
 
+## Configure signer-owned Solana RPC
+
+Protocol-v2 execution and reconciliation never read Gateway RPC environment
+variables. Each signer-owned wallet needs its own versioned RPC configuration
+before it can execute; otherwise the signer returns `network-pending` without
+reserving spend. URLs and provider tokens are encrypted with the signer master
+key in the signer-owned state database. Network reads and health return only
+`configured`, `version`, keyed `hash`, and readiness metadata.
+
+RPC URLs are accepted only as one strict JSON object on standard input. Do not
+put a provider URL or token in a command argument, environment variable, shell
+history, or inline here-document. On Hosting, first create a root-only input
+file using a trusted editor:
+
+```bash
+sudo install -d -m 0700 /var/lib/fased-signerd/admin
+sudo install -m 0600 /dev/null /var/lib/fased-signerd/admin/agent-network.json
+sudoedit /var/lib/fased-signerd/admin/agent-network.json
+```
+
+The initial file is:
+
+```json
+{
+  "expectedVersion": 0,
+  "primaryRpcUrl": "https://your-primary-provider.example/solana",
+  "fallbackRpcUrl": "https://your-fallback-provider.example/solana"
+}
+```
+
+Apply it through the signer-only control socket. The root shell opens the
+root-only file, then the admin client runs as `fased-signer` with that inherited
+standard input. The client receives neither the path nor content in its process
+arguments:
+
+```bash
+sudo /bin/sh -c 'exec sudo -u fased-signer -- \
+  /opt/fased/signer/fased-signerd admin network put \
+  --control-socket /run/fased-signerd/control.sock \
+  --wallet-id agent \
+  < /var/lib/fased-signerd/admin/agent-network.json'
+```
+
+Remove the temporary input file after checking the returned metadata. Read the
+current metadata before replacement and put its exact current `version` in the
+next stdin document:
+
+```bash
+sudo -u fased-signer -- /opt/fased/signer/fased-signerd admin \
+  network get \
+  --control-socket /run/fased-signerd/control.sock \
+  --wallet-id agent
+```
+
+For Local Linux, native macOS, or WSL2, create the same `0600` JSON document in
+a private directory and run the same-user client:
+
+```bash
+umask 077
+mkdir -p "$HOME/.fased/admin"
+"${EDITOR:-vi}" "$HOME/.fased/admin/agent-network.json"
+"$HOME/.fased/bin/fased-signerd" admin network put \
+  --control-socket "$HOME/.fased/wallet/local-signer-control.sock" \
+  --wallet-id agent \
+  < "$HOME/.fased/admin/agent-network.json"
+```
+
+HTTPS is required. Plain HTTP is accepted only for a loopback Local development
+endpoint such as `http://127.0.0.1:8899`. URL user information, fragments,
+unsafe metadata IP literals, link-local addresses, multicast addresses, and
+oversized URLs are rejected. Repeat the operation separately for every wallet
+that executes transactions.
+
 ## Re-encrypt wallet state
 
 ```bash
@@ -176,6 +250,6 @@ admin command cannot override them.
 ## Retry safety
 
 If a mutating command loses the response after writing its request, inspect
-wallet or policy state before retrying. The client reports this explicitly for
-an unreadable response. Never assume a failed client connection means the
-signer did not commit the operation.
+wallet, policy, or network state before retrying. The client reports this
+explicitly for an unreadable response. Never assume a failed client connection
+means the signer did not commit the operation.

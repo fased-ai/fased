@@ -20,6 +20,7 @@ var (
 	bucketSignerOperationsV2          = []byte("operations")
 	bucketSignerUsageV2               = []byte("daily-usage")
 	bucketSignerWalletsV2             = []byte("wallets")
+	bucketSignerNetworksV2            = []byte("networks")
 	bucketSignerWebAuthnCredentialsV2 = []byte("webauthn-credentials")
 	bucketSignerWebAuthnChallengesV2  = []byte("webauthn-challenges")
 	bucketSignerReviewProofsV2        = []byte("review-authorization-proofs")
@@ -28,59 +29,78 @@ var (
 
 const signerExecutionLeaseV2 = 5 * time.Minute
 
+var errSignerOperationNotFoundV2 = errors.New("signer operation not found")
+
 type signerStoreV2 struct {
-	db  *bolt.DB
-	now func() time.Time
+	db            *bolt.DB
+	now           func() time.Time
+	schemaVersion uint64
 }
 
 func openSignerStoreV2(path string) (*signerStoreV2, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, errors.New("signer state database path is required")
 	}
+	path = filepath.Clean(path)
+	existed, hadState, err := inspectSignerStateBeforeOpenV2(path)
+	if err != nil {
+		return nil, err
+	}
+	if existed && hadState {
+		version, err := inspectSignerSchemaReadOnlyV2(path)
+		if err != nil {
+			return nil, err
+		}
+		if version > signerStateSchemaVersionV2 {
+			return nil, fmt.Errorf(
+				"signer state schema %d is newer than supported schema %d; refusing to mutate",
+				version,
+				signerStateSchemaVersionV2,
+			)
+		}
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, fmt.Errorf("create signer state directory: %w", err)
-	}
-	if err := validateSignerStateFileV2(path); err != nil {
-		return nil, err
 	}
 	db, err := bolt.Open(path, 0o600, &bolt.Options{Timeout: 2 * time.Second})
 	if err != nil {
 		return nil, fmt.Errorf("open signer state database: %w", err)
 	}
-	if err := os.Chmod(path, 0o600); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("secure signer state database: %w", err)
-	}
 	store := &signerStoreV2{db: db, now: time.Now}
-	if err := store.db.Update(func(tx *bolt.Tx) error {
-		for _, bucket := range [][]byte{
-			bucketSignerMetaV2,
-			bucketSignerPoliciesV2,
-			bucketSignerOperationsV2,
-			bucketSignerUsageV2,
-			bucketSignerWalletsV2,
-			bucketSignerWebAuthnCredentialsV2,
-			bucketSignerWebAuthnChallengesV2,
-			bucketSignerReviewProofsV2,
-			bucketSignerReviewsV2,
-		} {
-			if _, err := tx.CreateBucketIfNotExists(bucket); err != nil {
-				return err
+	version, err := readSignerSchemaVersionV2(db)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if version > signerStateSchemaVersionV2 {
+		_ = db.Close()
+		return nil, fmt.Errorf(
+			"signer state schema %d is newer than supported schema %d; refusing to mutate",
+			version,
+			signerStateSchemaVersionV2,
+		)
+	}
+	if version < signerStateSchemaVersionV2 {
+		if hadState {
+			if _, err := backupSignerStateBeforeMigrationV2(db, path); err != nil {
+				_ = db.Close()
+				return nil, err
 			}
 		}
-		meta := tx.Bucket(bucketSignerMetaV2)
-		if err := meta.Put([]byte("schemaVersion"), []byte("2")); err != nil {
-			return err
+		if err := migrateSignerStateV2(db, version); err != nil {
+			_ = db.Close()
+			return nil, err
 		}
-		capabilities, err := json.Marshal(signerV2Capabilities)
-		if err != nil {
-			return err
+		if err := syncSignerStateDirectoryV2(filepath.Dir(path)); err != nil {
+			_ = db.Close()
+			return nil, err
 		}
-		return meta.Put([]byte("capabilities"), capabilities)
-	}); err != nil {
+		version = signerStateSchemaVersionV2
+	} else if err := validateSignerSchemaBucketsV2(db); err != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("initialize signer state database: %w", err)
+		return nil, err
 	}
+	store.schemaVersion = version
 	return store, nil
 }
 
@@ -189,6 +209,38 @@ func (s *signerStoreV2) listPolicies() ([]signerPolicyV2, error) {
 		})
 	})
 	return policies, err
+}
+
+func (s *signerStoreV2) preflightPolicyForIntentV2(req signerExecuteRequestV2, intent normalizedIntentV2) error {
+	if s == nil || s.db == nil {
+		return errors.New("signer state database is unavailable")
+	}
+	if _, err := validateRequestIDV2(req.RequestID); err != nil {
+		return err
+	}
+	walletID := normalizeWalletID(req.IntentWalletID())
+	return s.db.View(func(tx *bolt.Tx) error {
+		rawPolicy := tx.Bucket(bucketSignerPoliciesV2).Get([]byte(walletID))
+		if rawPolicy == nil {
+			return errors.New("explicit signer policy required")
+		}
+		var policy signerPolicyV2
+		if err := json.Unmarshal(rawPolicy, &policy); err != nil {
+			return fmt.Errorf("decode signer policy: %w", err)
+		}
+		if strings.TrimSpace(req.PolicyHash) == "" || req.PolicyHash != policy.Hash {
+			return errors.New("signer policy hash mismatch")
+		}
+		assetPolicy, err := policyAssetForIntentV2(policy, intent)
+		if err != nil {
+			return err
+		}
+		maxDaily, ok := new(big.Int).SetString(assetPolicy.MaxDaily, 10)
+		if !ok || maxDaily.Sign() <= 0 {
+			return errors.New("policy daily cap must be positive")
+		}
+		return nil
+	})
 }
 
 func (s *signerStoreV2) reserveOperation(req signerExecuteRequestV2, intent normalizedIntentV2) (signerOperationV2, bool, error) {
@@ -318,7 +370,7 @@ func (s *signerStoreV2) getOperation(requestID string) (signerOperationV2, error
 	err = s.db.View(func(tx *bolt.Tx) error {
 		raw := tx.Bucket(bucketSignerOperationsV2).Get([]byte(requestID))
 		if raw == nil {
-			return errors.New("signer operation not found")
+			return errSignerOperationNotFoundV2
 		}
 		return json.Unmarshal(raw, &operation)
 	})

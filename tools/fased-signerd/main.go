@@ -664,11 +664,11 @@ func mustValidate(req request, cfg signerConfig) error {
 		if len(req.Request) == 0 || req.Chain != "" || strings.TrimSpace(req.WalletID) == "" {
 			return errors.New("invalid signer request")
 		}
-	case "v2.policy.get", "v2.wallet.get", "v2.wallet.reencrypt":
+	case "v2.network.get", "v2.policy.get", "v2.wallet.get", "v2.wallet.reencrypt":
 		if len(req.Request) > 0 || req.Chain != "" || strings.TrimSpace(req.WalletID) == "" {
 			return errors.New("invalid signer request")
 		}
-	case "v2.policy.put", "v2.wallet.create", "v2.wallet.import", "v2.wallet.importLegacy", "v2.execute", "v2.review.prepare", "v2.review.execute", "v2.operation.get", "v2.operation.reconcile":
+	case "v2.network.put", "v2.policy.put", "v2.wallet.create", "v2.wallet.import", "v2.wallet.importLegacy", "v2.execute", "v2.review.prepare", "v2.review.execute", "v2.operation.get", "v2.operation.reconcile":
 		if len(req.Request) == 0 || req.Chain != "" || strings.TrimSpace(req.WalletID) == "" {
 			return errors.New("invalid signer request")
 		}
@@ -944,6 +944,8 @@ func parseArgs() signerConfig {
 	cfg.rateLimit = map[string]int{
 		"health":                          getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_HEALTH", 300),
 		"v2.capabilities":                 getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_HEALTH", 300),
+		"v2.network.get":                  getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_NETWORK", 120),
+		"v2.network.put":                  getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_NETWORK", 30),
 		"v2.policy.get":                   getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_POLICY", 120),
 		"v2.policy.put":                   getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_POLICY", 120),
 		"v2.wallet.get":                   getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WALLET", 120),

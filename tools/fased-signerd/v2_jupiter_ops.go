@@ -31,7 +31,6 @@ func (s *signerServiceV2) prepareJupiterReviewV2(walletID string, req signerRevi
 func (s *signerServiceV2) executeJupiterReviewV2(
 	walletID string,
 	req signerReviewExecuteRequestV2,
-	cfg signerConfig,
 ) (signerReviewExecutionResultV2, error) {
 	intent, err := normalizeSignerIntentV2(req.Intent)
 	if err != nil {
@@ -55,8 +54,12 @@ func (s *signerServiceV2) executeJupiterReviewV2(
 	if err != nil {
 		return signerReviewExecutionResultV2{}, err
 	}
+	rpcURLs, err := s.keys.SolanaRPCURLsV2(walletID)
+	if err != nil {
+		return signerReviewExecutionResultV2{}, errSignerNetworkPendingV2
+	}
 	validated, err := validateAndSimulateJupiterTransactionV2(
-		cfg.solanaWriteRPCURLsForWallet(walletID),
+		rpcURLs,
 		solana.MustPublicKeyFromBase58(walletKey),
 		intent,
 		req.Transaction,
@@ -126,12 +129,12 @@ func (s *signerServiceV2) executeJupiterReviewV2(
 		return result, nil
 	}
 
-	rpcURLs := cfg.solanaWriteRPCURLsForWallet(walletID)
 	if err := broadcastSignedOnceV2(rpcURLs, signedRaw, signature); err != nil {
-		unknown, markErr := s.store.markUnknown(operation.RequestID, err)
+		safeErr := errors.New("signer-owned Solana RPC broadcast result is ambiguous")
+		unknown, markErr := s.store.markUnknown(operation.RequestID, safeErr)
 		result.Operation = &unknown
 		if markErr != nil {
-			return result, fmt.Errorf("%v; persist ambiguous Jupiter result: %w", err, markErr)
+			return result, fmt.Errorf("%v; persist ambiguous Jupiter result: %w", safeErr, markErr)
 		}
 		return result, nil
 	}

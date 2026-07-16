@@ -137,7 +137,7 @@ func TestSignerV2ApplicationSocketCreatesOnlyExplicitlyLockedWallet(t *testing.T
 		RequestID: "locked-wallet-execute", PolicyHash: policy.Hash,
 		Intent:         signerIntentV2{Type: intentSolanaNativeTransfer, Destination: destination, Lamports: "1"},
 		intentWalletID: "locked-mining",
-	}, signerConfig{})
+	})
 	if err == nil || !strings.Contains(err.Error(), "policy denies operation") {
 		t.Fatalf("locked wallet execute must fail closed before RPC, got %v", err)
 	}

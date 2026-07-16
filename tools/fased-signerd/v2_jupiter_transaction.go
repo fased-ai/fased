@@ -82,22 +82,20 @@ func validateAndSimulateJupiterTransactionV2(
 	if err != nil {
 		return jupiterValidatedTransactionV2{}, err
 	}
-	var failures []string
-	for index, rpcURL := range active {
+	for _, rpcURL := range active {
 		candidate, candidateErr := validateAndSimulateJupiterAtRPCV2(rpcURL, tx, raw, wallet, walletSignerIndex, intent, envelope)
 		if candidateErr == nil {
 			markSolanaWriteRPCSuccess(rpcURL)
 			return candidate, nil
 		}
 		markSolanaWriteRPCFailure(rpcURL, candidateErr)
-		failures = append(failures, fmt.Sprintf("endpoint %d: %v", index+1, candidateErr))
 		// Semantic rejection is deterministic. A different RPC must never be used
 		// to turn a rejected transaction into an approved one.
 		if !isJupiterRPCReadFailureV2(candidateErr) {
-			break
+			return jupiterValidatedTransactionV2{}, candidateErr
 		}
 	}
-	return jupiterValidatedTransactionV2{}, fmt.Errorf("typed Jupiter validation failed: %s", strings.Join(failures, "; "))
+	return jupiterValidatedTransactionV2{}, errors.New("signer-owned Solana RPC validation reads failed")
 }
 
 func validateJupiterRequiredSignersV2(tx *solana.Transaction, wallet solana.PublicKey, intent normalizedIntentV2) (int, error) {
@@ -167,7 +165,7 @@ func validateAndSimulateJupiterAtRPCV2(
 	if err != nil {
 		return jupiterValidatedTransactionV2{}, err
 	}
-	client := rpc.New(rpcURL)
+	client := newSignerOwnedSolanaRPCClientV2(rpcURL)
 	ctx, cancel := context.WithTimeout(context.Background(), solanaWriteRPCRequestTimeout())
 	defer cancel()
 	if err := resolveAndVerifyLookupsV2(ctx, client, &candidate.Message); err != nil {

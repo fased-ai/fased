@@ -1,0 +1,704 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
+	"crypto/tls"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"math"
+	"net"
+	"net/http"
+	"net/url"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/gagliardetto/solana-go/rpc"
+	"github.com/gagliardetto/solana-go/rpc/jsonrpc"
+	bolt "go.etcd.io/bbolt"
+)
+
+const (
+	maxSignerRPCURLBytesV2        = 2048
+	maxSignerNetworkInputBytesV2  = 8192
+	maxSignerNetworkRecordBytesV2 = 64 * 1024
+)
+
+var (
+	errSignerNetworkNotConfiguredV2 = errors.New("signer-owned Solana network is not configured")
+	errSignerNetworkRecordInvalidV2 = errors.New("stored signer network record is invalid")
+	errSignerNetworkPendingV2       = errors.New("network-pending: signer-owned Solana RPC configuration is required")
+)
+
+type signerNetworkPutRequestV2 struct {
+	ExpectedVersion *uint64 `json:"expectedVersion"`
+	PrimaryRPCURL   string  `json:"primaryRpcUrl"`
+	FallbackRPCURL  string  `json:"fallbackRpcUrl,omitempty"`
+}
+
+type signerNetworkSecretV2 struct {
+	PrimaryRPCURL  string `json:"primaryRpcUrl"`
+	FallbackRPCURL string `json:"fallbackRpcUrl,omitempty"`
+}
+
+type signerNetworkRecordV2 struct {
+	WalletID  string `json:"walletId"`
+	Version   uint64 `json:"version"`
+	Hash      string `json:"hash"`
+	UpdatedAt string `json:"updatedAt"`
+	Nonce     string `json:"nonce"`
+	Secret    string `json:"secret"`
+}
+
+type signerNetworkSummaryV2 struct {
+	WalletID   string `json:"walletId"`
+	Configured bool   `json:"configured"`
+	Version    uint64 `json:"version"`
+	Hash       string `json:"hash,omitempty"`
+	Ready      bool   `json:"ready"`
+}
+
+type signerNetworkHealthV2 struct {
+	Ready   bool                     `json:"ready"`
+	Wallets []signerNetworkSummaryV2 `json:"wallets"`
+}
+
+func decodeSignerNetworkPutRequestV2(raw []byte, request *signerNetworkPutRequestV2) error {
+	if request == nil {
+		return errors.New("signer network request is unavailable")
+	}
+	*request = signerNetworkPutRequestV2{}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	token, err := decoder.Token()
+	if err != nil || token != json.Delim('{') {
+		return errors.New("signer network request must be one JSON object")
+	}
+	seen := map[string]bool{}
+	for decoder.More() {
+		keyToken, err := decoder.Token()
+		if err != nil {
+			return errors.New("invalid signer network request field")
+		}
+		key, ok := keyToken.(string)
+		if !ok || seen[key] {
+			return errors.New("invalid or duplicate signer network request field")
+		}
+		seen[key] = true
+		switch key {
+		case "expectedVersion":
+			if err := decoder.Decode(&request.ExpectedVersion); err != nil {
+				return errors.New("invalid signer network expectedVersion")
+			}
+		case "primaryRpcUrl":
+			if err := decoder.Decode(&request.PrimaryRPCURL); err != nil {
+				return errors.New("invalid signer network primaryRpcUrl")
+			}
+		case "fallbackRpcUrl":
+			if err := decoder.Decode(&request.FallbackRPCURL); err != nil {
+				return errors.New("invalid signer network fallbackRpcUrl")
+			}
+		default:
+			return errors.New("unknown signer network request field")
+		}
+	}
+	if token, err := decoder.Token(); err != nil || token != json.Delim('}') {
+		return errors.New("invalid signer network request object")
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return errors.New("trailing signer network request data")
+	}
+	return nil
+}
+
+func normalizeSignerNetworkInputV2(input signerNetworkPutRequestV2) (signerNetworkSecretV2, error) {
+	primary, err := normalizeSignerRPCURLV2(input.PrimaryRPCURL, "primaryRpcUrl")
+	if err != nil {
+		return signerNetworkSecretV2{}, err
+	}
+	fallback := ""
+	if input.FallbackRPCURL != "" {
+		fallback, err = normalizeSignerRPCURLV2(input.FallbackRPCURL, "fallbackRpcUrl")
+		if err != nil {
+			return signerNetworkSecretV2{}, err
+		}
+		if subtle.ConstantTimeCompare([]byte(primary), []byte(fallback)) == 1 {
+			return signerNetworkSecretV2{}, errors.New("fallbackRpcUrl must differ from primaryRpcUrl")
+		}
+	}
+	return signerNetworkSecretV2{PrimaryRPCURL: primary, FallbackRPCURL: fallback}, nil
+}
+
+func normalizeSignerRPCURLV2(raw, field string) (string, error) {
+	if raw == "" {
+		return "", fmt.Errorf("%s is required", field)
+	}
+	if raw != strings.TrimSpace(raw) || len(raw) > maxSignerRPCURLBytesV2 || strings.ContainsAny(raw, "\r\n\t\x00") {
+		return "", fmt.Errorf("%s is invalid or exceeds %d bytes", field, maxSignerRPCURLBytesV2)
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || !parsed.IsAbs() || parsed.Opaque != "" || parsed.Host == "" {
+		return "", fmt.Errorf("%s must be an absolute HTTPS URL", field)
+	}
+	if parsed.User != nil {
+		return "", fmt.Errorf("%s must not contain URL user information", field)
+	}
+	if parsed.Fragment != "" || strings.Contains(raw, "#") {
+		return "", fmt.Errorf("%s must not contain a fragment", field)
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme != "https" && scheme != "http" {
+		return "", fmt.Errorf("%s must use HTTPS", field)
+	}
+	hostname := strings.ToLower(strings.TrimSuffix(parsed.Hostname(), "."))
+	if hostname == "" || len(hostname) > 253 || strings.Contains(hostname, "%") {
+		return "", fmt.Errorf("%s contains an invalid host", field)
+	}
+	ip := net.ParseIP(hostname)
+	if ip == nil {
+		if looksLikeNonCanonicalIPLiteralV2(hostname) {
+			return "", fmt.Errorf("%s contains a non-canonical IP literal", field)
+		}
+		if err := validateSignerRPCHostnameV2(hostname); err != nil {
+			return "", fmt.Errorf("%s contains an unsafe host", field)
+		}
+	} else if isUnsafeSignerRPCIPV2(ip) {
+		return "", fmt.Errorf("%s targets an unsafe metadata, link-local, multicast, or unspecified address", field)
+	}
+	if scheme == "http" && !isSignerRPCLoopbackHostV2(hostname, ip) {
+		return "", fmt.Errorf("%s must use HTTPS except for loopback local development", field)
+	}
+	port := parsed.Port()
+	if port != "" {
+		value, err := strconv.ParseUint(port, 10, 16)
+		if err != nil || value == 0 {
+			return "", fmt.Errorf("%s contains an invalid port", field)
+		}
+	}
+	canonicalHost := hostname
+	if ip != nil && strings.Contains(hostname, ":") {
+		canonicalHost = "[" + hostname + "]"
+	}
+	if port != "" {
+		canonicalHost = net.JoinHostPort(hostname, port)
+	}
+	parsed.Scheme = scheme
+	parsed.Host = canonicalHost
+	return parsed.String(), nil
+}
+
+func looksLikeNonCanonicalIPLiteralV2(hostname string) bool {
+	if hostname == "" {
+		return false
+	}
+	parts := strings.Split(hostname, ".")
+	for _, part := range parts {
+		if part == "" {
+			return false
+		}
+		candidate := part
+		base := 10
+		if strings.HasPrefix(strings.ToLower(candidate), "0x") {
+			candidate = candidate[2:]
+			base = 16
+		}
+		if candidate == "" {
+			return false
+		}
+		for _, char := range candidate {
+			if char >= '0' && char <= '9' {
+				continue
+			}
+			if base == 16 && ((char >= 'a' && char <= 'f') || (char >= 'A' && char <= 'F')) {
+				continue
+			}
+			return false
+		}
+	}
+	return true
+}
+
+func validateSignerRPCHostnameV2(hostname string) error {
+	switch hostname {
+	case "metadata", "metadata.google.internal", "metadata.aws.internal", "metadata.azure.internal", "instance-data.ec2.internal":
+		return errors.New("metadata hostname")
+	}
+	labels := strings.Split(hostname, ".")
+	for _, label := range labels {
+		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return errors.New("invalid hostname label")
+		}
+		for _, char := range label {
+			if (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') || char == '-' {
+				continue
+			}
+			return errors.New("invalid hostname character")
+		}
+	}
+	return nil
+}
+
+func isUnsafeSignerRPCIPV2(ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+	if ip.IsUnspecified() || ip.IsMulticast() || ip.IsInterfaceLocalMulticast() || ip.IsLinkLocalMulticast() || ip.IsLinkLocalUnicast() {
+		return true
+	}
+	if ipv4 := ip.To4(); ipv4 != nil {
+		if ipv4.Equal(net.IPv4bcast) {
+			return true
+		}
+		for _, metadata := range []string{"100.100.100.200", "168.63.129.16", "192.0.0.192"} {
+			if ipv4.Equal(net.ParseIP(metadata).To4()) {
+				return true
+			}
+		}
+	} else {
+		for _, metadata := range []string{"fd00:ec2::254", "fd20:ce::254"} {
+			if ip.Equal(net.ParseIP(metadata)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isSignerRPCLoopbackHostV2(hostname string, ip net.IP) bool {
+	if ip != nil {
+		return ip.IsLoopback()
+	}
+	return hostname == "localhost" || strings.HasSuffix(hostname, ".localhost")
+}
+
+func newSignerOwnedSolanaRPCClientV2(endpoint string) *rpc.Client {
+	httpClient := newSignerOwnedHTTPClientV2()
+	client := jsonrpc.NewClientWithOpts(endpoint, &jsonrpc.RPCClientOpts{HTTPClient: httpClient})
+	return rpc.NewWithCustomRPCClient(client)
+}
+
+func newSignerOwnedHTTPClientV2() *http.Client {
+	return &http.Client{
+		Transport: &http.Transport{
+			Proxy:                 nil,
+			DialContext:           dialSignerOwnedRPCV2,
+			ForceAttemptHTTP2:     true,
+			MaxIdleConns:          16,
+			MaxIdleConnsPerHost:   4,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: time.Second,
+			TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
+		},
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+		Timeout: solanaWriteRPCRequestTimeout(),
+	}
+}
+
+func dialSignerOwnedRPCV2(ctx context.Context, network, address string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil || strings.TrimSpace(host) == "" || strings.TrimSpace(port) == "" {
+		return nil, errors.New("signer-owned Solana RPC dial address is invalid")
+	}
+	host = strings.Trim(host, "[]")
+	addresses := []net.IPAddr{}
+	if ip := net.ParseIP(host); ip != nil {
+		addresses = append(addresses, net.IPAddr{IP: ip})
+	} else {
+		resolved, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+		if err != nil || len(resolved) == 0 {
+			return nil, errors.New("signer-owned Solana RPC host resolution failed")
+		}
+		addresses = resolved
+	}
+	for _, candidate := range addresses {
+		if isUnsafeSignerRPCIPV2(candidate.IP) {
+			return nil, errors.New("signer-owned Solana RPC resolved to an unsafe address")
+		}
+	}
+	dialer := net.Dialer{Timeout: solanaWriteRPCRequestTimeout(), KeepAlive: 30 * time.Second}
+	for _, candidate := range addresses {
+		connection, err := dialer.DialContext(ctx, network, net.JoinHostPort(candidate.IP.String(), port))
+		if err == nil {
+			return connection, nil
+		}
+	}
+	return nil, errors.New("signer-owned Solana RPC connection failed")
+}
+
+func deriveSignerNetworkKeyV2(masterKey []byte, purpose string) ([]byte, error) {
+	if len(masterKey) != 32 {
+		return nil, errors.New("signer master key is unavailable")
+	}
+	mac := hmac.New(sha256.New, masterKey)
+	_, _ = mac.Write([]byte("fased-signerd:v2:network:" + purpose))
+	return mac.Sum(nil), nil
+}
+
+func signerNetworkHashV2(masterKey []byte, walletID string, config signerNetworkSecretV2) (string, error) {
+	encoded, err := json.Marshal(config)
+	if err != nil {
+		return "", errors.New("encode signer network configuration")
+	}
+	defer zeroBytes(encoded)
+	key, err := deriveSignerNetworkKeyV2(masterKey, "hash")
+	if err != nil {
+		return "", err
+	}
+	defer zeroBytes(key)
+	mac := hmac.New(sha256.New, key)
+	_, _ = mac.Write([]byte(normalizeWalletID(walletID)))
+	_, _ = mac.Write([]byte{0})
+	_, _ = mac.Write(encoded)
+	return "hmac-sha256:" + hex.EncodeToString(mac.Sum(nil)), nil
+}
+
+func signerNetworkAADV2(record signerNetworkRecordV2) []byte {
+	return []byte(fmt.Sprintf("fased-signerd:v2:network:%s:%d:%s:%s", record.WalletID, record.Version, record.Hash, record.UpdatedAt))
+}
+
+func (m *signerKeyManagerV2) encryptNetworkRecordV2(walletID string, version uint64, config signerNetworkSecretV2) (signerNetworkRecordV2, error) {
+	hash, err := signerNetworkHashV2(m.masterKey, walletID, config)
+	if err != nil {
+		return signerNetworkRecordV2{}, err
+	}
+	record := signerNetworkRecordV2{
+		WalletID:  normalizeWalletID(walletID),
+		Version:   version,
+		Hash:      hash,
+		UpdatedAt: timestampV2(m.store.now()),
+	}
+	plaintext, err := json.Marshal(config)
+	if err != nil {
+		return signerNetworkRecordV2{}, errors.New("encode signer network configuration")
+	}
+	defer zeroBytes(plaintext)
+	key, err := deriveSignerNetworkKeyV2(m.masterKey, "encryption")
+	if err != nil {
+		return signerNetworkRecordV2{}, err
+	}
+	defer zeroBytes(key)
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return signerNetworkRecordV2{}, errors.New("initialize signer network encryption")
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return signerNetworkRecordV2{}, errors.New("initialize signer network authenticated encryption")
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return signerNetworkRecordV2{}, errors.New("generate signer network encryption nonce")
+	}
+	defer zeroBytes(nonce)
+	ciphertext := gcm.Seal(nil, nonce, plaintext, signerNetworkAADV2(record))
+	record.Nonce = base64.RawURLEncoding.EncodeToString(nonce)
+	record.Secret = base64.RawURLEncoding.EncodeToString(ciphertext)
+	zeroBytes(ciphertext)
+	return record, nil
+}
+
+func (m *signerKeyManagerV2) decryptNetworkRecordV2(record signerNetworkRecordV2) (signerNetworkSecretV2, error) {
+	if err := validateSignerNetworkRecordMetadataV2(record); err != nil {
+		return signerNetworkSecretV2{}, err
+	}
+	nonce, err := base64.RawURLEncoding.DecodeString(record.Nonce)
+	if err != nil {
+		return signerNetworkSecretV2{}, errors.New("invalid signer network record nonce")
+	}
+	defer zeroBytes(nonce)
+	ciphertext, err := base64.RawURLEncoding.DecodeString(record.Secret)
+	if err != nil {
+		return signerNetworkSecretV2{}, errors.New("invalid signer network encrypted state")
+	}
+	defer zeroBytes(ciphertext)
+	key, err := deriveSignerNetworkKeyV2(m.masterKey, "encryption")
+	if err != nil {
+		return signerNetworkSecretV2{}, err
+	}
+	defer zeroBytes(key)
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return signerNetworkSecretV2{}, errors.New("initialize signer network decryption")
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return signerNetworkSecretV2{}, errors.New("initialize signer network authenticated decryption")
+	}
+	if len(nonce) != gcm.NonceSize() {
+		return signerNetworkSecretV2{}, errors.New("invalid signer network record nonce size")
+	}
+	if len(ciphertext) < gcm.Overhead() || len(ciphertext) > maxSignerNetworkRecordBytesV2 {
+		return signerNetworkSecretV2{}, errors.New("invalid signer network encrypted state size")
+	}
+	plaintext, err := gcm.Open(nil, nonce, ciphertext, signerNetworkAADV2(record))
+	if err != nil {
+		return signerNetworkSecretV2{}, errors.New("signer network encrypted state authentication failed")
+	}
+	defer zeroBytes(plaintext)
+	var config signerNetworkSecretV2
+	decoder := json.NewDecoder(bytes.NewReader(plaintext))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&config); err != nil {
+		return signerNetworkSecretV2{}, errors.New("invalid signer network encrypted payload")
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return signerNetworkSecretV2{}, errors.New("invalid signer network encrypted payload")
+	}
+	normalized, err := normalizeSignerNetworkInputV2(signerNetworkPutRequestV2{
+		PrimaryRPCURL:  config.PrimaryRPCURL,
+		FallbackRPCURL: config.FallbackRPCURL,
+	})
+	if err != nil {
+		return signerNetworkSecretV2{}, errors.New("stored signer network configuration is invalid")
+	}
+	expectedHash, err := signerNetworkHashV2(m.masterKey, record.WalletID, normalized)
+	if err != nil {
+		return signerNetworkSecretV2{}, err
+	}
+	if subtle.ConstantTimeCompare([]byte(record.Hash), []byte(expectedHash)) != 1 {
+		return signerNetworkSecretV2{}, errors.New("signer network configuration hash mismatch")
+	}
+	return normalized, nil
+}
+
+func (m *signerKeyManagerV2) PutNetworkV2(walletID string, request signerNetworkPutRequestV2) (signerNetworkSummaryV2, error) {
+	if m == nil || m.store == nil || m.store.db == nil {
+		return signerNetworkSummaryV2{}, errors.New("signer state database is unavailable")
+	}
+	if request.ExpectedVersion == nil {
+		return signerNetworkSummaryV2{}, errors.New("expectedVersion is required")
+	}
+	walletID = normalizeWalletID(walletID)
+	config, err := normalizeSignerNetworkInputV2(request)
+	if err != nil {
+		return signerNetworkSummaryV2{}, err
+	}
+	var stored signerNetworkRecordV2
+	err = m.store.db.Update(func(tx *bolt.Tx) error {
+		if tx.Bucket(bucketSignerWalletsV2).Get([]byte(walletID)) == nil {
+			return errors.New("signer wallet not found")
+		}
+		networks := tx.Bucket(bucketSignerNetworksV2)
+		currentVersion := uint64(0)
+		if raw := networks.Get([]byte(walletID)); raw != nil {
+			var current signerNetworkRecordV2
+			if err := decodeSignerNetworkRecordV2(raw, &current); err != nil || current.WalletID != walletID {
+				return errors.New("invalid stored signer network record")
+			}
+			if _, err := m.decryptNetworkRecordV2(current); err != nil {
+				return errors.New("stored signer network record is not ready")
+			}
+			currentVersion = current.Version
+		}
+		if *request.ExpectedVersion != currentVersion {
+			return fmt.Errorf("signer network version conflict: expected %d, current %d", *request.ExpectedVersion, currentVersion)
+		}
+		if currentVersion == math.MaxUint64 {
+			return errors.New("signer network version is exhausted")
+		}
+		record, err := m.encryptNetworkRecordV2(walletID, currentVersion+1, config)
+		if err != nil {
+			return err
+		}
+		encoded, err := json.Marshal(record)
+		if err != nil {
+			return errors.New("encode signer network record")
+		}
+		if err := networks.Put([]byte(walletID), encoded); err != nil {
+			return err
+		}
+		stored = record
+		return nil
+	})
+	if err != nil {
+		return signerNetworkSummaryV2{}, err
+	}
+	return signerNetworkSummaryV2{
+		WalletID:   walletID,
+		Configured: true,
+		Version:    stored.Version,
+		Hash:       stored.Hash,
+		Ready:      true,
+	}, nil
+}
+
+func (m *signerKeyManagerV2) getNetworkRecordV2(walletID string) (signerNetworkRecordV2, error) {
+	if m == nil || m.store == nil || m.store.db == nil {
+		return signerNetworkRecordV2{}, errors.New("signer state database is unavailable")
+	}
+	walletID = normalizeWalletID(walletID)
+	var record signerNetworkRecordV2
+	err := m.store.db.View(func(tx *bolt.Tx) error {
+		if tx.Bucket(bucketSignerWalletsV2).Get([]byte(walletID)) == nil {
+			return errors.New("signer wallet not found")
+		}
+		raw := tx.Bucket(bucketSignerNetworksV2).Get([]byte(walletID))
+		if raw == nil {
+			return errSignerNetworkNotConfiguredV2
+		}
+		if err := decodeSignerNetworkRecordV2(raw, &record); err != nil || record.WalletID != walletID {
+			return errSignerNetworkRecordInvalidV2
+		}
+		return nil
+	})
+	return record, err
+}
+
+func decodeSignerNetworkRecordV2(raw []byte, record *signerNetworkRecordV2) error {
+	if record == nil || len(raw) == 0 || len(raw) > maxSignerNetworkRecordBytesV2 {
+		return errors.New("invalid signer network record size")
+	}
+	*record = signerNetworkRecordV2{}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(record); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return errors.New("invalid trailing signer network record data")
+	}
+	return validateSignerNetworkRecordMetadataV2(*record)
+}
+
+func validateSignerNetworkRecordMetadataV2(record signerNetworkRecordV2) error {
+	if record.WalletID == "" || len(record.WalletID) > 64 || normalizeWalletID(record.WalletID) != record.WalletID || record.Version == 0 {
+		return errors.New("invalid signer network record metadata")
+	}
+	if !isValidSignerNetworkHashV2(record.Hash) {
+		return errors.New("invalid signer network record hash")
+	}
+	if _, err := time.Parse(time.RFC3339Nano, record.UpdatedAt); err != nil {
+		return errors.New("invalid signer network record timestamp")
+	}
+	if len(record.Nonce) == 0 || len(record.Nonce) > 64 || len(record.Secret) == 0 || len(record.Secret) > maxSignerNetworkRecordBytesV2 {
+		return errors.New("invalid signer network encrypted record")
+	}
+	return nil
+}
+
+func isValidSignerNetworkHashV2(hash string) bool {
+	const hashPrefix = "hmac-sha256:"
+	if !strings.HasPrefix(hash, hashPrefix) {
+		return false
+	}
+	hashHex := strings.TrimPrefix(hash, hashPrefix)
+	if len(hashHex) != sha256.Size*2 || hashHex != strings.ToLower(hashHex) {
+		return false
+	}
+	digest, err := hex.DecodeString(hashHex)
+	if err != nil || len(digest) != sha256.Size {
+		return false
+	}
+	zeroBytes(digest)
+	return true
+}
+
+func validateSignerNetworkSummaryV2(summary signerNetworkSummaryV2, expectedWalletID string) error {
+	if summary.WalletID == "" || len(summary.WalletID) > 64 || normalizeWalletID(summary.WalletID) != summary.WalletID || summary.WalletID != normalizeWalletID(expectedWalletID) {
+		return errors.New("invalid signer network summary wallet")
+	}
+	if !summary.Configured {
+		if summary.Ready || summary.Version != 0 || summary.Hash != "" {
+			return errors.New("invalid unconfigured signer network summary")
+		}
+		return nil
+	}
+	if summary.Version == 0 {
+		if summary.Ready || summary.Hash != "" {
+			return errors.New("invalid pending signer network summary")
+		}
+		return nil
+	}
+	if !isValidSignerNetworkHashV2(summary.Hash) {
+		return errors.New("invalid signer network summary hash")
+	}
+	return nil
+}
+
+func (m *signerKeyManagerV2) NetworkSummaryV2(walletID string) (signerNetworkSummaryV2, error) {
+	walletID = normalizeWalletID(walletID)
+	record, err := m.getNetworkRecordV2(walletID)
+	if errors.Is(err, errSignerNetworkNotConfiguredV2) {
+		return signerNetworkSummaryV2{WalletID: walletID, Configured: false, Ready: false}, nil
+	}
+	if errors.Is(err, errSignerNetworkRecordInvalidV2) {
+		return signerNetworkSummaryV2{WalletID: walletID, Configured: true, Ready: false}, nil
+	}
+	if err != nil {
+		return signerNetworkSummaryV2{}, err
+	}
+	summary := signerNetworkSummaryV2{
+		WalletID:   walletID,
+		Configured: true,
+		Version:    record.Version,
+		Hash:       record.Hash,
+		Ready:      false,
+	}
+	if _, err := m.decryptNetworkRecordV2(record); err == nil {
+		summary.Ready = true
+	}
+	return summary, nil
+}
+
+func (m *signerKeyManagerV2) NetworkHealthV2() (signerNetworkHealthV2, error) {
+	if m == nil || m.store == nil || m.store.db == nil {
+		return signerNetworkHealthV2{}, errors.New("signer state database is unavailable")
+	}
+	walletIDs := []string{}
+	if err := m.store.db.View(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketSignerWalletsV2).ForEach(func(walletID, value []byte) error {
+			if value != nil {
+				walletIDs = append(walletIDs, string(walletID))
+			}
+			return nil
+		})
+	}); err != nil {
+		return signerNetworkHealthV2{}, err
+	}
+	sort.Strings(walletIDs)
+	health := signerNetworkHealthV2{Ready: true, Wallets: make([]signerNetworkSummaryV2, 0, len(walletIDs))}
+	for _, walletID := range walletIDs {
+		summary, err := m.NetworkSummaryV2(walletID)
+		if err != nil {
+			return signerNetworkHealthV2{}, err
+		}
+		if !summary.Ready {
+			health.Ready = false
+		}
+		health.Wallets = append(health.Wallets, summary)
+	}
+	return health, nil
+}
+
+func (m *signerKeyManagerV2) SolanaRPCURLsV2(walletID string) ([]string, error) {
+	record, err := m.getNetworkRecordV2(walletID)
+	if err != nil {
+		return nil, errSignerNetworkPendingV2
+	}
+	config, err := m.decryptNetworkRecordV2(record)
+	if err != nil {
+		return nil, errSignerNetworkPendingV2
+	}
+	urls := []string{config.PrimaryRPCURL}
+	if config.FallbackRPCURL != "" {
+		urls = append(urls, config.FallbackRPCURL)
+	}
+	return urls, nil
+}

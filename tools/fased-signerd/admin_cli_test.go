@@ -366,6 +366,119 @@ func TestSignerAdminPolicyGetPutAndWalletReencrypt(t *testing.T) {
 	}
 }
 
+func TestSignerAdminNetworkPutReadsStrictStdinAndReturnsMetadataOnly(t *testing.T) {
+	secret := "admin-network-secret-token"
+	hash := "hmac-sha256:" + strings.Repeat("a", 64)
+	input := []byte(`{"expectedVersion":0,"primaryRpcUrl":"https://rpc.example.com/solana?api-key=` + secret + `","fallbackRpcUrl":"https://fallback.example.com/rpc"}`)
+	server := startSignerAdminTestServer(t, signerAdminTestSuccess(t, `{"walletId":"agent","configured":true,"version":1,"hash":"`+hash+`","ready":true}`))
+	var stdout bytes.Buffer
+	err := runSignerAdminCLI([]string{
+		"network", "put", "--control-socket", server.path, "--wallet-id", "agent",
+	}, bytes.NewReader(input), &stdout, nil)
+	if err != nil {
+		t.Fatalf("run signer admin network put: %v", err)
+	}
+	req := waitSignerAdminTestServer(t, server)
+	if req.Op != "v2.network.put" || req.WalletID != "agent" {
+		t.Fatalf("unexpected signer network put envelope: %#v", req)
+	}
+	var body signerNetworkPutRequestV2
+	decodeSignerAdminTestBody(t, req, &body)
+	if body.ExpectedVersion == nil || *body.ExpectedVersion != 0 || !strings.Contains(body.PrimaryRPCURL, secret) || body.FallbackRPCURL == "" {
+		t.Fatalf("network put did not forward strict stdin configuration: %#v", body)
+	}
+	if strings.Contains(stdout.String(), secret) || strings.Contains(stdout.String(), "rpc.example.com") || strings.Contains(stdout.String(), "fallback.example.com") {
+		t.Fatalf("network put output exposed RPC material: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), `"hash": "`+hash+`"`) {
+		t.Fatalf("network put did not return metadata summary: %q", stdout.String())
+	}
+	zeroBytes(input)
+}
+
+func TestSignerAdminNetworkGetHasNoBodyAndRejectsURLResponses(t *testing.T) {
+	hash := "hmac-sha256:" + strings.Repeat("b", 64)
+	server := startSignerAdminTestServer(t, signerAdminTestSuccess(t, `{"walletId":"agent","configured":true,"version":2,"hash":"`+hash+`","ready":true}`))
+	var stdout bytes.Buffer
+	if err := runSignerAdminCLI([]string{
+		"network", "get", "--control-socket", server.path, "--wallet-id", "agent",
+	}, strings.NewReader("ignored"), &stdout, nil); err != nil {
+		t.Fatalf("run signer admin network get: %v", err)
+	}
+	req := waitSignerAdminTestServer(t, server)
+	if req.Op != "v2.network.get" || req.WalletID != "agent" || len(req.Request) != 0 {
+		t.Fatalf("unexpected signer network get envelope: %#v", req)
+	}
+	if strings.Contains(stdout.String(), "http") || !strings.Contains(stdout.String(), `"version": 2`) {
+		t.Fatalf("unexpected signer network metadata output: %q", stdout.String())
+	}
+
+	leaking := startSignerAdminTestServer(t, signerAdminTestSuccess(t, `{"walletId":"agent","configured":true,"version":2,"hash":"`+hash+`","ready":true,"primaryRpcUrl":"https://do-not-print.example/?token=secret"}`))
+	stdout.Reset()
+	err := runSignerAdminCLI([]string{
+		"network", "get", "--control-socket", leaking.path, "--wallet-id", "agent",
+	}, strings.NewReader(""), &stdout, nil)
+	if err == nil || !strings.Contains(err.Error(), "invalid network summary") || stdout.Len() != 0 {
+		t.Fatalf("network get accepted a URL-bearing response: stdout=%q err=%v", stdout.String(), err)
+	}
+	waitSignerAdminTestServer(t, leaking)
+
+	unsafeHash := startSignerAdminTestServer(t, signerAdminTestSuccess(t, `{"walletId":"agent","configured":true,"version":2,"hash":"https://do-not-print.example/?token=secret","ready":true}`))
+	err = runSignerAdminCLI([]string{
+		"network", "get", "--control-socket", unsafeHash.path, "--wallet-id", "agent",
+	}, strings.NewReader(""), &stdout, nil)
+	if err == nil || !strings.Contains(err.Error(), "invalid network summary") || stdout.Len() != 0 || strings.Contains(err.Error(), "do-not-print") {
+		t.Fatalf("network get accepted unsafe hash metadata: stdout=%q err=%v", stdout.String(), err)
+	}
+	waitSignerAdminTestServer(t, unsafeHash)
+}
+
+func TestSignerAdminNetworkPutRejectsRPCArgsEnvironmentAndInvalidStdin(t *testing.T) {
+	err := runSignerAdminCLI([]string{
+		"network", "put", "--primary-rpc-url=https://do-not-print.example/?token=secret",
+	}, strings.NewReader(`{}`), io.Discard, nil)
+	if err == nil || !strings.Contains(err.Error(), "invalid or unknown") || strings.Contains(err.Error(), "do-not-print") {
+		t.Fatalf("network put did not safely reject URL command argument: %v", err)
+	}
+	err = runSignerAdminCLI([]string{"network", "put"}, strings.NewReader(`{}`), io.Discard, []string{
+		"FASED_WALLET_SOLANA_RPC_URL=https://do-not-print.example/?token=secret",
+	})
+	if err == nil || !strings.Contains(err.Error(), "not accepted") || strings.Contains(err.Error(), "do-not-print") {
+		t.Fatalf("network put did not safely reject RPC environment: %v", err)
+	}
+
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "missing expected version", input: `{"primaryRpcUrl":"https://rpc.example.com"}`, want: "expectedVersion"},
+		{name: "unknown field", input: `{"expectedVersion":0,"primaryRpcUrl":"https://rpc.example.com","unknown":true}`, want: "strict"},
+		{name: "duplicate field", input: `{"expectedVersion":0,"expectedVersion":1,"primaryRpcUrl":"https://rpc.example.com"}`, want: "strict"},
+		{name: "trailing json", input: `{"expectedVersion":0,"primaryRpcUrl":"https://rpc.example.com"} {}`, want: "strict"},
+		{name: "external http", input: `{"expectedVersion":0,"primaryRpcUrl":"http://rpc.example.com/?token=do-not-print"}`, want: "HTTPS"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := startSignerAdminTestServer(t, signerAdminTestSuccess(t, `{}`))
+			err := runSignerAdminCLI([]string{
+				"network", "put", "--control-socket", server.path, "--wallet-id", "agent",
+			}, strings.NewReader(test.input), io.Discard, nil)
+			if err == nil || !strings.Contains(err.Error(), test.want) || strings.Contains(err.Error(), "do-not-print") {
+				t.Fatalf("expected safe %q rejection, got %v", test.want, err)
+			}
+		})
+	}
+
+	server := startSignerAdminTestServer(t, signerAdminTestSuccess(t, `{}`))
+	oversized := strings.Repeat("x", maxSignerNetworkInputBytesV2+1)
+	if err := runSignerAdminCLI([]string{
+		"network", "put", "--control-socket", server.path, "--wallet-id", "agent",
+	}, strings.NewReader(oversized), io.Discard, nil); err == nil || !strings.Contains(err.Error(), "size limit") {
+		t.Fatalf("network put accepted oversized stdin: %v", err)
+	}
+}
+
 func TestSignerAdminWebAuthnTypedPassthrough(t *testing.T) {
 	finishPath := writeSignerAdminTestJSON(t, "finish.json", signerWebAuthnRegistrationFinishRequestV2{
 		ChallengeID: "challenge-1",
