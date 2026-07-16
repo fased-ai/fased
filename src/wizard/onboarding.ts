@@ -51,9 +51,8 @@ import {
 } from "../wallet/wallet-provider-registry.js";
 import {
   ensureWalletStateDir,
-  resolveLocalSignerBackendSocketPath,
+  resolveLocalSignerControlSocketPath,
   resolveLocalSignerMaterialRootDir,
-  resolveLocalSignerRunAsUser,
   resolveLocalSignerSocketPath,
 } from "../wallet/wallet-runtime-config.js";
 import { isHostedSecurityCapableSession } from "./host-security-capability.js";
@@ -78,7 +77,6 @@ import type {
 import {
   configureWalletForOnboarding,
   installSignerdBinary,
-  migrateLocalSignerKeystoreToMaterialDir,
   restartLocalSocketSigner,
   resolveSignerdBinaryPath,
 } from "./onboarding.wallet.js";
@@ -247,14 +245,8 @@ export async function runOnboardingWizard(
     const signerSocketPath = resolveLocalSignerSocketPath(process.env);
     process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET = signerSocketPath;
     next = setConfigEnvVar(next, "FASED_WALLET_LOCAL_SIGNER_SOCKET", signerSocketPath);
-    const backendSocketPath = resolveLocalSignerBackendSocketPath(process.env);
-    if (backendSocketPath !== signerSocketPath) {
-      process.env.FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET = backendSocketPath;
-      next = setConfigEnvVar(next, "FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET", backendSocketPath);
-    } else {
-      delete process.env.FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET;
-      next = setConfigEnvVar(next, "FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET", undefined);
-    }
+    delete process.env.FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET;
+    next = setConfigEnvVar(next, "FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET", undefined);
     const signerStateDir = resolveLocalSignerMaterialRootDir(process.env);
     if (signerStateDir !== ensureWalletStateDir(process.env).rootDir) {
       process.env.FASED_WALLET_SIGNER_STATE_DIR = signerStateDir;
@@ -263,14 +255,8 @@ export async function runOnboardingWizard(
       delete process.env.FASED_WALLET_SIGNER_STATE_DIR;
       next = setConfigEnvVar(next, "FASED_WALLET_SIGNER_STATE_DIR", undefined);
     }
-    const signerRunAsUser = resolveLocalSignerRunAsUser(process.env);
-    if (signerRunAsUser) {
-      process.env.FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER = signerRunAsUser;
-      next = setConfigEnvVar(next, "FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER", signerRunAsUser);
-    } else {
-      delete process.env.FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER;
-      next = setConfigEnvVar(next, "FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER", undefined);
-    }
+    delete process.env.FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER;
+    next = setConfigEnvVar(next, "FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER", undefined);
     const signerBinPath = String(process.env.FASED_WALLET_LOCAL_SIGNER_BIN ?? "").trim();
     if (signerBinPath) {
       next = setConfigEnvVar(next, "FASED_WALLET_LOCAL_SIGNER_BIN", signerBinPath);
@@ -1620,30 +1606,38 @@ export async function runOnboardingWizard(
             continue;
           }
         }
-        const mode = selfHostedAction === "create" ? "local-signer-create" : "local-signer-import";
+        const mode = "local-signer-create" as const;
         const walletIdentity = await resolveWalletIdentityForOnboarding({
           flow,
           purpose: walletPurpose,
         });
         const walletName = walletIdentity.walletName;
         const walletId: string | undefined = walletIdentity.walletId || undefined;
-        const keystoreKey = keystoreEnvKeyFor(chain, walletId);
-        const currentKeystoreValue =
-          (nextConfig.env?.vars?.[keystoreKey] ?? "").trim() ||
-          String(process.env[keystoreKey] ?? "").trim();
-        const isolatedSignerRunAsUser = resolveLocalSignerRunAsUser(process.env);
-        const stagingKeystorePath = defaultKeystorePathFor(chain, walletId);
-        const effectiveKeystorePath = isolatedSignerRunAsUser
-          ? stagingKeystorePath
-          : currentKeystoreValue || stagingKeystorePath;
-        const isolatedTargetKeystorePath = isolatedSignerRunAsUser
-          ? path.join(
-              resolveLocalSignerMaterialRootDir(process.env),
-              path.basename(stagingKeystorePath),
-            )
-          : undefined;
-        nextConfig = setConfigEnvVar(nextConfig, keystoreKey, effectiveKeystorePath);
-        process.env[keystoreKey] = effectiveKeystorePath;
+        if (selfHostedAction === "import") {
+          const effectiveWalletId = walletId ?? walletPurpose;
+          const hosting = hostProfile === "hosting";
+          const signerBin = hosting
+            ? "/opt/fased/signer/fased-signerd"
+            : resolveSignerdBinaryPath();
+          const controlSocket = hosting
+            ? "/run/fased-signerd/control.sock"
+            : resolveLocalSignerControlSocketPath(process.env);
+          const command = `${hosting ? "sudo -u fased-signer -- " : ""}${signerBin} admin wallet import --control-socket ${controlSocket} --wallet-id ${effectiveWalletId} --locked-role ${walletPurpose} < /absolute/path/to/solana-keypair.json`;
+          await prompter.note(
+            [
+              "Plaintext keys are never accepted by the Gateway or Node wizard.",
+              "Run this from an authenticated terminal on the signer host:",
+              command,
+              "Then rerun wallet setup and choose Manage wallet to register/verify the returned public address.",
+            ].join("\n"),
+            "Native signer import",
+          );
+          addAnotherWallet = await prompter.confirm({
+            message: "Run another wallet setup action?",
+            initialValue: false,
+          });
+          continue;
+        }
         const rpcKey = rpcEnvKeyFor(chain, walletId);
         const currentRpcValue =
           (nextConfig.env?.vars?.[rpcKey] ?? "").trim() || String(process.env[rpcKey] ?? "").trim();
@@ -1664,29 +1658,10 @@ export async function runOnboardingWizard(
         nextConfig = setConfigEnvVar(nextConfig, rpcKey, effectiveRpcUrl);
         process.env[rpcKey] = effectiveRpcUrl;
         try {
-          let moveToSignerDir = false;
-          if (isolatedTargetKeystorePath && fs.existsSync(isolatedTargetKeystorePath)) {
-            moveToSignerDir = await prompter.confirm({
-              message: "Signer keystore already exists. Overwrite it?",
-              initialValue: false,
-            });
-            if (!moveToSignerDir) {
-              throw new Error(`Keystore already exists: ${isolatedTargetKeystorePath}`);
-            }
-          }
-          const prevSignerStateDir = process.env.FASED_WALLET_SIGNER_STATE_DIR;
-          const prevPassphraseFile = process.env.FASED_WALLET_PASSPHRASE_FILE;
           if (mode === "local-signer-create") {
-            const showPrivateKeyOnce = await prompter.confirm({
-              message: "Show generated private key once for offline backup?",
-              initialValue: false,
-            });
-            const confirmPrivateKeyPrint = showPrivateKeyOnce ? "SHOW PRIVATE KEY" : undefined;
+            const showPrivateKeyOnce = false;
+            const confirmPrivateKeyPrint = undefined;
             try {
-              if (isolatedSignerRunAsUser) {
-                delete process.env.FASED_WALLET_SIGNER_STATE_DIR;
-                delete process.env.FASED_WALLET_PASSPHRASE_FILE;
-              }
               await walletSetupCommand(runtime, {
                 mode,
                 chain,
@@ -1709,7 +1684,6 @@ export async function runOnboardingWizard(
                 if (!overwrite) {
                   throw err;
                 }
-                moveToSignerDir = true;
                 await walletSetupCommand(runtime, {
                   mode,
                   chain,
@@ -1726,70 +1700,7 @@ export async function runOnboardingWizard(
               } else {
                 throw err;
               }
-            } finally {
-              if (isolatedSignerRunAsUser) {
-                if (prevSignerStateDir == null) {
-                  delete process.env.FASED_WALLET_SIGNER_STATE_DIR;
-                } else {
-                  process.env.FASED_WALLET_SIGNER_STATE_DIR = prevSignerStateDir;
-                }
-                if (prevPassphraseFile == null) {
-                  delete process.env.FASED_WALLET_PASSPHRASE_FILE;
-                } else {
-                  process.env.FASED_WALLET_PASSPHRASE_FILE = prevPassphraseFile;
-                }
-              }
             }
-          } else {
-            const keyInput =
-              typeof prompter.secret === "function"
-                ? await prompter.secret({
-                    message: "Solana private key (base58/json/base64/hex)",
-                    validate: (value) => (value.trim() ? undefined : "Required"),
-                  })
-                : await prompter.text({
-                    message: "Solana private key (base58/json/base64/hex)",
-                    validate: (value) => (value.trim() ? undefined : "Required"),
-                  });
-            try {
-              if (isolatedSignerRunAsUser) {
-                delete process.env.FASED_WALLET_SIGNER_STATE_DIR;
-                delete process.env.FASED_WALLET_PASSPHRASE_FILE;
-              }
-              await walletSetupCommand(runtime, {
-                mode: "local-signer-import",
-                chain,
-                walletId,
-                walletName,
-                privateKey: keyInput.trim(),
-                rpcUrl: effectiveRpcUrl,
-                noDoctor: true,
-                noSignerHints: true,
-                nonInteractive: true,
-              });
-            } finally {
-              if (isolatedSignerRunAsUser) {
-                if (prevSignerStateDir == null) {
-                  delete process.env.FASED_WALLET_SIGNER_STATE_DIR;
-                } else {
-                  process.env.FASED_WALLET_SIGNER_STATE_DIR = prevSignerStateDir;
-                }
-                if (prevPassphraseFile == null) {
-                  delete process.env.FASED_WALLET_PASSPHRASE_FILE;
-                } else {
-                  process.env.FASED_WALLET_PASSPHRASE_FILE = prevPassphraseFile;
-                }
-              }
-            }
-          }
-          let configuredKeystorePath = effectiveKeystorePath;
-          if (isolatedSignerRunAsUser) {
-            configuredKeystorePath = migrateLocalSignerKeystoreToMaterialDir({
-              keystorePath: effectiveKeystorePath,
-              force: moveToSignerDir,
-            });
-            nextConfig = setConfigEnvVar(nextConfig, keystoreKey, configuredKeystorePath);
-            process.env[keystoreKey] = configuredKeystorePath;
           }
           walletCeremonyEvents.push({
             mode,

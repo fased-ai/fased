@@ -20,7 +20,6 @@ import {
   walletRotateKeysCommand,
   walletRoleSetCommand,
   walletSetupCommand,
-  walletSignerBrokerCommand,
   walletSignerServeCommand,
   walletSignerDoctorCommand,
   walletStatusCommand,
@@ -453,27 +452,6 @@ export function registerWalletCommands(program: Command) {
       await runCommandWithRuntime(defaultRuntime, async () => {
         await walletSignerServeCommand(defaultRuntime, {
           socketPath: typeof opts.socket === "string" ? opts.socket : undefined,
-          readOnly: Boolean(opts.readOnly),
-          pidFile: typeof opts.pidFile === "string" ? opts.pidFile : undefined,
-          auditLog: typeof opts.auditLog === "string" ? opts.auditLog : undefined,
-        });
-      });
-    });
-
-  signer
-    .command("broker")
-    .description("Run the app-facing local signer broker daemon")
-    .option("--socket <path>", "App-facing Unix socket path")
-    .option("--backend-socket <path>", "Private backend signer socket path")
-    .option("--read-only", "Read-only mode", false)
-    .option("--pid-file <path>", "PID file path")
-    .option("--audit-log <path>", "Audit log path")
-    .action(async (opts) => {
-      await runCommandWithRuntime(defaultRuntime, async () => {
-        await walletSignerBrokerCommand(defaultRuntime, {
-          socketPath: typeof opts.socket === "string" ? opts.socket : undefined,
-          backendSocketPath:
-            typeof opts.backendSocket === "string" ? opts.backendSocket : undefined,
           readOnly: Boolean(opts.readOnly),
           pidFile: typeof opts.pidFile === "string" ? opts.pidFile : undefined,
           auditLog: typeof opts.auditLog === "string" ? opts.auditLog : undefined,

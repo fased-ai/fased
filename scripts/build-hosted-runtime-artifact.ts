@@ -219,93 +219,6 @@ async function canConnect(port: number): Promise<boolean> {
   });
 }
 
-async function canConnectUnixSocket(socketPath: string): Promise<boolean> {
-  return await new Promise<boolean>((resolve) => {
-    const socket = createConnection(socketPath);
-    socket.setTimeout(500);
-    socket.once("connect", () => {
-      socket.destroy();
-      resolve(true);
-    });
-    const fail = () => {
-      socket.destroy();
-      resolve(false);
-    };
-    socket.once("error", fail);
-    socket.once("timeout", fail);
-  });
-}
-
-async function smokeWalletSignerBroker(
-  packageRoot: string,
-  smokeEnv: NodeJS.ProcessEnv,
-): Promise<void> {
-  const brokerRoot = await fs.mkdtemp(path.join(os.tmpdir(), "fased-hosted-wallet-broker-"));
-  const socketPath = path.join(brokerRoot, "app.sock");
-  const backendSocketPath = path.join(brokerRoot, "backend.sock");
-  const output: string[] = [];
-  const child = spawn(
-    process.execPath,
-    [
-      path.join(packageRoot, "dist", "entry.js"),
-      "wallet",
-      "signer",
-      "broker",
-      "--socket",
-      socketPath,
-      "--backend-socket",
-      backendSocketPath,
-      "--pid-file",
-      path.join(brokerRoot, "broker.pid"),
-      "--audit-log",
-      path.join(brokerRoot, "broker.audit.jsonl"),
-    ],
-    {
-      cwd: packageRoot,
-      env: {
-        ...process.env,
-        ...smokeEnv,
-        FASED_NO_RESPAWN: "1",
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-    },
-  );
-  child.stdout.on("data", (chunk) => output.push(String(chunk)));
-  child.stderr.on("data", (chunk) => output.push(String(chunk)));
-
-  try {
-    const deadline = Date.now() + 10_000;
-    while (Date.now() < deadline) {
-      if (child.exitCode !== null) {
-        throw new Error(
-          `Hosted wallet signer broker exited before creating its socket.\n${output.join("").slice(-8_000)}`,
-        );
-      }
-      if (await canConnectUnixSocket(socketPath)) {
-        return;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-    throw new Error(
-      `Hosted wallet signer broker did not create its socket within 10 seconds.\n${output.join("").slice(-8_000)}`,
-    );
-  } finally {
-    if (child.exitCode === null) {
-      child.kill("SIGTERM");
-      await Promise.race([
-        new Promise<void>((resolve) => child.once("exit", () => resolve())),
-        new Promise<void>((resolve) =>
-          setTimeout(() => {
-            child.kill("SIGKILL");
-            resolve();
-          }, 5_000),
-        ),
-      ]);
-    }
-    await fs.rm(brokerRoot, { recursive: true, force: true });
-  }
-}
-
 async function smokeGateway(
   packageRoot: string,
   smokeEnv: NodeJS.ProcessEnv,
@@ -509,8 +422,6 @@ async function main(): Promise<void> {
     if (!satPluginOutput.includes("Status: loaded")) {
       throw new Error(`Hosted sat-mining plugin did not load.\n${satPluginOutput}`);
     }
-    console.log("hosted-artifact: starting isolated packaged wallet signer broker");
-    await smokeWalletSignerBroker(packageRoot, smokeEnv);
     console.log("hosted-artifact: starting isolated packaged gateway");
     const gatewaySmoke = await smokeGateway(packageRoot, smokeEnv);
     const pluginLoadMs = gatewaySmoke.pluginLoadMs;

@@ -29,19 +29,14 @@ describe("managed gateway entry selection", () => {
     expect(resolver.indexOf("dist/entry.mjs")).toBeLessThan(resolver.indexOf("dist/index.mjs"));
   });
 
-  it("uses only the lazy CLI entry for the wallet signer broker", () => {
+  it("starts the native Local signer directly and contains no Node broker lifecycle", () => {
     const script = fs.readFileSync(path.resolve(import.meta.dirname, "start-managed.sh"), "utf8");
-    const start = script.indexOf("resolve_wallet_broker_cli_entry() {");
-    const end = script.indexOf("\n}\n", start);
-    const resolver = script.slice(start, end);
-
-    expect(start).toBeGreaterThanOrEqual(0);
-    expect(end).toBeGreaterThan(start);
-    expect(resolver).toContain("dist/entry.js");
-    expect(resolver).toContain("dist/entry.mjs");
-    expect(resolver).not.toContain("dist/index.js");
-    expect(resolver).not.toContain("dist/index.mjs");
-    expect(script).toContain('gateway_entry="$(resolve_wallet_broker_cli_entry || true)"');
+    expect(script).toContain("start_signerd_process() {");
+    expect(script).toContain('-socket "$SIGNERD_SOCKET"');
+    expect(script).not.toContain("resolve_wallet_broker_cli_entry");
+    expect(script).not.toContain("start_signer_broker");
+    expect(script).not.toContain("wallet signer broker");
+    expect(script).not.toContain("sudo -n -u");
   });
 
   it("stamps the gateway version from the runtime selected by the launcher", () => {

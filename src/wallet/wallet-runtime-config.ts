@@ -216,10 +216,6 @@ export function resolveLocalSignerMaterialRootDir(env: NodeJS.ProcessEnv = proce
 }
 
 export function resolveLocalSignerBackendSocketPath(env: NodeJS.ProcessEnv = process.env): string {
-  const explicit = String(env.FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET ?? "").trim();
-  if (explicit) {
-    return path.resolve(explicit);
-  }
   return resolveLocalSignerSocketPath(env);
 }
 
@@ -248,10 +244,9 @@ export function resolveLocalSignerMasterKeyPath(env: NodeJS.ProcessEnv = process
 }
 
 export function resolveLocalSignerRunAsUser(
-  env: NodeJS.ProcessEnv = process.env,
+  _env: NodeJS.ProcessEnv = process.env,
 ): string | undefined {
-  const explicit = String(env.FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER ?? "").trim();
-  return explicit || undefined;
+  return undefined;
 }
 
 function parseRuntime(value: string | undefined): WalletRuntimeKind | null {

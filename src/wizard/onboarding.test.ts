@@ -75,9 +75,6 @@ const setNamedWalletRole = vi.hoisted(() => vi.fn());
 const resolveWalletUserRole = vi.hoisted(() => vi.fn<() => unknown>(() => undefined));
 const restartLocalSocketSigner = vi.hoisted(() => vi.fn(async () => {}));
 const installSignerdBinary = vi.hoisted(() => vi.fn());
-const migrateLocalSignerKeystoreToMaterialDir = vi.hoisted(() =>
-  vi.fn(({ keystorePath }: { keystorePath: string }) => keystorePath),
-);
 const resolveSignerdBinaryPath = vi.hoisted(() => vi.fn(() => "/tmp/fased-signerd"));
 const configureWalletForOnboarding = vi.hoisted(() =>
   vi.fn(async ({ nextConfig }) => ({
@@ -157,7 +154,6 @@ vi.mock("../wallet/wallet-provider-registry.js", () => ({
 vi.mock("./onboarding.wallet.js", () => ({
   configureWalletForOnboarding,
   installSignerdBinary,
-  migrateLocalSignerKeystoreToMaterialDir,
   restartLocalSocketSigner,
   resolveSignerdBinaryPath,
 }));
@@ -741,7 +737,7 @@ describe("runOnboardingWizard", () => {
     );
   });
 
-  it("uses the interactive yes answer as private-key print confirmation", async () => {
+  it("never asks Node to print signer-owned private keys", async () => {
     walletSetupCommand.mockClear();
     readWalletProviderRegistry.mockReturnValue({
       version: 1,
@@ -824,8 +820,8 @@ describe("runOnboardingWizard", () => {
       expect.anything(),
       expect.objectContaining({
         mode: "local-signer-create",
-        showPrivateKeyOnce: true,
-        confirmPrivateKeyPrint: "SHOW PRIVATE KEY",
+        showPrivateKeyOnce: false,
+        confirmPrivateKeyPrint: undefined,
       }),
     );
   });

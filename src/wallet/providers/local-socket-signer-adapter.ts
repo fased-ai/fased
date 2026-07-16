@@ -273,7 +273,6 @@ export class LocalSocketSignerAdapter implements WalletProviderAdapter {
   constructor(
     private readonly socketPath: string,
     private readonly options?: {
-      backendSocketPath?: string;
       rpcUrl?: string;
       scopedWalletId?: string;
     },

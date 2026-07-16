@@ -198,7 +198,7 @@ describe("walletSetupCommand local-signer self-hosted modes", () => {
     }
   });
 
-  it("imports self-hosted wallet material without persisting embedded-keystore provider state", async () => {
+  it("rejects signer-owned imports before plaintext key material reaches Node persistence", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-local-signer-import-"));
     const configPath = path.join(root, "fased.json");
     const stateDir = path.join(root, "state");
@@ -210,31 +210,24 @@ describe("walletSetupCommand local-signer self-hosted modes", () => {
     delete process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET;
     clearConfigCache();
     try {
-      await walletSetupCommand({ log: () => {} } as never, {
-        mode: "local-signer-import",
-        chain: "solana",
-        walletId: "trading-main",
-        walletName: "Trading Main",
-        privateKey: TEST_SOLANA_PRIVATE_KEY,
-        rpcUrl: "https://rpc.example/solana",
-        nonInteractive: true,
-        noDoctor: true,
-        force: true,
-      });
+      await expect(
+        walletSetupCommand({ log: () => {} } as never, {
+          mode: "local-signer-import",
+          chain: "solana",
+          walletId: "trading-main",
+          walletName: "Trading Main",
+          privateKey: TEST_SOLANA_PRIVATE_KEY,
+          rpcUrl: "https://rpc.example/solana",
+          nonInteractive: true,
+          noDoctor: true,
+          force: true,
+        }),
+      ).rejects.toThrow("cannot pass plaintext key material through Node");
 
       const cfg = loadConfig();
-      expect(cfg.wallet?.provider?.id).toBe("local-socket-signer");
-      expect(cfg.wallet?.runtime?.enabled).toBe(true);
-      expect(cfg.wallet?.keystore?.enabled).not.toBe(true);
-      expect(cfg.env?.vars?.FASED_WALLET_SOLANA_RPC_URL__TRADING_MAIN).toBe(
-        "https://rpc.example/solana",
-      );
-      expect(cfg.env?.vars?.FASED_WALLET_SOLANA_KEYSTORE_PATH__TRADING_MAIN).toMatch(
-        /keystore-solana-trading-main\.v1\.enc$/,
-      );
-      expect(cfg.env?.vars?.FASED_WALLET_LOCAL_SIGNER_SOCKET).toBe(
-        path.join(stateDir, "wallet", "local-signer.sock"),
-      );
+      expect(cfg.wallet).toBeUndefined();
+      expect(cfg.env?.vars).toBeUndefined();
+      await expect(fs.readFile(configPath, "utf8")).resolves.not.toContain(TEST_SOLANA_PRIVATE_KEY);
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

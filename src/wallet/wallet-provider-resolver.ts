@@ -11,10 +11,7 @@ import { TurnkeyAdapter } from "./providers/turnkey-adapter.js";
 import { WalletStandardAdapter } from "./providers/wallet-standard-adapter.js";
 import type { WalletProviderAdapter } from "./wallet-provider-adapter.js";
 import { readWalletProviderRegistry } from "./wallet-provider-registry.js";
-import {
-  resolveLocalSignerBackendSocketPath,
-  type ResolvedWalletRuntimeConfig,
-} from "./wallet-runtime-config.js";
+import type { ResolvedWalletRuntimeConfig } from "./wallet-runtime-config.js";
 import { loadWalletProviderSecret } from "./wallet-secrets-store.js";
 
 function parseProviderId(input: string | undefined): WalletProviderId | null {
@@ -230,7 +227,6 @@ export function createWalletProviderAdapter(params: {
 
   if (providerId === "local-socket-signer") {
     return new LocalSocketSignerAdapter(requireLocalSocketSignerPath(env), {
-      backendSocketPath: resolveLocalSignerBackendSocketPath(env),
       rpcUrl: resolveScopedRpcUrlForWallet({
         env,
         chains: params.wallet.chains,
