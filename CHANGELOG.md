@@ -4,6 +4,17 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.61
+
+- Harden local Docker deployments with loopback-only published ports, dropped
+  Linux capabilities, `no-new-privileges`, protected environment files, and
+  explicit rejection of container-engine socket mounts.
+- Validate release images as a non-root user and block images containing
+  embedded secrets or fixable critical vulnerabilities.
+- Publish immutable multi-architecture GHCR images only from version tags with
+  SBOM and provenance metadata; keep full Docker Gateway support local-only and
+  use the maintained non-Docker installer for VPS hosting.
+
 ## 0.1.36
 
 - Ship verified hosted release artifacts for fast VPS installs and updates
