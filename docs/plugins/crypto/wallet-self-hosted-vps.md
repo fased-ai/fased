@@ -21,9 +21,13 @@ It is written for the public Fased wallet model:
 ## Prerequisites
 
 - Fased is already installed on the VPS
-- native signer installed or available
 - self-hosted wallet material already created or imported through onboarding or CLI
 - chain RPC configured for the wallet role you are validating
+
+Fased installs the version-matched, checksum-verified native signer
+automatically when the first wallet is created or imported. The Hosting
+QuickStart does not show a signer backend question because the isolated local
+socket signer is the maintained backend.
 
 For Solana RPC setup, use [Solana RPC setup](/plugins/crypto/wallet-rpc-setup).
 

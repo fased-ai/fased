@@ -38,6 +38,7 @@ const requiredPathGroups = [
   "scripts/fased-managed-service.sh",
   "scripts/fased-managed-updater.mjs",
   "scripts/fased-launcher-runtime.mjs",
+  "scripts/install-fased-signerd.sh",
   "scripts/install-managed-runtime.mjs",
   "scripts/managed-runtime-layout.mjs",
   "shared/sat-hash-v1.json",

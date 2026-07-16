@@ -38,14 +38,22 @@ else
 fi
 
 if [[ "$BASE_URL" == "$DEFAULT_RELEASE_DOWNLOAD_BASE" && ( -z "$VERSION_TAG" || "$VERSION_TAG" == "latest" ) ]]; then
+  if command -v node >/dev/null 2>&1 && [[ -f "${ROOT}/package.json" ]]; then
+    PACKAGE_VERSION="$(cd "$ROOT" && node -p "require('./package.json').version" 2>/dev/null || true)"
+    if [[ "$PACKAGE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]; then
+      VERSION_TAG="v${PACKAGE_VERSION}"
+    fi
+  fi
+fi
+
+if [[ "$BASE_URL" == "$DEFAULT_RELEASE_DOWNLOAD_BASE" && ( -z "$VERSION_TAG" || "$VERSION_TAG" == "latest" ) ]]; then
   cat >&2 <<'EOF'
-fased-signerd installer requires an explicit signer asset source.
+Could not determine the version-matched fased-signerd release asset.
 
 Normal Fased install, dashboard, Gateway, and Fased Network startup do not need fased-signerd.
-For first-time wallet signer setup, prefer building locally with:
-  scripts/build-fased-signerd.sh
+The wallet setup wizard normally supplies the installed Fased version automatically.
 
-To install a published signer asset, set one of:
+For a manual install, set one of:
   FASED_LOCAL_SIGNER_VERSION=vX.Y.Z
   FASED_LOCAL_SIGNER_BASE_URL=file:///path/to/release FASED_LOCAL_SIGNER_LATEST_TAG=
   FASED_LOCAL_SIGNER_BASE_URL=https://example.invalid/releases/download FASED_LOCAL_SIGNER_VERSION=vX.Y.Z
