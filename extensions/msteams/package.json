@@ -1,6 +1,6 @@
 {
   "name": "@fased/msteams",
-  "version": "0.1.60",
+  "version": "0.1.61",
   "description": "FasedAgent Microsoft Teams channel plugin",
   "type": "module",
   "dependencies": {
