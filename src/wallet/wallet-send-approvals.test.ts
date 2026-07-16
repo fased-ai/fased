@@ -869,6 +869,9 @@ describe("wallet-send-approvals", () => {
       },
     } as const;
     const walletCfg = resolveWalletRuntimeConfigForTest(cfg);
+    const sendTx = vi.fn(async () => {
+      throw new Error("rpc failed at https://rpc.example.com/?api_key=super-secret-rpc-key&ok=1");
+    });
     const providerSpy = vi
       .spyOn(walletProviderResolver, "createWalletProviderAdapter")
       .mockReturnValue({
@@ -905,11 +908,7 @@ describe("wallet-send-approvals", () => {
           chain: "solana",
           preparedId: "prepared-1",
         }),
-        sendTx: async () => {
-          throw new Error(
-            "rpc failed at https://rpc.example.com/?api_key=super-secret-rpc-key&ok=1",
-          );
-        },
+        sendTx,
       } as ReturnType<typeof walletProviderResolver.createWalletProviderAdapter>);
 
     const result = await createOrExecuteWalletSend({
@@ -928,6 +927,9 @@ describe("wallet-send-approvals", () => {
     if (result.ok) {
       return;
     }
+    expect(sendTx).toHaveBeenCalledTimes(1);
+    expect(result.requestId).toEqual(expect.any(String));
+    expect(sendTx).toHaveBeenCalledWith(expect.objectContaining({ requestId: result.requestId }));
     expect(result.message).toContain("api_key=***");
     expect(result.message).not.toContain("super-secret-rpc-key");
     const failedAudit = readWalletAuditEntries({ limit: 20 }).find(

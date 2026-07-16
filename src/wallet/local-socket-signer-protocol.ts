@@ -313,6 +313,8 @@ export const LocalSocketSignerRequestSchema = Type.Union(
 );
 
 export type LocalSocketSignerRequest = Static<typeof LocalSocketSignerRequestSchema>;
+export type LocalSocketSignerPolicyV2 = Static<typeof LocalSocketSignerPolicyV2Schema>;
+export type LocalSocketSignerOperationV2 = Static<typeof LocalSocketSignerOperationV2Schema>;
 
 export const LocalSocketSignerResponseEnvelopeSchema = Type.Object(
   {

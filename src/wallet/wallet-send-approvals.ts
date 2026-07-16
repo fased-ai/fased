@@ -1,6 +1,5 @@
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
-import { setTimeout as delay } from "node:timers/promises";
 import type { FasedAgentConfig } from "../config/config.js";
 import { loadConfig } from "../config/config.js";
 import { tryResolveSatRuntimeIds } from "../config/sat-runtime-ids.js";
@@ -26,7 +25,6 @@ import {
   enforceWalletDailyCap,
   resolveWalletRoleForId,
 } from "./wallet-policy.js";
-import { WalletProviderError } from "./wallet-provider-adapter.js";
 import {
   buildWalletProviderCapabilityMatrix,
   providerSupportsChainOperation,
@@ -160,8 +158,6 @@ type WalletSendApprovalsFile = {
 };
 
 const DEFAULT_TTL_SECONDS = 15 * 60;
-const DEFAULT_SEND_RETRY_ATTEMPTS = 3;
-const DEFAULT_SEND_RETRY_DELAY_MS = 750;
 
 function isReviewedMiningNativeSolanaSend(params: {
   cfg: FasedAgentConfig;
@@ -465,40 +461,6 @@ function resolveTtlMs(env: NodeJS.ProcessEnv = process.env): number {
   return Math.min(24 * 60 * 60 * 1000, raw * 1000);
 }
 
-function resolveSendRetryAttempts(env: NodeJS.ProcessEnv = process.env): number {
-  const raw = Number.parseInt(String(env.FASED_WALLET_SEND_RETRY_ATTEMPTS ?? ""), 10);
-  if (!Number.isFinite(raw) || raw < 1) {
-    return DEFAULT_SEND_RETRY_ATTEMPTS;
-  }
-  return Math.min(6, raw);
-}
-
-function resolveSendRetryDelayMs(env: NodeJS.ProcessEnv = process.env): number {
-  const raw = Number.parseInt(String(env.FASED_WALLET_SEND_RETRY_DELAY_MS ?? ""), 10);
-  if (!Number.isFinite(raw) || raw < 0) {
-    return DEFAULT_SEND_RETRY_DELAY_MS;
-  }
-  return Math.min(15_000, raw);
-}
-
-function isRetryableSendError(error: unknown): boolean {
-  if (error instanceof WalletProviderError) {
-    return error.retryable;
-  }
-  const message = String(error).toLowerCase();
-  return (
-    message.includes("timeout") ||
-    message.includes("timed out") ||
-    message.includes("network") ||
-    message.includes("econnreset") ||
-    message.includes("econnrefused") ||
-    message.includes("429") ||
-    message.includes("rate limit") ||
-    message.includes("503") ||
-    message.includes("504")
-  );
-}
-
 function normalizeErrorMessage(error: unknown): string {
   return walletDiagnosticErrorMessage(error);
 }
@@ -519,49 +481,31 @@ function withSendAttemptMetadata<T extends { metadata?: Record<string, unknown> 
   };
 }
 
-async function executeWalletSendWithRetry(params: {
-  env?: NodeJS.ProcessEnv;
-  providerId?: WalletProviderId;
+async function executeWalletSendOnce(params: {
   execute: () => Promise<
     Awaited<ReturnType<ReturnType<typeof createWalletProviderAdapter>["sendTx"]>>
   >;
 }): Promise<WalletSendExecutionResult> {
-  const env = params.env ?? process.env;
-  const maxAttempts = params.providerId === "turnkey" ? 1 : resolveSendRetryAttempts(env);
-  const baseDelayMs = resolveSendRetryDelayMs(env);
-  let attempts = 0;
-  while (attempts < maxAttempts) {
-    attempts += 1;
-    try {
-      const tx = await params.execute();
-      return { ok: true, tx, attempts };
-    } catch (error) {
-      const shouldRetry = isRetryableSendError(error) && attempts < maxAttempts;
-      if (!shouldRetry) {
-        return { ok: false, error, attempts };
-      }
-      if (baseDelayMs > 0) {
-        await delay(baseDelayMs * attempts);
-      }
-    }
+  try {
+    const tx = await params.execute();
+    return { ok: true, tx, attempts: 1 };
+  } catch (error) {
+    return { ok: false, error, attempts: 1 };
   }
-  return {
-    ok: false,
-    error: new Error("wallet send failed after retry attempts"),
-    attempts: maxAttempts,
-  };
 }
 
 async function prepareAndSendProviderTransaction(params: {
   provider: ReturnType<typeof createWalletProviderAdapter>;
   payload: WalletSendApprovalPayload;
+  requestId: string;
 }) {
+  const payload = { ...params.payload, requestId: params.requestId };
   if (params.provider.id !== "turnkey") {
-    return await params.provider.sendTx(params.payload);
+    return await params.provider.sendTx(payload);
   }
-  const prepared = await params.provider.prepareTx(params.payload);
+  const prepared = await params.provider.prepareTx(payload);
   return await params.provider.sendTx({
-    ...params.payload,
+    ...payload,
     preparedId: prepared.preparedId,
   });
 }
@@ -692,7 +636,6 @@ export async function createOrExecuteWalletSend(params: {
     env,
     walletId: params.payload.walletId,
   });
-  const settlementRequestId = params.settlementContext?.taskId ? createRequestId() : undefined;
   const resolvedMode =
     params.sendPath === "reviewed"
       ? "manual"
@@ -701,6 +644,12 @@ export async function createOrExecuteWalletSend(params: {
         : params.config.execution.mode === "autonomous"
           ? "autonomous"
           : "manual";
+  // Every autonomous broadcast has a durable caller-owned idempotency key, even when it is not
+  // associated with a settlement task. Manual execution uses its persisted approval request id.
+  const settlementRequestId =
+    resolvedMode === "autonomous" || params.settlementContext?.taskId
+      ? createRequestId()
+      : undefined;
   const settlementPayload: WalletSendApprovalPayload = {
     ...params.payload,
     providerId:
@@ -961,23 +910,29 @@ export async function createOrExecuteWalletSend(params: {
       }),
       env,
     });
-    const sent = await executeWalletSendWithRetry({
-      env,
-      providerId: selectedProviderId,
+    const sent = await executeWalletSendOnce({
       execute: async () => {
         if (custodyGate.custodyMode === "split-key-active" && custodyGate.session) {
           const guarded = await withWalletCustodySigningMaterial({
             sessionId: custodyGate.session.id,
             host: custodyGate.session.host,
             handler: async () =>
-              await prepareAndSendProviderTransaction({ provider, payload: params.payload }),
+              await prepareAndSendProviderTransaction({
+                provider,
+                payload: params.payload,
+                requestId: settlementRequestId!,
+              }),
           });
           if (!guarded.ok) {
             throw new Error(guarded.message);
           }
           return guarded.value;
         }
-        return await prepareAndSendProviderTransaction({ provider, payload: params.payload });
+        return await prepareAndSendProviderTransaction({
+          provider,
+          payload: params.payload,
+          requestId: settlementRequestId!,
+        });
       },
     });
     if (!sent.ok) {
@@ -1540,23 +1495,29 @@ export async function approveWalletSendRequest(params: {
   });
 
   try {
-    const sent = await executeWalletSendWithRetry({
-      env,
-      providerId: selectedProviderId,
+    const sent = await executeWalletSendOnce({
       execute: async () => {
         if (custodyGate.custodyMode === "split-key-active" && custodyGate.session) {
           const guarded = await withWalletCustodySigningMaterial({
             sessionId: custodyGate.session.id,
             host: custodyGate.session.host,
             handler: async () =>
-              await prepareAndSendProviderTransaction({ provider, payload: request.payload }),
+              await prepareAndSendProviderTransaction({
+                provider,
+                payload: request.payload,
+                requestId: request.id,
+              }),
           });
           if (!guarded.ok) {
             throw new Error(guarded.message);
           }
           return guarded.value;
         }
-        return await prepareAndSendProviderTransaction({ provider, payload: request.payload });
+        return await prepareAndSendProviderTransaction({
+          provider,
+          payload: request.payload,
+          requestId: request.id,
+        });
       },
     });
     if (!sent.ok) {

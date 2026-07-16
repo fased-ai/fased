@@ -45,6 +45,8 @@ export type WalletProviderCreateWalletResult = {
 
 export type WalletProviderPrepareTxRequest = {
   chain: WalletChain;
+  /** Stable caller-owned idempotency key. Required by providers that can broadcast. */
+  requestId?: string;
   to?: string;
   amount?: string;
   contract?: string;

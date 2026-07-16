@@ -6,13 +6,10 @@ import {
   parseLocalSocketSignerResponseEnvelope,
   validateLocalSocketSignerResult,
   type LocalSocketSignerRequest,
+  type LocalSocketSignerOperationV2,
+  type LocalSocketSignerPolicyV2,
 } from "../local-socket-signer-protocol.js";
-import { fetchSolanaMintInfoViaRpc } from "../solana-assets.js";
-import {
-  buildCreateAssociatedTokenAccountIdempotentInstruction,
-  buildTransferCheckedInstruction,
-  deriveAssociatedTokenAddress,
-} from "../solana-spl-transfer.js";
+import { fetchSolanaMintInfoViaRpc, fetchSolanaNativeBalanceViaRpc } from "../solana-assets.js";
 import {
   type WalletProviderAdapter,
   type WalletProviderAddressMap,
@@ -55,6 +52,15 @@ export type LocalSocketSignerHealthProbe = {
 };
 
 const MAX_SIGNER_RESPONSE_BYTES = 1 << 20;
+const REQUIRED_PROTOCOL_V2_FEATURES = [
+  "failClosedPolicies",
+  "policyHashes",
+  "durableCaps",
+  "atomicIdempotency",
+  "ambiguousBroadcastReconciliation",
+  "signerOwnedKeys",
+  "typedSolanaTransactions",
+] as const;
 
 const SIGNER_SOCKET_TIMEOUT_MS: Record<LocalSocketSignerRequest["op"], number> = {
   health: 2_000,
@@ -253,7 +259,7 @@ export class LocalSocketSignerAdapter implements WalletProviderAdapter {
     supportsResetKeys: false,
     supportsPasskeyGate: false,
     signingLocation: "server",
-    supportsSignTransaction: true,
+    supportsSignTransaction: false,
     supportsSignMessage: false,
     supportedExecutionModes: ["manual", "autonomous"],
     supportedChains: ["solana"],
@@ -270,6 +276,32 @@ export class LocalSocketSignerAdapter implements WalletProviderAdapter {
 
   supportsChain(chain: WalletChain): boolean {
     return this.capabilities.supportedChains.includes(chain);
+  }
+
+  private async requireProtocolV2(intentType?: string): Promise<void> {
+    const result = await callSocket<{
+      ready?: boolean;
+      capabilities?: LocalSocketSignerHealthProbe["capabilities"];
+    }>(this.socketPath, { op: "v2.capabilities" });
+    const capabilities = result.capabilities;
+    const protocol = capabilities?.protocol;
+    const missingFeatures = REQUIRED_PROTOCOL_V2_FEATURES.filter(
+      (feature) => !capabilities?.features.includes(feature),
+    );
+    if (
+      result.ready !== true ||
+      !protocol ||
+      protocol.current !== 2 ||
+      protocol.min > 2 ||
+      protocol.max < 2 ||
+      missingFeatures.length > 0 ||
+      (intentType && !capabilities?.intentTypes.includes(intentType))
+    ) {
+      throw new WalletProviderError({
+        code: "wallet_provider_unavailable",
+        message: `local-socket-signer protocol-v2 capability negotiation failed${missingFeatures.length > 0 ? `; missing ${missingFeatures.join(",")}` : ""}${intentType && !capabilities?.intentTypes.includes(intentType) ? `; unsupported intent ${intentType}` : ""}`,
+      });
+    }
   }
 
   async health(): Promise<WalletProviderHealth> {
@@ -306,133 +338,173 @@ export class LocalSocketSignerAdapter implements WalletProviderAdapter {
 
   async getAddresses(options?: { walletId?: string }): Promise<WalletProviderAddressMap> {
     const walletId = options?.walletId?.trim() || this.options?.scopedWalletId?.trim();
-    return await callSocket<WalletProviderAddressMap>(this.socketPath, {
-      op: "getAddresses",
-      ...(walletId ? { walletId } : {}),
+    if (!walletId) {
+      throw new WalletProviderError({
+        code: "wallet_provider_invalid_config",
+        message: "local-socket-signer requires an explicit walletId",
+      });
+    }
+    await this.requireProtocolV2();
+    const wallet = await callSocket<{ publicKey: string }>(this.socketPath, {
+      op: "v2.wallet.get",
+      walletId,
     });
+    return { solana: wallet.publicKey };
   }
 
   async getBalance(
     chain: WalletChain,
     options?: { walletId?: string },
   ): Promise<WalletProviderBalanceResult> {
-    const walletId = options?.walletId?.trim() || this.options?.scopedWalletId?.trim();
-    return await callSocket<WalletProviderBalanceResult>(this.socketPath, {
-      op: "getBalance",
-      chain,
-      ...(walletId ? { walletId } : {}),
-    });
-  }
-
-  async prepareTx(request: WalletProviderPrepareTxRequest): Promise<WalletProviderPrepareTxResult> {
-    return await callSocket<WalletProviderPrepareTxResult>(this.socketPath, {
-      op: "prepareTx",
-      request,
-    });
-  }
-
-  async sendTx(request: WalletProviderSendTxRequest): Promise<WalletProviderSendTxResult> {
-    assertSecureLocalSignerSocket(this.socketPath);
-    if (request.chain === "solana" && request.program?.trim()) {
-      return await this.sendSplTokenTx(request);
-    }
-    return await callSocket<WalletProviderSendTxResult>(this.socketPath, { op: "sendTx", request });
-  }
-
-  async signTx(request: WalletProviderSendTxRequest): Promise<WalletProviderSignTxResult> {
-    assertSecureLocalSignerSocket(this.socketPath);
-    return await callSocket<WalletProviderSignTxResult>(this.socketPath, { op: "signTx", request });
-  }
-
-  private async sendSplTokenTx(
-    request: WalletProviderSendTxRequest,
-  ): Promise<WalletProviderSendTxResult> {
-    const mint = request.program?.trim();
-    const destinationOwner = request.to?.trim();
-    const amountRaw = request.amount?.trim();
-    if (!mint || !destinationOwner || !amountRaw) {
+    if (chain !== "solana") {
       throw new WalletProviderError({
-        code: "wallet_provider_invalid_config",
-        message: "local-socket-signer SPL send requires mint, destination, and amount",
+        code: "wallet_provider_unsupported_chain",
+        message: "local-socket-signer supports Solana only",
       });
     }
     const rpcUrl = this.options?.rpcUrl?.trim();
     if (!rpcUrl) {
       throw new WalletProviderError({
         code: "wallet_provider_invalid_config",
-        message: "local-socket-signer SPL send requires a Solana RPC URL",
+        message: "local-socket-signer balance lookup requires a Solana RPC URL",
       });
     }
-    const walletId = this.options?.scopedWalletId?.trim();
-    const addresses = await this.getAddresses(walletId ? { walletId } : undefined);
-    const authority = addresses.solana?.trim();
-    if (!authority) {
+    const address = (await this.getAddresses(options)).solana;
+    if (!address) {
       throw new WalletProviderError({
         code: "wallet_provider_unavailable",
         message: "local-socket-signer wallet has no Solana address",
       });
     }
-    const mintInfo = await fetchSolanaMintInfoViaRpc({ rpcUrl, mint });
-    if (!mintInfo) {
+    const balance = await fetchSolanaNativeBalanceViaRpc({ rpcUrl, ownerAddress: address });
+    if (balance === null) {
       throw new WalletProviderError({
         code: "wallet_provider_unavailable",
-        message: "failed to resolve SPL mint metadata from Solana RPC",
+        message: "failed to resolve the signer wallet balance from Solana RPC",
       });
     }
-    const sourceTokenAccount = await deriveAssociatedTokenAddress({
-      owner: authority,
-      mint,
-      tokenProgramId: mintInfo.tokenProgramId,
-    });
-    const destinationTokenAccount = await deriveAssociatedTokenAddress({
-      owner: destinationOwner,
-      mint,
-      tokenProgramId: mintInfo.tokenProgramId,
-    });
-    const createAta = await buildCreateAssociatedTokenAccountIdempotentInstruction({
-      payer: authority,
-      owner: destinationOwner,
-      mint,
-      tokenProgramId: mintInfo.tokenProgramId,
-    });
-    const transfer = buildTransferCheckedInstruction({
-      sourceTokenAccount,
-      mint,
-      destinationTokenAccount,
-      authority,
-      amountRaw,
-      decimals: mintInfo.decimals,
-      tokenProgramId: mintInfo.tokenProgramId,
-    });
-    const preTx = await this.sendSolanaInstruction({
-      walletId,
-      ...createAta,
-    });
-    const sent = await this.sendSolanaInstruction({
-      walletId,
-      ...transfer,
-    });
-    return {
-      ...sent,
-      metadata: {
-        ...sent.metadata,
-        provider: this.id,
-        associatedTokenTxHash: preTx.txHash,
-      },
-    };
+    return { ok: true, chain, address, balance, unit: "lamports" };
   }
 
-  private async sendSolanaInstruction(request: {
-    walletId?: string;
-    programId: string;
-    dataBase64: string;
-    keys: Array<{ pubkey: string; isSigner: boolean; isWritable: boolean }>;
-  }): Promise<WalletProviderSendTxResult> {
-    assertSecureLocalSignerSocket(this.socketPath);
-    return await callSocket<WalletProviderSendTxResult>(this.socketPath, {
-      op: "sendSolanaInstruction",
-      request,
+  async prepareTx(request: WalletProviderPrepareTxRequest): Promise<WalletProviderPrepareTxResult> {
+    void request;
+    throw new WalletProviderError({
+      code: "wallet_provider_not_implemented",
+      message: "local-socket-signer manual preparation requires signer protocol-v2 review.prepare",
     });
+  }
+
+  async sendTx(request: WalletProviderSendTxRequest): Promise<WalletProviderSendTxResult> {
+    assertSecureLocalSignerSocket(this.socketPath);
+    if (request.chain !== "solana") {
+      throw new WalletProviderError({
+        code: "wallet_provider_unsupported_chain",
+        message: "local-socket-signer supports Solana only",
+      });
+    }
+    if (request.serializedTxBase64?.trim() || request.memo?.trim()) {
+      throw new WalletProviderError({
+        code: "wallet_provider_invalid_config",
+        message:
+          "local-socket-signer accepts typed SOL/SPL intents, not serialized transactions or raw memos",
+      });
+    }
+    return await this.executeTypedTransfer(request);
+  }
+
+  async signTx(request: WalletProviderSendTxRequest): Promise<WalletProviderSignTxResult> {
+    void request;
+    throw new WalletProviderError({
+      code: "wallet_provider_not_implemented",
+      message:
+        "local-socket-signer raw transaction signing is disabled; use a typed signer-v2 operation",
+    });
+  }
+
+  private async executeTypedTransfer(
+    request: WalletProviderSendTxRequest,
+  ): Promise<WalletProviderSendTxResult> {
+    const walletId = request.walletId?.trim() || this.options?.scopedWalletId?.trim();
+    const requestId = request.requestId?.trim();
+    const destination = request.to?.trim();
+    const amount = request.amount?.trim();
+    if (!walletId || !requestId || !destination || !amount) {
+      throw new WalletProviderError({
+        code: "wallet_provider_invalid_config",
+        message:
+          "local-socket-signer typed send requires walletId, stable requestId, destination, and raw-unit amount",
+      });
+    }
+    const intentType = request.program?.trim()
+      ? "solana.splTransferChecked"
+      : "solana.nativeTransfer";
+    await this.requireProtocolV2(intentType);
+    // Resolve every dependency before execution. No fallible signer/RPC call may run after a
+    // confirmed broadcast, because turning success into an error could induce a duplicate send.
+    const wallet = await callSocket<{ publicKey: string }>(this.socketPath, {
+      op: "v2.wallet.get",
+      walletId,
+    });
+    const policy = await callSocket<LocalSocketSignerPolicyV2>(this.socketPath, {
+      op: "v2.policy.get",
+      walletId,
+    });
+    const mint = request.program?.trim();
+    let intent: Extract<LocalSocketSignerRequest, { op: "v2.execute" }>["request"]["intent"];
+    if (mint) {
+      const rpcUrl = this.options?.rpcUrl?.trim();
+      if (!rpcUrl) {
+        throw new WalletProviderError({
+          code: "wallet_provider_invalid_config",
+          message: "local-socket-signer SPL send requires a Solana RPC URL",
+        });
+      }
+      const mintInfo = await fetchSolanaMintInfoViaRpc({ rpcUrl, mint });
+      if (!mintInfo) {
+        throw new WalletProviderError({
+          code: "wallet_provider_unavailable",
+          message: "failed to resolve SPL mint metadata from Solana RPC",
+        });
+      }
+      intent = {
+        type: "solana.splTransferChecked",
+        destination,
+        tokenProgram: mintInfo.tokenProgramId,
+        mint,
+        amount,
+      };
+    } else {
+      intent = { type: "solana.nativeTransfer", destination, lamports: amount };
+    }
+    const operation = await callSocket<LocalSocketSignerOperationV2>(this.socketPath, {
+      op: "v2.execute",
+      walletId,
+      request: { requestId, policyHash: policy.hash, intent },
+    });
+    if (operation.state !== "confirmed" || !operation.signature) {
+      const ambiguous = operation.state === "broadcast" || operation.state === "unknown";
+      throw new WalletProviderError({
+        code: ambiguous ? "wallet_provider_ambiguous" : "wallet_provider_unavailable",
+        message: ambiguous
+          ? `signer operation ${requestId} has an ambiguous ${operation.state} result; reconcile it before any new attempt`
+          : `signer operation ${requestId} ended in state=${operation.state}${operation.error ? `: ${operation.error}` : ""}`,
+        retryable: false,
+      });
+    }
+    return {
+      ok: true,
+      chain: "solana",
+      txHash: operation.signature,
+      signer: wallet.publicKey,
+      metadata: {
+        provider: this.id,
+        requestId: operation.requestId,
+        intentDigest: operation.intentDigest,
+        transactionDigest: operation.transactionDigest,
+        policyHash: operation.policyHash,
+        operationState: operation.state,
+      },
+    };
   }
 }
 
