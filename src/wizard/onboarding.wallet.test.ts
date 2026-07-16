@@ -8,6 +8,7 @@ import {
   configureWalletForOnboarding,
   installSignerdBinary,
   renderLocalSignerEnvFile,
+  resolveLocalSignerWebAuthnConfig,
   shouldSyncLocalSocketSignerFromConfig,
   syncLocalSocketSignerFromConfig,
   writeLocalSignerEnvFile,
@@ -61,6 +62,49 @@ function createSignerReleaseFixture(root: string): {
 }
 
 describe("local signer env file helpers", () => {
+  it("uses the same localhost WebAuthn identity on Linux, WSL2, and native macOS", () => {
+    const cfg = { gateway: { port: 19876 } } as FasedAgentConfig;
+    for (const env of [
+      { HOME: "/home/linux" },
+      { HOME: "/home/wsl", WSL_DISTRO_NAME: "Ubuntu" },
+      { HOME: "/Users/macos" },
+    ]) {
+      expect(resolveLocalSignerWebAuthnConfig(cfg, env)).toEqual({
+        rpId: "localhost",
+        origins: "http://localhost:19876",
+      });
+    }
+  });
+
+  it("rejects partial, cross-origin, and shell-active local WebAuthn configuration", () => {
+    expect(() =>
+      resolveLocalSignerWebAuthnConfig(
+        {},
+        {
+          FASED_WALLET_WEBAUTHN_RP_ID: "localhost",
+        },
+      ),
+    ).toThrow(/requires both/);
+    expect(() =>
+      resolveLocalSignerWebAuthnConfig(
+        {},
+        {
+          FASED_WALLET_WEBAUTHN_RP_ID: "localhost",
+          FASED_WALLET_WEBAUTHN_ORIGINS: "https://attacker.example",
+        },
+      ),
+    ).toThrow(/exactly match/);
+    expect(() =>
+      resolveLocalSignerWebAuthnConfig(
+        {},
+        {
+          FASED_WALLET_WEBAUTHN_RP_ID: "localhost$(touch /tmp/unsafe)",
+          FASED_WALLET_WEBAUTHN_ORIGINS: "http://localhost:18789",
+        },
+      ),
+    ).toThrow(/valid exact hostname/);
+  });
+
   it("keeps fresh quickstart wallet disabled so installer does not require signerd assets", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-onboarding-wallet-fresh-"));
     tempDirs.push(root);
@@ -282,12 +326,10 @@ describe("local signer env file helpers", () => {
     expect(content).toContain('export FASED_WALLET_CHAINS="solana"');
     expect(content).not.toMatch(/FASED_WALLET_PASSPHRASE/);
     expect(content).not.toMatch(/FASED_WALLET_SOLANA_KEYSTORE_PATH/);
-    expect(content).toContain(
-      'export FASED_WALLET_SOLANA_RPC_URL__WALLET_1="https://rpc.example/solana"',
-    );
-    expect(content).toContain(
-      'export FASED_WALLET_SOLANA_WRITE_RPC_FALLBACK_URL__WALLET_1="https://rpc-backup.example/solana"',
-    );
+    expect(content).not.toContain("https://rpc.example/solana");
+    expect(content).not.toContain("https://rpc-backup.example/solana");
+    expect(content).toContain('export FASED_WALLET_WEBAUTHN_RP_ID="localhost"');
+    expect(content).toContain('export FASED_WALLET_WEBAUTHN_ORIGINS="http://localhost:18789"');
     expect(content).not.toMatch(/FASED_WALLET_CUSTODY_/);
     expect(content).not.toMatch(/FASED_WALLET_LOCAL_SIGNER_DIRECT_SIGNING/);
   });
@@ -335,6 +377,8 @@ describe("local signer env file helpers", () => {
     expect(signerEnv).toContain("FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET");
     expect(signerEnv).toContain("FASED_WALLET_LOCAL_SIGNER_STATE_DB");
     expect(signerEnv).toContain("FASED_WALLET_LOCAL_SIGNER_MASTER_KEY");
+    expect(signerEnv).toContain('FASED_WALLET_WEBAUTHN_RP_ID="localhost"');
+    expect(signerEnv).toContain('FASED_WALLET_WEBAUTHN_ORIGINS="http://localhost:18789"');
     expect(signerEnv).not.toMatch(/FASED_WALLET_PASSPHRASE|KEYSTORE/);
   });
 

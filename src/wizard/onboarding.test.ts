@@ -76,6 +76,15 @@ const resolveWalletUserRole = vi.hoisted(() => vi.fn<() => unknown>(() => undefi
 const restartLocalSocketSigner = vi.hoisted(() => vi.fn(async () => {}));
 const installSignerdBinary = vi.hoisted(() => vi.fn());
 const resolveSignerdBinaryPath = vi.hoisted(() => vi.fn(() => "/tmp/fased-signerd"));
+const configureSignerOwnedWalletNetwork = vi.hoisted(() =>
+  vi.fn(() => ({
+    walletId: "wallet_1",
+    configured: true,
+    version: 2,
+    hash: `hmac-sha256:${"a".repeat(64)}`,
+    ready: true,
+  })),
+);
 const configureWalletForOnboarding = vi.hoisted(() =>
   vi.fn(async ({ nextConfig }) => ({
     ...nextConfig,
@@ -149,6 +158,10 @@ vi.mock("../wallet/wallet-provider-registry.js", () => ({
   setDefaultWallet,
   setNamedWalletRole,
   resolveWalletUserRole,
+}));
+
+vi.mock("../wallet/signer-network-admin.js", () => ({
+  configureSignerOwnedWalletNetwork,
 }));
 
 vi.mock("./onboarding.wallet.js", () => ({
@@ -353,6 +366,7 @@ describe("runOnboardingWizard", () => {
       },
     });
     walletSetupCommand.mockClear();
+    configureSignerOwnedWalletNetwork.mockClear();
     configureGatewayForOnboarding.mockClear();
     configureFederationForOnboarding.mockClear();
     configureWalletForOnboarding.mockClear();
@@ -367,6 +381,8 @@ describe("runOnboardingWizard", () => {
     vi.unstubAllEnvs();
     delete process.env.FASED_WALLET_SOLANA_RPC_URL__WALLET_1;
     delete process.env.FASED_WALLET_SOLANA_KEYSTORE_PATH__WALLET_1;
+    delete process.env.FASED_WALLET_WEBAUTHN_RP_ID;
+    delete process.env.FASED_WALLET_WEBAUTHN_ORIGINS;
   });
 
   it("does not open model selection when interactive model/auth setup is skipped", async () => {
@@ -722,6 +738,7 @@ describe("runOnboardingWizard", () => {
         mode: "local-signer-create",
         walletName: "Agent",
         walletId: "agent",
+        force: true,
       }),
     );
     expect(upsertNamedWallet).toHaveBeenCalledWith(
@@ -1506,9 +1523,15 @@ describe("runOnboardingWizard", () => {
         }),
       }),
     );
-    expect(restartLocalSocketSigner).toHaveBeenCalled();
+    expect(restartLocalSocketSigner).not.toHaveBeenCalled();
+    expect(configureSignerOwnedWalletNetwork).toHaveBeenCalledWith(
+      expect.objectContaining({
+        walletId: "wallet-1",
+        primaryRpcUrl: "https://new-rpc.example",
+      }),
+    );
     expect(prompter.note).toHaveBeenCalledWith(
-      "Updated Solana RPC for Wallet 1 (wallet-1): https://new-rpc.example",
+      "Updated Solana RPC for Wallet 1 (wallet-1); signer network version 2 is ready.",
       "Wallet setup",
     );
   });

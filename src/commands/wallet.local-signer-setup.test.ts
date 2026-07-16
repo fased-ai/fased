@@ -26,17 +26,32 @@ const signerMocks = vi.hoisted(() => ({
   })),
   install: vi.fn(),
   restart: vi.fn(async () => undefined),
+  networkPut: vi.fn(() => ({
+    walletId: "solana_1",
+    configured: true,
+    version: 1,
+    hash: `hmac-sha256:${"b".repeat(64)}`,
+    ready: true,
+  })),
 }));
 
 vi.mock("../wallet/local-socket-signer-lifecycle.js", () => ({
   createLockedSignerOwnedWallet: signerMocks.create,
 }));
 
-vi.mock("../wizard/onboarding.wallet.js", () => ({
-  installSignerdBinary: signerMocks.install,
-  restartLocalSocketSigner: signerMocks.restart,
-  resolveSignerdBinaryPath: () => "/tmp/fased-signerd-test",
+vi.mock("../wallet/signer-network-admin.js", () => ({
+  configureSignerOwnedWalletNetwork: signerMocks.networkPut,
 }));
+
+vi.mock("../wizard/onboarding.wallet.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../wizard/onboarding.wallet.js")>();
+  return {
+    ...actual,
+    installSignerdBinary: signerMocks.install,
+    restartLocalSocketSigner: signerMocks.restart,
+    resolveSignerdBinaryPath: () => "/tmp/fased-signerd-test",
+  };
+});
 
 describe("walletSetupCommand local-signer self-hosted modes", () => {
   beforeEach(() => {
@@ -46,6 +61,9 @@ describe("walletSetupCommand local-signer self-hosted modes", () => {
       "FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET",
       "FASED_WALLET_LOCAL_SIGNER_STATE_DB",
       "FASED_WALLET_LOCAL_SIGNER_MASTER_KEY",
+      "FASED_HOST_PROFILE",
+      "FASED_HOST_BOOTSTRAP_CTL",
+      "FASED_HOST_BOOTSTRAP_SOCKET",
     ]) {
       delete process.env[key];
     }
@@ -56,6 +74,7 @@ describe("walletSetupCommand local-signer self-hosted modes", () => {
     signerMocks.create.mockClear();
     signerMocks.install.mockClear();
     signerMocks.restart.mockClear();
+    signerMocks.networkPut.mockClear();
     vi.unstubAllEnvs();
   });
 
@@ -107,15 +126,73 @@ describe("walletSetupCommand local-signer self-hosted modes", () => {
       expect(signerEnvStat.mode & 0o777).toBe(0o600);
       expect(signerEnv).toContain('export FASED_WALLET_CHAINS="solana"');
       expect(signerEnv).not.toMatch(/PASSPHRASE|KEYSTORE|PRIVATE_KEY|SECRET|SEED/i);
-      expect(signerEnv).toContain(
-        'export FASED_WALLET_SOLANA_RPC_URL__SOLANA_1="https://rpc.example/solana"',
-      );
+      expect(signerEnv).not.toContain("https://rpc.example/solana");
       expect(signerEnv).toContain("FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET");
       expect(signerEnv).toContain("FASED_WALLET_LOCAL_SIGNER_STATE_DB");
       expect(signerEnv).toContain("FASED_WALLET_LOCAL_SIGNER_MASTER_KEY");
       expect(signerEnv).toContain('--control-socket "$FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET"');
+      expect(signerEnv).toContain('FASED_WALLET_WEBAUTHN_RP_ID="localhost"');
+      expect(signerEnv).toContain('FASED_WALLET_WEBAUTHN_ORIGINS="http://localhost:18789"');
       expect(signerMocks.create).toHaveBeenCalledWith(
         expect.objectContaining({ walletId: "solana-1", role: "agent" }),
+      );
+      expect(signerMocks.networkPut).toHaveBeenCalledWith(
+        expect.objectContaining({
+          walletId: "solana-1",
+          primaryRpcUrl: "https://rpc.example/solana",
+        }),
+      );
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("uses only the ephemeral root bootstrap for a fresh hosted signer wallet", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-hosted-signer-create-"));
+    const configPath = path.join(root, "fased.json");
+    const stateDir = path.join(root, "state");
+    await fs.writeFile(configPath, "{}\n", "utf8");
+    vi.stubEnv("FASED_CONFIG_PATH", configPath);
+    vi.stubEnv("FASED_DISABLE_CONFIG_CACHE", "1");
+    vi.stubEnv("FASED_STATE_DIR", stateDir);
+    vi.stubEnv("FASED_HOST_PROFILE", "hosting");
+    vi.stubEnv("FASED_HOST_BOOTSTRAP_CTL", "/usr/local/libexec/fased-host-bootstrapctl.mjs");
+    vi.stubEnv("FASED_HOST_BOOTSTRAP_SOCKET", "/run/fased-host-bootstrap/control.sock");
+    vi.stubEnv("FASED_WALLET_LOCAL_SIGNER_SOCKET", "/run/fased-signerd/app.sock");
+    clearConfigCache();
+    try {
+      await walletSetupCommand({ log: () => {} } as never, {
+        mode: "local-signer-create",
+        chain: "solana",
+        walletId: "agent",
+        walletName: "Agent",
+        rpcUrl: "https://hosted-rpc.example/solana?api-key=secret",
+        nonInteractive: true,
+        noDoctor: true,
+        noSignerHints: true,
+      });
+
+      const cfg = loadConfig();
+      expect(cfg.env?.vars?.FASED_WALLET_LOCAL_SIGNER_SOCKET).toBe("/run/fased-signerd/app.sock");
+      for (const key of [
+        "FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET",
+        "FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET",
+        "FASED_WALLET_LOCAL_SIGNER_STATE_DB",
+        "FASED_WALLET_LOCAL_SIGNER_MASTER_KEY",
+        "FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER",
+        "FASED_WALLET_SIGNER_STATE_DIR",
+      ]) {
+        expect(cfg.env?.vars?.[key]).toBeUndefined();
+      }
+      await expect(fs.stat(path.join(stateDir, "wallet", "signer.env"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      expect(signerMocks.networkPut).toHaveBeenCalledWith(
+        expect.objectContaining({
+          walletId: "agent",
+          primaryRpcUrl: "https://hosted-rpc.example/solana?api-key=secret",
+          env: expect.objectContaining({ FASED_HOST_PROFILE: "hosting" }),
+        }),
       );
     } finally {
       await fs.rm(root, { recursive: true, force: true });

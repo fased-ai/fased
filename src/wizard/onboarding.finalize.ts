@@ -327,7 +327,6 @@ async function installRootSystemdFallback(params: {
       ...params.environment,
       FASED_HOST_PROFILE: "hosting",
       FASED_WALLET_LOCAL_SIGNER_SOCKET: "/run/fased-signerd/app.sock",
-      FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET: "/run/fased-signerd/app.sock",
     },
   });
   const unitLines = baseUnit.split("\n");
@@ -460,7 +459,7 @@ export function resolveLocalSignerSyncForFinalize(params: { strictVps: boolean }
   restart: boolean;
 } {
   return {
-    sync: true,
+    sync: !params.strictVps,
     restart: !params.strictVps,
   };
 }
@@ -619,6 +618,24 @@ async function verifyStrictVpsMaintenanceReadiness(params: {
   // If the user creates/imports a self-hosted wallet in this onboarding run,
   // the wallet ceremony already enforces signer checks earlier. A skipped or
   // deferred wallet setup must not block SSH/dashboard hardening completion.
+}
+
+async function configureHostedSignerWebAuthnForTailscale(): Promise<void> {
+  const bootstrapCtl = process.env.FASED_HOST_BOOTSTRAP_CTL?.trim();
+  if (!bootstrapCtl) {
+    throw new Error(
+      "Hosting requires the temporary root bootstrap to configure signer-owned WebAuthn.",
+    );
+  }
+  const result = await runShell(
+    `${shellQuote(process.execPath)} ${shellQuote(bootstrapCtl)} signer-webauthn-tailscale`,
+    { timeoutMs: 90_000 },
+  );
+  if (!result.ok) {
+    throw new Error(
+      `Hosting could not persist the Tailscale WebAuthn RP configuration (${result.detail ?? "unknown error"}).`,
+    );
+  }
 }
 
 async function isSystemdServiceRunningOrStarting(params: {
@@ -2787,6 +2804,9 @@ export async function finalizeOnboardingWizard(
         );
       },
     );
+  }
+  if (strictVps) {
+    await configureHostedSignerWebAuthnForTailscale();
   }
   let hostedDashboardBrowserVerified = false;
   if (strictVps && settings.tailscaleMode !== "off") {

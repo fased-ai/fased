@@ -39,6 +39,7 @@ import { logConfigUpdated } from "../config/logging.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { defaultRuntime } from "../runtime.js";
 import { resolveUserPath } from "../utils.js";
+import { configureSignerOwnedWalletNetwork } from "../wallet/signer-network-admin.js";
 import type { WalletNamedWallet } from "../wallet/wallet-provider-registry.js";
 import { readWalletProviderRegistry } from "../wallet/wallet-provider-registry.js";
 import {
@@ -176,6 +177,12 @@ export async function runOnboardingWizard(
     }
     return "FASED_WALLET_SOLANA_RPC_URL";
   };
+  const fallbackRpcEnvKeyFor = (walletId?: string): string => {
+    const suffix = walletIdEnvSuffix(walletId);
+    return suffix
+      ? `FASED_WALLET_SOLANA_WRITE_RPC_FALLBACK_URL__${suffix}`
+      : "FASED_WALLET_SOLANA_WRITE_RPC_FALLBACK_URL";
+  };
   const keystoreEnvKeyFor = (_chain: "solana", walletId?: string): string => {
     const suffix = walletIdEnvSuffix(walletId);
     if (suffix) {
@@ -225,6 +232,8 @@ export async function runOnboardingWizard(
       "FASED_WALLET_LOCAL_SIGNER_STATE_DB",
       "FASED_WALLET_LOCAL_SIGNER_MASTER_KEY",
       "FASED_WALLET_PASSPHRASE_FILE",
+      "FASED_WALLET_WEBAUTHN_RP_ID",
+      "FASED_WALLET_WEBAUTHN_ORIGINS",
     ] as const;
     let next = cfg;
     for (const key of signerOwnedKeys) {
@@ -1165,6 +1174,12 @@ export async function runOnboardingWizard(
   const hostingMode = hostProfile === "hosting";
   if (hostingMode) {
     nextConfig = applyHostedLocalSignerDefaults(nextConfig);
+  } else if (
+    !String(process.env.FASED_WALLET_WEBAUTHN_RP_ID ?? "").trim() &&
+    !String(process.env.FASED_WALLET_WEBAUTHN_ORIGINS ?? "").trim()
+  ) {
+    process.env.FASED_WALLET_WEBAUTHN_RP_ID = "localhost";
+    process.env.FASED_WALLET_WEBAUTHN_ORIGINS = `http://localhost:${settings.port}`;
   }
   const buildNativeSignerFromSource =
     String(process.env.FASED_BUILD_NATIVE_SIGNER_FROM_SOURCE ?? "").trim() === "1";
@@ -1209,7 +1224,9 @@ export async function runOnboardingWizard(
     nextConfig,
     prompter,
   });
-  nextConfig = syncLocalSignerRuntimeEnvIntoConfig(nextConfig);
+  nextConfig = hostingMode
+    ? applyHostedLocalSignerDefaults(nextConfig)
+    : syncLocalSignerRuntimeEnvIntoConfig(nextConfig);
 
   let onboardingWalletSecurityFocus: {
     walletId: string;
@@ -1336,7 +1353,7 @@ export async function runOnboardingWizard(
                       value: "configure-solana-rpc" as const,
                       label: configuredSolanaRpcUrl ? "Update Solana RPC" : "Add Solana RPC",
                       hint: configuredSolanaRpcUrl
-                        ? configuredSolanaRpcUrl
+                        ? "Signer-owned RPC is configured; replace it without displaying credentials."
                         : "Restore the per-wallet Solana RPC used for balances, readiness, and SAT mining.",
                     },
                   ]
@@ -1394,9 +1411,28 @@ export async function runOnboardingWizard(
               walletName: targetWallet.name,
               currentValue: configuredSolanaRpcUrl,
             });
-            await restartLocalSocketSigner(ensureWalletStateDir(process.env).rootDir);
+            let signerNetworkVersion: number | undefined;
+            if (targetWallet.providerId === "local-socket-signer") {
+              const effectiveEnv = {
+                ...process.env,
+                ...nextConfig.env?.vars,
+                FASED_HOST_PROFILE: hostProfile,
+              } as NodeJS.ProcessEnv;
+              const network = configureSignerOwnedWalletNetwork({
+                walletId,
+                primaryRpcUrl: effectiveSolanaRpcUrl,
+                fallbackRpcUrl:
+                  String(effectiveEnv[fallbackRpcEnvKeyFor(walletId)] ?? "").trim() || undefined,
+                env: effectiveEnv,
+                signerBinPath:
+                  hostProfile === "hosting" ? undefined : resolveSignerdBinaryPath(effectiveEnv),
+              });
+              signerNetworkVersion = network.version;
+            } else {
+              await restartLocalSocketSigner(ensureWalletStateDir(process.env).rootDir);
+            }
             await prompter.note(
-              `Updated Solana RPC for ${targetWallet.name} (${walletId}): ${effectiveSolanaRpcUrl}`,
+              `Updated Solana RPC for ${targetWallet.name} (${walletId})${signerNetworkVersion ? `; signer network version ${signerNetworkVersion} is ready` : ""}.`,
               "Wallet setup",
             );
             addAnotherWallet = await prompter.confirm({
@@ -1670,6 +1706,10 @@ export async function runOnboardingWizard(
                 rpcUrl: effectiveRpcUrl,
                 showPrivateKeyOnce,
                 confirmPrivateKeyPrint,
+                // Onboarding is repairable after a signer wallet was durably created but a
+                // later network/bootstrap step failed. The signer permits reuse only when the
+                // existing wallet has the exact requested role; it never overwrites the key.
+                force: true,
                 noDoctor: true,
                 noSignerHints: true,
                 nonInteractive: true,

@@ -4,7 +4,7 @@ import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { FasedAgentConfig } from "../config/config.js";
-import { loadConfig } from "../config/config.js";
+import { loadConfig, resolveGatewayPort } from "../config/config.js";
 import type {
   WalletChain,
   WalletRuntimeConfig,
@@ -506,49 +506,98 @@ function resolveSignerChildEnv(
   }
   for (const [key, rawValue] of Object.entries(mergedEnv)) {
     const value = String(rawValue ?? "").trim();
-    const isRpcConfig =
-      key === "FASED_WALLET_RPC_URL" ||
-      key === "FASED_WALLET_SOLANA_RPC_URL" ||
-      key.startsWith("FASED_WALLET_SOLANA_RPC_URL__") ||
-      key === "FASED_WALLET_SOLANA_WRITE_RPC_FALLBACK_URL" ||
-      key.startsWith("FASED_WALLET_SOLANA_WRITE_RPC_FALLBACK_URL__") ||
-      key === "FASED_WALLET_SOLANA_RPC_FALLBACK_URL";
     const isSignerRuntimeConfig =
       key.startsWith("FASED_WALLET_LOCAL_SIGNER_RATE_") ||
       key === "FASED_WALLET_LOCAL_SIGNER_AUDIT_MAX_BYTES" ||
       key === "FASED_WALLET_SOLANA_CONFIRM_TIMEOUT_MS" ||
       key === "FASED_WALLET_SOLANA_WRITE_RPC_TIMEOUT_MS";
-    if (value && (isRpcConfig || isSignerRuntimeConfig)) {
+    if (value && isSignerRuntimeConfig) {
       childEnv[key] = value;
     }
+  }
+  const webAuthn = resolveLocalSignerWebAuthnConfig(cfg, mergedEnv);
+  if (webAuthn) {
+    childEnv.FASED_WALLET_WEBAUTHN_RP_ID = webAuthn.rpId;
+    childEnv.FASED_WALLET_WEBAUTHN_ORIGINS = webAuthn.origins;
   }
   childEnv.FASED_WALLET_CHAINS = resolveSignerChainsEnvValue(cfg, mergedEnv);
   return childEnv;
 }
 
-const LOCAL_SIGNER_EXPORTABLE_PREFIXES = [
-  "FASED_WALLET_SOLANA_RPC_URL",
-  "FASED_WALLET_SOLANA_WRITE_RPC_FALLBACK_URL",
-  "FASED_WALLET_RPC_URL",
-] as const;
-
-function collectLocalSignerExportEnv(childEnv: NodeJS.ProcessEnv): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, rawValue] of Object.entries(childEnv)) {
-    if (
-      !LOCAL_SIGNER_EXPORTABLE_PREFIXES.some(
-        (prefix) => key === prefix || key.startsWith(`${prefix}__`),
-      )
-    ) {
-      continue;
-    }
-    const value = String(rawValue ?? "").trim();
-    if (!value) {
-      continue;
-    }
-    out[key] = value;
+export function resolveLocalSignerWebAuthnConfig(
+  cfg: FasedAgentConfig,
+  env: NodeJS.ProcessEnv = process.env,
+): { rpId: string; origins: string } | undefined {
+  if (
+    String(env.FASED_HOST_PROFILE ?? "")
+      .trim()
+      .toLowerCase() === "hosting"
+  ) {
+    return undefined;
   }
-  return out;
+  const explicitRpId = String(env.FASED_WALLET_WEBAUTHN_RP_ID ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\.$/, "");
+  const explicitOrigins = String(env.FASED_WALLET_WEBAUTHN_ORIGINS ?? "").trim();
+  if (Boolean(explicitRpId) !== Boolean(explicitOrigins)) {
+    throw new Error(
+      "Local signer WebAuthn requires both FASED_WALLET_WEBAUTHN_RP_ID and FASED_WALLET_WEBAUTHN_ORIGINS",
+    );
+  }
+  if (explicitRpId && explicitOrigins) {
+    if (
+      explicitRpId.length > 253 ||
+      !/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/.test(explicitRpId) ||
+      explicitRpId.includes("..")
+    ) {
+      throw new Error("Local signer WebAuthn RP ID must be a valid exact hostname");
+    }
+    const normalizedOrigins = explicitOrigins.split(",").map((rawOrigin) => {
+      const origin = rawOrigin.trim();
+      let parsed: URL;
+      try {
+        parsed = new URL(origin);
+      } catch {
+        throw new Error("Local signer WebAuthn contains an invalid origin");
+      }
+      const hostname = parsed.hostname.toLowerCase().replace(/\.$/, "");
+      const loopback = hostname === "localhost" || hostname.endsWith(".localhost");
+      const hostMatchesRp = hostname === explicitRpId || hostname.endsWith(`.${explicitRpId}`);
+      if (
+        parsed.username ||
+        parsed.password ||
+        (parsed.pathname && parsed.pathname !== "/") ||
+        parsed.search ||
+        parsed.hash ||
+        !hostMatchesRp ||
+        (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && loopback))
+      ) {
+        throw new Error(
+          "Local signer WebAuthn origins must exactly match the RP ID and use HTTPS, except localhost HTTP",
+        );
+      }
+      return parsed.origin.toLowerCase();
+    });
+    const uniqueOrigins = [...new Set(normalizedOrigins)].toSorted();
+    if (uniqueOrigins.length === 0) {
+      throw new Error("Local signer WebAuthn requires at least one exact origin");
+    }
+    return { rpId: explicitRpId, origins: uniqueOrigins.join(",") };
+  }
+  const port = resolveGatewayPort(cfg, env);
+  return { rpId: "localhost", origins: `http://localhost:${port}` };
+}
+
+function quoteSignerEnvValue(value: string): string {
+  if (value.includes("\0") || /[\r\n]/.test(value)) {
+    throw new Error("Signer environment values must be single-line strings");
+  }
+  return `"${value
+    .replaceAll("\\", "\\\\")
+    .replaceAll('"', '\\"')
+    .replaceAll("$", "\\$")
+    .replaceAll("`", "\\`")}"`;
 }
 
 export function renderLocalSignerEnvFile(params?: {
@@ -565,21 +614,24 @@ export function renderLocalSignerEnvFile(params?: {
   const masterKeyPath = resolveLocalSignerMasterKeyPath(mergedEnv);
   const signerBinPath = resolveSignerdBinaryPath(mergedEnv);
   const childEnv = resolveSignerChildEnv(materialDir, mergedEnv, cfg);
-  const exportLines = Object.entries(collectLocalSignerExportEnv(childEnv))
-    .toSorted(([a], [b]) => a.localeCompare(b))
-    .map(([key, value]) => `export ${key}="${value.replaceAll('"', '\\"')}"`);
+  const webAuthn = resolveLocalSignerWebAuthnConfig(cfg, mergedEnv);
   const lines = [
-    `export FASED_WALLET_LOCAL_SIGNER_SOCKET="${socketPath}"`,
-    `export FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET="${controlSocketPath}"`,
-    `export FASED_WALLET_LOCAL_SIGNER_STATE_DB="${stateDbPath}"`,
-    `export FASED_WALLET_LOCAL_SIGNER_MASTER_KEY="${masterKeyPath}"`,
+    `export FASED_WALLET_LOCAL_SIGNER_SOCKET=${quoteSignerEnvValue(socketPath)}`,
+    `export FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET=${quoteSignerEnvValue(controlSocketPath)}`,
+    `export FASED_WALLET_LOCAL_SIGNER_STATE_DB=${quoteSignerEnvValue(stateDbPath)}`,
+    `export FASED_WALLET_LOCAL_SIGNER_MASTER_KEY=${quoteSignerEnvValue(masterKeyPath)}`,
     ...(materialDir !== walletRoot
-      ? [`export FASED_WALLET_SIGNER_STATE_DIR="${materialDir}"`]
+      ? [`export FASED_WALLET_SIGNER_STATE_DIR=${quoteSignerEnvValue(materialDir)}`]
       : []),
-    `export FASED_WALLET_CHAINS="${String(childEnv.FASED_WALLET_CHAINS ?? "solana").trim() || "solana"}"`,
-    ...exportLines,
+    `export FASED_WALLET_CHAINS=${quoteSignerEnvValue(String(childEnv.FASED_WALLET_CHAINS ?? "solana").trim() || "solana")}`,
+    ...(webAuthn
+      ? [
+          `export FASED_WALLET_WEBAUTHN_RP_ID=${quoteSignerEnvValue(webAuthn.rpId)}`,
+          `export FASED_WALLET_WEBAUTHN_ORIGINS=${quoteSignerEnvValue(webAuthn.origins)}`,
+        ]
+      : []),
     "",
-    `"${signerBinPath}" --socket "$FASED_WALLET_LOCAL_SIGNER_SOCKET" --control-socket "$FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET" --state-db "$FASED_WALLET_LOCAL_SIGNER_STATE_DB" --master-key "$FASED_WALLET_LOCAL_SIGNER_MASTER_KEY"`,
+    `${quoteSignerEnvValue(signerBinPath)} --socket "$FASED_WALLET_LOCAL_SIGNER_SOCKET" --control-socket "$FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET" --state-db "$FASED_WALLET_LOCAL_SIGNER_STATE_DB" --master-key "$FASED_WALLET_LOCAL_SIGNER_MASTER_KEY"`,
   ];
   return `${lines.join("\n")}\n`;
 }

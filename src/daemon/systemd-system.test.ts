@@ -36,6 +36,7 @@ describe("hosted systemd unit", () => {
     expect(unit).toContain(
       "Environment=FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/app.sock",
     );
+    expect(unit).not.toContain("FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET");
     expect(unit).toContain("WantedBy=multi-user.target");
     expect(unit).toContain(
       "ExecStart=/bin/bash /home/app/.fased/install-cache/npm-global/lib/node_modules/@fased/fased/scripts/start-managed.sh",

@@ -2220,7 +2220,7 @@ reexec_as_app_user() {
 
   local cmd="cd $(shell_quote "$target_repo_dir") && "
   if [[ "$HOSTING_REQUESTED" -eq 1 ]]; then
-    cmd+="env FASED_HOST_PROFILE=hosting FASED_HOST_BOOTSTRAP_CTL=/usr/local/libexec/fased-host-bootstrapctl.mjs FASED_HOST_BOOTSTRAP_SOCKET=/run/fased-host-bootstrap/control.sock FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/app.sock FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET=/run/fased-signerd/app.sock "
+    cmd+="env FASED_HOST_PROFILE=hosting FASED_HOST_BOOTSTRAP_CTL=/usr/local/libexec/fased-host-bootstrapctl.mjs FASED_HOST_BOOTSTRAP_SOCKET=/run/fased-host-bootstrap/control.sock FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/app.sock "
     if [[ -n "$HOST_SIGNER_TRANSACTION_ID" ]]; then
       cmd+="FASED_HOST_UPDATE_TRANSACTION_ID=$(shell_quote "$HOST_SIGNER_TRANSACTION_ID") FASED_HOST_UPDATE_TRANSACTION_VERSION=$(shell_quote "$HOST_SIGNER_TRANSACTION_VERSION") "
     fi
@@ -2242,6 +2242,7 @@ reexec_as_app_user() {
       wait "$HOST_BOOTSTRAP_PID" 2>/dev/null || true
     fi
     rm -rf /run/fased-host-bootstrap
+    rm -f /var/log/fased-host-bootstrap.log
   }
   cleanup_root_bootstrap_and_transaction() {
     local status=$?
@@ -3102,6 +3103,9 @@ install_host_signer_and_updater_services() {
   install -d -m 0700 -o root -g root /var/lib/fased-host-updater
   install -d -m 0700 -o "$signer_user" -g "$signer_user" /var/lib/fased-signerd
   install -d -m 0755 -o root -g root /etc/fased
+  if [[ ! -f /etc/fased/signerd-webauthn.env ]]; then
+    install -m 0644 -o root -g root /dev/null /etc/fased/signerd-webauthn.env
+  fi
   install -d -m 0755 -o root -g root /etc/systemd/system/fased-gateway.service.d
   cat >/etc/systemd/system/fased-gateway.service.d/20-fased-update-gate.conf <<'EOF'
 [Unit]
@@ -3189,6 +3193,7 @@ StateDirectory=fased-signerd
 StateDirectoryMode=0700
 UMask=0077
 Environment=HOME=/var/lib/fased-signerd
+EnvironmentFile=-/etc/fased/signerd-webauthn.env
 ExecStart=/opt/fased/signer/fased-signerd -socket /run/fased-signerd/app.sock -control-socket /run/fased-signerd/control.sock -socket-mode 0660 -socket-group ${gateway_group} -state-db /var/lib/fased-signerd/state.db -master-key /var/lib/fased-signerd/master.key -pid-file /run/fased-signerd/fased-signerd.pid -audit-log /var/lib/fased-signerd/audit.jsonl
 Restart=always
 RestartSec=3
@@ -3298,6 +3303,7 @@ finalize_legacy_hosted_signer_migration() {
 
 start_host_bootstrap_channel() {
   local target_user="${FASED_INSTALL_USER:-app}"
+  local signer_user="${FASED_SIGNER_USER:-fased-signer}"
   local gateway_group="${FASED_GATEWAY_GROUP:-fased-gateway}"
   local gateway_gid
   gateway_gid="$(getent group "$gateway_group" | cut -d: -f3)"
@@ -3305,6 +3311,7 @@ start_host_bootstrap_channel() {
   rm -f /run/fased-host-bootstrap/control.sock
   node /usr/local/libexec/fased-host-bootstrapd.mjs \
     --app-user "$target_user" \
+    --signer-user "$signer_user" \
     --socket-gid "$gateway_gid" \
     >/var/log/fased-host-bootstrap.log 2>&1 &
   HOST_BOOTSTRAP_PID=$!

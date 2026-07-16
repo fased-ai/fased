@@ -193,7 +193,6 @@ export function buildHostedSystemdUnit(params: {
       ...params.environment,
       FASED_HOST_PROFILE: "hosting",
       FASED_WALLET_LOCAL_SIGNER_SOCKET: "/run/fased-signerd/app.sock",
-      FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET: "/run/fased-signerd/app.sock",
     },
   });
   const lines = baseUnit.split("\n");
