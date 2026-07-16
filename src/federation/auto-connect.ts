@@ -604,16 +604,38 @@ export async function createFederationBondProof(opts?: {
   const challengeBody = (challenge.json ?? {}) as FederationBondChallengeResult;
   const challengeId = challengeBody.challengeId?.trim();
   const expiresAt = challengeBody.expiresAt?.trim();
-  const payload =
-    challengeBody.payload?.trim() ||
-    (challengeBody.payloadBase64
-      ? Buffer.from(challengeBody.payloadBase64, "base64").toString("utf-8")
-      : "");
-  if (!challengeId || !expiresAt || !payload) {
+  let payloadBase64 = challengeBody.payloadBase64?.trim() ?? "";
+  let payload = challengeBody.payload ?? "";
+  if (payloadBase64) {
+    const decoded = Buffer.from(payloadBase64, "base64");
+    if (decoded.toString("base64") !== payloadBase64) {
+      throw new Error("federation bond challenge failed: payloadBase64 is not canonical");
+    }
+    const decodedPayload = decoded.toString("utf-8");
+    if (payload && payload !== decodedPayload) {
+      throw new Error("federation bond challenge failed: payload encodings disagree");
+    }
+    payload = decodedPayload;
+  } else if (payload) {
+    payloadBase64 = Buffer.from(payload, "utf-8").toString("base64");
+  }
+  if (!challengeId || !expiresAt || !payload || !payloadBase64) {
     throw new Error("federation bond challenge failed: incomplete challenge payload");
   }
+  if (!opts?.tier) {
+    throw new Error("federation bond challenge requires the locally reviewed bond tier");
+  }
   const signedWallet = await signFederationBondChallenge({
-    payload,
+    challengeId,
+    federationOrigin: baseUrl,
+    payloadBase64,
+    handle: federationToken.handle,
+    nodeId: federationToken.nodeId,
+    tokenId: federationToken.tokenId,
+    bondId,
+    tier: opts.tier,
+    ...(opts.amountRaw?.trim() ? { amountRaw: opts.amountRaw.trim() } : {}),
+    expiresAt,
     env,
     cfg: opts?.cfg,
     walletId: resolvedWallet.walletId,
@@ -628,8 +650,7 @@ export async function createFederationBondProof(opts?: {
     federationBaseUrl: baseUrl,
     expiresAt,
     payload,
-    payloadBase64:
-      challengeBody.payloadBase64?.trim() || Buffer.from(payload, "utf-8").toString("base64"),
+    payloadBase64,
     signatureBase64: signedWallet.signatureBase64,
     signedAt: new Date().toISOString(),
   };

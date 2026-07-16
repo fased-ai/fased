@@ -1,109 +1,130 @@
-import crypto from "node:crypto";
-import { scryptSync } from "node:crypto";
-import fs from "node:fs/promises";
+import { createHash } from "node:crypto";
 import type { FasedAgentConfig } from "../config/config.js";
 import { resolveFederationBondWalletId } from "../federation/runtime.js";
+import type { LocalSocketSignerPolicyV2 } from "./local-socket-signer-protocol.js";
+import {
+  assertSecureLocalSignerSocket,
+  callLocalSocketSigner,
+  requireLocalSocketSignerPath,
+} from "./providers/local-socket-signer-adapter.js";
 import { readWalletProviderRegistry } from "./wallet-provider-registry.js";
 
-type SolanaKeystoreEnvelopeV1 = {
-  kind: "fased-solana-keypair";
-  version: 1;
-  kdf: "scrypt";
-  cipher: "aes-256-gcm";
-  salt: string;
-  iv: string;
-  authTag: string;
-  ciphertext: string;
-  publicKey: string;
-};
+const FEDERATION_BOND_INTENT = "federation.bondChallenge" as const;
+const REQUIRED_FEDERATION_SIGNER_FEATURES = [
+  "failClosedPolicies",
+  "policyHashes",
+  "durableCaps",
+  "atomicIdempotency",
+  "signerOwnedKeys",
+  "domainSeparatedFederationBondChallenges",
+  "signerOwnedWebAuthn",
+  "singleUseReviewedAuthorization",
+] as const;
 
 export type ResolvedBondWallet = {
   walletId: string;
   walletAddress: string;
   providerId?: string;
-  keystorePath: string;
+  socketPath: string;
 };
 
-function normalizeWalletIdForEnvSuffix(walletId?: string): string | undefined {
-  const raw = String(walletId ?? "")
+function nativeSignerWalletId(walletId: string): string {
+  const normalized = walletId
     .trim()
-    .toLowerCase();
-  if (!raw) {
-    return undefined;
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return normalized || "default";
+}
+
+function federationOrigin(raw: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error("federation bond signing requires a valid HTTPS federation origin");
   }
-  const normalized = raw.replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
-  return normalized || undefined;
-}
-
-function resolveScopedSolanaKeystorePath(env: NodeJS.ProcessEnv, walletId?: string): string {
-  const suffix = normalizeWalletIdForEnvSuffix(walletId)?.toUpperCase();
-  const scoped = suffix
-    ? String(env[`FASED_WALLET_SOLANA_KEYSTORE_PATH__${suffix}`] ?? "").trim()
-    : "";
-  return scoped || String(env.FASED_WALLET_SOLANA_KEYSTORE_PATH ?? "").trim();
-}
-
-async function resolveWalletPassphrase(env: NodeJS.ProcessEnv): Promise<string> {
-  const filePath = String(env.FASED_WALLET_PASSPHRASE_FILE ?? "").trim();
-  if (filePath) {
-    return (await fs.readFile(filePath, "utf-8")).trim();
-  }
-  return String(env.FASED_WALLET_PASSPHRASE ?? "").trim();
-}
-
-function parseSolanaKeystoreEnvelope(raw: string): SolanaKeystoreEnvelopeV1 {
-  const parsed = JSON.parse(raw) as Partial<SolanaKeystoreEnvelopeV1>;
   if (
-    parsed.kind !== "fased-solana-keypair" ||
-    parsed.version !== 1 ||
-    parsed.kdf !== "scrypt" ||
-    parsed.cipher !== "aes-256-gcm" ||
-    typeof parsed.salt !== "string" ||
-    typeof parsed.iv !== "string" ||
-    typeof parsed.authTag !== "string" ||
-    typeof parsed.ciphertext !== "string" ||
-    typeof parsed.publicKey !== "string"
+    parsed.protocol !== "https:" ||
+    parsed.username ||
+    parsed.password ||
+    parsed.search ||
+    parsed.hash ||
+    (parsed.pathname !== "/" && parsed.pathname !== "")
   ) {
-    throw new Error("invalid Solana keystore envelope");
+    throw new Error(
+      "federation bond signing requires an HTTPS origin without path, credentials, query, or fragment",
+    );
   }
-  return parsed as SolanaKeystoreEnvelopeV1;
+  return parsed.origin;
 }
 
-function decryptSolanaKeypairEnvelope(
-  envelope: SolanaKeystoreEnvelopeV1,
-  passphrase: string,
-): Uint8Array {
-  const salt = Buffer.from(envelope.salt, "base64url");
-  const iv = Buffer.from(envelope.iv, "base64url");
-  const authTag = Buffer.from(envelope.authTag, "base64url");
-  const ciphertext = Buffer.from(envelope.ciphertext, "base64url");
-  const key = scryptSync(passphrase, salt, 32);
-  const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv);
-  decipher.setAuthTag(authTag);
-  const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
-  if (plaintext.length !== 64) {
-    throw new Error("invalid Solana secret key length");
+export function federationBondChallengeRequestId(challengeId: string): string {
+  const normalized = challengeId.trim();
+  if (!normalized || normalized !== challengeId || normalized.length > 256) {
+    throw new Error("federation bond challengeId is invalid");
   }
-  return Uint8Array.from(plaintext);
+  return `federation-bond:${createHash("sha256").update(normalized, "utf8").digest("hex")}`;
 }
 
-function base64url(bytes: Uint8Array): string {
-  return Buffer.from(bytes).toString("base64url");
-}
-
-function signEd25519Message(message: Buffer, secretKey: Uint8Array): string {
-  const seed = secretKey.slice(0, 32);
-  const publicKey = secretKey.slice(32, 64);
-  const privateKey = crypto.createPrivateKey({
-    key: {
-      kty: "OKP",
-      crv: "Ed25519",
-      d: base64url(seed),
-      x: base64url(publicKey),
+export function buildFederationBondChallengeIntent(params: {
+  challengeId: string;
+  federationOrigin: string;
+  payloadBase64: string;
+  handle: string;
+  nodeId: string;
+  tokenId: string;
+  bondId: string;
+  tier: "none" | "basic-bond" | "operator-bond";
+  amountRaw?: string;
+  expiresAt: string;
+}) {
+  return {
+    type: FEDERATION_BOND_INTENT,
+    federation: {
+      challengeId: params.challengeId,
+      federationOrigin: federationOrigin(params.federationOrigin),
+      handle: params.handle,
+      nodeId: params.nodeId,
+      tokenId: params.tokenId,
+      bondId: params.bondId,
+      tier: params.tier,
+      ...(params.amountRaw !== undefined ? { amountRaw: params.amountRaw } : {}),
+      expiresAt: params.expiresAt,
+      payloadBase64: params.payloadBase64,
     },
-    format: "jwk",
-  });
-  return crypto.sign(null, message, privateKey).toString("base64");
+  } as const;
+}
+
+async function requireFederationSigner(socketPath: string): Promise<void> {
+  assertSecureLocalSignerSocket(socketPath);
+  const health = await callLocalSocketSigner<{
+    ready?: boolean;
+    capabilities?: {
+      protocol?: { current?: number; min?: number; max?: number };
+      intentTypes?: string[];
+      features?: string[];
+    };
+  }>(socketPath, { op: "v2.capabilities" });
+  const capabilities = health.capabilities;
+  const features = new Set(capabilities?.features ?? []);
+  const missing = REQUIRED_FEDERATION_SIGNER_FEATURES.filter((feature) => !features.has(feature));
+  if (
+    health.ready !== true ||
+    capabilities?.protocol?.current !== 2 ||
+    typeof capabilities.protocol.min !== "number" ||
+    capabilities.protocol.min > 2 ||
+    typeof capabilities.protocol.max !== "number" ||
+    capabilities.protocol.max < 2 ||
+    !capabilities.intentTypes?.includes(FEDERATION_BOND_INTENT) ||
+    missing.length > 0
+  ) {
+    throw new Error(
+      `local-socket-signer does not support secure federation bond challenges${
+        missing.length > 0 ? `; missing features: ${missing.join(", ")}` : ""
+      }`,
+    );
+  }
 }
 
 export async function resolveFederationBondWallet(params?: {
@@ -118,49 +139,65 @@ export async function resolveFederationBondWallet(params?: {
     resolveFederationBondWalletId({ env, cfg: params?.cfg }) ||
     "default";
   const registryWallet = registry.wallets.find((entry) => entry.id === walletId);
-  const keystorePath = resolveScopedSolanaKeystorePath(env, walletId);
-  if (!keystorePath) {
-    throw new Error(`bond Vault ${walletId} has no Solana keystore path configured`);
+  const socketPath = requireLocalSocketSignerPath(env);
+  await requireFederationSigner(socketPath);
+  const wallet = await callLocalSocketSigner<{ walletId: string; publicKey: string }>(socketPath, {
+    op: "v2.wallet.get",
+    walletId,
+  });
+  const walletAddress = wallet.publicKey.trim();
+  if (!walletAddress || wallet.walletId !== nativeSignerWalletId(walletId)) {
+    throw new Error(`bond Vault ${walletId} is not available in the native signer`);
   }
-  const raw = await fs.readFile(keystorePath, "utf-8");
-  const envelope = parseSolanaKeystoreEnvelope(raw);
-  const walletAddress =
-    registryWallet?.addresses?.solana?.trim() || envelope.publicKey.trim() || "";
-  if (!walletAddress) {
-    throw new Error(`bond Vault ${walletId} has no Solana address`);
+  const registryAddress = registryWallet?.addresses?.solana?.trim();
+  if (registryAddress && registryAddress !== walletAddress) {
+    throw new Error(`bond Vault ${walletId} registry address does not match the native signer`);
   }
   return {
     walletId,
     walletAddress,
     providerId: registryWallet?.providerId,
-    keystorePath,
+    socketPath,
   };
 }
 
 export async function signFederationBondChallenge(params: {
-  payload: string;
+  challengeId: string;
+  federationOrigin: string;
+  payloadBase64: string;
+  handle: string;
+  nodeId: string;
+  tokenId: string;
+  bondId: string;
+  tier: "none" | "basic-bond" | "operator-bond";
+  amountRaw?: string;
+  expiresAt: string;
   env?: NodeJS.ProcessEnv;
   cfg?: FasedAgentConfig;
   walletId?: string;
-}): Promise<ResolvedBondWallet & { signatureBase64: string }> {
+}): Promise<ResolvedBondWallet & { signatureBase64: string; requestId: string }> {
   const env = params.env ?? process.env;
   const resolved = await resolveFederationBondWallet({
     env,
     cfg: params.cfg,
     walletId: params.walletId,
   });
-  const passphrase = await resolveWalletPassphrase(env);
-  if (!passphrase) {
-    throw new Error("wallet passphrase is required to sign federation bond challenge");
+  const requestId = federationBondChallengeRequestId(params.challengeId);
+  const policy = await callLocalSocketSigner<LocalSocketSignerPolicyV2>(resolved.socketPath, {
+    op: "v2.policy.get",
+    walletId: resolved.walletId,
+  });
+  if (
+    policy.role !== "vault" ||
+    !policy.operations.includes(FEDERATION_BOND_INTENT) ||
+    !policy.hash.startsWith("sha256:")
+  ) {
+    throw new Error(
+      `bond Vault ${resolved.walletId} does not have an explicit reviewed federation challenge policy`,
+    );
   }
-  const raw = await fs.readFile(resolved.keystorePath, "utf-8");
-  const envelope = parseSolanaKeystoreEnvelope(raw);
-  const secretKey = decryptSolanaKeypairEnvelope(envelope, passphrase);
-  if (envelope.publicKey.trim() && envelope.publicKey.trim() !== resolved.walletAddress) {
-    throw new Error("bond Vault address does not match keystore public key");
-  }
-  return {
-    ...resolved,
-    signatureBase64: signEd25519Message(Buffer.from(params.payload, "utf-8"), secretKey),
-  };
+  buildFederationBondChallengeIntent(params);
+  throw new Error(
+    `federation signer request ${requestId} requires signer-owned reviewed authorization; direct signing is disabled`,
+  );
 }

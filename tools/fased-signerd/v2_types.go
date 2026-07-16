@@ -21,6 +21,8 @@ const (
 	intentSolanaNativeTransfer     = "solana.nativeTransfer"
 	intentSolanaSPLTransferChecked = "solana.splTransferChecked"
 	intentSolanaSATAction          = "solana.satAction"
+	intentSolanaVaultBondAction    = "solana.vaultBondAction"
+	intentFederationBondChallenge  = "federation.bondChallenge"
 	intentSolanaJupiterSwap        = "solana.jupiter.swap"
 	intentSolanaTriggerAuth        = "solana.jupiter.trigger.auth"
 	intentSolanaTriggerCreate      = "solana.jupiter.trigger.create"
@@ -41,6 +43,8 @@ var signerV2Capabilities = signerCapabilitiesV2{
 		intentSolanaNativeTransfer,
 		intentSolanaSPLTransferChecked,
 		intentSolanaSATAction,
+		intentSolanaVaultBondAction,
+		intentFederationBondChallenge,
 		intentSolanaJupiterSwap,
 		intentSolanaTriggerAuth,
 		intentSolanaTriggerCreate,
@@ -67,6 +71,8 @@ var signerV2Capabilities = signerCapabilitiesV2{
 		"signerOwnedRPC",
 		"typedSolanaTransactions",
 		"typedSATActions",
+		"typedVaultBondActions",
+		"domainSeparatedFederationBondChallenges",
 		"signerOwnedWebAuthn",
 		"singleUseReviewedAuthorization",
 		"typedJupiterSemantics",
@@ -89,19 +95,21 @@ type signerCapabilitiesV2 struct {
 }
 
 type signerIntentV2 struct {
-	Type         string                   `json:"type"`
-	Destination  string                   `json:"destination,omitempty"`
-	Lamports     string                   `json:"lamports,omitempty"`
-	TokenProgram string                   `json:"tokenProgram,omitempty"`
-	Mint         string                   `json:"mint,omitempty"`
-	Amount       string                   `json:"amount,omitempty"`
-	Action       string                   `json:"action,omitempty"`
-	ProgramID    string                   `json:"programId,omitempty"`
-	DataBase64   string                   `json:"dataBase64,omitempty"`
-	Keys         []signerSATAccountV2     `json:"keys,omitempty"`
-	Context      *signerSATContextV2      `json:"context,omitempty"`
-	Instructions []signerSATInstructionV2 `json:"instructions,omitempty"`
-	Jupiter      *signerJupiterIntentV2   `json:"jupiter,omitempty"`
+	Type         string                                 `json:"type"`
+	Destination  string                                 `json:"destination,omitempty"`
+	Lamports     string                                 `json:"lamports,omitempty"`
+	TokenProgram string                                 `json:"tokenProgram,omitempty"`
+	Mint         string                                 `json:"mint,omitempty"`
+	Amount       string                                 `json:"amount,omitempty"`
+	Action       string                                 `json:"action,omitempty"`
+	ProgramID    string                                 `json:"programId,omitempty"`
+	DataBase64   string                                 `json:"dataBase64,omitempty"`
+	Keys         []signerSATAccountV2                   `json:"keys,omitempty"`
+	Context      *signerSATContextV2                    `json:"context,omitempty"`
+	Instructions []signerSATInstructionV2               `json:"instructions,omitempty"`
+	Jupiter      *signerJupiterIntentV2                 `json:"jupiter,omitempty"`
+	Cluster      string                                 `json:"cluster,omitempty"`
+	Federation   *signerFederationBondChallengeIntentV2 `json:"federation,omitempty"`
 }
 
 type signerExecuteRequestV2 struct {
@@ -204,6 +212,8 @@ type normalizedIntentV2 struct {
 	Instructions     []solana.Instruction
 	PolicyOperation  string
 	CapExempt        bool
+	RequiredRole     string
+	Message          []byte
 }
 
 func isSPLTokenProgram(programID string) bool {
@@ -291,6 +301,16 @@ func normalizeSignerIntentForWalletV2(input signerIntentV2, wallet *solana.Publi
 			return normalizedIntentV2{}, errors.New("typed SAT intent requires signer wallet context")
 		}
 		return normalizeSATIntentV2(input, *wallet)
+	case intentSolanaVaultBondAction:
+		if wallet == nil || wallet.IsZero() {
+			return normalizedIntentV2{}, errors.New("typed Vault bond intent requires signer wallet context")
+		}
+		return normalizeSATIntentV2(input, *wallet)
+	case intentFederationBondChallenge:
+		if wallet == nil || wallet.IsZero() {
+			return normalizedIntentV2{}, errors.New("federation bond challenge requires signer wallet context")
+		}
+		return normalizeFederationBondChallengeIntentV2(input, *wallet)
 	default:
 		return normalizedIntentV2{}, fmt.Errorf("unsupported signer-v2 intent type %q", intent.Type)
 	}
@@ -376,7 +396,7 @@ func normalizeSignerPolicyV2(input signerPolicyV2) (signerPolicyV2, error) {
 	seenAssets := map[string]bool{}
 	for _, rawAsset := range input.Assets {
 		asset := signerPolicyAssetV2{Asset: strings.TrimSpace(rawAsset.Asset)}
-		if asset.Asset == "solana:native" || asset.Asset == "sat:action" || asset.Asset == "sat:capital:lamports" {
+		if asset.Asset == "solana:native" || asset.Asset == "sat:action" || asset.Asset == "sat:capital:lamports" || asset.Asset == "federation:bond-challenge" {
 			// canonical as-is
 		} else if strings.HasPrefix(asset.Asset, "solana:spl:") {
 			mint, err := normalizePublicKeyV2(strings.TrimPrefix(asset.Asset, "solana:spl:"), "policy asset mint")
@@ -428,6 +448,9 @@ func normalizeSignerPolicyV2(input signerPolicyV2) (signerPolicyV2, error) {
 }
 
 func policyAssetForIntentV2(policy signerPolicyV2, intent normalizedIntentV2) (signerPolicyAssetV2, error) {
+	if intent.RequiredRole != "" && policy.Role != intent.RequiredRole {
+		return signerPolicyAssetV2{}, fmt.Errorf("policy role %s cannot authorize %s intent", policy.Role, intent.RequiredRole)
+	}
 	operation := intent.PolicyOperation
 	if operation == "" {
 		operation = intent.Intent.Type

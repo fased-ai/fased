@@ -127,6 +127,76 @@ describe("local socket signer protocol", () => {
     ).toThrow("invalid signer request");
   });
 
+  it("accepts only narrow Vault bond and federation challenge intents", () => {
+    const policyHash = `sha256:${"e".repeat(64)}`;
+    const bondIntent = {
+      type: "solana.vaultBondAction" as const,
+      cluster: "devnet" as const,
+      action: "requestBondUnlock",
+      programId: "D1ySMMiJmvJRhJJKwYnc171w3g2JDPQnkgD8kGhaG4Vq",
+      dataBase64: "BA==",
+      keys: [
+        {
+          pubkey: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
+          isSigner: true,
+          isWritable: true,
+        },
+      ],
+    };
+    expect(
+      parseLocalSocketSignerRequest({
+        op: "v2.execute",
+        walletId: "bond-vault",
+        request: { requestId: "vault-bond-request", policyHash, intent: bondIntent },
+      }).op,
+    ).toBe("v2.execute");
+    expect(() =>
+      parseLocalSocketSignerRequest({
+        op: "v2.execute",
+        walletId: "bond-vault",
+        request: {
+          requestId: "vault-bond-request",
+          policyHash,
+          intent: { ...bondIntent, serializedTxBase64: "forbidden" },
+        },
+      }),
+    ).toThrow("invalid signer request");
+
+    const federationIntent = {
+      type: "federation.bondChallenge" as const,
+      federation: {
+        challengeId: "challenge-1",
+        federationOrigin: "https://ff1.fased.app",
+        handle: "@bonded@ff1.fased.app",
+        nodeId: "node-1",
+        tokenId: "token-1",
+        bondId: "bond-1",
+        tier: "basic-bond" as const,
+        amountRaw: "100",
+        expiresAt: "2026-07-16T12:05:00Z",
+        payloadBase64: "e30=",
+      },
+    };
+    expect(
+      parseLocalSocketSignerRequest({
+        op: "v2.execute",
+        walletId: "bond-vault",
+        request: { requestId: "federation-bond:request", policyHash, intent: federationIntent },
+      }).op,
+    ).toBe("v2.execute");
+    expect(() =>
+      parseLocalSocketSignerRequest({
+        op: "v2.execute",
+        walletId: "bond-vault",
+        request: {
+          requestId: "federation-bond:request",
+          policyHash,
+          intent: { ...federationIntent, dataBase64: "cmF3" },
+        },
+      }),
+    ).toThrow("invalid signer request");
+  });
+
   it("validates durable signer-v2 operation states", () => {
     expect(
       validateLocalSocketSignerResult("v2.operation.get", {

@@ -121,7 +121,7 @@ function configureLocalSignerMock(addresses: { solana?: string } = { solana: SIG
             ready: true,
             capabilities: {
               protocol: { current: 2, min: 2, max: 2 },
-              intentTypes: ["solana.satAction"],
+              intentTypes: ["solana.satAction", "solana.vaultBondAction"],
               operationStates: ["reserved", "broadcast", "confirmed", "failed", "unknown"],
               features: [
                 "failClosedPolicies",
@@ -132,6 +132,7 @@ function configureLocalSignerMock(addresses: { solana?: string } = { solana: SIG
                 "signerOwnedKeys",
                 "typedSolanaTransactions",
                 "typedSATActions",
+                "typedVaultBondActions",
               ],
             },
           };
@@ -215,6 +216,7 @@ describe("SAT cycle transaction builders", () => {
           "sat-mining": {
             config: {
               walletId: "solana-1",
+              network: "devnet",
             },
           },
         },
@@ -534,122 +536,38 @@ describe("SAT cycle transaction builders", () => {
     );
   });
 
-  it("uses the dedicated bond program and policy account by default", async () => {
-    const amountRaw = 100_000_000_000;
-    const mint = new PublicKey(SAT_MINT_ADDRESS_TEXT);
-    const bondPosition = new PublicKey(
-      findBondPda(Buffer.from("sat_bond_position"), SIGNER.toBuffer()),
-    );
-    const bondTierPolicy = new PublicKey(findBondPda(Buffer.from("sat_bond_tier_policy")));
-
-    await submitSatOpenBondPosition({} as never, { amountRaw });
-
-    expect(callLocalSocketSigner).toHaveBeenCalledTimes(4);
-    const request = latestTypedSatRequest();
-    expect(request?.request?.programId).toBe(SAT_BOND_PROGRAM_ID_TEXT);
-    expect(Buffer.from(request?.request?.dataBase64 ?? "", "base64")).toEqual(
-      Buffer.concat([Buffer.from([2]), encodeU64(amountRaw)]),
-    );
-    expect(request?.request?.keys).toEqual([
-      { pubkey: SIGNER.toBase58(), isSigner: true, isWritable: true },
-      { pubkey: bondTierPolicy.toBase58(), isSigner: false, isWritable: false },
-      { pubkey: bondPosition.toBase58(), isSigner: false, isWritable: true },
-      { pubkey: findAta(SIGNER, mint), isSigner: false, isWritable: true },
-      { pubkey: findAta(bondPosition, mint), isSigner: false, isWritable: true },
-      { pubkey: mint.toBase58(), isSigner: false, isWritable: true },
-      { pubkey: SystemProgram.programId.toBase58(), isSigner: false, isWritable: false },
-      { pubkey: TOKEN_PROGRAM_ID.toBase58(), isSigner: false, isWritable: false },
-      { pubkey: ASSOCIATED_TOKEN_PROGRAM_ID.toBase58(), isSigner: false, isWritable: false },
-    ]);
-  });
-
   it.each([
-    ["sync rewards", submitSatSyncBondStakingRewards, 8],
-    ["sync position", submitSatSyncBondStakingPosition, 9],
-    ["claim rewards", submitSatClaimBondStakingRewards, 10],
+    ["open", () => submitSatOpenBondPosition({} as never, { amountRaw: 100_000_000_000 })],
+    ["increase", () => submitSatIncreaseBondPosition({} as never, { amountRaw: 100_000_000_000 })],
+    ["request unlock", () => submitSatRequestBondUnlock({} as never)],
+    ["cancel unlock", () => submitSatCancelBondUnlock({} as never)],
+    ["finalize unlock", () => submitSatFinalizeBondUnlock({} as never)],
+    ["sync rewards", () => submitSatSyncBondStakingRewards({} as never)],
+    ["sync position", () => submitSatSyncBondStakingPosition({} as never)],
+    ["claim rewards", () => submitSatClaimBondStakingRewards({} as never)],
+    [
+      "claim unallocated rewards",
+      () =>
+        submitSatClaimUnallocatedStakingRewards({} as never, {
+          recipientOwner: "AzXW61LgzhJTXN1so7rBR5auU2oCSzRyNEqFxPkZct3G",
+        }),
+    ],
   ] as const)(
-    "submits bond staking %s against the dedicated bond program",
-    async (_name, submit, ix) => {
-      await submit({} as never);
-
-      expect(callLocalSocketSigner).toHaveBeenCalledTimes(4);
-      const request = latestTypedSatRequest();
-      expect(request?.op).toBe("v2.execute");
-      expect(request?.request?.programId).toBe(SAT_BOND_PROGRAM_ID_TEXT);
-      expect(Buffer.from(request?.request?.dataBase64 ?? "", "base64")[0]).toBe(ix);
+    "keeps Vault bond %s reviewed-only and never calls direct execute",
+    async (_name, submit) => {
+      await expect(submit()).rejects.toThrow(
+        "requires signer-owned reviewed authorization; direct execution is disabled",
+      );
+      expect(callLocalSocketSigner.mock.calls.map((call) => call[1].op)).toEqual([
+        "getAddresses",
+        "v2.capabilities",
+      ]);
+      expect(callLocalSocketSigner).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ op: "v2.execute" }),
+      );
     },
   );
-
-  it("updates staking weight in the same request-unlock instruction", async () => {
-    await submitSatRequestBondUnlock({} as never);
-
-    const request = latestTypedSatRequest();
-    expect(request?.request?.keys).toEqual([
-      { pubkey: SIGNER.toBase58(), isSigner: true, isWritable: true },
-      {
-        pubkey: findBondPda(Buffer.from("sat_bond_tier_policy")),
-        isSigner: false,
-        isWritable: false,
-      },
-      {
-        pubkey: findBondPda(Buffer.from("sat_bond_position"), SIGNER.toBuffer()),
-        isSigner: false,
-        isWritable: true,
-      },
-      {
-        pubkey: findBondPda(Buffer.from("sat_bond_staking_distributor")),
-        isSigner: false,
-        isWritable: true,
-      },
-      {
-        pubkey: findBondPda(Buffer.from("sat_bond_staking_position"), SIGNER.toBuffer()),
-        isSigner: false,
-        isWritable: true,
-      },
-    ]);
-  });
-
-  it("updates staking weight in the same cancel-unlock instruction", async () => {
-    await submitSatCancelBondUnlock({} as never);
-
-    const request = latestTypedSatRequest();
-    expect(request?.request?.keys?.map((key: { pubkey: string }) => key.pubkey)).toEqual([
-      SIGNER.toBase58(),
-      findBondPda(Buffer.from("sat_bond_tier_policy")),
-      findBondPda(Buffer.from("sat_bond_position"), SIGNER.toBuffer()),
-      findBondPda(Buffer.from("sat_bond_staking_distributor")),
-      findBondPda(Buffer.from("sat_bond_staking_position"), SIGNER.toBuffer()),
-    ]);
-  });
-
-  it("verifies zero staking weight before finalizing a bond unlock", async () => {
-    await submitSatFinalizeBondUnlock({} as never);
-
-    const request = latestTypedSatRequest();
-    expect(request?.request?.keys?.slice(0, 5)).toEqual([
-      { pubkey: SIGNER.toBase58(), isSigner: true, isWritable: true },
-      {
-        pubkey: findBondPda(Buffer.from("sat_bond_tier_policy")),
-        isSigner: false,
-        isWritable: false,
-      },
-      {
-        pubkey: findBondPda(Buffer.from("sat_bond_position"), SIGNER.toBuffer()),
-        isSigner: false,
-        isWritable: true,
-      },
-      {
-        pubkey: findBondPda(Buffer.from("sat_bond_staking_distributor")),
-        isSigner: false,
-        isWritable: true,
-      },
-      {
-        pubkey: findBondPda(Buffer.from("sat_bond_staking_position"), SIGNER.toBuffer()),
-        isSigner: false,
-        isWritable: true,
-      },
-    ]);
-  });
 
   it("passes the bond program to the atomic protocol distributor claim", async () => {
     const distributor = findBondPda(Buffer.from("sat_bond_staking_distributor"));
@@ -665,33 +583,6 @@ describe("SAT cycle transaction builders", () => {
       isSigner: false,
       isWritable: false,
     });
-  });
-
-  it("claims quarantined zero-stake rewards only to the supplied treasury account", async () => {
-    const mint = new PublicKey(SAT_MINT_ADDRESS_TEXT);
-    const treasuryOwner = new PublicKey("AzXW61LgzhJTXN1so7rBR5auU2oCSzRyNEqFxPkZct3G");
-    const distributor = new PublicKey(findBondPda(Buffer.from("sat_bond_staking_distributor")));
-
-    await submitSatClaimUnallocatedStakingRewards({} as never, {
-      recipientOwner: treasuryOwner.toBase58(),
-    });
-
-    expect(callLocalSocketSigner).toHaveBeenCalledTimes(4);
-    const request = latestTypedSatRequest();
-    expect(request?.op).toBe("v2.execute");
-    expect(request?.request?.programId).toBe(SAT_BOND_PROGRAM_ID_TEXT);
-    expect(Buffer.from(request?.request?.dataBase64 ?? "", "base64")).toEqual(Buffer.from([11]));
-    expect(request?.request?.keys).toEqual([
-      { pubkey: SIGNER.toBase58(), isSigner: true, isWritable: true },
-      { pubkey: distributor.toBase58(), isSigner: false, isWritable: true },
-      { pubkey: findAta(distributor, mint), isSigner: false, isWritable: true },
-      { pubkey: findAta(treasuryOwner, mint), isSigner: false, isWritable: true },
-      { pubkey: treasuryOwner.toBase58(), isSigner: false, isWritable: false },
-      { pubkey: mint.toBase58(), isSigner: false, isWritable: true },
-      { pubkey: SystemProgram.programId.toBase58(), isSigner: false, isWritable: false },
-      { pubkey: TOKEN_PROGRAM_ID.toBase58(), isSigner: false, isWritable: false },
-      { pubkey: ASSOCIATED_TOKEN_PROGRAM_ID.toBase58(), isSigner: false, isWritable: false },
-    ]);
   });
 
   it("marks the exact cycle state writable when closing resolved artifacts", async () => {

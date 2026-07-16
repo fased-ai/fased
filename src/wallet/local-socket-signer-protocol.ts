@@ -124,6 +124,26 @@ const SignerSatInstructionV2Schema = Type.Object(
   { additionalProperties: false },
 );
 
+const SignerFederationBondChallengeV2Schema = Type.Object(
+  {
+    challengeId: Type.String({ minLength: 1, maxLength: 256 }),
+    federationOrigin: Type.String({ minLength: 1, maxLength: 2048 }),
+    handle: Type.String({ minLength: 1, maxLength: 512 }),
+    nodeId: Type.String({ minLength: 1, maxLength: 512 }),
+    tokenId: Type.String({ minLength: 1, maxLength: 512 }),
+    bondId: Type.String({ minLength: 1, maxLength: 512 }),
+    tier: Type.Union([
+      Type.Literal("none"),
+      Type.Literal("basic-bond"),
+      Type.Literal("operator-bond"),
+    ]),
+    amountRaw: Type.Optional(Type.String({ pattern: "^(0|[1-9][0-9]*)$" })),
+    expiresAt: Type.String({ minLength: 1, maxLength: 512 }),
+    payloadBase64: Type.String({ minLength: 4, maxLength: 24 * 1024 }),
+  },
+  { additionalProperties: false },
+);
+
 export const SignerIntentV2Schema = Type.Union([
   Type.Object(
     {
@@ -154,6 +174,29 @@ export const SignerIntentV2Schema = Type.Union([
       instructions: Type.Optional(
         Type.Array(SignerSatInstructionV2Schema, { minItems: 1, maxItems: 6 }),
       ),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      type: Type.Literal("solana.vaultBondAction"),
+      cluster: Type.Union([
+        Type.Literal("local"),
+        Type.Literal("devnet"),
+        Type.Literal("mainnet-beta"),
+      ]),
+      action: Type.String({ minLength: 1 }),
+      programId: Type.String(),
+      dataBase64: Type.String(),
+      keys: Type.Array(SignerSatAccountV2Schema),
+      context: Type.Optional(SignerSatContextV2Schema),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      type: Type.Literal("federation.bondChallenge"),
+      federation: SignerFederationBondChallengeV2Schema,
     },
     { additionalProperties: false },
   ),

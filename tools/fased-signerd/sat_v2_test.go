@@ -242,7 +242,7 @@ func TestSignerV2TypedSATBondValidatesMintATAsAndCleanupHasNoRawFallback(t *test
 	data[0] = 2
 	binary.LittleEndian.PutUint64(data[1:], 75)
 	intent := signerIntentV2{
-		Type: intentSolanaSATAction, Action: "openBondPosition", ProgramID: program.String(), DataBase64: base64.StdEncoding.EncodeToString(data),
+		Type: intentSolanaVaultBondAction, Cluster: "devnet", Action: "openBondPosition", ProgramID: program.String(), DataBase64: base64.StdEncoding.EncodeToString(data),
 		Keys: []signerSATAccountV2{
 			satTestAccount(wallet, true, true), satTestAccount(tier, false, false),
 			satTestAccount(position, false, true), satTestAccount(signerATA, false, true),
@@ -257,6 +257,48 @@ func TestSignerV2TypedSATBondValidatesMintATAsAndCleanupHasNoRawFallback(t *test
 	}
 	if normalized.Asset != "solana:spl:"+mint.String() || normalized.Amount.Uint64() != 75 {
 		t.Fatalf("unexpected bond accounting: asset=%s amount=%s", normalized.Asset, normalized.Amount)
+	}
+	if normalized.RequiredRole != "vault" || normalized.PolicyOperation != "vaultBond.openBondPosition@"+program.String() {
+		t.Fatalf("bond intent is not restricted to a program-bound Vault policy: %#v", normalized)
+	}
+	miningBypass := cloneSATTestIntent(t, intent)
+	miningBypass.Type, miningBypass.Cluster = intentSolanaSATAction, ""
+	if _, err := normalizeSignerIntentForWalletV2(miningBypass, &wallet); err == nil || !strings.Contains(err.Error(), "rejects Vault bond action") {
+		t.Fatalf("generic SAT mining intent accepted a Vault bond action: %v", err)
+	}
+	wrongCluster := cloneSATTestIntent(t, intent)
+	wrongCluster.Cluster = "testnet"
+	if _, err := normalizeSignerIntentForWalletV2(wrongCluster, &wallet); err == nil || !strings.Contains(err.Error(), "cluster must be") {
+		t.Fatalf("Vault bond intent accepted an unknown cluster: %v", err)
+	}
+	wrongFlags := cloneSATTestIntent(t, intent)
+	wrongFlags.Keys[3].IsWritable = false
+	if _, err := normalizeSignerIntentForWalletV2(wrongFlags, &wallet); err == nil || !strings.Contains(err.Error(), "flags mismatch") {
+		t.Fatalf("Vault bond intent accepted mutated account flags: %v", err)
+	}
+	wrongProgram := cloneSATTestIntent(t, intent)
+	wrongProgram.ProgramID = solana.NewWallet().PublicKey().String()
+	if _, err := normalizeSignerIntentForWalletV2(wrongProgram, &wallet); err == nil || !strings.Contains(err.Error(), "bond tier policy") {
+		t.Fatalf("Vault bond intent accepted accounts derived for a different program: %v", err)
+	}
+	zeroAmount := cloneSATTestIntent(t, intent)
+	zeroData, _ := base64.StdEncoding.DecodeString(zeroAmount.DataBase64)
+	for index := 1; index < len(zeroData); index++ {
+		zeroData[index] = 0
+	}
+	zeroAmount.DataBase64 = base64.StdEncoding.EncodeToString(zeroData)
+	if _, err := normalizeSignerIntentForWalletV2(zeroAmount, &wallet); err == nil || !strings.Contains(err.Error(), "amount must be positive") {
+		t.Fatalf("Vault bond intent accepted zero amount: %v", err)
+	}
+	agentPolicy, err := normalizeSignerPolicyV2(signerPolicyV2{
+		WalletID: "agent", Role: "agent", Operations: []string{normalized.PolicyOperation}, Programs: normalized.RequiredPrograms,
+		Assets: []signerPolicyAssetV2{{Asset: normalized.Asset, Destinations: []string{normalized.Destination}, MaxPerTx: "100", MaxDaily: "100"}},
+	})
+	if err != nil {
+		t.Fatalf("normalize non-Vault bypass policy: %v", err)
+	}
+	if _, err := policyAssetForIntentV2(agentPolicy, normalized); err == nil || !strings.Contains(err.Error(), "cannot authorize") {
+		t.Fatalf("non-Vault role authorized a typed bond mutation: %v", err)
 	}
 	malformed := cloneSATTestIntent(t, intent)
 	malformed.Keys[4].Pubkey = solana.NewWallet().PublicKey().String()
@@ -280,7 +322,7 @@ func TestSignerV2TypedSATClaimsBindPolicyToExactMint(t *testing.T) {
 		t.Fatalf("derive reward vault: %v", err)
 	}
 	intent := signerIntentV2{
-		Type: intentSolanaSATAction, Action: "syncBondStakingRewards", ProgramID: program.String(),
+		Type: intentSolanaVaultBondAction, Cluster: "devnet", Action: "syncBondStakingRewards", ProgramID: program.String(),
 		DataBase64: base64.StdEncoding.EncodeToString([]byte{8}),
 		Keys: []signerSATAccountV2{
 			satTestAccount(distributor, false, true),
@@ -296,7 +338,7 @@ func TestSignerV2TypedSATClaimsBindPolicyToExactMint(t *testing.T) {
 		t.Fatalf("SAT reward action is not bound to its exact mint: asset=%s amount=%s", normalized.Asset, normalized.Amount)
 	}
 	policy, err := normalizeSignerPolicyV2(signerPolicyV2{
-		WalletID: "mining", Role: "mining", Operations: []string{normalized.PolicyOperation}, Programs: normalized.RequiredPrograms,
+		WalletID: "vault", Role: "vault", Operations: []string{normalized.PolicyOperation}, Programs: normalized.RequiredPrograms,
 		Assets: []signerPolicyAssetV2{{Asset: "sat:mint:" + mint.String(), Destinations: []string{program.String()}, MaxPerTx: "1", MaxDaily: "10"}},
 	})
 	if err != nil {
@@ -316,7 +358,7 @@ func TestSignerV2TypedSATClaimsBindPolicyToExactMint(t *testing.T) {
 		t.Fatalf("derive unallocated reward recipient: %v", err)
 	}
 	unallocated := signerIntentV2{
-		Type: intentSolanaSATAction, Action: "claimUnallocatedStakingRewards", ProgramID: program.String(),
+		Type: intentSolanaVaultBondAction, Cluster: "devnet", Action: "claimUnallocatedStakingRewards", ProgramID: program.String(),
 		DataBase64: base64.StdEncoding.EncodeToString([]byte{11}),
 		Keys: []signerSATAccountV2{
 			satTestAccount(wallet, true, true), satTestAccount(distributor, false, true),

@@ -50,6 +50,20 @@ type normalizedSATInstructionV2 struct {
 }
 
 func normalizeSATIntentV2(input signerIntentV2, wallet solana.PublicKey) (normalizedIntentV2, error) {
+	if input.Destination != "" || input.Lamports != "" || input.TokenProgram != "" || input.Mint != "" || input.Amount != "" || input.Jupiter != nil || input.Federation != nil {
+		return normalizedIntentV2{}, errors.New("typed SAT intent rejects transfer, Jupiter, and federation fields")
+	}
+	isVaultBond := input.Type == intentSolanaVaultBondAction
+	cluster := ""
+	if isVaultBond {
+		var err error
+		cluster, err = normalizeSolanaClusterV2(input.Cluster)
+		if err != nil {
+			return normalizedIntentV2{}, err
+		}
+	} else if input.Cluster != "" {
+		return normalizedIntentV2{}, errors.New("typed SAT mining intent rejects a cluster field")
+	}
 	action := strings.TrimSpace(input.Action)
 	if action == "" {
 		return normalizedIntentV2{}, errors.New("typed SAT action is required")
@@ -57,6 +71,9 @@ func normalizeSATIntentV2(input signerIntentV2, wallet solana.PublicKey) (normal
 
 	var rawInstructions []signerSATInstructionV2
 	if action == "cleanupBatch" {
+		if isVaultBond {
+			return normalizedIntentV2{}, errors.New("typed Vault bond intent cannot contain an instruction batch")
+		}
 		if strings.TrimSpace(input.ProgramID) != "" || strings.TrimSpace(input.DataBase64) != "" || len(input.Keys) != 0 || input.Context != nil {
 			return normalizedIntentV2{}, errors.New("SAT cleanupBatch cannot contain a top-level raw instruction")
 		}
@@ -90,6 +107,12 @@ func normalizeSATIntentV2(input signerIntentV2, wallet solana.PublicKey) (normal
 		} else if instruction.Codec.Action != action {
 			return normalizedIntentV2{}, fmt.Errorf("SAT action mismatch: envelope=%s instruction=%s", action, instruction.Codec.Action)
 		}
+		if isVaultBond && instruction.Codec.Family != satFamilyBond {
+			return normalizedIntentV2{}, fmt.Errorf("typed Vault bond intent rejects non-bond action %s", instruction.Codec.Action)
+		}
+		if !isVaultBond && instruction.Codec.Family == satFamilyBond {
+			return normalizedIntentV2{}, fmt.Errorf("typed SAT mining intent rejects Vault bond action %s", instruction.Codec.Action)
+		}
 		programSet[instruction.Program.String()] = true
 		normalized = append(normalized, instruction)
 	}
@@ -97,7 +120,7 @@ func normalizeSATIntentV2(input signerIntentV2, wallet solana.PublicKey) (normal
 		return normalizedIntentV2{}, errors.New("SAT cleanupBatch instructions must use one program")
 	}
 
-	canonical := signerIntentV2{Type: intentSolanaSATAction, Action: action}
+	canonical := signerIntentV2{Type: input.Type, Action: action, Cluster: cluster}
 	if action == "cleanupBatch" {
 		canonical.Instructions = make([]signerSATInstructionV2, 0, len(normalized))
 		for _, instruction := range normalized {
@@ -118,6 +141,11 @@ func normalizeSATIntentV2(input signerIntentV2, wallet solana.PublicKey) (normal
 
 	primaryProgram := normalized[0].Program.String()
 	policyOperation := "sat." + action + "@" + primaryProgram
+	requiredRole := ""
+	if isVaultBond {
+		policyOperation = "vaultBond." + action + "@" + primaryProgram
+		requiredRole = "vault"
+	}
 	asset := "sat:action"
 	amount := big.NewInt(int64(len(normalized)))
 	destination := primaryProgram
@@ -169,7 +197,7 @@ func normalizeSATIntentV2(input signerIntentV2, wallet solana.PublicKey) (normal
 	return normalizedIntentV2{
 		Intent: canonical, Digest: "sha256:" + hex.EncodeToString(digest[:]), Asset: asset,
 		Amount: amount, RequiredPrograms: requiredPrograms, Destination: destination,
-		Instructions: goInstructions, PolicyOperation: policyOperation,
+		Instructions: goInstructions, PolicyOperation: policyOperation, RequiredRole: requiredRole,
 	}, nil
 }
 

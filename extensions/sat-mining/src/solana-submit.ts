@@ -67,6 +67,19 @@ const IX = SAT_INSTRUCTION_DISCRIMINATORS;
 
 const BOND_IX = SAT_BOND_INSTRUCTION_DISCRIMINATORS;
 
+const VAULT_BOND_ACTIONS = new Set<SatSignerAction>([
+  "updateBondTierPolicy",
+  "openBondPosition",
+  "increaseBondPosition",
+  "requestBondUnlock",
+  "cancelBondUnlock",
+  "finalizeBondUnlock",
+  "syncBondStakingRewards",
+  "syncBondStakingPosition",
+  "claimBondStakingRewards",
+  "claimUnallocatedStakingRewards",
+]);
+
 function satSubmitDebug(message: string) {
   if (String(process.env.FASED_SAT_SUBMIT_DEBUG ?? "").trim() === "1") {
     console.error(message);
@@ -138,6 +151,11 @@ function loadConfigForSatRuntime(activeConfig?: SatMiningConfig): FasedAgentConf
 function resolveSatWalletId(cfg: FasedAgentConfig): string | undefined {
   const value = cfg.plugins?.entries?.["sat-mining"]?.config?.walletId;
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function resolveSatCluster(cfg: FasedAgentConfig): "local" | "devnet" | "mainnet-beta" {
+  const value = cfg.plugins?.entries?.["sat-mining"]?.config?.network;
+  return value === "local" || value === "mainnet-beta" || value === "devnet" ? value : "devnet";
 }
 
 function resolveSatEffectiveEnv(cfg: FasedAgentConfig, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -388,7 +406,10 @@ const REQUIRED_SAT_SIGNER_FEATURES = [
   "typedSATActions",
 ] as const;
 
-async function requireTypedSatSignerCapabilities(socketPath: string) {
+async function requireTypedSatSignerCapabilities(
+  socketPath: string,
+  intentType: "solana.satAction" | "solana.vaultBondAction",
+) {
   const result = await callLocalSocketSigner<{
     ready?: boolean;
     capabilities?: {
@@ -413,8 +434,9 @@ async function requireTypedSatSignerCapabilities(socketPath: string) {
     protocol.min > 2 ||
     typeof protocol.max !== "number" ||
     protocol.max < 2 ||
-    !capabilities?.intentTypes?.includes("solana.satAction") ||
+    !capabilities?.intentTypes?.includes(intentType) ||
     missingFeatures.length > 0 ||
+    (intentType === "solana.vaultBondAction" && !features.has("typedVaultBondActions")) ||
     missingStates.length > 0
   ) {
     throw new Error(
@@ -459,8 +481,33 @@ async function executeTypedSatIntent(params: {
   action: SatSignerAction | "cleanupBatch";
   instruction?: Awaited<ReturnType<typeof buildLocalSignerInstructionRequest>>;
   instructions?: Array<Awaited<ReturnType<typeof buildLocalSignerInstructionRequest>>>;
+  cluster: "local" | "devnet" | "mainnet-beta";
 }) {
-  await requireTypedSatSignerCapabilities(params.socketPath);
+  const isVaultBond = params.action !== "cleanupBatch" && VAULT_BOND_ACTIONS.has(params.action);
+  const intentType = isVaultBond ? "solana.vaultBondAction" : "solana.satAction";
+  await requireTypedSatSignerCapabilities(params.socketPath, intentType);
+  const intent = isVaultBond
+    ? (() => {
+        if (!params.instruction || params.instructions) {
+          throw new Error("typed Vault bond execution requires exactly one semantic instruction");
+        }
+        return {
+          type: "solana.vaultBondAction" as const,
+          cluster: params.cluster,
+          ...params.instruction,
+        };
+      })()
+    : {
+        type: "solana.satAction" as const,
+        action: params.action,
+        ...(params.instruction ?? {}),
+        ...(params.instructions ? { instructions: params.instructions } : {}),
+      };
+  if (intent.type === "solana.vaultBondAction") {
+    throw new Error(
+      `Vault bond action ${intent.action} requires signer-owned reviewed authorization; direct execution is disabled`,
+    );
+  }
   const policy = await callLocalSocketSigner<{ hash: string }>(params.socketPath, {
     op: "v2.policy.get",
     walletId: params.walletId,
@@ -474,12 +521,7 @@ async function executeTypedSatIntent(params: {
       request: {
         requestId,
         policyHash: policy.hash,
-        intent: {
-          type: "solana.satAction",
-          action: params.action,
-          ...(params.instruction ?? {}),
-          ...(params.instructions ? { instructions: params.instructions } : {}),
-        },
+        intent,
       },
     });
   } catch (executeError) {
@@ -534,6 +576,7 @@ async function submitInstructionViaLocalSigner(
     walletId: context.walletId,
     action: request.action,
     instruction: request,
+    cluster: resolveSatCluster(params.cfg),
   });
   return {
     txHash: submitted.signature,
@@ -602,6 +645,7 @@ async function submitInstructionBatch(params: {
     walletId: context.walletId,
     action: "cleanupBatch",
     instructions,
+    cluster: resolveSatCluster(params.cfg),
   });
   return {
     txHash: submitted.signature,
