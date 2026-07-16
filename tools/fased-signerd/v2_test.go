@@ -95,6 +95,13 @@ func TestSignerV2PolicyIsDeterministicAndFailClosed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("normalize explicit deny-all policy: %v", err)
 	}
+	encodedEmpty, err := json.Marshal(empty)
+	if err != nil {
+		t.Fatalf("marshal explicit deny-all policy: %v", err)
+	}
+	if bytes.Contains(encodedEmpty, []byte(`null`)) || !bytes.Contains(encodedEmpty, []byte(`"assets":[]`)) {
+		t.Fatalf("explicit deny-all policy must use canonical empty arrays: %s", encodedEmpty)
+	}
 	intent, err := normalizeSignerIntentV2(signerIntentV2{
 		Type:        intentSolanaNativeTransfer,
 		Destination: destination,

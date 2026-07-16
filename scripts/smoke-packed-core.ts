@@ -1,6 +1,7 @@
 #!/usr/bin/env -S node --import tsx
 
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   closeSync,
   existsSync,
@@ -13,10 +14,11 @@ import {
   renameSync,
   rmSync,
   symlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import * as tar from "tar";
 
 type PackageJson = {
@@ -63,6 +65,49 @@ const optionalRuntimeDependencies = [
 
 let invocationIndex = 0;
 
+function signerAssetName(): string {
+  const os = process.platform === "darwin" ? "darwin" : process.platform === "linux" ? "linux" : "";
+  const arch = process.arch === "x64" ? "amd64" : process.arch === "arm64" ? "arm64" : "";
+  if (!os || !arch) {
+    throw new Error(`packed signer smoke does not support ${process.platform}/${process.arch}`);
+  }
+  return `fased-signerd-${os}-${arch}`;
+}
+
+function buildLocalSignerRelease(tempRoot: string): string {
+  const releaseRoot = path.join(tempRoot, "signer-release");
+  mkdirSync(releaseRoot, { recursive: true });
+  const assetName = signerAssetName();
+  const assetPath = path.join(releaseRoot, assetName);
+  execFileSync("go", ["build", "-buildvcs=false", "-trimpath", "-o", assetPath, "."], {
+    cwd: path.join(repoRoot, "tools", "fased-signerd"),
+    env: process.env,
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  const digest = createHash("sha256").update(readFileSync(assetPath)).digest("hex");
+  writeFileSync(
+    path.join(releaseRoot, "fased-signerd-checksums.txt"),
+    `${digest}  ${assetName}\n`,
+    {
+      encoding: "utf8",
+      mode: 0o600,
+    },
+  );
+  return releaseRoot;
+}
+
+function stopPackedSigner(stateDir: string): void {
+  const pidPath = path.join(stateDir, "wallet", "local-signer.pid");
+  try {
+    const pid = Number.parseInt(readFileSync(pidPath, "utf8").trim(), 10);
+    if (Number.isSafeInteger(pid) && pid > 1) {
+      process.kill(pid, "SIGTERM");
+    }
+  } catch {
+    // The command may have failed before the signer started.
+  }
+}
+
 function runCore(coreRoot: string, env: NodeJS.ProcessEnv, args: string[]): string {
   const outputRoot = env.FASED_STATE_DIR;
   if (!outputRoot) {
@@ -93,6 +138,7 @@ function runCore(coreRoot: string, env: NodeJS.ProcessEnv, args: string[]): stri
 
 async function main() {
   const tempRoot = mkdtempSync(path.join(tmpdir(), "fased-packed-core-smoke-"));
+  let stateDir = "";
   try {
     const npmCache = path.join(tempRoot, "npm-cache");
     execFileSync("npm", ["pack", "--ignore-scripts", "--pack-destination", tempRoot], {
@@ -151,13 +197,21 @@ async function main() {
     }
 
     const home = path.join(tempRoot, "home");
-    const stateDir = path.join(tempRoot, "state");
+    stateDir = path.join(tempRoot, "state");
     mkdirSync(home, { recursive: true });
     mkdirSync(stateDir, { recursive: true });
+    const configPath = path.join(stateDir, "fased.json");
+    writeFileSync(configPath, "{}\n", { encoding: "utf8", mode: 0o600 });
+    const signerReleaseRoot = buildLocalSignerRelease(tempRoot);
     const env = {
       ...process.env,
       HOME: home,
       FASED_STATE_DIR: stateDir,
+      FASED_CONFIG_PATH: configPath,
+      FASED_DISABLE_CONFIG_CACHE: "1",
+      FASED_LOCAL_SIGNER_BASE_URL: pathToFileURL(signerReleaseRoot).href,
+      FASED_LOCAL_SIGNER_VERSION: "",
+      FASED_LOCAL_SIGNER_LATEST_TAG: "",
       NO_COLOR: "1",
     };
 
@@ -196,11 +250,53 @@ async function main() {
     if (walletStatus.ok !== true || !walletStatus.status) {
       throw new Error(`packed core wallet CLI failed:\n${walletStatusRaw}`);
     }
+    const walletCreateRaw = runCore(coreRoot, env, [
+      "wallet",
+      "setup",
+      "--mode",
+      "local-signer-create",
+      "--chain",
+      "solana",
+      "--wallet-id",
+      "packed-smoke-agent",
+      "--role",
+      "agent",
+      "--rpc-url",
+      "http://127.0.0.1:8899",
+      "--non-interactive",
+      "--no-doctor",
+      "--json",
+    ]);
+    const walletCreate = JSON.parse(walletCreateRaw) as {
+      ok?: unknown;
+      provider?: unknown;
+      walletId?: unknown;
+      address?: unknown;
+      policyState?: unknown;
+    };
+    if (
+      walletCreate.ok !== true ||
+      walletCreate.provider !== "local-socket-signer" ||
+      walletCreate.walletId !== "packed-smoke-agent" ||
+      typeof walletCreate.address !== "string" ||
+      walletCreate.address.length === 0 ||
+      walletCreate.policyState !== "locked"
+    ) {
+      throw new Error(`packed core signer-owned wallet creation failed:\n${walletCreateRaw}`);
+    }
+    for (const dependency of optionalChannelDependencies) {
+      if (existsSync(path.join(coreNodeModules, ...dependency.split("/")))) {
+        throw new Error(`wallet creation pulled optional channel dependency ${dependency}`);
+      }
+    }
 
     console.log(
-      `packed-core-smoke: ${version} starts without optional channels; capabilities, wallet, SAT, Fased Network, and plugin checks passed.`,
+      `packed-core-smoke: ${version} starts and creates a locked native-signer wallet without optional channels; capabilities, wallet, SAT, Fased Network, and plugin checks passed.`,
     );
   } finally {
+    if (stateDir) {
+      stopPackedSigner(stateDir);
+    }
     rmSync(tempRoot, { recursive: true, force: true });
   }
 }

@@ -345,6 +345,7 @@ func normalizeSignerPolicyV2(input signerPolicyV2) (signerPolicyV2, error) {
 		WalletID: normalizeWalletID(input.WalletID),
 		Version:  input.Version,
 		Role:     strings.TrimSpace(strings.ToLower(input.Role)),
+		Assets:   make([]signerPolicyAssetV2, 0, len(input.Assets)),
 	}
 	if strings.TrimSpace(input.WalletID) == "" {
 		return signerPolicyV2{}, errors.New("walletId is required")

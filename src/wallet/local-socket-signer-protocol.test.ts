@@ -5,6 +5,28 @@ import {
 } from "./local-socket-signer-protocol.js";
 
 describe("local socket signer protocol", () => {
+  it("accepts the complete native signer-v2 capabilities health payload", () => {
+    expect(
+      validateLocalSocketSignerResult("v2.capabilities", {
+        details: "fased-signerd protocol-v2 ready",
+        readOnly: false,
+        keystoreType: "signer-owned-v2",
+        chains: ["solana"],
+        ready: true,
+        schema: { version: 3, supported: 3, ready: true },
+        network: { ready: true, wallets: [] },
+        capabilities: {
+          protocol: { current: 2, min: 2, max: 2 },
+          intentTypes: ["solana.nativeTransfer"],
+          operationStates: ["reserved", "broadcast", "confirmed", "failed", "unknown"],
+          features: ["failClosedPolicies", "policyHashes", "signerOwnedKeys"],
+        },
+        policies: [],
+        webAuthn: { configured: false, credentialCount: 0, ready: false },
+      }),
+    ).toBe(true);
+  });
+
   it("negotiates protocol-v2 capabilities and policy hashes", () => {
     const parsed = parseLocalSocketSignerRequest({ op: "v2.capabilities" });
     expect(parsed.op).toBe("v2.capabilities");

@@ -477,6 +477,36 @@ export const LocalSocketSignerHealthResultSchema = Type.Object(
     keystoreType: Type.Optional(Type.String()),
     chains: Type.Optional(Type.Array(WalletChainSchema)),
     ready: Type.Optional(Type.Boolean()),
+    schema: Type.Optional(
+      Type.Object(
+        {
+          version: Type.Integer({ minimum: 0 }),
+          supported: Type.Integer({ minimum: 1 }),
+          ready: Type.Boolean(),
+        },
+        { additionalProperties: false },
+      ),
+    ),
+    network: Type.Optional(
+      Type.Object(
+        {
+          ready: Type.Boolean(),
+          wallets: Type.Array(
+            Type.Object(
+              {
+                walletId: Type.String(),
+                configured: Type.Boolean(),
+                version: Type.Integer({ minimum: 0 }),
+                hash: Type.Optional(Type.String({ pattern: "^hmac-sha256:[0-9a-f]{64}$" })),
+                ready: Type.Boolean(),
+              },
+              { additionalProperties: false },
+            ),
+          ),
+        },
+        { additionalProperties: false },
+      ),
+    ),
     capabilities: Type.Optional(LocalSocketSignerCapabilitiesV2Schema),
     policies: Type.Optional(
       Type.Array(
@@ -489,6 +519,18 @@ export const LocalSocketSignerHealthResultSchema = Type.Object(
           },
           { additionalProperties: false },
         ),
+      ),
+    ),
+    webAuthn: Type.Optional(
+      Type.Object(
+        {
+          configured: Type.Boolean(),
+          rpId: Type.Optional(Type.String()),
+          origins: Type.Optional(Type.Array(Type.String())),
+          credentialCount: Type.Integer({ minimum: 0 }),
+          ready: Type.Boolean(),
+        },
+        { additionalProperties: false },
       ),
     ),
   },

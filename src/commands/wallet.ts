@@ -1867,7 +1867,7 @@ export async function walletSetupCommand(
       rpcUrl,
       role,
     });
-    if (!options.noSignerHints) {
+    if (!options.noSignerHints && !options.json) {
       runtime.log("Signer-owned wallet created in fased-signerd.");
     }
     await configureLimitOrdersIfRequested();
