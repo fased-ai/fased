@@ -25,6 +25,11 @@ afterEach(async () => {
 });
 
 describe("hosted signer v2 migration", () => {
+  it("defers destructive legacy quarantine until the cross-user transaction commits", () => {
+    expect(__testing.deferLegacyQuarantine({ FASED_DEFER_LEGACY_QUARANTINE: "1" })).toBe(true);
+    expect(__testing.deferLegacyQuarantine({})).toBe(false);
+  });
+
   it("requires explicit fail-closed wallet policy fields", () => {
     expect(() =>
       __testing.assertWalletEntry({

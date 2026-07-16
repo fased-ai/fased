@@ -113,9 +113,35 @@ REQUESTED_SWAP_GB=""
 FASED_CLI_PATH=""
 PREBUILT_RUNTIME_INSTALLED=0
 GATEWAY_SERVICE_REFRESHED=0
+HOST_SIGNER_TRANSACTION_ACTIVE=0
+HOST_SIGNER_TRANSACTION_ID=""
+HOST_SIGNER_TRANSACTION_VERSION=""
 LOW_MEMORY_SWAP_THRESHOLD_MB=2304
 LOW_MEMORY_SWAP_GB=4
 HOSTING_SWAP_GB=2
+
+rollback_pending_host_signer_transaction_on_exit() {
+  local captured_status=$?
+  local status="${1:-$captured_status}"
+  trap - EXIT
+  if [[ "$HOST_SIGNER_TRANSACTION_ACTIVE" -eq 1 && -n "$HOST_SIGNER_TRANSACTION_VERSION" ]]; then
+    echo "Hosted install did not commit; restoring the previous signer transaction..." >&2
+    if ! node /usr/local/libexec/fased-host-updaterctl.mjs \
+      "$HOST_SIGNER_TRANSACTION_VERSION" --rollback-only >/dev/null; then
+      echo "Signer rollback remains pending. Rerun sudo ./install.sh --repair-hosting." >&2
+      status=1
+    fi
+    local target_user="${FASED_INSTALL_USER:-app}"
+    local target_home
+    target_home="$(getent passwd "$target_user" 2>/dev/null | cut -d: -f6)"
+    [[ -n "$target_home" ]] || target_home="/home/$target_user"
+    if [[ ! -f "$target_home/.fased/hosted-update-transaction.json" ]] && \
+      systemctl list-unit-files fased-gateway.service --no-legend 2>/dev/null | grep -q '^fased-gateway.service'; then
+      systemctl start fased-gateway.service >/dev/null 2>&1 || status=1
+    fi
+  fi
+  exit "$status"
+}
 
 ORIGINAL_INSTALL_ARGS=("$@")
 pass_args=()
@@ -1305,15 +1331,26 @@ install_prebuilt_release_runtime() {
   fi
 
   local installed_package_root="$npm_prefix/lib/node_modules/@fased/fased"
-  node "$installed_package_root/scripts/install-managed-runtime.mjs" \
-    --package-root "$installed_package_root" \
-    --state-dir "$FASED_CONFIG_DIR" \
-    --prefix "$npm_prefix" \
-    --profile "$(resolved_host_profile)" || {
-      spinner_failed "Install prebuilt runtime"
-      echo "Failed to install the stable Fased updater layout." >&2
-      return 1
-    }
+  if [[ "$artifact_result" -ne 0 ]]; then
+    local -a managed_install_args=(
+      --package-root "$installed_package_root"
+      --state-dir "$FASED_CONFIG_DIR"
+      --prefix "$npm_prefix"
+      --profile "$(resolved_host_profile)"
+    )
+    if [[ -n "${FASED_HOST_UPDATE_TRANSACTION_ID:-}" ]]; then
+      managed_install_args+=(
+        --host-transaction-id "$FASED_HOST_UPDATE_TRANSACTION_ID"
+        --host-transaction-version "${FASED_HOST_UPDATE_TRANSACTION_VERSION:-}"
+      )
+    fi
+    node "$installed_package_root/scripts/install-managed-runtime.mjs" \
+      "${managed_install_args[@]}" || {
+        spinner_failed "Install prebuilt runtime"
+        echo "Failed to install the stable Fased updater layout." >&2
+        return 1
+      }
+  fi
 
   export PATH="$bin_dir:$PATH"
   hash -r 2>/dev/null || true
@@ -1645,6 +1682,14 @@ verify_gateway_runtime_identity_after_install() {
 rollback_managed_runtime_after_failed_install() {
   local current_root
   local rollback_script
+  local paired_updater="$FASED_CONFIG_DIR/updater/fased-managed-updater.mjs"
+  if [[ "$(resolved_host_profile)" == "hosting" && \
+    -f "$FASED_CONFIG_DIR/hosted-update-transaction.json" && \
+    -f "$paired_updater" ]]; then
+    echo "Hosted runtime verification failed; restoring the paired app and signer transaction..." >&2
+    node "$paired_updater" hosted-transaction rollback
+    return $?
+  fi
   current_root="$(readlink -f "$FASED_CONFIG_DIR/runtime/current" 2>/dev/null || true)"
   rollback_script="$current_root/scripts/install-managed-runtime.mjs"
   if [[ -z "$current_root" || ! -f "$rollback_script" || ! -e "$FASED_CONFIG_DIR/runtime/previous" ]]; then
@@ -2164,6 +2209,9 @@ reexec_as_app_user() {
   local cmd="cd $(shell_quote "$target_repo_dir") && "
   if [[ "$HOSTING_REQUESTED" -eq 1 ]]; then
     cmd+="env FASED_HOST_PROFILE=hosting FASED_HOST_BOOTSTRAP_CTL=/usr/local/libexec/fased-host-bootstrapctl.mjs FASED_HOST_BOOTSTRAP_SOCKET=/run/fased-host-bootstrap/control.sock FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/app.sock FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET=/run/fased-signerd/app.sock "
+    if [[ -n "$HOST_SIGNER_TRANSACTION_ID" ]]; then
+      cmd+="FASED_HOST_UPDATE_TRANSACTION_ID=$(shell_quote "$HOST_SIGNER_TRANSACTION_ID") FASED_HOST_UPDATE_TRANSACTION_VERSION=$(shell_quote "$HOST_SIGNER_TRANSACTION_VERSION") "
+    fi
   fi
   cmd+="./install.sh"
   cmd+=" --host-security-capable"
@@ -2183,7 +2231,12 @@ reexec_as_app_user() {
     fi
     rm -rf /run/fased-host-bootstrap
   }
-  trap cleanup_root_bootstrap EXIT
+  cleanup_root_bootstrap_and_transaction() {
+    local status=$?
+    cleanup_root_bootstrap
+    rollback_pending_host_signer_transaction_on_exit "$status"
+  }
+  trap cleanup_root_bootstrap_and_transaction EXIT
 
   echo "== Root bootstrap: re-executing installer as '$target_user' =="
   local child_status=0
@@ -2198,6 +2251,55 @@ reexec_as_app_user() {
       child_status=0
     else
       child_status=$?
+    fi
+  fi
+
+  if [[ "$HOSTING_REQUESTED" -eq 1 && "$HOST_SIGNER_TRANSACTION_ACTIVE" -eq 1 ]]; then
+    local app_state_dir="$target_home/.fased"
+    local app_transaction_updater="$app_state_dir/updater/fased-managed-updater.mjs"
+    if [[ "$child_status" -eq 0 && ! -f "$app_transaction_updater" ]]; then
+      echo "Hosted transaction cannot verify a managed application runtime; refusing signer commit." >&2
+      child_status=1
+    fi
+    if [[ "$child_status" -eq 0 ]]; then
+      echo "Verifying and finalizing the paired hosted app/signer transaction..."
+      if ! runuser -u "$target_user" -- env \
+        HOME="$target_home" \
+        FASED_STATE_DIR="$app_state_dir" \
+        FASED_CONFIG_PATH="$app_state_dir/fased.json" \
+        FASED_HOST_UPDATER_SOCKET=/run/fased-host-updater/request.sock \
+        FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/app.sock \
+        node "$app_transaction_updater" hosted-transaction finalize; then
+        child_status=1
+      fi
+    fi
+    if [[ "$child_status" -eq 0 ]]; then
+      if node /usr/local/libexec/fased-host-updaterctl.mjs \
+        "$HOST_SIGNER_TRANSACTION_VERSION" --commit-only >/dev/null; then
+        HOST_SIGNER_TRANSACTION_ACTIVE=0
+        if ! finalize_legacy_hosted_signer_migration; then
+          echo "Hosted release committed, but legacy custody cleanup is incomplete; rerun --repair-hosting." >&2
+          child_status=1
+        fi
+      else
+        echo "Hosted health passed, but the root signer commit is pending; rerun --repair-hosting." >&2
+        child_status=1
+      fi
+    else
+      systemctl stop fased-gateway.service >/dev/null 2>&1 || true
+      if [[ -f "$app_transaction_updater" ]]; then
+        runuser -u "$target_user" -- env \
+          HOME="$target_home" \
+          FASED_STATE_DIR="$app_state_dir" \
+          FASED_CONFIG_PATH="$app_state_dir/fased.json" \
+          FASED_HOST_UPDATER_SOCKET=/run/fased-host-updater/request.sock \
+          FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/app.sock \
+          node "$app_transaction_updater" hosted-transaction rollback >/dev/null 2>&1 || true
+      fi
+      if node /usr/local/libexec/fased-host-updaterctl.mjs \
+        "$HOST_SIGNER_TRANSACTION_VERSION" --rollback-only >/dev/null; then
+        HOST_SIGNER_TRANSACTION_ACTIVE=0
+      fi
     fi
   fi
 
@@ -2939,6 +3041,19 @@ install_host_signer_and_updater_services() {
     echo "Could not resolve hosted signer group or release version." >&2
     exit 1
   }
+  if [[ -n "${FASED_HOST_SIGNER_BINARY:-}" ]]; then
+    echo "FASED_HOST_SIGNER_BINARY is no longer accepted for hosted custody." >&2
+    echo "The root updater must fetch and attest the exact tagged signer artifact." >&2
+    exit 1
+  fi
+  local existing_signer_dropins
+  existing_signer_dropins="$(systemctl show fased-signerd.service --property=DropInPaths --value 2>/dev/null || true)"
+  if [[ -n "$existing_signer_dropins" ]]; then
+    echo "Custom fased-signerd systemd drop-ins prevent an exact transactional rollback:" >&2
+    echo "  $existing_signer_dropins" >&2
+    echo "Consolidate the prior signer launch policy into its main unit, then rerun --repair-hosting." >&2
+    exit 1
+  fi
 
   install -d -m 0755 -o root -g root /usr/local/libexec
   install -d -m 0755 -o root -g root /opt/fased/signer
@@ -2950,10 +3065,75 @@ install_host_signer_and_updater_services() {
   install -d -m 0700 -o root -g root /var/lib/fased-host-updater
   install -d -m 0700 -o "$signer_user" -g "$signer_user" /var/lib/fased-signerd
   install -d -m 0755 -o root -g root /etc/fased
+  install -d -m 0755 -o root -g root /etc/systemd/system/fased-gateway.service.d
+  cat >/etc/systemd/system/fased-gateway.service.d/20-fased-update-gate.conf <<'EOF'
+[Unit]
+After=fased-host-updater.service
+Wants=fased-host-updater.service
+ConditionPathExists=!/var/lib/fased-host-updater/gateway-update-gate
+EOF
+  chmod 0644 /etc/systemd/system/fased-gateway.service.d/20-fased-update-gate.conf
+  sync -f /etc/systemd/system/fased-gateway.service.d/20-fased-update-gate.conf
+  sync -f /etc/systemd/system/fased-gateway.service.d
   if [[ ! -f /etc/fased/host-updater-channel ]]; then
     printf 'stable\n' >/etc/fased/host-updater-channel
     chmod 0644 /etc/fased/host-updater-channel
   fi
+
+  cat >/etc/systemd/system/fased-host-updater.service <<EOF
+[Unit]
+Description=Fased verified native signer updater
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+RuntimeDirectory=fased-host-updater
+RuntimeDirectoryMode=0755
+StateDirectory=fased-host-updater
+StateDirectoryMode=0700
+UMask=0117
+Environment=HOME=/var/lib/fased-host-updater
+ExecStart=$(command -v node) /usr/local/libexec/fased-host-updater.mjs --socket-gid ${gateway_gid}
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/fased/signer /var/lib/fased-host-updater /var/lib/fased-signerd /run/fased-host-updater /etc/systemd/system
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  chmod 0644 /etc/systemd/system/fased-host-updater.service
+  sync -f /usr/local/libexec/fased-host-updater.mjs
+  sync -f /usr/local/libexec/fased-host-updaterctl.mjs
+  sync -f /etc/systemd/system/fased-host-updater.service
+  sync -f /usr/local/libexec /etc/systemd/system
+  systemctl daemon-reload
+  systemctl enable fased-host-updater.service >/dev/null
+  systemctl restart fased-host-updater.service
+
+  local prepare_result
+  prepare_result="$(node /usr/local/libexec/fased-host-updaterctl.mjs "$version" --prepare-only)"
+  HOST_SIGNER_TRANSACTION_ID="$(node -e 'const value=JSON.parse(process.argv[1]);process.stdout.write(String(value.transactionId||""))' "$prepare_result")"
+  [[ "$HOST_SIGNER_TRANSACTION_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || {
+    echo "Root signer updater did not return a transaction ID." >&2
+    exit 1
+  }
+  HOST_SIGNER_TRANSACTION_VERSION="$version"
+  HOST_SIGNER_TRANSACTION_ACTIVE=1
+  trap rollback_pending_host_signer_transaction_on_exit EXIT
 
   cat >/etc/systemd/system/fased-signerd.service <<EOF
 [Unit]
@@ -2992,58 +3172,17 @@ RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 [Install]
 WantedBy=multi-user.target
 EOF
-
-  cat >/etc/systemd/system/fased-host-updater.service <<EOF
-[Unit]
-Description=Fased verified native signer updater
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=root
-Group=root
-RuntimeDirectory=fased-host-updater
-RuntimeDirectoryMode=0755
-StateDirectory=fased-host-updater
-StateDirectoryMode=0700
-UMask=0117
-Environment=HOME=/var/lib/fased-host-updater
-ExecStart=$(command -v node) /usr/local/libexec/fased-host-updater.mjs --socket-gid ${gateway_gid}
-Restart=on-failure
-RestartSec=5
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectHome=true
-ProtectSystem=strict
-ReadWritePaths=/opt/fased/signer /var/lib/fased-host-updater /run/fased-host-updater
-ProtectKernelTunables=true
-ProtectKernelModules=true
-ProtectControlGroups=true
-LockPersonality=true
-RestrictSUIDSGID=true
-RestrictRealtime=true
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-
-[Install]
-WantedBy=multi-user.target
-EOF
-  chmod 0644 /etc/systemd/system/fased-signerd.service /etc/systemd/system/fased-host-updater.service
+  chmod 0644 /etc/systemd/system/fased-signerd.service
+  sync -f /etc/systemd/system/fased-signerd.service
+  sync -f /etc/systemd/system
   systemctl daemon-reload
   systemctl enable fased-signerd.service >/dev/null
-  systemctl enable --now fased-host-updater.service
 
-  if [[ -n "${FASED_HOST_SIGNER_BINARY:-}" ]]; then
-    [[ -x "$FASED_HOST_SIGNER_BINARY" ]] || {
-      echo "FASED_HOST_SIGNER_BINARY is not executable." >&2
-      exit 1
-    }
-    install -m 0755 -o root -g root "$FASED_HOST_SIGNER_BINARY" /opt/fased/signer/fased-signerd
-    printf '%s\n' "$version" >/var/lib/fased-host-updater/signer-version
-    systemctl restart fased-signerd.service
-  else
-    node /usr/local/libexec/fased-host-updaterctl.mjs "$version" >/dev/null
+  if systemctl list-unit-files fased-gateway.service --no-legend 2>/dev/null | grep -q '^fased-gateway.service'; then
+    systemctl stop fased-gateway.service
   fi
+
+  node /usr/local/libexec/fased-host-updaterctl.mjs "$version" --activate-only >/dev/null
   systemctl is-active --quiet fased-signerd.service || {
     echo "Root-managed fased-signerd did not become active." >&2
     journalctl -u fased-signerd.service -n 40 --no-pager >&2 || true
@@ -3079,6 +3218,32 @@ migrate_legacy_hosted_signer_if_needed() {
       echo "Legacy key files were not changed." >&2
       exit 1
     fi
+    FASED_APP_HOME="$target_home" \
+      FASED_LEGACY_SIGNER_HOME="$signer_home" \
+      FASED_DEFER_LEGACY_QUARANTINE=1 \
+      node /usr/local/libexec/migrate-hosted-signer-v2.mjs "$policy_file"
+  fi
+}
+
+finalize_legacy_hosted_signer_migration() {
+  local target_user="${FASED_INSTALL_USER:-app}"
+  local signer_user="${FASED_SIGNER_USER:-fased-signer}"
+  local target_home
+  local signer_home="/home/${signer_user}"
+  local policy_file="/etc/fased/signer-migration-policies.json"
+  local -a legacy_keystores=()
+  target_home="$(getent passwd "$target_user" | cut -d: -f6)"
+  [[ -n "$target_home" ]] || target_home="/home/${target_user}"
+
+  shopt -s nullglob
+  legacy_keystores+=("${target_home}/.fased/wallet"/keystore-*.enc)
+  legacy_keystores+=("${signer_home}/.fased/wallet"/keystore-*.enc)
+  shopt -u nullglob
+  if [[ "${#legacy_keystores[@]}" -gt 0 ]]; then
+    [[ -f "$policy_file" ]] || {
+      echo "Signer migration policy disappeared before commit; refusing cleanup." >&2
+      return 1
+    }
     FASED_APP_HOME="$target_home" \
       FASED_LEGACY_SIGNER_HOME="$signer_home" \
       node /usr/local/libexec/migrate-hosted-signer-v2.mjs "$policy_file"

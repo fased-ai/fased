@@ -214,6 +214,10 @@ async function quarantineLegacyFile(filePath, stamp) {
   return destination;
 }
 
+function deferLegacyQuarantine(env = process.env) {
+  return env.FASED_DEFER_LEGACY_QUARANTINE === "1";
+}
+
 async function main() {
   if (typeof process.getuid !== "function" || process.getuid() !== 0) {
     fail("hosted signer migration must run as root");
@@ -345,16 +349,23 @@ async function main() {
   } finally {
     await Promise.all([...sourceHandles.values()].map((handle) => handle.close()));
   }
+  const deferQuarantine = deferLegacyQuarantine();
   const quarantined = new Map();
-  for (const source of sources) {
-    quarantined.set(source, await quarantineLegacyFile(source, stamp));
+  if (!deferQuarantine) {
+    for (const source of sources) {
+      quarantined.set(source, await quarantineLegacyFile(source, stamp));
+    }
   }
   for (const result of verified) {
     process.stdout.write(
-      `${result.entry.walletId}: ${result.entry.expectedPublicKey} policy=${result.policyHash} legacy=${[
-        quarantined.get(result.entry.keystorePath),
-        quarantined.get(result.entry.passphrasePath),
-      ].join(",")}\n`,
+      `${result.entry.walletId}: ${result.entry.expectedPublicKey} policy=${result.policyHash} legacy=${
+        deferQuarantine
+          ? "verified-pending-commit"
+          : [
+              quarantined.get(result.entry.keystorePath),
+              quarantined.get(result.entry.passphrasePath),
+            ].join(",")
+      }\n`,
     );
   }
 }
@@ -372,5 +383,6 @@ export const __testing = {
   assertWalletEntry,
   comparablePolicy,
   copySignerOwned,
+  deferLegacyQuarantine,
   openVerifiedSourceFile,
 };

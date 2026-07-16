@@ -182,6 +182,7 @@ describe("managed runtime layout", () => {
         hostTransactionVersion: "1.2.3",
       },
       {
+        authorizePreactivatedHostedGateway: async () => undefined,
         beginPreactivatedHostedTransaction: async () => {
           coordinated = true;
         },

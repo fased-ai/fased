@@ -40,6 +40,28 @@ if [[ -z "$NODE_BIN" ]]; then
   exit 1
 fi
 
+TRANSACTION_JOURNAL="$STATE_DIR/hosted-update-transaction.json"
+if [[ -f "$TRANSACTION_JOURNAL" ]]; then
+  if ! "$NODE_BIN" -e '
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const journal = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+    const runtimeRoot = fs.realpathSync(process.argv[2]);
+    let expectedRoot = null;
+    if (["prepared", "rollback-ready"].includes(journal.phase)) {
+      expectedRoot = journal.previousRoot;
+    } else if (["signer-active", "gateway-verified"].includes(journal.phase)) {
+      expectedRoot = journal.targetRoot;
+    }
+    if (!expectedRoot || runtimeRoot !== fs.realpathSync(path.resolve(expectedRoot))) {
+      process.exit(1);
+    }
+  ' "$TRANSACTION_JOURNAL" "$RUNTIME_ROOT"; then
+    echo "Fased Gateway startup is paused for an incomplete hosted app/signer update. Run fased update to recover the transaction." >&2
+    exit 1
+  fi
+fi
+
 export FASED_MANAGED_RUNTIME_ROOT="$RUNTIME_ROOT"
 export FASED_RUNTIME_SOURCE="managed-package"
 export FASED_MANAGED_INSTALL_MANIFEST="$STATE_DIR/install.json"
