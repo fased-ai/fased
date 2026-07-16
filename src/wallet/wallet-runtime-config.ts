@@ -154,39 +154,6 @@ function normalizeSolanaTokenCaps(raw: unknown): Record<string, ResolvedWalletTo
   return out;
 }
 
-function isPositivePolicyAmount(raw: unknown): boolean {
-  if (typeof raw !== "string") {
-    return false;
-  }
-  try {
-    return BigInt(raw.trim() || "0") > 0n;
-  } catch {
-    return false;
-  }
-}
-
-function hasExplicitPositiveCaps(policy: unknown): boolean {
-  if (!policy || typeof policy !== "object" || Array.isArray(policy)) {
-    return false;
-  }
-  const value = policy as Record<string, unknown>;
-  const solana =
-    value.solana && typeof value.solana === "object"
-      ? (value.solana as Record<string, unknown>)
-      : {};
-  if (isPositivePolicyAmount(solana.maxPerTx) || isPositivePolicyAmount(solana.maxDaily)) {
-    return true;
-  }
-  const tokenCaps =
-    solana.tokenCaps && typeof solana.tokenCaps === "object" && !Array.isArray(solana.tokenCaps)
-      ? (solana.tokenCaps as Record<string, unknown>)
-      : {};
-  return Object.values(tokenCaps).some((capRaw) => {
-    const cap = capRaw && typeof capRaw === "object" ? (capRaw as Record<string, unknown>) : {};
-    return isPositivePolicyAmount(cap.maxPerTx) || isPositivePolicyAmount(cap.maxDaily);
-  });
-}
-
 export function resolveWalletStatePaths(env: NodeJS.ProcessEnv = process.env): WalletStatePaths {
   const rootDir = path.join(resolveStateDir(env), "wallet");
   const stackRootDir = path.join(rootDir, "wallet-stack");
@@ -403,7 +370,8 @@ export function resolveWalletRuntimeConfig(
     execution: {
       mode:
         cfg.wallet?.execution?.mode === "autonomous" ||
-        (cfg.wallet?.execution?.mode !== "manual" && (walletRuntime?.policy?.directSigning ?? true))
+        (cfg.wallet?.execution?.mode !== "manual" &&
+          (walletRuntime?.policy?.directSigning ?? false))
           ? "autonomous"
           : "manual",
     },
@@ -423,8 +391,8 @@ export function resolveWalletRuntimeConfig(
       capsEnabled:
         typeof walletRuntime?.policy?.capsEnabled === "boolean"
           ? walletRuntime.policy.capsEnabled
-          : hasExplicitPositiveCaps(walletRuntime?.policy),
-      directSigning: walletRuntime?.policy?.directSigning ?? true,
+          : true,
+      directSigning: walletRuntime?.policy?.directSigning ?? false,
       skillsEnabled: walletRuntime?.policy?.skillsEnabled === true,
       solana: {
         allowPrograms: (walletRuntime?.policy?.solana?.allowPrograms ?? [])

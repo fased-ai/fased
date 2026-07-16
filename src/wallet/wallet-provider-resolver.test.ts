@@ -31,6 +31,15 @@ describe("wallet provider resolver", () => {
     );
   });
 
+  it("fails closed to manual capped execution when wallet policy is absent", () => {
+    const wallet = resolveWalletRuntimeConfig({} as FasedAgentConfig, {} as NodeJS.ProcessEnv);
+
+    expect(wallet.execution.mode).toBe("manual");
+    expect(wallet.policy.directSigning).toBe(false);
+    expect(wallet.policy.capsEnabled).toBe(true);
+    expect(wallet.policy.solana.allowPrograms).toEqual([]);
+  });
+
   it("prefers the SAT attached local signer wallet over legacy embedded-keystore config", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-provider-resolver-"));
     tempRoots.push(root);

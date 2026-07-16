@@ -1015,8 +1015,8 @@ export function resolveWalletRolePolicyProfile(
         summary:
           "Hot Agent wallet for reviewed payments, Fased Network payment evidence, and approved skill actions. Keep explicit caps and narrow token / contract routes.",
         defaults: {
-          capsEnabled: false,
-          directSigning: true,
+          capsEnabled: true,
+          directSigning: false,
           skillsEnabled: false,
           solana: {
             maxPerTx: DEFAULT_POLICY_CAPS.solana.maxPerTx,
@@ -1033,7 +1033,7 @@ export function resolveWalletRolePolicyProfile(
         summary:
           "Manual-first Vault wallet for storage and federation bond assignment. No background agent execution by default; use split-key/passkey lock for custody.",
         defaults: {
-          capsEnabled: false,
+          capsEnabled: true,
           directSigning: false,
           skillsEnabled: false,
           solana: {
@@ -1129,7 +1129,14 @@ export function validateWalletTxPolicy(params: {
   const capsEnabled = params.config.policy.capsEnabled;
 
   const allowPrograms = params.config.policy.solana.allowPrograms;
-  if (params.program && allowPrograms.length > 0) {
+  if (params.program) {
+    if (allowPrograms.length === 0) {
+      return {
+        ok: false,
+        code: "wallet_program_allowlist_required",
+        message: "program execution requires an explicit non-empty allowlist",
+      };
+    }
     const normalized = params.program.trim();
     const allowed = allowPrograms.includes(normalized);
     if (!allowed) {

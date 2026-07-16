@@ -1587,10 +1587,10 @@ export async function configureWalletForOnboarding(params: {
 
   const automationSigning =
     flow === "quickstart"
-      ? (current?.policy?.directSigning ?? true)
+      ? (current?.policy?.directSigning ?? false)
       : await prompter.confirm({
-          message: "Allow automated wallet execution from approved Agent tools?",
-          initialValue: current?.policy?.directSigning ?? true,
+          message: "Allow typed automated wallet execution after signer policy and caps are set?",
+          initialValue: current?.policy?.directSigning ?? false,
         });
   const toolAccessMode =
     flow === "quickstart"
@@ -1622,7 +1622,7 @@ export async function configureWalletForOnboarding(params: {
       ? (current?.policy?.solana?.allowPrograms ?? []).map((item) => item.trim()).filter(Boolean)
       : splitCsvList(
           await prompter.text({
-            message: "Solana program allowlist (comma separated, blank=any)",
+            message: "Solana program/token allowlist (comma separated, blank=deny all)",
             initialValue: (current?.policy?.solana?.allowPrograms ?? []).join(","),
           }),
         );

@@ -404,7 +404,7 @@ const FIELD_HELP_BASE: Record<string, string> = {
   "wallet.runtime.policy.capsEnabled":
     "Enable wallet spend cap enforcement. When false, role, custody, signer, allowlist, and audit gates still apply, but SOL/token cap comparisons are skipped.",
   "wallet.runtime.policy.solana.allowPrograms":
-    "Optional Solana program allowlist. For Agent market swaps this restricts inspected Jupiter DEX route programs; empty allows inspected routes.",
+    "Explicit Solana program/token allowlist. Empty denies program and token execution; Agent market swaps also require every inspected Jupiter route program.",
   "wallet.runtime.policy.solana.tokenCaps":
     "Per-mint SPL token caps for token sends, token-input swaps, and token-input limit orders. Keys are mint addresses; values are base-unit maxPerTx/maxDaily strings.",
   "wallet.runtime.policy.solana.maxPerTx":

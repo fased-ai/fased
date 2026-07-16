@@ -22,7 +22,7 @@ const runtimeConfig = {
     directSigning: true,
     skillsEnabled: false,
     solana: {
-      allowPrograms: [],
+      allowPrograms: ["2qwAVnGmFakeMint111111111111111111kg1jVfP7"],
       caps: { maxPerTx: 1_000_000_000n, maxDaily: 2_000_000_000n },
     },
   },
@@ -100,6 +100,27 @@ describe("wallet-policy", () => {
     expect(result).toMatchObject({
       ok: false,
       code: "wallet_cap_per_tx_exceeded",
+    });
+  });
+
+  it("denies program and token execution when the allowlist is empty", () => {
+    const result = validateWalletTxPolicy({
+      config: {
+        ...runtimeConfig,
+        policy: {
+          ...runtimeConfig.policy,
+          solana: { ...runtimeConfig.policy.solana, allowPrograms: [] },
+        },
+      } as never,
+      action: "send",
+      chain: "solana",
+      amount: "1",
+      program: "2qwAVnGmFakeMint111111111111111111kg1jVfP7",
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      code: "wallet_program_allowlist_required",
     });
   });
 
@@ -260,7 +281,7 @@ describe("wallet-policy", () => {
     expect(agentDefault.policy.skillsEnabled).toBe(false);
     expect(agentDefault.policy.solana.caps.maxPerTx).toBe(2500000000n);
     expect(vaultDefault.policy.directSigning).toBe(false);
-    expect(vaultDefault.policy.capsEnabled).toBe(false);
+    expect(vaultDefault.policy.capsEnabled).toBe(true);
     expect(vaultDefault.policy.skillsEnabled).toBe(false);
     expect(vaultDefault.policy.solana.caps.maxPerTx).toBe(1000000000n);
 
@@ -289,7 +310,7 @@ describe("wallet-policy", () => {
     expect(overriddenVault.policy.solana.caps.maxPerTx).toBe(4200000000n);
   });
 
-  it("defaults fresh Agent caps off while keeping Agent automation on", async () => {
+  it("defaults fresh Agent and Vault wallets to manual capped execution", async () => {
     await writeProviderRegistry({
       defaultWalletId: "wallet-agent",
       wallets: [
@@ -308,11 +329,11 @@ describe("wallet-policy", () => {
     const agentDefault = resolveWalletPolicyConfig(cfg, process.env, "wallet-agent");
     const vaultDefault = resolveWalletPolicyConfig(cfg, process.env, "wallet-vault");
 
-    expect(agentDefault.policy.directSigning).toBe(true);
-    expect(agentDefault.policy.capsEnabled).toBe(false);
+    expect(agentDefault.policy.directSigning).toBe(false);
+    expect(agentDefault.policy.capsEnabled).toBe(true);
     expect(agentDefault.policy.skillsEnabled).toBe(false);
     expect(vaultDefault.policy.directSigning).toBe(false);
-    expect(vaultDefault.policy.capsEnabled).toBe(false);
+    expect(vaultDefault.policy.capsEnabled).toBe(true);
     expect(vaultDefault.policy.skillsEnabled).toBe(false);
   });
 
