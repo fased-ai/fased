@@ -157,6 +157,7 @@ describe("SAT protocol contract", () => {
         config: {
           cluster: string;
           registryReserve: { targetLamports: number; maxLamports: number };
+          keeperReserve: { spendableLamports: number };
         };
       };
       const contract = SAT_GENESIS_PROFILE_CONTRACTS[profile];
@@ -167,6 +168,9 @@ describe("SAT protocol contract", () => {
       );
       expect(contract.registryReserveMaxLamports).toBe(
         BigInt(generated.config.registryReserve.maxLamports),
+      );
+      expect(contract.keeperReserveSpendableLamports).toBe(
+        BigInt(generated.config.keeperReserve.spendableLamports),
       );
     }
   });

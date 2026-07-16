@@ -87,15 +87,17 @@ export const SAT_PROTOCOL_CONSTANTS = {
 export const SAT_GENESIS_PROFILE_CONTRACTS = {
   devnet: {
     cluster: "devnet",
-    configSha256: "365767d2e4dc1645791fd1c1fc72cbf5f56b2d0c81e80dc0acaf40d59cc5b738",
+    configSha256: "79c536b73d7682842c9574f6785e7a8ab5916eb0a99e29f98c00bde4b18e3500",
     registryReserveTargetLamports: 200_000_000n,
     registryReserveMaxLamports: 200_000_000n,
+    keeperReserveSpendableLamports: 10_000_000n,
   },
   "mainnet-beta": {
     cluster: "mainnet-beta",
-    configSha256: "67f3a9b072bce1e8e1c3444363a4019083ef886be34e3ca34ee61ef249e55edd",
+    configSha256: "f35ccf88352efc6f86e6ff18b5c6f349e7ba792916ec8a4ae5c3705fde4c963b",
     registryReserveTargetLamports: 500_000_000n,
     registryReserveMaxLamports: 1_000_000_000n,
+    keeperReserveSpendableLamports: 10_000_000n,
   },
 } as const;
 
