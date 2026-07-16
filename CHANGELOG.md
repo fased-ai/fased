@@ -4,6 +4,18 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.63
+
+- Fix maintained Hosting first-wallet setup by launching the packaged signer
+  broker through the lazy wallet CLI entry instead of importing optional
+  channel dependencies from the minimal hosted runtime.
+- Validate packaged signer-broker startup during hosted artifact creation and
+  recognize the secured `0660` app-facing broker socket used by the isolated
+  VPS signer account while retaining `0600` for single-user installs.
+- Clarify that Windows runs Fased inside WSL2 Ubuntu, with PowerShell used only
+  to install or manage WSL2, and document the public Docker image as a
+  local-only path; maintained VPS hosting remains non-Docker.
+
 ## 0.1.62
 
 - Install a version-matched, checksum-verified local wallet signer automatically
