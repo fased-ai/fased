@@ -376,6 +376,14 @@ fased wallet custody-lock
 fased wallet canary
 ```
 
+Signer-owned key creation/import, policy replacement, re-encryption, and first
+WebAuthn enrollment are host-administrator operations. Hosted operators use the
+typed `fased-signerd admin` client as the dedicated signer OS user through the
+signer-only control socket. The Gateway account has no sudo or control-socket
+access, and Fased does not provide a generic Gateway/HTTP proxy for these
+operations. See the native signer's `tools/fased-signerd/ADMIN.md` in the source
+release for the exact operator commands.
+
 ## Related docs
 
 - [Wallet](/plugins/crypto/wallet-page)

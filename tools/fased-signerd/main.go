@@ -1188,6 +1188,14 @@ func userHomeDir() string {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "admin" {
+		applyProcessDumpHardening()
+		if err := runSignerAdminCLI(os.Args[2:], os.Stdin, os.Stdout, os.Environ()); err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "fased-signerd admin: %s\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 	cfg := parseArgs()
 	if err := applyProcessHardening(cfg); err != nil {
 		log.Fatal(err)

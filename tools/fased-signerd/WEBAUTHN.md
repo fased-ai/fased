@@ -25,6 +25,8 @@ Credential enrollment begins and finishes only on the signer control socket.
 That rule also applies to the first credential, so a compromised Gateway with
 application-socket access cannot claim an uninitialized signer. Hosted service
 configuration must keep the control socket inaccessible to the Gateway user.
+Use the typed native commands documented in [ADMIN.md](./ADMIN.md) for the
+registration ceremony. They do not expose a generic control-socket proxy.
 
 Reviewed signing is a two-step signer ceremony:
 

@@ -1,0 +1,534 @@
+package main
+
+import (
+	"bufio"
+	"bytes"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/json"
+	"errors"
+	"io"
+	"net"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+type signerAdminTestServer struct {
+	path     string
+	requests <-chan request
+	done     <-chan error
+}
+
+func signerAdminShortTempDir(t *testing.T) string {
+	t.Helper()
+	directory, err := os.MkdirTemp("/tmp", "fsadm-")
+	if err != nil {
+		t.Fatalf("create short signer admin test directory: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(directory) })
+	return directory
+}
+
+func startSignerAdminTestServer(
+	t *testing.T,
+	respond func(request) ([]byte, error),
+) signerAdminTestServer {
+	t.Helper()
+	directory := signerAdminShortTempDir(t)
+	path := filepath.Join(directory, "control.sock")
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatalf("listen on signer admin test socket: %v", err)
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		_ = listener.Close()
+		t.Fatalf("secure signer admin test socket: %v", err)
+	}
+	requests := make(chan request, 1)
+	done := make(chan error, 1)
+	go func() {
+		defer close(done)
+		conn, err := listener.Accept()
+		if err != nil {
+			done <- err
+			return
+		}
+		defer conn.Close()
+		line, err := bufio.NewReader(conn).ReadBytes('\n')
+		if err != nil {
+			done <- err
+			return
+		}
+		var req request
+		if err := decodeSignerAdminStrictJSON(bytes.TrimSpace(line), &req); err != nil {
+			done <- err
+			return
+		}
+		requests <- req
+		response, err := respond(req)
+		if err != nil {
+			done <- err
+			return
+		}
+		if _, err := conn.Write(append(response, '\n')); err != nil {
+			done <- err
+			return
+		}
+		done <- nil
+	}()
+	t.Cleanup(func() {
+		_ = listener.Close()
+	})
+	return signerAdminTestServer{path: path, requests: requests, done: done}
+}
+
+func signerAdminTestSuccess(t *testing.T, result string) func(request) ([]byte, error) {
+	t.Helper()
+	return func(request) ([]byte, error) {
+		encoded, err := json.Marshal(signerAdminResponse{OK: true, Result: json.RawMessage(result)})
+		return encoded, err
+	}
+}
+
+func waitSignerAdminTestServer(t *testing.T, server signerAdminTestServer) request {
+	t.Helper()
+	select {
+	case err := <-server.done:
+		if err != nil {
+			t.Fatalf("signer admin test server: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("signer admin test server timed out")
+	}
+	select {
+	case req := <-server.requests:
+		return req
+	default:
+		t.Fatal("signer admin test server received no request")
+	}
+	return request{}
+}
+
+func writeSignerAdminTestJSON(t *testing.T, name string, value any) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), name)
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("encode test JSON: %v", err)
+	}
+	if err := os.WriteFile(path, encoded, 0o600); err != nil {
+		t.Fatalf("write test JSON: %v", err)
+	}
+	return path
+}
+
+func decodeSignerAdminTestBody(t *testing.T, req request, out any) {
+	t.Helper()
+	if err := decodeSignerAdminStrictJSON(req.Request, out); err != nil {
+		t.Fatalf("decode signer admin request body: %v", err)
+	}
+}
+
+func TestSignerAdminWalletCreateLockedPolicy(t *testing.T) {
+	server := startSignerAdminTestServer(t, signerAdminTestSuccess(t, `{"wallet":{"walletId":"mining","publicKey":"public"},"policy":{"walletId":"mining","role":"mining","version":1,"operations":[],"programs":[],"assets":[],"hash":"sha256:test"}}`))
+	var stdout bytes.Buffer
+	err := runSignerAdminCLI([]string{
+		"wallet", "create",
+		"--control-socket", server.path,
+		"--wallet-id", "mining",
+		"--locked-role", "mining",
+	}, strings.NewReader("unused"), &stdout, nil)
+	if err != nil {
+		t.Fatalf("run signer admin wallet create: %v", err)
+	}
+	req := waitSignerAdminTestServer(t, server)
+	if req.Op != "v2.wallet.create" || req.WalletID != "mining" {
+		t.Fatalf("unexpected wallet create envelope: %#v", req)
+	}
+	var body signerWalletCreateRequestV2
+	decodeSignerAdminTestBody(t, req, &body)
+	if body.ExpectedVersion != 0 || body.Policy.Role != "mining" || body.Policy.WalletID != "mining" {
+		t.Fatalf("unexpected locked create body: %#v", body)
+	}
+	if len(body.Policy.Operations) != 0 || len(body.Policy.Programs) != 0 || len(body.Policy.Assets) != 0 {
+		t.Fatalf("locked create policy is not deny-all: %#v", body.Policy)
+	}
+	if !strings.Contains(stdout.String(), `"publicKey": "public"`) {
+		t.Fatalf("expected public result JSON, got %q", stdout.String())
+	}
+}
+
+func TestSignerAdminWalletCreateWithStrictPolicyFile(t *testing.T) {
+	destination := "11111111111111111111111111111111"
+	policyPath := writeSignerAdminTestJSON(t, "policy.json", signerPolicyV2{
+		Role:       "agent",
+		Operations: []string{intentSolanaNativeTransfer},
+		Programs:   []string{destination},
+		Assets: []signerPolicyAssetV2{{
+			Asset:        "solana:native",
+			Destinations: []string{destination},
+			MaxPerTx:     "100",
+			MaxDaily:     "1000",
+		}},
+	})
+	server := startSignerAdminTestServer(t, signerAdminTestSuccess(t, `{"wallet":{"walletId":"agent"},"policy":{"walletId":"agent"}}`))
+	err := runSignerAdminCLI([]string{
+		"wallet", "create", "--control-socket", server.path, "--wallet-id", "agent", "--policy-file", policyPath,
+	}, strings.NewReader(""), io.Discard, nil)
+	if err != nil {
+		t.Fatalf("create wallet with policy file: %v", err)
+	}
+	req := waitSignerAdminTestServer(t, server)
+	var body signerWalletCreateRequestV2
+	decodeSignerAdminTestBody(t, req, &body)
+	if body.Policy.Hash == "" || body.Policy.WalletID != "agent" || len(body.Policy.Operations) != 1 {
+		t.Fatalf("policy was not normalized before submission: %#v", body.Policy)
+	}
+
+	unknownPath := filepath.Join(t.TempDir(), "unknown.json")
+	if err := os.WriteFile(unknownPath, []byte(`{"role":"agent","unknown":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadSignerAdminPolicy(unknownPath, "agent"); err == nil || !strings.Contains(err.Error(), "strict policy") {
+		t.Fatalf("expected strict policy-file rejection, got %v", err)
+	}
+}
+
+func TestSignerAdminWalletImportStagesOnlyStdinInExclusiveSignerFile(t *testing.T) {
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := make([]int, len(privateKey))
+	for i, value := range privateKey {
+		values[i] = int(value)
+	}
+	input, err := json.Marshal(values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type observedImport struct {
+		path   string
+		mode   os.FileMode
+		secret []byte
+	}
+	observed := make(chan observedImport, 1)
+	server := startSignerAdminTestServer(t, func(req request) ([]byte, error) {
+		if req.Op != "v2.wallet.import" || req.WalletID != "agent" {
+			return nil, errors.New("unexpected import request")
+		}
+		var body signerWalletImportRequestV2
+		if err := decodeSignerAdminStrictJSON(req.Request, &body); err != nil {
+			return nil, err
+		}
+		info, err := os.Lstat(body.Path)
+		if err != nil {
+			return nil, err
+		}
+		secret, err := readSignerImportFileV2(body.Path)
+		if err != nil {
+			return nil, err
+		}
+		observed <- observedImport{path: body.Path, mode: info.Mode().Perm(), secret: append([]byte(nil), secret...)}
+		zeroBytes(secret)
+		if err := removeSignerImportFileV2(body.Path); err != nil {
+			return nil, err
+		}
+		return json.Marshal(signerAdminResponse{OK: true, Result: json.RawMessage(`{"wallet":{"walletId":"agent","publicKey":"public"},"policy":{"walletId":"agent","role":"agent"}}`)})
+	})
+	var stdout bytes.Buffer
+	err = runSignerAdminCLI([]string{
+		"wallet", "import", "--control-socket", server.path, "--wallet-id", "agent", "--locked-role", "agent",
+	}, bytes.NewReader(input), &stdout, nil)
+	if err != nil {
+		t.Fatalf("run signer admin wallet import: %v", err)
+	}
+	waitSignerAdminTestServer(t, server)
+	got := <-observed
+	defer zeroBytes(got.secret)
+	if got.mode != 0o600 {
+		t.Fatalf("staged import mode = %o, want 600", got.mode)
+	}
+	if !bytes.Equal(got.secret, privateKey) {
+		t.Fatal("staged signer import did not match stdin keypair")
+	}
+	if _, err := os.Lstat(got.path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("staged signer import was not removed: %v", err)
+	}
+	for _, forbidden := range []string{string(input), "secret", "nonce"} {
+		if strings.Contains(stdout.String(), forbidden) {
+			t.Fatalf("signer admin output exposed import material: %q", stdout.String())
+		}
+	}
+	zeroBytes(input)
+	zeroBytes(privateKey)
+}
+
+func TestSignerAdminWalletImportCleansStagedFileOnRejection(t *testing.T) {
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := make([]int, len(privateKey))
+	for i, value := range privateKey {
+		values[i] = int(value)
+	}
+	input, _ := json.Marshal(values)
+	stagedPath := make(chan string, 1)
+	server := startSignerAdminTestServer(t, func(req request) ([]byte, error) {
+		var body signerWalletImportRequestV2
+		if err := decodeSignerAdminStrictJSON(req.Request, &body); err != nil {
+			return nil, err
+		}
+		stagedPath <- body.Path
+		return json.Marshal(signerAdminResponse{OK: false, Error: "signer wallet already exists"})
+	})
+	err = runSignerAdminCLI([]string{
+		"wallet", "import", "--control-socket", server.path, "--wallet-id", "agent", "--locked-role", "agent",
+	}, bytes.NewReader(input), io.Discard, nil)
+	if err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("expected signer rejection, got %v", err)
+	}
+	waitSignerAdminTestServer(t, server)
+	path := <-stagedPath
+	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("rejected signer import was not cleaned up: %v", err)
+	}
+	zeroBytes(input)
+	zeroBytes(privateKey)
+}
+
+func TestSignerAdminPolicyGetPutAndWalletReencrypt(t *testing.T) {
+	policyPath := writeSignerAdminTestJSON(t, "policy.json", signerPolicyV2{
+		WalletID:   "agent",
+		Role:       "agent",
+		Operations: []string{},
+		Programs:   []string{},
+		Assets:     []signerPolicyAssetV2{},
+	})
+	tests := []struct {
+		name       string
+		args       func(string) []string
+		wantOp     string
+		wantBody   bool
+		checkBody  func(*testing.T, request)
+		resultJSON string
+	}{
+		{
+			name: "policy get",
+			args: func(socket string) []string {
+				return []string{"policy", "get", "--control-socket", socket, "--wallet-id", "agent"}
+			},
+			wantOp: "v2.policy.get", resultJSON: `{"walletId":"agent","version":4}`,
+		},
+		{
+			name: "policy put",
+			args: func(socket string) []string {
+				return []string{"policy", "put", "--control-socket", socket, "--wallet-id", "agent", "--expected-version", "4", "--policy-file", policyPath}
+			},
+			wantOp: "v2.policy.put", wantBody: true, resultJSON: `{"walletId":"agent","version":5}`,
+			checkBody: func(t *testing.T, req request) {
+				var body signerPolicyPutRequestV2
+				decodeSignerAdminTestBody(t, req, &body)
+				if body.ExpectedVersion != 4 || body.Policy.WalletID != "agent" {
+					t.Fatalf("unexpected policy put body: %#v", body)
+				}
+			},
+		},
+		{
+			name: "wallet reencrypt",
+			args: func(socket string) []string {
+				return []string{"wallet", "reencrypt", "--control-socket", socket, "--wallet-id", "agent"}
+			},
+			wantOp: "v2.wallet.reencrypt", resultJSON: `{"walletId":"agent","version":2}`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := startSignerAdminTestServer(t, signerAdminTestSuccess(t, test.resultJSON))
+			if err := runSignerAdminCLI(test.args(server.path), strings.NewReader(""), io.Discard, nil); err != nil {
+				t.Fatalf("run command: %v", err)
+			}
+			req := waitSignerAdminTestServer(t, server)
+			if req.Op != test.wantOp || req.WalletID != "agent" {
+				t.Fatalf("unexpected request: %#v", req)
+			}
+			if test.wantBody != (len(req.Request) > 0) {
+				t.Fatalf("request body presence = %v, want %v", len(req.Request) > 0, test.wantBody)
+			}
+			if test.checkBody != nil {
+				test.checkBody(t, req)
+			}
+		})
+	}
+}
+
+func TestSignerAdminWebAuthnTypedPassthrough(t *testing.T) {
+	finishPath := writeSignerAdminTestJSON(t, "finish.json", signerWebAuthnRegistrationFinishRequestV2{
+		ChallengeID: "challenge-1",
+		Credential:  json.RawMessage(`{"id":"credential-1","response":{}}`),
+	})
+	tests := []struct {
+		name     string
+		args     func(string) []string
+		wantOp   string
+		wantBody bool
+		check    func(*testing.T, request)
+	}{
+		{
+			name: "registration begin",
+			args: func(socket string) []string {
+				return []string{"webauthn", "registration", "begin", "--control-socket", socket, "--label", "YubiKey"}
+			},
+			wantOp: "v2.webauthn.registration.begin", wantBody: true,
+			check: func(t *testing.T, req request) {
+				var body signerWebAuthnRegistrationBeginRequestV2
+				decodeSignerAdminTestBody(t, req, &body)
+				if body.Label != "YubiKey" {
+					t.Fatalf("unexpected WebAuthn label: %#v", body)
+				}
+			},
+		},
+		{
+			name: "registration finish",
+			args: func(socket string) []string {
+				return []string{"webauthn", "registration", "finish", "--control-socket", socket, "--request-file", finishPath}
+			},
+			wantOp: "v2.webauthn.registration.finish", wantBody: true,
+			check: func(t *testing.T, req request) {
+				var body signerWebAuthnRegistrationFinishRequestV2
+				decodeSignerAdminTestBody(t, req, &body)
+				if body.ChallengeID != "challenge-1" || !json.Valid(body.Credential) {
+					t.Fatalf("unexpected WebAuthn finish body: %#v", body)
+				}
+			},
+		},
+		{
+			name: "credentials list",
+			args: func(socket string) []string {
+				return []string{"webauthn", "credentials", "list", "--control-socket", socket}
+			},
+			wantOp: "v2.webauthn.credentials.list",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := startSignerAdminTestServer(t, signerAdminTestSuccess(t, `{"ok":"typed"}`))
+			if err := runSignerAdminCLI(test.args(server.path), strings.NewReader(""), io.Discard, nil); err != nil {
+				t.Fatalf("run WebAuthn admin command: %v", err)
+			}
+			req := waitSignerAdminTestServer(t, server)
+			if req.Op != test.wantOp || req.WalletID != "" {
+				t.Fatalf("unexpected WebAuthn request: %#v", req)
+			}
+			if test.wantBody != (len(req.Request) > 0) {
+				t.Fatalf("request body presence = %v, want %v", len(req.Request) > 0, test.wantBody)
+			}
+			if test.check != nil {
+				test.check(t, req)
+			}
+		})
+	}
+}
+
+func TestSignerAdminRejectsUnknownSecretAndUnsafeInputs(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		environ []string
+		want    string
+	}{
+		{name: "unknown flag", args: []string{"wallet", "create", "--unknown", "value"}, want: "invalid or unknown"},
+		{name: "secret flag", args: []string{"wallet", "import", "--private-key=do-not-print"}, want: "not accepted"},
+		{name: "secret environment", args: []string{"policy", "get"}, environ: []string{"FASED_WALLET_PASSPHRASE=do-not-print"}, want: "environment"},
+		{name: "unknown command", args: []string{"socket", "proxy"}, want: "unknown signer admin"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := runSignerAdminCLI(test.args, strings.NewReader(""), io.Discard, test.environ)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("expected %q error, got %v", test.want, err)
+			}
+			if strings.Contains(err.Error(), "do-not-print") {
+				t.Fatalf("error reflected secret material: %v", err)
+			}
+		})
+	}
+
+	if _, err := requireSignerAdminControlSocket("relative.sock"); err == nil || !strings.Contains(err.Error(), "absolute") {
+		t.Fatalf("expected relative control socket rejection, got %v", err)
+	}
+	regular := filepath.Join(t.TempDir(), "control.sock")
+	if err := os.WriteFile(regular, []byte("not a socket"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := requireSignerAdminControlSocket(regular); err == nil || !strings.Contains(err.Error(), "Unix socket") {
+		t.Fatalf("expected regular-file control socket rejection, got %v", err)
+	}
+	listenerPath := filepath.Join(signerAdminShortTempDir(t), "insecure-control.sock")
+	listener, err := net.Listen("unix", listenerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	if err := os.Chmod(listenerPath, 0o660); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := requireSignerAdminControlSocket(listenerPath); err == nil || !strings.Contains(err.Error(), "group/world") {
+		t.Fatalf("expected accessible control socket rejection, got %v", err)
+	}
+
+	if _, err := resolveSignerAdminCreationPolicy("agent", "", ""); err == nil || !strings.Contains(err.Error(), "exactly one") {
+		t.Fatalf("expected missing create policy choice rejection, got %v", err)
+	}
+	if _, err := resolveSignerAdminCreationPolicy("agent", regular, "agent"); err == nil || !strings.Contains(err.Error(), "exactly one") {
+		t.Fatalf("expected conflicting create policy choice rejection, got %v", err)
+	}
+}
+
+func TestSignerAdminRejectsInvalidKeypairAndStrictResponse(t *testing.T) {
+	if _, err := readSignerAdminSolanaKeypair(strings.NewReader(`[1,2,3]`)); err == nil || !strings.Contains(err.Error(), "64-byte") {
+		t.Fatalf("expected short keypair rejection, got %v", err)
+	}
+	if _, err := readSignerAdminSolanaKeypair(strings.NewReader(`[1,2,3] {}`)); err == nil || !strings.Contains(err.Error(), "64-byte") {
+		t.Fatalf("expected trailing keypair JSON rejection, got %v", err)
+	}
+	seed := make([]byte, ed25519.SeedSize)
+	if _, err := rand.Read(seed); err != nil {
+		t.Fatal(err)
+	}
+	privateKey := ed25519.NewKeyFromSeed(seed)
+	privateKey[len(privateKey)-1] ^= 0xff
+	values := make([]int, len(privateKey))
+	for i, value := range privateKey {
+		values[i] = int(value)
+	}
+	encoded, _ := json.Marshal(values)
+	if _, err := readSignerAdminSolanaKeypair(bytes.NewReader(encoded)); err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("expected mismatched keypair rejection, got %v", err)
+	}
+	invalidImportPath := filepath.Join(t.TempDir(), "invalid-keypair.json")
+	if err := os.WriteFile(invalidImportPath, encoded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readSignerImportFileV2(invalidImportPath); err == nil || !strings.Contains(err.Error(), "public key mismatch") {
+		t.Fatalf("expected signer-side mismatched keypair rejection, got %v", err)
+	}
+	zeroBytes(seed)
+	zeroBytes(privateKey)
+	zeroBytes(encoded)
+
+	server := startSignerAdminTestServer(t, func(request) ([]byte, error) {
+		return []byte(`{"ok":true,"result":{},"unknown":true}`), nil
+	})
+	err := runSignerAdminCLI([]string{
+		"policy", "get", "--control-socket", server.path, "--wallet-id", "agent",
+	}, strings.NewReader(""), io.Discard, nil)
+	if err == nil || !strings.Contains(err.Error(), "strict protocol envelope") {
+		t.Fatalf("expected strict response rejection, got %v", err)
+	}
+	waitSignerAdminTestServer(t, server)
+}

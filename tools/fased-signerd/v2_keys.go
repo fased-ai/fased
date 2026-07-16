@@ -5,6 +5,7 @@ import (
 	"crypto/cipher"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -341,6 +342,11 @@ func readSignerImportFileV2(path string) ([]byte, error) {
 	if err := json.Unmarshal(data, &values); err != nil || len(values) != ed25519.PrivateKeySize {
 		return nil, errors.New("wallet import file must be a 64-byte Solana CLI keypair JSON array")
 	}
+	defer func() {
+		for i := range values {
+			values[i] = 0
+		}
+	}()
 	secret := make([]byte, ed25519.PrivateKeySize)
 	for i, value := range values {
 		if value < 0 || value > 255 {
@@ -349,13 +355,20 @@ func readSignerImportFileV2(path string) ([]byte, error) {
 		}
 		secret[i] = byte(value)
 	}
-	privateKey := ed25519.PrivateKey(secret)
-	derived := privateKey.Public().(ed25519.PublicKey)
-	if !strings.EqualFold(base64.RawStdEncoding.EncodeToString(derived), base64.RawStdEncoding.EncodeToString(secret[32:])) {
+	if !validateSolanaCLIPrivateKeyV2(secret) {
 		zeroBytes(secret)
 		return nil, errors.New("wallet import keypair public key mismatch")
 	}
 	return secret, nil
+}
+
+func validateSolanaCLIPrivateKeyV2(secret []byte) bool {
+	if len(secret) != ed25519.PrivateKeySize {
+		return false
+	}
+	derived := ed25519.NewKeyFromSeed(secret[:ed25519.SeedSize])
+	defer zeroBytes(derived)
+	return subtle.ConstantTimeCompare(derived[ed25519.SeedSize:], secret[ed25519.SeedSize:]) == 1
 }
 
 func readLegacySignerImportV2(path, passphrasePath string) ([]byte, string, error) {
