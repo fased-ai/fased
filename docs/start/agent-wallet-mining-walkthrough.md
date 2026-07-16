@@ -75,6 +75,16 @@ Choose the setup profile first.
     Use this on your own computer. On macOS, use Terminal. On Windows, use WSL2
     with Ubuntu. On Linux, use your distro terminal.
 
+    <Warning>
+    On Windows 11 or Windows 10 version 2004/build 19041 or newer, first run
+    `wsl --install -d Ubuntu` in Administrator PowerShell and restart if
+    requested. Then open the Ubuntu application and run the command below in
+    the Ubuntu shell. Do not run it in PowerShell, Command Prompt, Git Bash, or
+    native Windows Node.js. Wallet signing uses Unix sockets, so first-wallet
+    setup must run inside WSL2; Fased automatically installs the verified Linux
+    signer asset and does not require Go.
+    </Warning>
+
     ```bash
     curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
     ```

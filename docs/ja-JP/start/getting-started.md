@@ -28,7 +28,7 @@ x-i18n:
 ## 前提条件
 
 - Node 24推奨、または`node:sqlite`を含むNode 22.14以降
-- macOS、Linux、またはWindowsのWSL2
+- macOS、Linux、またはWSL2 Ubuntu上のWindows
 - Git
 
 確認：
@@ -48,7 +48,7 @@ node -e 'require("node:sqlite"); console.log("node:sqlite ok")'
     ./install.sh
     ```
 
-    WindowsではWSL2のUbuntu内で同じコマンドを実行します。
+    Windowsでは、Windows 11またはWindows 10 version 2004/build 19041以降が必要です。管理者PowerShellで`wsl --install -d Ubuntu`を実行し、必要なら再起動してUbuntuを開きます。インストーラとすべての`fased`コマンドはUbuntu内で実行してください。PowerShell、コマンドプロンプト、Git Bash、ネイティブWindows Node.jsはFasedの実行環境としてサポートされません。ウォレット署名はUnix socketを使用します。
 
   </Step>
 

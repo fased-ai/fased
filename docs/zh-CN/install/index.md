@@ -42,9 +42,9 @@ flowchart LR
 - macOS、Linux，或通过 WSL2 运行的 Windows
 - 只有从源码构建时才需要 `pnpm`
 
-<Note>
-Windows 上建议使用 [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install)，并在 Ubuntu 里运行 Fased。
-</Note>
+<Warning>
+Windows 上必须使用 [WSL2 Ubuntu](https://learn.microsoft.com/en-us/windows/wsl/install)。支持 Windows 11，或 Windows 10 版本 2004/build 19041 及以上版本。在管理员 PowerShell 中运行 `wsl --install -d Ubuntu`，然后打开 Ubuntu，并在 Ubuntu 提示符内运行安装程序和所有 `fased` 命令。不要在 PowerShell、命令提示符、Git Bash 或原生 Windows Node.js 中运行 Fased；钱包签名器需要 Unix socket。
+</Warning>
 
 ## 推荐路径
 

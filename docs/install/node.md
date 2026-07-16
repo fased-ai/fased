@@ -100,21 +100,12 @@ but still omit `node:sqlite`; those are not suitable for full memory support.
     sudo pkg install -y node24 npm-node24
     ```
   </Tab>
-  <Tab title="Windows">
-    **winget** (recommended):
-
-    ```powershell
-    winget install OpenJS.NodeJS.LTS
-    ```
-
-    Or use Chocolatey:
-
-    ```powershell
-    choco install nodejs-lts
-    ```
-
-    Or download the Windows installer from [nodejs.org](https://nodejs.org/).
-
+  <Tab title="Windows / WSL2">
+    Do not install Node with `winget`, Chocolatey, or a native Windows Node.js
+    installer for the public Fased runtime. Install WSL2 Ubuntu, open the
+    Ubuntu shell, and use the Ubuntu instructions in this page or let
+    `install.sh` install Node automatically. Native Windows Node.js cannot run
+    the Unix-socket wallet signer path. See [Windows (WSL2)](/platforms/windows).
   </Tab>
 </Tabs>
 

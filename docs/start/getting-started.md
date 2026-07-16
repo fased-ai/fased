@@ -52,6 +52,14 @@ If you manage Node yourself, use Node 24, or Node 22.14+ with the built-in
 `node:sqlite` module.
 </Tip>
 
+<Warning>
+Windows users need Windows 11 or Windows 10 version 2004/build 19041 or newer.
+Run `wsl --install -d Ubuntu` once in Administrator PowerShell, restart if
+requested, and then open Ubuntu. Run the Fased installer and all later `fased`
+commands inside the Ubuntu shell—not PowerShell, Command Prompt, Git Bash, or
+native Windows Node.js. See [Windows (WSL2)](/platforms/windows).
+</Warning>
+
 ## Which install do I need?
 
 <CardGroup cols={2}>
@@ -80,8 +88,8 @@ The macOS app is a Local setup surface, not a separate hosting profile.
         ```
 
         Use this on your own computer. On macOS, use Terminal. On Windows,
-        install WSL2 first, then run this inside Ubuntu. On Linux, use your
-        distro terminal.
+        install WSL2 first, open the Ubuntu application, then run this inside
+        the Ubuntu shell. On Linux, use your distro terminal.
 
         After local setup:
 

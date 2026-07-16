@@ -22,6 +22,13 @@ Start by choosing one of two setup profiles:
   too. Alpine, Arch, macOS, and FreeBSD are local/dev targets until their
   hosted hardening paths are validated separately.
 
+<Warning>
+On Windows, PowerShell is used only to install or manage WSL2. Install WSL2
+Ubuntu, open the Ubuntu shell, and run the Fased installer and every `fased`
+command there. Do not run Fased through native PowerShell, Command Prompt, Git
+Bash, or native Windows Node.js. See [Windows (WSL2)](/platforms/windows).
+</Warning>
+
 After the Gateway and browser dashboard are working, add only what you need:
 wallets, services, Fased Network, or Satcoin mining.
 
@@ -127,7 +134,8 @@ one place.
 <Tabs>
   <Tab title="Local install">
     Use this on your own computer. On macOS, use Terminal. On Windows, use WSL2
-    with Ubuntu. On Linux, use your distro terminal.
+    with Ubuntu and run the command below **inside the Ubuntu shell**, not in
+    PowerShell. On Linux, use your distro terminal.
 
     ```bash
     curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local

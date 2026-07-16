@@ -15,7 +15,7 @@ x-i18n:
 
 # 新手引导向导（CLI）
 
-新手引导向导是在 macOS、Linux 或 Windows（通过 WSL2；强烈推荐）上设置 Fased 的**推荐**方式。
+新手引导向导是在 macOS、Linux 或 Windows（必须通过 WSL2 Ubuntu）上设置 Fased 的**推荐**方式。Windows 用户应在 Ubuntu 提示符内运行向导，而不是 PowerShell、命令提示符、Git Bash 或原生 Windows Node.js。
 它可以在一个引导式流程中配置本地 Gateway 网关或远程 Gateway 网关连接，以及渠道、Skills 和工作区默认值。
 
 主要入口：
