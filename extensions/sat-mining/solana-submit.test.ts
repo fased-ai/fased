@@ -83,6 +83,7 @@ import {
   submitSatFinalizeBondUnlock,
   submitSatFinalizeCycleSettlement,
   submitSatIncreaseBondPosition,
+  submitSatInitMinerCapital,
   submitSatOpenBondPosition,
   submitSatSetActiveCommit,
   submitSatOpenCycle,
@@ -107,6 +108,66 @@ const SAT_BOND_PROGRAM_ID = new PublicKey("D1ySMMiJmvJRhJJKwYnc171w3g2JDPQnkgD8k
 const SIGNER = new PublicKey("8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW");
 const TOKEN_PROGRAM_ID = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
+const TEST_POLICY_HASH = `sha256:${"ab".repeat(32)}`;
+
+function configureLocalSignerMock(addresses: { solana?: string } = { solana: SIGNER.toBase58() }) {
+  callLocalSocketSigner.mockImplementation(
+    async (_socketPath: string, payload: { op?: string; request?: { requestId?: string } }) => {
+      switch (payload.op) {
+        case "getAddresses":
+          return addresses;
+        case "v2.capabilities":
+          return {
+            ready: true,
+            capabilities: {
+              protocol: { current: 2, min: 2, max: 2 },
+              intentTypes: ["solana.satAction"],
+              operationStates: ["reserved", "broadcast", "confirmed", "failed", "unknown"],
+              features: [
+                "failClosedPolicies",
+                "policyHashes",
+                "durableCaps",
+                "atomicIdempotency",
+                "ambiguousBroadcastReconciliation",
+                "signerOwnedKeys",
+                "typedSolanaTransactions",
+                "typedSATActions",
+              ],
+            },
+          };
+        case "v2.policy.get":
+          return { hash: TEST_POLICY_HASH };
+        case "v2.execute":
+          return {
+            requestId: payload.request?.requestId ?? "sat-test-request",
+            state: "confirmed",
+            signature: "tx-submit-cycle",
+          };
+        default:
+          throw new Error(`unexpected signer test op ${payload.op}`);
+      }
+    },
+  );
+}
+
+function latestTypedSatRequest() {
+  const payload = [...callLocalSocketSigner.mock.calls]
+    .reverse()
+    .map((call) => call[1])
+    .find((candidate) => candidate?.op === "v2.execute");
+  if (!payload || payload.op !== "v2.execute") {
+    throw new Error("typed SAT v2.execute request was not captured");
+  }
+  const intent = payload.request.intent;
+  return {
+    op: payload.op,
+    request: {
+      ...intent,
+      walletId: payload.walletId,
+      ...(intent.action === "cleanupBatch" ? { purpose: "sat-cleanup" } : {}),
+    },
+  };
+}
 
 function encodeU64(value: number): Buffer {
   const out = Buffer.alloc(8);
@@ -159,9 +220,102 @@ describe("SAT cycle transaction builders", () => {
         },
       },
     });
-    callLocalSocketSigner
-      .mockResolvedValueOnce({ solana: SIGNER.toBase58() })
-      .mockResolvedValueOnce({ txHash: "tx-submit-cycle", signer: SIGNER.toBase58() });
+    configureLocalSignerMock();
+  });
+
+  it("defaults init miner capital authority to the configured signer address", async () => {
+    await submitSatInitMinerCapital({} as never, {});
+
+    expect(callLocalSocketSigner).toHaveBeenCalledTimes(4);
+    const request = latestTypedSatRequest();
+    expect(request.request.action).toBe("initMinerCapital");
+    expect(Buffer.from(request.request.dataBase64, "base64")).toEqual(
+      Buffer.concat([Buffer.from([36]), SIGNER.toBuffer()]),
+    );
+    expect(request.request.keys).toEqual([
+      { pubkey: SIGNER.toBase58(), isSigner: true, isWritable: true },
+      {
+        pubkey: findPda(Buffer.from("sat_miner_capital_state"), SIGNER.toBuffer()),
+        isSigner: false,
+        isWritable: true,
+      },
+      { pubkey: SystemProgram.programId.toBase58(), isSigner: false, isWritable: false },
+    ]);
+  });
+
+  it("fails closed before policy lookup when typed SAT capabilities are missing", async () => {
+    callLocalSocketSigner.mockImplementation(
+      async (_socketPath: string, payload: { op?: string }) => {
+        if (payload.op === "getAddresses") {
+          return { solana: SIGNER.toBase58() };
+        }
+        if (payload.op === "v2.capabilities") {
+          return {
+            ready: true,
+            capabilities: {
+              protocol: { current: 2, min: 2, max: 2 },
+              intentTypes: ["solana.nativeTransfer"],
+              operationStates: ["reserved", "confirmed"],
+              features: ["policyHashes"],
+            },
+          };
+        }
+        throw new Error(`unexpected signer test op ${payload.op}`);
+      },
+    );
+
+    await expect(
+      submitSatDepositMinerCapital({} as never, { lamports: 250_000_000 }),
+    ).rejects.toThrow("required typed SAT protocol-v2 contract");
+    expect(callLocalSocketSigner.mock.calls.map((call) => call[1]?.op)).toEqual([
+      "getAddresses",
+      "v2.capabilities",
+    ]);
+  });
+
+  it("reconciles the same durable request after an ambiguous execute transport result", async () => {
+    const healthySignerCall = callLocalSocketSigner.getMockImplementation();
+    let durableRequestId = "";
+    callLocalSocketSigner.mockImplementation(
+      async (socketPath: string, payload: { op?: string; request?: { requestId?: string } }) => {
+        if (payload.op === "v2.execute") {
+          durableRequestId = String(payload.request?.requestId ?? "");
+          throw new Error("socket closed after broadcast");
+        }
+        if (payload.op === "v2.operation.get" || payload.op === "v2.operation.reconcile") {
+          expect(payload.request?.requestId).toBe(durableRequestId);
+          return {
+            requestId: durableRequestId,
+            state: "unknown",
+            signature: "ambiguous-sat-signature",
+            error: "confirmation timeout",
+          };
+        }
+        if (!healthySignerCall) {
+          throw new Error("healthy signer mock is unavailable");
+        }
+        return await healthySignerCall(socketPath, payload);
+      },
+    );
+
+    await expect(
+      submitSatDepositMinerCapital({} as never, { lamports: 250_000_000 }),
+    ).resolves.toMatchObject({
+      txHash: "ambiguous-sat-signature",
+      signerState: "unknown",
+      requestId: expect.stringMatching(/^sat-[0-9a-f-]{36}$/),
+    });
+    expect(callLocalSocketSigner.mock.calls.map((call) => call[1]?.op)).toEqual([
+      "getAddresses",
+      "v2.capabilities",
+      "v2.policy.get",
+      "v2.execute",
+      "v2.operation.get",
+      "v2.operation.reconcile",
+    ]);
+    expect(
+      callLocalSocketSigner.mock.calls.filter((call) => call[1]?.op === "v2.execute"),
+    ).toHaveLength(1);
   });
 
   it("uses the reveal account order", async () => {
@@ -174,9 +328,37 @@ describe("SAT cycle transaction builders", () => {
       allocationFp: new Array(25).fill(40_000),
     });
 
-    expect(callLocalSocketSigner).toHaveBeenCalledTimes(2);
-    const request = callLocalSocketSigner.mock.calls[1]?.[1];
-    expect(request?.op).toBe("sendSolanaInstruction");
+    expect(callLocalSocketSigner).toHaveBeenCalledTimes(4);
+    const request = latestTypedSatRequest();
+    expect(request?.op).toBe("v2.execute");
+    expect(callLocalSocketSigner.mock.calls.map((call) => call[1]?.op)).toEqual([
+      "getAddresses",
+      "v2.capabilities",
+      "v2.policy.get",
+      "v2.execute",
+    ]);
+    const executeEnvelope = callLocalSocketSigner.mock.calls[3]?.[1];
+    expect(executeEnvelope).toMatchObject({
+      op: "v2.execute",
+      walletId: "solana-1",
+      request: {
+        policyHash: TEST_POLICY_HASH,
+        intent: {
+          type: "solana.satAction",
+          action: "revealCycle",
+          context: {
+            intervalStartCycleId: String(intervalStartCycleId),
+            registryPageIndex: "0",
+          },
+        },
+      },
+    });
+    expect(executeEnvelope?.request?.requestId).toMatch(/^sat-[0-9a-f-]{36}$/);
+    expect(
+      callLocalSocketSigner.mock.calls.some((call) =>
+        ["sendSolanaInstruction", "sendSolanaInstructions"].includes(call[1]?.op),
+      ),
+    ).toBe(false);
 
     expect(request?.request?.keys).toEqual([
       { pubkey: SIGNER.toBase58(), isSigner: true, isWritable: true },
@@ -237,9 +419,9 @@ describe("SAT cycle transaction builders", () => {
     const intervalStartCycleId = 9_859_128;
     await submitSatSealCycleEntropy({} as never, { cycleId, intervalStartCycleId });
 
-    expect(callLocalSocketSigner).toHaveBeenCalledTimes(2);
-    const request = callLocalSocketSigner.mock.calls[1]?.[1];
-    expect(request?.op).toBe("sendSolanaInstruction");
+    expect(callLocalSocketSigner).toHaveBeenCalledTimes(4);
+    const request = latestTypedSatRequest();
+    expect(request?.op).toBe("v2.execute");
     expect(request?.request?.keys).toEqual([
       { pubkey: SIGNER.toBase58(), isSigner: true, isWritable: false },
       {
@@ -267,9 +449,9 @@ describe("SAT cycle transaction builders", () => {
       minerAuthority: SIGNER.toBase58(),
     });
 
-    expect(callLocalSocketSigner).toHaveBeenCalledTimes(2);
-    const request = callLocalSocketSigner.mock.calls[1]?.[1];
-    expect(request?.op).toBe("sendSolanaInstruction");
+    expect(callLocalSocketSigner).toHaveBeenCalledTimes(4);
+    const request = latestTypedSatRequest();
+    expect(request?.op).toBe("v2.execute");
     expect(request?.request?.keys).toEqual([
       { pubkey: SIGNER.toBase58(), isSigner: true, isWritable: false },
       {
@@ -308,9 +490,9 @@ describe("SAT cycle transaction builders", () => {
     const cycleId = 9_859_137;
     await submitSatAbortEmptyCycle({} as never, { cycleId });
 
-    expect(callLocalSocketSigner).toHaveBeenCalledTimes(2);
-    const request = callLocalSocketSigner.mock.calls[1]?.[1];
-    expect(request?.op).toBe("sendSolanaInstruction");
+    expect(callLocalSocketSigner).toHaveBeenCalledTimes(4);
+    const request = latestTypedSatRequest();
+    expect(request?.op).toBe("v2.execute");
     expect(Buffer.from(request?.request?.dataBase64 ?? "", "base64")).toEqual(
       Buffer.concat([Buffer.from([94]), encodeU64(cycleId)]),
     );
@@ -362,8 +544,8 @@ describe("SAT cycle transaction builders", () => {
 
     await submitSatOpenBondPosition({} as never, { amountRaw });
 
-    expect(callLocalSocketSigner).toHaveBeenCalledTimes(2);
-    const request = callLocalSocketSigner.mock.calls[1]?.[1];
+    expect(callLocalSocketSigner).toHaveBeenCalledTimes(4);
+    const request = latestTypedSatRequest();
     expect(request?.request?.programId).toBe(SAT_BOND_PROGRAM_ID_TEXT);
     expect(Buffer.from(request?.request?.dataBase64 ?? "", "base64")).toEqual(
       Buffer.concat([Buffer.from([2]), encodeU64(amountRaw)]),
@@ -390,9 +572,9 @@ describe("SAT cycle transaction builders", () => {
     async (_name, submit, ix) => {
       await submit({} as never);
 
-      expect(callLocalSocketSigner).toHaveBeenCalledTimes(2);
-      const request = callLocalSocketSigner.mock.calls[1]?.[1];
-      expect(request?.op).toBe("sendSolanaInstruction");
+      expect(callLocalSocketSigner).toHaveBeenCalledTimes(4);
+      const request = latestTypedSatRequest();
+      expect(request?.op).toBe("v2.execute");
       expect(request?.request?.programId).toBe(SAT_BOND_PROGRAM_ID_TEXT);
       expect(Buffer.from(request?.request?.dataBase64 ?? "", "base64")[0]).toBe(ix);
     },
@@ -401,7 +583,7 @@ describe("SAT cycle transaction builders", () => {
   it("updates staking weight in the same request-unlock instruction", async () => {
     await submitSatRequestBondUnlock({} as never);
 
-    const request = callLocalSocketSigner.mock.calls[1]?.[1];
+    const request = latestTypedSatRequest();
     expect(request?.request?.keys).toEqual([
       { pubkey: SIGNER.toBase58(), isSigner: true, isWritable: true },
       {
@@ -430,7 +612,7 @@ describe("SAT cycle transaction builders", () => {
   it("updates staking weight in the same cancel-unlock instruction", async () => {
     await submitSatCancelBondUnlock({} as never);
 
-    const request = callLocalSocketSigner.mock.calls[1]?.[1];
+    const request = latestTypedSatRequest();
     expect(request?.request?.keys?.map((key: { pubkey: string }) => key.pubkey)).toEqual([
       SIGNER.toBase58(),
       findBondPda(Buffer.from("sat_bond_tier_policy")),
@@ -443,7 +625,7 @@ describe("SAT cycle transaction builders", () => {
   it("verifies zero staking weight before finalizing a bond unlock", async () => {
     await submitSatFinalizeBondUnlock({} as never);
 
-    const request = callLocalSocketSigner.mock.calls[1]?.[1];
+    const request = latestTypedSatRequest();
     expect(request?.request?.keys?.slice(0, 5)).toEqual([
       { pubkey: SIGNER.toBase58(), isSigner: true, isWritable: true },
       {
@@ -473,7 +655,7 @@ describe("SAT cycle transaction builders", () => {
     const distributor = findBondPda(Buffer.from("sat_bond_staking_distributor"));
     await submitSatClaimProtocolDistributorSat({} as never, { recipientOwner: distributor });
 
-    const request = callLocalSocketSigner.mock.calls[1]?.[1];
+    const request = latestTypedSatRequest();
     expect(request?.request?.programId).toBe(SAT_PROGRAM_ID_TEXT);
     expect(Buffer.from(request?.request?.dataBase64 ?? "", "base64")).toEqual(Buffer.from([85]));
     expect(request?.request?.keys).toHaveLength(13);
@@ -494,9 +676,9 @@ describe("SAT cycle transaction builders", () => {
       recipientOwner: treasuryOwner.toBase58(),
     });
 
-    expect(callLocalSocketSigner).toHaveBeenCalledTimes(2);
-    const request = callLocalSocketSigner.mock.calls[1]?.[1];
-    expect(request?.op).toBe("sendSolanaInstruction");
+    expect(callLocalSocketSigner).toHaveBeenCalledTimes(4);
+    const request = latestTypedSatRequest();
+    expect(request?.op).toBe("v2.execute");
     expect(request?.request?.programId).toBe(SAT_BOND_PROGRAM_ID_TEXT);
     expect(Buffer.from(request?.request?.dataBase64 ?? "", "base64")).toEqual(Buffer.from([11]));
     expect(request?.request?.keys).toEqual([
@@ -517,9 +699,9 @@ describe("SAT cycle transaction builders", () => {
 
     await submitSatCloseResolvedCycleArtifacts({} as never, { cycleId });
 
-    expect(callLocalSocketSigner).toHaveBeenCalledTimes(2);
-    const request = callLocalSocketSigner.mock.calls[1]?.[1];
-    expect(request?.op).toBe("sendSolanaInstruction");
+    expect(callLocalSocketSigner).toHaveBeenCalledTimes(4);
+    const request = latestTypedSatRequest();
+    expect(request?.op).toBe("v2.execute");
     expect(request?.request?.keys).toEqual([
       { pubkey: SIGNER.toBase58(), isSigner: true, isWritable: true },
       {
@@ -549,9 +731,9 @@ describe("SAT cycle transaction builders", () => {
     const cycleId = 9_859_145;
     await submitSatOpenCycle({} as never, { cycleId });
 
-    expect(callLocalSocketSigner).toHaveBeenCalledTimes(2);
-    const request = callLocalSocketSigner.mock.calls[1]?.[1];
-    expect(request?.op).toBe("sendSolanaInstruction");
+    expect(callLocalSocketSigner).toHaveBeenCalledTimes(4);
+    const request = latestTypedSatRequest();
+    expect(request?.op).toBe("v2.execute");
     expect(request?.request?.keys).toEqual([
       { pubkey: SIGNER.toBase58(), isSigner: true, isWritable: true },
       { pubkey: findPda(Buffer.from("sat_global_state")), isSigner: false, isWritable: true },
@@ -593,9 +775,9 @@ describe("SAT cycle transaction builders", () => {
       targetBalanceLamports: 1_000_000_000,
     });
 
-    expect(callLocalSocketSigner).toHaveBeenCalledTimes(2);
-    const request = callLocalSocketSigner.mock.calls[1]?.[1];
-    expect(request?.op).toBe("sendSolanaInstruction");
+    expect(callLocalSocketSigner).toHaveBeenCalledTimes(4);
+    const request = latestTypedSatRequest();
+    expect(request?.op).toBe("v2.execute");
     expect(Buffer.from(request?.request?.dataBase64 ?? "", "base64")[0]).toBe(88);
     expect(request?.request?.keys).toEqual([
       { pubkey: SIGNER.toBase58(), isSigner: true, isWritable: true },
@@ -611,9 +793,9 @@ describe("SAT cycle transaction builders", () => {
       targetBalanceLamports: 200_000_000,
     });
 
-    expect(callLocalSocketSigner).toHaveBeenCalledTimes(2);
-    const request = callLocalSocketSigner.mock.calls[1]?.[1];
-    expect(request?.op).toBe("sendSolanaInstruction");
+    expect(callLocalSocketSigner).toHaveBeenCalledTimes(4);
+    const request = latestTypedSatRequest();
+    expect(request?.op).toBe("v2.execute");
     expect(Buffer.from(request?.request?.dataBase64 ?? "", "base64")).toEqual(
       Buffer.concat([Buffer.from([84]), encodeU64(200_000_000)]),
     );
@@ -635,18 +817,16 @@ describe("SAT cycle transaction builders", () => {
 
   it("falls back to the registry Solana address when local signer getAddresses returns empty", async () => {
     const cycleId = 9_859_143;
-    callLocalSocketSigner
-      .mockResolvedValueOnce({})
-      .mockResolvedValueOnce({ txHash: "tx-submit-cycle", signer: SIGNER.toBase58() });
+    configureLocalSignerMock({});
 
     await submitSatCommitCycle({} as never, {
       cycleId,
       commitmentHex: "11".repeat(32),
     });
 
-    expect(callLocalSocketSigner).toHaveBeenCalledTimes(2);
-    const request = callLocalSocketSigner.mock.calls[1]?.[1];
-    expect(request?.op).toBe("sendSolanaInstruction");
+    expect(callLocalSocketSigner).toHaveBeenCalledTimes(4);
+    const request = latestTypedSatRequest();
+    expect(request?.op).toBe("v2.execute");
     expect(request?.request?.walletId).toBe("solana-1");
     expect(request?.request?.keys?.[0]).toEqual({
       pubkey: SIGNER.toBase58(),
@@ -673,9 +853,6 @@ describe("SAT cycle transaction builders", () => {
         },
       },
     });
-    callLocalSocketSigner
-      .mockResolvedValueOnce({ solana: SIGNER.toBase58() })
-      .mockResolvedValueOnce({ txHash: "tx-deposit", signer: SIGNER.toBase58() });
 
     await submitSatDepositMinerCapital(
       {
@@ -684,13 +861,13 @@ describe("SAT cycle transaction builders", () => {
       { lamports: 250_000_000 },
     );
 
-    expect(callLocalSocketSigner).toHaveBeenCalledTimes(2);
+    expect(callLocalSocketSigner).toHaveBeenCalledTimes(4);
     expect(callLocalSocketSigner.mock.calls[0]?.[1]).toEqual({
       op: "getAddresses",
       walletId: "solana-1",
     });
-    expect(callLocalSocketSigner.mock.calls[1]?.[1]).toMatchObject({
-      op: "sendSolanaInstruction",
+    expect(latestTypedSatRequest()).toMatchObject({
+      op: "v2.execute",
       request: {
         walletId: "solana-1",
       },
@@ -724,9 +901,6 @@ describe("SAT cycle transaction builders", () => {
           : [],
     }));
     resolveWalletProviderId.mockReturnValueOnce("embedded-keystore");
-    callLocalSocketSigner
-      .mockResolvedValueOnce({ solana: SIGNER.toBase58() })
-      .mockResolvedValueOnce({ txHash: "tx-deposit", signer: SIGNER.toBase58() });
 
     await submitSatDepositMinerCapital(
       {
@@ -740,10 +914,10 @@ describe("SAT cycle transaction builders", () => {
         FASED_CONFIG_ONLY_MARKER: "cfg-env",
       }),
     );
-    expect(callLocalSocketSigner).toHaveBeenCalledTimes(2);
+    expect(callLocalSocketSigner).toHaveBeenCalledTimes(4);
     expect(loadWalletProviderSecret).not.toHaveBeenCalled();
-    expect(callLocalSocketSigner.mock.calls[1]?.[1]).toMatchObject({
-      op: "sendSolanaInstruction",
+    expect(latestTypedSatRequest()).toMatchObject({
+      op: "v2.execute",
       request: {
         walletId: "solana-1",
       },
@@ -769,9 +943,6 @@ describe("SAT cycle transaction builders", () => {
       wallets: [],
     });
     resolveWalletProviderId.mockReturnValueOnce("embedded-keystore");
-    callLocalSocketSigner
-      .mockResolvedValueOnce({ solana: SIGNER.toBase58() })
-      .mockResolvedValueOnce({ txHash: "tx-set-active-commit", signer: SIGNER.toBase58() });
 
     await submitSatSetActiveCommit(
       {
@@ -780,14 +951,14 @@ describe("SAT cycle transaction builders", () => {
       { lamports: 350_000_000 },
     );
 
-    expect(callLocalSocketSigner).toHaveBeenCalledTimes(2);
+    expect(callLocalSocketSigner).toHaveBeenCalledTimes(4);
     expect(loadWalletProviderSecret).not.toHaveBeenCalled();
     expect(callLocalSocketSigner.mock.calls[0]?.[1]).toEqual({
       op: "getAddresses",
       walletId: "solana-1",
     });
-    expect(callLocalSocketSigner.mock.calls[1]?.[1]).toMatchObject({
-      op: "sendSolanaInstruction",
+    expect(latestTypedSatRequest()).toMatchObject({
+      op: "v2.execute",
       request: {
         walletId: "solana-1",
       },
@@ -819,9 +990,6 @@ describe("SAT cycle transaction builders", () => {
       ],
     });
     resolveWalletProviderId.mockReturnValueOnce("embedded-keystore");
-    callLocalSocketSigner
-      .mockResolvedValueOnce({ solana: SIGNER.toBase58() })
-      .mockResolvedValueOnce({ txHash: "tx-set-active-commit", signer: SIGNER.toBase58() });
 
     await submitSatSetActiveCommit(
       {
@@ -830,14 +998,14 @@ describe("SAT cycle transaction builders", () => {
       { lamports: 350_000_000 },
     );
 
-    expect(callLocalSocketSigner).toHaveBeenCalledTimes(2);
+    expect(callLocalSocketSigner).toHaveBeenCalledTimes(4);
     expect(loadWalletProviderSecret).not.toHaveBeenCalled();
     expect(callLocalSocketSigner.mock.calls[0]?.[1]).toEqual({
       op: "getAddresses",
       walletId: "solana-1",
     });
-    expect(callLocalSocketSigner.mock.calls[1]?.[1]).toMatchObject({
-      op: "sendSolanaInstruction",
+    expect(latestTypedSatRequest()).toMatchObject({
+      op: "v2.execute",
       request: {
         walletId: "solana-1",
       },
@@ -846,19 +1014,30 @@ describe("SAT cycle transaction builders", () => {
 
   it("uses the upgraded settleCyclePage progress PDA", async () => {
     const cycleId = 9_859_142;
+    const minerAuthorities = [
+      new PublicKey("Wmesty4ZT9XfG2BK5NfaTLyVvHyeG1DW2gZnwZQntuk"),
+      new PublicKey("4wxmFJm7xBkqLk7K3qn2gGw8v6SnM8j4rJz7s2p9dJQY"),
+    ];
+    const minerCycleAccounts = minerAuthorities.map((authority) =>
+      findPda(Buffer.from("sat_miner_cycle_state"), authority.toBuffer(), encodeU64(cycleId)),
+    );
+    inspectSatMinerCyclesByAddress.mockResolvedValueOnce(
+      minerAuthorities.map((authority, index) => ({
+        address: minerCycleAccounts[index],
+        authority: authority.toBase58(),
+        cycleId,
+      })),
+    );
     await submitSatSettleCyclePage({} as never, {
       cycleId,
       pageIndex: 0,
       chunkIndex: 0,
-      minerCycleAccounts: [
-        "9V3dNMQ1Gqf4Cz4km6o6t3xf9oh1vfy1xTo6cLq4s4qK",
-        "J2cCij1fwRjpj6CFa4U2j6vD7E1Qzzf6EX3THh1TjHq6",
-      ],
+      minerCycleAccounts,
     });
 
-    expect(callLocalSocketSigner).toHaveBeenCalledTimes(2);
-    const request = callLocalSocketSigner.mock.calls[1]?.[1];
-    expect(request?.op).toBe("sendSolanaInstruction");
+    expect(callLocalSocketSigner).toHaveBeenCalledTimes(4);
+    const request = latestTypedSatRequest();
+    expect(request?.op).toBe("v2.execute");
 
     expect(request?.request?.keys).toEqual([
       { pubkey: SIGNER.toBase58(), isSigner: true, isWritable: true },
@@ -918,12 +1097,12 @@ describe("SAT cycle transaction builders", () => {
         isWritable: true,
       },
       {
-        pubkey: "9V3dNMQ1Gqf4Cz4km6o6t3xf9oh1vfy1xTo6cLq4s4qK",
+        pubkey: minerCycleAccounts[0],
         isSigner: false,
         isWritable: true,
       },
       {
-        pubkey: "J2cCij1fwRjpj6CFa4U2j6vD7E1Qzzf6EX3THh1TjHq6",
+        pubkey: minerCycleAccounts[1],
         isSigner: false,
         isWritable: true,
       },
@@ -937,9 +1116,9 @@ describe("SAT cycle transaction builders", () => {
       pageCount: 2,
     });
 
-    expect(callLocalSocketSigner).toHaveBeenCalledTimes(2);
-    const request = callLocalSocketSigner.mock.calls[1]?.[1];
-    expect(request?.op).toBe("sendSolanaInstruction");
+    expect(callLocalSocketSigner).toHaveBeenCalledTimes(4);
+    const request = latestTypedSatRequest();
+    expect(request?.op).toBe("v2.execute");
 
     expect(request?.request?.keys).toEqual([
       { pubkey: SIGNER.toBase58(), isSigner: true, isWritable: true },
@@ -1004,9 +1183,9 @@ describe("SAT cycle transaction builders", () => {
       authority,
     });
 
-    expect(callLocalSocketSigner).toHaveBeenCalledTimes(2);
-    const request = callLocalSocketSigner.mock.calls[1]?.[1];
-    expect(request?.op).toBe("sendSolanaInstruction");
+    expect(callLocalSocketSigner).toHaveBeenCalledTimes(4);
+    const request = latestTypedSatRequest();
+    expect(request?.op).toBe("v2.execute");
     expect(request?.request?.keys).toEqual([
       { pubkey: SIGNER.toBase58(), isSigner: true, isWritable: true },
       {
@@ -1045,9 +1224,9 @@ describe("SAT cycle transaction builders", () => {
     const pageIndex = 1;
     await submitSatCloseResolvedCycleRegistryPage({} as never, { cycleId, pageIndex });
 
-    expect(callLocalSocketSigner).toHaveBeenCalledTimes(2);
-    const request = callLocalSocketSigner.mock.calls[1]?.[1];
-    expect(request?.op).toBe("sendSolanaInstruction");
+    expect(callLocalSocketSigner).toHaveBeenCalledTimes(4);
+    const request = latestTypedSatRequest();
+    expect(request?.op).toBe("v2.execute");
     expect(request?.request?.keys).toEqual([
       { pubkey: SIGNER.toBase58(), isSigner: true, isWritable: true },
       {
@@ -1078,13 +1257,6 @@ describe("SAT cycle transaction builders", () => {
   });
 
   it("submits cleanup close instructions as one sat-cleanup batch", async () => {
-    callLocalSocketSigner
-      .mockResolvedValueOnce({ solana: SIGNER.toBase58() })
-      .mockResolvedValueOnce({
-        txHash: "tx-cleanup-batch",
-        signer: SIGNER.toBase58(),
-        metadata: { instructionCount: 2 },
-      });
     const cycleId = 9_859_162;
     const authority = "4wxmFJm7xBkqLk7K3qn2gGw8v6SnM8j4rJz7s2p9dJQY";
 
@@ -1093,9 +1265,9 @@ describe("SAT cycle transaction builders", () => {
       { kind: "cycleRegistryPage", cycleId, pageIndex: 1 },
     ]);
 
-    expect(callLocalSocketSigner).toHaveBeenCalledTimes(2);
-    const request = callLocalSocketSigner.mock.calls[1]?.[1];
-    expect(request?.op).toBe("sendSolanaInstructions");
+    expect(callLocalSocketSigner).toHaveBeenCalledTimes(4);
+    const request = latestTypedSatRequest();
+    expect(request?.op).toBe("v2.execute");
     expect(request?.request?.purpose).toBe("sat-cleanup");
     expect(request?.request?.instructions).toHaveLength(2);
     expect(request?.request?.instructions?.[0]?.dataBase64).toBe(
@@ -1108,37 +1280,14 @@ describe("SAT cycle transaction builders", () => {
 
   it("uses the upgraded score/distribute progress PDA", async () => {
     const cycleId = 9_859_149;
-    const minerCycleAccounts = ["4wxmFJm7xBkqLk7K3qn2gGw8v6SnM8j4rJz7s2p9dJQY"];
-
-    await submitSatScoreCyclePage({} as never, {
-      cycleId,
-      pageIndex: 1,
-      chunkIndex: 0,
-      minerCycleAccounts,
-    });
-
-    expect(callLocalSocketSigner).toHaveBeenCalledTimes(2);
-    let request = callLocalSocketSigner.mock.calls[1]?.[1];
-    expect(request?.op).toBe("sendSolanaInstruction");
-    expect(request?.request?.keys?.[0]).toEqual({
-      pubkey: SIGNER.toBase58(),
-      isSigner: true,
-      isWritable: true,
-    });
-    expect(request?.request?.keys?.[3]?.pubkey).toBe(
-      findPda(Buffer.from("sat_cycle_registry_page"), encodeU64(cycleId), encodeU64(1)),
-    );
-    expect(request?.request?.keys?.[4]?.pubkey).toBe(
-      findPda(Buffer.from("sat_cycle_settlement_progress_v2"), encodeU64(cycleId)),
-    );
-
-    callLocalSocketSigner
-      .mockResolvedValueOnce({ solana: SIGNER.toBase58() })
-      .mockResolvedValueOnce({ txHash: "tx-distribute-cycle-page", signer: SIGNER.toBase58() });
-    inspectSatMinerCyclesByAddress.mockResolvedValueOnce([
+    const minerAuthority = new PublicKey("Wmesty4ZT9XfG2BK5NfaTLyVvHyeG1DW2gZnwZQntuk");
+    const minerCycleAccounts = [
+      findPda(Buffer.from("sat_miner_cycle_state"), minerAuthority.toBuffer(), encodeU64(cycleId)),
+    ];
+    inspectSatMinerCyclesByAddress.mockResolvedValue([
       {
-        address: "4wxmFJm7xBkqLk7K3qn2gGw8v6SnM8j4rJz7s2p9dJQY",
-        authority: "Wmesty4ZT9XfG2BK5NfaTLyVvHyeG1DW2gZnwZQntuk",
+        address: minerCycleAccounts[0],
+        authority: minerAuthority.toBase58(),
         cycleId,
         committedLamports: "250000000",
         claimableSatRaw: "0",
@@ -1152,7 +1301,7 @@ describe("SAT cycle transaction builders", () => {
       },
     ]);
 
-    await submitSatDistributeCyclePage({} as never, {
+    await submitSatScoreCyclePage({} as never, {
       cycleId,
       pageIndex: 1,
       chunkIndex: 0,
@@ -1160,8 +1309,30 @@ describe("SAT cycle transaction builders", () => {
     });
 
     expect(callLocalSocketSigner).toHaveBeenCalledTimes(4);
-    request = callLocalSocketSigner.mock.calls[3]?.[1];
-    expect(request?.op).toBe("sendSolanaInstruction");
+    let request = latestTypedSatRequest();
+    expect(request?.op).toBe("v2.execute");
+    expect(request?.request?.keys?.[0]).toEqual({
+      pubkey: SIGNER.toBase58(),
+      isSigner: true,
+      isWritable: true,
+    });
+    expect(request?.request?.keys?.[3]?.pubkey).toBe(
+      findPda(Buffer.from("sat_cycle_registry_page"), encodeU64(cycleId), encodeU64(1)),
+    );
+    expect(request?.request?.keys?.[4]?.pubkey).toBe(
+      findPda(Buffer.from("sat_cycle_settlement_progress_v2"), encodeU64(cycleId)),
+    );
+
+    await submitSatDistributeCyclePage({} as never, {
+      cycleId,
+      pageIndex: 1,
+      chunkIndex: 0,
+      minerCycleAccounts,
+    });
+
+    expect(callLocalSocketSigner).toHaveBeenCalledTimes(8);
+    request = latestTypedSatRequest();
+    expect(request?.op).toBe("v2.execute");
     expect(request?.request?.keys?.[0]).toEqual({
       pubkey: SIGNER.toBase58(),
       isSigner: true,
@@ -1222,15 +1393,12 @@ describe("SAT cycle transaction builders", () => {
         isWritable: true,
       },
       {
-        pubkey: "4wxmFJm7xBkqLk7K3qn2gGw8v6SnM8j4rJz7s2p9dJQY",
+        pubkey: minerCycleAccounts[0],
         isSigner: false,
         isWritable: true,
       },
       {
-        pubkey: findPda(
-          Buffer.from("sat_miner_capital_state"),
-          new PublicKey("Wmesty4ZT9XfG2BK5NfaTLyVvHyeG1DW2gZnwZQntuk").toBuffer(),
-        ),
+        pubkey: findPda(Buffer.from("sat_miner_capital_state"), minerAuthority.toBuffer()),
         isSigner: false,
         isWritable: true,
       },

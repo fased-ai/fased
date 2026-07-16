@@ -136,6 +136,9 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 		}
 		body.WalletID = req.WalletID
 		body.Policy.WalletID = req.WalletID
+		if !control && (len(body.Policy.Operations) != 0 || len(body.Policy.Programs) != 0 || len(body.Policy.Assets) != 0) {
+			return nil, errors.New("application socket may create only a locked wallet with an explicit deny-all policy")
+		}
 		wallet, policy, err := s.keys.CreateWithPolicy(body)
 		if err != nil {
 			return nil, err
@@ -232,28 +235,40 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 }
 
 func (s *signerServiceV2) execute(req signerExecuteRequestV2, cfg signerConfig) (signerOperationV2, error) {
-	intent, err := normalizeSignerIntentV2(req.Intent)
+	walletRecord, err := s.keys.PublicRecord(req.IntentWalletID())
 	if err != nil {
 		return signerOperationV2{}, err
 	}
-	operation, existing, err := s.store.reserveOperation(req, intent)
+	walletPublicKey, err := solana.PublicKeyFromBase58(walletRecord.PublicKey)
+	if err != nil {
+		return signerOperationV2{}, errors.New("signer-owned wallet record has an invalid public key")
+	}
+	intent, err := normalizeSignerIntentForWalletV2(req.Intent, &walletPublicKey)
 	if err != nil {
 		return signerOperationV2{}, err
 	}
-	if existing && operation.State != operationReserved {
+	operation, _, err := s.store.reserveOperation(req, intent)
+	if err != nil {
+		return signerOperationV2{}, err
+	}
+	operation, executionAttempt, claimed, err := s.store.claimReservedOperation(operation.RequestID)
+	if err != nil {
+		return signerOperationV2{}, err
+	}
+	if !claimed {
 		return operation, nil
 	}
 
 	privateKey, _, err := s.keys.privateKey(req.IntentWalletID())
 	if err != nil {
-		_, _ = s.store.markFailed(operation.RequestID, err)
+		_, _ = s.store.markFailedClaim(operation.RequestID, executionAttempt, err)
 		return signerOperationV2{}, err
 	}
 	defer zeroBytes(privateKey)
 	rpcURLs := cfg.solanaWriteRPCURLsForWallet(req.IntentWalletID())
 	tx, err := buildTypedTransactionV2(rpcURLs, privateKey, intent)
 	if err != nil {
-		failed, markErr := s.store.markFailed(operation.RequestID, err)
+		failed, markErr := s.store.markFailedClaim(operation.RequestID, executionAttempt, err)
 		if markErr != nil {
 			return signerOperationV2{}, fmt.Errorf("%v; persist signer failure: %w", err, markErr)
 		}
@@ -261,17 +276,17 @@ func (s *signerServiceV2) execute(req signerExecuteRequestV2, cfg signerConfig) 
 	}
 	raw, err := tx.MarshalBinary()
 	if err != nil {
-		failed, _ := s.store.markFailed(operation.RequestID, err)
+		failed, _ := s.store.markFailedClaim(operation.RequestID, executionAttempt, err)
 		return failed, err
 	}
 	if len(tx.Signatures) == 0 || tx.Signatures[0].IsZero() {
 		err := errors.New("typed signer transaction is missing its wallet signature")
-		failed, _ := s.store.markFailed(operation.RequestID, err)
+		failed, _ := s.store.markFailedClaim(operation.RequestID, executionAttempt, err)
 		return failed, err
 	}
 	digest := sha256.Sum256(raw)
 	signature := tx.Signatures[0].String()
-	operation, err = s.store.markBroadcast(operation.RequestID, signature, "sha256:"+hex.EncodeToString(digest[:]))
+	operation, err = s.store.markBroadcastClaim(operation.RequestID, executionAttempt, signature, "sha256:"+hex.EncodeToString(digest[:]))
 	if err != nil {
 		return signerOperationV2{}, err
 	}
@@ -417,6 +432,11 @@ func buildTypedInstructionsV2(
 			transferData,
 		)
 		return []solana.Instruction{createATA, transfer}, nil
+	case intentSolanaSATAction:
+		if len(intent.Instructions) == 0 || len(intent.Instructions) > 6 {
+			return nil, errors.New("typed SAT action has an invalid instruction count")
+		}
+		return intent.Instructions, nil
 	default:
 		return nil, errors.New("unsupported typed signer intent")
 	}

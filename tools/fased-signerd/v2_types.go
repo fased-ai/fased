@@ -20,6 +20,7 @@ const (
 
 	intentSolanaNativeTransfer     = "solana.nativeTransfer"
 	intentSolanaSPLTransferChecked = "solana.splTransferChecked"
+	intentSolanaSATAction          = "solana.satAction"
 
 	operationReserved  = "reserved"
 	operationBroadcast = "broadcast"
@@ -33,6 +34,7 @@ var signerV2Capabilities = signerCapabilitiesV2{
 	IntentTypes: []string{
 		intentSolanaNativeTransfer,
 		intentSolanaSPLTransferChecked,
+		intentSolanaSATAction,
 	},
 	OperationStates: []string{
 		operationReserved,
@@ -49,6 +51,7 @@ var signerV2Capabilities = signerCapabilitiesV2{
 		"ambiguousBroadcastReconciliation",
 		"signerOwnedKeys",
 		"typedSolanaTransactions",
+		"typedSATActions",
 	},
 }
 
@@ -66,12 +69,18 @@ type signerCapabilitiesV2 struct {
 }
 
 type signerIntentV2 struct {
-	Type         string `json:"type"`
-	Destination  string `json:"destination,omitempty"`
-	Lamports     string `json:"lamports,omitempty"`
-	TokenProgram string `json:"tokenProgram,omitempty"`
-	Mint         string `json:"mint,omitempty"`
-	Amount       string `json:"amount,omitempty"`
+	Type         string                   `json:"type"`
+	Destination  string                   `json:"destination,omitempty"`
+	Lamports     string                   `json:"lamports,omitempty"`
+	TokenProgram string                   `json:"tokenProgram,omitempty"`
+	Mint         string                   `json:"mint,omitempty"`
+	Amount       string                   `json:"amount,omitempty"`
+	Action       string                   `json:"action,omitempty"`
+	ProgramID    string                   `json:"programId,omitempty"`
+	DataBase64   string                   `json:"dataBase64,omitempty"`
+	Keys         []signerSATAccountV2     `json:"keys,omitempty"`
+	Context      *signerSATContextV2      `json:"context,omitempty"`
+	Instructions []signerSATInstructionV2 `json:"instructions,omitempty"`
 }
 
 type signerExecuteRequestV2 struct {
@@ -108,20 +117,20 @@ type signerPolicyPutRequestV2 struct {
 }
 
 type signerWalletCreateRequestV2 struct {
-	WalletID        string         `json:"walletId"`
+	WalletID        string         `json:"-"`
 	ExpectedVersion uint64         `json:"expectedPolicyVersion"`
 	Policy          signerPolicyV2 `json:"policy"`
 }
 
 type signerWalletImportRequestV2 struct {
-	WalletID        string         `json:"walletId"`
+	WalletID        string         `json:"-"`
 	ExpectedVersion uint64         `json:"expectedPolicyVersion"`
 	Policy          signerPolicyV2 `json:"policy"`
 	Path            string         `json:"path"`
 }
 
 type signerWalletLegacyImportRequestV2 struct {
-	WalletID        string         `json:"walletId"`
+	WalletID        string         `json:"-"`
 	ExpectedVersion uint64         `json:"expectedPolicyVersion"`
 	Policy          signerPolicyV2 `json:"policy"`
 	Path            string         `json:"path"`
@@ -143,23 +152,25 @@ type signerWalletRecordV2 struct {
 }
 
 type signerOperationV2 struct {
-	RequestID         string `json:"requestId"`
-	WalletID          string `json:"walletId"`
-	IntentType        string `json:"intentType"`
-	IntentDigest      string `json:"intentDigest"`
-	TransactionDigest string `json:"transactionDigest,omitempty"`
-	PolicyHash        string `json:"policyHash"`
-	Asset             string `json:"asset"`
-	Amount            string `json:"amount"`
-	State             string `json:"state"`
-	ReservationActive bool   `json:"reservationActive"`
-	UsageBucket       string `json:"usageBucket"`
-	ReservedAt        string `json:"reservedAt"`
-	BroadcastAt       string `json:"broadcastAt,omitempty"`
-	ConfirmedAt       string `json:"confirmedAt,omitempty"`
-	UpdatedAt         string `json:"updatedAt"`
-	Signature         string `json:"signature,omitempty"`
-	Error             string `json:"error,omitempty"`
+	RequestID           string `json:"requestId"`
+	WalletID            string `json:"walletId"`
+	IntentType          string `json:"intentType"`
+	IntentDigest        string `json:"intentDigest"`
+	TransactionDigest   string `json:"transactionDigest,omitempty"`
+	PolicyHash          string `json:"policyHash"`
+	Asset               string `json:"asset"`
+	Amount              string `json:"amount"`
+	State               string `json:"state"`
+	ReservationActive   bool   `json:"reservationActive"`
+	UsageBucket         string `json:"usageBucket"`
+	ReservedAt          string `json:"reservedAt"`
+	BroadcastAt         string `json:"broadcastAt,omitempty"`
+	ConfirmedAt         string `json:"confirmedAt,omitempty"`
+	UpdatedAt           string `json:"updatedAt"`
+	Signature           string `json:"signature,omitempty"`
+	Error               string `json:"error,omitempty"`
+	ExecutionAttempt    uint64 `json:"executionAttempt,omitempty"`
+	ExecutionLeaseUntil string `json:"executionLeaseUntil,omitempty"`
 }
 
 type normalizedIntentV2 struct {
@@ -169,6 +180,8 @@ type normalizedIntentV2 struct {
 	Amount           *big.Int
 	RequiredPrograms []string
 	Destination      string
+	Instructions     []solana.Instruction
+	PolicyOperation  string
 }
 
 func normalizePublicKeyV2(raw, field string) (string, error) {
@@ -195,6 +208,10 @@ func parsePositiveAmountV2(raw, field string) (*big.Int, error) {
 }
 
 func normalizeSignerIntentV2(input signerIntentV2) (normalizedIntentV2, error) {
+	return normalizeSignerIntentForWalletV2(input, nil)
+}
+
+func normalizeSignerIntentForWalletV2(input signerIntentV2, wallet *solana.PublicKey) (normalizedIntentV2, error) {
 	intent := signerIntentV2{Type: strings.TrimSpace(input.Type)}
 	var program string
 	var asset string
@@ -240,6 +257,11 @@ func normalizeSignerIntentV2(input signerIntentV2) (normalizedIntentV2, error) {
 		program = intent.TokenProgram
 		asset = "solana:spl:" + intent.Mint
 		destination = intent.Destination
+	case intentSolanaSATAction:
+		if wallet == nil || wallet.IsZero() {
+			return normalizedIntentV2{}, errors.New("typed SAT intent requires signer wallet context")
+		}
+		return normalizeSATIntentV2(input, *wallet)
 	default:
 		return normalizedIntentV2{}, fmt.Errorf("unsupported signer-v2 intent type %q", intent.Type)
 	}
@@ -256,6 +278,7 @@ func normalizeSignerIntentV2(input signerIntentV2) (normalizedIntentV2, error) {
 		Amount:           amount,
 		RequiredPrograms: requiredProgramsForIntentV2(intent.Type, program),
 		Destination:      destination,
+		PolicyOperation:  intent.Type,
 	}, nil
 }
 
@@ -323,7 +346,7 @@ func normalizeSignerPolicyV2(input signerPolicyV2) (signerPolicyV2, error) {
 	seenAssets := map[string]bool{}
 	for _, rawAsset := range input.Assets {
 		asset := signerPolicyAssetV2{Asset: strings.TrimSpace(rawAsset.Asset)}
-		if asset.Asset == "solana:native" {
+		if asset.Asset == "solana:native" || asset.Asset == "sat:action" || asset.Asset == "sat:capital:lamports" {
 			// canonical as-is
 		} else if strings.HasPrefix(asset.Asset, "solana:spl:") {
 			mint, err := normalizePublicKeyV2(strings.TrimPrefix(asset.Asset, "solana:spl:"), "policy asset mint")
@@ -331,6 +354,12 @@ func normalizeSignerPolicyV2(input signerPolicyV2) (signerPolicyV2, error) {
 				return signerPolicyV2{}, err
 			}
 			asset.Asset = "solana:spl:" + mint
+		} else if strings.HasPrefix(asset.Asset, "sat:mint:") {
+			mint, err := normalizePublicKeyV2(strings.TrimPrefix(asset.Asset, "sat:mint:"), "SAT policy asset mint")
+			if err != nil {
+				return signerPolicyV2{}, err
+			}
+			asset.Asset = "sat:mint:" + mint
 		} else {
 			return signerPolicyV2{}, fmt.Errorf("unsupported policy asset %q", asset.Asset)
 		}
@@ -369,8 +398,12 @@ func normalizeSignerPolicyV2(input signerPolicyV2) (signerPolicyV2, error) {
 }
 
 func policyAssetForIntentV2(policy signerPolicyV2, intent normalizedIntentV2) (signerPolicyAssetV2, error) {
-	if !containsStringV2(policy.Operations, intent.Intent.Type) {
-		return signerPolicyAssetV2{}, fmt.Errorf("policy denies operation %s", intent.Intent.Type)
+	operation := intent.PolicyOperation
+	if operation == "" {
+		operation = intent.Intent.Type
+	}
+	if !containsStringV2(policy.Operations, operation) {
+		return signerPolicyAssetV2{}, fmt.Errorf("policy denies operation %s", operation)
 	}
 	for _, program := range intent.RequiredPrograms {
 		if !containsStringV2(policy.Programs, program) {

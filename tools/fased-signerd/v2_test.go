@@ -113,6 +113,47 @@ func TestSignerV2PolicyIsDeterministicAndFailClosed(t *testing.T) {
 	}
 }
 
+func TestSignerV2ApplicationSocketCreatesOnlyExplicitlyLockedWallet(t *testing.T) {
+	store, keys := openTestSignerV2(t)
+	service := &signerServiceV2{store: store, keys: keys}
+	lockedBody, err := json.Marshal(signerWalletCreateRequestV2{
+		ExpectedVersion: 0,
+		Policy: signerPolicyV2{
+			Role: "mining", Operations: []string{}, Programs: []string{}, Assets: []signerPolicyAssetV2{},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.handle(request{Op: "v2.wallet.create", WalletID: "locked-mining", Request: lockedBody}, signerConfig{}, false); err != nil {
+		t.Fatalf("create locked wallet on application socket: %v", err)
+	}
+	policy, err := store.getPolicy("locked-mining")
+	if err != nil || policy.Hash == "" || len(policy.Operations) != 0 || len(policy.Programs) != 0 || len(policy.Assets) != 0 {
+		t.Fatalf("expected durable explicit deny-all policy, policy=%#v err=%v", policy, err)
+	}
+	destination := solana.NewWallet().PublicKey().String()
+	_, err = service.execute(signerExecuteRequestV2{
+		RequestID: "locked-wallet-execute", PolicyHash: policy.Hash,
+		Intent:         signerIntentV2{Type: intentSolanaNativeTransfer, Destination: destination, Lamports: "1"},
+		intentWalletID: "locked-mining",
+	}, signerConfig{})
+	if err == nil || !strings.Contains(err.Error(), "policy denies operation") {
+		t.Fatalf("locked wallet execute must fail closed before RPC, got %v", err)
+	}
+
+	configuredBody, err := json.Marshal(signerWalletCreateRequestV2{
+		ExpectedVersion: 0,
+		Policy:          testSignerPolicyV2("configured", destination, 10, 20),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.handle(request{Op: "v2.wallet.create", WalletID: "configured", Request: configuredBody}, signerConfig{}, false); err == nil || !strings.Contains(err.Error(), "only a locked wallet") {
+		t.Fatalf("application socket must reject configured wallet creation, got %v", err)
+	}
+}
+
 func TestSignerV2WalletCreationStoresEncryptedKeyAndPolicyAtomically(t *testing.T) {
 	store, keys := openTestSignerV2(t)
 	destination := solana.NewWallet().PublicKey().String()
@@ -274,6 +315,87 @@ func TestSignerV2ConcurrentReservationsCannotOverspend(t *testing.T) {
 	}
 	if successes != 1 || failures != 1 {
 		t.Fatalf("expected one reservation and one cap rejection, got success=%d failures=%d", successes, failures)
+	}
+}
+
+func TestSignerV2ExecutionLeaseIsAtomicFencedAndNeverReclaimsBroadcast(t *testing.T) {
+	store, keys := openTestSignerV2(t)
+	now := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
+	destination := solana.NewWallet().PublicKey().String()
+	_, policy := createTestSignerWalletV2(t, store, keys, "agent", destination, 100, 500)
+	store.now = func() time.Time { return now }
+	intent, err := normalizeSignerIntentV2(signerIntentV2{
+		Type: intentSolanaNativeTransfer, Destination: destination, Lamports: "25",
+	})
+	if err != nil {
+		t.Fatalf("normalize intent: %v", err)
+	}
+	req := signerExecuteRequestV2{
+		RequestID: "execution-lease-request", PolicyHash: policy.Hash, Intent: intent.Intent,
+		intentWalletID: "agent",
+	}
+	operation, _, err := store.reserveOperation(req, intent)
+	if err != nil {
+		t.Fatalf("reserve operation: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	claims := make(chan struct {
+		attempt uint64
+		claimed bool
+		err     error
+	}, 12)
+	for range 12 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, attempt, claimed, claimErr := store.claimReservedOperation(operation.RequestID)
+			claims <- struct {
+				attempt uint64
+				claimed bool
+				err     error
+			}{attempt, claimed, claimErr}
+		}()
+	}
+	wg.Wait()
+	close(claims)
+	claimCount := 0
+	firstAttempt := uint64(0)
+	for result := range claims {
+		if result.err != nil {
+			t.Fatalf("claim reserved operation: %v", result.err)
+		}
+		if result.claimed {
+			claimCount++
+			firstAttempt = result.attempt
+		}
+	}
+	if claimCount != 1 || firstAttempt != 1 {
+		t.Fatalf("expected exactly one fenced execution claim, got claims=%d attempt=%d", claimCount, firstAttempt)
+	}
+
+	now = now.Add(signerExecutionLeaseV2 + time.Second)
+	_, secondAttempt, claimed, err := store.claimReservedOperation(operation.RequestID)
+	if err != nil || !claimed || secondAttempt != 2 {
+		t.Fatalf("expected stale pre-broadcast lease recovery, claimed=%v attempt=%d err=%v", claimed, secondAttempt, err)
+	}
+	if _, err := store.markBroadcastClaim(operation.RequestID, firstAttempt, "stale-signature", "sha256:"+strings.Repeat("a", 64)); err == nil || !strings.Contains(err.Error(), "stale") {
+		t.Fatalf("expected stale worker fencing, got %v", err)
+	}
+	broadcast, err := store.markBroadcastClaim(operation.RequestID, secondAttempt, "winning-signature", "sha256:"+strings.Repeat("b", 64))
+	if err != nil || broadcast.State != operationBroadcast {
+		t.Fatalf("persist winning broadcast before network: %#v err=%v", broadcast, err)
+	}
+	if _, _, claimed, err := store.claimReservedOperation(operation.RequestID); err != nil || claimed {
+		t.Fatalf("broadcast operation must never be reclaimed, claimed=%v err=%v", claimed, err)
+	}
+	unknown, err := store.markUnknown(operation.RequestID, errors.New("ambiguous RPC result"))
+	if err != nil || unknown.State != operationUnknown {
+		t.Fatalf("persist ambiguous broadcast: %#v err=%v", unknown, err)
+	}
+	now = now.Add(24 * time.Hour)
+	if _, _, claimed, err := store.claimReservedOperation(operation.RequestID); err != nil || claimed {
+		t.Fatalf("ambiguous operation must never be reclaimed or rebroadcast, claimed=%v err=%v", claimed, err)
 	}
 }
 

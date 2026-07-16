@@ -64,6 +64,39 @@ export const LocalSocketSignerPolicyV2Schema = Type.Object(
   { additionalProperties: false },
 );
 
+const SignerSatAccountV2Schema = Type.Object(
+  {
+    pubkey: Type.String(),
+    isSigner: Type.Boolean(),
+    isWritable: Type.Boolean(),
+  },
+  { additionalProperties: false },
+);
+
+const SignerSatContextV2Schema = Type.Object(
+  {
+    targetAuthority: Type.Optional(Type.String()),
+    disputeAuthority: Type.Optional(Type.String()),
+    intervalStartCycleId: Type.Optional(Type.String()),
+    registryPageIndex: Type.Optional(Type.String()),
+    minerAuthorities: Type.Optional(Type.Array(Type.String())),
+    frontCycleIds: Type.Optional(Type.Array(Type.String())),
+    backCycleIds: Type.Optional(Type.Array(Type.String())),
+  },
+  { additionalProperties: false },
+);
+
+const SignerSatInstructionV2Schema = Type.Object(
+  {
+    action: Type.String({ minLength: 1 }),
+    programId: Type.String(),
+    dataBase64: Type.String(),
+    keys: Type.Array(SignerSatAccountV2Schema),
+    context: Type.Optional(SignerSatContextV2Schema),
+  },
+  { additionalProperties: false },
+);
+
 const SignerIntentV2Schema = Type.Union([
   Type.Object(
     {
@@ -80,6 +113,20 @@ const SignerIntentV2Schema = Type.Union([
       tokenProgram: Type.String(),
       mint: Type.String(),
       amount: Type.String(),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      type: Type.Literal("solana.satAction"),
+      action: Type.String({ minLength: 1 }),
+      programId: Type.Optional(Type.String()),
+      dataBase64: Type.Optional(Type.String()),
+      keys: Type.Optional(Type.Array(SignerSatAccountV2Schema)),
+      context: Type.Optional(SignerSatContextV2Schema),
+      instructions: Type.Optional(
+        Type.Array(SignerSatInstructionV2Schema, { minItems: 1, maxItems: 6 }),
+      ),
     },
     { additionalProperties: false },
   ),
@@ -473,6 +520,8 @@ export const LocalSocketSignerOperationV2Schema = Type.Object(
     updatedAt: Type.String(),
     signature: Type.Optional(Type.String()),
     error: Type.Optional(Type.String()),
+    executionAttempt: Type.Optional(Type.Integer({ minimum: 1 })),
+    executionLeaseUntil: Type.Optional(Type.String()),
   },
   { additionalProperties: false },
 );

@@ -71,6 +71,40 @@ describe("local socket signer protocol", () => {
     ).toBe("v2.execute");
   });
 
+  it("accepts typed SAT actions with request id and current policy hash", () => {
+    const request = {
+      op: "v2.execute" as const,
+      walletId: "mining",
+      request: {
+        requestId: "sat-request-123",
+        policyHash: `sha256:${"d".repeat(64)}`,
+        intent: {
+          type: "solana.satAction" as const,
+          action: "depositMinerCapital",
+          programId: "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75",
+          dataBase64: Buffer.from([37, 1, 0, 0, 0, 0, 0, 0, 0]).toString("base64"),
+          keys: [
+            {
+              pubkey: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
+              isSigner: true,
+              isWritable: true,
+            },
+          ],
+        },
+      },
+    };
+    expect(parseLocalSocketSignerRequest(request)).toEqual(request);
+    expect(() =>
+      parseLocalSocketSignerRequest({
+        ...request,
+        request: {
+          ...request.request,
+          intent: { ...request.request.intent, rawTransactionBase64: "forbidden" },
+        },
+      }),
+    ).toThrow("invalid signer request");
+  });
+
   it("validates durable signer-v2 operation states", () => {
     expect(
       validateLocalSocketSignerResult("v2.operation.get", {
@@ -90,6 +124,7 @@ describe("local socket signer protocol", () => {
         updatedAt: "2026-07-16T00:00:02.000Z",
         signature: "signature",
         error: "confirmation timeout",
+        executionAttempt: 2,
       }),
     ).toBe(true);
   });

@@ -22,6 +22,8 @@ var (
 	bucketSignerWalletsV2    = []byte("wallets")
 )
 
+const signerExecutionLeaseV2 = 5 * time.Minute
+
 type signerStoreV2 struct {
 	db  *bolt.DB
 	now func() time.Time
@@ -315,10 +317,66 @@ func (s *signerStoreV2) getOperation(requestID string) (signerOperationV2, error
 	return operation, err
 }
 
+// claimReservedOperation grants one fenced execution attempt. A duplicate caller
+// observes the live lease and returns the durable operation without building or
+// sending. A later caller may recover a stale pre-broadcast reservation; the
+// monotonically increasing attempt prevents the stale worker from persisting a
+// broadcast after ownership has moved.
+func (s *signerStoreV2) claimReservedOperation(requestID string) (signerOperationV2, uint64, bool, error) {
+	if s == nil || s.db == nil {
+		return signerOperationV2{}, 0, false, errors.New("signer state database is unavailable")
+	}
+	var operation signerOperationV2
+	claimed := false
+	err := s.db.Update(func(tx *bolt.Tx) error {
+		bucket := tx.Bucket(bucketSignerOperationsV2)
+		raw := bucket.Get([]byte(requestID))
+		if raw == nil {
+			return errors.New("signer operation not found")
+		}
+		if err := json.Unmarshal(raw, &operation); err != nil {
+			return err
+		}
+		if operation.State != operationReserved {
+			return nil
+		}
+		now := s.now().UTC()
+		if operation.ExecutionLeaseUntil != "" {
+			leaseUntil, err := time.Parse(time.RFC3339Nano, operation.ExecutionLeaseUntil)
+			if err != nil {
+				return errors.New("stored signer execution lease is invalid")
+			}
+			if leaseUntil.After(now) {
+				return nil
+			}
+		}
+		operation.ExecutionAttempt++
+		operation.ExecutionLeaseUntil = timestampV2(now.Add(signerExecutionLeaseV2))
+		operation.UpdatedAt = timestampV2(now)
+		encoded, err := json.Marshal(operation)
+		if err != nil {
+			return err
+		}
+		if err := bucket.Put([]byte(requestID), encoded); err != nil {
+			return err
+		}
+		claimed = true
+		return nil
+	})
+	return operation, operation.ExecutionAttempt, claimed, err
+}
+
 func (s *signerStoreV2) markBroadcast(requestID, signature, transactionDigest string) (signerOperationV2, error) {
+	return s.markBroadcastClaim(requestID, 0, signature, transactionDigest)
+}
+
+func (s *signerStoreV2) markBroadcastClaim(requestID string, attempt uint64, signature, transactionDigest string) (signerOperationV2, error) {
 	return s.updateOperation(requestID, func(operation *signerOperationV2, now string) error {
 		if operation.State != operationReserved {
 			return fmt.Errorf("cannot broadcast signer operation in state %s", operation.State)
+		}
+		if attempt != 0 && operation.ExecutionAttempt != attempt {
+			return errors.New("stale signer execution attempt cannot broadcast")
 		}
 		if strings.TrimSpace(signature) == "" {
 			return errors.New("transaction signature is required before broadcast")
@@ -331,6 +389,7 @@ func (s *signerStoreV2) markBroadcast(requestID, signature, transactionDigest st
 		operation.TransactionDigest = strings.TrimSpace(transactionDigest)
 		operation.BroadcastAt = now
 		operation.UpdatedAt = now
+		operation.ExecutionLeaseUntil = ""
 		return nil
 	})
 }
@@ -361,6 +420,10 @@ func (s *signerStoreV2) markUnknown(requestID string, cause error) (signerOperat
 }
 
 func (s *signerStoreV2) markFailed(requestID string, cause error) (signerOperationV2, error) {
+	return s.markFailedClaim(requestID, 0, cause)
+}
+
+func (s *signerStoreV2) markFailedClaim(requestID string, attempt uint64, cause error) (signerOperationV2, error) {
 	if s == nil || s.db == nil {
 		return signerOperationV2{}, errors.New("signer state database is unavailable")
 	}
@@ -377,6 +440,9 @@ func (s *signerStoreV2) markFailed(requestID string, cause error) (signerOperati
 		if updated.State != operationReserved && updated.State != operationBroadcast && updated.State != operationUnknown {
 			return fmt.Errorf("cannot fail signer operation in state %s", updated.State)
 		}
+		if attempt != 0 && updated.State == operationReserved && updated.ExecutionAttempt != attempt {
+			return errors.New("stale signer execution attempt cannot fail the active reservation")
+		}
 		// Only a failure proven to occur before broadcast releases its reservation.
 		if updated.State == operationReserved && updated.ReservationActive {
 			if err := releaseUsageReservationV2(tx, updated); err != nil {
@@ -388,6 +454,7 @@ func (s *signerStoreV2) markFailed(requestID string, cause error) (signerOperati
 		updated.State = operationFailed
 		updated.Error = safeOperationErrorV2(cause)
 		updated.UpdatedAt = now
+		updated.ExecutionLeaseUntil = ""
 		encoded, err := json.Marshal(updated)
 		if err != nil {
 			return err
@@ -492,9 +559,6 @@ func (s *signerStoreV2) putWalletAndPolicy(record signerWalletRecordV2, input si
 	normalized, err := normalizeSignerPolicyV2(input)
 	if err != nil {
 		return signerPolicyV2{}, err
-	}
-	if len(normalized.Operations) == 0 || len(normalized.Programs) == 0 || len(normalized.Assets) == 0 {
-		return signerPolicyV2{}, errors.New("new signer wallet requires a non-empty fail-closed policy")
 	}
 	record.WalletID = walletID
 	encodedRecord, err := json.Marshal(record)
