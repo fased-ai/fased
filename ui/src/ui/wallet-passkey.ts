@@ -3,6 +3,7 @@ import {
   beginWalletPasskeyRegistration,
   finishWalletPasskeyAssertion,
   finishWalletPasskeyRegistration,
+  type WalletSignerReviewAuthorizationBegin,
 } from "./wallet-api.ts";
 import {
   probeWalletCustodyCompanionHealth,
@@ -430,5 +431,119 @@ export async function authorizeWalletActionWithPasskey(params: {
     expiresAt: finish.expiresAt,
     credentialId: toBase64Url(credential.rawId),
     storageKeyBase64,
+  };
+}
+
+function signerAssertionOptions(
+  input: WalletSignerReviewAuthorizationBegin["options"],
+): CredentialRequestOptions {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error("Signer returned invalid WebAuthn assertion options.");
+  }
+  const outer = input as Record<string, unknown>;
+  const rawPublicKey = outer.publicKey;
+  if (!rawPublicKey || typeof rawPublicKey !== "object" || Array.isArray(rawPublicKey)) {
+    throw new Error("Signer WebAuthn assertion options omit publicKey.");
+  }
+  const value = rawPublicKey as Record<string, unknown>;
+  if (typeof value.challenge !== "string" || !value.challenge.trim()) {
+    throw new Error("Signer WebAuthn assertion challenge is invalid.");
+  }
+  const allowCredentials = Array.isArray(value.allowCredentials)
+    ? value.allowCredentials.map((raw): PublicKeyCredentialDescriptor => {
+        if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+          throw new Error("Signer WebAuthn credential descriptor is invalid.");
+        }
+        const descriptor = raw as Record<string, unknown>;
+        if (descriptor.type !== "public-key" || typeof descriptor.id !== "string") {
+          throw new Error("Signer WebAuthn credential descriptor is invalid.");
+        }
+        const transports = Array.isArray(descriptor.transports)
+          ? descriptor.transports.filter(
+              (entry): entry is AuthenticatorTransport =>
+                entry === "ble" ||
+                entry === "hybrid" ||
+                entry === "internal" ||
+                entry === "nfc" ||
+                entry === "smart-card" ||
+                entry === "usb",
+            )
+          : undefined;
+        return {
+          type: "public-key",
+          id: fromBase64Url(descriptor.id),
+          ...(transports?.length ? { transports } : {}),
+        };
+      })
+    : [];
+  const userVerification =
+    value.userVerification === "discouraged" ||
+    value.userVerification === "preferred" ||
+    value.userVerification === "required"
+      ? value.userVerification
+      : "required";
+  const publicKey: PublicKeyCredentialRequestOptions = {
+    challenge: fromBase64Url(value.challenge),
+    userVerification,
+    ...(typeof value.rpId === "string" && value.rpId.trim() ? { rpId: value.rpId.trim() } : {}),
+    ...(typeof value.timeout === "number" && Number.isFinite(value.timeout)
+      ? { timeout: value.timeout }
+      : {}),
+    ...(allowCredentials.length ? { allowCredentials } : {}),
+  };
+  const mediation =
+    outer.mediation === "conditional" ||
+    outer.mediation === "optional" ||
+    outer.mediation === "required" ||
+    outer.mediation === "silent"
+      ? outer.mediation
+      : undefined;
+  return { publicKey, ...(mediation ? { mediation } : {}) };
+}
+
+export async function authorizeSignerReviewWithPasskey(
+  begin: WalletSignerReviewAuthorizationBegin,
+): Promise<{ challengeId: string; credential: Record<string, unknown> }> {
+  ensureWebAuthnAvailable();
+  if (!begin.challengeId?.trim()) {
+    throw new Error("Signer WebAuthn challenge identifier is missing.");
+  }
+  if (
+    Date.parse(begin.expiresAt) <= Date.now() ||
+    Date.parse(begin.binding.expiresAt) <= Date.now()
+  ) {
+    throw new Error("Signer WebAuthn review expired; prepare and review the transaction again.");
+  }
+  let credential: PublicKeyCredential | null;
+  try {
+    credential = (await navigator.credentials.get(
+      signerAssertionOptions(begin.options),
+    )) as PublicKeyCredential | null;
+  } catch (error) {
+    throw explainPasskeyFailure(error, "approval");
+  }
+  if (!credential) {
+    throw new Error("Signer WebAuthn verification was canceled.");
+  }
+  const response = credential.response as AuthenticatorAssertionResponse;
+  const rawId = toBase64Url(credential.rawId);
+  const userHandle = response.userHandle ? toBase64Url(response.userHandle) : undefined;
+  return {
+    challengeId: begin.challengeId,
+    credential: {
+      id: credential.id || rawId,
+      rawId,
+      type: "public-key",
+      response: {
+        clientDataJSON: toBase64Url(response.clientDataJSON),
+        authenticatorData: toBase64Url(response.authenticatorData),
+        signature: toBase64Url(response.signature),
+        ...(userHandle ? { userHandle } : {}),
+      },
+      clientExtensionResults: credential.getClientExtensionResults(),
+      ...(credential.authenticatorAttachment
+        ? { authenticatorAttachment: credential.authenticatorAttachment }
+        : {}),
+    },
   };
 }

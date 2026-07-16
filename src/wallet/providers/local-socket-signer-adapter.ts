@@ -19,6 +19,11 @@ import {
   type WalletProviderJupiterExecutionV2,
   type WalletProviderJupiterIntentV2,
   type WalletProviderJupiterReviewV2,
+  type WalletProviderSignerReviewAuthorizationBeginV2,
+  type WalletProviderSignerReviewAuthorizationFinishV2,
+  type WalletProviderSignerReviewAuthorizationV2,
+  type WalletProviderSignerTransactionEnvelopeV2,
+  type WalletProviderTypedTransferIntentV2,
   type WalletProviderPrepareTxRequest,
   type WalletProviderPrepareTxResult,
   type WalletProviderSendTxRequest,
@@ -62,7 +67,14 @@ const REQUIRED_PROTOCOL_V2_FEATURES = [
   "atomicIdempotency",
   "ambiguousBroadcastReconciliation",
   "signerOwnedKeys",
+  "signerOwnedRPC",
   "typedSolanaTransactions",
+  "signerOwnedWebAuthn",
+  "singleUseReviewedAuthorization",
+  "typedJupiterSemantics",
+  "signerOwnedReviewPrepareExecute",
+  "exactPreparedTransactions",
+  "verifiedAddressLookupTables",
 ] as const;
 
 const SIGNER_SOCKET_TIMEOUT_MS: Record<LocalSocketSignerRequest["op"], number> = {
@@ -78,6 +90,8 @@ const SIGNER_SOCKET_TIMEOUT_MS: Record<LocalSocketSignerRequest["op"], number> =
   "v2.execute": 120_000,
   "v2.review.prepare": 15_000,
   "v2.review.execute": 120_000,
+  "v2.review.authorization.begin": 15_000,
+  "v2.review.authorization.finish": 30_000,
   "v2.operation.get": 5_000,
   "v2.operation.reconcile": 20_000,
   getAddresses: 10_000,
@@ -430,6 +444,7 @@ export class LocalSocketSignerAdapter implements WalletProviderAdapter {
     requestId: string;
     mode: "autonomous" | "reviewed";
     intent: WalletProviderJupiterIntentV2;
+    transaction: WalletProviderSignerTransactionEnvelopeV2;
   }): Promise<WalletProviderJupiterReviewV2> {
     assertSecureLocalSignerSocket(this.socketPath);
     await this.requireProtocolV2(request.intent.type);
@@ -445,6 +460,7 @@ export class LocalSocketSignerAdapter implements WalletProviderAdapter {
         policyHash: policy.hash,
         mode: request.mode,
         intent: request.intent,
+        transaction: request.transaction,
       },
     });
   }
@@ -452,30 +468,123 @@ export class LocalSocketSignerAdapter implements WalletProviderAdapter {
   async executeJupiterReview(request: {
     walletId: string;
     requestId: string;
-    policyHash: string;
-    mode: "autonomous" | "reviewed";
-    intent: WalletProviderJupiterIntentV2;
-    transaction: {
-      serializedTxBase64: string;
-      programs: string[];
-      writableAccounts: string[];
-      submission: "rpc" | "returnSigned";
-    };
-    authorization?: { type: string; proof: unknown };
+    authorization?: WalletProviderSignerReviewAuthorizationV2;
+  }): Promise<WalletProviderJupiterExecutionV2> {
+    return await this.executeSignerReview(request);
+  }
+
+  async prepareTypedTransferReview(request: {
+    walletId: string;
+    requestId: string;
+    destination: string;
+    amount: string;
+    mint?: string;
+  }): Promise<WalletProviderJupiterReviewV2> {
+    assertSecureLocalSignerSocket(this.socketPath);
+    const mint = request.mint?.trim();
+    let intent: WalletProviderTypedTransferIntentV2;
+    if (mint) {
+      const rpcUrl = this.options?.rpcUrl?.trim();
+      if (!rpcUrl) {
+        throw new WalletProviderError({
+          code: "wallet_provider_invalid_config",
+          message: "local-socket-signer SPL review requires a Solana RPC URL",
+        });
+      }
+      const mintInfo = await fetchSolanaMintInfoViaRpc({ rpcUrl, mint });
+      if (!mintInfo) {
+        throw new WalletProviderError({
+          code: "wallet_provider_unavailable",
+          message: "failed to resolve SPL mint metadata for signer review",
+        });
+      }
+      intent = {
+        type: "solana.splTransferChecked",
+        tokenProgram: mintInfo.tokenProgramId,
+        mint,
+        destination: request.destination,
+        amount: request.amount,
+      };
+    } else {
+      intent = {
+        type: "solana.nativeTransfer",
+        destination: request.destination,
+        lamports: request.amount,
+      };
+    }
+    await this.requireProtocolV2(intent.type);
+    const policy = await callSocket<LocalSocketSignerPolicyV2>(this.socketPath, {
+      op: "v2.policy.get",
+      walletId: request.walletId,
+    });
+    return await callSocket<WalletProviderJupiterReviewV2>(this.socketPath, {
+      op: "v2.review.prepare",
+      walletId: request.walletId,
+      request: {
+        requestId: request.requestId,
+        policyHash: policy.hash,
+        mode: "reviewed",
+        intent,
+      },
+    });
+  }
+
+  async executeSignerReview(request: {
+    walletId: string;
+    requestId: string;
+    authorization?: WalletProviderSignerReviewAuthorizationV2;
   }): Promise<WalletProviderJupiterExecutionV2> {
     assertSecureLocalSignerSocket(this.socketPath);
-    await this.requireProtocolV2(request.intent.type);
+    await this.requireProtocolV2();
     return await callSocket<WalletProviderJupiterExecutionV2>(this.socketPath, {
       op: "v2.review.execute",
       walletId: request.walletId,
       request: {
         requestId: request.requestId,
-        policyHash: request.policyHash,
-        mode: request.mode,
-        intent: request.intent,
-        transaction: request.transaction,
         ...(request.authorization ? { authorization: request.authorization } : {}),
       },
+    });
+  }
+
+  async beginJupiterReviewAuthorization(request: {
+    walletId: string;
+    requestId: string;
+  }): Promise<WalletProviderSignerReviewAuthorizationBeginV2> {
+    return await this.beginSignerReviewAuthorization(request);
+  }
+
+  async beginSignerReviewAuthorization(request: {
+    walletId: string;
+    requestId: string;
+  }): Promise<WalletProviderSignerReviewAuthorizationBeginV2> {
+    assertSecureLocalSignerSocket(this.socketPath);
+    await this.requireProtocolV2();
+    return await callSocket<WalletProviderSignerReviewAuthorizationBeginV2>(this.socketPath, {
+      op: "v2.review.authorization.begin",
+      walletId: request.walletId,
+      request: { requestId: request.requestId },
+    });
+  }
+
+  async finishJupiterReviewAuthorization(request: {
+    walletId: string;
+    challengeId: string;
+    credential: unknown;
+  }): Promise<WalletProviderSignerReviewAuthorizationFinishV2> {
+    return await this.finishSignerReviewAuthorization(request);
+  }
+
+  async finishSignerReviewAuthorization(request: {
+    walletId: string;
+    challengeId: string;
+    credential: unknown;
+  }): Promise<WalletProviderSignerReviewAuthorizationFinishV2> {
+    assertSecureLocalSignerSocket(this.socketPath);
+    await this.requireProtocolV2();
+    return await callSocket<WalletProviderSignerReviewAuthorizationFinishV2>(this.socketPath, {
+      op: "v2.review.authorization.finish",
+      walletId: request.walletId,
+      request: { challengeId: request.challengeId, credential: request.credential },
     });
   }
 

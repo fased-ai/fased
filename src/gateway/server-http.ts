@@ -5351,6 +5351,16 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
             });
             return;
           }
+          if (body.value != null && (typeof body.value !== "object" || Array.isArray(body.value))) {
+            sendLoginResponse(400, {
+              ok: false,
+              error: {
+                code: "invalid_request",
+                message: "signer-reviewed approval body must be a JSON object",
+              },
+            });
+            return;
+          }
           const payload = (body.value ?? {}) as Record<string, unknown>;
           const providerId = parseWalletProviderId(payload.providerId);
           if (!providerId) {
@@ -9951,10 +9961,184 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
         }
         const cfg = loadConfig();
         const walletCfg = resolveWalletRuntimeConfig(cfg, process.env);
+        const pendingRequest = getWalletSendApprovalRequest({ requestId, env: process.env });
+        const signerReviewId = pendingRequest?.payload.signerReviewId?.trim() || "";
+        const signerWalletId = pendingRequest?.payload.walletId?.trim() || "";
+        const isSignerOwnedReview =
+          pendingRequest?.payload.providerId === "local-socket-signer" &&
+          Boolean(signerReviewId) &&
+          Boolean(signerWalletId);
+        if (isSignerOwnedReview) {
+          if (pendingRequest.status !== "pending") {
+            sendLoginResponse(409, {
+              ok: false,
+              error: {
+                code: "invalid_state",
+                message: `signer-reviewed approval is ${pendingRequest.status}`,
+              },
+            });
+            return;
+          }
+          const body = await readJsonBody(req, 256 * 1024);
+          if (!body.ok) {
+            sendLoginResponse(400, {
+              ok: false,
+              error: { code: "invalid_request", message: body.error },
+            });
+            return;
+          }
+          const payload = (body.value ?? {}) as Record<string, unknown>;
+          const payloadKeys = Object.keys(payload);
+          const provider = createWalletProviderAdapter({
+            cfg,
+            wallet: walletCfg,
+            env: process.env,
+            providerIdOverride: "local-socket-signer",
+            walletId: signerWalletId,
+          });
+          const bindingMatchesApproval = (binding: {
+            requestId: string;
+            walletId: string;
+            policyHash: string;
+            intentDigest: string;
+            transactionDigest: string;
+          }) =>
+            binding.requestId === signerReviewId &&
+            binding.walletId === signerWalletId &&
+            binding.policyHash === pendingRequest.payload.signerPolicyHash?.trim() &&
+            binding.intentDigest === pendingRequest.payload.signerIntentDigest?.trim() &&
+            binding.transactionDigest === pendingRequest.payload.signerTransactionDigest?.trim();
+          if (payloadKeys.length === 0) {
+            if (!provider.beginSignerReviewAuthorization) {
+              sendLoginResponse(400, {
+                ok: false,
+                error: {
+                  code: "wallet_signer_webauthn_unavailable",
+                  message: "local-socket-signer does not expose signer-owned WebAuthn begin",
+                },
+              });
+              return;
+            }
+            try {
+              const authorization = await provider.beginSignerReviewAuthorization({
+                walletId: signerWalletId,
+                requestId: signerReviewId,
+              });
+              if (!bindingMatchesApproval(authorization.binding)) {
+                throw new Error("signer WebAuthn binding does not match the persisted approval");
+              }
+              sendLoginResponse(200, {
+                ok: true,
+                mode: "signer-webauthn",
+                request: sanitizeWalletSendApprovalRequest(pendingRequest),
+                signerAuthorization: authorization,
+              });
+            } catch (error) {
+              const message = walletDiagnosticErrorMessage(error);
+              sendLoginResponse(400, {
+                ok: false,
+                error: {
+                  code: message.includes("no signer-owned WebAuthn credential is enrolled")
+                    ? "wallet_signer_webauthn_not_enrolled"
+                    : "wallet_signer_webauthn_failed",
+                  message,
+                },
+              });
+            }
+            return;
+          }
+          if (
+            payloadKeys.length !== 1 ||
+            payloadKeys[0] !== "signerAuthorization" ||
+            !payload.signerAuthorization ||
+            typeof payload.signerAuthorization !== "object" ||
+            Array.isArray(payload.signerAuthorization)
+          ) {
+            sendLoginResponse(400, {
+              ok: false,
+              error: {
+                code: "invalid_request",
+                message: "signer-reviewed approval accepts only signerAuthorization",
+              },
+            });
+            return;
+          }
+          const signerAuthorization = payload.signerAuthorization as Record<string, unknown>;
+          if (
+            Object.keys(signerAuthorization).some(
+              (key) => key !== "challengeId" && key !== "credential",
+            ) ||
+            typeof signerAuthorization.challengeId !== "string" ||
+            !signerAuthorization.challengeId.trim() ||
+            !signerAuthorization.credential ||
+            typeof signerAuthorization.credential !== "object" ||
+            Array.isArray(signerAuthorization.credential)
+          ) {
+            sendLoginResponse(400, {
+              ok: false,
+              error: {
+                code: "invalid_request",
+                message: "challengeId and WebAuthn credential are required",
+              },
+            });
+            return;
+          }
+          if (!provider.finishSignerReviewAuthorization) {
+            sendLoginResponse(400, {
+              ok: false,
+              error: {
+                code: "wallet_signer_webauthn_unavailable",
+                message: "local-socket-signer does not expose signer-owned WebAuthn finish",
+              },
+            });
+            return;
+          }
+          try {
+            const finished = await provider.finishSignerReviewAuthorization({
+              walletId: signerWalletId,
+              challengeId: signerAuthorization.challengeId.trim(),
+              credential: signerAuthorization.credential,
+            });
+            if (!bindingMatchesApproval(finished.binding)) {
+              throw new Error("completed signer WebAuthn binding does not match the approval");
+            }
+            const approved = await approveWalletSendRequest({
+              requestId,
+              actor: "control-ui",
+              config: walletCfg,
+              reviewAuthorization: finished.authorization,
+              env: process.env,
+            });
+            if (!approved.ok) {
+              sendLoginResponse(approved.code === "wallet_provider_ambiguous" ? 409 : 400, {
+                ok: false,
+                error: { code: approved.code, message: approved.message },
+                request:
+                  "request" in approved && approved.request
+                    ? sanitizeWalletSendApprovalRequest(approved.request)
+                    : undefined,
+              });
+              return;
+            }
+            sendLoginResponse(200, {
+              ok: true,
+              request: sanitizeWalletSendApprovalRequest(approved.request),
+              tx: approved.tx,
+            });
+          } catch (error) {
+            sendLoginResponse(400, {
+              ok: false,
+              error: {
+                code: "wallet_signer_webauthn_failed",
+                message: walletDiagnosticErrorMessage(error),
+              },
+            });
+          }
+          return;
+        }
         if (!ensureWalletApprovalAuthorized({ operation: "wallet.approve", requestId, cfg })) {
           return;
         }
-        const pendingRequest = getWalletSendApprovalRequest({ requestId, env: process.env });
         if (pendingRequest?.payload.providerId === "wallet-standard") {
           if (pendingRequest.status !== "pending") {
             sendLoginResponse(400, {

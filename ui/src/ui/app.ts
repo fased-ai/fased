@@ -297,6 +297,7 @@ import {
   deleteWalletRpcSettingsFor,
   enrollWalletCustodyDevice,
   executeWalletStandardSend,
+  finishWalletSignerReviewApproval,
   initializeWalletCustody,
   lockWalletCustody,
   revokeWalletCustodyDevice,
@@ -345,6 +346,7 @@ import {
   saveStoredWalletCustodyDeviceShare,
 } from "./wallet-custody-storage.ts";
 import {
+  authorizeSignerReviewWithPasskey,
   authorizeWalletActionWithPasskey,
   detectWalletCustodyClientCompatibility,
   enrollWalletPasskey,
@@ -6247,12 +6249,40 @@ export class FasedAgentApp extends LitElement {
     this.walletApprovalsBusyId = requestId;
     this.walletApprovalsError = null;
     try {
-      const approvalToken = await this.resolveWalletApprovalToken({
-        operation: "wallet.approve",
-        requestId,
-      });
+      const usesSignerWebAuthn =
+        request?.payload.providerId === "local-socket-signer" &&
+        Boolean(request.payload.signerReviewId?.trim());
+      const approvalToken = usesSignerWebAuthn
+        ? null
+        : await this.resolveWalletApprovalToken({
+            operation: "wallet.approve",
+            requestId,
+          });
       let response = await approveWalletSend(requestId, approvalToken ?? undefined);
-      if (response.mode === "browser") {
+      if (response.mode === "signer-webauthn") {
+        const authorization = response.signerAuthorization;
+        if (!request || !authorization) {
+          throw new Error("Gateway returned an incomplete signer WebAuthn review");
+        }
+        const expectedReviewId = request.payload.signerReviewId?.trim();
+        if (
+          !expectedReviewId ||
+          authorization.binding.requestId !== expectedReviewId ||
+          authorization.binding.walletId !== request.payload.walletId?.trim() ||
+          authorization.binding.policyHash !== request.payload.signerPolicyHash?.trim() ||
+          authorization.binding.intentDigest !== request.payload.signerIntentDigest?.trim() ||
+          authorization.binding.transactionDigest !==
+            request.payload.signerTransactionDigest?.trim()
+        ) {
+          throw new Error("Signer WebAuthn binding does not match the reviewed approval");
+        }
+        const assertion = await authorizeSignerReviewWithPasskey(authorization);
+        response = await finishWalletSignerReviewApproval({
+          requestId,
+          challengeId: assertion.challengeId,
+          credential: assertion.credential,
+        });
+      } else if (response.mode === "browser") {
         const review = response.browserReview;
         if (!review) {
           throw new Error("Gateway returned an incomplete browser signing review");

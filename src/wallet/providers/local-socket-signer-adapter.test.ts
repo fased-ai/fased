@@ -165,7 +165,14 @@ describe("LocalSocketSignerAdapter protocol-v2 sends", () => {
         "atomicIdempotency",
         "ambiguousBroadcastReconciliation",
         "signerOwnedKeys",
+        "signerOwnedRPC",
         "typedSolanaTransactions",
+        "signerOwnedWebAuthn",
+        "singleUseReviewedAuthorization",
+        "typedJupiterSemantics",
+        "signerOwnedReviewPrepareExecute",
+        "exactPreparedTransactions",
+        "verifiedAddressLookupTables",
       ],
     },
     policies: [],
@@ -391,6 +398,215 @@ describe("LocalSocketSignerAdapter protocol-v2 sends", () => {
         }),
       ).rejects.toMatchObject({ code: "wallet_provider_unavailable" });
       expect(signer.requests).toEqual([{ op: "v2.capabilities" }]);
+    } finally {
+      await signer.close();
+    }
+  });
+
+  it("relays only request identity and opaque WebAuthn ceremony data", async () => {
+    const intent = {
+      type: "solana.jupiter.swap" as const,
+      jupiter: {
+        owner: wallet.publicKey,
+        inputMint: "So11111111111111111111111111111111111111112",
+        outputMint: "Vote111111111111111111111111111111111111111",
+        inputAmount: "100",
+        maxInputAmount: "100",
+        minimumOutputAmount: "90",
+        maxFeeLamports: "5000",
+        sourceTokenAccount: "Stake11111111111111111111111111111111111111",
+        destinationTokenAccount: "Config1111111111111111111111111111111111111",
+        programs: ["JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"],
+      },
+    };
+    const binding = {
+      requestId: "review-123",
+      walletId: "agent-wallet",
+      role: "agent" as const,
+      intentType: intent.type,
+      intentDigest: `sha256:${"b".repeat(64)}`,
+      semanticIntent: intent,
+      transactionDigest: `sha256:${"c".repeat(64)}`,
+      policyHash,
+      nonce: "d".repeat(64),
+      issuedAt: "2026-07-16T12:00:00.000Z",
+      expiresAt: "2026-07-16T12:02:00.000Z",
+    };
+    const signer = await createSignerServer({
+      prefix: "fased-signer-v2-review-auth-",
+      handle: (request) => {
+        if (request.op === "v2.capabilities") {
+          return capabilities;
+        }
+        if (request.op === "v2.review.authorization.begin") {
+          return {
+            challengeId: "challenge-123",
+            expiresAt: binding.expiresAt,
+            binding,
+            options: { publicKey: { challenge: "opaque-challenge" } },
+          };
+        }
+        if (request.op === "v2.review.authorization.finish") {
+          return {
+            authorization: { type: "webauthn", proof: { proofId: "proof-123" } },
+            binding,
+            credentialId: "credential-123",
+            expiresAt: binding.expiresAt,
+          };
+        }
+        throw new Error(`unexpected op=${String(request.op)}`);
+      },
+    });
+    try {
+      const adapter = new LocalSocketSignerAdapter(signer.socketPath, {
+        scopedWalletId: "agent-wallet",
+      });
+      const begin = await adapter.beginJupiterReviewAuthorization({
+        walletId: "agent-wallet",
+        requestId: "review-123",
+      });
+      expect(begin.challengeId).toBe("challenge-123");
+      const finish = await adapter.finishJupiterReviewAuthorization({
+        walletId: "agent-wallet",
+        challengeId: begin.challengeId,
+        credential: { id: "credential-123", response: { signature: "opaque" } },
+      });
+      expect(finish.authorization).toEqual({
+        type: "webauthn",
+        proof: { proofId: "proof-123" },
+      });
+      expect(signer.requests).toEqual([
+        { op: "v2.capabilities" },
+        {
+          op: "v2.review.authorization.begin",
+          walletId: "agent-wallet",
+          request: { requestId: "review-123" },
+        },
+        { op: "v2.capabilities" },
+        {
+          op: "v2.review.authorization.finish",
+          walletId: "agent-wallet",
+          request: {
+            challengeId: "challenge-123",
+            credential: { id: "credential-123", response: { signature: "opaque" } },
+          },
+        },
+      ]);
+    } finally {
+      await signer.close();
+    }
+  });
+
+  it("asks the signer to build native reviewed transfers and executes only the stored review", async () => {
+    const requestId = "review-native-123";
+    const destination = "Destination11111111111111111111111111111";
+    const review = {
+      requestId,
+      walletId: "agent-wallet",
+      intentType: "solana.nativeTransfer" as const,
+      intentDigest: `sha256:${"b".repeat(64)}`,
+      policyHash,
+      mode: "reviewed" as const,
+      nonce: "d".repeat(64),
+      semanticIntent: {
+        type: "solana.nativeTransfer" as const,
+        destination,
+        lamports: "900",
+      },
+      transaction: {
+        serializedTxBase64: "AA==",
+        programs: ["11111111111111111111111111111111"],
+        writableAccounts: [wallet.publicKey, destination],
+        submission: "rpc" as const,
+      },
+      issuedAt: "2026-07-16T12:00:00.000Z",
+      state: "prepared" as const,
+      preparedAt: "2026-07-16T12:00:00.000Z",
+      expiresAt: "2026-07-16T12:02:00.000Z",
+      updatedAt: "2026-07-16T12:00:00.000Z",
+      transactionDigest: `sha256:${"c".repeat(64)}`,
+    };
+    const signer = await createSignerServer({
+      prefix: "fased-signer-v2-native-review-",
+      handle: (request) => {
+        if (request.op === "v2.capabilities") {
+          return capabilities;
+        }
+        if (request.op === "v2.policy.get") {
+          return policy;
+        }
+        if (request.op === "v2.review.prepare") {
+          return review;
+        }
+        if (request.op === "v2.review.execute") {
+          return {
+            review: { ...review, state: "signed", signature: "review-signature" },
+            signer: wallet.publicKey,
+            operation: {
+              requestId,
+              walletId: "agent-wallet",
+              intentType: "solana.nativeTransfer",
+              intentDigest: review.intentDigest,
+              transactionDigest: review.transactionDigest,
+              policyHash,
+              asset: "solana:native",
+              amount: "900",
+              state: "confirmed",
+              reservationActive: false,
+              usageBucket: "2026-07-16:solana:native",
+              reservedAt: "2026-07-16T12:00:00.000Z",
+              confirmedAt: "2026-07-16T12:00:02.000Z",
+              updatedAt: "2026-07-16T12:00:02.000Z",
+              signature: "review-signature",
+            },
+          };
+        }
+        throw new Error(`unexpected op=${String(request.op)}`);
+      },
+    });
+    try {
+      const adapter = new LocalSocketSignerAdapter(signer.socketPath, {
+        scopedWalletId: "agent-wallet",
+      });
+      await adapter.prepareTypedTransferReview({
+        walletId: "agent-wallet",
+        requestId,
+        destination,
+        amount: "900",
+      });
+      await adapter.executeSignerReview({
+        walletId: "agent-wallet",
+        requestId,
+        authorization: { type: "webauthn", proof: { proofId: "proof-123" } },
+      });
+
+      expect(signer.requests).toEqual([
+        { op: "v2.capabilities" },
+        { op: "v2.policy.get", walletId: "agent-wallet" },
+        {
+          op: "v2.review.prepare",
+          walletId: "agent-wallet",
+          request: {
+            requestId,
+            policyHash,
+            mode: "reviewed",
+            intent: {
+              type: "solana.nativeTransfer",
+              destination,
+              lamports: "900",
+            },
+          },
+        },
+        { op: "v2.capabilities" },
+        {
+          op: "v2.review.execute",
+          walletId: "agent-wallet",
+          request: {
+            requestId,
+            authorization: { type: "webauthn", proof: { proofId: "proof-123" } },
+          },
+        },
+      ]);
     } finally {
       await signer.close();
     }

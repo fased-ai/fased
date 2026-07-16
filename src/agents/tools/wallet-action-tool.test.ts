@@ -13,7 +13,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FasedAgentConfig } from "../../config/config.js";
 import { SOLANA_NATIVE_MINT } from "../../wallet/solana-swap.js";
 import { resolveWalletRecurringTransferPolicy } from "../../wallet/wallet-policy.js";
-import type { WalletProviderJupiterIntentV2 } from "../../wallet/wallet-provider-adapter.js";
+import type {
+  WalletProviderJupiterIntentV2,
+  WalletProviderSignerTransactionEnvelopeV2,
+} from "../../wallet/wallet-provider-adapter.js";
 import { setDefaultWallet, upsertNamedWallet } from "../../wallet/wallet-provider-registry.js";
 import { listWalletSendApprovalRequests } from "../../wallet/wallet-send-approvals.js";
 import { createWalletActionTool } from "./wallet-action-tool.js";
@@ -42,6 +45,15 @@ const AGENT_ADDRESS = AGENT_PUBLIC_KEY.toBase58();
 const TRIGGER_VAULT_PUBLIC_KEY = Keypair.generate().publicKey;
 const TRIGGER_VAULT_ADDRESS = TRIGGER_VAULT_PUBLIC_KEY.toBase58();
 const MEMO_PROGRAM_ID = new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
+const preparedSignerReviews = new Map<
+  string,
+  {
+    walletId: string;
+    mode: "autonomous" | "reviewed";
+    intent: WalletProviderJupiterIntentV2;
+    transaction: WalletProviderSignerTransactionEnvelopeV2;
+  }
+>();
 
 function serializedTestSwapTx(routeProgramId?: string): string {
   const message = new TransactionMessage({
@@ -447,45 +459,46 @@ describe("wallet-action-tool", () => {
         requestId: string;
         mode: "autonomous" | "reviewed";
         intent: WalletProviderJupiterIntentV2;
-      }) => ({
-        requestId: request.requestId,
-        walletId: request.walletId,
-        intentType: request.intent.type,
-        intentDigest: `sha256:${"a".repeat(64)}`,
-        policyHash: `sha256:${"b".repeat(64)}`,
-        mode: request.mode,
-        nonce: "c".repeat(64),
-        semanticIntent: request.intent,
-        issuedAt: "2026-07-16T00:00:00.000Z",
-        state: "prepared" as const,
-        preparedAt: "2026-07-16T00:00:00.000Z",
-        expiresAt: "2099-07-16T00:05:00.000Z",
-        updatedAt: "2026-07-16T00:00:00.000Z",
-      }),
+        transaction: WalletProviderSignerTransactionEnvelopeV2;
+      }) => {
+        preparedSignerReviews.set(request.requestId, request);
+        return {
+          requestId: request.requestId,
+          walletId: request.walletId,
+          intentType: request.intent.type,
+          intentDigest: `sha256:${"a".repeat(64)}`,
+          policyHash: `sha256:${"b".repeat(64)}`,
+          mode: request.mode,
+          nonce: "c".repeat(64),
+          semanticIntent: request.intent,
+          transaction: request.transaction,
+          issuedAt: "2026-07-16T00:00:00.000Z",
+          state: "prepared" as const,
+          preparedAt: "2026-07-16T00:00:00.000Z",
+          expiresAt: "2099-07-16T00:05:00.000Z",
+          updatedAt: "2026-07-16T00:00:00.000Z",
+          transactionDigest: `sha256:${"d".repeat(64)}`,
+        };
+      },
     );
     mocks.provider.executeJupiterReview.mockImplementation(
-      async (request: {
-        walletId: string;
-        requestId: string;
-        policyHash: string;
-        mode: "autonomous" | "reviewed";
-        intent: WalletProviderJupiterIntentV2;
-        transaction: {
-          serializedTxBase64: string;
-          submission: "rpc" | "returnSigned";
-        };
-      }) => {
-        const signature = request.transaction.submission === "rpc" ? "swap-tx-1" : "typed-tx-1";
+      async (request: { walletId: string; requestId: string }) => {
+        const prepared = preparedSignerReviews.get(request.requestId);
+        if (!prepared || prepared.walletId !== request.walletId) {
+          throw new Error("missing exact prepared signer review");
+        }
+        const signature = prepared.transaction.submission === "rpc" ? "swap-tx-1" : "typed-tx-1";
         return {
           review: {
             requestId: request.requestId,
             walletId: request.walletId,
-            intentType: request.intent.type,
+            intentType: prepared.intent.type,
             intentDigest: `sha256:${"a".repeat(64)}`,
-            policyHash: request.policyHash,
-            mode: request.mode,
+            policyHash: `sha256:${"b".repeat(64)}`,
+            mode: prepared.mode,
             nonce: "c".repeat(64),
-            semanticIntent: request.intent,
+            semanticIntent: prepared.intent,
+            transaction: prepared.transaction,
             issuedAt: "2026-07-16T00:00:00.000Z",
             state: "signed" as const,
             preparedAt: "2026-07-16T00:00:00.000Z",
@@ -497,17 +510,17 @@ describe("wallet-action-tool", () => {
           operation: {
             requestId: request.requestId,
             walletId: request.walletId,
-            intentType: request.intent.type,
+            intentType: prepared.intent.type,
             intentDigest: `sha256:${"a".repeat(64)}`,
             transactionDigest: `sha256:${"d".repeat(64)}`,
-            policyHash: request.policyHash,
-            asset: request.intent.jupiter.inputMint ?? SOLANA_NATIVE_MINT,
-            amount: request.intent.jupiter.inputAmount ?? "0",
-            state: request.transaction.submission === "rpc" ? "confirmed" : "broadcast",
+            policyHash: `sha256:${"b".repeat(64)}`,
+            asset: prepared.intent.jupiter.inputMint ?? SOLANA_NATIVE_MINT,
+            amount: prepared.intent.jupiter.inputAmount ?? "0",
+            state: prepared.transaction.submission === "rpc" ? "confirmed" : "broadcast",
             signature,
           },
-          ...(request.transaction.submission === "returnSigned"
-            ? { signedTxBase64: request.transaction.serializedTxBase64 }
+          ...(prepared.transaction.submission === "returnSigned"
+            ? { signedTxBase64: prepared.transaction.serializedTxBase64 }
             : {}),
           signer: AGENT_ADDRESS,
         };
@@ -524,6 +537,7 @@ describe("wallet-action-tool", () => {
     mocks.provider.sendTx.mockReset();
     mocks.provider.prepareJupiterReview.mockReset();
     mocks.provider.executeJupiterReview.mockReset();
+    preparedSignerReviews.clear();
     mocks.createWalletProviderAdapter.mockReset();
   });
 
@@ -882,13 +896,17 @@ describe("wallet-action-tool", () => {
       const details = result.details as Record<string, unknown>;
       expect(details.ok).toBe(true);
       expect(details.executed).toBe(true);
-      expect(mocks.provider.executeJupiterReview).toHaveBeenCalledWith(
+      expect(mocks.provider.prepareJupiterReview).toHaveBeenCalledWith(
         expect.objectContaining({
           walletId: "agent",
           mode: "autonomous",
           transaction: expect.objectContaining({ submission: "rpc" }),
         }),
       );
+      expect(mocks.provider.executeJupiterReview).toHaveBeenCalledWith({
+        walletId: "agent",
+        requestId: expect.any(String),
+      });
       expect(mocks.provider.sendTx).not.toHaveBeenCalled();
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true });
@@ -927,7 +945,7 @@ describe("wallet-action-tool", () => {
       expect(order.raw).toBeUndefined();
       expect((details.vault as Record<string, unknown>).privyVaultId).toBeUndefined();
       expect(mocks.provider.executeJupiterReview).toHaveBeenCalledTimes(2);
-      expect(mocks.provider.executeJupiterReview).toHaveBeenCalledWith(
+      expect(mocks.provider.prepareJupiterReview).toHaveBeenCalledWith(
         expect.objectContaining({
           mode: "autonomous",
           transaction: expect.objectContaining({ submission: "returnSigned" }),
@@ -1139,7 +1157,7 @@ describe("wallet-action-tool", () => {
         amount: "1000000",
       });
       expect((tokenToToken.details as Record<string, unknown>).executed).toBe(true);
-      expect(mocks.provider.executeJupiterReview).toHaveBeenCalledWith(
+      expect(mocks.provider.prepareJupiterReview).toHaveBeenCalledWith(
         expect.objectContaining({
           walletId: "agent",
           intent: expect.objectContaining({
@@ -1288,7 +1306,7 @@ describe("wallet-action-tool", () => {
       const details = result.details as Record<string, unknown>;
       expect(details.ok).toBe(true);
       expect(details.executed).toBe(true);
-      expect(mocks.provider.executeJupiterReview).toHaveBeenCalledWith(
+      expect(mocks.provider.prepareJupiterReview).toHaveBeenCalledWith(
         expect.objectContaining({
           walletId: "agent",
           mode: "autonomous",

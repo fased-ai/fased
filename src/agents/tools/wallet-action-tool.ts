@@ -1057,6 +1057,7 @@ export function createWalletActionTool(opts?: {
           signerReviewId: signerReview.review.requestId,
           signerPolicyHash: signerReview.review.policyHash,
           signerIntentDigest: signerReview.review.intentDigest,
+          signerTransactionDigest: signerReview.review.transactionDigest,
           signerReviewExpiresAt: signerReview.review.expiresAt,
         });
         const request = createWalletSendApprovalRequest({

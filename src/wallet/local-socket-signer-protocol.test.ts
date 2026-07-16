@@ -238,11 +238,33 @@ describe("local socket signer protocol", () => {
       },
     };
     const policyHash = `sha256:${"a".repeat(64)}`;
+    const transaction = {
+      serializedTxBase64: "AA==",
+      programs: intent.jupiter.programs,
+      writableAccounts: [intent.jupiter.sourceTokenAccount],
+      submission: "rpc" as const,
+    };
     expect(
       parseLocalSocketSignerRequest({
         op: "v2.review.prepare",
         walletId: "agent",
-        request: { requestId: "review-123", policyHash, mode: "reviewed", intent },
+        request: { requestId: "review-123", policyHash, mode: "reviewed", intent, transaction },
+      }).op,
+    ).toBe("v2.review.prepare");
+    expect(
+      parseLocalSocketSignerRequest({
+        op: "v2.review.prepare",
+        walletId: "vault",
+        request: {
+          requestId: "review-native-123",
+          policyHash,
+          mode: "reviewed",
+          intent: {
+            type: "solana.nativeTransfer",
+            destination: "So11111111111111111111111111111111111111112",
+            lamports: "1000",
+          },
+        },
       }).op,
     ).toBe("v2.review.prepare");
     expect(
@@ -251,15 +273,6 @@ describe("local socket signer protocol", () => {
         walletId: "agent",
         request: {
           requestId: "review-123",
-          policyHash,
-          mode: "reviewed",
-          intent,
-          transaction: {
-            serializedTxBase64: "AA==",
-            programs: intent.jupiter.programs,
-            writableAccounts: [intent.jupiter.sourceTokenAccount],
-            submission: "rpc",
-          },
           authorization: { type: "webauthn", proof: { proofId: "proof-123" } },
         },
       }).op,
@@ -270,19 +283,67 @@ describe("local socket signer protocol", () => {
         walletId: "agent",
         request: {
           requestId: "review-123",
-          policyHash,
-          mode: "reviewed",
-          intent,
-          transaction: {
-            serializedTxBase64: "AA==",
-            programs: intent.jupiter.programs,
-            writableAccounts: [intent.jupiter.sourceTokenAccount],
-            submission: "rpc",
-          },
+          transaction,
           rawSignTx: true,
         },
       }),
     ).toThrow(/invalid signer request/);
+    for (const injected of [
+      { policyHash },
+      { transactionDigest: `sha256:${"b".repeat(64)}` },
+      { semanticIntent: intent },
+    ]) {
+      expect(() =>
+        parseLocalSocketSignerRequest({
+          op: "v2.review.authorization.begin",
+          walletId: "agent",
+          request: { requestId: "review-123", ...injected },
+        }),
+      ).toThrow(/invalid signer request/);
+    }
+    expect(
+      parseLocalSocketSignerRequest({
+        op: "v2.review.authorization.begin",
+        walletId: "agent",
+        request: { requestId: "review-123" },
+      }).op,
+    ).toBe("v2.review.authorization.begin");
+    expect(
+      parseLocalSocketSignerRequest({
+        op: "v2.review.authorization.finish",
+        walletId: "agent",
+        request: { challengeId: "challenge-123", credential: { id: "credential-123" } },
+      }).op,
+    ).toBe("v2.review.authorization.finish");
+    const binding = {
+      requestId: "review-123",
+      walletId: "agent",
+      role: "agent",
+      intentType: intent.type,
+      intentDigest: `sha256:${"b".repeat(64)}`,
+      semanticIntent: intent,
+      transactionDigest: `sha256:${"c".repeat(64)}`,
+      policyHash,
+      nonce: "d".repeat(64),
+      issuedAt: "2026-07-16T00:00:00.000Z",
+      expiresAt: "2026-07-16T00:02:00.000Z",
+    };
+    expect(
+      validateLocalSocketSignerResult("v2.review.authorization.begin", {
+        challengeId: "challenge-123",
+        expiresAt: binding.expiresAt,
+        binding,
+        options: { publicKey: { challenge: "opaque" } },
+      }),
+    ).toBe(true);
+    expect(
+      validateLocalSocketSignerResult("v2.review.authorization.finish", {
+        authorization: { type: "webauthn", proof: { proofId: "proof-123" } },
+        binding,
+        credentialId: "credential-123",
+        expiresAt: binding.expiresAt,
+      }),
+    ).toBe(true);
   });
 
   it("accepts sendSolanaInstruction requests", () => {

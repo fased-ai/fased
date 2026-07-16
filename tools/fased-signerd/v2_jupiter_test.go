@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"math/big"
 	"strings"
 	"testing"
@@ -11,6 +12,7 @@ import (
 
 	solana "github.com/gagliardetto/solana-go"
 	rpc "github.com/gagliardetto/solana-go/rpc"
+	bolt "go.etcd.io/bbolt"
 )
 
 func testJupiterIntentV2(owner solana.PublicKey) signerIntentV2 {
@@ -323,50 +325,139 @@ func TestJupiterReviewIsDurableImmutableAndExpires(t *testing.T) {
 		PolicyHash: policy.Hash,
 		Mode:       jupiterReviewModeAutonomousV2,
 		Intent:     normalized.Intent,
+		Transaction: &signerSolanaTransactionEnvelopeV2{
+			SerializedTxBase64: "AQ==",
+			Programs:           normalized.RequiredPrograms,
+			WritableAccounts:   []string{wallet.PublicKey},
+			Submission:         jupiterSubmissionRPCV2,
+		},
 	}
-	review, err := store.prepareReviewV2(wallet.WalletID, req, normalized)
+	transactionDigest := "sha256:" + strings.Repeat("a", 64)
+	review, err := store.prepareReviewV2(wallet.WalletID, req, normalized, *req.Transaction, transactionDigest)
 	if err != nil {
 		t.Fatalf("prepare durable review: %v", err)
 	}
 	if len(review.Nonce) != 64 || review.IntentDigest != normalized.Digest || len(review.SemanticIntent) == 0 {
 		t.Fatalf("review omitted immutable bindings: %#v", review)
 	}
-	duplicate, err := store.prepareReviewV2(wallet.WalletID, req, normalized)
+	duplicate, err := store.prepareReviewV2(wallet.WalletID, req, normalized, *req.Transaction, transactionDigest)
 	if err != nil || duplicate.Nonce != review.Nonce {
 		t.Fatalf("idempotent prepare changed review: %#v err=%v", duplicate, err)
 	}
 	changed := normalized
 	changed.Digest = "sha256:" + strings.Repeat("f", 64)
-	if _, err := store.prepareReviewV2(wallet.WalletID, req, changed); err == nil {
+	if _, err := store.prepareReviewV2(wallet.WalletID, req, changed, *req.Transaction, transactionDigest); err == nil {
 		t.Fatal("request id was rebound to a different review")
 	}
-
-	execute := signerReviewExecuteRequestV2{
-		RequestID:  req.RequestID,
-		PolicyHash: policy.Hash,
-		Mode:       req.Mode,
-		Intent:     normalized.Intent,
+	changedTransaction := *req.Transaction
+	changedTransaction.SerializedTxBase64 = "Ag=="
+	if _, err := store.prepareReviewV2(wallet.WalletID, req, normalized, changedTransaction, transactionDigest); err == nil || !strings.Contains(err.Error(), "different immutable") {
+		t.Fatalf("request id was rebound to substituted transaction bytes: %v", err)
 	}
-	if _, err := store.requirePreparedReviewV2(wallet.WalletID, execute, normalized); err != nil {
+
+	if _, _, _, err := store.requirePreparedReviewV2(wallet.WalletID, req.RequestID); err != nil {
 		t.Fatalf("require current review: %v", err)
 	}
 	store.now = func() time.Time { return now.Add(16 * time.Minute) }
-	if _, err := store.requirePreparedReviewV2(wallet.WalletID, execute, normalized); err == nil || !strings.Contains(err.Error(), "expired") {
+	if _, _, _, err := store.requirePreparedReviewV2(wallet.WalletID, req.RequestID); err == nil || !strings.Contains(err.Error(), "expired") {
 		t.Fatalf("expected expired review rejection, got %v", err)
 	}
 }
 
+func TestJupiterReviewPrepareRequiresSignerOwnedNetworkBeforePersistence(t *testing.T) {
+	store, keys := openTestSignerV2(t)
+	wallet, initialPolicy := createTestSignerWalletV2(
+		t,
+		store,
+		keys,
+		"agent-network-pending-review",
+		solana.NewWallet().PublicKey().String(),
+		100,
+		1000,
+	)
+	intent, err := normalizeSignerIntentV2(testJupiterIntentV2(solana.MustPublicKeyFromBase58(wallet.PublicKey)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := store.putPolicy(signerPolicyV2{
+		WalletID:   wallet.WalletID,
+		Role:       "agent",
+		Operations: []string{intentSolanaJupiterSwap},
+		Programs:   []string{jupiterAggregatorV6V2},
+		Assets: []signerPolicyAssetV2{{
+			Asset:        intent.Asset,
+			Destinations: []string{wallet.PublicKey},
+			MaxPerTx:     "100",
+			MaxDaily:     "1000",
+		}},
+	}, initialPolicy.Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &signerServiceV2{store: store, keys: keys}
+	request := signerReviewPrepareRequestV2{
+		RequestID:  "network-pending-review",
+		PolicyHash: policy.Hash,
+		Mode:       jupiterReviewModeAutonomousV2,
+		Intent:     intent.Intent,
+		Transaction: &signerSolanaTransactionEnvelopeV2{
+			SerializedTxBase64: "AQ==",
+			Programs:           intent.RequiredPrograms,
+			WritableAccounts:   []string{wallet.PublicKey},
+			Submission:         jupiterSubmissionRPCV2,
+		},
+	}
+	if _, err := service.prepareJupiterReviewV2(wallet.WalletID, request); !errors.Is(err, errSignerNetworkPendingV2) {
+		t.Fatalf("expected signer-owned network-pending rejection, got %v", err)
+	}
+	if err := store.db.View(func(tx *bolt.Tx) error {
+		if tx.Bucket(bucketSignerReviewsV2).Get([]byte(request.RequestID)) != nil {
+			return errors.New("network-pending review was persisted")
+		}
+		if tx.Bucket(bucketSignerOperationsV2).Get([]byte(request.RequestID)) != nil {
+			return errors.New("network-pending review reserved an operation")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestJupiterAuthorizationModesFailClosed(t *testing.T) {
-	review := signerReviewV2{Mode: jupiterReviewModeAutonomousV2}
-	if err := authorizeJupiterReviewExecutionV2(review, signerPolicyV2{Role: "agent"}, "sha256:"+strings.Repeat("a", 64), nil); err != nil {
-		t.Fatalf("Agent autonomous review rejected: %v", err)
+	store, keys := openTestSignerV2(t)
+	walletID := "vault-review-mode"
+	wallet, _, err := keys.CreateWithPolicy(signerWalletCreateRequestV2{
+		WalletID:        walletID,
+		ExpectedVersion: 0,
+		Policy:          signerPolicyV2{WalletID: walletID, Role: "vault"},
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if err := authorizeJupiterReviewExecutionV2(review, signerPolicyV2{Role: "vault"}, "sha256:"+strings.Repeat("a", 64), nil); err == nil {
-		t.Fatal("Vault autonomous review was accepted")
+	input := testJupiterIntentV2(solana.MustPublicKeyFromBase58(wallet.PublicKey))
+	normalized, err := normalizeSignerIntentV2(input)
+	if err != nil {
+		t.Fatal(err)
 	}
-	review.Mode = jupiterReviewModeReviewedV2
-	if err := authorizeJupiterReviewExecutionV2(review, signerPolicyV2{Role: "vault"}, "sha256:"+strings.Repeat("a", 64), nil); err == nil {
-		t.Fatal("reviewed execution without signer-owned proof was accepted")
+	policy, err := store.putPolicy(signerPolicyV2{
+		WalletID:   wallet.WalletID,
+		Role:       "vault",
+		Operations: []string{intentSolanaJupiterSwap},
+		Programs:   []string{jupiterAggregatorV6V2},
+		Assets:     []signerPolicyAssetV2{{Asset: normalized.Asset, Destinations: []string{wallet.PublicKey}, MaxPerTx: "100", MaxDaily: "1000"}},
+	}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := signerReviewPrepareRequestV2{
+		RequestID:   "vault-autonomous-review",
+		PolicyHash:  policy.Hash,
+		Mode:        jupiterReviewModeAutonomousV2,
+		Intent:      normalized.Intent,
+		Transaction: &signerSolanaTransactionEnvelopeV2{SerializedTxBase64: "AQ==", Programs: normalized.RequiredPrograms, WritableAccounts: []string{wallet.PublicKey}, Submission: jupiterSubmissionRPCV2},
+	}
+	if _, err := store.prepareReviewV2(wallet.WalletID, req, normalized, *req.Transaction, "sha256:"+strings.Repeat("a", 64)); err == nil || !strings.Contains(err.Error(), "Agent-role") {
+		t.Fatalf("Vault autonomous review was accepted: %v", err)
 	}
 }
 

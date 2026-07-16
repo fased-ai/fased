@@ -25,6 +25,7 @@ import {
   enforceWalletDailyCap,
   resolveWalletRoleForId,
 } from "./wallet-policy.js";
+import type { WalletProviderSignerReviewAuthorizationV2 } from "./wallet-provider-adapter.js";
 import {
   buildWalletProviderCapabilityMatrix,
   providerSupportsChainOperation,
@@ -90,6 +91,7 @@ export type WalletSendApprovalPayload = {
   signerReviewId?: string;
   signerPolicyHash?: string;
   signerIntentDigest?: string;
+  signerTransactionDigest?: string;
   signerReviewExpiresAt?: string;
   providerId?: WalletProviderId;
   walletId?: string;
@@ -572,6 +574,7 @@ function markExpired(file: WalletSendApprovalsFile): boolean {
 }
 
 export function createWalletSendApprovalRequest(params: {
+  requestId?: string;
   payload: WalletSendApprovalPayload;
   requestedBy?: string;
   settlementContext?: WalletSettlementContext;
@@ -583,7 +586,7 @@ export function createWalletSendApprovalRequest(params: {
   const file = loadFile(env);
   const changed = markExpired(file);
   const createdAtMs = nowMs();
-  const requestId = createRequestId();
+  const requestId = params.requestId?.trim() || createRequestId();
   const req: WalletSendApprovalRequest = {
     id: requestId,
     taskLedgerId: walletApprovalTaskId(requestId),
@@ -790,11 +793,59 @@ export async function createOrExecuteWalletSend(params: {
   }
 
   if (resolvedMode !== "autonomous") {
+    const requestId = createRequestId();
+    let reviewedPayload: WalletSendApprovalPayload = {
+      ...settlementPayload,
+      providerId: selectedProviderId,
+    };
+    if (
+      selectedProviderId === "local-socket-signer" &&
+      !isSolanaSwapApprovalPayload(reviewedPayload) &&
+      !reviewedPayload.signerReviewId
+    ) {
+      const walletId = reviewedPayload.walletId?.trim();
+      const destination = reviewedPayload.to?.trim();
+      const amount = reviewedPayload.amount?.trim();
+      if (!walletId || !destination || !amount || !provider.prepareTypedTransferReview) {
+        return {
+          ok: false,
+          code: "wallet_signer_review_required",
+          message:
+            "reviewed local-socket-signer sends require walletId, destination, amount, and exact signer review support",
+          requestId,
+        };
+      }
+      try {
+        const review = await provider.prepareTypedTransferReview({
+          walletId,
+          requestId,
+          destination,
+          amount,
+          ...(reviewedPayload.program?.trim() ? { mint: reviewedPayload.program.trim() } : {}),
+        });
+        reviewedPayload = {
+          ...reviewedPayload,
+          signerReviewId: review.requestId,
+          signerPolicyHash: review.policyHash,
+          signerIntentDigest: review.intentDigest,
+          signerTransactionDigest: review.transactionDigest,
+          signerReviewExpiresAt: review.expiresAt,
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          code: "wallet_signer_review_failed",
+          message: normalizeErrorMessage(error),
+          requestId,
+        };
+      }
+    }
     return {
       ok: true,
       mode: "manual",
       request: createWalletSendApprovalRequest({
-        payload: params.payload,
+        requestId,
+        payload: reviewedPayload,
         requestedBy,
         settlementContext: params.settlementContext,
         simulation,
@@ -1163,6 +1214,7 @@ export async function approveWalletSendRequest(params: {
   actor?: string;
   config: ResolvedWalletRuntimeConfig;
   providerIdOverride?: WalletProviderId;
+  reviewAuthorization?: WalletProviderSignerReviewAuthorizationV2;
   approvalHost?: string;
   env?: NodeJS.ProcessEnv;
 }) {
@@ -1201,6 +1253,7 @@ export async function approveWalletSendRequest(params: {
       runtimeConfig: cfg,
       providerIdOverride: params.providerIdOverride,
       autonomous: false,
+      reviewAuthorization: params.reviewAuthorization,
       env,
     });
     if (!executed.ok) {
@@ -1388,6 +1441,133 @@ export async function approveWalletSendRequest(params: {
   }
   request.simulation = simulation;
   request.approvalDiff = simulation.diff;
+
+  const signerReviewId = request.payload.signerReviewId?.trim();
+  if (selectedProviderId === "local-socket-signer" && signerReviewId) {
+    if (!params.reviewAuthorization) {
+      syncApprovalTaskForRequest({ request, settlementLink });
+      return {
+        ok: false as const,
+        code: "signer_webauthn_required",
+        message: "reviewed signer execution requires a signer-owned WebAuthn proof",
+        request,
+      };
+    }
+    if (!provider.executeSignerReview) {
+      return {
+        ok: false as const,
+        code: "wallet_signer_review_required",
+        message: "local-socket-signer does not expose exact review.execute support",
+        request,
+      };
+    }
+    let executed: Awaited<ReturnType<NonNullable<typeof provider.executeSignerReview>>>;
+    try {
+      executed = await provider.executeSignerReview({
+        walletId: request.payload.walletId?.trim() || "",
+        requestId: signerReviewId,
+        authorization: params.reviewAuthorization,
+      });
+    } catch (error) {
+      return {
+        ok: false as const,
+        code: "wallet_signer_review_failed",
+        message: normalizeErrorMessage(error),
+        request,
+      };
+    }
+    const operation = executed.operation;
+    if (operation.state === "broadcast" || operation.state === "unknown") {
+      const message = `signer operation ${operation.requestId} is ${operation.state}; reconcile signature before any new attempt`;
+      const ambiguousRequest = markWalletSendRequestBroadcastUnknown({
+        requestId: request.id,
+        txHash: operation.signature,
+        reason: message,
+        actor: params.actor,
+        env,
+      });
+      return {
+        ok: false as const,
+        code: "wallet_provider_ambiguous",
+        message,
+        request: ambiguousRequest,
+      };
+    }
+    if (operation.state !== "confirmed" || !operation.signature) {
+      request.status = "failed";
+      request.reason = operation.error ?? `signer operation ended in state=${operation.state}`;
+      request.result = { error: request.reason };
+      request.decisionAt = new Date().toISOString();
+      saveFile(file, env);
+      syncApprovalTaskForRequest({ request, settlementLink });
+      return {
+        ok: false as const,
+        code: "wallet_signer_review_failed",
+        message: request.reason,
+        request,
+      };
+    }
+    request.status = "approved";
+    request.approvedBy = params.actor?.trim() || "operator";
+    request.decisionAt = new Date().toISOString();
+    appendWalletAuditEntry({
+      action: "send_approved",
+      actor: request.approvedBy,
+      details: buildWalletSendAuditDetails({
+        payload: request.payload,
+        requestId: request.id,
+        mode: "manual",
+        providerId: selectedProviderId,
+        taskId: settlementLink?.taskId,
+        invoiceId: settlementLink?.invoiceId,
+        senderHandle: settlementLink?.senderHandle,
+      }),
+      env,
+    });
+    request.status = "executed";
+    request.result = { txHash: operation.signature };
+    appendWalletAuditEntry({
+      action: "send_executed",
+      actor: request.approvedBy,
+      details: buildWalletSendAuditDetails({
+        payload: request.payload,
+        requestId: request.id,
+        mode: "manual",
+        providerId: selectedProviderId,
+        txHash: operation.signature,
+        taskId: settlementLink?.taskId,
+        invoiceId: settlementLink?.invoiceId,
+        senderHandle: settlementLink?.senderHandle,
+      }),
+      env,
+    });
+    saveFile(file, env);
+    syncApprovalTaskForRequest({ request, settlementLink });
+    const updatedSettlement = markWalletSettlementLinkOutcome({
+      requestId: request.id,
+      status: "executed",
+      txHash: operation.signature,
+      env,
+    });
+    await publishSettlementEvidenceForLink({ settlementLink: updatedSettlement, env });
+    return {
+      ok: true as const,
+      request,
+      tx: {
+        ok: true,
+        chain: "solana" as const,
+        txHash: operation.signature,
+        signer: executed.signer,
+        metadata: {
+          provider: "local-socket-signer",
+          signerProtocol: 2,
+          signerOperationState: operation.state,
+          signerIntentDigest: operation.intentDigest,
+          signerTransactionDigest: operation.transactionDigest,
+        },
+      },
+    };
+  }
 
   const custodyGate = await enforceWalletCustodyForAutonomousSend({
     wallet: params.config,

@@ -29,21 +29,34 @@ describe("typed Jupiter signer flow", () => {
 
   it("routes review preparation only through signer-v2 review.prepare", async () => {
     const owner = new PublicKey(new Uint8Array(32).fill(8)).toBase58();
-    const prepare = vi.fn(async (request: { requestId: string; intent: unknown }) => ({
-      requestId: request.requestId,
-      walletId: "agent",
-      intentType: "solana.jupiter.swap" as const,
-      intentDigest: `sha256:${"a".repeat(64)}`,
-      policyHash: `sha256:${"b".repeat(64)}`,
-      mode: "autonomous" as const,
-      nonce: "c".repeat(64),
-      semanticIntent: request.intent as never,
-      issuedAt: "2026-07-16T12:00:00Z",
-      state: "prepared" as const,
-      preparedAt: "2026-07-16T12:00:00Z",
-      expiresAt: "2026-07-16T12:15:00Z",
-      updatedAt: "2026-07-16T12:00:00Z",
-    }));
+    const prepare = vi.fn(
+      async (request: {
+        requestId: string;
+        intent: unknown;
+        transaction: {
+          serializedTxBase64: string;
+          programs: string[];
+          writableAccounts: string[];
+          submission: "rpc" | "returnSigned";
+        };
+      }) => ({
+        requestId: request.requestId,
+        walletId: "agent",
+        intentType: "solana.jupiter.swap" as const,
+        intentDigest: `sha256:${"a".repeat(64)}`,
+        policyHash: `sha256:${"b".repeat(64)}`,
+        mode: "autonomous" as const,
+        nonce: "c".repeat(64),
+        semanticIntent: request.intent as never,
+        transaction: request.transaction,
+        issuedAt: "2026-07-16T12:00:00Z",
+        state: "prepared" as const,
+        preparedAt: "2026-07-16T12:00:00Z",
+        expiresAt: "2026-07-16T12:15:00Z",
+        updatedAt: "2026-07-16T12:00:00Z",
+        transactionDigest: `sha256:${"d".repeat(64)}`,
+      }),
+    );
     const signTx = vi.fn();
     const sendTx = vi.fn();
     const provider = {
@@ -78,6 +91,16 @@ describe("typed Jupiter signer flow", () => {
       mode: "autonomous",
     });
     expect(prepare).toHaveBeenCalledOnce();
+    expect(prepare).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transaction: {
+          serializedTxBase64: order.transaction,
+          programs: ["JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"],
+          writableAccounts: [owner],
+          submission: "rpc",
+        },
+      }),
+    );
     expect(signTx).not.toHaveBeenCalled();
     expect(sendTx).not.toHaveBeenCalled();
   });

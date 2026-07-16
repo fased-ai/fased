@@ -123,22 +123,83 @@ export type WalletProviderJupiterIntentV2 = {
   };
 };
 
+export type WalletProviderTypedTransferIntentV2 =
+  | {
+      type: "solana.nativeTransfer";
+      destination: string;
+      lamports: string;
+    }
+  | {
+      type: "solana.splTransferChecked";
+      tokenProgram: string;
+      mint: string;
+      destination: string;
+      amount: string;
+    };
+
+export type WalletProviderSignerIntentV2 =
+  | WalletProviderJupiterIntentV2
+  | WalletProviderTypedTransferIntentV2;
+
+export type WalletProviderSignerIntentType = WalletProviderSignerIntentV2["type"];
+
 export type WalletProviderJupiterReviewV2 = {
   requestId: string;
   walletId: string;
-  intentType: WalletProviderJupiterIntentType;
+  intentType: WalletProviderSignerIntentType;
   intentDigest: string;
   policyHash: string;
   mode: "autonomous" | "reviewed";
   nonce: string;
-  semanticIntent: WalletProviderJupiterIntentV2;
+  semanticIntent: WalletProviderSignerIntentV2;
+  transaction: WalletProviderSignerTransactionEnvelopeV2;
   issuedAt: string;
   state: "prepared" | "signed";
   preparedAt: string;
   expiresAt: string;
   updatedAt: string;
-  transactionDigest?: string;
+  transactionDigest: string;
   signature?: string;
+};
+
+export type WalletProviderSignerTransactionEnvelopeV2 = {
+  serializedTxBase64: string;
+  programs: string[];
+  writableAccounts: string[];
+  submission: "rpc" | "returnSigned";
+};
+
+export type WalletProviderSignerReviewAuthorizationV2 = {
+  type: "webauthn";
+  proof: { proofId: string };
+};
+
+export type WalletProviderSignerReviewBindingV2 = {
+  requestId: string;
+  walletId: string;
+  role: "agent" | "mining" | "vault";
+  intentType: WalletProviderSignerIntentType;
+  intentDigest: string;
+  semanticIntent: WalletProviderSignerIntentV2;
+  transactionDigest: string;
+  policyHash: string;
+  nonce: string;
+  issuedAt: string;
+  expiresAt: string;
+};
+
+export type WalletProviderSignerReviewAuthorizationBeginV2 = {
+  challengeId: string;
+  expiresAt: string;
+  binding: WalletProviderSignerReviewBindingV2;
+  options: unknown;
+};
+
+export type WalletProviderSignerReviewAuthorizationFinishV2 = {
+  authorization: WalletProviderSignerReviewAuthorizationV2;
+  binding: WalletProviderSignerReviewBindingV2;
+  credentialId: string;
+  expiresAt: string;
 };
 
 export type WalletProviderJupiterExecutionV2 = {
@@ -216,21 +277,43 @@ export interface WalletProviderAdapter {
     requestId: string;
     mode: "autonomous" | "reviewed";
     intent: WalletProviderJupiterIntentV2;
+    transaction: WalletProviderSignerTransactionEnvelopeV2;
   }): Promise<WalletProviderJupiterReviewV2>;
+  prepareTypedTransferReview?(request: {
+    walletId: string;
+    requestId: string;
+    destination: string;
+    amount: string;
+    mint?: string;
+  }): Promise<WalletProviderJupiterReviewV2>;
+  executeSignerReview?(request: {
+    walletId: string;
+    requestId: string;
+    authorization?: WalletProviderSignerReviewAuthorizationV2;
+  }): Promise<WalletProviderJupiterExecutionV2>;
   executeJupiterReview?(request: {
     walletId: string;
     requestId: string;
-    policyHash: string;
-    mode: "autonomous" | "reviewed";
-    intent: WalletProviderJupiterIntentV2;
-    transaction: {
-      serializedTxBase64: string;
-      programs: string[];
-      writableAccounts: string[];
-      submission: "rpc" | "returnSigned";
-    };
-    authorization?: { type: string; proof: unknown };
+    authorization?: WalletProviderSignerReviewAuthorizationV2;
   }): Promise<WalletProviderJupiterExecutionV2>;
+  beginSignerReviewAuthorization?(request: {
+    walletId: string;
+    requestId: string;
+  }): Promise<WalletProviderSignerReviewAuthorizationBeginV2>;
+  beginJupiterReviewAuthorization?(request: {
+    walletId: string;
+    requestId: string;
+  }): Promise<WalletProviderSignerReviewAuthorizationBeginV2>;
+  finishSignerReviewAuthorization?(request: {
+    walletId: string;
+    challengeId: string;
+    credential: unknown;
+  }): Promise<WalletProviderSignerReviewAuthorizationFinishV2>;
+  finishJupiterReviewAuthorization?(request: {
+    walletId: string;
+    challengeId: string;
+    credential: unknown;
+  }): Promise<WalletProviderSignerReviewAuthorizationFinishV2>;
 
   rotateKeys?(): Promise<{
     ok: boolean;

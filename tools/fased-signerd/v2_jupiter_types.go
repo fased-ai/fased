@@ -24,10 +24,9 @@ const (
 	jupiterReviewModeReviewedV2   = "reviewed"
 )
 
-// signerJupiterIntentV2 is the stable, human-reviewable semantic intent. It
-// deliberately excludes serialized transactions, blockhashes, lookup tables,
-// and writable-account manifests so a reviewed intent can be executed against
-// a fresh transaction without weakening the reviewed mint/amount/action bind.
+// signerJupiterIntentV2 is the stable, human-reviewable semantic intent. The
+// signer persists it beside one exact validated transaction envelope and
+// digest; review.execute never accepts replacement transaction bytes.
 type signerJupiterIntentV2 struct {
 	Owner                   string                        `json:"owner"`
 	InputMint               string                        `json:"inputMint,omitempty"`
@@ -57,45 +56,35 @@ type signerSolanaTransactionEnvelopeV2 struct {
 }
 
 type signerReviewPrepareRequestV2 struct {
-	RequestID  string         `json:"requestId"`
-	PolicyHash string         `json:"policyHash"`
-	Mode       string         `json:"mode"`
-	Intent     signerIntentV2 `json:"intent"`
+	RequestID   string                             `json:"requestId"`
+	PolicyHash  string                             `json:"policyHash"`
+	Mode        string                             `json:"mode"`
+	Intent      signerIntentV2                     `json:"intent"`
+	Transaction *signerSolanaTransactionEnvelopeV2 `json:"transaction,omitempty"`
 }
 
 type signerReviewExecuteRequestV2 struct {
-	RequestID     string                            `json:"requestId"`
-	PolicyHash    string                            `json:"policyHash"`
-	Mode          string                            `json:"mode"`
-	Intent        signerIntentV2                    `json:"intent"`
-	Transaction   signerSolanaTransactionEnvelopeV2 `json:"transaction"`
-	Authorization *signerReviewAuthorizationV2      `json:"authorization,omitempty"`
-}
-
-// signerReviewAuthorizationV2 is intentionally transport-generic. The
-// signer-owned WebAuthn lane installs the verifier and owns proof parsing.
-// A reviewed request is denied when no verifier/proof is available.
-type signerReviewAuthorizationV2 struct {
-	Type  string          `json:"type"`
-	Proof json.RawMessage `json:"proof"`
+	RequestID     string                                 `json:"requestId"`
+	Authorization *signerWebAuthnAuthorizationEnvelopeV2 `json:"authorization,omitempty"`
 }
 
 type signerReviewV2 struct {
-	RequestID         string          `json:"requestId"`
-	WalletID          string          `json:"walletId"`
-	IntentType        string          `json:"intentType"`
-	IntentDigest      string          `json:"intentDigest"`
-	PolicyHash        string          `json:"policyHash"`
-	Mode              string          `json:"mode"`
-	Nonce             string          `json:"nonce"`
-	SemanticIntent    json.RawMessage `json:"semanticIntent"`
-	IssuedAt          string          `json:"issuedAt"`
-	State             string          `json:"state"`
-	PreparedAt        string          `json:"preparedAt"`
-	ExpiresAt         string          `json:"expiresAt"`
-	UpdatedAt         string          `json:"updatedAt"`
-	TransactionDigest string          `json:"transactionDigest,omitempty"`
-	Signature         string          `json:"signature,omitempty"`
+	RequestID         string                            `json:"requestId"`
+	WalletID          string                            `json:"walletId"`
+	IntentType        string                            `json:"intentType"`
+	IntentDigest      string                            `json:"intentDigest"`
+	PolicyHash        string                            `json:"policyHash"`
+	Mode              string                            `json:"mode"`
+	Nonce             string                            `json:"nonce"`
+	SemanticIntent    json.RawMessage                   `json:"semanticIntent"`
+	Transaction       signerSolanaTransactionEnvelopeV2 `json:"transaction"`
+	IssuedAt          string                            `json:"issuedAt"`
+	State             string                            `json:"state"`
+	PreparedAt        string                            `json:"preparedAt"`
+	ExpiresAt         string                            `json:"expiresAt"`
+	UpdatedAt         string                            `json:"updatedAt"`
+	TransactionDigest string                            `json:"transactionDigest"`
+	Signature         string                            `json:"signature,omitempty"`
 }
 
 type signerReviewExecutionResultV2 struct {

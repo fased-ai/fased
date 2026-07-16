@@ -12,6 +12,7 @@ import type {
   WalletProviderAdapter,
   WalletProviderJupiterIntentType,
   WalletProviderJupiterIntentV2,
+  WalletProviderSignerReviewAuthorizationV2,
   WalletProviderSendTxResult,
 } from "./wallet-provider-adapter.js";
 import type { ResolvedWalletRuntimeConfig } from "./wallet-runtime-config.js";
@@ -241,7 +242,7 @@ async function executeTypedTriggerTransaction(params: {
   triggerVault?: string;
   triggerOrder?: string;
   triggerRequestId: string;
-  authorization?: { type: string; proof: unknown };
+  authorization?: WalletProviderSignerReviewAuthorizationV2;
   env?: NodeJS.ProcessEnv;
 }): Promise<{ signedTxBase64: string; signer?: string }> {
   if (!params.provider.prepareJupiterReview || !params.provider.executeJupiterReview) {
@@ -308,16 +309,9 @@ async function executeTypedTriggerTransaction(params: {
   const requestId = `jupiter-trigger:${createHash("sha256")
     .update(`${params.walletId}\0${params.type}\0${params.triggerRequestId}`)
     .digest("hex")}`;
-  const review = await params.provider.prepareJupiterReview({
+  await params.provider.prepareJupiterReview({
     walletId: params.walletId,
     requestId,
-    mode: params.mode ?? "autonomous",
-    intent,
-  });
-  const executed = await params.provider.executeJupiterReview({
-    walletId: params.walletId,
-    requestId,
-    policyHash: review.policyHash,
     mode: params.mode ?? "autonomous",
     intent,
     transaction: {
@@ -326,6 +320,10 @@ async function executeTypedTriggerTransaction(params: {
       writableAccounts: inspection.writableAccounts,
       submission: "returnSigned",
     },
+  });
+  const executed = await params.provider.executeJupiterReview({
+    walletId: params.walletId,
+    requestId,
     ...(params.authorization ? { authorization: params.authorization } : {}),
   });
   if (!executed.signedTxBase64 || !executed.operation.signature) {

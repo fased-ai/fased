@@ -232,6 +232,11 @@ export type WalletSendApprovalRequest = {
     routeProgramIds?: string[];
     usesAddressLookupTables?: boolean;
     jupiterRequestId?: string;
+    signerReviewId?: string;
+    signerPolicyHash?: string;
+    signerIntentDigest?: string;
+    signerTransactionDigest?: string;
+    signerReviewExpiresAt?: string;
   };
   simulation?: WalletPolicySimulation;
   approvalDiff?: WalletApprovalDiff;
@@ -1757,9 +1762,10 @@ export type WalletStandardBrowserReview = {
 
 export type WalletApproveSendResponse = {
   ok: true;
-  mode?: "browser";
+  mode?: "browser" | "signer-webauthn";
   request: WalletSendApprovalRequest;
   browserReview?: WalletStandardBrowserReview;
+  signerAuthorization?: WalletSignerReviewAuthorizationBegin;
   tx?: {
     ok: boolean;
     chain: "solana";
@@ -1767,6 +1773,25 @@ export type WalletApproveSendResponse = {
     signer?: string;
     idempotent?: boolean;
   };
+};
+
+export type WalletSignerReviewAuthorizationBegin = {
+  challengeId: string;
+  expiresAt: string;
+  binding: {
+    requestId: string;
+    walletId: string;
+    role: "agent" | "mining" | "vault";
+    intentType: string;
+    intentDigest: string;
+    semanticIntent: unknown;
+    transactionDigest: string;
+    policyHash: string;
+    nonce: string;
+    issuedAt: string;
+    expiresAt: string;
+  };
+  options: unknown;
 };
 
 export async function approveWalletSend(
@@ -1786,6 +1811,28 @@ export async function approveWalletSend(
           : {}),
       },
       body: "{}",
+    },
+  );
+}
+
+export async function finishWalletSignerReviewApproval(input: {
+  requestId: string;
+  challengeId: string;
+  credential: unknown;
+}): Promise<WalletApproveSendResponse> {
+  return await fetchJson<WalletApproveSendResponse>(
+    `/api/wallet/approvals/${encodeURIComponent(input.requestId)}/approve`,
+    {
+      method: "POST",
+      credentials: "include",
+      cache: "no-store",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        signerAuthorization: {
+          challengeId: input.challengeId,
+          credential: input.credential,
+        },
+      }),
     },
   );
 }

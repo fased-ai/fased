@@ -441,6 +441,12 @@ func (s *signerServiceV2) execute(req signerExecuteRequestV2) (signerOperationV2
 	if err != nil {
 		return signerOperationV2{}, err
 	}
+	if strings.TrimSpace(req.PolicyHash) == "" || req.PolicyHash != policy.Hash {
+		return signerOperationV2{}, errors.New("signer policy hash mismatch")
+	}
+	if policy.Role == "vault" {
+		return signerOperationV2{}, errors.New("Vault wallets require review.prepare, signer-owned WebAuthn authorization, and review.execute")
+	}
 	operation, lookupErr := s.store.getOperation(req.RequestID)
 	existing := lookupErr == nil
 	if lookupErr != nil && !errors.Is(lookupErr, errSignerOperationNotFoundV2) {

@@ -77,6 +77,7 @@ var signerV2Capabilities = signerCapabilitiesV2{
 		"singleUseReviewedAuthorization",
 		"typedJupiterSemantics",
 		"signerOwnedReviewPrepareExecute",
+		"exactPreparedTransactions",
 		"verifiedAddressLookupTables",
 	},
 }

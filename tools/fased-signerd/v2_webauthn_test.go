@@ -11,6 +11,8 @@ import (
 	"encoding/json"
 	"errors"
 	"math/big"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -239,7 +241,7 @@ func newTestSignerWebAuthnFixtureV2(t *testing.T) *testSignerWebAuthnFixtureV2 {
 		dbPath:   filepath.Join(dir, "state.db"),
 	}
 	store.now = func() time.Time { return fixture.now }
-	destination := solana.NewWallet().PublicKey().String()
+	destination := solanaNativeMintV2
 	policyInput := testSignerPolicyV2(fixture.walletID, destination, 10_000, 100_000)
 	policyInput.Role = "vault"
 	_, fixture.policy, err = keys.CreateWithPolicy(signerWalletCreateRequestV2{
@@ -251,6 +253,49 @@ func newTestSignerWebAuthnFixtureV2(t *testing.T) *testSignerWebAuthnFixtureV2 {
 		keys.Close()
 		_ = store.Close()
 		t.Fatalf("create signer wallet: %v", err)
+	}
+	var fixtureIntent signerIntentV2
+	if err := decodeSignerRequestV2(fixture.semantic, &fixtureIntent); err != nil {
+		t.Fatalf("decode fixture review intent: %v", err)
+	}
+	normalizedFixtureIntent, err := normalizeSignerIntentV2(fixtureIntent)
+	if err != nil {
+		t.Fatalf("normalize fixture review intent: %v", err)
+	}
+	fixture.semantic, err = json.Marshal(normalizedFixtureIntent.Intent)
+	if err != nil {
+		t.Fatalf("encode fixture review intent: %v", err)
+	}
+	review := signerReviewV2{
+		RequestID:      "review-request-001",
+		WalletID:       fixture.walletID,
+		IntentType:     normalizedFixtureIntent.Intent.Type,
+		IntentDigest:   normalizedFixtureIntent.Digest,
+		PolicyHash:     fixture.policy.Hash,
+		Mode:           jupiterReviewModeReviewedV2,
+		Nonce:          strings.Repeat("c", 64),
+		SemanticIntent: fixture.semantic,
+		Transaction: signerSolanaTransactionEnvelopeV2{
+			SerializedTxBase64: "AQ==",
+			Programs:           []string{solana.SystemProgramID.String()},
+			WritableAccounts:   []string{destination},
+			Submission:         jupiterSubmissionRPCV2,
+		},
+		IssuedAt:          timestampV2(fixture.now),
+		State:             jupiterReviewPreparedV2,
+		PreparedAt:        timestampV2(fixture.now),
+		ExpiresAt:         timestampV2(reviewExpiryV2(fixture.now)),
+		UpdatedAt:         timestampV2(fixture.now),
+		TransactionDigest: fixture.txDigest,
+	}
+	encodedReview, err := json.Marshal(review)
+	if err != nil {
+		t.Fatalf("encode fixture signer review: %v", err)
+	}
+	if err := fixture.store.db.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketSignerReviewsV2).Put([]byte(review.RequestID), encodedReview)
+	}); err != nil {
+		t.Fatalf("store fixture signer review: %v", err)
 	}
 	fixture.service, err = newSignerWebAuthnServiceV2(store, testWebAuthnRPID, testWebAuthnOrigin)
 	if err != nil {
@@ -290,15 +335,39 @@ func (f *testSignerWebAuthnFixtureV2) enroll(t *testing.T, authenticator *testWe
 func (f *testSignerWebAuthnFixtureV2) beginReview(t *testing.T) signerReviewAuthorizationBeginResultV2 {
 	t.Helper()
 	result, err := f.service.beginReviewAuthorization(f.walletID, signerReviewAuthorizationBeginRequestV2{
-		RequestID:         "review-request-001",
-		PolicyHash:        f.policy.Hash,
-		SemanticIntent:    f.semantic,
-		TransactionDigest: f.txDigest,
+		RequestID: "review-request-001",
 	})
 	if err != nil {
 		t.Fatalf("begin review authorization: %v", err)
 	}
 	return result
+}
+
+func (f *testSignerWebAuthnFixtureV2) refreshReview(t *testing.T) {
+	t.Helper()
+	if err := f.store.db.Update(func(tx *bolt.Tx) error {
+		bucket := tx.Bucket(bucketSignerReviewsV2)
+		raw := bucket.Get([]byte("review-request-001"))
+		if raw == nil {
+			return errors.New("fixture signer review not found")
+		}
+		var review signerReviewV2
+		if err := json.Unmarshal(raw, &review); err != nil {
+			return err
+		}
+		review.Nonce = strings.Repeat("d", 64)
+		review.IssuedAt = timestampV2(f.now)
+		review.PreparedAt = timestampV2(f.now)
+		review.ExpiresAt = timestampV2(reviewExpiryV2(f.now))
+		review.UpdatedAt = timestampV2(f.now)
+		encoded, err := json.Marshal(review)
+		if err != nil {
+			return err
+		}
+		return bucket.Put([]byte(review.RequestID), encoded)
+	}); err != nil {
+		t.Fatalf("refresh fixture signer review: %v", err)
+	}
 }
 
 func (f *testSignerWebAuthnFixtureV2) finishReview(
@@ -337,6 +406,127 @@ func TestSignerWebAuthnConfigurationIsExactAndFailClosed(t *testing.T) {
 	service, err := newSignerWebAuthnServiceV2(store, "localhost", "http://localhost:8787")
 	if err != nil || !service.enabled {
 		t.Fatalf("expected localhost development origin to be accepted: %v", err)
+	}
+}
+
+func TestSignerReviewedVaultTransferBuildsExactTransactionAndExecutesWithWebAuthn(t *testing.T) {
+	fixture := newTestSignerWebAuthnFixtureV2(t)
+	fixture.enroll(t, fixture.authenticator)
+	if err := fixture.store.db.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketSignerReviewsV2).Delete([]byte("review-request-001"))
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var blockhash solana.Hash
+	blockhash[0] = 7
+	rpcServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		defer request.Body.Close()
+		var body struct {
+			ID     any               `json:"id"`
+			Method string            `json:"method"`
+			Params []json.RawMessage `json:"params"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Fatalf("decode signer RPC request: %v", err)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		response := map[string]any{"jsonrpc": "2.0", "id": body.ID}
+		switch body.Method {
+		case "getLatestBlockhash":
+			response["result"] = map[string]any{
+				"context": map[string]any{"slot": 1},
+				"value": map[string]any{
+					"blockhash":            blockhash.String(),
+					"lastValidBlockHeight": 999999,
+				},
+			}
+		case "simulateTransaction":
+			response["result"] = map[string]any{
+				"context": map[string]any{"slot": 1},
+				"value":   map[string]any{"err": nil, "logs": []string{}, "unitsConsumed": 1},
+			}
+		case "sendTransaction":
+			if len(body.Params) == 0 {
+				t.Fatal("sendTransaction omitted signed bytes")
+			}
+			var encoded string
+			if err := json.Unmarshal(body.Params[0], &encoded); err != nil {
+				t.Fatalf("decode signed transaction: %v", err)
+			}
+			raw, err := base64.StdEncoding.DecodeString(encoded)
+			if err != nil {
+				t.Fatalf("decode signed transaction bytes: %v", err)
+			}
+			tx, err := solana.TransactionFromBytes(raw)
+			if err != nil || len(tx.Signatures) != 1 || tx.Signatures[0].IsZero() {
+				t.Fatalf("signer submitted invalid signed transaction: %v", err)
+			}
+			response["result"] = tx.Signatures[0].String()
+		case "getSignatureStatuses":
+			response["result"] = map[string]any{
+				"context": map[string]any{"slot": 2},
+				"value": []any{map[string]any{
+					"slot":               2,
+					"confirmations":      nil,
+					"err":                nil,
+					"confirmationStatus": "confirmed",
+				}},
+			}
+		default:
+			t.Fatalf("unexpected signer RPC method %q", body.Method)
+		}
+		if err := json.NewEncoder(writer).Encode(response); err != nil {
+			t.Fatalf("encode signer RPC response: %v", err)
+		}
+	}))
+	defer rpcServer.Close()
+	if _, err := fixture.keys.PutNetworkV2(fixture.walletID, signerNetworkPutRequestV2{
+		ExpectedVersion: signerUint64PointerV2(0),
+		PrimaryRPCURL:   rpcServer.URL,
+	}); err != nil {
+		t.Fatalf("configure signer-owned RPC: %v", err)
+	}
+	var intent signerIntentV2
+	if err := json.Unmarshal(fixture.semantic, &intent); err != nil {
+		t.Fatal(err)
+	}
+	service := &signerServiceV2{store: fixture.store, keys: fixture.keys, webauthn: fixture.service}
+	review, err := service.prepareJupiterReviewV2(fixture.walletID, signerReviewPrepareRequestV2{
+		RequestID:  "review-request-001",
+		PolicyHash: fixture.policy.Hash,
+		Mode:       jupiterReviewModeReviewedV2,
+		Intent:     intent,
+	})
+	if err != nil {
+		t.Fatalf("prepare signer-built reviewed transfer: %v", err)
+	}
+	if review.Transaction.SerializedTxBase64 == "" || review.TransactionDigest == "" || review.Transaction.Submission != jupiterSubmissionRPCV2 {
+		t.Fatalf("signer did not persist exact reviewed transaction: %#v", review)
+	}
+	callerTransaction := review.Transaction
+	if _, err := service.prepareJupiterReviewV2(fixture.walletID, signerReviewPrepareRequestV2{
+		RequestID:   "review-request-002",
+		PolicyHash:  fixture.policy.Hash,
+		Mode:        jupiterReviewModeReviewedV2,
+		Intent:      intent,
+		Transaction: &callerTransaction,
+	}); err == nil || !strings.Contains(err.Error(), "built only by the signer") {
+		t.Fatalf("reviewed transfer accepted caller transaction substitution: %v", err)
+	}
+	begin := fixture.beginReview(t)
+	finish, err := fixture.finishReview(t, begin, fixture.authenticator, 2)
+	if err != nil {
+		t.Fatalf("finish signer-owned WebAuthn authorization: %v", err)
+	}
+	result, err := service.executeJupiterReviewV2(fixture.walletID, signerReviewExecuteRequestV2{
+		RequestID:     review.RequestID,
+		Authorization: &finish.Authorization,
+	})
+	if err != nil {
+		t.Fatalf("execute exact reviewed transfer: %v", err)
+	}
+	if result.Operation == nil || result.Operation.State != operationConfirmed || result.Operation.Signature == "" || result.Review.State != jupiterReviewSignedV2 {
+		t.Fatalf("reviewed transfer did not reach one confirmed execution: %#v", result)
 	}
 }
 
@@ -388,6 +578,28 @@ func TestSignerWebAuthnFirstEnrollmentRequiresControlSocketAndDerivesAttestedKey
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSignerReviewedAuthorizationWithNoCredentialFailsWithNativeAdminWorkflow(t *testing.T) {
+	fixture := newTestSignerWebAuthnFixtureV2(t)
+	_, err := fixture.service.beginReviewAuthorization(fixture.walletID, signerReviewAuthorizationBeginRequestV2{
+		RequestID: "review-request-001",
+	})
+	if err == nil {
+		t.Fatal("expected reviewed authorization to fail before native WebAuthn enrollment")
+	}
+	message := err.Error()
+	for _, required := range []string{
+		"no signer-owned WebAuthn credential is enrolled",
+		"fased-signerd admin webauthn registration begin",
+		"--control-socket <signer-control.sock>",
+		"webauthn registration finish",
+		"Gateway enrollment is intentionally unavailable",
+	} {
+		if !strings.Contains(message, required) {
+			t.Fatalf("zero-credential error omitted %q: %v", required, err)
+		}
 	}
 }
 
@@ -611,6 +823,7 @@ func TestSignerWebAuthnChallengesAndProofsExpireDurably(t *testing.T) {
 	}
 
 	fixture.now = time.Date(2026, 7, 16, 19, 0, 0, 0, time.UTC)
+	fixture.refreshReview(t)
 	begin = fixture.beginReview(t)
 	finish, err := fixture.finishReview(t, begin, fixture.authenticator, 2)
 	if err != nil {
@@ -640,25 +853,34 @@ func TestSignerReviewIntentCanonicalizationRejectsDuplicateKeys(t *testing.T) {
 	}
 }
 
-func TestSignerWebAuthnMissingPolicyAndWrongPolicyHashFailClosed(t *testing.T) {
+func TestSignerWebAuthnAuthorizationBeginLoadsOnlySignerOwnedReview(t *testing.T) {
 	fixture := newTestSignerWebAuthnFixtureV2(t)
 	fixture.enroll(t, fixture.authenticator)
-	_, err := fixture.service.beginReviewAuthorization(fixture.walletID, signerReviewAuthorizationBeginRequestV2{
-		RequestID:         "wrong-policy-hash",
-		PolicyHash:        "sha256:" + strings.Repeat("f", 64),
-		SemanticIntent:    fixture.semantic,
-		TransactionDigest: fixture.txDigest,
-	})
-	if err == nil || !strings.Contains(err.Error(), "policy hash mismatch") {
-		t.Fatalf("expected wrong policy hash rejection, got %v", err)
+	service := &signerServiceV2{store: fixture.store, keys: fixture.keys, webauthn: fixture.service}
+	for _, body := range []string{
+		`{"requestId":"review-request-001","policyHash":"sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"}`,
+		`{"requestId":"review-request-001","transactionDigest":"sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"}`,
+		`{"requestId":"review-request-001","semanticIntent":{"type":"solana.nativeTransfer"}}`,
+	} {
+		if _, err := service.handle(request{
+			Op:       "v2.review.authorization.begin",
+			WalletID: fixture.walletID,
+			Request:  json.RawMessage(body),
+		}, signerConfig{}, false); err == nil || !strings.Contains(err.Error(), "invalid signer-v2 request") {
+			t.Fatalf("expected caller-supplied review binding to be rejected, body=%s err=%v", body, err)
+		}
 	}
-	_, err = fixture.service.beginReviewAuthorization("missing", signerReviewAuthorizationBeginRequestV2{
-		RequestID:         "missing-policy-001",
-		PolicyHash:        fixture.policy.Hash,
-		SemanticIntent:    fixture.semantic,
-		TransactionDigest: fixture.txDigest,
+	if _, err := service.handle(request{
+		Op:       "v2.review.execute",
+		WalletID: fixture.walletID,
+		Request:  json.RawMessage(`{"requestId":"review-request-001","transaction":{"serializedTxBase64":"Ag=="}}`),
+	}, signerConfig{}, false); err == nil || !strings.Contains(err.Error(), "invalid signer-v2 request") {
+		t.Fatalf("expected execute-time transaction substitution to be rejected, got %v", err)
+	}
+	_, err := fixture.service.beginReviewAuthorization("missing", signerReviewAuthorizationBeginRequestV2{
+		RequestID: "missing-policy-001",
 	})
-	if err == nil || !strings.Contains(err.Error(), "explicit signer policy required") {
-		t.Fatalf("expected missing policy rejection, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "review not found") {
+		t.Fatalf("expected missing signer-owned review rejection, got %v", err)
 	}
 }

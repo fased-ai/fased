@@ -17,6 +17,7 @@ import type {
   WalletProviderAdapter,
   WalletProviderJupiterIntentV2,
   WalletProviderJupiterReviewV2,
+  WalletProviderSignerReviewAuthorizationV2,
   WalletProviderSendTxResult,
 } from "./wallet-provider-adapter.js";
 import {
@@ -186,6 +187,9 @@ export async function prepareSolanaSwapSignerReview(params: {
     );
   }
   const intent = await buildSolanaSwapSignerIntent(params);
+  if (!params.order.transaction) {
+    throw new Error("Jupiter signer review requires the exact serialized transaction");
+  }
   const review = await params.provider.prepareJupiterReview({
     walletId: params.walletId,
     requestId:
@@ -196,6 +200,12 @@ export async function prepareSolanaSwapSignerReview(params: {
       ),
     mode: params.mode,
     intent,
+    transaction: {
+      serializedTxBase64: params.order.transaction,
+      programs: params.inspection.programIds,
+      writableAccounts: params.inspection.writableAccounts,
+      submission: "rpc",
+    },
   });
   return { review, intent };
 }
@@ -493,7 +503,7 @@ export async function executeSolanaSwapApprovalPayload(params: {
   runtimeConfig: FasedAgentConfig;
   providerIdOverride?: WalletProviderId;
   autonomous?: boolean;
-  reviewAuthorization?: { type: string; proof: unknown };
+  reviewAuthorization?: WalletProviderSignerReviewAuthorizationV2;
   env?: NodeJS.ProcessEnv;
 }): Promise<SolanaSwapExecutionResult> {
   const env = params.env ?? process.env;
@@ -582,9 +592,9 @@ export async function executeSolanaSwapApprovalPayload(params: {
       message: "Jupiter execution requires protocol-v2 local-socket-signer review.execute support",
     };
   }
-  let prepared: SolanaSwapSignerReview;
+  let signerReviewRequestId: string;
   if (params.autonomous) {
-    prepared = await prepareSolanaSwapSignerReview({
+    const prepared = await prepareSolanaSwapSignerReview({
       provider,
       walletId: params.payload.walletId,
       owner: taker,
@@ -594,47 +604,21 @@ export async function executeSolanaSwapApprovalPayload(params: {
       mode: "autonomous",
       env,
     });
+    signerReviewRequestId = prepared.review.requestId;
   } else {
     const requestId = params.payload.signerReviewId?.trim();
-    const policyHash = params.payload.signerPolicyHash?.trim();
-    if (!requestId || !policyHash) {
+    if (!requestId) {
       return {
         ok: false,
         code: "wallet_signer_review_missing",
         message: "reviewed Jupiter swap is not bound to signer review.prepare",
       };
     }
-    prepared = {
-      intent: await buildSolanaSwapSignerIntent({ order, inspection, owner: taker, rpcUrl, env }),
-      review: {
-        requestId,
-        walletId: params.payload.walletId,
-        intentType: "solana.jupiter.swap",
-        intentDigest: params.payload.signerIntentDigest?.trim() ?? "",
-        policyHash,
-        mode: "reviewed",
-        nonce: "",
-        semanticIntent: {} as WalletProviderJupiterIntentV2,
-        issuedAt: "",
-        state: "prepared",
-        preparedAt: "",
-        expiresAt: params.payload.signerReviewExpiresAt?.trim() ?? "",
-        updatedAt: "",
-      },
-    };
+    signerReviewRequestId = requestId;
   }
   const executed = await provider.executeJupiterReview({
     walletId: params.payload.walletId,
-    requestId: prepared.review.requestId,
-    policyHash: prepared.review.policyHash,
-    mode: params.autonomous ? "autonomous" : "reviewed",
-    intent: prepared.intent,
-    transaction: {
-      serializedTxBase64: order.transaction,
-      programs: inspection.programIds,
-      writableAccounts: inspection.writableAccounts,
-      submission: "rpc",
-    },
+    requestId: signerReviewRequestId,
     ...(params.reviewAuthorization ? { authorization: params.reviewAuthorization } : {}),
   });
   if (executed.operation.state === "failed") {
