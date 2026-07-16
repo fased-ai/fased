@@ -1,5 +1,4 @@
 import { execSync, spawn, spawnSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
@@ -15,7 +14,6 @@ import type {
 } from "../config/types.wallet.js";
 import { VERSION } from "../version.js";
 import { callLocalSocketSigner } from "../wallet/providers/local-socket-signer-adapter.js";
-import { applyWalletPolicyConfig, resolveWalletRoleForId } from "../wallet/wallet-policy.js";
 import {
   WALLET_PROVIDER_IDS,
   readWalletProviderRegistry,
@@ -25,11 +23,13 @@ import { resolveWalletProviderId } from "../wallet/wallet-provider-resolver.js";
 import {
   ensureWalletStateDir,
   resolveLocalSignerBackendSocketPath,
+  resolveLocalSignerControlSocketPath,
+  resolveLocalSignerMasterKeyPath,
   resolveLocalSignerMaterialRootDir,
   resolveLocalSignerRunAsUser,
   resolveLocalSignerSidecarPaths,
   resolveLocalSignerSocketPath,
-  resolveWalletRuntimeConfig,
+  resolveLocalSignerStateDbPath,
 } from "../wallet/wallet-runtime-config.js";
 import type { HostSetupProfile, WizardFlow } from "./onboarding.types.js";
 import type { WizardPrompter } from "./prompts.js";
@@ -557,52 +557,6 @@ function hasLocalSignerMaterialEnv(env: NodeJS.ProcessEnv): boolean {
   });
 }
 
-function normalizeWalletIdForEnvSuffix(walletId: string): string | undefined {
-  const normalized = walletId
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "");
-  return normalized || undefined;
-}
-
-function normalizeWalletIdForFilename(walletId: string): string | undefined {
-  const normalized = walletId
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return normalized || undefined;
-}
-
-function inferScopedSignerKeystoreEnv(
-  materialDir: string,
-  env: NodeJS.ProcessEnv,
-): NodeJS.ProcessEnv {
-  const inferred: NodeJS.ProcessEnv = {};
-  try {
-    const registry = readWalletProviderRegistry(env);
-    for (const wallet of registry.wallets) {
-      if (wallet.providerId !== "local-socket-signer") {
-        continue;
-      }
-      const envSuffix = normalizeWalletIdForEnvSuffix(wallet.id)?.toUpperCase();
-      const fileSuffix = normalizeWalletIdForFilename(wallet.id);
-      if (!envSuffix || !fileSuffix) {
-        continue;
-      }
-      const solanaKey = `FASED_WALLET_SOLANA_KEYSTORE_PATH__${envSuffix}`;
-      if (!String(env[solanaKey] ?? "").trim()) {
-        const candidate = path.join(materialDir, `keystore-solana-${fileSuffix}.v1.enc`);
-        if (fs.existsSync(candidate)) {
-          inferred[solanaKey] = candidate;
-        }
-      }
-    }
-  } catch {}
-  return inferred;
-}
-
 export function shouldSyncLocalSocketSignerFromConfig(params?: {
   config?: FasedAgentConfig;
   env?: NodeJS.ProcessEnv;
@@ -626,99 +580,63 @@ export function shouldSyncLocalSocketSignerFromConfig(params?: {
   }
 }
 
-function resolveLocalSignerPassphraseSource(
-  materialDir: string,
-  env: NodeJS.ProcessEnv,
-):
-  | { kind: "file"; path: string; value: string }
-  | { kind: "value"; value: string }
-  | { kind: "none" } {
-  const configuredFile = String(env.FASED_WALLET_PASSPHRASE_FILE ?? "").trim();
-  const candidates = [
-    configuredFile ? path.resolve(configuredFile) : "",
-    path.join(materialDir, "passphrase"),
-  ].filter(Boolean);
-  for (const candidate of candidates) {
-    try {
-      const value = fs.readFileSync(candidate, "utf8").trim();
-      if (value) {
-        return { kind: "file", path: candidate, value };
-      }
-    } catch {}
-  }
-  const explicit = String(env.FASED_WALLET_PASSPHRASE ?? "").trim();
-  if (explicit) {
-    return { kind: "value", value: explicit };
-  }
-  return { kind: "none" };
-}
-
 function resolveSignerChildEnv(
   materialDir: string,
   env: NodeJS.ProcessEnv = process.env,
   cfg: FasedAgentConfig = loadConfig(),
 ): NodeJS.ProcessEnv {
+  void materialDir;
   const configEnv = cfg.env?.vars ?? {};
   const mergedEnv = { ...env, ...configEnv } as NodeJS.ProcessEnv;
-  const inferredScopedEnv = inferScopedSignerKeystoreEnv(materialDir, mergedEnv);
-  const signerEnv = { ...mergedEnv, ...inferredScopedEnv } as NodeJS.ProcessEnv;
-  const hasScopedSolKeystore = hasScopedWalletEnvValue(
-    signerEnv,
-    "FASED_WALLET_SOLANA_KEYSTORE_PATH",
-  );
-  const childBaseEnv = { ...signerEnv } as NodeJS.ProcessEnv;
-  if (hasScopedSolKeystore) {
-    delete childBaseEnv.FASED_WALLET_SOLANA_KEYSTORE_PATH;
+  const childEnv: NodeJS.ProcessEnv = {};
+  const inheritedKeys = [
+    "PATH",
+    "HOME",
+    "TMPDIR",
+    "LANG",
+    "LC_ALL",
+    "TZ",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "no_proxy",
+  ] as const;
+  for (const key of inheritedKeys) {
+    const value = String(mergedEnv[key] ?? "").trim();
+    if (value) {
+      childEnv[key] = value;
+    }
   }
-  const explicitSolPath = String(signerEnv.FASED_WALLET_SOLANA_KEYSTORE_PATH ?? "").trim();
-  const passphraseSource = resolveLocalSignerPassphraseSource(materialDir, signerEnv);
-  const isolatedPassphraseFile = resolveLocalSignerRunAsUser(signerEnv)
-    ? path.resolve(
-        String(signerEnv.FASED_WALLET_PASSPHRASE_FILE ?? "").trim() ||
-          path.join(materialDir, "passphrase"),
-      )
-    : "";
-  const solPath = hasScopedSolKeystore
-    ? ""
-    : explicitSolPath || path.join(materialDir, "keystore-solana.v1.enc");
-  const chains = resolveSignerChainsEnvValue(cfg, signerEnv);
-  const chainSet = new Set(
-    chains
-      .split(",")
-      .map((entry) => entry.trim().toLowerCase())
-      .filter(Boolean),
-  );
-  return {
-    ...childBaseEnv,
-    FASED_WALLET_CHAINS: chains,
-    ...(chainSet.has("solana") && solPath ? { FASED_WALLET_SOLANA_KEYSTORE_PATH: solPath } : {}),
-    ...(passphraseSource.kind === "file"
-      ? {
-          FASED_WALLET_PASSPHRASE_FILE: passphraseSource.path,
-          FASED_WALLET_PASSPHRASE: undefined,
-        }
-      : isolatedPassphraseFile
-        ? {
-            FASED_WALLET_PASSPHRASE_FILE: isolatedPassphraseFile,
-            FASED_WALLET_PASSPHRASE: undefined,
-          }
-        : passphraseSource.kind === "value"
-          ? { FASED_WALLET_PASSPHRASE: passphraseSource.value }
-          : {}),
-  };
+  for (const [key, rawValue] of Object.entries(mergedEnv)) {
+    const value = String(rawValue ?? "").trim();
+    const isRpcConfig =
+      key === "FASED_WALLET_RPC_URL" ||
+      key === "FASED_WALLET_SOLANA_RPC_URL" ||
+      key.startsWith("FASED_WALLET_SOLANA_RPC_URL__") ||
+      key === "FASED_WALLET_SOLANA_WRITE_RPC_FALLBACK_URL" ||
+      key.startsWith("FASED_WALLET_SOLANA_WRITE_RPC_FALLBACK_URL__") ||
+      key === "FASED_WALLET_SOLANA_RPC_FALLBACK_URL";
+    const isSignerRuntimeConfig =
+      key.startsWith("FASED_WALLET_LOCAL_SIGNER_RATE_") ||
+      key === "FASED_WALLET_LOCAL_SIGNER_AUDIT_MAX_BYTES" ||
+      key === "FASED_WALLET_SOLANA_CONFIRM_TIMEOUT_MS" ||
+      key === "FASED_WALLET_SOLANA_WRITE_RPC_TIMEOUT_MS";
+    if (value && (isRpcConfig || isSignerRuntimeConfig)) {
+      childEnv[key] = value;
+    }
+  }
+  childEnv.FASED_WALLET_CHAINS = resolveSignerChainsEnvValue(cfg, mergedEnv);
+  return childEnv;
 }
 
 const LOCAL_SIGNER_EXPORTABLE_PREFIXES = [
-  "FASED_WALLET_SOLANA_KEYSTORE_PATH",
   "FASED_WALLET_SOLANA_RPC_URL",
   "FASED_WALLET_SOLANA_WRITE_RPC_FALLBACK_URL",
   "FASED_WALLET_RPC_URL",
-  "FASED_WALLET_EMBEDDED_KEYSTORE_RPC_URL",
-  "FASED_WALLET_CUSTODY_MODE",
-  "FASED_WALLET_CUSTODY_WALLETS",
-  "FASED_WALLET_CUSTODY_PASSKEY_CEREMONY",
-  "FASED_WALLET_CUSTODY_EPHEMERAL_RECONSTRUCTION",
-  "FASED_WALLET_CUSTODY_PHASE2_COMPLETE",
 ] as const;
 
 function collectLocalSignerExportEnv(childEnv: NodeJS.ProcessEnv): Record<string, string> {
@@ -740,77 +658,6 @@ function collectLocalSignerExportEnv(childEnv: NodeJS.ProcessEnv): Record<string
   return out;
 }
 
-function walletPolicyEnvSuffix(walletId: string): string {
-  return walletId
-    .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "");
-}
-
-function addLocalSignerPolicyEnv(
-  out: Record<string, string>,
-  params: {
-    prefix: string;
-    role: "agent" | "mining" | "vault";
-    policy: ReturnType<typeof resolveWalletRuntimeConfig>["policy"];
-  },
-) {
-  const key = (name: string) => `${name}${params.prefix}`;
-  out[key("FASED_WALLET_LOCAL_SIGNER_ROLE")] = params.role;
-  out[key("FASED_WALLET_LOCAL_SIGNER_DIRECT_SIGNING")] = params.policy.directSigning ? "1" : "0";
-  out[key("FASED_WALLET_LOCAL_SIGNER_CAPS_ENABLED")] = params.policy.capsEnabled ? "1" : "0";
-  out[key("FASED_WALLET_LOCAL_SIGNER_SOLANA_MAX_PER_TX")] =
-    params.policy.solana.caps.maxPerTx.toString();
-  out[key("FASED_WALLET_LOCAL_SIGNER_SOLANA_MAX_DAILY")] =
-    params.policy.solana.caps.maxDaily.toString();
-  if (params.policy.solana.allowPrograms.length > 0) {
-    out[key("FASED_WALLET_LOCAL_SIGNER_SOLANA_ALLOW_PROGRAMS")] =
-      params.policy.solana.allowPrograms.join(",");
-  }
-}
-
-function collectLocalSignerPolicyExportEnv(
-  cfg: FasedAgentConfig,
-  env: NodeJS.ProcessEnv,
-): Record<string, string> {
-  const out: Record<string, string> = {};
-  const registry = readWalletProviderRegistry(env);
-  const localSignerWallets = registry.wallets.filter(
-    (wallet) => wallet.providerId === "local-socket-signer" && wallet.id.trim(),
-  );
-  if (localSignerWallets.length === 0) {
-    return out;
-  }
-  const baseRuntime = resolveWalletRuntimeConfig(cfg, env);
-  for (const wallet of localSignerWallets) {
-    const role = resolveWalletRoleForId({ walletId: wallet.id, cfg, env });
-    const runtime = applyWalletPolicyConfig({
-      config: baseRuntime,
-      cfg,
-      env,
-      walletId: wallet.id,
-    });
-    const suffix = walletPolicyEnvSuffix(wallet.id);
-    if (!suffix) {
-      continue;
-    }
-    addLocalSignerPolicyEnv(out, {
-      prefix: `__${suffix}`,
-      role,
-      policy: runtime.policy,
-    });
-    if (registry.defaultWalletId === wallet.id || localSignerWallets.length === 1) {
-      addLocalSignerPolicyEnv(out, {
-        prefix: "",
-        role,
-        policy: runtime.policy,
-      });
-    }
-  }
-  return out;
-}
-
 export function renderLocalSignerEnvFile(params?: {
   config?: FasedAgentConfig;
   env?: NodeJS.ProcessEnv;
@@ -821,12 +668,12 @@ export function renderLocalSignerEnvFile(params?: {
   const materialDir = resolveLocalSignerMaterialRootDir(mergedEnv);
   const socketPath = resolveLocalSignerSocketPath(mergedEnv);
   const backendSocketPath = resolveLocalSignerBackendSocketPath(mergedEnv);
+  const controlSocketPath = resolveLocalSignerControlSocketPath(mergedEnv);
+  const stateDbPath = resolveLocalSignerStateDbPath(mergedEnv);
+  const masterKeyPath = resolveLocalSignerMasterKeyPath(mergedEnv);
   const signerBinPath = resolveSignerdBinaryPath(mergedEnv);
   const childEnv = resolveSignerChildEnv(materialDir, mergedEnv, cfg);
-  const exportLines = Object.entries({
-    ...collectLocalSignerExportEnv(childEnv),
-    ...collectLocalSignerPolicyExportEnv(cfg, mergedEnv),
-  })
+  const exportLines = Object.entries(collectLocalSignerExportEnv(childEnv))
     .toSorted(([a], [b]) => a.localeCompare(b))
     .map(([key, value]) => `export ${key}="${value.replaceAll('"', '\\"')}"`);
   const lines = [
@@ -834,24 +681,16 @@ export function renderLocalSignerEnvFile(params?: {
     ...(backendSocketPath !== socketPath
       ? [`export FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET="${backendSocketPath}"`]
       : []),
+    `export FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET="${controlSocketPath}"`,
+    `export FASED_WALLET_LOCAL_SIGNER_STATE_DB="${stateDbPath}"`,
+    `export FASED_WALLET_LOCAL_SIGNER_MASTER_KEY="${masterKeyPath}"`,
     ...(materialDir !== walletRoot
       ? [`export FASED_WALLET_SIGNER_STATE_DIR="${materialDir}"`]
       : []),
     `export FASED_WALLET_CHAINS="${String(childEnv.FASED_WALLET_CHAINS ?? "solana").trim() || "solana"}"`,
-    ...(String(childEnv.FASED_WALLET_PASSPHRASE ?? "").trim()
-      ? [
-          `export FASED_WALLET_PASSPHRASE="${String(childEnv.FASED_WALLET_PASSPHRASE ?? "")
-            .trim()
-            .replaceAll('"', '\\"')}"`,
-        ]
-      : String(childEnv.FASED_WALLET_PASSPHRASE_FILE ?? "").trim()
-        ? [
-            `export FASED_WALLET_PASSPHRASE_FILE="${String(childEnv.FASED_WALLET_PASSPHRASE_FILE ?? "").trim()}"`,
-          ]
-        : []),
     ...exportLines,
     "",
-    `"${signerBinPath}" --socket "\${FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET:-$FASED_WALLET_LOCAL_SIGNER_SOCKET}"`,
+    `"${signerBinPath}" --socket "\${FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET:-$FASED_WALLET_LOCAL_SIGNER_SOCKET}" --control-socket "$FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET" --state-db "$FASED_WALLET_LOCAL_SIGNER_STATE_DB" --master-key "$FASED_WALLET_LOCAL_SIGNER_MASTER_KEY"`,
   ];
   return `${lines.join("\n")}\n`;
 }
@@ -975,91 +814,6 @@ function ensureIsolatedSignerPaths(
   });
 }
 
-function ensureLocalSignerPassphrase(): string {
-  const materialDir = resolveLocalSignerMaterialRootDir(process.env);
-  const runAsUser = resolveLocalSignerRunAsUser(process.env);
-  const appSocketPath = resolveLocalSignerSocketPath(process.env);
-  const backendSocketPath = resolveLocalSignerBackendSocketPath(process.env);
-  if (runAsUser) {
-    ensureIsolatedSignerPaths(materialDir, backendSocketPath, appSocketPath, runAsUser);
-  }
-  const existing = resolveLocalSignerPassphraseSource(materialDir, process.env);
-  if (existing.kind === "file") {
-    process.env.FASED_WALLET_PASSPHRASE_FILE = existing.path;
-    delete process.env.FASED_WALLET_PASSPHRASE;
-    return existing.value;
-  }
-  if (runAsUser) {
-    const generated =
-      existing.kind === "value" ? existing.value : randomBytes(24).toString("base64url");
-    const stagingDir = ensureWalletStateDir(process.env).rootDir;
-    const stagingPath = path.join(
-      stagingDir,
-      `.local-signer-passphrase-${process.pid}-${Date.now()}`,
-    );
-    fs.mkdirSync(path.dirname(stagingPath), { recursive: true, mode: 0o700 });
-    fs.writeFileSync(stagingPath, `${generated}\n`, { encoding: "utf8", mode: 0o600 });
-    try {
-      fs.chmodSync(stagingPath, 0o600);
-    } catch {}
-    let passphrasePath = path.join(materialDir, "passphrase");
-    try {
-      const helperResult = runSignerIsolationHelper(
-        runAsUser,
-        ["install-passphrase", stagingPath, materialDir],
-        {
-          capture: true,
-        },
-      );
-      if (helperResult === undefined) {
-        runCommand({
-          command: "sudo",
-          args: [
-            "bash",
-            "-lc",
-            [
-              "set -euo pipefail",
-              `test ! -e ${JSON.stringify(passphrasePath)}`,
-              `install -d -m 700 -o ${JSON.stringify(runAsUser)} -g ${JSON.stringify(runAsUser)} ${JSON.stringify(materialDir)}`,
-              `install -m 600 -o ${JSON.stringify(runAsUser)} -g ${JSON.stringify(runAsUser)} ${JSON.stringify(stagingPath)} ${JSON.stringify(passphrasePath)}`,
-              `rm -f ${JSON.stringify(stagingPath)}`,
-            ].join("; "),
-          ],
-        });
-      } else {
-        passphrasePath = helperResult.trim() || passphrasePath;
-      }
-      process.env.FASED_WALLET_PASSPHRASE = generated;
-    } catch (err) {
-      try {
-        fs.rmSync(stagingPath, { force: true });
-      } catch {}
-      const detail = err instanceof Error ? err.message : String(err);
-      if (!detail.includes("passphrase already exists")) {
-        throw err;
-      }
-      delete process.env.FASED_WALLET_PASSPHRASE;
-    }
-    process.env.FASED_WALLET_PASSPHRASE_FILE = passphrasePath;
-    return process.env.FASED_WALLET_PASSPHRASE ?? "";
-  }
-  if (existing.kind === "value") {
-    process.env.FASED_WALLET_PASSPHRASE = existing.value;
-    delete process.env.FASED_WALLET_PASSPHRASE_FILE;
-    return existing.value;
-  }
-  const generated = randomBytes(24).toString("base64url");
-  const passphraseFile = path.join(materialDir, "passphrase");
-  fs.mkdirSync(path.dirname(passphraseFile), { recursive: true, mode: 0o700 });
-  fs.writeFileSync(passphraseFile, `${generated}\n`, { encoding: "utf8", mode: 0o600 });
-  try {
-    fs.chmodSync(passphraseFile, 0o600);
-  } catch {}
-  process.env.FASED_WALLET_PASSPHRASE_FILE = passphraseFile;
-  delete process.env.FASED_WALLET_PASSPHRASE;
-  return generated;
-}
-
 function startSignerdBackground(
   binPath: string,
   socketPath: string,
@@ -1070,6 +824,9 @@ function startSignerdBackground(
   const childEnv = resolveSignerChildEnv(materialDir, env);
   const appSocketPath = resolveLocalSignerSocketPath(env);
   const backendSocketPath = resolveLocalSignerBackendSocketPath(env);
+  const controlSocketPath = resolveLocalSignerControlSocketPath(env);
+  const stateDbPath = resolveLocalSignerStateDbPath(env);
+  const masterKeyPath = resolveLocalSignerMasterKeyPath(env);
   const { pidPath, auditPath } = resolveLocalSignerSidecarPaths(socketPath);
   const logPath = resolveSignerdLogPath({ appSocketPath, materialDir, runAsUser });
   if (runAsUser && process.getuid?.() === 0) {
@@ -1122,7 +879,20 @@ function startSignerdBackground(
   const err = fs.openSync(logPath, "a", 0o600);
   const child = spawn(
     binPath,
-    ["-socket", socketPath, "-pid-file", pidPath, "-audit-log", auditPath],
+    [
+      "-socket",
+      socketPath,
+      "-control-socket",
+      controlSocketPath,
+      "-state-db",
+      stateDbPath,
+      "-master-key",
+      masterKeyPath,
+      "-pid-file",
+      pidPath,
+      "-audit-log",
+      auditPath,
+    ],
     {
       detached: true,
       stdio: ["ignore", out, err],
@@ -1667,8 +1437,6 @@ export async function configureWalletForOnboarding(params: {
     const materialDir = resolveLocalSignerMaterialRootDir(process.env);
     const binPath = resolveSignerdBinaryPath(process.env);
     const runAsUser = resolveLocalSignerRunAsUser(process.env);
-    ensureLocalSignerPassphrase();
-
     if (!fs.existsSync(binPath)) {
       const signerInstallProgress = quietSignerNotes
         ? prompter.progress("Installing local wallet signer…")

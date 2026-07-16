@@ -256,6 +256,30 @@ export function resolveLocalSignerBackendSocketPath(env: NodeJS.ProcessEnv = pro
   return resolveLocalSignerSocketPath(env);
 }
 
+export function resolveLocalSignerControlSocketPath(env: NodeJS.ProcessEnv = process.env): string {
+  const explicit = String(env.FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET ?? "").trim();
+  if (explicit) {
+    return path.resolve(explicit);
+  }
+  return path.join(resolveLocalSignerMaterialRootDir(env), "local-signer-control.sock");
+}
+
+export function resolveLocalSignerStateDbPath(env: NodeJS.ProcessEnv = process.env): string {
+  const explicit = String(env.FASED_WALLET_LOCAL_SIGNER_STATE_DB ?? "").trim();
+  if (explicit) {
+    return path.resolve(explicit);
+  }
+  return path.join(resolveLocalSignerMaterialRootDir(env), "signerd-v2.db");
+}
+
+export function resolveLocalSignerMasterKeyPath(env: NodeJS.ProcessEnv = process.env): string {
+  const explicit = String(env.FASED_WALLET_LOCAL_SIGNER_MASTER_KEY ?? "").trim();
+  if (explicit) {
+    return path.resolve(explicit);
+  }
+  return path.join(resolveLocalSignerMaterialRootDir(env), "signerd-v2.master.key");
+}
+
 export function resolveLocalSignerRunAsUser(
   env: NodeJS.ProcessEnv = process.env,
 ): string | undefined {

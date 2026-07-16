@@ -13,6 +13,7 @@ import { loadConfig, type FasedAgentConfig, writeConfigFile } from "../config/co
 import type { WalletChain, WalletProviderId, WalletRuntimeKind } from "../config/types.wallet.js";
 import { defaultRuntime, type RuntimeEnv } from "../runtime.js";
 import { startLocalSocketSignerBroker } from "../wallet/local-socket-signer-broker.js";
+import { createLockedSignerOwnedWallet } from "../wallet/local-socket-signer-lifecycle.js";
 import { readWalletApprovalAuthSnapshot } from "../wallet/wallet-approval-auth.js";
 import { buildWalletCanaryReport, runWalletProviderCanaryReport } from "../wallet/wallet-canary.js";
 import {
@@ -29,7 +30,6 @@ import {
   reconcileWalletInboundEvents,
   type WalletInboundStatus,
 } from "../wallet/wallet-inbound-events.js";
-import { applyWalletPolicyConfig, resolveWalletRoleForId } from "../wallet/wallet-policy.js";
 import { buildWalletProviderCapabilityMatrix } from "../wallet/wallet-provider-capabilities.js";
 import {
   normalizeWalletUserRole,
@@ -48,10 +48,12 @@ import { redactWalletDiagnosticText } from "../wallet/wallet-redaction.js";
 import {
   ensureWalletStateDir,
   resolveLocalSignerBackendSocketPath,
+  resolveLocalSignerControlSocketPath,
+  resolveLocalSignerMasterKeyPath,
   resolveLocalSignerMaterialRootDir,
   resolveLocalSignerSidecarPaths,
   resolveLocalSignerSocketPath,
-  resolveWalletRuntimeConfig,
+  resolveLocalSignerStateDbPath,
 } from "../wallet/wallet-runtime-config.js";
 import {
   readWalletProviderSecretStatus,
@@ -61,7 +63,11 @@ import {
   readWalletStatusSnapshot,
   resolveWalletConfigForRuntime,
 } from "../wallet/wallet-status.js";
-import { restartLocalSocketSigner, resolveSignerdBinaryPath } from "../wizard/onboarding.wallet.js";
+import {
+  installSignerdBinary,
+  restartLocalSocketSigner,
+  resolveSignerdBinaryPath,
+} from "../wizard/onboarding.wallet.js";
 
 export type WalletSetupOptions = {
   managed?: boolean;
@@ -690,10 +696,9 @@ function collectLocalSignerExportEnv(
 ): Record<string, string> {
   const effectiveEnv = { ...env, ...cfg.env?.vars };
   const exportablePrefixes = [
-    "FASED_WALLET_SOLANA_KEYSTORE_PATH",
     "FASED_WALLET_SOLANA_RPC_URL",
+    "FASED_WALLET_SOLANA_WRITE_RPC_FALLBACK_URL",
     "FASED_WALLET_RPC_URL",
-    "FASED_WALLET_EMBEDDED_KEYSTORE_RPC_URL",
   ];
   const out: Record<string, string> = {};
   for (const [key, rawValue] of Object.entries(effectiveEnv)) {
@@ -705,77 +710,6 @@ function collectLocalSignerExportEnv(
       continue;
     }
     out[key] = value;
-  }
-  return out;
-}
-
-function walletPolicyEnvSuffix(walletId: string): string {
-  return walletId
-    .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "");
-}
-
-function addLocalSignerPolicyEnv(
-  out: Record<string, string>,
-  params: {
-    prefix: string;
-    role: "agent" | "mining" | "vault";
-    policy: ReturnType<typeof resolveWalletRuntimeConfig>["policy"];
-  },
-) {
-  const key = (name: string) => `${name}${params.prefix}`;
-  out[key("FASED_WALLET_LOCAL_SIGNER_ROLE")] = params.role;
-  out[key("FASED_WALLET_LOCAL_SIGNER_DIRECT_SIGNING")] = params.policy.directSigning ? "1" : "0";
-  out[key("FASED_WALLET_LOCAL_SIGNER_CAPS_ENABLED")] = params.policy.capsEnabled ? "1" : "0";
-  out[key("FASED_WALLET_LOCAL_SIGNER_SOLANA_MAX_PER_TX")] =
-    params.policy.solana.caps.maxPerTx.toString();
-  out[key("FASED_WALLET_LOCAL_SIGNER_SOLANA_MAX_DAILY")] =
-    params.policy.solana.caps.maxDaily.toString();
-  if (params.policy.solana.allowPrograms.length > 0) {
-    out[key("FASED_WALLET_LOCAL_SIGNER_SOLANA_ALLOW_PROGRAMS")] =
-      params.policy.solana.allowPrograms.join(",");
-  }
-}
-
-function collectLocalSignerPolicyExportEnv(
-  cfg: FasedAgentConfig,
-  env: NodeJS.ProcessEnv,
-): Record<string, string> {
-  const out: Record<string, string> = {};
-  const registry = readWalletProviderRegistry(env);
-  const localSignerWallets = registry.wallets.filter(
-    (wallet) => wallet.providerId === "local-socket-signer" && wallet.id.trim(),
-  );
-  if (localSignerWallets.length === 0) {
-    return out;
-  }
-  const baseRuntime = resolveWalletRuntimeConfig(cfg, env);
-  for (const wallet of localSignerWallets) {
-    const role = resolveWalletRoleForId({ walletId: wallet.id, cfg, env });
-    const runtime = applyWalletPolicyConfig({
-      config: baseRuntime,
-      cfg,
-      env,
-      walletId: wallet.id,
-    });
-    const suffix = walletPolicyEnvSuffix(wallet.id);
-    if (!suffix) {
-      continue;
-    }
-    addLocalSignerPolicyEnv(out, {
-      prefix: `__${suffix}`,
-      role,
-      policy: runtime.policy,
-    });
-    if (registry.defaultWalletId === wallet.id || localSignerWallets.length === 1) {
-      addLocalSignerPolicyEnv(out, {
-        prefix: "",
-        role,
-        policy: runtime.policy,
-      });
-    }
   }
   return out;
 }
@@ -1179,23 +1113,6 @@ function resolveLocalSignerPassphraseSource(
   return { kind: "none" };
 }
 
-function renderLocalSignerPassphraseEnvLines(env: NodeJS.ProcessEnv): string[] {
-  if (String(env.FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER ?? "").trim()) {
-    const file =
-      String(env.FASED_WALLET_PASSPHRASE_FILE ?? "").trim() ||
-      path.join(resolveLocalSignerMaterialRootDir(env), "passphrase");
-    return [`export FASED_WALLET_PASSPHRASE_FILE="${file.replaceAll('"', '\\"')}"`];
-  }
-  const source = resolveLocalSignerPassphraseSource(env);
-  if (source.kind === "file") {
-    return [`export FASED_WALLET_PASSPHRASE_FILE="${source.path.replaceAll('"', '\\"')}"`];
-  }
-  if (source.kind === "value") {
-    return [`export FASED_WALLET_PASSPHRASE="${source.value.replaceAll('"', '\\"')}"`];
-  }
-  return [];
-}
-
 function ensureLocalSignerPassphraseForSetup(runtime: RuntimeEnv, env: NodeJS.ProcessEnv): string {
   const existing = resolveLocalSignerPassphraseSource(env);
   if (existing.kind === "file") {
@@ -1414,39 +1331,29 @@ function writeLocalSignerEnvFile(cfg: FasedAgentConfig, env: NodeJS.ProcessEnv) 
   const effectiveEnv = { ...env, ...cfg.env?.vars };
   const socketPath = resolveLocalSignerSocketPath(effectiveEnv);
   const backendSocketPath = resolveLocalSignerBackendSocketPath(effectiveEnv);
+  const controlSocketPath = resolveLocalSignerControlSocketPath(effectiveEnv);
+  const stateDbPath = resolveLocalSignerStateDbPath(effectiveEnv);
+  const masterKeyPath = resolveLocalSignerMasterKeyPath(effectiveEnv);
   const materialRoot = resolveLocalSignerMaterialRootDir(effectiveEnv);
   const signerBinPath = resolveSignerdBinaryPath(effectiveEnv);
   const signerEnvPath = path.resolve(ensureWalletStateDir(env).rootDir, "signer.env");
-  const custodyKeys = [
-    "FASED_WALLET_CUSTODY_MODE",
-    "FASED_WALLET_CUSTODY_WALLETS",
-    "FASED_WALLET_CUSTODY_PASSKEY_CEREMONY",
-    "FASED_WALLET_CUSTODY_EPHEMERAL_RECONSTRUCTION",
-    "FASED_WALLET_CUSTODY_PHASE2_COMPLETE",
-  ] as const;
-  const custodyEnvLines = custodyKeys
-    .map((key) => [key, String(effectiveEnv[key] ?? "").trim()] as const)
-    .filter(([, value]) => Boolean(value))
-    .map(([key, value]) => `export ${key}="${value}"`);
   const signerEnvLines = [
     `export FASED_WALLET_LOCAL_SIGNER_SOCKET="${socketPath}"`,
     ...(backendSocketPath !== socketPath
       ? [`export FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET="${backendSocketPath}"`]
       : []),
+    `export FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET="${controlSocketPath}"`,
+    `export FASED_WALLET_LOCAL_SIGNER_STATE_DB="${stateDbPath}"`,
+    `export FASED_WALLET_LOCAL_SIGNER_MASTER_KEY="${masterKeyPath}"`,
     ...(materialRoot !== ensureWalletStateDir(env).rootDir
       ? [`export FASED_WALLET_SIGNER_STATE_DIR="${materialRoot}"`]
       : []),
     `export FASED_WALLET_CHAINS="${resolveLocalSignerChainsEnvValue(cfg, effectiveEnv)}"`,
-    ...renderLocalSignerPassphraseEnvLines(effectiveEnv),
-    ...Object.entries({
-      ...collectLocalSignerExportEnv(cfg, effectiveEnv),
-      ...collectLocalSignerPolicyExportEnv(cfg, effectiveEnv),
-    })
+    ...Object.entries(collectLocalSignerExportEnv(cfg, effectiveEnv))
       .toSorted(([a], [b]) => a.localeCompare(b))
       .map(([key, value]) => `export ${key}="${value.replaceAll('"', '\\"')}"`),
-    ...custodyEnvLines,
     "",
-    `"${signerBinPath}" --socket "\${FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET:-$FASED_WALLET_LOCAL_SIGNER_SOCKET}"`,
+    `"${signerBinPath}" --socket "\${FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET:-$FASED_WALLET_LOCAL_SIGNER_SOCKET}" --control-socket "$FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET" --state-db "$FASED_WALLET_LOCAL_SIGNER_STATE_DB" --master-key "$FASED_WALLET_LOCAL_SIGNER_MASTER_KEY"`,
   ];
   fs.mkdirSync(path.dirname(signerEnvPath), { recursive: true, mode: 0o700 });
   fs.writeFileSync(signerEnvPath, `${signerEnvLines.join("\n")}\n`, {
@@ -1510,6 +1417,9 @@ function ensureLocalSignerProviderConfig(
   const effectiveSocketPath = socketPath?.trim() || resolveLocalSignerSocketPath(env);
   let nextCfg = setConfigEnvVar(cfg, "FASED_WALLET_LOCAL_SIGNER_SOCKET", effectiveSocketPath);
   const backendSocketPath = resolveLocalSignerBackendSocketPath(env);
+  const controlSocketPath = resolveLocalSignerControlSocketPath(env);
+  const stateDbPath = resolveLocalSignerStateDbPath(env);
+  const masterKeyPath = resolveLocalSignerMasterKeyPath(env);
   if (backendSocketPath !== effectiveSocketPath) {
     nextCfg = setConfigEnvVar(
       nextCfg,
@@ -1517,6 +1427,9 @@ function ensureLocalSignerProviderConfig(
       backendSocketPath,
     );
   }
+  nextCfg = setConfigEnvVar(nextCfg, "FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET", controlSocketPath);
+  nextCfg = setConfigEnvVar(nextCfg, "FASED_WALLET_LOCAL_SIGNER_STATE_DB", stateDbPath);
+  nextCfg = setConfigEnvVar(nextCfg, "FASED_WALLET_LOCAL_SIGNER_MASTER_KEY", masterKeyPath);
   nextCfg = setConfigEnvVar(
     nextCfg,
     "FASED_WALLET_CHAINS",
@@ -1560,25 +1473,27 @@ async function configureLocalSignerMode(
   const signerEnvPath = path.resolve(ensureWalletStateDir(process.env).rootDir, "signer.env");
   const materialRoot = resolveLocalSignerMaterialRootDir(env);
   const effectiveEnv = { ...env, ...nextCfg.env?.vars };
+  const controlSocketPath = resolveLocalSignerControlSocketPath(effectiveEnv);
+  const stateDbPath = resolveLocalSignerStateDbPath(effectiveEnv);
+  const masterKeyPath = resolveLocalSignerMasterKeyPath(effectiveEnv);
   const signerBinPath = resolveSignerdBinaryPath(effectiveEnv);
   const signerEnvLines = [
     `export FASED_WALLET_LOCAL_SIGNER_SOCKET="${socketPath}"`,
     ...(backendSocketPath !== socketPath
       ? [`export FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET="${backendSocketPath}"`]
       : []),
+    `export FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET="${controlSocketPath}"`,
+    `export FASED_WALLET_LOCAL_SIGNER_STATE_DB="${stateDbPath}"`,
+    `export FASED_WALLET_LOCAL_SIGNER_MASTER_KEY="${masterKeyPath}"`,
     ...(materialRoot !== ensureWalletStateDir(env).rootDir
       ? [`export FASED_WALLET_SIGNER_STATE_DIR="${materialRoot}"`]
       : []),
     `export FASED_WALLET_CHAINS="${resolveLocalSignerChainsEnvValue(nextCfg, env)}"`,
-    ...renderLocalSignerPassphraseEnvLines(effectiveEnv),
-    ...Object.entries({
-      ...collectLocalSignerExportEnv(nextCfg, env),
-      ...collectLocalSignerPolicyExportEnv(nextCfg, env),
-    })
+    ...Object.entries(collectLocalSignerExportEnv(nextCfg, env))
       .toSorted(([a], [b]) => a.localeCompare(b))
       .map(([key, value]) => `export ${key}="${value.replaceAll('"', '\\"')}"`),
     "",
-    `"${signerBinPath}" --socket "\${FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET:-$FASED_WALLET_LOCAL_SIGNER_SOCKET}"`,
+    `"${signerBinPath}" --socket "\${FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET:-$FASED_WALLET_LOCAL_SIGNER_SOCKET}" --control-socket "$FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET" --state-db "$FASED_WALLET_LOCAL_SIGNER_STATE_DB" --master-key "$FASED_WALLET_LOCAL_SIGNER_MASTER_KEY"`,
   ];
   fs.mkdirSync(path.dirname(signerEnvPath), { recursive: true, mode: 0o700 });
   fs.writeFileSync(signerEnvPath, `${signerEnvLines.join("\n")}\n`, {
@@ -1612,16 +1527,118 @@ async function configureLocalSignerMode(
   }
 }
 
+async function createSignerOwnedWalletForSetup(params: {
+  runtime: RuntimeEnv;
+  options: WalletSetupOptions;
+  env: NodeJS.ProcessEnv;
+  chain: WalletChain;
+  walletId?: string;
+  rpcUrl: string;
+  role: "agent" | "mining" | "vault";
+}) {
+  if (params.chain !== "solana") {
+    throw new Error("fased-signerd protocol v2 currently supports Solana wallet creation only");
+  }
+  const walletId = params.walletId?.trim() || params.role;
+  let cfg = ensureLocalSignerProviderConfig(loadConfig(), params.env);
+  cfg = setConfigEnvVar(cfg, rpcEnvKeyFor(params.chain, walletId), params.rpcUrl);
+  await writeConfigFile(cfg);
+
+  const mergedEnv = { ...params.env, ...cfg.env?.vars } as NodeJS.ProcessEnv;
+  writeLocalSignerEnvFile(cfg, mergedEnv);
+  const socketPath = resolveLocalSignerSocketPath(mergedEnv);
+  const hosted =
+    String(mergedEnv.FASED_HOST_PROFILE ?? "")
+      .trim()
+      .toLowerCase() === "hosting";
+  if (!hosted) {
+    const signerBinPath = resolveSignerdBinaryPath(mergedEnv);
+    if (!fs.existsSync(signerBinPath)) {
+      installSignerdBinary(signerBinPath);
+    }
+    await restartLocalSocketSigner(undefined, mergedEnv);
+  }
+
+  let result;
+  try {
+    result = await createLockedSignerOwnedWallet({
+      socketPath,
+      walletId,
+      role: params.role,
+      allowExisting: Boolean(params.options.force),
+    });
+  } catch (error) {
+    if (hosted) {
+      throw new Error(
+        `root-managed hosted signer wallet creation failed: ${error instanceof Error ? error.message : String(error)}. Run sudo ./install.sh --repair-hosting and retry.`,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
+
+  // A signer-v2 wallet has no Node-readable keystore. Remove only the config mapping for the
+  // successfully created wallet; legacy material migration is handled separately and explicitly.
+  const keystoreKey = keystoreEnvKeyFor(params.chain, walletId);
+  cfg = setConfigEnvVar(cfg, keystoreKey, undefined);
+  await writeConfigFile(cfg);
+  delete params.env[keystoreKey];
+
+  const wallet = upsertNamedWallet({
+    walletId,
+    name: params.options.walletName || "Wallet",
+    providerId: "local-socket-signer",
+    addresses: { solana: result.wallet.publicKey },
+    metadata: {
+      role: params.role,
+      purpose: params.role,
+      custody: "signer-owned-v2",
+      policyHash: result.policy.hash,
+      policyVersion: result.policy.version,
+      policyState: "locked",
+    },
+    env: params.env,
+  });
+  if (params.role === "agent") {
+    setDefaultWallet({ walletId: wallet.id, env: params.env });
+  }
+
+  if (params.options.json) {
+    params.runtime.log(
+      JSON.stringify(
+        {
+          ok: true,
+          provider: "local-socket-signer",
+          chain: params.chain,
+          walletId: wallet.id,
+          address: result.wallet.publicKey,
+          policyHash: result.policy.hash,
+          policyVersion: result.policy.version,
+          policyState: "locked",
+        },
+        null,
+        2,
+      ),
+    );
+  } else {
+    params.runtime.log(`${params.chain.toUpperCase()} address: ${result.wallet.publicKey}`);
+    if (!params.options.noSignerHints) {
+      params.runtime.log(
+        "Signer-owned wallet created with a deny-all policy. Configure explicit operations, destinations, assets, and positive caps before sending.",
+      );
+    }
+  }
+  return result;
+}
+
 export async function walletSetupCommand(
   runtime: RuntimeEnv = defaultRuntime,
   options: WalletSetupOptions = {},
 ) {
   const env = process.env;
   const interactive = !options.nonInteractive;
-  if (options.role && !normalizeWalletRoleForCli(options.role)) {
-    throw new Error(
-      "wallet role must be agent or vault. Use the Mining page/command for SAT mining.",
-    );
+  if (options.role && !normalizeWalletUserRole(options.role)) {
+    throw new Error("wallet role must be agent, mining, or vault");
   }
 
   const configureLimitOrdersIfRequested = async () => {
@@ -1875,48 +1892,29 @@ export async function walletSetupCommand(
           "Pass --rpc-url or set FASED_WALLET_<CHAIN>_RPC_URL.",
       );
     }
-    const showPrivateKeyOnce =
-      typeof options.showPrivateKeyOnce === "boolean"
-        ? options.showPrivateKeyOnce
-        : !options.nonInteractive &&
-          (
-            await prompt(
-              "Show private key once for backup now? (dangerous, shoulder-surf risk) [y/N]",
-              "n",
-            )
-          )
-            .trim()
-            .toLowerCase()
-            .startsWith("y");
-    if (showPrivateKeyOnce && typeof options.showPrivateKeyOnce === "boolean") {
-      requirePrivateKeyPrintConfirmation(options.confirmPrivateKeyPrint);
+    if (options.showPrivateKeyOnce) {
+      throw new Error(
+        "Signer-owned wallet keys cannot be printed or exported. Back up the public address and use a separate hardware/Turnkey Vault for reserve funds.",
+      );
     }
-    const privateKeyPrintConfirmation = showPrivateKeyOnce
-      ? (options.confirmPrivateKeyPrint ??
-        (typeof options.showPrivateKeyOnce === "boolean"
-          ? undefined
-          : PRIVATE_KEY_PRINT_CONFIRMATION))
-      : undefined;
-
-    ensureLocalSignerPassphraseForSetup(runtime, env);
-
-    await walletKeystoreInitCommand(runtime, {
+    const role =
+      normalizeWalletUserRole(options.role) ??
+      (walletId?.trim().toLowerCase() === "mining"
+        ? "mining"
+        : walletId?.trim().toLowerCase() === "vault"
+          ? "vault"
+          : "agent");
+    await createSignerOwnedWalletForSetup({
+      runtime,
+      options,
+      env,
       chain,
       walletId,
-      name: options.walletName,
       rpcUrl,
-      showPrivateKeyOnce,
-      confirmPrivateKeyPrint: privateKeyPrintConfirmation,
-      force: Boolean(options.force),
-      json: Boolean(options.json),
-      skipProviderConfig: true,
-      providerIdForRegistry: "local-socket-signer",
-      suppressExtraLogs: Boolean(options.noSignerHints),
-      role: options.role,
+      role,
     });
-    await configureLocalSignerMode(runtime, options, env);
     if (!options.noSignerHints) {
-      runtime.log("Self-hosted wallet created for local native signer.");
+      runtime.log("Signer-owned wallet created in fased-signerd.");
     }
     await configureLimitOrdersIfRequested();
     return;

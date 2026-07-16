@@ -1,19 +1,65 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearConfigCache, loadConfig } from "../config/config.js";
 import { walletKeystoreExportCommand, walletSetupCommand } from "./wallet.js";
 
 const TEST_SOLANA_PRIVATE_KEY = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
+const signerMocks = vi.hoisted(() => ({
+  create: vi.fn(async (params: { walletId: string; role: string }) => ({
+    wallet: {
+      walletId: params.walletId,
+      publicKey: "11111111111111111111111111111111",
+      version: 1,
+      createdAt: "2026-07-16T12:00:00.000Z",
+    },
+    policy: {
+      walletId: params.walletId,
+      role: params.role,
+      version: 1,
+      operations: [],
+      programs: [],
+      assets: [],
+      hash: `sha256:${"a".repeat(64)}`,
+    },
+  })),
+  install: vi.fn(),
+  restart: vi.fn(async () => undefined),
+}));
+
+vi.mock("../wallet/local-socket-signer-lifecycle.js", () => ({
+  createLockedSignerOwnedWallet: signerMocks.create,
+}));
+
+vi.mock("../wizard/onboarding.wallet.js", () => ({
+  installSignerdBinary: signerMocks.install,
+  restartLocalSocketSigner: signerMocks.restart,
+  resolveSignerdBinaryPath: () => "/tmp/fased-signerd-test",
+}));
 
 describe("walletSetupCommand local-signer self-hosted modes", () => {
+  beforeEach(() => {
+    for (const key of [
+      "FASED_WALLET_LOCAL_SIGNER_SOCKET",
+      "FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET",
+      "FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET",
+      "FASED_WALLET_LOCAL_SIGNER_STATE_DB",
+      "FASED_WALLET_LOCAL_SIGNER_MASTER_KEY",
+    ]) {
+      delete process.env[key];
+    }
+  });
+
   afterEach(() => {
     clearConfigCache();
+    signerMocks.create.mockClear();
+    signerMocks.install.mockClear();
+    signerMocks.restart.mockClear();
     vi.unstubAllEnvs();
   });
 
-  it("creates self-hosted wallet material without falling back to embedded-keystore config", async () => {
+  it("creates signer-owned wallet state without an embedded keystore", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-local-signer-create-"));
     const configPath = path.join(root, "fased.json");
     const stateDir = path.join(root, "state");
@@ -38,7 +84,6 @@ describe("walletSetupCommand local-signer self-hosted modes", () => {
 
       const cfg = loadConfig();
       const walletDir = path.join(stateDir, "wallet");
-      const keystorePath = String(cfg.env?.vars?.FASED_WALLET_SOLANA_KEYSTORE_PATH__SOLANA_1 ?? "");
       const signerSocket = String(cfg.env?.vars?.FASED_WALLET_LOCAL_SIGNER_SOCKET ?? "");
       const signerEnvPath = path.join(walletDir, "signer.env");
 
@@ -50,33 +95,34 @@ describe("walletSetupCommand local-signer self-hosted modes", () => {
       expect(cfg.env?.vars?.FASED_WALLET_SOLANA_RPC_URL__SOLANA_1).toBe(
         "https://rpc.example/solana",
       );
-      expect(keystorePath).toMatch(/keystore-solana-solana-1\.v1\.enc$/);
+      expect(cfg.env?.vars?.FASED_WALLET_SOLANA_KEYSTORE_PATH__SOLANA_1).toBeUndefined();
       expect(signerSocket).toBe(path.join(walletDir, "local-signer.sock"));
 
-      const [walletDirStat, keystoreStat, signerEnvStat] = await Promise.all([
+      const [walletDirStat, signerEnvStat] = await Promise.all([
         fs.stat(walletDir),
-        fs.stat(keystorePath),
         fs.stat(signerEnvPath),
       ]);
       const signerEnv = await fs.readFile(signerEnvPath, "utf8");
       expect(walletDirStat.mode & 0o777).toBe(0o700);
-      expect(keystoreStat.mode & 0o777).toBe(0o600);
       expect(signerEnvStat.mode & 0o777).toBe(0o600);
       expect(signerEnv).toContain('export FASED_WALLET_CHAINS="solana"');
-      expect(signerEnv).toContain('export FASED_WALLET_PASSPHRASE="test-passphrase"');
-      expect(signerEnv).toContain(
-        `export FASED_WALLET_SOLANA_KEYSTORE_PATH__SOLANA_1="${keystorePath}"`,
-      );
-      expect(signerEnv).not.toContain("export FASED_WALLET_SOLANA_KEYSTORE_PATH=");
+      expect(signerEnv).not.toMatch(/PASSPHRASE|KEYSTORE|PRIVATE_KEY|SECRET|SEED/i);
       expect(signerEnv).toContain(
         'export FASED_WALLET_SOLANA_RPC_URL__SOLANA_1="https://rpc.example/solana"',
+      );
+      expect(signerEnv).toContain("FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET");
+      expect(signerEnv).toContain("FASED_WALLET_LOCAL_SIGNER_STATE_DB");
+      expect(signerEnv).toContain("FASED_WALLET_LOCAL_SIGNER_MASTER_KEY");
+      expect(signerEnv).toContain('--control-socket "$FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET"');
+      expect(signerMocks.create).toHaveBeenCalledWith(
+        expect.objectContaining({ walletId: "solana-1", role: "agent" }),
       );
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }
   });
 
-  it("creates named local signer wallets in scoped files even when a generic keystore env exists", async () => {
+  it("does not create a Node keystore when stale generic keystore config exists", async () => {
     const root = await fs.mkdtemp(
       path.join(os.tmpdir(), "fased-wallet-local-signer-create-scoped-"),
     );
@@ -104,17 +150,17 @@ describe("walletSetupCommand local-signer self-hosted modes", () => {
       });
 
       const cfg = loadConfig();
-      const scopedPath = String(cfg.env?.vars?.FASED_WALLET_SOLANA_KEYSTORE_PATH__SOLANA_3 ?? "");
-      expect(scopedPath).toMatch(/keystore-solana-solana-3\.v1\.enc$/);
-      expect(scopedPath).not.toBe(genericKeystorePath);
-      await expect(fs.stat(scopedPath)).resolves.toBeTruthy();
+      expect(cfg.env?.vars?.FASED_WALLET_SOLANA_KEYSTORE_PATH__SOLANA_3).toBeUndefined();
       await expect(fs.stat(genericKeystorePath)).rejects.toMatchObject({ code: "ENOENT" });
+      const signerEnv = await fs.readFile(path.join(stateDir, "wallet", "signer.env"), "utf8");
+      expect(signerEnv).not.toContain(genericKeystorePath);
+      expect(signerEnv).not.toMatch(/KEYSTORE|PASSPHRASE/i);
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }
   });
 
-  it("uses the managed passphrase file instead of a stale env passphrase", async () => {
+  it("does not export legacy passphrases for signer-owned wallets", async () => {
     const root = await fs.mkdtemp(
       path.join(os.tmpdir(), "fased-wallet-local-signer-passphrase-file-"),
     );
@@ -144,7 +190,8 @@ describe("walletSetupCommand local-signer self-hosted modes", () => {
       });
 
       const signerEnv = await fs.readFile(path.join(walletDir, "signer.env"), "utf8");
-      expect(signerEnv).toContain(`export FASED_WALLET_PASSPHRASE_FILE="${passphraseFile}"`);
+      expect(signerEnv).not.toContain(passphraseFile);
+      expect(signerEnv).not.toMatch(/FASED_WALLET_PASSPHRASE/i);
       expect(signerEnv).not.toContain("stale-env-passphrase");
     } finally {
       await fs.rm(root, { recursive: true, force: true });
@@ -215,14 +262,12 @@ describe("walletSetupCommand local-signer self-hosted modes", () => {
         nonInteractive: true,
         noDoctor: true,
         noSignerHints: true,
-        showPrivateKeyOnce: true,
-        confirmPrivateKeyPrint: "SHOW PRIVATE KEY",
         force: true,
       });
 
       const output = logs.join("\n");
       expect(output).toContain("SOLANA address:");
-      expect(output).toContain("PRIVATE KEY (shown once):");
+      expect(output).not.toMatch(/PRIVATE KEY|SECRET|SEED/i);
       expect(output).not.toContain("Self-hosted signer keystore created:");
       expect(output).not.toContain("Signer mode: local native signer");
       expect(output).not.toContain("Wallet signer doctor:");
@@ -232,7 +277,7 @@ describe("walletSetupCommand local-signer self-hosted modes", () => {
     }
   });
 
-  it("requires explicit confirmation before printing a generated private key", async () => {
+  it("refuses to print a signer-owned private key", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-private-key-confirm-"));
     const configPath = path.join(root, "fased.json");
     const stateDir = path.join(root, "state");
@@ -257,7 +302,7 @@ describe("walletSetupCommand local-signer self-hosted modes", () => {
           showPrivateKeyOnce: true,
           force: true,
         }),
-      ).rejects.toThrow(/requires explicit confirmation/);
+      ).rejects.toThrow(/cannot be printed or exported/);
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

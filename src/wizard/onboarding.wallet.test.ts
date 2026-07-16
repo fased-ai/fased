@@ -234,7 +234,7 @@ describe("local signer env file helpers", () => {
     expect(signerProgressStop).toHaveBeenCalledWith("Local wallet signer installation failed.");
   });
 
-  it("renders named-wallet signer env from config state", () => {
+  it("renders signer-v2 runtime env without legacy key or custody state", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-onboarding-wallet-env-"));
     tempDirs.push(root);
     const cfg: FasedAgentConfig = {
@@ -287,20 +287,16 @@ describe("local signer env file helpers", () => {
       `export FASED_WALLET_LOCAL_SIGNER_SOCKET="${path.join(root, "wallet", "local-signer.sock")}"`,
     );
     expect(content).toContain('export FASED_WALLET_CHAINS="solana"');
-    expect(content).toContain('export FASED_WALLET_PASSPHRASE="test-passphrase"');
-    expect(content).toContain(
-      `export FASED_WALLET_SOLANA_KEYSTORE_PATH__WALLET_1="${path.join(root, "wallet", "keystore-solana-wallet-1.v1.enc")}"`,
-    );
-    expect(content).not.toContain("export FASED_WALLET_SOLANA_KEYSTORE_PATH=");
+    expect(content).not.toMatch(/FASED_WALLET_PASSPHRASE/);
+    expect(content).not.toMatch(/FASED_WALLET_SOLANA_KEYSTORE_PATH/);
     expect(content).toContain(
       'export FASED_WALLET_SOLANA_RPC_URL__WALLET_1="https://rpc.example/solana"',
     );
     expect(content).toContain(
       'export FASED_WALLET_SOLANA_WRITE_RPC_FALLBACK_URL__WALLET_1="https://rpc-backup.example/solana"',
     );
-    expect(content).toContain('export FASED_WALLET_CUSTODY_MODE="split-key"');
-    expect(content).toContain('export FASED_WALLET_CUSTODY_WALLETS="wallet_1"');
-    expect(content).toContain('export FASED_WALLET_CUSTODY_PASSKEY_CEREMONY="1"');
+    expect(content).not.toMatch(/FASED_WALLET_CUSTODY_/);
+    expect(content).not.toMatch(/FASED_WALLET_LOCAL_SIGNER_DIRECT_SIGNING/);
   });
 
   it("writes signer.env with restrictive permissions", () => {
@@ -341,13 +337,15 @@ describe("local signer env file helpers", () => {
     });
     const stat = fs.statSync(signerEnvPath);
     expect(stat.mode & 0o777).toBe(0o600);
-    expect(fs.readFileSync(signerEnvPath, "utf8")).toContain('export FASED_WALLET_CHAINS="solana"');
-    expect(fs.readFileSync(signerEnvPath, "utf8")).toContain(
-      'export FASED_WALLET_PASSPHRASE="test-passphrase"',
-    );
+    const signerEnv = fs.readFileSync(signerEnvPath, "utf8");
+    expect(signerEnv).toContain('export FASED_WALLET_CHAINS="solana"');
+    expect(signerEnv).toContain("FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET");
+    expect(signerEnv).toContain("FASED_WALLET_LOCAL_SIGNER_STATE_DB");
+    expect(signerEnv).toContain("FASED_WALLET_LOCAL_SIGNER_MASTER_KEY");
+    expect(signerEnv).not.toMatch(/FASED_WALLET_PASSPHRASE|KEYSTORE/);
   });
 
-  it("writes signer.env with the managed passphrase file when one exists", () => {
+  it("does not leak an existing managed passphrase into signer-v2 env", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-onboarding-wallet-passphrase-file-"));
     tempDirs.push(root);
     const walletDir = path.join(root, "wallet");
@@ -384,7 +382,8 @@ describe("local signer env file helpers", () => {
       } as NodeJS.ProcessEnv,
     });
     const signerEnv = fs.readFileSync(signerEnvPath, "utf8");
-    expect(signerEnv).toContain(`export FASED_WALLET_PASSPHRASE_FILE="${passphraseFile}"`);
+    expect(signerEnv).not.toContain(passphraseFile);
+    expect(signerEnv).not.toMatch(/FASED_WALLET_PASSPHRASE/);
     expect(signerEnv).not.toContain("stale-env-passphrase");
   });
 
@@ -415,7 +414,7 @@ describe("local signer env file helpers", () => {
     ).toBe(true);
   });
 
-  it("ignores stale generic keystore env when named-wallet scoped signer material exists", () => {
+  it("ignores all stale Node keystore env for signer-v2", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-onboarding-wallet-scoped-"));
     tempDirs.push(root);
     const cfg: FasedAgentConfig = {
@@ -440,16 +439,10 @@ describe("local signer env file helpers", () => {
       env: { HOME: root, FASED_STATE_DIR: root } as NodeJS.ProcessEnv,
     });
 
-    expect(content).toContain(
-      `export FASED_WALLET_SOLANA_KEYSTORE_PATH__WALLET_1="${path.join(root, "wallet", "keystore-solana-wallet-1.v1.enc")}"`,
-    );
-    expect(content).not.toContain(
-      `export FASED_WALLET_SOLANA_KEYSTORE_PATH="${path.join(root, "wallet", "keystore-solana.v1.enc")}"`,
-    );
-    expect(content).not.toContain("export FASED_WALLET_SOLANA_KEYSTORE_PATH=");
+    expect(content).not.toMatch(/FASED_WALLET_SOLANA_KEYSTORE_PATH/);
   });
 
-  it("reconstructs scoped signer env from registry and named keystore files", () => {
+  it("does not reconstruct legacy keys or policies from registry files", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-onboarding-wallet-registry-"));
     tempDirs.push(root);
     const walletDir = path.join(root, "wallet");
@@ -501,19 +494,7 @@ describe("local signer env file helpers", () => {
       env: { HOME: root, FASED_STATE_DIR: root } as NodeJS.ProcessEnv,
     });
 
-    expect(content).toContain(
-      `export FASED_WALLET_SOLANA_KEYSTORE_PATH__WALLET_1="${path.join(walletDir, "keystore-solana-wallet-1.v1.enc")}"`,
-    );
-    expect(content).not.toContain(
-      `export FASED_WALLET_SOLANA_KEYSTORE_PATH="${path.join(walletDir, "keystore-solana.v1.enc")}"`,
-    );
-    expect(content).toContain('export FASED_WALLET_LOCAL_SIGNER_ROLE="agent"');
-    expect(content).toContain('export FASED_WALLET_LOCAL_SIGNER_DIRECT_SIGNING="1"');
-    expect(content).toContain('export FASED_WALLET_LOCAL_SIGNER_CAPS_ENABLED="0"');
-    expect(content).toContain('export FASED_WALLET_LOCAL_SIGNER_ROLE__WALLET_1="agent"');
-    expect(content).toContain('export FASED_WALLET_LOCAL_SIGNER_DIRECT_SIGNING__WALLET_1="1"');
-    expect(content).toContain('export FASED_WALLET_LOCAL_SIGNER_CAPS_ENABLED__WALLET_1="0"');
-    expect(content).toMatch(/FASED_WALLET_LOCAL_SIGNER_SOLANA_MAX_PER_TX__WALLET_1="[0-9]+"/);
-    expect(content).toMatch(/FASED_WALLET_LOCAL_SIGNER_SOLANA_MAX_DAILY__WALLET_1="[0-9]+"/);
+    expect(content).not.toMatch(/FASED_WALLET_SOLANA_KEYSTORE_PATH/);
+    expect(content).not.toMatch(/FASED_WALLET_LOCAL_SIGNER_(ROLE|DIRECT_SIGNING|CAPS_ENABLED)/);
   });
 });
