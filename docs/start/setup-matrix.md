@@ -93,7 +93,7 @@ The current CLI wizard order is:
 4. Choose workspace directory.
 5. Configure Gateway port, bind address, and auth.
 6. Configure Fased Network / federation when selected.
-7. Build or configure native signer support, then configure wallet roles and the optional singleton Mining wallet.
+7. Configure wallet roles and the optional singleton Mining wallet. When a wallet is created or imported, install the version-matched native signer automatically.
 8. Write config and bootstrap workspace/session state.
 9. Apply hosting security only when the Hosting profile is selected. Hosting requires Tailscale.
 10. Run final daemon, health, Control UI, and readiness steps.

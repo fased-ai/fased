@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -5,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { FasedAgentConfig } from "../config/config.js";
 import {
   configureWalletForOnboarding,
+  installSignerdBinary,
   renderLocalSignerEnvFile,
   shouldSyncLocalSocketSignerFromConfig,
   syncLocalSocketSignerFromConfig,
@@ -36,6 +38,26 @@ function createPrompterStub(): WizardPrompter {
     select: vi.fn(),
     text: vi.fn(),
   } as unknown as WizardPrompter;
+}
+
+function createSignerReleaseFixture(root: string): {
+  assetBody: string;
+  assetName: string;
+  releaseDir: string;
+} {
+  const releaseDir = path.join(root, "release");
+  fs.mkdirSync(releaseDir, { recursive: true });
+  const platform = process.platform === "darwin" ? "darwin" : "linux";
+  const arch = process.arch === "arm64" ? "arm64" : "amd64";
+  const assetName = `fased-signerd-${platform}-${arch}`;
+  const assetBody = "fixture signer binary\n";
+  fs.writeFileSync(path.join(releaseDir, assetName), assetBody, { mode: 0o755 });
+  const checksum = createHash("sha256").update(assetBody).digest("hex");
+  fs.writeFileSync(
+    path.join(releaseDir, "fased-signerd-checksums.txt"),
+    `${checksum}  ${assetName}\n`,
+  );
+  return { assetBody, assetName, releaseDir };
 }
 
 describe("local signer env file helpers", () => {
@@ -86,7 +108,57 @@ describe("local signer env file helpers", () => {
     expect(process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET).toBeUndefined();
   });
 
-  it("fails explicit signer setup without silently downloading latest release assets", async () => {
+  it.runIf(process.platform === "linux" || process.platform === "darwin")(
+    "installs a checksum-verified signer asset without Go from an arbitrary cwd",
+    () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-onboarding-wallet-signer-"));
+      tempDirs.push(root);
+      const binPath = path.join(root, "bin", "fased-signerd");
+      const { assetBody, releaseDir } = createSignerReleaseFixture(root);
+      vi.stubEnv("HOME", root);
+      vi.stubEnv("FASED_WALLET_LOCAL_SIGNER_BIN", binPath);
+      vi.stubEnv("FASED_SKIP_NATIVE_SIGNER_BUILD", "1");
+      vi.stubEnv("FASED_LOCAL_SIGNER_BASE_URL", `file://${releaseDir}`);
+      vi.stubEnv("FASED_LOCAL_SIGNER_VERSION", "");
+      vi.stubEnv("FASED_LOCAL_SIGNER_LATEST_TAG", "");
+
+      const originalCwd = process.cwd();
+      process.chdir(root);
+      try {
+        installSignerdBinary(binPath);
+      } finally {
+        process.chdir(originalCwd);
+      }
+
+      expect(fs.readFileSync(binPath, "utf8")).toBe(assetBody);
+      expect(fs.statSync(binPath).mode & 0o111).not.toBe(0);
+    },
+  );
+
+  it.runIf(process.platform === "linux" || process.platform === "darwin")(
+    "rejects a signer asset when its published checksum does not match",
+    () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-onboarding-wallet-checksum-"));
+      tempDirs.push(root);
+      const binPath = path.join(root, "bin", "fased-signerd");
+      const { assetName, releaseDir } = createSignerReleaseFixture(root);
+      fs.writeFileSync(
+        path.join(releaseDir, "fased-signerd-checksums.txt"),
+        `${"0".repeat(64)}  ${assetName}\n`,
+      );
+      vi.stubEnv("HOME", root);
+      vi.stubEnv("FASED_WALLET_LOCAL_SIGNER_BIN", binPath);
+      vi.stubEnv("FASED_SKIP_NATIVE_SIGNER_BUILD", "1");
+      vi.stubEnv("FASED_LOCAL_SIGNER_BASE_URL", `file://${releaseDir}`);
+      vi.stubEnv("FASED_LOCAL_SIGNER_VERSION", "");
+      vi.stubEnv("FASED_LOCAL_SIGNER_LATEST_TAG", "");
+
+      expect(() => installSignerdBinary(binPath)).toThrow(/Checksum mismatch/);
+      expect(fs.existsSync(binPath)).toBe(false);
+    },
+  );
+
+  it("reports an automatic asset failure without claiming Go is required", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-onboarding-wallet-signer-"));
     tempDirs.push(root);
     const binPath = path.join(root, "bin", "fased-signerd");
@@ -97,9 +169,9 @@ describe("local signer env file helpers", () => {
     vi.stubEnv("FASED_WALLET_LOCAL_SIGNER_BIN", binPath);
     vi.stubEnv("FASED_WALLET_LOCAL_SIGNER_SOCKET", socketPath);
     vi.stubEnv("FASED_SKIP_NATIVE_SIGNER_BUILD", "1");
-    vi.stubEnv("FASED_LOCAL_SIGNER_BASE_URL", "");
-    vi.stubEnv("FASED_LOCAL_SIGNER_VERSION", "latest");
-    vi.stubEnv("FASED_LOCAL_SIGNER_LATEST_TAG", "latest");
+    vi.stubEnv("FASED_LOCAL_SIGNER_BASE_URL", `file://${path.join(root, "missing-release")}`);
+    vi.stubEnv("FASED_LOCAL_SIGNER_VERSION", "");
+    vi.stubEnv("FASED_LOCAL_SIGNER_LATEST_TAG", "");
 
     const cfg: FasedAgentConfig = {
       env: {
@@ -120,11 +192,11 @@ describe("local signer env file helpers", () => {
         env: process.env,
         restart: false,
       }),
-    ).rejects.toThrow(/Install Go >= 1\.21/);
+    ).rejects.toThrow(/Go is not required/);
     expect(fs.existsSync(binPath)).toBe(false);
   });
 
-  it("runs the local signer preparation hook before signer install", async () => {
+  it("shows automatic signer progress in Hosting QuickStart without a backend prompt", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-onboarding-wallet-prepare-"));
     tempDirs.push(root);
     const binPath = path.join(root, "bin", "fased-signerd");
@@ -134,22 +206,32 @@ describe("local signer env file helpers", () => {
     vi.stubEnv("FASED_WALLET_LOCAL_SIGNER_BIN", binPath);
     vi.stubEnv("FASED_WALLET_LOCAL_SIGNER_SOCKET", path.join(root, "wallet", "local-signer.sock"));
     vi.stubEnv("FASED_SKIP_NATIVE_SIGNER_BUILD", "1");
-    vi.stubEnv("FASED_LOCAL_SIGNER_BASE_URL", "");
-    vi.stubEnv("FASED_LOCAL_SIGNER_VERSION", "latest");
-    vi.stubEnv("FASED_LOCAL_SIGNER_LATEST_TAG", "latest");
-    const prepareLocalSigner = vi.fn(async () => {});
+    const prepareLocalSigner = vi.fn(async () => {
+      throw new Error("preparation hook sentinel");
+    });
+    const signerProgressStop = vi.fn();
+    const prompter = createPrompterStub();
+    vi.mocked(prompter.progress).mockReturnValue({
+      stop: signerProgressStop,
+      update: vi.fn(),
+    });
 
     await expect(
       configureWalletForOnboarding({
         flow: "quickstart",
         forceEnable: true,
+        hostProfile: "hosting",
         nextConfig: {},
         prepareLocalSigner,
-        prompter: createPrompterStub(),
+        prompter,
       }),
-    ).rejects.toThrow(/Install Go >= 1\.21/);
+    ).rejects.toThrow(/preparation hook sentinel/);
 
     expect(prepareLocalSigner).toHaveBeenCalledWith({ binPath });
+    expect(prompter.multiselect).not.toHaveBeenCalled();
+    expect(prompter.note).not.toHaveBeenCalled();
+    expect(prompter.progress).toHaveBeenCalledWith("Installing local wallet signer…");
+    expect(signerProgressStop).toHaveBeenCalledWith("Local wallet signer installation failed.");
   });
 
   it("renders named-wallet signer env from config state", () => {

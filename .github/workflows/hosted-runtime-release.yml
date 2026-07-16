@@ -66,16 +66,56 @@ jobs:
           path: .artifacts/hosted-runtime/*
           if-no-files-found: error
 
+  signer:
+    name: Native wallet signer
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: tools/fased-signerd/go.mod
+          cache-dependency-path: tools/fased-signerd/go.sum
+
+      - name: Verify tag matches package version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_version="$(node -p "require('./package.json').version")"
+          tag_version="${GITHUB_REF#refs/tags/v}"
+          test "$package_version" = "$tag_version"
+
+      - name: Test native signer
+        working-directory: tools/fased-signerd
+        run: go test ./...
+
+      - name: Build native signer release assets
+        run: bash scripts/release-fased-signerd.sh
+
+      - name: Verify native signer checksums
+        working-directory: dist-native/release
+        run: sha256sum --check fased-signerd-checksums.txt
+
+      - name: Upload verified signer assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: fased-signerd-release
+          path: dist-native/release/*
+          if-no-files-found: error
+
   publish:
     name: Publish verified runtime assets
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: linux
+    needs: [linux, signer]
     runs-on: ubuntu-24.04
     steps:
       - name: Download verified architecture artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: fased-hosted-runtime-linux-*
+          pattern: fased-*
           path: .artifacts/hosted-runtime
           merge-multiple: true
 

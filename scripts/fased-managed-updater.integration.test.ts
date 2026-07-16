@@ -66,7 +66,7 @@ function writeFakeRuntime(
       `const version = ${JSON.stringify(version)};`,
       "const args = process.argv.slice(2);",
       "if (process.env.FASED_TEST_COMMAND_LOG && args[0] !== '--version') fs.appendFileSync(process.env.FASED_TEST_COMMAND_LOG, `${args.join(' ')}\\n`);",
-      "if (args[0] === '--version') console.log(version);",
+      "if (args[0] === '--version') fs.writeSync(1, `${version}\\n`);",
       "process.exit(0);",
       "",
     ].join("\n"),

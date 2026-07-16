@@ -652,24 +652,14 @@ export async function runOnboardingWizard(
           "elif command -v go >/dev/null 2>&1; then GOCMD=$(command -v go); " +
           "else exit 1; fi; " +
           "v=$($GOCMD version 2>/dev/null | awk '{print $3}' | sed 's/^go//'); " +
-          'maj=$(echo "$v" | cut -d. -f1); min=$(echo "$v" | cut -d. -f2); ' +
-          '([ "${maj:-0}" -gt 1 ] || ([ "${maj:-0}" -eq 1 ] && [ "${min:-0}" -ge 21 ]))',
+          'maj=$(echo "$v" | cut -d. -f1); min=$(echo "$v" | cut -d. -f2); patch=$(echo "$v" | cut -d. -f3 | sed "s/[^0-9].*$//"); ' +
+          '([ "${maj:-0}" -gt 1 ] || ([ "${maj:-0}" -eq 1 ] && ([ "${min:-0}" -gt 25 ] || ([ "${min:-0}" -eq 25 ] && [ "${patch:-0}" -ge 7 ]))))',
       ],
       { stdio: "ignore" },
     );
     return probe.status === 0;
   };
   const shellQuote = (value: string): string => `'${value.replaceAll("'", `'"'"'`)}'`;
-  const hasExplicitSignerAssetSource = (): boolean => {
-    const baseUrl = String(process.env.FASED_LOCAL_SIGNER_BASE_URL ?? "").trim();
-    const version = String(process.env.FASED_LOCAL_SIGNER_VERSION ?? "").trim();
-    const latestTag = String(process.env.FASED_LOCAL_SIGNER_LATEST_TAG ?? "").trim();
-    return Boolean(
-      (baseUrl && !baseUrl.includes("github.com/fased-ai/fased/releases/download")) ||
-      (version && version !== "latest") ||
-      (latestTag && latestTag !== "latest"),
-    );
-  };
   const runShell = async (command: string): Promise<void> => {
     await new Promise<void>((resolve, reject) => {
       const proc = spawn("bash", ["-lc", command], {
@@ -705,7 +695,7 @@ export async function runOnboardingWizard(
     if (process.platform !== "linux" || !hasCommand("curl") || !hasCommand("tar")) {
       return "unavailable";
     }
-    const goVersion = String(process.env.FASED_GO_VERSION ?? "1.23.6").trim() || "1.23.6";
+    const goVersion = String(process.env.FASED_GO_VERSION ?? "1.25.7").trim() || "1.25.7";
     const stateRoot =
       String(process.env.FASED_STATE_DIR ?? "").trim() ||
       path.join(String(process.env.HOME ?? "").trim() || process.cwd(), ".fased");
@@ -763,7 +753,7 @@ export async function runOnboardingWizard(
       return false;
     }
     const installNow = await prompter.confirm({
-      message: "Go >=1.21 is required for native signer. Install/update Go now?",
+      message: "Go >=1.25.7 is required for a source-built native signer. Install/update Go now?",
       initialValue: true,
     });
     if (!installNow) {
@@ -774,7 +764,7 @@ export async function runOnboardingWizard(
       await runShell(
         "arch=$(dpkg --print-architecture 2>/dev/null || uname -m); " +
           'case "$arch" in amd64|x86_64) goarch=amd64 ;; arm64|aarch64) goarch=arm64 ;; *) echo "Unsupported arch: $arch"; exit 1 ;; esac; ' +
-          "goversion=${FASED_GO_VERSION:-1.23.6}; " +
+          "goversion=${FASED_GO_VERSION:-1.25.7}; " +
           "tmp=$(mktemp); " +
           'curl -fsSL "https://go.dev/dl/go${goversion}.linux-${goarch}.tar.gz" -o "$tmp"; ' +
           "sudo rm -rf /usr/local/go; " +
@@ -788,19 +778,6 @@ export async function runOnboardingWizard(
       throw error;
     }
     return goModernEnough();
-  };
-  const prepareLocalSignerForOnboarding = async (params: { binPath: string }): Promise<void> => {
-    if (
-      fs.existsSync(params.binPath) ||
-      String(process.env.FASED_SKIP_NATIVE_SIGNER_BUILD ?? "").trim() === "1" ||
-      hasExplicitSignerAssetSource()
-    ) {
-      return;
-    }
-    if (goModernEnough()) {
-      return;
-    }
-    await installPrivateGoForOnboarding();
   };
   printWizardHeader(runtime);
   await requireRiskAcknowledgement({ opts, prompter });
@@ -1225,7 +1202,7 @@ export async function runOnboardingWizard(
         await prompter.note("Native signer already current.", "Native signer");
       }
     } else if (!(await maybeInstallGoForOnboarding())) {
-      const detail = "Go >=1.21 is required for native signer build/install.";
+      const detail = "Go >=1.25.7 is required for a source-built native signer.";
       if (hostingMode && !opts.allowInsecure) {
         throw new Error(
           `${detail} Install Go and rerun onboarding, or unset FASED_BUILD_NATIVE_SIGNER_FROM_SOURCE.`,
@@ -1249,7 +1226,6 @@ export async function runOnboardingWizard(
     flow,
     hostProfile,
     nextConfig,
-    prepareLocalSigner: prepareLocalSignerForOnboarding,
     prompter,
   });
   nextConfig = syncLocalSignerRuntimeEnvIntoConfig(nextConfig);
@@ -1602,7 +1578,6 @@ export async function runOnboardingWizard(
             forceEnable: true,
             hostProfile,
             nextConfig,
-            prepareLocalSigner: prepareLocalSignerForOnboarding,
             prompter,
           });
           nextConfig = syncLocalSignerRuntimeEnvIntoConfig(nextConfig);

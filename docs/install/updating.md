@@ -125,10 +125,19 @@ Fresh dashboard, Gateway, and Fased Network setup do not require
 `fased-signerd`. The native signer is only needed after you choose the local
 signer wallet path.
 
-When that path is enabled, Fased first tries to build `fased-signerd` locally
-from source when Go >= 1.21 is available. If Go is not available, provide either
-an existing signer binary with `FASED_WALLET_LOCAL_SIGNER_BIN` or an explicit
-asset source with `FASED_LOCAL_SIGNER_VERSION` / `FASED_LOCAL_SIGNER_BASE_URL`.
+When that path is enabled, Fased downloads the signer asset from the matching
+versioned GitHub Release and verifies it against
+`fased-signerd-checksums.txt`. Normal Local, WSL, macOS, and Hosting users do not
+need Go. WSL uses the Linux asset; the Unix-socket signer is not supported by a
+native Windows Node.js install.
+
+Each tagged release must publish signer assets for Linux and macOS on `amd64`
+and `arm64` before wallet setup for that version is considered releasable. A
+source checkout can still opt into a local build with
+`FASED_BUILD_NATIVE_SIGNER_FROM_SOURCE=1` and Go >= 1.25.7. Existing binaries
+and alternate trusted release sources remain available through
+`FASED_WALLET_LOCAL_SIGNER_BIN`, `FASED_LOCAL_SIGNER_VERSION`, and
+`FASED_LOCAL_SIGNER_BASE_URL`.
 
 Do not commit generated signer binaries to Git, and do not cut a release just to
 test signer setup.
