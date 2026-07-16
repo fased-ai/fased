@@ -495,38 +495,31 @@ export function installSignerdBinary(binPath: string): void {
     );
   }
 
-  let assetError: unknown;
   try {
     if (installSignerdBinaryFromAsset(binPath)) {
       return;
     }
   } catch (error) {
-    assetError = error;
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      [
+        `Verified fased-signerd installation failed for ${process.platform}/${process.arch}.`,
+        detail,
+        "Go is not required for the official prebuilt signer.",
+        "Fased will not replace a failed official asset or attestation with an unverified local build.",
+        "Developers may explicitly set FASED_BUILD_NATIVE_SIGNER_FROM_SOURCE=1 in a trusted source checkout.",
+      ].join("\n"),
+      { cause: error },
+    );
   }
 
-  let sourceError: unknown;
-  try {
-    if (buildSignerdBinaryFromSource(binPath)) {
-      return;
-    }
-  } catch (error) {
-    sourceError = error;
-  }
-
-  const assetDetail = assetError instanceof Error ? assetError.message : undefined;
-  const sourceDetail = sourceError instanceof Error ? sourceError.message : undefined;
   throw new Error(
     [
-      `Automatic fased-signerd installation failed for ${process.platform}/${process.arch}.`,
-      `Fased ${VERSION} normally downloads its matching prebuilt signer and verifies its SHA-256 checksum; Go is not required.`,
-      assetDetail
-        ? `Asset install: ${assetDetail}`
-        : "The packaged signer installer was not found.",
-      sourceDetail ? `Source fallback: ${sourceDetail}` : undefined,
-      "Retry after checking GitHub release access, or set FASED_WALLET_LOCAL_SIGNER_BIN to a trusted existing binary.",
-    ]
-      .filter((line): line is string => Boolean(line))
-      .join("\n"),
+      `Verified fased-signerd installation is unavailable for ${process.platform}/${process.arch}.`,
+      `Fased ${VERSION} requires its matching prebuilt signer, SHA-256 checksum, and release attestation; Go is not required.`,
+      "The packaged signer installer was not found.",
+      "Developers may explicitly set FASED_BUILD_NATIVE_SIGNER_FROM_SOURCE=1 in a trusted source checkout.",
+    ].join("\n"),
   );
 }
 
@@ -1316,7 +1309,10 @@ function hasConfiguredWalletMaterial(params: {
 const LOCAL_SIGNER_ENV_KEYS = [
   "FASED_WALLET_LOCAL_SIGNER_SOCKET",
   "FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET",
+  "FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET",
   "FASED_WALLET_SIGNER_STATE_DIR",
+  "FASED_WALLET_LOCAL_SIGNER_STATE_DB",
+  "FASED_WALLET_LOCAL_SIGNER_MASTER_KEY",
   "FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER",
   "FASED_WALLET_LOCAL_SIGNER_BIN",
   "FASED_WALLET_PASSPHRASE_FILE",
@@ -1437,7 +1433,65 @@ export async function configureWalletForOnboarding(params: {
     const materialDir = resolveLocalSignerMaterialRootDir(process.env);
     const binPath = resolveSignerdBinaryPath(process.env);
     const runAsUser = resolveLocalSignerRunAsUser(process.env);
-    if (!fs.existsSync(binPath)) {
+    const hostedSigner = params.hostProfile === "hosting";
+    if (hostedSigner) {
+      const expectedSocket = "/run/fased-signerd/app.sock";
+      if (socketPath !== expectedSocket || backendSocketPath !== expectedSocket || runAsUser) {
+        throw new Error(
+          "Hosting wallet setup must use only the root-managed signer app socket at /run/fased-signerd/app.sock.",
+        );
+      }
+      let result: {
+        ready?: boolean;
+        capabilities?: {
+          protocol?: { current?: number; min?: number; max?: number };
+          features?: string[];
+        };
+      };
+      try {
+        result = await callLocalSocketSigner(expectedSocket, { op: "v2.capabilities" });
+      } catch (error) {
+        throw new Error(
+          [
+            "The root-managed hosted wallet signer is unavailable or incompatible.",
+            `Signer socket: ${expectedSocket}`,
+            "Run the official Hosting repair from the provider console: sudo ./install.sh --repair-hosting",
+            `Detail: ${error instanceof Error ? error.message : String(error)}`,
+          ].join("\n"),
+          { cause: error },
+        );
+      }
+      const protocol = result.capabilities?.protocol;
+      const features = new Set(result.capabilities?.features ?? []);
+      const missingFeatures = ["failClosedPolicies", "signerOwnedKeys", "atomicIdempotency"].filter(
+        (feature) => !features.has(feature),
+      );
+      if (
+        result.ready !== true ||
+        protocol?.current !== 2 ||
+        (protocol.min ?? Number.POSITIVE_INFINITY) > 2 ||
+        (protocol.max ?? Number.NEGATIVE_INFINITY) < 2 ||
+        missingFeatures.length > 0
+      ) {
+        throw new Error(
+          `The root-managed hosted signer did not acknowledge the required signer-v2 boundary${
+            missingFeatures.length > 0 ? ` (missing: ${missingFeatures.join(", ")})` : ""
+          }. Run sudo ./install.sh --repair-hosting from the provider console.`,
+        );
+      }
+      process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET = expectedSocket;
+      delete process.env.FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET;
+      delete process.env.FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER;
+      if (!quietSignerNotes) {
+        await prompter.note(
+          [
+            `Root-managed fased-signerd is ready at: ${expectedSocket}`,
+            "Wallets start locked with deny-all policy until owner enrollment is completed.",
+          ].join("\n"),
+          "Hosted wallet signer",
+        );
+      }
+    } else if (!fs.existsSync(binPath)) {
       const signerInstallProgress = quietSignerNotes
         ? prompter.progress("Installing local wallet signer…")
         : undefined;
@@ -1465,64 +1519,68 @@ export async function configureWalletForOnboarding(params: {
       }
     }
 
-    const socketExists = isSignerdRunning(socketPath);
-    const socketHealthy = socketExists ? await isSignerdHealthy(socketPath) : false;
-    const desiredSignerChains = normalizeSignerChains(
-      String(resolveSignerChildEnv(materialDir, process.env).FASED_WALLET_CHAINS ?? "").split(","),
-    );
-    const healthDetails =
-      socketExists && socketHealthy
-        ? await readSignerdHealth(socketPath)
-        : { ok: false, chains: [] };
-    const missingSignerChains = desiredSignerChains.filter(
-      (chain) => !healthDetails.chains.includes(chain),
-    );
-    if (socketExists && socketHealthy && missingSignerChains.length === 0) {
-      process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET = socketPath;
-      if (backendSocketPath !== socketPath) {
-        process.env.FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET = backendSocketPath;
-      }
-      if (!quietSignerNotes) {
-        await prompter.note(
-          `fased-signerd already running at: ${socketPath}`,
-          "Local socket signer",
-        );
-      }
-    } else {
-      if (socketExists && (!socketHealthy || missingSignerChains.length > 0)) {
-        stopProcessBySocket(socketPath, runAsUser);
-      }
-      if (backendSocketPath !== socketPath) {
-        stopProcessBySocket(backendSocketPath, runAsUser);
-      }
-      startSignerdBackground(binPath, backendSocketPath, materialDir);
-      if (backendSocketPath !== socketPath) {
-        startSignerBrokerBackground(socketPath, backendSocketPath, materialDir);
-      }
-      const readyTimeoutMs = runAsUser ? 20_000 : 8_000;
-      if (await waitForSignerdHealthy(socketPath, readyTimeoutMs)) {
-        if (!quietSignerNotes) {
-          await prompter.note(
-            [
-              `fased-signerd started at: ${socketPath}`,
-              "Keys are isolated in the Go signer process — not accessible to Node agent.",
-            ].join("\n"),
-            "Local socket signer",
-          );
-        }
+    if (!hostedSigner) {
+      const socketExists = isSignerdRunning(socketPath);
+      const socketHealthy = socketExists ? await isSignerdHealthy(socketPath) : false;
+      const desiredSignerChains = normalizeSignerChains(
+        String(resolveSignerChildEnv(materialDir, process.env).FASED_WALLET_CHAINS ?? "").split(
+          ",",
+        ),
+      );
+      const healthDetails =
+        socketExists && socketHealthy
+          ? await readSignerdHealth(socketPath)
+          : { ok: false, chains: [] };
+      const missingSignerChains = desiredSignerChains.filter(
+        (chain) => !healthDetails.chains.includes(chain),
+      );
+      if (socketExists && socketHealthy && missingSignerChains.length === 0) {
         process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET = socketPath;
         if (backendSocketPath !== socketPath) {
           process.env.FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET = backendSocketPath;
         }
+        if (!quietSignerNotes) {
+          await prompter.note(
+            `fased-signerd already running at: ${socketPath}`,
+            "Local socket signer",
+          );
+        }
       } else {
-        throw buildSignerdReadinessError({
-          appSocketPath: socketPath,
-          backendSocketPath,
-          binPath,
-          materialDir,
-          readyTimeoutMs,
-          runAsUser,
-        });
+        if (socketExists && (!socketHealthy || missingSignerChains.length > 0)) {
+          stopProcessBySocket(socketPath, runAsUser);
+        }
+        if (backendSocketPath !== socketPath) {
+          stopProcessBySocket(backendSocketPath, runAsUser);
+        }
+        startSignerdBackground(binPath, backendSocketPath, materialDir);
+        if (backendSocketPath !== socketPath) {
+          startSignerBrokerBackground(socketPath, backendSocketPath, materialDir);
+        }
+        const readyTimeoutMs = runAsUser ? 20_000 : 8_000;
+        if (await waitForSignerdHealthy(socketPath, readyTimeoutMs)) {
+          if (!quietSignerNotes) {
+            await prompter.note(
+              [
+                `fased-signerd started at: ${socketPath}`,
+                "Keys are isolated in the Go signer process — not accessible to Node agent.",
+              ].join("\n"),
+              "Local socket signer",
+            );
+          }
+          process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET = socketPath;
+          if (backendSocketPath !== socketPath) {
+            process.env.FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET = backendSocketPath;
+          }
+        } else {
+          throw buildSignerdReadinessError({
+            appSocketPath: socketPath,
+            backendSocketPath,
+            binPath,
+            materialDir,
+            readyTimeoutMs,
+            runAsUser,
+          });
+        }
       }
     }
   }

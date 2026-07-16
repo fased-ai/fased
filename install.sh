@@ -387,6 +387,79 @@ for ((i = 0; i < ${#pass_args[@]}; i++)); do
   fi
 done
 
+is_windows_posix_shell() {
+  case "$(uname -s 2>/dev/null || true)" in
+    MINGW*|MSYS*|CYGWIN*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+is_wsl_environment() {
+  [[ "$(uname -s 2>/dev/null || true)" == "Linux" ]] || return 1
+  grep -Eqi '(microsoft|wsl)' /proc/sys/kernel/osrelease /proc/version 2>/dev/null
+}
+
+is_wsl2_environment() {
+  is_wsl_environment || return 1
+  uname -r 2>/dev/null | grep -Eqi '(microsoft-standard|wsl2)'
+}
+
+systemd_is_pid_one() {
+  [[ "$(ps -p 1 -o comm= 2>/dev/null | tr -d '[:space:]')" == "systemd" ]] &&
+    command -v systemctl >/dev/null 2>&1
+}
+
+validate_install_platform() {
+  if is_windows_posix_shell; then
+    cat >&2 <<'EOF_NATIVE_WINDOWS'
+Native Windows Node.js, PowerShell, Git Bash, MSYS2, and Cygwin installs are not supported.
+Fased and fased-signerd use Unix sockets. Install Ubuntu in WSL2, enable systemd,
+open the Ubuntu terminal, and run the Fased installer there.
+See: docs/platforms/windows.md
+EOF_NATIVE_WINDOWS
+    exit 1
+  fi
+
+  if [[ "$HOSTING_REQUESTED" -eq 1 ]]; then
+    if [[ "$(uname -s 2>/dev/null || true)" != "Linux" ]]; then
+      echo "--hosting requires a supported Linux VPS with systemd." >&2
+      exit 1
+    fi
+    if is_wsl_environment; then
+      echo "--hosting is for a Linux VPS, not WSL. Use --local inside WSL2." >&2
+      exit 1
+    fi
+    if [[ "$(id -u)" -ne 0 ]]; then
+      echo "--hosting must run as root so the isolated signer and Gateway services can be installed." >&2
+      echo "Rerun: curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | sudo bash -s -- --hosting" >&2
+      exit 1
+    fi
+    if ! systemd_is_pid_one; then
+      echo "--hosting requires systemd as PID 1; no host changes were started." >&2
+      echo "Use a supported VPS image with systemd, then rerun the installer." >&2
+      exit 1
+    fi
+  elif is_wsl_environment; then
+    if ! is_wsl2_environment; then
+      echo "WSL1 is not supported. Convert this distribution to WSL2, then rerun inside Ubuntu." >&2
+      echo "From PowerShell: wsl --set-version <DistributionName> 2" >&2
+      exit 1
+    fi
+    if ! systemd_is_pid_one; then
+      cat >&2 <<'EOF_WSL_SYSTEMD'
+Fased on WSL2 requires systemd for reliable Gateway and signer startup.
+Inside Ubuntu, add this to /etc/wsl.conf:
+  [boot]
+  systemd=true
+Then run `wsl --shutdown` from PowerShell, reopen Ubuntu, and rerun the installer.
+EOF_WSL_SYSTEMD
+      exit 1
+    fi
+  fi
+}
+
+validate_install_platform
+
 set_installer_state_dir() {
   local state_dir="$1"
   case "$state_dir" in
@@ -808,14 +881,25 @@ install_github_cli_for_attestations() {
   if github_cli_supports_attestations; then
     return 0
   fi
-  if [[ "$AUTO_INSTALL" -ne 1 || "$(uname -s)" != "Linux" ]]; then
+  if [[ "$AUTO_INSTALL" -ne 1 ]]; then
     echo "GitHub CLI with 'gh attestation verify' is required for official release assets." >&2
     echo "Install a current GitHub CLI, then rerun the installer." >&2
     return 1
   fi
 
   echo "Installing GitHub CLI for release attestation verification..."
-  if need_cmd apt-get; then
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    if ! need_cmd brew; then
+      echo "Automatic GitHub CLI installation on macOS requires Homebrew." >&2
+      echo "Install Homebrew from https://brew.sh, then rerun the installer." >&2
+      return 1
+    fi
+    brew install gh || brew upgrade gh
+  elif [[ "$(uname -s)" != "Linux" ]]; then
+    echo "Automatic GitHub CLI installation is unavailable on $(uname -s)." >&2
+    echo "Install a current GitHub CLI, then rerun the installer." >&2
+    return 1
+  elif need_cmd apt-get; then
     local keyring_tmp
     keyring_tmp="$(mktemp)"
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o "$keyring_tmp"

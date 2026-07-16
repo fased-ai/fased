@@ -217,29 +217,24 @@ export async function runOnboardingWizard(
     };
   };
   const applyHostedLocalSignerDefaults = (cfg: FasedAgentConfig): FasedAgentConfig => {
-    const signerUser = String(process.env.FASED_SIGNER_USER ?? "fased-signer").trim();
-    if (!signerUser) {
-      return cfg;
-    }
-    const appHome = String(process.env.HOME ?? "/home/app").trim() || "/home/app";
-    const signerHome = `/home/${signerUser}`;
-    const defaults: Record<string, string> = {
-      FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER: signerUser,
-      FASED_WALLET_SIGNER_STATE_DIR: `${signerHome}/.fased/wallet`,
-      FASED_WALLET_LOCAL_SIGNER_SOCKET: `${appHome}/.fased/wallet/local-signer.sock`,
-      FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET: `${signerHome}/.fased/wallet/local-signer.sock`,
-      FASED_WALLET_LOCAL_SIGNER_BIN: `${signerHome}/.fased/bin/fased-signerd`,
-    };
+    const appSocket = "/run/fased-signerd/app.sock";
+    const signerOwnedKeys = [
+      "FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET",
+      "FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET",
+      "FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER",
+      "FASED_WALLET_LOCAL_SIGNER_BIN",
+      "FASED_WALLET_SIGNER_STATE_DIR",
+      "FASED_WALLET_LOCAL_SIGNER_STATE_DB",
+      "FASED_WALLET_LOCAL_SIGNER_MASTER_KEY",
+      "FASED_WALLET_PASSPHRASE_FILE",
+    ] as const;
     let next = cfg;
-    for (const [key, value] of Object.entries(defaults)) {
-      const existing = String(process.env[key] ?? cfg.env?.vars?.[key] ?? "").trim();
-      if (existing) {
-        process.env[key] = existing;
-        continue;
-      }
-      process.env[key] = value;
-      next = setConfigEnvVar(next, key, value);
+    for (const key of signerOwnedKeys) {
+      delete process.env[key];
+      next = setConfigEnvVar(next, key, undefined);
     }
+    process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET = appSocket;
+    next = setConfigEnvVar(next, "FASED_WALLET_LOCAL_SIGNER_SOCKET", appSocket);
     return next;
   };
   const syncLocalSignerRuntimeEnvIntoConfig = (cfg: FasedAgentConfig): FasedAgentConfig => {

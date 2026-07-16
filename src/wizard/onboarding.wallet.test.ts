@@ -196,19 +196,10 @@ describe("local signer env file helpers", () => {
     expect(fs.existsSync(binPath)).toBe(false);
   });
 
-  it("shows automatic signer progress in Hosting QuickStart without a backend prompt", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-onboarding-wallet-prepare-"));
-    tempDirs.push(root);
-    const binPath = path.join(root, "bin", "fased-signerd");
-    vi.stubEnv("HOME", root);
-    vi.stubEnv("FASED_STATE_DIR", root);
-    vi.stubEnv("FASED_CONFIG_DIR", root);
-    vi.stubEnv("FASED_WALLET_LOCAL_SIGNER_BIN", binPath);
-    vi.stubEnv("FASED_WALLET_LOCAL_SIGNER_SOCKET", path.join(root, "wallet", "local-signer.sock"));
-    vi.stubEnv("FASED_SKIP_NATIVE_SIGNER_BUILD", "1");
-    const prepareLocalSigner = vi.fn(async () => {
-      throw new Error("preparation hook sentinel");
-    });
+  it("never installs or brokers a signer from Hosting QuickStart", async () => {
+    vi.stubEnv("FASED_WALLET_LOCAL_SIGNER_SOCKET", "/run/fased-signerd/app.sock");
+    vi.stubEnv("FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET", "/run/fased-signerd/app.sock");
+    const prepareLocalSigner = vi.fn();
     const signerProgressStop = vi.fn();
     const prompter = createPrompterStub();
     vi.mocked(prompter.progress).mockReturnValue({
@@ -225,13 +216,15 @@ describe("local signer env file helpers", () => {
         prepareLocalSigner,
         prompter,
       }),
-    ).rejects.toThrow(/preparation hook sentinel/);
+    ).rejects.toThrow(
+      /root-managed hosted wallet signer is unavailable|root-managed hosted signer/i,
+    );
 
-    expect(prepareLocalSigner).toHaveBeenCalledWith({ binPath });
+    expect(prepareLocalSigner).not.toHaveBeenCalled();
     expect(prompter.multiselect).not.toHaveBeenCalled();
     expect(prompter.note).not.toHaveBeenCalled();
-    expect(prompter.progress).toHaveBeenCalledWith("Installing local wallet signer…");
-    expect(signerProgressStop).toHaveBeenCalledWith("Local wallet signer installation failed.");
+    expect(prompter.progress).not.toHaveBeenCalled();
+    expect(signerProgressStop).not.toHaveBeenCalled();
   });
 
   it("renders signer-v2 runtime env without legacy key or custody state", () => {

@@ -136,7 +136,10 @@ function hasConfiguredWalletMaterial(registry: ReturnType<typeof readWalletProvi
 const LOCAL_SIGNER_ENV_KEYS = [
   "FASED_WALLET_LOCAL_SIGNER_SOCKET",
   "FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET",
+  "FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET",
   "FASED_WALLET_SIGNER_STATE_DIR",
+  "FASED_WALLET_LOCAL_SIGNER_STATE_DB",
+  "FASED_WALLET_LOCAL_SIGNER_MASTER_KEY",
   "FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER",
   "FASED_WALLET_LOCAL_SIGNER_BIN",
   "FASED_WALLET_PASSPHRASE_FILE",
@@ -180,31 +183,14 @@ function setConfigEnvVar(
 }
 
 function applyHostedLocalSignerDefaults(base: FasedAgentConfig): FasedAgentConfig {
-  const signerUser = String(process.env.FASED_SIGNER_USER ?? "fased-signer").trim();
-  if (!signerUser) {
-    return base;
-  }
-  const appHome = String(process.env.HOME ?? "/home/app").trim() || "/home/app";
-  const signerHome = `/home/${signerUser}`;
-  const defaults: Record<(typeof LOCAL_SIGNER_ENV_KEYS)[number], string> = {
-    FASED_WALLET_LOCAL_SIGNER_SOCKET: `${appHome}/.fased/wallet/local-signer.sock`,
-    FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET: `${signerHome}/.fased/wallet/local-signer.sock`,
-    FASED_WALLET_SIGNER_STATE_DIR: `${signerHome}/.fased/wallet`,
-    FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER: signerUser,
-    FASED_WALLET_LOCAL_SIGNER_BIN: `${signerHome}/.fased/bin/fased-signerd`,
-    FASED_WALLET_PASSPHRASE_FILE: `${signerHome}/.fased/wallet/passphrase`,
-  };
+  const appSocket = "/run/fased-signerd/app.sock";
   let next = base;
-  for (const [key, value] of Object.entries(defaults)) {
-    const existing = String(process.env[key] ?? base.env?.vars?.[key] ?? "").trim();
-    if (existing) {
-      process.env[key] = existing;
-      next = setConfigEnvVar(next, key, existing);
-      continue;
-    }
-    process.env[key] = value;
-    next = setConfigEnvVar(next, key, value);
+  for (const key of LOCAL_SIGNER_ENV_KEYS) {
+    delete process.env[key];
+    next = setConfigEnvVar(next, key, undefined);
   }
+  process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET = appSocket;
+  next = setConfigEnvVar(next, "FASED_WALLET_LOCAL_SIGNER_SOCKET", appSocket);
   return next;
 }
 

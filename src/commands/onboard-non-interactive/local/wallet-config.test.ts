@@ -103,9 +103,10 @@ describe("applyNonInteractiveWalletConfig", () => {
     expect(next.wallet?.runtime?.enabled).toBe(false);
   });
 
-  it("uses isolated signer defaults when hosted wallet is explicitly enabled", () => {
-    const appHome = path.join(tempConfigDir, "home-app");
-    vi.stubEnv("HOME", appHome);
+  it("uses only the root-managed app socket when hosted wallet is explicitly enabled", () => {
+    vi.stubEnv("FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET", "/legacy/backend.sock");
+    vi.stubEnv("FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER", "fased-signer");
+    vi.stubEnv("FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET", "/legacy/control.sock");
     const runtime = createRuntimeStub();
     const next = applyNonInteractiveWalletConfig({
       nextConfig: {},
@@ -115,17 +116,14 @@ describe("applyNonInteractiveWalletConfig", () => {
 
     expect(next.wallet?.runtime?.enabled).toBe(true);
     expect(next.wallet?.provider?.id).toBe("local-socket-signer");
-    expect(next.env?.vars?.FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER).toBe("fased-signer");
-    expect(next.env?.vars?.FASED_WALLET_SIGNER_STATE_DIR).toBe("/home/fased-signer/.fased/wallet");
-    expect(next.env?.vars?.FASED_WALLET_LOCAL_SIGNER_SOCKET).toBe(
-      path.join(appHome, ".fased/wallet/local-signer.sock"),
-    );
-    expect(next.env?.vars?.FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET).toBe(
-      "/home/fased-signer/.fased/wallet/local-signer.sock",
-    );
-    expect(next.env?.vars?.FASED_WALLET_LOCAL_SIGNER_BIN).toBe(
-      "/home/fased-signer/.fased/bin/fased-signerd",
-    );
+    expect(next.env?.vars?.FASED_WALLET_LOCAL_SIGNER_SOCKET).toBe("/run/fased-signerd/app.sock");
+    expect(next.env?.vars?.FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER).toBeUndefined();
+    expect(next.env?.vars?.FASED_WALLET_SIGNER_STATE_DIR).toBeUndefined();
+    expect(next.env?.vars?.FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET).toBeUndefined();
+    expect(next.env?.vars?.FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET).toBeUndefined();
+    expect(next.env?.vars?.FASED_WALLET_LOCAL_SIGNER_BIN).toBeUndefined();
+    expect(process.env.FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER).toBeUndefined();
+    expect(process.env.FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET).toBeUndefined();
   });
 
   it("rejects invalid chain values", () => {
