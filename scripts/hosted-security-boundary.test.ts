@@ -89,6 +89,8 @@ describe("hosted signer security boundary", () => {
     expect(service).toContain("-socket /run/fased-signerd/app.sock");
     expect(service).toContain("-control-socket /run/fased-signerd/control.sock");
     expect(service).toContain("-state-db /var/lib/fased-signerd/state.db");
+    expect(service).toContain("-update-gate /var/lib/fased-signer-update-gate/active");
+    expect(service).toContain("/var/lib/fased-signer-update-gate");
     expect(service).toContain("NoNewPrivileges=true");
     expect(service).toContain("ProtectSystem=strict");
   });

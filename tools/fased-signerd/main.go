@@ -49,6 +49,7 @@ type signerConfig struct {
 	masterKeyPath     string
 	webauthnRPID      string
 	webauthnOrigins   string
+	updateGatePath    string
 	readOnly          bool
 	rateWindow        time.Duration
 	rateLimit         map[string]int
@@ -299,6 +300,7 @@ func parseArgs() signerConfig {
 		),
 		webauthnRPID:    strings.TrimSpace(os.Getenv("FASED_WALLET_WEBAUTHN_RP_ID")),
 		webauthnOrigins: strings.TrimSpace(os.Getenv("FASED_WALLET_WEBAUTHN_ORIGINS")),
+		updateGatePath:  strings.TrimSpace(os.Getenv("FASED_WALLET_LOCAL_SIGNER_UPDATE_GATE")),
 		readOnly:        os.Getenv("FASED_WALLET_LOCAL_SIGNER_READ_ONLY") == "1",
 		rateWindow:      time.Duration(getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WINDOW_MS", 10_000)) * time.Millisecond,
 		auditMax:        getenvInt64("FASED_WALLET_LOCAL_SIGNER_AUDIT_MAX_BYTES", 1_048_576),
@@ -312,6 +314,7 @@ func parseArgs() signerConfig {
 	flags.StringVar(&cfg.masterKeyPath, "master-key", cfg.masterKeyPath, "signer-owned 0600 master key file path")
 	flags.StringVar(&cfg.webauthnRPID, "webauthn-rp-id", cfg.webauthnRPID, "root-configured WebAuthn relying party ID")
 	flags.StringVar(&cfg.webauthnOrigins, "webauthn-origins", cfg.webauthnOrigins, "comma-separated exact WebAuthn origin allowlist")
+	flags.StringVar(&cfg.updateGatePath, "update-gate", cfg.updateGatePath, "root-owned gate that blocks application-socket mutations during paired updates")
 	flags.StringVar(&socketModeRaw, "socket-mode", socketModeRaw, "application socket mode (octal, default 0600)")
 	flags.StringVar(&cfg.socketGroup, "socket-group", cfg.socketGroup, "private group allowed to use the application socket")
 	flags.StringVar(&cfg.pidFile, "pid-file", "", "pid file path (default <socket>.pid)")
@@ -540,6 +543,11 @@ func handleConn(conn net.Conn, cfg signerConfig, limiter *rateLimiter, audit *au
 		if err := mustValidate(req, cfg); err != nil {
 			_, _ = conn.Write([]byte(fmt.Sprintf(`{"ok":false,"error":%q}`+"\n", err.Error())))
 			audit.write(map[string]any{"ts": time.Now().UTC().Format(time.RFC3339Nano), "op": req.Op, "ok": false, "error": err.Error(), "fp": fingerprint(raw)})
+			continue
+		}
+		if err := enforceApplicationUpdateGate(cfg.updateGatePath, req.Op, control, 0); err != nil {
+			_, _ = conn.Write([]byte(fmt.Sprintf(`{"ok":false,"error":%q}`+"\n", err.Error())))
+			audit.write(map[string]any{"ts": time.Now().UTC().Format(time.RFC3339Nano), "op": req.Op, "ok": false, "error": "update_gate", "fp": fingerprint(raw)})
 			continue
 		}
 		if !limiter.allow(req.Op) {

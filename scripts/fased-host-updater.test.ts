@@ -38,6 +38,7 @@ async function createFixture() {
     journalPath: path.join(stateDir, "active-signer-transaction.json"),
     rollbackFloorPath: path.join(stateDir, "rollback-floor"),
     gatewayGatePath: path.join(stateDir, "gateway-update-gate"),
+    signerGatePath: path.join(root, "signer-update-gate", "active"),
     transactionsDir: path.join(stateDir, "transactions"),
     socketPath: path.join(root, "request.sock"),
   };
@@ -123,6 +124,7 @@ describe("root-owned hosted updater protocol", () => {
     expect(installer).toContain(
       "ConditionPathExists=!/var/lib/fased-host-updater/gateway-update-gate",
     );
+    expect(installer).toContain("-update-gate /var/lib/fased-signer-update-gate/active");
   });
 
   it("accepts only an exact release version", () => {
@@ -193,6 +195,8 @@ describe("root-owned hosted updater protocol", () => {
     expect(await fsp.readFile(paths.versionPath, "utf8")).toBe("1.2.2\n");
     expect(await fsp.readFile(paths.signerUnitPath, "utf8")).toBe("ExecStart=old-signer\n");
     expect(fs.existsSync(paths.gatewayGatePath)).toBe(true);
+    expect(fs.existsSync(paths.signerGatePath)).toBe(true);
+    expect((await fsp.stat(path.dirname(paths.signerGatePath))).mode & 0o777).toBe(0o755);
     expect(events).toEqual(["stage:1.2.3"]);
 
     await __testing.activateSignerRelease(
@@ -208,6 +212,7 @@ describe("root-owned hosted updater protocol", () => {
       "ExecStart=old-signer\n",
     );
     expect(fs.existsSync(paths.gatewayGatePath)).toBe(true);
+    expect(fs.existsSync(paths.signerGatePath)).toBe(true);
 
     await fsp.writeFile(paths.signerUnitPath, "ExecStart=new-signer-v2\n", { mode: 0o644 });
 
@@ -222,6 +227,7 @@ describe("root-owned hosted updater protocol", () => {
     expect(fs.existsSync(paths.journalPath)).toBe(false);
     expect(fs.existsSync(transactionPaths.transactionDir)).toBe(false);
     expect(fs.existsSync(paths.gatewayGatePath)).toBe(false);
+    expect(fs.existsSync(paths.signerGatePath)).toBe(false);
 
     await __testing.prepareSignerRelease(
       request("prepareRelease", TRANSACTION_TWO, "1.2.4"),
@@ -236,6 +242,7 @@ describe("root-owned hosted updater protocol", () => {
       context,
     );
     expect(fs.existsSync(paths.gatewayGatePath)).toBe(false);
+    expect(fs.existsSync(paths.signerGatePath)).toBe(true);
     await __testing.commitSignerRelease(
       request("commitRelease", TRANSACTION_TWO, "1.2.4"),
       context,
@@ -244,6 +251,7 @@ describe("root-owned hosted updater protocol", () => {
     expect(await fsp.readFile(paths.versionPath, "utf8")).toBe("1.2.4\n");
     expect(await fsp.readFile(paths.rollbackFloorPath, "utf8")).toBe("1.2.4\n");
     expect(fs.existsSync(paths.journalPath)).toBe(false);
+    expect(fs.existsSync(paths.signerGatePath)).toBe(false);
     await expect(
       __testing.prepareSignerRelease(request("prepareRelease", TRANSACTION_ONE, "1.2.3"), context),
     ).rejects.toThrow("rollback floor is v1.2.4");
@@ -265,6 +273,7 @@ describe("root-owned hosted updater protocol", () => {
     expect(await fsp.readFile(paths.signerPath, "utf8")).toBe("old-signer\n");
     expect(fs.existsSync(paths.journalPath)).toBe(false);
     expect(fs.existsSync(paths.gatewayGatePath)).toBe(true);
+    expect(fs.existsSync(paths.signerGatePath)).toBe(true);
     await expect(
       __testing.gateGatewayRelease(
         request("gateGatewayRelease", TRANSACTION_ONE, "1.2.3"),
@@ -276,6 +285,7 @@ describe("root-owned hosted updater protocol", () => {
       context,
     );
     expect(fs.existsSync(paths.gatewayGatePath)).toBe(false);
+    expect(fs.existsSync(paths.signerGatePath)).toBe(false);
   });
 
   it("finishes a durable commit decision and rolls back an interrupted activation", async () => {
@@ -332,6 +342,7 @@ describe("root-owned hosted updater protocol", () => {
       phase: "active",
     });
     expect(fs.existsSync(paths.gatewayGatePath)).toBe(true);
+    expect(fs.existsSync(paths.signerGatePath)).toBe(true);
 
     await __testing.authorizeGatewayRelease(
       request("authorizeGatewayRelease", TRANSACTION_ONE, "1.2.3"),
@@ -343,6 +354,7 @@ describe("root-owned hosted updater protocol", () => {
       phase: "gateway-authorized",
     });
     expect(fs.existsSync(paths.gatewayGatePath)).toBe(false);
+    expect(fs.existsSync(paths.signerGatePath)).toBe(true);
   });
 
   it("commits the preactivated repair only after the app-account health decision", async () => {
@@ -373,6 +385,7 @@ describe("root-owned hosted updater protocol", () => {
       verifyGateway: async () => {
         expect(application).toBe("target");
         expect(fs.existsSync(paths.gatewayGatePath)).toBe(false);
+        expect(fs.existsSync(paths.signerGatePath)).toBe(true);
         expect(await fsp.readFile(paths.signerPath, "utf8")).toBe("signer-1.2.3\n");
       },
       refreshPrevious: async () => undefined,
@@ -389,6 +402,7 @@ describe("root-owned hosted updater protocol", () => {
     expect(application).toBe("target");
     expect(await fsp.readFile(paths.rollbackFloorPath, "utf8")).toBe("1.2.3\n");
     expect(fs.existsSync(paths.journalPath)).toBe(false);
+    expect(fs.existsSync(paths.signerGatePath)).toBe(false);
   });
 
   it("restores app, signer DB, binary, and prior unit together when repair health fails", async () => {

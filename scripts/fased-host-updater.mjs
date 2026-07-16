@@ -25,6 +25,7 @@ const CHANNEL_PATH = "/etc/fased/host-updater-channel";
 const JOURNAL_PATH = path.join(STATE_DIR, "active-signer-transaction.json");
 const ROLLBACK_FLOOR_PATH = path.join(STATE_DIR, "rollback-floor");
 const GATEWAY_GATE_PATH = path.join(STATE_DIR, "gateway-update-gate");
+const SIGNER_GATE_PATH = "/var/lib/fased-signer-update-gate/active";
 const TRANSACTIONS_DIR = path.join(STATE_DIR, "transactions");
 const MAX_REQUEST_BYTES = 4096;
 const REQUEST_TIMEOUT_MS = 20 * 60_000;
@@ -69,6 +70,7 @@ const DEFAULT_PATHS = Object.freeze({
   journalPath: JOURNAL_PATH,
   rollbackFloorPath: ROLLBACK_FLOOR_PATH,
   gatewayGatePath: GATEWAY_GATE_PATH,
+  signerGatePath: SIGNER_GATE_PATH,
   transactionsDir: TRANSACTIONS_DIR,
 });
 
@@ -539,9 +541,46 @@ async function writeGatewayGate(context, journal) {
   );
 }
 
+async function writeSignerGate(context, journal) {
+  const directory = path.dirname(context.paths.signerGatePath);
+  await fsp.mkdir(directory, { recursive: true, mode: 0o755 });
+  const directoryStat = await fsp.lstat(directory);
+  if (
+    !directoryStat.isDirectory() ||
+    directoryStat.isSymbolicLink() ||
+    directoryStat.uid !== process.geteuid() ||
+    (directoryStat.mode & 0o022) !== 0
+  ) {
+    throw new Error(
+      "signer update gate directory must be owned by the updater and not writable by group/others",
+    );
+  }
+  await fsp.chmod(directory, 0o755);
+  await atomicWriteFileDurable(
+    context.paths.signerGatePath,
+    `${JSON.stringify({ transactionId: journal.transactionId, version: journal.version })}\n`,
+    0o644,
+  );
+}
+
+async function writeUpdateGates(context, journal) {
+  await writeGatewayGate(context, journal);
+  await writeSignerGate(context, journal);
+}
+
 async function removeGatewayGate(context) {
   await fsp.rm(context.paths.gatewayGatePath, { force: true });
   await fsyncDirectory(path.dirname(context.paths.gatewayGatePath));
+}
+
+async function removeSignerGate(context) {
+  await fsp.rm(context.paths.signerGatePath, { force: true });
+  await fsyncDirectory(path.dirname(context.paths.signerGatePath));
+}
+
+async function removeUpdateGates(context) {
+  await removeGatewayGate(context);
+  await removeSignerGate(context);
 }
 
 async function readGatewayGate(context) {
@@ -612,7 +651,9 @@ async function prepareSignerRelease(request, context) {
   if (active) {
     assertMatchingTransaction(active, request);
     if (active.phase !== "gateway-authorized" && active.phase !== "committing") {
-      await writeGatewayGate(context, active);
+      await writeUpdateGates(context, active);
+    } else if (active.phase === "gateway-authorized") {
+      await writeSignerGate(context, active);
     }
     return {
       transactionId: active.transactionId,
@@ -664,13 +705,13 @@ async function prepareSignerRelease(request, context) {
       signerUnit,
       rollbackFromPhase: null,
     });
-    await writeGatewayGate(context, journal);
+    await writeUpdateGates(context, journal);
   } catch (error) {
     await cleanupTransactionFiles(context, request.transactionId).catch(() => undefined);
     if (journal) {
       await removeJournal(context).catch(() => undefined);
     }
-    await removeGatewayGate(context).catch(() => undefined);
+    await removeUpdateGates(context).catch(() => undefined);
     throw error;
   }
   return {
@@ -741,7 +782,7 @@ async function rollbackSignerRelease(request, context, { preserveGatewayGate = f
   let journal = await readJournal(context);
   if (!journal) {
     if (!preserveGatewayGate) {
-      await removeGatewayGate(context);
+      await removeUpdateGates(context);
     }
     return {
       transactionId: request.transactionId,
@@ -751,12 +792,12 @@ async function rollbackSignerRelease(request, context, { preserveGatewayGate = f
     };
   }
   assertMatchingTransaction(journal, request);
-  await writeGatewayGate(context, journal);
+  await writeUpdateGates(context, journal);
   if (journal.phase === "restored") {
     await cleanupTransactionFiles(context, journal.transactionId);
     await removeJournal(context);
     if (!preserveGatewayGate) {
-      await removeGatewayGate(context);
+      await removeUpdateGates(context);
     }
     return {
       transactionId: journal.transactionId,
@@ -801,7 +842,7 @@ async function rollbackSignerRelease(request, context, { preserveGatewayGate = f
   await cleanupTransactionFiles(context, journal.transactionId);
   await removeJournal(context);
   if (!preserveGatewayGate) {
-    await removeGatewayGate(context);
+    await removeUpdateGates(context);
   }
   return {
     transactionId: journal.transactionId,
@@ -821,6 +862,7 @@ async function authorizeGatewayRelease(request, context) {
     journal = await writeJournal(context, { ...journal, phase: "gateway-authorized" });
   }
   try {
+    await writeSignerGate(context, journal);
     await removeGatewayGate(context);
     try {
       await context.startGateway();
@@ -830,7 +872,7 @@ async function authorizeGatewayRelease(request, context) {
       }
     }
   } catch (error) {
-    await writeGatewayGate(context, journal).catch(() => undefined);
+    await writeUpdateGates(context, journal).catch(() => undefined);
     throw error;
   }
   return {
@@ -859,7 +901,7 @@ async function gateGatewayRelease(request, context) {
   if (journal.phase === "committing") {
     throw new Error("cannot gate a Gateway after the signer commit decision");
   }
-  await writeGatewayGate(context, journal);
+  await writeUpdateGates(context, journal);
   return {
     transactionId: journal.transactionId,
     version: journal.version,
@@ -946,7 +988,7 @@ async function activateSignerRelease(request, context) {
 
 async function finishCommit(context, journal) {
   await writeInitialRollbackFloor(context, journal.version);
-  await removeGatewayGate(context);
+  await removeUpdateGates(context);
   await cleanupTransactionFiles(context, journal.transactionId);
   await removeJournal(context);
   return {
@@ -1006,7 +1048,14 @@ async function recoverInterruptedTransaction(context) {
     return { recovered: true, action: "rolled-back", result };
   }
   // Active/authorized is a valid target signer awaiting the application coordinator's
-  // durable commit/rollback decision. Preserve it across updater restarts.
+  // durable commit/rollback decision. Keep signer mutations gated until that
+  // decision; only a Gateway-authorized transaction may run the health probe.
+  if (journal.phase === "gateway-authorized") {
+    await writeSignerGate(context, journal);
+    await removeGatewayGate(context);
+  } else {
+    await writeUpdateGates(context, journal);
+  }
   return { recovered: true, action: "pending", phase: journal.phase };
 }
 
@@ -1034,6 +1083,9 @@ function writeResponse(socket, payload) {
 }
 
 export async function startServer() {
+  if (typeof process.getuid !== "function" || process.getuid() !== 0) {
+    throw new Error("hosted signer updater must run as root");
+  }
   const gidIndex = process.argv.indexOf("--socket-gid");
   const socketGid = gidIndex >= 0 ? Number(process.argv[gidIndex + 1]) : Number.NaN;
   if (!Number.isSafeInteger(socketGid) || socketGid <= 0) {
