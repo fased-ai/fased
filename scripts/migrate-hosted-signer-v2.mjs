@@ -206,11 +206,108 @@ async function socketRequest(socketPath, request) {
   });
 }
 
-async function quarantineLegacyFile(filePath, stamp) {
-  const destination = `${filePath}.migrated-v2-${stamp}`;
-  await fsp.rename(filePath, destination);
-  await fsp.chown(destination, 0, 0);
-  await fsp.chmod(destination, 0o000);
+async function syncDirectory(directory) {
+  const handle = await fsp.open(directory, fs.constants.O_RDONLY);
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
+function sameFile(left, right) {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+async function verifiedQuarantineDestination(
+  destination,
+  allowLinkedSource = false,
+  quarantineOwner = { uid: 0, gid: 0 },
+) {
+  const stat = await fsp.lstat(destination).catch((error) => {
+    if (error?.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  });
+  if (!stat) {
+    return null;
+  }
+  const expectedLinks = allowLinkedSource ? new Set([1, 2]) : new Set([1]);
+  if (
+    !stat.isFile() ||
+    stat.isSymbolicLink() ||
+    stat.uid !== quarantineOwner.uid ||
+    stat.gid !== quarantineOwner.gid ||
+    (stat.mode & 0o777) !== 0 ||
+    !expectedLinks.has(stat.nlink)
+  ) {
+    fail(`legacy wallet quarantine is not a root-owned locked regular file: ${destination}`);
+  }
+  return stat;
+}
+
+async function quarantineLegacyFile(
+  filePath,
+  allowedRoots,
+  allowedUids,
+  quarantineOwner = { uid: 0, gid: 0 },
+) {
+  // A deterministic destination plus a two-link intermediate makes cleanup
+  // resumable after power loss. The verified inode is made root-owned and
+  // unreadable before its app-visible pathname is removed.
+  const destination = `${filePath}.migrated-v2`;
+  const sourceStat = await fsp.lstat(filePath).catch((error) => {
+    if (error?.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  });
+  const destinationStat = await verifiedQuarantineDestination(destination, true, quarantineOwner);
+
+  if (!sourceStat) {
+    if (!destinationStat) {
+      fail(`legacy wallet material disappeared before quarantine: ${filePath}`);
+    }
+    if (destinationStat.nlink !== 1) {
+      fail(`legacy wallet quarantine has an incomplete link state: ${destination}`);
+    }
+    return destination;
+  }
+
+  if (destinationStat) {
+    if (!sameFile(sourceStat, destinationStat) || destinationStat.nlink !== 2) {
+      fail(`legacy wallet quarantine destination already exists: ${destination}`);
+    }
+    await fsp.unlink(filePath);
+    await syncDirectory(path.dirname(filePath));
+    await verifiedQuarantineDestination(destination, false, quarantineOwner);
+    return destination;
+  }
+
+  const handle = await openVerifiedSourceFile(
+    filePath,
+    allowedRoots,
+    allowedUids,
+    "legacy wallet material",
+  );
+  try {
+    await handle.chown(quarantineOwner.uid, quarantineOwner.gid);
+    await handle.chmod(0o000);
+    await handle.sync();
+    const lockedStat = await handle.stat();
+    const currentStat = await fsp.lstat(filePath);
+    if (!sameFile(lockedStat, currentStat)) {
+      fail(`legacy wallet material changed during quarantine: ${filePath}`);
+    }
+    await fsp.link(filePath, destination);
+    await syncDirectory(path.dirname(filePath));
+    await fsp.unlink(filePath);
+    await syncDirectory(path.dirname(filePath));
+  } finally {
+    await handle.close();
+  }
+  await verifiedQuarantineDestination(destination, false, quarantineOwner);
   return destination;
 }
 
@@ -272,8 +369,19 @@ async function main() {
   const sources = [
     ...new Set(entries.flatMap((entry) => [entry.keystorePath, entry.passphrasePath])),
   ];
+  const existingEntries = new Map();
+  for (const entry of entries) {
+    existingEntries.set(entry.walletId, await readExistingWallet(entry));
+  }
+  const importSources = [
+    ...new Set(
+      entries
+        .filter((entry) => !existingEntries.get(entry.walletId))
+        .flatMap((entry) => [entry.keystorePath, entry.passphrasePath]),
+    ),
+  ];
   try {
-    for (const source of sources) {
+    for (const source of importSources) {
       sourceHandles.set(
         source,
         await openVerifiedSourceFile(source, allowedRoots, ownerUids, "legacy wallet material"),
@@ -284,7 +392,7 @@ async function main() {
       const stagedKeystore = path.join(IMPORT_DIR, `keystore-${entry.walletId}-${stamp}.v1.enc`);
       const stagedPassphrase = path.join(IMPORT_DIR, `passphrase-${entry.walletId}-${stamp}`);
       try {
-        const existing = await readExistingWallet(entry);
+        const existing = existingEntries.get(entry.walletId);
         let wallet = existing?.wallet;
         let policy = existing?.policy;
         if (!existing) {
@@ -353,7 +461,7 @@ async function main() {
   const quarantined = new Map();
   if (!deferQuarantine) {
     for (const source of sources) {
-      quarantined.set(source, await quarantineLegacyFile(source, stamp));
+      quarantined.set(source, await quarantineLegacyFile(source, allowedRoots, ownerUids));
     }
   }
   for (const result of verified) {
@@ -385,4 +493,6 @@ export const __testing = {
   copySignerOwned,
   deferLegacyQuarantine,
   openVerifiedSourceFile,
+  quarantineLegacyFile,
+  verifiedQuarantineDestination,
 };

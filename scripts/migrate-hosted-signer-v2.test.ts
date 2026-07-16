@@ -116,4 +116,62 @@ describe("hosted signer v2 migration", () => {
       await handle.close();
     }
   });
+
+  it("locks and quarantines the verified legacy inode before removing its source name", async () => {
+    const directory = await temporaryDirectory();
+    const source = path.join(directory, "keystore-agent.v1.enc");
+    const destination = `${source}.migrated-v2`;
+    await fsp.writeFile(source, "encrypted-secret", { mode: 0o600 });
+    const stat = await fsp.stat(source);
+    const owner = { uid: stat.uid, gid: stat.gid };
+
+    await expect(
+      __testing.quarantineLegacyFile(source, [directory], new Set([stat.uid]), owner),
+    ).resolves.toBe(destination);
+    await expect(fsp.lstat(source)).rejects.toMatchObject({ code: "ENOENT" });
+    const quarantined = await fsp.lstat(destination);
+    expect(quarantined.size).toBe(Buffer.byteLength("encrypted-secret"));
+    expect(quarantined.mode & 0o777).toBe(0);
+    expect(quarantined.nlink).toBe(1);
+
+    await expect(
+      __testing.quarantineLegacyFile(source, [directory], new Set([stat.uid]), owner),
+    ).resolves.toBe(destination);
+  });
+
+  it("resumes the durable two-link quarantine state after an interrupted cleanup", async () => {
+    const directory = await temporaryDirectory();
+    const source = path.join(directory, "passphrase");
+    const destination = `${source}.migrated-v2`;
+    await fsp.writeFile(source, "legacy-passphrase", { mode: 0o600 });
+    const stat = await fsp.stat(source);
+    const owner = { uid: stat.uid, gid: stat.gid };
+    await fsp.chmod(source, 0o000);
+    await fsp.link(source, destination);
+
+    await expect(
+      __testing.quarantineLegacyFile(source, [directory], new Set([stat.uid]), owner),
+    ).resolves.toBe(destination);
+    await expect(fsp.lstat(source)).rejects.toMatchObject({ code: "ENOENT" });
+    const quarantined = await fsp.lstat(destination);
+    expect(quarantined.nlink).toBe(1);
+    expect(quarantined.mode & 0o777).toBe(0);
+  });
+
+  it("refuses to overwrite an unrelated quarantine destination", async () => {
+    const directory = await temporaryDirectory();
+    const source = path.join(directory, "keystore-vault.v1.enc");
+    const destination = `${source}.migrated-v2`;
+    await fsp.writeFile(source, "encrypted-secret", { mode: 0o600 });
+    await fsp.writeFile(destination, "collision", { mode: 0o000 });
+    const stat = await fsp.stat(source);
+
+    await expect(
+      __testing.quarantineLegacyFile(source, [directory], new Set([stat.uid]), {
+        uid: stat.uid,
+        gid: stat.gid,
+      }),
+    ).rejects.toThrow("destination already exists");
+    await expect(fsp.readFile(source, "utf8")).resolves.toBe("encrypted-secret");
+  });
 });
