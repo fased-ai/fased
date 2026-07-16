@@ -35,6 +35,12 @@ describe("hosted signer security boundary", () => {
     expect(accountBoundary).toContain('gpasswd -d "$target_user" "$admin_group"');
     expect(accountBoundary).toContain("passwordless sudo");
     expect(accountBoundary).not.toContain("NOPASSWD");
+    expect(install).not.toContain("install_host_maintenance_sudoers()");
+    expect(install).not.toContain("install_host_signer_isolation_helper()");
+    expect(install).not.toContain("install_host_signer_maintenance_wrapper()");
+    expect(install).not.toContain("ensure_host_signer_isolation_user()");
+    expect(install).not.toContain("NOPASSWD:");
+    expect(install).toContain("/usr/local/sbin/fased-signer-isolation");
   });
 
   it("cold starts use the external system signer and never start a hosted broker", () => {
