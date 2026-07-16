@@ -21,15 +21,19 @@ var applicationUpdateGateReadOperations = map[string]bool{
 }
 
 func enforceApplicationUpdateGate(gatePath, operation string, control bool, trustedUID int) error {
-	if control || strings.TrimSpace(gatePath) == "" || applicationUpdateGateReadOperations[operation] {
+	if strings.TrimSpace(gatePath) == "" || applicationUpdateGateReadOperations[operation] {
 		return nil
 	}
 	active, err := trustedUpdateGateActive(gatePath, trustedUID)
 	if err != nil {
-		return fmt.Errorf("signer update gate is invalid; refusing application mutation: %w", err)
+		return fmt.Errorf("signer update gate is invalid; refusing mutation: %w", err)
 	}
 	if active {
-		return errors.New("signer update is awaiting a durable app and signer decision; application mutations are temporarily disabled")
+		socketKind := "application"
+		if control {
+			socketKind = "control"
+		}
+		return fmt.Errorf("signer update is awaiting a durable app and signer decision; %s mutations are temporarily disabled", socketKind)
 	}
 	return nil
 }

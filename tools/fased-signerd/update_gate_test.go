@@ -24,8 +24,11 @@ func TestApplicationUpdateGateBlocksMutationsButAllowsHealth(t *testing.T) {
 			t.Fatalf("mutation %s was not blocked by the update gate: %v", operation, err)
 		}
 	}
-	if err := enforceApplicationUpdateGate(gatePath, "v2.wallet.import", true, trustedUID); err != nil {
-		t.Fatalf("root-only control operation was blocked: %v", err)
+	if err := enforceApplicationUpdateGate(gatePath, "v2.wallet.import", true, trustedUID); err == nil || !strings.Contains(err.Error(), "control mutations") {
+		t.Fatalf("control mutation was not blocked during the rollback window: %v", err)
+	}
+	if err := enforceApplicationUpdateGate(gatePath, "v2.policy.get", true, trustedUID); err != nil {
+		t.Fatalf("control read was blocked during the rollback window: %v", err)
 	}
 }
 
