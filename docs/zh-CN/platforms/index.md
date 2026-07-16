@@ -20,7 +20,7 @@ Fased 核心使用 TypeScript 编写。**Node 是推荐的运行时**。
 
 配套应用适用于 macOS（菜单栏应用）和移动节点（iOS/Android）。Windows 和
 Linux 配套应用已在计划中，但 Gateway 网关目前已完全支持。
-Windows 原生配套应用也在计划中；推荐通过 WSL2 使用 Gateway 网关。
+Windows 原生配套应用也在计划中；Fased CLI、Gateway 网关和钱包签名器必须在 WSL2 Ubuntu 内运行。
 
 ## 当前 UI 模型
 

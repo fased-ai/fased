@@ -29,6 +29,21 @@ describe("managed gateway entry selection", () => {
     expect(resolver.indexOf("dist/entry.mjs")).toBeLessThan(resolver.indexOf("dist/index.mjs"));
   });
 
+  it("uses only the lazy CLI entry for the wallet signer broker", () => {
+    const script = fs.readFileSync(path.resolve(import.meta.dirname, "start-managed.sh"), "utf8");
+    const start = script.indexOf("resolve_wallet_broker_cli_entry() {");
+    const end = script.indexOf("\n}\n", start);
+    const resolver = script.slice(start, end);
+
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    expect(resolver).toContain("dist/entry.js");
+    expect(resolver).toContain("dist/entry.mjs");
+    expect(resolver).not.toContain("dist/index.js");
+    expect(resolver).not.toContain("dist/index.mjs");
+    expect(script).toContain('gateway_entry="$(resolve_wallet_broker_cli_entry || true)"');
+  });
+
   it("stamps the gateway version from the runtime selected by the launcher", () => {
     const script = fs.readFileSync(path.resolve(import.meta.dirname, "start-managed.sh"), "utf8");
     const runtimeVersion = script.indexOf('RUNTIME_VERSION="$("$NODE_BIN"');

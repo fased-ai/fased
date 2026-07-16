@@ -52,6 +52,19 @@ Use this on your own machine:
   shell.
 - **Linux:** run the command in your distro terminal.
 
+Windows requires Windows 11 or Windows 10 version 2004/build 19041 or newer.
+Open PowerShell **as Administrator** only to install WSL2:
+
+```powershell
+wsl --install -d Ubuntu
+```
+
+Restart Windows if requested, open the **Ubuntu** application, create the Linux
+username/password on first launch, and run the Fased command below in that
+Ubuntu shell. Do not run the Fased installer in PowerShell, Command Prompt, Git
+Bash, or native Windows Node.js. Fased wallet signing requires Unix sockets and
+therefore runs through WSL2 on Windows.
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
 ```

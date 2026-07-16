@@ -44,7 +44,7 @@ x-i18n:
 - 可选网页搜索：在 Control UI 中打开 **Agent > Services**，配置 web/search 提供商和 API key。CLI 也支持 `fased configure --section web`。
 
 macOS：如果你计划构建应用，安装 Xcode / CLT。仅用于 CLI + Gateway 网关的话，Node 就足够了。
-Windows：使用 **WSL2**（推荐 Ubuntu）。强烈推荐 WSL2；原生 Windows 未经测试，问题更多，工具兼容性更差。先安装 WSL2，然后在 WSL 内运行 Linux 步骤。参见 [Windows (WSL2)](/platforms/windows)。
+Windows：Fased 必须在 **WSL2 Ubuntu 内**运行。支持 Windows 11，或 Windows 10 版本 2004/build 19041 及以上版本。在管理员 PowerShell 中运行 `wsl --install -d Ubuntu`，重新启动（如果系统要求），然后从开始菜单打开 Ubuntu。安装程序和所有 `fased` 命令都要在 Ubuntu 内运行；不要使用 PowerShell、命令提示符、Git Bash 或原生 Windows Node.js。钱包签名器需要 Unix socket。参见 [Windows (WSL2)](/platforms/windows)。
 
 ## 1) 安装 CLI（推荐）
 
@@ -56,7 +56,7 @@ cd fased
 
 安装程序选项（安装方法、非交互式、从 GitHub）：[安装](/install)。
 
-Windows：请先使用 [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install)，然后在 Ubuntu 里运行同样的仓库安装命令。
+Windows：先使用 [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install)，然后在 Ubuntu 提示符中运行安装命令。不要在 PowerShell 中运行 Fased 安装程序。
 
 ## 2) 运行新手引导向导（并安装服务）
 

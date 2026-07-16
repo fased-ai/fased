@@ -36,7 +36,10 @@ flowchart TD
 ### Local
 
 Use this when the agent runs on your own computer. On macOS, use Terminal. On
-Windows, use WSL2 with Ubuntu. On Linux, use your distro terminal.
+Windows, use WSL2 with Ubuntu and run Fased inside the Ubuntu shell, not native
+PowerShell or Windows Node.js. On Linux, use your distro terminal. See [Windows
+(WSL2)](/platforms/windows) for the supported Windows versions and exact shell
+boundary.
 
 It creates local config, workspace, gateway settings, local signer/wallet state
 if selected, and local service startup. Tailscale is not part of the basic Local

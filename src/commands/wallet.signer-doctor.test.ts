@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -13,6 +14,53 @@ afterEach(() => {
 });
 
 describe("collectWalletSignerDoctorReport", () => {
+  it.each([
+    { label: "single-user signer", mode: 0o600, splitBackend: false },
+    { label: "isolated hosted broker", mode: 0o660, splitBackend: true },
+  ])("accepts the intended $label socket mode", async ({ mode, splitBackend }) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-wallet-doctor-socket-mode-"));
+    tempDirs.push(root);
+    const stateDir = path.join(root, "state");
+    const walletDir = path.join(stateDir, "wallet");
+    const socketPath = path.join(walletDir, "local-signer.sock");
+    fs.mkdirSync(walletDir, { recursive: true });
+    const server = createServer();
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(socketPath, resolve);
+    });
+    fs.chmodSync(socketPath, mode);
+
+    try {
+      const report = await collectWalletSignerDoctorReport(
+        {
+          HOME: "/home/app",
+          FASED_STATE_DIR: stateDir,
+          FASED_WALLET_LOCAL_SIGNER_SOCKET: socketPath,
+          ...(splitBackend
+            ? {
+                FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET: path.join(root, "signer", "backend.sock"),
+              }
+            : {}),
+        } as NodeJS.ProcessEnv,
+        {
+          config: {
+            wallet: {
+              provider: { id: "local-socket-signer" },
+            },
+          },
+        },
+      );
+
+      expect(report.checks.find((check) => check.check === "socket.mode")).toMatchObject({
+        ok: true,
+        detail: `mode=${mode.toString(8)} expected=${mode.toString(8)}`,
+      });
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it("uses config-merged env when resolving per-chain keystore paths", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-wallet-doctor-"));
     tempDirs.push(root);

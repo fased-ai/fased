@@ -46,17 +46,23 @@ to avoid a slow source build, but normal users should still start from the curl
 installer.
 </Note>
 
-<Note>
+<Warning>
 Windows has two different paths:
 
 - **Local install on your Windows PC:** use
-  [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) and run Fased
-  inside Ubuntu.
+  [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) on Windows 11
+  or Windows 10 version 2004/build 19041 or newer. Run `wsl --install -d
+Ubuntu` in Administrator PowerShell, restart if requested, open Ubuntu, and
+  run the Fased installer inside that Ubuntu shell.
 - **Managing a hosted VPS from Windows:** use PowerShell or Windows Terminal
   with the Windows Tailscale app online. Use WSL for hosted SSH checks only
   unless Tailscale is also installed and logged in inside WSL.
 
-</Note>
+Do not run the Fased installer, CLI, Gateway, wallet, or signer in native
+PowerShell, Command Prompt, Git Bash, or native Windows Node.js. The wallet
+signer requires Unix sockets. See the complete [Windows (WSL2)
+guide](/platforms/windows).
+</Warning>
 
 ## Pick local or VPS hosting
 
@@ -92,7 +98,7 @@ recovery options and VPS provider console access working.
 
     - **macOS:** run the command in Terminal.
     - **Windows:** install WSL2 with Ubuntu, then run the command inside the
-      Ubuntu shell.
+      Ubuntu shell. PowerShell is not the Fased runtime shell.
     - **Linux:** run the command in your distro terminal.
 
     ```bash

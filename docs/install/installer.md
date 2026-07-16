@@ -23,10 +23,14 @@ curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | ba
 If you are starting from zero on a VPS, use the Hosting install from
 [Install](/install). Ubuntu LTS is the recommended first VPS target.
 
-<Note>
-On Windows, use [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install),
-then run the same bootstrap command inside Ubuntu.
-</Note>
+<Warning>
+On Windows 11 or Windows 10 version 2004/build 19041 or newer, open
+Administrator PowerShell and run `wsl --install -d Ubuntu`. Restart if
+requested, open the Ubuntu application, and run the bootstrap command inside
+that Ubuntu shell. Do not run `install.sh` in PowerShell, Command Prompt, Git
+Bash, or native Windows Node.js. The complete procedure is in [Windows
+(WSL2)](/platforms/windows).
+</Warning>
 
 ## What `install.sh` does
 

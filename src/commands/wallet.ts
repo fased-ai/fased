@@ -2985,6 +2985,8 @@ export async function collectWalletSignerDoctorReport(
     options.socketPath?.trim() ||
     String(effectiveEnv.FASED_WALLET_LOCAL_SIGNER_SOCKET ?? "").trim() ||
     path.join(ensureWalletStateDir(effectiveEnv).rootDir, "local-signer.sock");
+  const backendSocketPath = resolveLocalSignerBackendSocketPath(effectiveEnv);
+  const expectedSocketMode = backendSocketPath !== socketPath ? 0o660 : 0o600;
   const { pidPath, auditPath } = resolveLocalSignerSidecarPaths(socketPath);
   const wallet = resolveWalletConfigForRuntime(cfg, effectiveEnv);
   const checks: Array<{ check: string; ok: boolean; detail?: string }> = [];
@@ -3012,7 +3014,11 @@ export async function collectWalletSignerDoctorReport(
       push("socket.exists", st.isSocket?.() ?? true, socketPath);
       try {
         const mode = st.mode & 0o777;
-        push("socket.mode", mode === 0o600, `mode=${mode.toString(8)}`);
+        push(
+          "socket.mode",
+          mode === expectedSocketMode,
+          `mode=${mode.toString(8)} expected=${expectedSocketMode.toString(8)}`,
+        );
       } catch {}
     } catch (err) {
       push(

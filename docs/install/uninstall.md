@@ -100,7 +100,11 @@ rm -f ~/.config/systemd/user/fased-gateway.service
 systemctl --user daemon-reload
 ```
 
-### Windows (Scheduled Task)
+### Legacy native Windows installs (Scheduled Task)
+
+The current public Windows path runs inside WSL2 and uses the Linux/systemd
+instructions above. Use this section only to clean up an older native Windows
+installation created before WSL2 became the required public path.
 
 Default task name is `FasedAgent Gateway` (or `FasedAgent Gateway (<profile>)`).
 The task script lives under your state dir.

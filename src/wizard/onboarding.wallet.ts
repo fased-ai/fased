@@ -53,7 +53,7 @@ const BUILD_SCRIPT_RELURLS = [
   "../../scripts/build-fased-signerd.sh",
   "../scripts/build-fased-signerd.sh",
 ];
-const BROKER_CLI_RELPATHS = ["./index.js", "../../dist/index.js"];
+const BROKER_CLI_RELPATHS = ["../entry.js", "../../dist/entry.js"];
 const DEFAULT_SIGNER_RELEASE_DOWNLOAD_BASE = "https://github.com/fased-ai/fased/releases/download";
 const SIGNER_MAINTENANCE_HELPER = "/usr/local/sbin/fased-signer-maintenance";
 const SIGNER_ISOLATION_HELPER = "/usr/local/sbin/fased-signer-isolation";

@@ -183,6 +183,21 @@ resolve_gateway_cli_entry() {
   return 1
 }
 
+resolve_wallet_broker_cli_entry() {
+  local candidates=(
+    "$FASED_RUNTIME_ROOT/dist/entry.js"
+    "$FASED_RUNTIME_ROOT/dist/entry.mjs"
+  )
+  local candidate
+  for candidate in "${candidates[@]}"; do
+    if [[ -f "$candidate" ]]; then
+      printf "%s" "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
 mask_secret() {
   local raw="$1"
   local n=${#raw}
@@ -871,9 +886,9 @@ start_signer_broker_process() {
     return 0
   fi
   local gateway_entry
-  gateway_entry="$(resolve_gateway_cli_entry || true)"
+  gateway_entry="$(resolve_wallet_broker_cli_entry || true)"
   if [[ -z "$gateway_entry" ]]; then
-    echo "[signerd] ERROR: signer broker CLI unavailable under $FASED_ROOT/dist"
+    echo "[signerd] ERROR: signer broker CLI entry unavailable under $FASED_ROOT/dist"
     return 1
   fi
   if [[ -n "${FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER:-}" ]]; then

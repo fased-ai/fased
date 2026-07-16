@@ -104,7 +104,9 @@ rm -f ~/.config/systemd/user/fased-gateway.service
 systemctl --user daemon-reload
 ```
 
-### Windows（计划任务）
+### 旧版原生 Windows 安装（计划任务）
+
+当前公开的 Windows 安装路径在 WSL2 内运行，应使用上面的 Linux/systemd 卸载步骤。以下命令仅用于清理过去创建的原生 Windows 安装。
 
 默认任务名称是 `FasedAgent Gateway`（或 `FasedAgent Gateway (<profile>)`）。
 任务脚本位于你的状态目录下。

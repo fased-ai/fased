@@ -44,8 +44,11 @@ Sandboxing details: [Sandboxing](/gateway/sandboxing)
 ## Requirements
 
 - Docker Desktop (or Docker Engine) + Docker Compose v2
-- At least 2 GB RAM for image build. On 1 GB hosts, `pnpm install` may be
-  OOM-killed with exit 137.
+- Bash on Linux or macOS. Windows users need Docker Desktop with its WSL2
+  backend/integration enabled and must run the setup from the Ubuntu shell, not
+  PowerShell, Command Prompt, or Git Bash
+- At least 2 GB RAM when building the image from source. On 1 GB hosts,
+  `pnpm install` may be OOM-killed with exit 137.
 - Enough disk for images + logs
 
 ## Containerized Gateway (Docker Compose)
@@ -59,23 +62,44 @@ The curl installers and Docker are separate installation paths:
 | Maintained VPS hosting with Tailscale     | `install.sh --hosting` | No             |
 | Full Docker Gateway on a VPS/cloud server | Not supported          | —              |
 
-### Build locally from source (recommended now)
+### Install from the public image (recommended)
 
-Clone the repo, then run from repo root:
+Clone the matching stable release, then run the setup script from the repo
+root with the same image version:
 
 ```bash
-git clone https://github.com/fased-ai/fased.git fased
+git clone --branch v0.1.61 --depth 1 https://github.com/fased-ai/fased.git fased
 cd fased
-./docker-setup.sh
+FASED_IMAGE=ghcr.io/fased-ai/fased:0.1.61 ./docker-setup.sh
 ```
 
-This script:
+The image is public and supports anonymous pulls for `linux/amd64` and
+`linux/arm64`. Users do not need a Docker Hub account, GitHub account, package
+token, or `docker login`.
 
-- builds the local `fased:local` Gateway image
+For an immutable deployment that cannot move even if a tag changes, pin the
+verified `v0.1.61` multi-architecture manifest digest:
+
+```bash
+FASED_IMAGE=ghcr.io/fased-ai/fased@sha256:f1a6184e71ed59a45fe9792ed8ce63b87d199293bbd136ce7abbec29c110b792 \
+  ./docker-setup.sh
+```
+
+`latest` is available for convenience, but a version tag or digest is safer
+when reproducibility matters:
+
+```bash
+FASED_IMAGE=ghcr.io/fased-ai/fased:latest ./docker-setup.sh
+```
+
+With a published `FASED_IMAGE`, the setup script:
+
+- pulls the selected Gateway image
 - runs CLI onboarding
 - prints dashboard, token, and pairing hints
 - starts the gateway via Docker Compose
 - generates a gateway token and writes it to `.env`
+- records the selected image in `.env`
 
 Optional env vars:
 
@@ -96,26 +120,22 @@ It writes config/workspace on the host:
 - `~/.fased/`
 - `~/.fased/workspace`
 
-### Use a published image after public availability
+### Build locally from source (alternative)
 
-The official GHCR package remains an owner/testing path until a clean tagged
-image passes the Docker security checks and anonymous pulling is enabled. Until
-that announcement, public users should use the source-build path above.
-
-After the package is public, select an immutable release tag when possible:
+Use the source-build path when auditing or modifying the Dockerfile, testing
+unreleased source, or adding build-time packages. Select a stable release for a
+normal local build:
 
 ```bash
-FASED_IMAGE=ghcr.io/fased-ai/fased:X.Y.Z ./docker-setup.sh
+git clone --branch v0.1.61 --depth 1 https://github.com/fased-ai/fased.git fased
+cd fased
+./docker-setup.sh
 ```
 
-`docker-setup.sh` pulls a `FASED_IMAGE` other than `fased:local`, records the
-selection in `.env`, runs onboarding, and starts the local Gateway. `latest`
-will be available for convenience after public release, but a version tag or
-digest is safer when reproducibility matters.
-
-Public GHCR images support anonymous pulls; users do not need a Docker Hub
-account, GitHub account, or package token. An `unauthorized` or `denied` error
-means the package is not public yet or the requested tag does not exist.
+Without `FASED_IMAGE`, `docker-setup.sh` builds `fased:local`, records that
+selection in `.env`, runs onboarding, and starts the local Gateway. An
+`unauthorized` or `denied` error while using the public-image path usually
+means the requested tag does not exist or Docker is reusing stale credentials.
 
 ### Local security boundary
 
@@ -375,15 +395,34 @@ Do not run `fased update` inside a container. Update the selected image or
 source revision, then recreate the Gateway while preserving the same config and
 workspace mounts.
 
-For a published image already recorded in `.env`:
+For a published image pinned in `.env`, select the new stable source tag and
+change `FASED_IMAGE` in `.env` to the same version before pulling. For example,
+when updating to `X.Y.Z`:
 
 ```bash
 cd /path/to/fased
+git fetch origin --tags
+git switch --detach vX.Y.Z
+```
+
+Update `.env`:
+
+```text
+FASED_IMAGE=ghcr.io/fased-ai/fased:X.Y.Z
+```
+
+Then pull, recreate, and verify:
+
+```bash
 docker compose pull
 docker compose up -d fased-gateway
 docker compose exec fased-gateway fased --version
 docker compose exec fased-gateway node dist/index.js health
+docker compose run --rm fased-cli plugins doctor
 ```
+
+If `.env` uses `latest`, no image-name change is required, but `latest` is not
+an immutable production pin. Always verify the installed version after pulling.
 
 For a source-built image, select the intended stable tag, rebuild, and recreate:
 
@@ -395,6 +434,7 @@ docker build --pull -t fased:local -f Dockerfile .
 docker compose up -d fased-gateway
 docker compose exec fased-gateway fased --version
 docker compose exec fased-gateway node dist/index.js health
+docker compose run --rm fased-cli plugins doctor
 ```
 
 State survives only while `FASED_CONFIG_DIR` and `FASED_WORKSPACE_DIR` keep

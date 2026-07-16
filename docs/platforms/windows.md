@@ -8,20 +8,119 @@ title: "Windows (WSL2)"
 
 # Windows (WSL2)
 
-Fased on Windows is recommended **via WSL2** (Ubuntu recommended). The
-CLI + Gateway run inside Linux, which keeps the runtime consistent and makes
-tooling far more compatible (Node/Bun/pnpm, Linux binaries, skills). Native
-Windows runtime support is not the public default yet because daemon/process
-management, shell assumptions, and path handling differ. WSL2 gives you the full
-Linux experience — one command to install: `wsl --install`.
+Fased on Windows runs **inside WSL2 Ubuntu**. The CLI, Gateway, wallet signer,
+updates, and service all run inside Linux. Native Windows PowerShell, Command
+Prompt, Git Bash, and native Windows Node.js are not supported Fased runtime
+shells. Wallet signing specifically requires Unix sockets.
 
 Native Windows companion apps are planned.
 
-## Install (WSL2)
+<Warning>
+Use Administrator PowerShell only for the `wsl` management commands in steps 1
+and 2. After Ubuntu opens, switch to the Ubuntu shell and run every Fased
+command there. A prompt beginning with `PS C:\` is PowerShell and is the wrong
+place to run `install.sh`.
+</Warning>
 
-- [Getting Started](/start/getting-started) (use inside WSL)
+## Supported Windows versions
+
+The one-command WSL installation requires one of:
+
+- Windows 11
+- Windows 10 version 2004 or newer, build 19041 or newer
+
+Press `Windows + R`, run `winver`, and check the version and build. Older
+Windows releases must follow Microsoft's manual WSL installation instructions
+or update Windows before installing Fased.
+
+## Install WSL2 Ubuntu and Fased
+
+### 1. Install WSL2 and Ubuntu in Administrator PowerShell
+
+Open PowerShell with **Run as administrator** and run:
+
+```powershell
+wsl --install -d Ubuntu
+```
+
+Restart Windows if requested. If WSL is already installed but Ubuntu is not,
+list the available distributions and install Ubuntu explicitly:
+
+```powershell
+wsl --list --online
+wsl --install -d Ubuntu
+```
+
+### 2. Confirm that Ubuntu uses WSL2
+
+In PowerShell:
+
+```powershell
+wsl --list --verbose
+```
+
+The `Ubuntu` row must show `VERSION 2`. If it shows version 1, convert it:
+
+```powershell
+wsl --set-version Ubuntu 2
+```
+
+### 3. Open the Ubuntu application
+
+Open **Ubuntu** from the Windows Start menu. The first launch asks you to create
+a Linux username and password. This account is separate from the Windows
+account.
+
+Confirm that the shell is Linux:
+
+```bash
+uname -s
+```
+
+The result must be `Linux`. Run `pwd` if needed; a normal home directory looks
+like `/home/YOUR_LINUX_USER`, not `C:\...` or `/mnt/c/Windows/System32`.
+
+Current Ubuntu distributions installed by `wsl --install` use systemd by
+default. Verify it before installing the Gateway service:
+
+```bash
+systemctl --user status
+```
+
+### 4. Install Fased inside the Ubuntu shell
+
+Run this in Ubuntu, not PowerShell:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+  | bash -s -- --local
+```
+
+The installer prepares the Linux runtime and starts Local onboarding. Keep all
+later Fased commands inside Ubuntu:
+
+```bash
+fased --version
+fased doctor
+fased dashboard
+```
+
+When the first wallet is created or imported, Fased downloads the Linux signer
+asset matching the installed Fased version, verifies its SHA-256 checksum, and
+installs it automatically. Normal users do not install Go.
+
+### 5. Open the dashboard from Windows
+
+The Gateway remains inside WSL2, but the dashboard URL can be opened in the
+normal Windows browser. Keep the Ubuntu shell and WSL2 Gateway available while
+using Fased.
+
+Related documentation:
+
+- [Getting Started](/start/getting-started)
 - [Install & updates](/install/updating)
-- Official WSL2 guide (Microsoft):
+- [Installer reference](/install/installer)
+- Official WSL installation guide (Microsoft):
   [https://learn.microsoft.com/windows/wsl/install](https://learn.microsoft.com/windows/wsl/install)
 
 ## Gateway
@@ -103,60 +202,6 @@ Notes:
   token/password auth.
 - If you want this automatic, register a Scheduled Task to run the refresh
   step at login.
-
-## Step-by-step WSL2 install
-
-### 1) Install WSL2 + Ubuntu
-
-Open PowerShell (Admin):
-
-```powershell
-wsl --install
-# Or pick a distro explicitly:
-wsl --list --online
-wsl --install -d Ubuntu-24.04
-```
-
-Reboot if Windows asks.
-
-### 2) Enable systemd (required for gateway install)
-
-In your WSL terminal:
-
-```bash
-sudo tee /etc/wsl.conf >/dev/null <<'EOF'
-[boot]
-systemd=true
-EOF
-```
-
-Then from PowerShell:
-
-```powershell
-wsl --shutdown
-```
-
-Re-open Ubuntu, then verify:
-
-```bash
-systemctl --user status
-```
-
-### 3) Install Fased (inside WSL)
-
-Use the same repo-backed install flow you would use on Linux:
-
-```bash
-git clone https://github.com/fased-ai/fased.git fased
-cd fased
-./install.sh
-```
-
-`./install.sh` runs onboarding by default. Use `./install.sh --no-onboard` only
-when you want to install the CLI/runtime first and run
-`fased onboard --install-daemon` later.
-
-Full guide: [Getting Started](/start/getting-started)
 
 ## Windows companion app
 

@@ -26,11 +26,9 @@ cd fased
 ./install.sh
 ```
 
-<Note>
-Windows 请先安装
-[WSL2](https://learn.microsoft.com/en-us/windows/wsl/install)，
-然后在 Ubuntu 中运行同样的仓库命令。
-</Note>
+<Warning>
+Windows 11，或 Windows 10 版本 2004/build 19041 及以上版本，请先在管理员 PowerShell 中运行 `wsl --install -d Ubuntu`。PowerShell 只用于管理 WSL2。随后打开 Ubuntu，并在 Ubuntu 提示符内运行安装程序和所有 `fased` 命令；不要使用 PowerShell、命令提示符、Git Bash 或原生 Windows Node.js。
+</Warning>
 
 ## `install.sh` 会做什么
 
