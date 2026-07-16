@@ -2,6 +2,7 @@
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { beginPreactivatedHostedTransaction } from "./fased-managed-updater.mjs";
 import {
   assertManagedRuntime,
   atomicSymlink,
@@ -15,6 +16,10 @@ import {
   resolveLinkTarget,
   resolveManagedRuntimePaths,
 } from "./managed-runtime-layout.mjs";
+
+const DEFAULT_HOST_TRANSACTION_TIMEOUT_MS = 2 * 60_000;
+const HOST_TRANSACTION_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function parseArgs(argv) {
   const rollback = argv[0] === "--rollback";
@@ -44,7 +49,46 @@ function parseArgs(argv) {
     stateDir: path.resolve(stateDir),
     prefix: path.resolve(prefix),
     profile: normalizeManagedProfile(values.get("--profile")),
+    hostTransactionId: values.get("--host-transaction-id")?.trim() || null,
+    hostTransactionVersion: values.get("--host-transaction-version")?.trim() || null,
   };
+}
+
+function resolveHostTransaction(params, { existingManifest, previousRoot, version }) {
+  const transactionId = String(params.hostTransactionId || "").trim();
+  const transactionVersion = String(params.hostTransactionVersion || "").trim();
+  if (Boolean(transactionId) !== Boolean(transactionVersion)) {
+    throw new Error(
+      "--host-transaction-id and --host-transaction-version must be provided together",
+    );
+  }
+  if (!transactionId) {
+    return null;
+  }
+  if (!HOST_TRANSACTION_ID_PATTERN.test(transactionId)) {
+    throw new Error("--host-transaction-id must be a UUID v4");
+  }
+  if (normalizeManagedProfile(params.profile) !== "hosting") {
+    throw new Error("A host update transaction can only activate a hosting runtime.");
+  }
+  if (transactionVersion !== version) {
+    throw new Error(
+      `Host transaction version ${transactionVersion} does not match runtime ${version}.`,
+    );
+  }
+
+  // A fresh hosting install has no application release to roll back. Its root
+  // installer owns the signer transaction and commits it after the first
+  // Gateway health check. Existing hosting installs coordinate both sides here.
+  if (!previousRoot || existingManifest?.profile !== "hosting") {
+    return null;
+  }
+  if (existingManifest.runtime?.activeVersion !== params.previousVersion) {
+    throw new Error(
+      "The active hosting manifest does not match the runtime selected for transactional repair.",
+    );
+  }
+  return { transactionId, transactionVersion };
 }
 
 async function pathExists(target) {
@@ -111,7 +155,12 @@ async function installStableFiles(paths, releaseRoot) {
   }
 }
 
-export async function installManagedRuntime(params) {
+export async function installManagedRuntime(
+  params,
+  dependencies = {
+    beginPreactivatedHostedTransaction,
+  },
+) {
   const paths = resolveManagedRuntimePaths(params);
   const existingManifest = readManagedInstallManifest(paths.manifestPath);
   const version = await assertManagedRuntime(params.packageRoot);
@@ -119,6 +168,10 @@ export async function installManagedRuntime(params) {
   let previousRoot = await resolveLinkTarget(paths.currentLink);
   let previousVersion = previousRoot ? await readPackageVersion(previousRoot) : null;
   let releaseRoot = path.join(paths.releasesDir, version);
+  const hostTransaction = resolveHostTransaction(
+    { ...params, previousVersion },
+    { existingManifest, previousRoot, version },
+  );
 
   await fsp.mkdir(paths.releasesDir, { recursive: true });
   await fsp.mkdir(paths.stagingDir, { recursive: true });
@@ -164,13 +217,6 @@ export async function installManagedRuntime(params) {
   if (previousRoot && path.resolve(previousRoot) !== path.resolve(releaseRoot)) {
     await atomicSymlink(previousRoot, paths.previousLink);
   }
-  await atomicSymlink(releaseRoot, paths.currentLink);
-
-  const compatibilityBackup = await replaceWithSymlink(
-    paths.currentLink,
-    paths.compatibilityPackageRoot,
-  );
-  await installStableFiles(paths, releaseRoot);
 
   const manifest = buildManagedInstallManifest({
     paths,
@@ -179,12 +225,35 @@ export async function installManagedRuntime(params) {
     dependencyHash: metadata?.dependencyHash,
     previousVersion: previousVersion || null,
   });
+  if (hostTransaction) {
+    await installStableFiles(paths, releaseRoot);
+    await dependencies.beginPreactivatedHostedTransaction({
+      paths,
+      transactionId: hostTransaction.transactionId,
+      targetVersion: hostTransaction.transactionVersion,
+      previousVersion,
+      targetRoot: releaseRoot,
+      previousRoot,
+      nextManifest: manifest,
+      previousManifest: existingManifest,
+      timeoutMs: params.timeoutMs || DEFAULT_HOST_TRANSACTION_TIMEOUT_MS,
+    });
+    await fsp.chmod(paths.stateDir, 0o700).catch(() => undefined);
+    return { manifest, paths, releaseRoot, hostTransaction: true };
+  }
+
+  await atomicSymlink(releaseRoot, paths.currentLink);
+  const compatibilityBackup = await replaceWithSymlink(
+    paths.currentLink,
+    paths.compatibilityPackageRoot,
+  );
+  await installStableFiles(paths, releaseRoot);
   await atomicWriteJson(paths.manifestPath, manifest, 0o600);
   await fsp.chmod(paths.stateDir, 0o700).catch(() => undefined);
   if (compatibilityBackup) {
     await fsp.rm(compatibilityBackup, { recursive: true, force: true });
   }
-  return { manifest, paths, releaseRoot };
+  return { manifest, paths, releaseRoot, hostTransaction: false };
 }
 
 export async function rollbackManagedRuntime(params) {
@@ -233,6 +302,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
 }
 
 export const __testing = {
+  parseArgs,
+  resolveHostTransaction,
   installStableFiles,
   moveDirectory,
   replaceWithSymlink,

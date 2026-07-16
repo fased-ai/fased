@@ -112,6 +112,89 @@ describe("managed runtime layout", () => {
     );
   });
 
+  it("hands an existing hosting runtime to the prepared cross-user transaction", async () => {
+    const fixture = createFixture("1.2.3");
+    await installManagedRuntime({
+      packageRoot: fixture.paths.compatibilityPackageRoot,
+      stateDir: fixture.stateDir,
+      prefix: fixture.prefix,
+      profile: "hosting",
+    });
+    const previousRoot = fs.realpathSync(fixture.paths.currentLink);
+
+    fs.unlinkSync(fixture.paths.compatibilityPackageRoot);
+    writeRuntime(fixture.paths.compatibilityPackageRoot, "1.2.4");
+    fs.appendFileSync(
+      path.join(fixture.paths.compatibilityPackageRoot, "scripts", "fased-managed-updater.mjs"),
+      "\n// transaction-target\n",
+    );
+
+    let transaction;
+    let activeRootDuringHandoff;
+    let stableUpdaterDuringHandoff;
+    const result = await installManagedRuntime(
+      {
+        packageRoot: fixture.paths.compatibilityPackageRoot,
+        stateDir: fixture.stateDir,
+        prefix: fixture.prefix,
+        profile: "hosting",
+        hostTransactionId: "4f18fd75-a9ee-4dc3-a4e8-6a7e86ab3e4d",
+        hostTransactionVersion: "1.2.4",
+      },
+      {
+        beginPreactivatedHostedTransaction: async (params) => {
+          transaction = params;
+          activeRootDuringHandoff = fs.realpathSync(params.paths.currentLink);
+          stableUpdaterDuringHandoff = fs.readFileSync(params.paths.updaterPath, "utf8");
+          fs.unlinkSync(params.paths.currentLink);
+          fs.symlinkSync(params.targetRoot, params.paths.currentLink, "dir");
+          fs.symlinkSync(params.paths.currentLink, params.paths.compatibilityPackageRoot, "dir");
+          fs.writeFileSync(
+            params.paths.manifestPath,
+            `${JSON.stringify(params.nextManifest, null, 2)}\n`,
+          );
+        },
+      },
+    );
+
+    expect(result.hostTransaction).toBe(true);
+    expect(activeRootDuringHandoff).toBe(previousRoot);
+    expect(stableUpdaterDuringHandoff).toContain("transaction-target");
+    expect(transaction).toMatchObject({
+      transactionId: "4f18fd75-a9ee-4dc3-a4e8-6a7e86ab3e4d",
+      targetVersion: "1.2.4",
+      previousVersion: "1.2.3",
+      previousRoot,
+    });
+    expect(fs.realpathSync(fixture.paths.currentLink)).toBe(transaction.targetRoot);
+  });
+
+  it("leaves a fresh hosting install under the root installer's signer transaction", async () => {
+    const fixture = createFixture("1.2.3");
+    let coordinated = false;
+    const result = await installManagedRuntime(
+      {
+        packageRoot: fixture.paths.compatibilityPackageRoot,
+        stateDir: fixture.stateDir,
+        prefix: fixture.prefix,
+        profile: "hosting",
+        hostTransactionId: "0ca04df5-a044-45b0-856d-b28b10fc778f",
+        hostTransactionVersion: "1.2.3",
+      },
+      {
+        beginPreactivatedHostedTransaction: async () => {
+          coordinated = true;
+        },
+      },
+    );
+
+    expect(result.hostTransaction).toBe(false);
+    expect(coordinated).toBe(false);
+    expect(fs.realpathSync(fixture.paths.currentLink)).toBe(
+      path.join(fixture.paths.releasesDir, "1.2.3"),
+    );
+  });
+
   it("rehydrates the same version and keeps the displaced runtime for rollback", async () => {
     const fixture = createFixture("1.2.3");
     await installManagedRuntime({

@@ -89,6 +89,18 @@ case "$PROFILE" in
   local|hosting|source) ;;
   *) echo "Invalid managed runtime profile: $PROFILE" >&2; exit 20 ;;
 esac
+HOST_TRANSACTION_ID="${FASED_HOST_UPDATE_TRANSACTION_ID:-}"
+HOST_TRANSACTION_VERSION="${FASED_HOST_UPDATE_TRANSACTION_VERSION:-}"
+if [[ -n "$HOST_TRANSACTION_ID" || -n "$HOST_TRANSACTION_VERSION" ]]; then
+  if [[ -z "$HOST_TRANSACTION_ID" || -z "$HOST_TRANSACTION_VERSION" ]]; then
+    echo "FASED_HOST_UPDATE_TRANSACTION_ID and FASED_HOST_UPDATE_TRANSACTION_VERSION must be provided together." >&2
+    exit 20
+  fi
+  if [[ "$PROFILE" != "hosting" ]]; then
+    echo "A host update transaction can only install the hosting profile." >&2
+    exit 20
+  fi
+fi
 
 sha256_file() {
   local file="$1"
@@ -189,6 +201,10 @@ phase_started_ms="$(now_ms)"
 VERSION="$(resolve_version || true)"
 ARCH="$(resolve_arch || true)"
 [[ -n "$VERSION" && -n "$ARCH" ]] || exit 10
+if [[ -n "$HOST_TRANSACTION_VERSION" && "$HOST_TRANSACTION_VERSION" != "$VERSION" ]]; then
+  echo "Host transaction version ${HOST_TRANSACTION_VERSION} does not match runtime ${VERSION}." >&2
+  exit 20
+fi
 record_timing "release resolution" "$phase_started_ms"
 
 BASE_URL="${BASE_URL%/}"
@@ -313,6 +329,12 @@ MANAGED_INSTALL_ARGS=(
 )
 if [[ -n "$BACKUP_ROOT" ]]; then
   MANAGED_INSTALL_ARGS+=(--previous-package-root "$BACKUP_ROOT")
+fi
+if [[ -n "$HOST_TRANSACTION_ID" ]]; then
+  MANAGED_INSTALL_ARGS+=(
+    --host-transaction-id "$HOST_TRANSACTION_ID"
+    --host-transaction-version "$HOST_TRANSACTION_VERSION"
+  )
 fi
 node "$TARGET_ROOT/scripts/install-managed-runtime.mjs" "${MANAGED_INSTALL_ARGS[@]}"
 [[ -n "$BACKUP_ROOT" && -e "$BACKUP_ROOT" ]] && rm -rf "$BACKUP_ROOT"
