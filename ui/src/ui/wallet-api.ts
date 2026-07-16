@@ -392,6 +392,22 @@ export type WalletSettings = {
       updatedAt: string;
     } | null;
   };
+  signerPolicy?: {
+    state: "locked" | "acknowledged" | "unavailable";
+    walletId: string;
+    role?: "agent" | "mining" | "vault";
+    version?: number;
+    hash?: string;
+    operations?: string[];
+    programs?: string[];
+    assets?: Array<{
+      asset: string;
+      destinations: string[];
+      maxPerTx: string;
+      maxDaily: string;
+    }>;
+    guidance?: string;
+  };
   toolAccess: {
     mode: "owner-only" | "allowlist" | "all";
     allowAgents: string[];

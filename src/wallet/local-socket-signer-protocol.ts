@@ -348,6 +348,20 @@ export const LocalSocketSignerRequestSchema = Type.Union(
       { additionalProperties: false },
     ),
     Type.Object(
+      {
+        op: Type.Literal("v2.policy.tighten"),
+        walletId: Type.String(),
+        request: Type.Object(
+          {
+            expectedVersion: Type.Integer({ minimum: 1 }),
+            policy: SignerPolicyInputV2Schema,
+          },
+          { additionalProperties: false },
+        ),
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
       { op: Type.Literal("v2.wallet.get"), walletId: Type.String() },
       { additionalProperties: false },
     ),
@@ -858,6 +872,7 @@ export function validateLocalSocketSignerResult(
       return Value.Check(LocalSocketSignerHealthResultSchema, result);
     case "v2.policy.get":
     case "v2.policy.put":
+    case "v2.policy.tighten":
       return Value.Check(LocalSocketSignerPolicyV2Schema, result);
     case "v2.wallet.get":
     case "v2.wallet.reencrypt":

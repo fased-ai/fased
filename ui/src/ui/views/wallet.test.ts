@@ -951,6 +951,17 @@ describe("renderWallet", () => {
             directSigning: true,
             solana: { allowPrograms: [], maxPerTx: "1000000000", maxDaily: "5000000000" },
           },
+          signerPolicy: {
+            state: "locked",
+            walletId: "wallet-agent",
+            role: "agent",
+            version: 3,
+            hash: `sha256:${"e".repeat(64)}`,
+            operations: [],
+            programs: [],
+            assets: [],
+            guidance: "Install an owner-reviewed policy through the native signer control socket.",
+          },
           toolAccess: { mode: "owner-only", allowAgents: [] },
           providerCredentials: {
             configured: false,
@@ -1071,6 +1082,12 @@ describe("renderWallet", () => {
     expect(text).not.toContain("Enable security");
     expect(text).toContain("Tx");
     expect(text).toContain("Small Agent spend");
+    expect(text).toContain("Native signer policy: locked");
+    expect(text).toContain("Version 3");
+    expect(text).toContain(`sha256:${"e".repeat(64)}`);
+    expect(text).toContain(
+      "Install an owner-reviewed policy through the native signer control socket.",
+    );
     expect(text).not.toContain("Selected Wallet Policy");
     expect(text).not.toContain("Advanced spend caps");
     expect(text).not.toContain("Apply recommended Agent template");

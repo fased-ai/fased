@@ -5302,36 +5302,46 @@ export class FasedAgentApp extends LitElement {
             ? { walletId: selectedWalletId }
             : {}),
       };
+      const policyPatch =
+        scopedPatch.policyTemplate !== undefined ||
+        scopedPatch.approvalAuthMode !== undefined ||
+        scopedPatch.approvalChallengeTtlSeconds !== undefined ||
+        scopedPatch.approvalGrantTtlSeconds !== undefined ||
+        scopedPatch.capsEnabled !== undefined ||
+        scopedPatch.directSigning !== undefined ||
+        scopedPatch.skillsEnabled !== undefined ||
+        scopedPatch.solanaAllowPrograms !== undefined ||
+        scopedPatch.solanaMaxPerTx !== undefined ||
+        scopedPatch.solanaMaxDaily !== undefined ||
+        scopedPatch.solanaTokenCaps !== undefined ||
+        scopedPatch.recurringTransfer !== undefined ||
+        scopedPatch.toolAccessMode !== undefined ||
+        scopedPatch.toolAccessAllowAgents !== undefined;
+      if (policyPatch && this.walletSettings?.signerPolicy) {
+        this.walletSettingsMessage =
+          "Signer policy update pending; settings remain unchanged until the signer acknowledges the exact next version and hash.";
+      }
       let approvalToken: string | null = null;
       if (opts?.requireExecutionApproval) {
         approvalToken = await this.resolveWalletApprovalToken({
           operation: "wallet.execution-mode",
         });
       } else {
-        const policyPatch =
-          scopedPatch.policyTemplate !== undefined ||
-          scopedPatch.approvalAuthMode !== undefined ||
-          scopedPatch.approvalChallengeTtlSeconds !== undefined ||
-          scopedPatch.approvalGrantTtlSeconds !== undefined ||
-          scopedPatch.capsEnabled !== undefined ||
-          scopedPatch.directSigning !== undefined ||
-          scopedPatch.solanaAllowPrograms !== undefined ||
-          scopedPatch.solanaMaxPerTx !== undefined ||
-          scopedPatch.solanaMaxDaily !== undefined ||
-          scopedPatch.solanaTokenCaps !== undefined ||
-          scopedPatch.recurringTransfer !== undefined ||
-          scopedPatch.toolAccessMode !== undefined ||
-          scopedPatch.toolAccessAllowAgents !== undefined;
         approvalToken = await this.resolveWalletApprovalToken({
           operation: policyPatch ? "wallet.policy" : "wallet.settings",
         });
       }
       const response = await patchWalletSettings(scopedPatch, approvalToken ?? undefined);
       this.walletSettings = response.settings;
-      this.walletSettingsMessage = "Wallet settings updated.";
+      const signerPolicy = response.settings.signerPolicy;
+      this.walletSettingsMessage =
+        policyPatch && signerPolicy?.version && signerPolicy.hash
+          ? `Signer policy ${signerPolicy.state}: version ${signerPolicy.version}, hash ${signerPolicy.hash}. Wallet settings were saved after this acknowledgement.`
+          : "Wallet settings updated.";
       this.syncWalletPolicyDraftsFromSettings();
       this.scheduleWalletReloadAfterSettingsSave();
     } catch (err) {
+      this.walletSettingsMessage = null;
       this.walletSettingsError = `Wallet settings update failed: ${String(err)}`;
     } finally {
       this.walletSettingsBusy = false;

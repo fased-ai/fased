@@ -93,6 +93,44 @@ describe("local socket signer protocol", () => {
     ).toBe("v2.execute");
   });
 
+  it("accepts application policy tightening with an exact version fence", () => {
+    const policy = {
+      walletId: "agent",
+      role: "agent" as const,
+      operations: ["solana.nativeTransfer"],
+      programs: ["11111111111111111111111111111111"],
+      assets: [
+        {
+          asset: "solana:native",
+          destinations: ["Vote111111111111111111111111111111111111111"],
+          maxPerTx: "500",
+          maxDaily: "2500",
+        },
+      ],
+    };
+    expect(
+      parseLocalSocketSignerRequest({
+        op: "v2.policy.tighten",
+        walletId: "agent",
+        request: { expectedVersion: 4, policy },
+      }).op,
+    ).toBe("v2.policy.tighten");
+    expect(() =>
+      parseLocalSocketSignerRequest({
+        op: "v2.policy.tighten",
+        walletId: "agent",
+        request: { expectedVersion: 0, policy },
+      }),
+    ).toThrow("invalid signer request");
+    expect(
+      validateLocalSocketSignerResult("v2.policy.tighten", {
+        ...policy,
+        version: 5,
+        hash: `sha256:${"f".repeat(64)}`,
+      }),
+    ).toBe(true);
+  });
+
   it("accepts typed SAT actions with request id and current policy hash", () => {
     const request = {
       op: "v2.execute" as const,

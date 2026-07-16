@@ -886,16 +886,21 @@ export function applyWalletPolicyConfig(params: {
   );
 }
 
-export function upsertWalletPolicyConfig(params: {
+export type PreparedWalletPolicyConfigUpdate = {
+  walletId: string;
+  role: "mining" | "agent" | "vault";
+  config: ResolvedWalletRuntimeConfig;
+  expectedRecordJson: string;
+  nextRecord: StoredWalletPolicyRecord;
+  preparedAt: string;
+};
+
+export function prepareWalletPolicyConfigUpdate(params: {
   cfg: FasedAgentConfig;
   env?: NodeJS.ProcessEnv;
   walletId: string;
   patch: WalletScopedPolicyPatch;
-}): {
-  walletId: string;
-  role: "mining" | "agent" | "vault";
-  config: ResolvedWalletRuntimeConfig;
-} {
+}): PreparedWalletPolicyConfigUpdate {
   const env = params.env ?? process.env;
   const walletId = params.walletId.trim();
   if (!walletId) {
@@ -971,19 +976,58 @@ export function upsertWalletPolicyConfig(params: {
             role,
           })
         : existingRecord?.recurringTransfer;
-  state.wallets[walletId] = buildStoredPolicyRecord({
+  const preparedAt = nowIso();
+  const nextRecord = buildStoredPolicyRecord({
     walletId,
     role,
     policy: nextPolicy,
     recurringTransfer,
+    updatedAt: preparedAt,
   });
-  state.updatedAt = nowIso();
-  writeWalletPolicyState(state, env);
   return {
     walletId,
     role,
     config: cloneWalletConfigWithPolicy(base, nextPolicy),
+    expectedRecordJson: JSON.stringify(existingRecord ?? null),
+    nextRecord,
+    preparedAt,
   };
+}
+
+export function commitWalletPolicyConfigUpdate(
+  prepared: PreparedWalletPolicyConfigUpdate,
+  env: NodeJS.ProcessEnv = process.env,
+): {
+  walletId: string;
+  role: "mining" | "agent" | "vault";
+  config: ResolvedWalletRuntimeConfig;
+} {
+  const state = readWalletPolicyState(env);
+  if (JSON.stringify(state.wallets[prepared.walletId] ?? null) !== prepared.expectedRecordJson) {
+    throw new Error("wallet policy changed concurrently; reload the acknowledged signer policy");
+  }
+  state.wallets[prepared.walletId] = prepared.nextRecord;
+  state.updatedAt = prepared.preparedAt;
+  writeWalletPolicyState(state, env);
+  return {
+    walletId: prepared.walletId,
+    role: prepared.role,
+    config: prepared.config,
+  };
+}
+
+export function upsertWalletPolicyConfig(params: {
+  cfg: FasedAgentConfig;
+  env?: NodeJS.ProcessEnv;
+  walletId: string;
+  patch: WalletScopedPolicyPatch;
+}): {
+  walletId: string;
+  role: "mining" | "agent" | "vault";
+  config: ResolvedWalletRuntimeConfig;
+} {
+  const env = params.env ?? process.env;
+  return commitWalletPolicyConfigUpdate(prepareWalletPolicyConfigUpdate(params), env);
 }
 
 export function resolveWalletRolePolicyProfile(

@@ -72,6 +72,13 @@ import { getDiagnosticStabilitySnapshot } from "../logging/diagnostic-stability.
 import type { createSubsystemLogger } from "../logging/subsystem.js";
 import { resolveManagedFederationPublicUrl } from "../managed/federation.js";
 import { safeEqualSecret } from "../security/secret-equal.js";
+import {
+  buildLocalSignerPolicyTightening,
+  LocalSignerPolicyAdminRequiredError,
+  localSignerPolicyState,
+} from "../wallet/local-socket-signer-policy.js";
+import type { LocalSocketSignerPolicyV2 } from "../wallet/local-socket-signer-protocol.js";
+import { LocalSocketSignerAdapter } from "../wallet/providers/local-socket-signer-adapter.js";
 import { isValidSolanaAddress } from "../wallet/solana-address.js";
 import {
   fetchSolanaMintInfoViaRpc,
@@ -122,9 +129,11 @@ import {
 } from "../wallet/wallet-observability.js";
 import { simulateWalletPolicy } from "../wallet/wallet-policy-simulation.js";
 import {
+  commitWalletPolicyConfigUpdate,
+  prepareWalletPolicyConfigUpdate,
   resolveWalletPolicyConfig,
   resolveWalletRecurringTransferPolicy,
-  upsertWalletPolicyConfig,
+  type PreparedWalletPolicyConfigUpdate,
   type WalletPolicyPresetId,
 } from "../wallet/wallet-policy.js";
 import {
@@ -152,7 +161,10 @@ import {
   resolveWalletProviderId,
 } from "../wallet/wallet-provider-resolver.js";
 import { walletDiagnosticErrorMessage } from "../wallet/wallet-redaction.js";
-import { resolveWalletRuntimeConfig } from "../wallet/wallet-runtime-config.js";
+import {
+  resolveLocalSignerSocketPath,
+  resolveWalletRuntimeConfig,
+} from "../wallet/wallet-runtime-config.js";
 import {
   deleteWalletProviderSecret,
   readWalletProviderSecretStatus,
@@ -968,6 +980,22 @@ type WalletSettingsResponsePayload = {
       updatedAt: string;
     } | null;
   };
+  signerPolicy?: {
+    state: "locked" | "acknowledged" | "unavailable";
+    walletId: string;
+    role?: "agent" | "mining" | "vault";
+    version?: number;
+    hash?: string;
+    operations?: string[];
+    programs?: string[];
+    assets?: Array<{
+      asset: string;
+      destinations: string[];
+      maxPerTx: string;
+      maxDaily: string;
+    }>;
+    guidance?: string;
+  };
   toolAccess: {
     mode: "owner-only" | "allowlist" | "all";
     allowAgents: string[];
@@ -1290,11 +1318,63 @@ function hasTurnkeyPolicyCredentialsConfigured(env: NodeJS.ProcessEnv = process.
   return hasApiPublicKey && hasApiPrivateKey && hasOrganizationId && hasPolicyId && hasRpcUrl;
 }
 
-function buildWalletSettingsPayload(
+async function readWalletSettingsSignerPolicy(params: {
+  cfg: ReturnType<typeof loadConfig>;
+  walletId?: string;
+  env: NodeJS.ProcessEnv;
+  acknowledged?: LocalSocketSignerPolicyV2;
+}): Promise<WalletSettingsResponsePayload["signerPolicy"] | undefined> {
+  const walletId = params.walletId?.trim();
+  if (!walletId) {
+    return undefined;
+  }
+  const effectiveEnv = { ...params.env, ...params.cfg.env?.vars } as NodeJS.ProcessEnv;
+  const wallet = readWalletProviderRegistry(effectiveEnv).wallets.find(
+    (entry) => entry.id === walletId,
+  );
+  if (wallet?.providerId !== "local-socket-signer") {
+    return undefined;
+  }
+  try {
+    const policy =
+      params.acknowledged?.walletId === walletId
+        ? params.acknowledged
+        : await new LocalSocketSignerAdapter(
+            resolveLocalSignerSocketPath(effectiveEnv),
+          ).getSignerPolicy(walletId);
+    const state = localSignerPolicyState(policy);
+    return {
+      state,
+      walletId: policy.walletId,
+      role: policy.role,
+      version: policy.version,
+      hash: policy.hash,
+      operations: [...policy.operations],
+      programs: [...policy.programs],
+      assets: policy.assets.map((asset) => ({ ...asset, destinations: [...asset.destinations] })),
+      ...(state === "locked"
+        ? {
+            guidance:
+              "Signer policy is deny-all. Install an owner-reviewed policy through the native signer control socket; the Gateway can only tighten it.",
+          }
+        : {}),
+    };
+  } catch {
+    return {
+      state: "unavailable",
+      walletId,
+      guidance:
+        "Signer policy could not be verified. No policy change will be shown as saved until the signer returns its exact durable version and hash.",
+    };
+  }
+}
+
+async function buildWalletSettingsPayload(
   cfg: ReturnType<typeof loadConfig>,
   walletId?: string,
   env: NodeJS.ProcessEnv = process.env,
-): WalletSettingsResponsePayload {
+  acknowledgedSignerPolicy?: LocalSocketSignerPolicyV2,
+): Promise<WalletSettingsResponsePayload> {
   const runtimeWallet = resolveWalletRuntimeConfig(cfg, env);
   const wallet = resolveWalletPolicyConfig(cfg, env, walletId);
   const providerId = resolveWalletProviderId(cfg, env);
@@ -1308,6 +1388,12 @@ function buildWalletSettingsPayload(
     providerId,
     wallet,
     env,
+  });
+  const signerPolicy = await readWalletSettingsSignerPolicy({
+    cfg,
+    walletId,
+    env,
+    acknowledged: acknowledgedSignerPolicy,
   });
   return {
     managedMode: isManagedGatewayMode(env),
@@ -1359,6 +1445,7 @@ function buildWalletSettingsPayload(
       },
       recurringTransfer: resolveWalletRecurringTransferPolicy({ cfg, env, walletId }),
     },
+    ...(signerPolicy ? { signerPolicy } : {}),
     toolAccess: {
       mode: wallet.toolAccess.mode,
       allowAgents: wallet.toolAccess.allowAgents,
@@ -5033,7 +5120,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           const selectedWalletId = parsedUrl.searchParams.get("walletId")?.trim() || undefined;
           sendLoginResponse(200, {
             ok: true,
-            settings: buildWalletSettingsPayload(cfg, selectedWalletId, process.env),
+            settings: await buildWalletSettingsPayload(cfg, selectedWalletId, process.env),
           });
           return;
         }
@@ -5147,6 +5234,189 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
             return;
           }
 
+          const effectiveEnv = {
+            ...process.env,
+            ...currentCfg.env?.vars,
+          } as NodeJS.ProcessEnv;
+          const registry = readWalletProviderRegistry(effectiveEnv);
+          const selectedRegistryWallet = selectedWalletId
+            ? registry.wallets.find((wallet) => wallet.id === selectedWalletId)
+            : undefined;
+          if (
+            hasScopedPolicyPatch &&
+            !selectedWalletId &&
+            currentProviderId === "local-socket-signer"
+          ) {
+            sendLoginResponse(400, {
+              ok: false,
+              error: {
+                code: "wallet_id_required",
+                message:
+                  "Signer-backed policy changes require an explicit walletId so one immutable signer policy can acknowledge the change.",
+              },
+            });
+            return;
+          }
+
+          let preparedScopedPolicy: PreparedWalletPolicyConfigUpdate | undefined;
+          if (selectedWalletId && hasScopedPolicyPatch) {
+            try {
+              preparedScopedPolicy = prepareWalletPolicyConfigUpdate({
+                cfg: currentCfg,
+                env: effectiveEnv,
+                walletId: selectedWalletId,
+                patch: {
+                  template: patch.policyTemplate,
+                  capsEnabled: patch.capsEnabled,
+                  directSigning: patch.directSigning,
+                  skillsEnabled: patch.skillsEnabled,
+                  solanaAllowPrograms: patch.solanaAllowPrograms,
+                  solanaMaxPerTx: patch.solanaMaxPerTx,
+                  solanaMaxDaily: patch.solanaMaxDaily,
+                  solanaTokenCaps: patch.solanaTokenCaps,
+                  recurringTransfer: patch.recurringTransfer,
+                },
+              });
+            } catch (err) {
+              sendLoginResponse(400, {
+                ok: false,
+                error: {
+                  code: "invalid_wallet_settings",
+                  message: err instanceof Error ? err.message : String(err),
+                },
+              });
+              return;
+            }
+          }
+
+          let acknowledgedSignerPolicy: LocalSocketSignerPolicyV2 | undefined;
+          if (
+            preparedScopedPolicy &&
+            selectedRegistryWallet?.providerId === "local-socket-signer"
+          ) {
+            try {
+              const scopedWalletId = preparedScopedPolicy.walletId;
+              const signer = new LocalSocketSignerAdapter(
+                resolveLocalSignerSocketPath(effectiveEnv),
+              );
+              const currentSignerPolicy = await signer.getSignerPolicy(scopedWalletId);
+              const currentGatewayPolicy = resolveWalletPolicyConfig(
+                currentCfg,
+                effectiveEnv,
+                scopedWalletId,
+              ).policy;
+              const candidate = buildLocalSignerPolicyTightening({
+                current: currentSignerPolicy,
+                expectedRole: preparedScopedPolicy.role,
+                gatewayPolicy: {
+                  capsEnabled: currentGatewayPolicy.capsEnabled,
+                  directSigning: currentGatewayPolicy.directSigning,
+                  skillsEnabled: currentGatewayPolicy.skillsEnabled,
+                  solana: {
+                    allowPrograms: currentGatewayPolicy.solana.allowPrograms,
+                    maxPerTx: currentGatewayPolicy.solana.caps.maxPerTx.toString(),
+                    maxDaily: currentGatewayPolicy.solana.caps.maxDaily.toString(),
+                    tokenCaps: Object.fromEntries(
+                      Object.entries(currentGatewayPolicy.solana.tokenCaps).map(([mint, cap]) => [
+                        mint,
+                        {
+                          maxPerTx: cap.maxPerTx.toString(),
+                          maxDaily: cap.maxDaily.toString(),
+                        },
+                      ]),
+                    ),
+                  },
+                },
+                patch,
+                hosting:
+                  String(effectiveEnv.FASED_HOST_PROFILE ?? "")
+                    .trim()
+                    .toLowerCase() === "hosting",
+              });
+              acknowledgedSignerPolicy = await signer.tightenSignerPolicy({
+                walletId: scopedWalletId,
+                expectedVersion: currentSignerPolicy.version,
+                policy: candidate,
+              });
+            } catch (err) {
+              const message = err instanceof Error ? err.message : String(err);
+              if (err instanceof LocalSignerPolicyAdminRequiredError) {
+                sendLoginResponse(409, {
+                  ok: false,
+                  error: { code: err.code, message },
+                });
+                return;
+              }
+              if (/version conflict/i.test(message)) {
+                sendLoginResponse(409, {
+                  ok: false,
+                  error: {
+                    code: "signer_policy_conflict",
+                    message:
+                      "Signer policy changed concurrently. Reload the wallet policy and review the new version/hash before retrying.",
+                  },
+                });
+                return;
+              }
+              if (/cannot (?:add|alter|raise)|policy expansion/i.test(message)) {
+                sendLoginResponse(409, {
+                  ok: false,
+                  error: {
+                    code: "signer_policy_admin_required",
+                    message: `${message} Policy expansion or role changes require the native signer control socket and an authenticated host administrator; the Gateway cannot perform them.`,
+                  },
+                });
+                return;
+              }
+              sendLoginResponse(502, {
+                ok: false,
+                error: {
+                  code: "signer_policy_unavailable",
+                  message:
+                    "Signer policy acknowledgement failed. No wallet policy settings or metadata were saved.",
+                },
+              });
+              return;
+            }
+          }
+
+          if (acknowledgedSignerPolicy && selectedRegistryWallet) {
+            try {
+              const latestRegistryWallet = readWalletProviderRegistry(effectiveEnv).wallets.find(
+                (wallet) => wallet.id === selectedRegistryWallet.id,
+              );
+              if (latestRegistryWallet?.providerId !== "local-socket-signer") {
+                throw new Error("signer-backed wallet registry entry changed concurrently");
+              }
+              upsertNamedWallet({
+                walletId: latestRegistryWallet.id,
+                name: latestRegistryWallet.name,
+                providerId: latestRegistryWallet.providerId,
+                addresses: latestRegistryWallet.addresses,
+                metadata: {
+                  ...latestRegistryWallet.metadata,
+                  role: acknowledgedSignerPolicy.role,
+                  purpose: acknowledgedSignerPolicy.role,
+                  policyState: localSignerPolicyState(acknowledgedSignerPolicy),
+                  policyVersion: acknowledgedSignerPolicy.version,
+                  policyHash: acknowledgedSignerPolicy.hash,
+                },
+                env: effectiveEnv,
+              });
+            } catch (err) {
+              sendLoginResponse(409, {
+                ok: false,
+                error: {
+                  code: "signer_policy_metadata_conflict",
+                  message:
+                    `The signer acknowledged policy version ${acknowledgedSignerPolicy.version} (${acknowledgedSignerPolicy.hash}), but its wallet metadata could not be recorded: ` +
+                    `${err instanceof Error ? err.message : String(err)}. No app policy settings were saved; reload before retrying.`,
+                },
+              });
+              return;
+            }
+          }
+
           let nextCfg = currentCfg;
           if (hasGlobalConfigPatch) {
             const updated = await updateWalletConfig({
@@ -5224,30 +5494,15 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
             }
             nextCfg = updated.cfg;
           }
-          if (selectedWalletId && hasScopedPolicyPatch) {
+          if (preparedScopedPolicy) {
             try {
-              upsertWalletPolicyConfig({
-                cfg: nextCfg,
-                env: process.env,
-                walletId: selectedWalletId,
-                patch: {
-                  template: patch.policyTemplate,
-                  capsEnabled: patch.capsEnabled,
-                  directSigning: patch.directSigning,
-                  skillsEnabled: patch.skillsEnabled,
-                  solanaAllowPrograms: patch.solanaAllowPrograms,
-                  solanaMaxPerTx: patch.solanaMaxPerTx,
-                  solanaMaxDaily: patch.solanaMaxDaily,
-                  solanaTokenCaps: patch.solanaTokenCaps,
-                  recurringTransfer: patch.recurringTransfer,
-                },
-              });
+              commitWalletPolicyConfigUpdate(preparedScopedPolicy, effectiveEnv);
             } catch (err) {
-              sendLoginResponse(400, {
+              sendLoginResponse(409, {
                 ok: false,
                 error: {
-                  code: "invalid_wallet_settings",
-                  message: String(err),
+                  code: "wallet_policy_conflict",
+                  message: err instanceof Error ? err.message : String(err),
                 },
               });
               return;
@@ -5267,7 +5522,12 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           }
           sendLoginResponse(200, {
             ok: true,
-            settings: buildWalletSettingsPayload(nextCfg, selectedWalletId, process.env),
+            settings: await buildWalletSettingsPayload(
+              nextCfg,
+              selectedWalletId,
+              effectiveEnv,
+              acknowledgedSignerPolicy,
+            ),
           });
           return;
         }
@@ -5779,6 +6039,37 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
             return;
           }
           if (requestedRole) {
+            if (existing.providerId === "local-socket-signer") {
+              try {
+                const cfg = loadConfig();
+                const effectiveEnv = { ...process.env, ...cfg.env?.vars } as NodeJS.ProcessEnv;
+                const signerPolicy = await new LocalSocketSignerAdapter(
+                  resolveLocalSignerSocketPath(effectiveEnv),
+                ).getSignerPolicy(walletId);
+                if (signerPolicy.role !== requestedRole) {
+                  sendLoginResponse(409, {
+                    ok: false,
+                    error: {
+                      code: "signer_wallet_role_immutable",
+                      message:
+                        `The native signer owns this wallet as role=${signerPolicy.role}; the Gateway cannot change it to ${requestedRole}. ` +
+                        "Create a new signer-owned wallet with the required locked role through Local onboarding or an authenticated Hosting administrator session.",
+                    },
+                  });
+                  return;
+                }
+              } catch {
+                sendLoginResponse(502, {
+                  ok: false,
+                  error: {
+                    code: "signer_policy_unavailable",
+                    message:
+                      "The native signer role could not be verified, so wallet role metadata was not changed.",
+                  },
+                });
+                return;
+              }
+            }
             const currentRole =
               resolveWalletUserRole(existing) ??
               (registry.defaultWalletId === walletId ? "agent" : undefined);

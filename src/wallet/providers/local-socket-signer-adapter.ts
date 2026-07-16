@@ -64,6 +64,7 @@ const MAX_SIGNER_RESPONSE_BYTES = 1 << 20;
 const REQUIRED_PROTOCOL_V2_FEATURES = [
   "failClosedPolicies",
   "policyHashes",
+  "applicationPolicyTightening",
   "durableCaps",
   "atomicIdempotency",
   "ambiguousBroadcastReconciliation",
@@ -83,6 +84,7 @@ const SIGNER_SOCKET_TIMEOUT_MS: Record<LocalSocketSignerRequest["op"], number> =
   "v2.capabilities": 2_000,
   "v2.policy.get": 5_000,
   "v2.policy.put": 5_000,
+  "v2.policy.tighten": 5_000,
   "v2.wallet.get": 5_000,
   "v2.wallet.create": 10_000,
   "v2.wallet.import": 20_000,
@@ -379,6 +381,74 @@ export class LocalSocketSignerAdapter implements WalletProviderAdapter {
       walletId,
     });
     return { solana: wallet.publicKey };
+  }
+
+  async getSignerPolicy(walletIdRaw: string): Promise<LocalSocketSignerPolicyV2> {
+    const walletId = walletIdRaw.trim();
+    if (!walletId) {
+      throw new WalletProviderError({
+        code: "wallet_provider_invalid_config",
+        message: "local-socket-signer policy lookup requires an explicit walletId",
+      });
+    }
+    assertSecureLocalSignerSocket(this.socketPath);
+    await this.requireProtocolV2();
+    return await callSocket<LocalSocketSignerPolicyV2>(this.socketPath, {
+      op: "v2.policy.get",
+      walletId,
+    });
+  }
+
+  async tightenSignerPolicy(params: {
+    walletId: string;
+    expectedVersion: number;
+    policy: Omit<LocalSocketSignerPolicyV2, "version" | "hash"> & {
+      version?: number;
+      hash?: string;
+    };
+  }): Promise<LocalSocketSignerPolicyV2> {
+    const walletId = params.walletId.trim();
+    if (!walletId || !Number.isSafeInteger(params.expectedVersion) || params.expectedVersion < 1) {
+      throw new WalletProviderError({
+        code: "wallet_provider_invalid_config",
+        message:
+          "local-socket-signer policy tightening requires a walletId and positive expected version",
+      });
+    }
+    assertSecureLocalSignerSocket(this.socketPath);
+    await this.requireProtocolV2();
+    const acknowledged = await callSocket<LocalSocketSignerPolicyV2>(this.socketPath, {
+      op: "v2.policy.tighten",
+      walletId,
+      request: {
+        expectedVersion: params.expectedVersion,
+        policy: params.policy,
+      },
+    });
+    if (
+      acknowledged.walletId !== walletId ||
+      acknowledged.role !== params.policy.role ||
+      acknowledged.version !== params.expectedVersion + 1
+    ) {
+      throw new WalletProviderError({
+        code: "wallet_provider_unavailable",
+        message:
+          "local-socket-signer did not acknowledge the exact next policy version and wallet role",
+        retryable: false,
+      });
+    }
+    const durable = await callSocket<LocalSocketSignerPolicyV2>(this.socketPath, {
+      op: "v2.policy.get",
+      walletId,
+    });
+    if (JSON.stringify(durable) !== JSON.stringify(acknowledged)) {
+      throw new WalletProviderError({
+        code: "wallet_provider_unavailable",
+        message: "local-socket-signer policy acknowledgement does not match durable signer state",
+        retryable: false,
+      });
+    }
+    return acknowledged;
   }
 
   async getBalance(

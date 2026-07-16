@@ -161,6 +161,7 @@ describe("LocalSocketSignerAdapter protocol-v2 sends", () => {
       features: [
         "failClosedPolicies",
         "policyHashes",
+        "applicationPolicyTightening",
         "durableCaps",
         "atomicIdempotency",
         "ambiguousBroadcastReconciliation",
@@ -199,6 +200,74 @@ describe("LocalSocketSignerAdapter protocol-v2 sends", () => {
     ],
     hash: policyHash,
   };
+
+  it("acknowledges only the exact next durable signer policy version and hash", async () => {
+    const nextPolicy = {
+      ...policy,
+      version: 5,
+      assets: policy.assets.map((asset) => ({
+        ...asset,
+        maxPerTx: "500",
+        maxDaily: "2500",
+      })),
+      hash: `sha256:${"b".repeat(64)}`,
+    };
+    let durablePolicy = policy;
+    const signer = await createSignerServer({
+      prefix: "fased-signer-v2-policy-tighten-",
+      handle: (request) => {
+        if (request.op === "v2.capabilities") {
+          return capabilities;
+        }
+        if (request.op === "v2.policy.get") {
+          return durablePolicy;
+        }
+        if (request.op === "v2.policy.tighten") {
+          expect(request).toEqual({
+            op: "v2.policy.tighten",
+            walletId: "agent-wallet",
+            request: {
+              expectedVersion: 4,
+              policy: expect.objectContaining({
+                walletId: "agent-wallet",
+                role: "agent",
+                assets: [expect.objectContaining({ maxPerTx: "500", maxDaily: "2500" })],
+              }),
+            },
+          });
+          durablePolicy = nextPolicy;
+          return nextPolicy;
+        }
+        throw new Error(`unexpected op ${String(request.op)}`);
+      },
+    });
+    try {
+      const adapter = new LocalSocketSignerAdapter(signer.socketPath);
+      const current = await adapter.getSignerPolicy("agent-wallet");
+      const acknowledged = await adapter.tightenSignerPolicy({
+        walletId: "agent-wallet",
+        expectedVersion: current.version,
+        policy: {
+          ...current,
+          assets: current.assets.map((asset) => ({
+            ...asset,
+            maxPerTx: "500",
+            maxDaily: "2500",
+          })),
+        },
+      });
+      expect(acknowledged).toEqual(nextPolicy);
+      expect(signer.requests.map((request) => request.op)).toEqual([
+        "v2.capabilities",
+        "v2.policy.get",
+        "v2.capabilities",
+        "v2.policy.tighten",
+        "v2.policy.get",
+      ]);
+    } finally {
+      await signer.close();
+    }
+  });
 
   it("sends a typed native transfer with the stable request id and exact policy hash", async () => {
     const signer = await createSignerServer({

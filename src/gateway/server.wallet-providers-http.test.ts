@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer as createHttpServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import net from "node:net";
@@ -6,7 +6,10 @@ import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { describe, expect, test, vi } from "vitest";
-import { upsertNamedWallet } from "../wallet/wallet-provider-registry.js";
+import {
+  readWalletProviderRegistry,
+  upsertNamedWallet,
+} from "../wallet/wallet-provider-registry.js";
 import type { ResolvedGatewayAuth } from "./auth.js";
 import { createGatewayHttpServer } from "./server-http.js";
 
@@ -153,6 +156,130 @@ const resolvedAuth: ResolvedGatewayAuth = {
   token: "root-token",
   allowTailscale: false,
 };
+
+const signerV2Capabilities = {
+  details: "fased-signerd protocol-v2 ready",
+  readOnly: false,
+  keystoreType: "signer-owned-v2",
+  chains: ["solana"] as const,
+  ready: true,
+  capabilities: {
+    protocol: { current: 2 as const, min: 2, max: 2 },
+    intentTypes: ["solana.nativeTransfer", "solana.splTransferChecked"],
+    operationStates: ["reserved", "broadcast", "confirmed", "failed", "unknown"],
+    features: [
+      "failClosedPolicies",
+      "policyHashes",
+      "applicationPolicyTightening",
+      "durableCaps",
+      "atomicIdempotency",
+      "ambiguousBroadcastReconciliation",
+      "signerOwnedKeys",
+      "signerOwnedRPC",
+      "typedSolanaTransactions",
+      "signerOwnedWebAuthn",
+      "singleUseReviewedAuthorization",
+      "typedJupiterSemantics",
+      "signerOwnedReviewPrepareExecute",
+      "exactPreparedTransactions",
+      "verifiedAddressLookupTables",
+    ],
+  },
+  policies: [],
+};
+
+type PolicySignerPolicy = {
+  walletId: string;
+  role: "agent" | "mining" | "vault";
+  version: number;
+  operations: string[];
+  programs: string[];
+  assets: Array<{
+    asset: string;
+    destinations: string[];
+    maxPerTx: string;
+    maxDaily: string;
+  }>;
+  hash: string;
+};
+
+async function createPolicySignerServer(params: {
+  socketPath: string;
+  current: PolicySignerPolicy;
+  next: PolicySignerPolicy;
+  pauseTighten?: {
+    started: () => void;
+    wait: Promise<void>;
+  };
+}): Promise<{
+  requests: Array<Record<string, unknown>>;
+  close: () => Promise<void>;
+}> {
+  const requests: Array<Record<string, unknown>> = [];
+  const sockets = new Set<net.Socket>();
+  let durable = params.current;
+  const server = net.createServer((socket) => {
+    sockets.add(socket);
+    socket.once("close", () => sockets.delete(socket));
+    socket.setEncoding("utf8");
+    let buffer = "";
+    socket.on("data", (chunk: string) => {
+      buffer += chunk;
+      const newline = buffer.indexOf("\n");
+      if (newline < 0) {
+        return;
+      }
+      const request = JSON.parse(buffer.slice(0, newline)) as Record<string, unknown>;
+      requests.push(request);
+      const respond = async () => {
+        let result: unknown;
+        if (request.op === "v2.capabilities") {
+          result = signerV2Capabilities;
+        } else if (request.op === "v2.policy.get") {
+          result = durable;
+        } else if (request.op === "v2.policy.tighten") {
+          params.pauseTighten?.started();
+          await params.pauseTighten?.wait;
+          durable = params.next;
+          result = durable;
+        } else {
+          socket.end(
+            `${JSON.stringify({ ok: false, error: `unsupported op ${String(request.op)}` })}\n`,
+          );
+          return;
+        }
+        socket.end(`${JSON.stringify({ ok: true, result })}\n`);
+      };
+      void respond();
+    });
+  });
+  await mkdir(path.dirname(params.socketPath), { recursive: true });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(params.socketPath, resolve);
+  });
+  await chmod(params.socketPath, 0o660);
+  return {
+    requests,
+    close: async () => {
+      for (const socket of sockets) {
+        socket.destroy();
+      }
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    },
+  };
+}
+
+async function waitForResponseEnd(res: ServerResponse, count = 1): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const endMock = (res as unknown as { end?: { mock?: { calls: unknown[] } } }).end;
+    if (Array.isArray(endMock?.mock?.calls) && endMock.mock.calls.length >= count) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error(`response did not end ${count} time(s)`);
+}
 
 const baseConfig = {
   gateway: { trustedProxies: [] },
@@ -451,14 +578,14 @@ describe("wallet providers HTTP", () => {
         upsertNamedWallet({
           walletId: "vault",
           name: "Vault",
-          providerId: "local-socket-signer",
+          providerId: "embedded-keystore",
           metadata: { role: "vault" },
           env: process.env,
         });
         upsertNamedWallet({
           walletId: "agent",
           name: "Agent",
-          providerId: "local-socket-signer",
+          providerId: "embedded-keystore",
           metadata: { role: "agent" },
           env: process.env,
         });
@@ -525,6 +652,356 @@ describe("wallet providers HTTP", () => {
           minAmount: "1000000",
           keepAmount: "10000000",
         });
+      },
+    });
+  });
+
+  test("persists signer-backed settings and metadata only after the exact durable acknowledgement", async () => {
+    await withTempConfig({
+      cfg: baseConfig,
+      run: async () => {
+        const oldHash = `sha256:${"a".repeat(64)}`;
+        const nextHash = `sha256:${"b".repeat(64)}`;
+        const current: PolicySignerPolicy = {
+          walletId: "agent",
+          role: "agent",
+          version: 4,
+          operations: ["solana.nativeTransfer"],
+          programs: ["11111111111111111111111111111111"],
+          assets: [
+            {
+              asset: "solana:native",
+              destinations: ["Destination11111111111111111111111111111"],
+              maxPerTx: "1000",
+              maxDaily: "5000",
+            },
+          ],
+          hash: oldHash,
+        };
+        const next: PolicySignerPolicy = {
+          ...current,
+          version: 5,
+          assets: current.assets.map((asset) => ({
+            ...asset,
+            maxPerTx: "500",
+            maxDaily: "2500",
+          })),
+          hash: nextHash,
+        };
+        const socketPath = path.join(String(process.env.FASED_STATE_DIR), "signer.sock");
+        process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET = socketPath;
+        let markTightenStarted: (() => void) | undefined;
+        const tightenStarted = new Promise<void>((resolve) => {
+          markTightenStarted = resolve;
+        });
+        let releaseTighten: (() => void) | undefined;
+        const tightenWait = new Promise<void>((resolve) => {
+          releaseTighten = resolve;
+        });
+        const signer = await createPolicySignerServer({
+          socketPath,
+          current,
+          next,
+          pauseTighten: {
+            started: () => markTightenStarted?.(),
+            wait: tightenWait,
+          },
+        });
+        try {
+          upsertNamedWallet({
+            walletId: "agent",
+            name: "Agent",
+            providerId: "local-socket-signer",
+            metadata: {
+              role: "agent",
+              policyState: "acknowledged",
+              policyVersion: 4,
+              policyHash: oldHash,
+            },
+            env: process.env,
+          });
+          const server = createGatewayHttpServer({
+            canvasHost: null,
+            clients: new Set(),
+            controlUiEnabled: false,
+            controlUiBasePath: "/ui",
+            openAiChatCompletionsEnabled: false,
+            openResponsesEnabled: false,
+            handleHooksRequest: async () => false,
+            resolvedAuth,
+          });
+          const response = createResponse();
+          server.emit(
+            "request",
+            createRequest({
+              method: "PATCH",
+              path: "/api/wallet/settings",
+              authorization: "Bearer root-token",
+              body: {
+                walletId: "agent",
+                solanaMaxPerTx: "500",
+                solanaMaxDaily: "2500",
+              },
+            }),
+            response.res,
+          );
+
+          await tightenStarted;
+          const policyStatePath = path.join(
+            String(process.env.FASED_STATE_DIR),
+            "wallet",
+            "wallet-policy-state.v1.json",
+          );
+          await expect(readFile(policyStatePath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+          expect(
+            readWalletProviderRegistry(process.env).wallets.find((wallet) => wallet.id === "agent")
+              ?.metadata,
+          ).toMatchObject({ policyVersion: 4, policyHash: oldHash });
+
+          releaseTighten?.();
+          await waitForResponseEnd(response.res);
+          expect(response.res.statusCode).toBe(200);
+          const payload = JSON.parse(response.getBody()) as {
+            ok: boolean;
+            settings?: {
+              signerPolicy?: { state?: string; version?: number; hash?: string };
+              policy?: { solana?: { maxPerTx?: string; maxDaily?: string } };
+            };
+          };
+          expect(payload.ok).toBe(true);
+          expect(payload.settings?.signerPolicy).toMatchObject({
+            state: "acknowledged",
+            version: 5,
+            hash: nextHash,
+          });
+          expect(payload.settings?.policy?.solana).toMatchObject({
+            maxPerTx: "500",
+            maxDaily: "2500",
+          });
+          const persisted = JSON.parse(await readFile(policyStatePath, "utf8")) as {
+            wallets?: Record<string, { solana?: { maxPerTx?: string; maxDaily?: string } }>;
+          };
+          expect(persisted.wallets?.agent?.solana).toMatchObject({
+            maxPerTx: "500",
+            maxDaily: "2500",
+          });
+          expect(
+            readWalletProviderRegistry(process.env).wallets.find((wallet) => wallet.id === "agent")
+              ?.metadata,
+          ).toMatchObject({
+            role: "agent",
+            purpose: "agent",
+            policyState: "acknowledged",
+            policyVersion: 5,
+            policyHash: nextHash,
+          });
+          expect(signer.requests.map((request) => request.op)).toEqual([
+            "v2.capabilities",
+            "v2.policy.get",
+            "v2.capabilities",
+            "v2.policy.tighten",
+            "v2.policy.get",
+          ]);
+          const tightenRequest = signer.requests.find(
+            (request) => request.op === "v2.policy.tighten",
+          );
+          expect(tightenRequest).toMatchObject({
+            walletId: "agent",
+            request: {
+              expectedVersion: 4,
+              policy: {
+                role: "agent",
+                assets: [{ maxPerTx: "500", maxDaily: "2500" }],
+              },
+            },
+          });
+        } finally {
+          releaseTighten?.();
+          await signer.close();
+        }
+      },
+    });
+  });
+
+  test("rejects signer policy expansion without changing app policy or metadata", async () => {
+    await withTempConfig({
+      cfg: baseConfig,
+      run: async () => {
+        const oldHash = `sha256:${"c".repeat(64)}`;
+        const current: PolicySignerPolicy = {
+          walletId: "agent",
+          role: "agent",
+          version: 7,
+          operations: ["solana.nativeTransfer"],
+          programs: ["11111111111111111111111111111111"],
+          assets: [
+            {
+              asset: "solana:native",
+              destinations: ["Destination11111111111111111111111111111"],
+              maxPerTx: "1000",
+              maxDaily: "5000",
+            },
+          ],
+          hash: oldHash,
+        };
+        const socketPath = path.join(String(process.env.FASED_STATE_DIR), "signer.sock");
+        process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET = socketPath;
+        const signer = await createPolicySignerServer({
+          socketPath,
+          current,
+          next: current,
+        });
+        try {
+          upsertNamedWallet({
+            walletId: "agent",
+            name: "Agent",
+            providerId: "local-socket-signer",
+            metadata: {
+              role: "agent",
+              policyState: "acknowledged",
+              policyVersion: 7,
+              policyHash: oldHash,
+            },
+            env: process.env,
+          });
+          const server = createGatewayHttpServer({
+            canvasHost: null,
+            clients: new Set(),
+            controlUiEnabled: false,
+            controlUiBasePath: "/ui",
+            openAiChatCompletionsEnabled: false,
+            openResponsesEnabled: false,
+            handleHooksRequest: async () => false,
+            resolvedAuth,
+          });
+          const response = createResponse();
+          await dispatch(
+            server,
+            createRequest({
+              method: "PATCH",
+              path: "/api/wallet/settings",
+              authorization: "Bearer root-token",
+              body: { walletId: "agent", solanaMaxPerTx: "2000" },
+            }),
+            response.res,
+          );
+          expect(response.res.statusCode).toBe(409);
+          const payload = JSON.parse(response.getBody()) as {
+            ok: boolean;
+            error?: { code?: string; message?: string };
+          };
+          expect(payload.ok).toBe(false);
+          expect(payload.error?.code).toBe("signer_policy_admin_required");
+          expect(payload.error?.message).toContain("Gateway cannot widen policy");
+          expect(signer.requests.map((request) => request.op)).toEqual([
+            "v2.capabilities",
+            "v2.policy.get",
+          ]);
+          await expect(
+            readFile(
+              path.join(
+                String(process.env.FASED_STATE_DIR),
+                "wallet",
+                "wallet-policy-state.v1.json",
+              ),
+              "utf8",
+            ),
+          ).rejects.toMatchObject({ code: "ENOENT" });
+          expect(
+            readWalletProviderRegistry(process.env).wallets.find((wallet) => wallet.id === "agent")
+              ?.metadata,
+          ).toMatchObject({ policyVersion: 7, policyHash: oldHash });
+        } finally {
+          await signer.close();
+        }
+      },
+    });
+  });
+
+  test("keeps a fresh deny-all signer wallet locked until native administration", async () => {
+    await withTempConfig({
+      cfg: baseConfig,
+      run: async () => {
+        const lockedHash = `sha256:${"d".repeat(64)}`;
+        const locked: PolicySignerPolicy = {
+          walletId: "fresh-agent",
+          role: "agent",
+          version: 1,
+          operations: [],
+          programs: [],
+          assets: [],
+          hash: lockedHash,
+        };
+        const socketPath = path.join(String(process.env.FASED_STATE_DIR), "signer.sock");
+        process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET = socketPath;
+        const signer = await createPolicySignerServer({
+          socketPath,
+          current: locked,
+          next: locked,
+        });
+        try {
+          upsertNamedWallet({
+            walletId: "fresh-agent",
+            name: "Fresh Agent",
+            providerId: "local-socket-signer",
+            metadata: {
+              role: "agent",
+              policyState: "locked",
+              policyVersion: 1,
+              policyHash: lockedHash,
+            },
+            env: process.env,
+          });
+          const server = createGatewayHttpServer({
+            canvasHost: null,
+            clients: new Set(),
+            controlUiEnabled: false,
+            controlUiBasePath: "/ui",
+            openAiChatCompletionsEnabled: false,
+            openResponsesEnabled: false,
+            handleHooksRequest: async () => false,
+            resolvedAuth,
+          });
+          const getResponse = createResponse();
+          await dispatch(
+            server,
+            createRequest({
+              path: "/api/wallet/settings?walletId=fresh-agent",
+              authorization: "Bearer root-token",
+            }),
+            getResponse.res,
+          );
+          const settingsPayload = JSON.parse(getResponse.getBody()) as {
+            settings?: { signerPolicy?: { state?: string; guidance?: string } };
+          };
+          expect(settingsPayload.settings?.signerPolicy?.state).toBe("locked");
+          expect(settingsPayload.settings?.signerPolicy?.guidance).toContain(
+            "native signer control socket",
+          );
+
+          const patchResponse = createResponse();
+          await dispatch(
+            server,
+            createRequest({
+              method: "PATCH",
+              path: "/api/wallet/settings",
+              authorization: "Bearer root-token",
+              body: { walletId: "fresh-agent", directSigning: true },
+            }),
+            patchResponse.res,
+          );
+          expect(patchResponse.res.statusCode).toBe(409);
+          const patchPayload = JSON.parse(patchResponse.getBody()) as {
+            error?: { code?: string; message?: string };
+          };
+          expect(patchPayload.error?.code).toBe("signer_policy_admin_required");
+          expect(patchPayload.error?.message).toContain("explicit deny-all policy");
+          expect(signer.requests.filter((request) => request.op === "v2.policy.tighten")).toEqual(
+            [],
+          );
+        } finally {
+          await signer.close();
+        }
       },
     });
   });

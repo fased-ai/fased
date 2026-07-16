@@ -5093,6 +5093,8 @@ export function renderWallet(props: WalletViewProps) {
                 cardRole === "agent" && wallet.id === props.walletDetailsWalletId && settings
                   ? settings.policy.directSigning
                   : undefined;
+              const cardSignerPolicy =
+                wallet.id === props.walletDetailsWalletId ? settings?.signerPolicy : undefined;
               const cardCustodyUnlockActive = cardCustody?.unlock?.active ?? false;
               const cardAgentAutomationLocked =
                 cardRole === "agent" &&
@@ -5370,6 +5372,32 @@ export function renderWallet(props: WalletViewProps) {
                                 `,
                               )}
                             </div>
+                            ${
+                              cardSignerPolicy
+                                ? html`
+                                    <div
+                                      class="callout ${cardSignerPolicy.state === "acknowledged" ? "success" : "warn"}"
+                                      style="margin-top: 10px"
+                                      data-testid="wallet-signer-policy-status"
+                                    >
+                                      <strong>Native signer policy: ${cardSignerPolicy.state}</strong>
+                                      ${
+                                        cardSignerPolicy.version && cardSignerPolicy.hash
+                                          ? html`
+                                              <div>
+                                                Version ${cardSignerPolicy.version} ·
+                                                <span class="mono" style="overflow-wrap: anywhere"
+                                                  >${cardSignerPolicy.hash}</span
+                                                >
+                                              </div>
+                                            `
+                                          : nothing
+                                      }
+                                      ${cardSignerPolicy.guidance ? html`<div>${cardSignerPolicy.guidance}</div>` : nothing}
+                                    </div>
+                                  `
+                                : nothing
+                            }
                             ${
                               cardAgentAutomationLocked
                                 ? html`
