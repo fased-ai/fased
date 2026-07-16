@@ -127,9 +127,11 @@ signer wallet path.
 
 When that path is enabled, Fased downloads the signer asset from the matching
 versioned GitHub Release and verifies it against
-`fased-signerd-checksums.txt`. Normal Local, WSL, macOS, and Hosting users do not
-need Go. WSL uses the Linux asset; the Unix-socket signer is not supported by a
-native Windows Node.js install.
+`fased-signerd-checksums.txt` and the release's GitHub/Sigstore attestation.
+Normal Local, WSL, macOS, and Hosting users do not need Go. WSL uses the Linux
+asset; the Unix-socket signer is not supported by a native Windows Node.js
+install. Verification failure stops the install instead of falling back to an
+implicit source build.
 
 Each tagged release must publish signer assets for Linux and macOS on `amd64`
 and `arm64` before wallet setup for that version is considered releasable. A

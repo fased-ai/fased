@@ -325,11 +325,11 @@ model servers and model weights are not bundled. See
 [Core And Optional Components](./docs/install/components.md).
 
 Fresh dashboard, Gateway, and Fased Network setup do not require the native
-wallet signer. If you later choose the local signer wallet path, Fased builds
-`fased-signerd` locally when Go is available. Otherwise provide an explicit
-signer binary with `FASED_WALLET_LOCAL_SIGNER_BIN`, or an explicit signer asset
-source with `FASED_LOCAL_SIGNER_VERSION` / `FASED_LOCAL_SIGNER_BASE_URL`.
-Generated signer binaries are never committed to Git.
+wallet signer. When you create the first signer-owned wallet, Fased downloads
+the version-matched `fased-signerd` asset and verifies both its SHA-256 checksum
+and GitHub release attestation. Normal users do not need Go. A source build is a
+developer-only opt-in with `FASED_BUILD_NATIVE_SIGNER_FROM_SOURCE=1`; Fased does
+not silently replace a failed release verification with a local build.
 
 After install, open the dashboard, configure **Agent > Models**, send a first
 browser chat, then add channels, skills, services, wallets, mining, and tasks

@@ -207,14 +207,20 @@ Native signer note:
 - generated signer binaries are not committed to Git
 - when you create or import the first self-hosted wallet, Fased automatically
   downloads the signer asset matching the installed Fased version, verifies its
-  SHA-256 checksum, and installs it; Go is not required
-- Local and Hosting use the same signer installer; Hosting keeps the signer
-  under its isolated service account and does not show a redundant backend
-  choice during QuickStart
+  SHA-256 checksum and GitHub release attestation, and installs it; Go is not
+  required
+- Local runs the signer under the same OS account. Hosting installs an
+  independent root-managed systemd service under the `fased-signer` account;
+  the Gateway receives only `/run/fased-signerd/app.sock` and never receives the
+  control socket, signer state path, or sudo access
+- a newly created signer-owned wallet starts locked with deny-all policy; signer
+  service readiness is not the same as wallet send readiness
 - supported signer platforms are Linux and macOS on `amd64` or `arm64`; Windows
   users must run Fased inside WSL2, which receives the Linux asset
 - `FASED_WALLET_LOCAL_SIGNER_BIN`, `FASED_LOCAL_SIGNER_VERSION`, and
   `FASED_LOCAL_SIGNER_BASE_URL` remain advanced overrides
+- a failed official asset, checksum, or attestation is fatal; source builds
+  require the explicit developer option
 
 ## Common modes
 

@@ -84,8 +84,25 @@ Current Ubuntu distributions installed by `wsl --install` use systemd by
 default. Verify it before installing the Gateway service:
 
 ```bash
-systemctl --user status
+ps -p 1 -o comm=
 ```
+
+The result must be `systemd`. If it is not, create or edit `/etc/wsl.conf`
+inside Ubuntu:
+
+```ini
+[boot]
+systemd=true
+```
+
+Then close Ubuntu, run this once in PowerShell, and reopen Ubuntu:
+
+```powershell
+wsl --shutdown
+```
+
+Verify `ps -p 1 -o comm=` again before continuing. The installer stops before
+creating wallet state on WSL1 or WSL2 without systemd.
 
 ### 4. Install Fased inside the Ubuntu shell
 
@@ -105,9 +122,11 @@ fased doctor
 fased dashboard
 ```
 
-When the first wallet is created or imported, Fased downloads the Linux signer
-asset matching the installed Fased version, verifies its SHA-256 checksum, and
-installs it automatically. Normal users do not install Go.
+When the first wallet is created, Fased downloads the Linux signer asset
+matching the installed Fased version, verifies its SHA-256 checksum and GitHub
+release attestation, and installs it automatically. Normal users do not install
+Go. Existing-key import is an explicit signer-admin operation so the Gateway
+process never receives the private key.
 
 ### 5. Open the dashboard from Windows
 

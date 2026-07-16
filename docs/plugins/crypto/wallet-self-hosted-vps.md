@@ -24,10 +24,18 @@ It is written for the public Fased wallet model:
 - self-hosted wallet material already created or imported through onboarding or CLI
 - chain RPC configured for the wallet role you are validating
 
-Fased installs the version-matched, checksum-verified native signer
-automatically when the first wallet is created or imported. The Hosting
-QuickStart does not show a signer backend question because the isolated local
-socket signer is the maintained backend.
+Fased installs the version-matched native signer during Hosting bootstrap and
+verifies both its checksum and GitHub release attestation. Hosting runs it as an
+independent root-managed systemd service under `fased-signer`; the Gateway gets
+only the group-authorized app socket and has neither the control socket nor
+sudo. QuickStart therefore probes the existing service and never installs,
+starts, or brokers a second signer.
+
+A healthy signer service is only the first readiness layer. A new wallet is
+created inside Go with a locked deny-all policy. It becomes send-ready only
+after the owner/policy enrollment and per-wallet RPC configuration have been
+acknowledged by the signer. Import is an explicit signer-admin operation; do
+not paste a private key into the Gateway or dashboard.
 
 For Solana RPC setup, use [Solana RPC setup](/plugins/crypto/wallet-rpc-setup).
 
