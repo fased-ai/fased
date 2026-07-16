@@ -269,5 +269,13 @@ export function buildLocalSignerPolicyTightening(params: {
 export function localSignerPolicyState(
   policy: LocalSocketSignerPolicyV2,
 ): "locked" | "acknowledged" {
-  return policy.operations.length === 0 || policy.programs.length === 0 ? "locked" : "acknowledged";
+  const hasUsableAsset = policy.assets.some(
+    (asset) =>
+      asset.destinations.length > 0 &&
+      /^[1-9][0-9]*$/.test(asset.maxPerTx) &&
+      /^[1-9][0-9]*$/.test(asset.maxDaily),
+  );
+  return policy.operations.length === 0 || policy.programs.length === 0 || !hasUsableAsset
+    ? "locked"
+    : "acknowledged";
 }

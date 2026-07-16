@@ -189,4 +189,20 @@ describe("local signer application policy tightening", () => {
       }),
     ).toThrow(/explicit deny-all policy/i);
   });
+
+  it("does not call an unusable asset allowlist acknowledged", () => {
+    expect(localSignerPolicyState({ ...signerPolicy(), assets: [] })).toBe("locked");
+    expect(
+      localSignerPolicyState({
+        ...signerPolicy(),
+        assets: signerPolicy().assets.map((asset) => ({ ...asset, destinations: [] })),
+      }),
+    ).toBe("locked");
+    expect(
+      localSignerPolicyState({
+        ...signerPolicy(),
+        assets: [{ ...signerPolicy().assets[0], maxDaily: "0" }],
+      }),
+    ).toBe("locked");
+  });
 });
