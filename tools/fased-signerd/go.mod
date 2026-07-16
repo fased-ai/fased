@@ -6,7 +6,10 @@ require golang.org/x/crypto v0.52.0
 
 require github.com/gagliardetto/solana-go v1.12.0
 
-require github.com/gagliardetto/binary v0.8.0
+require (
+	github.com/gagliardetto/binary v0.8.0
+	go.etcd.io/bbolt v1.4.3
+)
 
 require (
 	filippo.io/edwards25519 v1.2.0 // indirect

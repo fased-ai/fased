@@ -3,6 +3,101 @@ import { Value } from "@sinclair/typebox/value";
 
 const WalletChainSchema = Type.Literal("solana");
 
+const SignerWalletRoleSchema = Type.Union([
+  Type.Literal("agent"),
+  Type.Literal("mining"),
+  Type.Literal("vault"),
+]);
+
+const SignerProtocolRangeV2Schema = Type.Object(
+  {
+    current: Type.Literal(2),
+    min: Type.Integer({ minimum: 2 }),
+    max: Type.Integer({ minimum: 2 }),
+  },
+  { additionalProperties: false },
+);
+
+export const LocalSocketSignerCapabilitiesV2Schema = Type.Object(
+  {
+    protocol: SignerProtocolRangeV2Schema,
+    intentTypes: Type.Array(Type.String()),
+    operationStates: Type.Array(Type.String()),
+    features: Type.Array(Type.String()),
+  },
+  { additionalProperties: false },
+);
+
+const SignerPolicyAssetV2Schema = Type.Object(
+  {
+    asset: Type.String(),
+    destinations: Type.Array(Type.String()),
+    maxPerTx: Type.String(),
+    maxDaily: Type.String(),
+  },
+  { additionalProperties: false },
+);
+
+const SignerPolicyInputV2Schema = Type.Object(
+  {
+    walletId: Type.Optional(Type.String()),
+    role: SignerWalletRoleSchema,
+    version: Type.Optional(Type.Integer({ minimum: 0 })),
+    operations: Type.Array(Type.String()),
+    programs: Type.Array(Type.String()),
+    assets: Type.Array(SignerPolicyAssetV2Schema),
+    hash: Type.Optional(Type.String()),
+  },
+  { additionalProperties: false },
+);
+
+export const LocalSocketSignerPolicyV2Schema = Type.Object(
+  {
+    walletId: Type.String(),
+    role: SignerWalletRoleSchema,
+    version: Type.Integer({ minimum: 1 }),
+    operations: Type.Array(Type.String()),
+    programs: Type.Array(Type.String()),
+    assets: Type.Array(SignerPolicyAssetV2Schema),
+    hash: Type.String({ pattern: "^sha256:[0-9a-f]{64}$" }),
+  },
+  { additionalProperties: false },
+);
+
+const SignerIntentV2Schema = Type.Union([
+  Type.Object(
+    {
+      type: Type.Literal("solana.nativeTransfer"),
+      destination: Type.String(),
+      lamports: Type.String(),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      type: Type.Literal("solana.splTransferChecked"),
+      destination: Type.String(),
+      tokenProgram: Type.String(),
+      mint: Type.String(),
+      amount: Type.String(),
+    },
+    { additionalProperties: false },
+  ),
+]);
+
+const SignerWalletPolicyCreateV2Schema = Type.Object(
+  {
+    expectedPolicyVersion: Type.Literal(0),
+    policy: SignerPolicyInputV2Schema,
+  },
+  { additionalProperties: false },
+);
+
+const SignerOperationLookupV2Schema = Type.Object(
+  { requestId: Type.String() },
+  { additionalProperties: false },
+);
+
 const TxRequestSchema = Type.Object(
   {
     chain: WalletChainSchema,
@@ -80,6 +175,95 @@ const LocalSocketSignerCustodyLockRequestSchema = Type.Object(
 export const LocalSocketSignerRequestSchema = Type.Union(
   [
     Type.Object({ op: Type.Literal("health") }, { additionalProperties: false }),
+    Type.Object({ op: Type.Literal("v2.capabilities") }, { additionalProperties: false }),
+    Type.Object(
+      { op: Type.Literal("v2.policy.get"), walletId: Type.String() },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        op: Type.Literal("v2.policy.put"),
+        walletId: Type.String(),
+        request: Type.Object(
+          {
+            expectedVersion: Type.Integer({ minimum: 0 }),
+            policy: SignerPolicyInputV2Schema,
+          },
+          { additionalProperties: false },
+        ),
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      { op: Type.Literal("v2.wallet.get"), walletId: Type.String() },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        op: Type.Literal("v2.wallet.create"),
+        walletId: Type.String(),
+        request: SignerWalletPolicyCreateV2Schema,
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        op: Type.Literal("v2.wallet.import"),
+        walletId: Type.String(),
+        request: Type.Object(
+          {
+            expectedPolicyVersion: Type.Literal(0),
+            policy: SignerPolicyInputV2Schema,
+            path: Type.String(),
+          },
+          { additionalProperties: false },
+        ),
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        op: Type.Literal("v2.wallet.importLegacy"),
+        walletId: Type.String(),
+        request: Type.Object(
+          {
+            expectedPolicyVersion: Type.Literal(0),
+            policy: SignerPolicyInputV2Schema,
+            path: Type.String(),
+            passphrasePath: Type.String(),
+          },
+          { additionalProperties: false },
+        ),
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      { op: Type.Literal("v2.wallet.reencrypt"), walletId: Type.String() },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        op: Type.Literal("v2.execute"),
+        walletId: Type.String(),
+        request: Type.Object(
+          {
+            requestId: Type.String(),
+            policyHash: Type.String({ pattern: "^sha256:[0-9a-f]{64}$" }),
+            intent: SignerIntentV2Schema,
+          },
+          { additionalProperties: false },
+        ),
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        op: Type.Union([Type.Literal("v2.operation.get"), Type.Literal("v2.operation.reconcile")]),
+        walletId: Type.String(),
+        request: SignerOperationLookupV2Schema,
+      },
+      { additionalProperties: false },
+    ),
     Type.Object(
       { op: Type.Literal("getAddresses"), walletId: Type.Optional(Type.String()) },
       { additionalProperties: false },
@@ -149,6 +333,21 @@ export const LocalSocketSignerHealthResultSchema = Type.Object(
     readOnly: Type.Optional(Type.Boolean()),
     keystoreType: Type.Optional(Type.String()),
     chains: Type.Optional(Type.Array(WalletChainSchema)),
+    ready: Type.Optional(Type.Boolean()),
+    capabilities: Type.Optional(LocalSocketSignerCapabilitiesV2Schema),
+    policies: Type.Optional(
+      Type.Array(
+        Type.Object(
+          {
+            walletId: Type.String(),
+            role: SignerWalletRoleSchema,
+            version: Type.Integer({ minimum: 1 }),
+            hash: Type.String(),
+          },
+          { additionalProperties: false },
+        ),
+      ),
+    ),
   },
   { additionalProperties: false },
 );
@@ -234,6 +433,56 @@ export const LocalSocketSignerCustodyLockResultSchema = Type.Object(
   { additionalProperties: false },
 );
 
+export const LocalSocketSignerWalletV2Schema = Type.Object(
+  {
+    walletId: Type.String(),
+    publicKey: Type.String(),
+    version: Type.Integer({ minimum: 1 }),
+    createdAt: Type.String(),
+    rotatedAt: Type.Optional(Type.String()),
+    nonce: Type.Optional(Type.Literal("")),
+    secret: Type.Optional(Type.Literal("")),
+  },
+  { additionalProperties: false },
+);
+
+export const LocalSocketSignerOperationV2Schema = Type.Object(
+  {
+    requestId: Type.String(),
+    walletId: Type.String(),
+    intentType: Type.String(),
+    intentDigest: Type.String(),
+    transactionDigest: Type.Optional(Type.String()),
+    policyHash: Type.String(),
+    asset: Type.String(),
+    amount: Type.String(),
+    state: Type.Union([
+      Type.Literal("reserved"),
+      Type.Literal("broadcast"),
+      Type.Literal("confirmed"),
+      Type.Literal("failed"),
+      Type.Literal("unknown"),
+    ]),
+    reservationActive: Type.Boolean(),
+    usageBucket: Type.String(),
+    reservedAt: Type.String(),
+    broadcastAt: Type.Optional(Type.String()),
+    confirmedAt: Type.Optional(Type.String()),
+    updatedAt: Type.String(),
+    signature: Type.Optional(Type.String()),
+    error: Type.Optional(Type.String()),
+  },
+  { additionalProperties: false },
+);
+
+const LocalSocketSignerWalletPolicyResultV2Schema = Type.Object(
+  {
+    wallet: LocalSocketSignerWalletV2Schema,
+    policy: LocalSocketSignerPolicyV2Schema,
+  },
+  { additionalProperties: false },
+);
+
 export function parseLocalSocketSignerRequest(input: unknown): LocalSocketSignerRequest {
   if (!Value.Check(LocalSocketSignerRequestSchema, input)) {
     throw new Error("invalid signer request");
@@ -256,7 +505,22 @@ export function validateLocalSocketSignerResult(
 ): boolean {
   switch (op) {
     case "health":
+    case "v2.capabilities":
       return Value.Check(LocalSocketSignerHealthResultSchema, result);
+    case "v2.policy.get":
+    case "v2.policy.put":
+      return Value.Check(LocalSocketSignerPolicyV2Schema, result);
+    case "v2.wallet.get":
+    case "v2.wallet.reencrypt":
+      return Value.Check(LocalSocketSignerWalletV2Schema, result);
+    case "v2.wallet.create":
+    case "v2.wallet.import":
+    case "v2.wallet.importLegacy":
+      return Value.Check(LocalSocketSignerWalletPolicyResultV2Schema, result);
+    case "v2.execute":
+    case "v2.operation.get":
+    case "v2.operation.reconcile":
+      return Value.Check(LocalSocketSignerOperationV2Schema, result);
     case "getAddresses":
       return Value.Check(LocalSocketSignerAddressMapSchema, result);
     case "getBalance":

@@ -39,12 +39,36 @@ export type LocalSocketSignerHealthProbe = {
   readOnly?: boolean;
   keystoreType?: string;
   chains?: WalletChain[];
+  ready?: boolean;
+  capabilities?: {
+    protocol: { current: 2; min: number; max: number };
+    intentTypes: string[];
+    operationStates: string[];
+    features: string[];
+  };
+  policies?: Array<{
+    walletId: string;
+    role: "agent" | "mining" | "vault";
+    version: number;
+    hash: string;
+  }>;
 };
 
 const MAX_SIGNER_RESPONSE_BYTES = 1 << 20;
 
 const SIGNER_SOCKET_TIMEOUT_MS: Record<LocalSocketSignerRequest["op"], number> = {
   health: 2_000,
+  "v2.capabilities": 2_000,
+  "v2.policy.get": 5_000,
+  "v2.policy.put": 5_000,
+  "v2.wallet.get": 5_000,
+  "v2.wallet.create": 10_000,
+  "v2.wallet.import": 20_000,
+  "v2.wallet.importLegacy": 30_000,
+  "v2.wallet.reencrypt": 10_000,
+  "v2.execute": 120_000,
+  "v2.operation.get": 5_000,
+  "v2.operation.reconcile": 20_000,
   getAddresses: 10_000,
   getBalance: 15_000,
   prepareTx: 15_000,
@@ -195,6 +219,9 @@ export async function probeLocalSocketSignerHealth(
       readOnly?: boolean;
       keystoreType?: string;
       chains?: WalletChain[];
+      ready?: boolean;
+      capabilities?: LocalSocketSignerHealthProbe["capabilities"];
+      policies?: LocalSocketSignerHealthProbe["policies"];
     }>(socketPath, { op: "health" });
     return {
       ok: true,
@@ -202,6 +229,9 @@ export async function probeLocalSocketSignerHealth(
       readOnly: result?.readOnly,
       keystoreType: result?.keystoreType,
       chains: Array.isArray(result?.chains) ? result.chains : undefined,
+      ready: result?.ready,
+      capabilities: result?.capabilities,
+      policies: result?.policies,
     };
   } catch (err) {
     return {

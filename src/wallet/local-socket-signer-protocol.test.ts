@@ -5,6 +5,95 @@ import {
 } from "./local-socket-signer-protocol.js";
 
 describe("local socket signer protocol", () => {
+  it("negotiates protocol-v2 capabilities and policy hashes", () => {
+    const parsed = parseLocalSocketSignerRequest({ op: "v2.capabilities" });
+    expect(parsed.op).toBe("v2.capabilities");
+    expect(
+      validateLocalSocketSignerResult("v2.capabilities", {
+        details: "fased-signerd protocol-v2 ready",
+        readOnly: false,
+        keystoreType: "signer-owned-v2",
+        chains: ["solana"],
+        ready: true,
+        capabilities: {
+          protocol: { current: 2, min: 2, max: 2 },
+          intentTypes: ["solana.nativeTransfer", "solana.splTransferChecked"],
+          operationStates: ["reserved", "broadcast", "confirmed", "failed", "unknown"],
+          features: ["failClosedPolicies", "policyHashes"],
+        },
+        policies: [
+          {
+            walletId: "agent",
+            role: "agent",
+            version: 1,
+            hash: `sha256:${"a".repeat(64)}`,
+          },
+        ],
+      }),
+    ).toBe(true);
+  });
+
+  it("accepts typed signer-v2 wallet creation and native execution", () => {
+    const policy = {
+      role: "agent" as const,
+      operations: ["solana.nativeTransfer"],
+      programs: ["11111111111111111111111111111111"],
+      assets: [
+        {
+          asset: "solana:native",
+          destinations: ["Vote111111111111111111111111111111111111111"],
+          maxPerTx: "1000",
+          maxDaily: "5000",
+        },
+      ],
+    };
+    expect(
+      parseLocalSocketSignerRequest({
+        op: "v2.wallet.create",
+        walletId: "agent",
+        request: { expectedPolicyVersion: 0, policy },
+      }).op,
+    ).toBe("v2.wallet.create");
+    expect(
+      parseLocalSocketSignerRequest({
+        op: "v2.execute",
+        walletId: "agent",
+        request: {
+          requestId: "request-123",
+          policyHash: `sha256:${"b".repeat(64)}`,
+          intent: {
+            type: "solana.nativeTransfer",
+            destination: "Vote111111111111111111111111111111111111111",
+            lamports: "1000",
+          },
+        },
+      }).op,
+    ).toBe("v2.execute");
+  });
+
+  it("validates durable signer-v2 operation states", () => {
+    expect(
+      validateLocalSocketSignerResult("v2.operation.get", {
+        requestId: "request-123",
+        walletId: "agent",
+        intentType: "solana.nativeTransfer",
+        intentDigest: `sha256:${"a".repeat(64)}`,
+        transactionDigest: `sha256:${"b".repeat(64)}`,
+        policyHash: `sha256:${"c".repeat(64)}`,
+        asset: "solana:native",
+        amount: "1000",
+        state: "unknown",
+        reservationActive: true,
+        usageBucket: "2026-07-16",
+        reservedAt: "2026-07-16T00:00:00.000Z",
+        broadcastAt: "2026-07-16T00:00:01.000Z",
+        updatedAt: "2026-07-16T00:00:02.000Z",
+        signature: "signature",
+        error: "confirmation timeout",
+      }),
+    ).toBe(true);
+  });
+
   it("accepts sendSolanaInstruction requests", () => {
     const parsed = parseLocalSocketSignerRequest({
       op: "sendSolanaInstruction",

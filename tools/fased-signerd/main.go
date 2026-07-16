@@ -123,8 +123,13 @@ type envelope struct {
 
 type signerConfig struct {
 	socketPath                 string
+	controlSocketPath          string
+	socketMode                 uint32
+	socketGroup                string
 	pidFile                    string
 	auditLog                   string
+	stateDBPath                string
+	masterKeyPath              string
 	readOnly                   bool
 	rateWindow                 time.Duration
 	rateLimit                  map[string]int
@@ -641,8 +646,16 @@ func parseScopedProgramAllowlistEnv(name string) map[string]map[string]bool {
 
 func mustValidate(req request, cfg signerConfig) error {
 	switch req.Op {
-	case "health":
+	case "health", "v2.capabilities":
 		if len(req.Request) > 0 || req.Chain != "" || req.WalletID != "" {
+			return errors.New("invalid signer request")
+		}
+	case "v2.policy.get", "v2.wallet.get", "v2.wallet.reencrypt":
+		if len(req.Request) > 0 || req.Chain != "" || strings.TrimSpace(req.WalletID) == "" {
+			return errors.New("invalid signer request")
+		}
+	case "v2.policy.put", "v2.wallet.create", "v2.wallet.import", "v2.wallet.importLegacy", "v2.execute", "v2.operation.get", "v2.operation.reconcile":
+		if len(req.Request) == 0 || req.Chain != "" || strings.TrimSpace(req.WalletID) == "" {
 			return errors.New("invalid signer request")
 		}
 	case "custodyStatus":
@@ -826,10 +839,22 @@ func bytesTrimNewline(b []byte) []byte {
 func parseArgs() signerConfig {
 	stateRoot := filepath.Join(userHomeDir(), ".fased", "wallet")
 	socketDefault := filepath.Join(stateRoot, "local-signer.sock")
+	socketModeRaw := firstNonEmpty(strings.TrimSpace(os.Getenv("FASED_WALLET_LOCAL_SIGNER_SOCKET_MODE")), "0600")
 	cfg := signerConfig{
-		socketPath:  socketDefault,
-		pidFile:     "",
-		auditLog:    "",
+		socketPath:        socketDefault,
+		controlSocketPath: filepath.Join(stateRoot, "local-signer-control.sock"),
+		socketMode:        0o600,
+		socketGroup:       strings.TrimSpace(os.Getenv("FASED_WALLET_LOCAL_SIGNER_SOCKET_GROUP")),
+		pidFile:           "",
+		auditLog:          "",
+		stateDBPath: firstNonEmpty(
+			strings.TrimSpace(os.Getenv("FASED_WALLET_LOCAL_SIGNER_STATE_DB")),
+			filepath.Join(stateRoot, "signerd-v2.db"),
+		),
+		masterKeyPath: firstNonEmpty(
+			strings.TrimSpace(os.Getenv("FASED_WALLET_LOCAL_SIGNER_MASTER_KEY")),
+			filepath.Join(stateRoot, "signerd-v2.master.key"),
+		),
 		readOnly:    os.Getenv("FASED_WALLET_LOCAL_SIGNER_READ_ONLY") == "1",
 		rateWindow:  time.Duration(getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WINDOW_MS", 10_000)) * time.Millisecond,
 		auditMax:    getenvInt64("FASED_WALLET_LOCAL_SIGNER_AUDIT_MAX_BYTES", 1_048_576),
@@ -876,11 +901,22 @@ func parseArgs() signerConfig {
 	cfg.solanaMaxDaily = parseScopedBigIntEnv("FASED_WALLET_LOCAL_SIGNER_SOLANA_MAX_DAILY")
 	fs := flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 	fs.StringVar(&cfg.socketPath, "socket", cfg.socketPath, "unix socket path")
+	fs.StringVar(&cfg.controlSocketPath, "control-socket", cfg.controlSocketPath, "administrative unix socket path")
+	fs.StringVar(&cfg.stateDBPath, "state-db", cfg.stateDBPath, "signer-owned bbolt state database path")
+	fs.StringVar(&cfg.masterKeyPath, "master-key", cfg.masterKeyPath, "signer-owned 0600 master key file path")
+	fs.StringVar(&socketModeRaw, "socket-mode", socketModeRaw, "application socket mode (octal, default 0600)")
+	fs.StringVar(&cfg.socketGroup, "socket-group", cfg.socketGroup, "private group allowed to use the application socket")
 	fs.StringVar(&cfg.pidFile, "pid-file", "", "pid file path (default <socket>.pid)")
 	fs.StringVar(&cfg.auditLog, "audit-log", "", "audit log path (default <socket>.audit.jsonl)")
 	fs.BoolVar(&cfg.readOnly, "read-only", cfg.readOnly, "read-only mode (health/getAddresses/getBalance only)")
 	fs.StringVar(&cfg.backendMode, "backend-mode", cfg.backendMode, "signer mode: native (hybrid accepted as alias)")
 	_ = fs.Parse(os.Args[1:])
+	mode, err := parseModeV2(socketModeRaw)
+	if err != nil {
+		fs.Usage()
+		log.Fatal(err)
+	}
+	cfg.socketMode = mode
 	if cfg.pidFile == "" {
 		cfg.pidFile = cfg.socketPath + ".pid"
 	}
@@ -888,16 +924,27 @@ func parseArgs() signerConfig {
 		cfg.auditLog = cfg.socketPath + ".audit.jsonl"
 	}
 	cfg.rateLimit = map[string]int{
-		"health":                getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_HEALTH", 300),
-		"custodyStatus":         getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_CUSTODYSTATUS", 300),
-		"unlockCustody":         getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_UNLOCKCUSTODY", 60),
-		"lockCustody":           getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_LOCKCUSTODY", 120),
-		"getAddresses":          getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_GETADDRESSES", 120),
-		"getBalance":            getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_GETBALANCE", 240),
-		"prepareTx":             getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_PREPARETX", 120),
-		"signTx":                getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_SIGNTX", 60),
-		"sendTx":                getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_SENDTX", 40),
-		"sendSolanaInstruction": getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_SENDSOLANAINSTRUCTION", 80),
+		"health":                 getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_HEALTH", 300),
+		"v2.capabilities":        getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_HEALTH", 300),
+		"v2.policy.get":          getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_POLICY", 120),
+		"v2.policy.put":          getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_POLICY", 120),
+		"v2.wallet.get":          getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WALLET", 120),
+		"v2.wallet.create":       getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WALLET", 30),
+		"v2.wallet.import":       getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WALLET", 30),
+		"v2.wallet.importLegacy": getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WALLET", 30),
+		"v2.wallet.reencrypt":    getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WALLET", 30),
+		"v2.execute":             getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_EXECUTE", 60),
+		"v2.operation.get":       getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_OPERATION", 300),
+		"v2.operation.reconcile": getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_OPERATION", 120),
+		"custodyStatus":          getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_CUSTODYSTATUS", 300),
+		"unlockCustody":          getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_UNLOCKCUSTODY", 60),
+		"lockCustody":            getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_LOCKCUSTODY", 120),
+		"getAddresses":           getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_GETADDRESSES", 120),
+		"getBalance":             getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_GETBALANCE", 240),
+		"prepareTx":              getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_PREPARETX", 120),
+		"signTx":                 getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_SIGNTX", 60),
+		"sendTx":                 getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_SENDTX", 40),
+		"sendSolanaInstruction":  getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_SENDSOLANAINSTRUCTION", 80),
 		"sendSolanaInstructions": getenvInt(
 			"FASED_WALLET_LOCAL_SIGNER_RATE_SENDSOLANAINSTRUCTIONS",
 			40,
@@ -1128,8 +1175,6 @@ func main() {
 }
 
 func run(cfg signerConfig) error {
-	_ = os.MkdirAll(filepath.Dir(cfg.socketPath), 0o700)
-	_ = os.Remove(cfg.socketPath)
 	if err := acquirePidLock(cfg.pidFile); err != nil {
 		return err
 	}
@@ -1139,12 +1184,33 @@ func run(cfg signerConfig) error {
 		cfg.backendMode = "native"
 	}
 
-	l, err := net.Listen("unix", cfg.socketPath)
+	store, err := openSignerStoreV2(cfg.stateDBPath)
 	if err != nil {
 		return err
 	}
-	defer l.Close()
-	_ = os.Chmod(cfg.socketPath, 0o600)
+	defer store.Close()
+	keys, err := openSignerKeyManagerV2(store, cfg.masterKeyPath)
+	if err != nil {
+		return err
+	}
+	defer keys.Close()
+	service := &signerServiceV2{store: store, keys: keys}
+
+	applicationListener, err := listenUnixSocketV2(cfg.socketPath, cfg.socketMode, cfg.socketGroup)
+	if err != nil {
+		return err
+	}
+	defer applicationListener.Close()
+	defer os.Remove(cfg.socketPath)
+	if filepath.Clean(cfg.controlSocketPath) == filepath.Clean(cfg.socketPath) {
+		return errors.New("control socket must be separate from the application socket")
+	}
+	controlListener, err := listenUnixSocketV2(cfg.controlSocketPath, 0o600, "")
+	if err != nil {
+		return err
+	}
+	defer controlListener.Close()
+	defer os.Remove(cfg.controlSocketPath)
 
 	limiter := newRateLimiter(cfg.rateWindow, cfg.rateLimit)
 	audit := &auditWriter{path: cfg.auditLog, maxBytes: cfg.auditMax}
@@ -1153,26 +1219,36 @@ func run(cfg signerConfig) error {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigCh
-		_ = l.Close()
+		_ = applicationListener.Close()
+		_ = controlListener.Close()
 		_ = os.Remove(cfg.socketPath)
+		_ = os.Remove(cfg.controlSocketPath)
 	}()
 
 	log.Printf("fased-signerd listening on %s", cfg.socketPath)
+	log.Printf("fased-signerd control socket listening on %s", cfg.controlSocketPath)
 	log.Printf("mode: %s", map[bool]string{true: "read-only", false: "read-write"}[cfg.readOnly])
 
-	for {
-		conn, err := l.Accept()
-		if err != nil {
-			if errors.Is(err, net.ErrClosed) {
-				return nil
+	errCh := make(chan error, 2)
+	serve := func(listener net.Listener, control bool) {
+		for {
+			conn, acceptErr := listener.Accept()
+			if acceptErr != nil {
+				if errors.Is(acceptErr, net.ErrClosed) {
+					errCh <- nil
+					return
+				}
+				continue
 			}
-			continue
+			go handleConn(conn, cfg, limiter, audit, service, control)
 		}
-		go handleConn(conn, cfg, limiter, audit)
 	}
+	go serve(applicationListener, false)
+	go serve(controlListener, true)
+	return <-errCh
 }
 
-func handleConn(conn net.Conn, cfg signerConfig, limiter *rateLimiter, audit *auditWriter) {
+func handleConn(conn net.Conn, cfg signerConfig, limiter *rateLimiter, audit *auditWriter, service *signerServiceV2, control bool) {
 	defer conn.Close()
 	br := bufio.NewReader(conn)
 	for {
@@ -1218,7 +1294,13 @@ func handleConn(conn net.Conn, cfg signerConfig, limiter *rateLimiter, audit *au
 			continue
 		}
 		{
-			resp, err := handleHybridNative(req, raw, cfg)
+			var resp []byte
+			var err error
+			if req.Op == "health" || strings.HasPrefix(req.Op, "v2.") {
+				resp, err = service.handle(req, cfg, control)
+			} else {
+				resp, err = handleHybridNative(req, raw, cfg)
+			}
 			if err != nil {
 				_, _ = conn.Write([]byte(fmt.Sprintf(`{"ok":false,"error":%q}`+"\n", err.Error())))
 				audit.write(map[string]any{"ts": time.Now().UTC().Format(time.RFC3339Nano), "op": req.Op, "ok": false, "error": "native", "fp": fingerprint(raw)})
