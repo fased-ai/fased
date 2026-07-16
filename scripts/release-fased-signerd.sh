@@ -49,6 +49,11 @@ for target in "${target_list[@]}"; do
   release_assets+=("$asset")
 done
 
+NOTICE_ASSET="fased-signerd-third-party-licenses.txt"
+cp "${ROOT}/tools/fased-signerd/THIRD_PARTY_LICENSES/go-webauthn-BSD-3-Clause.txt" \
+  "${OUT_DIR}/${NOTICE_ASSET}"
+release_assets+=("${NOTICE_ASSET}")
+
 (
   cd "$OUT_DIR"
   if command -v sha256sum >/dev/null 2>&1; then

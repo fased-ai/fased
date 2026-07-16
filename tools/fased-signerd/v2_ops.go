@@ -15,8 +15,9 @@ import (
 )
 
 type signerServiceV2 struct {
-	store *signerStoreV2
-	keys  *signerKeyManagerV2
+	store    *signerStoreV2
+	keys     *signerKeyManagerV2
+	webauthn *signerWebAuthnServiceV2
 }
 
 type signerWalletPolicyResultV2 struct {
@@ -39,6 +40,7 @@ type signerHealthResultV2 struct {
 	Ready        bool                    `json:"ready"`
 	Capabilities signerCapabilitiesV2    `json:"capabilities"`
 	Policies     []signerPolicySummaryV2 `json:"policies"`
+	WebAuthn     signerWebAuthnHealthV2  `json:"webAuthn"`
 }
 
 func marshalSignerResultV2(result any) ([]byte, error) {
@@ -59,6 +61,10 @@ func (s *signerServiceV2) health(cfg signerConfig) (signerHealthResultV2, error)
 			Hash:     policy.Hash,
 		})
 	}
+	webauthnHealth, err := s.webauthn.health()
+	if err != nil {
+		return signerHealthResultV2{}, err
+	}
 	return signerHealthResultV2{
 		Details:      "fased-signerd protocol-v2 ready",
 		ReadOnly:     cfg.readOnly,
@@ -67,6 +73,7 @@ func (s *signerServiceV2) health(cfg signerConfig) (signerHealthResultV2, error)
 		Ready:        true,
 		Capabilities: signerV2Capabilities,
 		Policies:     summaries,
+		WebAuthn:     webauthnHealth,
 	}, nil
 }
 
@@ -97,6 +104,73 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 			return nil, err
 		}
 		return marshalSignerResultV2(health)
+	case "v2.webauthn.registration.begin":
+		if cfg.readOnly {
+			return nil, errors.New("read-only signer mode")
+		}
+		if err := requireControlSocketV2(control); err != nil {
+			return nil, err
+		}
+		var body signerWebAuthnRegistrationBeginRequestV2
+		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
+			return nil, err
+		}
+		result, err := s.webauthn.beginRegistration(body.Label)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(result)
+	case "v2.webauthn.registration.finish":
+		if cfg.readOnly {
+			return nil, errors.New("read-only signer mode")
+		}
+		if err := requireControlSocketV2(control); err != nil {
+			return nil, err
+		}
+		var body signerWebAuthnRegistrationFinishRequestV2
+		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
+			return nil, err
+		}
+		result, err := s.webauthn.finishRegistration(body)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(result)
+	case "v2.webauthn.credentials.list":
+		if err := requireControlSocketV2(control); err != nil {
+			return nil, err
+		}
+		credentials, err := s.webauthn.listCredentials()
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(credentials)
+	case "v2.review.authorization.begin":
+		if cfg.readOnly {
+			return nil, errors.New("read-only signer mode")
+		}
+		var body signerReviewAuthorizationBeginRequestV2
+		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
+			return nil, err
+		}
+		result, err := s.webauthn.beginReviewAuthorization(req.WalletID, body)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(result)
+	case "v2.review.authorization.finish":
+		if cfg.readOnly {
+			return nil, errors.New("read-only signer mode")
+		}
+		var body signerReviewAuthorizationFinishRequestV2
+		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
+			return nil, err
+		}
+		result, err := s.webauthn.finishReviewAuthorization(req.WalletID, body)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(result)
 	case "v2.policy.get":
 		policy, err := s.store.getPolicy(req.WalletID)
 		if err != nil {

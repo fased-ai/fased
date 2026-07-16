@@ -130,6 +130,8 @@ type signerConfig struct {
 	auditLog                   string
 	stateDBPath                string
 	masterKeyPath              string
+	webauthnRPID               string
+	webauthnOrigins            string
 	readOnly                   bool
 	rateWindow                 time.Duration
 	rateLimit                  map[string]int
@@ -650,6 +652,18 @@ func mustValidate(req request, cfg signerConfig) error {
 		if len(req.Request) > 0 || req.Chain != "" || req.WalletID != "" {
 			return errors.New("invalid signer request")
 		}
+	case "v2.webauthn.credentials.list":
+		if len(req.Request) > 0 || req.Chain != "" || req.WalletID != "" {
+			return errors.New("invalid signer request")
+		}
+	case "v2.webauthn.registration.begin", "v2.webauthn.registration.finish":
+		if len(req.Request) == 0 || req.Chain != "" || req.WalletID != "" {
+			return errors.New("invalid signer request")
+		}
+	case "v2.review.authorization.begin", "v2.review.authorization.finish":
+		if len(req.Request) == 0 || req.Chain != "" || strings.TrimSpace(req.WalletID) == "" {
+			return errors.New("invalid signer request")
+		}
 	case "v2.policy.get", "v2.wallet.get", "v2.wallet.reencrypt":
 		if len(req.Request) > 0 || req.Chain != "" || strings.TrimSpace(req.WalletID) == "" {
 			return errors.New("invalid signer request")
@@ -855,12 +869,14 @@ func parseArgs() signerConfig {
 			strings.TrimSpace(os.Getenv("FASED_WALLET_LOCAL_SIGNER_MASTER_KEY")),
 			filepath.Join(stateRoot, "signerd-v2.master.key"),
 		),
-		readOnly:    os.Getenv("FASED_WALLET_LOCAL_SIGNER_READ_ONLY") == "1",
-		rateWindow:  time.Duration(getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WINDOW_MS", 10_000)) * time.Millisecond,
-		auditMax:    getenvInt64("FASED_WALLET_LOCAL_SIGNER_AUDIT_MAX_BYTES", 1_048_576),
-		dropUID:     getenvInt("FASED_WALLET_LOCAL_SIGNER_DROP_UID", 0),
-		dropGID:     getenvInt("FASED_WALLET_LOCAL_SIGNER_DROP_GID", 0),
-		backendMode: firstNonEmpty(strings.TrimSpace(os.Getenv("FASED_WALLET_LOCAL_SIGNER_BACKEND_MODE")), "native"),
+		webauthnRPID:    strings.TrimSpace(os.Getenv("FASED_WALLET_WEBAUTHN_RP_ID")),
+		webauthnOrigins: strings.TrimSpace(os.Getenv("FASED_WALLET_WEBAUTHN_ORIGINS")),
+		readOnly:        os.Getenv("FASED_WALLET_LOCAL_SIGNER_READ_ONLY") == "1",
+		rateWindow:      time.Duration(getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WINDOW_MS", 10_000)) * time.Millisecond,
+		auditMax:        getenvInt64("FASED_WALLET_LOCAL_SIGNER_AUDIT_MAX_BYTES", 1_048_576),
+		dropUID:         getenvInt("FASED_WALLET_LOCAL_SIGNER_DROP_UID", 0),
+		dropGID:         getenvInt("FASED_WALLET_LOCAL_SIGNER_DROP_GID", 0),
+		backendMode:     firstNonEmpty(strings.TrimSpace(os.Getenv("FASED_WALLET_LOCAL_SIGNER_BACKEND_MODE")), "native"),
 		keystorePath: firstNonEmpty(
 			strings.TrimSpace(os.Getenv("FASED_WALLET_KEYSTORE_PATH")),
 			filepath.Join(userHomeDir(), ".fased", "wallet", "keystore.v1.enc"),
@@ -904,6 +920,8 @@ func parseArgs() signerConfig {
 	fs.StringVar(&cfg.controlSocketPath, "control-socket", cfg.controlSocketPath, "administrative unix socket path")
 	fs.StringVar(&cfg.stateDBPath, "state-db", cfg.stateDBPath, "signer-owned bbolt state database path")
 	fs.StringVar(&cfg.masterKeyPath, "master-key", cfg.masterKeyPath, "signer-owned 0600 master key file path")
+	fs.StringVar(&cfg.webauthnRPID, "webauthn-rp-id", cfg.webauthnRPID, "root-configured WebAuthn relying party ID")
+	fs.StringVar(&cfg.webauthnOrigins, "webauthn-origins", cfg.webauthnOrigins, "comma-separated exact WebAuthn origin allowlist")
 	fs.StringVar(&socketModeRaw, "socket-mode", socketModeRaw, "application socket mode (octal, default 0600)")
 	fs.StringVar(&cfg.socketGroup, "socket-group", cfg.socketGroup, "private group allowed to use the application socket")
 	fs.StringVar(&cfg.pidFile, "pid-file", "", "pid file path (default <socket>.pid)")
@@ -924,27 +942,32 @@ func parseArgs() signerConfig {
 		cfg.auditLog = cfg.socketPath + ".audit.jsonl"
 	}
 	cfg.rateLimit = map[string]int{
-		"health":                 getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_HEALTH", 300),
-		"v2.capabilities":        getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_HEALTH", 300),
-		"v2.policy.get":          getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_POLICY", 120),
-		"v2.policy.put":          getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_POLICY", 120),
-		"v2.wallet.get":          getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WALLET", 120),
-		"v2.wallet.create":       getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WALLET", 30),
-		"v2.wallet.import":       getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WALLET", 30),
-		"v2.wallet.importLegacy": getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WALLET", 30),
-		"v2.wallet.reencrypt":    getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WALLET", 30),
-		"v2.execute":             getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_EXECUTE", 60),
-		"v2.operation.get":       getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_OPERATION", 300),
-		"v2.operation.reconcile": getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_OPERATION", 120),
-		"custodyStatus":          getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_CUSTODYSTATUS", 300),
-		"unlockCustody":          getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_UNLOCKCUSTODY", 60),
-		"lockCustody":            getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_LOCKCUSTODY", 120),
-		"getAddresses":           getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_GETADDRESSES", 120),
-		"getBalance":             getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_GETBALANCE", 240),
-		"prepareTx":              getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_PREPARETX", 120),
-		"signTx":                 getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_SIGNTX", 60),
-		"sendTx":                 getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_SENDTX", 40),
-		"sendSolanaInstruction":  getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_SENDSOLANAINSTRUCTION", 80),
+		"health":                          getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_HEALTH", 300),
+		"v2.capabilities":                 getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_HEALTH", 300),
+		"v2.policy.get":                   getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_POLICY", 120),
+		"v2.policy.put":                   getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_POLICY", 120),
+		"v2.wallet.get":                   getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WALLET", 120),
+		"v2.wallet.create":                getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WALLET", 30),
+		"v2.wallet.import":                getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WALLET", 30),
+		"v2.wallet.importLegacy":          getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WALLET", 30),
+		"v2.wallet.reencrypt":             getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WALLET", 30),
+		"v2.execute":                      getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_EXECUTE", 60),
+		"v2.operation.get":                getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_OPERATION", 300),
+		"v2.operation.reconcile":          getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_OPERATION", 120),
+		"v2.webauthn.registration.begin":  getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WEBAUTHN_ADMIN", 20),
+		"v2.webauthn.registration.finish": getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WEBAUTHN_ADMIN", 20),
+		"v2.webauthn.credentials.list":    getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WEBAUTHN_ADMIN", 60),
+		"v2.review.authorization.begin":   getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_REVIEW_AUTH", 60),
+		"v2.review.authorization.finish":  getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_REVIEW_AUTH", 60),
+		"custodyStatus":                   getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_CUSTODYSTATUS", 300),
+		"unlockCustody":                   getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_UNLOCKCUSTODY", 60),
+		"lockCustody":                     getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_LOCKCUSTODY", 120),
+		"getAddresses":                    getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_GETADDRESSES", 120),
+		"getBalance":                      getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_GETBALANCE", 240),
+		"prepareTx":                       getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_PREPARETX", 120),
+		"signTx":                          getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_SIGNTX", 60),
+		"sendTx":                          getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_SENDTX", 40),
+		"sendSolanaInstruction":           getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_SENDSOLANAINSTRUCTION", 80),
 		"sendSolanaInstructions": getenvInt(
 			"FASED_WALLET_LOCAL_SIGNER_RATE_SENDSOLANAINSTRUCTIONS",
 			40,
@@ -1194,7 +1217,11 @@ func run(cfg signerConfig) error {
 		return err
 	}
 	defer keys.Close()
-	service := &signerServiceV2{store: store, keys: keys}
+	webauthnService, err := newSignerWebAuthnServiceV2(store, cfg.webauthnRPID, cfg.webauthnOrigins)
+	if err != nil {
+		return err
+	}
+	service := &signerServiceV2{store: store, keys: keys, webauthn: webauthnService}
 
 	applicationListener, err := listenUnixSocketV2(cfg.socketPath, cfg.socketMode, cfg.socketGroup)
 	if err != nil {

@@ -52,6 +52,8 @@ var signerV2Capabilities = signerCapabilitiesV2{
 		"signerOwnedKeys",
 		"typedSolanaTransactions",
 		"typedSATActions",
+		"signerOwnedWebAuthn",
+		"singleUseReviewedAuthorization",
 	},
 }
 

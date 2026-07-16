@@ -15,11 +15,14 @@ import (
 )
 
 var (
-	bucketSignerMetaV2       = []byte("meta")
-	bucketSignerPoliciesV2   = []byte("policies")
-	bucketSignerOperationsV2 = []byte("operations")
-	bucketSignerUsageV2      = []byte("daily-usage")
-	bucketSignerWalletsV2    = []byte("wallets")
+	bucketSignerMetaV2                = []byte("meta")
+	bucketSignerPoliciesV2            = []byte("policies")
+	bucketSignerOperationsV2          = []byte("operations")
+	bucketSignerUsageV2               = []byte("daily-usage")
+	bucketSignerWalletsV2             = []byte("wallets")
+	bucketSignerWebAuthnCredentialsV2 = []byte("webauthn-credentials")
+	bucketSignerWebAuthnChallengesV2  = []byte("webauthn-challenges")
+	bucketSignerReviewProofsV2        = []byte("review-authorization-proofs")
 )
 
 const signerExecutionLeaseV2 = 5 * time.Minute
@@ -55,6 +58,9 @@ func openSignerStoreV2(path string) (*signerStoreV2, error) {
 			bucketSignerOperationsV2,
 			bucketSignerUsageV2,
 			bucketSignerWalletsV2,
+			bucketSignerWebAuthnCredentialsV2,
+			bucketSignerWebAuthnChallengesV2,
+			bucketSignerReviewProofsV2,
 		} {
 			if _, err := tx.CreateBucketIfNotExists(bucket); err != nil {
 				return err
