@@ -280,6 +280,32 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 			return nil, err
 		}
 		return marshalSignerResultV2(operation)
+	case "v2.review.prepare":
+		if cfg.readOnly {
+			return nil, errors.New("read-only signer mode")
+		}
+		var body signerReviewPrepareRequestV2
+		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
+			return nil, err
+		}
+		review, err := s.prepareJupiterReviewV2(req.WalletID, body)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(review)
+	case "v2.review.execute":
+		if cfg.readOnly {
+			return nil, errors.New("read-only signer mode")
+		}
+		var body signerReviewExecuteRequestV2
+		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
+			return nil, err
+		}
+		result, err := s.executeJupiterReviewV2(req.WalletID, body, cfg)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(result)
 	case "v2.operation.get":
 		var body signerOperationLookupV2
 		if err := decodeSignerRequestV2(req.Request, &body); err != nil {

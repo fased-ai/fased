@@ -23,6 +23,7 @@ var (
 	bucketSignerWebAuthnCredentialsV2 = []byte("webauthn-credentials")
 	bucketSignerWebAuthnChallengesV2  = []byte("webauthn-challenges")
 	bucketSignerReviewProofsV2        = []byte("review-authorization-proofs")
+	bucketSignerReviewsV2             = []byte("reviews")
 )
 
 const signerExecutionLeaseV2 = 5 * time.Minute
@@ -61,6 +62,7 @@ func openSignerStoreV2(path string) (*signerStoreV2, error) {
 			bucketSignerWebAuthnCredentialsV2,
 			bucketSignerWebAuthnChallengesV2,
 			bucketSignerReviewProofsV2,
+			bucketSignerReviewsV2,
 		} {
 			if _, err := tx.CreateBucketIfNotExists(bucket); err != nil {
 				return err

@@ -129,6 +129,70 @@ describe("local socket signer protocol", () => {
     ).toBe(true);
   });
 
+  it("accepts only typed Jupiter review.prepare/review.execute requests", () => {
+    const intent = {
+      type: "solana.jupiter.swap" as const,
+      jupiter: {
+        owner: "11111111111111111111111111111111",
+        inputMint: "So11111111111111111111111111111111111111112",
+        outputMint: "Vote111111111111111111111111111111111111111",
+        inputAmount: "100",
+        maxInputAmount: "100",
+        minimumOutputAmount: "90",
+        maxFeeLamports: "5000",
+        sourceTokenAccount: "Stake11111111111111111111111111111111111111",
+        destinationTokenAccount: "Config1111111111111111111111111111111111111",
+        programs: ["JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"],
+      },
+    };
+    const policyHash = `sha256:${"a".repeat(64)}`;
+    expect(
+      parseLocalSocketSignerRequest({
+        op: "v2.review.prepare",
+        walletId: "agent",
+        request: { requestId: "review-123", policyHash, mode: "reviewed", intent },
+      }).op,
+    ).toBe("v2.review.prepare");
+    expect(
+      parseLocalSocketSignerRequest({
+        op: "v2.review.execute",
+        walletId: "agent",
+        request: {
+          requestId: "review-123",
+          policyHash,
+          mode: "reviewed",
+          intent,
+          transaction: {
+            serializedTxBase64: "AA==",
+            programs: intent.jupiter.programs,
+            writableAccounts: [intent.jupiter.sourceTokenAccount],
+            submission: "rpc",
+          },
+          authorization: { type: "webauthn", proof: { proofId: "proof-123" } },
+        },
+      }).op,
+    ).toBe("v2.review.execute");
+    expect(() =>
+      parseLocalSocketSignerRequest({
+        op: "v2.review.execute",
+        walletId: "agent",
+        request: {
+          requestId: "review-123",
+          policyHash,
+          mode: "reviewed",
+          intent,
+          transaction: {
+            serializedTxBase64: "AA==",
+            programs: intent.jupiter.programs,
+            writableAccounts: [intent.jupiter.sourceTokenAccount],
+            submission: "rpc",
+          },
+          rawSignTx: true,
+        },
+      }),
+    ).toThrow(/invalid signer request/);
+  });
+
   it("accepts sendSolanaInstruction requests", () => {
     const parsed = parseLocalSocketSignerRequest({
       op: "sendSolanaInstruction",

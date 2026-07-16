@@ -1,16 +1,24 @@
+import { createHash } from "node:crypto";
 import type { FasedAgentConfig } from "../config/config.js";
 import type { WalletProviderId } from "../config/types.wallet.js";
-import { fetchSolanaNativeBalanceViaRpc, fetchSolanaWalletAssetsViaRpc } from "./solana-assets.js";
+import {
+  fetchSolanaMintInfoViaRpc,
+  fetchSolanaNativeBalanceViaRpc,
+  fetchSolanaWalletAssetsViaRpc,
+  SOLANA_ASSET_CONSTANTS,
+} from "./solana-assets.js";
+import { deriveAssociatedTokenAddress } from "./solana-spl-transfer.js";
 import {
   inspectSerializedSolanaSwapTransaction,
   type SolanaTransactionInspectionResult,
 } from "./solana-transaction-inspection.js";
-import {
-  applyWalletPolicyConfig,
-  enforceWalletDailyCap,
-  validateWalletTxPolicy,
-} from "./wallet-policy.js";
-import type { WalletProviderSendTxResult } from "./wallet-provider-adapter.js";
+import { applyWalletPolicyConfig, validateWalletTxPolicy } from "./wallet-policy.js";
+import type {
+  WalletProviderAdapter,
+  WalletProviderJupiterIntentV2,
+  WalletProviderJupiterReviewV2,
+  WalletProviderSendTxResult,
+} from "./wallet-provider-adapter.js";
 import {
   createWalletProviderAdapter,
   resolveScopedRpcUrlForWallet,
@@ -19,6 +27,7 @@ import type { ResolvedWalletRuntimeConfig } from "./wallet-runtime-config.js";
 import type { WalletSendApprovalPayload } from "./wallet-send-approvals.js";
 
 export const SOLANA_NATIVE_MINT = "So11111111111111111111111111111111111111112";
+const DEFAULT_JUPITER_MAX_FEE_LAMPORTS = "5000000";
 
 export type SolanaSwapOrder = {
   ok: true;
@@ -43,6 +52,11 @@ export type SolanaSwapExecutionResult =
     }
   | { ok: false; code: string; message: string };
 
+export type SolanaSwapSignerReview = {
+  review: WalletProviderJupiterReviewV2;
+  intent: WalletProviderJupiterIntentV2;
+};
+
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
@@ -52,12 +66,13 @@ function numberValue(value: unknown): number | undefined {
 }
 
 function parsePositiveBaseUnits(value: string | undefined): bigint {
-  if (!value?.trim()) {
+  const normalized = value?.trim();
+  if (!normalized || normalized.length > 32 || !/^\d+$/.test(normalized)) {
     throw new Error("amount is required");
   }
-  const parsed = BigInt(value.trim());
-  if (parsed <= 0n) {
-    throw new Error("amount must be positive base units");
+  const parsed = BigInt(normalized);
+  if (parsed <= 0n || parsed > 18_446_744_073_709_551_615n) {
+    throw new Error("amount must be positive uint64 base units");
   }
   return parsed;
 }
@@ -71,6 +86,118 @@ function normalizeSlippageBps(value: number | undefined): number {
     throw new Error("slippageBps must be between 1 and 300");
   }
   return rounded;
+}
+
+export function resolveSolanaSwapMinimumOutput(order: SolanaSwapOrder): string {
+  if (order.otherAmountThreshold?.trim()) {
+    return parsePositiveBaseUnits(order.otherAmountThreshold).toString();
+  }
+  const quoted = parsePositiveBaseUnits(order.outAmount);
+  const slippageBps = BigInt(normalizeSlippageBps(order.slippageBps));
+  return ((quoted * (10_000n - slippageBps) + 9_999n) / 10_000n).toString();
+}
+
+export function resolveJupiterMaxFeeLamports(env: NodeJS.ProcessEnv): string {
+  const value =
+    env.FASED_WALLET_JUPITER_MAX_FEE_LAMPORTS?.trim() || DEFAULT_JUPITER_MAX_FEE_LAMPORTS;
+  const parsed = BigInt(value);
+  if (parsed <= 0n || parsed > 100_000_000n) {
+    throw new Error("FASED_WALLET_JUPITER_MAX_FEE_LAMPORTS must be between 1 and 100000000");
+  }
+  return parsed.toString();
+}
+
+function createSignerReviewId(prefix: string, seed: string): string {
+  return `${prefix}:${createHash("sha256").update(seed).digest("hex")}`;
+}
+
+export async function exactJupiterTokenAccount(params: {
+  rpcUrl: string;
+  owner: string;
+  mint: string;
+}): Promise<string> {
+  const tokenProgramId =
+    params.mint === SOLANA_NATIVE_MINT
+      ? SOLANA_ASSET_CONSTANTS.tokenProgramId
+      : (await fetchSolanaMintInfoViaRpc({ rpcUrl: params.rpcUrl, mint: params.mint }))
+          ?.tokenProgramId;
+  if (!tokenProgramId) {
+    throw new Error(`unable to resolve token program for mint ${params.mint}`);
+  }
+  return await deriveAssociatedTokenAddress({
+    owner: params.owner,
+    mint: params.mint,
+    tokenProgramId,
+  });
+}
+
+export async function buildSolanaSwapSignerIntent(params: {
+  order: SolanaSwapOrder;
+  inspection: Extract<SolanaTransactionInspectionResult, { ok: true }>;
+  owner: string;
+  rpcUrl: string;
+  env?: NodeJS.ProcessEnv;
+}): Promise<WalletProviderJupiterIntentV2> {
+  const inAmount = parsePositiveBaseUnits(params.order.inAmount).toString();
+  const minimumOutputAmount = resolveSolanaSwapMinimumOutput(params.order);
+  const sourceTokenAccount = await exactJupiterTokenAccount({
+    rpcUrl: params.rpcUrl,
+    owner: params.owner,
+    mint: params.order.inputMint,
+  });
+  // Native SOL is represented as wrapped SOL inside the swap. The signer
+  // separately verifies that cleanup returns lamports to the exact owner.
+  const destinationTokenAccount = await exactJupiterTokenAccount({
+    rpcUrl: params.rpcUrl,
+    owner: params.owner,
+    mint: params.order.outputMint,
+  });
+  return {
+    type: "solana.jupiter.swap",
+    jupiter: {
+      owner: params.owner,
+      inputMint: params.order.inputMint,
+      outputMint: params.order.outputMint,
+      inputAmount: inAmount,
+      maxInputAmount: inAmount,
+      minimumOutputAmount,
+      maxFeeLamports: resolveJupiterMaxFeeLamports(params.env ?? process.env),
+      sourceTokenAccount,
+      destinationTokenAccount,
+      programs: [...params.inspection.programIds].toSorted(),
+    },
+  };
+}
+
+export async function prepareSolanaSwapSignerReview(params: {
+  provider: WalletProviderAdapter;
+  walletId: string;
+  owner: string;
+  order: SolanaSwapOrder;
+  inspection: Extract<SolanaTransactionInspectionResult, { ok: true }>;
+  rpcUrl: string;
+  mode: "autonomous" | "reviewed";
+  requestId?: string;
+  env?: NodeJS.ProcessEnv;
+}): Promise<SolanaSwapSignerReview> {
+  if (!params.provider.prepareJupiterReview) {
+    throw new Error(
+      "Jupiter execution requires protocol-v2 local-socket-signer review.prepare support",
+    );
+  }
+  const intent = await buildSolanaSwapSignerIntent(params);
+  const review = await params.provider.prepareJupiterReview({
+    walletId: params.walletId,
+    requestId:
+      params.requestId ??
+      createSignerReviewId(
+        "jupiter-swap",
+        params.order.requestId ?? params.order.transaction ?? JSON.stringify(params.order.raw),
+      ),
+    mode: params.mode,
+    intent,
+  });
+  return { review, intent };
 }
 
 function resolveSwapApiBaseUrl(env: NodeJS.ProcessEnv = process.env): string {
@@ -126,6 +253,29 @@ export function isSolanaSwapApprovalPayload(
   );
 }
 
+export function reviewedSolanaSwapOrderFromPayload(
+  payload: WalletSendApprovalPayload,
+): SolanaSwapOrder | undefined {
+  const transaction = payload.serializedTxBase64?.trim();
+  if (!transaction || !isSolanaSwapApprovalPayload(payload)) {
+    return undefined;
+  }
+  return {
+    ok: true,
+    requestId: payload.jupiterRequestId,
+    transaction,
+    inputMint: payload.inputMint,
+    outputMint: payload.outputMint,
+    inAmount: payload.amount,
+    outAmount: payload.outAmount,
+    otherAmountThreshold: payload.otherAmountThreshold,
+    slippageBps: payload.slippageBps,
+    priceImpactPct: payload.priceImpactPct,
+    routeLabel: payload.routeLabel,
+    raw: {},
+  };
+}
+
 export async function fetchJupiterSwapOrder(params: {
   inputMint: string;
   outputMint: string;
@@ -160,13 +310,17 @@ export async function fetchJupiterSwapOrder(params: {
   if (errorMessage && !stringValue(body.transaction)) {
     throw new Error(`jupiter order failed: ${errorMessage}`);
   }
+  const inAmount = stringValue(body.inAmount) ?? params.amount.trim();
+  if (parsePositiveBaseUnits(inAmount) !== parsePositiveBaseUnits(params.amount)) {
+    throw new Error("jupiter order changed the requested exact input amount");
+  }
   return {
     ok: true,
     requestId: stringValue(body.requestId),
     transaction: stringValue(body.transaction) ?? stringValue(body.tx),
     inputMint,
     outputMint,
-    inAmount: stringValue(body.inAmount) ?? params.amount.trim(),
+    inAmount,
     outAmount: stringValue(body.outAmount),
     otherAmountThreshold: stringValue(body.otherAmountThreshold),
     slippageBps: numberValue(body.slippageBps) ?? normalizeSlippageBps(params.slippageBps),
@@ -244,7 +398,11 @@ export function validateSolanaSwapRoutePolicy(params: {
     params.config.policy.solana.allowPrograms.map((program) => program.trim()).filter(Boolean),
   );
   if (allowlist.size === 0) {
-    return { ok: true };
+    return {
+      ok: false,
+      code: "wallet_swap_program_allowlist_required",
+      message: "swap execution requires an explicit non-empty Solana program allowlist",
+    };
   }
   const denied = params.routeProgramIds.filter((programId) => !allowlist.has(programId));
   if (denied.length === 0) {
@@ -335,6 +493,7 @@ export async function executeSolanaSwapApprovalPayload(params: {
   runtimeConfig: FasedAgentConfig;
   providerIdOverride?: WalletProviderId;
   autonomous?: boolean;
+  reviewAuthorization?: { type: string; proof: unknown };
   env?: NodeJS.ProcessEnv;
 }): Promise<SolanaSwapExecutionResult> {
   const env = params.env ?? process.env;
@@ -359,22 +518,6 @@ export async function executeSolanaSwapApprovalPayload(params: {
       ok: false,
       code: policy.code ?? "wallet_policy_rejected",
       message: policy.message ?? "wallet policy rejected",
-    };
-  }
-  const daily = enforceWalletDailyCap({
-    config: effectiveConfig,
-    chain: "solana",
-    amount: params.payload.amount,
-    tokenMint:
-      params.payload.inputMint === SOLANA_NATIVE_MINT ? undefined : params.payload.inputMint,
-    walletId: params.payload.walletId,
-    env,
-  });
-  if (!daily.ok) {
-    return {
-      ok: false,
-      code: daily.code ?? "wallet_cap_daily_exceeded",
-      message: daily.message ?? "wallet daily cap exceeded",
     };
   }
   const provider = createWalletProviderAdapter({
@@ -403,14 +546,19 @@ export async function executeSolanaSwapApprovalPayload(params: {
   if (!balance.ok) {
     return balance;
   }
-  const order = await fetchJupiterSwapOrder({
-    inputMint: params.payload.inputMint,
-    outputMint: params.payload.outputMint,
-    amount: params.payload.amount,
-    slippageBps: params.payload.slippageBps,
-    taker,
-    env,
-  });
+  const reviewedOrder = params.autonomous
+    ? undefined
+    : reviewedSolanaSwapOrderFromPayload(params.payload);
+  const order: SolanaSwapOrder =
+    reviewedOrder ??
+    (await fetchJupiterSwapOrder({
+      inputMint: params.payload.inputMint,
+      outputMint: params.payload.outputMint,
+      amount: params.payload.amount,
+      slippageBps: params.payload.slippageBps,
+      taker,
+      env,
+    }));
   const inspection = await inspectAndValidateSolanaSwapOrder({
     order,
     expectedSigner: taker,
@@ -420,14 +568,95 @@ export async function executeSolanaSwapApprovalPayload(params: {
   if (!inspection.ok) {
     return inspection;
   }
-  const tx = await provider.sendTx({
-    chain: "solana",
+  if (!rpcUrl?.trim()) {
+    return {
+      ok: false,
+      code: "wallet_swap_rpc_required",
+      message: "Solana RPC is required for signer-owned Jupiter validation",
+    };
+  }
+  if (!order.transaction || !provider.executeJupiterReview) {
+    return {
+      ok: false,
+      code: "wallet_signer_v2_required",
+      message: "Jupiter execution requires protocol-v2 local-socket-signer review.execute support",
+    };
+  }
+  let prepared: SolanaSwapSignerReview;
+  if (params.autonomous) {
+    prepared = await prepareSolanaSwapSignerReview({
+      provider,
+      walletId: params.payload.walletId,
+      owner: taker,
+      order,
+      inspection,
+      rpcUrl,
+      mode: "autonomous",
+      env,
+    });
+  } else {
+    const requestId = params.payload.signerReviewId?.trim();
+    const policyHash = params.payload.signerPolicyHash?.trim();
+    if (!requestId || !policyHash) {
+      return {
+        ok: false,
+        code: "wallet_signer_review_missing",
+        message: "reviewed Jupiter swap is not bound to signer review.prepare",
+      };
+    }
+    prepared = {
+      intent: await buildSolanaSwapSignerIntent({ order, inspection, owner: taker, rpcUrl, env }),
+      review: {
+        requestId,
+        walletId: params.payload.walletId,
+        intentType: "solana.jupiter.swap",
+        intentDigest: params.payload.signerIntentDigest?.trim() ?? "",
+        policyHash,
+        mode: "reviewed",
+        nonce: "",
+        semanticIntent: {} as WalletProviderJupiterIntentV2,
+        issuedAt: "",
+        state: "prepared",
+        preparedAt: "",
+        expiresAt: params.payload.signerReviewExpiresAt?.trim() ?? "",
+        updatedAt: "",
+      },
+    };
+  }
+  const executed = await provider.executeJupiterReview({
     walletId: params.payload.walletId,
-    serializedTxBase64: order.transaction,
-    amount: params.payload.amount,
-    tokenMint:
-      params.payload.inputMint === SOLANA_NATIVE_MINT ? undefined : params.payload.inputMint,
+    requestId: prepared.review.requestId,
+    policyHash: prepared.review.policyHash,
+    mode: params.autonomous ? "autonomous" : "reviewed",
+    intent: prepared.intent,
+    transaction: {
+      serializedTxBase64: order.transaction,
+      programs: inspection.programIds,
+      writableAccounts: inspection.writableAccounts,
+      submission: "rpc",
+    },
+    ...(params.reviewAuthorization ? { authorization: params.reviewAuthorization } : {}),
   });
+  if (executed.operation.state === "failed") {
+    return {
+      ok: false,
+      code: "wallet_swap_failed",
+      message: executed.operation.error ?? "typed Jupiter swap failed",
+    };
+  }
+  const tx: WalletProviderSendTxResult = {
+    ok: true,
+    chain: "solana",
+    txHash: executed.operation.signature ?? "",
+    signer: executed.signer,
+    metadata: {
+      provider: "local-socket-signer",
+      signerProtocol: 2,
+      signerOperationState: executed.operation.state,
+      signerIntentDigest: executed.operation.intentDigest,
+      signerTransactionDigest: executed.operation.transactionDigest,
+    },
+  };
   return {
     ok: true,
     tx: {

@@ -16,6 +16,9 @@ import {
   type WalletProviderBalanceResult,
   type WalletProviderCapabilities,
   type WalletProviderHealth,
+  type WalletProviderJupiterExecutionV2,
+  type WalletProviderJupiterIntentV2,
+  type WalletProviderJupiterReviewV2,
   type WalletProviderPrepareTxRequest,
   type WalletProviderPrepareTxResult,
   type WalletProviderSendTxRequest,
@@ -73,6 +76,8 @@ const SIGNER_SOCKET_TIMEOUT_MS: Record<LocalSocketSignerRequest["op"], number> =
   "v2.wallet.importLegacy": 30_000,
   "v2.wallet.reencrypt": 10_000,
   "v2.execute": 120_000,
+  "v2.review.prepare": 15_000,
+  "v2.review.execute": 120_000,
   "v2.operation.get": 5_000,
   "v2.operation.reconcile": 20_000,
   getAddresses: 10_000,
@@ -418,6 +423,60 @@ export class LocalSocketSignerAdapter implements WalletProviderAdapter {
       code: "wallet_provider_not_implemented",
       message:
         "local-socket-signer raw transaction signing is disabled; use a typed signer-v2 operation",
+    });
+  }
+
+  async prepareJupiterReview(request: {
+    walletId: string;
+    requestId: string;
+    mode: "autonomous" | "reviewed";
+    intent: WalletProviderJupiterIntentV2;
+  }): Promise<WalletProviderJupiterReviewV2> {
+    assertSecureLocalSignerSocket(this.socketPath);
+    await this.requireProtocolV2(request.intent.type);
+    const policy = await callSocket<LocalSocketSignerPolicyV2>(this.socketPath, {
+      op: "v2.policy.get",
+      walletId: request.walletId,
+    });
+    return await callSocket<WalletProviderJupiterReviewV2>(this.socketPath, {
+      op: "v2.review.prepare",
+      walletId: request.walletId,
+      request: {
+        requestId: request.requestId,
+        policyHash: policy.hash,
+        mode: request.mode,
+        intent: request.intent,
+      },
+    });
+  }
+
+  async executeJupiterReview(request: {
+    walletId: string;
+    requestId: string;
+    policyHash: string;
+    mode: "autonomous" | "reviewed";
+    intent: WalletProviderJupiterIntentV2;
+    transaction: {
+      serializedTxBase64: string;
+      programs: string[];
+      writableAccounts: string[];
+      submission: "rpc" | "returnSigned";
+    };
+    authorization?: { type: string; proof: unknown };
+  }): Promise<WalletProviderJupiterExecutionV2> {
+    assertSecureLocalSignerSocket(this.socketPath);
+    await this.requireProtocolV2(request.intent.type);
+    return await callSocket<WalletProviderJupiterExecutionV2>(this.socketPath, {
+      op: "v2.review.execute",
+      walletId: request.walletId,
+      request: {
+        requestId: request.requestId,
+        policyHash: request.policyHash,
+        mode: request.mode,
+        intent: request.intent,
+        transaction: request.transaction,
+        ...(request.authorization ? { authorization: request.authorization } : {}),
+      },
     });
   }
 

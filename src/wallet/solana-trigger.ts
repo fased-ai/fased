@@ -1,12 +1,17 @@
+import { createHash } from "node:crypto";
+import { fetchSolanaMintInfoViaRpc, SOLANA_ASSET_CONSTANTS } from "./solana-assets.js";
 import {
+  exactJupiterTokenAccount,
+  resolveJupiterMaxFeeLamports,
   SOLANA_NATIVE_MINT,
   validateSolanaSwapInputBalance,
   validateSolanaSwapIntentPolicy,
 } from "./solana-swap.js";
 import { inspectSerializedSolanaSwapTransaction } from "./solana-transaction-inspection.js";
-import { enforceWalletDailyCap } from "./wallet-policy.js";
 import type {
   WalletProviderAdapter,
+  WalletProviderJupiterIntentType,
+  WalletProviderJupiterIntentV2,
   WalletProviderSendTxResult,
 } from "./wallet-provider-adapter.js";
 import type { ResolvedWalletRuntimeConfig } from "./wallet-runtime-config.js";
@@ -14,6 +19,11 @@ import type { ResolvedWalletRuntimeConfig } from "./wallet-runtime-config.js";
 const JUPITER_TRIGGER_DEFAULT_BASE_URL = "https://api.jup.ag/trigger/v2";
 const JUPITER_TRIGGER_MAX_EXPIRY_MS = 30 * 24 * 60 * 60 * 1000;
 const JUPITER_TRIGGER_DEFAULT_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000;
+const SOLANA_SYSTEM_PROGRAM_ID = "11111111111111111111111111111111";
+const SOLANA_MEMO_PROGRAM_IDS = new Set([
+  "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr",
+  "Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo",
+]);
 
 export type JupiterTriggerOrder = {
   id?: string;
@@ -33,6 +43,18 @@ function stringValue(value: unknown): string | undefined {
 
 function positiveNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function positiveBaseUnits(value: unknown, field: string): string {
+  const normalized = stringValue(value);
+  if (!normalized || normalized.length > 32 || !/^\d+$/.test(normalized)) {
+    throw new Error(`${field} must be a positive base-unit integer`);
+  }
+  const parsed = BigInt(normalized);
+  if (parsed <= 0n || parsed > 18_446_744_073_709_551_615n) {
+    throw new Error(`${field} must be a positive uint64 base-unit integer`);
+  }
+  return parsed.toString();
 }
 
 function resolveTriggerApiBaseUrl(env: NodeJS.ProcessEnv = process.env): string {
@@ -94,27 +116,224 @@ function normalizeTriggerExpiry(params: { expiresAt?: number; expirySeconds?: nu
   return expiresAt;
 }
 
-async function signSerializedSolanaTx(params: {
+function triggerTransactionIdentity(value: string, supplied?: string): string {
+  return (
+    supplied?.trim() ||
+    `tx-${createHash("sha256").update(Buffer.from(value, "base64")).digest("hex")}`
+  );
+}
+
+function requireTriggerActionProgram(
+  inspection: Extract<
+    Awaited<ReturnType<typeof inspectSerializedSolanaSwapTransaction>>,
+    { ok: true }
+  >,
+  expectedProgram: string,
+): string {
+  if (!inspection.programIds.includes(expectedProgram)) {
+    throw new Error(
+      `Jupiter Trigger transaction omits the reviewed action program ${expectedProgram}`,
+    );
+  }
+  if (inspection.routeProgramIds.length > 0) {
+    throw new Error(
+      `Jupiter Trigger transaction contains unsupported opaque programs: ${inspection.routeProgramIds.join(", ")}`,
+    );
+  }
+  return expectedProgram;
+}
+
+async function resolveTriggerTransferProgram(params: {
+  mint: string;
+  rpcUrl: string;
+}): Promise<string> {
+  if (params.mint === SOLANA_NATIVE_MINT) {
+    return SOLANA_SYSTEM_PROGRAM_ID;
+  }
+  const mint = await fetchSolanaMintInfoViaRpc({ rpcUrl: params.rpcUrl, mint: params.mint });
+  if (
+    !mint ||
+    (mint.tokenProgramId !== SOLANA_ASSET_CONSTANTS.tokenProgramId &&
+      mint.tokenProgramId !== SOLANA_ASSET_CONSTANTS.token2022ProgramId)
+  ) {
+    throw new Error(`unable to resolve a supported SPL token program for ${params.mint}`);
+  }
+  return mint.tokenProgramId;
+}
+
+export function validateJupiterTriggerDepositCraftResponse(params: {
+  raw: Record<string, unknown>;
+  vaultAddress: string;
+  inputMint: string;
+  amount: string;
+  expectedInputTokenAccount: string;
+}): {
+  transaction: string;
+  requestId: string;
+} {
+  const transaction = stringValue(params.raw.transaction);
+  const requestId = stringValue(params.raw.requestId);
+  const receiverAddress = stringValue(params.raw.receiverAddress);
+  const mint = stringValue(params.raw.mint);
+  const amount = positiveBaseUnits(params.raw.amount, "Jupiter Trigger deposit amount");
+  const reviewedAmount = positiveBaseUnits(params.amount, "reviewed Trigger deposit amount");
+  const responseInputTokenAccount = stringValue(params.raw.inputTokenAccount);
+  if (!transaction || !requestId) {
+    throw new Error("Jupiter Trigger did not return a deposit transaction and request identity");
+  }
+  if (receiverAddress !== params.vaultAddress) {
+    throw new Error("Jupiter Trigger deposit receiver does not equal the authenticated vault");
+  }
+  if (mint !== params.inputMint || amount !== reviewedAmount) {
+    throw new Error("Jupiter Trigger deposit mint/amount does not equal the reviewed order");
+  }
+  if (responseInputTokenAccount && responseInputTokenAccount !== params.expectedInputTokenAccount) {
+    throw new Error(
+      "Jupiter Trigger deposit source account does not equal the reviewed wallet account",
+    );
+  }
+  return { transaction, requestId };
+}
+
+export type JupiterTriggerCancellationSemantics = {
+  vaultAddress: string;
+  refundMint: string;
+  refundAmount: string;
+};
+
+export function validateJupiterTriggerCancellationOrder(params: {
+  raw: Record<string, unknown>;
+  orderId: string;
+  walletAddress: string;
+}): JupiterTriggerCancellationSemantics {
+  if (stringValue(params.raw.id) !== params.orderId) {
+    throw new Error("Jupiter Trigger cancellation history returned a different order");
+  }
+  if (stringValue(params.raw.userPubkey) !== params.walletAddress) {
+    throw new Error("Jupiter Trigger cancellation order belongs to a different wallet");
+  }
+  const vaultAddress = stringValue(params.raw.privyWalletPubkey);
+  const refundMint = stringValue(params.raw.inputMint);
+  const refundAmount = positiveBaseUnits(
+    params.raw.remainingInputAmount,
+    "Jupiter Trigger remaining input amount",
+  );
+  if (!vaultAddress || !refundMint) {
+    throw new Error("Jupiter Trigger order history lacks exact vault/refund semantics");
+  }
+  return { vaultAddress, refundMint, refundAmount };
+}
+
+async function executeTypedTriggerTransaction(params: {
   provider: WalletProviderAdapter;
   walletId: string;
+  walletAddress: string;
   serializedTxBase64: string;
-  amount?: string;
-  tokenMint?: string;
+  rpcUrl: string;
+  type: Exclude<WalletProviderJupiterIntentType, "solana.jupiter.swap">;
+  mode?: "autonomous" | "reviewed";
+  inputMint?: string;
+  outputMint?: string;
+  inputAmount?: string;
+  minimumOutputAmount?: string;
+  sourceTokenAccount?: string;
+  destinationTokenAccount?: string;
+  triggerVault?: string;
+  triggerOrder?: string;
+  triggerRequestId: string;
+  authorization?: { type: string; proof: unknown };
+  env?: NodeJS.ProcessEnv;
 }): Promise<{ signedTxBase64: string; signer?: string }> {
-  if (!params.provider.signTx) {
-    throw new Error("wallet provider cannot sign Jupiter Trigger deposit transactions");
+  if (!params.provider.prepareJupiterReview || !params.provider.executeJupiterReview) {
+    throw new Error(
+      "Jupiter Trigger requires protocol-v2 local-socket-signer review.prepare/review.execute",
+    );
   }
-  const signed = await params.provider.signTx({
-    chain: "solana",
-    walletId: params.walletId,
+  const inspection = await inspectSerializedSolanaSwapTransaction({
     serializedTxBase64: params.serializedTxBase64,
-    amount: params.amount ?? "0",
-    tokenMint: params.tokenMint,
+    expectedSigner: params.walletAddress,
+    expectedAdditionalSigners:
+      (params.type === "solana.jupiter.trigger.cancel" ||
+        params.type === "solana.jupiter.trigger.withdraw") &&
+      params.triggerVault
+        ? [params.triggerVault]
+        : [],
+    rpcUrl: params.rpcUrl,
   });
-  if (!signed.ok || !signed.signedTxBase64) {
-    throw new Error("wallet provider failed to sign Jupiter Trigger transaction");
+  if (!inspection.ok) {
+    throw new Error(inspection.message);
   }
-  return { signedTxBase64: signed.signedTxBase64, signer: signed.signer };
+  let expectedActionProgram: string;
+  if (params.type === "solana.jupiter.trigger.auth") {
+    const memoPrograms = inspection.programIds.filter((programId) =>
+      SOLANA_MEMO_PROGRAM_IDS.has(programId),
+    );
+    if (memoPrograms.length !== 1) {
+      throw new Error("Jupiter Trigger auth must contain exactly one supported Memo program");
+    }
+    expectedActionProgram = memoPrograms[0]!;
+  } else {
+    const mint =
+      params.type === "solana.jupiter.trigger.cancel" ||
+      params.type === "solana.jupiter.trigger.withdraw"
+        ? params.outputMint
+        : params.inputMint;
+    if (!mint) {
+      throw new Error("typed Jupiter Trigger transfer is missing its reviewed mint");
+    }
+    expectedActionProgram = await resolveTriggerTransferProgram({ mint, rpcUrl: params.rpcUrl });
+  }
+  const actionProgram = requireTriggerActionProgram(inspection, expectedActionProgram);
+  const intent: WalletProviderJupiterIntentV2 = {
+    type: params.type,
+    jupiter: {
+      owner: params.walletAddress,
+      inputMint: params.inputMint,
+      outputMint: params.outputMint,
+      inputAmount: params.inputAmount ?? "0",
+      maxInputAmount: params.inputAmount ?? "0",
+      minimumOutputAmount: params.minimumOutputAmount ?? "0",
+      maxFeeLamports: resolveJupiterMaxFeeLamports(params.env ?? process.env),
+      sourceTokenAccount: params.sourceTokenAccount,
+      destinationTokenAccount: params.destinationTokenAccount,
+      programs: [...inspection.programIds].toSorted(),
+      trigger: {
+        program: actionProgram,
+        vault: params.triggerVault,
+        order: params.triggerOrder,
+        requestId: params.triggerRequestId,
+      },
+    },
+  };
+  const requestId = `jupiter-trigger:${createHash("sha256")
+    .update(`${params.walletId}\0${params.type}\0${params.triggerRequestId}`)
+    .digest("hex")}`;
+  const review = await params.provider.prepareJupiterReview({
+    walletId: params.walletId,
+    requestId,
+    mode: params.mode ?? "autonomous",
+    intent,
+  });
+  const executed = await params.provider.executeJupiterReview({
+    walletId: params.walletId,
+    requestId,
+    policyHash: review.policyHash,
+    mode: params.mode ?? "autonomous",
+    intent,
+    transaction: {
+      serializedTxBase64: params.serializedTxBase64,
+      programs: inspection.programIds,
+      writableAccounts: inspection.writableAccounts,
+      submission: "returnSigned",
+    },
+    ...(params.authorization ? { authorization: params.authorization } : {}),
+  });
+  if (!executed.signedTxBase64 || !executed.operation.signature) {
+    throw new Error(
+      `typed Jupiter Trigger signing did not return signed bytes (state=${executed.operation.state})`,
+    );
+  }
+  return { signedTxBase64: executed.signedTxBase64, signer: executed.signer };
 }
 
 async function authenticateJupiterTrigger(params: {
@@ -139,24 +358,21 @@ async function authenticateJupiterTrigger(params: {
   if (!transaction) {
     throw new Error("jupiter trigger did not return an auth transaction");
   }
-  const inspection = await inspectSerializedSolanaSwapTransaction({
-    serializedTxBase64: transaction,
-    expectedSigner: params.walletAddress,
-    rpcUrl: params.rpcUrl,
-  });
-  if (!inspection.ok) {
-    throw new Error(inspection.message);
+  if (!params.rpcUrl?.trim()) {
+    throw new Error("Solana RPC is required for typed Jupiter Trigger authentication");
   }
-  if (inspection.routeProgramIds.length > 0) {
-    throw new Error(
-      `jupiter trigger auth uses unexpected program ${inspection.routeProgramIds[0]}`,
-    );
-  }
-  const signed = await signSerializedSolanaTx({
+  const signed = await executeTypedTriggerTransaction({
     provider: params.provider,
     walletId: params.walletId,
+    walletAddress: params.walletAddress,
     serializedTxBase64: transaction,
-    amount: "0",
+    rpcUrl: params.rpcUrl,
+    type: "solana.jupiter.trigger.auth",
+    triggerRequestId: triggerTransactionIdentity(
+      transaction,
+      stringValue(challenge.challengeId) ?? stringValue(challenge.requestId),
+    ),
+    env: params.env,
   });
   const verified = await triggerJson<Record<string, unknown>>({
     path: "/auth/verify",
@@ -205,6 +421,51 @@ async function getOrRegisterJupiterVault(params: {
       });
     }
   }
+}
+
+async function getJupiterTriggerCancellationSemantics(params: {
+  apiKey: string;
+  token: string;
+  orderId: string;
+  walletAddress: string;
+  env?: NodeJS.ProcessEnv;
+}): Promise<JupiterTriggerCancellationSemantics> {
+  let offset = 0;
+  for (let page = 0; page < 10; page += 1) {
+    const raw = await triggerJson<Record<string, unknown>>({
+      path: `/orders/history?limit=100&offset=${offset}`,
+      apiKey: params.apiKey,
+      token: params.token,
+      env: params.env,
+    });
+    const orders = Array.isArray(raw.orders) ? raw.orders : [];
+    const order = orders.find(
+      (candidate): candidate is Record<string, unknown> =>
+        Boolean(candidate) &&
+        typeof candidate === "object" &&
+        !Array.isArray(candidate) &&
+        stringValue((candidate as Record<string, unknown>).id) === params.orderId,
+    );
+    if (order) {
+      return validateJupiterTriggerCancellationOrder({
+        raw: order,
+        orderId: params.orderId,
+        walletAddress: params.walletAddress,
+      });
+    }
+    const pagination =
+      raw.pagination && typeof raw.pagination === "object" && !Array.isArray(raw.pagination)
+        ? (raw.pagination as Record<string, unknown>)
+        : undefined;
+    const total = positiveNumber(pagination?.total);
+    offset += orders.length;
+    if (orders.length === 0 || orders.length < 100 || (total !== undefined && offset >= total)) {
+      break;
+    }
+  }
+  throw new Error(
+    "Jupiter Trigger order history did not return the locked order; no withdrawal was signed",
+  );
 }
 
 export function validateJupiterTriggerLimitOrderIntent(params: {
@@ -321,48 +582,63 @@ export async function createJupiterTriggerLimitOrder(params: {
       outputMint: params.outputMint,
       userAddress: params.walletAddress,
       amount: params.amount,
+      orderType: "price",
+      orderSubType: "single",
     },
     env,
   });
-  const depositTx = stringValue(deposit.transaction);
-  const depositRequestId = stringValue(deposit.requestId);
-  if (!depositTx || !depositRequestId) {
-    throw new Error("jupiter trigger did not return a deposit transaction");
+  if (!params.rpcUrl?.trim()) {
+    throw new Error("Solana RPC is required for typed Jupiter Trigger deposits");
   }
-  const depositInspection = await inspectSerializedSolanaSwapTransaction({
-    serializedTxBase64: depositTx,
-    expectedSigner: params.walletAddress,
-    rpcUrl: params.rpcUrl,
-  });
-  if (!depositInspection.ok) {
-    throw new Error(depositInspection.message);
-  }
-  if (depositInspection.routeProgramIds.length > 0) {
+  const vaultPubkey = stringValue(vault.vaultPubkey);
+  if (!vaultPubkey || stringValue(vault.userPubkey) !== params.walletAddress) {
     throw new Error(
-      `jupiter trigger deposit uses unexpected program ${depositInspection.routeProgramIds[0]}`,
+      "Jupiter Trigger vault response does not bind the authenticated wallet to an exact vault",
     );
   }
-  const daily = enforceWalletDailyCap({
-    config: params.config,
-    chain: "solana",
+  const sourceTokenAccount =
+    params.inputMint === SOLANA_NATIVE_MINT
+      ? params.walletAddress
+      : await exactJupiterTokenAccount({
+          rpcUrl: params.rpcUrl,
+          owner: params.walletAddress,
+          mint: params.inputMint,
+        });
+  const destinationTokenAccount =
+    params.inputMint === SOLANA_NATIVE_MINT
+      ? vaultPubkey
+      : await exactJupiterTokenAccount({
+          rpcUrl: params.rpcUrl,
+          owner: vaultPubkey,
+          mint: params.inputMint,
+        });
+  const validatedDeposit = validateJupiterTriggerDepositCraftResponse({
+    raw: deposit,
+    vaultAddress: vaultPubkey,
+    inputMint: params.inputMint,
     amount: params.amount,
-    tokenMint: params.inputMint === SOLANA_NATIVE_MINT ? undefined : params.inputMint,
-    walletId: params.walletId,
-    env,
+    expectedInputTokenAccount: sourceTokenAccount,
   });
-  if (!daily.ok) {
-    throw new Error(daily.message ?? daily.code ?? "wallet daily cap exceeded");
-  }
-  const signedDeposit = await signSerializedSolanaTx({
+  const signedDeposit = await executeTypedTriggerTransaction({
     provider: params.provider,
     walletId: params.walletId,
-    serializedTxBase64: depositTx,
-    amount: params.amount,
-    tokenMint: params.inputMint === SOLANA_NATIVE_MINT ? undefined : params.inputMint,
+    walletAddress: params.walletAddress,
+    serializedTxBase64: validatedDeposit.transaction,
+    rpcUrl: params.rpcUrl,
+    type: "solana.jupiter.trigger.create",
+    inputMint: params.inputMint,
+    outputMint: params.outputMint,
+    inputAmount: params.amount,
+    sourceTokenAccount,
+    destinationTokenAccount,
+    triggerVault: vaultPubkey,
+    triggerRequestId: validatedDeposit.requestId,
+    mode: params.autonomous === false ? "reviewed" : "autonomous",
+    env,
   });
   const orderBody = {
     orderType: "single",
-    depositRequestId,
+    depositRequestId: validatedDeposit.requestId,
     depositSignedTx: signedDeposit.signedTxBase64,
     userPubkey: params.walletAddress,
     inputMint: params.inputMint,
@@ -385,12 +661,19 @@ export async function createJupiterTriggerLimitOrder(params: {
     body: orderBody,
     env,
   });
+  const orderId = stringValue(raw.id);
+  const txSignature = stringValue(raw.txSignature);
+  if (!orderId || !txSignature) {
+    throw new Error(
+      "Jupiter Trigger create response is ambiguous; reconcile order history before any new deposit",
+    );
+  }
   return {
     ok: true,
     vault,
     order: {
-      id: stringValue(raw.id),
-      txSignature: stringValue(raw.txSignature),
+      id: orderId,
+      txSignature,
       raw,
     },
   };
@@ -479,24 +762,54 @@ export async function cancelJupiterTriggerOrder(params: {
   if (!transaction || !cancelRequestId) {
     throw new Error("jupiter trigger did not return a cancel withdrawal transaction");
   }
-  const inspection = await inspectSerializedSolanaSwapTransaction({
-    serializedTxBase64: transaction,
-    expectedSigner: params.walletAddress,
-    rpcUrl: params.rpcUrl,
+  const responseOrderId = stringValue(cancel.id);
+  if (responseOrderId && responseOrderId !== orderId) {
+    throw new Error("Jupiter Trigger returned a cancellation for a different order");
+  }
+  if (!params.rpcUrl?.trim()) {
+    throw new Error("Solana RPC is required for typed Jupiter Trigger cancellation");
+  }
+  // The documented cancel response contains only id/transaction/requestId.
+  // Resolve the exact locked order after initiation, when it can no longer
+  // fill, and bind the withdrawal to that vault/mint/remaining amount.
+  const semantics = await getJupiterTriggerCancellationSemantics({
+    apiKey,
+    token,
+    orderId,
+    walletAddress: params.walletAddress,
+    env,
   });
-  if (!inspection.ok) {
-    throw new Error(inspection.message);
-  }
-  if (inspection.routeProgramIds.length > 0) {
-    throw new Error(
-      `jupiter trigger cancel uses unexpected program ${inspection.routeProgramIds[0]}`,
-    );
-  }
-  const signed = await signSerializedSolanaTx({
+  const sourceTokenAccount =
+    semantics.refundMint === SOLANA_NATIVE_MINT
+      ? semantics.vaultAddress
+      : await exactJupiterTokenAccount({
+          rpcUrl: params.rpcUrl,
+          owner: semantics.vaultAddress,
+          mint: semantics.refundMint,
+        });
+  const destinationTokenAccount =
+    semantics.refundMint === SOLANA_NATIVE_MINT
+      ? params.walletAddress
+      : await exactJupiterTokenAccount({
+          rpcUrl: params.rpcUrl,
+          owner: params.walletAddress,
+          mint: semantics.refundMint,
+        });
+  const signed = await executeTypedTriggerTransaction({
     provider: params.provider,
     walletId: params.walletId,
+    walletAddress: params.walletAddress,
     serializedTxBase64: transaction,
-    amount: "0",
+    rpcUrl: params.rpcUrl,
+    type: "solana.jupiter.trigger.cancel",
+    outputMint: semantics.refundMint,
+    minimumOutputAmount: semantics.refundAmount,
+    sourceTokenAccount,
+    destinationTokenAccount,
+    triggerVault: semantics.vaultAddress,
+    triggerOrder: orderId,
+    triggerRequestId: cancelRequestId,
+    env,
   });
   const raw = await triggerJson<Record<string, unknown>>({
     path: `/orders/price/confirm-cancel/${encodeURIComponent(orderId)}`,
@@ -509,13 +822,19 @@ export async function cancelJupiterTriggerOrder(params: {
     },
     env,
   });
+  const txSignature = stringValue(raw.txSignature);
+  if (!txSignature) {
+    throw new Error(
+      "Jupiter Trigger cancellation response is ambiguous; reconcile the existing request/signature and do not sign another withdrawal",
+    );
+  }
   return {
     ok: true,
     raw,
     tx: {
       ok: true,
       chain: "solana",
-      txHash: stringValue(raw.txSignature) ?? "",
+      txHash: txSignature,
       signer: params.walletAddress,
       metadata: {
         provider: "jupiter-trigger",

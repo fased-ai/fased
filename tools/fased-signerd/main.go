@@ -668,7 +668,7 @@ func mustValidate(req request, cfg signerConfig) error {
 		if len(req.Request) > 0 || req.Chain != "" || strings.TrimSpace(req.WalletID) == "" {
 			return errors.New("invalid signer request")
 		}
-	case "v2.policy.put", "v2.wallet.create", "v2.wallet.import", "v2.wallet.importLegacy", "v2.execute", "v2.operation.get", "v2.operation.reconcile":
+	case "v2.policy.put", "v2.wallet.create", "v2.wallet.import", "v2.wallet.importLegacy", "v2.execute", "v2.review.prepare", "v2.review.execute", "v2.operation.get", "v2.operation.reconcile":
 		if len(req.Request) == 0 || req.Chain != "" || strings.TrimSpace(req.WalletID) == "" {
 			return errors.New("invalid signer request")
 		}
@@ -959,6 +959,8 @@ func parseArgs() signerConfig {
 		"v2.webauthn.credentials.list":    getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WEBAUTHN_ADMIN", 60),
 		"v2.review.authorization.begin":   getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_REVIEW_AUTH", 60),
 		"v2.review.authorization.finish":  getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_REVIEW_AUTH", 60),
+		"v2.review.prepare":               getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_REVIEW", 60),
+		"v2.review.execute":               getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_EXECUTE", 60),
 		"custodyStatus":                   getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_CUSTODYSTATUS", 300),
 		"unlockCustody":                   getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_UNLOCKCUSTODY", 60),
 		"lockCustody":                     getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_LOCKCUSTODY", 120),

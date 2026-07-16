@@ -73,6 +73,16 @@ const SignerSatAccountV2Schema = Type.Object(
   { additionalProperties: false },
 );
 
+const SignerJupiterTriggerIntentV2Schema = Type.Object(
+  {
+    program: Type.String(),
+    vault: Type.Optional(Type.String()),
+    order: Type.Optional(Type.String()),
+    requestId: Type.Optional(Type.String()),
+  },
+  { additionalProperties: false },
+);
+
 const SignerSatContextV2Schema = Type.Object(
   {
     targetAuthority: Type.Optional(Type.String()),
@@ -82,6 +92,23 @@ const SignerSatContextV2Schema = Type.Object(
     minerAuthorities: Type.Optional(Type.Array(Type.String())),
     frontCycleIds: Type.Optional(Type.Array(Type.String())),
     backCycleIds: Type.Optional(Type.Array(Type.String())),
+  },
+  { additionalProperties: false },
+);
+
+const SignerJupiterIntentV2Schema = Type.Object(
+  {
+    owner: Type.String(),
+    inputMint: Type.Optional(Type.String()),
+    outputMint: Type.Optional(Type.String()),
+    inputAmount: Type.Optional(Type.String()),
+    maxInputAmount: Type.Optional(Type.String()),
+    minimumOutputAmount: Type.Optional(Type.String()),
+    maxFeeLamports: Type.String(),
+    sourceTokenAccount: Type.Optional(Type.String()),
+    destinationTokenAccount: Type.Optional(Type.String()),
+    programs: Type.Array(Type.String(), { minItems: 1, maxItems: 64 }),
+    trigger: Type.Optional(SignerJupiterTriggerIntentV2Schema),
   },
   { additionalProperties: false },
 );
@@ -97,7 +124,7 @@ const SignerSatInstructionV2Schema = Type.Object(
   { additionalProperties: false },
 );
 
-const SignerIntentV2Schema = Type.Union([
+export const SignerIntentV2Schema = Type.Union([
   Type.Object(
     {
       type: Type.Literal("solana.nativeTransfer"),
@@ -130,7 +157,40 @@ const SignerIntentV2Schema = Type.Union([
     },
     { additionalProperties: false },
   ),
+  Type.Object(
+    {
+      type: Type.Union([
+        Type.Literal("solana.jupiter.swap"),
+        Type.Literal("solana.jupiter.trigger.auth"),
+        Type.Literal("solana.jupiter.trigger.create"),
+        Type.Literal("solana.jupiter.trigger.deposit"),
+        Type.Literal("solana.jupiter.trigger.cancel"),
+        Type.Literal("solana.jupiter.trigger.withdraw"),
+      ]),
+      jupiter: SignerJupiterIntentV2Schema,
+    },
+    { additionalProperties: false },
+  ),
 ]);
+
+export type SignerIntentV2 = Static<typeof SignerIntentV2Schema>;
+
+const SignerReviewModeV2Schema = Type.Union([Type.Literal("autonomous"), Type.Literal("reviewed")]);
+
+const SignerSolanaTransactionEnvelopeV2Schema = Type.Object(
+  {
+    serializedTxBase64: Type.String(),
+    programs: Type.Array(Type.String(), { minItems: 1, maxItems: 64 }),
+    writableAccounts: Type.Array(Type.String(), { minItems: 1, maxItems: 64 }),
+    submission: Type.Union([Type.Literal("rpc"), Type.Literal("returnSigned")]),
+  },
+  { additionalProperties: false },
+);
+
+const SignerReviewAuthorizationV2Schema = Type.Object(
+  { type: Type.String(), proof: Type.Unknown() },
+  { additionalProperties: false },
+);
 
 const SignerWalletPolicyCreateV2Schema = Type.Object(
   {
@@ -297,6 +357,40 @@ export const LocalSocketSignerRequestSchema = Type.Union(
             requestId: Type.String(),
             policyHash: Type.String({ pattern: "^sha256:[0-9a-f]{64}$" }),
             intent: SignerIntentV2Schema,
+          },
+          { additionalProperties: false },
+        ),
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        op: Type.Literal("v2.review.prepare"),
+        walletId: Type.String(),
+        request: Type.Object(
+          {
+            requestId: Type.String(),
+            policyHash: Type.String({ pattern: "^sha256:[0-9a-f]{64}$" }),
+            mode: SignerReviewModeV2Schema,
+            intent: SignerIntentV2Schema,
+          },
+          { additionalProperties: false },
+        ),
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        op: Type.Literal("v2.review.execute"),
+        walletId: Type.String(),
+        request: Type.Object(
+          {
+            requestId: Type.String(),
+            policyHash: Type.String({ pattern: "^sha256:[0-9a-f]{64}$" }),
+            mode: SignerReviewModeV2Schema,
+            intent: SignerIntentV2Schema,
+            transaction: SignerSolanaTransactionEnvelopeV2Schema,
+            authorization: Type.Optional(SignerReviewAuthorizationV2Schema),
           },
           { additionalProperties: false },
         ),
@@ -526,6 +620,37 @@ export const LocalSocketSignerOperationV2Schema = Type.Object(
   { additionalProperties: false },
 );
 
+export const LocalSocketSignerReviewV2Schema = Type.Object(
+  {
+    requestId: Type.String(),
+    walletId: Type.String(),
+    intentType: Type.String(),
+    intentDigest: Type.String({ pattern: "^sha256:[0-9a-f]{64}$" }),
+    policyHash: Type.String({ pattern: "^sha256:[0-9a-f]{64}$" }),
+    mode: SignerReviewModeV2Schema,
+    nonce: Type.String({ pattern: "^[0-9a-f]{64}$" }),
+    semanticIntent: SignerIntentV2Schema,
+    issuedAt: Type.String(),
+    state: Type.Union([Type.Literal("prepared"), Type.Literal("signed")]),
+    preparedAt: Type.String(),
+    expiresAt: Type.String(),
+    updatedAt: Type.String(),
+    transactionDigest: Type.Optional(Type.String()),
+    signature: Type.Optional(Type.String()),
+  },
+  { additionalProperties: false },
+);
+
+export const LocalSocketSignerReviewExecutionV2Schema = Type.Object(
+  {
+    review: LocalSocketSignerReviewV2Schema,
+    operation: LocalSocketSignerOperationV2Schema,
+    signedTxBase64: Type.Optional(Type.String()),
+    signer: Type.String(),
+  },
+  { additionalProperties: false },
+);
+
 const LocalSocketSignerWalletPolicyResultV2Schema = Type.Object(
   {
     wallet: LocalSocketSignerWalletV2Schema,
@@ -572,6 +697,10 @@ export function validateLocalSocketSignerResult(
     case "v2.operation.get":
     case "v2.operation.reconcile":
       return Value.Check(LocalSocketSignerOperationV2Schema, result);
+    case "v2.review.prepare":
+      return Value.Check(LocalSocketSignerReviewV2Schema, result);
+    case "v2.review.execute":
+      return Value.Check(LocalSocketSignerReviewExecutionV2Schema, result);
     case "getAddresses":
       return Value.Check(LocalSocketSignerAddressMapSchema, result);
     case "getBalance":

@@ -5,6 +5,7 @@ import {
   executeSolanaSwapApprovalPayload,
   fetchJupiterSwapOrder,
   inspectAndValidateSolanaSwapOrder,
+  prepareSolanaSwapSignerReview,
   SOLANA_NATIVE_MINT,
   validateSolanaSwapIntentPolicy,
 } from "../../wallet/solana-swap.js";
@@ -588,6 +589,21 @@ export function createWalletActionTool(opts?: {
           throw new Error("automated execution disabled by wallet policy");
         }
         const orderId = readStringParam(params, "orderId", { required: true });
+        if (!autonomous) {
+          return jsonResult({
+            ok: true,
+            live: false,
+            plan: {
+              kind: "solana_limit_cancel",
+              walletHandle: selection.walletHandle,
+              walletId: selection.walletId,
+              orderId,
+              mode,
+            },
+            message:
+              "Review this cancellation, then execute it through the signer-owned reviewed authorization flow.",
+          });
+        }
         appendWalletAuditEntry({
           action: "send_requested",
           actor: requesterAgentId ?? ownerAgentId ?? "agent",
@@ -957,8 +973,10 @@ export function createWalletActionTool(opts?: {
         routeLabel: order.routeLabel,
         programIds: inspection.programIds,
         routeProgramIds: inspection.routeProgramIds,
+        writableAccounts: inspection.writableAccounts,
         usesAddressLookupTables: inspection.usesAddressLookupTables,
         jupiterRequestId: order.requestId,
+        serializedTxBase64: order.transaction,
       };
 
       if (action === "quote") {
@@ -1022,6 +1040,25 @@ export function createWalletActionTool(opts?: {
           const failed = simulation.checks.find((check) => check.status === "fail");
           throw new Error(failed?.detail ?? "wallet policy rejected");
         }
+        if (!rpcUrl?.trim()) {
+          throw new Error("Solana RPC is required to prepare a signer-owned swap review");
+        }
+        const signerReview = await prepareSolanaSwapSignerReview({
+          provider,
+          walletId: selection.walletId,
+          owner: taker,
+          order,
+          inspection,
+          rpcUrl,
+          mode: "reviewed",
+          env: process.env,
+        });
+        Object.assign(payload, {
+          signerReviewId: signerReview.review.requestId,
+          signerPolicyHash: signerReview.review.policyHash,
+          signerIntentDigest: signerReview.review.intentDigest,
+          signerReviewExpiresAt: signerReview.review.expiresAt,
+        });
         const request = createWalletSendApprovalRequest({
           payload,
           requestedBy: requesterAgentId ?? ownerAgentId ?? "agent",

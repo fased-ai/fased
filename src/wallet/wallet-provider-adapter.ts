@@ -93,6 +93,73 @@ export type WalletProviderSignTxResult = {
   metadata?: Record<string, unknown>;
 };
 
+export type WalletProviderJupiterIntentType =
+  | "solana.jupiter.swap"
+  | "solana.jupiter.trigger.auth"
+  | "solana.jupiter.trigger.create"
+  | "solana.jupiter.trigger.deposit"
+  | "solana.jupiter.trigger.cancel"
+  | "solana.jupiter.trigger.withdraw";
+
+export type WalletProviderJupiterIntentV2 = {
+  type: WalletProviderJupiterIntentType;
+  jupiter: {
+    owner: string;
+    inputMint?: string;
+    outputMint?: string;
+    inputAmount?: string;
+    maxInputAmount?: string;
+    minimumOutputAmount?: string;
+    maxFeeLamports: string;
+    sourceTokenAccount?: string;
+    destinationTokenAccount?: string;
+    programs: string[];
+    trigger?: {
+      program: string;
+      vault?: string;
+      order?: string;
+      requestId?: string;
+    };
+  };
+};
+
+export type WalletProviderJupiterReviewV2 = {
+  requestId: string;
+  walletId: string;
+  intentType: WalletProviderJupiterIntentType;
+  intentDigest: string;
+  policyHash: string;
+  mode: "autonomous" | "reviewed";
+  nonce: string;
+  semanticIntent: WalletProviderJupiterIntentV2;
+  issuedAt: string;
+  state: "prepared" | "signed";
+  preparedAt: string;
+  expiresAt: string;
+  updatedAt: string;
+  transactionDigest?: string;
+  signature?: string;
+};
+
+export type WalletProviderJupiterExecutionV2 = {
+  review: WalletProviderJupiterReviewV2;
+  operation: {
+    requestId: string;
+    walletId: string;
+    intentType: string;
+    intentDigest: string;
+    transactionDigest?: string;
+    policyHash: string;
+    asset: string;
+    amount: string;
+    state: "reserved" | "broadcast" | "confirmed" | "failed" | "unknown";
+    signature?: string;
+    error?: string;
+  };
+  signedTxBase64?: string;
+  signer: string;
+};
+
 export type WalletProviderBalanceResult = {
   ok: boolean;
   chain: WalletChain;
@@ -144,6 +211,26 @@ export interface WalletProviderAdapter {
   prepareTx(request: WalletProviderPrepareTxRequest): Promise<WalletProviderPrepareTxResult>;
   signTx?(request: WalletProviderSendTxRequest): Promise<WalletProviderSignTxResult>;
   sendTx(request: WalletProviderSendTxRequest): Promise<WalletProviderSendTxResult>;
+  prepareJupiterReview?(request: {
+    walletId: string;
+    requestId: string;
+    mode: "autonomous" | "reviewed";
+    intent: WalletProviderJupiterIntentV2;
+  }): Promise<WalletProviderJupiterReviewV2>;
+  executeJupiterReview?(request: {
+    walletId: string;
+    requestId: string;
+    policyHash: string;
+    mode: "autonomous" | "reviewed";
+    intent: WalletProviderJupiterIntentV2;
+    transaction: {
+      serializedTxBase64: string;
+      programs: string[];
+      writableAccounts: string[];
+      submission: "rpc" | "returnSigned";
+    };
+    authorization?: { type: string; proof: unknown };
+  }): Promise<WalletProviderJupiterExecutionV2>;
 
   rotateKeys?(): Promise<{
     ok: boolean;

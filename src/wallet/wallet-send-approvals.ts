@@ -83,6 +83,14 @@ export type WalletSendApprovalPayload = {
   routeLabel?: string;
   jupiterRequestId?: string;
   serializedTxBase64?: string;
+  programIds?: string[];
+  routeProgramIds?: string[];
+  writableAccounts?: string[];
+  usesAddressLookupTables?: boolean;
+  signerReviewId?: string;
+  signerPolicyHash?: string;
+  signerIntentDigest?: string;
+  signerReviewExpiresAt?: string;
   providerId?: WalletProviderId;
   walletId?: string;
   walletName?: string;

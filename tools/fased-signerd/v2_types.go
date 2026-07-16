@@ -21,6 +21,12 @@ const (
 	intentSolanaNativeTransfer     = "solana.nativeTransfer"
 	intentSolanaSPLTransferChecked = "solana.splTransferChecked"
 	intentSolanaSATAction          = "solana.satAction"
+	intentSolanaJupiterSwap        = "solana.jupiter.swap"
+	intentSolanaTriggerAuth        = "solana.jupiter.trigger.auth"
+	intentSolanaTriggerCreate      = "solana.jupiter.trigger.create"
+	intentSolanaTriggerDeposit     = "solana.jupiter.trigger.deposit"
+	intentSolanaTriggerCancel      = "solana.jupiter.trigger.cancel"
+	intentSolanaTriggerWithdraw    = "solana.jupiter.trigger.withdraw"
 
 	operationReserved  = "reserved"
 	operationBroadcast = "broadcast"
@@ -35,6 +41,12 @@ var signerV2Capabilities = signerCapabilitiesV2{
 		intentSolanaNativeTransfer,
 		intentSolanaSPLTransferChecked,
 		intentSolanaSATAction,
+		intentSolanaJupiterSwap,
+		intentSolanaTriggerAuth,
+		intentSolanaTriggerCreate,
+		intentSolanaTriggerDeposit,
+		intentSolanaTriggerCancel,
+		intentSolanaTriggerWithdraw,
 	},
 	OperationStates: []string{
 		operationReserved,
@@ -54,6 +66,9 @@ var signerV2Capabilities = signerCapabilitiesV2{
 		"typedSATActions",
 		"signerOwnedWebAuthn",
 		"singleUseReviewedAuthorization",
+		"typedJupiterSemantics",
+		"signerOwnedReviewPrepareExecute",
+		"verifiedAddressLookupTables",
 	},
 }
 
@@ -83,6 +98,7 @@ type signerIntentV2 struct {
 	Keys         []signerSATAccountV2     `json:"keys,omitempty"`
 	Context      *signerSATContextV2      `json:"context,omitempty"`
 	Instructions []signerSATInstructionV2 `json:"instructions,omitempty"`
+	Jupiter      *signerJupiterIntentV2   `json:"jupiter,omitempty"`
 }
 
 type signerExecuteRequestV2 struct {
@@ -184,6 +200,7 @@ type normalizedIntentV2 struct {
 	Destination      string
 	Instructions     []solana.Instruction
 	PolicyOperation  string
+	CapExempt        bool
 }
 
 func normalizePublicKeyV2(raw, field string) (string, error) {
@@ -214,6 +231,9 @@ func normalizeSignerIntentV2(input signerIntentV2) (normalizedIntentV2, error) {
 }
 
 func normalizeSignerIntentForWalletV2(input signerIntentV2, wallet *solana.PublicKey) (normalizedIntentV2, error) {
+	if isJupiterIntentTypeV2(strings.TrimSpace(input.Type)) {
+		return normalizeJupiterIntentV2(input)
+	}
 	intent := signerIntentV2{Type: strings.TrimSpace(input.Type)}
 	var program string
 	var asset string
