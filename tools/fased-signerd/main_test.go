@@ -63,6 +63,28 @@ func TestReviewLookupRequiresAnExactWalletScopedRequest(t *testing.T) {
 	}
 }
 
+func TestCompatibilityReadsRequireAnExactWalletScope(t *testing.T) {
+	cfg := signerConfig{chains: []string{"solana"}}
+	for _, valid := range []request{
+		{Op: "getAddresses", WalletID: "agent"},
+		{Op: "getBalance", Chain: "solana", WalletID: "agent"},
+	} {
+		if err := mustValidate(valid, cfg); err != nil {
+			t.Fatalf("valid wallet-scoped read was rejected: request=%#v err=%v", valid, err)
+		}
+	}
+	for _, invalid := range []request{
+		{Op: "getAddresses"},
+		{Op: "getAddresses", WalletID: "   "},
+		{Op: "getBalance", Chain: "solana"},
+		{Op: "getBalance", Chain: "solana", WalletID: "   "},
+	} {
+		if err := mustValidate(invalid, cfg); err == nil {
+			t.Fatalf("unscoped compatibility read was accepted: %#v", invalid)
+		}
+	}
+}
+
 func TestRemovedSignerOperationsCannotMutateSignerState(t *testing.T) {
 	store, keys := openTestSignerV2(t)
 	destination := solana.NewWallet().PublicKey().String()

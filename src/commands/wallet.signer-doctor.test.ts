@@ -173,6 +173,122 @@ describe("collectWalletSignerDoctorReport", () => {
     ).rejects.toThrow(/embedded-keystore was retired/i);
   });
 
+  it("uses signer health metadata for wallet-scoped network readiness", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-wallet-doctor-network-"));
+    tempDirs.push(root);
+    const stateDir = path.join(root, "state");
+    const walletDir = path.join(stateDir, "wallet");
+    const socketPath = path.join(walletDir, "local-signer.sock");
+    fs.mkdirSync(walletDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(walletDir, "provider-registry.v1.json"),
+      JSON.stringify({
+        version: 1,
+        providers: {
+          "embedded-keystore": { enabled: false, updatedAt: "2026-07-16T00:00:00.000Z" },
+          "local-socket-signer": { enabled: true, updatedAt: "2026-07-16T00:00:00.000Z" },
+          alchemy: { enabled: false, updatedAt: "2026-07-16T00:00:00.000Z" },
+          turnkey: { enabled: false, updatedAt: "2026-07-16T00:00:00.000Z" },
+          privy: { enabled: false, updatedAt: "2026-07-16T00:00:00.000Z" },
+        },
+        wallets: [
+          {
+            id: "mining",
+            name: "Mining",
+            providerId: "local-socket-signer",
+            addresses: { solana: "So11111111111111111111111111111111111111112" },
+            createdAt: "2026-07-16T00:00:00.000Z",
+            updatedAt: "2026-07-16T00:00:00.000Z",
+          },
+        ],
+        assignments: {},
+        defaultWalletId: "mining",
+        updatedAt: "2026-07-16T00:00:00.000Z",
+      }),
+      "utf8",
+    );
+    const server = createServer((socket) => {
+      socket.setEncoding("utf8");
+      socket.once("data", () => {
+        socket.end(
+          `${JSON.stringify({
+            ok: true,
+            result: {
+              details: "fased-signerd protocol-v2 ready",
+              readOnly: false,
+              keystoreType: "signer-owned-v2",
+              chains: ["solana"],
+              ready: true,
+              schema: { version: 3, supported: 3, ready: true },
+              network: {
+                ready: true,
+                wallets: [
+                  {
+                    walletId: "mining",
+                    configured: true,
+                    version: 7,
+                    hash: `hmac-sha256:${"a".repeat(64)}`,
+                    ready: true,
+                  },
+                ],
+              },
+              capabilities: {
+                protocol: { current: 2, min: 2, max: 2 },
+                intentTypes: ["solana.nativeTransfer"],
+                operationStates: ["reserved", "broadcast", "confirmed", "failed", "unknown"],
+                features: ["signerOwnedRPC"],
+              },
+              policies: [],
+              webAuthn: { configured: false, credentialCount: 0, ready: false },
+            },
+          })}\n`,
+        );
+      });
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(socketPath, resolve);
+    });
+    fs.chmodSync(socketPath, 0o600);
+
+    try {
+      const report = await collectWalletSignerDoctorReport(
+        {
+          HOME: root,
+          FASED_STATE_DIR: stateDir,
+          FASED_WALLET_LOCAL_SIGNER_LIFECYCLE: "external",
+          FASED_WALLET_LOCAL_SIGNER_SOCKET: socketPath,
+          FASED_WALLET_SOLANA_RPC_URL__MINING:
+            "https://gateway-rpc-must-not-control-readiness.invalid",
+        } as NodeJS.ProcessEnv,
+        {
+          config: {
+            wallet: { provider: { id: "local-socket-signer" } },
+          },
+        },
+      );
+
+      expect(report.checks.find((check) => check.check === "socket.health")).toMatchObject({
+        ok: true,
+        detail: "fased-signerd protocol-v2 ready",
+      });
+      expect(report.checks.find((check) => check.check === "rpc.configured.solana")).toMatchObject({
+        ok: true,
+        detail: "signer-owned network ready",
+      });
+      expect(
+        report.checks.find((check) => check.check === "rpc.configured.solana.mining"),
+      ).toMatchObject({
+        ok: true,
+        detail: "signer-owned network ready (version=7)",
+      });
+      expect(JSON.stringify(report)).not.toContain("gateway-rpc-must-not-control-readiness");
+      expect(JSON.stringify(report)).not.toContain("hmac-sha256");
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it("uses canonical local signer sidecar paths instead of socket-suffixed files", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-wallet-doctor-sidecars-"));
     tempDirs.push(root);

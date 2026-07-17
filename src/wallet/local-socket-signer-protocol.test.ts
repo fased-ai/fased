@@ -55,6 +55,55 @@ describe("local socket signer protocol", () => {
     ).toBe(true);
   });
 
+  it("requires an exact wallet-scoped native balance request and result", () => {
+    expect(parseLocalSocketSignerRequest({ op: "getAddresses", walletId: "mining" })).toEqual({
+      op: "getAddresses",
+      walletId: "mining",
+    });
+    expect(() => parseLocalSocketSignerRequest({ op: "getAddresses" })).toThrow(
+      "invalid signer request",
+    );
+    expect(
+      parseLocalSocketSignerRequest({
+        op: "getBalance",
+        chain: "solana",
+        walletId: "mining",
+      }),
+    ).toEqual({ op: "getBalance", chain: "solana", walletId: "mining" });
+    for (const request of [
+      { op: "getBalance", chain: "solana" },
+      { op: "getBalance", chain: "solana", walletId: "" },
+      {
+        op: "getBalance",
+        chain: "solana",
+        walletId: "mining",
+        rpcUrl: "https://gateway-rpc.invalid",
+      },
+    ]) {
+      expect(() => parseLocalSocketSignerRequest(request)).toThrow("invalid signer request");
+    }
+
+    const valid = {
+      ok: true,
+      chain: "solana",
+      address: "So11111111111111111111111111111111111111112",
+      balance: "4242",
+      unit: "lamports",
+    };
+    expect(validateLocalSocketSignerResult("getBalance", valid)).toBe(true);
+    for (const invalid of [
+      { ...valid, ok: false },
+      { ...valid, balance: "-1" },
+      { ...valid, balance: "1.5" },
+      { ...valid, balance: "01" },
+      { ...valid, address: "not-a-solana-address" },
+      { ...valid, unit: "SOL" },
+      { ...valid, rpcUrl: "https://signer-secret.invalid" },
+    ]) {
+      expect(validateLocalSocketSignerResult("getBalance", invalid)).toBe(false);
+    }
+  });
+
   it("accepts typed signer-v2 wallet creation and native execution", () => {
     const policy = {
       role: "agent" as const,

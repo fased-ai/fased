@@ -208,7 +208,7 @@ async function resolveSatLocalSignerAddress(
   const effectiveEnv = resolveSatEffectiveEnv(cfg, env);
   const walletId = resolveSatWalletId(cfg);
   if (!walletId) {
-    throw new Error("typed SAT signing requires an explicit mining walletId");
+    throw new Error("SAT mining local signer address lookup requires an attached walletId");
   }
   const socketPath = requireLocalSocketSignerPath(effectiveEnv);
   if (verifyCapabilities) {

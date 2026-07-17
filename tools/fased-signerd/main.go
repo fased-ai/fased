@@ -214,11 +214,11 @@ func mustValidate(req request, cfg signerConfig) error {
 			return errors.New("invalid signer request")
 		}
 	case "getAddresses":
-		if len(req.Request) > 0 || req.Chain != "" {
+		if len(req.Request) > 0 || req.Chain != "" || strings.TrimSpace(req.WalletID) == "" {
 			return errors.New("invalid signer request")
 		}
 	case "getBalance":
-		if len(req.Request) > 0 || req.Chain != "solana" {
+		if len(req.Request) > 0 || req.Chain != "solana" || strings.TrimSpace(req.WalletID) == "" {
 			return errors.New("invalid signer request")
 		}
 		if err := cfg.ensureChainAllowed(req.Chain); err != nil {

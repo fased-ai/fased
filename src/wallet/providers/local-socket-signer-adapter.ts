@@ -5,11 +5,12 @@ import type { WalletChain } from "../../config/types.wallet.js";
 import {
   parseLocalSocketSignerResponseEnvelope,
   validateLocalSocketSignerResult,
+  type LocalSocketSignerBalanceResult,
   type LocalSocketSignerRequest,
   type LocalSocketSignerOperationV2,
   type LocalSocketSignerPolicyV2,
 } from "../local-socket-signer-protocol.js";
-import { fetchSolanaMintInfoViaRpc, fetchSolanaNativeBalanceViaRpc } from "../solana-assets.js";
+import { fetchSolanaMintInfoViaRpc } from "../solana-assets.js";
 import {
   type WalletProviderAdapter,
   type WalletProviderAddressMap,
@@ -44,6 +45,21 @@ export type LocalSocketSignerHealthProbe = {
   keystoreType?: string;
   chains?: WalletChain[];
   ready?: boolean;
+  schema?: {
+    version: number;
+    supported: number;
+    ready: boolean;
+  };
+  network?: {
+    ready: boolean;
+    wallets: Array<{
+      walletId: string;
+      configured: boolean;
+      version: number;
+      hash?: string;
+      ready: boolean;
+    }>;
+  };
   capabilities?: {
     protocol: { current: 2; min: number; max: number };
     intentTypes: string[];
@@ -239,6 +255,8 @@ export async function probeLocalSocketSignerHealth(
       keystoreType?: string;
       chains?: WalletChain[];
       ready?: boolean;
+      schema?: LocalSocketSignerHealthProbe["schema"];
+      network?: LocalSocketSignerHealthProbe["network"];
       capabilities?: LocalSocketSignerHealthProbe["capabilities"];
       policies?: LocalSocketSignerHealthProbe["policies"];
     }>(socketPath, { op: "health" });
@@ -249,6 +267,8 @@ export async function probeLocalSocketSignerHealth(
       keystoreType: result?.keystoreType,
       chains: Array.isArray(result?.chains) ? result.chains : undefined,
       ready: result?.ready,
+      schema: result?.schema,
+      network: result?.network,
       capabilities: result?.capabilities,
       policies: result?.policies,
     };
@@ -452,28 +472,20 @@ export class LocalSocketSignerAdapter implements WalletProviderAdapter {
         message: "local-socket-signer supports Solana only",
       });
     }
-    const rpcUrl = this.options?.rpcUrl?.trim();
-    if (!rpcUrl) {
+    const walletId = options?.walletId?.trim() || this.options?.scopedWalletId?.trim();
+    if (!walletId) {
       throw new WalletProviderError({
         code: "wallet_provider_invalid_config",
-        message: "local-socket-signer balance lookup requires a Solana RPC URL",
+        message: "local-socket-signer balance lookup requires an explicit walletId",
       });
     }
-    const address = (await this.getAddresses(options)).solana;
-    if (!address) {
-      throw new WalletProviderError({
-        code: "wallet_provider_unavailable",
-        message: "local-socket-signer wallet has no Solana address",
-      });
-    }
-    const balance = await fetchSolanaNativeBalanceViaRpc({ rpcUrl, ownerAddress: address });
-    if (balance === null) {
-      throw new WalletProviderError({
-        code: "wallet_provider_unavailable",
-        message: "failed to resolve the signer wallet balance from Solana RPC",
-      });
-    }
-    return { ok: true, chain, address, balance, unit: "lamports" };
+    assertSecureLocalSignerSocket(this.socketPath);
+    await this.requireProtocolV2();
+    return await callSocket<LocalSocketSignerBalanceResult>(this.socketPath, {
+      op: "getBalance",
+      chain,
+      walletId,
+    });
   }
 
   async sendTx(request: WalletProviderSendTxRequest): Promise<WalletProviderSendTxResult> {

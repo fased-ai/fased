@@ -12,7 +12,9 @@ import {
 import { createLockedSignerOwnedWallet } from "../wallet/local-socket-signer-lifecycle.js";
 import {
   callLocalSocketSigner,
+  probeLocalSocketSignerHealth,
   requireLocalSocketSignerPath,
+  type LocalSocketSignerHealthProbe,
 } from "../wallet/providers/local-socket-signer-adapter.js";
 import { configureSignerOwnedWalletNetwork } from "../wallet/signer-network-admin.js";
 import { buildWalletCanaryReport, runWalletProviderCanaryReport } from "../wallet/wallet-canary.js";
@@ -1570,7 +1572,6 @@ export async function collectWalletSignerDoctorReport(
       .toLowerCase() === "hosting" || socketPath === "/run/fased-signerd/app.sock";
   const expectedSocketMode = hostingSigner ? 0o660 : 0o600;
   const { pidPath, auditPath } = resolveLocalSignerSidecarPaths(socketPath);
-  const wallet = resolveWalletConfigForRuntime(cfg, effectiveEnv);
   const checks: Array<{ check: string; ok: boolean; detail?: string }> = [];
 
   const push = (check: string, ok: boolean, detail?: string) =>
@@ -1587,6 +1588,7 @@ export async function collectWalletSignerDoctorReport(
     (entry) => entry.providerId === providerId,
   );
   const localSignerSetupPending = isLocalSigner && providerWallets.length === 0;
+  let localSignerHealth: LocalSocketSignerHealthProbe | undefined;
   const isNotFoundError = (err: unknown): boolean =>
     (err as NodeJS.ErrnoException | undefined)?.code === "ENOENT";
 
@@ -1655,13 +1657,8 @@ export async function collectWalletSignerDoctorReport(
       push("socket.health", true, "Configure");
     } else {
       try {
-        const signerHealth = await createWalletProviderAdapter({
-          cfg,
-          wallet,
-          env: effectiveEnv,
-          providerIdOverride: "local-socket-signer",
-        }).health();
-        push("socket.health", signerHealth.ok, signerHealth.details);
+        localSignerHealth = await probeLocalSocketSignerHealth(socketPath);
+        push("socket.health", localSignerHealth.ok, localSignerHealth.details);
       } catch (err) {
         push("socket.health", false, String(err));
       }
@@ -1687,6 +1684,25 @@ export async function collectWalletSignerDoctorReport(
       String(effectiveEnv.FASED_WALLET_RPC_URL ?? "").trim(),
     );
   };
+  const signerNetworks = localSignerHealth?.network?.wallets ?? [];
+  const networkForWallet = (walletId: string) =>
+    signerNetworks.find(
+      (entry) => entry.walletId.trim().toLowerCase() === walletId.trim().toLowerCase(),
+    );
+  if (isLocalSigner && registrySolanaWalletIds.length > 0) {
+    const signerNetworkReady =
+      localSignerHealth?.network?.ready === true &&
+      registrySolanaWalletIds.every((walletId) => networkForWallet(walletId)?.ready === true);
+    push(
+      "rpc.configured.solana",
+      signerNetworkReady,
+      signerNetworkReady
+        ? "signer-owned network ready"
+        : localSignerHealth?.ok
+          ? "signer-owned network pending"
+          : "signer health unavailable",
+    );
+  }
   for (const walletId of registrySolanaWalletIds) {
     push(
       `keystore.file.solana.${walletId}`,
@@ -1702,12 +1718,25 @@ export async function collectWalletSignerDoctorReport(
         ? "native signer handles decryption; normal Fased Node decryption path disabled (Local same-user isolation is not a hard boundary)"
         : "native signer is not healthy",
     );
-    const rpcConfigured = resolveChainRpcConfigured(walletId);
-    push(
-      `rpc.configured.solana.${walletId}`,
-      rpcConfigured,
-      rpcConfigured ? "configured" : "missing",
-    );
+    if (isLocalSigner) {
+      const network = networkForWallet(walletId);
+      push(
+        `rpc.configured.solana.${walletId}`,
+        network?.ready === true,
+        network?.ready
+          ? `signer-owned network ready (version=${network.version})`
+          : network?.configured
+            ? "signer-owned network is not ready"
+            : "signer-owned network is not configured",
+      );
+    } else {
+      const rpcConfigured = resolveChainRpcConfigured(walletId);
+      push(
+        `rpc.configured.solana.${walletId}`,
+        rpcConfigured,
+        rpcConfigured ? "configured" : "missing",
+      );
+    }
   }
 
   const ok = checks.every((c) => {

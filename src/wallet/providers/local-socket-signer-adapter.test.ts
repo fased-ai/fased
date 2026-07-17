@@ -201,6 +201,87 @@ describe("LocalSocketSignerAdapter protocol-v2 sends", () => {
     hash: policyHash,
   };
 
+  it("reads the exact wallet balance through signer-owned RPC without Gateway fetch", async () => {
+    const signer = await createSignerServer({
+      prefix: "fased-signer-v2-balance-",
+      handle: (request) => {
+        if (request.op === "v2.capabilities") {
+          return capabilities;
+        }
+        if (request.op === "getBalance") {
+          return {
+            ok: true,
+            chain: "solana",
+            address: "So11111111111111111111111111111111111111112",
+            balance: "4242",
+            unit: "lamports",
+          };
+        }
+        throw new Error(`unexpected op=${String(request.op)}`);
+      },
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    try {
+      const adapter = new LocalSocketSignerAdapter(signer.socketPath, {
+        rpcUrl: "https://gateway-rpc-must-not-be-used.invalid",
+        scopedWalletId: "mining",
+      });
+      await expect(adapter.getBalance("solana")).resolves.toEqual({
+        ok: true,
+        chain: "solana",
+        address: "So11111111111111111111111111111111111111112",
+        balance: "4242",
+        unit: "lamports",
+      });
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(signer.requests).toEqual([
+        { op: "v2.capabilities" },
+        { op: "getBalance", chain: "solana", walletId: "mining" },
+      ]);
+    } finally {
+      fetchSpy.mockRestore();
+      await signer.close();
+    }
+  });
+
+  it("rejects unscoped or malformed signer-owned balance reads", async () => {
+    const signer = await createSignerServer({
+      prefix: "fased-signer-v2-invalid-balance-",
+      handle: (request) => {
+        if (request.op === "v2.capabilities") {
+          return capabilities;
+        }
+        return {
+          ok: true,
+          chain: "solana",
+          address: wallet.publicKey,
+          balance: "-1",
+          unit: "lamports",
+        };
+      },
+    });
+    try {
+      const unscoped = new LocalSocketSignerAdapter(signer.socketPath);
+      await expect(unscoped.getBalance("solana")).rejects.toMatchObject({
+        code: "wallet_provider_invalid_config",
+      });
+      expect(signer.requests).toHaveLength(0);
+
+      const scoped = new LocalSocketSignerAdapter(signer.socketPath, {
+        scopedWalletId: "agent-wallet",
+      });
+      await expect(scoped.getBalance("solana")).rejects.toThrow(
+        "invalid local socket signer result for op=getBalance",
+      );
+      expect(signer.requests.map((request) => request.op)).toEqual([
+        "v2.capabilities",
+        "getBalance",
+      ]);
+    } finally {
+      await signer.close();
+    }
+  });
+
   it("acknowledges only the exact next durable signer policy version and hash", async () => {
     const nextPolicy = {
       ...policy,

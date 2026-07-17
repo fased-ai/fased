@@ -416,14 +416,14 @@ export const LocalSocketSignerRequestSchema = Type.Union(
       { additionalProperties: false },
     ),
     Type.Object(
-      { op: Type.Literal("getAddresses"), walletId: Type.Optional(Type.String()) },
+      { op: Type.Literal("getAddresses"), walletId: Type.String({ minLength: 1 }) },
       { additionalProperties: false },
     ),
     Type.Object(
       {
         op: Type.Literal("getBalance"),
         chain: WalletChainSchema,
-        walletId: Type.Optional(Type.String()),
+        walletId: Type.String({ minLength: 1 }),
       },
       { additionalProperties: false },
     ),
@@ -524,14 +524,16 @@ export const LocalSocketSignerAddressMapSchema = Type.Object(
 
 export const LocalSocketSignerBalanceResultSchema = Type.Object(
   {
-    ok: Type.Boolean(),
+    ok: Type.Literal(true),
     chain: WalletChainSchema,
-    address: Type.String(),
-    balance: Type.String(),
-    unit: Type.Optional(Type.String()),
+    address: Type.String({ pattern: "^[1-9A-HJ-NP-Za-km-z]{32,44}$" }),
+    balance: Type.String({ pattern: "^(0|[1-9][0-9]*)$" }),
+    unit: Type.Literal("lamports"),
   },
   { additionalProperties: false },
 );
+
+export type LocalSocketSignerBalanceResult = Static<typeof LocalSocketSignerBalanceResultSchema>;
 
 export const LocalSocketSignerWalletV2Schema = Type.Object(
   {
