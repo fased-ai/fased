@@ -1657,6 +1657,7 @@ describe("wallet-action-tool", () => {
                     roles: ["agent"],
                     walletIds: ["agent"],
                     chains: ["solana"],
+                    registries: ["https://clawhub.com"],
                     inputMints: [SOLANA_NATIVE_MINT],
                     outputMints: [USDC_MINT],
                     maxAmount: "1000000000",

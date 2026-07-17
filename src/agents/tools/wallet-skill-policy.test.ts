@@ -203,6 +203,31 @@ describe("wallet skill policy", () => {
     }
   });
 
+  it("does not inherit a marketplace registry for a mutating wallet grant", async () => {
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-skill-origin-"));
+    try {
+      await writeClawHubOrigin({
+        workspaceDir,
+        skillId: "daily-dca",
+        registry: "https://clawhub.com",
+      });
+      const cfg = cfgWithWalletGrant("daily-dca", {
+        agents: { list: [{ id: "owner", default: true, workspace: workspaceDir }] },
+        skills: { marketplace: { allowRegistries: ["https://clawhub.com"] } },
+      });
+      const grant = cfg.skills?.entries?.["daily-dca"]?.config?.walletActions as
+        | Record<string, unknown>
+        | undefined;
+      delete grant?.registries;
+
+      await expect(enforce({ cfg, skillId: "daily-dca" })).rejects.toThrow(
+        "wallet_action_skill_registries_required",
+      );
+    } finally {
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
+
   it("enforces skill action, amount, slippage, and autonomous caps", async () => {
     const cfg = cfgWithWalletGrant("daily-dca");
 
@@ -251,6 +276,7 @@ describe("wallet skill policy", () => {
       ["actions", "wallet_action_skill_actions_required"],
       ["roles", "wallet_action_skill_roles_required"],
       ["chains", "wallet_action_skill_chains_required"],
+      ["registries", "wallet_action_skill_registries_required"],
       ["inputMints", "wallet_action_skill_input_mints_required"],
       ["outputMints", "wallet_action_skill_output_mints_required"],
       ["maxAmount", "wallet_action_skill_amount_cap_required"],
@@ -273,7 +299,7 @@ describe("wallet skill policy", () => {
       | Record<string, unknown>
       | undefined;
     if (grant) {
-      delete grant.registries;
+      grant.registries = ["https://clawhub.com"];
     }
     await expect(enforce({ cfg, skillId: "daily-dca" })).rejects.toThrow(
       "wallet_action_skill_local_source_not_allowed",

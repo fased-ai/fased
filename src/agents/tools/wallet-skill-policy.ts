@@ -4,7 +4,6 @@ import type { ResolvedWalletRuntimeConfig } from "../../wallet/wallet-runtime-co
 import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../agent-scope.js";
 import { readClawHubSkillOrigin } from "../skills-clawhub.js";
 
-const DEFAULT_WALLET_ACTION_REGISTRIES = ["https://clawhub.com"];
 const LOCAL_WALLET_ACTION_SOURCE = "local";
 
 export type WalletSkillActionName =
@@ -58,16 +57,12 @@ function normalizeRegistryUrl(value: string | undefined): string | null {
 }
 
 function normalizeRegistryList(values: unknown): string[] {
-  const rawList = Array.isArray(values) ? values : DEFAULT_WALLET_ACTION_REGISTRIES;
-  const registries = rawList
+  if (!Array.isArray(values)) {
+    return [];
+  }
+  return values
     .map((entry) => normalizeRegistryUrl(String(entry)))
     .filter((entry): entry is string => Boolean(entry));
-  return registries.length > 0 ? registries : DEFAULT_WALLET_ACTION_REGISTRIES;
-}
-
-function readSkillsMarketplaceAllowRegistries(cfg: FasedAgentConfig | undefined): string[] {
-  const raw = cfg?.skills?.marketplace?.allowRegistries;
-  return normalizeRegistryList(raw);
 }
 
 function normalizeSkillPathId(skillId: string): string | null {
@@ -251,6 +246,9 @@ export async function enforceWalletSkillPolicy(params: {
   if (params.scheduled && permissions.cron !== true) {
     throw new Error("wallet_action_skill_cron_not_allowed");
   }
+  if (!permissions.registries?.length) {
+    throw new Error("wallet_action_skill_registries_required");
+  }
 
   const origin = await readRequesterSkillOrigin({
     cfg: params.cfg,
@@ -265,9 +263,7 @@ export async function enforceWalletSkillPolicy(params: {
     }
     return;
   }
-  const allowedRegistries = normalizeRegistryList(
-    permissions.registries ?? readSkillsMarketplaceAllowRegistries(params.cfg),
-  );
+  const allowedRegistries = normalizeRegistryList(permissions.registries);
   const registry = normalizeRegistryUrl(origin.registry);
   if (!registry || !allowedRegistries.includes(registry)) {
     throw new Error("wallet_action_skill_registry_not_allowlisted");
