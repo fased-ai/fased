@@ -34,6 +34,21 @@ type SimulationResult = {
   };
 };
 
+type SignatureStatusResult = {
+  value?: Array<{
+    err?: unknown;
+    confirmationStatus?: "processed" | "confirmed" | "finalized";
+    confirmations?: number | null;
+    slot?: number;
+  } | null>;
+};
+
+export type ReviewedSolanaReconciliation =
+  | { state: "landed"; confirmationStatus: "processed" | "confirmed" | "finalized" }
+  | { state: "failed"; reason: string }
+  | { state: "expired"; blockHeight: number }
+  | { state: "pending"; blockHeight: number };
+
 export type ReviewedSolanaTransaction = {
   unsignedTxBase64: string;
   messageBase64: string;
@@ -94,6 +109,36 @@ function normalizeRpcUrl(rpcUrl: string): string {
     throw invalid("Solana RPC URL must use HTTPS or HTTP");
   }
   return parsed.toString();
+}
+
+async function fetchStrictSolanaRpc<T>(
+  rpcUrl: string,
+  method: string,
+  params: unknown[],
+): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(normalizeRpcUrl(rpcUrl), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+    });
+  } catch {
+    throw unavailable(`Solana RPC ${method} reconciliation request failed`);
+  }
+  if (!response.ok) {
+    throw unavailable(`Solana RPC ${method} reconciliation request failed`);
+  }
+  let payload: { result?: T; error?: unknown };
+  try {
+    payload = (await response.json()) as { result?: T; error?: unknown };
+  } catch {
+    throw unavailable(`Solana RPC ${method} reconciliation returned invalid JSON`);
+  }
+  if (payload.error != null || !("result" in payload)) {
+    throw unavailable(`Solana RPC ${method} reconciliation returned an error`);
+  }
+  return payload.result as T;
 }
 
 function canonicalIntent(params: {
@@ -411,6 +456,48 @@ export async function broadcastReviewedSolanaTransaction(params: {
     );
   }
   return txHash;
+}
+
+export async function reconcileReviewedSolanaTransaction(params: {
+  rpcUrl: string;
+  expectedTxHash: string;
+  lastValidBlockHeight: number;
+}): Promise<ReviewedSolanaReconciliation> {
+  const expectedTxHash = params.expectedTxHash.trim();
+  if (!expectedTxHash) {
+    throw invalid("Solana reconciliation requires the exact transaction signature");
+  }
+  if (!Number.isSafeInteger(params.lastValidBlockHeight) || params.lastValidBlockHeight < 0) {
+    throw invalid("Solana reconciliation requires a valid last block height");
+  }
+  const statuses = await fetchStrictSolanaRpc<SignatureStatusResult>(
+    params.rpcUrl,
+    "getSignatureStatuses",
+    [[expectedTxHash], { searchTransactionHistory: true }],
+  );
+  const status = Array.isArray(statuses?.value) ? statuses.value[0] : undefined;
+  if (status) {
+    if (status.err != null) {
+      return {
+        state: "failed",
+        reason: "Solana reported a terminal transaction error for the reviewed signature",
+      };
+    }
+    const confirmationStatus =
+      status.confirmationStatus === "confirmed" || status.confirmationStatus === "finalized"
+        ? status.confirmationStatus
+        : "processed";
+    return { state: "landed", confirmationStatus };
+  }
+  const blockHeight = await fetchStrictSolanaRpc<number>(params.rpcUrl, "getBlockHeight", [
+    { commitment: "confirmed" },
+  ]);
+  if (!Number.isSafeInteger(blockHeight) || blockHeight < 0) {
+    throw unavailable("Solana RPC returned an invalid block height during reconciliation");
+  }
+  return blockHeight > params.lastValidBlockHeight
+    ? { state: "expired", blockHeight }
+    : { state: "pending", blockHeight };
 }
 
 export function newReviewedSolanaPreparedId(): string {

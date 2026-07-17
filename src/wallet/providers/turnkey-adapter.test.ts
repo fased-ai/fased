@@ -92,7 +92,10 @@ function createAdapter(params?: {
   });
 }
 
-function installRpcMock(params?: { broadcast: "success" | "unknown" }) {
+function installRpcMock(params?: {
+  broadcast: "success" | "unknown";
+  reconciliation?: "pending" | "landed" | "failed" | "expired";
+}) {
   const blockhash = Keypair.generate().publicKey.toBase58();
   const methods: string[] = [];
   let expectedSignature = "";
@@ -113,6 +116,18 @@ function installRpcMock(params?: { broadcast: "success" | "unknown" }) {
         const signed = Transaction.from(Buffer.from(String(body.params[0]), "base64"));
         expectedSignature = encodeBase58(signed.signature!);
         result = params?.broadcast === "unknown" ? null : expectedSignature;
+      } else if (body.method === "getSignatureStatuses") {
+        if (params?.reconciliation === "landed") {
+          result = { value: [{ err: null, confirmationStatus: "confirmed", confirmations: 1 }] };
+        } else if (params?.reconciliation === "failed") {
+          result = {
+            value: [{ err: { InstructionError: [0, "Custom"] }, confirmationStatus: "confirmed" }],
+          };
+        } else {
+          result = { value: [null] };
+        }
+      } else if (body.method === "getBlockHeight") {
+        result = params?.reconciliation === "expired" ? 124 : 100;
       } else {
         throw new Error(`unexpected RPC method ${body.method}`);
       }
@@ -265,9 +280,67 @@ describe("TurnkeyAdapter", () => {
     await expect(adapter.sendTx(execution)).rejects.toMatchObject({
       code: "wallet_provider_ambiguous",
     });
+    const persisted = JSON.parse(
+      fs.readFileSync(path.join(env.FASED_STATE_DIR!, "wallet", "turnkey-reviews.v1.json"), "utf8"),
+    ) as { reviews: Array<{ signedTxBase64?: string; txHash?: string; status?: string }> };
+    expect(persisted.reviews[0]).toMatchObject({
+      status: "unknown",
+      txHash: rpc.getExpectedSignature(),
+    });
+    expect(persisted.reviews[0]?.signedTxBase64).toBeTruthy();
     await expect(createAdapter({ signer, env }).sendTx(execution)).rejects.toMatchObject({
       code: "wallet_provider_ambiguous",
     });
     expect(rpc.methods.filter((method) => method === "sendTransaction")).toHaveLength(1);
+  });
+
+  test("reconciles an ambiguous signature after restart without rebroadcasting", async () => {
+    const env = testEnv();
+    const signer = Keypair.generate();
+    const rpc = installRpcMock({ broadcast: "unknown", reconciliation: "landed" });
+    const request = {
+      chain: "solana" as const,
+      to: Keypair.generate().publicKey.toBase58(),
+      amount: "8",
+    };
+    const prepared = await createAdapter({ signer, env }).prepareTx(request);
+    const execution = { ...request, preparedId: prepared.preparedId };
+
+    await expect(createAdapter({ signer, env }).sendTx(execution)).rejects.toMatchObject({
+      code: "wallet_provider_ambiguous",
+    });
+    const reconciled = await createAdapter({ signer, env }).sendTx(execution);
+
+    expect(reconciled).toMatchObject({
+      txHash: rpc.getExpectedSignature(),
+      metadata: { idempotent: true, sendAttempts: 0 },
+    });
+    expect(rpc.methods.filter((method) => method === "sendTransaction")).toHaveLength(1);
+    expect(rpc.methods.filter((method) => method === "getSignatureStatuses")).toHaveLength(1);
+  });
+
+  test("records an expired ambiguous signature as failed before allowing a new review", async () => {
+    const env = testEnv();
+    const signer = Keypair.generate();
+    const rpc = installRpcMock({ broadcast: "unknown", reconciliation: "expired" });
+    const request = {
+      chain: "solana" as const,
+      to: Keypair.generate().publicKey.toBase58(),
+      amount: "9",
+    };
+    const prepared = await createAdapter({ signer, env }).prepareTx(request);
+    const execution = { ...request, preparedId: prepared.preparedId };
+
+    await expect(createAdapter({ signer, env }).sendTx(execution)).rejects.toMatchObject({
+      code: "wallet_provider_ambiguous",
+    });
+    await expect(createAdapter({ signer, env }).sendTx(execution)).rejects.toMatchObject({
+      code: "wallet_provider_unavailable",
+    });
+    await expect(createAdapter({ signer, env }).sendTx(execution)).rejects.toMatchObject({
+      code: "wallet_provider_unavailable",
+    });
+    expect(rpc.methods.filter((method) => method === "sendTransaction")).toHaveLength(1);
+    expect(rpc.methods.filter((method) => method === "getSignatureStatuses")).toHaveLength(1);
   });
 });

@@ -5,6 +5,7 @@ import {
   broadcastReviewedSolanaTransaction,
   buildReviewedSolanaTransaction,
   computeReviewedSolanaRequestDigest,
+  reconcileReviewedSolanaTransaction,
   validateReviewedSolanaSignedTransaction,
 } from "./solana-reviewed-transaction.js";
 import {
@@ -17,7 +18,7 @@ const STATE_FILE_NAME = "turnkey-reviews.v1.json";
 const REVIEW_TTL_MS = 2 * 60 * 1000;
 const STATE_FILE_MODE = 0o600;
 
-type TurnkeyReviewStatus = "prepared" | "broadcasting" | "broadcast" | "unknown";
+type TurnkeyReviewStatus = "prepared" | "broadcasting" | "broadcast" | "failed" | "unknown";
 
 type TurnkeyReviewRecord = {
   preparedId: string;
@@ -35,6 +36,8 @@ type TurnkeyReviewRecord = {
   authorizationContextDigest: string;
   simulationUnitsConsumed?: number;
   txHash?: string;
+  signedTxBase64?: string;
+  failureReason?: string;
 };
 
 type TurnkeyReviewFile = {
@@ -258,11 +261,60 @@ export async function executeTurnkeyReviewedTransaction(params: {
       };
     }
     if (review.status === "broadcasting" || review.status === "unknown") {
+      if (!review.txHash) {
+        throw new WalletProviderError({
+          code: "wallet_provider_ambiguous",
+          message: "Turnkey broadcast is in progress or unknown; do not submit it again",
+          retryable: false,
+        });
+      }
+      let reconciled: Awaited<ReturnType<typeof reconcileReviewedSolanaTransaction>>;
+      try {
+        reconciled = await reconcileReviewedSolanaTransaction({
+          rpcUrl: params.rpcUrl,
+          expectedTxHash: review.txHash,
+          lastValidBlockHeight: review.lastValidBlockHeight,
+        });
+      } catch {
+        throw new WalletProviderError({
+          code: "wallet_provider_ambiguous",
+          message: `Turnkey broadcast remains unknown; reconcile signature ${review.txHash} before any new send`,
+          retryable: false,
+        });
+      }
+      if (reconciled.state === "landed") {
+        review.status = "broadcast";
+        saveFile(file, env);
+        return {
+          txHash: review.txHash,
+          signer: review.signer,
+          intentDigest: review.intentDigest,
+          idempotent: true,
+        };
+      }
+      if (reconciled.state === "failed" || reconciled.state === "expired") {
+        review.status = "failed";
+        review.failureReason =
+          reconciled.state === "failed"
+            ? reconciled.reason
+            : `reviewed transaction expired at block height ${review.lastValidBlockHeight} without landing`;
+        saveFile(file, env);
+        throw new WalletProviderError({
+          code: "wallet_provider_unavailable",
+          message: `${review.failureReason}; prepare and review a new transaction`,
+          retryable: false,
+        });
+      }
       throw new WalletProviderError({
         code: "wallet_provider_ambiguous",
-        message: review.txHash
-          ? `Turnkey broadcast is in progress or unknown; reconcile signature ${review.txHash}`
-          : "Turnkey broadcast is in progress or unknown; do not submit it again",
+        message: `Turnkey broadcast remains pending; reconcile signature ${review.txHash} before any new send`,
+        retryable: false,
+      });
+    }
+    if (review.status === "failed") {
+      throw new WalletProviderError({
+        code: "wallet_provider_unavailable",
+        message: `${review.failureReason ?? "Turnkey reviewed transaction failed"}; prepare and review a new transaction`,
         retryable: false,
       });
     }
@@ -295,11 +347,12 @@ export async function executeTurnkeyReviewedTransaction(params: {
     });
     review.status = "broadcasting";
     review.txHash = verified.txHash;
+    review.signedTxBase64 = verified.signedBytes.toString("base64");
     saveFile(file, env);
     try {
       const txHash = await broadcastReviewedSolanaTransaction({
         rpcUrl: params.rpcUrl,
-        signedTxBase64: verified.signedBytes.toString("base64"),
+        signedTxBase64: review.signedTxBase64,
         expectedTxHash: verified.txHash,
       });
       review.status = "broadcast";
