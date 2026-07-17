@@ -28,6 +28,9 @@ const mocks = vi.hoisted(() => ({
     sendTx: vi.fn(),
     prepareJupiterReview: vi.fn(),
     executeJupiterReview: vi.fn(),
+    getSignerReview: vi.fn(),
+    getSignerOperation: vi.fn(),
+    reconcileSignerOperation: vi.fn(),
   },
   createWalletProviderAdapter: vi.fn(),
 }));
@@ -202,13 +205,22 @@ async function writeClawHubSkillOrigin(params: {
   );
 }
 
-function stubJupiterOrder(opts?: { routeProgramId?: string }) {
+function stubJupiterOrder(opts?: {
+  routeProgramId?: string;
+  failOnceWhen?: (url: string, method: string) => boolean;
+}) {
+  let failedRequestedCall = false;
   vi.stubEnv("FASED_WALLET_SOLANA_RPC_URL", "https://rpc.example.test");
   vi.stubEnv("FASED_JUPITER_API_KEY", "test-jupiter-key");
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input, init) => {
       const url = String(input);
+      const method = String(init?.method ?? "GET").toUpperCase();
+      if (!failedRequestedCall && opts?.failOnceWhen?.(url, method)) {
+        failedRequestedCall = true;
+        throw new Error("simulated response timeout");
+      }
       if (init && String(init.method ?? "GET").toUpperCase() === "POST") {
         const body = JSON.parse(String(init.body ?? "{}")) as {
           method?: string;
@@ -437,6 +449,17 @@ function stubJupiterOrder(opts?: { routeProgramId?: string }) {
   );
 }
 
+function fetchCallCount(predicate: (url: string, method: string) => boolean): number {
+  return vi
+    .mocked(fetch)
+    .mock.calls.filter(([input, init]) =>
+      predicate(
+        typeof input === "string" ? input : input instanceof URL ? input.href : input.url,
+        String(init?.method ?? "GET").toUpperCase(),
+      ),
+    ).length;
+}
+
 describe("wallet-action-tool", () => {
   beforeEach(() => {
     mocks.provider.getAddresses.mockResolvedValue({
@@ -500,7 +523,14 @@ describe("wallet-action-tool", () => {
         if (!prepared || prepared.walletId !== request.walletId) {
           throw new Error("missing exact prepared signer review");
         }
-        const signature = prepared.transaction.submission === "rpc" ? "swap-tx-1" : "typed-tx-1";
+        const signature =
+          prepared.transaction.submission === "rpc"
+            ? "swap-tx-1"
+            : prepared.intent.type === "solana.jupiter.trigger.create"
+              ? "deposit-tx-1"
+              : prepared.intent.type === "solana.jupiter.trigger.cancel"
+                ? "cancel-tx-1"
+                : "typed-tx-1";
         return {
           review: {
             requestId: request.requestId,
@@ -552,10 +582,16 @@ describe("wallet-action-tool", () => {
         };
       },
     );
+    mocks.provider.getSignerReview.mockRejectedValue(new Error("signer review not found"));
+    mocks.provider.getSignerOperation.mockRejectedValue(new Error("signer operation not found"));
+    mocks.provider.reconcileSignerOperation.mockRejectedValue(
+      new Error("signer operation is not yet reconcilable"),
+    );
     mocks.createWalletProviderAdapter.mockReturnValue(mocks.provider);
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
     mocks.provider.getAddresses.mockReset();
@@ -563,6 +599,9 @@ describe("wallet-action-tool", () => {
     mocks.provider.sendTx.mockReset();
     mocks.provider.prepareJupiterReview.mockReset();
     mocks.provider.executeJupiterReview.mockReset();
+    mocks.provider.getSignerReview.mockReset();
+    mocks.provider.getSignerOperation.mockReset();
+    mocks.provider.reconcileSignerOperation.mockReset();
     preparedSignerReviews.clear();
     mocks.createWalletProviderAdapter.mockReset();
   });
@@ -960,6 +999,111 @@ describe("wallet-action-tool", () => {
     }
   });
 
+  it("restarts an ambiguous autonomous swap without fetching or signing a replacement", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-action-swap-retry-"));
+    vi.stubEnv("FASED_STATE_DIR", tempDir);
+    stubJupiterOrder();
+    mocks.provider.executeJupiterReview.mockRejectedValueOnce(
+      new Error("simulated signer response timeout"),
+    );
+    const args = {
+      action: "swap",
+      walletHandle: "@wallet:agent",
+      outputMint: USDC_MINT,
+      amount: "100000000",
+    };
+    try {
+      setupWallets();
+      const firstTool = createWalletActionTool({
+        config: walletActionConfig(),
+        agentSessionKey: "agent:owner:main",
+      });
+      if (!firstTool) {
+        throw new Error("missing wallet_action tool");
+      }
+      await expect(firstTool.execute("stable-swap-call", args)).rejects.toThrow(/ambiguous/);
+
+      const restartedTool = createWalletActionTool({
+        config: walletActionConfig(),
+        agentSessionKey: "agent:owner:main",
+      });
+      if (!restartedTool) {
+        throw new Error("missing restarted wallet_action tool");
+      }
+      await expect(restartedTool.execute("stable-swap-call", args)).rejects.toThrow(/unresolved/);
+
+      expect(mocks.provider.prepareJupiterReview).toHaveBeenCalledTimes(1);
+      expect(mocks.provider.executeJupiterReview).toHaveBeenCalledTimes(1);
+      expect(
+        fetchCallCount(
+          (url, method) =>
+            method === "GET" && url.includes("/order?") && !url.includes("/trigger/"),
+        ),
+      ).toBe(1);
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("reconciles the exact signer operation for an ambiguous autonomous swap", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-action-swap-reconcile-"));
+    vi.stubEnv("FASED_STATE_DIR", tempDir);
+    stubJupiterOrder();
+    mocks.provider.executeJupiterReview.mockRejectedValueOnce(
+      new Error("simulated signer response timeout"),
+    );
+    const args = {
+      action: "swap",
+      walletHandle: "@wallet:agent",
+      outputMint: USDC_MINT,
+      amount: "100000000",
+    };
+    try {
+      setupWallets();
+      const tool = createWalletActionTool({
+        config: walletActionConfig(),
+        agentSessionKey: "agent:owner:main",
+      });
+      if (!tool) {
+        throw new Error("missing wallet_action tool");
+      }
+      await expect(tool.execute("stable-reconcile-call", args)).rejects.toThrow(/ambiguous/);
+      const preparedRequest = mocks.provider.prepareJupiterReview.mock.calls[0]?.[0];
+      if (!preparedRequest) {
+        throw new Error("missing prepared signer review");
+      }
+      mocks.provider.reconcileSignerOperation.mockResolvedValueOnce({
+        requestId: preparedRequest.requestId,
+        walletId: "agent",
+        intentType: "solana.jupiter.swap",
+        intentDigest: `sha256:${"a".repeat(64)}`,
+        transactionDigest: `sha256:${"d".repeat(64)}`,
+        policyHash: `sha256:${"b".repeat(64)}`,
+        asset: SOLANA_NATIVE_MINT,
+        amount: "100000000",
+        state: "confirmed",
+        signature: "swap-tx-1",
+      });
+
+      const reconciled = await tool.execute("stable-reconcile-call", args);
+      expect(reconciled.details).toMatchObject({ ok: true, executed: true });
+      expect(mocks.provider.prepareJupiterReview).toHaveBeenCalledTimes(1);
+      expect(mocks.provider.executeJupiterReview).toHaveBeenCalledTimes(1);
+      expect(mocks.provider.reconcileSignerOperation).toHaveBeenCalledWith({
+        walletId: "agent",
+        requestId: preparedRequest.requestId,
+      });
+      expect(
+        fetchCallCount(
+          (url, method) =>
+            method === "GET" && url.includes("/order?") && !url.includes("/trigger/"),
+        ),
+      ).toBe(1);
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("creates autonomous Jupiter Trigger limit orders under Agent caps", async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-action-limit-"));
     vi.stubEnv("FASED_STATE_DIR", tempDir);
@@ -1000,6 +1144,155 @@ describe("wallet-action-tool", () => {
       );
       expect(mocks.provider.signTx).not.toHaveBeenCalled();
       expect(mocks.provider.sendTx).not.toHaveBeenCalled();
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed after an ambiguous Trigger auth verification without a new challenge", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-action-auth-retry-"));
+    vi.stubEnv("FASED_STATE_DIR", tempDir);
+    stubJupiterOrder({
+      failOnceWhen: (url, method) => method === "POST" && url.endsWith("/trigger/v2/auth/verify"),
+    });
+    const args = {
+      action: "limit_history",
+      walletHandle: "@wallet:agent",
+      state: "active",
+    };
+    try {
+      setupWallets();
+      const tool = createWalletActionTool({
+        config: walletActionConfig(),
+        agentSessionKey: "agent:owner:main",
+      });
+      if (!tool) {
+        throw new Error("missing wallet_action tool");
+      }
+      await expect(tool.execute("stable-auth-call", args)).rejects.toThrow(/ambiguous/);
+      await expect(tool.execute("stable-auth-call", args)).rejects.toThrow(/ambiguous/);
+
+      expect(mocks.provider.prepareJupiterReview).toHaveBeenCalledTimes(1);
+      expect(mocks.provider.executeJupiterReview).toHaveBeenCalledTimes(1);
+      expect(fetchCallCount((url) => url.endsWith("/trigger/v2/auth/challenge"))).toBe(1);
+      expect(fetchCallCount((url) => url.endsWith("/trigger/v2/auth/verify"))).toBe(1);
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses a new immutable signer request when an accepted Trigger auth token expires", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-action-auth-renew-"));
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-16T12:00:00.000Z"));
+    vi.stubEnv("FASED_STATE_DIR", tempDir);
+    stubJupiterOrder();
+    const args = {
+      action: "limit_history",
+      walletHandle: "@wallet:agent",
+      state: "active",
+    };
+    try {
+      setupWallets();
+      const tool = createWalletActionTool({
+        config: walletActionConfig(),
+        agentSessionKey: "agent:owner:main",
+      });
+      if (!tool) {
+        throw new Error("missing wallet_action tool");
+      }
+      await tool.execute("auth-generation-one", args);
+      vi.setSystemTime(new Date("2026-07-16T12:06:00.000Z"));
+      await tool.execute("auth-generation-two", args);
+
+      const authRequestIds = mocks.provider.prepareJupiterReview.mock.calls
+        .map(([request]) => request)
+        .filter((request) => request.intent.type === "solana.jupiter.trigger.auth")
+        .map((request) => request.requestId);
+      expect(authRequestIds).toHaveLength(2);
+      expect(new Set(authRequestIds).size).toBe(2);
+      expect(fetchCallCount((url) => url.endsWith("/trigger/v2/auth/challenge"))).toBe(2);
+      expect(fetchCallCount((url) => url.endsWith("/trigger/v2/auth/verify"))).toBe(2);
+    } finally {
+      vi.useRealTimers();
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed after an ambiguous Trigger deposit craft without crafting another deposit", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-action-craft-retry-"));
+    vi.stubEnv("FASED_STATE_DIR", tempDir);
+    stubJupiterOrder({
+      failOnceWhen: (url, method) => method === "POST" && url.endsWith("/trigger/v2/deposit/craft"),
+    });
+    const args = {
+      action: "limit_order",
+      walletHandle: "@wallet:agent",
+      outputMint: USDC_MINT,
+      amount: "0.1",
+      amountFormat: "human",
+      triggerCondition: "below",
+      triggerPriceUsd: 120,
+      expirySeconds: 3600,
+      slippageBps: 100,
+    };
+    try {
+      setupWallets();
+      const tool = createWalletActionTool({
+        config: walletActionConfig(),
+        agentSessionKey: "agent:owner:main",
+      });
+      if (!tool) {
+        throw new Error("missing wallet_action tool");
+      }
+      await expect(tool.execute("stable-craft-call", args)).rejects.toThrow(/ambiguous/);
+      await expect(tool.execute("stable-craft-call", args)).rejects.toThrow(/no new deposit/);
+
+      expect(fetchCallCount((url) => url.endsWith("/trigger/v2/deposit/craft"))).toBe(1);
+      expect(mocks.provider.prepareJupiterReview).toHaveBeenCalledTimes(1);
+      expect(mocks.provider.executeJupiterReview).toHaveBeenCalledTimes(1);
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("reconciles an ambiguous Trigger create response without signing another deposit", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-action-create-retry-"));
+    vi.stubEnv("FASED_STATE_DIR", tempDir);
+    stubJupiterOrder({
+      failOnceWhen: (url, method) => method === "POST" && url.endsWith("/trigger/v2/orders/price"),
+    });
+    const args = {
+      action: "limit_order",
+      walletHandle: "@wallet:agent",
+      outputMint: USDC_MINT,
+      amount: "0.1",
+      amountFormat: "human",
+      triggerCondition: "below",
+      triggerPriceUsd: 120,
+      expirySeconds: 3600,
+      slippageBps: 100,
+    };
+    try {
+      setupWallets();
+      const tool = createWalletActionTool({
+        config: walletActionConfig(),
+        agentSessionKey: "agent:owner:main",
+      });
+      if (!tool) {
+        throw new Error("missing wallet_action tool");
+      }
+      await expect(tool.execute("stable-create-call", args)).rejects.toThrow(/ambiguous/);
+      await expect(tool.execute("stable-create-call", args)).rejects.toThrow(/remains ambiguous/);
+
+      expect(fetchCallCount((url) => url.endsWith("/trigger/v2/deposit/craft"))).toBe(1);
+      expect(
+        fetchCallCount(
+          (url, method) => method === "POST" && url.endsWith("/trigger/v2/orders/price"),
+        ),
+      ).toBe(1);
+      expect(mocks.provider.prepareJupiterReview).toHaveBeenCalledTimes(2);
+      expect(mocks.provider.executeJupiterReview).toHaveBeenCalledTimes(2);
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true });
     }
@@ -1076,6 +1369,94 @@ describe("wallet-action-tool", () => {
       expect(cancelDetails.raw).toBeUndefined();
       expect(mocks.provider.executeJupiterReview).toHaveBeenCalled();
       expect(mocks.provider.signTx).not.toHaveBeenCalled();
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not repeat an ambiguous Trigger cancel-init request", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-action-cancel-init-"));
+    vi.stubEnv("FASED_STATE_DIR", tempDir);
+    stubJupiterOrder({
+      failOnceWhen: (url, method) =>
+        method === "POST" &&
+        url.includes("/trigger/v2/orders/price/cancel/") &&
+        !url.includes("/confirm-cancel/"),
+    });
+    const args = {
+      action: "limit_cancel",
+      walletHandle: "@wallet:agent",
+      orderId: "order-1",
+    };
+    try {
+      setupWallets();
+      const tool = createWalletActionTool({
+        config: walletActionConfig(),
+        agentSessionKey: "agent:owner:main",
+      });
+      if (!tool) {
+        throw new Error("missing wallet_action tool");
+      }
+      await expect(tool.execute("stable-cancel-init", args)).rejects.toThrow(/ambiguous/);
+      await expect(tool.execute("stable-cancel-init", args)).rejects.toThrow(/remains ambiguous/);
+
+      expect(
+        fetchCallCount(
+          (url, method) =>
+            method === "POST" &&
+            url.includes("/trigger/v2/orders/price/cancel/") &&
+            !url.includes("/confirm-cancel/"),
+        ),
+      ).toBe(1);
+      expect(mocks.provider.prepareJupiterReview).toHaveBeenCalledTimes(1);
+      expect(mocks.provider.executeJupiterReview).toHaveBeenCalledTimes(1);
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("reconciles an ambiguous Trigger withdrawal without signing or submitting another", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-action-cancel-confirm-"));
+    vi.stubEnv("FASED_STATE_DIR", tempDir);
+    stubJupiterOrder({
+      failOnceWhen: (url, method) =>
+        method === "POST" && url.includes("/trigger/v2/orders/price/confirm-cancel/"),
+    });
+    const args = {
+      action: "limit_cancel",
+      walletHandle: "@wallet:agent",
+      orderId: "order-1",
+    };
+    try {
+      setupWallets();
+      const tool = createWalletActionTool({
+        config: walletActionConfig(),
+        agentSessionKey: "agent:owner:main",
+      });
+      if (!tool) {
+        throw new Error("missing wallet_action tool");
+      }
+      await expect(tool.execute("stable-cancel-confirm", args)).rejects.toThrow(/ambiguous/);
+      await expect(tool.execute("stable-cancel-confirm", args)).rejects.toThrow(
+        /remains ambiguous/,
+      );
+
+      expect(
+        fetchCallCount(
+          (url, method) =>
+            method === "POST" && url.includes("/trigger/v2/orders/price/confirm-cancel/"),
+        ),
+      ).toBe(1);
+      expect(
+        fetchCallCount(
+          (url, method) =>
+            method === "POST" &&
+            url.includes("/trigger/v2/orders/price/cancel/") &&
+            !url.includes("/confirm-cancel/"),
+        ),
+      ).toBe(1);
+      expect(mocks.provider.prepareJupiterReview).toHaveBeenCalledTimes(2);
+      expect(mocks.provider.executeJupiterReview).toHaveBeenCalledTimes(2);
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true });
     }
@@ -1320,7 +1701,10 @@ describe("wallet-action-tool", () => {
               config: {
                 walletActions: {
                   actions: ["swap", "quote", "schedule_plan"],
+                  roles: ["agent"],
                   walletIds: ["agent"],
+                  chains: ["solana"],
+                  registries: ["local"],
                   inputMints: [SOLANA_NATIVE_MINT],
                   outputMints: [USDC_MINT],
                   maxAmount: "1000000000",

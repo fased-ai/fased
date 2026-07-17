@@ -252,23 +252,26 @@ export type WalletProviderSignerReviewAuthorizationFinishV2 = {
   expiresAt: string;
 };
 
+export type WalletProviderSignerOperationV2 = {
+  requestId: string;
+  walletId: string;
+  intentType: string;
+  intentDigest: string;
+  transactionDigest?: string;
+  signedTxBase64?: string;
+  policyHash: string;
+  asset: string;
+  amount: string;
+  state: "reserved" | "broadcast" | "confirmed" | "failed" | "unknown";
+  signature?: string;
+  error?: string;
+  authorizationProof?: string;
+  authorizedAt?: string;
+};
+
 export type WalletProviderJupiterExecutionV2 = {
   review: WalletProviderJupiterReviewV2;
-  operation: {
-    requestId: string;
-    walletId: string;
-    intentType: string;
-    intentDigest: string;
-    transactionDigest?: string;
-    policyHash: string;
-    asset: string;
-    amount: string;
-    state: "reserved" | "broadcast" | "confirmed" | "failed" | "unknown";
-    signature?: string;
-    error?: string;
-    authorizationProof?: string;
-    authorizedAt?: string;
-  };
+  operation: WalletProviderSignerOperationV2;
   signedTxBase64?: string;
   signatureBase64?: string;
   signer: string;
@@ -359,6 +362,14 @@ export interface WalletProviderAdapter {
     requestId: string;
     authorization?: WalletProviderSignerReviewAuthorizationV2;
   }): Promise<WalletProviderJupiterExecutionV2>;
+  getSignerOperation?(request: {
+    walletId: string;
+    requestId: string;
+  }): Promise<WalletProviderSignerOperationV2>;
+  reconcileSignerOperation?(request: {
+    walletId: string;
+    requestId: string;
+  }): Promise<WalletProviderSignerOperationV2>;
   beginSignerReviewAuthorization?(request: {
     walletId: string;
     requestId: string;

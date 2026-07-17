@@ -191,6 +191,7 @@ type signerOperationV2 struct {
 	IntentType          string `json:"intentType"`
 	IntentDigest        string `json:"intentDigest"`
 	TransactionDigest   string `json:"transactionDigest,omitempty"`
+	SignedTxBase64      string `json:"signedTxBase64,omitempty"`
 	PolicyHash          string `json:"policyHash"`
 	Asset               string `json:"asset"`
 	Amount              string `json:"amount"`

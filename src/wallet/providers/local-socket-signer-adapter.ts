@@ -21,6 +21,7 @@ import {
   type WalletProviderJupiterReviewV2,
   type WalletProviderSignerReviewAuthorizationBeginV2,
   type WalletProviderSignerReviewAuthorizationFinishV2,
+  type WalletProviderSignerOperationV2,
   type WalletProviderSignerReviewAuthorizationV2,
   type WalletProviderSignerIntentV2,
   type WalletProviderSignerTransactionEnvelopeV2,
@@ -649,6 +650,32 @@ export class LocalSocketSignerAdapter implements WalletProviderAdapter {
     credential: unknown;
   }): Promise<WalletProviderSignerReviewAuthorizationFinishV2> {
     return await this.finishSignerReviewAuthorization(request);
+  }
+
+  async getSignerOperation(request: {
+    walletId: string;
+    requestId: string;
+  }): Promise<WalletProviderSignerOperationV2> {
+    assertSecureLocalSignerSocket(this.socketPath);
+    await this.requireProtocolV2();
+    return await callSocket<WalletProviderSignerOperationV2>(this.socketPath, {
+      op: "v2.operation.get",
+      walletId: request.walletId,
+      request: { requestId: request.requestId },
+    });
+  }
+
+  async reconcileSignerOperation(request: {
+    walletId: string;
+    requestId: string;
+  }): Promise<WalletProviderSignerOperationV2> {
+    assertSecureLocalSignerSocket(this.socketPath);
+    await this.requireProtocolV2();
+    return await callSocket<WalletProviderSignerOperationV2>(this.socketPath, {
+      op: "v2.operation.reconcile",
+      walletId: request.walletId,
+      request: { requestId: request.requestId },
+    });
   }
 
   async finishSignerReviewAuthorization(request: {

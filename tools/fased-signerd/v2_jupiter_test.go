@@ -1,8 +1,10 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"math/big"
@@ -361,6 +363,97 @@ func TestJupiterReviewIsDurableImmutableAndExpires(t *testing.T) {
 	store.now = func() time.Time { return now.Add(16 * time.Minute) }
 	if _, _, _, err := store.requirePreparedReviewV2(wallet.WalletID, req.RequestID); err == nil || !strings.Contains(err.Error(), "expired") {
 		t.Fatalf("expected expired review rejection, got %v", err)
+	}
+}
+
+func TestReturnSignedTerminalReplayReturnsDurableExactBytes(t *testing.T) {
+	store, keys := openTestSignerV2(t)
+	wallet, _ := createTestSignerWalletV2(
+		t,
+		store,
+		keys,
+		"agent-return-signed",
+		solana.NewWallet().PublicKey().String(),
+		100,
+		1000,
+	)
+	normalized, err := normalizeSignerIntentV2(testJupiterIntentV2(solana.MustPublicKeyFromBase58(wallet.PublicKey)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := store.putPolicy(signerPolicyV2{
+		WalletID:   wallet.WalletID,
+		Role:       "agent",
+		Operations: []string{intentSolanaJupiterSwap},
+		Programs:   []string{jupiterAggregatorV6V2},
+		Assets: []signerPolicyAssetV2{{
+			Asset:        normalized.Asset,
+			Destinations: []string{wallet.PublicKey},
+			MaxPerTx:     "100",
+			MaxDaily:     "1000",
+		}},
+	}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepare := signerReviewPrepareRequestV2{
+		RequestID:  "return-signed-replay",
+		PolicyHash: policy.Hash,
+		Mode:       jupiterReviewModeAutonomousV2,
+		Intent:     normalized.Intent,
+		Transaction: &signerSolanaTransactionEnvelopeV2{
+			SerializedTxBase64: "AQ==",
+			Programs:           normalized.RequiredPrograms,
+			WritableAccounts:   []string{wallet.PublicKey},
+			Submission:         jupiterSubmissionReturnV2,
+		},
+	}
+	if _, err := store.prepareReviewV2(
+		wallet.WalletID,
+		prepare,
+		normalized,
+		*prepare.Transaction,
+		"sha256:"+strings.Repeat("a", 64),
+	); err != nil {
+		t.Fatalf("prepare returnSigned review: %v", err)
+	}
+	operation, existing, err := store.reserveOperation(signerExecuteRequestV2{
+		RequestID:      prepare.RequestID,
+		PolicyHash:     policy.Hash,
+		Intent:         normalized.Intent,
+		intentWalletID: wallet.WalletID,
+	}, normalized)
+	if err != nil || existing {
+		t.Fatalf("reserve returnSigned operation: existing=%v err=%v", existing, err)
+	}
+	signedRaw := []byte("exact-signed-solana-transaction")
+	signedEncoded := base64.StdEncoding.EncodeToString(signedRaw)
+	digest := sha256.Sum256(signedRaw)
+	transactionDigest := "sha256:" + hex.EncodeToString(digest[:])
+	if _, err := store.markBroadcastClaim(
+		operation.RequestID,
+		0,
+		"exact-signature",
+		transactionDigest,
+		signedEncoded,
+	); err != nil {
+		t.Fatalf("persist signed artifact before return: %v", err)
+	}
+
+	service := &signerServiceV2{store: store, keys: keys}
+	for attempt := 0; attempt < 2; attempt++ {
+		result, err := service.executeJupiterReviewV2(wallet.WalletID, signerReviewExecuteRequestV2{
+			RequestID: prepare.RequestID,
+		})
+		if err != nil {
+			t.Fatalf("terminal replay %d: %v", attempt, err)
+		}
+		if result.SignedTxBase64 != signedEncoded || result.Operation == nil || result.Operation.SignedTxBase64 != signedEncoded {
+			t.Fatalf("terminal replay omitted or changed signed bytes: %#v", result)
+		}
+		if result.Operation.State != operationBroadcast || result.Operation.TransactionDigest != transactionDigest {
+			t.Fatalf("terminal replay changed operation state/digest: %#v", result.Operation)
+		}
 	}
 }
 

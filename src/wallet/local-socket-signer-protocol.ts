@@ -553,6 +553,7 @@ export const LocalSocketSignerOperationV2Schema = Type.Object(
     intentType: Type.String(),
     intentDigest: Type.String(),
     transactionDigest: Type.Optional(Type.String()),
+    signedTxBase64: Type.Optional(Type.String()),
     policyHash: Type.String(),
     asset: Type.String(),
     amount: Type.String(),

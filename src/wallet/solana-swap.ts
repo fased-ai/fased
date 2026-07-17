@@ -2,6 +2,13 @@ import { createHash } from "node:crypto";
 import type { FasedAgentConfig } from "../config/config.js";
 import type { WalletProviderId } from "../config/types.wallet.js";
 import {
+  beginExternalSubmission,
+  claimExternalSubmissionExecution,
+  createExternalSubmissionKey,
+  updateExternalSubmission,
+  type ExternalSubmissionEntry,
+} from "./external-submission-ledger.js";
+import {
   fetchSolanaMintInfoViaRpc,
   fetchSolanaNativeBalanceViaRpc,
   fetchSolanaWalletAssetsViaRpc,
@@ -18,6 +25,7 @@ import type {
   WalletProviderJupiterIntentV2,
   WalletProviderJupiterReviewV2,
   WalletProviderSignerReviewAuthorizationV2,
+  WalletProviderSignerOperationV2,
   WalletProviderSendTxResult,
 } from "./wallet-provider-adapter.js";
 import {
@@ -52,6 +60,112 @@ export type SolanaSwapExecutionResult =
       order: SolanaSwapOrder;
     }
   | { ok: false; code: string; message: string };
+
+function storedSwapOrder(entry: ExternalSubmissionEntry): SolanaSwapOrder | undefined {
+  const value = entry.details?.order;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const order = value as Partial<SolanaSwapOrder>;
+  if (
+    order.ok !== true ||
+    typeof order.inputMint !== "string" ||
+    typeof order.outputMint !== "string" ||
+    typeof order.inAmount !== "string" ||
+    !order.raw ||
+    typeof order.raw !== "object" ||
+    Array.isArray(order.raw)
+  ) {
+    return undefined;
+  }
+  return order as SolanaSwapOrder;
+}
+
+function storedSignerOperation(
+  entry: ExternalSubmissionEntry,
+): WalletProviderSignerOperationV2 | undefined {
+  const value = entry.result?.operation;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const operation = value as Partial<WalletProviderSignerOperationV2>;
+  if (
+    typeof operation.requestId !== "string" ||
+    typeof operation.walletId !== "string" ||
+    typeof operation.intentType !== "string" ||
+    typeof operation.intentDigest !== "string" ||
+    typeof operation.policyHash !== "string" ||
+    typeof operation.asset !== "string" ||
+    typeof operation.amount !== "string" ||
+    !["reserved", "broadcast", "confirmed", "failed", "unknown"].includes(operation.state ?? "")
+  ) {
+    return undefined;
+  }
+  return operation as WalletProviderSignerOperationV2;
+}
+
+function signerReviewMatchesAutonomousSwap(params: {
+  review: WalletProviderJupiterReviewV2;
+  requestId: string;
+  walletId: string;
+  owner: string;
+  inputMint: string;
+  outputMint: string;
+  amount: string;
+}): boolean {
+  const { review } = params;
+  return (
+    review.requestId === params.requestId &&
+    review.walletId === params.walletId &&
+    review.mode === "autonomous" &&
+    review.intentType === "solana.jupiter.swap" &&
+    review.semanticIntent.type === "solana.jupiter.swap" &&
+    review.semanticIntent.jupiter.owner === params.owner &&
+    review.semanticIntent.jupiter.inputMint === params.inputMint &&
+    review.semanticIntent.jupiter.outputMint === params.outputMint &&
+    review.semanticIntent.jupiter.inputAmount === params.amount &&
+    review.semanticIntent.jupiter.maxInputAmount === params.amount &&
+    review.transaction?.submission === "rpc" &&
+    Boolean(review.transaction.serializedTxBase64)
+  );
+}
+
+function swapExecutionResult(params: {
+  operation: WalletProviderSignerOperationV2;
+  signer?: string;
+  order: SolanaSwapOrder;
+  inspection?: SolanaTransactionInspectionResult;
+}): SolanaSwapExecutionResult {
+  const { operation } = params;
+  if (operation.state !== "confirmed" || !operation.signature) {
+    const ambiguous =
+      operation.state === "reserved" ||
+      operation.state === "broadcast" ||
+      operation.state === "unknown";
+    return {
+      ok: false,
+      code: ambiguous ? "wallet_provider_ambiguous" : "wallet_swap_failed",
+      message: ambiguous
+        ? `signer operation ${operation.requestId} is ${operation.state}; reconcile its existing signature before any new Jupiter order`
+        : (operation.error ?? `typed Jupiter swap ended in state=${operation.state}`),
+    };
+  }
+  const tx: WalletProviderSendTxResult = {
+    ok: true,
+    chain: "solana",
+    txHash: operation.signature,
+    signer: params.signer,
+    metadata: {
+      provider: "local-socket-signer",
+      signerProtocol: 2,
+      signerOperationState: operation.state,
+      signerIntentDigest: operation.intentDigest,
+      signerTransactionDigest: operation.transactionDigest,
+      ...(params.inspection ? { swapInspection: params.inspection } : {}),
+    },
+  };
+  return { ok: true, tx, order: params.order };
+}
 
 export type SolanaSwapSignerReview = {
   review: WalletProviderJupiterReviewV2;
@@ -547,37 +661,6 @@ export async function executeSolanaSwapApprovalPayload(params: {
   if (!taker) {
     return { ok: false, code: "wallet_address_missing", message: "wallet has no Solana address" };
   }
-  const balance = await validateSolanaSwapInputBalance({
-    rpcUrl,
-    ownerAddress: taker,
-    inputMint: params.payload.inputMint,
-    amount: params.payload.amount,
-  });
-  if (!balance.ok) {
-    return balance;
-  }
-  const reviewedOrder = params.autonomous
-    ? undefined
-    : reviewedSolanaSwapOrderFromPayload(params.payload);
-  const order: SolanaSwapOrder =
-    reviewedOrder ??
-    (await fetchJupiterSwapOrder({
-      inputMint: params.payload.inputMint,
-      outputMint: params.payload.outputMint,
-      amount: params.payload.amount,
-      slippageBps: params.payload.slippageBps,
-      taker,
-      env,
-    }));
-  const inspection = await inspectAndValidateSolanaSwapOrder({
-    order,
-    expectedSigner: taker,
-    rpcUrl,
-    config: effectiveConfig,
-  });
-  if (!inspection.ok) {
-    return inspection;
-  }
   if (!rpcUrl?.trim()) {
     return {
       ok: false,
@@ -585,71 +668,331 @@ export async function executeSolanaSwapApprovalPayload(params: {
       message: "Solana RPC is required for signer-owned Jupiter validation",
     };
   }
-  if (!order.transaction || !provider.executeJupiterReview) {
+  if (!provider.executeJupiterReview) {
     return {
       ok: false,
       code: "wallet_signer_v2_required",
       message: "Jupiter execution requires protocol-v2 local-socket-signer review.execute support",
     };
   }
-  let signerReviewRequestId: string;
-  if (params.autonomous) {
-    const prepared = await prepareSolanaSwapSignerReview({
-      provider,
-      walletId: params.payload.walletId,
-      owner: taker,
-      order,
-      inspection,
-      rpcUrl,
-      mode: "autonomous",
-      env,
-    });
-    signerReviewRequestId = prepared.review.requestId;
-  } else {
-    const requestId = params.payload.signerReviewId?.trim();
-    if (!requestId) {
+
+  const autonomousIdentity = params.autonomous
+    ? createExternalSubmissionKey({
+        kind: "jupiter-swap",
+        walletId: params.payload.walletId,
+        explicitIntentId: params.payload.executionIntentId,
+        intent: {
+          owner: taker,
+          inputMint: params.payload.inputMint,
+          outputMint: params.payload.outputMint,
+          amount: params.payload.amount,
+          slippageBps: normalizeSlippageBps(params.payload.slippageBps),
+          apiBaseUrl: resolveSwapApiBaseUrl(env),
+          rpcUrlDigest: `sha256:${createHash("sha256").update(rpcUrl).digest("hex")}`,
+        },
+      })
+    : undefined;
+  let entry = autonomousIdentity
+    ? beginExternalSubmission({
+        ...autonomousIdentity,
+        kind: "jupiter-swap",
+        walletId: params.payload.walletId,
+        details: {
+          semanticIntent: {
+            owner: taker,
+            inputMint: params.payload.inputMint,
+            outputMint: params.payload.outputMint,
+            amount: params.payload.amount,
+            slippageBps: normalizeSlippageBps(params.payload.slippageBps),
+          },
+        },
+        env,
+      }).entry
+    : undefined;
+  const releaseExecution = autonomousIdentity
+    ? claimExternalSubmissionExecution(autonomousIdentity.key, env)
+    : undefined;
+
+  try {
+    let order = entry ? storedSwapOrder(entry) : undefined;
+
+    if (entry?.state === "confirmed") {
+      const operation = storedSignerOperation(entry);
+      if (!operation || !order) {
+        return {
+          ok: false,
+          code: "wallet_provider_ambiguous",
+          message: "confirmed swap ledger entry is incomplete; refusing to create another order",
+        };
+      }
+      return swapExecutionResult({
+        operation,
+        signer: typeof entry.result?.signer === "string" ? entry.result.signer : taker,
+        order,
+      });
+    }
+
+    if (
+      entry?.signerRequestId &&
+      (entry.state === "unknown" || entry.state === "submitting" || entry.state === "signed")
+    ) {
+      let operation: WalletProviderSignerOperationV2 | undefined;
+      try {
+        operation = provider.reconcileSignerOperation
+          ? await provider.reconcileSignerOperation({
+              walletId: params.payload.walletId,
+              requestId: entry.signerRequestId,
+            })
+          : provider.getSignerOperation
+            ? await provider.getSignerOperation({
+                walletId: params.payload.walletId,
+                requestId: entry.signerRequestId,
+              })
+            : undefined;
+      } catch {
+        operation = undefined;
+      }
+      if (!operation || !order) {
+        return {
+          ok: false,
+          code: "wallet_provider_ambiguous",
+          message: `swap intent ${entry.key} has an unresolved signer submission; no new Jupiter order was created`,
+        };
+      }
+      if (operation.state === "confirmed" && operation.signature) {
+        entry = updateExternalSubmission({
+          key: entry.key,
+          expectedStates: ["unknown", "submitting", "signed"],
+          state: "confirmed",
+          patch: { result: { operation, signer: taker }, reason: undefined },
+          env,
+        });
+      } else if (operation.state === "failed") {
+        entry = updateExternalSubmission({
+          key: entry.key,
+          expectedStates: ["unknown", "submitting", "signed"],
+          state: "failed",
+          patch: { result: { operation, signer: taker }, reason: operation.error },
+          env,
+        });
+      } else {
+        updateExternalSubmission({
+          key: entry.key,
+          expectedStates: ["unknown", "submitting", "signed"],
+          state: "unknown",
+          patch: {
+            result: { operation, signer: taker },
+            reason: `signer operation remains ${operation.state}`,
+          },
+          env,
+        });
+      }
+      return swapExecutionResult({ operation, signer: taker, order });
+    }
+
+    if (entry?.state === "failed") {
+      const operation = storedSignerOperation(entry);
       return {
         ok: false,
-        code: "wallet_signer_review_missing",
-        message: "reviewed Jupiter swap is not bound to signer review.prepare",
+        code: "wallet_swap_failed",
+        message:
+          operation?.error ??
+          entry.reason ??
+          "this swap intent failed; use a distinct explicit intentId for a new order",
       };
     }
-    signerReviewRequestId = requestId;
+
+    if (entry?.state === "reserved" && provider.getSignerReview && autonomousIdentity) {
+      try {
+        const recovered = await provider.getSignerReview({
+          walletId: params.payload.walletId,
+          requestId: autonomousIdentity.key,
+        });
+        if (
+          !signerReviewMatchesAutonomousSwap({
+            review: recovered,
+            requestId: autonomousIdentity.key,
+            walletId: params.payload.walletId,
+            owner: taker,
+            inputMint: params.payload.inputMint,
+            outputMint: params.payload.outputMint,
+            amount: params.payload.amount,
+          })
+        ) {
+          throw new Error("stored signer review does not match the durable autonomous swap intent");
+        }
+        if (recovered.semanticIntent.type !== "solana.jupiter.swap") {
+          throw new Error("stored signer review has an unexpected semantic intent type");
+        }
+        order = {
+          ok: true,
+          transaction: recovered.transaction!.serializedTxBase64,
+          inputMint: params.payload.inputMint,
+          outputMint: params.payload.outputMint,
+          inAmount: params.payload.amount,
+          otherAmountThreshold: recovered.semanticIntent.jupiter.minimumOutputAmount,
+          slippageBps: params.payload.slippageBps,
+          raw: {},
+        };
+        entry = updateExternalSubmission({
+          key: entry.key,
+          expectedStates: ["reserved"],
+          state: "prepared",
+          patch: {
+            signerRequestId: recovered.requestId,
+            signerIntentDigest: recovered.intentDigest,
+            transactionDigest: recovered.transactionDigest,
+            details: { ...entry.details, order },
+          },
+          env,
+        });
+      } catch {
+        // No durable signer review exists yet; fetching an unsigned order cannot move funds.
+      }
+    }
+
+    const balance = await validateSolanaSwapInputBalance({
+      rpcUrl,
+      ownerAddress: taker,
+      inputMint: params.payload.inputMint,
+      amount: params.payload.amount,
+    });
+    if (!balance.ok) {
+      return balance;
+    }
+
+    const reviewedOrder = params.autonomous
+      ? undefined
+      : reviewedSolanaSwapOrderFromPayload(params.payload);
+    order =
+      order ??
+      reviewedOrder ??
+      (await fetchJupiterSwapOrder({
+        inputMint: params.payload.inputMint,
+        outputMint: params.payload.outputMint,
+        amount: params.payload.amount,
+        slippageBps: params.payload.slippageBps,
+        taker,
+        env,
+      }));
+    const inspection = await inspectAndValidateSolanaSwapOrder({
+      order,
+      expectedSigner: taker,
+      rpcUrl,
+      config: effectiveConfig,
+    });
+    if (!inspection.ok) {
+      return inspection;
+    }
+    if (!order.transaction) {
+      return {
+        ok: false,
+        code: "wallet_signer_v2_required",
+        message: "Jupiter signer review requires the exact serialized transaction",
+      };
+    }
+
+    let signerReviewRequestId: string;
+    if (params.autonomous && autonomousIdentity && entry) {
+      if (entry.state === "reserved") {
+        const prepared = await prepareSolanaSwapSignerReview({
+          provider,
+          walletId: params.payload.walletId,
+          owner: taker,
+          order,
+          inspection,
+          rpcUrl,
+          mode: "autonomous",
+          requestId: autonomousIdentity.key,
+          env,
+        });
+        signerReviewRequestId = prepared.review.requestId;
+        entry = updateExternalSubmission({
+          key: entry.key,
+          expectedStates: ["reserved"],
+          state: "prepared",
+          patch: {
+            signerRequestId: prepared.review.requestId,
+            signerIntentDigest: prepared.review.intentDigest,
+            transactionDigest: prepared.review.transactionDigest,
+            details: { ...entry.details, order },
+          },
+          env,
+        });
+      } else {
+        signerReviewRequestId = entry.signerRequestId ?? "";
+      }
+      if (!signerReviewRequestId || signerReviewRequestId !== autonomousIdentity.key) {
+        return {
+          ok: false,
+          code: "wallet_provider_ambiguous",
+          message: "durable autonomous swap is not bound to its stable signer request",
+        };
+      }
+    } else {
+      const requestId = params.payload.signerReviewId?.trim();
+      if (!requestId) {
+        return {
+          ok: false,
+          code: "wallet_signer_review_missing",
+          message: "reviewed Jupiter swap is not bound to signer review.prepare",
+        };
+      }
+      signerReviewRequestId = requestId;
+    }
+
+    let executed: Awaited<ReturnType<NonNullable<typeof provider.executeJupiterReview>>>;
+    try {
+      executed = await provider.executeJupiterReview({
+        walletId: params.payload.walletId,
+        requestId: signerReviewRequestId,
+        ...(params.reviewAuthorization ? { authorization: params.reviewAuthorization } : {}),
+      });
+    } catch (error) {
+      if (entry) {
+        updateExternalSubmission({
+          key: entry.key,
+          expectedStates: ["prepared"],
+          state: "unknown",
+          patch: {
+            reason: `signer response was lost after exact review preparation: ${String(error)}`,
+          },
+          env,
+        });
+        return {
+          ok: false,
+          code: "wallet_provider_ambiguous",
+          message: `signer response for ${signerReviewRequestId} is ambiguous; reconcile it before any new Jupiter order`,
+        };
+      }
+      throw error;
+    }
+
+    const result = swapExecutionResult({
+      operation: executed.operation,
+      signer: executed.signer,
+      order,
+      inspection,
+    });
+    if (entry) {
+      const confirmed =
+        executed.operation.state === "confirmed" && Boolean(executed.operation.signature);
+      const failed = executed.operation.state === "failed";
+      updateExternalSubmission({
+        key: entry.key,
+        expectedStates: ["prepared"],
+        state: confirmed ? "confirmed" : failed ? "failed" : "unknown",
+        patch: {
+          signerSignature: executed.operation.signature,
+          transactionDigest: executed.operation.transactionDigest,
+          result: { operation: executed.operation, signer: executed.signer },
+          reason: result.ok ? undefined : result.message,
+        },
+        env,
+      });
+    }
+    return result;
+  } finally {
+    releaseExecution?.();
   }
-  const executed = await provider.executeJupiterReview({
-    walletId: params.payload.walletId,
-    requestId: signerReviewRequestId,
-    ...(params.reviewAuthorization ? { authorization: params.reviewAuthorization } : {}),
-  });
-  if (executed.operation.state === "failed") {
-    return {
-      ok: false,
-      code: "wallet_swap_failed",
-      message: executed.operation.error ?? "typed Jupiter swap failed",
-    };
-  }
-  const tx: WalletProviderSendTxResult = {
-    ok: true,
-    chain: "solana",
-    txHash: executed.operation.signature ?? "",
-    signer: executed.signer,
-    metadata: {
-      provider: "local-socket-signer",
-      signerProtocol: 2,
-      signerOperationState: executed.operation.state,
-      signerIntentDigest: executed.operation.intentDigest,
-      signerTransactionDigest: executed.operation.transactionDigest,
-    },
-  };
-  return {
-    ok: true,
-    tx: {
-      ...tx,
-      metadata: {
-        ...tx.metadata,
-        swapInspection: inspection,
-      },
-    },
-    order,
-  };
 }

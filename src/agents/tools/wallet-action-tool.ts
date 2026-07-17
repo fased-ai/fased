@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { Type } from "@sinclair/typebox";
 import type { FasedAgentConfig } from "../../config/config.js";
 import { assertValidSolanaAddress } from "../../wallet/solana-address.js";
@@ -8,6 +9,7 @@ import {
   prepareSolanaSwapSignerReview,
   SOLANA_NATIVE_MINT,
   validateSolanaSwapIntentPolicy,
+  type SolanaSwapOrder,
 } from "../../wallet/solana-swap.js";
 import {
   normalizeTokenAmountToBaseUnits,
@@ -97,6 +99,7 @@ const WalletActionToolSchema = Type.Object({
   expiresAt: Type.Optional(Type.Number()),
   expirySeconds: Type.Optional(Type.Number()),
   orderId: Type.Optional(Type.String()),
+  intentId: Type.Optional(Type.String()),
   state: Type.Optional(optionalStringEnum(WALLET_ACTION_LIMIT_HISTORY_STATES)),
   mint: Type.Optional(Type.String()),
   limit: Type.Optional(Type.Number()),
@@ -177,6 +180,14 @@ function scheduleMessageForTransferPlan(plan: Record<string, unknown>): string {
 function readPositivePercent(value: unknown): number {
   const raw = typeof value === "number" && Number.isFinite(value) ? value : 100;
   return Math.max(1, Math.min(100, Math.floor(raw)));
+}
+
+function cronRunExecutionIntentId(sessionKey: string | undefined): string | undefined {
+  const normalized = sessionKey?.trim();
+  if (!normalized || !normalized.includes(":cron:") || !normalized.includes(":run:")) {
+    return undefined;
+  }
+  return `cron-run:${createHash("sha256").update(normalized).digest("hex")}`;
 }
 
 function publicJupiterTriggerOrder(order: { id?: string; txSignature?: string }) {
@@ -269,7 +280,7 @@ export function createWalletActionTool(opts?: {
     description:
       "Plan, quote, execute Solana swaps, schedule sends, and manage Jupiter Trigger limit orders through Fased policy. Use Agent wallets only. For normal SOL/token decimal amounts like 0.01, pass amountFormat=human; decimal amounts are treated as human units when amountFormat is omitted. For scheduled actions, create the schedule with cron using the schedule_plan or schedule_send output.",
     parameters: WalletActionToolSchema,
-    execute: async (_toolCallId, args) => {
+    execute: async (toolCallId, args) => {
       if (!access.ok) {
         throw new Error(access.code ?? "wallet action access denied");
       }
@@ -289,6 +300,19 @@ export function createWalletActionTool(opts?: {
           : 50;
       const mode = readStringParam(params, "mode") === "manual" ? "manual" : "autonomous";
       const autonomous = mode === "autonomous";
+      const toolCallExecutionIntentId = (() => {
+        const normalized = toolCallId?.trim();
+        if (!normalized) {
+          return undefined;
+        }
+        return `tool-call:${createHash("sha256")
+          .update(`${opts?.agentSessionKey?.trim() ?? "unknown-session"}\0${normalized}`)
+          .digest("hex")}`;
+      })();
+      const executionIntentId =
+        readStringParam(params, "intentId") ??
+        cronRunExecutionIntentId(opts?.agentSessionKey) ??
+        toolCallExecutionIntentId;
       const scheduled = action === "schedule_plan";
       const requesterSkillId = opts?.requesterSkillId?.trim() || null;
       const permissions = readSkillWalletActionPermissions(cfg, requesterSkillId);
@@ -734,6 +758,7 @@ export function createWalletActionTool(opts?: {
         amountFormat: "base",
         slippageBps,
         mode,
+        executionIntentId,
       };
 
       if (action === "limit_order") {
@@ -840,6 +865,7 @@ export function createWalletActionTool(opts?: {
             expiresAt,
             expirySeconds,
             autonomous,
+            intentId: executionIntentId,
             rpcUrl,
             env: process.env,
           });
@@ -929,21 +955,33 @@ export function createWalletActionTool(opts?: {
         });
       }
 
-      const order = await fetchJupiterSwapOrder({
-        inputMint,
-        outputMint,
-        amount,
-        slippageBps,
-        taker,
-        env: process.env,
-      });
-      const inspection = await inspectAndValidateSolanaSwapOrder({
-        order,
-        expectedSigner: taker,
-        rpcUrl,
-        config: effectiveWallet,
-      });
-      if (!inspection.ok) {
+      const deferAutonomousOrder = action === "swap" && autonomous;
+      const order: SolanaSwapOrder = deferAutonomousOrder
+        ? ({
+            ok: true,
+            inputMint,
+            outputMint,
+            inAmount: amount,
+            slippageBps,
+            raw: {},
+          } as const)
+        : await fetchJupiterSwapOrder({
+            inputMint,
+            outputMint,
+            amount,
+            slippageBps,
+            taker,
+            env: process.env,
+          });
+      const inspection = deferAutonomousOrder
+        ? undefined
+        : await inspectAndValidateSolanaSwapOrder({
+            order,
+            expectedSigner: taker,
+            rpcUrl,
+            config: effectiveWallet,
+          });
+      if (inspection && !inspection.ok) {
         throw new Error(inspection.message);
       }
 
@@ -974,15 +1012,19 @@ export function createWalletActionTool(opts?: {
         slippageBps: order.slippageBps ?? slippageBps,
         priceImpactPct: order.priceImpactPct,
         routeLabel: order.routeLabel,
-        programIds: inspection.programIds,
-        routeProgramIds: inspection.routeProgramIds,
-        writableAccounts: inspection.writableAccounts,
-        usesAddressLookupTables: inspection.usesAddressLookupTables,
+        programIds: inspection?.ok ? inspection.programIds : undefined,
+        routeProgramIds: inspection?.ok ? inspection.routeProgramIds : undefined,
+        writableAccounts: inspection?.ok ? inspection.writableAccounts : undefined,
+        usesAddressLookupTables: inspection?.ok ? inspection.usesAddressLookupTables : undefined,
         jupiterRequestId: order.requestId,
+        executionIntentId,
         serializedTxBase64: order.transaction,
       };
 
       if (action === "quote") {
+        if (!inspection?.ok) {
+          throw new Error("Jupiter quote inspection is unavailable");
+        }
         return jsonResult({
           ok: true,
           plan,
@@ -1028,6 +1070,9 @@ export function createWalletActionTool(opts?: {
       });
 
       if (!autonomous) {
+        if (!inspection?.ok) {
+          throw new Error("reviewed Jupiter swap inspection is unavailable");
+        }
         const simulation = simulateWalletPolicy({
           cfg,
           config: effectiveWallet,

@@ -1,6 +1,9 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -430,7 +433,7 @@ func (s *signerStoreV2) markBroadcast(requestID, signature, transactionDigest st
 	return s.markBroadcastClaim(requestID, 0, signature, transactionDigest)
 }
 
-func (s *signerStoreV2) markBroadcastClaim(requestID string, attempt uint64, signature, transactionDigest string) (signerOperationV2, error) {
+func (s *signerStoreV2) markBroadcastClaim(requestID string, attempt uint64, signature, transactionDigest string, signedTxBase64 ...string) (signerOperationV2, error) {
 	return s.updateOperation(requestID, func(operation *signerOperationV2, now string) error {
 		if operation.State != operationReserved {
 			return fmt.Errorf("cannot broadcast signer operation in state %s", operation.State)
@@ -443,6 +446,20 @@ func (s *signerStoreV2) markBroadcastClaim(requestID string, attempt uint64, sig
 		}
 		if !strings.HasPrefix(strings.TrimSpace(transactionDigest), "sha256:") {
 			return errors.New("transaction digest is required before broadcast")
+		}
+		if len(signedTxBase64) > 1 {
+			return errors.New("at most one signed transaction artifact may be persisted")
+		}
+		if len(signedTxBase64) == 1 {
+			raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(signedTxBase64[0]))
+			if err != nil || len(raw) == 0 || len(raw) > 1644 {
+				return errors.New("signed transaction artifact is invalid")
+			}
+			digest := sha256.Sum256(raw)
+			if "sha256:"+hex.EncodeToString(digest[:]) != strings.TrimSpace(transactionDigest) {
+				return errors.New("signed transaction artifact digest mismatch")
+			}
+			operation.SignedTxBase64 = strings.TrimSpace(signedTxBase64[0])
 		}
 		operation.State = operationBroadcast
 		operation.Signature = strings.TrimSpace(signature)

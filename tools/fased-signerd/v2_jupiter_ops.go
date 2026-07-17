@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 
 	solana "github.com/gagliardetto/solana-go"
 )
@@ -156,6 +157,15 @@ func (s *signerServiceV2) executeJupiterReviewV2(
 		result := signerReviewExecutionResultV2{Review: review, Operation: &terminal, Signer: wallet.PublicKey}
 		if review.IntentType == intentFederationBondChallenge {
 			result.SignatureBase64 = terminal.Signature
+		}
+		if review.Transaction != nil && review.Transaction.Submission == jupiterSubmissionReturnV2 {
+			requiresSignedArtifact := terminal.State == operationBroadcast || terminal.State == operationConfirmed || terminal.State == operationUnknown
+			if requiresSignedArtifact && strings.TrimSpace(terminal.SignedTxBase64) == "" {
+				return signerReviewExecutionResultV2{}, errors.New("terminal returnSigned operation is missing its durable signed transaction")
+			}
+			if strings.TrimSpace(terminal.SignedTxBase64) != "" {
+				result.SignedTxBase64 = terminal.SignedTxBase64
+			}
 		}
 		return result, nil
 	} else if lookupErr != nil && !errors.Is(lookupErr, errSignerOperationNotFoundV2) {
@@ -362,7 +372,8 @@ func (s *signerServiceV2) executeJupiterReviewV2(
 	}
 	signedDigestBytes := sha256.Sum256(signedRaw)
 	signedDigest := "sha256:" + hex.EncodeToString(signedDigestBytes[:])
-	operation, err = s.store.markBroadcastClaim(operation.RequestID, attempt, signature.String(), signedDigest)
+	signedTxBase64 := base64.StdEncoding.EncodeToString(signedRaw)
+	operation, err = s.store.markBroadcastClaim(operation.RequestID, attempt, signature.String(), signedDigest, signedTxBase64)
 	if err != nil {
 		return signerReviewExecutionResultV2{}, err
 	}
@@ -384,7 +395,7 @@ func (s *signerServiceV2) executeJupiterReviewV2(
 		// The operation is durably marked broadcast before signed bytes cross the
 		// signer boundary. A lost/ambiguous Jupiter API response must be
 		// reconciled by signature and must never trigger another signing attempt.
-		result.SignedTxBase64 = base64.StdEncoding.EncodeToString(signedRaw)
+		result.SignedTxBase64 = signedTxBase64
 		return result, nil
 	}
 

@@ -80,6 +80,7 @@ export type WalletSendApprovalPayload = {
   priceImpactPct?: string;
   routeLabel?: string;
   jupiterRequestId?: string;
+  executionIntentId?: string;
   serializedTxBase64?: string;
   programIds?: string[];
   routeProgramIds?: string[];
@@ -1498,6 +1499,20 @@ export async function approveWalletSendRequest(params: {
       env,
     });
     if (!executed.ok) {
+      if (executed.code === "wallet_provider_ambiguous") {
+        const ambiguousRequest = markWalletSendRequestBroadcastUnknown({
+          requestId: request.id,
+          reason: executed.message,
+          actor: params.actor,
+          env,
+        });
+        return {
+          ok: false as const,
+          code: executed.code,
+          message: executed.message,
+          request: ambiguousRequest,
+        };
+      }
       request.status = "failed";
       request.reason = executed.message;
       request.result = { error: request.reason };
