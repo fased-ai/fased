@@ -1,164 +1,146 @@
 ---
-summary: "Protect unattended Agent and Vault wallets with passkey, split-key custody, and signer-only unlock."
+summary: "Safe unattended Agent and Mining operation with typed signer policy, durable caps, idempotency, and emergency controls."
 read_when:
-  - You want Agent wallet automation without making the host the only source of truth
-  - You need the end-user security model for locked self-hosted wallets
+  - Enabling Agent, skill, task, Jupiter, Trigger, or mining automation
+  - Deciding how much value an unattended wallet should hold
 title: "Autonomous wallet security"
 sidebarTitle: "Autonomous security"
 ---
 
 # Autonomous wallet security
 
-This guide explains the recommended end-user model for unattended self-hosted wallets in Fased.
+Autonomy is a narrow policy grant, not an unlocked private key.
 
-Use it when you want:
+Fased supports unattended work only through typed operations whose exact
+programs, assets, destinations, amounts, and account semantics can be validated
+by the signer.
 
-- Agent wallet automation for sends, skills, plugins, or schedules
-- Vault custody for manual storage and Fased Network bond assignment
-- wallet separation for service receipts, invoices, or fresh receiving addresses
-- recoverable wallet security without turning one VPS into the only secret boundary
+## Which roles can be autonomous
 
-The practical rule is simple:
+- **Agent:** typed SOL/SPL transfers and reviewed semantic wallet actions when
+  every required policy and skill-grant dimension is explicit.
+- **Mining:** generated SAT protocol operations plus configured SOL fee/capital
+  and reviewed SAT movement.
+- **Vault:** never autonomous. Vault execution is manual reviewed work.
 
-- `local-socket-signer` is the signer path
-- `fased-signerd` is the signer process
-- Wallet Control Passkey is the ceremony layer
-- split-key custody is the locked-wallet layer
+Do not enable generic `directSigning` to make a Vault flow work. Use signer
+WebAuthn, a hardware-backed Wallet Standard account, or a strong Turnkey policy.
 
-## What the runtime should protect
+## Required Agent policy
 
-For an unattended self-hosted wallet, the locked state should protect against:
+An unattended Agent policy needs all of:
 
-- a copied VPS disk
-- a leaked app config
-- a browser session without passkey approval
-- a runtime compromise while the wallet is still locked
+- exact wallet id and `agent` role;
+- typed operation names;
+- exact Solana program ids;
+- explicit SOL/SPL assets and mints;
+- explicit destinations;
+- positive per-transaction cap;
+- positive daily cap.
 
-It should not pretend to abolish all risk during a live unlocked session.
+Missing policy, empty allowlists, zero/absent caps, stale policy version, or a
+hash the signer did not acknowledge means deny.
 
-## The healthy custody model
+Keep the Agent balance within the amount you intentionally accept as exposed by
+that host, policy, and workflow. Caps reduce loss; they do not make a large hot
+wallet safe.
 
-For production, use this split:
+## Skill and task authorization
 
-- encrypted wallet material on the host
-- host-side share on the host
-- device share on a trusted browser or second device
-- recovery share offline
+A skill install or task schedule does not grant wallet access. The skill's
+Agent-wallet grant must explicitly name actions, wallet ids, chain, trusted
+registry (or `local` source), input/output mints, amount/slippage caps, and
+autonomous/scheduled permission.
 
-That means the host is necessary, but not sufficient by itself.
+The signer policy may be narrower and is always final. Skills never receive
+private keys, raw signer access, provider master credentials, or the native
+control socket.
 
-```mermaid
-flowchart TD
-    Runtime["Fased runtime<br/>sign request"] --> Session["Scoped unlock session"]
-    UI["Trusted browser<br/>passkey ceremony"] --> Session
-    Device["Encrypted device share"] --> Session
+## Jupiter and Trigger operations
 
-    subgraph HostLayer["Host"]
-      Host["Host share<br/>wallet metadata"]
-      Signer["fased-signerd"]
-      Wallet["Encrypted wallet material"]
-    end
+Jupiter swaps and Trigger order create/deposit/cancel/withdraw run through
+semantic validators. The signer checks the decoded programs, mints,
+destinations, PDAs, signer/writable flags, amounts, and expected transaction
+binding.
 
-    Session --> Signer
-    Host --> Signer
-    Signer --> Wallet
-    Recovery["Offline recovery share"] -. emergency recovery .-> Signer
-```
+Fased durably stores:
 
-## What to avoid
+- stable intent and external authorization ids;
+- endpoint/API-key/RPC binding hashes;
+- prepared and signed artifacts;
+- deposit/craft/create/cancel/withdraw phase;
+- broadcast signature and final/unknown state.
 
-Avoid these patterns:
+After an ambiguous provider or RPC result, Fased does not fetch, sign, or submit
+a replacement. Reconcile the exact existing request first.
 
-- one Agent wallet reused for mining, bond, and vault storage
-- one wallet reused for mining, marketplace payments, treasury, and private business receipts
-- host-only passphrase files as the only real unlock boundary
-- recovery share stored next to the device share
-- leaving Agent automation enabled without tight caps and allowlists
-- leaving Vault custody unlocked longer than the work requires
-- treating passkey login as the same thing as complete at-rest custody protection
+## Mining autonomy
 
-## Recommended wallet split
+Mining uses generated SAT codecs shared by TypeScript and Go. The canonical
+schema includes discriminator, payload length, program family, account flags,
+and variable-account layout; CI and release checks reject generated drift.
+The signer additionally validates action-specific PDAs, programs, mints,
+destinations, amounts, and context.
 
-The recommended public split is:
+Mining can receive SAT and needs SOL for fees/capital. That does not authorize
+unrelated SPL tokens, arbitrary transfers, serialized trades, or raw
+instructions.
 
-- one or more Agent wallets, with one primary fallback
-- mining wallet
-- one or more Vault wallets
-- one or more Agent wallets for invoices, payments, or service receipts
-- optional Fased Network bond assignment to a Vault wallet
-- offline reserve outside the runtime
+## Durable accounting
 
-## Unlock discipline
+The native signer reserves allowance atomically before signing and persists
+daily totals across restart. Concurrent duplicates cannot both consume the same
+remaining cap.
 
-Agent and Vault use different controls:
+States are `reserved`, `broadcast`, `confirmed`, `failed`, and `unknown`.
+`broadcast` and `unknown` count against the cap. Request id and immutable
+transaction digest prevent a caller from reusing an approval for changed
+parameters.
 
-- Agent `Stop` pauses automated execution for chat, skills, plugins, and schedules.
-- Vault split-key unlock opens a manual signing window.
-- Mining does not use the generic wallet lock; it is Satcoin mining ops only.
+## Stop and recovery
 
-Good defaults:
+Agent **Stop** and Mining **Stop** prevent new automation at the Gateway layer.
+They do not erase keys, reset signer caps, cancel an already broadcast
+transaction, or turn a hot wallet into offline custody.
 
-- Agent: keep automation on only when caps and allowlists are correct; use `Stop` as emergency pause.
-- Vault: unlock until manual lock for deliberate work, or choose a short timed unlock.
-- Use wallet-specific sessions with one wallet, one purpose, and a short duration.
+When stopping automation:
 
-## Recovery discipline
+1. stop the Agent/task/miner source;
+2. inspect signer request and reconciliation state;
+3. confirm no `reserved`, `broadcast`, or `unknown` request is unresolved;
+4. tighten signer policy if authority should be removed;
+5. sweep excess working value through a reviewed typed transfer;
+6. review Gateway and signer audit logs.
 
-Good practice:
+## Local versus Hosting
 
-1. export the recovery share during setup
-2. store it offline
-3. keep it separate from the host
-4. rotate it after any suspected device compromise
+Local Linux/macOS/WSL2 runs Gateway and signer as one OS user. Use it for
+development and low-value working wallets; same-user compromise is outside its
+hard boundary.
 
-If the device share is lost, recover immediately and issue a fresh one.
+Hosting runs the root-managed signer as `fased-signer`, gives Gateway only the
+typed application socket, and gives it no sudo or control-socket access. A
+compromised Gateway can still request whatever the signer policy allows, which
+is why exact allowlists, caps, WebAuthn for manual work, and low working
+balances remain necessary.
 
-## Mining-specific reading
+## Checklist
 
-For Satcoin mining, the correct posture is:
-
-- dedicated mining wallet
-- stable Solana RPC
-- Satcoin mining actions only, not generic sends or skill wallet actions
-- post-claim sweep policy that moves excess Satcoin out of the working wallet
-
-Mining wallets are working wallets, not treasury wallets.
-
-## Agent-wallet reading
-
-For Agent wallet sends, Fased Network wallet actions, skill/plugin wallet actions, or
-advanced wallet automation, the conservative posture is:
-
-- separate Agent wallet
-- tight SOL caps and per-mint SPL token caps
-- explicit wallet-action allowlists when optional route actions are enabled
-- automation `Stop` available as an emergency pause
-- easy revoke and clear audit trail
-
-Risky agent actions should use explicit handles such as `@wallet:agent`.
-Mining and vault wallets must not be generic prompt wallets.
-
-Optional route actions add another boundary. Keep them behind Fased wallet
-policy, action allowlists, small working limits, explicit expiry, and visible
-cancel or review history.
-
-## Bottom line
-
-The recommended autonomous model is:
-
-- self-hosted wallet
-- signer-only decryption
-- passkey unlock ceremony
-- split-key custody
-- recovery share kept offline
-- short, scoped unlock windows
+- [ ] Role is Agent or Mining, never Vault.
+- [ ] Wallet id/address/policy version/hash are verified.
+- [ ] Every operation/program/asset/destination is explicit.
+- [ ] Positive per-transaction and daily caps match a small working balance.
+- [ ] Skill source/actions/mints/caps/autonomy are explicitly granted.
+- [ ] Signer-owned RPC is ready.
+- [ ] Duplicate/concurrent requests are tested.
+- [ ] Ambiguous broadcast recovery is tested without retry.
+- [ ] Cold restart preserves caps and pending state.
+- [ ] Stop, tighten-policy, sweep, backup, and audit procedures are known.
 
 ## Related docs
 
-- [Wallet](/plugins/crypto/wallet-page)
-- [Self-hosted wallet signer](/plugins/crypto/wallet-self-hosted)
-- [Wallet signer and provider architecture](/plugins/crypto/wallet-signer-provider-architecture)
 - [Wallet operations and security](/plugins/crypto/wallet-production-flow)
-- [Wallet Control Passkey](/plugins/crypto/wallet-control-passkey)
+- [Wallet roles and policies](/plugins/crypto/wallet-roles-and-policies)
 - [Autonomous wallet sessions](/plugins/crypto/wallet-autonomous-sessions)
+- [Wallet Control Passkey](/plugins/crypto/wallet-control-passkey)
 - [Mining](/plugins/crypto/mining-page)

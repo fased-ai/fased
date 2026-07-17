@@ -1,11 +1,11 @@
 ---
 title: "Security Test Report"
 summary: >-
-  Maintained security evidence for gateway access, wallet custody, passkeys,
-  split-key policy, skills, tasks, and SAT maintainer operations.
+  Maintained security evidence and pending release gates for gateway access,
+  native signer-v2 custody, passkeys, skills, tasks, and SAT operations.
 read_when:
   - Reviewing a Fased host before exposing remote access
-  - Checking wallet/passkey/split-key policy before unattended operation
+  - Checking wallet/passkey/signer policy before unattended operation
   - Auditing whether Agent skills, tasks, and mining controls stay separated
 ---
 
@@ -20,14 +20,18 @@ for unattended wallet, SAT mining, or Fased Network operation.
 
 - Gateway and node access: **covered**. Host checks and private-access guidance
   exist. Operators must verify their own network exposure.
-- Signer and wallet key safety: **covered**. Signer doctor, socket/file
-  permissions, wallet status, and no-key-output checks exist.
+- Signer-v2 and wallet key safety: **pending complete release validation**. The
+  controls exist, but this report must not call them covered until fresh Local,
+  WSL2, macOS, fresh Hosting, previous-Hosting migration, cold reboot, rollback,
+  concurrent-send, ambiguous-broadcast, and Local Docker gates pass together.
 - Wallet role separation: **covered**. Agent, Mining, and Vault roles are
   separate; generic skills must not reach Mining or Vault wallets.
-- Passkey controls: **covered**. Wallet Control Passkey mode, first enrollment,
-  approval, and removal behavior have regression coverage.
-- Split-key / Vault security: **covered**. Vault custody state and manual signing
-  windows are tested as Vault policy, not generic passkey state.
+- Gateway Wallet Control Passkey: **covered at its Gateway boundary**. Mode,
+  enrollment, approval, and removal have regression coverage; this is not signer
+  custody authorization.
+- Signer WebAuthn, fail-closed policy, durable caps/idempotency, and reviewed
+  execution: **pending complete release validation**. Go owns these controls;
+  the retired split-key/passphrase unlock model is not production custody.
 - Agent skills and wallet grants: **covered**. Skill install/allowlist is
   separate from Wallet > Skill Grants. Denied actions fail closed.
 - Tasks and automation: **covered**. Saved task definitions are separate from run
@@ -47,10 +51,9 @@ The security checks focus on the surfaces that can move money, expose a host, or
 grant an Agent persistent capability:
 
 - gateway and node access
-- local signer and wallet custody
+- native signer-v2 key lifecycle, sockets, policy, RPC, caps, and custody
 - wallet roles and policy boundaries
-- Wallet Control Passkey
-- split-key Vault security
+- Gateway Wallet Control Passkey and separate signer WebAuthn
 - skill installation, Agent allowlists, and wallet grants
 - task creation, task execution policy, and run history separation
 - SAT mining wallet isolation
@@ -100,30 +103,48 @@ See also:
 
 Required evidence:
 
-- `fased-signerd` owns signing operations
-- gateway policy and signer custody stay separated
-- signer socket permissions are not world-readable
-- keystore/passphrase files are not world-readable
-- signer audit log is enabled
-- raw private keys are not printed in logs, task output, UI, or environment
+- Go owns wallet creation/import/re-encryption, policy, execution RPC, signer
+  WebAuthn, caps, signing, and reconciliation
+- Hosting runs the Gateway as `app` and the signer as `fased-signer`
+- `/run/fased-signerd/app.sock` is group-authorized `0660`; the Gateway has no
+  access to `/run/fased-signerd/control.sock` (`0600`)
+- `/var/lib/fased-signerd/state.db`, `master.key`, and `audit.jsonl` are
+  signer-owned inside a `0700` directory
+- the Gateway has no signer sudo rule and cannot execute app-controlled code as
+  `fased-signer`
+- the fixed root updater verifies exact tagged artifact digest and attestation,
+  gates mutations, snapshots state, and rolls back/quarantines failure
+- raw private keys, RPC execution secrets, and signer credentials are not
+  printed in logs, task output, UI, argv, or environment
 
 Useful checks:
 
 ```bash
 fased wallet signer doctor --json
 fased wallet status --json
+sudo systemctl status fased-signerd.service fased-host-updater.service --no-pager
+sudo stat -c '%U:%G %a %n' \
+  /var/lib/fased-signerd \
+  /var/lib/fased-signerd/state.db \
+  /var/lib/fased-signerd/master.key \
+  /var/lib/fased-signerd/audit.jsonl \
+  /run/fased-signerd/app.sock \
+  /run/fased-signerd/control.sock
 ```
 
 Expected result:
 
 - signer doctor passes
-- configured wallets show healthy signer capability
+- configured wallets show protocol-v2 capability, exact policy/network hashes,
+  and no legacy Node keystore path
+- `app` can connect only to the application socket and has no signer sudo
 - no raw key material appears in the report
 
 Failure rule:
 
 If a command, UI card, task result, or log line prints a private key, seed
-phrase, passphrase, recovery share, or RPC secret, treat it as a security bug.
+phrase, passphrase, signer credential, or execution RPC secret, treat it as a
+security bug.
 
 ## Wallet role separation
 
@@ -140,7 +161,8 @@ Evidence to keep current:
 - Agent wallet sends use only allowed Agent-role wallets
 - Mining capital and mining submit use the mining wallet path
 - Vault bond and staking use the Vault/bond authority path
-- deleting or recreating a wallet does not leave stale secured-wallet policy
+- archive first durably tightens the native policy to deny-all, then unregisters;
+  failure to lock must leave the wallet registered
 
 Expected result:
 
@@ -150,49 +172,49 @@ Expected result:
 - wallet aliases such as `@wallet:agent`, `@wallet:mining`, and `@wallet:vault`
   resolve to the intended role and do not silently cross roles
 
-## Passkey controls
+## Gateway Wallet Control Passkey
 
 Required behavior:
 
-- passkey-off mode allows normal non-passkey wallet/mining flows
-- passkey-on mode requires approval for sensitive wallet actions
+- passkey-off mode does not claim signer custody authorization
+- passkey-on mode authenticates sensitive Gateway approval/settings actions
 - first passkey enrollment can happen without an existing passkey
-- removing the last passkey is blocked while a secured wallet still depends on it
-- passkey removal updates cached wallet-security state
+- Gateway passkey removal updates Gateway approval state only
 
 Useful regression areas:
 
 - wallet send approval
-- mining capital fund/withdraw approval
-- mining sweep policy approval
+- Gateway wallet/settings approval
 - passkey remove with deleted wallets
 - no stale wallet id aliases after deletion
 
 Expected result:
 
-- passkey-off mode does not dead-end wallet send or mining capital operations
-- passkey-on mode requires a real approval for sensitive actions
+- Gateway passkey state never substitutes for signer WebAuthn
 - no stale "passkey on with no usable passkey" state remains after removal
 - first passkey enrollment remains possible
 
-## Split-key / Vault security
+## Native signer WebAuthn, policy, and durable execution
 
 Required behavior:
 
-- Vault locked state blocks manual signing
-- Vault unlock opens only the intended manual signing window
-- locking returns the Vault to the safe state
-- split-key security is tied to Vault custody, not generic passkey readiness
-- recovery share guidance is visible during setup and not recoverable from chat
-  output later
+- missing policy and empty operations/programs/assets/destinations deny all
+- every executable asset has positive per-transaction and daily caps
+- every manual native Agent, Mining, or Vault review requires signer WebAuthn
+  bound to the exact digest, decoded intent, policy hash, nonce, and expiry
+- native signer credential registration/listing works through the signer-only
+  launcher/control socket; native credential removal is not currently supported
+- request ids, cap reservations, daily totals, signed bytes, and
+  reserved/broadcast/confirmed/failed/unknown states survive restart
+- an ambiguous result reconciles the exact existing signature and is never
+  automatically rebroadcast
 
 Expected result:
 
-- Vault locked is the default custody state
-- Vault unlock is a narrow manual signing state
-- Agent auto-sign policy is not confused with Vault split-key custody
-- Mining auto-sign behavior is controlled by mining runtime policy, not Vault
-  unlock state
+- new wallets remain deny-all until an owner-reviewed policy hash is acknowledged
+- concurrent requests cannot both consume the same remaining cap
+- restarting does not reset daily accounting or create a replacement request
+- the legacy split-key/passphrase unlock and Node custody routes remain absent
 
 ## Agent skills and wallet grants
 
@@ -357,7 +379,9 @@ For Satcoin protocol evidence, read the Satcoin
 
 - Mining page: miner-owned mining controls.
 - Fased Network page: bond, staking, and Vault authority state.
-- Wallets page: wallet roles, grants, passkeys, split-key policy, and balances.
+- Wallets page: wallet roles, grants, Gateway passkeys, review intent, and balances.
+- Native signer: keys, policy, signer WebAuthn, execution RPC, durable caps, and
+  reviewed execution.
 - Agent Tasks: saved automation definitions.
 - Logs/history: what already happened.
 - Security report: evidence that the boundaries above still hold.
@@ -369,7 +393,11 @@ Before a public-hosted or high-value wallet deployment, confirm:
 - gateway access is private or authenticated
 - signer doctor passes
 - wallet role separation passes
-- passkey and split-key policy match the intended wallet roles
+- Gateway Wallet Control Passkey and separate signer WebAuthn are not conflated
+- signer policy/RPC hashes, positive caps, and role-specific typed operations
+  match the intended wallets
+- fresh Local, WSL2, macOS, Hosting, prior-Hosting migration, cold reboot,
+  rollback, concurrent-send, ambiguous-broadcast, and Local Docker checks pass
 - skill wallet grants are narrow
 - task templates do not include unexpected wallet or web access
 - maintainer primary, standby, and monitor are active if SAT protocol
@@ -386,7 +414,7 @@ Before a public-hosted or high-value wallet deployment, confirm:
     Check host, firewall, Tailscale, signer, and systemd posture.
   </Card>
   <Card title="Wallet passkey" href="/plugins/crypto/wallet-control-passkey" icon="key-round">
-    Understand passkey approval and split-key wallet security.
+    Distinguish Gateway passkey authentication from exact signer WebAuthn.
   </Card>
   <Card title="Satcoin devnet report" href="https://docs.satcoin.app/devnet-test-report" icon="file-check">
     Read SAT protocol and runtime evidence.

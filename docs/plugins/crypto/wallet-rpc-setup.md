@@ -1,140 +1,178 @@
 ---
-summary: "Configure Solana RPC for self-hosted wallets, Satcoin mining, advanced wallet actions, and wallet readiness."
+summary: "Configure the separate signer execution and Gateway read/preparation Solana RPC planes."
 read_when:
-  - You are creating or operating a Solana wallet in Fased
-  - You are preparing a Mining wallet for Satcoin
-  - You need reliable RPC for long-running wallet automation
+  - Preparing a native Agent, Mining, or Vault wallet
+  - Fixing signer network-pending or RPC readiness
 title: "Solana RPC Setup"
 sidebarTitle: "RPC setup"
 ---
 
 # Solana RPC setup
 
-Solana RPC is the network path your self-hosted Fased wallet uses to read chain
-state and submit transactions.
+Fased uses two RPC planes:
 
-Wallets, advanced wallet actions, Satcoin mining, token metadata, balances,
-simulation, submit, confirmation, and claim all depend on RPC.
+- **Signer execution RPC:** encrypted and versioned per native wallet. It powers
+  native balance reads, construction, simulation, broadcast, and reconciliation.
+- **Gateway read/preparation RPC:** powers dashboard token inventory, SAT
+  inspection/watchers/readiness, federation/bond reads, Jupiter/Trigger
+  preparation, and provider/hardware custody lanes.
 
-## Recommended provider posture
+Gateway wallet environment variables are not authority for protocol-v2 native
+execution, and the Gateway has no arbitrary RPC proxy through the signer. They
+remain necessary for Gateway-owned reads and preparation.
 
-Use a reliable private or commercial Solana RPC provider for mainnet wallet
-automation and Satcoin mining.
+The simple setup wizard stores the selected endpoint in both planes. Therefore
+that URL/token is visible to Gateway code. For stronger separation, use a
+different read-only endpoint/credential for the Gateway and keep the execution
+credential only in signer-owned encrypted state.
 
-Many serious providers can work. Choose one that gives you stable HTTP access,
-WebSocket support, usage visibility, and enough request capacity for long-running
-wallet and mining work.
+## Provider posture
 
-The important rule is:
+Use a reliable private/commercial mainnet provider for unattended mining and
+wallet actions. A public endpoint is suitable for limited testing but should
+not be your production reliability or privacy assumption.
 
-```text
-long-running wallet automation needs reliable RPC.
-```
+Keep provider URLs/tokens out of:
 
-Public free RPC can be useful for local testing or first setup. If no custom
-provider is configured, Fased can fall back to a default Solana RPC, but that
-fallback should not be treated as the operating posture for unattended mining.
+- chat, prompts, screenshots, issues, and channel messages;
+- skill files and task instructions;
+- command arguments and shell history;
+- command-line flags and unencrypted ad hoc files;
+- public logs.
 
-## Get an RPC endpoint
+The Gateway read endpoint necessarily remains visible to the Gateway. Give it
+only the provider permissions/quota appropriate for public-chain reads; do not
+reuse a privileged signer execution credential there.
 
-1. Create or open an account with a Solana RPC provider.
-2. Open the provider's API key or endpoint page.
-3. Create or copy an API key if the provider requires one.
-4. Copy the endpoint for the target network.
+## Prepare the input document
 
-Endpoint shapes:
-
-```text
-mainnet: https://YOUR_PROVIDER_MAINNET_RPC/?api-key=YOUR_API_KEY
-testnet: https://YOUR_PROVIDER_TESTNET_RPC/?api-key=YOUR_API_KEY
-```
-
-Keep the key private. Do not paste it into prompts, public logs, screenshots,
-issues, Discord, Telegram, or channel messages.
-
-## Configure during wallet setup
-
-For a new local signer Mining wallet, use onboarding or the Mining page. Mining
-is the singleton `@wallet:mining` path, and generic wallet CLI role setup is
-reserved for Agent and Vault wallets.
-
-For a new Agent wallet:
+RPC changes use optimistic concurrency. Read current public metadata first:
 
 ```bash
-fased wallet setup \
-  --mode local-signer-create \
-  --role agent \
-  --wallet-id agent \
-  --wallet-name Agent \
-  --rpc-url "https://YOUR_PROVIDER_MAINNET_RPC/?api-key=YOUR_API_KEY"
+# Hosting
+sudo -u fased-signer -- /opt/fased/signer/fased-signerd admin \
+  network get \
+  --control-socket /run/fased-signerd/control.sock \
+  --wallet-id mining
+
+# Local Linux, macOS, or WSL2
+"$HOME/.fased/bin/fased-signerd" admin network get \
+  --control-socket "$HOME/.fased/wallet/local-signer-control.sock" \
+  --wallet-id mining
 ```
 
-You can also use onboarding:
+Create a private `0600` JSON file with that exact current version. Initial
+configuration uses version `0`:
+
+```json
+{
+  "expectedVersion": 0,
+  "primaryRpcUrl": "https://YOUR_PRIMARY_PROVIDER/solana",
+  "fallbackRpcUrl": "https://YOUR_FALLBACK_PROVIDER/solana"
+}
+```
+
+`fallbackRpcUrl` is optional. HTTPS is required except for an explicit
+loopback development endpoint such as `http://127.0.0.1:8899`. URLs with user
+information, fragments, unsafe metadata/link-local/multicast addresses, or
+oversized content are rejected.
+
+## Apply on VPS Hosting
+
+Create the file as root with a trusted editor:
 
 ```bash
-fased onboard
+sudo install -d -m 0700 /var/lib/fased-signerd/admin
+sudo install -m 0600 /dev/null /var/lib/fased-signerd/admin/mining-network.json
+sudoedit /var/lib/fased-signerd/admin/mining-network.json
 ```
 
-Choose the wallet setup action to configure Solana RPC for the selected wallet.
+Open the root-only file for stdin before running the native admin client as the
+signer user:
 
-## Per-wallet RPC keys
-
-Fased supports per-wallet RPC mappings so Agent, Mining, and Vault wallets can
-use separate endpoints.
-
-For wallet id `mining`:
-
-```text
-FASED_WALLET_SOLANA_RPC_URL__MINING=https://YOUR_PROVIDER_MAINNET_RPC/?api-key=YOUR_API_KEY
+```bash
+sudo /bin/sh -c 'exec sudo -u fased-signer -- \
+  /opt/fased/signer/fased-signerd admin network put \
+  --control-socket /run/fased-signerd/control.sock \
+  --wallet-id mining \
+  < /var/lib/fased-signerd/admin/mining-network.json'
 ```
 
-For wallet id `agent`:
+The Gateway account cannot reach the control socket and has no sudo access.
+Remove the temporary input file after verifying the returned version/hash.
 
-```text
-FASED_WALLET_SOLANA_RPC_URL__AGENT=https://YOUR_PROVIDER_MAINNET_RPC/?api-key=YOUR_API_KEY
+## Apply on Local Linux, macOS, or WSL2
+
+Run as the same user that owns the Local signer:
+
+```bash
+umask 077
+mkdir -p "$HOME/.fased/admin"
+"${EDITOR:-vi}" "$HOME/.fased/admin/mining-network.json"
+"$HOME/.fased/bin/fased-signerd" admin network put \
+  --control-socket "$HOME/.fased/wallet/local-signer-control.sock" \
+  --wallet-id mining \
+  < "$HOME/.fased/admin/mining-network.json"
 ```
 
-For wallet id `solana-1`:
+On Windows, run this inside WSL2 Ubuntu, not PowerShell, Command Prompt, Git
+Bash, or native Windows Node.js.
 
-```text
-FASED_WALLET_SOLANA_RPC_URL__SOLANA_1=https://YOUR_PROVIDER_MAINNET_RPC/?api-key=YOUR_API_KEY
-```
+## Configure every wallet independently
 
-The suffix is the wallet id uppercased with non-alphanumeric characters mapped
-to underscores.
+Repeat `network put` for each signer-owned Agent, Mining, or Vault wallet that
+will execute. A ready Mining RPC does not make Agent or Vault ready.
 
-## Mining readiness
+The signer returns only public metadata such as:
 
-For Satcoin mining, verify RPC before capital deposit or start:
+- configured/readiness state;
+- version;
+- keyed configuration hash;
+- last health/error category.
+
+It does not return the provider URL/token.
+
+## Configure the Gateway read plane
+
+Onboarding and **Manage wallet > Configure Solana RPC** save the per-wallet
+Gateway read endpoint and initially send the same value to the signer. The
+Gateway mapping uses the registry id normalized to an uppercase underscore
+suffix, for example `agent-2` becomes
+`FASED_WALLET_SOLANA_RPC_URL__AGENT_2`.
+
+For separation, enter a read-only endpoint in the wizard, then use the native
+`network get`/`network put` flow above to replace only the signer execution RPC
+with its private credential. Recheck both planes. Do not assume signer health
+proves the dashboard/SAT watcher endpoint works, or that a Gateway read succeeds
+through the signer.
+
+## Validate
 
 ```bash
 fased wallet signer doctor --json
+fased wallet status --json
 fased mining readiness --wallet mining
-fased mining status
 ```
 
-Mining readiness should show:
+Do not fund/deposit mining capital or enable Agent automation until signer
+network health, Gateway reads, and the exact signer policy version/hash all pass.
 
-- wallet selected
-- signer ready
-- RPC ready
-- funding ready
-- miner initialized
-- token account ready
+## Update and recovery
 
-RPC failures can cause missed cycle reads, submit failures, stale slot data,
-delayed confirmations, cycle-accounting delays, and claim delays.
+For replacement, read the current version and put a new document with that
+exact `expectedVersion`. Stale writers fail.
 
-## Operator rule
+If network state is corrupt or the master key cannot decrypt it, the signer
+fails closed. Preserve the state; do not delete it or move the URL into Gateway
+environment variables as a bypass. Restore/repair through the native admin
+procedure.
 
-Treat RPC as part of the mining machine.
+After an RPC timeout during broadcast, reconcile the exact stored signature or
+signed bytes. Never change endpoints/parameters and automatically submit a
+replacement transaction.
 
-For serious operation:
+## Related docs
 
-- use a reliable primary provider
-- keep a backup endpoint available when possible
-- watch readiness and history after the first cycles
-- investigate repeated RPC failures before increasing commit
-- keep API keys out of public logs and screenshots
-
-Satcoin mining is operator mining from your own Fased runtime.
+- [Self-hosted wallet signer](/plugins/crypto/wallet-self-hosted)
+- [Wallet operations and security](/plugins/crypto/wallet-production-flow)
+- [Mining troubleshooting](/plugins/crypto/mining-troubleshooting)

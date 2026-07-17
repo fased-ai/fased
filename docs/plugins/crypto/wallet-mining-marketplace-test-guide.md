@@ -281,7 +281,7 @@ Deliberately test blocked failures:
 - Mining wallet used for a normal send
 - Vault wallet used for a normal send
 - SPL send with no token cap
-- Agent wallet locked by split-key custody
+- Agent signer policy/RPC/WebAuthn state not ready for the requested reviewed operation
 - bad payee address
 - expired Marketplace token
 

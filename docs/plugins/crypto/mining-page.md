@@ -217,21 +217,25 @@ mining. Start from the Mining wallet and readiness flow below.
 
 Use this flow before pressing **Start** for the first time:
 
-1. Create or import a dedicated **Mining** wallet during onboarding or with
+1. Create a dedicated signer-owned **Mining** wallet during onboarding or with
    `fased wallet setup --chain solana`, then open **Wallets** to inspect it.
-2. Copy the Mining wallet address and fund it with enough SOL for fees, reserve,
-   and the capital you intend to deposit.
-3. Open **Mining** and confirm the wallet shown is `@wallet:mining`.
-4. Check official mainnet status. The manifest verification public key belongs
+   Existing-key import uses the separate native signer-admin control socket.
+2. Configure signer execution RPC and Gateway read RPC, activate the reviewed
+   Mining policy with the owner helper, verify exact policy/network hashes, and
+   enroll signer WebAuthn for manual Mining reviews.
+3. Only then copy the Mining address and fund it with a deliberately small
+   amount of SOL for fees, reserve, and intended capital.
+4. Open **Mining** and confirm the wallet shown is `@wallet:mining`.
+5. Check official mainnet status. The manifest verification public key belongs
    to the Fased release, not to your wallet; no wallet is required to check it.
-5. Run readiness. Fix signer, RPC, SOL, token-account, or capital warnings
+6. Run readiness. Fix signer, both RPC planes, policy, SOL, token-account, or capital warnings
    before continuing.
-6. Deposit a small amount of SOL into miner capital. The Fund action creates
+7. Deposit a small amount of SOL into miner capital. The Fund action creates
    the wallet-scoped miner account on-chain when it is missing.
-7. Set a conservative commit amount lower than the free capital and wallet fee
+8. Set a conservative commit amount lower than the free capital and wallet fee
    reserve.
-8. Click **Update** to write the active commit.
-9. Click **Start** only after readiness is green and the fee warning is clear.
+9. Click **Update** to write the active commit.
+10. Click **Start** only after readiness is green and the fee warning is clear.
 
 Start must confirm the active commit transaction before mining workers run. If
 the wallet fee reserve is short but free miner capital can cover the exact
@@ -403,14 +407,17 @@ Good rule:
 
 The clean operator sequence is:
 
-1. create or import the single Mining wallet in onboarding or wallet CLI
-2. confirm readiness
-3. initialize miner capital if missing
-4. deposit SOL into miner capital
-5. set a target commit
-6. click `Update` when you are ready to update the active commit PDA
-7. confirm wallet reserve and fee buffer
-8. click `Start`
+1. create the single signer-owned Mining wallet in onboarding/wallet setup, or
+   import it through the native signer-admin control socket
+2. configure both RPC planes and activate the owner-reviewed Mining policy
+3. enroll signer WebAuthn for manual reviewed Mining actions
+4. confirm exact policy/network hashes and readiness
+5. fund the wallet deliberately small and initialize miner capital if missing
+6. deposit SOL into miner capital
+7. set a target commit
+8. click `Update` when you are ready to update the active commit PDA
+9. confirm wallet reserve and fee buffer
+10. click `Start`
 
 CLI equivalent:
 

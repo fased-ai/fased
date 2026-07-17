@@ -27,18 +27,22 @@ Windows 上的 Fased 必须在 **WSL2 Ubuntu 内**运行。CLI、Gateway 网关�
 
 ```powershell
 wsl --install -d Ubuntu
+wsl --update
+wsl --version
 ```
 
-如果系统要求，请重新启动 Windows。然后确认 Ubuntu 使用 WSL2：
+如果系统要求，请重新启动 Windows。`wsl --version` 必须显示 WSL 版本为
+`0.67.6` 或更高版本，才能使用 systemd。然后列出已安装的发行版：
 
 ```powershell
 wsl --list --verbose
 ```
 
-`Ubuntu` 行必须显示 `VERSION 2`。如果显示版本 1，请运行：
+复制 `NAME` 列中的准确发行版名称；该行必须显示 `VERSION 2`。如果显示
+版本 1，请使用准确名称进行转换（名称可能是 `Ubuntu-24.04`，不要猜测）：
 
 ```powershell
-wsl --set-version Ubuntu 2
+wsl --set-version "<列表中的准确发行版名称>" 2
 ```
 
 ### 2）打开 Ubuntu
@@ -52,6 +56,24 @@ pwd
 
 `uname -s` 必须输出 `Linux`。正常主目录类似 `/home/YOUR_LINUX_USER`，而不是 `C:\...` 或 `/mnt/c/Windows/System32`。
 
+确认 systemd 正在运行：
+
+```bash
+ps -p 1 -o comm=
+```
+
+结果必须是 `systemd`。如果不是，请在 Ubuntu 内创建或修改
+`/etc/wsl.conf`：
+
+```ini
+[boot]
+systemd=true
+```
+
+关闭 Ubuntu，在 PowerShell 中运行 `wsl --shutdown`，重新打开 Ubuntu，
+然后再次检查。Microsoft 官方说明：
+[在 WSL 中使用 systemd](https://learn.microsoft.com/windows/wsl/systemd)。
+
 ### 3）在 Ubuntu 内安装 Fased
 
 不要在 PowerShell 中运行以下命令。请在 Ubuntu 提示符中运行：
@@ -61,15 +83,26 @@ curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
   | bash -s -- --local
 ```
 
-以后也请在 Ubuntu 内运行 `fased --version`、`fased doctor`、`fased dashboard`、钱包设置和更新。第一次创建或导入钱包时，Fased 会自动下载并校验匹配当前版本的 Linux 签名器；普通用户不需要安装 Go。
+以后也请在 Ubuntu 内运行 `fased --version`、`fased doctor`、`fased dashboard`、钱包设置和更新。第一次创建原生钱包时，Fased 会自动下载并校验匹配当前版本的 Linux 签名器；普通用户不需要安装 Go。现有密钥导入必须通过单独的原生签名器管理员命令完成，Gateway 和浏览器不接收私钥。
 
 ### 4）在 Windows 浏览器中打开 Dashboard
 
 Gateway 网关继续在 WSL2 内运行，但可以使用普通 Windows 浏览器打开 Dashboard URL。
 
+原生签名器 WebAuthn 注册也必须从 Ubuntu 内启动：
+
+```bash
+"$HOME/.fased/bin/fased-signer-enroll" "Primary security key"
+```
+
+在 Windows 浏览器中打开它输出的准确
+`http://localhost:18791/...` 短期 URL。不要为端口 `18791` 创建
+`portproxy`、防火墙入站规则、局域网绑定或公网隧道；注册必须仅限本机回环。
+
 - [入门指南](/start/getting-started)（在 WSL 内使用）
 - [安装和更新](/install/updating)
 - 官方 WSL2 指南（Microsoft）：https://learn.microsoft.com/windows/wsl/install
+- 官方 systemd 指南（Microsoft）：https://learn.microsoft.com/windows/wsl/systemd
 
 ## Gateway 网关
 

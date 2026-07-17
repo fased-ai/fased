@@ -64,13 +64,16 @@ one-time WSL installation:
 ```powershell
 wsl --install -d Ubuntu
 wsl --update
+wsl --version
+wsl --list --verbose
 ```
 
 Restart Windows if requested, open **Ubuntu**, finish the Linux username setup,
 then enable the Ubuntu distribution in Docker Desktop under **Settings >
 Resources > WSL Integration**. Current Ubuntu installations made by
 `wsl --install` use systemd. If an older distribution does not, update WSL to
-0.67.6 or later, add the following inside Ubuntu, and run `wsl --shutdown` once
+0.67.6 or later, ensure the exact installed distribution shows version 2, add
+the following inside Ubuntu, and run `wsl --shutdown` once
 from PowerShell:
 
 ```ini
@@ -256,8 +259,9 @@ success or failure, and prints the signer-acknowledged policy afterward. Empty
 operations/programs/assets still grant nothing; generic raw signing is not
 enabled.
 
-Reviewed signer operations, including a signer-backed Vault, require an owner
-WebAuthn credential. Run the one-shot enrollment service, open the printed
+Every manual native reviewed Agent, Mining, or Vault operation requires a
+signer-owned WebAuthn credential. This is separate from the Wallets Access-tab
+Gateway passkey. Run the one-shot enrollment service, open the printed
 `http://localhost:18791` URL on the same computer, and touch/approve your
 authenticator:
 

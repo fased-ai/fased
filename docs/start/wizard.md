@@ -333,14 +333,16 @@ extra Agent or Vault wallets, but you must pass the intended `--wallet-id`
 yourself.
 
 Mining is one active configured wallet, normally `@wallet:mining`. To replace
-it, stop mining, clear pending work and funds, delete the old Mining wallet
-through guarded wallet management if needed, then create the new one.
+it, stop mining, clear pending work and funds, then use the guarded
+**Archive/remove from Fased** action before creating the new one.
 
-Wallets are persistent machine state. Wizard repair never deletes them. Delete a
-wallet only from wallet management, one wallet at a time, after saving recovery
-material and typing the exact wallet id. Tailscale is also persistent machine
-access; repair does not remove it, so log out or remove the device in Tailscale
-only when you intentionally want to cut access.
+Wallets are persistent machine state. Wizard repair never deletes them. Archive
+one wallet at a time after saving recovery material and typing the exact id.
+Fased first durably tightens a native signer policy to deny-all, then detaches
+and unregisters the wallet. If locking fails, removal stops. The encrypted
+signer key remains recoverable; archive is not secure erasure. Tailscale is also
+persistent machine access; repair does not remove it, so log out or remove the
+device in Tailscale only when you intentionally want to cut access.
 
 Important distinction:
 

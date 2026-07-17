@@ -26,9 +26,11 @@ If you are starting from zero on a VPS, use the Hosting install from
 <Warning>
 On Windows 11 or Windows 10 version 2004/build 19041 or newer, open
 Administrator PowerShell and run `wsl --install -d Ubuntu`. Restart if
-requested, open the Ubuntu application, and run the bootstrap command inside
-that Ubuntu shell. Do not run `install.sh` in PowerShell, Command Prompt, Git
-Bash, or native Windows Node.js. The complete procedure is in [Windows
+requested, then run `wsl --update`, `wsl --version`, and `wsl --list --verbose`.
+WSL must be `0.67.6` or newer with the installed distribution on version 2.
+Open the Ubuntu application and run the bootstrap command inside that Ubuntu
+shell. Do not run `install.sh` in PowerShell, Command Prompt, Git Bash, or native
+Windows Node.js. The complete procedure is in [Windows
 (WSL2)](/platforms/windows).
 </Warning>
 
@@ -203,18 +205,25 @@ developer channel.
 
 Native signer note:
 
-- fresh dashboard, Gateway, and Fased Network setup do not require `fased-signerd`
 - generated signer binaries are not committed to Git
-- when you create or import the first self-hosted wallet, Fased automatically
-  downloads the signer asset matching the installed Fased version, verifies its
-  SHA-256 checksum and GitHub release attestation, and installs it; Go is not
-  required
+- Local installs download and install the verified signer asset automatically
+  when the first native wallet is created
+- Hosting bootstrap installs the version-matched signer and root updater as an
+  independent service before wallet selection, so first-wallet setup never
+  builds Go or starts a Node broker
+- both paths verify the SHA-256 checksum and GitHub release attestation; normal
+  users do not install Go
+- importing an existing account is a separate native
+  `fased-signerd admin wallet import` control-socket operation; the Gateway,
+  dashboard, and normal setup wizard do not accept private keys
 - Local runs the signer under the same OS account. Hosting installs an
   independent root-managed systemd service under the `fased-signer` account;
   the Gateway receives only `/run/fased-signerd/app.sock` and never receives the
   control socket, signer state path, or sudo access
 - a newly created signer-owned wallet starts locked with deny-all policy; signer
-  service readiness is not the same as wallet send readiness
+  service readiness is not wallet send readiness. Configure both RPC planes,
+  activate an owner-reviewed role policy, verify exact hashes, and enroll signer
+  WebAuthn before manual reviewed execution or funding
 - supported signer platforms are Linux and macOS on `amd64` or `arm64`; Windows
   users must run Fased inside WSL2, which receives the Linux asset
 - `FASED_WALLET_LOCAL_SIGNER_BIN`, `FASED_LOCAL_SIGNER_VERSION`, and

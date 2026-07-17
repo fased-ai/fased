@@ -55,9 +55,12 @@ If you manage Node yourself, use Node 24, or Node 22.14+ with the built-in
 <Warning>
 Windows users need Windows 11 or Windows 10 version 2004/build 19041 or newer.
 Run `wsl --install -d Ubuntu` once in Administrator PowerShell, restart if
-requested, and then open Ubuntu. Run the Fased installer and all later `fased`
-commands inside the Ubuntu shell—not PowerShell, Command Prompt, Git Bash, or
-native Windows Node.js. See [Windows (WSL2)](/platforms/windows).
+requested, then run `wsl --update`, `wsl --version`, and
+`wsl --list --verbose`. WSL must be `0.67.6` or newer and the exact installed
+distribution must show version 2. Then open Ubuntu. Run the Fased installer and
+all later `fased` commands inside the Ubuntu shell—not PowerShell, Command
+Prompt, Git Bash, or native Windows Node.js. See [Windows
+(WSL2)](/platforms/windows).
 </Warning>
 
 ## Which install do I need?
@@ -243,7 +246,8 @@ Once the dashboard is up, pick the path that matches your goal:
     Continue into wallet use, public routes, offers, and later bond setup.
   </Card>
   <Card title="SAT operator path" href="/plugins/crypto/mining-page" icon="coins">
-    Create or import `@wallet:mining`, fund mining capital, and run Satcoin mining.
+    Create signer-owned `@wallet:mining` (or import through the separate native
+    signer-admin command), fund mining capital, and run Satcoin mining.
   </Card>
 </CardGroup>
 

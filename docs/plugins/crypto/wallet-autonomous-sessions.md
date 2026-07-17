@@ -1,128 +1,92 @@
 ---
-summary: "Operator guide for wallet unlock sessions used by Agent wallet automation and Vault manual work."
+summary: "How durable signer policy and short-lived exact reviews replace broad wallet unlock sessions."
 read_when:
-  - You need the practical unlock-session model for unattended wallet work
-  - You want to understand scope, renewal, expiry, and revoke behavior for autonomous wallets
-title: "Autonomous wallet sessions"
-sidebarTitle: "Autonomous sessions"
+  - You are looking for the old wallet unlock-session model
+  - You need to pause, revoke, or recover autonomous wallet work
+title: "Autonomous wallet authorization"
+sidebarTitle: "Autonomous authorization"
 ---
 
-# Autonomous wallet sessions
+# Autonomous wallet authorization
 
-This guide explains how unattended wallet work should run in Fased without
-leaving a self-hosted wallet permanently open.
+Production Fased does not open a broad timed wallet unlock session for Agent or
+Vault work.
 
-Use it for:
+The old split-share/passphrase model—unlock a wallet for 15 to 60 minutes and
+let the runtime sign inside that window—is not the supported custody boundary.
+A compromised caller could change transaction intent during a broad unlock.
 
-- Agent wallet automation
-- Vault manual signing windows
-- emergency revoke/relock procedures
+## Current model
 
-The core idea is:
-
-- the wallet stays locked by default
-- the user opens a signer session with Wallet Control Passkey
-- the runtime may sign only inside that session's scope
-- expiry or revoke returns the wallet to locked posture
-
-## Why sessions exist
-
-Autonomous work needs some signing ability.
-Permanent unlock is the wrong answer.
-
-Unlock sessions separate:
-
-- long-lived wallet storage
-- short-lived runtime permission
-
-## Session flow
+- Agent autonomy is durable, narrow signer policy with exact operations,
+  programs, assets, destinations, and positive caps.
+- Mining autonomy is generated typed SAT operations only.
+- every manual native Agent, Mining, or Vault action uses one short-lived
+  immutable review plus signer-owned WebAuthn;
+- hardware Wallet Standard or Turnkey supplies a separate manual custody lane.
+- Request ids, digests, cap reservations, signed bytes, and
+  broadcast/confirmed/failed/unknown state survive restart.
 
 ```mermaid
 flowchart TD
-    User["User"] --> UI["Wallets UI"]
-    UI --> Ceremony["Unlock Agent or Vault wallet"]
-    Ceremony --> Passkey["Passkey approval"]
-    Passkey --> Share["Device share<br/>or recovery path"]
-    Share --> Signer["fased-signerd"]
-    Signer --> Session["Session created<br/>scope and expiry"]
-    Runtime["Fased runtime"] --> Request["Signature request<br/>inside allowed scope"]
-    Request --> Signer
-    Signer --> Decision{"Allowed?"}
-    Decision -->|yes| Signed["Sign"]
-    Decision -->|no| Rejected["Reject"]
-    Session --> Expiry["Expires<br/>or revoked"]
+  Caller["Agent / Skill / Mining / Wallets UI"] --> Intent["Typed immutable intent"]
+  Intent --> Policy["Signer policy + durable caps"]
+  Policy -->|Agent or Mining allowed| Execute["One idempotent execution"]
+  Policy -->|Any manual native action| Review["Short-lived exact review"]
+  Review --> Auth["Signer WebAuthn / hardware / Turnkey"]
+  Auth --> Execute
+  Execute --> State["Broadcast / confirmed / failed / unknown"]
+  State --> Reconcile["Exact reconciliation; no replacement retry"]
 ```
 
-## What a healthy session should include
+## Agent authorization
 
-A session should be tied to:
+Agent authority stays active only while its acknowledged signer policy allows
+the exact request. Keep its balance and caps small. Installing a skill or
+creating a task is a separate operation and does not expand signer policy.
 
-- one wallet
-- one purpose
-- one or more allowed chains
-- a short duration
-- explicit spend or action limits
+To remove authority, stop new Gateway work and tighten the signer policy. There
+is no need to wait for a broad session TTL to expire.
 
-Current runtime defaults:
+## Mining authorization
 
-- default unlock TTL: `15 minutes`
-- maximum unlock TTL: `60 minutes`
+Mining policy permits the generated SAT action set and configured SOL/SAT
+movement needed for fees, capital, claim, cleanup, and sweep. It does not
+authorize arbitrary SPL assets, generic sends, or serialized swaps.
 
-## Mining note
+## Manual native authorization
 
-Satcoin mining is a separate runtime path from generic Agent/Vault unlock
-sessions. The normal posture is:
+Every manual native Agent, Mining, or Vault action requires a freshly prepared
+exact review. Signer WebAuthn binds the wallet, role, decoded transaction,
+policy hash, request id, nonce, and expiry. The authorization is consumed once.
+The Wallets Access-tab Wallet Control Passkey is separate Gateway
+authentication and cannot satisfy this signer challenge.
 
-- mining wallet only
-- Solana only
-- Satcoin mining actions and configured sweep behavior only
+A hardware Wallet Standard Vault instead signs that immutable review in the
+browser wallet; confirm transaction intent on-device. Turnkey relies on its
+independent provider policy.
 
-Keep mining sessions limited to Satcoin mining and configured sweep behavior.
+## Pause and revoke procedure
 
-## Agent-wallet session reading
+1. Use Agent or Mining **Stop** to reject new Gateway automation.
+2. Inspect signer request state for `reserved`, `broadcast`, or `unknown` work.
+3. Reconcile exact stored signatures/signed bytes; do not retry with changed
+   parameters.
+4. Tighten signer policy through the owner/admin workflow.
+5. Remove or narrow skill grants and disable schedules.
+6. Sweep excess working value through a reviewed typed transfer.
+7. Review both Gateway and signer audit logs.
 
-For Agent wallet sends, Fased Network wallet actions, skill/plugin wallet actions, or
-other reviewed automation, the normal session posture is:
+`Stop` is not key deletion, cap reset, transaction cancellation, or offline
+custody.
 
-- Agent wallet only
-- stricter spend controls than mining
-- explicit counterparty, contract, or program boundaries when available
-- shorter duration than a mining session
+## Recovery events
 
-## Fased Network bond Vault session reading
-
-Fased Network bond posture is narrower than Agent-wallet automation.
-
-The Vault wallet assigned to bond should be used for:
-
-- bond open or top-up
-- proof-related actions
-- unlock and withdraw lifecycle
-
-It should not quietly become the same wallet used for routine outbound work.
-
-## When to relock immediately
-
-Relock or revoke immediately if:
-
-- a browser or device share is lost
-- passkey state changes unexpectedly
-- the host is handed to another operator
-- you are rotating RPC, wallet, or policy boundaries
-- you suspect the session stayed open too long
-
-## Operator checklist
-
-Before you trust unattended wallet work:
-
-1. signer health is clean
-2. the wallet appears in runtime state
-3. RPC is healthy
-4. Wallet Control Passkey is enrolled
-5. the recovery share is offline
-6. the wallet role is dedicated to its purpose
-7. the session is scoped to that purpose
-8. you know how to revoke it
+Treat unexpected credential changes, signer policy hash changes, wallet-id or
+address mismatch, corrupt signer state, missing RPC hash, or an unknown
+broadcast as a stop condition. Preserve state and use the documented native
+recovery/reconciliation procedure; never delete state to obtain a fresh
+default.
 
 Useful checks:
 
@@ -132,20 +96,9 @@ fased wallet status --json
 fased mining readiness --wallet mining
 ```
 
-## Bottom line
-
-If you want automation, the conservative mental model is:
-
-- storage stays locked
-- automation gets a temporary lane
-- the signer enforces that lane
-- expiry closes the lane again
-
 ## Related docs
 
-- [Wallet](/plugins/crypto/wallet-page)
-- [Self-hosted wallet signer](/plugins/crypto/wallet-self-hosted)
-- [Wallet operations and security](/plugins/crypto/wallet-production-flow)
-- [Wallet Control Passkey](/plugins/crypto/wallet-control-passkey)
 - [Autonomous wallet security](/plugins/crypto/wallet-autonomous-security)
-- [Mining](/plugins/crypto/mining-page)
+- [Wallet roles and policies](/plugins/crypto/wallet-roles-and-policies)
+- [Wallet Control Passkey](/plugins/crypto/wallet-control-passkey)
+- [Self-hosted wallet signer](/plugins/crypto/wallet-self-hosted)

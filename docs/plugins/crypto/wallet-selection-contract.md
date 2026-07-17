@@ -140,14 +140,16 @@ planning, scheduled native/SPL transfer templates, and trigger-order actions:
 }
 ```
 
-An Agent wallet request can execute only when wallet role, Auto policy, enabled
-caps, signer state, balance, and transaction inspection allow it. Use
-`"mode": "manual"` when the user wants a review-only request. Custom or
-installed skills need explicit `walletActions` config before wallet actions are
-allowed.
+An Agent wallet request can execute only when wallet role, Auto policy, positive
+per-transaction and daily signer caps, signer state, balance, and semantic
+transaction inspection allow it. Caps Off, missing, or zero means deny, never
+unlimited. Use `"mode": "manual"` when the user wants a review-only request;
+manual native execution also requires signer WebAuthn for the exact review.
+Custom or installed skills need explicit `walletActions` config before wallet
+actions are allowed.
 
-When Caps is On, SOL and SPL assets use separate cap rows. SOL caps never apply
-to SPL tokens.
+Every executable native asset policy requires caps. SOL and SPL assets use
+separate positive cap rows; SOL caps never apply to SPL tokens.
 
 For recurring native/SPL sends, `wallet_action.schedule_send` can save the same
 Agent-wallet recurring transfer policy that the Wallets page edits. Mining
@@ -185,9 +187,8 @@ saved policy is mint-keyed; token symbols and names are display hints only.
 Symbol or name lookup is only a convenience. If the symbol/name is ambiguous,
 the agent must ask for the exact mint. The mint address is the authority.
 
-`allowPrograms` restricts inspected route programs when it is non-empty. Leave
-it empty to allow inspected routes, or list exact route program ids to make
-route actions fail closed outside those routes.
+`allowPrograms` must list the exact inspected route program ids. An empty list
+denies route execution; it never means allow all.
 
 ### Trigger order with explicit Agent wallet handle
 
@@ -196,11 +197,12 @@ The current Solana adapter is configured through the Jupiter Trigger setting.
 Enable it from onboarding with `Wallet setup action -> Limit orders`, or from CLI:
 
 ```bash
-fased wallet limit-orders --enable --jupiter-api-key <jupiter-api-key>
+fased wallet limit-orders --enable
 ```
 
-The key is local runtime configuration. Do not pass the Jupiter API key through
-chat, skill prompts, plugin prompts, or scheduled job text.
+Enter the Jupiter API key only at the interactive secret prompt. Do not place it
+in shell arguments/history, chat, skill prompts, plugin prompts, or scheduled
+job text.
 
 ```json
 {
@@ -248,20 +250,15 @@ Do not expose the Jupiter Trigger API directly to the model path.
 
 ## 5. Multi-wallet signer mappings
 
-When a deployment uses multiple self-hosted wallets behind the local signer,
-the runtime expects per-wallet mappings for keystore and RPC configuration.
+Each native wallet id maps to one signer-owned wallet record, permanent role,
+versioned policy, encrypted RPC configuration, and public address. Protocol-v2
+execution does not select a Node keystore path or trust per-wallet Gateway RPC
+environment variables.
 
-Example pattern for wallet `agent`:
-
-- `FASED_WALLET_SOLANA_KEYSTORE_PATH__AGENT`
-- `FASED_WALLET_SOLANA_RPC_URL__AGENT`
-
-Example pattern for wallet `mining`:
-
-- `FASED_WALLET_SOLANA_KEYSTORE_PATH__MINING`
-- `FASED_WALLET_SOLANA_RPC_URL__MINING`
-
-Those mappings should come from saved runtime config and survive restart.
+Create/import and configure each wallet through the native control socket, then
+register the exact returned `walletId` and address in the runtime registry. A
+wallet-id/address collision fails closed. Signer health must acknowledge that
+wallet's policy and network hashes before execution.
 
 ## 6. Policy and source controls
 

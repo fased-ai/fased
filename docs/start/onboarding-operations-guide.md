@@ -170,10 +170,20 @@ Decide the working model first:
 
 Recommended progression:
 
-- view-only or manual first
-- policy-gated later
+- create/import and record both registry and canonical signer ids
+- configure signer execution RPC and Gateway read RPC
+- copy/review the installed role template and activate it with
+  `fased-signer-policy --initial-install`
+- verify exact signer policy/network versions and hashes
+- enroll signer WebAuthn before manual native Agent, Mining, or Vault work
+- only then fund a deliberately small balance
 - explicit `@wallet:<walletId>` handles for risky wallet actions
 - broad automation only after the signer path is proven
+
+The Wallets Access-tab Wallet Control Passkey protects Gateway approvals and
+settings. It is separate from signer WebAuthn. See [Self-hosted wallet
+signer](/plugins/crypto/wallet-self-hosted) for the exact Local and Hosting
+activation commands.
 
 ## 7. Plugin rollout
 
@@ -221,12 +231,15 @@ Treat SAT mining as an operator workflow, not a decorative toggle.
 
 Normal sequence:
 
-1. create or import the singleton `@wallet:mining` wallet
-2. confirm readiness
-3. fund miner capital
-4. set commit
-5. start mining
-6. watch runtime, actions, and recovery
+1. create the signer-owned singleton `@wallet:mining` wallet, or import it
+   through the separate native signer-admin control-socket command
+2. activate the reviewed Mining policy and configure both RPC planes
+3. enroll signer WebAuthn for manual reviewed Mining actions
+4. confirm readiness and exact policy/network hashes
+5. fund deliberately small miner capital
+6. set commit
+7. start mining
+8. watch runtime, actions, and recovery
 
 Use:
 

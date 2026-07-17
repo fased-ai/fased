@@ -123,8 +123,12 @@ the workflow.
 
 Fased's default custody path is a role-separated self-hosted signer:
 
-- `fased-signerd` owns signer-side material and signing operations.
-- the Gateway owns controls, approvals, Agent routing, and audit state.
+- `fased-signerd` owns key lifecycle, permanent role, fail-closed policy,
+  signer WebAuthn, execution RPC, durable caps/idempotency, signing, broadcast,
+  and reconciliation.
+- the Gateway owns request orchestration, review rendering, Gateway Wallet
+  Control Passkey authentication, Agent routing, read/preparation RPC, and its
+  own audit state. It cannot widen signer policy or satisfy signer WebAuthn.
 - skills and plugins request wallet work through wallet-control tools instead
   of receiving raw keys, seed phrases, keystores, or signer master credentials.
 
@@ -132,8 +136,8 @@ This is different from a generic hosted wallet provider. Hosted or MPC providers
 can be useful optional adapters, especially for managed recovery, but they move
 custody, recovery, provider credentials, and some control semantics outside the
 local signer boundary. If you use one, keep Fased role controls, Agent tool
-controls, Wallet > Skill Grants, approval state, and audit as the controlling
-layer above it.
+controls, Wallet > Skill Grants, approval state, and audit as an additional
+boundary; the provider/hardware policy remains an independent custody authority.
 
 Related docs:
 
