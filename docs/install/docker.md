@@ -280,16 +280,7 @@ project's `fased-signer-state` volume. Stop both Gateway and signer before an
 offline volume backup; never copy the live bbolt database while the signer is
 running.
 
-### Manual flow (compose)
-
-```bash
-docker build -t fased:local -f Dockerfile .
-docker compose up -d --wait fased-signerd
-docker compose run --rm fased-cli onboard
-docker compose up -d --no-deps --wait fased-gateway
-```
-
-Note: run `docker compose ...` from the repo root. If you enabled
+Run `docker compose ...` from the repo root. If you enabled
 `FASED_EXTRA_MOUNTS` or `FASED_HOME_VOLUME`, the setup script writes
 `docker-compose.extra.yml`; include it when running Compose elsewhere:
 
@@ -540,6 +531,18 @@ cd /path/to/fased
 git fetch origin --tags
 git switch --detach vX.Y.Z
 docker build --pull -t fased:local -f Dockerfile .
+```
+
+Set the local image in `.env`; otherwise Compose may keep using a previously
+configured GHCR image:
+
+```text
+FASED_IMAGE=fased:local
+```
+
+Then recreate and verify:
+
+```bash
 docker compose stop fased-gateway
 docker compose up -d --force-recreate --wait fased-signerd
 docker compose up -d --force-recreate --no-deps --wait fased-gateway
