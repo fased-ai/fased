@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -8,6 +9,7 @@ import {
   configureWalletForOnboarding,
   installSignerdBinary,
   renderLocalSignerEnvFile,
+  restartLocalSocketSigner,
   resolveLocalSignerWebAuthnConfig,
   shouldSyncLocalSocketSignerFromConfig,
   syncLocalSocketSignerFromConfig,
@@ -238,6 +240,82 @@ describe("local signer env file helpers", () => {
       }),
     ).rejects.toThrow(/Go is not required/);
     expect(fs.existsSync(binPath)).toBe(false);
+  });
+
+  it("never launches a replacement process for an externally managed Docker signer", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-onboarding-wallet-external-"));
+    tempDirs.push(root);
+    const binPath = path.join(root, "fased-signerd");
+    const markerPath = path.join(root, "unexpected-start");
+    const socketPath = path.join(root, "missing.sock");
+    fs.writeFileSync(binPath, `#!/bin/sh\ntouch ${markerPath}\n`, { mode: 0o755 });
+
+    await expect(
+      restartLocalSocketSigner(undefined, {
+        HOME: root,
+        FASED_WALLET_LOCAL_SIGNER_LIFECYCLE: "external",
+        FASED_WALLET_LOCAL_SIGNER_BIN: binPath,
+        FASED_WALLET_LOCAL_SIGNER_SOCKET: socketPath,
+      }),
+    ).rejects.toThrow(/externally managed fased-signerd is unavailable/);
+    expect(fs.existsSync(markerPath)).toBe(false);
+  }, 12_000);
+
+  it("accepts a healthy externally managed signer without replacing it", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-onboarding-wallet-external-ok-"));
+    tempDirs.push(root);
+    const binPath = path.join(root, "fased-signerd");
+    const markerPath = path.join(root, "unexpected-start");
+    const socketPath = path.join(root, "app.sock");
+    fs.writeFileSync(binPath, `#!/bin/sh\ntouch ${markerPath}\n`, { mode: 0o755 });
+    const sockets = new Set<net.Socket>();
+    const server = net.createServer((socket) => {
+      sockets.add(socket);
+      socket.once("close", () => sockets.delete(socket));
+      socket.setEncoding("utf8");
+      socket.once("data", () => {
+        socket.end(
+          `${JSON.stringify({
+            ok: true,
+            result: {
+              details: "fased-signerd protocol-v2 ready",
+              readOnly: false,
+              keystoreType: "signer-owned-v2",
+              chains: ["solana"],
+              ready: true,
+              capabilities: {
+                protocol: { current: 2, min: 2, max: 2 },
+                intentTypes: ["solana.nativeTransfer"],
+                operationStates: ["reserved", "broadcast", "confirmed", "failed", "unknown"],
+                features: ["failClosedPolicies", "policyHashes", "signerOwnedKeys"],
+              },
+              policies: [],
+            },
+          })}\n`,
+        );
+      });
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(socketPath, resolve);
+    });
+
+    try {
+      await expect(
+        restartLocalSocketSigner(undefined, {
+          HOME: root,
+          FASED_WALLET_LOCAL_SIGNER_LIFECYCLE: "external",
+          FASED_WALLET_LOCAL_SIGNER_BIN: binPath,
+          FASED_WALLET_LOCAL_SIGNER_SOCKET: socketPath,
+        }),
+      ).resolves.toBeUndefined();
+      expect(fs.existsSync(markerPath)).toBe(false);
+    } finally {
+      for (const socket of sockets) {
+        socket.destroy();
+      }
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 
   it("never installs or brokers a signer from Hosting QuickStart", async () => {

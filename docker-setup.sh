@@ -391,6 +391,16 @@ else
 fi
 
 echo ""
+echo "==> Starting native wallet signer"
+if ! docker compose "${COMPOSE_ARGS[@]}" stop fased-gateway; then
+  fail "Could not stop the existing Gateway before replacing fased-signerd."
+fi
+if ! docker compose "${COMPOSE_ARGS[@]}" up -d --force-recreate --wait --wait-timeout 60 fased-signerd; then
+  docker compose "${COMPOSE_ARGS[@]}" logs --no-color --tail 80 fased-signerd >&2 || true
+  fail "fased-signerd did not become healthy. Wallet onboarding was not started."
+fi
+
+echo ""
 echo "==> Onboarding (interactive)"
 echo "When prompted:"
 echo "  - Gateway bind: lan"
@@ -417,7 +427,7 @@ echo "Docs: https://docs.fased.ai/channels"
 
 echo ""
 echo "==> Starting gateway"
-docker compose "${COMPOSE_ARGS[@]}" up -d fased-gateway
+docker compose "${COMPOSE_ARGS[@]}" up -d --force-recreate --no-deps --wait --wait-timeout 60 fased-gateway
 
 echo ""
 echo "Gateway running with loopback-only host port mappings."
@@ -427,5 +437,7 @@ echo "Workspace: $FASED_WORKSPACE_DIR"
 echo "Token: $FASED_GATEWAY_TOKEN"
 echo ""
 echo "Commands:"
+echo "  ${COMPOSE_HINT} logs -f fased-signerd"
 echo "  ${COMPOSE_HINT} logs -f fased-gateway"
+echo "  ${COMPOSE_HINT} exec fased-signerd node /app/scripts/docker-signer-health.mjs /run/fased-signerd/app.sock"
 echo "  ${COMPOSE_HINT} exec fased-gateway node dist/index.js health"

@@ -1,3 +1,16 @@
+FROM golang:1.25.7-bookworm@sha256:564e366a28ad1d70f460a2b97d1d299a562f08707eb0ecb24b659e5bd6c108e1 AS signer-builder
+
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+
+WORKDIR /src/tools/fased-signerd
+COPY tools/fased-signerd/go.mod tools/fased-signerd/go.sum ./
+RUN go mod download
+COPY tools/fased-signerd ./
+RUN CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" \
+    go build -buildvcs=false -trimpath -ldflags="-s -w -buildid=" \
+    -o /out/fased-signerd .
+
 FROM node:22-bookworm@sha256:5647be709086c696ff32edaaf1c70cd26d1da6ab2b39c32f3c7b4c4a31957e37
 
 # Install Bun (required for build scripts)
@@ -54,7 +67,11 @@ RUN pnpm ui:build
 # Expose the CLI binary without requiring npm global writes as non-root.
 USER root
 RUN ln -sf /app/fased.mjs /usr/local/bin/fased \
- && chmod 755 /app/fased.mjs
+ && chmod 755 /app/fased.mjs \
+ && install -d -o node -g node -m 0700 /run/fased-signerd /var/lib/fased-signerd
+COPY --from=signer-builder --chown=root:root /out/fased-signerd /usr/local/bin/fased-signerd
+RUN chmod 0555 /usr/local/bin/fased-signerd \
+ && ln /usr/local/bin/fased-signerd /usr/local/bin/fased-signer-enroll
 
 ENV NODE_ENV=production
 

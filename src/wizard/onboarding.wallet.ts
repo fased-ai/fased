@@ -22,6 +22,7 @@ import {
 import { resolveWalletProviderId } from "../wallet/wallet-provider-resolver.js";
 import {
   ensureWalletStateDir,
+  isLocalSignerExternallyManaged,
   resolveLocalSignerControlSocketPath,
   resolveLocalSignerMasterKeyPath,
   resolveLocalSignerMaterialRootDir,
@@ -753,6 +754,18 @@ export async function restartLocalSocketSigner(
   const socketPath = resolveLocalSignerSocketPath(env);
   const binPath = resolveSignerdBinaryPath(env);
   const materialDir = resolveLocalSignerMaterialRootDir(env);
+  if (isLocalSignerExternallyManaged(env)) {
+    const readyTimeoutMs = 8_000;
+    if (
+      (await waitForSignerdHealthy(socketPath, readyTimeoutMs)) &&
+      (await readSignerdHealth(socketPath)).ok
+    ) {
+      return;
+    }
+    throw new Error(
+      `externally managed fased-signerd is unavailable at ${socketPath}; start or repair the Docker fased-signerd service before retrying`,
+    );
+  }
   if (!fs.existsSync(binPath)) {
     return;
   }
@@ -781,14 +794,15 @@ export async function syncLocalSocketSignerFromConfig(params?: {
   }
   const signerEnvPath = writeLocalSignerEnvFile({ config: cfg, env: mergedEnv });
   const binPath = resolveSignerdBinaryPath(mergedEnv);
-  if (!fs.existsSync(binPath)) {
+  const externallyManaged = isLocalSignerExternallyManaged(mergedEnv);
+  if (!externallyManaged && !fs.existsSync(binPath)) {
     installSignerdBinary(binPath);
   }
   if (params?.restart === false) {
     return { performed: true, restarted: false, signerEnvPath };
   }
   await restartLocalSocketSigner(undefined, mergedEnv);
-  return { performed: true, restarted: true, signerEnvPath };
+  return { performed: true, restarted: !externallyManaged, signerEnvPath };
 }
 
 const DEFAULT_WALLET_CHAINS: WalletChain[] = ["solana"];
@@ -1031,6 +1045,7 @@ export async function configureWalletForOnboarding(params: {
     const materialDir = resolveLocalSignerMaterialRootDir(process.env);
     const binPath = resolveSignerdBinaryPath(process.env);
     const hostedSigner = params.hostProfile === "hosting";
+    const externallyManagedSigner = !hostedSigner && isLocalSignerExternallyManaged(process.env);
     if (hostedSigner) {
       const expectedSocket = "/run/fased-signerd/app.sock";
       if (socketPath !== expectedSocket) {
@@ -1088,7 +1103,7 @@ export async function configureWalletForOnboarding(params: {
           "Hosted wallet signer",
         );
       }
-    } else if (!fs.existsSync(binPath)) {
+    } else if (!externallyManagedSigner && !fs.existsSync(binPath)) {
       const signerInstallProgress = quietSignerNotes
         ? prompter.progress("Installing local wallet signer…")
         : undefined;
@@ -1139,6 +1154,13 @@ export async function configureWalletForOnboarding(params: {
             "Local socket signer",
           );
         }
+      } else if (externallyManagedSigner) {
+        throw new Error(
+          [
+            `The externally managed native signer is unavailable or incompatible at ${socketPath}.`,
+            "Start or repair the Docker fased-signerd service, wait for it to become healthy, and retry wallet setup.",
+          ].join("\n"),
+        );
       } else {
         if (socketExists && (!socketHealthy || missingSignerChains.length > 0)) {
           stopProcessBySocket(socketPath);

@@ -16,17 +16,26 @@ type DockerSetupSandbox = {
 };
 
 type ComposeService = {
+  user?: string;
+  profiles?: string[];
+  environment?: Record<string, string>;
   ports?: string[];
   volumes?: string[];
   cap_drop?: string[];
   security_opt?: string[];
   privileged?: boolean;
   network_mode?: string;
+  read_only?: boolean;
+  restart?: string;
+  depends_on?: Record<string, { condition?: string; restart?: boolean }>;
+  entrypoint?: string[];
+  command?: string[];
   healthcheck?: { test?: string[] };
 };
 
 type ComposeConfig = {
   services?: Record<string, ComposeService>;
+  volumes?: Record<string, unknown>;
 };
 
 async function writeDockerStub(binDir: string, logPath: string) {
@@ -42,6 +51,9 @@ if [[ "\${1:-}" == "build" ]]; then
 fi
 if [[ "\${1:-}" == "compose" ]]; then
   echo "compose $*" >>"$log"
+  if [[ "\${DOCKER_STUB_FAIL_SIGNER:-}" == "1" && "$*" == *"up -d --force-recreate --wait --wait-timeout 60 fased-signerd"* ]]; then
+    exit 1
+  fi
   exit 0
 fi
 echo "unknown $*" >>"$log"
@@ -66,7 +78,7 @@ async function createDockerSetupSandbox(): Promise<DockerSetupSandbox> {
   await writeFile(dockerfilePath, "FROM scratch\n");
   await writeFile(
     composePath,
-    "services:\n  fased-gateway:\n    image: noop\n  fased-cli:\n    image: noop\n",
+    "services:\n  fased-signerd:\n    image: noop\n  fased-gateway:\n    image: noop\n  fased-cli:\n    image: noop\n",
   );
   await writeDockerStub(binDir, logPath);
 
@@ -304,12 +316,71 @@ describe("docker-setup.sh", () => {
     expect(compose).toContain('"gateway"');
   });
 
+  it("starts the signer before onboarding and recreates both long-running services", async () => {
+    const activeSandbox = requireSandbox(sandbox);
+    const result = runDockerSetup(activeSandbox, {
+      FASED_CONFIG_DIR: join(activeSandbox.rootDir, "config-order"),
+      FASED_WORKSPACE_DIR: join(activeSandbox.rootDir, "workspace-order"),
+    });
+    expect(result.status).toBe(0);
+
+    const log = await readFile(activeSandbox.logPath, "utf8");
+    const gatewayStop = log.lastIndexOf("stop fased-gateway");
+    const signerStart = log.lastIndexOf(
+      "up -d --force-recreate --wait --wait-timeout 60 fased-signerd",
+    );
+    const onboarding = log.lastIndexOf("run --rm fased-cli onboard --no-install-daemon");
+    const gatewayStart = log.lastIndexOf(
+      "up -d --force-recreate --no-deps --wait --wait-timeout 60 fased-gateway",
+    );
+    expect(gatewayStop).toBeGreaterThanOrEqual(0);
+    expect(signerStart).toBeGreaterThan(gatewayStop);
+    expect(signerStart).toBeGreaterThanOrEqual(0);
+    expect(onboarding).toBeGreaterThan(signerStart);
+    expect(gatewayStart).toBeGreaterThan(onboarding);
+  });
+
+  it("stops before wallet onboarding when the native signer is missing or unhealthy", async () => {
+    const activeSandbox = requireSandbox(sandbox);
+    const result = runDockerSetup(activeSandbox, {
+      DOCKER_STUB_FAIL_SIGNER: "1",
+      FASED_CONFIG_DIR: join(activeSandbox.rootDir, "config-missing-signer"),
+      FASED_WORKSPACE_DIR: join(activeSandbox.rootDir, "workspace-missing-signer"),
+    });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("fased-signerd did not become healthy");
+    const log = await readFile(activeSandbox.logPath, "utf8");
+    const failedSignerStart = log.lastIndexOf(
+      "up -d --force-recreate --wait --wait-timeout 60 fased-signerd",
+    );
+    expect(failedSignerStart).toBeGreaterThanOrEqual(0);
+    expect(log.indexOf("run --rm fased-cli onboard", failedSignerStart)).toBe(-1);
+  });
+
+  it("builds a deterministic multi-architecture native signer into the application image", async () => {
+    const dockerfile = await readFile(join(repoRoot, "Dockerfile"), "utf8");
+    expect(dockerfile).toMatch(
+      /^FROM golang:1\.25\.7-bookworm@sha256:[a-f0-9]{64} AS signer-builder$/m,
+    );
+    expect(dockerfile).toContain("ARG TARGETOS=linux");
+    expect(dockerfile).toContain("ARG TARGETARCH=amd64");
+    expect(dockerfile).toContain('CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH"');
+    expect(dockerfile).toContain("-buildvcs=false -trimpath");
+    expect(dockerfile).toContain("COPY --from=signer-builder");
+    expect(dockerfile).toContain("/usr/local/bin/fased-signerd");
+    expect(dockerfile).toContain(
+      "ln /usr/local/bin/fased-signerd /usr/local/bin/fased-signer-enroll",
+    );
+  });
+
   it("keeps Docker services local-only and drops unnecessary privileges", async () => {
     const compose = parse(await readFile(join(repoRoot, "docker-compose.yml"), "utf8")) as
       | ComposeConfig
       | undefined;
     const gateway = compose?.services?.["fased-gateway"];
     const cli = compose?.services?.["fased-cli"];
+    const signer = compose?.services?.["fased-signerd"];
+    const enrollment = compose?.services?.["fased-signer-enroll"];
 
     expect(gateway?.ports).toEqual([
       "127.0.0.1:${FASED_GATEWAY_PORT:-18789}:18789",
@@ -317,13 +388,63 @@ describe("docker-setup.sh", () => {
     ]);
     expect(gateway?.cap_drop).toContain("ALL");
     expect(cli?.cap_drop).toContain("ALL");
+    expect(signer?.cap_drop).toContain("ALL");
+    expect(enrollment?.cap_drop).toContain("ALL");
     expect(gateway?.security_opt).toContain("no-new-privileges:true");
     expect(cli?.security_opt).toContain("no-new-privileges:true");
+    expect(signer?.security_opt).toContain("no-new-privileges:true");
+    expect(enrollment?.security_opt).toContain("no-new-privileges:true");
     expect(gateway?.privileged).not.toBe(true);
     expect(cli?.privileged).not.toBe(true);
+    expect(signer?.privileged).not.toBe(true);
+    expect(enrollment?.privileged).not.toBe(true);
     expect(gateway?.network_mode).not.toBe("host");
     expect(cli?.network_mode).not.toBe("host");
-    expect(JSON.stringify([gateway?.volumes, cli?.volumes])).not.toContain("docker.sock");
+    expect(signer?.network_mode).not.toBe("host");
+    expect(enrollment?.network_mode).not.toBe("host");
+    expect(
+      JSON.stringify([gateway?.volumes, cli?.volumes, signer?.volumes, enrollment?.volumes]),
+    ).not.toContain("docker.sock");
+    expect(signer?.user).toBe("node");
+    expect(signer?.read_only).toBe(true);
+    expect(enrollment?.read_only).toBe(true);
+    expect(enrollment?.profiles).toEqual(["signer-admin"]);
+    expect(enrollment?.ports).toEqual(["127.0.0.1:18791:18792"]);
     expect(gateway?.healthcheck?.test).toEqual(["CMD", "node", "dist/index.js", "health"]);
+  });
+
+  it("persists signer state privately and shares only its Unix-socket volume", async () => {
+    const compose = parse(await readFile(join(repoRoot, "docker-compose.yml"), "utf8")) as
+      | ComposeConfig
+      | undefined;
+    const gateway = compose?.services?.["fased-gateway"];
+    const cli = compose?.services?.["fased-cli"];
+    const signer = compose?.services?.["fased-signerd"];
+    const enrollment = compose?.services?.["fased-signer-enroll"];
+
+    expect(compose?.volumes).toHaveProperty("fased-signer-run");
+    expect(compose?.volumes).toHaveProperty("fased-signer-state");
+    expect(signer?.volumes).toContain("fased-signer-run:/run/fased-signerd");
+    expect(signer?.volumes).toContain("fased-signer-state:/var/lib/fased-signerd");
+    expect(signer?.command).toContain("/var/lib/fased-signerd/state.db");
+    expect(signer?.command).toContain("/var/lib/fased-signerd/master.key");
+    expect(signer?.command).toContain("/var/lib/fased-signerd/fased-signerd.pid");
+    expect(signer?.command).toContain("/var/lib/fased-signerd/audit.jsonl");
+    expect(gateway?.volumes).toContain("fased-signer-run:/run/fased-signerd");
+    expect(cli?.volumes).toContain("fased-signer-run:/run/fased-signerd");
+    expect(gateway?.volumes).not.toContain("fased-signer-state:/var/lib/fased-signerd");
+    expect(cli?.volumes).not.toContain("fased-signer-state:/var/lib/fased-signerd");
+    expect(enrollment?.volumes).not.toContain("fased-signer-state:/var/lib/fased-signerd");
+    expect(signer?.restart).toBe("unless-stopped");
+    expect(gateway?.depends_on?.["fased-signerd"]?.condition).toBe("service_healthy");
+    expect(cli?.depends_on?.["fased-signerd"]?.condition).toBe("service_healthy");
+    expect(gateway?.environment?.FASED_WALLET_LOCAL_SIGNER_LIFECYCLE).toBe("external");
+    expect(cli?.environment?.FASED_WALLET_LOCAL_SIGNER_LIFECYCLE).toBe("external");
+    expect(signer?.healthcheck?.test).toEqual([
+      "CMD",
+      "node",
+      "/app/scripts/docker-signer-health.mjs",
+      "/run/fased-signerd/app.sock",
+    ]);
   });
 });

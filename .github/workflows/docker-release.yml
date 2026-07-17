@@ -7,10 +7,21 @@ on:
       - "Dockerfile"
       - "docker-compose.yml"
       - "docker-setup.sh"
+      - "scripts/docker-signer-enroll.mjs"
+      - "scripts/docker-signer-health.mjs"
+      - "scripts/docker-signer-policy.sh"
       - "scripts/scan-docker-image.sh"
       - "src/docker-image-digests.test.ts"
+      - "src/docker-signer-enroll.test.ts"
+      - "src/docker-signer-health.test.ts"
+      - "src/docker-signer-policy.test.ts"
       - "src/docker-setup.test.ts"
       - "src/dockerfile.test.ts"
+      - "src/commands/wallet.docker-signer-doctor.test.ts"
+      - "src/commands/wallet.ts"
+      - "src/wallet/wallet-runtime-config.ts"
+      - "src/wizard/onboarding.wallet.ts"
+      - "tools/fased-signerd/**"
       - ".github/workflows/docker-release.yml"
   push:
     tags:
@@ -52,6 +63,11 @@ jobs:
         env:
           IMAGE: fased-local-ci:${{ github.sha }}
         run: test "$(docker image inspect "$IMAGE" --format '{{.Config.User}}')" = "node"
+
+      - name: Verify native signer is packaged
+        env:
+          IMAGE: fased-local-ci:${{ github.sha }}
+        run: docker run --rm --entrypoint /bin/sh "$IMAGE" -c 'test "$(id -u)" -ne 0 && /usr/local/bin/fased-signerd -h >/dev/null'
 
       - name: Scan local validation image
         env:
@@ -121,6 +137,11 @@ jobs:
           IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
         run: scripts/scan-docker-image.sh "$IMAGE" linux/amd64
 
+      - name: Execute packaged amd64 signer
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+        run: docker run --rm --platform linux/amd64 --entrypoint /usr/local/bin/fased-signerd "$IMAGE" -h >/dev/null
+
   # Build arm64 image
   build-arm64:
     if: github.event_name == 'push'
@@ -186,6 +207,11 @@ jobs:
         env:
           IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
         run: scripts/scan-docker-image.sh "$IMAGE" linux/arm64
+
+      - name: Execute packaged arm64 signer
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+        run: docker run --rm --platform linux/arm64 --entrypoint /usr/local/bin/fased-signerd "$IMAGE" -h >/dev/null
 
   # Create multi-platform manifest
   create-manifest:

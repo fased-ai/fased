@@ -43,13 +43,44 @@ Sandboxing details: [Sandboxing](/gateway/sandboxing)
 
 ## Requirements
 
-- Docker Desktop (or Docker Engine) + Docker Compose v2
-- Bash on Linux or macOS. Windows users need Docker Desktop with its WSL2
-  backend/integration enabled and must run the setup from the Ubuntu shell, not
-  PowerShell, Command Prompt, or Git Bash
+- Docker Desktop (or Docker Engine) with a current Docker Compose v2. The
+  supplied setup uses Compose health dependencies and `docker compose up --wait`.
+- Linux: run the commands from Bash.
+- macOS: run the commands from Terminal. Docker runs the Linux signer image on
+  both Apple silicon and Intel Macs.
+- Windows: Windows 11, or Windows 10 version 2004/build 19041 or newer, with
+  WSL2, Ubuntu, Docker Desktop's WSL2 backend, and Ubuntu integration enabled.
+  Run every Fased command below in the **Ubuntu WSL2 shell**, never PowerShell,
+  Command Prompt, or Git Bash. Microsoft's setup instructions are
+  [Install WSL](https://learn.microsoft.com/windows/wsl/install) and
+  [Use systemd in WSL](https://learn.microsoft.com/windows/wsl/systemd).
 - At least 2 GB RAM when building the image from source. On 1 GB hosts,
   `pnpm install` may be OOM-killed with exit 137.
 - Enough disk for images + logs
+
+On a current Windows installation, open Administrator PowerShell only for the
+one-time WSL installation:
+
+```powershell
+wsl --install -d Ubuntu
+wsl --update
+```
+
+Restart Windows if requested, open **Ubuntu**, finish the Linux username setup,
+then enable the Ubuntu distribution in Docker Desktop under **Settings >
+Resources > WSL Integration**. Current Ubuntu installations made by
+`wsl --install` use systemd. If an older distribution does not, update WSL to
+0.67.6 or later, add the following inside Ubuntu, and run `wsl --shutdown` once
+from PowerShell:
+
+```ini
+# /etc/wsl.conf
+[boot]
+systemd=true
+```
+
+Return to the Ubuntu shell and verify `docker version` and
+`docker compose version` before continuing.
 
 ## Containerized Gateway (Docker Compose)
 
@@ -64,24 +95,27 @@ The curl installers and Docker are separate installation paths:
 
 ### Install from the public image (recommended)
 
-Clone the matching stable release, then run the setup script from the repo
-root with the same image version:
+Open the latest stable entry on
+[GitHub Releases](https://github.com/fased-ai/fased/releases), copy its version
+without the leading `v`, then clone and run that exact release. Keep the source
+tag and image tag identical:
 
 ```bash
-git clone --branch v0.1.61 --depth 1 https://github.com/fased-ai/fased.git fased
+export FASED_VERSION="<stable-version>"
+git clone --branch "v${FASED_VERSION}" --depth 1 https://github.com/fased-ai/fased.git fased
 cd fased
-FASED_IMAGE=ghcr.io/fased-ai/fased:0.1.61 ./docker-setup.sh
+FASED_IMAGE="ghcr.io/fased-ai/fased:${FASED_VERSION}" ./docker-setup.sh
 ```
 
 The image is public and supports anonymous pulls for `linux/amd64` and
 `linux/arm64`. Users do not need a Docker Hub account, GitHub account, package
 token, or `docker login`.
 
-For an immutable deployment that cannot move even if a tag changes, pin the
-verified `v0.1.61` multi-architecture manifest digest:
+For an immutable local deployment, copy the verified multi-architecture
+manifest digest from that release's container metadata and use it directly:
 
 ```bash
-FASED_IMAGE=ghcr.io/fased-ai/fased@sha256:f1a6184e71ed59a45fe9792ed8ce63b87d199293bbd136ce7abbec29c110b792 \
+FASED_IMAGE='ghcr.io/fased-ai/fased@sha256:<verified-manifest-digest>' \
   ./docker-setup.sh
 ```
 
@@ -94,10 +128,14 @@ FASED_IMAGE=ghcr.io/fased-ai/fased:latest ./docker-setup.sh
 
 With a published `FASED_IMAGE`, the setup script:
 
-- pulls the selected Gateway image
+- pulls the selected multi-architecture image, which contains both Fased and
+  the matching native `fased-signerd`
+- stops any existing Gateway before replacing its signer
+- recreates the non-root signer service and waits for protocol-v2 health
+  **before** any wallet operation
 - runs CLI onboarding
 - prints dashboard, token, and pairing hints
-- starts the gateway via Docker Compose
+- recreates and health-checks the Gateway
 - generates a gateway token and writes it to `.env`
 - records the selected image in `.env`
 
@@ -120,6 +158,11 @@ It writes config/workspace on the host:
 - `~/.fased/`
 - `~/.fased/workspace`
 
+Signer keys, durable limits, idempotency records, policies, and audit state live
+in the Compose-managed `fased-signer-state` volume. The Unix sockets use the
+separate `fased-signer-run` volume. Do not run `docker compose down -v` unless
+you intentionally want to destroy signer state and its wallets.
+
 ### Build locally from source (alternative)
 
 Use the source-build path when auditing or modifying the Dockerfile, testing
@@ -127,13 +170,15 @@ unreleased source, or adding build-time packages. Select a stable release for a
 normal local build:
 
 ```bash
-git clone --branch v0.1.61 --depth 1 https://github.com/fased-ai/fased.git fased
+export FASED_VERSION="<stable-version>"
+git clone --branch "v${FASED_VERSION}" --depth 1 https://github.com/fased-ai/fased.git fased
 cd fased
 ./docker-setup.sh
 ```
 
 Without `FASED_IMAGE`, `docker-setup.sh` builds `fased:local`, records that
-selection in `.env`, runs onboarding, and starts the local Gateway. An
+selection in `.env`, reproducibly cross-builds the native Go signer for the
+target image architecture, runs onboarding, and starts the local services. An
 `unauthorized` or `denied` error while using the public-image path usually
 means the requested tag does not exist or Docker is reusing stale credentials.
 
@@ -142,25 +187,99 @@ means the requested tag does not exist or Docker is reusing stale credentials.
 The supplied local Compose configuration:
 
 - publishes Gateway and bridge ports on `127.0.0.1` only
-- runs as the non-root `node` user
+- packages `fased-signerd` with the matching image and runs it as a separate,
+  non-root `fased-signerd` service before Gateway or CLI wallet work
+- keeps the signer database and master key in a signer-only persistent volume;
+  Gateway and CLI mount the separate Unix-socket volume, not signer state
+- requires a real protocol-v2 signer health response, not just a socket file
+- makes Gateway and CLI treat signer lifecycle as external so Node cannot start
+  a second signer process inside either container
+- runs all three services as the non-root `node` user
 - drops all Linux capabilities and enables `no-new-privileges`
 - does not use host networking, privileged mode, or a container-engine socket
-- health-checks the running Gateway
+- health-checks both the native signer and Gateway
 - stores the generated `.env` with user-only permissions
 - excludes local `.env*`, `.fased`, SSH/private keys, and common credential
   directories from the image build context
 
+This is **Local same-user process isolation**, not the Hosting custody boundary.
+Gateway, CLI, and signer containers deliberately use the same local UID and
+share the signer socket volume so local wallet setup and administration work.
+A compromised Gateway running as that UID may be able to use the signer control
+socket. Container separation does not protect a high-value reserve wallet from
+a fully compromised local Docker account or Docker daemon. Keep automated Agent
+and Mining wallets low-balance with explicit typed policies and positive caps;
+use a hardware-backed Wallet Standard account or a reviewed remote custody
+provider for reserve/Vault funds.
+
 Do not change the port mappings to `0.0.0.0`, add `network_mode: host`, mount
 `docker.sock`, or enable `privileged`. Those changes cross the supported local
-security boundary. Remote access and Docker VPS hosting are not covered by this
-guide.
+security boundary. Do not change the services to root to work around
+permissions. Remote access and Docker VPS hosting are not covered by this guide.
+
+### Wallets and SAT mining
+
+Local Docker supports signer-owned Solana Agent, Mining, and Vault wallet setup,
+typed wallet operations, and SAT mining. The native signer is part of the image;
+users do not install Go or download a second signer binary.
+
+To create or manage wallets after initial onboarding:
+
+```bash
+docker compose run --rm fased-cli wallet setup --chain solana
+```
+
+New signer-owned wallets begin with a durable deny-all policy. Before funding a
+wallet, review the exact role template under `config/signer-policies/`, set its
+canonical signer wallet ID, exact programs/assets/destinations, and positive
+per-transaction and daily caps. The friendly UI name and canonical signer ID
+can differ; use the canonical ID printed by wallet setup. For example:
+
+```bash
+cp config/signer-policies/agent.json.template "$HOME/fased-agent-policy.json"
+chmod 600 "$HOME/fased-agent-policy.json"
+# Edit every REPLACE_WITH_ value and review every line before continuing.
+scripts/docker-signer-policy.sh \
+  --initial-install \
+  --wallet-id agent \
+  --policy-file "$HOME/fased-agent-policy.json"
+```
+
+The helper refuses placeholders, group/world-readable policy files, a policy
+owned by another user, an unhealthy signer, a digest-confirmation mismatch, or
+anything other than the first version-1 deny-all transition. It stages the
+reviewed policy only in the signer's temporary filesystem, removes it on
+success or failure, and prints the signer-acknowledged policy afterward. Empty
+operations/programs/assets still grant nothing; generic raw signing is not
+enabled.
+
+Reviewed signer operations, including a signer-backed Vault, require an owner
+WebAuthn credential. Run the one-shot enrollment service, open the printed
+`http://localhost:18791` URL on the same computer, and touch/approve your
+authenticator:
+
+```bash
+docker compose --profile signer-admin run --rm --service-ports \
+  fased-signer-enroll "Local Docker owner"
+```
+
+The enrollment port is published on host loopback only and exists only while
+that one-shot command runs. Continue with
+[Agent, wallet, and mining walkthrough](/start/agent-wallet-mining-walkthrough).
+
+The signer state survives normal container recreation and `docker compose down`.
+It does **not** survive `docker compose down -v` or manual removal of the
+project's `fased-signer-state` volume. Stop both Gateway and signer before an
+offline volume backup; never copy the live bbolt database while the signer is
+running.
 
 ### Manual flow (compose)
 
 ```bash
 docker build -t fased:local -f Dockerfile .
+docker compose up -d --wait fased-signerd
 docker compose run --rm fased-cli onboard
-docker compose up -d fased-gateway
+docker compose up -d --no-deps --wait fased-gateway
 ```
 
 Note: run `docker compose ...` from the repo root. If you enabled
@@ -326,40 +445,15 @@ Example (Linux host):
 sudo chown -R 1000:1000 /path/to/fased-config /path/to/fased-workspace
 ```
 
-If you choose to run as root for convenience, you accept the security tradeoff.
+Do not change Gateway, CLI, or signer to root. On Docker Desktop, use a named
+home volume if host bind-mount ownership cannot be represented cleanly.
 
-### Faster rebuilds (recommended)
+### Faster rebuilds
 
-To speed up rebuilds, order your Dockerfile so dependency layers are cached.
-This avoids re-running `pnpm install` unless lockfiles change:
-
-```dockerfile
-FROM node:22-bookworm
-
-# Install Bun (required for build scripts)
-RUN curl -fsSL https://bun.sh/install | bash
-ENV PATH="/root/.bun/bin:${PATH}"
-
-RUN corepack enable
-
-WORKDIR /app
-
-# Cache dependencies unless package metadata changes
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
-COPY ui/package.json ./ui/package.json
-COPY scripts ./scripts
-
-RUN pnpm install --frozen-lockfile
-
-COPY . .
-RUN pnpm build
-RUN pnpm ui:install
-RUN pnpm ui:build
-
-ENV NODE_ENV=production
-
-CMD ["node","dist/index.js"]
-```
+The supplied multi-stage Dockerfile caches Go modules and pnpm dependencies
+before copying the remaining source. Keep using it: a simplified custom
+Dockerfile that copies only the Node application will omit `fased-signerd` and
+wallet/mining setup will fail closed.
 
 ### Channel setup (optional)
 
@@ -383,17 +477,21 @@ redirect URL you land on and paste it back into the auth prompt to finish auth.
 ### Health check
 
 ```bash
+docker compose exec fased-signerd \
+  node /app/scripts/docker-signer-health.mjs /run/fased-signerd/app.sock
 docker compose exec fased-gateway node dist/index.js health
 ```
 
-The Compose service already receives `FASED_GATEWAY_TOKEN` from `.env`; the
-`health` command reads runtime config/env and does not take a `--token` flag.
+Both commands must succeed. If signer health fails, do not retry wallet
+creation repeatedly; inspect `docker compose logs --tail 100 fased-signerd`
+first. The Gateway service already receives `FASED_GATEWAY_TOKEN` from `.env`;
+the `health` command reads runtime config/env and does not take a `--token` flag.
 
 ### Update local Docker
 
 Do not run `fased update` inside a container. Update the selected image or
-source revision, then recreate the Gateway while preserving the same config and
-workspace mounts.
+source revision, then recreate the signer **first** and Gateway second while
+preserving config, workspace, and signer-state volumes.
 
 For a published image pinned in `.env`, select the new stable source tag and
 change `FASED_IMAGE` in `.env` to the same version before pulling. For example,
@@ -414,8 +512,12 @@ FASED_IMAGE=ghcr.io/fased-ai/fased:X.Y.Z
 Then pull, recreate, and verify:
 
 ```bash
-docker compose pull
-docker compose up -d fased-gateway
+docker compose pull fased-signerd fased-gateway fased-cli
+docker compose stop fased-gateway
+docker compose up -d --force-recreate --wait fased-signerd
+docker compose up -d --force-recreate --no-deps --wait fased-gateway
+docker compose exec fased-signerd \
+  node /app/scripts/docker-signer-health.mjs /run/fased-signerd/app.sock
 docker compose exec fased-gateway fased --version
 docker compose exec fased-gateway node dist/index.js health
 docker compose run --rm fased-cli plugins doctor
@@ -431,14 +533,21 @@ cd /path/to/fased
 git fetch origin --tags
 git switch --detach vX.Y.Z
 docker build --pull -t fased:local -f Dockerfile .
-docker compose up -d fased-gateway
+docker compose stop fased-gateway
+docker compose up -d --force-recreate --wait fased-signerd
+docker compose up -d --force-recreate --no-deps --wait fased-gateway
+docker compose exec fased-signerd \
+  node /app/scripts/docker-signer-health.mjs /run/fased-signerd/app.sock
 docker compose exec fased-gateway fased --version
 docker compose exec fased-gateway node dist/index.js health
 docker compose run --rm fased-cli plugins doctor
 ```
 
-State survives only while `FASED_CONFIG_DIR` and `FASED_WORKSPACE_DIR` keep
-pointing to the same host directories or durable volumes.
+Config and workspace survive while `FASED_CONFIG_DIR` and
+`FASED_WORKSPACE_DIR` keep pointing to the same host directories. Signer keys,
+policies, durable caps, and idempotency state survive in
+`fased-signer-state`. Normal `docker compose down` preserves it; `docker compose
+down -v` destroys it.
 
 ### E2E smoke test (Docker)
 
@@ -456,6 +565,8 @@ pnpm test:docker:qr
 
 - Gateway bind inside the container is `lan` so Docker port forwarding works;
   the host-side port remains loopback-only.
+- `fased-signerd` must be healthy before Gateway or CLI wallet commands run.
+  Missing or incompatible signer binaries fail before onboarding.
 - Dockerfile CMD uses `--allow-unconfigured`; mounted config with
   `gateway.mode` not `local` will still start. Override CMD to enforce the
   guard.

@@ -17,6 +17,14 @@ export const DEFAULT_WALLET_RUNTIME_HOST = "127.0.0.1";
 export const DEFAULT_WALLET_RUNTIME_VERSION = "0.1.1";
 export const DEFAULT_WALLET_RUNTIME_SOURCE_REF = "v0.2.30";
 
+export function isLocalSignerExternallyManaged(env: NodeJS.ProcessEnv = process.env): boolean {
+  return (
+    String(env.FASED_WALLET_LOCAL_SIGNER_LIFECYCLE ?? "")
+      .trim()
+      .toLowerCase() === "external"
+  );
+}
+
 export type ResolvedWalletPolicyCaps = {
   maxPerTx: bigint;
   maxDaily: bigint;

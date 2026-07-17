@@ -38,6 +38,7 @@ import {
 import { redactWalletDiagnosticText } from "../wallet/wallet-redaction.js";
 import {
   ensureWalletStateDir,
+  isLocalSignerExternallyManaged,
   resolveLocalSignerControlSocketPath,
   resolveLocalSignerMasterKeyPath,
   resolveLocalSignerMaterialRootDir,
@@ -2675,6 +2676,7 @@ export async function collectWalletSignerDoctorReport(
     (err as NodeJS.ErrnoException | undefined)?.code === "ENOENT";
 
   if (isLocalSigner) {
+    const externallyManaged = isLocalSignerExternallyManaged(effectiveEnv);
     try {
       const st = fs.statSync(socketPath);
       push("socket.exists", st.isSocket?.() ?? true, socketPath);
@@ -2694,36 +2696,44 @@ export async function collectWalletSignerDoctorReport(
       );
     }
 
-    try {
-      const pidRaw = fs.readFileSync(pidPath, "utf8").trim();
-      const pid = Number.parseInt(pidRaw, 10);
-      if (Number.isFinite(pid) && pid > 1) {
-        try {
-          process.kill(pid, 0);
-          push("pid.alive", true, `pid=${pid}`);
-        } catch (err) {
-          push("pid.alive", false, `pid=${pid} ${String(err)}`);
+    if (externallyManaged) {
+      push("pid.alive", true, "lifecycle=external; process health is verified over the socket");
+    } else {
+      try {
+        const pidRaw = fs.readFileSync(pidPath, "utf8").trim();
+        const pid = Number.parseInt(pidRaw, 10);
+        if (Number.isFinite(pid) && pid > 1) {
+          try {
+            process.kill(pid, 0);
+            push("pid.alive", true, `pid=${pid}`);
+          } catch (err) {
+            push("pid.alive", false, `pid=${pid} ${String(err)}`);
+          }
+        } else {
+          push("pid.alive", false, "invalid pid file");
         }
-      } else {
-        push("pid.alive", false, "invalid pid file");
+      } catch (err) {
+        push(
+          "pid.alive",
+          localSignerSetupPending && isNotFoundError(err),
+          localSignerSetupPending && isNotFoundError(err) ? "Configure" : String(err),
+        );
       }
-    } catch (err) {
-      push(
-        "pid.alive",
-        localSignerSetupPending && isNotFoundError(err),
-        localSignerSetupPending && isNotFoundError(err) ? "Configure" : String(err),
-      );
     }
 
-    try {
-      const st = fs.statSync(auditPath);
-      push("audit.exists", true, `bytes=${st.size}`);
-    } catch (err) {
-      push(
-        "audit.exists",
-        localSignerSetupPending && isNotFoundError(err),
-        localSignerSetupPending && isNotFoundError(err) ? "Configure" : String(err),
-      );
+    if (externallyManaged) {
+      push("audit.exists", true, "lifecycle=external; audit state is signer-owned");
+    } else {
+      try {
+        const st = fs.statSync(auditPath);
+        push("audit.exists", true, `bytes=${st.size}`);
+      } catch (err) {
+        push(
+          "audit.exists",
+          localSignerSetupPending && isNotFoundError(err),
+          localSignerSetupPending && isNotFoundError(err) ? "Configure" : String(err),
+        );
+      }
     }
 
     if (localSignerSetupPending) {
