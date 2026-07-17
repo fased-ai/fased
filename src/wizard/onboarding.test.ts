@@ -73,6 +73,17 @@ const checkNamedWalletDeletionSafety = vi.hoisted(() => vi.fn(() => ({ ok: true,
 const setDefaultWallet = vi.hoisted(() => vi.fn());
 const setNamedWalletRole = vi.hoisted(() => vi.fn());
 const resolveWalletUserRole = vi.hoisted(() => vi.fn<() => unknown>(() => undefined));
+const lockSignerOwnedWalletForArchive = vi.hoisted(() =>
+  vi.fn(async () => ({
+    walletId: "mining",
+    role: "mining" as const,
+    version: 5,
+    operations: [],
+    programs: [],
+    assets: [],
+    hash: `sha256:${"a".repeat(64)}`,
+  })),
+);
 const restartLocalSocketSigner = vi.hoisted(() => vi.fn(async () => {}));
 const installSignerdBinary = vi.hoisted(() => vi.fn());
 const resolveSignerdBinaryPath = vi.hoisted(() => vi.fn(() => "/tmp/fased-signerd"));
@@ -162,6 +173,10 @@ vi.mock("../wallet/wallet-provider-registry.js", () => ({
 
 vi.mock("../wallet/signer-network-admin.js", () => ({
   configureSignerOwnedWalletNetwork,
+}));
+
+vi.mock("../wallet/local-socket-signer-archive.js", () => ({
+  lockSignerOwnedWalletForArchive,
 }));
 
 vi.mock("./onboarding.wallet.js", () => ({
@@ -366,6 +381,16 @@ describe("runOnboardingWizard", () => {
       },
     });
     walletSetupCommand.mockClear();
+    lockSignerOwnedWalletForArchive.mockReset();
+    lockSignerOwnedWalletForArchive.mockResolvedValue({
+      walletId: "mining",
+      role: "mining",
+      version: 5,
+      operations: [],
+      programs: [],
+      assets: [],
+      hash: `sha256:${"a".repeat(64)}`,
+    });
     configureSignerOwnedWalletNetwork.mockClear();
     configureGatewayForOnboarding.mockClear();
     configureFederationForOnboarding.mockClear();
@@ -1096,7 +1121,7 @@ describe("runOnboardingWizard", () => {
     );
   });
 
-  it("warns before deleting the singleton Mining wallet", async () => {
+  it("locks the singleton Mining wallet before archiving its registration", async () => {
     deleteNamedWallet.mockClear();
     restartLocalSocketSigner.mockClear();
     resolveWalletUserRole.mockReset();
@@ -1140,7 +1165,7 @@ describe("runOnboardingWizard", () => {
           name: "Mining",
           providerId: "local-socket-signer",
           addresses: { solana: "mining-sol-1" },
-          metadata: { selfHosted: true, role: "mining" },
+          metadata: { selfHosted: true, role: "mining", signerWalletId: "mining" },
         },
       ],
       assignments: {},
@@ -1158,7 +1183,7 @@ describe("runOnboardingWizard", () => {
         return "mining";
       }
       if (message === "Wallet action") {
-        return "delete";
+        return "archive";
       }
       if (message === "How do you want to hatch your bot?") {
         return "skip";
@@ -1170,7 +1195,7 @@ describe("runOnboardingWizard", () => {
         typeof (opts as { message?: unknown })?.message === "string"
           ? String((opts as { message?: unknown }).message)
           : "";
-      if (message === 'Type wallet id "mining" to delete this wallet') {
+      if (message === 'Type wallet id "mining" to archive/remove this wallet from Fased') {
         return "mining";
       }
       return "";
@@ -1204,13 +1229,128 @@ describe("runOnboardingWizard", () => {
 
     expect(prompter.note).toHaveBeenCalledWith(
       expect.stringContaining("For @wallet:mining, stop mining first"),
-      "Delete wallet",
+      "Archive wallet",
     );
     expect(prompter.note).toHaveBeenCalledWith(
       expect.stringContaining("balance as unknown"),
-      "Delete wallet",
+      "Archive wallet",
     );
+    expect(lockSignerOwnedWalletForArchive).toHaveBeenCalledWith({
+      wallet: expect.objectContaining({ id: "mining", providerId: "local-socket-signer" }),
+      socketPath: expect.any(String),
+    });
     expect(deleteNamedWallet).toHaveBeenCalledWith(expect.objectContaining({ walletId: "mining" }));
+    expect(lockSignerOwnedWalletForArchive.mock.invocationCallOrder[0]).toBeLessThan(
+      deleteNamedWallet.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
+    expect(prompter.note).toHaveBeenCalledWith(
+      expect.stringContaining("remains encrypted and locked by deny-all policy version 5"),
+      "Wallet setup",
+    );
+    expect(restartLocalSocketSigner).not.toHaveBeenCalled();
+    resolveWalletUserRole.mockReset();
+    resolveWalletUserRole.mockReturnValue(undefined);
+  });
+
+  it("keeps a hyphenated signer wallet registered when deny-all is not acknowledged", async () => {
+    deleteNamedWallet.mockClear();
+    restartLocalSocketSigner.mockClear();
+    lockSignerOwnedWalletForArchive.mockRejectedValueOnce(
+      new Error("signer policy version conflict"),
+    );
+    resolveWalletUserRole.mockReset();
+    resolveWalletUserRole.mockReturnValue("agent");
+    readConfigFileSnapshot.mockResolvedValueOnce({
+      exists: true,
+      valid: true,
+      config: {
+        env: {
+          vars: {
+            FASED_WALLET_SOLANA_RPC_URL__AGENT_2: "https://api.devnet.solana.com",
+          },
+        },
+      },
+    });
+    readWalletProviderRegistry.mockReturnValue({
+      providers: {
+        "embedded-keystore": { enabled: true, updatedAt: "2026-03-15T00:00:00.000Z" },
+        "local-socket-signer": { enabled: true, updatedAt: "2026-03-15T00:00:00.000Z" },
+        alchemy: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
+        turnkey: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
+        privy: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
+      },
+      wallets: [
+        {
+          id: "agent-2",
+          name: "Agent 2",
+          providerId: "local-socket-signer",
+          addresses: { solana: "agent-sol-2" },
+          metadata: { selfHosted: true, role: "agent", signerWalletId: "agent_2" },
+        },
+      ],
+      assignments: {},
+      updatedAt: "2026-03-15T00:00:00.000Z",
+    });
+    const select = vi.fn(async (opts: unknown) => {
+      const message =
+        typeof (opts as { message?: unknown })?.message === "string"
+          ? String((opts as { message?: unknown }).message)
+          : "";
+      if (message === "Wallet setup action") {
+        return "manage-self-hosted";
+      }
+      if (message === "Select wallet to manage") {
+        return "agent-2";
+      }
+      if (message === "Wallet action") {
+        return "archive";
+      }
+      if (message === "How do you want to hatch your bot?") {
+        return "skip";
+      }
+      return "quickstart";
+    }) as unknown as WizardPrompter["select"];
+    const text = vi.fn(async (opts: unknown) => {
+      const message =
+        typeof (opts as { message?: unknown })?.message === "string"
+          ? String((opts as { message?: unknown }).message)
+          : "";
+      if (message === 'Type wallet id "agent-2" to archive/remove this wallet from Fased') {
+        return "agent-2";
+      }
+      return "";
+    }) as unknown as WizardPrompter["text"];
+    const confirm = vi.fn(async () => false) as unknown as WizardPrompter["confirm"];
+    const prompter = createWizardPrompter({ select, text, confirm });
+
+    await runOnboardingWizard(
+      {
+        acceptRisk: true,
+        flow: "quickstart",
+        authChoice: "skip",
+        installDaemon: false,
+        skipProviders: true,
+        skipSkills: true,
+        skipHealth: true,
+        skipUi: true,
+      },
+      createRuntime({ throwsOnExit: true }),
+      prompter,
+    );
+
+    expect(lockSignerOwnedWalletForArchive).toHaveBeenCalledWith({
+      wallet: expect.objectContaining({
+        id: "agent-2",
+        metadata: expect.objectContaining({ signerWalletId: "agent_2" }),
+      }),
+      socketPath: expect.any(String),
+    });
+    expect(deleteNamedWallet).not.toHaveBeenCalled();
+    expect(restartLocalSocketSigner).not.toHaveBeenCalled();
+    expect(prompter.note).toHaveBeenCalledWith(
+      expect.stringContaining("no Fased registration or attachment was removed"),
+      "Archive blocked",
+    );
     resolveWalletUserRole.mockReset();
     resolveWalletUserRole.mockReturnValue(undefined);
   });

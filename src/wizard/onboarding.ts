@@ -39,6 +39,7 @@ import { logConfigUpdated } from "../config/logging.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { defaultRuntime } from "../runtime.js";
 import { resolveUserPath } from "../utils.js";
+import { lockSignerOwnedWalletForArchive } from "../wallet/local-socket-signer-archive.js";
 import { configureSignerOwnedWalletNetwork } from "../wallet/signer-network-admin.js";
 import type { WalletNamedWallet } from "../wallet/wallet-provider-registry.js";
 import { readWalletProviderRegistry } from "../wallet/wallet-provider-registry.js";
@@ -1319,7 +1320,7 @@ export async function runOnboardingWizard(
             | "attach-federation-bond"
             | "detach-federation-bond"
             | "configure-solana-rpc"
-            | "delete"
+            | "archive"
             | "cancel"
           >({
             message: "Wallet action",
@@ -1359,9 +1360,9 @@ export async function runOnboardingWizard(
                     ]
                   : []),
               {
-                value: "delete",
-                label: "Delete wallet",
-                hint: "Remove this wallet registration and local keystore mapping.",
+                value: "archive",
+                label: "Archive/remove from Fased",
+                hint: "Disable signer use first, then remove this wallet registration.",
               },
               {
                 value: "cancel",
@@ -1481,43 +1482,75 @@ export async function runOnboardingWizard(
             });
             continue;
           }
+          const archiveEnv = {
+            ...process.env,
+            ...nextConfig.env?.vars,
+            FASED_HOST_PROFILE: hostProfile,
+          } as NodeJS.ProcessEnv;
           const deletionSafety = checkNamedWalletDeletionSafety({
             walletId: targetWallet.id,
-            env: process.env,
+            env: archiveEnv,
           });
           if (!deletionSafety.ok) {
-            await prompter.note(deletionSafety.message, "Delete blocked");
+            await prompter.note(deletionSafety.message, "Archive blocked");
             addAnotherWallet = await prompter.confirm({
               message: "Run another wallet setup action?",
               initialValue: false,
             });
             continue;
           }
-          const deleteWarnings = [
-            `This deletes the local wallet registration and local keystore files for ${targetWallet.name} (${targetWallet.id}).`,
-            "It does not transfer funds and it cannot recover funds if you did not save the seed/private key first.",
-            "Move funds out, save recovery material, and clear active Mining/Fased Network use before deleting.",
+          const signerOwned = targetWallet.providerId === "local-socket-signer";
+          const archiveWarnings = [
+            `This removes the Fased registration for ${targetWallet.name} (${targetWallet.id}); it does not transfer funds or erase provider custody.`,
+            signerOwned
+              ? "Before removal, Fased must durably replace the native signer policy with deny-all. The encrypted signer-owned key remains archived in signer storage for host-administrator recovery."
+              : "The external provider or hardware wallet keeps its key; remove it there separately only if you intend to destroy that custody relationship.",
+            "Move funds out or verify your recovery procedure, and clear active Mining/Fased Network use before archiving.",
           ];
           if (currentMiningWalletId === targetWallet.id || targetWalletPurpose === "mining") {
-            deleteWarnings.push(
-              "For @wallet:mining, stop mining first; move SAT/SOL out; save recovery material; then delete and recreate the singleton Mining wallet.",
+            archiveWarnings.push(
+              "For @wallet:mining, stop mining first; move SAT/SOL out or verify recovery; then archive and re-register the singleton Mining wallet if needed.",
             );
           }
-          deleteWarnings.push(
+          archiveWarnings.push(
             "If balances cannot be checked from this terminal, treat the balance as unknown and verify it from the Wallet or Mining page first.",
-            "Use repair for auth/session recovery only; wallet deletion is always per-wallet.",
+            "Use repair for auth/session recovery only; wallet archive is always per-wallet.",
           );
-          await prompter.note(deleteWarnings.join("\n"), "Delete wallet");
+          await prompter.note(archiveWarnings.join("\n"), "Archive wallet");
           const typedWalletId = await prompter.text({
-            message: `Type wallet id "${targetWallet.id}" to delete this wallet`,
+            message: `Type wallet id "${targetWallet.id}" to archive/remove this wallet from Fased`,
             validate: (value) =>
               value.trim() === targetWallet.id ? undefined : `Type ${targetWallet.id}`,
           });
           if (typedWalletId.trim() === targetWallet.id) {
             const walletId = targetWallet.id;
+            let archivedSignerPolicy:
+              | Awaited<ReturnType<typeof lockSignerOwnedWalletForArchive>>
+              | undefined;
+            if (signerOwned) {
+              try {
+                archivedSignerPolicy = await lockSignerOwnedWalletForArchive({
+                  wallet: targetWallet,
+                  socketPath: resolveLocalSignerSocketPath(archiveEnv),
+                });
+              } catch (error) {
+                await prompter.note(
+                  [
+                    "The native signer did not durably acknowledge deny-all, so no Fased registration or attachment was removed.",
+                    `Detail: ${error instanceof Error ? error.message : String(error)}`,
+                    "Repair the signer and retry the archive operation.",
+                  ].join("\n"),
+                  "Archive blocked",
+                );
+                addAnotherWallet = await prompter.confirm({
+                  message: "Run another wallet setup action?",
+                  initialValue: false,
+                });
+                continue;
+              }
+            }
             for (const key of [rpcEnvKeyFor("solana", walletId)]) {
               nextConfig = setConfigEnvVar(nextConfig, key, undefined);
-              delete process.env[key];
             }
             if (satMiningAttachment.walletId === walletId) {
               satMiningAttachment = {};
@@ -1527,14 +1560,17 @@ export async function runOnboardingWizard(
               federationBondWalletId = undefined;
               nextConfig = clearFederationBondWallet(nextConfig);
             }
-            deleteNamedWallet({ walletId, env: process.env });
-            await restartLocalSocketSigner(ensureWalletStateDir(process.env).rootDir);
+            await writeConfigFile(nextConfig);
+            deleteNamedWallet({ walletId, env: archiveEnv });
+            delete process.env[rpcEnvKeyFor("solana", walletId)];
             await prompter.note(
-              `Deleted wallet ${targetWallet.name} (${walletId}) from onboarding-safe management.`,
+              archivedSignerPolicy
+                ? `Archived ${targetWallet.name} (${walletId}) from Fased. Native signer wallet ${archivedSignerPolicy.walletId} remains encrypted and locked by deny-all policy version ${archivedSignerPolicy.version}.`
+                : `Removed ${targetWallet.name} (${walletId}) from Fased. Its external custody was not erased.`,
               "Wallet setup",
             );
           } else {
-            await prompter.note("Wallet deletion cancelled.", "Wallet setup");
+            await prompter.note("Wallet archive cancelled.", "Wallet setup");
           }
           addAnotherWallet = await prompter.confirm({
             message: "Run another wallet setup action?",

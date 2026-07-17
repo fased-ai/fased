@@ -665,14 +665,14 @@ describe("wallet providers HTTP", () => {
     });
   });
 
-  test("persists signer-backed settings and metadata only after the exact durable acknowledgement", async () => {
+  test("uses the canonical signer ID and persists settings only after durable acknowledgement", async () => {
     await withTempConfig({
       cfg: baseConfig,
       run: async () => {
         const oldHash = `sha256:${"a".repeat(64)}`;
         const nextHash = `sha256:${"b".repeat(64)}`;
         const current: PolicySignerPolicy = {
-          walletId: "agent",
+          walletId: "agent_2",
           role: "agent",
           version: 4,
           operations: ["solana.nativeTransfer"],
@@ -718,11 +718,12 @@ describe("wallet providers HTTP", () => {
         });
         try {
           upsertNamedWallet({
-            walletId: "agent",
-            name: "Agent",
+            walletId: "agent-2",
+            name: "Agent 2",
             providerId: "local-socket-signer",
             metadata: {
               role: "agent",
+              signerWalletId: "agent_2",
               policyState: "acknowledged",
               policyVersion: 4,
               policyHash: oldHash,
@@ -747,7 +748,7 @@ describe("wallet providers HTTP", () => {
               path: "/api/wallet/settings",
               authorization: "Bearer root-token",
               body: {
-                walletId: "agent",
+                walletId: "agent-2",
                 solanaMaxPerTx: "500",
                 solanaMaxDaily: "2500",
               },
@@ -763,8 +764,9 @@ describe("wallet providers HTTP", () => {
           );
           await expect(readFile(policyStatePath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
           expect(
-            readWalletProviderRegistry(process.env).wallets.find((wallet) => wallet.id === "agent")
-              ?.metadata,
+            readWalletProviderRegistry(process.env).wallets.find(
+              (wallet) => wallet.id === "agent-2",
+            )?.metadata,
           ).toMatchObject({ policyVersion: 4, policyHash: oldHash });
 
           releaseTighten?.();
@@ -790,13 +792,14 @@ describe("wallet providers HTTP", () => {
           const persisted = JSON.parse(await readFile(policyStatePath, "utf8")) as {
             wallets?: Record<string, { solana?: { maxPerTx?: string; maxDaily?: string } }>;
           };
-          expect(persisted.wallets?.agent?.solana).toMatchObject({
+          expect(persisted.wallets?.["agent-2"]?.solana).toMatchObject({
             maxPerTx: "500",
             maxDaily: "2500",
           });
           expect(
-            readWalletProviderRegistry(process.env).wallets.find((wallet) => wallet.id === "agent")
-              ?.metadata,
+            readWalletProviderRegistry(process.env).wallets.find(
+              (wallet) => wallet.id === "agent-2",
+            )?.metadata,
           ).toMatchObject({
             role: "agent",
             purpose: "agent",
@@ -811,11 +814,16 @@ describe("wallet providers HTTP", () => {
             "v2.policy.tighten",
             "v2.policy.get",
           ]);
+          expect(
+            signer.requests
+              .filter((request) => request.op === "v2.policy.get")
+              .map((request) => request.walletId),
+          ).toEqual(["agent_2", "agent_2"]);
           const tightenRequest = signer.requests.find(
             (request) => request.op === "v2.policy.tighten",
           );
           expect(tightenRequest).toMatchObject({
-            walletId: "agent",
+            walletId: "agent_2",
             request: {
               expectedVersion: 4,
               policy: {

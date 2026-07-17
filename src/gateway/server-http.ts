@@ -79,6 +79,7 @@ import {
   localSignerPolicyState,
 } from "../wallet/local-socket-signer-policy.js";
 import type { LocalSocketSignerPolicyV2 } from "../wallet/local-socket-signer-protocol.js";
+import { resolveNativeSignerWalletId } from "../wallet/native-signer-wallet-id.js";
 import { LocalSocketSignerAdapter } from "../wallet/providers/local-socket-signer-adapter.js";
 import { isValidSolanaAddress } from "../wallet/solana-address.js";
 import {
@@ -1328,12 +1329,13 @@ async function readWalletSettingsSignerPolicy(params: {
     return undefined;
   }
   try {
+    const signerWalletId = resolveNativeSignerWalletId(wallet);
     const policy =
-      params.acknowledged?.walletId === walletId
+      params.acknowledged?.walletId === signerWalletId
         ? params.acknowledged
         : await new LocalSocketSignerAdapter(
             resolveLocalSignerSocketPath(effectiveEnv),
-          ).getSignerPolicy(walletId);
+          ).getSignerPolicy(signerWalletId);
     const state = localSignerPolicyState(policy);
     return {
       state,
@@ -5272,7 +5274,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
             selectedRegistryWallet?.providerId === "local-socket-signer"
           ) {
             try {
-              const scopedWalletId = preparedScopedPolicy.walletId;
+              const scopedWalletId = resolveNativeSignerWalletId(selectedRegistryWallet);
               const signer = new LocalSocketSignerAdapter(
                 resolveLocalSignerSocketPath(effectiveEnv),
               );
@@ -6063,7 +6065,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
                 const effectiveEnv = { ...process.env, ...cfg.env?.vars } as NodeJS.ProcessEnv;
                 const signerPolicy = await new LocalSocketSignerAdapter(
                   resolveLocalSignerSocketPath(effectiveEnv),
-                ).getSignerPolicy(walletId);
+                ).getSignerPolicy(resolveNativeSignerWalletId(existing));
                 if (signerPolicy.role !== requestedRole) {
                   sendLoginResponse(409, {
                     ok: false,

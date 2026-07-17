@@ -10,6 +10,7 @@ import {
   throwLegacyEmbeddedKeystoreMigrationRequired,
 } from "../wallet/legacy-embedded-keystore.js";
 import { createLockedSignerOwnedWallet } from "../wallet/local-socket-signer-lifecycle.js";
+import { normalizeNativeSignerWalletId } from "../wallet/native-signer-wallet-id.js";
 import {
   callLocalSocketSigner,
   probeLocalSocketSignerHealth,
@@ -689,15 +690,6 @@ async function configureLocalSignerMode(
       runtime.log(message);
     }
   }
-}
-
-function normalizeNativeSignerWalletId(value: string): string {
-  const normalized = value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "");
-  return normalized || "default";
 }
 
 function findNativeSignerWalletIdCollision(
