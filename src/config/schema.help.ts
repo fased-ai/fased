@@ -402,7 +402,7 @@ const FIELD_HELP_BASE: Record<string, string> = {
   "wallet.runtime.policy.directSigning":
     "Allow background/agent wallet execution from wallet tooling (must be paired with caps/allowlists). Manual reviewed sends are separate.",
   "wallet.runtime.policy.capsEnabled":
-    "Enable wallet spend cap enforcement. When false, role, custody, signer, allowlist, and audit gates still apply, but SOL/token cap comparisons are skipped.",
+    "Enable wallet spend cap enforcement. When false, role, signer policy, allowlist, and audit gates still apply, but SOL/token cap comparisons are skipped.",
   "wallet.runtime.policy.solana.allowPrograms":
     "Explicit Solana program/token allowlist. Empty denies program and token execution; Agent market swaps also require every inspected Jupiter route program.",
   "wallet.runtime.policy.solana.tokenCaps":

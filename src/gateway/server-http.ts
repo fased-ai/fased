@@ -35,11 +35,7 @@ import {
   handleA2uiHttpRequest,
 } from "../canvas-host/a2ui.js";
 import type { CanvasHostHandler } from "../canvas-host/server.js";
-import {
-  disableWalletCustodyForWallet,
-  initializeWalletCustodyForWallet,
-  walletSetupCommand,
-} from "../commands/wallet.js";
+import { walletSetupCommand } from "../commands/wallet.js";
 import {
   loadConfig,
   readConfigFileSnapshotForWrite,
@@ -107,16 +103,6 @@ import {
   resolveWalletApprovalAuthMode,
 } from "../wallet/wallet-approval-auth.js";
 import { appendWalletAuditEntry, readWalletAuditEntries } from "../wallet/wallet-audit-log.js";
-import {
-  activateWalletCustodyUnlockSession,
-  enrollWalletCustodyDevice,
-  lockWalletCustodyUnlockSessions,
-  listSplitKeyWalletCustodyStatuses,
-  revokeWalletCustodyDevice,
-  recoverWalletCustodyCeremony,
-  readWalletCustodyStatus,
-  refreshWalletCustodyUnlockSession,
-} from "../wallet/wallet-custody.js";
 import {
   listWalletInboundEvents,
   pollWalletInboundEvents,
@@ -1659,17 +1645,6 @@ const silentWalletSetupRuntime = {
   },
 };
 
-function listSplitKeyWalletsBlockingPasskeyRemoval(
-  cfg: ReturnType<typeof loadConfig>,
-  env: NodeJS.ProcessEnv = process.env,
-) {
-  return listSplitKeyWalletCustodyStatuses({
-    wallet: resolveWalletRuntimeConfig(cfg, env),
-    cfg,
-    env,
-  });
-}
-
 type WalletGatewayRpcMethodMetrics = {
   requestsSinceStart: number;
   successesSinceStart: number;
@@ -1720,21 +1695,6 @@ function summarizeWalletGatewayRpcMetrics(): {
       .map(([method, metrics]) => ({ method, ...metrics }))
       .toSorted((left, right) => left.method.localeCompare(right.method)),
   };
-}
-
-function formatSplitKeyPasskeyBlockMessage(
-  splitKeyWallets: ReturnType<typeof listSplitKeyWalletsBlockingPasskeyRemoval>,
-): string {
-  const walletList = splitKeyWallets
-    .map((entry) => entry.target.walletId)
-    .filter(Boolean)
-    .slice(0, 4)
-    .join(", ");
-  const suffix =
-    walletList.length > 0
-      ? ` Split-key wallet${splitKeyWallets.length === 1 ? "" : "s"}: ${walletList}.`
-      : "";
-  return `Cannot remove the last Wallet Control Passkey while wallet security is enabled. Disable wallet security on every secured wallet before removing this passkey.${suffix}`;
 }
 
 async function fetchSolanaLamportsViaRpc(params: {
@@ -4437,12 +4397,6 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           | "wallet.send"
           | "wallet.settings"
           | "wallet.policy"
-          | "wallet.custody-init"
-          | "wallet.custody-unlock"
-          | "wallet.custody-recover"
-          | "wallet.custody-enroll-device"
-          | "wallet.custody-revoke-device"
-          | "wallet.custody-disable"
           | "wallet.provider-credentials"
           | "mining.capital"
           | "mining.policy";
@@ -5183,22 +5137,6 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           const targetProviderId = patch.providerId ?? currentProviderId;
           const switchingToAutonomous =
             patch.executionMode === "autonomous" && currentWallet.execution.mode !== "autonomous";
-          if (patch.approvalAuthMode === "none") {
-            const splitKeyWallets = listSplitKeyWalletsBlockingPasskeyRemoval(
-              currentCfg,
-              process.env,
-            );
-            if (splitKeyWallets.length > 0) {
-              sendLoginResponse(409, {
-                ok: false,
-                error: {
-                  code: "wallet_passkey_required_by_split_key",
-                  message: formatSplitKeyPasskeyBlockMessage(splitKeyWallets),
-                },
-              });
-              return;
-            }
-          }
           if (patch.executionMode === "autonomous" && targetProviderId !== "local-socket-signer") {
             sendLoginResponse(400, {
               ok: false,
@@ -6762,7 +6700,6 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           config: cfg,
           env: effectiveEnv,
           walletId: selectedWalletId,
-          approvalHost: host,
         });
         if (configuredProviderId === "local-socket-signer" && !snapshot.service.healthy) {
           try {
@@ -6772,7 +6709,6 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
               config: cfg,
               env: effectiveEnv,
               walletId: selectedWalletId,
-              approvalHost: host,
             });
           } catch {
             // Keep original unhealthy snapshot; signer doctor endpoint provides deeper detail.
@@ -8244,756 +8180,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
         });
         return;
       }
-      if (requestPath === "/api/wallet/custody/status") {
-        if (req.method !== "GET") {
-          res.statusCode = 405;
-          res.setHeader("Allow", "GET");
-          sendLoginResponse(405, {
-            ok: false,
-            error: { code: "method_not_allowed", message: "method must be GET" },
-          });
-          return;
-        }
-        if (!(await ensureWalletApiAuthorized())) {
-          return;
-        }
-        const cfg = loadConfig();
-        const walletCfg = resolveWalletRuntimeConfig(cfg, process.env);
-        const walletId = parsedUrl.searchParams.get("walletId")?.trim() || undefined;
-        sendLoginResponse(200, {
-          ok: true,
-          custody: readWalletCustodyStatus({
-            wallet: walletCfg,
-            env: process.env,
-            cfg,
-            walletId,
-            approvalHost: host,
-          }),
-        });
-        return;
-      }
-      if (requestPath === "/api/wallet/custody/init") {
-        if (req.method !== "POST") {
-          res.statusCode = 405;
-          res.setHeader("Allow", "POST");
-          sendLoginResponse(405, {
-            ok: false,
-            error: { code: "method_not_allowed", message: "method must be POST" },
-          });
-          return;
-        }
-        if (!(await ensureWalletApiAuthorized())) {
-          return;
-        }
-        const body = await readJsonBody(req, 64 * 1024);
-        if (!body.ok) {
-          sendLoginResponse(400, {
-            ok: false,
-            error: { code: "invalid_request", message: body.error },
-          });
-          return;
-        }
-        const approvalToken = String(getHeader(req, "x-wallet-approval-token") ?? "").trim();
-        const walletId =
-          (typeof (body.value as { walletId?: unknown } | null)?.walletId === "string"
-            ? String((body.value as { walletId: string }).walletId).trim()
-            : "") || undefined;
-        const cfg = loadConfig();
-        const consumed = consumeWalletApprovalGrant({
-          host,
-          operation: "wallet.custody-init",
-          token: approvalToken,
-          env: process.env,
-          cfg,
-        });
-        if (!consumed.ok) {
-          sendLoginResponse(401, {
-            ok: false,
-            error: {
-              code: consumed.code ?? "approval_token_required",
-              message: consumed.message ?? "passkey approval token is required",
-            },
-          });
-          return;
-        }
-        try {
-          const initialized = await initializeWalletCustodyForWallet({
-            env: process.env,
-            cfg,
-            walletId,
-          });
-          const walletCfg = resolveWalletRuntimeConfig(cfg, process.env);
-          appendWalletAuditEntry({
-            action: "custody_initialized",
-            actor: "control-ui",
-            details: {
-              walletId: initialized.walletId,
-              role: initialized.role,
-              migratedKeystores: initialized.migratedKeystores.length,
-              signerRestarted: initialized.signerRestarted,
-              signerRestartError: initialized.signerRestartError,
-            },
-            env: process.env,
-          });
-          sendLoginResponse(200, {
-            ok: true,
-            walletId: initialized.walletId,
-            role: initialized.role,
-            deviceShare: initialized.deviceShare,
-            recoveryShare: initialized.recoveryShare,
-            signerRestarted: initialized.signerRestarted,
-            signerRestartError: initialized.signerRestartError,
-            custody: readWalletCustodyStatus({
-              wallet: walletCfg,
-              env: process.env,
-              cfg,
-              walletId: initialized.walletId,
-              approvalHost: host,
-            }),
-          });
-        } catch (err) {
-          sendLoginResponse(400, {
-            ok: false,
-            error: {
-              code: "wallet_custody_init_failed",
-              message: err instanceof Error ? err.message : String(err),
-            },
-          });
-        }
-        return;
-      }
-      if (requestPath === "/api/wallet/custody/recover") {
-        if (req.method !== "POST") {
-          res.statusCode = 405;
-          res.setHeader("Allow", "POST");
-          sendLoginResponse(405, {
-            ok: false,
-            error: { code: "method_not_allowed", message: "method must be POST" },
-          });
-          return;
-        }
-        if (!(await ensureWalletApiAuthorized())) {
-          return;
-        }
-        const body = await readJsonBody(req, 64 * 1024);
-        if (!body.ok) {
-          sendLoginResponse(400, {
-            ok: false,
-            error: { code: "invalid_request", message: body.error },
-          });
-          return;
-        }
-        const approvalToken = String(getHeader(req, "x-wallet-approval-token") ?? "").trim();
-        const walletId =
-          (typeof (body.value as { walletId?: unknown } | null)?.walletId === "string"
-            ? String((body.value as { walletId: string }).walletId).trim()
-            : "") || undefined;
-        const recoveryShare =
-          (typeof (body.value as { recoveryShare?: unknown } | null)?.recoveryShare === "string"
-            ? String((body.value as { recoveryShare: string }).recoveryShare).trim()
-            : "") || undefined;
-        const cfg = loadConfig();
-        const consumed = consumeWalletApprovalGrant({
-          host,
-          operation: "wallet.custody-recover",
-          token: approvalToken,
-          env: process.env,
-          cfg,
-        });
-        if (!consumed.ok) {
-          sendLoginResponse(401, {
-            ok: false,
-            error: {
-              code: consumed.code ?? "approval_token_required",
-              message: consumed.message ?? "passkey approval token is required",
-            },
-          });
-          return;
-        }
-        const walletCfg = resolveWalletRuntimeConfig(cfg, process.env);
-        const recovered = recoverWalletCustodyCeremony({
-          env: process.env,
-          walletId,
-          recoveryShare,
-          wallet: walletCfg,
-          cfg,
-        });
-        if (!recovered.ok) {
-          sendLoginResponse(400, {
-            ok: false,
-            error: {
-              code: recovered.code,
-              message: recovered.message,
-            },
-          });
-          return;
-        }
-        const locked = await lockWalletCustodyUnlockSessions({
-          env: process.env,
-          walletId: recovered.walletId,
-        });
-        if (!locked.ok) {
-          sendLoginResponse(400, {
-            ok: false,
-            error: {
-              code: locked.code,
-              message: locked.message,
-            },
-          });
-          return;
-        }
-        appendWalletAuditEntry({
-          action: "custody_recovered",
-          actor: "control-ui",
-          details: {
-            walletId: recovered.walletId,
-            role: recovered.role,
-          },
-          env: process.env,
-        });
-        sendLoginResponse(200, {
-          ok: true,
-          walletId: recovered.walletId,
-          role: recovered.role,
-          deviceShare: recovered.deviceShare,
-          recoveryShare: recovered.recoveryShare,
-          custody: readWalletCustodyStatus({
-            wallet: walletCfg,
-            env: process.env,
-            cfg,
-            walletId: recovered.walletId,
-            approvalHost: host,
-          }),
-        });
-        return;
-      }
-      if (requestPath === "/api/wallet/custody/enroll-device") {
-        if (req.method !== "POST") {
-          res.statusCode = 405;
-          res.setHeader("Allow", "POST");
-          sendLoginResponse(405, {
-            ok: false,
-            error: { code: "method_not_allowed", message: "method must be POST" },
-          });
-          return;
-        }
-        if (!(await ensureWalletApiAuthorized())) {
-          return;
-        }
-        const body = await readJsonBody(req, 64 * 1024);
-        if (!body.ok) {
-          sendLoginResponse(400, {
-            ok: false,
-            error: { code: "invalid_request", message: body.error },
-          });
-          return;
-        }
-        const approvalToken = String(getHeader(req, "x-wallet-approval-token") ?? "").trim();
-        const walletId =
-          (typeof (body.value as { walletId?: unknown } | null)?.walletId === "string"
-            ? String((body.value as { walletId: string }).walletId).trim()
-            : "") || undefined;
-        const deviceShare =
-          String(getHeader(req, "x-wallet-device-share") ?? "").trim() ||
-          (typeof (body.value as { deviceShare?: unknown } | null)?.deviceShare === "string"
-            ? String((body.value as { deviceShare: string }).deviceShare).trim()
-            : "") ||
-          undefined;
-        const label =
-          (typeof (body.value as { label?: unknown } | null)?.label === "string"
-            ? String((body.value as { label: string }).label).trim()
-            : "") || undefined;
-        const cfg = loadConfig();
-        const consumed = consumeWalletApprovalGrant({
-          host,
-          operation: "wallet.custody-enroll-device",
-          token: approvalToken,
-          env: process.env,
-          cfg,
-        });
-        if (!consumed.ok) {
-          sendLoginResponse(401, {
-            ok: false,
-            error: { code: consumed.code, message: consumed.message },
-          });
-          return;
-        }
-        const walletCfg = resolveWalletRuntimeConfig(cfg, process.env);
-        const enrolled = enrollWalletCustodyDevice({
-          env: process.env,
-          cfg,
-          wallet: walletCfg,
-          walletId,
-          deviceShare,
-          label,
-        });
-        if (!enrolled.ok) {
-          sendLoginResponse(400, {
-            ok: false,
-            error: { code: enrolled.code, message: enrolled.message },
-          });
-          return;
-        }
-        appendWalletAuditEntry({
-          action: "custody_device_enrolled",
-          actor: "control-ui",
-          details: {
-            walletId: enrolled.walletId,
-            role: enrolled.role,
-            deviceId: enrolled.deviceId,
-            label: enrolled.label,
-          },
-          env: process.env,
-        });
-        sendLoginResponse(200, {
-          ok: true,
-          walletId: enrolled.walletId,
-          role: enrolled.role,
-          deviceId: enrolled.deviceId,
-          label: enrolled.label,
-          deviceShare: enrolled.deviceShare,
-          custody: readWalletCustodyStatus({
-            wallet: walletCfg,
-            env: process.env,
-            cfg,
-            walletId: enrolled.walletId,
-            approvalHost: host,
-          }),
-        });
-        return;
-      }
-      if (requestPath === "/api/wallet/custody/revoke-device") {
-        if (req.method !== "POST") {
-          res.statusCode = 405;
-          res.setHeader("Allow", "POST");
-          sendLoginResponse(405, {
-            ok: false,
-            error: { code: "method_not_allowed", message: "method must be POST" },
-          });
-          return;
-        }
-        if (!(await ensureWalletApiAuthorized())) {
-          return;
-        }
-        const body = await readJsonBody(req, 64 * 1024);
-        if (!body.ok) {
-          sendLoginResponse(400, {
-            ok: false,
-            error: { code: "invalid_request", message: body.error },
-          });
-          return;
-        }
-        const approvalToken = String(getHeader(req, "x-wallet-approval-token") ?? "").trim();
-        const walletId =
-          (typeof (body.value as { walletId?: unknown } | null)?.walletId === "string"
-            ? String((body.value as { walletId: string }).walletId).trim()
-            : "") || undefined;
-        const deviceId =
-          (typeof (body.value as { deviceId?: unknown } | null)?.deviceId === "string"
-            ? String((body.value as { deviceId: string }).deviceId).trim()
-            : "") || undefined;
-        const deviceShare =
-          String(getHeader(req, "x-wallet-device-share") ?? "").trim() ||
-          (typeof (body.value as { deviceShare?: unknown } | null)?.deviceShare === "string"
-            ? String((body.value as { deviceShare: string }).deviceShare).trim()
-            : "") ||
-          undefined;
-        const cfg = loadConfig();
-        const consumed = consumeWalletApprovalGrant({
-          host,
-          operation: "wallet.custody-revoke-device",
-          token: approvalToken,
-          env: process.env,
-          cfg,
-        });
-        if (!consumed.ok) {
-          sendLoginResponse(401, {
-            ok: false,
-            error: { code: consumed.code, message: consumed.message },
-          });
-          return;
-        }
-        const walletCfg = resolveWalletRuntimeConfig(cfg, process.env);
-        const revoked = revokeWalletCustodyDevice({
-          env: process.env,
-          cfg,
-          wallet: walletCfg,
-          walletId,
-          deviceId,
-          deviceShare,
-        });
-        if (!revoked.ok) {
-          sendLoginResponse(400, {
-            ok: false,
-            error: { code: revoked.code, message: revoked.message },
-          });
-          return;
-        }
-        appendWalletAuditEntry({
-          action: "custody_device_revoked",
-          actor: "control-ui",
-          details: {
-            walletId: revoked.walletId,
-            role: revoked.role,
-            deviceId: revoked.removedDeviceId,
-            label: revoked.removedDeviceLabel,
-          },
-          env: process.env,
-        });
-        sendLoginResponse(200, {
-          ok: true,
-          walletId: revoked.walletId,
-          role: revoked.role,
-          removedDeviceId: revoked.removedDeviceId,
-          removedDeviceLabel: revoked.removedDeviceLabel,
-          custody: readWalletCustodyStatus({
-            wallet: walletCfg,
-            env: process.env,
-            cfg,
-            walletId: revoked.walletId,
-            approvalHost: host,
-          }),
-        });
-        return;
-      }
-      if (requestPath === "/api/wallet/custody/disable") {
-        if (req.method !== "POST") {
-          res.statusCode = 405;
-          res.setHeader("Allow", "POST");
-          sendLoginResponse(405, {
-            ok: false,
-            error: { code: "method_not_allowed", message: "method must be POST" },
-          });
-          return;
-        }
-        if (!(await ensureWalletApiAuthorized())) {
-          return;
-        }
-        const body = await readJsonBody(req, 64 * 1024);
-        if (!body.ok) {
-          sendLoginResponse(400, {
-            ok: false,
-            error: { code: "invalid_request", message: body.error },
-          });
-          return;
-        }
-        const approvalToken = String(getHeader(req, "x-wallet-approval-token") ?? "").trim();
-        const walletId =
-          (typeof (body.value as { walletId?: unknown } | null)?.walletId === "string"
-            ? String((body.value as { walletId: string }).walletId).trim()
-            : "") || undefined;
-        const deviceShare =
-          String(getHeader(req, "x-wallet-device-share") ?? "").trim() ||
-          (typeof (body.value as { deviceShare?: unknown } | null)?.deviceShare === "string"
-            ? String((body.value as { deviceShare: string }).deviceShare).trim()
-            : "") ||
-          undefined;
-        const recoveryShare =
-          (typeof (body.value as { recoveryShare?: unknown } | null)?.recoveryShare === "string"
-            ? String((body.value as { recoveryShare: string }).recoveryShare).trim()
-            : "") || undefined;
-        const cfg = loadConfig();
-        const consumed = consumeWalletApprovalGrant({
-          host,
-          operation: "wallet.custody-disable",
-          token: approvalToken,
-          env: process.env,
-          cfg,
-        });
-        if (!consumed.ok) {
-          sendLoginResponse(401, {
-            ok: false,
-            error: { code: consumed.code, message: consumed.message },
-          });
-          return;
-        }
-        try {
-          const disabled = await disableWalletCustodyForWallet({
-            env: process.env,
-            cfg,
-            walletId,
-            deviceShare,
-            recoveryShare,
-          });
-          const nextCfg = loadConfig();
-          const walletCfg = resolveWalletRuntimeConfig(nextCfg, process.env);
-          appendWalletAuditEntry({
-            action: "custody_disabled",
-            actor: "control-ui",
-            details: {
-              walletId: disabled.walletId,
-              migratedKeystores: disabled.migratedKeystores.length,
-              remainingCustodyWallets: disabled.remainingCustodyWallets,
-              signerRestarted: disabled.signerRestarted,
-              signerRestartError: disabled.signerRestartError,
-            },
-            env: process.env,
-          });
-          sendLoginResponse(200, {
-            ok: true,
-            walletId: disabled.walletId,
-            migratedKeystores: disabled.migratedKeystores,
-            remainingCustodyWallets: disabled.remainingCustodyWallets,
-            signerRestarted: disabled.signerRestarted,
-            signerRestartError: disabled.signerRestartError,
-            custody: readWalletCustodyStatus({
-              wallet: walletCfg,
-              env: process.env,
-              cfg: nextCfg,
-              walletId: disabled.walletId,
-              approvalHost: host,
-            }),
-          });
-        } catch (err) {
-          sendLoginResponse(400, {
-            ok: false,
-            error: {
-              code: "wallet_custody_disable_failed",
-              message: err instanceof Error ? err.message : String(err),
-            },
-          });
-        }
-        return;
-      }
-      if (requestPath === "/api/wallet/custody/unlock") {
-        if (req.method !== "POST") {
-          res.statusCode = 405;
-          res.setHeader("Allow", "POST");
-          sendLoginResponse(405, {
-            ok: false,
-            error: { code: "method_not_allowed", message: "method must be POST" },
-          });
-          return;
-        }
-        if (!(await ensureWalletApiAuthorized())) {
-          return;
-        }
-        const body = await readJsonBody(req, 64 * 1024);
-        if (!body.ok) {
-          sendLoginResponse(400, {
-            ok: false,
-            error: { code: "invalid_request", message: body.error },
-          });
-          return;
-        }
-        const deviceShare =
-          String(getHeader(req, "x-wallet-device-share") ?? "").trim() ||
-          (typeof (body.value as { deviceShare?: unknown } | null)?.deviceShare === "string"
-            ? String((body.value as { deviceShare: string }).deviceShare).trim()
-            : "");
-        const cfg = loadConfig();
-        const walletCfg = resolveWalletRuntimeConfig(cfg, process.env);
-        const approvalToken = String(getHeader(req, "x-wallet-approval-token") ?? "").trim();
-        const walletId =
-          (typeof (body.value as { walletId?: unknown } | null)?.walletId === "string"
-            ? String((body.value as { walletId: string }).walletId).trim()
-            : "") || undefined;
-        const ttlSecondsRaw = (body.value as { ttlSeconds?: unknown } | null)?.ttlSeconds;
-        const ttlSeconds =
-          typeof ttlSecondsRaw === "number" && Number.isFinite(ttlSecondsRaw)
-            ? ttlSecondsRaw
-            : typeof ttlSecondsRaw === "string" && ttlSecondsRaw.trim()
-              ? Number(ttlSecondsRaw)
-              : undefined;
-        const unlocked = await activateWalletCustodyUnlockSession({
-          host,
-          approvalToken,
-          env: process.env,
-          cfg,
-          wallet: walletCfg,
-          walletId,
-          deviceShare,
-          ttlSeconds,
-        });
-        if (!unlocked.ok) {
-          const authCodes = new Set([
-            "approval_token_required",
-            "invalid_approval_token",
-            "host_mismatch",
-            "operation_mismatch",
-            "request_mismatch",
-            "wallet_control_passkey_not_ready",
-          ]);
-          const status = authCodes.has(unlocked.code) ? 401 : 400;
-          sendLoginResponse(status, {
-            ok: false,
-            error: {
-              code: unlocked.code ?? "wallet_custody_unlock_failed",
-              message: unlocked.message ?? "wallet custody unlock failed",
-            },
-          });
-          return;
-        }
-        appendWalletAuditEntry({
-          action: "custody_unlocked",
-          actor: "control-ui",
-          details: {
-            walletId: unlocked.session.walletId,
-            host: unlocked.session.host,
-            expiresAt: unlocked.session.expiresAt,
-          },
-          env: process.env,
-        });
-        sendLoginResponse(200, {
-          ok: true,
-          session: {
-            id: unlocked.session.id,
-            host: unlocked.session.host,
-            expiresAt: unlocked.session.expiresAt,
-          },
-          custody: readWalletCustodyStatus({
-            wallet: walletCfg,
-            env: process.env,
-            cfg,
-            walletId,
-            approvalHost: host,
-          }),
-        });
-        return;
-      }
-      if (requestPath === "/api/wallet/custody/refresh") {
-        if (req.method !== "POST") {
-          res.statusCode = 405;
-          res.setHeader("Allow", "POST");
-          sendLoginResponse(405, {
-            ok: false,
-            error: { code: "method_not_allowed", message: "method must be POST" },
-          });
-          return;
-        }
-        if (!(await ensureWalletApiAuthorized())) {
-          return;
-        }
-        const body = await readJsonBody(req, 64 * 1024);
-        if (!body.ok) {
-          sendLoginResponse(400, {
-            ok: false,
-            error: { code: "invalid_request", message: body.error },
-          });
-          return;
-        }
-        const deviceShare =
-          String(getHeader(req, "x-wallet-device-share") ?? "").trim() ||
-          (typeof (body.value as { deviceShare?: unknown } | null)?.deviceShare === "string"
-            ? String((body.value as { deviceShare: string }).deviceShare).trim()
-            : "");
-        const cfg = loadConfig();
-        const walletCfg = resolveWalletRuntimeConfig(cfg, process.env);
-        const walletId =
-          (typeof (body.value as { walletId?: unknown } | null)?.walletId === "string"
-            ? String((body.value as { walletId: string }).walletId).trim()
-            : "") || undefined;
-        const ttlSecondsRaw = (body.value as { ttlSeconds?: unknown } | null)?.ttlSeconds;
-        const ttlSeconds =
-          typeof ttlSecondsRaw === "number" && Number.isFinite(ttlSecondsRaw)
-            ? ttlSecondsRaw
-            : typeof ttlSecondsRaw === "string" && ttlSecondsRaw.trim()
-              ? Number(ttlSecondsRaw)
-              : undefined;
-        const refreshed = await refreshWalletCustodyUnlockSession({
-          host,
-          env: process.env,
-          cfg,
-          wallet: walletCfg,
-          walletId,
-          deviceShare,
-          ttlSeconds,
-        });
-        if (!refreshed.ok) {
-          const authCodes = new Set([
-            "custody_device_share_required",
-            "custody_device_share_mismatch",
-            "custody_unlock_required",
-          ]);
-          const status = authCodes.has(refreshed.code) ? 401 : 400;
-          sendLoginResponse(status, {
-            ok: false,
-            error: {
-              code: refreshed.code ?? "wallet_custody_refresh_failed",
-              message: refreshed.message ?? "wallet custody refresh failed",
-            },
-          });
-          return;
-        }
-        sendLoginResponse(200, {
-          ok: true,
-          session: {
-            id: refreshed.session.id,
-            host: refreshed.session.host,
-            expiresAt: refreshed.session.expiresAt,
-          },
-          custody: readWalletCustodyStatus({
-            wallet: walletCfg,
-            env: process.env,
-            cfg,
-            walletId: refreshed.session.walletId,
-            approvalHost: host,
-          }),
-        });
-        return;
-      }
-      if (requestPath === "/api/wallet/custody/lock") {
-        if (req.method !== "POST") {
-          res.statusCode = 405;
-          res.setHeader("Allow", "POST");
-          sendLoginResponse(405, {
-            ok: false,
-            error: { code: "method_not_allowed", message: "method must be POST" },
-          });
-          return;
-        }
-        if (!(await ensureWalletApiAuthorized())) {
-          return;
-        }
-        const body = await readJsonBody(req, 32 * 1024);
-        if (!body.ok) {
-          sendLoginResponse(400, {
-            ok: false,
-            error: { code: "invalid_request", message: body.error },
-          });
-          return;
-        }
-        const cfg = loadConfig();
-        const walletCfg = resolveWalletRuntimeConfig(cfg, process.env);
-        const walletId =
-          (typeof (body.value as { walletId?: unknown } | null)?.walletId === "string"
-            ? String((body.value as { walletId: string }).walletId).trim()
-            : "") || undefined;
-        const locked = await lockWalletCustodyUnlockSessions({
-          env: process.env,
-          host,
-          walletId,
-        });
-        if (!locked.ok) {
-          sendLoginResponse(400, {
-            ok: false,
-            error: {
-              code: locked.code ?? "wallet_custody_lock_failed",
-              message: locked.message ?? "wallet custody lock failed",
-            },
-          });
-          return;
-        }
-        appendWalletAuditEntry({
-          action: "custody_locked",
-          actor: "control-ui",
-          details: { walletId: locked.walletId ?? walletId ?? "default", removed: locked.removed },
-          env: process.env,
-        });
-        sendLoginResponse(200, {
-          ok: true,
-          removed: locked.removed,
-          remaining: locked.remaining,
-          custody: readWalletCustodyStatus({
-            wallet: walletCfg,
-            env: process.env,
-            cfg,
-            walletId: locked.walletId ?? walletId,
-            approvalHost: host,
-          }),
-        });
-        return;
-      }
+
       if (requestPath === "/api/wallet/approval-auth/status") {
         if (req.method !== "GET") {
           res.statusCode = 405;
@@ -9061,17 +8248,6 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
         }
         const passkeys = listWalletPasskeys(process.env, cfg);
         const removingExistingPasskey = passkeys.some((passkey) => passkey.id === credentialId);
-        const splitKeyWallets = listSplitKeyWalletsBlockingPasskeyRemoval(cfg, process.env);
-        if (removingExistingPasskey && passkeys.length <= 1 && splitKeyWallets.length > 0) {
-          sendLoginResponse(409, {
-            ok: false,
-            error: {
-              code: "wallet_passkey_required_by_split_key",
-              message: formatSplitKeyPasskeyBlockMessage(splitKeyWallets),
-            },
-          });
-          return;
-        }
         const result = removeWalletPasskey({
           credentialId,
           env: process.env,
@@ -9286,12 +8462,6 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           operation !== "wallet.provider-credentials" &&
           operation !== "wallet.passkey-enroll" &&
           operation !== "wallet.passkey-remove" &&
-          operation !== "wallet.custody-init" &&
-          operation !== "wallet.custody-unlock" &&
-          operation !== "wallet.custody-recover" &&
-          operation !== "wallet.custody-enroll-device" &&
-          operation !== "wallet.custody-revoke-device" &&
-          operation !== "wallet.custody-disable" &&
           operation !== "wallet.reset" &&
           operation !== "wallet.rotate" &&
           operation !== "wallet.execution-mode" &&
@@ -9428,16 +8598,10 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           operation !== "wallet.provider-credentials" &&
           operation !== "wallet.passkey-enroll" &&
           operation !== "wallet.passkey-remove" &&
-          operation !== "wallet.custody-init" &&
-          operation !== "wallet.custody-recover" &&
-          operation !== "wallet.custody-enroll-device" &&
-          operation !== "wallet.custody-revoke-device" &&
-          operation !== "wallet.custody-disable" &&
           operation !== "wallet.reset" &&
           operation !== "wallet.rotate" &&
           operation !== "wallet.execution-mode" &&
           operation !== "wallet.send" &&
-          operation !== "wallet.custody-unlock" &&
           operation !== "mining.capital" &&
           operation !== "mining.policy"
         ) {
@@ -9913,8 +9077,6 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           return;
         }
         (payload as { amount?: string }).amount = normalizedAmount.amount;
-        const approvalToken = String(getHeader(req, "x-wallet-approval-token") ?? "").trim();
-        const custodyDeviceShare = String(getHeader(req, "x-wallet-device-share") ?? "").trim();
         const registrySnapshot = readWalletProviderRegistry(process.env);
         let walletSelection: ReturnType<typeof resolveWalletSelection> | undefined;
         try {
@@ -9995,9 +9157,6 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           config: walletCfg,
           runtimeConfig: cfg,
           providerIdOverride: selectedProviderId,
-          approvalToken,
-          approvalHost: host,
-          custodyDeviceShare,
           env: process.env,
         });
         if (!created.ok) {
@@ -10007,8 +9166,6 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
             "host_mismatch",
             "operation_mismatch",
             "request_mismatch",
-            "custody_device_share_required",
-            "custody_device_share_mismatch",
           ]);
           const status = authCodes.has(created.code) ? 401 : 400;
           sendLoginResponse(status, {
@@ -10507,7 +9664,6 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           requestId,
           actor: "control-ui",
           config: walletCfg,
-          approvalHost: host,
           env: process.env,
         });
         if (!approved.ok) {

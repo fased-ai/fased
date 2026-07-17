@@ -111,17 +111,6 @@ describe("loadWallet", () => {
           passkeys: [],
           statePath: "/tmp/passkeys.json",
         },
-        custody: {
-          mode: "single-key",
-          unlock: { active: false },
-          phase2: {
-            complete: false,
-            splitKeyEnabled: false,
-            passkeyCeremonyEnabled: false,
-            ephemeralReconstructionEnabled: false,
-            notes: [],
-          },
-        },
         paths: {
           rootDir: "/tmp",
           keysPath: "/tmp/keys",
@@ -443,17 +432,6 @@ describe("loadWallet", () => {
           passkeys: [],
           statePath: "/tmp/passkeys.json",
         },
-        custody: {
-          mode: "single-key",
-          unlock: { active: false },
-          phase2: {
-            complete: false,
-            splitKeyEnabled: false,
-            passkeyCeremonyEnabled: false,
-            ephemeralReconstructionEnabled: false,
-            notes: [],
-          },
-        },
         paths: {
           rootDir: "/tmp",
           keysPath: "/tmp/keys",
@@ -607,21 +585,8 @@ describe("resolveWalletSendApprovalOperation", () => {
       resolveWalletSendApprovalOperation({
         passkeyCount: 1,
         executionMode: "manual",
-        custodyMode: "single-key",
-        unlockActive: false,
       }),
     ).toBeNull();
-  });
-
-  it("requires custody unlock before autonomous split-key sends", () => {
-    expect(
-      resolveWalletSendApprovalOperation({
-        passkeyCount: 1,
-        executionMode: "autonomous",
-        custodyMode: "split-key-active",
-        unlockActive: false,
-      }),
-    ).toBe("wallet.custody-unlock");
   });
 
   it("requires wallet.send approval for standard autonomous sends when a passkey exists", () => {
@@ -629,8 +594,6 @@ describe("resolveWalletSendApprovalOperation", () => {
       resolveWalletSendApprovalOperation({
         passkeyCount: 1,
         executionMode: "autonomous",
-        custodyMode: "single-key",
-        unlockActive: false,
       }),
     ).toBe("wallet.send");
   });

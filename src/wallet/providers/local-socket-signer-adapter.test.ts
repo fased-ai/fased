@@ -403,12 +403,10 @@ describe("LocalSocketSignerAdapter protocol-v2 sends", () => {
     },
   );
 
-  it("rejects missing idempotency and all raw transaction signing before contacting the signer", async () => {
+  it("rejects missing idempotency and exposes no raw prepare/sign surface", async () => {
     const signer = await createSignerServer({
       prefix: "fased-signer-v2-reject-",
-      handle: () => {
-        throw new Error("the signer must not be contacted");
-      },
+      handle: () => capabilities,
     });
     try {
       const adapter = new LocalSocketSignerAdapter(signer.socketPath, {
@@ -428,13 +426,8 @@ describe("LocalSocketSignerAdapter protocol-v2 sends", () => {
           serializedTxBase64: "AQID",
         }),
       ).rejects.toMatchObject({ code: "wallet_provider_invalid_config" });
-      await expect(
-        adapter.signTx({
-          chain: "solana",
-          requestId: "request-sign",
-          serializedTxBase64: "AQID",
-        }),
-      ).rejects.toMatchObject({ code: "wallet_provider_not_implemented" });
+      expect((adapter as unknown as Record<string, unknown>).prepareTx).toBeUndefined();
+      expect((adapter as unknown as Record<string, unknown>).signTx).toBeUndefined();
       expect(signer.requests).toHaveLength(0);
     } finally {
       await signer.close();

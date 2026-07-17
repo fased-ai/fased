@@ -631,7 +631,7 @@ function shortcutsForConfigSection(section: string | null): FriendlyShortcut[] {
         {
           label: "Wallet",
           tab: "wallet",
-          detail: "Review balances, approvals, policy, passkeys, custody, and wallet health.",
+          detail: "Review balances, approvals, signer policy, passkeys, and wallet health.",
         },
         {
           label: "Mining",
@@ -786,8 +786,8 @@ function renderSectionAdminNotice(section: string | null) {
   if (section === "wallet") {
     return html`
       <div class="callout warn">
-        Wallet config is advanced plumbing. Use Wallet for balances, approvals, policy, passkeys, and
-        custody; use Mining for the singleton <span class="mono">@wallet:mining</span> lifecycle; use
+        Wallet config is advanced plumbing. Use Wallet for balances, approvals, signer policy, and
+        passkeys; use Mining for the singleton <span class="mono">@wallet:mining</span> lifecycle; use
         Network for bond wallet and Fased Network state. Private-key import/export, signer cleanup, and
         mining-wallet deletion stay in onboarding or CLI.
       </div>

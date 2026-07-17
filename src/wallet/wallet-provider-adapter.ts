@@ -85,14 +85,6 @@ export type WalletProviderSendTxResult = {
   metadata?: Record<string, unknown>;
 };
 
-export type WalletProviderSignTxResult = {
-  ok: boolean;
-  chain: WalletChain;
-  signedTxBase64: string;
-  signer?: string;
-  metadata?: Record<string, unknown>;
-};
-
 export type WalletProviderJupiterIntentType =
   | "solana.jupiter.swap"
   | "solana.jupiter.trigger.auth"
@@ -330,8 +322,7 @@ export interface WalletProviderAdapter {
     options?: WalletProviderRequestScope,
   ): Promise<WalletProviderBalanceResult>;
 
-  prepareTx(request: WalletProviderPrepareTxRequest): Promise<WalletProviderPrepareTxResult>;
-  signTx?(request: WalletProviderSendTxRequest): Promise<WalletProviderSignTxResult>;
+  prepareTx?(request: WalletProviderPrepareTxRequest): Promise<WalletProviderPrepareTxResult>;
   sendTx(request: WalletProviderSendTxRequest): Promise<WalletProviderSendTxResult>;
   prepareJupiterReview?(request: {
     walletId: string;

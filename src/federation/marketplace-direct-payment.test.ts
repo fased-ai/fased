@@ -199,24 +199,4 @@ describe("marketplace direct payment adapter", () => {
     expect(result).toMatchObject({ ok: false, code: "content_summary_adapter_required" });
     expect(mocked.createOrExecuteWalletSend).not.toHaveBeenCalled();
   });
-
-  it("returns an explicit custody unlock message when the Agent wallet signer is locked", async () => {
-    const mocked = deps({
-      ok: false,
-      code: "custody_unlock_required",
-      message:
-        "split-key custody requires an active unlock session; provide a passkey approval token",
-    });
-
-    const result = await payMarketplaceOrderDirect({
-      config: config(),
-      orderId: "order-1",
-      deps: mocked,
-    });
-
-    expect(result.ok).toBe(false);
-    expect(result).toMatchObject({ ok: false, code: "wallet_payment_failed" });
-    expect(result.message).toContain("Buyer Agent wallet is locked by split-key custody.");
-    expect(mocked.publishFederationSettlementEvidence).not.toHaveBeenCalled();
-  });
 });

@@ -122,7 +122,7 @@ describe("gateway reset/refresh responsiveness audit", () => {
     expect(serverImpl).toContain("resolveSessionKeyForRun");
     expect(serverRuntimeConfig).toContain("resolveWalletRuntimeConfig");
     expect(serverRuntimeConfig).toContain("wallet.execution.mode=autonomous");
-    expect(serverHttp).toContain("/api/wallet/custody/refresh");
+    expect(serverHttp).not.toContain("/api/wallet/custody/");
     expect(serverHttp).toContain("/api/wallet/reset");
     expect(controlUi).toContain("normalizeControlUiBasePath");
     expect(controlUi).toContain("serveResolvedIndexHtml");

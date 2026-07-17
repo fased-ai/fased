@@ -164,7 +164,7 @@ function scheduleMessageForTransferPlan(plan: Record<string, unknown>): string {
     "Use the wallet tool only. Do not use raw signing tools or substitute display wallet names for handles.",
     "If amountMode is fixed, call wallet.send with amountFormat=base and the exact base-unit amount.",
     "If amountMode is percentage, first call wallet.balance for the source wallet and asset, subtract keepAmount, apply percentage, skip when below minAmount, then call wallet.send with amountFormat=base.",
-    "If balance, policy, custody, signer, or send fails, report the failure and do not retry with different wallets, destinations, mints, or amounts.",
+    "If balance, policy, signer, or send fails, report the failure and do not retry with different wallets, destinations, mints, or amounts.",
     "",
     "walletTransferSchedule:",
     JSON.stringify(plan, null, 2),
@@ -508,7 +508,7 @@ export function createWalletActionTool(opts?: {
             "fixed amount or percentage rule",
             "minimum and keep balance for percentage schedules",
             "per-wallet SOL caps or per-mint token caps",
-            "Agent automation and custody state",
+            "Agent automation and signer policy state",
           ],
           message:
             "Review this scheduled transfer, then create it with the cron tool. It is disabled by default and runtime caps are enforced on every run.",

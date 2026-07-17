@@ -1,36 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  authorizeSignerReviewWithPasskey,
-  detectWalletCustodyClientCompatibility,
-} from "./wallet-passkey.ts";
-
-class MemoryStorage implements Storage {
-  private readonly data = new Map<string, string>();
-
-  get length() {
-    return this.data.size;
-  }
-
-  clear(): void {
-    this.data.clear();
-  }
-
-  getItem(key: string): string | null {
-    return this.data.has(key) ? (this.data.get(key) ?? null) : null;
-  }
-
-  key(index: number): string | null {
-    return [...this.data.keys()][index] ?? null;
-  }
-
-  removeItem(key: string): void {
-    this.data.delete(key);
-  }
-
-  setItem(key: string, value: string): void {
-    this.data.set(key, value);
-  }
-}
+import { authorizeSignerReviewWithPasskey } from "./wallet-passkey.ts";
 
 function stubBrowserCapabilities(params: {
   secureContext: boolean;
@@ -48,247 +17,25 @@ function stubBrowserCapabilities(params: {
     "navigator",
     params.credentials === undefined ? {} : { credentials: params.credentials },
   );
-  vi.stubGlobal("localStorage", new MemoryStorage());
 }
 
-describe("detectWalletCustodyClientCompatibility", () => {
+function bufferSourceBytes(value: BufferSource | undefined): number[] {
+  if (!value) {
+    return [];
+  }
+  if (value instanceof ArrayBuffer) {
+    return Array.from(new Uint8Array(value));
+  }
+  return Array.from(new Uint8Array(value.buffer, value.byteOffset, value.byteLength));
+}
+
+describe("signer-owned wallet WebAuthn", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it("reports manual-only mode when WebAuthn is unavailable", async () => {
-    stubBrowserCapabilities({ secureContext: false });
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => ({ ok: false, status: 404 })),
-    );
-
-    const result = await detectWalletCustodyClientCompatibility();
-
-    expect(result.secureContext).toBe(false);
-    expect(result.webauthn).toBe(false);
-    expect(result.storageMode).toBe("manual-share-only");
-    expect(result.nativeHelper).toEqual({ status: "unreachable" });
-  });
-
-  it("reports encrypted browser storage when PRF support is available", async () => {
-    stubBrowserCapabilities({
-      secureContext: true,
-      publicKeyCredential: {
-        getClientCapabilities: vi.fn(async () => ({ prf: true })),
-        isConditionalMediationAvailable: vi.fn(async () => true),
-        isUserVerifyingPlatformAuthenticatorAvailable: vi.fn(async () => true),
-      },
-      credentials: {},
-    });
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => ({ ok: false, status: 404 })),
-    );
-
-    const result = await detectWalletCustodyClientCompatibility();
-
-    expect(result.secureContext).toBe(true);
-    expect(result.webauthn).toBe(true);
-    expect(result.storageMode).toBe("encrypted-browser-storage");
-    expect(result.platformAuthenticator).toBe("supported");
-    expect(result.conditionalMediation).toBe("supported");
-    expect(result.prf).toBe("supported");
-    expect(result.nativeHelper).toEqual({ status: "unreachable" });
-  });
-
-  it("reports browser storage as untested when PRF cannot be preflighted", async () => {
-    stubBrowserCapabilities({
-      secureContext: true,
-      publicKeyCredential: {
-        isConditionalMediationAvailable: vi.fn(async () => true),
-        isUserVerifyingPlatformAuthenticatorAvailable: vi.fn(async () => true),
-      },
-      credentials: {},
-    });
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => ({ ok: false, status: 404 })),
-    );
-
-    const result = await detectWalletCustodyClientCompatibility();
-
-    expect(result.storageMode).toBe("encrypted-browser-storage-untested");
-    expect(result.prf).toBe("unknown");
-    expect(
-      result.notes.some((note) =>
-        note.includes("first custody unlock with browser storage enabled"),
-      ),
-    ).toBe(true);
-  });
-
-  it("reports native helper availability when the companion responds", async () => {
-    stubBrowserCapabilities({
-      secureContext: true,
-      publicKeyCredential: {
-        getClientCapabilities: vi.fn(async () => ({ prf: true })),
-        isConditionalMediationAvailable: vi.fn(async () => true),
-        isUserVerifyingPlatformAuthenticatorAvailable: vi.fn(async () => true),
-      },
-      credentials: {},
-    });
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => ({
-        ok: true,
-        json: async () => ({
-          ok: true,
-          protocolVersion: 2,
-          helper: "fased-macos-custody-companion",
-          platform: "macos",
-          storageMode: "os-keychain",
-          availableRoutes: ["/v1/custody/health"],
-          storedWalletCount: 2,
-        }),
-      })),
-    );
-
-    const result = await detectWalletCustodyClientCompatibility();
-
-    expect(result.nativeHelper).toEqual({
-      status: "available",
-      helper: "fased-macos-custody-companion",
-      platform: "macos",
-      storageMode: "os-keychain",
-      protocolVersion: 2,
-      availableRoutes: ["/v1/custody/health"],
-      storedWalletCount: 2,
-    });
-  });
-
-  it("rejects the unauthenticated protocol-v1 helper", async () => {
-    stubBrowserCapabilities({ secureContext: false });
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => ({
-        ok: true,
-        json: async () => ({
-          ok: true,
-          protocolVersion: 1,
-          helper: "fased-native-custody-helper",
-          platform: "linux",
-          storageMode: "secret-service",
-          availableRoutes: [
-            "/v1/custody/health",
-            "/v1/custody/device-share/status",
-            "/v1/custody/device-share/store",
-            "/v1/custody/device-share/load",
-            "/v1/custody/device-share/delete",
-          ],
-          storedWalletCount: 1,
-        }),
-      })),
-    );
-
-    const result = await detectWalletCustodyClientCompatibility();
-
-    expect(result.nativeHelper).toEqual({ status: "unreachable" });
-  });
-
-  it("reports mock helper availability distinctly from the real macOS helper", async () => {
-    stubBrowserCapabilities({
-      secureContext: true,
-      publicKeyCredential: {
-        getClientCapabilities: vi.fn(async () => ({ prf: true })),
-        isConditionalMediationAvailable: vi.fn(async () => true),
-        isUserVerifyingPlatformAuthenticatorAvailable: vi.fn(async () => true),
-      },
-      credentials: {},
-    });
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => ({
-        ok: true,
-        json: async () => ({
-          ok: true,
-          protocolVersion: 2,
-          helper: "fased-wallet-custody-companion-mock",
-          platform: "mock",
-          storageMode: "mock-memory",
-          availableRoutes: ["/v1/custody/health", "/v1/custody/device-share/load"],
-          storedWalletCount: 1,
-        }),
-      })),
-    );
-
-    const result = await detectWalletCustodyClientCompatibility();
-
-    expect(result.nativeHelper).toEqual({
-      status: "available",
-      helper: "fased-wallet-custody-companion-mock",
-      platform: "mock",
-      storageMode: "mock-memory",
-      protocolVersion: 2,
-      availableRoutes: ["/v1/custody/health", "/v1/custody/device-share/load"],
-      storedWalletCount: 1,
-    });
-    expect(result.notes.some((note) => note.includes("Mock custody helper detected"))).toBe(true);
-  });
-
-  it("reports native helper availability for Linux/Windows storage backends", async () => {
-    stubBrowserCapabilities({
-      secureContext: true,
-      publicKeyCredential: {
-        getClientCapabilities: vi.fn(async () => ({ prf: true })),
-        isConditionalMediationAvailable: vi.fn(async () => true),
-        isUserVerifyingPlatformAuthenticatorAvailable: vi.fn(async () => true),
-      },
-      credentials: {},
-    });
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => ({
-        ok: true,
-        json: async () => ({
-          ok: true,
-          protocolVersion: 2,
-          helper: "fased-native-custody-helper",
-          platform: "windows",
-          storageMode: "windows-dpapi",
-          availableRoutes: [
-            "/v1/custody/health",
-            "/v1/custody/device-share/status",
-            "/v1/custody/device-share/store",
-            "/v1/custody/device-share/load",
-            "/v1/custody/device-share/delete",
-          ],
-          storedWalletCount: 3,
-        }),
-      })),
-    );
-
-    const result = await detectWalletCustodyClientCompatibility();
-
-    expect(result.nativeHelper).toEqual({
-      status: "available",
-      helper: "fased-native-custody-helper",
-      platform: "windows",
-      storageMode: "windows-dpapi",
-      protocolVersion: 2,
-      availableRoutes: [
-        "/v1/custody/health",
-        "/v1/custody/device-share/status",
-        "/v1/custody/device-share/store",
-        "/v1/custody/device-share/load",
-        "/v1/custody/device-share/delete",
-      ],
-      storedWalletCount: 3,
-      warning: undefined,
-    });
-    expect(
-      result.notes.some((note) =>
-        note.includes("Browser-held encrypted storage remains the primary path"),
-      ),
-    ).toBe(true);
-  });
-
   it("uses signer options for WebAuthn and serializes only the opaque assertion", async () => {
-    const get = vi.fn(async () => ({
+    const get = vi.fn(async (_options: CredentialRequestOptions) => ({
       id: "credential-123",
       rawId: Uint8Array.from([4, 5, 6]).buffer,
       type: "public-key",
@@ -339,15 +86,9 @@ describe("detectWalletCustodyClientCompatibility", () => {
     });
 
     expect(get).toHaveBeenCalledTimes(1);
-    const options = get.mock.calls[0]?.[0] as CredentialRequestOptions;
-    expect(Array.from(new Uint8Array(options.publicKey?.challenge ?? new ArrayBuffer(0)))).toEqual([
-      1, 2, 3,
-    ]);
-    expect(
-      Array.from(
-        new Uint8Array(options.publicKey?.allowCredentials?.[0]?.id ?? new ArrayBuffer(0)),
-      ),
-    ).toEqual([4, 5, 6]);
+    const options = get.mock.calls[0]?.[0];
+    expect(bufferSourceBytes(options?.publicKey?.challenge)).toEqual([1, 2, 3]);
+    expect(bufferSourceBytes(options?.publicKey?.allowCredentials?.[0]?.id)).toEqual([4, 5, 6]);
     expect(options.publicKey).toMatchObject({
       rpId: "localhost",
       userVerification: "required",

@@ -1075,7 +1075,7 @@ export function resolveWalletRolePolicyProfile(
         role: "vault",
         label: "Vault",
         summary:
-          "Manual-first Vault wallet for storage and federation bond assignment. No background agent execution by default; use split-key/passkey lock for custody.",
+          "Manual-first Vault wallet for storage and federation bond assignment. No background agent execution by default; reviewed sends require signer-owned WebAuthn authorization.",
         defaults: {
           capsEnabled: true,
           directSigning: false,

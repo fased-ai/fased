@@ -226,7 +226,6 @@ import {
   type NotificationLevel,
   type NotificationRouteStatus,
 } from "./notifications.ts";
-import { openBlankWindowSafe } from "./open-external-url.ts";
 import { installGlobalSelectEnhancer } from "./select-enhancer.ts";
 import { loadSettings, type UiSettings } from "./storage.ts";
 import type { ResolvedTheme, ThemeMode } from "./theme.ts";
@@ -290,24 +289,16 @@ import {
   createWalletNamedWallet,
   createWalletSendRequest,
   deleteWalletAssignment,
-  disableWalletCustody,
   deleteWalletNamedWallet,
   deleteWalletPasskey,
   deleteWalletProviderCredentialsFor,
   deleteWalletRpcSettingsFor,
-  enrollWalletCustodyDevice,
   executeWalletStandardSend,
   finishWalletSignerReviewApproval,
-  initializeWalletCustody,
-  lockWalletCustody,
-  revokeWalletCustodyDevice,
-  recoverWalletCustody,
-  refreshWalletCustody,
   rejectWalletSend,
   resetWalletKeys,
   rotateWalletKeys,
   searchWalletSolanaTokens,
-  unlockWalletCustody,
   patchWalletSettings,
   patchWalletProvider,
   putWalletProviderCredentials,
@@ -330,27 +321,9 @@ import {
   type WalletStatus,
 } from "./wallet-api.ts";
 import {
-  deleteWalletCustodyCompanionDeviceShare,
-  getWalletCustodyCompanionDeviceShareStatus,
-  loadWalletCustodyCompanionDeviceShare,
-  saveWalletCustodyCompanionDeviceShare,
-  walletCustodyCompanionSupportsSecureStorage,
-} from "./wallet-custody-companion.ts";
-import {
-  buildWalletCustodyStorageBinding,
-  clearStoredWalletCustodyDeviceShare,
-  decryptStoredWalletCustodyDeviceShare,
-  getStoredWalletCustodyDeviceShareCredentialId,
-  hasStoredWalletCustodyDeviceShare,
-  loadStoredWalletCustodyDeviceShare,
-  saveStoredWalletCustodyDeviceShare,
-} from "./wallet-custody-storage.ts";
-import {
   authorizeSignerReviewWithPasskey,
   authorizeWalletActionWithPasskey,
-  detectWalletCustodyClientCompatibility,
   enrollWalletPasskey,
-  type WalletCustodyClientCompatibility,
 } from "./wallet-passkey.ts";
 import {
   buildWalletPolicyPatch,
@@ -879,74 +852,7 @@ function normalizeSendFormForWallet(
   };
 }
 
-function downloadTextFile(
-  filename: string,
-  contents: string,
-  mimeType = "text/plain;charset=utf-8",
-) {
-  const blob = new Blob([contents], { type: mimeType });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  anchor.rel = "noopener";
-  anchor.style.display = "none";
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
-function formatWalletCustodyExpiryForMessage(value: string): string {
-  if (isManualWalletCustodyExpiry(value)) {
-    return "you lock it";
-  }
-  const timestamp = Date.parse(value);
-  if (!Number.isFinite(timestamp)) {
-    return value;
-  }
-  return new Date(timestamp).toLocaleString();
-}
-
-function normalizeWalletCustodyUnlockMinutes(value: string): string {
-  const normalized = value.trim().toLowerCase();
-  if (normalized === "manual") {
-    return "manual";
-  }
-  const parsed = Number.parseInt(normalized, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return "manual";
-  }
-  return String(Math.max(1, Math.min(60, parsed)));
-}
-
-function walletCustodyUnlockTtlSeconds(value: string): number {
-  const normalized = normalizeWalletCustodyUnlockMinutes(value);
-  return normalized === "manual" ? 0 : Number.parseInt(normalized, 10) * 60;
-}
-
-function isManualWalletCustodyExpiry(value: string | null | undefined): boolean {
-  return String(value ?? "").startsWith("9999-12-31T23:59:59");
-}
-
-function readWalletApiErrorCode(error: unknown): string {
-  const value = error as { code?: unknown; payload?: { error?: { code?: unknown } } };
-  if (typeof value?.code === "string") {
-    return value.code;
-  }
-  if (typeof value?.payload?.error?.code === "string") {
-    return value.payload.error.code;
-  }
-  return "";
-}
-
-function formatWalletApproveError(error: unknown, request?: WalletSendApprovalRequest): string {
-  const code = readWalletApiErrorCode(error);
-  if (code === "custody_unlock_required") {
-    const walletLabel =
-      request?.payload.walletName?.trim() || request?.payload.walletId?.trim() || "this wallet";
-    return `Approve blocked: ${walletLabel} is locked. Unlock this wallet in Wallet Policy, then approve the pending request again.`;
-  }
+function formatWalletApproveError(error: unknown): string {
   return `Approve failed: ${error instanceof Error ? error.message : String(error)}`;
 }
 
@@ -961,38 +867,6 @@ const chooseWalletStandardOption: WalletStandardChooser = ({ title, options }) =
   const index = Number.parseInt(answer.trim(), 10) - 1;
   return Number.isInteger(index) && index >= 0 && index < options.length ? index : null;
 };
-
-function printHtmlDocument(title: string, bodyHtml: string) {
-  const printWindow = openBlankWindowSafe("noopener,noreferrer,width=900,height=720");
-  if (!printWindow) {
-    throw new Error("Popup blocked. Allow popups to print the recovery sheet.");
-  }
-  const escapedTitle = title
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
-  printWindow.document.open();
-  printWindow.document.write(`<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <title>${escapedTitle}</title>
-    <style>
-      body { font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 32px; color: #111827; }
-      h1 { margin: 0 0 12px; font-size: 26px; }
-      h2 { margin: 24px 0 8px; font-size: 18px; }
-      pre { white-space: pre-wrap; word-break: break-word; padding: 16px; border: 1px solid #d1d5db; border-radius: 12px; background: #f9fafb; }
-      .muted { color: #4b5563; }
-      ul { padding-left: 20px; }
-      li { margin: 6px 0; }
-    </style>
-  </head>
-  <body>${bodyHtml}</body>
-</html>`);
-  printWindow.document.close();
-  printWindow.focus();
-  printWindow.print();
-}
 
 function resolveSendFormAssetMetadata(
   form: WalletSendCreateInput,
@@ -1744,7 +1618,6 @@ export class FasedAgentApp extends LitElement {
   @state() walletLoading = false;
   @state() walletError: string | null = null;
   @state() walletStatus: WalletStatus | null = null;
-  @state() walletCustodyByWalletId: Record<string, WalletStatus["custody"]> = {};
   @state() walletBalancesLoading = false;
   @state() walletBalancesError: string | null = null;
   @state() walletBalances: WalletBalancesResponse | null = null;
@@ -1819,8 +1692,7 @@ export class FasedAgentApp extends LitElement {
   @state() walletBalanceWalletId = "";
   @state() walletExpandedPanelWalletId = "";
   @state() walletExpandedPanel: "balance" | "security" | "" = "";
-  @state() walletPolicyPanel: "caps" | "schedule" | "automation" | "skills" | "custody" | "sweep" =
-    "caps";
+  @state() walletPolicyPanel: "caps" | "schedule" | "automation" | "skills" | "sweep" = "caps";
   @state() walletCreateName = "";
   @state() walletCreateId = "";
   @state() walletCreateProvider: WalletProviderInfo["id"] = "local-socket-signer";
@@ -1896,16 +1768,6 @@ export class FasedAgentApp extends LitElement {
   @state() walletPasskeyBusy = false;
   @state() walletPasskeyError: string | null = null;
   @state() walletPasskeyLabel = "";
-  @state() walletCustodyClientCompatibility: WalletCustodyClientCompatibility | null = null;
-  @state() walletCustodyClientCompatibilityError: string | null = null;
-  @state() walletCustodyDeviceShare = "";
-  @state() walletCustodyRecoveryShare = "";
-  @state() walletCustodyRecoveryInput = "";
-  @state() walletCustodyEnrollLabel = "";
-  @state() walletCustodyEnrolledDeviceShare = "";
-  @state() walletCustodyRememberDeviceShare = true;
-  @state() walletCustodyDeviceShareStored = false;
-  @state() walletCustodyUnlockMinutes = "manual";
 
   @state() skillsLoading = false;
   @state() skillsReport: SkillStatusReport | null = null;
@@ -2082,9 +1944,7 @@ export class FasedAgentApp extends LitElement {
   private themeMediaHandler: ((event: MediaQueryListEvent) => void) | null = null;
   private topbarObserver: ResizeObserver | null = null;
   private overviewSecretsRevealTimer: number | null = null;
-  private walletCustodyRefreshTimer: number | null = null;
   private taskRefreshTimer: number | null = null;
-  private walletCustodyLoadedForWalletId = "";
   private selectEnhancerCleanup: (() => void) | null = null;
 
   createRenderRoot() {
@@ -2119,10 +1979,6 @@ export class FasedAgentApp extends LitElement {
       window.clearTimeout(this.overviewSecretsRevealTimer);
       this.overviewSecretsRevealTimer = null;
     }
-    if (this.walletCustodyRefreshTimer != null) {
-      window.clearTimeout(this.walletCustodyRefreshTimer);
-      this.walletCustodyRefreshTimer = null;
-    }
     if (this.walletReloadAfterSettingsTimer != null) {
       window.clearTimeout(this.walletReloadAfterSettingsTimer);
       this.walletReloadAfterSettingsTimer = null;
@@ -2149,14 +2005,6 @@ export class FasedAgentApp extends LitElement {
     }
     if (changed.has("channelsSnapshot") || changed.has("configForm")) {
       this.applyNotificationRouteDefaultsFromChannels();
-    }
-    if (
-      changed.has("walletStatus") ||
-      changed.has("walletDetailsWalletId") ||
-      changed.has("walletCustodyDeviceShare") ||
-      changed.has("walletCustodyRememberDeviceShare")
-    ) {
-      this.scheduleWalletCustodyRefresh();
     }
   }
 
@@ -4115,9 +3963,6 @@ export class FasedAgentApp extends LitElement {
     await loadWalletInternal(this);
     await loadWalletSkillGrants(this);
     this.syncWalletPolicyDraftsFromSettings();
-    await this.refreshWalletCustodyClientCompatibility();
-    await this.syncWalletCustodyDeviceShareFromClient();
-    this.scheduleWalletCustodyRefresh();
     this.focusWalletSecuritySetupIfNeeded();
   }
 
@@ -4154,39 +3999,9 @@ export class FasedAgentApp extends LitElement {
     await clearWalletSkillGrant(this, skillId);
   }
 
-  private async refreshWalletCustodyClientCompatibility() {
-    try {
-      this.walletCustodyClientCompatibility = await detectWalletCustodyClientCompatibility();
-      this.walletCustodyClientCompatibilityError = null;
-    } catch (error) {
-      this.walletCustodyClientCompatibility = null;
-      this.walletCustodyClientCompatibilityError =
-        error instanceof Error ? error.message : String(error);
-    }
-  }
-
-  private nativeWalletCustodyHelperAvailable(): boolean {
-    const helper = this.walletCustodyClientCompatibility?.nativeHelper;
-    return (
-      helper?.status === "available" &&
-      walletCustodyCompanionSupportsSecureStorage(helper) &&
-      !this.browserWalletCustodyStoragePreferred()
-    );
-  }
-
-  private browserWalletCustodyStoragePreferred(): boolean {
-    const mode = this.walletCustodyClientCompatibility?.storageMode;
-    return mode === "encrypted-browser-storage" || mode === "encrypted-browser-storage-untested";
-  }
-
-  private currentWalletCustodyWalletId(): string | undefined {
-    const walletId =
-      this.walletDetailsWalletId.trim() || this.walletSendCreateForm.walletId?.trim() || "";
-    return walletId || undefined;
-  }
-
   private currentWalletPolicyRole(): "agent" | "mining" | "vault" {
-    const walletId = this.currentWalletCustodyWalletId();
+    const walletId =
+      this.walletDetailsWalletId.trim() || this.walletSendCreateForm.walletId?.trim() || undefined;
     const wallet = walletId
       ? this.walletNamedWallets.find((entry) => entry.id === walletId)
       : undefined;
@@ -4246,9 +4061,6 @@ export class FasedAgentApp extends LitElement {
     }
     this.walletExpandedPanelWalletId = walletId;
     this.walletExpandedPanel = "security";
-    if (role === "vault") {
-      this.walletPolicyPanel = "custody";
-    }
     this.walletBalanceWalletId = "";
     const nextKey = `${walletId}:${role}`;
     if (this.walletSecuritySetupScrollKey === nextKey) {
@@ -4266,203 +4078,6 @@ export class FasedAgentApp extends LitElement {
         setTimeout(focusSection, 0);
       }
     });
-  }
-
-  private async resolveWalletCustodyApproval(params: {
-    operation:
-      | "wallet.custody-init"
-      | "wallet.custody-unlock"
-      | "wallet.custody-recover"
-      | "wallet.custody-enroll-device"
-      | "wallet.custody-revoke-device"
-      | "wallet.custody-disable";
-    walletId: string;
-    includeStorageKey: boolean;
-  }): Promise<{
-    approvalToken: string;
-    credentialId: string;
-    storageKeyBase64?: string;
-  }> {
-    if (!this.walletStatus) {
-      await this.handleWalletLoad();
-    }
-    const mode = this.walletStatus?.approvalAuth?.mode ?? "none";
-    if (mode !== "webauthn") {
-      throw new Error("Passkey approval must be enabled for wallet custody.");
-    }
-    const passkeyCount = this.walletStatus?.approvalAuth?.passkeyCount ?? 0;
-    if (passkeyCount <= 0) {
-      throw new Error("No passkey enrolled. Register a passkey first.");
-    }
-    const preferredCredentialId = params.includeStorageKey
-      ? getStoredWalletCustodyDeviceShareCredentialId(this.settings.gatewayUrl, params.walletId)
-      : "";
-    const auth = await authorizeWalletActionWithPasskey({
-      operation: params.operation,
-      storageBinding: params.includeStorageKey
-        ? buildWalletCustodyStorageBinding(this.settings.gatewayUrl, params.walletId)
-        : undefined,
-      preferredCredentialId: preferredCredentialId || undefined,
-    });
-    return auth;
-  }
-
-  private async hasStoredWalletCustodyDeviceShareOnClient(
-    walletId: string | undefined,
-  ): Promise<boolean> {
-    const normalizedWalletId = walletId?.trim() || "";
-    if (!normalizedWalletId) {
-      return false;
-    }
-    if (this.nativeWalletCustodyHelperAvailable()) {
-      return await getWalletCustodyCompanionDeviceShareStatus(
-        this.settings.gatewayUrl,
-        normalizedWalletId,
-      );
-    }
-    return hasStoredWalletCustodyDeviceShare(this.settings.gatewayUrl, normalizedWalletId);
-  }
-
-  private async loadStoredWalletCustodyDeviceShareFromClient(params: {
-    walletId: string | undefined;
-    storageKeyBase64?: string;
-    prompt?: string;
-  }): Promise<string> {
-    const normalizedWalletId = params.walletId?.trim() || "";
-    if (!normalizedWalletId) {
-      return "";
-    }
-    if (this.nativeWalletCustodyHelperAvailable()) {
-      return await loadWalletCustodyCompanionDeviceShare({
-        gatewayOrigin: this.settings.gatewayUrl,
-        walletId: normalizedWalletId,
-        prompt: params.prompt,
-      });
-    }
-    const storedDeviceShareExists = hasStoredWalletCustodyDeviceShare(
-      this.settings.gatewayUrl,
-      normalizedWalletId,
-    );
-    if (!storedDeviceShareExists) {
-      return "";
-    }
-    if (!params.storageKeyBase64) {
-      return loadStoredWalletCustodyDeviceShare(this.settings.gatewayUrl, normalizedWalletId);
-    }
-    return await decryptStoredWalletCustodyDeviceShare({
-      gatewayUrl: this.settings.gatewayUrl,
-      walletId: normalizedWalletId,
-      storageKeyBase64: params.storageKeyBase64,
-    });
-  }
-
-  private async clearStoredWalletCustodyDeviceShareOnClient(walletId: string | undefined) {
-    const normalizedWalletId = walletId?.trim() || "";
-    if (!normalizedWalletId) {
-      return;
-    }
-    if (this.nativeWalletCustodyHelperAvailable()) {
-      await deleteWalletCustodyCompanionDeviceShare(this.settings.gatewayUrl, normalizedWalletId);
-      return;
-    }
-    clearStoredWalletCustodyDeviceShare(this.settings.gatewayUrl, normalizedWalletId);
-  }
-
-  private async syncWalletCustodyDeviceShareFromClient(force = false) {
-    const walletId = this.currentWalletCustodyWalletId() ?? "";
-    if (!walletId) {
-      this.walletCustodyLoadedForWalletId = "";
-      this.walletCustodyDeviceShare = "";
-      this.walletCustodyRecoveryShare = "";
-      this.walletCustodyRecoveryInput = "";
-      this.walletCustodyEnrollLabel = "";
-      this.walletCustodyEnrolledDeviceShare = "";
-      this.walletCustodyDeviceShareStored = false;
-      this.walletCustodyRememberDeviceShare = true;
-      return;
-    }
-    if (!force && this.walletCustodyLoadedForWalletId === walletId) {
-      this.walletCustodyDeviceShareStored =
-        await this.hasStoredWalletCustodyDeviceShareOnClient(walletId);
-      return;
-    }
-    const stored = await this.hasStoredWalletCustodyDeviceShareOnClient(walletId);
-    this.walletCustodyLoadedForWalletId = walletId;
-    this.walletCustodyDeviceShare = "";
-    this.walletCustodyRecoveryShare = "";
-    this.walletCustodyRecoveryInput = "";
-    this.walletCustodyEnrollLabel = "";
-    this.walletCustodyEnrolledDeviceShare = "";
-    this.walletCustodyDeviceShareStored = Boolean(stored);
-    this.walletCustodyRememberDeviceShare =
-      Boolean(stored) || this.walletCustodyRememberDeviceShare;
-  }
-
-  private async persistWalletCustodyDeviceShareIfNeeded(
-    walletId: string,
-    deviceShare: string,
-    storage?: { storageKeyBase64?: string; credentialId?: string },
-  ): Promise<string | null> {
-    if (!this.walletCustodyRememberDeviceShare || !deviceShare.trim()) {
-      return null;
-    }
-    if (this.nativeWalletCustodyHelperAvailable()) {
-      const saved = await saveWalletCustodyCompanionDeviceShare({
-        gatewayOrigin: this.settings.gatewayUrl,
-        walletId,
-        deviceShare,
-        credentialId: storage?.credentialId,
-      });
-      this.walletCustodyDeviceShareStored = saved;
-      return saved
-        ? null
-        : "The native custody helper did not accept the device share on this device.";
-    }
-    if (!storage?.storageKeyBase64 || !storage?.credentialId) {
-      return "Secure browser storage for the device share requires a passkey/browser with WebAuthn PRF support. Leave browser storage disabled or use a supported authenticator.";
-    }
-    await saveStoredWalletCustodyDeviceShare({
-      gatewayUrl: this.settings.gatewayUrl,
-      walletId,
-      deviceShare,
-      storageKeyBase64: storage.storageKeyBase64,
-      credentialId: storage.credentialId,
-    });
-    this.walletCustodyDeviceShareStored = true;
-    return null;
-  }
-
-  private clearWalletCustodyRefreshTimer() {
-    if (this.walletCustodyRefreshTimer != null) {
-      window.clearTimeout(this.walletCustodyRefreshTimer);
-      this.walletCustodyRefreshTimer = null;
-    }
-  }
-
-  private scheduleWalletCustodyRefresh() {
-    this.clearWalletCustodyRefreshTimer();
-    const walletId = this.currentWalletCustodyWalletId();
-    const custody = this.walletStatus?.custody;
-    if (!walletId || !custody || custody.target.walletId !== walletId || !custody.unlock.active) {
-      return;
-    }
-    const deviceShare =
-      this.walletCustodyDeviceShare.trim() ||
-      loadStoredWalletCustodyDeviceShare(this.settings.gatewayUrl, walletId);
-    if (!deviceShare) {
-      return;
-    }
-    const expiresAtMs = Date.parse(String(custody.unlock.expiresAt ?? ""));
-    if (!Number.isFinite(expiresAtMs)) {
-      return;
-    }
-    if (isManualWalletCustodyExpiry(custody.unlock.expiresAt)) {
-      return;
-    }
-    const delayMs = Math.max(15_000, expiresAtMs - Date.now() - 60_000);
-    this.walletCustodyRefreshTimer = window.setTimeout(() => {
-      void this.handleWalletRefreshCustody(true);
-    }, delayMs);
   }
 
   private syncWalletPolicyDraftsFromSettings() {
@@ -5293,7 +4908,10 @@ export class FasedAgentApp extends LitElement {
     this.walletSettingsError = null;
     this.walletSettingsMessage = null;
     try {
-      const selectedWalletId = this.currentWalletCustodyWalletId();
+      const selectedWalletId =
+        this.walletDetailsWalletId.trim() ||
+        this.walletSendCreateForm.walletId?.trim() ||
+        undefined;
       const scopedPatch = {
         ...patch,
         ...(patch.walletId !== undefined
@@ -5832,9 +5450,7 @@ export class FasedAgentApp extends LitElement {
     await this.handleWalletLoad();
   }
 
-  handleWalletPolicyPanelChange(
-    panel: "caps" | "schedule" | "automation" | "skills" | "custody" | "sweep",
-  ) {
+  handleWalletPolicyPanelChange(panel: "caps" | "schedule" | "automation" | "skills" | "sweep") {
     this.walletPolicyPanel = panel;
   }
 
@@ -5964,10 +5580,6 @@ export class FasedAgentApp extends LitElement {
         this.walletExpandedPanelWalletId = "";
         this.walletExpandedPanel = "";
       }
-      if (this.walletCustodyByWalletId[walletId]) {
-        const { [walletId]: _removed, ...rest } = this.walletCustodyByWalletId;
-        this.walletCustodyByWalletId = rest;
-      }
       this.walletSettingsMessage = "Wallet deleted.";
       await this.handleWalletLoad();
     } catch (err) {
@@ -6071,12 +5683,6 @@ export class FasedAgentApp extends LitElement {
       | "wallet.passkey-remove"
       | "wallet.execution-mode"
       | "wallet.send"
-      | "wallet.custody-init"
-      | "wallet.custody-unlock"
-      | "wallet.custody-recover"
-      | "wallet.custody-enroll-device"
-      | "wallet.custody-revoke-device"
-      | "wallet.custody-disable"
       | "mining.capital"
       | "mining.policy";
     requestId?: string;
@@ -6148,28 +5754,6 @@ export class FasedAgentApp extends LitElement {
     this.walletPasskeyError = null;
     this.walletActionMessage = null;
     try {
-      const passkeyCount =
-        this.walletStatus?.approvalAuth?.passkeys?.length ??
-        this.walletStatus?.approvalAuth?.passkeyCount ??
-        0;
-      const splitKeyWallets = Object.values(this.walletCustodyByWalletId ?? {}).filter(
-        (custody) => custody?.mode && custody.mode !== "single-key",
-      );
-      const selectedCustody = this.walletStatus?.custody;
-      if (
-        selectedCustody?.mode &&
-        selectedCustody.mode !== "single-key" &&
-        !splitKeyWallets.some(
-          (custody) => custody.target.walletId === selectedCustody.target.walletId,
-        )
-      ) {
-        splitKeyWallets.push(selectedCustody);
-      }
-      if (passkeyCount <= 1 && splitKeyWallets.length > 0) {
-        throw new Error(
-          "Disable wallet security on every secured wallet before removing the last Wallet Control Passkey.",
-        );
-      }
       const approvalToken = await this.resolveWalletApprovalToken({
         operation: "wallet.passkey-remove",
       });
@@ -6322,11 +5906,7 @@ export class FasedAgentApp extends LitElement {
         : "Send request approved.";
       await this.handleWalletLoad();
     } catch (err) {
-      this.walletApprovalsError = formatWalletApproveError(err, request);
-      if (readWalletApiErrorCode(err) === "custody_unlock_required") {
-        this.walletApprovalsFilter = "pending";
-        await this.handleWalletLoad();
-      }
+      this.walletApprovalsError = formatWalletApproveError(err);
     } finally {
       this.walletApprovalsBusyId = null;
     }
@@ -6570,667 +6150,8 @@ export class FasedAgentApp extends LitElement {
     }
   }
 
-  handleWalletCustodyDeviceShareChange(next: string) {
-    this.walletCustodyDeviceShare = next;
-    const walletId = this.currentWalletCustodyWalletId();
-    if (walletId) {
-      this.walletCustodyLoadedForWalletId = walletId;
-    }
-    if (!next.trim()) {
-      void this.syncWalletCustodyDeviceShareFromClient(true);
-    }
-  }
-
-  handleWalletCustodyRememberToggle(next: boolean) {
-    this.walletCustodyRememberDeviceShare = next;
-  }
-
-  handleWalletCustodyRecoveryInputChange(next: string) {
-    this.walletCustodyRecoveryInput = next;
-  }
-
-  handleWalletCustodyEnrollLabelChange(next: string) {
-    this.walletCustodyEnrollLabel = next;
-  }
-
-  handleWalletCustodyUnlockMinutesChange(next: string) {
-    const normalized = next.trim().toLowerCase();
-    this.walletCustodyUnlockMinutes =
-      normalized === "manual" ? "manual" : next.replace(/[^\d]/g, "").slice(0, 2);
-  }
-
-  async handleWalletForgetCustodyDeviceShare() {
-    const walletId = this.currentWalletCustodyWalletId();
-    if (!walletId) {
-      return;
-    }
-    await this.clearStoredWalletCustodyDeviceShareOnClient(walletId);
-    this.walletCustodyDeviceShareStored = false;
-    this.walletCustodyDeviceShare = "";
-    this.walletCustodyRecoveryShare = "";
-    this.walletCustodyRecoveryInput = "";
-    this.walletCustodyEnrollLabel = "";
-    this.walletCustodyEnrolledDeviceShare = "";
-    this.walletCustodyLoadedForWalletId = walletId;
-    this.walletActionMessage = this.nativeWalletCustodyHelperAvailable()
-      ? `Removed the stored device share for ${walletId} from this client.`
-      : `Removed the stored device share for ${walletId} from this browser.`;
-  }
-
-  handleWalletDownloadCustodyDeviceShare() {
-    const walletId = this.currentWalletCustodyWalletId();
-    const deviceShare = this.walletCustodyDeviceShare.trim();
-    if (!walletId || !deviceShare) {
-      this.walletError = "No device share is available to export for the selected wallet.";
-      return;
-    }
-    const role = this.walletStatus?.custody?.target?.role ?? "vault";
-    downloadTextFile(
-      `fased-${walletId}-device-share.json`,
-      `${JSON.stringify(
-        {
-          version: 1,
-          kind: "fased-wallet-device-share",
-          walletId,
-          role,
-          gatewayOrigin: this.settings.gatewayUrl || window.location.origin,
-          exportedAt: new Date().toISOString(),
-          deviceShare,
-        },
-        null,
-        2,
-      )}\n`,
-      "application/json;charset=utf-8",
-    );
-    this.walletActionMessage = `Exported device share file for ${walletId}. Keep it separate from the host and recovery share.`;
-  }
-
-  handleWalletDownloadCustodyRecoveryKit() {
-    const walletId = this.currentWalletCustodyWalletId();
-    const recoveryShare = this.walletCustodyRecoveryShare.trim();
-    if (!walletId || !recoveryShare) {
-      this.walletError = "No recovery share is available to export for the selected wallet.";
-      return;
-    }
-    const role = this.walletStatus?.custody?.target?.role ?? "vault";
-    downloadTextFile(
-      `fased-${walletId}-recovery-kit.json`,
-      `${JSON.stringify(
-        {
-          version: 1,
-          kind: "fased-wallet-recovery-kit",
-          walletId,
-          role,
-          gatewayOrigin: this.settings.gatewayUrl || window.location.origin,
-          exportedAt: new Date().toISOString(),
-          recoveryShare,
-          instructions: [
-            "Store this offline and separate from the device share.",
-            "Use it with the host share to recover this wallet on a new device.",
-            "After recovery, revoke the old device share and export the new recovery share.",
-          ],
-        },
-        null,
-        2,
-      )}\n`,
-      "application/json;charset=utf-8",
-    );
-    this.walletActionMessage = `Exported recovery kit for ${walletId}. Store it offline.`;
-  }
-
-  handleWalletPrintCustodyRecoveryKit() {
-    const walletId = this.currentWalletCustodyWalletId();
-    const recoveryShare = this.walletCustodyRecoveryShare.trim();
-    if (!walletId || !recoveryShare) {
-      this.walletError = "No recovery share is available to print for the selected wallet.";
-      return;
-    }
-    const role = this.walletStatus?.custody?.target?.role ?? "vault";
-    const storageMode = this.nativeWalletCustodyHelperAvailable()
-      ? "Stored off-host on this client (advanced local helper)"
-      : this.walletCustodyDeviceShareStored
-        ? "Encrypted browser storage on this device"
-        : "Manual device-share handling";
-    printHtmlDocument(
-      `Recovery sheet for ${walletId}`,
-      `
-        <h1>Fased Recovery Sheet</h1>
-        <p class="muted">Wallet <strong>${walletId}</strong> · Role <strong>${role}</strong> · Exported ${new Date().toLocaleString()}</p>
-        <h2>Recovery share</h2>
-        <pre>${recoveryShare}</pre>
-        <h2>Current device storage</h2>
-        <p>${storageMode}</p>
-        <h2>Use this sheet when</h2>
-        <ul>
-          <li>The current device is lost or unavailable.</li>
-          <li>You need to rotate away from a compromised device share.</li>
-          <li>You are enrolling a replacement trusted device.</li>
-        </ul>
-        <h2>Instructions</h2>
-        <ul>
-          <li>Keep this sheet offline and separate from any exported device share.</li>
-          <li>Use this recovery share with the host share to recover the wallet on a new device.</li>
-          <li>After recovery, export the new recovery share and revoke any lost or stale devices.</li>
-        </ul>
-      `,
-    );
-    this.walletActionMessage = `Opened a printable recovery sheet for ${walletId}. Store it offline after printing.`;
-  }
-
-  handleWalletDownloadEnrolledDeviceShare() {
-    const walletId = this.currentWalletCustodyWalletId();
-    const deviceShare = this.walletCustodyEnrolledDeviceShare.trim();
-    if (!walletId || !deviceShare) {
-      this.walletError = "No newly enrolled device share is available to export.";
-      return;
-    }
-    const role = this.walletStatus?.custody?.target?.role ?? "vault";
-    const label = this.walletCustodyEnrollLabel.trim() || "Enrolled device";
-    downloadTextFile(
-      `fased-${walletId}-enrolled-device-share.json`,
-      `${JSON.stringify(
-        {
-          version: 1,
-          kind: "fased-wallet-device-share",
-          walletId,
-          role,
-          label,
-          gatewayOrigin: this.settings.gatewayUrl || window.location.origin,
-          exportedAt: new Date().toISOString(),
-          deviceShare,
-        },
-        null,
-        2,
-      )}\n`,
-      "application/json;charset=utf-8",
-    );
-    this.walletActionMessage = this.nativeWalletCustodyHelperAvailable()
-      ? `Exported enrolled device share for ${walletId}. Move it to the second trusted device or client and keep it separate from the recovery share.`
-      : `Exported enrolled device share for ${walletId}. Move it to the second device and keep it separate from the recovery share.`;
-  }
-
-  handleWalletPrintEnrolledDeviceShare() {
-    const walletId = this.currentWalletCustodyWalletId();
-    const deviceShare = this.walletCustodyEnrolledDeviceShare.trim();
-    if (!walletId || !deviceShare) {
-      this.walletError = "No newly enrolled device share is available to print.";
-      return;
-    }
-    const label = this.walletCustodyEnrollLabel.trim() || "Enrolled device";
-    const role = this.walletStatus?.custody?.target?.role ?? "vault";
-    printHtmlDocument(
-      `Device handoff for ${walletId}`,
-      `
-        <h1>Fased Device Handoff</h1>
-        <p class="muted">Wallet <strong>${walletId}</strong> · Role <strong>${role}</strong> · Device <strong>${label}</strong> · Exported ${new Date().toLocaleString()}</p>
-        <h2>New device share</h2>
-        <pre>${deviceShare}</pre>
-        <h2>Instructions</h2>
-        <ul>
-          <li>Move this share onto the second trusted device only.</li>
-          <li>Do not store it together with the recovery share.</li>
-          <li>Confirm the second device can unlock the wallet before revoking any existing device.</li>
-          <li>After replacement, revoke devices that are lost, stale, or no longer operator-controlled.</li>
-        </ul>
-      `,
-    );
-    this.walletActionMessage = this.nativeWalletCustodyHelperAvailable()
-      ? `Opened a printable device handoff for ${walletId}. Move it to the second trusted device or client and then verify unlock there.`
-      : `Opened a printable device handoff for ${walletId}. Move it to the second device and then verify unlock there.`;
-  }
-
   async handleWalletApplyRecommendedPolicy() {
     await this.handleWalletPatchSettings({ policyTemplate: "recommended" });
-  }
-
-  async handleWalletInitializeCustody() {
-    if (this.walletActionBusy) {
-      return;
-    }
-    const walletId = this.currentWalletCustodyWalletId();
-    if (!walletId) {
-      this.walletError = "Select a wallet first.";
-      return;
-    }
-    this.walletActionBusy = true;
-    this.walletActionMessage = null;
-    this.walletError = null;
-    try {
-      const approval = await this.resolveWalletCustodyApproval({
-        operation: "wallet.custody-init",
-        walletId,
-        includeStorageKey:
-          this.walletCustodyRememberDeviceShare && !this.nativeWalletCustodyHelperAvailable(),
-      });
-      const result = await initializeWalletCustody(approval.approvalToken, walletId);
-      this.walletCustodyDeviceShare = result.deviceShare;
-      this.walletCustodyRecoveryShare = result.recoveryShare;
-      this.walletCustodyRecoveryInput = "";
-      this.walletCustodyEnrollLabel = "";
-      this.walletCustodyEnrolledDeviceShare = "";
-      this.walletCustodyLoadedForWalletId = result.walletId;
-      const storageWarning = await this.persistWalletCustodyDeviceShareIfNeeded(
-        result.walletId,
-        result.deviceShare,
-        approval,
-      );
-      const restartWarning =
-        result.signerRestarted === false
-          ? ` Signer restart needs retry: ${result.signerRestartError ?? "unknown error"}`
-          : "";
-      this.walletActionMessage = storageWarning
-        ? `Wallet security enabled for ${result.walletId}. The wallet is locked by default; unlock with passkey before signing. Device share was not stored on this client: ${storageWarning}${restartWarning}`
-        : `Wallet security enabled for ${result.walletId}. The wallet is locked by default; unlock with passkey before signing. Store the recovery share offline and separate from this device.${restartWarning}`;
-      await this.handleWalletLoad();
-    } catch (err) {
-      const message = String(err);
-      this.walletError = message.includes("no self-hosted local-signer keystores")
-        ? "Custody init failed: this wallet has no local signer key yet. Create or import the wallet key before enabling split-key."
-        : `Custody init failed: ${message}`;
-    } finally {
-      this.walletActionBusy = false;
-    }
-  }
-
-  async handleWalletRecoverCustody() {
-    if (this.walletActionBusy) {
-      return;
-    }
-    const walletId = this.currentWalletCustodyWalletId();
-    if (!walletId) {
-      this.walletError = "Select a wallet first.";
-      return;
-    }
-    const recoveryShare = this.walletCustodyRecoveryInput.trim();
-    if (!recoveryShare) {
-      this.walletError = "Paste the offline recovery share for this wallet first.";
-      return;
-    }
-    this.walletActionBusy = true;
-    this.walletActionMessage = null;
-    this.walletError = null;
-    try {
-      const approval = await this.resolveWalletCustodyApproval({
-        operation: "wallet.custody-recover",
-        walletId,
-        includeStorageKey:
-          this.walletCustodyRememberDeviceShare && !this.nativeWalletCustodyHelperAvailable(),
-      });
-      const result = await recoverWalletCustody(approval.approvalToken, recoveryShare, walletId);
-      this.walletCustodyDeviceShare = result.deviceShare;
-      this.walletCustodyRecoveryShare = result.recoveryShare;
-      this.walletCustodyRecoveryInput = "";
-      this.walletCustodyEnrollLabel = "";
-      this.walletCustodyEnrolledDeviceShare = "";
-      this.walletCustodyLoadedForWalletId = result.walletId;
-      const storageWarning = await this.persistWalletCustodyDeviceShareIfNeeded(
-        result.walletId,
-        result.deviceShare,
-        approval,
-      );
-      this.walletActionMessage = storageWarning
-        ? `Recovered ${result.walletId} and rotated to a new device share. The wallet remains locked until passkey unlock. Client-side storage unchanged: ${storageWarning}`
-        : `Recovered ${result.walletId} and rotated to a new device share. Export the new recovery share now; the wallet remains locked until passkey unlock.`;
-      await this.handleWalletLoad();
-    } catch (err) {
-      this.walletError = `Custody recovery failed: ${String(err)}`;
-    } finally {
-      this.walletActionBusy = false;
-    }
-  }
-
-  async handleWalletEnrollCustodyDevice() {
-    if (this.walletActionBusy) {
-      return;
-    }
-    const walletId = this.currentWalletCustodyWalletId();
-    if (!walletId) {
-      this.walletError = "Select a wallet first.";
-      return;
-    }
-    const inlineDeviceShare = this.walletCustodyDeviceShare.trim();
-    this.walletActionBusy = true;
-    this.walletActionMessage = null;
-    this.walletError = null;
-    try {
-      const storedDeviceShareExists =
-        await this.hasStoredWalletCustodyDeviceShareOnClient(walletId);
-      const approval = await this.resolveWalletCustodyApproval({
-        operation: "wallet.custody-enroll-device",
-        walletId,
-        includeStorageKey:
-          !this.nativeWalletCustodyHelperAvailable() &&
-          !inlineDeviceShare &&
-          storedDeviceShareExists,
-      });
-      let deviceShare = inlineDeviceShare;
-      if (!deviceShare && storedDeviceShareExists) {
-        if (!approval.storageKeyBase64 && !this.nativeWalletCustodyHelperAvailable()) {
-          throw new Error(
-            "This browser stores only an encrypted device share. Unlock with a PRF-capable passkey browser or paste the raw device share to enroll another device.",
-          );
-        }
-        deviceShare = await this.loadStoredWalletCustodyDeviceShareFromClient({
-          walletId,
-          storageKeyBase64: approval.storageKeyBase64,
-          prompt: `Authenticate to load the stored device share for ${walletId}.`,
-        });
-      }
-      if (!deviceShare) {
-        throw new Error("Current device share is required to enroll another device.");
-      }
-      const result = await enrollWalletCustodyDevice({
-        approvalToken: approval.approvalToken,
-        walletId,
-        deviceShare,
-        label: this.walletCustodyEnrollLabel,
-      });
-      this.walletCustodyEnrolledDeviceShare = result.deviceShare;
-      this.walletCustodyEnrollLabel = result.label || this.walletCustodyEnrollLabel;
-      await this.handleWalletLoad();
-      this.walletActionMessage = this.nativeWalletCustodyHelperAvailable()
-        ? `Created a second-device handoff for ${walletId}. Export the new device share once and open it on the second trusted device or browser.`
-        : `Created a second-device handoff for ${walletId}. Export the new device share once and open it on the second device.`;
-    } catch (err) {
-      this.walletError = `Device enrollment failed: ${String(err)}`;
-    } finally {
-      this.walletActionBusy = false;
-    }
-  }
-
-  async handleWalletRevokeCustodyDevice(deviceId: string) {
-    if (this.walletActionBusy) {
-      return;
-    }
-    const walletId = this.currentWalletCustodyWalletId();
-    if (!walletId) {
-      this.walletError = "Select a wallet first.";
-      return;
-    }
-    const targetDeviceId = deviceId.trim();
-    if (!targetDeviceId) {
-      this.walletError = "Select a device first.";
-      return;
-    }
-    const inlineDeviceShare = this.walletCustodyDeviceShare.trim();
-    this.walletActionBusy = true;
-    this.walletActionMessage = null;
-    this.walletError = null;
-    try {
-      const storedDeviceShareExists =
-        await this.hasStoredWalletCustodyDeviceShareOnClient(walletId);
-      const approval = await this.resolveWalletCustodyApproval({
-        operation: "wallet.custody-revoke-device",
-        walletId,
-        includeStorageKey:
-          !this.nativeWalletCustodyHelperAvailable() &&
-          !inlineDeviceShare &&
-          storedDeviceShareExists,
-      });
-      let deviceShare = inlineDeviceShare;
-      if (!deviceShare && storedDeviceShareExists) {
-        if (!approval.storageKeyBase64 && !this.nativeWalletCustodyHelperAvailable()) {
-          throw new Error(
-            "This browser stores only an encrypted device share. Unlock with a PRF-capable passkey browser or paste the raw device share to revoke a device.",
-          );
-        }
-        deviceShare = await this.loadStoredWalletCustodyDeviceShareFromClient({
-          walletId,
-          storageKeyBase64: approval.storageKeyBase64,
-          prompt: `Authenticate to load the stored device share for ${walletId}.`,
-        });
-      }
-      if (!deviceShare) {
-        throw new Error("Current device share is required to revoke another device.");
-      }
-      const result = await revokeWalletCustodyDevice({
-        approvalToken: approval.approvalToken,
-        walletId,
-        deviceId: targetDeviceId,
-        deviceShare,
-      });
-      this.walletCustodyEnrolledDeviceShare = "";
-      await this.handleWalletLoad();
-      this.walletActionMessage = `Revoked ${result.removedDeviceLabel || result.removedDeviceId} for ${walletId}.`;
-    } catch (err) {
-      this.walletError = `Device revoke failed: ${String(err)}`;
-    } finally {
-      this.walletActionBusy = false;
-    }
-  }
-
-  async handleWalletDisableCustody(walletIdOverride?: string) {
-    if (this.walletActionBusy) {
-      return;
-    }
-    const walletId = walletIdOverride?.trim() || this.currentWalletCustodyWalletId();
-    if (!walletId) {
-      this.walletError = "Select a wallet first.";
-      return;
-    }
-    const inlineDeviceShare = this.walletCustodyDeviceShare.trim();
-    const recoveryShare = this.walletCustodyRecoveryInput.trim();
-    this.walletActionBusy = true;
-    this.walletActionMessage = null;
-    this.walletError = null;
-    try {
-      const storedDeviceShareExists =
-        await this.hasStoredWalletCustodyDeviceShareOnClient(walletId);
-      const approval = await this.resolveWalletCustodyApproval({
-        operation: "wallet.custody-disable",
-        walletId,
-        includeStorageKey:
-          !this.nativeWalletCustodyHelperAvailable() &&
-          !inlineDeviceShare &&
-          !recoveryShare &&
-          storedDeviceShareExists,
-      });
-      let deviceShare = inlineDeviceShare;
-      if (!deviceShare && !recoveryShare && storedDeviceShareExists) {
-        if (!approval.storageKeyBase64 && !this.nativeWalletCustodyHelperAvailable()) {
-          throw new Error(
-            "This browser stores only an encrypted device share. Unlock with a PRF-capable passkey browser, paste the device share, or paste the recovery share to disable wallet security.",
-          );
-        }
-        deviceShare = await this.loadStoredWalletCustodyDeviceShareFromClient({
-          walletId,
-          storageKeyBase64: approval.storageKeyBase64,
-          prompt: `Authenticate to load the stored device share for ${walletId}.`,
-        });
-      }
-      if (!deviceShare && !recoveryShare) {
-        throw new Error("Device share or recovery share is required to disable wallet security.");
-      }
-      const disabled = await disableWalletCustody({
-        approvalToken: approval.approvalToken,
-        walletId,
-        deviceShare,
-        recoveryShare,
-      });
-      await this.clearStoredWalletCustodyDeviceShareOnClient(walletId);
-      this.walletCustodyDeviceShare = "";
-      this.walletCustodyRecoveryShare = "";
-      this.walletCustodyRecoveryInput = "";
-      this.walletCustodyEnrollLabel = "";
-      this.walletCustodyEnrolledDeviceShare = "";
-      this.walletCustodyDeviceShareStored = false;
-      this.walletCustodyLoadedForWalletId = walletId;
-      this.walletActionMessage =
-        disabled.signerRestarted === false
-          ? `Wallet security disabled for ${walletId}. Signer restart needs retry: ${disabled.signerRestartError ?? "unknown error"}`
-          : `Wallet security disabled for ${walletId}.`;
-      await this.handleWalletLoad();
-    } catch (err) {
-      this.walletError = `Disable wallet security failed: ${String(err)}`;
-    } finally {
-      this.walletActionBusy = false;
-    }
-  }
-
-  async handleWalletUnlockCustody() {
-    if (this.walletActionBusy) {
-      return;
-    }
-    const selectedWalletId =
-      this.walletDetailsWalletId.trim() || this.walletSendCreateForm.walletId?.trim() || undefined;
-    if (!this.walletStatus) {
-      await this.handleWalletLoad();
-    }
-    if (this.walletStatus?.custody?.mode !== "split-key-active") {
-      this.walletError = "Split-key custody mode is not active.";
-      return;
-    }
-    if (!selectedWalletId) {
-      this.walletError = "Select a wallet before unlocking custody.";
-      return;
-    }
-    this.walletActionBusy = true;
-    this.walletActionMessage = null;
-    this.walletError = null;
-    try {
-      const inlineDeviceShare = this.walletCustodyDeviceShare.trim();
-      const storedDeviceShareExists =
-        await this.hasStoredWalletCustodyDeviceShareOnClient(selectedWalletId);
-      const needsStorageKey =
-        !this.nativeWalletCustodyHelperAvailable() &&
-        ((!inlineDeviceShare && storedDeviceShareExists) || this.walletCustodyRememberDeviceShare);
-      const approval = await this.resolveWalletCustodyApproval({
-        operation: "wallet.custody-unlock",
-        walletId: selectedWalletId,
-        includeStorageKey: needsStorageKey,
-      });
-      let deviceShare = inlineDeviceShare;
-      if (!deviceShare && storedDeviceShareExists) {
-        if (!approval.storageKeyBase64 && !this.nativeWalletCustodyHelperAvailable()) {
-          throw new Error("Stored device share could not be unlocked on this device.");
-        }
-        deviceShare = await this.loadStoredWalletCustodyDeviceShareFromClient({
-          walletId: selectedWalletId,
-          storageKeyBase64: approval.storageKeyBase64,
-          prompt: `Authenticate to load the stored device share for ${selectedWalletId}.`,
-        });
-      }
-      if (!deviceShare) {
-        throw new Error("Device share is required to unlock custody.");
-      }
-      const result = await unlockWalletCustody(
-        approval.approvalToken,
-        deviceShare,
-        selectedWalletId,
-        walletCustodyUnlockTtlSeconds(this.walletCustodyUnlockMinutes),
-      );
-      this.walletCustodyDeviceShare = deviceShare;
-      const storageWarning = selectedWalletId
-        ? await this.persistWalletCustodyDeviceShareIfNeeded(
-            selectedWalletId,
-            deviceShare,
-            approval,
-          )
-        : null;
-      const expiresAtLabel = formatWalletCustodyExpiryForMessage(result.session.expiresAt);
-      this.walletActionMessage = storageWarning
-        ? `Signing window unlocked until ${expiresAtLabel}. Browser storage unchanged: ${storageWarning}`
-        : `Signing window unlocked until ${expiresAtLabel}.`;
-      if (
-        this.walletStatus &&
-        (!selectedWalletId || result.custody.target.walletId === selectedWalletId)
-      ) {
-        this.walletStatus = {
-          ...this.walletStatus,
-          custody: result.custody,
-        };
-      }
-      await this.handleWalletLoad();
-      if (
-        this.walletStatus &&
-        (!selectedWalletId || result.custody.target.walletId === selectedWalletId)
-      ) {
-        this.walletStatus = {
-          ...this.walletStatus,
-          custody: result.custody,
-        };
-      }
-    } catch (err) {
-      this.walletError = `Custody unlock failed: ${String(err)}`;
-    } finally {
-      this.walletActionBusy = false;
-    }
-  }
-
-  async handleWalletRefreshCustody(silent = false) {
-    const walletId = this.currentWalletCustodyWalletId();
-    if (!walletId) {
-      return;
-    }
-    const deviceShare =
-      this.walletCustodyDeviceShare.trim() ||
-      (await this.loadStoredWalletCustodyDeviceShareFromClient({
-        walletId,
-        prompt: `Authenticate to refresh the signing window for ${walletId}.`,
-      }));
-    if (!deviceShare) {
-      if (!silent) {
-        this.walletError =
-          "Device share is required to refresh custody unlock. Unlock the wallet again if only an encrypted browser copy is available.";
-      }
-      return;
-    }
-    try {
-      const result = await refreshWalletCustody(
-        deviceShare,
-        walletId,
-        walletCustodyUnlockTtlSeconds(this.walletCustodyUnlockMinutes),
-      );
-      this.walletCustodyDeviceShare = deviceShare;
-      this.walletCustodyLoadedForWalletId = walletId;
-      if (this.walletStatus && this.walletStatus.custody.target.walletId === walletId) {
-        this.walletStatus = {
-          ...this.walletStatus,
-          custody: result.custody,
-        };
-      }
-      if (!silent) {
-        this.walletActionMessage = `Signing window extended until ${formatWalletCustodyExpiryForMessage(
-          result.session.expiresAt,
-        )}.`;
-      }
-    } catch (err) {
-      if (!silent) {
-        this.walletError = `Custody refresh failed: ${String(err)}`;
-      }
-    } finally {
-      this.scheduleWalletCustodyRefresh();
-    }
-  }
-
-  async handleWalletLockCustody() {
-    if (this.walletActionBusy) {
-      return;
-    }
-    const walletId = this.currentWalletCustodyWalletId();
-    if (!walletId) {
-      this.walletError = "Select a wallet first.";
-      return;
-    }
-    this.walletActionBusy = true;
-    this.walletActionMessage = null;
-    this.walletError = null;
-    try {
-      const result = await lockWalletCustody(walletId);
-      if (this.walletStatus && this.walletStatus.custody.target.walletId === walletId) {
-        this.walletStatus = {
-          ...this.walletStatus,
-          custody: result.custody,
-        };
-      }
-      this.clearWalletCustodyRefreshTimer();
-      this.walletActionMessage = `Signing window locked for ${walletId}.`;
-      await this.handleWalletLoad();
-    } catch (err) {
-      this.walletError = `Custody lock failed: ${String(err)}`;
-    } finally {
-      this.walletActionBusy = false;
-    }
   }
 
   async handleAbortChat() {

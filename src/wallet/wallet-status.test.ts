@@ -19,17 +19,12 @@ vi.mock("./wallet-approval-auth.js", () => ({
   readWalletApprovalAuthSnapshot: vi.fn(),
 }));
 
-vi.mock("./wallet-custody.js", () => ({
-  readWalletCustodyStatus: vi.fn(),
-}));
-
 vi.mock("./wallet-policy.js", () => ({
   resolveWalletPolicyConfig: vi.fn(),
 }));
 
 import { loadConfig } from "../config/config.js";
 import { readWalletApprovalAuthSnapshot } from "./wallet-approval-auth.js";
-import { readWalletCustodyStatus } from "./wallet-custody.js";
 import { resolveWalletPolicyConfig } from "./wallet-policy.js";
 import {
   createWalletProviderAdapter,
@@ -93,11 +88,6 @@ describe("readWalletStatusSnapshot", () => {
       notes: [],
       passkeys: [],
       statePath: "/tmp/fased-wallet/approval.json",
-    } as never);
-    vi.mocked(readWalletCustodyStatus).mockReturnValue({
-      owner: null,
-      ready: false,
-      summary: "unconfigured",
     } as never);
   });
 
@@ -175,23 +165,16 @@ describe("readWalletStatusSnapshot", () => {
     );
   });
 
-  it("passes the current approval host into custody status", async () => {
+  it("does not expose the removed Gateway custody status", async () => {
     vi.mocked(createWalletProviderAdapter).mockReturnValue({
       health: vi.fn().mockResolvedValue({ ok: true, details: "socket healthy" }),
       getAddresses: vi.fn().mockResolvedValue({ solana: "abc" }),
     } as never);
 
-    await readWalletStatusSnapshot({
+    const status = await readWalletStatusSnapshot({
       env: {} as NodeJS.ProcessEnv,
       walletId: "solana-2",
-      approvalHost: "fased.tailnet.local:8787",
     });
-
-    expect(readWalletCustodyStatus).toHaveBeenCalledWith(
-      expect.objectContaining({
-        walletId: "solana-2",
-        approvalHost: "fased.tailnet.local:8787",
-      }),
-    );
+    expect(status).not.toHaveProperty("custody");
   });
 });

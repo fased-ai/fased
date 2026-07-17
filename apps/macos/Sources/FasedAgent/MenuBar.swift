@@ -281,7 +281,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ExecApprovalsPromptServer.shared.start()
         ExecApprovalsGatewayPrompter.shared.start()
         MacNodeModeCoordinator.shared.start()
-        WalletCustodyCompanionBridge.shared.start()
         VoiceWakeGlobalSettingsSync.shared.start()
         Task { PresenceReporter.shared.start() }
         Task { await HealthStore.shared.refresh(onDemand: true) }
@@ -309,7 +308,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ExecApprovalsPromptServer.shared.stop()
         ExecApprovalsGatewayPrompter.shared.stop()
         MacNodeModeCoordinator.shared.stop()
-        WalletCustodyCompanionBridge.shared.stop()
         TerminationSignalWatcher.shared.stop()
         VoiceWakeGlobalSettingsSync.shared.stop()
         WebChatManager.shared.close()

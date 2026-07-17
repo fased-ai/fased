@@ -251,80 +251,6 @@ const SignerOperationLookupV2Schema = Type.Object(
   { additionalProperties: false },
 );
 
-const TxRequestSchema = Type.Object(
-  {
-    chain: WalletChainSchema,
-    walletId: Type.Optional(Type.String()),
-    to: Type.Optional(Type.String()),
-    amount: Type.Optional(Type.String()),
-    contract: Type.Optional(Type.String()),
-    program: Type.Optional(Type.String()),
-    tokenMint: Type.Optional(Type.String()),
-    source: Type.Optional(Type.String()),
-    destination: Type.Optional(Type.String()),
-    allowSplInstructions: Type.Optional(Type.Array(Type.String())),
-    memo: Type.Optional(Type.String()),
-    serializedTxBase64: Type.Optional(Type.String()),
-    preparedId: Type.Optional(Type.String()),
-  },
-  { additionalProperties: false },
-);
-
-const SolanaInstructionAccountSchema = Type.Object(
-  {
-    pubkey: Type.String(),
-    isSigner: Type.Boolean(),
-    isWritable: Type.Boolean(),
-  },
-  { additionalProperties: false },
-);
-
-const SolanaInstructionRequestSchema = Type.Object(
-  {
-    walletId: Type.Optional(Type.String()),
-    programId: Type.String(),
-    dataBase64: Type.String(),
-    keys: Type.Array(SolanaInstructionAccountSchema),
-  },
-  { additionalProperties: false },
-);
-
-const SolanaInstructionsRequestSchema = Type.Object(
-  {
-    walletId: Type.Optional(Type.String()),
-    purpose: Type.Literal("sat-cleanup"),
-    instructions: Type.Array(SolanaInstructionRequestSchema, { minItems: 1, maxItems: 6 }),
-  },
-  { additionalProperties: false },
-);
-
-const LocalSocketSignerCustodyUnlockRequestSchema = Type.Object(
-  {
-    sessionId: Type.String(),
-    host: Type.String(),
-    walletId: Type.String(),
-    role: Type.Optional(
-      Type.Union([Type.Literal("mining"), Type.Literal("agent"), Type.Literal("vault")]),
-    ),
-    chains: Type.Optional(Type.Array(WalletChainSchema)),
-    allowPrograms: Type.Optional(Type.Array(Type.String())),
-    expiresAt: Type.String(),
-    passphrase: Type.String(),
-    solanaMaxPerTx: Type.Optional(Type.String()),
-    solanaMaxDaily: Type.Optional(Type.String()),
-  },
-  { additionalProperties: false },
-);
-
-const LocalSocketSignerCustodyLockRequestSchema = Type.Object(
-  {
-    sessionId: Type.Optional(Type.String()),
-    host: Type.Optional(Type.String()),
-    walletId: Type.Optional(Type.String()),
-  },
-  { additionalProperties: false },
-);
-
 export const LocalSocketSignerRequestSchema = Type.Union(
   [
     Type.Object({ op: Type.Literal("health") }, { additionalProperties: false }),
@@ -493,38 +419,6 @@ export const LocalSocketSignerRequestSchema = Type.Union(
       },
       { additionalProperties: false },
     ),
-    Type.Object(
-      { op: Type.Literal("prepareTx"), request: TxRequestSchema },
-      { additionalProperties: false },
-    ),
-    Type.Object(
-      { op: Type.Literal("sendTx"), request: TxRequestSchema },
-      { additionalProperties: false },
-    ),
-    Type.Object(
-      { op: Type.Literal("signTx"), request: TxRequestSchema },
-      { additionalProperties: false },
-    ),
-    Type.Object(
-      { op: Type.Literal("sendSolanaInstruction"), request: SolanaInstructionRequestSchema },
-      { additionalProperties: false },
-    ),
-    Type.Object(
-      { op: Type.Literal("sendSolanaInstructions"), request: SolanaInstructionsRequestSchema },
-      { additionalProperties: false },
-    ),
-    Type.Object(
-      { op: Type.Literal("custodyStatus"), walletId: Type.Optional(Type.String()) },
-      { additionalProperties: false },
-    ),
-    Type.Object(
-      { op: Type.Literal("unlockCustody"), request: LocalSocketSignerCustodyUnlockRequestSchema },
-      { additionalProperties: false },
-    ),
-    Type.Object(
-      { op: Type.Literal("lockCustody"), request: LocalSocketSignerCustodyLockRequestSchema },
-      { additionalProperties: false },
-    ),
   ],
   { additionalProperties: false },
 );
@@ -627,69 +521,6 @@ export const LocalSocketSignerBalanceResultSchema = Type.Object(
     address: Type.String(),
     balance: Type.String(),
     unit: Type.Optional(Type.String()),
-  },
-  { additionalProperties: false },
-);
-
-export const LocalSocketSignerPrepareResultSchema = Type.Object(
-  {
-    ok: Type.Boolean(),
-    chain: WalletChainSchema,
-    preparedId: Type.String(),
-    signer: Type.Optional(Type.String()),
-    metadata: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
-  },
-  { additionalProperties: false },
-);
-
-export const LocalSocketSignerSendResultSchema = Type.Object(
-  {
-    ok: Type.Boolean(),
-    chain: WalletChainSchema,
-    txHash: Type.String(),
-    signer: Type.Optional(Type.String()),
-    metadata: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
-  },
-  { additionalProperties: false },
-);
-
-export const LocalSocketSignerSignResultSchema = Type.Object(
-  {
-    ok: Type.Boolean(),
-    chain: WalletChainSchema,
-    signedTxBase64: Type.String(),
-    signer: Type.Optional(Type.String()),
-    metadata: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
-  },
-  { additionalProperties: false },
-);
-
-export const LocalSocketSignerSendSolanaInstructionResultSchema = LocalSocketSignerSendResultSchema;
-export const LocalSocketSignerSendSolanaInstructionsResultSchema =
-  LocalSocketSignerSendResultSchema;
-
-export const LocalSocketSignerCustodyStatusResultSchema = Type.Object(
-  {
-    active: Type.Boolean(),
-    sessionId: Type.Optional(Type.String()),
-    host: Type.Optional(Type.String()),
-    expiresAt: Type.Optional(Type.String()),
-    walletId: Type.Optional(Type.String()),
-    role: Type.Optional(
-      Type.Union([Type.Literal("mining"), Type.Literal("agent"), Type.Literal("vault")]),
-    ),
-    chains: Type.Optional(Type.Array(WalletChainSchema)),
-    allowPrograms: Type.Optional(Type.Array(Type.String())),
-    solanaMaxPerTx: Type.Optional(Type.String()),
-    solanaMaxDaily: Type.Optional(Type.String()),
-  },
-  { additionalProperties: false },
-);
-
-export const LocalSocketSignerCustodyLockResultSchema = Type.Object(
-  {
-    active: Type.Boolean(),
-    removed: Type.Boolean(),
   },
   { additionalProperties: false },
 );
@@ -897,21 +728,5 @@ export function validateLocalSocketSignerResult(
       return Value.Check(LocalSocketSignerAddressMapSchema, result);
     case "getBalance":
       return Value.Check(LocalSocketSignerBalanceResultSchema, result);
-    case "prepareTx":
-      return Value.Check(LocalSocketSignerPrepareResultSchema, result);
-    case "sendTx":
-      return Value.Check(LocalSocketSignerSendResultSchema, result);
-    case "signTx":
-      return Value.Check(LocalSocketSignerSignResultSchema, result);
-    case "sendSolanaInstruction":
-      return Value.Check(LocalSocketSignerSendSolanaInstructionResultSchema, result);
-    case "sendSolanaInstructions":
-      return Value.Check(LocalSocketSignerSendSolanaInstructionsResultSchema, result);
-    case "custodyStatus":
-      return Value.Check(LocalSocketSignerCustodyStatusResultSchema, result);
-    case "unlockCustody":
-      return Value.Check(LocalSocketSignerCustodyStatusResultSchema, result);
-    case "lockCustody":
-      return Value.Check(LocalSocketSignerCustodyLockResultSchema, result);
   }
 }

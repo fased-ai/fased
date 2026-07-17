@@ -1,11 +1,9 @@
-import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { initializeWalletCustodyCeremony } from "../wallet/wallet-custody.js";
 import type { WalletProviderAdapter } from "../wallet/wallet-provider-adapter.js";
 import * as walletProviderResolver from "../wallet/wallet-provider-resolver.js";
 import type { ResolvedGatewayAuth } from "./auth.js";
@@ -414,7 +412,7 @@ describe("wallet approval-auth HTTP", () => {
     });
   });
 
-  test("accepts wallet.custody-unlock as a valid passkey assertion operation", async () => {
+  test("rejects removed custody operations at the Gateway passkey boundary", async () => {
     await withTempConfig({
       cfg,
       run: async () => {
@@ -439,8 +437,7 @@ describe("wallet approval-auth HTTP", () => {
           response.res,
         );
         expect(response.res.statusCode).toBe(400);
-        expect(response.getBody()).toContain("webauthn_not_ready");
-        expect(response.getBody()).not.toContain("invalid_operation");
+        expect(response.getBody()).toContain("invalid_operation");
       },
     });
   });
@@ -807,7 +804,7 @@ describe("wallet approval-auth HTTP", () => {
     }
   });
 
-  test("blocks custody unlock when passkey mode is enabled but no passkey is enrolled", async () => {
+  test("does not expose legacy custody helper routes", async () => {
     await withTempConfig({
       cfg,
       run: async () => {
@@ -821,18 +818,29 @@ describe("wallet approval-auth HTTP", () => {
           handleHooksRequest: async () => false,
           resolvedAuth,
         });
-        const response = createResponse();
-        await dispatch(
-          server,
-          createRequest({
-            path: "/api/wallet/custody/unlock",
-            authorization: "Bearer root-token",
-            body: {},
-          }),
-          response.res,
-        );
-        expect(response.res.statusCode).toBe(401);
-        expect(response.getBody()).toContain("wallet_control_passkey_not_ready");
+        for (const route of [
+          "/api/wallet/custody/status",
+          "/api/wallet/custody/init",
+          "/api/wallet/custody/recover",
+          "/api/wallet/custody/enroll-device",
+          "/api/wallet/custody/revoke-device",
+          "/api/wallet/custody/disable",
+          "/api/wallet/custody/unlock",
+          "/api/wallet/custody/refresh",
+          "/api/wallet/custody/lock",
+        ]) {
+          const response = createResponse();
+          await dispatch(
+            server,
+            createRequest({
+              path: route,
+              authorization: "Bearer root-token",
+              body: {},
+            }),
+            response.res,
+          );
+          expect(response.res.statusCode, `${route}: ${response.getBody()}`).toBe(404);
+        }
       },
     });
   });
@@ -865,211 +873,6 @@ describe("wallet approval-auth HTTP", () => {
         expect(response.getBody()).toContain("wallet_control_passkey_not_ready");
       },
     });
-  });
-
-  test("blocks removing the last passkey while any wallet still has split-key security", async () => {
-    const stateDir = await mkdtemp(path.join(os.tmpdir(), "fased-wallet-auth-splitkey-test-"));
-    const previousEnv = {
-      FASED_STATE_DIR: process.env.FASED_STATE_DIR,
-      FASED_WALLET_CUSTODY_MODE: process.env.FASED_WALLET_CUSTODY_MODE,
-      FASED_WALLET_CUSTODY_PHASE2_COMPLETE: process.env.FASED_WALLET_CUSTODY_PHASE2_COMPLETE,
-      FASED_WALLET_CUSTODY_PASSKEY_CEREMONY: process.env.FASED_WALLET_CUSTODY_PASSKEY_CEREMONY,
-      FASED_WALLET_CUSTODY_EPHEMERAL_RECONSTRUCTION:
-        process.env.FASED_WALLET_CUSTODY_EPHEMERAL_RECONSTRUCTION,
-      FASED_WALLET_APPROVAL_AUTH: process.env.FASED_WALLET_APPROVAL_AUTH,
-    };
-    try {
-      process.env.FASED_STATE_DIR = stateDir;
-      process.env.FASED_WALLET_CUSTODY_MODE = "split-key";
-      process.env.FASED_WALLET_CUSTODY_PHASE2_COMPLETE = "1";
-      process.env.FASED_WALLET_CUSTODY_PASSKEY_CEREMONY = "1";
-      process.env.FASED_WALLET_CUSTODY_EPHEMERAL_RECONSTRUCTION = "1";
-      process.env.FASED_WALLET_APPROVAL_AUTH = "none";
-      const walletDir = path.join(stateDir, "wallet");
-      await mkdir(walletDir, { recursive: true });
-      const approvalToken = "remove-last-passkey";
-      await writeFile(
-        path.join(walletDir, "wallet-approval-auth.json"),
-        `${JSON.stringify(
-          {
-            version: 2,
-            passkeys: [
-              {
-                id: "credential-1",
-                label: "fc",
-                createdAt: "2026-04-08T12:30:08.000Z",
-                publicKeySpki: "pub",
-                publicKeyAlgorithm: -7,
-                signCount: 0,
-              },
-            ],
-            challenges: [],
-            grants: [
-              {
-                tokenHash: createHash("sha256").update(approvalToken).digest("hex"),
-                host: "fasedagent7f1b9b93ccfdb.agents.fased.app",
-                operation: "wallet.passkey-remove",
-                createdAt: new Date().toISOString(),
-                expiresAt: new Date(Date.now() + 60_000).toISOString(),
-              },
-            ],
-          },
-          null,
-          2,
-        )}\n`,
-      );
-      const custody = initializeWalletCustodyCeremony({
-        walletId: "payment-wallet",
-        env: process.env,
-      });
-      expect(custody.ok).toBe(true);
-
-      await withTempConfig({
-        cfg,
-        run: async () => {
-          const server = createGatewayHttpServer({
-            canvasHost: null,
-            clients: new Set(),
-            controlUiEnabled: false,
-            controlUiBasePath: "/ui",
-            openAiChatCompletionsEnabled: false,
-            openResponsesEnabled: false,
-            handleHooksRequest: async () => false,
-            resolvedAuth,
-          });
-          const response = createResponse();
-          await dispatch(
-            server,
-            createRequest({
-              method: "DELETE",
-              path: "/api/wallet/approval-auth/passkeys/credential-1",
-              authorization: "Bearer root-token",
-              headers: { "x-wallet-approval-token": approvalToken },
-            }),
-            response.res,
-          );
-
-          expect(response.res.statusCode).toBe(409);
-          expect(response.getBody()).toContain("wallet_passkey_required_by_split_key");
-        },
-      });
-    } finally {
-      for (const [key, value] of Object.entries(previousEnv)) {
-        if (value === undefined) {
-          delete process.env[key];
-        } else {
-          process.env[key] = value;
-        }
-      }
-      await rm(stateDir, { recursive: true, force: true });
-    }
-  });
-
-  test("allows removing the last passkey when only stale legacy split-key folders remain", async () => {
-    const stateDir = await mkdtemp(path.join(os.tmpdir(), "fased-wallet-auth-stale-splitkey-"));
-    const previousEnv = {
-      FASED_STATE_DIR: process.env.FASED_STATE_DIR,
-      FASED_WALLET_CUSTODY_MODE: process.env.FASED_WALLET_CUSTODY_MODE,
-      FASED_WALLET_CUSTODY_PHASE2_COMPLETE: process.env.FASED_WALLET_CUSTODY_PHASE2_COMPLETE,
-      FASED_WALLET_CUSTODY_PASSKEY_CEREMONY: process.env.FASED_WALLET_CUSTODY_PASSKEY_CEREMONY,
-      FASED_WALLET_CUSTODY_EPHEMERAL_RECONSTRUCTION:
-        process.env.FASED_WALLET_CUSTODY_EPHEMERAL_RECONSTRUCTION,
-      FASED_WALLET_APPROVAL_AUTH: process.env.FASED_WALLET_APPROVAL_AUTH,
-    };
-    try {
-      process.env.FASED_STATE_DIR = stateDir;
-      process.env.FASED_WALLET_CUSTODY_MODE = "split-key";
-      process.env.FASED_WALLET_CUSTODY_PHASE2_COMPLETE = "1";
-      process.env.FASED_WALLET_CUSTODY_PASSKEY_CEREMONY = "1";
-      process.env.FASED_WALLET_CUSTODY_EPHEMERAL_RECONSTRUCTION = "1";
-      process.env.FASED_WALLET_APPROVAL_AUTH = "none";
-      const walletDir = path.join(stateDir, "wallet");
-      await mkdir(walletDir, { recursive: true });
-      const approvalToken = "remove-stale-splitkey-passkey";
-      await writeFile(
-        path.join(walletDir, "wallet-approval-auth.json"),
-        `${JSON.stringify(
-          {
-            version: 2,
-            passkeys: [
-              {
-                id: "credential-1",
-                label: "fc",
-                createdAt: "2026-04-08T12:30:08.000Z",
-                publicKeySpki: "pub",
-                publicKeyAlgorithm: -7,
-                signCount: 0,
-              },
-            ],
-            challenges: [],
-            grants: [
-              {
-                tokenHash: createHash("sha256").update(approvalToken).digest("hex"),
-                host: "fasedagent7f1b9b93ccfdb.agents.fased.app",
-                operation: "wallet.passkey-remove",
-                createdAt: new Date().toISOString(),
-                expiresAt: new Date(Date.now() + 60_000).toISOString(),
-              },
-            ],
-          },
-          null,
-          2,
-        )}\n`,
-      );
-      const custody = initializeWalletCustodyCeremony({
-        walletId: "solana-2",
-        env: process.env,
-      });
-      expect(custody.ok).toBe(true);
-      const sharePath = path.join(walletDir, "custody", "solana-2", "shares.v1.json");
-      const staleShare = JSON.parse(await readFile(sharePath, "utf8")) as Record<string, unknown>;
-      staleShare.role = "payment";
-      await writeFile(sharePath, `${JSON.stringify(staleShare, null, 2)}\n`);
-
-      await withTempConfig({
-        cfg,
-        run: async () => {
-          const server = createGatewayHttpServer({
-            canvasHost: null,
-            clients: new Set(),
-            controlUiEnabled: false,
-            controlUiBasePath: "/ui",
-            openAiChatCompletionsEnabled: false,
-            openResponsesEnabled: false,
-            handleHooksRequest: async () => false,
-            resolvedAuth,
-          });
-          const response = createResponse();
-          await dispatch(
-            server,
-            createRequest({
-              method: "DELETE",
-              path: "/api/wallet/approval-auth/passkeys/credential-1",
-              authorization: "Bearer root-token",
-              headers: { "x-wallet-approval-token": approvalToken },
-            }),
-            response.res,
-          );
-
-          expect(response.res.statusCode).toBe(200);
-          const body = parseBody(response.getBody());
-          expect(body).toMatchObject({
-            ok: true,
-            snapshot: { mode: "none", passkeyCount: 0, ready: true },
-          });
-          expect(response.getBody()).not.toContain("wallet_passkey_required_by_split_key");
-        },
-      });
-    } finally {
-      for (const [key, value] of Object.entries(previousEnv)) {
-        if (value === undefined) {
-          delete process.env[key];
-        } else {
-          process.env[key] = value;
-        }
-      }
-      await rm(stateDir, { recursive: true, force: true });
-    }
   });
 
   test("converts Solana human amountFormat for /api/wallet/approvals/create", async () => {

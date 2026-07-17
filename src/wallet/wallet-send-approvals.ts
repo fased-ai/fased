@@ -6,15 +6,7 @@ import { tryResolveSatRuntimeIds } from "../config/sat-runtime-ids.js";
 import type { WalletProviderId } from "../config/types.wallet.js";
 import { publishFederationSettlementEvidence } from "../federation/settlement-evidence.js";
 import { executeSolanaSwapApprovalPayload, isSolanaSwapApprovalPayload } from "./solana-swap.js";
-import {
-  consumeWalletApprovalGrant,
-  resolveWalletApprovalAuthMode,
-} from "./wallet-approval-auth.js";
 import { appendWalletAuditEntry } from "./wallet-audit-log.js";
-import {
-  enforceWalletCustodyForAutonomousSend,
-  withWalletCustodySigningMaterial,
-} from "./wallet-custody.js";
 import {
   simulateWalletPolicy,
   type WalletApprovalDiff,
@@ -513,6 +505,9 @@ async function prepareAndSendProviderTransaction(params: {
   if (params.provider.id !== "turnkey") {
     return await params.provider.sendTx(payload);
   }
+  if (!params.provider.prepareTx) {
+    throw new Error("turnkey provider does not expose transaction preparation");
+  }
   const prepared = await params.provider.prepareTx(payload);
   return await params.provider.sendTx({
     ...payload,
@@ -633,9 +628,6 @@ export async function createOrExecuteWalletSend(params: {
   sendPath?: WalletSendPath;
   providerIdOverride?: WalletProviderId;
   settlementContext?: WalletSettlementContext;
-  approvalToken?: string;
-  approvalHost?: string;
-  custodyDeviceShare?: string;
   env?: NodeJS.ProcessEnv;
 }): Promise<WalletCreateSendResult> {
   const env = params.env ?? process.env;
@@ -854,67 +846,6 @@ export async function createOrExecuteWalletSend(params: {
       }),
     };
   }
-  const custodyGate = await enforceWalletCustodyForAutonomousSend({
-    wallet: effectiveConfig,
-    env,
-    cfg,
-    walletId: params.payload.walletId,
-    approvalToken: params.approvalToken,
-    approvalHost: params.approvalHost,
-    deviceShare: params.custodyDeviceShare,
-  });
-  if (!custodyGate.ok) {
-    if (settlementRequestId) {
-      upsertSettlementLinkForPayload({
-        requestId: settlementRequestId,
-        payload: settlementPayload,
-        settlementContext: params.settlementContext,
-        mode: resolvedMode,
-        status: "failed",
-        reason: custodyGate.message,
-        env,
-      });
-    }
-    return {
-      ok: false,
-      code: custodyGate.code,
-      message: custodyGate.message,
-      requestId: settlementRequestId,
-    };
-  }
-  if (
-    params.sendPath !== "automation" &&
-    custodyGate.custodyMode !== "split-key-active" &&
-    resolveWalletApprovalAuthMode(env, cfg) === "webauthn"
-  ) {
-    const consumed = consumeWalletApprovalGrant({
-      host: params.approvalHost?.trim() || "127.0.0.1",
-      operation: "wallet.send",
-      token: params.approvalToken ?? "",
-      env,
-      cfg,
-    });
-    if (!consumed.ok) {
-      if (settlementRequestId) {
-        upsertSettlementLinkForPayload({
-          requestId: settlementRequestId,
-          payload: settlementPayload,
-          settlementContext: params.settlementContext,
-          mode: resolvedMode,
-          status: "failed",
-          reason: consumed.message,
-          env,
-        });
-      }
-      return {
-        ok: false,
-        code: consumed.code,
-        message: consumed.message,
-        requestId: settlementRequestId,
-      };
-    }
-  }
-
   const daily = enforceWalletDailyCap({
     config: effectiveConfig,
     chain: params.payload.chain,
@@ -970,29 +901,12 @@ export async function createOrExecuteWalletSend(params: {
       env,
     });
     const sent = await executeWalletSendOnce({
-      execute: async () => {
-        if (custodyGate.custodyMode === "split-key-active" && custodyGate.session) {
-          const guarded = await withWalletCustodySigningMaterial({
-            sessionId: custodyGate.session.id,
-            host: custodyGate.session.host,
-            handler: async () =>
-              await prepareAndSendProviderTransaction({
-                provider,
-                payload: params.payload,
-                requestId: settlementRequestId!,
-              }),
-          });
-          if (!guarded.ok) {
-            throw new Error(guarded.message);
-          }
-          return guarded.value;
-        }
-        return await prepareAndSendProviderTransaction({
+      execute: async () =>
+        await prepareAndSendProviderTransaction({
           provider,
           payload: params.payload,
           requestId: settlementRequestId!,
-        });
-      },
+        }),
     });
     if (!sent.ok) {
       throw new Error(`${normalizeErrorMessage(sent.error)} (attempts=${sent.attempts})`);
@@ -1215,7 +1129,6 @@ export async function approveWalletSendRequest(params: {
   config: ResolvedWalletRuntimeConfig;
   providerIdOverride?: WalletProviderId;
   reviewAuthorization?: WalletProviderSignerReviewAuthorizationV2;
-  approvalHost?: string;
   env?: NodeJS.ProcessEnv;
 }) {
   const env = params.env ?? process.env;
@@ -1569,58 +1482,6 @@ export async function approveWalletSendRequest(params: {
     };
   }
 
-  const custodyGate = await enforceWalletCustodyForAutonomousSend({
-    wallet: params.config,
-    cfg,
-    env,
-    walletId: request.payload.walletId,
-    approvalHost: params.approvalHost,
-  });
-  if (!custodyGate.ok) {
-    if (custodyGate.code === "custody_unlock_required") {
-      syncApprovalTaskForRequest({ request, settlementLink });
-      return {
-        ok: false as const,
-        code: custodyGate.code,
-        message: custodyGate.message,
-        request,
-      };
-    }
-    request.status = "failed";
-    request.reason = custodyGate.message;
-    request.result = { error: request.reason };
-    request.decisionAt = new Date().toISOString();
-    saveFile(file, env);
-    syncApprovalTaskForRequest({ request, settlementLink });
-    appendWalletAuditEntry({
-      action: "send_failed",
-      actor: params.actor?.trim() || "operator",
-      details: {
-        requestId: request.id,
-        reason: request.reason,
-        providerId: request.payload.providerId,
-        walletId: request.payload.walletId,
-        walletName: request.payload.walletName,
-        taskId: settlementLink?.taskId,
-        invoiceId: settlementLink?.invoiceId,
-        senderHandle: settlementLink?.senderHandle,
-      },
-      env,
-    });
-    markWalletSettlementLinkOutcome({
-      requestId: request.id,
-      status: "failed",
-      reason: request.reason,
-      env,
-    });
-    return {
-      ok: false as const,
-      code: custodyGate.code,
-      message: request.reason,
-      request,
-    };
-  }
-
   const daily = enforceWalletDailyCap({
     config: effectiveConfig,
     chain: request.payload.chain,
@@ -1684,29 +1545,12 @@ export async function approveWalletSendRequest(params: {
 
   try {
     const sent = await executeWalletSendOnce({
-      execute: async () => {
-        if (custodyGate.custodyMode === "split-key-active" && custodyGate.session) {
-          const guarded = await withWalletCustodySigningMaterial({
-            sessionId: custodyGate.session.id,
-            host: custodyGate.session.host,
-            handler: async () =>
-              await prepareAndSendProviderTransaction({
-                provider,
-                payload: request.payload,
-                requestId: request.id,
-              }),
-          });
-          if (!guarded.ok) {
-            throw new Error(guarded.message);
-          }
-          return guarded.value;
-        }
-        return await prepareAndSendProviderTransaction({
+      execute: async () =>
+        await prepareAndSendProviderTransaction({
           provider,
           payload: request.payload,
           requestId: request.id,
-        });
-      },
+        }),
     });
     if (!sent.ok) {
       throw new Error(`${normalizeErrorMessage(sent.error)} (attempts=${sent.attempts})`);

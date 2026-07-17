@@ -433,7 +433,6 @@ function hasScopedWalletEnvValue(env: NodeJS.ProcessEnv, prefix: string): boolea
 function hasLocalSignerMaterialEnv(env: NodeJS.ProcessEnv): boolean {
   if (
     String(env.FASED_WALLET_LOCAL_SIGNER_SOCKET ?? "").trim() ||
-    String(env.FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET ?? "").trim() ||
     String(env.FASED_WALLET_SIGNER_STATE_DIR ?? "").trim() ||
     String(env.FASED_WALLET_PASSPHRASE_FILE ?? "").trim()
   ) {

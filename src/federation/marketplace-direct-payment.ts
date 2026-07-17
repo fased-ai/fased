@@ -111,17 +111,6 @@ function parseHumanAmountToOnChainInteger(amountInput: string, decimals: number)
 
 function normalizeMarketplacePaymentFailure(message: string): string {
   const normalized = message.trim();
-  const lower = normalized.toLowerCase();
-  if (
-    lower.includes("split-key custody requires an active unlock session") ||
-    lower.includes("custody_unlock_required")
-  ) {
-    return [
-      "Buyer Agent wallet is locked by split-key custody.",
-      "Open Wallet, select the Agent wallet, unlock custody with passkey/device share, then retry Pay.",
-      "No funds were moved.",
-    ].join(" ");
-  }
   return normalized || "wallet payment failed";
 }
 

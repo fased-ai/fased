@@ -154,12 +154,6 @@ type WalletBalanceRefreshResult = {
   error?: unknown;
 };
 
-type WalletCustodyRefreshResult = {
-  walletId: string;
-  custody?: Awaited<ReturnType<typeof getWalletStatus>>["status"]["custody"];
-  error?: unknown;
-};
-
 type WalletAuditRefreshResult =
   | {
       status: "fulfilled";
@@ -355,51 +349,6 @@ function queueBackgroundWalletBalanceRefresh(
     .catch(() => {});
 }
 
-function queueBackgroundWalletCustodyRefresh(
-  host: FasedAgentApp,
-  loadToken: number,
-  walletIds: string[],
-) {
-  if (walletIds.length === 0) {
-    return;
-  }
-  const isStale = () => walletLoadTokens.get(host) !== loadToken;
-  void Promise.all(
-    walletIds.map(async (walletId) => {
-      try {
-        const result = await getWalletStatus(walletId);
-        return {
-          walletId,
-          custody: result.status.custody,
-        } satisfies WalletCustodyRefreshResult;
-      } catch (error) {
-        return {
-          walletId,
-          error,
-        } satisfies WalletCustodyRefreshResult;
-      }
-    }),
-  )
-    .then((results) => {
-      if (isStale()) {
-        return;
-      }
-      const next = { ...host.walletCustodyByWalletId };
-      let updated = false;
-      for (const entry of results) {
-        if (!entry.custody) {
-          continue;
-        }
-        next[entry.walletId] = entry.custody;
-        updated = true;
-      }
-      if (updated) {
-        host.walletCustodyByWalletId = next;
-      }
-    })
-    .catch(() => {});
-}
-
 export async function loadWallet(host: FasedAgentApp) {
   const loadToken = (walletLoadTokens.get(host) ?? 0) + 1;
   walletLoadTokens.set(host, loadToken);
@@ -442,15 +391,6 @@ export async function loadWallet(host: FasedAgentApp) {
 
     if (statusResult.status === "fulfilled") {
       host.walletStatus = statusResult.value.status;
-      const targetWalletId = String(
-        statusResult.value.status.custody?.target?.walletId ?? "",
-      ).trim();
-      if (targetWalletId) {
-        host.walletCustodyByWalletId = {
-          ...host.walletCustodyByWalletId,
-          [targetWalletId]: statusResult.value.status.custody,
-        };
-      }
       if (signerDoctorResult.status === "fulfilled") {
         host.walletStatus = {
           ...host.walletStatus,
@@ -579,11 +519,6 @@ export async function loadWallet(host: FasedAgentApp) {
       .map((wallet) => wallet.id)
       .filter((walletId) => walletId !== selectedWalletId);
     queueWalletMiningSummaryRefresh(host, loadToken);
-    queueBackgroundWalletCustodyRefresh(
-      host,
-      loadToken,
-      host.walletNamedWallets.map((wallet) => wallet.id),
-    );
     queueBackgroundWalletBalanceRefresh(host, loadToken, backgroundWalletIds);
 
     const balancesResultPromise = (
@@ -637,7 +572,6 @@ export async function loadWallet(host: FasedAgentApp) {
     host.walletBalances = null;
     host.walletProviders = [];
     host.walletNamedWallets = [];
-    host.walletCustodyByWalletId = {};
     host.walletAssignments = {};
     host.walletDefaultWalletId = null;
     host.walletError = String(err);

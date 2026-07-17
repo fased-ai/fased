@@ -46,7 +46,6 @@ export {
   probeLocalSocketSignerHealth,
   requireLocalSocketSignerPath,
 } from "../wallet/providers/local-socket-signer-adapter.js";
-export { enforceWalletCustodyForAutonomousSend } from "../wallet/wallet-custody.js";
 export {
   readWalletProviderRegistry,
   resolveWalletUserRole,

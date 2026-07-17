@@ -2,7 +2,6 @@ import { createHash, randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import {
   callLocalSocketSigner,
-  enforceWalletCustodyForAutonomousSend,
   loadConfig,
   readWalletProviderRegistry,
   requireLocalSocketSignerPath,
@@ -196,30 +195,6 @@ function resolveSatProviderId(cfg: FasedAgentConfig, env: NodeJS.ProcessEnv): st
   return resolveWalletProviderId(cfg, effectiveEnv);
 }
 
-async function enforceSatCustodyAutonomousSigning(
-  cfg: FasedAgentConfig,
-  env: NodeJS.ProcessEnv,
-): Promise<void> {
-  const effectiveEnv = resolveSatEffectiveEnv(cfg, env);
-  const walletCfg = resolveWalletRuntimeConfig(cfg, effectiveEnv);
-  const walletId = resolveSatWalletId(cfg);
-  if (walletCfg.execution.mode !== "autonomous") {
-    return;
-  }
-  const custodyGate = await enforceWalletCustodyForAutonomousSend({
-    wallet: walletCfg,
-    env: effectiveEnv,
-    cfg,
-    walletId,
-    approvalHost: String(
-      effectiveEnv.FASED_WALLET_CUSTODY_ACTIVE_HOST ?? effectiveEnv.FASED_A2A_ORIGIN ?? "127.0.0.1",
-    ),
-  });
-  if (!custodyGate.ok) {
-    throw new Error(custodyGate.message);
-  }
-}
-
 function resolveSatRegistrySolanaAddress(cfg: FasedAgentConfig, env: NodeJS.ProcessEnv): string {
   const effectiveEnv = resolveSatEffectiveEnv(cfg, env);
   const walletId = resolveSatWalletId(cfg);
@@ -318,7 +293,6 @@ function assertDedicatedBondProgram(env: NodeJS.ProcessEnv): void {
 export async function resolveSatValidatorAuthority(_config: SatMiningConfig) {
   const cfg = loadConfigForSatRuntime(_config);
   const effectiveEnv = resolveSatEffectiveEnv(cfg, process.env);
-  await enforceSatCustodyAutonomousSigning(cfg, effectiveEnv);
   if (resolveSatProviderId(cfg, effectiveEnv) !== "local-socket-signer") {
     throw new Error(
       "SAT mining unattended signing currently requires local-socket-signer for validator authority resolution",
@@ -622,7 +596,6 @@ async function submitInstruction(
   } & SatInstructionSubmitSpec,
 ) {
   const effectiveEnv = resolveSatEffectiveEnv(params.cfg, params.env);
-  await enforceSatCustodyAutonomousSigning(params.cfg, effectiveEnv);
   if (resolveSatProviderId(params.cfg, effectiveEnv) !== "local-socket-signer") {
     throw new Error("SAT mining unattended submission currently requires local-socket-signer");
   }
@@ -648,7 +621,6 @@ async function submitInstructionBatch(params: {
     throw new Error("SAT cleanup batch exceeds signer limit");
   }
   const effectiveEnv = resolveSatEffectiveEnv(params.cfg, params.env);
-  await enforceSatCustodyAutonomousSigning(params.cfg, effectiveEnv);
   if (resolveSatProviderId(params.cfg, effectiveEnv) !== "local-socket-signer") {
     throw new Error(
       "SAT mining unattended batch submission currently requires local-socket-signer",

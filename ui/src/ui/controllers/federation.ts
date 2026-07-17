@@ -896,23 +896,8 @@ function marketplaceWalletIsAgent(
   return role === "agent" || wallet.id === String(defaultWalletId ?? "").trim();
 }
 
-function marketplaceWalletIsSplitKeyLocked(
-  host: Pick<FasedAgentApp, "walletCustodyByWalletId" | "walletStatus">,
-  walletId: string,
-): boolean {
-  const custody =
-    host.walletCustodyByWalletId?.[walletId] ??
-    (host.walletStatus?.custody?.target?.walletId === walletId
-      ? host.walletStatus.custody
-      : undefined);
-  return custody?.mode === "split-key-active" && !custody.unlock?.active;
-}
-
 function resolveMarketplacePaymentWalletId(
-  host: Pick<
-    FasedAgentApp,
-    "walletNamedWallets" | "walletDefaultWalletId" | "walletCustodyByWalletId" | "walletStatus"
-  >,
+  host: Pick<FasedAgentApp, "walletNamedWallets" | "walletDefaultWalletId">,
 ): string | undefined {
   const defaultWalletId = String(host.walletDefaultWalletId ?? "").trim();
   const wallets = Array.isArray(host.walletNamedWallets) ? host.walletNamedWallets : [];
@@ -922,12 +907,7 @@ function resolveMarketplacePaymentWalletId(
   const preferred = defaultWalletId
     ? agentWallets.find((wallet) => wallet.id === defaultWalletId)
     : undefined;
-  const unlockedPreferred =
-    preferred && !marketplaceWalletIsSplitKeyLocked(host, preferred.id) ? preferred : undefined;
-  const unlockedAny = agentWallets.find(
-    (wallet) => !marketplaceWalletIsSplitKeyLocked(host, wallet.id),
-  );
-  return (unlockedPreferred ?? unlockedAny ?? preferred ?? agentWallets[0])?.id;
+  return (preferred ?? agentWallets[0])?.id;
 }
 
 function resetFederationOperatorEconomy(

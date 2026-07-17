@@ -1,8 +1,6 @@
 import type { Command } from "commander";
 import {
   walletCanaryCommand,
-  walletCustodyLockCommand,
-  walletCustodyInitCommand,
   walletInboundListCommand,
   walletInboundPollCommand,
   walletInboundReconcileCommand,
@@ -41,7 +39,7 @@ function resolvePublicWalletSetupChain(raw: unknown): "solana" | undefined {
 export function registerWalletCommands(program: Command) {
   const wallet = program
     .command("wallet")
-    .description("Wallet providers, keystore, custody, and policy status")
+    .description("Wallet providers, native signer, and policy status")
     .action(() => {
       wallet.help({ error: true });
     });
@@ -469,45 +467,6 @@ export function registerWalletCommands(program: Command) {
         await walletSignerDoctorCommand(defaultRuntime, {
           socketPath: typeof opts.socket === "string" ? opts.socket : undefined,
           json: Boolean(opts.json),
-        });
-      });
-    });
-
-  wallet
-    .command("custody-init")
-    .description("Initialize split-key custody ceremony (device/hot/cold share state)")
-    .option("--json", "Print JSON output", false)
-    .option("--force", "Overwrite existing custody ceremony state", false)
-    .option("--wallet <walletId>", "Target wallet id for per-wallet custody state")
-    .option(
-      "--device-share <base64>",
-      "Optional pre-generated device share (base64/base64url, 32 bytes)",
-    )
-    .action(async (opts) => {
-      await runCommandWithRuntime(defaultRuntime, async () => {
-        await walletCustodyInitCommand(defaultRuntime, {
-          json: Boolean(opts.json),
-          force: Boolean(opts.force),
-          walletId: typeof opts.wallet === "string" ? opts.wallet : undefined,
-          deviceShare: typeof opts.deviceShare === "string" ? opts.deviceShare : undefined,
-        });
-      });
-    });
-
-  wallet
-    .command("custody-lock")
-    .description(
-      "Immediately end active custody unlock sessions (clears ephemeral signing material)",
-    )
-    .option("--host <host>", "Only lock unlock sessions for this host")
-    .option("--wallet <walletId>", "Only lock unlock sessions for this wallet")
-    .option("--json", "Print JSON output", false)
-    .action(async (opts) => {
-      await runCommandWithRuntime(defaultRuntime, async () => {
-        await walletCustodyLockCommand(defaultRuntime, {
-          json: Boolean(opts.json),
-          host: typeof opts.host === "string" ? opts.host : undefined,
-          walletId: typeof opts.wallet === "string" ? opts.wallet : undefined,
         });
       });
     });

@@ -856,6 +856,9 @@ export function createWalletTool(opts?: {
       }
 
       if (action === "prepare") {
+        if (!provider.prepareTx) {
+          throw new Error(`wallet provider ${provider.id} does not support prepare`);
+        }
         const result = await provider.prepareTx(payload);
         return jsonResult({ ok: true, result });
       }

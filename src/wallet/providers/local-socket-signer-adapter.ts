@@ -25,11 +25,8 @@ import {
   type WalletProviderSignerIntentV2,
   type WalletProviderSignerTransactionEnvelopeV2,
   type WalletProviderTypedTransferIntentV2,
-  type WalletProviderPrepareTxRequest,
-  type WalletProviderPrepareTxResult,
   type WalletProviderSendTxRequest,
   type WalletProviderSendTxResult,
-  type WalletProviderSignTxResult,
   WalletProviderError,
 } from "../wallet-provider-adapter.js";
 import {
@@ -99,14 +96,6 @@ const SIGNER_SOCKET_TIMEOUT_MS: Record<LocalSocketSignerRequest["op"], number> =
   "v2.operation.reconcile": 20_000,
   getAddresses: 10_000,
   getBalance: 15_000,
-  prepareTx: 15_000,
-  signTx: 20_000,
-  sendTx: 120_000,
-  sendSolanaInstruction: 120_000,
-  sendSolanaInstructions: 120_000,
-  custodyStatus: 5_000,
-  unlockCustody: 10_000,
-  lockCustody: 10_000,
 };
 
 export type LocalSocketSignerCallOptions = {
@@ -275,7 +264,7 @@ export class LocalSocketSignerAdapter implements WalletProviderAdapter {
   readonly capabilities: WalletProviderCapabilities = {
     custodyModel: "self-hosted",
     supportsCreateWallet: false,
-    supportsPrepare: true,
+    supportsPrepare: false,
     supportsSend: true,
     supportsRotateKeys: false,
     supportsResetKeys: false,
@@ -485,14 +474,6 @@ export class LocalSocketSignerAdapter implements WalletProviderAdapter {
     return { ok: true, chain, address, balance, unit: "lamports" };
   }
 
-  async prepareTx(request: WalletProviderPrepareTxRequest): Promise<WalletProviderPrepareTxResult> {
-    void request;
-    throw new WalletProviderError({
-      code: "wallet_provider_not_implemented",
-      message: "local-socket-signer manual preparation requires signer protocol-v2 review.prepare",
-    });
-  }
-
   async sendTx(request: WalletProviderSendTxRequest): Promise<WalletProviderSendTxResult> {
     assertSecureLocalSignerSocket(this.socketPath);
     if (request.chain !== "solana") {
@@ -509,15 +490,6 @@ export class LocalSocketSignerAdapter implements WalletProviderAdapter {
       });
     }
     return await this.executeTypedTransfer(request);
-  }
-
-  async signTx(request: WalletProviderSendTxRequest): Promise<WalletProviderSignTxResult> {
-    void request;
-    throw new WalletProviderError({
-      code: "wallet_provider_not_implemented",
-      message:
-        "local-socket-signer raw transaction signing is disabled; use a typed signer-v2 operation",
-    });
   }
 
   async prepareJupiterReview(request: {

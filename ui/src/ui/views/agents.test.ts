@@ -158,6 +158,7 @@ function createProps(overrides: Record<string, unknown> = {}): AgentsProps {
       catalogStatus: null,
       authStatus: null,
     },
+    runnableModelCatalog: [],
     usage: {
       result: null,
       loading: false,
@@ -392,23 +393,6 @@ describe("renderAgents", () => {
                 notes: [],
                 passkeys: [],
                 statePath: "",
-              },
-              custody: {
-                mode: "single-key",
-                target: { walletId: "agent", role: "agent" },
-                scope: {
-                  chains: ["solana"],
-                  allowPrograms: [],
-                  solana: { maxPerTx: "0", maxDaily: "0" },
-                },
-                unlock: { active: false },
-                phase2: {
-                  complete: false,
-                  splitKeyEnabled: false,
-                  passkeyCeremonyEnabled: false,
-                  ephemeralReconstructionEnabled: false,
-                  notes: [],
-                },
               },
               paths: { rootDir: "", keysPath: "", pidPath: "" },
               checkedAt: "2026-05-07T00:00:00Z",

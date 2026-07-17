@@ -9,10 +9,6 @@ import {
   resetTaskRegistryForTests,
 } from "../tasks/task-registry.js";
 import { readWalletAuditEntries } from "./wallet-audit-log.js";
-import {
-  activateWalletCustodyUnlockSession,
-  initializeWalletCustodyCeremony,
-} from "./wallet-custody.js";
 import * as walletProviderResolver from "./wallet-provider-resolver.js";
 import { resolveWalletRuntimeConfig } from "./wallet-runtime-config.js";
 import {
@@ -40,18 +36,6 @@ vi.mock("./wallet-approval-auth.js", () => ({
     }
     return { ok: true };
   }),
-}));
-
-vi.mock("./local-socket-signer-custody.js", () => ({
-  lockLocalSignerCustody: vi.fn(async () => ({ active: false, removed: true })),
-  unlockLocalSignerCustody: vi.fn(
-    async (params: { sessionId: string; host: string; expiresAt: string }) => ({
-      active: true,
-      sessionId: params.sessionId,
-      host: params.host,
-      expiresAt: params.expiresAt,
-    }),
-  ),
 }));
 
 let tempDir = "";
@@ -425,7 +409,7 @@ describe("wallet-send-approvals", () => {
         capabilities: {
           custodyModel: "self-hosted",
           supportsCreateWallet: false,
-          supportsPrepare: true,
+          supportsPrepare: false,
           supportsSend: true,
           supportsRotateKeys: false,
           supportsResetKeys: false,
@@ -447,12 +431,6 @@ describe("wallet-send-approvals", () => {
           address: "So11111111111111111111111111111111111111112",
           balance: "1",
           unit: "lamports",
-        }),
-        prepareTx: async () => ({
-          ok: true,
-          chain: "solana",
-          preparedId: "prepared-1",
-          signer: "So11111111111111111111111111111111111111112",
         }),
         sendTx,
         prepareTypedTransferReview,
@@ -510,61 +488,6 @@ describe("wallet-send-approvals", () => {
     expect(sendTx).not.toHaveBeenCalled();
   });
 
-  it("keeps approval pending when split-key wallet is locked", async () => {
-    vi.stubEnv("FASED_WALLET_CUSTODY_MODE", "split-key");
-    vi.stubEnv("FASED_WALLET_CUSTODY_PHASE2_COMPLETE", "1");
-    vi.stubEnv("FASED_WALLET_CUSTODY_PASSKEY_CEREMONY", "1");
-    vi.stubEnv("FASED_WALLET_CUSTODY_EPHEMERAL_RECONSTRUCTION", "1");
-    vi.stubEnv("FASED_WALLET_APPROVAL_AUTH", "webauthn");
-
-    const cfg = {
-      wallet: {
-        provider: { id: "local-socket-signer" },
-        execution: { mode: "manual" },
-        runtime: {
-          enabled: true,
-          mode: "external",
-          runtime: "external-custom",
-          chains: ["solana"],
-          solana: { enabled: true },
-          service: { host: "127.0.0.1", port: 19444 },
-          policy: { directSigning: true },
-        },
-      },
-    } as const;
-    const walletCfg = resolveWalletRuntimeConfigForTest(cfg);
-    const init = initializeWalletCustodyCeremony({ env: process.env });
-    expect(init.ok).toBe(true);
-
-    const request = createWalletSendApprovalRequest({
-      payload: {
-        chain: "solana",
-        to: "So11111111111111111111111111111111111111112",
-        amount: "1",
-        providerId: "local-socket-signer",
-      },
-      requestedBy: "control-ui",
-    });
-
-    const approved = await approveWalletSendRequest({
-      requestId: request.id,
-      actor: "control-ui",
-      config: walletCfg,
-      approvalHost: "127.0.0.1",
-    });
-
-    expect(approved.ok).toBe(false);
-    if (!approved.ok) {
-      expect(approved.code).toBe("custody_unlock_required");
-      if (!approved.request) {
-        throw new Error("Expected locked custody failure to keep the approval request pending");
-      }
-      expect(approved.request.status).toBe("pending");
-    }
-    const pending = listWalletSendApprovalRequests({ status: "pending" });
-    expect(pending.map((entry) => entry.id)).toContain(request.id);
-  });
-
   it("allows reviewed operator SOL sends from the mining wallet but blocks generic automation", async () => {
     const cfg = {
       wallet: {
@@ -597,7 +520,7 @@ describe("wallet-send-approvals", () => {
         capabilities: {
           custodyModel: "self-hosted",
           supportsCreateWallet: false,
-          supportsPrepare: true,
+          supportsPrepare: false,
           supportsSend: true,
           supportsRotateKeys: false,
           supportsResetKeys: false,
@@ -619,12 +542,6 @@ describe("wallet-send-approvals", () => {
           address: "miner-address",
           balance: "1",
           unit: "lamports",
-        }),
-        prepareTx: async () => ({
-          ok: true,
-          chain: "solana",
-          preparedId: "prepared-1",
-          signer: "miner-address",
         }),
         sendTx: vi.fn(),
         prepareTypedTransferReview: async (request) => ({
@@ -735,7 +652,7 @@ describe("wallet-send-approvals", () => {
         capabilities: {
           custodyModel: "self-hosted",
           supportsCreateWallet: false,
-          supportsPrepare: true,
+          supportsPrepare: false,
           supportsSend: true,
           supportsRotateKeys: false,
           supportsResetKeys: false,
@@ -757,12 +674,6 @@ describe("wallet-send-approvals", () => {
           address: "miner-address",
           balance: "1",
           unit: "lamports",
-        }),
-        prepareTx: async () => ({
-          ok: true,
-          chain: "solana",
-          preparedId: "prepared-1",
-          signer: "miner-address",
         }),
         sendTx,
       } as ReturnType<typeof walletProviderResolver.createWalletProviderAdapter>);
@@ -813,12 +724,8 @@ describe("wallet-send-approvals", () => {
     }
   });
 
-  it("blocks autonomous send when split-key custody is active without unlock session", async () => {
+  it("ignores removed custody flags and sends autonomous transfers only through the typed provider API", async () => {
     vi.stubEnv("FASED_WALLET_CUSTODY_MODE", "split-key");
-    vi.stubEnv("FASED_WALLET_CUSTODY_PHASE2_COMPLETE", "1");
-    vi.stubEnv("FASED_WALLET_CUSTODY_PASSKEY_CEREMONY", "1");
-    vi.stubEnv("FASED_WALLET_CUSTODY_EPHEMERAL_RECONSTRUCTION", "1");
-    vi.stubEnv("FASED_WALLET_APPROVAL_AUTH", "webauthn");
 
     const cfg = {
       wallet: {
@@ -836,104 +743,12 @@ describe("wallet-send-approvals", () => {
       },
     } as const;
     const walletCfg = resolveWalletRuntimeConfigForTest(cfg);
-    const init = initializeWalletCustodyCeremony({ env: process.env });
-    expect(init.ok).toBe(true);
-
-    const result = await createOrExecuteWalletSend({
-      payload: {
-        chain: "solana",
-        to: "So11111111111111111111111111111111111111112",
-        amount: "1",
-      },
-      requestedBy: "owner",
-      config: walletCfg,
-      runtimeConfig: cfg as unknown as Record<string, unknown>,
-      approvalHost: "127.0.0.1",
-    });
-
-    expect(result.ok).toBe(false);
-    if (result.ok) {
-      return;
-    }
-    expect(result.code).toBe("custody_unlock_required");
-  });
-
-  it("requires a wallet-send passkey token when Wallet Control Passkey mode is enabled", async () => {
-    vi.stubEnv("FASED_WALLET_APPROVAL_AUTH", "webauthn");
-
-    const cfg = {
-      wallet: {
-        provider: { id: "local-socket-signer" },
-        execution: { mode: "autonomous" },
-        runtime: {
-          enabled: true,
-          mode: "external",
-          runtime: "external-custom",
-          chains: ["solana"],
-          solana: { enabled: true },
-          service: { host: "127.0.0.1", port: 19444 },
-          policy: { directSigning: true },
-        },
-      },
-    } as const;
-    const walletCfg = resolveWalletRuntimeConfigForTest(cfg);
-
-    const result = await createOrExecuteWalletSend({
-      payload: {
-        chain: "solana",
-        to: "So11111111111111111111111111111111111111112",
-        amount: "1",
-      },
-      requestedBy: "owner",
-      config: walletCfg,
-      runtimeConfig: cfg as unknown as FasedAgentConfig,
-      approvalHost: "127.0.0.1",
-    });
-
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.code).toBe("approval_token_required");
-    }
-  });
-
-  it("allows autonomous send path to proceed when split-key unlock session is active", async () => {
-    vi.stubEnv("FASED_WALLET_CUSTODY_MODE", "split-key");
-    vi.stubEnv("FASED_WALLET_CUSTODY_PHASE2_COMPLETE", "1");
-    vi.stubEnv("FASED_WALLET_CUSTODY_PASSKEY_CEREMONY", "1");
-    vi.stubEnv("FASED_WALLET_CUSTODY_EPHEMERAL_RECONSTRUCTION", "1");
-    vi.stubEnv("FASED_WALLET_APPROVAL_AUTH", "webauthn");
-
-    const cfg = {
-      wallet: {
-        provider: { id: "local-socket-signer" },
-        execution: { mode: "autonomous" },
-        runtime: {
-          enabled: true,
-          mode: "external",
-          runtime: "external-docker",
-          chains: ["solana"],
-          solana: { enabled: true },
-          service: { host: "127.0.0.1", port: 19444 },
-          policy: { directSigning: true },
-        },
-      },
-    } as const;
-    const walletCfg = resolveWalletRuntimeConfigForTest(cfg);
-    const init = initializeWalletCustodyCeremony({ env: process.env });
-    expect(init.ok).toBe(true);
-    if (!init.ok) {
-      return;
-    }
-    const unlocked = await activateWalletCustodyUnlockSession({
-      host: "127.0.0.1",
-      approvalToken: "approval-token",
-      env: process.env,
-      cfg: cfg as unknown as FasedAgentConfig,
-      wallet: walletCfg,
-      deviceShare: init.deviceShare,
-    });
-    expect(unlocked.ok).toBe(true);
-
+    const sendTx = vi.fn(async () => ({
+      ok: true as const,
+      chain: "solana" as const,
+      txHash: "0xsent",
+      signer: "So11111111111111111111111111111111111111112",
+    }));
     const providerSpy = vi
       .spyOn(walletProviderResolver, "createWalletProviderAdapter")
       .mockReturnValue({
@@ -942,7 +757,7 @@ describe("wallet-send-approvals", () => {
         capabilities: {
           custodyModel: "self-hosted",
           supportsCreateWallet: false,
-          supportsPrepare: true,
+          supportsPrepare: false,
           supportsSend: true,
           supportsRotateKeys: false,
           supportsResetKeys: false,
@@ -965,18 +780,7 @@ describe("wallet-send-approvals", () => {
           balance: "1",
           unit: "lamports",
         }),
-        prepareTx: async () => ({
-          ok: true,
-          chain: "solana",
-          preparedId: "prepared-1",
-          signer: "So11111111111111111111111111111111111111112",
-        }),
-        sendTx: async () => ({
-          ok: true,
-          chain: "solana",
-          txHash: "0xsent",
-          signer: "So11111111111111111111111111111111111111112",
-        }),
+        sendTx,
       } as ReturnType<typeof walletProviderResolver.createWalletProviderAdapter>);
 
     const result = await createOrExecuteWalletSend({
@@ -988,11 +792,16 @@ describe("wallet-send-approvals", () => {
       requestedBy: "owner",
       config: walletCfg,
       runtimeConfig: cfg as unknown as Record<string, unknown>,
-      approvalHost: "127.0.0.1",
     });
     providerSpy.mockRestore();
 
     expect(result.ok).toBe(true);
+    expect(sendTx).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chain: "solana",
+        to: "So11111111111111111111111111111111111111112",
+      }),
+    );
   });
 
   it("redacts secret-bearing provider errors from autonomous send results and audit", async () => {
@@ -1023,7 +832,7 @@ describe("wallet-send-approvals", () => {
         capabilities: {
           custodyModel: "self-hosted",
           supportsCreateWallet: false,
-          supportsPrepare: true,
+          supportsPrepare: false,
           supportsSend: true,
           supportsRotateKeys: false,
           supportsResetKeys: false,
@@ -1045,11 +854,6 @@ describe("wallet-send-approvals", () => {
           address: "So11111111111111111111111111111111111111112",
           balance: "1",
           unit: "lamports",
-        }),
-        prepareTx: async () => ({
-          ok: true,
-          chain: "solana",
-          preparedId: "prepared-1",
         }),
         sendTx,
       } as ReturnType<typeof walletProviderResolver.createWalletProviderAdapter>);

@@ -455,7 +455,6 @@ export async function runWalletProviderCanaryReport(params: {
         actor: "wallet-canary",
         config: params.wallet,
         providerIdOverride: providerId,
-        approvalHost: "127.0.0.1",
         env,
       });
       pushStep(steps, {
