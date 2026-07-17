@@ -334,11 +334,22 @@ The `app` shell is a full Linux shell on the VPS and is configured to start in
 
 Use `fased health` as the single pass/fail check after hosting install. It
 should start with `Gateway: online`. Use `fased health --verbose` only when you
-want optional channel details. If health fails, inspect the service:
+want optional channel details. The `app` account intentionally has no `sudo`
+access to the Gateway, signer, or root updater. It can run application-level
+diagnostics:
 
 ```bash
-sudo systemctl status fased-gateway --no-pager
-sudo journalctl -u fased-gateway -n 120 --no-pager
+fased gateway status
+fased wallet signer doctor --json
+```
+
+If root-owned service state or journals are required, use the VPS provider's
+authenticated console or an authorized host-administrator session, not an
+`app` sudo rule:
+
+```bash
+systemctl status fased-gateway fased-signerd --no-pager
+journalctl -u fased-gateway -u fased-signerd -n 120 --no-pager
 ```
 
 If the hosted dashboard or SSH works immediately after setup but fails after you
@@ -417,19 +428,19 @@ hosted installer is recommended because it sets the `app` runtime, Tailscale
 access, and closed public admin posture. Manual npm installs are for advanced
 local/dev or self-managed hosts.
 
-Use `fased update --channel dev` only when intentionally tracking latest
-development commits. For development/testing from the hosted repo checkout, the
-direct app-user flow is:
+Use `fased update --channel dev` only when intentionally tracking the
+development channel:
 
 ```bash
 ssh app@YOUR_VPS_TAILSCALE_NAME
-git checkout main
-git pull --ff-only origin main
-./install.sh --hosting
+fased update --channel dev
 ```
 
-Do not use the root bootstrap checkout for normal updates after hosted
-onboarding has completed.
+Do not run `./install.sh --hosting` from the `app` shell or grant `app` sudo so
+that it can do so. The bootstrap installer is a host-administrator operation;
+normal `app` updates use the verified managed Gateway and root signer updaters.
+Do not use the temporary root bootstrap checkout for normal updates after
+hosted onboarding has completed.
 
 <Note>
 You do not need a Tailscale API key for the normal manual VPS flow. The
