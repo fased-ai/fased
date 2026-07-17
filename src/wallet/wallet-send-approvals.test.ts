@@ -9,15 +9,18 @@ import {
   resetTaskRegistryForTests,
 } from "../tasks/task-registry.js";
 import { readWalletAuditEntries } from "./wallet-audit-log.js";
+import type { WalletProviderJupiterReviewV2 } from "./wallet-provider-adapter.js";
 import * as walletProviderResolver from "./wallet-provider-resolver.js";
 import { resolveWalletRuntimeConfig } from "./wallet-runtime-config.js";
 import {
   approveWalletSendRequest,
   createOrExecuteWalletSend,
+  createSignerReviewApprovalRequest,
   createWalletSendApprovalRequest,
   listWalletSendApprovalRequests,
   rejectWalletSendRequest,
   sanitizeWalletSendApprovalRequest,
+  signerReviewMatchesWalletApprovalPayload,
 } from "./wallet-send-approvals.js";
 import { listWalletSettlementLinks } from "./wallet-settlement-links.js";
 
@@ -99,6 +102,144 @@ describe("wallet-send-approvals", () => {
     const publicRequest = sanitizeWalletSendApprovalRequest(request);
     expect(publicRequest.payload.serializedTxBase64).toBeUndefined();
     expect((publicRequest.payload as { hasSerializedTx?: boolean }).hasSerializedTx).toBe(true);
+  });
+
+  it("persists every exact signer binding and recovers an already-signed review once", async () => {
+    const now = new Date().toISOString();
+    const expiresAt = new Date(Date.now() + 15 * 60_000).toISOString();
+    const walletId = "vault-reviewed";
+    const walletPublicKey = "Vault11111111111111111111111111111111111111";
+    const destination = "Dest111111111111111111111111111111111111111";
+    const systemProgram = "11111111111111111111111111111111";
+    const review: WalletProviderJupiterReviewV2 = {
+      requestId: "review-recovery-123",
+      walletId,
+      walletPublicKey,
+      intentType: "solana.nativeTransfer",
+      intentDigest: `sha256:${"a".repeat(64)}`,
+      policyHash: `sha256:${"b".repeat(64)}`,
+      mode: "reviewed",
+      nonce: "c".repeat(64),
+      semanticIntent: {
+        type: "solana.nativeTransfer",
+        destination,
+        lamports: "42",
+      },
+      artifactKind: "solana-transaction",
+      artifactDigest: `sha256:${"d".repeat(64)}`,
+      transaction: {
+        serializedTxBase64: "AA==",
+        programs: [systemProgram],
+        writableAccounts: [walletPublicKey, destination],
+        submission: "rpc",
+      },
+      asset: "solana:native",
+      amount: "42",
+      destination,
+      policyOperation: "solana.nativeTransfer",
+      requiredPrograms: [systemProgram],
+      requiredRole: "vault",
+      issuedAt: now,
+      state: "prepared",
+      preparedAt: now,
+      expiresAt,
+      updatedAt: now,
+      transactionDigest: `sha256:${"d".repeat(64)}`,
+    };
+    const pending = createSignerReviewApprovalRequest({ review, role: "vault" });
+    const duplicate = createSignerReviewApprovalRequest({ review, role: "vault" });
+    expect(duplicate.id).toBe(pending.id);
+    expect(listWalletSendApprovalRequests({ status: "all" })).toHaveLength(1);
+    expect(pending.expiresAt).toBe(expiresAt);
+    expect(signerReviewMatchesWalletApprovalPayload(review, pending.payload)).toBe(true);
+    expect(
+      signerReviewMatchesWalletApprovalPayload(review, {
+        ...pending.payload,
+        signerArtifactDigest: `sha256:${"e".repeat(64)}`,
+      }),
+    ).toBe(false);
+
+    const signedReview: WalletProviderJupiterReviewV2 = {
+      ...review,
+      state: "signed",
+      signature: "signed-transaction",
+      updatedAt: new Date().toISOString(),
+    };
+    const getSignerReview = vi.fn(async () => signedReview);
+    const executeSignerReview = vi.fn(async () => ({
+      review: signedReview,
+      signer: walletPublicKey,
+      operation: {
+        requestId: review.requestId,
+        walletId,
+        intentType: review.intentType,
+        intentDigest: review.intentDigest,
+        transactionDigest: review.transactionDigest,
+        policyHash: review.policyHash,
+        asset: review.asset,
+        amount: review.amount,
+        state: "confirmed" as const,
+        reservationActive: false,
+        usageBucket: "2026-07-16:solana:native",
+        reservedAt: now,
+        confirmedAt: now,
+        updatedAt: now,
+        signature: "signed-transaction",
+        authorizationProof: "consumed-proof",
+      },
+    }));
+    const providerSpy = vi
+      .spyOn(walletProviderResolver, "createWalletProviderAdapter")
+      .mockReturnValue({
+        id: "local-socket-signer",
+        displayName: "Local Socket Signer",
+        capabilities: {
+          custodyModel: "self-hosted",
+          supportsCreateWallet: false,
+          supportsPrepare: false,
+          supportsSend: true,
+          supportsRotateKeys: false,
+          supportsResetKeys: false,
+          supportsPasskeyGate: false,
+          supportedExecutionModes: ["manual", "autonomous"],
+          supportedChains: ["solana"],
+        },
+        supportsChain: () => true,
+        health: async () => ({
+          ok: true,
+          provider: "local-socket-signer",
+          configured: true,
+          checkedAt: now,
+        }),
+        getAddresses: async () => ({ solana: walletPublicKey }),
+        getBalance: async () => ({
+          ok: true,
+          chain: "solana",
+          address: walletPublicKey,
+          balance: "42",
+          unit: "lamports",
+        }),
+        sendTx: vi.fn(),
+        getSignerReview,
+        executeSignerReview,
+      } as ReturnType<typeof walletProviderResolver.createWalletProviderAdapter>);
+    const approved = await approveWalletSendRequest({
+      requestId: pending.id,
+      actor: "control-ui",
+      config: resolveWalletRuntimeConfigForTest({
+        wallet: { provider: { id: "local-socket-signer" } },
+      }),
+      providerIdOverride: "local-socket-signer",
+    });
+    providerSpy.mockRestore();
+
+    expect(approved.ok).toBe(true);
+    expect(getSignerReview).toHaveBeenCalledOnce();
+    expect(executeSignerReview).toHaveBeenCalledWith({
+      walletId,
+      requestId: review.requestId,
+      authorization: undefined,
+    });
   });
 
   it("mirrors pending wallet approvals into the task ledger", () => {
@@ -337,6 +478,10 @@ describe("wallet-send-approvals", () => {
       },
     } as const;
     const walletCfg = resolveWalletRuntimeConfigForTest(cfg);
+    const reviewIssuedAt = new Date().toISOString();
+    const reviewExpiresAt = new Date(Date.now() + 15 * 60_000).toISOString();
+    const signerPublicKey = "Signer111111111111111111111111111111111";
+    const systemProgram = "11111111111111111111111111111111";
     const prepareTypedTransferReview = vi.fn(
       async (request: {
         walletId: string;
@@ -356,19 +501,37 @@ describe("wallet-send-approvals", () => {
           destination: request.destination,
           lamports: request.amount,
         },
+        walletPublicKey: signerPublicKey,
+        artifactKind: "solana-transaction" as const,
+        artifactDigest: `sha256:${"d".repeat(64)}`,
         transaction: {
           serializedTxBase64: "AA==",
-          programs: ["11111111111111111111111111111111"],
+          programs: [systemProgram],
           writableAccounts: [request.destination],
           submission: "rpc" as const,
         },
-        issuedAt: "2026-07-16T12:00:00.000Z",
+        asset: "solana:native",
+        amount: request.amount,
+        destination: request.destination,
+        policyOperation: "solana.nativeTransfer",
+        requiredPrograms: [systemProgram],
+        requiredRole: "vault" as const,
+        issuedAt: reviewIssuedAt,
         state: "prepared" as const,
-        preparedAt: "2026-07-16T12:00:00.000Z",
-        expiresAt: "2026-07-16T12:15:00.000Z",
-        updatedAt: "2026-07-16T12:00:00.000Z",
+        preparedAt: reviewIssuedAt,
+        expiresAt: reviewExpiresAt,
+        updatedAt: reviewIssuedAt,
         transactionDigest: `sha256:${"d".repeat(64)}`,
       }),
+    );
+    const getSignerReview = vi.fn(
+      async (request: { walletId: string; requestId: string }) =>
+        await prepareTypedTransferReview({
+          walletId: request.walletId,
+          requestId: request.requestId,
+          destination: "So11111111111111111111111111111111111111112",
+          amount: "1",
+        }),
     );
     const executeSignerReview = vi.fn(async (request: { requestId: string }) => ({
       review: {
@@ -381,7 +544,7 @@ describe("wallet-send-approvals", () => {
         state: "signed" as const,
         signature: "0xmanual",
       },
-      signer: "Signer111111111111111111111111111111111",
+      signer: signerPublicKey,
       operation: {
         requestId: request.requestId,
         walletId: "wallet-agent",
@@ -398,6 +561,7 @@ describe("wallet-send-approvals", () => {
         confirmedAt: "2026-07-16T12:00:01.000Z",
         updatedAt: "2026-07-16T12:00:01.000Z",
         signature: "0xmanual",
+        authorizationProof: "proof-123",
       },
     }));
     const sendTx = vi.fn();
@@ -434,6 +598,7 @@ describe("wallet-send-approvals", () => {
         }),
         sendTx,
         prepareTypedTransferReview,
+        getSignerReview,
         executeSignerReview,
       } as ReturnType<typeof walletProviderResolver.createWalletProviderAdapter>);
 
@@ -512,6 +677,8 @@ describe("wallet-send-approvals", () => {
       },
     } as const;
     const walletCfg = resolveWalletRuntimeConfigForTest(cfg);
+    const miningReviewIssuedAt = new Date().toISOString();
+    const miningReviewExpiresAt = new Date(Date.now() + 15 * 60_000).toISOString();
     const providerSpy = vi
       .spyOn(walletProviderResolver, "createWalletProviderAdapter")
       .mockReturnValue({
@@ -557,17 +724,26 @@ describe("wallet-send-approvals", () => {
             destination: request.destination,
             lamports: request.amount,
           },
+          walletPublicKey: "Miner11111111111111111111111111111111111",
+          artifactKind: "solana-transaction",
+          artifactDigest: `sha256:${"d".repeat(64)}`,
           transaction: {
             serializedTxBase64: "AA==",
             programs: ["11111111111111111111111111111111"],
             writableAccounts: [request.destination],
             submission: "rpc",
           },
-          issuedAt: "2026-07-16T12:00:00.000Z",
+          asset: "solana:native",
+          amount: request.amount,
+          destination: request.destination,
+          policyOperation: "solana.nativeTransfer",
+          requiredPrograms: ["11111111111111111111111111111111"],
+          requiredRole: "mining",
+          issuedAt: miningReviewIssuedAt,
           state: "prepared",
-          preparedAt: "2026-07-16T12:00:00.000Z",
-          expiresAt: "2026-07-16T12:15:00.000Z",
-          updatedAt: "2026-07-16T12:00:00.000Z",
+          preparedAt: miningReviewIssuedAt,
+          expiresAt: miningReviewExpiresAt,
+          updatedAt: miningReviewIssuedAt,
           transactionDigest: `sha256:${"d".repeat(64)}`,
         }),
       } as ReturnType<typeof walletProviderResolver.createWalletProviderAdapter>);

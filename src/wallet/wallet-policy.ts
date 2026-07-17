@@ -513,11 +513,13 @@ export function resolveWalletRoleForId(params: {
   if (walletId && storedPurpose === "mining") {
     return "mining";
   }
-  if (
-    walletId &&
-    ((registry.defaultWalletId && walletId === registry.defaultWalletId) ||
-      storedPurpose === "agent")
-  ) {
+  if (walletId && storedPurpose === "vault") {
+    return "vault";
+  }
+  if (walletId && storedPurpose === "agent") {
+    return "agent";
+  }
+  if (walletId && registry.defaultWalletId && walletId === registry.defaultWalletId) {
     return "agent";
   }
   return "vault";

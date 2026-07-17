@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import {
   callLocalSocketSigner,
+  createSignerReviewApprovalRequest,
   loadConfig,
   readWalletProviderRegistry,
   requireLocalSocketSignerPath,
@@ -12,6 +13,7 @@ import {
   resolveWalletProviderId,
   resolveWalletRuntimeConfig,
   type FasedAgentConfig,
+  type WalletProviderJupiterReviewV2,
 } from "fased/plugin-sdk/sat-runtime";
 import type { SatMiningConfig } from "./config.js";
 import { decodeHash32 } from "./hash-spec.js";
@@ -469,6 +471,7 @@ async function executeTypedSatIntent(params: {
   instruction?: Awaited<ReturnType<typeof buildLocalSignerInstructionRequest>>;
   instructions?: Array<Awaited<ReturnType<typeof buildLocalSignerInstructionRequest>>>;
   cluster: "local" | "devnet" | "mainnet-beta";
+  env: NodeJS.ProcessEnv;
 }) {
   const isVaultBond = params.action !== "cleanupBatch" && VAULT_BOND_ACTIONS.has(params.action);
   const intentType = isVaultBond ? "solana.vaultBondAction" : "solana.satAction";
@@ -496,13 +499,7 @@ async function executeTypedSatIntent(params: {
   });
   const requestId = `sat-${randomUUID()}`;
   if (intent.type === "solana.vaultBondAction") {
-    const review = await callLocalSocketSigner<{
-      requestId: string;
-      artifactKind: "solana-transaction";
-      artifactDigest: string;
-      stateDigest: string;
-      policyHash: string;
-    }>(params.socketPath, {
+    const review = await callLocalSocketSigner<WalletProviderJupiterReviewV2>(params.socketPath, {
       op: "v2.review.prepare",
       walletId: params.walletId,
       request: {
@@ -512,8 +509,18 @@ async function executeTypedSatIntent(params: {
         intent,
       },
     });
+    const approval = createSignerReviewApprovalRequest({
+      review,
+      role: "vault",
+      walletId: params.walletId,
+      requestedBy: "sat-mining-vault",
+      assetSymbol: "SAT",
+      assetName: "SAT bond",
+      memo: `Reviewed Vault bond action: ${intent.action}`,
+      env: params.env,
+    });
     throw new Error(
-      `Vault bond review ${review.requestId} is prepared for ${intent.action} and requires signer-owned WebAuthn authorization before review.execute`,
+      `Vault bond review ${approval.id} is pending in Wallet Approvals for ${intent.action}; approve it there with the signer-owned passkey`,
     );
   }
   let operation: SatSignerOperation;
@@ -580,6 +587,7 @@ async function submitInstructionViaLocalSigner(
     action: request.action,
     instruction: request,
     cluster: resolveSatCluster(params.cfg),
+    env: context.effectiveEnv,
   });
   return {
     txHash: submitted.signature,
@@ -647,6 +655,7 @@ async function submitInstructionBatch(params: {
     action: "cleanupBatch",
     instructions,
     cluster: resolveSatCluster(params.cfg),
+    env: context.effectiveEnv,
   });
   return {
     txHash: submitted.signature,

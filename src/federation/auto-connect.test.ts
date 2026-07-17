@@ -15,6 +15,8 @@ vi.mock("../wallet/solana-bond-signing.js", () => ({
 import {
   createAndSubmitFederationBondProof,
   createFederationBondProof,
+  loadPersistedFederationBondProof,
+  persistFederationBondProofFromSignerReview,
   runFederationAutoConnectOnce,
   startFederationAutoConnect,
 } from "./auto-connect.js";
@@ -49,6 +51,95 @@ beforeEach(() => {
 });
 
 describe("federation auto-connect", () => {
+  it("persists only the exact signer-owned reviewed federation signature", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-reviewed-bond-proof-"));
+    const now = new Date().toISOString();
+    const challengeExpiresAt = new Date(Date.now() + 5 * 60_000).toISOString();
+    const payload = JSON.stringify({ schema: "fased-bond-v1", challenge: "reviewed" });
+    const payloadBase64 = Buffer.from(payload, "utf8").toString("base64");
+    const signatureBase64 = Buffer.alloc(64, 7).toString("base64");
+    const env = {
+      FASED_STATE_DIR: stateDir,
+      FASED_FEDERATION_BASE_URL: "https://ff1.fased.app",
+    };
+    await writeFederationTokenFile(stateDir, {
+      tokenId: "bond-token-reviewed",
+      nodeId: "node-reviewed",
+      handle: "@reviewed@ff1.fased.app",
+      issuedAt: now,
+      expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
+      scopes: ["federation.read"],
+      signature: "token-signature",
+    });
+    const review = {
+      requestId: "federation-bond:reviewed",
+      walletId: "bond_wallet",
+      walletPublicKey: BOND_WALLET_ADDRESS,
+      intentType: "federation.bondChallenge" as const,
+      intentDigest: `sha256:${"a".repeat(64)}`,
+      policyHash: `sha256:${"b".repeat(64)}`,
+      mode: "reviewed" as const,
+      nonce: "c".repeat(64),
+      semanticIntent: {
+        type: "federation.bondChallenge" as const,
+        federation: {
+          challengeId: "challenge-reviewed",
+          federationOrigin: "https://ff1.fased.app",
+          handle: "@reviewed@ff1.fased.app",
+          nodeId: "node-reviewed",
+          tokenId: "bond-token-reviewed",
+          bondId: "bond-reviewed",
+          tier: "basic-bond" as const,
+          amountRaw: "100",
+          expiresAt: challengeExpiresAt,
+          payloadBase64,
+        },
+      },
+      artifactKind: "domain-separated-message" as const,
+      artifactDigest: `sha256:${"d".repeat(64)}`,
+      messageBase64: payloadBase64,
+      asset: "federation:bond-challenge",
+      amount: "1",
+      destination: BOND_WALLET_ADDRESS,
+      policyOperation: "federation.bondChallenge",
+      requiredPrograms: ["domain:fased:federation-bond-challenge-v1"],
+      requiredRole: "vault" as const,
+      issuedAt: now,
+      state: "signed" as const,
+      preparedAt: now,
+      expiresAt: challengeExpiresAt,
+      updatedAt: now,
+      signature: signatureBase64,
+    };
+    try {
+      const proof = await persistFederationBondProofFromSignerReview({
+        review,
+        signatureBase64,
+        walletId: "bond-wallet",
+        env,
+      });
+      expect(proof).toMatchObject({
+        challengeId: "challenge-reviewed",
+        bondId: "bond-reviewed",
+        walletId: "bond-wallet",
+        walletAddress: BOND_WALLET_ADDRESS,
+        payload,
+        signatureBase64,
+      });
+      expect(await loadPersistedFederationBondProof(env)).toEqual(proof);
+      await expect(
+        persistFederationBondProofFromSignerReview({
+          review: { ...review, destination: "tampered-destination" },
+          signatureBase64,
+          walletId: "bond-wallet",
+          env,
+        }),
+      ).rejects.toThrow(/does not match its wallet or payload/);
+    } finally {
+      await fs.rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
   it("uses configured api token for register + attest", async () => {
     const calls: Array<{ url: string; auth: string; body: unknown }> = [];
     const fetchMock = vi.fn(async (input: URL | RequestInfo, init?: RequestInit) => {

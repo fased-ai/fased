@@ -7,6 +7,7 @@ import {
   enforceWalletDailyCap,
   resolveWalletPolicyConfig,
   resolveWalletRecurringTransferPolicy,
+  resolveWalletRoleForId,
   resolveWalletRolePolicyProfile,
   upsertWalletPolicyConfig,
   validateWalletTxPolicy,
@@ -40,7 +41,7 @@ describe("wallet-policy", () => {
 
   async function writeProviderRegistry(input: {
     defaultWalletId?: string;
-    wallets: Array<{ id: string; name: string }>;
+    wallets: Array<{ id: string; name: string; role?: "agent" | "mining" | "vault" }>;
   }) {
     const walletRoot = path.join(tempDir, "wallet");
     await fs.mkdir(walletRoot, { recursive: true });
@@ -61,6 +62,7 @@ describe("wallet-policy", () => {
             name: wallet.name,
             providerId: "local-socket-signer",
             addresses: { solana: `${wallet.id}-solana` },
+            ...(wallet.role ? { metadata: { role: wallet.role } } : {}),
             createdAt: "2026-04-14T00:00:00.000Z",
             updatedAt: "2026-04-14T00:00:00.000Z",
           })),
@@ -308,6 +310,14 @@ describe("wallet-policy", () => {
     const overriddenVault = resolveWalletPolicyConfig(cfg, process.env, "wallet-vault");
     expect(overriddenVault.policy.directSigning).toBe(false);
     expect(overriddenVault.policy.solana.caps.maxPerTx).toBe(4200000000n);
+  });
+
+  it("keeps an explicitly designated Vault role when that wallet is also the default", async () => {
+    await writeProviderRegistry({
+      defaultWalletId: "wallet-vault",
+      wallets: [{ id: "wallet-vault", name: "Vault", role: "vault" }],
+    });
+    expect(resolveWalletRoleForId({ walletId: "wallet-vault", env: process.env })).toBe("vault");
   });
 
   it("defaults fresh Agent and Vault wallets to manual capped execution", async () => {

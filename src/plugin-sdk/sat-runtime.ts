@@ -69,7 +69,11 @@ export {
   resolveWalletPolicyConfig,
   resolveWalletRolePolicyProfile,
 } from "../wallet/wallet-policy.js";
-export { createOrExecuteWalletSend } from "../wallet/wallet-send-approvals.js";
+export {
+  createOrExecuteWalletSend,
+  createSignerReviewApprovalRequest,
+} from "../wallet/wallet-send-approvals.js";
+export type { WalletProviderJupiterReviewV2 } from "../wallet/wallet-provider-adapter.js";
 export { readWalletStatusSnapshot } from "../wallet/wallet-status.js";
 
 export async function fetchWithSsrFGuard(

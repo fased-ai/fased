@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const {
   loadConfig,
   callLocalSocketSigner,
+  createSignerReviewApprovalRequest,
   requireLocalSocketSignerPath,
   readWalletProviderRegistry,
   resolveWalletProviderId,
@@ -13,6 +14,9 @@ const {
 } = vi.hoisted(() => ({
   loadConfig: vi.fn(),
   callLocalSocketSigner: vi.fn(),
+  createSignerReviewApprovalRequest: vi.fn((params: { review: { requestId: string } }) => ({
+    id: params.review.requestId,
+  })),
   requireLocalSocketSignerPath: vi.fn(() => "/tmp/fased-test-signer.sock"),
   readWalletProviderRegistry: vi.fn(() => ({
     defaultWalletId: "solana-1",
@@ -50,6 +54,11 @@ vi.mock("../../src/wallet/wallet-provider-registry.js", () => ({
 
 vi.mock("../../src/wallet/wallet-provider-resolver.js", () => ({
   resolveWalletProviderId,
+}));
+
+vi.mock("../../src/wallet/wallet-send-approvals.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/wallet/wallet-send-approvals.js")>()),
+  createSignerReviewApprovalRequest,
 }));
 
 vi.mock("../../src/wallet/wallet-secrets-store.js", () => ({
@@ -568,8 +577,12 @@ describe("SAT cycle transaction builders", () => {
   ] as const)(
     "keeps Vault bond %s reviewed-only and never calls direct execute",
     async (_name, submit) => {
-      await expect(submit()).rejects.toThrow(
-        "requires signer-owned WebAuthn authorization before review.execute",
+      await expect(submit()).rejects.toThrow("is pending in Wallet Approvals");
+      expect(createSignerReviewApprovalRequest).toHaveBeenCalledWith(
+        expect.objectContaining({
+          role: "vault",
+          requestedBy: "sat-mining-vault",
+        }),
       );
       expect(callLocalSocketSigner.mock.calls.map((call) => call[1].op)).toEqual([
         "getAddresses",

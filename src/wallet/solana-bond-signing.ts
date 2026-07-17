@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import type { FasedAgentConfig } from "../config/config.js";
 import { resolveFederationBondWalletId } from "../federation/runtime.js";
 import type { LocalSocketSignerPolicyV2 } from "./local-socket-signer-protocol.js";
@@ -13,6 +14,7 @@ import type {
   WalletProviderSignerReviewAuthorizationV2,
 } from "./wallet-provider-adapter.js";
 import { readWalletProviderRegistry } from "./wallet-provider-registry.js";
+import { createSignerReviewApprovalRequest } from "./wallet-send-approvals.js";
 
 const FEDERATION_BOND_INTENT = "federation.bondChallenge" as const;
 export const FEDERATION_BOND_POLICY_DOMAIN = "domain:fased:federation-bond-challenge-v1";
@@ -33,13 +35,15 @@ const REQUIRED_FEDERATION_SIGNER_FEATURES = [
 
 export class FederationBondReviewAuthorizationRequiredError extends Error {
   readonly review: WalletProviderJupiterReviewV2;
+  readonly approvalId: string;
 
-  constructor(review: WalletProviderJupiterReviewV2) {
+  constructor(review: WalletProviderJupiterReviewV2, approvalId: string) {
     super(
-      `federation signer review ${review.requestId} is prepared and requires signer-owned WebAuthn authorization`,
+      `federation signer review ${review.requestId} is pending in Wallet Approvals and requires signer-owned WebAuthn authorization`,
     );
     this.name = "FederationBondReviewAuthorizationRequiredError";
     this.review = review;
+    this.approvalId = approvalId;
   }
 }
 
@@ -221,18 +225,61 @@ export async function signFederationBondChallenge(params: {
     );
   }
   const intent = buildFederationBondChallengeIntent(params);
-  const review = await callLocalSocketSigner<WalletProviderJupiterReviewV2>(resolved.socketPath, {
-    op: "v2.review.prepare",
-    walletId: resolved.walletId,
-    request: {
-      requestId,
-      policyHash: policy.hash,
-      mode: "reviewed",
-      intent,
-    },
-  });
-  if (!params.authorization) {
-    throw new FederationBondReviewAuthorizationRequiredError(review);
+  let review: WalletProviderJupiterReviewV2;
+  try {
+    review = await callLocalSocketSigner<WalletProviderJupiterReviewV2>(resolved.socketPath, {
+      op: "v2.review.get",
+      walletId: resolved.walletId,
+      request: { requestId },
+    });
+  } catch (error) {
+    if (!String(error).includes("signer review not found; review.prepare is required")) {
+      throw error;
+    }
+    review = await callLocalSocketSigner<WalletProviderJupiterReviewV2>(resolved.socketPath, {
+      op: "v2.review.prepare",
+      walletId: resolved.walletId,
+      request: {
+        requestId,
+        policyHash: policy.hash,
+        mode: "reviewed",
+        intent,
+      },
+    });
+  }
+  if (
+    review.requestId !== requestId ||
+    review.walletId !== nativeSignerWalletId(resolved.walletId) ||
+    review.walletPublicKey !== resolved.walletAddress ||
+    review.intentType !== FEDERATION_BOND_INTENT ||
+    !isDeepStrictEqual(review.semanticIntent, intent) ||
+    review.policyHash !== policy.hash ||
+    review.mode !== "reviewed" ||
+    review.artifactKind !== "domain-separated-message" ||
+    review.messageBase64 !== params.payloadBase64 ||
+    review.asset !== "federation:bond-challenge" ||
+    review.amount !== "1" ||
+    review.destination !== resolved.walletAddress ||
+    review.policyOperation !== FEDERATION_BOND_INTENT ||
+    review.requiredPrograms.length !== 1 ||
+    review.requiredPrograms[0] !== FEDERATION_BOND_POLICY_DOMAIN ||
+    review.requiredRole !== "vault"
+  ) {
+    throw new Error(`federation signer review ${requestId} does not match the exact challenge`);
+  }
+  if (review.state === "prepared" && !params.authorization) {
+    const approval = createSignerReviewApprovalRequest({
+      review,
+      role: "vault",
+      walletId: resolved.walletId,
+      requestedBy: "federation-bond",
+      walletName: resolved.walletId,
+      assetName: "Federation bond proof",
+      assetSymbol: "Proof",
+      memo: `Federation bond challenge for ${params.handle}`,
+      env,
+    });
+    throw new FederationBondReviewAuthorizationRequiredError(review, approval.id);
   }
   const executed = await callLocalSocketSigner<WalletProviderJupiterExecutionV2>(
     resolved.socketPath,

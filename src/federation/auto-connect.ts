@@ -7,6 +7,7 @@ import {
   resolveFederationBondWallet,
   signFederationBondChallenge,
 } from "../wallet/solana-bond-signing.js";
+import type { WalletProviderJupiterReviewV2 } from "../wallet/wallet-provider-adapter.js";
 import { buildAttestation } from "./attestation.js";
 import {
   resolveAgentPublicOrigin,
@@ -659,6 +660,82 @@ export async function createFederationBondProof(opts?: {
     `federation bond proof prepared (${proof.handle} -> ${proof.walletAddress}, bond=${proof.bondId})`,
   );
   return proof;
+}
+
+export async function persistFederationBondProofFromSignerReview(params: {
+  review: WalletProviderJupiterReviewV2;
+  signatureBase64: string;
+  walletId: string;
+  env?: NodeJS.ProcessEnv;
+}): Promise<PersistedFederationBondProof> {
+  const env = params.env ?? process.env;
+  const review = params.review;
+  if (
+    review.state !== "signed" ||
+    review.intentType !== "federation.bondChallenge" ||
+    review.semanticIntent.type !== "federation.bondChallenge" ||
+    review.artifactKind !== "domain-separated-message" ||
+    review.asset !== "federation:bond-challenge" ||
+    review.amount !== "1" ||
+    review.policyOperation !== "federation.bondChallenge" ||
+    review.requiredRole !== "vault" ||
+    review.requiredPrograms.length !== 1 ||
+    review.requiredPrograms[0] !== "domain:fased:federation-bond-challenge-v1"
+  ) {
+    throw new Error("signed signer review is not an exact federation bond challenge");
+  }
+  const federation = review.semanticIntent.federation;
+  if (
+    !review.walletPublicKey ||
+    review.destination !== review.walletPublicKey ||
+    review.messageBase64 !== federation.payloadBase64 ||
+    review.signature !== params.signatureBase64
+  ) {
+    throw new Error("signed federation review artifact does not match its wallet or payload");
+  }
+  const signature = Buffer.from(params.signatureBase64, "base64");
+  if (signature.length !== 64 || signature.toString("base64") !== params.signatureBase64) {
+    throw new Error("signed federation review returned a non-canonical Ed25519 signature");
+  }
+  const payloadBytes = Buffer.from(federation.payloadBase64, "base64");
+  if (payloadBytes.toString("base64") !== federation.payloadBase64) {
+    throw new Error("signed federation review payload is not canonical base64");
+  }
+  const payload = payloadBytes.toString("utf8");
+  if (!Buffer.from(payload, "utf8").equals(payloadBytes)) {
+    throw new Error("signed federation review payload is not valid UTF-8");
+  }
+  const challengeExpiresAt = Date.parse(federation.expiresAt);
+  if (!Number.isFinite(challengeExpiresAt) || challengeExpiresAt <= Date.now()) {
+    throw new Error("signed federation review challenge has expired");
+  }
+  const token = await loadPersistedFederationToken(env, { includeExpired: true });
+  if (
+    !token ||
+    token.tokenId !== federation.tokenId ||
+    token.nodeId !== federation.nodeId ||
+    token.handle !== federation.handle
+  ) {
+    throw new Error("signed federation review does not match the persisted federation identity");
+  }
+  const configuredOrigin = resolveFederationBaseUrl(env);
+  if (!configuredOrigin || new URL(configuredOrigin).origin !== federation.federationOrigin) {
+    throw new Error("signed federation review does not match the configured federation origin");
+  }
+  return await persistFederationBondProof(env, {
+    challengeId: federation.challengeId,
+    bondId: federation.bondId,
+    walletId: params.walletId,
+    walletAddress: review.walletPublicKey,
+    handle: federation.handle,
+    nodeId: federation.nodeId,
+    federationBaseUrl: federation.federationOrigin,
+    expiresAt: federation.expiresAt,
+    payload,
+    payloadBase64: federation.payloadBase64,
+    signatureBase64: params.signatureBase64,
+    signedAt: review.updatedAt,
+  });
 }
 
 export async function submitFederationBondProof(opts?: {

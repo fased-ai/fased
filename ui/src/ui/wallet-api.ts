@@ -156,7 +156,7 @@ export type WalletSendApprovalRequest = {
   reason?: string;
   payload: {
     chain: "solana";
-    actionKind?: "send" | "solana_swap";
+    actionKind?: "send" | "solana_swap" | "signer_review";
     assetId?: string;
     assetSymbol?: string;
     assetName?: string;
@@ -192,9 +192,24 @@ export type WalletSendApprovalRequest = {
     usesAddressLookupTables?: boolean;
     jupiterRequestId?: string;
     signerReviewId?: string;
+    signerWalletId?: string;
+    signerWalletPublicKey?: string;
+    signerIntentType?: string;
     signerPolicyHash?: string;
     signerIntentDigest?: string;
+    signerArtifactKind?: "solana-transaction" | "domain-separated-message";
+    signerArtifactDigest?: string;
     signerTransactionDigest?: string;
+    signerStateDigest?: string;
+    signerStateSlot?: number;
+    signerAsset?: string;
+    signerAmount?: string;
+    signerDestination?: string;
+    signerPolicyOperation?: string;
+    signerRequiredPrograms?: string[];
+    signerRequiredRole?: "agent" | "mining" | "vault";
+    signerNonce?: string;
+    signerIssuedAt?: string;
     signerReviewExpiresAt?: string;
   };
   simulation?: WalletPolicySimulation;
@@ -1503,10 +1518,20 @@ export type WalletSignerReviewAuthorizationBegin = {
     requestId: string;
     walletId: string;
     role: "agent" | "mining" | "vault";
+    walletPublicKey?: string;
     intentType: string;
     intentDigest: string;
     semanticIntent: unknown;
-    transactionDigest: string;
+    artifactKind: "solana-transaction" | "domain-separated-message";
+    artifactDigest: string;
+    transactionDigest?: string;
+    stateDigest?: string;
+    stateSlot?: number;
+    asset: string;
+    amount: string;
+    destination: string;
+    policyOperation: string;
+    requiredPrograms: string[];
     policyHash: string;
     nonce: string;
     issuedAt: string;
@@ -1514,6 +1539,41 @@ export type WalletSignerReviewAuthorizationBegin = {
   };
   options: unknown;
 };
+
+export function signerAuthorizationMatchesWalletApproval(
+  authorization: WalletSignerReviewAuthorizationBegin,
+  request: WalletSendApprovalRequest,
+): boolean {
+  const binding = authorization.binding;
+  const payload = request.payload;
+  const sameOptional = (left: string | undefined, right: string | undefined) =>
+    (left?.trim() || undefined) === (right?.trim() || undefined);
+  const requiredPrograms = payload.signerRequiredPrograms;
+  return (
+    binding.requestId === payload.signerReviewId?.trim() &&
+    binding.walletId === payload.signerWalletId?.trim() &&
+    sameOptional(binding.walletPublicKey, payload.signerWalletPublicKey) &&
+    binding.role === payload.signerRequiredRole &&
+    binding.intentType === payload.signerIntentType?.trim() &&
+    binding.policyHash === payload.signerPolicyHash?.trim() &&
+    binding.intentDigest === payload.signerIntentDigest?.trim() &&
+    binding.artifactKind === payload.signerArtifactKind &&
+    binding.artifactDigest === payload.signerArtifactDigest?.trim() &&
+    sameOptional(binding.transactionDigest, payload.signerTransactionDigest) &&
+    sameOptional(binding.stateDigest, payload.signerStateDigest) &&
+    (binding.stateSlot ?? undefined) === payload.signerStateSlot &&
+    binding.asset === payload.signerAsset?.trim() &&
+    binding.amount === payload.signerAmount?.trim() &&
+    binding.destination === payload.signerDestination?.trim() &&
+    binding.policyOperation === payload.signerPolicyOperation?.trim() &&
+    Boolean(requiredPrograms) &&
+    requiredPrograms?.length === binding.requiredPrograms.length &&
+    requiredPrograms.every((program, index) => program === binding.requiredPrograms[index]) &&
+    binding.nonce === payload.signerNonce?.trim() &&
+    binding.issuedAt === payload.signerIssuedAt?.trim() &&
+    binding.expiresAt === payload.signerReviewExpiresAt?.trim()
+  );
+}
 
 export async function approveWalletSend(
   requestId: string,

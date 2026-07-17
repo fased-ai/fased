@@ -136,12 +136,21 @@ function signerReviewAdapter() {
             destination: request.destination,
             lamports: request.amount,
           },
+      walletPublicKey: "So11111111111111111111111111111111111111112",
+      artifactKind: "solana-transaction" as const,
+      artifactDigest: `sha256:${"d".repeat(64)}`,
       transaction: {
         serializedTxBase64: "AA==",
         programs: ["11111111111111111111111111111111"],
         writableAccounts: [request.destination],
         submission: "rpc" as const,
       },
+      asset: request.mint ? `solana:spl:${request.mint}` : "solana:native",
+      amount: request.amount,
+      destination: request.destination,
+      policyOperation: request.mint ? "solana.splTransferChecked" : "solana.nativeTransfer",
+      requiredPrograms: ["11111111111111111111111111111111"],
+      requiredRole: "vault" as const,
       issuedAt: "2026-07-16T12:00:00.000Z",
       state: "prepared" as const,
       preparedAt: "2026-07-16T12:00:00.000Z",
@@ -150,23 +159,60 @@ function signerReviewAdapter() {
       transactionDigest: `sha256:${"d".repeat(64)}`,
     }),
   );
-  const bindingFor = (requestId: string, walletId: string) => ({
-    requestId,
-    walletId,
-    role: "vault" as const,
-    intentType: "solana.nativeTransfer" as const,
-    intentDigest: `sha256:${"a".repeat(64)}`,
-    semanticIntent: {
-      type: "solana.nativeTransfer" as const,
-      destination: "So11111111111111111111111111111111111111112",
-      lamports: "500000000",
-    },
-    transactionDigest: `sha256:${"d".repeat(64)}`,
-    policyHash: `sha256:${"b".repeat(64)}`,
-    nonce: "c".repeat(64),
-    issuedAt: "2026-07-16T12:00:00.000Z",
-    expiresAt: "2099-07-16T12:15:00.000Z",
+  const preparedInputFor = (requestId: string) =>
+    prepareTypedTransferReview.mock.calls.find(([input]) => input.requestId === requestId)?.[0];
+  const getSignerReview = vi.fn(async (request: { walletId: string; requestId: string }) => {
+    const preparedInput = preparedInputFor(request.requestId);
+    if (!preparedInput || preparedInput.walletId !== request.walletId) {
+      throw new Error("signer review not found; review.prepare is required");
+    }
+    return await prepareTypedTransferReview(preparedInput);
   });
+  const bindingFor = (requestId: string, walletId: string) => {
+    const preparedInput = preparedInputFor(requestId) ?? {
+      walletId,
+      requestId,
+      destination: "So11111111111111111111111111111111111111112",
+      amount: "500000000",
+    };
+    const intentType = preparedInput.mint
+      ? ("solana.splTransferChecked" as const)
+      : ("solana.nativeTransfer" as const);
+    const semanticIntent = preparedInput.mint
+      ? {
+          type: "solana.splTransferChecked" as const,
+          tokenProgram: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+          mint: preparedInput.mint,
+          destination: preparedInput.destination,
+          amount: preparedInput.amount,
+        }
+      : {
+          type: "solana.nativeTransfer" as const,
+          destination: preparedInput.destination,
+          lamports: preparedInput.amount,
+        };
+    return {
+      requestId,
+      walletId,
+      role: "vault" as const,
+      intentType,
+      intentDigest: `sha256:${"a".repeat(64)}`,
+      semanticIntent,
+      walletPublicKey: "So11111111111111111111111111111111111111112",
+      artifactKind: "solana-transaction" as const,
+      artifactDigest: `sha256:${"d".repeat(64)}`,
+      transactionDigest: `sha256:${"d".repeat(64)}`,
+      asset: preparedInput.mint ? `solana:spl:${preparedInput.mint}` : "solana:native",
+      amount: preparedInput.amount,
+      destination: preparedInput.destination,
+      policyOperation: intentType,
+      requiredPrograms: ["11111111111111111111111111111111"],
+      policyHash: `sha256:${"b".repeat(64)}`,
+      nonce: "c".repeat(64),
+      issuedAt: "2026-07-16T12:00:00.000Z",
+      expiresAt: "2099-07-16T12:15:00.000Z",
+    };
+  };
   const beginSignerReviewAuthorization = vi.fn(
     async (request: { walletId: string; requestId: string }) => ({
       challengeId: "challenge-123",
@@ -218,6 +264,7 @@ function signerReviewAdapter() {
       confirmedAt: "2026-07-16T12:00:01.000Z",
       updatedAt: "2026-07-16T12:00:01.000Z",
       signature: "review-signature",
+      authorizationProof: "proof-123",
     },
   }));
   const sendTx = vi.fn();
@@ -260,6 +307,7 @@ function signerReviewAdapter() {
     beginSignerReviewAuthorization,
     finishSignerReviewAuthorization,
     executeSignerReview,
+    getSignerReview,
   } as WalletProviderAdapter;
   return {
     adapter,
@@ -267,6 +315,7 @@ function signerReviewAdapter() {
     beginSignerReviewAuthorization,
     finishSignerReviewAuthorization,
     executeSignerReview,
+    getSignerReview,
     sendTx,
     setFinishReviewId(requestId: string) {
       finishSignerReviewAuthorization.mockImplementationOnce(async (request) => ({

@@ -4800,10 +4800,10 @@ export function renderWallet(props: WalletViewProps) {
               <div class="card-title wallet-title-with-help">
                 <span>Wallet Approvals</span>
                 ${renderWalletHelp(
-                  "Direct user Send creates a pending approval request here, and Approve is the step that triggers passkey and broadcast when passkey approval is enabled.",
+                  "Reviewed sends, Vault actions, and federation signatures appear here. Approve triggers the signer-owned passkey ceremony and executes only the exact prepared operation.",
                 )}
               </div>
-              <div class="card-sub">Pending and recent send requests.</div>
+			  <div class="card-sub">Pending and recent reviewed wallet operations.</div>
             </div>
             <div class="row" style="gap: 8px; flex-wrap: wrap;">
               ${(

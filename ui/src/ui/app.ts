@@ -299,6 +299,7 @@ import {
   resetWalletKeys,
   rotateWalletKeys,
   searchWalletSolanaTokens,
+  signerAuthorizationMatchesWalletApproval,
   patchWalletSettings,
   patchWalletProvider,
   putWalletProviderCredentials,
@@ -5858,16 +5859,7 @@ export class FasedAgentApp extends LitElement {
         if (!request || !authorization) {
           throw new Error("Gateway returned an incomplete signer WebAuthn review");
         }
-        const expectedReviewId = request.payload.signerReviewId?.trim();
-        if (
-          !expectedReviewId ||
-          authorization.binding.requestId !== expectedReviewId ||
-          authorization.binding.walletId !== request.payload.walletId?.trim() ||
-          authorization.binding.policyHash !== request.payload.signerPolicyHash?.trim() ||
-          authorization.binding.intentDigest !== request.payload.signerIntentDigest?.trim() ||
-          authorization.binding.transactionDigest !==
-            request.payload.signerTransactionDigest?.trim()
-        ) {
+        if (!signerAuthorizationMatchesWalletApproval(authorization, request)) {
           throw new Error("Signer WebAuthn binding does not match the reviewed approval");
         }
         const assertion = await authorizeSignerReviewWithPasskey(authorization);
@@ -5901,9 +5893,11 @@ export class FasedAgentApp extends LitElement {
         typeof (response.tx as { txHash?: unknown } | undefined)?.txHash === "string"
           ? (response.tx as { txHash: string }).txHash
           : null;
+      const actionLabel =
+        request?.payload.actionKind === "signer_review" ? "Reviewed operation" : "Send";
       this.walletActionMessage = txHash
-        ? `Send approved and executed (${txHash}).`
-        : "Send request approved.";
+        ? `${actionLabel} approved and executed (${txHash}).`
+        : `${actionLabel} approved.`;
       await this.handleWalletLoad();
     } catch (err) {
       this.walletApprovalsError = formatWalletApproveError(err);

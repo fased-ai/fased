@@ -1,4 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  signerAuthorizationMatchesWalletApproval,
+  type WalletSendApprovalRequest,
+  type WalletSignerReviewAuthorizationBegin,
+} from "./wallet-api.ts";
 import { authorizeSignerReviewWithPasskey } from "./wallet-passkey.ts";
 
 function stubBrowserCapabilities(params: {
@@ -61,6 +66,7 @@ describe("signer-owned wallet WebAuthn", () => {
         requestId: "review-123",
         walletId: "vault-1",
         role: "vault",
+        walletPublicKey: "So11111111111111111111111111111111111111112",
         intentType: "solana.nativeTransfer",
         intentDigest: `sha256:${"a".repeat(64)}`,
         semanticIntent: {
@@ -68,7 +74,14 @@ describe("signer-owned wallet WebAuthn", () => {
           destination: "So11111111111111111111111111111111111111112",
           lamports: "500000000",
         },
+        artifactKind: "solana-transaction",
+        artifactDigest: `sha256:${"b".repeat(64)}`,
         transactionDigest: `sha256:${"b".repeat(64)}`,
+        asset: "solana:native",
+        amount: "500000000",
+        destination: "So11111111111111111111111111111111111111112",
+        policyOperation: "solana.nativeTransfer",
+        requiredPrograms: ["11111111111111111111111111111111"],
         policyHash: `sha256:${"c".repeat(64)}`,
         nonce: "d".repeat(64),
         issuedAt: new Date().toISOString(),
@@ -110,5 +123,81 @@ describe("signer-owned wallet WebAuthn", () => {
         authenticatorAttachment: "platform",
       },
     });
+  });
+
+  it("rejects any changed field in an exact domain-message approval binding", () => {
+    const programs = ["domain:fased:federation-bond-challenge-v1"];
+    const request = {
+      id: "federation-review-1",
+      createdAt: "2026-07-16T12:00:00.000Z",
+      expiresAt: "2026-07-16T12:02:00.000Z",
+      status: "pending",
+      requestedBy: "federation-bond",
+      payload: {
+        chain: "solana",
+        actionKind: "signer_review",
+        providerId: "local-socket-signer",
+        walletId: "vault-friendly-name",
+        signerReviewId: "federation-review-1",
+        signerWalletId: "vault_friendly_name",
+        signerWalletPublicKey: "Vault11111111111111111111111111111111111111",
+        signerIntentType: "federation.bondChallenge",
+        signerPolicyHash: `sha256:${"a".repeat(64)}`,
+        signerIntentDigest: `sha256:${"b".repeat(64)}`,
+        signerArtifactKind: "domain-separated-message",
+        signerArtifactDigest: `sha256:${"c".repeat(64)}`,
+        signerAsset: "federation:bond-challenge",
+        signerAmount: "1",
+        signerDestination: "Vault11111111111111111111111111111111111111",
+        signerPolicyOperation: "federation.bondChallenge",
+        signerRequiredPrograms: programs,
+        signerRequiredRole: "vault",
+        signerNonce: "d".repeat(64),
+        signerIssuedAt: "2026-07-16T12:00:00.000Z",
+        signerReviewExpiresAt: "2026-07-16T12:02:00.000Z",
+      },
+    } satisfies WalletSendApprovalRequest;
+    const authorization = {
+      challengeId: "challenge-1",
+      expiresAt: request.expiresAt,
+      binding: {
+        requestId: request.id,
+        walletId: "vault_friendly_name",
+        role: "vault",
+        walletPublicKey: request.payload.signerWalletPublicKey,
+        intentType: "federation.bondChallenge",
+        intentDigest: request.payload.signerIntentDigest,
+        semanticIntent: { type: "federation.bondChallenge" },
+        artifactKind: "domain-separated-message",
+        artifactDigest: request.payload.signerArtifactDigest,
+        asset: "federation:bond-challenge",
+        amount: "1",
+        destination: request.payload.signerDestination,
+        policyOperation: "federation.bondChallenge",
+        requiredPrograms: programs,
+        policyHash: request.payload.signerPolicyHash,
+        nonce: request.payload.signerNonce,
+        issuedAt: request.payload.signerIssuedAt,
+        expiresAt: request.payload.signerReviewExpiresAt,
+      },
+      options: {},
+    } satisfies WalletSignerReviewAuthorizationBegin;
+
+    expect(signerAuthorizationMatchesWalletApproval(authorization, request)).toBe(true);
+    expect(
+      signerAuthorizationMatchesWalletApproval(
+        { ...authorization, binding: { ...authorization.binding, amount: "2" } },
+        request,
+      ),
+    ).toBe(false);
+    expect(
+      signerAuthorizationMatchesWalletApproval(
+        {
+          ...authorization,
+          binding: { ...authorization.binding, walletId: request.payload.walletId },
+        },
+        request,
+      ),
+    ).toBe(false);
   });
 });

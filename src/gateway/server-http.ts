@@ -56,6 +56,7 @@ import type {
 import {
   createAndSubmitFederationBondProof,
   loadPersistedFederationBondProof,
+  submitFederationBondProof,
 } from "../federation/auto-connect.js";
 import {
   resolveAgentPublicOrigin,
@@ -122,6 +123,7 @@ import {
   type PreparedWalletPolicyConfigUpdate,
   type WalletPolicyPresetId,
 } from "../wallet/wallet-policy.js";
+import type { WalletProviderSignerReviewBindingV2 } from "../wallet/wallet-provider-adapter.js";
 import {
   buildWalletProviderCapabilityMatrix,
   providerSupportsChainOperation,
@@ -167,6 +169,8 @@ import {
   rejectWalletSendRequest,
   sanitizeWalletSendApprovalPayload,
   sanitizeWalletSendApprovalRequest,
+  signerReviewBindingMatchesWalletApprovalPayload,
+  signerReviewMatchesWalletApprovalPayload,
 } from "../wallet/wallet-send-approvals.js";
 import {
   executeWalletStandardReview,
@@ -2481,6 +2485,20 @@ async function runFederationBondProof(params: {
     ));
   if (!bondView || bondView.statusLabel !== "active") {
     throw new Error("active SAT bond not found for proof submission");
+  }
+  const pendingProof = await loadPersistedFederationBondProof(process.env);
+  if (
+    pendingProof &&
+    !pendingProof.verifiedAt &&
+    pendingProof.walletId === params.walletId &&
+    pendingProof.bondId === bondView.address &&
+    Date.parse(pendingProof.expiresAt) > Date.now()
+  ) {
+    return await submitFederationBondProof({
+      env: process.env,
+      cfg: params.cfg,
+      proof: pendingProof,
+    });
   }
   return await createAndSubmitFederationBondProof({
     env: process.env,
@@ -9411,11 +9429,13 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
         const walletCfg = resolveWalletRuntimeConfig(cfg, process.env);
         const pendingRequest = getWalletSendApprovalRequest({ requestId, env: process.env });
         const signerReviewId = pendingRequest?.payload.signerReviewId?.trim() || "";
-        const signerWalletId = pendingRequest?.payload.walletId?.trim() || "";
+        const signerWalletId = pendingRequest?.payload.signerWalletId?.trim() || "";
+        const applicationWalletId = pendingRequest?.payload.walletId?.trim() || "";
         const isSignerOwnedReview =
           pendingRequest?.payload.providerId === "local-socket-signer" &&
           Boolean(signerReviewId) &&
-          Boolean(signerWalletId);
+          Boolean(signerWalletId) &&
+          Boolean(applicationWalletId);
         if (isSignerOwnedReview) {
           if (pendingRequest.status !== "pending") {
             sendLoginResponse(409, {
@@ -9442,32 +9462,55 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
             wallet: walletCfg,
             env: process.env,
             providerIdOverride: "local-socket-signer",
-            walletId: signerWalletId,
+            walletId: applicationWalletId,
           });
-          const bindingMatchesApproval = (binding: {
-            requestId: string;
-            walletId: string;
-            policyHash: string;
-            intentDigest: string;
-            transactionDigest: string;
-          }) =>
-            binding.requestId === signerReviewId &&
-            binding.walletId === signerWalletId &&
-            binding.policyHash === pendingRequest.payload.signerPolicyHash?.trim() &&
-            binding.intentDigest === pendingRequest.payload.signerIntentDigest?.trim() &&
-            binding.transactionDigest === pendingRequest.payload.signerTransactionDigest?.trim();
+          const bindingMatchesApproval = (binding: WalletProviderSignerReviewBindingV2) =>
+            signerReviewBindingMatchesWalletApprovalPayload(binding, pendingRequest.payload);
           if (payloadKeys.length === 0) {
-            if (!provider.beginSignerReviewAuthorization) {
+            if (!provider.getSignerReview || !provider.beginSignerReviewAuthorization) {
               sendLoginResponse(400, {
                 ok: false,
                 error: {
                   code: "wallet_signer_webauthn_unavailable",
-                  message: "local-socket-signer does not expose signer-owned WebAuthn begin",
+                  message:
+                    "local-socket-signer does not expose exact review recovery and signer-owned WebAuthn begin",
                 },
               });
               return;
             }
             try {
+              const storedReview = await provider.getSignerReview({
+                walletId: signerWalletId,
+                requestId: signerReviewId,
+              });
+              if (!signerReviewMatchesWalletApprovalPayload(storedReview, pendingRequest.payload)) {
+                throw new Error("stored signer review does not match the persisted approval");
+              }
+              if (storedReview.state === "signed") {
+                const recovered = await approveWalletSendRequest({
+                  requestId,
+                  actor: "control-ui",
+                  config: walletCfg,
+                  env: process.env,
+                });
+                if (!recovered.ok) {
+                  sendLoginResponse(recovered.code === "wallet_provider_ambiguous" ? 409 : 400, {
+                    ok: false,
+                    error: { code: recovered.code, message: recovered.message },
+                    request:
+                      "request" in recovered && recovered.request
+                        ? sanitizeWalletSendApprovalRequest(recovered.request)
+                        : undefined,
+                  });
+                  return;
+                }
+                sendLoginResponse(200, {
+                  ok: true,
+                  request: sanitizeWalletSendApprovalRequest(recovered.request),
+                  tx: recovered.tx,
+                });
+                return;
+              }
               const authorization = await provider.beginSignerReviewAuthorization({
                 walletId: signerWalletId,
                 requestId: signerReviewId,

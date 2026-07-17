@@ -95,6 +95,9 @@ function approvalStatusToSummary(request: WalletSendApprovalRequest): {
 }
 
 function policyStepStatus(request: WalletSendApprovalRequest): TaskRegistryStepStatus {
+  if (request.payload.actionKind === "signer_review" && request.payload.signerPolicyHash) {
+    return "succeeded";
+  }
   if (!request.simulation) {
     return "queued";
   }
@@ -142,7 +145,10 @@ function buildApprovalSteps(request: WalletSendApprovalRequest): TaskRegistrySte
   return [
     {
       id: "policy",
-      label: "Policy simulation",
+      label:
+        request.payload.actionKind === "signer_review"
+          ? "Signer policy binding"
+          : "Policy simulation",
       status: policyStepStatus(request),
       updatedAt: request.simulation ? parseTime(request.createdAt) : undefined,
       error: request.simulation?.checks.find((check) => check.status === "fail")?.detail,
@@ -157,7 +163,10 @@ function buildApprovalSteps(request: WalletSendApprovalRequest): TaskRegistrySte
     },
     {
       id: "broadcast",
-      label: "Broadcast transaction",
+      label:
+        request.payload.signerArtifactKind === "domain-separated-message"
+          ? "Complete reviewed signature"
+          : "Broadcast transaction",
       status: broadcastStepStatus(request),
       updatedAt:
         request.status === "executed" || request.status === "failed" ? decisionAt : undefined,
@@ -167,6 +176,9 @@ function buildApprovalSteps(request: WalletSendApprovalRequest): TaskRegistrySte
 }
 
 function formatApprovalTaskTitle(request: WalletSendApprovalRequest): string {
+  if (request.payload.actionKind === "signer_review" && request.payload.memo?.trim()) {
+    return `Wallet approval: ${request.payload.memo.trim()}`;
+  }
   const diff = request.approvalDiff ?? request.simulation?.diff;
   const amount =
     diff?.amountDisplay ||

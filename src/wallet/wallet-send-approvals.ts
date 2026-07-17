@@ -17,7 +17,11 @@ import {
   enforceWalletDailyCap,
   resolveWalletRoleForId,
 } from "./wallet-policy.js";
-import type { WalletProviderSignerReviewAuthorizationV2 } from "./wallet-provider-adapter.js";
+import type {
+  WalletProviderJupiterReviewV2,
+  WalletProviderSignerReviewAuthorizationV2,
+  WalletProviderSignerReviewBindingV2,
+} from "./wallet-provider-adapter.js";
 import {
   buildWalletProviderCapabilityMatrix,
   providerSupportsChainOperation,
@@ -46,7 +50,7 @@ export type WalletSendApprovalStatus =
 
 export type WalletSendApprovalPayload = {
   chain: "solana";
-  actionKind?: "send" | "solana_swap";
+  actionKind?: "send" | "solana_swap" | "signer_review";
   assetId?: string;
   assetSymbol?: string;
   assetName?: string;
@@ -81,9 +85,24 @@ export type WalletSendApprovalPayload = {
   writableAccounts?: string[];
   usesAddressLookupTables?: boolean;
   signerReviewId?: string;
+  signerWalletId?: string;
+  signerWalletPublicKey?: string;
+  signerIntentType?: string;
   signerPolicyHash?: string;
   signerIntentDigest?: string;
+  signerArtifactKind?: "solana-transaction" | "domain-separated-message";
+  signerArtifactDigest?: string;
   signerTransactionDigest?: string;
+  signerStateDigest?: string;
+  signerStateSlot?: number;
+  signerAsset?: string;
+  signerAmount?: string;
+  signerDestination?: string;
+  signerPolicyOperation?: string;
+  signerRequiredPrograms?: string[];
+  signerRequiredRole?: "agent" | "mining" | "vault";
+  signerNonce?: string;
+  signerIssuedAt?: string;
   signerReviewExpiresAt?: string;
   providerId?: WalletProviderId;
   walletId?: string;
@@ -123,6 +142,120 @@ export function sanitizeWalletSendApprovalPayload(
   return {
     ...rest,
     ...(serializedTxBase64 ? { hasSerializedTx: true } : {}),
+  };
+}
+
+function sameSignerPrograms(
+  left: readonly string[] | undefined,
+  right: readonly string[],
+): boolean {
+  return (
+    Boolean(left) &&
+    left?.length === right.length &&
+    left.every((value, index) => value === right[index])
+  );
+}
+
+function sameOptionalSignerValue(left: string | undefined, right: string | undefined): boolean {
+  return (left?.trim() || undefined) === (right?.trim() || undefined);
+}
+
+export function signerReviewMatchesWalletApprovalPayload(
+  review: WalletProviderJupiterReviewV2,
+  payload: WalletSendApprovalPayload,
+): boolean {
+  return (
+    review.requestId === payload.signerReviewId?.trim() &&
+    review.walletId === payload.signerWalletId?.trim() &&
+    sameOptionalSignerValue(review.walletPublicKey, payload.signerWalletPublicKey) &&
+    review.intentType === payload.signerIntentType?.trim() &&
+    review.policyHash === payload.signerPolicyHash?.trim() &&
+    review.intentDigest === payload.signerIntentDigest?.trim() &&
+    review.artifactKind === payload.signerArtifactKind &&
+    review.artifactDigest === payload.signerArtifactDigest?.trim() &&
+    sameOptionalSignerValue(review.transactionDigest, payload.signerTransactionDigest) &&
+    sameOptionalSignerValue(review.stateDigest, payload.signerStateDigest) &&
+    (review.stateSlot ?? undefined) === payload.signerStateSlot &&
+    review.asset === payload.signerAsset?.trim() &&
+    review.amount === payload.signerAmount?.trim() &&
+    review.destination === payload.signerDestination?.trim() &&
+    review.policyOperation === payload.signerPolicyOperation?.trim() &&
+    sameSignerPrograms(payload.signerRequiredPrograms, review.requiredPrograms) &&
+    (!review.requiredRole || review.requiredRole === payload.signerRequiredRole) &&
+    review.nonce === payload.signerNonce?.trim() &&
+    review.issuedAt === payload.signerIssuedAt?.trim() &&
+    review.expiresAt === payload.signerReviewExpiresAt?.trim()
+  );
+}
+
+export function signerReviewBindingMatchesWalletApprovalPayload(
+  binding: WalletProviderSignerReviewBindingV2,
+  payload: WalletSendApprovalPayload,
+): boolean {
+  return (
+    binding.requestId === payload.signerReviewId?.trim() &&
+    binding.walletId === payload.signerWalletId?.trim() &&
+    sameOptionalSignerValue(binding.walletPublicKey, payload.signerWalletPublicKey) &&
+    binding.role === payload.signerRequiredRole &&
+    binding.intentType === payload.signerIntentType?.trim() &&
+    binding.policyHash === payload.signerPolicyHash?.trim() &&
+    binding.intentDigest === payload.signerIntentDigest?.trim() &&
+    binding.artifactKind === payload.signerArtifactKind &&
+    binding.artifactDigest === payload.signerArtifactDigest?.trim() &&
+    sameOptionalSignerValue(binding.transactionDigest, payload.signerTransactionDigest) &&
+    sameOptionalSignerValue(binding.stateDigest, payload.signerStateDigest) &&
+    (binding.stateSlot ?? undefined) === payload.signerStateSlot &&
+    binding.asset === payload.signerAsset?.trim() &&
+    binding.amount === payload.signerAmount?.trim() &&
+    binding.destination === payload.signerDestination?.trim() &&
+    binding.policyOperation === payload.signerPolicyOperation?.trim() &&
+    sameSignerPrograms(payload.signerRequiredPrograms, binding.requiredPrograms) &&
+    binding.nonce === payload.signerNonce?.trim() &&
+    binding.issuedAt === payload.signerIssuedAt?.trim() &&
+    binding.expiresAt === payload.signerReviewExpiresAt?.trim()
+  );
+}
+
+export function bindSignerReviewToWalletApprovalPayload(params: {
+  payload: WalletSendApprovalPayload;
+  review: WalletProviderJupiterReviewV2;
+  role: "agent" | "mining" | "vault";
+}): WalletSendApprovalPayload {
+  const { review, role } = params;
+  if (
+    review.mode !== "reviewed" ||
+    review.state !== "prepared" ||
+    !review.requestId.trim() ||
+    !review.walletId.trim() ||
+    !review.requiredPrograms.length ||
+    (review.requiredRole && review.requiredRole !== role)
+  ) {
+    throw new Error("signer review is not a valid pending reviewed operation");
+  }
+  return {
+    ...params.payload,
+    providerId: "local-socket-signer",
+    walletId: params.payload.walletId || review.walletId,
+    signerReviewId: review.requestId,
+    signerWalletId: review.walletId,
+    signerWalletPublicKey: review.walletPublicKey,
+    signerIntentType: review.intentType,
+    signerPolicyHash: review.policyHash,
+    signerIntentDigest: review.intentDigest,
+    signerArtifactKind: review.artifactKind,
+    signerArtifactDigest: review.artifactDigest,
+    signerTransactionDigest: review.transactionDigest,
+    signerStateDigest: review.stateDigest,
+    signerStateSlot: review.stateSlot,
+    signerAsset: review.asset,
+    signerAmount: review.amount,
+    signerDestination: review.destination,
+    signerPolicyOperation: review.policyOperation,
+    signerRequiredPrograms: [...review.requiredPrograms],
+    signerRequiredRole: role,
+    signerNonce: review.nonce,
+    signerIssuedAt: review.issuedAt,
+    signerReviewExpiresAt: review.expiresAt,
   };
 }
 
@@ -570,6 +703,7 @@ function markExpired(file: WalletSendApprovalsFile): boolean {
 
 export function createWalletSendApprovalRequest(params: {
   requestId?: string;
+  expiresAt?: string;
   payload: WalletSendApprovalPayload;
   requestedBy?: string;
   settlementContext?: WalletSettlementContext;
@@ -582,11 +716,19 @@ export function createWalletSendApprovalRequest(params: {
   const changed = markExpired(file);
   const createdAtMs = nowMs();
   const requestId = params.requestId?.trim() || createRequestId();
+  const requestedExpiresAt = params.expiresAt?.trim();
+  const requestedExpiresAtMs = requestedExpiresAt ? Date.parse(requestedExpiresAt) : Number.NaN;
+  if (
+    requestedExpiresAt &&
+    (!Number.isFinite(requestedExpiresAtMs) || requestedExpiresAtMs <= createdAtMs)
+  ) {
+    throw new Error("approval expiration must be a future timestamp");
+  }
   const req: WalletSendApprovalRequest = {
     id: requestId,
     taskLedgerId: walletApprovalTaskId(requestId),
     createdAt: new Date(createdAtMs).toISOString(),
-    expiresAt: new Date(createdAtMs + resolveTtlMs(env)).toISOString(),
+    expiresAt: requestedExpiresAt || new Date(createdAtMs + resolveTtlMs(env)).toISOString(),
     status: "pending",
     requestedBy: params.requestedBy?.trim() || "agent",
     payload: params.payload,
@@ -618,6 +760,58 @@ export function createWalletSendApprovalRequest(params: {
     env,
   });
   return req;
+}
+
+export function createSignerReviewApprovalRequest(params: {
+  review: WalletProviderJupiterReviewV2;
+  role: "agent" | "mining" | "vault";
+  walletId?: string;
+  requestedBy?: string;
+  walletName?: string;
+  assetSymbol?: string;
+  assetName?: string;
+  amountDisplay?: string;
+  memo?: string;
+  env?: NodeJS.ProcessEnv;
+}): WalletSendApprovalRequest {
+  const env = params.env ?? process.env;
+  const review = params.review;
+  const splMint = review.asset.startsWith("solana:spl:")
+    ? review.asset.slice("solana:spl:".length).trim()
+    : undefined;
+  const payload = bindSignerReviewToWalletApprovalPayload({
+    role: params.role,
+    review,
+    payload: {
+      chain: "solana",
+      actionKind: "signer_review",
+      assetId: review.asset,
+      assetSymbol: params.assetSymbol,
+      assetName: params.assetName,
+      amountDisplay: params.amountDisplay,
+      to: review.destination,
+      amount: review.amount,
+      program: splMint,
+      memo: params.memo,
+      walletId: params.walletId ?? review.walletId,
+      walletName: params.walletName,
+      providerId: "local-socket-signer",
+    },
+  });
+  const existing = getWalletSendApprovalRequest({ requestId: review.requestId, env });
+  if (existing) {
+    if (JSON.stringify(existing.payload) !== JSON.stringify(payload)) {
+      throw new Error("signer review approval ID collides with different persisted metadata");
+    }
+    return existing;
+  }
+  return createWalletSendApprovalRequest({
+    requestId: review.requestId,
+    expiresAt: review.expiresAt,
+    payload,
+    requestedBy: params.requestedBy ?? "signer-review",
+    env,
+  });
 }
 
 export async function createOrExecuteWalletSend(params: {
@@ -815,14 +1009,11 @@ export async function createOrExecuteWalletSend(params: {
           amount,
           ...(reviewedPayload.program?.trim() ? { mint: reviewedPayload.program.trim() } : {}),
         });
-        reviewedPayload = {
-          ...reviewedPayload,
-          signerReviewId: review.requestId,
-          signerPolicyHash: review.policyHash,
-          signerIntentDigest: review.intentDigest,
-          signerTransactionDigest: review.transactionDigest,
-          signerReviewExpiresAt: review.expiresAt,
-        };
+        reviewedPayload = bindSignerReviewToWalletApprovalPayload({
+          payload: reviewedPayload,
+          review,
+          role: walletRole,
+        });
       } catch (error) {
         return {
           ok: false,
@@ -837,6 +1028,7 @@ export async function createOrExecuteWalletSend(params: {
       mode: "manual",
       request: createWalletSendApprovalRequest({
         requestId,
+        expiresAt: reviewedPayload.signerReviewExpiresAt,
         payload: reviewedPayload,
         requestedBy,
         settlementContext: params.settlementContext,
@@ -1302,62 +1494,96 @@ export async function approveWalletSendRequest(params: {
     requestedBy: request.requestedBy,
     payload: request.payload,
   });
+  const signerReviewId = request.payload.signerReviewId?.trim();
+  const isSignerOwnedReview =
+    selectedProviderId === "local-socket-signer" && Boolean(signerReviewId);
 
-  const simulation = simulateWalletPolicy({
-    cfg,
-    config: effectiveConfig,
-    payload: request.payload,
-    mode: "manual",
-    source: request.requestedBy,
-    requireDirectSigning: false,
-    skipNativeSolanaCaps,
-    requireSolanaTokenCap: Boolean(request.payload.program?.trim()),
-    env,
-  });
-  if (!simulation.ok) {
-    const failed = simulation.checks.find((check) => check.status === "fail");
-    request.status = "failed";
-    request.reason = failed?.detail ?? "wallet policy rejected";
-    request.result = { error: request.reason };
+  if (!isSignerOwnedReview) {
+    const simulation = simulateWalletPolicy({
+      cfg,
+      config: effectiveConfig,
+      payload: request.payload,
+      mode: "manual",
+      source: request.requestedBy,
+      requireDirectSigning: false,
+      skipNativeSolanaCaps,
+      requireSolanaTokenCap: Boolean(request.payload.program?.trim()),
+      env,
+    });
+    if (!simulation.ok) {
+      const failed = simulation.checks.find((check) => check.status === "fail");
+      request.status = "failed";
+      request.reason = failed?.detail ?? "wallet policy rejected";
+      request.result = { error: request.reason };
+      request.simulation = simulation;
+      request.approvalDiff = simulation.diff;
+      request.decisionAt = new Date().toISOString();
+      saveFile(file, env);
+      syncApprovalTaskForRequest({ request, settlementLink });
+      appendWalletAuditEntry({
+        action: "send_failed",
+        actor: params.actor?.trim() || "operator",
+        details: {
+          requestId: request.id,
+          reason: request.reason,
+          providerId: request.payload.providerId,
+          walletId: request.payload.walletId,
+          walletName: request.payload.walletName,
+          taskId: settlementLink?.taskId,
+          invoiceId: settlementLink?.invoiceId,
+          senderHandle: settlementLink?.senderHandle,
+        },
+        env,
+      });
+      markWalletSettlementLinkOutcome({
+        requestId: request.id,
+        status: "failed",
+        reason: request.reason,
+        env,
+      });
+      return {
+        ok: false as const,
+        code: failed?.code ?? "policy_rejected",
+        message: request.reason,
+        request,
+      };
+    }
     request.simulation = simulation;
     request.approvalDiff = simulation.diff;
-    request.decisionAt = new Date().toISOString();
-    saveFile(file, env);
-    syncApprovalTaskForRequest({ request, settlementLink });
-    appendWalletAuditEntry({
-      action: "send_failed",
-      actor: params.actor?.trim() || "operator",
-      details: {
-        requestId: request.id,
-        reason: request.reason,
-        providerId: request.payload.providerId,
-        walletId: request.payload.walletId,
-        walletName: request.payload.walletName,
-        taskId: settlementLink?.taskId,
-        invoiceId: settlementLink?.invoiceId,
-        senderHandle: settlementLink?.senderHandle,
-      },
-      env,
-    });
-    markWalletSettlementLinkOutcome({
-      requestId: request.id,
-      status: "failed",
-      reason: request.reason,
-      env,
-    });
-    return {
-      ok: false as const,
-      code: failed?.code ?? "policy_rejected",
-      message: request.reason,
-      request,
-    };
   }
-  request.simulation = simulation;
-  request.approvalDiff = simulation.diff;
 
-  const signerReviewId = request.payload.signerReviewId?.trim();
-  if (selectedProviderId === "local-socket-signer" && signerReviewId) {
-    if (!params.reviewAuthorization) {
+  if (isSignerOwnedReview && signerReviewId) {
+    if (!provider.getSignerReview || !provider.executeSignerReview) {
+      return {
+        ok: false as const,
+        code: "wallet_signer_review_required",
+        message: "local-socket-signer does not expose exact review.get/review.execute support",
+        request,
+      };
+    }
+    let storedReview: WalletProviderJupiterReviewV2;
+    try {
+      storedReview = await provider.getSignerReview({
+        walletId: request.payload.signerWalletId?.trim() || "",
+        requestId: signerReviewId,
+      });
+    } catch (error) {
+      return {
+        ok: false as const,
+        code: "wallet_signer_review_failed",
+        message: normalizeErrorMessage(error),
+        request,
+      };
+    }
+    if (!signerReviewMatchesWalletApprovalPayload(storedReview, request.payload)) {
+      return {
+        ok: false as const,
+        code: "wallet_signer_review_mismatch",
+        message: "signer review does not match the exact persisted approval binding",
+        request,
+      };
+    }
+    if (storedReview.state === "prepared" && !params.reviewAuthorization) {
       syncApprovalTaskForRequest({ request, settlementLink });
       return {
         ok: false as const,
@@ -1366,18 +1592,10 @@ export async function approveWalletSendRequest(params: {
         request,
       };
     }
-    if (!provider.executeSignerReview) {
-      return {
-        ok: false as const,
-        code: "wallet_signer_review_required",
-        message: "local-socket-signer does not expose exact review.execute support",
-        request,
-      };
-    }
     let executed: Awaited<ReturnType<NonNullable<typeof provider.executeSignerReview>>>;
     try {
       executed = await provider.executeSignerReview({
-        walletId: request.payload.walletId?.trim() || "",
+        walletId: request.payload.signerWalletId?.trim() || "",
         requestId: signerReviewId,
         authorization: params.reviewAuthorization,
       });
@@ -1386,6 +1604,32 @@ export async function approveWalletSendRequest(params: {
         ok: false as const,
         code: "wallet_signer_review_failed",
         message: normalizeErrorMessage(error),
+        request,
+      };
+    }
+    if (
+      executed.review.state !== "signed" ||
+      !signerReviewMatchesWalletApprovalPayload(executed.review, request.payload) ||
+      executed.operation.requestId !== signerReviewId ||
+      executed.operation.walletId !== request.payload.signerWalletId?.trim() ||
+      executed.operation.intentDigest !== request.payload.signerIntentDigest?.trim() ||
+      executed.operation.policyHash !== request.payload.signerPolicyHash?.trim() ||
+      executed.operation.asset !== request.payload.signerAsset?.trim() ||
+      executed.operation.amount !== request.payload.signerAmount?.trim() ||
+      !sameOptionalSignerValue(
+        executed.operation.transactionDigest,
+        request.payload.signerTransactionDigest,
+      ) ||
+      !sameOptionalSignerValue(executed.signer, request.payload.signerWalletPublicKey) ||
+      (executed.review.artifactKind === "domain-separated-message" &&
+        executed.signatureBase64 !== executed.operation.signature) ||
+      (params.reviewAuthorization &&
+        executed.operation.authorizationProof !== params.reviewAuthorization.proof.proofId)
+    ) {
+      return {
+        ok: false as const,
+        code: "wallet_signer_review_mismatch",
+        message: "signer execution result does not match the exact persisted approval binding",
         request,
       };
     }
@@ -1420,6 +1664,38 @@ export async function approveWalletSendRequest(params: {
         request,
       };
     }
+    let signerCompletionWarning: string | undefined;
+    if (executed.review.intentType === "federation.bondChallenge") {
+      if (!executed.signatureBase64) {
+        return {
+          ok: false as const,
+          code: "wallet_signer_review_mismatch",
+          message: "federation signer review completed without its exact signature artifact",
+          request,
+        };
+      }
+      try {
+        const federation = await import("../federation/auto-connect.js");
+        const proof = await federation.persistFederationBondProofFromSignerReview({
+          review: executed.review,
+          signatureBase64: executed.signatureBase64,
+          walletId: request.payload.walletId?.trim() || executed.review.walletId,
+          env,
+        });
+        try {
+          await federation.submitFederationBondProof({ env, proof });
+        } catch (error) {
+          signerCompletionWarning = `signature completed; federation proof submission remains pending: ${normalizeErrorMessage(error)}`;
+        }
+      } catch (error) {
+        return {
+          ok: false as const,
+          code: "wallet_signer_review_failed",
+          message: `signature completed but its federation proof could not be persisted safely: ${normalizeErrorMessage(error)}`,
+          request,
+        };
+      }
+    }
     request.status = "approved";
     request.approvedBy = params.actor?.trim() || "operator";
     request.decisionAt = new Date().toISOString();
@@ -1438,20 +1714,26 @@ export async function approveWalletSendRequest(params: {
       env,
     });
     request.status = "executed";
-    request.result = { txHash: operation.signature };
+    request.result = {
+      txHash: operation.signature,
+      ...(signerCompletionWarning ? { error: signerCompletionWarning } : {}),
+    };
     appendWalletAuditEntry({
       action: "send_executed",
       actor: request.approvedBy,
-      details: buildWalletSendAuditDetails({
-        payload: request.payload,
-        requestId: request.id,
-        mode: "manual",
-        providerId: selectedProviderId,
-        txHash: operation.signature,
-        taskId: settlementLink?.taskId,
-        invoiceId: settlementLink?.invoiceId,
-        senderHandle: settlementLink?.senderHandle,
-      }),
+      details: {
+        ...buildWalletSendAuditDetails({
+          payload: request.payload,
+          requestId: request.id,
+          mode: "manual",
+          providerId: selectedProviderId,
+          txHash: operation.signature,
+          taskId: settlementLink?.taskId,
+          invoiceId: settlementLink?.invoiceId,
+          senderHandle: settlementLink?.senderHandle,
+        }),
+        ...(signerCompletionWarning ? { warning: signerCompletionWarning } : {}),
+      },
       env,
     });
     saveFile(file, env);
