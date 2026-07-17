@@ -6,6 +6,7 @@ import {
   broadcastReviewedSolanaTransaction,
   buildReviewedSolanaTransaction,
   computeReviewedSolanaRequestDigest,
+  reconcileReviewedSolanaTransaction,
   validateReviewedSolanaSignedTransaction,
 } from "./solana-reviewed-transaction.js";
 import { WalletProviderError } from "./wallet-provider-adapter.js";
@@ -18,7 +19,7 @@ const REVIEW_FILE_MODE = 0o600;
 const SOLANA_MAINNET_GENESIS_HASH = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp";
 const SOLANA_DEVNET_GENESIS_HASH = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
 
-type WalletStandardReviewStatus = "prepared" | "broadcasting" | "broadcast" | "unknown";
+type WalletStandardReviewStatus = "prepared" | "broadcasting" | "broadcast" | "failed" | "unknown";
 
 type WalletStandardReviewRecord = {
   requestId: string;
@@ -37,6 +38,8 @@ type WalletStandardReviewRecord = {
   rpcUrlDigest: string;
   simulationUnitsConsumed?: number;
   txHash?: string;
+  signedTxBase64?: string;
+  failureReason?: string;
 };
 
 type WalletStandardReviewFile = {
@@ -297,11 +300,56 @@ async function executeLocked(params: {
     return { ok: true, txHash: review.txHash, signer: review.signer, idempotent: true };
   }
   if (review.status === "broadcasting" || review.status === "unknown") {
+    if (!review.txHash) {
+      throw new WalletProviderError({
+        code: "wallet_provider_ambiguous",
+        message:
+          "Hardware-wallet broadcast is already in progress or unknown; do not submit it again",
+        retryable: false,
+      });
+    }
+    let reconciled: Awaited<ReturnType<typeof reconcileReviewedSolanaTransaction>>;
+    try {
+      reconciled = await reconcileReviewedSolanaTransaction({
+        rpcUrl: params.rpcUrl,
+        expectedTxHash: review.txHash,
+        lastValidBlockHeight: review.lastValidBlockHeight,
+      });
+    } catch {
+      throw new WalletProviderError({
+        code: "wallet_provider_ambiguous",
+        message: `Hardware-wallet broadcast remains unknown; reconcile signature ${review.txHash} before any new send`,
+        retryable: false,
+      });
+    }
+    if (reconciled.state === "landed") {
+      review.status = "broadcast";
+      saveFile(file, params.env);
+      return { ok: true, txHash: review.txHash, signer: review.signer, idempotent: true };
+    }
+    if (reconciled.state === "failed" || reconciled.state === "expired") {
+      review.status = "failed";
+      review.failureReason =
+        reconciled.state === "failed"
+          ? reconciled.reason
+          : `reviewed transaction expired at block height ${review.lastValidBlockHeight} without landing`;
+      saveFile(file, params.env);
+      throw new WalletProviderError({
+        code: "wallet_provider_unavailable",
+        message: `${review.failureReason}; create and approve a new hardware-wallet review`,
+        retryable: false,
+      });
+    }
     throw new WalletProviderError({
       code: "wallet_provider_ambiguous",
-      message: review.txHash
-        ? `Hardware-wallet broadcast is already in progress or unknown; reconcile signature ${review.txHash}`
-        : "Hardware-wallet broadcast is already in progress or unknown; do not submit it again",
+      message: `Hardware-wallet broadcast remains pending; reconcile signature ${review.txHash} before any new send`,
+      retryable: false,
+    });
+  }
+  if (review.status === "failed") {
+    throw new WalletProviderError({
+      code: "wallet_provider_unavailable",
+      message: `${review.failureReason ?? "Hardware-wallet transaction failed"}; create and approve a new hardware-wallet review`,
       retryable: false,
     });
   }
@@ -318,11 +366,12 @@ async function executeLocked(params: {
   });
   review.status = "broadcasting";
   review.txHash = verified.txHash;
+  review.signedTxBase64 = verified.signedBytes.toString("base64");
   saveFile(file, params.env);
   try {
     const txHash = await broadcastReviewedSolanaTransaction({
       rpcUrl: params.rpcUrl,
-      signedTxBase64: verified.signedBytes.toString("base64"),
+      signedTxBase64: review.signedTxBase64,
       expectedTxHash: verified.txHash,
     });
     review.status = "broadcast";

@@ -16,7 +16,11 @@ function testEnv(): NodeJS.ProcessEnv {
   return { ...process.env, FASED_STATE_DIR: stateDir };
 }
 
-function installRpcMock(params: { blockhash: string; broadcastResult?: string | null }) {
+function installRpcMock(params: {
+  blockhash: string;
+  broadcastResult?: string | null;
+  reconciliation?: "pending" | "landed" | "failed" | "expired";
+}) {
   const methods: string[] = [];
   let signedSignature = "";
   const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
@@ -36,6 +40,18 @@ function installRpcMock(params: { blockhash: string; broadcastResult?: string | 
       const signed = Transaction.from(Buffer.from(String(body.params[0]), "base64"));
       signedSignature = encodeBase58(signed.signature!);
       result = params.broadcastResult === undefined ? signedSignature : params.broadcastResult;
+    } else if (body.method === "getSignatureStatuses") {
+      if (params.reconciliation === "landed") {
+        result = { value: [{ err: null, confirmationStatus: "confirmed", confirmations: 1 }] };
+      } else if (params.reconciliation === "failed") {
+        result = {
+          value: [{ err: { InstructionError: [0, "Custom"] }, confirmationStatus: "confirmed" }],
+        };
+      } else {
+        result = { value: [null] };
+      }
+    } else if (body.method === "getBlockHeight") {
+      result = params.reconciliation === "expired" ? 457 : 400;
     } else {
       throw new Error(`unexpected RPC method ${body.method}`);
     }
@@ -251,9 +267,103 @@ describe("Wallet Standard reviewed execution", () => {
     await expect(executeWalletStandardReview(input)).rejects.toMatchObject({
       code: "wallet_provider_ambiguous",
     });
+    const persisted = JSON.parse(
+      fs.readFileSync(
+        path.join(env.FASED_STATE_DIR!, "wallet", "wallet-standard-reviews.v1.json"),
+        "utf8",
+      ),
+    ) as { reviews: Array<{ signedTxBase64?: string; txHash?: string; status?: string }> };
+    expect(persisted.reviews[0]).toMatchObject({
+      status: "unknown",
+      txHash: rpc.getSignedSignature(),
+    });
+    expect(persisted.reviews[0]?.signedTxBase64).toBeTruthy();
     await expect(executeWalletStandardReview(input)).rejects.toMatchObject({
       code: "wallet_provider_ambiguous",
     });
     expect(rpc.methods.filter((method) => method === "sendTransaction")).toHaveLength(1);
+  });
+
+  test("reconciles an ambiguous hardware signature after restart without rebroadcasting", async () => {
+    const env = testEnv();
+    const signer = Keypair.generate();
+    const rpc = installRpcMock({
+      blockhash: Keypair.generate().publicKey.toBase58(),
+      broadcastResult: null,
+      reconciliation: "landed",
+    });
+    const review = await prepareWalletStandardReview({
+      requestId: "request-4",
+      payload: {
+        chain: "solana",
+        to: Keypair.generate().publicKey.toBase58(),
+        amount: "1",
+        providerId: "wallet-standard",
+      },
+      signerAddress: signer.publicKey.toBase58(),
+      rpcUrl: "https://rpc.invalid",
+      env,
+    });
+    const input = {
+      requestId: review.requestId,
+      preparedId: review.preparedId,
+      intentDigest: review.intentDigest,
+      signedTxBase64: sign(review.unsignedTxBase64, signer),
+      rpcUrl: "https://rpc.invalid",
+      env,
+    };
+
+    await expect(executeWalletStandardReview(input)).rejects.toMatchObject({
+      code: "wallet_provider_ambiguous",
+    });
+    await expect(executeWalletStandardReview(input)).resolves.toMatchObject({
+      ok: true,
+      idempotent: true,
+      txHash: rpc.getSignedSignature(),
+    });
+    expect(rpc.methods.filter((method) => method === "sendTransaction")).toHaveLength(1);
+    expect(rpc.methods.filter((method) => method === "getSignatureStatuses")).toHaveLength(1);
+  });
+
+  test("marks an expired ambiguous hardware signature failed without another broadcast", async () => {
+    const env = testEnv();
+    const signer = Keypair.generate();
+    const rpc = installRpcMock({
+      blockhash: Keypair.generate().publicKey.toBase58(),
+      broadcastResult: null,
+      reconciliation: "expired",
+    });
+    const review = await prepareWalletStandardReview({
+      requestId: "request-5",
+      payload: {
+        chain: "solana",
+        to: Keypair.generate().publicKey.toBase58(),
+        amount: "1",
+        providerId: "wallet-standard",
+      },
+      signerAddress: signer.publicKey.toBase58(),
+      rpcUrl: "https://rpc.invalid",
+      env,
+    });
+    const input = {
+      requestId: review.requestId,
+      preparedId: review.preparedId,
+      intentDigest: review.intentDigest,
+      signedTxBase64: sign(review.unsignedTxBase64, signer),
+      rpcUrl: "https://rpc.invalid",
+      env,
+    };
+
+    await expect(executeWalletStandardReview(input)).rejects.toMatchObject({
+      code: "wallet_provider_ambiguous",
+    });
+    await expect(executeWalletStandardReview(input)).rejects.toMatchObject({
+      code: "wallet_provider_unavailable",
+    });
+    await expect(executeWalletStandardReview(input)).rejects.toMatchObject({
+      code: "wallet_provider_unavailable",
+    });
+    expect(rpc.methods.filter((method) => method === "sendTransaction")).toHaveLength(1);
+    expect(rpc.methods.filter((method) => method === "getSignatureStatuses")).toHaveLength(1);
   });
 });
