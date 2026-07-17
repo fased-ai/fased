@@ -41,6 +41,7 @@ const requiredPathGroups = [
   "scripts/fased-host-bootstrapd.mjs",
   "scripts/fased-host-updater.mjs",
   "scripts/fased-host-updaterctl.mjs",
+  "scripts/fased-signer-enroll-hosting.sh",
   "scripts/migrate-hosted-signer-v2.mjs",
   "scripts/fased-launcher-runtime.mjs",
   "scripts/install-fased-signerd.sh",

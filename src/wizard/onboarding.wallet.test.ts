@@ -71,7 +71,7 @@ describe("local signer env file helpers", () => {
     ]) {
       expect(resolveLocalSignerWebAuthnConfig(cfg, env)).toEqual({
         rpId: "localhost",
-        origins: "http://localhost:19876",
+        origins: "http://localhost:18791,http://localhost:19876",
       });
     }
   });
@@ -329,7 +329,9 @@ describe("local signer env file helpers", () => {
     expect(content).not.toContain("https://rpc.example/solana");
     expect(content).not.toContain("https://rpc-backup.example/solana");
     expect(content).toContain('export FASED_WALLET_WEBAUTHN_RP_ID="localhost"');
-    expect(content).toContain('export FASED_WALLET_WEBAUTHN_ORIGINS="http://localhost:18789"');
+    expect(content).toContain(
+      'export FASED_WALLET_WEBAUTHN_ORIGINS="http://localhost:18789,http://localhost:18791"',
+    );
     expect(content).not.toMatch(/FASED_WALLET_CUSTODY_/);
     expect(content).not.toMatch(/FASED_WALLET_LOCAL_SIGNER_DIRECT_SIGNING/);
   });
@@ -378,7 +380,9 @@ describe("local signer env file helpers", () => {
     expect(signerEnv).toContain("FASED_WALLET_LOCAL_SIGNER_STATE_DB");
     expect(signerEnv).toContain("FASED_WALLET_LOCAL_SIGNER_MASTER_KEY");
     expect(signerEnv).toContain('FASED_WALLET_WEBAUTHN_RP_ID="localhost"');
-    expect(signerEnv).toContain('FASED_WALLET_WEBAUTHN_ORIGINS="http://localhost:18789"');
+    expect(signerEnv).toContain(
+      'FASED_WALLET_WEBAUTHN_ORIGINS="http://localhost:18789,http://localhost:18791"',
+    );
     expect(signerEnv).not.toMatch(/FASED_WALLET_PASSPHRASE|KEYSTORE/);
   });
 

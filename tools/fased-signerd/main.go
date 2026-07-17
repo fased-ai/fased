@@ -419,6 +419,20 @@ func userHomeDir() string {
 }
 
 func main() {
+	if filepath.Base(os.Args[0]) == "fased-signer-enroll" {
+		applyProcessDumpHardening()
+		home, err := os.UserHomeDir()
+		controlSocket := strings.TrimSpace(os.Getenv("FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET"))
+		os.Clearenv()
+		if err == nil {
+			err = runLocalSignerEnrollmentLauncher(os.Args[1:], home, controlSocket, os.Stdout)
+		}
+		if err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "fased-signer-enroll: %s\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "admin" {
 		applyProcessDumpHardening()
 		if err := runSignerAdminCLI(os.Args[2:], os.Stdin, os.Stdout, os.Environ()); err != nil {

@@ -132,7 +132,9 @@ describe("walletSetupCommand local-signer self-hosted modes", () => {
       expect(signerEnv).toContain("FASED_WALLET_LOCAL_SIGNER_MASTER_KEY");
       expect(signerEnv).toContain('--control-socket "$FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET"');
       expect(signerEnv).toContain('FASED_WALLET_WEBAUTHN_RP_ID="localhost"');
-      expect(signerEnv).toContain('FASED_WALLET_WEBAUTHN_ORIGINS="http://localhost:18789"');
+      expect(signerEnv).toContain(
+        'FASED_WALLET_WEBAUTHN_ORIGINS="http://localhost:18789,http://localhost:18791"',
+      );
       expect(signerMocks.create).toHaveBeenCalledWith(
         expect.objectContaining({ walletId: "solana-1", role: "agent" }),
       );

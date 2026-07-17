@@ -3094,12 +3094,14 @@ install_host_signer_and_updater_services() {
   fi
 
   install -d -m 0755 -o root -g root /usr/local/libexec
+  install -d -m 0755 -o root -g root /usr/local/sbin
   install -d -m 0755 -o root -g root /opt/fased/signer
   install -m 0755 -o root -g root "$FASED_DIR/scripts/fased-host-updater.mjs" /usr/local/libexec/fased-host-updater.mjs
   install -m 0755 -o root -g root "$FASED_DIR/scripts/fased-host-updaterctl.mjs" /usr/local/libexec/fased-host-updaterctl.mjs
   install -m 0755 -o root -g root "$FASED_DIR/scripts/fased-host-bootstrapd.mjs" /usr/local/libexec/fased-host-bootstrapd.mjs
   install -m 0755 -o root -g root "$FASED_DIR/scripts/fased-host-bootstrapctl.mjs" /usr/local/libexec/fased-host-bootstrapctl.mjs
   install -m 0755 -o root -g root "$FASED_DIR/scripts/migrate-hosted-signer-v2.mjs" /usr/local/libexec/migrate-hosted-signer-v2.mjs
+  install -m 0755 -o root -g root "$FASED_DIR/scripts/fased-signer-enroll-hosting.sh" /usr/local/sbin/fased-signer-enroll
   install -d -m 0700 -o root -g root /var/lib/fased-host-updater
   install -d -m 0755 -o root -g root /var/lib/fased-signer-update-gate
   install -d -m 0700 -o "$signer_user" -g "$signer_user" /var/lib/fased-signerd
@@ -3160,6 +3162,7 @@ EOF
   chmod 0644 /etc/systemd/system/fased-host-updater.service
   sync -f /usr/local/libexec/fased-host-updater.mjs
   sync -f /usr/local/libexec/fased-host-updaterctl.mjs
+  sync -f /usr/local/sbin/fased-signer-enroll
   sync -f /etc/systemd/system/fased-host-updater.service
   sync -f /usr/local/libexec /etc/systemd/system
   systemctl daemon-reload

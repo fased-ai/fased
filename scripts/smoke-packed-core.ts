@@ -13,6 +13,7 @@ import {
   readdirSync,
   renameSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -283,6 +284,10 @@ async function main() {
       walletCreate.policyState !== "locked"
     ) {
       throw new Error(`packed core signer-owned wallet creation failed:\n${walletCreateRaw}`);
+    }
+    const enrollmentLauncher = path.join(home, ".fased", "bin", "fased-signer-enroll");
+    if (!existsSync(enrollmentLauncher) || (statSync(enrollmentLauncher).mode & 0o111) === 0) {
+      throw new Error("packed signer install did not include the executable enrollment launcher");
     }
     for (const dependency of optionalChannelDependencies) {
       if (existsSync(path.join(coreNodeModules, ...dependency.split("/")))) {

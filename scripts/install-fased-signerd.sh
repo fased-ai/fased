@@ -155,8 +155,19 @@ EOF
 else
   echo "Custom signer source: checksum verified; GitHub release provenance not applicable."
 fi
+LAUNCHER_PATH="${INSTALL_DIR}/fased-signer-enroll"
 install -m 0755 "${TMP}/fased-signerd" "$BIN_PATH"
+if [[ ! -e "$LAUNCHER_PATH" || ! "$BIN_PATH" -ef "$LAUNCHER_PATH" ]]; then
+  ln -f "$BIN_PATH" "$LAUNCHER_PATH"
+fi
+if [[ ! "$BIN_PATH" -ef "$LAUNCHER_PATH" ]]; then
+  echo "Could not install the signer-attested enrollment launcher." >&2
+  exit 1
+fi
 
 echo "Installed: $BIN_PATH"
+echo "Installed: $LAUNCHER_PATH"
 echo "Export for Fased:"
 echo "  export FASED_WALLET_LOCAL_SIGNER_BIN=\"$BIN_PATH\""
+echo "Enroll a signer-owned wallet approval passkey after the signer is running:"
+echo "  $LAUNCHER_PATH"

@@ -49,6 +49,7 @@ const BUILD_SCRIPT_RELURLS = [
   "../scripts/build-fased-signerd.sh",
 ];
 const DEFAULT_SIGNER_RELEASE_DOWNLOAD_BASE = "https://github.com/fased-ai/fased/releases/download";
+export const LOCAL_SIGNER_ENROLLMENT_ORIGIN = "http://localhost:18791";
 
 function isSignerdRunning(socketPath: string): boolean {
   try {
@@ -578,14 +579,22 @@ export function resolveLocalSignerWebAuthnConfig(
       }
       return parsed.origin.toLowerCase();
     });
-    const uniqueOrigins = [...new Set(normalizedOrigins)].toSorted();
+    const uniqueOrigins = [
+      ...new Set([
+        ...normalizedOrigins,
+        ...(explicitRpId === "localhost" ? [LOCAL_SIGNER_ENROLLMENT_ORIGIN] : []),
+      ]),
+    ].toSorted();
     if (uniqueOrigins.length === 0) {
       throw new Error("Local signer WebAuthn requires at least one exact origin");
     }
     return { rpId: explicitRpId, origins: uniqueOrigins.join(",") };
   }
   const port = resolveGatewayPort(cfg, env);
-  return { rpId: "localhost", origins: `http://localhost:${port}` };
+  return {
+    rpId: "localhost",
+    origins: [`http://localhost:${port}`, LOCAL_SIGNER_ENROLLMENT_ORIGIN].toSorted().join(","),
+  };
 }
 
 function quoteSignerEnvValue(value: string): string {

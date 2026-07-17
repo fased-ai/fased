@@ -105,7 +105,7 @@ func runSignerAdminCLI(args []string, stdin io.Reader, stdout io.Writer, environ
 		}
 	case "webauthn":
 		if len(args) < 3 {
-			return errors.New("signer admin webauthn requires registration or credentials command")
+			return errors.New("signer admin webauthn requires registration, credentials, or enrollment command")
 		}
 		switch args[1] + " " + args[2] {
 		case "registration begin":
@@ -114,6 +114,8 @@ func runSignerAdminCLI(args []string, stdin io.Reader, stdout io.Writer, environ
 			return runSignerAdminWebAuthnRegistrationFinish(args[3:], stdout)
 		case "credentials list":
 			return runSignerAdminWebAuthnCredentialsList(args[3:], stdout)
+		case "enrollment serve":
+			return runSignerAdminWebAuthnEnrollmentServe(args[3:], stdout)
 		default:
 			return errors.New("unknown signer admin webauthn command")
 		}
