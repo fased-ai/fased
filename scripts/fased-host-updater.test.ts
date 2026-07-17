@@ -120,7 +120,7 @@ describe("root-owned hosted updater protocol", () => {
     expect(installCall).toBeGreaterThan(rootFlow);
     expect(migrationCall).toBeGreaterThan(installCall);
     expect(reexecCall).toBeGreaterThan(migrationCall);
-    expect(installer).toContain("FASED_DEFER_LEGACY_QUARANTINE=1");
+    expect(installer).not.toContain("FASED_DEFER_LEGACY_QUARANTINE");
     expect(installer).toContain(
       "ConditionPathExists=!/var/lib/fased-host-updater/gateway-update-gate",
     );
