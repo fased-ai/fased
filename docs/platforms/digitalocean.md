@@ -234,7 +234,7 @@ free -h
 
 ## See Also
 
-- [Hetzner guide](/install/hetzner) — Docker-based VPS path
-- [Docker install](/install/docker) — containerized setup
+- [Hetzner guide](/install/hetzner) — same maintained Hosting installer
+- [Local Docker install](/install/docker) — local computers only, not VPS hosting
 - [Tailscale](/gateway/tailscale) — private remote access
 - [Configuration](/gateway/configuration) — full config reference

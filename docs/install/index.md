@@ -567,8 +567,8 @@ choice is clear.
 | ------------------------ | ------------------------- | ------------------------------------------------------------- |
 | Repo-backed `install.sh` | Main bootstrap            | You are using either Local or VPS Hosting                     |
 | Source checkout          | Contributor path          | You want to build, test, or patch the repo directly           |
-| Docker                   | Advanced reference        | You want a containerized Gateway or sandbox validation        |
-| Podman                   | Advanced reference        | You want rootless containers on Linux                         |
+| Docker                   | Supported Local container | You want a containerized Gateway on your own computer         |
+| Podman                   | Experimental Gateway-only | You want a local rootless Gateway without wallet/mining       |
 | Nix                      | Advanced/declarative path | You already manage systems with Nix/Home Manager              |
 | Bun                      | Experimental dev path     | You want local TypeScript iteration; use Node for the Gateway |
 | Remote client mode       | Client mode               | This machine should connect to an existing Gateway            |
@@ -576,10 +576,10 @@ choice is clear.
 
 <CardGroup cols={2}>
   <Card title="Docker" href="/install/docker" icon="container">
-    Containerized Gateway and sandbox reference.
+    Supported Local containerized Gateway and sandbox reference. Not for VPS hosting.
   </Card>
   <Card title="Podman" href="/install/podman" icon="container">
-    Rootless container reference for Linux.
+    Experimental local Gateway-only container. Wallet and mining are unsupported.
   </Card>
   <Card title="Nix" href="/install/nix" icon="snowflake">
     Declarative install path for Nix users.
@@ -608,7 +608,8 @@ activates `pnpm` only when a source build is needed. Do not run plain
 - Hosted/VPS hardening: Ubuntu/Fedora/RHEL-family Linux with systemd. Alpine,
   Arch, macOS, and FreeBSD are local/dev install targets until their hosted
   hardening paths are validated separately.
-- Containers: Docker and Podman paths are separate from host package managers.
+- Containers: the full Docker Gateway is Local only. Podman is experimental,
+  Gateway-only, and does not support wallet or mining. VPS Hosting is host-managed.
 - Native Windows: use WSL2 for the Gateway. The native Windows app/runtime path
   is not the public install path.
 

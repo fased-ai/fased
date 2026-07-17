@@ -33,7 +33,7 @@ Use these hubs to discover every page, including deep dives and reference docs t
 ## Installation + updates
 
 - [Install: Local or VPS Hosting](/install)
-- [Docker](/install/docker)
+- [Docker (Local only)](/install/docker)
 - [Nix](/install/nix)
 - [Updating / rollback](/install/updating)
 - [Bun workflow (experimental)](/install/bun)

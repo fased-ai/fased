@@ -35,7 +35,7 @@ Reviewed for the current Agent-centered Control UI.
 
 - Node 24 recommended, or Node 22.14+ with `node:sqlite`
 - `pnpm`
-- Docker (optional; only for containerized setup/e2e — see [Docker](/install/docker))
+- Docker (optional; only for Local container setup/e2e — see [Docker](/install/docker))
 
 ## Tailoring strategy (so updates don’t hurt)
 

@@ -1,5 +1,5 @@
 ---
-summary: "VPS hosting hub for Fased (Oracle/Fly/Hetzner/GCP and general VPS guidance)"
+summary: "Maintained non-Docker VPS hosting for Fased"
 read_when:
   - You want to run the Gateway in the cloud
   - You need a quick map of VPS/hosting guides
@@ -10,6 +10,12 @@ title: "VPS Hosting"
 
 This hub links to the supported VPS/hosting guides and explains the current
 hosted Fased posture at a high level.
+
+<Warning>
+The supported VPS path is the host-managed `install.sh --hosting` profile. The
+full Docker Gateway is Local only; there is no `--hosting-docker` mode. Fly.io
+and Render container manifests are archived and unsupported.
+</Warning>
 
 ## Local vs VPS security
 
@@ -439,17 +445,19 @@ before it closes public management paths.
 
 ## Pick a provider
 
-- **Oracle Cloud (Always Free)**: [Oracle](/platforms/oracle) — $0/month (Always Free, ARM; capacity/signup can be finicky)
-- **Fly.io**: [Fly.io](/install/fly)
-- **Hetzner (Docker)**: [Hetzner](/install/hetzner)
-- **GCP (Compute Engine)**: [GCP](/install/gcp)
+- **Oracle Cloud**: [Oracle](/platforms/oracle)
+- **Hetzner**: [Hetzner](/install/hetzner) — maintained non-Docker Hosting installer
+- **GCP (Compute Engine)**: [GCP](/install/gcp) — maintained non-Docker Hosting installer
+- **DigitalOcean**: [DigitalOcean](/platforms/digitalocean)
 - **Other VPS providers**: a clean Ubuntu LTS box usually works fine if you follow
   the same hosting/onboarding and Tailscale guidance.
 
-Fased docs only list hosted install methods backed by files in this repository,
-for example `deploy/hosting/fly.toml`, `deploy/hosting/render.yaml`, Docker, or the repo installer. External
-hosted presets are intentionally not listed because we cannot verify or maintain
-them from this repo.
+Use the same `install.sh --hosting` command on each supported provider. Provider
+guides cover VM creation and access; they do not replace the Fased installer.
+
+Fly.io and Render are not supported hosting targets. Their repo manifests and
+docs remain only as [Fly migration guidance](/install/fly) and
+[Render migration guidance](/install/render) for existing users.
 
 ## How cloud setups work
 

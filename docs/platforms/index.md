@@ -59,11 +59,14 @@ path is WSL2.
 
 - VPS hub: [VPS hosting](/install/vps)
 - Raspberry Pi: [Raspberry Pi](/platforms/raspberry-pi)
-- Fly.io: [Fly.io](/install/fly)
-- Hetzner (Docker): [Hetzner](/install/hetzner)
+- Hetzner: [Hetzner](/install/hetzner)
 - GCP (Compute Engine): [GCP](/install/gcp)
 - DigitalOcean: [DigitalOcean](/platforms/digitalocean)
 - Oracle Cloud: [Oracle](/platforms/oracle)
+
+All VPS provider guides use the non-Docker `install.sh --hosting` profile. The
+full Docker Gateway is Local only. Fly.io and Render are
+[unsupported archives](/install/fly), not hosting options.
 
 ## Common links
 

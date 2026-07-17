@@ -1,386 +1,128 @@
 ---
-summary: "Run Fased on a Hetzner VPS with durable state and baked-in binaries"
+summary: "Install Fased on a Hetzner VPS with the maintained Hosting profile"
 read_when:
-  - You want Fased running 24/7 on a cloud VPS (not your laptop)
-  - You want an always-on Gateway on your own VPS
-  - You want full control over persistence, binaries, and restart behavior
-  - You are running Fased in Docker on Hetzner or a similar provider
+  - You want Fased running continuously on a Hetzner VPS
+  - You want the supported non-Docker hosting and Tailscale path
 title: "Hetzner"
 ---
 
-# Fased on Hetzner (Docker VPS Guide)
+# Fased on Hetzner
 
-## Goal
+Use the maintained **Hosting** installer on a normal Linux VPS. It creates the
+non-root application account, installs the independent native signer and root
+updater, configures systemd, joins Tailscale, hardens remote access, and keeps
+updates and rollback coordinated.
 
-Run a persistent Fased Gateway on a Hetzner VPS using Docker, with durable
-state, baked-in binaries, and predictable restart behavior.
-
-Pick a small Debian/Ubuntu VPS and scale up if you hit OOMs. Provider pricing
-changes, so check the current plan before provisioning.
-
-Security model reminder:
-
-- Company-shared agents are fine when everyone is in the same trust boundary and
-  the runtime is business-only.
-- Keep strict separation: dedicated VPS/runtime plus dedicated accounts. Keep
-  personal Apple/Google/browser/password-manager profiles off that host.
-- If users are adversarial to each other, split by gateway/host/OS user.
-
-See [Security](/gateway/security) and [VPS hosting](/install/vps).
-
-## What are we doing (simple terms)?
-
-- Rent a small Linux server (Hetzner VPS)
-- Install Docker (isolated app runtime)
-- Start the Fased Gateway in Docker
-- Persist `~/.fased` + `~/.fased/workspace` on the host so state survives
-  restarts and rebuilds
-- Keep operator access private through Tailscale
-- Keep the gateway loopback-only
-- Access the Control UI privately from your laptop through Tailscale
-
-The intended operator access path is:
-
-- bootstrap with SSH only long enough to provision the host
-- keep your local computer signed into Tailscale
-- run the standard hosted installer when you want the maintained Fased host
-  hardening path, or manually install Tailscale only for this Docker guide
-- keep the gateway on loopback
-- use Tailscale or a private SSH tunnel over Tailscale for ongoing admin access
-
-This guide assumes Ubuntu or Debian on Hetzner.  
-If you are on another Linux VPS, map packages accordingly.
-For the generic Docker flow, see [Docker](/install/docker).
-
----
-
-## Quick path (experienced operators)
-
-1. Provision Hetzner VPS
-2. Install Docker
-3. Prepare Tailscale operator access
-4. Clone the Fased repository
-5. Create persistent host directories
-6. Configure `.env` and `docker-compose.yml`
-7. Bake required binaries into the image
-8. `docker compose up -d`
-9. Verify persistence and Gateway access
-
----
+<Warning>
+Do not run the full Docker Gateway on a Hetzner VPS. Docker Gateway support is
+Local only, and there is no `install.sh --hosting-docker` mode. On Hetzner, use
+`install.sh --hosting` exactly as shown below.
+</Warning>
 
 ## What you need
 
-- Hetzner VPS with initial root access
-- SSH access from your laptop
-- Basic comfort with SSH + copy/paste
-- ~20 minutes
-- Docker and Docker Compose
-- Model auth credentials
-- Optional provider credentials
-  - WhatsApp QR
-  - Telegram agent token
-  - Gmail OAuth
+- A Hetzner Cloud server with Ubuntu LTS (recommended)
+- Initial root SSH access, preferably with an SSH key
+- A Tailscale account
+- Tailscale installed and signed into the same tailnet on your own computer
+- The provider console/rescue path retained for emergency recovery
 
----
+Use the general [VPS sizing guidance](/install/vps#recommended-vps-size) before
+choosing a server. Do not open the raw Gateway port (`18789`) in a Hetzner
+firewall.
 
-## 1) Provision the VPS
+## 1. Create and enter the server
 
-Create an Ubuntu or Debian VPS in Hetzner.
-
-Connect as root for the bootstrap phase:
+Create an Ubuntu LTS server in Hetzner Cloud and attach your SSH public key.
+Keep public SSH available only for initial bootstrap; the installer verifies
+the private Tailscale path before applying its remote-access hardening.
 
 ```bash
-ssh root@YOUR_VPS_IP
+ssh root@YOUR_PUBLIC_VPS_IP
 ```
 
-This guide assumes the VPS is stateful.
-Treat it as persistent infrastructure.
+The remaining installation commands run **inside that SSH session**, not in a
+PowerShell or Terminal window on your local computer.
 
-After the host is provisioned and joined to Tailscale, ongoing operator access
-should move to **Tailscale/private access**, not normal public root login.
-
----
-
-## 2) Install Docker (on the VPS)
+## 2. Run the Hosting installer
 
 ```bash
-apt-get update
-apt-get install -y git curl ca-certificates
-curl -fsSL https://get.docker.com | sh
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+  | bash -s -- --hosting
 ```
 
-Verify:
+The installer bootstraps the matching repository/runtime itself. Do not install
+Docker, Node, Go, or Fased globally first.
+
+When Tailscale prints a login URL, open that URL in the browser on your own
+computer and approve the server. Return to SSH only after the server appears in
+the correct tailnet. The installer stops before SSH/firewall lockdown if it
+cannot verify a valid tailnet address.
+
+## 3. Verify private access
+
+From your own computer, with Tailscale connected to the same tailnet:
 
 ```bash
-docker --version
-docker compose version
+tailscale ping YOUR_VPS_TAILSCALE_NAME
+ssh app@YOUR_VPS_TAILSCALE_NAME
 ```
 
-## 2.5) Prepare Tailscale operator access (manual Docker path)
-
-This section is only for the manual Docker guide. For the maintained hosted
-Fased path, use [VPS Hosting](/install/vps) and let the hosted installer handle
-Tailscale login.
-
-Create or sign into your Tailscale account first, then authenticate the VPS
-before you rely on the private operator path.
+If the initial provider login was password-only and no application SSH key was
+available, use Tailscale SSH:
 
 ```bash
-curl -fsSL https://tailscale.com/install.sh | sh
-tailscale up
+tailscale ssh app@YOUR_VPS_TAILSCALE_NAME
 ```
 
-From this point forward, treat Tailscale as the normal operator access path.
-Do not plan around public gateway exposure.
+Do not close the bootstrap session until private access works.
 
-For a manual VPS, `tailscale up` prints a login URL in SSH. Open that URL in
-your local computer's browser, then return to the SSH session. Use a Tailscale
-auth key only when you need unattended provisioning, cloud-init, Terraform, or
-another non-interactive install path.
+## 4. Verify Fased
 
-If the Tailscale UI shows the VPS as approved but the SSH command keeps
-waiting, verify `tailscale status` and `tailscale ip -4` in a second SSH
-session. If the VPS has a `100.x.x.x` tailnet IP, press `Ctrl+C` in the stuck
-terminal and continue.
-
----
-
-## 3) Clone the Fased repository
+As the `app` user on the VPS:
 
 ```bash
-git clone https://github.com/fased-ai/fased.git fased
-cd fased
+fased health
+fased --version
+fased gateway status
+fased plugins doctor
+fased wallet signer doctor --json
 ```
 
-This guide assumes you will build a custom image so binary persistence is predictable.
+The install is ready only when health passes, the Gateway is running, the RPC
+probe succeeds, plugins are clean, and signer doctor reports the expected
+native protocol.
 
----
+## 5. Open the Control UI privately
 
-## 4) Create persistent host directories
-
-Docker containers are ephemeral.
-All long-lived state must live on the host.
+Keep the Gateway on loopback. If you need a direct browser tunnel, run this on
+your own computer:
 
 ```bash
-mkdir -p /root/.fased/workspace
-
-# Set ownership to the container user (uid 1000):
-chown -R 1000:1000 /root/.fased
+ssh -N -L 18790:127.0.0.1:18789 app@YOUR_VPS_TAILSCALE_NAME
 ```
 
----
+Then open `http://127.0.0.1:18790/`. Use the dashboard/token instructions
+printed by the installer; never publish port `18789` to the internet.
 
-## 5) Configure environment variables
+## Updates and repair
 
-Create `.env` in the repository root.
+For a normal update, connect as `app` over Tailscale and run:
 
 ```bash
-FASED_IMAGE=fased:latest
-FASED_GATEWAY_TOKEN=change-me-now
-FASED_GATEWAY_BIND=loopback
-FASED_GATEWAY_PORT=18789
-
-FASED_CONFIG_DIR=/root/.fased
-FASED_WORKSPACE_DIR=/root/.fased/workspace
-
-GOG_KEYRING_PASSWORD=change-me-now
-XDG_CONFIG_HOME=/home/node/.fased
+fased update status
+fased update
+fased health
 ```
 
-Generate strong secrets:
+Use `install.sh --hosting` again only for an intentional hosted repair or
+reinstall. See [VPS Hosting](/install/vps) and
+[Updating and rollback](/install/updating) for the complete lifecycle and
+backup guidance.
 
-```bash
-openssl rand -hex 32
-```
+## Container note
 
-**Do not commit this file.**
-
----
-
-## 6) Docker Compose configuration
-
-Create or update `docker-compose.yml`.
-
-```yaml
-services:
-  fased-gateway:
-    image: ${FASED_IMAGE}
-    build: .
-    restart: unless-stopped
-    env_file:
-      - .env
-    environment:
-      - HOME=/home/node
-      - NODE_ENV=production
-      - TERM=xterm-256color
-      - FASED_GATEWAY_BIND=${FASED_GATEWAY_BIND}
-      - FASED_GATEWAY_PORT=${FASED_GATEWAY_PORT}
-      - FASED_GATEWAY_TOKEN=${FASED_GATEWAY_TOKEN}
-      - GOG_KEYRING_PASSWORD=${GOG_KEYRING_PASSWORD}
-      - XDG_CONFIG_HOME=${XDG_CONFIG_HOME}
-      - PATH=/home/linuxbrew/.linuxbrew/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-    volumes:
-      - ${FASED_CONFIG_DIR}:/home/node/.fased
-      - ${FASED_WORKSPACE_DIR}:/home/node/.fased/workspace
-    ports:
-      # Keep the Gateway loopback-only on the VPS.
-      # Access it through Tailscale or a private tunnel; do not expose it publicly by default.
-      - "127.0.0.1:${FASED_GATEWAY_PORT}:18789"
-    command:
-      [
-        "node",
-        "dist/index.js",
-        "gateway",
-        "--bind",
-        "${FASED_GATEWAY_BIND}",
-        "--port",
-        "${FASED_GATEWAY_PORT}",
-        "--allow-unconfigured",
-      ]
-```
-
-`--allow-unconfigured` is only for bootstrap convenience. It is not a
-replacement for a proper gateway configuration. Still set auth
-(`gateway.auth.token` or password) and use private bind settings for your
-deployment.
-
----
-
-## 7) Bake required binaries into the image (critical)
-
-Installing binaries inside a running container is a trap.
-Anything installed at runtime will be lost on restart.
-
-All external binaries required by skills must be installed at image build time.
-
-The examples below show three common binaries only:
-
-- `gog` for Gmail access
-- `goplaces` for Google Places
-- `wacli` for WhatsApp
-
-These are examples, not a complete list.
-You may install as many binaries as needed using the same pattern.
-
-If you add new skills later that depend on additional binaries, you must:
-
-1. Update the Dockerfile
-2. Rebuild the image
-3. Restart the containers
-
-**Example Dockerfile**
-
-```dockerfile
-FROM node:22-bookworm
-
-RUN apt-get update && apt-get install -y socat && rm -rf /var/lib/apt/lists/*
-
-# Example binary 1: Gmail CLI
-RUN curl -L https://github.com/steipete/gog/releases/latest/download/gog_Linux_x86_64.tar.gz \
-  | tar -xz -C /usr/local/bin && chmod +x /usr/local/bin/gog
-
-# Example binary 2: Google Places CLI
-RUN curl -L https://github.com/steipete/goplaces/releases/latest/download/goplaces_Linux_x86_64.tar.gz \
-  | tar -xz -C /usr/local/bin && chmod +x /usr/local/bin/goplaces
-
-# Example binary 3: WhatsApp CLI
-RUN curl -L https://github.com/steipete/wacli/releases/latest/download/wacli_Linux_x86_64.tar.gz \
-  | tar -xz -C /usr/local/bin && chmod +x /usr/local/bin/wacli
-
-# Add more binaries below using the same pattern
-
-WORKDIR /app
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
-COPY ui/package.json ./ui/package.json
-COPY scripts ./scripts
-
-RUN corepack enable
-RUN pnpm install --frozen-lockfile
-
-COPY . .
-RUN pnpm build
-RUN pnpm ui:install
-RUN pnpm ui:build
-
-ENV NODE_ENV=production
-
-CMD ["node","dist/index.js"]
-```
-
----
-
-## 8) Build and launch
-
-```bash
-docker compose build
-docker compose up -d fased-gateway
-```
-
-Verify binaries:
-
-```bash
-docker compose exec fased-gateway which gog
-docker compose exec fased-gateway which goplaces
-docker compose exec fased-gateway which wacli
-```
-
-Expected output:
-
-```
-/usr/local/bin/gog
-/usr/local/bin/goplaces
-/usr/local/bin/wacli
-```
-
----
-
-## 9) Verify Gateway
-
-```bash
-docker compose logs -f fased-gateway
-```
-
-Success should show the gateway listening internally on port `18789` for the
-container, while the host keeps that mapping on `127.0.0.1` only.
-
-From your laptop, prefer a **Tailscale/private** path:
-
-- Tailscale SSH tunnel
-- Tailscale Serve on the host
-- or another private tailnet path you control
-
-If you use an SSH tunnel, treat that as a private operator tunnel, not a reason
-to keep public root login as the steady-state access path.
-
----
-
-## What persists where (source of truth)
-
-Fased runs in Docker, but Docker is not the source of truth.
-All long-lived state must survive restarts, rebuilds, and reboots.
-
-| Component           | Location                       | Persistence mechanism  | Notes                           |
-| ------------------- | ------------------------------ | ---------------------- | ------------------------------- |
-| Gateway config      | `/home/node/.fased/`           | Host volume mount      | Includes `fased.json`, tokens   |
-| Model auth profiles | `/home/node/.fased/`           | Host volume mount      | OAuth tokens, API keys          |
-| Skill configs       | `/home/node/.fased/skills/`    | Host volume mount      | Skill-level state               |
-| Agent workspace     | `/home/node/.fased/workspace/` | Host volume mount      | Code and agent artifacts        |
-| WhatsApp session    | `/home/node/.fased/`           | Host volume mount      | Preserves QR login              |
-| Gmail keyring       | `/home/node/.fased/`           | Host volume + password | Requires `GOG_KEYRING_PASSWORD` |
-| External binaries   | `/usr/local/bin/`              | Docker image           | Must be baked at build time     |
-| Node runtime        | Container filesystem           | Docker image           | Rebuilt every image build       |
-| OS packages         | Container filesystem           | Docker image           | Do not install at runtime       |
-| Docker container    | Ephemeral                      | Restartable            | Can be destroyed                |
-
----
-
-## Automation
-
-If you automate this guide with cloud-init, Terraform, Ansible, or another
-provisioning tool, keep the same order:
-
-1. create the VPS
-2. join Tailscale
-3. install Docker and Fased
-4. keep the Gateway loopback-only on the host
-5. verify private operator access before relying on the runtime
+Docker may still be installed on the same VPS for optional per-session Agent
+sandboxing while the Gateway and native signer remain managed by the host
+installer. That is different from running the full Gateway in Docker. See
+[Sandboxing](/gateway/sandboxing).

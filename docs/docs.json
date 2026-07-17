@@ -960,14 +960,11 @@
               },
               {
                 "group": "Hosting and deployment",
-                "pages": [
-                  "install/vps",
-                  "install/fly",
-                  "install/hetzner",
-                  "install/gcp",
-                  "install/macos-vm",
-                  "install/render"
-                ]
+                "pages": ["install/vps", "install/hetzner", "install/gcp", "install/macos-vm"]
+              },
+              {
+                "group": "Unsupported archives",
+                "pages": ["install/fly", "install/render"]
               },
               {
                 "group": "Advanced and reference",

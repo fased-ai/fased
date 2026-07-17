@@ -521,8 +521,10 @@ The root intentionally contains both product code and build/deploy control files
 - `test/`: test fixtures and integration helpers
 - `token/`: SAT/token technical materials
 - `Dockerfile`, `docker-compose.yml`, `docker-setup.sh`, and
-  `setup-podman.sh`: primary container entrypoints
-- `deploy/`: secondary container, Fly, Render, and hosting configuration files
+  `setup-podman.sh`: Local Docker entrypoints plus an experimental Gateway-only
+  Podman helper
+- `deploy/`: sandbox/container assets and archived Fly/Render reference
+  manifests; VPS Hosting uses `install.sh --hosting`, not those manifests
 
 Root config files should stay at repository root unless the owning toolchain,
 docs publisher, installer, and CI path are updated together.

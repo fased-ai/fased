@@ -377,6 +377,6 @@ only for Fased.
 
 - [Linux guide](/platforms/linux) — general Linux setup
 - [DigitalOcean guide](/platforms/digitalocean) — cloud alternative
-- [Hetzner guide](/install/hetzner) — Docker setup
+- [Hetzner guide](/install/hetzner) — maintained non-Docker VPS Hosting setup
 - [Tailscale](/gateway/tailscale) — remote access
 - [Nodes](/nodes) — operator docs for pairing laptop/phone nodes with the Pi gateway

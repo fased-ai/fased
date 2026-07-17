@@ -284,4 +284,4 @@ tar -czvf fased-backup.tar.gz ~/.fased ~/.fased/workspace
 - [Tailscale integration](/gateway/tailscale) — full Tailscale docs
 - [Gateway configuration](/gateway/configuration) — all config options
 - [DigitalOcean guide](/platforms/digitalocean) — simpler VPS setup path
-- [Hetzner guide](/install/hetzner) — Docker-based alternative
+- [Hetzner guide](/install/hetzner) — same maintained Hosting installer
