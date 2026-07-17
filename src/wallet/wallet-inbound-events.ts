@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { FasedAgentConfig } from "../config/config.js";
 import type { WalletChain, WalletProviderId } from "../config/types.wallet.js";
+import { serializeWalletState, writeWalletStateFileAtomically } from "./wallet-atomic-state.js";
 import { appendWalletAuditEntry, readWalletAuditEntries } from "./wallet-audit-log.js";
 import {
   buildWalletProviderCapabilityMatrix,
@@ -196,9 +197,17 @@ function defaultLedger(): WalletInboundLedger {
 
 function normalizeLedger(raw: unknown): WalletInboundLedger {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    return defaultLedger();
+    throw new Error("wallet inbound ledger must be an object");
   }
   const value = raw as Partial<WalletInboundLedger>;
+  if (
+    value.version !== 1 ||
+    !Array.isArray(value.snapshots) ||
+    !Array.isArray(value.events) ||
+    typeof value.updatedAt !== "string"
+  ) {
+    throw new Error("wallet inbound ledger has an unsupported shape");
+  }
   const snapshots = Array.isArray(value.snapshots)
     ? value.snapshots
         .filter((entry): entry is WalletInboundSnapshot => {
@@ -225,6 +234,9 @@ function normalizeLedger(raw: unknown): WalletInboundLedger {
           updatedAt: entry.updatedAt,
         }))
     : [];
+  if (snapshots.length !== value.snapshots.length) {
+    throw new Error("wallet inbound ledger contains an invalid balance snapshot");
+  }
   const events = Array.isArray(value.events)
     ? value.events
         .filter((entry): entry is WalletInboundEvent => {
@@ -270,11 +282,14 @@ function normalizeLedger(raw: unknown): WalletInboundLedger {
             entry.metadata && typeof entry.metadata === "object" ? entry.metadata : undefined,
         }))
     : [];
+  if (events.length !== value.events.length) {
+    throw new Error("wallet inbound ledger contains an invalid event");
+  }
   return {
     version: 1,
     snapshots,
     events,
-    updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : nowIso(),
+    updatedAt: value.updatedAt,
     lastReconciledAt:
       typeof value.lastReconciledAt === "string" ? value.lastReconciledAt : undefined,
   };
@@ -288,8 +303,10 @@ function readLedger(env: NodeJS.ProcessEnv = process.env): WalletInboundLedger {
   try {
     const parsed = JSON.parse(fs.readFileSync(filePath, "utf8")) as unknown;
     return normalizeLedger(parsed);
-  } catch {
-    return defaultLedger();
+  } catch (error) {
+    throw new Error("wallet inbound ledger is unreadable; refusing to reset event history", {
+      cause: error,
+    });
   }
 }
 
@@ -300,15 +317,7 @@ function writeLedger(ledger: WalletInboundLedger, env: NodeJS.ProcessEnv = proce
     version: 1,
     updatedAt: nowIso(),
   };
-  fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, {
-    encoding: "utf8",
-    mode: 0o600,
-  });
-  try {
-    fs.chmodSync(filePath, 0o600);
-  } catch {
-    // best effort
-  }
+  writeWalletStateFileAtomically(filePath, serializeWalletState(payload));
 }
 
 function findWalletById(env: NodeJS.ProcessEnv, walletId?: string): WalletNamedWallet | undefined {

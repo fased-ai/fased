@@ -2,6 +2,7 @@ import { createHash, createPublicKey, randomBytes, timingSafeEqual, verify } fro
 import fs from "node:fs";
 import path from "node:path";
 import type { FasedAgentConfig } from "../config/types.fased.js";
+import { serializeWalletState, writeWalletStateFileAtomically } from "./wallet-atomic-state.js";
 import { ensureWalletStateDir } from "./wallet-runtime-config.js";
 
 export type WalletApprovalAuthMode = "none" | "webauthn";
@@ -129,8 +130,8 @@ function rpIdFromHost(host: string): string {
 }
 
 function normalizeState(input: unknown): WalletApprovalAuthState {
-  if (!input || typeof input !== "object") {
-    return { version: 2, passkeys: [], challenges: [], grants: [] };
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error("wallet approval auth state must be an object");
   }
   const parsed = input as Partial<WalletApprovalAuthState> & {
     version?: number;
@@ -138,8 +139,13 @@ function normalizeState(input: unknown): WalletApprovalAuthState {
     challenges?: unknown;
     grants?: unknown;
   };
-  if (parsed.version !== 2) {
-    return { version: 2, passkeys: [], challenges: [], grants: [] };
+  if (
+    parsed.version !== 2 ||
+    !Array.isArray(parsed.passkeys) ||
+    !Array.isArray(parsed.challenges) ||
+    !Array.isArray(parsed.grants)
+  ) {
+    throw new Error("wallet approval auth state has an unsupported shape");
   }
   const passkeys: WalletPasskeyRecord[] = Array.isArray(parsed.passkeys)
     ? (parsed.passkeys
@@ -178,6 +184,9 @@ function normalizeState(input: unknown): WalletApprovalAuthState {
         })
         .filter((entry) => entry !== null) as WalletPasskeyRecord[])
     : [];
+  if (passkeys.length !== parsed.passkeys.length) {
+    throw new Error("wallet approval auth state contains an invalid passkey");
+  }
 
   const challenges: WalletApprovalChallengeRecord[] = Array.isArray(parsed.challenges)
     ? (parsed.challenges
@@ -224,6 +233,12 @@ function normalizeState(input: unknown): WalletApprovalAuthState {
         })
         .filter((entry) => entry !== null) as WalletApprovalChallengeRecord[])
     : [];
+  if (
+    challenges.length !== parsed.challenges.length ||
+    challenges.some((entry) => !entry.id || !entry.challenge || !entry.host || !entry.rpId)
+  ) {
+    throw new Error("wallet approval auth state contains an invalid challenge");
+  }
 
   const grants: WalletApprovalGrantRecord[] = Array.isArray(parsed.grants)
     ? (parsed.grants
@@ -255,6 +270,9 @@ function normalizeState(input: unknown): WalletApprovalAuthState {
         })
         .filter((entry) => entry !== null) as WalletApprovalGrantRecord[])
     : [];
+  if (grants.length !== parsed.grants.length || grants.some((entry) => !entry.host)) {
+    throw new Error("wallet approval auth state contains an invalid grant");
+  }
 
   return { version: 2, passkeys, challenges, grants };
 }
@@ -267,22 +285,16 @@ function loadState(env: NodeJS.ProcessEnv = process.env): WalletApprovalAuthStat
   try {
     const raw = fs.readFileSync(statePath, "utf8");
     return normalizeState(JSON.parse(raw) as unknown);
-  } catch {
-    return { version: 2, passkeys: [], challenges: [], grants: [] };
+  } catch (error) {
+    throw new Error("wallet approval auth state is unreadable; refusing to reset credentials", {
+      cause: error,
+    });
   }
 }
 
 function saveState(state: WalletApprovalAuthState, env: NodeJS.ProcessEnv = process.env): void {
   const statePath = resolveStatePath(env);
-  fs.writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, {
-    encoding: "utf8",
-    mode: 0o600,
-  });
-  try {
-    fs.chmodSync(statePath, 0o600);
-  } catch {
-    // best effort
-  }
+  writeWalletStateFileAtomically(statePath, serializeWalletState(state));
 }
 
 function pruneState(state: WalletApprovalAuthState): boolean {

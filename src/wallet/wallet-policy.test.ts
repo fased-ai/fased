@@ -513,4 +513,37 @@ describe("wallet-policy", () => {
     expect(miningProfile.defaults.solana.allowPrograms).not.toContain(bondProgramId);
     expect(vaultProfile.defaults.solana.allowPrograms).not.toContain(bondProgramId);
   });
+
+  it("fails closed without replacing a corrupt daily spend ledger", async () => {
+    const walletRoot = path.join(tempDir, "wallet");
+    const usagePath = path.join(walletRoot, "policy-usage.json");
+    await fs.mkdir(walletRoot, { recursive: true });
+    await fs.writeFile(usagePath, "{not-json\n", "utf8");
+
+    expect(() =>
+      enforceWalletDailyCap({
+        config: runtimeConfig as never,
+        chain: "solana",
+        amount: "1",
+        walletId: "wallet-agent",
+        env: process.env,
+      }),
+    ).toThrow("refusing to reset spend counters");
+    await expect(fs.readFile(usagePath, "utf8")).resolves.toBe("{not-json\n");
+  });
+
+  it("fails closed without replacing corrupt persisted policy", async () => {
+    await writeProviderRegistry({
+      defaultWalletId: "wallet-agent",
+      wallets: [{ id: "wallet-agent", name: "Agent" }],
+    });
+    const policyPath = path.join(tempDir, "wallet", "wallet-policy-state.v1.json");
+    await fs.writeFile(policyPath, '{"version":999,"wallets":{}}\n', "utf8");
+    const cfg = { wallet: { runtime: { chains: ["solana"] } } } as never;
+
+    expect(() => resolveWalletPolicyConfig(cfg, process.env, "wallet-agent")).toThrow(
+      "refusing to replace persisted policy",
+    );
+    await expect(fs.readFile(policyPath, "utf8")).resolves.toBe('{"version":999,"wallets":{}}\n');
+  });
 });
