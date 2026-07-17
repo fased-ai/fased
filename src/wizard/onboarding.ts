@@ -1615,7 +1615,17 @@ export async function runOnboardingWizard(
           const controlSocket = hosting
             ? "/run/fased-signerd/control.sock"
             : resolveLocalSignerControlSocketPath(process.env);
-          const command = `${hosting ? "sudo -u fased-signer -- " : ""}${signerBin} admin wallet import --control-socket ${controlSocket} --wallet-id ${effectiveWalletId} --locked-role ${walletPurpose} < /absolute/path/to/solana-keypair.json`;
+          const signerImportCommand = [
+            shellQuote(signerBin),
+            "admin wallet import",
+            `--control-socket ${shellQuote(controlSocket)}`,
+            `--wallet-id ${shellQuote(effectiveWalletId)}`,
+            `--locked-role ${shellQuote(walletPurpose)}`,
+            `< ${shellQuote("/absolute/path/to/solana-keypair.json")}`,
+          ].join(" ");
+          const command = hosting
+            ? `sudo /bin/sh -c ${shellQuote(`exec sudo -u fased-signer -- ${signerImportCommand}`)}`
+            : signerImportCommand;
           await prompter.note(
             [
               "The normal Gateway and Node wizard paths do not accept plaintext wallet keys. Local same-user isolation is not a hard compromise boundary; Hosting isolates the signer account.",

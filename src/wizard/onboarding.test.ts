@@ -1964,6 +1964,69 @@ describe("runOnboardingWizard", () => {
     }
   });
 
+  it("opens hosted signer import input in a privileged shell before dropping privileges", async () => {
+    const tempHome = await fs.mkdtemp(path.join(os.tmpdir(), "fased-hosted-wallet-import-"));
+    vi.stubEnv("USER", "app");
+    vi.stubEnv("HOME", tempHome);
+    const select = vi.fn(async (opts: unknown) => {
+      const rawMessage = (opts as { message?: unknown })?.message;
+      const message = typeof rawMessage === "string" ? rawMessage : "";
+      if (message === "Wallet setup action") {
+        return "self-hosted";
+      }
+      if (message === "Wallet action") {
+        return "import";
+      }
+      if (message === "How do you want to hatch your bot?") {
+        return "skip";
+      }
+      return "quickstart";
+    }) as unknown as WizardPrompter["select"];
+    const confirm = vi.fn(async (opts: unknown) => {
+      const rawMessage = (opts as { message?: unknown })?.message;
+      const message = typeof rawMessage === "string" ? rawMessage : "";
+      if (message === "Run another wallet setup action?") {
+        return false;
+      }
+      return false;
+    }) as unknown as WizardPrompter["confirm"];
+    const note = vi.fn(async () => {});
+    const prompter = createWizardPrompter({ select, confirm, note });
+    writeConfigFile.mockImplementationOnce(async () => {
+      throw new Error("write-reached");
+    });
+
+    try {
+      await expect(
+        runOnboardingWizard(
+          {
+            acceptRisk: true,
+            flow: "quickstart",
+            authChoice: "skip",
+            hostProfile: "hosting",
+            installDaemon: false,
+            skipProviders: true,
+            skipSkills: true,
+            skipHealth: true,
+            skipUi: true,
+          },
+          createRuntime({ throwsOnExit: true }),
+          prompter,
+        ),
+      ).rejects.toThrow("write-reached");
+
+      const importNote = note.mock.calls.find(([, title]) => title === "Native signer import");
+      expect(importNote?.[0]).toContain("sudo /bin/sh -c");
+      expect(importNote?.[0]).toContain("exec sudo -u fased-signer --");
+      expect(importNote?.[0]).toContain("/opt/fased/signer/fased-signerd");
+      expect(importNote?.[0]).toContain("<");
+      expect(importNote?.[0]).toContain("/absolute/path/to/solana-keypair.json");
+      expect(walletSetupCommand).not.toHaveBeenCalled();
+    } finally {
+      await fs.rm(tempHome, { recursive: true, force: true });
+    }
+  });
+
   it("shows the operator readiness summary at onboarding completion", async () => {
     configureFederationForOnboarding.mockResolvedValueOnce({
       enabled: true,

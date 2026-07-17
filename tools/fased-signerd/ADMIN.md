@@ -72,16 +72,19 @@ exclusive signer-owned `0600` staging file in a private import directory beside
 the control socket, writes and fsyncs it, asks the signer to consume it
 atomically, then removes it on success or failure.
 
-The import command must run as the control-socket owner. Root can open a
-root-only source file for stdin before changing to the signer user:
+The import command must run as the control-socket owner. Use a root shell for
+the input redirection, then change only the signer process to the signer user.
+This works from a non-root administrator session; a plain
+`sudo -u fased-signer ... < /root/file` fails because the calling shell opens
+the root-only file before `sudo` runs:
 
 ```bash
-sudo -u fased-signer -- /opt/fased/signer/fased-signerd admin \
-  wallet import \
+sudo /bin/sh -c 'exec sudo -u fased-signer -- \
+  /opt/fased/signer/fased-signerd admin wallet import \
   --control-socket /run/fased-signerd/control.sock \
   --wallet-id agent \
   --locked-role agent \
-  < /root/offline-agent-keypair.json
+  < /root/offline-agent-keypair.json'
 ```
 
 The command prints only the public wallet record and policy. It never prints or
