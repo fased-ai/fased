@@ -75,6 +75,7 @@ describe("Docker initial signer policy helper", () => {
     expect(result.status, result.stderr).toBe(0);
     const log = await readFile(logPath, "utf8");
     expect(log).toContain("docker-signer-health.mjs /run/fased-signerd/app.sock");
+    expect(log).toContain("--control-socket /run/fased-signerd-control/control.sock");
     expect(log).toContain("admin policy get");
     expect(log).toContain("admin policy put");
     expect(log).toContain("--expected-version 1");

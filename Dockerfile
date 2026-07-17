@@ -68,7 +68,10 @@ RUN pnpm ui:build
 USER root
 RUN ln -sf /app/fased.mjs /usr/local/bin/fased \
  && chmod 755 /app/fased.mjs \
- && install -d -o node -g node -m 0700 /run/fased-signerd /var/lib/fased-signerd
+ && install -d -o node -g node -m 0700 \
+      /run/fased-signerd \
+      /run/fased-signerd-control \
+      /var/lib/fased-signerd
 COPY --from=signer-builder --chown=root:root /out/fased-signerd /usr/local/bin/fased-signerd
 RUN chmod 0555 /usr/local/bin/fased-signerd \
  && ln /usr/local/bin/fased-signerd /usr/local/bin/fased-signer-enroll

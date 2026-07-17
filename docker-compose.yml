@@ -6,13 +6,14 @@ services:
       HOME: /var/lib/fased-signerd
       FASED_WALLET_CHAINS: solana
       FASED_WALLET_LOCAL_SIGNER_SOCKET: /run/fased-signerd/app.sock
-      FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET: /run/fased-signerd/control.sock
+      FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET: /run/fased-signerd-control/control.sock
       FASED_WALLET_LOCAL_SIGNER_STATE_DB: /var/lib/fased-signerd/state.db
       FASED_WALLET_LOCAL_SIGNER_MASTER_KEY: /var/lib/fased-signerd/master.key
       FASED_WALLET_WEBAUTHN_RP_ID: localhost
       FASED_WALLET_WEBAUTHN_ORIGINS: http://localhost:${FASED_GATEWAY_PORT:-18789},http://127.0.0.1:${FASED_GATEWAY_PORT:-18789},http://localhost:18791
     volumes:
-      - fased-signer-run:/run/fased-signerd
+      - fased-signer-app-run:/run/fased-signerd
+      - fased-signer-control-run:/run/fased-signerd-control
       - fased-signer-state:/var/lib/fased-signerd
     init: true
     restart: unless-stopped
@@ -29,7 +30,7 @@ services:
         "-socket",
         "/run/fased-signerd/app.sock",
         "-control-socket",
-        "/run/fased-signerd/control.sock",
+        "/run/fased-signerd-control/control.sock",
         "-socket-mode",
         "0600",
         "-state-db",
@@ -63,9 +64,9 @@ services:
         condition: service_healthy
     environment:
       HOME: /tmp/fased-enroll
-      FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET: /run/fased-signerd/control.sock
+      FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET: /run/fased-signerd-control/control.sock
     volumes:
-      - fased-signer-run:/run/fased-signerd
+      - fased-signer-control-run:/run/fased-signerd-control
     ports:
       - "127.0.0.1:18791:18792"
     read_only: true
@@ -90,14 +91,10 @@ services:
       FASED_WALLET_LOCAL_SIGNER_LIFECYCLE: external
       FASED_WALLET_LOCAL_SIGNER_BIN: /usr/local/bin/fased-signerd
       FASED_WALLET_LOCAL_SIGNER_SOCKET: /run/fased-signerd/app.sock
-      FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET: /run/fased-signerd/control.sock
-      FASED_WALLET_SIGNER_STATE_DIR: /var/lib/fased-signerd
-      FASED_WALLET_LOCAL_SIGNER_STATE_DB: /var/lib/fased-signerd/state.db
-      FASED_WALLET_LOCAL_SIGNER_MASTER_KEY: /var/lib/fased-signerd/master.key
     volumes:
       - ${FASED_CONFIG_DIR}:/home/node/.fased
       - ${FASED_WORKSPACE_DIR}:/home/node/.fased/workspace
-      - fased-signer-run:/run/fased-signerd
+      - fased-signer-app-run:/run/fased-signerd
     ports:
       - "127.0.0.1:${FASED_GATEWAY_PORT:-18789}:18789"
       - "127.0.0.1:${FASED_BRIDGE_PORT:-18790}:18790"
@@ -136,15 +133,13 @@ services:
       FASED_WALLET_LOCAL_SIGNER_LIFECYCLE: external
       FASED_WALLET_LOCAL_SIGNER_BIN: /usr/local/bin/fased-signerd
       FASED_WALLET_LOCAL_SIGNER_SOCKET: /run/fased-signerd/app.sock
-      FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET: /run/fased-signerd/control.sock
-      FASED_WALLET_SIGNER_STATE_DIR: /var/lib/fased-signerd
-      FASED_WALLET_LOCAL_SIGNER_STATE_DB: /var/lib/fased-signerd/state.db
-      FASED_WALLET_LOCAL_SIGNER_MASTER_KEY: /var/lib/fased-signerd/master.key
+      FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET: /run/fased-signerd-control/control.sock
       BROWSER: echo
     volumes:
       - ${FASED_CONFIG_DIR}:/home/node/.fased
       - ${FASED_WORKSPACE_DIR}:/home/node/.fased/workspace
-      - fased-signer-run:/run/fased-signerd
+      - fased-signer-app-run:/run/fased-signerd
+      - fased-signer-control-run:/run/fased-signerd-control
     stdin_open: true
     tty: true
     init: true
@@ -155,5 +150,6 @@ services:
     entrypoint: ["node", "dist/index.js"]
 
 volumes:
-  fased-signer-run:
+  fased-signer-app-run:
+  fased-signer-control-run:
   fased-signer-state:

@@ -101,7 +101,7 @@ fi
 command -v docker >/dev/null 2>&1 || fail "Docker is required."
 docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 is required."
 
-control_socket="/run/fased-signerd/control.sock"
+control_socket="/run/fased-signerd-control/control.sock"
 stage_path="/tmp/fased-owner-policy-${wallet_id}-${RANDOM}.json"
 stage_created=0
 cleanup() {

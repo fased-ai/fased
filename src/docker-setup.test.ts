@@ -371,6 +371,7 @@ describe("docker-setup.sh", () => {
     expect(dockerfile).toContain(
       "ln /usr/local/bin/fased-signerd /usr/local/bin/fased-signer-enroll",
     );
+    expect(dockerfile).toContain("/run/fased-signerd-control");
   });
 
   it("keeps Docker services local-only and drops unnecessary privileges", async () => {
@@ -413,7 +414,7 @@ describe("docker-setup.sh", () => {
     expect(gateway?.healthcheck?.test).toEqual(["CMD", "node", "dist/index.js", "health"]);
   });
 
-  it("persists signer state privately and shares only its Unix-socket volume", async () => {
+  it("persists signer state privately and separates application and control sockets", async () => {
     const compose = parse(await readFile(join(repoRoot, "docker-compose.yml"), "utf8")) as
       | ComposeConfig
       | undefined;
@@ -422,19 +423,35 @@ describe("docker-setup.sh", () => {
     const signer = compose?.services?.["fased-signerd"];
     const enrollment = compose?.services?.["fased-signer-enroll"];
 
-    expect(compose?.volumes).toHaveProperty("fased-signer-run");
+    expect(compose?.volumes).toHaveProperty("fased-signer-app-run");
+    expect(compose?.volumes).toHaveProperty("fased-signer-control-run");
     expect(compose?.volumes).toHaveProperty("fased-signer-state");
-    expect(signer?.volumes).toContain("fased-signer-run:/run/fased-signerd");
+    expect(signer?.volumes).toContain("fased-signer-app-run:/run/fased-signerd");
+    expect(signer?.volumes).toContain("fased-signer-control-run:/run/fased-signerd-control");
     expect(signer?.volumes).toContain("fased-signer-state:/var/lib/fased-signerd");
     expect(signer?.command).toContain("/var/lib/fased-signerd/state.db");
     expect(signer?.command).toContain("/var/lib/fased-signerd/master.key");
     expect(signer?.command).toContain("/var/lib/fased-signerd/fased-signerd.pid");
     expect(signer?.command).toContain("/var/lib/fased-signerd/audit.jsonl");
-    expect(gateway?.volumes).toContain("fased-signer-run:/run/fased-signerd");
-    expect(cli?.volumes).toContain("fased-signer-run:/run/fased-signerd");
+    expect(gateway?.volumes).toContain("fased-signer-app-run:/run/fased-signerd");
+    expect(gateway?.volumes).not.toContain("fased-signer-control-run:/run/fased-signerd-control");
+    expect(cli?.volumes).toContain("fased-signer-app-run:/run/fased-signerd");
+    expect(cli?.volumes).toContain("fased-signer-control-run:/run/fased-signerd-control");
+    expect(enrollment?.volumes).toContain("fased-signer-control-run:/run/fased-signerd-control");
+    expect(enrollment?.volumes).not.toContain("fased-signer-app-run:/run/fased-signerd");
     expect(gateway?.volumes).not.toContain("fased-signer-state:/var/lib/fased-signerd");
     expect(cli?.volumes).not.toContain("fased-signer-state:/var/lib/fased-signerd");
     expect(enrollment?.volumes).not.toContain("fased-signer-state:/var/lib/fased-signerd");
+    expect(gateway?.environment?.FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET).toBeUndefined();
+    expect(gateway?.environment?.FASED_WALLET_SIGNER_STATE_DIR).toBeUndefined();
+    expect(gateway?.environment?.FASED_WALLET_LOCAL_SIGNER_STATE_DB).toBeUndefined();
+    expect(gateway?.environment?.FASED_WALLET_LOCAL_SIGNER_MASTER_KEY).toBeUndefined();
+    expect(cli?.environment?.FASED_WALLET_SIGNER_STATE_DIR).toBeUndefined();
+    expect(cli?.environment?.FASED_WALLET_LOCAL_SIGNER_STATE_DB).toBeUndefined();
+    expect(cli?.environment?.FASED_WALLET_LOCAL_SIGNER_MASTER_KEY).toBeUndefined();
+    expect(cli?.environment?.FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET).toBe(
+      "/run/fased-signerd-control/control.sock",
+    );
     expect(signer?.restart).toBe("unless-stopped");
     expect(gateway?.depends_on?.["fased-signerd"]?.condition).toBe("service_healthy");
     expect(cli?.depends_on?.["fased-signerd"]?.condition).toBe("service_healthy");

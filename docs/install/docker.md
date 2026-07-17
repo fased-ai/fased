@@ -159,9 +159,11 @@ It writes config/workspace on the host:
 - `~/.fased/workspace`
 
 Signer keys, durable limits, idempotency records, policies, and audit state live
-in the Compose-managed `fased-signer-state` volume. The Unix sockets use the
-separate `fased-signer-run` volume. Do not run `docker compose down -v` unless
-you intentionally want to destroy signer state and its wallets.
+in the Compose-managed `fased-signer-state` volume. The policy-limited
+application socket and administrative control socket use separate
+`fased-signer-app-run` and `fased-signer-control-run` volumes. The always-running
+Gateway mounts only the application volume. Do not run `docker compose down -v`
+unless you intentionally want to destroy signer state and its wallets.
 
 ### Build locally from source (alternative)
 
@@ -189,8 +191,10 @@ The supplied local Compose configuration:
 - publishes Gateway and bridge ports on `127.0.0.1` only
 - packages `fased-signerd` with the matching image and runs it as a separate,
   non-root `fased-signerd` service before Gateway or CLI wallet work
-- keeps the signer database and master key in a signer-only persistent volume;
-  Gateway and CLI mount the separate Unix-socket volume, not signer state
+- keeps the signer database and master key in a signer-only persistent volume
+- separates the policy-limited application socket from the administrative
+  control socket; Gateway mounts only the application socket, while one-shot
+  CLI and enrollment containers can mount the control socket
 - requires a real protocol-v2 signer health response, not just a socket file
 - makes Gateway and CLI treat signer lifecycle as external so Node cannot start
   a second signer process inside either container
@@ -202,15 +206,14 @@ The supplied local Compose configuration:
 - excludes local `.env*`, `.fased`, SSH/private keys, and common credential
   directories from the image build context
 
-This is **Local same-user process isolation**, not the Hosting custody boundary.
-Gateway, CLI, and signer containers deliberately use the same local UID and
-share the signer socket volume so local wallet setup and administration work.
-A compromised Gateway running as that UID may be able to use the signer control
-socket. Container separation does not protect a high-value reserve wallet from
-a fully compromised local Docker account or Docker daemon. Keep automated Agent
-and Mining wallets low-balance with explicit typed policies and positive caps;
-use a hardware-backed Wallet Standard account or a reviewed remote custody
-provider for reserve/Vault funds.
+This is **Local container isolation**, not the Hosting custody boundary. The
+Gateway cannot mount signer state or the administrative control socket, but it
+can request operations allowed by wallet policy through the application socket.
+The local account and Docker daemon still control all containers and volumes, so
+container separation does not protect a high-value reserve wallet from a fully
+compromised host. Keep automated Agent and Mining wallets low-balance with
+explicit typed policies and positive caps; use a hardware-backed Wallet
+Standard account or a reviewed remote custody provider for reserve/Vault funds.
 
 Do not change the port mappings to `0.0.0.0`, add `network_mode: host`, mount
 `docker.sock`, or enable `privileged`. Those changes cross the supported local
