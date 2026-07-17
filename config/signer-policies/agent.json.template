@@ -1,0 +1,31 @@
+{
+  "walletId": "agent",
+  "role": "agent",
+  "operations": [
+    "solana.nativeTransfer",
+    "solana.splTransferChecked"
+  ],
+  "programs": [
+    "11111111111111111111111111111111",
+    "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+    "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+  ],
+  "assets": [
+    {
+      "asset": "solana:native",
+      "destinations": [
+        "REPLACE_WITH_APPROVED_SOL_RECIPIENT"
+      ],
+      "maxPerTx": "REPLACE_WITH_POSITIVE_LAMPORTS_PER_TX",
+      "maxDaily": "REPLACE_WITH_POSITIVE_LAMPORTS_PER_UTC_DAY"
+    },
+    {
+      "asset": "solana:spl:REPLACE_WITH_SAT_MINT",
+      "destinations": [
+        "REPLACE_WITH_APPROVED_SAT_RECIPIENT_OWNER"
+      ],
+      "maxPerTx": "REPLACE_WITH_POSITIVE_SAT_RAW_UNITS_PER_TX",
+      "maxDaily": "REPLACE_WITH_POSITIVE_SAT_RAW_UNITS_PER_UTC_DAY"
+    }
+  ]
+}

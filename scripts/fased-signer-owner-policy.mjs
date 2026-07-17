@@ -30,8 +30,6 @@ const POLICY_ROLES = new Set(["agent", "mining", "vault"]);
 const POLICY_OPERATIONS = new Set([
   "solana.nativeTransfer",
   "solana.splTransferChecked",
-  "solana.satAction",
-  "solana.vaultBondAction",
   "federation.bondChallenge",
   "solana.jupiter.swap",
   "solana.jupiter.trigger.auth",
@@ -39,6 +37,52 @@ const POLICY_OPERATIONS = new Set([
   "solana.jupiter.trigger.deposit",
   "solana.jupiter.trigger.cancel",
   "solana.jupiter.trigger.withdraw",
+]);
+const SAT_MINING_ACTIONS = new Set([
+  "abortEmptyCycle",
+  "claimCycleRewards",
+  "claimCycleRewardsBatch",
+  "claimProtocolDistributorSat",
+  "claimProtocolTreasury",
+  "cleanupBatch",
+  "closeCommitPhase",
+  "closeResolvedCycleArtifacts",
+  "closeResolvedCycleRegistryPage",
+  "closeResolvedMinerCycleState",
+  "commitCycle",
+  "compactPendingCycleRange",
+  "depositMinerCapital",
+  "distributeCyclePage",
+  "finalizeCycleSettlement",
+  "initMinerCapital",
+  "initializeCycle",
+  "openCycle",
+  "openDispute",
+  "refillRegistryReserveFromTreasury",
+  "releaseUnrevealedCommit",
+  "republishEpochRoots",
+  "resolveDispute",
+  "retargetUnlock",
+  "revealCycle",
+  "scoreCyclePage",
+  "sealCycleEntropy",
+  "setActiveCommit",
+  "settleCyclePage",
+  "topUpRegistryReserve",
+  "validatorAttestation",
+  "withdrawMinerCapital",
+]);
+const VAULT_BOND_ACTIONS = new Set([
+  "cancelBondUnlock",
+  "claimBondStakingRewards",
+  "claimUnallocatedStakingRewards",
+  "finalizeBondUnlock",
+  "increaseBondPosition",
+  "openBondPosition",
+  "requestBondUnlock",
+  "syncBondStakingPosition",
+  "syncBondStakingRewards",
+  "updateBondTierPolicy",
 ]);
 
 function compareCanonicalString(left, right) {
@@ -378,20 +422,46 @@ function normalizeAssetName(value, field) {
   throw new Error(`${field} is not a supported policy asset`);
 }
 
+function normalizePolicyOperation(value, role, field) {
+  if (typeof value !== "string" || value.trim() !== value) {
+    throw new Error(`${field} is not a supported typed signer operation`);
+  }
+  if (POLICY_OPERATIONS.has(value)) {
+    return value;
+  }
+  const match = /^(sat|vaultBond)\.([A-Za-z][A-Za-z0-9]*)@(.+)$/u.exec(value);
+  if (!match) {
+    if (value === "solana.satAction" || value === "solana.vaultBondAction") {
+      throw new Error(`${field} must name an exact action bound to its SAT program`);
+    }
+    throw new Error(`${field} is not a supported typed signer operation`);
+  }
+  const [, family, action, rawProgram] = match;
+  const program = requireSolanaPublicKey(rawProgram, `${field} program`);
+  if (family === "sat") {
+    if (role !== "mining" || !SAT_MINING_ACTIONS.has(action)) {
+      throw new Error(`${field} is not an allowed program-bound Mining action`);
+    }
+  } else if (role !== "vault" || !VAULT_BOND_ACTIONS.has(action)) {
+    throw new Error(`${field} is not an allowed program-bound Vault bond action`);
+  }
+  return `${family}.${action}@${program}`;
+}
+
 function validatePolicyRelationships(policy) {
   const operations = new Set(policy.operations);
   const programs = new Set(policy.programs);
   const assets = new Set(policy.assets.map((asset) => asset.asset));
   const hasFederation = operations.has("federation.bondChallenge");
 
-  if (operations.has("solana.satAction") && policy.role !== "mining") {
-    throw new Error("solana.satAction requires the immutable mining role");
+  if (operations.has("federation.bondChallenge") && policy.role !== "vault") {
+    throw new Error("federation operations require the immutable vault role");
   }
-  if (
-    (operations.has("solana.vaultBondAction") || operations.has("federation.bondChallenge")) &&
-    policy.role !== "vault"
-  ) {
-    throw new Error("Vault bond and federation operations require the immutable vault role");
+  for (const operation of policy.operations) {
+    const separator = operation.lastIndexOf("@");
+    if (separator >= 0 && !programs.has(operation.slice(separator + 1))) {
+      throw new Error(`program-bound operation ${operation} requires the same program in programs`);
+    }
   }
   if (operations.has("solana.nativeTransfer")) {
     if (!programs.has(SYSTEM_PROGRAM) || !assets.has("solana:native")) {
@@ -433,17 +503,8 @@ export function normalizeOwnerPolicy(value) {
   const operations = requireUniqueStrings(
     object.operations,
     "operations",
-    (operation, field) => {
-      if (
-        typeof operation !== "string" ||
-        operation.trim() !== operation ||
-        !POLICY_OPERATIONS.has(operation)
-      ) {
-        throw new Error(`${field} is not a supported typed signer operation`);
-      }
-      return operation;
-    },
-    { max: POLICY_OPERATIONS.size },
+    (operation, field) => normalizePolicyOperation(operation, object.role, field),
+    { max: 128 },
   );
   const programs = requireUniqueStrings(
     object.programs,
@@ -1302,6 +1363,9 @@ export const __testing = Object.freeze({
   SYSTEM_PROGRAM,
   TOKEN_2022_PROGRAM,
   TOKEN_PROGRAM,
+  SAT_MINING_ACTIONS,
+  VAULT_BOND_ACTIONS,
+  encodeBase58,
   normalizeLockedStoredPolicy,
   parseAdminPolicyOutput,
   parseCLI,

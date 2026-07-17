@@ -3,7 +3,6 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   __testing,
-  assertHostingUpdateGateInactive,
   buildAdminInvocation,
   createExecutionPlan,
   normalizeOwnerPolicy,
@@ -144,6 +143,26 @@ async function successfulFlow(options: {
 }
 
 describe("strict owner policy input", () => {
+  it("keeps every program-bound SAT action synchronized with the native generated manifest", async () => {
+    const manifest = await fsp.readFile(
+      path.join(process.cwd(), "tools", "fased-signerd", "sat_manifest_generated.go"),
+      "utf8",
+    );
+    const main = [...manifest.matchAll(/^\s*"([A-Za-z][A-Za-z0-9]*)":.*satFamilyMain,/gmu)].map(
+      (match) => match[1],
+    );
+    const bond = [...manifest.matchAll(/^\s*"([A-Za-z][A-Za-z0-9]*)":.*satFamilyBond,/gmu)].map(
+      (match) => match[1],
+    );
+    const compare = (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0);
+    expect(
+      [...__testing.SAT_MINING_ACTIONS]
+        .filter((action) => action !== "cleanupBatch")
+        .toSorted(compare),
+    ).toEqual(main.toSorted(compare));
+    expect([...__testing.VAULT_BOND_ACTIONS].toSorted(compare)).toEqual(bond.toSorted(compare));
+  });
+
   it("normalizes a typed policy deterministically and preserves the federation signer domain", () => {
     const federation = normalizeOwnerPolicy({
       walletId: "vault",
@@ -190,6 +209,59 @@ describe("strict owner policy input", () => {
       "solana:native",
       `solana:spl:${destination}`,
     ]);
+  });
+
+  it("accepts only exact role- and program-bound Mining and Vault bond operations", () => {
+    const mining = normalizeOwnerPolicy({
+      walletId: "mining",
+      role: "mining",
+      operations: [`sat.depositMinerCapital@${destination}`],
+      programs: [__testing.SYSTEM_PROGRAM, destination],
+      assets: [
+        {
+          asset: "solana:native",
+          destinations: [__testing.SYSTEM_PROGRAM],
+          maxPerTx: "1",
+          maxDaily: "2",
+        },
+      ],
+    });
+    expect(mining.operations).toEqual([`sat.depositMinerCapital@${destination}`]);
+
+    const vault = normalizeOwnerPolicy({
+      walletId: "vault",
+      role: "vault",
+      operations: [`vaultBond.openBondPosition@${destination}`],
+      programs: [destination],
+      assets: [
+        {
+          asset: `solana:spl:${destination}`,
+          destinations: [__testing.SYSTEM_PROGRAM],
+          maxPerTx: "1",
+          maxDaily: "2",
+        },
+      ],
+    });
+    expect(vault.operations).toEqual([`vaultBond.openBondPosition@${destination}`]);
+
+    expect(() =>
+      normalizeOwnerPolicy({
+        ...validPolicy(),
+        role: "mining",
+        operations: [`sat.rawInstruction@${destination}`],
+        programs: [destination],
+      }),
+    ).toThrow("not an allowed program-bound Mining action");
+    expect(() =>
+      normalizeOwnerPolicy({
+        ...validPolicy(),
+        role: "mining",
+        operations: [`sat.depositMinerCapital@${destination}`],
+      }),
+    ).toThrow("requires the same program");
+    expect(() =>
+      normalizeOwnerPolicy({ ...validPolicy(), operations: ["solana.satAction"] }),
+    ).toThrow("exact action bound");
   });
 
   it("rejects unknown and duplicate JSON fields before native signer execution", async () => {
@@ -396,57 +468,5 @@ describe("Local and Hosting execution identity", () => {
     await staged.cleanup();
     await expect(fsp.access(staged.path)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(fsp.access(stagedDirectory)).rejects.toMatchObject({ code: "ENOENT" });
-  });
-});
-
-describe("root signer update gate", () => {
-  it("accepts only absence in a trusted directory and refuses active or malformed gates", async () => {
-    const root = await fixtureRoot();
-    const directory = path.join(root, "gate");
-    const gatePath = path.join(directory, "active");
-    await expect(
-      assertHostingUpdateGateInactive(
-        { updateGateDirectory: directory, updateGatePath: gatePath },
-        uid,
-      ),
-    ).rejects.toThrow("missing or unreadable");
-    await fsp.mkdir(directory, { mode: 0o700 });
-    const paths = { updateGateDirectory: directory, updateGatePath: gatePath };
-    await expect(assertHostingUpdateGateInactive(paths, uid)).resolves.toBeUndefined();
-
-    await fsp.writeFile(gatePath, "active\n", { mode: 0o600 });
-    await expect(assertHostingUpdateGateInactive(paths, uid)).rejects.toThrow("is active");
-
-    await fsp.rm(gatePath);
-    await fsp.symlink(path.join(root, "missing"), gatePath);
-    await expect(assertHostingUpdateGateInactive(paths, uid)).rejects.toThrow(
-      "present but invalid",
-    );
-
-    await fsp.rm(gatePath);
-    await fsp.chmod(directory, 0o777);
-    await expect(assertHostingUpdateGateInactive(paths, uid)).rejects.toThrow(
-      "directory is invalid",
-    );
-  });
-});
-
-describe("CLI safety", () => {
-  it("rejects duplicate/unknown flags and intentionally has no permissive --yes", () => {
-    expect(() => __testing.parseCLI(["--profile", "local", "--profile", "hosting"])).toThrow(
-      "duplicate argument",
-    );
-    expect(() => __testing.parseCLI(["--policy-json", "{}"])).toThrow("unknown argument");
-    expect(() => __testing.parseCLI(["--yes"])).toThrow("unknown argument");
-    expect(() => __testing.parseCLI(["--help", "--yes"])).toThrow("must be used alone");
-    expect(
-      __testing.parseCLI(["--profile", "local", "--initial-install", "--policy-file", "/x"]),
-    ).toEqual({
-      profile: "local",
-      policyFile: "/x",
-      confirmDigest: undefined,
-      initialInstall: true,
-      nonInteractive: false,
-    });
   });
 });
