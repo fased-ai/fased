@@ -3,7 +3,6 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { getReplyFromConfig } from "./auto-reply/reply.js";
 import { applyTemplate } from "./auto-reply/templating.js";
-import { monitorWebChannel } from "./channel-web.js";
 import { createDefaultDeps } from "./cli/deps.js";
 import { promptYesNo } from "./cli/prompt.js";
 import { waitForever } from "./cli/wait.js";
@@ -46,6 +45,12 @@ assertSupportedRuntime();
 import { buildProgram } from "./cli/program.js";
 
 const program = buildProgram();
+
+type MonitorWebChannel = typeof import("./channel-web.js").monitorWebChannel;
+const monitorWebChannel: MonitorWebChannel = async (...args) => {
+  const channelWeb = await import("./channel-web.js");
+  return await channelWeb.monitorWebChannel(...args);
+};
 
 export {
   assertWebChannel,

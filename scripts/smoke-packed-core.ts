@@ -1,6 +1,6 @@
 #!/usr/bin/env -S node --import tsx
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   closeSync,
@@ -17,6 +17,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -137,6 +138,170 @@ function runCore(coreRoot: string, env: NodeJS.ProcessEnv, args: string[]): stri
   return readFileSync(stdoutPath, "utf8");
 }
 
+function formatGatewayOutput(stdout: string[], stderr: string[]): string {
+  return `--- stdout ---\n${stdout.join("")}\n--- stderr ---\n${stderr.join("")}`;
+}
+
+async function reserveLoopbackPort(): Promise<number> {
+  const server = createServer();
+  return await new Promise<number>((resolve, reject) => {
+    const onError = (error: Error) => {
+      server.close();
+      reject(error);
+    };
+    server.once("error", onError);
+    server.listen({ host: "127.0.0.1", port: 0, exclusive: true }, () => {
+      server.off("error", onError);
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        server.close();
+        reject(new Error("packed Gateway smoke could not reserve a loopback TCP port"));
+        return;
+      }
+      const port = address.port;
+      server.close((error) => {
+        if (error) {
+          reject(error);
+        } else {
+          resolve(port);
+        }
+      });
+    });
+  });
+}
+
+async function waitForGatewayReady(params: {
+  child: ReturnType<typeof spawn>;
+  stdout: string[];
+  stderr: string[];
+  port: number;
+  timeoutMs: number;
+}): Promise<void> {
+  const readyNeedle = `listening on ws://127.0.0.1:${params.port}`;
+  const deadline = Date.now() + params.timeoutMs;
+  while (Date.now() < deadline) {
+    if (`${params.stdout.join("")}\n${params.stderr.join("")}`.includes(readyNeedle)) {
+      return;
+    }
+    if (params.child.exitCode !== null || params.child.signalCode !== null) {
+      throw new Error(
+        `packed Gateway exited before readiness (code=${String(params.child.exitCode)}, signal=${String(params.child.signalCode)})\n${formatGatewayOutput(params.stdout, params.stderr)}`,
+      );
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(
+    `packed Gateway did not become ready within ${params.timeoutMs}ms\n${formatGatewayOutput(params.stdout, params.stderr)}`,
+  );
+}
+
+async function waitForGatewayExit(
+  child: ReturnType<typeof spawn>,
+  timeoutMs: number,
+): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return { code: child.exitCode, signal: child.signalCode };
+  }
+  return await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      child.off("exit", onExit);
+      reject(new Error(`packed Gateway did not exit within ${timeoutMs}ms`));
+    }, timeoutMs);
+    const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
+      clearTimeout(timer);
+      resolve({ code, signal });
+    };
+    child.once("exit", onExit);
+  });
+}
+
+async function runPackedGateway(coreRoot: string, env: NodeJS.ProcessEnv): Promise<void> {
+  const port = await reserveLoopbackPort();
+  const stdout: string[] = [];
+  const stderr: string[] = [];
+  const child = spawn(
+    process.execPath,
+    [
+      path.join(coreRoot, "fased.mjs"),
+      "gateway",
+      "run",
+      "--allow-unconfigured",
+      "--bind",
+      "loopback",
+      "--port",
+      String(port),
+      "--token",
+      "packed-core-smoke-token",
+    ],
+    {
+      cwd: coreRoot,
+      env: {
+        ...env,
+        FASED_DISABLE_BONJOUR: "1",
+        FASED_NO_RESPAWN: "1",
+        FASED_SKIP_BROWSER_CONTROL_SERVER: "1",
+        FASED_SKIP_CANVAS_HOST: "1",
+        FASED_SKIP_CRON: "1",
+        FASED_SKIP_GMAIL_WATCHER: "1",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  child.stdout?.setEncoding("utf8");
+  child.stderr?.setEncoding("utf8");
+  child.stdout?.on("data", (chunk) => stdout.push(String(chunk)));
+  child.stderr?.on("data", (chunk) => stderr.push(String(chunk)));
+
+  let exitResult: { code: number | null; signal: NodeJS.Signals | null } | undefined;
+  let shutdownError: Error | undefined;
+  try {
+    await waitForGatewayReady({ child, stdout, stderr, port, timeoutMs: 30_000 });
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill("SIGTERM");
+    }
+    try {
+      exitResult = await waitForGatewayExit(child, 15_000);
+    } catch (error) {
+      child.kill("SIGKILL");
+      await waitForGatewayExit(child, 5_000).catch(() => undefined);
+      shutdownError = new Error(
+        `${error instanceof Error ? error.message : String(error)}\n${formatGatewayOutput(stdout, stderr)}`,
+        { cause: error },
+      );
+    }
+  }
+
+  if (shutdownError) {
+    throw shutdownError;
+  }
+  if (!exitResult) {
+    throw new Error(
+      `packed Gateway exit status was not observed\n${formatGatewayOutput(stdout, stderr)}`,
+    );
+  }
+  if (exitResult.code !== 0 && !(exitResult.code === null && exitResult.signal === "SIGTERM")) {
+    throw new Error(
+      `packed Gateway shutdown failed (code=${String(exitResult.code)}, signal=${String(exitResult.signal)})\n${formatGatewayOutput(stdout, stderr)}`,
+    );
+  }
+}
+
+function importPackedMain(coreRoot: string, env: NodeJS.ProcessEnv): void {
+  const mainUrl = pathToFileURL(path.join(coreRoot, "dist", "index.js")).href;
+  try {
+    execFileSync(process.execPath, ["--import", mainUrl, "--eval", "", "packed-main-smoke"], {
+      cwd: coreRoot,
+      env,
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+  } catch (error) {
+    const stderr =
+      error && typeof error === "object" && "stderr" in error ? String(error.stderr) : "";
+    throw new Error(`packed core main import failed: ${stderr}`, { cause: error });
+  }
+}
+
 async function main() {
   const tempRoot = mkdtempSync(path.join(tmpdir(), "fased-packed-core-smoke-"));
   let stateDir = "";
@@ -220,6 +385,7 @@ async function main() {
     if (!packageJson.version || version !== packageJson.version) {
       throw new Error(`packed version mismatch: expected ${packageJson.version}, got ${version}`);
     }
+    importPackedMain(coreRoot, env);
     const componentsRaw = runCore(coreRoot, env, ["components", "--json"]);
     const components = JSON.parse(componentsRaw) as {
       summary?: { coreIncluded?: unknown; optionalInstalled?: unknown; errors?: unknown };
@@ -251,6 +417,7 @@ async function main() {
     if (walletStatus.ok !== true || !walletStatus.status) {
       throw new Error(`packed core wallet CLI failed:\n${walletStatusRaw}`);
     }
+    await runPackedGateway(coreRoot, env);
     const walletCreateRaw = runCore(coreRoot, env, [
       "wallet",
       "setup",
@@ -323,7 +490,7 @@ async function main() {
     }
 
     console.log(
-      `packed-core-smoke: ${version} starts and creates a locked native-signer wallet without optional channels; capabilities, wallet, SAT, Fased Network, and plugin checks passed.`,
+      `packed-core-smoke: ${version} imports, starts its Gateway, and creates a locked native-signer wallet without optional channels; capabilities, wallet, SAT, Fased Network, and plugin checks passed.`,
     );
   } finally {
     if (stateDir) {
