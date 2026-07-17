@@ -88,6 +88,7 @@ const SIGNER_SOCKET_TIMEOUT_MS: Record<LocalSocketSignerRequest["op"], number> =
   "v2.wallet.importLegacy": 30_000,
   "v2.wallet.reencrypt": 10_000,
   "v2.execute": 120_000,
+  "v2.review.get": 5_000,
   "v2.review.prepare": 15_000,
   "v2.review.execute": 120_000,
   "v2.review.authorization.begin": 15_000,
@@ -500,6 +501,19 @@ export class LocalSocketSignerAdapter implements WalletProviderAdapter {
     transaction: WalletProviderSignerTransactionEnvelopeV2;
   }): Promise<WalletProviderJupiterReviewV2> {
     return await this.prepareSignerReview(request);
+  }
+
+  async getSignerReview(request: {
+    walletId: string;
+    requestId: string;
+  }): Promise<WalletProviderJupiterReviewV2> {
+    assertSecureLocalSignerSocket(this.socketPath);
+    await this.requireProtocolV2();
+    return await callSocket<WalletProviderJupiterReviewV2>(this.socketPath, {
+      op: "v2.review.get",
+      walletId: request.walletId,
+      request: { requestId: request.requestId },
+    });
   }
 
   async prepareSignerReview(request: {

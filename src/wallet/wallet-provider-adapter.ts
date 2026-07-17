@@ -331,6 +331,10 @@ export interface WalletProviderAdapter {
     intent: WalletProviderJupiterIntentV2;
     transaction: WalletProviderSignerTransactionEnvelopeV2;
   }): Promise<WalletProviderJupiterReviewV2>;
+  getSignerReview?(request: {
+    walletId: string;
+    requestId: string;
+  }): Promise<WalletProviderJupiterReviewV2>;
   prepareSignerReview?(request: {
     walletId: string;
     requestId: string;

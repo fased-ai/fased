@@ -209,7 +209,7 @@ func mustValidate(req request, cfg signerConfig) error {
 		if len(req.Request) > 0 || req.Chain != "" || strings.TrimSpace(req.WalletID) == "" {
 			return errors.New("invalid signer request")
 		}
-	case "v2.network.put", "v2.policy.put", "v2.policy.tighten", "v2.wallet.create", "v2.wallet.import", "v2.wallet.importLegacy", "v2.execute", "v2.review.prepare", "v2.review.execute", "v2.operation.get", "v2.operation.reconcile":
+	case "v2.network.put", "v2.policy.put", "v2.policy.tighten", "v2.wallet.create", "v2.wallet.import", "v2.wallet.importLegacy", "v2.execute", "v2.review.get", "v2.review.prepare", "v2.review.execute", "v2.operation.get", "v2.operation.reconcile":
 		if len(req.Request) == 0 || req.Chain != "" || strings.TrimSpace(req.WalletID) == "" {
 			return errors.New("invalid signer request")
 		}
@@ -350,6 +350,7 @@ func parseArgs() signerConfig {
 		"v2.execute":                      getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_EXECUTE", 60),
 		"v2.operation.get":                getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_OPERATION", 300),
 		"v2.operation.reconcile":          getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_OPERATION", 120),
+		"v2.review.get":                   getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_REVIEW", 300),
 		"v2.webauthn.registration.begin":  getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WEBAUTHN_ADMIN", 20),
 		"v2.webauthn.registration.finish": getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WEBAUTHN_ADMIN", 20),
 		"v2.webauthn.credentials.list":    getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WEBAUTHN_ADMIN", 60),

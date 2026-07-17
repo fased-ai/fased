@@ -15,6 +15,7 @@ var applicationUpdateGateReadOperations = map[string]bool{
 	"v2.policy.get":                true,
 	"v2.wallet.get":                true,
 	"v2.operation.get":             true,
+	"v2.review.get":                true,
 	"v2.webauthn.credentials.list": true,
 	"getAddresses":                 true,
 	"getBalance":                   true,

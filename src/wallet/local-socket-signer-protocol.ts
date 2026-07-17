@@ -351,6 +351,14 @@ export const LocalSocketSignerRequestSchema = Type.Union(
     ),
     Type.Object(
       {
+        op: Type.Literal("v2.review.get"),
+        walletId: Type.String(),
+        request: SignerOperationLookupV2Schema,
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
         op: Type.Literal("v2.review.prepare"),
         walletId: Type.String(),
         request: Type.Object(
@@ -716,6 +724,7 @@ export function validateLocalSocketSignerResult(
     case "v2.operation.get":
     case "v2.operation.reconcile":
       return Value.Check(LocalSocketSignerOperationV2Schema, result);
+    case "v2.review.get":
     case "v2.review.prepare":
       return Value.Check(LocalSocketSignerReviewV2Schema, result);
     case "v2.review.execute":

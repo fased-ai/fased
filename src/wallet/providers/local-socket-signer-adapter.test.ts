@@ -616,6 +616,9 @@ describe("LocalSocketSignerAdapter protocol-v2 sends", () => {
         if (request.op === "v2.review.prepare") {
           return review;
         }
+        if (request.op === "v2.review.get") {
+          return review;
+        }
         if (request.op === "v2.review.execute") {
           return {
             review: { ...review, state: "signed", signature: "review-signature" },
@@ -652,6 +655,7 @@ describe("LocalSocketSignerAdapter protocol-v2 sends", () => {
         destination,
         amount: "900",
       });
+      await adapter.getSignerReview({ walletId: "agent-wallet", requestId });
       await adapter.executeSignerReview({
         walletId: "agent-wallet",
         requestId,
@@ -674,6 +678,12 @@ describe("LocalSocketSignerAdapter protocol-v2 sends", () => {
               lamports: "900",
             },
           },
+        },
+        { op: "v2.capabilities" },
+        {
+          op: "v2.review.get",
+          walletId: "agent-wallet",
+          request: { requestId },
         },
         { op: "v2.capabilities" },
         {

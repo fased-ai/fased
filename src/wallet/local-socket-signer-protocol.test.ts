@@ -307,6 +307,20 @@ describe("local socket signer protocol", () => {
     ).toBe("v2.review.prepare");
     expect(
       parseLocalSocketSignerRequest({
+        op: "v2.review.get",
+        walletId: "agent",
+        request: { requestId: "review-123" },
+      }).op,
+    ).toBe("v2.review.get");
+    expect(() =>
+      parseLocalSocketSignerRequest({
+        op: "v2.review.get",
+        walletId: "agent",
+        request: { requestId: "review-123", transaction },
+      }),
+    ).toThrow(/invalid signer request/);
+    expect(
+      parseLocalSocketSignerRequest({
         op: "v2.review.execute",
         walletId: "agent",
         request: {
@@ -373,6 +387,21 @@ describe("local socket signer protocol", () => {
       issuedAt: "2026-07-16T00:00:00.000Z",
       expiresAt: "2026-07-16T00:02:00.000Z",
     };
+    const { role: requiredRole, ...reviewBinding } = binding;
+    expect(
+      validateLocalSocketSignerResult("v2.review.get", {
+        ...reviewBinding,
+        requiredRole,
+        mode: "reviewed",
+        nonce: binding.nonce,
+        transaction,
+        issuedAt: binding.issuedAt,
+        state: "signed",
+        preparedAt: binding.issuedAt,
+        updatedAt: binding.issuedAt,
+        signature: "signature",
+      }),
+    ).toBe(true);
     expect(
       validateLocalSocketSignerResult("v2.review.authorization.begin", {
         challengeId: "challenge-123",

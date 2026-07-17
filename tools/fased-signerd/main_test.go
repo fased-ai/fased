@@ -45,6 +45,24 @@ func TestRemovedSignerOperationsAreUnsupported(t *testing.T) {
 	}
 }
 
+func TestReviewLookupRequiresAnExactWalletScopedRequest(t *testing.T) {
+	valid := request{
+		Op: "v2.review.get", WalletID: "vault", Request: json.RawMessage(`{"requestId":"review-123"}`),
+	}
+	if err := mustValidate(valid, signerConfig{}); err != nil {
+		t.Fatalf("valid review lookup was rejected: %v", err)
+	}
+	for _, invalid := range []request{
+		{Op: "v2.review.get", WalletID: "vault"},
+		{Op: "v2.review.get", Request: valid.Request},
+		{Op: "v2.review.get", WalletID: "vault", Chain: "solana", Request: valid.Request},
+	} {
+		if err := mustValidate(invalid, signerConfig{}); err == nil {
+			t.Fatalf("invalid review lookup was accepted: %#v", invalid)
+		}
+	}
+}
+
 func TestRemovedSignerOperationsCannotMutateSignerState(t *testing.T) {
 	store, keys := openTestSignerV2(t)
 	destination := solana.NewWallet().PublicKey().String()

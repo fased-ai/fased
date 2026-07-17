@@ -379,6 +379,16 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 			return nil, err
 		}
 		return marshalSignerResultV2(review)
+	case "v2.review.get":
+		var body signerOperationLookupV2
+		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
+			return nil, err
+		}
+		review, _, err := s.store.getReviewV2(req.WalletID, body.RequestID)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(review)
 	case "v2.review.execute":
 		if cfg.readOnly {
 			return nil, errors.New("read-only signer mode")

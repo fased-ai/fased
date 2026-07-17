@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/ed25519"
 	"encoding/base64"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -110,6 +111,31 @@ func TestReviewedFederationChallengeSignsExactMessageOnce(t *testing.T) {
 	if err != nil || duplicate.Operation == nil || duplicate.Operation.State != operationConfirmed ||
 		duplicate.SignatureBase64 != result.SignatureBase64 {
 		t.Fatalf("idempotent federation retry changed or repeated the result: %#v err=%v", duplicate, err)
+	}
+	lookupBody, err := json.Marshal(signerOperationLookupV2{RequestID: requestID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lookupRaw, err := service.handle(request{
+		Op: "v2.review.get", WalletID: wallet.WalletID, Request: lookupBody,
+	}, signerConfig{readOnly: true}, false)
+	if err != nil {
+		t.Fatalf("read signed review after completion: %v", err)
+	}
+	var lookup struct {
+		Result signerReviewV2 `json:"result"`
+	}
+	if err := json.Unmarshal(lookupRaw, &lookup); err != nil {
+		t.Fatalf("decode signed review lookup: %v", err)
+	}
+	if lookup.Result.State != jupiterReviewSignedV2 || lookup.Result.Signature != result.SignatureBase64 ||
+		lookup.Result.ArtifactDigest != review.ArtifactDigest || lookup.Result.IntentDigest != review.IntentDigest {
+		t.Fatalf("signed review lookup changed its immutable result: %#v", lookup.Result)
+	}
+	if _, err := service.handle(request{
+		Op: "v2.review.get", WalletID: "different-wallet", Request: lookupBody,
+	}, signerConfig{readOnly: true}, false); err == nil || !strings.Contains(err.Error(), "wallet mismatch") {
+		t.Fatalf("cross-wallet review lookup was accepted: %v", err)
 	}
 	if _, err := service.execute(signerExecuteRequestV2{
 		RequestID: requestID + "-raw", PolicyHash: policy.Hash, Intent: intentInput, intentWalletID: wallet.WalletID,
