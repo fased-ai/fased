@@ -682,6 +682,44 @@ function saveFile(file: WalletSendApprovalsFile, env: NodeJS.ProcessEnv = proces
   }
 }
 
+function hasExactSignerOwnedReviewBinding(request: WalletSendApprovalRequest): boolean {
+  const payload = request.payload;
+  return (
+    payload.providerId === "local-socket-signer" &&
+    Boolean(payload.signerReviewId?.trim()) &&
+    Boolean(payload.signerWalletId?.trim()) &&
+    Boolean(payload.signerIntentType?.trim()) &&
+    Boolean(payload.signerPolicyHash?.trim()) &&
+    Boolean(payload.signerIntentDigest?.trim()) &&
+    Boolean(payload.signerArtifactKind) &&
+    Boolean(payload.signerArtifactDigest?.trim()) &&
+    Boolean(payload.signerRequiredRole) &&
+    Boolean(payload.signerNonce?.trim()) &&
+    Boolean(payload.signerIssuedAt?.trim()) &&
+    Boolean(payload.signerReviewExpiresAt?.trim())
+  );
+}
+
+function isWalletSendApprovalExpired(request: WalletSendApprovalRequest, now = nowMs()): boolean {
+  const expiresAt = Date.parse(request.expiresAt);
+  return Number.isFinite(expiresAt) && expiresAt <= now;
+}
+
+function expireWalletSendApprovalRequest(params: {
+  request: WalletSendApprovalRequest;
+  settlementLink?: WalletSettlementLink;
+  now?: number;
+}): void {
+  const now = params.now ?? nowMs();
+  params.request.status = "expired";
+  params.request.decisionAt = new Date(now).toISOString();
+  params.request.reason = "expired";
+  syncApprovalTaskForRequest({
+    request: params.request,
+    ...(params.settlementLink ? { settlementLink: params.settlementLink } : {}),
+  });
+}
+
 function markExpired(file: WalletSendApprovalsFile): boolean {
   const now = nowMs();
   let changed = false;
@@ -689,12 +727,17 @@ function markExpired(file: WalletSendApprovalsFile): boolean {
     if (request.status !== "pending") {
       continue;
     }
-    const exp = Date.parse(request.expiresAt);
-    if (Number.isFinite(exp) && exp <= now) {
-      request.status = "expired";
-      request.decisionAt = new Date(now).toISOString();
-      request.reason = "expired";
-      syncApprovalTaskForRequest({ request });
+    // A reviewed operation can already be durably signed/confirmed inside the
+    // native signer while Node still records it as pending (for example, after
+    // a process crash between review.execute and saveFile). Only review.get can
+    // distinguish that terminal state from an unsigned expired review, so the
+    // synchronous readers must leave exact signer-owned reviews for the async
+    // reconciliation path in approveWalletSendRequest.
+    if (hasExactSignerOwnedReviewBinding(request)) {
+      continue;
+    }
+    if (isWalletSendApprovalExpired(request, now)) {
+      expireWalletSendApprovalRequest({ request, now });
       changed = true;
     }
   }
@@ -1332,7 +1375,9 @@ export async function approveWalletSendRequest(params: {
   if (!request) {
     return { ok: false as const, code: "not_found", message: "approval request not found" };
   }
-  if (request.status !== "pending") {
+  const hasSignerOwnedReview = hasExactSignerOwnedReviewBinding(request);
+  const canReconcileExpiredSignerReview = request.status === "expired" && hasSignerOwnedReview;
+  if (request.status !== "pending" && !canReconcileExpiredSignerReview) {
     return {
       ok: false as const,
       code: "invalid_state",
@@ -1341,16 +1386,12 @@ export async function approveWalletSendRequest(params: {
     };
   }
   const settlementLink = getWalletSettlementLinkByRequestId({ requestId: request.id, env });
-  const expiredAt = Date.parse(request.expiresAt);
-  if (Number.isFinite(expiredAt) && expiredAt <= nowMs()) {
-    request.status = "expired";
-    request.reason = "expired";
-    request.decisionAt = new Date().toISOString();
+  if (isWalletSendApprovalExpired(request) && !hasSignerOwnedReview) {
+    expireWalletSendApprovalRequest({ request, settlementLink });
     saveFile(file, env);
-    syncApprovalTaskForRequest({ request, settlementLink });
     return { ok: false as const, code: "expired", message: "approval request expired", request };
   }
-  if (isSolanaSwapApprovalPayload(request.payload)) {
+  if (isSolanaSwapApprovalPayload(request.payload) && !hasSignerOwnedReview) {
     const cfg = loadConfig();
     const executed = await executeSolanaSwapApprovalPayload({
       payload: request.payload,
@@ -1583,6 +1624,19 @@ export async function approveWalletSendRequest(params: {
         request,
       };
     }
+    if (
+      storedReview.state === "prepared" &&
+      (request.status === "expired" || isWalletSendApprovalExpired(request))
+    ) {
+      expireWalletSendApprovalRequest({ request, settlementLink });
+      saveFile(file, env);
+      return {
+        ok: false as const,
+        code: "expired",
+        message: "approval request expired before the signer completed it",
+        request,
+      };
+    }
     if (storedReview.state === "prepared" && !params.reviewAuthorization) {
       syncApprovalTaskForRequest({ request, settlementLink });
       return {
@@ -1592,12 +1646,14 @@ export async function approveWalletSendRequest(params: {
         request,
       };
     }
+    const executionAuthorization =
+      storedReview.state === "prepared" ? params.reviewAuthorization : undefined;
     let executed: Awaited<ReturnType<NonNullable<typeof provider.executeSignerReview>>>;
     try {
       executed = await provider.executeSignerReview({
         walletId: request.payload.signerWalletId?.trim() || "",
         requestId: signerReviewId,
-        authorization: params.reviewAuthorization,
+        authorization: executionAuthorization,
       });
     } catch (error) {
       return {
@@ -1623,8 +1679,8 @@ export async function approveWalletSendRequest(params: {
       !sameOptionalSignerValue(executed.signer, request.payload.signerWalletPublicKey) ||
       (executed.review.artifactKind === "domain-separated-message" &&
         executed.signatureBase64 !== executed.operation.signature) ||
-      (params.reviewAuthorization &&
-        executed.operation.authorizationProof !== params.reviewAuthorization.proof.proofId)
+      (executionAuthorization &&
+        executed.operation.authorizationProof !== executionAuthorization.proof.proofId)
     ) {
       return {
         ok: false as const,
@@ -1699,6 +1755,7 @@ export async function approveWalletSendRequest(params: {
     request.status = "approved";
     request.approvedBy = params.actor?.trim() || "operator";
     request.decisionAt = new Date().toISOString();
+    request.reason = undefined;
     appendWalletAuditEntry({
       action: "send_approved",
       actor: request.approvedBy,

@@ -104,9 +104,11 @@ describe("wallet-send-approvals", () => {
     expect((publicRequest.payload as { hasSerializedTx?: boolean }).hasSerializedTx).toBe(true);
   });
 
-  it("persists every exact signer binding and recovers an already-signed review once", async () => {
-    const now = new Date().toISOString();
-    const expiresAt = new Date(Date.now() + 15 * 60_000).toISOString();
+  it("recovers an expired signed review once but expires an unsigned review", async () => {
+    const createdAtMs = Date.now();
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(createdAtMs);
+    const now = new Date(createdAtMs).toISOString();
+    const expiresAt = new Date(createdAtMs + 60_000).toISOString();
     const walletId = "vault-reviewed";
     const walletPublicKey = "Vault11111111111111111111111111111111111111";
     const destination = "Dest111111111111111111111111111111111111111";
@@ -159,35 +161,95 @@ describe("wallet-send-approvals", () => {
       }),
     ).toBe(false);
 
+    const unsignedReview: WalletProviderJupiterReviewV2 = {
+      ...review,
+      requestId: "review-expired-unsigned-123",
+      nonce: "e".repeat(64),
+    };
+    const unsignedPending = createSignerReviewApprovalRequest({
+      review: unsignedReview,
+      role: "vault",
+    });
+    const swapReview: WalletProviderJupiterReviewV2 = {
+      ...review,
+      requestId: "review-expired-signed-swap-123",
+      nonce: "f".repeat(64),
+      state: "signed",
+      signature: "signed-swap-transaction",
+    };
+    const unknownSwapReview: WalletProviderJupiterReviewV2 = {
+      ...swapReview,
+      requestId: "review-expired-unknown-swap-123",
+      nonce: "1".repeat(64),
+      signature: "unknown-swap-transaction",
+    };
+    const createSwapApproval = (swap: WalletProviderJupiterReviewV2) =>
+      createWalletSendApprovalRequest({
+        requestId: swap.requestId,
+        expiresAt: swap.expiresAt,
+        payload: {
+          ...pending.payload,
+          actionKind: "solana_swap",
+          inputMint: "Input1111111111111111111111111111111111111",
+          outputMint: "Output111111111111111111111111111111111111",
+          signerReviewId: swap.requestId,
+          signerNonce: swap.nonce,
+        },
+        requestedBy: "control-ui",
+      });
+    const signedSwapPending = createSwapApproval(swapReview);
+    const unknownSwapPending = createSwapApproval(unknownSwapReview);
+    nowSpy.mockReturnValue(createdAtMs + 2 * 60_000);
+    expect(listWalletSendApprovalRequests()).toHaveLength(4);
+
     const signedReview: WalletProviderJupiterReviewV2 = {
       ...review,
       state: "signed",
       signature: "signed-transaction",
       updatedAt: new Date().toISOString(),
     };
-    const getSignerReview = vi.fn(async () => signedReview);
-    const executeSignerReview = vi.fn(async () => ({
-      review: signedReview,
-      signer: walletPublicKey,
-      operation: {
-        requestId: review.requestId,
-        walletId,
-        intentType: review.intentType,
-        intentDigest: review.intentDigest,
-        transactionDigest: review.transactionDigest,
-        policyHash: review.policyHash,
-        asset: review.asset,
-        amount: review.amount,
-        state: "confirmed" as const,
-        reservationActive: false,
-        usageBucket: "2026-07-16:solana:native",
-        reservedAt: now,
-        confirmedAt: now,
-        updatedAt: now,
-        signature: "signed-transaction",
-        authorizationProof: "consumed-proof",
-      },
-    }));
+    const getSignerReview = vi.fn(async (request: { requestId: string }) =>
+      request.requestId === unsignedReview.requestId
+        ? unsignedReview
+        : request.requestId === swapReview.requestId
+          ? swapReview
+          : request.requestId === unknownSwapReview.requestId
+            ? unknownSwapReview
+            : signedReview,
+    );
+    const executeSignerReview = vi.fn(async (request: { requestId: string }) => {
+      const executedReview =
+        request.requestId === swapReview.requestId
+          ? swapReview
+          : request.requestId === unknownSwapReview.requestId
+            ? unknownSwapReview
+            : signedReview;
+      return {
+        review: executedReview,
+        signer: walletPublicKey,
+        operation: {
+          requestId: executedReview.requestId,
+          walletId,
+          intentType: executedReview.intentType,
+          intentDigest: executedReview.intentDigest,
+          transactionDigest: executedReview.transactionDigest,
+          policyHash: executedReview.policyHash,
+          asset: executedReview.asset,
+          amount: executedReview.amount,
+          state:
+            request.requestId === unknownSwapReview.requestId
+              ? ("unknown" as const)
+              : ("confirmed" as const),
+          reservationActive: false,
+          usageBucket: "2026-07-16:solana:native",
+          reservedAt: now,
+          confirmedAt: now,
+          updatedAt: now,
+          signature: executedReview.signature,
+          authorizationProof: "consumed-proof",
+        },
+      };
+    });
     const providerSpy = vi
       .spyOn(walletProviderResolver, "createWalletProviderAdapter")
       .mockReturnValue({
@@ -223,6 +285,61 @@ describe("wallet-send-approvals", () => {
         getSignerReview,
         executeSignerReview,
       } as ReturnType<typeof walletProviderResolver.createWalletProviderAdapter>);
+    const expiredUnsigned = await approveWalletSendRequest({
+      requestId: unsignedPending.id,
+      actor: "control-ui",
+      config: resolveWalletRuntimeConfigForTest({
+        wallet: { provider: { id: "local-socket-signer" } },
+      }),
+      providerIdOverride: "local-socket-signer",
+      reviewAuthorization: { type: "webauthn", proof: { proofId: "must-not-be-consumed" } },
+    });
+    expect(expiredUnsigned.ok).toBe(false);
+    if (!expiredUnsigned.ok) {
+      expect(expiredUnsigned.code).toBe("expired");
+      expect(expiredUnsigned.request.status).toBe("expired");
+    }
+    expect(executeSignerReview).not.toHaveBeenCalled();
+
+    const recoveredSwap = await approveWalletSendRequest({
+      requestId: signedSwapPending.id,
+      actor: "control-ui",
+      config: resolveWalletRuntimeConfigForTest({
+        wallet: { provider: { id: "local-socket-signer" } },
+      }),
+      providerIdOverride: "local-socket-signer",
+    });
+    expect(recoveredSwap.ok).toBe(true);
+    if (recoveredSwap.ok) {
+      expect(recoveredSwap.tx.txHash).toBe("signed-swap-transaction");
+    }
+
+    const ambiguousSwap = await approveWalletSendRequest({
+      requestId: unknownSwapPending.id,
+      actor: "control-ui",
+      config: resolveWalletRuntimeConfigForTest({
+        wallet: { provider: { id: "local-socket-signer" } },
+      }),
+      providerIdOverride: "local-socket-signer",
+    });
+    expect(ambiguousSwap.ok).toBe(false);
+    if (!ambiguousSwap.ok) {
+      expect(ambiguousSwap.code).toBe("wallet_provider_ambiguous");
+      expect(ambiguousSwap.request.status).toBe("approved");
+    }
+    const ambiguousRetry = await approveWalletSendRequest({
+      requestId: unknownSwapPending.id,
+      actor: "control-ui",
+      config: resolveWalletRuntimeConfigForTest({
+        wallet: { provider: { id: "local-socket-signer" } },
+      }),
+      providerIdOverride: "local-socket-signer",
+    });
+    expect(ambiguousRetry.ok).toBe(false);
+    if (!ambiguousRetry.ok) {
+      expect(ambiguousRetry.code).toBe("invalid_state");
+    }
+
     const approved = await approveWalletSendRequest({
       requestId: pending.id,
       actor: "control-ui",
@@ -231,15 +348,28 @@ describe("wallet-send-approvals", () => {
       }),
       providerIdOverride: "local-socket-signer",
     });
-    providerSpy.mockRestore();
-
     expect(approved.ok).toBe(true);
-    expect(getSignerReview).toHaveBeenCalledOnce();
+    expect(getSignerReview).toHaveBeenCalledTimes(4);
     expect(executeSignerReview).toHaveBeenCalledWith({
       walletId,
       requestId: review.requestId,
       authorization: undefined,
     });
+    const duplicateRecovery = await approveWalletSendRequest({
+      requestId: pending.id,
+      actor: "control-ui",
+      config: resolveWalletRuntimeConfigForTest({
+        wallet: { provider: { id: "local-socket-signer" } },
+      }),
+      providerIdOverride: "local-socket-signer",
+    });
+    expect(duplicateRecovery.ok).toBe(false);
+    if (!duplicateRecovery.ok) {
+      expect(duplicateRecovery.code).toBe("invalid_state");
+    }
+    expect(executeSignerReview).toHaveBeenCalledTimes(3);
+    providerSpy.mockRestore();
+    nowSpy.mockRestore();
   });
 
   it("mirrors pending wallet approvals into the task ledger", () => {

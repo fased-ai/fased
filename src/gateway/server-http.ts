@@ -9437,7 +9437,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           Boolean(signerWalletId) &&
           Boolean(applicationWalletId);
         if (isSignerOwnedReview) {
-          if (pendingRequest.status !== "pending") {
+          if (pendingRequest.status !== "pending" && pendingRequest.status !== "expired") {
             sendLoginResponse(409, {
               ok: false,
               error: {
@@ -9508,6 +9508,31 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
                   ok: true,
                   request: sanitizeWalletSendApprovalRequest(recovered.request),
                   tx: recovered.tx,
+                });
+                return;
+              }
+              if (
+                pendingRequest.status === "expired" ||
+                Date.parse(pendingRequest.expiresAt) <= Date.now()
+              ) {
+                const expired = await approveWalletSendRequest({
+                  requestId,
+                  actor: "control-ui",
+                  config: walletCfg,
+                  env: process.env,
+                });
+                sendLoginResponse(409, {
+                  ok: false,
+                  error: {
+                    code: expired.ok ? "invalid_state" : expired.code,
+                    message: expired.ok
+                      ? "expired signer review unexpectedly executed"
+                      : expired.message,
+                  },
+                  request:
+                    !expired.ok && "request" in expired && expired.request
+                      ? sanitizeWalletSendApprovalRequest(expired.request)
+                      : undefined,
                 });
                 return;
               }
