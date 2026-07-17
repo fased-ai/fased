@@ -3,7 +3,11 @@ import {
   SAT_BOND_INSTRUCTION_DISCRIMINATORS,
   SAT_INSTRUCTION_DISCRIMINATORS,
 } from "./src/protocol-contract.js";
-import { resolveSatSignerCodec, SAT_SIGNER_ACTIONS } from "./src/signer-codec-manifest.js";
+import {
+  resolveSatSignerCodec,
+  SAT_SIGNER_ACTIONS,
+  SAT_SIGNER_CODECS,
+} from "./src/signer-codec-manifest.js";
 
 const MAIN_PROGRAM = "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75";
 const BOND_PROGRAM = "D1ySMMiJmvJRhJJKwYnc171w3g2JDPQnkgD8kGhaG4Vq";
@@ -75,5 +79,18 @@ describe("SAT protocol-v2 signer codec manifest", () => {
         ]),
       }),
     ).toThrow("item count does not match");
+  });
+
+  it("keeps every generated discriminator bound to the shared protocol contract", () => {
+    const contracts = {
+      main: SAT_INSTRUCTION_DISCRIMINATORS as Record<string, number>,
+      bond: SAT_BOND_INSTRUCTION_DISCRIMINATORS as Record<string, number>,
+    };
+    for (const codec of SAT_SIGNER_CODECS) {
+      expect(contracts[codec.family][codec.contractKey], codec.action).toBe(codec.discriminator);
+      expect(codec.accountShape.split(",").every((flags) => /^(?:S|-)(?:W|-)$/.test(flags))).toBe(
+        true,
+      );
+    }
   });
 });

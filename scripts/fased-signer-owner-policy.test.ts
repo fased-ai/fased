@@ -144,16 +144,18 @@ async function successfulFlow(options: {
 
 describe("strict owner policy input", () => {
   it("keeps every program-bound SAT action synchronized with the native generated manifest", async () => {
-    const manifest = await fsp.readFile(
-      path.join(process.cwd(), "tools", "fased-signerd", "sat_manifest_generated.go"),
-      "utf8",
-    );
-    const main = [...manifest.matchAll(/^\s*"([A-Za-z][A-Za-z0-9]*)":.*satFamilyMain,/gmu)].map(
-      (match) => match[1],
-    );
-    const bond = [...manifest.matchAll(/^\s*"([A-Za-z][A-Za-z0-9]*)":.*satFamilyBond,/gmu)].map(
-      (match) => match[1],
-    );
+    const manifest = JSON.parse(
+      await fsp.readFile(
+        path.join(process.cwd(), "extensions", "sat-mining", "signer-codec-schema.v1.json"),
+        "utf8",
+      ),
+    ) as { codecs: Array<{ action: string; family: "main" | "bond" }> };
+    const main = manifest.codecs
+      .filter((codec) => codec.family === "main")
+      .map((codec) => codec.action);
+    const bond = manifest.codecs
+      .filter((codec) => codec.family === "bond")
+      .map((codec) => codec.action);
     const compare = (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0);
     expect(
       [...__testing.SAT_MINING_ACTIONS]
