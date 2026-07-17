@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
+import path from "node:path";
 import type { FasedAgentConfig } from "../config/config.js";
 import { loadConfig } from "../config/config.js";
 import { tryResolveSatRuntimeIds } from "../config/sat-runtime-ids.js";
@@ -663,27 +664,81 @@ function loadFile(env: NodeJS.ProcessEnv = process.env): WalletSendApprovalsFile
         requests: parsed.requests,
       };
     }
-  } catch {
-    // ignore parse errors and reset file
+  } catch (error) {
+    throw new Error("wallet approval state is unreadable; refusing to reset persisted requests", {
+      cause: error,
+    });
   }
-  return { version: 1, requests: [] };
+  throw new Error(
+    "wallet approval state has an unsupported shape; refusing to reset persisted requests",
+  );
 }
 
 function saveFile(file: WalletSendApprovalsFile, env: NodeJS.ProcessEnv = process.env) {
   const paths = ensureWalletStateDir(env);
-  fs.writeFileSync(paths.sendApprovalsPath, `${JSON.stringify(file, null, 2)}\n`, {
-    encoding: "utf8",
-    mode: 0o600,
-  });
+  const serialized = `${JSON.stringify(file, null, 2)}\n`;
+  const tempPath = path.join(
+    path.dirname(paths.sendApprovalsPath),
+    `.${path.basename(paths.sendApprovalsPath)}.${process.pid}.${randomBytes(8).toString("hex")}.tmp`,
+  );
+  let tempFd: number | undefined;
+  let renamed = false;
   try {
-    fs.chmodSync(paths.sendApprovalsPath, 0o600);
-  } catch {
-    // best effort
+    tempFd = fs.openSync(tempPath, "wx", 0o600);
+    fs.writeFileSync(tempFd, serialized, { encoding: "utf8" });
+    fs.fsyncSync(tempFd);
+    fs.closeSync(tempFd);
+    tempFd = undefined;
+    fs.renameSync(tempPath, paths.sendApprovalsPath);
+    renamed = true;
+
+    const directoryFd = fs.openSync(path.dirname(paths.sendApprovalsPath), "r");
+    try {
+      fs.fsyncSync(directoryFd);
+    } finally {
+      fs.closeSync(directoryFd);
+    }
+  } catch (error) {
+    if (tempFd !== undefined) {
+      try {
+        fs.closeSync(tempFd);
+      } catch {
+        // Preserve the original write error.
+      }
+    }
+    if (!renamed) {
+      try {
+        fs.unlinkSync(tempPath);
+      } catch {
+        // The temporary file may not have been created.
+      }
+    }
+    throw error;
   }
+}
+
+function hasSignerOwnedReviewMetadata(payload: WalletSendApprovalPayload): boolean {
+  const hasSignerField = Object.entries(payload).some(
+    ([key, value]) =>
+      key.startsWith("signer") &&
+      value !== undefined &&
+      value !== null &&
+      (!Array.isArray(value) || value.length > 0) &&
+      (typeof value !== "string" || Boolean(value.trim())),
+  );
+  return (
+    hasSignerField ||
+    (payload.providerId === "local-socket-signer" &&
+      (payload.actionKind === "solana_swap" || payload.actionKind === "signer_review"))
+  );
 }
 
 function hasExactSignerOwnedReviewBinding(request: WalletSendApprovalRequest): boolean {
   const payload = request.payload;
+  const reviewExpiresAt = payload.signerReviewExpiresAt?.trim();
+  const transactionArtifactHasDigest =
+    payload.signerArtifactKind !== "solana-transaction" ||
+    Boolean(payload.signerTransactionDigest?.trim());
   return (
     payload.providerId === "local-socket-signer" &&
     Boolean(payload.signerReviewId?.trim()) &&
@@ -693,10 +748,18 @@ function hasExactSignerOwnedReviewBinding(request: WalletSendApprovalRequest): b
     Boolean(payload.signerIntentDigest?.trim()) &&
     Boolean(payload.signerArtifactKind) &&
     Boolean(payload.signerArtifactDigest?.trim()) &&
+    transactionArtifactHasDigest &&
+    Boolean(payload.signerAsset?.trim()) &&
+    Boolean(payload.signerAmount?.trim()) &&
+    Boolean(payload.signerDestination?.trim()) &&
+    Boolean(payload.signerPolicyOperation?.trim()) &&
+    Boolean(payload.signerRequiredPrograms?.length) &&
+    payload.signerRequiredPrograms?.every((program) => Boolean(program.trim())) === true &&
     Boolean(payload.signerRequiredRole) &&
     Boolean(payload.signerNonce?.trim()) &&
     Boolean(payload.signerIssuedAt?.trim()) &&
-    Boolean(payload.signerReviewExpiresAt?.trim())
+    Boolean(reviewExpiresAt) &&
+    request.expiresAt === reviewExpiresAt
   );
 }
 
@@ -707,7 +770,7 @@ function isWalletSendApprovalExpired(request: WalletSendApprovalRequest, now = n
 
 function expireWalletSendApprovalRequest(params: {
   request: WalletSendApprovalRequest;
-  settlementLink?: WalletSettlementLink;
+  settlementLink?: WalletSettlementLink | null;
   now?: number;
 }): void {
   const now = params.now ?? nowMs();
@@ -778,6 +841,9 @@ export function createWalletSendApprovalRequest(params: {
     ...(params.simulation ? { simulation: params.simulation } : {}),
     ...(params.approvalDiff ? { approvalDiff: params.approvalDiff } : {}),
   };
+  if (hasSignerOwnedReviewMetadata(req.payload) && !hasExactSignerOwnedReviewBinding(req)) {
+    throw new Error("signer-reviewed approval requires a complete exact signer review binding");
+  }
   file.requests.push(req);
   saveFile(file, env);
   syncApprovalTaskForRequest({ request: req, settlementContext: params.settlementContext });
@@ -1375,6 +1441,7 @@ export async function approveWalletSendRequest(params: {
   if (!request) {
     return { ok: false as const, code: "not_found", message: "approval request not found" };
   }
+  const hasSignerReviewMetadata = hasSignerOwnedReviewMetadata(request.payload);
   const hasSignerOwnedReview = hasExactSignerOwnedReviewBinding(request);
   const canReconcileExpiredSignerReview = request.status === "expired" && hasSignerOwnedReview;
   if (request.status !== "pending" && !canReconcileExpiredSignerReview) {
@@ -1386,6 +1453,34 @@ export async function approveWalletSendRequest(params: {
     };
   }
   const settlementLink = getWalletSettlementLinkByRequestId({ requestId: request.id, env });
+  if (hasSignerReviewMetadata && !hasSignerOwnedReview) {
+    request.status = "failed";
+    request.reason = "signer-reviewed approval is missing its complete exact signer binding";
+    request.result = { error: request.reason };
+    request.decisionAt = new Date().toISOString();
+    saveFile(file, env);
+    syncApprovalTaskForRequest({ request, settlementLink });
+    appendWalletAuditEntry({
+      action: "send_failed",
+      actor: params.actor?.trim() || "operator",
+      details: buildWalletSendAuditDetails({
+        payload: request.payload,
+        requestId: request.id,
+        mode: "manual",
+        taskId: settlementLink?.taskId,
+        invoiceId: settlementLink?.invoiceId,
+        senderHandle: settlementLink?.senderHandle,
+        reason: request.reason,
+      }),
+      env,
+    });
+    return {
+      ok: false as const,
+      code: "wallet_signer_review_binding_incomplete",
+      message: request.reason,
+      request,
+    };
+  }
   if (isWalletSendApprovalExpired(request) && !hasSignerOwnedReview) {
     expireWalletSendApprovalRequest({ request, settlementLink });
     saveFile(file, env);

@@ -36,7 +36,10 @@ import {
   resolveScopedRpcUrlForWallet,
 } from "../../wallet/wallet-provider-resolver.js";
 import { resolveWalletRuntimeConfig } from "../../wallet/wallet-runtime-config.js";
-import { createWalletSendApprovalRequest } from "../../wallet/wallet-send-approvals.js";
+import {
+  bindSignerReviewToWalletApprovalPayload,
+  createWalletSendApprovalRequest,
+} from "../../wallet/wallet-send-approvals.js";
 import { resolveDefaultAgentId } from "../agent-scope.js";
 import { optionalStringEnum, stringEnum } from "../schema/typebox.js";
 import { type AnyAgentTool, jsonResult, readStringParam } from "./common.js";
@@ -1053,15 +1056,14 @@ export function createWalletActionTool(opts?: {
           mode: "reviewed",
           env: process.env,
         });
-        Object.assign(payload, {
-          signerReviewId: signerReview.review.requestId,
-          signerPolicyHash: signerReview.review.policyHash,
-          signerIntentDigest: signerReview.review.intentDigest,
-          signerTransactionDigest: signerReview.review.transactionDigest,
-          signerReviewExpiresAt: signerReview.review.expiresAt,
+        const reviewedPayload = bindSignerReviewToWalletApprovalPayload({
+          payload,
+          review: signerReview.review,
+          role: "agent",
         });
         const request = createWalletSendApprovalRequest({
-          payload,
+          expiresAt: signerReview.review.expiresAt,
+          payload: reviewedPayload,
           requestedBy: requesterAgentId ?? ownerAgentId ?? "agent",
           simulation,
           approvalDiff: simulation.diff,

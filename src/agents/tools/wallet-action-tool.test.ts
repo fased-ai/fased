@@ -465,13 +465,26 @@ describe("wallet-action-tool", () => {
         return {
           requestId: request.requestId,
           walletId: request.walletId,
+          walletPublicKey: AGENT_ADDRESS,
           intentType: request.intent.type,
           intentDigest: `sha256:${"a".repeat(64)}`,
           policyHash: `sha256:${"b".repeat(64)}`,
           mode: request.mode,
           nonce: "c".repeat(64),
           semanticIntent: request.intent,
+          artifactKind: "solana-transaction" as const,
+          artifactDigest: `sha256:${"d".repeat(64)}`,
           transaction: request.transaction,
+          asset:
+            request.intent.jupiter.inputMint === SOLANA_NATIVE_MINT
+              ? "solana:native"
+              : `solana:spl:${request.intent.jupiter.inputMint}`,
+          amount:
+            request.intent.jupiter.maxInputAmount ?? request.intent.jupiter.inputAmount ?? "0",
+          destination: request.intent.jupiter.owner,
+          policyOperation: request.intent.type,
+          requiredPrograms: [...request.transaction.programs].toSorted(),
+          requiredRole: "agent" as const,
           issuedAt: "2026-07-16T00:00:00.000Z",
           state: "prepared" as const,
           preparedAt: "2026-07-16T00:00:00.000Z",
@@ -492,13 +505,26 @@ describe("wallet-action-tool", () => {
           review: {
             requestId: request.requestId,
             walletId: request.walletId,
+            walletPublicKey: AGENT_ADDRESS,
             intentType: prepared.intent.type,
             intentDigest: `sha256:${"a".repeat(64)}`,
             policyHash: `sha256:${"b".repeat(64)}`,
             mode: prepared.mode,
             nonce: "c".repeat(64),
             semanticIntent: prepared.intent,
+            artifactKind: "solana-transaction" as const,
+            artifactDigest: `sha256:${"d".repeat(64)}`,
             transaction: prepared.transaction,
+            asset:
+              prepared.intent.jupiter.inputMint === SOLANA_NATIVE_MINT
+                ? "solana:native"
+                : `solana:spl:${prepared.intent.jupiter.inputMint}`,
+            amount:
+              prepared.intent.jupiter.maxInputAmount ?? prepared.intent.jupiter.inputAmount ?? "0",
+            destination: prepared.intent.jupiter.owner,
+            policyOperation: prepared.intent.type,
+            requiredPrograms: [...prepared.transaction.programs].toSorted(),
+            requiredRole: "agent" as const,
             issuedAt: "2026-07-16T00:00:00.000Z",
             state: "signed" as const,
             preparedAt: "2026-07-16T00:00:00.000Z",
@@ -868,6 +894,27 @@ describe("wallet-action-tool", () => {
       expect(requests[0]?.payload.actionKind).toBe("solana_swap");
       expect(requests[0]?.payload.walletHandle).toBe("@wallet:agent");
       expect(requests[0]?.payload.outputMint).toBe(USDC_MINT);
+      expect(requests[0]?.expiresAt).toBe("2099-07-16T00:05:00.000Z");
+      expect(requests[0]?.payload).toMatchObject({
+        providerId: "local-socket-signer",
+        signerWalletId: "agent",
+        signerWalletPublicKey: AGENT_ADDRESS,
+        signerIntentType: "solana.jupiter.swap",
+        signerPolicyHash: `sha256:${"b".repeat(64)}`,
+        signerIntentDigest: `sha256:${"a".repeat(64)}`,
+        signerArtifactKind: "solana-transaction",
+        signerArtifactDigest: `sha256:${"d".repeat(64)}`,
+        signerTransactionDigest: `sha256:${"d".repeat(64)}`,
+        signerAsset: "solana:native",
+        signerAmount: "100000000",
+        signerDestination: AGENT_ADDRESS,
+        signerPolicyOperation: "solana.jupiter.swap",
+        signerRequiredPrograms: [SystemProgram.programId.toBase58()],
+        signerRequiredRole: "agent",
+        signerNonce: "c".repeat(64),
+        signerIssuedAt: "2026-07-16T00:00:00.000Z",
+        signerReviewExpiresAt: "2099-07-16T00:05:00.000Z",
+      });
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true });
     }

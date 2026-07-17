@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -11,7 +12,7 @@ import {
 import { readWalletAuditEntries } from "./wallet-audit-log.js";
 import type { WalletProviderJupiterReviewV2 } from "./wallet-provider-adapter.js";
 import * as walletProviderResolver from "./wallet-provider-resolver.js";
-import { resolveWalletRuntimeConfig } from "./wallet-runtime-config.js";
+import { resolveWalletRuntimeConfig, resolveWalletStatePaths } from "./wallet-runtime-config.js";
 import {
   approveWalletSendRequest,
   createOrExecuteWalletSend,
@@ -104,6 +105,168 @@ describe("wallet-send-approvals", () => {
     expect((publicRequest.payload as { hasSerializedTx?: boolean }).hasSerializedTx).toBe(true);
   });
 
+  it("refuses to persist a partial local signer review binding", () => {
+    expect(() =>
+      createWalletSendApprovalRequest({
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        payload: {
+          chain: "solana",
+          actionKind: "solana_swap",
+          providerId: "local-socket-signer",
+          walletId: "agent",
+          amount: "1",
+          inputMint: "So11111111111111111111111111111111111111112",
+          outputMint: "USDC111111111111111111111111111111111111111",
+          signerReviewId: "partial-review",
+          signerPolicyHash: `sha256:${"a".repeat(64)}`,
+        },
+      }),
+    ).toThrow("complete exact signer review binding");
+    expect(listWalletSendApprovalRequests({ status: "all" })).toEqual([]);
+  });
+
+  it("fails closed when a legacy persisted swap has only a partial signer binding", async () => {
+    const request = createWalletSendApprovalRequest({
+      payload: {
+        chain: "solana",
+        actionKind: "solana_swap",
+        walletId: "agent",
+        amount: "1",
+        inputMint: "So11111111111111111111111111111111111111112",
+        outputMint: "USDC111111111111111111111111111111111111111",
+      },
+    });
+    const approvalsPath = resolveWalletStatePaths(process.env).sendApprovalsPath;
+    const persisted = JSON.parse(await fs.readFile(approvalsPath, "utf8")) as {
+      requests: Array<{ id: string; payload: Record<string, unknown> }>;
+    };
+    const persistedRequest = persisted.requests.find((entry) => entry.id === request.id);
+    if (!persistedRequest) {
+      throw new Error("missing persisted approval fixture");
+    }
+    Object.assign(persistedRequest.payload, {
+      providerId: "local-socket-signer",
+      signerReviewId: "legacy-partial-review",
+      signerPolicyHash: `sha256:${"a".repeat(64)}`,
+    });
+    await fs.writeFile(approvalsPath, `${JSON.stringify(persisted, null, 2)}\n`, "utf8");
+
+    const approved = await approveWalletSendRequest({
+      requestId: request.id,
+      actor: "control-ui",
+      config: resolveWalletRuntimeConfigForTest({
+        wallet: { provider: { id: "local-socket-signer" } },
+      }),
+      providerIdOverride: "local-socket-signer",
+    });
+    expect(approved.ok).toBe(false);
+    if (!approved.ok) {
+      expect(approved.code).toBe("wallet_signer_review_binding_incomplete");
+      expect(approved.request?.status).toBe("failed");
+    }
+  });
+
+  it("preserves the previous approval ledger if an atomic rename is interrupted", async () => {
+    const first = createWalletSendApprovalRequest({
+      payload: {
+        chain: "solana",
+        to: "So11111111111111111111111111111111111111112",
+        amount: "1",
+      },
+    });
+    const paths = resolveWalletStatePaths(process.env);
+    const original = await fs.readFile(paths.sendApprovalsPath, "utf8");
+    const renameSpy = vi.spyOn(fsSync, "renameSync").mockImplementationOnce(() => {
+      throw new Error("simulated crash before atomic rename");
+    });
+    expect(() =>
+      createWalletSendApprovalRequest({
+        payload: {
+          chain: "solana",
+          to: "Vote111111111111111111111111111111111111111",
+          amount: "2",
+        },
+      }),
+    ).toThrow("simulated crash before atomic rename");
+    renameSpy.mockRestore();
+
+    expect(await fs.readFile(paths.sendApprovalsPath, "utf8")).toBe(original);
+    expect((await fs.stat(paths.sendApprovalsPath)).mode & 0o777).toBe(0o600);
+    expect(listWalletSendApprovalRequests({ status: "all" }).map((entry) => entry.id)).toEqual([
+      first.id,
+    ]);
+    expect((await fs.readdir(paths.rootDir)).filter((entry) => entry.endsWith(".tmp"))).toEqual([]);
+  });
+
+  it("fails closed without overwriting a corrupt existing approval ledger", async () => {
+    const paths = resolveWalletStatePaths(process.env);
+    createWalletSendApprovalRequest({
+      payload: {
+        chain: "solana",
+        to: "So11111111111111111111111111111111111111112",
+        amount: "1",
+      },
+    });
+    await fs.writeFile(paths.sendApprovalsPath, "{corrupt", "utf8");
+
+    expect(() => listWalletSendApprovalRequests({ status: "all" })).toThrow(
+      "wallet approval state is unreadable; refusing to reset persisted requests",
+    );
+    expect(await fs.readFile(paths.sendApprovalsPath, "utf8")).toBe("{corrupt");
+  });
+
+  it("keeps domain-separated federation reviews recoverable without a transaction digest", () => {
+    const createdAtMs = Date.now();
+    const issuedAt = new Date(createdAtMs).toISOString();
+    const expiresAt = new Date(createdAtMs + 60_000).toISOString();
+    const review: WalletProviderJupiterReviewV2 = {
+      requestId: "federation-review-recovery-123",
+      walletId: "vault",
+      walletPublicKey: "Vault11111111111111111111111111111111111111",
+      intentType: "federation.bondChallenge",
+      intentDigest: `sha256:${"a".repeat(64)}`,
+      policyHash: `sha256:${"b".repeat(64)}`,
+      mode: "reviewed",
+      nonce: "c".repeat(64),
+      semanticIntent: {
+        type: "federation.bondChallenge",
+        federation: {
+          challengeId: "challenge-123",
+          federationOrigin: "https://federation.example.test",
+          handle: "@vault@example.test",
+          nodeId: "node-123",
+          tokenId: "token-123",
+          bondId: "bond-123",
+          tier: "basic-bond",
+          amountRaw: "1",
+          expiresAt,
+          payloadBase64: Buffer.from("challenge", "utf8").toString("base64"),
+        },
+      },
+      artifactKind: "domain-separated-message",
+      artifactDigest: `sha256:${"d".repeat(64)}`,
+      messageBase64: Buffer.from("challenge", "utf8").toString("base64"),
+      asset: "federation:bond-challenge",
+      amount: "1",
+      destination: "Vault11111111111111111111111111111111111111",
+      policyOperation: "federation.bondChallenge",
+      requiredPrograms: ["domain:fased:federation-bond-challenge-v1"],
+      requiredRole: "vault",
+      issuedAt,
+      state: "prepared",
+      preparedAt: issuedAt,
+      expiresAt,
+      updatedAt: issuedAt,
+    };
+    const request = createSignerReviewApprovalRequest({ review, role: "vault" });
+    expect(request.payload.signerTransactionDigest).toBeUndefined();
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(createdAtMs + 2 * 60_000);
+    expect(listWalletSendApprovalRequests()).toMatchObject([
+      { id: review.requestId, status: "pending" },
+    ]);
+    nowSpy.mockRestore();
+  });
+
   it("recovers an expired signed review once but expires an unsigned review", async () => {
     const createdAtMs = Date.now();
     const nowSpy = vi.spyOn(Date, "now").mockReturnValue(createdAtMs);
@@ -183,6 +346,12 @@ describe("wallet-send-approvals", () => {
       nonce: "1".repeat(64),
       signature: "unknown-swap-transaction",
     };
+    const mismatchedSwapReview: WalletProviderJupiterReviewV2 = {
+      ...swapReview,
+      requestId: "review-expired-mismatch-swap-123",
+      nonce: "2".repeat(64),
+      signature: "mismatch-swap-transaction",
+    };
     const createSwapApproval = (swap: WalletProviderJupiterReviewV2) =>
       createWalletSendApprovalRequest({
         requestId: swap.requestId,
@@ -199,8 +368,9 @@ describe("wallet-send-approvals", () => {
       });
     const signedSwapPending = createSwapApproval(swapReview);
     const unknownSwapPending = createSwapApproval(unknownSwapReview);
+    const mismatchedSwapPending = createSwapApproval(mismatchedSwapReview);
     nowSpy.mockReturnValue(createdAtMs + 2 * 60_000);
-    expect(listWalletSendApprovalRequests()).toHaveLength(4);
+    expect(listWalletSendApprovalRequests()).toHaveLength(5);
 
     const signedReview: WalletProviderJupiterReviewV2 = {
       ...review,
@@ -215,7 +385,12 @@ describe("wallet-send-approvals", () => {
           ? swapReview
           : request.requestId === unknownSwapReview.requestId
             ? unknownSwapReview
-            : signedReview,
+            : request.requestId === mismatchedSwapReview.requestId
+              ? {
+                  ...mismatchedSwapReview,
+                  artifactDigest: `sha256:${"9".repeat(64)}`,
+                }
+              : signedReview,
     );
     const executeSignerReview = vi.fn(async (request: { requestId: string }) => {
       const executedReview =
@@ -297,7 +472,7 @@ describe("wallet-send-approvals", () => {
     expect(expiredUnsigned.ok).toBe(false);
     if (!expiredUnsigned.ok) {
       expect(expiredUnsigned.code).toBe("expired");
-      expect(expiredUnsigned.request.status).toBe("expired");
+      expect(expiredUnsigned.request?.status).toBe("expired");
     }
     expect(executeSignerReview).not.toHaveBeenCalled();
 
@@ -325,7 +500,7 @@ describe("wallet-send-approvals", () => {
     expect(ambiguousSwap.ok).toBe(false);
     if (!ambiguousSwap.ok) {
       expect(ambiguousSwap.code).toBe("wallet_provider_ambiguous");
-      expect(ambiguousSwap.request.status).toBe("approved");
+      expect(ambiguousSwap.request?.status).toBe("approved");
     }
     const ambiguousRetry = await approveWalletSendRequest({
       requestId: unknownSwapPending.id,
@@ -340,6 +515,20 @@ describe("wallet-send-approvals", () => {
       expect(ambiguousRetry.code).toBe("invalid_state");
     }
 
+    const mismatchedSwap = await approveWalletSendRequest({
+      requestId: mismatchedSwapPending.id,
+      actor: "control-ui",
+      config: resolveWalletRuntimeConfigForTest({
+        wallet: { provider: { id: "local-socket-signer" } },
+      }),
+      providerIdOverride: "local-socket-signer",
+    });
+    expect(mismatchedSwap.ok).toBe(false);
+    if (!mismatchedSwap.ok) {
+      expect(mismatchedSwap.code).toBe("wallet_signer_review_mismatch");
+      expect(mismatchedSwap.request?.status).toBe("pending");
+    }
+
     const approved = await approveWalletSendRequest({
       requestId: pending.id,
       actor: "control-ui",
@@ -349,7 +538,7 @@ describe("wallet-send-approvals", () => {
       providerIdOverride: "local-socket-signer",
     });
     expect(approved.ok).toBe(true);
-    expect(getSignerReview).toHaveBeenCalledTimes(4);
+    expect(getSignerReview).toHaveBeenCalledTimes(5);
     expect(executeSignerReview).toHaveBeenCalledWith({
       walletId,
       requestId: review.requestId,
