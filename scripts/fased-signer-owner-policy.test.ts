@@ -388,6 +388,7 @@ describe("Local and Hosting execution identity", () => {
       "/home/alice/staged/policy.json",
     ]);
     expect(invocation.args).not.toContain("sudo");
+    expect(plan.enrollmentLauncherPath).toBe("/home/alice/.fased/bin/fased-signer-enroll");
     expect(Object.keys(invocation.env).toSorted()).toEqual([
       "HOME",
       "LANG",
@@ -398,6 +399,28 @@ describe("Local and Hosting execution identity", () => {
     expect(() => createExecutionPlan("local", { effectiveUID: 0, home: "/root" })).toThrow(
       "must not run as root",
     );
+  });
+
+  it("accepts only the exact attested Local enrollment hardlink", async () => {
+    const root = await fixtureRoot();
+    const binDir = path.join(root, "bin");
+    const binary = path.join(binDir, "fased-signerd");
+    const launcher = path.join(binDir, "fased-signer-enroll");
+    const unexpected = path.join(binDir, "unexpected-hardlink");
+    const filesystemUID = Number((await fsp.stat(path.parse(root).root)).uid);
+    const allowedUIDs = new Set([0, uid, filesystemUID]);
+    await fsp.mkdir(binDir, { mode: 0o700 });
+    await fsp.writeFile(binary, "native signer", { mode: 0o700 });
+    await fsp.link(binary, launcher);
+
+    await expect(
+      __testing.assertSafeExecutable(binary, uid, allowedUIDs, launcher),
+    ).resolves.toBeUndefined();
+
+    await fsp.link(binary, unexpected);
+    await expect(
+      __testing.assertSafeExecutable(binary, uid, allowedUIDs, launcher),
+    ).rejects.toThrow("unexpected hardlink");
   });
 
   it("uses fixed runuser, signer binary, socket, account, and minimal environment for Hosting", () => {

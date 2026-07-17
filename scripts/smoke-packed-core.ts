@@ -289,6 +289,33 @@ async function main() {
     if (!existsSync(enrollmentLauncher) || (statSync(enrollmentLauncher).mode & 0o111) === 0) {
       throw new Error("packed signer install did not include the executable enrollment launcher");
     }
+    const signerBinary = path.join(home, ".fased", "bin", "fased-signerd");
+    const signerStats = statSync(signerBinary);
+    const enrollmentStats = statSync(enrollmentLauncher);
+    if (signerStats.dev !== enrollmentStats.dev || signerStats.ino !== enrollmentStats.ino) {
+      throw new Error("packed signer enrollment launcher is not the attested signer hardlink");
+    }
+    const policyLauncher = path.join(home, ".fased", "bin", "fased-signer-policy");
+    const policyHelper = path.join(home, ".fased", "bin", "fased-signer-owner-policy.mjs");
+    const policyTemplates = path.join(home, ".fased", "share", "signer-policies");
+    if (
+      !existsSync(policyLauncher) ||
+      (statSync(policyLauncher).mode & 0o111) === 0 ||
+      !existsSync(policyHelper) ||
+      (statSync(policyHelper).mode & 0o077) !== 0
+    ) {
+      throw new Error("packed signer install did not include private Local policy tooling");
+    }
+    for (const role of ["agent", "mining", "vault"]) {
+      const template = path.join(policyTemplates, `${role}.json.template`);
+      if (!existsSync(template) || !readFileSync(template, "utf8").includes("REPLACE_WITH_")) {
+        throw new Error(`packed signer install is missing inactive ${role} policy template`);
+      }
+    }
+    const policyHelp = execFileSync(policyLauncher, ["--help"], { env, encoding: "utf8" });
+    if (!policyHelp.includes("fased-signer-policy --initial-install")) {
+      throw new Error("packed signer policy launcher did not expose the fixed-profile owner help");
+    }
     for (const dependency of optionalChannelDependencies) {
       if (existsSync(path.join(coreNodeModules, ...dependency.split("/")))) {
         throw new Error(`wallet creation pulled optional channel dependency ${dependency}`);

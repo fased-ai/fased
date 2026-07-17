@@ -2,9 +2,13 @@
 
 These files are deliberately inactive templates. Every `REPLACE_WITH_...` value
 is invalid, so an unreviewed template cannot unlock a wallet. Copy one template
-to a new owner-only file, replace every placeholder with an exact address or a
+to a new owner-only file, set `walletId` to the canonical signer wallet ID
+returned by native setup (lowercase with separators normalized to underscores,
+not the friendly Gateway/registry ID; the template value is only the
+conventional role name), replace every placeholder with an exact address or a
 canonical positive raw-unit cap, review every line, then set the file to mode
-`0600` before running `fased-signer-policy --initial-install`.
+`0600` before running
+`fased-signer-policy --initial-install`.
 
 Fresh signer-owned wallets remain at their version-1 deny-all policy until that
 owner-confirmed command succeeds. Merely installing Fased or copying a template

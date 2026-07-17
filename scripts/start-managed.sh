@@ -458,6 +458,9 @@ start_gateway_if_needed
 SIGNERD_BIN="${FASED_CONFIG_DIR}/bin/fased-signerd"
 SIGNERD_SOCKET="${FASED_CONFIG_DIR}/wallet/local-signer.sock"
 SIGNERD_MATERIAL_DIR="${FASED_CONFIG_DIR}/wallet"
+SIGNERD_CONTROL_SOCKET="${SIGNERD_MATERIAL_DIR}/local-signer-control.sock"
+SIGNERD_STATE_DB="${SIGNERD_MATERIAL_DIR}/signerd-v2.db"
+SIGNERD_MASTER_KEY="${SIGNERD_MATERIAL_DIR}/signerd-v2.master.key"
 SIGNERD_PASSPHRASE_FILE="$SIGNERD_MATERIAL_DIR/passphrase"
 SIGNERD_EVM_KEYSTORE="$SIGNERD_MATERIAL_DIR/keystore-evm.v1.enc"
 SIGNERD_SOL_KEYSTORE="$SIGNERD_MATERIAL_DIR/keystore-solana.v1.enc"
@@ -490,6 +493,9 @@ load_wallet_signer_env_from_config() {
       || [[ "$key" == "FASED_WALLET_CHAINS" ]] \
       || [[ "$key" == "FASED_WALLET_PASSPHRASE_FILE" ]] \
       || [[ "$key" == "FASED_WALLET_LOCAL_SIGNER_SOCKET" ]] \
+      || [[ "$key" == "FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET" ]] \
+      || [[ "$key" == "FASED_WALLET_LOCAL_SIGNER_STATE_DB" ]] \
+      || [[ "$key" == "FASED_WALLET_LOCAL_SIGNER_MASTER_KEY" ]] \
       || [[ "$key" == "FASED_WALLET_SIGNER_STATE_DIR" ]] \
       || [[ "$key" == "FASED_WALLET_LOCAL_SIGNER_BIN" ]] \
       || [[ "$key" =~ ^FASED_WALLET_LOCAL_SIGNER_(ROLE|DIRECT_SIGNING|CAPS_ENABLED|SOLANA_MAX_PER_TX|SOLANA_MAX_DAILY|SOLANA_ALLOW_PROGRAMS)(__[A-Za-z0-9_-]+)?$ ]]; then
@@ -505,6 +511,9 @@ load_wallet_signer_env_from_config() {
             or . == "FASED_WALLET_CHAINS"
             or . == "FASED_WALLET_PASSPHRASE_FILE"
             or . == "FASED_WALLET_LOCAL_SIGNER_SOCKET"
+            or . == "FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET"
+            or . == "FASED_WALLET_LOCAL_SIGNER_STATE_DB"
+            or . == "FASED_WALLET_LOCAL_SIGNER_MASTER_KEY"
             or . == "FASED_WALLET_SIGNER_STATE_DIR"
             or . == "FASED_WALLET_LOCAL_SIGNER_BIN"
             or test("^FASED_WALLET_LOCAL_SIGNER_(ROLE|DIRECT_SIGNING|CAPS_ENABLED|SOLANA_MAX_PER_TX|SOLANA_MAX_DAILY|SOLANA_ALLOW_PROGRAMS)(__[A-Za-z0-9_-]+)?$")
@@ -713,7 +722,7 @@ stop_existing_signerd() {
     [[ "$pid" =~ ^[0-9]+$ ]] || continue
     kill -9 "$pid" >/dev/null 2>&1 || true
   done < <(collect_existing_signerd_pids)
-  rm -f "$SIGNERD_SOCKET" "$pid_file"
+  rm -f "$SIGNERD_SOCKET" "$SIGNERD_CONTROL_SOCKET" "$pid_file"
 }
 
 wait_for_signerd_ready() {
@@ -722,7 +731,7 @@ wait_for_signerd_ready() {
   while true; do
     local active_count
     active_count="$(count_existing_signerd_pids)"
-    if [[ "$active_count" == "1" && -S "$SIGNERD_SOCKET" ]]; then
+    if [[ "$active_count" == "1" && -S "$SIGNERD_SOCKET" && -S "$SIGNERD_CONTROL_SOCKET" ]]; then
       return 0
     fi
     if [[ "$active_count" -gt 1 ]]; then
@@ -747,6 +756,9 @@ start_signerd_process() {
   audit_log="$(resolve_local_signer_sidecar_path "$SIGNERD_SOCKET" "audit")"
   "$SIGNERD_BIN" \
     -socket "$SIGNERD_SOCKET" \
+    -control-socket "$SIGNERD_CONTROL_SOCKET" \
+    -state-db "$SIGNERD_STATE_DB" \
+    -master-key "$SIGNERD_MASTER_KEY" \
     -pid-file "$pid_file" \
     -audit-log "$audit_log" \
     >>"$SIGNERD_LOG" 2>&1 &
@@ -756,6 +768,9 @@ load_wallet_signer_env_from_config
 load_wallet_signer_env_file
 SIGNERD_BIN="${FASED_WALLET_LOCAL_SIGNER_BIN:-$SIGNERD_BIN}"
 SIGNERD_MATERIAL_DIR="${FASED_WALLET_SIGNER_STATE_DIR:-$SIGNERD_MATERIAL_DIR}"
+SIGNERD_CONTROL_SOCKET="${FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET:-$SIGNERD_MATERIAL_DIR/local-signer-control.sock}"
+SIGNERD_STATE_DB="${FASED_WALLET_LOCAL_SIGNER_STATE_DB:-$SIGNERD_MATERIAL_DIR/signerd-v2.db}"
+SIGNERD_MASTER_KEY="${FASED_WALLET_LOCAL_SIGNER_MASTER_KEY:-$SIGNERD_MATERIAL_DIR/signerd-v2.master.key}"
 hydrate_scoped_wallet_keystore_env_from_registry "$SIGNERD_MATERIAL_DIR"
 HOSTED_ROOT_SIGNER=0
 if [[ "${FASED_HOST_PROFILE:-}" == "hosting" ]]; then

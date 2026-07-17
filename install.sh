@@ -3095,13 +3095,20 @@ install_host_signer_and_updater_services() {
 
   install -d -m 0755 -o root -g root /usr/local/libexec
   install -d -m 0755 -o root -g root /usr/local/sbin
+  install -d -m 0755 -o root -g root /usr/local/share/fased/signer-policies
   install -d -m 0755 -o root -g root /opt/fased/signer
   install -m 0755 -o root -g root "$FASED_DIR/scripts/fased-host-updater.mjs" /usr/local/libexec/fased-host-updater.mjs
   install -m 0755 -o root -g root "$FASED_DIR/scripts/fased-host-updaterctl.mjs" /usr/local/libexec/fased-host-updaterctl.mjs
   install -m 0755 -o root -g root "$FASED_DIR/scripts/fased-host-bootstrapd.mjs" /usr/local/libexec/fased-host-bootstrapd.mjs
   install -m 0755 -o root -g root "$FASED_DIR/scripts/fased-host-bootstrapctl.mjs" /usr/local/libexec/fased-host-bootstrapctl.mjs
   install -m 0755 -o root -g root "$FASED_DIR/scripts/migrate-hosted-signer-v2.mjs" /usr/local/libexec/migrate-hosted-signer-v2.mjs
+  install -m 0700 -o root -g root "$FASED_DIR/scripts/fased-signer-owner-policy.mjs" /usr/local/libexec/fased-signer-owner-policy.mjs
   install -m 0755 -o root -g root "$FASED_DIR/scripts/fased-signer-enroll-hosting.sh" /usr/local/sbin/fased-signer-enroll
+  install -m 0755 -o root -g root "$FASED_DIR/scripts/fased-signer-policy-hosting.sh" /usr/local/sbin/fased-signer-policy
+  install -m 0644 -o root -g root "$FASED_DIR/config/signer-policies/README.md" /usr/local/share/fased/signer-policies/README.md
+  install -m 0644 -o root -g root "$FASED_DIR/config/signer-policies/agent.json.template" /usr/local/share/fased/signer-policies/agent.json.template
+  install -m 0644 -o root -g root "$FASED_DIR/config/signer-policies/mining.json.template" /usr/local/share/fased/signer-policies/mining.json.template
+  install -m 0644 -o root -g root "$FASED_DIR/config/signer-policies/vault.json.template" /usr/local/share/fased/signer-policies/vault.json.template
   install -d -m 0700 -o root -g root /var/lib/fased-host-updater
   install -d -m 0755 -o root -g root /var/lib/fased-signer-update-gate
   install -d -m 0700 -o "$signer_user" -g "$signer_user" /var/lib/fased-signerd
@@ -3162,9 +3169,15 @@ EOF
   chmod 0644 /etc/systemd/system/fased-host-updater.service
   sync -f /usr/local/libexec/fased-host-updater.mjs
   sync -f /usr/local/libexec/fased-host-updaterctl.mjs
+  sync -f /usr/local/libexec/fased-signer-owner-policy.mjs
   sync -f /usr/local/sbin/fased-signer-enroll
+  sync -f /usr/local/sbin/fased-signer-policy
+  sync -f /usr/local/share/fased/signer-policies/README.md
+  sync -f /usr/local/share/fased/signer-policies/agent.json.template
+  sync -f /usr/local/share/fased/signer-policies/mining.json.template
+  sync -f /usr/local/share/fased/signer-policies/vault.json.template
   sync -f /etc/systemd/system/fased-host-updater.service
-  sync -f /usr/local/libexec /etc/systemd/system
+  sync -f /usr/local/libexec /usr/local/sbin /usr/local/share/fased/signer-policies /etc/systemd/system
   systemctl daemon-reload
   systemctl enable fased-host-updater.service >/dev/null
   systemctl restart fased-host-updater.service
@@ -3240,6 +3253,23 @@ EOF
     journalctl -u fased-signerd.service -n 40 --no-pager >&2 || true
     exit 1
   }
+  cat <<'EOF'
+Hosted signer owner handoff
+---------------------------
+Fresh signer-owned wallets remain deny-all. Enrollment and policy activation are
+separate host-administrator actions; neither the Gateway nor the app account can run them.
+
+After onboarding creates a signer-owned wallet, use a root SSH/provider-console session:
+  1. sudo /usr/local/sbin/fased-signer-enroll [authenticator-label]
+  2. sudo cp /usr/local/share/fased/signer-policies/<role>.json.template /root/fased-<role>-policy.json
+  3. Set walletId to the canonical native signer ID (lowercase, separators become
+     underscores; do not use a different friendly registry ID), replace every
+     REPLACE_WITH_ value, review the exact destinations/caps, then run:
+       sudo chmod 0600 /root/fased-<role>-policy.json
+       sudo /usr/local/sbin/fased-signer-policy --initial-install --policy-file /root/fased-<role>-policy.json
+
+Copying a template or enrolling a passkey does not enable signing.
+EOF
 }
 
 migrate_legacy_hosted_signer_if_needed() {

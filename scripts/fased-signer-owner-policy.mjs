@@ -636,6 +636,7 @@ async function assertSecureAncestors(
 ) {
   let current = path.dirname(targetPath);
   const stop = path.resolve(boundary);
+  const stopPrefix = stop.endsWith(path.sep) ? stop : `${stop}${path.sep}`;
   while (true) {
     const stats = await fsp.lstat(current, { bigint: true });
     if (!stats.isDirectory() || stats.isSymbolicLink()) {
@@ -652,7 +653,7 @@ async function assertSecureAncestors(
       break;
     }
     const next = path.dirname(current);
-    if (next === current || !path.resolve(current).startsWith(`${stop}${path.sep}`)) {
+    if (next === current || !path.resolve(current).startsWith(stopPrefix)) {
       throw new Error("secure path boundary was not reached");
     }
     current = next;
@@ -758,19 +759,12 @@ async function readPasswdSignerUID(passwdPath = HOSTING_PATHS.passwdPath) {
   return uid;
 }
 
-async function assertSafeExecutable(filePath, expectedUID, allowedParentUIDs) {
+async function assertSafeExecutable(filePath, expectedUID, allowedParentUIDs, trustedHardlinkPath) {
   await assertSecureAncestors(filePath, allowedParentUIDs);
   const stats = await fsp.lstat(filePath, { bigint: true });
   const permissions = Number(stats.mode & 0o777n);
-  if (
-    !stats.isFile() ||
-    stats.isSymbolicLink() ||
-    stats.nlink !== 1n ||
-    Number(stats.uid) !== expectedUID
-  ) {
-    throw new Error(
-      `${filePath} must be a single-link executable owned by the trusted installer identity`,
-    );
+  if (!stats.isFile() || stats.isSymbolicLink() || Number(stats.uid) !== expectedUID) {
+    throw new Error(`${filePath} must be an executable owned by the trusted installer identity`);
   }
   if (
     (permissions & 0o022) !== 0 ||
@@ -778,6 +772,25 @@ async function assertSafeExecutable(filePath, expectedUID, allowedParentUIDs) {
     (Number(stats.mode) & 0o6000) !== 0
   ) {
     throw new Error(`${filePath} has unsafe executable permissions`);
+  }
+  if (stats.nlink === 1n) {
+    return;
+  }
+  if (stats.nlink !== 2n || !trustedHardlinkPath) {
+    throw new Error(`${filePath} has an unexpected hardlink`);
+  }
+  await assertSecureAncestors(trustedHardlinkPath, allowedParentUIDs);
+  const launcher = await fsp.lstat(trustedHardlinkPath, { bigint: true });
+  if (
+    !launcher.isFile() ||
+    launcher.isSymbolicLink() ||
+    launcher.nlink !== 2n ||
+    launcher.dev !== stats.dev ||
+    launcher.ino !== stats.ino ||
+    Number(launcher.uid) !== expectedUID ||
+    Number(launcher.mode) !== Number(stats.mode)
+  ) {
+    throw new Error(`${filePath} is not linked only to the attested enrollment launcher`);
   }
 }
 
@@ -843,6 +856,7 @@ export async function assertHostingUpdateGateInactive(paths = HOSTING_PATHS, tru
 function localPaths(home) {
   return {
     binaryPath: path.join(home, ".fased", "bin", "fased-signerd"),
+    enrollmentLauncherPath: path.join(home, ".fased", "bin", "fased-signer-enroll"),
     controlSocketPath: path.join(home, ".fased", "wallet", "local-signer-control.sock"),
     signerHome: home,
   };
@@ -916,7 +930,12 @@ async function resolveAndValidateExecutionPlan(profile) {
   }
   if (profile === "local") {
     const plan = createExecutionPlan(profile);
-    await assertSafeExecutable(plan.binaryPath, plan.effectiveUID, new Set([0, plan.effectiveUID]));
+    await assertSafeExecutable(
+      plan.binaryPath,
+      plan.effectiveUID,
+      new Set([0, plan.effectiveUID]),
+      plan.enrollmentLauncherPath,
+    );
     await assertControlSocket(
       plan.controlSocketPath,
       plan.effectiveUID,
@@ -1327,6 +1346,10 @@ function parseCLI(argv) {
 
 function usage() {
   return `Usage:
+  # Installed profile-specific launcher (recommended)
+  fased-signer-policy --initial-install --policy-file /secure/policy.json
+
+  # Direct packaged helper
   fased-signer-policy --profile local --initial-install --policy-file /secure/policy.json
   fased-signer-policy --profile hosting --initial-install --policy-file /root/policy.json
 
@@ -1365,6 +1388,7 @@ export const __testing = Object.freeze({
   TOKEN_PROGRAM,
   SAT_MINING_ACTIONS,
   VAULT_BOND_ACTIONS,
+  assertSafeExecutable,
   encodeBase58,
   normalizeLockedStoredPolicy,
   parseAdminPolicyOutput,

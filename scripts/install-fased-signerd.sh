@@ -5,6 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALL_DIR_DEFAULT="${HOME}/.fased/bin"
 INSTALL_DIR="${FASED_LOCAL_SIGNER_BIN_DIR:-$INSTALL_DIR_DEFAULT}"
 VERSION="${FASED_LOCAL_SIGNER_VERSION:-}"
+POLICY_TEMPLATE_DIR="${FASED_LOCAL_SIGNER_POLICY_TEMPLATE_DIR:-$(dirname "$INSTALL_DIR")/share/signer-policies}"
 
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 ARCH="$(uname -m)"
@@ -156,6 +157,26 @@ else
   echo "Custom signer source: checksum verified; GitHub release provenance not applicable."
 fi
 LAUNCHER_PATH="${INSTALL_DIR}/fased-signer-enroll"
+POLICY_HELPER_PATH="${INSTALL_DIR}/fased-signer-owner-policy.mjs"
+POLICY_LAUNCHER_PATH="${INSTALL_DIR}/fased-signer-policy"
+POLICY_HELPER_SOURCE="${ROOT}/scripts/fased-signer-owner-policy.mjs"
+POLICY_LAUNCHER_SOURCE="${ROOT}/scripts/fased-signer-policy-local.sh"
+POLICY_TEMPLATE_SOURCE="${ROOT}/config/signer-policies"
+
+for required_path in \
+  "$POLICY_HELPER_SOURCE" \
+  "$POLICY_LAUNCHER_SOURCE" \
+  "$POLICY_TEMPLATE_SOURCE/README.md" \
+  "$POLICY_TEMPLATE_SOURCE/agent.json.template" \
+  "$POLICY_TEMPLATE_SOURCE/mining.json.template" \
+  "$POLICY_TEMPLATE_SOURCE/vault.json.template"; do
+  [[ -f "$required_path" && ! -L "$required_path" ]] || {
+    echo "Packaged signer policy asset is missing or unsafe: $required_path" >&2
+    exit 1
+  }
+done
+
+install -d -m 0700 "$INSTALL_DIR" "$POLICY_TEMPLATE_DIR"
 install -m 0755 "${TMP}/fased-signerd" "$BIN_PATH"
 if [[ ! -e "$LAUNCHER_PATH" || ! "$BIN_PATH" -ef "$LAUNCHER_PATH" ]]; then
   ln -f "$BIN_PATH" "$LAUNCHER_PATH"
@@ -164,10 +185,28 @@ if [[ ! "$BIN_PATH" -ef "$LAUNCHER_PATH" ]]; then
   echo "Could not install the signer-attested enrollment launcher." >&2
   exit 1
 fi
+install -m 0700 "$POLICY_HELPER_SOURCE" "$POLICY_HELPER_PATH"
+install -m 0700 "$POLICY_LAUNCHER_SOURCE" "$POLICY_LAUNCHER_PATH"
+install -m 0600 "$POLICY_TEMPLATE_SOURCE/README.md" "$POLICY_TEMPLATE_DIR/README.md"
+install -m 0600 "$POLICY_TEMPLATE_SOURCE/agent.json.template" "$POLICY_TEMPLATE_DIR/agent.json.template"
+install -m 0600 "$POLICY_TEMPLATE_SOURCE/mining.json.template" "$POLICY_TEMPLATE_DIR/mining.json.template"
+install -m 0600 "$POLICY_TEMPLATE_SOURCE/vault.json.template" "$POLICY_TEMPLATE_DIR/vault.json.template"
 
 echo "Installed: $BIN_PATH"
 echo "Installed: $LAUNCHER_PATH"
+echo "Installed: $POLICY_LAUNCHER_PATH"
+echo "Installed fail-closed policy templates: $POLICY_TEMPLATE_DIR"
 echo "Export for Fased:"
 echo "  export FASED_WALLET_LOCAL_SIGNER_BIN=\"$BIN_PATH\""
-echo "Enroll a signer-owned wallet approval passkey after the signer is running:"
-echo "  $LAUNCHER_PATH"
+cat <<EOF
+Fresh signer-owned wallets remain deny-all. After the wallet wizard creates a wallet
+and the signer is running, complete these owner-controlled steps as this same user:
+  1. $LAUNCHER_PATH [authenticator-label]
+  2. Copy the matching template from $POLICY_TEMPLATE_DIR to an owner-only file,
+     set walletId to the canonical native signer ID (lowercase, separators become
+     underscores; do not use a different friendly registry ID), replace every
+     REPLACE_WITH_ value, review it, and chmod 0600 that copy.
+  3. $POLICY_LAUNCHER_PATH --initial-install --policy-file /absolute/path/to/policy.json
+
+Enrollment does not enable signing, and installing/copying a template never applies it.
+EOF
