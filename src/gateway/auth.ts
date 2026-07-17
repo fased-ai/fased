@@ -136,6 +136,24 @@ export function isLocalDirectRequest(
   return false;
 }
 
+/**
+ * Returns true only when the peer itself is loopback and the request carries
+ * no proxy-origin headers. This stricter predicate is required for auth mode
+ * "none"; configured proxies must never turn an unauthenticated request into
+ * a local one.
+ */
+export function isDirectLoopbackRequest(req?: IncomingMessage, trustedProxies?: string[]): boolean {
+  if (!req) {
+    return false;
+  }
+  const remoteAddr = req.socket?.remoteAddress;
+  return (
+    isLoopbackAddress(remoteAddr) &&
+    !isTrustedProxyAddress(remoteAddr, trustedProxies) &&
+    !hasForwardedProxyHeaders(req)
+  );
+}
+
 function getTailscaleUser(req?: IncomingMessage): TailscaleUser | null {
   if (!req) {
     return null;
@@ -169,13 +187,18 @@ function hasForwardedProxyHeaders(req?: IncomingMessage): boolean {
   if (!req) {
     return false;
   }
-  return Boolean(
-    req.headers["forwarded"] ||
-    req.headers["x-forwarded-for"] ||
-    req.headers["x-forwarded-host"] ||
-    req.headers["x-forwarded-proto"] ||
-    req.headers["x-real-ip"],
-  );
+  // Presence matters even when a proxy emits an empty value. Checking header
+  // truthiness would turn `X-Forwarded-For:` into a direct-local request.
+  return [
+    "forwarded",
+    "via",
+    "x-forwarded-for",
+    "x-forwarded-host",
+    "x-forwarded-port",
+    "x-forwarded-proto",
+    "x-forwarded-server",
+    "x-real-ip",
+  ].some((header) => Object.prototype.hasOwnProperty.call(req.headers, header));
 }
 
 function isTailscaleProxyRequest(req?: IncomingMessage): boolean {
@@ -393,6 +416,19 @@ export async function authorizeGatewayConnect(params: {
         user: tailscaleCheck.user.login,
       };
     }
+  }
+
+  if (auth.mode === "none") {
+    // A Tailscale proxy and a configured loopback trusted proxy are
+    // indistinguishable from a direct local peer when origin headers are
+    // missing. Fail closed in that ambiguous state; verified Tailscale
+    // requests have already been accepted above.
+    if (!auth.allowTailscale && isDirectLoopbackRequest(req, trustedProxies)) {
+      limiter?.reset(ip, rateLimitScope);
+      return { ok: true, method: "none" };
+    }
+    limiter?.recordFailure(ip, rateLimitScope);
+    return { ok: false, reason: "unauthorized" };
   }
 
   let sessionAuthResolved: GatewayAuthResult | null | undefined;

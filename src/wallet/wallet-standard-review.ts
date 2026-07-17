@@ -1,6 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { withFileLock } from "../infra/file-lock.js";
 import { fetchSolanaRpc } from "./solana-assets.js";
 import {
   broadcastReviewedSolanaTransaction,
@@ -16,6 +17,16 @@ import type { WalletSendApprovalPayload } from "./wallet-send-approvals.js";
 const REVIEW_FILE_NAME = "wallet-standard-reviews.v1.json";
 const REVIEW_TTL_MS = 2 * 60 * 1000;
 const REVIEW_FILE_MODE = 0o600;
+const REVIEW_LOCK_OPTIONS = {
+  retries: {
+    retries: 80,
+    factor: 1.15,
+    minTimeout: 20,
+    maxTimeout: 200,
+    randomize: true,
+  },
+  stale: 30_000,
+} as const;
 const SOLANA_MAINNET_GENESIS_HASH = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp";
 const SOLANA_DEVNET_GENESIS_HASH = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
 
@@ -80,7 +91,7 @@ function readFile(env: NodeJS.ProcessEnv): WalletStandardReviewFile {
   }
   throw new WalletProviderError({
     code: "wallet_provider_unavailable",
-    message: "Wallet Standard review state is invalid; repair it before approving hardware sends",
+    message: "Wallet Standard review state is invalid; repair it before approving Vault sends",
     retryable: false,
   });
 }
@@ -163,8 +174,10 @@ async function resolveWalletStandardChain(
   });
 }
 
-async function withReviewLock<T>(_requestId: string, task: () => Promise<T>): Promise<T> {
-  const current = reviewStateLock.then(task, task);
+async function withReviewLock<T>(env: NodeJS.ProcessEnv, task: () => Promise<T>): Promise<T> {
+  const run = async () =>
+    await withFileLock(reviewPath(env), REVIEW_LOCK_OPTIONS, async () => await task());
+  const current = reviewStateLock.then(run, run);
   reviewStateLock = current.then(
     () => undefined,
     () => undefined,
@@ -207,7 +220,7 @@ export async function prepareWalletStandardReview(params: {
       message: "Wallet Standard review requires an approval request ID",
     });
   }
-  return await withReviewLock(requestId, async () => {
+  return await withReviewLock(env, async () => {
     const requestDigest = computeReviewedSolanaRequestDigest({
       request: params.payload,
       signer: params.signerAddress.trim(),
@@ -234,7 +247,7 @@ export async function prepareWalletStandardReview(params: {
             ? "wallet_provider_ambiguous"
             : "wallet_provider_invalid_config",
         message:
-          "This approval request ID already has an immutable hardware-wallet review; create a new approval request",
+          "This approval request ID already has an immutable Wallet Standard review; create a new approval request",
         retryable: false,
       });
     }
@@ -336,7 +349,7 @@ async function executeLocked(params: {
       saveFile(file, params.env);
       throw new WalletProviderError({
         code: "wallet_provider_unavailable",
-        message: `${review.failureReason}; create and approve a new hardware-wallet review`,
+        message: `${review.failureReason}; create and approve a new Wallet Standard review`,
         retryable: false,
       });
     }
@@ -349,7 +362,7 @@ async function executeLocked(params: {
   if (review.status === "failed") {
     throw new WalletProviderError({
       code: "wallet_provider_unavailable",
-      message: `${review.failureReason ?? "Hardware-wallet transaction failed"}; create and approve a new hardware-wallet review`,
+      message: `${review.failureReason ?? "Wallet Standard transaction failed"}; create and approve a new Wallet Standard review`,
       retryable: false,
     });
   }
@@ -395,10 +408,7 @@ export async function executeWalletStandardReview(params: {
 }): Promise<{ ok: true; txHash: string; signer: string; idempotent: boolean }> {
   const env = params.env ?? process.env;
   const requestId = params.requestId.trim();
-  return await withReviewLock(
-    requestId,
-    async () => await executeLocked({ ...params, requestId, env }),
-  );
+  return await withReviewLock(env, async () => await executeLocked({ ...params, requestId, env }));
 }
 
 export function readWalletStandardReviewTxHash(params: {

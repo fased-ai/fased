@@ -9,6 +9,21 @@ const { resolveFederationBondWallet, signFederationBondChallenge } = vi.hoisted(
 }));
 
 vi.mock("../wallet/solana-bond-signing.js", () => ({
+  FEDERATION_BOND_SIGNATURE_DOMAIN: "fased:federation-bond-challenge-signature:v2",
+  federationBondSigningMessageBase64: (params: {
+    challengeId: string;
+    federationOrigin: string;
+    payloadBase64: string;
+  }) =>
+    Buffer.from(
+      JSON.stringify({
+        domain: "fased:federation-bond-challenge-signature:v2",
+        challengeId: params.challengeId,
+        federationOrigin: new URL(params.federationOrigin).origin,
+        payloadBase64: params.payloadBase64,
+      }),
+      "utf8",
+    ).toString("base64"),
   resolveFederationBondWallet,
   signFederationBondChallenge,
 }));
@@ -57,6 +72,15 @@ describe("federation auto-connect", () => {
     const challengeExpiresAt = new Date(Date.now() + 5 * 60_000).toISOString();
     const payload = JSON.stringify({ schema: "fased-bond-v1", challenge: "reviewed" });
     const payloadBase64 = Buffer.from(payload, "utf8").toString("base64");
+    const signedMessageBase64 = Buffer.from(
+      JSON.stringify({
+        domain: "fased:federation-bond-challenge-signature:v2",
+        challengeId: "challenge-reviewed",
+        federationOrigin: "https://ff1.fased.app",
+        payloadBase64,
+      }),
+      "utf8",
+    ).toString("base64");
     const signatureBase64 = Buffer.alloc(64, 7).toString("base64");
     const env = {
       FASED_STATE_DIR: stateDir,
@@ -97,7 +121,7 @@ describe("federation auto-connect", () => {
       },
       artifactKind: "domain-separated-message" as const,
       artifactDigest: `sha256:${"d".repeat(64)}`,
-      messageBase64: payloadBase64,
+      messageBase64: signedMessageBase64,
       asset: "federation:bond-challenge",
       amount: "1",
       destination: BOND_WALLET_ADDRESS,
@@ -124,6 +148,8 @@ describe("federation auto-connect", () => {
         walletId: "bond-wallet",
         walletAddress: BOND_WALLET_ADDRESS,
         payload,
+        signatureDomain: "fased:federation-bond-challenge-signature:v2",
+        signedMessageBase64,
         signatureBase64,
       });
       expect(await loadPersistedFederationBondProof(env)).toEqual(proof);
@@ -640,6 +666,7 @@ describe("federation auto-connect", () => {
     expect(proof.challengeId).toBe("bond-challenge-1");
     expect(proof.walletId).toBe("bond-wallet");
     expect(proof.walletAddress).toBe(publicKeyBase58);
+    expect(proof.bondTier).toBe("basic-bond");
     expect(proof.signatureBase64.length).toBeGreaterThan(10);
     expect(signFederationBondChallenge).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -716,11 +743,15 @@ describe("federation auto-connect", () => {
           ? (JSON.parse(init.body as string) as {
               challengeId?: string;
               payloadBase64?: string;
+              signatureDomain?: string;
+              signedMessageBase64?: string;
               signatureBase64?: string;
             })
           : null;
         expect(body?.challengeId).toBe("bond-challenge-2");
         expect(body?.payloadBase64).toBe(Buffer.from(payload, "utf-8").toString("base64"));
+        expect(body?.signatureDomain).toBe("fased:federation-bond-challenge-signature:v2");
+        expect(typeof body?.signedMessageBase64).toBe("string");
         expect(typeof body?.signatureBase64).toBe("string");
         expect((body?.signatureBase64?.length ?? 0) > 10).toBe(true);
         return new Response(

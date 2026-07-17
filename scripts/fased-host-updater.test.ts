@@ -15,6 +15,15 @@ const cleanupRoots: string[] = [];
 const TRANSACTION_ONE = "11111111-1111-4111-8111-111111111111";
 const TRANSACTION_TWO = "22222222-2222-4222-8222-222222222222";
 
+function signerRelease(version: string) {
+  return {
+    version,
+    commit: "a".repeat(40),
+    buildInputDigest: `sha256:${"b".repeat(64)}`,
+    development: false,
+  };
+}
+
 afterEach(async () => {
   for (const root of cleanupRoots.splice(0)) {
     await fsp.rm(root, { recursive: true, force: true });
@@ -59,13 +68,28 @@ async function createFixture() {
     stageCandidate: async (version: string, candidatePath: string) => {
       events.push(`stage:${version}`);
       await fsp.writeFile(candidatePath, `signer-${version}\n`, { mode: 0o755 });
+      return {
+        release: signerRelease(version),
+        binding: {
+          manifestDigest: `sha256:${"1".repeat(64)}`,
+          signerArtifactDigest: `sha256:${"2".repeat(64)}`,
+          capabilitiesDigest: `sha256:${"3".repeat(64)}`,
+          releaseCommit: signerRelease(version).commit,
+        },
+      };
     },
     stopSigner: async () => {
       events.push("stop");
     },
-    startSignerV2: async () => {
+    startSignerV2: async ({
+      expectedRelease,
+    }: {
+      expectedRelease: ReturnType<typeof signerRelease>;
+    }) => {
       events.push("start-v2");
+      expect(expectedRelease).toEqual(signerRelease(expectedRelease.version));
       await fsp.writeFile(signerStateDBPath, "new-db\n", { mode: 0o600 });
+      return expectedRelease;
     },
     startPreviousSigner: async () => {
       events.push("start-previous");
@@ -76,7 +100,7 @@ async function createFixture() {
     startGateway: async () => {
       events.push("start-gateway");
     },
-    probeSigner: async () => undefined,
+    probeSigner: async () => signerRelease("1.2.2"),
   });
   return { context, events, paths };
 }
@@ -139,7 +163,10 @@ describe("root-owned hosted updater protocol", () => {
     expect(() =>
       parseUpdateRequest({ schemaVersion: 1, op: "prepareRelease", version: "1.2.3" }),
     ).toThrow(PRE_V2_HOSTING_MIGRATION_MESSAGE);
-    expect(PRE_V2_HOSTING_MIGRATION_MESSAGE).toContain("install.sh | bash -s -- --repair-hosting");
+    expect(PRE_V2_HOSTING_MIGRATION_MESSAGE).toContain("gh attestation verify");
+    expect(PRE_V2_HOSTING_MIGRATION_MESSAGE).toContain("--repair-hosting --release vX.Y.Z");
+    expect(PRE_V2_HOSTING_MIGRATION_MESSAGE).not.toContain("curl -fsSL");
+    expect(PRE_V2_HOSTING_MIGRATION_MESSAGE).toContain("Never run /home/app/fased/install.sh");
     expect(PRE_V2_HOSTING_MIGRATION_MESSAGE).toContain("left unchanged");
   });
 
@@ -474,11 +501,30 @@ describe("root-owned hosted updater protocol", () => {
       result: {
         ready: true,
         keystoreType: "signer-owned-v2",
+        release: signerRelease("1.2.3"),
         capabilities: { protocol: { current: 2, min: 2, max: 2 } },
         policies: [],
       },
     };
-    expect(() => __testing.assertSignerV2Health(health)).not.toThrow();
+    expect(() => __testing.assertSignerV2Health(health, signerRelease("1.2.3"))).not.toThrow();
+    expect(() =>
+      __testing.assertSignerV2Health(
+        {
+          ...health,
+          result: {
+            ...health.result,
+            release: { ...signerRelease("1.2.3"), development: true },
+          },
+        },
+        signerRelease("1.2.3"),
+      ),
+    ).toThrow("development");
+    expect(() =>
+      __testing.assertSignerV2Health(health, {
+        ...signerRelease("1.2.3"),
+        commit: "c".repeat(40),
+      }),
+    ).toThrow("attested release manifest");
     expect(() =>
       __testing.assertSignerV2Health({ ...health, result: { ...health.result, ready: false } }),
     ).toThrow("protocol v2");

@@ -127,6 +127,20 @@ describe("signer-owned wallet WebAuthn", () => {
 
   it("rejects any changed field in an exact domain-message approval binding", () => {
     const programs = ["domain:fased:federation-bond-challenge-v1"];
+    const semanticIntent = {
+      type: "federation.bondChallenge",
+      federation: {
+        challengeId: "challenge-1",
+        federationOrigin: "https://federation.example.test",
+        handle: "@vault@example.test",
+        nodeId: "node-1",
+        tokenId: "token-1",
+        bondId: "bond-1",
+        tier: "basic-bond",
+        expiresAt: "2026-07-16T12:02:00.000Z",
+        payloadBase64: "Y2hhbGxlbmdl",
+      },
+    };
     const request = {
       id: "federation-review-1",
       createdAt: "2026-07-16T12:00:00.000Z",
@@ -144,6 +158,7 @@ describe("signer-owned wallet WebAuthn", () => {
         signerIntentType: "federation.bondChallenge",
         signerPolicyHash: `sha256:${"a".repeat(64)}`,
         signerIntentDigest: `sha256:${"b".repeat(64)}`,
+        signerSemanticIntent: structuredClone(semanticIntent),
         signerArtifactKind: "domain-separated-message",
         signerArtifactDigest: `sha256:${"c".repeat(64)}`,
         signerAsset: "federation:bond-challenge",
@@ -167,7 +182,7 @@ describe("signer-owned wallet WebAuthn", () => {
         walletPublicKey: request.payload.signerWalletPublicKey,
         intentType: "federation.bondChallenge",
         intentDigest: request.payload.signerIntentDigest,
-        semanticIntent: { type: "federation.bondChallenge" },
+        semanticIntent: structuredClone(semanticIntent),
         artifactKind: "domain-separated-message",
         artifactDigest: request.payload.signerArtifactDigest,
         asset: "federation:bond-challenge",
@@ -195,6 +210,21 @@ describe("signer-owned wallet WebAuthn", () => {
         {
           ...authorization,
           binding: { ...authorization.binding, walletId: request.payload.walletId },
+        },
+        request,
+      ),
+    ).toBe(false);
+    expect(
+      signerAuthorizationMatchesWalletApproval(
+        {
+          ...authorization,
+          binding: {
+            ...authorization.binding,
+            semanticIntent: {
+              ...semanticIntent,
+              federation: { ...semanticIntent.federation, bondId: "different-bond" },
+            },
+          },
         },
         request,
       ),

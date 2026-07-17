@@ -2,7 +2,7 @@
 read_when:
   - 安装 Fased
   - 需要本地、容器或私有主机安装路径
-summary: 使用仓库安装器安装 Fased，并在 Control UI 中完成后续设置。
+summary: 选择 Local 或 VPS Hosting 安装 Fased，并在 Control UI 中完成设置。
 title: 安装
 x-i18n:
   generated_at: "2026-05-31T00:00:00Z"
@@ -13,71 +13,119 @@ x-i18n:
 
 # 安装
 
-如果已经完成 [Getting Started](/start/getting-started)，通常可以继续从那里走。这个页面用于安装方式、平台说明、托管配置和维护入口。
+Fased 有两种受维护的设置配置：自己的电脑使用 **Local**，常驻 Linux
+服务器使用 **VPS Hosting**。如果你已经完成 [Getting
+Started](/start/getting-started)，通常可以继续从那里设置 Agent。
 
 ```mermaid
 flowchart LR
-  choose["选择安装路径"] --> repo["仓库安装器"]
-  choose --> container["容器路径"]
-  choose --> host["托管运行时"]
-  repo --> onboard["onboarding"]
-  container --> verify["验证 Gateway"]
-  host --> private["先配置私有访问"]
+  choose["选择配置"] --> local["Local"]
+  choose --> hosting["VPS Hosting"]
+  local --> onboard["onboarding"]
+  hosting --> private["Tailscale 私有访问"]
   private --> onboard
   onboard --> ui["Control UI"]
-  ui --> models["Models"]
   ui --> chat["first chat"]
 
   classDef root fill:#120605,stroke:#ff5a36,color:#ffffff;
   classDef run fill:#071018,stroke:#12cfff,color:#ffffff;
   classDef host fill:#20120a,stroke:#ffb020,color:#ffffff;
-  class choose,repo root;
-  class onboard,ui,models,chat,verify run;
-  class container,host,private host;
+  class choose,local root;
+  class onboard,ui,chat run;
+  class hosting,private host;
 ```
 
 ## 系统要求
 
-- [推荐 Node 24，或带 `node:sqlite` 的 Node 22.14+](/install/node)
-- macOS、Linux，或通过 WSL2 运行的 Windows
-- 只有从源码构建时才需要 `pnpm`
+- macOS、Linux，或通过 WSL2 Ubuntu 运行的 Windows
+- 可以访问 Fased GitHub 仓库
+- 如果自行管理 Node，请使用 Node 24，或带内置 `node:sqlite` 的 Node
+  22.14+
+- 只有源码/贡献者构建才需要自行管理 `pnpm`
 
 <Warning>
-Windows 上必须使用 [WSL2 Ubuntu](https://learn.microsoft.com/en-us/windows/wsl/install)。支持 Windows 11，或 Windows 10 版本 2004/build 19041 及以上版本。在管理员 PowerShell 中运行 `wsl --install -d Ubuntu`，然后打开 Ubuntu，并在 Ubuntu 提示符内运行安装程序和所有 `fased` 命令。不要在 PowerShell、命令提示符、Git Bash 或原生 Windows Node.js 中运行 Fased；钱包签名器需要 Unix socket。
+Windows 运行时只支持 **WSL2 Ubuntu**。需要 Windows 11，或 Windows 10
+版本 2004/build 19041 及以上版本。在管理员 PowerShell 中运行
+`wsl --install -d Ubuntu`，按提示重启，然后运行 `wsl --update`、
+`wsl --version` 和 `wsl --list --verbose`。WSL 必须为 0.67.6 或更新版本，
+Ubuntu 必须显示版本 2。
+
+随后打开 Ubuntu 应用，并只在 Ubuntu shell 中运行安装器、CLI、Gateway、
+钱包和 signer。不要在 PowerShell、命令提示符、Git Bash、WSL1 或原生
+Windows Node.js 中运行 Fased；native signer 使用 Unix socket。完整步骤见
+[Windows (WSL2)](/platforms/windows)。
 </Warning>
 
-## 推荐路径
+## Local 安装
 
-使用 `fased-ai/fased` 的仓库安装器：
-
-```bash
-git clone https://github.com/fased-ai/fased.git fased
-cd fased
-./install.sh
-```
-
-安装器会：
-
-- 检查主机环境
-- 检查 Node，并在支持的 Linux 主机上安装缺失依赖
-- 安装 `fased` CLI
-- 默认运行 onboarding
-- 引导你打开浏览器 Control UI
-
-只安装 CLI/runtime、不运行 onboarding：
+Local 适用于 macOS Terminal、Linux 电脑和 WSL2 Ubuntu。Tailscale 可选，
+安装器不会应用 VPS 的 SSH 或防火墙加固。
 
 ```bash
-./install.sh --no-onboard
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
 ```
 
-参数和自动化细节见 [Installer Reference](/install/installer)。
+安装器会检查环境，按需安装受支持的命令行工具和 Node，安装 CLI，默认运行
+onboarding，并验证 Gateway。已有 `~/.fased` 时，正常安装和更新会保留配置、
+凭证、会话、钱包、signer 状态、Mining 状态和插件记录。
+
+只安装 runtime、不运行 onboarding：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+  | bash -s -- --local --no-onboard
+```
+
+<Note>
+本页中的 raw `curl | bash` 只用于非特权 Local 安装。不要把它用于 VPS
+Hosting 的 root bootstrap。
+</Note>
+
+## VPS Hosting 安装
+
+Hosting 适用于常驻、带 systemd 的 Ubuntu/Fedora/RHEL-family Linux VPS；
+首次部署推荐 Ubuntu LTS。它是主机管理的非 Docker 部署。
+
+从 VPS 提供商的 **root console** 开始，并严格使用 [VPS Hosting
+页面中的执行前验证流程](/install/vps#3-install-fased-and-connect-through-tailscale)：
+
+1. 下载某个精确 release tag 的独立 `install.sh` 和 attestation bundle。
+2. 在执行任何 Fased shell 代码之前，验证 repository、tag、release
+   workflow 和 GitHub-hosted runner。
+3. 只有验证成功后，才执行已下载的文件并传入 `--hosting` 和精确
+   `--release`。
+4. 按安装器提示，让自己的电脑和 VPS 加入同一个 Tailscale tailnet。
+5. 完成后退出 root bootstrap，使用
+   `ssh app@YOUR_VPS_TAILSCALE_NAME` 进行日常操作。
+
+不要把未经验证的 Hosting 安装器直接 pipe 到 root shell。不要用
+`sudo /home/app/fased/install.sh` 修复 Hosting，也不要给 `app` 用户 sudo
+权限。
+
+Hosting 会安装 root 管理的 Gateway service、独立的 `fased-signer` service
+和 root updater；Gateway 以非 root `app` 用户运行，只能访问 signer 的应用
+socket。`app` 不能访问 signer control socket、signer state，也没有 sudo。
+原始 Gateway 管理端口保持关闭，dashboard 和 SSH 通过 Tailscale 私有访问。
+
+完整的 Tailscale、SSH 验证、恢复和提供商步骤见 [VPS
+Hosting](/install/vps)、[Hetzner](/install/hetzner) 和 [GCP](/install/gcp)。
+
+## Docker 边界
+
+完整 Docker Gateway 只支持 **Local** 容器化安装。它不是 VPS Hosting 的
+安全边界，不能替代 root 管理的独立 signer/updater，也没有
+`install.sh --hosting-docker` 选项。
+
+- Docker：受支持的 Local Gateway/sandbox 路径。
+- Podman：实验性的 Local Gateway-only 路径；钱包和 Mining 不受支持。
+- VPS Hosting：使用上面的主机管理非 Docker 流程。
+
+详情见 [Docker](/install/docker)。
 
 ## Onboarding 做什么
 
-Onboarding 创建基础运行时：state directory、config、workspace、Gateway
-service、dashboard access，以及选定的托管姿态。
-
-它不会配置每一个 Agent 能力。安装后，从选中 Agent 的 Control UI 继续：
+Onboarding 创建 state directory、config、workspace、Gateway service、
+dashboard access，以及选定的 Local/Hosting 姿态。之后从 Control UI 继续：
 
 1. **Models**
 2. **Chat**
@@ -86,43 +134,49 @@ service、dashboard access，以及选定的托管姿态。
 5. **Skills / Tools**
 6. **Memory**
 7. **Tasks**
-8. Wallets、Mining、Fased Network 只在你明确启用时再配置
+8. 只有明确需要时才设置 Wallets、Mining 和 Fased Network
 
 <Note>
 预发布安装保持 SAT runtime ids 为空。官方 Satcoin mainnet proof 发布后，
-在 Mining 页面使用 **Sync** 验证签名 manifest，并写入 `config/sat-runtime.env`。
+在 Mining 页面使用 **Sync** 验证签名 manifest，并写入
+`config/sat-runtime.env`。
 </Note>
 
-## 托管运行时姿态
+## 安装方式
 
-VPS 或托管运行时建议：
+| 方式                          | 状态                | 适用场景                                              |
+| ----------------------------- | ------------------- | ----------------------------------------------------- |
+| Local `install.sh`            | 推荐                | macOS、Linux、WSL2 Ubuntu                             |
+| VPS Hosting `install.sh`      | 推荐                | 经过执行前 attestation 验证的常驻 Linux VPS           |
+| 源码 checkout                 | 贡献者路径          | 构建、测试或修改仓库                                  |
+| `npm install -g @fased/fased` | 支持的高级路径      | Local/dev 或自行管理的主机；不是推荐 VPS Hosting 路径 |
+| Docker                        | 受支持的 Local 容器 | 自己电脑上的容器化 Gateway/sandbox                    |
+| Podman                        | 实验性 Local        | Gateway-only；不支持钱包或 Mining                     |
+| Nix                           | 高级/声明式         | 已使用 Nix 或 Home Manager                            |
+| Bun                           | 实验性开发          | 本地 TypeScript 迭代；Gateway 使用 Node               |
 
-1. 使用干净的基础 OS 镜像
-2. onboarding 前先加入 Tailscale
-3. onboarding 时选择 hosting profile
-4. 通过 Tailscale 或 SSH tunnel 保持私有管理访问
-5. 不要把原始 Gateway 端口直接公开到互联网
+## 更新
 
-具体命令见 [VPS hosting](/install/vps)、[Hetzner](/install/hetzner)
-或 [GCP](/install/gcp)。
+正常更新不要 `git pull` 后重新运行通用安装器。使用稳定 release channel：
 
-## 安装方式表
+```bash
+fased update status
+fased update
+```
 
-| 方式                    | 状态             | 适用场景                                        |
-| ----------------------- | ---------------- | ----------------------------------------------- |
-| 仓库安装器 `install.sh` | 推荐公开路径     | macOS、Linux、WSL2、本地笔记本或 VPS 运行时     |
-| 源码 checkout           | 贡献者路径       | 需要构建、测试或直接修改仓库                    |
-| 托管/VPS profile        | 支持             | 需要常驻 Linux 主机，并先设置私有访问           |
-| Docker                  | 可选支持路径     | 容器化 Gateway 或 sandbox 验证                  |
-| Podman                  | 支持的容器路径   | Linux 上的 rootless container                   |
-| Nix                     | 高级/声明式路径  | 已经使用 Nix 或 Home Manager 管理运行时         |
-| Bun                     | 实验性开发路径   | 本地 TypeScript 迭代；Gateway runtime 使用 Node |
-| Remote client mode      | 支持的客户端模式 | 本机连接已有 Gateway                            |
-| Task worker install     | 运行时安装后支持 | Gateway/runtime 已存在，需要单独的 task worker  |
+Hosting 先通过 Tailscale 以 `app` 登录：
 
-<Note>
-公开 npm/pnpm 全局安装还不是正常公开设置路径。发布包和文档准备好之前，请使用仓库安装器。
-</Note>
+```bash
+ssh app@YOUR_VPS_TAILSCALE_NAME
+fased update status
+fased update
+```
+
+Local/WSL/Linux managed install 会把精确版本的 Gateway 和 signer 当成一个
+事务更新；macOS 和明确的 source install 在已经配置 signer 时也使用配对
+事务。Hosting 使用独立 root updater 更新 Gateway 和 signer。失败会在安全
+提交点之前恢复两边；存在可能已经广播的 signer 请求时只向前恢复，不用旧
+数据库覆盖新状态。完整说明见 [更新](/install/updating)。
 
 ## 验证安装
 
@@ -138,21 +192,6 @@ fased dashboard
 - `fased status` 显示预期 Gateway target
 - `fased dashboard` 打开带认证信息的 Control UI 链接
 
-## 安装后顺序
-
-新运行时建议按这个顺序：
-
-1. 验证 runtime health
-2. 确认 operator access 是私有的
-3. 配置 model access
-4. 发送第一条 chat
-5. 按需要添加 channels 和 services
-6. 使用钱包相关功能前先定义 wallet/signer posture
-7. base runtime 稳定后再启用 Mining 或 Fased Network
-
-安装成功只代表 runtime 存在；channels、services、wallets、mining、network
-roles 仍需要各自的设置检查。
-
 ## `fased` not found
 
 <Accordion title="PATH 诊断和修复">
@@ -164,11 +203,9 @@ ls -l "$HOME/.local/bin/fased"
 echo "$PATH"
 ```
 
-仓库安装器会把 launcher 写到
+安装器默认把 launcher 写到
 `${FASED_CLI_BIN_DIR:-$HOME/.local/bin}/fased`。如果 `$HOME/.local/bin`
-不在 PATH 中，shell 找不到 `fased`。
-
-把它加入 `~/.zshrc` 或 `~/.bashrc`：
+不在 PATH 中，把下面一行加入 `~/.zshrc` 或 `~/.bashrc`：
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"

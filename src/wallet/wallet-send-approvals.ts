@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { FasedAgentConfig } from "../config/config.js";
@@ -6,6 +6,8 @@ import { loadConfig } from "../config/config.js";
 import { tryResolveSatRuntimeIds } from "../config/sat-runtime-ids.js";
 import type { WalletProviderId } from "../config/types.wallet.js";
 import { publishFederationSettlementEvidence } from "../federation/settlement-evidence.js";
+import { acquireFileLock, withFileLock } from "../infra/file-lock.js";
+import { resolveProcessScopedMap } from "../shared/process-scoped-map.js";
 import { executeSolanaSwapApprovalPayload, isSolanaSwapApprovalPayload } from "./solana-swap.js";
 import { appendWalletAuditEntry } from "./wallet-audit-log.js";
 import {
@@ -18,8 +20,10 @@ import {
   enforceWalletDailyCap,
   resolveWalletRoleForId,
 } from "./wallet-policy.js";
-import type {
+import {
+  WalletProviderError,
   WalletProviderJupiterReviewV2,
+  WalletProviderSignerIntentV2,
   WalletProviderSignerReviewAuthorizationV2,
   WalletProviderSignerReviewBindingV2,
 } from "./wallet-provider-adapter.js";
@@ -27,12 +31,22 @@ import {
   buildWalletProviderCapabilityMatrix,
   providerSupportsChainOperation,
 } from "./wallet-provider-capabilities.js";
+import { readWalletProviderRegistry } from "./wallet-provider-registry.js";
 import {
   createWalletProviderAdapter,
   resolveWalletProviderId,
 } from "./wallet-provider-resolver.js";
 import { walletDiagnosticErrorMessage, walletDiagnosticErrorString } from "./wallet-redaction.js";
 import { ensureWalletStateDir, type ResolvedWalletRuntimeConfig } from "./wallet-runtime-config.js";
+import {
+  beginWalletSendExecution,
+  claimWalletSendExecution,
+  getWalletSendExecution,
+  updateWalletSendExecution,
+  walletSendIntentDigest,
+  walletSendRequestId,
+  type WalletSendExecutionEntry,
+} from "./wallet-send-execution-ledger.js";
 import {
   getWalletSettlementLinkByRequestId,
   markWalletSettlementLinkOutcome,
@@ -43,7 +57,9 @@ import { syncWalletApprovalTask, walletApprovalTaskId } from "./wallet-task-ledg
 
 export type WalletSendApprovalStatus =
   | "pending"
+  | "executing"
   | "approved"
+  | "unknown"
   | "rejected"
   | "executed"
   | "failed"
@@ -92,7 +108,8 @@ export type WalletSendApprovalPayload = {
   signerIntentType?: string;
   signerPolicyHash?: string;
   signerIntentDigest?: string;
-  signerArtifactKind?: "solana-transaction" | "domain-separated-message";
+  signerSemanticIntent?: WalletProviderSignerIntentV2;
+  signerArtifactKind?: "solana-transaction" | "domain-separated-message" | "jupiter-trigger-state";
   signerArtifactDigest?: string;
   signerTransactionDigest?: string;
   signerStateDigest?: string;
@@ -117,6 +134,20 @@ export type WalletSettlementContext = {
   senderHandle?: string;
 };
 
+export type SatMiningSweepAuthorization = {
+  kind: "sat-auto-sweep-v1";
+  occurrenceId: string;
+  walletId: string;
+  destination: string;
+  mint: string;
+  sourceBalanceRaw: string;
+  amountRaw: string;
+  keepRaw: string;
+  minRaw: string;
+  mode: "all" | "percentage";
+  percentage: number;
+};
+
 export type WalletSendApprovalRequest = {
   id: string;
   taskLedgerId?: string;
@@ -134,6 +165,12 @@ export type WalletSendApprovalRequest = {
   result?: {
     txHash?: string;
     error?: string;
+  };
+  requestDigest?: string;
+  execution?: {
+    id: string;
+    requestDigest: string;
+    startedAt: string;
   };
 };
 
@@ -162,6 +199,26 @@ function sameOptionalSignerValue(left: string | undefined, right: string | undef
   return (left?.trim() || undefined) === (right?.trim() || undefined);
 }
 
+function sameSignerSemanticIntent(
+  left: WalletProviderSignerIntentV2 | undefined,
+  right: WalletProviderSignerIntentV2,
+): boolean {
+  if (!left) {
+    return false;
+  }
+  try {
+    return canonicalApprovalJson(left) === canonicalApprovalJson(right);
+  } catch {
+    return false;
+  }
+}
+
+function cloneSignerSemanticIntent(
+  intent: WalletProviderSignerIntentV2,
+): WalletProviderSignerIntentV2 {
+  return JSON.parse(canonicalApprovalJson(intent)) as WalletProviderSignerIntentV2;
+}
+
 export function signerReviewMatchesWalletApprovalPayload(
   review: WalletProviderJupiterReviewV2,
   payload: WalletSendApprovalPayload,
@@ -173,6 +230,7 @@ export function signerReviewMatchesWalletApprovalPayload(
     review.intentType === payload.signerIntentType?.trim() &&
     review.policyHash === payload.signerPolicyHash?.trim() &&
     review.intentDigest === payload.signerIntentDigest?.trim() &&
+    sameSignerSemanticIntent(payload.signerSemanticIntent, review.semanticIntent) &&
     review.artifactKind === payload.signerArtifactKind &&
     review.artifactDigest === payload.signerArtifactDigest?.trim() &&
     sameOptionalSignerValue(review.transactionDigest, payload.signerTransactionDigest) &&
@@ -202,6 +260,7 @@ export function signerReviewBindingMatchesWalletApprovalPayload(
     binding.intentType === payload.signerIntentType?.trim() &&
     binding.policyHash === payload.signerPolicyHash?.trim() &&
     binding.intentDigest === payload.signerIntentDigest?.trim() &&
+    sameSignerSemanticIntent(payload.signerSemanticIntent, binding.semanticIntent) &&
     binding.artifactKind === payload.signerArtifactKind &&
     binding.artifactDigest === payload.signerArtifactDigest?.trim() &&
     sameOptionalSignerValue(binding.transactionDigest, payload.signerTransactionDigest) &&
@@ -244,6 +303,7 @@ export function bindSignerReviewToWalletApprovalPayload(params: {
     signerIntentType: review.intentType,
     signerPolicyHash: review.policyHash,
     signerIntentDigest: review.intentDigest,
+    signerSemanticIntent: cloneSignerSemanticIntent(review.semanticIntent),
     signerArtifactKind: review.artifactKind,
     signerArtifactDigest: review.artifactDigest,
     signerTransactionDigest: review.transactionDigest,
@@ -295,6 +355,32 @@ type WalletSendApprovalsFile = {
 };
 
 const DEFAULT_TTL_SECONDS = 15 * 60;
+const APPROVAL_LOCK_OPTIONS = {
+  retries: {
+    retries: 100,
+    factor: 1.15,
+    minTimeout: 10,
+    maxTimeout: 200,
+    randomize: true,
+  },
+  stale: 30_000,
+} as const;
+const APPROVAL_MUTATION_QUEUES = resolveProcessScopedMap<Promise<void>>(
+  Symbol.for("fased.wallet.sendApprovals.mutationQueues"),
+);
+const APPROVAL_ACTIVE_EXECUTIONS = resolveProcessScopedMap<true>(
+  Symbol.for("fased.wallet.sendApprovals.activeExecutions"),
+);
+const APPROVAL_EXECUTION_LOCK_OPTIONS = {
+  retries: {
+    retries: 1,
+    factor: 1,
+    minTimeout: 10,
+    maxTimeout: 10,
+    randomize: false,
+  },
+  stale: 30_000,
+} as const;
 
 function isReviewedMiningNativeSolanaSend(params: {
   cfg: FasedAgentConfig;
@@ -321,35 +407,189 @@ function isReviewedMiningNativeSolanaSend(params: {
   );
 }
 
-function isSatMiningTokenSweep(params: {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseUnsignedInteger(value: unknown): bigint | null {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (!/^\d+$/u.test(text)) {
+    return null;
+  }
+  try {
+    return BigInt(text);
+  } catch {
+    return null;
+  }
+}
+
+function resolveConfiguredSatSweepDestination(params: {
+  cfg: FasedAgentConfig;
+  walletId: string;
+  env: NodeJS.ProcessEnv;
+}): string | null {
+  const rawConfig = params.cfg.plugins?.entries?.["sat-mining"]?.config;
+  if (!isRecord(rawConfig) || !isRecord(rawConfig.automation)) {
+    return null;
+  }
+  const rawSweep = rawConfig.automation.satSweep;
+  if (!isRecord(rawSweep) || rawSweep.enabled !== true) {
+    return null;
+  }
+  const explicitAddress =
+    typeof rawSweep.destinationAddress === "string" ? rawSweep.destinationAddress.trim() : "";
+  const registry = readWalletProviderRegistry(params.env);
+  const source = registry.wallets.find((wallet) => wallet.id === params.walletId);
+  if (explicitAddress) {
+    return explicitAddress !== source?.addresses?.solana?.trim() ? explicitAddress : null;
+  }
+  const destinationWalletId =
+    typeof rawSweep.destinationWalletId === "string" ? rawSweep.destinationWalletId.trim() : "";
+  if (!destinationWalletId || destinationWalletId === params.walletId) {
+    return null;
+  }
+  return (
+    registry.wallets
+      .find((wallet) => wallet.id === destinationWalletId)
+      ?.addresses?.solana?.trim() || null
+  );
+}
+
+function validateSatMiningTokenSweep(params: {
   cfg: FasedAgentConfig;
   env: NodeJS.ProcessEnv;
   walletId?: string;
   requestedBy?: string;
   sendPath?: WalletSendPath;
-  payload: Pick<WalletSendApprovalPayload, "chain" | "program">;
-}): boolean {
+  executionIntentId?: string;
+  authorization?: SatMiningSweepAuthorization;
+  payload: Pick<
+    WalletSendApprovalPayload,
+    "actionKind" | "amount" | "chain" | "contract" | "program" | "to"
+  >;
+}): { ok: true } | { ok: false; message: string } {
   if (params.payload.chain !== "solana") {
-    return false;
+    return { ok: false, message: "SAT sweep must be a typed Solana transfer" };
   }
-  const ids = tryResolveSatRuntimeIds(params.env);
-  const program = String(params.payload.program ?? "").trim();
-  if (!program || !ids?.mintAddress || program !== ids.mintAddress) {
-    return false;
+  if (params.payload.actionKind && params.payload.actionKind !== "send") {
+    return { ok: false, message: "SAT sweep cannot use a generic signing action" };
+  }
+  if (params.payload.contract?.trim()) {
+    return { ok: false, message: "SAT sweep cannot include a contract override" };
+  }
+  const walletId = params.walletId?.trim() || "";
+  if (
+    !walletId ||
+    resolveWalletRoleForId({ walletId, cfg: params.cfg, env: params.env }) !== "mining"
+  ) {
+    return { ok: false, message: "SAT sweep requires the configured Mining wallet" };
   }
   if (
     params.sendPath !== "automation" ||
-    String(params.requestedBy ?? "").trim() !== "sat-mining"
+    String(params.requestedBy ?? "").trim() !== "sat-mining:auto-sweep"
   ) {
-    return false;
+    return { ok: false, message: "Mining wallet automation is limited to the SAT sweep worker" };
   }
-  return (
-    resolveWalletRoleForId({
-      walletId: params.walletId,
-      cfg: params.cfg,
-      env: params.env,
-    }) === "mining"
+  const authorization = params.authorization;
+  if (!authorization || authorization.kind !== "sat-auto-sweep-v1") {
+    return { ok: false, message: "SAT sweep requires an exact typed sweep authorization" };
+  }
+  const occurrenceId = authorization.occurrenceId.trim();
+  const expectedExecutionIntentId = `sat-auto-sweep:${walletId}:${occurrenceId}`;
+  if (
+    !occurrenceId ||
+    params.executionIntentId?.trim() !== expectedExecutionIntentId ||
+    authorization.walletId.trim() !== walletId
+  ) {
+    return { ok: false, message: "SAT sweep occurrence identity does not match the Mining wallet" };
+  }
+  const ids = tryResolveSatRuntimeIds(params.env);
+  const rawConfig = params.cfg.plugins?.entries?.["sat-mining"]?.config;
+  const rawTokenConfig =
+    isRecord(rawConfig) && isRecord(rawConfig.tokenConfig) ? rawConfig.tokenConfig : null;
+  const configuredMint =
+    (rawTokenConfig && typeof rawTokenConfig.mintAddress === "string"
+      ? rawTokenConfig.mintAddress.trim()
+      : "") ||
+    ids?.mintAddress ||
+    "";
+  const program = String(params.payload.program ?? "").trim();
+  if (
+    !program ||
+    !configuredMint ||
+    program !== configuredMint ||
+    authorization.mint.trim() !== configuredMint
+  ) {
+    return {
+      ok: false,
+      message: "Mining wallet automation can transfer only the configured SAT mint",
+    };
+  }
+  const destination = resolveConfiguredSatSweepDestination({
+    cfg: params.cfg,
+    walletId,
+    env: params.env,
+  });
+  if (
+    !destination ||
+    params.payload.to?.trim() !== destination ||
+    authorization.destination.trim() !== destination
+  ) {
+    return {
+      ok: false,
+      message: "SAT sweep destination does not match the configured destination",
+    };
+  }
+  const sourceBalance = parseUnsignedInteger(authorization.sourceBalanceRaw);
+  const keepRaw = parseUnsignedInteger(authorization.keepRaw);
+  const minRaw = parseUnsignedInteger(authorization.minRaw);
+  const amountRaw = parseUnsignedInteger(authorization.amountRaw);
+  if (
+    sourceBalance === null ||
+    keepRaw === null ||
+    minRaw === null ||
+    amountRaw === null ||
+    !Number.isFinite(authorization.percentage)
+  ) {
+    return { ok: false, message: "SAT sweep authorization contains invalid raw amounts" };
+  }
+  const rawSweep =
+    isRecord(rawConfig) && isRecord(rawConfig.automation) && isRecord(rawConfig.automation.satSweep)
+      ? rawConfig.automation.satSweep
+      : null;
+  const configuredMode = rawSweep?.mode === "percentage" ? "percentage" : "all";
+  const configuredPercentage =
+    typeof rawSweep?.percentage === "number" && Number.isFinite(rawSweep.percentage)
+      ? Math.max(0, Math.min(100, rawSweep.percentage))
+      : 100;
+  const configuredKeep = parseUnsignedInteger(
+    typeof rawSweep?.keepRaw === "string" && rawSweep.keepRaw.trim() ? rawSweep.keepRaw : "0",
   );
+  const configuredMin = parseUnsignedInteger(
+    typeof rawSweep?.minRaw === "string" && rawSweep.minRaw.trim() ? rawSweep.minRaw : "1",
+  );
+  if (
+    authorization.mode !== configuredMode ||
+    authorization.percentage !== configuredPercentage ||
+    keepRaw !== configuredKeep ||
+    minRaw !== configuredMin
+  ) {
+    return { ok: false, message: "SAT sweep authorization does not match the active sweep policy" };
+  }
+  const spendable = sourceBalance > keepRaw ? sourceBalance - keepRaw : 0n;
+  const expectedAmount =
+    configuredMode === "percentage"
+      ? (spendable * BigInt(Math.round(configuredPercentage * 10_000))) / 1_000_000n
+      : spendable;
+  if (
+    expectedAmount <= 0n ||
+    expectedAmount < minRaw ||
+    amountRaw !== expectedAmount ||
+    params.payload.amount?.trim() !== expectedAmount.toString()
+  ) {
+    return { ok: false, message: "SAT sweep amount does not match the exact computed occurrence" };
+  }
+  return { ok: true };
 }
 
 type WalletSendExecutionResult =
@@ -369,7 +609,7 @@ function upsertSettlementLinkForPayload(params: {
   payload: WalletSendApprovalPayload;
   settlementContext?: WalletSettlementContext;
   mode: "manual" | "autonomous";
-  status: "pending" | "executed" | "failed" | "rejected";
+  status: "pending" | "unknown" | "executed" | "failed" | "rejected";
   txHash?: string;
   reason?: string;
   env?: NodeJS.ProcessEnv;
@@ -650,6 +890,119 @@ async function prepareAndSendProviderTransaction(params: {
   });
 }
 
+type WalletAutonomousSendResult =
+  | Extract<WalletCreateSendResult, { ok: true; mode: "autonomous" }>
+  | Extract<WalletCreateSendResult, { ok: false }>;
+
+function autonomousResultFromExecution(params: {
+  entry: WalletSendExecutionEntry;
+  payload: WalletSendApprovalPayload;
+}): WalletAutonomousSendResult | null {
+  if (params.entry.state === "executed" && params.entry.result) {
+    return {
+      ok: true,
+      mode: "autonomous",
+      tx: {
+        ok: true,
+        ...params.entry.result,
+      },
+      payload: params.payload,
+      requestId: params.entry.requestId,
+    };
+  }
+  if (params.entry.state === "unknown" || params.entry.state === "executing") {
+    return {
+      ok: false,
+      code:
+        params.entry.state === "unknown" ? "wallet_provider_ambiguous" : "wallet_send_in_progress",
+      message:
+        params.entry.reason ??
+        (params.entry.state === "unknown"
+          ? "wallet send result is unknown; reconcile the original signer request before retrying"
+          : "wallet send is already executing; wait for its durable result"),
+      requestId: params.entry.requestId,
+    };
+  }
+  if (params.entry.state === "failed") {
+    return {
+      ok: false,
+      code: "send_failed",
+      message: params.entry.reason ?? "wallet send failed",
+      requestId: params.entry.requestId,
+    };
+  }
+  return null;
+}
+
+type WalletSendReconciliation =
+  | { state: "not_found" }
+  | { state: "confirmed"; signature: string; metadata: Record<string, unknown> }
+  | { state: "failed"; reason: string }
+  | { state: "unknown"; signature?: string; reason: string };
+
+async function reconcileTypedWalletSend(params: {
+  provider: ReturnType<typeof createWalletProviderAdapter>;
+  walletId: string;
+  requestId: string;
+}): Promise<WalletSendReconciliation> {
+  if (!params.provider.getSignerOperation) {
+    return {
+      state: "unknown",
+      reason: "wallet provider cannot reconcile the original send request",
+    };
+  }
+  try {
+    let operation = await params.provider.getSignerOperation({
+      walletId: params.walletId,
+      requestId: params.requestId,
+    });
+    if (
+      (operation.state === "broadcast" || operation.state === "unknown") &&
+      params.provider.reconcileSignerOperation
+    ) {
+      operation = await params.provider.reconcileSignerOperation({
+        walletId: params.walletId,
+        requestId: params.requestId,
+      });
+    }
+    if (operation.state === "confirmed" && operation.signature) {
+      return {
+        state: "confirmed",
+        signature: operation.signature,
+        metadata: {
+          provider: params.provider.id,
+          requestId: operation.requestId,
+          intentDigest: operation.intentDigest,
+          transactionDigest: operation.transactionDigest,
+          policyHash: operation.policyHash,
+          operationState: operation.state,
+          reconciled: true,
+        },
+      };
+    }
+    if (operation.state === "failed") {
+      return {
+        state: "failed",
+        reason: operation.error?.trim() || "signer operation failed before confirmation",
+      };
+    }
+    return {
+      state: "unknown",
+      signature: operation.signature,
+      reason: `signer operation ${operation.requestId} is ${operation.state}; no new broadcast is allowed`,
+    };
+  } catch (error) {
+    const message = normalizeErrorMessage(error);
+    if (/signer operation not found/iu.test(message)) {
+      return { state: "not_found" };
+    }
+    return {
+      state: "unknown",
+      reason: `could not reconcile the original signer request: ${message}`,
+    };
+  }
+}
+
 function loadFile(env: NodeJS.ProcessEnv = process.env): WalletSendApprovalsFile {
   const paths = ensureWalletStateDir(env);
   if (!fs.existsSync(paths.sendApprovalsPath)) {
@@ -718,6 +1071,270 @@ function saveFile(file: WalletSendApprovalsFile, env: NodeJS.ProcessEnv = proces
   }
 }
 
+function canonicalApprovalJson(value: unknown): string {
+  if (value === null || typeof value === "string" || typeof value === "boolean") {
+    return JSON.stringify(value);
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      throw new Error("wallet approval contains a non-finite number");
+    }
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => canonicalApprovalJson(entry)).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .filter((key) => record[key] !== undefined)
+      .toSorted()
+      .map((key) => `${JSON.stringify(key)}:${canonicalApprovalJson(record[key])}`)
+      .join(",")}}`;
+  }
+  throw new Error("wallet approval contains an unsupported value");
+}
+
+function walletApprovalRequestDigest(
+  request: Pick<
+    WalletSendApprovalRequest,
+    "id" | "createdAt" | "expiresAt" | "requestedBy" | "payload"
+  >,
+): string {
+  return `sha256:${createHash("sha256")
+    .update(
+      canonicalApprovalJson({
+        id: request.id,
+        createdAt: request.createdAt,
+        expiresAt: request.expiresAt,
+        requestedBy: request.requestedBy,
+        payload: request.payload,
+      }),
+    )
+    .digest("hex")}`;
+}
+
+function approvalRequestDigest(request: WalletSendApprovalRequest): string {
+  const computed = walletApprovalRequestDigest(request);
+  if (request.requestDigest && request.requestDigest !== computed) {
+    throw new Error(
+      `wallet approval ${request.id} immutable request digest does not match its persisted payload`,
+    );
+  }
+  return computed;
+}
+
+function reserveWalletApprovalIdentity(
+  request: WalletSendApprovalRequest,
+  env: NodeJS.ProcessEnv,
+): () => void {
+  const identityDir = path.join(
+    path.dirname(ensureWalletStateDir(env).sendApprovalsPath),
+    ".wallet-approval-identities",
+  );
+  fs.mkdirSync(identityDir, { recursive: true, mode: 0o700 });
+  const identityPath = path.join(
+    identityDir,
+    `${createHash("sha256").update(request.id).digest("hex")}.json`,
+  );
+  const payload = `${JSON.stringify({
+    version: 1,
+    requestId: request.id,
+    requestDigest: approvalRequestDigest(request),
+  })}\n`;
+  let descriptor: number | undefined;
+  try {
+    descriptor = fs.openSync(identityPath, "wx", 0o600);
+    fs.writeFileSync(descriptor, payload, "utf8");
+    fs.fsyncSync(descriptor);
+    fs.closeSync(descriptor);
+    descriptor = undefined;
+  } catch (error) {
+    if (descriptor !== undefined) {
+      fs.closeSync(descriptor);
+    }
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+      let existingDigest: string | undefined;
+      try {
+        const existing = JSON.parse(fs.readFileSync(identityPath, "utf8")) as {
+          requestDigest?: unknown;
+        };
+        existingDigest =
+          typeof existing.requestDigest === "string" ? existing.requestDigest : undefined;
+      } catch {
+        // An unreadable identity reservation fails closed as a collision.
+      }
+      throw new Error(
+        existingDigest === request.requestDigest
+          ? "wallet approval request ID already exists"
+          : "wallet approval request ID collides with a different immutable request",
+        { cause: error },
+      );
+    }
+    throw error;
+  }
+  return () => {
+    try {
+      fs.unlinkSync(identityPath);
+    } catch {
+      // Preserve the original persistence error.
+    }
+  };
+}
+
+async function withApprovalMutationLock<T>(
+  env: NodeJS.ProcessEnv,
+  task: () => T | Promise<T>,
+): Promise<T> {
+  const filePath = ensureWalletStateDir(env).sendApprovalsPath;
+  const previous = APPROVAL_MUTATION_QUEUES.get(filePath) ?? Promise.resolve();
+  let releaseQueue!: () => void;
+  const turn = new Promise<void>((resolve) => {
+    releaseQueue = resolve;
+  });
+  const queued = previous.then(
+    () => turn,
+    () => turn,
+  );
+  APPROVAL_MUTATION_QUEUES.set(filePath, queued);
+  await previous.catch(() => undefined);
+  try {
+    return await withFileLock(filePath, APPROVAL_LOCK_OPTIONS, async () => await task());
+  } finally {
+    releaseQueue();
+    if (APPROVAL_MUTATION_QUEUES.get(filePath) === queued) {
+      APPROVAL_MUTATION_QUEUES.delete(filePath);
+    }
+  }
+}
+
+async function claimWalletApprovalProcessExecution(params: {
+  requestId: string;
+  env: NodeJS.ProcessEnv;
+}): Promise<() => Promise<void>> {
+  const requestId = params.requestId.trim();
+  const approvalsPath = ensureWalletStateDir(params.env).sendApprovalsPath;
+  const executionKey = `${approvalsPath}\0${requestId}`;
+  if (APPROVAL_ACTIVE_EXECUTIONS.has(executionKey)) {
+    throw new Error("wallet approval execution is already in progress");
+  }
+  APPROVAL_ACTIVE_EXECUTIONS.set(executionKey, true);
+  const target = path.join(
+    path.dirname(approvalsPath),
+    ".wallet-approval-executions",
+    createHash("sha256").update(requestId).digest("hex"),
+  );
+  let lock: Awaited<ReturnType<typeof acquireFileLock>>;
+  try {
+    lock = await acquireFileLock(target, APPROVAL_EXECUTION_LOCK_OPTIONS);
+  } catch (error) {
+    APPROVAL_ACTIVE_EXECUTIONS.delete(executionKey);
+    throw new Error("wallet approval execution is already in progress", { cause: error });
+  }
+  let released = false;
+  return async () => {
+    if (released) {
+      return;
+    }
+    released = true;
+    APPROVAL_ACTIVE_EXECUTIONS.delete(executionKey);
+    await lock.release();
+  };
+}
+
+type WalletApprovalExecutionClaim =
+  | {
+      ok: true;
+      file: WalletSendApprovalsFile;
+      request: WalletSendApprovalRequest;
+      recovered: boolean;
+      release: () => Promise<void>;
+    }
+  | { ok: false; request?: WalletSendApprovalRequest; code: string; message: string };
+
+type WalletApprovalExecutionClaimMutation =
+  | Omit<Extract<WalletApprovalExecutionClaim, { ok: true }>, "release">
+  | Extract<WalletApprovalExecutionClaim, { ok: false }>;
+
+async function claimWalletSendApprovalExecution(params: {
+  requestId: string;
+  actor?: string;
+  allowExpiredSignerReview?: boolean;
+  env: NodeJS.ProcessEnv;
+}): Promise<WalletApprovalExecutionClaim> {
+  let release: () => Promise<void>;
+  try {
+    release = await claimWalletApprovalProcessExecution({
+      requestId: params.requestId,
+      env: params.env,
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      code: "execution_in_progress_or_unknown",
+      message: normalizeErrorMessage(error),
+    };
+  }
+  const result = await withApprovalMutationLock<WalletApprovalExecutionClaimMutation>(
+    params.env,
+    () => {
+      const file = loadFile(params.env);
+      const request = findRequest(file, params.requestId);
+      if (!request) {
+        return { ok: false, code: "not_found", message: "approval request not found" };
+      }
+      let requestDigest: string;
+      try {
+        requestDigest = approvalRequestDigest(request);
+      } catch (error) {
+        return {
+          ok: false,
+          request,
+          code: "immutable_request_mismatch",
+          message: normalizeErrorMessage(error),
+        };
+      }
+      const recovery = request.status === "executing" || request.status === "unknown";
+      const claimable =
+        request.status === "pending" ||
+        recovery ||
+        (params.allowExpiredSignerReview === true && request.status === "expired");
+      if (!claimable) {
+        return {
+          ok: false,
+          request,
+          code:
+            request.status === "executing" || request.status === "unknown"
+              ? "execution_in_progress_or_unknown"
+              : "invalid_state",
+          message:
+            request.status === "executing" || request.status === "unknown"
+              ? `approval request is ${request.status}; reconcile its durable execution before any retry`
+              : `approval request is ${request.status}`,
+        };
+      }
+      request.requestDigest = requestDigest;
+      if (!recovery) {
+        request.status = "executing";
+        request.execution = {
+          id: randomBytes(24).toString("base64url"),
+          requestDigest,
+          startedAt: new Date().toISOString(),
+        };
+      }
+      request.approvedBy = params.actor?.trim() || "operator";
+      request.decisionAt = request.decisionAt ?? new Date().toISOString();
+      saveFile(file, params.env);
+      return { ok: true, file, request, recovered: recovery } as const;
+    },
+  );
+  if (!result.ok) {
+    await release();
+    return result;
+  }
+  return { ...result, release };
+}
+
 function hasSignerOwnedReviewMetadata(payload: WalletSendApprovalPayload): boolean {
   const hasSignerField = Object.entries(payload).some(
     ([key, value]) =>
@@ -747,6 +1364,7 @@ function hasExactSignerOwnedReviewBinding(request: WalletSendApprovalRequest): b
     Boolean(payload.signerIntentType?.trim()) &&
     Boolean(payload.signerPolicyHash?.trim()) &&
     Boolean(payload.signerIntentDigest?.trim()) &&
+    payload.signerSemanticIntent !== undefined &&
     Boolean(payload.signerArtifactKind) &&
     Boolean(payload.signerArtifactDigest?.trim()) &&
     transactionArtifactHasDigest &&
@@ -845,8 +1463,24 @@ export function createWalletSendApprovalRequest(params: {
   if (hasSignerOwnedReviewMetadata(req.payload) && !hasExactSignerOwnedReviewBinding(req)) {
     throw new Error("signer-reviewed approval requires a complete exact signer review binding");
   }
+  req.requestDigest = walletApprovalRequestDigest(req);
+  const collision = findRequest(file, requestId);
+  if (collision) {
+    const collisionDigest = approvalRequestDigest(collision);
+    throw new Error(
+      collisionDigest === req.requestDigest
+        ? "wallet approval request ID already exists"
+        : "wallet approval request ID collides with a different immutable request",
+    );
+  }
+  const releaseIdentityReservation = reserveWalletApprovalIdentity(req, env);
   file.requests.push(req);
-  saveFile(file, env);
+  try {
+    saveFile(file, env);
+  } catch (error) {
+    releaseIdentityReservation();
+    throw error;
+  }
   syncApprovalTaskForRequest({ request: req, settlementContext: params.settlementContext });
   appendWalletAuditEntry({
     action: "send_requested",
@@ -910,7 +1544,7 @@ export function createSignerReviewApprovalRequest(params: {
   });
   const existing = getWalletSendApprovalRequest({ requestId: review.requestId, env });
   if (existing) {
-    if (JSON.stringify(existing.payload) !== JSON.stringify(payload)) {
+    if (canonicalApprovalJson(existing.payload) !== canonicalApprovalJson(payload)) {
       throw new Error("signer review approval ID collides with different persisted metadata");
     }
     return existing;
@@ -927,6 +1561,8 @@ export function createSignerReviewApprovalRequest(params: {
 export async function createOrExecuteWalletSend(params: {
   payload: WalletSendApprovalPayload;
   requestedBy?: string;
+  executionIntentId?: string;
+  satSweepAuthorization?: SatMiningSweepAuthorization;
   config: ResolvedWalletRuntimeConfig;
   runtimeConfig?: FasedAgentConfig;
   sendPath?: WalletSendPath;
@@ -951,14 +1587,24 @@ export async function createOrExecuteWalletSend(params: {
         : params.config.execution.mode === "autonomous"
           ? "autonomous"
           : "manual";
-  // Every autonomous broadcast has a durable caller-owned idempotency key, even when it is not
-  // associated with a settlement task. Manual execution uses its persisted approval request id.
+  const executionIntentId = params.executionIntentId?.trim();
+  if (resolvedMode === "autonomous" && !executionIntentId) {
+    return {
+      ok: false,
+      code: "wallet_execution_intent_required",
+      message:
+        "autonomous wallet sends require a stable caller-owned executionIntentId that is reused across retries",
+    };
+  }
   const settlementRequestId =
-    resolvedMode === "autonomous" || params.settlementContext?.taskId
-      ? createRequestId()
-      : undefined;
+    resolvedMode === "autonomous" && executionIntentId
+      ? walletSendRequestId(executionIntentId)
+      : params.settlementContext?.taskId
+        ? createRequestId()
+        : undefined;
   const settlementPayload: WalletSendApprovalPayload = {
     ...params.payload,
+    ...(executionIntentId ? { executionIntentId } : {}),
     providerId:
       params.providerIdOverride ?? params.payload.providerId ?? resolveWalletProviderId(cfg, env),
   };
@@ -967,8 +1613,18 @@ export async function createOrExecuteWalletSend(params: {
     cfg,
     env,
   });
-  if (resolvedMode === "autonomous" && walletRole === "mining" && requestedBy !== "sat-mining") {
-    const message = "Mining wallets are limited to mining operations and SAT sweep automation";
+  const satSweepValidation = validateSatMiningTokenSweep({
+    cfg,
+    env,
+    walletId: params.payload.walletId,
+    requestedBy,
+    sendPath: params.sendPath,
+    executionIntentId,
+    authorization: params.satSweepAuthorization,
+    payload: params.payload,
+  });
+  if (resolvedMode === "autonomous" && walletRole === "mining" && !satSweepValidation.ok) {
+    const message = satSweepValidation.message;
     if (settlementRequestId) {
       upsertSettlementLinkForPayload({
         requestId: settlementRequestId,
@@ -984,6 +1640,18 @@ export async function createOrExecuteWalletSend(params: {
       ok: false,
       code: "wallet_role_not_allowed",
       message,
+      requestId: settlementRequestId,
+    };
+  }
+  if (
+    resolvedMode === "autonomous" &&
+    requestedBy.startsWith("sat-mining") &&
+    !satSweepValidation.ok
+  ) {
+    return {
+      ok: false,
+      code: "wallet_role_not_allowed",
+      message: satSweepValidation.message,
       requestId: settlementRequestId,
     };
   }
@@ -1023,14 +1691,7 @@ export async function createOrExecuteWalletSend(params: {
     sendPath: params.sendPath,
     payload: params.payload,
   });
-  const skipSatMiningTokenCapRequirement = isSatMiningTokenSweep({
-    cfg,
-    env,
-    walletId: params.payload.walletId,
-    requestedBy,
-    sendPath: params.sendPath,
-    payload: params.payload,
-  });
+  const skipSatMiningTokenCapRequirement = satSweepValidation.ok;
   if (resolvedMode === "autonomous" && selectedProviderId !== "local-socket-signer") {
     const message =
       "Autonomous wallet execution is restricted to local-socket-signer in the current self-hosted runtime";
@@ -1089,54 +1750,128 @@ export async function createOrExecuteWalletSend(params: {
   }
 
   if (resolvedMode !== "autonomous") {
-    const requestId = createRequestId();
-    let reviewedPayload: WalletSendApprovalPayload = {
-      ...settlementPayload,
-      providerId: selectedProviderId,
-    };
-    if (
-      selectedProviderId === "local-socket-signer" &&
-      !isSolanaSwapApprovalPayload(reviewedPayload) &&
-      !reviewedPayload.signerReviewId
-    ) {
-      const walletId = reviewedPayload.walletId?.trim();
-      const destination = reviewedPayload.to?.trim();
-      const amount = reviewedPayload.amount?.trim();
-      if (!walletId || !destination || !amount || !provider.prepareTypedTransferReview) {
+    const requestId = executionIntentId
+      ? walletSendRequestId(executionIntentId)
+      : createRequestId();
+    let releaseManualExecution: (() => Promise<void>) | undefined;
+    if (executionIntentId) {
+      const walletId = params.payload.walletId?.trim();
+      if (!walletId) {
         return {
           ok: false,
-          code: "wallet_signer_review_required",
-          message:
-            "reviewed local-socket-signer sends require walletId, destination, amount, and exact signer review support",
+          code: "wallet_execution_intent_required",
+          message: "reviewed wallet sends with executionIntentId require an explicit walletId",
           requestId,
         };
       }
+      const intentDigest = walletSendIntentDigest({
+        version: 1,
+        executionIntentId,
+        requestedBy,
+        sendPath: "reviewed",
+        payload: settlementPayload,
+        settlementContext: params.settlementContext,
+      });
       try {
-        const review = await provider.prepareTypedTransferReview({
+        const begun = await beginWalletSendExecution({
+          executionIntentId,
+          intentDigest,
           walletId,
-          requestId,
-          destination,
-          amount,
-          ...(reviewedPayload.program?.trim() ? { mint: reviewedPayload.program.trim() } : {}),
+          providerId: selectedProviderId,
+          env,
         });
-        reviewedPayload = bindSignerReviewToWalletApprovalPayload({
-          payload: reviewedPayload,
-          review,
-          role: walletRole,
-        });
+        if (begun.entry.state === "approval_pending") {
+          const existing = getWalletSendApprovalRequest({ requestId, env });
+          if (existing) {
+            return { ok: true, mode: "manual", request: existing };
+          }
+          return {
+            ok: false,
+            code: "wallet_approval_reconciliation_required",
+            message: "wallet approval identity exists but its approval record must be reconciled",
+            requestId,
+          };
+        }
+        releaseManualExecution = await claimWalletSendExecution(executionIntentId, env);
       } catch (error) {
+        const existing = getWalletSendApprovalRequest({ requestId, env });
+        if (existing) {
+          return { ok: true, mode: "manual", request: existing };
+        }
         return {
           ok: false,
-          code: "wallet_signer_review_failed",
+          code: "wallet_execution_intent_collision",
           message: normalizeErrorMessage(error),
           requestId,
         };
       }
     }
-    return {
-      ok: true,
-      mode: "manual",
-      request: createWalletSendApprovalRequest({
+    try {
+      let reviewedPayload: WalletSendApprovalPayload = {
+        ...settlementPayload,
+        providerId: selectedProviderId,
+      };
+      if (
+        selectedProviderId === "local-socket-signer" &&
+        !isSolanaSwapApprovalPayload(reviewedPayload) &&
+        !reviewedPayload.signerReviewId
+      ) {
+        const walletId = reviewedPayload.walletId?.trim();
+        const destination = reviewedPayload.to?.trim();
+        const amount = reviewedPayload.amount?.trim();
+        if (!walletId || !destination || !amount || !provider.prepareTypedTransferReview) {
+          return {
+            ok: false,
+            code: "wallet_signer_review_required",
+            message:
+              "reviewed local-socket-signer sends require walletId, destination, amount, and exact signer review support",
+            requestId,
+          };
+        }
+        try {
+          const review = await provider.prepareTypedTransferReview({
+            walletId,
+            requestId,
+            destination,
+            amount,
+            ...(reviewedPayload.program?.trim() ? { mint: reviewedPayload.program.trim() } : {}),
+          });
+          reviewedPayload = bindSignerReviewToWalletApprovalPayload({
+            payload: reviewedPayload,
+            review,
+            role: walletRole,
+          });
+        } catch (error) {
+          return {
+            ok: false,
+            code: "wallet_signer_review_failed",
+            message: normalizeErrorMessage(error),
+            requestId,
+          };
+        }
+      }
+      const existingRequest = getWalletSendApprovalRequest({ requestId, env });
+      if (existingRequest) {
+        if (
+          existingRequest.requestedBy !== requestedBy ||
+          canonicalApprovalJson(existingRequest.payload) !== canonicalApprovalJson(reviewedPayload)
+        ) {
+          throw new Error(
+            "wallet approval request ID collides with a different immutable reviewed send",
+          );
+        }
+        if (executionIntentId) {
+          await updateWalletSendExecution({
+            executionIntentId,
+            expectedStates: ["reserved", "approval_pending"],
+            state: "approval_pending",
+            patch: { approvalRequestId: existingRequest.id },
+            env,
+          });
+        }
+        return { ok: true, mode: "manual", request: existingRequest };
+      }
+      const request = createWalletSendApprovalRequest({
         requestId,
         expiresAt: reviewedPayload.signerReviewExpiresAt,
         payload: reviewedPayload,
@@ -1145,55 +1880,174 @@ export async function createOrExecuteWalletSend(params: {
         simulation,
         approvalDiff: simulation.diff,
         env,
-      }),
-    };
-  }
-  const daily = enforceWalletDailyCap({
-    config: effectiveConfig,
-    chain: params.payload.chain,
-    amount: params.payload.amount,
-    program: params.payload.program,
-    walletId: params.payload.walletId,
-    env,
-    skipNativeSolanaCaps,
-  });
-  if (!daily.ok) {
-    if (settlementRequestId) {
-      upsertSettlementLinkForPayload({
-        requestId: settlementRequestId,
-        payload: settlementPayload,
-        settlementContext: params.settlementContext,
-        mode: resolvedMode,
-        status: "failed",
-        reason: daily.message ?? daily.code ?? "wallet daily cap exceeded",
-        env,
       });
+      if (executionIntentId) {
+        await updateWalletSendExecution({
+          executionIntentId,
+          expectedStates: ["reserved"],
+          state: "approval_pending",
+          patch: { approvalRequestId: request.id },
+          env,
+        });
+      }
+      return {
+        ok: true,
+        mode: "manual",
+        request,
+      };
+    } finally {
+      await releaseManualExecution?.();
     }
+  }
+  const walletId = params.payload.walletId?.trim();
+  if (!walletId || !executionIntentId || !settlementRequestId) {
     return {
       ok: false,
-      code: daily.code ?? "wallet_cap_daily_exceeded",
-      message: daily.message ?? "wallet daily cap exceeded",
+      code: "wallet_execution_intent_required",
+      message: "autonomous wallet sends require an explicit walletId and executionIntentId",
+      requestId: settlementRequestId,
+    };
+  }
+  const intentDigest = walletSendIntentDigest({
+    version: 1,
+    executionIntentId,
+    requestedBy,
+    sendPath: "automation",
+    payload: settlementPayload,
+    settlementContext: params.settlementContext,
+    satSweepAuthorization: params.satSweepAuthorization,
+  });
+  let begun: Awaited<ReturnType<typeof beginWalletSendExecution>>;
+  try {
+    begun = await beginWalletSendExecution({
+      executionIntentId,
+      intentDigest,
+      walletId,
+      providerId: selectedProviderId,
+      env,
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      code: "wallet_execution_intent_collision",
+      message: normalizeErrorMessage(error),
       requestId: settlementRequestId,
     };
   }
 
+  let releaseExecution: (() => Promise<void>) | undefined;
   try {
-    if (settlementRequestId) {
-      upsertSettlementLinkForPayload({
-        requestId: settlementRequestId,
-        payload: settlementPayload,
-        settlementContext: params.settlementContext,
-        mode: resolvedMode,
-        status: "pending",
-        env,
-      });
+    releaseExecution = await claimWalletSendExecution(executionIntentId, env);
+  } catch {
+    const current = getWalletSendExecution({ executionIntentId, env }) ?? begun.entry;
+    return (
+      autonomousResultFromExecution({ entry: current, payload: settlementPayload }) ?? {
+        ok: false,
+        code: "wallet_send_in_progress",
+        message: "wallet send is already executing; wait for its durable result",
+        requestId: current.requestId,
+      }
+    );
+  }
+
+  try {
+    let current = getWalletSendExecution({ executionIntentId, env }) ?? begun.entry;
+    const terminal = autonomousResultFromExecution({ entry: current, payload: settlementPayload });
+    if (current.state === "executed" || current.state === "failed") {
+      return terminal!;
     }
+    if (current.state === "executing" || current.state === "unknown") {
+      const reconciliation = await reconcileTypedWalletSend({
+        provider,
+        walletId,
+        requestId: current.requestId,
+      });
+      if (reconciliation.state === "confirmed") {
+        current = await updateWalletSendExecution({
+          executionIntentId,
+          expectedStates: ["executing", "unknown"],
+          state: "executed",
+          patch: {
+            signature: reconciliation.signature,
+            result: {
+              chain: "solana",
+              txHash: reconciliation.signature,
+              metadata: reconciliation.metadata,
+            },
+          },
+          env,
+        });
+        return autonomousResultFromExecution({ entry: current, payload: settlementPayload })!;
+      }
+      if (reconciliation.state === "failed") {
+        current = await updateWalletSendExecution({
+          executionIntentId,
+          expectedStates: ["executing", "unknown"],
+          state: "failed",
+          patch: { reason: reconciliation.reason },
+          env,
+        });
+        return autonomousResultFromExecution({ entry: current, payload: settlementPayload })!;
+      }
+      if (reconciliation.state === "unknown") {
+        current = await updateWalletSendExecution({
+          executionIntentId,
+          expectedStates: ["executing", "unknown"],
+          state: "unknown",
+          patch: { reason: reconciliation.reason, signature: reconciliation.signature },
+          env,
+        });
+        return autonomousResultFromExecution({ entry: current, payload: settlementPayload })!;
+      }
+    }
+
+    if (begun.created) {
+      const daily = enforceWalletDailyCap({
+        config: effectiveConfig,
+        chain: params.payload.chain,
+        amount: params.payload.amount,
+        program: params.payload.program,
+        walletId: params.payload.walletId,
+        env,
+        skipNativeSolanaCaps,
+      });
+      if (!daily.ok) {
+        current = await updateWalletSendExecution({
+          executionIntentId,
+          expectedStates: ["reserved"],
+          state: "failed",
+          patch: { reason: daily.message ?? daily.code ?? "wallet daily cap exceeded" },
+          env,
+        });
+        return {
+          ok: false,
+          code: daily.code ?? "wallet_cap_daily_exceeded",
+          message: daily.message ?? "wallet daily cap exceeded",
+          requestId: current.requestId,
+        };
+      }
+    }
+
+    current = await updateWalletSendExecution({
+      executionIntentId,
+      expectedStates: ["reserved", "executing"],
+      state: "executing",
+      env,
+    });
+    upsertSettlementLinkForPayload({
+      requestId: current.requestId,
+      payload: settlementPayload,
+      settlementContext: params.settlementContext,
+      mode: resolvedMode,
+      status: "pending",
+      env,
+    });
     appendWalletAuditEntry({
       action: "send_requested",
       actor: requestedBy,
       details: buildWalletSendAuditDetails({
-        payload: params.payload,
-        requestId: settlementRequestId,
+        payload: settlementPayload,
+        requestId: current.requestId,
         mode: resolvedMode,
         providerId: selectedProviderId,
         taskId: params.settlementContext?.taskId,
@@ -1202,80 +2056,125 @@ export async function createOrExecuteWalletSend(params: {
       }),
       env,
     });
+
     const sent = await executeWalletSendOnce({
       execute: async () =>
         await prepareAndSendProviderTransaction({
           provider,
-          payload: params.payload,
-          requestId: settlementRequestId!,
+          payload: settlementPayload,
+          requestId: current.requestId,
         }),
     });
     if (!sent.ok) {
-      throw new Error(`${normalizeErrorMessage(sent.error)} (attempts=${sent.attempts})`);
+      const reconciliation = await reconcileTypedWalletSend({
+        provider,
+        walletId,
+        requestId: current.requestId,
+      });
+      if (reconciliation.state === "confirmed") {
+        current = await updateWalletSendExecution({
+          executionIntentId,
+          expectedStates: ["executing"],
+          state: "executed",
+          patch: {
+            signature: reconciliation.signature,
+            result: {
+              chain: "solana",
+              txHash: reconciliation.signature,
+              metadata: reconciliation.metadata,
+            },
+          },
+          env,
+        });
+      } else if (reconciliation.state === "failed" || reconciliation.state === "not_found") {
+        const reason =
+          reconciliation.state === "failed"
+            ? reconciliation.reason
+            : normalizeErrorMessage(sent.error);
+        current = await updateWalletSendExecution({
+          executionIntentId,
+          expectedStates: ["executing"],
+          state: "failed",
+          patch: { reason },
+          env,
+        });
+      } else {
+        current = await updateWalletSendExecution({
+          executionIntentId,
+          expectedStates: ["executing"],
+          state: "unknown",
+          patch: { reason: reconciliation.reason, signature: reconciliation.signature },
+          env,
+        });
+      }
+    } else {
+      const tx = withSendAttemptMetadata(sent.tx, sent.attempts);
+      current = await updateWalletSendExecution({
+        executionIntentId,
+        expectedStates: ["executing"],
+        state: "executed",
+        patch: {
+          signature: tx.txHash,
+          result: {
+            chain: "solana",
+            txHash: tx.txHash,
+            ...(tx.signer ? { signer: tx.signer } : {}),
+            ...(tx.metadata ? { metadata: tx.metadata } : {}),
+          },
+        },
+        env,
+      });
     }
-    const tx = withSendAttemptMetadata(sent.tx, sent.attempts);
+
+    const result = autonomousResultFromExecution({ entry: current, payload: settlementPayload });
+    if (!result?.ok) {
+      appendWalletAuditEntry({
+        action: "send_failed",
+        actor: requestedBy,
+        details: buildWalletSendAuditDetails({
+          payload: settlementPayload,
+          requestId: current.requestId,
+          mode: resolvedMode,
+          providerId: selectedProviderId,
+          reason: current.reason,
+        }),
+        env,
+      });
+      markWalletSettlementLinkOutcome({
+        requestId: current.requestId,
+        status: current.state === "unknown" || current.state === "executing" ? "unknown" : "failed",
+        reason: current.reason,
+        env,
+      });
+      return result!;
+    }
+
     appendWalletAuditEntry({
       action: "send_executed",
       actor: requestedBy,
       details: buildWalletSendAuditDetails({
-        payload: params.payload,
-        requestId: settlementRequestId,
+        payload: settlementPayload,
+        requestId: current.requestId,
         mode: resolvedMode,
         taskId: params.settlementContext?.taskId,
         invoiceId: params.settlementContext?.invoiceId,
         senderHandle: params.settlementContext?.senderHandle,
         providerId: selectedProviderId,
-        txHash: tx.txHash,
-        attempts: sent.attempts,
+        txHash: result.tx.txHash,
+        attempts: 1,
       }),
       env,
     });
-    if (settlementRequestId) {
-      const settlementLink = markWalletSettlementLinkOutcome({
-        requestId: settlementRequestId,
-        status: "executed",
-        txHash: tx.txHash,
-        env,
-      });
-      await publishSettlementEvidenceForLink({ settlementLink, env });
-    }
-    return {
-      ok: true,
-      mode: "autonomous",
-      tx,
-      payload: params.payload,
-      requestId: settlementRequestId,
-    };
-  } catch (err) {
-    const message = walletDiagnosticErrorString(err);
-    appendWalletAuditEntry({
-      action: "send_failed",
-      actor: requestedBy,
-      details: {
-        requestId: settlementRequestId,
-        mode: resolvedMode,
-        chain: params.payload.chain,
-        amount: params.payload.amount,
-        to: params.payload.to,
-        providerId: selectedProviderId,
-        walletId: params.payload.walletId,
-        walletName: params.payload.walletName,
-        taskId: params.settlementContext?.taskId,
-        invoiceId: params.settlementContext?.invoiceId,
-        senderHandle: params.settlementContext?.senderHandle,
-        reason: message,
-      },
+    const settlementLink = markWalletSettlementLinkOutcome({
+      requestId: current.requestId,
+      status: "executed",
+      txHash: result.tx.txHash,
       env,
     });
-    if (settlementRequestId) {
-      markWalletSettlementLinkOutcome({
-        requestId: settlementRequestId,
-        status: "failed",
-        reason: message,
-        env,
-      });
-    }
-    return { ok: false, code: "send_failed", message, requestId: settlementRequestId };
+    await publishSettlementEvidenceForLink({ settlementLink, env });
+    return result;
+  } finally {
+    await releaseExecution();
   }
 }
 
@@ -1380,45 +2279,59 @@ export async function markWalletSendRequestExecutedExternally(params: {
   return request;
 }
 
-export function markWalletSendRequestBroadcastUnknown(params: {
+export async function markWalletSendRequestBroadcastUnknown(params: {
   requestId: string;
   txHash?: string;
   reason: string;
   actor?: string;
   env?: NodeJS.ProcessEnv;
-}): WalletSendApprovalRequest {
+}): Promise<WalletSendApprovalRequest> {
   const env = params.env ?? process.env;
-  const file = loadFile(env);
-  const request = findRequest(file, params.requestId);
-  if (!request) {
-    throw new Error("approval request not found");
-  }
-  if (request.status !== "pending" && request.status !== "approved") {
-    return request;
-  }
-  request.status = "approved";
-  request.approvedBy = params.actor?.trim() || "control-ui";
-  request.decisionAt = request.decisionAt ?? new Date().toISOString();
-  request.reason = params.reason;
-  request.result = params.txHash
-    ? { txHash: params.txHash, error: params.reason }
-    : { error: params.reason };
-  appendWalletAuditEntry({
-    action: "send_failed",
-    actor: request.approvedBy,
-    details: buildWalletSendAuditDetails({
-      payload: request.payload,
+  return await withApprovalMutationLock(env, () => {
+    const file = loadFile(env);
+    const request = findRequest(file, params.requestId);
+    if (!request) {
+      throw new Error("approval request not found");
+    }
+    if (
+      request.status !== "pending" &&
+      request.status !== "executing" &&
+      request.status !== "approved" &&
+      request.status !== "unknown"
+    ) {
+      return request;
+    }
+    request.status = "unknown";
+    request.approvedBy = params.actor?.trim() || "control-ui";
+    request.decisionAt = request.decisionAt ?? new Date().toISOString();
+    request.reason = params.reason;
+    request.result = params.txHash
+      ? { txHash: params.txHash, error: params.reason }
+      : { error: params.reason };
+    appendWalletAuditEntry({
+      action: "send_failed",
+      actor: request.approvedBy,
+      details: buildWalletSendAuditDetails({
+        payload: request.payload,
+        requestId: request.id,
+        mode: "manual",
+        providerId: request.payload.providerId,
+        txHash: params.txHash,
+        reason: params.reason,
+      }),
+      env,
+    });
+    const settlementLink = markWalletSettlementLinkOutcome({
       requestId: request.id,
-      mode: "manual",
-      providerId: request.payload.providerId,
+      status: "unknown",
       txHash: params.txHash,
       reason: params.reason,
-    }),
-    env,
+      env,
+    });
+    saveFile(file, env);
+    syncApprovalTaskForRequest({ request, ...(settlementLink ? { settlementLink } : {}) });
+    return request;
   });
-  saveFile(file, env);
-  syncApprovalTaskForRequest({ request });
-  return request;
 }
 
 function findRequest(file: WalletSendApprovalsFile, requestId: string) {
@@ -1434,18 +2347,23 @@ export async function approveWalletSendRequest(params: {
   env?: NodeJS.ProcessEnv;
 }) {
   const env = params.env ?? process.env;
-  const file = loadFile(env);
+  let file = loadFile(env);
   if (markExpired(file)) {
     saveFile(file, env);
   }
-  const request = findRequest(file, params.requestId);
+  let request = findRequest(file, params.requestId);
   if (!request) {
     return { ok: false as const, code: "not_found", message: "approval request not found" };
   }
   const hasSignerReviewMetadata = hasSignerOwnedReviewMetadata(request.payload);
   const hasSignerOwnedReview = hasExactSignerOwnedReviewBinding(request);
   const canReconcileExpiredSignerReview = request.status === "expired" && hasSignerOwnedReview;
-  if (request.status !== "pending" && !canReconcileExpiredSignerReview) {
+  const canRecoverClaimedExecution = request.status === "executing" || request.status === "unknown";
+  if (
+    request.status !== "pending" &&
+    !canReconcileExpiredSignerReview &&
+    !canRecoverClaimedExecution
+  ) {
     return {
       ok: false as const,
       code: "invalid_state",
@@ -1488,103 +2406,122 @@ export async function approveWalletSendRequest(params: {
     return { ok: false as const, code: "expired", message: "approval request expired", request };
   }
   if (isSolanaSwapApprovalPayload(request.payload) && !hasSignerOwnedReview) {
-    const cfg = loadConfig();
-    const executed = await executeSolanaSwapApprovalPayload({
-      payload: request.payload,
-      config: params.config,
-      runtimeConfig: cfg,
-      providerIdOverride: params.providerIdOverride,
-      autonomous: false,
-      reviewAuthorization: params.reviewAuthorization,
+    const claim = await claimWalletSendApprovalExecution({
+      requestId: request.id,
+      actor: params.actor,
       env,
     });
-    if (!executed.ok) {
-      if (executed.code === "wallet_provider_ambiguous") {
-        const ambiguousRequest = markWalletSendRequestBroadcastUnknown({
-          requestId: request.id,
-          reason: executed.message,
-          actor: params.actor,
-          env,
-        });
-        return {
-          ok: false as const,
-          code: executed.code,
-          message: executed.message,
-          request: ambiguousRequest,
-        };
-      }
-      request.status = "failed";
-      request.reason = executed.message;
-      request.result = { error: request.reason };
-      request.decisionAt = new Date().toISOString();
-      saveFile(file, env);
-      syncApprovalTaskForRequest({ request, settlementLink });
-      appendWalletAuditEntry({
-        action: "send_failed",
-        actor: params.actor?.trim() || "operator",
-        details: {
-          ...buildWalletSendAuditDetails({
-            payload: request.payload,
-            requestId: request.id,
-            mode: "manual",
-            taskId: settlementLink?.taskId,
-            invoiceId: settlementLink?.invoiceId,
-            senderHandle: settlementLink?.senderHandle,
-            reason: request.reason,
-          }),
-          code: executed.code,
-        },
+    if (!claim.ok) {
+      return {
+        ok: false as const,
+        code: claim.code,
+        message: claim.message,
+        ...(claim.request ? { request: claim.request } : {}),
+      };
+    }
+    file = claim.file;
+    request = claim.request;
+    try {
+      const cfg = loadConfig();
+      const executed = await executeSolanaSwapApprovalPayload({
+        payload: request.payload,
+        config: params.config,
+        runtimeConfig: cfg,
+        providerIdOverride: params.providerIdOverride,
+        autonomous: false,
+        reviewAuthorization: params.reviewAuthorization,
         env,
       });
-      return { ok: false as const, code: executed.code, message: executed.message, request };
-    }
-    request.status = "approved";
-    request.approvedBy = params.actor?.trim() || "operator";
-    request.decisionAt = new Date().toISOString();
-    appendWalletAuditEntry({
-      action: "send_approved",
-      actor: request.approvedBy,
-      details: buildWalletSendAuditDetails({
-        payload: request.payload,
-        requestId: request.id,
-        mode: "manual",
-        taskId: settlementLink?.taskId,
-        invoiceId: settlementLink?.invoiceId,
-        senderHandle: settlementLink?.senderHandle,
-      }),
-      env,
-    });
-    request.status = "executed";
-    request.result = { txHash: executed.tx.txHash };
-    appendWalletAuditEntry({
-      action: "send_executed",
-      actor: request.approvedBy,
-      details: {
-        ...buildWalletSendAuditDetails({
-          payload: {
-            ...request.payload,
-            outAmount: executed.order.outAmount ?? request.payload.outAmount,
-            outAmountDisplay: request.payload.outAmountDisplay,
-            otherAmountThreshold:
-              executed.order.otherAmountThreshold ?? request.payload.otherAmountThreshold,
-            routeLabel: executed.order.routeLabel ?? request.payload.routeLabel,
-            jupiterRequestId: executed.order.requestId ?? request.payload.jupiterRequestId,
+      if (!executed.ok) {
+        if (executed.code === "wallet_provider_ambiguous") {
+          const ambiguousRequest = await markWalletSendRequestBroadcastUnknown({
+            requestId: request.id,
+            reason: executed.message,
+            actor: params.actor,
+            env,
+          });
+          return {
+            ok: false as const,
+            code: executed.code,
+            message: executed.message,
+            request: ambiguousRequest,
+          };
+        }
+        request.status = "failed";
+        request.reason = executed.message;
+        request.result = { error: request.reason };
+        request.decisionAt = new Date().toISOString();
+        saveFile(file, env);
+        syncApprovalTaskForRequest({ request, settlementLink });
+        appendWalletAuditEntry({
+          action: "send_failed",
+          actor: params.actor?.trim() || "operator",
+          details: {
+            ...buildWalletSendAuditDetails({
+              payload: request.payload,
+              requestId: request.id,
+              mode: "manual",
+              taskId: settlementLink?.taskId,
+              invoiceId: settlementLink?.invoiceId,
+              senderHandle: settlementLink?.senderHandle,
+              reason: request.reason,
+            }),
+            code: executed.code,
           },
+          env,
+        });
+        return { ok: false as const, code: executed.code, message: executed.message, request };
+      }
+      request.status = "approved";
+      request.approvedBy = params.actor?.trim() || "operator";
+      request.decisionAt = new Date().toISOString();
+      appendWalletAuditEntry({
+        action: "send_approved",
+        actor: request.approvedBy,
+        details: buildWalletSendAuditDetails({
+          payload: request.payload,
           requestId: request.id,
           mode: "manual",
-          providerId: request.payload.providerId,
-          txHash: executed.tx.txHash,
           taskId: settlementLink?.taskId,
           invoiceId: settlementLink?.invoiceId,
           senderHandle: settlementLink?.senderHandle,
         }),
-        swapProvider: "jupiter",
-      },
-      env,
-    });
-    saveFile(file, env);
-    syncApprovalTaskForRequest({ request, settlementLink });
-    return { ok: true as const, request, tx: executed.tx };
+        env,
+      });
+      request.status = "executed";
+      request.result = { txHash: executed.tx.txHash };
+      appendWalletAuditEntry({
+        action: "send_executed",
+        actor: request.approvedBy,
+        details: {
+          ...buildWalletSendAuditDetails({
+            payload: {
+              ...request.payload,
+              outAmount: executed.order.outAmount ?? request.payload.outAmount,
+              outAmountDisplay: request.payload.outAmountDisplay,
+              otherAmountThreshold:
+                executed.order.otherAmountThreshold ?? request.payload.otherAmountThreshold,
+              routeLabel: executed.order.routeLabel ?? request.payload.routeLabel,
+              jupiterRequestId: executed.order.requestId ?? request.payload.jupiterRequestId,
+            },
+            requestId: request.id,
+            mode: "manual",
+            providerId: request.payload.providerId,
+            txHash: executed.tx.txHash,
+            taskId: settlementLink?.taskId,
+            invoiceId: settlementLink?.invoiceId,
+            senderHandle: settlementLink?.senderHandle,
+          }),
+          swapProvider: "jupiter",
+        },
+        env,
+      });
+      saveFile(file, env);
+      syncApprovalTaskForRequest({ request, settlementLink });
+      return { ok: true as const, request, tx: executed.tx };
+    } finally {
+      await claim.release();
+    }
   }
 
   const cfg = loadConfig();
@@ -1734,77 +2671,291 @@ export async function approveWalletSendRequest(params: {
         request,
       };
     }
-    if (
-      storedReview.state === "prepared" &&
-      (request.status === "expired" || isWalletSendApprovalExpired(request))
-    ) {
-      expireWalletSendApprovalRequest({ request, settlementLink });
-      saveFile(file, env);
+    const claim = await claimWalletSendApprovalExecution({
+      requestId: request.id,
+      actor: params.actor,
+      allowExpiredSignerReview: canReconcileExpiredSignerReview,
+      env,
+    });
+    if (!claim.ok) {
       return {
         ok: false as const,
-        code: "expired",
-        message: "approval request expired before the signer completed it",
-        request,
+        code: claim.code,
+        message: claim.message,
+        ...(claim.request ? { request: claim.request } : {}),
       };
     }
-    if (storedReview.state === "prepared" && !params.reviewAuthorization) {
-      syncApprovalTaskForRequest({ request, settlementLink });
-      return {
-        ok: false as const,
-        code: "signer_webauthn_required",
-        message: "reviewed signer execution requires a signer-owned WebAuthn proof",
-        request,
-      };
-    }
-    const executionAuthorization =
-      storedReview.state === "prepared" ? params.reviewAuthorization : undefined;
-    let executed: Awaited<ReturnType<NonNullable<typeof provider.executeSignerReview>>>;
+    file = claim.file;
+    request = claim.request;
     try {
-      executed = await provider.executeSignerReview({
-        walletId: request.payload.signerWalletId?.trim() || "",
-        requestId: signerReviewId,
-        authorization: executionAuthorization,
+      if (
+        storedReview.state === "prepared" &&
+        (request.status === "expired" || isWalletSendApprovalExpired(request))
+      ) {
+        expireWalletSendApprovalRequest({ request, settlementLink });
+        saveFile(file, env);
+        return {
+          ok: false as const,
+          code: "expired",
+          message: "approval request expired before the signer completed it",
+          request,
+        };
+      }
+      if (storedReview.state === "prepared" && !params.reviewAuthorization) {
+        if (claim.recovered && request.status === "executing") {
+          await withApprovalMutationLock(env, () => {
+            file = loadFile(env);
+            const persisted = findRequest(file, claim.request.id);
+            if (persisted?.status === "executing") {
+              persisted.status = "pending";
+              persisted.execution = undefined;
+              persisted.reason =
+                "previous execution stopped before the signer accepted it; a new WebAuthn approval is required";
+              saveFile(file, env);
+              request = persisted;
+            }
+          });
+        }
+        syncApprovalTaskForRequest({ request, settlementLink });
+        return {
+          ok: false as const,
+          code: "signer_webauthn_required",
+          message: "reviewed signer execution requires a signer-owned WebAuthn proof",
+          request,
+        };
+      }
+      const executionAuthorization =
+        storedReview.state === "prepared" ? params.reviewAuthorization : undefined;
+      let executed: Awaited<ReturnType<NonNullable<typeof provider.executeSignerReview>>>;
+      try {
+        executed = await provider.executeSignerReview({
+          walletId: request.payload.signerWalletId?.trim() || "",
+          requestId: signerReviewId,
+          authorization: executionAuthorization,
+        });
+      } catch (error) {
+        const message = `signer execution result is unknown; reconcile the durable signer request before retrying: ${normalizeErrorMessage(error)}`;
+        const unknownRequest = await markWalletSendRequestBroadcastUnknown({
+          requestId: request.id,
+          reason: message,
+          actor: params.actor,
+          env,
+        });
+        return {
+          ok: false as const,
+          code: "wallet_provider_ambiguous",
+          message,
+          request: unknownRequest,
+        };
+      }
+      if (
+        executed.review.state !== "signed" ||
+        !signerReviewMatchesWalletApprovalPayload(executed.review, request.payload) ||
+        executed.operation.requestId !== signerReviewId ||
+        executed.operation.walletId !== request.payload.signerWalletId?.trim() ||
+        executed.operation.intentDigest !== request.payload.signerIntentDigest?.trim() ||
+        executed.operation.policyHash !== request.payload.signerPolicyHash?.trim() ||
+        executed.operation.asset !== request.payload.signerAsset?.trim() ||
+        executed.operation.amount !== request.payload.signerAmount?.trim() ||
+        !sameOptionalSignerValue(
+          executed.operation.transactionDigest,
+          request.payload.signerTransactionDigest,
+        ) ||
+        !sameOptionalSignerValue(executed.signer, request.payload.signerWalletPublicKey) ||
+        (executed.review.artifactKind === "domain-separated-message" &&
+          executed.signatureBase64 !== executed.operation.signature) ||
+        (executionAuthorization &&
+          executed.operation.authorizationProof !== executionAuthorization.proof.proofId)
+      ) {
+        const message =
+          "signer execution returned a mismatched result; preserve it as unknown and reconcile before retrying";
+        const unknownRequest = await markWalletSendRequestBroadcastUnknown({
+          requestId: request.id,
+          txHash: executed.operation.signature,
+          reason: message,
+          actor: params.actor,
+          env,
+        });
+        return {
+          ok: false as const,
+          code: "wallet_signer_review_mismatch",
+          message,
+          request: unknownRequest,
+        };
+      }
+      const operation = executed.operation;
+      if (operation.state === "broadcast" || operation.state === "unknown") {
+        const message = `signer operation ${operation.requestId} is ${operation.state}; reconcile signature before any new attempt`;
+        const ambiguousRequest = await markWalletSendRequestBroadcastUnknown({
+          requestId: request.id,
+          txHash: operation.signature,
+          reason: message,
+          actor: params.actor,
+          env,
+        });
+        return {
+          ok: false as const,
+          code: "wallet_provider_ambiguous",
+          message,
+          request: ambiguousRequest,
+        };
+      }
+      if (operation.state !== "confirmed" || !operation.signature) {
+        request.status = "failed";
+        request.reason = operation.error ?? `signer operation ended in state=${operation.state}`;
+        request.result = { error: request.reason };
+        request.decisionAt = new Date().toISOString();
+        saveFile(file, env);
+        syncApprovalTaskForRequest({ request, settlementLink });
+        return {
+          ok: false as const,
+          code: "wallet_signer_review_failed",
+          message: request.reason,
+          request,
+        };
+      }
+      let signerCompletionWarning: string | undefined;
+      if (executed.review.intentType === "federation.bondChallenge") {
+        if (!executed.signatureBase64) {
+          const message =
+            "federation signer review completed without its exact signature artifact; reconcile before retrying";
+          const unknownRequest = await markWalletSendRequestBroadcastUnknown({
+            requestId: request.id,
+            txHash: operation.signature,
+            reason: message,
+            actor: params.actor,
+            env,
+          });
+          return {
+            ok: false as const,
+            code: "wallet_signer_review_mismatch",
+            message,
+            request: unknownRequest,
+          };
+        }
+        try {
+          const federation = await import("../federation/auto-connect.js");
+          const proof = await federation.persistFederationBondProofFromSignerReview({
+            review: executed.review,
+            signatureBase64: executed.signatureBase64,
+            walletId: request.payload.walletId?.trim() || executed.review.walletId,
+            env,
+          });
+          try {
+            await federation.submitFederationBondProof({ env, proof });
+          } catch (error) {
+            signerCompletionWarning = `signature completed; federation proof submission remains pending: ${normalizeErrorMessage(error)}`;
+          }
+        } catch (error) {
+          const message = `signature completed but its federation proof could not be persisted safely: ${normalizeErrorMessage(error)}`;
+          const unknownRequest = await markWalletSendRequestBroadcastUnknown({
+            requestId: request.id,
+            txHash: operation.signature,
+            reason: message,
+            actor: params.actor,
+            env,
+          });
+          return {
+            ok: false as const,
+            code: "wallet_signer_review_failed",
+            message,
+            request: unknownRequest,
+          };
+        }
+      }
+      request.status = "approved";
+      request.approvedBy = params.actor?.trim() || "operator";
+      request.decisionAt = new Date().toISOString();
+      request.reason = undefined;
+      appendWalletAuditEntry({
+        action: "send_approved",
+        actor: request.approvedBy,
+        details: buildWalletSendAuditDetails({
+          payload: request.payload,
+          requestId: request.id,
+          mode: "manual",
+          providerId: selectedProviderId,
+          taskId: settlementLink?.taskId,
+          invoiceId: settlementLink?.invoiceId,
+          senderHandle: settlementLink?.senderHandle,
+        }),
+        env,
       });
-    } catch (error) {
-      return {
-        ok: false as const,
-        code: "wallet_signer_review_failed",
-        message: normalizeErrorMessage(error),
-        request,
-      };
-    }
-    if (
-      executed.review.state !== "signed" ||
-      !signerReviewMatchesWalletApprovalPayload(executed.review, request.payload) ||
-      executed.operation.requestId !== signerReviewId ||
-      executed.operation.walletId !== request.payload.signerWalletId?.trim() ||
-      executed.operation.intentDigest !== request.payload.signerIntentDigest?.trim() ||
-      executed.operation.policyHash !== request.payload.signerPolicyHash?.trim() ||
-      executed.operation.asset !== request.payload.signerAsset?.trim() ||
-      executed.operation.amount !== request.payload.signerAmount?.trim() ||
-      !sameOptionalSignerValue(
-        executed.operation.transactionDigest,
-        request.payload.signerTransactionDigest,
-      ) ||
-      !sameOptionalSignerValue(executed.signer, request.payload.signerWalletPublicKey) ||
-      (executed.review.artifactKind === "domain-separated-message" &&
-        executed.signatureBase64 !== executed.operation.signature) ||
-      (executionAuthorization &&
-        executed.operation.authorizationProof !== executionAuthorization.proof.proofId)
-    ) {
-      return {
-        ok: false as const,
-        code: "wallet_signer_review_mismatch",
-        message: "signer execution result does not match the exact persisted approval binding",
-        request,
-      };
-    }
-    const operation = executed.operation;
-    if (operation.state === "broadcast" || operation.state === "unknown") {
-      const message = `signer operation ${operation.requestId} is ${operation.state}; reconcile signature before any new attempt`;
-      const ambiguousRequest = markWalletSendRequestBroadcastUnknown({
-        requestId: request.id,
+      request.status = "executed";
+      request.result = {
         txHash: operation.signature,
+        ...(signerCompletionWarning ? { error: signerCompletionWarning } : {}),
+      };
+      appendWalletAuditEntry({
+        action: "send_executed",
+        actor: request.approvedBy,
+        details: {
+          ...buildWalletSendAuditDetails({
+            payload: claim.request.payload,
+            requestId: claim.request.id,
+            mode: "manual",
+            providerId: selectedProviderId,
+            txHash: operation.signature,
+            taskId: settlementLink?.taskId,
+            invoiceId: settlementLink?.invoiceId,
+            senderHandle: settlementLink?.senderHandle,
+          }),
+          ...(signerCompletionWarning ? { warning: signerCompletionWarning } : {}),
+        },
+        env,
+      });
+      saveFile(file, env);
+      syncApprovalTaskForRequest({ request, settlementLink });
+      const updatedSettlement = markWalletSettlementLinkOutcome({
+        requestId: request.id,
+        status: "executed",
+        txHash: operation.signature,
+        env,
+      });
+      await publishSettlementEvidenceForLink({ settlementLink: updatedSettlement, env });
+      return {
+        ok: true as const,
+        request,
+        tx: {
+          ok: true,
+          chain: "solana" as const,
+          txHash: operation.signature,
+          signer: executed.signer,
+          metadata: {
+            provider: "local-socket-signer",
+            signerProtocol: 2,
+            signerOperationState: operation.state,
+            signerIntentDigest: operation.intentDigest,
+            signerTransactionDigest: operation.transactionDigest,
+          },
+        },
+      };
+    } finally {
+      await claim.release();
+    }
+  }
+
+  const claim = await claimWalletSendApprovalExecution({
+    requestId: request.id,
+    actor: params.actor,
+    env,
+  });
+  if (!claim.ok) {
+    return {
+      ok: false as const,
+      code: claim.code,
+      message: claim.message,
+      ...(claim.request ? { request: claim.request } : {}),
+    };
+  }
+  file = claim.file;
+  request = claim.request;
+  try {
+    if (claim.recovered && selectedProviderId === "wallet-standard") {
+      const message =
+        "Wallet Standard execution cannot be server-reconciled; preserve this approval as unknown until its exact on-chain signature is supplied";
+      const unknownRequest = await markWalletSendRequestBroadcastUnknown({
+        requestId: request.id,
         reason: message,
         actor: params.actor,
         env,
@@ -1813,147 +2964,64 @@ export async function approveWalletSendRequest(params: {
         ok: false as const,
         code: "wallet_provider_ambiguous",
         message,
-        request: ambiguousRequest,
+        request: unknownRequest,
       };
     }
-    if (operation.state !== "confirmed" || !operation.signature) {
+
+    const daily = claim.recovered
+      ? { ok: true as const }
+      : enforceWalletDailyCap({
+          config: effectiveConfig,
+          chain: request.payload.chain,
+          amount: request.payload.amount,
+          program: request.payload.program,
+          walletId: request.payload.walletId,
+          env,
+          skipNativeSolanaCaps,
+        });
+    if (!daily.ok) {
       request.status = "failed";
-      request.reason = operation.error ?? `signer operation ended in state=${operation.state}`;
+      request.reason = daily.message ?? daily.code ?? "wallet daily cap exceeded";
       request.result = { error: request.reason };
       request.decisionAt = new Date().toISOString();
       saveFile(file, env);
       syncApprovalTaskForRequest({ request, settlementLink });
-      return {
-        ok: false as const,
-        code: "wallet_signer_review_failed",
-        message: request.reason,
-        request,
-      };
-    }
-    let signerCompletionWarning: string | undefined;
-    if (executed.review.intentType === "federation.bondChallenge") {
-      if (!executed.signatureBase64) {
-        return {
-          ok: false as const,
-          code: "wallet_signer_review_mismatch",
-          message: "federation signer review completed without its exact signature artifact",
-          request,
-        };
-      }
-      try {
-        const federation = await import("../federation/auto-connect.js");
-        const proof = await federation.persistFederationBondProofFromSignerReview({
-          review: executed.review,
-          signatureBase64: executed.signatureBase64,
-          walletId: request.payload.walletId?.trim() || executed.review.walletId,
-          env,
-        });
-        try {
-          await federation.submitFederationBondProof({ env, proof });
-        } catch (error) {
-          signerCompletionWarning = `signature completed; federation proof submission remains pending: ${normalizeErrorMessage(error)}`;
-        }
-      } catch (error) {
-        return {
-          ok: false as const,
-          code: "wallet_signer_review_failed",
-          message: `signature completed but its federation proof could not be persisted safely: ${normalizeErrorMessage(error)}`,
-          request,
-        };
-      }
-    }
-    request.status = "approved";
-    request.approvedBy = params.actor?.trim() || "operator";
-    request.decisionAt = new Date().toISOString();
-    request.reason = undefined;
-    appendWalletAuditEntry({
-      action: "send_approved",
-      actor: request.approvedBy,
-      details: buildWalletSendAuditDetails({
-        payload: request.payload,
-        requestId: request.id,
-        mode: "manual",
-        providerId: selectedProviderId,
-        taskId: settlementLink?.taskId,
-        invoiceId: settlementLink?.invoiceId,
-        senderHandle: settlementLink?.senderHandle,
-      }),
-      env,
-    });
-    request.status = "executed";
-    request.result = {
-      txHash: operation.signature,
-      ...(signerCompletionWarning ? { error: signerCompletionWarning } : {}),
-    };
-    appendWalletAuditEntry({
-      action: "send_executed",
-      actor: request.approvedBy,
-      details: {
-        ...buildWalletSendAuditDetails({
-          payload: request.payload,
+      appendWalletAuditEntry({
+        action: "send_failed",
+        actor: params.actor?.trim() || "operator",
+        details: {
           requestId: request.id,
-          mode: "manual",
-          providerId: selectedProviderId,
-          txHash: operation.signature,
+          reason: request.reason,
+          providerId: request.payload.providerId,
+          walletId: request.payload.walletId,
+          walletName: request.payload.walletName,
           taskId: settlementLink?.taskId,
           invoiceId: settlementLink?.invoiceId,
           senderHandle: settlementLink?.senderHandle,
-        }),
-        ...(signerCompletionWarning ? { warning: signerCompletionWarning } : {}),
-      },
-      env,
-    });
-    saveFile(file, env);
-    syncApprovalTaskForRequest({ request, settlementLink });
-    const updatedSettlement = markWalletSettlementLinkOutcome({
-      requestId: request.id,
-      status: "executed",
-      txHash: operation.signature,
-      env,
-    });
-    await publishSettlementEvidenceForLink({ settlementLink: updatedSettlement, env });
-    return {
-      ok: true as const,
-      request,
-      tx: {
-        ok: true,
-        chain: "solana" as const,
-        txHash: operation.signature,
-        signer: executed.signer,
-        metadata: {
-          provider: "local-socket-signer",
-          signerProtocol: 2,
-          signerOperationState: operation.state,
-          signerIntentDigest: operation.intentDigest,
-          signerTransactionDigest: operation.transactionDigest,
         },
-      },
-    };
-  }
+        env,
+      });
+      markWalletSettlementLinkOutcome({
+        requestId: request.id,
+        status: "failed",
+        reason: request.reason,
+        env,
+      });
+      return { ok: false as const, code: "daily_cap_rejected", message: request.reason, request };
+    }
 
-  const daily = enforceWalletDailyCap({
-    config: effectiveConfig,
-    chain: request.payload.chain,
-    amount: request.payload.amount,
-    program: request.payload.program,
-    walletId: request.payload.walletId,
-    env,
-    skipNativeSolanaCaps,
-  });
-  if (!daily.ok) {
-    request.status = "failed";
-    request.reason = daily.message ?? daily.code ?? "wallet daily cap exceeded";
-    request.result = { error: request.reason };
+    request.status = "approved";
+    request.approvedBy = params.actor?.trim() || "operator";
     request.decisionAt = new Date().toISOString();
-    saveFile(file, env);
     syncApprovalTaskForRequest({ request, settlementLink });
     appendWalletAuditEntry({
-      action: "send_failed",
-      actor: params.actor?.trim() || "operator",
+      action: "send_approved",
+      actor: request.approvedBy,
       details: {
         requestId: request.id,
-        reason: request.reason,
-        providerId: request.payload.providerId,
+        chain: request.payload.chain,
+        amount: request.payload.amount,
+        providerId: selectedProviderId,
         walletId: request.payload.walletId,
         walletName: request.payload.walletName,
         taskId: settlementLink?.taskId,
@@ -1962,104 +3030,95 @@ export async function approveWalletSendRequest(params: {
       },
       env,
     });
-    markWalletSettlementLinkOutcome({
-      requestId: request.id,
-      status: "failed",
-      reason: request.reason,
-      env,
-    });
-    return { ok: false as const, code: "daily_cap_rejected", message: request.reason, request };
-  }
 
-  request.status = "approved";
-  request.approvedBy = params.actor?.trim() || "operator";
-  request.decisionAt = new Date().toISOString();
-  syncApprovalTaskForRequest({ request, settlementLink });
-  appendWalletAuditEntry({
-    action: "send_approved",
-    actor: request.approvedBy,
-    details: {
-      requestId: request.id,
-      chain: request.payload.chain,
-      amount: request.payload.amount,
-      providerId: selectedProviderId,
-      walletId: request.payload.walletId,
-      walletName: request.payload.walletName,
-      taskId: settlementLink?.taskId,
-      invoiceId: settlementLink?.invoiceId,
-      senderHandle: settlementLink?.senderHandle,
-    },
-    env,
-  });
-
-  try {
-    const sent = await executeWalletSendOnce({
-      execute: async () =>
-        await prepareAndSendProviderTransaction({
-          provider,
+    const claimedPayload = claim.request.payload;
+    const claimedRequestId = claim.request.id;
+    try {
+      const sent = await executeWalletSendOnce({
+        execute: async () =>
+          await prepareAndSendProviderTransaction({
+            provider,
+            payload: claimedPayload,
+            requestId: claimedRequestId,
+          }),
+      });
+      if (!sent.ok) {
+        throw sent.error;
+      }
+      const tx = withSendAttemptMetadata(sent.tx, sent.attempts);
+      request.status = "executed";
+      request.result = { txHash: tx.txHash };
+      const settlementLink = markWalletSettlementLinkOutcome({
+        requestId: request.id,
+        status: "executed",
+        txHash: tx.txHash,
+        env,
+      });
+      await publishSettlementEvidenceForLink({ settlementLink, env });
+      appendWalletAuditEntry({
+        action: "send_executed",
+        actor: request.approvedBy,
+        details: buildWalletSendAuditDetails({
           payload: request.payload,
           requestId: request.id,
+          txHash: tx.txHash,
+          providerId: selectedProviderId,
+          taskId: settlementLink?.taskId,
+          invoiceId: settlementLink?.invoiceId,
+          senderHandle: settlementLink?.senderHandle,
+          attempts: sent.attempts,
         }),
-    });
-    if (!sent.ok) {
-      throw new Error(`${normalizeErrorMessage(sent.error)} (attempts=${sent.attempts})`);
-    }
-    const tx = withSendAttemptMetadata(sent.tx, sent.attempts);
-    request.status = "executed";
-    request.result = { txHash: tx.txHash };
-    const settlementLink = markWalletSettlementLinkOutcome({
-      requestId: request.id,
-      status: "executed",
-      txHash: tx.txHash,
-      env,
-    });
-    await publishSettlementEvidenceForLink({ settlementLink, env });
-    appendWalletAuditEntry({
-      action: "send_executed",
-      actor: request.approvedBy,
-      details: buildWalletSendAuditDetails({
-        payload: request.payload,
+        env,
+      });
+      saveFile(file, env);
+      syncApprovalTaskForRequest({ request, settlementLink });
+      return { ok: true as const, request, tx };
+    } catch (err) {
+      if (err instanceof WalletProviderError && err.code === "wallet_provider_ambiguous") {
+        const message = `${err.message}; reconcile the durable provider review before any retry`;
+        const unknownRequest = await markWalletSendRequestBroadcastUnknown({
+          requestId: request.id,
+          reason: message,
+          actor: params.actor,
+          env,
+        });
+        return {
+          ok: false as const,
+          code: err.code,
+          message,
+          request: unknownRequest,
+        };
+      }
+      request.status = "failed";
+      request.reason = walletDiagnosticErrorString(err);
+      request.result = { error: request.reason };
+      markWalletSettlementLinkOutcome({
         requestId: request.id,
-        txHash: tx.txHash,
-        providerId: selectedProviderId,
-        taskId: settlementLink?.taskId,
-        invoiceId: settlementLink?.invoiceId,
-        senderHandle: settlementLink?.senderHandle,
-        attempts: sent.attempts,
-      }),
-      env,
-    });
-    saveFile(file, env);
-    syncApprovalTaskForRequest({ request, settlementLink });
-    return { ok: true as const, request, tx };
-  } catch (err) {
-    request.status = "failed";
-    request.reason = walletDiagnosticErrorString(err);
-    request.result = { error: request.reason };
-    markWalletSettlementLinkOutcome({
-      requestId: request.id,
-      status: "failed",
-      reason: request.reason,
-      env,
-    });
-    appendWalletAuditEntry({
-      action: "send_failed",
-      actor: request.approvedBy,
-      details: {
-        requestId: request.id,
+        status: "failed",
         reason: request.reason,
-        providerId: request.payload.providerId,
-        walletId: request.payload.walletId,
-        walletName: request.payload.walletName,
-        taskId: settlementLink?.taskId,
-        invoiceId: settlementLink?.invoiceId,
-        senderHandle: settlementLink?.senderHandle,
-      },
-      env,
-    });
-    saveFile(file, env);
-    syncApprovalTaskForRequest({ request, settlementLink });
-    return { ok: false as const, code: "send_failed", message: request.reason, request };
+        env,
+      });
+      appendWalletAuditEntry({
+        action: "send_failed",
+        actor: request.approvedBy,
+        details: {
+          requestId: request.id,
+          reason: request.reason,
+          providerId: request.payload.providerId,
+          walletId: request.payload.walletId,
+          walletName: request.payload.walletName,
+          taskId: settlementLink?.taskId,
+          invoiceId: settlementLink?.invoiceId,
+          senderHandle: settlementLink?.senderHandle,
+        },
+        env,
+      });
+      saveFile(file, env);
+      syncApprovalTaskForRequest({ request, settlementLink });
+      return { ok: false as const, code: "send_failed", message: request.reason, request };
+    }
+  } finally {
+    await claim.release();
   }
 }
 

@@ -242,6 +242,45 @@ Local example:
 HTTPS is required except for an explicit loopback development endpoint. Health
 returns readiness plus version/hash metadata, not the secret URL.
 
+## Signer-owned Jupiter Trigger credential
+
+Jupiter Trigger authentication belongs to `fased-signerd`, not Gateway. The
+Trigger API key and derived JWT must never be placed in Fased config, a Gateway
+environment variable, a CLI option, or a browser form. This is distinct from
+`FASED_JUPITER_API_KEY`, which Gateway may use only to craft ordinary Jupiter
+swap transactions for signer review.
+
+Create a private input file and stream it to the native admin command. Local:
+
+```bash
+chmod 600 /absolute/path/to/jupiter-trigger.key
+"$HOME/.fased/bin/fased-signerd" admin jupiter api-key-install \
+  --output "$HOME/.fased/wallet/jupiter-trigger-api.key" \
+  < /absolute/path/to/jupiter-trigger.key
+fased gateway restart
+```
+
+Hosting must be configured only from the provider root console. The `app`
+account cannot access signer storage or use signer sudo:
+
+```bash
+chmod 600 /root/jupiter-trigger.key
+/usr/sbin/runuser -u fased-signer -- \
+  /opt/fased/signer/fased-signerd admin jupiter api-key-install \
+  --output /var/lib/fased-signerd/jupiter-trigger-api.key \
+  < /root/jupiter-trigger.key
+systemctl restart fased-signerd.service
+```
+
+The admin command accepts the secret only on stdin, validates printable
+single-line input, atomically replaces a signer-owned `0600` non-symlink file,
+and never prints the key. Health exposes only `jupiter.triggerConfigured`.
+Without this file, all other wallet and mining features remain available while
+Trigger history/create/cancel fail closed. Use `api-key-status` or
+`api-key-remove` with the same `--output` path; restart the signer after a
+change. Local Docker uses the dedicated procedure in
+[Docker](/install/docker#local-security-boundary).
+
 ## WebAuthn manual approval
 
 Signer-owned WebAuthn is the authorization path for every manual native Agent,
@@ -288,6 +327,8 @@ The default Local material directory is `~/.fased/wallet`:
 - `signerd-v2.db`: encrypted signer, policy, WebAuthn, network, cap, and request
   state;
 - `signerd-v2.master.key`: owner-only signer master key;
+- `jupiter-trigger-api.key`: optional owner-only Trigger credential, never
+  readable by Gateway;
 - `local-signer.audit.jsonl`: signer audit stream;
 - `provider-registry.v1.json`: public provider/wallet registry used by the
   runtime;

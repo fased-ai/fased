@@ -106,10 +106,10 @@ func TestReviewedVaultBondPrepareBuildsTransactionAndBindsState(t *testing.T) {
 	policy, err := store.putPolicy(signerPolicyV2{
 		WalletID: wallet.WalletID, Role: "vault",
 		Operations: []string{reviewedIntent.PolicyOperation}, Programs: reviewedIntent.RequiredPrograms,
-		Assets: []signerPolicyAssetV2{{
-			Asset: reviewedIntent.Asset, Destinations: []string{reviewedIntent.Destination},
-			MaxPerTx: "75", MaxDaily: "75",
-		}},
+		Assets: []signerPolicyAssetV2{
+			{Asset: reviewedIntent.Asset, Destinations: []string{reviewedIntent.Destination}, MaxPerTx: "75", MaxDaily: "75"},
+			{Asset: "solana:native", Destinations: []string{wallet.PublicKey}, MaxPerTx: "5000000", MaxDaily: "5000000"},
+		},
 	}, locked.Version)
 	if err != nil {
 		t.Fatal(err)

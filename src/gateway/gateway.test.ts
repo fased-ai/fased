@@ -57,7 +57,8 @@ describe("gateway e2e", () => {
 
       const nonceA = randomUUID();
       const nonceB = randomUUID();
-      const toolProbePath = path.join(workspaceDir, `.fased-tool-probe.${nonceA}.txt`);
+      const toolProbeFile = `fased-tool-probe-${nonceA}.txt`;
+      const toolProbePath = path.join(workspaceDir, toolProbeFile);
       await fs.writeFile(toolProbePath, `nonceA=${nonceA}\nnonceB=${nonceB}\n`);
 
       const configDir = path.join(tempHome, ".fased");
@@ -66,6 +67,7 @@ describe("gateway e2e", () => {
 
       const cfg = {
         agents: { defaults: { workspace: workspaceDir } },
+        tools: { profile: "coding" },
         models: {
           mode: "replace",
           providers: {
@@ -83,7 +85,7 @@ describe("gateway e2e", () => {
       });
 
       try {
-        const sessionKey = "agent:dev:mock-openai";
+        const sessionKey = "agent:main:mock-openai";
 
         await client.request("sessions.patch", {
           key: sessionKey,
@@ -100,7 +102,7 @@ describe("gateway e2e", () => {
             sessionKey,
             idempotencyKey: `idem-${runId}`,
             message:
-              `Call the read tool on "${toolProbePath}". ` +
+              `Call the read tool on "${toolProbeFile}". ` +
               `Then reply with exactly: ${nonceA} ${nonceB}. No extra text.`,
             deliver: false,
           },

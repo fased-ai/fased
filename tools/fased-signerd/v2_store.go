@@ -28,6 +28,8 @@ var (
 	bucketSignerWebAuthnChallengesV2  = []byte("webauthn-challenges")
 	bucketSignerReviewProofsV2        = []byte("review-authorization-proofs")
 	bucketSignerReviewsV2             = []byte("reviews")
+	bucketSignerJupiterTriggerV2      = []byte("jupiter-trigger-workflows")
+	bucketSignerRotationsV2           = []byte("wallet-rotations")
 )
 
 const signerExecutionLeaseV2 = 5 * time.Minute
@@ -142,6 +144,13 @@ func (s *signerStoreV2) putPolicy(input signerPolicyV2, expectedVersion uint64) 
 	err := s.db.Update(func(tx *bolt.Tx) error {
 		bucket := tx.Bucket(bucketSignerPoliciesV2)
 		walletID := normalizeWalletID(input.WalletID)
+		retired, err := signerWalletIsRetiredInTxV2(tx, walletID)
+		if err != nil {
+			return err
+		}
+		if retired {
+			return errors.New("retired signer wallet policy is permanently deny-all")
+		}
 		if tx.Bucket(bucketSignerWalletsV2).Get([]byte(walletID)) == nil {
 			return errors.New("signer wallet not found")
 		}
@@ -234,13 +243,19 @@ func (s *signerStoreV2) preflightPolicyForIntentV2(req signerExecuteRequestV2, i
 		if strings.TrimSpace(req.PolicyHash) == "" || req.PolicyHash != policy.Hash {
 			return errors.New("signer policy hash mismatch")
 		}
-		assetPolicy, err := policyAssetForIntentV2(policy, intent)
+		reservations, err := policyReservationsForIntentV2(policy, intent)
 		if err != nil {
 			return err
 		}
-		maxDaily, ok := new(big.Int).SetString(assetPolicy.MaxDaily, 10)
-		if !ok || maxDaily.Sign() <= 0 {
-			return errors.New("policy daily cap must be positive")
+		for _, reservation := range reservations {
+			assetPolicy, policyErr := policyAssetByNameV2(policy, reservation.Asset)
+			if policyErr != nil {
+				return policyErr
+			}
+			maxDaily, ok := new(big.Int).SetString(assetPolicy.MaxDaily, 10)
+			if !ok || maxDaily.Sign() <= 0 {
+				return fmt.Errorf("policy daily cap must be positive for %s", reservation.Asset)
+			}
 		}
 		return nil
 	})
@@ -266,7 +281,30 @@ func (s *signerStoreV2) reserveOperation(req signerExecuteRequestV2, intent norm
 			if operation.WalletID != walletID || operation.IntentDigest != intent.Digest || operation.PolicyHash != strings.TrimSpace(req.PolicyHash) {
 				return errors.New("requestId is already bound to a different immutable signer request")
 			}
-			if operation.State == operationReserved {
+			if operation.State == operationReserved && len(operation.Reservations) == 0 {
+				// A pre-multi-asset reservation accounted only the semantic
+				// principal. It must never be grandfathered into execution without
+				// the independent native fee/rent claim introduced by this signer.
+				// Broadcast/unknown legacy operations are intentionally left
+				// untouched because their outcome may already be on chain.
+				if operation.ReservationActive {
+					if err := releaseUsageReservationV2(tx, operation); err != nil {
+						return err
+					}
+					operation.ReservationActive = false
+				}
+				operation.State = operationFailed
+				operation.Error = "pre-upgrade signer reservation lacks atomic fee/rent accounting; submit a new requestId"
+				operation.ExecutionLeaseUntil = ""
+				operation.UpdatedAt = timestampV2(s.now())
+				encoded, err := json.Marshal(operation)
+				if err != nil {
+					return err
+				}
+				if err := operations.Put([]byte(requestID), encoded); err != nil {
+					return err
+				}
+			} else if operation.State == operationReserved {
 				currentPolicyRaw := tx.Bucket(bucketSignerPoliciesV2).Get([]byte(walletID))
 				var currentPolicy signerPolicyV2
 				policyCurrent := currentPolicyRaw != nil && json.Unmarshal(currentPolicyRaw, &currentPolicy) == nil && currentPolicy.Hash == operation.PolicyHash
@@ -305,30 +343,40 @@ func (s *signerStoreV2) reserveOperation(req signerExecuteRequestV2, intent norm
 		if strings.TrimSpace(req.PolicyHash) == "" || req.PolicyHash != policy.Hash {
 			return errors.New("signer policy hash mismatch")
 		}
-		assetPolicy, err := policyAssetForIntentV2(policy, intent)
+		reservationRequirements, err := policyReservationsForIntentV2(policy, intent)
 		if err != nil {
 			return err
 		}
-		maxDaily, ok := new(big.Int).SetString(assetPolicy.MaxDaily, 10)
-		if !ok || maxDaily.Sign() <= 0 {
-			return errors.New("policy daily cap must be positive")
-		}
 		now := s.now()
 		usageBucket := currentDayBucket(now)
-		usageKey := dailyUsageKeyV2(walletID, intent.Asset, usageBucket)
 		usage := tx.Bucket(bucketSignerUsageV2)
-		current := big.NewInt(0)
-		if raw := usage.Get(usageKey); raw != nil {
-			if _, ok := current.SetString(string(raw), 10); !ok {
-				return errors.New("invalid durable signer usage counter")
+		reservations := make([]signerOperationReservationV2, 0, len(reservationRequirements))
+		for _, requirement := range reservationRequirements {
+			assetPolicy, policyErr := policyAssetByNameV2(policy, requirement.Asset)
+			if policyErr != nil {
+				return policyErr
 			}
-		}
-		next := new(big.Int).Add(current, intent.Amount)
-		if next.Cmp(maxDaily) > 0 {
-			return errors.New("policy daily cap exceeded")
-		}
-		if err := usage.Put(usageKey, []byte(next.String())); err != nil {
-			return err
+			maxDaily, ok := new(big.Int).SetString(assetPolicy.MaxDaily, 10)
+			if !ok || maxDaily.Sign() <= 0 {
+				return fmt.Errorf("policy daily cap must be positive for %s", requirement.Asset)
+			}
+			usageKey := dailyUsageKeyV2(walletID, requirement.Asset, usageBucket)
+			current := big.NewInt(0)
+			if raw := usage.Get(usageKey); raw != nil {
+				if _, ok := current.SetString(string(raw), 10); !ok {
+					return errors.New("invalid durable signer usage counter")
+				}
+			}
+			next := new(big.Int).Add(current, requirement.Amount)
+			if next.Cmp(maxDaily) > 0 {
+				return fmt.Errorf("policy daily cap exceeded for %s", requirement.Asset)
+			}
+			if err := usage.Put(usageKey, []byte(next.String())); err != nil {
+				return err
+			}
+			reservations = append(reservations, signerOperationReservationV2{
+				Asset: requirement.Asset, Amount: requirement.Amount.String(), UsageBucket: usageBucket,
+			})
 		}
 		timestamp := timestampV2(now)
 		operation = signerOperationV2{
@@ -339,6 +387,7 @@ func (s *signerStoreV2) reserveOperation(req signerExecuteRequestV2, intent norm
 			PolicyHash:        policy.Hash,
 			Asset:             intent.Asset,
 			Amount:            intent.Amount.String(),
+			Reservations:      reservations,
 			State:             operationReserved,
 			ReservationActive: true,
 			UsageBucket:       usageBucket,
@@ -429,8 +478,18 @@ func (s *signerStoreV2) claimReservedOperation(requestID string) (signerOperatio
 	return operation, operation.ExecutionAttempt, claimed, err
 }
 
-func (s *signerStoreV2) markBroadcast(requestID, signature, transactionDigest string) (signerOperationV2, error) {
-	return s.markBroadcastClaim(requestID, 0, signature, transactionDigest)
+func (s *signerStoreV2) markBroadcast(requestID, signature string, signedRaw []byte) (signerOperationV2, error) {
+	if len(signedRaw) == 0 {
+		return signerOperationV2{}, errors.New("exact signed transaction bytes are required before broadcast")
+	}
+	digest := sha256.Sum256(signedRaw)
+	return s.markBroadcastClaim(
+		requestID,
+		0,
+		signature,
+		"sha256:"+hex.EncodeToString(digest[:]),
+		base64.StdEncoding.EncodeToString(signedRaw),
+	)
 }
 
 func (s *signerStoreV2) markBroadcastClaim(requestID string, attempt uint64, signature, transactionDigest string, signedTxBase64 ...string) (signerOperationV2, error) {
@@ -447,20 +506,18 @@ func (s *signerStoreV2) markBroadcastClaim(requestID string, attempt uint64, sig
 		if !strings.HasPrefix(strings.TrimSpace(transactionDigest), "sha256:") {
 			return errors.New("transaction digest is required before broadcast")
 		}
-		if len(signedTxBase64) > 1 {
-			return errors.New("at most one signed transaction artifact may be persisted")
+		if len(signedTxBase64) != 1 {
+			return errors.New("exact signed transaction artifact is required before broadcast")
 		}
-		if len(signedTxBase64) == 1 {
-			raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(signedTxBase64[0]))
-			if err != nil || len(raw) == 0 || len(raw) > 1644 {
-				return errors.New("signed transaction artifact is invalid")
-			}
-			digest := sha256.Sum256(raw)
-			if "sha256:"+hex.EncodeToString(digest[:]) != strings.TrimSpace(transactionDigest) {
-				return errors.New("signed transaction artifact digest mismatch")
-			}
-			operation.SignedTxBase64 = strings.TrimSpace(signedTxBase64[0])
+		raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(signedTxBase64[0]))
+		if err != nil || len(raw) == 0 || len(raw) > 1644 {
+			return errors.New("signed transaction artifact is invalid")
 		}
+		digest := sha256.Sum256(raw)
+		if "sha256:"+hex.EncodeToString(digest[:]) != strings.TrimSpace(transactionDigest) {
+			return errors.New("signed transaction artifact digest mismatch")
+		}
+		operation.SignedTxBase64 = strings.TrimSpace(signedTxBase64[0])
 		operation.State = operationBroadcast
 		operation.Signature = strings.TrimSpace(signature)
 		operation.TransactionDigest = strings.TrimSpace(transactionDigest)
@@ -599,6 +656,30 @@ func (s *signerStoreV2) updateOperation(requestID string, mutate func(*signerOpe
 }
 
 func releaseUsageReservationV2(tx *bolt.Tx, operation signerOperationV2) error {
+	if len(operation.Reservations) > 0 {
+		for _, reservation := range operation.Reservations {
+			amount, ok := new(big.Int).SetString(reservation.Amount, 10)
+			if !ok || amount.Sign() <= 0 || strings.TrimSpace(reservation.Asset) == "" || strings.TrimSpace(reservation.UsageBucket) == "" {
+				return errors.New("invalid signer operation reservation")
+			}
+			usage := tx.Bucket(bucketSignerUsageV2)
+			key := dailyUsageKeyV2(operation.WalletID, reservation.Asset, reservation.UsageBucket)
+			current := big.NewInt(0)
+			if raw := usage.Get(key); raw != nil {
+				if _, ok := current.SetString(string(raw), 10); !ok {
+					return errors.New("invalid durable signer usage counter")
+				}
+			}
+			if current.Cmp(amount) < 0 {
+				return errors.New("durable signer usage counter underflow")
+			}
+			current.Sub(current, amount)
+			if err := usage.Put(key, []byte(current.String())); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	amount, ok := new(big.Int).SetString(operation.Amount, 10)
 	if !ok || amount.Sign() <= 0 {
 		return errors.New("invalid signer operation reservation amount")

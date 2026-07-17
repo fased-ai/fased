@@ -148,7 +148,15 @@ export type WalletSendApprovalRequest = {
   taskLedgerId?: string;
   createdAt: string;
   expiresAt: string;
-  status: "pending" | "approved" | "rejected" | "executed" | "failed" | "expired";
+  status:
+    | "pending"
+    | "executing"
+    | "approved"
+    | "unknown"
+    | "rejected"
+    | "executed"
+    | "failed"
+    | "expired";
   requestedBy: string;
   approvedBy?: string;
   rejectedBy?: string;
@@ -197,7 +205,11 @@ export type WalletSendApprovalRequest = {
     signerIntentType?: string;
     signerPolicyHash?: string;
     signerIntentDigest?: string;
-    signerArtifactKind?: "solana-transaction" | "domain-separated-message";
+    signerSemanticIntent?: unknown;
+    signerArtifactKind?:
+      | "solana-transaction"
+      | "domain-separated-message"
+      | "jupiter-trigger-state";
     signerArtifactDigest?: string;
     signerTransactionDigest?: string;
     signerStateDigest?: string;
@@ -1493,7 +1505,7 @@ export type WalletSignerReviewAuthorizationBegin = {
     intentType: string;
     intentDigest: string;
     semanticIntent: unknown;
-    artifactKind: "solana-transaction" | "domain-separated-message";
+    artifactKind: "solana-transaction" | "domain-separated-message" | "jupiter-trigger-state";
     artifactDigest: string;
     transactionDigest?: string;
     stateDigest?: string;
@@ -1510,6 +1522,38 @@ export type WalletSignerReviewAuthorizationBegin = {
   };
   options: unknown;
 };
+
+function canonicalSignerSemanticIntent(value: unknown): string {
+  if (value === null || typeof value === "string" || typeof value === "boolean") {
+    return JSON.stringify(value);
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      throw new Error("signer semantic intent contains a non-finite number");
+    }
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => canonicalSignerSemanticIntent(entry)).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .filter((key) => record[key] !== undefined)
+      .toSorted()
+      .map((key) => `${JSON.stringify(key)}:${canonicalSignerSemanticIntent(record[key])}`)
+      .join(",")}}`;
+  }
+  throw new Error("signer semantic intent is missing or unsupported");
+}
+
+function signerSemanticIntentsMatch(left: unknown, right: unknown): boolean {
+  try {
+    return canonicalSignerSemanticIntent(left) === canonicalSignerSemanticIntent(right);
+  } catch {
+    return false;
+  }
+}
 
 export function signerAuthorizationMatchesWalletApproval(
   authorization: WalletSignerReviewAuthorizationBegin,
@@ -1528,6 +1572,7 @@ export function signerAuthorizationMatchesWalletApproval(
     binding.intentType === payload.signerIntentType?.trim() &&
     binding.policyHash === payload.signerPolicyHash?.trim() &&
     binding.intentDigest === payload.signerIntentDigest?.trim() &&
+    signerSemanticIntentsMatch(binding.semanticIntent, payload.signerSemanticIntent) &&
     binding.artifactKind === payload.signerArtifactKind &&
     binding.artifactDigest === payload.signerArtifactDigest?.trim() &&
     sameOptional(binding.transactionDigest, payload.signerTransactionDigest) &&

@@ -49,6 +49,7 @@ type signerConfig struct {
 	masterKeyPath     string
 	webauthnRPID      string
 	webauthnOrigins   string
+	jupiterAPIKeyPath string
 	updateGatePath    string
 	readOnly          bool
 	rateWindow        time.Duration
@@ -197,7 +198,7 @@ func mustValidate(req request, cfg signerConfig) error {
 		if len(req.Request) > 0 || req.Chain != "" || req.WalletID != "" {
 			return errors.New("invalid signer request")
 		}
-	case "v2.webauthn.registration.begin", "v2.webauthn.registration.finish":
+	case "v2.webauthn.registration.begin", "v2.webauthn.registration.finish", "v2.webauthn.credentials.revoke":
 		if len(req.Request) == 0 || req.Chain != "" || req.WalletID != "" {
 			return errors.New("invalid signer request")
 		}
@@ -205,11 +206,11 @@ func mustValidate(req request, cfg signerConfig) error {
 		if len(req.Request) == 0 || req.Chain != "" || strings.TrimSpace(req.WalletID) == "" {
 			return errors.New("invalid signer request")
 		}
-	case "v2.network.get", "v2.policy.get", "v2.wallet.get", "v2.wallet.reencrypt":
+	case "v2.network.get", "v2.policy.get", "v2.wallet.get", "v2.wallet.reencrypt", "v2.wallet.rotation.status", "v2.jupiter.trigger.history":
 		if len(req.Request) > 0 || req.Chain != "" || strings.TrimSpace(req.WalletID) == "" {
 			return errors.New("invalid signer request")
 		}
-	case "v2.network.put", "v2.policy.put", "v2.policy.tighten", "v2.wallet.create", "v2.wallet.import", "v2.wallet.importLegacy", "v2.execute", "v2.review.get", "v2.review.prepare", "v2.review.execute", "v2.operation.get", "v2.operation.reconcile":
+	case "v2.network.put", "v2.policy.put", "v2.policy.tighten", "v2.wallet.create", "v2.wallet.import", "v2.wallet.importLegacy", "v2.wallet.rotation.create", "v2.wallet.rotation.commit", "v2.execute", "v2.review.get", "v2.review.prepare", "v2.review.execute", "v2.operation.get", "v2.operation.reconcile":
 		if len(req.Request) == 0 || req.Chain != "" || strings.TrimSpace(req.WalletID) == "" {
 			return errors.New("invalid signer request")
 		}
@@ -298,14 +299,15 @@ func parseArgs() signerConfig {
 			strings.TrimSpace(os.Getenv("FASED_WALLET_LOCAL_SIGNER_MASTER_KEY")),
 			filepath.Join(stateRoot, "signerd-v2.master.key"),
 		),
-		webauthnRPID:    strings.TrimSpace(os.Getenv("FASED_WALLET_WEBAUTHN_RP_ID")),
-		webauthnOrigins: strings.TrimSpace(os.Getenv("FASED_WALLET_WEBAUTHN_ORIGINS")),
-		updateGatePath:  strings.TrimSpace(os.Getenv("FASED_WALLET_LOCAL_SIGNER_UPDATE_GATE")),
-		readOnly:        os.Getenv("FASED_WALLET_LOCAL_SIGNER_READ_ONLY") == "1",
-		rateWindow:      time.Duration(getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WINDOW_MS", 10_000)) * time.Millisecond,
-		auditMax:        getenvInt64("FASED_WALLET_LOCAL_SIGNER_AUDIT_MAX_BYTES", 1_048_576),
-		dropUID:         getenvInt("FASED_WALLET_LOCAL_SIGNER_DROP_UID", 0),
-		dropGID:         getenvInt("FASED_WALLET_LOCAL_SIGNER_DROP_GID", 0),
+		webauthnRPID:      strings.TrimSpace(os.Getenv("FASED_WALLET_WEBAUTHN_RP_ID")),
+		webauthnOrigins:   strings.TrimSpace(os.Getenv("FASED_WALLET_WEBAUTHN_ORIGINS")),
+		jupiterAPIKeyPath: strings.TrimSpace(os.Getenv("FASED_WALLET_JUPITER_API_KEY_FILE")),
+		updateGatePath:    strings.TrimSpace(os.Getenv("FASED_WALLET_LOCAL_SIGNER_UPDATE_GATE")),
+		readOnly:          os.Getenv("FASED_WALLET_LOCAL_SIGNER_READ_ONLY") == "1",
+		rateWindow:        time.Duration(getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WINDOW_MS", 10_000)) * time.Millisecond,
+		auditMax:          getenvInt64("FASED_WALLET_LOCAL_SIGNER_AUDIT_MAX_BYTES", 1_048_576),
+		dropUID:           getenvInt("FASED_WALLET_LOCAL_SIGNER_DROP_UID", 0),
+		dropGID:           getenvInt("FASED_WALLET_LOCAL_SIGNER_DROP_GID", 0),
 	}
 	flags := flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 	flags.StringVar(&cfg.socketPath, "socket", cfg.socketPath, "unix socket path")
@@ -314,6 +316,7 @@ func parseArgs() signerConfig {
 	flags.StringVar(&cfg.masterKeyPath, "master-key", cfg.masterKeyPath, "signer-owned 0600 master key file path")
 	flags.StringVar(&cfg.webauthnRPID, "webauthn-rp-id", cfg.webauthnRPID, "root-configured WebAuthn relying party ID")
 	flags.StringVar(&cfg.webauthnOrigins, "webauthn-origins", cfg.webauthnOrigins, "comma-separated exact WebAuthn origin allowlist")
+	flags.StringVar(&cfg.jupiterAPIKeyPath, "jupiter-api-key-file", cfg.jupiterAPIKeyPath, "signer-owned private Jupiter API key file")
 	flags.StringVar(&cfg.updateGatePath, "update-gate", cfg.updateGatePath, "root-owned gate that blocks application-socket mutations during paired updates")
 	flags.StringVar(&socketModeRaw, "socket-mode", socketModeRaw, "application socket mode (octal, default 0600)")
 	flags.StringVar(&cfg.socketGroup, "socket-group", cfg.socketGroup, "private group allowed to use the application socket")
@@ -321,6 +324,7 @@ func parseArgs() signerConfig {
 	flags.StringVar(&cfg.auditLog, "audit-log", "", "audit log path (default <socket>.audit.jsonl)")
 	flags.BoolVar(&cfg.readOnly, "read-only", cfg.readOnly, "read-only mode (health/getAddresses/getBalance only)")
 	_ = flags.Parse(os.Args[1:])
+	cfg.jupiterAPIKeyPath = resolveSignerJupiterAPIKeyPathV2(cfg.jupiterAPIKeyPath, cfg.stateDBPath)
 
 	mode, err := parseModeV2(socketModeRaw)
 	if err != nil {
@@ -347,6 +351,9 @@ func parseArgs() signerConfig {
 		"v2.wallet.import":                getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WALLET", 30),
 		"v2.wallet.importLegacy":          getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WALLET", 30),
 		"v2.wallet.reencrypt":             getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WALLET", 30),
+		"v2.wallet.rotation.create":       getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_ROTATION_ADMIN", 10),
+		"v2.wallet.rotation.status":       getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_ROTATION_ADMIN", 60),
+		"v2.wallet.rotation.commit":       getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_ROTATION_ADMIN", 10),
 		"v2.execute":                      getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_EXECUTE", 60),
 		"v2.operation.get":                getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_OPERATION", 300),
 		"v2.operation.reconcile":          getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_OPERATION", 120),
@@ -354,6 +361,8 @@ func parseArgs() signerConfig {
 		"v2.webauthn.registration.begin":  getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WEBAUTHN_ADMIN", 20),
 		"v2.webauthn.registration.finish": getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WEBAUTHN_ADMIN", 20),
 		"v2.webauthn.credentials.list":    getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WEBAUTHN_ADMIN", 60),
+		"v2.webauthn.credentials.revoke":  getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WEBAUTHN_ADMIN", 20),
+		"v2.jupiter.trigger.history":      getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_OPERATION", 120),
 		"v2.review.authorization.begin":   getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_REVIEW_AUTH", 60),
 		"v2.review.authorization.finish":  getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_REVIEW_AUTH", 60),
 		"v2.review.prepare":               getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_REVIEW", 60),
@@ -419,6 +428,15 @@ func userHomeDir() string {
 }
 
 func main() {
+	identity, identityErr := signerReleaseIdentity()
+	if identityErr != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "fased-signerd: invalid build identity: %s\n", identityErr)
+		os.Exit(1)
+	}
+	if len(os.Args) == 2 && (os.Args[1] == "--version" || os.Args[1] == "-version") {
+		_, _ = fmt.Fprintln(os.Stdout, formatSignerVersionV2(identity))
+		return
+	}
 	if filepath.Base(os.Args[0]) == "fased-signer-enroll" {
 		applyProcessDumpHardening()
 		home, err := os.UserHomeDir()
@@ -451,6 +469,9 @@ func main() {
 }
 
 func run(cfg signerConfig) error {
+	if _, err := signerReleaseIdentity(); err != nil {
+		return fmt.Errorf("invalid signer build identity: %w", err)
+	}
 	if err := acquirePidLock(cfg.pidFile); err != nil {
 		return err
 	}
@@ -470,7 +491,22 @@ func run(cfg signerConfig) error {
 	if err != nil {
 		return err
 	}
-	service := &signerServiceV2{store: store, keys: keys, webauthn: webauthn}
+	var trigger *signerJupiterTriggerClientV2
+	if _, statErr := os.Lstat(cfg.jupiterAPIKeyPath); statErr == nil {
+		apiKey, keyErr := readSignerJupiterAPIKeyFileV2(cfg.jupiterAPIKeyPath)
+		if keyErr != nil {
+			return keyErr
+		}
+		trigger, keyErr = newSignerJupiterTriggerClientV2(apiKey)
+		zeroBytes(apiKey)
+		if keyErr != nil {
+			return keyErr
+		}
+		defer trigger.close()
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		return errors.New("inspect signer-owned Jupiter API key file")
+	}
+	service := &signerServiceV2{store: store, keys: keys, webauthn: webauthn, trigger: trigger}
 
 	applicationListener, err := listenUnixSocketV2(cfg.socketPath, cfg.socketMode, cfg.socketGroup)
 	if err != nil {
@@ -544,15 +580,10 @@ func handleConn(conn net.Conn, cfg signerConfig, limiter *rateLimiter, audit *au
 		}
 		_ = conn.SetReadDeadline(time.Time{})
 		line = bytesTrimNewline(line)
-		var raw map[string]any
-		if err := json.Unmarshal(line, &raw); err != nil {
+		req, raw, err := decodeSignerEnvelopeV2(line)
+		if err != nil {
 			_, _ = conn.Write([]byte(`{"ok":false,"error":"invalid signer request"}` + "\n"))
 			audit.write(map[string]any{"ts": time.Now().UTC().Format(time.RFC3339Nano), "ok": false, "error": "invalid_json"})
-			continue
-		}
-		var req request
-		if err := json.Unmarshal(line, &req); err != nil {
-			_, _ = conn.Write([]byte(`{"ok":false,"error":"invalid signer request"}` + "\n"))
 			continue
 		}
 		if err := mustValidate(req, cfg); err != nil {

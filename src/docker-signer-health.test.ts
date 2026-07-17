@@ -14,10 +14,24 @@ const healthScript = fileURLToPath(new URL("../scripts/docker-signer-health.mjs"
 const requiredFeatures = [
   "failClosedPolicies",
   "durableCaps",
+  "atomicMultiAssetCaps",
+  "signerControlledNativeFeeCaps",
   "atomicIdempotency",
   "signerOwnedKeys",
   "typedSolanaTransactions",
 ];
+const developmentRelease = {
+  version: "dev",
+  commit: "unknown",
+  buildInputDigest: "unknown",
+  development: true,
+};
+const productionRelease = {
+  version: "9.9.9",
+  commit: "a".repeat(40),
+  buildInputDigest: `sha256:${"b".repeat(64)}`,
+  development: false,
+};
 
 const roots: string[] = [];
 
@@ -31,8 +45,10 @@ describe("Docker native signer health", () => {
       ok: true,
       result: {
         ready: true,
+        release: developmentRelease,
         capabilities: {
           protocol: { current: 2, min: 2, max: 2 },
+          nativeFeeReservationLamports: 5_000_000,
           features: requiredFeatures,
         },
       },
@@ -49,6 +65,60 @@ describe("Docker native signer health", () => {
       }),
     ).toBe(false);
     expect(validateDockerSignerHealthEnvelope({ ok: true, result: { ready: false } })).toBe(false);
+    expect(
+      validateDockerSignerHealthEnvelope({
+        ...healthy,
+        result: { ...healthy.result, release: undefined },
+      }),
+    ).toBe(false);
+    expect(
+      validateDockerSignerHealthEnvelope({
+        ...healthy,
+        result: {
+          ...healthy.result,
+          capabilities: {
+            ...healthy.result.capabilities,
+            nativeFeeReservationLamports: 5_000_001,
+          },
+        },
+      }),
+    ).toBe(false);
+  });
+
+  it("binds production health to the complete expected release identity", () => {
+    const healthy = {
+      ok: true,
+      result: {
+        ready: true,
+        release: productionRelease,
+        capabilities: {
+          protocol: { current: 2, min: 2, max: 2 },
+          nativeFeeReservationLamports: 5_000_000,
+          features: requiredFeatures,
+        },
+      },
+    };
+    const expected = {
+      expectedVersion: productionRelease.version,
+      expectedCommit: productionRelease.commit,
+      expectedBuildInputDigest: productionRelease.buildInputDigest,
+      expectedDevelopment: false,
+      requireProduction: true,
+    };
+
+    expect(validateDockerSignerHealthEnvelope(healthy, expected)).toBe(true);
+    expect(
+      validateDockerSignerHealthEnvelope(healthy, {
+        ...expected,
+        expectedCommit: "c".repeat(40),
+      }),
+    ).toBe(false);
+    expect(
+      validateDockerSignerHealthEnvelope(
+        { ...healthy, result: { ...healthy.result, release: developmentRelease } },
+        expected,
+      ),
+    ).toBe(false);
   });
 
   it("probes the Unix socket and rejects an incompatible response", async () => {
@@ -62,8 +132,10 @@ describe("Docker native signer health", () => {
             ok: true,
             result: {
               ready: true,
+              release: developmentRelease,
               capabilities: {
                 protocol: { current: 2, min: 2, max: 2 },
+                nativeFeeReservationLamports: 5_000_000,
                 features: requiredFeatures,
               },
             },

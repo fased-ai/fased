@@ -26,7 +26,9 @@ import {
   submitSatRequestBondUnlock,
   submitSatSyncBondStakingPosition,
   submitSatSyncBondStakingRewards,
+  runWithSatSubmissionWorkflow,
 } from "../../extensions/sat-mining/src/solana-submit.js";
+import { digestSatSubmissionIntent } from "../../extensions/sat-mining/src/submission-ledger.js";
 import { resolveAgentAvatar } from "../agents/identity-avatar.js";
 import {
   A2UI_PATH,
@@ -187,6 +189,7 @@ import { createA2aHandler } from "./a2a-http.js";
 import type { AuthRateLimiter } from "./auth-rate-limit.js";
 import {
   authorizeGatewayConnect,
+  isDirectLoopbackRequest,
   isLocalDirectRequest,
   type GatewayAuthResult,
   type ResolvedGatewayAuth,
@@ -234,7 +237,7 @@ import {
 } from "./net.js";
 import { handleOpenAiHttpRequest } from "./openai-http.js";
 import { buildGatewayProbePayload } from "./probe-payload.js";
-import { canonicalizePathVariant } from "./security-path.js";
+import { canonicalizePathVariant, isPathProtectedByPrefixes } from "./security-path.js";
 import type { ReadinessChecker } from "./server/readiness.js";
 import type { GatewayWsClient } from "./server/ws-types.js";
 import { handleToolsInvokeHttpRequest } from "./tools-invoke-http.js";
@@ -245,6 +248,14 @@ type HookAuthFailure = { count: number; windowStartedAtMs: number };
 const HOOK_AUTH_FAILURE_LIMIT = 20;
 const HOOK_AUTH_FAILURE_WINDOW_MS = 60_000;
 const HOOK_AUTH_FAILURE_TRACK_MAX = 2048;
+const FEDERATION_HTTP_ROUTE_PREFIXES = ["/api/federation"] as const;
+// These two peer-facing routes perform mandatory directory-bound Ed25519 v2
+// authentication in federation-http. Every other federation route stays
+// behind the local Gateway auth boundary.
+const SIGNED_FEDERATION_INBOUND_ROUTES = new Set([
+  "/api/federation/marketplace/orders",
+  "/api/federation/marketplace/deliveries",
+]);
 const CONTROL_UI_SETTINGS_STORAGE_KEY = "fased.control.settings.v1";
 const CONTROL_UI_TOKEN_LOCAL_STORAGE_KEY = "fased.control.token.local.v1";
 const CONTROL_UI_TOKEN_SESSION_STORAGE_KEY = "fased.control.token.session.v1";
@@ -2202,6 +2213,7 @@ type FederationBondMutationInput = {
   amountSat?: string;
   tier?: "basic-bond" | "operator-bond";
   autoSubmitProof?: boolean;
+  idempotencyKey?: string;
 };
 
 function parseFederationBondWalletInput(input: unknown): FederationBondWalletInput {
@@ -2227,7 +2239,17 @@ function parseFederationBondMutationInput(input: unknown): FederationBondMutatio
     amountSat: typeof body.amountSat === "string" ? body.amountSat.trim() || undefined : undefined,
     tier: body.tier === "basic-bond" || body.tier === "operator-bond" ? body.tier : undefined,
     autoSubmitProof: typeof body.autoSubmitProof === "boolean" ? body.autoSubmitProof : undefined,
+    idempotencyKey:
+      typeof body.idempotencyKey === "string" ? body.idempotencyKey.trim() || undefined : undefined,
   };
+}
+
+function normalizeFederationBondIdempotencyKey(value: string): string {
+  const normalized = value.trim();
+  if (!normalized || normalized.length > 160 || /[^\x20-\x7e]/u.test(normalized)) {
+    throw new Error("idempotency key must contain 1-160 printable characters");
+  }
+  return normalized;
 }
 
 function validateFederationBondVaultWallet(
@@ -2491,11 +2513,15 @@ async function runFederationBondProof(params: {
   const pendingProof = await loadPersistedFederationBondProof(process.env);
   if (
     pendingProof &&
-    !pendingProof.verifiedAt &&
     pendingProof.walletId === params.walletId &&
     pendingProof.bondId === bondView.address &&
+    pendingProof.bondAmountRaw === bondView.amountRaw &&
+    pendingProof.bondTier === bondView.tierLabel &&
     Date.parse(pendingProof.expiresAt) > Date.now()
   ) {
+    if (pendingProof.verifiedAt) {
+      return { proof: pendingProof };
+    }
     return await submitFederationBondProof({
       env: process.env,
       cfg: params.cfg,
@@ -3586,6 +3612,10 @@ function isCanvasPath(pathname: string): boolean {
   );
 }
 
+function isSignedFederationInboundRequest(req: IncomingMessage): boolean {
+  return req.method === "POST" && SIGNED_FEDERATION_INBOUND_ROUTES.has(req.url ?? "");
+}
+
 function hasAuthorizedWsClientForIp(clients: Set<GatewayWsClient>, clientIp: string): boolean {
   for (const client of clients) {
     if (client.clientIp && client.clientIp === clientIp) {
@@ -4375,8 +4405,12 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
         });
       };
       const isRemoteHost = host ? !isLocalHostName(host) : true;
+      const tailscaleProxyConfigured =
+        resolvedAuth.allowTailscale || (configSnapshot.gateway?.tailscale?.mode ?? "off") !== "off";
+      const directLocalRequest =
+        !tailscaleProxyConfigured && isDirectLoopbackRequest(req, trustedProxies);
       const ensureWalletApiAuthorized = async (): Promise<boolean> => {
-        if (!isRemoteHost) {
+        if (directLocalRequest) {
           return true;
         }
         let authorized = false;
@@ -4708,8 +4742,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           return;
         }
 
-        const isRemoteHost = host ? !isLocalHostName(host) : true;
-        if (isRemoteHost) {
+        if (!directLocalRequest) {
           let authorized = false;
           const bearer = getBearerToken(req);
           if (controlUiLogin && host) {
@@ -4844,6 +4877,29 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           return;
         }
         const parsed = parseFederationBondMutationInput(body.value);
+        const headerIdempotencyKey = Array.isArray(req.headers["idempotency-key"])
+          ? req.headers["idempotency-key"][0]
+          : req.headers["idempotency-key"];
+        let idempotencyKey: string;
+        try {
+          idempotencyKey = normalizeFederationBondIdempotencyKey(
+            parsed.idempotencyKey ??
+              (typeof headerIdempotencyKey === "string" && headerIdempotencyKey.trim()
+                ? headerIdempotencyKey
+                : `derived:${digestSatSubmissionIntent(body.value)}`),
+          );
+        } catch (error) {
+          sendLoginResponse(400, {
+            ok: false,
+            error: {
+              code: "invalid_idempotency_key",
+              message: error instanceof Error ? error.message : String(error),
+            },
+          });
+          return;
+        }
+        const runBondSubmission = async <T>(step: string, task: () => Promise<T>): Promise<T> =>
+          await runWithSatSubmissionWorkflow(`http:${requestPath}:${idempotencyKey}:${step}`, task);
         const cfg = loadConfig();
         const walletId = parsed.walletId ?? resolveFederationBondDefaultWalletId(cfg);
         if (!walletId) {
@@ -4901,11 +4957,19 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
             try {
               await retrySolanaRateLimit(
                 "sync bond staking rewards",
-                async () => await submitSatSyncBondStakingRewards(bondCfg as never),
+                async () =>
+                  await runBondSubmission(
+                    "sync-staking-rewards",
+                    async () => await submitSatSyncBondStakingRewards(bondCfg as never),
+                  ),
               );
               await retrySolanaRateLimit(
                 "sync bond staking position",
-                async () => await submitSatSyncBondStakingPosition(bondCfg as never),
+                async () =>
+                  await runBondSubmission(
+                    "sync-staking-position",
+                    async () => await submitSatSyncBondStakingPosition(bondCfg as never),
+                  ),
               );
               invalidateSatReadCaches({ preserveStable: true });
             } catch (error) {
@@ -4927,9 +4991,13 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           if (requestPath === "/api/federation/bond/open") {
             const amountSat = parsed.amountSat ?? resolveDefaultBondAmountSat(parsed.tier);
             const amount = parseSatAmountToRawNumber(amountSat);
-            tx = await submitSatOpenBondPosition(bondCfg as never, {
-              amountRaw: amount.safeInteger,
-            });
+            tx = await runBondSubmission(
+              "open",
+              async () =>
+                await submitSatOpenBondPosition(bondCfg as never, {
+                  amountRaw: amount.safeInteger,
+                }),
+            );
             invalidateSatReadCaches({ preserveStable: true });
             liveBond = await readBond();
             if (liveBond?.statusLabel === "active") {
@@ -4937,16 +5005,23 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
               liveBond = await readBond();
             }
             if ((parsed.autoSubmitProof ?? true) && liveBond?.statusLabel === "active") {
-              const proof = await tryRunFederationBondProof({ cfg, walletId, liveBond });
+              const proof = await runBondSubmission(
+                "refresh-proof",
+                async () => await tryRunFederationBondProof({ cfg, walletId, liveBond }),
+              );
               proofSubmitted = proof.submitted;
               proofWarning = appendActionWarning(proofWarning, proof.warning ?? "");
             }
           } else if (requestPath === "/api/federation/bond/increase") {
             const amountSat = parsed.amountSat ?? "1";
             const amount = parseSatAmountToRawNumber(amountSat);
-            tx = await submitSatIncreaseBondPosition(bondCfg as never, {
-              amountRaw: amount.safeInteger,
-            });
+            tx = await runBondSubmission(
+              "increase",
+              async () =>
+                await submitSatIncreaseBondPosition(bondCfg as never, {
+                  amountRaw: amount.safeInteger,
+                }),
+            );
             invalidateSatReadCaches({ preserveStable: true });
             liveBond = await readBond();
             if (liveBond?.statusLabel === "active") {
@@ -4954,18 +5029,27 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
               liveBond = await readBond();
             }
             if ((parsed.autoSubmitProof ?? true) && liveBond?.statusLabel === "active") {
-              const proof = await tryRunFederationBondProof({ cfg, walletId, liveBond });
+              const proof = await runBondSubmission(
+                "refresh-proof",
+                async () => await tryRunFederationBondProof({ cfg, walletId, liveBond }),
+              );
               proofSubmitted = proof.submitted;
               proofWarning = appendActionWarning(proofWarning, proof.warning ?? "");
             }
           } else if (requestPath === "/api/federation/bond/request-unlock") {
-            tx = await submitSatRequestBondUnlock(bondCfg as never);
+            tx = await runBondSubmission(
+              "request-unlock",
+              async () => await submitSatRequestBondUnlock(bondCfg as never),
+            );
             invalidateSatReadCaches({ preserveStable: true });
             liveBond = await readBond();
             await syncBondStakingPositionForAction();
             liveBond = await readBond();
           } else if (requestPath === "/api/federation/bond/cancel-unlock") {
-            tx = await submitSatCancelBondUnlock(bondCfg as never);
+            tx = await runBondSubmission(
+              "cancel-unlock",
+              async () => await submitSatCancelBondUnlock(bondCfg as never),
+            );
             invalidateSatReadCaches({ preserveStable: true });
             liveBond = await readBond();
             if (liveBond?.statusLabel === "active") {
@@ -4981,14 +5065,20 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
                 );
               }
             }
-            tx = await submitSatFinalizeBondUnlock(bondCfg as never);
+            tx = await runBondSubmission(
+              "finalize-unlock",
+              async () => await submitSatFinalizeBondUnlock(bondCfg as never),
+            );
             invalidateSatReadCaches({ preserveStable: true });
             liveBond = await readBond();
             await syncBondStakingPositionForAction();
             liveBond = await readBond();
           } else if (requestPath === "/api/federation/bond/prove") {
             liveBond = await readBond();
-            await runFederationBondProof({ cfg, walletId, liveBond });
+            await runBondSubmission(
+              "proof",
+              async () => await runFederationBondProof({ cfg, walletId, liveBond }),
+            );
             proofSubmitted = true;
             liveBond = await readBond();
           } else if (requestPath === "/api/federation/bond/staking/init") {
@@ -4998,11 +5088,19 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           } else if (requestPath === "/api/federation/bond/staking/sync") {
             tx = await retrySolanaRateLimit(
               "sync bond staking rewards",
-              async () => await submitSatSyncBondStakingRewards(bondCfg as never),
+              async () =>
+                await runBondSubmission(
+                  "sync-staking-rewards",
+                  async () => await submitSatSyncBondStakingRewards(bondCfg as never),
+                ),
             );
             await retrySolanaRateLimit(
               "sync bond staking position",
-              async () => await submitSatSyncBondStakingPosition(bondCfg as never),
+              async () =>
+                await runBondSubmission(
+                  "sync-staking-position",
+                  async () => await submitSatSyncBondStakingPosition(bondCfg as never),
+                ),
             );
             invalidateSatReadCaches({ preserveStable: true });
             liveBond = await readBond();
@@ -5021,7 +5119,11 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
               stakingClaimedRaw = estimatedClaimRaw;
               tx = await retrySolanaRateLimit(
                 "claim bond staking rewards",
-                async () => await submitSatClaimBondStakingRewards(bondCfg as never),
+                async () =>
+                  await runBondSubmission(
+                    "claim-staking-rewards",
+                    async () => await submitSatClaimBondStakingRewards(bondCfg as never),
+                  ),
               );
             } else {
               proofWarning = "No claimable distributor SAT after sync.";
@@ -9315,7 +9417,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
                 : "wallet_provider_error";
             const message = walletDiagnosticErrorMessage(error);
             if (code === "wallet_provider_ambiguous") {
-              markWalletSendRequestBroadcastUnknown({
+              await markWalletSendRequestBroadcastUnknown({
                 requestId,
                 txHash: readWalletStandardReviewTxHash({ requestId, env: process.env }),
                 reason: message,
@@ -9942,7 +10044,23 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
       if (await a2aHandler(req, res)) {
         return;
       }
-      if (await handleFederationHttpRequest(req, res, {})) {
+      if (
+        isPathProtectedByPrefixes(requestPath, FEDERATION_HTTP_ROUTE_PREFIXES) &&
+        !isSignedFederationInboundRequest(req) &&
+        !(await ensureWalletApiAuthorized())
+      ) {
+        return;
+      }
+      if (
+        await handleFederationHttpRequest(req, res, {
+          peerAuthClientIp: resolveGatewayClientIp({
+            remoteAddr: req.socket?.remoteAddress ?? "",
+            forwardedFor: getHeader(req, "x-forwarded-for"),
+            realIp: getHeader(req, "x-real-ip"),
+            trustedProxies,
+          }),
+        })
+      ) {
         return;
       }
       if (await fedifyHandler(req, res)) {
@@ -9973,9 +10091,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
         ) {
           const bearerToken = getBearerToken(req);
           let pluginAuthOk = false;
-          if (resolvedAuth.mode === "none") {
-            pluginAuthOk = true;
-          } else if (resolvedAuth.mode === "token" && resolvedAuth.token) {
+          if (resolvedAuth.mode === "token" && resolvedAuth.token) {
             pluginAuthOk = Boolean(bearerToken && safeEqualSecret(resolvedAuth.token, bearerToken));
           } else if (resolvedAuth.mode === "password" && resolvedAuth.password) {
             pluginAuthOk = Boolean(

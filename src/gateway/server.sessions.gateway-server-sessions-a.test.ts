@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { WebSocket } from "ws";
+import { withEnvAsync } from "../test-utils/env.js";
 import { GATEWAY_CLIENT_IDS, GATEWAY_CLIENT_MODES } from "./protocol/client-info.js";
 import { startGatewayServerHarness, type GatewayServerHarness } from "./server.e2e-ws-harness.js";
 import { createToolSummaryPreviewTranscriptLines } from "./session-preview.test-helpers.js";
@@ -86,8 +87,9 @@ vi.mock("../plugins/hook-runner-global.js", async (importOriginal) => {
   };
 });
 
-vi.mock("../discord/monitor/thread-bindings.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../discord/monitor/thread-bindings.js")>();
+vi.mock("../discord/monitor/thread-bindings.lifecycle.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../discord/monitor/thread-bindings.lifecycle.js")>();
   return {
     ...actual,
     unbindThreadBindingsBySessionKey: (params: unknown) =>
@@ -207,6 +209,8 @@ describe("gateway server sessions", () => {
   });
 
   test("lists and patches session store via sessions.* RPC", async () => {
+    piSdkMock.enabled = true;
+    piSdkMock.models = [{ id: "gpt-test-a", name: "A", provider: "openai" }];
     const { dir, storePath } = await createSessionStoreDir();
     const now = Date.now();
     const recent = now - 30_000;
@@ -442,15 +446,15 @@ describe("gateway server sessions", () => {
     });
     expect(spawnedPatchedInvalidKey.ok).toBe(false);
 
-    piSdkMock.enabled = true;
-    piSdkMock.models = [{ id: "gpt-test-a", name: "A", provider: "openai" }];
-    const modelPatched = await rpcReq<{
-      ok: true;
-      entry: { modelOverride?: string; providerOverride?: string };
-    }>(ws, "sessions.patch", {
-      key: "agent:main:main",
-      model: "openai/gpt-test-a",
-    });
+    const modelPatched = await withEnvAsync({ OPENAI_API_KEY: "test-openai-key" }, async () =>
+      rpcReq<{
+        ok: true;
+        entry: { modelOverride?: string; providerOverride?: string };
+      }>(ws, "sessions.patch", {
+        key: "agent:main:main",
+        model: "openai/gpt-test-a",
+      }),
+    );
     expect(modelPatched.ok).toBe(true);
     expect(modelPatched.payload?.entry.modelOverride).toBe("gpt-test-a");
     expect(modelPatched.payload?.entry.providerOverride).toBe("openai");

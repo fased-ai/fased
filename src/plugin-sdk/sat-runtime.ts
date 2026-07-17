@@ -1,5 +1,6 @@
 export type { FasedAgentConfig } from "../config/config.js";
 export { loadConfig, resolveGatewayPort } from "../config/config.js";
+export { resolveStateDir } from "../config/paths.js";
 export {
   SAT_RUNTIME_DEFAULTS,
   resolveSatBondProgramIdFromEnv,
@@ -40,6 +41,8 @@ export {
 } from "../infra/device-identity.js";
 export { createSubsystemLogger } from "../logging/subsystem.js";
 export { resolvePreferredFasedAgentTmpDir } from "../infra/tmp-fased-dir.js";
+export { withFileLock } from "./file-lock.js";
+export type { FileLockOptions } from "./file-lock.js";
 export { fetchSolanaWalletAssetsViaRpc } from "../wallet/solana-assets.js";
 export {
   callLocalSocketSigner,

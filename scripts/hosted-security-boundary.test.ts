@@ -3,6 +3,14 @@ import { describe, expect, it } from "vitest";
 
 const install = fs.readFileSync(new URL("../install.sh", import.meta.url), "utf8");
 const managed = fs.readFileSync(new URL("./start-managed.sh", import.meta.url), "utf8");
+const networkAdmin = fs.readFileSync(
+  new URL("./fased-signer-network-hosting.sh", import.meta.url),
+  "utf8",
+);
+const onboardingHostSecurity = fs.readFileSync(
+  new URL("../src/wizard/onboarding.host-security.ts", import.meta.url),
+  "utf8",
+);
 
 function sliceBetween(source: string, start: string, end: string): string {
   const startIndex = source.indexOf(start);
@@ -13,16 +21,39 @@ function sliceBetween(source: string, start: string, end: string): string {
 }
 
 describe("hosted signer security boundary", () => {
-  it("never grants the Gateway sudo and uses only the temporary bootstrap during install", () => {
+  it("enters privileged Hosting setup only through an immutable attested release bundle", () => {
+    expect(install).toContain("VPS Hosting requires an explicit tagged release");
+    expect(install).toContain('gh attestation verify "$archive"');
+    expect(install).toContain('--source-ref "refs/tags/v${release_version}"');
+    expect(install).toContain("/var/lib/fased-installer/install.lock");
+    expect(install).toContain("flock -x 9");
+    expect(install).toContain('local root_store="${release_parent}/${actual}"');
+    expect(install).toContain(
+      "Refusing privileged Hosting setup from an unverified or caller-owned source tree",
+    );
+    expect(install).toContain("Refusing privileged Hosting setup from a Git checkout");
+    expect(install).toContain("! -user root -o -perm /022");
+    expect(install).toContain("! -type f ! -type d");
+    expect(install).toContain("-type f -links +1");
+    expect(install).toContain(
+      "printf 'version=%s\\nsha256=%s\\nrelease_manifest_sha256=%s\\ncommit=%s\\n'",
+    );
+    expect(install).toContain('tagged_head" == "$attested_commit');
+    expect(install).toContain('tagged_package_version" == "$HOSTING_RELEASE');
+    expect(install).not.toContain('tagged_head" == "$expected_tag_head');
+    expect(install).not.toContain('rm -rf -- "$root_store"');
+  });
+
+  it("never grants the Gateway sudo or an app-visible root control socket", () => {
     const rootFlow = sliceBetween(
       install,
-      'if [[ "$(id -u)" -eq 0 ]]; then\n  if [[ "$HOSTING_REQUESTED" -eq 1 ]]; then',
+      'if [[ "$(id -u)" -eq 0 ]]; then\n  assert_verified_hosting_root_source',
       'if [[ ! -f "$FASED_DIR/package.json"',
     );
     expect(rootFlow).toContain("ensure_host_boundary_accounts");
     expect(rootFlow).toContain("install_host_signer_and_updater_services");
     expect(rootFlow).toContain("migrate_legacy_hosted_signer_if_needed");
-    expect(rootFlow).toContain("start_host_bootstrap_channel");
+    expect(rootFlow).not.toContain("start_host_bootstrap_channel");
     expect(rootFlow).not.toContain("install_host_maintenance_sudoers");
     expect(rootFlow).not.toContain("install_host_signer_isolation_helper");
     expect(rootFlow).not.toContain("install_host_signer_maintenance_wrapper");
@@ -41,6 +72,10 @@ describe("hosted signer security boundary", () => {
     expect(install).not.toContain("ensure_host_signer_isolation_user()");
     expect(install).not.toContain("NOPASSWD:");
     expect(install).toContain("/usr/local/sbin/fased-signer-isolation");
+    expect(install).not.toContain("FASED_HOST_BOOTSTRAP_CTL=");
+    expect(install).not.toContain("FASED_HOST_BOOTSTRAP_SOCKET=");
+    expect(install).not.toContain("node /usr/local/libexec/fased-host-bootstrapd.mjs");
+    expect(install).toContain("FASED_HOST_ROOT_PREPARED=1");
   });
 
   it("cold starts use the external system signer and never start a hosted broker", () => {
@@ -100,12 +135,21 @@ describe("hosted signer security boundary", () => {
     );
   });
 
-  it("keeps hosted Tailscale administration in the temporary root bootstrap", () => {
+  it("keeps hosted Tailscale administration in the provider-console root phase", () => {
     expect(install).not.toContain("tailscale-set-operator-self");
     expect(install).not.toContain("tailscale set --operator");
     expect(managed).toContain(
       '[[ "${FASED_TAILSCALE_AUTO_SERVE:-1}" == "1" && "${FASED_HOST_PROFILE:-}" != "hosting" ]]',
     );
+    expect(install).toContain("prepare_hosting_root_prerequisites");
+    expect(install).toContain("tailnetSshConfirmed=true");
+    expect(onboardingHostSecurity).not.toContain("fased-host-maintenance");
+    expect(onboardingHostSecurity).not.toContain("tailscale up");
+    expect(onboardingHostSecurity).not.toContain("tailscale set");
+    expect(onboardingHostSecurity).not.toContain("firewall-cmd");
+    expect(onboardingHostSecurity).not.toContain("systemctl enable");
+    expect(onboardingHostSecurity).not.toContain("systemctl restart");
+    expect(onboardingHostSecurity).toContain('probe("sudo", ["-n", "true"])');
   });
 
   it("installs a hardened external signer with only the application socket group shared", () => {
@@ -124,6 +168,15 @@ describe("hosted signer security boundary", () => {
     expect(service).toContain("ProtectSystem=strict");
   });
 
+  it("keeps hosted network activation root-only and stdin-bound", () => {
+    expect(networkAdmin).toContain('if [[ "${EUID}" != "0" ]]');
+    expect(networkAdmin).toContain("--network-file");
+    expect(networkAdmin).toContain('file_owner" == "0"');
+    expect(networkAdmin).toContain('"$socket_mode" == "600"');
+    expect(networkAdmin).toContain('printf \'%s\\n\' "$request" | "${common[@]}" put');
+    expect(networkAdmin).not.toContain("FASED_HOST_BOOTSTRAP");
+  });
+
   it("moves legacy custody migration into the verified native signer binary", () => {
     const prepare = sliceBetween(
       install,
@@ -133,7 +186,7 @@ describe("hosted signer security boundary", () => {
     const commit = sliceBetween(
       install,
       "finalize_legacy_hosted_signer_migration()",
-      "start_host_bootstrap_channel()",
+      "assert_verified_hosting_root_source()",
     );
     for (const phase of [prepare, commit]) {
       expect(phase).toContain("/opt/fased/signer/fased-signerd admin migration hosted-v1");

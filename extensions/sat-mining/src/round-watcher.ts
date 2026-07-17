@@ -465,6 +465,7 @@ export function createSatRoundWatcherService(params: {
           api,
           method: "sat.withdrawMinerCapital",
           payload: { lamports: Number(missingLamports) },
+          workflowId: `round-watcher:cycle:${params.cycleId}:withdraw-operating-rent`,
         });
         walletSpendableLamports += missingLamports;
       } catch (error) {
@@ -486,6 +487,7 @@ export function createSatRoundWatcherService(params: {
           payload: {
             targetBalanceLamports: Number(targetReserveBalance),
           },
+          workflowId: `round-watcher:cycle:${params.cycleId}:treasury-reserve-refill`,
         });
       } catch (error) {
         if (isInsufficientLamportsError(error)) {
@@ -510,6 +512,7 @@ export function createSatRoundWatcherService(params: {
           api,
           method: "sat.topUpRegistryReserve",
           payload: { targetBalanceLamports: Number(targetReserveBalance) },
+          workflowId: `round-watcher:cycle:${params.cycleId}:wallet-reserve-top-up`,
         });
       } catch (error) {
         if (isInsufficientLamportsError(error)) {
@@ -1380,6 +1383,7 @@ export function createSatRoundWatcherService(params: {
               lamports: commitLamports,
               persistConfig: false,
             },
+            workflowId: `round-watcher:cycle:${cycleId}:set-active-commit`,
           });
         }
         await runSatGatewayMethod({

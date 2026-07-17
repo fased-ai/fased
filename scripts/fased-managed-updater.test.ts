@@ -7,6 +7,15 @@ import { PRE_V2_HOSTING_MIGRATION_MESSAGE, __testing } from "./fased-managed-upd
 
 const TRANSACTION_ID = "11111111-1111-4111-8111-111111111111";
 
+function signerRelease(version = "1.2.3") {
+  return {
+    version,
+    commit: "a".repeat(40),
+    buildInputDigest: `sha256:${"b".repeat(64)}`,
+    development: false,
+  };
+}
+
 async function withUnixServer(handler: (socket: net.Socket) => void) {
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-managed-updater-test-"));
   const socketPath = path.join(root, "request.sock");
@@ -96,6 +105,39 @@ describe("stable managed updater", () => {
     expect(__testing.archiveEntryIsSafe("/package/dist/entry.js", "package")).toBe(false);
     expect(__testing.archiveEntryIsSafe("package\\..\\escape", "package")).toBe(false);
     expect(__testing.archiveEntryIsSafe("other/dist/entry.js", "package")).toBe(false);
+  });
+
+  it("parses the generated Local signer environment without executing its command", async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-signer-env-test-"));
+    const signerEnvPath = path.join(root, "signer.env");
+    await fsp.writeFile(
+      signerEnvPath,
+      [
+        `export FASED_WALLET_LOCAL_SIGNER_SOCKET="${path.join(root, "app.sock")}"`,
+        `export FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET="${path.join(root, "control.sock")}"`,
+        `export FASED_WALLET_LOCAL_SIGNER_STATE_DB="${path.join(root, "state.db")}"`,
+        `export FASED_WALLET_LOCAL_SIGNER_MASTER_KEY="${path.join(root, "master.key")}"`,
+        'export FASED_WALLET_CHAINS="solana"',
+        'export FASED_WALLET_WEBAUTHN_RP_ID="localhost"',
+        'export FASED_WALLET_WEBAUTHN_ORIGINS="http://localhost:18789,http://localhost:18791"',
+        '"/verified/fased-signerd" --socket "$FASED_WALLET_LOCAL_SIGNER_SOCKET" --control-socket "$FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET" --state-db "$FASED_WALLET_LOCAL_SIGNER_STATE_DB" --master-key "$FASED_WALLET_LOCAL_SIGNER_MASTER_KEY"',
+        "",
+      ].join("\n"),
+      { mode: 0o600 },
+    );
+    try {
+      await expect(__testing.loadSignerEnvironment({ signerEnvPath })).resolves.toMatchObject({
+        FASED_WALLET_CHAINS: "solana",
+        FASED_WALLET_WEBAUTHN_RP_ID: "localhost",
+        FASED_WALLET_WEBAUTHN_ORIGINS: "http://localhost:18789,http://localhost:18791",
+      });
+      await fsp.appendFile(signerEnvPath, 'export FASED_WALLET_PRIVATE_KEY="forbidden"\n');
+      await expect(__testing.loadSignerEnvironment({ signerEnvPath })).rejects.toThrow(
+        "unsupported key FASED_WALLET_PRIVATE_KEY",
+      );
+    } finally {
+      await fsp.rm(root, { recursive: true, force: true });
+    }
   });
 
   it("activates the app and signer as one ordered transaction", async () => {
@@ -250,6 +292,34 @@ describe("stable managed updater", () => {
     }
   });
 
+  it("requires the root updater to return an exact production signer identity", async () => {
+    const server = await withUnixServer((socket) => {
+      socket.once("data", () => {
+        socket.end(
+          `${JSON.stringify({
+            ok: true,
+            transactionId: TRANSACTION_ID,
+            version: "1.2.3",
+            release: signerRelease(),
+          })}\n`,
+        );
+      });
+    });
+    try {
+      await expect(
+        __testing.requestHostedSignerTransaction(
+          "prepareRelease",
+          TRANSACTION_ID,
+          "1.2.3",
+          1000,
+          server.socketPath,
+        ),
+      ).resolves.toMatchObject({ release: signerRelease() });
+    } finally {
+      await server.close();
+    }
+  });
+
   it("requires app-account protocol-v2 features and valid signer policy hashes", async () => {
     const features = [
       "failClosedPolicies",
@@ -259,8 +329,10 @@ describe("stable managed updater", () => {
       "ambiguousBroadcastReconciliation",
       "signerOwnedKeys",
       "typedSolanaTransactions",
+      "atomicMultiAssetCaps",
+      "signerControlledNativeFeeCaps",
     ];
-    const serveHealth = async (featureList: string[]) =>
+    const serveHealth = async (featureList: string[], nativeFeeReservationLamports = 5_000_000) =>
       await withUnixServer((socket) => {
         socket.once("data", () => {
           socket.end(
@@ -269,7 +341,12 @@ describe("stable managed updater", () => {
               result: {
                 ready: true,
                 keystoreType: "signer-owned-v2",
-                capabilities: { protocol: { current: 2, min: 2, max: 2 }, features: featureList },
+                release: signerRelease(),
+                capabilities: {
+                  protocol: { current: 2, min: 2, max: 2 },
+                  features: featureList,
+                  nativeFeeReservationLamports,
+                },
                 policies: [
                   {
                     walletId: "agent",
@@ -285,7 +362,12 @@ describe("stable managed updater", () => {
     const healthy = await serveHealth(features);
     try {
       await expect(
-        __testing.probeHostedSignerCompatibility(healthy.socketPath, 1000),
+        __testing.probeHostedSignerCompatibility(
+          healthy.socketPath,
+          1000,
+          signerRelease(),
+          "1.2.3",
+        ),
       ).resolves.toMatchObject({ ok: true });
     } finally {
       await healthy.close();
@@ -297,6 +379,27 @@ describe("stable managed updater", () => {
       ).rejects.toThrow("missing failClosedPolicies");
     } finally {
       await incomplete.close();
+    }
+    const wrongFeeReservation = await serveHealth(features, 4_999_999);
+    try {
+      await expect(
+        __testing.probeHostedSignerCompatibility(wrongFeeReservation.socketPath, 1000),
+      ).rejects.toThrow("invalid native fee reservation");
+    } finally {
+      await wrongFeeReservation.close();
+    }
+    const wrongIdentity = await serveHealth(features);
+    try {
+      await expect(
+        __testing.probeHostedSignerCompatibility(
+          wrongIdentity.socketPath,
+          1000,
+          { ...signerRelease(), commit: "c".repeat(40) },
+          "1.2.3",
+        ),
+      ).rejects.toThrow("signer release identity mismatch");
+    } finally {
+      await wrongIdentity.close();
     }
   });
 });

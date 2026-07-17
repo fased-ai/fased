@@ -38,6 +38,15 @@ func buildTypedUnsignedTransactionV2(
 			return nil, err
 		}
 		decimals = &resolvedDecimals
+		if err := validateSPLTransferAccountsV2(
+			rpcURLs,
+			wallet,
+			solana.MustPublicKeyFromBase58(intent.Intent.Destination),
+			mint,
+			tokenProgram,
+		); err != nil {
+			return nil, err
+		}
 	}
 	instructions, err := buildTypedInstructionsV2(wallet, intent, decimals)
 	if err != nil {

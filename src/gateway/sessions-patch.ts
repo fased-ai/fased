@@ -3,7 +3,7 @@ import { resolveDefaultAgentId } from "../agents/agent-scope.js";
 import { filterModelCatalogByProviders } from "../agents/model-catalog-access.js";
 import type { ModelCatalogEntry } from "../agents/model-catalog.js";
 import {
-  modelKey,
+  normalizeProviderId,
   resolveAllowedModelRef,
   resolveDefaultModelForAgent,
   resolveSubagentConfiguredModelSelection,
@@ -18,7 +18,6 @@ import {
 } from "../auto-reply/thinking.js";
 import type { FasedAgentConfig } from "../config/config.js";
 import type { SessionEntry } from "../config/sessions.js";
-import { isStandardProviderModelRef } from "../providers/registry.js";
 import {
   isSubagentSessionKey,
   normalizeAgentId,
@@ -318,19 +317,17 @@ export async function applySessionsPatchToStore(params: {
         raw: trimmed,
         defaultProvider: resolvedDefault.provider,
         defaultModel: subagentModelHint ?? resolvedDefault.model,
-        additionalAllowedProviders: params.additionalAllowedModelProviders,
       });
       if ("error" in resolved) {
         return invalid(resolved.error);
       }
       if (
         params.additionalAllowedModelProviders &&
-        !catalog.some(
-          (entry) =>
-            modelKey(entry.provider, entry.id) ===
-            modelKey(resolved.ref.provider, resolved.ref.model),
-        ) &&
-        !isStandardProviderModelRef(resolved.key)
+        !new Set(
+          [...params.additionalAllowedModelProviders]
+            .map((provider) => normalizeProviderId(provider))
+            .filter(Boolean),
+        ).has(normalizeProviderId(resolved.ref.provider))
       ) {
         return invalid(`Model "${resolved.key}" is not available for signed-in providers.`);
       }

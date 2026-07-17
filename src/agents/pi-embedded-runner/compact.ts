@@ -566,7 +566,7 @@ export async function compactEmbeddedPiSessionDirect(
         await resourceLoader.reload();
       }
 
-      const { builtInTools, customTools } = splitSdkTools({
+      const { activeToolNames, customTools } = splitSdkTools({
         tools,
         sandboxEnabled: !!sandbox?.enabled,
       });
@@ -587,7 +587,7 @@ export async function compactEmbeddedPiSessionDirect(
         modelRegistry,
         model,
         thinkingLevel: mapThinkingLevel(params.thinkLevel),
-        tools: builtInTools,
+        tools: activeToolNames,
         customTools,
         sessionManager,
         settingsManager,

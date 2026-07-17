@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
@@ -10,8 +10,9 @@ import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import { readHostedReleaseManifestV2, verifyManifestArtifact } from "./hosted-release-manifest.mjs";
 import {
   assertManagedRuntime,
   atomicSymlink,
@@ -19,6 +20,7 @@ import {
   buildManagedInstallManifest,
   copyExecutable,
   readHostedRuntimeMetadata,
+  readHostedReleaseBinding,
   readManagedInstallManifest,
   readPackageVersion,
   resolveLinkTarget,
@@ -46,11 +48,34 @@ const HOSTED_TRANSACTION_PHASES = new Set([
 ]);
 const TRANSACTION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const LOCAL_SIGNER_TRANSACTION_SCHEMA_VERSION = 1;
+const LOCAL_SIGNER_TRANSACTION_PHASES = new Set([
+  "staging",
+  "quiesced",
+  "snapshotted",
+  "prepared",
+  "activating",
+  "candidate-active",
+  "committing",
+  "rolling-back",
+]);
+const LOCAL_SIGNER_REQUIRED_FEATURES = [
+  "failClosedPolicies",
+  "policyHashes",
+  "durableCaps",
+  "atomicIdempotency",
+  "ambiguousBroadcastReconciliation",
+  "signerOwnedKeys",
+  "typedSolanaTransactions",
+  "atomicMultiAssetCaps",
+  "signerControlledNativeFeeCaps",
+];
 
 export const PRE_V2_HOSTING_MIGRATION_MESSAGE = [
   "This hosted installation needs the one-time signer-v2 security migration before it can update.",
   "From a VPS provider console or a root SSH session, run:",
-  "curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --repair-hosting",
+  "Follow the verified release-asset and GitHub attestation procedure at https://docs.fased.ai/install/vps#3-install-fased-and-connect-through-tailscale, then run the verified tagged install.sh with --repair-hosting --release vX.Y.Z.",
+  "Never run /home/app/fased/install.sh with sudo or as root.",
   "The current Gateway, signer, wallets, and persistent state were left unchanged.",
 ].join(" ");
 
@@ -276,10 +301,12 @@ async function downloadToFile(url, destination, timeoutMs) {
 }
 
 async function verifyOfficialAsset(assetPath, version, timeoutMs) {
-  const gh = ["/usr/bin/gh", "/usr/local/bin/gh"].find((candidate) => fs.existsSync(candidate));
+  const gh = ["/usr/bin/gh", "/usr/local/bin/gh", "/opt/homebrew/bin/gh"].find((candidate) =>
+    fs.existsSync(candidate),
+  );
   if (!gh) {
     throw new Error(
-      "GitHub CLI with attestation verification is required; rerun ./install.sh --repair-hosting as root.",
+      "GitHub CLI with `gh attestation verify` is required for exact tagged Fased release assets.",
     );
   }
   const result = await runFile(
@@ -299,7 +326,7 @@ async function verifyOfficialAsset(assetPath, version, timeoutMs) {
     {
       env: {
         HOME: process.env.HOME,
-        PATH: "/usr/local/bin:/usr/bin:/bin",
+        PATH: "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin",
         GH_PROMPT_DISABLED: "1",
       },
       timeoutMs,
@@ -332,6 +359,22 @@ async function downloadVerifiedAsset({
   if (actual !== expected) {
     throw new Error(`Checksum mismatch for ${assetName}.`);
   }
+  if (officialVersion) {
+    await verifyOfficialAsset(destination, officialVersion, timeoutMs);
+  }
+  return destination;
+}
+
+async function downloadManifestBoundAsset({
+  releaseUrl,
+  artifact,
+  destinationDir,
+  timeoutMs,
+  officialVersion,
+}) {
+  const destination = path.join(destinationDir, artifact.asset);
+  await downloadToFile(`${releaseUrl}/${artifact.asset}`, destination, timeoutMs);
+  await verifyManifestArtifact(destination, artifact);
   if (officialVersion) {
     await verifyOfficialAsset(destination, officialVersion, timeoutMs);
   }
@@ -398,12 +441,13 @@ async function ensureDependencyLayer({
   temporaryRoot,
   timeoutMs,
   officialVersion,
+  manifestArtifact,
 }) {
   const dependencyRoot = path.join(
     paths.stateDir,
     "install-cache",
     "hosted-dependencies",
-    dependencyHash,
+    manifestArtifact ? `${dependencyHash}-${manifestArtifact.sha256}` : dependencyHash,
   );
   const nodeModules = path.join(dependencyRoot, "node_modules");
   const durabilityMarker = path.join(dependencyRoot, ".fased-durable-v1");
@@ -423,14 +467,23 @@ async function ensureDependencyLayer({
       return nodeModules;
     }
   }
-  const assetName = `fased-hosted-deps-linux-${arch}-${dependencyHash}.tar.gz`;
-  const archive = await downloadVerifiedAsset({
-    releaseUrl,
-    assetName,
-    destinationDir: temporaryRoot,
-    timeoutMs,
-    officialVersion,
-  });
+  const assetName =
+    manifestArtifact?.asset || `fased-hosted-deps-linux-${arch}-${dependencyHash}.tar.gz`;
+  const archive = manifestArtifact
+    ? await downloadManifestBoundAsset({
+        releaseUrl,
+        artifact: manifestArtifact,
+        destinationDir: temporaryRoot,
+        timeoutMs,
+        officialVersion,
+      })
+    : await downloadVerifiedAsset({
+        releaseUrl,
+        assetName,
+        destinationDir: temporaryRoot,
+        timeoutMs,
+        officialVersion,
+      });
   await assertArchiveSafe(archive, "node_modules");
   const staging = `${dependencyRoot}.staging-${process.pid}-${Date.now()}`;
   await fsp.rm(staging, { recursive: true, force: true });
@@ -558,6 +611,53 @@ function hostedUpdaterError(error, ambiguous = Boolean(error?.hostUpdaterAmbiguo
   return normalized;
 }
 
+function parseSignerReleaseIdentity(value, expectedVersion) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("signer release identity is missing");
+  }
+  if (Object.keys(value).toSorted().join(",") !== "buildInputDigest,commit,development,version") {
+    throw new Error("signer release identity contains unsupported fields");
+  }
+  if (
+    (expectedVersion !== undefined && value.version !== expectedVersion) ||
+    !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/.test(value.version || "") ||
+    !/^[a-f0-9]{40}$/.test(value.commit || "") ||
+    !/^sha256:[a-f0-9]{64}$/.test(value.buildInputDigest || "") ||
+    value.development !== false
+  ) {
+    throw new Error("signer release identity is development, malformed, or mismatched");
+  }
+  return Object.freeze({
+    version: value.version,
+    commit: value.commit,
+    buildInputDigest: value.buildInputDigest,
+    development: false,
+  });
+}
+
+function signerReleaseIdentitiesEqual(left, right) {
+  return (
+    left?.version === right?.version &&
+    left?.commit === right?.commit &&
+    left?.buildInputDigest === right?.buildInputDigest &&
+    left?.development === false &&
+    right?.development === false
+  );
+}
+
+function canonicalReleaseJSON(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => canonicalReleaseJSON(entry)).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value)
+      .toSorted()
+      .map((key) => `${JSON.stringify(key)}:${canonicalReleaseJSON(value[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
 async function requestHostedSignerTransaction(
   operation,
   transactionId,
@@ -628,6 +728,14 @@ async function requestHostedSignerTransaction(
             new Error(response?.error || `host updater rejected ${operation}`),
             !explicitPreV2Rejection,
           );
+          return;
+        }
+        if (response.release !== undefined) {
+          response.release = parseSignerReleaseIdentity(response.release, version);
+        } else if (
+          new Set(["prepareRelease", "activateRelease", "authorizeGatewayRelease"]).has(operation)
+        ) {
+          fail(new Error(`host updater ${operation} response omitted signer release identity`));
           return;
         }
         settled = true;
@@ -766,7 +874,14 @@ async function quiesceHostedGateway(timeoutMs = 30_000) {
   throw new Error("Hosted Gateway did not quiesce before the app/signer switch.");
 }
 
-async function refreshGateway(runtimeRoot, manifest, timeoutMs, allowInactiveHosted = false) {
+async function refreshGateway(
+  runtimeRoot,
+  manifest,
+  timeoutMs,
+  allowInactiveHosted = false,
+  expectedSignerRelease,
+  hostedServiceAlreadyRestarted = false,
+) {
   const cli = path.join(runtimeRoot, "fased.mjs");
   const env = {
     ...process.env,
@@ -776,7 +891,7 @@ async function refreshGateway(runtimeRoot, manifest, timeoutMs, allowInactiveHos
     FASED_MANAGED_RUNTIME_ROOT: runtimeRoot,
     FASED_RUNTIME_SOURCE: "managed-package",
   };
-  if (manifest.profile === "hosting") {
+  if (manifest.profile === "hosting" && !hostedServiceAlreadyRestarted) {
     try {
       await restartHostedGateway();
     } catch (error) {
@@ -818,6 +933,9 @@ async function refreshGateway(runtimeRoot, manifest, timeoutMs, allowInactiveHos
         await probeHostedSignerCompatibility(
           process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET || "/run/fased-signerd/app.sock",
           Math.min(timeoutMs, 5000),
+          expectedSignerRelease,
+          manifest.runtime.activeVersion,
+          manifest.release?.signer?.capabilities,
         );
       }
       return;
@@ -829,7 +947,13 @@ async function refreshGateway(runtimeRoot, manifest, timeoutMs, allowInactiveHos
   );
 }
 
-async function probeHostedSignerCompatibility(socketPath, timeoutMs = 5000) {
+async function probeHostedSignerCompatibility(
+  socketPath,
+  timeoutMs = 5000,
+  expectedRelease,
+  expectedVersion = expectedRelease?.version,
+  expectedCapabilities,
+) {
   const requiredFeatures = [
     "failClosedPolicies",
     "policyHashes",
@@ -838,6 +962,8 @@ async function probeHostedSignerCompatibility(socketPath, timeoutMs = 5000) {
     "ambiguousBroadcastReconciliation",
     "signerOwnedKeys",
     "typedSolanaTransactions",
+    "atomicMultiAssetCaps",
+    "signerControlledNativeFeeCaps",
   ];
   const socketStat = await fsp.lstat(socketPath).catch((error) => {
     throw new Error(`hosted signer socket is unavailable to the app account: ${error.message}`, {
@@ -915,6 +1041,18 @@ async function probeHostedSignerCompatibility(socketPath, timeoutMs = 5000) {
       policyIds.add(walletId);
       return valid;
     });
+  let signerRelease = null;
+  try {
+    signerRelease = parseSignerReleaseIdentity(result?.release, expectedVersion);
+  } catch {
+    signerRelease = null;
+  }
+  const releaseMatches =
+    signerRelease !== null &&
+    (expectedRelease === undefined || signerReleaseIdentitiesEqual(signerRelease, expectedRelease));
+  const capabilitiesMatch =
+    expectedCapabilities === undefined ||
+    canonicalReleaseJSON(result?.capabilities) === canonicalReleaseJSON(expectedCapabilities);
   if (
     response?.ok !== true ||
     result?.ready !== true ||
@@ -922,11 +1060,14 @@ async function probeHostedSignerCompatibility(socketPath, timeoutMs = 5000) {
     protocol?.current !== 2 ||
     protocol?.min > 2 ||
     protocol?.max < 2 ||
+    result?.capabilities?.nativeFeeReservationLamports !== 5_000_000 ||
     missing.length > 0 ||
-    !policiesValid
+    !policiesValid ||
+    !releaseMatches ||
+    !capabilitiesMatch
   ) {
     throw new Error(
-      `hosted Gateway-to-signer compatibility check failed${missing.length ? `; missing ${missing.join(",")}` : ""}`,
+      `hosted Gateway-to-signer compatibility check failed${missing.length ? `; missing ${missing.join(",")}` : ""}${result?.capabilities?.nativeFeeReservationLamports !== 5_000_000 ? "; invalid native fee reservation" : ""}${!releaseMatches ? "; signer release identity mismatch" : ""}${!capabilitiesMatch ? "; signer capability contract mismatch" : ""}`,
     );
   }
   return response;
@@ -999,6 +1140,10 @@ function validateHostedTransactionJournal(paths, value) {
   ) {
     throw new Error("hosted application update journal manifests do not match the transaction");
   }
+  const signerRelease =
+    value.signerRelease == null
+      ? null
+      : parseSignerReleaseIdentity(value.signerRelease, targetVersion);
   return {
     ...value,
     transactionId: value.transactionId.toLowerCase(),
@@ -1006,6 +1151,7 @@ function validateHostedTransactionJournal(paths, value) {
     previousVersion,
     targetRoot,
     previousRoot,
+    signerRelease,
   };
 }
 
@@ -1211,7 +1357,8 @@ async function coordinateHostedReleaseTransaction(journal, operations) {
   }
 }
 
-function hostedTransactionOperations(paths, timeoutMs) {
+function hostedTransactionOperations(paths, timeoutMs, options = {}) {
+  const targetServiceAlreadyRestarted = options.targetServiceAlreadyRestarted === true;
   return {
     activateApplication: async (journal) => await activateHostedApplication(paths, journal),
     restoreApplication: async (journal) => {
@@ -1219,18 +1366,62 @@ function hostedTransactionOperations(paths, timeoutMs) {
       await updateStableComponents(paths, journal.previousRoot, true);
     },
     quiesceGateway: async () => await quiesceHostedGateway(timeoutMs),
-    signerRequest: async (operation, journal) =>
-      await requestHostedSignerTransactionWithRetry(
+    signerRequest: async (operation, journal) => {
+      const response = await requestHostedSignerTransactionWithRetry(
         operation,
         journal.transactionId,
         journal.targetVersion,
         timeoutMs,
-      ),
+      );
+      if (response.release) {
+        const manifestSignerRelease = journal.nextManifest?.release?.signer?.release;
+        const applicationCommit = journal.nextManifest?.release?.commit;
+        if (
+          (manifestSignerRelease &&
+            !signerReleaseIdentitiesEqual(manifestSignerRelease, response.release)) ||
+          (applicationCommit && applicationCommit !== response.release.commit)
+        ) {
+          throw new Error(
+            "attested hosted application and native signer release identities do not match",
+          );
+        }
+        if (
+          journal.signerRelease &&
+          !signerReleaseIdentitiesEqual(journal.signerRelease, response.release)
+        ) {
+          throw new Error("root updater changed signer release identity during the transaction");
+        }
+        journal.signerRelease ??= response.release;
+      }
+      return response;
+    },
     verifyGateway: async (journal) =>
-      await refreshGateway(journal.targetRoot, journal.nextManifest, timeoutMs, true),
+      await refreshGateway(
+        journal.targetRoot,
+        journal.nextManifest,
+        timeoutMs,
+        true,
+        journal.signerRelease,
+        targetServiceAlreadyRestarted,
+      ),
     refreshPrevious: async (journal) =>
-      await refreshGateway(journal.previousRoot, journal.previousManifest, timeoutMs, true),
+      await refreshGateway(
+        journal.previousRoot,
+        journal.previousManifest,
+        timeoutMs,
+        true,
+        journal.previousManifest?.signer?.release,
+      ),
     finalizeApplication: async (journal) => {
+      if (!journal.signerRelease) {
+        throw new Error("cannot commit a hosted runtime without signer release identity");
+      }
+      journal.nextManifest = {
+        ...journal.nextManifest,
+        signer: { release: journal.signerRelease },
+      };
+      await atomicWriteJson(paths.manifestPath, journal.nextManifest, 0o600);
+      await syncManagedActivation(paths);
       await updateStableComponents(paths, journal.targetRoot, true);
       await cleanupReleases(paths, [journal.targetRoot, journal.previousRoot]);
     },
@@ -1350,7 +1541,7 @@ async function recoverHostedReleaseTransaction(paths, timeoutMs) {
   };
 }
 
-async function runHostedTransactionControl(action, timeoutMs = DEFAULT_TIMEOUT_MS) {
+async function runHostedTransactionControl(action, timeoutMs = DEFAULT_TIMEOUT_MS, options = {}) {
   if (!new Set(["finalize", "recover", "rollback"]).has(action)) {
     throw new Error("hosted-transaction requires finalize, recover, or rollback");
   }
@@ -1365,12 +1556,19 @@ async function runHostedTransactionControl(action, timeoutMs = DEFAULT_TIMEOUT_M
         if (!manifest || manifest.profile !== "hosting" || !currentRoot) {
           throw new Error("hosted managed runtime is unavailable for final verification");
         }
-        await refreshGateway(currentRoot, manifest, timeoutMs, true);
+        await refreshGateway(
+          currentRoot,
+          manifest,
+          timeoutMs,
+          true,
+          manifest.signer?.release,
+          options.targetServiceAlreadyRestarted === true,
+        );
         return { action: "verified-current" };
       }
       return { action: "none" };
     }
-    const operations = hostedTransactionOperations(paths, timeoutMs);
+    const operations = hostedTransactionOperations(paths, timeoutMs, options);
     if (action === "rollback") {
       if (journal.phase === "gateway-verified") {
         return await coordinateHostedReleaseTransaction(journal, operations);
@@ -1383,10 +1581,48 @@ async function runHostedTransactionControl(action, timeoutMs = DEFAULT_TIMEOUT_M
     ) {
       throw new Error(`hosted repair cannot finalize from phase ${journal.phase}`);
     }
-    return await recoverHostedReleaseTransaction(paths, timeoutMs);
+    if (journal.phase === "gateway-verified" || journal.phase === "signer-active") {
+      return await coordinateHostedReleaseTransaction(journal, operations);
+    }
+    return await rollbackHostedReleaseTransaction(journal, operations);
   } finally {
     await releaseLock();
   }
+}
+
+function parseHostedTransactionArgs(argv) {
+  const action = argv[1] || "recover";
+  let timeoutMs = DEFAULT_TIMEOUT_MS;
+  let targetServiceAlreadyRestarted = false;
+  const seen = new Set();
+  for (let index = 2; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (seen.has(argument)) {
+      throw new Error(`hosted-transaction received duplicate option ${argument}`);
+    }
+    seen.add(argument);
+    if (argument === "--root-restarted") {
+      targetServiceAlreadyRestarted = true;
+      continue;
+    }
+    if (argument === "--timeout") {
+      const seconds = argv[index + 1] || "";
+      if (!/^\d+$/.test(seconds)) {
+        throw new Error("--timeout must be a positive integer (seconds)");
+      }
+      timeoutMs = Number.parseInt(seconds, 10) * 1000;
+      index += 1;
+      if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
+        throw new Error("--timeout must be a positive integer (seconds)");
+      }
+      continue;
+    }
+    throw new Error("hosted-transaction accepts only --timeout <seconds> and --root-restarted");
+  }
+  if (targetServiceAlreadyRestarted && action !== "finalize") {
+    throw new Error("--root-restarted is valid only with hosted-transaction finalize");
+  }
+  return { action, timeoutMs, targetServiceAlreadyRestarted };
 }
 
 async function updateStableComponents(paths, runtimeRoot, durable = false) {
@@ -1395,12 +1631,14 @@ async function updateStableComponents(paths, runtimeRoot, durable = false) {
     paths.launcherPath,
     paths.serviceLauncherPath,
     path.join(paths.updaterDir, "managed-runtime-layout.mjs"),
+    path.join(paths.updaterDir, "hosted-release-manifest.mjs"),
     paths.updaterPath,
   ];
   await copyExecutable(path.join(scripts, "fased-managed-launcher.sh"), stablePaths[0]);
   await copyExecutable(path.join(scripts, "fased-managed-service.sh"), stablePaths[1]);
   await copyExecutable(path.join(scripts, "managed-runtime-layout.mjs"), stablePaths[2]);
-  await copyExecutable(path.join(scripts, "fased-managed-updater.mjs"), stablePaths[3]);
+  await copyExecutable(path.join(scripts, "hosted-release-manifest.mjs"), stablePaths[3]);
+  await copyExecutable(path.join(scripts, "fased-managed-updater.mjs"), stablePaths[4]);
   if (!durable) {
     return;
   }
@@ -1482,6 +1720,1457 @@ async function cleanupReleases(paths, keepRoots) {
   }
 }
 
+function resolveLocalSignerPaths(overrides = {}) {
+  const managed = resolveManagedRuntimePaths({ stateDir: overrides.stateDir });
+  const stateDir = managed.stateDir;
+  const materialDir = path.resolve(
+    overrides.materialDir ||
+      process.env.FASED_WALLET_SIGNER_STATE_DIR ||
+      path.join(stateDir, "wallet"),
+  );
+  const explicitBinary = String(
+    overrides.binaryPath || process.env.FASED_WALLET_LOCAL_SIGNER_BIN || "",
+  ).trim();
+  const binDir = path.resolve(
+    overrides.binDir ||
+      process.env.FASED_LOCAL_SIGNER_BIN_DIR ||
+      (explicitBinary ? path.dirname(explicitBinary) : path.join(stateDir, "bin")),
+  );
+  const binaryPath = path.resolve(explicitBinary || path.join(binDir, "fased-signerd"));
+  const policyTemplateDir = path.resolve(
+    process.env.FASED_LOCAL_SIGNER_POLICY_TEMPLATE_DIR ||
+      path.join(path.dirname(binDir), "share", "signer-policies"),
+  );
+  const socketPath = path.resolve(
+    overrides.socketPath ||
+      process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET ||
+      path.join(materialDir, "local-signer.sock"),
+  );
+  const controlSocketPath = path.resolve(
+    overrides.controlSocketPath ||
+      process.env.FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET ||
+      path.join(materialDir, "local-signer-control.sock"),
+  );
+  const stateDbPath = path.resolve(
+    overrides.stateDbPath ||
+      process.env.FASED_WALLET_LOCAL_SIGNER_STATE_DB ||
+      path.join(materialDir, "signerd-v2.db"),
+  );
+  const masterKeyPath = path.resolve(
+    overrides.masterKeyPath ||
+      process.env.FASED_WALLET_LOCAL_SIGNER_MASTER_KEY ||
+      path.join(materialDir, "signerd-v2.master.key"),
+  );
+  const socketBase = path.basename(socketPath).endsWith(".sock")
+    ? path.basename(socketPath).slice(0, -5)
+    : path.basename(socketPath);
+  const pidPath = path.join(path.dirname(socketPath), `${socketBase}.pid`);
+  const auditPath = path.join(path.dirname(socketPath), `${socketBase}.audit.jsonl`);
+  const updateRoot = path.join(stateDir, "signer-update");
+  const resolved = {
+    stateDir,
+    materialDir,
+    binDir,
+    binaryPath,
+    enrollmentPath: path.join(binDir, "fased-signer-enroll"),
+    policyHelperPath: path.join(binDir, "fased-signer-owner-policy.mjs"),
+    policyLauncherPath: path.join(binDir, "fased-signer-policy"),
+    policyTemplatePaths: [
+      "README.md",
+      "agent.json.template",
+      "mining.json.template",
+      "vault.json.template",
+      "network.json.template",
+    ].map((name) => path.join(policyTemplateDir, name)),
+    releaseManifestPath: path.join(binDir, "fased-signerd-release.json"),
+    socketPath,
+    controlSocketPath,
+    stateDbPath,
+    masterKeyPath,
+    pidPath,
+    legacyPidPath: `${socketPath}.pid`,
+    auditPath,
+    logPath: path.join(materialDir, "local-signer.log"),
+    signerEnvPath: path.join(materialDir, "signer.env"),
+    updateRoot,
+    journalPath: path.join(updateRoot, "transaction.json"),
+    transactionsDir: path.join(updateRoot, "transactions"),
+  };
+  for (const [label, candidate] of [
+    ["signer socket", socketPath],
+    ["signer control socket", controlSocketPath],
+    ["signer state database", stateDbPath],
+    ["signer master key", masterKeyPath],
+    ["signer PID file", pidPath],
+    ["signer audit log", auditPath],
+  ]) {
+    const relative = path.relative(materialDir, candidate);
+    if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+      throw new Error(
+        `${label} must be inside the Local signer state directory for transactional updates`,
+      );
+    }
+  }
+  if (materialDir === path.parse(materialDir).root || materialDir === stateDir) {
+    throw new Error("Local signer state directory is too broad for transactional snapshot/restore");
+  }
+  return resolved;
+}
+
+function parseSignerVersionOutput(raw, expectedVersion) {
+  const match =
+    /^fased-signerd ([^\s]+) commit=([^\s]+) buildInputDigest=([^\s]+) development=(true|false)\s*$/.exec(
+      String(raw || ""),
+    );
+  if (!match) {
+    throw new Error("fased-signerd --version returned a malformed release identity");
+  }
+  const identity = {
+    version: match[1],
+    commit: match[2],
+    buildInputDigest: match[3],
+    development: match[4] === "true",
+  };
+  if (expectedVersion !== undefined && identity.version !== expectedVersion) {
+    throw new Error(
+      `signer binary version ${identity.version} does not match target ${expectedVersion}`,
+    );
+  }
+  if (
+    !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?(?:\+[0-9A-Za-z.-]+)?$/.test(
+      identity.version,
+    ) ||
+    !/^[a-f0-9]{40}$/.test(identity.commit) ||
+    !/^sha256:[a-f0-9]{64}$/.test(identity.buildInputDigest) ||
+    identity.development
+  ) {
+    throw new Error("fased-signerd release identity is not an exact production identity");
+  }
+  return Object.freeze(identity);
+}
+
+function parseSignerReleaseManifest(value, expectedVersion) {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    Object.keys(value).toSorted().join(",") !==
+      "buildInputDigest,commit,development,schemaVersion,version" ||
+    value.schemaVersion !== 1
+  ) {
+    throw new Error("fased-signerd-release.json is malformed or contains unsupported fields");
+  }
+  return parseSignerVersionOutput(
+    `fased-signerd ${value.version} commit=${value.commit} buildInputDigest=${value.buildInputDigest} development=${String(value.development)}`,
+    expectedVersion,
+  );
+}
+
+function signerIdentitiesEqual(left, right) {
+  return (
+    left?.version === right?.version &&
+    left?.commit === right?.commit &&
+    left?.buildInputDigest === right?.buildInputDigest &&
+    left?.development === false &&
+    right?.development === false
+  );
+}
+
+async function readSignerBinaryIdentity(binaryPath, expectedVersion) {
+  const result = await runFile(binaryPath, ["--version"], { timeoutMs: 10_000 });
+  if (!result.ok) {
+    throw new Error(`could not execute candidate fased-signerd: ${result.stderr.trim()}`);
+  }
+  return parseSignerVersionOutput(result.stdout, expectedVersion);
+}
+
+async function copyDownloadSource(source, destination, timeoutMs) {
+  const parsed = new URL(source);
+  if (parsed.protocol === "file:") {
+    const sourcePath = fileURLToPath(parsed);
+    const sourceStat = await fsp.lstat(sourcePath);
+    if (!sourceStat.isFile() || sourceStat.isSymbolicLink()) {
+      throw new Error(`Local signer release asset is not a regular file: ${sourcePath}`);
+    }
+    await fsp.mkdir(path.dirname(destination), { recursive: true, mode: 0o700 });
+    await fsp.copyFile(sourcePath, destination);
+    await fsp.chmod(destination, 0o600);
+    return;
+  }
+  await downloadToFile(source, destination, timeoutMs);
+}
+
+function checksumEntry(checksums, assetName) {
+  for (const line of String(checksums || "").split(/\r?\n/)) {
+    const match = /^([a-fA-F0-9]{64})\s+\*?(.+)$/.exec(line.trim());
+    if (match && match[2] === assetName) {
+      return match[1].toLowerCase();
+    }
+  }
+  throw new Error(`fased-signerd-checksums.txt has no exact entry for ${assetName}`);
+}
+
+async function downloadVerifiedLocalSignerRelease({ targetVersion, timeoutMs, transactionDir }) {
+  if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/.test(targetVersion)) {
+    throw new Error("Local signer update requires an exact canonical release version");
+  }
+  const { assetName } = resolveLocalSignerAsset(process.platform, process.arch);
+  const base = String(process.env.FASED_LOCAL_SIGNER_BASE_URL || DEFAULT_RELEASE_BASE_URL).replace(
+    /\/$/,
+    "",
+  );
+  const official = base === DEFAULT_RELEASE_BASE_URL;
+  if (!official && process.env.FASED_LOCAL_SIGNER_ALLOW_UNATTESTED !== "1") {
+    throw new Error(
+      "A custom signer release source is allowed only for an explicit trusted-source test with FASED_LOCAL_SIGNER_ALLOW_UNATTESTED=1.",
+    );
+  }
+  const flat = !official && process.env.FASED_LOCAL_SIGNER_FLAT_RELEASE === "1";
+  const releaseUrl = flat ? base : `${base}/v${targetVersion}`;
+  const manifestName = "fased-signerd-release.json";
+  const checksumName = "fased-signerd-checksums.txt";
+  const candidatePath = path.join(transactionDir, assetName);
+  const manifestPath = path.join(transactionDir, manifestName);
+  const checksumsPath = path.join(transactionDir, checksumName);
+  await Promise.all([
+    copyDownloadSource(`${releaseUrl}/${assetName}`, candidatePath, timeoutMs),
+    copyDownloadSource(`${releaseUrl}/${manifestName}`, manifestPath, timeoutMs),
+    copyDownloadSource(`${releaseUrl}/${checksumName}`, checksumsPath, timeoutMs),
+  ]);
+  const checksums = await fsp.readFile(checksumsPath, "utf8");
+  for (const [name, filePath] of [
+    [assetName, candidatePath],
+    [manifestName, manifestPath],
+  ]) {
+    const expected = checksumEntry(checksums, name);
+    const actual = await sha256File(filePath);
+    if (expected !== actual) {
+      throw new Error(`Checksum mismatch for ${name}`);
+    }
+  }
+  if (official) {
+    await verifyOfficialAsset(candidatePath, targetVersion, timeoutMs);
+    await verifyOfficialAsset(manifestPath, targetVersion, timeoutMs);
+  }
+  const manifestIdentity = parseSignerReleaseManifest(
+    JSON.parse(await fsp.readFile(manifestPath, "utf8")),
+    targetVersion,
+  );
+  await fsp.chmod(candidatePath, 0o700);
+  const binaryIdentity = await readSignerBinaryIdentity(candidatePath, targetVersion);
+  if (!signerIdentitiesEqual(binaryIdentity, manifestIdentity)) {
+    throw new Error("candidate signer binary and release manifest identities do not match");
+  }
+  return { candidatePath, manifestPath, identity: binaryIdentity, official, assetName };
+}
+
+function resolveLocalSignerAsset(platformRaw, archRaw) {
+  const platform = platformRaw === "darwin" ? "darwin" : platformRaw;
+  if (platform !== "linux" && platform !== "darwin") {
+    throw new Error(
+      platformRaw === "win32"
+        ? "Native Windows is unsupported. Install and run Fased inside WSL2."
+        : `fased-signerd has no supported asset for ${platformRaw}`,
+    );
+  }
+  const arch = archRaw === "x64" ? "amd64" : archRaw;
+  if (arch !== "amd64" && arch !== "arm64") {
+    throw new Error(`fased-signerd has no supported asset for ${archRaw}`);
+  }
+  const assetName = `fased-signerd-${platform}-${arch}`;
+  return { platform, arch, assetName };
+}
+
+function isPathInside(parent, candidate) {
+  const relative = path.relative(path.resolve(parent), path.resolve(candidate));
+  return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+async function fsyncDirectoryTree(root) {
+  const directories = [];
+  const pending = [root];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    directories.push(current);
+    const entries = await fsp.readdir(current, { withFileTypes: true });
+    for (const entry of entries) {
+      const entryPath = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        pending.push(entryPath);
+      } else if (entry.isFile()) {
+        await fsyncManagedPath(entryPath);
+      }
+    }
+  }
+  for (const directory of directories.toReversed()) {
+    await fsyncManagedPath(directory);
+  }
+}
+
+async function createOwnerOnlySnapshot(sourceRoot, destinationRoot, excludedPaths = []) {
+  const excluded = new Set(excludedPaths.map((value) => path.resolve(value)));
+  const sourceExists = await fsp
+    .lstat(sourceRoot)
+    .then((stat) => stat.isDirectory() && !stat.isSymbolicLink())
+    .catch(() => false);
+  await fsp.rm(destinationRoot, { recursive: true, force: true });
+  await fsp.mkdir(destinationRoot, { recursive: true, mode: 0o700 });
+  const files = [];
+  if (sourceExists) {
+    const pending = [{ source: sourceRoot, relative: "" }];
+    while (pending.length > 0) {
+      const current = pending.pop();
+      const entries = await fsp.readdir(current.source, { withFileTypes: true });
+      for (const entry of entries) {
+        const sourcePath = path.join(current.source, entry.name);
+        if (excluded.has(path.resolve(sourcePath))) {
+          continue;
+        }
+        const relative = path.join(current.relative, entry.name);
+        const destinationPath = path.join(destinationRoot, relative);
+        const stat = await fsp.lstat(sourcePath);
+        if (stat.isSymbolicLink()) {
+          throw new Error(`Local signer state contains an unsafe symlink: ${sourcePath}`);
+        }
+        if (stat.isDirectory()) {
+          await fsp.mkdir(destinationPath, { recursive: true, mode: 0o700 });
+          pending.push({ source: sourcePath, relative });
+          continue;
+        }
+        if (!stat.isFile()) {
+          throw new Error(`Local signer state contains an unsupported file: ${sourcePath}`);
+        }
+        await fsp.mkdir(path.dirname(destinationPath), { recursive: true, mode: 0o700 });
+        await fsp.copyFile(sourcePath, destinationPath);
+        await fsp.chmod(destinationPath, 0o600);
+        files.push({
+          path: relative.split(path.sep).join("/"),
+          size: stat.size,
+          sha256: await sha256File(destinationPath),
+        });
+      }
+    }
+  }
+  files.sort((left, right) => left.path.localeCompare(right.path));
+  const manifest = { schemaVersion: 1, sourceExisted: sourceExists, files };
+  const manifestPath = path.join(destinationRoot, ".snapshot.json");
+  await atomicWriteJson(manifestPath, manifest, 0o600);
+  await fsyncDirectoryTree(destinationRoot);
+  return manifest;
+}
+
+async function verifyOwnerOnlySnapshot(snapshotRoot) {
+  const manifest = JSON.parse(
+    await fsp.readFile(path.join(snapshotRoot, ".snapshot.json"), "utf8"),
+  );
+  if (
+    manifest?.schemaVersion !== 1 ||
+    typeof manifest.sourceExisted !== "boolean" ||
+    !Array.isArray(manifest.files)
+  ) {
+    throw new Error("Local signer state snapshot manifest is invalid");
+  }
+  const seen = new Set();
+  for (const entry of manifest.files) {
+    if (
+      !entry ||
+      typeof entry.path !== "string" ||
+      entry.path.includes("\\") ||
+      path.posix.isAbsolute(entry.path) ||
+      entry.path.split("/").some((part) => !part || part === "." || part === "..") ||
+      seen.has(entry.path) ||
+      !Number.isSafeInteger(entry.size) ||
+      entry.size < 0 ||
+      !/^[a-f0-9]{64}$/.test(entry.sha256 || "")
+    ) {
+      throw new Error("Local signer state snapshot contains an invalid entry");
+    }
+    seen.add(entry.path);
+    const filePath = path.join(snapshotRoot, ...entry.path.split("/"));
+    const stat = await fsp.lstat(filePath);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size !== entry.size) {
+      throw new Error(`Local signer state snapshot file is invalid: ${entry.path}`);
+    }
+    if ((stat.mode & 0o077) !== 0 || (await sha256File(filePath)) !== entry.sha256) {
+      throw new Error(`Local signer state snapshot verification failed: ${entry.path}`);
+    }
+  }
+  return manifest;
+}
+
+async function restoreOwnerOnlySnapshot(snapshotRoot, destinationRoot) {
+  const manifest = await verifyOwnerOnlySnapshot(snapshotRoot);
+  await fsp.rm(destinationRoot, { recursive: true, force: true });
+  if (!manifest.sourceExisted) {
+    await fsp.mkdir(path.dirname(destinationRoot), { recursive: true, mode: 0o700 });
+    await fsyncManagedPath(path.dirname(destinationRoot));
+    return;
+  }
+  await fsp.mkdir(destinationRoot, { recursive: true, mode: 0o700 });
+  for (const entry of manifest.files) {
+    const sourcePath = path.join(snapshotRoot, ...entry.path.split("/"));
+    const destinationPath = path.join(destinationRoot, ...entry.path.split("/"));
+    await fsp.mkdir(path.dirname(destinationPath), { recursive: true, mode: 0o700 });
+    await fsp.copyFile(sourcePath, destinationPath);
+    await fsp.chmod(destinationPath, 0o600);
+  }
+  await fsyncDirectoryTree(destinationRoot);
+}
+
+async function readProcessCommand(pid) {
+  if (process.platform === "linux") {
+    const raw = await fsp.readFile(`/proc/${pid}/cmdline`).catch(() => null);
+    if (raw) {
+      return raw.toString("utf8").replaceAll("\0", " ").trim();
+    }
+  }
+  const result = await runFile("ps", ["-p", String(pid), "-o", "command="], {
+    timeoutMs: 5_000,
+  });
+  return result.ok ? result.stdout.trim() : "";
+}
+
+function processIsAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === "EPERM";
+  }
+}
+
+async function requireExactSignerPid(pid, binaryPath) {
+  if (!Number.isSafeInteger(pid) || pid <= 1 || !processIsAlive(pid)) {
+    return false;
+  }
+  const command = await readProcessCommand(pid);
+  const expected = path.resolve(binaryPath);
+  if (!command.includes("fased-signerd") || !command.includes(expected)) {
+    throw new Error(
+      `PID ${pid} is not the exact Local signer executable ${expected}; refusing to signal it`,
+    );
+  }
+  return true;
+}
+
+async function resolveRunningSignerPid(paths) {
+  const pids = new Set();
+  for (const pidPath of new Set([paths.pidPath, paths.legacyPidPath])) {
+    try {
+      const pid = Number.parseInt((await fsp.readFile(pidPath, "utf8")).trim(), 10);
+      if (await requireExactSignerPid(pid, paths.binaryPath)) {
+        pids.add(pid);
+      } else {
+        await fsp.rm(pidPath, { force: true });
+      }
+    } catch (error) {
+      if (error?.code !== "ENOENT") {
+        throw error;
+      }
+    }
+  }
+  if (pids.size > 1) {
+    throw new Error("Multiple Local signer PIDs were recorded; refusing an ambiguous update");
+  }
+  if (pids.size === 0) {
+    const socketExists = await fsp
+      .lstat(paths.socketPath)
+      .then((stat) => stat.isSocket())
+      .catch(() => false);
+    if (socketExists) {
+      throw new Error("Local signer socket exists without a verifiable exact PID; repair manually");
+    }
+    return null;
+  }
+  return [...pids][0];
+}
+
+async function stopExactSigner(paths, explicitPid) {
+  const pid = explicitPid ?? (await resolveRunningSignerPid(paths));
+  if (pid !== null) {
+    await requireExactSignerPid(pid, paths.binaryPath);
+    process.kill(pid, "SIGTERM");
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline && processIsAlive(pid)) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    if (processIsAlive(pid)) {
+      await requireExactSignerPid(pid, paths.binaryPath);
+      process.kill(pid, "SIGKILL");
+    }
+    const killedDeadline = Date.now() + 3_000;
+    while (Date.now() < killedDeadline && processIsAlive(pid)) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    if (processIsAlive(pid)) {
+      throw new Error(`Local signer PID ${pid} did not stop; refusing to copy live state`);
+    }
+  }
+  await Promise.all([
+    fsp.rm(paths.socketPath, { force: true }),
+    fsp.rm(paths.controlSocketPath, { force: true }),
+    fsp.rm(paths.pidPath, { force: true }),
+    fsp.rm(paths.legacyPidPath, { force: true }),
+  ]);
+  const stillRunning = await resolveRunningSignerPid(paths);
+  if (stillRunning !== null) {
+    throw new Error("Local signer remained active after stop; refusing an online state snapshot");
+  }
+}
+
+async function loadSignerEnvironment(paths) {
+  const env = { ...process.env };
+  const raw = await fsp.readFile(paths.signerEnvPath, "utf8").catch(() => "");
+  const locationKeys = new Set([
+    "FASED_WALLET_LOCAL_SIGNER_SOCKET",
+    "FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET",
+    "FASED_WALLET_LOCAL_SIGNER_STATE_DB",
+    "FASED_WALLET_LOCAL_SIGNER_MASTER_KEY",
+    "FASED_WALLET_SIGNER_STATE_DIR",
+    "FASED_WALLET_LOCAL_SIGNER_BIN",
+  ]);
+  const commandPattern =
+    /^"(?:[^"\\]|\\[\\"$`])*" --socket "\$FASED_WALLET_LOCAL_SIGNER_SOCKET" --control-socket "\$FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET" --state-db "\$FASED_WALLET_LOCAL_SIGNER_STATE_DB" --master-key "\$FASED_WALLET_LOCAL_SIGNER_MASTER_KEY"$/u;
+  const decodeValue = (rawValue) => {
+    if (rawValue.length < 2 || rawValue[0] !== '"' || rawValue.at(-1) !== '"') {
+      throw new Error("Local signer environment values must use generated double-quote syntax");
+    }
+    let value = "";
+    for (let index = 1; index < rawValue.length - 1; index += 1) {
+      const current = rawValue[index];
+      if (current !== "\\") {
+        value += current;
+        continue;
+      }
+      const escaped = rawValue[index + 1];
+      if (!escaped || !new Set(["\\", '"', "$", "`"]).has(escaped)) {
+        throw new Error("Local signer environment contains an unsupported escape");
+      }
+      value += escaped;
+      index += 1;
+    }
+    return value;
+  };
+  for (const rawLine of raw.split(/\r?\n/u)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) {
+      continue;
+    }
+    if (!line.startsWith("export ")) {
+      if (commandPattern.test(line)) {
+        continue;
+      }
+      throw new Error("Local signer environment file contains an invalid line");
+    }
+    const assignment = line.slice("export ".length);
+    const separator = assignment.indexOf("=");
+    if (separator <= 0) {
+      throw new Error("Local signer environment file contains an invalid line");
+    }
+    const key = assignment.slice(0, separator);
+    if (!/^[A-Z][A-Z0-9_]*$/u.test(key)) {
+      throw new Error("Local signer environment file contains an invalid key");
+    }
+    const value = decodeValue(assignment.slice(separator + 1));
+    if (
+      key === "FASED_WALLET_CHAINS" ||
+      key === "FASED_WALLET_WEBAUTHN_RP_ID" ||
+      key === "FASED_WALLET_WEBAUTHN_ORIGINS" ||
+      key.startsWith("FASED_WALLET_LOCAL_SIGNER_RATE_") ||
+      key === "FASED_WALLET_LOCAL_SIGNER_AUDIT_MAX_BYTES" ||
+      key === "FASED_WALLET_SOLANA_CONFIRM_TIMEOUT_MS" ||
+      key === "FASED_WALLET_SOLANA_WRITE_RPC_TIMEOUT_MS"
+    ) {
+      env[key] = value;
+    } else if (locationKeys.has(key)) {
+      if (!path.isAbsolute(value)) {
+        throw new Error(`Local signer environment path ${key} must be absolute`);
+      }
+    } else {
+      throw new Error(`Local signer environment file contains unsupported key ${key}`);
+    }
+  }
+  delete env.FASED_WALLET_SOLANA_KEYSTORE_PATH;
+  delete env.FASED_WALLET_EVM_KEYSTORE_PATH;
+  delete env.FASED_WALLET_PASSPHRASE;
+  delete env.FASED_WALLET_PASSPHRASE_FILE;
+  return env;
+}
+
+async function probeLocalSignerHealth(
+  socketPath,
+  expectedIdentity,
+  timeoutMs = 8_000,
+  expectedReadOnly,
+) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError = null;
+  while (Date.now() < deadline) {
+    try {
+      const response = await new Promise((resolve, reject) => {
+        const socket = net.createConnection({ path: socketPath });
+        socket.setEncoding("utf8");
+        socket.setTimeout(Math.min(2_000, timeoutMs));
+        let body = "";
+        let settled = false;
+        const fail = (error) => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          socket.destroy();
+          reject(error);
+        };
+        socket.once("connect", () => socket.write(`${JSON.stringify({ op: "health" })}\n`));
+        socket.on("data", (chunk) => {
+          body += chunk;
+          if (Buffer.byteLength(body) > 1024 * 1024) {
+            fail(new Error("Local signer health response is too large"));
+            return;
+          }
+          const newline = body.indexOf("\n");
+          if (newline < 0 || settled) {
+            return;
+          }
+          settled = true;
+          socket.destroy();
+          try {
+            resolve(JSON.parse(body.slice(0, newline)));
+          } catch (error) {
+            reject(error);
+          }
+        });
+        socket.once("timeout", () => fail(new Error("Local signer health timed out")));
+        socket.once("error", fail);
+      });
+      const result = response?.result;
+      const release = parseSignerReleaseManifest(
+        { schemaVersion: 1, ...result?.release },
+        expectedIdentity.version,
+      );
+      const features = new Set(result?.capabilities?.features || []);
+      const missing = LOCAL_SIGNER_REQUIRED_FEATURES.filter((feature) => !features.has(feature));
+      const policies = result?.policies;
+      const policiesValid =
+        Array.isArray(policies) &&
+        policies.every(
+          (policy) =>
+            typeof policy?.walletId === "string" &&
+            policy.walletId.length > 0 &&
+            Number.isSafeInteger(policy.version) &&
+            policy.version > 0 &&
+            /^sha256:[a-f0-9]{64}$/.test(policy.hash || ""),
+        );
+      if (
+        response?.ok !== true ||
+        result?.ready !== true ||
+        result?.keystoreType !== "signer-owned-v2" ||
+        result?.capabilities?.protocol?.current !== 2 ||
+        result?.capabilities?.protocol?.min > 2 ||
+        result?.capabilities?.protocol?.max < 2 ||
+        result?.capabilities?.nativeFeeReservationLamports !== 5_000_000 ||
+        result?.schema?.ready !== true ||
+        (expectedReadOnly !== undefined && result?.readOnly !== expectedReadOnly) ||
+        missing.length > 0 ||
+        !policiesValid ||
+        !signerIdentitiesEqual(release, expectedIdentity)
+      ) {
+        throw new Error(
+          `Local signer failed protocol-v2 compatibility${missing.length ? `; missing ${missing.join(",")}` : ""}${expectedReadOnly !== undefined && result?.readOnly !== expectedReadOnly ? `; expected readOnly=${String(expectedReadOnly)}` : ""}`,
+        );
+      }
+      return result;
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+  throw new Error(
+    `Local signer did not become exactly healthy: ${lastError?.message || "timeout"}`,
+  );
+}
+
+async function startSignerProcess(paths, binaryPath = paths.binaryPath, readOnly = false) {
+  await fsp.mkdir(paths.materialDir, { recursive: true, mode: 0o700 });
+  const log = await fsp.open(paths.logPath, "a", 0o600);
+  const child = spawn(
+    binaryPath,
+    [
+      "-socket",
+      paths.socketPath,
+      "-control-socket",
+      paths.controlSocketPath,
+      "-state-db",
+      paths.stateDbPath,
+      "-master-key",
+      paths.masterKeyPath,
+      "-pid-file",
+      paths.pidPath,
+      "-audit-log",
+      paths.auditPath,
+      ...(readOnly ? ["-read-only"] : []),
+    ],
+    {
+      detached: true,
+      stdio: ["ignore", log.fd, log.fd],
+      env: await loadSignerEnvironment(paths),
+    },
+  );
+  child.unref();
+  await log.close();
+  if (!Number.isSafeInteger(child.pid) || child.pid <= 1) {
+    throw new Error("Could not start the exact Local signer candidate");
+  }
+  return child.pid;
+}
+
+async function copyStandaloneFile(source, destination, mode) {
+  await fsp.mkdir(path.dirname(destination), { recursive: true, mode: 0o700 });
+  await fsp.copyFile(source, destination);
+  await fsp.chmod(destination, mode);
+  await fsyncManagedPath(destination);
+  await fsyncManagedPath(path.dirname(destination));
+}
+
+async function atomicInstallSignerBinary(paths, candidatePath, manifestPath) {
+  await fsp.mkdir(paths.binDir, { recursive: true, mode: 0o700 });
+  const candidateTemporary = `${paths.binaryPath}.candidate-${process.pid}-${Date.now()}`;
+  await copyStandaloneFile(candidatePath, candidateTemporary, 0o700);
+  await fsp.rename(candidateTemporary, paths.binaryPath);
+  await fsyncManagedPath(paths.binDir);
+  const releaseTemporary = `${paths.releaseManifestPath}.candidate-${process.pid}-${Date.now()}`;
+  await copyStandaloneFile(manifestPath, releaseTemporary, 0o600);
+  await fsp.rename(releaseTemporary, paths.releaseManifestPath);
+  const enrollTemporary = `${paths.enrollmentPath}.candidate-${process.pid}-${Date.now()}`;
+  await fsp.rm(enrollTemporary, { force: true });
+  await fsp.link(paths.binaryPath, enrollTemporary);
+  await fsp.rename(enrollTemporary, paths.enrollmentPath);
+  await fsyncManagedPath(paths.binDir);
+}
+
+async function snapshotStandaloneFile(source, destination) {
+  try {
+    const stat = await fsp.lstat(source);
+    if (!stat.isFile() || stat.isSymbolicLink()) {
+      throw new Error(`Signer installation path is not a regular file: ${source}`);
+    }
+    await copyStandaloneFile(source, destination, 0o600);
+    return { existed: true, sha256: await sha256File(destination) };
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return { existed: false, sha256: null };
+    }
+    throw error;
+  }
+}
+
+async function restoreStandaloneFile(snapshot, destination, executable = false) {
+  if (!snapshot.existed) {
+    await fsp.rm(destination, { force: true });
+    await fsyncManagedPath(path.dirname(destination)).catch((error) => {
+      if (error?.code !== "ENOENT") {
+        throw error;
+      }
+    });
+    return;
+  }
+  if ((await sha256File(snapshot.path)) !== snapshot.sha256) {
+    throw new Error(`Signer rollback snapshot was tampered: ${snapshot.path}`);
+  }
+  const temporary = `${destination}.rollback-${process.pid}-${Date.now()}`;
+  await copyStandaloneFile(snapshot.path, temporary, executable ? 0o700 : 0o600);
+  await fsp.rename(temporary, destination);
+  await fsyncManagedPath(path.dirname(destination));
+}
+
+function validateLocalSignerJournal(paths, value) {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    value.schemaVersion !== LOCAL_SIGNER_TRANSACTION_SCHEMA_VERSION ||
+    !LOCAL_SIGNER_TRANSACTION_PHASES.has(value.phase) ||
+    !TRANSACTION_ID_PATTERN.test(value.transactionId || "") ||
+    !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/.test(value.targetVersion || "") ||
+    path.resolve(value.transactionDir || "") !==
+      path.join(paths.transactionsDir, value.transactionId) ||
+    !isPathInside(paths.updateRoot, value.transactionDir)
+  ) {
+    throw new Error("Local signer update journal is invalid");
+  }
+  return value;
+}
+
+async function readLocalSignerJournal(paths) {
+  try {
+    return validateLocalSignerJournal(
+      paths,
+      JSON.parse(await fsp.readFile(paths.journalPath, "utf8")),
+    );
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function writeLocalSignerJournal(paths, journal, phase = journal.phase) {
+  const next = validateLocalSignerJournal(paths, {
+    ...journal,
+    schemaVersion: LOCAL_SIGNER_TRANSACTION_SCHEMA_VERSION,
+    phase,
+    updatedAt: new Date().toISOString(),
+  });
+  await atomicWriteJson(paths.journalPath, next, 0o600);
+  await fsyncManagedPath(paths.journalPath);
+  await fsyncManagedPath(paths.updateRoot);
+  if (process.env.FASED_TEST_LOCAL_SIGNER_CRASH_AFTER_PHASE === phase) {
+    process.exit(97);
+  }
+  return next;
+}
+
+async function removeLocalSignerJournal(paths) {
+  await fsp.rm(paths.journalPath, { force: true });
+  await fsyncManagedPath(paths.updateRoot);
+}
+
+async function prepareLocalSignerTransaction({
+  targetVersion,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+  deferCommit = false,
+  confirmDowngrade,
+  paths = resolveLocalSignerPaths(),
+}) {
+  const existingJournal = await readLocalSignerJournal(paths);
+  if (existingJournal) {
+    throw new Error(
+      `An unfinished Local signer transaction already exists (${existingJournal.transactionId}, phase=${existingJournal.phase}). Recover it first.`,
+    );
+  }
+  await fsp.mkdir(paths.transactionsDir, { recursive: true, mode: 0o700 });
+  const transactionId = randomUUID();
+  const transactionDir = path.join(paths.transactionsDir, transactionId);
+  await fsp.mkdir(transactionDir, { recursive: true, mode: 0o700 });
+  const release = await downloadVerifiedLocalSignerRelease({
+    targetVersion,
+    timeoutMs,
+    transactionDir,
+  });
+  let previousIdentity = null;
+  try {
+    previousIdentity = await readSignerBinaryIdentity(paths.binaryPath);
+  } catch (error) {
+    if (error?.code !== "ENOENT" && !String(error.message).includes("could not execute")) {
+      throw error;
+    }
+  }
+  if (previousIdentity && compareVersions(previousIdentity.version, targetVersion) === 1) {
+    if (confirmDowngrade !== targetVersion) {
+      throw new Error(
+        `Refusing signer downgrade ${previousIdentity.version} -> ${targetVersion}. Re-run only with --confirm-downgrade ${targetVersion} after reviewing the rollback boundary.`,
+      );
+    }
+  }
+  const runningPid = await resolveRunningSignerPid(paths);
+  const stateDbExists = await fsp
+    .lstat(paths.stateDbPath)
+    .then((stat) => stat.isFile() && !stat.isSymbolicLink())
+    .catch(() => false);
+  const legacyMaterialDetected =
+    !stateDbExists &&
+    (
+      await Promise.all(
+        [
+          path.join(paths.materialDir, "wallet-keys.json"),
+          path.join(paths.materialDir, "keystore-solana.v1.enc"),
+          path.join(paths.materialDir, "keystore-evm.v1.enc"),
+        ].map(
+          async (candidate) =>
+            await fsp
+              .lstat(candidate)
+              .then((stat) => stat.isFile() && !stat.isSymbolicLink())
+              .catch(() => false),
+        ),
+      )
+    ).some(Boolean);
+  let previousHealth = null;
+  if (runningPid !== null) {
+    if (!previousIdentity) {
+      throw new Error("The active Local signer has no verifiable production release identity");
+    }
+    previousHealth = await probeLocalSignerHealth(paths.socketPath, previousIdentity, 5_000);
+  }
+  let journal = {
+    schemaVersion: LOCAL_SIGNER_TRANSACTION_SCHEMA_VERSION,
+    transactionId,
+    transactionDir,
+    targetVersion,
+    targetIdentity: release.identity,
+    previousIdentity,
+    previousHealthPolicies: previousHealth?.policies || null,
+    previousWasRunning: runningPid !== null,
+    legacyMigrationRequired: legacyMaterialDetected,
+    deferCommit: deferCommit,
+    phase: "staging",
+    createdAt: new Date().toISOString(),
+  };
+  journal = await writeLocalSignerJournal(paths, journal, "staging");
+  await stopExactSigner(paths, runningPid);
+  journal = await writeLocalSignerJournal(paths, journal, "quiesced");
+  const snapshotDir = path.join(transactionDir, "snapshot");
+  const materialSnapshotDir = path.join(snapshotDir, "material");
+  await createOwnerOnlySnapshot(paths.materialDir, materialSnapshotDir, [
+    paths.socketPath,
+    paths.controlSocketPath,
+    paths.pidPath,
+    paths.legacyPidPath,
+    paths.logPath,
+  ]);
+  const binarySnapshotPath = path.join(snapshotDir, "fased-signerd.previous");
+  const releaseSnapshotPath = path.join(snapshotDir, "fased-signerd-release.previous.json");
+  const enrollmentSnapshotPath = path.join(snapshotDir, "fased-signer-enroll.previous");
+  const binarySnapshot = await snapshotStandaloneFile(paths.binaryPath, binarySnapshotPath);
+  const releaseSnapshot = await snapshotStandaloneFile(
+    paths.releaseManifestPath,
+    releaseSnapshotPath,
+  );
+  const enrollmentSnapshot = await snapshotStandaloneFile(
+    paths.enrollmentPath,
+    enrollmentSnapshotPath,
+  );
+  const auxiliarySnapshots = [];
+  const auxiliaryDestinations = [
+    { destination: paths.policyHelperPath, executable: true },
+    { destination: paths.policyLauncherPath, executable: true },
+    ...paths.policyTemplatePaths.map((destination) => ({ destination, executable: false })),
+  ];
+  for (const [index, entry] of auxiliaryDestinations.entries()) {
+    const snapshotPath = path.join(
+      snapshotDir,
+      "auxiliary",
+      `${index}-${path.basename(entry.destination)}.previous`,
+    );
+    auxiliarySnapshots.push({
+      ...entry,
+      ...(await snapshotStandaloneFile(entry.destination, snapshotPath)),
+      path: snapshotPath,
+    });
+  }
+  journal = {
+    ...journal,
+    snapshot: {
+      materialDir: materialSnapshotDir,
+      binary: { ...binarySnapshot, path: binarySnapshotPath },
+      releaseManifest: { ...releaseSnapshot, path: releaseSnapshotPath },
+      enrollment: { ...enrollmentSnapshot, path: enrollmentSnapshotPath },
+      auxiliary: auxiliarySnapshots,
+    },
+    candidatePath: release.candidatePath,
+    candidateManifestPath: release.manifestPath,
+  };
+  journal = await writeLocalSignerJournal(paths, journal, "snapshotted");
+
+  const preflightMaterial = path.join(transactionDir, "preflight", "material");
+  await restoreOwnerOnlySnapshot(materialSnapshotDir, preflightMaterial);
+  const translate = (source) =>
+    path.join(preflightMaterial, path.relative(paths.materialDir, source));
+  const preflightRuntime = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-signerd-preflight-"));
+  await fsp.chmod(preflightRuntime, 0o700);
+  const preflightPaths = {
+    ...paths,
+    binaryPath: release.candidatePath,
+    materialDir: preflightMaterial,
+    socketPath: path.join(preflightRuntime, "app.sock"),
+    controlSocketPath: path.join(preflightRuntime, "control.sock"),
+    stateDbPath: translate(paths.stateDbPath),
+    masterKeyPath: translate(paths.masterKeyPath),
+    pidPath: path.join(preflightRuntime, "signer.pid"),
+    legacyPidPath: path.join(preflightRuntime, "legacy.pid"),
+    auditPath: path.join(preflightMaterial, "preflight.audit.jsonl"),
+    logPath: path.join(preflightMaterial, "preflight.log"),
+    signerEnvPath: translate(paths.signerEnvPath),
+  };
+  const preflightPid = await startSignerProcess(preflightPaths, release.candidatePath, true);
+  try {
+    const candidateHealth = await probeLocalSignerHealth(
+      preflightPaths.socketPath,
+      release.identity,
+      10_000,
+      true,
+    );
+    if (
+      journal.previousHealthPolicies &&
+      JSON.stringify(candidateHealth.policies) !== JSON.stringify(journal.previousHealthPolicies)
+    ) {
+      throw new Error("Candidate signer preflight did not preserve exact wallet policy hashes");
+    }
+  } finally {
+    await stopExactSigner(preflightPaths, preflightPid).catch(() => undefined);
+    await fsp.rm(preflightRuntime, { recursive: true, force: true });
+  }
+  journal = await writeLocalSignerJournal(paths, journal, "prepared");
+  return journal;
+}
+
+async function activateLocalSignerTransaction(paths = resolveLocalSignerPaths()) {
+  let journal = await readLocalSignerJournal(paths);
+  if (!journal || journal.phase !== "prepared") {
+    throw new Error("Local signer transaction is not prepared for activation");
+  }
+  journal = await writeLocalSignerJournal(paths, journal, "activating");
+  await stopExactSigner(paths);
+  await atomicInstallSignerBinary(paths, journal.candidatePath, journal.candidateManifestPath);
+  const stateExists = await fsp
+    .lstat(paths.stateDbPath)
+    .then((stat) => stat.isFile())
+    .catch(() => false);
+  const shouldStart =
+    !journal.legacyMigrationRequired &&
+    (journal.previousWasRunning || stateExists || process.env.FASED_LOCAL_SIGNER_START === "1");
+  if (shouldStart) {
+    const pid = await startSignerProcess(paths, paths.binaryPath, true);
+    try {
+      const health = await probeLocalSignerHealth(
+        paths.socketPath,
+        journal.targetIdentity,
+        15_000,
+        true,
+      );
+      if (
+        journal.previousHealthPolicies &&
+        JSON.stringify(health.policies) !== JSON.stringify(journal.previousHealthPolicies)
+      ) {
+        throw new Error("Activated signer did not preserve exact wallet IDs and policy hashes");
+      }
+    } catch (error) {
+      await stopExactSigner(paths, pid).catch(() => undefined);
+      throw error;
+    }
+  } else {
+    const exact = await readSignerBinaryIdentity(paths.binaryPath, journal.targetVersion);
+    if (!signerIdentitiesEqual(exact, journal.targetIdentity)) {
+      throw new Error("Activated Local signer binary identity changed during the switch");
+    }
+  }
+  journal = await writeLocalSignerJournal(
+    paths,
+    { ...journal, candidateShouldRun: shouldStart },
+    "candidate-active",
+  );
+  return journal;
+}
+
+async function commitLocalSignerTransaction(paths = resolveLocalSignerPaths()) {
+  let journal = await readLocalSignerJournal(paths);
+  if (!journal || !new Set(["candidate-active", "committing"]).has(journal.phase)) {
+    throw new Error("Local signer transaction has not passed candidate health verification");
+  }
+  if (journal.phase !== "committing") {
+    journal = await writeLocalSignerJournal(paths, journal, "committing");
+  }
+  const exact = await readSignerBinaryIdentity(paths.binaryPath, journal.targetVersion);
+  if (!signerIdentitiesEqual(exact, journal.targetIdentity)) {
+    throw new Error("Local signer commit identity no longer matches the verified candidate");
+  }
+  if (journal.candidateShouldRun) {
+    await stopExactSigner(paths);
+    await startSignerProcess(paths);
+    const health = await probeLocalSignerHealth(paths.socketPath, exact, 15_000, false);
+    if (
+      journal.previousHealthPolicies &&
+      JSON.stringify(health.policies) !== JSON.stringify(journal.previousHealthPolicies)
+    ) {
+      throw new Error("Committed signer did not preserve exact wallet IDs and policy hashes");
+    }
+  }
+  const committedMarker = path.join(journal.transactionDir, "committed.json");
+  await atomicWriteJson(
+    committedMarker,
+    { schemaVersion: 1, committedAt: new Date().toISOString(), identity: exact },
+    0o600,
+  );
+  await fsyncManagedPath(committedMarker);
+  await fsyncManagedPath(journal.transactionDir);
+  await removeLocalSignerJournal(paths);
+  const transactions = await fsp.readdir(paths.transactionsDir, { withFileTypes: true });
+  for (const entry of transactions) {
+    if (entry.isDirectory() && entry.name !== journal.transactionId) {
+      await fsp.rm(path.join(paths.transactionsDir, entry.name), {
+        recursive: true,
+        force: true,
+      });
+    }
+  }
+  await fsyncManagedPath(paths.transactionsDir);
+  return {
+    action: "committed",
+    identity: exact,
+    legacyMigrationRequired: journal.legacyMigrationRequired === true,
+  };
+}
+
+async function rollbackLocalSignerTransaction(paths = resolveLocalSignerPaths(), originalError) {
+  let journal = await readLocalSignerJournal(paths);
+  if (!journal) {
+    return { action: "none" };
+  }
+  if (journal.phase === "committing") {
+    throw new Error(
+      "Local signer has a durable commit decision; rollback is refused and recovery must finish forward",
+    );
+  }
+  if (journal.phase !== "rolling-back") {
+    journal = await writeLocalSignerJournal(paths, journal, "rolling-back");
+  }
+  await stopExactSigner(paths).catch(async (error) => {
+    if (journal.phase === "staging") {
+      return;
+    }
+    throw error;
+  });
+  if (journal.snapshot) {
+    await restoreOwnerOnlySnapshot(journal.snapshot.materialDir, paths.materialDir);
+    await fsp.mkdir(paths.binDir, { recursive: true, mode: 0o700 });
+    await restoreStandaloneFile(journal.snapshot.binary, paths.binaryPath, true);
+    await restoreStandaloneFile(journal.snapshot.releaseManifest, paths.releaseManifestPath, false);
+    await restoreStandaloneFile(journal.snapshot.enrollment, paths.enrollmentPath, true);
+    for (const entry of journal.snapshot.auxiliary || []) {
+      await restoreStandaloneFile(entry, entry.destination, entry.executable === true);
+    }
+    await fsyncManagedPath(paths.binDir);
+    if (journal.previousWasRunning && journal.snapshot.binary.existed) {
+      const previousIdentity = await readSignerBinaryIdentity(paths.binaryPath);
+      if (
+        journal.previousIdentity &&
+        !signerIdentitiesEqual(previousIdentity, journal.previousIdentity)
+      ) {
+        throw new Error("Rollback restored a different Local signer binary identity");
+      }
+      await startSignerProcess(paths);
+      if (journal.previousIdentity) {
+        await probeLocalSignerHealth(paths.socketPath, journal.previousIdentity, 15_000);
+      }
+    }
+  } else if (journal.previousWasRunning) {
+    await startSignerProcess(paths);
+  }
+  await removeLocalSignerJournal(paths);
+  await fsp.rm(journal.transactionDir, { recursive: true, force: true });
+  await fsyncManagedPath(paths.updateRoot);
+  if (originalError) {
+    const error = new Error(`Local signer update rolled back exactly: ${originalError.message}`, {
+      cause: originalError,
+    });
+    error.code = "LOCAL_SIGNER_UPDATE_ROLLED_BACK";
+    throw error;
+  }
+  return { action: "rolled-back" };
+}
+
+async function recoverLocalSignerTransaction(paths = resolveLocalSignerPaths()) {
+  const journal = await readLocalSignerJournal(paths);
+  if (!journal) {
+    return { action: "none" };
+  }
+  if (journal.phase === "committing") {
+    return await commitLocalSignerTransaction(paths);
+  }
+  if (journal.phase === "candidate-active" && !journal.deferCommit) {
+    return await commitLocalSignerTransaction(paths);
+  }
+  return await rollbackLocalSignerTransaction(paths);
+}
+
+async function runLocalSignerTransaction(options, pathOverrides = {}) {
+  const paths = resolveLocalSignerPaths(pathOverrides);
+  await fsp.mkdir(paths.updateRoot, { recursive: true, mode: 0o700 });
+  const releaseLock = await acquireUpdateLock(paths.updateRoot);
+  try {
+    if (options.action === "status") {
+      return { action: "status", journal: await readLocalSignerJournal(paths) };
+    }
+    if (options.action === "verify") {
+      const journal = await readLocalSignerJournal(paths);
+      const identity = await readSignerBinaryIdentity(
+        paths.binaryPath,
+        options.targetVersion || undefined,
+      );
+      await probeLocalSignerHealth(
+        paths.socketPath,
+        identity,
+        Math.min(options.timeoutMs, 15_000),
+        journal?.phase === "candidate-active",
+      );
+      return { action: "verified", identity };
+    }
+    if (options.action === "recover") {
+      return await recoverLocalSignerTransaction(paths);
+    }
+    if (options.action === "rollback") {
+      return await rollbackLocalSignerTransaction(paths);
+    }
+    if (options.action === "commit") {
+      return await commitLocalSignerTransaction(paths);
+    }
+    if (options.action === "activate") {
+      return await activateLocalSignerTransaction(paths);
+    }
+    if (options.action === "prepare") {
+      return await prepareLocalSignerTransaction({ ...options, paths });
+    }
+    if (options.action !== "install") {
+      throw new Error(`Unsupported Local signer transaction action: ${options.action}`);
+    }
+    await recoverLocalSignerTransaction(paths);
+    try {
+      await prepareLocalSignerTransaction({ ...options, paths });
+      const journal = await activateLocalSignerTransaction(paths);
+      if (options.deferCommit) {
+        return { action: "candidate-active", identity: journal.targetIdentity };
+      }
+      return await commitLocalSignerTransaction(paths);
+    } catch (error) {
+      if (await readLocalSignerJournal(paths)) {
+        return await rollbackLocalSignerTransaction(paths, error);
+      }
+      throw error;
+    }
+  } finally {
+    await releaseLock();
+  }
+}
+
+function parseLocalSignerTransactionArgs(argv) {
+  const action = argv[1] || "install";
+  if (
+    !new Set([
+      "install",
+      "prepare",
+      "activate",
+      "verify",
+      "commit",
+      "rollback",
+      "recover",
+      "status",
+    ]).has(action)
+  ) {
+    throw new Error(
+      "local-signer requires install, prepare, activate, verify, commit, rollback, recover, or status",
+    );
+  }
+  const options = {
+    action,
+    targetVersion: null,
+    timeoutMs: DEFAULT_TIMEOUT_MS,
+    deferCommit: false,
+    confirmDowngrade: null,
+  };
+  for (let index = 2; index < argv.length; index += 1) {
+    const token = argv[index];
+    if (token === "--version") {
+      options.targetVersion = String(argv[++index] || "").replace(/^v/, "");
+    } else if (token === "--timeout") {
+      options.timeoutMs = Number.parseInt(argv[++index] || "", 10) * 1000;
+    } else if (token === "--defer-commit") {
+      options.deferCommit = true;
+    } else if (token === "--confirm-downgrade") {
+      options.confirmDowngrade = String(argv[++index] || "").replace(/^v/, "");
+    } else {
+      throw new Error(`Unsupported Local signer transaction option: ${token}`);
+    }
+  }
+  if (
+    new Set(["install", "prepare", "verify"]).has(action) &&
+    !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/.test(options.targetVersion || "")
+  ) {
+    throw new Error(`local-signer ${action} requires --version X.Y.Z`);
+  }
+  if (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs <= 0) {
+    throw new Error("--timeout must be a positive integer (seconds)");
+  }
+  return options;
+}
+
+function localPairedUpdateJournalPath(paths) {
+  return path.join(paths.stateDir, "local-paired-update-transaction.json");
+}
+
+function validateLocalPairedUpdateJournal(paths, value) {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    value.schemaVersion !== 1 ||
+    !new Set(["prepared", "signer-active", "app-active", "gateway-verified"]).has(value.phase) ||
+    !TRANSACTION_ID_PATTERN.test(value.transactionId || "") ||
+    !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/.test(value.targetVersion || "") ||
+    !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/.test(value.previousVersion || "") ||
+    value.nextManifest?.runtime?.activeVersion !== value.targetVersion ||
+    value.previousManifest?.runtime?.activeVersion !== value.previousVersion ||
+    value.nextManifest?.profile === "hosting" ||
+    value.previousManifest?.profile === "hosting"
+  ) {
+    throw new Error("Local paired app/signer update journal is invalid");
+  }
+  return {
+    ...value,
+    targetRoot: managedReleaseRoot(paths, value.targetRoot, "targetRoot"),
+    previousRoot: managedReleaseRoot(paths, value.previousRoot, "previousRoot"),
+  };
+}
+
+async function readLocalPairedUpdateJournal(paths) {
+  try {
+    return validateLocalPairedUpdateJournal(
+      paths,
+      JSON.parse(await fsp.readFile(localPairedUpdateJournalPath(paths), "utf8")),
+    );
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function writeLocalPairedUpdateJournal(paths, journal, phase = journal.phase) {
+  const next = validateLocalPairedUpdateJournal(paths, {
+    ...journal,
+    schemaVersion: 1,
+    phase,
+    updatedAt: new Date().toISOString(),
+  });
+  const journalPath = localPairedUpdateJournalPath(paths);
+  await atomicWriteJson(journalPath, next, 0o600);
+  await fsyncManagedPath(journalPath);
+  await fsyncManagedPath(paths.stateDir);
+  if (process.env.FASED_TEST_LOCAL_PAIRED_CRASH_AFTER_PHASE === phase) {
+    process.exit(98);
+  }
+  return next;
+}
+
+async function removeLocalPairedUpdateJournal(paths) {
+  await fsp.rm(localPairedUpdateJournalPath(paths), { force: true });
+  await fsyncManagedPath(paths.stateDir);
+}
+
+async function localSignerIsInstalledOrConfigured(signerPaths) {
+  for (const candidate of [signerPaths.binaryPath, signerPaths.stateDbPath]) {
+    if (
+      await fsp
+        .lstat(candidate)
+        .then((stat) => stat.isFile() && !stat.isSymbolicLink())
+        .catch(() => false)
+    ) {
+      return true;
+    }
+  }
+  const registryPath = path.join(signerPaths.materialDir, "provider-registry.v1.json");
+  try {
+    const registry = JSON.parse(await fsp.readFile(registryPath, "utf8"));
+    return (registry.wallets || []).some((wallet) => wallet?.providerId === "local-socket-signer");
+  } catch {
+    return false;
+  }
+}
+
+async function restoreLocalPairedApplication(paths, journal) {
+  await atomicSymlink(journal.previousRoot, paths.currentLink);
+  await replaceCompatibilityLink(paths);
+  await atomicWriteJson(paths.manifestPath, journal.previousManifest, 0o600);
+  await syncManagedActivation(paths);
+  await updateStableComponents(paths, journal.previousRoot, true);
+}
+
+async function rollbackLocalPairedUpdate(paths, journal, timeoutMs, originalError = null) {
+  const failures = [];
+  try {
+    await restoreLocalPairedApplication(paths, journal);
+  } catch (error) {
+    failures.push(`application restore: ${error.message}`);
+  }
+  try {
+    await runLocalSignerTransaction({ action: "rollback" }, { stateDir: paths.stateDir });
+  } catch (error) {
+    failures.push(`signer restore: ${error.message}`);
+  }
+  if (failures.length === 0) {
+    try {
+      await refreshGateway(
+        journal.previousRoot,
+        journal.previousManifest,
+        timeoutMs,
+        false,
+        journal.previousManifest?.signer?.release,
+      );
+    } catch (error) {
+      failures.push(`previous Gateway refresh: ${error.message}`);
+    }
+  }
+  if (failures.length > 0) {
+    const error = new Error(
+      `Local paired update recovery is incomplete (${failures.join("; ")}). Re-run fased update after correcting the failure.`,
+      { cause: originalError || undefined },
+    );
+    error.code = "LOCAL_PAIRED_ROLLBACK_INCOMPLETE";
+    throw error;
+  }
+  await removeLocalPairedUpdateJournal(paths);
+  if (originalError) {
+    const error = new Error(
+      `Update rolled back the exact Local app and signer after health verification failed: ${originalError.message}`,
+      { cause: originalError },
+    );
+    error.code = "LOCAL_PAIRED_UPDATE_ROLLED_BACK";
+    throw error;
+  }
+  return { action: "rolled-back" };
+}
+
+async function recoverLocalPairedUpdate(paths, timeoutMs) {
+  const journal = await readLocalPairedUpdateJournal(paths);
+  if (!journal) {
+    await runLocalSignerTransaction({ action: "recover" }, { stateDir: paths.stateDir });
+    return { recovered: false };
+  }
+  if (journal.phase === "gateway-verified") {
+    let signer;
+    try {
+      signer = await runLocalSignerTransaction({ action: "commit" }, { stateDir: paths.stateDir });
+    } catch (error) {
+      if (!String(error?.message || "").includes("has not passed candidate health")) {
+        throw error;
+      }
+      const signerPaths = resolveLocalSignerPaths({ stateDir: paths.stateDir });
+      const identity = await readSignerBinaryIdentity(
+        signerPaths.binaryPath,
+        journal.targetVersion,
+      );
+      if (!signerIdentitiesEqual(identity, journal.nextManifest?.signer?.release)) {
+        throw new Error("Local paired recovery found no signer journal and a mismatched binary", {
+          cause: error,
+        });
+      }
+      await probeLocalSignerHealth(signerPaths.socketPath, identity, Math.min(timeoutMs, 15_000));
+      signer = { identity };
+    }
+    const nextManifest = {
+      ...journal.nextManifest,
+      signer: { release: signer.identity },
+    };
+    await atomicWriteJson(paths.manifestPath, nextManifest, 0o600);
+    await syncManagedActivation(paths);
+    await updateStableComponents(paths, journal.targetRoot, true);
+    await removeLocalPairedUpdateJournal(paths);
+    return { recovered: true, action: "committed" };
+  }
+  return {
+    recovered: true,
+    ...(await rollbackLocalPairedUpdate(paths, journal, timeoutMs)),
+  };
+}
+
 async function updateManagedRuntime(options) {
   const commandStartedAt = Date.now();
   const timings = [];
@@ -1540,6 +3229,18 @@ async function updateManagedRuntime(options) {
       currentVersion = currentRoot
         ? (await readPackageVersion(currentRoot)) || existingManifest.runtime.activeVersion
         : existingManifest.runtime.activeVersion;
+    } else {
+      await measureStage(timings, "interrupted Local app/signer transaction recovery", () =>
+        recoverLocalPairedUpdate(paths, options.timeoutMs),
+      );
+      existingManifest = readManagedInstallManifest(paths.manifestPath);
+      if (!existingManifest) {
+        throw new Error("Managed installation manifest is invalid after Local update recovery.");
+      }
+      currentRoot = await resolveLinkTarget(paths.currentLink);
+      currentVersion = currentRoot
+        ? (await readPackageVersion(currentRoot)) || existingManifest.runtime.activeVersion
+        : existingManifest.runtime.activeVersion;
     }
     targetVersion = await measureStage(timings, "release resolution", () =>
       resolveTargetVersion(options),
@@ -1562,7 +3263,13 @@ async function updateManagedRuntime(options) {
           2000,
         );
         if (!identity.ok && options.restart && currentRoot) {
-          await refreshGateway(currentRoot, existingManifest, options.timeoutMs);
+          await refreshGateway(
+            currentRoot,
+            existingManifest,
+            options.timeoutMs,
+            false,
+            existingManifest.signer?.release,
+          );
         } else if (!identity.ok && !options.restart) {
           throw new Error("Installed files are current, but Gateway runtime identity is stale.");
         }
@@ -1600,15 +3307,43 @@ async function updateManagedRuntime(options) {
     let previousRoot = currentRoot;
     let previousManifest = existingManifest;
     try {
-      const assetName = `fased-hosted-app-linux-${arch}-v${targetVersion}.tar.gz`;
+      let unifiedRelease = null;
+      let unifiedReleasePath = null;
+      if (existingManifest.profile === "hosting") {
+        unifiedReleasePath = path.join(temporaryRoot, "fased-hosted-release-v2.json");
+        await measureStage(timings, "unified release manifest", async () => {
+          await downloadToFile(
+            `${releaseUrl}/fased-hosted-release-v2.json`,
+            unifiedReleasePath,
+            options.timeoutMs,
+          );
+          if (officialVersion) {
+            await verifyOfficialAsset(unifiedReleasePath, officialVersion, options.timeoutMs);
+          }
+          unifiedRelease = (
+            await readHostedReleaseManifestV2(unifiedReleasePath, { version: targetVersion })
+          ).manifest;
+        });
+      }
+      const appArtifact = unifiedRelease?.application?.linux?.[arch]?.artifact;
+      const assetName =
+        appArtifact?.asset || `fased-hosted-app-linux-${arch}-v${targetVersion}.tar.gz`;
       const archive = await measureStage(timings, "application download and checksum", () =>
-        downloadVerifiedAsset({
-          releaseUrl,
-          assetName,
-          destinationDir: temporaryRoot,
-          timeoutMs: options.timeoutMs,
-          officialVersion,
-        }),
+        appArtifact
+          ? downloadManifestBoundAsset({
+              releaseUrl,
+              artifact: appArtifact,
+              destinationDir: temporaryRoot,
+              timeoutMs: options.timeoutMs,
+              officialVersion,
+            })
+          : downloadVerifiedAsset({
+              releaseUrl,
+              assetName,
+              destinationDir: temporaryRoot,
+              timeoutMs: options.timeoutMs,
+              officialVersion,
+            }),
       );
       await measureStage(timings, "application archive verification", () =>
         assertArchiveSafe(archive, "package"),
@@ -1618,6 +3353,12 @@ async function updateManagedRuntime(options) {
         extractArchive(archive, extracted, options.timeoutMs),
       );
       const stagedRoot = path.join(extracted, "package");
+      if (unifiedReleasePath) {
+        await fsp.copyFile(
+          unifiedReleasePath,
+          path.join(stagedRoot, ".fased-hosted-release-v2.json"),
+        );
+      }
       const metadata = await readHostedRuntimeMetadata(stagedRoot);
       if (!metadata) {
         throw new Error("Hosted app metadata is missing or invalid.");
@@ -1631,10 +3372,15 @@ async function updateManagedRuntime(options) {
           temporaryRoot,
           timeoutMs: options.timeoutMs,
           officialVersion,
+          manifestArtifact: unifiedRelease?.application?.linux?.[arch]?.dependencies,
         }),
       );
       await fsp.symlink(nodeModules, path.join(stagedRoot, "node_modules"), "dir");
       await assertManagedRuntime(stagedRoot, targetVersion);
+      const hostedRelease = await readHostedReleaseBinding(stagedRoot, metadata, targetVersion);
+      if (existingManifest.profile === "hosting" && !hostedRelease) {
+        throw new Error("Maintained Hosting update omitted its attested unified release binding.");
+      }
       await measureStage(timings, "staged runtime smoke", () =>
         smokeRuntime(stagedRoot, options.timeoutMs),
       );
@@ -1673,6 +3419,7 @@ async function updateManagedRuntime(options) {
         profile: existingManifest.profile,
         version: targetVersion,
         dependencyHash: metadata.dependencyHash,
+        hostedRelease,
         previousVersion: currentVersion,
       });
       if (existingManifest.profile === "hosting") {
@@ -1722,38 +3469,130 @@ async function updateManagedRuntime(options) {
           throw error;
         }
       } else {
-        await measureStage(timings, "runtime activation", async () => {
-          if (previousRoot && path.resolve(previousRoot) !== path.resolve(releaseRoot)) {
-            await atomicSymlink(previousRoot, paths.previousLink);
+        const signerPaths = resolveLocalSignerPaths({ stateDir: paths.stateDir });
+        const pairSigner =
+          Boolean(previousRoot) && (await localSignerIsInstalledOrConfigured(signerPaths));
+        if (pairSigner) {
+          let pairedJournal = await writeLocalPairedUpdateJournal(paths, {
+            schemaVersion: 1,
+            transactionId: randomUUID(),
+            targetVersion,
+            previousVersion: currentVersion,
+            targetRoot: releaseRoot,
+            previousRoot,
+            nextManifest,
+            previousManifest,
+            phase: "prepared",
+            createdAt: new Date().toISOString(),
+          });
+          try {
+            const signer = await measureStage(timings, "Local signer prepare and preflight", () =>
+              runLocalSignerTransaction(
+                {
+                  action: "install",
+                  targetVersion,
+                  timeoutMs: options.timeoutMs,
+                  deferCommit: true,
+                },
+                { stateDir: paths.stateDir },
+              ),
+            );
+            pairedJournal.nextManifest = {
+              ...pairedJournal.nextManifest,
+              signer: { release: signer.identity },
+            };
+            pairedJournal = await writeLocalPairedUpdateJournal(
+              paths,
+              pairedJournal,
+              "signer-active",
+            );
+            await measureStage(timings, "paired runtime activation", async () => {
+              if (path.resolve(previousRoot) !== path.resolve(releaseRoot)) {
+                await atomicSymlink(previousRoot, paths.previousLink);
+              }
+              await atomicSymlink(releaseRoot, paths.currentLink);
+              await replaceCompatibilityLink(paths);
+              await atomicWriteJson(paths.manifestPath, pairedJournal.nextManifest, 0o600);
+              await syncManagedActivation(paths);
+            });
+            activated = true;
+            pairedJournal = await writeLocalPairedUpdateJournal(paths, pairedJournal, "app-active");
+            await measureStage(timings, "paired Gateway and signer health", async () => {
+              await refreshGateway(releaseRoot, pairedJournal.nextManifest, options.timeoutMs);
+              await probeLocalSignerHealth(
+                signerPaths.socketPath,
+                pairedJournal.nextManifest.signer.release,
+                Math.min(options.timeoutMs, 15_000),
+              );
+            });
+            pairedJournal = await writeLocalPairedUpdateJournal(
+              paths,
+              pairedJournal,
+              "gateway-verified",
+            );
+            const committed = await runLocalSignerTransaction(
+              { action: "commit" },
+              { stateDir: paths.stateDir },
+            );
+            if (
+              !signerIdentitiesEqual(committed.identity, pairedJournal.nextManifest.signer.release)
+            ) {
+              throw new Error("Committed signer identity changed after paired health verification");
+            }
+            await measureStage(timings, "paired updater commit cleanup", async () => {
+              await atomicWriteJson(paths.manifestPath, pairedJournal.nextManifest, 0o600);
+              await syncManagedActivation(paths);
+              await updateStableComponents(paths, releaseRoot, true);
+              await cleanupReleases(paths, [releaseRoot, previousRoot]);
+              await removeLocalPairedUpdateJournal(paths);
+            });
+          } catch (error) {
+            if (pairedJournal.phase === "gateway-verified") {
+              const pending = new Error(
+                `The Local Gateway and signer passed exact health, but commit cleanup is pending: ${error.message}. Re-run fased update to finish forward recovery.`,
+                { cause: error },
+              );
+              pending.code = "LOCAL_PAIRED_COMMIT_PENDING";
+              throw pending;
+            }
+            activated = false;
+            return await rollbackLocalPairedUpdate(paths, pairedJournal, options.timeoutMs, error);
           }
-          await atomicSymlink(releaseRoot, paths.currentLink);
-          await replaceCompatibilityLink(paths);
-          await atomicWriteJson(paths.manifestPath, nextManifest, 0o600);
-        });
-        activated = true;
-
-        try {
-          await measureStage(timings, "Gateway refresh and health", () =>
-            refreshGateway(releaseRoot, nextManifest, options.timeoutMs),
-          );
-        } catch (error) {
-          if (previousRoot) {
-            await atomicSymlink(previousRoot, paths.currentLink);
+        } else {
+          await measureStage(timings, "runtime activation", async () => {
+            if (previousRoot && path.resolve(previousRoot) !== path.resolve(releaseRoot)) {
+              await atomicSymlink(previousRoot, paths.previousLink);
+            }
+            await atomicSymlink(releaseRoot, paths.currentLink);
             await replaceCompatibilityLink(paths);
-            await atomicWriteJson(paths.manifestPath, previousManifest, 0o600);
-            await refreshGateway(previousRoot, previousManifest, options.timeoutMs).catch(
-              () => undefined,
+            await atomicWriteJson(paths.manifestPath, nextManifest, 0o600);
+          });
+          activated = true;
+
+          try {
+            await measureStage(timings, "Gateway refresh and health", () =>
+              refreshGateway(releaseRoot, nextManifest, options.timeoutMs),
+            );
+          } catch (error) {
+            if (previousRoot) {
+              await atomicSymlink(previousRoot, paths.currentLink);
+              await replaceCompatibilityLink(paths);
+              await atomicWriteJson(paths.manifestPath, previousManifest, 0o600);
+              await refreshGateway(previousRoot, previousManifest, options.timeoutMs).catch(
+                () => undefined,
+              );
+            }
+            throw new Error(
+              `Update rolled back after health verification failed: ${error.message}`,
+              { cause: error },
             );
           }
-          throw new Error(`Update rolled back after health verification failed: ${error.message}`, {
-            cause: error,
+
+          await measureStage(timings, "updater and rollback cleanup", async () => {
+            await updateStableComponents(paths, releaseRoot);
+            await cleanupReleases(paths, [releaseRoot, previousRoot]);
           });
         }
-
-        await measureStage(timings, "updater and rollback cleanup", async () => {
-          await updateStableComponents(paths, releaseRoot);
-          await cleanupReleases(paths, [releaseRoot, previousRoot]);
-        });
       }
       timings.push({ name: "total", durationMs: Date.now() - commandStartedAt });
       if (options.json) {
@@ -1800,19 +3639,16 @@ async function updateManagedRuntime(options) {
 }
 
 export async function run(argv = process.argv.slice(2)) {
+  if (argv[0] === "local-signer") {
+    const result = await runLocalSignerTransaction(parseLocalSignerTransactionArgs(argv));
+    process.stdout.write(`${JSON.stringify({ ok: true, ...result })}\n`);
+    return;
+  }
   if (argv[0] === "hosted-transaction") {
-    const action = argv[1] || "recover";
-    let timeoutMs = DEFAULT_TIMEOUT_MS;
-    if (argv.length > 2) {
-      if (argv[2] !== "--timeout" || !/^\d+$/.test(argv[3] || "") || argv.length !== 4) {
-        throw new Error("hosted-transaction accepts only --timeout <seconds>");
-      }
-      timeoutMs = Number.parseInt(argv[3], 10) * 1000;
-      if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
-        throw new Error("--timeout must be a positive integer (seconds)");
-      }
-    }
-    const result = await runHostedTransactionControl(action, timeoutMs);
+    const { action, timeoutMs, targetServiceAlreadyRestarted } = parseHostedTransactionArgs(argv);
+    const result = await runHostedTransactionControl(action, timeoutMs, {
+      targetServiceAlreadyRestarted,
+    });
     process.stdout.write(`${JSON.stringify({ ok: true, ...result })}\n`);
     return;
   }
@@ -1866,6 +3702,24 @@ export const __testing = {
   requestHostedSignerTransactionWithRetry,
   rollbackHostedReleaseTransaction,
   restartHostedGateway,
+  activateLocalSignerTransaction,
+  commitLocalSignerTransaction,
+  createOwnerOnlySnapshot,
+  downloadVerifiedLocalSignerRelease,
+  loadSignerEnvironment,
+  parseLocalSignerTransactionArgs,
+  parseHostedTransactionArgs,
+  parseSignerReleaseManifest,
+  parseSignerVersionOutput,
+  prepareLocalSignerTransaction,
+  probeLocalSignerHealth,
+  readLocalSignerJournal,
+  recoverLocalSignerTransaction,
+  resolveLocalSignerAsset,
+  resolveLocalSignerPaths,
+  restoreOwnerOnlySnapshot,
+  rollbackLocalSignerTransaction,
+  runLocalSignerTransaction,
   runHostedTransactionControl,
   validateHostedTransactionJournal,
 };

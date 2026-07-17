@@ -215,6 +215,7 @@ export async function orchestrateA2aTaskSettlement(params: {
   const send = await deps.createOrExecuteWalletSend({
     payload: intent.payload,
     requestedBy: params.actor?.trim() || "a2a-settlement",
+    executionIntentId: `a2a-settlement:${params.taskId.trim()}`,
     sendPath: "automation",
     settlementContext: {
       taskId: params.taskId,

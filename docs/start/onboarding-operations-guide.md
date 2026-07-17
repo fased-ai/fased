@@ -32,8 +32,9 @@ Install and onboard with the right profile:
 
 - **Local:** use `./install.sh` from the checkout, or the Local curl bootstrap
   in [Getting Started](/start/getting-started).
-- **VPS Hosting:** use `./install.sh --hosting` from `/home/app/fased`, or the
-  VPS Hosting curl bootstrap in [Getting Started](/start/getting-started).
+- **VPS Hosting:** use the exact tagged, attested curl bootstrap from the
+  provider root console in [Getting Started](/start/getting-started). Never run
+  `/home/app/fased/install.sh` with sudo or as root.
 
 Run onboarding directly after install:
 
@@ -48,9 +49,28 @@ fased onboard \
   --non-interactive \
   --accept-risk \
   --host-profile hosting \
-  --ts-authkey 'tskey-auth-...' \
   --install-daemon
 ```
+
+Tailscale authentication must already have been completed by the root Hosting
+installer. Normal installs use its browser login URL. For unattended
+provisioning, prepare the secret without putting it in shell history or process
+arguments, then append the file option to the verified standalone Hosting
+installer command:
+
+```bash
+install -m 0600 -o root -g root /dev/null /root/fased-tailscale-authkey
+read -rsp "Tailscale auth key: " TAILSCALE_AUTHKEY </dev/tty
+printf '\n'
+printf '%s\n' "$TAILSCALE_AUTHKEY" > /root/fased-tailscale-authkey
+unset TAILSCALE_AUTHKEY
+```
+
+Append `--ts-authkey-file /root/fased-tailscale-authkey` to the verified
+standalone Hosting installer command. As soon as it finishes, run
+`rm -f /root/fased-tailscale-authkey`. Run these commands only in the provider
+root console. `fased onboard` does not accept Tailscale secrets, and raw
+`--ts-authkey <key>` arguments are rejected.
 
 Bootstrap note:
 
@@ -113,7 +133,7 @@ These decisions carry the most long-term consequence.
 
 - `--tailscale off|serve|funnel`
 - `--install-daemon`
-- `--ts-authkey <key>`
+- root installer only: `--ts-authkey-file <root-owned-mode-0600-file>`
 
 ### Wallet posture
 

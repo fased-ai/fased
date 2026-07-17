@@ -1,4 +1,7 @@
-import type { LocalSocketSignerPolicyV2 } from "./local-socket-signer-protocol.js";
+import {
+  LOCAL_SIGNER_NATIVE_FEE_RESERVATION_LAMPORTS_V2,
+  type LocalSocketSignerPolicyV2,
+} from "./local-socket-signer-protocol.js";
 
 type GatewayPolicyState = {
   capsEnabled: boolean;
@@ -275,7 +278,23 @@ export function localSignerPolicyState(
       /^[1-9][0-9]*$/.test(asset.maxPerTx) &&
       /^[1-9][0-9]*$/.test(asset.maxDaily),
   );
-  return policy.operations.length === 0 || policy.programs.length === 0 || !hasUsableAsset
+  const hasOnChainOperation = policy.operations.some(
+    (operation) => operation !== "federation.bondChallenge",
+  );
+  const nativeFeeReserve = BigInt(LOCAL_SIGNER_NATIVE_FEE_RESERVATION_LAMPORTS_V2);
+  const hasNativeFeeBudget = policy.assets.some(
+    (asset) =>
+      asset.asset === "solana:native" &&
+      asset.destinations.length > 0 &&
+      /^[1-9][0-9]*$/.test(asset.maxPerTx) &&
+      /^[1-9][0-9]*$/.test(asset.maxDaily) &&
+      BigInt(asset.maxPerTx) >= nativeFeeReserve &&
+      BigInt(asset.maxDaily) >= nativeFeeReserve,
+  );
+  return policy.operations.length === 0 ||
+    policy.programs.length === 0 ||
+    !hasUsableAsset ||
+    (hasOnChainOperation && !hasNativeFeeBudget)
     ? "locked"
     : "acknowledged";
 }

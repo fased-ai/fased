@@ -864,6 +864,7 @@ export function createWalletTool(opts?: {
       const result = await createOrExecute({
         payload,
         requestedBy: requesterAgentId ?? ownerAgentId,
+        executionIntentId: `agent-wallet-tool:${_toolCallId}`,
         sendPath: "automation",
         config: effectiveWallet,
         runtimeConfig: cfg,

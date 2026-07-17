@@ -27,9 +27,13 @@ const loadConfig = vi.hoisted(() =>
   })),
 );
 
-vi.mock("../../config/config.js", () => ({
-  loadConfig,
-}));
+vi.mock("../../config/config.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../config/config.js")>();
+  return {
+    ...actual,
+    loadConfig,
+  };
+});
 
 async function callTtsHandler(method: keyof typeof ttsHandlers) {
   let response:

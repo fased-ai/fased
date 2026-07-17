@@ -24,8 +24,10 @@ A compromised caller could change transaction intent during a broad unlock.
 - every manual native Agent, Mining, or Vault action uses one short-lived
   immutable review plus signer-owned WebAuthn;
 - hardware Wallet Standard or Turnkey supplies a separate manual custody lane.
-- Request ids, digests, cap reservations, signed bytes, and
-  broadcast/confirmed/failed/unknown state survive restart.
+- The native signer persists request ids, digests, cap reservations, signed
+  bytes, and broadcast/confirmed/failed/unknown state across restart. Each
+  Gateway/Mining workflow must also persist and reuse its caller-owned request
+  id; losing it is not permission to submit a replacement operation.
 
 ```mermaid
 flowchart TD

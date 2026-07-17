@@ -1,4 +1,6 @@
+import fs from "node:fs/promises";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readConfigFileSnapshot, type ConfigFileSnapshot } from "../config/config.js";
 import {
   connectOk,
   getFreePort,
@@ -110,8 +112,12 @@ const hoisted = vi.hoisted(() => {
   const createChannelManager = vi.fn(() => providerManager);
 
   const reloaderStop = vi.fn(async () => {});
-  let onHotReload: ((plan: unknown, nextConfig: unknown) => Promise<void>) | null = null;
-  let onRestart: ((plan: unknown, nextConfig: unknown) => void) | null = null;
+  let onHotReload:
+    | ((plan: unknown, nextConfig: unknown, snapshot: ConfigFileSnapshot) => Promise<void>)
+    | null = null;
+  let onRestart:
+    | ((plan: unknown, nextConfig: unknown, snapshot: ConfigFileSnapshot) => Promise<void>)
+    | null = null;
 
   const startGatewayConfigReloader = vi.fn(
     (opts: { onHotReload: typeof onHotReload; onRestart: typeof onRestart }) => {
@@ -161,7 +167,8 @@ vi.mock("./server-channels.js", () => ({
   createChannelManager: hoisted.createChannelManager,
 }));
 
-vi.mock("./config-reload.js", () => ({
+vi.mock("./config-reload.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./config-reload.js")>()),
   startGatewayConfigReloader: hoisted.startGatewayConfigReloader,
 }));
 
@@ -199,6 +206,15 @@ describe("gateway hot reload", () => {
     }
   });
 
+  async function writeConfigSnapshot(config: unknown): Promise<ConfigFileSnapshot> {
+    const configPath = process.env.FASED_CONFIG_PATH;
+    if (!configPath) {
+      throw new Error("FASED_CONFIG_PATH is not set");
+    }
+    await fs.writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+    return await readConfigFileSnapshot();
+  }
+
   it("applies hot reload actions and emits restart signal", async () => {
     const port = await getFreePort();
     const server = await startGatewayServer(port);
@@ -223,6 +239,7 @@ describe("gateway hot reload", () => {
         imessage: { enabled: true },
       },
     };
+    const nextSnapshot = await writeConfigSnapshot(nextConfig);
 
     await onHotReload?.(
       {
@@ -249,6 +266,7 @@ describe("gateway hot reload", () => {
         noopPaths: [],
       },
       nextConfig,
+      nextSnapshot,
     );
 
     expect(hoisted.stopGmailWatcher).toHaveBeenCalled();
@@ -284,7 +302,9 @@ describe("gateway hot reload", () => {
     const signalSpy = vi.fn();
     process.once("SIGUSR1", signalSpy);
 
-    onRestart?.(
+    const restartConfig = {};
+    const restartSnapshot = await writeConfigSnapshot(restartConfig);
+    await onRestart?.(
       {
         changedPaths: ["gateway.port"],
         restartGateway: true,
@@ -298,7 +318,8 @@ describe("gateway hot reload", () => {
         restartChannels: new Set(),
         noopPaths: [],
       },
-      {},
+      restartConfig,
+      restartSnapshot,
     );
 
     expect(signalSpy).toHaveBeenCalledTimes(1);

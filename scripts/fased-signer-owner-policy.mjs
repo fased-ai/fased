@@ -17,6 +17,7 @@ const SYSTEM_PROGRAM = "11111111111111111111111111111111";
 const TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const TOKEN_2022_PROGRAM = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
 const ASSOCIATED_TOKEN_PROGRAM = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
+const NATIVE_FEE_RESERVATION_LAMPORTS = 5_000_000n;
 const UINT64_MAX = 18_446_744_073_709_551_615n;
 const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 const BASE58_INDEX = new Map(
@@ -83,6 +84,17 @@ const VAULT_BOND_ACTIONS = new Set([
   "syncBondStakingPosition",
   "syncBondStakingRewards",
   "updateBondTierPolicy",
+]);
+const ASSOCIATED_TOKEN_PROGRAM_ACTIONS = new Set([
+  "claimBondStakingRewards",
+  "claimCycleRewards",
+  "claimCycleRewardsBatch",
+  "claimProtocolDistributorSat",
+  "claimProtocolTreasury",
+  "claimUnallocatedStakingRewards",
+  "finalizeBondUnlock",
+  "increaseBondPosition",
+  "openBondPosition",
 ]);
 
 function compareCanonicalString(left, right) {
@@ -462,6 +474,12 @@ function validatePolicyRelationships(policy) {
     if (separator >= 0 && !programs.has(operation.slice(separator + 1))) {
       throw new Error(`program-bound operation ${operation} requires the same program in programs`);
     }
+    const action = separator >= 0 ? operation.slice(operation.indexOf(".") + 1, separator) : "";
+    if (ASSOCIATED_TOKEN_PROGRAM_ACTIONS.has(action) && !programs.has(ASSOCIATED_TOKEN_PROGRAM)) {
+      throw new Error(
+        `program-bound operation ${operation} requires the Associated Token program used by its exact native codec`,
+      );
+    }
   }
   if (operations.has("solana.nativeTransfer")) {
     if (!programs.has(SYSTEM_PROGRAM) || !assets.has("solana:native")) {
@@ -471,14 +489,24 @@ function validatePolicyRelationships(policy) {
   if (operations.has("solana.splTransferChecked")) {
     const hasTokenProgram = programs.has(TOKEN_PROGRAM) || programs.has(TOKEN_2022_PROGRAM);
     const hasSPLAsset = [...assets].some((asset) => asset.startsWith("solana:spl:"));
+    if (!hasTokenProgram || !hasSPLAsset) {
+      throw new Error(
+        "solana.splTransferChecked requires a token program and explicit SPL asset; signer-funded associated-token-account creation is not permitted",
+      );
+    }
+  }
+  const hasOnChainOperation = policy.operations.some(
+    (operation) => operation !== "federation.bondChallenge",
+  );
+  if (hasOnChainOperation) {
+    const native = policy.assets.find((asset) => asset.asset === "solana:native");
     if (
-      !hasTokenProgram ||
-      !programs.has(SYSTEM_PROGRAM) ||
-      !programs.has(ASSOCIATED_TOKEN_PROGRAM) ||
-      !hasSPLAsset
+      !native ||
+      BigInt(native.maxPerTx) < NATIVE_FEE_RESERVATION_LAMPORTS ||
+      BigInt(native.maxDaily) < NATIVE_FEE_RESERVATION_LAMPORTS
     ) {
       throw new Error(
-        "solana.splTransferChecked requires a token program, System program, Associated Token program, and explicit SPL asset",
+        `on-chain signer policies require solana:native maxPerTx and maxDaily of at least ${NATIVE_FEE_RESERVATION_LAMPORTS} lamports for the signer-controlled fee/rent reservation`,
       );
     }
   }
@@ -1381,9 +1409,11 @@ if (isMain) {
 
 export const __testing = Object.freeze({
   ASSOCIATED_TOKEN_PROGRAM,
+  ASSOCIATED_TOKEN_PROGRAM_ACTIONS,
   FEDERATION_POLICY_DOMAIN,
   HOSTING_PATHS,
   SYSTEM_PROGRAM,
+  NATIVE_FEE_RESERVATION_LAMPORTS,
   TOKEN_2022_PROGRAM,
   TOKEN_PROGRAM,
   SAT_MINING_ACTIONS,

@@ -3,6 +3,8 @@ import { Value } from "@sinclair/typebox/value";
 
 const WalletChainSchema = Type.Literal("solana");
 
+export const LOCAL_SIGNER_NATIVE_FEE_RESERVATION_LAMPORTS_V2 = 5_000_000;
+
 const SignerWalletRoleSchema = Type.Union([
   Type.Literal("agent"),
   Type.Literal("mining"),
@@ -21,12 +23,38 @@ const SignerProtocolRangeV2Schema = Type.Object(
 export const LocalSocketSignerCapabilitiesV2Schema = Type.Object(
   {
     protocol: SignerProtocolRangeV2Schema,
+    nativeFeeReservationLamports: Type.Literal(LOCAL_SIGNER_NATIVE_FEE_RESERVATION_LAMPORTS_V2),
     intentTypes: Type.Array(Type.String()),
     operationStates: Type.Array(Type.String()),
     features: Type.Array(Type.String()),
   },
   { additionalProperties: false },
 );
+
+export const LocalSocketSignerReleaseIdentityV2Schema = Type.Union([
+  Type.Object(
+    {
+      version: Type.String({
+        pattern: "^(?:dev|[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?)$",
+      }),
+      commit: Type.String({ pattern: "^(?:unknown|[a-f0-9]{40})$" }),
+      buildInputDigest: Type.String({ pattern: "^(?:unknown|sha256:[a-f0-9]{64})$" }),
+      development: Type.Literal(true),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      version: Type.String({
+        pattern: "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$",
+      }),
+      commit: Type.String({ pattern: "^[a-f0-9]{40}$" }),
+      buildInputDigest: Type.String({ pattern: "^sha256:[a-f0-9]{64}$" }),
+      development: Type.Literal(false),
+    },
+    { additionalProperties: false },
+  ),
+]);
 
 const SignerPolicyAssetV2Schema = Type.Object(
   {
@@ -75,10 +103,19 @@ const SignerSatAccountV2Schema = Type.Object(
 
 const SignerJupiterTriggerIntentV2Schema = Type.Object(
   {
+    operation: Type.Union([Type.Literal("create"), Type.Literal("cancel")]),
     program: Type.String(),
-    vault: Type.Optional(Type.String()),
     order: Type.Optional(Type.String()),
-    requestId: Type.Optional(Type.String()),
+    triggerMint: Type.Optional(Type.String()),
+    condition: Type.Optional(Type.Union([Type.Literal("above"), Type.Literal("below")])),
+    targetPriceUsd: Type.Optional(Type.String({ pattern: "^(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$" })),
+    slippageBps: Type.Optional(Type.Integer({ minimum: 1, maximum: 1000 })),
+    expiresAt: Type.Optional(
+      Type.String({
+        pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$",
+      }),
+    ),
+    expectedOrderState: Type.Union([Type.Literal("new"), Type.Literal("open")]),
   },
   { additionalProperties: false },
 );
@@ -204,11 +241,8 @@ export const SignerIntentV2Schema = Type.Union([
     {
       type: Type.Union([
         Type.Literal("solana.jupiter.swap"),
-        Type.Literal("solana.jupiter.trigger.auth"),
         Type.Literal("solana.jupiter.trigger.create"),
-        Type.Literal("solana.jupiter.trigger.deposit"),
         Type.Literal("solana.jupiter.trigger.cancel"),
-        Type.Literal("solana.jupiter.trigger.withdraw"),
       ]),
       jupiter: SignerJupiterIntentV2Schema,
     },
@@ -225,7 +259,7 @@ const SignerSolanaTransactionEnvelopeV2Schema = Type.Object(
     serializedTxBase64: Type.String(),
     programs: Type.Array(Type.String(), { minItems: 1, maxItems: 64 }),
     writableAccounts: Type.Array(Type.String(), { minItems: 1, maxItems: 64 }),
-    submission: Type.Union([Type.Literal("rpc"), Type.Literal("returnSigned")]),
+    submission: Type.Literal("rpc"),
   },
   { additionalProperties: false },
 );
@@ -237,6 +271,49 @@ const SignerReviewAuthorizationV2Schema = Type.Object(
   },
   { additionalProperties: false },
 );
+
+export const LocalSocketSignerJupiterTriggerHistoryV2Schema = Type.Object(
+  {
+    orders: Type.Array(
+      Type.Object(
+        {
+          orderId: Type.String({ minLength: 1 }),
+          orderState: Type.String({ minLength: 1 }),
+          orderType: Type.Literal("single"),
+          inputMint: Type.String({ minLength: 1 }),
+          initialInputAmount: Type.String({ pattern: "^[1-9][0-9]*$" }),
+          remainingInputAmount: Type.String({ pattern: "^(?:0|[1-9][0-9]*)$" }),
+          outputMint: Type.String({ minLength: 1 }),
+          triggerMint: Type.String({ minLength: 1 }),
+          condition: Type.Union([Type.Literal("above"), Type.Literal("below")]),
+          targetPriceUsd: Type.String({ pattern: "^(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$" }),
+          slippageBps: Type.Integer({ minimum: 1, maximum: 1000 }),
+          expiresAt: Type.String({
+            pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$",
+          }),
+          cancel: Type.Optional(
+            Type.Object(
+              {
+                expectedOrderState: Type.Literal("open"),
+                refundMint: Type.String({ minLength: 1 }),
+                refundAmount: Type.String({ pattern: "^[1-9][0-9]*$" }),
+                destinationTokenAccount: Type.String({ minLength: 1 }),
+                program: Type.String({ minLength: 1 }),
+              },
+              { additionalProperties: false },
+            ),
+          ),
+        },
+        { additionalProperties: false },
+      ),
+    ),
+  },
+  { additionalProperties: false },
+);
+
+export type LocalSocketSignerJupiterTriggerHistoryV2 = Static<
+  typeof LocalSocketSignerJupiterTriggerHistoryV2Schema
+>;
 
 const SignerWalletPolicyCreateV2Schema = Type.Object(
   {
@@ -255,6 +332,10 @@ export const LocalSocketSignerRequestSchema = Type.Union(
   [
     Type.Object({ op: Type.Literal("health") }, { additionalProperties: false }),
     Type.Object({ op: Type.Literal("v2.capabilities") }, { additionalProperties: false }),
+    Type.Object(
+      { op: Type.Literal("v2.jupiter.trigger.history"), walletId: Type.String() },
+      { additionalProperties: false },
+    ),
     Type.Object(
       { op: Type.Literal("v2.policy.get"), walletId: Type.String() },
       { additionalProperties: false },
@@ -455,6 +536,7 @@ export const LocalSocketSignerHealthResultSchema = Type.Object(
     keystoreType: Type.Optional(Type.String()),
     chains: Type.Optional(Type.Array(WalletChainSchema)),
     ready: Type.Optional(Type.Boolean()),
+    release: LocalSocketSignerReleaseIdentityV2Schema,
     schema: Type.Optional(
       Type.Object(
         {
@@ -506,7 +588,16 @@ export const LocalSocketSignerHealthResultSchema = Type.Object(
           rpId: Type.Optional(Type.String()),
           origins: Type.Optional(Type.Array(Type.String())),
           credentialCount: Type.Integer({ minimum: 0 }),
+          credentialVersion: Type.Integer({ minimum: 0 }),
           ready: Type.Boolean(),
+        },
+        { additionalProperties: false },
+      ),
+    ),
+    jupiter: Type.Optional(
+      Type.Object(
+        {
+          triggerConfigured: Type.Boolean(),
         },
         { additionalProperties: false },
       ),
@@ -555,10 +646,21 @@ export const LocalSocketSignerOperationV2Schema = Type.Object(
     intentType: Type.String(),
     intentDigest: Type.String(),
     transactionDigest: Type.Optional(Type.String()),
-    signedTxBase64: Type.Optional(Type.String()),
     policyHash: Type.String(),
     asset: Type.String(),
     amount: Type.String(),
+    reservations: Type.Optional(
+      Type.Array(
+        Type.Object(
+          {
+            asset: Type.String(),
+            amount: Type.String(),
+            usageBucket: Type.String(),
+          },
+          { additionalProperties: false },
+        ),
+      ),
+    ),
     state: Type.Union([
       Type.Literal("reserved"),
       Type.Literal("broadcast"),
@@ -578,6 +680,17 @@ export const LocalSocketSignerOperationV2Schema = Type.Object(
     executionLeaseUntil: Type.Optional(Type.String()),
     authorizationProof: Type.Optional(Type.String()),
     authorizedAt: Type.Optional(Type.String()),
+    externalResult: Type.Optional(
+      Type.Object(
+        {
+          provider: Type.Literal("jupiter-trigger-v2"),
+          action: Type.Union([Type.Literal("create"), Type.Literal("cancel")]),
+          orderId: Type.String({ minLength: 1 }),
+          orderState: Type.Union([Type.Literal("open"), Type.Literal("cancelled")]),
+        },
+        { additionalProperties: false },
+      ),
+    ),
   },
   { additionalProperties: false },
 );
@@ -596,6 +709,7 @@ export const LocalSocketSignerReviewV2Schema = Type.Object(
     artifactKind: Type.Union([
       Type.Literal("solana-transaction"),
       Type.Literal("domain-separated-message"),
+      Type.Literal("jupiter-trigger-state"),
     ]),
     artifactDigest: Type.String({ pattern: "^sha256:[0-9a-f]{64}$" }),
     transaction: Type.Optional(SignerSolanaTransactionEnvelopeV2Schema),
@@ -623,7 +737,6 @@ export const LocalSocketSignerReviewExecutionV2Schema = Type.Object(
   {
     review: LocalSocketSignerReviewV2Schema,
     operation: LocalSocketSignerOperationV2Schema,
-    signedTxBase64: Type.Optional(Type.String()),
     signatureBase64: Type.Optional(Type.String()),
     signer: Type.String(),
   },
@@ -642,6 +755,7 @@ const LocalSocketSignerReviewBindingV2Schema = Type.Object(
     artifactKind: Type.Union([
       Type.Literal("solana-transaction"),
       Type.Literal("domain-separated-message"),
+      Type.Literal("jupiter-trigger-state"),
     ]),
     artifactDigest: Type.String({ pattern: "^sha256:[0-9a-f]{64}$" }),
     transactionDigest: Type.Optional(Type.String({ pattern: "^sha256:[0-9a-f]{64}$" })),
@@ -688,9 +802,78 @@ const LocalSocketSignerWalletPolicyResultV2Schema = Type.Object(
   { additionalProperties: false },
 );
 
+function isPositiveUnsignedInteger(value: string | undefined): boolean {
+  return typeof value === "string" && /^[1-9][0-9]*$/.test(value);
+}
+
+function isExactSignerOwnedTriggerIntent(intent: SignerIntentV2): boolean {
+  if (
+    intent.type !== "solana.jupiter.trigger.create" &&
+    intent.type !== "solana.jupiter.trigger.cancel"
+  ) {
+    return true;
+  }
+  const jupiter = intent.jupiter;
+  const trigger = jupiter.trigger;
+  if (!trigger || !jupiter.programs.includes(trigger.program)) {
+    return false;
+  }
+  if (intent.type === "solana.jupiter.trigger.create") {
+    return (
+      trigger.operation === "create" &&
+      trigger.order === undefined &&
+      Boolean(trigger.triggerMint) &&
+      (trigger.condition === "above" || trigger.condition === "below") &&
+      Boolean(trigger.targetPriceUsd) &&
+      trigger.slippageBps !== undefined &&
+      Boolean(trigger.expiresAt) &&
+      trigger.expectedOrderState === "new" &&
+      Boolean(jupiter.inputMint) &&
+      Boolean(jupiter.outputMint) &&
+      jupiter.inputMint !== jupiter.outputMint &&
+      isPositiveUnsignedInteger(jupiter.inputAmount) &&
+      jupiter.maxInputAmount === jupiter.inputAmount &&
+      jupiter.minimumOutputAmount === "0" &&
+      jupiter.sourceTokenAccount === undefined &&
+      jupiter.destinationTokenAccount === undefined
+    );
+  }
+  return (
+    trigger.operation === "cancel" &&
+    Boolean(trigger.order) &&
+    trigger.triggerMint === undefined &&
+    trigger.condition === undefined &&
+    trigger.targetPriceUsd === undefined &&
+    trigger.slippageBps === undefined &&
+    trigger.expiresAt === undefined &&
+    trigger.expectedOrderState === "open" &&
+    jupiter.inputMint === undefined &&
+    jupiter.inputAmount === undefined &&
+    jupiter.maxInputAmount === undefined &&
+    Boolean(jupiter.outputMint) &&
+    isPositiveUnsignedInteger(jupiter.minimumOutputAmount) &&
+    Boolean(jupiter.destinationTokenAccount) &&
+    jupiter.sourceTokenAccount === undefined
+  );
+}
+
 export function parseLocalSocketSignerRequest(input: unknown): LocalSocketSignerRequest {
   if (!Value.Check(LocalSocketSignerRequestSchema, input)) {
     throw new Error("invalid signer request");
+  }
+  if (
+    input.op === "v2.review.prepare" &&
+    (input.request.intent.type === "solana.jupiter.trigger.create" ||
+      input.request.intent.type === "solana.jupiter.trigger.cancel") &&
+    input.request.transaction !== undefined
+  ) {
+    throw new Error("invalid signer request: Jupiter Trigger transaction bytes are signer-owned");
+  }
+  if (
+    (input.op === "v2.review.prepare" || input.op === "v2.execute") &&
+    !isExactSignerOwnedTriggerIntent(input.request.intent)
+  ) {
+    throw new Error("invalid signer request: Jupiter Trigger terms are not exact and signer-owned");
   }
   return input;
 }
@@ -712,6 +895,8 @@ export function validateLocalSocketSignerResult(
     case "health":
     case "v2.capabilities":
       return Value.Check(LocalSocketSignerHealthResultSchema, result);
+    case "v2.jupiter.trigger.history":
+      return Value.Check(LocalSocketSignerJupiterTriggerHistoryV2Schema, result);
     case "v2.policy.get":
     case "v2.policy.put":
     case "v2.policy.tighten":

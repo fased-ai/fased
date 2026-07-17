@@ -18,7 +18,9 @@ type PackageJson = {
 };
 
 type HostedRuntimeMetadata = {
-  schemaVersion: 1;
+  schemaVersion: 2;
+  version: string;
+  commit: string;
   dependencyHash: string;
 };
 
@@ -293,6 +295,15 @@ async function main(): Promise<void> {
   if (!version || packageJson.name !== "@fased/fased") {
     throw new Error("Root package metadata is missing @fased/fased and its version.");
   }
+  const buildInfo = JSON.parse(
+    await fs.readFile(path.join(rootDir, "dist", "build-info.json"), "utf8"),
+  ) as { version?: string; commit?: string };
+  const commit = String(buildInfo.commit || "").trim();
+  if (buildInfo.version !== version || !/^[a-f0-9]{40}$/u.test(commit)) {
+    throw new Error(
+      "Hosted runtime build identity must match the package version and full commit.",
+    );
+  }
 
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "fased-hosted-runtime-"));
   const packDir = path.join(tempRoot, "pack");
@@ -483,7 +494,12 @@ async function main(): Promise<void> {
     console.log("hosted-artifact: packaged gateway smoke passed");
 
     const dependencyHash = await hostedDependencyHash(path.join(rootDir, "pnpm-lock.yaml"));
-    const runtimeMetadata: HostedRuntimeMetadata = { schemaVersion: 1, dependencyHash };
+    const runtimeMetadata: HostedRuntimeMetadata = {
+      schemaVersion: 2,
+      version,
+      commit,
+      dependencyHash,
+    };
     await fs.writeFile(
       path.join(packageRoot, ".fased-hosted-runtime.json"),
       `${JSON.stringify(runtimeMetadata, null, 2)}\n`,
@@ -531,6 +547,23 @@ async function main(): Promise<void> {
     const dependencyStat = await fs.stat(dependencyAssetPath);
     console.log(
       `hosted-artifact: ready ${dependencyAssetName} (${(dependencyStat.size / 1024 / 1024).toFixed(1)} MB, sha256 ${dependencyDigest})`,
+    );
+    await fs.writeFile(
+      path.join(outputDir, `${appAssetName}.release.json`),
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          version,
+          commit,
+          architecture: arch,
+          dependencyHash,
+          app: { asset: appAssetName, sha256: appDigest },
+          dependencies: { asset: dependencyAssetName, sha256: dependencyDigest },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
     );
   } finally {
     await fs.rm(tempRoot, { recursive: true, force: true });

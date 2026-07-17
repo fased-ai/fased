@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -43,7 +44,10 @@ const (
 	signerReviewProofConsumed = "consumed"
 )
 
-var signerWebAuthnUserIDKeyV2 = []byte("webauthnUserID")
+var (
+	signerWebAuthnUserIDKeyV2             = []byte("webauthnUserID")
+	signerWebAuthnCredentialsVersionKeyV2 = []byte("webauthnCredentialsVersion")
+)
 
 // signerWebAuthnServiceV2 is the signer-owned relying party. The Gateway only
 // relays opaque WebAuthn ceremony data. It cannot choose the RP ID, origins,
@@ -89,6 +93,27 @@ type signerWebAuthnCredentialMetadataV2 struct {
 	Label      string `json:"label"`
 	CreatedAt  string `json:"createdAt"`
 	LastUsedAt string `json:"lastUsedAt,omitempty"`
+}
+
+type signerWebAuthnCredentialSummaryV2 struct {
+	Version     uint64                               `json:"version"`
+	Count       uint64                               `json:"count"`
+	Credentials []signerWebAuthnCredentialMetadataV2 `json:"credentials"`
+}
+
+type signerWebAuthnCredentialRevokeRequestV2 struct {
+	CredentialID          string `json:"credentialId"`
+	ExpectedCount         uint64 `json:"expectedCount"`
+	ExpectedVersion       uint64 `json:"expectedVersion"`
+	ConfirmLastCredential bool   `json:"confirmLastCredential"`
+}
+
+type signerWebAuthnCredentialRevokeResultV2 struct {
+	Revoked               signerWebAuthnCredentialMetadataV2 `json:"revoked"`
+	Version               uint64                             `json:"version"`
+	Count                 uint64                             `json:"count"`
+	InvalidatedChallenges uint64                             `json:"invalidatedChallenges"`
+	InvalidatedProofs     uint64                             `json:"invalidatedProofs"`
 }
 
 type signerReviewBindingV2 struct {
@@ -175,6 +200,8 @@ type signerWebAuthnRegistrationBeginResultV2 struct {
 
 type signerWebAuthnRegistrationFinishResultV2 struct {
 	Credential signerWebAuthnCredentialMetadataV2 `json:"credential"`
+	Version    uint64                             `json:"version"`
+	Count      uint64                             `json:"count"`
 }
 
 type signerReviewAuthorizationBeginResultV2 struct {
@@ -192,11 +219,12 @@ type signerReviewAuthorizationFinishResultV2 struct {
 }
 
 type signerWebAuthnHealthV2 struct {
-	Configured      bool     `json:"configured"`
-	RPID            string   `json:"rpId,omitempty"`
-	Origins         []string `json:"origins,omitempty"`
-	CredentialCount int      `json:"credentialCount"`
-	Ready           bool     `json:"ready"`
+	Configured        bool     `json:"configured"`
+	RPID              string   `json:"rpId,omitempty"`
+	Origins           []string `json:"origins,omitempty"`
+	CredentialCount   int      `json:"credentialCount"`
+	CredentialVersion uint64   `json:"credentialVersion"`
+	Ready             bool     `json:"ready"`
 }
 
 func newSignerWebAuthnServiceV2(store *signerStoreV2, rpID, originList string) (*signerWebAuthnServiceV2, error) {
@@ -352,6 +380,51 @@ func loadSignerWebAuthnCredentialRecordsV2(tx *bolt.Tx) ([]signerWebAuthnCredent
 		return nil
 	})
 	return records, err
+}
+
+func signerWebAuthnCredentialsVersionFromTxV2(tx *bolt.Tx) (uint64, error) {
+	meta := tx.Bucket(bucketSignerMetaV2)
+	if meta == nil {
+		return 0, errors.New("signer metadata bucket is unavailable")
+	}
+	raw := meta.Get(signerWebAuthnCredentialsVersionKeyV2)
+	if len(raw) == 0 {
+		return 0, errors.New("signer WebAuthn credential version is unavailable")
+	}
+	version, err := strconv.ParseUint(string(raw), 10, 64)
+	if err != nil {
+		return 0, errors.New("signer WebAuthn credential version is invalid")
+	}
+	return version, nil
+}
+
+func putSignerWebAuthnCredentialsVersionV2(tx *bolt.Tx, version uint64) error {
+	meta := tx.Bucket(bucketSignerMetaV2)
+	if meta == nil {
+		return errors.New("signer metadata bucket is unavailable")
+	}
+	return meta.Put(signerWebAuthnCredentialsVersionKeyV2, []byte(strconv.FormatUint(version, 10)))
+}
+
+func signerWebAuthnCredentialSummaryFromTxV2(tx *bolt.Tx) (signerWebAuthnCredentialSummaryV2, error) {
+	records, err := loadSignerWebAuthnCredentialRecordsV2(tx)
+	if err != nil {
+		return signerWebAuthnCredentialSummaryV2{}, err
+	}
+	version, err := signerWebAuthnCredentialsVersionFromTxV2(tx)
+	if err != nil {
+		return signerWebAuthnCredentialSummaryV2{}, err
+	}
+	metadata := make([]signerWebAuthnCredentialMetadataV2, 0, len(records))
+	for _, record := range records {
+		metadata = append(metadata, signerWebAuthnCredentialMetadataFromRecordV2(record))
+	}
+	sort.Slice(metadata, func(i, j int) bool { return metadata[i].ID < metadata[j].ID })
+	return signerWebAuthnCredentialSummaryV2{
+		Version:     version,
+		Count:       uint64(len(metadata)),
+		Credentials: metadata,
+	}, nil
 }
 
 func signerWebAuthnUserFromTxV2(tx *bolt.Tx) (signerWebAuthnUserV2, []signerWebAuthnCredentialRecordV2, error) {
@@ -557,9 +630,12 @@ func (s *signerWebAuthnServiceV2) finishRegistration(body signerWebAuthnRegistra
 		if challenge.Kind != signerWebAuthnChallengeRegistration || challenge.Binding != nil {
 			return errors.New("signer WebAuthn challenge is not a registration ceremony")
 		}
-		user, _, err := signerWebAuthnUserFromTxV2(tx)
+		user, records, err := signerWebAuthnUserFromTxV2(tx)
 		if err != nil {
 			return err
+		}
+		if len(records) >= signerWebAuthnMaxCredentials {
+			return errors.New("signer WebAuthn credential limit reached")
 		}
 		parsed, err := protocol.ParseCredentialCreationResponseBytes(body.Credential)
 		if err != nil {
@@ -597,7 +673,20 @@ func (s *signerWebAuthnServiceV2) finishRegistration(body signerWebAuthnRegistra
 		if err := saveSignerWebAuthnChallengeV2(tx, challenge); err != nil {
 			return err
 		}
+		version, err := signerWebAuthnCredentialsVersionFromTxV2(tx)
+		if err != nil {
+			return err
+		}
+		if version == ^uint64(0) {
+			return errors.New("signer WebAuthn credential version is exhausted")
+		}
+		version++
+		if err := putSignerWebAuthnCredentialsVersionV2(tx, version); err != nil {
+			return err
+		}
 		result.Credential = signerWebAuthnCredentialMetadataFromRecordV2(record)
+		result.Version = version
+		result.Count = uint64(len(records) + 1)
 		return nil
 	})
 	return result, err
@@ -622,20 +711,143 @@ func (s *signerWebAuthnServiceV2) listCredentials() ([]signerWebAuthnCredentialM
 	return metadata, err
 }
 
+func (s *signerWebAuthnServiceV2) credentialSummary() (signerWebAuthnCredentialSummaryV2, error) {
+	if err := s.requireEnabled(); err != nil {
+		return signerWebAuthnCredentialSummaryV2{}, err
+	}
+	var summary signerWebAuthnCredentialSummaryV2
+	err := s.store.db.View(func(tx *bolt.Tx) error {
+		var loadErr error
+		summary, loadErr = signerWebAuthnCredentialSummaryFromTxV2(tx)
+		return loadErr
+	})
+	return summary, err
+}
+
+func normalizeSignerWebAuthnCredentialIDV2(raw string) (string, []byte, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" || len(value) > 2048 {
+		return "", nil, errors.New("credentialId is required and bounded")
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil || len(decoded) == 0 || len(decoded) > 1024 || base64.RawURLEncoding.EncodeToString(decoded) != value {
+		zeroBytes(decoded)
+		return "", nil, errors.New("credentialId must be canonical unpadded base64url")
+	}
+	return value, decoded, nil
+}
+
+func (s *signerWebAuthnServiceV2) revokeCredential(
+	req signerWebAuthnCredentialRevokeRequestV2,
+) (signerWebAuthnCredentialRevokeResultV2, error) {
+	if err := s.requireEnabled(); err != nil {
+		return signerWebAuthnCredentialRevokeResultV2{}, err
+	}
+	credentialID, decodedID, err := normalizeSignerWebAuthnCredentialIDV2(req.CredentialID)
+	if err != nil {
+		return signerWebAuthnCredentialRevokeResultV2{}, err
+	}
+	defer zeroBytes(decodedID)
+	var result signerWebAuthnCredentialRevokeResultV2
+	err = s.store.db.Update(func(tx *bolt.Tx) error {
+		summary, err := signerWebAuthnCredentialSummaryFromTxV2(tx)
+		if err != nil {
+			return err
+		}
+		if summary.Version != req.ExpectedVersion || summary.Count != req.ExpectedCount {
+			return fmt.Errorf(
+				"signer WebAuthn credential state conflict: expected version %d count %d, current version %d count %d",
+				req.ExpectedVersion,
+				req.ExpectedCount,
+				summary.Version,
+				summary.Count,
+			)
+		}
+		if summary.Count == 0 {
+			return errors.New("no signer WebAuthn credentials are enrolled")
+		}
+		if summary.Count == 1 && !req.ConfirmLastCredential {
+			return errors.New("refusing to revoke the last WebAuthn credential without explicit admin confirmation")
+		}
+		credentials := tx.Bucket(bucketSignerWebAuthnCredentialsV2)
+		key := signerWebAuthnCredentialKeyV2(decodedID)
+		raw := credentials.Get(key)
+		if raw == nil {
+			return errors.New("signer WebAuthn credential not found")
+		}
+		var record signerWebAuthnCredentialRecordV2
+		if err := json.Unmarshal(raw, &record); err != nil ||
+			base64.RawURLEncoding.EncodeToString(record.Credential.ID) != credentialID {
+			return errors.New("invalid stored signer WebAuthn credential")
+		}
+		if err := credentials.Delete(key); err != nil {
+			return err
+		}
+
+		invalidatedChallenges := uint64(0)
+		challengeCursor := tx.Bucket(bucketSignerWebAuthnChallengesV2).Cursor()
+		for challengeKey, challengeRaw := challengeCursor.First(); challengeKey != nil; challengeKey, challengeRaw = challengeCursor.Next() {
+			var challenge signerWebAuthnChallengeV2
+			if err := json.Unmarshal(challengeRaw, &challenge); err != nil {
+				return errors.New("invalid stored signer WebAuthn challenge")
+			}
+			if challenge.State == signerWebAuthnChallengePending {
+				if err := challengeCursor.Delete(); err != nil {
+					return err
+				}
+				invalidatedChallenges++
+			}
+		}
+
+		invalidatedProofs := uint64(0)
+		proofCursor := tx.Bucket(bucketSignerReviewProofsV2).Cursor()
+		for proofKey, proofRaw := proofCursor.First(); proofKey != nil; proofKey, proofRaw = proofCursor.Next() {
+			var proof signerReviewProofRecordV2
+			if err := json.Unmarshal(proofRaw, &proof); err != nil {
+				return errors.New("invalid stored review authorization proof")
+			}
+			if proof.State == signerReviewProofPending && proof.CredentialID == credentialID {
+				if err := proofCursor.Delete(); err != nil {
+					return err
+				}
+				invalidatedProofs++
+			}
+		}
+
+		if summary.Version == ^uint64(0) {
+			return errors.New("signer WebAuthn credential version is exhausted")
+		}
+		nextVersion := summary.Version + 1
+		if err := putSignerWebAuthnCredentialsVersionV2(tx, nextVersion); err != nil {
+			return err
+		}
+		result = signerWebAuthnCredentialRevokeResultV2{
+			Revoked:               signerWebAuthnCredentialMetadataFromRecordV2(record),
+			Version:               nextVersion,
+			Count:                 summary.Count - 1,
+			InvalidatedChallenges: invalidatedChallenges,
+			InvalidatedProofs:     invalidatedProofs,
+		}
+		return nil
+	})
+	return result, err
+}
+
 func (s *signerWebAuthnServiceV2) health() (signerWebAuthnHealthV2, error) {
 	if s == nil || !s.enabled {
 		return signerWebAuthnHealthV2{}, nil
 	}
-	credentials, err := s.listCredentials()
+	summary, err := s.credentialSummary()
 	if err != nil {
 		return signerWebAuthnHealthV2{}, err
 	}
 	return signerWebAuthnHealthV2{
-		Configured:      true,
-		RPID:            s.rpID,
-		Origins:         append([]string(nil), s.origins...),
-		CredentialCount: len(credentials),
-		Ready:           len(credentials) > 0,
+		Configured:        true,
+		RPID:              s.rpID,
+		Origins:           append([]string(nil), s.origins...),
+		CredentialCount:   int(summary.Count),
+		CredentialVersion: summary.Version,
+		Ready:             summary.Count > 0,
 	}, nil
 }
 

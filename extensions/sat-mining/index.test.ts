@@ -119,6 +119,7 @@ vi.mock("../../src/wallet/providers/local-socket-signer-adapter.js", async (impo
 });
 
 vi.mock("./src/solana-submit.js", () => ({
+  runWithSatSubmissionWorkflow: vi.fn(async (_workflowId, task) => await task()),
   submitSatInitMinerCapital: vi.fn(async () => ({ ok: true, txHash: "tx-init-miner-capital" })),
   submitSatDepositMinerCapital: vi.fn(async () => ({
     ok: true,
@@ -5432,6 +5433,11 @@ describe("sat-mining plugin config persistence", () => {
           selectedWalletId: undefined,
           checks: expect.arrayContaining([
             expect.objectContaining({ key: "walletSelected", ok: false }),
+            expect.objectContaining({
+              key: "signerReady",
+              remediation:
+                "Use the local native signer for unattended Mining. Wallet Standard and Turnkey are reviewed/manual wallet paths, not background Mining signers.",
+            }),
           ]),
         },
       },
@@ -6256,12 +6262,17 @@ describe("sat-mining cycle gateway integration", () => {
 
     let response: { ok: boolean; payload: unknown } | null = null;
     await gatewayMethods.get("sat.openCycle")!.handler({
-      params: { cycleId: 123 },
+      params: { cycleId: 123, idempotencyKey: "manual-open-cycle-123" },
       respond: (ok, payload) => {
         response = { ok, payload };
       },
     });
     expect(response).toMatchObject({ ok: true });
+    const solanaSubmit = await import("./src/solana-submit.js");
+    expect(vi.mocked(solanaSubmit.runWithSatSubmissionWorkflow)).toHaveBeenCalledWith(
+      "gateway:sat.openCycle:manual-open-cycle-123",
+      expect.any(Function),
+    );
   });
 });
 

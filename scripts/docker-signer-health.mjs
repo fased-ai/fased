@@ -7,12 +7,52 @@ const MAX_RESPONSE_BYTES = 1 << 20;
 const REQUIRED_FEATURES = [
   "failClosedPolicies",
   "durableCaps",
+  "atomicMultiAssetCaps",
+  "signerControlledNativeFeeCaps",
   "atomicIdempotency",
   "signerOwnedKeys",
   "typedSolanaTransactions",
 ];
+const NATIVE_FEE_RESERVATION_LAMPORTS = 5_000_000;
+const RELEASE_VERSION_RE = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u;
+const RELEASE_COMMIT_RE = /^[a-f0-9]{40}$/u;
+const RELEASE_DIGEST_RE = /^sha256:[a-f0-9]{64}$/u;
 
-export function validateDockerSignerHealthEnvelope(envelope) {
+function validateReleaseIdentity(release, options = {}) {
+  if (!release || typeof release !== "object" || typeof release.development !== "boolean") {
+    return false;
+  }
+  const version = typeof release.version === "string" ? release.version : "";
+  const commit = typeof release.commit === "string" ? release.commit : "";
+  const digest = typeof release.buildInputDigest === "string" ? release.buildInputDigest : "";
+  if (release.development) {
+    if (
+      (version !== "dev" && !RELEASE_VERSION_RE.test(version)) ||
+      (commit !== "unknown" && !RELEASE_COMMIT_RE.test(commit)) ||
+      (digest !== "unknown" && !RELEASE_DIGEST_RE.test(digest))
+    ) {
+      return false;
+    }
+  } else if (
+    !RELEASE_VERSION_RE.test(version) ||
+    !RELEASE_COMMIT_RE.test(commit) ||
+    !RELEASE_DIGEST_RE.test(digest)
+  ) {
+    return false;
+  }
+  if (options.requireProduction === true && release.development) {
+    return false;
+  }
+  return (
+    (!options.expectedVersion || version === options.expectedVersion) &&
+    (!options.expectedCommit || commit === options.expectedCommit) &&
+    (!options.expectedBuildInputDigest || digest === options.expectedBuildInputDigest) &&
+    (options.expectedDevelopment === undefined ||
+      release.development === options.expectedDevelopment)
+  );
+}
+
+export function validateDockerSignerHealthEnvelope(envelope, options = {}) {
   if (!envelope || typeof envelope !== "object" || envelope.ok !== true) {
     return false;
   }
@@ -26,6 +66,8 @@ export function validateDockerSignerHealthEnvelope(envelope) {
     protocol?.current === 2 &&
     Number(protocol?.min) <= 2 &&
     Number(protocol?.max) >= 2 &&
+    result?.capabilities?.nativeFeeReservationLamports === NATIVE_FEE_RESERVATION_LAMPORTS &&
+    validateReleaseIdentity(result?.release, options) &&
     REQUIRED_FEATURES.every((feature) => features.has(feature))
   );
 }
@@ -68,7 +110,7 @@ export async function checkDockerSignerHealth(socketPath, options = {}) {
       try {
         const envelope = JSON.parse(buffer.slice(0, newline));
         finish(
-          validateDockerSignerHealthEnvelope(envelope)
+          validateDockerSignerHealthEnvelope(envelope, options)
             ? undefined
             : new Error("native signer did not acknowledge required protocol-v2 capabilities"),
         );
@@ -86,11 +128,67 @@ export async function checkDockerSignerHealth(socketPath, options = {}) {
 }
 
 async function main(argv = process.argv.slice(2)) {
-  const socketPath = String(argv[0] ?? process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET ?? "").trim();
+  const args = [...argv];
+  const socketPath = String(
+    args.shift() ?? process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET ?? "",
+  ).trim();
   if (!socketPath.startsWith("/")) {
     throw new Error("an absolute native signer socket path is required");
   }
-  await checkDockerSignerHealth(socketPath);
+  let expectedVersion;
+  let expectedCommit;
+  let expectedBuildInputDigest;
+  let expectedDevelopment;
+  let requireProduction = false;
+  while (args.length > 0) {
+    const arg = args.shift();
+    if (arg === "--expected-version") {
+      expectedVersion = String(args.shift() ?? "").trim();
+      if (expectedVersion !== "dev" && !RELEASE_VERSION_RE.test(expectedVersion)) {
+        throw new Error("--expected-version requires canonical semver or dev");
+      }
+      continue;
+    }
+    if (arg === "--expected-commit") {
+      expectedCommit = String(args.shift() ?? "").trim();
+      if (expectedCommit !== "unknown" && !RELEASE_COMMIT_RE.test(expectedCommit)) {
+        throw new Error("--expected-commit requires a full lowercase Git commit or unknown");
+      }
+      continue;
+    }
+    if (arg === "--expected-build-input-digest") {
+      expectedBuildInputDigest = String(args.shift() ?? "").trim();
+      if (
+        expectedBuildInputDigest !== "unknown" &&
+        !RELEASE_DIGEST_RE.test(expectedBuildInputDigest)
+      ) {
+        throw new Error(
+          "--expected-build-input-digest requires sha256:<64 lowercase hex> or unknown",
+        );
+      }
+      continue;
+    }
+    if (arg === "--expected-development") {
+      const value = String(args.shift() ?? "").trim();
+      if (value !== "true" && value !== "false") {
+        throw new Error("--expected-development requires true or false");
+      }
+      expectedDevelopment = value === "true";
+      continue;
+    }
+    if (arg === "--require-production") {
+      requireProduction = true;
+      continue;
+    }
+    throw new Error(`unknown argument: ${String(arg)}`);
+  }
+  await checkDockerSignerHealth(socketPath, {
+    expectedVersion,
+    expectedCommit,
+    expectedBuildInputDigest,
+    expectedDevelopment,
+    requireProduction,
+  });
 }
 
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;

@@ -6,25 +6,49 @@ import {
 
 describe("local socket signer protocol", () => {
   it("accepts the complete native signer-v2 capabilities health payload", () => {
+    const health = {
+      details: "fased-signerd protocol-v2 ready",
+      readOnly: false,
+      keystoreType: "signer-owned-v2",
+      chains: ["solana"],
+      ready: true,
+      release: {
+        version: "dev",
+        commit: "unknown",
+        buildInputDigest: "unknown",
+        development: true,
+      },
+      schema: { version: 3, supported: 3, ready: true },
+      network: { ready: true, wallets: [] },
+      capabilities: {
+        protocol: { current: 2, min: 2, max: 2 },
+        nativeFeeReservationLamports: 5_000_000,
+        intentTypes: ["solana.nativeTransfer"],
+        operationStates: ["reserved", "broadcast", "confirmed", "failed", "unknown"],
+        features: ["failClosedPolicies", "policyHashes", "signerOwnedKeys"],
+      },
+      policies: [],
+      webAuthn: {
+        configured: false,
+        credentialCount: 0,
+        credentialVersion: 4,
+        ready: false,
+      },
+      jupiter: { triggerConfigured: true },
+    };
+    expect(validateLocalSocketSignerResult("v2.capabilities", health)).toBe(true);
     expect(
       validateLocalSocketSignerResult("v2.capabilities", {
-        details: "fased-signerd protocol-v2 ready",
-        readOnly: false,
-        keystoreType: "signer-owned-v2",
-        chains: ["solana"],
-        ready: true,
-        schema: { version: 3, supported: 3, ready: true },
-        network: { ready: true, wallets: [] },
-        capabilities: {
-          protocol: { current: 2, min: 2, max: 2 },
-          intentTypes: ["solana.nativeTransfer"],
-          operationStates: ["reserved", "broadcast", "confirmed", "failed", "unknown"],
-          features: ["failClosedPolicies", "policyHashes", "signerOwnedKeys"],
-        },
-        policies: [],
-        webAuthn: { configured: false, credentialCount: 0, ready: false },
+        ...health,
+        webAuthn: { ...health.webAuthn, credentialVersion: -1 },
       }),
-    ).toBe(true);
+    ).toBe(false);
+    expect(
+      validateLocalSocketSignerResult("v2.capabilities", {
+        ...health,
+        jupiter: { ...health.jupiter, apiKey: "must-never-cross-the-socket" },
+      }),
+    ).toBe(false);
   });
 
   it("negotiates protocol-v2 capabilities and policy hashes", () => {
@@ -37,8 +61,15 @@ describe("local socket signer protocol", () => {
         keystoreType: "signer-owned-v2",
         chains: ["solana"],
         ready: true,
+        release: {
+          version: "dev",
+          commit: "unknown",
+          buildInputDigest: "unknown",
+          development: true,
+        },
         capabilities: {
           protocol: { current: 2, min: 2, max: 2 },
+          nativeFeeReservationLamports: 5_000_000,
           intentTypes: ["solana.nativeTransfer", "solana.splTransferChecked"],
           operationStates: ["reserved", "broadcast", "confirmed", "failed", "unknown"],
           features: ["failClosedPolicies", "policyHashes"],
@@ -53,6 +84,44 @@ describe("local socket signer protocol", () => {
         ],
       }),
     ).toBe(true);
+  });
+
+  it("rejects unstamped production identity and missing native fee-reserve negotiation", () => {
+    const base = {
+      details: "fased-signerd protocol-v2 ready",
+      ready: true,
+      release: {
+        version: "0.1.63",
+        commit: "a".repeat(40),
+        buildInputDigest: `sha256:${"b".repeat(64)}`,
+        development: false,
+      },
+      capabilities: {
+        protocol: { current: 2, min: 2, max: 2 },
+        nativeFeeReservationLamports: 5_000_000,
+        intentTypes: ["solana.nativeTransfer"],
+        operationStates: ["reserved"],
+        features: ["signerControlledNativeFeeCaps"],
+      },
+    };
+    expect(validateLocalSocketSignerResult("v2.capabilities", base)).toBe(true);
+    expect(
+      validateLocalSocketSignerResult("v2.capabilities", {
+        ...base,
+        release: { ...base.release, commit: "unknown" },
+      }),
+    ).toBe(false);
+    expect(
+      validateLocalSocketSignerResult("v2.capabilities", {
+        ...base,
+        capabilities: {
+          protocol: base.capabilities.protocol,
+          intentTypes: base.capabilities.intentTypes,
+          operationStates: base.capabilities.operationStates,
+          features: base.capabilities.features,
+        },
+      }),
+    ).toBe(false);
   });
 
   it("requires an exact wallet-scoped native balance request and result", () => {
@@ -338,6 +407,81 @@ describe("local socket signer protocol", () => {
         request: { requestId: "review-123", policyHash, mode: "reviewed", intent, transaction },
       }).op,
     ).toBe("v2.review.prepare");
+    const triggerIntent = {
+      type: "solana.jupiter.trigger.create" as const,
+      jupiter: {
+        owner: "11111111111111111111111111111111",
+        inputMint: "So11111111111111111111111111111111111111112",
+        outputMint: "Vote111111111111111111111111111111111111111",
+        inputAmount: "100",
+        maxInputAmount: "100",
+        minimumOutputAmount: "0",
+        maxFeeLamports: "5000",
+        programs: ["11111111111111111111111111111111"],
+        trigger: {
+          operation: "create" as const,
+          program: "11111111111111111111111111111111",
+          triggerMint: "So11111111111111111111111111111111111111112",
+          condition: "below" as const,
+          targetPriceUsd: "120.5",
+          slippageBps: 100,
+          expiresAt: "2026-07-20T00:00:00.000Z",
+          expectedOrderState: "new" as const,
+        },
+      },
+    };
+    expect(
+      parseLocalSocketSignerRequest({
+        op: "v2.review.prepare",
+        walletId: "agent",
+        request: {
+          requestId: "trigger-review-123",
+          policyHash,
+          mode: "reviewed",
+          intent: triggerIntent,
+        },
+      }).op,
+    ).toBe("v2.review.prepare");
+    expect(() =>
+      parseLocalSocketSignerRequest({
+        op: "v2.review.prepare",
+        walletId: "agent",
+        request: {
+          requestId: "trigger-review-123",
+          policyHash,
+          mode: "reviewed",
+          intent: triggerIntent,
+          transaction,
+        },
+      }),
+    ).toThrow(/transaction bytes are signer-owned/);
+    expect(() =>
+      parseLocalSocketSignerRequest({
+        op: "v2.execute",
+        walletId: "agent",
+        request: {
+          requestId: "removed-auth",
+          policyHash,
+          intent: {
+            ...triggerIntent,
+            type: "solana.jupiter.trigger.auth",
+          },
+        },
+      }),
+    ).toThrow(/invalid signer request/);
+    expect(() =>
+      parseLocalSocketSignerRequest({
+        op: "v2.review.prepare",
+        walletId: "agent",
+        request: {
+          requestId: "return-signed",
+          policyHash,
+          mode: "reviewed",
+          intent,
+          transaction: { ...transaction, submission: "returnSigned" },
+        },
+      }),
+    ).toThrow(/invalid signer request/);
     expect(
       parseLocalSocketSignerRequest({
         op: "v2.review.prepare",
@@ -467,6 +611,51 @@ describe("local socket signer protocol", () => {
         expiresAt: binding.expiresAt,
       }),
     ).toBe(true);
+  });
+
+  it("accepts only sanitized signer-owned Jupiter Trigger history", () => {
+    expect(
+      parseLocalSocketSignerRequest({
+        op: "v2.jupiter.trigger.history",
+        walletId: "agent",
+      }).op,
+    ).toBe("v2.jupiter.trigger.history");
+    const result = {
+      orders: [
+        {
+          orderId: "order-1",
+          orderState: "open",
+          orderType: "single",
+          inputMint: "So11111111111111111111111111111111111111112",
+          initialInputAmount: "100",
+          remainingInputAmount: "90",
+          outputMint: "Vote111111111111111111111111111111111111111",
+          triggerMint: "So11111111111111111111111111111111111111112",
+          condition: "below",
+          targetPriceUsd: "120.5",
+          slippageBps: 100,
+          expiresAt: "2026-07-20T00:00:00.000Z",
+          cancel: {
+            expectedOrderState: "open",
+            refundMint: "So11111111111111111111111111111111111111112",
+            refundAmount: "90",
+            destinationTokenAccount: "11111111111111111111111111111111",
+            program: "11111111111111111111111111111111",
+          },
+        },
+      ],
+    };
+    expect(validateLocalSocketSignerResult("v2.jupiter.trigger.history", result)).toBe(true);
+    expect(
+      validateLocalSocketSignerResult("v2.jupiter.trigger.history", {
+        orders: [{ ...result.orders[0], jwt: "secret" }],
+      }),
+    ).toBe(false);
+    expect(
+      validateLocalSocketSignerResult("v2.jupiter.trigger.history", {
+        orders: [{ ...result.orders[0], vault: "secret" }],
+      }),
+    ).toBe(false);
   });
 
   it.each([

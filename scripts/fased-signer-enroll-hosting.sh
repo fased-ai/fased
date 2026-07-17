@@ -8,7 +8,7 @@ if [[ "${EUID}" != "0" ]]; then
   exit 1
 fi
 if [[ $# -gt 1 ]]; then
-  echo "usage: sudo /usr/local/sbin/fased-signer-enroll [authenticator label]" >&2
+  echo "usage: /usr/local/sbin/fased-signer-enroll [authenticator label]" >&2
   exit 64
 fi
 

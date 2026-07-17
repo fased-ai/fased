@@ -1,8 +1,19 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { runPaidFederatedContentSummarize } from "./federation-marketplace.js";
 
+function stableMarketplaceIds(executionIntentId: string): {
+  invoiceId: string;
+  receiptId: string;
+} {
+  const suffix = createHash("sha256").update(executionIntentId).digest("hex").slice(0, 24);
+  return { invoiceId: `invoice-${suffix}`, receiptId: `receipt-${suffix}` };
+}
+
 describe("runPaidFederatedContentSummarize", () => {
   it("runs a paid typed summarize flow with real invoice and receipt linkage", async () => {
+    const executionIntentId = "marketplace-test-paid-summary-1";
+    const { invoiceId, receiptId } = stableMarketplaceIds(executionIntentId);
     const fetchImpl = vi.fn(async (input: URL | string, init?: RequestInit) => {
       const url = new URL(String(input));
       if (url.pathname === "/api/federation/offers") {
@@ -62,8 +73,8 @@ describe("runPaidFederatedContentSummarize", () => {
                 status: "succeeded",
                 paymentProof: {
                   status: "verified",
-                  invoiceId: "invoice-fixed",
-                  receiptId: "receipt-fixed",
+                  invoiceId,
+                  receiptId,
                   txRef: "0xtx",
                 },
                 output: {
@@ -73,8 +84,8 @@ describe("runPaidFederatedContentSummarize", () => {
                   },
                   payment: {
                     offerId: "https://seller.example/offers/content-summarize-v0",
-                    invoiceId: "invoice-fixed",
-                    receiptId: "receipt-fixed",
+                    invoiceId,
+                    receiptId,
                     status: "verified",
                     txRef: "0xtx",
                   },
@@ -90,6 +101,7 @@ describe("runPaidFederatedContentSummarize", () => {
 
     const result = await runPaidFederatedContentSummarize(
       {
+        executionIntentId,
         handle: "@seller@fed.test",
         offerId: "federation-offer-seller-fed-test-content-summarize-v0",
         walletId: "wallet-payment",
@@ -190,13 +202,15 @@ describe("runPaidFederatedContentSummarize", () => {
 
     expect(result.status).toBe("accepted");
     expect(result.taskId).toBe("task-paid-1");
-    expect(result.invoiceId).toBe("invoice-fixed");
-    expect(result.receiptId).toBe("receipt-fixed");
+    expect(result.invoiceId).toBe(invoiceId);
+    expect(result.receiptId).toBe(receiptId);
     expect(result.txRef).toBe("0xtx");
     expect(result.snapshot?.output?.payment?.status).toBe("verified");
   });
 
   it("runs paid summarize from a Marketplace-index listing when live offers are stale", async () => {
+    const executionIntentId = "marketplace-test-index-summary-1";
+    const { invoiceId, receiptId } = stableMarketplaceIds(executionIntentId);
     const fetchImpl = vi.fn(async (input: URL | string, init?: RequestInit) => {
       const url = new URL(String(input));
       if (url.pathname === "/api/federation/offers") {
@@ -274,8 +288,8 @@ describe("runPaidFederatedContentSummarize", () => {
                 status: "succeeded",
                 paymentProof: {
                   status: "verified",
-                  invoiceId: "invoice-index",
-                  receiptId: "receipt-index",
+                  invoiceId,
+                  receiptId,
                   txRef: "soltx",
                 },
                 output: {
@@ -285,8 +299,8 @@ describe("runPaidFederatedContentSummarize", () => {
                   },
                   payment: {
                     offerId: "https://seller.example/offers/content-summarize-v0",
-                    invoiceId: "invoice-index",
-                    receiptId: "receipt-index",
+                    invoiceId,
+                    receiptId,
                     status: "verified",
                     txRef: "soltx",
                   },
@@ -302,6 +316,7 @@ describe("runPaidFederatedContentSummarize", () => {
 
     const result = await runPaidFederatedContentSummarize(
       {
+        executionIntentId,
         handle: "@seller@fed.test",
         offerId: "https://seller.example/offers/content-summarize-v0",
         sourceText: "Fased can run paid summaries from indexed Marketplace listings.",
@@ -582,6 +597,8 @@ describe("runPaidFederatedContentSummarize", () => {
   });
 
   it("uses published offer defaults and the only wallet when no default wallet is pinned", async () => {
+    const executionIntentId = "marketplace-test-sole-wallet-summary-1";
+    const { invoiceId, receiptId } = stableMarketplaceIds(executionIntentId);
     const fetchImpl = vi.fn(async (input: URL | string, init?: RequestInit) => {
       const url = new URL(String(input));
       if (url.pathname === "/api/federation/offers") {
@@ -647,8 +664,8 @@ describe("runPaidFederatedContentSummarize", () => {
                 status: "succeeded",
                 paymentProof: {
                   status: "verified",
-                  invoiceId: "invoice-fixed",
-                  receiptId: "receipt-fixed",
+                  invoiceId,
+                  receiptId,
                   txRef: "sol-tx",
                 },
                 output: {
@@ -658,8 +675,8 @@ describe("runPaidFederatedContentSummarize", () => {
                   },
                   payment: {
                     offerId: "https://seller.example/offers/content-summarize-v0",
-                    invoiceId: "invoice-fixed",
-                    receiptId: "receipt-fixed",
+                    invoiceId,
+                    receiptId,
                     status: "verified",
                     txRef: "sol-tx",
                   },
@@ -675,6 +692,7 @@ describe("runPaidFederatedContentSummarize", () => {
 
     const result = await runPaidFederatedContentSummarize(
       {
+        executionIntentId,
         handle: "@seller@fed.test",
         offerId: "https://seller.example/offers/content-summarize-v0",
         sourceText: "hello",

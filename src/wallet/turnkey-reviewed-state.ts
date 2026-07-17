@@ -1,6 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { withFileLock } from "../infra/file-lock.js";
 import {
   broadcastReviewedSolanaTransaction,
   buildReviewedSolanaTransaction,
@@ -17,10 +18,21 @@ import { ensureWalletStateDir } from "./wallet-runtime-config.js";
 const STATE_FILE_NAME = "turnkey-reviews.v1.json";
 const REVIEW_TTL_MS = 2 * 60 * 1000;
 const STATE_FILE_MODE = 0o600;
+const REVIEW_LOCK_OPTIONS = {
+  retries: {
+    retries: 80,
+    factor: 1.15,
+    minTimeout: 20,
+    maxTimeout: 200,
+    randomize: true,
+  },
+  stale: 30_000,
+} as const;
 
 type TurnkeyReviewStatus = "prepared" | "broadcasting" | "broadcast" | "failed" | "unknown";
 
 type TurnkeyReviewRecord = {
+  approvalRequestId?: string;
   preparedId: string;
   createdAt: string;
   expiresAt: string;
@@ -149,59 +161,24 @@ function normalizedRpcUrlDigest(rpcUrl: string): string {
   return digest(normalized);
 }
 
-async function withReviewLock<T>(_preparedId: string, task: () => Promise<T>): Promise<T> {
-  const current = reviewStateLock.then(task, task);
-  reviewStateLock = current.then(
-    () => undefined,
-    () => undefined,
+function preparedIdentity(params: {
+  approvalRequestId: string;
+  requestDigest: string;
+  rpcUrlDigest: string;
+  authorizationContextDigest: string;
+}): string {
+  return digest(
+    [
+      "fased-turnkey-reviewed-v1",
+      params.approvalRequestId,
+      params.requestDigest,
+      params.rpcUrlDigest,
+      params.authorizationContextDigest,
+    ].join("\0"),
   );
-  return await current;
 }
 
-export async function prepareTurnkeyReviewedTransaction(params: {
-  request: WalletProviderPrepareTxRequest;
-  signerAddress: string;
-  rpcUrl: string;
-  authorizationContext: string;
-  env?: NodeJS.ProcessEnv;
-}): Promise<TurnkeyReviewedPrepareResult> {
-  const env = params.env ?? process.env;
-  const prepared = await buildReviewedSolanaTransaction({
-    request: params.request,
-    signerAddress: params.signerAddress,
-    rpcUrl: params.rpcUrl,
-  });
-  const now = Date.now();
-  const record: TurnkeyReviewRecord = {
-    preparedId: randomBytes(32).toString("base64url"),
-    createdAt: new Date(now).toISOString(),
-    expiresAt: new Date(now + REVIEW_TTL_MS).toISOString(),
-    status: "prepared",
-    signer: prepared.signer,
-    requestDigest: computeReviewedSolanaRequestDigest({
-      request: params.request,
-      signer: prepared.signer,
-    }),
-    intentDigest: prepared.intentDigest,
-    unsignedTxBase64: prepared.unsignedTxBase64,
-    messageBase64: prepared.messageBase64,
-    recentBlockhash: prepared.recentBlockhash,
-    lastValidBlockHeight: prepared.lastValidBlockHeight,
-    rpcUrlDigest: normalizedRpcUrlDigest(params.rpcUrl),
-    authorizationContextDigest: digest(params.authorizationContext),
-    simulationUnitsConsumed: prepared.simulation.unitsConsumed,
-  };
-  await withReviewLock(record.preparedId, async () => {
-    const file = readFile(env);
-    if (file.reviews.some((review) => review.preparedId === record.preparedId)) {
-      throw new WalletProviderError({
-        code: "wallet_provider_unavailable",
-        message: "Turnkey prepared review ID collision",
-      });
-    }
-    file.reviews.push(record);
-    saveFile(file, env);
-  });
+function toPrepareResult(record: TurnkeyReviewRecord): TurnkeyReviewedPrepareResult {
   return {
     preparedId: record.preparedId,
     signer: record.signer,
@@ -219,6 +196,118 @@ export async function prepareTurnkeyReviewedTransaction(params: {
         : {}),
     },
   };
+}
+
+async function withReviewLock<T>(env: NodeJS.ProcessEnv, task: () => Promise<T>): Promise<T> {
+  const run = async () =>
+    await withFileLock(statePath(env), REVIEW_LOCK_OPTIONS, async () => await task());
+  const current = reviewStateLock.then(run, run);
+  reviewStateLock = current.then(
+    () => undefined,
+    () => undefined,
+  );
+  return await current;
+}
+
+export async function prepareTurnkeyReviewedTransaction(params: {
+  request: WalletProviderPrepareTxRequest;
+  signerAddress: string;
+  rpcUrl: string;
+  authorizationContext: string;
+  env?: NodeJS.ProcessEnv;
+}): Promise<TurnkeyReviewedPrepareResult> {
+  const env = params.env ?? process.env;
+  const approvalRequestId = params.request.requestId?.trim();
+  if (!approvalRequestId) {
+    throw new WalletProviderError({
+      code: "wallet_provider_invalid_config",
+      message: "Turnkey preparation requires a stable approval request ID",
+    });
+  }
+  const requestDigest = computeReviewedSolanaRequestDigest({
+    request: params.request,
+    signer: params.signerAddress.trim(),
+  });
+  const expectedRpcUrlDigest = normalizedRpcUrlDigest(params.rpcUrl);
+  const expectedAuthorizationContextDigest = digest(params.authorizationContext);
+  const preparedId = preparedIdentity({
+    approvalRequestId,
+    requestDigest,
+    rpcUrlDigest: expectedRpcUrlDigest,
+    authorizationContextDigest: expectedAuthorizationContextDigest,
+  });
+  return await withReviewLock(env, async () => {
+    const file = readFile(env);
+    const existing = file.reviews.find(
+      (review) =>
+        review.approvalRequestId === approvalRequestId || review.preparedId === preparedId,
+    );
+    if (existing) {
+      const sameImmutableRequest =
+        existing.approvalRequestId === approvalRequestId &&
+        secureEqual(existing.preparedId, preparedId) &&
+        secureEqual(existing.signer, params.signerAddress.trim()) &&
+        secureEqual(existing.requestDigest, requestDigest) &&
+        secureEqual(existing.rpcUrlDigest, expectedRpcUrlDigest) &&
+        secureEqual(existing.authorizationContextDigest, expectedAuthorizationContextDigest);
+      if (!sameImmutableRequest) {
+        throw new WalletProviderError({
+          code: "wallet_provider_invalid_config",
+          message:
+            "Turnkey approval request ID is already bound to a different immutable transaction",
+          retryable: false,
+        });
+      }
+      if (existing.status === "failed") {
+        throw new WalletProviderError({
+          code: "wallet_provider_unavailable",
+          message: `${existing.failureReason ?? "Turnkey reviewed transaction failed"}; create a new approval request`,
+          retryable: false,
+        });
+      }
+      if (existing.status === "prepared" && Date.parse(existing.expiresAt) <= Date.now()) {
+        throw new WalletProviderError({
+          code: "wallet_provider_invalid_config",
+          message: "Turnkey prepared review expired; create a new approval request",
+          retryable: false,
+        });
+      }
+      return toPrepareResult(existing);
+    }
+
+    const prepared = await buildReviewedSolanaTransaction({
+      request: params.request,
+      signerAddress: params.signerAddress,
+      rpcUrl: params.rpcUrl,
+    });
+    if (!secureEqual(prepared.signer, params.signerAddress.trim())) {
+      throw new WalletProviderError({
+        code: "wallet_provider_unavailable",
+        message: "Turnkey transaction builder returned a different signer",
+      });
+    }
+    const now = Date.now();
+    const record: TurnkeyReviewRecord = {
+      approvalRequestId,
+      preparedId,
+      createdAt: new Date(now).toISOString(),
+      expiresAt: new Date(now + REVIEW_TTL_MS).toISOString(),
+      status: "prepared",
+      signer: prepared.signer,
+      requestDigest,
+      intentDigest: prepared.intentDigest,
+      unsignedTxBase64: prepared.unsignedTxBase64,
+      messageBase64: prepared.messageBase64,
+      recentBlockhash: prepared.recentBlockhash,
+      lastValidBlockHeight: prepared.lastValidBlockHeight,
+      rpcUrlDigest: expectedRpcUrlDigest,
+      authorizationContextDigest: expectedAuthorizationContextDigest,
+      simulationUnitsConsumed: prepared.simulation.unitsConsumed,
+    };
+    file.reviews.push(record);
+    saveFile(file, env);
+    return toPrepareResult(record);
+  });
 }
 
 export async function executeTurnkeyReviewedTransaction(params: {
@@ -243,7 +332,7 @@ export async function executeTurnkeyReviewedTransaction(params: {
       message: "Turnkey send requires a prepared review ID",
     });
   }
-  return await withReviewLock(preparedId, async () => {
+  return await withReviewLock(env, async () => {
     const file = readFile(env);
     const review = file.reviews.find((record) => record.preparedId === preparedId);
     if (!review) {
@@ -329,6 +418,8 @@ export async function executeTurnkeyReviewedTransaction(params: {
       signer: params.signerAddress,
     });
     if (
+      (review.approvalRequestId !== undefined &&
+        !secureEqual(review.approvalRequestId, params.request.requestId?.trim() ?? "")) ||
       !secureEqual(review.signer, params.signerAddress) ||
       !secureEqual(review.requestDigest, expectedRequestDigest) ||
       !secureEqual(review.rpcUrlDigest, normalizedRpcUrlDigest(params.rpcUrl)) ||

@@ -12,15 +12,13 @@ import (
 	"strings"
 
 	solana "github.com/gagliardetto/solana-go"
-	addresslookuptable "github.com/gagliardetto/solana-go/programs/address-lookup-table"
 	rpc "github.com/gagliardetto/solana-go/rpc"
 )
 
 var (
-	addressLookupTableProgramV2 = solana.MustPublicKeyFromBase58("AddressLookupTab1e1111111111111111111111111")
-	computeBudgetProgramV2      = solana.MustPublicKeyFromBase58("ComputeBudget111111111111111111111111111111")
-	memoProgramV1V2             = solana.MustPublicKeyFromBase58("Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo")
-	memoProgramV2V2             = solana.MustPublicKeyFromBase58("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr")
+	computeBudgetProgramV2 = solana.MustPublicKeyFromBase58("ComputeBudget111111111111111111111111111111")
+	memoProgramV1V2        = solana.MustPublicKeyFromBase58("Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo")
+	memoProgramV2V2        = solana.MustPublicKeyFromBase58("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr")
 )
 
 type jupiterTokenAccountV2 struct {
@@ -58,11 +56,11 @@ func validateAndSimulateJupiterTransactionV2(
 	if !equalSortedStringsV2(envelope.Programs, intent.Intent.Jupiter.Programs) {
 		return jupiterValidatedTransactionV2{}, errors.New("caller program manifest does not match the reviewed semantic intent")
 	}
-	if intent.Intent.Type == intentSolanaJupiterSwap && envelope.Submission != jupiterSubmissionRPCV2 {
-		return jupiterValidatedTransactionV2{}, errors.New("Jupiter swaps must use signer-owned RPC submission")
+	if intent.Intent.Type != intentSolanaJupiterSwap {
+		return jupiterValidatedTransactionV2{}, errors.New("Jupiter Trigger transactions are crafted, validated, signed, and submitted only inside the native signer")
 	}
-	if intent.Intent.Type != intentSolanaJupiterSwap && envelope.Submission != jupiterSubmissionReturnV2 {
-		return jupiterValidatedTransactionV2{}, errors.New("Jupiter Trigger transactions must use typed returnSigned submission")
+	if envelope.Submission != jupiterSubmissionRPCV2 {
+		return jupiterValidatedTransactionV2{}, errors.New("Jupiter swaps must use signer-owned RPC submission")
 	}
 
 	raw, err := base64.StdEncoding.DecodeString(envelope.SerializedTxBase64)
@@ -83,7 +81,7 @@ func validateAndSimulateJupiterTransactionV2(
 		return jupiterValidatedTransactionV2{}, err
 	}
 	for _, rpcURL := range active {
-		candidate, candidateErr := validateAndSimulateJupiterAtRPCV2(rpcURL, tx, raw, wallet, walletSignerIndex, intent, envelope)
+		candidate, candidateErr := validateAndSimulateJupiterAtRPCV2(rpcURL, tx, raw, wallet, walletSignerIndex, intent, envelope, false)
 		if candidateErr == nil {
 			markSolanaWriteRPCSuccess(rpcURL)
 			return candidate, nil
@@ -91,6 +89,55 @@ func validateAndSimulateJupiterTransactionV2(
 		markSolanaWriteRPCFailure(rpcURL, candidateErr)
 		// Semantic rejection is deterministic. A different RPC must never be used
 		// to turn a rejected transaction into an approved one.
+		if !isJupiterRPCReadFailureV2(candidateErr) {
+			return jupiterValidatedTransactionV2{}, candidateErr
+		}
+	}
+	return jupiterValidatedTransactionV2{}, errors.New("signer-owned Solana RPC validation reads failed")
+}
+
+func validateSignerOwnedJupiterTriggerTransactionV2(
+	rpcURLs []string,
+	wallet solana.PublicKey,
+	intent normalizedIntentV2,
+	serializedTxBase64 string,
+) (jupiterValidatedTransactionV2, error) {
+	if !isSignerOwnedTriggerIntentV2(intent) || intent.Intent.Jupiter == nil {
+		return jupiterValidatedTransactionV2{}, errors.New("signer-owned Trigger semantics are required")
+	}
+	serializedTxBase64 = strings.TrimSpace(serializedTxBase64)
+	raw, err := base64.StdEncoding.Strict().DecodeString(serializedTxBase64)
+	if err != nil || len(raw) == 0 || len(raw) > 1232 || base64.StdEncoding.EncodeToString(raw) != serializedTxBase64 {
+		return jupiterValidatedTransactionV2{}, errors.New("signer-owned Trigger transaction is invalid or exceeds the Solana packet limit")
+	}
+	tx, err := solana.TransactionFromBytes(raw)
+	if err != nil {
+		return jupiterValidatedTransactionV2{}, errors.New("decode signer-owned Trigger transaction")
+	}
+	walletSignerIndex, err := validateJupiterRequiredSignersV2(tx, wallet, intent)
+	if err != nil {
+		return jupiterValidatedTransactionV2{}, err
+	}
+	active, err := activeSolanaWriteRPCURLs(rpcURLs)
+	if err != nil {
+		return jupiterValidatedTransactionV2{}, err
+	}
+	for _, rpcURL := range active {
+		candidate, candidateErr := validateAndSimulateJupiterAtRPCV2(
+			rpcURL,
+			tx,
+			raw,
+			wallet,
+			walletSignerIndex,
+			intent,
+			signerSolanaTransactionEnvelopeV2{SerializedTxBase64: serializedTxBase64},
+			true,
+		)
+		if candidateErr == nil {
+			markSolanaWriteRPCSuccess(rpcURL)
+			return candidate, nil
+		}
+		markSolanaWriteRPCFailure(rpcURL, candidateErr)
 		if !isJupiterRPCReadFailureV2(candidateErr) {
 			return jupiterValidatedTransactionV2{}, candidateErr
 		}
@@ -109,13 +156,11 @@ func validateJupiterRequiredSignersV2(tx *solana.Transaction, wallet solana.Publ
 		}
 	}
 	expected := map[string]bool{wallet.String(): true}
-	allowVaultPayer := false
 	if intent.Intent.Type == intentSolanaTriggerCancel || intent.Intent.Type == intentSolanaTriggerWithdraw {
 		if intent.Intent.Jupiter == nil || intent.Intent.Jupiter.Trigger == nil || intent.Intent.Jupiter.Trigger.Vault == "" {
 			return -1, errors.New("Trigger withdrawal lacks its reviewed vault signer")
 		}
 		expected[intent.Intent.Jupiter.Trigger.Vault] = true
-		allowVaultPayer = true
 	}
 	if required != len(expected) {
 		return -1, errors.New("typed Jupiter required signers do not exactly match the reviewed signer set")
@@ -136,8 +181,8 @@ func validateJupiterRequiredSignersV2(tx *solana.Transaction, wallet solana.Publ
 		return -1, errors.New("typed Jupiter transaction omits the signer-owned wallet")
 	}
 	payer := tx.Message.AccountKeys[0]
-	if !payer.Equals(wallet) && !(allowVaultPayer && payer.String() == intent.Intent.Jupiter.Trigger.Vault) {
-		return -1, errors.New("typed Jupiter transaction payer is outside the reviewed wallet/vault")
+	if !payer.Equals(wallet) {
+		return -1, errors.New("typed Jupiter transaction must use the signer-owned wallet as fee payer so its wallet signature is the final transaction identity")
 	}
 	return walletIndex, nil
 }
@@ -159,6 +204,7 @@ func validateAndSimulateJupiterAtRPCV2(
 	walletSignerIndex int,
 	intent normalizedIntentV2,
 	envelope signerSolanaTransactionEnvelopeV2,
+	signerOwnedTrigger bool,
 ) (jupiterValidatedTransactionV2, error) {
 	// Re-decode for each endpoint because lookup resolution mutates Message.
 	candidate, err := solana.TransactionFromBytes(raw)
@@ -189,7 +235,7 @@ func validateAndSimulateJupiterAtRPCV2(
 	if err != nil {
 		return jupiterValidatedTransactionV2{}, err
 	}
-	if !equalSortedStringsV2(programs, envelope.Programs) {
+	if !signerOwnedTrigger && !equalSortedStringsV2(programs, envelope.Programs) {
 		return jupiterValidatedTransactionV2{}, errors.New("caller program manifest does not match decoded transaction programs")
 	}
 	writableKeys, err := candidate.Message.Writable()
@@ -197,7 +243,7 @@ func validateAndSimulateJupiterAtRPCV2(
 		return jupiterValidatedTransactionV2{}, err
 	}
 	writable := publicKeyStringsSortedV2(writableKeys)
-	if !equalSortedStringsV2(writable, envelope.WritableAccounts) {
+	if !signerOwnedTrigger && !equalSortedStringsV2(writable, envelope.WritableAccounts) {
 		return jupiterValidatedTransactionV2{}, errors.New("caller writable-account manifest does not match decoded transaction")
 	}
 	if len(writableKeys) == 0 || len(writableKeys) > 64 {
@@ -232,53 +278,9 @@ func resolveAndVerifyLookupsV2(ctx context.Context, client *rpc.Client, message 
 	if len(lookups) == 0 {
 		return nil
 	}
-	tables := make(map[solana.PublicKey]solana.PublicKeySlice, len(lookups))
-	seen := map[string]bool{}
-	for _, lookup := range lookups {
-		key := lookup.AccountKey.String()
-		if seen[key] {
-			return errors.New("duplicate address lookup table is not supported")
-		}
-		seen[key] = true
-		account, err := client.GetAccountInfo(ctx, lookup.AccountKey)
-		if err != nil {
-			return jupiterRPCReadErrorV2{fmt.Errorf("fetch address lookup table: %w", err)}
-		}
-		if account == nil || account.Value == nil || !account.Value.Owner.Equals(addressLookupTableProgramV2) || account.Value.Executable {
-			return errors.New("address lookup table owner/executable state is invalid")
-		}
-		raw := account.GetBinary()
-		if len(raw) < addresslookuptable.LOOKUP_TABLE_META_SIZE ||
-			(len(raw)-addresslookuptable.LOOKUP_TABLE_META_SIZE)%32 != 0 ||
-			(len(raw)-addresslookuptable.LOOKUP_TABLE_META_SIZE)/32 > addresslookuptable.LOOKUP_TABLE_MAX_ADDRESSES {
-			return errors.New("address lookup table has a non-canonical serialized length")
-		}
-		state, err := addresslookuptable.DecodeAddressLookupTableState(raw)
-		if err != nil || state.TypeIndex != 1 || !state.IsActive() {
-			return errors.New("address lookup table is malformed or deactivated")
-		}
-		if int(state.LastExtendedSlotStartIndex) > len(state.Addresses) {
-			return errors.New("address lookup table extension metadata is inconsistent")
-		}
-		indexSeen := map[uint8]string{}
-		for _, index := range lookup.WritableIndexes {
-			if int(index) >= len(state.Addresses) || indexSeen[index] != "" {
-				return errors.New("address lookup table contains duplicate or out-of-range indexes")
-			}
-			indexSeen[index] = "writable"
-		}
-		for _, index := range lookup.ReadonlyIndexes {
-			if int(index) >= len(state.Addresses) || indexSeen[index] != "" {
-				return errors.New("address lookup table contains duplicate or out-of-range indexes")
-			}
-			indexSeen[index] = "readonly"
-		}
-		tables[lookup.AccountKey] = state.Addresses
-	}
-	if err := message.SetAddressTables(tables); err != nil {
-		return fmt.Errorf("set verified address lookup tables: %w", err)
-	}
-	return message.ResolveLookups()
+	_ = ctx
+	_ = client
+	return errors.New("address lookup tables are denied for signer-authorized Jupiter transactions; use a legacy transaction with explicit account keys")
 }
 
 func rejectDuplicateTransactionAccountsV2(keys solana.PublicKeySlice) error {
@@ -561,48 +563,15 @@ func validateJupiterSystemInstructionV2(data []byte, metas []*solana.AccountMeta
 }
 
 func validateJupiterATAInstructionV2(data []byte, metas []*solana.AccountMeta, wallet solana.PublicKey, normalized normalizedIntentV2) error {
-	if (len(data) != 0 && !(len(data) == 1 && (data[0] == 0 || data[0] == 1))) || len(metas) < 6 || len(metas) > 7 {
-		return errors.New("unsupported associated-token-account instruction")
-	}
-	if !metas[0].PublicKey.Equals(wallet) || !metas[0].IsSigner || !metas[0].IsWritable || !metas[1].IsWritable || metas[1].IsSigner {
-		return errors.New("associated-token-account payer/account flags are invalid")
-	}
-	if !metas[4].PublicKey.Equals(solana.SystemProgramID) || (!metas[5].PublicKey.Equals(solana.TokenProgramID) && !metas[5].PublicKey.Equals(solana.Token2022ProgramID)) {
-		return errors.New("associated-token-account infrastructure programs are invalid")
-	}
-	expected, err := findAssociatedTokenAddressV2(metas[2].PublicKey, metas[3].PublicKey, metas[5].PublicKey)
-	if err != nil || !expected.Equals(metas[1].PublicKey) {
-		return errors.New("associated-token-account address does not match owner/mint/token program")
-	}
-	jupiter := normalized.Intent.Jupiter
-	if jupiter == nil {
-		return errors.New("associated-token-account instruction lacks reviewed Jupiter semantics")
-	}
-	type allowedATA struct {
-		account string
-		owner   string
-		mint    string
-	}
-	allowed := []allowedATA{
-		{account: jupiter.SourceTokenAccount, owner: wallet.String(), mint: jupiter.InputMint},
-		{account: jupiter.DestinationTokenAccount, owner: wallet.String(), mint: jupiter.OutputMint},
-	}
-	if jupiter.Trigger != nil {
-		switch normalized.Intent.Type {
-		case intentSolanaTriggerCreate, intentSolanaTriggerDeposit:
-			allowed[1] = allowedATA{account: jupiter.DestinationTokenAccount, owner: jupiter.Trigger.Vault, mint: jupiter.InputMint}
-		case intentSolanaTriggerCancel, intentSolanaTriggerWithdraw:
-			allowed[0] = allowedATA{account: jupiter.SourceTokenAccount, owner: jupiter.Trigger.Vault, mint: jupiter.OutputMint}
-			allowed[1] = allowedATA{account: jupiter.DestinationTokenAccount, owner: wallet.String(), mint: jupiter.OutputMint}
-		}
-	}
-	for _, candidate := range allowed {
-		if candidate.account != "" && metas[1].PublicKey.String() == candidate.account &&
-			metas[2].PublicKey.String() == candidate.owner && metas[3].PublicKey.String() == candidate.mint {
-			return nil
-		}
-	}
-	return errors.New("associated-token-account creation is outside reviewed accounts/mints/owners")
+	// A wallet-funded ATA can consume rent independently of the reviewed token
+	// amount. The signer does not accept caller-created accounts: callers must
+	// prepare canonical ATAs before review so the transaction has fee-only SOL
+	// exposure.
+	_ = data
+	_ = metas
+	_ = wallet
+	_ = normalized
+	return errors.New("signer-funded associated-token-account creation is denied; create the ATA separately before review")
 }
 
 func validateJupiterTokenInstructionV2(

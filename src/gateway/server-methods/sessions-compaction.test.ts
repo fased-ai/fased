@@ -52,10 +52,18 @@ async function callSessionHandler(
   extra?: Record<string, unknown>,
 ) {
   const respond = vi.fn();
+  const extraContext =
+    extra?.context && typeof extra.context === "object"
+      ? (extra.context as Record<string, unknown>)
+      : {};
   await sessionsHandlers[method]({
     params,
     respond,
     ...extra,
+    context: {
+      chatAbortControllers: new Map(),
+      ...extraContext,
+    },
   } as unknown as Parameters<(typeof sessionsHandlers)[typeof method]>[0]);
   return respond;
 }

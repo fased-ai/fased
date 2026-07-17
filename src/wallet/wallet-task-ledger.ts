@@ -49,8 +49,11 @@ function approvalStatusToTaskStatus(request: WalletSendApprovalRequest): TaskSta
   switch (request.status) {
     case "pending":
       return "blocked";
+    case "executing":
     case "approved":
       return "running";
+    case "unknown":
+      return "blocked";
     case "executed":
       return "succeeded";
     case "failed":
@@ -72,8 +75,15 @@ function approvalStatusToSummary(request: WalletSendApprovalRequest): {
   switch (request.status) {
     case "pending":
       return { progressSummary: "Waiting for wallet approval." };
+    case "executing":
+      return { progressSummary: "Wallet approval claimed; execution is in progress." };
     case "approved":
       return { progressSummary: "Wallet approval accepted; broadcast is in progress." };
+    case "unknown":
+      return {
+        progressSummary:
+          request.reason ?? "Wallet execution is unknown; reconcile it before any retry.",
+      };
     case "executed":
       return {
         terminalSummary: request.result?.txHash
@@ -108,7 +118,9 @@ function approvalStepStatus(request: WalletSendApprovalRequest): TaskRegistrySte
   switch (request.status) {
     case "pending":
       return "blocked";
+    case "executing":
     case "approved":
+    case "unknown":
     case "executed":
       return "succeeded";
     case "rejected":
@@ -126,8 +138,11 @@ function broadcastStepStatus(request: WalletSendApprovalRequest): TaskRegistrySt
   switch (request.status) {
     case "pending":
       return "queued";
+    case "executing":
     case "approved":
       return "running";
+    case "unknown":
+      return "blocked";
     case "executed":
       return "succeeded";
     case "failed":

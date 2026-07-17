@@ -54,8 +54,9 @@ func TestSignerV2FederationChallengeBindsExactDomainPayload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("normalize federation challenge: %v", err)
 	}
-	if !bytes.Equal(normalized.Message, payload) {
-		t.Fatal("normalized federation message changed the exact remote challenge bytes")
+	expectedMessage, err := federationBondSigningMessageBytesV2(*normalized.Intent.Federation)
+	if err != nil || !bytes.Equal(normalized.Message, expectedMessage) {
+		t.Fatal("normalized federation message did not bind the canonical signature wrapper")
 	}
 	if normalized.Intent.Federation.FederationOrigin != "https://ff1.fased.app" {
 		t.Fatalf("federation origin was not canonicalized: %q", normalized.Intent.Federation.FederationOrigin)
@@ -63,7 +64,7 @@ func TestSignerV2FederationChallengeBindsExactDomainPayload(t *testing.T) {
 	if normalized.RequiredRole != "vault" || normalized.PolicyOperation != intentFederationBondChallenge || normalized.Asset != "federation:bond-challenge" || normalized.Amount.String() != "1" || normalized.Destination != wallet.String() || len(normalized.RequiredPrograms) != 1 || normalized.RequiredPrograms[0] != federationBondPolicyDomainV2 {
 		t.Fatalf("federation intent omitted its Vault policy binding: %#v", normalized)
 	}
-	decoded, err := decodeFederationBondChallengePayloadV2(normalized.Message)
+	_, decoded, err := federationPayloadFromIntentV2(normalized)
 	if err != nil {
 		t.Fatalf("decode normalized federation payload: %v", err)
 	}
@@ -72,6 +73,22 @@ func TestSignerV2FederationChallengeBindsExactDomainPayload(t *testing.T) {
 	}
 	if federationBondChallengeRequestIDV2("bond-challenge-1") == federationBondChallengeRequestIDV2("bond-challenge-2") {
 		t.Fatal("different challenge IDs produced the same deterministic request ID")
+	}
+	otherID := intent
+	otherFederation := *intent.Federation
+	otherID.Federation = &otherFederation
+	otherID.Federation.ChallengeID = "bond-challenge-2"
+	otherNormalized, err := normalizeFederationBondChallengeIntentV2(otherID, wallet)
+	if err != nil || bytes.Equal(otherNormalized.Message, normalized.Message) {
+		t.Fatal("federation signature message did not bind challengeId")
+	}
+	otherOrigin := intent
+	otherFederation = *intent.Federation
+	otherOrigin.Federation = &otherFederation
+	otherOrigin.Federation.FederationOrigin = "https://other.fased.app"
+	otherNormalized, err = normalizeFederationBondChallengeIntentV2(otherOrigin, wallet)
+	if err != nil || bytes.Equal(otherNormalized.Message, normalized.Message) {
+		t.Fatal("federation signature message did not bind federationOrigin")
 	}
 }
 

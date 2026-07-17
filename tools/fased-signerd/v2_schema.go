@@ -12,7 +12,7 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
-const signerStateSchemaVersionV2 uint64 = 3
+const signerStateSchemaVersionV2 uint64 = 5
 
 var signerStateBucketsV2 = [][]byte{
 	bucketSignerMetaV2,
@@ -25,6 +25,8 @@ var signerStateBucketsV2 = [][]byte{
 	bucketSignerWebAuthnChallengesV2,
 	bucketSignerReviewProofsV2,
 	bucketSignerReviewsV2,
+	bucketSignerJupiterTriggerV2,
+	bucketSignerRotationsV2,
 }
 
 type signerSchemaHealthV2 struct {
@@ -102,7 +104,7 @@ func migrateSignerStateV2(db *bolt.DB, fromVersion uint64) error {
 	if fromVersion == signerStateSchemaVersionV2 {
 		return validateSignerSchemaBucketsV2(db)
 	}
-	if fromVersion != 0 && fromVersion != 1 && fromVersion != 2 {
+	if fromVersion != 0 && fromVersion != 1 && fromVersion != 2 && fromVersion != 3 && fromVersion != 4 {
 		return fmt.Errorf("unsupported signer state migration from schema %d", fromVersion)
 	}
 	capabilities, err := json.Marshal(signerV2Capabilities)
@@ -123,6 +125,22 @@ func migrateSignerStateV2(db *bolt.DB, fromVersion uint64) error {
 			}
 		}
 		meta := tx.Bucket(bucketSignerMetaV2)
+		if meta.Get(signerWebAuthnCredentialsVersionKeyV2) == nil {
+			credentialCount := uint64(0)
+			if credentials := tx.Bucket(bucketSignerWebAuthnCredentialsV2); credentials != nil {
+				if err := credentials.ForEach(func(_, value []byte) error {
+					if value != nil {
+						credentialCount++
+					}
+					return nil
+				}); err != nil {
+					return err
+				}
+			}
+			if err := meta.Put(signerWebAuthnCredentialsVersionKeyV2, []byte(strconv.FormatUint(credentialCount, 10))); err != nil {
+				return err
+			}
+		}
 		if err := meta.Put([]byte("capabilities"), capabilities); err != nil {
 			return err
 		}

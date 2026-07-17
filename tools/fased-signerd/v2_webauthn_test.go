@@ -10,6 +10,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -892,5 +893,153 @@ func TestSignerWebAuthnAuthorizationBeginLoadsOnlySignerOwnedReview(t *testing.T
 	})
 	if err == nil || !strings.Contains(err.Error(), "review not found") {
 		t.Fatalf("expected missing signer-owned review rejection, got %v", err)
+	}
+}
+
+func TestSignerWebAuthnCredentialRevocationIsFencedAtomicAndInvalidatesPendingAuthority(t *testing.T) {
+	fixture := newTestSignerWebAuthnFixtureV2(t)
+	primary := fixture.authenticator
+	backup := newTestWebAuthnAuthenticatorV2(t)
+	primaryMetadata := fixture.enroll(t, primary)
+	backupMetadata := fixture.enroll(t, backup)
+
+	summary, err := fixture.service.credentialSummary()
+	if err != nil || summary.Version != 2 || summary.Count != 2 || len(summary.Credentials) != 2 {
+		t.Fatalf("unexpected enrolled credential fence: %#v err=%v", summary, err)
+	}
+	begin := fixture.beginReview(t)
+	proof, err := fixture.finishReview(t, begin, primary, 2)
+	if err != nil {
+		t.Fatalf("issue primary credential proof: %v", err)
+	}
+	pendingReview := fixture.beginReview(t)
+	pendingRegistration, err := fixture.service.beginRegistration("Replacement key")
+	if err != nil {
+		t.Fatalf("begin pending replacement registration: %v", err)
+	}
+
+	stale := signerWebAuthnCredentialRevokeRequestV2{
+		CredentialID:    primaryMetadata.ID,
+		ExpectedCount:   2,
+		ExpectedVersion: 1,
+	}
+	if _, err := fixture.service.revokeCredential(stale); err == nil || !strings.Contains(err.Error(), "state conflict") {
+		t.Fatalf("credential revoke accepted a stale optimistic fence: %v", err)
+	}
+	unchanged, err := fixture.service.credentialSummary()
+	if err != nil || unchanged.Version != 2 || unchanged.Count != 2 {
+		t.Fatalf("stale revoke mutated credential state: %#v err=%v", unchanged, err)
+	}
+
+	revoke := stale
+	revoke.ExpectedVersion = summary.Version
+	result, err := fixture.service.revokeCredential(revoke)
+	if err != nil {
+		t.Fatalf("revoke exact primary credential: %v", err)
+	}
+	if result.Revoked.ID != primaryMetadata.ID || result.Version != 3 || result.Count != 1 ||
+		result.InvalidatedChallenges != 2 || result.InvalidatedProofs != 1 {
+		t.Fatalf("unexpected credential revoke result: %#v", result)
+	}
+	remaining, err := fixture.service.credentialSummary()
+	if err != nil || remaining.Version != 3 || remaining.Count != 1 || len(remaining.Credentials) != 1 || remaining.Credentials[0].ID != backupMetadata.ID {
+		t.Fatalf("credential membership/version was not updated atomically: %#v err=%v", remaining, err)
+	}
+	if err := fixture.store.db.View(func(tx *bolt.Tx) error {
+		for _, challengeID := range []string{pendingReview.ChallengeID, pendingRegistration.ChallengeID} {
+			if tx.Bucket(bucketSignerWebAuthnChallengesV2).Get([]byte(challengeID)) != nil {
+				return fmt.Errorf("pending challenge %s survived credential revocation", challengeID)
+			}
+		}
+		if tx.Bucket(bucketSignerReviewProofsV2).Get([]byte(proof.Authorization.Proof.ProofID)) != nil {
+			return errors.New("unused proof issued by the revoked credential survived")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	last := signerWebAuthnCredentialRevokeRequestV2{
+		CredentialID:    backupMetadata.ID,
+		ExpectedCount:   1,
+		ExpectedVersion: 3,
+	}
+	if _, err := fixture.service.revokeCredential(last); err == nil || !strings.Contains(err.Error(), "last WebAuthn credential") {
+		t.Fatalf("last credential was removed without explicit admin confirmation: %v", err)
+	}
+	afterRefusal, err := fixture.service.credentialSummary()
+	if err != nil || afterRefusal.Version != 3 || afterRefusal.Count != 1 {
+		t.Fatalf("last-credential refusal mutated state: %#v err=%v", afterRefusal, err)
+	}
+	last.ConfirmLastCredential = true
+	lastResult, err := fixture.service.revokeCredential(last)
+	if err != nil || lastResult.Version != 4 || lastResult.Count != 0 {
+		t.Fatalf("explicit control-owned last credential revoke failed: %#v err=%v", lastResult, err)
+	}
+}
+
+func TestSignerWebAuthnCredentialRevokeOpIsStrictAndControlOnly(t *testing.T) {
+	fixture := newTestSignerWebAuthnFixtureV2(t)
+	metadata := fixture.enroll(t, fixture.authenticator)
+	service := &signerServiceV2{store: fixture.store, keys: fixture.keys, webauthn: fixture.service}
+	body, _ := json.Marshal(signerWebAuthnCredentialRevokeRequestV2{
+		CredentialID:          metadata.ID,
+		ExpectedCount:         1,
+		ExpectedVersion:       1,
+		ConfirmLastCredential: true,
+	})
+	req := request{Op: "v2.webauthn.credentials.revoke", Request: body}
+	if _, err := service.handle(req, signerConfig{}, false); err == nil || !strings.Contains(err.Error(), "control socket") {
+		t.Fatalf("application socket reached credential revocation: %v", err)
+	}
+	unknown := append([]byte{}, body[:len(body)-1]...)
+	unknown = append(unknown, []byte(`,"unexpected":true}`)...)
+	if _, err := service.handle(requestWithBodyV2(req, unknown), signerConfig{}, true); err == nil || !strings.Contains(err.Error(), "invalid signer-v2 request") {
+		t.Fatalf("credential revocation accepted unknown fields: %v", err)
+	}
+	if _, err := service.handle(req, signerConfig{readOnly: true}, true); err == nil || !strings.Contains(err.Error(), "read-only") {
+		t.Fatalf("read-only signer allowed credential revocation: %v", err)
+	}
+}
+
+func TestSignerWebAuthnConcurrentRevocationHasOneAtomicWinner(t *testing.T) {
+	fixture := newTestSignerWebAuthnFixtureV2(t)
+	metadata := fixture.enroll(t, fixture.authenticator)
+	req := signerWebAuthnCredentialRevokeRequestV2{
+		CredentialID:          metadata.ID,
+		ExpectedCount:         1,
+		ExpectedVersion:       1,
+		ConfirmLastCredential: true,
+	}
+	const workers = 8
+	results := make(chan error, workers)
+	var wait sync.WaitGroup
+	for range workers {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			_, err := fixture.service.revokeCredential(req)
+			results <- err
+		}()
+	}
+	wait.Wait()
+	close(results)
+	successes := 0
+	conflicts := 0
+	for err := range results {
+		if err == nil {
+			successes++
+		} else if strings.Contains(err.Error(), "state conflict") {
+			conflicts++
+		} else {
+			t.Fatalf("unexpected concurrent revoke result: %v", err)
+		}
+	}
+	if successes != 1 || conflicts != workers-1 {
+		t.Fatalf("concurrent revoke successes=%d conflicts=%d", successes, conflicts)
+	}
+	summary, err := fixture.service.credentialSummary()
+	if err != nil || summary.Version != 2 || summary.Count != 0 {
+		t.Fatalf("concurrent revoke did not converge to one state transition: %#v err=%v", summary, err)
 	}
 }

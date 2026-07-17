@@ -13,12 +13,12 @@ func TestApplicationUpdateGateBlocksMutationsButAllowsHealth(t *testing.T) {
 		t.Fatal(err)
 	}
 	trustedUID := os.Geteuid()
-	for _, operation := range []string{"health", "v2.capabilities", "v2.policy.get", "v2.review.get", "v2.operation.get", "getBalance"} {
+	for _, operation := range []string{"health", "v2.capabilities", "v2.policy.get", "v2.review.get", "v2.operation.get", "v2.wallet.rotation.status", "v2.jupiter.trigger.history", "getBalance"} {
 		if err := enforceApplicationUpdateGate(gatePath, operation, false, trustedUID); err != nil {
 			t.Fatalf("read operation %s was blocked: %v", operation, err)
 		}
 	}
-	for _, operation := range []string{"v2.wallet.create", "v2.policy.tighten", "v2.review.prepare", "v2.review.execute", "v2.execute", "v2.operation.reconcile"} {
+	for _, operation := range []string{"v2.wallet.create", "v2.wallet.rotation.create", "v2.wallet.rotation.commit", "v2.webauthn.credentials.revoke", "v2.policy.tighten", "v2.review.prepare", "v2.review.execute", "v2.execute", "v2.operation.reconcile"} {
 		err := enforceApplicationUpdateGate(gatePath, operation, false, trustedUID)
 		if err == nil || !strings.Contains(err.Error(), "temporarily disabled") {
 			t.Fatalf("mutation %s was not blocked by the update gate: %v", operation, err)

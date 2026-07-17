@@ -12,16 +12,14 @@ Docker is **optional** and the full Docker Gateway is supported only on a local
 computer. Fased does not currently support a Docker-hosted Gateway on a VPS or
 cloud server, and there is no `install.sh --hosting-docker` mode.
 
-For a maintained VPS deployment, use the non-Docker hosted installer:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
-  | bash -s -- --hosting
-```
-
-The hosted installer manages the `app` account, Tailscale, firewall and SSH
-hardening, systemd service, updates, and rollback. The local Docker setup does
-not provide those hosting controls and must not be substituted for it.
+For a maintained VPS deployment, use the non-Docker hosted installer through
+the [pre-execution verified tagged bootstrap](/install/vps#3-install-fased-and-connect-through-tailscale)
+from the provider root console with the exact stable release tag. It verifies
+the standalone installer before root execution; the hosted installer then
+verifies the tagged runtime bundle and manages the `app` account, Tailscale,
+firewall and SSH hardening, systemd service, updates, and
+rollback. The local Docker setup does not provide those hosting controls and
+must not be substituted for it.
 
 ## Is Docker right for me?
 
@@ -112,10 +110,15 @@ FASED_IMAGE="ghcr.io/fased-ai/fased:${FASED_VERSION}" ./docker-setup.sh
 
 The image is public and supports anonymous pulls for `linux/amd64` and
 `linux/arm64`. Users do not need a Docker Hub account, GitHub account, package
-token, or `docker login`.
+token, or `docker login`. Tagged images contain a production-stamped signer;
+its version, release commit, and signer build-input digest are exposed through
+signer health and must match the exact image selected during an update.
 
-For an immutable local deployment, copy the verified multi-architecture
-manifest digest from that release's container metadata and use it directly:
+For an immutable local deployment, download that release's
+`fased-container-vX.Y.Z.json` plus attestation bundle, verify it with the exact
+tag and Docker release workflow constraints shown in
+[Update local Docker](#update-local-docker), and use its multi-architecture
+manifest digest directly:
 
 ```bash
 FASED_IMAGE='ghcr.io/fased-ai/fased@sha256:<verified-manifest-digest>' \
@@ -133,9 +136,10 @@ With a published `FASED_IMAGE`, the setup script:
 
 - pulls the selected multi-architecture image, which contains both Fased and
   the matching native `fased-signerd`
-- stops any existing Gateway before replacing its signer
-- recreates the non-root signer service and waits for protocol-v2 health
-  **before** any wallet operation
+- refuses to replace an existing signer through the fresh-install path; Docker
+  updates must use the offline transaction later in this guide
+- creates the non-root signer service and waits for protocol-v2 health **before**
+  any wallet operation
 - runs CLI onboarding
 - prints dashboard, token, and pairing hints
 - recreates and health-checks the Gateway
@@ -165,8 +169,9 @@ Signer keys, durable limits, idempotency records, policies, and audit state live
 in the Compose-managed `fased-signer-state` volume. The policy-limited
 application socket and administrative control socket use separate
 `fased-signer-app-run` and `fased-signer-control-run` volumes. The always-running
-Gateway mounts only the application volume. Do not run `docker compose down -v`
-unless you intentionally want to destroy signer state and its wallets.
+Gateway and routine `fased-cli` mount only the application volume. Do not run
+`docker compose down -v` unless you intentionally want to destroy signer state
+and its wallets.
 
 ### Build locally from source (alternative)
 
@@ -183,9 +188,12 @@ cd fased
 
 Without `FASED_IMAGE`, `docker-setup.sh` builds `fased:local`, records that
 selection in `.env`, reproducibly cross-builds the native Go signer for the
-target image architecture, runs onboarding, and starts the local services. An
-`unauthorized` or `denied` error while using the public-image path usually
-means the requested tag does not exist or Docker is reusing stale credentials.
+target image architecture, stamps it as a development build with the packaged
+Fased version, runs onboarding, and starts the local services. A local
+development identity is explicit and is not a substitute for the provenance of
+a published release image. An `unauthorized` or `denied` error while using the
+public-image path usually means the requested tag does not exist or Docker is
+reusing stale credentials.
 
 ### Local security boundary
 
@@ -196,8 +204,11 @@ The supplied local Compose configuration:
   non-root `fased-signerd` service before Gateway or CLI wallet work
 - keeps the signer database and master key in a signer-only persistent volume
 - separates the policy-limited application socket from the administrative
-  control socket; Gateway mounts only the application socket, while one-shot
-  CLI and enrollment containers can mount the control socket
+  control socket; Gateway and routine `fased-cli` mount only the application
+  socket
+- exposes control access only through explicit, one-shot `fased-signer-admin`
+  and `fased-signer-enroll` profile services; the admin service has no Gateway
+  config, workspace, application socket, signer state, or network access
 - requires a real protocol-v2 signer health response, not just a socket file
 - makes Gateway and CLI treat signer lifecycle as external so Node cannot start
   a second signer process inside either container
@@ -254,10 +265,59 @@ scripts/docker-signer-policy.sh \
 The helper refuses placeholders, group/world-readable policy files, a policy
 owned by another user, an unhealthy signer, a digest-confirmation mismatch, or
 anything other than the first version-1 deny-all transition. It stages the
-reviewed policy only in the signer's temporary filesystem, removes it on
-success or failure, and prints the signer-acknowledged policy afterward. Empty
-operations/programs/assets still grant nothing; generic raw signing is not
-enabled.
+reviewed policy over standard input only in the one-shot admin container's
+temporary filesystem; it never gives routine `fased-cli` the control socket and
+prints the signer-acknowledged policy afterward. Empty operations, programs,
+and assets still grant nothing; generic raw signing is not enabled.
+
+For a native administrative command not covered by the initial-policy helper,
+use the explicit profile service. Never use `docker compose exec
+fased-signerd ... admin` and never add the control volume back to `fased-cli`:
+
+```bash
+docker compose --profile signer-admin run --rm --no-deps \
+  fased-signer-admin policy get \
+  --control-socket /run/fased-signerd-control/control.sock \
+  --wallet-id agent
+```
+
+This service is deliberately short-lived and networkless. Review every admin
+command and its input from the local owner terminal before running it.
+
+Jupiter Trigger orders use a separate API key owned only by the native signer.
+The Gateway's `FASED_JUPITER_API_KEY` is for ordinary swap quote/transaction
+crafting and does not enable Trigger. Put the Trigger key in a private file,
+stream it to the networkless admin container, and restart only the signer:
+
+```bash
+chmod 600 /absolute/path/to/jupiter-trigger.key
+docker compose --profile signer-admin run --rm -T --no-deps \
+  fased-signer-admin jupiter api-key-install \
+  --output /var/lib/fased-signerd-secrets/jupiter-trigger-api.key \
+  < /absolute/path/to/jupiter-trigger.key
+docker compose restart fased-signerd
+```
+
+The one-shot admin receives the key only on stdin and atomically writes it to a
+dedicated signer-secret volume. Gateway, routine CLI, enrollment, and signer
+state volumes do not receive that volume. The signer reports only whether
+Trigger is configured; it never returns the key or its Jupiter JWT. Check or
+remove the credential without printing it:
+
+```bash
+docker compose --profile signer-admin run --rm -T --no-deps \
+  fased-signer-admin jupiter api-key-status \
+  --output /var/lib/fased-signerd-secrets/jupiter-trigger-api.key
+
+docker compose --profile signer-admin run --rm -T --no-deps \
+  fased-signer-admin jupiter api-key-remove \
+  --output /var/lib/fased-signerd-secrets/jupiter-trigger-api.key
+docker compose restart fased-signerd
+```
+
+If no Trigger key is installed, wallet creation, SOL/SPL transfers, SAT mining,
+and reviewed Vault operations continue to work; Trigger history/create/cancel
+fail closed with a configuration error.
 
 Every manual native reviewed Agent, Mining, or Vault operation requires a
 signer-owned WebAuthn credential. This is separate from the Wallets Access-tab
@@ -276,9 +336,9 @@ that one-shot command runs. Continue with
 
 The signer state survives normal container recreation and `docker compose down`.
 It does **not** survive `docker compose down -v` or manual removal of the
-project's `fased-signer-state` volume. Stop both Gateway and signer before an
-offline volume backup; never copy the live bbolt database while the signer is
-running.
+project's `fased-signer-state` and `fased-signer-secrets` volumes. Stop both
+Gateway and signer before an offline volume backup; never copy the live bbolt
+database while the signer is running.
 
 Run `docker compose ...` from the repo root. If you enabled
 `FASED_EXTRA_MOUNTS` or `FASED_HOME_VOLUME`, the setup script writes
@@ -487,77 +547,161 @@ the `health` command reads runtime config/env and does not take a `--token` flag
 
 ### Update local Docker
 
-Do not run `fased update` inside a container. Update the selected image or
-source revision, then recreate the signer **first** and Gateway second while
-preserving config, workspace, and signer-state volumes.
+Do not run `fased update` inside a container, edit `FASED_IMAGE` first, or
+manually recreate `fased-signerd`. A new signer can migrate its bbolt database;
+an older image may then correctly refuse that migrated state. Copying
+`state.db` while the signer is running is not a backup.
 
-For a published image pinned in `.env`, select the new stable source tag and
-change `FASED_IMAGE` in `.env` to the same version before pulling. For example,
-when updating to `X.Y.Z`:
+Run the coordinated helper from the **currently running release checkout**.
+Give it a new absolute snapshot directory on durable local storage and an
+immutable image digest or unique version tag. For the high-assurance registry
+path, verify the tagged release metadata and OCI image attestation before the
+updater can stop either service. Install GitHub CLI from your operating
+system's trusted package source, confirm `gh version`, replace `vX.Y.Z`, and
+run:
 
 ```bash
 cd /path/to/fased
+mkdir -p "$HOME/.local/state/fased/docker-signer-backups"
+
+RELEASE=vX.Y.Z
+VERIFY_DIR="$(mktemp -d)"
+chmod 0700 "$VERIFY_DIR"
+curl -fsSLo "$VERIFY_DIR/fased-container-${RELEASE}.json" \
+  "https://github.com/fased-ai/fased/releases/download/${RELEASE}/fased-container-${RELEASE}.json"
+curl -fsSLo "$VERIFY_DIR/fased-container-${RELEASE}.attestation.json" \
+  "https://github.com/fased-ai/fased/releases/download/${RELEASE}/fased-container-${RELEASE}.attestation.json"
+curl -fsSLo "$VERIFY_DIR/fased-container-${RELEASE}.image-attestation.json" \
+  "https://github.com/fased-ai/fased/releases/download/${RELEASE}/fased-container-${RELEASE}.image-attestation.json"
+GH_PROMPT_DISABLED=1 gh attestation verify \
+  "$VERIFY_DIR/fased-container-${RELEASE}.json" \
+  --repo fased-ai/fased \
+  --bundle "$VERIFY_DIR/fased-container-${RELEASE}.attestation.json" \
+  --signer-workflow fased-ai/fased/.github/workflows/docker-release.yml \
+  --source-ref "refs/tags/${RELEASE}" \
+  --deny-self-hosted-runners
+
+MANIFEST_DIGEST="$(sed -n 's/.*"manifestDigest": "\(sha256:[a-f0-9]*\)".*/\1/p' \
+  "$VERIFY_DIR/fased-container-${RELEASE}.json")"
+RELEASE_COMMIT="$(sed -n 's/.*"releaseCommit": "\([a-f0-9]*\)".*/\1/p' \
+  "$VERIFY_DIR/fased-container-${RELEASE}.json")"
+SIGNER_BUILD_INPUT_DIGEST="$(sed -n 's/.*"signerBuildInputDigest": "\(sha256:[a-f0-9]*\)".*/\1/p' \
+  "$VERIFY_DIR/fased-container-${RELEASE}.json")"
+[[ "$MANIFEST_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
+[[ "$RELEASE_COMMIT" =~ ^[a-f0-9]{40}$ ]]
+[[ "$SIGNER_BUILD_INPUT_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
+GH_PROMPT_DISABLED=1 gh attestation verify \
+  "oci://ghcr.io/fased-ai/fased@${MANIFEST_DIGEST}" \
+  --repo fased-ai/fased \
+  --bundle "$VERIFY_DIR/fased-container-${RELEASE}.image-attestation.json" \
+  --signer-workflow fased-ai/fased/.github/workflows/docker-release.yml \
+  --source-ref "refs/tags/${RELEASE}" \
+  --deny-self-hosted-runners
+
+scripts/docker-signer-update.sh \
+  --image "ghcr.io/fased-ai/fased@${MANIFEST_DIGEST}" \
+  --expected-release-commit "$RELEASE_COMMIT" \
+  --expected-signer-build-input-digest "$SIGNER_BUILD_INPUT_DIGEST" \
+  --snapshot-dir "$HOME/.local/state/fased/docker-signer-backups/pre-${RELEASE}"
+rm -rf "$VERIFY_DIR"
+```
+
+The three downloaded files contain no credentials. The metadata attestation
+binds the manifest digest and exact signer identity to the repository, tag,
+workflow, and GitHub-hosted runner. The OCI attestation independently binds
+that same manifest digest to the Docker release workflow. Stop if a download,
+attestation, parse, or identity check fails. A unique version tag remains
+accepted as a convenience path, but it does not provide the same pre-update
+immutable verification.
+
+The helper, in order:
+
+1. pulls or resolves the target without starting it, reads the packaged Fased
+   version, complete signer release identity, and target Compose definition
+   from that exact image under a networkless, read-only container; it requires
+   the Gateway and signer versions to match, requires a version tag to match
+   that version, rejects a development signer in any registry target, and,
+   when verified release metadata is supplied, requires the embedded commit and
+   signer build-input digest to match it before stopping either service;
+2. validates the target Compose definition with the current owner-controlled
+   `.env` and optional `docker-compose.extra.yml` before stopping services;
+3. stops Gateway and then `fased-signerd`;
+4. verifies the signer is stopped and creates a deterministic offline archive
+   of the complete `fased-signer-state` volume;
+5. checksums the archive, old and target `.env`/Compose definitions, records
+   both complete signer identities and Gateway versions, and preserves the
+   exact old image ID under a local rollback tag;
+6. atomically installs the target Compose definition and pins `FASED_IMAGE` to
+   the resolved target image ID;
+7. creates the target signer without starting it and requires it to use both
+   the exact target image ID and the existing signer-state volume;
+8. starts the new signer and requires protocol v2, signer-owned atomic caps,
+   the fixed native-fee reserve, and an exact match for the saved version,
+   commit, build-input digest, and development marker; only then does it start
+   the Gateway and verify its packaged release version.
+
+If target activation fails, the helper stops it, erases the migrated volume
+contents while offline, restores and re-verifies the exact snapshot, restores
+the exact old image, atomically restores the old `.env` and Compose definition,
+and starts that saved deployment. The same rollback runs automatically for any
+error or interruption after the verified offline snapshot is armed. It fails
+closed without starting either signer when the archive, metadata, volume,
+release identity, or exact old image is unavailable.
+
+The snapshot contains the signer master key, wallets, policy database, audit
+state, and the Gateway token from `.env`. The helper creates its directory as
+`0700` and its files as `0600`; keep that directory on owner-only encrypted
+storage and never upload or share it.
+
+After success, the deployment directory already contains the target base
+Compose definition extracted from the image. Verify the version and plugins,
+then move the rest of the source checkout to the matching tag. Do not edit or
+discard that Compose file first. Do not delete the snapshot or local rollback
+image until you have deliberately ended the rollback window:
+
+```bash
+docker compose exec fased-gateway fased --version
+docker compose run --rm fased-cli plugins doctor
+
 git fetch origin --tags
 git switch --detach vX.Y.Z
 ```
 
-Update `.env`:
-
-```text
-FASED_IMAGE=ghcr.io/fased-ai/fased:X.Y.Z
-```
-
-Then pull, recreate, and verify:
+To roll back later, run the helper from the deployment directory and pass the
+retained snapshot. It verifies all saved artifacts before touching signer
+state, then restores the saved pre-update `.env`, Compose definition, image,
+and state together:
 
 ```bash
-docker compose pull fased-signerd fased-gateway fased-cli
-docker compose stop fased-gateway
-docker compose up -d --force-recreate --wait fased-signerd
-docker compose up -d --force-recreate --no-deps --wait fased-gateway
-docker compose exec fased-signerd \
-  node /app/scripts/docker-signer-health.mjs /run/fased-signerd/app.sock
-docker compose exec fased-gateway fased --version
-docker compose exec fased-gateway node dist/index.js health
-docker compose run --rm fased-cli plugins doctor
+scripts/docker-signer-update.sh \
+  --rollback "$HOME/.local/state/fased/docker-signer-backups/pre-X.Y.Z"
 ```
 
-If `.env` uses `latest`, no image-name change is required, but `latest` is not
-an immutable production pin. Always verify the installed version after pulling.
-
-For a source-built image, select the intended stable tag, rebuild, and recreate:
+For a source build, never overwrite `fased:local` before snapshotting because
+that destroys the old image reference. Keep the running release checkout in
+place, build the target tag from a separate checkout under a unique image tag,
+then invoke the helper from the running release checkout:
 
 ```bash
-cd /path/to/fased
 git fetch origin --tags
-git switch --detach vX.Y.Z
-docker build --pull -t fased:local -f Dockerfile .
+git worktree add --detach ../fased-build-X.Y.Z vX.Y.Z
+docker build --pull -t fased-local:X.Y.Z \
+  -f ../fased-build-X.Y.Z/Dockerfile ../fased-build-X.Y.Z
+
+scripts/docker-signer-update.sh \
+  --image fased-local:X.Y.Z \
+  --snapshot-dir "$HOME/.local/state/fased/docker-signer-backups/pre-X.Y.Z-local"
 ```
 
-Set the local image in `.env`; otherwise Compose may keep using a previously
-configured GHCR image:
-
-```text
-FASED_IMAGE=fased:local
-```
-
-Then recreate and verify:
-
-```bash
-docker compose stop fased-gateway
-docker compose up -d --force-recreate --wait fased-signerd
-docker compose up -d --force-recreate --no-deps --wait fased-gateway
-docker compose exec fased-signerd \
-  node /app/scripts/docker-signer-health.mjs /run/fased-signerd/app.sock
-docker compose exec fased-gateway fased --version
-docker compose exec fased-gateway node dist/index.js health
-docker compose run --rm fased-cli plugins doctor
-```
+The updater rejects `latest` and `fased:local` because neither identifies a
+stable rollback target.
 
 Config and workspace survive while `FASED_CONFIG_DIR` and
 `FASED_WORKSPACE_DIR` keep pointing to the same host directories. Signer keys,
 policies, durable caps, and idempotency state survive in
 `fased-signer-state`. Normal `docker compose down` preserves it; `docker compose
-down -v` destroys it.
+down -v` destroys it. The transaction snapshot is intentionally outside that
+volume, so it survives a Compose volume rollback.
 
 ### E2E smoke test (Docker)
 

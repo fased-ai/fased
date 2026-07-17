@@ -1,4 +1,5 @@
-import { createHash, randomUUID } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import {
   callLocalSocketSigner,
@@ -30,6 +31,14 @@ import {
   inspectSatMinerCyclesByAddress,
 } from "./rpc-read.js";
 import { resolveSatSignerCodec, type SatSignerAction } from "./signer-codec-manifest.js";
+import {
+  buildSatSubmissionOperationKey,
+  claimSatSubmission,
+  digestSatSubmissionIntent,
+  updateSatSubmission,
+  waitForSatSubmissionLease,
+  type SatSubmissionSignerState,
+} from "./submission-ledger.js";
 
 const require = createRequire(import.meta.url);
 
@@ -81,6 +90,19 @@ const VAULT_BOND_ACTIONS = new Set<SatSignerAction>([
   "claimBondStakingRewards",
   "claimUnallocatedStakingRewards",
 ]);
+
+const satSubmissionWorkflowStorage = new AsyncLocalStorage<string>();
+
+export async function runWithSatSubmissionWorkflow<T>(
+  workflowId: string,
+  task: () => Promise<T>,
+): Promise<T> {
+  const normalized = workflowId.trim();
+  if (!normalized || normalized.length > 240 || /[\u0000-\u001f\u007f]/u.test(normalized)) {
+    throw new Error("SAT submission idempotency key must contain 1-240 printable characters");
+  }
+  return await satSubmissionWorkflowStorage.run(normalized, task);
+}
 
 function satSubmitDebug(message: string) {
   if (String(process.env.FASED_SAT_SUBMIT_DEBUG ?? "").trim() === "1") {
@@ -456,6 +478,40 @@ async function reconcileTypedSatOperation(params: {
   return operation;
 }
 
+function assertSatSignerOperationIdentity(
+  operation: SatSignerOperation,
+  requestId: string,
+): SatSignerOperation {
+  if (operation.requestId !== requestId) {
+    throw new Error(
+      `SAT signer returned request ${operation.requestId || "<empty>"} while reconciling ${requestId}`,
+    );
+  }
+  return operation;
+}
+
+function signerStateForLedger(state: SatSignerOperation["state"]): SatSubmissionSignerState {
+  return state;
+}
+
+class SatSubmissionUnresolvedError extends Error {
+  readonly requestId: string;
+  readonly signature?: string;
+
+  constructor(params: { requestId: string; state: string; signature?: string; detail?: string }) {
+    super(
+      `SAT signer operation ${params.requestId} remains ${params.state}${
+        params.signature ? ` with signature ${params.signature}` : ""
+      }; it is unresolved and must be reconciled with the same idempotency key before any new submission${
+        params.detail ? ` (${params.detail})` : ""
+      }`,
+    );
+    this.name = "SatSubmissionUnresolvedError";
+    this.requestId = params.requestId;
+    this.signature = params.signature;
+  }
+}
+
 async function executeTypedSatIntent(params: {
   socketPath: string;
   walletId: string;
@@ -489,70 +545,274 @@ async function executeTypedSatIntent(params: {
     op: "v2.policy.get",
     walletId: params.walletId,
   });
-  const requestId = `sat-${randomUUID()}`;
-  if (intent.type === "solana.vaultBondAction") {
-    const review = await callLocalSocketSigner<WalletProviderJupiterReviewV2>(params.socketPath, {
-      op: "v2.review.prepare",
+  const intentDigest = digestSatSubmissionIntent({
+    walletId: params.walletId,
+    policyHash: policy.hash,
+    intent,
+  });
+  const operationKey = buildSatSubmissionOperationKey(intent);
+  const workflowId =
+    satSubmissionWorkflowStorage.getStore() ?? `derived:${operationKey}:${intentDigest}`;
+  let claim = await claimSatSubmission({
+    walletId: params.walletId,
+    workflowId,
+    operationKey,
+    intentDigest,
+    action: params.action,
+    env: params.env,
+  });
+  if (!claim.claimed) {
+    await waitForSatSubmissionLease({
       walletId: params.walletId,
-      request: {
-        requestId,
-        policyHash: policy.hash,
-        mode: "reviewed",
-        intent,
-      },
-    });
-    const approval = createSignerReviewApprovalRequest({
-      review,
-      role: "vault",
-      walletId: params.walletId,
-      requestedBy: "sat-mining-vault",
-      assetSymbol: "SAT",
-      assetName: "SAT bond",
-      memo: `Reviewed Vault bond action: ${intent.action}`,
+      requestId: claim.record.requestId,
       env: params.env,
     });
-    throw new Error(
-      `Vault bond review ${approval.id} is pending in Wallet Approvals for ${intent.action}; approve it there with the signer-owned passkey`,
-    );
-  }
-  let operation: SatSignerOperation;
-  try {
-    operation = await callLocalSocketSigner<SatSignerOperation>(params.socketPath, {
-      op: "v2.execute",
+    claim = await claimSatSubmission({
       walletId: params.walletId,
-      request: {
-        requestId,
-        policyHash: policy.hash,
-        intent,
-      },
+      workflowId,
+      operationKey,
+      intentDigest,
+      action: params.action,
+      env: params.env,
+      owner: claim.owner,
     });
-  } catch (executeError) {
-    try {
-      operation = await callLocalSocketSigner<SatSignerOperation>(params.socketPath, {
-        op: "v2.operation.get",
-        walletId: params.walletId,
-        request: { requestId },
-      });
-    } catch {
-      const detail = executeError instanceof Error ? executeError.message : String(executeError);
+    if (!claim.claimed) {
       throw new Error(
-        `SAT signer request ${requestId} has an unresolved transport result (${detail}); do not submit a new request ID until this operation is reconciled`,
+        `SAT submission ${claim.record.requestId} could not acquire its durable execution lease`,
       );
     }
   }
-  operation = await reconcileTypedSatOperation({
-    socketPath: params.socketPath,
+  const requestId = claim.record.requestId;
+  if (intent.type === "solana.vaultBondAction") {
+    try {
+      const review = await callLocalSocketSigner<WalletProviderJupiterReviewV2>(params.socketPath, {
+        op: "v2.review.prepare",
+        walletId: params.walletId,
+        request: {
+          requestId,
+          policyHash: policy.hash,
+          mode: "reviewed",
+          intent,
+        },
+      });
+      const approval = createSignerReviewApprovalRequest({
+        review,
+        role: "vault",
+        walletId: params.walletId,
+        requestedBy: "sat-mining-vault",
+        assetSymbol: "SAT",
+        assetName: "SAT bond",
+        memo: `Reviewed Vault bond action: ${intent.action}`,
+        env: params.env,
+      });
+      await updateSatSubmission({
+        walletId: params.walletId,
+        requestId,
+        intentDigest,
+        state: "reserved",
+        error: `review ${approval.id} pending`,
+        owner: claim.owner,
+        releaseLease: true,
+        env: params.env,
+      });
+      throw new Error(
+        `Vault bond review ${approval.id} is pending in Wallet Approvals for ${intent.action}; approve it there with the signer-owned passkey`,
+      );
+    } catch (error) {
+      await updateSatSubmission({
+        walletId: params.walletId,
+        requestId,
+        intentDigest,
+        state: "reserved",
+        error: error instanceof Error ? error.message : String(error),
+        owner: claim.owner,
+        releaseLease: true,
+        env: params.env,
+      }).catch(() => undefined);
+      throw error;
+    }
+  }
+  const executeExactOrRecover = async (): Promise<SatSignerOperation> => {
+    try {
+      return await callLocalSocketSigner<SatSignerOperation>(params.socketPath, {
+        op: "v2.execute",
+        walletId: params.walletId,
+        request: {
+          requestId,
+          policyHash: policy.hash,
+          intent,
+        },
+      });
+    } catch (executeError) {
+      try {
+        return await callLocalSocketSigner<SatSignerOperation>(params.socketPath, {
+          op: "v2.operation.get",
+          walletId: params.walletId,
+          request: { requestId },
+        });
+      } catch (lookupError) {
+        const detail = `${executeError instanceof Error ? executeError.message : String(executeError)}; ${
+          lookupError instanceof Error ? lookupError.message : String(lookupError)
+        }`;
+        await updateSatSubmission({
+          walletId: params.walletId,
+          requestId,
+          intentDigest,
+          state:
+            claim.record.state === "confirmed" || claim.record.state === "failed"
+              ? claim.record.state
+              : "unknown",
+          ...(claim.record.signature ? { signature: claim.record.signature } : {}),
+          error: detail,
+          owner: claim.owner,
+          releaseLease: true,
+          env: params.env,
+        });
+        throw new SatSubmissionUnresolvedError({ requestId, state: "unknown", detail });
+      }
+    }
+  };
+  let operation: SatSignerOperation;
+  if (!claim.created) {
+    const callerStateWasAmbiguous =
+      claim.record.state === "broadcast" || claim.record.state === "unknown";
+    try {
+      operation = assertSatSignerOperationIdentity(
+        await callLocalSocketSigner<SatSignerOperation>(params.socketPath, {
+          op: "v2.operation.get",
+          walletId: params.walletId,
+          request: { requestId },
+        }),
+        requestId,
+      );
+      operation = assertSatSignerOperationIdentity(
+        await reconcileTypedSatOperation({
+          socketPath: params.socketPath,
+          walletId: params.walletId,
+          requestId,
+          operation,
+        }),
+        requestId,
+      );
+    } catch (lookupError) {
+      if (claim.record.signature) {
+        await updateSatSubmission({
+          walletId: params.walletId,
+          requestId,
+          intentDigest,
+          state: claim.record.state === "confirmed" ? "confirmed" : "unknown",
+          signature: claim.record.signature,
+          error: lookupError instanceof Error ? lookupError.message : String(lookupError),
+          owner: claim.owner,
+          releaseLease: true,
+          env: params.env,
+        });
+        throw new SatSubmissionUnresolvedError({
+          requestId,
+          state: claim.record.state === "confirmed" ? "confirmed-but-unverified" : "unknown",
+          signature: claim.record.signature,
+          detail: lookupError instanceof Error ? lookupError.message : String(lookupError),
+        });
+      }
+      if (claim.record.state === "failed" || claim.record.state === "confirmed") {
+        const detail = lookupError instanceof Error ? lookupError.message : String(lookupError);
+        await updateSatSubmission({
+          walletId: params.walletId,
+          requestId,
+          intentDigest,
+          state: claim.record.state,
+          error: detail,
+          owner: claim.owner,
+          releaseLease: true,
+          env: params.env,
+        });
+        if (claim.record.state === "failed") {
+          throw new Error(claim.record.error || `SAT signer operation ${requestId} failed`);
+        }
+        throw new SatSubmissionUnresolvedError({
+          requestId,
+          state: "confirmed-without-signature",
+          detail,
+        });
+      }
+      operation = await executeExactOrRecover();
+    }
+    if (operation.state === "reserved" && !operation.signature) {
+      if (callerStateWasAmbiguous) {
+        const detail = `signer regressed to reserved after caller persisted ${claim.record.state}`;
+        await updateSatSubmission({
+          walletId: params.walletId,
+          requestId,
+          intentDigest,
+          state: "unknown",
+          ...(claim.record.signature ? { signature: claim.record.signature } : {}),
+          error: detail,
+          owner: claim.owner,
+          releaseLease: true,
+          env: params.env,
+        });
+        throw new SatSubmissionUnresolvedError({
+          requestId,
+          state: "unknown",
+          signature: claim.record.signature,
+          detail,
+        });
+      }
+      operation = await executeExactOrRecover();
+    }
+  } else {
+    operation = await executeExactOrRecover();
+  }
+  try {
+    operation = assertSatSignerOperationIdentity(operation, requestId);
+    operation = assertSatSignerOperationIdentity(
+      await reconcileTypedSatOperation({
+        socketPath: params.socketPath,
+        walletId: params.walletId,
+        requestId,
+        operation,
+      }),
+      requestId,
+    );
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    await updateSatSubmission({
+      walletId: params.walletId,
+      requestId,
+      intentDigest,
+      state:
+        claim.record.state === "confirmed" || claim.record.state === "failed"
+          ? claim.record.state
+          : "unknown",
+      ...(claim.record.signature ? { signature: claim.record.signature } : {}),
+      error: detail,
+      owner: claim.owner,
+      releaseLease: true,
+      env: params.env,
+    });
+    throw new SatSubmissionUnresolvedError({ requestId, state: "unknown", detail });
+  }
+  await updateSatSubmission({
     walletId: params.walletId,
     requestId,
-    operation,
+    intentDigest,
+    state: signerStateForLedger(operation.state),
+    ...(operation.signature ? { signature: operation.signature } : {}),
+    ...(operation.error ? { error: operation.error } : {}),
+    owner: claim.owner,
+    releaseLease: true,
+    env: params.env,
   });
   if (operation.state === "failed") {
     throw new Error(operation.error || `SAT signer operation ${requestId} failed`);
   }
-  if (!operation.signature) {
-    throw new Error(
-      `SAT signer operation ${requestId} remains ${operation.state} without a transaction signature; reconcile this request ID instead of submitting a new one`,
-    );
+  if (operation.state !== "confirmed" || !operation.signature) {
+    throw new SatSubmissionUnresolvedError({
+      requestId,
+      state: operation.state,
+      signature: operation.signature,
+      detail: operation.error,
+    });
   }
   return { ...operation, signature: operation.signature };
 }

@@ -322,25 +322,7 @@ func validateJupiterAuxiliaryInstructionV2(data []byte, metas []*solana.AccountM
 	}
 	switch discriminator {
 	case jupiterCreateTokenAccountDiscriminatorV2:
-		if len(data) != 9 || len(metas) != 5 {
-			return false, errors.New("invalid Jupiter create-token-account instruction")
-		}
-		account := metas[0].PublicKey.String()
-		mint := metas[2].PublicKey.String()
-		if (account != intent.SourceTokenAccount || mint != intent.InputMint) &&
-			(account != intent.DestinationTokenAccount || mint != intent.OutputMint) {
-			return false, errors.New("Jupiter token-account creation is outside reviewed accounts/mints")
-		}
-		if err := requireJupiterMetaV2(metas, 1, wallet.String(), true, true, "token-account payer"); err != nil {
-			return false, err
-		}
-		if err := requireJupiterInfrastructureV2(metas[3], solana.TokenProgramID, solana.Token2022ProgramID); err != nil {
-			return false, err
-		}
-		if !metas[4].PublicKey.Equals(solana.SystemProgramID) {
-			return false, errors.New("Jupiter token-account creation has an invalid System program")
-		}
-		return false, nil
+		return false, errors.New("Jupiter signer-funded token-account creation is denied; prepare token accounts before review")
 	case jupiterCloseWSOLAccountDiscriminatorV2:
 		if len(data) != 8 || len(metas) != 4 {
 			return false, errors.New("invalid Jupiter close-WSOL instruction")

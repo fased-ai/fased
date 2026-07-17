@@ -2,13 +2,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { capabilitiesDigest } from "./hosted-release-manifest.mjs";
 import { installManagedRuntime, rollbackManagedRuntime } from "./install-managed-runtime.mjs";
 import {
   readManagedInstallManifest,
   resolveManagedRuntimePaths,
 } from "./managed-runtime-layout.mjs";
 
-function writeRuntime(packageRoot: string, version: string) {
+function writeRuntime(packageRoot: string, version: string, options: { attested?: boolean } = {}) {
   fs.mkdirSync(path.join(packageRoot, "node_modules"), { recursive: true });
   fs.mkdirSync(path.join(packageRoot, "dist", "control-ui"), { recursive: true });
   fs.mkdirSync(path.join(packageRoot, "scripts"), { recursive: true });
@@ -21,15 +22,68 @@ function writeRuntime(packageRoot: string, version: string) {
     path.join(packageRoot, "dist", "control-ui", "version.json"),
     `${JSON.stringify({ version })}\n`,
   );
-  fs.writeFileSync(
-    path.join(packageRoot, ".fased-hosted-runtime.json"),
-    `${JSON.stringify({ schemaVersion: 1, dependencyHash: "a".repeat(64) })}\n`,
-  );
+  const dependencyHash = "a".repeat(64);
+  const commit = "e".repeat(40);
+  if (options.attested) {
+    const capabilities = {
+      protocol: { current: 2, min: 2, max: 2 },
+      nativeFeeReservationLamports: 5_000_000,
+      intentTypes: ["solana.nativeTransfer"],
+      operationStates: ["reserved"],
+      features: ["failClosedPolicies"],
+    };
+    const artifact = { asset: "app.tar.gz", sha256: "b".repeat(64) };
+    const dependencies = {
+      asset: "deps.tar.gz",
+      sha256: "c".repeat(64),
+      dependencyHash,
+    };
+    const platforms = Object.fromEntries(
+      ["linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64"].map((platform) => [
+        platform,
+        { asset: `fased-signerd-${platform}`, sha256: "d".repeat(64) },
+      ]),
+    );
+    fs.writeFileSync(
+      path.join(packageRoot, ".fased-hosted-runtime.json"),
+      `${JSON.stringify({ schemaVersion: 2, version, commit, dependencyHash })}\n`,
+    );
+    fs.writeFileSync(
+      path.join(packageRoot, ".fased-hosted-release-v2.json"),
+      `${JSON.stringify({
+        schemaVersion: 2,
+        release: { version, tag: `v${version}`, commit },
+        application: {
+          linux: {
+            x64: { artifact, dependencies },
+            arm64: { artifact: { ...artifact, asset: "app-arm64.tar.gz" }, dependencies },
+          },
+        },
+        signer: {
+          release: {
+            version,
+            commit,
+            buildInputDigest: `sha256:${"f".repeat(64)}`,
+            development: false,
+          },
+          capabilities,
+          capabilitiesDigest: capabilitiesDigest(capabilities),
+          platforms,
+        },
+      })}\n`,
+    );
+  } else {
+    fs.writeFileSync(
+      path.join(packageRoot, ".fased-hosted-runtime.json"),
+      `${JSON.stringify({ schemaVersion: 1, dependencyHash })}\n`,
+    );
+  }
   for (const script of [
     "fased-managed-launcher.sh",
     "fased-managed-service.sh",
     "fased-managed-updater.mjs",
     "managed-runtime-layout.mjs",
+    "hosted-release-manifest.mjs",
     "start-managed.sh",
   ]) {
     const source = path.join(import.meta.dirname, script);
@@ -38,12 +92,12 @@ function writeRuntime(packageRoot: string, version: string) {
   }
 }
 
-function createFixture(version: string) {
+function createFixture(version: string, options: { attested?: boolean } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-managed-layout-"));
   const stateDir = path.join(root, "home", ".fased");
   const prefix = path.join(stateDir, "install-cache", "npm-global");
   const paths = resolveManagedRuntimePaths({ stateDir, prefix });
-  writeRuntime(paths.compatibilityPackageRoot, version);
+  writeRuntime(paths.compatibilityPackageRoot, version, options);
   fs.mkdirSync(stateDir, { recursive: true });
   fs.writeFileSync(path.join(stateDir, "wallet-state-preserved"), "unchanged\n");
   return { root, stateDir, prefix, paths };
@@ -84,7 +138,7 @@ describe("managed runtime layout", () => {
     });
 
     fs.unlinkSync(fixture.paths.compatibilityPackageRoot);
-    writeRuntime(fixture.paths.compatibilityPackageRoot, "1.2.4");
+    writeRuntime(fixture.paths.compatibilityPackageRoot, "1.2.4", { attested: true });
     await installManagedRuntime({
       packageRoot: fixture.paths.compatibilityPackageRoot,
       stateDir: fixture.stateDir,
@@ -113,7 +167,7 @@ describe("managed runtime layout", () => {
   });
 
   it("hands an existing hosting runtime to the prepared cross-user transaction", async () => {
-    const fixture = createFixture("1.2.3");
+    const fixture = createFixture("1.2.3", { attested: true });
     await installManagedRuntime({
       packageRoot: fixture.paths.compatibilityPackageRoot,
       stateDir: fixture.stateDir,
@@ -123,7 +177,7 @@ describe("managed runtime layout", () => {
     const previousRoot = fs.realpathSync(fixture.paths.currentLink);
 
     fs.unlinkSync(fixture.paths.compatibilityPackageRoot);
-    writeRuntime(fixture.paths.compatibilityPackageRoot, "1.2.4");
+    writeRuntime(fixture.paths.compatibilityPackageRoot, "1.2.4", { attested: true });
     fs.appendFileSync(
       path.join(fixture.paths.compatibilityPackageRoot, "scripts", "fased-managed-updater.mjs"),
       "\n// transaction-target\n",
@@ -159,7 +213,13 @@ describe("managed runtime layout", () => {
 
     expect(result.hostTransaction).toBe(true);
     expect(activeRootDuringHandoff).toBe(previousRoot);
-    expect(stableUpdaterDuringHandoff).toContain("transaction-target");
+    expect(stableUpdaterDuringHandoff).not.toContain("transaction-target");
+    expect(
+      fs.readFileSync(
+        path.join(transaction.targetRoot, "scripts", "fased-managed-updater.mjs"),
+        "utf8",
+      ),
+    ).toContain("transaction-target");
     expect(transaction).toMatchObject({
       transactionId: "4f18fd75-a9ee-4dc3-a4e8-6a7e86ab3e4d",
       targetVersion: "1.2.4",
@@ -170,7 +230,7 @@ describe("managed runtime layout", () => {
   });
 
   it("leaves a fresh hosting install under the root installer's signer transaction", async () => {
-    const fixture = createFixture("1.2.3");
+    const fixture = createFixture("1.2.3", { attested: true });
     let coordinated = false;
     const result = await installManagedRuntime(
       {
@@ -182,7 +242,14 @@ describe("managed runtime layout", () => {
         hostTransactionVersion: "1.2.3",
       },
       {
-        authorizePreactivatedHostedGateway: async () => undefined,
+        authorizePreactivatedHostedGateway: async () => ({
+          release: {
+            version: "1.2.3",
+            commit: "e".repeat(40),
+            buildInputDigest: `sha256:${"f".repeat(64)}`,
+            development: false,
+          },
+        }),
         beginPreactivatedHostedTransaction: async () => {
           coordinated = true;
         },

@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { WebSocket } from "ws";
 import { DEFAULT_PROVIDER } from "../agents/defaults.js";
+import { withEnvAsync } from "../test-utils/env.js";
 import {
   connectOk,
   embeddedRunMock,
@@ -92,6 +93,8 @@ describe("gateway server sessions", () => {
   });
 
   test("lists and patches session store via sessions.* RPC", async () => {
+    piSdkMock.enabled = true;
+    piSdkMock.models = [{ id: "gpt-test-a", name: "A", provider: "openai" }];
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-sessions-"));
     const storePath = path.join(dir, "sessions.json");
     const now = Date.now();
@@ -327,15 +330,15 @@ describe("gateway server sessions", () => {
     });
     expect(spawnedPatchedInvalidKey.ok).toBe(false);
 
-    piSdkMock.enabled = true;
-    piSdkMock.models = [{ id: "gpt-test-a", name: "A", provider: "openai" }];
-    const modelPatched = await rpcReq<{
-      ok: true;
-      entry: { modelOverride?: string; providerOverride?: string };
-    }>(ws, "sessions.patch", {
-      key: "agent:main:main",
-      model: "openai/gpt-test-a",
-    });
+    const modelPatched = await withEnvAsync({ OPENAI_API_KEY: "test-openai-key" }, async () =>
+      rpcReq<{
+        ok: true;
+        entry: { modelOverride?: string; providerOverride?: string };
+      }>(ws, "sessions.patch", {
+        key: "agent:main:main",
+        model: "openai/gpt-test-a",
+      }),
+    );
     expect(modelPatched.ok).toBe(true);
     expect(modelPatched.payload?.entry.modelOverride).toBe("gpt-test-a");
     expect(modelPatched.payload?.entry.providerOverride).toBe("openai");

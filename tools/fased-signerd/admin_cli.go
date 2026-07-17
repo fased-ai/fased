@@ -84,6 +84,12 @@ func runSignerAdminCLI(args []string, stdin io.Reader, stdout io.Writer, environ
 			return runSignerAdminWalletImportLegacy(args[2:], stdout)
 		case "reencrypt":
 			return runSignerAdminWalletReencrypt(args[2:], stdout)
+		case "rotate-successor":
+			return runSignerAdminWalletRotateSuccessor(args[2:], stdout)
+		case "rotation-status":
+			return runSignerAdminWalletRotationStatus(args[2:], stdout)
+		case "rotation-commit":
+			return runSignerAdminWalletRotationCommit(args[2:], stdout)
 		default:
 			return errors.New("unknown signer admin wallet command")
 		}
@@ -105,6 +111,17 @@ func runSignerAdminCLI(args []string, stdin io.Reader, stdout io.Writer, environ
 		default:
 			return errors.New("unknown signer admin network command")
 		}
+	case "jupiter":
+		switch args[1] {
+		case "api-key-install":
+			return runSignerAdminJupiterAPIKeyInstallV2(args[2:], stdin, stdout)
+		case "api-key-status":
+			return runSignerAdminJupiterAPIKeyStatusV2(args[2:], stdout)
+		case "api-key-remove":
+			return runSignerAdminJupiterAPIKeyRemoveV2(args[2:], stdout)
+		default:
+			return errors.New("unknown signer admin jupiter command")
+		}
 	case "webauthn":
 		if len(args) < 3 {
 			return errors.New("signer admin webauthn requires registration, credentials, or enrollment command")
@@ -116,6 +133,8 @@ func runSignerAdminCLI(args []string, stdin io.Reader, stdout io.Writer, environ
 			return runSignerAdminWebAuthnRegistrationFinish(args[3:], stdout)
 		case "credentials list":
 			return runSignerAdminWebAuthnCredentialsList(args[3:], stdout)
+		case "credentials revoke":
+			return runSignerAdminWebAuthnCredentialsRevoke(args[3:], stdout)
 		case "enrollment serve":
 			return runSignerAdminWebAuthnEnrollmentServe(args[3:], stdout)
 		default:
@@ -132,7 +151,7 @@ func runSignerAdminCLI(args []string, stdin io.Reader, stdout io.Writer, environ
 }
 
 func signerAdminUsageError() error {
-	return errors.New("usage: fased-signerd admin {wallet|policy|network|webauthn|migration} <command> [flags]")
+	return errors.New("usage: fased-signerd admin {wallet|policy|network|jupiter|webauthn|migration} <command> [flags]")
 }
 
 func rejectSignerAdminNetworkEnvironmentV2(environ []string) error {
@@ -160,21 +179,25 @@ func rejectSignerAdminSecretInputs(args, environ []string) error {
 			// The native signer reads and consumes the file through its control socket.
 			continue
 		}
-		for _, marker := range []string{"PRIVATE_KEY", "PRIVATE-KEY", "SECRET_KEY", "SECRET-KEY", "KEYPAIR", "MNEMONIC", "PASSPHRASE", "SEED"} {
+		for _, marker := range []string{"PRIVATE_KEY", "PRIVATE-KEY", "SECRET_KEY", "SECRET-KEY", "API_KEY", "API-KEY", "KEYPAIR", "MNEMONIC", "PASSPHRASE", "SEED"} {
 			if strings.Contains(name, marker) {
-				return errors.New("secret material is not accepted in signer admin command arguments; wallet import reads only stdin")
+				return errors.New("secret material is not accepted in signer admin command arguments; supported secret-install commands read only stdin")
 			}
 		}
 	}
 	for _, entry := range environ {
 		name, _, found := strings.Cut(entry, "=")
-		if !found || !strings.HasPrefix(strings.ToUpper(name), "FASED_") {
+		upper := strings.ToUpper(name)
+		if !found || (!strings.HasPrefix(upper, "FASED_") && upper != "JUPITER_API_KEY") {
 			continue
 		}
-		upper := strings.ToUpper(name)
-		for _, marker := range []string{"PRIVATE_KEY", "SECRET_KEY", "KEYPAIR", "MNEMONIC", "PASSPHRASE", "SEED"} {
+		if upper == "FASED_WALLET_JUPITER_API_KEY_FILE" {
+			// This contains only a signer-owned file path, never the credential.
+			continue
+		}
+		for _, marker := range []string{"PRIVATE_KEY", "SECRET_KEY", "API_KEY", "KEYPAIR", "MNEMONIC", "PASSPHRASE", "SEED"} {
 			if strings.Contains(upper, marker) {
-				return errors.New("secret-bearing Fased environment variables are not accepted by signer admin; unset them and use stdin for wallet import")
+				return errors.New("secret-bearing environment variables are not accepted by signer admin; unset them and use stdin for the supported secret-install command")
 			}
 		}
 	}
@@ -434,6 +457,126 @@ func runSignerAdminWalletReencrypt(args []string, stdout io.Writer) error {
 	return callAndWriteSignerAdmin(common.controlSocket, "v2.wallet.reencrypt", walletID, nil, stdout)
 }
 
+func validateSignerAdminPublicKeyV2(raw, flagName string) (string, error) {
+	value, err := normalizeRotationPublicKeyV2(raw, strings.TrimPrefix(flagName, "--"))
+	if err != nil {
+		return "", fmt.Errorf("%s must be a canonical Solana public key", flagName)
+	}
+	return value, nil
+}
+
+func runSignerAdminWalletRotateSuccessor(args []string, stdout io.Writer) error {
+	fs, common := newSignerAdminFlagSet("wallet rotate-successor")
+	var sourceWalletID, successorWalletID, sourcePublicKey string
+	var sourceWalletVersion, sourcePolicyVersion signerAdminRequiredUint64
+	fs.StringVar(&sourceWalletID, "wallet-id", "", "normalized source wallet identifier")
+	fs.StringVar(&successorWalletID, "successor-wallet-id", "", "new normalized successor wallet identifier")
+	fs.StringVar(&sourcePublicKey, "expected-source-public-key", "", "exact current source public key")
+	fs.Var(&sourceWalletVersion, "expected-source-wallet-version", "required current source wallet version")
+	fs.Var(&sourcePolicyVersion, "expected-source-policy-version", "required current source policy version")
+	if err := parseSignerAdminFlags(fs, args); err != nil {
+		return err
+	}
+	if !sourceWalletVersion.set || !sourcePolicyVersion.set {
+		return errors.New("--expected-source-wallet-version and --expected-source-policy-version are required")
+	}
+	if _, err := requireSignerAdminControlSocket(common.controlSocket); err != nil {
+		return err
+	}
+	var err error
+	if sourceWalletID, err = validateSignerAdminWalletID(sourceWalletID); err != nil {
+		return err
+	}
+	if successorWalletID, err = validateSignerAdminWalletID(successorWalletID); err != nil {
+		return fmt.Errorf("invalid --successor-wallet-id: %w", err)
+	}
+	if sourceWalletID == successorWalletID {
+		return errors.New("--successor-wallet-id must differ from --wallet-id")
+	}
+	if sourcePublicKey, err = validateSignerAdminPublicKeyV2(sourcePublicKey, "--expected-source-public-key"); err != nil {
+		return err
+	}
+	body := signerWalletRotationCreateRequestV2{
+		SuccessorWalletID:           successorWalletID,
+		ExpectedSourcePublicKey:     sourcePublicKey,
+		ExpectedSourceWalletVersion: sourceWalletVersion.value,
+		ExpectedSourcePolicyVersion: sourcePolicyVersion.value,
+	}
+	return callAndWriteSignerAdmin(common.controlSocket, "v2.wallet.rotation.create", sourceWalletID, body, stdout)
+}
+
+func runSignerAdminWalletRotationStatus(args []string, stdout io.Writer) error {
+	fs, common := newSignerAdminFlagSet("wallet rotation-status")
+	var sourceWalletID string
+	fs.StringVar(&sourceWalletID, "wallet-id", "", "normalized source wallet identifier")
+	if err := parseSignerAdminFlags(fs, args); err != nil {
+		return err
+	}
+	if _, err := requireSignerAdminControlSocket(common.controlSocket); err != nil {
+		return err
+	}
+	var err error
+	if sourceWalletID, err = validateSignerAdminWalletID(sourceWalletID); err != nil {
+		return err
+	}
+	return callAndWriteSignerAdmin(common.controlSocket, "v2.wallet.rotation.status", sourceWalletID, nil, stdout)
+}
+
+func runSignerAdminWalletRotationCommit(args []string, stdout io.Writer) error {
+	fs, common := newSignerAdminFlagSet("wallet rotation-commit")
+	var sourceWalletID, successorWalletID, rotationID, sourcePublicKey, successorPublicKey string
+	var sourceWalletVersion, sourcePolicyVersion signerAdminRequiredUint64
+	var successorWalletVersion, successorPolicyVersion, rotationVersion signerAdminRequiredUint64
+	fs.StringVar(&sourceWalletID, "wallet-id", "", "normalized source wallet identifier")
+	fs.StringVar(&successorWalletID, "successor-wallet-id", "", "exact successor wallet identifier")
+	fs.StringVar(&rotationID, "rotation-id", "", "exact prepared rotation digest")
+	fs.StringVar(&sourcePublicKey, "expected-source-public-key", "", "exact current source public key")
+	fs.StringVar(&successorPublicKey, "expected-successor-public-key", "", "exact current successor public key")
+	fs.Var(&sourceWalletVersion, "expected-source-wallet-version", "required current source wallet version")
+	fs.Var(&sourcePolicyVersion, "expected-source-policy-version", "required current source policy version")
+	fs.Var(&successorWalletVersion, "expected-successor-wallet-version", "required current successor wallet version")
+	fs.Var(&successorPolicyVersion, "expected-successor-policy-version", "required current successor policy version")
+	fs.Var(&rotationVersion, "expected-rotation-version", "required current rotation version")
+	if err := parseSignerAdminFlags(fs, args); err != nil {
+		return err
+	}
+	if !sourceWalletVersion.set || !sourcePolicyVersion.set || !successorWalletVersion.set ||
+		!successorPolicyVersion.set || !rotationVersion.set {
+		return errors.New("all expected source, successor, policy, and rotation version flags are required")
+	}
+	if _, err := requireSignerAdminControlSocket(common.controlSocket); err != nil {
+		return err
+	}
+	var err error
+	if sourceWalletID, err = validateSignerAdminWalletID(sourceWalletID); err != nil {
+		return err
+	}
+	if successorWalletID, err = validateSignerAdminWalletID(successorWalletID); err != nil {
+		return fmt.Errorf("invalid --successor-wallet-id: %w", err)
+	}
+	if sourcePublicKey, err = validateSignerAdminPublicKeyV2(sourcePublicKey, "--expected-source-public-key"); err != nil {
+		return err
+	}
+	if successorPublicKey, err = validateSignerAdminPublicKeyV2(successorPublicKey, "--expected-successor-public-key"); err != nil {
+		return err
+	}
+	if rotationID, err = normalizeSHA256DigestV2(rotationID, "--rotation-id"); err != nil {
+		return err
+	}
+	body := signerWalletRotationCommitRequestV2{
+		RotationID:                     rotationID,
+		SuccessorWalletID:              successorWalletID,
+		ExpectedSourcePublicKey:        sourcePublicKey,
+		ExpectedSuccessorPublicKey:     successorPublicKey,
+		ExpectedSourceWalletVersion:    sourceWalletVersion.value,
+		ExpectedSourcePolicyVersion:    sourcePolicyVersion.value,
+		ExpectedSuccessorWalletVersion: successorWalletVersion.value,
+		ExpectedSuccessorPolicyVersion: successorPolicyVersion.value,
+		ExpectedRotationVersion:        rotationVersion.value,
+	}
+	return callAndWriteSignerAdmin(common.controlSocket, "v2.wallet.rotation.commit", sourceWalletID, body, stdout)
+}
+
 func runSignerAdminPolicyGet(args []string, stdout io.Writer) error {
 	fs, common := newSignerAdminFlagSet("policy get")
 	var walletID string
@@ -609,6 +752,38 @@ func runSignerAdminWebAuthnCredentialsList(args []string, stdout io.Writer) erro
 		return err
 	}
 	return callAndWriteSignerAdmin(common.controlSocket, "v2.webauthn.credentials.list", "", nil, stdout)
+}
+
+func runSignerAdminWebAuthnCredentialsRevoke(args []string, stdout io.Writer) error {
+	fs, common := newSignerAdminFlagSet("webauthn credentials revoke")
+	var credentialID string
+	var expectedCount, expectedVersion signerAdminRequiredUint64
+	var confirmLastCredential bool
+	fs.StringVar(&credentialID, "credential-id", "", "exact public credential identifier from credentials list")
+	fs.Var(&expectedCount, "expected-count", "required current credential count")
+	fs.Var(&expectedVersion, "expected-version", "required current credential-set version")
+	fs.BoolVar(&confirmLastCredential, "confirm-last-credential", false, "explicitly allow removal of the final credential")
+	if err := parseSignerAdminFlags(fs, args); err != nil {
+		return err
+	}
+	if !expectedCount.set || !expectedVersion.set {
+		return errors.New("--expected-count and --expected-version are required")
+	}
+	if _, err := requireSignerAdminControlSocket(common.controlSocket); err != nil {
+		return err
+	}
+	credentialID, decoded, err := normalizeSignerWebAuthnCredentialIDV2(credentialID)
+	if err != nil {
+		return err
+	}
+	zeroBytes(decoded)
+	body := signerWebAuthnCredentialRevokeRequestV2{
+		CredentialID:          credentialID,
+		ExpectedCount:         expectedCount.value,
+		ExpectedVersion:       expectedVersion.value,
+		ConfirmLastCredential: confirmLastCredential,
+	}
+	return callAndWriteSignerAdmin(common.controlSocket, "v2.webauthn.credentials.revoke", "", body, stdout)
 }
 
 func readSignerAdminJSONFile(path string, maxBytes int64) ([]byte, error) {

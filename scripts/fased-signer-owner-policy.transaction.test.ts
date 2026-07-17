@@ -36,8 +36,8 @@ function validPolicy(overrides: Record<string, unknown> = {}) {
       {
         asset: "solana:native",
         destinations: [destination],
-        maxPerTx: "1000000",
-        maxDaily: "5000000",
+        maxPerTx: "10000000",
+        maxDaily: "50000000",
       },
     ],
     ...overrides,
@@ -144,7 +144,7 @@ describe("initial-only policy transaction", () => {
   it("prints every reviewed field, confirms wallet plus exact input digest, and verifies ack/readback", async () => {
     const { chunks, cleanupCount, digest, expected, result } = await successfulFlow({});
     expect(expected.hash).toBe(
-      "sha256:94771528e67c04f4d73d92fd95ff1d8e99a1dc7489de1ff7965dac1330dbc976",
+      "sha256:519b36d2f7eeb44a20c7ed4a8cf8d01371063cc71246299c4ab052a3b1712f92",
     );
     const output = chunks.join("");
     expect(output).toContain(`Input SHA-256: ${digest}`);
@@ -233,7 +233,10 @@ describe("initial-only policy transaction", () => {
     const policy = normalizeOwnerPolicy(validPolicy());
     const policyPath = await writePolicy(root, validPolicy());
     const raced = __testing.policyWithVersion(
-      { ...policy, assets: [{ ...policy.assets[0], maxPerTx: "1", maxDaily: "1" }] },
+      {
+        ...policy,
+        assets: [{ ...policy.assets[0], maxPerTx: "5000000", maxDaily: "5000000" }],
+      },
       2,
     );
     let calls = 0;
@@ -275,7 +278,10 @@ describe("initial-only policy transaction", () => {
     const policyPath = await writePolicy(root, validPolicy());
     const expected = __testing.policyWithVersion(policy, 2);
     const mismatched = __testing.policyWithVersion(
-      { ...policy, assets: [{ ...policy.assets[0], maxPerTx: "1", maxDaily: "1" }] },
+      {
+        ...policy,
+        assets: [{ ...policy.assets[0], maxPerTx: "5000000", maxDaily: "5000000" }],
+      },
       2,
     );
     let calls = 0;

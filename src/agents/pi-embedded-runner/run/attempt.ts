@@ -709,11 +709,6 @@ export async function runEmbeddedAttempt(
       // Get hook runner early so it's available when creating tools
       const hookRunner = getGlobalHookRunner();
 
-      const { builtInTools, customTools } = splitSdkTools({
-        tools,
-        sandboxEnabled: !!sandbox?.enabled,
-      });
-
       // Add client tools (OpenResponses hosted tools) to customTools
       let clientToolCallDetected: { name: string; params: Record<string, unknown> } | null = null;
       const clientToolLoopDetection = resolveToolLoopDetectionConfig({
@@ -734,7 +729,11 @@ export async function runEmbeddedAttempt(
           )
         : [];
 
-      const allCustomTools = [...customTools, ...clientToolDefs];
+      const { activeToolNames, customTools } = splitSdkTools({
+        tools,
+        clientTools: clientToolDefs,
+        sandboxEnabled: !!sandbox?.enabled,
+      });
 
       if (params.model.api === "ollama") {
         registerProviderStreamForModel({
@@ -752,8 +751,8 @@ export async function runEmbeddedAttempt(
         modelRegistry: params.modelRegistry,
         model: params.model,
         thinkingLevel: mapThinkingLevel(params.thinkLevel),
-        tools: builtInTools,
-        customTools: allCustomTools,
+        tools: activeToolNames,
+        customTools,
         sessionManager,
         settingsManager,
         resourceLoader,

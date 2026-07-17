@@ -6,6 +6,7 @@ import { isDeepStrictEqual } from "node:util";
 import JSON5 from "json5";
 import { ensureOwnerDisplaySecret } from "../agents/owner-display.js";
 import { loadDotEnv } from "../infra/dotenv.js";
+import { withFileLock } from "../infra/file-lock.js";
 import { resolveRequiredHomeDir } from "../infra/home-dir.js";
 import {
   loadShellEnvFallback,
@@ -159,6 +160,60 @@ export type ReadConfigFileSnapshotForWriteResult = {
   snapshot: ConfigFileSnapshot;
   writeOptions: ConfigWriteOptions;
 };
+
+export type ConfigUpdateDecision<T> = {
+  config: FasedAgentConfig;
+  result: T;
+  /** Set false for validated no-op/idempotent transactions. */
+  write?: boolean;
+};
+
+export type ConfigUpdateResult<T> = {
+  config: FasedAgentConfig;
+  result: T;
+  written: boolean;
+};
+
+const CONFIG_WRITE_QUEUES = new Map<string, Promise<void>>();
+
+async function inConfigWriteQueue<T>(configPath: string, fn: () => Promise<T>): Promise<T> {
+  const previous = CONFIG_WRITE_QUEUES.get(configPath) ?? Promise.resolve();
+  let release: (() => void) | undefined;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  CONFIG_WRITE_QUEUES.set(configPath, current);
+  await previous.catch(() => undefined);
+  try {
+    return await fn();
+  } finally {
+    release?.();
+    if (CONFIG_WRITE_QUEUES.get(configPath) === current) {
+      CONFIG_WRITE_QUEUES.delete(configPath);
+    }
+  }
+}
+
+async function withConfigWriteLock<T>(configPath: string, fn: () => Promise<T>): Promise<T> {
+  return await inConfigWriteQueue(
+    configPath,
+    async () =>
+      await withFileLock(
+        configPath,
+        {
+          retries: {
+            retries: 160,
+            factor: 1.08,
+            minTimeout: 10,
+            maxTimeout: 250,
+            randomize: true,
+          },
+          stale: 120_000,
+        },
+        fn,
+      ),
+  );
+}
 
 function hashConfigRaw(raw: string | null): string {
   return crypto
@@ -1128,7 +1183,7 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
     };
   }
 
-  async function writeConfigFile(cfg: FasedAgentConfig, options: ConfigWriteOptions = {}) {
+  async function writeConfigFileUnlocked(cfg: FasedAgentConfig, options: ConfigWriteOptions = {}) {
     clearConfigCache();
     let persistCandidate: unknown = cfg;
     const { snapshot } = await readConfigFileSnapshotInternal();
@@ -1380,11 +1435,45 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
     }
   }
 
+  async function writeConfigFile(cfg: FasedAgentConfig, options: ConfigWriteOptions = {}) {
+    await withConfigWriteLock(configPath, async () => {
+      await writeConfigFileUnlocked(cfg, options);
+    });
+  }
+
+  async function updateConfigFile<T>(
+    mutator: (
+      current: FasedAgentConfig,
+      snapshot: ConfigFileSnapshot,
+    ) => ConfigUpdateDecision<T> | Promise<ConfigUpdateDecision<T>>,
+  ): Promise<ConfigUpdateResult<T>> {
+    return await withConfigWriteLock(configPath, async () => {
+      const read = await readConfigFileSnapshotInternal();
+      if (!read.snapshot.valid) {
+        throw new Error("Config update transaction refused an invalid config snapshot");
+      }
+      const decision = await mutator(structuredClone(read.snapshot.config), read.snapshot);
+      const shouldWrite = decision.write !== false;
+      if (shouldWrite) {
+        await writeConfigFileUnlocked(decision.config, {
+          envSnapshotForRestore: read.envSnapshotForRestore,
+          expectedConfigPath: configPath,
+        });
+      }
+      return {
+        config: shouldWrite ? decision.config : read.snapshot.config,
+        result: decision.result,
+        written: shouldWrite,
+      };
+    });
+  }
+
   return {
     configPath,
     loadConfig,
     readConfigFileSnapshot,
     readConfigFileSnapshotForWrite,
+    updateConfigFile,
     writeConfigFile,
   };
 }
@@ -1502,4 +1591,13 @@ export async function writeConfigFile(
     envSnapshotForRestore: sameConfigPath ? options.envSnapshotForRestore : undefined,
     unsetPaths: options.unsetPaths,
   });
+}
+
+export async function updateConfigFile<T>(
+  mutator: (
+    current: FasedAgentConfig,
+    snapshot: ConfigFileSnapshot,
+  ) => ConfigUpdateDecision<T> | Promise<ConfigUpdateDecision<T>>,
+): Promise<ConfigUpdateResult<T>> {
+  return await createConfigIO().updateConfigFile(mutator);
 }

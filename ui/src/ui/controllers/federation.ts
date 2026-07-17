@@ -3171,6 +3171,7 @@ export async function runPaidFederationContentSummarize(host: FasedAgentApp) {
         ? paymentIntent.expiresInMinutes
         : expiresInMinutes;
     const payload: FederationPaidContentSummarizeRunRequest = {
+      executionIntentId: `marketplace-order:${orderEntry.configId}:paid-content-summary`,
       handle: selectedOffer.handle,
       offerId: selectedOffer.offer.id,
       walletId: resolveMarketplacePaymentWalletId(host),
@@ -3411,6 +3412,7 @@ export async function runPaidFederationContentSummarizeOrder(host: FasedAgentApp
     });
     requestHostUpdate(host);
     const payload: FederationPaidContentSummarizeRunRequest = {
+      executionIntentId: `marketplace-order:${orderEntry.configId}:paid-content-summary`,
       handle,
       offerId,
       walletId: resolveMarketplacePaymentWalletId(host),

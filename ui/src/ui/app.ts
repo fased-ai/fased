@@ -5425,7 +5425,7 @@ export class FasedAgentApp extends LitElement {
       const providerId = this.walletCreateProvider || this.walletProviderTab;
       if (providerId === "wallet-standard") {
         throw new Error(
-          "Use Attach hardware Vault so the browser wallet supplies and confirms the public account.",
+          "Use Attach Wallet Standard Vault so the browser wallet supplies and confirms the public account.",
         );
       }
       const walletId = this.walletCreateId.trim() || undefined;
@@ -5462,9 +5462,9 @@ export class FasedAgentApp extends LitElement {
         chooser: chooseWalletStandardOption,
       });
       const suggestedName = `${selection.wallet.name} Vault`;
-      const name = window.prompt("Name this hardware-backed Vault", suggestedName)?.trim();
+      const name = window.prompt("Name this Wallet Standard Vault", suggestedName)?.trim();
       if (!name) {
-        throw new Error("Hardware Vault attachment was cancelled");
+        throw new Error("Wallet Standard Vault attachment was cancelled");
       }
       const created = await createWalletNamedWallet({
         name,
@@ -5479,10 +5479,11 @@ export class FasedAgentApp extends LitElement {
       };
       this.walletSettingsMessage =
         `Attached ${created.wallet.name}. Fased stores only its public address; ` +
-        "each send still requires the connected wallet to review and sign.";
+        "each send still requires the connected wallet to review and sign. " +
+        "For reserve custody, verify on the device that this account is hardware-backed.";
       await this.handleWalletLoad();
     } catch (err) {
-      this.walletSettingsError = `Attaching hardware Vault failed: ${String(err)}`;
+      this.walletSettingsError = `Attaching Wallet Standard Vault failed: ${String(err)}`;
     } finally {
       this.walletSettingsBusy = false;
     }

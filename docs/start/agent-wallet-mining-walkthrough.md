@@ -138,9 +138,8 @@ Choose the setup profile first.
 
     Run the hosted installer **inside the VPS SSH session**:
 
-    ```bash
-    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
-    ```
+    Follow the [pre-execution verified tagged bootstrap](/install/vps#3-install-fased-and-connect-through-tailscale)
+    from the VPS provider root console.
 
     Do not paste the hosted command into local PowerShell or Terminal unless
     that shell is already connected to the VPS.
@@ -166,12 +165,14 @@ Choose the setup profile first.
 
 Simple command recap:
 
+For Hosting, first use the
+[pre-execution verified tagged VPS bootstrap](/install/vps#3-install-fased-and-connect-through-tailscale)
+from the provider root console. Do not substitute the Local command below on a
+VPS.
+
 ```bash
 # Local on this computer
 curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
-
-# Hosted on the VPS itself
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
 
 # Continue setup if interrupted
 fased onboard --install-daemon
@@ -370,10 +371,10 @@ sudo cp /usr/local/share/fased/signer-policies/<role>.json.template \
   /root/fased-<role>-policy.json
 sudo chmod 0600 /root/fased-<role>-policy.json
 sudoedit /root/fased-<role>-policy.json
-sudo /usr/local/sbin/fased-signer-policy \
+/usr/local/sbin/fased-signer-policy \
   --initial-install \
   --policy-file /root/fased-<role>-policy.json
-sudo /usr/local/sbin/fased-signer-enroll "Primary security key"
+/usr/local/sbin/fased-signer-enroll "Primary security key"
 ```
 
 Open **Access** if you also want Wallet Control Passkey protection for Gateway

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGE_SPEC="@fased/fased@latest"
 PREFIX=""
 CACHE_DIR=""
@@ -133,6 +134,25 @@ resolve_version() {
   npm view "$PACKAGE_SPEC" version --loglevel=error 2>/dev/null | tail -n 1 | tr -d '[:space:]'
 }
 
+download_manifest_bound_asset() {
+  local asset_name="$1"
+  local expected="$2"
+  local archive="$TEMP_ROOT/$asset_name"
+  [[ "$expected" =~ ^[a-f0-9]{64}$ ]] || return 20
+  curl -fsSL "$RELEASE_URL/$asset_name" -o "$archive" 2>/dev/null || return 10
+  local actual
+  actual="$(sha256_file "$archive" || true)"
+  [[ "$actual" == "$expected" ]] || return 20
+  if [[ "$BASE_URL" == "$DEFAULT_BASE_URL" ]]; then
+    GH_PROMPT_DISABLED=1 gh attestation verify "$archive" \
+      --repo fased-ai/fased \
+      --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
+      --source-ref "refs/tags/v${VERSION}" \
+      --deny-self-hosted-runners >/dev/null || return 20
+  fi
+  printf '%s\n' "$archive"
+}
+
 archive_entry_is_safe() {
   local entry="${1%/}"
   local allowed_root="$2"
@@ -201,6 +221,10 @@ phase_started_ms="$(now_ms)"
 VERSION="$(resolve_version || true)"
 ARCH="$(resolve_arch || true)"
 [[ -n "$VERSION" && -n "$ARCH" ]] || exit 10
+if [[ "$PROFILE" == "hosting" && ! "${PACKAGE_SPEC##*@}" =~ ^v?${VERSION//./\.}$ ]]; then
+  echo "Maintained Hosting requires an exact @fased/fased@X.Y.Z release selection." >&2
+  exit 20
+fi
 if [[ -n "$HOST_TRANSACTION_VERSION" && "$HOST_TRANSACTION_VERSION" != "$VERSION" ]]; then
   echo "Host transaction version ${HOST_TRANSACTION_VERSION} does not match runtime ${VERSION}." >&2
   exit 20
@@ -215,15 +239,82 @@ trap 'rm -rf "$TEMP_ROOT"' EXIT
 EXTRACT_ROOT="$TEMP_ROOT/extract"
 mkdir -p "$EXTRACT_ROOT"
 APP_ASSET_NAME="fased-hosted-app-linux-${ARCH}-v${VERSION}.tar.gz"
-set +e
-phase_started_ms="$(now_ms)"
-APP_ARCHIVE="$(download_verified_asset "$APP_ASSET_NAME" no)"
-APP_DOWNLOAD_STATUS=$?
-set -e
-record_timing "app download and checksum" "$phase_started_ms"
-if [[ "$APP_DOWNLOAD_STATUS" -eq 20 ]]; then
-  echo "Hosted app layer failed checksum verification." >&2
-  exit 20
+APP_ARCHIVE=""
+APP_DOWNLOAD_STATUS=1
+RELEASE_MANIFEST_PATH=""
+RELEASE_COMMIT=""
+EXPECTED_APP_DIGEST=""
+EXPECTED_DEPENDENCY_DIGEST=""
+DEPENDENCY_ASSET_NAME=""
+DEPENDENCY_HASH=""
+if [[ "$PROFILE" == "hosting" ]]; then
+  RELEASE_MANIFEST_NAME="fased-hosted-release-v2.json"
+  RELEASE_MANIFEST_PATH="$TEMP_ROOT/$RELEASE_MANIFEST_NAME"
+  phase_started_ms="$(now_ms)"
+  curl -fsSL "$RELEASE_URL/$RELEASE_MANIFEST_NAME" -o "$RELEASE_MANIFEST_PATH" 2>/dev/null || {
+    echo "The exact attested Hosting release manifest is unavailable; the installed runtime was not changed." >&2
+    exit 20
+  }
+  if [[ "$BASE_URL" == "$DEFAULT_BASE_URL" ]]; then
+    GH_PROMPT_DISABLED=1 gh attestation verify "$RELEASE_MANIFEST_PATH" \
+      --repo fased-ai/fased \
+      --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
+      --source-ref "refs/tags/v${VERSION}" \
+      --deny-self-hosted-runners >/dev/null || {
+        echo "Hosted release manifest attestation verification failed." >&2
+        exit 20
+      }
+  fi
+  mapfile -t RELEASE_SELECTION < <(
+    node --input-type=module - "$SCRIPT_DIR/hosted-release-manifest.mjs" "$RELEASE_MANIFEST_PATH" "$VERSION" "$ARCH" <<'EOF_RELEASE_SELECTION'
+import { pathToFileURL } from "node:url";
+const [modulePath, manifestPath, version, arch] = process.argv.slice(2);
+const { readHostedReleaseManifestV2 } = await import(pathToFileURL(modulePath));
+const { manifest } = await readHostedReleaseManifestV2(manifestPath, { version });
+const selected = manifest.application.linux[arch];
+for (const value of [
+  manifest.release.commit,
+  selected.artifact.asset,
+  selected.artifact.sha256,
+  selected.dependencies.asset,
+  selected.dependencies.sha256,
+  selected.dependencies.dependencyHash,
+  manifest.signer.release.commit,
+  manifest.signer.capabilitiesDigest,
+]) console.log(value);
+EOF_RELEASE_SELECTION
+  )
+  [[ "${#RELEASE_SELECTION[@]}" -eq 8 ]] || {
+    echo "Hosted release manifest is malformed or missing this architecture." >&2
+    exit 20
+  }
+  RELEASE_COMMIT="${RELEASE_SELECTION[0]}"
+  APP_ASSET_NAME="${RELEASE_SELECTION[1]}"
+  EXPECTED_APP_DIGEST="${RELEASE_SELECTION[2]}"
+  DEPENDENCY_ASSET_NAME="${RELEASE_SELECTION[3]}"
+  EXPECTED_DEPENDENCY_DIGEST="${RELEASE_SELECTION[4]}"
+  DEPENDENCY_HASH="${RELEASE_SELECTION[5]}"
+  [[ "${RELEASE_SELECTION[6]}" == "$RELEASE_COMMIT" ]] || {
+    echo "Hosted app and signer commits are mixed; activation was refused." >&2
+    exit 20
+  }
+  APP_ARCHIVE="$(download_manifest_bound_asset "$APP_ASSET_NAME" "$EXPECTED_APP_DIGEST")" || {
+    echo "Hosted app layer is unavailable or does not match the attested release manifest." >&2
+    exit 20
+  }
+  APP_DOWNLOAD_STATUS=0
+  record_timing "release manifest, app attestation, and digest verification" "$phase_started_ms"
+else
+  set +e
+  phase_started_ms="$(now_ms)"
+  APP_ARCHIVE="$(download_verified_asset "$APP_ASSET_NAME" no)"
+  APP_DOWNLOAD_STATUS=$?
+  set -e
+  record_timing "app download and checksum" "$phase_started_ms"
+  if [[ "$APP_DOWNLOAD_STATUS" -eq 20 ]]; then
+    echo "Hosted app layer failed checksum verification." >&2
+    exit 20
+  fi
 fi
 if [[ -n "$APP_ARCHIVE" ]]; then
   phase_started_ms="$(now_ms)"
@@ -234,18 +325,40 @@ if [[ -n "$APP_ARCHIVE" ]]; then
   record_timing "app extraction" "$phase_started_ms"
   PACKAGE_ROOT="$EXTRACT_ROOT/package"
   METADATA_PATH="$PACKAGE_ROOT/.fased-hosted-runtime.json"
-  DEPENDENCY_HASH="$(node -e '
+  EMBEDDED_RELEASE="$(node -e '
     const fs = require("node:fs");
     const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-    if (value.schemaVersion !== 1 || !/^[a-f0-9]{64}$/.test(value.dependencyHash || "")) process.exit(1);
-    process.stdout.write(value.dependencyHash);
+    if (value.schemaVersion === 2) {
+      process.stdout.write([value.version, value.commit, value.dependencyHash].join("\n"));
+    } else if (value.schemaVersion === 1) {
+      process.stdout.write(["", "", value.dependencyHash].join("\n"));
+    } else process.exit(1);
   ' "$METADATA_PATH" 2>/dev/null || true)"
+  mapfile -t EMBEDDED_RELEASE_FIELDS <<<"$EMBEDDED_RELEASE"
+  EMBEDDED_VERSION="${EMBEDDED_RELEASE_FIELDS[0]:-}"
+  EMBEDDED_COMMIT="${EMBEDDED_RELEASE_FIELDS[1]:-}"
+  EMBEDDED_DEPENDENCY_HASH="${EMBEDDED_RELEASE_FIELDS[2]:-}"
+  if [[ "$PROFILE" == "hosting" ]]; then
+    [[ "$EMBEDDED_VERSION" == "$VERSION" && "$EMBEDDED_COMMIT" == "$RELEASE_COMMIT" && "$EMBEDDED_DEPENDENCY_HASH" == "$DEPENDENCY_HASH" ]] || {
+      echo "Hosted application build identity does not match the attested release manifest." >&2
+      exit 20
+    }
+    cp "$RELEASE_MANIFEST_PATH" "$PACKAGE_ROOT/.fased-hosted-release-v2.json"
+  else
+    DEPENDENCY_HASH="$EMBEDDED_DEPENDENCY_HASH"
+  fi
   [[ "$DEPENDENCY_HASH" =~ ^[a-f0-9]{64}$ ]] || exit 20
   DEPENDENCY_ROOT="$CACHE_DIR/hosted-dependencies/$DEPENDENCY_HASH"
   if [[ ! -d "$DEPENDENCY_ROOT/node_modules" ]]; then
-    DEPENDENCY_ASSET_NAME="fased-hosted-deps-linux-${ARCH}-${DEPENDENCY_HASH}.tar.gz"
+    if [[ "$PROFILE" != "hosting" ]]; then
+      DEPENDENCY_ASSET_NAME="fased-hosted-deps-linux-${ARCH}-${DEPENDENCY_HASH}.tar.gz"
+    fi
     phase_started_ms="$(now_ms)"
-    DEPENDENCY_ARCHIVE="$(download_verified_asset "$DEPENDENCY_ASSET_NAME" yes)" || exit $?
+    if [[ "$PROFILE" == "hosting" ]]; then
+      DEPENDENCY_ARCHIVE="$(download_manifest_bound_asset "$DEPENDENCY_ASSET_NAME" "$EXPECTED_DEPENDENCY_DIGEST")" || exit $?
+    else
+      DEPENDENCY_ARCHIVE="$(download_verified_asset "$DEPENDENCY_ASSET_NAME" yes)" || exit $?
+    fi
     record_timing "dependency download and checksum" "$phase_started_ms"
     phase_started_ms="$(now_ms)"
     dependency_archive_is_safe "$DEPENDENCY_ARCHIVE" || exit 20

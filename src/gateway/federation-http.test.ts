@@ -5,7 +5,21 @@ import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { clearConfigCache, loadConfig, writeConfigFile } from "../config/config.js";
+import {
+  clearConfigCache,
+  loadConfig,
+  updateConfigFile,
+  writeConfigFile,
+} from "../config/config.js";
+import { resolveStateDir } from "../config/paths.js";
+import { upsertMarketplaceOrderConfig } from "../federation/offers.js";
+import {
+  buildSignedFederationPeerRequest,
+  FEDERATION_MARKETPLACE_DELIVERY_PATH,
+  FEDERATION_MARKETPLACE_ORDER_PATH,
+} from "../federation/peer-auth-v2.js";
+import { resolveFederationHandle } from "../federation/runtime.js";
+import { loadOrCreateDeviceIdentity } from "../infra/device-identity.js";
 import { handleFederationHttpRequest } from "./federation-http.js";
 
 class MockResponse extends PassThrough {
@@ -59,13 +73,59 @@ async function invoke(opts: {
   url: string;
   body?: string;
   headers?: Record<string, string>;
+  signPeerRequest?: boolean;
+  baseUrl?: string;
 }) {
-  const req = createRequest(opts);
+  const parsedUrl = new URL(opts.url, "http://localhost");
+  const peerPath =
+    parsedUrl.pathname === FEDERATION_MARKETPLACE_ORDER_PATH
+      ? FEDERATION_MARKETPLACE_ORDER_PATH
+      : parsedUrl.pathname === FEDERATION_MARKETPLACE_DELIVERY_PATH
+        ? FEDERATION_MARKETPLACE_DELIVERY_PATH
+        : null;
+  const identity =
+    peerPath && opts.method === "POST"
+      ? loadOrCreateDeviceIdentity(
+          path.join(resolveStateDir(process.env), "identity", "device.json"),
+        )
+      : null;
+  let body = opts.body;
+  let headers = { ...opts.headers };
+  if (peerPath && identity && opts.method === "POST" && opts.signPeerRequest !== false) {
+    const federationBase = process.env.FASED_FEDERATION_BASE_URL || "https://ff1.fased.app";
+    const recipientHandle = resolveFederationHandle({
+      env: process.env,
+      fallbackDomain: new URL(federationBase).hostname,
+    });
+    const senderHandle = headers["x-fased-sender-handle"] || "@peer@ff1.fased.app";
+    const signed = buildSignedFederationPeerRequest({
+      senderHandle,
+      recipientHandle,
+      path: peerPath,
+      body: JSON.parse(body || "{}") as unknown,
+      env: process.env,
+      identity,
+    });
+    body = signed.body;
+    headers = { ...headers, ...signed.headers };
+  }
+  const req = createRequest({ ...opts, body, headers });
   const res = new MockResponse();
   const chunks: Buffer[] = [];
   res.on("data", (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
   const handled = await handleFederationHttpRequest(req, res as unknown as ServerResponse, {
-    baseUrl: "https://ff1.fased.app",
+    baseUrl: opts.baseUrl ?? "https://ff1.fased.app",
+    peerAuthDeps: {
+      directoryLookup: async ({ senderHandle }) => ({
+        status: "verified",
+        nodeId: identity?.deviceId ?? "missing-test-peer-identity",
+        handle: senderHandle,
+      }),
+      rateLimiter: {
+        check: () => ({ allowed: true, remaining: 100, retryAfterMs: 0 }),
+        recordFailure: () => undefined,
+      },
+    },
   });
   await waitForFinish(res);
   return {
@@ -128,6 +188,7 @@ afterEach(() => {
   delete process.env.FASED_A2A_HANDLE;
   delete process.env.FASED_A2A_ORIGIN;
   delete process.env.FASED_FEDERATION_BASE_URL;
+  delete process.env.FASED_FEDERATION_API_TOKEN;
   delete process.env.FASED_FEDERATION_TOKEN_PATH;
   delete process.env.FASED_OPERATOR_ECON_THRESHOLD_STATUS_PATH;
   delete process.env.FASED_OPERATOR_ECON_COLLECTION_EVIDENCE_PATH;
@@ -161,15 +222,17 @@ describe("federation HTTP proxy", () => {
     expect(JSON.parse(response.bodyText)).toEqual({ offers: [{ id: "offer-1" }] });
   });
 
-  it("forwards review publishes to the federation server", async () => {
+  it("uses only the dedicated federation credential for upstream review publishes", async () => {
+    process.env.FASED_FEDERATION_API_TOKEN = "upstream-fed-token";
     const fetchMock = vi.fn(async (input: URL | RequestInfo, init?: RequestInit) => {
       const url = new URL(
         typeof input === "string" ? input : input instanceof URL ? input : input.url,
       );
       expect(url.toString()).toBe("https://ff1.fased.app/api/federation/reviews");
       expect(init?.method).toBe("POST");
-      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer user-fed-token");
+      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer upstream-fed-token");
       expect(init?.body).toBe('{"rating":5}');
+      expect(init?.redirect).toBe("error");
       return new Response(JSON.stringify({ status: "accepted" }), {
         status: 200,
         headers: { "content-type": "application/json" },
@@ -181,12 +244,29 @@ describe("federation HTTP proxy", () => {
       method: "POST",
       url: "/api/federation/reviews",
       body: JSON.stringify({ rating: 5 }),
-      headers: { authorization: "Bearer user-fed-token" },
+      headers: { authorization: "Bearer gateway-secret-must-not-forward" },
     });
 
     expect(response.handled).toBe(true);
     expect(response.statusCode).toBe(200);
     expect(JSON.parse(response.bodyText)).toEqual({ status: "accepted" });
+  });
+
+  it("rejects a plaintext remote federation base before forwarding credentials", async () => {
+    process.env.FASED_FEDERATION_API_TOKEN = "must-not-leak";
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await invoke({
+      method: "GET",
+      url: "/api/federation/offers",
+      baseUrl: "http://central.example",
+      headers: { authorization: "Bearer gateway-secret" },
+    });
+
+    expect(response.statusCode).toBe(503);
+    expect(JSON.parse(response.bodyText).reason).toContain("must use HTTPS");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("falls back to the persisted local federation token for operator economy fee reads", async () => {
@@ -1316,7 +1396,21 @@ describe("federation HTTP proxy", () => {
     process.env.FASED_CONFIG_PATH = path.join(configDir, "fased.json");
     process.env.FASED_STATE_DIR = configDir;
     process.env.FASED_FEDERATION_BASE_URL = "https://ff1.fased.app";
-    await writeConfigFile({});
+    const buyerOrder = upsertMarketplaceOrderConfig({
+      config: {},
+      input: {
+        id: "buyer-order-1",
+        source: "local",
+        status: "accepted",
+        offerId: "https://seller.example/offers/content-summarize-v0",
+        buyerHandle: "@buyer@ff1.fased.app",
+        sellerHandle: "@seller@ff1.fased.app",
+        sellerOrderId: "seller-order-1",
+        serviceKind: "content.summarize",
+        title: "Federated content summary",
+      },
+    });
+    await writeConfigFile(buyerOrder.config);
 
     const response = await invoke({
       method: "POST",
@@ -1368,6 +1462,8 @@ describe("federation HTTP proxy", () => {
           source?: string;
           status?: string;
           sellerHandle?: string;
+          paymentIntent?: { status?: string; txRef?: string };
+          settlement?: { status?: string; txRef?: string; notes?: string };
           delivery?: { status?: string; notes?: string; targetKind?: string };
           receipt?: { status?: string; invoiceId?: string; receiptId?: string; txRef?: string };
         };
@@ -1375,24 +1471,60 @@ describe("federation HTTP proxy", () => {
     };
     expect(body.ok).toBe(true);
     expect(body.accepted).toBe(true);
-    expect(body.delivery?.configId).toBe("inbound-seller-ff1-fased-app-seller-order-1");
+    expect(body.delivery?.configId).toMatch(
+      /^inbound-delivery-seller-ff1-fased-app-seller-order-1-[a-f0-9]{32}$/u,
+    );
     expect(body.delivery?.order).toMatchObject({
       source: "federation",
       status: "delivered",
       sellerHandle: "@seller@ff1.fased.app",
+      paymentIntent: { status: "submitted", txRef: "tx-fed-1" },
+      settlement: {
+        status: "submitted",
+        txRef: "tx-fed-1",
+        notes: expect.stringContaining("not been locally chain-verified"),
+      },
       delivery: {
         status: "delivered",
         targetKind: "federation",
         notes: expect.stringContaining("Federated paid summary result."),
       },
       receipt: {
-        status: "issued",
-        invoiceId: "invoice-fed-1",
-        receiptId: "receipt-fed-1",
-        txRef: "tx-fed-1",
+        status: "pending",
       },
     });
-    expect(loadConfig().federation?.marketplace?.orders?.local).toHaveLength(1);
+    expect(body.delivery?.order?.receipt?.invoiceId).toBeUndefined();
+    expect(body.delivery?.order?.receipt?.receiptId).toBeUndefined();
+    expect(body.delivery?.order?.receipt?.txRef).toBeUndefined();
+    expect(loadConfig().federation?.marketplace?.orders?.local).toHaveLength(2);
+
+    const unsolicited = await invoke({
+      method: "POST",
+      url: "/api/federation/marketplace/deliveries",
+      headers: {
+        host: "127.0.0.1:18789",
+        "content-type": "application/json",
+        "x-fased-sender-handle": "@seller@ff1.fased.app",
+      },
+      body: JSON.stringify({
+        type: "content.summarize.delivered",
+        orderId: "unknown-seller-order",
+        offerId: "https://seller.example/offers/content-summarize-v0",
+        serviceKind: "content.summarize",
+        resultRef: "task-unsolicited",
+        result: { summaryText: "Unsolicited result." },
+      }),
+    });
+    expect(unsolicited.statusCode).toBe(409);
+    expect(JSON.parse(unsolicited.bodyText)).toMatchObject({
+      status: "rejected",
+      reason: expect.stringContaining("does not match an existing local buyer order"),
+    });
+    expect(
+      loadConfig().federation?.marketplace?.orders?.local?.some(
+        (entry) => entry.sellerOrderId === "unknown-seller-order",
+      ),
+    ).toBe(false);
   });
 
   it("accepts remote buyer marketplace orders into seller Sales idempotently", async () => {
@@ -1415,6 +1547,19 @@ describe("federation HTTP proxy", () => {
               visibility: "federation",
               availability: "open",
               acceptedAssets: ["USDC", "SOL"],
+              paymentDefaults: {
+                currency: "USDC",
+                chain: "solana",
+                asset: {
+                  kind: "spl-token",
+                  address: "Usdc111111111111111111111111111111111111111",
+                },
+                assetDecimals: 6,
+                payee: {
+                  chain: "solana",
+                  address: "Seller111111111111111111111111111111111111",
+                },
+              },
             },
           ],
         },
@@ -1428,6 +1573,7 @@ describe("federation HTTP proxy", () => {
       offerId: "http://127.0.0.1:18789/offers/signal-v0",
       buyerHandle: "@buyer@ff1.fased.app",
       sellerHandle: "@seller@ff1.fased.app",
+      sellerEndpoint: "https://attacker.example",
       title: "Daily trading signal",
       serviceKind: "trading.signal",
       pricing: { amount: 25, currency: "USDC", model: "fixed", unit: "per-day" },
@@ -1437,7 +1583,19 @@ describe("federation HTTP proxy", () => {
         currency: "USDC",
         unit: "per-day",
         method: "agent-wallet",
-        acceptedAssets: ["USDC", "SOL"],
+        chain: "solana",
+        assetKind: "native",
+        acceptedAssets: ["ATTACK"],
+        payeeAddress: "Attacker1111111111111111111111111111111111",
+      },
+      settlement: {
+        mode: "escrow",
+        status: "settled",
+        amount: 25,
+        currency: "USDC",
+        chain: "solana",
+        assetKind: "native",
+        payeeAddress: "Attacker1111111111111111111111111111111111",
       },
       delivery: {
         status: "pending",
@@ -1449,7 +1607,7 @@ describe("federation HTTP proxy", () => {
       receipt: { status: "pending" },
     };
 
-    const first = await invoke({
+    const unsigned = await invoke({
       method: "POST",
       url: "/api/federation/marketplace/orders",
       headers: {
@@ -1458,7 +1616,31 @@ describe("federation HTTP proxy", () => {
         "x-fased-sender-handle": "@buyer@ff1.fased.app",
       },
       body: JSON.stringify(payload),
+      signPeerRequest: false,
     });
+    expect(unsigned.statusCode).toBe(401);
+    expect(JSON.parse(unsigned.bodyText)).toMatchObject({
+      status: "rejected",
+      code: "peer_auth_invalid",
+    });
+    expect(loadConfig().federation?.marketplace?.orders?.local).toBeUndefined();
+
+    const [first] = await Promise.all([
+      invoke({
+        method: "POST",
+        url: "/api/federation/marketplace/orders",
+        headers: {
+          host: "127.0.0.1:18789",
+          "content-type": "application/json",
+          "x-fased-sender-handle": "@buyer@ff1.fased.app",
+        },
+        body: JSON.stringify(payload),
+      }),
+      updateConfigFile(async (current) => ({
+        config: { ...current, logging: { ...current.logging, level: "debug" } },
+        result: undefined,
+      })),
+    ]);
 
     expect(first.handled).toBe(true);
     expect(first.statusCode).toBe(200);
@@ -1472,26 +1654,69 @@ describe("federation HTTP proxy", () => {
           buyerHandle?: string;
           sellerHandle?: string;
           offerId?: string;
-          paymentIntent?: { status?: string; amount?: number; currency?: string };
-          delivery?: { targetKind?: string; targetMasked?: string; target?: unknown };
+          sellerEndpoint?: string;
+          paymentIntent?: {
+            status?: string;
+            amount?: number;
+            currency?: string;
+            assetKind?: string;
+            assetAddress?: string;
+            acceptedAssets?: string[];
+            payeeAddress?: string;
+          };
+          settlement?: { mode?: string; status?: string; payeeAddress?: string };
+          delivery?: {
+            targetId?: string;
+            targetKind?: string;
+            targetMasked?: string;
+            target?: unknown;
+          };
         };
       };
     };
     expect(firstBody.created).toBe(true);
-    expect(firstBody.order?.configId).toBe("inbound-buyer-ff1-fased-app-checkout-1");
+    expect(firstBody.order?.configId).toMatch(
+      /^inbound-order-buyer-ff1-fased-app-checkout-1-[a-f0-9]{32}$/u,
+    );
     expect(firstBody.order?.status).toBe("accepted");
     expect(firstBody.order?.order).toMatchObject({
       source: "federation",
       buyerHandle: "@buyer@ff1.fased.app",
       sellerHandle: "@seller@ff1.fased.app",
       offerId: "http://127.0.0.1:18789/offers/signal-v0",
-      paymentIntent: { status: "requires_payment", amount: 25, currency: "USDC" },
+      paymentIntent: {
+        status: "requires_payment",
+        amount: 25,
+        currency: "USDC",
+        assetKind: "spl-token",
+        assetAddress: "Usdc111111111111111111111111111111111111111",
+        acceptedAssets: ["USDC", "SOL"],
+        payeeAddress: "Seller111111111111111111111111111111111111",
+      },
+      settlement: {
+        mode: "direct",
+        status: "requires_payment",
+        payeeAddress: "Seller111111111111111111111111111111111111",
+      },
       delivery: {
-        targetKind: "channel",
-        targetMasked: "telegram:buyer-chat",
+        targetKind: "federation",
+        targetMasked: "@buyer@ff1.fased.app",
       },
     });
+    expect(firstBody.order?.order?.sellerEndpoint).toBeUndefined();
     expect(firstBody.order?.order?.delivery?.target).toBeUndefined();
+    const savedDeliveryTarget = loadConfig().federation?.marketplace?.deliveryTargets?.local?.find(
+      (entry) => entry.targetId === firstBody.order?.order?.delivery?.targetId,
+    );
+    expect(savedDeliveryTarget).toMatchObject({
+      kind: "federation",
+      status: "ready",
+      owner: "buyer",
+      maskedTarget: "@buyer@ff1.fased.app",
+      federation: { handle: "@buyer@ff1.fased.app" },
+    });
+    expect(JSON.stringify(savedDeliveryTarget)).not.toContain("telegram:buyer-chat");
+    expect(loadConfig().logging?.level).toBe("debug");
 
     const second = await invoke({
       method: "POST",
@@ -1508,7 +1733,7 @@ describe("federation HTTP proxy", () => {
     expect(loadConfig().federation?.marketplace?.orders?.local).toHaveLength(1);
   });
 
-  it("updates seller Sales with paid delivery evidence without duplicating the buyer order", async () => {
+  it("keeps peer-reported payment and delivery evidence unverified on seller intake", async () => {
     const configDir = fs.mkdtempSync(path.join(os.tmpdir(), "fased-fed-http-order-paid-sync-"));
     process.env.FASED_CONFIG_PATH = path.join(configDir, "fased.json");
     process.env.FASED_STATE_DIR = configDir;
@@ -1642,41 +1867,34 @@ describe("federation HTTP proxy", () => {
         resultRef: "task-summary-1",
       }),
     });
-    expect(paid.statusCode).toBe(200);
-    const paidBody = JSON.parse(paid.bodyText) as {
-      created?: boolean;
-      order?: {
-        status?: string;
-        order?: {
-          paymentIntent?: { status?: string; txRef?: string };
-          settlement?: { status?: string; invoiceId?: string; receiptId?: string; txRef?: string };
-          delivery?: { status?: string; resultRef?: string; artifactRef?: string };
-          receipt?: { status?: string; invoiceId?: string; receiptId?: string; txRef?: string };
-        };
-      };
-    };
-    expect(paidBody.created).toBe(false);
-    expect(paidBody.order?.status).toBe("delivered");
-    expect(paidBody.order?.order).toMatchObject({
-      paymentIntent: { status: "verified", txRef: "sol-tx-paid-1" },
+    expect(paid.statusCode).toBe(409);
+    expect(JSON.parse(paid.bodyText)).toMatchObject({
+      status: "rejected",
+      reason: expect.stringContaining("immutable"),
+    });
+    const savedOrder = loadConfig().federation?.marketplace?.orders?.local?.[0];
+    expect(savedOrder).toMatchObject({
+      paymentIntent: { status: "requires_payment" },
       settlement: {
-        status: "settled",
-        invoiceId: "invoice-paid-1",
-        receiptId: "receipt-paid-1",
-        txRef: "sol-tx-paid-1",
+        status: "requires_payment",
       },
       delivery: {
-        status: "delivered",
-        resultRef: "task-summary-1",
-        artifactRef: "fased://marketplace/orders/checkout-paid-1/content-summarize/task-summary-1",
+        status: "pending",
       },
       receipt: {
-        status: "issued",
-        invoiceId: "invoice-paid-1",
-        receiptId: "receipt-paid-1",
-        txRef: "sol-tx-paid-1",
+        status: "pending",
       },
     });
+    expect(savedOrder?.paymentIntent?.txRef).toBeUndefined();
+    expect(savedOrder?.settlement?.invoiceId).toBeUndefined();
+    expect(savedOrder?.settlement?.receiptId).toBeUndefined();
+    expect(savedOrder?.settlement?.txRef).toBeUndefined();
+    expect(savedOrder?.delivery?.resultRef).toBeUndefined();
+    expect(savedOrder?.delivery?.artifactRef).toBeUndefined();
+    expect(savedOrder?.invoiceId).toBeUndefined();
+    expect(savedOrder?.receiptId).toBeUndefined();
+    expect(savedOrder?.txRef).toBeUndefined();
+    expect(savedOrder?.resultRef).toBeUndefined();
     expect(loadConfig().federation?.marketplace?.orders?.local).toHaveLength(1);
   });
 
@@ -1697,6 +1915,19 @@ describe("federation HTTP proxy", () => {
               serviceKind: "trading.signal",
               pricing: { amount: 25, currency: "USDC", model: "fixed", unit: "per-day" },
               visibility: "federation",
+              paymentDefaults: {
+                currency: "USDC",
+                chain: "solana",
+                asset: {
+                  kind: "spl-token",
+                  address: "Usdc111111111111111111111111111111111111111",
+                },
+                assetDecimals: 6,
+                payee: {
+                  chain: "solana",
+                  address: "Seller111111111111111111111111111111111111",
+                },
+              },
             },
           ],
         },
@@ -1732,6 +1963,21 @@ describe("federation HTTP proxy", () => {
     });
     expect(selfOrder.statusCode).toBe(409);
     expect(JSON.parse(selfOrder.bodyText).reason).toContain("itself");
+
+    const mismatchedBuyer = await invoke({
+      method: "POST",
+      url: "/api/federation/marketplace/orders",
+      headers: {
+        host: "127.0.0.1:18789",
+        "content-type": "application/json",
+        "x-fased-sender-handle": "@buyer@ff1.fased.app",
+      },
+      body: JSON.stringify({ ...basePayload, buyerHandle: "@other@ff1.fased.app" }),
+    });
+    expect(mismatchedBuyer.statusCode).toBe(409);
+    expect(JSON.parse(mismatchedBuyer.bodyText).reason).toContain(
+      "buyerHandle does not match signed sender",
+    );
 
     const priceChanged = await invoke({
       method: "POST",
@@ -1771,6 +2017,38 @@ describe("federation HTTP proxy", () => {
     });
     expect(rawTarget.statusCode).toBe(400);
     expect(JSON.parse(rawTarget.bodyText).reason).toContain("masked delivery");
+    expect(loadConfig().federation?.marketplace?.orders?.local).toBeUndefined();
+
+    await writeConfigFile({
+      federation: {
+        offers: {
+          manual: [
+            {
+              id: "signal-v0",
+              enabled: true,
+              title: "Daily trading signal",
+              serviceKind: "trading.signal",
+              pricing: { amount: 25, currency: "USDC", model: "fixed", unit: "per-day" },
+              visibility: "federation",
+            },
+          ],
+        },
+      },
+    });
+    const noLocalPayee = await invoke({
+      method: "POST",
+      url: "/api/federation/marketplace/orders",
+      headers: {
+        host: "127.0.0.1:18789",
+        "content-type": "application/json",
+        "x-fased-sender-handle": "@buyer@ff1.fased.app",
+      },
+      body: JSON.stringify(basePayload),
+    });
+    expect(noLocalPayee.statusCode).toBe(409);
+    expect(JSON.parse(noLocalPayee.bodyText).reason).toContain(
+      "no wallet-backed payment destination",
+    );
     expect(loadConfig().federation?.marketplace?.orders?.local).toBeUndefined();
   });
 
@@ -1815,7 +2093,16 @@ describe("federation HTTP proxy", () => {
       );
       expect(url.toString()).toBe("https://seller.ff1.fased.app/api/federation/marketplace/orders");
       expect(init?.method).toBe("POST");
-      expect(new Headers(init?.headers).get("x-fased-sender-handle")).toBe("@buyer@ff1.fased.app");
+      expect(init?.redirect).toBe("error");
+      const headers = new Headers(init?.headers);
+      expect(headers.get("authorization")).toBeNull();
+      expect(headers.get("x-fased-protocol-version")).toBe("2");
+      expect(headers.get("x-fased-sender-handle")).toBe("@buyer@ff1.fased.app");
+      expect(headers.get("x-fased-recipient-handle")).toBe("@seller@ff1.fased.app");
+      expect(headers.get("x-fased-device-public-key")).toMatch(/^[A-Za-z0-9_-]+$/u);
+      expect(headers.get("x-fased-request-signature")).toMatch(/^[A-Za-z0-9_-]+$/u);
+      expect(headers.get("x-fased-request-nonce")).toMatch(/^[A-Za-z0-9_-]{16,128}$/u);
+      expect(headers.get("x-fased-content-sha256")).toMatch(/^[a-f0-9]{64}$/u);
       const payload = JSON.parse(typeof init?.body === "string" ? init.body : "{}") as {
         id?: string;
         delivery?: { target?: unknown; targetMasked?: string };
@@ -1868,6 +2155,19 @@ describe("federation HTTP proxy", () => {
     expect(body.order?.order?.sellerOrderId).toBe("inbound-buyer-checkout-1");
     expect(body.order?.order?.sellerSyncStatus).toBe("accepted");
     expect(body.order?.order?.receipt?.notes).toContain("Seller intake accepted");
+    expect(fetchMock).toHaveBeenCalledOnce();
+
+    const insecure = await invoke({
+      method: "POST",
+      url: "/api/federation/local/orders/checkout-1/submit-seller",
+      headers: {
+        host: "127.0.0.1:18789",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ endpoint: "http://seller.ff1.fased.app" }),
+    });
+    expect(insecure.statusCode).toBe(400);
+    expect(JSON.parse(insecure.bodyText).reason).toContain("must use HTTPS");
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 

@@ -18,6 +18,7 @@ import { createSignerReviewApprovalRequest } from "./wallet-send-approvals.js";
 
 const FEDERATION_BOND_INTENT = "federation.bondChallenge" as const;
 export const FEDERATION_BOND_POLICY_DOMAIN = "domain:fased:federation-bond-challenge-v1";
+export const FEDERATION_BOND_SIGNATURE_DOMAIN = "fased:federation-bond-challenge-signature:v2";
 const REQUIRED_FEDERATION_SIGNER_FEATURES = [
   "failClosedPolicies",
   "policyHashes",
@@ -25,6 +26,7 @@ const REQUIRED_FEDERATION_SIGNER_FEATURES = [
   "atomicIdempotency",
   "signerOwnedKeys",
   "domainSeparatedFederationBondChallenges",
+  "federationBondChallengeWrapperV2",
   "signerOwnedWebAuthn",
   "singleUseReviewedAuthorization",
   "signerOwnedReviewPrepareExecute",
@@ -120,6 +122,24 @@ export function buildFederationBondChallengeIntent(params: {
       payloadBase64: params.payloadBase64,
     },
   } as const;
+}
+
+export function federationBondSigningMessageBase64(params: {
+  challengeId: string;
+  federationOrigin: string;
+  payloadBase64: string;
+}): string {
+  const payload = Buffer.from(params.payloadBase64, "base64");
+  if (payload.length === 0 || payload.toString("base64") !== params.payloadBase64) {
+    throw new Error("federation bond signing payload must be canonical non-empty base64");
+  }
+  const message = JSON.stringify({
+    domain: FEDERATION_BOND_SIGNATURE_DOMAIN,
+    challengeId: params.challengeId,
+    federationOrigin: federationOrigin(params.federationOrigin),
+    payloadBase64: params.payloadBase64,
+  });
+  return Buffer.from(message, "utf8").toString("base64");
 }
 
 async function requireFederationSigner(socketPath: string): Promise<void> {
@@ -225,6 +245,7 @@ export async function signFederationBondChallenge(params: {
     );
   }
   const intent = buildFederationBondChallengeIntent(params);
+  const signingMessageBase64 = federationBondSigningMessageBase64(intent.federation);
   let review: WalletProviderJupiterReviewV2;
   try {
     review = await callLocalSocketSigner<WalletProviderJupiterReviewV2>(resolved.socketPath, {
@@ -256,7 +277,7 @@ export async function signFederationBondChallenge(params: {
     review.policyHash !== policy.hash ||
     review.mode !== "reviewed" ||
     review.artifactKind !== "domain-separated-message" ||
-    review.messageBase64 !== params.payloadBase64 ||
+    review.messageBase64 !== signingMessageBase64 ||
     review.asset !== "federation:bond-challenge" ||
     review.amount !== "1" ||
     review.destination !== resolved.walletAddress ||

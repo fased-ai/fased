@@ -43,12 +43,35 @@ binary. The Gateway has no signer sudo access.
 
 ### 2. Private admin network path via Tailscale (`required`)
 
-For normal hosted VPS setup, use the hosted installer. It starts Tailscale when
-needed, prints the login URL, and verifies private access before lock-down:
+For normal hosted VPS setup, use the hosted installer. Verify the root
+bootstrap release asset before execution; it then starts Tailscale when needed,
+prints the login URL, and verifies private access before lock-down:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
+RELEASE=vX.Y.Z
+BOOTSTRAP_DIR="$(mktemp -d)"
+chmod 0700 "$BOOTSTRAP_DIR"
+curl -fsSLo "$BOOTSTRAP_DIR/install.sh" \
+  "https://github.com/fased-ai/fased/releases/download/${RELEASE}/install.sh"
+curl -fsSLo "$BOOTSTRAP_DIR/install.sh.attestation.json" \
+  "https://github.com/fased-ai/fased/releases/download/${RELEASE}/install.sh.attestation.json"
+GH_PROMPT_DISABLED=1 gh attestation verify "$BOOTSTRAP_DIR/install.sh" \
+  --repo fased-ai/fased \
+  --bundle "$BOOTSTRAP_DIR/install.sh.attestation.json" \
+  --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
+  --source-ref "refs/tags/${RELEASE}" \
+  --deny-self-hosted-runners
+chmod 0500 "$BOOTSTRAP_DIR/install.sh"
+bash "$BOOTSTRAP_DIR/install.sh" --hosting --release "$RELEASE"
+rm -rf "$BOOTSTRAP_DIR"
 ```
+
+Run this from the VPS provider's root console after replacing `vX.Y.Z` with an
+exact stable release. Install `gh` from a trusted OS package source first. Do
+not run an app-owned checkout with sudo, and do not continue after an
+attestation failure. The shorter raw tagged command trusts the initial
+GitHub/repository download before it can attest later assets; it is not the
+high-assurance bootstrap path.
 
 Manual hardening only: install and authenticate Tailscale yourself:
 

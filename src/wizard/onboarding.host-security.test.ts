@@ -1,647 +1,158 @@
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { __testing } from "./onboarding.host-security.js";
 
-function checkBashSyntax(script: string) {
-  return spawnSync("bash", ["-n", "-c", script], {
-    encoding: "utf8",
-    timeout: 5000,
-  });
+const roots: string[] = [];
+
+afterEach(() => {
+  for (const root of roots.splice(0)) {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+function marker(overrides: Record<string, string> = {}): string {
+  const values = {
+    schemaVersion: "2",
+    release: "1.2.3",
+    gatewayPort: "18789",
+    tailscaleDns: "fased.tailnet.ts.net",
+    tailnetSshConfirmed: "true",
+    tailscaleServeReady: "true",
+    firewallReady: "true",
+    sshHardened: "true",
+    fail2banReady: "true",
+    automaticUpdatesReady: "true",
+    signerReady: "true",
+    appSudoDisabled: "true",
+    preparedBy: "root",
+    ...overrides,
+  };
+  return `${Object.entries(values)
+    .map(([key, value]) => `${key}=${value}`)
+    .join("\n")}\n`;
 }
 
-describe("onboarding host security", () => {
-  it("redacts Tailscale auth keys from host hardening log text", () => {
-    const sanitized = __testing.sanitizeHostSecurityLogText(
-      "sudo tailscale up --authkey tskey-auth-super-secret-token --ssh",
+function markerPath(contents = marker()): string {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-root-prerequisites-"));
+  roots.push(root);
+  const file = path.join(root, "hosting-prerequisites");
+  fs.writeFileSync(file, contents, { mode: 0o644 });
+  return file;
+}
+
+function healthyProbe(command: string, args: string[]) {
+  const invocation = [command, ...args].join(" ");
+  if (invocation === "tailscale ip -4") {
+    return { ok: true, stdout: "100.64.1.2\n" };
+  }
+  if (invocation === "tailscale serve status") {
+    return { ok: true, stdout: "https://fased.tailnet.ts.net -> 127.0.0.1:18789\n" };
+  }
+  if (invocation === "id -nG") {
+    return { ok: true, stdout: "app fased-gateway\n" };
+  }
+  if (invocation === "sudo -n true") {
+    return { ok: false };
+  }
+  return { ok: true };
+}
+
+describe("onboarding Hosting security verification", () => {
+  it("accepts only the complete root-prepared schema", () => {
+    const values = __testing.readRootPreparedMarker(markerPath(), process.getuid?.() ?? 0);
+    expect(__testing.markerHasExpectedRootState(values)).toBe(true);
+
+    const stale = __testing.readRootPreparedMarker(
+      markerPath(marker({ schemaVersion: "1" })),
+      process.getuid?.() ?? 0,
     );
-
-    expect(sanitized).toContain("--authkey ***");
-    expect(sanitized).not.toContain("super-secret-token");
+    expect(__testing.markerHasExpectedRootState(stale)).toBe(false);
   });
 
-  it("accepts an existing sudo-managed Tailscale login", () => {
+  it("rejects unknown and duplicate marker fields", () => {
+    expect(() =>
+      __testing.readRootPreparedMarker(
+        markerPath(`${marker()}unknown=true\n`),
+        process.getuid?.() ?? 0,
+      ),
+    ).toThrow(/unknown or duplicate/);
+    expect(() =>
+      __testing.readRootPreparedMarker(
+        markerPath(`${marker()}release=1.2.3\n`),
+        process.getuid?.() ?? 0,
+      ),
+    ).toThrow(/unknown or duplicate/);
+  });
+
+  it("verifies root preparation without performing host mutations", () => {
     const commands: string[] = [];
-    const loggedIn = __testing.isTailscaleLoggedIn(undefined, (command) => {
-      commands.push(command);
-      return { ok: command.includes("fased-host-maintenance tailscale-status") };
-    });
-
-    expect(loggedIn).toBe(true);
-    expect(commands).toEqual([
-      "tailscale status >/dev/null 2>&1",
-      "sudo -n /usr/local/sbin/fased-host-maintenance tailscale-status >/dev/null 2>&1",
-    ]);
-  });
-
-  it("accepts a sudo-readable tailnet IP during hosted bootstrap", () => {
-    const commands: string[] = [];
-    const hasIp = __testing.hasTailscaleIp(undefined, (command) => {
-      commands.push(command);
-      return { ok: command.includes("fased-host-maintenance tailscale-ip4") };
-    });
-
-    expect(hasIp).toBe(true);
-    expect(commands).toEqual([
-      "tailscale ip -4 >/dev/null 2>&1",
-      "sudo -n /usr/local/sbin/fased-host-maintenance tailscale-ip4 >/dev/null 2>&1",
-    ]);
-  });
-
-  it("defaults hosted swap to 4G on 2 GB VPS nodes", () => {
-    expect(__testing.resolveHostingSwapGb(undefined, 2048)).toBe(4);
-  });
-
-  it("keeps explicit hosted swap overrides", () => {
-    expect(__testing.resolveHostingSwapGb(0, 2048)).toBe(0);
-    expect(__testing.resolveHostingSwapGb(6, 2048)).toBe(6);
-  });
-
-  it("uses the smaller hosted swap default when memory is not constrained", () => {
-    expect(__testing.resolveHostingSwapGb(undefined, 4096)).toBe(2);
-  });
-
-  it("explains the local device Tailscale requirement before hosted verification", () => {
-    const note = __testing.formatLocalDeviceTailnetRequirementNote();
-
-    expect(note).toContain("1. PREPARE LOCAL COMPUTER");
-    expect(note).toContain("2. CHECK TAILSCALE");
-    expect(note).toContain("3. INSTALL IF NEEDED");
-    expect(note).toContain("Do this on your own computer, not inside the VPS.");
-    expect(note).toContain("Turn off any non-Tailscale VPN.");
-    expect(note).toContain("WINDOWS AND MACOS");
-    expect(note).toContain("FEDORA");
-    expect(note).toContain("UBUNTU DEBIAN KALI");
-    expect(note).toContain("sudo dnf install -y tailscale");
-    expect(note).toContain("curl -fsSL https://tailscale.com/install.sh | sh");
-    expect(note).toContain("sudo systemctl enable --now tailscaled");
-    expect(note).toContain("tailscale status");
-    expect(note).toContain("tailscale ip -4");
-    expect(note).toContain("100.x.x.x");
-    expect(note).not.toContain("TWO DEVICES");
-    expect(note).not.toContain("TAILSCALE FIRST");
-    expect(note).not.toContain("Fedora: sudo");
-    expect(note).not.toContain("Ubuntu/Debian/Kali: curl");
-    expect(note).not.toContain("Arch:");
-    expect(note).not.toContain("WSL:");
-  });
-
-  it("formats the pre-lockdown SSH over Tailscale check", () => {
-    const note = __testing.formatTailnetSshVerificationNote({
-      user: "app",
-      host: "fased-vps.tailnet.ts.net",
-      dns: "fased-vps.tailnet.ts.net",
-      ipv4: "100.64.1.2",
-      repoDir: "/home/app/fased",
-    });
-
-    expect(note).toContain("1. CHECK VISIBILITY");
-    expect(note).toContain("2. SSH INTO VPS");
-    expect(note).toContain("tailscale ping fased-vps.tailnet.ts.net");
-    expect(note).toContain("tailscale ping 100.64.1.2");
-    expect(note).toContain("Run on your own computer");
-    expect(note).toContain("tailscale status");
-    expect(note).toContain("tailscale ip -4");
-    expect(note).toContain('"no matching peer"');
-    expect(note).toContain("not in the same tailnet");
-    expect(note).toContain("ssh app@fased-vps.tailnet.ts.net");
-    expect(note).toContain("ssh app@100.64.1.2");
-    expect(note).not.toContain("tailscale ssh");
-    expect(note).toContain("/home/app/fased");
-    expect(note).toContain("FALLBACK");
-    expect(note).not.toContain("LOCAL COMPUTER SETUP");
-    expect(note).not.toContain("Fedora: sudo");
-  });
-
-  it("formats Tailscale SSH verification when app SSH keys are unavailable", () => {
-    const note = __testing.formatTailnetSshVerificationNote(
-      {
-        user: "app",
-        host: "fased-vps.tailnet.ts.net",
-        dns: "fased-vps.tailnet.ts.net",
-        ipv4: "100.64.1.2",
-        repoDir: "/home/app/fased",
+    const checks = __testing.verifyRootPreparedHostingPrerequisites({
+      markerPath: markerPath(),
+      requiredMarkerUid: process.getuid?.() ?? 0,
+      probe: (command, args) => {
+        commands.push([command, ...args].join(" "));
+        return healthyProbe(command, args);
       },
-      "tailscale-ssh",
+    });
+
+    expect(checks.every((check) => check.ok)).toBe(true);
+    expect(commands).toEqual([
+      "tailscale ip -4",
+      "tailscale serve status",
+      "systemctl is-active --quiet fased-signerd.service",
+      "systemctl is-active --quiet fail2ban.service",
+      "id -nG",
+      "sudo -n true",
+    ]);
+    expect(commands.join("\n")).not.toMatch(
+      /\b(?:up|set|install|enable|restart|reload|serve reset)\b/,
     );
-
-    expect(note).toContain("No app SSH key was found");
-    expect(note).toContain("tailscale ssh app@fased-vps.tailnet.ts.net");
-    expect(note).toContain("tailscale ssh app@100.64.1.2");
-    expect(note).toContain("SSH public key fallback");
-    expect(note).not.toContain("\nssh app@fased-vps.tailnet.ts.net");
   });
 
-  it("checks app SSH prerequisites before hosted lock-down", () => {
-    const commands: string[] = [];
-    const result = __testing.verifyTailnetSshServerPrerequisites({
-      target: {
-        user: "app",
-        host: "fased-vps.tailnet.ts.net",
-        repoDir: "/home/app/fased",
-      },
-      runner: (command) => {
-        commands.push(command);
-        return { ok: true };
+  it("fails closed if the app account regains passwordless sudo", () => {
+    const checks = __testing.verifyRootPreparedHostingPrerequisites({
+      markerPath: markerPath(),
+      requiredMarkerUid: process.getuid?.() ?? 0,
+      probe: (command, args) => {
+        if ([command, ...args].join(" ") === "sudo -n true") {
+          return { ok: true };
+        }
+        return healthyProbe(command, args);
       },
     });
 
-    expect(result.ok).toBe(true);
-    expect(result.detail).toContain("repo directory ready: /home/app/fased");
-    expect(result.detail).toContain("SSH keys ready: /home/app/.ssh/authorized_keys");
-    expect(result.detail).toContain("OS SSH service active");
-    expect(commands).toContain("test -d '/home/app/fased'");
-    expect(commands).toContain("test -s '/home/app/.ssh/authorized_keys'");
+    expect(checks.find((check) => check.name === "firewall")).toMatchObject({ ok: false });
   });
 
-  it("uses Tailscale SSH when app SSH keys are missing", () => {
-    const result = __testing.verifyTailnetSshServerPrerequisites({
-      target: {
-        user: "app",
-        host: "fased-vps.tailnet.ts.net",
-        repoDir: "/home/app/fased",
+  it("fails closed if the app account belongs to an admin group", () => {
+    const checks = __testing.verifyRootPreparedHostingPrerequisites({
+      markerPath: markerPath(),
+      requiredMarkerUid: process.getuid?.() ?? 0,
+      probe: (command, args) => {
+        if ([command, ...args].join(" ") === "id -nG") {
+          return { ok: true, stdout: "app fased-gateway sudo\n" };
+        }
+        return healthyProbe(command, args);
       },
-      runner: (command) => {
-        if (command.includes("authorized_keys")) {
+    });
+
+    expect(checks.find((check) => check.name === "firewall")).toMatchObject({ ok: false });
+  });
+
+  it("fails closed when the root-owned services are not active", () => {
+    const checks = __testing.verifyRootPreparedHostingPrerequisites({
+      markerPath: markerPath(),
+      requiredMarkerUid: process.getuid?.() ?? 0,
+      probe: (command, args) => {
+        if ([command, ...args].join(" ").includes("fased-signerd.service")) {
           return { ok: false };
         }
-        return { ok: true };
+        return healthyProbe(command, args);
       },
     });
 
-    expect(result.ok).toBe(true);
-    expect(result.method).toBe("tailscale-ssh");
-    expect(result.detail).toContain("using Tailscale SSH");
-  });
-
-  it("rejects private key text for hosted app SSH key bootstrap", () => {
-    const result = __testing.normalizeSshPublicKeys(
-      "-----BEGIN OPENSSH PRIVATE KEY-----\nnot-for-authorized-keys\n-----END OPENSSH PRIVATE KEY-----",
-    );
-
-    expect(result.ok).toBe(false);
-    expect(result.detail).toContain("private key");
-  });
-
-  it("uses SSH public key fallback only after Tailscale SSH fails", async () => {
-    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "fased-host-security-ssh-key-"));
-    const previousStateDir = process.env.FASED_STATE_DIR;
-    process.env.FASED_STATE_DIR = stateDir;
-    const publicKey =
-      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDrF7r43caJH6vxGOaWOzQ4TYx4bTM0f9HT9M1S6X2eA user@computer";
-    const commands: string[] = [];
-    const notes: string[] = [];
-    const confirms = [true, false, true, true, true];
-    let keyInstalled = false;
-    const prompter = {
-      intro: async () => {},
-      outro: async () => {},
-      note: async (message: string) => {
-        notes.push(message);
-      },
-      select: async () => "",
-      multiselect: async () => [],
-      text: async () => publicKey,
-      confirm: async () => {
-        const next = confirms.shift();
-        if (next === undefined) {
-          throw new Error("unexpected confirm");
-        }
-        return next;
-      },
-      progress: () => ({
-        update: () => {},
-        stop: () => {},
-      }),
-    };
-
-    try {
-      const result = await __testing.confirmTailnetSshBeforeLockdown({
-        opts: { hostProfile: "hosting" } as never,
-        runtime: {
-          error: (message: string) => {
-            throw new Error(message);
-          },
-          exit: (code?: number) => {
-            throw new Error(`exit ${code ?? 0}`);
-          },
-        } as never,
-        prompter: prompter as never,
-        logPath: path.join(stateDir, "host-security.log"),
-        target: {
-          user: "app",
-          host: "fased-vps.tailnet.ts.net",
-          ipv4: "100.64.1.2",
-          repoDir: "/home/app/fased",
-        },
-        runner: (command) => {
-          commands.push(command);
-          if (command === "test -s '/home/app/.ssh/authorized_keys'") {
-            return { ok: keyInstalled };
-          }
-          if (command.includes("base64 -d") && command.includes("/home/app/.ssh/authorized_keys")) {
-            keyInstalled = true;
-            return { ok: true };
-          }
-          return { ok: true, detail: "ok" };
-        },
-      });
-
-      expect(result).toBe(true);
-      expect(
-        notes.some((note) => note.includes("tailscale ssh app@fased-vps.tailnet.ts.net")),
-      ).toBe(true);
-      expect(notes.some((note) => note.includes("FIND YOUR PUBLIC KEY"))).toBe(true);
-      expect(commands.some((command) => command.includes("base64 -d"))).toBe(true);
-      const installCommand = commands.find((command) => command.includes("base64 -d"));
-      expect(installCommand).toContain("/home/app/.ssh/authorized_keys");
-      expect(installCommand).not.toContain(publicKey);
-      const syntax = checkBashSyntax(installCommand ?? "");
-      expect(syntax.status, syntax.stderr).toBe(0);
-      expect(confirms).toEqual([]);
-    } finally {
-      if (previousStateDir === undefined) {
-        delete process.env.FASED_STATE_DIR;
-      } else {
-        process.env.FASED_STATE_DIR = previousStateDir;
-      }
-      fs.rmSync(stateDir, { recursive: true, force: true });
-    }
-  });
-
-  it("prepares tailnet-only SSH ingress before the external SSH check", () => {
-    const commands: string[] = [];
-    const result = __testing.ensureTailnetSshIngressForVerification({
-      runner: (command) => {
-        commands.push(command);
-        return { ok: true };
-      },
-    });
-
-    expect(result.ok).toBe(true);
-    expect(commands).toHaveLength(1);
-    expect(commands[0]).toContain("fased-host-maintenance tailnet-ssh-ingress");
-    expect(commands[0]).not.toContain("ufw allow 22/tcp");
-    const syntax = checkBashSyntax(commands[0]);
-    expect(syntax.status, syntax.stderr).toBe(0);
-  });
-
-  it("generates portable package manager commands for hosted hardening", () => {
-    const command = __testing.packageInstallCommand(["fail2ban"]);
-
-    expect(command).toContain("apt-get install -y 'fail2ban'");
-    expect(command).toContain("dnf install -y 'fail2ban'");
-    expect(command).toContain("dnf5 install -y 'fail2ban'");
-    expect(command).toContain("yum install -y 'fail2ban'");
-    const syntax = checkBashSyntax(command);
-    expect(syntax.status, syntax.stderr).toBe(0);
-  });
-
-  it("generates a Fedora-friendly Tailscale install command", () => {
-    const command = __testing.tailscaleInstallCommand();
-
-    expect(command).toContain("command -v tailscale");
-    expect(command).toContain("fased-host-maintenance tailscale-install-start");
-    expect(command).toContain("dnf install -y tailscale");
-    expect(command).toContain("dnf5 install -y tailscale");
-    expect(command).toContain("yum install -y tailscale");
-    expect(command).toContain("systemctl enable --now tailscaled");
-    expect(command).toContain("https://tailscale.com/install.sh");
-    const syntax = checkBashSyntax(command);
-    expect(syntax.status, syntax.stderr).toBe(0);
-  });
-
-  it("wraps Tailscale browser login so approval continues once a tailnet IP appears", () => {
-    const command = __testing.buildTailscaleLoginWaitCommand("sudo -n tailscale up --ssh");
-
-    expect(command).toContain("sudo -n tailscale up --ssh");
-    expect(command).toContain("fased-host-maintenance tailscale-ip4");
-    expect(command).toContain("tailscale ip -4");
-    expect(command).toContain('kill -INT "$ts_pid"');
-    expect(command).toContain("exit 124");
-    const syntax = checkBashSyntax(command);
-    expect(syntax.status, syntax.stderr).toBe(0);
-  });
-
-  it("generates hosted firewall hardening for ufw and firewalld", () => {
-    const command = __testing.firewallBaselineCommand();
-
-    expect(command).toContain("fased-host-maintenance firewall-baseline");
-    expect(command).toContain("ufw default deny incoming");
-    expect(command).toContain("firewall-cmd --permanent --zone=trusted --add-interface=tailscale0");
-    expect(command).toContain("firewall-cmd --permanent --zone=public --remove-service=ssh");
-    const syntax = checkBashSyntax(command);
-    expect(syntax.status, syntax.stderr).toBe(0);
-  });
-
-  it("generates automatic update setup for apt and dnf families", () => {
-    const command = __testing.automaticUpdatesCommand();
-
-    expect(command).toContain("fased-host-maintenance automatic-updates");
-    expect(command).toContain("unattended-upgrades");
-    expect(command).toContain("dnf5-plugin-automatic");
-    expect(command).toContain("/usr/local/sbin/fased-host-maintenance enable-dnf-automatic");
-    expect(command).toContain("dnf5-automatic.timer");
-    expect(command).toContain("dnf-automatic");
-    expect(command).toContain("yum-cron");
-    const syntax = checkBashSyntax(command);
-    expect(syntax.status, syntax.stderr).toBe(0);
-  });
-
-  it("uses the hosted maintenance helper for SSH hardening", () => {
-    const command = __testing.sshHardeningCommand();
-
-    expect(command).toContain("/usr/local/sbin/fased-host-maintenance harden-ssh");
-    expect(command).not.toContain("sed -i");
-    const syntax = checkBashSyntax(command);
-    expect(syntax.status, syntax.stderr).toBe(0);
-  });
-
-  it("fails verification setup when tailnet SSH ingress cannot be prepared", () => {
-    const result = __testing.ensureTailnetSshIngressForVerification({
-      runner: () => ({ ok: false, detail: "sudo refused" }),
-    });
-
-    expect(result.ok).toBe(false);
-    expect(result.detail).toContain("sudo refused");
-  });
-
-  it("offers VPS Tailscale re-auth when local tailnet ping does not see the VPS", async () => {
-    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "fased-host-security-reauth-"));
-    const previousStateDir = process.env.FASED_STATE_DIR;
-    process.env.FASED_STATE_DIR = stateDir;
-    const confirms = [false, true, true, true];
-    const notes: string[] = [];
-    const commands: string[] = [];
-    const interactiveCommands: string[] = [];
-    const prompter = {
-      intro: async () => {},
-      outro: async () => {},
-      note: async (message: string) => {
-        notes.push(message);
-      },
-      select: async () => "",
-      multiselect: async () => [],
-      text: async () => "",
-      confirm: async () => {
-        const next = confirms.shift();
-        if (next === undefined) {
-          throw new Error("unexpected confirm");
-        }
-        return next;
-      },
-      progress: () => ({
-        update: () => {},
-        stop: () => {},
-      }),
-    };
-    try {
-      const result = await __testing.confirmTailnetSshBeforeLockdown({
-        opts: { hostProfile: "hosting" } as never,
-        runtime: {
-          error: (message: string) => {
-            throw new Error(message);
-          },
-          exit: (code?: number) => {
-            throw new Error(`exit ${code ?? 0}`);
-          },
-        } as never,
-        prompter: prompter as never,
-        logPath: path.join(stateDir, "host-security.log"),
-        target: {
-          user: "app",
-          host: "old.tailnet.ts.net",
-          ipv4: "100.64.1.2",
-          repoDir: "/home/app/fased",
-        },
-        runner: (command) => {
-          commands.push(command);
-          if (command === "tailscale status --json") {
-            return {
-              ok: true,
-              detail: JSON.stringify({
-                Self: {
-                  DNSName: "new.tailnet.ts.net.",
-                  TailscaleIPs: ["100.64.1.9"],
-                },
-              }),
-            };
-          }
-          return { ok: true, detail: "ok" };
-        },
-        interactiveRunner: (command) => {
-          interactiveCommands.push(command);
-          return { ok: true, detail: "reauth ok" };
-        },
-      });
-
-      expect(result).toBe(true);
-      expect(interactiveCommands).toEqual([
-        "sudo -n /usr/local/sbin/fased-host-maintenance tailscale-up-reset-ssh",
-      ]);
-      expect(notes.some((note) => note.includes("old.tailnet.ts.net"))).toBe(true);
-      expect(notes.some((note) => note.includes("new.tailnet.ts.net"))).toBe(true);
-      expect(commands).toContain("tailscale status --json");
-      expect(confirms).toEqual([]);
-    } finally {
-      if (previousStateDir === undefined) {
-        delete process.env.FASED_STATE_DIR;
-      } else {
-        process.env.FASED_STATE_DIR = previousStateDir;
-      }
-      fs.rmSync(stateDir, { recursive: true, force: true });
-    }
-  });
-
-  it("continues when Tailscale browser login times out after a tailnet IP appears", async () => {
-    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "fased-host-security-ts-timeout-"));
-    const previousStateDir = process.env.FASED_STATE_DIR;
-    process.env.FASED_STATE_DIR = stateDir;
-    const confirms = [false, true, true, true];
-    const commands: string[] = [];
-    const interactiveCommands: string[] = [];
-    const prompter = {
-      intro: async () => {},
-      outro: async () => {},
-      note: async () => {},
-      select: async () => "",
-      multiselect: async () => [],
-      text: async () => "",
-      confirm: async () => {
-        const next = confirms.shift();
-        if (next === undefined) {
-          throw new Error("unexpected confirm");
-        }
-        return next;
-      },
-      progress: () => ({
-        update: () => {},
-        stop: () => {},
-      }),
-    };
-
-    try {
-      const result = await __testing.confirmTailnetSshBeforeLockdown({
-        opts: { hostProfile: "hosting" } as never,
-        runtime: {
-          error: (message: string) => {
-            throw new Error(message);
-          },
-          exit: (code?: number) => {
-            throw new Error(`exit ${code ?? 0}`);
-          },
-        } as never,
-        prompter: prompter as never,
-        logPath: path.join(stateDir, "host-security.log"),
-        target: {
-          user: "app",
-          host: "old.tailnet.ts.net",
-          ipv4: "100.64.1.2",
-          repoDir: "/home/app/fased",
-        },
-        runner: (command) => {
-          commands.push(command);
-          if (command.includes("tailscale ip -4")) {
-            return { ok: true, detail: "100.64.1.9\n" };
-          }
-          if (command === "tailscale status --json") {
-            return {
-              ok: true,
-              detail: JSON.stringify({
-                Self: {
-                  DNSName: "new.tailnet.ts.net.",
-                  TailscaleIPs: ["100.64.1.9"],
-                },
-              }),
-            };
-          }
-          return { ok: true, detail: "ok" };
-        },
-        interactiveRunner: (command) => {
-          interactiveCommands.push(command);
-          return { ok: false, detail: "tailscale up timed out", timedOut: true };
-        },
-      });
-
-      expect(result).toBe(true);
-      expect(interactiveCommands).toEqual([
-        "sudo -n /usr/local/sbin/fased-host-maintenance tailscale-up-reset-ssh",
-      ]);
-      expect(commands).toContain("tailscale ip -4 >/dev/null 2>&1");
-      expect(commands).toContain("tailscale status --json");
-      expect(confirms).toEqual([]);
-    } finally {
-      if (previousStateDir === undefined) {
-        delete process.env.FASED_STATE_DIR;
-      } else {
-        process.env.FASED_STATE_DIR = previousStateDir;
-      }
-      fs.rmSync(stateDir, { recursive: true, force: true });
-    }
-  });
-
-  it("skips repeated SSH verification after a previous successful confirmation", async () => {
-    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "fased-host-security-confirm-"));
-    const previousStateDir = process.env.FASED_STATE_DIR;
-    process.env.FASED_STATE_DIR = stateDir;
-    fs.writeFileSync(
-      path.join(stateDir, "hosting-tailnet-ssh-confirmed.json"),
-      JSON.stringify({
-        user: "app",
-        repoDir: "/home/app/fased",
-      }),
-      "utf8",
-    );
-
-    try {
-      const result = await __testing.confirmTailnetSshBeforeLockdown({
-        opts: { hostProfile: "hosting" } as never,
-        runtime: {
-          error: (message: string) => {
-            throw new Error(message);
-          },
-          exit: (code?: number) => {
-            throw new Error(`exit ${code ?? 0}`);
-          },
-        } as never,
-        prompter: {
-          note: async () => {
-            throw new Error("unexpected note");
-          },
-          confirm: async () => {
-            throw new Error("unexpected confirm");
-          },
-        } as never,
-        logPath: path.join(stateDir, "host-security.log"),
-        target: {
-          user: "app",
-          host: "fased-vps.tailnet.ts.net",
-          repoDir: "/home/app/fased",
-        },
-      });
-
-      expect(result).toBe(true);
-    } finally {
-      if (previousStateDir === undefined) {
-        delete process.env.FASED_STATE_DIR;
-      } else {
-        process.env.FASED_STATE_DIR = previousStateDir;
-      }
-      fs.rmSync(stateDir, { recursive: true, force: true });
-    }
-  });
-
-  it("uses Tailscale DNS for the SSH verification target", () => {
-    const target = __testing.resolveTailnetSshTarget({
-      user: "app",
-      repoDir: "/home/app/fased",
-      runner: (command) => {
-        if (command === "tailscale status --json") {
-          return {
-            ok: true,
-            detail: JSON.stringify({
-              Self: {
-                DNSName: "fased-vps.tailnet.ts.net.",
-                TailscaleIPs: ["100.64.1.2"],
-              },
-            }),
-          };
-        }
-        return { ok: false };
-      },
-    });
-
-    expect(target.host).toBe("fased-vps.tailnet.ts.net");
-    expect(target.ipv4).toBe("100.64.1.2");
-    expect(target.repoDir).toBe("/home/app/fased");
-  });
-
-  it("falls back to the Tailscale IPv4 when status JSON is unavailable", () => {
-    const target = __testing.resolveTailnetSshTarget({
-      user: "app",
-      runner: (command) => {
-        if (command === "tailscale ip -4") {
-          return { ok: true, detail: "100.64.1.9\n" };
-        }
-        return { ok: false };
-      },
-    });
-
-    expect(target.host).toBe("100.64.1.9");
-  });
-
-  it("allows explicit non-interactive SSH confirmation by env", () => {
-    expect(
-      __testing.hasExplicitTailnetSshConfirmation({
-        FASED_HOSTING_TAILNET_SSH_CONFIRMED: "yes",
-      } as NodeJS.ProcessEnv),
-    ).toBe(true);
-    expect(
-      __testing.hasExplicitTailnetSshConfirmation({
-        FASED_HOSTING_TAILNET_SSH_CONFIRMED: "",
-      } as NodeJS.ProcessEnv),
-    ).toBe(false);
+    expect(checks.find((check) => check.name === "updates")).toMatchObject({ ok: false });
   });
 });

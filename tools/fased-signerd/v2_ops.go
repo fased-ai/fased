@@ -1,15 +1,15 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
+	"math/big"
 	"strconv"
 	"strings"
 	"time"
@@ -22,6 +22,7 @@ type signerServiceV2 struct {
 	store    *signerStoreV2
 	keys     *signerKeyManagerV2
 	webauthn *signerWebAuthnServiceV2
+	trigger  *signerJupiterTriggerClientV2
 }
 
 type signerWalletPolicyResultV2 struct {
@@ -42,18 +43,40 @@ type signerHealthResultV2 struct {
 	KeystoreType string                  `json:"keystoreType"`
 	Chains       []string                `json:"chains"`
 	Ready        bool                    `json:"ready"`
+	Release      signerReleaseIdentityV2 `json:"release"`
 	Schema       signerSchemaHealthV2    `json:"schema"`
 	Network      signerNetworkHealthV2   `json:"network"`
 	Capabilities signerCapabilitiesV2    `json:"capabilities"`
 	Policies     []signerPolicySummaryV2 `json:"policies"`
 	WebAuthn     signerWebAuthnHealthV2  `json:"webAuthn"`
+	Jupiter      signerJupiterHealthV2   `json:"jupiter"`
+}
+
+type signerJupiterHealthV2 struct {
+	TriggerConfigured bool `json:"triggerConfigured"`
 }
 
 func marshalSignerResultV2(result any) ([]byte, error) {
+	switch value := result.(type) {
+	case signerOperationV2:
+		value.SignedTxBase64 = ""
+		result = value
+	case signerReviewExecutionResultV2:
+		if value.Operation != nil {
+			operation := *value.Operation
+			operation.SignedTxBase64 = ""
+			value.Operation = &operation
+		}
+		result = value
+	}
 	return json.Marshal(map[string]any{"ok": true, "result": result})
 }
 
 func (s *signerServiceV2) health(cfg signerConfig) (signerHealthResultV2, error) {
+	releaseIdentity, err := signerReleaseIdentity()
+	if err != nil {
+		return signerHealthResultV2{}, err
+	}
 	policies, err := s.store.listPolicies()
 	if err != nil {
 		return signerHealthResultV2{}, err
@@ -82,11 +105,13 @@ func (s *signerServiceV2) health(cfg signerConfig) (signerHealthResultV2, error)
 		KeystoreType: "signer-owned-v2",
 		Chains:       cfg.chains,
 		Ready:        schemaHealth.Ready,
+		Release:      releaseIdentity,
 		Schema:       schemaHealth,
 		Network:      networkHealth,
 		Capabilities: signerV2Capabilities,
 		Policies:     summaries,
 		WebAuthn:     webauthnHealth,
+		Jupiter:      signerJupiterHealthV2{TriggerConfigured: s.trigger != nil},
 	}, nil
 }
 
@@ -101,13 +126,7 @@ func decodeSignerRequestV2(raw json.RawMessage, out any) error {
 	if len(raw) == 0 {
 		return errors.New("signer-v2 request body is required")
 	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(out); err != nil {
-		return errors.New("invalid signer-v2 request")
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+	if err := decodeStrictJSONV2(raw, out); err != nil {
 		return errors.New("invalid signer-v2 request")
 	}
 	return nil
@@ -187,11 +206,27 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 		if err := requireControlSocketV2(control); err != nil {
 			return nil, err
 		}
-		credentials, err := s.webauthn.listCredentials()
+		credentials, err := s.webauthn.credentialSummary()
 		if err != nil {
 			return nil, err
 		}
 		return marshalSignerResultV2(credentials)
+	case "v2.webauthn.credentials.revoke":
+		if cfg.readOnly {
+			return nil, errors.New("read-only signer mode")
+		}
+		if err := requireControlSocketV2(control); err != nil {
+			return nil, err
+		}
+		var body signerWebAuthnCredentialRevokeRequestV2
+		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
+			return nil, err
+		}
+		result, err := s.webauthn.revokeCredential(body)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(result)
 	case "v2.review.authorization.begin":
 		if cfg.readOnly {
 			return nil, errors.New("read-only signer mode")
@@ -352,6 +387,56 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 			return nil, err
 		}
 		return marshalSignerResultV2(wallet)
+	case "v2.wallet.rotation.create":
+		if cfg.readOnly {
+			return nil, errors.New("read-only signer mode")
+		}
+		if err := requireControlSocketV2(control); err != nil {
+			return nil, err
+		}
+		var body signerWalletRotationCreateRequestV2
+		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
+			return nil, err
+		}
+		rotation, err := s.keys.CreateSuccessorRotation(req.WalletID, body)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(rotation)
+	case "v2.wallet.rotation.status":
+		if err := requireControlSocketV2(control); err != nil {
+			return nil, err
+		}
+		rotation, err := s.keys.SuccessorRotationStatus(req.WalletID)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(rotation)
+	case "v2.wallet.rotation.commit":
+		if cfg.readOnly {
+			return nil, errors.New("read-only signer mode")
+		}
+		if err := requireControlSocketV2(control); err != nil {
+			return nil, err
+		}
+		var body signerWalletRotationCommitRequestV2
+		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
+			return nil, err
+		}
+		rotation, err := s.keys.CommitSuccessorRotation(req.WalletID, body)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(rotation)
+	case "v2.jupiter.trigger.history":
+		if cfg.readOnly {
+			return nil, errors.New("read-only signer mode")
+		}
+		history, err := s.jupiterTriggerPublicHistoryV2(req.WalletID)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(history)
 	case "v2.execute":
 		if cfg.readOnly {
 			return nil, errors.New("read-only signer mode")
@@ -467,7 +552,7 @@ func (s *signerServiceV2) execute(req signerExecuteRequestV2) (signerOperationV2
 		if err != nil {
 			return signerOperationV2{}, err
 		}
-		if operation.State != operationReserved {
+		if operation.State != operationReserved && !isSignerOwnedTriggerIntentV2(intent) {
 			return operation, nil
 		}
 	} else if err := s.store.preflightPolicyForIntentV2(req, intent); err != nil {
@@ -478,6 +563,9 @@ func (s *signerServiceV2) execute(req signerExecuteRequestV2) (signerOperationV2
 			_, _ = s.store.markFailed(operation.RequestID, roleErr)
 		}
 		return signerOperationV2{}, roleErr
+	}
+	if isSignerOwnedTriggerIntentV2(intent) {
+		return s.executeAutonomousJupiterTriggerV2(req, intent, policy, walletPublicKey)
 	}
 	rpcURLs, err := s.keys.SolanaRPCURLsV2(req.IntentWalletID())
 	if err != nil {
@@ -522,9 +610,24 @@ func (s *signerServiceV2) execute(req signerExecuteRequestV2) (signerOperationV2
 		failed, _ := s.store.markFailedClaim(operation.RequestID, executionAttempt, err)
 		return failed, err
 	}
+	if err := validateSignerNativeSpendV2(rpcURLs, tx, walletPublicKey, intent); err != nil {
+		safeErr := fmt.Errorf("signer transaction native spend validation failed: %w", err)
+		failed, markErr := s.store.markFailedClaim(operation.RequestID, executionAttempt, safeErr)
+		if markErr != nil {
+			return signerOperationV2{}, fmt.Errorf("%v; persist signer failure: %w", safeErr, markErr)
+		}
+		return failed, safeErr
+	}
 	digest := sha256.Sum256(raw)
 	signature := tx.Signatures[0].String()
-	operation, err = s.store.markBroadcastClaim(operation.RequestID, executionAttempt, signature, "sha256:"+hex.EncodeToString(digest[:]))
+	signedTxBase64 := base64.StdEncoding.EncodeToString(raw)
+	operation, err = s.store.markBroadcastClaim(
+		operation.RequestID,
+		executionAttempt,
+		signature,
+		"sha256:"+hex.EncodeToString(digest[:]),
+		signedTxBase64,
+	)
 	if err != nil {
 		return signerOperationV2{}, err
 	}
@@ -575,6 +678,15 @@ func buildTypedTransactionV2(
 			return nil, err
 		}
 		decimals = &resolvedDecimals
+		if err := validateSPLTransferAccountsV2(
+			rpcURLs,
+			from,
+			solana.MustPublicKeyFromBase58(intent.Intent.Destination),
+			mint,
+			tokenProgram,
+		); err != nil {
+			return nil, err
+		}
 	}
 	instructions, err := buildTypedInstructionsV2(from, intent, decimals)
 	if err != nil {
@@ -644,7 +756,11 @@ func buildTypedInstructionsV2(
 		if err != nil {
 			return nil, err
 		}
-		createATA := solana.NewInstruction(
+		transferData := make([]byte, 10)
+		transferData[0] = 12
+		binary.LittleEndian.PutUint64(transferData[1:9], amount)
+		transferData[9] = *decimals
+		createDestinationATA := solana.NewInstruction(
 			solana.SPLAssociatedTokenAccountProgramID,
 			solana.AccountMetaSlice{
 				&solana.AccountMeta{PublicKey: from, IsSigner: true, IsWritable: true},
@@ -654,12 +770,8 @@ func buildTypedInstructionsV2(
 				&solana.AccountMeta{PublicKey: solana.SystemProgramID},
 				&solana.AccountMeta{PublicKey: tokenProgram},
 			},
-			[]byte{1},
+			[]byte{1}, // CreateIdempotent: safe whether the canonical ATA already exists or not.
 		)
-		transferData := make([]byte, 10)
-		transferData[0] = 12
-		binary.LittleEndian.PutUint64(transferData[1:9], amount)
-		transferData[9] = *decimals
 		transfer := solana.NewInstruction(
 			tokenProgram,
 			solana.AccountMetaSlice{
@@ -670,7 +782,7 @@ func buildTypedInstructionsV2(
 			},
 			transferData,
 		)
-		return []solana.Instruction{createATA, transfer}, nil
+		return []solana.Instruction{createDestinationATA, transfer}, nil
 	case intentSolanaSATAction, intentSolanaVaultBondAction:
 		if len(intent.Instructions) == 0 || len(intent.Instructions) > 6 {
 			return nil, errors.New("typed SAT action has an invalid instruction count")
@@ -679,6 +791,83 @@ func buildTypedInstructionsV2(
 	default:
 		return nil, errors.New("unsupported typed signer intent")
 	}
+}
+
+func validateSPLTransferAccountsV2(
+	rpcURLs []string,
+	owner solana.PublicKey,
+	destinationOwner solana.PublicKey,
+	mint solana.PublicKey,
+	tokenProgram solana.PublicKey,
+) error {
+	sourceATA, err := findAssociatedTokenAddressV2(owner, mint, tokenProgram)
+	if err != nil {
+		return err
+	}
+	destinationATA, err := findAssociatedTokenAddressV2(destinationOwner, mint, tokenProgram)
+	if err != nil {
+		return err
+	}
+	active, err := activeSolanaWriteRPCURLs(rpcURLs)
+	if err != nil {
+		return err
+	}
+	for _, rpcURL := range active {
+		client := newSignerOwnedSolanaRPCClientV2(rpcURL)
+		ctx, cancel := context.WithTimeout(context.Background(), solanaWriteRPCRequestTimeout())
+		response, requestErr := client.GetMultipleAccounts(ctx, sourceATA, destinationATA)
+		cancel()
+		if requestErr != nil || response == nil || len(response.Value) != 2 {
+			if requestErr == nil {
+				requestErr = errors.New("missing SPL transfer account response")
+			}
+			markSolanaWriteRPCFailure(rpcURL, requestErr)
+			continue
+		}
+		if err := validateSPLTransferAccountResponseV2(
+			response.Value,
+			owner,
+			destinationOwner,
+			mint,
+			tokenProgram,
+		); err != nil {
+			return err
+		}
+		markSolanaWriteRPCSuccess(rpcURL)
+		return nil
+	}
+	return errors.New("signer-owned Solana RPC could not verify existing SPL transfer accounts")
+}
+
+func validateSPLTransferAccountResponseV2(
+	accounts []*rpc.Account,
+	owner solana.PublicKey,
+	destinationOwner solana.PublicKey,
+	mint solana.PublicKey,
+	tokenProgram solana.PublicKey,
+) error {
+	if len(accounts) != 2 {
+		return errors.New("SPL transfer account response must contain source and destination accounts")
+	}
+	source := accounts[0]
+	decodedSource, ok := parseJupiterTokenAccountV2(source)
+	if !ok || source == nil || !source.Owner.Equals(tokenProgram) ||
+		!decodedSource.Mint.Equals(mint) || !decodedSource.Owner.Equals(owner) {
+		return errors.New("SPL transfer requires an existing canonical source associated-token account")
+	}
+	// A missing destination is expected for a first transfer. The signer always
+	// includes the canonical CreateIdempotent instruction. If an account already
+	// exists at that address, validate it before signing as defense in depth.
+	destination := accounts[1]
+	if destination == nil {
+		return nil
+	}
+	decodedDestination, ok := parseJupiterTokenAccountV2(destination)
+	if !ok || !destination.Owner.Equals(tokenProgram) ||
+		!decodedDestination.Mint.Equals(mint) || !decodedDestination.Owner.Equals(destinationOwner) {
+		return errors.New("existing SPL destination associated-token account has the wrong mint, owner, or token program")
+	}
+	return nil
 }
 
 func findAssociatedTokenAddressV2(owner, mint, tokenProgram solana.PublicKey) (solana.PublicKey, error) {
@@ -739,6 +928,84 @@ func signerOwnedSolanaBalanceV2(rpcURLs []string, address solana.PublicKey) (uin
 		return result.Value, nil
 	}
 	return 0, errors.New("signer-owned Solana RPC balance lookup failed")
+}
+
+func validateSignerNativeSpendV2(
+	rpcURLs []string,
+	tx *solana.Transaction,
+	wallet solana.PublicKey,
+	intent normalizedIntentV2,
+) error {
+	if tx == nil {
+		return errors.New("signed transaction is missing")
+	}
+	// A signer-built native transfer has one static System instruction and no
+	// account creation, so its exact principal is already signer-derived. SPL
+	// transfers may fund one canonical destination ATA and therefore continue
+	// through simulation below to enforce the signer-owned fee/rent ceiling.
+	if intent.Intent.Type == intentSolanaNativeTransfer {
+		return nil
+	}
+	feeCeiling, err := signerFeeReservationForIntentV2(intent)
+	if err != nil {
+		return err
+	}
+	principal := big.NewInt(0)
+	if intent.Asset == "solana:native" {
+		principal.Set(intent.Amount)
+	}
+	maximum := new(big.Int).Add(principal, feeCeiling)
+	active, err := activeSolanaWriteRPCURLs(rpcURLs)
+	if err != nil {
+		return err
+	}
+	for _, rpcURL := range active {
+		client := newSignerOwnedSolanaRPCClientV2(rpcURL)
+		ctx, cancel := context.WithTimeout(context.Background(), solanaWriteRPCRequestTimeout())
+		preResponse, preErr := client.GetAccountInfo(ctx, wallet)
+		if preErr != nil || preResponse == nil || preResponse.Value == nil {
+			cancel()
+			if preErr == nil {
+				preErr = errors.New("wallet account is missing")
+			}
+			markSolanaWriteRPCFailure(rpcURL, preErr)
+			continue
+		}
+		simulation, simulationErr := client.SimulateTransactionWithOpts(ctx, tx, &rpc.SimulateTransactionOpts{
+			SigVerify:  false,
+			Commitment: rpc.CommitmentConfirmed,
+			Accounts: &rpc.SimulateTransactionAccountsOpts{
+				Encoding:  solana.EncodingBase64,
+				Addresses: []solana.PublicKey{wallet},
+			},
+		})
+		cancel()
+		if simulationErr != nil || simulation == nil || simulation.Value == nil || simulation.Value.Err != nil || len(simulation.Value.Accounts) != 1 || simulation.Value.Accounts[0] == nil {
+			if simulationErr == nil {
+				simulationErr = errors.New("wallet spend simulation failed or omitted the wallet account")
+			}
+			markSolanaWriteRPCFailure(rpcURL, simulationErr)
+			continue
+		}
+		pre := preResponse.Value
+		post := simulation.Value.Accounts[0]
+		if pre.Executable || post.Executable || !pre.Owner.Equals(solana.SystemProgramID) || !post.Owner.Equals(solana.SystemProgramID) {
+			return errors.New("wallet payer is not a canonical System account")
+		}
+		spent := big.NewInt(0)
+		if pre.Lamports > post.Lamports {
+			spent.SetUint64(pre.Lamports - post.Lamports)
+		}
+		if spent.Cmp(maximum) > 0 {
+			return fmt.Errorf("wallet native spend %s exceeds principal plus signer fee/rent ceiling %s", spent, maximum)
+		}
+		if principal.Sign() > 0 && spent.Cmp(principal) < 0 {
+			return errors.New("simulation did not apply the exact reviewed native principal")
+		}
+		markSolanaWriteRPCSuccess(rpcURL)
+		return nil
+	}
+	return errors.New("signer-owned Solana RPC native spend validation failed")
 }
 
 func broadcastSignedOnceV2(rpcURLs []string, signedRaw []byte, expectedSignature solana.Signature) error {
@@ -862,6 +1129,44 @@ func (s *signerServiceV2) reconcile(requestID, walletID string) (signerOperation
 	}
 	if operation.State != operationBroadcast && operation.State != operationUnknown {
 		return operation, nil
+	}
+	if operation.IntentType == intentSolanaTriggerCreate || operation.IntentType == intentSolanaTriggerCancel {
+		workflow, workflowErr := s.store.getJupiterTriggerWorkflowV2(requestID)
+		if workflowErr != nil {
+			return operation, workflowErr
+		}
+		var semantic signerIntentV2
+		if json.Unmarshal(workflow.SemanticIntent, &semantic) != nil {
+			return operation, errors.New("stored Jupiter Trigger semantic intent is invalid")
+		}
+		walletRecord, walletErr := s.keys.PublicRecord(walletID)
+		if walletErr != nil {
+			return operation, walletErr
+		}
+		walletPublicKey, walletErr := solana.PublicKeyFromBase58(walletRecord.PublicKey)
+		if walletErr != nil {
+			return operation, errors.New("signer-owned wallet record has an invalid public key")
+		}
+		intent, intentErr := normalizeSignerIntentForWalletV2(semantic, &walletPublicKey)
+		if intentErr != nil || intent.Digest != workflow.IntentDigest || intent.Digest != operation.IntentDigest {
+			return operation, errors.New("stored Jupiter Trigger semantic intent is inconsistent")
+		}
+		privateKey, _, keyErr := s.keys.privateKey(walletID)
+		if keyErr != nil {
+			return operation, keyErr
+		}
+		defer zeroBytes(privateKey)
+		return s.reconcileJupiterTriggerWorkflowV2(
+			signerExecuteRequestV2{
+				RequestID: requestID, PolicyHash: operation.PolicyHash,
+				Intent: intent.Intent, intentWalletID: walletID,
+			},
+			intent,
+			walletPublicKey,
+			privateKey,
+			operation,
+			workflow,
+		)
 	}
 	signature, err := solana.SignatureFromBase58(operation.Signature)
 	if err != nil {

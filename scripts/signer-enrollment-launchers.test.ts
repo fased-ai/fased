@@ -10,6 +10,7 @@ describe("signer-owned WebAuthn enrollment launchers", () => {
     const native = read("tools/fased-signerd/admin_webauthn_enrollment.go");
     const main = read("tools/fased-signerd/main.go");
     const installer = read("scripts/install-fased-signerd.sh");
+    const updater = read("scripts/fased-managed-updater.mjs");
     const onboarding = read("src/wizard/onboarding.wallet.ts");
 
     expect(main).toContain('filepath.Base(os.Args[0]) == "fased-signer-enroll"');
@@ -18,9 +19,12 @@ describe("signer-owned WebAuthn enrollment launchers", () => {
     expect(native).toContain('Origin:        "http://localhost:18791"');
     expect(native).toContain('"webauthn-enrollment.lock"');
 
-    expect(installer).toContain('ln -f "$BIN_PATH" "$LAUNCHER_PATH"');
-    expect(installer).toContain('[[ ! "$BIN_PATH" -ef "$LAUNCHER_PATH" ]]');
-    expect(installer).toContain("signer-attested enrollment launcher");
+    expect(installer).toContain('node "$UPDATER" "${args[@]}"');
+    expect(updater).toContain("await fsp.link(paths.binaryPath, enrollTemporary)");
+    expect(updater).toContain("await fsp.rename(enrollTemporary, paths.enrollmentPath)");
+    expect(updater.indexOf("downloadVerifiedLocalSignerRelease")).toBeLessThan(
+      updater.indexOf("atomicInstallSignerBinary"),
+    );
     expect(onboarding).toContain('LOCAL_SIGNER_ENROLLMENT_ORIGIN = "http://localhost:18791"');
   });
 

@@ -38,7 +38,7 @@ receive plaintext key material in the supported path.
 
 ### Wallet Standard hardware Vault
 
-In **Wallets**, choose **Attach hardware Vault** from a browser with a Solana
+In **Wallets**, choose **Attach Wallet Standard Vault** from a browser with a Solana
 Wallet Standard wallet. Fased stores the public address only. It prepares and
 simulates one short-lived immutable review; the browser wallet signs it; Fased
 verifies that the signed message is byte-for-byte unchanged; then broadcast is
@@ -51,9 +51,20 @@ account, destination, mint, and amount on the hardware device itself.
 
 Turnkey is the implemented provider-managed lane. Use a dedicated API user and
 an independently reviewed Turnkey organization policy with a non-empty
-condition. Fased checks that the configured policy reference resolves to an
-`ALLOW` policy, but cannot prove that its selector covers the intended API
-user. Turnkey's policy engine remains the custody authority.
+condition. The readiness probe confirms only that the policy reference exists;
+Turnkey read queries are not policy-enforced. For every reviewed signature,
+Fased requires the exact completed signing activity's policy evaluations to
+contain `OUTCOME_ALLOW` for the configured policy ID and rejects an activity if
+another policy also returns `OUTCOME_ALLOW` before broadcast. Turnkey's policy
+engine remains the custody authority.
+
+The Turnkey API credential is available to the Gateway process. Therefore the
+post-signing evaluation check protects normal Fased execution, but it is not by
+itself a boundary against a fully compromised Gateway that calls Turnkey
+directly. Use a dedicated Turnkey API user/sub-organization and make the
+provider policy independently restrict that user, exact wallet/account,
+allowed activity type, destinations, assets, and limits. No other permissive
+policy should authorize the same signing activity.
 
 Turnkey supports manual reviewed typed SOL/SPL transfers. Fased stores the
 immutable review, verifies returned signed bytes, broadcasts once, and treats
@@ -98,6 +109,13 @@ Every executable policy must explicitly name:
 - assets/mints;
 - destinations;
 - positive per-transaction and daily caps.
+
+Checked SPL transfers also explicitly require the System, Associated Token
+Account, and selected Token/Token-2022 programs. Go always derives and includes
+the canonical idempotent destination-account creation instruction, validates
+the source and any existing destination account, and charges possible rent to
+the signer-owned SOL reservation. This lets the first SAT transfer to a new
+recipient work without accepting caller-selected account creation.
 
 Empty or missing lists mean no signing. The signer returns policy version/hash
 in health. A UI change stays pending until the signer acknowledges that exact

@@ -44,9 +44,12 @@ Windows 原生配套应用也在计划中；Fased CLI、Gateway 网关和钱包�
 ## VPS 和托管
 
 - VPS 中心：[VPS 托管](/install/vps)
-- Fly.io：[Fly.io](/install/fly)
-- Hetzner（Docker）：[Hetzner](/install/hetzner)
+- Hetzner（受维护的非 Docker Hosting）：[Hetzner](/install/hetzner)
 - GCP（Compute Engine）：[GCP](/install/gcp)
+- Fly.io（不支持的历史归档）：[Fly.io](/install/fly)
+
+完整 Docker Gateway 只支持本地电脑。VPS 使用 `install.sh --hosting`；不存在
+`install.sh --hosting-docker`。
 
 ## 常用链接
 

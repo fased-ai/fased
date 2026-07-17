@@ -159,7 +159,7 @@ describe("Wallet Standard reviewed execution", () => {
         rpcUrl: "https://rpc.invalid",
         env,
       }),
-    ).rejects.toThrow("immutable hardware-wallet review");
+    ).rejects.toThrow("immutable Wallet Standard review");
   });
 
   test("never replaces a request ID when intent changes or its review expires", async () => {

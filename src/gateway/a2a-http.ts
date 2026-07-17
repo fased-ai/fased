@@ -11,6 +11,13 @@ import {
   normalizeHandle as normalizeFederationHandle,
 } from "../federation/runtime.js";
 import { orchestrateA2aTaskSettlement, type A2aSettlementResult } from "./a2a-settlement.js";
+import {
+  claimDurableA2aTaskExecution,
+  readDurableA2aTask,
+  reserveDurableA2aTask,
+  updateDurableA2aTask,
+  type DurableA2aTaskRecord,
+} from "./a2a-task-store.js";
 
 export type A2aHttpHandler = (req: IncomingMessage, res: ServerResponse) => Promise<boolean>;
 
@@ -27,8 +34,10 @@ type TaskRecord = {
   output?: unknown;
   error?: string;
   marketplacePayment?: MarketplacePaymentSummary;
+  settlement?: A2aSettlementResult;
   timers: NodeJS.Timeout[];
   subscribers: Set<ServerResponse>;
+  executionRelease?: () => Promise<void>;
 };
 
 type JsonRpcRequest = {
@@ -546,6 +555,7 @@ function toTaskSnapshot(task: TaskRecord) {
     updatedAt: task.updatedAt,
     output: task.output,
     error: task.error,
+    settlement: task.settlement,
   };
 }
 
@@ -697,20 +707,53 @@ export function createA2aHandler(opts: {
         env: params.env,
       }));
 
-  function updateTask(
+  function taskFromDurable(record: DurableA2aTaskRecord): TaskRecord {
+    return {
+      taskId: record.taskId,
+      status: record.status,
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+      input: record.input,
+      output: record.output,
+      error: record.error,
+      marketplacePayment: record.marketplacePayment as MarketplacePaymentSummary | undefined,
+      settlement: record.settlement,
+      timers: [],
+      subscribers: new Set<ServerResponse>(),
+    };
+  }
+
+  function resolveTask(taskId: string): TaskRecord | undefined {
+    const active = tasks.get(taskId);
+    if (active) {
+      return active;
+    }
+    const durable = readDurableA2aTask({ taskId, env: process.env });
+    if (!durable) {
+      return undefined;
+    }
+    const task = taskFromDurable(durable);
+    tasks.set(taskId, task);
+    return task;
+  }
+
+  async function updateTask(
     task: TaskRecord,
-    patch: Partial<Pick<TaskRecord, "status" | "output" | "error">>,
+    patch: Partial<Pick<TaskRecord, "status" | "output" | "error" | "settlement">>,
   ) {
-    if (patch.status) {
-      task.status = patch.status;
-    }
-    if (patch.output !== undefined) {
-      task.output = patch.output;
-    }
-    if (patch.error !== undefined) {
-      task.error = patch.error;
-    }
-    task.updatedAt = new Date().toISOString();
+    const durable = await updateDurableA2aTask({
+      taskId: task.taskId,
+      ...(patch.status ? { status: patch.status } : {}),
+      ...(patch.output !== undefined ? { output: patch.output } : {}),
+      ...(patch.error !== undefined ? { error: patch.error } : {}),
+      ...(patch.settlement !== undefined ? { settlement: patch.settlement } : {}),
+      env: process.env,
+    });
+    task.status = durable.status;
+    task.output = durable.output;
+    task.error = durable.error;
+    task.settlement = durable.settlement;
+    task.updatedAt = durable.updatedAt;
 
     const snapshot = toTaskSnapshot(task);
     for (const subscriber of task.subscribers) {
@@ -731,6 +774,12 @@ export function createA2aHandler(opts: {
       clearTimeout(timer);
     }
     task.timers = [];
+  }
+
+  async function releaseTaskExecution(task: TaskRecord): Promise<void> {
+    const release = task.executionRelease;
+    task.executionRelease = undefined;
+    await release?.();
   }
 
   async function resolveSenderTier(senderHandle: string): Promise<SenderTier> {
@@ -782,43 +831,66 @@ export function createA2aHandler(opts: {
     }
   }
 
-  function createTask(input: unknown, marketplacePayment?: MarketplacePaymentSummary): TaskRecord {
-    const createdAt = new Date().toISOString();
+  async function createTask(params: {
+    input: unknown;
+    marketplacePayment?: MarketplacePaymentSummary;
+    senderHandle: string;
+  }): Promise<{ task: TaskRecord; created: boolean }> {
     const requestedTaskId =
-      isRecord(input) && typeof input.taskId === "string" ? input.taskId.trim() : "";
-    const taskId = requestedTaskId && !tasks.has(requestedTaskId) ? requestedTaskId : randomUUID();
-    const task: TaskRecord = {
+      isRecord(params.input) && typeof params.input.taskId === "string"
+        ? params.input.taskId.trim()
+        : "";
+    const taskId = requestedTaskId || randomUUID();
+    const reserved = await reserveDurableA2aTask({
       taskId,
-      status: "queued",
-      createdAt,
-      updatedAt: createdAt,
-      input,
-      ...(marketplacePayment ? { marketplacePayment } : {}),
-      timers: [],
-      subscribers: new Set<ServerResponse>(),
-    };
+      senderHandle: params.senderHandle,
+      input: params.input,
+      marketplacePayment: params.marketplacePayment,
+      env: process.env,
+    });
+    const existing = tasks.get(taskId);
+    const task = existing ?? taskFromDurable(reserved.record);
+    if (!existing) {
+      tasks.set(task.taskId, task);
+    }
+    return { task, created: reserved.created };
+  }
 
+  function scheduleTaskExecution(task: TaskRecord): void {
+    if (isTerminal(task.status) || task.timers.length > 0) {
+      void releaseTaskExecution(task);
+      return;
+    }
     const queuedToRunning = setTimeout(() => {
       if (task.status !== "queued") {
         return;
       }
-      updateTask(task, { status: "running" });
+      void updateTask(task, { status: "running" }).catch(async (error) => {
+        task.error = error instanceof Error ? error.message : String(error);
+        clearTaskTimers(task);
+        await releaseTaskExecution(task);
+      });
     }, 10);
 
     const runningToDone = setTimeout(() => {
       if (task.status === "canceled") {
+        void releaseTaskExecution(task);
         return;
       }
-      updateTask(task, {
+      void updateTask(task, {
         status: "succeeded",
         output: buildCanonicalResultPayload(task, handle),
-      });
-      clearTaskTimers(task);
+      })
+        .catch((error) => {
+          task.error = error instanceof Error ? error.message : String(error);
+        })
+        .finally(async () => {
+          clearTaskTimers(task);
+          await releaseTaskExecution(task);
+        });
     }, 50);
 
     task.timers.push(queuedToRunning, runningToDone);
-    tasks.set(task.taskId, task);
-    return task;
   }
 
   return async (req, res) => {
@@ -863,7 +935,7 @@ export function createA2aHandler(opts: {
         sendJson(res, 400, { status: "rejected", reason: "missing taskId" });
         return true;
       }
-      const task = tasks.get(taskId);
+      const task = resolveTask(taskId);
       if (!task) {
         sendJson(res, 404, { status: "not_found", reason: "task not found" });
         return true;
@@ -983,9 +1055,26 @@ export function createA2aHandler(opts: {
         return true;
       }
 
-      const task = createTask(taskInput, extractMarketplacePaymentSummary(taskInput, params));
+      let taskResult: Awaited<ReturnType<typeof createTask>>;
+      try {
+        taskResult = await createTask({
+          input: taskInput,
+          marketplacePayment: extractMarketplacePaymentSummary(taskInput, params),
+          senderHandle,
+        });
+      } catch (error) {
+        sendRpcError(res, id, -32054, error instanceof Error ? error.message : String(error));
+        return true;
+      }
+      const task = taskResult.task;
       let settlement: A2aSettlementResult | undefined;
-      if (hasPaidReferences) {
+      const executionRelease = isTerminal(task.status)
+        ? null
+        : await claimDurableA2aTaskExecution({ taskId: task.taskId, env: process.env });
+      if (executionRelease) {
+        task.executionRelease = executionRelease;
+      }
+      if (hasPaidReferences && executionRelease && !task.settlement) {
         try {
           settlement = await settlementOrchestrator({
             taskId: task.taskId,
@@ -1000,6 +1089,12 @@ export function createA2aHandler(opts: {
             reason: `settlement orchestration error: ${String(err)}`,
           };
         }
+        await updateTask(task, { settlement });
+      } else {
+        settlement = task.settlement;
+      }
+      if (executionRelease) {
+        scheduleTaskExecution(task);
       }
       sendRpcResult(res, id, {
         taskId: task.taskId,
@@ -1016,7 +1111,7 @@ export function createA2aHandler(opts: {
         sendRpcError(res, id, -32602, "missing taskId");
         return true;
       }
-      const task = tasks.get(taskId);
+      const task = resolveTask(taskId);
       if (!task) {
         sendRpcError(res, id, -32044, "task not found");
         return true;
@@ -1035,14 +1130,15 @@ export function createA2aHandler(opts: {
         sendRpcError(res, id, -32602, "missing taskId");
         return true;
       }
-      const task = tasks.get(taskId);
+      const task = resolveTask(taskId);
       if (!task) {
         sendRpcError(res, id, -32044, "task not found");
         return true;
       }
       if (!isTerminal(task.status)) {
         clearTaskTimers(task);
-        updateTask(task, { status: "canceled" });
+        await updateTask(task, { status: "canceled" });
+        await releaseTaskExecution(task);
       }
       sendRpcResult(res, id, toTaskSnapshot(task));
       return true;

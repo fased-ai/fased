@@ -3,6 +3,12 @@ import { vi } from "vitest";
 import type { ResolvedGatewayAuth } from "./auth.js";
 import { createGatewayHttpServer, type GatewayHttpServerOpts } from "./server-http.js";
 
+const RESPONSE_FINISHED = Symbol("gateway-http-test-response-finished");
+
+type TestServerResponse = ServerResponse & {
+  [RESPONSE_FINISHED]: Promise<void>;
+};
+
 export const AUTH_NONE: ResolvedGatewayAuth = {
   mode: "none",
   allowTailscale: false,
@@ -40,6 +46,10 @@ export function createResponse(): {
   getBody: () => string;
 } {
   let body = "";
+  let finishResponse = () => {};
+  const finished = new Promise<void>((resolve) => {
+    finishResponse = resolve;
+  });
   const res = {
     headersSent: false,
     statusCode: 200,
@@ -63,8 +73,10 @@ export function createResponse(): {
       } else if (Buffer.isBuffer(chunk)) {
         body += chunk.toString("utf8");
       }
+      finishResponse();
     }),
   } as unknown as ServerResponse;
+  (res as TestServerResponse)[RESPONSE_FINISHED] = finished;
   return { res, getBody: () => body };
 }
 
@@ -74,7 +86,7 @@ export async function dispatchRequest(
   res: ServerResponse,
 ): Promise<void> {
   server.emit("request", req, res);
-  await new Promise((resolve) => setImmediate(resolve));
+  await (res as TestServerResponse)[RESPONSE_FINISHED];
 }
 
 export async function withGatewayServer<T>(params: {

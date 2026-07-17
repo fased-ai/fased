@@ -18,6 +18,12 @@ import (
 const (
 	signerProtocolVersion = 2
 
+	// signerNativeFeeReservationV2 is a signer-owned upper bound for the
+	// network fee and any explicitly validated rent paid by a signer-built
+	// transaction. It is deliberately independent of caller input. Jupiter
+	// requests may choose a lower ceiling, but can never raise this bound.
+	signerNativeFeeReservationV2 = uint64(5_000_000)
+
 	intentSolanaNativeTransfer     = "solana.nativeTransfer"
 	intentSolanaSPLTransferChecked = "solana.splTransferChecked"
 	intentSolanaSATAction          = "solana.satAction"
@@ -38,7 +44,8 @@ const (
 )
 
 var signerV2Capabilities = signerCapabilitiesV2{
-	Protocol: signerProtocolRangeV2{Current: signerProtocolVersion, Min: signerProtocolVersion, Max: signerProtocolVersion},
+	Protocol:                     signerProtocolRangeV2{Current: signerProtocolVersion, Min: signerProtocolVersion, Max: signerProtocolVersion},
+	NativeFeeReservationLamports: signerNativeFeeReservationV2,
 	IntentTypes: []string{
 		intentSolanaNativeTransfer,
 		intentSolanaSPLTransferChecked,
@@ -46,11 +53,8 @@ var signerV2Capabilities = signerCapabilitiesV2{
 		intentSolanaVaultBondAction,
 		intentFederationBondChallenge,
 		intentSolanaJupiterSwap,
-		intentSolanaTriggerAuth,
 		intentSolanaTriggerCreate,
-		intentSolanaTriggerDeposit,
 		intentSolanaTriggerCancel,
-		intentSolanaTriggerWithdraw,
 	},
 	OperationStates: []string{
 		operationReserved,
@@ -65,15 +69,22 @@ var signerV2Capabilities = signerCapabilitiesV2{
 		"applicationPolicyTightening",
 		"vaultReviewedOnly",
 		"durableCaps",
+		"atomicMultiAssetCaps",
+		"signerControlledNativeFeeCaps",
 		"atomicIdempotency",
 		"ambiguousBroadcastReconciliation",
 		"signerOwnedKeys",
+		"signerOwnedSuccessorRotation",
+		"permanentRetiredWalletPolicies",
 		"signerOwnedRPC",
 		"typedSolanaTransactions",
+		"idempotentAssociatedTokenCreation",
 		"typedSATActions",
 		"typedVaultBondActions",
 		"domainSeparatedFederationBondChallenges",
+		"federationBondChallengeWrapperV2",
 		"signerOwnedWebAuthn",
+		"signerOwnedWebAuthnCredentialRevocation",
 		"singleUseReviewedAuthorization",
 		"typedJupiterSemantics",
 		"signerOwnedReviewPrepareExecute",
@@ -82,7 +93,10 @@ var signerV2Capabilities = signerCapabilitiesV2{
 		"reviewedFederationBondChallenges",
 		"signerOwnedStateRecheck",
 		"durableReviewAuthorization",
-		"verifiedAddressLookupTables",
+		"signerOwnedJupiterTriggerV2",
+		"signerOwnedJupiterTriggerHistory",
+		"jupiterTriggerSecretsNeverCrossSocket",
+		"jupiterTriggerDurablePhases",
 	},
 }
 
@@ -93,10 +107,11 @@ type signerProtocolRangeV2 struct {
 }
 
 type signerCapabilitiesV2 struct {
-	Protocol        signerProtocolRangeV2 `json:"protocol"`
-	IntentTypes     []string              `json:"intentTypes"`
-	OperationStates []string              `json:"operationStates"`
-	Features        []string              `json:"features"`
+	Protocol                     signerProtocolRangeV2 `json:"protocol"`
+	NativeFeeReservationLamports uint64                `json:"nativeFeeReservationLamports"`
+	IntentTypes                  []string              `json:"intentTypes"`
+	OperationStates              []string              `json:"operationStates"`
+	Features                     []string              `json:"features"`
 }
 
 type signerIntentV2 struct {
@@ -176,38 +191,71 @@ type signerWalletRotateRequestV2 struct {
 }
 
 type signerWalletRecordV2 struct {
-	WalletID  string `json:"walletId"`
-	PublicKey string `json:"publicKey"`
-	Version   uint64 `json:"version"`
-	CreatedAt string `json:"createdAt"`
-	RotatedAt string `json:"rotatedAt,omitempty"`
-	Nonce     string `json:"nonce"`
-	Secret    string `json:"secret"`
+	WalletID          string `json:"walletId"`
+	PublicKey         string `json:"publicKey"`
+	Version           uint64 `json:"version"`
+	CreatedAt         string `json:"createdAt"`
+	RotatedAt         string `json:"rotatedAt,omitempty"`
+	RetiredAt         string `json:"retiredAt,omitempty"`
+	SuccessorWalletID string `json:"successorWalletId,omitempty"`
+	RotationID        string `json:"rotationId,omitempty"`
+	Nonce             string `json:"nonce"`
+	Secret            string `json:"secret"`
 }
 
 type signerOperationV2 struct {
-	RequestID           string `json:"requestId"`
-	WalletID            string `json:"walletId"`
-	IntentType          string `json:"intentType"`
-	IntentDigest        string `json:"intentDigest"`
-	TransactionDigest   string `json:"transactionDigest,omitempty"`
-	SignedTxBase64      string `json:"signedTxBase64,omitempty"`
-	PolicyHash          string `json:"policyHash"`
-	Asset               string `json:"asset"`
-	Amount              string `json:"amount"`
-	State               string `json:"state"`
-	ReservationActive   bool   `json:"reservationActive"`
-	UsageBucket         string `json:"usageBucket"`
-	ReservedAt          string `json:"reservedAt"`
-	BroadcastAt         string `json:"broadcastAt,omitempty"`
-	ConfirmedAt         string `json:"confirmedAt,omitempty"`
-	UpdatedAt           string `json:"updatedAt"`
-	Signature           string `json:"signature,omitempty"`
-	Error               string `json:"error,omitempty"`
-	ExecutionAttempt    uint64 `json:"executionAttempt,omitempty"`
-	ExecutionLeaseUntil string `json:"executionLeaseUntil,omitempty"`
-	AuthorizationProof  string `json:"authorizationProof,omitempty"`
-	AuthorizedAt        string `json:"authorizedAt,omitempty"`
+	RequestID           string                         `json:"requestId"`
+	WalletID            string                         `json:"walletId"`
+	IntentType          string                         `json:"intentType"`
+	IntentDigest        string                         `json:"intentDigest"`
+	TransactionDigest   string                         `json:"transactionDigest,omitempty"`
+	SignedTxBase64      string                         `json:"signedTxBase64,omitempty"`
+	PolicyHash          string                         `json:"policyHash"`
+	Asset               string                         `json:"asset"`
+	Amount              string                         `json:"amount"`
+	Reservations        []signerOperationReservationV2 `json:"reservations,omitempty"`
+	State               string                         `json:"state"`
+	ReservationActive   bool                           `json:"reservationActive"`
+	UsageBucket         string                         `json:"usageBucket"`
+	ReservedAt          string                         `json:"reservedAt"`
+	BroadcastAt         string                         `json:"broadcastAt,omitempty"`
+	ConfirmedAt         string                         `json:"confirmedAt,omitempty"`
+	UpdatedAt           string                         `json:"updatedAt"`
+	Signature           string                         `json:"signature,omitempty"`
+	Error               string                         `json:"error,omitempty"`
+	ExecutionAttempt    uint64                         `json:"executionAttempt,omitempty"`
+	ExecutionLeaseUntil string                         `json:"executionLeaseUntil,omitempty"`
+	AuthorizationProof  string                         `json:"authorizationProof,omitempty"`
+	AuthorizedAt        string                         `json:"authorizedAt,omitempty"`
+	ExternalResult      *signerExternalResultV2        `json:"externalResult,omitempty"`
+}
+
+// signerExternalResultV2 deliberately contains only public, non-secret
+// identifiers that callers need to render a durable external workflow result.
+// API keys, JWTs, unsigned/signed transaction bytes, and Jupiter request bodies
+// are signer-internal and must never be represented here.
+type signerExternalResultV2 struct {
+	Provider   string `json:"provider"`
+	Action     string `json:"action"`
+	OrderID    string `json:"orderId,omitempty"`
+	OrderState string `json:"orderState,omitempty"`
+}
+
+// signerOperationReservationV2 records every durable spend exposure claimed
+// by an operation. Asset/Amount above remain the primary semantic effect for
+// protocol compatibility; Reservations is the complete accounting record.
+// Multiple reservations for one asset are coalesced before being persisted.
+type signerOperationReservationV2 struct {
+	Asset       string `json:"asset"`
+	Amount      string `json:"amount"`
+	UsageBucket string `json:"usageBucket"`
+}
+
+type signerReservationRequirementV2 struct {
+	Asset       string
+	Amount      *big.Int
+	Destination string
+	Primary     bool
 }
 
 type normalizedIntentV2 struct {
@@ -339,10 +387,14 @@ func normalizeSignerIntentForWalletV2(input signerIntentV2, wallet *solana.Publi
 	}, nil
 }
 
-func requiredProgramsForIntentV2(intentType, primaryProgram string) []string {
+func requiredProgramsForIntentV2(intentType string, primaryProgram string) []string {
 	programs := []string{primaryProgram}
 	if intentType == intentSolanaSPLTransferChecked {
-		programs = append(programs, solana.SystemProgramID.String(), solana.SPLAssociatedTokenAccountProgramID.String())
+		programs = append(
+			programs,
+			solana.SystemProgramID.String(),
+			solana.SPLAssociatedTokenAccountProgramID.String(),
+		)
 	}
 	programs, _ = normalizeSortedStringsV2(programs, func(raw string) (string, error) {
 		return normalizePublicKeyV2(raw, "required program")
@@ -497,6 +549,108 @@ func policyAssetForIntentV2(policy signerPolicyV2, intent normalizedIntentV2) (s
 		return asset, nil
 	}
 	return signerPolicyAssetV2{}, fmt.Errorf("policy denies asset %s", intent.Asset)
+}
+
+func policyAssetByNameV2(policy signerPolicyV2, assetName string) (signerPolicyAssetV2, error) {
+	for _, asset := range policy.Assets {
+		if asset.Asset == assetName {
+			return asset, nil
+		}
+	}
+	return signerPolicyAssetV2{}, fmt.Errorf("policy denies asset %s", assetName)
+}
+
+func signerFeeReservationForIntentV2(intent normalizedIntentV2) (*big.Int, error) {
+	if intent.Intent.Type == intentFederationBondChallenge {
+		return big.NewInt(0), nil
+	}
+	if isJupiterIntentTypeV2(intent.Intent.Type) {
+		if intent.Intent.Jupiter == nil {
+			return nil, errors.New("typed Jupiter intent is missing its fee ceiling")
+		}
+		fee, ok := new(big.Int).SetString(intent.Intent.Jupiter.MaxFeeLamports, 10)
+		if !ok || fee.Sign() <= 0 {
+			return nil, errors.New("typed Jupiter maxFeeLamports must be positive")
+		}
+		if fee.Cmp(new(big.Int).SetUint64(signerNativeFeeReservationV2)) > 0 {
+			return nil, fmt.Errorf("typed Jupiter maxFeeLamports exceeds signer ceiling %d", signerNativeFeeReservationV2)
+		}
+		// Durable accounting uses the signer-owned ceiling, not the caller's
+		// claimed maximum or an RPC's simulated fee. This remains conservative
+		// if the base fee changes or a broadcast fails after fee collection.
+		return new(big.Int).SetUint64(signerNativeFeeReservationV2), nil
+	}
+	return new(big.Int).SetUint64(signerNativeFeeReservationV2), nil
+}
+
+// policyReservationsForIntentV2 validates the semantic asset and the
+// independent SOL fee/rent exposure, then coalesces both by asset. This makes
+// a native transfer consume amount+fee from one per-tx and daily SOL cap while
+// an SPL transfer atomically consumes both its mint cap and the native cap.
+func policyReservationsForIntentV2(policy signerPolicyV2, intent normalizedIntentV2) ([]signerReservationRequirementV2, error) {
+	primaryPolicy, err := policyAssetForIntentV2(policy, intent)
+	if err != nil {
+		return nil, err
+	}
+	fee, err := signerFeeReservationForIntentV2(intent)
+	if err != nil {
+		return nil, err
+	}
+	requirements := make([]signerReservationRequirementV2, 0, 2)
+	feeOnlyPrimary := false
+	switch intent.Intent.Type {
+	case intentSolanaTriggerAuth, intentSolanaTriggerCancel, intentSolanaTriggerWithdraw:
+		// These operations historically expose maxFeeLamports as their primary
+		// semantic amount. It is not an additional principal transfer; the
+		// signer-owned fee reservation below replaces it for durable accounting.
+		feeOnlyPrimary = true
+	}
+	if !feeOnlyPrimary {
+		requirements = append(requirements, signerReservationRequirementV2{
+			Asset: intent.Asset, Amount: new(big.Int).Set(intent.Amount), Destination: intent.Destination, Primary: true,
+		})
+	}
+	policies := map[string]signerPolicyAssetV2{intent.Asset: primaryPolicy}
+	if fee.Sign() > 0 {
+		nativePolicy, policyErr := policyAssetByNameV2(policy, "solana:native")
+		if policyErr != nil {
+			return nil, errors.New("explicit positive solana:native policy is required for transaction fees and rent")
+		}
+		policies["solana:native"] = nativePolicy
+		requirements = append(requirements, signerReservationRequirementV2{
+			Asset: "solana:native", Amount: fee,
+		})
+	}
+
+	coalesced := make(map[string]signerReservationRequirementV2, len(requirements))
+	for _, requirement := range requirements {
+		current, ok := coalesced[requirement.Asset]
+		if !ok {
+			current = signerReservationRequirementV2{Asset: requirement.Asset, Amount: big.NewInt(0)}
+		}
+		current.Amount.Add(current.Amount, requirement.Amount)
+		if requirement.Primary {
+			current.Primary = true
+			current.Destination = requirement.Destination
+		}
+		coalesced[requirement.Asset] = current
+	}
+	assets := make([]string, 0, len(coalesced))
+	for asset := range coalesced {
+		assets = append(assets, asset)
+	}
+	sort.Strings(assets)
+	out := make([]signerReservationRequirementV2, 0, len(assets))
+	for _, asset := range assets {
+		requirement := coalesced[asset]
+		assetPolicy := policies[asset]
+		maxPerTx, ok := new(big.Int).SetString(assetPolicy.MaxPerTx, 10)
+		if !ok || maxPerTx.Sign() <= 0 || requirement.Amount.Sign() <= 0 || requirement.Amount.Cmp(maxPerTx) > 0 {
+			return nil, fmt.Errorf("policy per-transaction cap exceeded for %s including fee/rent exposure", asset)
+		}
+		out = append(out, requirement)
+	}
+	return out, nil
 }
 
 func containsStringV2(values []string, target string) bool {

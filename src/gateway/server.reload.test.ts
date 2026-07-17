@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readConfigFileSnapshot, type ConfigFileSnapshot } from "../config/config.js";
 import { resolveMainSessionKeyFromConfig } from "../config/sessions.js";
 import { drainSystemEvents } from "../infra/system-events.js";
 import {
@@ -12,6 +13,7 @@ import {
 } from "./test-helpers.js";
 
 const hoisted = vi.hoisted(() => {
+  const lifecycleEvents: string[] = [];
   const cronInstances: Array<{
     start: ReturnType<typeof vi.fn>;
     stop: ReturnType<typeof vi.fn>;
@@ -25,7 +27,9 @@ const hoisted = vi.hoisted(() => {
     }
   }
 
-  const browserStop = vi.fn(async () => {});
+  const browserStop = vi.fn(async () => {
+    lifecycleEvents.push("browser.stop");
+  });
   const startBrowserControlServerIfEnabled = vi.fn(async () => ({
     stop: browserStop,
   }));
@@ -37,7 +41,7 @@ const hoisted = vi.hoisted(() => {
     updateConfig: heartbeatUpdateConfig,
   }));
 
-  const startGmailWatcher = vi.fn(async () => ({ started: true }));
+  const startGmailWatcher = vi.fn(async (_config: unknown) => ({ started: true }));
   const stopGmailWatcher = vi.fn(async () => {});
 
   const providerManager = {
@@ -112,14 +116,33 @@ const hoisted = vi.hoisted(() => {
 
   const createChannelManager = vi.fn(() => providerManager);
 
-  const reloaderStop = vi.fn(async () => {});
-  let onHotReload: ((plan: unknown, nextConfig: unknown) => Promise<void>) | null = null;
-  let onRestart: ((plan: unknown, nextConfig: unknown) => void) | null = null;
+  let reloaderStopped = false;
+  let onStop: (() => void) | null = null;
+  const reloaderStop = vi.fn(async () => {
+    if (reloaderStopped) {
+      return;
+    }
+    reloaderStopped = true;
+    lifecycleEvents.push("configReloader.stop");
+    onStop?.();
+  });
+  let onHotReload:
+    | ((plan: unknown, nextConfig: unknown, snapshot: ConfigFileSnapshot) => Promise<void>)
+    | null = null;
+  let onRestart:
+    | ((plan: unknown, nextConfig: unknown, snapshot: ConfigFileSnapshot) => Promise<void>)
+    | null = null;
 
   const startGatewayConfigReloader = vi.fn(
-    (opts: { onHotReload: typeof onHotReload; onRestart: typeof onRestart }) => {
+    (opts: {
+      onHotReload: typeof onHotReload;
+      onRestart: typeof onRestart;
+      onStop?: () => void;
+    }) => {
+      reloaderStopped = false;
       onHotReload = opts.onHotReload;
       onRestart = opts.onRestart;
+      onStop = opts.onStop ?? null;
       return { stop: reloaderStop };
     },
   );
@@ -127,6 +150,7 @@ const hoisted = vi.hoisted(() => {
   return {
     CronService: CronServiceMock,
     cronInstances,
+    lifecycleEvents,
     browserStop,
     startBrowserControlServerIfEnabled,
     heartbeatStop,
@@ -164,7 +188,8 @@ vi.mock("./server-channels.js", () => ({
   createChannelManager: hoisted.createChannelManager,
 }));
 
-vi.mock("./config-reload.js", () => ({
+vi.mock("./config-reload.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./config-reload.js")>()),
   startGatewayConfigReloader: hoisted.startGatewayConfigReloader,
 }));
 
@@ -177,6 +202,7 @@ describe("gateway hot reload", () => {
   let prevOpenAiApiKey: string | undefined;
 
   beforeEach(() => {
+    hoisted.lifecycleEvents.length = 0;
     prevSkipChannels = process.env.FASED_SKIP_CHANNELS;
     prevSkipGmail = process.env.FASED_SKIP_GMAIL_WATCHER;
     prevSkipProviders = process.env.FASED_SKIP_PROVIDERS;
@@ -186,7 +212,7 @@ describe("gateway hot reload", () => {
     delete process.env.FASED_SKIP_PROVIDERS;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (prevSkipChannels === undefined) {
       delete process.env.FASED_SKIP_CHANNELS;
     } else {
@@ -206,6 +232,10 @@ describe("gateway hot reload", () => {
       delete process.env.OPENAI_API_KEY;
     } else {
       process.env.OPENAI_API_KEY = prevOpenAiApiKey;
+    }
+    const configPath = process.env.FASED_CONFIG_PATH;
+    if (configPath) {
+      await fs.writeFile(configPath, "{}\n", "utf8");
     }
   });
 
@@ -233,6 +263,15 @@ describe("gateway hot reload", () => {
       )}\n`,
       "utf8",
     );
+  }
+
+  async function writeConfigSnapshot(config: unknown): Promise<ConfigFileSnapshot> {
+    const configPath = process.env.FASED_CONFIG_PATH;
+    if (!configPath) {
+      throw new Error("FASED_CONFIG_PATH is not set");
+    }
+    await fs.writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+    return await readConfigFileSnapshot();
   }
 
   async function writeAuthProfileEnvRefStore() {
@@ -296,6 +335,7 @@ describe("gateway hot reload", () => {
           imessage: { enabled: true },
         },
       };
+      const nextSnapshot = await writeConfigSnapshot(nextConfig);
 
       await onHotReload?.(
         {
@@ -322,17 +362,19 @@ describe("gateway hot reload", () => {
           noopPaths: [],
         },
         nextConfig,
+        nextSnapshot,
       );
 
       expect(hoisted.stopGmailWatcher).toHaveBeenCalled();
-      expect(hoisted.startGmailWatcher).toHaveBeenCalledWith(nextConfig);
+      const appliedConfig = hoisted.startGmailWatcher.mock.calls.at(-1)?.[0];
+      expect(appliedConfig).toMatchObject(nextConfig);
 
       expect(hoisted.browserStop).toHaveBeenCalledTimes(1);
       expect(hoisted.startBrowserControlServerIfEnabled).toHaveBeenCalledTimes(2);
 
       expect(hoisted.startHeartbeatRunner).toHaveBeenCalledTimes(1);
       expect(hoisted.heartbeatUpdateConfig).toHaveBeenCalledTimes(1);
-      expect(hoisted.heartbeatUpdateConfig).toHaveBeenCalledWith(nextConfig);
+      expect(hoisted.heartbeatUpdateConfig).toHaveBeenCalledWith(appliedConfig);
 
       expect(hoisted.cronInstances.length).toBe(2);
       expect(hoisted.cronInstances[0].stop).toHaveBeenCalledTimes(1);
@@ -357,6 +399,8 @@ describe("gateway hot reload", () => {
       const signalSpy = vi.fn();
       process.once("SIGUSR1", signalSpy);
 
+      const restartConfig = {};
+      const restartSnapshot = await writeConfigSnapshot(restartConfig);
       const restartResult = onRestart?.(
         {
           changedPaths: ["gateway.port"],
@@ -371,7 +415,8 @@ describe("gateway hot reload", () => {
           restartChannels: new Set(),
           noopPaths: [],
         },
-        {},
+        restartConfig,
+        restartSnapshot,
       );
       await Promise.resolve(restartResult);
 
@@ -391,9 +436,7 @@ describe("gateway hot reload", () => {
     await writeAuthProfileEnvRefStore();
     delete process.env.MISSING_FASED_AUTH_REF;
     try {
-      await expect(withGatewayServer(async () => {})).rejects.toThrow(
-        'Environment variable "MISSING_FASED_AUTH_REF" is missing or empty.',
-      );
+      await expect(withGatewayServer(async () => {})).rejects.toThrow("SECRETS_RESOLUTION_FAILED");
     } finally {
       await removeMainAuthProfileStore();
     }
@@ -431,23 +474,24 @@ describe("gateway hot reload", () => {
           },
         },
       };
+      const nextSnapshot = await readConfigFileSnapshot();
 
       delete process.env.OPENAI_API_KEY;
-      await expect(onHotReload?.(plan, nextConfig)).rejects.toThrow(
-        'Environment variable "OPENAI_API_KEY" is missing or empty.',
-      );
+      await expect(onHotReload?.(plan, nextConfig, nextSnapshot)).rejects.toMatchObject({
+        code: "SECRETS_RESOLUTION_FAILED",
+      });
       const degradedEvents = drainSystemEvents(sessionKey);
       expect(degradedEvents.some((event) => event.includes("[SECRETS_RELOADER_DEGRADED]"))).toBe(
         true,
       );
 
-      await expect(onHotReload?.(plan, nextConfig)).rejects.toThrow(
-        'Environment variable "OPENAI_API_KEY" is missing or empty.',
-      );
+      await expect(onHotReload?.(plan, nextConfig, nextSnapshot)).rejects.toMatchObject({
+        code: "SECRETS_RESOLUTION_FAILED",
+      });
       expect(drainSystemEvents(sessionKey)).toEqual([]);
 
       process.env.OPENAI_API_KEY = "sk-recovered";
-      await expect(onHotReload?.(plan, nextConfig)).resolves.toBeUndefined();
+      await expect(onHotReload?.(plan, nextConfig, nextSnapshot)).resolves.toBeUndefined();
       const recoveredEvents = drainSystemEvents(sessionKey);
       expect(recoveredEvents.some((event) => event.includes("[SECRETS_RELOADER_RECOVERED]"))).toBe(
         true,
@@ -465,12 +509,26 @@ describe("gateway hot reload", () => {
         rpcReq<{ warningCount: number }>(ws, "secrets.reload", {}),
         rpcReq<{ warningCount: number }>(ws, "secrets.reload", {}),
       ]);
-      expect(first.ok).toBe(true);
-      expect(second.ok).toBe(true);
+      const results = [first, second];
+      expect(results.filter((result) => result.ok)).toHaveLength(1);
+      const stale = results.find((result) => !result.ok);
+      const staleError = stale?.error as { details?: { code?: string } } | undefined;
+      expect(staleError?.details).toEqual({ code: "SECRETS_SOURCE_STALE" });
     } finally {
       ws.close();
       await server.close();
     }
+  });
+
+  it("stops the config watcher once before base component teardown", async () => {
+    await withGatewayServer(async () => {});
+
+    expect(hoisted.lifecycleEvents.filter((event) => event === "configReloader.stop")).toHaveLength(
+      1,
+    );
+    expect(hoisted.lifecycleEvents.indexOf("configReloader.stop")).toBeLessThan(
+      hoisted.lifecycleEvents.indexOf("browser.stop"),
+    );
   });
 });
 

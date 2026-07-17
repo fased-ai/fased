@@ -97,6 +97,31 @@ describe("applyNonInteractiveWalletConfig", () => {
     expect(next.wallet?.runtime?.enabled).toBe(false);
   });
 
+  it("keeps automated execution disabled when a managed wallet is first enabled", () => {
+    vi.stubEnv("FASED_GATEWAY_MODE", "managed");
+    const runtime = createRuntimeStub();
+    const next = applyNonInteractiveWalletConfig({
+      nextConfig: {},
+      opts: { walletEnabled: true } as OnboardOptions,
+      runtime,
+    });
+
+    expect(next.wallet?.runtime?.enabled).toBe(true);
+    expect(next.wallet?.runtime?.policy?.directSigning).toBe(false);
+  });
+
+  it("enables automated execution only when explicitly requested", () => {
+    vi.stubEnv("FASED_GATEWAY_MODE", "managed");
+    const runtime = createRuntimeStub();
+    const next = applyNonInteractiveWalletConfig({
+      nextConfig: {},
+      opts: { walletEnabled: true, walletDirectSigning: true } as OnboardOptions,
+      runtime,
+    });
+
+    expect(next.wallet?.runtime?.policy?.directSigning).toBe(true);
+  });
+
   it("respects explicit disable flag", () => {
     const runtime = createRuntimeStub();
     const next = applyNonInteractiveWalletConfig({

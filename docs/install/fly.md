@@ -26,10 +26,8 @@ mining must not be enabled on this path.
 - For an always-on server, provision a normal Linux VPS and run the maintained
   [VPS Hosting installer](/install/vps):
 
-  ```bash
-  curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
-    | bash -s -- --hosting
-  ```
+  Follow the [pre-execution verified tagged VPS bootstrap](/install/vps#3-install-fased-and-connect-through-tailscale)
+  from the provider root console.
 
 - For a containerized Gateway on your own computer, use the supported
   [Local Docker](/install/docker) guide.

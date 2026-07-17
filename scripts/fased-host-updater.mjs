@@ -29,7 +29,7 @@ const SIGNER_GATE_PATH = "/var/lib/fased-signer-update-gate/active";
 const TRANSACTIONS_DIR = path.join(STATE_DIR, "transactions");
 const MAX_REQUEST_BYTES = 4096;
 const REQUEST_TIMEOUT_MS = 20 * 60_000;
-const JOURNAL_SCHEMA_VERSION = 1;
+const JOURNAL_SCHEMA_VERSION = 2;
 const PROTOCOL_SCHEMA_VERSION = 2;
 const TRANSACTION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -54,8 +54,9 @@ const TRANSACTION_PHASES = new Set([
 
 export const PRE_V2_HOSTING_MIGRATION_MESSAGE = [
   "This hosted installation needs the one-time signer-v2 security migration before it can update.",
-  "From a VPS provider console or a root SSH session, run:",
-  "curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --repair-hosting",
+  "From a VPS provider console or a root SSH session, follow the pre-execution verified tagged repair procedure at https://docs.fased.ai/install/vps.",
+  "After gh attestation verify succeeds, execute that verified install.sh asset with --repair-hosting --release vX.Y.Z.",
+  "Never run /home/app/fased/install.sh with sudo or as root.",
   "The current Gateway, signer, wallets, and persistent state were left unchanged.",
 ].join(" ");
 
@@ -276,21 +277,6 @@ async function verifyReleaseAsset(assetPath, version, stateDir) {
   );
 }
 
-async function verifyAdjacentChecksum(assetPath, checksumPath, assetName) {
-  const checksum = await fsp.readFile(checksumPath, "utf8");
-  const expected = checksum
-    .split(/\r?\n/)
-    .map((line) => line.trim().split(/\s+/))
-    .find((parts) => parts[1]?.replace(/^\*/, "") === assetName)?.[0]
-    ?.toLowerCase();
-  if (!expected || !/^[a-f0-9]{64}$/.test(expected)) {
-    throw new Error("official signer checksum entry is missing");
-  }
-  if ((await sha256(assetPath)) !== expected) {
-    throw new Error("official signer checksum mismatch");
-  }
-}
-
 async function readVersionFile(filePath) {
   try {
     return parseReleaseVersion(await fsp.readFile(filePath, "utf8"));
@@ -301,6 +287,111 @@ async function readVersionFile(filePath) {
 
 function releaseAllowedForChannel(version, channel) {
   return !version.includes("-") || channel.trim() === "beta";
+}
+
+function parseSignerReleaseIdentity(value, expectedVersion) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("signer release identity is missing");
+  }
+  const keys = Object.keys(value).toSorted();
+  if (keys.join(",") !== "buildInputDigest,commit,development,version") {
+    throw new Error("signer release identity contains unsupported fields");
+  }
+  const version = parseReleaseVersion(value.version);
+  if (
+    (expectedVersion && version !== expectedVersion) ||
+    !/^[a-f0-9]{40}$/.test(value.commit || "") ||
+    !/^sha256:[a-f0-9]{64}$/.test(value.buildInputDigest || "") ||
+    value.development !== false
+  ) {
+    throw new Error("signer release identity is development, malformed, or mismatched");
+  }
+  return Object.freeze({
+    version,
+    commit: value.commit,
+    buildInputDigest: value.buildInputDigest,
+    development: false,
+  });
+}
+
+function canonicalJSON(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => canonicalJSON(entry)).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value)
+      .toSorted()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJSON(value[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function parseUnifiedHostedSignerRelease(value, expectedVersion, platform) {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    Object.keys(value).toSorted().join(",") !== "application,release,schemaVersion,signer" ||
+    value.schemaVersion !== 2
+  ) {
+    throw new Error("attested unified hosted release manifest schema is invalid");
+  }
+  const release = value.release;
+  if (
+    !release ||
+    Object.keys(release).toSorted().join(",") !== "commit,tag,version" ||
+    release.version !== expectedVersion ||
+    release.tag !== `v${expectedVersion}` ||
+    !/^[a-f0-9]{40}$/.test(release.commit || "")
+  ) {
+    throw new Error("attested unified hosted release identity is malformed or mismatched");
+  }
+  const signer = value.signer;
+  if (
+    !signer ||
+    Object.keys(signer).toSorted().join(",") !==
+      "capabilities,capabilitiesDigest,platforms,release" ||
+    !/^sha256:[a-f0-9]{64}$/.test(signer.capabilitiesDigest || "") ||
+    `sha256:${createHash("sha256").update(canonicalJSON(signer.capabilities)).digest("hex")}` !==
+      signer.capabilitiesDigest ||
+    signer.capabilities?.protocol?.current !== 2 ||
+    signer.capabilities?.protocol?.min !== 2 ||
+    signer.capabilities?.protocol?.max !== 2
+  ) {
+    throw new Error("attested unified signer capability contract is invalid");
+  }
+  const signerRelease = parseSignerReleaseIdentity(signer.release, expectedVersion);
+  if (signerRelease.commit !== release.commit) {
+    throw new Error("attested hosted app and signer commits do not match");
+  }
+  const artifact = signer.platforms?.[platform];
+  if (
+    !artifact ||
+    Object.keys(artifact).toSorted().join(",") !== "asset,sha256" ||
+    !/^[A-Za-z0-9][A-Za-z0-9._-]+$/.test(artifact.asset || "") ||
+    !/^[a-f0-9]{64}$/.test(artifact.sha256 || "")
+  ) {
+    throw new Error(`attested unified signer release has no valid ${platform} artifact`);
+  }
+  return {
+    release: signerRelease,
+    artifact,
+    binding: {
+      releaseCommit: release.commit,
+      capabilitiesDigest: signer.capabilitiesDigest,
+    },
+  };
+}
+
+function signerReleaseIdentitiesEqual(left, right) {
+  return (
+    left?.version === right?.version &&
+    left?.commit === right?.commit &&
+    left?.buildInputDigest === right?.buildInputDigest &&
+    left?.development === false &&
+    right?.development === false
+  );
 }
 
 async function assertReleaseChannelAllowed(version, channelPath) {
@@ -325,7 +416,7 @@ async function assertReleaseChannelAllowed(version, channelPath) {
   }
 }
 
-function assertSignerV2Health(response) {
+function assertSignerV2Health(response, expectedRelease) {
   const protocol = response?.result?.capabilities?.protocol;
   if (
     response?.ok !== true ||
@@ -338,9 +429,14 @@ function assertSignerV2Health(response) {
   ) {
     throw new Error("signer health did not acknowledge protocol v2 and signer-owned custody");
   }
+  const release = parseSignerReleaseIdentity(response.result.release, expectedRelease?.version);
+  if (expectedRelease && !signerReleaseIdentitiesEqual(release, expectedRelease)) {
+    throw new Error("signer health release identity does not match the attested release manifest");
+  }
+  return release;
 }
 
-export async function probeSignerV2() {
+export async function probeSignerV2(expectedRelease) {
   const response = await new Promise((resolve, reject) => {
     const socket = net.createConnection({ path: "/run/fased-signerd/app.sock" });
     socket.setEncoding("utf8");
@@ -363,7 +459,7 @@ export async function probeSignerV2() {
     socket.once("timeout", () => reject(new Error("signer health probe timed out")));
     socket.once("error", reject);
   });
-  assertSignerV2Health(response);
+  return assertSignerV2Health(response, expectedRelease);
 }
 
 async function systemctl(...args) {
@@ -378,7 +474,7 @@ async function stopSignerService() {
   await systemctl("stop", "fased-signerd.service");
 }
 
-async function startSignerService({ requireV2 }) {
+async function startSignerService({ requireV2, expectedRelease }) {
   await systemctl("start", "fased-signerd.service");
   await systemctl("is-active", "--quiet", "fased-signerd.service");
   if (!requireV2) {
@@ -387,7 +483,7 @@ async function startSignerService({ requireV2 }) {
   let lastError;
   for (let attempt = 0; attempt < 30; attempt += 1) {
     try {
-      await probeSignerV2();
+      await probeSignerV2(expectedRelease);
       return;
     } catch (error) {
       lastError = error;
@@ -415,17 +511,30 @@ function validateJournal(value) {
   if (
     !value ||
     typeof value !== "object" ||
-    value.schemaVersion !== JOURNAL_SCHEMA_VERSION ||
+    !new Set([1, JOURNAL_SCHEMA_VERSION]).has(value.schemaVersion) ||
     !TRANSACTION_PHASES.has(value.phase)
   ) {
     throw new Error("host updater transaction journal is invalid");
   }
+  const version = parseReleaseVersion(value.version);
+  const releaseBinding = value.releaseBinding == null ? null : value.releaseBinding;
+  if (
+    releaseBinding &&
+    (!/^sha256:[a-f0-9]{64}$/.test(releaseBinding.manifestDigest || "") ||
+      !/^sha256:[a-f0-9]{64}$/.test(releaseBinding.signerArtifactDigest || "") ||
+      !/^sha256:[a-f0-9]{64}$/.test(releaseBinding.capabilitiesDigest || "") ||
+      !/^[a-f0-9]{40}$/.test(releaseBinding.releaseCommit || ""))
+  ) {
+    throw new Error("host updater release-manifest binding is invalid");
+  }
   return {
     ...value,
     transactionId: parseTransactionId(value.transactionId),
-    version: parseReleaseVersion(value.version),
+    version,
     previousVersion:
       value.previousVersion == null ? null : parseReleaseVersion(value.previousVersion),
+    release: parseSignerReleaseIdentity(value.release, version),
+    releaseBinding,
     changed: value.changed === true,
   };
 }
@@ -489,21 +598,37 @@ async function cleanupTransactionFiles(context, transactionId) {
 
 async function stageOfficialCandidate(version, candidatePath, context) {
   const arch = releaseArchitecture();
-  const assetName = `fased-signerd-linux-${arch}`;
+  const platform = `linux-${arch}`;
   const releaseUrl = `${RELEASE_BASE}/v${version}`;
   await fsp.mkdir(context.paths.stateDir, { recursive: true, mode: 0o700 });
   const staging = await fsp.mkdtemp(path.join(context.paths.stateDir, `.download-${version}-`));
-  const assetPath = path.join(staging, assetName);
-  const checksumsPath = path.join(staging, "fased-signerd-checksums.txt");
+  const releaseManifestName = "fased-hosted-release-v2.json";
+  const releaseManifestPath = path.join(staging, releaseManifestName);
   try {
-    await Promise.all([
-      download(`${releaseUrl}/${assetName}`, assetPath),
-      download(`${releaseUrl}/fased-signerd-checksums.txt`, checksumsPath),
-    ]);
-    await verifyAdjacentChecksum(assetPath, checksumsPath, assetName);
+    await download(`${releaseUrl}/${releaseManifestName}`, releaseManifestPath);
+    await verifyReleaseAsset(releaseManifestPath, version, context.paths.stateDir);
+    const manifestBytes = await fsp.readFile(releaseManifestPath);
+    const selected = parseUnifiedHostedSignerRelease(
+      JSON.parse(manifestBytes.toString("utf8")),
+      version,
+      platform,
+    );
+    const assetPath = path.join(staging, selected.artifact.asset);
+    await download(`${releaseUrl}/${selected.artifact.asset}`, assetPath);
+    if ((await sha256(assetPath)) !== selected.artifact.sha256) {
+      throw new Error("native signer does not match the attested unified release manifest");
+    }
     await verifyReleaseAsset(assetPath, version, context.paths.stateDir);
     await fsp.rm(candidatePath, { force: true });
     await atomicCopyFileDurable(assetPath, candidatePath, { mode: 0o755 });
+    return {
+      release: selected.release,
+      binding: {
+        ...selected.binding,
+        manifestDigest: `sha256:${createHash("sha256").update(manifestBytes).digest("hex")}`,
+        signerArtifactDigest: `sha256:${selected.artifact.sha256}`,
+      },
+    };
   } finally {
     await fsp.rm(staging, { recursive: true, force: true });
   }
@@ -522,7 +647,9 @@ function createTransactionContext(overrides = {}) {
         await stageOfficialCandidate(version, candidatePath, context)),
     stopSigner: overrides.stopSigner ?? stopSignerService,
     startSignerV2:
-      overrides.startSignerV2 ?? (async () => await startSignerService({ requireV2: true })),
+      overrides.startSignerV2 ??
+      (async ({ expectedRelease } = {}) =>
+        await startSignerService({ requireV2: true, expectedRelease })),
     startPreviousSigner:
       overrides.startPreviousSigner ??
       (async ({ requireV2 = false } = {}) => await startSignerService({ requireV2 })),
@@ -660,6 +787,7 @@ async function prepareSignerRelease(request, context) {
       version: active.version,
       phase: active.phase,
       changed: active.changed,
+      release: active.release,
     };
   }
 
@@ -669,10 +797,12 @@ async function prepareSignerRelease(request, context) {
   }
 
   let changed = true;
+  let release = null;
+  let releaseBinding = null;
   if (currentVersion === request.version) {
     try {
       await fsp.access(context.paths.signerPath, fs.constants.X_OK);
-      await context.probeSigner();
+      release = parseSignerReleaseIdentity(await context.probeSigner(), request.version);
       changed = false;
     } catch {
       changed = true;
@@ -690,13 +820,20 @@ async function prepareSignerRelease(request, context) {
       });
     }
     if (changed) {
-      await context.stageCandidate(request.version, txPaths.candidatePath, context);
+      const staged = await context.stageCandidate(request.version, txPaths.candidatePath, context);
+      release = parseSignerReleaseIdentity(staged?.release || staged, request.version);
+      releaseBinding = staged?.binding || null;
+      if (!releaseBinding) {
+        throw new Error("signer candidate omitted its attested unified release binding");
+      }
     }
     journal = await writeJournal(context, {
       schemaVersion: JOURNAL_SCHEMA_VERSION,
       transactionId: request.transactionId,
       version: request.version,
       previousVersion: currentVersion,
+      release,
+      releaseBinding,
       phase: "prepared",
       changed,
       createdAt: new Date().toISOString(),
@@ -719,6 +856,7 @@ async function prepareSignerRelease(request, context) {
     version: journal.version,
     phase: journal.phase,
     changed: journal.changed,
+    release: journal.release,
   };
 }
 
@@ -880,6 +1018,7 @@ async function authorizeGatewayRelease(request, context) {
     version: journal.version,
     phase: journal.phase,
     changed: journal.changed,
+    release: journal.release,
   };
 }
 
@@ -907,6 +1046,7 @@ async function gateGatewayRelease(request, context) {
     version: journal.version,
     phase: journal.phase,
     changed: journal.changed,
+    release: journal.release,
   };
 }
 
@@ -919,6 +1059,7 @@ async function activateSignerRelease(request, context) {
       version: journal.version,
       phase: journal.phase,
       changed: journal.changed,
+      release: journal.release,
     };
   }
   if (journal.phase !== "prepared") {
@@ -931,6 +1072,7 @@ async function activateSignerRelease(request, context) {
       version: journal.version,
       phase: journal.phase,
       changed: false,
+      release: journal.release,
     };
   }
 
@@ -958,7 +1100,7 @@ async function activateSignerRelease(request, context) {
     journal = await writeJournal(context, { ...journal, phase: "activating" });
     await fsp.rename(txPaths.candidatePath, context.paths.signerPath);
     await fsyncDirectory(path.dirname(context.paths.signerPath));
-    await context.startSignerV2();
+    await context.startSignerV2({ expectedRelease: journal.release });
     await atomicWriteFileDurable(context.paths.versionPath, `${journal.version}\n`, 0o600);
     journal = await writeJournal(context, { ...journal, phase: "active" });
     return {
@@ -966,6 +1108,7 @@ async function activateSignerRelease(request, context) {
       version: journal.version,
       phase: journal.phase,
       changed: true,
+      release: journal.release,
     };
   } catch (error) {
     let rollbackError = null;
@@ -996,6 +1139,7 @@ async function finishCommit(context, journal) {
     version: journal.version,
     phase: "committed",
     changed: journal.changed,
+    release: journal.release,
   };
 }
 

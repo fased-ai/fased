@@ -250,7 +250,10 @@ describe("gateway sessions patch", () => {
       agents: {
         defaults: {
           model: { primary: "openai-codex/gpt-5.5" },
-          models: { "openai-codex/gpt-5.5": {} },
+          models: {
+            "openai-codex/gpt-5.5": {},
+            "openai-codex/gpt-5.6-luna": {},
+          },
         },
       },
     } as FasedAgentConfig;
@@ -320,7 +323,7 @@ describe("gateway sessions patch", () => {
     }
   });
 
-  test("accepts model refs from authenticated providers even when the model allowlist is narrow", async () => {
+  test("rejects authenticated provider refs outside a narrow model allowlist", async () => {
     const store: Record<string, SessionEntry> = {};
     const cfg = {
       agents: {
@@ -345,15 +348,13 @@ describe("gateway sessions patch", () => {
       additionalAllowedModelProviders: ["openai"],
     });
 
-    expect(res.ok).toBe(true);
+    expect(res.ok).toBe(false);
     if (!res.ok) {
-      return;
+      expect(res.error.message).toContain("model not allowed: openai/gpt-5.5");
     }
-    expect(res.entry.providerOverride).toBe("openai");
-    expect(res.entry.modelOverride).toBe("gpt-5.5");
   });
 
-  test("accepts standard signed-in provider model refs when the gateway catalog is stale", async () => {
+  test("rejects stale signed-in provider refs outside an explicit allowlist", async () => {
     const store: Record<string, SessionEntry> = {};
     const cfg = {
       agents: {
@@ -377,12 +378,12 @@ describe("gateway sessions patch", () => {
       additionalAllowedModelProviders: ["openrouter"],
     });
 
-    expect(res.ok).toBe(true);
+    expect(res.ok).toBe(false);
     if (!res.ok) {
-      return;
+      expect(res.error.message).toContain(
+        "model not allowed: openrouter/mistralai/mistral-small-2603",
+      );
     }
-    expect(res.entry.providerOverride).toBe("openrouter");
-    expect(res.entry.modelOverride).toBe("mistralai/mistral-small-2603");
   });
 
   test("accepts explicit allowlisted refs absent from bundled catalog", async () => {
@@ -415,6 +416,67 @@ describe("gateway sessions patch", () => {
     }
     expect(res.entry.providerOverride).toBe("anthropic");
     expect(res.entry.modelOverride).toBe("claude-sonnet-4-6");
+  });
+
+  test("rejects an allowlisted model when its provider is not authenticated", async () => {
+    const store: Record<string, SessionEntry> = {};
+    const cfg = {
+      agents: {
+        defaults: {
+          model: { primary: "openai/gpt-5.2" },
+          models: {
+            "openai/gpt-5.2": {},
+            "anthropic/claude-sonnet-4-6": {},
+          },
+        },
+      },
+    } as FasedAgentConfig;
+
+    const res = await applySessionsPatchToStore({
+      cfg,
+      store,
+      storeKey: "agent:main:main",
+      patch: { key: "agent:main:main", model: "openai/gpt-5.2" },
+      loadGatewayModelCatalog: async () => [
+        { provider: "openai", id: "gpt-5.2", name: "GPT-5.2" },
+        { provider: "anthropic", id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
+      ],
+      additionalAllowedModelProviders: ["anthropic"],
+    });
+
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.error.message).toContain("not available for signed-in providers");
+    }
+  });
+
+  test("accepts an allowlisted stale-catalog model for an authenticated provider", async () => {
+    const store: Record<string, SessionEntry> = {};
+    const cfg = {
+      agents: {
+        defaults: {
+          model: { primary: "anthropic/claude-sonnet-4-6" },
+          models: {
+            "anthropic/claude-sonnet-4-6": {},
+          },
+        },
+      },
+    } as FasedAgentConfig;
+
+    const res = await applySessionsPatchToStore({
+      cfg,
+      store,
+      storeKey: "agent:main:main",
+      patch: { key: "agent:main:main", model: "anthropic/claude-sonnet-4-6" },
+      loadGatewayModelCatalog: async () => [],
+      additionalAllowedModelProviders: ["anthropic"],
+    });
+
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.entry.providerOverride).toBeUndefined();
+      expect(res.entry.modelOverride).toBeUndefined();
+    }
   });
 
   test("sets spawnDepth for subagent sessions", async () => {

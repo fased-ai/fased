@@ -103,7 +103,6 @@ export type OnboardOptions = {
   hostMaintenanceSession?: boolean;
   /** Internal flag for root-only host security preflight/prep flows. */
   hostSecurityOnly?: boolean;
-  tsAuthkey?: string;
   allowInsecure?: boolean;
   swapGb?: number;
   mode?: OnboardMode;

@@ -625,7 +625,7 @@ describe("models.auth.status handler", () => {
       agents: {
         defaults: {
           models: {
-            "anthropic/claude-opus-4-6": {},
+            "openrouter/openai/gpt-5.6-sol": {},
           },
         },
       },

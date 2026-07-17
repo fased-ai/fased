@@ -103,6 +103,7 @@ export async function applyInlineDirectiveOverrides(params: {
   let { provider, model } = params;
   let { contextTokens } = params;
   const directiveModelState = {
+    allowAnyModel: modelState.allowAnyModel,
     allowedModelKeys: modelState.allowedModelKeys,
     allowedModelCatalog: modelState.allowedModelCatalog,
     resetModelOverride: modelState.resetModelOverride,
@@ -258,6 +259,7 @@ export async function applyInlineDirectiveOverrides(params: {
     defaultProvider,
     defaultModel,
     aliasIndex,
+    allowAnyModel: modelState.allowAnyModel,
     allowedModelKeys: modelState.allowedModelKeys,
     provider,
     model,

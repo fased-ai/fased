@@ -11,6 +11,8 @@ export type SignerNetworkSummary = {
   version: number;
   hash?: string;
   ready: boolean;
+  rootAdminRequired?: boolean;
+  rootCommand?: string;
 };
 
 export type SignerPolicyInstallSummary = {
@@ -81,19 +83,13 @@ function redactSignerNetworkError(raw: string, secrets: string[]): string {
   return value.trim().slice(0, 2_000) || "signer network administration failed";
 }
 
-function signerAdminEnvironment(
-  env: NodeJS.ProcessEnv,
-  bootstrapSocket?: string,
-): NodeJS.ProcessEnv {
+function signerAdminEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {};
   for (const key of ["HOME", "PATH", "TMPDIR", "LANG", "LC_ALL", "TZ"] as const) {
     const value = String(env[key] ?? "").trim();
     if (value) {
       out[key] = value;
     }
-  }
-  if (bootstrapSocket) {
-    out.FASED_HOST_BOOTSTRAP_SOCKET = bootstrapSocket;
   }
   return out;
 }
@@ -144,7 +140,6 @@ export function configureSignerOwnedWalletNetwork(params: {
   env?: NodeJS.ProcessEnv;
   signerBinPath?: string;
   controlSocketPath?: string;
-  bootstrapCtlPath?: string;
 }): SignerNetworkSummary {
   const env = params.env ?? process.env;
   const walletId = canonicalSignerWalletId(params.walletId);
@@ -160,34 +155,18 @@ export function configureSignerOwnedWalletNetwork(params: {
       .toLowerCase() === "hosting";
 
   if (hosting) {
-    const bootstrapCtlPath =
-      params.bootstrapCtlPath ?? String(env.FASED_HOST_BOOTSTRAP_CTL ?? "").trim();
-    if (!bootstrapCtlPath || !path.isAbsolute(bootstrapCtlPath)) {
-      throw new Error(
-        "Hosting signer network setup requires the temporary root bootstrap; rerun sudo ./install.sh --repair-hosting",
-      );
-    }
-    const bootstrapSocket =
-      String(env.FASED_HOST_BOOTSTRAP_SOCKET ?? "").trim() ||
-      "/run/fased-host-bootstrap/control.sock";
-    const input = `${JSON.stringify({
-      schemaVersion: 1,
+    // The app/Gateway never receives a privileged root channel. Wallet creation remains
+    // fail-closed; a host administrator activates RPC state later from a root-only file.
+    return {
       walletId,
-      primaryRpcUrl,
-      ...(fallbackRpcUrl ? { fallbackRpcUrl } : {}),
-    })}\n`;
-    const output = runSignerAdmin({
-      command: process.execPath,
-      args: [bootstrapCtlPath, "signer-network-put"],
-      input,
-      env: signerAdminEnvironment(env, bootstrapSocket),
-      secrets,
-    });
-    const summary = parseSignerNetworkSummary(output, walletId);
-    if (!summary.configured || !summary.ready || !summary.hash || summary.version < 1) {
-      throw new Error("hosted signer network update did not return ready metadata");
-    }
-    return summary;
+      configured: false,
+      version: 0,
+      ready: false,
+      rootAdminRequired: true,
+      rootCommand:
+        `/usr/local/sbin/fased-signer-network --wallet-id ${walletId} ` +
+        "--network-file /root/fased-network.json",
+    };
   }
 
   const signerBinPath =
@@ -225,9 +204,8 @@ export function configureSignerOwnedWalletNetwork(params: {
 }
 
 /**
- * Install the explicit deny-all hosted policy while the root bootstrap channel exists.
- * Permission selection is intentionally not part of fresh onboarding; expanding policy later
- * requires a separately reviewed host-admin flow.
+ * Hosted policy changes are deliberately unavailable to the app process. New signer-owned
+ * wallets are born deny-all; policy expansion requires the root-only installed policy CLI.
  */
 export function applyHostedSignerOwnedWalletPolicy(params: {
   walletId: string;
@@ -239,67 +217,20 @@ export function applyHostedSignerOwnedWalletPolicy(params: {
     assets: unknown[];
   };
   env?: NodeJS.ProcessEnv;
-  bootstrapCtlPath?: string;
 }): SignerPolicyInstallSummary {
-  const env = params.env ?? process.env;
+  void (params.env ?? process.env);
   const walletId = canonicalSignerWalletId(params.walletId);
-  const bootstrapCtlPath =
-    params.bootstrapCtlPath ?? String(env.FASED_HOST_BOOTSTRAP_CTL ?? "").trim();
-  if (!bootstrapCtlPath || !path.isAbsolute(bootstrapCtlPath)) {
-    throw new Error(
-      "Hosted signer policy setup requires the temporary root bootstrap; rerun sudo ./install.sh --repair-hosting",
-    );
-  }
   if (
     params.policy.operations.length !== 0 ||
     params.policy.programs.length !== 0 ||
     params.policy.assets.length !== 0
   ) {
-    throw new Error("Fresh hosted signer bootstrap accepts only an explicit deny-all policy");
+    throw new Error("Fresh hosted signer setup accepts only the signer's built-in deny-all policy");
   }
-  const policy = { ...params.policy, walletId };
-  const input = `${JSON.stringify({
-    schemaVersion: 1,
-    walletId,
-    policyJson: JSON.stringify(policy),
-  })}\n`;
-  const bootstrapSocket =
-    String(env.FASED_HOST_BOOTSTRAP_SOCKET ?? "").trim() ||
-    "/run/fased-host-bootstrap/control.sock";
-  const output = runSignerAdmin({
-    command: process.execPath,
-    args: [bootstrapCtlPath, "signer-policy-put"],
-    input,
-    env: signerAdminEnvironment(env, bootstrapSocket),
-    secrets: [],
-  });
-  let value: unknown;
-  try {
-    value = JSON.parse(output);
-  } catch {
-    throw new Error("hosted signer policy setup returned invalid JSON");
-  }
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("hosted signer policy setup returned an invalid summary");
-  }
-  const summary = value as Record<string, unknown>;
-  if (
-    Object.keys(summary).toSorted().join(",") !== "hash,role,version,walletId" ||
-    summary.walletId !== walletId ||
-    !new Set(["agent", "mining", "vault"]).has(String(summary.role)) ||
-    !Number.isSafeInteger(summary.version) ||
-    Number(summary.version) < 2 ||
-    typeof summary.hash !== "string" ||
-    !/^sha256:[0-9a-f]{64}$/.test(summary.hash)
-  ) {
-    throw new Error("hosted signer policy setup returned an invalid summary");
-  }
-  return {
-    walletId,
-    role: summary.role as SignerPolicyInstallSummary["role"],
-    version: Number(summary.version),
-    hash: summary.hash,
-  };
+  throw new Error(
+    `Hosted signer policy for ${walletId} requires the root-only ` +
+      "/usr/local/sbin/fased-signer-policy command and a root-owned policy file.",
+  );
 }
 
 export const __testing = {

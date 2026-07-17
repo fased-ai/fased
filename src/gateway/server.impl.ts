@@ -48,6 +48,7 @@ import { createEmptyPluginRegistry, type PluginRegistry } from "../plugins/regis
 import type { PluginServicesHandle } from "../plugins/services.js";
 import { getTotalQueueSize } from "../process/command-queue.js";
 import type { RuntimeEnv } from "../runtime.js";
+import { clearSecretsRuntimeSnapshot } from "../secrets/runtime.js";
 import { onSessionTranscriptUpdate } from "../sessions/transcript-events.js";
 import { readWalletProviderRegistry } from "../wallet/wallet-provider-registry.js";
 import {
@@ -74,6 +75,7 @@ import { GATEWAY_EVENTS, listGatewayMethods } from "./server-methods-list.js";
 import { coreGatewayHandlers } from "./server-methods.js";
 import { createExecApprovalHandlers } from "./server-methods/exec-approval.js";
 import { safeParseJson } from "./server-methods/nodes.helpers.js";
+import { createSecretsHandlers } from "./server-methods/secrets.js";
 import type { GatewayRequestHandlers } from "./server-methods/types.js";
 import { hasConnectedMobileNode } from "./server-mobile-nodes.js";
 import { loadGatewayModelCatalog } from "./server-model-catalog.js";
@@ -82,6 +84,10 @@ import { loadGatewayPlugins } from "./server-plugins.js";
 import { createGatewayReloadHandlers } from "./server-reload-handlers.js";
 import { resolveGatewayRuntimeConfig } from "./server-runtime-config.js";
 import { createGatewayRuntimeState } from "./server-runtime-state.js";
+import {
+  createGatewaySecretsRuntimeController,
+  sanitizeGatewaySecretsRuntimeError,
+} from "./server-secrets-runtime.js";
 import {
   broadcastSessionLifecycleEvent,
   createTranscriptUpdateBroadcastHandler,
@@ -241,6 +247,19 @@ export async function startGatewayServer(
   port = 18789,
   opts: GatewayServerOptions = {},
 ): Promise<GatewayServer> {
+  try {
+    return await startGatewayServerInternal(port, opts);
+  } catch (error) {
+    // A failed startup must never leave resolved plaintext in process-global snapshots.
+    clearSecretsRuntimeSnapshot();
+    throw error;
+  }
+}
+
+async function startGatewayServerInternal(
+  port: number,
+  opts: GatewayServerOptions,
+): Promise<GatewayServer> {
   const minimalTestGateway =
     process.env.VITEST === "1" && process.env.FASED_TEST_MINIMAL_GATEWAY === "1";
 
@@ -308,6 +327,30 @@ export async function startGatewayServer(
       log.warn(`gateway: failed to persist plugin auto-enable changes: ${String(err)}`);
     }
   }
+
+  configSnapshot = await startupTrace.measure("config.secrets-source", () =>
+    readConfigFileSnapshot(),
+  );
+  if (configSnapshot.exists && !configSnapshot.valid) {
+    const issues = configSnapshot.issues
+      .map((issue) => `${issue.path || "<root>"}: ${issue.message}`)
+      .join("\n");
+    throw new Error(
+      `Invalid config at ${configSnapshot.path}.\n${issues || "Unknown validation issue."}\nRun "${formatCliCommand("fased doctor")}" to repair, then retry.`,
+    );
+  }
+  const secretsRuntime = createGatewaySecretsRuntimeController({
+    readConfigSnapshot: readConfigFileSnapshot,
+    log: logReload,
+  });
+  const startupSecretsSnapshot = await startupTrace
+    .measure("secrets.activate", () => secretsRuntime.activateStartup(configSnapshot))
+    .catch((error: unknown) => {
+      const safe = sanitizeGatewaySecretsRuntimeError(error);
+      throw new Error(
+        `Startup failed: required secrets are unavailable (${safe.code}). ${safe.message}`,
+      );
+    });
 
   const cfgAtStart = startupTrace.measureSync("config.load", () => loadConfig());
   const diagnosticsEnabled = isDiagnosticsEnabled(cfgAtStart);
@@ -755,6 +798,10 @@ export async function startGatewayServer(
     forwarder: execApprovalForwarder,
   });
   Object.assign(extraGatewayHandlers, execApprovalHandlers);
+  Object.assign(
+    extraGatewayHandlers,
+    createSecretsHandlers({ reloadSecrets: secretsRuntime.reloadFromConfig }),
+  );
 
   const canvasHostServerPort = (canvasHostServer as CanvasHostServer | null)?.port;
 
@@ -888,37 +935,60 @@ export async function startGatewayServer(
   const configReloader = minimalTestGateway
     ? { stop: async () => {} }
     : startupTrace.measureSync("config-reload.start", () => {
-        const { applyHotReload, requestGatewayRestart } = createGatewayReloadHandlers({
-          deps,
-          broadcast,
-          getState: () => ({
-            hooksConfig,
-            heartbeatRunner,
-            cronState,
-            browserControl,
-          }),
-          setState: (nextState) => {
-            hooksConfig = nextState.hooksConfig;
-            heartbeatRunner = nextState.heartbeatRunner;
-            cronState = nextState.cronState;
-            cron = cronState.cron;
-            cronStorePath = cronState.storePath;
-            browserControl = nextState.browserControl;
-          },
-          startChannel,
-          stopChannel,
-          logHooks,
-          logBrowser,
-          logChannels,
-          logCron,
-          logReload,
-        });
-
+        const { cancelPendingGatewayRestart, createHotReloadTransaction, requestGatewayRestart } =
+          createGatewayReloadHandlers({
+            deps,
+            broadcast,
+            getState: () => ({
+              hooksConfig,
+              heartbeatRunner,
+              cronState,
+              browserControl,
+            }),
+            setState: (nextState) => {
+              hooksConfig = nextState.hooksConfig;
+              heartbeatRunner = nextState.heartbeatRunner;
+              cronState = nextState.cronState;
+              cron = cronState.cron;
+              cronStorePath = cronState.storePath;
+              browserControl = nextState.browserControl;
+            },
+            startChannel,
+            stopChannel,
+            logHooks,
+            logBrowser,
+            logChannels,
+            logCron,
+            logReload,
+          });
         return startGatewayConfigReloader({
-          initialConfig: cfgAtStart,
+          initialConfig: startupSecretsSnapshot.sourceConfig,
           readSnapshot: readConfigFileSnapshot,
-          onHotReload: applyHotReload,
-          onRestart: requestGatewayRestart,
+          onSourceRevision: () => {
+            cancelPendingGatewayRestart();
+          },
+          onStop: () => {
+            cancelPendingGatewayRestart();
+          },
+          onHotReload: async (plan, _nextConfig, snapshot) => {
+            const transaction = createHotReloadTransaction(plan);
+            await secretsRuntime.activateHotReload(snapshot, {
+              apply: async (preparedConfig) => {
+                await transaction.apply(preparedConfig);
+              },
+              rollback: async (previousConfig) => {
+                await transaction.rollback(previousConfig);
+              },
+            });
+          },
+          onRestart: async (plan, nextConfig, snapshot) => {
+            // The per-revision hook already cancelled the prior decision.
+            // Success schedules a fresh deferral; failure leaves no obsolete
+            // restart able to fire. Already-emitted restarts are intentionally
+            // handled by strict validation in the replacement process.
+            await secretsRuntime.validateRestart(snapshot);
+            requestGatewayRestart(plan, nextConfig);
+          },
           log: {
             info: (msg) => logReload.info(msg),
             warn: (msg) => logReload.warn(msg),
@@ -965,23 +1035,32 @@ export async function startGatewayServer(
 
   return {
     close: async (opts) => {
-      // Run gateway_stop plugin hook before shutdown
-      await runGlobalGatewayStopSafely({
-        event: { reason: opts?.reason ?? "gateway stopping" },
-        ctx: { port },
-        onError: (err) => log.warn(`gateway_stop hook failed: ${String(err)}`),
-      });
-      if (diagnosticsEnabled) {
-        stopDiagnosticHeartbeat();
-        stopDiagnosticStabilityRecorder();
+      try {
+        // Run gateway_stop plugin hook before shutdown
+        await runGlobalGatewayStopSafely({
+          event: { reason: opts?.reason ?? "gateway stopping" },
+          ctx: { port },
+          onError: (err) => log.warn(`gateway_stop hook failed: ${String(err)}`),
+        });
+        // Stop the source watcher before closing the reload gate. This prevents
+        // a new reload from entering while shutdown waits for an in-flight
+        // transaction to drain. The base close calls stop() again safely.
+        await configReloader.stop().catch(() => {});
+        await secretsRuntime.shutdown();
+        if (diagnosticsEnabled) {
+          stopDiagnosticHeartbeat();
+          stopDiagnosticStabilityRecorder();
+        }
+        if (skillsRefreshTimer) {
+          clearTimeout(skillsRefreshTimer);
+          skillsRefreshTimer = null;
+        }
+        skillsChangeUnsub();
+        authRateLimiter?.dispose();
+        await close(opts);
+      } finally {
+        await secretsRuntime.shutdown();
       }
-      if (skillsRefreshTimer) {
-        clearTimeout(skillsRefreshTimer);
-        skillsRefreshTimer = null;
-      }
-      skillsChangeUnsub();
-      authRateLimiter?.dispose();
-      await close(opts);
     },
   };
 }

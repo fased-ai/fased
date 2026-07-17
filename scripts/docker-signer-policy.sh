@@ -102,40 +102,32 @@ command -v docker >/dev/null 2>&1 || fail "Docker is required."
 docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 is required."
 
 control_socket="/run/fased-signerd-control/control.sock"
-stage_path="/tmp/fased-owner-policy-${wallet_id}-${RANDOM}.json"
-stage_created=0
-cleanup() {
-  if [[ "$stage_created" == "1" ]]; then
-    docker compose exec -T fased-signerd rm -f -- "$stage_path" >/dev/null 2>&1 || true
-  fi
-}
-trap cleanup EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
+container_policy="/tmp/reviewed-policy.json"
 
 docker compose exec -T fased-signerd \
   node /app/scripts/docker-signer-health.mjs /run/fased-signerd/app.sock >/dev/null
 
 echo "Current signer policy (must be version 1 deny-all):"
-docker compose exec -T fased-signerd /usr/local/bin/fased-signerd admin policy get \
+docker compose --profile signer-admin run --rm -T --no-deps fased-signer-admin policy get \
   --control-socket "$control_socket" \
   --wallet-id "$wallet_id"
 
-stage_created=1
-docker compose exec -T fased-signerd sh -c \
-  'umask 077; cat > "$1"; chmod 600 "$1"' sh "$stage_path" <"$policy_file"
-
-docker compose exec -T fased-signerd /usr/local/bin/fased-signerd admin policy put \
+docker compose --profile signer-admin run --rm -T --no-deps \
+  --entrypoint /bin/sh \
+  fased-signer-admin -ceu \
+  'umask 077
+   policy_file="$1"
+   shift
+   cat >"$policy_file"
+   chmod 600 "$policy_file"
+   exec /usr/local/bin/fased-signerd admin policy put "$@" --policy-file "$policy_file"' \
+  sh "$container_policy" \
   --control-socket "$control_socket" \
   --wallet-id "$wallet_id" \
   --expected-version 1 \
-  --policy-file "$stage_path"
-
-cleanup
-stage_created=0
-trap - EXIT INT TERM
+  <"$policy_file"
 
 echo "Signer-acknowledged installed policy:"
-docker compose exec -T fased-signerd /usr/local/bin/fased-signerd admin policy get \
+docker compose --profile signer-admin run --rm -T --no-deps fased-signer-admin policy get \
   --control-socket "$control_socket" \
   --wallet-id "$wallet_id"

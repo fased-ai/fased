@@ -1,5 +1,19 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+function createStorageMock(): Storage {
+  const values = new Map<string, string>();
+  return {
+    get length() {
+      return values.size;
+    },
+    clear: () => values.clear(),
+    getItem: (key) => values.get(key) ?? null,
+    key: (index) => [...values.keys()][index] ?? null,
+    removeItem: (key) => values.delete(key),
+    setItem: (key, value) => values.set(key, value),
+  };
+}
+
 describe("federation-api review flow", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -469,5 +483,75 @@ describe("federation-api review flow", () => {
       ),
       { cache: "no-store" },
     );
+  });
+
+  it("persists one bond idempotency key across an ambiguous request and clears it on success", async () => {
+    const storage = createStorageMock();
+    const randomUUID = vi
+      .fn()
+      .mockReturnValueOnce("11111111-1111-4111-8111-111111111111")
+      .mockReturnValueOnce("22222222-2222-4222-8222-222222222222");
+    let requestCount = 0;
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
+      requestCount += 1;
+      if (requestCount === 1) {
+        throw new Error("connection closed after request write");
+      }
+      return new Response(
+        JSON.stringify({ ok: true, walletId: "vault-1", status: { managed: true } }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
+    vi.stubGlobal("window", {
+      location: { hostname: "localhost" },
+      __FASED_FEDERATION_MOCK__: false,
+    });
+    vi.stubGlobal("localStorage", storage);
+    vi.stubGlobal("crypto", { randomUUID });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const firstModule = await import("./federation-api.js");
+    await expect(
+      firstModule.createFederationApi().openBond({
+        walletId: "vault-1",
+        amountSat: "2.5",
+        tier: "basic-bond",
+      }),
+    ).rejects.toThrow("connection closed after request write");
+    expect(storage.getItem("fased.federation.bond-idempotency.pending.v1")).toContain(
+      "bond-11111111-1111-4111-8111-111111111111",
+    );
+
+    vi.resetModules();
+    const retriedModule = await import("./federation-api.js");
+    const api = retriedModule.createFederationApi();
+    await expect(
+      api.openBond({ walletId: "vault-1", amountSat: "2.5", tier: "basic-bond" }),
+    ).resolves.toMatchObject({ ok: true, walletId: "vault-1" });
+
+    const firstInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const retryInit = fetchMock.mock.calls[1]?.[1] as RequestInit;
+    expect(new Headers(firstInit.headers).get("Idempotency-Key")).toBe(
+      "bond-11111111-1111-4111-8111-111111111111",
+    );
+    expect(new Headers(retryInit.headers).get("Idempotency-Key")).toBe(
+      "bond-11111111-1111-4111-8111-111111111111",
+    );
+    const retryBody = retryInit.body;
+    expect(typeof retryBody).toBe("string");
+    if (typeof retryBody !== "string") {
+      throw new TypeError("expected a JSON string request body");
+    }
+    expect(JSON.parse(retryBody)).toMatchObject({
+      idempotencyKey: "bond-11111111-1111-4111-8111-111111111111",
+    });
+    expect(storage.getItem("fased.federation.bond-idempotency.pending.v1")).toBe("[]");
+
+    await api.openBond({ walletId: "vault-1", amountSat: "2.5", tier: "basic-bond" });
+    const nextInit = fetchMock.mock.calls[2]?.[1] as RequestInit;
+    expect(new Headers(nextInit.headers).get("Idempotency-Key")).toBe(
+      "bond-22222222-2222-4222-8222-222222222222",
+    );
+    expect(randomUUID).toHaveBeenCalledTimes(2);
   });
 });

@@ -1216,6 +1216,163 @@ function renderWalletApprovalDiffSummary(params: {
   `;
 }
 
+function walletSignerIntentRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function walletSignerIntentValue(value: unknown): string | null {
+  if (typeof value === "string") {
+    return value.trim() || null;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+  if (typeof value === "boolean") {
+    return value ? "yes" : "no";
+  }
+  if (Array.isArray(value)) {
+    const values = value.map((entry) => walletSignerIntentValue(entry)).filter(Boolean);
+    return values.length > 0 ? values.join(", ") : null;
+  }
+  return null;
+}
+
+function renderWalletSignerSemanticIntent(request: WalletSendApprovalRequest) {
+  const intent = walletSignerIntentRecord(request.payload.signerSemanticIntent);
+  const intentType = walletSignerIntentValue(intent?.type);
+  if (!intent || !intentType) {
+    return nothing;
+  }
+  const fields: Array<{ label: string; value: string }> = [];
+  const add = (label: string, value: unknown) => {
+    const text = walletSignerIntentValue(value);
+    if (text) {
+      fields.push({ label, value: text });
+    }
+  };
+  let missingTriggerTerms: string[] = [];
+  if (intentType.startsWith("solana.jupiter.")) {
+    const jupiter = walletSignerIntentRecord(intent.jupiter);
+    const trigger = walletSignerIntentRecord(jupiter?.trigger);
+    add("Owner", jupiter?.owner);
+    add("Input mint", jupiter?.inputMint);
+    add("Output mint", jupiter?.outputMint);
+    add("Input amount", jupiter?.inputAmount);
+    add("Maximum input", jupiter?.maxInputAmount);
+    add("Minimum output", jupiter?.minimumOutputAmount);
+    add("Fee ceiling (lamports)", jupiter?.maxFeeLamports);
+    add("Source token account", jupiter?.sourceTokenAccount);
+    add("Destination token account", jupiter?.destinationTokenAccount);
+    add("Programs", jupiter?.programs);
+    add("Trigger operation", trigger?.operation);
+    add("Trigger program", trigger?.program);
+    add("Trigger order ID", trigger?.order);
+    add("Trigger mint", trigger?.triggerMint);
+    add("Condition", trigger?.condition);
+    add("Target price (USD)", trigger?.targetPriceUsd);
+    add("Slippage (bps)", trigger?.slippageBps);
+    add("Order expiry", trigger?.expiresAt);
+    add("Expected order state", trigger?.expectedOrderState);
+    if (intentType.includes(".trigger.")) {
+      const operation = walletSignerIntentValue(trigger?.operation);
+      const requiredTerms =
+        operation === "create"
+          ? [
+              ["input mint", jupiter?.inputMint],
+              ["output mint", jupiter?.outputMint],
+              ["exact input amount", jupiter?.inputAmount],
+              ["trigger mint", trigger?.triggerMint],
+              ["condition", trigger?.condition],
+              ["target price", trigger?.targetPriceUsd],
+              ["slippage", trigger?.slippageBps],
+              ["order expiry", trigger?.expiresAt],
+              ["expected new state", trigger?.expectedOrderState],
+            ]
+          : operation === "cancel"
+            ? [
+                ["order ID", trigger?.order],
+                ["refund mint", jupiter?.outputMint],
+                ["minimum refund", jupiter?.minimumOutputAmount],
+                ["refund destination", jupiter?.destinationTokenAccount],
+                ["expected open state", trigger?.expectedOrderState],
+              ]
+            : [["operation", trigger?.operation]];
+      missingTriggerTerms = requiredTerms
+        .filter((entry) => walletSignerIntentValue(entry[1]) === null)
+        .map((entry) => String(entry[0]));
+      const forbiddenSignerOwnedFields = [
+        ["vault", trigger?.vault],
+        ["external request ID", trigger?.requestId],
+        ["source token account", jupiter?.sourceTokenAccount],
+        ...(operation === "create"
+          ? [["destination token account", jupiter?.destinationTokenAccount]]
+          : []),
+      ]
+        .filter((entry) => walletSignerIntentValue(entry[1]) !== null)
+        .map((entry) => String(entry[0]));
+      missingTriggerTerms.push(
+        ...forbiddenSignerOwnedFields.map((field) => `remove caller-provided ${field}`),
+      );
+    }
+  } else if (intentType === "solana.nativeTransfer") {
+    add("Destination", intent.destination);
+    add("Lamports", intent.lamports);
+  } else if (intentType === "solana.splTransferChecked") {
+    add("Token program", intent.tokenProgram);
+    add("Mint", intent.mint);
+    add("Destination", intent.destination);
+    add("Amount", intent.amount);
+  } else if (intentType === "solana.vaultBondAction") {
+    const context = walletSignerIntentRecord(intent.context);
+    add("Cluster", intent.cluster);
+    add("Vault action", intent.action);
+    add("Program", intent.programId);
+    add("Target authority", context?.targetAuthority);
+    add("Dispute authority", context?.disputeAuthority);
+    add("Interval start cycle", context?.intervalStartCycleId);
+    add("Registry page", context?.registryPageIndex);
+    add("Miner authorities", context?.minerAuthorities);
+    add("Front cycle IDs", context?.frontCycleIds);
+    add("Back cycle IDs", context?.backCycleIds);
+  } else if (intentType === "federation.bondChallenge") {
+    const federation = walletSignerIntentRecord(intent.federation);
+    add("Challenge ID", federation?.challengeId);
+    add("Bond ID", federation?.bondId);
+    add("Bond tier", federation?.tier);
+    add("Bond amount", federation?.amountRaw);
+    add("Federation handle", federation?.handle);
+    add("Node ID", federation?.nodeId);
+    add("Token ID", federation?.tokenId);
+    add("Federation origin", federation?.federationOrigin);
+    add("Challenge expiry", federation?.expiresAt);
+  }
+  return html`
+    <div class="wallet-approval-diff" style="margin-top: 6px;">
+      <span><strong>Signer intent</strong> <span class="mono">${intentType}</span></span>
+      ${fields.map(
+        (field) => html`
+          <span>
+            ${field.label}:
+            <span class="mono" style="overflow-wrap: anywhere;">${field.value}</span>
+          </span>
+        `,
+      )}
+      ${
+        missingTriggerTerms.length > 0
+          ? html`
+            <span class="muted">
+              Invalid or incomplete signer binding: ${missingTriggerTerms.join(", ")}. Do not
+              approve this Trigger review.
+            </span>
+          `
+          : nothing
+      }
+    </div>
+  `;
+}
+
 function trimTrailingZeros(value: string): string {
   return value.replace(/\.0+$/, "").replace(/(\.\d*?)0+$/, "$1");
 }
@@ -3846,9 +4003,9 @@ export function renderWallet(props: WalletViewProps) {
                     class="btn small"
                     ?disabled=${props.settingsBusy}
                     @click=${props.onAttachWalletStandardVault}
-                    title="Attach a Solana Wallet Standard account. Use a hardware-backed account for Vault custody."
+                    title="Attach a Solana Wallet Standard account. Wallet discovery cannot prove hardware backing; verify a reserve account on its device."
                   >
-                    Attach hardware Vault
+                    Attach Wallet Standard Vault
                   </button>
                   <button
                     class="btn small"
@@ -4873,6 +5030,7 @@ export function renderWallet(props: WalletViewProps) {
                             display: approvalDisplay,
                             endpoints: approvalEndpoints,
                           })}
+                          ${renderWalletSignerSemanticIntent(request)}
                         </div>
                         <div>
                           <div class="row" style="gap: 8px; align-items: center;">
@@ -5094,7 +5252,7 @@ export function renderWallet(props: WalletViewProps) {
                   const reasonTxt = toDisplayText(details.reason, "");
                   const orderIdTxt = toDisplayText(details.orderId, "");
                   const vaultTxt = toDisplayText(details.vaultPubkey, "");
-                  const externalVaultTxt = toDisplayText(details.externalVault, "");
+                  const executionProviderTxt = toDisplayText(details.executionProvider, "");
                   const activityTone = walletActivityTone(entry.action);
                   return html`
                     <div class="wallet-activity-item" data-tone=${activityTone}>
@@ -5125,8 +5283,8 @@ export function renderWallet(props: WalletViewProps) {
                         }
                         <span class="wallet-status-chip">${amountTxt}</span>
                         ${
-                          externalVaultTxt
-                            ? html`<span class="wallet-status-chip">${externalVaultTxt}</span>`
+                          executionProviderTxt
+                            ? html`<span class="wallet-status-chip">${executionProviderTxt}</span>`
                             : nothing
                         }
                       </div>

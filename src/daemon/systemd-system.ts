@@ -29,30 +29,7 @@ function buildHostedSystemctlControlArgs(action: "stop" | "restart"): string[] {
   return [action, `${SERVICE_NAME}.service`];
 }
 
-async function runBootstrapAction(action: string, input = "") {
-  const ctl = process.env.FASED_HOST_BOOTSTRAP_CTL?.trim();
-  if (!ctl) {
-    return null;
-  }
-  return await new Promise<{ code: number; stdout: string; stderr: string }>((resolve, reject) => {
-    const child = spawn(process.execPath, [ctl, action], {
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (chunk) => (stdout += String(chunk)));
-    child.stderr.on("data", (chunk) => (stderr += String(chunk)));
-    child.once("error", reject);
-    child.once("close", (code) => resolve({ code: code ?? 1, stdout, stderr }));
-    child.stdin.end(input);
-  });
-}
-
 async function restartHostedServiceWithoutPrivilege() {
-  const bootstrap = await runBootstrapAction("gateway-restart");
-  if (bootstrap) {
-    return bootstrap;
-  }
   const shown = await execFileUtf8("systemctl", [
     "show",
     `${SERVICE_NAME}.service`,
@@ -245,15 +222,9 @@ export function buildHostedSystemdUnit(params: {
 }
 
 async function runHelper(unit: string): Promise<void> {
-  const bootstrap = await runBootstrapAction("gateway-install", unit);
-  if (bootstrap) {
-    if (bootstrap.code !== 0) {
-      throw new Error((bootstrap.stderr || bootstrap.stdout || "host bootstrap failed").trim());
-    }
-    return;
-  }
+  void unit;
   throw new Error(
-    "Hosted system service installation requires the root bootstrap session. Run ./install.sh --repair-hosting as root.",
+    "The app account cannot install or mutate the root-managed hosted service. Use the exact tagged, attested Hosting repair from the provider root console; never run the app checkout with sudo.",
   );
 }
 

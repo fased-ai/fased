@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -8,6 +9,33 @@ import { WalletProviderError } from "../wallet-provider-adapter.js";
 import { TurnkeyAdapter } from "./turnkey-adapter.js";
 
 const temporaryDirectories: string[] = [];
+
+function runTurnkeyChild(script: string, env: NodeJS.ProcessEnv): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      process.execPath,
+      ["--import", "tsx", "--input-type=module", "--eval", script],
+      {
+        cwd: process.cwd(),
+        env,
+        stdio: ["ignore", "ignore", "pipe"],
+      },
+    );
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+    child.once("error", reject);
+    child.once("exit", (code, signal) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(`Turnkey child exited code=${code} signal=${signal}: ${stderr}`));
+      }
+    });
+  });
+}
 
 function encodeBase58(bytes: Uint8Array): string {
   const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
@@ -200,11 +228,187 @@ describe("TurnkeyAdapter", () => {
     expect(health.details).toContain("non-empty condition");
   });
 
+  test("requires the configured Turnkey policy to allow the exact signing activity", async () => {
+    const env = testEnv();
+    const signer = Keypair.generate();
+    const rpc = installRpcMock();
+    const signTransaction = vi.fn(async (input: { unsignedTransaction: string }) => {
+      const transaction = Transaction.from(Buffer.from(input.unsignedTransaction, "hex"));
+      transaction.partialSign(signer);
+      return {
+        activity: {
+          id: "activity-1",
+          organizationId: "organization-1",
+          status: "ACTIVITY_STATUS_COMPLETED",
+          type: "ACTIVITY_TYPE_SIGN_TRANSACTION_V2",
+        },
+        signedTransaction: Buffer.from(
+          transaction.serialize({ requireAllSignatures: true, verifySignatures: true }),
+        ).toString("hex"),
+      };
+    });
+    const getPolicyEvaluations = vi.fn().mockResolvedValue({
+      policyEvaluations: [
+        {
+          policyEvaluations: [{ policyId: "policy-1", outcome: "OUTCOME_ALLOW" }],
+        },
+      ],
+    });
+    const adapter = new TurnkeyAdapter({
+      chains: ["solana"],
+      credentials: {
+        apiPublicKey: "turnkey-public",
+        apiPrivateKey: "turnkey-private",
+        organizationId: "organization-1",
+        policyId: "policy-1",
+        rpcUrl: "https://rpc.invalid",
+        defaultSolanaAddress: signer.publicKey.toBase58(),
+      },
+      service: { host: "127.0.0.1", port: 0 },
+      stateEnv: env,
+      dependencies: {
+        createClient: () => fakeClient({ signTransaction, getPolicyEvaluations }),
+      },
+    });
+    const request = {
+      chain: "solana" as const,
+      requestId: "approval-policy-allow",
+      to: Keypair.generate().publicKey.toBase58(),
+      amount: "33",
+    };
+    const prepared = await adapter.prepareTx(request);
+
+    const sent = await adapter.sendTx({ ...request, preparedId: prepared.preparedId });
+
+    expect(sent.txHash).toBe(rpc.getExpectedSignature());
+    expect(signTransaction).toHaveBeenCalledOnce();
+    expect(getPolicyEvaluations).toHaveBeenCalledWith({
+      organizationId: "organization-1",
+      activityId: "activity-1",
+    });
+  });
+
+  test("does not broadcast when the configured policy did not allow signing", async () => {
+    const env = testEnv();
+    const signer = Keypair.generate();
+    const rpc = installRpcMock();
+    const client = fakeClient({
+      signTransaction: vi.fn(async (input: { unsignedTransaction: string }) => {
+        const transaction = Transaction.from(Buffer.from(input.unsignedTransaction, "hex"));
+        transaction.partialSign(signer);
+        return {
+          activity: {
+            id: "activity-denied",
+            organizationId: "organization-1",
+            status: "ACTIVITY_STATUS_COMPLETED",
+            type: "ACTIVITY_TYPE_SIGN_TRANSACTION_V2",
+          },
+          signedTransaction: Buffer.from(
+            transaction.serialize({ requireAllSignatures: true, verifySignatures: true }),
+          ).toString("hex"),
+        };
+      }),
+      getPolicyEvaluations: vi.fn().mockResolvedValue({
+        policyEvaluations: [
+          {
+            policyEvaluations: [{ policyId: "different-policy", outcome: "OUTCOME_ALLOW" }],
+          },
+        ],
+      }),
+    });
+    const adapter = new TurnkeyAdapter({
+      chains: ["solana"],
+      credentials: {
+        apiPublicKey: "turnkey-public",
+        apiPrivateKey: "turnkey-private",
+        organizationId: "organization-1",
+        policyId: "policy-1",
+        rpcUrl: "https://rpc.invalid",
+        defaultSolanaAddress: signer.publicKey.toBase58(),
+      },
+      service: { host: "127.0.0.1", port: 0 },
+      stateEnv: env,
+      dependencies: { createClient: () => client },
+    });
+    const request = {
+      chain: "solana" as const,
+      requestId: "approval-policy-deny",
+      to: Keypair.generate().publicKey.toBase58(),
+      amount: "34",
+    };
+    const prepared = await adapter.prepareTx(request);
+
+    await expect(adapter.sendTx({ ...request, preparedId: prepared.preparedId })).rejects.toThrow(
+      "configured Turnkey policy",
+    );
+    expect(rpc.methods).not.toContain("sendTransaction");
+  });
+
+  test("does not broadcast when another policy can allow the same signing activity", async () => {
+    const env = testEnv();
+    const signer = Keypair.generate();
+    const rpc = installRpcMock();
+    const client = fakeClient({
+      signTransaction: vi.fn(async (input: { unsignedTransaction: string }) => {
+        const transaction = Transaction.from(Buffer.from(input.unsignedTransaction, "hex"));
+        transaction.partialSign(signer);
+        return {
+          activity: {
+            id: "activity-alternate-allow",
+            organizationId: "organization-1",
+            status: "ACTIVITY_STATUS_COMPLETED",
+            type: "ACTIVITY_TYPE_SIGN_TRANSACTION_V2",
+          },
+          signedTransaction: Buffer.from(
+            transaction.serialize({ requireAllSignatures: true, verifySignatures: true }),
+          ).toString("hex"),
+        };
+      }),
+      getPolicyEvaluations: vi.fn().mockResolvedValue({
+        policyEvaluations: [
+          {
+            policyEvaluations: [
+              { policyId: "policy-1", outcome: "OUTCOME_ALLOW" },
+              { policyId: "permissive-policy", outcome: "OUTCOME_ALLOW" },
+            ],
+          },
+        ],
+      }),
+    });
+    const adapter = new TurnkeyAdapter({
+      chains: ["solana"],
+      credentials: {
+        apiPublicKey: "turnkey-public",
+        apiPrivateKey: "turnkey-private",
+        organizationId: "organization-1",
+        policyId: "policy-1",
+        rpcUrl: "https://rpc.invalid",
+        defaultSolanaAddress: signer.publicKey.toBase58(),
+      },
+      service: { host: "127.0.0.1", port: 0 },
+      stateEnv: env,
+      dependencies: { createClient: () => client },
+    });
+    const request = {
+      chain: "solana" as const,
+      requestId: "approval-alternate-policy-allow",
+      to: Keypair.generate().publicKey.toBase58(),
+      amount: "35",
+    };
+    const prepared = await adapter.prepareTx(request);
+
+    await expect(adapter.sendTx({ ...request, preparedId: prepared.preparedId })).rejects.toThrow(
+      "exclusive OUTCOME_ALLOW",
+    );
+    expect(rpc.methods).not.toContain("sendTransaction");
+  });
+
   test("requires a known prepared review and never falls back to a direct send", async () => {
     const signer = Keypair.generate();
     const adapter = createAdapter({ signer, env: testEnv() });
     const request = {
       chain: "solana" as const,
+      requestId: "approval-unknown-prepare",
       to: Keypair.generate().publicKey.toBase58(),
       amount: "1",
     };
@@ -223,6 +427,7 @@ describe("TurnkeyAdapter", () => {
     const rpc = installRpcMock();
     const request = {
       chain: "solana" as const,
+      requestId: "approval-restart",
       to: Keypair.generate().publicKey.toBase58(),
       amount: "1000",
     };
@@ -240,6 +445,31 @@ describe("TurnkeyAdapter", () => {
     expect(rpc.methods).toEqual(["getLatestBlockhash", "simulateTransaction", "sendTransaction"]);
   });
 
+  test("binds one stable prepared identity to the approval request and immutable digest", async () => {
+    const env = testEnv();
+    const signer = Keypair.generate();
+    const rpc = installRpcMock();
+    const request = {
+      chain: "solana" as const,
+      requestId: "approval-stable-prepare",
+      to: Keypair.generate().publicKey.toBase58(),
+      amount: "123",
+    };
+
+    const first = await createAdapter({ signer, env }).prepareTx(request);
+    const resumed = await createAdapter({ signer, env }).prepareTx(request);
+
+    expect(resumed).toEqual(first);
+    expect(rpc.methods.filter((method) => method === "getLatestBlockhash")).toHaveLength(1);
+    expect(rpc.methods.filter((method) => method === "simulateTransaction")).toHaveLength(1);
+    await expect(
+      createAdapter({ signer, env }).prepareTx({ ...request, amount: "124" }),
+    ).rejects.toMatchObject({
+      code: "wallet_provider_invalid_config",
+    } satisfies Partial<WalletProviderError>);
+    expect(rpc.methods.filter((method) => method === "getLatestBlockhash")).toHaveLength(1);
+  });
+
   test("serializes concurrent execution and returns one idempotent result", async () => {
     const env = testEnv();
     const signer = Keypair.generate();
@@ -247,6 +477,7 @@ describe("TurnkeyAdapter", () => {
     const adapter = createAdapter({ signer, env });
     const request = {
       chain: "solana" as const,
+      requestId: "approval-concurrent",
       to: Keypair.generate().publicKey.toBase58(),
       amount: "42",
     };
@@ -264,6 +495,87 @@ describe("TurnkeyAdapter", () => {
     expect(rpc.methods.filter((method) => method === "sendTransaction")).toHaveLength(1);
   });
 
+  test("permits only one broadcast across competing processes", async () => {
+    const env = testEnv();
+    const signer = Keypair.generate();
+    installRpcMock();
+    const request = {
+      chain: "solana" as const,
+      requestId: "approval-cross-process",
+      to: Keypair.generate().publicKey.toBase58(),
+      amount: "77",
+    };
+    const prepared = await createAdapter({ signer, env }).prepareTx(request);
+    const counterPath = path.join(env.FASED_STATE_DIR!, "turnkey-broadcasts.log");
+    const childScript = `
+      const fs = await import("node:fs");
+      const { Keypair, Transaction } = await import("@solana/web3.js");
+      const { executeTurnkeyReviewedTransaction } = await import("./src/wallet/turnkey-reviewed-state.ts");
+      const signer = Keypair.fromSecretKey(Buffer.from(process.env.FASED_TEST_SIGNER_SECRET, "base64"));
+      const request = JSON.parse(process.env.FASED_TEST_TURNKEY_REQUEST);
+      const encodeBase58 = (bytes) => {
+        const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+        const digits = [0];
+        for (const byte of bytes) {
+          let carry = byte;
+          for (let index = 0; index < digits.length; index += 1) {
+            const value = digits[index] * 256 + carry;
+            digits[index] = value % 58;
+            carry = Math.floor(value / 58);
+          }
+          while (carry > 0) { digits.push(carry % 58); carry = Math.floor(carry / 58); }
+        }
+        let result = "";
+        for (const byte of bytes) { if (byte !== 0) break; result += "1"; }
+        for (let index = digits.length - 1; index >= 0; index -= 1) result += alphabet[digits[index]];
+        return result;
+      };
+      globalThis.fetch = async (_url, init) => {
+        const body = JSON.parse(init.body);
+        if (body.method !== "sendTransaction") throw new Error("unexpected RPC method " + body.method);
+        fs.appendFileSync(process.env.FASED_TEST_BROADCAST_COUNTER, "send\\n");
+        const signed = Transaction.from(Buffer.from(String(body.params[0]), "base64"));
+        return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: encodeBase58(signed.signature) }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      };
+      await executeTurnkeyReviewedTransaction({
+        preparedId: process.env.FASED_TEST_PREPARED_ID,
+        request,
+        signerAddress: signer.publicKey.toBase58(),
+        rpcUrl: "https://rpc.invalid",
+        authorizationContext: JSON.stringify({ organizationId: "organization-1", policyId: "policy-1", providerWalletId: null }),
+        env: process.env,
+        sign: async (unsignedTxBase64) => {
+          const transaction = Transaction.from(Buffer.from(unsignedTxBase64, "base64"));
+          transaction.partialSign(signer);
+          return Buffer.from(transaction.serialize({ requireAllSignatures: true, verifySignatures: true })).toString("base64");
+        },
+      });
+    `;
+    const childEnv = {
+      ...env,
+      FASED_TEST_SIGNER_SECRET: Buffer.from(signer.secretKey).toString("base64"),
+      FASED_TEST_TURNKEY_REQUEST: JSON.stringify(request),
+      FASED_TEST_PREPARED_ID: prepared.preparedId,
+      FASED_TEST_BROADCAST_COUNTER: counterPath,
+    };
+
+    await Promise.all([
+      runTurnkeyChild(childScript, childEnv),
+      runTurnkeyChild(childScript, childEnv),
+    ]);
+
+    expect(fs.readFileSync(counterPath, "utf8").trim().split("\n")).toHaveLength(1);
+    const persisted = JSON.parse(
+      fs.readFileSync(path.join(env.FASED_STATE_DIR!, "wallet", "turnkey-reviews.v1.json"), "utf8"),
+    ) as { reviews: Array<{ status: string; approvalRequestId?: string }> };
+    expect(persisted.reviews).toEqual([
+      expect.objectContaining({ status: "broadcast", approvalRequestId: request.requestId }),
+    ]);
+  });
+
   test("persists an ambiguous broadcast across restart and never retries it", async () => {
     const env = testEnv();
     const signer = Keypair.generate();
@@ -271,6 +583,7 @@ describe("TurnkeyAdapter", () => {
     const adapter = createAdapter({ signer, env });
     const request = {
       chain: "solana" as const,
+      requestId: "approval-ambiguous",
       to: Keypair.generate().publicKey.toBase58(),
       amount: "7",
     };
@@ -300,6 +613,7 @@ describe("TurnkeyAdapter", () => {
     const rpc = installRpcMock({ broadcast: "unknown", reconciliation: "landed" });
     const request = {
       chain: "solana" as const,
+      requestId: "approval-reconcile",
       to: Keypair.generate().publicKey.toBase58(),
       amount: "8",
     };
@@ -325,6 +639,7 @@ describe("TurnkeyAdapter", () => {
     const rpc = installRpcMock({ broadcast: "unknown", reconciliation: "expired" });
     const request = {
       chain: "solana" as const,
+      requestId: "approval-expired",
       to: Keypair.generate().publicKey.toBase58(),
       amount: "9",
     };

@@ -38,13 +38,13 @@ Only then can one exact transaction be signed and broadcast.
 
 ## Supported custody lanes
 
-| Lane                                  | Current use                                            | Security boundary                                                                                                                                                                                                                             |
-| ------------------------------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Native signer, Local Linux/macOS/WSL2 | Agent, Mining, and reviewed Vault wallets              | Keys are created/imported and used only by Go, but Gateway and signer run as the same OS user. This is process and code-path isolation, not a hard boundary against a compromised same-user process or host account.                          |
-| Native signer, VPS Hosting            | Agent, Mining, and reviewed Vault wallets              | Root installs a verified fixed binary. `fased-signer` owns key state and the control socket. The Gateway account receives only the typed application socket and has no signer sudo access.                                                    |
-| Native signer, Local Docker           | Local development and self-hosting on Linux/macOS/WSL2 | Signer has a separate non-root container and signer-only volume; Gateway receives only the socket volume. It is not VPS Hosting and is not a boundary against the Docker daemon or host administrator.                                        |
-| Turnkey                               | Manual reviewed Agent or Vault SOL/SPL transfers       | Turnkey holds the signing authority. Its organization policy must independently restrict the dedicated API user. Fased verifies the immutable transaction review, but cannot prove that an operator configured the intended Turnkey selector. |
-| Solana Wallet Standard                | Manual hardware-backed Vault transfers                 | Fased stores only the public address. The browser wallet signs one immutable review. Wallet Standard discovery alone cannot prove hardware backing; confirm the account and transaction on the hardware device.                               |
+| Lane                                  | Current use                                            | Security boundary                                                                                                                                                                                                                                                                                                                          |
+| ------------------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Native signer, Local Linux/macOS/WSL2 | Agent, Mining, and reviewed Vault wallets              | Keys are created/imported and used only by Go, but Gateway and signer run as the same OS user. This is process and code-path isolation, not a hard boundary against a compromised same-user process or host account.                                                                                                                       |
+| Native signer, VPS Hosting            | Agent, Mining, and reviewed Vault wallets              | Root installs a verified fixed binary. `fased-signer` owns key state and the control socket. The Gateway account receives only the typed application socket and has no signer sudo access.                                                                                                                                                 |
+| Native signer, Local Docker           | Local development and self-hosting on Linux/macOS/WSL2 | Signer has a separate non-root container and signer-only volume; Gateway receives only the socket volume. It is not VPS Hosting and is not a boundary against the Docker daemon or host administrator.                                                                                                                                     |
+| Turnkey                               | Manual reviewed Agent or Vault SOL/SPL transfers       | Turnkey holds the signing authority. Its organization policy must independently restrict the dedicated API user. Fased requires the configured policy to be the exclusive `OUTCOME_ALLOW` for the completed activity before broadcast; the Gateway-held API key means the Turnkey policy, not this post-check, is the compromise boundary. |
+| Solana Wallet Standard                | Manual hardware-backed Vault transfers                 | Fased stores only the public address. The browser wallet signs one immutable review. Wallet Standard discovery alone cannot prove hardware backing; confirm the account and transaction on the hardware device.                                                                                                                            |
 
 Privy is not a supported signing lane. Its adapter is an unavailable placeholder
 and Fased refuses to save credentials as if creation or signing worked.
@@ -95,13 +95,24 @@ The native application socket accepts narrowly typed operations, including:
 - signer-validated Jupiter swap and Trigger order operations;
 - exact review preparation, approval, execution, status, and reconciliation.
 
-It does not expose arbitrary `signTx`, caller-supplied serialized transactions,
-raw instructions, generic messages, or a custody-control relay. The signer
-decodes the transaction and derives the amount, programs, mints, destinations,
-PDAs, signer flags, and writable accounts before policy approval.
+It does not expose arbitrary `signTx`, generic caller-selected serialized
+transactions, raw instructions, generic messages, or a custody-control relay.
+Typed Jupiter swap and Trigger operations may carry a provider-produced
+transaction artifact, but Go decodes that artifact and semantically validates
+the exact operation, amount, programs, mints, destinations, PDAs, signer flags,
+and writable accounts before policy approval.
 
-Every potentially mutating request has a stable request id and immutable intent
-digest. The signer stores its state atomically in bbolt:
+For a checked SPL transfer, Go derives both canonical token accounts and always
+adds the Associated Token Program's idempotent destination-account creation.
+It validates the existing source and any existing destination, explicitly
+requires the System/Associated Token/Token programs in policy, and includes
+possible account rent in the signer-owned fixed SOL reservation.
+
+Every potentially mutating request admitted to the native signer has a stable
+request id and immutable intent digest. The caller must persist and reuse that
+same id across transport failure or restart; the signer never invents a safe
+replacement for a caller that loses it. The signer stores its state atomically
+in bbolt:
 
 - `reserved`
 - `broadcast`
@@ -160,7 +171,9 @@ authority.
 
 Provider credentials are secrets too. Keep Turnkey API credentials and RPC
 URLs out of chats, prompts, skill files, command arguments, and shell history.
-Use the supported credential and signer-admin input paths.
+The Turnkey API credential is loaded by the Gateway, so a dedicated restrictive
+Turnkey policy must remain safe even if that process is compromised. Use the
+supported credential and signer-admin input paths.
 
 ## RPC ownership
 

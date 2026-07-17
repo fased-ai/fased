@@ -6,11 +6,23 @@ import type {
 } from "../config/types.federation.js";
 import { deliverOutboundPayloads, type OutboundSendDeps } from "../infra/outbound/deliver.js";
 import {
+  claimMarketplaceDelivery,
+  reserveMarketplaceDelivery,
+  updateMarketplaceDeliveryOutbox,
+  type MarketplaceDeliveryOutboxOutcome,
+} from "./marketplace-delivery-outbox.js";
+import {
   listLocalMarketplaceDeliveryTargets,
   listLocalMarketplaceOrders,
   upsertMarketplaceOrderConfig,
 } from "./offers.js";
-import { resolveFederationBaseUrl } from "./runtime.js";
+import {
+  buildSignedFederationPeerRequest,
+  FEDERATION_MARKETPLACE_DELIVERY_PATH,
+  isTrustedFederationPeerUrl,
+  lookupFederationPeerDirectory,
+} from "./peer-auth-v2.js";
+import { resolveFederationBaseUrl, resolveFederationHandle } from "./runtime.js";
 
 export type MarketplaceContentSummarizeDeliveryResult = {
   status?: string;
@@ -64,57 +76,12 @@ type DeliverDeps = {
 };
 
 const DELIVERY_SCHEMA = "https://schemas.fased.ai/fased-marketplace-delivery-v0.json";
+const FEDERATION_DELIVERY_TIMEOUT_MS = 10_000;
+const FEDERATION_PROTOCOL_V2_UPGRADE_ERROR =
+  "federation recipient does not advertise federation peer protocol v2; upgrade both nodes before retrying";
 
 function trimString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-function readRecordString(record: Record<string, unknown>, key: string): string {
-  return typeof record[key] === "string" ? record[key].trim() : "";
-}
-
-function directoryEntryCandidates(body: unknown): Record<string, unknown>[] {
-  if (!isRecord(body)) {
-    return [];
-  }
-  return [
-    body,
-    isRecord(body.entry) ? body.entry : undefined,
-    isRecord(body.record) ? body.record : undefined,
-    isRecord(body.directory) ? body.directory : undefined,
-    isRecord(body.node) ? body.node : undefined,
-  ].filter((candidate): candidate is Record<string, unknown> => Boolean(candidate));
-}
-
-function extractDirectoryStatus(body: unknown): string {
-  for (const entry of directoryEntryCandidates(body)) {
-    const status = readRecordString(entry, "status").toLowerCase();
-    if (status) {
-      return status;
-    }
-  }
-  return "";
-}
-
-function extractDirectoryNodeEndpoint(body: unknown): string {
-  for (const entry of directoryEntryCandidates(body)) {
-    for (const key of ["nodeEndpoint", "endpoint", "publicUrl"]) {
-      const value = readRecordString(entry, key);
-      if (value) {
-        return value;
-      }
-    }
-  }
-  return "";
-}
-
-function buildAuthHeaders(apiToken?: string): Record<string, string> {
-  const token = trimString(apiToken);
-  return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
 function safeRefSegment(value: string): string {
@@ -248,22 +215,53 @@ async function postFederationDelivery(params: {
   if (!endpointResult.ok) {
     return endpointResult;
   }
+  if (!handle) {
+    return {
+      ok: false,
+      blocked: true,
+      reason: "federation delivery target is missing the verified recipient handle",
+    };
+  }
   let url: URL;
   try {
     url = new URL("/api/federation/marketplace/deliveries", endpointResult.endpoint);
   } catch {
     return { ok: false, reason: "federation delivery target has an invalid node endpoint" };
   }
+  if (!isTrustedFederationPeerUrl(url)) {
+    return {
+      ok: false,
+      blocked: true,
+      reason:
+        "federation delivery endpoint must use HTTPS (plain HTTP is allowed only for an explicit loopback URL)",
+    };
+  }
   try {
+    const federationBaseUrl =
+      trimString(params.federationBaseUrl) || resolveFederationBaseUrl(process.env);
+    const senderHandle = resolveFederationHandle({
+      env: process.env,
+      fallbackDomain: federationBaseUrl ? new URL(federationBaseUrl).hostname : "localhost",
+    });
+    const signedRequest = buildSignedFederationPeerRequest({
+      senderHandle,
+      recipientHandle: handle,
+      path: FEDERATION_MARKETPLACE_DELIVERY_PATH,
+      body: params.payload,
+      env: process.env,
+    });
     const response = await params.fetchImpl(url, {
       method: "POST",
       headers: {
         "content-type": "application/json",
         "x-fased-marketplace-delivery": "content.summarize",
         "x-fased-marketplace-order": params.orderId,
-        ...(handle ? { "x-fased-federation-recipient": handle } : {}),
+        "x-fased-federation-recipient": handle,
+        ...signedRequest.headers,
       },
-      body: JSON.stringify(params.payload),
+      body: signedRequest.body,
+      redirect: "error",
+      signal: AbortSignal.timeout(FEDERATION_DELIVERY_TIMEOUT_MS),
     });
     if (!response.ok) {
       return {
@@ -287,16 +285,35 @@ async function resolveFederationDeliveryEndpoint(params: {
   federationApiToken?: string;
 }): Promise<{ ok: true; endpoint: string } | { ok: false; reason: string; blocked?: boolean }> {
   const explicitEndpoint = trimString(params.target.federation?.nodeEndpoint);
-  if (explicitEndpoint) {
-    return { ok: true, endpoint: explicitEndpoint };
-  }
-
   const handle = trimString(params.target.federation?.handle);
   if (!handle) {
     return {
       ok: false,
       blocked: true,
-      reason: "federation delivery target is missing node endpoint and handle",
+      reason: "federation delivery target is missing the verified recipient handle",
+    };
+  }
+
+  const canonicalDeliveryUrl = (endpoint: string): URL | null => {
+    try {
+      const endpointUrl = new URL(endpoint);
+      if (!isTrustedFederationPeerUrl(endpointUrl)) {
+        return null;
+      }
+      const deliveryUrl = new URL(FEDERATION_MARKETPLACE_DELIVERY_PATH, endpointUrl);
+      return isTrustedFederationPeerUrl(deliveryUrl) ? deliveryUrl : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const explicitDeliveryUrl = explicitEndpoint ? canonicalDeliveryUrl(explicitEndpoint) : undefined;
+  if (explicitEndpoint && !explicitDeliveryUrl) {
+    return {
+      ok: false,
+      blocked: true,
+      reason:
+        "federation delivery endpoint must use HTTPS (plain HTTP is allowed only for an explicit loopback URL)",
     };
   }
 
@@ -309,25 +326,13 @@ async function resolveFederationDeliveryEndpoint(params: {
     };
   }
 
-  let directoryUrl: URL;
+  let directoryIdentity;
   try {
-    directoryUrl = new URL(`/api/federation/directory/${encodeURIComponent(handle)}`, baseUrl);
-  } catch {
-    return {
-      ok: false,
-      blocked: true,
-      reason: "federation directory base URL is invalid",
-    };
-  }
-
-  let response: Response;
-  try {
-    response = await params.fetchImpl(directoryUrl, {
-      method: "GET",
-      headers: {
-        accept: "application/json",
-        ...buildAuthHeaders(params.federationApiToken ?? process.env.FASED_FEDERATION_API_TOKEN),
-      },
+    directoryIdentity = await lookupFederationPeerDirectory({
+      senderHandle: handle,
+      baseUrl,
+      apiToken: params.federationApiToken ?? process.env.FASED_FEDERATION_API_TOKEN,
+      fetchImpl: params.fetchImpl,
     });
   } catch (error) {
     return {
@@ -339,43 +344,55 @@ async function resolveFederationDeliveryEndpoint(params: {
     };
   }
 
-  if (!response.ok) {
+  if (directoryIdentity.status !== "verified") {
     return {
       ok: false,
       blocked: true,
-      reason: `federation directory lookup failed with HTTP ${response.status}`,
+      reason: `federation directory status is ${directoryIdentity.status || "unverified"}`,
     };
   }
-
-  let body: unknown;
-  try {
-    body = await response.json();
-  } catch {
+  if (
+    directoryIdentity.handle &&
+    directoryIdentity.handle.trim().toLowerCase() !== handle.toLowerCase()
+  ) {
     return {
       ok: false,
       blocked: true,
-      reason: "federation directory response was not valid JSON",
+      reason: "federation directory returned a different recipient handle",
     };
   }
-
-  const status = extractDirectoryStatus(body);
-  if (status === "blocked" || status === "revoked") {
+  if (!directoryIdentity.supportsProtocolV2) {
     return {
       ok: false,
       blocked: true,
-      reason: `federation directory status is ${status}`,
+      reason: FEDERATION_PROTOCOL_V2_UPGRADE_ERROR,
     };
   }
-
-  const endpoint = extractDirectoryNodeEndpoint(body);
-  if (!endpoint) {
+  const registeredEndpoint = trimString(directoryIdentity.nodeEndpoint);
+  if (!registeredEndpoint) {
     return {
       ok: false,
       blocked: true,
       reason: "federation directory entry did not include a node endpoint",
     };
   }
-  return { ok: true, endpoint };
+  const registeredDeliveryUrl = canonicalDeliveryUrl(registeredEndpoint);
+  if (!registeredDeliveryUrl) {
+    return {
+      ok: false,
+      blocked: true,
+      reason:
+        "verified federation directory endpoint must use HTTPS (plain HTTP is allowed only for an explicit loopback URL)",
+    };
+  }
+  if (explicitDeliveryUrl && explicitDeliveryUrl.href !== registeredDeliveryUrl.href) {
+    return {
+      ok: false,
+      blocked: true,
+      reason: "explicit federation node endpoint does not match the verified directory endpoint",
+    };
+  }
+  return { ok: true, endpoint: registeredDeliveryUrl.href };
 }
 
 function buildChannelDeliveryText(params: {
@@ -498,144 +515,252 @@ export async function deliverMarketplaceContentSummarizeResult(params: {
     updatedAt: now,
   };
 
-  let orderStatus: FederationMarketplaceOrderConfig["status"] = "running";
-  let delivery: FederationMarketplaceDeliveryRecordConfig;
-  let delivered = false;
-  let message = "";
+  const performDeliveryOutcome = async (): Promise<MarketplaceDeliveryOutboxOutcome> => {
+    let orderStatus: FederationMarketplaceOrderConfig["status"] = "running";
+    let delivery: FederationMarketplaceDeliveryRecordConfig;
+    let delivered = false;
+    let message = "";
 
-  if (targetStatus !== "ready") {
-    delivery = {
-      ...baseDelivery,
-      status: "blocked",
-      notes: `content.summarize completed, but delivery target ${targetDescriptor} is ${targetStatus}. Result is retained in the Fased app inbox for manual handling.`,
-    };
-    message = `Order ${order.id ?? orderId} completed, but delivery is blocked by target status ${targetStatus}.`;
-  } else if (targetKind === "app-inbox" || targetKind === "artifact") {
-    orderStatus = "delivered";
-    delivered = true;
-    delivery = {
-      ...baseDelivery,
-      status: "delivered",
-      notes: `Delivered content.summarize result to ${targetDescriptor}. External delivery adapters were not used.`,
-      deliveredAt: now,
-    };
-    message = `Order ${order.id ?? orderId} delivered to ${targetDescriptor}.`;
-  } else if (targetKind === "webhook") {
-    const webhookResult = await postWebhookDelivery({
-      fetchImpl,
-      target,
-      payload: buildDeliveryPayload({
-        order,
+    if (targetStatus !== "ready") {
+      delivery = {
+        ...baseDelivery,
+        status: "blocked",
+        notes: `content.summarize completed, but delivery target ${targetDescriptor} is ${targetStatus}. Result is retained in the Fased app inbox for manual handling.`,
+      };
+      message = `Order ${order.id ?? orderId} completed, but delivery is blocked by target status ${targetStatus}.`;
+    } else if (targetKind === "app-inbox" || targetKind === "artifact") {
+      orderStatus = "delivered";
+      delivered = true;
+      delivery = {
+        ...baseDelivery,
+        status: "delivered",
+        notes: `Delivered content.summarize result to ${targetDescriptor}. External delivery adapters were not used.`,
+        deliveredAt: now,
+      };
+      message = `Order ${order.id ?? orderId} delivered to ${targetDescriptor}.`;
+    } else if (targetKind === "webhook") {
+      const webhookResult = await postWebhookDelivery({
+        fetchImpl,
         target,
+        payload: buildDeliveryPayload({
+          order,
+          target,
+          result: params.result,
+          resultRef,
+          artifactRef,
+          deliveredAt: now,
+        }),
+        orderId: order.id ?? orderId,
+      });
+      if (webhookResult.ok) {
+        orderStatus = "delivered";
+        delivered = true;
+        delivery = {
+          ...baseDelivery,
+          status: "delivered",
+          notes: `Delivered content.summarize result to webhook ${targetDescriptor}.`,
+          deliveredAt: now,
+        };
+        message = `Order ${order.id ?? orderId} delivered to webhook ${targetDescriptor}.`;
+      } else {
+        delivery = {
+          ...baseDelivery,
+          status: "failed",
+          notes: `Webhook delivery failed: ${webhookResult.reason}. Result is retained in the Fased app inbox for manual handling.`,
+        };
+        message = `Order ${order.id ?? orderId} completed, but webhook delivery failed.`;
+      }
+    } else if (
+      targetKind === "channel" &&
+      trimString(target.channel?.provider).toLowerCase() === "telegram"
+    ) {
+      const channelResult = await sendTelegramChannelDelivery({
+        config: params.config,
+        deliverOutboundPayloadsImpl,
+        outboundSendDeps: params.deps?.outboundSendDeps,
+        target,
+        text: buildChannelDeliveryText({
+          order,
+          result: params.result,
+          resultRef,
+        }),
+      });
+      if (channelResult.ok) {
+        orderStatus = "delivered";
+        delivered = true;
+        delivery = {
+          ...baseDelivery,
+          status: "delivered",
+          notes: `Delivered content.summarize result to Telegram ${targetDescriptor}.`,
+          deliveredAt: now,
+        };
+        message = `Order ${order.id ?? orderId} delivered to Telegram ${targetDescriptor}.`;
+      } else {
+        delivery = {
+          ...baseDelivery,
+          status: "failed",
+          notes: `Telegram delivery failed: ${channelResult.reason}. Result is retained in the Fased app inbox for manual handling.`,
+        };
+        message = `Order ${order.id ?? orderId} completed, but Telegram delivery failed.`;
+      }
+    } else if (targetKind === "federation") {
+      const federationResult = await postFederationDelivery({
+        fetchImpl,
+        target,
+        payload: buildDeliveryPayload({
+          order,
+          target,
+          result: params.result,
+          resultRef,
+          artifactRef,
+          deliveredAt: now,
+        }),
+        orderId: order.id ?? orderId,
+        federationBaseUrl: params.deps?.federationBaseUrl,
+        federationApiToken: params.deps?.federationApiToken,
+      });
+      if (federationResult.ok) {
+        orderStatus = "delivered";
+        delivered = true;
+        delivery = {
+          ...baseDelivery,
+          status: "delivered",
+          notes: `Delivered content.summarize result to federation target ${targetDescriptor}.`,
+          deliveredAt: now,
+        };
+        message = `Order ${order.id ?? orderId} delivered to federation target ${targetDescriptor}.`;
+      } else {
+        const status = federationResult.blocked ? "blocked" : "failed";
+        delivery = {
+          ...baseDelivery,
+          status,
+          notes: `Federation delivery ${status}: ${federationResult.reason}. Result is retained in the Fased app inbox for manual handling.`,
+        };
+        message = `Order ${order.id ?? orderId} completed, but federation delivery ${status}.`;
+      }
+    } else if (targetKind === "channel") {
+      const provider = trimString(target.channel?.provider) || "channel";
+      delivery = {
+        ...baseDelivery,
+        status: "blocked",
+        notes: `${provider} delivery adapter is not enabled yet for content.summarize. Result is retained in the Fased app inbox until a dedicated adapter is added.`,
+      };
+      message = `Order ${order.id ?? orderId} completed, but ${provider} delivery needs its adapter.`;
+    } else {
+      delivery = {
+        ...baseDelivery,
+        status: "blocked",
+        notes: `${targetKind} delivery adapter is not enabled yet for content.summarize. Result is retained in the Fased app inbox until a dedicated adapter is added.`,
+      };
+      message = `Order ${order.id ?? orderId} completed, but ${targetKind} delivery needs its adapter.`;
+    }
+
+    return { delivered, orderStatus, targetKind, delivery, message };
+  };
+
+  const targetId = trimString(target.targetId) || trimString(order.delivery?.targetId) || "default";
+  const deliveryId = `marketplace-delivery:${order.id ?? orderId}:${resultRef}:${targetId}`;
+  let reserved;
+  try {
+    reserved = await reserveMarketplaceDelivery({
+      deliveryId,
+      orderId: order.id ?? orderId,
+      intent: {
+        orderId: order.id ?? orderId,
         result: params.result,
         resultRef,
         artifactRef,
-        deliveredAt: now,
-      }),
-      orderId: order.id ?? orderId,
-    });
-    if (webhookResult.ok) {
-      orderStatus = "delivered";
-      delivered = true;
-      delivery = {
-        ...baseDelivery,
-        status: "delivered",
-        notes: `Delivered content.summarize result to webhook ${targetDescriptor}.`,
-        deliveredAt: now,
-      };
-      message = `Order ${order.id ?? orderId} delivered to webhook ${targetDescriptor}.`;
-    } else {
-      delivery = {
-        ...baseDelivery,
-        status: "failed",
-        notes: `Webhook delivery failed: ${webhookResult.reason}. Result is retained in the Fased app inbox for manual handling.`,
-      };
-      message = `Order ${order.id ?? orderId} completed, but webhook delivery failed.`;
-    }
-  } else if (
-    targetKind === "channel" &&
-    trimString(target.channel?.provider).toLowerCase() === "telegram"
-  ) {
-    const channelResult = await sendTelegramChannelDelivery({
-      config: params.config,
-      deliverOutboundPayloadsImpl,
-      outboundSendDeps: params.deps?.outboundSendDeps,
-      target,
-      text: buildChannelDeliveryText({
-        order,
-        result: params.result,
-        resultRef,
-      }),
-    });
-    if (channelResult.ok) {
-      orderStatus = "delivered";
-      delivered = true;
-      delivery = {
-        ...baseDelivery,
-        status: "delivered",
-        notes: `Delivered content.summarize result to Telegram ${targetDescriptor}.`,
-        deliveredAt: now,
-      };
-      message = `Order ${order.id ?? orderId} delivered to Telegram ${targetDescriptor}.`;
-    } else {
-      delivery = {
-        ...baseDelivery,
-        status: "failed",
-        notes: `Telegram delivery failed: ${channelResult.reason}. Result is retained in the Fased app inbox for manual handling.`,
-      };
-      message = `Order ${order.id ?? orderId} completed, but Telegram delivery failed.`;
-    }
-  } else if (targetKind === "federation") {
-    const federationResult = await postFederationDelivery({
-      fetchImpl,
-      target,
-      payload: buildDeliveryPayload({
-        order,
         target,
-        result: params.result,
-        resultRef,
-        artifactRef,
-        deliveredAt: now,
-      }),
-      orderId: order.id ?? orderId,
-      federationBaseUrl: params.deps?.federationBaseUrl,
-      federationApiToken: params.deps?.federationApiToken,
+        targetKind,
+        targetStatus,
+      },
     });
-    if (federationResult.ok) {
-      orderStatus = "delivered";
-      delivered = true;
-      delivery = {
-        ...baseDelivery,
-        status: "delivered",
-        notes: `Delivered content.summarize result to federation target ${targetDescriptor}.`,
-        deliveredAt: now,
-      };
-      message = `Order ${order.id ?? orderId} delivered to federation target ${targetDescriptor}.`;
-    } else {
-      const status = federationResult.blocked ? "blocked" : "failed";
-      delivery = {
-        ...baseDelivery,
-        status,
-        notes: `Federation delivery ${status}: ${federationResult.reason}. Result is retained in the Fased app inbox for manual handling.`,
-      };
-      message = `Order ${order.id ?? orderId} completed, but federation delivery ${status}.`;
-    }
-  } else if (targetKind === "channel") {
-    const provider = trimString(target.channel?.provider) || "channel";
-    delivery = {
-      ...baseDelivery,
-      status: "blocked",
-      notes: `${provider} delivery adapter is not enabled yet for content.summarize. Result is retained in the Fased app inbox until a dedicated adapter is added.`,
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error.message : String(error),
+      statusCode: 409,
     };
-    message = `Order ${order.id ?? orderId} completed, but ${provider} delivery needs its adapter.`;
-  } else {
-    delivery = {
-      ...baseDelivery,
-      status: "blocked",
-      notes: `${targetKind} delivery adapter is not enabled yet for content.summarize. Result is retained in the Fased app inbox until a dedicated adapter is added.`,
-    };
-    message = `Order ${order.id ?? orderId} completed, but ${targetKind} delivery needs its adapter.`;
   }
+  const releaseDelivery = await claimMarketplaceDelivery({ deliveryId });
+  if (!releaseDelivery) {
+    return { error: "marketplace delivery is already in progress", statusCode: 409 };
+  }
+
+  let outcome: MarketplaceDeliveryOutboxOutcome;
+  try {
+    if (
+      reserved.record.outcome &&
+      ["delivered", "blocked", "unknown"].includes(reserved.record.state)
+    ) {
+      outcome = reserved.record.outcome;
+    } else if (!reserved.created && reserved.record.state === "delivering") {
+      outcome = {
+        delivered: false,
+        orderStatus: "running",
+        targetKind,
+        delivery: {
+          ...baseDelivery,
+          status: "failed",
+          notes:
+            "Delivery outcome is unknown after an interrupted external send. Automatic retry is disabled; reconcile the recipient before creating a new delivery intent.",
+        },
+        message: `Order ${order.id ?? orderId} delivery outcome is unknown and requires reconciliation.`,
+      };
+      await updateMarketplaceDeliveryOutbox({
+        deliveryId,
+        expectedStates: ["delivering"],
+        state: "unknown",
+        outcome,
+        reason: outcome.delivery.notes,
+      });
+    } else {
+      const externalDelivery =
+        targetStatus === "ready" &&
+        (targetKind === "webhook" ||
+          targetKind === "federation" ||
+          (targetKind === "channel" &&
+            trimString(target.channel?.provider).toLowerCase() === "telegram"));
+      if (externalDelivery) {
+        await updateMarketplaceDeliveryOutbox({
+          deliveryId,
+          expectedStates: ["reserved"],
+          state: "delivering",
+        });
+      }
+      outcome = await performDeliveryOutcome();
+      const ambiguous = externalDelivery && outcome.delivery.status === "failed";
+      if (ambiguous) {
+        outcome.delivery = {
+          ...outcome.delivery,
+          notes: `${outcome.delivery.notes ?? "External delivery failed."} The outcome is treated as unknown and will not be retried automatically.`,
+        };
+        outcome.message = `${outcome.message} Delivery outcome is unknown; reconcile it manually before retrying.`;
+      }
+      await updateMarketplaceDeliveryOutbox({
+        deliveryId,
+        expectedStates: externalDelivery ? ["delivering"] : ["reserved"],
+        state: outcome.delivered ? "delivered" : ambiguous ? "unknown" : "blocked",
+        outcome,
+        reason: ambiguous ? outcome.delivery.notes : undefined,
+      });
+    }
+  } finally {
+    await releaseDelivery();
+  }
+
+  const { orderStatus, delivery, delivered, message } = outcome;
+  const escrowStatus = order.settlement?.escrow?.status;
+  const escrowClosed =
+    escrowStatus === "released" || escrowStatus === "refunded" || escrowStatus === "cancelled";
+  const settlementStatusAfterDelivery =
+    order.settlement?.mode !== "escrow"
+      ? "settled"
+      : order.settlement.status === "released" ||
+          order.settlement.status === "cancelled" ||
+          order.settlement.status === "failed" ||
+          order.settlement.status === "disputed"
+        ? order.settlement.status
+        : "held";
 
   const updated = upsertMarketplaceOrderConfig({
     config: params.config,
@@ -655,14 +780,7 @@ export async function deliverMarketplaceContentSummarizeResult(params: {
       settlement: {
         ...order.settlement,
         mode: order.settlement?.mode ?? "direct",
-        status:
-          payment?.status === "verified"
-            ? order.settlement?.mode === "escrow"
-              ? delivered
-                ? "released"
-                : "held"
-              : "settled"
-            : "submitted",
+        status: payment?.status === "verified" ? settlementStatusAfterDelivery : "submitted",
         amount: order.settlement?.amount ?? order.paymentIntent?.amount,
         currency: order.settlement?.currency ?? order.paymentIntent?.currency,
         chain: order.settlement?.chain ?? order.paymentIntent?.chain,
@@ -678,22 +796,23 @@ export async function deliverMarketplaceContentSummarizeResult(params: {
           ...order.settlement?.escrow,
           status:
             order.settlement?.mode === "escrow"
-              ? delivered
-                ? "released"
+              ? escrowClosed || escrowStatus === "blocked"
+                ? escrowStatus
                 : "held"
               : "not_applicable",
           holdPolicy:
             order.settlement?.escrow?.holdPolicy ??
             (order.settlement?.mode === "escrow" ? "release_on_delivery" : "none"),
-          releaseRequired: order.settlement?.mode === "escrow",
-          ...(order.settlement?.mode === "escrow" && delivered ? { releasedAt: now } : {}),
+          releaseRequired: order.settlement?.mode === "escrow" && !escrowClosed,
           updatedAt: now,
         },
         notes:
           order.settlement?.mode === "escrow"
-            ? delivered
-              ? "Escrow settlement release recorded after delivery."
-              : "Escrow settlement verified; release is waiting on delivery or manual review."
+            ? delivered && !escrowClosed
+              ? "Delivery is complete. Escrow remains held until an explicit reviewed release transaction succeeds."
+              : escrowClosed
+                ? order.settlement?.notes
+                : "Escrow settlement verified; release is waiting on delivery or manual review."
             : "Direct Agent-wallet settlement verified by marketplace payment proof.",
         ...(payment?.status === "verified" ? { verifiedAt: now } : {}),
         ...(payment?.status === "verified" && order.settlement?.mode !== "escrow"

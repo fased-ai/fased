@@ -4,7 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, vi } from "vitest";
 import { WebSocket } from "ws";
-import { resolveMainSessionKeyFromConfig, type SessionEntry } from "../config/sessions.js";
+import {
+  resolveMainSessionKeyFromConfig,
+  saveSessionStore,
+  type SessionEntry,
+} from "../config/sessions.js";
 import { resetAgentRunContextForTest } from "../infra/agent-events.js";
 import {
   loadOrCreateDeviceIdentity,
@@ -55,12 +59,47 @@ const GATEWAY_TEST_ENV_KEYS = [
   "FASED_SKIP_CHANNELS",
   "FASED_SKIP_PROVIDERS",
   "FASED_SKIP_CRON",
+  "FASED_FEDERATION_AUTO_CONNECT",
   "FASED_TEST_MINIMAL_GATEWAY",
 ] as const;
 
 let gatewayEnvSnapshot: ReturnType<typeof captureEnv> | undefined;
 let tempHome: string | undefined;
 let tempConfigRoot: string | undefined;
+
+type GatewayConfigFileSnapshot = {
+  path?: string;
+  raw: string | null;
+};
+
+async function captureGatewayConfigFile(): Promise<GatewayConfigFileSnapshot> {
+  const configPath = process.env.FASED_CONFIG_PATH;
+  if (!configPath) {
+    return { raw: null };
+  }
+  try {
+    return { path: configPath, raw: await fs.readFile(configPath, "utf-8") };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { path: configPath, raw: null };
+    }
+    throw error;
+  }
+}
+
+async function restoreGatewayConfigFile(snapshot: GatewayConfigFileSnapshot): Promise<void> {
+  if (!snapshot.path) {
+    return;
+  }
+  if (snapshot.raw === null) {
+    await fs.rm(snapshot.path, { force: true });
+  } else {
+    await fs.mkdir(path.dirname(snapshot.path), { recursive: true });
+    await fs.writeFile(snapshot.path, snapshot.raw, "utf-8");
+  }
+  const { clearConfigCache } = await import("../config/config.js");
+  clearConfigCache();
+}
 
 export async function writeSessionStore(params: {
   entries: Record<string, Partial<SessionEntry>>;
@@ -73,7 +112,7 @@ export async function writeSessionStore(params: {
     throw new Error("writeSessionStore requires testState.sessionStorePath");
   }
   const agentId = params.agentId ?? DEFAULT_AGENT_ID;
-  const store: Record<string, Partial<SessionEntry>> = {};
+  const store: Record<string, SessionEntry> = {};
   for (const [requestKey, entry] of Object.entries(params.entries)) {
     const rawKey = requestKey.trim();
     const storeKey =
@@ -84,10 +123,9 @@ export async function writeSessionStore(params: {
             requestKey,
             mainKey: params.mainKey,
           });
-    store[storeKey] = entry;
+    store[storeKey] = entry as SessionEntry;
   }
-  await fs.mkdir(path.dirname(storePath), { recursive: true });
-  await fs.writeFile(storePath, JSON.stringify(store, null, 2), "utf-8");
+  await saveSessionStore(storePath, store, { skipMaintenance: true });
 }
 
 async function setupGatewayTestHome() {
@@ -99,6 +137,30 @@ async function setupGatewayTestHome() {
   delete process.env.FASED_CONFIG_PATH;
 }
 
+async function resetGatewayTestExecutionState() {
+  // Keep suite-owned server configuration intact while clearing state that is
+  // expected to be isolated between individual test cases.
+  vi.useRealTimers();
+  setLoggerOverride({ level: "silent", consoleLevel: "silent" });
+  sessionStoreSaveDelayMs.value = 0;
+  testTailnetIPv4.value = undefined;
+  testTailscaleWhois.value = null;
+  testIsNixMode.value = false;
+  cronIsolatedRun.mockClear();
+  agentCommand.mockClear();
+  embeddedRunMock.activeIds.clear();
+  embeddedRunMock.abortCalls = [];
+  embeddedRunMock.waitCalls = [];
+  embeddedRunMock.waitResults.clear();
+  drainSystemEvents(resolveMainSessionKeyFromConfig());
+  resetAgentRunContextForTest();
+  const mod = await getServerModule();
+  mod.__resetModelCatalogCacheForTest();
+  piSdkMock.enabled = false;
+  piSdkMock.discoverCalls = 0;
+  piSdkMock.models = [];
+}
+
 function applyGatewaySkipEnv() {
   process.env.FASED_SKIP_BROWSER_CONTROL_SERVER = "1";
   process.env.FASED_SKIP_GMAIL_WATCHER = "1";
@@ -106,6 +168,7 @@ function applyGatewaySkipEnv() {
   process.env.FASED_SKIP_CHANNELS = "1";
   process.env.FASED_SKIP_PROVIDERS = "1";
   process.env.FASED_SKIP_CRON = "1";
+  process.env.FASED_FEDERATION_AUTO_CONNECT = "0";
   process.env.FASED_TEST_MINIMAL_GATEWAY = "1";
   process.env.FASED_BUNDLED_PLUGINS_DIR = tempHome
     ? path.join(tempHome, "fased-test-no-bundled-extensions")
@@ -113,9 +176,7 @@ function applyGatewaySkipEnv() {
 }
 
 async function resetGatewayTestState(options: { uniqueConfigRoot: boolean }) {
-  // Some tests intentionally use fake timers; ensure they don't leak into gateway suites.
-  vi.useRealTimers();
-  setLoggerOverride({ level: "silent", consoleLevel: "silent" });
+  await resetGatewayTestExecutionState();
   if (!tempHome) {
     throw new Error("resetGatewayTestState called before temp home was initialized");
   }
@@ -149,20 +210,6 @@ async function resetGatewayTestState(options: { uniqueConfigRoot: boolean }) {
   testState.bindingsConfig = undefined;
   testState.channelsConfig = undefined;
   testState.allowFrom = undefined;
-  testIsNixMode.value = false;
-  cronIsolatedRun.mockClear();
-  agentCommand.mockClear();
-  embeddedRunMock.activeIds.clear();
-  embeddedRunMock.abortCalls = [];
-  embeddedRunMock.waitCalls = [];
-  embeddedRunMock.waitResults.clear();
-  drainSystemEvents(resolveMainSessionKeyFromConfig());
-  resetAgentRunContextForTest();
-  const mod = await getServerModule();
-  mod.__resetModelCatalogCacheForTest();
-  piSdkMock.enabled = false;
-  piSdkMock.discoverCalls = 0;
-  piSdkMock.models = [];
 }
 
 async function cleanupGatewayTestHome(options: { restoreEnv: boolean }) {
@@ -187,17 +234,41 @@ async function cleanupGatewayTestHome(options: { restoreEnv: boolean }) {
 export function installGatewayTestHooks(options?: { scope?: "test" | "suite" }) {
   const scope = options?.scope ?? "test";
   if (scope === "suite") {
+    let suiteStateBaseline: typeof testState | undefined;
+    let suiteConfigBaseline: GatewayConfigFileSnapshot | undefined;
+    let suiteEnvBaseline: ReturnType<typeof captureEnv> | undefined;
     beforeAll(async () => {
       await setupGatewayTestHome();
       await resetGatewayTestState({ uniqueConfigRoot: true });
     });
     beforeEach(async () => {
-      await resetGatewayTestState({ uniqueConfigRoot: true });
+      // Suite-scoped files keep one Gateway alive across their tests. Preserve
+      // the config root and server-owned testState established by file/nested
+      // beforeAll hooks, while still clearing transient execution state.
+      // Capture a fresh baseline for every case so nested beforeAll changes are
+      // included and mutations made by one test cannot leak into the next.
+      suiteStateBaseline = structuredClone(testState);
+      suiteConfigBaseline = await captureGatewayConfigFile();
+      suiteEnvBaseline = captureEnv([...GATEWAY_TEST_ENV_KEYS]);
+      await resetGatewayTestExecutionState();
     }, 60_000);
     afterEach(async () => {
+      if (suiteStateBaseline) {
+        Object.assign(testState, structuredClone(suiteStateBaseline));
+        suiteStateBaseline = undefined;
+      }
+      if (suiteConfigBaseline) {
+        await restoreGatewayConfigFile(suiteConfigBaseline);
+        suiteConfigBaseline = undefined;
+      }
+      suiteEnvBaseline?.restore();
+      suiteEnvBaseline = undefined;
       await cleanupGatewayTestHome({ restoreEnv: false });
     });
     afterAll(async () => {
+      suiteStateBaseline = undefined;
+      suiteConfigBaseline = undefined;
+      suiteEnvBaseline = undefined;
       await cleanupGatewayTestHome({ restoreEnv: true });
     });
     return;

@@ -26,6 +26,10 @@ const signerInstallerSource = fs.readFileSync(
   new URL("../../scripts/install-fased-signerd.sh", import.meta.url),
   "utf8",
 );
+const signerUpdaterSource = fs.readFileSync(
+  new URL("../../scripts/fased-managed-updater.mjs", import.meta.url),
+  "utf8",
+);
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -61,12 +65,62 @@ function createSignerReleaseFixture(root: string): {
   const platform = process.platform === "darwin" ? "darwin" : "linux";
   const arch = process.arch === "arm64" ? "arm64" : "amd64";
   const assetName = `fased-signerd-${platform}-${arch}`;
-  const assetBody = "fixture signer binary\n";
+  const identity = {
+    version: "0.1.63",
+    commit: "a".repeat(40),
+    buildInputDigest: `sha256:${"b".repeat(64)}`,
+    development: false,
+  };
+  const assetBody = `#!/usr/bin/env node
+const fs = require("node:fs");
+const net = require("node:net");
+const path = require("node:path");
+const identity = ${JSON.stringify(identity)};
+if (process.argv[2] === "--version") {
+  process.stdout.write(\`fased-signerd \${identity.version} commit=\${identity.commit} buildInputDigest=\${identity.buildInputDigest} development=false\\n\`);
+  process.exit(0);
+}
+const args = process.argv.slice(2);
+const value = (name) => args[args.indexOf(name) + 1];
+const readOnly = args.includes("-read-only");
+const socketPath = value("-socket");
+const controlPath = value("-control-socket");
+const statePath = value("-state-db");
+const masterPath = value("-master-key");
+const pidPath = value("-pid-file");
+const auditPath = value("-audit-log");
+for (const file of [statePath, masterPath, pidPath, auditPath]) fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+if (!fs.existsSync(statePath)) fs.writeFileSync(statePath, "state\\n", { mode: 0o600 });
+if (!fs.existsSync(masterPath)) fs.writeFileSync(masterPath, "master\\n", { mode: 0o600 });
+fs.writeFileSync(pidPath, \`\${process.pid}\\n\`, { mode: 0o600 });
+const health = { ok: true, result: { ready: true, readOnly, keystoreType: "signer-owned-v2", release: identity, schema: { version: 3, supported: 3, ready: true }, capabilities: { protocol: { current: 2, min: 2, max: 2 }, nativeFeeReservationLamports: 5000000, features: ${JSON.stringify(
+    [
+      "failClosedPolicies",
+      "policyHashes",
+      "durableCaps",
+      "atomicIdempotency",
+      "ambiguousBroadcastReconciliation",
+      "signerOwnedKeys",
+      "typedSolanaTransactions",
+      "atomicMultiAssetCaps",
+      "signerControlledNativeFeeCaps",
+    ],
+  )} }, policies: [] } };
+const app = net.createServer((socket) => socket.once("data", () => socket.end(JSON.stringify(health) + "\\n")));
+const control = net.createServer((socket) => socket.destroy());
+const cleanup = () => { app.close(); control.close(); for (const file of [socketPath, controlPath, pidPath]) { try { fs.rmSync(file, { force: true }); } catch {} } process.exit(0); };
+process.on("SIGTERM", cleanup);
+app.listen(socketPath, () => fs.chmodSync(socketPath, 0o600));
+control.listen(controlPath, () => fs.chmodSync(controlPath, 0o600));
+`;
   fs.writeFileSync(path.join(releaseDir, assetName), assetBody, { mode: 0o755 });
   const checksum = createHash("sha256").update(assetBody).digest("hex");
+  const manifestBody = `${JSON.stringify({ schemaVersion: 1, ...identity }, null, 2)}\n`;
+  fs.writeFileSync(path.join(releaseDir, "fased-signerd-release.json"), manifestBody);
+  const manifestChecksum = createHash("sha256").update(manifestBody).digest("hex");
   fs.writeFileSync(
     path.join(releaseDir, "fased-signerd-checksums.txt"),
-    `${checksum}  ${assetName}\n`,
+    `${checksum}  ${assetName}\n${manifestChecksum}  fased-signerd-release.json\n`,
   );
   return { assetBody, assetName, releaseDir };
 }
@@ -84,8 +138,8 @@ describe("local signer env file helpers", () => {
     );
     expect(onboardingWalletSource).toContain("Go is not required for the official prebuilt signer");
     expect(signerInstallerSource).toContain("gh attestation verify");
-    expect(signerInstallerSource).toContain('--source-ref "refs/tags/${VERSION_TAG}"');
-    expect(signerInstallerSource).toContain("--deny-self-hosted-runners");
+    expect(signerUpdaterSource).toContain("`refs/tags/v${version}`");
+    expect(signerUpdaterSource).toContain("--deny-self-hosted-runners");
   });
 
   it("uses the same localhost WebAuthn identity on Linux, WSL2, and native macOS", () => {
@@ -191,6 +245,8 @@ describe("local signer env file helpers", () => {
       vi.stubEnv("FASED_LOCAL_SIGNER_BASE_URL", `file://${releaseDir}`);
       vi.stubEnv("FASED_LOCAL_SIGNER_VERSION", "");
       vi.stubEnv("FASED_LOCAL_SIGNER_LATEST_TAG", "");
+      vi.stubEnv("FASED_LOCAL_SIGNER_ALLOW_UNATTESTED", "1");
+      vi.stubEnv("FASED_LOCAL_SIGNER_FLAT_RELEASE", "1");
 
       const originalCwd = process.cwd();
       process.chdir(root);
@@ -222,6 +278,8 @@ describe("local signer env file helpers", () => {
       vi.stubEnv("FASED_LOCAL_SIGNER_BASE_URL", `file://${releaseDir}`);
       vi.stubEnv("FASED_LOCAL_SIGNER_VERSION", "");
       vi.stubEnv("FASED_LOCAL_SIGNER_LATEST_TAG", "");
+      vi.stubEnv("FASED_LOCAL_SIGNER_ALLOW_UNATTESTED", "1");
+      vi.stubEnv("FASED_LOCAL_SIGNER_FLAT_RELEASE", "1");
 
       expect(() => installSignerdBinary(binPath)).toThrow(/Checksum mismatch/);
       expect(fs.existsSync(binPath)).toBe(false);
@@ -306,8 +364,15 @@ describe("local signer env file helpers", () => {
               keystoreType: "signer-owned-v2",
               chains: ["solana"],
               ready: true,
+              release: {
+                version: "0.1.63",
+                commit: "a".repeat(40),
+                buildInputDigest: `sha256:${"b".repeat(64)}`,
+                development: false,
+              },
               capabilities: {
                 protocol: { current: 2, min: 2, max: 2 },
+                nativeFeeReservationLamports: 5_000_000,
                 intentTypes: ["solana.nativeTransfer"],
                 operationStates: ["reserved", "broadcast", "confirmed", "failed", "unknown"],
                 features: ["failClosedPolicies", "policyHashes", "signerOwnedKeys"],

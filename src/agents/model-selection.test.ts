@@ -322,7 +322,7 @@ describe("model-selection", () => {
       ]);
     });
 
-    it("adds catalog models from authenticated providers to a configured allowlist", () => {
+    it("does not widen a configured allowlist for authenticated providers", () => {
       const cfg: FasedAgentConfig = {
         agents: {
           defaults: {
@@ -343,15 +343,32 @@ describe("model-selection", () => {
         cfg,
         catalog,
         defaultProvider: "openrouter",
-        additionalAllowedProviders: ["openai"],
       });
 
       expect(result.allowAny).toBe(false);
       expect(result.allowedCatalog.map((entry) => `${entry.provider}/${entry.id}`)).toEqual([
         "openrouter/openrouter/auto",
-        "openai/gpt-5.5",
       ]);
+      expect(result.allowedKeys.has("openai/gpt-5.5")).toBe(false);
       expect(result.allowedKeys.has("anthropic/claude-sonnet-4-6")).toBe(false);
+    });
+
+    it("fails closed when a configured allowlist contains only invalid refs", () => {
+      const result = buildAllowedModelSet({
+        cfg: {
+          agents: {
+            defaults: {
+              models: { " ": {} },
+            },
+          },
+        } as FasedAgentConfig,
+        catalog: [{ provider: "openai", id: "gpt-5.5", name: "GPT-5.5" }],
+        defaultProvider: "openai",
+      });
+
+      expect(result.allowAny).toBe(false);
+      expect(result.allowedCatalog).toEqual([]);
+      expect(result.allowedKeys).toEqual(new Set());
     });
 
     it("treats configured task model roles as allowed model refs", () => {
@@ -514,7 +531,7 @@ describe("model-selection", () => {
       });
     });
 
-    it("allows selecting catalog models from authenticated providers", () => {
+    it("rejects authenticated provider models outside an explicit allowlist", () => {
       const cfg: FasedAgentConfig = {
         agents: {
           defaults: {
@@ -533,13 +550,9 @@ describe("model-selection", () => {
         ],
         raw: "openai/gpt-5.5",
         defaultProvider: "openrouter",
-        additionalAllowedProviders: ["openai"],
       });
 
-      expect(result).toEqual({
-        key: "openai/gpt-5.5",
-        ref: { provider: "openai", model: "gpt-5.5" },
-      });
+      expect(result).toEqual({ error: "model not allowed: openai/gpt-5.5" });
     });
 
     it("accepts OpenRouter slash IDs when they are the selected default model", () => {

@@ -107,13 +107,13 @@ The macOS app is a Local setup surface, not a separate hosting profile.
         Arch, macOS, and FreeBSD are local/dev targets until their hosted
         hardening paths are validated separately.
 
-        ```bash
-        curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
-        ```
+        Use the [pre-execution verified tagged bootstrap](/install/vps#3-install-fased-and-connect-through-tailscale)
+        from the provider root console. It verifies the standalone installer
+        asset and attestation bundle before executing Fased shell code as root.
 
         If the VPS image is so small that `curl` is missing, use the OS tabs in
         [Install](/install#vps-hosting-install) to install only the downloader,
-        then rerun the hosted command.
+        then rerun the verified hosted bootstrap.
 
         During hosted setup, Fased bootstraps into `/home/app/fased` and
         continues as the `app` user when you start as `root`. Before

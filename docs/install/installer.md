@@ -20,8 +20,10 @@ If you are starting from zero on your own computer, use the Local install:
 curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
 ```
 
-If you are starting from zero on a VPS, use the Hosting install from
-[Install](/install). Ubuntu LTS is the recommended first VPS target.
+If you are starting from zero on a VPS, use the
+[pre-execution verified Hosting bootstrap](/install/vps#3-install-fased-and-connect-through-tailscale).
+Ubuntu LTS is the recommended first VPS target. Never pipe an unverified
+Hosting installer directly into a privileged shell.
 
 <Warning>
 On Windows 11 or Windows 10 version 2004/build 19041 or newer, open
@@ -172,13 +174,17 @@ Fresh machine, one copy-paste block:
 curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
 ```
 
-Fresh VPS hosting uses the OS-specific steps in [Install](/install#vps-hosting-install).
-The Fased hosted installer installs/starts Tailscale when needed and runs the
-browser login with timeout/readiness checks.
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
-```
+Fresh VPS Hosting uses the
+[pre-execution verified release-asset bootstrap](/install/vps#3-install-fased-and-connect-through-tailscale).
+That procedure downloads the standalone installer and its attestation, verifies
+the exact repository, tag, release workflow, and GitHub-hosted runner before
+execution, and only then invokes the verified file with `--hosting`. Do not use
+a raw tagged `curl | bash` command for Hosting. The installer installs/starts
+Tailscale when needed and runs the browser login with timeout/readiness checks.
+Automatic Hosting setup uses Tailscale's signed apt repository on Ubuntu/Debian
+or its signature-enforcing RPM repository on Fedora/RHEL-family systems; it
+does not execute Tailscale's remote installer script as root. Other systems
+must install the official signed package first.
 
 Hosting note:
 
@@ -213,6 +219,11 @@ Native signer note:
   builds Go or starts a Node broker
 - both paths verify the SHA-256 checksum and GitHub release attestation; normal
   users do not install Go
+- Local wallet-first setup stages the exact signer candidate in read-only mode
+  while the launcher, policy helper, and templates are installed. The signer is
+  promoted to read-write only after its identity, protocol, and policy state
+  pass verification; a pre-commit failure restores the previous signer files
+  and process state
 - importing an existing account is a separate native
   `fased-signerd admin wallet import` control-socket operation; the Gateway,
   dashboard, and normal setup wizard do not accept private keys
@@ -248,14 +259,16 @@ Native signer note:
     ```
   </Tab>
   <Tab title="Hosting profile">
-    ```bash
-    ./install.sh --hosting
-    ```
+    Follow the exact
+    [pre-execution verified Hosting bootstrap](/install/vps#3-install-fased-and-connect-through-tailscale)
+    from the VPS provider's root console. Execute the downloaded standalone
+    installer with `--hosting` only after its release attestation succeeds.
   </Tab>
   <Tab title="Repair hosting">
-    ```bash
-    ./install.sh --repair-hosting
-    ```
+    Follow the same
+    [pre-execution verified release-asset procedure](/install/vps#3-install-fased-and-connect-through-tailscale),
+    but use `--repair-hosting` in the final invocation of the already-verified
+    standalone installer. Never use raw `curl | bash` for this root repair.
 
     Refreshes an existing hosted runtime and root-managed Gateway service
     without rerunning onboarding or resetting persistent state.
@@ -286,20 +299,21 @@ Native signer note:
 
 These are the flags that matter for the current public repo-backed flow.
 
-| Flag                   | Description                                                       |
-| ---------------------- | ----------------------------------------------------------------- |
-| `--auto-install`       | Install missing macOS/Linux dependencies where supported.         |
-| `--no-auto-install`    | Do not install missing dependencies automatically.                |
-| `--install-dir <path>` | Bootstrap or resolve the checkout under a specific directory.     |
-| `--hosting`            | Use hosted/VPS onboarding defaults.                               |
-| `--repair-hosting`     | Repair hosted runtime/service state without rerunning onboarding. |
-| `--repair-local`       | Repair Local/WSL runtime and user service without onboarding.     |
-| `--local`              | Use local-machine onboarding defaults.                            |
-| `--source-install`     | Build from source instead of using the verified Linux runtime.    |
-| `--swap-gb <n>`        | Override automatic install-time swap sizing on small Linux hosts. |
-| `--no-onboard`         | Build/install and skip onboarding.                                |
-| `--verbose`            | Show install command output instead of only log paths.            |
-| `--help`               | Show usage (`-h`).                                                |
+| Flag                         | Description                                                                     |
+| ---------------------------- | ------------------------------------------------------------------------------- |
+| `--auto-install`             | Install missing macOS/Linux dependencies where supported.                       |
+| `--no-auto-install`          | Do not install missing dependencies automatically.                              |
+| `--install-dir <path>`       | Bootstrap or resolve the checkout under a specific directory.                   |
+| `--hosting`                  | Use hosted/VPS onboarding defaults; root bootstrap also requires `--release`.   |
+| `--repair-hosting`           | Repair hosted runtime/service state from the tagged provider-console bootstrap. |
+| `--release <vX.Y.Z\|latest>` | Select and attest the exact Hosting release before privileged setup.            |
+| `--repair-local`             | Repair Local/WSL runtime and user service without onboarding.                   |
+| `--local`                    | Use local-machine onboarding defaults.                                          |
+| `--source-install`           | Build Local from source; refused for privileged VPS Hosting.                    |
+| `--swap-gb <n>`              | Override automatic install-time swap sizing on small Linux hosts.               |
+| `--no-onboard`               | Build/install and skip onboarding.                                              |
+| `--verbose`                  | Show install command output instead of only log paths.                          |
+| `--help`                     | Show usage (`-h`).                                                              |
 
 Extra arguments after `--` are forwarded to `fased onboard --install-daemon`.
 
@@ -327,8 +341,8 @@ current surface, run `./install.sh --help` from the repo root.
 - `FASED_HOSTING_NPM_PACKAGE=<spec>`: compatibility alias for hosted installs.
 - `FASED_SOURCE_INSTALL=1`: build from the checkout instead of using a verified
   Linux release runtime.
-- `FASED_HOSTING_SOURCE_INSTALL=1`: advanced hosted testing path that uses the
-  source checkout, `pnpm`, and local builds instead of the prebuilt runtime.
+- `FASED_HOSTING_SOURCE_INSTALL=1`: retired for maintained Hosting. Privileged
+  Hosting refuses source/app checkouts and requires a tagged attested bundle.
 - `FASED_EXISTING_DATA_ACTION=<mode>`: advanced local state override: `keep`,
   `reset-config`, or `separate-state`. Normal installs keep existing state
   automatically.
@@ -340,13 +354,16 @@ current surface, run `./install.sh --help` from the repo root.
 
 ## Automation
 
-Headless install without onboarding:
+Local headless install without onboarding:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --no-onboard
 ```
 
-If you automate a hosted install, keep the same security order:
+This raw bootstrap is Local only. If you automate a hosted install, begin with
+the attested standalone release asset in the
+[verified Hosting procedure](/install/vps#3-install-fased-and-connect-through-tailscale)
+and keep the same security order:
 
 1. provision the host
 2. let the hosted installer start Tailscale and approve the printed login URL;
@@ -355,7 +372,7 @@ If you automate a hosted install, keep the same security order:
 4. access Control UI / gateway only through Tailscale or a deliberate private
    tunnel
 
-Use a controlled install directory in CI or on a managed host:
+Use a controlled Local install directory in CI or on a self-managed host:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --install-dir "$HOME/agent" --no-onboard
@@ -363,12 +380,14 @@ curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | ba
 
 ## Package runtime note
 
-The curl bootstrap is the public first-run path for fresh machines because it
-can install missing OS tools, Git, and Node, then choose the right Local or VPS
-Hosting setup. Supported Linux Local and VPS Hosting installs use the verified
-release runtime when available. The source checkout remains the setup and repair
-anchor. Users should still begin with the Fased installer so service setup,
-host security, and onboarding stay aligned.
+The raw curl bootstrap is the public Local first-run path because it can install
+missing OS tools, Git, and Node. VPS Hosting instead downloads and verifies the
+standalone tagged installer before any privileged execution. Supported Linux
+Local and VPS Hosting installs use the verified release runtime when available.
+The source checkout remains the Local setup/repair anchor; privileged Hosting
+repair starts from a new verified release asset. Users should still begin with
+the appropriate Fased installer path so service setup, host security, and
+onboarding stay aligned.
 
 Bun global installs are not the public Fased install path; Bun remains
 experimental local development only.

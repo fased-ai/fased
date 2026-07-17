@@ -20,11 +20,24 @@ function capabilityResult() {
     keystoreType: "signer-owned-v2",
     chains: ["solana"],
     ready: true,
+    release: {
+      version: "dev",
+      commit: "unknown",
+      buildInputDigest: "unknown",
+      development: true,
+    },
     capabilities: {
       protocol: { current: 2, min: 2, max: 2 },
+      nativeFeeReservationLamports: 5_000_000,
       intentTypes: ["solana.nativeTransfer"],
       operationStates: ["reserved", "broadcast", "confirmed", "failed", "unknown"],
-      features: ["failClosedPolicies", "policyHashes", "signerOwnedKeys"],
+      features: [
+        "failClosedPolicies",
+        "policyHashes",
+        "signerOwnedKeys",
+        "atomicMultiAssetCaps",
+        "signerControlledNativeFeeCaps",
+      ],
     },
     policies: [],
   };

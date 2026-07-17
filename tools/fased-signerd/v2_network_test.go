@@ -96,6 +96,12 @@ func TestSignerNetworkConfigurationIsEncryptedAndMetadataOnly(t *testing.T) {
 	if err != nil || !health.Schema.Ready || health.Schema.Version != signerStateSchemaVersionV2 || !health.Network.Ready || len(health.Network.Wallets) != 1 {
 		t.Fatalf("health did not report schema/network readiness: %#v err=%v", health, err)
 	}
+	if !health.Release.Development || health.Release.Version != "dev" || health.Release.Commit != "unknown" || health.Release.BuildInputDigest != "unknown" {
+		t.Fatalf("source-test health did not expose its explicit development identity: %#v", health.Release)
+	}
+	if health.Capabilities.NativeFeeReservationLamports != signerNativeFeeReservationV2 {
+		t.Fatalf("health did not expose the signer-owned native fee reserve: %#v", health.Capabilities)
+	}
 	encodedHealth, err := json.Marshal(health)
 	if err != nil {
 		t.Fatal(err)
@@ -546,7 +552,7 @@ func TestSignerV2ReconcileUsesOnlySignerOwnedNetwork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	operation, err = store.markBroadcast(operation.RequestID, signature.String(), "sha256:"+strings.Repeat("a", 64))
+	operation, err = store.markBroadcast(operation.RequestID, signature.String(), []byte("signed-reconcile-transaction"))
 	if err != nil {
 		t.Fatal(err)
 	}

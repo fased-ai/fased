@@ -1,10 +1,9 @@
 package main
 
 import (
-	"crypto/sha256"
+	"context"
 	"encoding/base64"
 	"encoding/binary"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"math/big"
@@ -16,6 +15,15 @@ import (
 	rpc "github.com/gagliardetto/solana-go/rpc"
 	bolt "go.etcd.io/bbolt"
 )
+
+func TestJupiterAddressLookupTablesFailClosedWithoutRPCTrust(t *testing.T) {
+	message := solana.Message{AddressTableLookups: solana.MessageAddressTableLookupSlice{{
+		AccountKey: solana.NewWallet().PublicKey(), WritableIndexes: solana.Uint8SliceAsNum{0},
+	}}}
+	if err := resolveAndVerifyLookupsV2(context.Background(), nil, &message); err == nil || !strings.Contains(err.Error(), "address lookup tables are denied") {
+		t.Fatalf("Jupiter lookup table was accepted through a single RPC trust path: %v", err)
+	}
+}
 
 func testJupiterIntentV2(owner solana.PublicKey) signerIntentV2 {
 	return signerIntentV2{
@@ -72,8 +80,35 @@ func TestJupiterIntentNormalizationIsExactAndFailClosed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("normalize Jupiter intent: %v", err)
 	}
-	if normalized.Amount.Cmp(big.NewInt(100)) != 0 || normalized.Asset != "solana:spl:"+input.Jupiter.InputMint {
+	if normalized.Amount.Cmp(big.NewInt(100)) != 0 || normalized.Asset != "solana:spl:"+input.Jupiter.InputMint ||
+		normalized.RequiredRole != "" || normalized.PolicyOperation != intentSolanaJupiterSwap {
 		t.Fatalf("unexpected normalized intent: %#v", normalized)
+	}
+	lowClaim := input
+	lowFee := *input.Jupiter
+	lowClaim.Jupiter = &lowFee
+	lowClaim.Jupiter.MaxFeeLamports = "1"
+	lowNormalized, err := normalizeSignerIntentV2(lowClaim)
+	if err != nil {
+		t.Fatalf("normalize low caller fee claim: %v", err)
+	}
+	policy, err := normalizeSignerPolicyV2(signerPolicyV2{
+		WalletID: "jupiter-fee-accounting", Role: "agent", Operations: []string{intentSolanaJupiterSwap},
+		Programs: []string{jupiterAggregatorV6V2},
+		Assets: []signerPolicyAssetV2{
+			{Asset: lowNormalized.Asset, Destinations: []string{owner.String()}, MaxPerTx: "100", MaxDaily: "1000"},
+			{Asset: "solana:native", Destinations: []string{owner.String()}, MaxPerTx: "5000000", MaxDaily: "5000000"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reservations, err := policyReservationsForIntentV2(policy, lowNormalized)
+	if err != nil {
+		t.Fatalf("build signer-owned Jupiter reservations: %v", err)
+	}
+	if len(reservations) != 2 || reservations[0].Asset != "solana:native" || reservations[0].Amount.Uint64() != signerNativeFeeReservationV2 {
+		t.Fatalf("caller lowered durable Jupiter native fee accounting: %#v", reservations)
 	}
 
 	mutated := input
@@ -96,6 +131,34 @@ func TestJupiterIntentNormalizationIsExactAndFailClosed(t *testing.T) {
 	mutated.Jupiter.MinimumOutputAmount = "0"
 	if _, err := normalizeSignerIntentV2(mutated); err == nil || !strings.Contains(err.Error(), "positive input/minimum") {
 		t.Fatalf("expected zero minimum output rejection, got %v", err)
+	}
+}
+
+func TestEveryAutonomousJupiterAndTriggerIntentRequiresAgentRole(t *testing.T) {
+	wallet := solana.NewWallet().PublicKey()
+	vault := solana.NewWallet().PublicKey()
+	mint := solana.NewWallet().PublicKey()
+	source := solana.NewWallet().PublicKey()
+	destination := solana.NewWallet().PublicKey()
+	create := triggerDepositIntentV2(wallet, vault, mint, source, destination, solana.TokenProgramID.String())
+	cancel := triggerCancelIntentV2(wallet, vault, mint, source, destination, solana.TokenProgramID.String())
+
+	for _, input := range []signerIntentV2{testJupiterIntentV2(wallet), create, cancel} {
+		normalized, err := normalizeSignerIntentV2(input)
+		if err != nil {
+			t.Fatalf("normalize %s: %v", input.Type, err)
+		}
+		if normalized.RequiredRole != "" || normalized.PolicyOperation != input.Type {
+			t.Fatalf("%s did not preserve reviewed-mode role flexibility: %#v", input.Type, normalized)
+		}
+		for _, role := range []string{"vault", "mining"} {
+			if err := requireAutonomousRoleV2(signerPolicyV2{Role: role}, normalized); err == nil {
+				t.Fatalf("%s policy authorized autonomous %s", role, input.Type)
+			}
+		}
+		if err := requireAutonomousRoleV2(signerPolicyV2{Role: "agent"}, normalized); err != nil {
+			t.Fatalf("Agent policy rejected autonomous %s: %v", input.Type, err)
+		}
 	}
 }
 
@@ -164,8 +227,8 @@ func TestJupiterAuxiliaryInstructionsAreNarrowlyBound(t *testing.T) {
 		{PublicKey: solana.TokenProgramID},
 		{PublicKey: solana.SystemProgramID},
 	}
-	if action, err := validateJupiterAuxiliaryInstructionV2(createData, createMetas, wallet, intent); err != nil || action {
-		t.Fatalf("validate exact create-token-account: action=%v err=%v", action, err)
+	if _, err := validateJupiterAuxiliaryInstructionV2(createData, createMetas, wallet, intent); err == nil || !strings.Contains(err.Error(), "token-account creation is denied") {
+		t.Fatalf("signer-funded Jupiter token-account creation was accepted: %v", err)
 	}
 	createMetas[0] = &solana.AccountMeta{PublicKey: solana.NewWallet().PublicKey(), IsWritable: true}
 	if _, err := validateJupiterAuxiliaryInstructionV2(createData, createMetas, wallet, intent); err == nil {
@@ -310,12 +373,10 @@ func TestJupiterReviewIsDurableImmutableAndExpires(t *testing.T) {
 		Role:       "agent",
 		Operations: []string{intentSolanaJupiterSwap},
 		Programs:   []string{jupiterAggregatorV6V2},
-		Assets: []signerPolicyAssetV2{{
-			Asset:        normalized.Asset,
-			Destinations: []string{wallet.PublicKey},
-			MaxPerTx:     "100",
-			MaxDaily:     "1000",
-		}},
+		Assets: []signerPolicyAssetV2{
+			{Asset: normalized.Asset, Destinations: []string{wallet.PublicKey}, MaxPerTx: "100", MaxDaily: "1000"},
+			{Asset: "solana:native", Destinations: []string{wallet.PublicKey}, MaxPerTx: "5000000", MaxDaily: "10000000"},
+		},
 	}, 1)
 	if err != nil {
 		t.Fatalf("install Jupiter policy: %v", err)
@@ -364,96 +425,56 @@ func TestJupiterReviewIsDurableImmutableAndExpires(t *testing.T) {
 	if _, _, _, err := store.requirePreparedReviewV2(wallet.WalletID, req.RequestID); err == nil || !strings.Contains(err.Error(), "expired") {
 		t.Fatalf("expected expired review rejection, got %v", err)
 	}
+	store.now = func() time.Time { return now }
+	operation, _, err := store.reserveOperation(signerExecuteRequestV2{
+		RequestID: req.RequestID, PolicyHash: policy.Hash, Intent: normalized.Intent, intentWalletID: wallet.WalletID,
+	}, normalized)
+	if err != nil {
+		t.Fatalf("reserve reviewed operation before expiry: %v", err)
+	}
+	store.now = func() time.Time { return now.Add(16 * time.Minute) }
+	terminalized, err := store.terminalizeInvalidReviewedReservationV2(wallet.WalletID, req.RequestID, errors.New("signer review expired; prepare a fresh review"))
+	if err != nil || !terminalized {
+		t.Fatalf("expired reviewed reservation was not terminalized: terminalized=%v err=%v", terminalized, err)
+	}
+	operation, err = store.getOperation(req.RequestID)
+	if err != nil || operation.State != operationFailed || operation.ReservationActive {
+		t.Fatalf("expired reviewed reservation remains active: %#v err=%v", operation, err)
+	}
+	if usage, err := store.dailyUsage(wallet.WalletID, normalized.Asset, now); err != nil || usage.Sign() != 0 {
+		t.Fatalf("expired reviewed reservation did not release primary usage: %v err=%v", usage, err)
+	}
+	if usage, err := store.dailyUsage(wallet.WalletID, "solana:native", now); err != nil || usage.Sign() != 0 {
+		t.Fatalf("expired reviewed reservation did not release fee usage: %v err=%v", usage, err)
+	}
 }
 
-func TestReturnSignedTerminalReplayReturnsDurableExactBytes(t *testing.T) {
-	store, keys := openTestSignerV2(t)
-	wallet, _ := createTestSignerWalletV2(
-		t,
-		store,
-		keys,
-		"agent-return-signed",
-		solana.NewWallet().PublicKey().String(),
-		100,
-		1000,
-	)
-	normalized, err := normalizeSignerIntentV2(testJupiterIntentV2(solana.MustPublicKeyFromBase58(wallet.PublicKey)))
+func TestTriggerReturnSignedAndSecretsNeverCrossSocketResult(t *testing.T) {
+	if _, err := normalizeTransactionEnvelopeV2(signerSolanaTransactionEnvelopeV2{
+		SerializedTxBase64: "AQ==",
+		Programs:           []string{solana.SystemProgramID.String()},
+		WritableAccounts:   []string{solana.NewWallet().PublicKey().String()},
+		Submission:         "returnSigned",
+	}); err == nil || !strings.Contains(err.Error(), "signer-owned rpc") {
+		t.Fatalf("legacy returnSigned mode was accepted: %v", err)
+	}
+	operation := signerOperationV2{
+		RequestID: "trigger-no-secret-response", WalletID: "agent", IntentType: intentSolanaTriggerCreate,
+		IntentDigest: "sha256:" + strings.Repeat("a", 64), PolicyHash: "sha256:" + strings.Repeat("b", 64),
+		State: operationUnknown, SignedTxBase64: "signed-transaction-secret", Signature: "public-signature",
+		ExternalResult: &signerExternalResultV2{Provider: triggerProviderJupiterV2, Action: "create", OrderID: "order-1", OrderState: "open"},
+	}
+	raw, err := marshalSignerResultV2(signerReviewExecutionResultV2{Operation: &operation, Signer: "public-signer"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	policy, err := store.putPolicy(signerPolicyV2{
-		WalletID:   wallet.WalletID,
-		Role:       "agent",
-		Operations: []string{intentSolanaJupiterSwap},
-		Programs:   []string{jupiterAggregatorV6V2},
-		Assets: []signerPolicyAssetV2{{
-			Asset:        normalized.Asset,
-			Destinations: []string{wallet.PublicKey},
-			MaxPerTx:     "100",
-			MaxDaily:     "1000",
-		}},
-	}, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	prepare := signerReviewPrepareRequestV2{
-		RequestID:  "return-signed-replay",
-		PolicyHash: policy.Hash,
-		Mode:       jupiterReviewModeAutonomousV2,
-		Intent:     normalized.Intent,
-		Transaction: &signerSolanaTransactionEnvelopeV2{
-			SerializedTxBase64: "AQ==",
-			Programs:           normalized.RequiredPrograms,
-			WritableAccounts:   []string{wallet.PublicKey},
-			Submission:         jupiterSubmissionReturnV2,
-		},
-	}
-	if _, err := store.prepareReviewV2(
-		wallet.WalletID,
-		prepare,
-		normalized,
-		*prepare.Transaction,
-		"sha256:"+strings.Repeat("a", 64),
-	); err != nil {
-		t.Fatalf("prepare returnSigned review: %v", err)
-	}
-	operation, existing, err := store.reserveOperation(signerExecuteRequestV2{
-		RequestID:      prepare.RequestID,
-		PolicyHash:     policy.Hash,
-		Intent:         normalized.Intent,
-		intentWalletID: wallet.WalletID,
-	}, normalized)
-	if err != nil || existing {
-		t.Fatalf("reserve returnSigned operation: existing=%v err=%v", existing, err)
-	}
-	signedRaw := []byte("exact-signed-solana-transaction")
-	signedEncoded := base64.StdEncoding.EncodeToString(signedRaw)
-	digest := sha256.Sum256(signedRaw)
-	transactionDigest := "sha256:" + hex.EncodeToString(digest[:])
-	if _, err := store.markBroadcastClaim(
-		operation.RequestID,
-		0,
-		"exact-signature",
-		transactionDigest,
-		signedEncoded,
-	); err != nil {
-		t.Fatalf("persist signed artifact before return: %v", err)
-	}
-
-	service := &signerServiceV2{store: store, keys: keys}
-	for attempt := 0; attempt < 2; attempt++ {
-		result, err := service.executeJupiterReviewV2(wallet.WalletID, signerReviewExecuteRequestV2{
-			RequestID: prepare.RequestID,
-		})
-		if err != nil {
-			t.Fatalf("terminal replay %d: %v", attempt, err)
+	for _, secret := range []string{"signed-transaction-secret", "api-key-secret", "jwt-secret", "signedTxBase64"} {
+		if strings.Contains(string(raw), secret) {
+			t.Fatalf("socket result leaked %q: %s", secret, raw)
 		}
-		if result.SignedTxBase64 != signedEncoded || result.Operation == nil || result.Operation.SignedTxBase64 != signedEncoded {
-			t.Fatalf("terminal replay omitted or changed signed bytes: %#v", result)
-		}
-		if result.Operation.State != operationBroadcast || result.Operation.TransactionDigest != transactionDigest {
-			t.Fatalf("terminal replay changed operation state/digest: %#v", result.Operation)
-		}
+	}
+	if !strings.Contains(string(raw), "order-1") || !strings.Contains(string(raw), "public-signature") {
+		t.Fatalf("socket result omitted safe public identifiers: %s", raw)
 	}
 }
 
@@ -477,12 +498,10 @@ func TestJupiterReviewPrepareRequiresSignerOwnedNetworkBeforePersistence(t *test
 		Role:       "agent",
 		Operations: []string{intentSolanaJupiterSwap},
 		Programs:   []string{jupiterAggregatorV6V2},
-		Assets: []signerPolicyAssetV2{{
-			Asset:        intent.Asset,
-			Destinations: []string{wallet.PublicKey},
-			MaxPerTx:     "100",
-			MaxDaily:     "1000",
-		}},
+		Assets: []signerPolicyAssetV2{
+			{Asset: intent.Asset, Destinations: []string{wallet.PublicKey}, MaxPerTx: "100", MaxDaily: "1000"},
+			{Asset: "solana:native", Destinations: []string{wallet.PublicKey}, MaxPerTx: "5000000", MaxDaily: "10000000"},
+		},
 	}, initialPolicy.Version)
 	if err != nil {
 		t.Fatal(err)
@@ -537,7 +556,10 @@ func TestJupiterAuthorizationModesFailClosed(t *testing.T) {
 		Role:       "vault",
 		Operations: []string{intentSolanaJupiterSwap},
 		Programs:   []string{jupiterAggregatorV6V2},
-		Assets:     []signerPolicyAssetV2{{Asset: normalized.Asset, Destinations: []string{wallet.PublicKey}, MaxPerTx: "100", MaxDaily: "1000"}},
+		Assets: []signerPolicyAssetV2{
+			{Asset: normalized.Asset, Destinations: []string{wallet.PublicKey}, MaxPerTx: "100", MaxDaily: "1000"},
+			{Asset: "solana:native", Destinations: []string{wallet.PublicKey}, MaxPerTx: "5000000", MaxDaily: "10000000"},
+		},
 	}, 1)
 	if err != nil {
 		t.Fatal(err)
@@ -555,27 +577,31 @@ func TestJupiterAuthorizationModesFailClosed(t *testing.T) {
 }
 
 func triggerDepositIntentV2(wallet, vault, mint, source, destination solana.PublicKey, program string) signerIntentV2 {
+	_ = vault
+	_ = source
+	_ = destination
 	return signerIntentV2{
-		Type: intentSolanaTriggerDeposit,
+		Type: intentSolanaTriggerCreate,
 		Jupiter: &signerJupiterIntentV2{
-			Owner:                   wallet.String(),
-			InputMint:               mint.String(),
-			InputAmount:             "10",
-			MaxInputAmount:          "10",
-			MaxFeeLamports:          "5000",
-			SourceTokenAccount:      source.String(),
-			DestinationTokenAccount: destination.String(),
-			Programs:                []string{program},
+			Owner:          wallet.String(),
+			InputMint:      mint.String(),
+			OutputMint:     solana.NewWallet().PublicKey().String(),
+			InputAmount:    "10",
+			MaxInputAmount: "10",
+			MaxFeeLamports: "5000",
+			Programs:       []string{program},
 			Trigger: &signerJupiterTriggerIntentV2{
-				Program:   program,
-				Vault:     vault.String(),
-				RequestID: "deposit-request",
+				Operation: "create", Program: program,
+				TriggerMint: mint.String(), Condition: "above", TargetPriceUSD: "200.00",
+				SlippageBPS: 100, ExpiresAt: "2026-08-01T00:00:00.000Z", ExpectedOrderState: "new",
 			},
 		},
 	}
 }
 
 func triggerCancelIntentV2(wallet, vault, mint, source, destination solana.PublicKey, program string) signerIntentV2 {
+	_ = vault
+	_ = source
 	return signerIntentV2{
 		Type: intentSolanaTriggerCancel,
 		Jupiter: &signerJupiterIntentV2{
@@ -583,14 +609,11 @@ func triggerCancelIntentV2(wallet, vault, mint, source, destination solana.Publi
 			OutputMint:              mint.String(),
 			MinimumOutputAmount:     "10",
 			MaxFeeLamports:          "5000",
-			SourceTokenAccount:      source.String(),
 			DestinationTokenAccount: destination.String(),
 			Programs:                []string{program},
 			Trigger: &signerJupiterTriggerIntentV2{
-				Program:   program,
-				Vault:     vault.String(),
-				Order:     "order-1",
-				RequestID: "cancel-request",
+				Operation: "cancel", Program: program,
+				Order: "order-1", ExpectedOrderState: "open",
 			},
 		},
 	}
@@ -604,7 +627,7 @@ func TestJupiterTriggerIntentRejectsOpaqueProgramsAndSignerAliasing(t *testing.T
 	destination := solana.NewWallet().PublicKey()
 	valid := triggerDepositIntentV2(wallet, vault, mint, source, destination, solana.TokenProgramID.String())
 	if _, err := normalizeSignerIntentV2(valid); err != nil {
-		t.Fatalf("normalize exact Trigger deposit: %v", err)
+		t.Fatalf("normalize exact Trigger create: %v", err)
 	}
 
 	opaque := valid
@@ -625,8 +648,8 @@ func TestJupiterTriggerIntentRejectsOpaqueProgramsAndSignerAliasing(t *testing.T
 	aliasedTrigger := *valid.Jupiter.Trigger
 	aliased.Jupiter.Trigger = &aliasedTrigger
 	aliased.Jupiter.Trigger.Vault = wallet.String()
-	if _, err := normalizeSignerIntentV2(aliased); err == nil || !strings.Contains(err.Error(), "distinct") {
-		t.Fatalf("expected signer/vault alias rejection, got %v", err)
+	if _, err := normalizeSignerIntentV2(aliased); err == nil || !strings.Contains(err.Error(), "signer-owned") {
+		t.Fatalf("expected caller-supplied vault rejection, got %v", err)
 	}
 }
 
@@ -662,6 +685,7 @@ func TestJupiterTriggerTokenTransfersBindDirectionAuthorityAndExactAmount(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
+	deposit = enrichJupiterTriggerIntentV2(deposit, vault.String(), "deposit-request", source.String(), destination.String())
 	accounts := map[string]*rpc.Account{
 		mint.String():        rpcAccountV2(t, solana.TokenProgramID, 1, make([]byte, 82)),
 		source.String():      tokenAccountV2(t, mint, wallet, 20),
@@ -691,6 +715,7 @@ func TestJupiterTriggerTokenTransfersBindDirectionAuthorityAndExactAmount(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
+	cancel = enrichJupiterTriggerIntentV2(cancel, vault.String(), "cancel-request", source.String(), destination.String())
 	cancelMetas := []*solana.AccountMeta{
 		{PublicKey: source, IsWritable: true},
 		{PublicKey: mint},
@@ -723,6 +748,7 @@ func TestJupiterTriggerWithdrawalRequiresExactWalletAndVaultSignerSet(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
+	intent = enrichJupiterTriggerIntentV2(intent, vault.String(), "cancel-request", intent.Intent.Jupiter.SourceTokenAccount, intent.Intent.Jupiter.DestinationTokenAccount)
 	tx := &solana.Transaction{
 		Signatures: []solana.Signature{{}, {}},
 		Message: solana.Message{
@@ -733,6 +759,11 @@ func TestJupiterTriggerWithdrawalRequiresExactWalletAndVaultSignerSet(t *testing
 	if index, err := validateJupiterRequiredSignersV2(tx, wallet, intent); err != nil || index != 0 {
 		t.Fatalf("validate exact wallet+vault signer set: index=%d err=%v", index, err)
 	}
+	tx.Message.AccountKeys = solana.PublicKeySlice{vault, wallet}
+	if _, err := validateJupiterRequiredSignersV2(tx, wallet, intent); err == nil || !strings.Contains(err.Error(), "final transaction identity") {
+		t.Fatalf("vault fee payer made the returned wallet signature an incorrect transaction id: %v", err)
+	}
+	tx.Message.AccountKeys = solana.PublicKeySlice{wallet, vault}
 	tx.Message.AccountKeys[1] = solana.NewWallet().PublicKey()
 	if _, err := validateJupiterRequiredSignersV2(tx, wallet, intent); err == nil {
 		t.Fatal("unexpected Trigger co-signer was accepted")
@@ -758,6 +789,7 @@ func TestJupiterTriggerNativeDepositAndWithdrawalBindVaultDeltas(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	deposit = enrichJupiterTriggerIntentV2(deposit, vault.String(), "deposit-request", wallet.String(), vault.String())
 	snapshot := jupiterTransactionSnapshotV2{
 		Accounts: map[string]*rpc.Account{
 			wallet.String(): rpcAccountV2(t, solana.SystemProgramID, 1_000_000, nil),
@@ -789,6 +821,7 @@ func TestJupiterTriggerNativeDepositAndWithdrawalBindVaultDeltas(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	cancel = enrichJupiterTriggerIntentV2(cancel, vault.String(), "cancel-request", vault.String(), wallet.String())
 	cancelSnapshot := jupiterTransactionSnapshotV2{
 		Accounts: map[string]*rpc.Account{
 			wallet.String(): rpcAccountV2(t, solana.SystemProgramID, 1_000_000, nil),

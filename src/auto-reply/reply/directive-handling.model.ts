@@ -360,6 +360,7 @@ export function resolveModelSelectionFromDirective(params: {
   defaultProvider: string;
   defaultModel: string;
   aliasIndex: ModelAliasIndex;
+  allowAnyModel: boolean;
   allowedModelKeys: Set<string>;
   allowedModelCatalog: Array<{ provider: string; id?: string; name?: string }>;
   provider: string;
@@ -396,7 +397,7 @@ export function resolveModelSelectionFromDirective(params: {
   });
   if (explicit) {
     const explicitKey = modelKey(explicit.ref.provider, explicit.ref.model);
-    if (params.allowedModelKeys.size === 0 || params.allowedModelKeys.has(explicitKey)) {
+    if (params.allowAnyModel || params.allowedModelKeys.has(explicitKey)) {
       modelSelection = {
         provider: explicit.ref.provider,
         model: explicit.ref.model,
@@ -414,6 +415,7 @@ export function resolveModelSelectionFromDirective(params: {
       defaultProvider: params.defaultProvider,
       defaultModel: params.defaultModel,
       aliasIndex: params.aliasIndex,
+      allowAnyModel: params.allowAnyModel,
       allowedModelKeys: params.allowedModelKeys,
     });
 

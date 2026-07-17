@@ -155,6 +155,17 @@ function requestUrl(input: URL | RequestInfo): string {
   return input instanceof URL ? input.toString() : input instanceof Request ? input.url : input;
 }
 
+function verifiedDirectoryEntry(overrides?: Record<string, unknown>): Record<string, unknown> {
+  return {
+    status: "verified",
+    nodeId: "buyer-node-id",
+    handle: "@buyer@fased.test",
+    nodeEndpoint: "https://buyer-node.example/registered",
+    protocolVersions: ["2"],
+    ...overrides,
+  };
+}
+
 describe("deliverMarketplaceContentSummarizeResult", () => {
   it("delivers paid content summaries to Telegram channel targets without queueing raw target secrets", async () => {
     const deliverOutboundPayloadsImpl = vi.fn(async () => [
@@ -224,6 +235,112 @@ describe("deliverMarketplaceContentSummarizeResult", () => {
     expect(text).not.toContain("123456789-secret");
   });
 
+  it("reuses a durable delivered outcome instead of sending the same result twice", async () => {
+    const deliverOutboundPayloadsImpl = vi.fn(async () => [
+      { channel: "telegram" as const, messageId: "tg-message-once", chatId: "secret" },
+    ]) as unknown as typeof deliverOutboundPayloads;
+    const input = {
+      config: buildTelegramOrderConfig(),
+      orderId: "order-telegram-1",
+      result: acceptedSummaryResult,
+      deps: {
+        deliverOutboundPayloadsImpl,
+        now: () => new Date("2026-05-02T12:00:00.000Z"),
+      },
+    };
+
+    const first = await deliverMarketplaceContentSummarizeResult(input);
+    const retryAfterConfigWriteCrash = await deliverMarketplaceContentSummarizeResult(input);
+
+    expect("error" in first ? first.error : undefined).toBeUndefined();
+    expect(
+      "error" in retryAfterConfigWriteCrash ? retryAfterConfigWriteCrash.error : undefined,
+    ).toBeUndefined();
+    expect(deliverOutboundPayloadsImpl).toHaveBeenCalledTimes(1);
+    if (!("error" in retryAfterConfigWriteCrash)) {
+      expect(retryAfterConfigWriteCrash.delivered).toBe(true);
+      expect(retryAfterConfigWriteCrash.deliveryStatus).toBe("delivered");
+    }
+  });
+
+  it("does not retry an external delivery whose outcome became ambiguous", async () => {
+    const deliverOutboundPayloadsImpl = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("connection dropped after send"))
+      .mockResolvedValueOnce([
+        { channel: "telegram" as const, messageId: "must-not-send", chatId: "secret" },
+      ]) as unknown as typeof deliverOutboundPayloads;
+    const input = {
+      config: buildTelegramOrderConfig(),
+      orderId: "order-telegram-1",
+      result: acceptedSummaryResult,
+      deps: {
+        deliverOutboundPayloadsImpl,
+        now: () => new Date("2026-05-02T12:00:00.000Z"),
+      },
+    };
+
+    const first = await deliverMarketplaceContentSummarizeResult(input);
+    const retry = await deliverMarketplaceContentSummarizeResult(input);
+
+    expect(deliverOutboundPayloadsImpl).toHaveBeenCalledTimes(1);
+    for (const result of [first, retry]) {
+      expect("error" in result ? result.error : undefined).toBeUndefined();
+      if (!("error" in result)) {
+        expect(result.delivered).toBe(false);
+        expect(result.deliveryStatus).toBe("failed");
+        expect(result.order.delivery?.notes).toContain("will not be retried automatically");
+      }
+    }
+  });
+
+  it("keeps escrow held after delivery until a reviewed release transaction succeeds", async () => {
+    const orderConfig = buildTelegramOrderConfig();
+    const order = orderConfig.federation?.marketplace?.orders?.local?.[0];
+    if (!order) {
+      throw new Error("missing test order");
+    }
+    order.settlement = {
+      mode: "escrow",
+      status: "held",
+      chain: "solana",
+      assetKind: "native",
+      escrow: {
+        status: "held",
+        holdPolicy: "release_on_delivery",
+        releaseRequired: true,
+        fundingTxRef: "escrow-funding-tx-1",
+      },
+    };
+    const deliverOutboundPayloadsImpl = vi.fn(async () => [
+      { channel: "telegram" as const, messageId: "tg-escrow-delivered", chatId: "secret" },
+    ]) as unknown as typeof deliverOutboundPayloads;
+
+    const result = await deliverMarketplaceContentSummarizeResult({
+      config: orderConfig,
+      orderId: "order-telegram-1",
+      result: acceptedSummaryResult,
+      deps: {
+        deliverOutboundPayloadsImpl,
+        now: () => new Date("2026-05-02T12:00:00.000Z"),
+      },
+    });
+
+    expect("error" in result ? result.error : undefined).toBeUndefined();
+    if ("error" in result) {
+      return;
+    }
+    expect(result.delivered).toBe(true);
+    expect(result.order.settlement?.status).toBe("held");
+    expect(result.order.settlement?.escrow).toMatchObject({
+      status: "held",
+      releaseRequired: true,
+      fundingTxRef: "escrow-funding-tx-1",
+    });
+    expect(result.order.settlement?.escrow?.releasedAt).toBeUndefined();
+    expect(result.order.settlement?.escrow?.releaseTxRef).toBeUndefined();
+  });
+
   it("marks Telegram delivery failed when the outbound send fails", async () => {
     const deliverOutboundPayloadsImpl = vi.fn(async () => {
       throw new Error("telegram send failed");
@@ -278,11 +395,21 @@ describe("deliverMarketplaceContentSummarizeResult", () => {
   });
 
   it("delivers paid content summaries to federation node endpoints without exposing raw endpoint details in the order", async () => {
-    const fetchImpl = vi.fn(async (_input: URL | RequestInfo, _init?: RequestInit) => {
-      return new Response(JSON.stringify({ ok: true }), {
-        status: 202,
-        headers: { "content-type": "application/json" },
-      });
+    const fetchImpl = vi.fn(async (input: URL | RequestInfo, _init?: RequestInit) => {
+      const url = new URL(requestUrl(input));
+      if (url.pathname === "/api/federation/directory/%40buyer%40fased.test") {
+        return new Response(JSON.stringify(verifiedDirectoryEntry()), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.pathname === "/api/federation/marketplace/deliveries") {
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 202,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ error: "unexpected request" }), { status: 500 });
     });
 
     const result = await deliverMarketplaceContentSummarizeResult({
@@ -291,6 +418,8 @@ describe("deliverMarketplaceContentSummarizeResult", () => {
       result: acceptedSummaryResult,
       deps: {
         fetchImpl,
+        federationBaseUrl: "https://directory.fased.test",
+        federationApiToken: "directory-secret",
         now: () => new Date("2026-05-02T12:00:00.000Z"),
       },
     });
@@ -313,8 +442,13 @@ describe("deliverMarketplaceContentSummarizeResult", () => {
         },
       },
     });
-    expect(fetchImpl).toHaveBeenCalledOnce();
-    const [input, init] = fetchImpl.mock.calls[0] ?? [];
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    const [lookupInput, lookupInit] = fetchImpl.mock.calls[0] ?? [];
+    expect(requestUrl(lookupInput)).toBe(
+      "https://directory.fased.test/api/federation/directory/%40buyer%40fased.test",
+    );
+    expect(new Headers(lookupInit?.headers).get("authorization")).toBe("Bearer directory-secret");
+    const [input, init] = fetchImpl.mock.calls[1] ?? [];
     expect(requestUrl(input)).toBe(
       "https://buyer-node.example/api/federation/marketplace/deliveries",
     );
@@ -323,7 +457,15 @@ describe("deliverMarketplaceContentSummarizeResult", () => {
       "x-fased-marketplace-delivery": "content.summarize",
       "x-fased-marketplace-order": "order-federation-1",
       "x-fased-federation-recipient": "@buyer@fased.test",
+      "x-fased-protocol-version": "2",
+      "x-fased-recipient-handle": "@buyer@fased.test",
     });
+    expect(init?.redirect).toBe("error");
+    const signedHeaders = new Headers(init?.headers);
+    expect(signedHeaders.get("authorization")).toBeNull();
+    expect(signedHeaders.get("x-fased-sender-handle")).toMatch(/^@.+@.+$/u);
+    expect(signedHeaders.get("x-fased-request-signature")).toMatch(/^[A-Za-z0-9_-]+$/u);
+    expect(signedHeaders.get("x-fased-content-sha256")).toMatch(/^[a-f0-9]{64}$/u);
     const body = JSON.parse(typeof init?.body === "string" ? init.body : "{}") as {
       result?: { summaryText?: string };
       target?: { maskedTarget?: string };
@@ -333,13 +475,37 @@ describe("deliverMarketplaceContentSummarizeResult", () => {
     expect(JSON.stringify(result.order)).not.toContain("buyer-node.example/private");
   });
 
+  it("blocks plaintext non-loopback federation delivery endpoints", async () => {
+    const fetchImpl = vi.fn();
+    const result = await deliverMarketplaceContentSummarizeResult({
+      config: buildFederationOrderConfig({
+        nodeEndpoint: "http://buyer-node.example/private",
+      }),
+      orderId: "order-federation-1",
+      result: acceptedSummaryResult,
+      deps: {
+        fetchImpl,
+        now: () => new Date("2026-05-02T12:00:00.000Z"),
+      },
+    });
+
+    expect("error" in result ? result.error : undefined).toBeUndefined();
+    if ("error" in result) {
+      return;
+    }
+    expect(result.delivered).toBe(false);
+    expect(result.deliveryStatus).toBe("blocked");
+    expect(result.order.delivery?.notes).toContain("must use HTTPS");
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("resolves handle-only federation delivery targets through the federation directory", async () => {
     const fetchImpl = vi.fn(async (input: URL | RequestInfo, _init?: RequestInit) => {
       const url = new URL(requestUrl(input));
       if (url.pathname === "/api/federation/directory/%40buyer%40fased.test") {
         return new Response(
           JSON.stringify({
-            status: "verified",
+            ...verifiedDirectoryEntry(),
             nodeEndpoint: "https://buyer-node.example/private",
           }),
           {
@@ -364,6 +530,7 @@ describe("deliverMarketplaceContentSummarizeResult", () => {
       deps: {
         fetchImpl,
         federationBaseUrl: "https://directory.fased.test",
+        federationApiToken: "directory-secret",
         now: () => new Date("2026-05-02T12:00:00.000Z"),
       },
     });
@@ -381,7 +548,10 @@ describe("deliverMarketplaceContentSummarizeResult", () => {
     expect(requestUrl(lookupInput)).toBe(
       "https://directory.fased.test/api/federation/directory/%40buyer%40fased.test",
     );
-    expect(lookupInit?.headers).toMatchObject({ accept: "application/json" });
+    expect(lookupInit?.redirect).toBe("error");
+    const lookupHeaders = new Headers(lookupInit?.headers);
+    expect(lookupHeaders.get("accept")).toBe("application/json");
+    expect(lookupHeaders.get("authorization")).toBe("Bearer directory-secret");
     const [deliveryInput, deliveryInit] = fetchImpl.mock.calls[1] ?? [];
     expect(requestUrl(deliveryInput)).toBe(
       "https://buyer-node.example/api/federation/marketplace/deliveries",
@@ -389,6 +559,7 @@ describe("deliverMarketplaceContentSummarizeResult", () => {
     expect(deliveryInit?.headers).toMatchObject({
       "x-fased-federation-recipient": "@buyer@fased.test",
     });
+    expect(new Headers(deliveryInit?.headers).get("authorization")).toBeNull();
     const body = JSON.parse(typeof deliveryInit?.body === "string" ? deliveryInit.body : "{}") as {
       target?: { maskedTarget?: string };
     };
@@ -402,7 +573,10 @@ describe("deliverMarketplaceContentSummarizeResult", () => {
         return new Response(
           JSON.stringify({
             status: "revoked",
+            nodeId: "buyer-node-id",
+            handle: "@buyer@fased.test",
             nodeEndpoint: "https://buyer-node.example/private",
+            protocolVersions: ["2"],
           }),
           {
             status: 200,
@@ -433,5 +607,134 @@ describe("deliverMarketplaceContentSummarizeResult", () => {
     expect(result.order.status).toBe("running");
     expect(result.order.delivery?.notes).toContain("directory status is revoked");
     expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
+  it("blocks delivery when the verified recipient does not advertise peer protocol v2", async () => {
+    const fetchImpl = vi.fn(async (input: URL | RequestInfo) => {
+      const url = new URL(requestUrl(input));
+      if (url.pathname === "/api/federation/directory/%40buyer%40fased.test") {
+        return new Response(JSON.stringify(verifiedDirectoryEntry({ protocolVersions: ["1"] })), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ error: "delivery should not run" }), { status: 500 });
+    });
+
+    const result = await deliverMarketplaceContentSummarizeResult({
+      config: buildFederationOrderConfig(),
+      orderId: "order-federation-1",
+      result: acceptedSummaryResult,
+      deps: {
+        fetchImpl,
+        federationBaseUrl: "https://directory.fased.test",
+        now: () => new Date("2026-05-02T12:00:00.000Z"),
+      },
+    });
+
+    expect("error" in result ? result.error : undefined).toBeUndefined();
+    if ("error" in result) {
+      return;
+    }
+    expect(result.delivered).toBe(false);
+    expect(result.deliveryStatus).toBe("blocked");
+    expect(result.order.delivery?.notes).toContain(
+      "does not advertise federation peer protocol v2; upgrade both nodes",
+    );
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
+  it("blocks an explicit endpoint that does not match the verified directory endpoint", async () => {
+    const fetchImpl = vi.fn(async (input: URL | RequestInfo) => {
+      const url = new URL(requestUrl(input));
+      if (url.pathname === "/api/federation/directory/%40buyer%40fased.test") {
+        return new Response(JSON.stringify(verifiedDirectoryEntry()), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ error: "delivery should not run" }), { status: 500 });
+    });
+
+    const result = await deliverMarketplaceContentSummarizeResult({
+      config: buildFederationOrderConfig({ nodeEndpoint: "https://attacker.example/private" }),
+      orderId: "order-federation-1",
+      result: acceptedSummaryResult,
+      deps: {
+        fetchImpl,
+        federationBaseUrl: "https://directory.fased.test",
+        now: () => new Date("2026-05-02T12:00:00.000Z"),
+      },
+    });
+
+    expect("error" in result ? result.error : undefined).toBeUndefined();
+    if ("error" in result) {
+      return;
+    }
+    expect(result.delivered).toBe(false);
+    expect(result.deliveryStatus).toBe("blocked");
+    expect(result.order.delivery?.notes).toContain(
+      "explicit federation node endpoint does not match the verified directory endpoint",
+    );
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
+  it("blocks an untrusted node endpoint returned by the verified directory", async () => {
+    const fetchImpl = vi.fn(async (input: URL | RequestInfo) => {
+      const url = new URL(requestUrl(input));
+      if (url.pathname === "/api/federation/directory/%40buyer%40fased.test") {
+        return new Response(
+          JSON.stringify(
+            verifiedDirectoryEntry({ nodeEndpoint: "http://buyer-node.example/private" }),
+          ),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response(JSON.stringify({ error: "delivery should not run" }), { status: 500 });
+    });
+
+    const result = await deliverMarketplaceContentSummarizeResult({
+      config: buildFederationOrderConfig(),
+      orderId: "order-federation-1",
+      result: acceptedSummaryResult,
+      deps: {
+        fetchImpl,
+        federationBaseUrl: "https://directory.fased.test",
+        now: () => new Date("2026-05-02T12:00:00.000Z"),
+      },
+    });
+
+    expect("error" in result ? result.error : undefined).toBeUndefined();
+    if ("error" in result) {
+      return;
+    }
+    expect(result.delivered).toBe(false);
+    expect(result.deliveryStatus).toBe("blocked");
+    expect(result.order.delivery?.notes).toContain("directory endpoint must use HTTPS");
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
+  it("blocks a plaintext non-loopback federation directory before sending credentials", async () => {
+    const fetchImpl = vi.fn();
+    const result = await deliverMarketplaceContentSummarizeResult({
+      config: buildFederationOrderConfig(),
+      orderId: "order-federation-1",
+      result: acceptedSummaryResult,
+      deps: {
+        fetchImpl,
+        federationBaseUrl: "http://directory.fased.test",
+        federationApiToken: "must-not-leak",
+        now: () => new Date("2026-05-02T12:00:00.000Z"),
+      },
+    });
+
+    expect("error" in result ? result.error : undefined).toBeUndefined();
+    if ("error" in result) {
+      return;
+    }
+    expect(result.delivered).toBe(false);
+    expect(result.deliveryStatus).toBe("blocked");
+    expect(result.order.delivery?.notes).toContain("must use HTTPS");
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });

@@ -152,20 +152,60 @@ func (m *signerKeyManagerV2) ImportLegacyWithPolicy(req signerWalletLegacyImport
 
 func (m *signerKeyManagerV2) RotateEncryption(walletID string) (signerWalletRecordV2, error) {
 	walletID = normalizeWalletID(walletID)
-	privateKey, record, err := m.privateKey(walletID)
+	privateKey, original, err := m.privateKey(walletID)
 	if err != nil {
 		return signerWalletRecordV2{}, err
 	}
 	defer zeroBytes(privateKey)
+	record := original
+	if record.Version == ^uint64(0) {
+		return signerWalletRecordV2{}, errors.New("signer wallet encrypted-state version is exhausted")
+	}
 	record.Version++
 	record.RotatedAt = timestampV2(m.store.now())
 	if err := m.encryptRecord(&record, privateKey); err != nil {
 		return signerWalletRecordV2{}, err
 	}
-	if err := m.putRecord(record, true); err != nil {
+	if err := m.putReencryptedRecordV2(original, record); err != nil {
 		return signerWalletRecordV2{}, err
 	}
 	return publicWalletRecordV2(record), nil
+}
+
+func (m *signerKeyManagerV2) putReencryptedRecordV2(original, updated signerWalletRecordV2) error {
+	return m.store.db.Update(func(tx *bolt.Tx) error {
+		retired, err := signerWalletIsRetiredInTxV2(tx, original.WalletID)
+		if err != nil {
+			return err
+		}
+		if retired {
+			return errors.New("signer wallet is permanently retired; encrypted state cannot be rewritten")
+		}
+		bucket := tx.Bucket(bucketSignerWalletsV2)
+		raw := bucket.Get([]byte(original.WalletID))
+		if raw == nil {
+			return errors.New("signer wallet not found")
+		}
+		var current signerWalletRecordV2
+		if err := json.Unmarshal(raw, &current); err != nil {
+			return errors.New("invalid stored signer wallet")
+		}
+		if current.WalletID != original.WalletID || current.PublicKey != original.PublicKey ||
+			current.Version != original.Version || current.Nonce != original.Nonce || current.Secret != original.Secret ||
+			current.RetiredAt != original.RetiredAt || current.SuccessorWalletID != original.SuccessorWalletID ||
+			current.RotationID != original.RotationID {
+			return errors.New("signer wallet encrypted state changed concurrently; inspect wallet and rotation status before retrying")
+		}
+		if updated.WalletID != original.WalletID || updated.PublicKey != original.PublicKey || updated.Version != original.Version+1 ||
+			updated.RetiredAt != "" || updated.SuccessorWalletID != "" || updated.RotationID != "" {
+			return errors.New("invalid signer wallet re-encryption update")
+		}
+		encoded, err := json.Marshal(updated)
+		if err != nil {
+			return err
+		}
+		return bucket.Put([]byte(updated.WalletID), encoded)
+	})
 }
 
 func (m *signerKeyManagerV2) PublicRecord(walletID string) (signerWalletRecordV2, error) {
@@ -177,9 +217,30 @@ func (m *signerKeyManagerV2) PublicRecord(walletID string) (signerWalletRecordV2
 }
 
 func (m *signerKeyManagerV2) privateKey(walletID string) (solana.PrivateKey, signerWalletRecordV2, error) {
-	record, err := m.getRecord(normalizeWalletID(walletID))
+	walletID = normalizeWalletID(walletID)
+	var record signerWalletRecordV2
+	err := m.store.db.View(func(tx *bolt.Tx) error {
+		raw := tx.Bucket(bucketSignerWalletsV2).Get([]byte(walletID))
+		if raw == nil {
+			return errors.New("signer wallet not found")
+		}
+		if err := json.Unmarshal(raw, &record); err != nil {
+			return errors.New("invalid stored signer wallet")
+		}
+		retired, err := signerWalletIsRetiredInTxV2(tx, walletID)
+		if err != nil {
+			return err
+		}
+		if retired {
+			return errors.New("signer wallet is permanently retired; use its recorded successor")
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, signerWalletRecordV2{}, err
+	}
+	if record.RetiredAt != "" || record.SuccessorWalletID != "" || record.RotationID != "" {
+		return nil, signerWalletRecordV2{}, errors.New("signer wallet is permanently retired; use its recorded successor")
 	}
 	secret, err := m.decryptRecord(record)
 	if err != nil {
@@ -282,20 +343,6 @@ func (m *signerKeyManagerV2) getRecord(walletID string) (signerWalletRecordV2, e
 		return json.Unmarshal(raw, &record)
 	})
 	return record, err
-}
-
-func (m *signerKeyManagerV2) putRecord(record signerWalletRecordV2, replace bool) error {
-	return m.store.db.Update(func(tx *bolt.Tx) error {
-		bucket := tx.Bucket(bucketSignerWalletsV2)
-		if existing := bucket.Get([]byte(record.WalletID)); existing != nil && !replace {
-			return errors.New("signer wallet already exists")
-		}
-		encoded, err := json.Marshal(record)
-		if err != nil {
-			return err
-		}
-		return bucket.Put([]byte(record.WalletID), encoded)
-	})
 }
 
 func publicWalletRecordV2(record signerWalletRecordV2) signerWalletRecordV2 {

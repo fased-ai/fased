@@ -21,13 +21,18 @@ describe("Docker initial signer policy helper", () => {
     expect(script).toContain('[[ "$confirmed_digest" == "$digest" ]]');
     expect(script).toContain("--expected-version 1");
     expect(script).toContain("docker-signer-health.mjs");
-    expect(script).toContain("trap cleanup EXIT");
+    expect(script).toContain("--profile signer-admin run --rm -T --no-deps");
+    expect(script).toContain("/usr/local/bin/fased-signerd admin policy put");
+    expect(script).toContain("--entrypoint /bin/sh");
+    expect(script).toContain('<"$policy_file"');
+    expect(script).not.toContain('--volume "${policy_file}');
+    expect(script).not.toContain("exec -T fased-signerd /usr/local/bin/fased-signerd admin");
     expect(script).not.toContain("sudo");
     expect(script).not.toContain("docker.sock");
     expect(script).not.toContain("--privileged");
   });
 
-  it("stages only a fully digest-confirmed version-1 policy through the signer container", async () => {
+  it("mounts only a fully digest-confirmed version-1 policy into the one-shot admin service", async () => {
     const root = await mkdtemp(join(tmpdir(), "fased-docker-policy-"));
     roots.push(root);
     const binDir = join(root, "bin");
@@ -76,9 +81,13 @@ describe("Docker initial signer policy helper", () => {
     const log = await readFile(logPath, "utf8");
     expect(log).toContain("docker-signer-health.mjs /run/fased-signerd/app.sock");
     expect(log).toContain("--control-socket /run/fased-signerd-control/control.sock");
-    expect(log).toContain("admin policy get");
-    expect(log).toContain("admin policy put");
+    expect(log).toContain(
+      "--profile signer-admin run --rm -T --no-deps fased-signer-admin policy get",
+    );
+    expect(log).toContain("--profile signer-admin run --rm -T --no-deps --entrypoint /bin/sh");
+    expect(log).toContain("fased-signer-admin -ceu");
+    expect(log).toContain("/usr/local/bin/fased-signerd admin policy put");
     expect(log).toContain("--expected-version 1");
-    expect(log).toContain("rm -f -- /tmp/fased-owner-policy-agent-");
+    expect(log).not.toContain("exec -T fased-signerd /usr/local/bin/fased-signerd admin");
   });
 });

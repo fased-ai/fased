@@ -29,6 +29,13 @@ type PackageJson = {
   optionalDependencies?: Record<string, string>;
 };
 
+type SignerReleaseIdentity = {
+  version: string;
+  commit: string;
+  buildInputDigest: string;
+  development: false;
+};
+
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const optionalChannels = ["discord", "slack", "telegram", "whatsapp"] as const;
 const optionalRuntimeExtensions = [
@@ -81,15 +88,61 @@ function buildLocalSignerRelease(tempRoot: string): string {
   mkdirSync(releaseRoot, { recursive: true });
   const assetName = signerAssetName();
   const assetPath = path.join(releaseRoot, assetName);
-  execFileSync("go", ["build", "-buildvcs=false", "-trimpath", "-o", assetPath, "."], {
-    cwd: path.join(repoRoot, "tools", "fased-signerd"),
-    env: process.env,
-    stdio: ["ignore", "ignore", "pipe"],
+  const packageVersion = String(
+    (JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8")) as PackageJson)
+      .version ?? "",
+  );
+  const commit = execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  }).trim();
+  const identityScript = path.join(repoRoot, "scripts", "fased-signerd-build-identity.mjs");
+  const identityEnv = {
+    ...process.env,
+    FASED_SIGNER_BUILD_VERSION: packageVersion,
+    FASED_SIGNER_BUILD_COMMIT: commit,
+    FASED_SIGNER_BUILD_DEVELOPMENT: "false",
+  };
+  const identity = JSON.parse(
+    execFileSync(process.execPath, [identityScript, "--json"], {
+      cwd: repoRoot,
+      env: identityEnv,
+      encoding: "utf8",
+    }),
+  ) as SignerReleaseIdentity;
+  const ldflags = execFileSync(process.execPath, [identityScript, "--ldflags"], {
+    cwd: repoRoot,
+    env: identityEnv,
+    encoding: "utf8",
+  }).trim();
+  execFileSync(
+    "go",
+    [
+      "build",
+      "-buildvcs=false",
+      "-trimpath",
+      `-ldflags=-buildid= ${ldflags}`,
+      "-o",
+      assetPath,
+      ".",
+    ],
+    {
+      cwd: path.join(repoRoot, "tools", "fased-signerd"),
+      env: process.env,
+      stdio: ["ignore", "ignore", "pipe"],
+    },
+  );
+  const manifestName = "fased-signerd-release.json";
+  const manifestPath = path.join(releaseRoot, manifestName);
+  writeFileSync(manifestPath, `${JSON.stringify({ schemaVersion: 1, ...identity }, null, 2)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
   });
-  const digest = createHash("sha256").update(readFileSync(assetPath)).digest("hex");
+  const assetDigest = createHash("sha256").update(readFileSync(assetPath)).digest("hex");
+  const manifestDigest = createHash("sha256").update(readFileSync(manifestPath)).digest("hex");
   writeFileSync(
     path.join(releaseRoot, "fased-signerd-checksums.txt"),
-    `${digest}  ${assetName}\n`,
+    `${assetDigest}  ${assetName}\n${manifestDigest}  ${manifestName}\n`,
     {
       encoding: "utf8",
       mode: 0o600,
@@ -378,6 +431,8 @@ async function main() {
       FASED_LOCAL_SIGNER_BASE_URL: pathToFileURL(signerReleaseRoot).href,
       FASED_LOCAL_SIGNER_VERSION: "",
       FASED_LOCAL_SIGNER_LATEST_TAG: "",
+      FASED_LOCAL_SIGNER_ALLOW_UNATTESTED: "1",
+      FASED_LOCAL_SIGNER_FLAT_RELEASE: "1",
       NO_COLOR: "1",
     };
 

@@ -28,21 +28,24 @@ describe("signer owner-policy package and installers", () => {
 
   it("installs Local owner tools only after the signer artifact is authenticated", () => {
     const installer = read("scripts/install-fased-signerd.sh");
-    const provenance = installer.indexOf("Build provenance OK");
-    const signerInstall = installer.indexOf('install -m 0755 "${TMP}/fased-signerd"');
+    const updater = read("scripts/fased-managed-updater.mjs");
+    const signerInstall = installer.indexOf('node "$UPDATER" "${args[@]}"');
     const policyInstall = installer.indexOf(
       'install -m 0700 "$POLICY_HELPER_SOURCE" "$POLICY_HELPER_PATH"',
     );
 
-    expect(provenance).toBeGreaterThan(0);
-    expect(signerInstall).toBeGreaterThan(provenance);
+    expect(updater).toContain("downloadVerifiedLocalSignerRelease");
+    expect(updater).toContain("atomicInstallSignerBinary");
+    expect(updater).toContain("await verifyOfficialAsset(candidatePath, targetVersion, timeoutMs)");
+    expect(updater).toContain("await verifyOfficialAsset(manifestPath, targetVersion, timeoutMs)");
+    expect(signerInstall).toBeGreaterThan(0);
     expect(policyInstall).toBeGreaterThan(signerInstall);
     expect(installer).toContain('POLICY_LAUNCHER_PATH="${INSTALL_DIR}/fased-signer-policy"');
     expect(installer).toContain('install -m 0700 "$POLICY_LAUNCHER_SOURCE"');
-    expect(installer).toContain('install -m 0600 "$POLICY_TEMPLATE_SOURCE/agent.json.template"');
-    expect(installer).toContain('ln -f "$BIN_PATH" "$LAUNCHER_PATH"');
+    expect(installer).toContain("for template in README.md agent.json.template");
+    expect(updater).toContain("await fsp.link(paths.binaryPath, enrollTemporary)");
     expect(installer).toContain("Fresh signer-owned wallets remain deny-all");
-    expect(installer).toContain("Enrollment does not enable signing");
+    expect(installer).toContain("Enrollment never enables signing");
     expect(installer.match(/--initial-install/gu)).toHaveLength(1);
   });
 

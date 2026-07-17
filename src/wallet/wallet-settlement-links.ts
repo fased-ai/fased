@@ -4,7 +4,7 @@ import type { WalletChain, WalletProviderId } from "../config/types.wallet.js";
 import { serializeWalletState, writeWalletStateFileAtomically } from "./wallet-atomic-state.js";
 import { ensureWalletStateDir } from "./wallet-runtime-config.js";
 
-export type WalletSettlementLinkStatus = "pending" | "executed" | "failed" | "rejected";
+export type WalletSettlementLinkStatus = "pending" | "unknown" | "executed" | "failed" | "rejected";
 
 export type WalletSettlementLink = {
   requestId: string;
@@ -48,6 +48,7 @@ function isWalletSettlementLink(value: unknown): value is WalletSettlementLink {
     Boolean(entry.taskId.trim()) &&
     (entry.mode === "manual" || entry.mode === "autonomous") &&
     (entry.status === "pending" ||
+      entry.status === "unknown" ||
       entry.status === "executed" ||
       entry.status === "failed" ||
       entry.status === "rejected") &&

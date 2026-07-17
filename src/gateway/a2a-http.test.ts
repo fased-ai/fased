@@ -4,7 +4,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearConfigCache, writeConfigFile } from "../config/config.js";
 import { createA2aHandler, type A2aHttpHandler } from "./a2a-http.js";
 
@@ -29,11 +29,25 @@ class MockResponse extends PassThrough {
   }
 }
 
+let testStateDir = "";
+let previousStateDir: string | undefined;
+
+beforeEach(() => {
+  previousStateDir = process.env.FASED_STATE_DIR;
+  testStateDir = fs.mkdtempSync(path.join(os.tmpdir(), "fased-a2a-http-"));
+  process.env.FASED_STATE_DIR = testStateDir;
+});
+
 afterEach(() => {
   vi.restoreAllMocks();
   clearConfigCache();
   delete process.env.FASED_CONFIG_PATH;
-  delete process.env.FASED_STATE_DIR;
+  if (previousStateDir === undefined) {
+    delete process.env.FASED_STATE_DIR;
+  } else {
+    process.env.FASED_STATE_DIR = previousStateDir;
+  }
+  fs.rmSync(testStateDir, { recursive: true, force: true });
 });
 
 function createRequest(opts: {
@@ -304,9 +318,8 @@ describe("gateway A2A adapter", () => {
   });
 
   it("publishes settlement defaults from the Agent seller wallet", async () => {
-    const stateDir = "/tmp/fased-a2a-http-test-state";
+    const stateDir = testStateDir;
     const walletDir = `${stateDir}/wallet`;
-    process.env.FASED_STATE_DIR = stateDir;
     fs.mkdirSync(walletDir, { recursive: true });
     fs.writeFileSync(
       `${walletDir}/provider-registry.v1.json`,
@@ -381,6 +394,65 @@ describe("gateway A2A adapter", () => {
     });
     expect(get.error).toBeUndefined();
     expect(typeof (get.result as Record<string, unknown>).status).toBe("string");
+  });
+
+  it("returns the same durable task for an exact duplicate id and rejects changed payloads", async () => {
+    const handler = createHandler();
+    const task = {
+      taskId: "durable-duplicate-task-1",
+      prompt: "exactly once",
+    };
+    const first = await rpcCall({
+      handler,
+      method: "tasks.create",
+      rpcParams: { senderHandle: "@alice@agent.fased.test", task },
+    });
+    const duplicate = await rpcCall({
+      handler,
+      method: "tasks.create",
+      rpcParams: { senderHandle: "@alice@agent.fased.test", task },
+    });
+    expect((first.result as Record<string, unknown>).taskId).toBe(task.taskId);
+    expect((duplicate.result as Record<string, unknown>).taskId).toBe(task.taskId);
+
+    const collision = await rpcCall({
+      handler,
+      method: "tasks.create",
+      rpcParams: {
+        senderHandle: "@alice@agent.fased.test",
+        task: { ...task, prompt: "changed after binding" },
+      },
+    });
+    expect(collision.error?.code).toBe(-32054);
+    expect(collision.error?.message).toContain("different immutable task intent");
+  });
+
+  it("loads completed tasks from durable state after a handler restart", async () => {
+    const taskId = "durable-restart-task-1";
+    const firstHandler = createHandler();
+    const created = await rpcCall({
+      handler: firstHandler,
+      method: "tasks.create",
+      rpcParams: {
+        senderHandle: "@alice@agent.fased.test",
+        task: { taskId, prompt: "survive restart" },
+      },
+    });
+    expect(created.error).toBeUndefined();
+    await new Promise((resolve) => setTimeout(resolve, 90));
+
+    const restartedHandler = createHandler();
+    const restored = await rpcCall({
+      handler: restartedHandler,
+      method: "tasks.get",
+      rpcParams: { taskId },
+    });
+    expect(restored.error).toBeUndefined();
+    expect(restored.result).toMatchObject({
+      taskId,
+      status: "succeeded",
+      output: expect.objectContaining({ taskId, outputText: "ack:survive restart" }),
+    });
   });
 
   it("rejects canonical tasks that reference an unknown offer", async () => {
@@ -706,16 +778,31 @@ describe("gateway A2A adapter", () => {
       rpcParams: {
         senderHandle: "@verified@agent.fased.test",
         task: {
+          taskId: "paid-settlement-once-1",
+          prompt: "paid",
+          invoiceRef: "inv-123",
+        },
+      },
+    });
+    const duplicate = await rpcCall({
+      handler,
+      method: "tasks.create",
+      rpcParams: {
+        senderHandle: "@verified@agent.fased.test",
+        task: {
+          taskId: "paid-settlement-once-1",
           prompt: "paid",
           invoiceRef: "inv-123",
         },
       },
     });
     expect(response.error).toBeUndefined();
+    expect(duplicate.error).toBeUndefined();
     const result = response.result as Record<string, unknown>;
     expect(settlementOrchestrator).toHaveBeenCalledTimes(1);
     expect((result.settlement as Record<string, unknown>)?.status).toBe("queued");
     expect((result.settlement as Record<string, unknown>)?.requestId).toBe("req-123");
+    expect((duplicate.result as Record<string, unknown>).settlement).toEqual(result.settlement);
   });
 
   it("rejects blocked senders from directory status", async () => {

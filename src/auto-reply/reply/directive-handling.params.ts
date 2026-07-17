@@ -19,6 +19,7 @@ export type HandleDirectiveOnlyCoreParams = {
   defaultProvider: string;
   defaultModel: string;
   aliasIndex: ModelAliasIndex;
+  allowAnyModel: boolean;
   allowedModelKeys: Set<string>;
   allowedModelCatalog: Awaited<
     ReturnType<typeof import("../../agents/model-catalog.js").loadModelCatalog>
@@ -46,6 +47,7 @@ export type ApplyInlineDirectivesFastLaneParams = HandleDirectiveOnlyCoreParams 
   agentCfg?: NonNullable<FasedAgentConfig["agents"]>["defaults"];
   modelState: {
     resolveDefaultThinkingLevel: () => Promise<ThinkLevel | undefined>;
+    allowAnyModel: boolean;
     allowedModelKeys: Set<string>;
     allowedModelCatalog: Awaited<
       ReturnType<typeof import("../../agents/model-catalog.js").loadModelCatalog>

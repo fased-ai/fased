@@ -1,287 +1,87 @@
 ---
-summary: "Fased on Oracle Cloud (OCI ARM path)"
+summary: "Install Fased on Oracle Cloud ARM with the maintained Hosting profile"
 read_when:
-  - Setting up Fased on Oracle Cloud
-  - Looking for low-cost VPS hosting for Fased
-  - Want 24/7 Fased on a small server
+  - You want an always-on Fased node on Oracle Cloud
+  - You need the supported ARM64 VPS path
 title: "Oracle Cloud"
 ---
 
 # Fased on Oracle Cloud (OCI)
 
-## Goal
+Oracle Ampere ARM64 instances can run the maintained Fased Hosting profile.
+Use the root-managed non-Docker installer; do not combine an app-owned checkout
+with `sudo`, and do not use the older `./install.sh --no-onboard` plus user
+daemon sequence for a VPS.
 
-Run a persistent Fased Gateway on Oracle Cloud's ARM path.
+<Warning>
+The full Docker Gateway is Local only. It is not the OCI VPS installation path,
+and there is no `install.sh --hosting-docker` mode. Do not expose the raw
+Gateway port (`18789`) through an OCI security list or public load balancer.
+</Warning>
 
-Oracle’s ARM instances can be a useful fit for Fased, especially if you already
-have an OCI account, but they come with tradeoffs:
+## 1. Create the instance
 
-- ARM architecture (most things work, but some binaries may be x86-only)
-- Capacity and signup can be finicky
+Create an Ubuntu 24.04 ARM64 instance with an SSH key. Use the general
+[VPS sizing guidance](/install/vps#recommended-vps-size); 2 vCPU, 4 GB RAM, and
+at least 25 GB disk is a practical starting point. Retain OCI Console/Rescue
+access for emergency recovery.
 
-## Prerequisites
-
-- Oracle Cloud account
-- Tailscale account
-- ~30 minutes
-
-## 1) Create an OCI Instance
-
-1. Log into [Oracle Cloud Console](https://cloud.oracle.com/)
-2. Navigate to **Compute → Instances → Create Instance**
-3. Configure:
-   - **Name:** `fased`
-   - **Image:** Ubuntu 24.04 (aarch64)
-   - **Shape:** `VM.Standard.A1.Flex` (Ampere ARM)
-   - **OCPUs:** 2 or more if available
-   - **Memory:** 8-12 GB or more if available
-   - **Boot volume:** 50 GB or more
-   - **SSH key:** Add your public key
-4. Click **Create**
-5. Note the public IP address
-
-**Tip:** If instance creation fails with "Out of capacity", try a different
-availability domain or retry later.
-
-## 2) Connect and Update
+## 2. Enter the provider root shell
 
 ```bash
-# Connect via public IP
 ssh ubuntu@YOUR_PUBLIC_IP
-
-# Update system
-sudo apt update && sudo apt upgrade -y
-sudo apt install -y build-essential
+sudo -i
 ```
 
-**Note:** `build-essential` is required for ARM compilation of some dependencies.
+The remaining installation commands run inside that root shell. Do not install
+Node, Go, Docker, or Fased globally first.
 
-## 3) Configure User and Hostname
+## 3. Run the verified Hosting installer
+
+Follow the
+[pre-execution verified tagged bootstrap](/install/vps#3-install-fased-and-connect-through-tailscale)
+from the provider root console. It verifies the standalone `install.sh`
+repository, exact tag, release workflow, and GitHub-hosted runner provenance
+before any Fased shell code executes as root.
+
+The Hosting installer creates separate `app` and signer accounts, installs the
+root-owned signer/updater systemd services, configures Tailscale and host
+hardening, and coordinates app/signer update and rollback. Never grant the
+`app` account sudo access.
+
+## 4. Verify private access and Fased
+
+Keep the OCI provider console open until a computer connected to the same
+tailnet succeeds with:
 
 ```bash
-# Set hostname
-sudo hostnamectl set-hostname fased
-
-# Set password for ubuntu user
-sudo passwd ubuntu
-
-# Enable lingering (keeps user services running after logout)
-sudo loginctl enable-linger ubuntu
+tailscale ping YOUR_VPS_TAILSCALE_NAME
+tailscale ssh app@YOUR_VPS_TAILSCALE_NAME
 ```
 
-## 4) Install Fased with the hosting profile
-
-Run the standard hosting installer on the instance itself. It installs missing
-tools, starts Tailscale when needed, prints the Tailscale login URL, and applies
-the hosted profile.
+Then, as `app` on the instance:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
-```
-
-> Note: If you hit ARM-native build issues, start with system packages (e.g.
-> `sudo apt install -y build-essential`) before reaching for Homebrew.
-
-## 5) Tailscale Serve
-
-The hosting installer keeps the Gateway private and prints the Tailscale access
-path. Use that printed dashboard URL first. Manual Tailscale Serve changes are
-advanced repair/customization work, not the normal install path.
-
-## 6) Verify
-
-```bash
-# Check version
+fased health
 fased --version
-
-# Check daemon status
-sudo -n systemctl status fased-gateway.service --no-pager
-
-# Check Tailscale Serve
-tailscale serve status
-
-# Test local response
-curl http://localhost:18789
-```
-
-## 8) Lock Down VCN Security
-
-Now that everything is working, lock down the VCN to block all traffic except
-Tailscale. OCI's Virtual Cloud Network acts as a firewall at the network edge:
-traffic is blocked before it reaches your instance.
-
-1. Go to **Networking → Virtual Cloud Networks** in the OCI Console
-2. Click your VCN → **Security Lists** → Default Security List
-3. **Remove** all ingress rules except:
-   - `0.0.0.0/0 UDP 41641` (Tailscale)
-4. Keep default egress rules (allow all outbound)
-
-This blocks SSH on port 22, HTTP, HTTPS, and everything else at the network
-edge. From now on, normal access goes through Tailscale.
-
----
-
-## Access the Control UI
-
-Run this on the instance and open the printed private URL from a device on your
-tailnet:
-
-```bash
-fased dashboard
-```
-
-If you configured Tailscale Serve explicitly, the URL is usually:
-
-```
-https://fased.<tailnet-name>.ts.net/
-```
-
-Replace `<tailnet-name>` with your tailnet name (visible in `tailscale status`).
-
-Tailscale provides:
-
-- HTTPS encryption (automatic certs)
-- Access controlled by your Tailscale account and device membership
-- Access from any device on your tailnet (laptop, phone, etc.)
-
-Inside the Control UI, use **Dashboard** for overview, **Chat** to test the
-Agent, **Agents** for models/channels/skills/tools/memory/tasks, and
-**Advanced** for Config, Debug, and Nodes.
-
----
-
-## Security: VCN + Tailscale baseline
-
-With the VCN locked down (only UDP 41641 open) and the Gateway bound to loopback,
-public traffic is blocked at the network edge and admin access happens over your
-tailnet.
-
-This setup often removes the need for extra host-based firewall rules purely to
-stop internet-wide SSH brute force. Still keep the OS updated, run
-`fased security audit`, and verify you are not accidentally listening on public
-interfaces.
-
-### What the VCN changes
-
-- **UFW firewall:** usually secondary because VCN blocks before traffic reaches
-  the instance.
-- **fail2ban:** usually secondary when port 22 is not internet-reachable.
-- **sshd hardening:** still review it. Tailscale SSH can reduce direct `sshd`
-  exposure, but normal OS hardening still matters.
-- **Disable root login:** still review it and keep it aligned with your access
-  model.
-- **SSH key-only auth:** still review it; Tailscale is the preferred access
-  path.
-- **IPv6 hardening:** verify what is actually assigned/exposed by your VCN and
-  subnet settings.
-
-### Still Recommended
-
-- **Credential permissions:** `chmod 700 ~/.fased`
-- **Security audit:** `fased security audit`
-- **System updates:** `sudo apt update && sudo apt upgrade` regularly
-- **Monitor Tailscale:** Review devices in [Tailscale admin console](https://login.tailscale.com/admin)
-
-### Verify Security Posture
-
-```bash
-# Confirm no public ports listening
-sudo ss -tlnp | grep -v '127.0.0.1\|::1'
-
-# Verify Tailscale SSH is active
-tailscale status | grep -q 'offers: ssh' && echo "Tailscale SSH active"
-
-# Optional: disable sshd entirely
-sudo systemctl disable --now ssh
-```
-
----
-
-## Fallback: SSH Tunnel
-
-If Tailscale Serve isn't working, use an SSH tunnel:
-
-```bash
-# From your local machine (via Tailscale)
-ssh -L 18789:127.0.0.1:18789 ubuntu@fased
-```
-
-Then open `http://localhost:18789`.
-
----
-
-## Troubleshooting
-
-### Instance creation fails ("Out of capacity")
-
-Capacity can be limited. Try:
-
-- Different availability domain
-- Retry during off-peak hours (early morning)
-- Review the current provider shape and availability options
-
-### Tailscale won't connect
-
-```bash
-# Check status
-sudo tailscale status
-
-# Re-authenticate
-sudo tailscale up --reset
-```
-
-### Gateway won't start
-
-```bash
 fased gateway status
-fased doctor --non-interactive
-journalctl --user -u fased-gateway -n 50
+fased plugins doctor
+fased wallet signer doctor --json
 ```
 
-### Can't reach Control UI
+Use the private dashboard URL printed by the installer. Keep OCI ingress
+limited to the bootstrap and Tailscale requirements; do not publish the
+dashboard or Gateway directly.
+
+## Updates
+
+As `app`, over Tailscale:
 
 ```bash
-# Verify Tailscale Serve is running
-tailscale serve status
-
-# Check gateway is listening
-curl http://localhost:18789
-
-# Restart if needed
-systemctl --user restart fased-gateway
+fased update status
+fased update
+fased health
 ```
 
-### ARM binary issues
-
-Some tools may not have ARM builds. Check:
-
-```bash
-uname -m  # Should show aarch64
-```
-
-Most npm packages work fine. For binaries, look for `linux-arm64` or `aarch64` releases.
-
----
-
-## Persistence
-
-All state lives in:
-
-- `~/.fased/` — config, credentials, session data
-- `~/.fased/workspace/` — workspace memory, notes, and generated files
-
-Back up periodically:
-
-```bash
-tar -czvf fased-backup.tar.gz ~/.fased ~/.fased/workspace
-```
-
----
-
-## See Also
-
-- [Gateway remote access](/gateway/remote) — other remote access patterns
-- [Tailscale integration](/gateway/tailscale) — full Tailscale docs
-- [Gateway configuration](/gateway/configuration) — all config options
-- [DigitalOcean guide](/platforms/digitalocean) — simpler VPS setup path
-- [Hetzner guide](/install/hetzner) — same maintained Hosting installer
+See [VPS Hosting](/install/vps), [Tailscale](/gateway/tailscale),
+[DigitalOcean](/platforms/digitalocean), and [Hetzner](/install/hetzner).

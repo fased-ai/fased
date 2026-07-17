@@ -120,7 +120,6 @@ export function registerOnboardCommand(program: Command) {
       "--host-maintenance-session",
       "Internal: post-bootstrap hosted rerun from the app user over Tailscale",
     )
-    .option("--ts-authkey <key>", "Tailscale auth key for hosting setup")
     .option("--allow-insecure", "Allow continuing when hosting security setup fails")
     .option("--swap-gb <n>", "Override automatic swap size in GB for hosting setup")
     .option("--auth-choice <choice>", `Auth: ${AUTH_CHOICE_HELP}`)
@@ -251,7 +250,6 @@ export function registerOnboardCommand(program: Command) {
           hostProfile: opts.hostProfile as "local" | "hosting" | undefined,
           hostSecurityCapable: Boolean(opts.hostSecurityCapable),
           hostMaintenanceSession: Boolean(opts.hostMaintenanceSession),
-          tsAuthkey: opts.tsAuthkey as string | undefined,
           allowInsecure: Boolean(opts.allowInsecure),
           swapGb:
             typeof swapGbRaw === "number" && Number.isFinite(swapGbRaw) ? swapGbRaw : undefined,

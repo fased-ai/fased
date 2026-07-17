@@ -395,7 +395,11 @@ function makeDefaultRegistry(): WalletProviderRegistry {
       "local-socket-signer": { enabled: true, updatedAt: ts, label: "Local signer" },
       alchemy: { enabled: false, updatedAt: ts },
       turnkey: { enabled: false, updatedAt: ts, label: "Turnkey (policy-managed)" },
-      "wallet-standard": { enabled: true, updatedAt: ts, label: "Hardware wallet" },
+      "wallet-standard": {
+        enabled: true,
+        updatedAt: ts,
+        label: "Wallet Standard (verify hardware on device)",
+      },
       privy: { enabled: false, updatedAt: ts, label: "Privy (integration unavailable)" },
     },
     wallets: [],

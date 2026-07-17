@@ -50,7 +50,7 @@ func validateReviewPolicyV2(policy signerPolicyV2, intent normalizedIntentV2) er
 	if intent.CapExempt {
 		return nil
 	}
-	_, err := policyAssetForIntentV2(policy, intent)
+	_, err := policyReservationsForIntentV2(policy, intent)
 	return err
 }
 
@@ -102,6 +102,10 @@ func normalizeReviewArtifactInputV2(input signerReviewArtifactInputV2) (signerRe
 		digest := sha256.Sum256(message)
 		if input.Digest != "sha256:"+hex.EncodeToString(digest[:]) {
 			return input, errors.New("domain message artifact digest mismatch")
+		}
+	case signerReviewArtifactTriggerStateV2:
+		if input.Transaction != nil || input.MessageBase64 != "" || input.StateDigest == "" {
+			return input, errors.New("Jupiter Trigger review requires only an exact signer-owned state digest")
 		}
 	default:
 		return input, errors.New("unsupported signer review artifact kind")
@@ -322,6 +326,83 @@ func (s *signerStoreV2) getReviewV2(walletID, requestID string) (signerReviewV2,
 
 func (s *signerStoreV2) requirePreparedReviewV2(walletID, requestID string) (signerReviewV2, normalizedIntentV2, signerPolicyV2, error) {
 	return s.requireReviewForExecutionV2(walletID, requestID, false)
+}
+
+// terminalizeInvalidReviewedReservationV2 releases a reservation only when
+// the signer can prove, inside the same database transaction, that its exact
+// prepared review expired or its policy hash was revoked before broadcast.
+// This recovers crash-left reservations without weakening ambiguous-broadcast
+// accounting.
+func (s *signerStoreV2) terminalizeInvalidReviewedReservationV2(walletID, requestID string, cause error) (bool, error) {
+	if s == nil || s.db == nil {
+		return false, errors.New("signer state database is unavailable")
+	}
+	requestID, err := validateRequestIDV2(requestID)
+	if err != nil {
+		return false, err
+	}
+	walletID = normalizeWalletID(walletID)
+	terminalized := false
+	err = s.db.Update(func(tx *bolt.Tx) error {
+		operations := tx.Bucket(bucketSignerOperationsV2)
+		rawOperation := operations.Get([]byte(requestID))
+		if rawOperation == nil {
+			return nil
+		}
+		var operation signerOperationV2
+		if err := json.Unmarshal(rawOperation, &operation); err != nil {
+			return fmt.Errorf("decode signer operation: %w", err)
+		}
+		if operation.State != operationReserved || operation.WalletID != walletID {
+			return nil
+		}
+
+		invalid := false
+		rawReview := tx.Bucket(bucketSignerReviewsV2).Get([]byte(requestID))
+		if rawReview == nil {
+			invalid = true
+		} else {
+			var review signerReviewV2
+			if err := json.Unmarshal(rawReview, &review); err != nil {
+				invalid = true
+			} else if review.WalletID != walletID || review.State != jupiterReviewPreparedV2 {
+				invalid = true
+			} else {
+				expiresAt, parseErr := time.Parse(time.RFC3339Nano, review.ExpiresAt)
+				if parseErr != nil || !s.now().Before(expiresAt) {
+					invalid = true
+				}
+				rawPolicy := tx.Bucket(bucketSignerPoliciesV2).Get([]byte(walletID))
+				var policy signerPolicyV2
+				if rawPolicy == nil || json.Unmarshal(rawPolicy, &policy) != nil || policy.Hash != review.PolicyHash || policy.Hash != operation.PolicyHash {
+					invalid = true
+				}
+			}
+		}
+		if !invalid {
+			return nil
+		}
+		if operation.ReservationActive {
+			if err := releaseUsageReservationV2(tx, operation); err != nil {
+				return err
+			}
+			operation.ReservationActive = false
+		}
+		operation.State = operationFailed
+		operation.Error = safeOperationErrorV2(cause)
+		operation.ExecutionLeaseUntil = ""
+		operation.UpdatedAt = timestampV2(s.now())
+		encoded, err := json.Marshal(operation)
+		if err != nil {
+			return err
+		}
+		if err := operations.Put([]byte(requestID), encoded); err != nil {
+			return err
+		}
+		terminalized = true
+		return nil
+	})
+	return terminalized, err
 }
 
 func (s *signerStoreV2) requireReviewForExecutionV2(walletID, requestID string, allowSigned bool) (signerReviewV2, normalizedIntentV2, signerPolicyV2, error) {

@@ -32,6 +32,7 @@ import {
   FEDERATION_BOND_POLICY_DOMAIN,
   FederationBondReviewAuthorizationRequiredError,
   federationBondChallengeRequestId,
+  federationBondSigningMessageBase64,
   resolveFederationBondWallet,
   signFederationBondChallenge,
 } from "./solana-bond-signing.js";
@@ -66,6 +67,7 @@ function configureSigner() {
                 "atomicIdempotency",
                 "signerOwnedKeys",
                 "domainSeparatedFederationBondChallenges",
+                "federationBondChallengeWrapperV2",
                 "signerOwnedWebAuthn",
                 "singleUseReviewedAuthorization",
                 "signerOwnedReviewPrepareExecute",
@@ -114,7 +116,9 @@ function configureSigner() {
             semanticIntent: request.request?.intent,
             artifactKind: "domain-separated-message",
             artifactDigest: `sha256:${"d".repeat(64)}`,
-            messageBase64: request.request?.intent?.federation.payloadBase64,
+            messageBase64: request.request?.intent
+              ? federationBondSigningMessageBase64(request.request.intent.federation)
+              : undefined,
             asset: "federation:bond-challenge",
             amount: "1",
             destination: ADDRESS,
@@ -300,7 +304,7 @@ describe("native federation bond signing", () => {
           semanticIntent: intent,
           artifactKind: "domain-separated-message",
           artifactDigest: `sha256:${"d".repeat(64)}`,
-          messageBase64: payloadBase64,
+          messageBase64: federationBondSigningMessageBase64(intent.federation),
           asset: "federation:bond-challenge",
           amount: "1",
           destination: ADDRESS,

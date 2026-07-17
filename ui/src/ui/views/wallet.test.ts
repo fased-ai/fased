@@ -1487,6 +1487,84 @@ describe("renderWallet", () => {
     expect(text).toContain("1.2");
   });
 
+  it("renders exact signer-bound Trigger and Vault semantics in approval cards", () => {
+    const text = flattenTemplateText(
+      renderWalletForTest({
+        approvals: [
+          {
+            id: "trigger-review-1",
+            createdAt: "2026-07-17T10:00:00.000Z",
+            expiresAt: "2026-07-17T10:15:00.000Z",
+            status: "pending",
+            requestedBy: "control-ui",
+            payload: {
+              chain: "solana",
+              actionKind: "signer_review",
+              signerSemanticIntent: {
+                type: "solana.jupiter.trigger.create",
+                jupiter: {
+                  owner: "Owner1111111111111111111111111111111111111",
+                  inputMint: "InputMint111111111111111111111111111111111",
+                  outputMint: "OutputMint11111111111111111111111111111111",
+                  inputAmount: "2500000",
+                  maxInputAmount: "2500000",
+                  minimumOutputAmount: "0",
+                  maxFeeLamports: "5000",
+                  programs: ["TriggerProgram111111111111111111111111111111"],
+                  trigger: {
+                    operation: "create",
+                    program: "TriggerProgram111111111111111111111111111111",
+                    triggerMint: "TriggerMint1111111111111111111111111111111",
+                    condition: "below",
+                    targetPriceUsd: "123.45",
+                    slippageBps: 75,
+                    expiresAt: "2026-07-18T10:00:00.000Z",
+                    expectedOrderState: "new",
+                  },
+                },
+              },
+            },
+          },
+          {
+            id: "vault-review-1",
+            createdAt: "2026-07-17T10:00:00.000Z",
+            expiresAt: "2026-07-17T10:15:00.000Z",
+            status: "pending",
+            requestedBy: "control-ui",
+            payload: {
+              chain: "solana",
+              actionKind: "signer_review",
+              signerSemanticIntent: {
+                type: "solana.vaultBondAction",
+                cluster: "mainnet-beta",
+                action: "bond.release",
+                programId: "BondProgram11111111111111111111111111111111",
+                dataBase64: "AA==",
+                keys: [],
+                context: {
+                  targetAuthority: "Target111111111111111111111111111111111111",
+                  intervalStartCycleId: "cycle-42",
+                },
+              },
+            },
+          },
+        ],
+      }),
+    );
+
+    expect(text).toContain("Signer intent solana.jupiter.trigger.create");
+    expect(text).toContain("Input mint : InputMint111111111111111111111111111111111");
+    expect(text).toContain("Condition : below");
+    expect(text).toContain("Target price (USD) : 123.45");
+    expect(text).toContain("Slippage (bps) : 75");
+    expect(text).toContain("Order expiry : 2026-07-18T10:00:00.000Z");
+    expect(text).toContain("Trigger mint : TriggerMint1111111111111111111111111111111");
+    expect(text).toContain("Signer intent solana.vaultBondAction");
+    expect(text).toContain("Vault action : bond.release");
+    expect(text).toContain("Target authority : Target111111111111111111111111111111111111");
+    expect(text).not.toContain("Do not approve this Trigger review");
+  });
+
   it("collapses fallback mint-derived token identity in the send summary", () => {
     const text = flattenTemplateText(
       renderWalletForTest({

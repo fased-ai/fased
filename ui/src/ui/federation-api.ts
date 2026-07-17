@@ -1,3 +1,5 @@
+import { generateUUID } from "./uuid.js";
+
 export type FederationHandleEntry = {
   handle: string;
   nodeEndpoint: string;
@@ -862,6 +864,7 @@ export type FederationContentSummarizeRunRequest = {
 };
 
 export type FederationPaidContentSummarizeRunRequest = FederationContentSummarizeRunRequest & {
+  executionIntentId?: string;
   walletId?: string;
   quote: {
     amountInput: string;
@@ -1415,6 +1418,10 @@ export type FederationBondActionResponse = {
   status: FederationStatus;
 };
 
+export type FederationBondIdempotencyInput = {
+  idempotencyKey?: string;
+};
+
 export type RegisterHandleRequest = {
   requestedHandle: string;
   nodeEndpoint: string;
@@ -1483,28 +1490,46 @@ export type FederationApi = {
   getStatus: () => Promise<FederationStatusResponse>;
   setBondWallet: (walletId: string | null) => Promise<FederationBondWalletConfigResponse>;
   clearBondWallet: () => Promise<FederationBondWalletConfigResponse>;
-  openBond: (payload: {
-    walletId?: string;
-    amountSat?: string;
-    tier?: "basic-bond" | "operator-bond";
-    autoSubmitProof?: boolean;
-  }) => Promise<FederationBondActionResponse>;
-  increaseBond: (payload: {
-    walletId?: string;
-    amountSat?: string;
-    autoSubmitProof?: boolean;
-  }) => Promise<FederationBondActionResponse>;
-  requestBondUnlock: (payload?: { walletId?: string }) => Promise<FederationBondActionResponse>;
-  cancelBondUnlock: (payload?: { walletId?: string }) => Promise<FederationBondActionResponse>;
-  finalizeBondUnlock: (payload?: { walletId?: string }) => Promise<FederationBondActionResponse>;
-  submitBondProof: (payload?: { walletId?: string }) => Promise<FederationBondActionResponse>;
-  initBondStaking: (payload: {
-    walletId?: string;
-    amountSat?: string;
-    tier?: "basic-bond" | "operator-bond";
-  }) => Promise<FederationBondActionResponse>;
-  syncBondStaking: (payload?: { walletId?: string }) => Promise<FederationBondActionResponse>;
-  claimBondStaking: (payload?: { walletId?: string }) => Promise<FederationBondActionResponse>;
+  openBond: (
+    payload: {
+      walletId?: string;
+      amountSat?: string;
+      tier?: "basic-bond" | "operator-bond";
+      autoSubmitProof?: boolean;
+    } & FederationBondIdempotencyInput,
+  ) => Promise<FederationBondActionResponse>;
+  increaseBond: (
+    payload: {
+      walletId?: string;
+      amountSat?: string;
+      autoSubmitProof?: boolean;
+    } & FederationBondIdempotencyInput,
+  ) => Promise<FederationBondActionResponse>;
+  requestBondUnlock: (
+    payload?: { walletId?: string } & FederationBondIdempotencyInput,
+  ) => Promise<FederationBondActionResponse>;
+  cancelBondUnlock: (
+    payload?: { walletId?: string } & FederationBondIdempotencyInput,
+  ) => Promise<FederationBondActionResponse>;
+  finalizeBondUnlock: (
+    payload?: { walletId?: string } & FederationBondIdempotencyInput,
+  ) => Promise<FederationBondActionResponse>;
+  submitBondProof: (
+    payload?: { walletId?: string } & FederationBondIdempotencyInput,
+  ) => Promise<FederationBondActionResponse>;
+  initBondStaking: (
+    payload: {
+      walletId?: string;
+      amountSat?: string;
+      tier?: "basic-bond" | "operator-bond";
+    } & FederationBondIdempotencyInput,
+  ) => Promise<FederationBondActionResponse>;
+  syncBondStaking: (
+    payload?: { walletId?: string } & FederationBondIdempotencyInput,
+  ) => Promise<FederationBondActionResponse>;
+  claimBondStaking: (
+    payload?: { walletId?: string } & FederationBondIdempotencyInput,
+  ) => Promise<FederationBondActionResponse>;
   enrollChallenge: (
     payload: FederationEnrollChallengeRequest,
   ) => Promise<FederationEnrollChallengeResult>;
@@ -1648,6 +1673,157 @@ function resolveBaseUrl(): string {
     return injected.trim();
   }
   return "";
+}
+
+const FEDERATION_BOND_IDEMPOTENCY_STORAGE_KEY = "fased.federation.bond-idempotency.pending.v1";
+const FEDERATION_BOND_IDEMPOTENCY_ENTRY_LIMIT = 64;
+
+type FederationBondPendingIdempotency = {
+  semanticKey: string;
+  idempotencyKey: string;
+  createdAt: string;
+};
+
+const pendingFederationBondIdempotency = new Map<string, FederationBondPendingIdempotency>();
+
+function canonicalFederationBondValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((entry) => canonicalFederationBondValue(entry));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, entry]) => entry !== undefined)
+        .toSorted(([left], [right]) => left.localeCompare(right))
+        .map(([key, entry]) => [key, canonicalFederationBondValue(entry)]),
+    );
+  }
+  return value;
+}
+
+function normalizeFederationBondIdempotencyKey(value: string): string {
+  const normalized = value.trim();
+  if (!normalized || normalized.length > 160 || /[^\x20-\x7e]/u.test(normalized)) {
+    throw new Error("Bond idempotency key must contain 1-160 printable characters");
+  }
+  return normalized;
+}
+
+function federationBondStorage(): Storage {
+  try {
+    const storage = globalThis.localStorage;
+    if (storage) {
+      return storage;
+    }
+  } catch {
+    // Fall through to the fail-closed error below.
+  }
+  throw new Error(
+    "Durable browser storage is required before a reviewed bond action can be submitted",
+  );
+}
+
+function readPendingFederationBondIdempotency(
+  storage: Storage,
+): FederationBondPendingIdempotency[] {
+  const raw = storage.getItem(FEDERATION_BOND_IDEMPOTENCY_STORAGE_KEY);
+  if (!raw) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed
+      .filter((entry): entry is FederationBondPendingIdempotency =>
+        Boolean(
+          entry &&
+          typeof entry === "object" &&
+          typeof (entry as FederationBondPendingIdempotency).semanticKey === "string" &&
+          typeof (entry as FederationBondPendingIdempotency).idempotencyKey === "string" &&
+          typeof (entry as FederationBondPendingIdempotency).createdAt === "string",
+        ),
+      )
+      .slice(-FEDERATION_BOND_IDEMPOTENCY_ENTRY_LIMIT);
+  } catch {
+    return [];
+  }
+}
+
+function writePendingFederationBondIdempotency(
+  storage: Storage,
+  entries: FederationBondPendingIdempotency[],
+): void {
+  storage.setItem(
+    FEDERATION_BOND_IDEMPOTENCY_STORAGE_KEY,
+    JSON.stringify(entries.slice(-FEDERATION_BOND_IDEMPOTENCY_ENTRY_LIMIT)),
+  );
+}
+
+function claimFederationBondIdempotency(
+  action: string,
+  payload: Record<string, unknown>,
+): { semanticKey: string; idempotencyKey: string } {
+  const semanticKey = `${action}:${JSON.stringify(canonicalFederationBondValue(payload))}`;
+  const memoryEntry = pendingFederationBondIdempotency.get(semanticKey);
+  if (memoryEntry) {
+    return memoryEntry;
+  }
+  const storage = federationBondStorage();
+  const persisted = readPendingFederationBondIdempotency(storage);
+  const existing = persisted.find((entry) => entry.semanticKey === semanticKey);
+  if (existing) {
+    const normalized = normalizeFederationBondIdempotencyKey(existing.idempotencyKey);
+    const entry = { ...existing, idempotencyKey: normalized };
+    pendingFederationBondIdempotency.set(semanticKey, entry);
+    return entry;
+  }
+  const entry: FederationBondPendingIdempotency = {
+    semanticKey,
+    idempotencyKey: normalizeFederationBondIdempotencyKey(`bond-${generateUUID()}`),
+    createdAt: new Date().toISOString(),
+  };
+  writePendingFederationBondIdempotency(storage, [...persisted, entry]);
+  pendingFederationBondIdempotency.set(semanticKey, entry);
+  return entry;
+}
+
+function completeFederationBondIdempotency(semanticKey: string, idempotencyKey: string): void {
+  if (pendingFederationBondIdempotency.get(semanticKey)?.idempotencyKey === idempotencyKey) {
+    pendingFederationBondIdempotency.delete(semanticKey);
+  }
+  const storage = federationBondStorage();
+  const remaining = readPendingFederationBondIdempotency(storage).filter(
+    (entry) => entry.semanticKey !== semanticKey || entry.idempotencyKey !== idempotencyKey,
+  );
+  writePendingFederationBondIdempotency(storage, remaining);
+}
+
+async function postFederationBondAction<T extends Record<string, unknown>>(
+  url: string,
+  action: string,
+  payload: T & FederationBondIdempotencyInput,
+): Promise<FederationBondActionResponse> {
+  const { idempotencyKey: explicitIdempotencyKey, ...intentPayload } = payload;
+  const claimed = explicitIdempotencyKey
+    ? {
+        semanticKey: "",
+        idempotencyKey: normalizeFederationBondIdempotencyKey(explicitIdempotencyKey),
+      }
+    : claimFederationBondIdempotency(action, intentPayload);
+  const result = await fetchJson<FederationBondActionResponse>(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": claimed.idempotencyKey,
+    },
+    body: JSON.stringify({ ...intentPayload, idempotencyKey: claimed.idempotencyKey }),
+  });
+  if (!explicitIdempotencyKey) {
+    completeFederationBondIdempotency(claimed.semanticKey, claimed.idempotencyKey);
+  }
+  return result;
 }
 
 async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
@@ -4508,87 +4684,62 @@ export function createFederationApi(): FederationApi {
       );
     },
     async openBond(payload) {
-      return await fetchJson<FederationBondActionResponse>(`${baseUrl}/api/federation/bond/open`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      return await postFederationBondAction(`${baseUrl}/api/federation/bond/open`, "open", payload);
     },
     async increaseBond(payload) {
-      return await fetchJson<FederationBondActionResponse>(
+      return await postFederationBondAction(
         `${baseUrl}/api/federation/bond/increase`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        },
+        "increase",
+        payload,
       );
     },
     async requestBondUnlock(payload) {
-      return await fetchJson<FederationBondActionResponse>(
+      return await postFederationBondAction(
         `${baseUrl}/api/federation/bond/request-unlock`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload ?? {}),
-        },
+        "request-unlock",
+        payload ?? {},
       );
     },
     async cancelBondUnlock(payload) {
-      return await fetchJson<FederationBondActionResponse>(
+      return await postFederationBondAction(
         `${baseUrl}/api/federation/bond/cancel-unlock`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload ?? {}),
-        },
+        "cancel-unlock",
+        payload ?? {},
       );
     },
     async finalizeBondUnlock(payload) {
-      return await fetchJson<FederationBondActionResponse>(
+      return await postFederationBondAction(
         `${baseUrl}/api/federation/bond/finalize-unlock`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload ?? {}),
-        },
+        "finalize-unlock",
+        payload ?? {},
       );
     },
     async submitBondProof(payload) {
-      return await fetchJson<FederationBondActionResponse>(`${baseUrl}/api/federation/bond/prove`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload ?? {}),
-      });
+      return await postFederationBondAction(
+        `${baseUrl}/api/federation/bond/prove`,
+        "prove",
+        payload ?? {},
+      );
     },
     async initBondStaking(payload) {
-      return await fetchJson<FederationBondActionResponse>(
+      return await postFederationBondAction(
         `${baseUrl}/api/federation/bond/staking/init`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        },
+        "staking-init",
+        payload,
       );
     },
     async syncBondStaking(payload) {
-      return await fetchJson<FederationBondActionResponse>(
+      return await postFederationBondAction(
         `${baseUrl}/api/federation/bond/staking/sync`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload ?? {}),
-        },
+        "staking-sync",
+        payload ?? {},
       );
     },
     async claimBondStaking(payload) {
-      return await fetchJson<FederationBondActionResponse>(
+      return await postFederationBondAction(
         `${baseUrl}/api/federation/bond/staking/claim`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload ?? {}),
-        },
+        "staking-claim",
+        payload ?? {},
       );
     },
     async enrollChallenge(payload) {

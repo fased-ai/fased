@@ -36,6 +36,12 @@ vi.mock("../session-utils.js", async (importOriginal) => {
       },
       canonicalKey: "main",
     }),
+    resolveGatewaySessionStoreTarget: () => ({
+      agentId: "main",
+      storePath: path.join(path.dirname(mockState.transcriptPath), "sessions.json"),
+      canonicalKey: "main",
+      storeKeys: ["main"],
+    }),
   };
 });
 
@@ -76,6 +82,16 @@ function createTranscriptFixture(prefix: string) {
       id: mockState.sessionId,
       timestamp: new Date(0).toISOString(),
       cwd: "/tmp",
+    })}\n`,
+    "utf-8",
+  );
+  fs.writeFileSync(
+    path.join(dir, "sessions.json"),
+    `${JSON.stringify({
+      main: {
+        sessionId: mockState.sessionId,
+        sessionFile: transcriptPath,
+      },
     })}\n`,
     "utf-8",
   );

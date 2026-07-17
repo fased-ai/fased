@@ -185,6 +185,25 @@ mkdir -p "$HOME/.fased/admin"
   < "$HOME/.fased/admin/agent-network.json"
 ```
 
+## Jupiter Trigger API key
+
+Trigger authentication is signer-owned. Install the API key from stdin into a
+private path beside the signer database; never pass the key in argv or an
+environment variable:
+
+```bash
+fased-signerd admin jupiter api-key-install \
+  --output /absolute/signer-owned/jupiter-trigger-api.key \
+  < /absolute/owner-only/jupiter-trigger.key
+```
+
+The command validates a single printable non-space ASCII value, writes a new
+`0600` file with fsync plus atomic rename, rejects symlinks and unsafe ownership
+or modes, and prints no credential. Restart `fased-signerd` after install or
+removal. `api-key-status` and `api-key-remove` accept the same `--output` path.
+These file-management commands do not use the control socket, but they must run
+as the OS account that owns the signer credential directory.
+
 HTTPS is required. Plain HTTP is accepted only for a loopback Local development
 endpoint such as `http://127.0.0.1:8899`. URL user information, fragments,
 unsafe metadata IP literals, link-local addresses, multicast addresses, and
@@ -202,6 +221,67 @@ sudo -u fased-signer -- /opt/fased/signer/fased-signerd admin \
 
 This rewrites the existing private key under a new authenticated-encryption
 nonce and record version. It is not public-address/key rotation.
+
+## Rotate to a new signer-owned address
+
+Address rotation is a two-phase host-administration workflow. It never replaces
+or deletes a funded key in place, and it never moves funds automatically. First
+read the source wallet and policy, record their exact public key and versions,
+choose a new wallet ID, then prepare a distinct signer-generated successor:
+
+```bash
+sudo -u fased-signer -- /opt/fased/signer/fased-signerd admin \
+  wallet rotate-successor \
+  --control-socket /run/fased-signerd/control.sock \
+  --wallet-id agent \
+  --successor-wallet-id agent_2026 \
+  --expected-source-public-key SOURCE_PUBLIC_KEY \
+  --expected-source-wallet-version 1 \
+  --expected-source-policy-version 3
+```
+
+The command returns public metadata only. Go creates and encrypts a new key
+inside signer storage, gives it the source wallet's immutable role, and installs
+an explicit deny-all policy. An exact retry returns the same prepared rotation;
+a different successor is rejected. Inspect the durable status at any time:
+
+```bash
+sudo -u fased-signer -- /opt/fased/signer/fased-signerd admin \
+  wallet rotation-status \
+  --control-socket /run/fased-signerd/control.sock \
+  --wallet-id agent
+```
+
+Back up the successor according to the custody procedure, register its public
+address with external systems, and transfer source assets through separately
+reviewed transactions. Confirm balances and in-flight transactions before
+retiring the source. Commit by copying every exact public binding and version
+from fresh wallet, policy, and rotation status reads:
+
+```bash
+sudo -u fased-signer -- /opt/fased/signer/fased-signerd admin \
+  wallet rotation-commit \
+  --control-socket /run/fased-signerd/control.sock \
+  --wallet-id agent \
+  --successor-wallet-id agent_2026 \
+  --rotation-id sha256:ROTATION_DIGEST \
+  --expected-source-public-key SOURCE_PUBLIC_KEY \
+  --expected-successor-public-key SUCCESSOR_PUBLIC_KEY \
+  --expected-source-wallet-version 1 \
+  --expected-source-policy-version 3 \
+  --expected-successor-wallet-version 1 \
+  --expected-successor-policy-version 1 \
+  --expected-rotation-version 1
+```
+
+Commit is one bbolt transaction: the source receives a new permanent deny-all
+policy and retirement link, source WebAuthn authorizations are invalidated, and
+the rotation becomes committed. The encrypted source key and historical
+operation records remain for recovery and reconciliation, but the source can
+never sign or accept another policy. The successor remains deny-all until a
+host administrator deliberately installs its reviewed policy with `policy put`.
+If commit loses its response, `rotation-status` is authoritative; an exact
+commit retry is idempotent.
 
 ## Enroll and inspect WebAuthn credentials
 
@@ -239,7 +319,8 @@ sudo -u fased-signer -- /opt/fased/signer/fased-signerd admin \
   --request-file /var/lib/fased-signerd/admin/webauthn-finish.json
 ```
 
-List public credential metadata:
+List public credential metadata together with its optimistic `version` and
+`count` fence:
 
 ```bash
 sudo -u fased-signer -- /opt/fased/signer/fased-signerd admin \
@@ -249,6 +330,26 @@ sudo -u fased-signer -- /opt/fased/signer/fased-signerd admin \
 
 RP ID and exact allowed origins remain root-owned daemon configuration. The
 admin command cannot override them.
+
+Revoke by copying the exact public credential ID, version, and count from a
+fresh list. The signer removes it atomically, increments the membership version,
+invalidates every pending WebAuthn ceremony, and destroys unused proofs issued
+by that credential:
+
+```bash
+sudo -u fased-signer -- /opt/fased/signer/fased-signerd admin \
+  webauthn credentials revoke \
+  --control-socket /run/fased-signerd/control.sock \
+  --credential-id PUBLIC_BASE64URL_CREDENTIAL_ID \
+  --expected-count 2 \
+  --expected-version 4
+```
+
+Removing the final credential is refused by default because it disables new
+reviewed approvals. Only an authenticated host administrator who has planned
+re-enrollment may repeat the command with `--confirm-last-credential`. The
+credential ID is public metadata; credential public keys and private
+authenticator material are never printed by the revoke command.
 
 ## Retry safety
 

@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearConfigCache, loadConfig } from "../config/config.js";
+import type { SignerNetworkSummary } from "../wallet/signer-network-admin.js";
 import {
   readWalletProviderRegistry,
   upsertNamedWallet,
@@ -47,13 +48,15 @@ const signerMocks = vi.hoisted(() => ({
   }),
   install: vi.fn(),
   restart: vi.fn(async () => undefined),
-  networkPut: vi.fn(() => ({
-    walletId: "agent",
-    configured: true,
-    version: 1,
-    hash: `hmac-sha256:${"b".repeat(64)}`,
-    ready: true,
-  })),
+  networkPut: vi.fn(
+    (): SignerNetworkSummary => ({
+      walletId: "agent",
+      configured: true,
+      version: 1,
+      hash: `hmac-sha256:${"b".repeat(64)}`,
+      ready: true,
+    }),
+  ),
   socketCall: vi.fn(),
 }));
 
@@ -98,8 +101,7 @@ const WALLET_ENV_KEYS = [
   "FASED_WALLET_LOCAL_SIGNER_STATE_DB",
   "FASED_WALLET_LOCAL_SIGNER_MASTER_KEY",
   "FASED_HOST_PROFILE",
-  "FASED_HOST_BOOTSTRAP_CTL",
-  "FASED_HOST_BOOTSTRAP_SOCKET",
+  "FASED_HOST_ROOT_PREPARED",
 ] as const;
 
 describe("walletSetupCommand native signer boundary", () => {
@@ -198,7 +200,7 @@ describe("walletSetupCommand native signer boundary", () => {
     }
   });
 
-  it("uses only the ephemeral root bootstrap for a fresh hosted signer wallet", async () => {
+  it("creates a fail-closed hosted wallet without any app-visible root channel", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-hosted-signer-create-"));
     const configPath = path.join(root, "fased.json");
     const stateDir = path.join(root, "state");
@@ -207,9 +209,17 @@ describe("walletSetupCommand native signer boundary", () => {
     vi.stubEnv("FASED_DISABLE_CONFIG_CACHE", "1");
     vi.stubEnv("FASED_STATE_DIR", stateDir);
     vi.stubEnv("FASED_HOST_PROFILE", "hosting");
-    vi.stubEnv("FASED_HOST_BOOTSTRAP_CTL", "/usr/local/libexec/fased-host-bootstrapctl.mjs");
-    vi.stubEnv("FASED_HOST_BOOTSTRAP_SOCKET", "/run/fased-host-bootstrap/control.sock");
+    vi.stubEnv("FASED_HOST_ROOT_PREPARED", "1");
     vi.stubEnv("FASED_WALLET_LOCAL_SIGNER_SOCKET", "/run/fased-signerd/app.sock");
+    signerMocks.networkPut.mockReturnValueOnce({
+      walletId: "agent",
+      configured: false,
+      version: 0,
+      ready: false,
+      rootAdminRequired: true,
+      rootCommand:
+        "/usr/local/sbin/fased-signer-network --wallet-id agent --network-file /root/fased-network.json",
+    });
     clearConfigCache();
     try {
       await walletSetupCommand({ log: () => {} } as never, {
@@ -245,6 +255,11 @@ describe("walletSetupCommand native signer boundary", () => {
           env: expect.objectContaining({ FASED_HOST_PROFILE: "hosting" }),
         }),
       );
+      const hostedWallet = readWalletProviderRegistry(process.env).wallets.find(
+        (wallet) => wallet.id === "agent",
+      );
+      expect(hostedWallet?.metadata?.networkReady).toBe(false);
+      expect(hostedWallet?.metadata?.policyState).toBe("locked");
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

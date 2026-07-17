@@ -281,7 +281,10 @@ export async function buildReviewedSolanaTransaction(params: {
       message: "reviewed transaction builder supports Solana only",
     });
   }
-  if (params.request.serializedTxBase64?.trim()) {
+  const untypedSerializedTransaction = (
+    params.request as WalletProviderPrepareTxRequest & { serializedTxBase64?: unknown }
+  ).serializedTxBase64;
+  if (typeof untypedSerializedTransaction === "string" && untypedSerializedTransaction.trim()) {
     throw invalid("reviewed SOL/SPL sends do not accept caller-supplied serialized transactions");
   }
   const rpcUrl = normalizeRpcUrl(params.rpcUrl);

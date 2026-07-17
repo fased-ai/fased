@@ -141,7 +141,7 @@ func normalizeSATIntentV2(input signerIntentV2, wallet solana.PublicKey) (normal
 
 	primaryProgram := normalized[0].Program.String()
 	policyOperation := "sat." + action + "@" + primaryProgram
-	requiredRole := ""
+	requiredRole := "mining"
 	if isVaultBond {
 		policyOperation = "vaultBond." + action + "@" + primaryProgram
 		requiredRole = "vault"
@@ -169,6 +169,9 @@ func normalizeSATIntentV2(input signerIntentV2, wallet solana.PublicKey) (normal
 			asset = "solana:spl:" + normalized[0].Accounts[5].PublicKey.String()
 		case "setActiveCommit":
 			amount = new(big.Int).SetUint64(binary.LittleEndian.Uint64(data[1:9]))
+			if amount.Sign() <= 0 {
+				return normalizedIntentV2{}, errors.New("SAT setActiveCommit capital exposure must be positive")
+			}
 			asset = "sat:capital:lamports"
 		default:
 			if mint, ok := satMintForActionV2(normalized[0]); ok {
@@ -744,6 +747,9 @@ func validateSATSemanticsV2(ix normalizedSATInstructionV2, wallet solana.PublicK
 			expectSATKeyV2(ix, 2, system, "system program"),
 		)
 	case "setActiveCommit":
+		if satU64V2(d, 1) == 0 {
+			return errors.New("SAT setActiveCommit capital exposure must be positive")
+		}
 		return expectSATPDAV2(ix, 1, p, "miner capital", []byte("sat_miner_capital_state"), wallet[:])
 	case "updateBondTierPolicy":
 		if !satPublicKeyV2(d, 1).Equals(wallet) {

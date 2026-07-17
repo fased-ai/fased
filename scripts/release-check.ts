@@ -33,12 +33,12 @@ const requiredPathGroups = [
   "dist/plugin-sdk/whatsapp.d.ts",
   "dist/build-info.json",
   "docs/reference/templates/AGENTS.md",
+  "install.sh",
   "scripts/clean-package-dist.mjs",
   "scripts/fased-managed-launcher.sh",
   "scripts/fased-managed-service.sh",
   "scripts/fased-managed-updater.mjs",
-  "scripts/fased-host-bootstrapctl.mjs",
-  "scripts/fased-host-bootstrapd.mjs",
+  "scripts/fased-signer-network-hosting.sh",
   "scripts/fased-host-updater.mjs",
   "scripts/fased-host-updaterctl.mjs",
   "scripts/fased-signer-enroll-hosting.sh",
@@ -50,6 +50,7 @@ const requiredPathGroups = [
   "scripts/install-fased-signerd.sh",
   "scripts/install-managed-runtime.mjs",
   "scripts/managed-runtime-layout.mjs",
+  "scripts/hosted-release-manifest.mjs",
   "shared/sat-hash-v1.json",
 ];
 const requiredExactDependencies = new Map<string, string>();

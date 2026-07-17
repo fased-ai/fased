@@ -27,6 +27,13 @@ func (s *signerStoreV2) tightenPolicy(input signerPolicyV2, expectedVersion uint
 		if tx.Bucket(bucketSignerWalletsV2).Get([]byte(walletID)) == nil {
 			return errors.New("signer wallet not found")
 		}
+		retired, err := signerWalletIsRetiredInTxV2(tx, walletID)
+		if err != nil {
+			return err
+		}
+		if retired {
+			return errors.New("retired signer wallet policy is permanently deny-all")
+		}
 		policies := tx.Bucket(bucketSignerPoliciesV2)
 		raw := policies.Get([]byte(walletID))
 		if raw == nil {

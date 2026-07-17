@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import { createServer } from "node:net";
 import path from "node:path";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { WebSocket } from "ws";
 import { getChannelPlugin } from "../channels/plugins/index.js";
 import type { ChannelOutboundAdapter } from "../channels/plugins/types.js";
@@ -29,6 +29,16 @@ import {
   testTailnetIPv4,
   trackConnectChallengeNonce,
 } from "./test-helpers.js";
+
+const fetchProviderRefreshSnapshotForRoutes = vi.hoisted(() => vi.fn());
+
+vi.mock("../providers/refresh.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../providers/refresh.js")>();
+  return {
+    ...actual,
+    fetchProviderRefreshSnapshotForRoutes,
+  };
+});
 
 installGatewayTestHooks({ scope: "suite" });
 
@@ -87,6 +97,8 @@ type ModelCatalogRpcEntry = {
   name: string;
   provider: string;
   contextWindow?: number;
+  available?: boolean;
+  runnable?: boolean;
 };
 
 type PiCatalogFixtureEntry = {
@@ -144,12 +156,50 @@ const expectedSortedCatalog = (): ModelCatalogRpcEntry[] => [
   },
 ];
 
+const summarizeModels = (models: ModelCatalogRpcEntry[]): ModelCatalogRpcEntry[] =>
+  models.map(({ id, name, provider, contextWindow, available, runnable }) => ({
+    id,
+    name,
+    provider,
+    ...(contextWindow === undefined ? {} : { contextWindow }),
+    available,
+    runnable,
+  }));
+
+const expectedRunnableCatalog = (): ModelCatalogRpcEntry[] =>
+  expectedSortedCatalog().map((model) => ({ ...model, available: true, runnable: true }));
+
 describe("gateway server models + voicewake", () => {
-  const listModels = async () => rpcReq<{ models: ModelCatalogRpcEntry[] }>(ws, "models.list");
+  const listModels = async () =>
+    withEnvAsync(
+      {
+        OPENAI_API_KEY: "test-openai-key",
+        ANTHROPIC_API_KEY: "test-anthropic-key",
+      },
+      async () => rpcReq<{ models: ModelCatalogRpcEntry[] }>(ws, "models.list"),
+    );
 
   const seedPiCatalog = () => {
     piSdkMock.enabled = true;
     piSdkMock.models = buildPiCatalogFixture();
+    fetchProviderRefreshSnapshotForRoutes.mockResolvedValue({
+      providers: {
+        openai: {
+          routes: {
+            openai: buildPiCatalogFixture()
+              .filter((model) => model.provider === "openai")
+              .map((model) => ({ id: model.id, source: "provider-api" })),
+          },
+        },
+        anthropic: {
+          routes: {
+            anthropic: buildPiCatalogFixture()
+              .filter((model) => model.provider === "anthropic")
+              .map((model) => ({ id: model.id, source: "provider-api" })),
+          },
+        },
+      },
+    });
   };
 
   const withModelsConfig = async <T>(config: unknown, run: () => Promise<T>): Promise<T> => {
@@ -288,12 +338,12 @@ describe("gateway server models + voicewake", () => {
     expect(res2.ok).toBe(true);
 
     const models = res1.payload?.models ?? [];
-    expect(models).toEqual(expectedSortedCatalog());
+    expect(summarizeModels(models)).toEqual(expectedRunnableCatalog());
 
     expect(piSdkMock.discoverCalls).toBe(1);
   });
 
-  test("models.list filters to allowlisted configured models by default", async () => {
+  test("models.list filters to explicitly allowlisted configured models", async () => {
     await withModelsConfig(
       {
         agents: {
@@ -311,24 +361,28 @@ describe("gateway server models + voicewake", () => {
         const res = await listModels();
 
         expect(res.ok).toBe(true);
-        expect(res.payload?.models).toEqual([
+        expect(summarizeModels(res.payload?.models ?? [])).toEqual([
           {
             id: "claude-test-a",
             name: "A-Model",
             provider: "anthropic",
             contextWindow: 200_000,
+            available: true,
+            runnable: true,
           },
           {
             id: "gpt-test-z",
             name: "gpt-test-z",
             provider: "openai",
+            available: true,
+            runnable: true,
           },
         ]);
       },
     );
   });
 
-  test("models.list includes synthetic entries for allowlist models absent from catalog", async () => {
+  test("models.list does not synthesize configured models absent from the authoritative catalog", async () => {
     await withModelsConfig(
       {
         agents: {
@@ -345,13 +399,7 @@ describe("gateway server models + voicewake", () => {
         const res = await listModels();
 
         expect(res.ok).toBe(true);
-        expect(res.payload?.models).toEqual([
-          {
-            id: "not-in-catalog",
-            name: "not-in-catalog",
-            provider: "openai",
-          },
-        ]);
+        expect(res.payload?.models).toEqual([]);
       },
     );
   });

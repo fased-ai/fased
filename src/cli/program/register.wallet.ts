@@ -40,12 +40,12 @@ export function registerWalletCommands(program: Command) {
 
   wallet
     .command("setup")
-    .description("Guided Solana wallet setup (create/import local signer wallet)")
+    .description("Create a signer-owned Solana wallet or configure a supported provider")
     .option("--mode <mode>", "local-signer-create|local-signer-import|local-signer|turnkey|alchemy")
     .option("--chain <chain>", "solana", "solana")
     .option("--wallet-id <id>", "Named wallet id (examples: agent, mining, vault)")
     .option("--wallet-name <value>", "Friendly wallet display name (for UI/skills/plugins)")
-    .option("--role <role>", "agent|vault. SAT mining is attached separately.")
+    .option("--role <role>", "Permanent signer role: agent|mining|vault")
     .option("--api-key <value>", "Alchemy API key")
     .option("--rpc-url <url>", "Solana RPC URL")
     .option("--turnkey-api-public-key <value>", "Turnkey API public key (turnkey mode)")
@@ -55,15 +55,11 @@ export function registerWalletCommands(program: Command) {
     .option("--turnkey-base-url <value>", "Turnkey base URL override (turnkey mode)")
     .option(
       "--enable-limit-orders",
-      "Store Jupiter API key config for policy-gated wallet actions",
+      "Legacy alias: configure Gateway Jupiter Swap API access (Trigger is signer-owned)",
       false,
     )
-    .option("--disable-limit-orders", "Remove stored Jupiter wallet-action config", false)
-    .option("--jupiter-api-key <value>", "Jupiter API key for policy-gated wallet actions")
-    .option(
-      "--jupiter-trigger-api-base-url <url>",
-      "Advanced: Jupiter Trigger API base URL override",
-    )
+    .option("--disable-limit-orders", "Remove stored Gateway Jupiter Swap API key", false)
+    .option("--jupiter-api-key <value>", "Jupiter API key for Gateway swap crafting only")
     .option("--non-interactive", "Do not prompt; require mode/inputs", false)
     .option("--no-doctor", "Skip signer doctor in local-signer mode", false)
     .option("--json", "Print JSON output", false)
@@ -89,10 +85,6 @@ export function registerWalletCommands(program: Command) {
           enableLimitOrders: Boolean(opts.enableLimitOrders),
           disableLimitOrders: Boolean(opts.disableLimitOrders),
           jupiterApiKey: typeof opts.jupiterApiKey === "string" ? opts.jupiterApiKey : undefined,
-          jupiterTriggerApiBaseUrl:
-            typeof opts.jupiterTriggerApiBaseUrl === "string"
-              ? opts.jupiterTriggerApiBaseUrl
-              : undefined,
           nonInteractive: Boolean(opts.nonInteractive),
           noDoctor: Boolean(opts.noDoctor),
           json: Boolean(opts.json),
@@ -102,14 +94,12 @@ export function registerWalletCommands(program: Command) {
 
   wallet
     .command("limit-orders")
-    .description("Configure Jupiter Trigger support for policy-gated Agent wallet actions")
-    .option("--enable", "Enable Jupiter wallet-action support and store API key config", false)
-    .option("--disable", "Remove stored Jupiter wallet-action config", false)
-    .option("--jupiter-api-key <value>", "Jupiter API key for policy-gated wallet actions")
-    .option(
-      "--jupiter-trigger-api-base-url <url>",
-      "Advanced: Jupiter Trigger API base URL override",
+    .description(
+      "Configure Gateway Jupiter Swap API access; Trigger credentials remain signer-owned",
     )
+    .option("--enable", "Store a Gateway Jupiter Swap API key", false)
+    .option("--disable", "Remove the stored Gateway Jupiter Swap API key", false)
+    .option("--jupiter-api-key <value>", "Jupiter API key for Gateway swap crafting only")
     .option("--non-interactive", "Do not prompt; require explicit inputs", false)
     .option("--json", "Print JSON output", false)
     .action(async (opts) => {
@@ -118,10 +108,6 @@ export function registerWalletCommands(program: Command) {
           enable: Boolean(opts.enable),
           disable: Boolean(opts.disable),
           jupiterApiKey: typeof opts.jupiterApiKey === "string" ? opts.jupiterApiKey : undefined,
-          jupiterTriggerApiBaseUrl:
-            typeof opts.jupiterTriggerApiBaseUrl === "string"
-              ? opts.jupiterTriggerApiBaseUrl
-              : undefined,
           nonInteractive: Boolean(opts.nonInteractive),
           json: Boolean(opts.json),
         });

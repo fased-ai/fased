@@ -105,6 +105,7 @@ if [[ "${FASED_MANAGED_INTERNAL:-0}" != "1" ]]; then
 fi
 
 set -euo pipefail
+umask 077
 
 NODE_BIN="$(resolve_node_bin || true)"
 if [[ -z "$NODE_BIN" ]]; then
@@ -187,10 +188,51 @@ mask_secret() {
   local raw="$1"
   local n=${#raw}
   if [[ $n -le 10 ]]; then
-    printf "%s" "$raw"
+    printf "%s" "[redacted]"
     return
   fi
   printf "%s...%s" "${raw:0:6}" "${raw: -4}"
+}
+
+read_private_zrok_reservation() {
+  local file="$1"
+  local owner="" mode="" links="" size=""
+  [[ -f "$file" && ! -L "$file" ]] || return 1
+  read -r owner mode links size <<<"$(stat -c '%u %a %h %s' "$file" 2>/dev/null || true)"
+  [[ "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
+  [[ "$owner" == "$(id -u)" && "$links" == "1" && "$size" =~ ^[0-9]+$ && \
+    "$size" -gt 0 && "$size" -le 4096 ]] || return 1
+  chmod 0600 "$file"
+  local token=""
+  IFS= read -r token <"$file" || true
+  [[ -n "$token" ]] || return 1
+  printf '%s' "$token"
+}
+
+write_private_zrok_reservation() {
+  local file="$1"
+  local token="$2"
+  local temp_file=""
+  [[ -n "$token" ]] || return 1
+  mkdir -p "$(dirname "$file")"
+  chmod 0700 "$(dirname "$file")" 2>/dev/null || true
+  temp_file="$(mktemp "${file}.tmp.XXXXXXXX")"
+  trap 'rm -f -- "${temp_file:-}"' RETURN
+  printf '%s\n' "$token" >"$temp_file"
+  chmod 0600 "$temp_file"
+  mv -f -- "$temp_file" "$file"
+  temp_file=""
+  chmod 0600 "$file"
+  trap - RETURN
+}
+
+filter_zrok_runtime_output() {
+  local line=""
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" == *"issuedAt of token is in the future"* ]]; then
+      printf '%s\n' '[zrok] clock-skew-auth-failure'
+    fi
+  done
 }
 
 is_gateway_listener_ready() {
@@ -246,7 +288,7 @@ measure_managed_clock_skew_seconds() {
 }
 
 zrok_log_indicates_clock_skew() {
-  tail -n 80 "$ZROK_RUNTIME_LOG" 2>/dev/null | grep -Fqi "issuedAt of token is in the future"
+  tail -n 80 "$ZROK_RUNTIME_LOG" 2>/dev/null | grep -Fqi "[zrok] clock-skew-auth-failure"
 }
 
 attempt_managed_clock_sync_repair() {
@@ -270,7 +312,7 @@ ensure_managed_clock_sync() {
 
   echo "[tunnel] WARNING: Host clock skew detected (${skew_seconds}s versus public control plane)."
   if ! attempt_managed_clock_sync_repair; then
-    echo "[tunnel] WARNING: Rerun ./install.sh --repair-hosting as root to repair host time sync."
+    echo "[tunnel] WARNING: Repair only from the provider root console using the exact tagged, attested Hosting release; never run the app checkout with sudo."
     return 1
   fi
 
@@ -292,7 +334,8 @@ start_initial_zrok_share() {
 
   while (( attempt <= attempts )); do
     echo "[tunnel] Starting tunnel for ${slug} (attempt ${attempt}/${attempts})..."
-    "$ZROK_BIN" share reserved "$RES_TOKEN" --headless >>"$ZROK_RUNTIME_LOG" 2>&1 &
+    "$ZROK_BIN" share reserved "$RES_TOKEN" --headless 2>&1 \
+      | filter_zrok_runtime_output >>"$ZROK_RUNTIME_LOG" &
     ZROK_PID=$!
     echo "$ZROK_PID" > "$FASED_CONFIG_DIR/.zrok-pid"
     sleep 5
@@ -326,8 +369,7 @@ start_initial_zrok_share() {
 
     echo "[tunnel] WARNING: zrok share died during startup."
     if [[ "$VERBOSE_STARTUP" != "1" ]]; then
-      echo "[debug] Last zrok startup logs:"
-      tail -n 40 "$ZROK_RUNTIME_LOG" || true
+      echo "[debug] zrok output was reduced to non-secret diagnostics in $ZROK_RUNTIME_LOG"
     fi
     if zrok_log_indicates_clock_skew; then
       echo "[tunnel] Detected zrok auth failure caused by host clock skew."
@@ -431,6 +473,7 @@ mkdir -p "$FASED_CONFIG_DIR"
 mkdir -p "$LOG_DIR"
 : > "$ZROK_RUNTIME_LOG"
 : > "$WALLET_SETUP_LOG"
+chmod 0600 "$ZROK_RUNTIME_LOG" "$WALLET_SETUP_LOG"
 SERVICE_GATEWAY_TOKEN="${FASED_GATEWAY_TOKEN:-}"
 if [ ! -f "$GW_TOKEN_PATH" ]; then
   if [[ -n "$SERVICE_GATEWAY_TOKEN" ]]; then
@@ -699,7 +742,7 @@ if [[ "${FASED_HOST_PROFILE:-}" == "hosting" ]]; then
     SIGNERD_STARTUP_MODE="external"
     echo "==> Using root-managed fased-signerd service (socket: $SIGNERD_SOCKET)"
   else
-    mark_signerd_degraded "root-managed fased-signerd socket is unavailable. Run ./install.sh --repair-hosting as root."
+    mark_signerd_degraded "root-managed fased-signerd socket is unavailable. Repair only from the provider root console using the exact tagged, attested Hosting release; never run the app checkout with sudo."
   fi
 elif should_start_signerd; then
   SIGNERD_STARTUP_MODE="healthy"
@@ -781,9 +824,11 @@ start_health_monitor() {
       ensure_managed_clock_sync || true
     fi
     if [[ -n "$RES_TOKEN" ]]; then
-      "$ZROK_BIN" share reserved "$RES_TOKEN" --headless >>"$ZROK_RUNTIME_LOG" 2>&1 &
+      "$ZROK_BIN" share reserved "$RES_TOKEN" --headless 2>&1 \
+        | filter_zrok_runtime_output >>"$ZROK_RUNTIME_LOG" &
     else
-      "$ZROK_BIN" share public "http://127.0.0.1:${FASED_GATEWAY_PORT}" --unique-name "$SLUG" >>"$ZROK_RUNTIME_LOG" 2>&1 &
+      "$ZROK_BIN" share public "http://127.0.0.1:${FASED_GATEWAY_PORT}" --unique-name "$SLUG" 2>&1 \
+        | filter_zrok_runtime_output >>"$ZROK_RUNTIME_LOG" &
     fi
     pid=$!
     echo "$pid" > "$FASED_CONFIG_DIR/.zrok-pid"
@@ -974,8 +1019,12 @@ echo "[tunnel] Target Slug: $SLUG"
 RES_FILE="$FASED_CONFIG_DIR/${SLUG}.zrok-reservation"
 RES_TOKEN=""
 if [[ -f "$RES_FILE" ]]; then
-   RES_TOKEN=$(cat "$RES_FILE")
-   echo "[tunnel] Found cached reservation: $RES_TOKEN"
+   RES_TOKEN="$(read_private_zrok_reservation "$RES_FILE" || true)"
+   if [[ -n "$RES_TOKEN" ]]; then
+     echo "[tunnel] Found a private cached reservation (token hidden)."
+   else
+     echo "[tunnel] Ignoring an unsafe or unreadable cached reservation file."
+   fi
 fi
 
 # Recovery when exact slug file is missing: use the only reservation token in config dir.
@@ -983,14 +1032,16 @@ if [[ -z "$RES_TOKEN" ]]; then
   mapfile -t RES_FILES < <(ls "$FASED_CONFIG_DIR"/*.zrok-reservation 2>/dev/null || true)
   if [[ ${#RES_FILES[@]} -eq 1 ]]; then
     RES_FILE="${RES_FILES[0]}"
-    RES_TOKEN=$(cat "$RES_FILE")
+    RES_TOKEN="$(read_private_zrok_reservation "$RES_FILE" || true)"
     RECOVERED_BASENAME=$(basename "$RES_FILE")
     RECOVERED_SLUG="${RECOVERED_BASENAME%.zrok-reservation}"
     if [[ -n "$RECOVERED_SLUG" ]]; then
       SLUG="$RECOVERED_SLUG"
       echo "[tunnel] Recovered slug from cached reservation filename: $SLUG"
     fi
-    echo "[tunnel] Recovered cached reservation: $RES_TOKEN"
+    if [[ -n "$RES_TOKEN" ]]; then
+      echo "[tunnel] Recovered a private cached reservation (token hidden)."
+    fi
   fi
 fi
 
@@ -1031,7 +1082,7 @@ if [[ "$MANAGED_TUNNEL_DISABLED" != "1" && "$ZROK_TOKEN" != "null" && -n "$ZROK_
   # zrok enable (idempotent-ish, or just try)
   # Remove --force as it's not supported in v1.1+
   # We ignore error if already enabled, but capture output to be safe
-  "$ZROK_BIN" enable "$ZROK_TOKEN" --description "fased-agent" 2>/dev/null || true
+  "$ZROK_BIN" enable "$ZROK_TOKEN" --description "fased-agent" >/dev/null 2>&1 || true
   
   # If no token, check if we already reserved it (recovery from lost file)
   if [[ -z "$RES_TOKEN" ]]; then
@@ -1040,9 +1091,10 @@ if [[ "$MANAGED_TUNNEL_DISABLED" != "1" && "$ZROK_TOKEN" != "null" && -n "$ZROK_
       EXISTING_TOKEN=$(echo "$OVERVIEW_JSON" | jq -r --arg SLUG "$SLUG" '(.shares // [])[] | select(.frontendEndpoints[] | contains($SLUG)) | .token' 2>/dev/null | head -n 1 || true)
       
       if [[ -n "$EXISTING_TOKEN" ]]; then
-          echo "[tunnel] Recovered existing token: $EXISTING_TOKEN"
+          echo "[tunnel] Recovered an existing reservation (token hidden)."
           RES_TOKEN="$EXISTING_TOKEN"
-          echo "$RES_TOKEN" > "$RES_FILE"
+          write_private_zrok_reservation "$RES_FILE" "$RES_TOKEN"
+          unset EXISTING_TOKEN OVERVIEW_JSON
       fi
   fi
 
@@ -1050,25 +1102,27 @@ if [[ "$MANAGED_TUNNEL_DISABLED" != "1" && "$ZROK_TOKEN" != "null" && -n "$ZROK_
   if [[ -z "$RES_TOKEN" ]]; then
       echo "[tunnel] Reserving public share..."
       # Use --json-output to parse output reliably; separate stderr
-      PARAMS="--unique-name $SLUG --backend-mode proxy --json-output"
+      ZROK_RESERVE_ARGS=(--unique-name "$SLUG" --backend-mode proxy --json-output)
       
       # Capture logic: stdout to variable, stderr to temp file
-      ZROK_LOG="/tmp/zrok-reserve.log"
-      rm -f "$ZROK_LOG"
+      ZROK_LOG="$(mktemp "$FASED_CONFIG_DIR/.zrok-reserve.XXXXXXXX")"
+      chmod 0600 "$ZROK_LOG"
+      OUT=""
       
-      if OUT=$("$ZROK_BIN" reserve public "http://127.0.0.1:${FASED_GATEWAY_PORT}" $PARAMS 2> "$ZROK_LOG"); then
+      if OUT=$("$ZROK_BIN" reserve public "http://127.0.0.1:${FASED_GATEWAY_PORT}" "${ZROK_RESERVE_ARGS[@]}" 2> "$ZROK_LOG"); then
           RES_TOKEN=$(echo "$OUT" | jq -r '.token // empty')
       else
-          echo "[tunnel] Reserve failed. Log:"
-          cat "$ZROK_LOG"
+          echo "[tunnel] Reservation request failed; provider output was suppressed because it may contain credentials."
       fi
+      rm -f -- "$ZROK_LOG"
+      unset ZROK_LOG ZROK_RESERVE_ARGS OUT
       
       if [[ -z "$RES_TOKEN" ]]; then
-          echo "[tunnel] Reservation failed or already reserved. Output: $OUT"
+          echo "[tunnel] Reservation failed or was already reserved; secret-bearing output was not logged."
           disable_managed_tunnel "Could not establish reserved tunnel for '$SLUG'."
       else
-          echo "$RES_TOKEN" > "$RES_FILE"
-          echo "[tunnel] Reserved: $RES_TOKEN"
+          write_private_zrok_reservation "$RES_FILE" "$RES_TOKEN"
+          echo "[tunnel] Reserved a private share (token hidden)."
       fi
   fi
   
@@ -1220,22 +1274,20 @@ FED_TOKEN_ID="N/A"
 FED_EXPIRES_AT="N/A"
 FED_AGENT_SLUG="N/A"
 FED_PUBLIC_URL="N/A"
-FED_ZROK_TOKEN=""
+FED_ZROK_CREDENTIAL_STATE="not present"
 if command -v jq >/dev/null 2>&1; then
   FED_HANDLE=$(jq -r '.handle // "N/A"' "$TOKEN_PATH" 2>/dev/null || echo "N/A")
   FED_TOKEN_ID=$(jq -r '.tokenId // "N/A"' "$TOKEN_PATH" 2>/dev/null || echo "N/A")
   FED_EXPIRES_AT=$(jq -r '.expiresAt // "N/A"' "$TOKEN_PATH" 2>/dev/null || echo "N/A")
   FED_AGENT_SLUG=$(jq -r '.agentSlug // "N/A"' "$TOKEN_PATH" 2>/dev/null || echo "N/A")
   FED_PUBLIC_URL=$(jq -r '.publicUrl // "N/A"' "$TOKEN_PATH" 2>/dev/null || echo "N/A")
-  FED_ZROK_TOKEN=$(jq -r '.zrokToken // empty' "$TOKEN_PATH" 2>/dev/null || true)
+  if jq -e '.zrokToken | type == "string" and length > 0' "$TOKEN_PATH" >/dev/null 2>&1; then
+    FED_ZROK_CREDENTIAL_STATE="present (hidden)"
+  fi
 fi
-FED_ZROK_TOKEN_MASKED="N/A"
-if [[ -n "$FED_ZROK_TOKEN" ]]; then
-  FED_ZROK_TOKEN_MASKED=$(mask_secret "$FED_ZROK_TOKEN")
-fi
-RES_TOKEN_MASKED="N/A"
+RES_TOKEN_STATE="not present"
 if [[ -n "${RES_TOKEN:-}" ]]; then
-  RES_TOKEN_MASKED=$(mask_secret "$RES_TOKEN")
+  RES_TOKEN_STATE="present (hidden)"
 fi
 GATEWAY_TOKEN_MASKED=$(mask_secret "$(tr -d '\n' < "$GW_TOKEN_PATH")")
 
@@ -1252,11 +1304,11 @@ echo "  Token ID:            $FED_TOKEN_ID"
 echo "  Expires At:          $FED_EXPIRES_AT"
 echo "  Agent Slug:          $FED_AGENT_SLUG"
 echo "  Public URL (token):  $FED_PUBLIC_URL"
-echo "  zrokToken:           $FED_ZROK_TOKEN_MASKED"
+echo "  zrok credential:     $FED_ZROK_CREDENTIAL_STATE"
 echo "Federation/A2A Tunnel (zrok)"
 echo "  PID:                 ${ZROK_PID:-N/A}"
 echo "  Slug:                ${SLUG:-N/A}"
-echo "  Reservation token:   $RES_TOKEN_MASKED"
+echo "  Reservation:         $RES_TOKEN_STATE"
 echo "  Public URL (A2A):    $FINAL_URL"
 echo "  Runtime log:         $ZROK_RUNTIME_LOG"
 if [[ "$MANAGED_TUNNEL_DISABLED" == "1" ]]; then

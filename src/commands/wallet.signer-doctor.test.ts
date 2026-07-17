@@ -219,6 +219,12 @@ describe("collectWalletSignerDoctorReport", () => {
               keystoreType: "signer-owned-v2",
               chains: ["solana"],
               ready: true,
+              release: {
+                version: "dev",
+                commit: "unknown",
+                buildInputDigest: "unknown",
+                development: true,
+              },
               schema: { version: 3, supported: 3, ready: true },
               network: {
                 ready: true,
@@ -234,12 +240,19 @@ describe("collectWalletSignerDoctorReport", () => {
               },
               capabilities: {
                 protocol: { current: 2, min: 2, max: 2 },
+                nativeFeeReservationLamports: 5_000_000,
                 intentTypes: ["solana.nativeTransfer"],
                 operationStates: ["reserved", "broadcast", "confirmed", "failed", "unknown"],
                 features: ["signerOwnedRPC"],
               },
               policies: [],
-              webAuthn: { configured: false, credentialCount: 0, ready: false },
+              webAuthn: {
+                configured: true,
+                credentialCount: 1,
+                credentialVersion: 9,
+                ready: true,
+              },
+              jupiter: { triggerConfigured: false },
             },
           })}\n`,
         );
@@ -284,6 +297,22 @@ describe("collectWalletSignerDoctorReport", () => {
       });
       expect(JSON.stringify(report)).not.toContain("gateway-rpc-must-not-control-readiness");
       expect(JSON.stringify(report)).not.toContain("hmac-sha256");
+      expect(report.signer).toEqual({
+        jupiter: { triggerConfigured: false },
+        webAuthn: {
+          configured: true,
+          credentialCount: 1,
+          credentialVersion: 9,
+          ready: true,
+        },
+      });
+      expect(
+        report.checks.find((check) => check.check === "jupiter.trigger.configured"),
+      ).toMatchObject({
+        ok: true,
+        detail: "not configured (optional; swaps and transfers remain available)",
+      });
+      expect(JSON.stringify(report)).not.toMatch(/api.?key|jwt|secret|jupiter-trigger-api\.key/iu);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }

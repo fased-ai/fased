@@ -40,6 +40,7 @@ import {
 import { resolveWalletRuntimeConfig } from "../../wallet/wallet-runtime-config.js";
 import {
   bindSignerReviewToWalletApprovalPayload,
+  createSignerReviewApprovalRequest,
   createWalletSendApprovalRequest,
 } from "../../wallet/wallet-send-approvals.js";
 import { resolveDefaultAgentId } from "../agent-scope.js";
@@ -95,8 +96,8 @@ const WalletActionToolSchema = Type.Object({
   triggerToken: Type.Optional(Type.String()),
   triggerSymbol: Type.Optional(Type.String()),
   triggerCondition: Type.Optional(optionalStringEnum(WALLET_ACTION_TRIGGER_CONDITIONS)),
-  triggerPriceUsd: Type.Optional(Type.Number()),
-  expiresAt: Type.Optional(Type.Number()),
+  triggerPriceUsd: Type.Optional(Type.Union([Type.Number(), Type.String()])),
+  expiresAt: Type.Optional(Type.Union([Type.Number(), Type.String()])),
   expirySeconds: Type.Optional(Type.Number()),
   orderId: Type.Optional(Type.String()),
   intentId: Type.Optional(Type.String()),
@@ -190,17 +191,17 @@ function cronRunExecutionIntentId(sessionKey: string | undefined): string | unde
   return `cron-run:${createHash("sha256").update(normalized).digest("hex")}`;
 }
 
-function publicJupiterTriggerOrder(order: { id?: string; txSignature?: string }) {
+function publicJupiterTriggerOrder(order: {
+  id?: string;
+  txSignature?: string;
+  state?: string;
+  provider?: string;
+}) {
   return {
     id: order.id,
     txSignature: order.txSignature,
-  };
-}
-
-function publicJupiterTriggerVault(vault: Record<string, unknown>) {
-  return {
-    userPubkey: typeof vault.userPubkey === "string" ? vault.userPubkey : undefined,
-    vaultPubkey: typeof vault.vaultPubkey === "string" ? vault.vaultPubkey : undefined,
+    state: order.state,
+    provider: order.provider,
   };
 }
 
@@ -617,9 +618,33 @@ export function createWalletActionTool(opts?: {
         }
         const orderId = readStringParam(params, "orderId", { required: true });
         if (!autonomous) {
+          const prepared = await cancelJupiterTriggerOrder({
+            provider,
+            walletId: selection.walletId,
+            walletAddress: taker,
+            orderId,
+            autonomous: false,
+            intentId: executionIntentId,
+            env: process.env,
+          });
+          if (prepared.mode !== "reviewed") {
+            throw new Error("Jupiter Trigger cancellation did not return an exact signer review");
+          }
+          const request = createSignerReviewApprovalRequest({
+            review: prepared.review,
+            role: "agent",
+            walletId: selection.walletId,
+            walletName: selection.walletName,
+            requestedBy: requesterAgentId ?? ownerAgentId ?? "agent",
+            memo: `Cancel Jupiter Trigger order ${orderId}`,
+            env: process.env,
+          });
           return jsonResult({
-            ok: true,
-            live: false,
+            ok: false,
+            approvalRequired: true,
+            code: "wallet_trigger_approval_required",
+            requestId: request.id,
+            expiresAt: request.expiresAt,
             plan: {
               kind: "solana_limit_cancel",
               walletHandle: selection.walletHandle,
@@ -628,7 +653,7 @@ export function createWalletActionTool(opts?: {
               mode,
             },
             message:
-              "Review this cancellation, then execute it through the signer-owned reviewed authorization flow.",
+              "Jupiter Trigger cancellation requires operator approval in Control UI. No cancel side effect has occurred.",
           });
         }
         appendWalletAuditEntry({
@@ -650,9 +675,13 @@ export function createWalletActionTool(opts?: {
           walletId: selection.walletId,
           walletAddress: taker,
           orderId,
-          rpcUrl,
+          autonomous: true,
+          intentId: executionIntentId,
           env: process.env,
         });
+        if (cancelled.mode !== "autonomous") {
+          throw new Error("Jupiter Trigger autonomous cancellation returned a review");
+        }
         appendWalletAuditEntry({
           action: "send_executed",
           actor: requesterAgentId ?? ownerAgentId ?? "agent",
@@ -662,7 +691,7 @@ export function createWalletActionTool(opts?: {
             walletId: selection.walletId,
             orderId,
             mode,
-            txHash: cancelled.tx.txHash,
+            txHash: cancelled.operation.signature,
           },
           env: process.env,
         });
@@ -671,7 +700,13 @@ export function createWalletActionTool(opts?: {
           cancelled: true,
           walletHandle: selection.walletHandle,
           orderId,
-          tx: cancelled.tx,
+          order: cancelled.order,
+          tx: {
+            ok: true,
+            chain: "solana",
+            txHash: cancelled.operation.signature,
+            signer: taker,
+          },
         });
       }
 
@@ -784,7 +819,7 @@ export function createWalletActionTool(opts?: {
         const expiresAt =
           typeof params.expiresAt === "number" && Number.isFinite(params.expiresAt)
             ? Math.floor(params.expiresAt)
-            : undefined;
+            : readStringParam(params, "expiresAt");
         const expirySeconds =
           typeof params.expirySeconds === "number" && Number.isFinite(params.expirySeconds)
             ? Math.floor(params.expirySeconds)
@@ -819,12 +854,49 @@ export function createWalletActionTool(opts?: {
           triggerPriceUsd,
           expiresAt,
           expirySeconds,
-          externalVault: "jupiter-trigger-v2",
+          executionProvider: "jupiter-trigger-v2",
         };
         if (!autonomous) {
+          const prepared = await createJupiterTriggerLimitOrder({
+            provider,
+            walletId: selection.walletId,
+            walletAddress: taker,
+            config: effectiveWallet,
+            inputMint,
+            outputMint,
+            amount,
+            triggerCondition,
+            triggerPriceUsd,
+            triggerMint: triggerToken.mint,
+            slippageBps,
+            expiresAt,
+            expirySeconds,
+            autonomous: false,
+            intentId: executionIntentId,
+            rpcUrl,
+            env: process.env,
+          });
+          if (prepared.mode !== "reviewed") {
+            throw new Error("Jupiter Trigger create did not return an exact signer review");
+          }
+          const request = createSignerReviewApprovalRequest({
+            review: prepared.review,
+            role: "agent",
+            walletId: selection.walletId,
+            walletName: selection.walletName,
+            assetSymbol: inputToken.symbol,
+            assetName: inputToken.name,
+            amountDisplay: amountFormat === "human" ? readStringParam(params, "amount") : undefined,
+            requestedBy: requesterAgentId ?? ownerAgentId ?? "agent",
+            memo: `Create Jupiter Trigger ${triggerCondition} ${triggerPriceUsd} USD`,
+            env: process.env,
+          });
           return jsonResult({
-            ok: true,
-            live: false,
+            ok: false,
+            approvalRequired: true,
+            code: "wallet_trigger_approval_required",
+            requestId: request.id,
+            expiresAt: request.expiresAt,
             plan: limitPlan,
             reviewChecklist: [
               "wallet handle",
@@ -835,7 +907,7 @@ export function createWalletActionTool(opts?: {
               "Jupiter Trigger vault custody while order is active",
             ],
             message:
-              "Review this limit order plan, then rerun with mode=autonomous to create the live Jupiter Trigger order.",
+              "Jupiter Trigger create requires operator approval in Control UI. No vault, deposit, or order side effect has occurred.",
           });
         }
         appendWalletAuditEntry({
@@ -869,8 +941,10 @@ export function createWalletActionTool(opts?: {
             rpcUrl,
             env: process.env,
           });
+          if (created.mode !== "autonomous") {
+            throw new Error("Jupiter Trigger autonomous create returned a review");
+          }
           const order = publicJupiterTriggerOrder(created.order);
-          const vault = publicJupiterTriggerVault(created.vault);
           appendWalletAuditEntry({
             action: "send_executed",
             actor: requesterAgentId ?? ownerAgentId ?? "agent",
@@ -879,7 +953,6 @@ export function createWalletActionTool(opts?: {
               mode,
               orderId: order.id,
               txHash: order.txSignature,
-              vaultPubkey: vault.vaultPubkey,
             },
             env: process.env,
           });
@@ -888,9 +961,8 @@ export function createWalletActionTool(opts?: {
             live: true,
             plan: limitPlan,
             order,
-            vault,
             message:
-              "Jupiter Trigger limit order created. Deposited funds sit in the Jupiter Trigger vault until fill, expiry, or cancellation.",
+              "Jupiter Trigger limit order created through the signer-owned durable workflow.",
           });
         } catch (err) {
           appendWalletAuditEntry({

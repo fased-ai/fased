@@ -28,6 +28,14 @@ configuration must keep the control socket inaccessible to the Gateway user.
 Use the typed native commands documented in [ADMIN.md](./ADMIN.md) for the
 registration ceremony. They do not expose a generic control-socket proxy.
 
+Credential listing returns an optimistic membership version and count.
+Revocation is also control-socket-only and must bind the exact public credential
+ID to both values in one bbolt transaction. A successful revoke invalidates all
+pending ceremonies and every unused proof issued by the removed credential.
+Removing the last credential requires a separate explicit administrator flag;
+otherwise the signer fails closed without mutation. See
+[Signer administration](./ADMIN.md) for the typed commands.
+
 `v2.review.prepare` receives a typed intent. For native SOL and SPL transfers,
 the caller must omit transaction bytes: the signer resolves mint metadata and a
 recent blockhash through its own per-wallet RPC configuration, builds the exact

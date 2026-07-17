@@ -5,7 +5,6 @@ import {
   toAgentModelListLike,
 } from "../config/model-input.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
-import { isStandardProviderModelRef } from "../providers/registry.js";
 import { resolveAgentConfig, resolveAgentEffectiveModelPrimary } from "./agent-scope.js";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "./defaults.js";
 import type { ModelCatalogEntry } from "./model-catalog.js";
@@ -485,7 +484,6 @@ export function buildAllowedModelSet(params: {
   catalog: ModelCatalogEntry[];
   defaultProvider: string;
   defaultModel?: string;
-  additionalAllowedProviders?: Iterable<string>;
 }): {
   allowAny: boolean;
   allowedCatalog: ModelCatalogEntry[];
@@ -535,11 +533,6 @@ export function buildAllowedModelSet(params: {
     defaultModel: params.defaultModel,
   });
   const catalogKeys = new Set(params.catalog.map((entry) => modelKey(entry.provider, entry.id)));
-  const additionalAllowedProviders = new Set(
-    [...(params.additionalAllowedProviders ?? [])]
-      .map((provider) => normalizeProviderId(provider))
-      .filter(Boolean),
-  );
 
   if (allowAny) {
     for (const key of defaultKeys) {
@@ -576,27 +569,10 @@ export function buildAllowedModelSet(params: {
   for (const key of defaultKeys) {
     allowedKeys.add(key);
   }
-  for (const entry of params.catalog) {
-    if (additionalAllowedProviders.has(normalizeProviderId(entry.provider))) {
-      allowedKeys.add(modelKey(entry.provider, entry.id));
-    }
-  }
-
   const allowedCatalog = [
     ...params.catalog.filter((entry) => allowedKeys.has(modelKey(entry.provider, entry.id))),
     ...syntheticCatalogEntries.values(),
   ];
-
-  if (allowedCatalog.length === 0 && allowedKeys.size === 0) {
-    for (const key of defaultKeys) {
-      catalogKeys.add(key);
-    }
-    return {
-      allowAny: true,
-      allowedCatalog: params.catalog,
-      allowedKeys: catalogKeys,
-    };
-  }
 
   return { allowAny: false, allowedCatalog, allowedKeys };
 }
@@ -614,14 +590,12 @@ export function getModelRefStatus(params: {
   ref: ModelRef;
   defaultProvider: string;
   defaultModel?: string;
-  additionalAllowedProviders?: Iterable<string>;
 }): ModelRefStatus {
   const allowed = buildAllowedModelSet({
     cfg: params.cfg,
     catalog: params.catalog,
     defaultProvider: params.defaultProvider,
     defaultModel: params.defaultModel,
-    additionalAllowedProviders: params.additionalAllowedProviders,
   });
   const key = modelKey(params.ref.provider, params.ref.model);
   return {
@@ -638,7 +612,6 @@ export function resolveAllowedModelRef(params: {
   raw: string;
   defaultProvider: string;
   defaultModel?: string;
-  additionalAllowedProviders?: Iterable<string>;
 }):
   | { ref: ModelRef; key: string }
   | {
@@ -668,20 +641,8 @@ export function resolveAllowedModelRef(params: {
     ref: resolved.ref,
     defaultProvider: params.defaultProvider,
     defaultModel: params.defaultModel,
-    additionalAllowedProviders: params.additionalAllowedProviders,
   });
   if (!status.allowed) {
-    const additionalAllowedProviders = new Set(
-      [...(params.additionalAllowedProviders ?? [])].map((provider) =>
-        normalizeProviderId(provider),
-      ),
-    );
-    if (
-      additionalAllowedProviders.has(normalizeProviderId(resolved.ref.provider)) &&
-      isStandardProviderModelRef(status.key)
-    ) {
-      return { ref: resolved.ref, key: status.key };
-    }
     return { error: `model not allowed: ${status.key}` };
   }
 

@@ -38,8 +38,8 @@ function validPolicy(overrides: Record<string, unknown> = {}) {
       {
         asset: "solana:native",
         destinations: [destination],
-        maxPerTx: "1000000",
-        maxDaily: "5000000",
+        maxPerTx: "10000000",
+        maxDaily: "50000000",
       },
     ],
     ...overrides,
@@ -185,11 +185,7 @@ describe("strict owner policy input", () => {
 
     const unsorted = validPolicy({
       operations: ["solana.splTransferChecked", "solana.nativeTransfer"],
-      programs: [
-        __testing.TOKEN_PROGRAM,
-        __testing.ASSOCIATED_TOKEN_PROGRAM,
-        __testing.SYSTEM_PROGRAM,
-      ],
+      programs: [__testing.TOKEN_PROGRAM, __testing.SYSTEM_PROGRAM],
       assets: [
         {
           asset: `solana:spl:${destination}`,
@@ -200,8 +196,8 @@ describe("strict owner policy input", () => {
         {
           asset: "solana:native",
           destinations: [destination],
-          maxPerTx: "1",
-          maxDaily: "2",
+          maxPerTx: "5000000",
+          maxDaily: "10000000",
         },
       ],
     });
@@ -223,8 +219,8 @@ describe("strict owner policy input", () => {
         {
           asset: "solana:native",
           destinations: [__testing.SYSTEM_PROGRAM],
-          maxPerTx: "1",
-          maxDaily: "2",
+          maxPerTx: "5000000",
+          maxDaily: "10000000",
         },
       ],
     });
@@ -234,13 +230,19 @@ describe("strict owner policy input", () => {
       walletId: "vault",
       role: "vault",
       operations: [`vaultBond.openBondPosition@${destination}`],
-      programs: [destination],
+      programs: [__testing.ASSOCIATED_TOKEN_PROGRAM, destination],
       assets: [
         {
           asset: `solana:spl:${destination}`,
           destinations: [__testing.SYSTEM_PROGRAM],
           maxPerTx: "1",
           maxDaily: "2",
+        },
+        {
+          asset: "solana:native",
+          destinations: [__testing.SYSTEM_PROGRAM],
+          maxPerTx: "5000000",
+          maxDaily: "10000000",
         },
       ],
     });
@@ -264,6 +266,50 @@ describe("strict owner policy input", () => {
     expect(() =>
       normalizeOwnerPolicy({ ...validPolicy(), operations: ["solana.satAction"] }),
     ).toThrow("exact action bound");
+    expect(() =>
+      normalizeOwnerPolicy({
+        ...vault,
+        programs: [destination],
+      }),
+    ).toThrow("requires the Associated Token program");
+  });
+
+  it("requires the fixed native fee reserve for on-chain policies but not federation-only proof signing", () => {
+    expect(() =>
+      normalizeOwnerPolicy({
+        ...validPolicy(),
+        assets: [
+          {
+            ...validPolicy().assets[0],
+            maxPerTx: "4999999",
+            maxDaily: "5000000",
+          },
+        ],
+      }),
+    ).toThrow("at least 5000000 lamports");
+
+    expect(() =>
+      normalizeOwnerPolicy({
+        walletId: "agent",
+        role: "agent",
+        operations: ["solana.splTransferChecked"],
+        programs: [__testing.TOKEN_PROGRAM],
+        assets: [
+          {
+            asset: `solana:spl:${destination}`,
+            destinations: [destination],
+            maxPerTx: "1",
+            maxDaily: "2",
+          },
+          {
+            asset: "solana:native",
+            destinations: [destination],
+            maxPerTx: "5000000",
+            maxDaily: "5000000",
+          },
+        ],
+      }),
+    ).not.toThrow();
   });
 
   it("rejects unknown and duplicate JSON fields before native signer execution", async () => {

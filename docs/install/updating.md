@@ -50,11 +50,12 @@ fased update
 After hosted onboarding, SSH as `app` should open directly in `/home/app/fased`.
 If it does not, fix the hosted login/shell setup before updating.
 
-For hosted VPS installs, the recommended setup path is the hosted installer:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
-```
+For a fresh hosted VPS, use the
+[pre-execution verified Hosting bootstrap](/install/vps#3-install-fased-and-connect-through-tailscale).
+It downloads the standalone installer and attestation for an exact release,
+verifies the repository, tag, release workflow, and GitHub-hosted runner, and
+only then runs the verified file. Raw tagged `curl | bash` is not a supported
+Hosting bootstrap.
 
 Run the first Hosting install from the VPS provider's root shell. That path
 creates the non-root `app` runtime, private Tailscale access, and the hosted
@@ -116,8 +117,9 @@ git pull --ff-only origin main
 ./install.sh --source-install
 ```
 
-On a hosted VPS, run the development checkout flow as `app` from
-`/home/app/fased` and use `./install.sh --hosting`.
+Privileged VPS Hosting refuses source checkouts. Test development Hosting work
+on a disposable self-managed machine; do not run `/home/app/fased/install.sh`
+with sudo or describe that setup as the maintained Hosting boundary.
 
 ## Native signer artifacts
 
@@ -128,10 +130,29 @@ signer wallet path.
 When that path is enabled, Fased downloads the signer asset from the matching
 versioned GitHub Release and verifies it against
 `fased-signerd-checksums.txt` and the release's GitHub/Sigstore attestation.
+The release also includes an attested `fased-signerd-release.json`. Hosting
+accepts only a production identity whose exact version, commit, and build-input
+digest match both that manifest and the running signer's health response;
+development, missing, or mismatched identities fail closed.
 Normal Local, WSL, macOS, and Hosting users do not need Go. WSL uses the Linux
 asset; the Unix-socket signer is not supported by a native Windows Node.js
 install. Verification failure stops the install instead of falling back to an
 implicit source build.
+
+When a Local install already has a native signer, `fased update` treats the
+Gateway and signer as one transaction. It snapshots the current application
+and signer state, stages the exact version-matched signer read-only, activates
+the application, and requires exact Gateway and signer health before committing
+the signer read-write. Before that durable health decision, a failure restores
+both sides. After the decision, recovery completes forward so a signer database
+that may have recorded a request is never replaced by an older snapshot.
+
+This pairing also applies to tagged macOS and explicit source installs. A
+source checkout with a configured signer must be clean, resolve to a production
+release tag, allow the required restart, and pass the same exact health checks.
+Signer-paired source updates reject an untagged development commit,
+`--no-restart`, or an install-mode switch. Interrupted updates recover from the
+owner-only transaction journal before the Gateway starts.
 
 Each tagged release must publish signer assets for Linux and macOS on `amd64`
 and `arm64` before wallet setup for that version is considered releasable. A
@@ -255,15 +276,23 @@ place.
 
 The repair must restore root-owned service helpers and the system service. Open
 the VPS provider's web/recovery console as `root` (or use root SSH only when the
-provider still permits it), then run:
+provider still permits it). Follow the exact
+[pre-execution verified release-asset procedure](/install/vps#3-install-fased-and-connect-through-tailscale),
+but replace the final invocation of the already-verified standalone installer
+with:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --repair-hosting
+bash "$BOOTSTRAP_DIR/install.sh" --repair-hosting --release "$RELEASE"
 ```
 
-Do not run this command from the normal `app` Tailscale shell. The restricted
-`app` account intentionally cannot replace arbitrary root-owned installer
-helpers.
+Do not run this command unless the preceding `gh attestation verify` step
+completed successfully for the same exact release. Remove `BOOTSTRAP_DIR` only
+after the repair succeeds.
+
+Do not run this command from the normal `app` Tailscale shell, and never run
+`/home/app/fased/install.sh` with sudo. The restricted `app` account has no
+sudo and no root bootstrap socket. The provider-console bootstrap verifies the
+exact tagged app bundle attestation before loading any privileged assets.
 
 The repair keeps the existing `/home/app/fased` checkout and persistent
 `/home/app/.fased` state. It refreshes the managed runtime, replaces a legacy
@@ -331,12 +360,11 @@ service, and verifies that the running Gateway reports the same version. It
 does not overwrite an unrelated user-managed command and does not rerun
 onboarding.
 
-VPS Hosting bootstrap, run from the provider's root console:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
-  | bash -s -- --repair-hosting
-```
+VPS Hosting bootstrap must run from the provider's root console. Follow the
+[pre-execution verified release-asset procedure](/install/vps#3-install-fased-and-connect-through-tailscale)
+for the exact release, then use `--repair-hosting` instead of `--hosting` only
+in the final invocation of that already-verified standalone installer. Never
+recover Hosting by piping a raw repository URL into a shell.
 
 An immutable old binary cannot execute updater logic that was introduced in a
 newer release. That one-time bootstrap is therefore unavoidable for a small set

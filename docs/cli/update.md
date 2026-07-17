@@ -67,9 +67,9 @@ Root is only for first bootstrap or emergency repair after hosted hardening.
 For normal VPS hosting, install with the hosted installer, not a direct global
 npm install:
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
-```
+Use the [pre-execution verified tagged bootstrap](/install/vps#3-install-fased-and-connect-through-tailscale)
+from the provider root console. For an existing installation, run the verified
+local asset with `--repair-hosting` instead of `--hosting`.
 
 Manual `npm install -g @fased/fased` is an advanced local/dev or self-managed
 host path for users who already know how to secure the service user, firewall,
@@ -79,19 +79,14 @@ dashboard access, and recovery flow.
 
 `fased update` is the normal stable app update.
 
-`install.sh --hosting` is a hosted bootstrap/repair path. It can refresh more
-than the app version:
+`install.sh --hosting --release vX.Y.Z` is a provider-console bootstrap/repair
+path. It can refresh more than the app version:
 
-- when run through the remote curl/bootstrap path, an existing `~/fased`
-  checkout is pulled from `origin main`
-- when run from a local checkout, the installer can fetch and fast-forward the
-  current branch unless `--no-git-update` is used
-- hosted mode normally installs/refreshes the prebuilt runtime package from
-  `@fased/fased@latest`
-- hosted mode can use the source checkout instead when
-  `FASED_HOSTING_SOURCE_INSTALL=1` is set
-- it can repair hosted service files, Tailscale/private access, sudoers, and
-  daemon setup
+- it verifies the exact tagged architecture-specific hosted app artifact and
+  GitHub/Sigstore attestation before privileged assets are loaded
+- it installs the fixed root-owned Gateway/signer units and host prerequisites
+- it keeps the `app` account out of sudo and exposes no general root control socket
+- it refuses privileged `--source-install` and app-owned/Git checkout sources
 
 Use `install.sh --hosting` for first VPS setup or hosted repair. Use
 `fased update` for normal stable app releases.
@@ -190,8 +185,9 @@ git pull --ff-only origin main
 ./install.sh
 ```
 
-On a hosted VPS, run that direct development flow as `app` from
-`/home/app/fased` and use `./install.sh --hosting`.
+Do not use that direct development flow for maintained VPS Hosting. Privileged
+Hosting refuses source/app checkouts; use the exact tagged provider-console
+command or a disposable self-managed development host.
 
 The browser Control UI shows update state under **Advanced > Debug > Update
 Status**. Current UI behavior is status-only: it can show version, channel,

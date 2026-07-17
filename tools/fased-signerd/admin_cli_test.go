@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	solana "github.com/gagliardetto/solana-go"
 )
 
 type signerAdminTestServer struct {
@@ -560,6 +562,24 @@ func TestSignerAdminWebAuthnTypedPassthrough(t *testing.T) {
 			},
 			wantOp: "v2.webauthn.credentials.list",
 		},
+		{
+			name: "credentials revoke",
+			args: func(socket string) []string {
+				return []string{
+					"webauthn", "credentials", "revoke", "--control-socket", socket,
+					"--credential-id", "Y3JlZGVudGlhbC0x", "--expected-count", "1", "--expected-version", "7",
+					"--confirm-last-credential",
+				}
+			},
+			wantOp: "v2.webauthn.credentials.revoke", wantBody: true,
+			check: func(t *testing.T, req request) {
+				var body signerWebAuthnCredentialRevokeRequestV2
+				decodeSignerAdminTestBody(t, req, &body)
+				if body.CredentialID != "Y3JlZGVudGlhbC0x" || body.ExpectedCount != 1 || body.ExpectedVersion != 7 || !body.ConfirmLastCredential {
+					t.Fatalf("unexpected WebAuthn revoke body: %#v", body)
+				}
+			},
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -573,6 +593,86 @@ func TestSignerAdminWebAuthnTypedPassthrough(t *testing.T) {
 			}
 			if test.wantBody != (len(req.Request) > 0) {
 				t.Fatalf("request body presence = %v, want %v", len(req.Request) > 0, test.wantBody)
+			}
+			if test.check != nil {
+				test.check(t, req)
+			}
+		})
+	}
+}
+
+func TestSignerAdminWalletSuccessorRotationTypedCommands(t *testing.T) {
+	sourcePublicKey := solana.NewWallet().PublicKey().String()
+	successorPublicKey := solana.NewWallet().PublicKey().String()
+	rotationID := "sha256:" + strings.Repeat("a", 64)
+	tests := []struct {
+		name  string
+		args  func(string) []string
+		op    string
+		body  bool
+		check func(*testing.T, request)
+	}{
+		{
+			name: "prepare successor",
+			args: func(socket string) []string {
+				return []string{
+					"wallet", "rotate-successor", "--control-socket", socket,
+					"--wallet-id", "agent", "--successor-wallet-id", "agent_2026",
+					"--expected-source-public-key", sourcePublicKey,
+					"--expected-source-wallet-version", "3", "--expected-source-policy-version", "8",
+				}
+			},
+			op: "v2.wallet.rotation.create", body: true,
+			check: func(t *testing.T, req request) {
+				var body signerWalletRotationCreateRequestV2
+				decodeSignerAdminTestBody(t, req, &body)
+				if body.SuccessorWalletID != "agent_2026" || body.ExpectedSourcePublicKey != sourcePublicKey ||
+					body.ExpectedSourceWalletVersion != 3 || body.ExpectedSourcePolicyVersion != 8 {
+					t.Fatalf("unexpected rotation prepare body: %#v", body)
+				}
+			},
+		},
+		{
+			name: "status",
+			args: func(socket string) []string {
+				return []string{"wallet", "rotation-status", "--control-socket", socket, "--wallet-id", "agent"}
+			},
+			op: "v2.wallet.rotation.status",
+		},
+		{
+			name: "commit",
+			args: func(socket string) []string {
+				return []string{
+					"wallet", "rotation-commit", "--control-socket", socket,
+					"--wallet-id", "agent", "--successor-wallet-id", "agent_2026", "--rotation-id", rotationID,
+					"--expected-source-public-key", sourcePublicKey, "--expected-successor-public-key", successorPublicKey,
+					"--expected-source-wallet-version", "3", "--expected-source-policy-version", "8",
+					"--expected-successor-wallet-version", "1", "--expected-successor-policy-version", "1",
+					"--expected-rotation-version", "1",
+				}
+			},
+			op: "v2.wallet.rotation.commit", body: true,
+			check: func(t *testing.T, req request) {
+				var body signerWalletRotationCommitRequestV2
+				decodeSignerAdminTestBody(t, req, &body)
+				if body.RotationID != rotationID || body.SuccessorWalletID != "agent_2026" ||
+					body.ExpectedSourcePublicKey != sourcePublicKey || body.ExpectedSuccessorPublicKey != successorPublicKey ||
+					body.ExpectedSourceWalletVersion != 3 || body.ExpectedSourcePolicyVersion != 8 ||
+					body.ExpectedSuccessorWalletVersion != 1 || body.ExpectedSuccessorPolicyVersion != 1 || body.ExpectedRotationVersion != 1 {
+					t.Fatalf("unexpected rotation commit body: %#v", body)
+				}
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := startSignerAdminTestServer(t, signerAdminTestSuccess(t, `{"state":"typed"}`))
+			if err := runSignerAdminCLI(test.args(server.path), strings.NewReader(""), io.Discard, nil); err != nil {
+				t.Fatalf("run rotation admin command: %v", err)
+			}
+			req := waitSignerAdminTestServer(t, server)
+			if req.Op != test.op || req.WalletID != "agent" || test.body != (len(req.Request) > 0) {
+				t.Fatalf("unexpected rotation admin request: %#v", req)
 			}
 			if test.check != nil {
 				test.check(t, req)

@@ -62,6 +62,20 @@ if [[ -f "$TRANSACTION_JOURNAL" ]]; then
   fi
 fi
 
+LOCAL_TRANSACTION_JOURNAL="$STATE_DIR/local-paired-update-transaction.json"
+if [[ -f "$LOCAL_TRANSACTION_JOURNAL" ]]; then
+  if ! "$NODE_BIN" -e '
+    const fs = require("node:fs");
+    const journal = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+    const runtimeRoot = fs.realpathSync(process.argv[2]);
+    if (!["app-active", "gateway-verified"].includes(journal.phase)) process.exit(1);
+    if (runtimeRoot !== fs.realpathSync(journal.targetRoot)) process.exit(1);
+  ' "$LOCAL_TRANSACTION_JOURNAL" "$RUNTIME_ROOT"; then
+    echo "Fased Gateway startup is paused for an incomplete Local app/signer update. Run fased update to recover the paired transaction." >&2
+    exit 1
+  fi
+fi
+
 export FASED_MANAGED_RUNTIME_ROOT="$RUNTIME_ROOT"
 export FASED_RUNTIME_SOURCE="managed-package"
 export FASED_MANAGED_INSTALL_MANIFEST="$STATE_DIR/install.json"

@@ -2,20 +2,31 @@ FROM golang:1.25.7-bookworm@sha256:564e366a28ad1d70f460a2b97d1d299a562f08707eb0e
 
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
+ARG FASED_SIGNER_BUILD_VERSION=""
+ARG FASED_SIGNER_BUILD_COMMIT=unknown
+ARG FASED_SIGNER_BUILD_INPUT_DIGEST=unknown
+ARG FASED_SIGNER_BUILD_DEVELOPMENT=true
 
 WORKDIR /src/tools/fased-signerd
+COPY package.json /src/package.json
 COPY tools/fased-signerd/go.mod tools/fased-signerd/go.sum ./
 RUN go mod download
 COPY tools/fased-signerd ./
-RUN CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" \
-    go build -buildvcs=false -trimpath -ldflags="-s -w -buildid=" \
+RUN signer_version="$FASED_SIGNER_BUILD_VERSION" \
+ && if [ -z "$signer_version" ]; then \
+      signer_version="$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' /src/package.json)"; \
+    fi \
+ && printf '%s' "$signer_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$' \
+ && CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" \
+    go build -buildvcs=false -trimpath \
+    -ldflags="-s -w -buildid= \
+      -X main.signerBuildVersion=${signer_version} \
+      -X main.signerBuildCommit=${FASED_SIGNER_BUILD_COMMIT} \
+      -X main.signerBuildInputDigest=${FASED_SIGNER_BUILD_INPUT_DIGEST} \
+      -X main.signerBuildDevelopment=${FASED_SIGNER_BUILD_DEVELOPMENT}" \
     -o /out/fased-signerd .
 
 FROM node:22-bookworm@sha256:5647be709086c696ff32edaaf1c70cd26d1da6ab2b39c32f3c7b4c4a31957e37
-
-# Install Bun (required for build scripts)
-RUN curl -fsSL https://bun.sh/install | bash
-ENV PATH="/root/.bun/bin:${PATH}"
 
 RUN corepack enable
 
@@ -30,7 +41,7 @@ RUN if [ -n "$FASED_DOCKER_APT_PACKAGES" ]; then \
       rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*; \
     fi
 
-COPY --chown=node:node package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+COPY --chown=node:node package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY --chown=node:node ui/package.json ./ui/package.json
 COPY --chown=node:node patches ./patches
 COPY --chown=node:node scripts ./scripts
@@ -71,7 +82,8 @@ RUN ln -sf /app/fased.mjs /usr/local/bin/fased \
  && install -d -o node -g node -m 0700 \
       /run/fased-signerd \
       /run/fased-signerd-control \
-      /var/lib/fased-signerd
+      /var/lib/fased-signerd \
+      /var/lib/fased-signerd-secrets
 COPY --from=signer-builder --chown=root:root /out/fased-signerd /usr/local/bin/fased-signerd
 RUN chmod 0555 /usr/local/bin/fased-signerd \
  && ln /usr/local/bin/fased-signerd /usr/local/bin/fased-signer-enroll

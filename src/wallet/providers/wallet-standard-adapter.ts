@@ -27,7 +27,7 @@ export type WalletStandardAdapterOptions = {
  */
 export class WalletStandardAdapter implements WalletProviderAdapter {
   readonly id = "wallet-standard" as const;
-  readonly displayName = "Hardware / Wallet Standard";
+  readonly displayName = "Wallet Standard";
   readonly capabilities: WalletProviderAdapter["capabilities"] = {
     custodyModel: "self-hosted",
     supportsCreateWallet: false,
@@ -63,15 +63,16 @@ export class WalletStandardAdapter implements WalletProviderAdapter {
       configured,
       checkedAt: new Date().toISOString(),
       details: configured
-        ? "Hardware Vault registered. Signing capability is checked in the local browser before every operation."
-        : "Attach a Wallet Standard account and configure Solana RPC before using a hardware Vault.",
+        ? "Wallet Standard account registered. Signing capability is checked in the local browser before every operation; Wallet Standard does not prove that the account is hardware-backed."
+        : "Attach a Wallet Standard account and configure Solana RPC. For reserve funds, select and verify a hardware-backed account on its device.",
     };
   }
 
   async createWallet(): Promise<WalletProviderCreateWalletResult> {
     throw new WalletProviderError({
       code: "wallet_provider_browser_required",
-      message: "Attach a hardware wallet from Fased Control in a Wallet Standard-enabled browser",
+      message:
+        "Attach a Solana Wallet Standard account from Fased Control. For reserve funds, use and verify a hardware-backed account on its device",
     });
   }
 
@@ -100,7 +101,7 @@ export class WalletStandardAdapter implements WalletProviderAdapter {
     if (typeof balance !== "number" && typeof balance !== "string") {
       throw new WalletProviderError({
         code: "wallet_provider_unavailable",
-        message: "Solana RPC did not return a hardware Vault balance",
+        message: "Solana RPC did not return a Wallet Standard Vault balance",
         retryable: true,
       });
     }
@@ -118,14 +119,15 @@ export class WalletStandardAdapter implements WalletProviderAdapter {
   ): Promise<WalletProviderPrepareTxResult> {
     throw new WalletProviderError({
       code: "wallet_provider_browser_required",
-      message: "Hardware Vault transactions must be prepared through the reviewed browser flow",
+      message:
+        "Wallet Standard Vault transactions must be prepared through the reviewed browser flow",
     });
   }
 
   async sendTx(_request: WalletProviderSendTxRequest): Promise<WalletProviderSendTxResult> {
     throw new WalletProviderError({
       code: "wallet_provider_browser_required",
-      message: "Gateway cannot sign for a Wallet Standard hardware Vault",
+      message: "Gateway cannot sign for a Wallet Standard Vault",
     });
   }
 }

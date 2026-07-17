@@ -97,8 +97,11 @@ recovery options and VPS provider console access working.
     Use this on your own machine. Most local users fit one of these paths:
 
     - **macOS:** run the command in Terminal.
-    - **Windows:** install WSL2 with Ubuntu, then run the command inside the
-      Ubuntu shell. PowerShell is not the Fased runtime shell.
+    - **Windows:** first complete [Windows (WSL2)](/platforms/windows), then run
+      the command inside the Ubuntu shell. Use Windows 11 or Windows 10 version
+      2004/build 19041 or newer, verify the distribution is WSL version 2, and
+      enable systemd. PowerShell, Command Prompt, Git Bash, WSL1, and native
+      Windows Node.js are not Fased runtime environments.
     - **Linux:** run the command in your distro terminal.
 
     ```bash
@@ -240,11 +243,12 @@ recovery options and VPS provider console access working.
 
     ### 3. Install Fased and connect through Tailscale
 
-    Use the same hosted command on supported VPS systems:
-
-    ```bash
-    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
-    ```
+    Do not pipe a raw repository URL into a privileged shell. Download the
+    standalone `install.sh` release asset and its attestation, verify the exact
+    repository, tag, release workflow, and GitHub-hosted runner **before**
+    executing it, then run the verified file with `--hosting`. Use the complete
+    [pre-execution verified Hosting bootstrap](/install/vps#3-install-fased-and-connect-through-tailscale)
+    from the VPS provider's root console.
 
     The hosted installer installs/starts Tailscale when needed. When Fased
     prints a Tailscale login URL, open that URL in your local PC browser, sign
@@ -309,19 +313,18 @@ recovery options and VPS provider console access working.
       </Tabs>
     </Accordion>
 
-    Hosted setup keeps `/home/app/fased` as the app checkout for updates and
-    repair commands. The installer may use the published runtime package behind
-    the scenes so the full source tree does not need to build on small VPS
-    hosts.
+    Hosted setup keeps `/home/app/fased` as the app checkout for normal
+    unprivileged updates. Privileged repair never runs that app-owned checkout;
+    it starts again from the provider root console with an exact tagged,
+    attested release bundle.
 
-    Current installers try a clean fast-forward update from Git before setup.
-    If you already started from an older installer and it stopped, run
-    `git pull --ff-only origin main` once in the checkout and rerun
-    `./install.sh --hosting`.
+    If an older installer stopped, do not run its checkout with sudo. Rerun the
+    verified release-asset procedure above from the provider root console.
 
     If you start as `root`, the installer creates a non-root `app` user,
-    prepares `/home/app/fased`, re-runs itself there, and removes the temporary
-    root checkout after successful hosted onboarding.
+    prepares `/home/app/fased`, then continues the unprivileged application
+    phase as `app`. The verified root bundle remains immutable under
+    `/var/lib/fased-installer/releases/` for audit/reuse.
 
     The installer adds the VPS to the same Tailscale tailnet before setup can
     finish. The hosted profile keeps the raw Gateway port closed.
@@ -459,9 +462,9 @@ git pull --ff-only origin main
 ./install.sh --source-install
 ```
 
-Use `./install.sh --hosting` for that same development checkout flow on a
-hosted VPS by adding `--source-install`, and run it as `app` from
-`/home/app/fased`.
+VPS Hosting does not accept `--source-install` for privileged setup. Test a
+development checkout only on a disposable self-managed host without claiming
+the maintained Hosting security boundary.
 
 The installer is repo-backed from `fased-ai/fased`.
 
@@ -541,14 +544,20 @@ For a hosted or VPS install:
 
 1. start from a clean Linux VPS
 2. create/sign into Tailscale and join the VPS using the OS-specific hosted steps above
-3. run `./install.sh --hosting` or choose **Hosting** during onboarding
+3. run the [pre-execution verified standalone Hosting bootstrap](/install/vps#3-install-fased-and-connect-through-tailscale)
+   for the exact tagged release from the provider root console
 4. after onboarding, reconnect as `app` over the Tailscale network
 5. avoid exposing the raw Gateway port publicly
 
 Normal manual setup does **not** need a Tailscale API key. If the VPS is not
 logged in, Tailscale prints a login URL in the SSH terminal. Open that URL in
-your local computer's browser, then return to the SSH session. Use
-`--ts-authkey` only for non-interactive provisioning.
+your local computer's browser, then return to the SSH session. For unattended
+provisioning, put the key in a root-owned mode-`0600` file and append
+`--ts-authkey-file /root/fased-tailscale-authkey` to the verified standalone
+Hosting installer command. The installer copies it to a one-use private file,
+passes only that file path to Tailscale, and removes the copy. Delete the source
+file after the install. Raw `--ts-authkey <key>` arguments are rejected because
+process arguments can expose secrets.
 
 If Tailscale is missing or not logged in, Hosting onboarding tries to install or
 start it. If it cannot get a valid tailnet IP, it refuses to apply the SSH/UFW

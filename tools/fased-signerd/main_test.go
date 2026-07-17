@@ -63,6 +63,79 @@ func TestReviewLookupRequiresAnExactWalletScopedRequest(t *testing.T) {
 	}
 }
 
+func TestJupiterTriggerHistoryIsARealWalletScopedApplicationRead(t *testing.T) {
+	valid := request{Op: "v2.jupiter.trigger.history", WalletID: "agent"}
+	if err := mustValidate(valid, signerConfig{}); err != nil {
+		t.Fatalf("valid Trigger history request was rejected before dispatch: %v", err)
+	}
+	for _, invalid := range []request{
+		{Op: valid.Op},
+		{Op: valid.Op, WalletID: "   "},
+		{Op: valid.Op, WalletID: "agent", Chain: "solana"},
+		{Op: valid.Op, WalletID: "agent", Request: json.RawMessage(`{}`)},
+	} {
+		if err := mustValidate(invalid, signerConfig{}); err == nil {
+			t.Fatalf("invalid Trigger history request was accepted: %#v", invalid)
+		}
+	}
+	limiter := newRateLimiter(time.Minute, map[string]int{"v2.jupiter.trigger.history": 2})
+	if !limiter.allow(valid.Op) || !limiter.allow(valid.Op) || limiter.allow(valid.Op) {
+		t.Fatal("Trigger history does not have the expected bounded read-rate classification")
+	}
+
+	store, keys := openTestSignerV2(t)
+	service := &signerServiceV2{store: store, keys: keys}
+	server, client := net.Pipe()
+	done := make(chan struct{})
+	go func() {
+		handleConn(server, signerConfig{}, newRateLimiter(time.Minute, map[string]int{valid.Op: 1}), &auditWriter{}, service, false)
+		close(done)
+	}()
+	_ = client.SetDeadline(time.Now().Add(5 * time.Second))
+	encoded, _ := json.Marshal(valid)
+	if _, err := client.Write(append(encoded, '\n')); err != nil {
+		t.Fatalf("write Trigger history application-socket request: %v", err)
+	}
+	line, err := bufio.NewReader(client).ReadString('\n')
+	if err != nil {
+		t.Fatalf("read Trigger history response: %v", err)
+	}
+	if !strings.Contains(line, "signer-owned Jupiter Trigger API key is not configured") || strings.Contains(line, "unsupported op") || strings.Contains(line, "rate limit") {
+		t.Fatalf("Trigger history did not reach its application-socket handler: %s", line)
+	}
+	_ = client.Close()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Trigger history socket did not close")
+	}
+}
+
+func TestSignerSuccessorAndCredentialAdminRequestClassification(t *testing.T) {
+	valid := []request{
+		{Op: "v2.wallet.rotation.create", WalletID: "agent", Request: json.RawMessage(`{"successorWalletId":"agent_next"}`)},
+		{Op: "v2.wallet.rotation.status", WalletID: "agent"},
+		{Op: "v2.wallet.rotation.commit", WalletID: "agent", Request: json.RawMessage(`{"rotationId":"sha256:test"}`)},
+		{Op: "v2.webauthn.credentials.revoke", Request: json.RawMessage(`{"credentialId":"YQ"}`)},
+	}
+	for _, req := range valid {
+		if err := mustValidate(req, signerConfig{}); err != nil {
+			t.Fatalf("valid administrative envelope classification rejected %#v: %v", req, err)
+		}
+	}
+	invalid := []request{
+		{Op: "v2.wallet.rotation.create", WalletID: "agent"},
+		{Op: "v2.wallet.rotation.status", WalletID: "agent", Request: json.RawMessage(`{}`)},
+		{Op: "v2.wallet.rotation.commit", Request: json.RawMessage(`{}`)},
+		{Op: "v2.webauthn.credentials.revoke", WalletID: "agent", Request: json.RawMessage(`{}`)},
+	}
+	for _, req := range invalid {
+		if err := mustValidate(req, signerConfig{}); err == nil {
+			t.Fatalf("invalid administrative envelope classification accepted %#v", req)
+		}
+	}
+}
+
 func TestCompatibilityReadsRequireAnExactWalletScope(t *testing.T) {
 	cfg := signerConfig{chains: []string{"solana"}}
 	for _, valid := range []request{

@@ -1,335 +1,51 @@
 ---
+summary: "使用受维护的 Hosting profile 在 Hetzner VPS 安装 Fased"
 read_when:
-  - 你想让 Fased 在云 VPS 上 24/7 运行（而不是你的笔记本电脑）
-  - 你想在自己的 VPS 上运行常驻 Gateway 网关
-  - 你想完全控制持久化、二进制文件和重启行为
-  - 你在 Hetzner 或类似提供商上用 Docker 运行 Fased
-summary: 在 Hetzner VPS（Docker）上运行 Fased Gateway 网关，带持久状态和内置二进制文件
-title: Hetzner
-x-i18n:
-  generated_at: "2026-02-03T07:52:17Z"
-  model: claude-opus-4-5
-  provider: pi
-  source_hash: 84d9f24f1a803aa15faa52a05f25fe557ec3e2c2f48a00c701d49764bd3bc21a
-  source_path: platforms/hetzner.md
-  workflow: 15
+  - 你想让 Fased 在 Hetzner VPS 上持续运行
+  - 你需要受支持的非 Docker Hosting 与 Tailscale 流程
+title: "Hetzner"
 ---
 
-# 在 Hetzner 上运行 Fased（Docker VPS 指南）
-
-## 目标
-
-使用 Docker 在 Hetzner VPS 上运行持久的 Fased Gateway 网关，带持久状态、内置二进制文件和可预测的重启行为。
-
-选择适合你负载的 Debian/Ubuntu VPS；如果遇到 OOM 再扩容。
-
-## 我们在做什么（简单说明）？
-
-- 租用一台小型 Linux 服务器（Hetzner VPS）
-- 安装 Docker（隔离的应用运行时）
-- 在 Docker 中启动 Fased Gateway 网关
-- 在主机上持久化 `~/.fased` + `~/.fased/workspace`（重启/重建后保留）
-- 在 onboarding 前把 VPS 加入 Tailscale
-- 通过 Tailscale 或私有 SSH 隧道访问 Control UI
-
-Gateway 管理访问应保持私有；不要默认公开原始 Gateway 端口。
-
-本指南假设在 Hetzner 上使用 Ubuntu 或 Debian。
-如果你使用其他 Linux VPS，请相应地映射软件包。
-通用 Docker 流程请参见 [Docker](/install/docker)。
-
----
-
-## 快速路径（有经验的运维人员）
-
-1. 配置 Hetzner VPS
-2. 安装 Docker
-3. 加入 Tailscale
-4. 克隆 Fased 仓库
-5. 创建持久化主机目录
-6. 配置 `.env` 和 `docker-compose.yml`
-7. 将所需二进制文件烘焙到镜像中
-8. `docker compose up -d`
-9. 验证持久化和 Gateway 访问
-
----
-
-## 你需要什么
-
-- 具有 root 访问权限的 Hetzner VPS
-- 从你的笔记本电脑进行 SSH 访问
-- 基本熟悉 SSH + 复制/粘贴
-- 约 20 分钟
-- Docker 和 Docker Compose
-- 模型认证凭证
-- 可选的提供商凭证
-  - WhatsApp 二维码
-  - Telegram 机器人令牌
-  - Gmail OAuth
-
----
-
-## 1) 配置 VPS
-
-在 Hetzner 中创建一个 Ubuntu 或 Debian VPS。
-
-以 root 身份连接：
-
-```bash
-ssh root@YOUR_VPS_IP
-```
-
-本指南假设 VPS 是有状态的。
-不要将其视为一次性基础设施。
-
----
-
-## 2) 安装 Docker（在 VPS 上）
-
-```bash
-apt-get update
-apt-get install -y git curl ca-certificates
-curl -fsSL https://get.docker.com | sh
-```
-
-验证：
-
-```bash
-docker --version
-docker compose version
-```
-
----
-
-## 3) 克隆 Fased 仓库
-
-```bash
-git clone https://github.com/fased-ai/fased.git fased
-cd fased
-```
-
-本指南假设你将构建自定义镜像以保证二进制文件持久化。
-
----
-
-## 4) 创建持久化主机目录
-
-Docker 容器是临时的。
-所有长期状态必须存储在主机上。
-
-```bash
-mkdir -p /root/.fased
-mkdir -p /root/.fased/workspace
-
-# 将所有权设置为容器用户（uid 1000）：
-chown -R 1000:1000 /root/.fased
-chown -R 1000:1000 /root/.fased/workspace
-```
-
----
-
-## 5) 配置环境变量
-
-在仓库根目录创建 `.env`。
-
-```bash
-FASED_IMAGE=fased:latest
-FASED_GATEWAY_TOKEN=change-me-now
-FASED_GATEWAY_BIND=lan
-FASED_GATEWAY_PORT=18789
-
-FASED_CONFIG_DIR=/root/.fased
-FASED_WORKSPACE_DIR=/root/.fased/workspace
-
-GOG_KEYRING_PASSWORD=change-me-now
-XDG_CONFIG_HOME=/home/node/.fased
-```
-
-生成强密钥：
-
-```bash
-openssl rand -hex 32
-```
-
-**不要提交此文件。**
-
----
-
-## 6) Docker Compose 配置
-
-创建或更新 `docker-compose.yml`。
-
-```yaml
-services:
-  fased-gateway:
-    image: ${FASED_IMAGE}
-    build: .
-    restart: unless-stopped
-    env_file:
-      - .env
-    environment:
-      - HOME=/home/node
-      - NODE_ENV=production
-      - TERM=xterm-256color
-      - FASED_GATEWAY_BIND=${FASED_GATEWAY_BIND}
-      - FASED_GATEWAY_PORT=${FASED_GATEWAY_PORT}
-      - FASED_GATEWAY_TOKEN=${FASED_GATEWAY_TOKEN}
-      - GOG_KEYRING_PASSWORD=${GOG_KEYRING_PASSWORD}
-      - XDG_CONFIG_HOME=${XDG_CONFIG_HOME}
-      - PATH=/home/linuxbrew/.linuxbrew/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-    volumes:
-      - ${FASED_CONFIG_DIR}:/home/node/.fased
-      - ${FASED_WORKSPACE_DIR}:/home/node/.fased/workspace
-    ports:
-      # 推荐：在 VPS 上保持 Gateway 网关仅限 loopback；通过 SSH 隧道访问。
-      # 要公开暴露，移除 `127.0.0.1:` 前缀并相应配置防火墙。
-      - "127.0.0.1:${FASED_GATEWAY_PORT}:18789"
-
-      # 可选：仅当你对此 VPS 运行 iOS/Android 节点并需要 Canvas 主机时。
-      # 如果你公开暴露此端口，请阅读 /gateway/security 并相应配置防火墙。
-      # - "18793:18793"
-    command:
-      [
-        "node",
-        "dist/index.js",
-        "gateway",
-        "--bind",
-        "${FASED_GATEWAY_BIND}",
-        "--port",
-        "${FASED_GATEWAY_PORT}",
-      ]
-```
-
----
-
-## 7) 将所需二进制文件烘焙到镜像中（关键）
-
-在运行中的容器内安装二进制文件是一个陷阱。
-任何在运行时安装的东西都会在重启时丢失。
-
-所有 skills 所需的外部二进制文件必须在镜像构建时安装。
-
-以下示例仅展示三个常见二进制文件：
-
-- `gog` 用于 Gmail 访问
-- `goplaces` 用于 Google Places
-- `wacli` 用于 WhatsApp
-
-这些是示例，不是完整列表。
-你可以使用相同的模式安装任意数量的二进制文件。
-
-如果你以后添加依赖额外二进制文件的新 skills，你必须：
-
-1. 更新 Dockerfile
-2. 重新构建镜像
-3. 重启容器
-
-**示例 Dockerfile**
-
-```dockerfile
-FROM node:22-bookworm
-
-RUN apt-get update && apt-get install -y socat && rm -rf /var/lib/apt/lists/*
-
-# 示例二进制文件 1：Gmail CLI
-RUN curl -L https://github.com/steipete/gog/releases/latest/download/gog_Linux_x86_64.tar.gz \
-  | tar -xz -C /usr/local/bin && chmod +x /usr/local/bin/gog
-
-# 示例二进制文件 2：Google Places CLI
-RUN curl -L https://github.com/steipete/goplaces/releases/latest/download/goplaces_Linux_x86_64.tar.gz \
-  | tar -xz -C /usr/local/bin && chmod +x /usr/local/bin/goplaces
-
-# 示例二进制文件 3：WhatsApp CLI
-RUN curl -L https://github.com/steipete/wacli/releases/latest/download/wacli_Linux_x86_64.tar.gz \
-  | tar -xz -C /usr/local/bin && chmod +x /usr/local/bin/wacli
-
-# 使用相同模式在下方添加更多二进制文件
-
-WORKDIR /app
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
-COPY ui/package.json ./ui/package.json
-COPY scripts ./scripts
-
-RUN corepack enable
-RUN pnpm install --frozen-lockfile
-
-COPY . .
-RUN pnpm build
-RUN pnpm ui:install
-RUN pnpm ui:build
-
-ENV NODE_ENV=production
-
-CMD ["node","dist/index.js"]
-```
-
----
-
-## 8) 构建并启动
-
-```bash
-docker compose build
-docker compose up -d fased-gateway
-```
-
-验证二进制文件：
-
-```bash
-docker compose exec fased-gateway which gog
-docker compose exec fased-gateway which goplaces
-docker compose exec fased-gateway which wacli
-```
-
-预期输出：
-
-```
-/usr/local/bin/gog
-/usr/local/bin/goplaces
-/usr/local/bin/wacli
-```
-
----
-
-## 9) 验证 Gateway 网关
-
-```bash
-docker compose logs -f fased-gateway
-```
-
-成功：
-
-```
-[gateway] listening on ws://0.0.0.0:18789
-```
-
-从你的笔记本电脑：
-
-```bash
-ssh -N -L 18789:127.0.0.1:18789 root@YOUR_VPS_IP
-```
-
-打开：
-
-`http://127.0.0.1:18789/`
-
-粘贴你的 Gateway 网关令牌。
-
----
-
-## 持久化位置（事实来源）
-
-Fased 在 Docker 中运行，但 Docker 不是事实来源。
-所有长期状态必须在重启、重建和重启后保留。
-
-| 组件             | 位置                           | 持久化机制    | 说明                        |
-| ---------------- | ------------------------------ | ------------- | --------------------------- |
-| Gateway 网关配置 | `/home/node/.fased/`           | 主机卷挂载    | 包括 `fased.json`、令牌     |
-| 模型认证配置文件 | `/home/node/.fased/`           | 主机卷挂载    | OAuth 令牌、API 密钥        |
-| Skill 配置       | `/home/node/.fased/skills/`    | 主机卷挂载    | Skill 级别状态              |
-| 智能体工作区     | `/home/node/.fased/workspace/` | 主机卷挂载    | 代码和智能体产物            |
-| WhatsApp 会话    | `/home/node/.fased/`           | 主机卷挂载    | 保留二维码登录              |
-| Gmail 密钥环     | `/home/node/.fased/`           | 主机卷 + 密码 | 需要 `GOG_KEYRING_PASSWORD` |
-| 外部二进制文件   | `/usr/local/bin/`              | Docker 镜像   | 必须在构建时烘焙            |
-| Node 运行时      | 容器文件系统                   | Docker 镜像   | 每次镜像构建时重建          |
-| 操作系统包       | 容器文件系统                   | Docker 镜像   | 不要在运行时安装            |
-| Docker 容器      | 临时的                         | 可重启        | 可以安全销毁                |
+# 在 Hetzner 上运行 Fased
+
+在普通 Ubuntu LTS VPS 上使用受维护的 **Hosting** 安装器。它会创建非 root `app`
+账户、安装独立原生签名器和 root 更新器、配置 systemd、接入 Tailscale、加固远程
+访问，并协调更新与回滚。
+
+<Warning>
+不要在 Hetzner VPS 上运行完整 Docker Gateway。Docker Gateway 只支持本地电脑，
+不存在 `install.sh --hosting-docker`。请使用 `install.sh --hosting`。
+</Warning>
+
+1. 创建 Ubuntu LTS 服务器，添加 SSH 公钥，并保留 Hetzner Console/Rescue 作为恢复路径。
+2. 不要在防火墙中开放 Gateway 端口 `18789`。
+3. 通过初始公网 SSH 进入 provider root console：
+
+   ```bash
+   ssh root@YOUR_PUBLIC_VPS_IP
+   ```
+
+4. 在该 root 会话中执行 [VPS 的预执行验证稳定版安装流程](/install/vps#3-安装-fased-并通过-tailscale-连接)。
+   不要先自行安装 Docker、Node、Go 或全局 Fased。
+5. Tailscale 显示登录 URL 时，在自己的电脑上完成授权；在私有连接验证成功前不要关闭
+   初始 provider 会话。
+6. 从已连接同一 tailnet 的电脑验证：
+
+   ```bash
+   tailscale ping YOUR_VPS_TAILSCALE_NAME
+   tailscale ssh app@YOUR_VPS_TAILSCALE_NAME
+   ```
+
+7. 作为 VPS 上的 `app` 用户验证：
+
+   ```bash
+   fased health
+   fased --version
+   fased gateway status
+   fased plugins doctor
+   fased wallet signer doctor --json
+   ```
+
+正常更新时，通过 Tailscale 连接为 `app` 后运行 `fased update status`、`fased update`
+和 `fased health`。Docker 可以只用于可选 Agent 沙箱；Gateway 和签名器仍必须由
+Hosting 安装器在主机上管理。

@@ -153,9 +153,9 @@ describe("marketplace direct payment adapter", () => {
           to: SELLER_ADDRESS,
           amount: "100000000",
           walletId: "agent-wallet",
-          memo: "invoice-1",
         }),
         requestedBy: "marketplace-manual-order",
+        executionIntentId: "marketplace-order:order-1:direct-payment",
         sendPath: "automation",
         settlementContext: expect.objectContaining({
           taskId: "order-1",
@@ -179,6 +179,50 @@ describe("marketplace direct payment adapter", () => {
     expect(result.order.delivery?.status).toBe("pending");
     expect(result.order.receipt?.status).toBe("issued");
     expect(result.evidenceRef).toBe("fased://marketplace/settlements/evidence-1");
+  });
+
+  it("resumes settlement evidence after a crash without paying the order twice", async () => {
+    const mocked = deps({
+      ok: true,
+      mode: "autonomous",
+      tx: { ok: true, chain: "solana", txHash: "durable-payment-tx-1", signer: AGENT_ADDRESS },
+      payload: { chain: "solana", to: SELLER_ADDRESS, amount: "100000000" },
+      requestId: "durable-wallet-send-1",
+    });
+    const publish = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false as const, message: "evidence service unavailable" })
+      .mockResolvedValueOnce({
+        ok: true as const,
+        entry: { evidenceRef: "fased://marketplace/settlements/durable-evidence-1" },
+      }) as MarketplaceDirectPaymentDeps["publishFederationSettlementEvidence"];
+    mocked.publishFederationSettlementEvidence = publish;
+    const originalConfig = config();
+
+    const first = await payMarketplaceOrderDirect({
+      config: originalConfig,
+      orderId: "order-1",
+      deps: mocked,
+    });
+    const resumed = await payMarketplaceOrderDirect({
+      config: originalConfig,
+      orderId: "order-1",
+      deps: mocked,
+    });
+
+    expect(first).toMatchObject({
+      ok: false,
+      code: "settlement_evidence_failed",
+      state: "evidence_pending",
+      txRef: "durable-payment-tx-1",
+    });
+    expect(resumed.ok).toBe(true);
+    expect(mocked.createOrExecuteWalletSend).toHaveBeenCalledTimes(1);
+    expect(publish).toHaveBeenCalledTimes(2);
+    if (resumed.ok) {
+      expect(resumed.txRef).toBe("durable-payment-tx-1");
+      expect(resumed.evidenceRef).toBe("fased://marketplace/settlements/durable-evidence-1");
+    }
   });
 
   it("keeps content summary orders on the paid content adapter", async () => {

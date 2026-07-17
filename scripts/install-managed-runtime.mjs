@@ -14,6 +14,7 @@ import {
   copyExecutable,
   normalizeManagedProfile,
   readHostedRuntimeMetadata,
+  readHostedReleaseBinding,
   readManagedInstallManifest,
   readPackageVersion,
   resolveLinkTarget,
@@ -23,6 +24,15 @@ import {
 const DEFAULT_HOST_TRANSACTION_TIMEOUT_MS = 2 * 60_000;
 const HOST_TRANSACTION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function signerReleaseIdentitiesEqual(left, right) {
+  return (
+    left?.version === right?.version &&
+    left?.commit === right?.commit &&
+    left?.buildInputDigest === right?.buildInputDigest &&
+    left?.development === right?.development
+  );
+}
 
 function parseArgs(argv) {
   const rollback = argv[0] === "--rollback";
@@ -174,6 +184,10 @@ async function installStableFiles(paths, releaseRoot, durable = false) {
     path.join(scriptDir, "managed-runtime-layout.mjs"),
     path.join(paths.updaterDir, "managed-runtime-layout.mjs"),
   );
+  await copyExecutable(
+    path.join(scriptDir, "hosted-release-manifest.mjs"),
+    path.join(paths.updaterDir, "hosted-release-manifest.mjs"),
+  );
   await fsp.mkdir(path.dirname(paths.prefixLauncherPath), { recursive: true });
   const launcherBackup = await replaceWithSymlink(paths.launcherPath, paths.prefixLauncherPath);
   if (launcherBackup) {
@@ -187,6 +201,7 @@ async function installStableFiles(paths, releaseRoot, durable = false) {
     paths.serviceLauncherPath,
     paths.updaterPath,
     path.join(paths.updaterDir, "managed-runtime-layout.mjs"),
+    path.join(paths.updaterDir, "hosted-release-manifest.mjs"),
   ];
   for (const stablePath of stablePaths) {
     const handle = await fsp.open(stablePath, "r");
@@ -208,6 +223,16 @@ export async function installManagedRuntime(params, dependencyOverrides = {}) {
   const existingManifest = readManagedInstallManifest(paths.manifestPath);
   const version = await assertManagedRuntime(params.packageRoot);
   const metadata = await readHostedRuntimeMetadata(params.packageRoot);
+  const hostedRelease = await readHostedReleaseBinding(params.packageRoot, metadata, version);
+  if (
+    normalizeManagedProfile(params.profile) === "hosting" &&
+    params.hostTransactionId &&
+    !hostedRelease
+  ) {
+    throw new Error(
+      "Maintained Hosting requires an attested unified app and signer release manifest.",
+    );
+  }
   let previousRoot = await resolveLinkTarget(paths.currentLink);
   let previousVersion = previousRoot ? await readPackageVersion(previousRoot) : null;
   let releaseRoot = path.join(paths.releasesDir, version);
@@ -298,10 +323,10 @@ export async function installManagedRuntime(params, dependencyOverrides = {}) {
     profile: params.profile,
     version,
     dependencyHash: metadata?.dependencyHash,
+    hostedRelease,
     previousVersion: previousVersion || null,
   });
   if (hostTransaction) {
-    await installStableFiles(paths, releaseRoot, true);
     await dependencies.beginPreactivatedHostedTransaction({
       paths,
       transactionId: hostTransaction.transactionId,
@@ -325,8 +350,8 @@ export async function installManagedRuntime(params, dependencyOverrides = {}) {
   await installStableFiles(paths, releaseRoot, Boolean(params.hostTransactionId));
   await atomicWriteJson(paths.manifestPath, manifest, 0o600);
   if (params.hostTransactionId) {
-    const manifestHandle = await fsp.open(paths.manifestPath, "r");
-    await manifestHandle.sync().finally(() => manifestHandle.close());
+    const identityManifestHandle = await fsp.open(paths.manifestPath, "r");
+    await identityManifestHandle.sync().finally(() => identityManifestHandle.close());
     for (const directoryPath of new Set([
       paths.stateDir,
       paths.runtimeDir,
@@ -335,11 +360,23 @@ export async function installManagedRuntime(params, dependencyOverrides = {}) {
       const handle = await fsp.open(directoryPath, "r");
       await handle.sync().finally(() => handle.close());
     }
-    await dependencies.authorizePreactivatedHostedGateway({
+    const authorization = await dependencies.authorizePreactivatedHostedGateway({
       transactionId: params.hostTransactionId,
       targetVersion: params.hostTransactionVersion,
       timeoutMs: params.timeoutMs || DEFAULT_HOST_TRANSACTION_TIMEOUT_MS,
     });
+    if (
+      !authorization?.release ||
+      !signerReleaseIdentitiesEqual(authorization.release, hostedRelease?.signer)
+    ) {
+      throw new Error(
+        "root signer updater did not return the exact signer identity from the unified release manifest",
+      );
+    }
+    manifest.signer = { release: authorization.release };
+    await atomicWriteJson(paths.manifestPath, manifest, 0o600);
+    const manifestHandle = await fsp.open(paths.manifestPath, "r");
+    await manifestHandle.sync().finally(() => manifestHandle.close());
   }
   await fsp.chmod(paths.stateDir, 0o700).catch(() => undefined);
   if (compatibilityBackup) {
@@ -362,6 +399,7 @@ export async function rollbackManagedRuntime(params) {
   const previousVersion = await assertManagedRuntime(previousRoot);
   const currentVersion = await readPackageVersion(currentRoot);
   const metadata = await readHostedRuntimeMetadata(previousRoot);
+  const hostedRelease = await readHostedReleaseBinding(previousRoot, metadata, previousVersion);
 
   await atomicSymlink(currentRoot, paths.previousLink);
   await atomicSymlink(previousRoot, paths.currentLink);
@@ -372,6 +410,7 @@ export async function rollbackManagedRuntime(params) {
     profile: manifest.profile,
     version: previousVersion,
     dependencyHash: metadata?.dependencyHash,
+    hostedRelease,
     previousVersion: currentVersion,
   });
   await atomicWriteJson(paths.manifestPath, previousManifest, 0o600);

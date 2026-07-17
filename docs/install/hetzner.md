@@ -46,13 +46,10 @@ PowerShell or Terminal window on your local computer.
 
 ## 2. Run the Hosting installer
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
-  | bash -s -- --hosting
-```
-
-The installer bootstraps the matching repository/runtime itself. Do not install
-Docker, Node, Go, or Fased globally first.
+From the provider root console, follow the
+[pre-execution verified tagged bootstrap](/install/vps#3-install-fased-and-connect-through-tailscale).
+It verifies the standalone installer attestation before any Fased shell code
+runs as root. Do not install Docker, Node, Go, or Fased globally first.
 
 When Tailscale prints a login URL, open that URL in the browser on your own
 computer and approve the server. Return to SSH only after the server appears in

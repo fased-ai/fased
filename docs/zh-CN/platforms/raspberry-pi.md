@@ -335,7 +335,7 @@ sudo systemctl restart fased
 
 1. 检查该二进制文件是否有 ARM64 构建
 2. 尝试从源代码构建
-3. 或使用支持 ARM 的 Docker 容器
+3. 或仅在本地/家庭网络环境使用受支持的 ARM64 本地 Docker 路径；不要把它当作 VPS Hosting
 
 ### WiFi 断开
 
@@ -370,6 +370,6 @@ echo 'wireless-power off' | sudo tee -a /etc/network/interfaces
 
 - [Linux 指南](/platforms/linux) — 通用 Linux 设置
 - [DigitalOcean 指南](/platforms/digitalocean) — 云替代方案
-- [Hetzner 指南](/install/hetzner) — Docker 设置
+- [Hetzner 指南](/install/hetzner) — 受维护的非 Docker Hosting 设置
 - [Tailscale](/gateway/tailscale) — 远程访问
 - [节点](/nodes) — 将你的笔记本电脑/手机与 Pi Gateway 网关配对

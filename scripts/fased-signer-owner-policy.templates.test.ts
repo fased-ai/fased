@@ -5,13 +5,14 @@ import { __testing, normalizeOwnerPolicy } from "./fased-signer-owner-policy.mjs
 
 const templateRoot = path.join(process.cwd(), "config", "signer-policies");
 const templateNames = ["agent.json.template", "mining.json.template", "vault.json.template"];
+const allTemplateNames = [...templateNames, "network.json.template"];
 
 function fillTemplate(raw: string) {
   const compare = (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0);
   const placeholders = [...new Set(raw.match(/REPLACE_WITH_[A-Z0-9_]+/gu) ?? [])].toSorted(compare);
   const replacements = new Map<string, string>();
   let addressIndex = 1;
-  let capIndex = 1;
+  let capIndex = Number(__testing.NATIVE_FEE_RESERVATION_LAMPORTS);
   for (const placeholder of placeholders) {
     if (placeholder.includes("POSITIVE_")) {
       replacements.set(placeholder, String(capIndex));
@@ -29,12 +30,12 @@ function fillTemplate(raw: string) {
 }
 
 describe("packaged native signer policy templates", () => {
-  it("ships exactly the documented Agent, Mining, and Vault starter templates", async () => {
+  it("ships exactly the documented wallet and independent-RPC starter templates", async () => {
     const entries = (await fsp.readdir(templateRoot)).filter((entry) =>
       entry.endsWith(".json.template"),
     );
     expect(entries.toSorted((left, right) => (left < right ? -1 : left > right ? 1 : 0))).toEqual(
-      templateNames,
+      allTemplateNames.toSorted((left, right) => (left < right ? -1 : left > right ? 1 : 0)),
     );
     const readme = await fsp.readFile(path.join(templateRoot, "README.md"), "utf8");
     expect(readme).toContain("deliberately inactive templates");
@@ -75,6 +76,7 @@ describe("packaged native signer policy templates", () => {
     );
     const [agent, mining, vault] = policies;
     expect(agent.operations).toEqual(["solana.nativeTransfer", "solana.splTransferChecked"]);
+    expect(agent.programs).toContain(__testing.ASSOCIATED_TOKEN_PROGRAM);
     expect(mining.operations.some((operation) => operation.startsWith("sat.commitCycle@"))).toBe(
       true,
     );
@@ -82,6 +84,8 @@ describe("packaged native signer policy templates", () => {
     expect(mining.operations).toContain("solana.splTransferChecked");
     expect(vault.operations).toContain("federation.bondChallenge");
     expect(vault.operations.some((operation) => operation.startsWith("vaultBond."))).toBe(true);
+    expect(mining.programs).toContain(__testing.ASSOCIATED_TOKEN_PROGRAM);
+    expect(vault.programs).toContain(__testing.ASSOCIATED_TOKEN_PROGRAM);
     for (const policy of policies) {
       expect(policy.operations.some((operation) => operation.includes("signTx"))).toBe(false);
       expect(policy.operations.some((operation) => operation.includes("jupiter"))).toBe(false);

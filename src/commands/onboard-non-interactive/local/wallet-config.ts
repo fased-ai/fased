@@ -354,7 +354,11 @@ export function applyNonInteractiveWalletConfig(params: {
         : "static-token-compat";
   const authBootstrapUrl = current?.auth?.bootstrapUrl?.trim() || undefined;
   const sourceRef = current?.source?.ref?.trim() || undefined;
-  const directSigning = opts.walletDirectSigning ?? current?.policy?.directSigning ?? managedMode;
+  // A managed runtime is an installation/lifecycle choice, not authorization to
+  // spend. Keep automated execution off unless an existing configuration or an
+  // explicit non-interactive flag enables it. The native signer still enforces
+  // its own independent, fail-closed policy after this Gateway-side choice.
+  const directSigning = opts.walletDirectSigning ?? current?.policy?.directSigning ?? false;
 
   const toolAccessMode =
     parseToolAccessMode(opts.walletToolAccessMode) ?? current?.toolAccess?.mode ?? "owner-only";

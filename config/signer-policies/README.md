@@ -14,11 +14,24 @@ Fresh signer-owned wallets remain at their version-1 deny-all policy until that
 owner-confirmed command succeeds. Merely installing Fased or copying a template
 does not enable signing.
 
+Every policy that permits an on-chain operation must include a
+`solana:native` asset whose `maxPerTx` and `maxDaily` are each at least
+`5000000` lamports. The native signer reserves that fixed, signer-controlled
+ceiling atomically for network fees and explicitly validated rent; for a native
+SOL transfer, the principal and this reserve must fit inside the same cap.
+Existing custom policies below that minimum intentionally become locked after
+the signer-v2 upgrade. Review the new limit and install a new version explicitly
+with `fased-signer-policy`; installation and update never widen it automatically.
+
 - Agent permits only typed native SOL and exact-mint SPL transfers to listed
-  destinations.
+  destinations. Direct SPL transfer requires pre-existing canonical source and
+  destination token accounts; it cannot spend SOL to create an associated token
+  account and therefore does not grant the Associated Token program by default.
 - Mining permits program-bound typed SAT mining actions. The native signer
   forces generic SOL/SAT transfers through reviewed authorization for a Mining
-  wallet; it never treats them as autonomous mining actions.
+  wallet; it never treats them as autonomous mining actions. Exact SAT codecs
+  that genuinely use associated-token-account instructions retain that program
+  grant.
 - Vault operations always require signer-owned reviewed authorization. The
   starter omits Jupiter and Trigger permissions; add them only after separately
   reviewing their exact semantic policy programs, assets, destinations, and

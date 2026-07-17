@@ -693,24 +693,26 @@ export async function executeSolanaSwapApprovalPayload(params: {
       })
     : undefined;
   let entry = autonomousIdentity
-    ? beginExternalSubmission({
-        ...autonomousIdentity,
-        kind: "jupiter-swap",
-        walletId: params.payload.walletId,
-        details: {
-          semanticIntent: {
-            owner: taker,
-            inputMint: params.payload.inputMint,
-            outputMint: params.payload.outputMint,
-            amount: params.payload.amount,
-            slippageBps: normalizeSlippageBps(params.payload.slippageBps),
+    ? (
+        await beginExternalSubmission({
+          ...autonomousIdentity,
+          kind: "jupiter-swap",
+          walletId: params.payload.walletId,
+          details: {
+            semanticIntent: {
+              owner: taker,
+              inputMint: params.payload.inputMint,
+              outputMint: params.payload.outputMint,
+              amount: params.payload.amount,
+              slippageBps: normalizeSlippageBps(params.payload.slippageBps),
+            },
           },
-        },
-        env,
-      }).entry
+          env,
+        })
+      ).entry
     : undefined;
   const releaseExecution = autonomousIdentity
-    ? claimExternalSubmissionExecution(autonomousIdentity.key, env)
+    ? await claimExternalSubmissionExecution(autonomousIdentity.key, env)
     : undefined;
 
   try {
@@ -760,7 +762,7 @@ export async function executeSolanaSwapApprovalPayload(params: {
         };
       }
       if (operation.state === "confirmed" && operation.signature) {
-        entry = updateExternalSubmission({
+        entry = await updateExternalSubmission({
           key: entry.key,
           expectedStates: ["unknown", "submitting", "signed"],
           state: "confirmed",
@@ -768,7 +770,7 @@ export async function executeSolanaSwapApprovalPayload(params: {
           env,
         });
       } else if (operation.state === "failed") {
-        entry = updateExternalSubmission({
+        entry = await updateExternalSubmission({
           key: entry.key,
           expectedStates: ["unknown", "submitting", "signed"],
           state: "failed",
@@ -776,7 +778,7 @@ export async function executeSolanaSwapApprovalPayload(params: {
           env,
         });
       } else {
-        updateExternalSubmission({
+        await updateExternalSubmission({
           key: entry.key,
           expectedStates: ["unknown", "submitting", "signed"],
           state: "unknown",
@@ -834,7 +836,7 @@ export async function executeSolanaSwapApprovalPayload(params: {
           slippageBps: params.payload.slippageBps,
           raw: {},
         };
-        entry = updateExternalSubmission({
+        entry = await updateExternalSubmission({
           key: entry.key,
           expectedStates: ["reserved"],
           state: "prepared",
@@ -907,7 +909,7 @@ export async function executeSolanaSwapApprovalPayload(params: {
           env,
         });
         signerReviewRequestId = prepared.review.requestId;
-        entry = updateExternalSubmission({
+        entry = await updateExternalSubmission({
           key: entry.key,
           expectedStates: ["reserved"],
           state: "prepared",
@@ -950,7 +952,7 @@ export async function executeSolanaSwapApprovalPayload(params: {
       });
     } catch (error) {
       if (entry) {
-        updateExternalSubmission({
+        await updateExternalSubmission({
           key: entry.key,
           expectedStates: ["prepared"],
           state: "unknown",
@@ -978,7 +980,7 @@ export async function executeSolanaSwapApprovalPayload(params: {
       const confirmed =
         executed.operation.state === "confirmed" && Boolean(executed.operation.signature);
       const failed = executed.operation.state === "failed";
-      updateExternalSubmission({
+      await updateExternalSubmission({
         key: entry.key,
         expectedStates: ["prepared"],
         state: confirmed ? "confirmed" : failed ? "failed" : "unknown",
@@ -993,6 +995,6 @@ export async function executeSolanaSwapApprovalPayload(params: {
     }
     return result;
   } finally {
-    releaseExecution?.();
+    await releaseExecution?.();
   }
 }

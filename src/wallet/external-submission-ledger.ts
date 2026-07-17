@@ -1,6 +1,8 @@
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { acquireFileLock, withFileLock } from "../infra/file-lock.js";
+import { resolveProcessScopedMap } from "../shared/process-scoped-map.js";
 import { ensureWalletStateDir } from "./wallet-runtime-config.js";
 
 export type ExternalSubmissionKind =
@@ -63,31 +65,79 @@ const TRANSITIONS: Record<ExternalSubmissionState, ReadonlySet<ExternalSubmissio
   reserved: new Set(["reserved", "prepared", "submitting", "failed"]),
   prepared: new Set(["prepared", "signed", "unknown", "confirmed", "failed"]),
   signed: new Set(["signed", "submitting", "unknown"]),
-  submitting: new Set(["submitting", "prepared", "unknown", "confirmed"]),
+  submitting: new Set(["submitting", "prepared", "unknown", "confirmed", "failed"]),
   unknown: new Set(["unknown", "confirmed", "failed"]),
   confirmed: new Set(["confirmed"]),
   failed: new Set(["failed"]),
 };
 
-const ACTIVE_EXECUTIONS = new Set<string>();
+const LEDGER_LOCK_OPTIONS = {
+  retries: {
+    retries: 100,
+    factor: 1.15,
+    minTimeout: 10,
+    maxTimeout: 200,
+    randomize: true,
+  },
+  stale: 30_000,
+} as const;
 
-export function claimExternalSubmissionExecution(
+const EXECUTION_LOCK_OPTIONS = {
+  retries: {
+    // The second attempt lets acquireFileLock remove a dead owner's stale
+    // lock and claim it. A live owner is never evicted, regardless of age.
+    retries: 1,
+    factor: 1,
+    minTimeout: 10,
+    maxTimeout: 10,
+    randomize: false,
+  },
+  stale: 30_000,
+} as const;
+
+const ACTIVE_EXECUTIONS = resolveProcessScopedMap<true>(
+  Symbol.for("fased.wallet.externalSubmission.activeExecutions"),
+);
+const LEDGER_MUTATION_QUEUES = resolveProcessScopedMap<Promise<void>>(
+  Symbol.for("fased.wallet.externalSubmission.mutationQueues"),
+);
+
+export async function claimExternalSubmissionExecution(
   keyRaw: string,
   env: NodeJS.ProcessEnv = process.env,
-): () => void {
+): Promise<() => Promise<void>> {
   const key = keyRaw.trim();
+  if (!key || containsControlCharacter(key)) {
+    throw new Error("external submission execution key is invalid");
+  }
   const executionKey = `${ledgerPath(env)}\0${key}`;
   if (ACTIVE_EXECUTIONS.has(executionKey)) {
     throw new Error(
       `external submission ${key} is already executing; wait for its durable result instead of retrying`,
     );
   }
-  ACTIVE_EXECUTIONS.add(executionKey);
+  ACTIVE_EXECUTIONS.set(executionKey, true);
+  const claimTarget = path.join(
+    path.dirname(ledgerPath(env)),
+    ".external-submission-executions",
+    createHash("sha256").update(key).digest("hex"),
+  );
+  let lock: Awaited<ReturnType<typeof acquireFileLock>>;
+  try {
+    lock = await acquireFileLock(claimTarget, EXECUTION_LOCK_OPTIONS);
+  } catch (error) {
+    ACTIVE_EXECUTIONS.delete(executionKey);
+    throw new Error(
+      `external submission ${key} is already executing; wait for its durable result instead of retrying`,
+      { cause: error },
+    );
+  }
   let released = false;
-  return () => {
+  return async () => {
     if (!released) {
       ACTIVE_EXECUTIONS.delete(executionKey);
       released = true;
+      await lock.release();
     }
   };
 }
@@ -159,6 +209,32 @@ export function createExternalSubmissionKey(params: {
 
 function ledgerPath(env: NodeJS.ProcessEnv): string {
   return path.join(ensureWalletStateDir(env).rootDir, "external-submissions.json");
+}
+
+async function withLedgerMutationLock<T>(
+  env: NodeJS.ProcessEnv,
+  task: () => T | Promise<T>,
+): Promise<T> {
+  const filePath = ledgerPath(env);
+  const previous = LEDGER_MUTATION_QUEUES.get(filePath) ?? Promise.resolve();
+  let releaseQueue!: () => void;
+  const turn = new Promise<void>((resolve) => {
+    releaseQueue = resolve;
+  });
+  const queued = previous.then(
+    () => turn,
+    () => turn,
+  );
+  LEDGER_MUTATION_QUEUES.set(filePath, queued);
+  await previous.catch(() => undefined);
+  try {
+    return await withFileLock(filePath, LEDGER_LOCK_OPTIONS, async () => await task());
+  } finally {
+    releaseQueue();
+    if (LEDGER_MUTATION_QUEUES.get(filePath) === queued) {
+      LEDGER_MUTATION_QUEUES.delete(filePath);
+    }
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -280,7 +356,28 @@ export function getExternalSubmission(params: {
   return file.entries.find((entry) => entry.key === params.key.trim());
 }
 
-export function beginExternalSubmission(params: {
+export function getExternalSubmissionByExplicitIntent(params: {
+  kind: ExternalSubmissionKind;
+  walletId: string;
+  explicitIntentId: string;
+  env?: NodeJS.ProcessEnv;
+}): ExternalSubmissionEntry | undefined {
+  const kind = params.kind;
+  const walletId = params.walletId.trim();
+  const explicitIntentId = params.explicitIntentId.trim();
+  if (!walletId || !explicitIntentId || containsControlCharacter(explicitIntentId)) {
+    throw new Error("external submission explicit intent lookup is invalid");
+  }
+  const file = loadLedger(params.env ?? process.env);
+  return file.entries.find(
+    (entry) =>
+      entry.kind === kind &&
+      entry.walletId === walletId &&
+      entry.explicitIntentId === explicitIntentId,
+  );
+}
+
+export async function beginExternalSubmission(params: {
   key: string;
   kind: ExternalSubmissionKind;
   walletId: string;
@@ -288,55 +385,57 @@ export function beginExternalSubmission(params: {
   explicitIntentId?: string;
   details?: Record<string, unknown>;
   env?: NodeJS.ProcessEnv;
-}): { entry: ExternalSubmissionEntry; created: boolean } {
+}): Promise<{ entry: ExternalSubmissionEntry; created: boolean }> {
   const env = params.env ?? process.env;
-  const file = loadLedger(env);
-  const key = params.key.trim();
-  const walletId = params.walletId.trim();
-  const existing = file.entries.find((entry) => entry.key === key);
-  if (existing) {
-    if (
-      existing.kind !== params.kind ||
-      existing.walletId !== walletId ||
-      existing.intentDigest !== params.intentDigest ||
-      (existing.explicitIntentId ?? undefined) !== (params.explicitIntentId?.trim() || undefined)
-    ) {
-      throw new Error("external submission idempotency key collides with a different intent");
+  return await withLedgerMutationLock(env, () => {
+    const file = loadLedger(env);
+    const key = params.key.trim();
+    const walletId = params.walletId.trim();
+    const existing = file.entries.find((entry) => entry.key === key);
+    if (existing) {
+      if (
+        existing.kind !== params.kind ||
+        existing.walletId !== walletId ||
+        existing.intentDigest !== params.intentDigest ||
+        (existing.explicitIntentId ?? undefined) !== (params.explicitIntentId?.trim() || undefined)
+      ) {
+        throw new Error("external submission idempotency key collides with a different intent");
+      }
+      return { entry: existing, created: false };
     }
-    return { entry: existing, created: false };
-  }
-  const explicitIntentId = params.explicitIntentId?.trim() || undefined;
-  const conflictingExplicitIntent = explicitIntentId
-    ? file.entries.find(
-        (entry) =>
-          entry.kind === params.kind &&
-          entry.walletId === walletId &&
-          entry.explicitIntentId === explicitIntentId,
-      )
-    : undefined;
-  if (conflictingExplicitIntent) {
-    throw new Error(
-      "external submission intentId is already bound to a different immutable intent",
-    );
-  }
-  const now = new Date().toISOString();
-  const entry: ExternalSubmissionEntry = {
-    key,
-    kind: params.kind,
-    walletId,
-    intentDigest: params.intentDigest,
-    ...(explicitIntentId ? { explicitIntentId } : {}),
-    state: "reserved",
-    ...(params.details ? { details: params.details } : {}),
-    createdAt: now,
-    updatedAt: now,
-  };
-  file.entries.push(entry);
-  saveLedger(file, env);
-  return { entry, created: true };
+    const explicitIntentId = params.explicitIntentId?.trim() || undefined;
+    const conflictingExplicitIntent = explicitIntentId
+      ? file.entries.find(
+          (entry) =>
+            entry.kind === params.kind &&
+            entry.walletId === walletId &&
+            entry.explicitIntentId === explicitIntentId,
+        )
+      : undefined;
+    if (conflictingExplicitIntent) {
+      throw new Error(
+        "external submission intentId is already bound to a different immutable intent",
+      );
+    }
+    const now = new Date().toISOString();
+    const entry: ExternalSubmissionEntry = {
+      key,
+      kind: params.kind,
+      walletId,
+      intentDigest: params.intentDigest,
+      ...(explicitIntentId ? { explicitIntentId } : {}),
+      state: "reserved",
+      ...(params.details ? { details: params.details } : {}),
+      createdAt: now,
+      updatedAt: now,
+    };
+    file.entries.push(entry);
+    saveLedger(file, env);
+    return { entry, created: true };
+  });
 }
 
-export function updateExternalSubmission(params: {
+export async function updateExternalSubmission(params: {
   key: string;
   expectedStates: ExternalSubmissionState[];
   state: ExternalSubmissionState;
@@ -354,52 +453,58 @@ export function updateExternalSubmission(params: {
     >
   >;
   env?: NodeJS.ProcessEnv;
-}): ExternalSubmissionEntry {
+}): Promise<ExternalSubmissionEntry> {
   const env = params.env ?? process.env;
-  const file = loadLedger(env);
-  const entry = file.entries.find((candidate) => candidate.key === params.key.trim());
-  if (!entry) {
-    throw new Error("external submission ledger entry not found");
-  }
-  if (!params.expectedStates.includes(entry.state)) {
-    throw new Error(
-      `external submission ${entry.key} is ${entry.state}; expected ${params.expectedStates.join(" or ")}`,
-    );
-  }
-  if (!TRANSITIONS[entry.state].has(params.state)) {
-    throw new Error(`external submission cannot transition from ${entry.state} to ${params.state}`);
-  }
-  Object.assign(entry, params.patch ?? {});
-  entry.state = params.state;
-  entry.updatedAt = new Date().toISOString();
-  saveLedger(file, env);
-  return entry;
+  return await withLedgerMutationLock(env, () => {
+    const file = loadLedger(env);
+    const entry = file.entries.find((candidate) => candidate.key === params.key.trim());
+    if (!entry) {
+      throw new Error("external submission ledger entry not found");
+    }
+    if (!params.expectedStates.includes(entry.state)) {
+      throw new Error(
+        `external submission ${entry.key} is ${entry.state}; expected ${params.expectedStates.join(" or ")}`,
+      );
+    }
+    if (!TRANSITIONS[entry.state].has(params.state)) {
+      throw new Error(
+        `external submission cannot transition from ${entry.state} to ${params.state}`,
+      );
+    }
+    Object.assign(entry, params.patch ?? {});
+    entry.state = params.state;
+    entry.updatedAt = new Date().toISOString();
+    saveLedger(file, env);
+    return entry;
+  });
 }
 
-export function renewConfirmedExternalSubmission(params: {
+export async function renewConfirmedExternalSubmission(params: {
   key: string;
   details?: Record<string, unknown>;
   env?: NodeJS.ProcessEnv;
-}): ExternalSubmissionEntry {
+}): Promise<ExternalSubmissionEntry> {
   const env = params.env ?? process.env;
-  const file = loadLedger(env);
-  const entry = file.entries.find((candidate) => candidate.key === params.key.trim());
-  if (!entry || entry.state !== "confirmed") {
-    throw new Error("only a confirmed external submission can be renewed");
-  }
-  const now = new Date().toISOString();
-  const renewed: ExternalSubmissionEntry = {
-    key: entry.key,
-    kind: entry.kind,
-    walletId: entry.walletId,
-    intentDigest: entry.intentDigest,
-    ...(entry.explicitIntentId ? { explicitIntentId: entry.explicitIntentId } : {}),
-    state: "reserved",
-    ...(params.details ? { details: params.details } : {}),
-    createdAt: now,
-    updatedAt: now,
-  };
-  file.entries[file.entries.indexOf(entry)] = renewed;
-  saveLedger(file, env);
-  return renewed;
+  return await withLedgerMutationLock(env, () => {
+    const file = loadLedger(env);
+    const entry = file.entries.find((candidate) => candidate.key === params.key.trim());
+    if (!entry || entry.state !== "confirmed") {
+      throw new Error("only a confirmed external submission can be renewed");
+    }
+    const now = new Date().toISOString();
+    const renewed: ExternalSubmissionEntry = {
+      key: entry.key,
+      kind: entry.kind,
+      walletId: entry.walletId,
+      intentDigest: entry.intentDigest,
+      ...(entry.explicitIntentId ? { explicitIntentId: entry.explicitIntentId } : {}),
+      state: "reserved",
+      ...(params.details ? { details: params.details } : {}),
+      createdAt: now,
+      updatedAt: now,
+    };
+    file.entries[file.entries.indexOf(entry)] = renewed;
+    saveLedger(file, env);
+    return renewed;
+  });
 }

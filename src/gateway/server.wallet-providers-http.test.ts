@@ -163,8 +163,15 @@ const signerV2Capabilities = {
   keystoreType: "signer-owned-v2",
   chains: ["solana"] as const,
   ready: true,
+  release: {
+    version: "dev",
+    commit: "unknown",
+    buildInputDigest: "unknown",
+    development: true,
+  },
   capabilities: {
     protocol: { current: 2 as const, min: 2, max: 2 },
+    nativeFeeReservationLamports: 5_000_000 as const,
     intentTypes: ["solana.nativeTransfer", "solana.splTransferChecked"],
     operationStates: ["reserved", "broadcast", "confirmed", "failed", "unknown"],
     features: [
@@ -172,6 +179,8 @@ const signerV2Capabilities = {
       "policyHashes",
       "applicationPolicyTightening",
       "durableCaps",
+      "atomicMultiAssetCaps",
+      "signerControlledNativeFeeCaps",
       "atomicIdempotency",
       "ambiguousBroadcastReconciliation",
       "signerOwnedKeys",
@@ -180,9 +189,11 @@ const signerV2Capabilities = {
       "signerOwnedWebAuthn",
       "singleUseReviewedAuthorization",
       "typedJupiterSemantics",
+      "signerOwnedJupiterTriggerV2",
+      "signerOwnedJupiterTriggerHistory",
       "signerOwnedReviewPrepareExecute",
       "exactPreparedTransactions",
-      "verifiedAddressLookupTables",
+      "legacyOnlyJupiterTransactions",
     ],
   },
   policies: [],
@@ -681,8 +692,8 @@ describe("wallet providers HTTP", () => {
             {
               asset: "solana:native",
               destinations: ["Destination11111111111111111111111111111"],
-              maxPerTx: "1000",
-              maxDaily: "5000",
+              maxPerTx: "10000000",
+              maxDaily: "20000000",
             },
           ],
           hash: oldHash,
@@ -692,8 +703,8 @@ describe("wallet providers HTTP", () => {
           version: 5,
           assets: current.assets.map((asset) => ({
             ...asset,
-            maxPerTx: "500",
-            maxDaily: "2500",
+            maxPerTx: "7500000",
+            maxDaily: "15000000",
           })),
           hash: nextHash,
         };
@@ -749,8 +760,8 @@ describe("wallet providers HTTP", () => {
               authorization: "Bearer root-token",
               body: {
                 walletId: "agent-2",
-                solanaMaxPerTx: "500",
-                solanaMaxDaily: "2500",
+                solanaMaxPerTx: "7500000",
+                solanaMaxDaily: "15000000",
               },
             }),
             response.res,
@@ -786,15 +797,15 @@ describe("wallet providers HTTP", () => {
             hash: nextHash,
           });
           expect(payload.settings?.policy?.solana).toMatchObject({
-            maxPerTx: "500",
-            maxDaily: "2500",
+            maxPerTx: "7500000",
+            maxDaily: "15000000",
           });
           const persisted = JSON.parse(await readFile(policyStatePath, "utf8")) as {
             wallets?: Record<string, { solana?: { maxPerTx?: string; maxDaily?: string } }>;
           };
           expect(persisted.wallets?.["agent-2"]?.solana).toMatchObject({
-            maxPerTx: "500",
-            maxDaily: "2500",
+            maxPerTx: "7500000",
+            maxDaily: "15000000",
           });
           expect(
             readWalletProviderRegistry(process.env).wallets.find(
@@ -828,7 +839,7 @@ describe("wallet providers HTTP", () => {
               expectedVersion: 4,
               policy: {
                 role: "agent",
-                assets: [{ maxPerTx: "500", maxDaily: "2500" }],
+                assets: [{ maxPerTx: "7500000", maxDaily: "15000000" }],
               },
             },
           });

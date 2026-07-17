@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -71,9 +73,9 @@ func TestSignerSchemaMigrationCreatesDurablePreMigrationBackup(t *testing.T) {
 		t.Fatalf("close migrated store: %v", err)
 	}
 
-	backups, err := filepath.Glob(path + ".pre-v3-*.bak")
+	backups, err := filepath.Glob(path + ".pre-v5-*.bak")
 	if err != nil || len(backups) != 1 {
-		t.Fatalf("expected one pre-v3 backup, backups=%#v err=%v", backups, err)
+		t.Fatalf("expected one pre-v5 backup, backups=%#v err=%v", backups, err)
 	}
 	backupInfo, err := os.Stat(backups[0])
 	if err != nil || backupInfo.Mode().Perm() != 0o600 || backupInfo.Size() == 0 {
@@ -106,7 +108,7 @@ func TestSignerSchemaMigrationCreatesDurablePreMigrationBackup(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if version != signerStateSchemaVersionV2 || tx.Bucket(bucketSignerNetworksV2) == nil || string(tx.Bucket(bucketSignerMetaV2).Get([]byte("fixture"))) != "preserve-me" {
+		if version != signerStateSchemaVersionV2 || tx.Bucket(bucketSignerNetworksV2) == nil || tx.Bucket(bucketSignerRotationsV2) == nil || string(tx.Bucket(bucketSignerMetaV2).Get([]byte("fixture"))) != "preserve-me" {
 			t.Fatalf("migration did not atomically preserve state and add networks: version=%d", version)
 		}
 		return nil
@@ -120,9 +122,58 @@ func TestSignerSchemaMigrationCreatesDurablePreMigrationBackup(t *testing.T) {
 		t.Fatalf("reopen current schema: %v", err)
 	}
 	_ = reopened.Close()
-	backupsAfterReopen, _ := filepath.Glob(path + ".pre-v3-*.bak")
+	backupsAfterReopen, _ := filepath.Glob(path + ".pre-v5-*.bak")
 	if len(backupsAfterReopen) != 1 {
 		t.Fatalf("current schema was migrated or backed up twice: %#v", backupsAfterReopen)
+	}
+}
+
+func TestSignerSchemaFourMigrationAddsRotationAndCredentialFence(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "state.db")
+	createSignerSchemaFixtureV2(t, path, 4, true)
+	db, err := bolt.Open(path, 0o600, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = db.Update(func(tx *bolt.Tx) error {
+		for _, bucket := range [][]byte{bucketSignerNetworksV2, bucketSignerJupiterTriggerV2} {
+			if _, err := tx.CreateBucketIfNotExists(bucket); err != nil {
+				return err
+			}
+		}
+		return tx.Bucket(bucketSignerWebAuthnCredentialsV2).Put([]byte("fixture-credential"), []byte(`{"credential":{"id":"Zml4dHVyZQ","publicKey":"cHVibGlj"}}`))
+	})
+	if closeErr := db.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := openSignerStoreV2(path)
+	if err != nil {
+		t.Fatalf("migrate schema 4 to current: %v", err)
+	}
+	defer store.Close()
+	if err := store.db.View(func(tx *bolt.Tx) error {
+		if tx.Bucket(bucketSignerRotationsV2) == nil {
+			return errors.New("schema migration omitted wallet rotation bucket")
+		}
+		version, err := signerWebAuthnCredentialsVersionFromTxV2(tx)
+		if err != nil {
+			return err
+		}
+		if version != 1 {
+			return fmt.Errorf("migrated credential fence version = %d, want 1", version)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	backups, _ := filepath.Glob(path + ".pre-v5-*.bak")
+	if len(backups) != 1 {
+		t.Fatalf("schema 4 migration did not create exactly one durable backup: %#v", backups)
 	}
 }
 

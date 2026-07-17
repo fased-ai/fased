@@ -36,6 +36,16 @@ const probeRunningGatewayRuntimeIdentity = vi.fn();
 const ensureOpenAICodexRuntimeComponent = vi.fn();
 const hasConfiguredOpenAICodexProfile = vi.fn();
 const ensureManagedRuntimeBootstrap = vi.fn();
+const isLocalSourceSignerConfigured = vi.fn(async () => false);
+const readLocalSourcePairedUpdateJournal = vi.fn(async () => null);
+const recoverLocalSourcePairedUpdate = vi.fn(async () => "none");
+const prepareLocalSourcePairedUpdate = vi.fn();
+const markLocalSourceAppActive = vi.fn(async ({ journal }) => journal);
+const activateLocalSourceSigner = vi.fn(async ({ journal }) => journal);
+const verifyLocalSourceSigner = vi.fn(async () => undefined);
+const markLocalSourceGatewayVerified = vi.fn(async (journal) => journal);
+const commitLocalSourcePairedUpdate = vi.fn(async () => undefined);
+const rollbackLocalSourcePairedUpdate = vi.fn(async () => undefined);
 
 vi.mock("@clack/prompts", () => ({
   confirm,
@@ -63,6 +73,19 @@ vi.mock("../infra/fased-root.js", () => ({
 
 vi.mock("../infra/managed-runtime-bootstrap.js", () => ({
   ensureManagedRuntimeBootstrap,
+}));
+
+vi.mock("../infra/local-source-paired-update.js", () => ({
+  isLocalSourceSignerConfigured,
+  readLocalSourcePairedUpdateJournal,
+  recoverLocalSourcePairedUpdate,
+  prepareLocalSourcePairedUpdate,
+  markLocalSourceAppActive,
+  activateLocalSourceSigner,
+  verifyLocalSourceSigner,
+  markLocalSourceGatewayVerified,
+  commitLocalSourcePairedUpdate,
+  rollbackLocalSourcePairedUpdate,
 }));
 
 vi.mock("../config/config.js", () => ({
@@ -344,6 +367,25 @@ describe("update-cli", () => {
     ensureOpenAICodexRuntimeComponent.mockReset();
     hasConfiguredOpenAICodexProfile.mockReset();
     ensureManagedRuntimeBootstrap.mockReset();
+    isLocalSourceSignerConfigured.mockReset();
+    readLocalSourcePairedUpdateJournal.mockReset();
+    recoverLocalSourcePairedUpdate.mockReset();
+    prepareLocalSourcePairedUpdate.mockReset();
+    markLocalSourceAppActive.mockReset();
+    activateLocalSourceSigner.mockReset();
+    verifyLocalSourceSigner.mockReset();
+    markLocalSourceGatewayVerified.mockReset();
+    commitLocalSourcePairedUpdate.mockReset();
+    rollbackLocalSourcePairedUpdate.mockReset();
+    isLocalSourceSignerConfigured.mockResolvedValue(false);
+    readLocalSourcePairedUpdateJournal.mockResolvedValue(null);
+    recoverLocalSourcePairedUpdate.mockResolvedValue("none");
+    markLocalSourceAppActive.mockImplementation(async ({ journal }) => journal);
+    activateLocalSourceSigner.mockImplementation(async ({ journal }) => journal);
+    verifyLocalSourceSigner.mockResolvedValue(undefined);
+    markLocalSourceGatewayVerified.mockImplementation(async (journal) => journal);
+    commitLocalSourcePairedUpdate.mockResolvedValue(undefined);
+    rollbackLocalSourcePairedUpdate.mockResolvedValue(undefined);
     hasConfiguredOpenAICodexProfile.mockReturnValue(false);
     ensureManagedRuntimeBootstrap.mockResolvedValue({
       installed: false,
@@ -496,6 +538,97 @@ describe("update-cli", () => {
 
     expect(runGatewayUpdate).toHaveBeenCalled();
     expect(defaultRuntime.log).toHaveBeenCalled();
+  });
+
+  it("commits a source app and Local signer only after both health checks", async () => {
+    const prepared = {
+      phase: "prepared",
+      sourceRoot: "/test/path",
+      previous: { version: "1.0.0", sha: "a".repeat(40), branch: "main" },
+    };
+    const appActive = {
+      ...prepared,
+      phase: "app-active",
+      target: { version: "1.0.1", sha: "b".repeat(40) },
+    };
+    const signerActive = { ...appActive, phase: "signer-active" };
+    const gatewayVerified = { ...signerActive, phase: "gateway-verified" };
+    isLocalSourceSignerConfigured.mockResolvedValue(true);
+    serviceLoaded.mockResolvedValue(true);
+    probeGateway.mockResolvedValue({
+      ok: true,
+      error: null,
+      server: { version: "1.0.1", runtimeSource: "source-checkout" },
+    });
+    prepareLocalSourcePairedUpdate.mockResolvedValue(prepared);
+    markLocalSourceAppActive.mockResolvedValue(appActive);
+    activateLocalSourceSigner.mockResolvedValue(signerActive);
+    markLocalSourceGatewayVerified.mockResolvedValue(gatewayVerified);
+    vi.mocked(runGatewayUpdate).mockResolvedValue(
+      makeOkUpdateResult({
+        root: "/test/path",
+        before: { version: "1.0.0", sha: "a".repeat(40) },
+        after: { version: "1.0.1", sha: "b".repeat(40) },
+      }),
+    );
+
+    await updateCommand({});
+
+    expect(prepareLocalSourcePairedUpdate).toHaveBeenCalled();
+    expect(activateLocalSourceSigner).toHaveBeenCalledWith(
+      expect.objectContaining({ journal: appActive }),
+    );
+    expect(verifyLocalSourceSigner).toHaveBeenCalledWith(
+      expect.objectContaining({ journal: signerActive }),
+    );
+    expect(markLocalSourceGatewayVerified).toHaveBeenCalledWith(signerActive, process.env);
+    expect(commitLocalSourcePairedUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ journal: gatewayVerified }),
+    );
+    expect(rollbackLocalSourcePairedUpdate).not.toHaveBeenCalled();
+    expect(verifyLocalSourceSigner.mock.invocationCallOrder[0]).toBeLessThan(
+      commitLocalSourcePairedUpdate.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("rolls back the exact source pair when post-restart signer health fails", async () => {
+    const prepared = {
+      phase: "prepared",
+      sourceRoot: "/test/path",
+      previous: { version: "1.0.0", sha: "a".repeat(40), branch: "main" },
+    };
+    const appActive = {
+      ...prepared,
+      phase: "app-active",
+      target: { version: "1.0.1", sha: "b".repeat(40) },
+    };
+    const signerActive = { ...appActive, phase: "signer-active" };
+    isLocalSourceSignerConfigured.mockResolvedValue(true);
+    serviceLoaded.mockResolvedValue(true);
+    probeGateway.mockResolvedValue({
+      ok: true,
+      error: null,
+      server: { version: "1.0.1", runtimeSource: "source-checkout" },
+    });
+    prepareLocalSourcePairedUpdate.mockResolvedValue(prepared);
+    markLocalSourceAppActive.mockResolvedValue(appActive);
+    activateLocalSourceSigner.mockResolvedValue(signerActive);
+    verifyLocalSourceSigner.mockRejectedValue(new Error("signer mismatch"));
+    vi.mocked(runGatewayUpdate).mockResolvedValue(
+      makeOkUpdateResult({
+        root: "/test/path",
+        before: { version: "1.0.0", sha: "a".repeat(40) },
+        after: { version: "1.0.1", sha: "b".repeat(40) },
+      }),
+    );
+
+    await updateCommand({});
+
+    expect(rollbackLocalSourcePairedUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ journal: signerActive }),
+    );
+    expect(commitLocalSourcePairedUpdate).not.toHaveBeenCalled();
+    expect(defaultRuntime.exit).toHaveBeenCalledWith(1);
   });
 
   it("skips plugin update discovery when no plugins are installed and reports stage timing", async () => {

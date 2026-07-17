@@ -74,7 +74,7 @@ export async function connectWalletStandardAccount(params?: {
   const wallets = getWallets().get().filter(isCompatibleWallet);
   if (wallets.length === 0) {
     throw new Error(
-      "No compatible Solana wallet was found. Install a Wallet Standard wallet and connect its hardware-backed account.",
+      "No compatible Solana wallet was found. Install a Wallet Standard wallet and connect the account you intend to use. For reserve funds, use and verify a hardware-backed account on its device.",
     );
   }
   const alreadyMatching = expectedAddress

@@ -258,8 +258,8 @@ export async function runOnboardingWizard(
     return next;
   };
   const jupiterApiKeyEnvKey = "FASED_JUPITER_API_KEY";
-  const jupiterTriggerApiBaseUrlEnvKey = "FASED_JUPITER_TRIGGER_API_BASE_URL";
-  const readJupiterLimitOrderApiKey = (): string =>
+  const legacyJupiterTriggerApiBaseUrlEnvKey = "FASED_JUPITER_TRIGGER_API_BASE_URL";
+  const readJupiterSwapApiKey = (): string =>
     String(
       process.env[jupiterApiKeyEnvKey] ??
         nextConfig.env?.vars?.[jupiterApiKeyEnvKey] ??
@@ -267,32 +267,26 @@ export async function runOnboardingWizard(
         nextConfig.env?.vars?.JUPITER_API_KEY ??
         "",
     ).trim();
-  const readJupiterTriggerApiBaseUrl = (): string =>
-    String(
-      process.env[jupiterTriggerApiBaseUrlEnvKey] ??
-        nextConfig.env?.vars?.[jupiterTriggerApiBaseUrlEnvKey] ??
-        "",
-    ).trim();
-  const promptAndStoreJupiterLimitOrders = async (): Promise<boolean> => {
-    const existingKey = readJupiterLimitOrderApiKey();
+  const promptAndStoreJupiterSwapApi = async (): Promise<boolean> => {
+    const existingKey = readJupiterSwapApiKey();
     const enable = await prompter.confirm({
       message: existingKey
-        ? "Keep Jupiter wallet-action support enabled?"
-        : "Enable Jupiter support for policy-gated Agent wallet actions?",
+        ? "Keep Gateway Jupiter Swap API access enabled?"
+        : "Enable Gateway Jupiter Swap API access? Trigger credentials remain signer-owned.",
       initialValue: Boolean(existingKey),
     });
     if (!enable) {
       nextConfig = setConfigEnvVar(nextConfig, jupiterApiKeyEnvKey, undefined);
-      nextConfig = setConfigEnvVar(nextConfig, jupiterTriggerApiBaseUrlEnvKey, undefined);
       delete process.env[jupiterApiKeyEnvKey];
-      delete process.env[jupiterTriggerApiBaseUrlEnvKey];
       await prompter.note(
-        "Jupiter wallet-action support disabled. Other approved wallet actions still use the normal wallet flow.",
-        "Wallet actions",
+        "Gateway Jupiter Swap API access disabled. Native signer Trigger configuration is unchanged.",
+        "Jupiter swaps",
       );
       return false;
     }
-    const keyPrompt = existingKey ? "Jupiter API key (blank keeps current)" : "Jupiter API key";
+    const keyPrompt = existingKey
+      ? "Jupiter Swap API key (blank keeps current)"
+      : "Jupiter Swap API key";
     const keyInput = (
       typeof prompter.secret === "function"
         ? await prompter.secret({
@@ -308,30 +302,18 @@ export async function runOnboardingWizard(
     ).trim();
     const effectiveKey = keyInput || existingKey;
     if (!effectiveKey) {
-      throw new Error("Jupiter API key is required to enable Jupiter wallet-action support.");
+      throw new Error("Jupiter API key is required to enable Gateway swap crafting.");
     }
     nextConfig = setConfigEnvVar(nextConfig, jupiterApiKeyEnvKey, effectiveKey);
     process.env[jupiterApiKeyEnvKey] = effectiveKey;
 
-    const existingBaseUrl = readJupiterTriggerApiBaseUrl();
-    if (existingBaseUrl) {
-      const baseUrlInput = (
-        await prompter.text({
-          message: "Jupiter Trigger API base URL (blank keeps current)",
-          initialValue: existingBaseUrl,
-        })
-      ).trim();
-      const effectiveBaseUrl = baseUrlInput || existingBaseUrl;
-      nextConfig = setConfigEnvVar(nextConfig, jupiterTriggerApiBaseUrlEnvKey, effectiveBaseUrl);
-      process.env[jupiterTriggerApiBaseUrlEnvKey] = effectiveBaseUrl;
-    }
-
     await prompter.note(
       [
-        "Jupiter wallet-action support enabled for Agent wallet actions.",
-        `${jupiterApiKeyEnvKey} is stored in local config env vars and is never printed in chat.`,
+        "Gateway Jupiter Swap API access enabled for Agent wallet swap crafting.",
+        `${jupiterApiKeyEnvKey} is stored in Gateway config for swaps only and is never printed in chat.`,
+        "Jupiter Trigger credentials and production routing stay inside fased-signerd.",
       ].join("\n"),
-      "Wallet actions",
+      "Jupiter swaps",
     );
     return true;
   };
@@ -858,7 +840,8 @@ export async function runOnboardingWizard(
   const explicitHostProfileRequested = requestedHostProfile !== undefined;
   const hostedProfileUnavailableNote = [
     "This session cannot run hosting security setup.",
-    `Rerun ${formatCliCommand("./install.sh")} from root on the VPS and choose a hosting profile there.`,
+    "Start from the provider root console with the exact tagged, attested Hosting command and --release vX.Y.Z.",
+    "Never run the app-owned checkout with sudo or as root.",
   ].join("\n");
   const hostProfile: HostSetupProfile =
     opts.mode === "remote"
@@ -1072,6 +1055,8 @@ export async function runOnboardingWizard(
   const workspaceDir = resolveUserPath(workspaceInput.trim() || DEFAULT_WORKSPACE);
 
   let nextConfig: FasedAgentConfig = applyOnboardingLocalWorkspaceConfig(baseConfig, workspaceDir);
+  nextConfig = setConfigEnvVar(nextConfig, legacyJupiterTriggerApiBaseUrlEnvKey, undefined);
+  delete process.env[legacyJupiterTriggerApiBaseUrlEnvKey];
   nextConfig = normalizeHostedWalletPaths(nextConfig, process.env);
 
   const authChoice = opts.authChoice;
@@ -1236,18 +1221,18 @@ export async function runOnboardingWizard(
       let addAnotherWallet = true;
       while (addAnotherWallet) {
         const setupMode = await prompter.select<
-          "self-hosted" | "manage-self-hosted" | "limit-orders" | "skip"
+          "self-hosted" | "manage-self-hosted" | "jupiter-swaps" | "skip"
         >({
           message: "Wallet setup action",
           options: [
             { value: "self-hosted", label: "Create wallet" },
             { value: "manage-self-hosted", label: "Manage wallet" },
             {
-              value: "limit-orders",
-              label: "Limit orders",
-              hint: readJupiterLimitOrderApiKey()
-                ? "Jupiter key configured"
-                : "Enable Jupiter Trigger limit orders for Agent wallets",
+              value: "jupiter-swaps",
+              label: "Jupiter swaps",
+              hint: readJupiterSwapApiKey()
+                ? "Gateway swap key configured"
+                : "Optional API key for Gateway swap crafting; Trigger is signer-owned",
             },
             {
               value: "skip",
@@ -1261,8 +1246,8 @@ export async function runOnboardingWizard(
           break;
         }
 
-        if (setupMode === "limit-orders") {
-          await promptAndStoreJupiterLimitOrders();
+        if (setupMode === "jupiter-swaps") {
+          await promptAndStoreJupiterSwapApi();
           addAnotherWallet = await prompter.confirm({
             message: "Run another wallet setup action?",
             initialValue: false,
@@ -1390,6 +1375,7 @@ export async function runOnboardingWizard(
               currentValue: configuredSolanaRpcUrl,
             });
             let signerNetworkVersion: number | undefined;
+            let signerNetworkRootCommand: string | undefined;
             if (targetWallet.providerId === "local-socket-signer") {
               const effectiveEnv = {
                 ...process.env,
@@ -1406,11 +1392,20 @@ export async function runOnboardingWizard(
                   hostProfile === "hosting" ? undefined : resolveSignerdBinaryPath(effectiveEnv),
               });
               signerNetworkVersion = network.version;
+              signerNetworkRootCommand = network.rootCommand;
             } else {
               await restartLocalSocketSigner(ensureWalletStateDir(process.env).rootDir);
             }
             await prompter.note(
-              `Updated Solana RPC for ${targetWallet.name} (${walletId})${signerNetworkVersion ? `; signer network version ${signerNetworkVersion} is ready` : ""}.`,
+              [
+                `Updated the app-side Solana RPC setting for ${targetWallet.name} (${walletId})${signerNetworkVersion ? `; signer network version ${signerNetworkVersion} is ready` : "."}`,
+                ...(signerNetworkRootCommand
+                  ? [
+                      "The hosted signer was not changed because the app has no root channel. Activate the RPC from a root-owned file:",
+                      signerNetworkRootCommand,
+                    ]
+                  : []),
+              ].join("\n"),
               "Wallet setup",
             );
             addAnotherWallet = await prompter.confirm({
@@ -1738,6 +1733,23 @@ export async function runOnboardingWizard(
                 throw err;
               }
             }
+            if (hostProfile === "hosting") {
+              const nativeWalletId = (walletId ?? walletPurpose)
+                .trim()
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, "_")
+                .replace(/^_+|_+$/g, "");
+              await prompter.note(
+                [
+                  "The wallet key was created inside the root-managed signer with deny-all policy.",
+                  "The Gateway has no sudo or root control socket, so RPC activation is a separate host-administrator step.",
+                  "From a provider/root console, copy the installed network template to a root-owned mode-0600 file, set the exact RPC URLs, then run:",
+                  `/usr/local/sbin/fased-signer-network --wallet-id ${nativeWalletId} --network-file /root/fased-network.json`,
+                  "Signing stays disabled until network activation, owner enrollment, and an explicit positive-cap policy all succeed.",
+                ].join("\n"),
+                "Hosted wallet owner handoff",
+              );
+            }
           }
           walletCeremonyEvents.push({
             mode,
@@ -1910,7 +1922,7 @@ export async function runOnboardingWizard(
             }`,
           ),
           noteBullet(
-            `Jupiter wallet actions: ${readJupiterLimitOrderApiKey() ? "configured" : "not configured"}`,
+            `Gateway Jupiter swaps: ${readJupiterSwapApiKey() ? "configured" : "not configured"}; Trigger: signer-owned configuration`,
           ),
         ];
         const rpcKeys = Array.from(

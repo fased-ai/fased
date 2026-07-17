@@ -324,6 +324,14 @@ for compose_file in "${COMPOSE_FILES[@]}"; do
   COMPOSE_HINT+=" -f ${compose_file}"
 done
 
+# This is the fresh-install/onboarding path. Rebuilding or pulling over an
+# existing signer here would start a possibly schema-migrating binary without
+# the offline rollback snapshot required by scripts/docker-signer-update.sh.
+EXISTING_SIGNER_CONTAINER="$(docker compose "${COMPOSE_ARGS[@]}" ps -a -q fased-signerd)"
+if [[ -n "$EXISTING_SIGNER_CONTAINER" ]]; then
+  fail "An existing Docker signer was detected. Do not rerun docker-setup.sh for an update; use scripts/docker-signer-update.sh with an immutable target image and offline snapshot directory."
+fi
+
 ENV_FILE="$ROOT_DIR/.env"
 upsert_env() {
   local file="$1"

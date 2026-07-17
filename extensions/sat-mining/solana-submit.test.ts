@@ -1,5 +1,8 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { PublicKey, SystemProgram } from "@solana/web3.js";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
   loadConfig,
@@ -86,6 +89,7 @@ import {
   submitSatCloseResolvedCycleRegistryPage,
   submitSatCloseResolvedMinerCycleState,
   resolveSatValidatorAuthority,
+  runWithSatSubmissionWorkflow,
   submitSatDepositMinerCapital,
   submitSatCommitCycle,
   submitSatDistributeCyclePage,
@@ -214,6 +218,8 @@ function findAta(owner: PublicKey, mint: PublicKey): string {
 }
 
 describe("SAT cycle transaction builders", () => {
+  let stateDir: string;
+
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.FASED_SAT_PROGRAM_ID = SAT_PROGRAM_ID_TEXT;
@@ -221,6 +227,8 @@ describe("SAT cycle transaction builders", () => {
     process.env.FASED_SAT_MINT_ADDRESS = SAT_MINT_ADDRESS_TEXT;
     process.env.FASED_SAT_MINT_PROGRAM_ID = SAT_MINT_PROGRAM_ID_TEXT;
     process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET = "/tmp/fased-test-signer.sock";
+    stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "fased-sat-submission-test-"));
+    process.env.FASED_STATE_DIR = stateDir;
     readWalletProviderRegistry.mockImplementation(() => ({
       defaultWalletId: "solana-1",
       wallets: [
@@ -246,6 +254,11 @@ describe("SAT cycle transaction builders", () => {
       },
     });
     configureLocalSignerMock();
+  });
+
+  afterEach(() => {
+    delete process.env.FASED_STATE_DIR;
+    fs.rmSync(stateDir, { recursive: true, force: true });
   });
 
   it("defaults init miner capital authority to the configured signer address", async () => {
@@ -301,6 +314,7 @@ describe("SAT cycle transaction builders", () => {
   it("reconciles the same durable request after an ambiguous execute transport result", async () => {
     const healthySignerCall = callLocalSocketSigner.getMockImplementation();
     let durableRequestId = "";
+    let retrying = false;
     callLocalSocketSigner.mockImplementation(
       async (socketPath: string, payload: { op?: string; request?: { requestId?: string } }) => {
         if (payload.op === "v2.execute") {
@@ -309,6 +323,13 @@ describe("SAT cycle transaction builders", () => {
         }
         if (payload.op === "v2.operation.get" || payload.op === "v2.operation.reconcile") {
           expect(payload.request?.requestId).toBe(durableRequestId);
+          if (retrying) {
+            return {
+              requestId: durableRequestId,
+              state: "confirmed",
+              signature: "ambiguous-sat-signature",
+            };
+          }
           return {
             requestId: durableRequestId,
             state: "unknown",
@@ -325,10 +346,14 @@ describe("SAT cycle transaction builders", () => {
 
     await expect(
       submitSatDepositMinerCapital({} as never, { lamports: 250_000_000 }),
+    ).rejects.toThrow(/remains unknown.*unresolved/);
+    retrying = true;
+    await expect(
+      submitSatDepositMinerCapital({} as never, { lamports: 250_000_000 }),
     ).resolves.toMatchObject({
       txHash: "ambiguous-sat-signature",
-      signerState: "unknown",
-      requestId: expect.stringMatching(/^sat-[0-9a-f-]{36}$/),
+      signerState: "confirmed",
+      requestId: durableRequestId,
     });
     expect(callLocalSocketSigner.mock.calls.map((call) => call[1]?.op)).toEqual([
       "v2.wallet.get",
@@ -337,6 +362,148 @@ describe("SAT cycle transaction builders", () => {
       "v2.execute",
       "v2.operation.get",
       "v2.operation.reconcile",
+      "v2.wallet.get",
+      "v2.capabilities",
+      "v2.policy.get",
+      "v2.operation.get",
+    ]);
+    expect(
+      callLocalSocketSigner.mock.calls.filter((call) => call[1]?.op === "v2.execute"),
+    ).toHaveLength(1);
+  });
+
+  it("never re-executes when an unknown caller record regresses to signer reserved", async () => {
+    const healthySignerCall = callLocalSocketSigner.getMockImplementation();
+    let durableRequestId = "";
+    let retrying = false;
+    callLocalSocketSigner.mockImplementation(
+      async (socketPath: string, payload: { op?: string; request?: { requestId?: string } }) => {
+        if (payload.op === "v2.execute") {
+          durableRequestId = String(payload.request?.requestId ?? "");
+          throw new Error("socket closed after possible broadcast");
+        }
+        if (payload.op === "v2.operation.get") {
+          expect(payload.request?.requestId).toBe(durableRequestId);
+          if (retrying) {
+            return { requestId: durableRequestId, state: "reserved" };
+          }
+          throw new Error("signer lookup unavailable");
+        }
+        if (!healthySignerCall) {
+          throw new Error("healthy signer mock is unavailable");
+        }
+        return await healthySignerCall(socketPath, payload);
+      },
+    );
+
+    const submit = async () =>
+      await runWithSatSubmissionWorkflow(
+        "manual:deposit:ambiguous-without-signature",
+        async () => await submitSatDepositMinerCapital({} as never, { lamports: 250_000_000 }),
+      );
+    await expect(submit()).rejects.toThrow(/remains unknown.*unresolved/);
+    retrying = true;
+    await expect(submit()).rejects.toThrow(/remains unknown.*regressed to reserved/);
+    expect(
+      callLocalSocketSigner.mock.calls.filter((call) => call[1]?.op === "v2.execute"),
+    ).toHaveLength(1);
+  });
+
+  it("returns the exact confirmed operation for a repeated idempotency key without re-executing", async () => {
+    const healthySignerCall = callLocalSocketSigner.getMockImplementation();
+    let requestId = "";
+    callLocalSocketSigner.mockImplementation(
+      async (socketPath: string, payload: { op?: string; request?: { requestId?: string } }) => {
+        if (payload.op === "v2.execute") {
+          requestId = String(payload.request?.requestId ?? "");
+          return { requestId, state: "confirmed", signature: "stable-confirmed-signature" };
+        }
+        if (payload.op === "v2.operation.get") {
+          expect(payload.request?.requestId).toBe(requestId);
+          return { requestId, state: "confirmed", signature: "stable-confirmed-signature" };
+        }
+        if (!healthySignerCall) {
+          throw new Error("healthy signer mock is unavailable");
+        }
+        return await healthySignerCall(socketPath, payload);
+      },
+    );
+
+    const submit = async () =>
+      await runWithSatSubmissionWorkflow(
+        "manual:deposit:stable-key",
+        async () => await submitSatDepositMinerCapital({} as never, { lamports: 250_000_000 }),
+      );
+    const first = await submit();
+    const repeated = await submit();
+
+    expect(repeated).toEqual(first);
+    expect(
+      callLocalSocketSigner.mock.calls.filter((call) => call[1]?.op === "v2.execute"),
+    ).toHaveLength(1);
+    expect(
+      callLocalSocketSigner.mock.calls.filter((call) => call[1]?.op === "v2.operation.get"),
+    ).toHaveLength(1);
+  });
+
+  it("fails closed when a stable workflow key is reused with a different deposit intent", async () => {
+    await runWithSatSubmissionWorkflow(
+      "manual:deposit:collision",
+      async () => await submitSatDepositMinerCapital({} as never, { lamports: 250_000_000 }),
+    );
+
+    await expect(
+      runWithSatSubmissionWorkflow(
+        "manual:deposit:collision",
+        async () => await submitSatDepositMinerCapital({} as never, { lamports: 500_000_000 }),
+      ),
+    ).rejects.toThrow(/idempotency collision/);
+    expect(
+      callLocalSocketSigner.mock.calls.filter((call) => call[1]?.op === "v2.execute"),
+    ).toHaveLength(1);
+  });
+
+  it("serializes concurrent exact workers and broadcasts only once", async () => {
+    const healthySignerCall = callLocalSocketSigner.getMockImplementation();
+    let requestId = "";
+    let releaseExecute!: () => void;
+    const executeGate = new Promise<void>((resolve) => {
+      releaseExecute = resolve;
+    });
+    callLocalSocketSigner.mockImplementation(
+      async (socketPath: string, payload: { op?: string; request?: { requestId?: string } }) => {
+        if (payload.op === "v2.execute") {
+          requestId = String(payload.request?.requestId ?? "");
+          await executeGate;
+          return { requestId, state: "confirmed", signature: "concurrent-signature" };
+        }
+        if (payload.op === "v2.operation.get") {
+          return { requestId, state: "confirmed", signature: "concurrent-signature" };
+        }
+        if (!healthySignerCall) {
+          throw new Error("healthy signer mock is unavailable");
+        }
+        return await healthySignerCall(socketPath, payload);
+      },
+    );
+    const submit = async () =>
+      await runWithSatSubmissionWorkflow(
+        "worker:cycle:52:commit",
+        async () => await submitSatDepositMinerCapital({} as never, { lamports: 250_000_000 }),
+      );
+
+    const first = submit();
+    await vi.waitFor(() => {
+      expect(
+        callLocalSocketSigner.mock.calls.filter((call) => call[1]?.op === "v2.execute"),
+      ).toHaveLength(1);
+    });
+    const concurrent = submit();
+    releaseExecute();
+
+    await expect(Promise.all([first, concurrent])).resolves.toEqual([
+      expect.objectContaining({ txHash: "concurrent-signature" }),
+      expect.objectContaining({ txHash: "concurrent-signature" }),
     ]);
     expect(
       callLocalSocketSigner.mock.calls.filter((call) => call[1]?.op === "v2.execute"),
@@ -378,7 +545,7 @@ describe("SAT cycle transaction builders", () => {
         },
       },
     });
-    expect(executeEnvelope?.request?.requestId).toMatch(/^sat-[0-9a-f-]{36}$/);
+    expect(executeEnvelope?.request?.requestId).toMatch(/^sat-v2-[0-9a-f]{48}$/);
     expect(
       callLocalSocketSigner.mock.calls.some((call) =>
         ["sendSolanaInstruction", "sendSolanaInstructions"].includes(call[1]?.op),

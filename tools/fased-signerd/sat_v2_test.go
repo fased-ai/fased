@@ -150,6 +150,9 @@ func TestSignerV2TypedSATDepositNormalizesAmountProgramsAndProgramBoundOperation
 	if normalized.PolicyOperation != "sat.depositMinerCapital@"+program.String() {
 		t.Fatalf("SAT policy operation is not program-bound: %s", normalized.PolicyOperation)
 	}
+	if normalized.RequiredRole != "mining" {
+		t.Fatalf("SAT mining intent is not permanently bound to the Mining role: %#v", normalized)
+	}
 	capital := satTestPDA(t, program, []byte("sat_miner_capital_state"), wallet[:])
 	if normalized.Destination != capital.String() {
 		t.Fatalf("SAT deposit policy destination is not the exact miner capital PDA: %s", normalized.Destination)
@@ -170,6 +173,13 @@ func TestSignerV2TypedSATDepositNormalizesAmountProgramsAndProgramBoundOperation
 	}
 	if _, err := policyAssetForIntentV2(policy, normalized); err != nil {
 		t.Fatalf("program-bound policy should allow exact SAT deposit: %v", err)
+	}
+	for _, role := range []string{"agent", "vault"} {
+		crossRole := policy
+		crossRole.Role = role
+		if _, err := policyAssetForIntentV2(crossRole, normalized); err == nil || !strings.Contains(err.Error(), "cannot authorize mining") {
+			t.Fatalf("%s role authorized a Mining SAT operation despite exact policy grants: %v", role, err)
+		}
 	}
 	policy.Operations = []string{"sat.depositMinerCapital@" + solana.NewWallet().PublicKey().String()}
 	if _, err := policyAssetForIntentV2(policy, normalized); err == nil || !strings.Contains(err.Error(), "denies operation") {
@@ -196,6 +206,13 @@ func TestSignerV2TypedSATActiveCommitUsesCapitalExposureCap(t *testing.T) {
 	}
 	if normalized.Asset != "sat:capital:lamports" || normalized.Amount.Uint64() != 250_000_000 || normalized.Destination != capital.String() {
 		t.Fatalf("active commit must be capped as exact capital exposure: asset=%s amount=%s destination=%s", normalized.Asset, normalized.Amount, normalized.Destination)
+	}
+	zero := intent
+	zeroData := append([]byte(nil), data...)
+	binary.LittleEndian.PutUint64(zeroData[1:], 0)
+	zero.DataBase64 = base64.StdEncoding.EncodeToString(zeroData)
+	if _, err := normalizeSignerIntentForWalletV2(zero, &wallet); err == nil || !strings.Contains(err.Error(), "must be positive") {
+		t.Fatalf("zero active-commit exposure was accepted into durable reservations: %v", err)
 	}
 }
 
@@ -299,6 +316,11 @@ func TestSignerV2TypedSATBondValidatesMintATAsAndCleanupHasNoRawFallback(t *test
 	}
 	if _, err := policyAssetForIntentV2(agentPolicy, normalized); err == nil || !strings.Contains(err.Error(), "cannot authorize") {
 		t.Fatalf("non-Vault role authorized a typed bond mutation: %v", err)
+	}
+	miningPolicy := agentPolicy
+	miningPolicy.Role = "mining"
+	if _, err := policyAssetForIntentV2(miningPolicy, normalized); err == nil || !strings.Contains(err.Error(), "cannot authorize vault") {
+		t.Fatalf("Mining role authorized a Vault bond mutation despite exact policy grants: %v", err)
 	}
 	malformed := cloneSATTestIntent(t, intent)
 	malformed.Keys[4].Pubkey = solana.NewWallet().PublicKey().String()

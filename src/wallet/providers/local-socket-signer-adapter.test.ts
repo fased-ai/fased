@@ -7,6 +7,7 @@ import {
   assertSecureLocalSignerSocket,
   callLocalSocketSigner,
   LocalSocketSignerAdapter,
+  probeLocalSocketSignerHealth,
   requireLocalSocketSignerPath,
 } from "./local-socket-signer-adapter.js";
 
@@ -87,6 +88,42 @@ async function createSignerServer(params: {
 }
 
 describe("callLocalSocketSigner", () => {
+  it("preserves only sanitized signer credential readiness in health", async () => {
+    const signer = await createSignerServer({
+      prefix: "fased-signer-sanitized-health-",
+      handle: () => ({
+        details: "fased-signerd protocol-v2 ready",
+        release: {
+          version: "dev",
+          commit: "unknown",
+          buildInputDigest: "unknown",
+          development: true,
+        },
+        webAuthn: {
+          configured: true,
+          credentialCount: 2,
+          credentialVersion: 7,
+          ready: true,
+        },
+        jupiter: { triggerConfigured: true },
+      }),
+    });
+    try {
+      const health = await probeLocalSocketSignerHealth(signer.socketPath);
+      expect(health).toMatchObject({
+        ok: true,
+        webAuthn: { credentialCount: 2, credentialVersion: 7, ready: true },
+        jupiter: { triggerConfigured: true },
+      });
+      expect(JSON.stringify(health)).not.toMatch(/api.?key|jwt|secret|\.key/iu);
+
+      const providerHealth = await new LocalSocketSignerAdapter(signer.socketPath).health();
+      expect(providerHealth.details).toContain("jupiter-trigger=configured");
+    } finally {
+      await signer.close();
+    }
+  });
+
   it("times out bounded signer calls", async () => {
     const dir = await createSocketDir("fased-signer-timeout-");
     const socketPath = path.join(dir, "signer.sock");
@@ -154,8 +191,15 @@ describe("LocalSocketSignerAdapter protocol-v2 sends", () => {
     keystoreType: "signer-owned-v2",
     chains: ["solana"] as const,
     ready: true,
+    release: {
+      version: "dev",
+      commit: "unknown",
+      buildInputDigest: "unknown",
+      development: true,
+    },
     capabilities: {
       protocol: { current: 2 as const, min: 2, max: 2 },
+      nativeFeeReservationLamports: 5_000_000 as const,
       intentTypes: ["solana.nativeTransfer", "solana.splTransferChecked"],
       operationStates: ["reserved", "broadcast", "confirmed", "failed", "unknown"],
       features: [
@@ -163,6 +207,8 @@ describe("LocalSocketSignerAdapter protocol-v2 sends", () => {
         "policyHashes",
         "applicationPolicyTightening",
         "durableCaps",
+        "atomicMultiAssetCaps",
+        "signerControlledNativeFeeCaps",
         "atomicIdempotency",
         "ambiguousBroadcastReconciliation",
         "signerOwnedKeys",
@@ -171,9 +217,11 @@ describe("LocalSocketSignerAdapter protocol-v2 sends", () => {
         "signerOwnedWebAuthn",
         "singleUseReviewedAuthorization",
         "typedJupiterSemantics",
+        "signerOwnedJupiterTriggerV2",
+        "signerOwnedJupiterTriggerHistory",
         "signerOwnedReviewPrepareExecute",
         "exactPreparedTransactions",
-        "verifiedAddressLookupTables",
+        "legacyOnlyJupiterTransactions",
       ],
     },
     policies: [],
@@ -505,7 +553,7 @@ describe("LocalSocketSignerAdapter protocol-v2 sends", () => {
           chain: "solana",
           requestId: "request-raw",
           serializedTxBase64: "AQID",
-        }),
+        } as never),
       ).rejects.toMatchObject({ code: "wallet_provider_invalid_config" });
       expect((adapter as unknown as Record<string, unknown>).prepareTx).toBeUndefined();
       expect((adapter as unknown as Record<string, unknown>).signTx).toBeUndefined();
@@ -776,6 +824,61 @@ describe("LocalSocketSignerAdapter protocol-v2 sends", () => {
           },
         },
       ]);
+    } finally {
+      await signer.close();
+    }
+  });
+
+  it("reads only sanitized signer-owned Jupiter Trigger history", async () => {
+    const history = {
+      orders: [
+        {
+          orderId: "order-1",
+          orderState: "open",
+          orderType: "single",
+          inputMint: "So11111111111111111111111111111111111111112",
+          initialInputAmount: "100",
+          remainingInputAmount: "90",
+          outputMint: "Vote111111111111111111111111111111111111111",
+          triggerMint: "So11111111111111111111111111111111111111112",
+          condition: "below",
+          targetPriceUsd: "120.5",
+          slippageBps: 100,
+          expiresAt: "2026-07-20T00:00:00.000Z",
+          cancel: {
+            expectedOrderState: "open",
+            refundMint: "So11111111111111111111111111111111111111112",
+            refundAmount: "90",
+            destinationTokenAccount: "11111111111111111111111111111111",
+            program: "11111111111111111111111111111111",
+          },
+        },
+      ],
+    };
+    const signer = await createSignerServer({
+      prefix: "fased-signer-v2-trigger-history-",
+      handle: (request) => {
+        if (request.op === "v2.capabilities") {
+          return capabilities;
+        }
+        if (request.op === "v2.jupiter.trigger.history") {
+          return history;
+        }
+        throw new Error(`unexpected op=${String(request.op)}`);
+      },
+    });
+    try {
+      const adapter = new LocalSocketSignerAdapter(signer.socketPath, {
+        scopedWalletId: "agent-wallet",
+      });
+      await expect(
+        adapter.listJupiterTriggerOrders({ walletId: "agent-wallet", state: "active" }),
+      ).resolves.toEqual(history);
+      expect(signer.requests).toEqual([
+        { op: "v2.capabilities" },
+        { op: "v2.jupiter.trigger.history", walletId: "agent-wallet" },
+      ]);
+      expect(JSON.stringify(history)).not.toMatch(/jwt|apiKey|vault|transaction|requestId/i);
     } finally {
       await signer.close();
     }

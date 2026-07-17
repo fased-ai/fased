@@ -106,6 +106,41 @@ export type WriteOAuthCredentialsOptions = {
   syncSiblingAgents?: boolean;
 };
 
+function assertValidOAuthCredentialInput(
+  provider: string,
+  creds: OAuthCredentials,
+): asserts creds is OAuthCredentials {
+  if (typeof provider !== "string" || !provider.trim()) {
+    throw new Error("OAuth credential provider must be a non-empty string.");
+  }
+  if (
+    !creds ||
+    typeof creds !== "object" ||
+    typeof creds.access !== "string" ||
+    !creds.access.trim() ||
+    typeof creds.refresh !== "string" ||
+    !creds.refresh.trim() ||
+    typeof creds.expires !== "number" ||
+    !Number.isFinite(creds.expires)
+  ) {
+    throw new Error("OAuth credentials must include valid access, refresh, and expiry fields.");
+  }
+  for (const field of ["email", "clientId", "enterpriseUrl", "projectId", "accountId"] as const) {
+    if (creds[field] !== undefined && typeof creds[field] !== "string") {
+      throw new Error(`OAuth credential ${field} must be a string when provided.`);
+    }
+  }
+  if (
+    creds.availableModelIds !== undefined &&
+    (!Array.isArray(creds.availableModelIds) ||
+      !creds.availableModelIds.every(
+        (modelId) => typeof modelId === "string" && modelId.trim().length > 0,
+      ))
+  ) {
+    throw new Error("OAuth credential availableModelIds must contain non-empty strings.");
+  }
+}
+
 /** Resolve real path, returning null if the target doesn't exist. */
 function safeRealpathSync(dir: string): string | null {
   try {
@@ -160,18 +195,20 @@ export async function writeOAuthCredentials(
   agentDir?: string,
   options?: WriteOAuthCredentialsOptions,
 ): Promise<string> {
+  assertValidOAuthCredentialInput(provider, creds);
+  const canonicalProvider = provider.trim();
   const email =
     typeof creds.email === "string" && creds.email.trim() ? creds.email.trim() : "default";
-  const profileId = `${provider}:${email}`;
+  const profileId = `${canonicalProvider}:${email}`;
   const resolvedAgentDir = path.resolve(resolveAuthAgentDir(agentDir));
   const targetAgentDirs = options?.syncSiblingAgents
     ? resolveSiblingAgentDirs(resolvedAgentDir)
     : [resolvedAgentDir];
 
   const credential = {
-    type: "oauth" as const,
-    provider,
     ...creds,
+    type: "oauth" as const,
+    provider: canonicalProvider,
   };
 
   // Primary write must succeed — let it throw on failure.

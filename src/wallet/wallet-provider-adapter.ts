@@ -56,7 +56,6 @@ export type WalletProviderPrepareTxRequest = {
   destination?: string;
   allowSplInstructions?: string[];
   memo?: string;
-  serializedTxBase64?: string;
   preparedId?: string;
 };
 
@@ -87,11 +86,8 @@ export type WalletProviderSendTxResult = {
 
 export type WalletProviderJupiterIntentType =
   | "solana.jupiter.swap"
-  | "solana.jupiter.trigger.auth"
   | "solana.jupiter.trigger.create"
-  | "solana.jupiter.trigger.deposit"
-  | "solana.jupiter.trigger.cancel"
-  | "solana.jupiter.trigger.withdraw";
+  | "solana.jupiter.trigger.cancel";
 
 export type WalletProviderJupiterIntentV2 = {
   type: WalletProviderJupiterIntentType;
@@ -107,12 +103,43 @@ export type WalletProviderJupiterIntentV2 = {
     destinationTokenAccount?: string;
     programs: string[];
     trigger?: {
+      operation: "create" | "cancel";
       program: string;
-      vault?: string;
       order?: string;
-      requestId?: string;
+      triggerMint?: string;
+      condition?: "above" | "below";
+      targetPriceUsd?: string;
+      slippageBps?: number;
+      expiresAt?: string;
+      expectedOrderState: "new" | "open";
     };
   };
+};
+
+export type WalletProviderJupiterTriggerOrderV2 = {
+  orderId: string;
+  orderState: string;
+  orderType: "single";
+  inputMint: string;
+  initialInputAmount: string;
+  remainingInputAmount: string;
+  outputMint: string;
+  triggerMint: string;
+  condition: "above" | "below";
+  targetPriceUsd: string;
+  slippageBps: number;
+  expiresAt: string;
+  cancel?: {
+    expectedOrderState: "open";
+    refundMint: string;
+    refundAmount: string;
+    destinationTokenAccount: string;
+    program: string;
+  };
+};
+
+export type WalletProviderJupiterTriggerHistoryV2 = {
+  orders: WalletProviderJupiterTriggerOrderV2[];
 };
 
 export type WalletProviderTypedTransferIntentV2 =
@@ -181,7 +208,7 @@ export type WalletProviderJupiterReviewV2 = {
   nonce: string;
   semanticIntent: WalletProviderSignerIntentV2;
   walletPublicKey?: string;
-  artifactKind: "solana-transaction" | "domain-separated-message";
+  artifactKind: "solana-transaction" | "domain-separated-message" | "jupiter-trigger-state";
   artifactDigest: string;
   transaction?: WalletProviderSignerTransactionEnvelopeV2;
   messageBase64?: string;
@@ -189,6 +216,7 @@ export type WalletProviderJupiterReviewV2 = {
   stateSlot?: number;
   asset: string;
   amount: string;
+  reservations?: Array<{ asset: string; amount: string; usageBucket: string }>;
   destination: string;
   policyOperation: string;
   requiredPrograms: string[];
@@ -206,7 +234,7 @@ export type WalletProviderSignerTransactionEnvelopeV2 = {
   serializedTxBase64: string;
   programs: string[];
   writableAccounts: string[];
-  submission: "rpc" | "returnSigned";
+  submission: "rpc";
 };
 
 export type WalletProviderSignerReviewAuthorizationV2 = {
@@ -222,7 +250,7 @@ export type WalletProviderSignerReviewBindingV2 = {
   intentDigest: string;
   semanticIntent: WalletProviderSignerIntentV2;
   walletPublicKey?: string;
-  artifactKind: "solana-transaction" | "domain-separated-message";
+  artifactKind: "solana-transaction" | "domain-separated-message" | "jupiter-trigger-state";
   artifactDigest: string;
   transactionDigest?: string;
   stateDigest?: string;
@@ -258,21 +286,26 @@ export type WalletProviderSignerOperationV2 = {
   intentType: string;
   intentDigest: string;
   transactionDigest?: string;
-  signedTxBase64?: string;
   policyHash: string;
   asset: string;
   amount: string;
+  reservations?: Array<{ asset: string; amount: string; usageBucket: string }>;
   state: "reserved" | "broadcast" | "confirmed" | "failed" | "unknown";
   signature?: string;
   error?: string;
   authorizationProof?: string;
   authorizedAt?: string;
+  externalResult?: {
+    provider: "jupiter-trigger-v2";
+    action: "create" | "cancel";
+    orderId: string;
+    orderState: "open" | "cancelled";
+  };
 };
 
 export type WalletProviderJupiterExecutionV2 = {
   review: WalletProviderJupiterReviewV2;
   operation: WalletProviderSignerOperationV2;
-  signedTxBase64?: string;
   signatureBase64?: string;
   signer: string;
 };
@@ -332,7 +365,7 @@ export interface WalletProviderAdapter {
     requestId: string;
     mode: "autonomous" | "reviewed";
     intent: WalletProviderJupiterIntentV2;
-    transaction: WalletProviderSignerTransactionEnvelopeV2;
+    transaction?: WalletProviderSignerTransactionEnvelopeV2;
   }): Promise<WalletProviderJupiterReviewV2>;
   getSignerReview?(request: {
     walletId: string;
@@ -362,6 +395,15 @@ export interface WalletProviderAdapter {
     requestId: string;
     authorization?: WalletProviderSignerReviewAuthorizationV2;
   }): Promise<WalletProviderJupiterExecutionV2>;
+  executeSignerIntent?(request: {
+    walletId: string;
+    requestId: string;
+    intent: WalletProviderSignerIntentV2;
+  }): Promise<WalletProviderSignerOperationV2>;
+  listJupiterTriggerOrders?(request: {
+    walletId: string;
+    state?: "active" | "past";
+  }): Promise<WalletProviderJupiterTriggerHistoryV2>;
   getSignerOperation?(request: {
     walletId: string;
     requestId: string;

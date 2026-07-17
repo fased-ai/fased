@@ -24,8 +24,10 @@ for unattended wallet, SAT mining, or Fased Network operation.
   controls exist, but this report must not call them covered until fresh Local,
   WSL2, macOS, fresh Hosting, previous-Hosting migration, cold reboot, rollback,
   concurrent-send, ambiguous-broadcast, and Local Docker gates pass together.
-- Wallet role separation: **covered**. Agent, Mining, and Vault roles are
-  separate; generic skills must not reach Mining or Vault wallets.
+- Wallet role separation: **pending complete release validation**. Skill-side
+  Agent selection is fail-closed, but the complete signer role matrix and
+  Mining confused-deputy tests must pass before this report calls the boundary
+  covered.
 - Gateway Wallet Control Passkey: **covered at its Gateway boundary**. Mode,
   enrollment, approval, and removal have regression coverage; this is not signer
   custody authorization.
@@ -34,11 +36,15 @@ for unattended wallet, SAT mining, or Fased Network operation.
   the retired split-key/passphrase unlock model is not production custody.
 - Agent skills and wallet grants: **covered**. Skill install/allowlist is
   separate from Wallet > Skill Grants. Denied actions fail closed.
-- Tasks and automation: **covered**. Saved task definitions are separate from run
-  history; mining strategy tasks are strategy-only.
-- SAT mining runtime: **covered on devnet**. Max-capital targets, restart
-  continuity, commit downsizing, and cycle-claim recovery have regression and
-  live evidence.
+- Tasks and automation: **partial / payment-idempotency gate pending**. Saved
+  task definitions remain separate from run history and mining strategy tasks
+  are strategy-only, but concurrent/restarted settlement and marketplace
+  payment workflows must prove one durable execution before release.
+- SAT mining runtime: **pending signer-workflow idempotency validation**.
+  Max-capital, restart, commit-downsizing, and recovery behavior has regression
+  evidence, but every mining mutation still requires the complete stable
+  caller-id, ambiguous-broadcast, crash/restart, and concurrency matrix before
+  unattended operation is called covered.
 - SAT protocol maintainer: **partial / drill required**. Primary maintainer
   behavior and safe fixed-recipient lanes are documented. Standby, alert
   delivery, and cleanup backlog evidence must be rerun per deployment.

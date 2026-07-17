@@ -333,8 +333,10 @@ function resolveSignerdAssetInstallEnv(installScript: string): NodeJS.ProcessEnv
   const localReleaseBaseUrl = resolveLocalSignerdReleaseBaseUrl(installScript);
   if (localReleaseBaseUrl) {
     env.FASED_LOCAL_SIGNER_BASE_URL = localReleaseBaseUrl;
-    env.FASED_LOCAL_SIGNER_VERSION = "";
+    env.FASED_LOCAL_SIGNER_VERSION = `v${VERSION.trim().replace(/^v/, "")}`;
     env.FASED_LOCAL_SIGNER_LATEST_TAG = "";
+    env.FASED_LOCAL_SIGNER_ALLOW_UNATTESTED = "1";
+    env.FASED_LOCAL_SIGNER_FLAT_RELEASE = "1";
     return env;
   }
   const normalizedVersion = VERSION.trim().replace(/^v/, "");
@@ -1030,7 +1032,7 @@ export async function configureWalletForOnboarding(params: {
           [
             "The root-managed hosted wallet signer is unavailable or incompatible.",
             `Signer socket: ${expectedSocket}`,
-            "Run the official Hosting repair from the provider console: sudo ./install.sh --repair-hosting",
+            "Repair only from the provider root console with the exact tagged, attested Hosting release; never run the app checkout with sudo.",
             `Detail: ${error instanceof Error ? error.message : String(error)}`,
           ].join("\n"),
           { cause: error },
@@ -1051,7 +1053,7 @@ export async function configureWalletForOnboarding(params: {
         throw new Error(
           `The root-managed hosted signer did not acknowledge the required signer-v2 boundary${
             missingFeatures.length > 0 ? ` (missing: ${missingFeatures.join(", ")})` : ""
-          }. Run sudo ./install.sh --repair-hosting from the provider console.`,
+          }. Repair from the provider root console with the exact tagged, attested Hosting release; never run the app checkout with sudo.`,
         );
       }
       process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET = expectedSocket;

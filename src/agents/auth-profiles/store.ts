@@ -1,23 +1,51 @@
 import fs from "node:fs";
 import type { OAuthCredentials } from "@mariozechner/pi-ai";
 import { resolveOAuthPath } from "../../config/paths.js";
+import { coerceSecretRef, isSecretRef } from "../../config/types.secrets.js";
 import { withFileLock } from "../../infra/file-lock.js";
 import { loadJsonFile, saveJsonFile } from "../../infra/json-file.js";
 import { AUTH_STORE_LOCK_OPTIONS, AUTH_STORE_VERSION, log } from "./constants.js";
 import { syncExternalCliCredentials } from "./external-cli-sync.js";
 import { ensureAuthStoreFile, resolveAuthStorePath, resolveLegacyAuthStorePath } from "./paths.js";
-import type { AuthProfileCredential, AuthProfileStore, ProfileUsageStats } from "./types.js";
+import type {
+  AuthProfileCredential,
+  AuthProfileFailureReason,
+  AuthProfileStore,
+  ProfileUsageStats,
+} from "./types.js";
 
 type LegacyAuthStore = Record<string, AuthProfileCredential>;
-type CredentialRejectReason = "non_object" | "invalid_type" | "missing_provider";
+type CredentialRejectReason =
+  | "non_object"
+  | "invalid_type"
+  | "missing_provider"
+  | "invalid_shape"
+  | "missing_material";
 type RejectedCredentialEntry = { key: string; reason: CredentialRejectReason };
 type LoadAuthProfileStoreOptions = {
   allowKeychainPrompt?: boolean;
   readOnly?: boolean;
+  strict?: boolean;
   syncExternalCli?: boolean;
 };
 
+type StoreCoercionOptions = {
+  rejectInvalidEntries?: boolean;
+};
+
 const AUTH_PROFILE_TYPES = new Set<AuthProfileCredential["type"]>(["api_key", "oauth", "token"]);
+const AUTH_PROFILE_FAILURE_REASONS = new Set<AuthProfileFailureReason>([
+  "auth",
+  "auth_permanent",
+  "format",
+  "rate_limit",
+  "overloaded",
+  "billing",
+  "timeout",
+  "model_not_found",
+  "session_expired",
+  "unknown",
+]);
 
 const runtimeAuthStoreSnapshots = new Map<string, AuthProfileStore>();
 
@@ -121,14 +149,121 @@ function normalizeRawCredentialEntry(raw: Record<string, unknown>): Partial<Auth
   return entry as Partial<AuthProfileCredential>;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isUsableString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function isOptionalString(value: unknown): boolean {
+  return value === undefined || typeof value === "string";
+}
+
+function isOptionalFiniteNumber(value: unknown): boolean {
+  return value === undefined || (typeof value === "number" && Number.isFinite(value));
+}
+
+function isValidStringMetadata(value: unknown): boolean {
+  return (
+    value === undefined ||
+    (isRecord(value) && Object.values(value).every((entry) => typeof entry === "string"))
+  );
+}
+
+function isSupportedStoredSecretRef(value: unknown): boolean {
+  if (isSecretRef(value)) {
+    return true;
+  }
+  if (!isRecord(value)) {
+    return false;
+  }
+  const keys = Object.keys(value).toSorted();
+  // Previous releases persisted `{ source, id }`. Validate that the compatibility
+  // coercion accepts it, but preserve the raw value so secrets runtime can apply
+  // the active source-specific default provider during resolution.
+  return (
+    keys.length === 2 && keys[0] === "id" && keys[1] === "source" && coerceSecretRef(value) !== null
+  );
+}
+
+function hasValidSecretMaterial(params: { value: unknown; ref: unknown }): boolean {
+  const valueIsValid = isUsableString(params.value) || isSupportedStoredSecretRef(params.value);
+  const refIsValid = isSupportedStoredSecretRef(params.ref);
+  return valueIsValid || refIsValid;
+}
+
+function isValidCredentialShape(
+  entry: Record<string, unknown>,
+  type: AuthProfileCredential["type"],
+): CredentialRejectReason | null {
+  if (!isOptionalString(entry.email)) {
+    return "invalid_shape";
+  }
+
+  if (type === "api_key") {
+    if (
+      (entry.key !== undefined &&
+        typeof entry.key !== "string" &&
+        !isSupportedStoredSecretRef(entry.key)) ||
+      (entry.keyRef !== undefined && !isSupportedStoredSecretRef(entry.keyRef)) ||
+      !isValidStringMetadata(entry.metadata)
+    ) {
+      return "invalid_shape";
+    }
+    return hasValidSecretMaterial({ value: entry.key, ref: entry.keyRef })
+      ? null
+      : "missing_material";
+  }
+
+  if (type === "token") {
+    if (
+      (entry.token !== undefined &&
+        typeof entry.token !== "string" &&
+        !isSupportedStoredSecretRef(entry.token)) ||
+      (entry.tokenRef !== undefined && !isSupportedStoredSecretRef(entry.tokenRef)) ||
+      !isOptionalFiniteNumber(entry.expires)
+    ) {
+      return "invalid_shape";
+    }
+    return hasValidSecretMaterial({ value: entry.token, ref: entry.tokenRef })
+      ? null
+      : "missing_material";
+  }
+
+  if (
+    !isUsableString(entry.access) ||
+    !isUsableString(entry.refresh) ||
+    typeof entry.expires !== "number" ||
+    !Number.isFinite(entry.expires)
+  ) {
+    return "missing_material";
+  }
+  for (const field of ["clientId", "enterpriseUrl", "projectId", "accountId"] as const) {
+    if (!isOptionalString(entry[field])) {
+      return "invalid_shape";
+    }
+  }
+  if (
+    entry.availableModelIds !== undefined &&
+    (!Array.isArray(entry.availableModelIds) ||
+      !entry.availableModelIds.every((modelId) => isUsableString(modelId)))
+  ) {
+    return "invalid_shape";
+  }
+  return null;
+}
+
 function parseCredentialEntry(
   raw: unknown,
   fallbackProvider?: string,
+  options?: { strict?: boolean },
 ): { ok: true; credential: AuthProfileCredential } | { ok: false; reason: CredentialRejectReason } {
-  if (!raw || typeof raw !== "object") {
+  if (!isRecord(raw)) {
     return { ok: false, reason: "non_object" };
   }
-  const typed = normalizeRawCredentialEntry(raw as Record<string, unknown>);
+  const typed = normalizeRawCredentialEntry(raw);
   if (!AUTH_PROFILE_TYPES.has(typed.type as AuthProfileCredential["type"])) {
     return { ok: false, reason: "invalid_type" };
   }
@@ -136,10 +271,18 @@ function parseCredentialEntry(
   if (typeof provider !== "string" || provider.trim().length === 0) {
     return { ok: false, reason: "missing_provider" };
   }
+  const type = typed.type as AuthProfileCredential["type"];
+  if (options?.strict) {
+    const invalidReason = isValidCredentialShape(typed as Record<string, unknown>, type);
+    if (invalidReason) {
+      return { ok: false, reason: invalidReason };
+    }
+  }
   return {
     ok: true,
     credential: {
       ...typed,
+      type,
       provider,
     } as AuthProfileCredential,
   };
@@ -164,50 +307,166 @@ function warnRejectedCredentialEntries(source: string, rejected: RejectedCredent
   });
 }
 
-function coerceLegacyStore(raw: unknown): LegacyAuthStore | null {
-  if (!raw || typeof raw !== "object") {
+function coerceLegacyStore(raw: unknown, options?: StoreCoercionOptions): LegacyAuthStore | null {
+  if (!isRecord(raw)) {
     return null;
   }
-  const record = raw as Record<string, unknown>;
+  const record = raw;
   if ("profiles" in record) {
     return null;
   }
   const entries: LegacyAuthStore = {};
   const rejected: RejectedCredentialEntry[] = [];
   for (const [key, value] of Object.entries(record)) {
-    const parsed = parseCredentialEntry(value, key);
+    const parsed = parseCredentialEntry(value, key, {
+      strict: options?.rejectInvalidEntries === true,
+    });
     if (!parsed.ok) {
       rejected.push({ key, reason: parsed.reason });
       continue;
     }
     entries[key] = parsed.credential;
   }
+  if (options?.rejectInvalidEntries && rejected.length > 0) {
+    return null;
+  }
   warnRejectedCredentialEntries("auth.json", rejected);
-  return Object.keys(entries).length > 0 ? entries : null;
+  return Object.keys(entries).length > 0 || options?.rejectInvalidEntries ? entries : null;
 }
 
-function coerceAuthStore(raw: unknown): AuthProfileStore | null {
-  if (!raw || typeof raw !== "object") {
+function isValidProfileOrder(value: unknown): boolean {
+  if (value === undefined) {
+    return true;
+  }
+  if (!isRecord(value)) {
+    return false;
+  }
+  return Object.entries(value).every(
+    ([provider, profileIds]) =>
+      isUsableString(provider) &&
+      Array.isArray(profileIds) &&
+      profileIds.every((profileId) => isUsableString(profileId)),
+  );
+}
+
+function isValidLastGood(value: unknown): boolean {
+  if (value === undefined) {
+    return true;
+  }
+  if (!isRecord(value)) {
+    return false;
+  }
+  return Object.entries(value).every(
+    ([provider, profileId]) => isUsableString(provider) && isUsableString(profileId),
+  );
+}
+
+function isValidFailureCounts(value: unknown): boolean {
+  if (value === undefined) {
+    return true;
+  }
+  if (!isRecord(value)) {
+    return false;
+  }
+  return Object.entries(value).every(
+    ([reason, count]) =>
+      AUTH_PROFILE_FAILURE_REASONS.has(reason as AuthProfileFailureReason) &&
+      typeof count === "number" &&
+      Number.isFinite(count) &&
+      Number.isInteger(count) &&
+      count >= 0,
+  );
+}
+
+function isValidUsageStats(value: unknown): boolean {
+  if (value === undefined) {
+    return true;
+  }
+  if (!isRecord(value)) {
+    return false;
+  }
+  return Object.entries(value).every(([profileId, stats]) => {
+    if (!isUsableString(profileId) || !isRecord(stats)) {
+      return false;
+    }
+    for (const field of ["lastUsed", "cooldownUntil", "disabledUntil", "lastFailureAt"] as const) {
+      if (!isOptionalFiniteNumber(stats[field])) {
+        return false;
+      }
+    }
+    if (
+      stats.errorCount !== undefined &&
+      (typeof stats.errorCount !== "number" ||
+        !Number.isFinite(stats.errorCount) ||
+        !Number.isInteger(stats.errorCount) ||
+        stats.errorCount < 0)
+    ) {
+      return false;
+    }
+    for (const field of ["disabledReason", "cooldownReason"] as const) {
+      if (
+        stats[field] !== undefined &&
+        (typeof stats[field] !== "string" ||
+          !AUTH_PROFILE_FAILURE_REASONS.has(stats[field] as AuthProfileFailureReason))
+      ) {
+        return false;
+      }
+    }
+    if (!isOptionalString(stats.cooldownModel) || !isValidFailureCounts(stats.failureCounts)) {
+      return false;
+    }
+    return true;
+  });
+}
+
+function hasValidStoreMetadata(record: Record<string, unknown>): boolean {
+  return (
+    (record.version === undefined ||
+      (typeof record.version === "number" &&
+        Number.isFinite(record.version) &&
+        Number.isInteger(record.version) &&
+        record.version >= 1 &&
+        record.version <= AUTH_STORE_VERSION)) &&
+    isValidProfileOrder(record.order) &&
+    isValidLastGood(record.lastGood) &&
+    isValidUsageStats(record.usageStats)
+  );
+}
+
+function coerceAuthStore(raw: unknown, options?: StoreCoercionOptions): AuthProfileStore | null {
+  if (!isRecord(raw)) {
     return null;
   }
-  const record = raw as Record<string, unknown>;
-  if (!record.profiles || typeof record.profiles !== "object") {
+  const record = raw;
+  if (!isRecord(record.profiles)) {
     return null;
   }
-  const profiles = record.profiles as Record<string, unknown>;
+  if (options?.rejectInvalidEntries && !hasValidStoreMetadata(record)) {
+    return null;
+  }
+  const profiles = record.profiles;
   const normalized: Record<string, AuthProfileCredential> = {};
   const rejected: RejectedCredentialEntry[] = [];
   for (const [key, value] of Object.entries(profiles)) {
-    const parsed = parseCredentialEntry(value);
+    const parsed =
+      !options?.rejectInvalidEntries || isUsableString(key)
+        ? parseCredentialEntry(value, undefined, {
+            strict: options?.rejectInvalidEntries === true,
+          })
+        : ({ ok: false, reason: "invalid_shape" } as const);
     if (!parsed.ok) {
       rejected.push({ key, reason: parsed.reason });
       continue;
     }
     normalized[key] = parsed.credential;
   }
+  if (options?.rejectInvalidEntries && rejected.length > 0) {
+    return null;
+  }
   warnRejectedCredentialEntries("auth-profiles.json", rejected);
-  const order =
-    record.order && typeof record.order === "object"
+  const order = options?.rejectInvalidEntries
+    ? (record.order as Record<string, string[]> | undefined)
+    : record.order && typeof record.order === "object"
       ? Object.entries(record.order as Record<string, unknown>).reduce(
           (acc, [provider, value]) => {
             if (!Array.isArray(value)) {
@@ -277,27 +536,77 @@ function mergeAuthProfileStores(
   };
 }
 
-function mergeOAuthFileIntoStore(store: AuthProfileStore): boolean {
+function readJsonFileForAuthRuntime(params: {
+  pathname: string;
+  label: string;
+  strict: boolean;
+}): unknown {
+  if (!params.strict) {
+    return loadJsonFile(params.pathname);
+  }
+  if (!fs.existsSync(params.pathname)) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(fs.readFileSync(params.pathname, "utf8")) as unknown;
+  } catch {
+    throw new Error(`${params.label} is unreadable or contains invalid JSON.`);
+  }
+}
+
+function mergeOAuthFileIntoStore(store: AuthProfileStore, strict = false): boolean {
   const oauthPath = resolveOAuthPath();
-  const oauthRaw = loadJsonFile(oauthPath);
-  if (!oauthRaw || typeof oauthRaw !== "object") {
+  const oauthRaw = readJsonFileForAuthRuntime({
+    pathname: oauthPath,
+    label: "OAuth credential store",
+    strict,
+  });
+  if (oauthRaw === undefined) {
     return false;
   }
-  const oauthEntries = oauthRaw as Record<string, OAuthCredentials>;
+  if (!oauthRaw || typeof oauthRaw !== "object" || Array.isArray(oauthRaw)) {
+    if (strict) {
+      throw new Error("OAuth credential store has an invalid structure.");
+    }
+    return false;
+  }
+  const oauthEntries = oauthRaw as Record<string, unknown>;
   let mutated = false;
-  for (const [provider, creds] of Object.entries(oauthEntries)) {
-    if (!creds || typeof creds !== "object") {
+  for (const [provider, rawCreds] of Object.entries(oauthEntries)) {
+    if (!isRecord(rawCreds)) {
+      if (strict) {
+        throw new Error("OAuth credential store has an invalid credential entry.");
+      }
       continue;
+    }
+    const creds = rawCreds as OAuthCredentials;
+    let credential: AuthProfileCredential;
+    if (strict) {
+      const parsed = parseCredentialEntry(
+        {
+          ...creds,
+          type: "oauth",
+          provider,
+        },
+        undefined,
+        { strict: true },
+      );
+      if (!parsed.ok) {
+        throw new Error("OAuth credential store has an invalid credential entry.");
+      }
+      credential = parsed.credential;
+    } else {
+      credential = {
+        ...creds,
+        type: "oauth",
+        provider,
+      } as AuthProfileCredential;
     }
     const profileId = `${provider}:default`;
     if (store.profiles[profileId]) {
       continue;
     }
-    store.profiles[profileId] = {
-      type: "oauth",
-      provider,
-      ...creds,
-    };
+    store.profiles[profileId] = credential;
     mutated = true;
   }
   return mutated;
@@ -310,8 +619,10 @@ function applyLegacyStore(store: AuthProfileStore, legacy: LegacyAuthStore): voi
       store.profiles[profileId] = {
         type: "api_key",
         provider: String(cred.provider ?? provider),
-        key: cred.key,
+        ...(cred.key !== undefined ? { key: cred.key } : {}),
+        ...(cred.keyRef ? { keyRef: cred.keyRef } : {}),
         ...(cred.email ? { email: cred.email } : {}),
+        ...(cred.metadata ? { metadata: cred.metadata } : {}),
       };
       continue;
     }
@@ -319,10 +630,11 @@ function applyLegacyStore(store: AuthProfileStore, legacy: LegacyAuthStore): voi
       store.profiles[profileId] = {
         type: "token",
         provider: String(cred.provider ?? provider),
-        token: cred.token,
+        ...(cred.token !== undefined ? { token: cred.token } : {}),
+        ...(cred.tokenRef ? { tokenRef: cred.tokenRef } : {}),
         ...(typeof cred.expires === "number" ? { expires: cred.expires } : {}),
         ...(cred.email ? { email: cred.email } : {}),
-      };
+      } as AuthProfileCredential;
       continue;
     }
     store.profiles[profileId] = {
@@ -339,9 +651,20 @@ function applyLegacyStore(store: AuthProfileStore, legacy: LegacyAuthStore): voi
   }
 }
 
-function loadCoercedStore(authPath: string): AuthProfileStore | null {
-  const raw = loadJsonFile(authPath);
-  return coerceAuthStore(raw);
+function loadCoercedStore(authPath: string, strict = false): AuthProfileStore | null {
+  const raw = readJsonFileForAuthRuntime({
+    pathname: authPath,
+    label: "Auth profile store",
+    strict,
+  });
+  if (raw === undefined) {
+    return null;
+  }
+  const store = coerceAuthStore(raw, { rejectInvalidEntries: strict });
+  if (!store && strict) {
+    throw new Error("Auth profile store has an invalid structure or credential entry.");
+  }
+  return store;
 }
 
 export function loadAuthProfileStore(): AuthProfileStore {
@@ -377,8 +700,9 @@ function loadAuthProfileStoreForAgent(
   options?: LoadAuthProfileStoreOptions,
 ): AuthProfileStore {
   const readOnly = options?.readOnly === true;
+  const strict = options?.strict === true;
   const authPath = resolveAuthStorePath(agentDir);
-  const asStore = loadCoercedStore(authPath);
+  const asStore = loadCoercedStore(authPath, strict);
   if (asStore) {
     // Runtime secret activation must remain read-only:
     // sync external CLI credentials in-memory, but never persist while readOnly.
@@ -404,8 +728,16 @@ function loadAuthProfileStoreForAgent(
     }
   }
 
-  const legacyRaw = loadJsonFile(resolveLegacyAuthStorePath(agentDir));
-  const legacy = coerceLegacyStore(legacyRaw);
+  const legacyPath = resolveLegacyAuthStorePath(agentDir);
+  const legacyRaw = readJsonFileForAuthRuntime({
+    pathname: legacyPath,
+    label: "Legacy auth profile store",
+    strict,
+  });
+  const legacy = coerceLegacyStore(legacyRaw, { rejectInvalidEntries: strict });
+  if (legacyRaw !== undefined && !legacy && strict) {
+    throw new Error("Legacy auth profile store has an invalid structure or credential entry.");
+  }
   const store: AuthProfileStore = {
     version: AUTH_STORE_VERSION,
     profiles: {},
@@ -414,7 +746,7 @@ function loadAuthProfileStoreForAgent(
     applyLegacyStore(store, legacy);
   }
 
-  const mergedOAuth = mergeOAuthFileIntoStore(store);
+  const mergedOAuth = mergeOAuthFileIntoStore(store, strict);
   // Keep external CLI credentials visible in runtime even during read-only loads.
   const syncedCli = shouldSyncExternalCliCredentials(options)
     ? syncExternalCliCredentials(store)
@@ -465,7 +797,11 @@ export function loadAuthProfileStoreForRuntime(
 }
 
 export function loadAuthProfileStoreForSecretsRuntime(agentDir?: string): AuthProfileStore {
-  return loadAuthProfileStoreForRuntime(agentDir, { readOnly: true, allowKeychainPrompt: false });
+  return loadAuthProfileStoreForRuntime(agentDir, {
+    readOnly: true,
+    strict: true,
+    allowKeychainPrompt: false,
+  });
 }
 
 export function ensureAuthProfileStore(

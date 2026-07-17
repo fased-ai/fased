@@ -1,6 +1,5 @@
 import { Transaction } from "@solana/web3.js";
 import { defaultSolanaAccountAtIndex, Turnkey, type TurnkeyApiClient } from "@turnkey/sdk-server";
-import { TurnkeySigner } from "@turnkey/solana";
 import type { WalletChain } from "../../config/types.wallet.js";
 import { fetchSolanaRpc } from "../solana-assets.js";
 import {
@@ -128,7 +127,7 @@ export class TurnkeyAdapter implements WalletProviderAdapter {
         provider: this.id,
         configured: false,
         checkedAt,
-        details: `Turnkey requires ${missing.join(", ")}. Use a dedicated API user covered by a restrictive Turnkey organization policy.`,
+        details: `Turnkey requires ${missing.join(", ")}. Use a dedicated API user/sub-organization covered by one restrictive Turnkey policy; the Gateway-held API key must not be authorized by another permissive policy.`,
       };
     }
     try {
@@ -156,8 +155,8 @@ export class TurnkeyAdapter implements WalletProviderAdapter {
         configured: true,
         checkedAt,
         details: this.credentials.defaultSolanaAddress
-          ? "Turnkey API, an ALLOW policy reference with a selector, Solana account, and RPC are reachable. This does not prove that the selector covers this API user; Turnkey remains final policy authority."
-          : "Turnkey API and an ALLOW policy reference with a selector are reachable. This does not prove that the selector covers this API user; create or register a Solana account next.",
+          ? "Turnkey API, an ALLOW policy reference with a condition, Solana account, and RPC are reachable. Fased requires this policy to be the exclusive OUTCOME_ALLOW for every reviewed signature; this read-only check cannot prove the policy is safe against direct use of the Gateway-held API key."
+          : "Turnkey API and an ALLOW policy reference with a condition are reachable. Create or register a Solana account next; exclusive policy evaluation is verified on every reviewed signature.",
       };
     } catch (error) {
       return {
@@ -386,12 +385,73 @@ export class TurnkeyAdapter implements WalletProviderAdapter {
     client: TurnkeyApiClient;
     transaction: Transaction;
   }): Promise<Transaction> {
-    const signed = await new TurnkeySigner({
-      organizationId: this.requireOrganizationId(),
-      client: params.client,
-    }).signTransaction(params.transaction, this.requireAddress());
-    if (!(signed instanceof Transaction)) {
-      throw new Error("Turnkey returned an unexpected Solana transaction version");
+    const organizationId = this.requireOrganizationId();
+    const policyId = this.requirePolicyId();
+    const response = await params.client.signTransaction({
+      organizationId,
+      signWith: this.requireAddress(),
+      unsignedTransaction: Buffer.from(
+        params.transaction.serialize({
+          requireAllSignatures: false,
+          verifySignatures: false,
+        }),
+      ).toString("hex"),
+      type: "TRANSACTION_TYPE_SOLANA",
+    });
+    if (
+      response.activity.status !== "ACTIVITY_STATUS_COMPLETED" ||
+      response.activity.type !== "ACTIVITY_TYPE_SIGN_TRANSACTION_V2" ||
+      clean(response.activity.organizationId) !== organizationId ||
+      !clean(response.activity.id) ||
+      !clean(response.signedTransaction)
+    ) {
+      throw new Error("Turnkey did not complete the expected Solana signing activity");
+    }
+
+    // A successful getPolicy query only proves that a policy exists: Turnkey
+    // queries are not policy-enforced. Bind this integration to the configured
+    // policy by requiring its evaluation for the exact completed signing
+    // activity before the signed bytes can leave this adapter.
+    let evaluatedPolicies: Array<{ policyId: string; outcome: string }> = [];
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const evaluations = await params.client.getPolicyEvaluations({
+        organizationId,
+        activityId: response.activity.id,
+      });
+      evaluatedPolicies = evaluations.policyEvaluations.flatMap((evaluation) =>
+        evaluation.policyEvaluations.map((entry) => ({
+          policyId: clean(entry.policyId),
+          outcome: clean(entry.outcome),
+        })),
+      );
+      if (evaluatedPolicies.some((entry) => entry.policyId === policyId)) {
+        break;
+      }
+      if (attempt < 3) {
+        await new Promise((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
+      }
+    }
+    const matchingOutcomes = evaluatedPolicies
+      .filter((entry) => entry.policyId === policyId)
+      .map((entry) => entry.outcome);
+    const alternateAllow = evaluatedPolicies.some(
+      (entry) => entry.policyId !== policyId && entry.outcome === "OUTCOME_ALLOW",
+    );
+    if (
+      matchingOutcomes.length === 0 ||
+      matchingOutcomes.some((outcome) => outcome !== "OUTCOME_ALLOW") ||
+      alternateAllow
+    ) {
+      throw new Error(
+        "the configured Turnkey policy was not the exclusive OUTCOME_ALLOW for this reviewed signing activity",
+      );
+    }
+
+    let signed: Transaction;
+    try {
+      signed = Transaction.from(Buffer.from(response.signedTransaction, "hex"));
+    } catch (error) {
+      throw new Error("Turnkey returned an invalid signed Solana transaction", { cause: error });
     }
     return signed;
   }

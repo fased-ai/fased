@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { loadConfig } from "../config/config.js";
 import { loadPersistedFederationToken } from "../federation/access-token.js";
@@ -16,6 +16,7 @@ export type MarketplaceAssetKind = "native" | "spl-token";
 export type MarketplaceChain = "solana";
 
 export type FederationPaidContentSummarizeRunRequest = {
+  executionIntentId?: string;
   handle: string;
   offerId: string;
   walletId?: string;
@@ -34,6 +35,10 @@ export type FederationPaidContentSummarizeRunRequest = {
     expiresInMinutes?: number;
   };
 };
+
+function stableMarketplaceRunId(prefix: string, executionIntentId: string): string {
+  return `${prefix}-${createHash("sha256").update(executionIntentId).digest("hex").slice(0, 24)}`;
+}
 
 export type FederationPaidContentSummarizeRunResult = {
   status: "accepted" | "rejected";
@@ -130,6 +135,7 @@ type RunDeps = {
   publishFederationSettlementEvidence?: typeof publishFederationSettlementEvidence;
   sleep?: (ms: number) => Promise<void>;
   now?: () => Date;
+  /** @deprecated IDs are derived from executionIntentId; retained for test compatibility. */
   createId?: (prefix: string) => string;
 };
 
@@ -180,10 +186,6 @@ function offerIdsMatch(left: string, right: string): boolean {
   const leftCanonical = canonicalizeOfferReference(left);
   const rightCanonical = canonicalizeOfferReference(right);
   return !!leftCanonical && leftCanonical === rightCanonical;
-}
-
-function createDefaultId(prefix: string): string {
-  return `${prefix}-${Date.now()}-${randomUUID().slice(0, 8)}`;
 }
 
 function parseAssetDecimals(raw: number): number | null {
@@ -442,7 +444,6 @@ export async function runPaidFederatedContentSummarize(
   const fetchImpl = deps.fetchImpl ?? fetch;
   const sleep = deps.sleep ?? (async (ms: number) => await delay(ms));
   const now = deps.now ?? (() => new Date());
-  const createId = deps.createId ?? createDefaultId;
   const loadConfigImpl = deps.loadConfig ?? loadConfig;
   const readWalletProviderRegistryImpl =
     deps.readWalletProviderRegistry ?? readWalletProviderRegistry;
@@ -588,9 +589,28 @@ export async function runPaidFederatedContentSummarize(
     return { status: "rejected", reason: "wallet runtime is disabled" };
   }
 
-  const taskId = createId("market-summary");
-  const invoiceId = createId("invoice");
-  const receiptId = createId("receipt");
+  const executionIntentId =
+    trimString(request.executionIntentId) ||
+    `marketplace-paid-summary:${createHash("sha256")
+      .update(
+        JSON.stringify({
+          handle,
+          offerId: canonicalOfferId,
+          walletId: defaultWallet.id,
+          sourceText,
+          requestedOutput,
+          summaryStyle,
+          maxSentences,
+          amount: amountBaseUnits.toString(),
+          currency,
+          asset,
+          payeeAddress,
+        }),
+      )
+      .digest("hex")}`;
+  const taskId = stableMarketplaceRunId("market-summary", executionIntentId);
+  const invoiceId = stableMarketplaceRunId("invoice", executionIntentId);
+  const receiptId = stableMarketplaceRunId("receipt", executionIntentId);
 
   const send = await createOrExecuteWalletSendImpl({
     payload: {
@@ -601,9 +621,9 @@ export async function runPaidFederatedContentSummarize(
       walletId: defaultWallet.id,
       walletName: defaultWallet.name,
       providerId: defaultWallet.providerId,
-      memo: invoiceId,
     },
     requestedBy: "marketplace-runner",
+    executionIntentId,
     sendPath: "automation",
     settlementContext: {
       taskId,
@@ -748,9 +768,9 @@ export async function runPaidFederatedContentSummarize(
     const output = asRecord(snapshot?.output) ?? {};
     const result = asRecord(output.result) ?? {};
     const payment = asRecord(output.payment) ?? {};
+    const paymentProof = asRecord(snapshot?.paymentProof) ?? {};
     const resultKind = trimString(result.kind);
-    const paymentStatus =
-      trimString(payment.status) || trimString(asRecord(snapshot?.paymentProof)?.status);
+    const paymentStatus = trimString(payment.status) || trimString(paymentProof.status);
     if (resultKind !== CONTENT_SUMMARIZE_RESULT_KIND) {
       return {
         status: "rejected",
@@ -761,6 +781,30 @@ export async function runPaidFederatedContentSummarize(
       return {
         status: "rejected",
         reason: `paid summarize completed without verified payment: ${paymentStatus || "missing"}`,
+      };
+    }
+    const paymentLinkage = {
+      offerId: trimString(payment.offerId),
+      invoiceId: trimString(payment.invoiceId),
+      receiptId: trimString(payment.receiptId),
+      txRef: trimString(payment.txRef),
+      proofInvoiceId: trimString(paymentProof.invoiceId),
+      proofReceiptId: trimString(paymentProof.receiptId),
+      proofTxRef: trimString(paymentProof.txRef),
+    };
+    if (
+      !offerIdsMatch(paymentLinkage.offerId, canonicalOfferId) ||
+      paymentLinkage.invoiceId !== invoiceId ||
+      paymentLinkage.receiptId !== receiptId ||
+      paymentLinkage.txRef !== txRef ||
+      paymentLinkage.proofInvoiceId !== invoiceId ||
+      paymentLinkage.proofReceiptId !== receiptId ||
+      paymentLinkage.proofTxRef !== txRef
+    ) {
+      return {
+        status: "rejected",
+        reason:
+          "paid summarize completion did not match the exact offer, invoice, receipt, and transaction",
       };
     }
     return {

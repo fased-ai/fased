@@ -21,9 +21,17 @@ import (
 const (
 	federationBondChallengeSchemaV2   = "https://schemas.fased.ai/fased-bond-challenge-v1.json"
 	federationBondPolicyDomainV2      = "domain:fased:federation-bond-challenge-v1"
+	federationBondSignatureDomainV2   = "fased:federation-bond-challenge-signature:v2"
 	federationBondChallengeMaxBytesV2 = 16 << 10
 	federationBondChallengeMaxTTL     = 10 * time.Minute
 )
+
+type federationBondSigningMessageV2 struct {
+	Domain           string `json:"domain"`
+	ChallengeID      string `json:"challengeId"`
+	FederationOrigin string `json:"federationOrigin"`
+	PayloadBase64    string `json:"payloadBase64"`
+}
 
 type signerFederationBondChallengeIntentV2 struct {
 	ChallengeID      string `json:"challengeId"`
@@ -207,6 +215,28 @@ func validateFederationBondChallengeTimeV2(payload federationBondChallengePayloa
 	return nil
 }
 
+func federationPayloadFromIntentV2(intent normalizedIntentV2) ([]byte, federationBondChallengePayloadV2, error) {
+	if intent.Intent.Federation == nil {
+		return nil, federationBondChallengePayloadV2{}, errors.New("federation challenge intent is missing")
+	}
+	payloadBytes, err := base64.StdEncoding.Strict().DecodeString(intent.Intent.Federation.PayloadBase64)
+	if err != nil || base64.StdEncoding.EncodeToString(payloadBytes) != intent.Intent.Federation.PayloadBase64 {
+		return nil, federationBondChallengePayloadV2{}, errors.New("federation challenge payloadBase64 must be canonical base64")
+	}
+	payload, err := decodeFederationBondChallengePayloadV2(payloadBytes)
+	return payloadBytes, payload, err
+}
+
+func federationBondSigningMessageBytesV2(outer signerFederationBondChallengeIntentV2) ([]byte, error) {
+	message := federationBondSigningMessageV2{
+		Domain:           federationBondSignatureDomainV2,
+		ChallengeID:      outer.ChallengeID,
+		FederationOrigin: outer.FederationOrigin,
+		PayloadBase64:    outer.PayloadBase64,
+	}
+	return json.Marshal(message)
+}
+
 func normalizeFederationBondChallengeIntentV2(input signerIntentV2, wallet solana.PublicKey) (normalizedIntentV2, error) {
 	if input.Federation == nil {
 		return normalizedIntentV2{}, errors.New("federation bond challenge details are required")
@@ -260,11 +290,15 @@ func normalizeFederationBondChallengeIntentV2(input signerIntentV2, wallet solan
 		return normalizedIntentV2{}, err
 	}
 	digest := sha256.Sum256(canonical)
+	signingMessage, err := federationBondSigningMessageBytesV2(outer)
+	if err != nil {
+		return normalizedIntentV2{}, err
+	}
 	return normalizedIntentV2{
 		Intent: canonicalIntent, Digest: "sha256:" + hex.EncodeToString(digest[:]),
 		Asset: "federation:bond-challenge", Amount: big.NewInt(1), Destination: wallet.String(),
 		PolicyOperation: intentFederationBondChallenge, RequiredPrograms: []string{federationBondPolicyDomainV2},
-		RequiredRole: "vault", Message: payloadBytes,
+		RequiredRole: "vault", Message: signingMessage,
 	}, nil
 }
 

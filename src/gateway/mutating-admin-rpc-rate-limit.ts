@@ -4,6 +4,7 @@ export type MutatingAdminRpcRateLimitMethod =
   | "chat.inject"
   | "doctor.memory.repair.execute"
   | "push.test"
+  | "secrets.reload"
   | "web.login.start"
   | "web.login.wait";
 
@@ -25,6 +26,7 @@ const MUTATING_ADMIN_RPC_RATE_LIMIT_POLICIES: Record<
   "chat.inject": { maxRequests: 10, windowMs: 60_000, label: "10 per 60s" },
   "doctor.memory.repair.execute": { maxRequests: 1, windowMs: 300_000, label: "1 per 300s" },
   "push.test": { maxRequests: 3, windowMs: 60_000, label: "3 per 60s" },
+  "secrets.reload": { maxRequests: 6, windowMs: 60_000, label: "6 per 60s" },
   "web.login.start": { maxRequests: 3, windowMs: 300_000, label: "3 per 300s" },
   "web.login.wait": { maxRequests: 12, windowMs: 300_000, label: "12 per 300s" },
 };

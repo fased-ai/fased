@@ -65,8 +65,9 @@ func TestReviewedFederationChallengeSignsExactMessageOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("prepare exact federation review: %v", err)
 	}
+	signingMessageBase64 := base64.StdEncoding.EncodeToString(normalized.Message)
 	if review.ArtifactKind != signerReviewArtifactDomainMessageV2 || review.Transaction != nil ||
-		review.ArtifactDigest == "" || review.MessageBase64 != intentInput.Federation.PayloadBase64 ||
+		review.ArtifactDigest == "" || review.MessageBase64 != signingMessageBase64 ||
 		review.RequiredPrograms[0] != federationBondPolicyDomainV2 {
 		t.Fatalf("federation review omitted its exact artifact/domain binding: %#v", review)
 	}
@@ -98,7 +99,7 @@ func TestReviewedFederationChallengeSignsExactMessageOnce(t *testing.T) {
 	signature, err := base64.StdEncoding.Strict().DecodeString(result.SignatureBase64)
 	if err != nil || len(signature) != ed25519.SignatureSize ||
 		!ed25519.Verify(ed25519.PublicKey(walletKey[:]), normalized.Message, signature) {
-		t.Fatal("federation result is not the signer-owned signature of the exact raw challenge payload")
+		t.Fatal("federation result is not the signer-owned signature of the exact domain-separated challenge wrapper")
 	}
 	usage, err := store.dailyUsage(wallet.WalletID, "federation:bond-challenge", now)
 	if err != nil || usage.String() != "1" {

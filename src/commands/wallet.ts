@@ -96,14 +96,12 @@ export type WalletSetupOptions = {
   enableLimitOrders?: boolean;
   disableLimitOrders?: boolean;
   jupiterApiKey?: string;
-  jupiterTriggerApiBaseUrl?: string;
 };
 
 export type WalletLimitOrdersOptions = {
   enable?: boolean;
   disable?: boolean;
   jupiterApiKey?: string;
-  jupiterTriggerApiBaseUrl?: string;
   nonInteractive?: boolean;
   json?: boolean;
 };
@@ -259,6 +257,15 @@ export type WalletSignerDoctorReport = {
   pidPath: string;
   auditPath: string;
   checks: Array<{ check: string; ok: boolean; detail?: string }>;
+  signer?: {
+    jupiter?: { triggerConfigured: boolean };
+    webAuthn?: {
+      configured: boolean;
+      credentialCount: number;
+      credentialVersion: number;
+      ready: boolean;
+    };
+  };
 };
 
 function parseWalletProviderId(input: string | undefined) {
@@ -349,7 +356,7 @@ function setConfigEnvVar(
 }
 
 const JUPITER_API_KEY_ENV = "FASED_JUPITER_API_KEY";
-const JUPITER_TRIGGER_API_BASE_URL_ENV = "FASED_JUPITER_TRIGGER_API_BASE_URL";
+const LEGACY_JUPITER_TRIGGER_API_BASE_URL_ENV = "FASED_JUPITER_TRIGGER_API_BASE_URL";
 
 function resolveConfiguredJupiterApiKey(cfg: FasedAgentConfig, env: NodeJS.ProcessEnv): string {
   return String(
@@ -423,41 +430,31 @@ export async function walletLimitOrdersConfigureCommand(
   options: WalletLimitOrdersOptions = {},
 ) {
   if (options.enable && options.disable) {
-    throw new Error(
-      "Use either --enable or --disable for Jupiter wallet-action support, not both.",
-    );
+    throw new Error("Use either --enable or --disable for Jupiter Swap API access, not both.");
   }
   const env = process.env;
   let cfg = loadConfig();
   if (options.disable) {
     cfg = setConfigEnvVar(cfg, JUPITER_API_KEY_ENV, undefined);
-    cfg = setConfigEnvVar(cfg, JUPITER_TRIGGER_API_BASE_URL_ENV, undefined);
+    cfg = setConfigEnvVar(cfg, LEGACY_JUPITER_TRIGGER_API_BASE_URL_ENV, undefined);
     await writeConfigFile(cfg, { envSnapshotForRestore: process.env });
     delete env[JUPITER_API_KEY_ENV];
-    delete env[JUPITER_TRIGGER_API_BASE_URL_ENV];
+    delete env[LEGACY_JUPITER_TRIGGER_API_BASE_URL_ENV];
     if (options.json) {
       runtime.log(JSON.stringify({ ok: true, enabled: false }, null, 2));
     } else {
       runtime.log(
-        "Jupiter wallet-action support disabled. Other approved wallet actions can still use the normal wallet flow.",
+        "Gateway Jupiter Swap API access disabled. Signer-owned Trigger configuration is unchanged.",
       );
     }
     return;
   }
 
   const existingKey = resolveConfiguredJupiterApiKey(cfg, env);
-  const existingBaseUrl = String(
-    env[JUPITER_TRIGGER_API_BASE_URL_ENV] ??
-      cfg.env?.vars?.[JUPITER_TRIGGER_API_BASE_URL_ENV] ??
-      "",
-  ).trim();
-  let shouldEnable =
-    options.enable === true ||
-    Boolean(options.jupiterApiKey?.trim()) ||
-    Boolean(options.jupiterTriggerApiBaseUrl?.trim());
+  let shouldEnable = options.enable === true || Boolean(options.jupiterApiKey?.trim());
   if (!shouldEnable && !options.nonInteractive) {
     const answer = await promptCliText(
-      "Enable Jupiter support for policy-gated Agent wallet actions? [y/N]",
+      "Enable Gateway Jupiter Swap API access? Trigger credentials remain signer-owned. [y/N]",
       existingKey ? "y" : "n",
     );
     shouldEnable = answer.trim().toLowerCase().startsWith("y");
@@ -474,8 +471,8 @@ export async function walletLimitOrdersConfigureCommand(
     } else {
       runtime.log(
         existingKey
-          ? "Jupiter wallet-action support already configured."
-          : "Jupiter wallet-action support not configured.",
+          ? "Gateway Jupiter Swap API access already configured."
+          : "Gateway Jupiter Swap API access not configured.",
       );
     }
     return;
@@ -483,23 +480,19 @@ export async function walletLimitOrdersConfigureCommand(
 
   let apiKey = String(options.jupiterApiKey ?? "").trim() || existingKey;
   if (!apiKey && !options.nonInteractive) {
-    apiKey = await promptCliSecret("Jupiter API key");
+    apiKey = await promptCliSecret("Jupiter Swap API key");
   }
   if (!apiKey) {
     throw new Error(
-      "Jupiter wallet-action support requires a Jupiter API key. Pass --jupiter-api-key or set FASED_JUPITER_API_KEY.",
+      "Jupiter swap crafting requires an API key. Pass --jupiter-api-key or set FASED_JUPITER_API_KEY.",
     );
   }
 
-  const triggerApiBaseUrl =
-    String(options.jupiterTriggerApiBaseUrl ?? "").trim() || existingBaseUrl;
   cfg = setConfigEnvVar(cfg, JUPITER_API_KEY_ENV, apiKey);
-  if (triggerApiBaseUrl) {
-    cfg = setConfigEnvVar(cfg, JUPITER_TRIGGER_API_BASE_URL_ENV, triggerApiBaseUrl);
-    env[JUPITER_TRIGGER_API_BASE_URL_ENV] = triggerApiBaseUrl;
-  }
+  cfg = setConfigEnvVar(cfg, LEGACY_JUPITER_TRIGGER_API_BASE_URL_ENV, undefined);
   await writeConfigFile(cfg, { envSnapshotForRestore: process.env });
   env[JUPITER_API_KEY_ENV] = apiKey;
+  delete env[LEGACY_JUPITER_TRIGGER_API_BASE_URL_ENV];
 
   if (options.json) {
     runtime.log(
@@ -508,7 +501,8 @@ export async function walletLimitOrdersConfigureCommand(
           ok: true,
           enabled: true,
           jupiterApiKeyConfigured: true,
-          triggerApiBaseUrl: triggerApiBaseUrl || undefined,
+          scope: "gateway-jupiter-swap-only",
+          triggerCredentials: "signer-owned",
         },
         null,
         2,
@@ -516,8 +510,11 @@ export async function walletLimitOrdersConfigureCommand(
     );
     return;
   }
-  runtime.log("Jupiter wallet-action support enabled for Agent wallet actions.");
-  runtime.log(`Stored ${JUPITER_API_KEY_ENV} in local config env vars.`);
+  runtime.log("Gateway Jupiter Swap API access enabled for Agent wallet swap crafting.");
+  runtime.log(`Stored ${JUPITER_API_KEY_ENV} in local config env vars for swaps only.`);
+  runtime.log(
+    "Jupiter Trigger credentials and production API routing are owned by fased-signerd and are not configured in Gateway.",
+  );
 }
 
 function normalizeWalletChainsForSigner(chains: WalletChain[] | undefined): WalletChain[] {
@@ -762,7 +759,7 @@ async function createSignerOwnedWalletForSetup(params: {
   } catch (error) {
     if (hosted) {
       throw new Error(
-        `root-managed hosted signer wallet creation failed: ${error instanceof Error ? error.message : String(error)}. Run sudo ./install.sh --repair-hosting and retry.`,
+        `root-managed hosted signer wallet creation failed: ${error instanceof Error ? error.message : String(error)}. Repair only from the provider root console with the exact tagged, attested Hosting release; never run the app checkout with sudo.`,
         { cause: error },
       );
     }
@@ -844,6 +841,9 @@ async function createSignerOwnedWalletForSetup(params: {
           policyState: "locked",
           networkVersion: network.version,
           networkReady: network.ready,
+          ...(network.rootAdminRequired
+            ? { networkActivation: "root-admin-required", rootCommand: network.rootCommand }
+            : {}),
         },
         null,
         2,
@@ -856,6 +856,12 @@ async function createSignerOwnedWalletForSetup(params: {
       params.runtime.log(
         "Signer-owned wallet created with a deny-all policy. Configure explicit operations, destinations, assets, and positive caps before sending.",
       );
+      if (network.rootAdminRequired && network.rootCommand) {
+        params.runtime.log(
+          "Hosted wallet remains fail-closed until a root administrator activates its RPC network from a root-owned file:",
+        );
+        params.runtime.log(network.rootCommand);
+      }
     }
   }
   return result;
@@ -885,19 +891,13 @@ export async function walletSetupCommand(
   }
 
   const configureLimitOrdersIfRequested = async () => {
-    if (
-      !options.enableLimitOrders &&
-      !options.disableLimitOrders &&
-      !options.jupiterApiKey &&
-      !options.jupiterTriggerApiBaseUrl
-    ) {
+    if (!options.enableLimitOrders && !options.disableLimitOrders && !options.jupiterApiKey) {
       return;
     }
     await walletLimitOrdersConfigureCommand(runtime, {
       enable: Boolean(options.enableLimitOrders || options.jupiterApiKey),
       disable: Boolean(options.disableLimitOrders),
       jupiterApiKey: options.jupiterApiKey,
-      jupiterTriggerApiBaseUrl: options.jupiterTriggerApiBaseUrl,
       nonInteractive: options.nonInteractive,
       json: options.json,
     });
@@ -1695,6 +1695,15 @@ export async function collectWalletSignerDoctorReport(
           : "signer health unavailable",
     );
   }
+  if (isLocalSigner && localSignerHealth?.ok && localSignerHealth.jupiter) {
+    push(
+      "jupiter.trigger.configured",
+      true,
+      localSignerHealth.jupiter.triggerConfigured
+        ? "configured in native signer"
+        : "not configured (optional; swaps and transfers remain available)",
+    );
+  }
   for (const walletId of registrySolanaWalletIds) {
     push(
       `keystore.file.solana.${walletId}`,
@@ -1743,7 +1752,22 @@ export async function collectWalletSignerDoctorReport(
     }
     return false;
   });
-  return { ok, socketPath, pidPath, auditPath, checks };
+  const signer = localSignerHealth?.ok
+    ? {
+        ...(localSignerHealth.jupiter ? { jupiter: localSignerHealth.jupiter } : {}),
+        ...(localSignerHealth.webAuthn
+          ? {
+              webAuthn: {
+                configured: localSignerHealth.webAuthn.configured,
+                credentialCount: localSignerHealth.webAuthn.credentialCount,
+                credentialVersion: localSignerHealth.webAuthn.credentialVersion,
+                ready: localSignerHealth.webAuthn.ready,
+              },
+            }
+          : {}),
+      }
+    : undefined;
+  return { ok, socketPath, pidPath, auditPath, checks, ...(signer ? { signer } : {}) };
 }
 
 export async function walletSignerDoctorCommand(

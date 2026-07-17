@@ -138,28 +138,23 @@ First SSH into the fresh VPS using the login your VPS provider gives you, often
 ssh root@YOUR_PUBLIC_VPS_IP
 ```
 
-Then run this on the VPS:
+Then follow the [pre-execution verified VPS bootstrap](https://docs.fased.ai/install/vps#3-install-fased-and-connect-through-tailscale).
+It downloads the exact tagged `install.sh` release asset and its attestation
+bundle, verifies repository/tag/workflow/GitHub-runner provenance with
+`gh attestation verify`, and only then runs the script as root. Do not pipe a
+moving or unverified script directly into a root shell.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
-```
-
-The Fased installer bootstraps the repository itself. A fresh VPS does not need
-`git clone` first; the installer installs missing system tools, Node, and Git
-when the OS package manager supports auto-install. Hosted installs may use the
-published runtime package internally and skip the slow source build.
+The Fased installer bootstraps the attested hosted runtime itself. A fresh VPS
+does not need `git clone`; the installer installs the supported system tools and
+Node when the OS package manager supports auto-install, then activates the
+exact tagged runtime instead of building an app-owned source checkout.
 If a minimal VPS image does not have `curl`, use the OS tab in the install docs
 to install only the downloader first, then rerun the same hosted command.
 
-Current installers try a clean fast-forward update from Git before building. If
-you already started from an older installer and it stopped before creating the
-`app` runtime, update the bootstrap checkout once and rerun:
-
-```bash
-cd ~/fased
-git pull --ff-only origin main
-./install.sh --hosting
-```
+If an earlier install stopped before creating the `app` runtime, repeat the
+same verified tagged bootstrap from the provider root console. Use the
+documented `--repair-hosting` path for an existing installation; do not repair
+Hosting from a moving `main` checkout.
 
 If you SSH into a fresh VPS as `root`, the installer creates a non-root `app`
 user, copies/clones the repo to `/home/app/fased`, and continues there. The
@@ -468,11 +463,9 @@ your own machine:
 curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
 ```
 
-Use the VPS Hosting profile only on the server that will run Fased all the time:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
-```
+Use the VPS Hosting profile only on the server that will run Fased all the time,
+and use the [pre-execution verified tagged bootstrap](https://docs.fased.ai/install/vps#3-install-fased-and-connect-through-tailscale)
+before executing root code.
 
 The commands below are for contributors working from the source checkout. Do
 not use plain `npm install` to install Fased from source.

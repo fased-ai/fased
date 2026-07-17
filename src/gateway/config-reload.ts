@@ -257,8 +257,18 @@ export type GatewayConfigReloader = {
 export function startGatewayConfigReloader(opts: {
   initialConfig: FasedAgentConfig;
   readSnapshot: () => Promise<ConfigFileSnapshot>;
-  onHotReload: (plan: GatewayReloadPlan, nextConfig: FasedAgentConfig) => Promise<void>;
-  onRestart: (plan: GatewayReloadPlan, nextConfig: FasedAgentConfig) => void | Promise<void>;
+  onHotReload: (
+    plan: GatewayReloadPlan,
+    nextConfig: FasedAgentConfig,
+    snapshot: ConfigFileSnapshot,
+  ) => Promise<void>;
+  onRestart: (
+    plan: GatewayReloadPlan,
+    nextConfig: FasedAgentConfig,
+    snapshot: ConfigFileSnapshot,
+  ) => void | Promise<void>;
+  onSourceRevision?: (snapshot: ConfigFileSnapshot) => void;
+  onStop?: () => void;
   log: {
     info: (msg: string) => void;
     warn: (msg: string) => void;
@@ -272,7 +282,6 @@ export function startGatewayConfigReloader(opts: {
   let pending = false;
   let running = false;
   let stopped = false;
-  let restartQueued = false;
   let missingConfigRetries = 0;
 
   const scheduleAfter = (wait: number) => {
@@ -289,21 +298,20 @@ export function startGatewayConfigReloader(opts: {
   const schedule = () => {
     scheduleAfter(settings.debounceMs);
   };
-  const queueRestart = (plan: GatewayReloadPlan, nextConfig: FasedAgentConfig) => {
-    if (restartQueued) {
-      return;
+  const queueRestart = async (
+    plan: GatewayReloadPlan,
+    nextConfig: FasedAgentConfig,
+    snapshot: ConfigFileSnapshot,
+  ): Promise<boolean> => {
+    try {
+      await opts.onRestart(plan, nextConfig, snapshot);
+      return true;
+    } catch {
+      // Restart checks can fail (for example unresolved SecretRefs). Keep the
+      // active-runtime baseline and allow an unchanged source revision to retry.
+      opts.log.error("config restart validation failed; restart was not scheduled");
+      return false;
     }
-    restartQueued = true;
-    void (async () => {
-      try {
-        await opts.onRestart(plan, nextConfig);
-      } catch (err) {
-        // Restart checks can fail (for example unresolved SecretRefs). Keep the
-        // reloader alive and allow a future change to retry restart scheduling.
-        restartQueued = false;
-        opts.log.error(`config restart failed: ${String(err)}`);
-      }
-    })();
   };
 
   const handleMissingSnapshot = (snapshot: ConfigFileSnapshot): boolean => {
@@ -332,26 +340,31 @@ export function startGatewayConfigReloader(opts: {
     return true;
   };
 
-  const applySnapshot = async (nextConfig: FasedAgentConfig) => {
+  const applySnapshot = async (snapshot: ConfigFileSnapshot) => {
+    const nextConfig = snapshot.config;
     const changedPaths = diffConfigPaths(currentConfig, nextConfig);
-    currentConfig = nextConfig;
-    settings = resolveGatewayReloadSettings(nextConfig);
+    const nextSettings = resolveGatewayReloadSettings(nextConfig);
+    const commitBaseline = () => {
+      currentConfig = nextConfig;
+      settings = nextSettings;
+    };
     if (changedPaths.length === 0) {
+      commitBaseline();
       return;
     }
 
     opts.log.info(`config change detected; evaluating reload (${changedPaths.join(", ")})`);
     const plan = buildGatewayReloadPlan(changedPaths);
-    if (settings.mode === "off") {
+    if (nextSettings.mode === "off") {
       opts.log.info("config reload disabled (gateway.reload.mode=off)");
       return;
     }
-    if (settings.mode === "restart") {
-      queueRestart(plan, nextConfig);
+    if (nextSettings.mode === "restart") {
+      await queueRestart(plan, nextConfig, snapshot);
       return;
     }
     if (plan.restartGateway) {
-      if (settings.mode === "hot") {
+      if (nextSettings.mode === "hot") {
         opts.log.warn(
           `config reload requires gateway restart; hot mode ignoring (${plan.restartReasons.join(
             ", ",
@@ -359,11 +372,12 @@ export function startGatewayConfigReloader(opts: {
         );
         return;
       }
-      queueRestart(plan, nextConfig);
+      await queueRestart(plan, nextConfig, snapshot);
       return;
     }
 
-    await opts.onHotReload(plan, nextConfig);
+    await opts.onHotReload(plan, nextConfig, snapshot);
+    commitBaseline();
   };
 
   const runReload = async () => {
@@ -381,15 +395,19 @@ export function startGatewayConfigReloader(opts: {
     }
     try {
       const snapshot = await opts.readSnapshot();
+      // A newly observed source revision supersedes any decision made for the
+      // previous one, even when this revision is missing, invalid, unchanged,
+      // disabled, or cannot be applied in the configured reload mode.
+      opts.onSourceRevision?.(snapshot);
       if (handleMissingSnapshot(snapshot)) {
         return;
       }
       if (handleInvalidSnapshot(snapshot)) {
         return;
       }
-      await applySnapshot(snapshot.config);
-    } catch (err) {
-      opts.log.error(`config reload failed: ${String(err)}`);
+      await applySnapshot(snapshot);
+    } catch {
+      opts.log.error("config reload failed; keeping last-known-good configuration");
     } finally {
       running = false;
       if (pending) {
@@ -418,15 +436,28 @@ export function startGatewayConfigReloader(opts: {
     void watcher.close().catch(() => {});
   });
 
+  let stopPromise: Promise<void> | null = null;
+
   return {
-    stop: async () => {
-      stopped = true;
-      if (debounceTimer) {
-        clearTimeout(debounceTimer);
+    stop: () => {
+      if (stopPromise) {
+        return stopPromise;
       }
-      debounceTimer = null;
-      watcherClosed = true;
-      await watcher.close().catch(() => {});
+      stopPromise = (async () => {
+        stopped = true;
+        try {
+          opts.onStop?.();
+        } catch {
+          opts.log.warn("config reload shutdown cleanup failed");
+        }
+        if (debounceTimer) {
+          clearTimeout(debounceTimer);
+        }
+        debounceTimer = null;
+        watcherClosed = true;
+        await watcher.close().catch(() => {});
+      })();
+      return stopPromise;
     },
   };
 }

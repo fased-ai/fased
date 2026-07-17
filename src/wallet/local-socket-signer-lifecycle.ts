@@ -1,3 +1,4 @@
+import { LOCAL_SIGNER_NATIVE_FEE_RESERVATION_LAMPORTS_V2 } from "./local-socket-signer-protocol.js";
 import {
   callLocalSocketSigner,
   type LocalSocketSignerHealthProbe,
@@ -48,13 +49,20 @@ async function requireSignerOwnedProtocolV2(socketPath: string): Promise<void> {
     capabilities?: LocalSocketSignerHealthProbe["capabilities"];
   }>(socketPath, { op: "v2.capabilities" });
   const capabilities = result.capabilities;
-  const required = ["failClosedPolicies", "policyHashes", "signerOwnedKeys"];
+  const required = [
+    "failClosedPolicies",
+    "policyHashes",
+    "signerOwnedKeys",
+    "atomicMultiAssetCaps",
+    "signerControlledNativeFeeCaps",
+  ];
   const missing = required.filter((feature) => !capabilities?.features.includes(feature));
   if (
     result.ready !== true ||
     capabilities?.protocol.current !== 2 ||
     capabilities.protocol.min > 2 ||
     capabilities.protocol.max < 2 ||
+    capabilities.nativeFeeReservationLamports !== LOCAL_SIGNER_NATIVE_FEE_RESERVATION_LAMPORTS_V2 ||
     missing.length > 0
   ) {
     throw new Error(
