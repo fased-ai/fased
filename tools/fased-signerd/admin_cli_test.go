@@ -301,6 +301,40 @@ func TestSignerAdminWalletImportCleansStagedFileOnRejection(t *testing.T) {
 	zeroBytes(privateKey)
 }
 
+func TestSignerAdminWalletImportLegacySendsOnlyOwnerFilePaths(t *testing.T) {
+	root := t.TempDir()
+	keystorePath := filepath.Join(root, "legacy-wallet.enc")
+	passphrasePath := filepath.Join(root, "legacy-passphrase")
+	server := startSignerAdminTestServer(t, signerAdminTestSuccess(t, `{"wallet":{"walletId":"agent","publicKey":"public"},"policy":{"walletId":"agent","role":"agent"}}`))
+	var stdout bytes.Buffer
+	err := runSignerAdminCLI([]string{
+		"wallet", "import-legacy",
+		"--control-socket", server.path,
+		"--wallet-id", "agent",
+		"--locked-role", "agent",
+		"--keystore-path", keystorePath,
+		"--passphrase-path", passphrasePath,
+	}, strings.NewReader("stdin-must-not-be-read"), &stdout, nil)
+	if err != nil {
+		t.Fatalf("run signer admin legacy import: %v", err)
+	}
+	req := waitSignerAdminTestServer(t, server)
+	if req.Op != "v2.wallet.importLegacy" || req.WalletID != "agent" {
+		t.Fatalf("unexpected legacy import request: %#v", req)
+	}
+	var body signerWalletLegacyImportRequestV2
+	decodeSignerAdminTestBody(t, req, &body)
+	if body.Path != keystorePath || body.PassphrasePath != passphrasePath {
+		t.Fatalf("legacy import paths changed: %#v", body)
+	}
+	if body.Policy.Role != "agent" || len(body.Policy.Operations) != 0 || len(body.Policy.Programs) != 0 || len(body.Policy.Assets) != 0 {
+		t.Fatalf("legacy import policy must remain explicit deny-all: %#v", body.Policy)
+	}
+	if strings.Contains(stdout.String(), keystorePath) || strings.Contains(stdout.String(), passphrasePath) {
+		t.Fatalf("legacy import output exposed source paths: %q", stdout.String())
+	}
+}
+
 func TestSignerAdminPolicyGetPutAndWalletReencrypt(t *testing.T) {
 	policyPath := writeSignerAdminTestJSON(t, "policy.json", signerPolicyV2{
 		WalletID:   "agent",

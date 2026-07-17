@@ -15,9 +15,9 @@ afterEach(() => {
 
 describe("collectWalletSignerDoctorReport", () => {
   it.each([
-    { label: "single-user signer", mode: 0o600, splitBackend: false },
-    { label: "isolated hosted broker", mode: 0o660, splitBackend: true },
-  ])("accepts the intended $label socket mode", async ({ mode, splitBackend }) => {
+    { label: "single-user signer", mode: 0o600, hosted: false },
+    { label: "separate-user hosted signer", mode: 0o660, hosted: true },
+  ])("accepts the intended $label socket mode", async ({ mode, hosted }) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-wallet-doctor-socket-mode-"));
     tempDirs.push(root);
     const stateDir = path.join(root, "state");
@@ -37,11 +37,7 @@ describe("collectWalletSignerDoctorReport", () => {
           HOME: "/home/app",
           FASED_STATE_DIR: stateDir,
           FASED_WALLET_LOCAL_SIGNER_SOCKET: socketPath,
-          ...(splitBackend
-            ? {
-                FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET: path.join(root, "signer", "backend.sock"),
-              }
-            : {}),
+          ...(hosted ? { FASED_HOST_PROFILE: "hosting" } : {}),
         } as NodeJS.ProcessEnv,
         {
           config: {
@@ -61,7 +57,7 @@ describe("collectWalletSignerDoctorReport", () => {
     }
   });
 
-  it("uses config-merged env when resolving per-chain keystore paths", async () => {
+  it("fails closed when config-merged env still references a Node keystore", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-wallet-doctor-"));
     tempDirs.push(root);
     const stateDir = path.join(root, "state");
@@ -69,34 +65,29 @@ describe("collectWalletSignerDoctorReport", () => {
     fs.mkdirSync(stateDir, { recursive: true });
     fs.writeFileSync(configuredKeystore, '{"kind":"unknown"}', "utf8");
 
-    const report = await collectWalletSignerDoctorReport(
-      {
-        HOME: "/home/root",
-        FASED_STATE_DIR: stateDir,
-      } as NodeJS.ProcessEnv,
-      {
-        config: {
-          env: {
-            vars: {
-              FASED_WALLET_SOLANA_KEYSTORE_PATH: configuredKeystore,
+    await expect(
+      collectWalletSignerDoctorReport(
+        {
+          HOME: "/home/root",
+          FASED_STATE_DIR: stateDir,
+        } as NodeJS.ProcessEnv,
+        {
+          config: {
+            env: {
+              vars: {
+                FASED_WALLET_SOLANA_KEYSTORE_PATH: configuredKeystore,
+              },
+            },
+            wallet: {
+              provider: { id: "embedded-keystore" },
             },
           },
-          wallet: {
-            provider: { id: "embedded-keystore" },
-          },
         },
-      },
-    );
-
-    expect(
-      report.checks.find((check) => check.check === "keystore.file.solana.default")?.detail,
-    ).toContain(configuredKeystore);
-    expect(
-      report.checks.find((check) => check.check === "keystore.file.solana.default")?.detail,
-    ).not.toContain("/home/root/.fased/wallet/keystore.v1.enc");
+      ),
+    ).rejects.toThrow(/embedded-keystore was retired/i);
   });
 
-  it("does not require phantom default local-signer wallets when named wallets are configured", async () => {
+  it("fails closed on stale Node keystore mappings after a named signer wallet is configured", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-wallet-doctor-local-signer-"));
     tempDirs.push(root);
     const stateDir = path.join(root, "state");
@@ -154,47 +145,32 @@ describe("collectWalletSignerDoctorReport", () => {
       "utf8",
     );
 
-    const report = await collectWalletSignerDoctorReport(
-      {
-        HOME: "/home/test",
-        FASED_STATE_DIR: stateDir,
-      } as NodeJS.ProcessEnv,
-      {
-        config: {
-          env: {
-            vars: {
-              FASED_WALLET_SOLANA_KEYSTORE_PATH__SOLANA_1: solanaKeystore,
-              FASED_WALLET_SOLANA_RPC_URL__SOLANA_1:
-                "https://rpc.example/solana?api-key=private-rpc-key",
+    await expect(
+      collectWalletSignerDoctorReport(
+        {
+          HOME: "/home/test",
+          FASED_STATE_DIR: stateDir,
+        } as NodeJS.ProcessEnv,
+        {
+          config: {
+            env: {
+              vars: {
+                FASED_WALLET_SOLANA_KEYSTORE_PATH__SOLANA_1: solanaKeystore,
+                FASED_WALLET_SOLANA_RPC_URL__SOLANA_1:
+                  "https://rpc.example/solana?api-key=private-rpc-key",
+              },
             },
-          },
-          wallet: {
-            provider: { id: "local-socket-signer" },
-            keystore: {
-              enabled: true,
-              path: path.join(walletDir, "keystore-solana-solana-4.v1.enc"),
+            wallet: {
+              provider: { id: "local-socket-signer" },
+              keystore: {
+                enabled: true,
+                path: path.join(walletDir, "keystore-solana-solana-4.v1.enc"),
+              },
             },
           },
         },
-      },
-    );
-
-    expect(report.checks.some((check) => check.check === "keystore.file.solana.default")).toBe(
-      false,
-    );
-    expect(report.checks.some((check) => check.check === "keystore.file.solana.default")).toBe(
-      false,
-    );
-    expect(report.checks.find((check) => check.check === "rpc.configured.solana")?.detail).toBe(
-      "https://rpc.example/solana?api-key=***",
-    );
-    expect(JSON.stringify(report)).not.toContain("private-rpc-key");
-    expect(
-      report.checks.find((check) => check.check === "keystore.file.solana.solana_1")?.detail,
-    ).toContain("keystore-solana-solana-1.v1.enc");
-    expect(
-      report.checks.some((check) => check.check === "keystore.passphrase.solana.solana_1"),
-    ).toBe(false);
+      ),
+    ).rejects.toThrow(/embedded-keystore was retired/i);
   });
 
   it("uses canonical local signer sidecar paths instead of socket-suffixed files", async () => {

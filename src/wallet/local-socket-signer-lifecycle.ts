@@ -81,7 +81,8 @@ export async function readSignerOwnedWallet(params: {
 }
 
 /**
- * Create a signer-owned key without ever materializing its secret in Node.
+ * Create a signer-owned key without returning its secret to normal Fased Node code. Local runs the
+ * signer under the same OS account, so this code-path separation is not a hard compromise boundary.
  *
  * The application socket may create only this explicit empty/deny-all policy. Policy expansion is
  * a separate signer-admin action, so a compromised Gateway cannot turn key creation into spending.

@@ -70,6 +70,10 @@ import type { createSubsystemLogger } from "../logging/subsystem.js";
 import { resolveManagedFederationPublicUrl } from "../managed/federation.js";
 import { safeEqualSecret } from "../security/secret-equal.js";
 import {
+  LegacyEmbeddedKeystoreMigrationRequiredError,
+  LEGACY_EMBEDDED_KEYSTORE_MIGRATION_MESSAGE,
+} from "../wallet/legacy-embedded-keystore.js";
+import {
   buildLocalSignerPolicyTightening,
   LocalSignerPolicyAdminRequiredError,
   localSignerPolicyState,
@@ -1215,12 +1219,10 @@ function parseWalletSettingsPatchInput(input: unknown): WalletSettingsPatchInput
     walletId: toOptionalString(payload.walletId),
     policyTemplate,
     providerId:
-      payload.providerId === "embedded-keystore" ||
       payload.providerId === "local-socket-signer" ||
       payload.providerId === "alchemy" ||
       payload.providerId === "turnkey" ||
-      payload.providerId === "wallet-standard" ||
-      payload.providerId === "privy"
+      payload.providerId === "wallet-standard"
         ? payload.providerId
         : undefined,
     executionMode:
@@ -1617,7 +1619,7 @@ function resolveWalletRpcUrlFromEnv(
   const scopedOrChain =
     (perWalletKey ? String(env[perWalletKey] ?? "").trim() : "") ||
     String(env[perChainKey] ?? "").trim();
-  return scopedOrChain || String(env.FASED_WALLET_EMBEDDED_KEYSTORE_RPC_URL ?? "").trim();
+  return scopedOrChain || String(env.FASED_WALLET_RPC_URL ?? "").trim();
 }
 
 function inferLocalSignerCreateChain(params: {
@@ -1872,9 +1874,7 @@ async function buildWalletProviderPayload(params: {
           solana: { receiveAddress: false, getBalance: false, prepare: false, send: false },
         },
         requiresCredentials:
-          providerId !== "embedded-keystore" &&
-          providerId !== "local-socket-signer" &&
-          providerId !== "wallet-standard",
+          providerId !== "local-socket-signer" && providerId !== "wallet-standard",
         requiresRpcSecret: false,
       };
       let health: WalletProviderSummary["health"] = {
@@ -1908,7 +1908,7 @@ async function buildWalletProviderPayload(params: {
       });
       return {
         id: providerId,
-        enabled: registry.providers[providerId]?.enabled ?? providerId === "embedded-keystore",
+        enabled: registry.providers[providerId]?.enabled ?? false,
         label: registry.providers[providerId]?.label,
         isDefault: providerId === defaultProviderId,
         operationsImplemented,
@@ -5108,6 +5108,27 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
             });
             return;
           }
+          const settingsPayload = (body.value ?? {}) as Record<string, unknown>;
+          if (settingsPayload.providerId === "embedded-keystore") {
+            sendLoginResponse(409, {
+              ok: false,
+              error: {
+                code: "wallet_legacy_embedded_keystore_migration_required",
+                message: LEGACY_EMBEDDED_KEYSTORE_MIGRATION_MESSAGE,
+              },
+            });
+            return;
+          }
+          if (settingsPayload.providerId === "privy") {
+            sendLoginResponse(400, {
+              ok: false,
+              error: {
+                code: "provider_unavailable",
+                message: "Privy wallet creation and signing are unavailable.",
+              },
+            });
+            return;
+          }
           const patch = parseWalletSettingsPatchInput(body.value);
           if (!isManagedGatewayMode(process.env) && !isWalletPolicyPatch(patch)) {
             sendLoginResponse(400, {
@@ -5578,6 +5599,26 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
             return;
           }
           const payload = (body.value ?? {}) as Record<string, unknown>;
+          if (payload.providerId === "embedded-keystore") {
+            sendLoginResponse(409, {
+              ok: false,
+              error: {
+                code: "wallet_legacy_embedded_keystore_migration_required",
+                message: LEGACY_EMBEDDED_KEYSTORE_MIGRATION_MESSAGE,
+              },
+            });
+            return;
+          }
+          if (payload.providerId === "privy") {
+            sendLoginResponse(400, {
+              ok: false,
+              error: {
+                code: "provider_unavailable",
+                message: "Privy wallet creation and signing are unavailable.",
+              },
+            });
+            return;
+          }
           const providerId = parseWalletProviderId(payload.providerId);
           if (!providerId) {
             sendLoginResponse(400, {
@@ -5650,7 +5691,8 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
             return {
               ...wallet,
               readiness: {
-                keystore: true,
+                keystore:
+                  wallet.providerId !== "embedded-keystore" && wallet.providerId !== "privy",
                 rpc: Boolean(solanaRpc),
               },
             };
@@ -5684,6 +5726,26 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
             return;
           }
           const payload = (body.value ?? {}) as Record<string, unknown>;
+          if (payload.providerId === "embedded-keystore") {
+            sendLoginResponse(409, {
+              ok: false,
+              error: {
+                code: "wallet_legacy_embedded_keystore_migration_required",
+                message: LEGACY_EMBEDDED_KEYSTORE_MIGRATION_MESSAGE,
+              },
+            });
+            return;
+          }
+          if (payload.providerId === "privy") {
+            sendLoginResponse(400, {
+              ok: false,
+              error: {
+                code: "provider_unavailable",
+                message: "Privy wallet creation and signing are unavailable.",
+              },
+            });
+            return;
+          }
           const cfg = loadConfig();
           const walletCfg = resolveWalletRuntimeConfig(cfg, process.env);
           const providerId =
@@ -6117,7 +6179,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
               error: {
                 code: "wallet_requires_onboarding_delete",
                 message:
-                  "self-hosted wallets must be deleted from onboarding so keystore files and mining attachments are cleaned up safely",
+                  "signer-owned wallets must be removed through the native signer/onboarding flow so signer state and mining attachments are handled safely",
               },
             });
             return;
@@ -6388,7 +6450,37 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
             return;
           }
           const payload = (body.value ?? {}) as Record<string, unknown>;
+          if (payload.providerId === "embedded-keystore") {
+            sendLoginResponse(409, {
+              ok: false,
+              error: {
+                code: "wallet_legacy_embedded_keystore_migration_required",
+                message: LEGACY_EMBEDDED_KEYSTORE_MIGRATION_MESSAGE,
+              },
+            });
+            return;
+          }
+          if (payload.providerId === "privy") {
+            sendLoginResponse(400, {
+              ok: false,
+              error: {
+                code: "provider_unavailable",
+                message: "Privy wallet creation and signing are unavailable.",
+              },
+            });
+            return;
+          }
           const providerId = resolveProviderFromInput(payload.providerId) ?? configuredProviderId;
+          if (providerId !== "alchemy" && providerId !== "turnkey") {
+            sendLoginResponse(400, {
+              ok: false,
+              error: {
+                code: "provider_credentials_not_accepted",
+                message: `${providerId} does not accept Gateway-held provider credentials.`,
+              },
+            });
+            return;
+          }
           let credentials: Record<string, string> = {};
           if (providerId === "alchemy") {
             const apiKey = toOptionalString(payload.apiKey);
@@ -6495,21 +6587,6 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
                 return;
               }
             }
-            if (providerId === "privy") {
-              if (
-                typeof credentials.appId !== "string" ||
-                typeof credentials.appSecret !== "string"
-              ) {
-                sendLoginResponse(400, {
-                  ok: false,
-                  error: {
-                    code: "invalid_request",
-                    message: "privy credentials must include appId and appSecret",
-                  },
-                });
-                return;
-              }
-            }
           }
           const saved = saveWalletProviderSecret(
             {
@@ -6597,18 +6674,18 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           checks.push({
             id: "wallet.rpc.configured",
             ok: true,
-            message:
-              providerId === "embedded-keystore"
-                ? "embedded-keystore may require provider-specific RPC configuration (separate RPC secret endpoint removed)"
-                : `${providerId} uses provider-managed APIs; separate RPC secret is optional`,
+            message: `${providerId} uses signer/provider-owned network configuration`,
           });
         }
         checks.push({
           id: "wallet.provider.credentials",
-          ok: providerId === "embedded-keystore" ? true : providerSecret.configured,
+          ok:
+            providerId === "local-socket-signer" ||
+            providerId === "wallet-standard" ||
+            providerSecret.configured,
           message:
-            providerId === "embedded-keystore"
-              ? "embedded-keystore uses local encrypted keystore (provider API credentials not required)"
+            providerId === "local-socket-signer" || providerId === "wallet-standard"
+              ? `${providerId} does not use Gateway-held provider credentials`
               : providerSecret.configured
                 ? `${providerId} provider credentials configured`
                 : `${providerId} provider credentials are missing`,
@@ -6743,22 +6820,20 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           ) {
             return "hosted-provider" as const;
           }
-          return "embedded-in-process" as const;
+          return "local-native-signer" as const;
         })();
         const providerSummary = {
           id: configuredProviderId,
           label:
-            configuredProviderId === "embedded-keystore"
-              ? "Self-hosted wallet"
-              : configuredProviderId === "local-socket-signer"
-                ? "Local signer socket"
-                : configuredProviderId === "turnkey"
-                  ? "Turnkey"
-                  : configuredProviderId === "privy"
-                    ? "Privy"
-                    : configuredProviderId === "alchemy"
-                      ? "Alchemy"
-                      : configuredProviderId,
+            configuredProviderId === "local-socket-signer"
+              ? "Local signer socket"
+              : configuredProviderId === "turnkey"
+                ? "Turnkey"
+                : configuredProviderId === "privy"
+                  ? "Privy"
+                  : configuredProviderId === "alchemy"
+                    ? "Alchemy"
+                    : configuredProviderId,
           category:
             activeSignerMode === "hosted-provider"
               ? ("hosted-provider" as const)
@@ -6816,10 +6891,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
             health: readiness.keystore ? "ok" : "degraded",
           };
         });
-        if (
-          configuredProviderId === "embedded-keystore" ||
-          configuredProviderId === "local-socket-signer"
-        ) {
+        if (configuredProviderId === "local-socket-signer") {
           statusPayload.providerAuthMode = snapshot.authMode;
           statusPayload.providerAuthSource = snapshot.authSource;
           statusPayload.providerAuthDetails = snapshot.authBootstrap
@@ -6860,20 +6932,8 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
         const effectiveEnv = { ...process.env, ...cfg.env?.vars };
         const doctor = await collectWalletSignerDoctorReport(effectiveEnv, { config: cfg });
         const registry = readWalletProviderRegistry(effectiveEnv);
-        const parseWalletIds = (prefix: string, _chain: "solana") => {
-          const ids = new Set<string>(["default"]);
-          for (const [key, value] of Object.entries(effectiveEnv)) {
-            if (!key.startsWith(prefix)) {
-              continue;
-            }
-            if (typeof value !== "string" || !value.trim()) {
-              continue;
-            }
-            const id = key.slice(prefix.length).trim().toLowerCase();
-            if (id) {
-              ids.add(id);
-            }
-          }
+        const parseWalletIds = (_chain: "solana") => {
+          const ids = new Set<string>();
           for (const wallet of registry.wallets) {
             const hasChain = wallet.addresses?.solana;
             if (hasChain && wallet.id.trim()) {
@@ -6912,10 +6972,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
             checks: doctor.checks,
           },
           chainWallets: {
-            solana: buildChainEntries(
-              "solana",
-              parseWalletIds("FASED_WALLET_SOLANA_KEYSTORE_PATH__", "solana"),
-            ),
+            solana: buildChainEntries("solana", parseWalletIds("solana")),
           },
         });
         return;
@@ -8665,62 +8722,14 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
         if (!(await ensureWalletApiAuthorized())) {
           return;
         }
-        const cfg = loadConfig();
-        const walletCfg = resolveWalletRuntimeConfig(cfg, process.env);
-        const parsedUrl = new URL(req.url || "/", "http://localhost");
-        const providerId =
-          parseWalletProviderId(parsedUrl.searchParams.get("providerId")) ??
-          resolveWalletProviderId(cfg, process.env);
-        if (!walletCfg.enabled) {
-          sendLoginResponse(400, {
-            ok: false,
-            error: { code: "wallet_disabled", message: "wallet is disabled" },
-          });
-          return;
-        }
-        if (!ensureWalletApprovalAuthorized({ operation: "wallet.rotate", cfg })) {
-          return;
-        }
-        const provider = createWalletProviderAdapter({
-          cfg,
-          wallet: walletCfg,
-          env: process.env,
-          providerIdOverride: providerId,
+        sendLoginResponse(410, {
+          ok: false,
+          error: {
+            code: "gateway_wallet_key_lifecycle_removed",
+            message:
+              "Wallet key rotation is signer/provider-owned. Use `fased-signerd admin wallet reencrypt` as the control-socket owner, or rotate through Turnkey/hardware wallet authority.",
+          },
         });
-        if (!provider.rotateKeys) {
-          sendLoginResponse(400, {
-            ok: false,
-            error: {
-              code: "provider_operation_not_supported",
-              message: `provider ${provider.id} does not support rotate keys`,
-            },
-          });
-          return;
-        }
-        let result: {
-          ok: boolean;
-          addresses?: Record<string, unknown>;
-          metadata?: Record<string, unknown>;
-        };
-        try {
-          result = await provider.rotateKeys();
-        } catch (err) {
-          sendLoginResponse(502, {
-            ok: false,
-            error: {
-              code: "wallet_provider_error",
-              message: String(err),
-            },
-          });
-          return;
-        }
-        appendWalletAuditEntry({
-          action: "rotate_keys",
-          actor: "control-ui",
-          details: { provider: provider.id, providerId, addresses: result.addresses ?? {} },
-          env: process.env,
-        });
-        sendLoginResponse(200, { ok: true, result });
         return;
       }
       if (requestPath === "/api/wallet/reset") {
@@ -8736,84 +8745,14 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
         if (!(await ensureWalletApiAuthorized())) {
           return;
         }
-        const body = await readJsonBody(req, 64 * 1024);
-        if (!body.ok) {
-          sendLoginResponse(400, {
-            ok: false,
-            error: { code: "invalid_request", message: body.error },
-          });
-          return;
-        }
-        const confirmText =
-          typeof (body.value as { confirmText?: unknown } | null)?.confirmText === "string"
-            ? (body.value as { confirmText: string }).confirmText.trim()
-            : "";
-        if (confirmText !== "RESET WALLET") {
-          sendLoginResponse(400, {
-            ok: false,
-            error: {
-              code: "confirm_text_mismatch",
-              message: 'confirmText must equal "RESET WALLET"',
-            },
-          });
-          return;
-        }
-        const cfg = loadConfig();
-        const walletCfg = resolveWalletRuntimeConfig(cfg, process.env);
-        const parsedUrl = new URL(req.url || "/", "http://localhost");
-        const providerId =
-          parseWalletProviderId(parsedUrl.searchParams.get("providerId")) ??
-          resolveWalletProviderId(cfg, process.env);
-        if (!walletCfg.enabled) {
-          sendLoginResponse(400, {
-            ok: false,
-            error: { code: "wallet_disabled", message: "wallet is disabled" },
-          });
-          return;
-        }
-        if (!ensureWalletApprovalAuthorized({ operation: "wallet.reset", cfg })) {
-          return;
-        }
-        const provider = createWalletProviderAdapter({
-          cfg,
-          wallet: walletCfg,
-          env: process.env,
-          providerIdOverride: providerId,
+        sendLoginResponse(410, {
+          ok: false,
+          error: {
+            code: "gateway_wallet_key_lifecycle_removed",
+            message:
+              "Wallet reset is unavailable through the Gateway. Create or import only in the signer/provider/hardware-wallet authority surface.",
+          },
         });
-        if (!provider.resetKeys) {
-          sendLoginResponse(400, {
-            ok: false,
-            error: {
-              code: "provider_operation_not_supported",
-              message: `provider ${provider.id} does not support reset keys`,
-            },
-          });
-          return;
-        }
-        let result: {
-          ok: boolean;
-          addresses?: Record<string, unknown>;
-          metadata?: Record<string, unknown>;
-        };
-        try {
-          result = await provider.resetKeys();
-        } catch (err) {
-          sendLoginResponse(502, {
-            ok: false,
-            error: {
-              code: "wallet_provider_error",
-              message: String(err),
-            },
-          });
-          return;
-        }
-        appendWalletAuditEntry({
-          action: "reset_wallet",
-          actor: "control-ui",
-          details: { provider: provider.id, providerId, addresses: result.addresses ?? {} },
-          env: process.env,
-        });
-        sendLoginResponse(200, { ok: true, result });
         return;
       }
       if (requestPath === "/api/wallet/policy/simulate") {
@@ -10235,14 +10174,18 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
     } catch (error) {
       if (!res.headersSent && requestPath.startsWith("/api/")) {
         const message = error instanceof Error ? error.message : String(error);
-        res.statusCode = 500;
+        const legacyMigrationRequired =
+          error instanceof LegacyEmbeddedKeystoreMigrationRequiredError;
+        res.statusCode = legacyMigrationRequired ? 409 : 500;
         res.setHeader("Content-Type", "application/json; charset=utf-8");
         res.setHeader("Cache-Control", "no-store");
         res.end(
           JSON.stringify({
             ok: false,
             error: {
-              code: "internal_server_error",
+              code: legacyMigrationRequired
+                ? "wallet_legacy_embedded_keystore_migration_required"
+                : "internal_server_error",
               message: message || "Internal Server Error",
             },
           }),

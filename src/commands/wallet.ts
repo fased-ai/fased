@@ -1,18 +1,19 @@
-import {
-  createCipheriv,
-  createDecipheriv,
-  createPrivateKey,
-  createPublicKey,
-  randomBytes,
-  scryptSync,
-} from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { createInterface } from "node:readline/promises";
 import { loadConfig, type FasedAgentConfig, writeConfigFile } from "../config/config.js";
-import type { WalletChain, WalletProviderId, WalletRuntimeKind } from "../config/types.wallet.js";
+import type { WalletChain, WalletRuntimeKind } from "../config/types.wallet.js";
 import { defaultRuntime, type RuntimeEnv } from "../runtime.js";
+import {
+  hasLegacyEmbeddedKeystoreConfig,
+  hasLegacyEmbeddedKeystoreMaterialHint,
+  throwLegacyEmbeddedKeystoreMigrationRequired,
+} from "../wallet/legacy-embedded-keystore.js";
 import { createLockedSignerOwnedWallet } from "../wallet/local-socket-signer-lifecycle.js";
+import {
+  callLocalSocketSigner,
+  requireLocalSocketSignerPath,
+} from "../wallet/providers/local-socket-signer-adapter.js";
 import { configureSignerOwnedWalletNetwork } from "../wallet/signer-network-admin.js";
 import { buildWalletCanaryReport, runWalletProviderCanaryReport } from "../wallet/wallet-canary.js";
 import {
@@ -41,7 +42,6 @@ import {
   isLocalSignerExternallyManaged,
   resolveLocalSignerControlSocketPath,
   resolveLocalSignerMasterKeyPath,
-  resolveLocalSignerMaterialRootDir,
   resolveLocalSignerSidecarPaths,
   resolveLocalSignerSocketPath,
   resolveLocalSignerStateDbPath,
@@ -77,7 +77,6 @@ export type WalletSetupOptions = {
   chain?: WalletChain;
   walletId?: string;
   walletName?: string;
-  privateKey?: string;
   apiKey?: string;
   rpcUrl?: string;
   noDoctor?: boolean;
@@ -88,8 +87,6 @@ export type WalletSetupOptions = {
   turnkeyOrganizationId?: string;
   turnkeyPolicyId?: string;
   turnkeyBaseUrl?: string;
-  showPrivateKeyOnce?: boolean;
-  confirmPrivateKeyPrint?: string;
   role?: string;
   noProviderIdUpdate?: boolean;
   force?: boolean;
@@ -113,6 +110,12 @@ export type WalletStatusOptions = {
 };
 
 export type WalletRotateKeysOptions = {
+  json?: boolean;
+};
+
+export type WalletLegacyMigrationFinalizeOptions = {
+  walletId: string;
+  walletName?: string;
   json?: boolean;
 };
 
@@ -159,35 +162,14 @@ export type WalletInboundReconcileOptions = {
 
 export type WalletKeystoreInitOptions = {
   json?: boolean;
-  out?: string;
-  rpcUrl?: string;
-  passphrase?: string;
   chain?: WalletChain;
   walletId?: string;
-  showPrivateKeyOnce?: boolean;
-  confirmPrivateKeyPrint?: string;
-  force?: boolean;
-  name?: string;
-  role?: string;
-  skipProviderConfig?: boolean;
-  providerIdForRegistry?: WalletProviderId;
-  suppressExtraLogs?: boolean;
 };
 
 export type WalletKeystoreImportOptions = {
   json?: boolean;
-  out?: string;
-  rpcUrl?: string;
-  passphrase?: string;
-  privateKey?: string;
   chain?: WalletChain;
   walletId?: string;
-  force?: boolean;
-  name?: string;
-  role?: string;
-  skipProviderConfig?: boolean;
-  providerIdForRegistry?: WalletProviderId;
-  suppressExtraLogs?: boolean;
 };
 
 export type WalletKeystoreStatusOptions = {
@@ -205,23 +187,14 @@ export type WalletKeystoreValidateOptions = {
 
 export type WalletKeystorePassphraseInitOptions = {
   json?: boolean;
-  out?: string;
-  length?: number;
-  force?: boolean;
 };
 
 export type WalletKeystorePassphraseRotateOptions = {
   json?: boolean;
-  file?: string;
-  oldPassphrase?: string;
-  newPassphrase?: string;
 };
 
 export type WalletKeystoreExportOptions = {
   json?: boolean;
-  out?: string;
-  includeSecret?: boolean;
-  confirmIncludeSecret?: string;
 };
 
 export type WalletProviderConfigureOptions = {
@@ -230,29 +203,6 @@ export type WalletProviderConfigureOptions = {
   rpcUrl?: string;
   values?: string[];
 };
-
-const PRIVATE_KEY_PRINT_CONFIRMATION = "SHOW PRIVATE KEY";
-const KEYSTORE_EXPORT_CONFIRMATION = "EXPORT KEYSTORE";
-
-function normalizeDangerousConfirmation(value: string | undefined): string {
-  return String(value ?? "").trim();
-}
-
-function requirePrivateKeyPrintConfirmation(value: string | undefined): void {
-  if (normalizeDangerousConfirmation(value) !== PRIVATE_KEY_PRINT_CONFIRMATION) {
-    throw new Error(
-      `Printing a private key requires explicit confirmation. Re-run with confirmation text "${PRIVATE_KEY_PRINT_CONFIRMATION}".`,
-    );
-  }
-}
-
-function requireKeystoreSecretExportConfirmation(value: string | undefined): void {
-  if (normalizeDangerousConfirmation(value) !== KEYSTORE_EXPORT_CONFIRMATION) {
-    throw new Error(
-      `Including encrypted keystore material requires explicit confirmation. Re-run with confirmation text "${KEYSTORE_EXPORT_CONFIRMATION}".`,
-    );
-  }
-}
 
 export type WalletRoleSetOptions = {
   walletId: string;
@@ -289,56 +239,8 @@ function normalizeWalletRoleForCli(value: string | undefined): "agent" | "vault"
   return role === "agent" || role === "vault" ? role : undefined;
 }
 
-export function resolveLegacyLocalSignerEmbeddedScope(params: {
-  cfg: FasedAgentConfig;
-  env: NodeJS.ProcessEnv;
-  chain: WalletChain;
-  walletId?: string;
-}) {
-  const effectiveEnv = { ...params.env, ...params.cfg.env?.vars };
-  const walletId = params.walletId?.trim() || undefined;
-  const keystorePath = resolveEmbeddedKeystorePathForChain(
-    effectiveEnv,
-    params.chain,
-    undefined,
-    walletId,
-  );
-  const rpcUrl = resolveRpcUrlForChain(effectiveEnv, params.chain, walletId);
-  return { effectiveEnv, keystorePath, rpcUrl };
-}
-
-export function createLegacyLocalSignerEmbeddedAdapter(params: {
-  cfg: FasedAgentConfig;
-  env: NodeJS.ProcessEnv;
-  chain: WalletChain;
-  walletId?: string;
-}) {
-  const { effectiveEnv, keystorePath, rpcUrl } = resolveLegacyLocalSignerEmbeddedScope(params);
-  const scopedEnv = {
-    ...effectiveEnv,
-    FASED_WALLET_KEYSTORE_PATH: keystorePath,
-    FASED_WALLET_EMBEDDED_KEYSTORE_RPC_URL: rpcUrl,
-    FASED_WALLET_RPC_URL: rpcUrl,
-  };
-  const scopedCfg: FasedAgentConfig = {
-    ...params.cfg,
-    wallet: {
-      ...params.cfg.wallet,
-      keystore: {
-        ...params.cfg.wallet?.keystore,
-        path: keystorePath,
-      },
-    },
-  };
-  return createWalletProviderAdapter({
-    cfg: scopedCfg,
-    wallet: {
-      ...resolveWalletConfigForRuntime(scopedCfg, scopedEnv),
-      chains: [params.chain],
-    },
-    env: scopedEnv,
-    providerIdOverride: "embedded-keystore",
-  });
+export function createLegacyLocalSignerEmbeddedAdapter(): never {
+  throwLegacyEmbeddedKeystoreMigrationRequired("legacy embedded adapter construction requested");
 }
 
 export type WalletSignerDoctorOptions = {
@@ -359,11 +261,13 @@ export type WalletSignerDoctorReport = {
 function parseWalletProviderId(input: string | undefined) {
   switch ((input ?? "").trim()) {
     case "embedded-keystore":
+      throwLegacyEmbeddedKeystoreMigrationRequired("legacy wallet provider requested");
     case "local-socket-signer":
     case "alchemy":
     case "turnkey":
+      return input as "local-socket-signer" | "alchemy" | "turnkey";
     case "privy":
-      return input as "embedded-keystore" | "local-socket-signer" | "alchemy" | "turnkey" | "privy";
+      throw new Error("Privy wallet creation and signing are unavailable.");
     default:
       return undefined;
   }
@@ -400,27 +304,8 @@ function isWalletRuntime(value: string): value is WalletRuntimeKind {
 
 function throwLegacyDockerSignerRemoved(command: string): never {
   throw new Error(
-    `${command} is no longer supported. Use \`fased wallet keystore ...\` or hosted providers (turnkey/privy/alchemy).`,
+    `${command} is no longer supported. Use the native fased-signerd, Wallet Standard hardware custody, or Turnkey.`,
   );
-}
-
-function resolveEmbeddedKeystorePath(env: NodeJS.ProcessEnv, explicit?: string): string {
-  const custom = explicit?.trim() || String(env.FASED_WALLET_KEYSTORE_PATH ?? "").trim();
-  if (custom) {
-    return path.resolve(custom);
-  }
-  const paths = ensureWalletStateDir(env);
-  return path.join(paths.rootDir, "keystore.v1.enc");
-}
-
-function normalizeWalletIdForFilename(walletId?: string): string | undefined {
-  const raw = String(walletId ?? "")
-    .trim()
-    .toLowerCase();
-  if (!raw) {
-    return undefined;
-  }
-  return raw.replace(/[^a-z0-9_-]+/g, "-");
 }
 
 function normalizeWalletIdForEnvSuffix(walletId?: string): string | undefined {
@@ -661,15 +546,6 @@ function resolveLocalSignerChainsEnvValue(cfg: FasedAgentConfig, env: NodeJS.Pro
   return normalizeWalletChainsForSigner(cfg.wallet?.runtime?.chains).join(",");
 }
 
-function keystoreEnvKeyFor(chain: WalletChain, walletId?: string): string {
-  void chain;
-  const suffix = walletIdEnvSuffix(walletId);
-  if (suffix) {
-    return `FASED_WALLET_SOLANA_KEYSTORE_PATH__${suffix}`;
-  }
-  return "FASED_WALLET_SOLANA_KEYSTORE_PATH";
-}
-
 function rpcEnvKeyFor(chain: WalletChain, walletId?: string): string {
   void chain;
   const suffix = walletIdEnvSuffix(walletId);
@@ -703,397 +579,7 @@ function resolveRpcUrlForChain(
     (perWalletKey ? String(env[perWalletKey] ?? "").trim() : "") ||
     String(env[perChainKey] ?? "").trim();
   void chain;
-  return scopedOrChain || String(env.FASED_WALLET_EMBEDDED_KEYSTORE_RPC_URL ?? "").trim();
-}
-
-function defaultKeystoreFilenameFor(chain: WalletChain, walletId?: string): string {
-  void chain;
-  const normalized = normalizeWalletIdForFilename(walletId);
-  if (!normalized || normalized === "default") {
-    return "keystore-solana.v1.enc";
-  }
-  return `keystore-solana-${normalized}.v1.enc`;
-}
-
-function resolveEmbeddedKeystorePathForChain(
-  env: NodeJS.ProcessEnv,
-  chain: WalletChain,
-  explicit?: string,
-  walletId?: string,
-): string {
-  const explicitPath = explicit?.trim();
-  if (explicitPath) {
-    return path.resolve(explicitPath);
-  }
-  const suffix = walletIdEnvSuffix(walletId);
-  const perChainEnvKey = "FASED_WALLET_SOLANA_KEYSTORE_PATH";
-  const perWalletEnvKey = suffix ? `FASED_WALLET_SOLANA_KEYSTORE_PATH__${suffix}` : undefined;
-  const scopedPath = perWalletEnvKey ? String(env[perWalletEnvKey] ?? "").trim() : "";
-  if (scopedPath) {
-    return path.resolve(scopedPath);
-  }
-  const normalizedWalletId = normalizeWalletIdForFilename(walletId);
-  if (normalizedWalletId && normalizedWalletId !== "default") {
-    return path.join(
-      resolveLocalSignerMaterialRootDir(env),
-      defaultKeystoreFilenameFor(chain, walletId),
-    );
-  }
-  const genericPath =
-    String(env[perChainEnvKey] ?? "").trim() || String(env.FASED_WALLET_KEYSTORE_PATH ?? "").trim();
-  if (genericPath) {
-    return path.resolve(genericPath);
-  }
-  return path.join(
-    resolveLocalSignerMaterialRootDir(env),
-    defaultKeystoreFilenameFor(chain, walletId),
-  );
-}
-
-type SolanaKeystoreEnvelopeV1 = {
-  kind: "fased-solana-keypair";
-  version: 1;
-  kdf: "scrypt";
-  cipher: "aes-256-gcm";
-  salt: string;
-  iv: string;
-  authTag: string;
-  ciphertext: string;
-  publicKey: string;
-};
-
-const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-const ED25519_PKCS8_SEED_PREFIX = Buffer.from("302e020100300506032b657004220420", "hex");
-const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
-
-function decodeBase58(input: string): Uint8Array {
-  const text = input.trim();
-  if (!text) {
-    return new Uint8Array();
-  }
-  let num = 0n;
-  for (const ch of text) {
-    const idx = BASE58_ALPHABET.indexOf(ch);
-    if (idx < 0) {
-      throw new Error(`invalid base58 character: ${ch}`);
-    }
-    num = num * 58n + BigInt(idx);
-  }
-  const bytes: number[] = [];
-  while (num > 0n) {
-    bytes.push(Number(num % 256n));
-    num /= 256n;
-  }
-  bytes.reverse();
-  let leadingZeros = 0;
-  for (const ch of text) {
-    if (ch === "1") {
-      leadingZeros += 1;
-    } else {
-      break;
-    }
-  }
-  return Uint8Array.from([...Array.from({ length: leadingZeros }, () => 0), ...bytes]);
-}
-
-function encodeBase58(input: Uint8Array): string {
-  if (input.length === 0) {
-    return "";
-  }
-  let num = 0n;
-  for (const b of input) {
-    num = (num << 8n) + BigInt(b);
-  }
-  let encoded = "";
-  while (num > 0n) {
-    const idx = Number(num % 58n);
-    encoded = BASE58_ALPHABET[idx] + encoded;
-    num /= 58n;
-  }
-  let leadingZeros = 0;
-  for (const b of input) {
-    if (b === 0) {
-      leadingZeros += 1;
-    } else {
-      break;
-    }
-  }
-  return `${"1".repeat(leadingZeros)}${encoded}`;
-}
-
-function deriveEd25519PublicKeyFromSeed(seed: Uint8Array): Uint8Array {
-  if (seed.length !== 32) {
-    throw new Error(`invalid Ed25519 seed length: ${seed.length} (expected 32)`);
-  }
-  const privateKey = createPrivateKey({
-    key: Buffer.concat([ED25519_PKCS8_SEED_PREFIX, Buffer.from(seed)]),
-    format: "der",
-    type: "pkcs8",
-  });
-  const spki = Buffer.from(createPublicKey(privateKey).export({ format: "der", type: "spki" }));
-  if (
-    spki.length !== ED25519_SPKI_PREFIX.length + 32 ||
-    !spki.subarray(0, ED25519_SPKI_PREFIX.length).equals(ED25519_SPKI_PREFIX)
-  ) {
-    throw new Error("failed to derive Ed25519 public key");
-  }
-  return Uint8Array.from(spki.subarray(ED25519_SPKI_PREFIX.length));
-}
-
-function normalizeSolanaSecretKey(secret: Uint8Array): Uint8Array {
-  if (secret.length === 64) {
-    return secret;
-  }
-  if (secret.length === 32) {
-    const publicKey = deriveEd25519PublicKeyFromSeed(secret);
-    return Uint8Array.from([...secret, ...publicKey]);
-  }
-  throw new Error(`invalid Solana secret key length: ${secret.length} (expected 32 or 64)`);
-}
-
-function solanaAddressFromSecretKey(secretKey: Uint8Array): string {
-  if (secretKey.length !== 64) {
-    throw new Error(`invalid Solana secret key length: ${secretKey.length} (expected 64)`);
-  }
-  return encodeBase58(secretKey.slice(32));
-}
-
-async function callRpcMethod(
-  rpcUrl: string,
-  method: string,
-  params: unknown[],
-): Promise<Record<string, unknown>> {
-  const response = await fetch(rpcUrl, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: `${method}-${Date.now()}`,
-      method,
-      params,
-    }),
-  });
-  if (!response.ok) {
-    throw new Error(`rpc ${method} http ${response.status}`);
-  }
-  const payload = (await response.json()) as {
-    result?: Record<string, unknown>;
-    error?: { message?: string };
-  };
-  if (payload.error) {
-    throw new Error(payload.error.message || `rpc ${method} error`);
-  }
-  if (!payload.result || typeof payload.result !== "object") {
-    throw new Error(`rpc ${method} missing result`);
-  }
-  return payload.result;
-}
-
-function parseSolanaSecretKey(raw: string): Uint8Array {
-  const text = raw.trim();
-  if (!text) {
-    throw new Error("missing Solana private key");
-  }
-  if (text.startsWith("[")) {
-    const parsed = JSON.parse(text) as unknown;
-    if (!Array.isArray(parsed)) {
-      throw new Error("invalid Solana key JSON");
-    }
-    const bytes = Uint8Array.from(
-      parsed.map((v) => {
-        const n = Number(v);
-        if (!Number.isInteger(n) || n < 0 || n > 255) {
-          throw new Error("invalid Solana secret key byte");
-        }
-        return n;
-      }),
-    );
-    return normalizeSolanaSecretKey(bytes);
-  }
-  const normalized = text.replace(/^0x/i, "");
-  if (/^[0-9a-fA-F]+$/.test(normalized) && normalized.length % 2 === 0) {
-    const bytes = Uint8Array.from(Buffer.from(normalized, "hex"));
-    if (bytes.length === 32 || bytes.length === 64) {
-      return normalizeSolanaSecretKey(bytes);
-    }
-  }
-  try {
-    const bytes = Uint8Array.from(Buffer.from(text, "base64"));
-    if (bytes.length === 32 || bytes.length === 64) {
-      return normalizeSolanaSecretKey(bytes);
-    }
-  } catch {}
-  try {
-    const bytes = Uint8Array.from(Buffer.from(text, "base64url"));
-    if (bytes.length === 32 || bytes.length === 64) {
-      return normalizeSolanaSecretKey(bytes);
-    }
-  } catch {}
-  try {
-    const bytes = decodeBase58(text);
-    if (bytes.length === 64) {
-      return normalizeSolanaSecretKey(bytes);
-    }
-  } catch {}
-  throw new Error(
-    "Unsupported Solana secret key format. Use JSON byte array [32/64 bytes], base64/base64url, base58 (64-byte secret), or hex.",
-  );
-}
-
-function encryptSolanaKeypairEnvelope(params: {
-  secretKey: Uint8Array;
-  passphrase: string;
-  publicKey: string;
-}): SolanaKeystoreEnvelopeV1 {
-  const salt = randomBytes(16);
-  const iv = randomBytes(12);
-  const key = scryptSync(params.passphrase, salt, 32);
-  const cipher = createCipheriv("aes-256-gcm", key, iv);
-  const ciphertext = Buffer.concat([cipher.update(Buffer.from(params.secretKey)), cipher.final()]);
-  const authTag = cipher.getAuthTag();
-  return {
-    kind: "fased-solana-keypair",
-    version: 1,
-    kdf: "scrypt",
-    cipher: "aes-256-gcm",
-    salt: salt.toString("base64url"),
-    iv: iv.toString("base64url"),
-    authTag: authTag.toString("base64url"),
-    ciphertext: ciphertext.toString("base64url"),
-    publicKey: params.publicKey,
-  };
-}
-
-function parseSolanaKeystoreEnvelope(raw: string): SolanaKeystoreEnvelopeV1 | null {
-  try {
-    const parsed = JSON.parse(raw) as Partial<SolanaKeystoreEnvelopeV1>;
-    if (
-      parsed.kind !== "fased-solana-keypair" ||
-      parsed.version !== 1 ||
-      parsed.kdf !== "scrypt" ||
-      parsed.cipher !== "aes-256-gcm"
-    ) {
-      return null;
-    }
-    if (
-      typeof parsed.salt !== "string" ||
-      typeof parsed.iv !== "string" ||
-      typeof parsed.authTag !== "string" ||
-      typeof parsed.ciphertext !== "string" ||
-      typeof parsed.publicKey !== "string"
-    ) {
-      return null;
-    }
-    return parsed as SolanaKeystoreEnvelopeV1;
-  } catch {
-    return null;
-  }
-}
-
-function decryptSolanaKeypairEnvelope(
-  envelope: SolanaKeystoreEnvelopeV1,
-  passphrase: string,
-): Uint8Array {
-  const salt = Buffer.from(envelope.salt, "base64url");
-  const iv = Buffer.from(envelope.iv, "base64url");
-  const authTag = Buffer.from(envelope.authTag, "base64url");
-  const ciphertext = Buffer.from(envelope.ciphertext, "base64url");
-  const key = scryptSync(passphrase, salt, 32);
-  const decipher = createDecipheriv("aes-256-gcm", key, iv);
-  decipher.setAuthTag(authTag);
-  const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
-  if (plaintext.length !== 64) {
-    throw new Error(`invalid decrypted Solana secret key length: ${plaintext.length}`);
-  }
-  return Uint8Array.from(plaintext);
-}
-
-function detectEmbeddedKeystoreType(raw: string): "solana-envelope" | "unknown" {
-  if (parseSolanaKeystoreEnvelope(raw)) {
-    return "solana-envelope";
-  }
-  return "unknown";
-}
-
-function resolveKeystorePassphrase(
-  optionsPassphrase: string | undefined,
-  env: NodeJS.ProcessEnv,
-): string {
-  if (optionsPassphrase?.trim()) {
-    return optionsPassphrase.trim();
-  }
-  const file = String(env.FASED_WALLET_PASSPHRASE_FILE ?? "").trim();
-  if (file && fs.existsSync(file)) {
-    return fs.readFileSync(file, "utf8").trim();
-  }
-  const managedFile = path.join(resolveLocalSignerMaterialRootDir(env), "passphrase");
-  if (fs.existsSync(managedFile)) {
-    return fs.readFileSync(managedFile, "utf8").trim();
-  }
-  return String(env.FASED_WALLET_PASSPHRASE ?? "").trim();
-}
-
-function resolvePassphraseFilePath(env: NodeJS.ProcessEnv, explicit?: string): string {
-  const provided = explicit?.trim() || String(env.FASED_WALLET_PASSPHRASE_FILE ?? "").trim();
-  if (provided) {
-    return path.resolve(provided);
-  }
-  return path.join(resolveLocalSignerMaterialRootDir(env), "passphrase");
-}
-
-function writePassphraseFile(filePath: string, passphrase: string) {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
-  fs.writeFileSync(filePath, `${passphrase}\n`, { encoding: "utf8", mode: 0o600 });
-  try {
-    fs.chmodSync(filePath, 0o600);
-  } catch {}
-}
-
-function ensureEmbeddedProviderConfig(
-  cfg: FasedAgentConfig,
-  params: { keystorePath: string; rpcUrl?: string; chain?: WalletChain; walletId?: string },
-): FasedAgentConfig {
-  let nextCfg = ensureWalletMaterialConfig(cfg, params);
-  const chain = params.chain ?? "solana";
-  const nextChains = new Set<WalletChain>(nextCfg.wallet?.keystore?.chainSupport ?? []);
-  nextChains.add(chain);
-  nextCfg = {
-    ...nextCfg,
-    wallet: {
-      ...nextCfg.wallet,
-      provider: {
-        ...nextCfg.wallet?.provider,
-        id: "embedded-keystore",
-      },
-      keystore: {
-        ...nextCfg.wallet?.keystore,
-        enabled: true,
-        path: params.keystorePath,
-        chainSupport: nextChains.size > 0 ? [...nextChains] : ["solana"],
-      },
-      runtime: {
-        ...cfg.wallet?.runtime,
-        enabled: false,
-      },
-    },
-  };
-  return nextCfg;
-}
-
-function ensureWalletMaterialConfig(
-  cfg: FasedAgentConfig,
-  params: { keystorePath: string; rpcUrl?: string; chain?: WalletChain; walletId?: string },
-): FasedAgentConfig {
-  const chain = params.chain ?? "solana";
-  let nextCfg = setConfigEnvVar(
-    cfg,
-    keystoreEnvKeyFor(chain, params.walletId),
-    params.keystorePath,
-  );
-  if (params.rpcUrl?.trim()) {
-    nextCfg = setConfigEnvVar(nextCfg, rpcEnvKeyFor(chain, params.walletId), params.rpcUrl);
-  }
-  return nextCfg;
+  return scopedOrChain || String(env.FASED_WALLET_RPC_URL ?? "").trim();
 }
 
 function ensureLocalSignerProviderConfig(
@@ -1203,6 +689,31 @@ async function configureLocalSignerMode(
   }
 }
 
+function normalizeNativeSignerWalletId(value: string): string {
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return normalized || "default";
+}
+
+function findNativeSignerWalletIdCollision(
+  wallets: ReturnType<typeof readWalletProviderRegistry>["wallets"],
+  friendlyWalletId: string,
+  signerWalletId: string,
+) {
+  return wallets.find((entry) => {
+    if (entry.id === friendlyWalletId || entry.providerId !== "local-socket-signer") {
+      return false;
+    }
+    const signerWalletIdMetadata = entry.metadata?.signerWalletId;
+    const registeredSignerWalletId =
+      typeof signerWalletIdMetadata === "string" ? signerWalletIdMetadata.trim() : "";
+    return (registeredSignerWalletId || normalizeNativeSignerWalletId(entry.id)) === signerWalletId;
+  });
+}
+
 async function createSignerOwnedWalletForSetup(params: {
   runtime: RuntimeEnv;
   options: WalletSetupOptions;
@@ -1226,6 +737,17 @@ async function createSignerOwnedWalletForSetup(params: {
     String(mergedEnv.FASED_HOST_PROFILE ?? "")
       .trim()
       .toLowerCase() === "hosting";
+  const expectedSignerWalletId = normalizeNativeSignerWalletId(walletId);
+  const existingSignerIdCollision = findNativeSignerWalletIdCollision(
+    readWalletProviderRegistry(params.env).wallets,
+    walletId,
+    expectedSignerWalletId,
+  );
+  if (existingSignerIdCollision) {
+    throw new Error(
+      `native signer wallet ID ${expectedSignerWalletId} is already registered as ${existingSignerIdCollision.id}; choose a distinct wallet ID`,
+    );
+  }
   if (!hosted) {
     writeManagedLocalSignerEnvFile({ config: cfg, env: mergedEnv });
     const signerBinPath = resolveSignerdBinaryPath(mergedEnv);
@@ -1253,13 +775,34 @@ async function createSignerOwnedWalletForSetup(params: {
     throw error;
   }
 
+  const signerWalletId = String(result.wallet.walletId ?? "").trim();
+  if (
+    !signerWalletId ||
+    signerWalletId !== expectedSignerWalletId ||
+    (result.policy.walletId && result.policy.walletId !== signerWalletId)
+  ) {
+    throw new Error(
+      `native signer returned an unexpected wallet ID; requested=${walletId} expected=${expectedSignerWalletId} returned=${signerWalletId || "missing"}`,
+    );
+  }
+  const signerIdCollision = findNativeSignerWalletIdCollision(
+    readWalletProviderRegistry(params.env).wallets,
+    walletId,
+    signerWalletId,
+  );
+  if (signerIdCollision) {
+    throw new Error(
+      `native signer wallet ID ${signerWalletId} is already registered as ${signerIdCollision.id}; choose a distinct wallet ID`,
+    );
+  }
+
   const fallbackRpcUrl = String(
     mergedEnv[fallbackRpcEnvKeyFor(walletId)] ??
       mergedEnv.FASED_WALLET_SOLANA_RPC_FALLBACK_URL ??
       "",
   ).trim();
   const network = configureSignerOwnedWalletNetwork({
-    walletId: result.wallet.walletId || walletId,
+    walletId: signerWalletId,
     primaryRpcUrl: params.rpcUrl,
     fallbackRpcUrl: fallbackRpcUrl || undefined,
     env: mergedEnv,
@@ -1267,12 +810,7 @@ async function createSignerOwnedWalletForSetup(params: {
     controlSocketPath: hosted ? undefined : resolveLocalSignerControlSocketPath(mergedEnv),
   });
 
-  // A signer-v2 wallet has no Node-readable keystore. Remove only the config mapping for the
-  // successfully created wallet; legacy material migration is handled separately and explicitly.
-  const keystoreKey = keystoreEnvKeyFor(params.chain, walletId);
-  cfg = setConfigEnvVar(cfg, keystoreKey, undefined);
   await writeConfigFile(cfg);
-  delete params.env[keystoreKey];
 
   const wallet = upsertNamedWallet({
     walletId,
@@ -1283,6 +821,7 @@ async function createSignerOwnedWalletForSetup(params: {
       role: params.role,
       purpose: params.role,
       keyAuthority: "signer-owned-v2",
+      signerWalletId,
       policyHash: result.policy.hash,
       policyVersion: result.policy.version,
       policyState: "locked",
@@ -1304,6 +843,7 @@ async function createSignerOwnedWalletForSetup(params: {
           provider: "local-socket-signer",
           chain: params.chain,
           walletId: wallet.id,
+          signerWalletId,
           address: result.wallet.publicKey,
           policyHash: result.policy.hash,
           policyVersion: result.policy.version,
@@ -1316,6 +856,7 @@ async function createSignerOwnedWalletForSetup(params: {
       ),
     );
   } else {
+    params.runtime.log(`Signer wallet ID: ${signerWalletId}`);
     params.runtime.log(`${params.chain.toUpperCase()} address: ${result.wallet.publicKey}`);
     if (!params.options.noSignerHints) {
       params.runtime.log(
@@ -1332,6 +873,19 @@ export async function walletSetupCommand(
 ) {
   const env = process.env;
   const interactive = !options.nonInteractive;
+  const currentConfig = loadConfig();
+  const currentRegistry = readWalletProviderRegistry(env);
+  if (
+    hasLegacyEmbeddedKeystoreConfig(currentConfig, {
+      ...env,
+      ...currentConfig.env?.vars,
+    }) ||
+    hasLegacyEmbeddedKeystoreMaterialHint({ ...env, ...currentConfig.env?.vars }) ||
+    currentRegistry.providers["embedded-keystore"]?.enabled ||
+    currentRegistry.wallets.some((wallet) => wallet.providerId === "embedded-keystore")
+  ) {
+    throwLegacyEmbeddedKeystoreMigrationRequired("legacy wallet setup state detected");
+  }
   if (options.role && !normalizeWalletUserRole(options.role)) {
     throw new Error("wallet role must be agent, mining, or vault");
   }
@@ -1420,32 +974,25 @@ export async function walletSetupCommand(
   let mode = options.mode;
   if (!mode) {
     runtime.log("Wallet setup modes:");
-    runtime.log("  embedded-create  Create a new self-hosted wallet (default)");
-    runtime.log("  embedded-import  Import an existing Solana key (advanced)");
+    runtime.log("  local-signer-create  Create a signer-owned Solana wallet (default)");
+    runtime.log("  local-signer-import  Show the native signer-only import command");
     runtime.log("  turnkey          Configure hosted provider (Turnkey)");
     runtime.log("  alchemy          Configure hosted provider (Alchemy)");
-    runtime.log("  privy            Configure hosted provider (Privy)");
-    const picked = await prompt("Choose wallet setup mode", "embedded-create");
+    const picked = await prompt("Choose wallet setup mode", "local-signer-create");
     mode =
-      picked === "embedded" ||
-      picked === "embedded-create" ||
-      picked === "embedded-import" ||
       picked === "local-signer-create" ||
       picked === "local-signer-import" ||
       picked === "local-signer" ||
       picked === "turnkey" ||
-      picked === "alchemy" ||
-      picked === "privy"
+      picked === "alchemy"
         ? picked
-        : "embedded-create";
+        : "local-signer-create";
   }
 
-  if (mode === "embedded") {
-    mode = "embedded-create";
+  if (mode === "embedded" || mode === "embedded-create" || mode === "embedded-import") {
+    throwLegacyEmbeddedKeystoreMigrationRequired(`wallet setup mode ${mode} is unavailable`);
   }
   if (
-    mode !== "embedded-create" &&
-    mode !== "embedded-import" &&
     mode !== "local-signer-create" &&
     mode !== "local-signer-import" &&
     mode !== "local-signer" &&
@@ -1455,118 +1002,8 @@ export async function walletSetupCommand(
   ) {
     throw new Error(
       `Unsupported wallet setup mode: ${String(mode)}. ` +
-        "Use one of: embedded-create, embedded-import, local-signer-create, local-signer-import, local-signer, turnkey, alchemy, privy.",
+        "Use one of: local-signer-create, local-signer-import, local-signer, turnkey, alchemy. Privy is unavailable.",
     );
-  }
-
-  if (mode === "embedded-create") {
-    const chain = options.chain ?? "solana";
-    const walletId =
-      options.walletId ??
-      ((await prompt("Wallet id (optional, e.g. agent/mining/vault)", "")).trim() || undefined);
-    const rpcUrlFallback = resolveRpcUrlForChain(env, chain, walletId, options.rpcUrl);
-    const rpcUrl = (
-      await prompt(
-        `${chain.toUpperCase()} RPC URL (required for balances/readiness/send)`,
-        rpcUrlFallback,
-      )
-    ).trim();
-    if (!rpcUrl) {
-      throw new Error(
-        `${chain.toUpperCase()} RPC URL is required for self-hosted wallet setup. ` +
-          "Pass --rpc-url or set FASED_WALLET_<CHAIN>_RPC_URL.",
-      );
-    }
-    const showPrivateKeyOnce =
-      typeof options.showPrivateKeyOnce === "boolean"
-        ? options.showPrivateKeyOnce
-        : !options.nonInteractive &&
-          (
-            await prompt(
-              "Show private key once for backup now? (dangerous, shoulder-surf risk) [y/N]",
-              "n",
-            )
-          )
-            .trim()
-            .toLowerCase()
-            .startsWith("y");
-    if (showPrivateKeyOnce && typeof options.showPrivateKeyOnce === "boolean") {
-      requirePrivateKeyPrintConfirmation(options.confirmPrivateKeyPrint);
-    }
-    const privateKeyPrintConfirmation = showPrivateKeyOnce
-      ? (options.confirmPrivateKeyPrint ??
-        (typeof options.showPrivateKeyOnce === "boolean"
-          ? undefined
-          : PRIVATE_KEY_PRINT_CONFIRMATION))
-      : undefined;
-
-    if (!String(env.FASED_WALLET_PASSPHRASE_FILE ?? env.FASED_WALLET_PASSPHRASE ?? "").trim()) {
-      runtime.log("No wallet passphrase configured. Creating a local passphrase file (0600)...");
-      await walletKeystorePassphraseInitCommand(runtime, { force: false, json: false });
-    }
-
-    await walletKeystoreInitCommand(runtime, {
-      chain,
-      walletId,
-      name: options.walletName,
-      rpcUrl,
-      showPrivateKeyOnce,
-      confirmPrivateKeyPrint: privateKeyPrintConfirmation,
-      force: Boolean(options.force),
-      json: Boolean(options.json),
-      role: options.role,
-    });
-    if (!options.noSignerHints) {
-      runtime.log("Embedded wallet created.");
-    }
-    await configureLimitOrdersIfRequested();
-    return;
-  }
-
-  if (mode === "embedded-import") {
-    const chain = options.chain ?? "solana";
-    const walletId =
-      options.walletId ??
-      ((await prompt("Wallet id (optional, e.g. agent/mining/vault)", "")).trim() || undefined);
-    const rpcUrlFallback = resolveRpcUrlForChain(env, chain, walletId, options.rpcUrl);
-    const rpcUrl = (
-      await prompt(
-        `${chain.toUpperCase()} RPC URL (required for balances/readiness/send)`,
-        rpcUrlFallback,
-      )
-    ).trim();
-    if (!rpcUrl) {
-      throw new Error(
-        `${chain.toUpperCase()} RPC URL is required for self-hosted wallet setup. ` +
-          "Pass --rpc-url or set FASED_WALLET_<CHAIN>_RPC_URL.",
-      );
-    }
-    const privateKey =
-      options.privateKey ?? (await prompt("Paste Solana private key (base58/json/base64/hex)"));
-    if (!privateKey) {
-      throw new Error(
-        "Import mode requires a private key. " +
-          "Pass --private-key (and optional --wallet-id) or set FASED_WALLET_PRIVATE_KEY for non-interactive runs.",
-      );
-    }
-    if (!String(env.FASED_WALLET_PASSPHRASE_FILE ?? env.FASED_WALLET_PASSPHRASE ?? "").trim()) {
-      runtime.log("No wallet passphrase configured. Creating a local passphrase file (0600)...");
-      await walletKeystorePassphraseInitCommand(runtime, { force: false, json: false });
-    }
-    await walletKeystoreImportCommand(runtime, {
-      chain,
-      walletId,
-      name: options.walletName,
-      privateKey,
-      rpcUrl,
-      json: Boolean(options.json),
-      role: options.role,
-    });
-    if (!options.noSignerHints) {
-      runtime.log("Embedded wallet imported.");
-    }
-    await configureLimitOrdersIfRequested();
-    return;
   }
 
   if (mode === "local-signer-create") {
@@ -1585,11 +1022,6 @@ export async function walletSetupCommand(
       throw new Error(
         `${chain.toUpperCase()} RPC URL is required for self-hosted wallet setup. ` +
           "Pass --rpc-url or set FASED_WALLET_<CHAIN>_RPC_URL.",
-      );
-    }
-    if (options.showPrivateKeyOnce) {
-      throw new Error(
-        "Signer-owned wallet keys cannot be printed or exported. Back up the public address and use a separate hardware/Turnkey Vault for reserve funds.",
       );
     }
     const role =
@@ -1617,7 +1049,7 @@ export async function walletSetupCommand(
 
   if (mode === "local-signer-import") {
     throw new Error(
-      "Signer-owned key import cannot pass plaintext key material through Node. Run the native fased-signerd admin wallet import command on the signer host and provide the key on standard input; then register the returned public address in Fased.",
+      "Wallet import is native-signer-only. For a Solana CLI keypair, run `fased-signerd admin wallet import --control-socket <absolute-control.sock> --wallet-id <wallet-id> --locked-role <agent|mining|vault> < /absolute/path/to/solana-keypair.json`. For an old Fased encrypted keystore, use `wallet import-legacy` with owner-only keystore/passphrase file paths. Normal Fased Node, Gateway, and UI paths do not accept wallet private keys or passphrases. Local runs both processes under one OS account and is not a hard compromise boundary; Hosting uses a separate signer account for OS isolation.",
     );
   }
 
@@ -1642,8 +1074,7 @@ export async function walletSetupCommand(
     if (providerId === "alchemy") {
       const apiKey = (
         options.apiKey ??
-        options.privateKey ??
-        env[providerId === "alchemy" ? "ALCHEMY_API_KEY" : "PRIVY_API_KEY"] ??
+        env.ALCHEMY_API_KEY ??
         (await prompt(`${providerId} API key`, ""))
       ).trim();
       if (!apiKey) {
@@ -1871,587 +1302,69 @@ export async function walletStatusCommand(
 export async function walletKeystoreInitCommand(
   runtime: RuntimeEnv = defaultRuntime,
   options: WalletKeystoreInitOptions = {},
-) {
-  const env = process.env;
-  if (options.role && !normalizeWalletRoleForCli(options.role)) {
-    throw new Error(
-      "wallet role must be agent or vault. Use the Mining page/command for SAT mining.",
-    );
-  }
-  const passphrase = resolveKeystorePassphrase(options.passphrase, env);
-  if (!passphrase) {
-    throw new Error(
-      "Missing keystore passphrase. Set FASED_WALLET_PASSPHRASE(_FILE) or pass --passphrase.",
-    );
-  }
-  if (options.showPrivateKeyOnce) {
-    requirePrivateKeyPrintConfirmation(options.confirmPrivateKeyPrint);
-  }
-  const chain = options.chain ?? "solana";
-  const outPath = resolveEmbeddedKeystorePathForChain(env, chain, options.out, options.walletId);
-  if (fs.existsSync(outPath) && !options.force) {
-    throw new Error(`Keystore already exists: ${outPath}`);
-  }
-  fs.mkdirSync(path.dirname(outPath), { recursive: true, mode: 0o700 });
-  let addressOut = "";
-  let privateKeyOut = "";
-  const seed = randomBytes(32);
-  const publicKeyBytes = deriveEd25519PublicKeyFromSeed(seed);
-  const secretKey = Uint8Array.from([...seed, ...publicKeyBytes]);
-  const publicKey = encodeBase58(publicKeyBytes);
-  const envelope = encryptSolanaKeypairEnvelope({
-    secretKey,
-    passphrase,
-    publicKey,
-  });
-  fs.writeFileSync(outPath, `${JSON.stringify(envelope, null, 2)}\n`, {
-    encoding: "utf8",
-    mode: 0o600,
-  });
-  addressOut = publicKey;
-  privateKeyOut = Buffer.from(secretKey).toString("base64");
-  try {
-    fs.chmodSync(outPath, 0o600);
-  } catch {}
-
-  const cfg = options.skipProviderConfig
-    ? ensureWalletMaterialConfig(loadConfig(), {
-        keystorePath: outPath,
-        rpcUrl: options.rpcUrl,
-        chain,
-        walletId: options.walletId,
-      })
-    : ensureEmbeddedProviderConfig(loadConfig(), {
-        keystorePath: outPath,
-        rpcUrl: options.rpcUrl,
-        chain,
-        walletId: options.walletId,
-      });
-  await writeConfigFile(cfg);
-
-  if (options.json) {
-    const payload: Record<string, unknown> = {
-      ok: true,
-      provider: options.providerIdForRegistry ?? "embedded-keystore",
-      chain,
-      keystorePath: outPath,
-      address: addressOut,
-      warning: "Store the passphrase securely; it is not stored in fased config.",
-    };
-    if (options.showPrivateKeyOnce) {
-      payload.privateKey = privateKeyOut;
-      payload.warning =
-        "Private key shown once in JSON output; move to offline backup immediately.";
-    }
-    runtime.log(JSON.stringify(payload, null, 2));
-    return;
-  }
-  runtime.log(`${chain.toUpperCase()} address: ${addressOut}`);
-  if (options.showPrivateKeyOnce) {
-    runtime.log(`PRIVATE KEY (shown once): ${privateKeyOut}`);
-  }
-  if (options.skipProviderConfig && !options.suppressExtraLogs) {
-    runtime.log(`Self-hosted signer keystore created: ${outPath}`);
-  }
-
-  // Register the wallet in the provider registry so it shows up in the UI
-  try {
-    const role = normalizeWalletRoleForCli(options.role);
-    const wallet = upsertNamedWallet({
-      walletId: options.walletId?.trim() || undefined,
-      name: options.name || "Wallet",
-      providerId: options.providerIdForRegistry ?? "embedded-keystore",
-      addresses: {
-        solana: addressOut,
-      },
-      metadata: role ? { role, purpose: role } : undefined,
-      env,
-    });
-    if (role === "agent") {
-      setDefaultWallet({ walletId: wallet.id, env });
-    }
-  } catch (err) {
-    runtime.log(
-      `Warning: failed to register wallet in UI registry: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
+): Promise<never> {
+  void runtime;
+  void options;
+  throwLegacyEmbeddedKeystoreMigrationRequired("legacy keystore CLI command is unavailable");
 }
-
 export async function walletKeystoreImportCommand(
   runtime: RuntimeEnv = defaultRuntime,
   options: WalletKeystoreImportOptions = {},
-) {
-  const env = process.env;
-  if (options.role && !normalizeWalletRoleForCli(options.role)) {
-    throw new Error(
-      "wallet role must be agent or vault. Use the Mining page/command for SAT mining.",
-    );
-  }
-  const passphrase = resolveKeystorePassphrase(options.passphrase, env);
-  if (!passphrase) {
-    throw new Error(
-      "Missing keystore passphrase. Set FASED_WALLET_PASSPHRASE(_FILE) or pass --passphrase.",
-    );
-  }
-  const chain = options.chain ?? "solana";
-  const privateKey = (options.privateKey ?? String(env.FASED_WALLET_PRIVATE_KEY ?? "")).trim();
-  if (!privateKey) {
-    throw new Error("Missing private key. Pass --private-key or set FASED_WALLET_PRIVATE_KEY.");
-  }
-  const outPath = resolveEmbeddedKeystorePathForChain(env, chain, options.out, options.walletId);
-  if (fs.existsSync(outPath) && !options.force) {
-    throw new Error(`Keystore already exists: ${outPath}`);
-  }
-  fs.mkdirSync(path.dirname(outPath), { recursive: true, mode: 0o700 });
-  let addressOut = "";
-  const secretKey = parseSolanaSecretKey(privateKey);
-  const publicKey = solanaAddressFromSecretKey(secretKey);
-  const envelope = encryptSolanaKeypairEnvelope({ secretKey, passphrase, publicKey });
-  fs.writeFileSync(outPath, `${JSON.stringify(envelope, null, 2)}\n`, {
-    encoding: "utf8",
-    mode: 0o600,
-  });
-  addressOut = publicKey;
-  try {
-    fs.chmodSync(outPath, 0o600);
-  } catch {}
-
-  const cfg = options.skipProviderConfig
-    ? ensureWalletMaterialConfig(loadConfig(), {
-        keystorePath: outPath,
-        rpcUrl: options.rpcUrl,
-        chain,
-        walletId: options.walletId,
-      })
-    : ensureEmbeddedProviderConfig(loadConfig(), {
-        keystorePath: outPath,
-        rpcUrl: options.rpcUrl,
-        chain,
-        walletId: options.walletId,
-      });
-  await writeConfigFile(cfg);
-
-  if (options.json) {
-    runtime.log(
-      JSON.stringify(
-        {
-          ok: true,
-          provider: options.providerIdForRegistry ?? "embedded-keystore",
-          chain,
-          keystorePath: outPath,
-          address: addressOut,
-        },
-        null,
-        2,
-      ),
-    );
-    return;
-  }
-  if (!options.skipProviderConfig || !options.suppressExtraLogs) {
-    runtime.log(
-      options.skipProviderConfig
-        ? `Self-hosted signer keystore imported: ${outPath}`
-        : `Embedded keystore imported: ${outPath}`,
-    );
-  }
-  runtime.log(`${chain.toUpperCase()} address: ${addressOut}`);
-  if (options.walletId) {
-    runtime.log(
-      `Signer env hint: export FASED_WALLET_SOLANA_KEYSTORE_PATH__${walletIdEnvSuffix(options.walletId)}="${outPath}"`,
-    );
-  }
-  if (!options.skipProviderConfig) {
-    runtime.log("Configured wallet.provider.id=embedded-keystore and disabled wallet.runtime.");
-  }
-
-  // Register the wallet in the provider registry so it shows up in the UI
-  try {
-    const role = normalizeWalletRoleForCli(options.role);
-    const wallet = upsertNamedWallet({
-      walletId: options.walletId?.trim() || undefined,
-      name: options.name || "Wallet",
-      providerId: options.providerIdForRegistry ?? "embedded-keystore",
-      addresses: {
-        solana: addressOut,
-      },
-      metadata: role ? { role, purpose: role } : undefined,
-      env,
-    });
-    if (role === "agent") {
-      setDefaultWallet({ walletId: wallet.id, env });
-    }
-  } catch (err) {
-    runtime.log(
-      `Warning: failed to register wallet in UI registry: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
+): Promise<never> {
+  void runtime;
+  void options;
+  throwLegacyEmbeddedKeystoreMigrationRequired("legacy keystore CLI command is unavailable");
 }
-
 export async function walletKeystoreStatusCommand(
   runtime: RuntimeEnv = defaultRuntime,
   options: WalletKeystoreStatusOptions = {},
-) {
-  const env = process.env;
-  const cfg = loadConfig();
-  const chain = options.chain ?? "solana";
-  const keystorePath = resolveEmbeddedKeystorePathForChain(
-    env,
-    chain,
-    cfg.wallet?.keystore?.path,
-    options.walletId,
-  );
-  const exists = fs.existsSync(keystorePath);
-  const providerId = cfg.wallet?.provider?.id;
-  let address: string | undefined;
-  let unlocked = false;
-  let error: string | undefined;
-  let detectedType: "solana-envelope" | "unknown" | "missing" = "missing";
-  if (exists) {
-    const passphrase = resolveKeystorePassphrase(undefined, env);
-    const raw = fs.readFileSync(keystorePath, "utf8");
-    detectedType = detectEmbeddedKeystoreType(raw);
-    if (passphrase) {
-      try {
-        if (detectedType === "solana-envelope") {
-          const envelope = parseSolanaKeystoreEnvelope(raw);
-          if (!envelope) {
-            throw new Error("invalid Solana keystore envelope");
-          }
-          decryptSolanaKeypairEnvelope(envelope, passphrase);
-          address = envelope.publicKey;
-          unlocked = true;
-        } else {
-          throw new Error("unsupported Solana keystore envelope");
-        }
-      } catch (err) {
-        error = String(err);
-      }
-    }
-  }
-  const payload = {
-    ok: true,
-    provider: providerId,
-    keystore: {
-      path: keystorePath,
-      exists,
-      type: detectedType,
-      unlocked,
-      address,
-      passphraseConfigured: Boolean(
-        String(env.FASED_WALLET_PASSPHRASE_FILE ?? "").trim() ||
-        String(env.FASED_WALLET_PASSPHRASE ?? "").trim(),
-      ),
-      rpcUrlConfigured: Boolean(
-        String(env.FASED_WALLET_EMBEDDED_KEYSTORE_RPC_URL ?? "").trim() ||
-        String(env.FASED_WALLET_RPC_URL ?? "").trim(),
-      ),
-      providerReady:
-        Boolean(providerId === "embedded-keystore") &&
-        exists &&
-        Boolean(
-          String(env.FASED_WALLET_EMBEDDED_KEYSTORE_RPC_URL ?? "").trim() ||
-          String(env.FASED_WALLET_RPC_URL ?? "").trim(),
-        ),
-      error,
-    },
-  };
-  if (options.json) {
-    runtime.log(JSON.stringify(payload, null, 2));
-    return;
-  }
-  runtime.log(`Provider: ${String(providerId ?? "unset")}`);
-  runtime.log(`Keystore: ${keystorePath} (${exists ? "exists" : "missing"})`);
-  runtime.log(`Type: ${detectedType}`);
-  runtime.log(`Unlocked: ${unlocked ? "yes" : "no"}`);
-  runtime.log(
-    `RPC URL configured: ${
-      payload.keystore.rpcUrlConfigured
-        ? "yes"
-        : "no (set FASED_WALLET_[EMBEDDED_KEYSTORE_]RPC_URL)"
-    }`,
-  );
-  if (address) {
-    runtime.log(`Address: ${address}`);
-  }
-  if (error) {
-    runtime.log(`Error: ${error}`);
-  }
+): Promise<never> {
+  void runtime;
+  void options;
+  throwLegacyEmbeddedKeystoreMigrationRequired("legacy keystore CLI command is unavailable");
 }
-
 export async function walletKeystoreValidateCommand(
   runtime: RuntimeEnv = defaultRuntime,
   options: WalletKeystoreValidateOptions = {},
-) {
-  const env = process.env;
-  const cfg = loadConfig();
-  const chainForPath = options.chain ?? "solana";
-  const keystorePath = resolveEmbeddedKeystorePathForChain(
-    env,
-    chainForPath,
-    cfg.wallet?.keystore?.path,
-    options.walletId,
-  );
-  const passphrase = resolveKeystorePassphrase(undefined, env);
-  const rpcUrl =
-    String(env.FASED_WALLET_EMBEDDED_KEYSTORE_RPC_URL ?? "").trim() ||
-    String(env.FASED_WALLET_RPC_URL ?? "").trim();
-  const result: {
-    ok: boolean;
-    provider: string;
-    checks: Array<{ id: string; ok: boolean; message: string }>;
-    address?: string;
-    chainId?: number;
-    error?: string;
-    chain?: WalletChain;
-  } = {
-    ok: false,
-    provider: "embedded-keystore",
-    checks: [],
-  };
-
-  let raw = "";
-  let detectedType: "solana-envelope" | "unknown" | "missing" = "missing";
-  if (!fs.existsSync(keystorePath)) {
-    result.checks.push({ id: "keystore.exists", ok: false, message: `missing: ${keystorePath}` });
-  } else {
-    raw = fs.readFileSync(keystorePath, "utf8");
-    detectedType = detectEmbeddedKeystoreType(raw);
-    result.checks.push({
-      id: "keystore.exists",
-      ok: true,
-      message: `${keystorePath} (${detectedType})`,
-    });
-  }
-  if (!passphrase) {
-    result.checks.push({
-      id: "keystore.passphrase",
-      ok: false,
-      message: "missing passphrase (set FASED_WALLET_PASSPHRASE or FASED_WALLET_PASSPHRASE_FILE)",
-    });
-  } else {
-    result.checks.push({ id: "keystore.passphrase", ok: true, message: "configured" });
-  }
-  if (!rpcUrl) {
-    result.checks.push({
-      id: "rpc.url",
-      ok: false,
-      message:
-        "missing RPC URL (set FASED_WALLET_EMBEDDED_KEYSTORE_RPC_URL or FASED_WALLET_RPC_URL)",
-    });
-  } else {
-    result.checks.push({ id: "rpc.url", ok: true, message: "configured" });
-  }
-
-  if (result.checks.some((check) => !check.ok)) {
-    if (options.json) {
-      runtime.log(JSON.stringify(result, null, 2));
-      return;
-    }
-    for (const check of result.checks) {
-      runtime.log(`${check.ok ? "✓" : "✗"} ${check.id}: ${check.message}`);
-    }
-    throw new Error("embedded keystore validation failed");
-  }
-
-  try {
-    if (detectedType === "solana-envelope") {
-      const envelope = parseSolanaKeystoreEnvelope(raw);
-      if (!envelope) {
-        throw new Error("invalid Solana keystore envelope");
-      }
-      const secretKey = decryptSolanaKeypairEnvelope(envelope, passphrase);
-      const address = solanaAddressFromSecretKey(secretKey);
-      result.chain = "solana";
-      result.address = address;
-      result.checks.push({
-        id: "keystore.decrypt",
-        ok: true,
-        message: `unlocked (${address})`,
-      });
-      const latest = await callRpcMethod(rpcUrl, "getLatestBlockhash", [
-        { commitment: "finalized" },
-      ]);
-      const latestValue = latest.value as { blockhash?: unknown } | undefined;
-      const blockhash =
-        latestValue && typeof latestValue === "object" && typeof latestValue.blockhash === "string"
-          ? latestValue.blockhash
-          : "unknown";
-      result.checks.push({
-        id: "rpc.connect",
-        ok: true,
-        message: `latestBlockhash=${String(blockhash).slice(0, 12)}…`,
-      });
-      const balance = await callRpcMethod(rpcUrl, "getBalance", [
-        address,
-        { commitment: "finalized" },
-      ]);
-      const balanceValue = balance.value;
-      const lamports =
-        typeof balanceValue === "number" || typeof balanceValue === "string"
-          ? String(balanceValue)
-          : "unknown";
-      result.checks.push({
-        id: "rpc.balance",
-        ok: true,
-        message: `lamports=${lamports}`,
-      });
-      result.ok = result.checks.every((check) => check.ok);
-    } else {
-      throw new Error("unsupported Solana keystore envelope");
-    }
-  } catch (err) {
-    result.error = String(err);
-    result.checks.push({
-      id: "validate.error",
-      ok: false,
-      message: String(err),
-    });
-    result.ok = false;
-  }
-
-  if (options.json) {
-    runtime.log(JSON.stringify(result, null, 2));
-    return;
-  }
-  for (const check of result.checks) {
-    runtime.log(`${check.ok ? "✓" : "✗"} ${check.id}: ${check.message}`);
-  }
-  if (!result.ok) {
-    throw new Error("embedded keystore validation failed");
-  }
+): Promise<never> {
+  void runtime;
+  void options;
+  throwLegacyEmbeddedKeystoreMigrationRequired("legacy keystore CLI command is unavailable");
 }
-
 export async function walletKeystorePassphraseInitCommand(
   runtime: RuntimeEnv = defaultRuntime,
   options: WalletKeystorePassphraseInitOptions = {},
-) {
-  const env = process.env ?? process.env;
-  const outPath = resolvePassphraseFilePath(env, options.out);
-  if (fs.existsSync(outPath) && !options.force) {
-    throw new Error(`Passphrase file already exists: ${outPath} (use --force to overwrite)`);
-  }
-  const bytes =
-    typeof options.length === "number" && Number.isFinite(options.length) && options.length >= 16
-      ? Math.floor(options.length)
-      : 24;
-  const passphrase = randomBytes(bytes).toString("base64url");
-  writePassphraseFile(outPath, passphrase);
-  const payload = {
-    ok: true,
-    path: outPath,
-    bytes,
-    envExport: `export FASED_WALLET_PASSPHRASE_FILE=${outPath}`,
-  };
-  runtime.log(
-    options.json
-      ? JSON.stringify(payload, null, 2)
-      : `Passphrase file written: ${outPath} (mode 600)`,
-  );
-  if (!options.json) {
-    runtime.log(`Set env: export FASED_WALLET_PASSPHRASE_FILE=${outPath}`);
-  }
+): Promise<never> {
+  void runtime;
+  void options;
+  throwLegacyEmbeddedKeystoreMigrationRequired("legacy keystore CLI command is unavailable");
 }
-
 export async function walletKeystorePassphraseRotateCommand(
   runtime: RuntimeEnv = defaultRuntime,
   options: WalletKeystorePassphraseRotateOptions = {},
-) {
-  const env = process.env ?? process.env;
-  const cfg = loadConfig();
-  const keystorePath = resolveEmbeddedKeystorePath(env, cfg.wallet?.keystore?.path);
-  const passphraseFile = resolvePassphraseFilePath(env, options.file);
-  if (!fs.existsSync(keystorePath)) {
-    throw new Error(`Keystore missing: ${keystorePath}`);
-  }
-  const oldPassphrase =
-    (
-      options.oldPassphrase ??
-      (fs.existsSync(passphraseFile) ? fs.readFileSync(passphraseFile, "utf8") : "")
-    ).trim() || String(env.FASED_WALLET_PASSPHRASE ?? "").trim();
-  if (!oldPassphrase) {
-    throw new Error(
-      "Missing old passphrase. Provide --old-passphrase or configure passphrase file/env.",
-    );
-  }
-  const newPassphrase =
-    (options.newPassphrase ?? "").trim() || randomBytes(24).toString("base64url");
-  const raw = fs.readFileSync(keystorePath, "utf8");
-  const detected = detectEmbeddedKeystoreType(raw);
-  if (detected === "solana-envelope") {
-    const envelope = parseSolanaKeystoreEnvelope(raw);
-    if (!envelope) {
-      throw new Error("Invalid Solana keystore envelope");
-    }
-    const secretKey = decryptSolanaKeypairEnvelope(envelope, oldPassphrase);
-    const nextEnvelope = encryptSolanaKeypairEnvelope({
-      secretKey,
-      passphrase: newPassphrase,
-      publicKey: envelope.publicKey,
-    });
-    fs.writeFileSync(keystorePath, `${JSON.stringify(nextEnvelope, null, 2)}\n`, {
-      encoding: "utf8",
-      mode: 0o600,
-    });
-  } else {
-    throw new Error("unsupported Solana keystore envelope");
-  }
-  writePassphraseFile(passphraseFile, newPassphrase);
-  const payload = { ok: true, keystorePath, passphraseFile };
-  runtime.log(
-    options.json
-      ? JSON.stringify(payload, null, 2)
-      : `Rotated keystore passphrase and updated ${passphraseFile}`,
-  );
+): Promise<never> {
+  void runtime;
+  void options;
+  throwLegacyEmbeddedKeystoreMigrationRequired("legacy keystore CLI command is unavailable");
 }
-
 export async function walletKeystoreExportCommand(
   runtime: RuntimeEnv = defaultRuntime,
   options: WalletKeystoreExportOptions = {},
-) {
-  if (options.includeSecret) {
-    if (!options.json) {
-      throw new Error("Including encrypted keystore material requires --json.");
-    }
-    requireKeystoreSecretExportConfirmation(options.confirmIncludeSecret);
-  }
-  const env = process.env ?? process.env;
-  const cfg = loadConfig();
-  const keystorePath = resolveEmbeddedKeystorePath(env, cfg.wallet?.keystore?.path);
-  if (!fs.existsSync(keystorePath)) {
-    throw new Error(`Keystore missing: ${keystorePath}`);
-  }
-  const raw = fs.readFileSync(keystorePath, "utf8");
-  const detected = detectEmbeddedKeystoreType(raw);
-  const outPath = options.out?.trim() ? path.resolve(options.out.trim()) : undefined;
-  const payload: Record<string, unknown> = {
-    ok: true,
-    keystorePath,
-    type: detected,
-    exportedAt: new Date().toISOString(),
-  };
-  if (options.includeSecret) {
-    payload.keystore = raw;
-  }
-  if (outPath) {
-    fs.mkdirSync(path.dirname(outPath), { recursive: true, mode: 0o700 });
-    fs.writeFileSync(outPath, raw, { encoding: "utf8", mode: 0o600 });
-    payload.outputPath = outPath;
-  }
-  if (!options.json && !outPath && !options.includeSecret) {
-    runtime.log(`Keystore export info: type=${detected} path=${keystorePath}`);
-    runtime.log(
-      "Use --out <path> to write a backup copy, or --include-secret --json to print (dangerous).",
-    );
-    return;
-  }
-  runtime.log(JSON.stringify(payload, null, 2));
+): Promise<never> {
+  void runtime;
+  void options;
+  throwLegacyEmbeddedKeystoreMigrationRequired("legacy keystore CLI command is unavailable");
 }
-
 export async function walletProviderConfigureCommand(
   runtime: RuntimeEnv,
   options: WalletProviderConfigureOptions,
 ): Promise<void> {
   const providerId = options.providerId;
+  if (providerId === "privy") {
+    throw new Error(
+      "Privy wallet creation and signing are unavailable. No Privy credentials or provider selection were saved.",
+    );
+  }
   const cfg = loadConfig();
   const credentials = parseCredentialPairs(options.values);
   if (Object.keys(credentials).length === 0) {
@@ -2524,9 +1437,7 @@ export async function walletProviderConfigureCommand(
   }
 
   await writeConfigFile(nextCfg, { envSnapshotForRestore: process.env });
-  if (providerId !== "privy") {
-    setWalletProviderEnabled({ providerId, enabled: true, env: process.env });
-  }
+  setWalletProviderEnabled({ providerId, enabled: true, env: process.env });
   const status = readWalletProviderSecretStatus(providerId, process.env);
 
   if (options.json) {
@@ -2653,7 +1564,11 @@ export async function collectWalletSignerDoctorReport(
     options.socketPath?.trim() ||
     String(effectiveEnv.FASED_WALLET_LOCAL_SIGNER_SOCKET ?? "").trim() ||
     path.join(ensureWalletStateDir(effectiveEnv).rootDir, "local-signer.sock");
-  const expectedSocketMode = 0o600;
+  const hostingSigner =
+    String(effectiveEnv.FASED_HOST_PROFILE ?? "")
+      .trim()
+      .toLowerCase() === "hosting" || socketPath === "/run/fased-signerd/app.sock";
+  const expectedSocketMode = hostingSigner ? 0o660 : 0o600;
   const { pidPath, auditPath } = resolveLocalSignerSidecarPaths(socketPath);
   const wallet = resolveWalletConfigForRuntime(cfg, effectiveEnv);
   const checks: Array<{ check: string; ok: boolean; detail?: string }> = [];
@@ -2752,154 +1667,47 @@ export async function collectWalletSignerDoctorReport(
       }
     }
   }
-  const providerDefaultWallet = providerRegistry.defaultWalletId
-    ? providerWallets.find((entry) => entry.id === providerRegistry.defaultWalletId)
-    : undefined;
-
-  const passphrase =
-    String(effectiveEnv.FASED_WALLET_PASSPHRASE ?? "").trim() ||
-    (() => {
-      const p =
-        String(effectiveEnv.FASED_WALLET_PASSPHRASE_FILE ?? "").trim() ||
-        path.join(resolveLocalSignerMaterialRootDir(effectiveEnv), "passphrase");
-      if (!p) {
-        return "";
-      }
-      try {
-        return fs.readFileSync(p, "utf8").trim();
-      } catch {
-        return "";
-      }
-    })();
-
-  const inspectKeystore = (label: string, keystorePath: string) => {
-    try {
-      const raw = fs.readFileSync(keystorePath, "utf8");
-      const kind = detectEmbeddedKeystoreType(raw);
-      if (kind === "unknown") {
-        push(
-          `keystore.file.${label}`,
-          false,
-          `${keystorePath} type=unknown (expected fased-solana-keypair envelope)`,
-        );
-      } else {
-        push(`keystore.file.${label}`, true, `${keystorePath} type=${kind}`);
-      }
-      if (!passphrase) {
-        push(`keystore.passphrase.${label}`, false, "missing FASED_WALLET_PASSPHRASE(_FILE)");
-      } else if (kind === "solana-envelope") {
-        try {
-          const envv = parseSolanaKeystoreEnvelope(raw);
-          if (!envv) {
-            throw new Error("invalid solana envelope");
-          }
-          void decryptSolanaKeypairEnvelope(envv, passphrase);
-          push(`keystore.decrypt.${label}`, true, "solana envelope decrypt ok");
-        } catch (err) {
-          push(`keystore.decrypt.${label}`, false, String(err));
-        }
-      } else {
-        push(`keystore.decrypt.${label}`, false, "unsupported keystore format");
-      }
-    } catch (err) {
-      push(`keystore.file.${label}`, false, String(err));
-    }
-  };
-
-  const listWalletIds = (prefix: string): string[] => {
-    const out = new Set<string>();
-    for (const [key, value] of Object.entries(effectiveEnv)) {
-      if (!key.startsWith(prefix)) {
-        continue;
-      }
-      if (typeof value !== "string" || !value.trim()) {
-        continue;
-      }
-      const walletId = key.slice(prefix.length).trim().toLowerCase();
-      if (walletId) {
-        out.add(walletId);
-      }
-    }
-    return [...out].toSorted();
-  };
-  const solanaWalletIds = listWalletIds("FASED_WALLET_SOLANA_KEYSTORE_PATH__");
+  const signerHealthy = checks.find((entry) => entry.check === "socket.health")?.ok === true;
   const registrySolanaWalletIds = providerWallets
-    .filter((wallet) => Boolean(wallet.addresses?.solana))
-    .map((wallet) => wallet.id.trim().toLowerCase())
-    .filter(Boolean);
-  const configuredSolanaWallets = new Set([...solanaWalletIds, ...registrySolanaWalletIds]);
+    .filter((entry) => Boolean(entry.addresses?.solana))
+    .map((entry) => entry.id.trim())
+    .filter(Boolean)
+    .toSorted();
   push(
     "wallets.configured.solana",
     true,
-    configuredSolanaWallets.size
-      ? [...configuredSolanaWallets].join(",")
-      : "default-only (or fallback vars)",
+    registrySolanaWalletIds.length > 0 ? registrySolanaWalletIds.join(",") : "none",
   );
 
-  const shouldInspectDefaultWallet = (): boolean => {
-    const perChainKey = "FASED_WALLET_SOLANA_KEYSTORE_PATH";
-    const explicitChainPath =
-      String(effectiveEnv[perChainKey] ?? "").trim() ||
-      String(effectiveEnv.FASED_WALLET_KEYSTORE_PATH ?? "").trim();
-    if (explicitChainPath) {
-      return true;
-    }
-    if (
-      providerId !== "local-socket-signer" &&
-      typeof cfg.wallet?.keystore?.path === "string" &&
-      cfg.wallet.keystore.path.trim()
-    ) {
-      return true;
-    }
-    const defaultPath = resolveEmbeddedKeystorePathForChain(effectiveEnv, "solana");
-    if (fs.existsSync(defaultPath)) {
-      return true;
-    }
-    if (providerDefaultWallet?.addresses?.solana) {
-      return true;
-    }
-    return false;
-  };
-
-  const solanaWalletSet = new Set<string>([
-    ...(shouldInspectDefaultWallet() ? ["default"] : []),
-    ...solanaWalletIds,
-    ...registrySolanaWalletIds,
-  ]);
-
-  const resolveChainKeystorePath = (walletId: string): string => {
-    const explicitFallback =
-      providerId !== "local-socket-signer" && walletId === "default"
-        ? cfg.wallet?.keystore?.path
-        : undefined;
-    return resolveEmbeddedKeystorePathForChain(effectiveEnv, "solana", explicitFallback, walletId);
-  };
-
-  for (const walletId of [...solanaWalletSet].toSorted()) {
-    inspectKeystore(`solana.${walletId}`, resolveChainKeystorePath(walletId));
-  }
-
-  const resolveChainRpcUrl = (walletId: string): string => {
-    const suffix = walletId.toUpperCase();
-    const perWalletKey = `FASED_WALLET_SOLANA_RPC_URL__${suffix}`;
-    const perChainKey = "FASED_WALLET_SOLANA_RPC_URL";
-    return (
-      String(effectiveEnv[perWalletKey] ?? "").trim() ||
-      String(effectiveEnv[perChainKey] ?? "").trim() ||
-      String(effectiveEnv.FASED_WALLET_EMBEDDED_KEYSTORE_RPC_URL ?? "").trim()
+  const resolveChainRpcConfigured = (walletId: string): boolean => {
+    const suffix = walletIdEnvSuffix(walletId);
+    return Boolean(
+      (suffix ? String(effectiveEnv[`FASED_WALLET_SOLANA_RPC_URL__${suffix}`] ?? "").trim() : "") ||
+      String(effectiveEnv.FASED_WALLET_SOLANA_RPC_URL ?? "").trim() ||
+      String(effectiveEnv.FASED_WALLET_RPC_URL ?? "").trim(),
     );
   };
-  const solanaRpcChecks = [...solanaWalletSet]
-    .toSorted()
-    .map((walletId) => resolveChainRpcUrl(walletId));
-  const solanaRpcUrl = solanaRpcChecks.find(Boolean) ?? "";
-  if (solanaWalletSet.size > 0 || String(effectiveEnv.FASED_WALLET_SOLANA_RPC_URL ?? "").trim()) {
-    push("rpc.configured.solana", Boolean(solanaRpcUrl), solanaRpcUrl || "missing");
-  }
-
-  for (const walletId of [...solanaWalletSet].toSorted()) {
-    const u = resolveChainRpcUrl(walletId);
-    push(`rpc.configured.solana.${walletId}`, Boolean(u), u || "missing");
+  for (const walletId of registrySolanaWalletIds) {
+    push(
+      `keystore.file.solana.${walletId}`,
+      signerHealthy,
+      signerHealthy
+        ? "signer-owned encrypted state; normal Fased Node key-handling path disabled (Local same-user isolation is not a hard boundary)"
+        : "native signer is not healthy",
+    );
+    push(
+      `keystore.decrypt.solana.${walletId}`,
+      signerHealthy,
+      signerHealthy
+        ? "native signer handles decryption; normal Fased Node decryption path disabled (Local same-user isolation is not a hard boundary)"
+        : "native signer is not healthy",
+    );
+    const rpcConfigured = resolveChainRpcConfigured(walletId);
+    push(
+      `rpc.configured.solana.${walletId}`,
+      rpcConfigured,
+      rpcConfigured ? "configured" : "missing",
+    );
   }
 
   const ok = checks.every((c) => {
@@ -2936,27 +1744,176 @@ export async function walletSignerDoctorCommand(
 export async function walletRotateKeysCommand(
   runtime: RuntimeEnv = defaultRuntime,
   options: WalletRotateKeysOptions = {},
-) {
+): Promise<never> {
+  void runtime;
+  void options;
+  throw new Error(
+    "Gateway wallet key rotation was removed. For signer-owned encryption rotation, run `fased-signerd admin wallet reencrypt --control-socket <absolute-control.sock> --wallet-id <wallet-id>` as the signer/control-socket owner. Rotate Turnkey or hardware custody only in its provider/wallet authority surface.",
+  );
+}
+
+function isLegacyWalletMaterialEnvKey(key: string): boolean {
+  return (
+    key === "FASED_WALLET_KEYSTORE_PATH" ||
+    key === "FASED_WALLET_PASSPHRASE" ||
+    key === "FASED_WALLET_PASSPHRASE_FILE" ||
+    key === "FASED_WALLET_PRIVATE_KEY" ||
+    key === "FASED_WALLET_SOLANA_KEYSTORE_PATH" ||
+    key.startsWith("FASED_WALLET_SOLANA_KEYSTORE_PATH__")
+  );
+}
+
+export async function walletLegacyMigrationFinalizeCommand(
+  runtime: RuntimeEnv = defaultRuntime,
+  options: WalletLegacyMigrationFinalizeOptions,
+): Promise<void> {
+  const walletId = options.walletId.trim();
+  if (!walletId || !/^[a-zA-Z0-9_-]+$/.test(walletId)) {
+    throw new Error("walletId must contain only letters, numbers, hyphens, or underscores");
+  }
   const cfg = loadConfig();
-  const resolved = resolveWalletConfigForRuntime(cfg, process.env);
-  if (!resolved.enabled) {
-    throw new Error("wallet is disabled");
+  const effectiveEnv = { ...process.env, ...cfg.env?.vars } as NodeJS.ProcessEnv;
+  const socketPath = requireLocalSocketSignerPath(effectiveEnv);
+  const capabilities = await callLocalSocketSigner<{
+    ready?: boolean;
+    capabilities?: {
+      protocol?: { current?: number };
+      features?: string[];
+    };
+  }>(socketPath, { op: "v2.capabilities" });
+  if (
+    capabilities.ready !== true ||
+    capabilities.capabilities?.protocol?.current !== 2 ||
+    !capabilities.capabilities?.features?.includes("signerOwnedKeys")
+  ) {
+    throw new Error(
+      "legacy migration finalization requires a ready protocol-v2 signer-owned wallet",
+    );
   }
-  const provider = createWalletProviderAdapter({
-    cfg,
-    wallet: resolved,
-    env: process.env,
+  const nativeWallet = await callLocalSocketSigner<{ walletId?: string; publicKey?: string }>(
+    socketPath,
+    { op: "v2.wallet.get", walletId },
+  );
+  const expectedSignerWalletId = normalizeNativeSignerWalletId(walletId);
+  const signerWalletId = String(nativeWallet.walletId ?? "").trim();
+  const publicKey = String(nativeWallet.publicKey ?? "").trim();
+  if (!publicKey || signerWalletId !== expectedSignerWalletId) {
+    throw new Error("protocol-v2 signer did not return the requested signer-owned wallet");
+  }
+
+  const registry = readWalletProviderRegistry(effectiveEnv);
+  const legacyWallet = registry.wallets.find((wallet) => wallet.id === walletId);
+  const signerIdCollision = findNativeSignerWalletIdCollision(
+    registry.wallets,
+    walletId,
+    signerWalletId,
+  );
+  if (signerIdCollision) {
+    throw new Error(
+      `native signer wallet ID ${signerWalletId} is already registered as ${signerIdCollision.id}; refusing legacy migration finalization`,
+    );
+  }
+  if (legacyWallet && legacyWallet.providerId !== "embedded-keystore") {
+    if (legacyWallet.providerId !== "local-socket-signer") {
+      throw new Error(
+        `wallet ${walletId} is registered to ${legacyWallet.providerId}, not the legacy provider`,
+      );
+    }
+    const registeredAddress = legacyWallet.addresses?.solana?.trim();
+    if (registeredAddress && registeredAddress !== publicKey) {
+      throw new Error(
+        `signer public key mismatch for ${walletId}; registry=${registeredAddress} signer=${publicKey}`,
+      );
+    }
+    const registeredSignerWalletId = legacyWallet.metadata?.signerWalletId;
+    if (
+      typeof registeredSignerWalletId === "string" &&
+      registeredSignerWalletId.trim() &&
+      registeredSignerWalletId.trim() !== signerWalletId
+    ) {
+      throw new Error(
+        `signer wallet ID mismatch for ${walletId}; registry=${registeredSignerWalletId.trim()} signer=${signerWalletId}`,
+      );
+    }
+  }
+  const legacyAddress = legacyWallet?.addresses?.solana?.trim();
+  if (legacyAddress && legacyAddress !== publicKey) {
+    throw new Error(
+      `signer public key mismatch for ${walletId}; registry=${legacyAddress} signer=${publicKey}`,
+    );
+  }
+
+  upsertNamedWallet({
+    walletId,
+    name: options.walletName?.trim() || legacyWallet?.name || "Wallet",
+    providerId: "local-socket-signer",
+    addresses: { solana: publicKey },
+    metadata: {
+      ...legacyWallet?.metadata,
+      keyAuthority: "signer-owned-v2",
+      signerWalletId,
+      migratedFromProviderId: "embedded-keystore",
+      migratedAt: new Date().toISOString(),
+    },
+    env: effectiveEnv,
   });
-  if (!provider.capabilities.supportsRotateKeys || !provider.rotateKeys) {
-    throw new Error(`provider ${provider.id} does not support key rotation`);
+  setWalletProviderEnabled({ providerId: "local-socket-signer", enabled: true, env: effectiveEnv });
+
+  const afterRegistry = readWalletProviderRegistry(effectiveEnv);
+  const remainingLegacyWallets = afterRegistry.wallets.filter(
+    (wallet) => wallet.providerId === "embedded-keystore",
+  );
+  if (remainingLegacyWallets.length === 0) {
+    setWalletProviderEnabled({
+      providerId: "embedded-keystore",
+      enabled: false,
+      env: effectiveEnv,
+    });
+    const vars = { ...cfg.env?.vars };
+    for (const key of Object.keys(vars)) {
+      if (isLegacyWalletMaterialEnvKey(key)) {
+        delete vars[key];
+      }
+    }
+    for (const key of Object.keys(process.env)) {
+      if (isLegacyWalletMaterialEnvKey(key)) {
+        delete process.env[key];
+      }
+    }
+    await writeConfigFile(
+      {
+        ...cfg,
+        env: { ...cfg.env, vars },
+        wallet: {
+          ...cfg.wallet,
+          provider: { ...cfg.wallet?.provider, id: "local-socket-signer" },
+          keystore: undefined,
+        },
+      },
+      { envSnapshotForRestore: process.env },
+    );
   }
-  const result = await provider.rotateKeys();
+
+  const result = {
+    ok: true,
+    walletId,
+    signerWalletId,
+    publicKey,
+    alreadyFinalized:
+      legacyWallet?.providerId === "local-socket-signer" &&
+      legacyWallet.addresses?.solana?.trim() === publicKey,
+    remainingLegacyWalletIds: remainingLegacyWallets.map((wallet) => wallet.id),
+  };
   if (options.json) {
     runtime.log(JSON.stringify(result, null, 2));
   } else {
-    runtime.log("Wallet keys rotated.");
-    if (result.addresses?.solana) {
-      runtime.log(`Address: ${result.addresses.solana}`);
+    runtime.log(
+      `Verified and finalized signer-owned migration for ${walletId}; signer wallet ID: ${signerWalletId} (${publicKey}).`,
+    );
+    if (remainingLegacyWallets.length > 0) {
+      runtime.log(
+        `Remaining legacy wallets: ${remainingLegacyWallets.map((wallet) => wallet.id).join(", ")}`,
+      );
     }
   }
 }
@@ -3107,9 +2064,9 @@ export async function walletCanaryCommand(
     const requestedProviders = (options.providers ?? [])
       .map((entry) => entry.trim())
       .filter(Boolean);
-    const allowed = new Set(["embedded-keystore", "alchemy", "turnkey", "privy"]);
+    const allowed = new Set(["alchemy", "turnkey"]);
     const providers = requestedProviders.filter((entry) => allowed.has(entry)) as Array<
-      "embedded-keystore" | "alchemy" | "turnkey" | "privy"
+      "alchemy" | "turnkey"
     >;
     const providerE2E = await runWalletProviderCanaryReport({
       cfg,

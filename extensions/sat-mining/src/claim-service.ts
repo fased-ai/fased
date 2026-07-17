@@ -134,9 +134,7 @@ function resolveWalletEnvValue(
 function resolveAutoSweepRpcUrl(walletId: string, env: NodeJS.ProcessEnv): string | undefined {
   return (
     resolveWalletEnvValue(env, "FASED_WALLET_SOLANA_READ_RPC_URL", walletId) ||
-    resolveWalletEnvValue(env, "FASED_WALLET_SOLANA_RPC_URL", walletId) ||
-    resolveWalletEnvValue(env, "FASED_WALLET_EMBEDDED_KEYSTORE_READ_RPC_URL", walletId) ||
-    resolveWalletEnvValue(env, "FASED_WALLET_EMBEDDED_KEYSTORE_RPC_URL", walletId)
+    resolveWalletEnvValue(env, "FASED_WALLET_SOLANA_RPC_URL", walletId)
   );
 }
 

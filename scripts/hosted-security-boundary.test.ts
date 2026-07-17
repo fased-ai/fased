@@ -71,6 +71,35 @@ describe("hosted signer security boundary", () => {
     expect(cleanup).toContain('if [[ "${HOSTED_ROOT_SIGNER:-0}" != "1" ]]');
   });
 
+  it("never imports legacy wallet key material from signer.env into managed startup", () => {
+    const envLoader = sliceBetween(
+      managed,
+      "load_wallet_signer_env_file()",
+      "clear_legacy_wallet_key_env()",
+    );
+    expect(envLoader).not.toContain("grep -E '^export FASED_WALLET_' \"$SIGNERD_ENV_FILE\"");
+    expect(envLoader).toContain("SOLANA_RPC_URL");
+    expect(envLoader).toContain("LOCAL_SIGNER_(SOCKET|");
+    expect(envLoader).toContain("CONTROL_SOCKET");
+    expect(envLoader).toContain("STATE_DB");
+    expect(envLoader).toContain("MASTER_KEY");
+    expect(envLoader).not.toContain("PASSPHRASE");
+    expect(envLoader).not.toContain("PRIVATE_KEY");
+
+    const legacyClear = sliceBetween(
+      managed,
+      "clear_legacy_wallet_key_env()",
+      "resolve_wallet_chains_from_config()",
+    );
+    expect(legacyClear).toContain("FASED_WALLET_SOLANA_KEYSTORE_PATH__*");
+    expect(legacyClear).toContain("FASED_WALLET_PASSPHRASE_FILE__*");
+    expect(legacyClear).toContain("FASED_WALLET_PRIVATE_KEY__*");
+    expect(legacyClear).toContain("FASED_WALLET_MNEMONIC__*");
+    expect(managed).toMatch(
+      /load_wallet_signer_env_file\s+clear_legacy_wallet_key_env\s+SIGNERD_BIN=/,
+    );
+  });
+
   it("keeps hosted Tailscale administration in the temporary root bootstrap", () => {
     expect(install).not.toContain("tailscale-set-operator-self");
     expect(install).not.toContain("tailscale set --operator");
@@ -93,5 +122,29 @@ describe("hosted signer security boundary", () => {
     expect(service).toContain("/var/lib/fased-signer-update-gate");
     expect(service).toContain("NoNewPrivileges=true");
     expect(service).toContain("ProtectSystem=strict");
+  });
+
+  it("moves legacy custody migration into the verified native signer binary", () => {
+    const prepare = sliceBetween(
+      install,
+      "migrate_legacy_hosted_signer_if_needed()",
+      "finalize_legacy_hosted_signer_migration()",
+    );
+    const commit = sliceBetween(
+      install,
+      "finalize_legacy_hosted_signer_migration()",
+      "start_host_bootstrap_channel()",
+    );
+    for (const phase of [prepare, commit]) {
+      expect(phase).toContain("/opt/fased/signer/fased-signerd admin migration hosted-v1");
+      expect(phase).toContain("--control-socket /run/fased-signerd/control.sock");
+      expect(phase).toContain("--state-dir /var/lib/fased-signerd");
+      expect(phase).toContain('--marker-file "$marker_file"');
+      expect(phase).not.toContain("node /usr/local/libexec/migrate-hosted-signer-v2.mjs");
+      expect(phase).not.toContain("FASED_DEFER_LEGACY_QUARANTINE");
+    }
+    expect(prepare).toContain("--phase prepare");
+    expect(commit).toContain("--phase commit");
+    expect(commit).toContain('[[ "${#legacy_keystores[@]}" -gt 0 || -f "$marker_file" ]]');
   });
 });

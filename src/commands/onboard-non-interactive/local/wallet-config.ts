@@ -9,6 +9,10 @@ import type {
 } from "../../../config/types.wallet.js";
 import type { RuntimeEnv } from "../../../runtime.js";
 import {
+  hasLegacyEmbeddedKeystoreMaterialHint,
+  LEGACY_EMBEDDED_KEYSTORE_MIGRATION_MESSAGE,
+} from "../../../wallet/legacy-embedded-keystore.js";
+import {
   WALLET_PROVIDER_IDS,
   readWalletProviderRegistry,
   setWalletProvidersEnabled,
@@ -106,12 +110,10 @@ function parseWalletRuntime(raw: string | undefined): WalletRuntimeKind | null {
 
 function parseWalletProviderId(raw: string | undefined): WalletProviderId | null {
   switch ((raw ?? "").trim()) {
-    case "embedded-keystore":
     case "local-socket-signer":
     case "alchemy":
     case "turnkey":
     case "wallet-standard":
-    case "privy":
       return raw as WalletProviderId;
     default:
       return null;
@@ -203,6 +205,36 @@ export function applyNonInteractiveWalletConfig(params: {
   const current = nextConfig.wallet?.runtime;
   const managedMode = isManagedGatewayMode(opts);
   const registry = readWalletProviderRegistry(process.env);
+  const requestedLegacyProvider =
+    String(opts.walletDefaultProvider ?? "").trim() === "embedded-keystore" ||
+    (typeof opts.walletProviders === "string" &&
+      opts.walletProviders.split(",").some((entry) => entry.trim() === "embedded-keystore"));
+  if (
+    requestedLegacyProvider ||
+    nextConfig.wallet?.provider?.id === "embedded-keystore" ||
+    registry.providers["embedded-keystore"]?.enabled ||
+    registry.wallets.some((wallet) => wallet.providerId === "embedded-keystore") ||
+    hasLegacyEmbeddedKeystoreMaterialHint({ ...process.env, ...nextConfig.env?.vars })
+  ) {
+    runtime.error(LEGACY_EMBEDDED_KEYSTORE_MIGRATION_MESSAGE);
+    runtime.exit(1);
+    return nextConfig;
+  }
+  const requestedPrivyProvider =
+    String(opts.walletDefaultProvider ?? "").trim() === "privy" ||
+    (typeof opts.walletProviders === "string" &&
+      opts.walletProviders.split(",").some((entry) => entry.trim() === "privy"));
+  if (
+    requestedPrivyProvider ||
+    nextConfig.wallet?.provider?.id === "privy" ||
+    registry.wallets.some((wallet) => wallet.providerId === "privy")
+  ) {
+    runtime.error(
+      "Privy wallet creation and signing are unavailable; use the Go signer, Turnkey, or Wallet Standard.",
+    );
+    runtime.exit(1);
+    return nextConfig;
+  }
   const configuredWalletMaterial = hasConfiguredWalletMaterial(registry);
   const enabled =
     opts.walletEnabled ??
@@ -249,9 +281,7 @@ export function applyNonInteractiveWalletConfig(params: {
   const defaultProviderFromConfig = parseWalletProviderId(nextConfig.wallet?.provider?.id);
   const defaultProvider =
     defaultProviderFromOption ??
-    (defaultProviderFromConfig === "embedded-keystore"
-      ? "local-socket-signer"
-      : defaultProviderFromConfig) ??
+    defaultProviderFromConfig ??
     providersFromOption?.[0] ??
     "local-socket-signer";
   const enabledProviders = providersFromOption

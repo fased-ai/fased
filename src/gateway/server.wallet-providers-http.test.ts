@@ -284,7 +284,7 @@ async function waitForResponseEnd(res: ServerResponse, count = 1): Promise<void>
 const baseConfig = {
   gateway: { trustedProxies: [] },
   wallet: {
-    provider: { id: "embedded-keystore" },
+    provider: { id: "local-socket-signer" },
     runtime: {
       enabled: true,
       runtime: "external-custom",
@@ -335,9 +335,12 @@ describe("wallet providers HTTP", () => {
     });
   });
 
-  test("accepts local-socket-signer in wallet settings patch", async () => {
+  test("requires native migration instead of switching a legacy wallet through settings", async () => {
     await withTempConfig({
-      cfg: baseConfig,
+      cfg: {
+        ...baseConfig,
+        wallet: { ...baseConfig.wallet, provider: { id: "embedded-keystore" } },
+      },
       env: { FASED_WALLET_LOCAL_SIGNER_SOCKET: "/tmp/fased-wallet-test.sock" },
       run: async () => {
         const server = createGatewayHttpServer({
@@ -361,13 +364,13 @@ describe("wallet providers HTTP", () => {
           }),
           response.res,
         );
-        expect(response.res.statusCode).toBe(200);
+        expect(response.res.statusCode).toBe(409);
         const payload = JSON.parse(response.getBody()) as {
           ok: boolean;
-          settings?: { provider?: { id?: string } };
+          error?: { code?: string };
         };
-        expect(payload.ok).toBe(true);
-        expect(payload.settings?.provider?.id).toBe("local-socket-signer");
+        expect(payload.ok).toBe(false);
+        expect(payload.error?.code).toBe("wallet_legacy_embedded_keystore_migration_required");
       },
     });
   });
@@ -531,7 +534,10 @@ describe("wallet providers HTTP", () => {
 
   test("accepts wallet policy patch in external mode", async () => {
     await withTempConfig({
-      cfg: baseConfig,
+      cfg: {
+        ...baseConfig,
+        wallet: { ...baseConfig.wallet, provider: { id: "alchemy" } },
+      },
       run: async () => {
         const server = createGatewayHttpServer({
           canvasHost: null,
@@ -573,19 +579,22 @@ describe("wallet providers HTTP", () => {
 
   test("persists Agent wallet-scoped recurring transfer policy in settings payload", async () => {
     await withTempConfig({
-      cfg: baseConfig,
+      cfg: {
+        ...baseConfig,
+        wallet: { ...baseConfig.wallet, provider: { id: "alchemy" } },
+      },
       run: async () => {
         upsertNamedWallet({
           walletId: "vault",
           name: "Vault",
-          providerId: "embedded-keystore",
+          providerId: "alchemy",
           metadata: { role: "vault" },
           env: process.env,
         });
         upsertNamedWallet({
           walletId: "agent",
           name: "Agent",
-          providerId: "embedded-keystore",
+          providerId: "alchemy",
           metadata: { role: "agent" },
           env: process.env,
         });
@@ -1008,7 +1017,10 @@ describe("wallet providers HTTP", () => {
 
   test("persists zero-valued wallet policy limits", async () => {
     await withTempConfig({
-      cfg: baseConfig,
+      cfg: {
+        ...baseConfig,
+        wallet: { ...baseConfig.wallet, provider: { id: "alchemy" } },
+      },
       run: async () => {
         const server = createGatewayHttpServer({
           canvasHost: null,
@@ -1212,7 +1224,7 @@ describe("wallet providers HTTP", () => {
     });
   });
 
-  test("falls back to config-scoped Solana RPC when signer balance probing fails", async () => {
+  test("uses config-scoped Solana RPC with the signer-owned v2 wallet address", async () => {
     const rpcPort = 18999;
     const rpcUrl = `http://127.0.0.1:${rpcPort}`;
     await withTempConfig({
@@ -1253,7 +1265,7 @@ describe("wallet providers HTTP", () => {
         });
         const socketPath = path.join(
           String(process.env.FASED_STATE_DIR ?? os.tmpdir()),
-          `wallet-balance-fallback-${Date.now()}.sock`,
+          "balance.sock",
         );
         process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET = socketPath;
         await mkdir(path.dirname(socketPath), { recursive: true });
@@ -1269,14 +1281,15 @@ describe("wallet providers HTTP", () => {
                 const payload = JSON.parse(line) as Record<string, unknown>;
                 signerRequests.push(payload);
                 const op = typeof payload.op === "string" ? payload.op : "";
-                if (op === "getBalance") {
-                  conn.write(`${JSON.stringify({ ok: false, error: "signer balance failed" })}\n`);
-                } else if (op === "getAddresses") {
+                if (op === "v2.capabilities") {
+                  conn.write(`${JSON.stringify({ ok: true, result: signerV2Capabilities })}\n`);
+                } else if (op === "v2.wallet.get") {
                   conn.write(
                     `${JSON.stringify({
                       ok: true,
                       result: {
-                        solana: "3P2TQ3ED1111111111111111111111111116TNai5",
+                        walletId: "solana_1",
+                        publicKey: "3P2TQ3ED1111111111111111111111111116TNai5",
                       },
                     })}\n`,
                   );
@@ -1329,7 +1342,9 @@ describe("wallet providers HTTP", () => {
               };
               expect(payload.balances?.solana?.ok).toBe(true);
               expect(payload.balances?.solana?.balance).toBe("498000000");
-              expect(signerRequests.some((entry) => entry.op === "getBalance")).toBe(true);
+              expect(signerRequests.some((entry) => entry.op === "v2.capabilities")).toBe(true);
+              expect(signerRequests.some((entry) => entry.op === "v2.wallet.get")).toBe(true);
+              expect(signerRequests.some((entry) => entry.op === "getBalance")).toBe(false);
               signer.close(() => rpcServer.close(() => resolve()));
             } catch (err) {
               signer.close(() => rpcServer.close(() => reject(err)));
@@ -1369,25 +1384,15 @@ describe("wallet providers HTTP", () => {
                 const payload = JSON.parse(line) as Record<string, unknown>;
                 received.push(payload);
                 const op = typeof payload.op === "string" ? payload.op : "";
-                if (op === "getBalance") {
+                if (op === "v2.capabilities") {
+                  conn.write(`${JSON.stringify({ ok: true, result: signerV2Capabilities })}\n`);
+                } else if (op === "v2.wallet.get") {
                   conn.write(
                     `${JSON.stringify({
                       ok: true,
                       result: {
-                        ok: true,
-                        chain: payload.chain,
-                        address: "So11111111111111111111111111111111111111112",
-                        balance: "1",
-                        unit: "lamports",
-                      },
-                    })}\n`,
-                  );
-                } else if (op === "getAddresses") {
-                  conn.write(
-                    `${JSON.stringify({
-                      ok: true,
-                      result: {
-                        solana: "2bm8fYZ6BDVE5LMRotEdQSqCgAonenegsVzKDuVGtaic",
+                        walletId: "trading_main",
+                        publicKey: "2bm8fYZ6BDVE5LMRotEdQSqCgAonenegsVzKDuVGtaic",
                       },
                     })}\n`,
                   );
@@ -1441,18 +1446,13 @@ describe("wallet providers HTTP", () => {
               expect(
                 received.some(
                   (entry) =>
-                    entry.op === "getBalance" &&
-                    entry.chain === "solana" &&
+                    entry.op === "v2.wallet.get" &&
                     (entry.walletId === "trading-main" || entry.walletId === "trading_main"),
                 ),
               ).toBe(true);
-              expect(
-                received.some(
-                  (entry) =>
-                    entry.op === "getAddresses" &&
-                    (entry.walletId === "trading-main" || entry.walletId === "trading_main"),
-                ),
-              ).toBe(true);
+              expect(received.some((entry) => entry.op === "v2.capabilities")).toBe(true);
+              expect(received.some((entry) => entry.op === "getAddresses")).toBe(false);
+              expect(received.some((entry) => entry.op === "getBalance")).toBe(false);
               signer.close(() => resolve());
             } catch (err) {
               signer.close(() => reject(err));

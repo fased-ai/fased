@@ -1,12 +1,15 @@
 import type { FasedAgentConfig } from "../config/config.js";
 import type { WalletProviderId } from "../config/types.wallet.js";
+import {
+  hasLegacyEmbeddedKeystoreConfig,
+  hasLegacyEmbeddedKeystoreMaterialHint,
+  throwLegacyEmbeddedKeystoreMigrationRequired,
+} from "./legacy-embedded-keystore.js";
 import { AlchemyAdapter } from "./providers/alchemy-adapter.js";
-import { EmbeddedKeystoreAdapter } from "./providers/embedded-keystore-adapter.js";
 import {
   LocalSocketSignerAdapter,
   requireLocalSocketSignerPath,
 } from "./providers/local-socket-signer-adapter.js";
-import { PrivyAdapter } from "./providers/privy-adapter.js";
 import { TurnkeyAdapter } from "./providers/turnkey-adapter.js";
 import { WalletStandardAdapter } from "./providers/wallet-standard-adapter.js";
 import type { WalletProviderAdapter } from "./wallet-provider-adapter.js";
@@ -26,6 +29,12 @@ function parseProviderId(input: string | undefined): WalletProviderId | null {
     default:
       return null;
   }
+}
+
+function throwPrivyProviderUnavailable(): never {
+  throw new Error(
+    "Privy wallet creation and signing are unavailable; no Privy provider selection or credentials are accepted.",
+  );
 }
 
 function pickCredentialValue(source: Record<string, unknown>, keys: string[]): string | undefined {
@@ -82,7 +91,7 @@ function resolveWalletRpcUrlFromEnv(
   const scopedOrChain =
     (perWalletKey ? String(env[perWalletKey] ?? "").trim() : "") ||
     String(env[perChainKey] ?? "").trim();
-  return scopedOrChain || String(env.FASED_WALLET_EMBEDDED_KEYSTORE_RPC_URL ?? "").trim();
+  return scopedOrChain || String(env.FASED_WALLET_RPC_URL ?? "").trim();
 }
 
 export function resolveScopedRpcUrlForWallet(params: {
@@ -110,18 +119,6 @@ function inferSelfHostedProviderId(env: NodeJS.ProcessEnv): WalletProviderId | n
   if (String(env.FASED_WALLET_LOCAL_SIGNER_SOCKET ?? "").trim()) {
     return "local-socket-signer";
   }
-  for (const [key, rawValue] of Object.entries(env)) {
-    if (typeof rawValue !== "string" || rawValue.trim().length === 0) {
-      continue;
-    }
-    if (
-      key === "FASED_WALLET_SOLANA_KEYSTORE_PATH" ||
-      key === "FASED_WALLET_PASSPHRASE_FILE" ||
-      key.startsWith("FASED_WALLET_SOLANA_KEYSTORE_PATH__")
-    ) {
-      return "local-socket-signer";
-    }
-  }
   return null;
 }
 
@@ -134,14 +131,21 @@ export function resolveWalletProviderId(
     ...cfg.env?.vars,
   } as NodeJS.ProcessEnv;
   const envProvider = parseProviderId(effectiveEnv.FASED_WALLET_PROVIDER);
-  if (envProvider) {
-    return envProvider;
+  if (hasLegacyEmbeddedKeystoreConfig(cfg, effectiveEnv)) {
+    throwLegacyEmbeddedKeystoreMigrationRequired("legacy wallet provider selection detected");
+  }
+  if (hasLegacyEmbeddedKeystoreMaterialHint(effectiveEnv)) {
+    throwLegacyEmbeddedKeystoreMigrationRequired("legacy wallet material configuration detected");
   }
   const configProvider = parseProviderId(cfg.wallet?.provider?.id);
   const inferredSelfHostedProvider = inferSelfHostedProviderId(effectiveEnv);
   let registryProvider: WalletProviderId | null = null;
+  let registryHasLegacyEmbeddedWallet = false;
   try {
     const registry = readWalletProviderRegistry(effectiveEnv);
+    registryHasLegacyEmbeddedWallet =
+      Boolean(registry.providers["embedded-keystore"]?.enabled) ||
+      registry.wallets.some((entry) => entry.providerId === "embedded-keystore");
     const satWalletId =
       typeof cfg.plugins?.entries?.["sat-mining"]?.config?.walletId === "string"
         ? cfg.plugins.entries["sat-mining"]?.config?.walletId.trim()
@@ -172,13 +176,28 @@ export function resolveWalletProviderId(
   } catch {
     registryProvider = null;
   }
-  if (registryProvider && (!configProvider || configProvider === "embedded-keystore")) {
+  if (registryHasLegacyEmbeddedWallet || registryProvider === "embedded-keystore") {
+    throwLegacyEmbeddedKeystoreMigrationRequired("legacy wallet registry selection detected");
+  }
+  if (envProvider === "privy") {
+    throwPrivyProviderUnavailable();
+  }
+  if (envProvider) {
+    return envProvider;
+  }
+  if (registryProvider === "privy") {
+    throwPrivyProviderUnavailable();
+  }
+  if (registryProvider && !configProvider) {
     return registryProvider;
   }
-  if (inferredSelfHostedProvider && (!configProvider || configProvider === "embedded-keystore")) {
+  if (inferredSelfHostedProvider && !configProvider) {
     return inferredSelfHostedProvider;
   }
   if (configProvider) {
+    if (configProvider === "privy") {
+      throwPrivyProviderUnavailable();
+    }
     return configProvider;
   }
   return inferredSelfHostedProvider ?? "local-socket-signer";
@@ -198,31 +217,7 @@ export function createWalletProviderAdapter(params: {
   const providerId = params.providerIdOverride ?? resolveWalletProviderId(params.cfg, env);
 
   if (providerId === "embedded-keystore") {
-    const secret = loadWalletProviderSecret(providerId, env);
-    const secretCredentials = secret?.credentials ?? {};
-    return new EmbeddedKeystoreAdapter({
-      chains: params.wallet.chains,
-      credentials: {
-        keystorePath:
-          pickCredentialValue(secretCredentials, ["keystorePath", "path"]) ||
-          params.cfg.wallet?.keystore?.path?.trim() ||
-          String(env.FASED_WALLET_KEYSTORE_PATH ?? "").trim() ||
-          undefined,
-        passphrase:
-          pickCredentialValue(secretCredentials, ["passphrase"]) ||
-          String(env.FASED_WALLET_PASSPHRASE ?? "").trim() ||
-          undefined,
-        rpcUrl:
-          pickCredentialValue(secretCredentials, ["rpcUrl", "rpc_url"]) ||
-          resolveScopedRpcUrlForWallet({
-            env,
-            chains: params.wallet.chains,
-            walletId: params.walletId,
-          }) ||
-          undefined,
-      },
-      env,
-    });
+    throwLegacyEmbeddedKeystoreMigrationRequired("legacy wallet adapter selection detected");
   }
 
   if (providerId === "local-socket-signer") {
@@ -341,28 +336,7 @@ export function createWalletProviderAdapter(params: {
   }
 
   if (providerId === "privy") {
-    const secret = loadWalletProviderSecret(providerId, env);
-    const secretCredentials = secret?.credentials ?? {};
-    return new PrivyAdapter({
-      chains: params.wallet.chains,
-      service: params.wallet.service,
-      credentials: {
-        appId:
-          pickCredentialValue(secretCredentials, ["appId", "app_id", "applicationId"]) ||
-          String(env.FASED_WALLET_PRIVY_APP_ID ?? "").trim(),
-        appSecret:
-          pickCredentialValue(secretCredentials, ["appSecret", "app_secret", "secret"]) ||
-          String(env.FASED_WALLET_PRIVY_APP_SECRET ?? "").trim(),
-        baseUrl:
-          pickCredentialValue(secretCredentials, ["baseUrl", "url", "endpoint"]) ||
-          String(env.FASED_WALLET_PRIVY_BASE_URL ?? "").trim() ||
-          undefined,
-        defaultSolanaAddress:
-          pickCredentialValue(secretCredentials, ["defaultSolanaAddress", "solanaAddress"]) ||
-          String(env.FASED_WALLET_PRIVY_DEFAULT_SOLANA_ADDRESS ?? "").trim() ||
-          undefined,
-      },
-    });
+    throwPrivyProviderUnavailable();
   }
 
   throw new Error("unsupported wallet provider");

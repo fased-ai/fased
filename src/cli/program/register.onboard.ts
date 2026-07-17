@@ -165,11 +165,11 @@ export function registerOnboardCommand(program: Command) {
     .option("--wallet-runtime <runtime>", "Wallet runtime: external-docker|external-custom")
     .option(
       "--wallet-providers <ids>",
-      "Enabled wallet providers CSV (embedded-keystore,local-socket-signer,alchemy,turnkey,privy)",
+      "Enabled wallet providers CSV (local-socket-signer,alchemy,turnkey,wallet-standard)",
     )
     .option(
       "--wallet-default-provider <id>",
-      "Default wallet provider id (embedded-keystore|local-socket-signer|alchemy|turnkey|privy)",
+      "Default wallet provider id (local-socket-signer|alchemy|turnkey|wallet-standard)",
     )
     .option("--wallet-chains <chains>", "Wallet chains CSV (solana)")
     .option("--wallet-host <host>", "External self-hosted signer host (advanced/deprecated)")

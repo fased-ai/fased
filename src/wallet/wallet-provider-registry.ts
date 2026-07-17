@@ -3,17 +3,22 @@ import fs from "node:fs";
 import path from "node:path";
 import { resolveStateDir } from "../config/paths.js";
 import type { WalletProviderId } from "../config/types.wallet.js";
+import { throwLegacyEmbeddedKeystoreMigrationRequired } from "./legacy-embedded-keystore.js";
 import { ensureWalletStateDir } from "./wallet-runtime-config.js";
 
 const REGISTRY_FILE_MODE = 0o600;
 const PROVIDER_REGISTRY_FILENAME = "provider-registry.v1.json";
 
 export const WALLET_PROVIDER_IDS: WalletProviderId[] = [
-  "embedded-keystore",
   "local-socket-signer",
   "alchemy",
   "turnkey",
   "wallet-standard",
+];
+
+const WALLET_PROVIDER_REGISTRY_IDS: WalletProviderId[] = [
+  "embedded-keystore",
+  ...WALLET_PROVIDER_IDS,
   "privy",
 ];
 
@@ -377,33 +382,17 @@ function normalizeWalletEntry(raw: unknown): WalletNamedWallet | null {
   };
 }
 
-function isLegacySelfHostedWallet(wallet: WalletNamedWallet): boolean {
-  if (wallet.providerId !== "embedded-keystore") {
-    return false;
-  }
-  const metadata =
-    wallet.metadata && typeof wallet.metadata === "object" && !Array.isArray(wallet.metadata)
-      ? wallet.metadata
-      : undefined;
-  if (metadata?.selfHosted === true) {
-    return true;
-  }
-  if (/^solana-\d+$/i.test(wallet.id)) {
-    return true;
-  }
-  if (/^solana\s+\d+$/i.test(wallet.name)) {
-    return true;
-  }
-  return false;
-}
-
 function makeDefaultRegistry(): WalletProviderRegistry {
   const ts = nowIso();
   return {
     version: 1,
     providers: {
-      "embedded-keystore": { enabled: true, updatedAt: ts, label: "Self-hosted" },
-      "local-socket-signer": { enabled: false, updatedAt: ts, label: "Local signer" },
+      "embedded-keystore": {
+        enabled: false,
+        updatedAt: ts,
+        label: "Legacy embedded keystore (migration required)",
+      },
+      "local-socket-signer": { enabled: true, updatedAt: ts, label: "Local signer" },
       alchemy: { enabled: false, updatedAt: ts },
       turnkey: { enabled: false, updatedAt: ts, label: "Turnkey (policy-managed)" },
       "wallet-standard": { enabled: true, updatedAt: ts, label: "Hardware wallet" },
@@ -434,7 +423,7 @@ function normalizeRegistry(raw: unknown): { registry: WalletProviderRegistry; ch
     "wallet-standard": defaults.providers["wallet-standard"]!,
     privy: defaults.providers.privy,
   };
-  for (const providerId of WALLET_PROVIDER_IDS) {
+  for (const providerId of WALLET_PROVIDER_REGISTRY_IDS) {
     const entryRaw = providersRaw[providerId];
     if (!entryRaw || typeof entryRaw !== "object" || Array.isArray(entryRaw)) {
       continue;
@@ -443,8 +432,13 @@ function normalizeRegistry(raw: unknown): { registry: WalletProviderRegistry; ch
     const enabled = Boolean(entry.enabled);
     let label = typeof entry.label === "string" ? entry.label.trim() || undefined : undefined;
     if (providerId === "embedded-keystore") {
-      if (!label || label === "Embedded keystore (default)" || label === "Self-hosted wallet") {
-        label = "Self-hosted";
+      if (
+        !label ||
+        label === "Embedded keystore (default)" ||
+        label === "Self-hosted wallet" ||
+        label === "Self-hosted"
+      ) {
+        label = "Legacy embedded keystore (migration required)";
       }
     }
     if (providerId === "local-socket-signer") {
@@ -455,32 +449,11 @@ function normalizeRegistry(raw: unknown): { registry: WalletProviderRegistry; ch
     const updatedAt = typeof entry.updatedAt === "string" ? entry.updatedAt : defaults.updatedAt;
     providers[providerId] = { enabled, label, updatedAt };
   }
-  const wallets = (
-    Array.isArray(value.wallets)
-      ? value.wallets
-          .map(normalizeWalletEntry)
-          .filter((entry): entry is WalletNamedWallet => Boolean(entry))
-      : []
-  ).map((wallet) => {
-    if (!isLegacySelfHostedWallet(wallet)) {
-      return wallet;
-    }
-    changed = true;
-    const metadata =
-      wallet.metadata && typeof wallet.metadata === "object" && !Array.isArray(wallet.metadata)
-        ? wallet.metadata
-        : undefined;
-    return {
-      ...wallet,
-      providerId: "local-socket-signer",
-      metadata: {
-        ...metadata,
-        selfHosted: true,
-        migratedFromProviderId: metadata?.migratedFromProviderId ?? "embedded-keystore",
-      },
-      updatedAt: nowIso(),
-    } satisfies WalletNamedWallet;
-  });
+  const wallets = Array.isArray(value.wallets)
+    ? value.wallets
+        .map(normalizeWalletEntry)
+        .filter((entry): entry is WalletNamedWallet => Boolean(entry))
+    : [];
   if (wallets.some((wallet) => wallet.providerId === "local-socket-signer")) {
     const current = providers["local-socket-signer"];
     if (!current.enabled) {
@@ -574,6 +547,14 @@ export function setWalletProviderEnabled(params: {
   label?: string;
   env?: NodeJS.ProcessEnv;
 }): WalletProviderRegistry {
+  if (params.providerId === "embedded-keystore" && params.enabled) {
+    throwLegacyEmbeddedKeystoreMigrationRequired("cannot enable retired wallet provider");
+  }
+  if (params.providerId === "privy" && params.enabled) {
+    throw new Error(
+      "Privy wallet creation and signing are unavailable; the provider stays disabled.",
+    );
+  }
   const env = params.env ?? process.env;
   const registry = readWalletProviderRegistry(env);
   registry.providers[params.providerId] = {
@@ -593,6 +574,20 @@ export function setWalletProvidersEnabled(params: {
   const registry = readWalletProviderRegistry(env);
   const enabledSet = new Set<WalletProviderId>(params.enabledProviders);
   const now = nowIso();
+  const legacy = registry.providers["embedded-keystore"];
+  registry.providers["embedded-keystore"] = {
+    ...legacy,
+    enabled: false,
+    label: "Legacy embedded keystore (migration required)",
+    updatedAt: legacy.enabled ? now : legacy.updatedAt,
+  };
+  const unavailablePrivy = registry.providers.privy;
+  registry.providers.privy = {
+    ...unavailablePrivy,
+    enabled: false,
+    label: "Privy (integration unavailable)",
+    updatedAt: unavailablePrivy.enabled ? now : unavailablePrivy.updatedAt,
+  };
   for (const providerId of WALLET_PROVIDER_IDS) {
     const current = registry.providers[providerId] ?? {
       enabled: false,
@@ -617,6 +612,12 @@ export function upsertNamedWallet(params: {
   metadata?: Record<string, unknown>;
   env?: NodeJS.ProcessEnv;
 }): WalletNamedWallet {
+  if (params.providerId === "embedded-keystore") {
+    throwLegacyEmbeddedKeystoreMigrationRequired("cannot register a new legacy wallet");
+  }
+  if (params.providerId === "privy") {
+    throw new Error("Privy wallet creation and signing are unavailable; no wallet was registered.");
+  }
   const env = params.env ?? process.env;
   const registry = readWalletProviderRegistry(env);
   const name = params.name.trim();

@@ -355,7 +355,6 @@ export function normalizeLegacyConfigValues(cfg: FasedAgentConfig): {
 
   const rawWalletProviderId = String(cfg.wallet?.provider?.id ?? "").trim();
   const allowedProviderIds = new Set([
-    "embedded-keystore",
     "local-socket-signer",
     "alchemy",
     "turnkey",
@@ -363,18 +362,9 @@ export function normalizeLegacyConfigValues(cfg: FasedAgentConfig): {
     "privy",
   ]);
   if (rawWalletProviderId && !allowedProviderIds.has(rawWalletProviderId)) {
-    const mappedProviderId = "embedded-keystore";
-    next = {
-      ...next,
-      wallet: {
-        ...next.wallet,
-        provider: {
-          ...next.wallet?.provider,
-          id: mappedProviderId,
-        },
-      },
-    };
-    changes.push("Normalized unsupported wallet.provider.id to embedded-keystore.");
+    changes.push(
+      `Wallet provider ${rawWalletProviderId} is unsupported and was left unchanged for explicit operator repair.`,
+    );
   }
 
   const legacyAckReaction = cfg.messages?.ackReaction?.trim();

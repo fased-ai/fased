@@ -367,7 +367,7 @@ const FIELD_HELP_BASE: Record<string, string> = {
     "Session/channel scope for QMD recall (same syntax as session.sendPolicy; default: direct-only). Use match.rawKeyPrefix to match full agent-prefixed session keys.",
   wallet: "Wallet subsystem configuration.",
   "wallet.provider.id":
-    'Wallet backend provider id for the current self-hosted runtime ("local-socket-signer" preferred; "embedded-keystore" legacy). Hosted provider ids are CLI/admin-only compatibility plumbing.',
+    'Wallet backend provider id. Local, WSL2, macOS, and Hosting use "local-socket-signer"; Wallet Standard and Turnkey remain supported. Legacy "embedded-keystore" values are migration-only and fail closed.',
   "wallet.execution.mode":
     'Wallet send execution mode ("manual" queues approvals; "autonomous" executes immediately when policy allows).',
   "wallet.approvalAuth.mode":
@@ -376,12 +376,12 @@ const FIELD_HELP_BASE: Record<string, string> = {
     "Wallet WebAuthn challenge TTL in seconds (default: 300).",
   "wallet.approvalAuth.grantTtlSeconds": "Wallet approval grant TTL in seconds (default: 120).",
   "wallet.keystore.enabled":
-    "Enable embedded encrypted keystore provider for local self-hosted signing.",
+    "Retired legacy field. Embedded keystores are migration-only and fail closed.",
   "wallet.keystore.path":
-    "Path to encrypted embedded keystore file (defaults under wallet state dir).",
+    "Retired legacy path retained only so the native signer migration can be performed explicitly.",
   "wallet.keystore.chainSupport":
-    "Enabled chains for embedded keystore. Normal Fased wallet setup is Solana-first.",
-  "wallet.keystore.autoLockSeconds": "Optional idle auto-lock timeout for embedded keystore.",
+    "Retired legacy field; production wallet keys are signer/provider-owned.",
+  "wallet.keystore.autoLockSeconds": "Retired legacy embedded-keystore field.",
   "wallet.runtime.enabled":
     "Enable wallet runtime compatibility settings (provider-agnostic replacement for legacy wallet runtime config).",
   "wallet.runtime.mode": 'Wallet runtime mode ("managed" or "external").',

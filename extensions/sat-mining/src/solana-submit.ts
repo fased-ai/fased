@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import {
   callLocalSocketSigner,
   createSignerReviewApprovalRequest,
+  LEGACY_EMBEDDED_KEYSTORE_MIGRATION_MESSAGE,
   loadConfig,
   readWalletProviderRegistry,
   requireLocalSocketSignerPath,
@@ -169,67 +170,57 @@ function resolveSatEffectiveEnv(cfg: FasedAgentConfig, env: NodeJS.ProcessEnv): 
 function resolveSatProviderId(cfg: FasedAgentConfig, env: NodeJS.ProcessEnv): string {
   const effectiveEnv = resolveSatEffectiveEnv(cfg, env);
   const walletId = resolveSatWalletId(cfg);
+  const signerSocket = String(effectiveEnv.FASED_WALLET_LOCAL_SIGNER_SOCKET ?? "").trim();
   if (walletId) {
-    const hasSelfHostedSignerMaterial =
-      String(effectiveEnv.FASED_WALLET_LOCAL_SIGNER_SOCKET ?? "").trim() ||
-      String(effectiveEnv.FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET ?? "").trim() ||
-      String(
-        walletEnvValue(effectiveEnv, "FASED_WALLET_SOLANA_KEYSTORE_PATH", walletId) ?? "",
-      ).trim();
-    try {
-      const wallet = readWalletProviderRegistry(effectiveEnv).wallets.find(
-        (entry) => entry.id === walletId,
+    const wallet = readWalletProviderRegistry(effectiveEnv).wallets.find(
+      (entry) => entry.id === walletId,
+    );
+    if (wallet?.providerId === "embedded-keystore") {
+      throw new Error(LEGACY_EMBEDDED_KEYSTORE_MIGRATION_MESSAGE);
+    }
+    if (wallet?.providerId && wallet.providerId !== "local-socket-signer") {
+      return wallet.providerId;
+    }
+    if (wallet?.providerId === "local-socket-signer" && !signerSocket) {
+      throw new Error(
+        "SAT mining requires the actual protocol-v2 fased-signerd application socket; legacy keystore paths and backend sockets are not signer capability.",
       );
-      if (wallet?.providerId === "local-socket-signer") {
-        return wallet.providerId;
-      }
-      if (hasSelfHostedSignerMaterial) {
-        return "local-socket-signer";
-      }
-      if (wallet?.providerId) {
-        return wallet.providerId;
-      }
-    } catch {}
-    if (hasSelfHostedSignerMaterial) {
-      return "local-socket-signer";
+    }
+    if (wallet?.providerId === "local-socket-signer") {
+      return wallet.providerId;
     }
   }
-  return resolveWalletProviderId(cfg, effectiveEnv);
-}
-
-function resolveSatRegistrySolanaAddress(cfg: FasedAgentConfig, env: NodeJS.ProcessEnv): string {
-  const effectiveEnv = resolveSatEffectiveEnv(cfg, env);
-  const walletId = resolveSatWalletId(cfg);
-  if (!walletId) {
-    return "";
+  const providerId = resolveWalletProviderId(cfg, effectiveEnv);
+  if (providerId === "local-socket-signer" && !signerSocket) {
+    throw new Error(
+      "SAT mining requires the actual protocol-v2 fased-signerd application socket; configure FASED_WALLET_LOCAL_SIGNER_SOCKET.",
+    );
   }
-  const wallet = readWalletProviderRegistry(effectiveEnv).wallets.find(
-    (entry) => entry.id === walletId,
-  );
-  return typeof wallet?.addresses?.solana === "string" ? wallet.addresses.solana.trim() : "";
+  return providerId;
 }
 
 async function resolveSatLocalSignerAddress(
   cfg: FasedAgentConfig,
   env: NodeJS.ProcessEnv,
   errorMessage: string,
+  verifyCapabilities = true,
 ): Promise<string> {
   const effectiveEnv = resolveSatEffectiveEnv(cfg, env);
   const walletId = resolveSatWalletId(cfg);
-  const result = await callLocalSocketSigner<{ solana?: string }>(
-    requireLocalSocketSignerPath(effectiveEnv),
-    {
-      op: "getAddresses",
-      ...(walletId ? { walletId } : {}),
-    },
-  );
-  const signer = String(result.solana ?? "").trim();
+  if (!walletId) {
+    throw new Error("typed SAT signing requires an explicit mining walletId");
+  }
+  const socketPath = requireLocalSocketSignerPath(effectiveEnv);
+  if (verifyCapabilities) {
+    await requireTypedSatSignerCapabilities(socketPath, "solana.satAction");
+  }
+  const result = await callLocalSocketSigner<{ publicKey?: string }>(socketPath, {
+    op: "v2.wallet.get",
+    walletId,
+  });
+  const signer = String(result.publicKey ?? "").trim();
   if (signer) {
     return signer;
-  }
-  const fallback = resolveSatRegistrySolanaAddress(cfg, env);
-  if (fallback) {
-    return fallback;
   }
   throw new Error(errorMessage);
 }
@@ -325,6 +316,7 @@ async function prepareLocalSignerSubmitContext(cfg: FasedAgentConfig, env: NodeJ
     cfg,
     effectiveEnv,
     "local-socket-signer returned no Solana address for SAT mining wallet",
+    false,
   );
   const signer = new solana.PublicKey(signerAddress);
   return { effectiveEnv, solana, walletId, socketPath, signerAddress, signer };
@@ -1408,7 +1400,6 @@ export async function submitSatInitMinerCapital(
   const effectiveEnv = resolveSatEffectiveEnv(cfg, process.env);
   const authority =
     params.authority?.trim() ||
-    resolveSatRegistrySolanaAddress(cfg, effectiveEnv) ||
     (await resolveSatLocalSignerAddress(
       cfg,
       effectiveEnv,
@@ -1560,13 +1551,11 @@ export async function submitSatUpdateBondTierPolicy(
   if (!hasDedicatedBondProgram(effectiveEnv)) {
     throw new Error("SAT bond tier policy update requires FASED_SAT_BOND_PROGRAM_ID");
   }
-  const defaultUpdateAuthority =
-    resolveSatRegistrySolanaAddress(cfg, effectiveEnv) ||
-    (await resolveSatLocalSignerAddress(
-      cfg,
-      effectiveEnv,
-      "local-socket-signer returned no Solana address for SAT bond policy authority",
-    ));
+  const defaultUpdateAuthority = await resolveSatLocalSignerAddress(
+    cfg,
+    effectiveEnv,
+    "local-socket-signer returned no Solana address for SAT bond policy authority",
+  );
   return submitInstruction({
     cfg,
     env: effectiveEnv,

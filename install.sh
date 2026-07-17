@@ -3278,6 +3278,7 @@ migrate_legacy_hosted_signer_if_needed() {
   local target_home
   local signer_home="/home/${signer_user}"
   local policy_file="/etc/fased/signer-migration-policies.json"
+  local marker_file="/var/lib/fased-host-updater/signer-v1-migration.pending"
   local -a legacy_keystores=()
   target_home="$(getent passwd "$target_user" | cut -d: -f6)"
   [[ -n "$target_home" ]] || target_home="/home/${target_user}"
@@ -3286,7 +3287,7 @@ migrate_legacy_hosted_signer_if_needed() {
   legacy_keystores+=("${target_home}/.fased/wallet"/keystore-*.enc)
   legacy_keystores+=("${signer_home}/.fased/wallet"/keystore-*.enc)
   shopt -u nullglob
-  if [[ "${#legacy_keystores[@]}" -gt 0 ]]; then
+  if [[ "${#legacy_keystores[@]}" -gt 0 || -f "$marker_file" ]]; then
     if [[ ! -f "$policy_file" ]]; then
       echo "A previous hosted wallet requires a fail-closed signer-v2 migration." >&2
       echo "Create root-owned ${policy_file} (mode 0600) with each expected wallet address and explicit policy, then rerun:" >&2
@@ -3294,10 +3295,14 @@ migrate_legacy_hosted_signer_if_needed() {
       echo "Legacy key files were not changed." >&2
       exit 1
     fi
-    FASED_APP_HOME="$target_home" \
-      FASED_LEGACY_SIGNER_HOME="$signer_home" \
-      FASED_DEFER_LEGACY_QUARANTINE=1 \
-      node /usr/local/libexec/migrate-hosted-signer-v2.mjs "$policy_file"
+    /opt/fased/signer/fased-signerd admin migration hosted-v1 \
+      --phase prepare \
+      --control-socket /run/fased-signerd/control.sock \
+      --policy-file "$policy_file" \
+      --app-home "$target_home" \
+      --legacy-signer-home "$signer_home" \
+      --state-dir /var/lib/fased-signerd \
+      --marker-file "$marker_file"
   fi
 }
 
@@ -3307,6 +3312,7 @@ finalize_legacy_hosted_signer_migration() {
   local target_home
   local signer_home="/home/${signer_user}"
   local policy_file="/etc/fased/signer-migration-policies.json"
+  local marker_file="/var/lib/fased-host-updater/signer-v1-migration.pending"
   local -a legacy_keystores=()
   target_home="$(getent passwd "$target_user" | cut -d: -f6)"
   [[ -n "$target_home" ]] || target_home="/home/${target_user}"
@@ -3315,14 +3321,19 @@ finalize_legacy_hosted_signer_migration() {
   legacy_keystores+=("${target_home}/.fased/wallet"/keystore-*.enc)
   legacy_keystores+=("${signer_home}/.fased/wallet"/keystore-*.enc)
   shopt -u nullglob
-  if [[ "${#legacy_keystores[@]}" -gt 0 ]]; then
+  if [[ "${#legacy_keystores[@]}" -gt 0 || -f "$marker_file" ]]; then
     [[ -f "$policy_file" ]] || {
       echo "Signer migration policy disappeared before commit; refusing cleanup." >&2
       return 1
     }
-    FASED_APP_HOME="$target_home" \
-      FASED_LEGACY_SIGNER_HOME="$signer_home" \
-      node /usr/local/libexec/migrate-hosted-signer-v2.mjs "$policy_file"
+    /opt/fased/signer/fased-signerd admin migration hosted-v1 \
+      --phase commit \
+      --control-socket /run/fased-signerd/control.sock \
+      --policy-file "$policy_file" \
+      --app-home "$target_home" \
+      --legacy-signer-home "$signer_home" \
+      --state-dir /var/lib/fased-signerd \
+      --marker-file "$marker_file"
   fi
 
   if need_cmd pkill; then

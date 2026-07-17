@@ -3,10 +3,13 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  WALLET_PROVIDER_IDS,
   deleteNamedWallet,
   readWalletProviderRegistry,
   setDefaultWallet,
   setNamedWalletRole,
+  setWalletProviderEnabled,
+  setWalletProvidersEnabled,
   upsertNamedWallet,
 } from "./wallet-provider-registry.js";
 
@@ -70,7 +73,18 @@ describe("wallet-provider-registry", () => {
     }
   });
 
-  it("migrates legacy self-hosted embedded keystore wallets to local socket signer", async () => {
+  it("offers only supported providers for fresh selection", () => {
+    expect(WALLET_PROVIDER_IDS).toEqual([
+      "local-socket-signer",
+      "alchemy",
+      "turnkey",
+      "wallet-standard",
+    ]);
+    expect(WALLET_PROVIDER_IDS).not.toContain("embedded-keystore");
+    expect(WALLET_PROVIDER_IDS).not.toContain("privy");
+  });
+
+  it("retains legacy embedded registry rows for explicit one-way migration", async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-registry-"));
     vi.stubEnv("FASED_STATE_DIR", stateDir);
     try {
@@ -107,16 +121,49 @@ describe("wallet-provider-registry", () => {
       );
 
       const registry = readWalletProviderRegistry(process.env);
-      expect(registry.wallets[0]?.providerId).toBe("local-socket-signer");
-      expect(registry.providers["local-socket-signer"]?.enabled).toBe(true);
+      expect(registry.wallets[0]?.providerId).toBe("embedded-keystore");
+      expect(registry.providers["embedded-keystore"]?.enabled).toBe(true);
+      expect(registry.providers["embedded-keystore"]?.label).toMatch(/migration required/i);
 
       const persisted = JSON.parse(
         await fs.readFile(path.join(walletRoot, "provider-registry.v1.json"), "utf8"),
       ) as {
         wallets: Array<{ providerId?: string; metadata?: Record<string, unknown> }>;
       };
-      expect(persisted.wallets[0]?.providerId).toBe("local-socket-signer");
-      expect(persisted.wallets[0]?.metadata?.selfHosted).toBe(true);
+      expect(persisted.wallets[0]?.providerId).toBe("embedded-keystore");
+      expect(persisted.wallets[0]?.metadata?.selfHosted).toBeUndefined();
+    } finally {
+      await fs.rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("cannot enable or register embedded-keystore or Privy", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-registry-"));
+    vi.stubEnv("FASED_STATE_DIR", stateDir);
+    try {
+      expect(() =>
+        setWalletProviderEnabled({ providerId: "embedded-keystore", enabled: true }),
+      ).toThrow(/import-legacy/i);
+      expect(() => setWalletProviderEnabled({ providerId: "privy", enabled: true })).toThrow(
+        /Privy.*unavailable/i,
+      );
+      expect(() =>
+        upsertNamedWallet({
+          walletId: "legacy",
+          name: "Legacy",
+          providerId: "embedded-keystore",
+        }),
+      ).toThrow(/import-legacy/i);
+      expect(() =>
+        upsertNamedWallet({ walletId: "privy", name: "Privy", providerId: "privy" }),
+      ).toThrow(/Privy.*unavailable/i);
+
+      const registry = setWalletProvidersEnabled({
+        enabledProviders: ["embedded-keystore", "privy", "local-socket-signer"],
+      });
+      expect(registry.providers["embedded-keystore"]?.enabled).toBe(false);
+      expect(registry.providers.privy?.enabled).toBe(false);
+      expect(registry.providers["local-socket-signer"]?.enabled).toBe(true);
     } finally {
       await fs.rm(stateDir, { recursive: true, force: true });
     }

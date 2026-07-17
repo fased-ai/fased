@@ -178,7 +178,7 @@ describe("formatHostedRootServiceRequiredFailure", () => {
     expect(text).toContain("root-managed fased-gateway.service running as User=app");
     expect(text).toContain("will not fall back to an app-managed user service");
     expect(text).toContain("Root service repair failed: sudo denied");
-    expect(text).toContain("./install.sh --hosting");
+    expect(text).toContain("./install.sh --repair-hosting");
     expect(text).toContain("sudo systemctl status fased-gateway");
   });
 });

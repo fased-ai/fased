@@ -18,6 +18,14 @@ import {
 import type { WizardPrompter } from "./prompts.js";
 
 const tempDirs: string[] = [];
+const onboardingWalletSource = fs.readFileSync(
+  new URL("./onboarding.wallet.ts", import.meta.url),
+  "utf8",
+);
+const signerInstallerSource = fs.readFileSync(
+  new URL("../../scripts/install-fased-signerd.sh", import.meta.url),
+  "utf8",
+);
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -64,6 +72,22 @@ function createSignerReleaseFixture(root: string): {
 }
 
 describe("local signer env file helpers", () => {
+  it("states the Local same-user boundary precisely and keeps official installs version-attested", () => {
+    expect(onboardingWalletSource).toContain(
+      "Local shares one OS account and is not a hard compromise boundary; Hosting isolates the signer account.",
+    );
+    expect(onboardingWalletSource).not.toContain(
+      "Keys are isolated in Go signer process — not accessible to Node agent",
+    );
+    expect(onboardingWalletSource).toContain(
+      "env.FASED_LOCAL_SIGNER_VERSION = `v${normalizedVersion}`",
+    );
+    expect(onboardingWalletSource).toContain("Go is not required for the official prebuilt signer");
+    expect(signerInstallerSource).toContain("gh attestation verify");
+    expect(signerInstallerSource).toContain('--source-ref "refs/tags/${VERSION_TAG}"');
+    expect(signerInstallerSource).toContain("--deny-self-hosted-runners");
+  });
+
   it("uses the same localhost WebAuthn identity on Linux, WSL2, and native macOS", () => {
     const cfg = { gateway: { port: 19876 } } as FasedAgentConfig;
     for (const env of [
@@ -223,7 +247,6 @@ describe("local signer env file helpers", () => {
       env: {
         vars: {
           FASED_WALLET_LOCAL_SIGNER_SOCKET: socketPath,
-          FASED_WALLET_PASSPHRASE: "test-passphrase",
         },
       },
       wallet: {
@@ -506,7 +529,7 @@ describe("local signer env file helpers", () => {
     expect(signerEnv).not.toContain("stale-env-passphrase");
   });
 
-  it("still syncs signer env when provider config is stale but self-hosted signer env exists", () => {
+  it("requires migration when provider config and keystore env are stale", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-onboarding-wallet-sync-"));
     tempDirs.push(root);
     const cfg: FasedAgentConfig = {
@@ -525,12 +548,12 @@ describe("local signer env file helpers", () => {
       },
     };
 
-    expect(
+    expect(() =>
       shouldSyncLocalSocketSignerFromConfig({
         config: cfg,
         env: { HOME: root, FASED_STATE_DIR: root } as NodeJS.ProcessEnv,
       }),
-    ).toBe(true);
+    ).toThrow(/embedded-keystore was retired/i);
   });
 
   it("ignores all stale Node keystore env for signer-v2", () => {

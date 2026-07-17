@@ -60,6 +60,7 @@ export {
   createWalletProviderAdapter,
   resolveWalletProviderId,
 } from "../wallet/wallet-provider-resolver.js";
+export { LEGACY_EMBEDDED_KEYSTORE_MIGRATION_MESSAGE } from "../wallet/legacy-embedded-keystore.js";
 export {
   resolveLocalSignerSocketPath,
   resolveWalletRuntimeConfig,

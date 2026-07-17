@@ -1,4 +1,3 @@
-import fs from "node:fs";
 import path from "node:path";
 import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../agents/agent-scope.js";
 import { getActiveEmbeddedRunCount } from "../agents/pi-embedded-runner/runs.js";
@@ -50,14 +49,12 @@ import type { PluginServicesHandle } from "../plugins/services.js";
 import { getTotalQueueSize } from "../process/command-queue.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { onSessionTranscriptUpdate } from "../sessions/transcript-events.js";
+import { readWalletProviderRegistry } from "../wallet/wallet-provider-registry.js";
 import {
   createWalletProviderAdapter,
   resolveWalletProviderId,
 } from "../wallet/wallet-provider-resolver.js";
-import {
-  resolveLocalSignerMaterialRootDir,
-  resolveWalletRuntimeConfig,
-} from "../wallet/wallet-runtime-config.js";
+import { resolveWalletRuntimeConfig } from "../wallet/wallet-runtime-config.js";
 import { runOnboardingWizard } from "../wizard/onboarding.js";
 import { createAuthRateLimiter, type AuthRateLimiter } from "./auth-rate-limit.js";
 import { startGatewayConfigReloader } from "./config-reload.js";
@@ -130,40 +127,18 @@ const canvasRuntime = runtimeForLogger(logCanvas);
 
 const LOCAL_SIGNER_STARTUP_RECOVERY_TIMEOUT_MS = 2_000;
 
-function hasConfiguredLocalSignerKeystoreMaterial(env: NodeJS.ProcessEnv): boolean {
-  for (const [key, rawValue] of Object.entries(env)) {
-    if (typeof rawValue !== "string" || rawValue.trim().length === 0) {
-      continue;
-    }
-    if (
-      key === "FASED_WALLET_SOLANA_KEYSTORE_PATH" ||
-      key.startsWith("FASED_WALLET_SOLANA_KEYSTORE_PATH__")
-    ) {
-      return true;
-    }
-  }
-
-  try {
-    const materialDir = resolveLocalSignerMaterialRootDir(env);
-    if (!fs.existsSync(materialDir)) {
-      return false;
-    }
-    return fs
-      .readdirSync(materialDir, { withFileTypes: true })
-      .some((entry) => entry.isFile() && /^keystore-solana(?:-.+)?\.v1\.enc$/i.test(entry.name));
-  } catch {
-    return false;
-  }
-}
-
 async function ensureLocalSignerReadyAtGatewayStart(cfg: ReturnType<typeof loadConfig>) {
   const effectiveEnv = { ...process.env, ...cfg.env?.vars };
   const providerId = resolveWalletProviderId(cfg, effectiveEnv);
   if (providerId !== "local-socket-signer") {
     return;
   }
-  if (!hasConfiguredLocalSignerKeystoreMaterial(effectiveEnv)) {
-    log.debug("local signer startup check skipped: no self-hosted signer keystore material found");
+  if (
+    !readWalletProviderRegistry(effectiveEnv).wallets.some(
+      (wallet) => wallet.providerId === "local-socket-signer",
+    )
+  ) {
+    log.debug("local signer startup check skipped: no signer-owned wallet is registered");
     return;
   }
   const wallet = resolveWalletRuntimeConfig(cfg, effectiveEnv);

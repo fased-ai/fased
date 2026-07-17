@@ -56,7 +56,7 @@ const FULL_CHAIN_OPS: WalletProviderChainOps = {
 
 const PROVIDER_CHAIN_OPERATION_PROFILES: Record<WalletProviderId, ProviderChainOperationProfile> = {
   "embedded-keystore": {
-    solana: { ...FULL_CHAIN_OPS },
+    solana: { receiveAddress: false, getBalance: false, prepare: false, send: false },
   },
   "local-socket-signer": {
     solana: { ...FULL_CHAIN_OPS },
@@ -199,10 +199,7 @@ export function buildWalletProviderCapabilityMatrix(
       resetKeys: adapter.capabilities.supportsResetKeys,
     },
     chains,
-    requiresCredentials:
-      adapter.id !== "embedded-keystore" &&
-      adapter.id !== "local-socket-signer" &&
-      adapter.id !== "wallet-standard",
+    requiresCredentials: adapter.id !== "local-socket-signer" && adapter.id !== "wallet-standard",
     requiresRpcSecret: false,
   };
 }

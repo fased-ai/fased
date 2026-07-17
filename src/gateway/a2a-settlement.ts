@@ -37,12 +37,10 @@ function normalizeChain(value: unknown): WalletChain | null {
 function normalizeProviderId(value: unknown): WalletProviderId | undefined {
   const normalized = asString(value)?.toLowerCase();
   if (
-    normalized === "embedded-keystore" ||
     normalized === "local-socket-signer" ||
     normalized === "alchemy" ||
     normalized === "turnkey" ||
-    normalized === "wallet-standard" ||
-    normalized === "privy"
+    normalized === "wallet-standard"
   ) {
     return normalized;
   }

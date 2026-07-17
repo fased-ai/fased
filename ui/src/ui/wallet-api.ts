@@ -1441,47 +1441,18 @@ export async function finishWalletPasskeyAssertion(input: {
 }
 
 export async function rotateWalletKeys(
-  approvalToken?: string,
-  providerId?: WalletProviderId,
+  _approvalToken?: string,
+  _providerId?: WalletProviderId,
 ): Promise<{ ok: true; result: unknown }> {
-  const search = new URLSearchParams();
-  if (providerId) {
-    search.set("providerId", providerId);
-  }
-  const path = search.size > 0 ? `/api/wallet/rotate?${search.toString()}` : "/api/wallet/rotate";
-  return await fetchJson<{ ok: true; result: unknown }>(path, {
-    method: "POST",
-    credentials: "include",
-    cache: "no-store",
-    headers:
-      approvalToken && approvalToken.trim()
-        ? { "x-wallet-approval-token": approvalToken.trim() }
-        : undefined,
-  });
+  throw new Error("Wallet key rotation is unavailable through the Gateway UI.");
 }
 
 export async function resetWalletKeys(
-  confirmText: string,
-  approvalToken?: string,
-  providerId?: WalletProviderId,
+  _confirmText: string,
+  _approvalToken?: string,
+  _providerId?: WalletProviderId,
 ): Promise<{ ok: true; result: unknown }> {
-  const search = new URLSearchParams();
-  if (providerId) {
-    search.set("providerId", providerId);
-  }
-  const path = search.size > 0 ? `/api/wallet/reset?${search.toString()}` : "/api/wallet/reset";
-  return await fetchJson<{ ok: true; result: unknown }>(path, {
-    method: "POST",
-    credentials: "include",
-    cache: "no-store",
-    headers: {
-      "content-type": "application/json",
-      ...(approvalToken && approvalToken.trim()
-        ? { "x-wallet-approval-token": approvalToken.trim() }
-        : {}),
-    },
-    body: JSON.stringify({ confirmText }),
-  });
+  throw new Error("Wallet reset is unavailable through the Gateway UI.");
 }
 
 export type WalletStandardBrowserReview = {

@@ -287,17 +287,6 @@ function inferDefaultWalletProviderId(env: NodeJS.ProcessEnv): WalletProviderId 
   if (String(env.FASED_WALLET_LOCAL_SIGNER_SOCKET ?? "").trim()) {
     return "local-socket-signer";
   }
-  for (const key of Object.keys(env)) {
-    if (
-      key === "FASED_WALLET_SOLANA_KEYSTORE_PATH" ||
-      key === "FASED_WALLET_PASSPHRASE_FILE" ||
-      key.startsWith("FASED_WALLET_SOLANA_KEYSTORE_PATH__")
-    ) {
-      if (String(env[key] ?? "").trim()) {
-        return "local-socket-signer";
-      }
-    }
-  }
   return null;
 }
 

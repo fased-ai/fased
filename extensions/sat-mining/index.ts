@@ -501,8 +501,7 @@ function resolveWalletSolanaRpcUrl(env: NodeJS.ProcessEnv, walletId?: string): s
   const perWalletKey = suffix ? `FASED_WALLET_SOLANA_RPC_URL__${suffix}` : "";
   const value =
     (perWalletKey ? String(env[perWalletKey] ?? "").trim() : "") ||
-    String(env.FASED_WALLET_SOLANA_RPC_URL ?? "").trim() ||
-    String(env.FASED_WALLET_EMBEDDED_KEYSTORE_RPC_URL ?? "").trim();
+    String(env.FASED_WALLET_SOLANA_RPC_URL ?? "").trim();
   return value || undefined;
 }
 
@@ -3735,8 +3734,7 @@ const satMiningPlugin = {
       const perWalletKey = suffix ? `FASED_WALLET_SOLANA_RPC_URL__${suffix.toUpperCase()}` : "";
       return Boolean(
         (perWalletKey ? String(effectiveEnv[perWalletKey] ?? "").trim() : "") ||
-        String(effectiveEnv.FASED_WALLET_SOLANA_RPC_URL ?? "").trim() ||
-        String(effectiveEnv.FASED_WALLET_EMBEDDED_KEYSTORE_RPC_URL ?? "").trim(),
+        String(effectiveEnv.FASED_WALLET_SOLANA_RPC_URL ?? "").trim(),
       );
     };
     const normalizeAddressValue = (value?: string) => {

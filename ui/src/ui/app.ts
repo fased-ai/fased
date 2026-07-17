@@ -292,18 +292,14 @@ import {
   deleteWalletNamedWallet,
   deleteWalletPasskey,
   deleteWalletProviderCredentialsFor,
-  deleteWalletRpcSettingsFor,
   executeWalletStandardSend,
   finishWalletSignerReviewApproval,
   rejectWalletSend,
-  resetWalletKeys,
-  rotateWalletKeys,
   searchWalletSolanaTokens,
   signerAuthorizationMatchesWalletApproval,
   patchWalletSettings,
   patchWalletProvider,
   putWalletProviderCredentials,
-  putWalletRpcSettings,
   getWalletSignerDoctor,
   getWalletBalances,
   upsertWalletAssignment,
@@ -5182,50 +5178,8 @@ export class FasedAgentApp extends LitElement {
   }
 
   async handleWalletSaveRpcSecret() {
-    if (this.walletSettingsBusy) {
-      return;
-    }
-    const providerId = this.walletProviderTab;
-    if (providerId !== "embedded-keystore") {
-      this.walletSettingsError = "RPC settings are not exposed for this provider in the UI.";
-      return;
-    }
-    const provider = this.walletRpcProvider.trim();
-    const apiKey = this.walletRpcApiKey.trim();
-    const rpcUrl = this.walletRpcUrl.trim();
-    if (!provider && !rpcUrl) {
-      this.walletSettingsError = "RPC provider is required unless RPC URL is provided.";
-      return;
-    }
-    if (!apiKey && !rpcUrl) {
-      this.walletSettingsError = "RPC API key is required unless RPC URL includes the key.";
-      return;
-    }
-    this.walletSettingsBusy = true;
-    this.walletSettingsError = null;
-    this.walletSettingsMessage = null;
-    try {
-      const approvalToken = await this.resolveWalletApprovalToken({
-        operation: "wallet.provider-credentials",
-      });
-      await putWalletRpcSettings(
-        {
-          providerId,
-          chain: this.walletRpcChain,
-          provider: provider || undefined,
-          apiKey: apiKey || undefined,
-          rpcUrl: rpcUrl || undefined,
-        },
-        approvalToken ?? undefined,
-      );
-      this.walletRpcApiKey = "";
-      this.walletSettingsMessage = "RPC secret saved.";
-      await this.handleWalletLoad();
-    } catch (err) {
-      this.walletSettingsError = `Saving RPC secret failed: ${String(err)}`;
-    } finally {
-      this.walletSettingsBusy = false;
-    }
+    this.walletSettingsError =
+      "RPC settings are signer/provider-owned and are not accepted by the Gateway UI.";
   }
 
   async handleWalletSaveProviderCredentials() {
@@ -5346,29 +5300,8 @@ export class FasedAgentApp extends LitElement {
   }
 
   async handleWalletDeleteRpcSecret() {
-    if (this.walletSettingsBusy) {
-      return;
-    }
-    const providerId = this.walletProviderTab;
-    if (providerId !== "embedded-keystore") {
-      this.walletSettingsError = "RPC settings are not exposed for this provider in the UI.";
-      return;
-    }
-    this.walletSettingsBusy = true;
-    this.walletSettingsError = null;
-    this.walletSettingsMessage = null;
-    try {
-      const approvalToken = await this.resolveWalletApprovalToken({
-        operation: "wallet.provider-credentials",
-      });
-      await deleteWalletRpcSettingsFor(providerId, approvalToken ?? undefined);
-      this.walletSettingsMessage = "RPC secret removed.";
-      await this.handleWalletLoad();
-    } catch (err) {
-      this.walletSettingsError = `Removing RPC secret failed: ${String(err)}`;
-    } finally {
-      this.walletSettingsBusy = false;
-    }
+    this.walletSettingsError =
+      "RPC settings are signer/provider-owned and are not stored by the Gateway UI.";
   }
 
   async handleWalletSelectProvider(providerId: WalletProviderInfo["id"]) {
@@ -5782,53 +5715,13 @@ export class FasedAgentApp extends LitElement {
   }
 
   async handleWalletRotateKeys() {
-    if (this.walletActionBusy) {
-      return;
-    }
-    this.walletActionBusy = true;
-    this.walletActionMessage = null;
-    this.walletError = null;
-    try {
-      const approvalToken = await this.resolveWalletApprovalToken({ operation: "wallet.rotate" });
-      await rotateWalletKeys(approvalToken ?? undefined, this.walletProviderTab);
-      this.walletActionMessage = "Wallet keys rotated.";
-      await this.handleWalletLoad();
-    } catch (err) {
-      this.walletError = `Wallet rotate failed: ${String(err)}`;
-    } finally {
-      this.walletActionBusy = false;
-    }
+    this.walletError =
+      "Wallet key rotation is signer/provider-owned and is unavailable through the Gateway UI.";
   }
 
   async handleWalletResetKeys() {
-    if (this.walletActionBusy) {
-      return;
-    }
-    const confirmText = this.walletResetConfirmText.trim();
-    if (confirmText !== "RESET WALLET") {
-      this.walletError = 'Reset blocked: type "RESET WALLET" to confirm.';
-      return;
-    }
-    const accepted = window.confirm(
-      "Resetting wallet keys is destructive and changes wallet addresses. Continue?",
-    );
-    if (!accepted) {
-      return;
-    }
-    this.walletActionBusy = true;
-    this.walletActionMessage = null;
-    this.walletError = null;
-    try {
-      const approvalToken = await this.resolveWalletApprovalToken({ operation: "wallet.reset" });
-      await resetWalletKeys(confirmText, approvalToken ?? undefined, this.walletProviderTab);
-      this.walletResetConfirmText = "";
-      this.walletActionMessage = "Wallet reset completed. New keys generated.";
-      await this.handleWalletLoad();
-    } catch (err) {
-      this.walletError = `Wallet reset failed: ${String(err)}`;
-    } finally {
-      this.walletActionBusy = false;
-    }
+    this.walletError =
+      "Wallet reset is unavailable through the Gateway UI. Create/import only in the signer, provider, or hardware-wallet authority surface.";
   }
 
   async handleWalletSetApprovalsFilter(filter: WalletApprovalFilter) {

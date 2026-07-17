@@ -80,6 +80,8 @@ func runSignerAdminCLI(args []string, stdin io.Reader, stdout io.Writer, environ
 			return runSignerAdminWalletCreate(args[2:], stdout)
 		case "import":
 			return runSignerAdminWalletImport(args[2:], stdin, stdout)
+		case "import-legacy":
+			return runSignerAdminWalletImportLegacy(args[2:], stdout)
 		case "reencrypt":
 			return runSignerAdminWalletReencrypt(args[2:], stdout)
 		default:
@@ -119,13 +121,18 @@ func runSignerAdminCLI(args []string, stdin io.Reader, stdout io.Writer, environ
 		default:
 			return errors.New("unknown signer admin webauthn command")
 		}
+	case "migration":
+		if args[1] != "hosted-v1" {
+			return errors.New("unknown signer admin migration command")
+		}
+		return runSignerAdminHostedMigrationV1(args[2:], stdout)
 	default:
 		return errors.New("unknown signer admin command")
 	}
 }
 
 func signerAdminUsageError() error {
-	return errors.New("usage: fased-signerd admin {wallet|policy|network|webauthn} <command> [flags]")
+	return errors.New("usage: fased-signerd admin {wallet|policy|network|webauthn|migration} <command> [flags]")
 }
 
 func rejectSignerAdminNetworkEnvironmentV2(environ []string) error {
@@ -148,6 +155,11 @@ func rejectSignerAdminSecretInputs(args, environ []string) error {
 			continue
 		}
 		name := strings.ToUpper(strings.TrimLeft(strings.SplitN(arg, "=", 2)[0], "-"))
+		if name == "PASSPHRASE_PATH" || name == "PASSPHRASE-PATH" {
+			// A path to an owner-only file is migration metadata, not the passphrase value.
+			// The native signer reads and consumes the file through its control socket.
+			continue
+		}
 		for _, marker := range []string{"PRIVATE_KEY", "PRIVATE-KEY", "SECRET_KEY", "SECRET-KEY", "KEYPAIR", "MNEMONIC", "PASSPHRASE", "SEED"} {
 			if strings.Contains(name, marker) {
 				return errors.New("secret material is not accepted in signer admin command arguments; wallet import reads only stdin")
@@ -354,6 +366,53 @@ func runSignerAdminWalletImport(args []string, stdin io.Reader, stdout io.Writer
 	}
 	if callErr != nil {
 		return callErr
+	}
+	return writeSignerAdminResult(result, stdout)
+}
+
+func runSignerAdminWalletImportLegacy(args []string, stdout io.Writer) error {
+	fs, common := newSignerAdminFlagSet("wallet import-legacy")
+	var walletID, policyFile, lockedRole, keystorePath, passphrasePath string
+	fs.StringVar(&walletID, "wallet-id", "", "normalized wallet identifier")
+	fs.StringVar(&policyFile, "policy-file", "", "absolute strict policy JSON path")
+	fs.StringVar(&lockedRole, "locked-role", "", "agent, mining, or vault deny-all policy")
+	fs.StringVar(&keystorePath, "keystore-path", "", "absolute owner-only legacy encrypted keystore path")
+	fs.StringVar(&passphrasePath, "passphrase-path", "", "absolute owner-only passphrase file path")
+	if err := parseSignerAdminFlags(fs, args); err != nil {
+		return err
+	}
+	socketInfo, err := requireSignerAdminControlSocket(common.controlSocket)
+	if err != nil {
+		return err
+	}
+	if socketInfo.ownerUID >= 0 && socketInfo.ownerUID != os.Geteuid() {
+		return errors.New("legacy wallet import must run as the signer control socket owner")
+	}
+	walletID, err = validateSignerAdminWalletID(walletID)
+	if err != nil {
+		return err
+	}
+	policy, err := resolveSignerAdminCreationPolicy(walletID, policyFile, lockedRole)
+	if err != nil {
+		return err
+	}
+	keystorePath = strings.TrimSpace(keystorePath)
+	passphrasePath = strings.TrimSpace(passphrasePath)
+	if !filepath.IsAbs(keystorePath) || filepath.Clean(keystorePath) != keystorePath {
+		return errors.New("--keystore-path must be an absolute clean path")
+	}
+	if !filepath.IsAbs(passphrasePath) || filepath.Clean(passphrasePath) != passphrasePath {
+		return errors.New("--passphrase-path must be an absolute clean path")
+	}
+	body := signerWalletLegacyImportRequestV2{
+		ExpectedVersion: 0,
+		Policy:          policy,
+		Path:            keystorePath,
+		PassphrasePath:  passphrasePath,
+	}
+	result, err := callSignerAdminSensitiveV2(common.controlSocket, "v2.wallet.importLegacy", walletID, body)
+	if err != nil {
+		return err
 	}
 	return writeSignerAdminResult(result, stdout)
 }

@@ -835,12 +835,11 @@ describe("runOnboardingWizard", () => {
     );
     expect(walletSetupCommand).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({
-        mode: "local-signer-create",
-        showPrivateKeyOnce: false,
-        confirmPrivateKeyPrint: undefined,
-      }),
+      expect.objectContaining({ mode: "local-signer-create" }),
     );
+    const setupOptions = walletSetupCommand.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(setupOptions).not.toHaveProperty("showPrivateKeyOnce");
+    expect(setupOptions).not.toHaveProperty("confirmPrivateKeyPrint");
   });
 
   it("keeps onboarding wallet id role-based when display name is edited", async () => {

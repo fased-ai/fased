@@ -44,7 +44,7 @@ describe("applyNonInteractiveWalletConfig", () => {
     expect(next.wallet?.provider?.id).toBeUndefined();
   });
 
-  it("does not migrate legacy embedded-keystore defaults while wallet is disabled", () => {
+  it("fails closed on legacy embedded-keystore config even while wallet is disabled", () => {
     const runtime = createRuntimeStub();
     const next = applyNonInteractiveWalletConfig({
       nextConfig: {
@@ -56,7 +56,11 @@ describe("applyNonInteractiveWalletConfig", () => {
       runtime,
     });
 
-    expect(next.wallet?.runtime?.enabled).toBe(false);
+    expect(runtime.error).toHaveBeenCalledWith(
+      expect.stringContaining("embedded-keystore was retired"),
+    );
+    expect(runtime.exit).toHaveBeenCalledWith(1);
+    expect(next.wallet?.runtime?.enabled).toBeUndefined();
     expect(next.wallet?.provider?.id).toBe("embedded-keystore");
   });
 
@@ -143,17 +147,32 @@ describe("applyNonInteractiveWalletConfig", () => {
       nextConfig: {},
       opts: {
         walletEnabled: true,
-        walletProviders: "alchemy,privy",
-        walletDefaultProvider: "privy",
+        walletProviders: "alchemy,turnkey",
+        walletDefaultProvider: "turnkey",
       } as OnboardOptions,
       runtime,
     });
     const registry = readWalletProviderRegistry(process.env);
-    expect(next.wallet?.provider?.id).toBe("privy");
+    expect(next.wallet?.provider?.id).toBe("turnkey");
     expect(next.wallet?.runtime?.runtime).toBe("external-custom");
     expect(next.wallet?.runtime?.install?.enabled).toBe(false);
     expect(registry.providers.alchemy?.enabled).toBe(true);
-    expect(registry.providers.privy?.enabled).toBe(true);
+    expect(registry.providers.turnkey?.enabled).toBe(true);
+  });
+
+  it("rejects the unfinished Privy provider", () => {
+    const runtime = createRuntimeStub();
+    applyNonInteractiveWalletConfig({
+      nextConfig: {},
+      opts: {
+        walletEnabled: true,
+        walletProviders: "privy",
+        walletDefaultProvider: "privy",
+      } as OnboardOptions,
+      runtime,
+    });
+    expect(runtime.error).toHaveBeenCalledWith(expect.stringContaining("Privy"));
+    expect(runtime.exit).toHaveBeenCalledWith(1);
   });
 
   it("rejects invalid deprecated provider in --wallet-providers", () => {

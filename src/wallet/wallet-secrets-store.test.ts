@@ -68,4 +68,60 @@ describe("wallet provider secret store", () => {
       expect(statusAfterDelete.fields).toHaveLength(0);
     });
   });
+
+  test("keeps Turnkey provider credentials available", async () => {
+    await withTempStateDir(async (env) => {
+      saveWalletProviderSecret(
+        {
+          providerId: "turnkey",
+          credentials: {
+            apiPublicKey: "public-key",
+            apiPrivateKey: "provider-api-private-key",
+            organizationId: "org-1",
+            policyId: "policy-1",
+          },
+        },
+        env,
+      );
+
+      expect(loadWalletProviderSecret("turnkey", env)).toMatchObject({
+        providerId: "turnkey",
+        credentials: {
+          apiPublicKey: "public-key",
+          organizationId: "org-1",
+          policyId: "policy-1",
+        },
+      });
+      expect(readWalletProviderSecretStatus("turnkey", env)).toMatchObject({
+        configured: true,
+        providerId: "turnkey",
+      });
+    });
+  });
+
+  test("never saves embedded wallet material or unavailable Privy credentials", async () => {
+    await withTempStateDir(async (env) => {
+      expect(() =>
+        saveWalletProviderSecret(
+          {
+            providerId: "embedded-keystore",
+            credentials: { legacyReference: "/must/not/be/read" },
+          },
+          env,
+        ),
+      ).toThrow(/no longer reads wallet private keys in Node.*import-legacy/i);
+      expect(() =>
+        saveWalletProviderSecret(
+          {
+            providerId: "privy",
+            credentials: { appId: "must-not-be-saved" },
+          },
+          env,
+        ),
+      ).toThrow(/does not accept Gateway-held provider credentials/i);
+      expect(() => loadWalletProviderSecret("embedded-keystore", env)).toThrow(/import-legacy/i);
+      expect(readWalletProviderSecretStatus("embedded-keystore", env).configured).toBe(false);
+      expect(readWalletProviderSecretStatus("privy", env).configured).toBe(false);
+    });
+  });
 });

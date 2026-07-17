@@ -123,8 +123,8 @@ function configureLocalSignerMock(addresses: { solana?: string } = { solana: SIG
   callLocalSocketSigner.mockImplementation(
     async (_socketPath: string, payload: { op?: string; request?: { requestId?: string } }) => {
       switch (payload.op) {
-        case "getAddresses":
-          return addresses;
+        case "v2.wallet.get":
+          return { walletId: "solana-1", publicKey: addresses.solana };
         case "v2.capabilities":
           return {
             ready: true,
@@ -220,6 +220,7 @@ describe("SAT cycle transaction builders", () => {
     process.env.FASED_SAT_BOND_PROGRAM_ID = SAT_BOND_PROGRAM_ID_TEXT;
     process.env.FASED_SAT_MINT_ADDRESS = SAT_MINT_ADDRESS_TEXT;
     process.env.FASED_SAT_MINT_PROGRAM_ID = SAT_MINT_PROGRAM_ID_TEXT;
+    process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET = "/tmp/fased-test-signer.sock";
     readWalletProviderRegistry.mockImplementation(() => ({
       defaultWalletId: "solana-1",
       wallets: [
@@ -250,7 +251,7 @@ describe("SAT cycle transaction builders", () => {
   it("defaults init miner capital authority to the configured signer address", async () => {
     await submitSatInitMinerCapital({} as never, {});
 
-    expect(callLocalSocketSigner).toHaveBeenCalledTimes(4);
+    expect(callLocalSocketSigner).toHaveBeenCalledTimes(6);
     const request = latestTypedSatRequest();
     expect(request.request.action).toBe("initMinerCapital");
     expect(Buffer.from(request.request.dataBase64, "base64")).toEqual(
@@ -270,8 +271,8 @@ describe("SAT cycle transaction builders", () => {
   it("fails closed before policy lookup when typed SAT capabilities are missing", async () => {
     callLocalSocketSigner.mockImplementation(
       async (_socketPath: string, payload: { op?: string }) => {
-        if (payload.op === "getAddresses") {
-          return { solana: SIGNER.toBase58() };
+        if (payload.op === "v2.wallet.get") {
+          return { walletId: "solana-1", publicKey: SIGNER.toBase58() };
         }
         if (payload.op === "v2.capabilities") {
           return {
@@ -292,7 +293,7 @@ describe("SAT cycle transaction builders", () => {
       submitSatDepositMinerCapital({} as never, { lamports: 250_000_000 }),
     ).rejects.toThrow("required typed SAT protocol-v2 contract");
     expect(callLocalSocketSigner.mock.calls.map((call) => call[1]?.op)).toEqual([
-      "getAddresses",
+      "v2.wallet.get",
       "v2.capabilities",
     ]);
   });
@@ -330,7 +331,7 @@ describe("SAT cycle transaction builders", () => {
       requestId: expect.stringMatching(/^sat-[0-9a-f-]{36}$/),
     });
     expect(callLocalSocketSigner.mock.calls.map((call) => call[1]?.op)).toEqual([
-      "getAddresses",
+      "v2.wallet.get",
       "v2.capabilities",
       "v2.policy.get",
       "v2.execute",
@@ -356,7 +357,7 @@ describe("SAT cycle transaction builders", () => {
     const request = latestTypedSatRequest();
     expect(request?.op).toBe("v2.execute");
     expect(callLocalSocketSigner.mock.calls.map((call) => call[1]?.op)).toEqual([
-      "getAddresses",
+      "v2.wallet.get",
       "v2.capabilities",
       "v2.policy.get",
       "v2.execute",
@@ -585,7 +586,7 @@ describe("SAT cycle transaction builders", () => {
         }),
       );
       expect(callLocalSocketSigner.mock.calls.map((call) => call[1].op)).toEqual([
-        "getAddresses",
+        "v2.wallet.get",
         "v2.capabilities",
         "v2.policy.get",
         "v2.review.prepare",
@@ -734,34 +735,29 @@ describe("SAT cycle transaction builders", () => {
     expect(callLocalSocketSigner).not.toHaveBeenCalled();
   });
 
-  it("falls back to the registry Solana address when local signer getAddresses returns empty", async () => {
+  it("fails closed when the signer-owned wallet has no public key", async () => {
     const cycleId = 9_859_143;
     configureLocalSignerMock({});
 
-    await submitSatCommitCycle({} as never, {
-      cycleId,
-      commitmentHex: "11".repeat(32),
-    });
-
-    expect(callLocalSocketSigner).toHaveBeenCalledTimes(4);
-    const request = latestTypedSatRequest();
-    expect(request?.op).toBe("v2.execute");
-    expect(request?.request?.walletId).toBe("solana-1");
-    expect(request?.request?.keys?.[0]).toEqual({
-      pubkey: SIGNER.toBase58(),
-      isSigner: true,
-      isWritable: true,
-    });
+    await expect(
+      submitSatCommitCycle({} as never, {
+        cycleId,
+        commitmentHex: "11".repeat(32),
+      }),
+    ).rejects.toThrow("returned no Solana address");
+    expect(callLocalSocketSigner.mock.calls.map((call) => call[1]?.op)).toEqual(["v2.wallet.get"]);
   });
 
-  it("falls back to the registry Solana address for validator authority resolution", async () => {
-    callLocalSocketSigner.mockResolvedValueOnce({});
+  it("does not fall back to the registry address for validator authority resolution", async () => {
+    configureLocalSignerMock({});
 
-    await expect(resolveSatValidatorAuthority({} as never)).resolves.toBe(SIGNER.toBase58());
-    expect(callLocalSocketSigner).toHaveBeenCalledWith("/tmp/fased-test-signer.sock", {
-      op: "getAddresses",
-      walletId: "solana-1",
-    });
+    await expect(resolveSatValidatorAuthority({} as never)).rejects.toThrow(
+      "returned no Solana address",
+    );
+    expect(callLocalSocketSigner.mock.calls.map((call) => call[1]?.op)).toEqual([
+      "v2.capabilities",
+      "v2.wallet.get",
+    ]);
   });
 
   it("uses the active SAT wallet attachment for deposit even when the loaded config is stale", async () => {
@@ -782,7 +778,7 @@ describe("SAT cycle transaction builders", () => {
 
     expect(callLocalSocketSigner).toHaveBeenCalledTimes(4);
     expect(callLocalSocketSigner.mock.calls[0]?.[1]).toEqual({
-      op: "getAddresses",
+      op: "v2.wallet.get",
       walletId: "solana-1",
     });
     expect(latestTypedSatRequest()).toMatchObject({
@@ -843,7 +839,7 @@ describe("SAT cycle transaction builders", () => {
     });
   });
 
-  it("uses local-socket-signer for SAT commit changes when registry is stale but self-hosted env exists", async () => {
+  it("does not infer local-socket-signer from a socket when the registry is missing", async () => {
     loadConfig.mockReturnValueOnce({
       env: {
         vars: {
@@ -863,28 +859,19 @@ describe("SAT cycle transaction builders", () => {
     });
     resolveWalletProviderId.mockReturnValueOnce("embedded-keystore");
 
-    await submitSatSetActiveCommit(
-      {
-        walletId: "solana-1",
-      } as never,
-      { lamports: 350_000_000 },
-    );
-
-    expect(callLocalSocketSigner).toHaveBeenCalledTimes(4);
+    await expect(
+      submitSatSetActiveCommit(
+        {
+          walletId: "solana-1",
+        } as never,
+        { lamports: 350_000_000 },
+      ),
+    ).rejects.toThrow("requires local-socket-signer");
+    expect(callLocalSocketSigner).not.toHaveBeenCalled();
     expect(loadWalletProviderSecret).not.toHaveBeenCalled();
-    expect(callLocalSocketSigner.mock.calls[0]?.[1]).toEqual({
-      op: "getAddresses",
-      walletId: "solana-1",
-    });
-    expect(latestTypedSatRequest()).toMatchObject({
-      op: "v2.execute",
-      request: {
-        walletId: "solana-1",
-      },
-    });
   });
 
-  it("uses local-socket-signer for SAT commit changes when the registry wallet provider is stale", async () => {
+  it("requires migration when the registry wallet still uses embedded-keystore", async () => {
     loadConfig.mockReturnValueOnce({
       env: {
         vars: {
@@ -910,25 +897,16 @@ describe("SAT cycle transaction builders", () => {
     });
     resolveWalletProviderId.mockReturnValueOnce("embedded-keystore");
 
-    await submitSatSetActiveCommit(
-      {
-        walletId: "solana-1",
-      } as never,
-      { lamports: 350_000_000 },
-    );
-
-    expect(callLocalSocketSigner).toHaveBeenCalledTimes(4);
+    await expect(
+      submitSatSetActiveCommit(
+        {
+          walletId: "solana-1",
+        } as never,
+        { lamports: 350_000_000 },
+      ),
+    ).rejects.toThrow("embedded-keystore was retired");
+    expect(callLocalSocketSigner).not.toHaveBeenCalled();
     expect(loadWalletProviderSecret).not.toHaveBeenCalled();
-    expect(callLocalSocketSigner.mock.calls[0]?.[1]).toEqual({
-      op: "getAddresses",
-      walletId: "solana-1",
-    });
-    expect(latestTypedSatRequest()).toMatchObject({
-      op: "v2.execute",
-      request: {
-        walletId: "solana-1",
-      },
-    });
   });
 
   it("uses the upgraded settleCyclePage progress PDA", async () => {

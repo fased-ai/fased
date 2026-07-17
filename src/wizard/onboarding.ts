@@ -183,25 +183,6 @@ export async function runOnboardingWizard(
       ? `FASED_WALLET_SOLANA_WRITE_RPC_FALLBACK_URL__${suffix}`
       : "FASED_WALLET_SOLANA_WRITE_RPC_FALLBACK_URL";
   };
-  const keystoreEnvKeyFor = (_chain: "solana", walletId?: string): string => {
-    const suffix = walletIdEnvSuffix(walletId);
-    if (suffix) {
-      return `FASED_WALLET_SOLANA_KEYSTORE_PATH__${suffix}`;
-    }
-    return "FASED_WALLET_SOLANA_KEYSTORE_PATH";
-  };
-  const defaultKeystorePathFor = (_chain: "solana", walletId?: string): string => {
-    const normalized = String(walletId ?? "")
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9_-]+/g, "-")
-      .replace(/^-+|-+$/g, "");
-    const walletDir = ensureWalletStateDir(process.env).rootDir;
-    if (!normalized || normalized === "default") {
-      return path.join(walletDir, "keystore-solana.v1.enc");
-    }
-    return path.join(walletDir, `keystore-solana-${normalized}.v1.enc`);
-  };
   const setConfigEnvVar = (
     cfg: FasedAgentConfig,
     key: string,
@@ -1293,8 +1274,7 @@ export async function runOnboardingWizard(
           const managedWallets = registry.wallets.filter(
             (wallet) =>
               wallet.providerId === "local-socket-signer" ||
-              wallet.providerId === "embedded-keystore" ||
-              wallet.metadata?.selfHosted === true,
+              (wallet.metadata?.selfHosted === true && wallet.providerId !== "embedded-keystore"),
           );
           if (managedWallets.length === 0) {
             await prompter.note(
@@ -1331,11 +1311,8 @@ export async function runOnboardingWizard(
           const configuredSolanaRpcUrl =
             (nextConfig.env?.vars?.[rpcEnvKeyFor("solana", walletId)] ?? "").trim() ||
             String(process.env[rpcEnvKeyFor("solana", walletId)] ?? "").trim();
-          const configuredSolanaKeystore =
-            (nextConfig.env?.vars?.[keystoreEnvKeyFor("solana", walletId)] ?? "").trim() ||
-            String(process.env[keystoreEnvKeyFor("solana", walletId)] ?? "").trim();
           const supportsSolanaWallet = Boolean(
-            targetWallet.addresses?.solana || configuredSolanaKeystore,
+            targetWallet.addresses?.solana || targetWallet.providerId === "local-socket-signer",
           );
           const targetWalletPurpose = resolveWalletUserRole(targetWallet);
           const manageAction = await prompter.select<
@@ -1538,26 +1515,6 @@ export async function runOnboardingWizard(
           });
           if (typedWalletId.trim() === targetWallet.id) {
             const walletId = targetWallet.id;
-            const keystoreKeys = [keystoreEnvKeyFor("solana", walletId)];
-            const defaultKeystorePaths = [defaultKeystorePathFor("solana", walletId)];
-            const configuredPaths = keystoreKeys
-              .map(
-                (key) =>
-                  (nextConfig.env?.vars?.[key] ?? "").trim() ||
-                  String(process.env[key] ?? "").trim(),
-              )
-              .filter(Boolean);
-            for (const file of new Set([...configuredPaths, ...defaultKeystorePaths])) {
-              try {
-                if (file && fs.existsSync(file)) {
-                  fs.rmSync(file, { force: true });
-                }
-              } catch {}
-            }
-            for (const key of keystoreKeys) {
-              nextConfig = setConfigEnvVar(nextConfig, key, undefined);
-              delete process.env[key];
-            }
             for (const key of [rpcEnvKeyFor("solana", walletId)]) {
               nextConfig = setConfigEnvVar(nextConfig, key, undefined);
               delete process.env[key];
@@ -1661,7 +1618,7 @@ export async function runOnboardingWizard(
           const command = `${hosting ? "sudo -u fased-signer -- " : ""}${signerBin} admin wallet import --control-socket ${controlSocket} --wallet-id ${effectiveWalletId} --locked-role ${walletPurpose} < /absolute/path/to/solana-keypair.json`;
           await prompter.note(
             [
-              "Plaintext keys are never accepted by the Gateway or Node wizard.",
+              "The normal Gateway and Node wizard paths do not accept plaintext wallet keys. Local same-user isolation is not a hard compromise boundary; Hosting isolates the signer account.",
               "Run this from an authenticated terminal on the signer host:",
               command,
               "Then rerun wallet setup and choose Manage wallet to register/verify the returned public address.",
@@ -1695,8 +1652,6 @@ export async function runOnboardingWizard(
         process.env[rpcKey] = effectiveRpcUrl;
         try {
           if (mode === "local-signer-create") {
-            const showPrivateKeyOnce = false;
-            const confirmPrivateKeyPrint = undefined;
             try {
               await walletSetupCommand(runtime, {
                 mode,
@@ -1704,8 +1659,6 @@ export async function runOnboardingWizard(
                 walletId,
                 walletName,
                 rpcUrl: effectiveRpcUrl,
-                showPrivateKeyOnce,
-                confirmPrivateKeyPrint,
                 // Onboarding is repairable after a signer wallet was durably created but a
                 // later network/bootstrap step failed. The signer permits reuse only when the
                 // existing wallet has the exact requested role; it never overwrites the key.
@@ -1730,8 +1683,6 @@ export async function runOnboardingWizard(
                   walletId,
                   walletName,
                   rpcUrl: effectiveRpcUrl,
-                  showPrivateKeyOnce,
-                  confirmPrivateKeyPrint,
                   force: true,
                   noDoctor: true,
                   noSignerHints: true,

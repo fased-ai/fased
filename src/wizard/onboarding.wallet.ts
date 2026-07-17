@@ -13,6 +13,10 @@ import type {
   WalletProviderId,
 } from "../config/types.wallet.js";
 import { VERSION } from "../version.js";
+import {
+  hasLegacyEmbeddedKeystoreMaterialHint,
+  throwLegacyEmbeddedKeystoreMigrationRequired,
+} from "../wallet/legacy-embedded-keystore.js";
 import { callLocalSocketSigner } from "../wallet/providers/local-socket-signer-adapter.js";
 import {
   WALLET_PROVIDER_IDS,
@@ -425,32 +429,6 @@ export function installSignerdBinary(binPath: string): void {
   );
 }
 
-function hasScopedWalletEnvValue(env: NodeJS.ProcessEnv, prefix: string): boolean {
-  return Object.entries(env).some(
-    ([key, value]) =>
-      key.startsWith(`${prefix}__`) && typeof value === "string" && value.trim().length > 0,
-  );
-}
-
-function hasLocalSignerMaterialEnv(env: NodeJS.ProcessEnv): boolean {
-  if (
-    String(env.FASED_WALLET_LOCAL_SIGNER_SOCKET ?? "").trim() ||
-    String(env.FASED_WALLET_SIGNER_STATE_DIR ?? "").trim() ||
-    String(env.FASED_WALLET_PASSPHRASE_FILE ?? "").trim()
-  ) {
-    return true;
-  }
-  return Object.entries(env).some(([key, rawValue]) => {
-    if (typeof rawValue !== "string" || rawValue.trim().length === 0) {
-      return false;
-    }
-    return (
-      key === "FASED_WALLET_SOLANA_KEYSTORE_PATH" ||
-      key.startsWith("FASED_WALLET_SOLANA_KEYSTORE_PATH__")
-    );
-  });
-}
-
 export function shouldSyncLocalSocketSignerFromConfig(params?: {
   config?: FasedAgentConfig;
   env?: NodeJS.ProcessEnv;
@@ -461,9 +439,6 @@ export function shouldSyncLocalSocketSignerFromConfig(params?: {
   }
   const mergedEnv = { ...(params?.env ?? process.env), ...cfg.env?.vars };
   if (resolveWalletProviderId(cfg, mergedEnv) === "local-socket-signer") {
-    return true;
-  }
-  if (hasLocalSignerMaterialEnv(mergedEnv)) {
     return true;
   }
   try {
@@ -891,32 +866,9 @@ export function applyWalletConfig(
 }
 
 function hasConfiguredWalletMaterial(params: {
-  config: FasedAgentConfig;
   registry: ReturnType<typeof readWalletProviderRegistry>;
-  env: NodeJS.ProcessEnv;
 }): boolean {
-  if (params.registry.wallets.length > 0) {
-    return true;
-  }
-  const mergedEnv = { ...params.env, ...params.config.env?.vars };
-  if (
-    String(mergedEnv.FASED_WALLET_SOLANA_KEYSTORE_PATH ?? "").trim() ||
-    hasScopedWalletEnvValue(mergedEnv, "FASED_WALLET_SOLANA_KEYSTORE_PATH")
-  ) {
-    return true;
-  }
-  try {
-    const walletDir = ensureWalletStateDir(mergedEnv).rootDir;
-    return fs
-      .readdirSync(walletDir)
-      .some(
-        (entry) =>
-          /^keystore-solana(?:-[A-Za-z0-9_-]+)?\.v1\.enc$/.test(entry) ||
-          /^keystore-evm(?:-[A-Za-z0-9_-]+)?\.v1\.enc$/.test(entry),
-      );
-  } catch {
-    return false;
-  }
+  return params.registry.wallets.some((wallet) => wallet.providerId === "local-socket-signer");
 }
 
 const LOCAL_SIGNER_ENV_KEYS = [
@@ -957,8 +909,21 @@ export async function configureWalletForOnboarding(params: {
   prompter: WizardPrompter;
 }): Promise<FasedAgentConfig> {
   const { flow, prompter } = params;
+  if (params.nextConfig.wallet?.provider?.id === "embedded-keystore") {
+    throwLegacyEmbeddedKeystoreMigrationRequired("legacy wallet configuration detected");
+  }
   const current = params.nextConfig.wallet?.runtime;
   const registry = readWalletProviderRegistry(process.env);
+  if (
+    registry.providers["embedded-keystore"]?.enabled ||
+    registry.wallets.some((wallet) => wallet.providerId === "embedded-keystore") ||
+    hasLegacyEmbeddedKeystoreMaterialHint({
+      ...process.env,
+      ...params.nextConfig.env?.vars,
+    })
+  ) {
+    throwLegacyEmbeddedKeystoreMigrationRequired("legacy wallet material detected");
+  }
   const currentEnabledProviders = WALLET_PROVIDER_IDS.filter(
     (providerId) => registry.providers[providerId]?.enabled,
   );
@@ -970,9 +935,7 @@ export async function configureWalletForOnboarding(params: {
   );
   const currentChains = normalizeChains(current?.chains);
   const configuredWalletMaterial = hasConfiguredWalletMaterial({
-    config: params.nextConfig,
     registry,
-    env: process.env,
   });
   const defaultEnabled =
     current?.enabled === false ? false : Boolean(current?.enabled && configuredWalletMaterial);
@@ -1172,7 +1135,7 @@ export async function configureWalletForOnboarding(params: {
             await prompter.note(
               [
                 `fased-signerd started at: ${socketPath}`,
-                "Keys are isolated in the Go signer process — not accessible to Node agent.",
+                "Normal Fased code sends signing requests to Go and does not receive plaintext keys. Local shares one OS account and is not a hard compromise boundary; Hosting isolates the signer account.",
               ].join("\n"),
               "Local socket signer",
             );

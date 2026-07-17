@@ -55,14 +55,7 @@ const WALLET_ACTIONS = [
 ] as const;
 const WALLET_CHAINS = ["solana"] as const;
 const WALLET_AMOUNT_FORMATS = ["base", "human"] as const;
-const WALLET_PROVIDERS = [
-  "embedded-keystore",
-  "local-socket-signer",
-  "alchemy",
-  "turnkey",
-  "wallet-standard",
-  "privy",
-] as const;
+const WALLET_PROVIDERS = ["local-socket-signer", "alchemy", "turnkey", "wallet-standard"] as const;
 
 const WalletToolSchema = Type.Object({
   action: stringEnum(WALLET_ACTIONS),
@@ -147,12 +140,10 @@ function resolveRequesterAgentId(params: {
 
 function parseWalletProviderId(value: string | undefined): WalletProviderId | undefined {
   switch (value) {
-    case "embedded-keystore":
     case "local-socket-signer":
     case "alchemy":
     case "turnkey":
     case "wallet-standard":
-    case "privy":
       return value;
     default:
       return undefined;
