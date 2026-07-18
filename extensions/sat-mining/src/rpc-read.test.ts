@@ -3,21 +3,25 @@ import type { AddressInfo } from "node:net";
 import { PublicKey } from "@solana/web3.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  calculateSatRevealSharedRentLamports,
   createReadConnection,
   decodeSatBondPosition,
   decodeSatBondStakingDistributor,
   decodeSatCycle,
+  decodeSatCycleSettlementProgressV2,
   decodeSatRoundBucket,
   decodeSatCycleRegistryPage,
   decodeSatGlobalState,
   decodeSatMinerCycle,
   inspectSatCycleAccountExists,
   inspectSatChainUnixTime,
+  inspectSatAddressLookupTable,
   inspectSatMinerCycleByAddress,
   inspectSatMinerCyclesByAddress,
   inspectSatConnectionDetails,
   invalidateSatReadCaches,
   resolveDefaultSolanaPublicReadFallbackUrl,
+  SAT_RENT_ACCOUNT_SPACES,
 } from "./rpc-read.js";
 
 const READ_RPC_ENV_KEYS = [
@@ -147,13 +151,32 @@ describe("decodeSatCycle", () => {
   });
 });
 
+describe("decodeSatCycleSettlementProgressV2", () => {
+  it("exposes paid and unpaid keeper bounty accounting", () => {
+    const data = Buffer.alloc(1_048);
+    data[0] = 137;
+    const body = data.subarray(8);
+    body.writeBigUInt64LE(77n, 0);
+    body.writeBigUInt64LE(11_000n, 1_008);
+    body.writeBigUInt64LE(22_000n, 1_016);
+
+    expect(decodeSatCycleSettlementProgressV2(data, "progress-address")).toMatchObject({
+      address: "progress-address",
+      cycleId: 77,
+      keeperBountyPaidLamports: "11000",
+      keeperBountyUnpaidLamports: "22000",
+    });
+  });
+});
+
 async function startRpcServer(
-  handler: (payload: { method?: string; params?: unknown[] }) => {
+  handler: (payload: { id?: string | number; method?: string; params?: unknown[] }) => {
     statusCode?: number;
     body?: string;
     result?: unknown;
     error?: { message?: string };
     hang?: boolean;
+    reset?: boolean;
   },
 ): Promise<string> {
   const server = http.createServer((req, res) => {
@@ -161,11 +184,16 @@ async function startRpcServer(
     req.on("data", (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
     req.on("end", () => {
       const payload = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}") as {
+        id?: string | number;
         method?: string;
         params?: unknown[];
       };
       const response = handler(payload);
       if (response.hang) {
+        return;
+      }
+      if (response.reset) {
+        req.socket.destroy();
         return;
       }
       res.statusCode = response.statusCode ?? 200;
@@ -177,7 +205,7 @@ async function startRpcServer(
       res.end(
         JSON.stringify({
           jsonrpc: "2.0",
-          id: 1,
+          id: payload.id ?? 1,
           ...(response.error ? { error: response.error } : { result: response.result ?? null }),
         }),
       );
@@ -223,6 +251,27 @@ function configureReadRpc(primaryUrl: string, fallbackUrl?: string) {
     process.env.FASED_WALLET_SOLANA_READ_RPC_FALLBACK_URL = fallbackUrl;
   }
 }
+
+describe("inspectSatRentExemptionLamports", () => {
+  it("uses current account sizes and includes unlock interval rent in reveal funding", () => {
+    expect(SAT_RENT_ACCOUNT_SPACES).toEqual({
+      protocolVault: 0,
+      cycleState: 376,
+      cycleRegistryMeta: 88,
+      cycleRegistryPage: 2_072,
+      cycleSettlementProgressV2: 1_048,
+      minerCycle: 352,
+      unlockInterval: 80,
+    });
+    expect(
+      calculateSatRevealSharedRentLamports({
+        cycleSettlementProgressLamports: 2_048,
+        cycleRegistryPageLamports: 3_072,
+        unlockIntervalLamports: 1_080,
+      }),
+    ).toBe(6_200);
+  });
+});
 
 function encodeU64(value: number): Buffer {
   const out = Buffer.alloc(8);
@@ -436,6 +485,56 @@ describe("decodeSatBondPosition", () => {
 });
 
 describe("secondary read rpc fallback", () => {
+  it("decodes a confirmed signer-owned address lookup table", async () => {
+    const methods: string[] = [];
+    const authority = new PublicKey("8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW");
+    const entry = new PublicKey("So11111111111111111111111111111111111111112");
+    const data = Buffer.alloc(88);
+    data.writeUInt32LE(1, 0);
+    data.writeBigUInt64LE(18_446_744_073_709_551_615n, 4);
+    data.writeBigUInt64LE(100n, 12);
+    data[20] = 0;
+    data[21] = 1;
+    authority.toBuffer().copy(data, 22);
+    entry.toBuffer().copy(data, 56);
+    const rpcUrl = await startRpcServer((payload) => {
+      methods.push(String(payload.method ?? ""));
+      if (payload.method === "getAccountInfo") {
+        return {
+          result: {
+            context: { slot: 101 },
+            value: {
+              data: [data.toString("base64"), "base64"],
+              executable: false,
+              lamports: 1,
+              owner: "AddressLookupTab1e1111111111111111111111111",
+              rentEpoch: 0,
+              space: data.length,
+            },
+          },
+        };
+      }
+      return { error: { message: `unexpected ${payload.method}` } };
+    });
+    configureReadRpc(rpcUrl);
+    process.env.FASED_SAT_PROGRAM_ID = "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75";
+    process.env.FASED_SAT_BOND_PROGRAM_ID = "D1ySMMiJmvJRhJJKwYnc171w3g2JDPQnkgD8kGhaG4Vq";
+    process.env.FASED_SAT_MINT_ADDRESS = "2AhikHhzJdv6uve1yUBSUmhRKWaSfa7exrsDsfKjVFKa";
+    process.env.FASED_SAT_MINT_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+
+    const result = await inspectSatAddressLookupTable({ network: "devnet" } as never, {
+      address: "4c8wadNoNVAJMpJtQnUAYbJgdE1YyfTpwBCNak1hBuPB",
+    });
+    expect(methods).toEqual(["getAccountInfo"]);
+    expect(result).toEqual({
+      address: "4c8wadNoNVAJMpJtQnUAYbJgdE1YyfTpwBCNak1hBuPB",
+      authority: authority.toBase58(),
+      addresses: [entry.toBase58()],
+      active: true,
+      lastExtendedSlot: 100,
+    });
+  });
+
   it("resolves Solana public fallbacks for configured networks", () => {
     expect(
       resolveDefaultSolanaPublicReadFallbackUrl({
@@ -523,10 +622,16 @@ describe("secondary read rpc fallback", () => {
     expect(fallbackGetAccountInfo).toHaveBeenCalledTimes(1);
   });
 
-  it("skips the primary endpoint during quota backoff when a fallback endpoint exists", async () => {
-    const primaryGetAccountInfo = vi.fn(async (..._args: unknown[]) => {
-      throw new Error("429 Too Many Requests");
-    });
+  it("keeps primary quota backoff through fallback success and restores it after a successful probe", async () => {
+    let nowMs = Date.now();
+    vi.spyOn(Date, "now").mockImplementation(() => nowMs);
+    const primaryGetAccountInfo = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("429 Too Many Requests"))
+      .mockResolvedValue({
+        owner: { toBase58: () => "owner-address" },
+        data: Buffer.alloc(0),
+      });
     const fallbackGetAccountInfo = vi
       .fn()
       .mockRejectedValueOnce(new Error("fallback temporarily unavailable"))
@@ -577,13 +682,31 @@ describe("secondary read rpc fallback", () => {
     await expect(
       connection.getAccountInfo("account-address" as never, "confirmed" as never),
     ).resolves.toMatchObject({ owner: { toBase58: expect.any(Function) } });
+
     expect(primaryGetAccountInfo).toHaveBeenCalledTimes(1);
+    expect(fallbackGetAccountInfo).toHaveBeenCalledTimes(3);
+
+    nowMs += 30_001;
+    await expect(
+      connection.getAccountInfo("account-address" as never, "confirmed" as never),
+    ).resolves.toMatchObject({ owner: { toBase58: expect.any(Function) } });
+    await expect(
+      connection.getAccountInfo("account-address" as never, "confirmed" as never),
+    ).resolves.toMatchObject({ owner: { toBase58: expect.any(Function) } });
+
+    expect(primaryGetAccountInfo).toHaveBeenCalledTimes(3);
     expect(fallbackGetAccountInfo).toHaveBeenCalledTimes(3);
   });
 
   it("aborts a hung raw JSON-RPC request and falls back within the configured timeout", async () => {
-    const primaryUrl = await startRpcServer(() => ({ hang: true }));
+    const primaryRequests: string[] = [];
+    const fallbackRequests: string[] = [];
+    const primaryUrl = await startRpcServer((payload) => {
+      primaryRequests.push(String(payload.method ?? ""));
+      return { hang: true };
+    });
     const fallbackUrl = await startRpcServer((payload) => {
+      fallbackRequests.push(String(payload.method ?? ""));
       if (payload.method === "getSlot") {
         return { result: 123 };
       }
@@ -593,11 +716,81 @@ describe("secondary read rpc fallback", () => {
       return { error: { message: `unexpected ${payload.method}` } };
     });
     process.env.FASED_SAT_RPC_REQUEST_TIMEOUT_MS = "50";
-    configureReadRpc(primaryUrl, fallbackUrl);
+    process.env.FASED_SAT_PROGRAM_ID = "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75";
+    process.env.FASED_SAT_BOND_PROGRAM_ID = "8RYKuGb2k8hBcGX34QdYJXdXZkNvD3fKy85s63Pph2j7";
+    process.env.FASED_SAT_MINT_ADDRESS = "2AhikHhzJdv6uve1yUBSUmhRKWaSfa7exrsDsfKjVFKa";
+    process.env.FASED_SAT_MINT_PROGRAM_ID = "8fb3Mpowe4pD6ed89gwm6gLuh8csPSrLi3hypcesqs5C";
+    configureReadRpc(`${primaryUrl}?api-key=raw-timeout-secret`, fallbackUrl);
 
     const startedAt = Date.now();
     await expect(inspectSatChainUnixTime({} as never)).resolves.toBe(1_775_487_000);
     expect(Date.now() - startedAt).toBeLessThan(1_000);
+    expect(primaryRequests).toEqual(["getSlot", "getBlockTime"]);
+    expect(fallbackRequests).toEqual(["getSlot", "getBlockTime"]);
+    expect(JSON.stringify(inspectSatConnectionDetails())).not.toContain("raw-timeout-secret");
+  });
+
+  it("falls back once after a connection reset and records bounded request counts", async () => {
+    const primaryRequests: string[] = [];
+    const fallbackRequests: string[] = [];
+    const primaryUrl = await startRpcServer((payload) => {
+      primaryRequests.push(String(payload.method ?? ""));
+      if (primaryRequests.length === 1) {
+        return { reset: true };
+      }
+      return { result: 1_775_487_000 };
+    });
+    const fallbackUrl = await startRpcServer((payload) => {
+      fallbackRequests.push(String(payload.method ?? ""));
+      return { result: 123 };
+    });
+    configureReadRpc(primaryUrl, fallbackUrl);
+
+    await expect(inspectSatChainUnixTime({} as never)).resolves.toBe(1_775_487_000);
+    expect(primaryRequests).toEqual(["getSlot", "getBlockTime"]);
+    expect(fallbackRequests).toEqual(["getSlot"]);
+  });
+
+  it("falls back once after malformed JSON and records bounded request counts", async () => {
+    const primaryRequests: string[] = [];
+    const fallbackRequests: string[] = [];
+    const primaryUrl = await startRpcServer((payload) => {
+      primaryRequests.push(String(payload.method ?? ""));
+      if (primaryRequests.length === 1) {
+        return { body: "{" };
+      }
+      return { result: 1_775_487_000 };
+    });
+    const fallbackUrl = await startRpcServer((payload) => {
+      fallbackRequests.push(String(payload.method ?? ""));
+      return { result: 123 };
+    });
+    configureReadRpc(primaryUrl, fallbackUrl);
+
+    await expect(inspectSatChainUnixTime({} as never)).resolves.toBe(1_775_487_000);
+    expect(primaryRequests).toEqual(["getSlot", "getBlockTime"]);
+    expect(fallbackRequests).toEqual(["getSlot"]);
+  });
+
+  it("rejects an oversized response, falls back once, and records bounded request counts", async () => {
+    const primaryRequests: string[] = [];
+    const fallbackRequests: string[] = [];
+    const primaryUrl = await startRpcServer((payload) => {
+      primaryRequests.push(String(payload.method ?? ""));
+      if (primaryRequests.length === 1) {
+        return { body: "x".repeat(16 * 1024 * 1024 + 1) };
+      }
+      return { result: 1_775_487_000 };
+    });
+    const fallbackUrl = await startRpcServer((payload) => {
+      fallbackRequests.push(String(payload.method ?? ""));
+      return { result: 123 };
+    });
+    configureReadRpc(primaryUrl, fallbackUrl);
+
+    await expect(inspectSatChainUnixTime({} as never)).resolves.toBe(1_775_487_000);
+    expect(primaryRequests).toEqual(["getSlot", "getBlockTime"]);
+    expect(fallbackRequests).toEqual(["getSlot"]);
   });
 
   it("aborts a hung web3 read and falls back without waiting for the abandoned fetch", async () => {

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { PublicKey, SystemProgram } from "@solana/web3.js";
+import { AddressLookupTableProgram, PublicKey, SystemProgram } from "@solana/web3.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
@@ -14,6 +14,8 @@ const {
   loadWalletProviderSecret,
   inspectSatMinerCycleByAddress,
   inspectSatMinerCyclesByAddress,
+  inspectSatAddressLookupTable,
+  inspectSatChainSlot,
 } = vi.hoisted(() => ({
   loadConfig: vi.fn(),
   callLocalSocketSigner: vi.fn(),
@@ -35,6 +37,8 @@ const {
   loadWalletProviderSecret: vi.fn(() => null),
   inspectSatMinerCycleByAddress: vi.fn(),
   inspectSatMinerCyclesByAddress: vi.fn(),
+  inspectSatAddressLookupTable: vi.fn(),
+  inspectSatChainSlot: vi.fn(),
 }));
 
 vi.mock("../../src/config/config.js", async (importOriginal) => ({
@@ -74,6 +78,8 @@ vi.mock("./src/rpc-read.js", async () => {
     ...actual,
     inspectSatMinerCycleByAddress,
     inspectSatMinerCyclesByAddress,
+    inspectSatAddressLookupTable,
+    inspectSatChainSlot,
   };
 });
 
@@ -83,6 +89,7 @@ import {
   submitSatClaimBondStakingRewards,
   submitSatClaimProtocolDistributorSat,
   submitSatClaimUnallocatedStakingRewards,
+  submitSatCleanupDistributionLookupTable,
   submitSatCancelBondUnlock,
   submitSatCloseResolvedCleanupBatch,
   submitSatCloseResolvedCycleArtifacts,
@@ -137,7 +144,7 @@ function configureLocalSignerMock(addresses: { solana?: string } = { solana: SIG
             ready: true,
             capabilities: {
               protocol: { current: 2, min: 2, max: 2 },
-              intentTypes: ["solana.satAction", "solana.vaultBondAction"],
+              intentTypes: ["solana.satAction", "solana.satLookupTable", "solana.vaultBondAction"],
               operationStates: ["reserved", "broadcast", "confirmed", "failed", "unknown"],
               features: [
                 "failClosedPolicies",
@@ -148,6 +155,7 @@ function configureLocalSignerMock(addresses: { solana?: string } = { solana: SIG
                 "signerOwnedKeys",
                 "typedSolanaTransactions",
                 "typedSATActions",
+                "typedSATAddressLookupTables",
                 "typedVaultBondActions",
                 "signerOwnedReviewPrepareExecute",
                 "exactPreparedTransactions",
@@ -264,9 +272,33 @@ describe("SAT cycle transaction builders", () => {
       },
     });
     configureLocalSignerMock();
+    inspectSatChainSlot.mockResolvedValue(101);
+    inspectSatAddressLookupTable.mockImplementation(
+      async (_config: unknown, params: { address: string }) => {
+        const lookupIntents = callLocalSocketSigner.mock.calls
+          .map((call) => call[1])
+          .filter(
+            (payload) =>
+              payload?.op === "v2.execute" &&
+              payload?.request?.intent?.type === "solana.satLookupTable",
+          )
+          .map((payload) => payload.request.intent);
+        if (!lookupIntents.some((intent) => intent.action === "create")) {
+          return null;
+        }
+        return {
+          address: params.address,
+          authority: SIGNER.toBase58(),
+          addresses: lookupIntents.flatMap((intent) => intent.lookupTable?.addresses ?? []),
+          active: true,
+          lastExtendedSlot: lookupIntents.some((intent) => intent.action === "extend") ? 100 : 99,
+        };
+      },
+    );
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     delete process.env.FASED_STATE_DIR;
     fs.rmSync(stateDir, { recursive: true, force: true });
   });
@@ -1525,5 +1557,244 @@ describe("SAT cycle transaction builders", () => {
         isWritable: true,
       },
     ]);
+  });
+
+  it("creates, extends, activates, and uses one typed v0 lookup table for 16 miners", async () => {
+    vi.stubEnv("FASED_SAT_ENABLE_ALT_V0", "1");
+    const cycleId = 9_859_150;
+    const minerCycleAccounts = Array.from({ length: 16 }, (_, index) =>
+      new PublicKey(new Uint8Array(32).fill(index + 20)).toBase58(),
+    );
+    const authorities = Array.from({ length: 16 }, (_, index) =>
+      new PublicKey(new Uint8Array(32).fill(index + 60)).toBase58(),
+    );
+    inspectSatMinerCyclesByAddress.mockResolvedValueOnce(
+      minerCycleAccounts.map((address, index) => ({
+        address,
+        authority: authorities[index],
+      })),
+    );
+
+    const submitted = await runWithSatSubmissionWorkflow(
+      "test:distribution:16",
+      async () =>
+        await submitSatDistributeCyclePage({} as never, {
+          cycleId,
+          pageIndex: 0,
+          chunkIndex: 0,
+          minerCycleAccounts,
+        }),
+    );
+
+    const executeIntents = callLocalSocketSigner.mock.calls
+      .map((call) => call[1])
+      .filter((payload) => payload?.op === "v2.execute")
+      .map((payload) => payload.request.intent);
+    const lookupIntents = executeIntents.filter(
+      (intent) => intent.type === "solana.satLookupTable",
+    );
+    const [, expectedLookupTable] = AddressLookupTableProgram.createLookupTable({
+      authority: SIGNER,
+      payer: SIGNER,
+      recentSlot: 100,
+    });
+    expect(lookupIntents.map((intent) => intent.action)).toEqual([
+      "create",
+      "extend",
+      "extend",
+      "extend",
+    ]);
+    expect(lookupIntents[0]).toMatchObject({
+      lookupTable: { address: expectedLookupTable.toBase58(), recentSlot: "100" },
+    });
+    expect(lookupIntents.slice(1).map((intent) => intent.lookupTable.addresses.length)).toEqual([
+      20, 20, 1,
+    ]);
+    const distribution = executeIntents.at(-1);
+    expect(distribution).toMatchObject({
+      type: "solana.satAction",
+      action: "distributeCyclePage",
+      addressLookupTables: [expectedLookupTable.toBase58()],
+    });
+    expect(submitted).toMatchObject({
+      transactionVersion: "v0",
+      lookupTableAddress: expectedLookupTable.toBase58(),
+      lookupTableCreated: true,
+      lookupTableExtended: true,
+      lookupTableAddressCount: 41,
+    });
+    expect(submitted.lookupTableTransactionHashes).toHaveLength(4);
+  });
+
+  it("reuses the exact signer-owned table derived by another worker in the same slot", async () => {
+    vi.stubEnv("FASED_SAT_ENABLE_ALT_V0", "1");
+    const minerCycleAccounts = Array.from({ length: 16 }, (_, index) =>
+      new PublicKey(new Uint8Array(32).fill(index + 20)).toBase58(),
+    );
+    const authorities = Array.from({ length: 16 }, (_, index) =>
+      new PublicKey(new Uint8Array(32).fill(index + 60)).toBase58(),
+    );
+    inspectSatMinerCyclesByAddress.mockResolvedValueOnce(
+      minerCycleAccounts.map((address, index) => ({
+        address,
+        authority: authorities[index],
+      })),
+    );
+    const [, expectedLookupTable] = AddressLookupTableProgram.createLookupTable({
+      authority: SIGNER,
+      payer: SIGNER,
+      recentSlot: 100,
+    });
+    inspectSatAddressLookupTable.mockImplementation(
+      async (_config: unknown, params: { address: string }) => {
+        const lookupIntents = callLocalSocketSigner.mock.calls
+          .map((call) => call[1])
+          .filter(
+            (payload) =>
+              payload?.op === "v2.execute" &&
+              payload?.request?.intent?.type === "solana.satLookupTable",
+          )
+          .map((payload) => payload.request.intent);
+        return {
+          address: params.address,
+          authority: SIGNER.toBase58(),
+          addresses: lookupIntents.flatMap((intent) => intent.lookupTable?.addresses ?? []),
+          active: true,
+          lastExtendedSlot: lookupIntents.some((intent) => intent.action === "extend") ? 100 : 99,
+        };
+      },
+    );
+
+    const submitted = await runWithSatSubmissionWorkflow(
+      "test:distribution:reuse-derived",
+      async () =>
+        await submitSatDistributeCyclePage({} as never, {
+          cycleId: 9_859_152,
+          pageIndex: 0,
+          chunkIndex: 0,
+          minerCycleAccounts,
+        }),
+    );
+
+    const lookupIntents = callLocalSocketSigner.mock.calls
+      .map((call) => call[1])
+      .filter(
+        (payload) =>
+          payload?.op === "v2.execute" &&
+          payload?.request?.intent?.type === "solana.satLookupTable",
+      )
+      .map((payload) => payload.request.intent);
+    expect(lookupIntents.some((intent) => intent.action === "create")).toBe(false);
+    expect(lookupIntents.filter((intent) => intent.action === "extend")).toHaveLength(3);
+    expect(submitted).toMatchObject({
+      lookupTableAddress: expectedLookupTable.toBase58(),
+      lookupTableCreated: false,
+      lookupTableExtended: true,
+    });
+  });
+
+  it("does not treat an ambiguous lookup-table creation as successful state reconciliation", async () => {
+    vi.stubEnv("FASED_SAT_ENABLE_ALT_V0", "1");
+    const minerCycleAccounts = Array.from({ length: 16 }, (_, index) =>
+      new PublicKey(new Uint8Array(32).fill(index + 20)).toBase58(),
+    );
+    inspectSatMinerCyclesByAddress.mockResolvedValueOnce(
+      minerCycleAccounts.map((address, index) => ({
+        address,
+        authority: new PublicKey(new Uint8Array(32).fill(index + 60)).toBase58(),
+      })),
+    );
+    const healthySignerCall = callLocalSocketSigner.getMockImplementation();
+    if (!healthySignerCall) {
+      throw new Error("healthy signer mock is unavailable");
+    }
+    callLocalSocketSigner.mockImplementation(async (...args: unknown[]) => {
+      const payload = args[1] as {
+        op?: string;
+        request?: { intent?: { type?: string; action?: string } };
+      };
+      if (
+        payload.op === "v2.execute" &&
+        payload.request?.intent?.type === "solana.satLookupTable" &&
+        payload.request.intent.action === "create"
+      ) {
+        throw new Error("transport closed after possible lookup-table broadcast");
+      }
+      return await healthySignerCall(...args);
+    });
+
+    await expect(
+      runWithSatSubmissionWorkflow("test:distribution:ambiguous-create", async () =>
+        submitSatDistributeCyclePage({} as never, {
+          cycleId: 9_859_153,
+          pageIndex: 0,
+          chunkIndex: 0,
+          minerCycleAccounts,
+        }),
+      ),
+    ).rejects.toThrow("remains unknown");
+    expect(
+      callLocalSocketSigner.mock.calls.some(
+        (call) =>
+          call[1]?.op === "v2.execute" &&
+          call[1]?.request?.intent?.type === "solana.satAction" &&
+          call[1]?.request?.intent?.action === "distributeCyclePage",
+      ),
+    ).toBe(false);
+  });
+
+  it("fails closed for large distribution when typed ALT/v0 is not explicitly enabled", async () => {
+    vi.stubEnv("FASED_SAT_ENABLE_ALT_V0", "");
+    const minerCycleAccounts = Array.from({ length: 16 }, (_, index) =>
+      new PublicKey(new Uint8Array(32).fill(index + 100)).toBase58(),
+    );
+    inspectSatMinerCyclesByAddress.mockResolvedValueOnce(
+      minerCycleAccounts.map((address, index) => ({
+        address,
+        authority: new PublicKey(new Uint8Array(32).fill(index + 140)).toBase58(),
+      })),
+    );
+    await expect(
+      submitSatDistributeCyclePage({} as never, {
+        cycleId: 9_859_151,
+        pageIndex: 0,
+        chunkIndex: 0,
+        minerCycleAccounts,
+      }),
+    ).rejects.toThrow("SAT ALT/v0 support is disabled");
+    expect(
+      callLocalSocketSigner.mock.calls.some(
+        (call) =>
+          call[1]?.op === "v2.execute" &&
+          call[1]?.request?.intent?.action === "distributeCyclePage",
+      ),
+    ).toBe(false);
+  });
+
+  it("uses the typed durable signer operation for lookup-table cleanup", async () => {
+    vi.stubEnv("FASED_SAT_ENABLE_ALT_V0", "1");
+    const lookupTableAddress = new PublicKey(new Uint8Array(32).fill(8)).toBase58();
+    const result = await submitSatCleanupDistributionLookupTable({} as never, {
+      lookupTableAddress,
+      action: "deactivate",
+    });
+    const execute = callLocalSocketSigner.mock.calls
+      .map((call) => call[1])
+      .find(
+        (payload) =>
+          payload?.op === "v2.execute" &&
+          payload?.request?.intent?.type === "solana.satLookupTable",
+      );
+    expect(execute?.request.intent).toEqual({
+      type: "solana.satLookupTable",
+      action: "deactivate",
+      lookupTable: { address: lookupTableAddress },
+    });
+    expect(result).toMatchObject({
+      lookupTable: lookupTableAddress,
+      action: "deactivate",
+      transactionHashes: ["tx-submit-cycle"],
+      signerState: "confirmed",
+    });
   });
 });

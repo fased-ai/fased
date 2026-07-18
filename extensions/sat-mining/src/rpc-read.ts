@@ -33,6 +33,7 @@ const SAT_DISPUTE_SEED = "sat_dispute";
 const MINING_STAKE_SEED = "mining_stake";
 const TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const ASSOCIATED_TOKEN_PROGRAM_ID = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
+const ADDRESS_LOOKUP_TABLE_PROGRAM_ID = "AddressLookupTab1e1111111111111111111111111";
 
 function assertDedicatedBondProgramConfigured(env: NodeJS.ProcessEnv = process.env): void {
   const resolved = resolveSatBondProgramIdFromEnv(env);
@@ -399,6 +400,7 @@ export type SatCycleSettlementProgressV2View = {
   scoreExclusiveUntilSlot?: number | undefined;
   distributeExclusiveUntilSlot?: number | undefined;
   keeperBountyPaidLamports?: string | undefined;
+  keeperBountyUnpaidLamports?: string | undefined;
 };
 
 export type SatTreasuryStateView = {
@@ -421,6 +423,7 @@ export type SatPayoutReadinessView = {
 export type SatMiningStatusAccountsView = {
   globalState: SatGlobalStateView | null;
   currentCycle: SatCycleView | null;
+  currentSettlementProgress: SatCycleSettlementProgressV2View | null;
   currentMinerCycle: SatMinerCycleView | null;
   claimMinerCycle: SatMinerCycleView | null;
   minerCapital: SatMinerCapitalView | null;
@@ -1127,7 +1130,7 @@ export function decodeSatCycleRegistryPage(
   };
 }
 
-function decodeSatCycleSettlementProgressV2(
+export function decodeSatCycleSettlementProgressV2(
   data: Buffer,
   address: string,
 ): SatCycleSettlementProgressV2View {
@@ -1153,6 +1156,7 @@ function decodeSatCycleSettlementProgressV2(
     scoreExclusiveUntilSlot: readU64Number(body, 992),
     distributeExclusiveUntilSlot: readU64Number(body, 1000),
     keeperBountyPaidLamports: readU64String(body, 1008),
+    keeperBountyUnpaidLamports: readU64String(body, 1016),
   };
 }
 
@@ -2140,9 +2144,13 @@ export function createReadConnection(
         } catch (secondaryError) {
           throw new Error(
             `rpc ${method} failed on primary (${String(
-              primaryError instanceof Error ? primaryError.message : primaryError,
+              redactSensitiveUrlLikeString(
+                primaryError instanceof Error ? primaryError.message : String(primaryError),
+              ),
             )}) and fallback (${String(
-              secondaryError instanceof Error ? secondaryError.message : secondaryError,
+              redactSensitiveUrlLikeString(
+                secondaryError instanceof Error ? secondaryError.message : String(secondaryError),
+              ),
             )})`,
           );
         }
@@ -2192,12 +2200,27 @@ async function resolveBondProgramContext(env: NodeJS.ProcessEnv) {
   };
 }
 
-const SAT_PROTOCOL_VAULT_ACCOUNT_SPACE = 0;
-const SAT_CYCLE_STATE_ACCOUNT_SPACE = 336;
-const SAT_CYCLE_REGISTRY_META_ACCOUNT_SPACE = 88;
-const SAT_CYCLE_REGISTRY_PAGE_ACCOUNT_SPACE = 2_072;
-const SAT_CYCLE_SETTLEMENT_PROGRESS_V2_ACCOUNT_SPACE = 1_048;
-const SAT_MINER_CYCLE_ACCOUNT_SPACE = 296;
+export const SAT_RENT_ACCOUNT_SPACES = {
+  protocolVault: 0,
+  cycleState: 376,
+  cycleRegistryMeta: 88,
+  cycleRegistryPage: 2_072,
+  cycleSettlementProgressV2: 1_048,
+  minerCycle: 352,
+  unlockInterval: 80,
+} as const;
+
+export function calculateSatRevealSharedRentLamports(params: {
+  cycleSettlementProgressLamports: number;
+  cycleRegistryPageLamports: number;
+  unlockIntervalLamports: number;
+}): number {
+  return (
+    params.cycleSettlementProgressLamports +
+    params.cycleRegistryPageLamports +
+    params.unlockIntervalLamports
+  );
+}
 
 function normalizeReadRpcConfig(rpc: string | SatReadRpcConfig): SatReadRpcConfig {
   return typeof rpc === "string" ? { primaryUrl: rpc, secondaryUrl: null } : rpc;
@@ -2255,7 +2278,9 @@ async function rpcRequestOnce<T>(rpcUrl: string, method: string, params: unknown
       );
       req.setTimeout(satRpcRequestTimeoutMs(), () => {
         req.destroy(
-          new Error(`rpc ${method} timed out after ${satRpcRequestTimeoutMs()}ms (${rpcUrl})`),
+          new Error(
+            `rpc ${method} timed out after ${satRpcRequestTimeoutMs()}ms (${redactSensitiveUrlLikeString(rpcUrl)})`,
+          ),
         );
       });
       req.on("error", (error) => finishReject(error));
@@ -2321,10 +2346,12 @@ async function rpcRequest<T>(
       return result;
     } catch (secondaryError) {
       markReadRpcFailure(secondaryError, normalized.secondaryUrl);
-      const primaryMessage =
-        primaryError instanceof Error ? primaryError.message : String(primaryError);
-      const secondaryMessage =
-        secondaryError instanceof Error ? secondaryError.message : String(secondaryError);
+      const primaryMessage = redactSensitiveUrlLikeString(
+        primaryError instanceof Error ? primaryError.message : String(primaryError),
+      );
+      const secondaryMessage = redactSensitiveUrlLikeString(
+        secondaryError instanceof Error ? secondaryError.message : String(secondaryError),
+      );
       throw new Error(
         `rpc ${method} failed on primary (${primaryMessage}) and fallback (${secondaryMessage})`,
       );
@@ -2530,6 +2557,37 @@ export async function inspectSatChainUnixTime(_config: SatMiningConfig): Promise
 export async function inspectSatChainSlot(_config: SatMiningConfig): Promise<number> {
   const rpc = resolveEffectiveReadRpcConfig();
   return await rpcRequest<number>(rpc, "getSlot", []);
+}
+
+export type SatAddressLookupTableView = {
+  address: string;
+  authority: string | null;
+  addresses: string[];
+  active: boolean;
+  lastExtendedSlot: number;
+};
+
+export async function inspectSatAddressLookupTable(
+  _config: SatMiningConfig,
+  params: { address: string },
+): Promise<SatAddressLookupTableView | null> {
+  const { solana, connection } = await resolveConnection(process.env);
+  const address = new solana.PublicKey(params.address);
+  const account = await connection.getAccountInfo(address, "confirmed");
+  if (!account) {
+    return null;
+  }
+  if (!account.owner.equals(new solana.PublicKey(ADDRESS_LOOKUP_TABLE_PROGRAM_ID))) {
+    throw new Error("SAT distribution lookup table has the wrong program owner");
+  }
+  const state = solana.AddressLookupTableAccount.deserialize(account.data);
+  return {
+    address: address.toBase58(),
+    authority: state.authority?.toBase58() ?? null,
+    addresses: state.addresses.map((entry) => entry.toBase58()),
+    active: state.deactivationSlot === 18_446_744_073_709_551_615n,
+    lastExtendedSlot: state.lastExtendedSlot,
+  };
 }
 
 export async function inspectSatLamportBalance(
@@ -2803,6 +2861,10 @@ export async function inspectSatMiningStatusAccounts(
     [Buffer.from("sat_cycle_state"), encodeU64(currentCycleId)],
     programId,
   );
+  const [currentSettlementProgressAddress] = solana.PublicKey.findProgramAddressSync(
+    [Buffer.from("sat_cycle_settlement_progress_v2"), encodeU64(currentCycleId)],
+    programId,
+  );
   const [treasuryStateAddress] = solana.PublicKey.findProgramAddressSync(
     [Buffer.from("sat_treasury_state")],
     programId,
@@ -2832,6 +2894,7 @@ export async function inspectSatMiningStatusAccounts(
 
   const coreEntries = [
     ["currentCycle", currentCycleAddress],
+    ["currentSettlementProgress", currentSettlementProgressAddress],
     ["currentMinerCycle", currentMinerCycleAddress],
     ["claimMinerCycle", claimMinerCycleAddress],
     ["minerCapital", minerCapitalAddress],
@@ -2866,6 +2929,7 @@ export async function inspectSatMiningStatusAccounts(
 
   const globalRecord = recordFor(globalAddress);
   const currentCycleRecord = recordFor(currentCycleAddress);
+  const currentSettlementProgressRecord = recordFor(currentSettlementProgressAddress);
   const currentMinerCycleRecord = recordFor(currentMinerCycleAddress);
   const claimMinerCycleRecord = recordFor(claimMinerCycleAddress);
   const minerCapitalRecord = recordFor(minerCapitalAddress);
@@ -2878,6 +2942,12 @@ export async function inspectSatMiningStatusAccounts(
     : null;
   const currentCycle = currentCycleRecord?.data
     ? decodeSatCycle(currentCycleRecord.data, currentCycleAddress.toBase58())
+    : null;
+  const currentSettlementProgress = currentSettlementProgressRecord?.data
+    ? decodeSatCycleSettlementProgressV2(
+        currentSettlementProgressRecord.data,
+        currentSettlementProgressAddress.toBase58(),
+      )
     : null;
   const currentMinerCycle = currentMinerCycleRecord?.data
     ? decodeSatMinerCycle(currentMinerCycleRecord.data, currentMinerCycleAddress?.toBase58() ?? "")
@@ -2912,6 +2982,11 @@ export async function inspectSatMiningStatusAccounts(
     `view:cycle:${rpcCacheScope(rpc)}:${currentCycleId}`,
     SAT_RPC_LIVE_VIEW_CACHE_TTL_MS,
     currentCycle,
+  );
+  writeRpcCacheValue(
+    `view:settlement-progress:${rpcCacheScope(rpc)}:${currentCycleId}`,
+    SAT_RPC_LIVE_VIEW_CACHE_TTL_MS,
+    currentSettlementProgress,
   );
   if (owner && currentMinerCycleAddress) {
     writeRpcCacheValue(
@@ -2950,6 +3025,7 @@ export async function inspectSatMiningStatusAccounts(
   return {
     globalState,
     currentCycle,
+    currentSettlementProgress,
     currentMinerCycle,
     claimMinerCycle,
     minerCapital,
@@ -3574,6 +3650,7 @@ export async function inspectSatRentExemptionLamports(config: SatMiningConfig): 
   cycleRegistryPageLamports: string;
   cycleSettlementProgressLamports: string;
   minerCycleLamports: string;
+  unlockIntervalLamports: string;
   openCycleLamports: string;
   submitCycleSharedLamports: string;
   submitCycleSignerLamports: string;
@@ -3594,18 +3671,24 @@ export async function inspectSatRentExemptionLamports(config: SatMiningConfig): 
         cycleRegistryPageLamports,
         cycleSettlementProgressLamports,
         minerCycleLamports,
+        unlockIntervalLamports,
       ] = await Promise.all([
-        connection.getMinimumBalanceForRentExemption(SAT_PROTOCOL_VAULT_ACCOUNT_SPACE),
-        connection.getMinimumBalanceForRentExemption(SAT_CYCLE_STATE_ACCOUNT_SPACE),
-        connection.getMinimumBalanceForRentExemption(SAT_CYCLE_REGISTRY_META_ACCOUNT_SPACE),
-        connection.getMinimumBalanceForRentExemption(SAT_CYCLE_REGISTRY_PAGE_ACCOUNT_SPACE),
+        connection.getMinimumBalanceForRentExemption(SAT_RENT_ACCOUNT_SPACES.protocolVault),
+        connection.getMinimumBalanceForRentExemption(SAT_RENT_ACCOUNT_SPACES.cycleState),
+        connection.getMinimumBalanceForRentExemption(SAT_RENT_ACCOUNT_SPACES.cycleRegistryMeta),
+        connection.getMinimumBalanceForRentExemption(SAT_RENT_ACCOUNT_SPACES.cycleRegistryPage),
         connection.getMinimumBalanceForRentExemption(
-          SAT_CYCLE_SETTLEMENT_PROGRESS_V2_ACCOUNT_SPACE,
+          SAT_RENT_ACCOUNT_SPACES.cycleSettlementProgressV2,
         ),
-        connection.getMinimumBalanceForRentExemption(SAT_MINER_CYCLE_ACCOUNT_SPACE),
+        connection.getMinimumBalanceForRentExemption(SAT_RENT_ACCOUNT_SPACES.minerCycle),
+        connection.getMinimumBalanceForRentExemption(SAT_RENT_ACCOUNT_SPACES.unlockInterval),
       ]);
       const openCycleLamports = cycleStateLamports + cycleRegistryMetaLamports;
-      const submitCycleSharedLamports = cycleSettlementProgressLamports + cycleRegistryPageLamports;
+      const submitCycleSharedLamports = calculateSatRevealSharedRentLamports({
+        cycleSettlementProgressLamports,
+        cycleRegistryPageLamports,
+        unlockIntervalLamports,
+      });
       return {
         registryReserveTargetLamports: String(registryReserveTargetLamports),
         protocolVaultLamports: String(protocolVaultLamports),
@@ -3614,6 +3697,7 @@ export async function inspectSatRentExemptionLamports(config: SatMiningConfig): 
         cycleRegistryPageLamports: String(cycleRegistryPageLamports),
         cycleSettlementProgressLamports: String(cycleSettlementProgressLamports),
         minerCycleLamports: String(minerCycleLamports),
+        unlockIntervalLamports: String(unlockIntervalLamports),
         openCycleLamports: String(openCycleLamports),
         submitCycleSharedLamports: String(submitCycleSharedLamports),
         submitCycleSignerLamports: String(minerCycleLamports),

@@ -577,6 +577,22 @@ describe("mining view helpers", () => {
     ]);
   });
 
+  it("surfaces unpaid keeper bounty in the current cycle summary", () => {
+    const summary = summarizeCurrentCycleSnapshot({
+      running: true,
+      network: "devnet",
+      riskMode: "balanced",
+      blocked: false,
+      currentCycleId: 9863001,
+      currentKeeperBountyUnpaidLamports: "1500000",
+    });
+
+    expect(summary).toContainEqual({
+      label: "Keeper bounty owed",
+      value: "0.0015",
+    });
+  });
+
   it("keeps global issuance fields out of the current-cycle summary", () => {
     const summary = summarizeCurrentCycleSnapshot(
       {

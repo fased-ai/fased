@@ -638,6 +638,11 @@ func (s *signerServiceV2) execute(req signerExecuteRequestV2) (signerOperationV2
 		failed, _ := s.store.markFailedClaim(operation.RequestID, executionAttempt, err)
 		return failed, err
 	}
+	if len(raw) == 0 || len(raw) > 1232 {
+		err := fmt.Errorf("typed signer transaction exceeds Solana's 1232-byte wire limit: %d bytes", len(raw))
+		failed, _ := s.store.markFailedClaim(operation.RequestID, executionAttempt, err)
+		return failed, err
+	}
 	if len(tx.Signatures) == 0 || tx.Signatures[0].IsZero() {
 		err := errors.New("typed signer transaction is missing its wallet signature")
 		failed, _ := s.store.markFailedClaim(operation.RequestID, executionAttempt, err)
@@ -745,14 +750,42 @@ func buildTypedTransactionV2(
 	if err != nil {
 		return nil, err
 	}
+	if intent.Intent.Type == intentSolanaSATLookupTable {
+		if err := validateSATLookupTableOperationStateV2(rpcURLs, from, intent); err != nil {
+			return nil, err
+		}
+	}
+	addressTables, err := loadSATDistributionAddressTablesV2(rpcURLs, from, intent)
+	if err != nil {
+		return nil, err
+	}
 
 	blockhash, err := signerLatestBlockhashWithFallbackV2(rpcURLs)
 	if err != nil {
 		return nil, err
 	}
-	tx, err := solana.NewTransaction(instructions, blockhash, solana.TransactionPayer(from))
+	return newSignedTypedTransactionV2(instructions, blockhash, privateKey, addressTables)
+}
+
+func newSignedTypedTransactionV2(
+	instructions []solana.Instruction,
+	blockhash solana.Hash,
+	privateKey solana.PrivateKey,
+	addressTables map[solana.PublicKey]solana.PublicKeySlice,
+) (*solana.Transaction, error) {
+	from := privateKey.PublicKey()
+	options := []solana.TransactionOption{solana.TransactionPayer(from)}
+	if len(addressTables) > 0 {
+		options = append(options, solana.TransactionAddressTables(addressTables))
+	}
+	tx, err := solana.NewTransaction(instructions, blockhash, options...)
 	if err != nil {
 		return nil, err
+	}
+	if len(addressTables) > 0 {
+		if tx.Message.GetVersion() != solana.MessageVersionV0 || len(tx.Message.GetAddressTableLookups()) != 1 || tx.Message.NumLookups() == 0 {
+			return nil, errors.New("typed SAT distribution did not compile to the required single-table v0 transaction")
+		}
 	}
 	_, err = tx.Sign(func(key solana.PublicKey) *solana.PrivateKey {
 		if key.Equals(from) {
@@ -846,7 +879,7 @@ func buildTypedInstructionsV2(
 			transferData,
 		)
 		return appendMemo([]solana.Instruction{createDestinationATA, transfer}), nil
-	case intentSolanaSATAction, intentSolanaVaultBondAction:
+	case intentSolanaSATAction, intentSolanaSATLookupTable, intentSolanaVaultBondAction:
 		if len(intent.Instructions) == 0 || len(intent.Instructions) > 6 {
 			return nil, errors.New("typed SAT action has an invalid instruction count")
 		}

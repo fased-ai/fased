@@ -1293,6 +1293,12 @@ export function summarizeCurrentCycleSnapshot(
       value: formatOptionalSignedMetricAmount(latestSettled?.netLamports ?? null, "SOL"),
     },
   ];
+  if (hasPositiveLamports(status?.currentKeeperBountyUnpaidLamports)) {
+    summary.push({
+      label: "Keeper bounty owed",
+      value: formatMetricAmount(status?.currentKeeperBountyUnpaidLamports ?? "0", "SOL"),
+    });
+  }
   return summary;
 }
 

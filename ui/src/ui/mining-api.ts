@@ -259,6 +259,8 @@ export type SatMiningRuntimeStatus = {
   nextOpenCycleLamports?: string | null;
   nextSubmitCycleSharedLamports?: string | null;
   nextSubmitCycleSignerLamports?: string | null;
+  currentKeeperBountyPaidLamports?: string | null;
+  currentKeeperBountyUnpaidLamports?: string | null;
   currentCapitalAddress?: string | null;
   currentCapitalFundedLamports?: string;
   currentCapitalLockedLamports?: string;

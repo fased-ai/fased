@@ -248,6 +248,30 @@ describe("strict owner policy input", () => {
     });
     expect(vault.operations).toEqual([`vaultBond.openBondPosition@${destination}`]);
 
+    const lookup = normalizeOwnerPolicy({
+      walletId: "mining",
+      role: "mining",
+      operations: [`satLookup.create@${__testing.ADDRESS_LOOKUP_TABLE_PROGRAM}`],
+      programs: [__testing.ADDRESS_LOOKUP_TABLE_PROGRAM, __testing.SYSTEM_PROGRAM],
+      assets: [
+        {
+          asset: "sat:action",
+          destinations: [__testing.ADDRESS_LOOKUP_TABLE_PROGRAM],
+          maxPerTx: "1",
+          maxDaily: "4",
+        },
+        {
+          asset: "solana:native",
+          destinations: [__testing.ADDRESS_LOOKUP_TABLE_PROGRAM],
+          maxPerTx: "25000000",
+          maxDaily: "100000000",
+        },
+      ],
+    });
+    expect(lookup.operations).toEqual([
+      `satLookup.create@${__testing.ADDRESS_LOOKUP_TABLE_PROGRAM}`,
+    ]);
+
     expect(() =>
       normalizeOwnerPolicy({
         ...validPolicy(),
@@ -266,6 +290,14 @@ describe("strict owner policy input", () => {
     expect(() =>
       normalizeOwnerPolicy({ ...validPolicy(), operations: ["solana.satAction"] }),
     ).toThrow("exact action bound");
+    expect(() =>
+      normalizeOwnerPolicy({
+        ...validPolicy(),
+        role: "mining",
+        operations: [`satLookup.create@${destination}`],
+        programs: [destination],
+      }),
+    ).toThrow("not an allowed typed Mining lookup-table action");
     expect(() =>
       normalizeOwnerPolicy({
         ...vault,

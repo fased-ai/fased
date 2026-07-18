@@ -184,6 +184,7 @@ export type SatMiningRuntimeState = {
   roundExecution: Map<string, SatRoundExecutionState>;
   claimBacklog: Map<number, SatClaimBacklogEntry>;
   settlementPageParticipants: Map<string, string[]>;
+  settlementPageLookupTables: Map<string, string>;
   auditArtifacts: Map<string, SatAuditArtifact>;
   auditStorePath: string | null;
   runtimeStorePath: string | null;
@@ -673,6 +674,7 @@ export function createSatMiningRuntimeState(_config: SatMiningConfig): SatMining
     roundExecution: new Map(),
     claimBacklog: new Map(),
     settlementPageParticipants: new Map(),
+    settlementPageLookupTables: new Map(),
     auditArtifacts: new Map(),
     auditStorePath: null,
     runtimeStorePath: null,

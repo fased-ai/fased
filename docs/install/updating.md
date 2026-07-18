@@ -167,6 +167,12 @@ and alternate trusted release sources remain available through
 `FASED_WALLET_LOCAL_SIGNER_BIN`, `FASED_LOCAL_SIGNER_VERSION`, and
 `FASED_LOCAL_SIGNER_BASE_URL`.
 
+Existing Local/WSL2 SAT operators that explicitly use large distribution v0
+transactions keep `FASED_SAT_ENABLE_ALT_V0` and `FASED_SAT_PROGRAM_ID` from
+managed config across restart/update. An update does not silently enable the
+feature or widen signer policy; exact `satLookup` grants still require
+owner-policy acknowledgement.
+
 Do not commit generated signer binaries to Git, and do not cut a release just to
 test signer setup.
 

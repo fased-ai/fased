@@ -28,6 +28,7 @@ const (
 	intentSolanaNativeTransfer     = "solana.nativeTransfer"
 	intentSolanaSPLTransferChecked = "solana.splTransferChecked"
 	intentSolanaSATAction          = "solana.satAction"
+	intentSolanaSATLookupTable     = "solana.satLookupTable"
 	intentSolanaVaultBondAction    = "solana.vaultBondAction"
 	intentFederationBondChallenge  = "federation.bondChallenge"
 	intentSolanaJupiterSwap        = "solana.jupiter.swap"
@@ -59,22 +60,24 @@ type signerCapabilitiesV2 struct {
 }
 
 type signerIntentV2 struct {
-	Type         string                                 `json:"type"`
-	Destination  string                                 `json:"destination,omitempty"`
-	Lamports     string                                 `json:"lamports,omitempty"`
-	TokenProgram string                                 `json:"tokenProgram,omitempty"`
-	Mint         string                                 `json:"mint,omitempty"`
-	Amount       string                                 `json:"amount,omitempty"`
-	Memo         string                                 `json:"memo,omitempty"`
-	Action       string                                 `json:"action,omitempty"`
-	ProgramID    string                                 `json:"programId,omitempty"`
-	DataBase64   string                                 `json:"dataBase64,omitempty"`
-	Keys         []signerSATAccountV2                   `json:"keys,omitempty"`
-	Context      *signerSATContextV2                    `json:"context,omitempty"`
-	Instructions []signerSATInstructionV2               `json:"instructions,omitempty"`
-	Jupiter      *signerJupiterIntentV2                 `json:"jupiter,omitempty"`
-	Cluster      string                                 `json:"cluster,omitempty"`
-	Federation   *signerFederationBondChallengeIntentV2 `json:"federation,omitempty"`
+	Type                string                                 `json:"type"`
+	Destination         string                                 `json:"destination,omitempty"`
+	Lamports            string                                 `json:"lamports,omitempty"`
+	TokenProgram        string                                 `json:"tokenProgram,omitempty"`
+	Mint                string                                 `json:"mint,omitempty"`
+	Amount              string                                 `json:"amount,omitempty"`
+	Memo                string                                 `json:"memo,omitempty"`
+	Action              string                                 `json:"action,omitempty"`
+	ProgramID           string                                 `json:"programId,omitempty"`
+	DataBase64          string                                 `json:"dataBase64,omitempty"`
+	Keys                []signerSATAccountV2                   `json:"keys,omitempty"`
+	Context             *signerSATContextV2                    `json:"context,omitempty"`
+	Instructions        []signerSATInstructionV2               `json:"instructions,omitempty"`
+	AddressLookupTables []string                               `json:"addressLookupTables,omitempty"`
+	LookupTable         *signerSATLookupTableIntentV2          `json:"lookupTable,omitempty"`
+	Jupiter             *signerJupiterIntentV2                 `json:"jupiter,omitempty"`
+	Cluster             string                                 `json:"cluster,omitempty"`
+	Federation          *signerFederationBondChallengeIntentV2 `json:"federation,omitempty"`
 }
 
 type signerExecuteRequestV2 struct {
@@ -204,17 +207,19 @@ type signerReservationRequirementV2 struct {
 }
 
 type normalizedIntentV2 struct {
-	Intent           signerIntentV2
-	Digest           string
-	Asset            string
-	Amount           *big.Int
-	RequiredPrograms []string
-	Destination      string
-	Instructions     []solana.Instruction
-	PolicyOperation  string
-	CapExempt        bool
-	RequiredRole     string
-	Message          []byte
+	Intent               signerIntentV2
+	Digest               string
+	Asset                string
+	Amount               *big.Int
+	RequiredPrograms     []string
+	Destination          string
+	Instructions         []solana.Instruction
+	AddressLookupTables  []solana.PublicKey
+	NativeFeeReservation *big.Int
+	PolicyOperation      string
+	CapExempt            bool
+	RequiredRole         string
+	Message              []byte
 }
 
 func isSPLTokenProgram(programID string) bool {
@@ -305,6 +310,11 @@ func normalizeSignerIntentForWalletV2(input signerIntentV2, wallet *solana.Publi
 			return normalizedIntentV2{}, errors.New("typed SAT intent requires signer wallet context")
 		}
 		return normalizeSATIntentV2(input, *wallet)
+	case intentSolanaSATLookupTable:
+		if wallet == nil || wallet.IsZero() {
+			return normalizedIntentV2{}, errors.New("typed SAT lookup-table intent requires signer wallet context")
+		}
+		return normalizeSATLookupTableIntentV2(input, *wallet)
 	case intentSolanaVaultBondAction:
 		if wallet == nil || wallet.IsZero() {
 			return normalizedIntentV2{}, errors.New("typed Vault bond intent requires signer wallet context")
@@ -536,6 +546,12 @@ func signerFeeReservationForIntentV2(intent normalizedIntentV2) (*big.Int, error
 		// claimed maximum or an RPC's simulated fee. This remains conservative
 		// if the base fee changes or a broadcast fails after fee collection.
 		return new(big.Int).SetUint64(signerNativeFeeReservationV2), nil
+	}
+	if intent.NativeFeeReservation != nil {
+		if intent.NativeFeeReservation.Sign() <= 0 || intent.NativeFeeReservation.BitLen() > 64 {
+			return nil, errors.New("typed signer native fee/rent reservation is invalid")
+		}
+		return new(big.Int).Set(intent.NativeFeeReservation), nil
 	}
 	return new(big.Int).SetUint64(signerNativeFeeReservationV2), nil
 }

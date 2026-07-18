@@ -537,6 +537,8 @@ load_wallet_signer_env_from_config() {
       || [[ "$key" == "FASED_WALLET_LOCAL_SIGNER_MASTER_KEY" ]] \
       || [[ "$key" == "FASED_WALLET_SIGNER_STATE_DIR" ]] \
       || [[ "$key" == "FASED_WALLET_LOCAL_SIGNER_BIN" ]] \
+      || [[ "$key" == "FASED_SAT_PROGRAM_ID" ]] \
+      || [[ "$key" == "FASED_SAT_ENABLE_ALT_V0" ]] \
       || [[ "$key" =~ ^FASED_WALLET_LOCAL_SIGNER_(ROLE|DIRECT_SIGNING|CAPS_ENABLED|SOLANA_MAX_PER_TX|SOLANA_MAX_DAILY|SOLANA_ALLOW_PROGRAMS)(__[A-Za-z0-9_-]+)?$ ]]; then
       export "$key=$value"
     fi
@@ -554,6 +556,8 @@ load_wallet_signer_env_from_config() {
             or . == "FASED_WALLET_LOCAL_SIGNER_MASTER_KEY"
             or . == "FASED_WALLET_SIGNER_STATE_DIR"
             or . == "FASED_WALLET_LOCAL_SIGNER_BIN"
+            or . == "FASED_SAT_PROGRAM_ID"
+            or . == "FASED_SAT_ENABLE_ALT_V0"
             or test("^FASED_WALLET_LOCAL_SIGNER_(ROLE|DIRECT_SIGNING|CAPS_ENABLED|SOLANA_MAX_PER_TX|SOLANA_MAX_DAILY|SOLANA_ALLOW_PROGRAMS)(__[A-Za-z0-9_-]+)?$")
         )
       | "\(.key)=\(.value|tostring)"

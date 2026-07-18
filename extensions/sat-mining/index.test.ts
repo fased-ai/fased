@@ -152,6 +152,13 @@ vi.mock("./src/solana-submit.js", () => ({
     ok: true,
     txHash: "tx-claim-cycle-batch",
   })),
+  submitSatCleanupDistributionLookupTable: vi.fn(async (_config, params) => ({
+    lookupTable: params.lookupTableAddress,
+    action: params.action,
+    transactionHashes: ["tx-cleanup-distribution-lookup"],
+    signerState: "confirmed",
+    requestId: "lookup-cleanup-request",
+  })),
   submitSatClaimUnallocatedStakingRewards: vi.fn(async () => ({
     ok: true,
     txHash: "tx-claim-unallocated-staking",
@@ -6252,6 +6259,7 @@ describe("sat-mining cycle gateway integration", () => {
       "sat.abortEmptyCycle",
       "sat.submitCycle",
       "sat.settleCyclePage",
+      "sat.cleanupDistributionLookupTable",
       "sat.claimCycleRewards",
       "sat.retargetUnlock",
     ]) {

@@ -141,6 +141,7 @@ import {
   submitSatClaimUnallocatedStakingRewards,
   submitSatClaimCycleRewards,
   submitSatClaimCycleRewardsBatch,
+  submitSatCleanupDistributionLookupTable,
   submitSatAbortEmptyCycle,
   submitSatCompactPendingCycleRange,
   submitSatCloseResolvedCycleArtifacts,
@@ -2258,6 +2259,9 @@ const satMiningPlugin = {
             participants,
           }),
         ),
+        settlementPageLookupTables: Array.from(state.settlementPageLookupTables.entries()).map(
+          ([cacheKey, lookupTableAddress]) => ({ cacheKey, lookupTableAddress }),
+        ),
         workers: state.workers,
         lastKnownStatus: state.lastKnownStatus,
         chainTime: state.chainTime,
@@ -2278,6 +2282,7 @@ const satMiningPlugin = {
       state.roundExecution.clear();
       state.claimBacklog.clear();
       state.settlementPageParticipants.clear();
+      state.settlementPageLookupTables.clear();
       state.auditArtifacts.clear();
       state.recentActions = [];
       state.archivedFailures = [];
@@ -2342,6 +2347,12 @@ const satMiningPlugin = {
         runtimeSummary.settlementPageParticipants.map((entry) => [
           entry.cacheKey,
           [...entry.participants],
+        ]),
+      );
+      state.settlementPageLookupTables = new Map(
+        runtimeSummary.settlementPageLookupTables.map((entry) => [
+          entry.cacheKey,
+          entry.lookupTableAddress,
         ]),
       );
       if (runtimeSummary.workers.roundWatcher) {
@@ -4521,6 +4532,11 @@ const satMiningPlugin = {
         (await satOps
           .inspectSatCycle(state.activeConfig, { cycleId: currentCycleId })
           .catch(() => null));
+      const currentSettlementProgress =
+        statusAccounts?.currentSettlementProgress ??
+        (await satOps
+          .inspectSatCycleSettlementProgressV2(state.activeConfig, { cycleId: currentCycleId })
+          .catch(() => null));
       const currentMinerCycleState =
         statusAccounts?.currentMinerCycle ??
         (statusAuthority
@@ -5361,6 +5377,10 @@ const satMiningPlugin = {
         nextOpenCycleLamports: rentExemptionLamports?.openCycleLamports ?? null,
         nextSubmitCycleSharedLamports: rentExemptionLamports?.submitCycleSharedLamports ?? null,
         nextSubmitCycleSignerLamports: rentExemptionLamports?.submitCycleSignerLamports ?? null,
+        currentKeeperBountyPaidLamports:
+          currentSettlementProgress?.keeperBountyPaidLamports ?? null,
+        currentKeeperBountyUnpaidLamports:
+          currentSettlementProgress?.keeperBountyUnpaidLamports ?? null,
         currentCapitalAddress,
         currentCapitalFundedLamports,
         currentCapitalLockedLamports,
@@ -7719,6 +7739,12 @@ const satMiningPlugin = {
           : Array.isArray((params as { minerAuthorities?: string[] })?.minerAuthorities)
             ? ((params as { minerAuthorities?: string[] }).minerAuthorities ?? [])
             : [];
+        const lookupTableAddress = String(
+          (params as { lookupTableAddress?: string })?.lookupTableAddress ?? "",
+        ).trim();
+        const lookupTableCacheKey = `${cycleId}:${pageIndex}`;
+        const effectiveLookupTableAddress =
+          lookupTableAddress || state.settlementPageLookupTables.get(lookupTableCacheKey) || "";
         const request = state.client.buildDistributeCyclePageRequest({
           cycleId,
           pageIndex,
@@ -7727,13 +7753,28 @@ const satMiningPlugin = {
         const submitted = await submitSatDistributeCyclePage(state.activeConfig, {
           ...request.params,
           minerCycleAccounts,
+          ...(effectiveLookupTableAddress
+            ? { lookupTableAddress: effectiveLookupTableAddress }
+            : {}),
         });
+        if (submitted.lookupTableAddress) {
+          state.settlementPageLookupTables.set(lookupTableCacheKey, submitted.lookupTableAddress);
+        }
         markActionSuccess("distributeCyclePage", submitted.txHash, cycleId);
         await persistRecentActions();
         respond(
           true,
           jsonOk({
-            request: { ...request, params: { ...request.params, minerCycleAccounts } },
+            request: {
+              ...request,
+              params: {
+                ...request.params,
+                minerCycleAccounts,
+                ...(submitted.lookupTableAddress
+                  ? { lookupTableAddress: submitted.lookupTableAddress }
+                  : {}),
+              },
+            },
             submitted,
           }),
         );
@@ -7742,6 +7783,53 @@ const satMiningPlugin = {
         respondGatewayError(respond, error);
       }
     });
+
+    registerSatSubmissionMethod(
+      "sat.cleanupDistributionLookupTable",
+      async ({ params, respond }) => {
+        const cycleId = Number((params as { cycleId?: number })?.cycleId ?? 0);
+        try {
+          const pageIndex = Number((params as { pageIndex?: number })?.pageIndex ?? 0);
+          const action = String((params as { action?: string })?.action ?? "").trim();
+          if (action !== "deactivate" && action !== "close") {
+            throw new Error("SAT lookup-table cleanup action must be deactivate or close");
+          }
+          const cacheKey = `${cycleId}:${pageIndex}`;
+          const lookupTableAddress =
+            String((params as { lookupTableAddress?: string })?.lookupTableAddress ?? "").trim() ||
+            state.settlementPageLookupTables.get(cacheKey) ||
+            "";
+          if (!lookupTableAddress) {
+            throw new Error(`SAT distribution lookup table is unknown for ${cacheKey}`);
+          }
+          const submitted = await submitSatCleanupDistributionLookupTable(state.activeConfig, {
+            lookupTableAddress,
+            action,
+          });
+          if (action === "close") {
+            state.settlementPageLookupTables.delete(cacheKey);
+          } else {
+            state.settlementPageLookupTables.set(cacheKey, lookupTableAddress);
+          }
+          markActionSuccess(
+            "cleanupDistributionLookupTable",
+            submitted.transactionHashes.at(-1),
+            cycleId,
+          );
+          await persistRecentActions();
+          respond(
+            true,
+            jsonOk({
+              request: { cycleId, pageIndex, action, lookupTableAddress },
+              submitted,
+            }),
+          );
+        } catch (error) {
+          markActionFailure("cleanupDistributionLookupTable", error, cycleId);
+          respondGatewayError(respond, error);
+        }
+      },
+    );
 
     registerSatSubmissionMethod("sat.claimCycleRewards", async ({ params, respond }) => {
       const cycleId = Number((params as { cycleId?: number })?.cycleId ?? 0);

@@ -514,6 +514,22 @@ describe("wallet-policy", () => {
     expect(vaultProfile.defaults.solana.allowPrograms).not.toContain(bondProgramId);
   });
 
+  it("adds the address lookup table program only when SAT ALT/v0 is enabled", () => {
+    const lookupTableProgram = "AddressLookupTab1e1111111111111111111111111";
+    vi.stubEnv("FASED_SAT_ENABLE_ALT_V0", "");
+    expect(
+      resolveWalletRolePolicyProfile("mining", process.env).defaults.solana.allowPrograms,
+    ).not.toContain(lookupTableProgram);
+
+    vi.stubEnv("FASED_SAT_ENABLE_ALT_V0", "1");
+    expect(
+      resolveWalletRolePolicyProfile("mining", process.env).defaults.solana.allowPrograms,
+    ).toContain(lookupTableProgram);
+    expect(
+      resolveWalletRolePolicyProfile("agent", process.env).defaults.solana.allowPrograms,
+    ).not.toContain(lookupTableProgram);
+  });
+
   it("fails closed without replacing a corrupt daily spend ledger", async () => {
     const walletRoot = path.join(tempDir, "wallet");
     const usagePath = path.join(walletRoot, "policy-usage.json");

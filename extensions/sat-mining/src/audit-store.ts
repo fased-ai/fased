@@ -294,6 +294,11 @@ export type SatPersistedSettlementPageParticipants = {
   participants: string[];
 };
 
+export type SatPersistedSettlementPageLookupTable = {
+  cacheKey: string;
+  lookupTableAddress: string;
+};
+
 export type SatPersistedLastKnownStatus = {
   walletId: string | null;
   currentSolBalanceLamports: string | null;
@@ -317,7 +322,7 @@ export type SatPersistedLastKnownStatus = {
 export type SatPersistedChainTime = SatChainTimeState;
 
 type SatRuntimeStoreFile = {
-  version: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11;
+  version: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12;
   recentActions: SatMiningRecentAction[];
   archivedFailures?: SatMiningRecentAction[];
   plannerHistory?: SatPlannerOutcomeMemory[];
@@ -326,6 +331,7 @@ type SatRuntimeStoreFile = {
   roundExecution?: SatPersistedRoundExecution[];
   claimBacklog?: SatClaimBacklogEntry[];
   settlementPageParticipants?: SatPersistedSettlementPageParticipants[];
+  settlementPageLookupTables?: SatPersistedSettlementPageLookupTable[];
   workers?: Partial<Record<SatMiningWorkerName, SatMiningWorkerState>>;
   lastKnownStatus?: SatPersistedLastKnownStatus | null;
   chainTime?: SatPersistedChainTime | null;
@@ -347,6 +353,7 @@ type SatRuntimeSummary = {
   roundExecution: SatPersistedRoundExecution[];
   claimBacklog: SatClaimBacklogEntry[];
   settlementPageParticipants: SatPersistedSettlementPageParticipants[];
+  settlementPageLookupTables: SatPersistedSettlementPageLookupTable[];
   workers: Partial<Record<SatMiningWorkerName, SatMiningWorkerState>>;
   lastKnownStatus: SatPersistedLastKnownStatus | null;
   chainTime: SatPersistedChainTime | null;
@@ -913,6 +920,25 @@ function trimSettlementPageParticipants(
   return [...deduped.values()].slice(0, SAT_SETTLEMENT_PAGE_PARTICIPANT_CACHE_LIMIT);
 }
 
+function trimSettlementPageLookupTables(
+  entries: readonly SatPersistedSettlementPageLookupTable[] | null | undefined,
+): SatPersistedSettlementPageLookupTable[] {
+  if (!Array.isArray(entries) || SAT_SETTLEMENT_PAGE_PARTICIPANT_CACHE_LIMIT <= 0) {
+    return [];
+  }
+  const deduped = new Map<string, SatPersistedSettlementPageLookupTable>();
+  for (const entry of entries) {
+    const cacheKey = typeof entry?.cacheKey === "string" ? entry.cacheKey.trim() : "";
+    const lookupTableAddress =
+      typeof entry?.lookupTableAddress === "string" ? entry.lookupTableAddress.trim() : "";
+    if (!cacheKey || !lookupTableAddress) {
+      continue;
+    }
+    deduped.set(cacheKey, { cacheKey, lookupTableAddress });
+  }
+  return [...deduped.values()].slice(0, SAT_SETTLEMENT_PAGE_PARTICIPANT_CACHE_LIMIT);
+}
+
 function emptySatRuntimeSummary(): SatRuntimeSummary {
   return {
     recentActions: [],
@@ -923,6 +949,7 @@ function emptySatRuntimeSummary(): SatRuntimeSummary {
     roundExecution: [],
     claimBacklog: [],
     settlementPageParticipants: [],
+    settlementPageLookupTables: [],
     workers: normalizeSatWorkers(undefined),
     lastKnownStatus: null,
     chainTime: null,
@@ -950,6 +977,7 @@ function normalizeSatRuntimeSummary(parsed: Partial<SatRuntimeStoreFile>): SatRu
     roundExecution: trimSatRoundExecution(parsed.roundExecution),
     claimBacklog: trimSatClaimBacklog(parsed.claimBacklog),
     settlementPageParticipants: trimSettlementPageParticipants(parsed.settlementPageParticipants),
+    settlementPageLookupTables: trimSettlementPageLookupTables(parsed.settlementPageLookupTables),
     workers: normalizeSatWorkers(parsed.workers),
     lastKnownStatus: normalizeSatLastKnownStatus(parsed.lastKnownStatus),
     chainTime: normalizeSatChainTime(parsed.chainTime),
@@ -973,7 +1001,7 @@ async function persistSatRuntimeSummary(
   summary: SatRuntimeSummary,
 ): Promise<void> {
   const payload: SatRuntimeStoreFile = {
-    version: 11,
+    version: 12,
     recentActions: summary.recentActions,
     archivedFailures: [],
     plannerHistory: summary.plannerHistory,
@@ -982,6 +1010,7 @@ async function persistSatRuntimeSummary(
     roundExecution: summary.roundExecution,
     claimBacklog: summary.claimBacklog,
     settlementPageParticipants: summary.settlementPageParticipants,
+    settlementPageLookupTables: summary.settlementPageLookupTables,
     workers: normalizeSatWorkers(summary.workers),
     lastKnownStatus: normalizeSatLastKnownStatus(summary.lastKnownStatus),
     chainTime: normalizeSatChainTime(summary.chainTime),
@@ -1095,7 +1124,8 @@ export async function readSatRecentActions(filePath: string): Promise<SatMiningR
         parsed.version !== 8 &&
         parsed.version !== 9 &&
         parsed.version !== 10 &&
-        parsed.version !== 11) ||
+        parsed.version !== 11 &&
+        parsed.version !== 12) ||
       !Array.isArray(parsed.recentActions)
     ) {
       return [];
@@ -1121,7 +1151,8 @@ export async function readSatRuntimeSummary(filePath: string): Promise<SatRuntim
         parsed.version !== 8 &&
         parsed.version !== 9 &&
         parsed.version !== 10 &&
-        parsed.version !== 11) ||
+        parsed.version !== 11 &&
+        parsed.version !== 12) ||
       !Array.isArray(parsed.recentActions)
     ) {
       return emptySatRuntimeSummary();
@@ -1156,6 +1187,12 @@ export async function readSatRuntimeSummary(filePath: string): Promise<SatRuntim
       (Array.isArray(parsed.settlementPageParticipants)
         ? parsed.settlementPageParticipants.length
         : 0);
+    const hadSettlementPageLookupTables = Array.isArray(parsed.settlementPageLookupTables);
+    const hadStaleSettlementPageLookupTables =
+      normalized.settlementPageLookupTables.length !==
+      (Array.isArray(parsed.settlementPageLookupTables)
+        ? parsed.settlementPageLookupTables.length
+        : 0);
     const hadWorkers =
       parsed.workers != null &&
       typeof parsed.workers === "object" &&
@@ -1177,6 +1214,8 @@ export async function readSatRuntimeSummary(filePath: string): Promise<SatRuntim
       hadStaleClaimBacklog ||
       !hadSettlementPageParticipants ||
       hadStaleSettlementPageParticipants ||
+      !hadSettlementPageLookupTables ||
+      hadStaleSettlementPageLookupTables ||
       !hadWorkers ||
       !hadLastKnownStatus ||
       !hadChainTime
@@ -1472,6 +1511,7 @@ export async function writeSatRecentActions(
     roundExecution?: readonly SatPersistedRoundExecution[];
     claimBacklog?: readonly SatClaimBacklogEntry[];
     settlementPageParticipants?: readonly SatPersistedSettlementPageParticipants[];
+    settlementPageLookupTables?: readonly SatPersistedSettlementPageLookupTable[];
     workers?: Partial<Record<SatMiningWorkerName, SatMiningWorkerState>>;
     lastKnownStatus?: SatPersistedLastKnownStatus | null;
     chainTime?: SatPersistedChainTime | null;
@@ -1497,6 +1537,7 @@ export async function writeSatRecentActions(
     roundExecution: trimSatRoundExecution(summary?.roundExecution),
     claimBacklog: trimSatClaimBacklog(summary?.claimBacklog),
     settlementPageParticipants: trimSettlementPageParticipants(summary?.settlementPageParticipants),
+    settlementPageLookupTables: trimSettlementPageLookupTables(summary?.settlementPageLookupTables),
     workers: normalizeSatWorkers(summary?.workers),
     lastKnownStatus: normalizeSatLastKnownStatus(summary?.lastKnownStatus),
     chainTime: normalizeSatChainTime(summary?.chainTime),

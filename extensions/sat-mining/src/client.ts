@@ -11,6 +11,7 @@ export const SAT_GATEWAY_METHODS = {
   finalizeCycleSettlement: "sat.finalizeCycleSettlement",
   scoreCyclePage: "sat.scoreCyclePage",
   distributeCyclePage: "sat.distributeCyclePage",
+  cleanupDistributionLookupTable: "sat.cleanupDistributionLookupTable",
   claimCycleRewards: "sat.claimCycleRewards",
   claimCycleRewardsBatch: "sat.claimCycleRewardsBatch",
   retargetUnlock: "sat.retargetUnlock",
@@ -124,6 +125,18 @@ export class SatMiningClient {
   }) {
     return {
       method: SAT_GATEWAY_METHODS.distributeCyclePage,
+      params,
+    };
+  }
+
+  buildCleanupDistributionLookupTableRequest(params: {
+    cycleId: number;
+    pageIndex: number;
+    action: "deactivate" | "close";
+    lookupTableAddress?: string;
+  }) {
+    return {
+      method: SAT_GATEWAY_METHODS.cleanupDistributionLookupTable,
       params,
     };
   }

@@ -193,6 +193,86 @@ sudo /usr/local/sbin/fased-signer-policy \
 The helper shows the normalized diff/hash, asks for confirmation, writes
 through the control socket, and verifies the exact durable acknowledgement.
 
+<Accordion title="Optional large SAT distribution policy">
+  SAT distribution pages with 16 or more miners use one signer-owned Solana
+  address lookup table only when `FASED_SAT_ENABLE_ALT_V0=1` is explicitly set.
+  Keep the default disabled until you need that scale.
+
+The Mining policy must contain the exact `satLookup.create`, `extend`,
+`deactivate`, and `close` operations bound to
+`AddressLookupTab1e1111111111111111111111111`, plus that program and the
+System program. The default Mining template intentionally omits these grants.
+For a new wallet, add them to the private copy before the initial owner-policy
+install. For an active wallet, read its exact current version and replace it
+through the signer-only control socket as described in the native signer
+`ADMIN.md`; the Gateway cannot widen it. Its `sat:action` destinations must
+also include the lookup-table program. Create and extend reserve a
+signer-controlled `25000000` lamports each for fee/rent exposure; set the
+native per-transaction cap to at least that amount and size the daily cap for
+all expected chunks.
+
+Add these four exact operations:
+
+```text
+satLookup.create@AddressLookupTab1e1111111111111111111111111
+satLookup.extend@AddressLookupTab1e1111111111111111111111111
+satLookup.deactivate@AddressLookupTab1e1111111111111111111111111
+satLookup.close@AddressLookupTab1e1111111111111111111111111
+```
+
+Also add `AddressLookupTab1e1111111111111111111111111` to `programs` and to
+the `sat:action` destinations. Keep the existing System program grant. For an
+already active Local policy, replace `CURRENT_VERSION` with the version from
+the first command:
+
+```bash
+"$HOME/.fased/bin/fased-signerd" admin policy get \
+  --control-socket "$HOME/.fased/wallet/local-signer-control.sock" \
+  --wallet-id YOUR_MINING_WALLET_ID
+"$HOME/.fased/bin/fased-signerd" admin policy put \
+  --control-socket "$HOME/.fased/wallet/local-signer-control.sock" \
+  --wallet-id YOUR_MINING_WALLET_ID --expected-version CURRENT_VERSION \
+  --policy-file /secure/absolute/mining-policy.json
+```
+
+On Hosting, stage the reviewed file for the isolated signer user, then use the
+same version fence:
+
+```bash
+sudo install -d -o fased-signer -g fased-signer -m 0700 \
+  /var/lib/fased-signerd/admin
+sudo install -o fased-signer -g fased-signer -m 0600 \
+  /root/mining-policy.json /var/lib/fased-signerd/admin/mining-policy.json
+sudo -u fased-signer -- /opt/fased/signer/fased-signerd admin policy get \
+  --control-socket /run/fased-signerd/control.sock \
+  --wallet-id YOUR_MINING_WALLET_ID
+sudo -u fased-signer -- /opt/fased/signer/fased-signerd admin policy put \
+  --control-socket /run/fased-signerd/control.sock \
+  --wallet-id YOUR_MINING_WALLET_ID \
+  --expected-version CURRENT_VERSION \
+  --policy-file /var/lib/fased-signerd/admin/mining-policy.json
+```
+
+After the signer acknowledges the new policy hash, enable the Gateway side as
+the app user:
+
+```bash
+fased config set env.vars.FASED_SAT_ENABLE_ALT_V0 "1"
+```
+
+Restart Local normally. On Hosting, use the provider root console to restart
+`fased-gateway.service`; never grant the `app` user sudo access.
+
+Each mutation is a separate idempotent signer-v2 request. The signer verifies
+the table PDA, Mining authority, current on-chain state, capacity, activation
+slot, cooldown, and exact distribution accounts. Gateway persists the table
+address per cycle/page but cannot submit a caller-built v0 transaction. The
+signer also requires reachable primary and fallback execution RPC URLs on two
+distinct origins. Both must return identical lookup-table account bytes; one
+origin, duplicate origins, or any disagreement fails closed before numeric ALT
+indexes are compiled.
+</Accordion>
+
 ## Two RPC planes
 
 Each native wallet needs both:
@@ -241,6 +321,10 @@ Local example:
 
 HTTPS is required except for an explicit loopback development endpoint. Health
 returns readiness plus version/hash metadata, not the secret URL.
+
+The fallback is optional for ordinary signer operations, but it is mandatory
+for typed SAT lookup-table lifecycle and distribution operations. Use a second
+RPC origin rather than another path or credential on the primary origin.
 
 ## Signer-owned Jupiter Trigger credential
 
