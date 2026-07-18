@@ -15,6 +15,7 @@ import type { GatewayWsLogStyle } from "../../gateway/ws-logging.js";
 import { setGatewayWsLogStyle } from "../../gateway/ws-logging.js";
 import { setVerbose } from "../../globals.js";
 import { GatewayLockError } from "../../infra/gateway-lock.js";
+import { assertLocalSourcePairedGatewayStartAllowed } from "../../infra/local-source-paired-update.js";
 import { formatPortDiagnostics, inspectPortUsage } from "../../infra/ports.js";
 import { setConsoleSubsystemFilter, setConsoleTimestampPrefix } from "../../logging/console.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
@@ -86,6 +87,13 @@ function inheritGatewayRunOptions(opts: GatewayRunOpts, command: Command): Gatew
 }
 
 async function runGatewayCommand(opts: GatewayRunOpts) {
+  try {
+    await assertLocalSourcePairedGatewayStartAllowed({ runtimeRoot: path.resolve(process.cwd()) });
+  } catch (error) {
+    defaultRuntime.error(String(error));
+    defaultRuntime.exit(1);
+    return;
+  }
   const isDevProfile = process.env.FASED_PROFILE?.trim().toLowerCase() === "dev";
   const devMode = Boolean(opts.dev) || isDevProfile;
   if (opts.reset && !devMode) {

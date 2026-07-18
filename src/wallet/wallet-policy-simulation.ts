@@ -218,7 +218,7 @@ export function simulateWalletPolicy(params: {
     pass(
       "wallet.approval",
       "Approval",
-      "Autonomous mode may sign after custody and approval gates.",
+      "Autonomous mode may sign only after typed signer policy and cap checks.",
     ),
   );
   return { ok: true, decision: "pass", checks, diff };

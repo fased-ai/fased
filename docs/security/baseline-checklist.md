@@ -1,6 +1,7 @@
 # Fased Host Security Baseline Checklist
 
-Scope: host-native Fased gateway + `fased-signerd` (no Docker required).  
+Scope: maintained VPS Hosting with the host-native Gateway and independent
+`fased-signerd`. Full Docker Gateway support is Local only.
 Goal: secure default for crypto workloads with private operator access and a
 separate public Fased Network/A2A surface only where needed.
 
@@ -26,21 +27,51 @@ Cannot be fully automated without prior identity:
 
 ### 1. Dedicated non-root runtime users (`required`)
 
+The Hosting installer creates the non-root Gateway account (default `app`) and
+the locked `fased-signer` account. Do not replace them with ad hoc `fased` or
+`fasedsigner` users.
+
 ```bash
-sudo useradd --system --create-home --home-dir /var/lib/fased --shell /usr/sbin/nologin fased
-sudo useradd --system --create-home --home-dir /var/lib/fased-signer --shell /usr/sbin/nologin fasedsigner
+getent passwd app fased-signer
+sudo systemctl show fased-gateway.service -p User -p Group
+sudo systemctl show fased-signerd.service -p User -p Group -p SupplementaryGroups
 ```
 
-Run gateway and signer as these users (never as root).
+The Gateway and signer never run as root. A separate fixed root updater is
+intentional: it verifies and transactionally replaces the root-owned signer
+binary. The Gateway has no signer sudo access.
 
 ### 2. Private admin network path via Tailscale (`required`)
 
-For normal hosted VPS setup, use the hosted installer. It starts Tailscale when
-needed, prints the login URL, and verifies private access before lock-down:
+For normal hosted VPS setup, use the hosted installer. Verify the root
+bootstrap release asset before execution; it then starts Tailscale when needed,
+prints the login URL, and verifies private access before lock-down:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
+RELEASE=vX.Y.Z
+BOOTSTRAP_DIR="$(mktemp -d)"
+chmod 0700 "$BOOTSTRAP_DIR"
+curl -fsSLo "$BOOTSTRAP_DIR/install.sh" \
+  "https://github.com/fased-ai/fased/releases/download/${RELEASE}/install.sh"
+curl -fsSLo "$BOOTSTRAP_DIR/install.sh.attestation.json" \
+  "https://github.com/fased-ai/fased/releases/download/${RELEASE}/install.sh.attestation.json"
+GH_PROMPT_DISABLED=1 gh attestation verify "$BOOTSTRAP_DIR/install.sh" \
+  --repo fased-ai/fased \
+  --bundle "$BOOTSTRAP_DIR/install.sh.attestation.json" \
+  --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
+  --source-ref "refs/tags/${RELEASE}" \
+  --deny-self-hosted-runners
+chmod 0500 "$BOOTSTRAP_DIR/install.sh"
+bash "$BOOTSTRAP_DIR/install.sh" --hosting --release "$RELEASE"
+rm -rf "$BOOTSTRAP_DIR"
 ```
+
+Run this from the VPS provider's root console after replacing `vX.Y.Z` with an
+exact stable release. Install `gh` from a trusted OS package source first. Do
+not run an app-owned checkout with sudo, and do not continue after an
+attestation failure. The shorter raw tagged command trusts the initial
+GitHub/repository download before it can attest later assets; it is not the
+high-assurance bootstrap path.
 
 Manual hardening only: install and authenticate Tailscale yourself:
 
@@ -83,7 +114,7 @@ Notes:
 
 Minimum hardening directives:
 
-- `User=fased`
+- `User=app` for the default Hosting account
 - `NoNewPrivileges=true`
 - `PrivateTmp=true`
 - `ProtectSystem=strict`
@@ -97,10 +128,12 @@ Minimum hardening directives:
 
 Minimum hardening directives:
 
-- `User=fasedsigner`
+- `User=fased-signer`
 - `UMask=0077`
 - `RuntimeDirectory=fased-signerd`
-- signer socket mode `0600`
+- application socket `/run/fased-signerd/app.sock` mode `0660`, group-authorized
+  for the Gateway
+- control socket `/run/fased-signerd/control.sock` mode `0600`, signer only
 - `NoNewPrivileges=true`
 - `PrivateTmp=true`
 - `ProtectSystem=strict`
@@ -108,11 +141,15 @@ Minimum hardening directives:
 
 ### 7. Signer isolation and key material protections (`required`)
 
-- passphrase file mode `0600`
-- keystore files mode `0600`
-- signer audit log enabled
-- signer PID lock enabled
-- separate unix user from gateway process where possible
+- `/var/lib/fased-signerd` is `0700`, owned by `fased-signer`
+- `state.db`, `master.key`, and `audit.jsonl` are signer-owned and never mounted
+  or exposed to the Gateway
+- Go owns creation/import/re-encryption; normal Node/Gateway code never receives
+  plaintext key material
+- fail-closed policy, signer WebAuthn, durable cap/idempotency state, and
+  signer-owned execution RPC live in signer state
+- Gateway can connect only to the typed application socket and has no control
+  socket or signer sudo path
 
 ### 8. Disable password SSH login (`required`)
 
@@ -148,24 +185,31 @@ sudo dpkg-reconfigure -plow unattended-upgrades
 
 ### 11. Strict service restart/update flow (`recommended`)
 
-Use explicit update flow:
+Use the managed update flow:
 
-1. pull/update code
-2. rebuild
-3. restart systemd units
-4. run signer doctor/status checks
+1. run `fased update` from the managed Hosting runtime
+2. let the fixed root updater verify the exact tagged signer digest and GitHub
+   attestation
+3. let it gate mutations, snapshot state, install/restart, verify health, and
+   commit or roll back the coordinated Gateway/signer transaction
+4. run signer doctor/status and cold-restart checks
 
-Avoid ad-hoc runtime `npm/pnpm` installs under privileged users.
+Avoid ad hoc `git pull`, runtime `npm/pnpm`, binary replacement, or custom
+systemd drop-ins under privileged users.
 
-### 12. Optional Docker mode (`recommended as alternate profile`)
+### 12. Docker support boundary (`required`)
 
-Offer Docker as an alternate hardened profile, but keep the same baseline principles:
+Full Docker Gateway is a Local-only installation path. Do not present it as a
+VPS Hosting profile. Maintained VPS/cloud installation uses
+`install.sh --hosting` and the native systemd boundary above.
+
+For Local Docker, keep these baseline principles:
 
 - non-root container user
 - read-only rootfs where possible
 - minimal writable volumes
-- private admin path via Tailscale
-- separate public edge only for A2A/public
+- loopback/private admin access
+- signer app/control volumes separated from the Gateway
 
 ---
 
@@ -176,6 +220,15 @@ Run after install:
 ```bash
 fased wallet signer doctor --json
 fased wallet status --json
+sudo systemctl is-active fased-signerd.service fased-host-updater.service
+sudo stat -c '%U:%G %a %n' \
+  /var/lib/fased-signerd \
+  /var/lib/fased-signerd/state.db \
+  /var/lib/fased-signerd/master.key \
+  /var/lib/fased-signerd/audit.jsonl \
+  /run/fased-signerd/app.sock \
+  /run/fased-signerd/control.sock
+sudo -l -U app
 ss -ltnp | rg '18789|19444|22|443'
 sudo ufw status verbose
 ```
@@ -183,6 +236,8 @@ sudo ufw status verbose
 Expected:
 
 - signer doctor passes
+- `app` has no signer maintenance sudo command
+- app socket is `0660`; control socket and signer state are inaccessible to `app`
 - wallet status healthy for configured provider/signer mode
 - admin ports not publicly exposed unintentionally
 - firewall policy is default deny with explicit allows only

@@ -72,7 +72,13 @@ export type SatMinerProfile = {
 export type SatMiningWalletOption = {
   walletId: string;
   walletName: string;
-  providerId: "embedded-keystore" | "local-socket-signer" | "alchemy" | "turnkey" | "privy";
+  providerId:
+    | "embedded-keystore"
+    | "local-socket-signer"
+    | "alchemy"
+    | "turnkey"
+    | "wallet-standard"
+    | "privy";
   role?: "agent" | "vault" | "mining";
   signerCapability: SatSignerCapability;
   signerCapabilityReason?: string;

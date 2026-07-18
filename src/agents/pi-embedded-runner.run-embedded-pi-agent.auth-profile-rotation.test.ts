@@ -375,6 +375,47 @@ async function runTurnWithCooldownSeed(params: {
 }
 
 describe("runEmbeddedPiAgent auth profile rotation", () => {
+  it("forwards client tools and disabled host tools to the attempt", async () => {
+    await withAgentWorkspace(async ({ agentDir, workspaceDir }) => {
+      await writeAuthStore(agentDir);
+      mockSingleSuccessfulAttempt();
+      const clientTools = [
+        {
+          type: "function" as const,
+          function: {
+            name: "get_time",
+            description: "Get the current time",
+            parameters: { type: "object", properties: {} },
+          },
+        },
+      ];
+
+      await runEmbeddedPiAgent({
+        sessionId: "session:test",
+        sessionKey: "agent:test:client-tools-forwarding",
+        sessionFile: path.join(workspaceDir, "session.jsonl"),
+        workspaceDir,
+        agentDir,
+        config: makeConfig(),
+        prompt: "hello",
+        clientTools,
+        disabledToolNames: ["exec"],
+        provider: "openai",
+        model: "mock-1",
+        authProfileId: "openai:p1",
+        authProfileIdSource: "auto",
+        timeoutMs: 5_000,
+        runId: "run:client-tools-forwarding",
+      });
+
+      expect(runEmbeddedAttemptMock).toHaveBeenCalledTimes(1);
+      expect(runEmbeddedAttemptMock.mock.calls[0]?.[0]).toMatchObject({
+        clientTools,
+        disabledToolNames: ["exec"],
+      });
+    });
+  });
+
   it("rotates for auto-pinned profiles across retryable stream failures", async () => {
     const { usageStats } = await runAutoPinnedRotationCase({
       errorMessage: "rate limit",

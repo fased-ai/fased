@@ -48,7 +48,7 @@
       "label": "Wallet And Mining Core",
       "delivery": "core",
       "target": "keep",
-      "dependencies": ["@solana/web3.js"]
+      "dependencies": ["@solana/web3.js", "@turnkey/sdk-server"]
     },
     {
       "id": "fased-network",

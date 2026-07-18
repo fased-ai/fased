@@ -4,9 +4,12 @@ import type { FasedAgentConfig } from "../config/config.js";
 import { resolveStateDir } from "../config/paths.js";
 import { isTruthyEnvValue } from "../infra/env.js";
 import {
+  FEDERATION_BOND_SIGNATURE_DOMAIN,
+  federationBondSigningMessageBase64,
   resolveFederationBondWallet,
   signFederationBondChallenge,
 } from "../wallet/solana-bond-signing.js";
+import type { WalletProviderJupiterReviewV2 } from "../wallet/wallet-provider-adapter.js";
 import { buildAttestation } from "./attestation.js";
 import {
   resolveAgentPublicOrigin,
@@ -102,6 +105,8 @@ export type PersistedFederationBondProof = {
   expiresAt: string;
   payload: string;
   payloadBase64: string;
+  signatureDomain: typeof FEDERATION_BOND_SIGNATURE_DOMAIN;
+  signedMessageBase64: string;
   signatureBase64: string;
   signedAt: string;
   verifiedAt?: string;
@@ -284,6 +289,8 @@ export async function loadPersistedFederationBondProof(
       typeof parsed.expiresAt !== "string" ||
       typeof parsed.payload !== "string" ||
       typeof parsed.payloadBase64 !== "string" ||
+      parsed.signatureDomain !== FEDERATION_BOND_SIGNATURE_DOMAIN ||
+      typeof parsed.signedMessageBase64 !== "string" ||
       typeof parsed.signatureBase64 !== "string" ||
       typeof parsed.signedAt !== "string"
     ) {
@@ -300,6 +307,8 @@ export async function loadPersistedFederationBondProof(
       expiresAt: parsed.expiresAt,
       payload: parsed.payload,
       payloadBase64: parsed.payloadBase64,
+      signatureDomain: FEDERATION_BOND_SIGNATURE_DOMAIN,
+      signedMessageBase64: parsed.signedMessageBase64,
       signatureBase64: parsed.signatureBase64,
       signedAt: parsed.signedAt,
       verifiedAt: typeof parsed.verifiedAt === "string" ? parsed.verifiedAt : undefined,
@@ -604,16 +613,38 @@ export async function createFederationBondProof(opts?: {
   const challengeBody = (challenge.json ?? {}) as FederationBondChallengeResult;
   const challengeId = challengeBody.challengeId?.trim();
   const expiresAt = challengeBody.expiresAt?.trim();
-  const payload =
-    challengeBody.payload?.trim() ||
-    (challengeBody.payloadBase64
-      ? Buffer.from(challengeBody.payloadBase64, "base64").toString("utf-8")
-      : "");
-  if (!challengeId || !expiresAt || !payload) {
+  let payloadBase64 = challengeBody.payloadBase64?.trim() ?? "";
+  let payload = challengeBody.payload ?? "";
+  if (payloadBase64) {
+    const decoded = Buffer.from(payloadBase64, "base64");
+    if (decoded.toString("base64") !== payloadBase64) {
+      throw new Error("federation bond challenge failed: payloadBase64 is not canonical");
+    }
+    const decodedPayload = decoded.toString("utf-8");
+    if (payload && payload !== decodedPayload) {
+      throw new Error("federation bond challenge failed: payload encodings disagree");
+    }
+    payload = decodedPayload;
+  } else if (payload) {
+    payloadBase64 = Buffer.from(payload, "utf-8").toString("base64");
+  }
+  if (!challengeId || !expiresAt || !payload || !payloadBase64) {
     throw new Error("federation bond challenge failed: incomplete challenge payload");
   }
+  if (!opts?.tier) {
+    throw new Error("federation bond challenge requires the locally reviewed bond tier");
+  }
   const signedWallet = await signFederationBondChallenge({
-    payload,
+    challengeId,
+    federationOrigin: baseUrl,
+    payloadBase64,
+    handle: federationToken.handle,
+    nodeId: federationToken.nodeId,
+    tokenId: federationToken.tokenId,
+    bondId,
+    tier: opts.tier,
+    ...(opts.amountRaw?.trim() ? { amountRaw: opts.amountRaw.trim() } : {}),
+    expiresAt,
     env,
     cfg: opts?.cfg,
     walletId: resolvedWallet.walletId,
@@ -628,16 +659,102 @@ export async function createFederationBondProof(opts?: {
     federationBaseUrl: baseUrl,
     expiresAt,
     payload,
-    payloadBase64:
-      challengeBody.payloadBase64?.trim() || Buffer.from(payload, "utf-8").toString("base64"),
+    payloadBase64,
+    signatureDomain: FEDERATION_BOND_SIGNATURE_DOMAIN,
+    signedMessageBase64: federationBondSigningMessageBase64({
+      challengeId,
+      federationOrigin: baseUrl,
+      payloadBase64,
+    }),
     signatureBase64: signedWallet.signatureBase64,
     signedAt: new Date().toISOString(),
+    ...(opts?.amountRaw?.trim() ? { bondAmountRaw: opts.amountRaw.trim() } : {}),
+    ...(opts?.tier ? { bondTier: opts.tier } : {}),
   };
   await persistFederationBondProof(env, proof);
   opts?.log?.info?.(
     `federation bond proof prepared (${proof.handle} -> ${proof.walletAddress}, bond=${proof.bondId})`,
   );
   return proof;
+}
+
+export async function persistFederationBondProofFromSignerReview(params: {
+  review: WalletProviderJupiterReviewV2;
+  signatureBase64: string;
+  walletId: string;
+  env?: NodeJS.ProcessEnv;
+}): Promise<PersistedFederationBondProof> {
+  const env = params.env ?? process.env;
+  const review = params.review;
+  if (
+    review.state !== "signed" ||
+    review.intentType !== "federation.bondChallenge" ||
+    review.semanticIntent.type !== "federation.bondChallenge" ||
+    review.artifactKind !== "domain-separated-message" ||
+    review.asset !== "federation:bond-challenge" ||
+    review.amount !== "1" ||
+    review.policyOperation !== "federation.bondChallenge" ||
+    review.requiredRole !== "vault" ||
+    review.requiredPrograms.length !== 1 ||
+    review.requiredPrograms[0] !== "domain:fased:federation-bond-challenge-v1"
+  ) {
+    throw new Error("signed signer review is not an exact federation bond challenge");
+  }
+  const federation = review.semanticIntent.federation;
+  const signedMessageBase64 = federationBondSigningMessageBase64(federation);
+  if (
+    !review.walletPublicKey ||
+    review.destination !== review.walletPublicKey ||
+    review.messageBase64 !== signedMessageBase64 ||
+    review.signature !== params.signatureBase64
+  ) {
+    throw new Error("signed federation review artifact does not match its wallet or payload");
+  }
+  const signature = Buffer.from(params.signatureBase64, "base64");
+  if (signature.length !== 64 || signature.toString("base64") !== params.signatureBase64) {
+    throw new Error("signed federation review returned a non-canonical Ed25519 signature");
+  }
+  const payloadBytes = Buffer.from(federation.payloadBase64, "base64");
+  if (payloadBytes.toString("base64") !== federation.payloadBase64) {
+    throw new Error("signed federation review payload is not canonical base64");
+  }
+  const payload = payloadBytes.toString("utf8");
+  if (!Buffer.from(payload, "utf8").equals(payloadBytes)) {
+    throw new Error("signed federation review payload is not valid UTF-8");
+  }
+  const challengeExpiresAt = Date.parse(federation.expiresAt);
+  if (!Number.isFinite(challengeExpiresAt) || challengeExpiresAt <= Date.now()) {
+    throw new Error("signed federation review challenge has expired");
+  }
+  const token = await loadPersistedFederationToken(env, { includeExpired: true });
+  if (
+    !token ||
+    token.tokenId !== federation.tokenId ||
+    token.nodeId !== federation.nodeId ||
+    token.handle !== federation.handle
+  ) {
+    throw new Error("signed federation review does not match the persisted federation identity");
+  }
+  const configuredOrigin = resolveFederationBaseUrl(env);
+  if (!configuredOrigin || new URL(configuredOrigin).origin !== federation.federationOrigin) {
+    throw new Error("signed federation review does not match the configured federation origin");
+  }
+  return await persistFederationBondProof(env, {
+    challengeId: federation.challengeId,
+    bondId: federation.bondId,
+    walletId: params.walletId,
+    walletAddress: review.walletPublicKey,
+    handle: federation.handle,
+    nodeId: federation.nodeId,
+    federationBaseUrl: federation.federationOrigin,
+    expiresAt: federation.expiresAt,
+    payload,
+    payloadBase64: federation.payloadBase64,
+    signatureDomain: FEDERATION_BOND_SIGNATURE_DOMAIN,
+    signedMessageBase64,
+    signatureBase64: params.signatureBase64,
+    signedAt: review.updatedAt,
+  });
 }
 
 export async function submitFederationBondProof(opts?: {
@@ -661,6 +778,8 @@ export async function submitFederationBondProof(opts?: {
     body: {
       challengeId: proof.challengeId,
       payloadBase64: proof.payloadBase64,
+      signatureDomain: proof.signatureDomain,
+      signedMessageBase64: proof.signedMessageBase64,
       signatureBase64: proof.signatureBase64,
     },
   });

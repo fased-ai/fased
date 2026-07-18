@@ -1,9 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { WalletChain, WalletProviderId } from "../config/types.wallet.js";
+import { serializeWalletState, writeWalletStateFileAtomically } from "./wallet-atomic-state.js";
 import { ensureWalletStateDir } from "./wallet-runtime-config.js";
 
-export type WalletSettlementLinkStatus = "pending" | "executed" | "failed" | "rejected";
+export type WalletSettlementLinkStatus = "pending" | "unknown" | "executed" | "failed" | "rejected";
 
 export type WalletSettlementLink = {
   requestId: string;
@@ -35,6 +36,29 @@ function linksFilePath(env: NodeJS.ProcessEnv = process.env): string {
   return path.join(ensureWalletStateDir(env).rootDir, "wallet-settlement-links.json");
 }
 
+function isWalletSettlementLink(value: unknown): value is WalletSettlementLink {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const entry = value as Partial<WalletSettlementLink>;
+  return (
+    typeof entry.requestId === "string" &&
+    Boolean(entry.requestId.trim()) &&
+    typeof entry.taskId === "string" &&
+    Boolean(entry.taskId.trim()) &&
+    (entry.mode === "manual" || entry.mode === "autonomous") &&
+    (entry.status === "pending" ||
+      entry.status === "unknown" ||
+      entry.status === "executed" ||
+      entry.status === "failed" ||
+      entry.status === "rejected") &&
+    typeof entry.createdAt === "string" &&
+    Boolean(entry.createdAt) &&
+    typeof entry.updatedAt === "string" &&
+    Boolean(entry.updatedAt)
+  );
+}
+
 function loadFile(env: NodeJS.ProcessEnv = process.env): WalletSettlementLinksFile {
   const filePath = linksFilePath(env);
   if (!fs.existsSync(filePath)) {
@@ -44,29 +68,27 @@ function loadFile(env: NodeJS.ProcessEnv = process.env): WalletSettlementLinksFi
     const parsed = JSON.parse(
       fs.readFileSync(filePath, "utf8"),
     ) as Partial<WalletSettlementLinksFile>;
-    if (parsed?.version === 1 && Array.isArray(parsed.links)) {
+    if (
+      parsed?.version === 1 &&
+      Array.isArray(parsed.links) &&
+      parsed.links.every(isWalletSettlementLink)
+    ) {
       return {
         version: 1,
         links: parsed.links,
       };
     }
-  } catch {
-    // ignore and reset
+  } catch (error) {
+    throw new Error("wallet settlement state is unreadable; refusing to reset request links", {
+      cause: error,
+    });
   }
-  return { version: 1, links: [] };
+  throw new Error("wallet settlement state has an unsupported shape; refusing to reset links");
 }
 
 function saveFile(file: WalletSettlementLinksFile, env: NodeJS.ProcessEnv = process.env) {
   const filePath = linksFilePath(env);
-  fs.writeFileSync(filePath, `${JSON.stringify(file, null, 2)}\n`, {
-    encoding: "utf8",
-    mode: 0o600,
-  });
-  try {
-    fs.chmodSync(filePath, 0o600);
-  } catch {
-    // best effort
-  }
+  writeWalletStateFileAtomically(filePath, serializeWalletState(file));
 }
 
 export function upsertWalletSettlementLink(params: {

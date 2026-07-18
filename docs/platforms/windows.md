@@ -41,6 +41,8 @@ Open PowerShell with **Run as administrator** and run:
 
 ```powershell
 wsl --install -d Ubuntu
+wsl --update
+wsl --version
 ```
 
 Restart Windows if requested. If WSL is already installed but Ubuntu is not,
@@ -51,7 +53,11 @@ wsl --list --online
 wsl --install -d Ubuntu
 ```
 
-### 2. Confirm that Ubuntu uses WSL2
+`wsl --version` must report WSL `0.67.6` or newer for systemd support. If the
+command is unavailable or the version is older, finish `wsl --update` (or the
+Microsoft Store WSL update), restart when requested, and check again.
+
+### 2. Confirm that the installed distribution uses WSL2
 
 In PowerShell:
 
@@ -59,10 +65,12 @@ In PowerShell:
 wsl --list --verbose
 ```
 
-The `Ubuntu` row must show `VERSION 2`. If it shows version 1, convert it:
+Copy the exact distribution name from the `NAME` column. Its row must show
+`VERSION 2`. If it shows version 1, convert that exact name; do not guess
+`Ubuntu` when the installed name is something such as `Ubuntu-24.04`:
 
 ```powershell
-wsl --set-version Ubuntu 2
+wsl --set-version "<EXACT DISTRO NAME>" 2
 ```
 
 ### 3. Open the Ubuntu application
@@ -81,11 +89,32 @@ The result must be `Linux`. Run `pwd` if needed; a normal home directory looks
 like `/home/YOUR_LINUX_USER`, not `C:\...` or `/mnt/c/Windows/System32`.
 
 Current Ubuntu distributions installed by `wsl --install` use systemd by
-default. Verify it before installing the Gateway service:
+default when WSL is current. Verify it before installing the Gateway service:
 
 ```bash
-systemctl --user status
+ps -p 1 -o comm=
 ```
+
+The result must be `systemd`. If it is not, create or edit `/etc/wsl.conf`
+inside Ubuntu:
+
+```ini
+[boot]
+systemd=true
+```
+
+Then close Ubuntu, run this once in PowerShell, and reopen Ubuntu:
+
+```powershell
+wsl --shutdown
+```
+
+Verify `ps -p 1 -o comm=` again before continuing. The installer stops before
+creating wallet state on WSL1 or WSL2 without systemd.
+
+Microsoft's systemd procedure is
+[Use systemd to manage Linux services with
+WSL](https://learn.microsoft.com/windows/wsl/systemd).
 
 ### 4. Install Fased inside the Ubuntu shell
 
@@ -105,15 +134,35 @@ fased doctor
 fased dashboard
 ```
 
-When the first wallet is created or imported, Fased downloads the Linux signer
-asset matching the installed Fased version, verifies its SHA-256 checksum, and
-installs it automatically. Normal users do not install Go.
+When the first wallet is created, Fased downloads the Linux signer asset
+matching the installed Fased version, verifies its SHA-256 checksum and GitHub
+release attestation, and installs it automatically. Normal users do not install
+Go. Existing-key import is an explicit signer-admin operation so the Gateway
+process never receives the private key.
+
+This is still a Local same-Linux-user install: the Gateway and signer run under
+your WSL Ubuntu account. Go owns key lifecycle, but this is not a hard boundary
+against code that fully compromises that same account. Keep Local wallet
+balances limited; use VPS Hosting's separate signer account, a hardware-backed
+Wallet Standard Vault, or a reviewed provider policy when stronger compromise
+isolation is required.
 
 ### 5. Open the dashboard from Windows
 
 The Gateway remains inside WSL2, but the dashboard URL can be opened in the
 normal Windows browser. Keep the Ubuntu shell and WSL2 Gateway available while
 using Fased.
+
+The native signer enrollment launcher also runs inside Ubuntu:
+
+```bash
+"$HOME/.fased/bin/fased-signer-enroll" "Primary security key"
+```
+
+Open the exact short-lived `http://localhost:18791/...` URL it prints in the
+normal Windows browser. WSL localhost forwarding handles this. Never add a
+Windows `portproxy`, firewall rule, LAN bind, or public tunnel for signer
+enrollment port `18791`.
 
 Related documentation:
 
@@ -166,7 +215,7 @@ so you may need to refresh the forwarding rule.
 Example (PowerShell **as Administrator**):
 
 ```powershell
-$Distro = "Ubuntu-24.04"
+$Distro = "<EXACT NAME FROM: wsl --list --verbose>"
 $ListenPort = 2222
 $TargetPort = 22
 
@@ -200,6 +249,8 @@ Notes:
 - Use `listenaddress=0.0.0.0` only for intended LAN access; `127.0.0.1` keeps it
   local only. If the Gateway is reachable from other devices, require
   token/password auth.
+- Never use this procedure for signer enrollment port `18791`; enrollment must
+  remain loopback-only.
 - If you want this automatic, register a Scheduled Task to run the refresh
   step at login.
 

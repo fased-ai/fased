@@ -73,12 +73,11 @@ References:
 
 ## First-time setup
 
-For a hosted VPS, use the normal hosted installer. It starts Tailscale on the
-VPS when needed and prints the browser login URL:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
-```
+For a hosted VPS, use the
+[pre-execution verified tagged installer](/install/vps#3-install-fased-and-connect-through-tailscale)
+from the provider root console. It starts Tailscale when needed and prints the
+browser login URL. Do not pipe an unverified installer directly into a root
+shell.
 
 For a manual laptop or desktop setup:
 

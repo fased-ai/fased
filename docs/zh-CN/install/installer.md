@@ -14,90 +14,102 @@ x-i18n:
 
 # 安装器内部机制
 
-当前这套文档只记录仓库里真实存在的安装器：
+本页记录仓库中真实存在的安装器：
 
 - [`install.sh`](https://github.com/fased-ai/fased/blob/main/install.sh)
 
-从零开始的真实路径是：
+自己的电脑从零开始时，使用 Local 安装：
 
 ```bash
-git clone https://github.com/fased-ai/fased.git fased
-cd fased
-./install.sh
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
 ```
 
+VPS 从零开始时，使用 [执行前验证的 Hosting
+bootstrap](/install/vps#3-install-fased-and-connect-through-tailscale)。首次 VPS
+推荐 Ubuntu LTS。不要把未经验证的 Hosting 安装器直接 pipe 到特权 shell。
+
 <Warning>
-Windows 11，或 Windows 10 版本 2004/build 19041 及以上版本，请先在管理员 PowerShell 中运行 `wsl --install -d Ubuntu`。PowerShell 只用于管理 WSL2。随后打开 Ubuntu，并在 Ubuntu 提示符内运行安装程序和所有 `fased` 命令；不要使用 PowerShell、命令提示符、Git Bash 或原生 Windows Node.js。
+Windows 只支持 WSL2 Ubuntu。需要 Windows 11，或 Windows 10 版本
+2004/build 19041 及以上版本。在管理员 PowerShell 中运行
+`wsl --install -d Ubuntu`，按提示重启，然后运行 `wsl --update`、
+`wsl --version` 和 `wsl --list --verbose`。WSL 必须为 0.67.6 或更新版本，
+Ubuntu 必须显示版本 2。打开 Ubuntu 应用，在 Ubuntu shell 中运行 bootstrap
+和所有 `fased` 命令。不要在 PowerShell、命令提示符、Git Bash、WSL1 或
+原生 Windows Node.js 中运行 Fased。完整步骤见 [Windows
+(WSL2)](/platforms/windows)。
 </Warning>
 
 ## `install.sh` 会做什么
 
 <Steps>
   <Step title="检测主机环境">
-    支持 macOS、Linux 和 WSL2。
+    支持 macOS、Linux 和 WSL2。Local 和 Hosting 使用不同的主机安全配置。
   </Step>
-  <Step title="确保兼容的 Node.js 运行时">
-    Fased 推荐 Node 24，并要求 Node 22.14 或更新版本且带有内置
-    `node:sqlite` 模块。在支持的 Linux 主机上，启用自动安装时安装器可以安装缺失依赖。
+  <Step title="确保兼容的工具和 Node.js">
+    Fased 推荐 Node 24，并要求 Node 22.14 或更新版本且带内置
+    `node:sqlite`。启用自动安装后，安装器可在常见 Linux、WSL2 Ubuntu 和
+    已安装 Homebrew 的 macOS 上安装缺失依赖。普通用户不需要安装 Go。
   </Step>
-  <Step title="确保 Git 可用">
-    需要从仓库检出或更新。
+  <Step title="准备 runtime">
+    支持的 Linux Local 和 VPS Hosting 通常使用经过 checksum 和 release
+    attestation 验证的预构建 runtime。macOS 和明确的 `--source-install`
+    使用源码 checkout。checkout 仍是 Local 设置/修复锚点；特权 Hosting
+    不会执行 app-owned checkout。
   </Step>
-  <Step title="准备仓库运行时">
-    使用当前公开支持的仓库 checkout 安装流程。
+  <Step title="安装稳定 launcher 和 updater">
+    CLI launcher 和 updater 位于版本化应用目录之外。候选 runtime 经过
+    smoke test 后原子切换；设置、凭证、会话、钱包、Mining 和 signer 数据
+    不属于应用 release swap。
   </Step>
-  <Step title="按需运行新手引导">
-    如果没有跳过，新手引导会交给 `fased onboard --install-daemon`。
+  <Step title="按需运行 onboarding">
+    未跳过时，安装器运行 `fased onboard --install-daemon`。Local 安装配置
+    user service；Hosting 安装 root 管理的 Gateway service，但 Gateway
+    仍以非 root `app` 用户运行。
   </Step>
-  <Step title="通过 Sync 写入 SAT 运行时 id">
-    预发布安装会保持 `config/sat-runtime.env` 为空。Satcoin mainnet proof
-    发布后，在 Mining 页面使用 Sync 验证签名 manifest，并写入官方 SAT ids。
+  <Step title="安装 native signer">
+    Local 在首次选择 local signer wallet 时自动下载精确版本的 signer asset；
+    Hosting 在选择钱包前安装版本匹配、root 管理且使用独立
+    `fased-signer` 账户的 signer service。两条路径都验证 SHA-256、release
+    manifest 和 GitHub/Sigstore attestation，不会自动回退到 Go 源码构建。
+  </Step>
+  <Step title="通过 Sync 写入 SAT runtime ids">
+    预发布安装保持 `config/sat-runtime.env` 为空。Satcoin mainnet proof
+    发布后，在 Mining 页面使用 **Sync** 验证签名 manifest 并写入官方 ids。
   </Step>
 </Steps>
-
-## 最常用命令
-
-```bash
-./install.sh
-```
-
-```bash
-./install.sh --help
-```
-
-```bash
-./install.sh --no-onboard
-```
-
-```bash
-./install.sh --verbose
-```
 
 ## 常见模式
 
 <Tabs>
-  <Tab title="默认">
-    ```bash
-    ./install.sh
-    ```
-
-    默认会运行新手引导。
-
-  </Tab>
-  <Tab title="跳过新手引导">
-    ```bash
-    ./install.sh --no-onboard
-    ```
-  </Tab>
-  <Tab title="托管配置">
-    ```bash
-    ./install.sh --hosting
-    ```
-  </Tab>
-  <Tab title="本地配置">
+  <Tab title="Local">
     ```bash
     ./install.sh --local
     ```
+  </Tab>
+  <Tab title="跳过 onboarding">
+    ```bash
+    ./install.sh --local --no-onboard
+    ```
+  </Tab>
+  <Tab title="修复 Local / WSL2">
+    ```bash
+    ./install.sh --repair-local
+    ```
+
+    修复 managed Local/WSL runtime 和 user Gateway service，不重新运行
+    onboarding，也不重置用户状态。
+
+  </Tab>
+  <Tab title="VPS Hosting">
+    从 VPS 提供商的 root console 使用 [执行前验证的 Hosting
+    bootstrap](/install/vps#3-install-fased-and-connect-through-tailscale)。先验证
+    独立 installer asset 和 attestation，再对已下载文件使用 `--hosting` 和
+    精确 `--release`。
+  </Tab>
+  <Tab title="修复 Hosting">
+    使用同一个执行前验证流程，只在最后执行已经验证的独立 installer 时改用
+    `--repair-hosting`。不要使用 raw `curl | bash`，也不要对
+    `/home/app/fased/install.sh` 使用 sudo。
   </Tab>
   <Tab title="详细日志">
     ```bash
@@ -106,60 +118,113 @@ Windows 11，或 Windows 10 版本 2004/build 19041 及以上版本，请先在�
   </Tab>
 </Tabs>
 
-## 主要参数
+<Warning>
+不存在 `--hosting-docker`。完整 Docker Gateway 只支持 Local。VPS Hosting
+必须使用主机管理、非 Docker 的独立 Gateway/signer/updater 架构。
+</Warning>
 
-| 参数                   | 说明                          |
-| ---------------------- | ----------------------------- |
-| `--auto-install`       | 在支持的 Linux 上自动安装依赖 |
-| `--no-auto-install`    | 不自动安装缺失依赖            |
-| `--install-dir <path>` | 指定 checkout/安装目录        |
-| `--hosting`            | 使用托管/VPS 新手引导默认值   |
-| `--local`              | 使用本地机器新手引导默认值    |
-| `--swap-gb <n>`        | 为小内存 Linux 主机配置 swap  |
-| `--no-onboard`         | 构建/安装后跳过新手引导       |
-| `--verbose`            | 显示安装命令输出              |
-| `--help`               | 显示帮助                      |
+## 主要公开参数
+
+| 参数                         | 说明                                                       |
+| ---------------------------- | ---------------------------------------------------------- |
+| `--auto-install`             | 在支持的 macOS/Linux 主机上安装缺失依赖                    |
+| `--no-auto-install`          | 不自动安装缺失依赖                                         |
+| `--install-dir <path>`       | 指定 bootstrap/checkout 目录                               |
+| `--local`                    | 使用本地电脑 onboarding 默认值                             |
+| `--repair-local`             | 修复 Local/WSL runtime 和 user service，不运行 onboarding  |
+| `--hosting`                  | 使用 VPS Hosting 默认值；root bootstrap 还要求 `--release` |
+| `--repair-hosting`           | 从已验证的 tagged provider-console bootstrap 修复 Hosting  |
+| `--release <vX.Y.Z\|latest>` | 为特权 Hosting 选择并验证精确 release                      |
+| `--source-install`           | Local 从源码构建；特权 VPS Hosting 拒绝此选项              |
+| `--swap-gb <n>`              | 覆盖小内存 Linux 主机的安装时 swap 大小                    |
+| `--no-onboard`               | 安装后跳过 onboarding                                      |
+| `--verbose`                  | 显示安装命令输出                                           |
+| `--help`                     | 显示当前完整参数                                           |
 
 `--` 后面的额外参数会转发给 `fased onboard --install-daemon`。
 
+## Native signer 安全边界
+
+- Local signer 与 Gateway 使用同一个 OS 账户，但使用独立 Unix socket 和
+  fail-closed wallet policy。
+- Hosting signer 是 root 安装、`fased-signer` 账户运行的独立 systemd
+  service；Gateway 只能访问 `/run/fased-signerd/app.sock`。
+- Hosting 的 `app` 用户不能访问 control socket、signer state 或 sudo，也
+  不会运行 app-owned Node broker。
+- 新建 wallet 在 signer 内部生成 key，只返回 public address；Gateway 和
+  dashboard 不接受 private key import。
+- 导入已有账户必须使用独立 native signer admin/control-socket 流程。
+- 新 wallet 初始为 locked + deny-all。只有 RPC、owner-reviewed policy、精确
+  policy hash 和 signer WebAuthn enrollment 都完成后，才能执行 reviewed send。
+- Linux/macOS 支持 `amd64` 和 `arm64`；Windows 在 WSL2 中使用 Linux asset。
+
+Local 首次 wallet setup 会先以 read-only 模式 staging 精确 signer
+candidate。只有 identity、protocol 和 policy state 验证成功后才切换为
+read-write；提交前失败会恢复旧 signer 文件和进程状态。
+
 ## 环境变量
 
-| 变量                                | 说明                              |
-| ----------------------------------- | --------------------------------- |
-| `FASED_INSTALL_REPO=<url>`          | bootstrap 使用的仓库 URL          |
-| `FASED_INSTALL_DIR=<path>`          | checkout/安装目录                 |
-| `FASED_CONFIG_DIR=<path>`           | 配置、安装标记、缓存和日志目录    |
-| `FASED_CLI_BIN_DIR=<path>`          | `install.sh` 写入 `fased` 的目录  |
-| `FASED_INSTALL_VERBOSE=1`           | 显示安装命令输出                  |
-| `FASED_INSTALL_USER=<name>`         | root bootstrap 使用的非 root 用户 |
-| `FASED_SAT_RUNTIME_ENV_FILE=<path>` | 安装和新手引导读取的 SAT env 文件 |
+- `FASED_INSTALL_REPO=<url>`：Local bootstrap 使用的仓库 URL。
+- `FASED_INSTALL_DIR=<path>`：checkout/安装目录。
+- `FASED_STATE_DIR=<path>`：config、sessions、credentials、wallets 和 logs
+  的 state directory。
+- `FASED_CONFIG_PATH=<path>`：显式 config 文件；默认
+  `$FASED_STATE_DIR/fased.json`。
+- `FASED_CLI_BIN_DIR=<path>`：安装 `fased` launcher 的目录。
+- `FASED_INSTALL_VERBOSE=1`：显示安装命令输出。
+- `FASED_EXISTING_DATA_ACTION=<mode>`：Local 高级状态选择：`keep`、
+  `reset-config` 或 `separate-state`。正常安装默认保留状态。
+- `FASED_WALLET_LOCAL_SIGNER_BIN`、`FASED_LOCAL_SIGNER_VERSION`、
+  `FASED_LOCAL_SIGNER_BASE_URL`：高级 signer asset override。
+
+运行 `./install.sh --help` 查看当前完整参数和内部兼容选项。
 
 ## 自动化
 
-无头安装：
+Local 无头安装：
 
 ```bash
-git clone https://github.com/fased-ai/fased.git fased
-cd fased
-./install.sh --no-onboard
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+  | bash -s -- --local --no-onboard
 ```
 
-在 CI 或受控主机上指定安装目录：
+指定 Local 安装目录：
 
 ```bash
-git clone https://github.com/fased-ai/fased.git fased
-cd fased
-./install.sh --install-dir "$HOME/agent" --no-onboard
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+  | bash -s -- --local --install-dir "$HOME/agent" --no-onboard
 ```
 
-## 暂未作为公开安装路径
+这些 raw bootstrap 只用于 Local。自动化 Hosting 仍必须先下载并验证精确
+release 的独立 installer 和 attestation，再执行已经验证的文件。只有在带外
+检查确认 `app` 的 Tailscale SSH 路径可用后，自动化才可以确认 SSH/firewall
+lock-down。
 
-直接 `npm install -g`、`pnpm add -g` 或 Bun 全局包安装不是当前公开设置路径。
-等包发布和发布自动化准备好后，这些路径可以重新加入。现在支持的公开路径仍然是仓库安装器。
+## npm 和容器
+
+`npm install -g @fased/fased` 是受支持的高级 Local/dev 或自行管理主机路径，
+但不会替代 installer 完成 Hosting 的 service、Tailscale、signer 和主机加固。
+它不是推荐的 VPS Hosting 安装方式。Bun 全局安装不是公开路径。
+
+Docker 只用于 Local container Gateway/sandbox，详情见
+[Docker](/install/docker)。
+
+## 更新
+
+正常用户使用：
+
+```bash
+fased update status
+fased update
+```
+
+不要把 `git pull` 加重新运行通用 installer 当成稳定版本升级流程。stable
+解析最新稳定 release tag；`fased update --channel dev` 只适合主动跟踪
+`main` 的开发者。事务更新和旧 updater 修复见 [更新](/install/updating)。
 
 ## 相关页面
 
 - [安装](/install)
 - [更新](/install/updating)
 - [Docker](/install/docker)
-- [CLI 新手引导](/cli/onboard)
+- [CLI onboarding](/cli/onboard)

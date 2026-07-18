@@ -15,9 +15,9 @@ afterEach(() => {
 
 describe("collectWalletSignerDoctorReport", () => {
   it.each([
-    { label: "single-user signer", mode: 0o600, splitBackend: false },
-    { label: "isolated hosted broker", mode: 0o660, splitBackend: true },
-  ])("accepts the intended $label socket mode", async ({ mode, splitBackend }) => {
+    { label: "single-user signer", mode: 0o600, hosted: false },
+    { label: "separate-user hosted signer", mode: 0o660, hosted: true },
+  ])("accepts the intended $label socket mode", async ({ mode, hosted }) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-wallet-doctor-socket-mode-"));
     tempDirs.push(root);
     const stateDir = path.join(root, "state");
@@ -37,11 +37,7 @@ describe("collectWalletSignerDoctorReport", () => {
           HOME: "/home/app",
           FASED_STATE_DIR: stateDir,
           FASED_WALLET_LOCAL_SIGNER_SOCKET: socketPath,
-          ...(splitBackend
-            ? {
-                FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET: path.join(root, "signer", "backend.sock"),
-              }
-            : {}),
+          ...(hosted ? { FASED_HOST_PROFILE: "hosting" } : {}),
         } as NodeJS.ProcessEnv,
         {
           config: {
@@ -61,7 +57,7 @@ describe("collectWalletSignerDoctorReport", () => {
     }
   });
 
-  it("uses config-merged env when resolving per-chain keystore paths", async () => {
+  it("fails closed when config-merged env still references a Node keystore", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-wallet-doctor-"));
     tempDirs.push(root);
     const stateDir = path.join(root, "state");
@@ -69,34 +65,29 @@ describe("collectWalletSignerDoctorReport", () => {
     fs.mkdirSync(stateDir, { recursive: true });
     fs.writeFileSync(configuredKeystore, '{"kind":"unknown"}', "utf8");
 
-    const report = await collectWalletSignerDoctorReport(
-      {
-        HOME: "/home/root",
-        FASED_STATE_DIR: stateDir,
-      } as NodeJS.ProcessEnv,
-      {
-        config: {
-          env: {
-            vars: {
-              FASED_WALLET_SOLANA_KEYSTORE_PATH: configuredKeystore,
+    await expect(
+      collectWalletSignerDoctorReport(
+        {
+          HOME: "/home/root",
+          FASED_STATE_DIR: stateDir,
+        } as NodeJS.ProcessEnv,
+        {
+          config: {
+            env: {
+              vars: {
+                FASED_WALLET_SOLANA_KEYSTORE_PATH: configuredKeystore,
+              },
+            },
+            wallet: {
+              provider: { id: "embedded-keystore" },
             },
           },
-          wallet: {
-            provider: { id: "embedded-keystore" },
-          },
         },
-      },
-    );
-
-    expect(
-      report.checks.find((check) => check.check === "keystore.file.solana.default")?.detail,
-    ).toContain(configuredKeystore);
-    expect(
-      report.checks.find((check) => check.check === "keystore.file.solana.default")?.detail,
-    ).not.toContain("/home/root/.fased/wallet/keystore.v1.enc");
+      ),
+    ).rejects.toThrow(/embedded-keystore was retired/i);
   });
 
-  it("does not require phantom default local-signer wallets when named wallets are configured", async () => {
+  it("fails closed on stale Node keystore mappings after a named signer wallet is configured", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-wallet-doctor-local-signer-"));
     tempDirs.push(root);
     const stateDir = path.join(root, "state");
@@ -154,47 +145,201 @@ describe("collectWalletSignerDoctorReport", () => {
       "utf8",
     );
 
-    const report = await collectWalletSignerDoctorReport(
-      {
-        HOME: "/home/test",
-        FASED_STATE_DIR: stateDir,
-      } as NodeJS.ProcessEnv,
-      {
-        config: {
-          env: {
-            vars: {
-              FASED_WALLET_SOLANA_KEYSTORE_PATH__SOLANA_1: solanaKeystore,
-              FASED_WALLET_SOLANA_RPC_URL__SOLANA_1:
-                "https://rpc.example/solana?api-key=private-rpc-key",
+    await expect(
+      collectWalletSignerDoctorReport(
+        {
+          HOME: "/home/test",
+          FASED_STATE_DIR: stateDir,
+        } as NodeJS.ProcessEnv,
+        {
+          config: {
+            env: {
+              vars: {
+                FASED_WALLET_SOLANA_KEYSTORE_PATH__SOLANA_1: solanaKeystore,
+                FASED_WALLET_SOLANA_RPC_URL__SOLANA_1:
+                  "https://rpc.example/solana?api-key=private-rpc-key",
+              },
             },
-          },
-          wallet: {
-            provider: { id: "local-socket-signer" },
-            keystore: {
-              enabled: true,
-              path: path.join(walletDir, "keystore-solana-solana-4.v1.enc"),
+            wallet: {
+              provider: { id: "local-socket-signer" },
+              keystore: {
+                enabled: true,
+                path: path.join(walletDir, "keystore-solana-solana-4.v1.enc"),
+              },
             },
           },
         },
-      },
-    );
+      ),
+    ).rejects.toThrow(/embedded-keystore was retired/i);
+  });
 
-    expect(report.checks.some((check) => check.check === "keystore.file.solana.default")).toBe(
-      false,
+  it("uses signer health metadata for wallet-scoped network readiness", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-wallet-doctor-network-"));
+    tempDirs.push(root);
+    const stateDir = path.join(root, "state");
+    const walletDir = path.join(stateDir, "wallet");
+    const socketPath = path.join(walletDir, "local-signer.sock");
+    fs.mkdirSync(walletDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(walletDir, "provider-registry.v1.json"),
+      JSON.stringify({
+        version: 1,
+        providers: {
+          "embedded-keystore": { enabled: false, updatedAt: "2026-07-16T00:00:00.000Z" },
+          "local-socket-signer": { enabled: true, updatedAt: "2026-07-16T00:00:00.000Z" },
+          alchemy: { enabled: false, updatedAt: "2026-07-16T00:00:00.000Z" },
+          turnkey: { enabled: false, updatedAt: "2026-07-16T00:00:00.000Z" },
+          privy: { enabled: false, updatedAt: "2026-07-16T00:00:00.000Z" },
+        },
+        wallets: [
+          {
+            id: "mining",
+            name: "Mining",
+            providerId: "local-socket-signer",
+            addresses: { solana: "So11111111111111111111111111111111111111112" },
+            createdAt: "2026-07-16T00:00:00.000Z",
+            updatedAt: "2026-07-16T00:00:00.000Z",
+          },
+        ],
+        assignments: {},
+        defaultWalletId: "mining",
+        updatedAt: "2026-07-16T00:00:00.000Z",
+      }),
+      "utf8",
     );
-    expect(report.checks.some((check) => check.check === "keystore.file.solana.default")).toBe(
-      false,
-    );
-    expect(report.checks.find((check) => check.check === "rpc.configured.solana")?.detail).toBe(
-      "https://rpc.example/solana?api-key=***",
-    );
-    expect(JSON.stringify(report)).not.toContain("private-rpc-key");
-    expect(
-      report.checks.find((check) => check.check === "keystore.file.solana.solana_1")?.detail,
-    ).toContain("keystore-solana-solana-1.v1.enc");
-    expect(
-      report.checks.some((check) => check.check === "keystore.passphrase.solana.solana_1"),
-    ).toBe(false);
+    const server = createServer((socket) => {
+      socket.setEncoding("utf8");
+      socket.once("data", () => {
+        socket.end(
+          `${JSON.stringify({
+            ok: true,
+            result: {
+              details: "fased-signerd protocol-v2 ready",
+              readOnly: false,
+              keystoreType: "signer-owned-v2",
+              chains: ["solana"],
+              ready: true,
+              release: {
+                version: "dev",
+                commit: "unknown",
+                buildInputDigest: "unknown",
+                development: true,
+              },
+              schema: { version: 3, supported: 3, ready: true },
+              network: {
+                ready: true,
+                wallets: [
+                  {
+                    walletId: "mining",
+                    configured: true,
+                    version: 7,
+                    hash: `hmac-sha256:${"a".repeat(64)}`,
+                    ready: true,
+                  },
+                ],
+              },
+              capabilities: {
+                protocol: { current: 2, min: 2, max: 2 },
+                nativeFeeReservationLamports: 5_000_000,
+                intentTypes: ["solana.nativeTransfer"],
+                operationStates: ["reserved", "broadcast", "confirmed", "failed", "unknown"],
+                features: ["signerOwnedRPC"],
+              },
+              policies: [],
+              webAuthn: {
+                configured: true,
+                credentialCount: 1,
+                credentialVersion: 9,
+                ready: true,
+              },
+              jupiter: { triggerConfigured: false, liveEnabled: false },
+              state: {
+                databaseBytes: 4096,
+                wallets: 1,
+                operations: 80_000,
+                operationReplayArchive: 1,
+                reviews: 0,
+                triggerWorkflows: 0,
+                dailyUsageBuckets: 1,
+                capacities: {
+                  operations: {
+                    used: 80_000,
+                    maximum: 100_000,
+                    warnAt: 80_000,
+                    warning: true,
+                  },
+                },
+                capacityWarnings: ["operations signer state is at 80000/100000 records"],
+              },
+            },
+          })}\n`,
+        );
+      });
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(socketPath, resolve);
+    });
+    fs.chmodSync(socketPath, 0o600);
+
+    try {
+      const report = await collectWalletSignerDoctorReport(
+        {
+          HOME: root,
+          FASED_STATE_DIR: stateDir,
+          FASED_WALLET_LOCAL_SIGNER_LIFECYCLE: "external",
+          FASED_WALLET_LOCAL_SIGNER_SOCKET: socketPath,
+          FASED_WALLET_SOLANA_RPC_URL__MINING:
+            "https://gateway-rpc-must-not-control-readiness.invalid",
+        } as NodeJS.ProcessEnv,
+        {
+          config: {
+            wallet: { provider: { id: "local-socket-signer" } },
+          },
+        },
+      );
+
+      expect(report.checks.find((check) => check.check === "socket.health")).toMatchObject({
+        ok: true,
+        detail: "fased-signerd protocol-v2 ready",
+      });
+      expect(report.checks.find((check) => check.check === "rpc.configured.solana")).toMatchObject({
+        ok: true,
+        detail: "signer-owned network ready",
+      });
+      expect(
+        report.checks.find((check) => check.check === "rpc.configured.solana.mining"),
+      ).toMatchObject({
+        ok: true,
+        detail: "signer-owned network ready (version=7)",
+      });
+      expect(JSON.stringify(report)).not.toContain("gateway-rpc-must-not-control-readiness");
+      expect(JSON.stringify(report)).not.toContain("hmac-sha256");
+      expect(report.signer).toEqual({
+        jupiter: { triggerConfigured: false, liveEnabled: false },
+        webAuthn: {
+          configured: true,
+          credentialCount: 1,
+          credentialVersion: 9,
+          ready: true,
+        },
+      });
+      expect(
+        report.checks.find((check) => check.check === "jupiter.trigger.configured"),
+      ).toMatchObject({
+        ok: true,
+        detail: "not configured (optional; swaps and transfers remain available)",
+      });
+      expect(report.checks.find((check) => check.check === "jupiter.execution.mode")).toMatchObject(
+        { ok: true, detail: "preview-only; signer rejects Jupiter and Trigger execution" },
+      );
+      expect(
+        report.checks.find((check) => check.check === "state.capacity.operations"),
+      ).toMatchObject({ ok: false, detail: "80000/100000 records; warning=80000" });
+      expect(JSON.stringify(report)).not.toMatch(/api.?key|jwt|secret|jupiter-trigger-api\.key/iu);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 
   it("uses canonical local signer sidecar paths instead of socket-suffixed files", async () => {

@@ -173,7 +173,8 @@ your shell has not reloaded its startup files yet.
       </Tab>
       <Tab title="Windows / WSL2">
         Add the same line to the Ubuntu shell startup file inside WSL2. Native
-        Use WSL2 for the normal public install path.
+        Windows Node.js is not a supported Fased runtime; use WSL2 for the
+        normal public install path.
       </Tab>
     </Tabs>
 

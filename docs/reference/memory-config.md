@@ -24,6 +24,12 @@ Fased memory has four layers:
 The global Memory page is diagnostic. Per-Agent archive controls live in
 Agent > Memory.
 
+Memory and session-search results are untrusted reference data. They do not
+override the current user request, system policy, tool approvals, wallet
+policy, or skill trust boundaries. Review imported memory and `extraPaths` as
+carefully as any other external content; instructions found inside recalled
+text have no authority by themselves.
+
 Fased ships a small deterministic **Memory Wiki** export. It is not a competing
 memory backend and does not write new memories. It reads the selected Agent's
 `MEMORY.md` and `memory/*.md`, then writes a compiled read-only Markdown view
@@ -80,7 +86,11 @@ Key fields:
 - `provider`: embedding provider: `openai`, `gemini`, `voyage`, `mistral`, or
   `local`.
 - `remote.baseUrl`, `remote.apiKey`, `remote.headers`: custom remote embedding
-  endpoint settings.
+  endpoint settings. Remote providers receive the text being embedded.
+- `remote.allowSessionContent`: explicit privacy gate for sending sanitized
+  session transcript text to a remote embedding provider. It defaults to
+  `false`; enabling experimental session indexing alone does not permit that
+  egress. Prefer `provider: "local"` for private transcript recall.
 - `remote.batch.*`: batch embedding indexing for supported remote providers.
 - `local.modelPath`: GGUF path or supported local model reference for local
   embeddings.
@@ -112,6 +122,11 @@ Builtin index content:
 - `memory/**/*.md`
 - reviewed `extraPaths`
 - optional session sources when configured
+
+Builtin session indexing is bounded to the newest 500 transcript files per
+Agent. Individual transcripts over 10 MiB are skipped, and indexed text from
+one transcript is capped at 2 MiB. Secret-pattern redaction is defense in
+depth, not a guarantee that arbitrary private prose is anonymous.
 
 ## QMD Backend
 
@@ -172,6 +187,9 @@ QMD fields:
 
 When QMD fails, Fased falls back to the builtin search path where possible and
 reports backend state in Memory diagnostics.
+
+When QMD session export is enabled without an explicit retention value, Fased
+uses a 30-day retention period.
 
 ## Session Archive Hook
 

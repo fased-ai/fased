@@ -124,7 +124,8 @@ export async function runNonInteractiveOnboardingLocal(params: {
     runtime.error(
       [
         "Hosted non-interactive onboarding requires a root-started installer session.",
-        `Re-run ${formatCliCommand("./install.sh")} from root and select a hosting profile there, or use the explicit hosted installer flags from root.`,
+        "Start from the provider root console with the exact tagged, attested Hosting command and --release vX.Y.Z.",
+        "Never run the app-owned checkout with sudo or as root.",
       ].join("\n"),
     );
     runtime.exit(1);

@@ -2658,6 +2658,10 @@ public struct ModelChoice: Codable, Sendable {
     public let baseurl: String?
     public let api: String?
     public let catalogsource: AnyCodable?
+    public let available: Bool?
+    public let runnable: Bool?
+    public let recommended: Bool?
+    public let assignedroles: [AnyCodable]?
     public let metadata: [String: AnyCodable]?
 
     public init(
@@ -2671,6 +2675,10 @@ public struct ModelChoice: Codable, Sendable {
         baseurl: String?,
         api: String?,
         catalogsource: AnyCodable?,
+        available: Bool?,
+        runnable: Bool?,
+        recommended: Bool?,
+        assignedroles: [AnyCodable]?,
         metadata: [String: AnyCodable]?)
     {
         self.id = id
@@ -2683,6 +2691,10 @@ public struct ModelChoice: Codable, Sendable {
         self.baseurl = baseurl
         self.api = api
         self.catalogsource = catalogsource
+        self.available = available
+        self.runnable = runnable
+        self.recommended = recommended
+        self.assignedroles = assignedroles
         self.metadata = metadata
     }
 
@@ -2697,6 +2709,10 @@ public struct ModelChoice: Codable, Sendable {
         case baseurl = "baseUrl"
         case api
         case catalogsource = "catalogSource"
+        case available
+        case runnable
+        case recommended
+        case assignedroles = "assignedRoles"
         case metadata
     }
 }
@@ -3241,15 +3257,31 @@ public struct ModelsListParams: Codable, Sendable {
 
 public struct ModelsListResult: Codable, Sendable {
     public let models: [ModelChoice]
+    public let generatedat: String?
+    public let agentid: String?
+    public let providers: [[String: AnyCodable]]?
+    public let assignments: [[String: AnyCodable]]?
 
     public init(
-        models: [ModelChoice])
+        models: [ModelChoice],
+        generatedat: String?,
+        agentid: String?,
+        providers: [[String: AnyCodable]]?,
+        assignments: [[String: AnyCodable]]?)
     {
         self.models = models
+        self.generatedat = generatedat
+        self.agentid = agentid
+        self.providers = providers
+        self.assignments = assignments
     }
 
     private enum CodingKeys: String, CodingKey {
         case models
+        case generatedat = "generatedAt"
+        case agentid = "agentId"
+        case providers
+        case assignments
     }
 }
 

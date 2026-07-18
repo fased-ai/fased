@@ -57,7 +57,8 @@ specifically for AI/ML systems.
 | Gateway              | Yes      | Authentication, routing, channel integration                  |
 | Channel Integrations | Yes      | WhatsApp, Telegram, Discord, Signal, Slack, etc.              |
 | Plugin Catalog       | Yes      | Public registry contract plus Fased review/install client     |
-| Wallet Runtime       | Yes      | Wallet roles, passkey approvals, skill grants                 |
+| Wallet Runtime       | Yes      | Request orchestration, Gateway passkey, skill grants          |
+| Native Signer        | Yes      | Go-owned keys, policy, WebAuthn, RPC, caps, execution         |
 | MCP Servers          | Yes      | External tool providers                                       |
 | User Devices         | Partial  | Mobile apps, desktop clients and Advanced > Nodes diagnostics |
 
@@ -142,28 +143,42 @@ audits of those external systems.
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                 TRUST BOUNDARY 6: Wallet Authority               │
+│              TRUST BOUNDARY 6A: Gateway Wallet Control           │
 │  ┌──────────────────────────────────────────────────────────┐   │
-│  │                      WALLETS                              │   │
+│  │                  WALLET ORCHESTRATION                     │   │
 │  │  • Role-separated wallets (agent/mining/vault)            │   │
-│  │  • Passkey approvals and caps                             │   │
+│  │  • Gateway Wallet Control Passkey and review rendering     │   │
 │  │  • Wallet > Skill Grants for reviewed skills only         │   │
 │  │  • Mining wallet reserved for SAT mining runtime          │   │
+│  └──────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+                              │ typed protocol-v2 intents only
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                 TRUST BOUNDARY 6B: Native Signer                │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │                    FASED-SIGNERD                          │   │
+│  │  • Go-owned key lifecycle and encrypted state             │   │
+│  │  • Fail-closed policy, explicit caps, durable accounting   │   │
+│  │  • Signer WebAuthn for exact manual reviews                │   │
+│  │  • Execution RPC, broadcast, and exact reconciliation      │   │
 │  └──────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 ### 2.2 Data Flows
 
-| Flow | Source  | Destination | Data               | Protection                                      |
-| ---- | ------- | ----------- | ------------------ | ----------------------------------------------- |
-| F1   | Channel | Gateway     | User messages      | TLS, AllowFrom                                  |
-| F2   | Gateway | Agent       | Routed messages    | Session isolation                               |
-| F3   | Agent   | Tools       | Tool invocations   | Policy enforcement                              |
-| F4   | Agent   | External    | web_fetch requests | SSRF blocking                                   |
-| F5   | Catalog | Agent       | Skill files        | Review, moderation, path checks                 |
-| F6   | Agent   | Channel     | Responses          | Output filtering                                |
-| F7   | Agent   | Wallet      | Wallet actions     | Role policy, caps, approval gates, skill grants |
+| Flow | Source  | Destination | Data                | Protection                                                    |
+| ---- | ------- | ----------- | ------------------- | ------------------------------------------------------------- |
+| F1   | Channel | Gateway     | User messages       | TLS, AllowFrom                                                |
+| F2   | Gateway | Agent       | Routed messages     | Session isolation                                             |
+| F3   | Agent   | Tools       | Tool invocations    | Policy enforcement                                            |
+| F4   | Agent   | External    | web_fetch requests  | SSRF blocking                                                 |
+| F5   | Catalog | Agent       | Skill files         | Review, moderation, path checks                               |
+| F6   | Agent   | Channel     | Responses           | Output filtering                                              |
+| F7   | Agent   | Gateway     | Wallet intent       | Role routing, Gateway passkey, explicit skill grants          |
+| F8   | Gateway | Signer      | Typed wallet intent | App socket, semantic validation, fail-closed policy, WebAuthn |
+| F9   | Signer  | Solana RPC  | Exact transaction   | Signer-owned RPC, durable caps/idempotency, reconciliation    |
 
 ---
 
@@ -475,15 +490,17 @@ audits of those external systems.
   wallet policy, or start mining.
 - **Attack vector:** prompt injection, malicious skill instructions, overbroad
   tool/wallet grants.
-- **Affected components:** wallet runtime, SAT mining runtime, Agent tool
-  policy, Skill Grants.
-- **Current mitigations:** role-separated wallets, caps, passkey/approval gates,
-  explicit Wallet > Skill Grants, and mining wallet not available to generic
-  skills.
+- **Affected components:** Gateway wallet orchestration, native signer, SAT
+  mining runtime, Agent tool policy, Skill Grants.
+- **Current mitigations:** role-separated wallets, explicit skill grants,
+  fail-closed typed signer policy, positive durable caps, signer WebAuthn for
+  exact manual reviews, semantic transaction validation, and no generic raw
+  signing API.
 - **Residual risk:** High - user can still over-grant or approve a malicious
   action.
-- **Recommendations:** stronger policy simulation, clearer approval diffs,
-  hardware wallet support where possible.
+- **Recommendations:** keep policy/review diffs clear, validate the full
+  Local/Hosting/migration/reboot/rollback/concurrency/ambiguity matrix, and use
+  on-device hardware review for reserve value where possible.
 
 ---
 

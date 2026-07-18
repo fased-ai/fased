@@ -622,6 +622,7 @@ export const MemorySearchSchema = z
         baseUrl: z.string().optional(),
         apiKey: z.string().optional().register(sensitive),
         headers: z.record(z.string(), z.string()).optional(),
+        allowSessionContent: z.boolean().optional(),
         batch: z
           .object({
             enabled: z.boolean().optional(),

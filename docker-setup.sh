@@ -154,6 +154,48 @@ validate_named_volume() {
   fi
 }
 
+verify_published_image_source_binding() {
+  local image="$1"
+  require_cmd git
+  if [[ ! -d "$ROOT_DIR/.git" && ! -f "$ROOT_DIR/.git" ]]; then
+    fail "Published-image setup must run from the exact Git checkout for that release."
+  fi
+  local protected_paths=(
+    Dockerfile
+    docker-compose.yml
+    docker-setup.sh
+    scripts/docker-signer-enroll.mjs
+    scripts/docker-signer-health.mjs
+    scripts/docker-signer-policy.sh
+    scripts/docker-signer-update.sh
+  )
+  if ! git -C "$ROOT_DIR" diff --quiet -- "${protected_paths[@]}" ||
+    ! git -C "$ROOT_DIR" diff --cached --quiet -- "${protected_paths[@]}" ||
+    [[ -n "$(git -C "$ROOT_DIR" status --porcelain --untracked-files=all -- "${protected_paths[@]}")" ]]; then
+    fail "Docker setup/Compose source differs from its committed release; use a clean exact release checkout."
+  fi
+  local signer_identity=""
+  signer_identity="$(docker run --rm --entrypoint /usr/local/bin/fased-signerd "$image" --version)"
+  local image_version=""
+  local image_commit=""
+  image_version="$(printf '%s\n' "$signer_identity" | sed -nE 's/^fased-signerd ([0-9]+\.[0-9]+\.[0-9]+) commit=[a-f0-9]{40} buildInputDigest=sha256:[a-f0-9]{64} development=false$/\1/p')"
+  image_commit="$(printf '%s\n' "$signer_identity" | sed -nE 's/^fased-signerd [0-9]+\.[0-9]+\.[0-9]+ commit=([a-f0-9]{40}) buildInputDigest=sha256:[a-f0-9]{64} development=false$/\1/p')"
+  if [[ -z "$image_version" || -z "$image_commit" ]]; then
+    fail "Published image does not expose a production native signer release identity."
+  fi
+  local checkout_commit=""
+  checkout_commit="$(git -C "$ROOT_DIR" rev-parse HEAD)"
+  if [[ "$checkout_commit" != "$image_commit" ]]; then
+    fail "Docker setup/Compose commit does not match the selected image release commit."
+  fi
+  local checkout_version=""
+  checkout_version="$(git -C "$ROOT_DIR" show "${checkout_commit}:package.json" | sed -nE 's/^.*"version":[[:space:]]*"([0-9]+\.[0-9]+\.[0-9]+)".*$/\1/p' | head -n 1)"
+  if [[ "$checkout_version" != "$image_version" ]]; then
+    fail "Docker setup/Compose version does not match the selected image version."
+  fi
+  echo "Verified Docker image/source binding: v${image_version} commit ${image_commit}."
+}
+
 validate_mount_spec() {
   local mount="$1"
   if contains_disallowed_chars "$mount"; then
@@ -324,6 +366,14 @@ for compose_file in "${COMPOSE_FILES[@]}"; do
   COMPOSE_HINT+=" -f ${compose_file}"
 done
 
+# This is the fresh-install/onboarding path. Rebuilding or pulling over an
+# existing signer here would start a possibly schema-migrating binary without
+# the offline rollback snapshot required by scripts/docker-signer-update.sh.
+EXISTING_SIGNER_CONTAINER="$(docker compose "${COMPOSE_ARGS[@]}" ps -a -q fased-signerd)"
+if [[ -n "$EXISTING_SIGNER_CONTAINER" ]]; then
+  fail "An existing Docker signer was detected. Do not rerun docker-setup.sh for an update; use scripts/docker-signer-update.sh with an immutable target image and offline snapshot directory."
+fi
+
 ENV_FILE="$ROOT_DIR/.env"
 upsert_env() {
   local file="$1"
@@ -388,6 +438,17 @@ else
     echo "ERROR: Failed to pull image $IMAGE_NAME. Please check the image name and your access permissions." >&2
     exit 1
   fi
+  verify_published_image_source_binding "$IMAGE_NAME"
+fi
+
+echo ""
+echo "==> Starting native wallet signer"
+if ! docker compose "${COMPOSE_ARGS[@]}" stop fased-gateway; then
+  fail "Could not stop the existing Gateway before replacing fased-signerd."
+fi
+if ! docker compose "${COMPOSE_ARGS[@]}" up -d --force-recreate --wait --wait-timeout 60 fased-signerd; then
+  docker compose "${COMPOSE_ARGS[@]}" logs --no-color --tail 80 fased-signerd >&2 || true
+  fail "fased-signerd did not become healthy. Wallet onboarding was not started."
 fi
 
 echo ""
@@ -417,7 +478,7 @@ echo "Docs: https://docs.fased.ai/channels"
 
 echo ""
 echo "==> Starting gateway"
-docker compose "${COMPOSE_ARGS[@]}" up -d fased-gateway
+docker compose "${COMPOSE_ARGS[@]}" up -d --force-recreate --no-deps --wait --wait-timeout 60 fased-gateway
 
 echo ""
 echo "Gateway running with loopback-only host port mappings."
@@ -427,5 +488,7 @@ echo "Workspace: $FASED_WORKSPACE_DIR"
 echo "Token: $FASED_GATEWAY_TOKEN"
 echo ""
 echo "Commands:"
+echo "  ${COMPOSE_HINT} logs -f fased-signerd"
 echo "  ${COMPOSE_HINT} logs -f fased-gateway"
+echo "  ${COMPOSE_HINT} exec fased-signerd node /app/scripts/docker-signer-health.mjs /run/fased-signerd/app.sock"
 echo "  ${COMPOSE_HINT} exec fased-gateway node dist/index.js health"

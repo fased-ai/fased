@@ -39,6 +39,7 @@ function buildSelectionFromExplicit(params: {
   defaultProvider: string;
   defaultModel: string;
   aliasIndex: ModelAliasIndex;
+  allowAnyModel: boolean;
   allowedModelKeys: Set<string>;
 }): ModelDirectiveSelection | undefined {
   const resolved = resolveModelRefFromString({
@@ -50,7 +51,7 @@ function buildSelectionFromExplicit(params: {
     return undefined;
   }
   const key = modelKey(resolved.ref.provider, resolved.ref.model);
-  if (params.allowedModelKeys.size > 0 && !params.allowedModelKeys.has(key)) {
+  if (!params.allowAnyModel && !params.allowedModelKeys.has(key)) {
     return undefined;
   }
   const isDefault =
@@ -134,10 +135,8 @@ export async function applyResetModelOverride(params: {
       { allowKeychainPrompt: false },
     ),
   });
+  const allowAnyModel = allowed.allowAny;
   const allowedModelKeys = allowed.allowedKeys;
-  if (allowedModelKeys.size === 0) {
-    return {};
-  }
 
   const providers = new Set<string>();
   for (const key of allowedModelKeys) {
@@ -154,6 +153,7 @@ export async function applyResetModelOverride(params: {
       defaultProvider: params.defaultProvider,
       defaultModel: params.defaultModel,
       aliasIndex: params.aliasIndex,
+      allowAnyModel,
       allowedModelKeys,
     });
 
@@ -175,6 +175,7 @@ export async function applyResetModelOverride(params: {
       defaultProvider: params.defaultProvider,
       defaultModel: params.defaultModel,
       aliasIndex: params.aliasIndex,
+      allowAnyModel,
       allowedModelKeys,
     });
     if (selection) {

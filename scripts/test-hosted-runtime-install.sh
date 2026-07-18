@@ -36,6 +36,7 @@ for managed_script in \
   fased-managed-launcher.sh \
   fased-managed-service.sh \
   fased-managed-updater.mjs \
+  hosted-release-manifest.mjs \
   install-managed-runtime.mjs \
   managed-runtime-layout.mjs; do
   cp "$ROOT_DIR/scripts/$managed_script" "$PACKAGE_ROOT/scripts/$managed_script"

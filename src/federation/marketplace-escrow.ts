@@ -13,6 +13,15 @@ import {
   type WalletCreateSendResult,
   type WalletSendPath,
 } from "../wallet/wallet-send-approvals.js";
+import {
+  claimMarketplaceSettlementOrder,
+  getMarketplaceSettlementEntry,
+  reserveMarketplaceSettlementAction,
+  updateMarketplaceSettlementAction,
+  type MarketplaceSettlementAction,
+  type MarketplaceSettlementActionRecord,
+  type MarketplaceSettlementPhase,
+} from "./marketplace-settlement-ledger.js";
 import { listLocalMarketplaceOrders, upsertMarketplaceOrderConfig } from "./offers.js";
 
 export type MarketplaceEscrowDeps = {
@@ -43,10 +52,21 @@ export type MarketplaceEscrowActionResult =
       statusCode: number;
       code: string;
       message: string;
+      state?: "pending" | "unknown";
+      requestId?: string;
+      txHash?: string;
     };
 
-function fail(statusCode: number, code: string, message: string): MarketplaceEscrowActionResult {
-  return { ok: false, statusCode, code, message };
+function fail(
+  statusCode: number,
+  code: string,
+  message: string,
+  details: Omit<
+    Extract<MarketplaceEscrowActionResult, { ok: false }>,
+    "ok" | "statusCode" | "code" | "message"
+  > = {},
+): MarketplaceEscrowActionResult {
+  return { ok: false, statusCode, code, message, ...details };
 }
 
 function trimString(value: unknown): string {
@@ -220,6 +240,88 @@ function sendModeAndRefs(send: WalletCreateSendResult): {
   return { mode: "manual" };
 }
 
+function cachedEscrowActionRefs(
+  action: MarketplaceSettlementActionRecord,
+): ReturnType<typeof sendModeAndRefs> | null {
+  if ((action.state !== "executed" && action.state !== "complete") || !action.txHash) {
+    return null;
+  }
+  return {
+    mode: "autonomous",
+    requestId: action.requestId,
+    txHash: action.txHash,
+  };
+}
+
+function escrowInitialPhase(order: FederationMarketplaceOrderConfig): MarketplaceSettlementPhase {
+  const escrow = order.settlement?.escrow;
+  if (escrow?.status === "released" || escrow?.releaseTxRef) {
+    return "released";
+  }
+  if (escrow?.status === "refunded" || escrow?.refundTxRef) {
+    return "refunded";
+  }
+  if (escrow?.releaseRequestId) {
+    return "release_pending";
+  }
+  if (escrow?.refundRequestId) {
+    return "refund_pending";
+  }
+  if (
+    escrow?.status === "held" ||
+    escrow?.status === "funded" ||
+    escrow?.fundingTxRef ||
+    order.settlement?.status === "held"
+  ) {
+    return "held";
+  }
+  if (escrow?.fundingRequestId || order.settlement?.status === "submitted") {
+    return "fund_pending";
+  }
+  if (escrow?.status === "cancelled" || order.settlement?.status === "cancelled") {
+    return "cancelled";
+  }
+  return "open";
+}
+
+function isAmbiguousSendFailure(code: string): boolean {
+  return code === "wallet_provider_ambiguous" || code === "wallet_send_in_progress";
+}
+
+function failForExistingUnknown(params: {
+  orderId: string;
+  action: MarketplaceSettlementAction;
+  env: NodeJS.ProcessEnv;
+}): MarketplaceEscrowActionResult | null {
+  const action = getMarketplaceSettlementEntry({ orderId: params.orderId, env: params.env })
+    ?.actions[params.action];
+  if (action?.state !== "unknown") {
+    return null;
+  }
+  return fail(
+    409,
+    "escrow_settlement_unknown",
+    action.reason || `escrow ${params.action} result is unknown; reconcile it before retrying`,
+    { state: "unknown", requestId: action.requestId, txHash: action.txHash },
+  );
+}
+
+async function claimEscrowOrder(params: {
+  orderId: string;
+  env: NodeJS.ProcessEnv;
+}): Promise<(() => Promise<void>) | MarketplaceEscrowActionResult> {
+  try {
+    return await claimMarketplaceSettlementOrder(params.orderId, params.env);
+  } catch (error) {
+    return fail(
+      409,
+      "escrow_settlement_in_progress",
+      error instanceof Error ? error.message : String(error),
+      { state: "pending" },
+    );
+  }
+}
+
 export async function fundMarketplaceSolanaEscrow(params: {
   config: FasedAgentConfig;
   orderId: string;
@@ -253,90 +355,184 @@ export async function fundMarketplaceSolanaEscrow(params: {
   if (!walletConfig.enabled) {
     return fail(409, "wallet_disabled", "wallet runtime is disabled");
   }
-  const invoiceId = trimString(
-    order.settlement?.invoiceId ?? order.receipt?.invoiceId ?? order.invoiceId,
-  );
-  const send = await deps.createOrExecuteWalletSend({
-    payload: {
-      chain: "solana",
-      to: vault.address,
-      amount: validated.amountLamports,
-      walletId: payerWallet.id,
-      walletName: payerWallet.name,
-      providerId: payerWallet.providerId,
-      memo: invoiceId || `escrow-fund:${entry.configId}`,
-    },
-    requestedBy: params.actor?.trim() || "marketplace-escrow",
-    sendPath: params.sendPath ?? "automation",
-    settlementContext: {
-      taskId: `marketplace-escrow-fund:${entry.configId}`,
-      ...(invoiceId ? { invoiceId } : {}),
-      ...(trimString(order.buyerHandle) ? { senderHandle: trimString(order.buyerHandle) } : {}),
-    },
-    config: walletConfig,
-    runtimeConfig: params.config,
-    providerIdOverride: payerWallet.providerId,
-    env,
-  });
-  if (!send.ok) {
-    return fail(409, send.code, send.message);
+  const claim = await claimEscrowOrder({ orderId: entry.configId, env });
+  if (typeof claim !== "function") {
+    return claim;
   }
-  const now = params.now ?? new Date().toISOString();
-  const refs = sendModeAndRefs(send);
-  const status = refs.txHash ? "held" : "submitted";
-  const result = updateOrder({
-    config: params.config,
-    now,
-    order: {
-      ...order,
-      status: refs.txHash ? "funded" : order.status,
-      paymentIntent: {
-        ...order.paymentIntent,
-        status: refs.txHash ? "verified" : "submitted",
-        txRef: refs.txHash ?? order.paymentIntent?.txRef,
-        payerWalletId: payerWallet.id,
-        updatedAt: now,
-      },
-      settlement: {
-        ...order.settlement,
-        mode: "escrow",
-        status,
-        amount: order.settlement?.amount ?? order.paymentIntent?.amount,
-        currency: "SOL",
-        chain: "solana",
-        assetKind: "native",
-        payerWalletId: payerWallet.id,
-        txRef: refs.txHash ?? order.settlement?.txRef,
-        escrow: {
-          ...order.settlement?.escrow,
-          status: refs.txHash ? "held" : "required",
-          holdPolicy: order.settlement?.escrow?.holdPolicy ?? "release_on_delivery",
-          releaseRequired: true,
+  try {
+    const escrow = order.settlement?.escrow;
+    if (
+      escrow?.fundingTxRef ||
+      escrow?.status === "funded" ||
+      escrow?.status === "held" ||
+      order.settlement?.status === "held"
+    ) {
+      return fail(
+        409,
+        "escrow_already_funded",
+        "escrow is already funded and must not be paid again",
+        {
+          txHash: escrow?.fundingTxRef ?? order.settlement?.txRef,
+        },
+      );
+    }
+    const currentLedger = getMarketplaceSettlementEntry({ orderId: entry.configId, env });
+    if (escrow?.fundingRequestId && !currentLedger?.actions.fund) {
+      return fail(
+        409,
+        "escrow_settlement_unknown",
+        "an older escrow funding request exists without a durable settlement record; reconcile or reject it before retrying",
+        { state: "unknown", requestId: escrow.fundingRequestId },
+      );
+    }
+    const executionIntentId = `marketplace-order:${entry.configId}:escrow-fund`;
+    let workflow: ReturnType<typeof reserveMarketplaceSettlementAction>;
+    try {
+      workflow = reserveMarketplaceSettlementAction({
+        orderId: entry.configId,
+        action: "fund",
+        executionIntentId,
+        initialPhase: escrowInitialPhase(order),
+        intent: {
+          chain: "solana",
+          assetKind: "native",
+          amount: validated.amountLamports,
+          payerWalletId: payerWallet.id,
           vaultWalletId: vault.wallet.id,
-          vaultWalletName: vault.wallet.name,
           vaultAddress: vault.address,
-          ...(refs.requestId ? { fundingRequestId: refs.requestId } : {}),
-          ...(refs.txHash ? { fundingTxRef: refs.txHash, fundedAt: now } : {}),
+        },
+        env,
+      });
+    } catch (error) {
+      return fail(
+        409,
+        "escrow_settlement_conflict",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+    const unknown = failForExistingUnknown({ orderId: entry.configId, action: "fund", env });
+    if (unknown) {
+      return unknown;
+    }
+    const invoiceId = trimString(
+      order.settlement?.invoiceId ?? order.receipt?.invoiceId ?? order.invoiceId,
+    );
+    let refs = cachedEscrowActionRefs(workflow.action);
+    if (!refs) {
+      updateMarketplaceSettlementAction({
+        orderId: entry.configId,
+        action: "fund",
+        expectedStates: ["reserved", "pending", "failed"],
+        state: "pending",
+        env,
+      });
+      const send = await deps.createOrExecuteWalletSend({
+        payload: {
+          chain: "solana",
+          to: vault.address,
+          amount: validated.amountLamports,
+          walletId: payerWallet.id,
+          walletName: payerWallet.name,
+          providerId: payerWallet.providerId,
+        },
+        requestedBy: params.actor?.trim() || "marketplace-escrow",
+        executionIntentId,
+        sendPath: params.sendPath ?? "automation",
+        settlementContext: {
+          taskId: `marketplace-escrow-fund:${entry.configId}`,
+          ...(invoiceId ? { invoiceId } : {}),
+          ...(trimString(order.buyerHandle) ? { senderHandle: trimString(order.buyerHandle) } : {}),
+        },
+        config: walletConfig,
+        runtimeConfig: params.config,
+        providerIdOverride: payerWallet.providerId,
+        env,
+      });
+      if (!send.ok) {
+        const ambiguous = isAmbiguousSendFailure(send.code);
+        updateMarketplaceSettlementAction({
+          orderId: entry.configId,
+          action: "fund",
+          expectedStates: ["pending"],
+          state: ambiguous ? "unknown" : "failed",
+          requestId: send.requestId,
+          reason: send.message,
+          env,
+        });
+        return fail(409, send.code, send.message, {
+          state: ambiguous ? "unknown" : undefined,
+          requestId: send.requestId,
+        });
+      }
+      refs = sendModeAndRefs(send);
+      updateMarketplaceSettlementAction({
+        orderId: entry.configId,
+        action: "fund",
+        expectedStates: ["pending"],
+        state: refs.txHash ? "complete" : "pending",
+        requestId: refs.requestId,
+        txHash: refs.txHash,
+        env,
+      });
+    }
+    const now = params.now ?? new Date().toISOString();
+    const status = refs.txHash ? "held" : "submitted";
+    const result = updateOrder({
+      config: params.config,
+      now,
+      order: {
+        ...order,
+        status: refs.txHash ? "funded" : order.status,
+        paymentIntent: {
+          ...order.paymentIntent,
+          status: refs.txHash ? "verified" : "submitted",
+          txRef: refs.txHash ?? order.paymentIntent?.txRef,
+          payerWalletId: payerWallet.id,
           updatedAt: now,
         },
-        notes: refs.txHash
-          ? "Escrow funded with native SOL and held for release."
-          : "Escrow funding approval request was created.",
-        updatedAt: now,
-        ...(refs.txHash ? { verifiedAt: now } : {}),
+        settlement: {
+          ...order.settlement,
+          mode: "escrow",
+          status,
+          amount: order.settlement?.amount ?? order.paymentIntent?.amount,
+          currency: "SOL",
+          chain: "solana",
+          assetKind: "native",
+          payerWalletId: payerWallet.id,
+          txRef: refs.txHash ?? order.settlement?.txRef,
+          escrow: {
+            ...escrow,
+            status: refs.txHash ? "held" : "required",
+            holdPolicy: escrow?.holdPolicy ?? "release_on_delivery",
+            releaseRequired: true,
+            vaultWalletId: vault.wallet.id,
+            vaultWalletName: vault.wallet.name,
+            vaultAddress: vault.address,
+            ...(refs.requestId ? { fundingRequestId: refs.requestId } : {}),
+            ...(refs.txHash ? { fundingTxRef: refs.txHash, fundedAt: now } : {}),
+            updatedAt: now,
+          },
+          notes: refs.txHash
+            ? "Escrow funded with native SOL and held for release."
+            : "Escrow funding approval request was created.",
+          updatedAt: now,
+          ...(refs.txHash ? { verifiedAt: now } : {}),
+        },
       },
-    },
-  });
-  return {
-    ok: true,
-    config: result.config,
-    order: result.order,
-    mode: refs.mode,
-    requestId: refs.requestId,
-    txHash: refs.txHash,
-    status,
-    message: refs.txHash ? "Solana escrow funded and held." : "Solana escrow funding queued.",
-  };
+    });
+    return {
+      ok: true,
+      config: result.config,
+      order: result.order,
+      mode: refs.mode,
+      requestId: refs.requestId,
+      txHash: refs.txHash,
+      status,
+      message: refs.txHash ? "Solana escrow funded and held." : "Solana escrow funding queued.",
+    };
+  } finally {
+    await claim();
+  }
 }
 
 export async function releaseMarketplaceSolanaEscrow(params: {
@@ -379,74 +575,153 @@ export async function releaseMarketplaceSolanaEscrow(params: {
   if (!walletConfig.enabled) {
     return fail(409, "wallet_disabled", "wallet runtime is disabled");
   }
-  const invoiceId = trimString(
-    order.settlement?.invoiceId ?? order.receipt?.invoiceId ?? order.invoiceId,
-  );
-  const send = await deps.createOrExecuteWalletSend({
-    payload: {
-      chain: "solana",
-      to: validated.payeeAddress,
-      amount: validated.amountLamports,
-      walletId: vault.wallet.id,
-      walletName: vault.wallet.name,
-      providerId: vault.wallet.providerId,
-      memo: invoiceId || `escrow-release:${entry.configId}`,
-    },
-    requestedBy: params.actor?.trim() || "marketplace-escrow",
-    sendPath: params.sendPath ?? "reviewed",
-    settlementContext: {
-      taskId: `marketplace-escrow-release:${entry.configId}`,
-      ...(invoiceId ? { invoiceId } : {}),
-      ...(trimString(order.buyerHandle) ? { senderHandle: trimString(order.buyerHandle) } : {}),
-    },
-    config: walletConfig,
-    runtimeConfig: params.config,
-    providerIdOverride: vault.wallet.providerId,
-    env,
-  });
-  if (!send.ok) {
-    return fail(409, send.code, send.message);
+  const claim = await claimEscrowOrder({ orderId: entry.configId, env });
+  if (typeof claim !== "function") {
+    return claim;
   }
-  const now = params.now ?? new Date().toISOString();
-  const refs = sendModeAndRefs(send);
-  const released = Boolean(refs.txHash);
-  const result = updateOrder({
-    config: params.config,
-    now,
-    order: {
-      ...order,
-      status: released ? "closed" : order.status,
-      settlement: {
-        ...order.settlement,
-        mode: "escrow",
-        status: released ? "released" : "held",
-        escrow: {
-          ...order.settlement?.escrow,
-          status: released ? "released" : "held",
-          holdPolicy,
-          releaseRequired: !released,
-          ...(refs.requestId ? { releaseRequestId: refs.requestId } : {}),
-          ...(refs.txHash ? { releaseTxRef: refs.txHash, releasedAt: now } : {}),
-          updatedAt: now,
+  try {
+    const escrow = order.settlement?.escrow;
+    const currentLedger = getMarketplaceSettlementEntry({ orderId: entry.configId, env });
+    if (escrow?.releaseRequestId && !currentLedger?.actions.release) {
+      return fail(
+        409,
+        "escrow_settlement_unknown",
+        "an older escrow release request exists without a durable settlement record; reconcile it before retrying",
+        { state: "unknown", requestId: escrow.releaseRequestId },
+      );
+    }
+    const executionIntentId = `marketplace-order:${entry.configId}:escrow-release`;
+    let workflow: ReturnType<typeof reserveMarketplaceSettlementAction>;
+    try {
+      workflow = reserveMarketplaceSettlementAction({
+        orderId: entry.configId,
+        action: "release",
+        executionIntentId,
+        initialPhase: escrowInitialPhase(order),
+        intent: {
+          chain: "solana",
+          assetKind: "native",
+          amount: validated.amountLamports,
+          vaultWalletId: vault.wallet.id,
+          vaultAddress: vault.address,
+          payeeAddress: validated.payeeAddress,
         },
-        notes: released
-          ? "Escrow released to seller payee address."
-          : "Escrow release approval request was created.",
-        updatedAt: now,
-        ...(released ? { settledAt: now } : {}),
+        env,
+      });
+    } catch (error) {
+      return fail(
+        409,
+        "escrow_settlement_conflict",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+    const unknown = failForExistingUnknown({ orderId: entry.configId, action: "release", env });
+    if (unknown) {
+      return unknown;
+    }
+    const invoiceId = trimString(
+      order.settlement?.invoiceId ?? order.receipt?.invoiceId ?? order.invoiceId,
+    );
+    let refs = cachedEscrowActionRefs(workflow.action);
+    if (!refs) {
+      updateMarketplaceSettlementAction({
+        orderId: entry.configId,
+        action: "release",
+        expectedStates: ["reserved", "pending", "failed"],
+        state: "pending",
+        env,
+      });
+      const send = await deps.createOrExecuteWalletSend({
+        payload: {
+          chain: "solana",
+          to: validated.payeeAddress,
+          amount: validated.amountLamports,
+          walletId: vault.wallet.id,
+          walletName: vault.wallet.name,
+          providerId: vault.wallet.providerId,
+        },
+        requestedBy: params.actor?.trim() || "marketplace-escrow",
+        executionIntentId,
+        sendPath: params.sendPath ?? "reviewed",
+        settlementContext: {
+          taskId: `marketplace-escrow-release:${entry.configId}`,
+          ...(invoiceId ? { invoiceId } : {}),
+          ...(trimString(order.buyerHandle) ? { senderHandle: trimString(order.buyerHandle) } : {}),
+        },
+        config: walletConfig,
+        runtimeConfig: params.config,
+        providerIdOverride: vault.wallet.providerId,
+        env,
+      });
+      if (!send.ok) {
+        const ambiguous = isAmbiguousSendFailure(send.code);
+        updateMarketplaceSettlementAction({
+          orderId: entry.configId,
+          action: "release",
+          expectedStates: ["pending"],
+          state: ambiguous ? "unknown" : "failed",
+          requestId: send.requestId,
+          reason: send.message,
+          env,
+        });
+        return fail(409, send.code, send.message, {
+          state: ambiguous ? "unknown" : undefined,
+          requestId: send.requestId,
+        });
+      }
+      refs = sendModeAndRefs(send);
+      updateMarketplaceSettlementAction({
+        orderId: entry.configId,
+        action: "release",
+        expectedStates: ["pending"],
+        state: refs.txHash ? "complete" : "pending",
+        requestId: refs.requestId,
+        txHash: refs.txHash,
+        env,
+      });
+    }
+    const now = params.now ?? new Date().toISOString();
+    const released = Boolean(refs.txHash);
+    const result = updateOrder({
+      config: params.config,
+      now,
+      order: {
+        ...order,
+        status: released ? "closed" : order.status,
+        settlement: {
+          ...order.settlement,
+          mode: "escrow",
+          status: released ? "released" : "held",
+          escrow: {
+            ...escrow,
+            status: released ? "released" : "held",
+            holdPolicy,
+            releaseRequired: !released,
+            ...(refs.requestId ? { releaseRequestId: refs.requestId } : {}),
+            ...(refs.txHash ? { releaseTxRef: refs.txHash, releasedAt: now } : {}),
+            updatedAt: now,
+          },
+          notes: released
+            ? "Escrow released to seller payee address."
+            : "Escrow release approval request was created.",
+          updatedAt: now,
+          ...(released ? { settledAt: now } : {}),
+        },
       },
-    },
-  });
-  return {
-    ok: true,
-    config: result.config,
-    order: result.order,
-    mode: refs.mode,
-    requestId: refs.requestId,
-    txHash: refs.txHash,
-    status: released ? "released" : "held",
-    message: released ? "Solana escrow released." : "Solana escrow release queued.",
-  };
+    });
+    return {
+      ok: true,
+      config: result.config,
+      order: result.order,
+      mode: refs.mode,
+      requestId: refs.requestId,
+      txHash: refs.txHash,
+      status: released ? "released" : "held",
+      message: released ? "Solana escrow released." : "Solana escrow release queued.",
+    };
+  } finally {
+    await claim();
+  }
 }
 
 export async function refundMarketplaceSolanaEscrow(params: {
@@ -493,84 +768,164 @@ export async function refundMarketplaceSolanaEscrow(params: {
   if (!walletConfig.enabled) {
     return fail(409, "wallet_disabled", "wallet runtime is disabled");
   }
-  const invoiceId = trimString(
-    order.settlement?.invoiceId ?? order.receipt?.invoiceId ?? order.invoiceId,
-  );
-  const send = await deps.createOrExecuteWalletSend({
-    payload: {
-      chain: "solana",
-      to: payerAddress,
-      amount: validated.amountLamports,
-      walletId: vault.wallet.id,
-      walletName: vault.wallet.name,
-      providerId: vault.wallet.providerId,
-      memo: invoiceId || `escrow-refund:${entry.configId}`,
-    },
-    requestedBy: params.actor?.trim() || "marketplace-escrow",
-    sendPath: params.sendPath ?? "reviewed",
-    settlementContext: {
-      taskId: `marketplace-escrow-refund:${entry.configId}`,
-      ...(invoiceId ? { invoiceId } : {}),
-      ...(trimString(order.buyerHandle) ? { senderHandle: trimString(order.buyerHandle) } : {}),
-    },
-    config: walletConfig,
-    runtimeConfig: params.config,
-    providerIdOverride: vault.wallet.providerId,
-    env,
-  });
-  if (!send.ok) {
-    return fail(409, send.code, send.message);
+  const claim = await claimEscrowOrder({ orderId: entry.configId, env });
+  if (typeof claim !== "function") {
+    return claim;
   }
-  const now = params.now ?? new Date().toISOString();
-  const refs = sendModeAndRefs(send);
-  const refunded = Boolean(refs.txHash);
-  const result = updateOrder({
-    config: params.config,
-    now,
-    order: {
-      ...order,
-      status: refunded ? "cancelled" : order.status,
-      paymentIntent: {
-        ...order.paymentIntent,
-        status: refunded ? "cancelled" : order.paymentIntent?.status,
-        payerWalletId: payerWallet.id,
-        updatedAt: now,
-      },
-      settlement: {
-        ...order.settlement,
-        mode: "escrow",
-        status: refunded ? "cancelled" : "held",
-        payerWalletId: payerWallet.id,
-        escrow: {
-          ...order.settlement?.escrow,
-          status: refunded ? "refunded" : "held",
-          holdPolicy: order.settlement?.escrow?.holdPolicy ?? "release_on_delivery",
-          releaseRequired: !refunded,
+  try {
+    const escrow = order.settlement?.escrow;
+    const currentLedger = getMarketplaceSettlementEntry({ orderId: entry.configId, env });
+    if (escrow?.refundRequestId && !currentLedger?.actions.refund) {
+      return fail(
+        409,
+        "escrow_settlement_unknown",
+        "an older escrow refund request exists without a durable settlement record; reconcile it before retrying",
+        { state: "unknown", requestId: escrow.refundRequestId },
+      );
+    }
+    const executionIntentId = `marketplace-order:${entry.configId}:escrow-refund`;
+    let workflow: ReturnType<typeof reserveMarketplaceSettlementAction>;
+    try {
+      workflow = reserveMarketplaceSettlementAction({
+        orderId: entry.configId,
+        action: "refund",
+        executionIntentId,
+        initialPhase: escrowInitialPhase(order),
+        intent: {
+          chain: "solana",
+          assetKind: "native",
+          amount: validated.amountLamports,
           vaultWalletId: vault.wallet.id,
-          vaultWalletName: vault.wallet.name,
           vaultAddress: vault.address,
-          ...(refs.requestId ? { refundRequestId: refs.requestId } : {}),
-          ...(refs.txHash ? { refundTxRef: refs.txHash, refundedAt: now } : {}),
+          payerWalletId: payerWallet.id,
+          payerAddress,
+        },
+        env,
+      });
+    } catch (error) {
+      return fail(
+        409,
+        "escrow_settlement_conflict",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+    const unknown = failForExistingUnknown({ orderId: entry.configId, action: "refund", env });
+    if (unknown) {
+      return unknown;
+    }
+    const invoiceId = trimString(
+      order.settlement?.invoiceId ?? order.receipt?.invoiceId ?? order.invoiceId,
+    );
+    let refs = cachedEscrowActionRefs(workflow.action);
+    if (!refs) {
+      updateMarketplaceSettlementAction({
+        orderId: entry.configId,
+        action: "refund",
+        expectedStates: ["reserved", "pending", "failed"],
+        state: "pending",
+        env,
+      });
+      const send = await deps.createOrExecuteWalletSend({
+        payload: {
+          chain: "solana",
+          to: payerAddress,
+          amount: validated.amountLamports,
+          walletId: vault.wallet.id,
+          walletName: vault.wallet.name,
+          providerId: vault.wallet.providerId,
+        },
+        requestedBy: params.actor?.trim() || "marketplace-escrow",
+        executionIntentId,
+        sendPath: params.sendPath ?? "reviewed",
+        settlementContext: {
+          taskId: `marketplace-escrow-refund:${entry.configId}`,
+          ...(invoiceId ? { invoiceId } : {}),
+          ...(trimString(order.buyerHandle) ? { senderHandle: trimString(order.buyerHandle) } : {}),
+        },
+        config: walletConfig,
+        runtimeConfig: params.config,
+        providerIdOverride: vault.wallet.providerId,
+        env,
+      });
+      if (!send.ok) {
+        const ambiguous = isAmbiguousSendFailure(send.code);
+        updateMarketplaceSettlementAction({
+          orderId: entry.configId,
+          action: "refund",
+          expectedStates: ["pending"],
+          state: ambiguous ? "unknown" : "failed",
+          requestId: send.requestId,
+          reason: send.message,
+          env,
+        });
+        return fail(409, send.code, send.message, {
+          state: ambiguous ? "unknown" : undefined,
+          requestId: send.requestId,
+        });
+      }
+      refs = sendModeAndRefs(send);
+      updateMarketplaceSettlementAction({
+        orderId: entry.configId,
+        action: "refund",
+        expectedStates: ["pending"],
+        state: refs.txHash ? "complete" : "pending",
+        requestId: refs.requestId,
+        txHash: refs.txHash,
+        env,
+      });
+    }
+    const now = params.now ?? new Date().toISOString();
+    const refunded = Boolean(refs.txHash);
+    const result = updateOrder({
+      config: params.config,
+      now,
+      order: {
+        ...order,
+        status: refunded ? "cancelled" : order.status,
+        paymentIntent: {
+          ...order.paymentIntent,
+          status: refunded ? "cancelled" : order.paymentIntent?.status,
+          payerWalletId: payerWallet.id,
           updatedAt: now,
         },
-        notes: refunded
-          ? "Escrow refunded to the Agent payer wallet."
-          : "Escrow refund approval request was created.",
-        updatedAt: now,
-        ...(refunded ? { settledAt: now } : {}),
+        settlement: {
+          ...order.settlement,
+          mode: "escrow",
+          status: refunded ? "cancelled" : "held",
+          payerWalletId: payerWallet.id,
+          escrow: {
+            ...escrow,
+            status: refunded ? "refunded" : "held",
+            holdPolicy: escrow?.holdPolicy ?? "release_on_delivery",
+            releaseRequired: !refunded,
+            vaultWalletId: vault.wallet.id,
+            vaultWalletName: vault.wallet.name,
+            vaultAddress: vault.address,
+            ...(refs.requestId ? { refundRequestId: refs.requestId } : {}),
+            ...(refs.txHash ? { refundTxRef: refs.txHash, refundedAt: now } : {}),
+            updatedAt: now,
+          },
+          notes: refunded
+            ? "Escrow refunded to the Agent payer wallet."
+            : "Escrow refund approval request was created.",
+          updatedAt: now,
+          ...(refunded ? { settledAt: now } : {}),
+        },
       },
-    },
-  });
-  return {
-    ok: true,
-    config: result.config,
-    order: result.order,
-    mode: refs.mode,
-    requestId: refs.requestId,
-    txHash: refs.txHash,
-    status: refunded ? "refunded" : "held",
-    message: refunded ? "Solana escrow refunded." : "Solana escrow refund queued.",
-  };
+    });
+    return {
+      ok: true,
+      config: result.config,
+      order: result.order,
+      mode: refs.mode,
+      requestId: refs.requestId,
+      txHash: refs.txHash,
+      status: refunded ? "refunded" : "held",
+      message: refunded ? "Solana escrow refunded." : "Solana escrow refund queued.",
+    };
+  } finally {
+    await claim();
+  }
 }
 
 export async function cancelMarketplaceSolanaEscrow(params: {
@@ -578,7 +933,9 @@ export async function cancelMarketplaceSolanaEscrow(params: {
   orderId: string;
   actor?: string;
   now?: string;
+  env?: NodeJS.ProcessEnv;
 }): Promise<MarketplaceEscrowActionResult> {
+  const env = params.env ?? process.env;
   const entry = findOrder(params.config, params.orderId);
   if (!entry) {
     return fail(404, "order_not_found", "marketplace order not found");
@@ -587,61 +944,91 @@ export async function cancelMarketplaceSolanaEscrow(params: {
   if (order.settlement?.mode !== "escrow") {
     return fail(409, "escrow_not_enabled", "order settlement mode must be escrow");
   }
-  const escrow = order.settlement.escrow;
-  if (
-    escrow?.status === "held" ||
-    escrow?.status === "funded" ||
-    escrow?.fundingTxRef ||
-    escrow?.refundRequestId ||
-    escrow?.releaseRequestId
-  ) {
-    return fail(409, "escrow_refund_required", "funded escrow must be refunded, not cancelled");
+  const claim = await claimEscrowOrder({ orderId: entry.configId, env });
+  if (typeof claim !== "function") {
+    return claim;
   }
-  if (escrow?.fundingRequestId) {
-    return fail(
-      409,
-      "escrow_funding_pending",
-      "escrow funding approval is pending; reject the wallet request before cancelling",
-    );
-  }
-  if (escrow?.status === "released" || escrow?.status === "refunded") {
-    return fail(409, "escrow_already_closed", "closed escrow cannot be cancelled");
-  }
-  const now = params.now ?? new Date().toISOString();
-  const result = updateOrder({
-    config: params.config,
-    now,
-    order: {
-      ...order,
-      status: "cancelled",
-      paymentIntent: {
-        ...order.paymentIntent,
+  try {
+    const escrow = order.settlement.escrow;
+    if (
+      escrow?.status === "held" ||
+      escrow?.status === "funded" ||
+      escrow?.fundingTxRef ||
+      escrow?.refundRequestId ||
+      escrow?.releaseRequestId
+    ) {
+      return fail(409, "escrow_refund_required", "funded escrow must be refunded, not cancelled");
+    }
+    if (escrow?.fundingRequestId) {
+      return fail(
+        409,
+        "escrow_funding_pending",
+        "escrow funding approval is pending; reject the wallet request before cancelling",
+        { state: "pending", requestId: escrow.fundingRequestId },
+      );
+    }
+    if (escrow?.status === "released" || escrow?.status === "refunded") {
+      return fail(409, "escrow_already_closed", "closed escrow cannot be cancelled");
+    }
+    try {
+      reserveMarketplaceSettlementAction({
+        orderId: entry.configId,
+        action: "cancel",
+        executionIntentId: `marketplace-order:${entry.configId}:escrow-cancel`,
+        initialPhase: escrowInitialPhase(order),
+        intent: {
+          orderId: entry.configId,
+          settlementMode: "escrow",
+          fundingRequestId: escrow?.fundingRequestId,
+          fundingTxRef: escrow?.fundingTxRef,
+        },
+        env,
+      });
+    } catch (error) {
+      return fail(
+        409,
+        "escrow_settlement_conflict",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+    const now = params.now ?? new Date().toISOString();
+    const result = updateOrder({
+      config: params.config,
+      now,
+      order: {
+        ...order,
         status: "cancelled",
-        updatedAt: now,
-      },
-      settlement: {
-        ...order.settlement,
-        mode: "escrow",
-        status: "cancelled",
-        escrow: {
-          ...escrow,
+        paymentIntent: {
+          ...order.paymentIntent,
           status: "cancelled",
-          holdPolicy: escrow?.holdPolicy ?? "release_on_delivery",
-          releaseRequired: false,
-          cancelledAt: now,
           updatedAt: now,
         },
-        notes: "Escrow order cancelled before funding.",
-        updatedAt: now,
+        settlement: {
+          ...order.settlement,
+          mode: "escrow",
+          status: "cancelled",
+          escrow: {
+            ...escrow,
+            status: "cancelled",
+            holdPolicy: escrow?.holdPolicy ?? "release_on_delivery",
+            releaseRequired: false,
+            cancelledAt: now,
+            updatedAt: now,
+          },
+          notes: "Escrow order cancelled before funding.",
+          updatedAt: now,
+        },
       },
-    },
-  });
-  return {
-    ok: true,
-    config: result.config,
-    order: result.order,
-    mode: "manual",
-    status: "cancelled",
-    message: "Escrow order cancelled before funding.",
-  };
+    });
+    return {
+      ok: true,
+      config: result.config,
+      order: result.order,
+      mode: "manual",
+      status: "cancelled",
+      message: "Escrow order cancelled before funding.",
+    };
+  } finally {
+    await claim();
+  }
 }

@@ -7,10 +7,24 @@ on:
       - "Dockerfile"
       - "docker-compose.yml"
       - "docker-setup.sh"
+      - "scripts/docker-signer-enroll.mjs"
+      - "scripts/docker-signer-health.mjs"
+      - "scripts/docker-signer-policy.sh"
+      - "scripts/docker-signer-update.sh"
+      - "scripts/docker-signer-update.backup.test.ts"
+      - "scripts/fased-signerd-build-identity.mjs"
       - "scripts/scan-docker-image.sh"
       - "src/docker-image-digests.test.ts"
+      - "src/docker-signer-enroll.test.ts"
+      - "src/docker-signer-health.test.ts"
+      - "src/docker-signer-policy.test.ts"
       - "src/docker-setup.test.ts"
       - "src/dockerfile.test.ts"
+      - "src/commands/wallet.docker-signer-doctor.test.ts"
+      - "src/commands/wallet.ts"
+      - "src/wallet/wallet-runtime-config.ts"
+      - "src/wizard/onboarding.wallet.ts"
+      - "tools/fased-signerd/**"
       - ".github/workflows/docker-release.yml"
   push:
     tags:
@@ -35,6 +49,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Setup Node test environment
+        uses: ./.github/actions/setup-node-env
+        with:
+          install-bun: "false"
+
+      - name: Test Docker setup and coordinated backup/rollback
+        run: pnpm exec vitest run src/docker-setup.test.ts scripts/docker-signer-update.backup.test.ts
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
@@ -52,6 +74,14 @@ jobs:
         env:
           IMAGE: fased-local-ci:${{ github.sha }}
         run: test "$(docker image inspect "$IMAGE" --format '{{.Config.User}}')" = "node"
+
+      - name: Verify native signer is packaged
+        env:
+          IMAGE: fased-local-ci:${{ github.sha }}
+        run: |
+          expected="$(node -p "require('./package.json').version")"
+          actual="$(docker run --rm --entrypoint /usr/local/bin/fased-signerd "$IMAGE" --version)"
+          test "$actual" = "fased-signerd ${expected} commit=unknown buildInputDigest=unknown development=true"
 
       - name: Scan local validation image
         env:
@@ -71,6 +101,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Resolve immutable signer release identity
+        id: signer-identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REF_TYPE}" = "tag"
+          version="${GITHUB_REF#refs/tags/v}"
+          package_version="$(node -p "require('./package.json').version")"
+          test "${GITHUB_REF}" = "refs/tags/v${package_version}"
+          test "$version" = "$package_version"
+          git diff --exit-code -- . ':!dist/control-ui/'
+          release_commit="$(git rev-parse HEAD)"
+          FASED_SIGNER_BUILD_VERSION="$version" \
+          FASED_SIGNER_BUILD_COMMIT="$release_commit" \
+          FASED_SIGNER_BUILD_DEVELOPMENT=false \
+            node scripts/fased-signerd-build-identity.mjs --github-output >> "$GITHUB_OUTPUT"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
@@ -81,45 +128,37 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Resolve image tags (amd64)
-        id: tags
-        shell: bash
-        env:
-          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-        run: |
-          set -euo pipefail
-          tags=()
-          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            version="${GITHUB_REF#refs/tags/v}"
-            tags+=("${IMAGE}:${version}-amd64")
-          fi
-          if [[ ${#tags[@]} -eq 0 ]]; then
-            echo "::error::No amd64 tags resolved for ref ${GITHUB_REF}"
-            exit 1
-          fi
-          {
-            echo "value<<EOF"
-            printf "%s\n" "${tags[@]}"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Build and push amd64 image
+      - name: Build and push untagged amd64 digest
         id: build
         uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64
-          tags: ${{ steps.tags.outputs.value }}
+          build-args: |
+            FASED_SIGNER_BUILD_VERSION=${{ steps.signer-identity.outputs.version }}
+            FASED_SIGNER_BUILD_COMMIT=${{ steps.signer-identity.outputs.commit }}
+            FASED_SIGNER_BUILD_INPUT_DIGEST=${{ steps.signer-identity.outputs.build_input_digest }}
+            FASED_SIGNER_BUILD_DEVELOPMENT=${{ steps.signer-identity.outputs.development }}
           cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-cache:amd64
           cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-cache:amd64,mode=max
           provenance: mode=max
           sbom: true
-          push: true
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
 
       - name: Scan pushed amd64 image
         env:
           IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
         run: scripts/scan-docker-image.sh "$IMAGE" linux/amd64
+
+      - name: Execute packaged amd64 signer
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+          EXPECTED_VERSION: ${{ steps.signer-identity.outputs.version }}
+          EXPECTED_COMMIT: ${{ steps.signer-identity.outputs.commit }}
+          EXPECTED_BUILD_INPUT_DIGEST: ${{ steps.signer-identity.outputs.build_input_digest }}
+        run: |
+          actual="$(docker run --rm --platform linux/amd64 --entrypoint /usr/local/bin/fased-signerd "$IMAGE" --version)"
+          test "$actual" = "fased-signerd ${EXPECTED_VERSION} commit=${EXPECTED_COMMIT} buildInputDigest=${EXPECTED_BUILD_INPUT_DIGEST} development=false"
 
   # Build arm64 image
   build-arm64:
@@ -134,6 +173,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Resolve immutable signer release identity
+        id: signer-identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REF_TYPE}" = "tag"
+          version="${GITHUB_REF#refs/tags/v}"
+          package_version="$(node -p "require('./package.json').version")"
+          test "${GITHUB_REF}" = "refs/tags/v${package_version}"
+          test "$version" = "$package_version"
+          git diff --exit-code -- . ':!dist/control-ui/'
+          release_commit="$(git rev-parse HEAD)"
+          FASED_SIGNER_BUILD_VERSION="$version" \
+          FASED_SIGNER_BUILD_COMMIT="$release_commit" \
+          FASED_SIGNER_BUILD_DEVELOPMENT=false \
+            node scripts/fased-signerd-build-identity.mjs --github-output >> "$GITHUB_OUTPUT"
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
 
@@ -147,53 +203,48 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Resolve image tags (arm64)
-        id: tags
-        shell: bash
-        env:
-          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-        run: |
-          set -euo pipefail
-          tags=()
-          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            version="${GITHUB_REF#refs/tags/v}"
-            tags+=("${IMAGE}:${version}-arm64")
-          fi
-          if [[ ${#tags[@]} -eq 0 ]]; then
-            echo "::error::No arm64 tags resolved for ref ${GITHUB_REF}"
-            exit 1
-          fi
-          {
-            echo "value<<EOF"
-            printf "%s\n" "${tags[@]}"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Build and push arm64 image
+      - name: Build and push untagged arm64 digest
         id: build
         uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/arm64
-          tags: ${{ steps.tags.outputs.value }}
+          build-args: |
+            FASED_SIGNER_BUILD_VERSION=${{ steps.signer-identity.outputs.version }}
+            FASED_SIGNER_BUILD_COMMIT=${{ steps.signer-identity.outputs.commit }}
+            FASED_SIGNER_BUILD_INPUT_DIGEST=${{ steps.signer-identity.outputs.build_input_digest }}
+            FASED_SIGNER_BUILD_DEVELOPMENT=${{ steps.signer-identity.outputs.development }}
           cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-cache:arm64
           cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-cache:arm64,mode=max
           provenance: mode=max
           sbom: true
-          push: true
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
 
       - name: Scan pushed arm64 image
         env:
           IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
         run: scripts/scan-docker-image.sh "$IMAGE" linux/arm64
 
+      - name: Execute packaged arm64 signer
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+          EXPECTED_VERSION: ${{ steps.signer-identity.outputs.version }}
+          EXPECTED_COMMIT: ${{ steps.signer-identity.outputs.commit }}
+          EXPECTED_BUILD_INPUT_DIGEST: ${{ steps.signer-identity.outputs.build_input_digest }}
+        run: |
+          actual="$(docker run --rm --platform linux/arm64 --entrypoint /usr/local/bin/fased-signerd "$IMAGE" --version)"
+          test "$actual" = "fased-signerd ${EXPECTED_VERSION} commit=${EXPECTED_COMMIT} buildInputDigest=${EXPECTED_BUILD_INPUT_DIGEST} development=false"
+
   # Create multi-platform manifest
   create-manifest:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
+      artifact-metadata: write
+      attestations: write
+      id-token: write
       packages: write
-      contents: read
+      contents: write
     needs: [build-amd64, build-arm64]
     steps:
       - name: Checkout
@@ -205,6 +256,18 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve immutable signer release identity
+        id: signer-identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF#refs/tags/v}"
+          release_commit="$(git rev-parse HEAD)"
+          FASED_SIGNER_BUILD_VERSION="$version" \
+          FASED_SIGNER_BUILD_COMMIT="$release_commit" \
+          FASED_SIGNER_BUILD_DEVELOPMENT=false \
+            node scripts/fased-signerd-build-identity.mjs --github-output >> "$GITHUB_OUTPUT"
 
       - name: Resolve manifest tags
         id: tags
@@ -231,8 +294,11 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Create and push manifest
+      - name: Create and push scanned manifest
+        id: manifest
         shell: bash
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
         run: |
           set -euo pipefail
           mapfile -t tags <<< "${{ steps.tags.outputs.value }}"
@@ -242,5 +308,124 @@ jobs:
             args+=("-t" "$tag")
           done
           docker buildx imagetools create "${args[@]}" \
-            ${{ needs.build-amd64.outputs.image-digest }} \
-            ${{ needs.build-arm64.outputs.image-digest }}
+            --metadata-file /tmp/fased-image-create-metadata.json \
+            "${IMAGE}@${{ needs.build-amd64.outputs.image-digest }}" \
+            "${IMAGE}@${{ needs.build-arm64.outputs.image-digest }}"
+          version="${GITHUB_REF#refs/tags/v}"
+          manifest_digest="$(node --input-type=module - /tmp/fased-image-create-metadata.json <<'NODE'
+          import { readFileSync } from "node:fs";
+          const metadata = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          const digest = metadata?.["containerimage.descriptor"]?.digest;
+          if (typeof digest !== "string") process.exit(1);
+          process.stdout.write(digest);
+          NODE
+          )"
+          [[ "$manifest_digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          docker buildx imagetools inspect "${IMAGE}@${manifest_digest}" >/dev/null
+          echo "digest=$manifest_digest" >> "$GITHUB_OUTPUT"
+
+      - name: Verify public multi-architecture manifest and anonymous pull
+        shell: bash
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF#refs/tags/v}"
+          anonymous_config="$(mktemp -d)"
+          trap 'rm -rf "$anonymous_config"' EXIT
+
+          manifest_ready=0
+          for attempt in $(seq 1 12); do
+            if DOCKER_CONFIG="$anonymous_config" docker buildx imagetools inspect "${IMAGE}:${version}" >/tmp/fased-image-manifest.txt; then
+              manifest_ready=1
+              break
+            fi
+            sleep 5
+          done
+          test "$manifest_ready" -eq 1
+          grep -Fq 'linux/amd64' /tmp/fased-image-manifest.txt
+          grep -Fq 'linux/arm64' /tmp/fased-image-manifest.txt
+          DOCKER_CONFIG="$anonymous_config" docker pull --platform linux/amd64 "${IMAGE}:${version}"
+
+      - name: Attest public multi-architecture image
+        id: attest-image
+        uses: actions/attest@v4
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.manifest.outputs.digest }}
+          push-to-registry: true
+
+      - name: Create immutable container release metadata
+        id: metadata
+        shell: bash
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          MANIFEST_DIGEST: ${{ steps.manifest.outputs.digest }}
+          RELEASE_COMMIT: ${{ steps.signer-identity.outputs.commit }}
+          SIGNER_BUILD_INPUT_DIGEST: ${{ steps.signer-identity.outputs.build_input_digest }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF#refs/tags/v}"
+          output_dir=".artifacts/container"
+          output_path="${output_dir}/fased-container-v${version}.json"
+          mkdir -p "$output_dir"
+          node --input-type=module - "$output_path" <<'NODE'
+          import { writeFileSync } from "node:fs";
+          const [outputPath] = process.argv.slice(2);
+          const metadata = {
+            schemaVersion: 1,
+            image: process.env.IMAGE,
+            version: process.env.GITHUB_REF_NAME?.replace(/^v/u, ""),
+            sourceRef: process.env.GITHUB_REF,
+            releaseCommit: process.env.RELEASE_COMMIT,
+            manifestDigest: process.env.MANIFEST_DIGEST,
+            signerBuildInputDigest: process.env.SIGNER_BUILD_INPUT_DIGEST,
+            signerDevelopment: false,
+            platforms: ["linux/amd64", "linux/arm64"],
+          };
+          writeFileSync(outputPath, `${JSON.stringify(metadata, null, 2)}\n`, { mode: 0o644 });
+          NODE
+          install -m 0644 \
+            "${{ steps.attest-image.outputs.bundle-path }}" \
+            "${output_dir}/fased-container-v${version}.image-attestation.json"
+          echo "path=$output_path" >> "$GITHUB_OUTPUT"
+          echo "dir=$output_dir" >> "$GITHUB_OUTPUT"
+
+      - name: Attest container release metadata
+        id: attest-metadata
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ steps.metadata.outputs.path }}
+
+      - name: Stage metadata attestation bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF#refs/tags/v}"
+          install -m 0644 \
+            "${{ steps.attest-metadata.outputs.bundle-path }}" \
+            "${{ steps.metadata.outputs.dir }}/fased-container-v${version}.attestation.json"
+
+      - name: Upload container release metadata artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fased-container-release
+          path: .artifacts/container/*
+          if-no-files-found: error
+
+      - name: Publish container release metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Fased Agent $GITHUB_REF_NAME" \
+              --generate-notes \
+              || gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null
+          fi
+          gh release upload "$GITHUB_REF_NAME" .artifacts/container/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber

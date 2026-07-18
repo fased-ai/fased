@@ -85,7 +85,7 @@ type FinalizeOnboardingOptions = {
   runtime: RuntimeEnv;
   walletSecurityFocus?: {
     walletId: string;
-    role: "agent" | "vault";
+    role: "agent" | "mining" | "vault";
   } | null;
 };
 
@@ -95,7 +95,7 @@ export function buildOnboardingDashboardUrl(params: {
   token?: string;
   walletSecurityFocus?: {
     walletId: string;
-    role: "agent" | "vault";
+    role: "agent" | "mining" | "vault";
   } | null;
 }): string {
   const url = new URL(params.baseUrl);
@@ -302,38 +302,10 @@ async function installRootServiceMaintenanceAccess(params: {
   serviceName: string;
   runAsUser: string;
 }): Promise<{ ok: boolean; detail?: string }> {
-  const safeServiceName = params.serviceName.replace(/[^A-Za-z0-9@_.-]/g, "");
-  const safeUser = params.runAsUser.replace(/[^A-Za-z0-9@_.-]/g, "");
-  const existingAccess = await runShell(
-    `sudo -n systemctl show ${safeServiceName}.service -p ActiveState --value >/dev/null`,
-  );
-  if (existingAccess.ok) {
-    return { ok: true };
-  }
-  const sudoersPath = `/etc/sudoers.d/${safeServiceName}-${safeUser}-maintenance`;
-  const sudoers = [
-    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl restart ${safeServiceName}.service`,
-    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl restart --no-block ${safeServiceName}.service`,
-    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl start --no-block ${safeServiceName}.service`,
-    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now ${safeServiceName}.service`,
-    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl status ${safeServiceName}.service`,
-    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl status ${safeServiceName}.service --no-pager`,
-    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl is-active ${safeServiceName}.service`,
-    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl is-active ${safeServiceName}`,
-    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl show ${safeServiceName}.service -p ActiveState --value`,
-    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/systemctl cat ${safeServiceName}.service`,
-    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/journalctl -u ${safeServiceName}.service -n 50 --no-pager`,
-    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/journalctl -u ${safeServiceName}.service -n 120 --no-pager`,
-    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/journalctl -u ${safeServiceName} -n 50 --no-pager`,
-    `${safeUser} ALL=(root) NOPASSWD: /usr/bin/journalctl -u ${safeServiceName} -n 120 --no-pager`,
-  ].join("\n");
-  const b64 = Buffer.from(`${sudoers}\n`, "utf8").toString("base64");
-  const installCommand = [
-    `echo '${b64}' | base64 -d | sudo -n tee '${sudoersPath}' >/dev/null`,
-    `sudo -n chmod 440 '${sudoersPath}'`,
-    `if command -v visudo >/dev/null 2>&1; then sudo -n visudo -cf '${sudoersPath}' >/dev/null; fi`,
-  ].join(" && ");
-  return await runShell(installCommand);
+  return {
+    ok: false,
+    detail: `${params.runAsUser} is intentionally not granted sudo access to ${params.serviceName}`,
+  };
 }
 
 async function installRootSystemdFallback(params: {
@@ -343,17 +315,27 @@ async function installRootSystemdFallback(params: {
   workingDirectory?: string;
   environment?: Record<string, string | undefined>;
 }): Promise<{ ok: boolean; detail?: string }> {
-  const safeServiceName = params.serviceName.replace(/[^A-Za-z0-9@_.-]/g, "");
-  const safeRunAsUser = params.runAsUser.replace(/[^A-Za-z0-9@_.-]/g, "");
-  const unitPath = `/etc/systemd/system/${safeServiceName}.service`;
   const escapedUser = params.runAsUser.replace(/"/g, '\\"');
   const baseUnit = buildSystemdUnit({
     description: "Fased Gateway (managed)",
     programArguments: params.programArguments,
     workingDirectory: params.workingDirectory,
-    environment: params.environment,
+    environment: {
+      ...params.environment,
+      FASED_HOST_PROFILE: "hosting",
+      FASED_WALLET_LOCAL_SIGNER_SOCKET: "/run/fased-signerd/app.sock",
+    },
   });
   const unitLines = baseUnit.split("\n");
+  const unitIndex = unitLines.findIndex((line) => line.trim() === "[Unit]");
+  if (unitIndex !== -1) {
+    unitLines.splice(
+      unitIndex + 1,
+      0,
+      "After=fased-signerd.service",
+      "Wants=fased-signerd.service",
+    );
+  }
   const installIndex = unitLines.findIndex((line) => line.trim() === "[Install]");
   const wantedByIndex = unitLines.findIndex((line) => line.trim() === "WantedBy=default.target");
   if (wantedByIndex !== -1) {
@@ -374,21 +356,17 @@ async function installRootSystemdFallback(params: {
   }
   const unit = unitLines.join("\n");
   const b64 = Buffer.from(unit, "utf8").toString("base64");
-  const helperInstallCommand = `printf '%s' '${b64}' | base64 -d | sudo -n /usr/local/sbin/fased-install-gateway-service '${safeServiceName}' '${safeRunAsUser}'`;
+  void b64;
+  const helperInstallCommand = "false";
   const helperResult = await runShell(helperInstallCommand);
-  const installCommand = [
-    `echo '${b64}' | base64 -d | sudo -n tee '${unitPath}' >/dev/null`,
-    "sudo -n systemctl daemon-reload",
-    `sudo -n systemctl enable --now '${safeServiceName}.service'`,
-  ].join(" && ");
-  const result = helperResult.ok ? helperResult : await runShell(installCommand);
+  const result = helperResult;
   if (!result.ok) {
     return {
       ok: false,
       detail:
         `systemd install failed (${result.detail ?? "unknown error"}). ` +
         `Installer helper result: ${helperResult.detail ?? (helperResult.ok ? "ok" : "unavailable")}. ` +
-        "Rerun ./install.sh --hosting from root so the hosted service helper and sudoers are refreshed.",
+        "Repair only from the provider root console using the exact tagged, attested Hosting release; never run the app checkout with sudo.",
     };
   }
   if (params.runAsUser !== "root") {
@@ -401,7 +379,7 @@ async function installRootSystemdFallback(params: {
         ok: false,
         detail:
           `systemd install succeeded, but post-install maintenance access failed (${maintenanceAccess.detail ?? "unknown error"}). ` +
-          `Without this, ${params.runAsUser} cannot restart ${params.serviceName}.service after updates.`,
+          "The hosted app must remain unable to elevate after installation.",
       };
     }
   }
@@ -476,7 +454,7 @@ export function resolveLocalSignerSyncForFinalize(params: { strictVps: boolean }
   restart: boolean;
 } {
   return {
-    sync: true,
+    sync: !params.strictVps,
     restart: !params.strictVps,
   };
 }
@@ -519,7 +497,7 @@ export function formatHostedRootServiceRequiredFailure(params: {
     `Hosting requires the root-managed fased-gateway.service running as User=${runAsUser}.`,
     "The installer will not fall back to an app-managed user service for the hosting profile.",
     `Root service repair failed: ${detail}`,
-    "Repair: rerun ./install.sh --hosting from root on the VPS, or restore the installer sudoers for the app user and rerun ./install.sh --hosting.",
+    "Repair only from the provider root console using the exact tagged, attested Hosting release; never run the app checkout with sudo.",
     "Inspect: sudo systemctl status fased-gateway --no-pager",
     "Inspect logs: sudo journalctl -u fased-gateway -n 120 --no-pager",
   ].join("\n");
@@ -533,12 +511,6 @@ async function migrateStrictVpsGatewayServices(): Promise<{ ok: boolean; detail?
       "rm -f ~/.config/systemd/user/fased-gateway.service 2>/dev/null || true",
       "rm -rf ~/.config/systemd/user/fased-gateway.service.d 2>/dev/null || true",
       "systemctl --user daemon-reload 2>/dev/null || true",
-      "sudo -n systemctl disable --now fased-gateway 2>/dev/null || true",
-      "sudo -n systemctl reset-failed fased-gateway 2>/dev/null || true",
-      "sudo -n rm -rf /etc/systemd/system/fased-gateway.service.d 2>/dev/null || true",
-      "sudo -n pkill -f 'start-managed.sh|start-vps.sh|run-node.mjs managed up|run-node.mjs gateway|dist/index.js managed up|fased.mjs start --mode managed|zrok share' 2>/dev/null || true",
-      "sleep 1",
-      "sudo -n systemctl daemon-reload 2>/dev/null || true",
       "true",
     ].join(" ; "),
   );
@@ -553,12 +525,12 @@ async function verifyStrictRootGatewayExecStart(
   return await runShell(
     [
       startupMode === "managed-up"
-        ? `sudo -n systemctl cat ${serviceName}.service 2>/dev/null | grep -E '^ExecStart=' | grep -E ' managed up|start-(managed|vps)\\.sh' >/dev/null`
-        : `sudo -n systemctl cat ${serviceName}.service 2>/dev/null | grep -E '^ExecStart=' | grep -F ' gateway ' >/dev/null`,
-      `sudo -n systemctl cat ${serviceName}.service 2>/dev/null | grep -F 'Environment=FASED_GATEWAY_PORT=' >/dev/null`,
+        ? `systemctl cat ${serviceName}.service 2>/dev/null | grep -E '^ExecStart=' | grep -E ' managed up|start-(managed|vps)\\.sh|/usr/local/libexec/fased-gateway-launch' >/dev/null`
+        : `systemctl cat ${serviceName}.service 2>/dev/null | grep -E '^ExecStart=' | grep -F ' gateway ' >/dev/null`,
+      `systemctl cat ${serviceName}.service 2>/dev/null | grep -F 'Environment=FASED_GATEWAY_PORT=' >/dev/null`,
       ...(safeRunAsUser
         ? [
-            `sudo -n systemctl cat ${serviceName}.service 2>/dev/null | grep -F 'User=${safeRunAsUser}' >/dev/null`,
+            `systemctl cat ${serviceName}.service 2>/dev/null | grep -F 'User=${safeRunAsUser}' >/dev/null`,
           ]
         : []),
       "true",
@@ -572,7 +544,7 @@ async function isSystemdServiceActive(params: {
 }): Promise<{ ok: boolean; detail?: string }> {
   const command =
     params.scope === "root"
-      ? `sudo -n systemctl is-active ${params.name} 2>/dev/null`
+      ? `systemctl is-active ${params.name} 2>/dev/null`
       : `systemctl --user is-active ${params.name} 2>/dev/null`;
   const result = await runShell(command, { timeoutMs: 5_000 });
   return result;
@@ -616,11 +588,9 @@ async function verifyStrictVpsMaintenanceReadiness(params: {
     throw new Error(`Hosting requires ${configDir} to be owned by ${runAsUser} before completion.`);
   }
 
-  const tailscaleOperator = await runShell("tailscale serve status >/dev/null 2>&1");
-  if (!tailscaleOperator.ok) {
-    throw new Error(
-      "Hosting requires unprivileged tailscale serve status access for the app maintenance user before completion.",
-    );
+  const tailscaleStatus = await runShell("tailscale serve status >/dev/null 2>&1");
+  if (!tailscaleStatus.ok) {
+    throw new Error("Hosting requires the root-prepared Tailscale Serve route before completion.");
   }
 
   // Wallet/signer readiness is feature readiness, not host access readiness.
@@ -629,13 +599,27 @@ async function verifyStrictVpsMaintenanceReadiness(params: {
   // deferred wallet setup must not block SSH/dashboard hardening completion.
 }
 
+async function configureHostedSignerWebAuthnForTailscale(): Promise<void> {
+  const result = await runShell(
+    "test -f /etc/fased/signerd-webauthn.env && test ! -L /etc/fased/signerd-webauthn.env && " +
+      'test "$(stat -c %u /etc/fased/signerd-webauthn.env)" = 0 && ' +
+      "grep -Eq '^FASED_WALLET_WEBAUTHN_RP_ID=[a-z0-9.-]+$' /etc/fased/signerd-webauthn.env && " +
+      "grep -Eq '^FASED_WALLET_WEBAUTHN_ORIGINS=https://[a-z0-9.-]+$' /etc/fased/signerd-webauthn.env",
+  );
+  if (!result.ok) {
+    throw new Error(
+      `Hosting could not verify the root-persisted Tailscale WebAuthn RP configuration (${result.detail ?? "unknown error"}).`,
+    );
+  }
+}
+
 async function isSystemdServiceRunningOrStarting(params: {
   name: string;
   scope: "root" | "user";
 }): Promise<boolean> {
   const command =
     params.scope === "root"
-      ? `sudo -n systemctl show ${params.name}.service -p ActiveState --value 2>/dev/null | grep -E '^(active|activating|deactivating)$' >/dev/null 2>&1`
+      ? `systemctl show ${params.name}.service -p ActiveState --value 2>/dev/null | grep -E '^(active|activating|deactivating)$' >/dev/null 2>&1`
       : `systemctl --user show ${params.name}.service -p ActiveState --value 2>/dev/null | grep -E '^(active|activating|deactivating)$' >/dev/null 2>&1`;
   const result = await runShell(command, { timeoutMs: 5_000 });
   return result.ok;
@@ -727,21 +711,11 @@ export function buildGatewayServiceRestartAttempts(
   ];
   const rootAttempts = [
     {
-      label: "root restart",
-      command: `sudo -n systemctl restart --no-block ${serviceName}.service >/dev/null 2>&1`,
+      label: "signal app-owned hosted Gateway",
+      command:
+        `pid="$(systemctl show ${serviceName}.service --property MainPID --value 2>/dev/null)"; ` +
+        'test "$pid" -gt 1; kill -TERM "$pid"',
       timeoutMs: 8_000,
-      timeoutIsProgress: true,
-    },
-    {
-      label: "root start",
-      command: `sudo -n systemctl start --no-block ${serviceName}.service >/dev/null 2>&1`,
-      timeoutMs: 8_000,
-      timeoutIsProgress: true,
-    },
-    {
-      label: "root enable+start",
-      command: `sudo -n systemctl enable --now ${serviceName}.service >/dev/null 2>&1`,
-      timeoutMs: 12_000,
       timeoutIsProgress: true,
     },
   ];
@@ -1559,7 +1533,11 @@ export async function finalizeOnboardingWizard(
           config: nextConfig,
         });
   let installDaemon: boolean;
-  if (explicitInstallDaemon !== undefined) {
+  if (strictVps) {
+    // The provider-console root phase already installed the fixed system unit.
+    // Hosted onboarding verifies it; the app may not opt out or replace it.
+    installDaemon = true;
+  } else if (explicitInstallDaemon !== undefined) {
     installDaemon = explicitInstallDaemon;
   } else if (process.platform === "linux" && !systemdAvailable) {
     installDaemon = false;
@@ -1572,181 +1550,47 @@ export async function finalizeOnboardingWizard(
     });
   }
 
-  if (process.platform === "linux" && !systemdAvailable && installDaemon) {
+  if (process.platform === "linux" && !systemdAvailable && installDaemon && !strictVps) {
     installDaemon = false;
   }
 
   if (installDaemon) {
-    const sudoCheck =
-      process.platform === "linux"
-        ? await runShell("command -v sudo >/dev/null 2>&1")
-        : { ok: false };
-    const canUseRootService = process.platform === "linux" && sudoCheck.ok;
-    const preferRootService = strictVps;
+    const rootPrepared = strictVps && process.env.FASED_HOST_ROOT_PREPARED?.trim() === "1";
 
     let rootServiceActiveSuccessfully = false;
-    if (strictVps && !canUseRootService) {
+    if (strictVps && !rootPrepared) {
       throw new Error(
         formatHostedRootServiceRequiredFailure({
           runAsUser: resolveGatewayServiceRunAsUser(),
-          detail: "non-interactive sudo is unavailable for systemd service install/repair",
+          detail:
+            "the provider-console root phase did not install the fixed root-owned service; the app has no sudo or root control socket",
         }),
       );
     }
-    if (preferRootService && canUseRootService) {
+    if (rootPrepared) {
       const runAsUser = resolveGatewayServiceRunAsUser();
       if (!runAsUser) {
-        if (strictVps) {
-          throw new Error(
-            formatHostedRootServiceRequiredFailure({
-              detail: "runtime user could not be resolved",
-            }),
-          );
-        }
-        await prompter.note(
-          "Unable to resolve root service runtime user; falling back to non-root service install.",
-          "Gateway service",
+        throw new Error(
+          formatHostedRootServiceRequiredFailure({
+            detail: "runtime user could not be resolved",
+          }),
         );
-      } else {
-        const strictExec = await verifyStrictRootGatewayExecStart(
-          "fased-gateway",
-          expectedGatewayStartupMode,
-          runAsUser,
-        );
-        const rootActive = await isSystemdServiceActive({
-          name: "fased-gateway",
-          scope: "root",
-        });
-        if (strictExec.ok && rootActive.ok) {
-          // Always patch heap size in the existing unit so install.sh picks up adaptive changes.
-          const patchHeap = await runShell(
-            [
-              `sudo -n sed -i 's/FASED_GATEWAY_MAX_OLD_SPACE_MB=[0-9]*/FASED_GATEWAY_MAX_OLD_SPACE_MB=${recommendedGatewayMaxOldSpaceMb}/' /etc/systemd/system/fased-gateway.service`,
-              `sudo -n sed -i 's/max-old-space-size=[0-9]*/max-old-space-size=${recommendedGatewayMaxOldSpaceMb}/' /etc/systemd/system/fased-gateway.service`,
-              "sudo -n systemctl daemon-reload",
-              "sudo -n systemctl restart --no-block fased-gateway.service",
-            ].join(" && "),
-            { timeoutMs: 12_000 },
-          );
-          if (!strictVps || flow !== "quickstart") {
-            await prompter.note(
-              [
-                "Root-managed gateway service already healthy; reusing existing service.",
-                patchHeap.ok
-                  ? `Updated heap limit to ${recommendedGatewayMaxOldSpaceMb}MB and restarted.`
-                  : `Heap patch skipped (${patchHeap.detail ?? "unknown error"}); unit may need manual update.`,
-              ].join("\n"),
-              "Gateway service",
-            );
-          }
-          rootServiceActiveSuccessfully = true;
-        } else {
-          let rootRestartQueued = false;
-          if (strictExec.ok && !rootActive.ok) {
-            const restartExisting = await runShell(
-              "sudo -n systemctl restart --no-block fased-gateway.service",
-            );
-            if (restartExisting.ok) {
-              if (!strictVps || flow !== "quickstart") {
-                await prompter.note(
-                  "Started existing root-managed gateway service.",
-                  "Gateway service",
-                );
-              }
-              rootRestartQueued = true;
-            }
-          }
-          const rootNowActive = await isSystemdServiceActive({
-            name: "fased-gateway",
-            scope: "root",
-          });
-          if (!rootNowActive.ok) {
-            await withWizardProgress(
-              "Gateway service",
-              { doneMessage: "Gateway service migration complete." },
-              async (progress) => {
-                progress.update("Removing conflicting gateway services…");
-                await migrateStrictVpsGatewayServices();
-              },
-            );
-            const rootInstallPlan = await buildOnboardingGatewayInstallPlan({
-              port: settings.port,
-              token: preferredGatewayToken,
-              runtime: preferredDaemonRuntime,
-              config: nextConfig,
-              prompter,
-              strictVps,
-              startupMode: expectedGatewayStartupMode,
-            });
-            const rootService = await installRootSystemdFallback({
-              serviceName: "fased-gateway",
-              runAsUser,
-              programArguments: rootInstallPlan.programArguments,
-              workingDirectory: rootInstallPlan.workingDirectory,
-              environment: rootInstallPlan.environment,
-            });
-            rootServiceActiveSuccessfully = resolveVerifiedRootServiceReady({
-              restartQueued: rootRestartQueued,
-              activeAfterRestart: rootNowActive.ok,
-              repairInstalled: rootService.ok,
-            });
-            if (!rootService.ok) {
-              if (strictVps) {
-                throw new Error(
-                  formatHostedRootServiceRequiredFailure({
-                    runAsUser,
-                    detail: rootService.detail,
-                  }),
-                );
-              }
-              await prompter.note(
-                `${strictVps ? "Hosting" : "Local"} root service install failed: ${rootService.detail ?? "unknown error"}. Falling back to non-root service.`,
-                "Gateway service",
-              );
-            }
-          } else {
-            rootServiceActiveSuccessfully = resolveVerifiedRootServiceReady({
-              restartQueued: rootRestartQueued,
-              activeAfterRestart: rootNowActive.ok,
-              repairInstalled: false,
-            });
-          }
-          if (rootServiceActiveSuccessfully) {
-            const strictExecAfter = await verifyStrictRootGatewayExecStart(
-              "fased-gateway",
-              expectedGatewayStartupMode,
-              runAsUser,
-            );
-            if (!strictExecAfter.ok) {
-              if (strictVps) {
-                throw new Error(
-                  formatHostedRootServiceRequiredFailure({
-                    runAsUser,
-                    detail:
-                      strictExecAfter.detail ||
-                      "unit ExecStart/User is not the canonical hosted service command",
-                  }),
-                );
-              }
-              await prompter.note(
-                `${strictVps ? "Hosting" : "Local"} root service check failed: unit ExecStart is not the canonical hosted service command.`,
-                "Gateway service",
-              );
-            }
-          }
-          if (rootServiceActiveSuccessfully) {
-            await runShell(
-              "systemctl --user disable --now fased-gateway 2>/dev/null || true && systemctl --user reset-failed fased-gateway 2>/dev/null || true",
-            );
-            if (!strictVps || flow !== "quickstart") {
-              await prompter.note(
-                "Root-managed gateway service ready (fased-gateway).",
-                "Gateway service",
-              );
-            }
-          }
-        }
       }
+      const [strictExec, rootActive] = await Promise.all([
+        verifyStrictRootGatewayExecStart("fased-gateway", expectedGatewayStartupMode, runAsUser),
+        isSystemdServiceRunningOrStarting({ name: "fased-gateway", scope: "root" }),
+      ]);
+      if (!strictExec.ok || !rootActive) {
+        throw new Error(
+          formatHostedRootServiceRequiredFailure({
+            runAsUser,
+            detail:
+              strictExec.detail ||
+              "fixed root-owned Gateway unit is missing, inactive, or has an unexpected command",
+          }),
+        );
+      }
+      rootServiceActiveSuccessfully = true;
     }
     if (strictVps && !rootServiceActiveSuccessfully) {
       throw new Error(
@@ -2779,6 +2623,9 @@ export async function finalizeOnboardingWizard(
         );
       },
     );
+  }
+  if (strictVps) {
+    await configureHostedSignerWebAuthnForTailscale();
   }
   let hostedDashboardBrowserVerified = false;
   if (strictVps && settings.tailscaleMode !== "off") {

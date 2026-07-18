@@ -17,6 +17,14 @@ export const DEFAULT_WALLET_RUNTIME_HOST = "127.0.0.1";
 export const DEFAULT_WALLET_RUNTIME_VERSION = "0.1.1";
 export const DEFAULT_WALLET_RUNTIME_SOURCE_REF = "v0.2.30";
 
+export function isLocalSignerExternallyManaged(env: NodeJS.ProcessEnv = process.env): boolean {
+  return (
+    String(env.FASED_WALLET_LOCAL_SIGNER_LIFECYCLE ?? "")
+      .trim()
+      .toLowerCase() === "external"
+  );
+}
+
 export type ResolvedWalletPolicyCaps = {
   maxPerTx: bigint;
   maxDaily: bigint;
@@ -154,39 +162,6 @@ function normalizeSolanaTokenCaps(raw: unknown): Record<string, ResolvedWalletTo
   return out;
 }
 
-function isPositivePolicyAmount(raw: unknown): boolean {
-  if (typeof raw !== "string") {
-    return false;
-  }
-  try {
-    return BigInt(raw.trim() || "0") > 0n;
-  } catch {
-    return false;
-  }
-}
-
-function hasExplicitPositiveCaps(policy: unknown): boolean {
-  if (!policy || typeof policy !== "object" || Array.isArray(policy)) {
-    return false;
-  }
-  const value = policy as Record<string, unknown>;
-  const solana =
-    value.solana && typeof value.solana === "object"
-      ? (value.solana as Record<string, unknown>)
-      : {};
-  if (isPositivePolicyAmount(solana.maxPerTx) || isPositivePolicyAmount(solana.maxDaily)) {
-    return true;
-  }
-  const tokenCaps =
-    solana.tokenCaps && typeof solana.tokenCaps === "object" && !Array.isArray(solana.tokenCaps)
-      ? (solana.tokenCaps as Record<string, unknown>)
-      : {};
-  return Object.values(tokenCaps).some((capRaw) => {
-    const cap = capRaw && typeof capRaw === "object" ? (capRaw as Record<string, unknown>) : {};
-    return isPositivePolicyAmount(cap.maxPerTx) || isPositivePolicyAmount(cap.maxDaily);
-  });
-}
-
 export function resolveWalletStatePaths(env: NodeJS.ProcessEnv = process.env): WalletStatePaths {
   const rootDir = path.join(resolveStateDir(env), "wallet");
   const stackRootDir = path.join(rootDir, "wallet-stack");
@@ -249,18 +224,37 @@ export function resolveLocalSignerMaterialRootDir(env: NodeJS.ProcessEnv = proce
 }
 
 export function resolveLocalSignerBackendSocketPath(env: NodeJS.ProcessEnv = process.env): string {
-  const explicit = String(env.FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET ?? "").trim();
-  if (explicit) {
-    return path.resolve(explicit);
-  }
   return resolveLocalSignerSocketPath(env);
 }
 
+export function resolveLocalSignerControlSocketPath(env: NodeJS.ProcessEnv = process.env): string {
+  const explicit = String(env.FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET ?? "").trim();
+  if (explicit) {
+    return path.resolve(explicit);
+  }
+  return path.join(resolveLocalSignerMaterialRootDir(env), "local-signer-control.sock");
+}
+
+export function resolveLocalSignerStateDbPath(env: NodeJS.ProcessEnv = process.env): string {
+  const explicit = String(env.FASED_WALLET_LOCAL_SIGNER_STATE_DB ?? "").trim();
+  if (explicit) {
+    return path.resolve(explicit);
+  }
+  return path.join(resolveLocalSignerMaterialRootDir(env), "signerd-v2.db");
+}
+
+export function resolveLocalSignerMasterKeyPath(env: NodeJS.ProcessEnv = process.env): string {
+  const explicit = String(env.FASED_WALLET_LOCAL_SIGNER_MASTER_KEY ?? "").trim();
+  if (explicit) {
+    return path.resolve(explicit);
+  }
+  return path.join(resolveLocalSignerMaterialRootDir(env), "signerd-v2.master.key");
+}
+
 export function resolveLocalSignerRunAsUser(
-  env: NodeJS.ProcessEnv = process.env,
+  _env: NodeJS.ProcessEnv = process.env,
 ): string | undefined {
-  const explicit = String(env.FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER ?? "").trim();
-  return explicit || undefined;
+  return undefined;
 }
 
 function parseRuntime(value: string | undefined): WalletRuntimeKind | null {
@@ -292,17 +286,6 @@ function resolveRuntime(params: {
 function inferDefaultWalletProviderId(env: NodeJS.ProcessEnv): WalletProviderId | null {
   if (String(env.FASED_WALLET_LOCAL_SIGNER_SOCKET ?? "").trim()) {
     return "local-socket-signer";
-  }
-  for (const key of Object.keys(env)) {
-    if (
-      key === "FASED_WALLET_SOLANA_KEYSTORE_PATH" ||
-      key === "FASED_WALLET_PASSPHRASE_FILE" ||
-      key.startsWith("FASED_WALLET_SOLANA_KEYSTORE_PATH__")
-    ) {
-      if (String(env[key] ?? "").trim()) {
-        return "local-socket-signer";
-      }
-    }
   }
   return null;
 }
@@ -379,7 +362,8 @@ export function resolveWalletRuntimeConfig(
     execution: {
       mode:
         cfg.wallet?.execution?.mode === "autonomous" ||
-        (cfg.wallet?.execution?.mode !== "manual" && (walletRuntime?.policy?.directSigning ?? true))
+        (cfg.wallet?.execution?.mode !== "manual" &&
+          (walletRuntime?.policy?.directSigning ?? false))
           ? "autonomous"
           : "manual",
     },
@@ -399,8 +383,8 @@ export function resolveWalletRuntimeConfig(
       capsEnabled:
         typeof walletRuntime?.policy?.capsEnabled === "boolean"
           ? walletRuntime.policy.capsEnabled
-          : hasExplicitPositiveCaps(walletRuntime?.policy),
-      directSigning: walletRuntime?.policy?.directSigning ?? true,
+          : true,
+      directSigning: walletRuntime?.policy?.directSigning ?? false,
       skillsEnabled: walletRuntime?.policy?.skillsEnabled === true,
       solana: {
         allowPrograms: (walletRuntime?.policy?.solana?.allowPrograms ?? [])

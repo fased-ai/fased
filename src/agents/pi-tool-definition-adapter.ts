@@ -77,6 +77,21 @@ function stringifyToolPayload(payload: unknown): string {
   return String(payload);
 }
 
+function normalizeClientToolParams(params: unknown): Record<string, unknown> {
+  if (isPlainObject(params)) {
+    return params;
+  }
+  if (typeof params !== "string") {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(params.trim());
+    return isPlainObject(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 function normalizeToolExecutionResult(params: {
   toolName: string;
   result: unknown;
@@ -258,9 +273,10 @@ export function toClientToolDefinitions(
       parameters: func.parameters as ToolDefinition["parameters"],
       execute: async (...args: ToolExecuteArgs): Promise<AgentToolResult<unknown>> => {
         const { toolCallId, params } = splitToolExecuteArgs(args);
+        const normalizedParams = normalizeClientToolParams(params);
         const outcome = await runBeforeToolCallHook({
           toolName: func.name,
-          params,
+          params: normalizedParams,
           toolCallId,
           ctx: hookContext,
         });

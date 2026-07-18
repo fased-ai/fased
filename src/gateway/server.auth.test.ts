@@ -338,6 +338,7 @@ describe("gateway server auth/connect", () => {
     let port: number;
 
     beforeAll(async () => {
+      testState.gatewayAuth = { mode: "token", token: "test-gateway-token-1234567890" };
       port = await getFreePort();
       server = await startGatewayServer(port);
     });
@@ -766,6 +767,7 @@ describe("gateway server auth/connect", () => {
     beforeAll(async () => {
       prevToken = process.env.FASED_GATEWAY_TOKEN;
       process.env.FASED_GATEWAY_TOKEN = "secret";
+      testState.gatewayAuth = { mode: "token" };
       port = await getFreePort();
       server = await startGatewayServer(port);
     });
@@ -840,6 +842,26 @@ describe("gateway server auth/connect", () => {
       const ws = await openWs(port);
       const res = await connectReq(ws, { skipDefaultAuth: true });
       expect(res.ok).toBe(true);
+      ws.close();
+    });
+
+    test("rejects a loopback websocket carrying proxy-origin headers", async () => {
+      const ws = await openWs(port, { "x-forwarded-for": "203.0.113.10" });
+      const res = await connectReq(ws, { skipDefaultAuth: true });
+      expect(res.ok).toBe(false);
+      expect(res.error?.message ?? "").toContain("unauthorized");
+      ws.close();
+    });
+
+    test("rejects a headerless websocket from a configured loopback proxy peer", async () => {
+      const { writeConfigFile } = await import("../config/config.js");
+      await writeConfigFile({
+        gateway: { trustedProxies: ["127.0.0.1/32", "::1/128"] },
+      });
+      const ws = await openWs(port);
+      const res = await connectReq(ws, { skipDefaultAuth: true });
+      expect(res.ok).toBe(false);
+      expect(res.error?.message ?? "").toContain("unauthorized");
       ws.close();
     });
   });

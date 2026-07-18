@@ -57,12 +57,10 @@ Ubuntu LTS is the recommended first VPS target. Fedora and RHEL-family systems
 are also hosted targets. Alpine, Arch, macOS, and FreeBSD are Local/dev install
 targets until their hosted hardening paths are validated separately.
 
-Hosting uses Tailscale and hosted hardening. Run the hosted installer on the VPS
-and approve the Tailscale login URL when Fased prints it:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
-```
+Hosting uses Tailscale and hosted hardening. From the VPS provider root console,
+run the [pre-execution verified tagged installer](/install/vps#3-install-fased-and-connect-through-tailscale),
+then approve the Tailscale login URL when Fased prints it. The verification step
+runs before any Fased shell code receives root authority.
 
 Docs:
 

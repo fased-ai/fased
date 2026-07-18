@@ -92,7 +92,8 @@ describe("Lane 6 Control UI/TUI chat/channel responsiveness event-log audit", ()
     expect(channelController).toContain("channelRuntimeBusy");
     expect(channelController).toContain('"channels.start" | "channels.stop"');
     expect(channelController).toContain("await loadChannels(state, false)");
-    expect(channelController).toContain("state.channelsError = String(err)");
+    expect(channelController).toContain("function formatChannelError(");
+    expect(channelController).toContain("state.channelsError = formatChannelError(err)");
     expect(channelController).not.toContain("control-ui.long-frame");
     expect(channelController).not.toContain("PerformanceObserver");
 

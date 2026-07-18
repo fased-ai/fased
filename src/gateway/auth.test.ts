@@ -46,6 +46,82 @@ describe("gateway auth", () => {
     expect(res.ok).toBe(true);
   });
 
+  it("allows explicit none auth only for a direct loopback request", async () => {
+    const direct = await authorizeGatewayConnect({
+      auth: { mode: "none", allowTailscale: false },
+      req: {
+        socket: { remoteAddress: "127.0.0.1" },
+        headers: { host: "127.0.0.1" },
+      } as never,
+    });
+    expect(direct).toMatchObject({ ok: true, method: "none" });
+
+    const forwarded = await authorizeGatewayConnect({
+      auth: { mode: "none", allowTailscale: false },
+      req: {
+        socket: { remoteAddress: "127.0.0.1" },
+        headers: { "x-forwarded-for": "203.0.113.10" },
+      } as never,
+    });
+    expect(forwarded).toMatchObject({ ok: false, reason: "unauthorized" });
+
+    const emptyForwarded = await authorizeGatewayConnect({
+      auth: { mode: "none", allowTailscale: false },
+      req: {
+        socket: { remoteAddress: "127.0.0.1" },
+        headers: { "x-forwarded-for": "" },
+      } as never,
+    });
+    expect(emptyForwarded).toMatchObject({ ok: false, reason: "unauthorized" });
+
+    const viaProxy = await authorizeGatewayConnect({
+      auth: { mode: "none", allowTailscale: false },
+      req: {
+        socket: { remoteAddress: "127.0.0.1" },
+        headers: { via: "1.1 local-proxy" },
+      } as never,
+    });
+    expect(viaProxy).toMatchObject({ ok: false, reason: "unauthorized" });
+
+    const remote = await authorizeGatewayConnect({
+      auth: { mode: "none", allowTailscale: false },
+      req: {
+        socket: { remoteAddress: "203.0.113.10" },
+        headers: {},
+      } as never,
+    });
+    expect(remote).toMatchObject({ ok: false, reason: "unauthorized" });
+
+    const trustedProxyPeer = await authorizeGatewayConnect({
+      auth: { mode: "none", allowTailscale: false },
+      req: {
+        socket: { remoteAddress: "10.20.30.40" },
+        headers: {},
+      } as never,
+      trustedProxies: ["10.0.0.0/8"],
+    });
+    expect(trustedProxyPeer).toMatchObject({ ok: false, reason: "unauthorized" });
+
+    const trustedLoopbackProxyPeer = await authorizeGatewayConnect({
+      auth: { mode: "none", allowTailscale: false },
+      req: {
+        socket: { remoteAddress: "127.0.0.1" },
+        headers: {},
+      } as never,
+      trustedProxies: ["127.0.0.1/32"],
+    });
+    expect(trustedLoopbackProxyPeer).toMatchObject({ ok: false, reason: "unauthorized" });
+
+    const tailscaleProxyAmbiguity = await authorizeGatewayConnect({
+      auth: { mode: "none", allowTailscale: true },
+      req: {
+        socket: { remoteAddress: "127.0.0.1" },
+        headers: {},
+      } as never,
+    });
+    expect(tailscaleProxyAmbiguity).toMatchObject({ ok: false, reason: "unauthorized" });
+  });
+
   it("reports missing and mismatched token reasons", async () => {
     const missing = await authorizeGatewayConnect({
       auth: { mode: "token", token: "secret", allowTailscale: false },

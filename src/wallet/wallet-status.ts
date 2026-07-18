@@ -1,7 +1,6 @@
 import { loadConfig, type FasedAgentConfig } from "../config/config.js";
 import type { WalletProviderId } from "../config/types.wallet.js";
 import { readWalletApprovalAuthSnapshot } from "./wallet-approval-auth.js";
-import { readWalletCustodyStatus } from "./wallet-custody.js";
 import { resolveWalletPolicyConfig } from "./wallet-policy.js";
 import { readWalletProviderRegistry } from "./wallet-provider-registry.js";
 import {
@@ -88,7 +87,6 @@ export type WalletStatusSnapshot = {
     }>;
     statePath: string;
   };
-  custody: ReturnType<typeof readWalletCustodyStatus>;
   addresses?: {
     solana?: string;
   };
@@ -115,7 +113,6 @@ export async function readWalletStatusSnapshot(params?: {
   config?: FasedAgentConfig;
   env?: NodeJS.ProcessEnv;
   walletId?: string;
-  approvalHost?: string;
 }): Promise<WalletStatusSnapshot> {
   const env = params?.env ?? process.env;
   const cfg = params?.config ?? loadConfig();
@@ -133,13 +130,6 @@ export async function readWalletStatusSnapshot(params?: {
   const statePaths = resolveWalletStatePaths(effectiveEnv);
   const approvalAuth = readWalletApprovalAuthSnapshot(effectiveEnv, cfg);
   const checkedAt = new Date().toISOString();
-  const custody = readWalletCustodyStatus({
-    wallet: resolved,
-    env: effectiveEnv,
-    cfg,
-    walletId: params?.walletId,
-    approvalHost: params?.approvalHost,
-  });
 
   let providerHealth: { ok: boolean; details?: string } = {
     ok: false,
@@ -207,7 +197,6 @@ export async function readWalletStatusSnapshot(params?: {
       },
     },
     approvalAuth,
-    custody,
     addresses,
     paths: {
       rootDir: paths.rootDir,

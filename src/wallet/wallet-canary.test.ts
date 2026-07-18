@@ -44,28 +44,6 @@ function baseStatus(): WalletStatusSnapshot {
       passkeys: [],
       statePath: "/tmp/approval-auth.json",
     },
-    custody: {
-      mode: "single-key",
-      target: {
-        walletId: "agent-1",
-        role: "agent",
-      },
-      scope: {
-        chains: ["solana"],
-        allowPrograms: [],
-        solana: { maxPerTx: "1", maxDaily: "10" },
-      },
-      unlock: {
-        active: false,
-      },
-      phase2: {
-        complete: false,
-        splitKeyEnabled: false,
-        passkeyCeremonyEnabled: false,
-        ephemeralReconstructionEnabled: false,
-        notes: [],
-      },
-    },
     paths: {
       rootDir: "/tmp/wallet",
       keysPath: "/tmp/wallet/keys.json",

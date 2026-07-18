@@ -20,6 +20,33 @@ type TestCommandOptions = {
   env?: NodeJS.ProcessEnv;
 };
 
+const SOURCE_RELEASE_COMMIT = "a".repeat(40);
+
+const sourceReleaseFetch = vi.fn(async (input: string | URL | Request) => {
+  const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
+  const match = url.pathname.match(
+    /\/download\/(v[^/]+)\/(fased-hosted-release-v2\.json(?:\.attestation\.json)?)$/u,
+  );
+  if (!match) {
+    return new Response("not found", { status: 404 });
+  }
+  if (match[2].endsWith(".attestation.json")) {
+    return new Response(JSON.stringify({ bundle: "test-only" }), { status: 200 });
+  }
+  const tag = match[1];
+  const version = tag.slice(1);
+  return new Response(
+    JSON.stringify({
+      schemaVersion: 2,
+      release: { version, tag, commit: SOURCE_RELEASE_COMMIT },
+      signer: {
+        release: { version, commit: SOURCE_RELEASE_COMMIT, development: false },
+      },
+    }),
+    { status: 200 },
+  );
+});
+
 function createRunner(responses: Record<string, CommandResponse>) {
   const calls: string[] = [];
   const runner = async (argv: string[]) => {
@@ -89,6 +116,9 @@ describe("runGatewayUpdate", () => {
       if (key === `git -C ${tempDir} tag --list v* --sort=-v:refname`) {
         return { stdout: `${params.stableTag}\n`, stderr: "", code: 0 };
       }
+      if (key === `git -C ${tempDir} rev-parse ${params.stableTag}^{commit}`) {
+        return { stdout: `${SOURCE_RELEASE_COMMIT}\n`, stderr: "", code: 0 };
+      }
       if (key === `git -C ${tempDir} checkout --detach ${params.stableTag}`) {
         return { stdout: "", stderr: "", code: 0 };
       }
@@ -148,6 +178,9 @@ describe("runGatewayUpdate", () => {
       [`git -C ${tempDir} status --porcelain -- :!dist/control-ui/`]: { stdout: "" },
       [`git -C ${tempDir} fetch --all --prune --tags`]: { stdout: "" },
       [`git -C ${tempDir} tag --list v* --sort=-v:refname`]: { stdout: `${tagOutput}\n` },
+      [`git -C ${tempDir} rev-parse ${stableTag}^{commit}`]: {
+        stdout: `${SOURCE_RELEASE_COMMIT}\n`,
+      },
       [`git -C ${tempDir} checkout --detach ${stableTag}`]: { stdout: "" },
     };
   }
@@ -185,7 +218,9 @@ describe("runGatewayUpdate", () => {
       ...(options?.channel ? { channel: options.channel } : {}),
       ...(options?.tag ? { tag: options.tag } : {}),
       ...(options?.allowDevFallback ? { allowDevFallback: options.allowDevFallback } : {}),
-      hostedReleaseFetch: options?.hostedReleaseFetch ?? null,
+      hostedReleaseFetch:
+        options?.hostedReleaseFetch ??
+        ((options?.cwd ?? tempDir) === tempDir ? sourceReleaseFetch : null),
       ...(options?.hostedReleaseBaseUrl
         ? { hostedReleaseBaseUrl: options.hostedReleaseBaseUrl }
         : {}),
@@ -361,6 +396,39 @@ describe("runGatewayUpdate", () => {
     expect(calls).toContain(`git -C ${tempDir} checkout --detach ${stableTag}`);
     expect(calls.some((call) => call.includes("rev-list"))).toBe(false);
     expect(calls.some((call) => call.includes("rebase"))).toBe(false);
+  });
+
+  it("does not check out a stable tag when its attested manifest binds another commit", async () => {
+    await setupGitCheckout({ packageManager: "pnpm@8.0.0" });
+    const stableTag = "v1.0.1";
+    const { runner, calls } = createRunner(buildStableTagResponses(stableTag));
+    const tamperedFetch = vi.fn(async (input: string | URL | Request) => {
+      const url = new URL(
+        typeof input === "string" ? input : input instanceof URL ? input : input.url,
+      );
+      if (url.pathname.endsWith(".attestation.json")) {
+        return new Response(JSON.stringify({ bundle: "test-only" }), { status: 200 });
+      }
+      return new Response(
+        JSON.stringify({
+          schemaVersion: 2,
+          release: { version: "1.0.1", tag: stableTag, commit: "c".repeat(40) },
+          signer: {
+            release: { version: "1.0.1", commit: "c".repeat(40), development: false },
+          },
+        }),
+        { status: 200 },
+      );
+    });
+
+    const result = await runWithCommand(runner, {
+      channel: "stable",
+      hostedReleaseFetch: tamperedFetch as typeof fetch,
+    });
+
+    expect(result.status).toBe("error");
+    expect(result.reason).toBe("source-release-attestation-failed");
+    expect(calls).not.toContain(`git -C ${tempDir} checkout --detach ${stableTag}`);
   });
 
   it("stops dev update when fetch fails before resolving upstream SHA", async () => {

@@ -4,9 +4,38 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearConfigCache, writeConfigFile } from "../config/config.js";
+import {
+  buildSignedFederationPeerRequest,
+  FEDERATION_A2A_RPC_PATH,
+} from "../federation/peer-auth-v2.js";
+import { createEphemeralDeviceIdentity, type DeviceIdentity } from "../infra/device-identity.js";
 import { createA2aHandler, type A2aHttpHandler } from "./a2a-http.js";
+import { issueDurableA2aPaymentChallenge } from "./a2a-task-store.js";
+
+const TEST_PAYER = "CktRuQ2mttgRG4jNqNLPBJW7zW6zRE3xBepcGQpXU7Yf";
+const TEST_PAYEE = "GgBaCs3NqYt1dJU3puKoZ3qr7hT4YFj9bZHzszoqkqTD";
+
+async function issueTestPaymentChallenge(params: {
+  taskId: string;
+  senderHandle?: string;
+  offerId?: string;
+  amount?: number;
+  currency?: string;
+  asset?: { kind: "native" | "spl-token"; address?: string };
+}) {
+  return await issueDurableA2aPaymentChallenge({
+    taskId: params.taskId,
+    senderHandle: params.senderHandle ?? "@verified@agent.fased.test",
+    offerId: params.offerId ?? "https://agent.fased.test/offers/general-task-v0",
+    payerAddress: TEST_PAYER,
+    payeeAddress: TEST_PAYEE,
+    amount: params.amount ?? 1,
+    currency: params.currency ?? "SOL",
+    asset: params.asset ?? { kind: "native" },
+  });
+}
 
 type RpcResponse = {
   jsonrpc?: string;
@@ -29,11 +58,25 @@ class MockResponse extends PassThrough {
   }
 }
 
+let testStateDir = "";
+let previousStateDir: string | undefined;
+
+beforeEach(() => {
+  previousStateDir = process.env.FASED_STATE_DIR;
+  testStateDir = fs.mkdtempSync(path.join(os.tmpdir(), "fased-a2a-http-"));
+  process.env.FASED_STATE_DIR = testStateDir;
+});
+
 afterEach(() => {
   vi.restoreAllMocks();
   clearConfigCache();
   delete process.env.FASED_CONFIG_PATH;
-  delete process.env.FASED_STATE_DIR;
+  if (previousStateDir === undefined) {
+    delete process.env.FASED_STATE_DIR;
+  } else {
+    process.env.FASED_STATE_DIR = previousStateDir;
+  }
+  fs.rmSync(testStateDir, { recursive: true, force: true });
 });
 
 function createRequest(opts: {
@@ -90,13 +133,32 @@ function createHandler(params?: {
   federationApiToken?: string;
   includeApBridgeMetadata?: boolean;
   settlementOrchestrator?: Parameters<typeof createA2aHandler>[0]["settlementOrchestrator"];
+  peerIdentity?: DeviceIdentity;
+  peerHandle?: string;
+  peerStatus?: "verified" | "unverified" | "revoked";
 }) {
   return createA2aHandler({
     origin: params?.origin ?? "https://agent.fased.test",
+    defaultHandle: "@agent@agent.fased.test",
     federationBaseUrl: params?.federationBaseUrl,
     federationApiToken: params?.federationApiToken,
     includeApBridgeMetadata: params?.includeApBridgeMetadata,
     settlementOrchestrator: params?.settlementOrchestrator,
+    ...(params?.peerIdentity
+      ? {
+          peerAuthDeps: {
+            directoryLookup: async () => ({
+              status: params.peerStatus ?? "verified",
+              nodeId: params.peerIdentity!.deviceId,
+              handle: params.peerHandle ?? "@verified@agent.fased.test",
+            }),
+            rateLimiter: {
+              check: () => ({ allowed: true, remaining: 100, retryAfterMs: 0 }),
+              recordFailure: () => undefined,
+            },
+          },
+        }
+      : {}),
   });
 }
 
@@ -127,24 +189,43 @@ async function rpcCall(params: {
   method: string;
   rpcParams?: unknown;
   headers?: Record<string, string>;
+  signed?: { identity: DeviceIdentity; senderHandle: string; recipientHandle?: string };
+  expectedStatus?: number;
 }): Promise<RpcResponse> {
+  const body = {
+    jsonrpc: "2.0",
+    id: "test-id",
+    method: params.method,
+    params: params.rpcParams ?? {},
+  };
+  const signed = params.signed
+    ? buildSignedFederationPeerRequest({
+        senderHandle: params.signed.senderHandle,
+        recipientHandle: params.signed.recipientHandle ?? "@agent@agent.fased.test",
+        path: FEDERATION_A2A_RPC_PATH,
+        body,
+        identity: params.signed.identity,
+      })
+    : undefined;
   const response = await invoke(params.handler, {
     method: "POST",
     url: "/a2a",
     headers: {
       "content-type": "application/json",
       ...params.headers,
+      ...signed?.headers,
     },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: "test-id",
-      method: params.method,
-      params: params.rpcParams ?? {},
-    }),
+    body: signed?.body ?? JSON.stringify(body),
   });
   expect(response.handled).toBe(true);
-  expect(response.statusCode).toBe(200);
+  expect(response.statusCode).toBe(params.expectedStatus ?? 200);
   return JSON.parse(response.bodyText) as RpcResponse;
+}
+
+function taskToken(response: RpcResponse): string {
+  const token = (response.result as Record<string, unknown> | undefined)?.taskAccessToken;
+  expect(typeof token).toBe("string");
+  return String(token);
 }
 
 describe("gateway A2A adapter", () => {
@@ -304,9 +385,8 @@ describe("gateway A2A adapter", () => {
   });
 
   it("publishes settlement defaults from the Agent seller wallet", async () => {
-    const stateDir = "/tmp/fased-a2a-http-test-state";
+    const stateDir = testStateDir;
     const walletDir = `${stateDir}/wallet`;
-    process.env.FASED_STATE_DIR = stateDir;
     fs.mkdirSync(walletDir, { recursive: true });
     fs.writeFileSync(
       `${walletDir}/provider-registry.v1.json`,
@@ -362,12 +442,13 @@ describe("gateway A2A adapter", () => {
     });
     expect(create.error).toBeUndefined();
     const taskId = (create.result as Record<string, unknown>).taskId;
+    const accessToken = taskToken(create);
     expect(typeof taskId).toBe("string");
 
     const streamResponse = await invoke(handler, {
       method: "GET",
       url: `/a2a/stream?taskId=${encodeURIComponent(String(taskId))}`,
-      headers: { accept: "text/event-stream" },
+      headers: { accept: "text/event-stream", "x-fased-task-token": accessToken },
     });
     expect(streamResponse.statusCode).toBe(200);
     expect(streamResponse.contentType).toMatch(/text\/event-stream/);
@@ -377,10 +458,100 @@ describe("gateway A2A adapter", () => {
     const get = await rpcCall({
       handler,
       method: "tasks.get",
-      rpcParams: { taskId },
+      rpcParams: { taskId, taskAccessToken: accessToken },
     });
     expect(get.error).toBeUndefined();
     expect(typeof (get.result as Record<string, unknown>).status).toBe("string");
+  });
+
+  it("returns the same durable task for an exact duplicate id and rejects changed payloads", async () => {
+    const handler = createHandler();
+    const task = {
+      taskId: "durable-duplicate-task-1",
+      prompt: "exactly once",
+    };
+    const first = await rpcCall({
+      handler,
+      method: "tasks.create",
+      rpcParams: { senderHandle: "@alice@agent.fased.test", task },
+    });
+    const accessToken = taskToken(first);
+    const duplicate = await rpcCall({
+      handler,
+      method: "tasks.create",
+      rpcParams: {
+        senderHandle: "@alice@agent.fased.test",
+        task,
+        taskAccessToken: accessToken,
+      },
+    });
+    expect((first.result as Record<string, unknown>).taskId).toBe(task.taskId);
+    expect((duplicate.result as Record<string, unknown>).taskId).toBe(task.taskId);
+
+    const collision = await rpcCall({
+      handler,
+      method: "tasks.create",
+      rpcParams: {
+        senderHandle: "@alice@agent.fased.test",
+        task: { ...task, prompt: "changed after binding" },
+        taskAccessToken: accessToken,
+      },
+    });
+    expect(collision.error?.code).toBe(-32054);
+    expect(collision.error?.message).toContain("different immutable task intent");
+  });
+
+  it("does not expose or cancel a task without its capability token", async () => {
+    const handler = createHandler();
+    const created = await rpcCall({
+      handler,
+      method: "tasks.create",
+      rpcParams: { task: { taskId: "private-task-1", prompt: "private result" } },
+    });
+    expect(created.error).toBeUndefined();
+
+    const unauthorizedGet = await rpcCall({
+      handler,
+      method: "tasks.get",
+      rpcParams: { taskId: "private-task-1", taskAccessToken: "wrong-token" },
+    });
+    const unauthorizedCancel = await rpcCall({
+      handler,
+      method: "tasks.cancel",
+      rpcParams: { taskId: "private-task-1", taskAccessToken: "wrong-token" },
+    });
+
+    expect(unauthorizedGet.error?.code).toBe(-32044);
+    expect(unauthorizedCancel.error?.code).toBe(-32044);
+  });
+
+  it("loads completed tasks from durable state after a handler restart", async () => {
+    const taskId = "durable-restart-task-1";
+    const firstHandler = createHandler();
+    const created = await rpcCall({
+      handler: firstHandler,
+      method: "tasks.create",
+      rpcParams: {
+        senderHandle: "@alice@agent.fased.test",
+        task: { taskId, prompt: "survive restart" },
+      },
+    });
+    expect(created.error).toBeUndefined();
+    const accessToken = taskToken(created);
+    await new Promise((resolve) => setTimeout(resolve, 90));
+
+    const restartedHandler = createHandler();
+    const restored = await rpcCall({
+      handler: restartedHandler,
+      method: "tasks.get",
+      rpcParams: { taskId, taskAccessToken: accessToken },
+    });
+    expect(restored.error).toBeUndefined();
+    expect(restored.result).toMatchObject({
+      taskId,
+      status: "succeeded",
+      output: expect.objectContaining({ taskId, outputText: "ack:survive restart" }),
+    });
   });
 
   it("rejects canonical tasks that reference an unknown offer", async () => {
@@ -434,11 +605,12 @@ describe("gateway A2A adapter", () => {
       },
     });
     expect(create.error).toBeUndefined();
+    const accessToken = taskToken(create);
     await new Promise((resolve) => setTimeout(resolve, 90));
     const get = await rpcCall({
       handler,
       method: "tasks.get",
-      rpcParams: { taskId: "task-canonical-1" },
+      rpcParams: { taskId: "task-canonical-1", taskAccessToken: accessToken },
     });
     expect(get.error).toBeUndefined();
     const output = ((get.result as Record<string, unknown>).output ?? {}) as Record<
@@ -486,11 +658,12 @@ describe("gateway A2A adapter", () => {
       },
     });
     expect(create.error).toBeUndefined();
+    const accessToken = taskToken(create);
     await new Promise((resolve) => setTimeout(resolve, 90));
     const get = await rpcCall({
       handler,
       method: "tasks.get",
-      rpcParams: { taskId: "task-summary-1" },
+      rpcParams: { taskId: "task-summary-1", taskAccessToken: accessToken },
     });
     expect(get.error).toBeUndefined();
     const output = ((get.result as Record<string, unknown>).output ?? {}) as Record<
@@ -506,11 +679,18 @@ describe("gateway A2A adapter", () => {
   });
 
   it("ties paid content.summarize tasks to canonical payment metadata in the result", async () => {
-    mockDirectoryFetch({
-      "@verified@agent.fased.test": "verified",
-    });
+    const peerIdentity = createEphemeralDeviceIdentity();
     const handler = createHandler({
       federationBaseUrl: "https://directory.fased.test",
+      peerIdentity,
+      settlementOrchestrator: async ({ challenge }) => ({
+        status: "executed",
+        mode: "autonomous",
+        txHash: "tx-summary-paid-1",
+        challengeId: challenge?.challengeId,
+        payerAddress: challenge?.payerAddress,
+        paymentMemo: challenge?.paymentMemo,
+      }),
     });
     const offersResponse = await rpcCall({
       handler,
@@ -521,6 +701,13 @@ describe("gateway A2A adapter", () => {
     >;
     const summarizeOffer = offers.find((offer) => offer.serviceKind === "content.summarize");
     expect(summarizeOffer).toBeTruthy();
+    const challenge = await issueTestPaymentChallenge({
+      taskId: "task-summary-paid-1",
+      offerId: String(summarizeOffer?.id),
+      amount: 250000,
+      currency: "USDC",
+      asset: { kind: "spl-token", address: "Mint1111111111111111111111111111111111" },
+    });
 
     const create = await rpcCall({
       handler,
@@ -539,6 +726,8 @@ describe("gateway A2A adapter", () => {
           requestedOutput: "summary-v0",
           invoice: "inv-summary-paid-1",
           receipt: "rcpt-summary-paid-1",
+          challengeId: challenge.challengeId,
+          paymentMemo: challenge.paymentMemo,
           issuedAt: "2026-04-09T00:00:00.000Z",
         },
         invoice: {
@@ -552,6 +741,8 @@ describe("gateway A2A adapter", () => {
           payee: { chain: "solana", address: "Payee111111111111111111111111111111111" },
           issuedAt: "2026-04-09T00:00:00.000Z",
           expiresAt: "2026-04-09T00:10:00.000Z",
+          challengeId: challenge.challengeId,
+          paymentMemo: challenge.paymentMemo,
         },
         receipt: {
           receiptId: "rcpt-summary-paid-1",
@@ -566,15 +757,19 @@ describe("gateway A2A adapter", () => {
           payee: { chain: "solana", address: "Payee111111111111111111111111111111111" },
           txRef: "tx-summary-paid-1",
           settledAt: "2026-04-09T00:01:00.000Z",
+          challengeId: challenge.challengeId,
+          paymentMemo: challenge.paymentMemo,
         },
       },
+      signed: { identity: peerIdentity, senderHandle: "@verified@agent.fased.test" },
     });
     expect(create.error).toBeUndefined();
+    const accessToken = taskToken(create);
     await new Promise((resolve) => setTimeout(resolve, 90));
     const get = await rpcCall({
       handler,
       method: "tasks.get",
-      rpcParams: { taskId: "task-summary-paid-1" },
+      rpcParams: { taskId: "task-summary-paid-1", taskAccessToken: accessToken },
     });
     const output = ((get.result as Record<string, unknown>).output ?? {}) as Record<
       string,
@@ -589,11 +784,10 @@ describe("gateway A2A adapter", () => {
   });
 
   it("rejects paid tasks when invoice.offerId does not match task.offerId", async () => {
-    mockDirectoryFetch({
-      "@verified@agent.fased.test": "verified",
-    });
+    const peerIdentity = createEphemeralDeviceIdentity();
     const handler = createHandler({
       federationBaseUrl: "https://directory.fased.test",
+      peerIdentity,
     });
     const response = await rpcCall({
       handler,
@@ -614,6 +808,7 @@ describe("gateway A2A adapter", () => {
           offerId: "https://agent.fased.test/offers/general-task-v0",
         },
       },
+      signed: { identity: peerIdentity, senderHandle: "@verified@agent.fased.test" },
     });
     expect(response.error?.code).toBe(-32043);
   });
@@ -668,11 +863,10 @@ describe("gateway A2A adapter", () => {
   });
 
   it("allows paid tasks from verified senders", async () => {
-    mockDirectoryFetch({
-      "@verified@agent.fased.test": "verified",
-    });
+    const peerIdentity = createEphemeralDeviceIdentity();
     const handler = createHandler({
       federationBaseUrl: "https://directory.fased.test",
+      peerIdentity,
     });
     const response = await rpcCall({
       handler,
@@ -681,49 +875,151 @@ describe("gateway A2A adapter", () => {
         senderHandle: "@verified@agent.fased.test",
         task: { prompt: "paid", invoiceRef: "inv-2" },
       },
+      signed: { identity: peerIdentity, senderHandle: "@verified@agent.fased.test" },
     });
     expect(response.error).toBeUndefined();
     expect(typeof (response.result as Record<string, unknown>).taskId).toBe("string");
   });
 
-  it("includes settlement result for verified paid tasks", async () => {
-    mockDirectoryFetch({
-      "@verified@agent.fased.test": "verified",
-    });
-    const settlementOrchestrator = vi.fn(async () => ({
-      status: "queued" as const,
-      mode: "manual" as const,
-      requestId: "req-123",
-      invoiceId: "inv-123",
-    }));
+  it("keeps paid tasks queued until settlement executes and safely retries settlement", async () => {
+    const peerIdentity = createEphemeralDeviceIdentity();
+    const settlementOrchestrator = vi
+      .fn()
+      .mockImplementationOnce(async ({ challenge }) => ({
+        status: "queued" as const,
+        mode: "manual" as const,
+        requestId: "req-123",
+        invoiceId: "inv-123",
+        challengeId: challenge?.challengeId,
+      }))
+      .mockImplementationOnce(async ({ challenge }) => ({
+        status: "executed" as const,
+        mode: "autonomous" as const,
+        requestId: "req-123",
+        txHash: "settlement-signature",
+        invoiceId: "inv-123",
+        challengeId: challenge?.challengeId,
+        payerAddress: challenge?.payerAddress,
+        paymentMemo: challenge?.paymentMemo,
+      }));
     const handler = createHandler({
       federationBaseUrl: "https://directory.fased.test",
       settlementOrchestrator,
+      peerIdentity,
     });
+    await issueTestPaymentChallenge({ taskId: "paid-settlement-once-1" });
     const response = await rpcCall({
       handler,
       method: "tasks.create",
       rpcParams: {
         senderHandle: "@verified@agent.fased.test",
         task: {
+          taskId: "paid-settlement-once-1",
           prompt: "paid",
           invoiceRef: "inv-123",
         },
       },
+      signed: { identity: peerIdentity, senderHandle: "@verified@agent.fased.test" },
+    });
+    const accessToken = taskToken(response);
+    await new Promise((resolve) => setTimeout(resolve, 90));
+    const pending = await rpcCall({
+      handler,
+      method: "tasks.get",
+      rpcParams: {
+        taskId: "paid-settlement-once-1",
+        taskAccessToken: accessToken,
+      },
+    });
+    expect((pending.result as Record<string, unknown>).status).toBe("queued");
+
+    const duplicate = await rpcCall({
+      handler,
+      method: "tasks.create",
+      rpcParams: {
+        senderHandle: "@verified@agent.fased.test",
+        task: {
+          taskId: "paid-settlement-once-1",
+          prompt: "paid",
+          invoiceRef: "inv-123",
+        },
+        taskAccessToken: accessToken,
+      },
+      signed: { identity: peerIdentity, senderHandle: "@verified@agent.fased.test" },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 90));
+    const completed = await rpcCall({
+      handler,
+      method: "tasks.get",
+      rpcParams: {
+        taskId: "paid-settlement-once-1",
+        taskAccessToken: accessToken,
+      },
     });
     expect(response.error).toBeUndefined();
+    expect(duplicate.error).toBeUndefined();
     const result = response.result as Record<string, unknown>;
-    expect(settlementOrchestrator).toHaveBeenCalledTimes(1);
+    expect(settlementOrchestrator).toHaveBeenCalledTimes(2);
     expect((result.settlement as Record<string, unknown>)?.status).toBe("queued");
     expect((result.settlement as Record<string, unknown>)?.requestId).toBe("req-123");
+    expect((duplicate.result as Record<string, unknown>).settlement).toMatchObject({
+      status: "executed",
+      txHash: "settlement-signature",
+    });
+    expect((completed.result as Record<string, unknown>).status).toBe("succeeded");
+  });
+
+  it("durably marks a paid task for refund recovery when it is canceled after payment", async () => {
+    const peerIdentity = createEphemeralDeviceIdentity();
+    const handler = createHandler({
+      federationBaseUrl: "https://directory.fased.test",
+      peerIdentity,
+      settlementOrchestrator: vi.fn().mockImplementation(async ({ challenge }) => ({
+        status: "executed" as const,
+        txHash: "paid-before-cancel-signature",
+        invoiceId: "inv-cancel-1",
+        challengeId: challenge?.challengeId,
+        payerAddress: challenge?.payerAddress,
+        paymentMemo: challenge?.paymentMemo,
+      })),
+    });
+    await issueTestPaymentChallenge({ taskId: "paid-cancel-recovery-1" });
+    const created = await rpcCall({
+      handler,
+      method: "tasks.create",
+      rpcParams: {
+        task: {
+          taskId: "paid-cancel-recovery-1",
+          prompt: "paid then canceled",
+          invoiceRef: "inv-cancel-1",
+        },
+      },
+      signed: { identity: peerIdentity, senderHandle: "@verified@agent.fased.test" },
+    });
+    const accessToken = taskToken(created);
+    const canceled = await rpcCall({
+      handler,
+      method: "tasks.cancel",
+      rpcParams: { taskId: "paid-cancel-recovery-1", taskAccessToken: accessToken },
+    });
+
+    expect(canceled.error).toBeUndefined();
+    expect(canceled.result).toMatchObject({
+      status: "canceled",
+      paymentRecovery: {
+        status: "refund-required",
+        paymentTxRef: "paid-before-cancel-signature",
+      },
+    });
   });
 
   it("rejects blocked senders from directory status", async () => {
-    mockDirectoryFetch({
-      "@blocked@agent.fased.test": "revoked",
-    });
+    const peerIdentity = createEphemeralDeviceIdentity();
     const handler = createHandler({
       federationBaseUrl: "https://directory.fased.test",
+      peerIdentity,
+      peerHandle: "@blocked@agent.fased.test",
+      peerStatus: "revoked",
     });
     const response = await rpcCall({
       handler,
@@ -731,6 +1027,8 @@ describe("gateway A2A adapter", () => {
       rpcParams: {
         senderHandle: "@blocked@agent.fased.test",
       },
+      signed: { identity: peerIdentity, senderHandle: "@blocked@agent.fased.test" },
+      expectedStatus: 401,
     });
     expect(response.error?.code).toBe(-32040);
   });

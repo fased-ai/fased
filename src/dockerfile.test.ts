@@ -8,6 +8,13 @@ const dockerfilePath = join(repoRoot, "Dockerfile");
 const dockerignorePath = join(repoRoot, ".dockerignore");
 
 describe("Dockerfile", () => {
+  it("does not execute remote installer scripts during the image build", async () => {
+    const dockerfile = await readFile(dockerfilePath, "utf8");
+
+    expect(dockerfile).not.toMatch(/curl\b[^\n|]*\|\s*(?:ba)?sh\b/u);
+    expect(dockerfile).not.toContain("bun.sh/install");
+  });
+
   it("installs optional browser dependencies after pnpm install", async () => {
     const dockerfile = await readFile(dockerfilePath, "utf8");
     const installIndex = dockerfile.indexOf("pnpm install --frozen-lockfile");
@@ -32,8 +39,25 @@ describe("Dockerfile", () => {
     expect(userInstructions.at(-1)).toBe("USER node");
   });
 
+  it("embeds the release-matched Compose definition used by the transactional updater", async () => {
+    const [dockerfile, dockerignore] = await Promise.all([
+      readFile(dockerfilePath, "utf8"),
+      readFile(dockerignorePath, "utf8"),
+    ]);
+
+    expect(dockerfile).toContain("COPY --chown=node:node . .");
+    expect(dockerignore).not.toMatch(/^docker-compose\.yml$/mu);
+    expect(dockerignore).not.toMatch(/^docker-compose\.\*$/mu);
+    expect(dockerfile).toContain("COPY package.json /src/package.json");
+    expect(dockerfile).toContain('signer_version="$FASED_SIGNER_BUILD_VERSION"');
+    expect(dockerfile).toContain("/src/package.json");
+  });
+
   it("excludes local secrets and operator state from the build context", async () => {
-    const dockerignore = await readFile(dockerignorePath, "utf8");
+    const [dockerignore, dockerfile] = await Promise.all([
+      readFile(dockerignorePath, "utf8"),
+      readFile(dockerfilePath, "utf8"),
+    ]);
     const entries = new Set(
       dockerignore
         .split(/\r?\n/)
@@ -47,12 +71,28 @@ describe("Dockerfile", () => {
       "**/.env.*",
       ".fased",
       "**/.fased",
+      "**/.agents",
+      "**/.claude",
+      "**/.codex",
+      "**/.cursor",
       "**/.ssh",
       "**/.docker/config.json",
+      ".npmrc",
+      "**/.npmrc",
+      "**/.pypirc",
+      "**/.config/gh",
+      "**/.config/gcloud",
+      "**/.config/anthropic",
+      "**/.config/openai",
+      "**/.terraform.d/credentials.tfrc.json",
       "**/.git-credentials",
       "**/.netrc",
       "**/*.pem",
       "**/*.key",
+      "**/*.jks",
+      "**/*.keystore",
+      "**/*.kdbx",
+      "**/*.agekey",
       "**/id_ed25519",
       "**/id_rsa",
     ];
@@ -60,5 +100,6 @@ describe("Dockerfile", () => {
     for (const entry of requiredEntries) {
       expect(entries, `.dockerignore must contain ${entry}`).toContain(entry);
     }
+    expect(dockerfile).not.toMatch(/COPY[^\n]*\.npmrc/u);
   });
 });

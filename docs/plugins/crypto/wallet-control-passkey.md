@@ -1,186 +1,162 @@
 ---
-summary: "How to enable Wallet Control Passkey, approve sends, and operate split-key wallet security deliberately."
+summary: "The separate Gateway Wallet Control Passkey and native signer WebAuthn authorization paths."
 read_when:
-  - You want to turn on passkey-gated wallet approval
-  - You need the operator flow for send approval, unlock, recovery, or device-share handling
+  - Distinguishing the Wallets Access passkey from native signer WebAuthn
+  - Enrolling a credential for native wallet reviews
+  - Comparing passkey approval with hardware-wallet transaction display
 title: "Wallet Control Passkey"
 sidebarTitle: "Wallet passkey"
 ---
 
 # Wallet Control Passkey
 
-Wallet Control Passkey is the approval and ceremony layer for wallet-sensitive
-actions in Fased.
+Fased has two separate WebAuthn layers:
 
-Use it for:
+- **Wallet Control Passkey** in the Wallets **Access** tab is Gateway-owned. It
+  authenticates approval requests and settings changes handled by the Gateway.
+- **Signer WebAuthn** is Go-owned. Its credential, exact review challenge, and
+  single-use consumption live inside `fased-signerd`.
 
-- send approvals
-- wallet-control changes
-- wallet security setup
-- unlock
-- recovery
-- device-share and second-device changes
+They are different credential sets. Enrolling or removing a Wallet Control
+Passkey in the Gateway UI does not enroll, list, or remove a signer credential.
+The Gateway UI cannot administer signer credentials.
 
-It is the first approval-control step before you rely on split-key wallet security.
+## What signer WebAuthn authorizes
 
-## What it protects today
+A manual signer review binds the WebAuthn challenge to:
 
-Current behavior is:
+- wallet id and permanent role;
+- exact typed operation;
+- immutable transaction or federation digest;
+- decoded destinations, mints, and amounts;
+- signer policy version and hash;
+- request id, nonce, and short expiry.
 
-- ordinary user sends create an approval request first
-- passkey is used on `Approve`, not on `Create Approval Request`
-- wallet security actions require Wallet Control Passkey before they proceed
+An assertion can execute only that review and is consumed once. Every manual
+native reviewed Agent, Mining, or Vault operation uses this path. Narrowly
+autonomous Agent operations and generated Mining operations instead rely on
+their explicit signer policy and durable caps.
 
-That means passkey is not just cosmetic login decoration.
-It is already part of the wallet-control plane.
+Wallet Control Passkey remains useful Gateway authentication, but a token that
+names only the host, operation, or Gateway request is not signer custody
+authorization and cannot satisfy this challenge.
 
-## Browser and origin requirements
+## What it does not do
 
-Passkeys need a secure browser context.
+WebAuthn does not:
 
-Practical rule:
+- make a deny-all or missing policy executable;
+- allow raw signing or arbitrary serialized transactions;
+- turn a Vault into an autonomous wallet;
+- prove the browser is showing honest transaction intent;
+- protect a Local same-user install from a fully compromised OS account;
+- replace an offline backup/recovery procedure.
 
-- use HTTPS
-- or use `http://localhost:18789` on the gateway host
+The Control UI is served by the Gateway. For high-value manual Vault work, a
+hardware wallet that displays the account and transaction on-device is a
+stronger review surface.
 
-If you are browsing from a different machine over plain HTTP, passkey behavior
-may fail even when the wallet setup itself is healthy.
+## Enrollment prerequisites
 
-## Step 1: enable passkey approval
+- the version-matched native signer is healthy;
+- the enrollment origin/RP configuration matches the loopback ceremony;
+- the operator is connected locally or through the private Hosting admin path.
 
-In the Wallets page:
+Signer enrollment is global; no wallet, policy, or RPC is required merely to
+register the credential. Before executing a review, separately verify the
+wallet id/role/address, explicit policy hash, and both RPC planes:
 
-1. open **Wallets**
-2. open the `Access` tab
-3. find `Wallet Control Passkey`
-4. click `Enable passkey approval`
+```bash
+fased wallet signer doctor --json
+fased wallet status --json
+```
 
-After that, Fased is in passkey mode but still not ready until a passkey is enrolled.
+## Enroll on Local Linux, macOS, or WSL2
 
-## Step 2: enroll the first passkey
+Use the loopback-only enrollment launcher installed with the signer. Run it as
+the same signed-in user that owns the Local signer. Do not use native Windows
+PowerShell; run it inside WSL2 Ubuntu.
 
-Still in `Wallet Control Passkey`:
+```bash
+"$HOME/.fased/bin/fased-signer-enroll" "Primary security key"
+```
 
-1. optionally set a label
-2. click `Enroll passkey`
-3. complete the browser's passkey ceremony
+The launcher prints a short-lived `http://localhost:18791/...` URL. On WSL2,
+open that exact URL in the normal Windows browser through WSL localhost
+forwarding. Never create a Windows `portproxy` or firewall rule for port
+`18791`. Verify the signer lists the new public credential metadata.
 
-Once enrolled, Wallet Control Passkey becomes the normal gate for:
+## Enroll on VPS Hosting
 
-- approving sends
-- changing wallet controls
-- setting up split-key security
-- unlock and recovery actions
+The Gateway account cannot reach the control socket and has no signer sudo.
+Start enrollment from an authenticated host-administrator session:
 
-## Step 3: use passkey in the send flow
+```bash
+sudo /usr/local/sbin/fased-signer-enroll "Primary security key"
+```
 
-The current send flow is:
+Use the private loopback/Tailscale procedure printed by the launcher. Do not
+expose an enrollment port publicly and do not add a Gateway/HTTP relay to the
+control socket.
 
-1. open the send modal
-2. choose source wallet, chain, amount, and destination
-3. click `Create Approval Request`
-4. review the pending request
-5. click `Approve`
-6. complete passkey verification if enabled
-7. let Fased execute and log the send
+## Local Docker
 
-This matters because the passkey is attached to approval, not to typing the form.
+Local Docker provides a one-shot loopback-only enrollment helper that talks to
+the signer control socket without mounting signer state into the Gateway. Use
+the exact command in [Docker](/install/docker).
 
-## Step 4: turn on wallet security
+Docker support is Local only. Do not use it as a replacement for the Hosting
+signer account/service boundary.
 
-For Agent and Vault wallets, you can then enable split-key custody.
+## Review and execute
 
-Current operator flow:
+The Wallets page renders the exact review intent. Confirm the source,
+destination, mint, amount, decoded programs, policy hash, request id, and
+expiry. Gateway approval authentication may happen first; signer WebAuthn is
+then completed for the exact native review. Neither gate substitutes for the
+other.
 
-1. select the wallet
-2. go to its security section
-3. initialize split-key security
-4. export or print the recovery share
-5. decide whether this browser may keep an encrypted device share
+If a result is uncertain:
 
-After setup:
+- do not click repeatedly;
+- do not change parameters and try again;
+- query the existing review/request state;
+- reconcile the stored signature or signed bytes.
 
-- the wallet is locked by default
-- unlock requires Wallet Control Passkey plus device or recovery share
+Signed expired reviews may be recovered only from the exact signer-owned
+artifact. Unsigned expired reviews are rejected.
 
-Mining keeps its own Satcoin-only controls instead of mirroring the full Agent or
-Vault security panel.
+## Credential operations and recovery
 
-## Device share and recovery share
+The current native admin protocol supports signer credential registration and
+listing; it does not support signer credential removal. Do not mistake the
+Gateway UI's Wallet Control Passkey removal button for native signer removal.
+Keep recoverable authenticators according to your security model and record
+only public credential metadata; never store a wallet key or recovery phrase in
+the passkey file.
 
-The current split-key model has two operator responsibilities:
+If signer WebAuthn state is corrupt, Fased fails closed and preserves it. Do not
+delete the state to bypass approval. Restore or repair it using the native
+admin procedure and confirm the wallet/policy hashes before resuming.
 
-- device share
-- recovery share
+## Passkey versus custody lane
 
-Device share:
+| Control                         | Best use                                                                 |
+| ------------------------------- | ------------------------------------------------------------------------ |
+| Gateway Wallet Control Passkey  | Authenticate Gateway approvals and settings; not signer custody          |
+| Native signer WebAuthn          | Exact manual native Agent, Mining, or hot/warm Vault review              |
+| Wallet Standard hardware wallet | On-device manual Vault review; Fased stores public address only          |
+| Turnkey policy                  | Provider-managed manual signing under an independent organization policy |
+| Agent signer caps               | Narrow unattended Agent authority; not a passkey replacement             |
+| Mining typed policy             | SAT-only automation plus configured SOL fee/capital movement             |
 
-- belongs on a trusted browser or second device
-- can be exported for second-device setup
-- should not be stored together with the recovery share
-
-Recovery share:
-
-- is the offline backup
-- should be downloaded, printed, or otherwise stored offline
-- should stay separate from both the host and any device share
-
-If you lose the browser-stored device share, the recovery share is the thing
-that gets you back in.
-
-## Encrypted browser storage
-
-Some browsers can keep the current device share in encrypted browser storage.
-
-That is helpful. The recovery share remains the real backup.
-
-Practical rule:
-
-- encrypted browser storage is convenience for this client
-- offline recovery share is the real backup
-
-If the browser or authenticator does not support the required passkey storage
-path, keep the device share manual on that client.
-
-## Unlock, recovery, and second device
-
-Current operator model:
-
-- `unlock` opens a signing window for a secured wallet
-- `recover` rotates the wallet onto a new device share and new recovery share
-- `enroll device` creates a second-device handoff
-- `revoke device` removes a stale or lost device share
-
-Best practice:
-
-- unlock only when you intend to sign
-- recover immediately if a device share is lost or compromised
-- after recovery, export the new recovery share right away
-
-## Best practices
-
-- enroll at least one passkey before turning on wallet security
-- keep passkey, device share, and recovery share as three separate concerns
-- keep the recovery share offline
-- do not rely on one browser profile as your only recovery path
-- do not remove the last passkey while secured wallets still depend on it
-
-## Scope
-
-Wallet Control Passkey is already real for approval and ceremony.
-
-A passkey approval gate is one part of wallet protection. Split-key custody,
-small working balances, signer isolation, and recovery discipline remain part
-of the wallet security model.
-
-For the deeper operator model, see:
-
-- [Autonomous wallet security](/plugins/crypto/wallet-autonomous-security)
-- [Autonomous wallet sessions](/plugins/crypto/wallet-autonomous-sessions)
+The old split-passphrase/custody-unlock model is not the production custody
+path. Do not rely on legacy split-key UI or Node custody routes.
 
 ## Related docs
 
-- [Wallet](/plugins/crypto/wallet-page)
-- [Self-hosted wallet signer](/plugins/crypto/wallet-self-hosted)
 - [Wallet operations and security](/plugins/crypto/wallet-production-flow)
-- [Mining](/plugins/crypto/mining-page)
+- [Self-hosted wallet signer](/plugins/crypto/wallet-self-hosted)
+- [Wallet signer architecture](/plugins/crypto/wallet-signer-provider-architecture)
+- [Wallet roles and policies](/plugins/crypto/wallet-roles-and-policies)
+- [Windows (WSL2)](/platforms/windows)

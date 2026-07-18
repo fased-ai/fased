@@ -212,7 +212,7 @@ const coreEntries: CoreCliEntry[] = [
     commands: [
       {
         name: "wallet",
-        description: "Wallet providers, keystore, custody, and policy status",
+        description: "Wallet providers, signer keys, and policy status",
         hasSubcommands: true,
       },
     ],

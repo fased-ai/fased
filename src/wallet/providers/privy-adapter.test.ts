@@ -18,13 +18,13 @@ function createAdapter(defaultSolanaAddress?: string) {
 }
 
 describe("PrivyAdapter", () => {
-  test("reports Solana-only wallet discovery health", async () => {
+  test("reports discovery-only Privy configuration as unavailable", async () => {
     const adapter = createAdapter("So11111111111111111111111111111111111111112");
 
     const health = await adapter.health();
     const addresses = await adapter.getAddresses();
 
-    expect(health.ok).toBe(true);
+    expect(health.ok).toBe(false);
     expect(health.configured).toBe(true);
     expect(adapter.capabilities.supportedChains).toEqual(["solana"]);
     expect(adapter.capabilities.supportsSend).toBe(false);

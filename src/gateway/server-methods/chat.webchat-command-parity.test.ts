@@ -320,22 +320,29 @@ describe("WebChat deterministic command parity", () => {
     );
   });
 
-  it("routes bare @wallet balance before the model when thinking is selected", async () => {
+  it("routes wallet-like prose through the model when a thinking directive is selected", async () => {
+    vi.mocked(dispatchReplyFromConfig).mockImplementationOnce(async ({ dispatcher }) => {
+      const queuedFinal = dispatcher.sendFinalReply({ text: "model response" });
+      return { queuedFinal, counts: dispatcher.getQueuedCounts() };
+    });
+
     const context = await sendWebChatCommand({
       message: "Show @wallet balance.",
       thinking: "medium",
       idempotencyKey: "webchat-wallet-thinking",
     });
 
-    expect(executeWalletChatCommand).toHaveBeenCalledWith(
+    expect(executeWalletChatCommand).not.toHaveBeenCalled();
+    expect(dispatchReplyFromConfig).toHaveBeenCalledWith(
       expect.objectContaining({
-        command: expect.objectContaining({ action: "balance", args: { action: "balance" } }),
-        sessionKey: "main",
+        ctx: expect.objectContaining({
+          Body: "Show @wallet balance.",
+          BodyForCommands: "/think medium Show @wallet balance.",
+        }),
       }),
     );
-    expect(dispatchReplyFromConfig).not.toHaveBeenCalled();
     expect(extractFirstTextBlock(vi.mocked(context.broadcast).mock.calls.at(-1)?.[1])).toBe(
-      "wallet command ok",
+      "model response",
     );
   });
 

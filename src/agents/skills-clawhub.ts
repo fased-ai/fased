@@ -34,6 +34,9 @@ export type ClawHubSkillOrigin = {
   slug: string;
   installedVersion: string;
   installedAt: number;
+  archiveSha256?: string;
+  archiveIntegrityVerified?: boolean;
+  contentSha256?: string;
   permissions?: SkillMarketplacePermissionSummary;
   installScan?: SkillMarketplaceArchiveScan;
   lastUpdateReview?: SkillMarketplaceUpdateReview;
@@ -53,6 +56,9 @@ export type ClawHubSkillsLockfile = {
     {
       version: string;
       installedAt: number;
+      archiveSha256?: string;
+      archiveIntegrityVerified?: boolean;
+      contentSha256?: string;
     }
   >;
 };
@@ -352,7 +358,12 @@ async function resolveInstallVersion(params: {
   slug: string;
   version?: string;
   baseUrl?: string;
-}): Promise<{ detail: ClawHubSkillDetail; version: string }> {
+}): Promise<{
+  detail: ClawHubSkillDetail;
+  version: string;
+  expectedIntegrity?: string;
+  expectedSha256?: string;
+}> {
   const detail = await fetchClawHubSkillDetail({
     slug: params.slug,
     baseUrl: params.baseUrl,
@@ -364,9 +375,19 @@ async function resolveInstallVersion(params: {
   if (!resolvedVersion) {
     throw new Error(`Skill "${params.slug}" has no installable version.`);
   }
+  const versionMetadataMatches = detail.latestVersion?.version === resolvedVersion;
+  const expectedIntegrity = versionMetadataMatches ? detail.latestVersion?.integrity : undefined;
+  const expectedSha256 = versionMetadataMatches ? detail.latestVersion?.sha256 : undefined;
+  if (!expectedIntegrity && !expectedSha256) {
+    throw new Error(
+      `Skill "${params.slug}"@${resolvedVersion} has no registry-published archive digest; refusing an unverifiable install.`,
+    );
+  }
   return {
     detail,
     version: resolvedVersion,
+    expectedIntegrity,
+    expectedSha256,
   };
 }
 
@@ -490,10 +511,10 @@ function buildMarketplaceUpdateReview(params: {
       message: finding.message,
     }));
   const reasons: string[] = [];
-  if (params.isUpdate && params.permissions.risky && permissionDigestChanged) {
+  if (params.permissions.risky && permissionDigestChanged) {
     reasons.push("requested permissions changed");
   }
-  if (params.isUpdate && addedScanFindings.length > 0) {
+  if (addedScanFindings.length > 0) {
     reasons.push("archive scan added reviewable findings");
   }
   return {
@@ -514,7 +535,7 @@ function assertUpdateReviewAllowed(params: {
 }): void {
   if (params.review.approvalRequired && params.allowPermissionChanges !== true) {
     throw new Error(
-      `ClawHub skill update requires permission review (${params.review.reasons.join(
+      `ClawHub skill install or update requires permission review (${params.review.reasons.join(
         ", ",
       )}); rerun with explicit permission-change approval.`,
     );
@@ -531,7 +552,7 @@ async function performClawHubSkillInstall(
       allowRegistries: params.allowRegistries,
       allowTrackedLegacyOrigin: params.force && Boolean(params.previousOrigin),
     });
-    const { detail, version } = await resolveInstallVersion({
+    const { detail, version, expectedIntegrity, expectedSha256 } = await resolveInstallVersion({
       slug: params.slug,
       version: params.version,
       baseUrl: params.baseUrl,
@@ -549,11 +570,14 @@ async function performClawHubSkillInstall(
       slug: params.slug,
       version,
       baseUrl: params.baseUrl,
+      expectedIntegrity,
+      expectedSha256,
     });
     try {
       let extractedPermissions: SkillMarketplacePermissionSummary | null = null;
       let archiveScan: SkillMarketplaceArchiveScan | null = null;
       let updateReview: SkillMarketplaceUpdateReview | null = null;
+      let contentSha256: string | null = null;
       const install = await withExtractedArchiveRoot({
         archivePath: archive.archivePath,
         tempDirPrefix: "fased-skill-clawhub-",
@@ -572,6 +596,7 @@ async function performClawHubSkillInstall(
             `Marketplace archive scan for ${params.slug}: ${formatArchiveScanFindings(scan)}`,
           );
           const inspection = await inspectSkillMarketplaceManifest(rootDir);
+          contentSha256 = await computeSkillFingerprint(rootDir);
           extractedPermissions = inspection.permissions;
           updateReview = buildMarketplaceUpdateReview({
             previousOrigin: params.previousOrigin,
@@ -609,6 +634,9 @@ async function performClawHubSkillInstall(
       if (!updateReview) {
         throw new Error("failed to review marketplace skill update");
       }
+      if (!contentSha256) {
+        throw new Error("failed to fingerprint marketplace skill content");
+      }
 
       const installedAt = Date.now();
       await writeClawHubSkillOrigin(install.targetDir, {
@@ -617,6 +645,9 @@ async function performClawHubSkillInstall(
         slug: params.slug,
         installedVersion: version,
         installedAt,
+        archiveSha256: archive.sha256,
+        archiveIntegrityVerified: archive.integrityVerified,
+        contentSha256,
         permissions: extractedPermissions,
         installScan: archiveScan,
         lastUpdateReview: updateReview,
@@ -625,6 +656,9 @@ async function performClawHubSkillInstall(
       lock.skills[params.slug] = {
         version,
         installedAt,
+        archiveSha256: archive.sha256,
+        archiveIntegrityVerified: archive.integrityVerified,
+        contentSha256,
       };
       await writeClawHubSkillsLockfile(params.workspaceDir, lock);
 
@@ -698,7 +732,7 @@ async function previewTrackedSkillUpdateFromClawHub(params: {
       allowRegistries: params.allowRegistries,
       allowTrackedLegacyOrigin: Boolean(params.previousOrigin),
     });
-    const { version } = await resolveInstallVersion({
+    const { version, expectedIntegrity, expectedSha256 } = await resolveInstallVersion({
       slug: params.slug,
       baseUrl: params.baseUrl,
     });
@@ -707,6 +741,8 @@ async function previewTrackedSkillUpdateFromClawHub(params: {
       slug: params.slug,
       version,
       baseUrl: params.baseUrl,
+      expectedIntegrity,
+      expectedSha256,
     });
     try {
       const targetDir = resolveSkillInstallDir(params.workspaceDir, params.slug);
@@ -776,7 +812,7 @@ export async function previewSkillInstallFromClawHub(params: {
       registry,
       allowRegistries: params.allowRegistries,
     });
-    const { detail, version } = await resolveInstallVersion({
+    const { detail, version, expectedIntegrity, expectedSha256 } = await resolveInstallVersion({
       slug,
       version: params.version,
       baseUrl: params.baseUrl,
@@ -793,6 +829,8 @@ export async function previewSkillInstallFromClawHub(params: {
       slug,
       version,
       baseUrl: params.baseUrl,
+      expectedIntegrity,
+      expectedSha256,
     });
     try {
       let permissions: SkillMarketplacePermissionSummary | null = null;

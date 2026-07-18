@@ -406,6 +406,14 @@ export type FederationMarketplaceOrderConfig = {
   sellerSyncError?: string;
   sellerSyncedAt?: string;
   sellerAcceptedAt?: string;
+  /** Directory-bound peer identity that first created this inbound record. */
+  peerNodeId?: string;
+  /** Exact remote order identifier bound to the peer identity. */
+  peerRemoteOrderId?: string;
+  /** SHA-256 of the canonical signed order intake body. */
+  peerRequestDigest?: string;
+  /** SHA-256 of the canonical signed delivery body. */
+  peerDeliveryDigest?: string;
   serviceKind?: string;
   title?: string;
   pricing?: FederationOfferPricingConfig;

@@ -35,6 +35,20 @@ mkdir -p "$OUT_DIR"
 mkdir -p "${GOTMPDIR:-$GOTMPDIR_DEFAULT}" "${GOCACHE:-$GOCACHE_DEFAULT}"
 export GOTMPDIR="${GOTMPDIR:-$GOTMPDIR_DEFAULT}"
 export GOCACHE="${GOCACHE:-$GOCACHE_DEFAULT}"
+PACKAGE_VERSION="$(node -p "require(process.argv[1]).version" "${ROOT}/package.json")"
+BUILD_COMMIT="${FASED_SIGNER_BUILD_COMMIT:-$(git -C "${ROOT}" rev-parse HEAD)}"
+IDENTITY_JSON="$(
+  FASED_SIGNER_BUILD_VERSION="${PACKAGE_VERSION}" \
+    FASED_SIGNER_BUILD_COMMIT="${BUILD_COMMIT}" \
+    FASED_SIGNER_BUILD_DEVELOPMENT=false \
+    node "${ROOT}/scripts/fased-signerd-build-identity.mjs" --json
+)"
+IDENTITY_LDFLAGS="$(
+  FASED_SIGNER_BUILD_VERSION="${PACKAGE_VERSION}" \
+    FASED_SIGNER_BUILD_COMMIT="${BUILD_COMMIT}" \
+    FASED_SIGNER_BUILD_DEVELOPMENT=false \
+    node "${ROOT}/scripts/fased-signerd-build-identity.mjs" --ldflags
+)"
 cd "${ROOT}/tools/fased-signerd"
 
 IFS=',' read -r -a target_list <<< "$TARGETS"
@@ -44,10 +58,24 @@ for target in "${target_list[@]}"; do
   arch="${target#*/}"
   asset="fased-signerd-${os}-${arch}"
   echo "Building ${asset}..."
-  CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" "$GO_BIN" build -buildvcs=false -trimpath -ldflags='-s -w' -o "${OUT_DIR}/${asset}" .
+  CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" "$GO_BIN" build -buildvcs=false -trimpath \
+    -ldflags="-s -w -buildid= ${IDENTITY_LDFLAGS}" -o "${OUT_DIR}/${asset}" .
   chmod +x "${OUT_DIR}/${asset}"
   release_assets+=("$asset")
 done
+
+IDENTITY_ASSET="fased-signerd-release.json"
+node -e '
+  const fs = require("node:fs");
+  const identity = JSON.parse(process.argv[1]);
+  fs.writeFileSync(process.argv[2], `${JSON.stringify({ schemaVersion: 1, ...identity }, null, 2)}\n`, { mode: 0o644 });
+' "$IDENTITY_JSON" "${OUT_DIR}/${IDENTITY_ASSET}"
+release_assets+=("${IDENTITY_ASSET}")
+
+NOTICE_ASSET="fased-signerd-third-party-licenses.txt"
+cp "${ROOT}/tools/fased-signerd/THIRD_PARTY_LICENSES/go-webauthn-BSD-3-Clause.txt" \
+  "${OUT_DIR}/${NOTICE_ASSET}"
+release_assets+=("${NOTICE_ASSET}")
 
 (
   cd "$OUT_DIR"

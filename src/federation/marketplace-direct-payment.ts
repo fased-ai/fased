@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import type { FasedAgentConfig } from "../config/config.js";
 import type {
   FederationMarketplaceOrderConfig,
@@ -12,6 +12,12 @@ import {
 } from "../wallet/wallet-provider-registry.js";
 import { resolveWalletRuntimeConfig } from "../wallet/wallet-runtime-config.js";
 import { createOrExecuteWalletSend } from "../wallet/wallet-send-approvals.js";
+import {
+  claimMarketplaceSettlementOrder,
+  reserveMarketplaceSettlementAction,
+  updateMarketplaceSettlementAction,
+  type MarketplaceSettlementPhase,
+} from "./marketplace-settlement-ledger.js";
 import { listLocalMarketplaceOrders, upsertMarketplaceOrderConfig } from "./offers.js";
 import { publishFederationSettlementEvidence } from "./settlement-evidence.js";
 
@@ -50,6 +56,11 @@ export type MarketplaceDirectPaymentResult =
       statusCode: number;
       code: string;
       message: string;
+      state?: "pending" | "unknown" | "evidence_pending";
+      requestId?: string;
+      invoiceId?: string;
+      receiptId?: string;
+      txRef?: string;
     };
 
 const MAX_SAFE_ON_CHAIN_INTEGER = BigInt(Number.MAX_SAFE_INTEGER);
@@ -58,16 +69,20 @@ function fail(
   statusCode: number,
   code: string,
   message: string,
+  details: Omit<
+    Extract<MarketplaceDirectPaymentResult, { ok: false }>,
+    "ok" | "statusCode" | "code" | "message"
+  > = {},
 ): Extract<MarketplaceDirectPaymentResult, { ok: false }> {
-  return { ok: false, statusCode, code, message };
+  return { ok: false, statusCode, code, message, ...details };
 }
 
 function trimString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function createDefaultId(prefix: string): string {
-  return `${prefix}-${Date.now()}-${randomUUID().slice(0, 8)}`;
+function createStableOrderId(prefix: string, orderId: string): string {
+  return `${prefix}-${createHash("sha256").update(orderId.trim()).digest("hex").slice(0, 24)}`;
 }
 
 function parseAssetDecimals(params: {
@@ -111,17 +126,6 @@ function parseHumanAmountToOnChainInteger(amountInput: string, decimals: number)
 
 function normalizeMarketplacePaymentFailure(message: string): string {
   const normalized = message.trim();
-  const lower = normalized.toLowerCase();
-  if (
-    lower.includes("split-key custody requires an active unlock session") ||
-    lower.includes("custody_unlock_required")
-  ) {
-    return [
-      "Buyer Agent wallet is locked by split-key custody.",
-      "Open Wallet, select the Agent wallet, unlock custody with passkey/device share, then retry Pay.",
-      "No funds were moved.",
-    ].join(" ");
-  }
   return normalized || "wallet payment failed";
 }
 
@@ -228,6 +232,17 @@ function normalizePaymentIntent(params: {
   };
 }
 
+function directInitialPhase(order: FederationMarketplaceOrderConfig): MarketplaceSettlementPhase {
+  if (order.settlement?.status === "settled" || order.paymentIntent?.status === "verified") {
+    return "direct_settled";
+  }
+  return order.settlement?.txRef || order.paymentIntent?.txRef ? "direct_paid" : "open";
+}
+
+function isAmbiguousSendFailure(code: string): boolean {
+  return code === "wallet_provider_ambiguous" || code === "wallet_send_in_progress";
+}
+
 export async function payMarketplaceOrderDirect(params: {
   config: FasedAgentConfig;
   orderId: string;
@@ -251,6 +266,14 @@ export async function payMarketplaceOrderDirect(params: {
   }
   if (order.paymentIntent?.status === "verified" || order.settlement?.status === "settled") {
     return fail(409, "already_paid", "marketplace order is already paid");
+  }
+  if (order.paymentIntent?.txRef || order.settlement?.txRef) {
+    return fail(
+      409,
+      "settlement_unknown",
+      "marketplace order already has a transaction reference but is not settled; reconcile it before retrying",
+      { state: "unknown", txRef: order.paymentIntent?.txRef ?? order.settlement?.txRef },
+    );
   }
   const amount = resolvePaymentAmount(order);
   if (!amount) {
@@ -313,172 +336,313 @@ export async function payMarketplaceOrderDirect(params: {
     return fail(409, "wallet_runtime_disabled", "wallet runtime is disabled");
   }
 
-  const nowDate = new Date();
-  const now = nowDate.toISOString();
-  const invoiceId =
-    trimString(order.settlement?.invoiceId) ||
-    trimString(order.receipt?.invoiceId) ||
-    trimString(order.invoiceId) ||
-    createDefaultId("invoice");
-  const receiptId =
-    trimString(order.settlement?.receiptId) ||
-    trimString(order.receipt?.receiptId) ||
-    trimString(order.receiptId) ||
-    createDefaultId("receipt");
-  const taskId = trimString(order.id) || trimString(order.offerId) || params.orderId;
-
-  const send = await deps.createOrExecuteWalletSend({
-    payload: {
-      chain,
-      to: payeeAddress,
-      amount: amountBaseUnits.toString(),
-      ...(asset.kind === "spl-token" ? { program: asset.address } : {}),
-      walletId: wallet.id,
-      walletName: wallet.name,
-      providerId: wallet.providerId,
-      memo: invoiceId,
-    },
-    requestedBy: "marketplace-manual-order",
-    sendPath: "automation",
-    settlementContext: {
-      taskId,
-      invoiceId,
-      senderHandle: order.buyerHandle,
-    },
-    config: walletConfig,
-    runtimeConfig: params.config,
-    providerIdOverride: wallet.providerId,
-    env,
-  });
-  if (!send.ok) {
-    return fail(409, "wallet_payment_failed", normalizeMarketplacePaymentFailure(send.message));
-  }
-  if (send.mode !== "autonomous") {
+  const executionIntentId = `marketplace-order:${entry.configId}:direct-payment`;
+  let releaseSettlement: () => Promise<void>;
+  try {
+    releaseSettlement = await claimMarketplaceSettlementOrder(entry.configId, env);
+  } catch (error) {
     return fail(
       409,
-      "payment_automation_required",
-      "Marketplace payment requires Agent wallet automation to be enabled",
+      "settlement_in_progress",
+      error instanceof Error ? error.message : String(error),
     );
   }
 
-  const txRef = trimString(send.tx.txHash);
-  const payerAddress = resolveWalletAddress({
-    wallet,
-    chain,
-    txSigner: typeof send.tx.signer === "string" ? send.tx.signer : undefined,
-  });
-  const publishSettlement = await deps.publishFederationSettlementEvidence({
-    taskId,
-    invoiceId,
-    senderHandle: order.buyerHandle,
-    txRef,
-    chain,
-    asset,
-    amount: amountBaseUnits.toString(),
-    payeeAddress,
-    providerId: wallet.providerId,
-    walletId: wallet.id,
-    walletName: wallet.name,
-    env,
-  });
-  if (!publishSettlement.ok) {
-    return fail(
-      502,
-      "settlement_evidence_failed",
-      `settlement evidence publish failed: ${publishSettlement.message}`,
-    );
-  }
-  const evidenceRef =
-    typeof publishSettlement.entry?.evidenceRef === "string"
-      ? publishSettlement.entry.evidenceRef
-      : typeof publishSettlement.entry?.settlementId === "string"
-        ? `fased://marketplace/settlements/${publishSettlement.entry.settlementId}`
-        : `tx:${txRef}`;
-  const paymentIntent = normalizePaymentIntent({
-    order,
-    amount,
-    currency,
-    chain,
-    assetKind,
-    assetAddress,
-    assetDecimals,
-    payeeAddress,
-    payerWalletId: wallet.id,
-    txRef,
-    now,
-  });
-  const result = upsertMarketplaceOrderConfig({
-    config: params.config,
-    input: {
-      ...order,
-      id: entry.configId,
-      status: order.status === "delivered" ? "delivered" : "running",
-      paymentIntent,
-      settlement: {
-        ...order.settlement,
-        mode: "direct",
-        status: "settled",
-        amount,
-        currency,
+  try {
+    let workflow;
+    try {
+      workflow = reserveMarketplaceSettlementAction({
+        orderId: entry.configId,
+        action: "direct",
+        executionIntentId,
+        initialPhase: directInitialPhase(order),
+        intent: {
+          chain,
+          asset,
+          amount: amountBaseUnits.toString(),
+          payeeAddress,
+          payerWalletId: wallet.id,
+          buyerHandle: order.buyerHandle,
+        },
+        env,
+      });
+    } catch (error) {
+      return fail(
+        409,
+        "settlement_conflict",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+    if (workflow.action.state === "unknown") {
+      return fail(
+        409,
+        "settlement_unknown",
+        workflow.action.reason || "direct payment is unknown; reconcile it before retrying",
+      );
+    }
+    const nowDate = new Date();
+    const now = nowDate.toISOString();
+    const invoiceId =
+      trimString(order.settlement?.invoiceId) ||
+      trimString(order.receipt?.invoiceId) ||
+      trimString(order.invoiceId) ||
+      createStableOrderId("invoice", params.orderId);
+    const receiptId =
+      trimString(order.settlement?.receiptId) ||
+      trimString(order.receipt?.receiptId) ||
+      trimString(order.receiptId) ||
+      createStableOrderId("receipt", params.orderId);
+    const taskId = trimString(order.id) || trimString(order.offerId) || params.orderId;
+    const cachedPayment =
+      (workflow.action.state === "executed" ||
+        workflow.action.state === "evidence_pending" ||
+        workflow.action.state === "complete") &&
+      Boolean(workflow.action.txHash);
+    let requestId = workflow.action.requestId;
+    let txRef = trimString(workflow.action.txHash);
+    let payerAddress = resolveWalletAddress({ wallet, chain });
+
+    if (!cachedPayment) {
+      updateMarketplaceSettlementAction({
+        orderId: entry.configId,
+        action: "direct",
+        expectedStates: ["reserved", "pending", "failed"],
+        state: "pending",
+        env,
+      });
+      const send = await deps.createOrExecuteWalletSend({
+        payload: {
+          chain,
+          to: payeeAddress,
+          amount: amountBaseUnits.toString(),
+          ...(asset.kind === "spl-token" ? { program: asset.address } : {}),
+          walletId: wallet.id,
+          walletName: wallet.name,
+          providerId: wallet.providerId,
+        },
+        requestedBy: "marketplace-manual-order",
+        executionIntentId,
+        sendPath: "automation",
+        settlementContext: {
+          taskId,
+          invoiceId,
+          senderHandle: order.buyerHandle,
+        },
+        config: walletConfig,
+        runtimeConfig: params.config,
+        providerIdOverride: wallet.providerId,
+        env,
+      });
+      if (!send.ok) {
+        const ambiguous = isAmbiguousSendFailure(send.code);
+        updateMarketplaceSettlementAction({
+          orderId: entry.configId,
+          action: "direct",
+          expectedStates: ["pending"],
+          state: ambiguous ? "unknown" : "failed",
+          requestId: send.requestId,
+          reason: send.message,
+          env,
+        });
+        return fail(
+          409,
+          "wallet_payment_failed",
+          normalizeMarketplacePaymentFailure(send.message),
+          {
+            state: ambiguous ? "unknown" : undefined,
+            requestId: send.requestId,
+            invoiceId,
+            receiptId,
+          },
+        );
+      }
+      if (send.mode !== "autonomous") {
+        updateMarketplaceSettlementAction({
+          orderId: entry.configId,
+          action: "direct",
+          expectedStates: ["pending"],
+          state: "pending",
+          requestId: send.request.id,
+          reason: "Agent wallet automation approval is pending",
+          env,
+        });
+        return fail(
+          409,
+          "payment_automation_required",
+          "Marketplace payment requires Agent wallet automation to be enabled",
+          {
+            state: "pending",
+            requestId: send.request.id,
+            invoiceId,
+            receiptId,
+          },
+        );
+      }
+
+      requestId = send.requestId;
+      txRef = trimString(send.tx.txHash);
+      payerAddress = resolveWalletAddress({
+        wallet,
         chain,
-        assetKind,
-        ...(assetAddress ? { assetAddress } : {}),
-        assetDecimals,
+        txSigner: typeof send.tx.signer === "string" ? send.tx.signer : undefined,
+      });
+      updateMarketplaceSettlementAction({
+        orderId: entry.configId,
+        action: "direct",
+        expectedStates: ["pending"],
+        state: "executed",
+        requestId,
+        txHash: txRef,
+        env,
+      });
+    }
+
+    let evidenceRef = trimString(workflow.action.evidenceRef);
+    if (!evidenceRef) {
+      const publishSettlement = await deps.publishFederationSettlementEvidence({
+        taskId,
         invoiceId,
-        receiptId,
+        senderHandle: order.buyerHandle,
         txRef,
-        evidenceRef,
-        payerWalletId: wallet.id,
+        chain,
+        asset,
+        amount: amountBaseUnits.toString(),
         payeeAddress,
-        escrow: {
-          ...order.settlement?.escrow,
-          status: "not_applicable",
-          holdPolicy: "none",
-          releaseRequired: false,
+        providerId: wallet.providerId,
+        walletId: wallet.id,
+        walletName: wallet.name,
+        env,
+      });
+      if (!publishSettlement.ok) {
+        updateMarketplaceSettlementAction({
+          orderId: entry.configId,
+          action: "direct",
+          expectedStates: ["executed", "evidence_pending"],
+          state: "evidence_pending",
+          requestId,
+          txHash: txRef,
+          reason: publishSettlement.message,
+          env,
+        });
+        return fail(
+          502,
+          "settlement_evidence_failed",
+          `settlement evidence publish failed: ${publishSettlement.message}`,
+          {
+            state: "evidence_pending",
+            requestId,
+            invoiceId,
+            receiptId,
+            txRef,
+          },
+        );
+      }
+      evidenceRef =
+        typeof publishSettlement.entry?.evidenceRef === "string"
+          ? publishSettlement.entry.evidenceRef
+          : typeof publishSettlement.entry?.settlementId === "string"
+            ? `fased://marketplace/settlements/${publishSettlement.entry.settlementId}`
+            : `tx:${txRef}`;
+      updateMarketplaceSettlementAction({
+        orderId: entry.configId,
+        action: "direct",
+        expectedStates: ["executed", "evidence_pending"],
+        state: "complete",
+        requestId,
+        txHash: txRef,
+        evidenceRef,
+        env,
+      });
+    }
+    const paymentIntent = normalizePaymentIntent({
+      order,
+      amount,
+      currency,
+      chain,
+      assetKind,
+      assetAddress,
+      assetDecimals,
+      payeeAddress,
+      payerWalletId: wallet.id,
+      txRef,
+      now,
+    });
+    const result = upsertMarketplaceOrderConfig({
+      config: params.config,
+      input: {
+        ...order,
+        id: entry.configId,
+        status: order.status === "delivered" ? "delivered" : "running",
+        paymentIntent,
+        settlement: {
+          ...order.settlement,
+          mode: "direct",
+          status: "settled",
+          amount,
+          currency,
+          chain,
+          assetKind,
+          ...(assetAddress ? { assetAddress } : {}),
+          assetDecimals,
+          invoiceId,
+          receiptId,
+          txRef,
+          evidenceRef,
+          payerWalletId: wallet.id,
+          payeeAddress,
+          escrow: {
+            ...order.settlement?.escrow,
+            status: "not_applicable",
+            holdPolicy: "none",
+            releaseRequired: false,
+            updatedAt: now,
+          },
+          notes: "Direct Agent-wallet payment settled. Seller manual delivery is pending.",
+          verifiedAt: now,
+          settledAt: now,
           updatedAt: now,
         },
-        notes: "Direct Agent-wallet payment settled. Seller manual delivery is pending.",
-        verifiedAt: now,
-        settledAt: now,
-        updatedAt: now,
-      },
-      delivery: {
-        ...order.delivery,
-        status: order.delivery?.status === "delivered" ? "delivered" : "pending",
-        notes:
-          order.delivery?.notes ||
-          "Payment verified. Waiting for seller to manually complete delivery.",
-        updatedAt: now,
-      },
-      receipt: {
-        ...order.receipt,
-        status: "issued",
+        delivery: {
+          ...order.delivery,
+          status: order.delivery?.status === "delivered" ? "delivered" : "pending",
+          notes:
+            order.delivery?.notes ||
+            "Payment verified. Waiting for seller to manually complete delivery.",
+          updatedAt: now,
+        },
+        receipt: {
+          ...order.receipt,
+          status: "issued",
+          invoiceId,
+          receiptId,
+          txRef,
+          notes:
+            "Receipt issued after direct Agent-wallet payment. Delivery remains seller-managed.",
+          updatedAt: now,
+        },
         invoiceId,
         receiptId,
         txRef,
-        notes: "Receipt issued after direct Agent-wallet payment. Delivery remains seller-managed.",
-        updatedAt: now,
       },
+      now,
+    });
+    const updatedOrder =
+      listLocalMarketplaceOrders(result.config).find(
+        (candidate) => candidate.configId === result.order.id,
+      )?.order ?? result.order;
+    return {
+      ok: true,
+      config: result.config,
+      order: updatedOrder,
+      mode: "autonomous",
       invoiceId,
       receiptId,
       txRef,
-    },
-    now,
-  });
-  const updatedOrder =
-    listLocalMarketplaceOrders(result.config).find(
-      (candidate) => candidate.configId === result.order.id,
-    )?.order ?? result.order;
-  return {
-    ok: true,
-    config: result.config,
-    order: updatedOrder,
-    mode: "autonomous",
-    invoiceId,
-    receiptId,
-    txRef,
-    payerAddress,
-    evidenceRef,
-    message: "Payment verified. Seller manual delivery is pending.",
-  };
+      payerAddress,
+      evidenceRef,
+      message: "Payment verified. Seller manual delivery is pending.",
+    };
+  } finally {
+    await releaseSettlement();
+  }
 }

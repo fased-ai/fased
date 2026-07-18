@@ -201,6 +201,14 @@ const testProfile =
 const overrideWorkers = Number.parseInt(process.env.FASED_TEST_WORKERS ?? "", 10);
 const resolvedOverride =
   Number.isFinite(overrideWorkers) && overrideWorkers > 0 ? overrideWorkers : null;
+const extensionOverrideWorkers = Number.parseInt(
+  process.env.FASED_TEST_EXTENSIONS_WORKERS ?? "",
+  10,
+);
+const resolvedExtensionOverride =
+  Number.isFinite(extensionOverrideWorkers) && extensionOverrideWorkers > 0
+    ? extensionOverrideWorkers
+    : null;
 const parallelGatewayEnabled =
   process.env.FASED_TEST_PARALLEL_GATEWAY === "1" || (!isCI && highMemLocalHost);
 // Keep gateway serial by default except when explicitly requested or on high-memory local hosts.
@@ -209,8 +217,21 @@ const keepGatewaySerial =
   process.env.FASED_TEST_SERIAL_GATEWAY === "1" ||
   testProfile === "serial" ||
   !parallelGatewayEnabled;
-const parallelRuns = keepGatewaySerial ? runs.filter((entry) => entry.name !== "gateway") : runs;
-const serialRuns = keepGatewaySerial ? runs.filter((entry) => entry.name === "gateway") : [];
+// Serial means every suite group runs one at a time. This is intentionally
+// stronger than serializing only Gateway: CI assigns a heap budget to each
+// child process, so running unit, isolated, and extension groups concurrently
+// can overcommit a hosted runner even with conservative Vitest worker counts.
+const serializeAllRuns = testProfile === "serial";
+const parallelRuns = serializeAllRuns
+  ? []
+  : keepGatewaySerial
+    ? runs.filter((entry) => entry.name !== "gateway")
+    : runs;
+const serialRuns = serializeAllRuns
+  ? runs
+  : keepGatewaySerial
+    ? runs.filter((entry) => entry.name === "gateway")
+    : [];
 const baseLocalWorkers = Math.max(4, Math.min(16, hostCpuCount));
 const loadAwareDisabledRaw = process.env.FASED_TEST_LOAD_AWARE?.trim().toLowerCase();
 const loadAwareDisabled = loadAwareDisabledRaw === "0" || loadAwareDisabledRaw === "false";
@@ -270,6 +291,9 @@ const defaultWorkerBudget =
 // Keep worker counts predictable for local runs; trim macOS CI workers to avoid worker crashes/OOM.
 // In CI on linux/windows, prefer Vitest defaults to avoid cross-test interference from lower worker counts.
 const maxWorkersForRun = (name) => {
+  if (name === "extensions" && resolvedExtensionOverride) {
+    return resolvedExtensionOverride;
+  }
   if (resolvedOverride) {
     return resolvedOverride;
   }

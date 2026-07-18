@@ -7,7 +7,10 @@ on:
   workflow_dispatch:
 
 permissions:
+  artifact-metadata: write
+  attestations: write
   contents: write
+  id-token: write
 
 concurrency:
   group: hosted-runtime-release-${{ github.ref }}
@@ -38,6 +41,12 @@ jobs:
           node-version: 24.x
           check-latest: true
 
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: tools/fased-signerd/go.mod
+          cache-dependency-path: tools/fased-signerd/go.sum
+
       - name: Setup pnpm + cache store
         uses: ./.github/actions/setup-pnpm-store-cache
         with:
@@ -58,6 +67,12 @@ jobs:
           package_version="$(node -p "require('./package.json').version")"
           tag_version="${GITHUB_REF#refs/tags/v}"
           test "$package_version" = "$tag_version"
+
+      - name: Attest hosted runtime release assets
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/attest@v4
+        with:
+          subject-path: .artifacts/hosted-runtime/*
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
@@ -95,9 +110,38 @@ jobs:
       - name: Build native signer release assets
         run: bash scripts/release-fased-signerd.sh
 
+      - name: Stage root Hosting bootstrap release asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n install.sh
+          install -m 0755 install.sh dist-native/release/install.sh
+
       - name: Verify native signer checksums
         working-directory: dist-native/release
         run: sha256sum --check fased-signerd-checksums.txt
+
+      - name: Attest native signer release assets
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/attest@v4
+        with:
+          subject-path: dist-native/release/fased-signerd-*
+
+      - name: Attest root Hosting bootstrap
+        id: attest-hosting-bootstrap
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/attest@v4
+        with:
+          subject-path: dist-native/release/install.sh
+
+      - name: Stage root Hosting bootstrap attestation bundle
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -m 0644 \
+            "${{ steps.attest-hosting-bootstrap.outputs.bundle-path }}" \
+            dist-native/release/install.sh.attestation.json
 
       - name: Upload verified signer assets
         uses: actions/upload-artifact@v4
@@ -112,12 +156,41 @@ jobs:
     needs: [linux, signer]
     runs-on: ubuntu-24.04
     steps:
+      - name: Checkout exact tagged source
+        uses: actions/checkout@v6
+
       - name: Download verified architecture artifacts
         uses: actions/download-artifact@v4
         with:
           pattern: fased-*
           path: .artifacts/hosted-runtime
           merge-multiple: true
+
+      - name: Assemble one app and signer release manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_version="$(node -p "require('./package.json').version")"
+          test "$GITHUB_REF_NAME" = "v${package_version}"
+          node scripts/build-hosted-release-manifest.mjs \
+            --assets .artifacts/hosted-runtime \
+            --version "$package_version" \
+            --commit "$GITHUB_SHA" \
+            --output .artifacts/hosted-runtime/fased-hosted-release-v2.json
+
+      - name: Attest unified hosted release manifest
+        id: attest-hosted-release-manifest
+        uses: actions/attest@v4
+        with:
+          subject-path: .artifacts/hosted-runtime/fased-hosted-release-v2.json
+
+      - name: Stage unified manifest attestation bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -m 0644 \
+            "${{ steps.attest-hosted-release-manifest.outputs.bundle-path }}" \
+            .artifacts/hosted-runtime/fased-hosted-release-v2.json.attestation.json
 
       - name: Publish GitHub release assets
         env:

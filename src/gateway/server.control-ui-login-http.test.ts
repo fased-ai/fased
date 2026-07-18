@@ -8,6 +8,12 @@ import type { ResolvedGatewayAuth } from "./auth.js";
 import { CONTROL_UI_BOOT_CHECK_PATH } from "./control-ui-boot-check.js";
 import { createGatewayHttpServer } from "./server-http.js";
 
+const RESPONSE_FINISHED = Symbol("control-ui-login-test-response-finished");
+
+type TestServerResponse = ServerResponse & {
+  [RESPONSE_FINISHED]: Promise<void>;
+};
+
 vi.mock("https-proxy-agent", () => ({
   HttpsProxyAgent: class {},
 }));
@@ -76,12 +82,17 @@ function createResponse(): {
     headers.set(name.toLowerCase(), String(value));
   });
   let body = "";
+  let finishResponse = () => {};
+  const finished = new Promise<void>((resolve) => {
+    finishResponse = resolve;
+  });
   const end = vi.fn((chunk?: unknown) => {
     if (typeof chunk === "string") {
       body = chunk;
-      return;
+    } else {
+      body = chunk ? (chunk as string) : "";
     }
-    body = chunk ? (chunk as string) : "";
+    finishResponse();
   });
   const res = {
     statusCode: 200,
@@ -89,6 +100,7 @@ function createResponse(): {
     setHeader,
     end,
   } as unknown as ServerResponse;
+  (res as TestServerResponse)[RESPONSE_FINISHED] = finished;
   return {
     res,
     setHeader,
@@ -103,7 +115,7 @@ async function dispatch(
   res: ServerResponse,
 ) {
   server.emit("request", req, res);
-  await new Promise((resolve) => setImmediate(resolve));
+  await (res as TestServerResponse)[RESPONSE_FINISHED];
 }
 
 describe("control-ui login exchange endpoint", () => {

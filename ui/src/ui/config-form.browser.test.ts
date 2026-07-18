@@ -238,7 +238,7 @@ describe("config form renderer", () => {
     );
 
     const text = container.textContent ?? "";
-    expect(text).toContain("embedded-keystore");
+    expect(text).not.toContain("embedded-keystore");
     expect(text).toContain("local-socket-signer");
     expect(text).toContain("Wallet Chains");
     expect(text).toContain("Normal Config only exposes self-hosted wallet providers");

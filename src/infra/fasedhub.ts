@@ -6,6 +6,7 @@ import { resolvePreferredFasedAgentTmpDir } from "./tmp-fased-dir.js";
 
 const DEFAULT_CLAWHUB_REGISTRY = "https://clawhub.com";
 const DEFAULT_FETCH_TIMEOUT_MS = 30_000;
+const MAX_SKILL_ARCHIVE_BYTES = 25 * 1024 * 1024;
 
 export type FasedHubSkillSearchResult = {
   score: number;
@@ -29,6 +30,8 @@ export type FasedHubSkillDetail = {
     version: string;
     createdAt: number;
     changelog?: string;
+    integrity?: string;
+    sha256?: string;
   } | null;
   metadata?: {
     os?: string[] | null;
@@ -65,6 +68,8 @@ export type FasedHubSkillListResponse = {
 export type FasedHubDownloadResult = {
   archivePath: string;
   integrity: string;
+  sha256: string;
+  integrityVerified: boolean;
   cleanup: () => Promise<void>;
 };
 
@@ -267,6 +272,64 @@ function formatSha256Integrity(bytes: Uint8Array): string {
   return `sha256-${digest}`;
 }
 
+function normalizeExpectedSha256(value: string | undefined): string | undefined {
+  const normalized = value?.trim().toLowerCase();
+  return normalized && /^[a-f0-9]{64}$/u.test(normalized) ? normalized : undefined;
+}
+
+function sha256HexFromIntegrity(value: string | undefined): string | undefined {
+  const normalized = value?.trim();
+  if (!normalized?.startsWith("sha256-")) {
+    return undefined;
+  }
+  try {
+    const digest = Buffer.from(normalized.slice("sha256-".length), "base64");
+    return digest.length === 32 ? digest.toString("hex") : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function readBoundedResponseBytes(response: Response, maxBytes: number): Promise<Uint8Array> {
+  const declaredLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+    throw new Error(`ClawHub skill archive exceeds the ${maxBytes}-byte download limit`);
+  }
+  if (!response.body) {
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength > maxBytes) {
+      throw new Error(`ClawHub skill archive exceeds the ${maxBytes}-byte download limit`);
+    }
+    return bytes;
+  }
+  const chunks: Uint8Array[] = [];
+  const reader = response.body.getReader();
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel();
+        throw new Error(`ClawHub skill archive exceeds the ${maxBytes}-byte download limit`);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
 function sanitizeTempFileName(fileName: string): string {
   const base = path.basename(fileName).replace(/[^a-zA-Z0-9._-]+/g, "-");
   const normalized = base.replace(/^-+|-+$/g, "");
@@ -351,6 +414,8 @@ export async function downloadFasedHubSkillArchive(params: {
   token?: string;
   timeoutMs?: number;
   fetchImpl?: FetchLike;
+  expectedIntegrity?: string;
+  expectedSha256?: string;
 }): Promise<FasedHubDownloadResult> {
   const { response, url } = await fasedHubRequest({
     baseUrl: params.baseUrl,
@@ -371,7 +436,16 @@ export async function downloadFasedHubSkillArchive(params: {
       body: await readErrorBody(response),
     });
   }
-  const bytes = new Uint8Array(await response.arrayBuffer());
+  const bytes = await readBoundedResponseBytes(response, MAX_SKILL_ARCHIVE_BYTES);
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const expectedSha256 =
+    normalizeExpectedSha256(params.expectedSha256) ??
+    sha256HexFromIntegrity(params.expectedIntegrity);
+  if (expectedSha256 && expectedSha256 !== sha256) {
+    throw new Error(
+      `ClawHub skill archive digest mismatch: expected ${expectedSha256}, received ${sha256}`,
+    );
+  }
   const target = await createTempDownloadTarget({
     prefix: "clawhub-skill",
     fileName: `${params.slug}.zip`,
@@ -380,6 +454,8 @@ export async function downloadFasedHubSkillArchive(params: {
   return {
     archivePath: target.path,
     integrity: formatSha256Integrity(bytes),
+    sha256,
+    integrityVerified: Boolean(expectedSha256),
     cleanup: target.cleanup,
   };
 }

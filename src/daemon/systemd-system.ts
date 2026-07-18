@@ -10,7 +10,6 @@ import { parseSystemdEnvAssignment, parseSystemdExecStart } from "./systemd-unit
 import { parseSystemdShow } from "./systemd.js";
 
 const SERVICE_NAME = "fased-gateway";
-const INSTALL_HELPER = "/usr/local/sbin/fased-install-gateway-service";
 const SYSTEM_UNIT_CANDIDATES = [
   `/etc/systemd/system/${SERVICE_NAME}.service`,
   `/usr/lib/systemd/system/${SERVICE_NAME}.service`,
@@ -28,6 +27,32 @@ export function findHostedSystemdUnitPath(
 
 function buildHostedSystemctlControlArgs(action: "stop" | "restart"): string[] {
   return [action, `${SERVICE_NAME}.service`];
+}
+
+async function restartHostedServiceWithoutPrivilege() {
+  const shown = await execFileUtf8("systemctl", [
+    "show",
+    `${SERVICE_NAME}.service`,
+    "--property",
+    "MainPID",
+    "--value",
+  ]);
+  const pid = Number.parseInt(shown.stdout.trim(), 10);
+  if (shown.code !== 0 || !Number.isSafeInteger(pid) || pid <= 1) {
+    return { code: 1, stdout: shown.stdout, stderr: shown.stderr || "Gateway MainPID unavailable" };
+  }
+  try {
+    const status = await fs.readFile(`/proc/${pid}/status`, "utf8");
+    const ownerUid = Number.parseInt(status.match(/^Uid:\s+(\d+)/m)?.[1] ?? "", 10);
+    const currentUid = typeof process.getuid === "function" ? process.getuid() : -1;
+    if (!Number.isSafeInteger(ownerUid) || ownerUid !== currentUid) {
+      throw new Error("Gateway service process is not owned by the current app account");
+    }
+    process.kill(pid, "SIGTERM");
+    return { code: 0, stdout: "", stderr: "" };
+  } catch (error) {
+    return { code: 1, stdout: "", stderr: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 async function readHostedSystemdCommand(unitPath: string) {
@@ -69,11 +94,13 @@ export function resolveHostedSystemdService(): GatewayService | null {
     return null;
   }
   const runSystemctl = async (args: string[]) => await execFileUtf8("systemctl", args);
-  const runPrivilegedSystemctl = async (args: string[]) =>
-    await execFileUtf8("sudo", ["-n", "systemctl", ...args]);
   const control = async (action: "stop" | "restart", stdout: NodeJS.WritableStream) => {
-    const args = buildHostedSystemctlControlArgs(action);
-    const result = await runPrivilegedSystemctl(args);
+    if (action === "stop") {
+      throw new Error(
+        "Stopping the root-managed hosted Gateway requires host administration; the app has no sudo access.",
+      );
+    }
+    const result = await restartHostedServiceWithoutPrivilege();
     if (result.code !== 0) {
       throw new Error(result.stderr || result.stdout || `system service ${action} failed`);
     }
@@ -139,9 +166,17 @@ export function buildHostedSystemdUnit(params: {
     description: "Fased Gateway (managed)",
     programArguments: params.programArguments,
     workingDirectory: params.workingDirectory,
-    environment: params.environment,
+    environment: {
+      ...params.environment,
+      FASED_HOST_PROFILE: "hosting",
+      FASED_WALLET_LOCAL_SIGNER_SOCKET: "/run/fased-signerd/app.sock",
+    },
   });
   const lines = baseUnit.split("\n");
+  const unitIndex = lines.findIndex((line) => line.trim() === "[Unit]");
+  if (unitIndex !== -1) {
+    lines.splice(unitIndex + 1, 0, "After=fased-signerd.service", "Wants=fased-signerd.service");
+  }
   const serviceIndex = lines.findIndex((line) => line.trim() === "[Service]");
   if (serviceIndex !== -1) {
     lines.splice(
@@ -154,7 +189,30 @@ export function buildHostedSystemdUnit(params: {
   }
   const installIndex = lines.findIndex((line) => line.trim() === "[Install]");
   if (installIndex !== -1) {
-    lines.splice(installIndex, 0, "NoNewPrivileges=true", "PrivateTmp=true");
+    lines.splice(
+      installIndex,
+      0,
+      "UMask=0077",
+      "NoNewPrivileges=true",
+      "PrivateTmp=true",
+      "PrivateDevices=true",
+      "ProtectSystem=strict",
+      "ProtectHome=read-only",
+      `ReadWritePaths=/home/${params.runAsUser}/.fased`,
+      "ProtectKernelTunables=true",
+      "ProtectKernelModules=true",
+      "ProtectKernelLogs=true",
+      "ProtectControlGroups=true",
+      "ProtectClock=true",
+      "ProtectHostname=true",
+      "LockPersonality=true",
+      "RestrictSUIDSGID=true",
+      "RestrictRealtime=true",
+      "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
+      "SystemCallArchitectures=native",
+      "CapabilityBoundingSet=",
+      "AmbientCapabilities=",
+    );
   }
   const wantedByIndex = lines.findIndex((line) => line.trim() === "WantedBy=default.target");
   if (wantedByIndex !== -1) {
@@ -163,38 +221,11 @@ export function buildHostedSystemdUnit(params: {
   return lines.join("\n");
 }
 
-async function runHelper(unit: string, runAsUser: string): Promise<void> {
-  await fs.access(INSTALL_HELPER);
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn("sudo", ["-n", INSTALL_HELPER, SERVICE_NAME, runAsUser], {
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    const timer = setTimeout(() => {
-      child.kill("SIGTERM");
-      reject(new Error("hosted gateway service helper timed out"));
-    }, 60_000);
-    child.stdout.on("data", (chunk) => {
-      stdout += String(chunk);
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += String(chunk);
-    });
-    child.on("error", (error) => {
-      clearTimeout(timer);
-      reject(error);
-    });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      if (code === 0) {
-        resolve();
-      } else {
-        reject(new Error((stderr || stdout || `service helper exited ${code}`).trim()));
-      }
-    });
-    child.stdin.end(unit);
-  });
+async function runHelper(unit: string): Promise<void> {
+  void unit;
+  throw new Error(
+    "The app account cannot install or mutate the root-managed hosted service. Use the exact tagged, attested Hosting repair from the provider root console; never run the app checkout with sudo.",
+  );
 }
 
 export async function installHostedSystemdService(params: {
@@ -216,7 +247,7 @@ export async function installHostedSystemdService(params: {
   await fs.rm(`${userUnit}.d`, { recursive: true, force: true }).catch(() => undefined);
   await spawnCommand("systemctl", ["--user", "daemon-reload"]).catch(() => undefined);
 
-  await runHelper(unit, runAsUser);
+  await runHelper(unit);
   return { unitPath: `/etc/systemd/system/${SERVICE_NAME}.service` };
 }
 
@@ -237,5 +268,6 @@ async function spawnCommand(command: string, args: string[]): Promise<void> {
 export const __testing = {
   buildHostedSystemctlControlArgs,
   readHostedSystemdCommand,
+  restartHostedServiceWithoutPrivilege,
   resolveRunAsUser,
 };

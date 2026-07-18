@@ -134,9 +134,7 @@ function resolveWalletEnvValue(
 function resolveAutoSweepRpcUrl(walletId: string, env: NodeJS.ProcessEnv): string | undefined {
   return (
     resolveWalletEnvValue(env, "FASED_WALLET_SOLANA_READ_RPC_URL", walletId) ||
-    resolveWalletEnvValue(env, "FASED_WALLET_SOLANA_RPC_URL", walletId) ||
-    resolveWalletEnvValue(env, "FASED_WALLET_EMBEDDED_KEYSTORE_READ_RPC_URL", walletId) ||
-    resolveWalletEnvValue(env, "FASED_WALLET_EMBEDDED_KEYSTORE_RPC_URL", walletId)
+    resolveWalletEnvValue(env, "FASED_WALLET_SOLANA_RPC_URL", walletId)
   );
 }
 
@@ -273,6 +271,7 @@ function resolveAutoSweepDestination(params: {
 async function maybeAutoSweepClaimedSat(params: {
   api: FasedAgentPluginApi;
   state: SatMiningRuntimeState;
+  occurrenceId: string;
 }): Promise<void> {
   const sweep = params.state.activeConfig.automation?.satSweep;
   if (!sweep?.enabled) {
@@ -360,7 +359,24 @@ async function maybeAutoSweepClaimedSat(params: {
       walletId,
       walletName: resolveAutoSweepSourceWalletName(walletId, process.env),
     },
-    requestedBy: "sat-mining",
+    requestedBy: "sat-mining:auto-sweep",
+    executionIntentId: `sat-auto-sweep:${walletId}:${params.occurrenceId}`,
+    satSweepAuthorization: {
+      kind: "sat-auto-sweep-v1",
+      occurrenceId: params.occurrenceId,
+      walletId,
+      destination: destination.to,
+      mint: satMintAddress,
+      sourceBalanceRaw: recipientBalanceRaw.toString(),
+      amountRaw: sweepRaw.toString(),
+      keepRaw: keepRaw.toString(),
+      minRaw: minRaw.toString(),
+      mode: sweep.mode === "percentage" ? "percentage" : "all",
+      percentage:
+        typeof sweep.percentage === "number" && Number.isFinite(sweep.percentage)
+          ? Math.max(0, Math.min(100, sweep.percentage))
+          : 100,
+    },
     config: effectiveWalletConfig,
     runtimeConfig: cfg,
     sendPath: "automation",
@@ -821,7 +837,11 @@ export function createSatClaimService(params: {
         completion.pendingCycleIds,
         "bounded SAT claim chunk submitted; rewards remain claimable",
       );
-      await maybeAutoSweepClaimedSat({ api, state });
+      await maybeAutoSweepClaimedSat({
+        api,
+        state,
+        occurrenceId: [...readyCycleIds].toSorted((left, right) => left - right).join(","),
+      });
       markWorkerSuccess(
         state,
         "claim",

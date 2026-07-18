@@ -1,0 +1,69 @@
+{
+  "walletId": "mining",
+  "role": "mining",
+  "operations": [
+    "sat.cleanupBatch@REPLACE_WITH_SAT_PROGRAM_ID",
+    "sat.claimCycleRewards@REPLACE_WITH_SAT_PROGRAM_ID",
+    "sat.claimCycleRewardsBatch@REPLACE_WITH_SAT_PROGRAM_ID",
+    "sat.commitCycle@REPLACE_WITH_SAT_PROGRAM_ID",
+    "sat.depositMinerCapital@REPLACE_WITH_SAT_PROGRAM_ID",
+    "sat.initMinerCapital@REPLACE_WITH_SAT_PROGRAM_ID",
+    "sat.revealCycle@REPLACE_WITH_SAT_PROGRAM_ID",
+    "sat.setActiveCommit@REPLACE_WITH_SAT_PROGRAM_ID",
+    "sat.withdrawMinerCapital@REPLACE_WITH_SAT_PROGRAM_ID",
+    "solana.nativeTransfer",
+    "solana.splTransferChecked"
+  ],
+  "programs": [
+    "11111111111111111111111111111111",
+    "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+    "REPLACE_WITH_CLAIM_VERIFICATION_PROGRAM_ID",
+    "REPLACE_WITH_SAT_PROGRAM_ID",
+    "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+  ],
+  "assets": [
+    {
+      "asset": "sat:action",
+      "destinations": [
+        "REPLACE_WITH_MINING_WALLET_PUBLIC_KEY",
+        "REPLACE_WITH_MINER_CAPITAL_PDA",
+        "REPLACE_WITH_SAT_PROGRAM_ID"
+      ],
+      "maxPerTx": "REPLACE_WITH_POSITIVE_TYPED_ACTIONS_PER_TX",
+      "maxDaily": "REPLACE_WITH_POSITIVE_TYPED_ACTIONS_PER_UTC_DAY"
+    },
+    {
+      "asset": "sat:capital:lamports",
+      "destinations": [
+        "REPLACE_WITH_MINER_CAPITAL_PDA"
+      ],
+      "maxPerTx": "REPLACE_WITH_POSITIVE_ACTIVE_CAPITAL_LAMPORTS_PER_TX",
+      "maxDaily": "REPLACE_WITH_POSITIVE_ACTIVE_CAPITAL_LAMPORTS_PER_UTC_DAY"
+    },
+    {
+      "asset": "sat:mint:REPLACE_WITH_SAT_MINT",
+      "destinations": [
+        "REPLACE_WITH_MINING_WALLET_PUBLIC_KEY"
+      ],
+      "maxPerTx": "REPLACE_WITH_POSITIVE_REWARD_ACTIONS_PER_TX",
+      "maxDaily": "REPLACE_WITH_POSITIVE_REWARD_ACTIONS_PER_UTC_DAY"
+    },
+    {
+      "asset": "solana:native",
+      "destinations": [
+        "REPLACE_WITH_APPROVED_REVIEWED_SOL_RECIPIENT",
+        "REPLACE_WITH_MINER_CAPITAL_PDA"
+      ],
+      "maxPerTx": "REPLACE_WITH_POSITIVE_LAMPORTS_PER_TX",
+      "maxDaily": "REPLACE_WITH_POSITIVE_LAMPORTS_PER_UTC_DAY"
+    },
+    {
+      "asset": "solana:spl:REPLACE_WITH_SAT_MINT",
+      "destinations": [
+        "REPLACE_WITH_APPROVED_REVIEWED_SAT_RECIPIENT_OWNER"
+      ],
+      "maxPerTx": "REPLACE_WITH_POSITIVE_SAT_RAW_UNITS_PER_TX",
+      "maxDaily": "REPLACE_WITH_POSITIVE_SAT_RAW_UNITS_PER_UTC_DAY"
+    }
+  ]
+}

@@ -32,8 +32,9 @@ Install and onboard with the right profile:
 
 - **Local:** use `./install.sh` from the checkout, or the Local curl bootstrap
   in [Getting Started](/start/getting-started).
-- **VPS Hosting:** use `./install.sh --hosting` from `/home/app/fased`, or the
-  VPS Hosting curl bootstrap in [Getting Started](/start/getting-started).
+- **VPS Hosting:** use the exact tagged, attested curl bootstrap from the
+  provider root console in [Getting Started](/start/getting-started). Never run
+  `/home/app/fased/install.sh` with sudo or as root.
 
 Run onboarding directly after install:
 
@@ -48,9 +49,28 @@ fased onboard \
   --non-interactive \
   --accept-risk \
   --host-profile hosting \
-  --ts-authkey 'tskey-auth-...' \
   --install-daemon
 ```
+
+Tailscale authentication must already have been completed by the root Hosting
+installer. Normal installs use its browser login URL. For unattended
+provisioning, prepare the secret without putting it in shell history or process
+arguments, then append the file option to the verified standalone Hosting
+installer command:
+
+```bash
+install -m 0600 -o root -g root /dev/null /root/fased-tailscale-authkey
+read -rsp "Tailscale auth key: " TAILSCALE_AUTHKEY </dev/tty
+printf '\n'
+printf '%s\n' "$TAILSCALE_AUTHKEY" > /root/fased-tailscale-authkey
+unset TAILSCALE_AUTHKEY
+```
+
+Append `--ts-authkey-file /root/fased-tailscale-authkey` to the verified
+standalone Hosting installer command. As soon as it finishes, run
+`rm -f /root/fased-tailscale-authkey`. Run these commands only in the provider
+root console. `fased onboard` does not accept Tailscale secrets, and raw
+`--ts-authkey <key>` arguments are rejected.
 
 Bootstrap note:
 
@@ -113,7 +133,7 @@ These decisions carry the most long-term consequence.
 
 - `--tailscale off|serve|funnel`
 - `--install-daemon`
-- `--ts-authkey <key>`
+- root installer only: `--ts-authkey-file <root-owned-mode-0600-file>`
 
 ### Wallet posture
 
@@ -170,10 +190,20 @@ Decide the working model first:
 
 Recommended progression:
 
-- view-only or manual first
-- policy-gated later
+- create/import and record both registry and canonical signer ids
+- configure signer execution RPC and Gateway read RPC
+- copy/review the installed role template and activate it with
+  `fased-signer-policy --initial-install`
+- verify exact signer policy/network versions and hashes
+- enroll signer WebAuthn before manual native Agent, Mining, or Vault work
+- only then fund a deliberately small balance
 - explicit `@wallet:<walletId>` handles for risky wallet actions
 - broad automation only after the signer path is proven
+
+The Wallets Access-tab Wallet Control Passkey protects Gateway approvals and
+settings. It is separate from signer WebAuthn. See [Self-hosted wallet
+signer](/plugins/crypto/wallet-self-hosted) for the exact Local and Hosting
+activation commands.
 
 ## 7. Plugin rollout
 
@@ -221,12 +251,15 @@ Treat SAT mining as an operator workflow, not a decorative toggle.
 
 Normal sequence:
 
-1. create or import the singleton `@wallet:mining` wallet
-2. confirm readiness
-3. fund miner capital
-4. set commit
-5. start mining
-6. watch runtime, actions, and recovery
+1. create the signer-owned singleton `@wallet:mining` wallet, or import it
+   through the separate native signer-admin control-socket command
+2. activate the reviewed Mining policy and configure both RPC planes
+3. enroll signer WebAuthn for manual reviewed Mining actions
+4. confirm readiness and exact policy/network hashes
+5. fund deliberately small miner capital
+6. set commit
+7. start mining
+8. watch runtime, actions, and recovery
 
 Use:
 

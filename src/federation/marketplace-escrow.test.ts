@@ -168,9 +168,9 @@ describe("marketplace Solana escrow adapter", () => {
           to: VAULT_ADDRESS,
           amount: "100000000",
           walletId: "agent-wallet",
-          memo: "invoice-1",
         }),
         requestedBy: "marketplace-escrow",
+        executionIntentId: "marketplace-order:order-1:escrow-fund",
         sendPath: "automation",
       }),
     );
@@ -179,6 +179,93 @@ describe("marketplace Solana escrow adapter", () => {
     expect(result.order.settlement?.status).toBe("held");
     expect(result.order.settlement?.escrow?.status).toBe("held");
     expect(result.order.settlement?.escrow?.fundingTxRef).toBe("fund-tx-1");
+  });
+
+  it("restores a completed funding result without sending funds twice", async () => {
+    const mocked = deps({
+      ok: true,
+      mode: "autonomous",
+      tx: { ok: true, chain: "solana", txHash: "fund-once-tx-1" },
+      payload: { chain: "solana", to: VAULT_ADDRESS, amount: "100000000" },
+      requestId: "fund-once-request-1",
+    });
+    const originalConfig = config();
+
+    const first = await fundMarketplaceSolanaEscrow({
+      config: originalConfig,
+      orderId: "order-1",
+      deps: mocked,
+    });
+    const retryAfterConfigWriteCrash = await fundMarketplaceSolanaEscrow({
+      config: originalConfig,
+      orderId: "order-1",
+      deps: mocked,
+    });
+
+    expect(first.ok).toBe(true);
+    expect(retryAfterConfigWriteCrash.ok).toBe(true);
+    expect(mocked.createOrExecuteWalletSend).toHaveBeenCalledTimes(1);
+    if (retryAfterConfigWriteCrash.ok) {
+      expect(retryAfterConfigWriteCrash.txHash).toBe("fund-once-tx-1");
+      expect(retryAfterConfigWriteCrash.order.settlement?.escrow?.fundingTxRef).toBe(
+        "fund-once-tx-1",
+      );
+    }
+  });
+
+  it("makes release and refund mutually exclusive in durable settlement state", async () => {
+    const mocked = deps({
+      ok: true,
+      mode: "autonomous",
+      tx: { ok: true, chain: "solana", txHash: "release-exclusive-tx-1" },
+      payload: { chain: "solana", to: SELLER_ADDRESS, amount: "100000000" },
+      requestId: "release-exclusive-request-1",
+    });
+    const heldConfig = config({
+      status: "funded",
+      paymentIntent: {
+        status: "verified",
+        amount: 0.1,
+        currency: "SOL",
+        chain: "solana",
+        assetKind: "native",
+        payerWalletId: "agent-wallet",
+        payeeAddress: SELLER_ADDRESS,
+      },
+      settlement: {
+        mode: "escrow",
+        status: "held",
+        amount: 0.1,
+        currency: "SOL",
+        chain: "solana",
+        assetKind: "native",
+        payerWalletId: "agent-wallet",
+        payeeAddress: SELLER_ADDRESS,
+        escrow: {
+          status: "held",
+          holdPolicy: "release_on_delivery",
+          releaseRequired: true,
+          vaultWalletId: "escrow-vault",
+          fundingTxRef: "funding-exclusive-tx-1",
+        },
+      },
+      delivery: { status: "delivered" },
+    });
+
+    const released = await releaseMarketplaceSolanaEscrow({
+      config: heldConfig,
+      orderId: "order-1",
+      deps: mocked,
+    });
+    const refundAttempt = await refundMarketplaceSolanaEscrow({
+      config: heldConfig,
+      orderId: "order-1",
+      deps: mocked,
+    });
+
+    expect(released).toMatchObject({ ok: true, status: "released" });
+    expect(refundAttempt).toMatchObject({ ok: false, code: "escrow_settlement_conflict" });
+    expect(mocked.createOrExecuteWalletSend).toHaveBeenCalledTimes(1);
   });
 
   it("queues release from the escrow vault after delivery", async () => {
@@ -233,8 +320,8 @@ describe("marketplace Solana escrow adapter", () => {
           to: SELLER_ADDRESS,
           amount: "100000000",
           walletId: "escrow-vault",
-          memo: "invoice-1",
         }),
+        executionIntentId: "marketplace-order:order-1:escrow-release",
         sendPath: "reviewed",
       }),
     );
@@ -333,8 +420,8 @@ describe("marketplace Solana escrow adapter", () => {
           to: AGENT_ADDRESS,
           amount: "100000000",
           walletId: "escrow-vault",
-          memo: "invoice-1",
         }),
+        executionIntentId: "marketplace-order:order-1:escrow-refund",
         sendPath: "reviewed",
       }),
     );

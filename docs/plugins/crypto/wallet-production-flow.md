@@ -1,332 +1,319 @@
 ---
-summary: "Wallet operating guide for setup, funding, roles, policy, passkey, custody, and sweeps."
+summary: "Production wallet setup, custody choices, roles, policy, reviewed execution, mining, sweeps, and recovery."
 read_when:
-  - You want the full wallet operating model after onboarding
-  - You are validating wallet behavior for order actions, mining, Fased Network, or plugins
+  - Preparing Agent, Mining, or Vault wallets for real value
+  - Choosing native, Turnkey, or hardware-backed custody
 title: "Wallet operations and security"
 sidebarTitle: "Wallet security"
 ---
 
 # Wallet operations and security
 
-This is the operator guide for wallets in Fased.
+Use this guide after installing Fased and before funding a runtime wallet.
 
-Use it as the contract between:
+## Recommended layout
 
-- onboarding and CLI setup
-- the self-hosted signer
-- Wallets UI behavior
-- mining and Fased Network use of wallets
-- policy, approval, and security controls
+- one or more limited **Agent** working wallets;
+- exactly one active **Mining** wallet;
+- one or more manual **Vault** wallets;
+- an optional hardware-backed Vault for reserve and high-value manual sends;
+- long-term reserve outside unattended Agent and Mining wallets.
 
-For the page walkthrough, start with [Wallet](/plugins/crypto/wallet-page).
+Do not reuse one account for every role. Role is a permanent signer-policy
+input, not a cosmetic label.
 
-## The short version
+## 1. Choose custody before funding
 
-The recommended public wallet model is:
+### Native `fased-signerd`
 
-- one or more Agent wallets, with one primary fallback
-- one mining wallet
-- one or more Vault wallets
-- optional Fased Network bond assignment to a Vault wallet
-- one offline reserve outside the runtime
+Use the native signer for self-hosted Agent and Mining operation and for
+reviewed hot/warm Vault work. Go creates/imports and uses the key; Node does not
+receive plaintext key material in the supported path.
 
-The recommended security model is:
+- Local Linux/macOS/WSL2 is a same-user boundary. Use limited balances.
+- VPS Hosting separates signer and Gateway OS accounts and removes Gateway
+  signer sudo/control access.
+- Local Docker separates containers and volumes but is not VPS Hosting or a
+  boundary against the host/Docker administrator.
 
-- self-hosted signer
-- passkey approval
-- split-key where needed
-- Vault custody unlock until manual lock, or short timed unlock when preferred
-- Agent automation stop/resume for emergency pause
-- deliberate sweeps
+### Wallet Standard hardware Vault
 
-## 1. Onboarding and first setup
+In **Wallets**, choose **Attach Wallet Standard Vault** from a browser with a Solana
+Wallet Standard wallet. Fased stores the public address only. It prepares and
+simulates one short-lived immutable review; the browser wallet signs it; Fased
+verifies that the signed message is byte-for-byte unchanged; then broadcast is
+attempted once.
 
-The normal public flow is:
+Wallet Standard cannot prove an account is hardware-backed. Confirm the
+account, destination, mint, and amount on the hardware device itself.
 
-1. create or import the wallet during onboarding or `fased wallet setup`
-2. configure chain RPC
-3. let the runtime register the wallet
-4. verify signer health
-5. assign Agent, mining, Vault, and optional Fased Network bond usage intentionally
+### Turnkey
 
-Good rule:
+Turnkey is the implemented provider-managed lane. Use a dedicated API user and
+an independently reviewed Turnkey organization policy with a non-empty
+condition. The readiness probe confirms only that the policy reference exists;
+Turnkey read queries are not policy-enforced. For every reviewed signature,
+Fased requires the exact completed signing activity's policy evaluations to
+contain `OUTCOME_ALLOW` for the configured policy ID and rejects an activity if
+another policy also returns `OUTCOME_ALLOW` before broadcast. Turnkey's policy
+engine remains the custody authority.
 
-- never let the import step become your only backup of the key material
+The Turnkey API credential is available to the Gateway process. Therefore the
+post-signing evaluation check protects normal Fased execution, but it is not by
+itself a boundary against a fully compromised Gateway that calls Turnkey
+directly. Use a dedicated Turnkey API user/sub-organization and make the
+provider policy independently restrict that user, exact wallet/account,
+allowed activity type, destinations, assets, and limits. No other permissive
+policy should authorize the same signing activity.
 
-## 2. Self-hosted signer model
+Turnkey supports manual reviewed typed SOL/SPL transfers. Fased stores the
+immutable review, verifies returned signed bytes, broadcasts once, and treats
+an ambiguous result as terminal until exact reconciliation.
 
-The public self-hosted path is:
+Privy is unavailable. Do not treat its placeholder configuration as wallet
+creation, balance, or signing support.
 
-- provider id `local-socket-signer`
-- native signer `fased-signerd`
-- explicit RPC for the relevant chain
+## 2. Create or import
 
-Useful checks:
+New native wallets are created inside Go and return only a public address. The
+first wallet wizard installs/starts the version-matched signer automatically;
+normal users do not install Go.
+
+Import is not a dashboard, chat, or normal wizard field. Use
+`fased-signerd admin wallet import` through the signer-only control socket. It
+accepts one Solana CLI 64-byte JSON keypair array from stdin. It does not accept
+seed phrases, base58, hex, base64, command arguments, or environment secrets.
+
+See [Self-hosted wallet signer](/plugins/crypto/wallet-self-hosted) for Local
+and Hosting commands.
+
+After creation/import, verify:
 
 ```bash
 fased wallet signer doctor --json
 fased wallet status --json
 ```
 
-For the full file layout and signer boundary, see [Self-hosted wallet signer](/plugins/crypto/wallet-self-hosted).
+Do not fund the address until the id, role, address, policy hash, and RPC
+readiness match what you intended.
 
-## 3. Funding and working balances
+## 3. Install explicit signer policy
 
-Runtime wallets should be sized as working wallets.
+A new native wallet starts deny-all. It cannot sign merely because a wallet
+exists or RPC is configured.
 
-Good operating posture:
+Every executable policy must explicitly name:
 
-- Agent wallets hold everyday working capital for approved agent actions
-- mining wallet holds enough SOL for fees, reserve, capital staging, and short-lived Satcoin
-- Vault wallet stays manual-first and can hold Satcoin you intentionally want to lock or prove with
-- offline reserve stays outside the runtime
+- typed operations;
+- exact programs;
+- assets/mints;
+- destinations;
+- positive per-transaction and daily caps.
 
-Practical rule:
+Checked SPL transfers also explicitly require the System, Associated Token
+Account, and selected Token/Token-2022 programs. Go always derives and includes
+the canonical idempotent destination-account creation instruction, validates
+the source and any existing destination account, and charges possible rent to
+the signer-owned SOL reservation. This lets the first SAT transfer to a new
+recipient work without accepting caller-selected account creation.
 
-- every Solana working wallet needs SOL for fees
-- every runtime wallet should stay intentionally small
+Empty or missing lists mean no signing. The signer returns policy version/hash
+in health. A UI change stays pending until the signer acknowledges that exact
+hash. The Gateway can request a tighter policy; initial authority and later
+loosening use the native owner/admin workflow.
 
-## 4. Role split today
-
-The operator model in the product is:
-
-- `agent`
-  user-facing Agent wallets. Multiple wallets may carry this role; one can be primary for fallback.
-- `mining`
-  Satcoin capital, claim, and sweep path
-- `vault`
-  manual-first hot or warm reserve use; Fased Network bond can be assigned to a Vault wallet
-
-Important detail:
-
-- wallet purpose is stored as Agent, Mining, or Vault
-- new policy, custody, and signer status records use `agent`, `vault`, or `mining`
-- risky chat and skill actions use explicit `@wallet:<walletId>` handles or
-  structured `walletId`; display names are labels only
-- Agent wallets are the automation path; Vault wallets are manual-only and use reviewed Wallets page approval
-- Mining wallets should not be repurposed; create a new Agent or Vault wallet when the purpose changes
-
-## 5. Wallet policy profiles
-
-The runtime supports policy profiles such as:
+Copy the role template to a private absolute path, replace its wallet id with
+the canonical signer id reported by setup, review every permission, and perform
+the initial installation:
 
 ```bash
-fased wallet policy profile manual-owner
-fased wallet policy profile autonomous-strict
-fased wallet policy profile autonomous-moderate
+# Local Linux, macOS, or WSL2
+cp "$HOME/.fased/share/signer-policies/<role>.json.template" \
+  /secure/absolute/policy.json
+chmod 0600 /secure/absolute/policy.json
+"$HOME/.fased/bin/fased-signer-policy" \
+  --initial-install \
+  --policy-file /secure/absolute/policy.json
 ```
-
-Practical reading:
-
-- `manual-owner`
-  recommended starting point for human-reviewed operation
-- `autonomous-strict`
-  narrow automation posture with tighter limits
-- `autonomous-moderate`
-  broader automation posture with deliberate guardrails
-
-Remember:
-
-- these are wallet send guardrails
-- they do not replace mining reserve, bond rules, or custody state
-
-## 6. Wallet actions
-
-Agent wallets are the wallets for reviewed chat, skill, plugin, scheduled, and
-optional advanced wallet actions. Mining wallets are rejected for generic sends,
-advanced wallet actions, and recurring wallet-action flows because they use the
-SAT mining and SAT sweep policy. Vault wallets are rejected for chat, skill,
-plugin, and scheduled task sends because they are manual-only reviewed Wallets
-page sources.
-
-Supported Solana action classes, when enabled and allowed by policy:
-
-- native SOL and SPL sends through reviewed wallet requests
-- route quotes and optional route actions through the Fased wallet wrapper
-- token route actions only when policy allows that asset and route
-- disabled recurring plans that the operator can review before enabling
-- saved recurring Agent native/SPL transfer policy shared by chat and Wallets UI
-- optional trigger-order create, history, and cancel/reclaim when configured
-
-Policy rules:
-
-- use explicit handles such as `@wallet:agent`
-- display names are hints only
-- Caps defaults Off on fresh wallets; turn it On when you want limit enforcement
-- SOL and SPL token rows are separate when Caps is On
-- route program allowlists can restrict inspected route adapters
-- live trigger orders can deposit input funds into a third-party route vault until fill, expiry, or cancellation/reclaim
-
-Enable live trigger orders only when you intend to use that optional advanced path:
 
 ```bash
-fased wallet limit-orders --enable --jupiter-api-key <jupiter-api-key>
+# VPS Hosting
+sudo cp /usr/local/share/fased/signer-policies/<role>.json.template \
+  /root/fased-<role>-policy.json
+sudo chmod 0600 /root/fased-<role>-policy.json
+sudoedit /root/fased-<role>-policy.json
+sudo /usr/local/sbin/fased-signer-policy \
+  --initial-install \
+  --policy-file /root/fased-<role>-policy.json
 ```
 
-Do not paste route-action API keys into chat or channel messages.
+Registry handles and signer ids can differ: `@wallet:agent-2` maps to canonical
+signer id `agent_2`. Use the canonical signer id in native policy/network input.
 
-## 7. Approval flow
+## 4. Configure both RPC planes
 
-The ordinary user send path is:
+Fased deliberately has two RPC planes:
 
-1. create a send request
-2. review the pending request
-3. approve it
-4. complete passkey approval if enabled
-5. let the runtime execute and log the send
+- **Signer execution RPC:** encrypted, versioned, and scoped per native wallet.
+  The signer uses it for native balance reads, construction, simulation,
+  broadcast, and reconciliation. Configure it through
+  `fased-signerd admin network put`.
+- **Gateway read/preparation RPC:** used for dashboard token inventory, SAT
+  inspection/watchers/readiness, federation and bond reads, Jupiter/Trigger
+  preparation, and provider/hardware lanes.
 
-The Wallets page is an approval surface. It shows the request before signing and
-broadcast.
+The simple wizard stores the selected endpoint in both planes, so that URL or
+token is visible to Gateway code. For stronger separation, give the Gateway a
+different read-only endpoint/credential and keep execution credentials only in
+signer state. The Gateway has no arbitrary RPC proxy through the signer.
 
-### Approval details and audit records
+Protocol-v2 native execution does not trust the Gateway value. Signer health
+returns only readiness plus version/hash metadata, not its encrypted URL/token.
 
-Fased simulates the policy decision before approval, records an approval diff on
-the pending request, and writes an audit record. The approval review should
-answer:
+Use dedicated/private RPC for production mining and wallet actions. Public RPC
+is suitable only for limited testing.
 
-- source wallet role and handle
-- destination address or local wallet handle
-- chain and token/mint
-- requested amount and fee estimate when the selected chain/provider exposes one
-- trigger source: UI, chat, channel, task, skill, plugin, or mining runtime
-- Agent id and session/task id when available
-- skill id and Wallet > Skill Grant when the request came from a skill
-- cap state: per-transaction cap, daily cap, and already-spent amount
-- custody state: locked, unlocked, passkey required, or approval token required
-- final policy result: allowed, pending manual approval, or rejected
-- run/history id for audit visibility
+See [Solana RPC setup](/plugins/crypto/wallet-rpc-setup).
 
-This policy-simulation, approval-diff, and audit lane does not broaden wallet
-authority. It makes the current authority easier to inspect before signing.
-Final signing still goes through wallet policy, custody, and passkey approval
-when enabled.
+## 5. Role contract
 
-### Roadmap: policy presets
+### Agent
 
-Wallet policy should stay editable, but normal operators should be able to
-start from one-click presets in Wallets > Access. Preset meanings:
+Agent is the only general automation role. Permit only the exact SOL/SPL mints,
+programs, destinations, per-transaction caps, and daily caps the work needs.
+Wallet-capable skills also require their own explicit Agent-wallet grant.
 
-**Read-only**
+Jupiter swap and Trigger mutation are preview capabilities in this release and
+are absent from starter policies. The signer rejects their execution by default;
+normal Local and Hosting installers do not enable the qualification-only live
+switch. Do not enable them for production funds until the exact generated
+RouteV2/Trigger codec and a live Jupiter qualification are published for the
+same release. Prepared, signed, broadcast, and unknown states are durable, but
+storage/idempotency does not replace exact protocol decoding. Never retry an
+ambiguous result with changed parameters.
 
-Balance and status only.
+### Mining
 
-**Manual only**
+Mining is reserved for generated SAT protocol operations, mining capital,
+fees, claims, cleanup, and reviewed SAT sweeps. It needs SOL for fees/capital
+and may receive SAT rewards, but it is not a generic token wallet or arbitrary
+swap source.
 
-Wallets UI reviewed requests only.
+### Vault
 
-**Small Agent spend**
+Vault is manual-only. Native Vault work uses signer-owned WebAuthn bound to the
+exact transaction/policy hash. Do not enable generic direct signing to make a
+Vault send work. Prefer on-device hardware review or a strong provider policy
+for reserve value.
 
-Agent wallet can perform small approved work under low caps and narrow
-destinations/routes.
+## 6. What a review binds
 
-**Mining only**
+`review.prepare` creates an immutable review containing the wallet, role,
+operation, decoded destinations/mints/amounts, transaction digest, policy
+version/hash, request id, and expiry. `review.execute` accepts only the exact
+prepared artifact and a valid one-time authorization.
 
-Mining wallet can perform SAT mining and sweep paths.
+The UI should show:
 
-**Skill limited**
+- source wallet id/role and public address;
+- destination or wallet handle;
+- SOL amount or SPL mint/amount;
+- decoded programs and route/order type;
+- per-transaction and daily cap impact;
+- policy version/hash;
+- request id and expiry;
+- simulation and estimated fee when available.
 
-Reviewed wallet-capable skills can use only selected Agent wallets, actions,
-and caps.
+Signed reviews can be recovered after UI expiry only by querying the exact
+stored signer artifact. Unsigned expired reviews cannot be revived. Broadcast
+or unknown requests are reconciled; they are not rebroadcast.
 
-**Advanced wallet actions**
+## 7. WebAuthn and hardware review
 
-Agent wallet can use inspected route-action adapters with explicit caps and
-route checks.
+Native WebAuthn is verified in Go and binds the exact review. Every manual
+native reviewed Agent, Mining, or Vault action requires it; narrowly autonomous
+Agent and generated Mining operations are the policy-controlled exceptions. It
+protects against replay and a Gateway-generated broad approval token.
 
-Presets compile down to the same role policy, caps, allowlists, approval mode,
-and skill-grant checks that the runtime already enforces. They are not a second
-policy system.
+The Wallets Access-tab **Wallet Control Passkey** is a separate Gateway-owned
+credential and cannot satisfy signer WebAuthn. The review UI is also served by
+the Gateway and does not independently show transaction intent. A hardware
+wallet with an on-device transaction display is stronger for high-value manual
+approval.
 
-### Roadmap: secret proxy boundary
+Keep at least two recoverable WebAuthn credentials where supported and test the
+operator recovery procedure before funding a Vault.
 
-Fased supports SecretRef and focused Services/Skills setup. The runtime also has
-a secret-proxy primitive for service/tool code: resolve a SecretRef inside a
-bounded provider call, return only sanitized results, and fail if the call tries
-to echo the raw secret back out.
+## 8. Skill grants
 
-This is a lower-level boundary. Keep secrets in Agent > Services, Agent >
-Skills config, environment-backed SecretRefs, or Advanced Config only when no
-friendly page exists. Keep provider API keys out of chat and skill instructions.
+Installing a skill never creates wallet permission. A grant must explicitly
+name:
 
-## 8. Passkey and split-key custody
+- allowed actions;
+- Agent role and exact wallet ids;
+- Solana chain;
+- trusted registry URL, or explicit `local` source;
+- input/output mints used by the request;
+- amount and slippage caps;
+- whether autonomous or scheduled use is allowed.
 
-Recommended order:
+Omitted dimensions deny the request. The signer policy is still the final
+authority and can be narrower.
 
-1. enable Wallet Control Passkey
-2. enroll at least one passkey
-3. keep Agent automation controlled by caps and use `Stop` when automation should pause
-4. enable split-key on Vault wallets that should require custody unlock
-5. keep Vault wallets locked when idle, or unlock until you manually lock them again
+## 9. Durable caps and ambiguous broadcasts
 
-Passkey is the ceremony layer.
-Split-key is the locked-wallet layer.
-Agent `Stop` is an automation control, not a custody lock.
+The native signer reserves caps atomically in bbolt before signing. Concurrent
+requests cannot both spend the same remaining daily allowance. Restarting does
+not reset totals.
 
-For the detailed walkthroughs, see:
+Signer states are `reserved`, `broadcast`, `confirmed`, `failed`, or `unknown`.
+`broadcast` and `unknown` count against the cap. Fased preserves the exact
+signature/signed bytes and reconciles them before any new attempt.
 
-- [Wallet Control Passkey](/plugins/crypto/wallet-control-passkey)
-- [Autonomous wallet security](/plugins/crypto/wallet-autonomous-security)
-- [Autonomous wallet sessions](/plugins/crypto/wallet-autonomous-sessions)
+Jupiter swap and Trigger create/deposit/cancel/withdraw flows also persist
+their external authorization/artifact state. An uncertain provider response
+must be resolved, not repeated.
 
-## 9. Sweep discipline
+## 10. Working balances and sweeps
 
-Sweeps are part of healthy wallet hygiene.
+"Low balance" means the maximum value you intentionally accept as exposed by
+that role and host—not a fixed Fased number.
 
-Good rules:
+- Agent: everyday working capital only.
+- Mining: fee headroom, configured capital, and short-lived rewards.
+- Native hot/warm Vault: only deliberate manual value.
+- Hardware/provider Vault: reserve appropriate to that custody review.
+- Offline reserve: outside the runtime.
 
-- keep Agent wallet near working-capital size
-- keep mining wallet small except when staging capital or claims
-- keep the bond Vault narrow to intentional bond-related Satcoin
-- move excess value out on purpose
+Mining supports typed SAT claim/sweep behavior. Agent recurring SOL/SPL plans
+start disabled and are rechecked against current signer policy/caps each run.
+Vault has no autonomous recurring send.
 
-Mining adds a separate post-claim Satcoin sweep model:
+## 11. Production checklist
 
-- destination runtime wallet id or external Solana address
-- `all` or `percentage`
-- minimum threshold
-- keep-after-sweep balance
+Before funding or enabling automation, verify all of these:
 
-Manual one-off transfers still belong in Wallet.
-Recurring Agent-wallet SOL/SPL transfers use `wallet_action.schedule_send` to
-create disabled Task templates and, when requested, save the same wallet-scoped
-recurring transfer policy shown in Wallets UI. They still run through normal
-Auto, enabled caps, custody, signer, and audit checks on every execution. Vault
-wallets remain manual-only.
-Automated Satcoin post-claim sweeps remain a Mining-specific policy.
-
-## 9. Production checklist
-
-Treat the wallet stack as ready for serious operation only when all of these are true:
-
-1. signer health is healthy
-2. RPC is healthy
-3. the expected wallets appear in Wallet
-4. addresses and balances resolve correctly
-5. send approval works
-6. passkey is enrolled if you plan to use secured flows
-7. restart preserves wallet availability
-8. Agent, mining, and bond separation is intentional
-9. working balances are intentionally small
-10. sweep discipline exists and is reviewed
-
-## 10. Scope
-
-This page describes the current operator contract.
-
-Current scope:
-
-- each economic role has its own wallet lane
-- passkey is one layer in the wallet security model
-- future plugin automation paths will be documented as they become public and
-  stable
+1. the installer and signer version match;
+2. signer artifact checksum and attestation verification succeeded;
+3. `fased wallet signer doctor --json` is healthy;
+4. wallet id, permanent role, and public address are correct;
+5. signer execution RPC and Gateway read RPC are ready for that wallet;
+6. policy version/hash is acknowledged and every allowlist/cap is explicit;
+7. signer WebAuthn is tested for manual native reviews, or the selected
+   hardware/provider policy is tested;
+8. cold restart preserves wallet, policy, cap, and request state;
+9. a concurrent duplicate is rejected/replayed, not signed twice;
+10. an ambiguous broadcast is reconciled without replacement;
+11. an offline, encrypted backup restores the same public address, policy hash,
+    WebAuthn inventory, durable caps, and unresolved request state under the
+    [Migration Guide](/install/migrating);
+12. balances fit the role's intentional loss envelope.
 
 ## Related docs
 
 - [Wallet](/plugins/crypto/wallet-page)
+- [Wallet roles and policies](/plugins/crypto/wallet-roles-and-policies)
+- [Wallet signer architecture](/plugins/crypto/wallet-signer-provider-architecture)
 - [Self-hosted wallet signer](/plugins/crypto/wallet-self-hosted)
 - [Wallet Control Passkey](/plugins/crypto/wallet-control-passkey)
-- [Wallet selection contract](/plugins/crypto/wallet-selection-contract)
-- [Self-hosted wallet VPS validation](/plugins/crypto/wallet-self-hosted-vps)
 - [Mining](/plugins/crypto/mining-page)
-- [Fased Network](/start/federation)

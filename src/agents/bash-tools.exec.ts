@@ -43,6 +43,7 @@ import {
   resolveWorkdir,
   truncateMiddle,
 } from "./bash-tools.shared.js";
+import { getActiveSkillEnvOverrides } from "./skills/env-overrides.js";
 
 export type { BashSandboxConfig } from "./bash-tools.shared.js";
 export type {
@@ -416,6 +417,7 @@ export function createExecTool(
 
       const inheritedBaseEnv = coerceEnv(process.env);
       const baseEnv = host === "sandbox" ? inheritedBaseEnv : sanitizeHostBaseEnv(inheritedBaseEnv);
+      const trustedSkillEnv = { ...getActiveSkillEnvOverrides() };
 
       // Logic: Sandbox gets raw env. Host (gateway/node) must pass validation.
       // We validate BEFORE merging to prevent any dangerous vars from entering the stream.
@@ -423,12 +425,12 @@ export function createExecTool(
         validateHostEnv(params.env);
       }
 
-      const mergedEnv = params.env ? { ...baseEnv, ...params.env } : baseEnv;
+      const mergedEnv = { ...baseEnv, ...params.env, ...trustedSkillEnv };
 
       const env = sandbox
         ? buildSandboxEnv({
             defaultPath: DEFAULT_PATH,
-            paramsEnv: params.env,
+            paramsEnv: { ...params.env, ...trustedSkillEnv },
             sandboxEnv: sandbox.env,
             containerWorkdir: containerWorkdir ?? sandbox.containerWorkdir,
           })

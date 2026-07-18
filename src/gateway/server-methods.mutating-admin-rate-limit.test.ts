@@ -11,6 +11,7 @@ const noWebchat = () => false;
 const limits = [
   { method: "chat.inject", allowed: 10, windowMs: 60_000 },
   { method: "push.test", allowed: 3, windowMs: 60_000 },
+  { method: "secrets.reload", allowed: 6, windowMs: 60_000 },
   { method: "web.login.start", allowed: 3, windowMs: 300_000 },
   { method: "web.login.wait", allowed: 12, windowMs: 300_000 },
 ] as const;

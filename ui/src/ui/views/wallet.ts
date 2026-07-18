@@ -17,13 +17,10 @@ import type {
   WalletSendCreateInput,
   WalletSettings,
   WalletSettingsPatch,
+  WalletProviderInfo,
   WalletSolanaTokenSearchResult,
   WalletStatus,
 } from "../wallet-api.ts";
-import type {
-  WalletCustodyClientCompatibility,
-  WalletPasskeySupportState,
-} from "../wallet-passkey.ts";
 import {
   buildRecurringTransferCron,
   parseRecurringTransferCron,
@@ -36,11 +33,16 @@ export type WalletViewProps = {
   mainPanel?: "wallets" | "access" | "skill-grants";
   onMainPanelChange?: (panel: "wallets" | "access" | "skill-grants") => void;
   status: WalletStatus | null;
-  custodyByWalletId?: Record<string, WalletStatus["custody"]>;
   namedWallets: Array<{
     id: string;
     name: string;
-    providerId: "embedded-keystore" | "local-socket-signer" | "alchemy" | "turnkey" | "privy";
+    providerId:
+      | "embedded-keystore"
+      | "local-socket-signer"
+      | "alchemy"
+      | "turnkey"
+      | "wallet-standard"
+      | "privy";
     addresses?: { solana?: string };
     balances?: { solana?: string };
     metadata?: Record<string, unknown>;
@@ -55,6 +57,11 @@ export type WalletViewProps = {
   balancesError: string | null;
   balances: WalletBalancesResponse | null;
   defaultWalletId: string | null;
+  providers?: WalletProviderInfo[];
+  createName?: string;
+  createId?: string;
+  createProvider?: WalletProviderInfo["id"];
+  createRole?: "agent" | "vault";
   settingsBusy: boolean;
   settingsError: string | null;
   settingsMessage: string | null;
@@ -96,23 +103,11 @@ export type WalletViewProps = {
   recurringTransferCron: string;
   recurringTransferTz: string;
   recurringTransferName: string;
-  securitySetupWalletId?: string;
-  securitySetupRole?: "agent" | "vault" | null;
   actionMessage: string | null;
   actionBusy?: boolean;
   passkeyBusy: boolean;
   passkeyError: string | null;
   passkeyLabel: string;
-  clientSecuritySupport?: WalletCustodyClientCompatibility | null;
-  clientSecuritySupportError?: string | null;
-  custodyDeviceShare?: string;
-  custodyRecoveryShare?: string;
-  custodyRecoveryInput?: string;
-  custodyEnrollLabel?: string;
-  custodyEnrolledDeviceShare?: string;
-  custodyRememberDeviceShare?: boolean;
-  custodyDeviceShareStored?: boolean;
-  custodyUnlockMinutes?: string;
   auditEntries: WalletAuditEntry[];
   activityPage: number;
   sendModalVisible: boolean;
@@ -136,6 +131,12 @@ export type WalletViewProps = {
   onWalletBalanceWalletChange?: (walletId: string) => void;
   onPolicyPanelChange?: (panel: WalletPolicyPanel) => void;
   onApprovalsFilterChange: (filter: WalletApprovalFilter) => void;
+  onAttachWalletStandardVault?: () => void;
+  onCreateNameChange?: (next: string) => void;
+  onCreateIdChange?: (next: string) => void;
+  onCreateProviderChange?: (next: WalletProviderInfo["id"]) => void;
+  onCreateRoleChange?: (next: "agent" | "vault") => void;
+  onCreateWallet?: () => void;
   onApproveRequest: (requestId: string) => void;
   onRejectRequest: (requestId: string) => void;
   onSetDefaultWallet: (walletId: string | null) => void;
@@ -143,24 +144,6 @@ export type WalletViewProps = {
   onEnablePasskeyApproval: () => void;
   onEnrollPasskey: () => void;
   onDeletePasskey?: (credentialId: string) => void;
-  onCustodyDeviceShareChange?: (next: string) => void;
-  onCustodyRecoveryInputChange?: (next: string) => void;
-  onCustodyEnrollLabelChange?: (next: string) => void;
-  onCustodyRememberChange?: (next: boolean) => void;
-  onCustodyUnlockMinutesChange?: (next: string) => void;
-  onInitializeCustody?: () => void;
-  onEnrollCustodyDevice?: () => void;
-  onRevokeCustodyDevice?: (deviceId: string) => void;
-  onDisableCustody?: (walletId?: string) => void;
-  onRecoverCustody?: () => void;
-  onUnlockCustody?: () => void;
-  onLockCustody?: () => void;
-  onForgetCustodyDeviceShare?: () => void;
-  onDownloadDeviceShare?: () => void;
-  onDownloadEnrolledDeviceShare?: () => void;
-  onDownloadRecoveryKit?: () => void;
-  onPrintRecoveryKit?: () => void;
-  onPrintEnrolledDeviceShare?: () => void;
   onApplyRecommendedPolicy?: () => void;
   onMiningSatSweepChange?: (
     patch: Partial<NonNullable<SatMinerProfile["automation"]["satSweep"]>>,
@@ -231,7 +214,7 @@ export type OperatorWalletRoles = {
 };
 
 type DisplayedWalletRole = "mining" | "agent" | "vault";
-export type WalletPolicyPanel = "caps" | "schedule" | "automation" | "skills" | "custody" | "sweep";
+export type WalletPolicyPanel = "caps" | "schedule" | "automation" | "skills" | "sweep";
 
 const WALLET_ACTIVITY_PAGE_SIZE = 8;
 const SOL_DECIMALS = 9n;
@@ -255,8 +238,7 @@ export function describeAdminControlShortcut(
   if (approvalMode !== "webauthn") {
     return {
       summary: "Not ready",
-      detail:
-        "Enable Wallet Control Passkey before approving sends, policy changes, wallet security setup, unlock, recovery, or device changes.",
+      detail: "Enable Wallet Control Passkey before approving sends or policy changes.",
       enableVisible: true,
       enableLabel: props.settingsBusy ? "Enabling..." : "Enable passkey approval",
       enableDisabled: props.settingsBusy || props.passkeyBusy,
@@ -268,8 +250,7 @@ export function describeAdminControlShortcut(
   if (!approvalReady || passkeyCount <= 0) {
     return {
       summary: "Not ready",
-      detail:
-        "Enroll one passkey in this browser before wallet sends, policy changes, wallet security setup, unlock, recovery, or device changes.",
+      detail: "Enroll one passkey in this browser before wallet sends or policy changes.",
       enableVisible: false,
       enableLabel: "Passkey approval enabled",
       enableDisabled: true,
@@ -280,8 +261,7 @@ export function describeAdminControlShortcut(
   }
   return {
     summary: "Ready",
-    detail:
-      "Wallet Control Passkey is ready for sends, policy changes, wallet security setup, unlock, recovery, and device changes.",
+    detail: "Wallet Control Passkey is ready for sends and policy changes.",
     enableVisible: false,
     enableLabel: "Passkey approval ready",
     enableDisabled: true,
@@ -292,7 +272,7 @@ export function describeAdminControlShortcut(
 }
 
 export function describeWalletSendFlow(
-  _status: Pick<WalletStatus, "policy" | "approvalAuth" | "custody"> | null | undefined,
+  _status: Pick<WalletStatus, "policy" | "approvalAuth"> | null | undefined,
 ): {
   mode: "manual";
   submitLabel: string;
@@ -329,9 +309,9 @@ export function describeWalletAutomationPolicySummary(
     return {
       label: "Automation on",
       detail:
-        "This selected wallet can execute approved background actions when role policy, caps, and custody state allow it.",
+        "This selected wallet can execute approved typed background actions when signer policy and caps allow it.",
       operatorDetail:
-        "These caps belong to the selected wallet. They are not SAT mining cycle limits, and they do not override custody or role restrictions.",
+        "These caps belong to the selected wallet. They are not SAT mining cycle limits, and they do not override signer or role restrictions.",
     };
   }
   return {
@@ -339,7 +319,7 @@ export function describeWalletAutomationPolicySummary(
     detail:
       "This selected wallet is manual-first. Reviewed Wallet UI sends can still be approved, but background actions cannot execute.",
     operatorDetail:
-      "These caps belong to the selected wallet. They are not SAT mining cycle limits, and they do not override custody or role restrictions.",
+      "These caps belong to the selected wallet. They are not SAT mining cycle limits, and they do not override signer or role restrictions.",
   };
 }
 
@@ -511,23 +491,21 @@ export function resolveOperatorWalletRoles(
       ? {
           title: "Wallet Control Passkey",
           summary: "Ready",
-          detail:
-            "Use this passkey for send approvals, policy changes, wallet security setup, unlock, recovery, and device changes.",
+          detail: "Use this passkey for reviewed sends and policy changes.",
           tone: "success",
         }
       : approvalMode === "webauthn"
         ? {
             title: "Wallet Control Passkey",
             summary: "Not ready",
-            detail:
-              "Enroll one passkey before wallet sends, policy changes, wallet security setup, unlock, recovery, or device changes.",
+            detail: "Enroll one passkey before reviewed wallet sends or policy changes.",
             tone: "warn",
           }
         : {
             title: "Wallet Control Passkey",
             summary: "Not ready",
             detail:
-              "Wallet control currently relies on the signed-in session. Add a passkey before enabling wallet security.",
+              "Wallet control currently relies on the signed-in session. Add a passkey before approving reviewed sends.",
             tone: "warn",
           }
     : {
@@ -699,46 +677,15 @@ function renderWalletBondIcon(
   `;
 }
 
-function resolveWalletCustodyStatus(
-  walletId: string,
-  props: Pick<WalletViewProps, "custodyByWalletId" | "status">,
-): WalletStatus["custody"] | null {
-  const direct = props.custodyByWalletId?.[walletId];
-  if (direct) {
-    return direct;
-  }
-  const statusCustody = props.status?.custody;
-  return statusCustody?.target?.walletId === walletId ? statusCustody : null;
-}
-
 function renderWalletRuntimeStatusIcons(params: {
-  custody: WalletStatus["custody"] | null;
   role: DisplayedWalletRole;
   automationEnabled?: boolean;
 }) {
-  const { custody, role } = params;
-  const unlockActive = Boolean(custody?.unlock?.active);
-  const splitKeyActive = Boolean(custody && custody.mode !== "single-key");
+  const { role } = params;
   if (role === "mining") {
     return nothing;
   }
   if (role === "vault") {
-    const splitKeyIcon = splitKeyActive
-      ? html`
-          <span
-            class="wallet-status-icon"
-            data-state=${unlockActive ? "vault-split-unlocked" : "vault-split-locked"}
-            title=${
-              unlockActive
-                ? `Split-key window is open${custody?.unlock?.expiresAt ? ` until ${formatCustodyExpiry(custody.unlock.expiresAt)}` : ""}.`
-                : "Split-key security is active and locked."
-            }
-            aria-label=${unlockActive ? "Vault split-key unlocked" : "Vault split-key locked"}
-          >
-            ${unlockActive ? icons.unlock : icons.lock}
-          </span>
-        `
-      : nothing;
     return html`
       <span
         class="wallet-status-icon"
@@ -748,7 +695,6 @@ function renderWalletRuntimeStatusIcons(params: {
       >
         ${icons.hand}
       </span>
-      ${splitKeyIcon}
     `;
   }
   if (params.automationEnabled === undefined) {
@@ -799,7 +745,6 @@ function renderWalletSweepChip(profile: SatMinerProfile | null | undefined) {
 function renderWalletActivePolicyIcons(params: {
   walletId: string;
   role: DisplayedWalletRole;
-  custody: WalletStatus["custody"] | null;
   props: Pick<
     WalletViewProps,
     | "walletDetailsWalletId"
@@ -834,9 +779,6 @@ function renderWalletActivePolicyIcons(params: {
             params.props.policyCapsEnabled
               ? { dataRole: "policy-on", title: "Vault caps active", icon: icons.shield }
               : null,
-            params.custody && params.custody.mode !== "single-key"
-              ? { dataRole: "policy-on", title: "Vault security active", icon: icons.lock }
-              : null,
           ]
         : [];
   return entries
@@ -848,225 +790,6 @@ function renderWalletActivePolicyIcons(params: {
         </span>
       `,
     );
-}
-
-function collectKnownSplitKeyWallets(props: WalletViewProps): WalletStatus["custody"][] {
-  const entries = new Map<string, WalletStatus["custody"]>();
-  const add = (custody: WalletStatus["custody"] | null | undefined) => {
-    if (!custody || custody.mode === "single-key") {
-      return;
-    }
-    entries.set(custody.target.walletId, custody);
-  };
-  add(props.status?.custody);
-  for (const custody of Object.values(props.custodyByWalletId ?? {})) {
-    add(custody);
-  }
-  return [...entries.values()];
-}
-
-function formatSupportStateLabel(state: WalletPasskeySupportState): string {
-  switch (state) {
-    case "supported":
-      return "Supported";
-    case "unsupported":
-      return "Unavailable";
-    default:
-      return "Unknown";
-  }
-}
-
-function browserWalletCustodyStoragePreferred(
-  support: WalletCustodyClientCompatibility | null | undefined,
-): boolean {
-  return (
-    support?.storageMode === "encrypted-browser-storage" ||
-    support?.storageMode === "encrypted-browser-storage-untested"
-  );
-}
-
-function describeWalletCustodyStorageMode(
-  support: WalletCustodyClientCompatibility | null | undefined,
-  stored: boolean,
-): {
-  label: string;
-  detail: string;
-} {
-  if (!support) {
-    return {
-      label: stored ? "Encrypted browser storage" : "Manual device share only",
-      detail: stored
-        ? "This browser already has an encrypted device share for the selected wallet."
-        : "No compatible storage mode has been confirmed on this client yet.",
-    };
-  }
-  if (browserWalletCustodyStoragePreferred(support)) {
-    if (support.storageMode === "encrypted-browser-storage") {
-      return {
-        label: stored ? "Encrypted browser storage" : "Encrypted browser storage ready",
-        detail: stored
-          ? "This browser is holding the selected wallet's device share off-host in encrypted browser storage."
-          : "This browser supports passkey-gated encrypted storage for the selected wallet's device share.",
-      };
-    }
-    return {
-      label: stored ? "Browser storage active" : "Browser storage ready after first unlock",
-      detail: stored
-        ? "This browser already has the encrypted device share for the selected wallet."
-        : "This browser can try passkey-protected storage during the first unlock. If it cannot protect the share, the UI will keep recovery/manual mode instead.",
-    };
-  }
-  return {
-    label: stored ? "Encrypted browser storage" : "Manual device share only",
-    detail: stored
-      ? "An encrypted browser-held share already exists here, but this browser cannot create new protected browser storage without PRF support."
-      : "This client cannot protect a browser-held device share, so keep the device share manual or use another client.",
-  };
-}
-
-function describeWalletCustodyRememberNote(
-  support: WalletCustodyClientCompatibility | null | undefined,
-): string {
-  if (browserWalletCustodyStoragePreferred(support)) {
-    return "Browser-held encrypted storage is the primary off-host path on this device. It helps with the next unlock here, but it does not replace the offline recovery share.";
-  }
-  return "Browser storage helps with the next unlock on this device. It does not silently restore the raw share after reload, and it does not replace the offline recovery share.";
-}
-
-function describeWalletRecoveryGuidance(
-  support: WalletCustodyClientCompatibility | null | undefined,
-): string {
-  if (browserWalletCustodyStoragePreferred(support)) {
-    return "This browser can keep the current device share in encrypted browser storage. The recovery kit is still the offline backup you need if this browser profile or device is lost.";
-  }
-  return "The recovery kit is the offline backup for this wallet. Keep it separate from the host and separate from any device share you export.";
-}
-
-function describeWalletSecondDeviceGuidance(
-  support: WalletCustodyClientCompatibility | null | undefined,
-): string {
-  if (browserWalletCustodyStoragePreferred(support)) {
-    return "Use Enroll device to mint a second device share, then move that share onto another trusted browser/device. Revoke lost or stale devices once the replacement is ready.";
-  }
-  return "Use Enroll device to mint a second device share, then move that share onto another trusted device. Revoke lost or stale devices once the replacement is ready.";
-}
-
-function buildWalletCompatibilityRows(
-  support: WalletCustodyClientCompatibility | null | undefined,
-): Array<{ label: string; state: string; detail: string }> {
-  if (!support) {
-    return [
-      {
-        label: "Browser path (primary)",
-        state: "Checking",
-        detail:
-          "Browser/passkey storage checks are still loading. Unlock will re-check before storing a device share.",
-      },
-    ];
-  }
-  const browserPrimaryState =
-    support.storageMode === "encrypted-browser-storage"
-      ? "Ready"
-      : support.storageMode === "encrypted-browser-storage-untested"
-        ? "Needs first unlock"
-        : "Unavailable";
-  const browserPrimaryDetail =
-    support.storageMode === "encrypted-browser-storage"
-      ? "This browser can keep the device share off-host in encrypted browser storage."
-      : support.storageMode === "encrypted-browser-storage-untested"
-        ? "This browser meets the base requirements, but PRF support is only proven during the first unlock."
-        : "This browser cannot protect a stored device share. Keep the share manual or use another trusted browser/device.";
-  return [
-    {
-      label: "Browser path (primary)",
-      state: browserPrimaryState,
-      detail: browserPrimaryDetail,
-    },
-    {
-      label: "Passkey / WebAuthn",
-      state: support.webauthn ? "Supported" : "Unavailable",
-      detail: support.webauthn
-        ? "Passkey approval is available on this device."
-        : "This device/browser cannot use passkey approval here.",
-    },
-    {
-      label: "PRF local encryption",
-      state: formatSupportStateLabel(support.prf),
-      detail: `Secure context ${support.secureContext ? "ok" : "missing"} · Web Crypto ${support.webCrypto ? "ok" : "missing"} · Browser storage ${support.localStorage ? "ok" : "missing"}`,
-    },
-  ];
-}
-
-function buildWalletSecuritySetupSteps(params: {
-  role: "agent" | "vault";
-  custody: WalletStatus["custody"];
-  recoveryShare: string | null | undefined;
-  deviceShareStored: boolean;
-  support: WalletCustodyClientCompatibility | null | undefined;
-}): Array<{ label: string; state: string; detail: string }> {
-  const browserPreferred = browserWalletCustodyStoragePreferred(params.support);
-  const recoveryReady = Boolean(String(params.recoveryShare ?? "").trim());
-  const roleLabel = params.role === "agent" ? "Agent" : "vault";
-  const steps: Array<{ label: string; state: string; detail: string }> = [];
-  if (params.custody.mode === "single-key") {
-    steps.push({
-      label: "1. Enable split-key",
-      state: "Next",
-      detail: `Turn on split-key for this ${roleLabel} wallet now before you rely on browser-held recovery and device-share handling.`,
-    });
-    steps.push({
-      label: "2. Download recovery kit",
-      state: "Blocked",
-      detail: "After split-key initializes, export the recovery kit once and store it offline.",
-    });
-  } else {
-    steps.push({
-      label: "1. Split-key",
-      state: "Ready",
-      detail: `Split-key is active for this ${roleLabel} wallet.`,
-    });
-    steps.push(
-      recoveryReady
-        ? {
-            label: "2. Download recovery kit",
-            state: "Ready now",
-            detail:
-              "A new recovery share is shown below. Download or print it before leaving this screen.",
-          }
-        : {
-            label: "2. Recovery kit",
-            state: "Keep offline",
-            detail:
-              "This wallet already has a recovery kit. Keep it offline and export a new one only after recovery or rotation.",
-          },
-    );
-  }
-  if (browserPreferred) {
-    steps.push(
-      params.deviceShareStored
-        ? {
-            label: "3. Store on this browser",
-            state: "Stored",
-            detail: "Encrypted browser storage is active for this wallet on the current client.",
-          }
-        : {
-            label: "3. Store on this browser",
-            state: params.custody.mode === "single-key" ? "Next" : "Ready after unlock",
-            detail:
-              "This happens automatically after split-key setup or the first unlock when this browser supports passkey-protected storage.",
-          },
-    );
-  } else {
-    steps.push({
-      label: "3. Store on this client",
-      state: "Manual",
-      detail:
-        params.support?.storageMode === "manual-share-only"
-          ? "This browser cannot protect a stored device share. Keep the device share manual on this client and rely on the offline recovery kit."
-          : "Browser-held encrypted storage is not ready here. Keep the device share manual on this client and rely on the offline recovery kit.",
-    });
-  }
-  return steps;
 }
 
 export function describeAgentDefaultAction(
@@ -1158,65 +881,6 @@ export function orderWalletsForDisplay(
   });
 }
 
-function describeSelectedWalletRole(role: DisplayedWalletRole): {
-  label: string;
-  tone: "success" | "warn" | "neutral";
-  summary: string;
-  security: string;
-  runtimeCapsNote: string;
-  templateBullets: string[];
-} {
-  switch (role) {
-    case "mining":
-      return {
-        label: "Mining",
-        tone: "warn",
-        summary:
-          "Use this wallet for SAT mining only. Keep generic sends off it and move claimed SAT out with sweep rules if you want lower hot-wallet exposure.",
-        security:
-          "Mining is SAT mining ops only. Keep it funded for mining fees and use sweep rules to move claimed SAT out.",
-        runtimeCapsNote:
-          "The runtime caps below do not control SAT cycle txs. Mining spend is governed by the SAT runtime and signer scope.",
-        templateBullets: [
-          "SAT-only signer scope and keep generic sends off this wallet.",
-          "Use the Mining page for SAT auto-sweep target, all/% balance sweep mode, and keep amount.",
-          "Keep only operating SOL here and move claimed SAT out quickly.",
-        ],
-      };
-    case "agent":
-      return {
-        label: "Agent",
-        tone: "success",
-        summary:
-          "Use this wallet for reviewed and automated payments, Fased Network payment evidence, and approved skill/plugin wallet actions.",
-        security:
-          "Main guardrails are caps, allowlists, source policy, and audit logs. Use Stop to pause automation.",
-        runtimeCapsNote: "The caps below are this Agent wallet's main send guardrails.",
-        templateBullets: [
-          "Reviewed and automated wallet path for the agent.",
-          "Set realistic per-tx and daily caps for the balances you actually want online.",
-          "Use contract/program allowlists to narrow what this wallet can touch.",
-        ],
-      };
-    default:
-      return {
-        label: "Vault",
-        tone: "neutral",
-        summary:
-          "Use this wallet as storage and manual transfer target. It should not be the routine automation path.",
-        security:
-          "Recommended default: split-key and manual-only. Keep it locked except when you intentionally unlock for a transfer.",
-        runtimeCapsNote:
-          "The caps below belong to this vault wallet, but vault should still stay manual-first regardless.",
-        templateBullets: [
-          "Storage and manual transfer target, not the routine automation path.",
-          "Keep split-key enabled and stay locked unless you are actively signing.",
-          "Use as the preferred destination for SAT auto-sweep and longer-term holdings.",
-        ],
-      };
-  }
-}
-
 function formatSatInputValue(raw: string | number | bigint | null | undefined): string {
   const value = String(raw ?? "").trim();
   if (!value) {
@@ -1243,17 +907,6 @@ function parseSatInputToRaw(value: string): string {
     BigInt(wholePart || "0") * 100_000_000_000n +
     BigInt((fractionPart + "00000000000").slice(0, 11) || "0")
   ).toString();
-}
-
-function formatCustodyExpiry(value: string | undefined): string {
-  if (String(value ?? "").startsWith("9999-12-31T23:59:59")) {
-    return "you lock it";
-  }
-  const timestamp = Date.parse(String(value ?? ""));
-  if (!Number.isFinite(timestamp)) {
-    return "n/a";
-  }
-  return new Date(timestamp).toLocaleString();
 }
 
 function toHumanAmount(raw: string, chain: "solana", options: { hideUnit?: boolean } = {}): string {
@@ -1570,6 +1223,163 @@ function renderWalletApprovalDiffSummary(params: {
       <span>from <strong>${from}</strong> <span class="muted">(${diff.fromRole})</span></span>
       <span>to <span class="mono">${shortenMiddle(target, 8, 6)}</span></span>
       ${trigger ? html`<span class="muted">triggered by ${trigger}</span>` : nothing}
+    </div>
+  `;
+}
+
+function walletSignerIntentRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function walletSignerIntentValue(value: unknown): string | null {
+  if (typeof value === "string") {
+    return value.trim() || null;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+  if (typeof value === "boolean") {
+    return value ? "yes" : "no";
+  }
+  if (Array.isArray(value)) {
+    const values = value.map((entry) => walletSignerIntentValue(entry)).filter(Boolean);
+    return values.length > 0 ? values.join(", ") : null;
+  }
+  return null;
+}
+
+function renderWalletSignerSemanticIntent(request: WalletSendApprovalRequest) {
+  const intent = walletSignerIntentRecord(request.payload.signerSemanticIntent);
+  const intentType = walletSignerIntentValue(intent?.type);
+  if (!intent || !intentType) {
+    return nothing;
+  }
+  const fields: Array<{ label: string; value: string }> = [];
+  const add = (label: string, value: unknown) => {
+    const text = walletSignerIntentValue(value);
+    if (text) {
+      fields.push({ label, value: text });
+    }
+  };
+  let missingTriggerTerms: string[] = [];
+  if (intentType.startsWith("solana.jupiter.")) {
+    const jupiter = walletSignerIntentRecord(intent.jupiter);
+    const trigger = walletSignerIntentRecord(jupiter?.trigger);
+    add("Owner", jupiter?.owner);
+    add("Input mint", jupiter?.inputMint);
+    add("Output mint", jupiter?.outputMint);
+    add("Input amount", jupiter?.inputAmount);
+    add("Maximum input", jupiter?.maxInputAmount);
+    add("Minimum output", jupiter?.minimumOutputAmount);
+    add("Fee ceiling (lamports)", jupiter?.maxFeeLamports);
+    add("Source token account", jupiter?.sourceTokenAccount);
+    add("Destination token account", jupiter?.destinationTokenAccount);
+    add("Programs", jupiter?.programs);
+    add("Trigger operation", trigger?.operation);
+    add("Trigger program", trigger?.program);
+    add("Trigger order ID", trigger?.order);
+    add("Trigger mint", trigger?.triggerMint);
+    add("Condition", trigger?.condition);
+    add("Target price (USD)", trigger?.targetPriceUsd);
+    add("Slippage (bps)", trigger?.slippageBps);
+    add("Order expiry", trigger?.expiresAt);
+    add("Expected order state", trigger?.expectedOrderState);
+    if (intentType.includes(".trigger.")) {
+      const operation = walletSignerIntentValue(trigger?.operation);
+      const requiredTerms =
+        operation === "create"
+          ? [
+              ["input mint", jupiter?.inputMint],
+              ["output mint", jupiter?.outputMint],
+              ["exact input amount", jupiter?.inputAmount],
+              ["trigger mint", trigger?.triggerMint],
+              ["condition", trigger?.condition],
+              ["target price", trigger?.targetPriceUsd],
+              ["slippage", trigger?.slippageBps],
+              ["order expiry", trigger?.expiresAt],
+              ["expected new state", trigger?.expectedOrderState],
+            ]
+          : operation === "cancel"
+            ? [
+                ["order ID", trigger?.order],
+                ["refund mint", jupiter?.outputMint],
+                ["minimum refund", jupiter?.minimumOutputAmount],
+                ["refund destination", jupiter?.destinationTokenAccount],
+                ["expected open state", trigger?.expectedOrderState],
+              ]
+            : [["operation", trigger?.operation]];
+      missingTriggerTerms = requiredTerms
+        .filter((entry) => walletSignerIntentValue(entry[1]) === null)
+        .map((entry) => String(entry[0]));
+      const forbiddenSignerOwnedFields = [
+        ["vault", trigger?.vault],
+        ["external request ID", trigger?.requestId],
+        ["source token account", jupiter?.sourceTokenAccount],
+        ...(operation === "create"
+          ? [["destination token account", jupiter?.destinationTokenAccount]]
+          : []),
+      ]
+        .filter((entry) => walletSignerIntentValue(entry[1]) !== null)
+        .map((entry) => String(entry[0]));
+      missingTriggerTerms.push(
+        ...forbiddenSignerOwnedFields.map((field) => `remove caller-provided ${field}`),
+      );
+    }
+  } else if (intentType === "solana.nativeTransfer") {
+    add("Destination", intent.destination);
+    add("Lamports", intent.lamports);
+  } else if (intentType === "solana.splTransferChecked") {
+    add("Token program", intent.tokenProgram);
+    add("Mint", intent.mint);
+    add("Destination", intent.destination);
+    add("Amount", intent.amount);
+  } else if (intentType === "solana.vaultBondAction") {
+    const context = walletSignerIntentRecord(intent.context);
+    add("Cluster", intent.cluster);
+    add("Vault action", intent.action);
+    add("Program", intent.programId);
+    add("Target authority", context?.targetAuthority);
+    add("Dispute authority", context?.disputeAuthority);
+    add("Interval start cycle", context?.intervalStartCycleId);
+    add("Registry page", context?.registryPageIndex);
+    add("Miner authorities", context?.minerAuthorities);
+    add("Front cycle IDs", context?.frontCycleIds);
+    add("Back cycle IDs", context?.backCycleIds);
+  } else if (intentType === "federation.bondChallenge") {
+    const federation = walletSignerIntentRecord(intent.federation);
+    add("Challenge ID", federation?.challengeId);
+    add("Bond ID", federation?.bondId);
+    add("Bond tier", federation?.tier);
+    add("Bond amount", federation?.amountRaw);
+    add("Federation handle", federation?.handle);
+    add("Node ID", federation?.nodeId);
+    add("Token ID", federation?.tokenId);
+    add("Federation origin", federation?.federationOrigin);
+    add("Challenge expiry", federation?.expiresAt);
+  }
+  return html`
+    <div class="wallet-approval-diff" style="margin-top: 6px;">
+      <span><strong>Signer intent</strong> <span class="mono">${intentType}</span></span>
+      ${fields.map(
+        (field) => html`
+          <span>
+            ${field.label}:
+            <span class="mono" style="overflow-wrap: anywhere;">${field.value}</span>
+          </span>
+        `,
+      )}
+      ${
+        missingTriggerTerms.length > 0
+          ? html`
+            <span class="muted">
+              Invalid or incomplete signer binding: ${missingTriggerTerms.join(", ")}. Do not
+              approve this Trigger review.
+            </span>
+          `
+          : nothing
+      }
     </div>
   `;
 }
@@ -2131,7 +1941,7 @@ function renderWalletCapsPanel(params: {
                 </div>
                 ${
                   props.policyTokenSearchError
-                    ? html`<div class="wallet-custody-note error" style="margin-top: 8px;">${props.policyTokenSearchError}</div>`
+                    ? html`<div class="wallet-security-note error" style="margin-top: 8px;">${props.policyTokenSearchError}</div>`
                     : nothing
                 }
                 ${
@@ -2564,10 +2374,6 @@ function walletExplorerUrl(
     : `https://solscan.io/account/${encodeURIComponent(trimmed)}`;
 }
 
-function walletTone(state: "success" | "warn" | "neutral"): "success" | "warn" | "neutral" {
-  return state;
-}
-
 function renderWalletBalancePill(
   label: "SOL" | "SAT",
   value: string,
@@ -2657,7 +2463,7 @@ function renderWalletSkillGrantsPanel(props: WalletViewProps) {
       ${
         props.skillGrantRows.length === 0
           ? html`
-              <div class="wallet-custody-note" style="margin-top: 12px">
+              <div class="wallet-security-note" style="margin-top: 12px">
                 No reviewed wallet-capable skills or existing wallet grants found yet.
               </div>
             `
@@ -2850,12 +2656,6 @@ function renderWalletSkillGrantsPanel(props: WalletViewProps) {
 function renderWalletAccessPanel(props: WalletViewProps) {
   const status = props.status;
   const adminControlShortcut = describeAdminControlShortcut(props);
-  const knownSplitKeyWallets = collectKnownSplitKeyWallets(props);
-  const passkeyCount =
-    status?.approvalAuth?.passkeys?.length ?? status?.approvalAuth?.passkeyCount ?? 0;
-  const blockLastPasskeyRemoval = knownSplitKeyWallets.length > 0 && passkeyCount <= 1;
-  const passkeyRemovalBlockDetail =
-    "Disable wallet security on every secured wallet before removing the last Wallet Control Passkey.";
 
   return html`
     <div class="wallet-top-grid">
@@ -2907,8 +2707,10 @@ function renderWalletAccessPanel(props: WalletViewProps) {
               : nothing
           }
         </div>
-        <div class="wallet-custody-note" style="margin-top: 10px;">
-          Required before wallet security setup, unlock, recovery, second-device changes, policy changes, and approving sends.
+        <div class="wallet-security-note" style="margin-top: 10px;">
+          Protects Gateway policy and administration changes. Native signer
+          wallets use a separate signer-owned WebAuthn credential for each exact
+          reviewed send.
         </div>
         ${
           !adminControlShortcut.enableVisible && !adminControlShortcut.enrollVisible
@@ -2918,25 +2720,20 @@ function renderWalletAccessPanel(props: WalletViewProps) {
                   ${
                     (status?.approvalAuth?.passkeys?.length ?? 0) > 0
                       ? html`
-                          <div class="wallet-custody-device-list">
+                          <div class="wallet-security-device-list">
                             ${status!.approvalAuth.passkeys.map(
                               (passkey) => html`
-                                <div class="wallet-custody-device-row">
+                                <div class="wallet-security-device-row">
                                   <div>
                                     <div>Label: ${passkey.label || "Wallet passkey"}</div>
-                                    <div class="wallet-custody-note">
+                                    <div class="wallet-security-note">
                                       Credential ID <span class="mono">${shortenMiddle(passkey.id)}</span>
                                       · added ${new Date(passkey.createdAt).toLocaleString()}
                                     </div>
                                   </div>
                                   <button
                                     class="btn small"
-                                    title=${blockLastPasskeyRemoval ? passkeyRemovalBlockDetail : ""}
-                                    ?disabled=${
-                                      props.passkeyBusy ||
-                                      !props.onDeletePasskey ||
-                                      blockLastPasskeyRemoval
-                                    }
+                                    ?disabled=${props.passkeyBusy || !props.onDeletePasskey}
                                     @click=${() => props.onDeletePasskey?.(passkey.id)}
                                   >
                                     Remove passkey
@@ -2945,15 +2742,6 @@ function renderWalletAccessPanel(props: WalletViewProps) {
                               `,
                             )}
                           </div>
-                          ${
-                            blockLastPasskeyRemoval
-                              ? html`
-                                  <div class="wallet-custody-note" style="margin-top: 10px;">
-                                    ${passkeyRemovalBlockDetail}
-                                  </div>
-                                `
-                              : nothing
-                          }
                         `
                       : nothing
                   }
@@ -3017,48 +2805,6 @@ export function renderWallet(props: WalletViewProps) {
   const policyDisplay = status?.policyDisplay;
   const selectedWallet = findNamedWallet(props.namedWallets, props.walletDetailsWalletId);
   const displayedWallets = orderWalletsForDisplay(props.namedWallets, props);
-  const selectedWalletChains = allowedWalletSendChains(selectedWallet);
-  const selectedWalletCanSpendSolana = selectedWalletChains.includes("solana");
-  const custody = status?.custody ?? null;
-  const passkeyApprovalReady =
-    (status?.approvalAuth?.mode ?? "none") === "webauthn" &&
-    Boolean(status?.approvalAuth?.ready) &&
-    (status?.approvalAuth?.passkeyCount ?? 0) > 0;
-  const custodyUnlockActive = custody?.unlock?.active ?? false;
-  const custodyUnlockExpiresAt = custody?.unlock?.expiresAt;
-  const displayedSelectedRole = selectedWallet
-    ? resolveDisplayedWalletRole(selectedWallet.id, props)
-    : ("vault" as const);
-  const selectedRoleSummary = describeSelectedWalletRole(displayedSelectedRole);
-  const focusedSecuritySetupRole =
-    selectedWallet &&
-    props.securitySetupWalletId?.trim() === selectedWallet.id &&
-    (props.securitySetupRole === "agent" || props.securitySetupRole === "vault")
-      ? props.securitySetupRole
-      : null;
-  const custodyIsSelectedWallet =
-    Boolean(custody?.target?.walletId) &&
-    custody?.target?.walletId === (props.walletDetailsWalletId.trim() || selectedWallet?.id || "");
-  const selectedWalletHasLocalKey = Boolean(selectedWallet?.readiness?.keystore);
-  const selectedWalletNeedsKeyBeforeSplitKey =
-    Boolean(selectedWallet && custodyIsSelectedWallet && custody?.mode === "single-key") &&
-    !selectedWalletHasLocalKey;
-  const custodyStateLabel =
-    custody?.mode === "single-key" || custodyUnlockActive ? "Unlocked" : "Locked";
-  const custodyStateTone =
-    custody?.mode === "single-key" ? "success" : custodyUnlockActive ? "success" : "warn";
-  const custodyStateDetail =
-    custody?.mode === "single-key"
-      ? "Unlocked"
-      : custodyUnlockActive
-        ? `Unlocked until ${formatCustodyExpiry(custodyUnlockExpiresAt)}`
-        : "Locked. Use passkey unlock before this wallet can sign.";
-  const custodyUnlockWindowDetail =
-    custody?.mode === "single-key"
-      ? "No split-key lock is active for this wallet."
-      : custodyUnlockActive
-        ? `Signing window is active until ${formatCustodyExpiry(custodyUnlockExpiresAt)}.`
-        : "Signing window is locked. Unlock with Wallet Control Passkey plus this wallet's device share before it can sign.";
   const miningSatSweep = {
     enabled: false,
     mode: "all" as const,
@@ -3074,28 +2820,8 @@ export function renderWallet(props: WalletViewProps) {
     miningSatSweep.destinationAddress || !miningSatSweep.destinationWalletId
       ? "external"
       : "wallet";
-  const enrolledDevices = custodyIsSelectedWallet ? (custody?.ceremony?.devices ?? []) : [];
-  const clientStorageSummary = describeWalletCustodyStorageMode(
-    props.clientSecuritySupport,
-    Boolean(props.custodyDeviceShareStored),
-  );
-  const compatibilityNotes = props.clientSecuritySupport?.notes ?? [];
-  const primaryClientNotes = compatibilityNotes.filter(
-    (note) => !note.toLowerCase().includes("helper"),
-  );
-  const setupSteps =
-    focusedSecuritySetupRole && custody && custodyIsSelectedWallet
-      ? buildWalletSecuritySetupSteps({
-          role: focusedSecuritySetupRole,
-          custody,
-          recoveryShare: props.custodyRecoveryShare,
-          deviceShareStored: Boolean(props.custodyDeviceShareStored),
-          support: props.clientSecuritySupport,
-        })
-      : [];
   const expandedWalletId = String(props.expandedWalletId ?? "").trim();
   const expandedPanel = props.expandedPanel ?? "";
-  const showLegacyWalletSecurityPanel = false;
   const hashPanel =
     typeof window !== "undefined" &&
     window.location.hash.replace(/^#/, "") === "wallet-skill-grants"
@@ -3105,6 +2831,19 @@ export function renderWallet(props: WalletViewProps) {
         ? "access"
         : null;
   const activeMainPanel = hashPanel ?? props.mainPanel ?? "wallets";
+  const createProviders = (props.providers ?? []).filter(
+    (provider) =>
+      (provider.id === "local-socket-signer" || provider.id === "turnkey") &&
+      provider.operationsImplemented &&
+      provider.capabilities.operations.createWallet,
+  );
+  const createProviderId = props.createProvider ?? createProviders[0]?.id ?? "local-socket-signer";
+  const createProvider = createProviders.find((provider) => provider.id === createProviderId);
+  const createProviderReady = Boolean(
+    createProvider?.enabled &&
+    createProvider.health.ok &&
+    (!createProvider.capabilities.requiresCredentials || createProvider.credentialsConfigured),
+  );
   const setMainPanel = (panel: "wallets" | "access" | "skill-grants") => {
     props.onMainPanelChange?.(panel);
     if (typeof window === "undefined") {
@@ -3345,31 +3084,16 @@ export function renderWallet(props: WalletViewProps) {
         line-height: 1;
         font-weight: 560;
       }
-      .wallet-custody-grid {
-        display: grid;
-        gap: 12px;
-      }
-      .wallet-custody-fields {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 12px;
-      }
-      .wallet-custody-actions {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 10px;
-        align-items: center;
-      }
-      .wallet-custody-note {
+      .wallet-security-note {
         color: var(--muted);
         font-size: 13px;
         line-height: 1.5;
       }
-      .wallet-custody-device-list {
+      .wallet-security-device-list {
         display: grid;
         gap: 10px;
       }
-      .wallet-custody-device-row {
+      .wallet-security-device-row {
         display: flex;
         justify-content: space-between;
         gap: 12px;
@@ -3377,17 +3101,6 @@ export function renderWallet(props: WalletViewProps) {
         border: 1px solid var(--border);
         border-radius: 12px;
         padding: 10px 12px;
-      }
-      .wallet-custody-remember {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        color: var(--muted);
-        font-size: 13px;
-      }
-      .wallet-custody-stored {
-        color: var(--ok);
-        font-size: 12px;
       }
       .wallet-inline-badges {
         display: inline-flex;
@@ -4107,7 +3820,34 @@ export function renderWallet(props: WalletViewProps) {
         font-size: 12px;
         line-height: 1.45;
       }
+      .wallet-create-panel {
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: var(--surface-muted);
+        padding: 10px 12px;
+      }
+      .wallet-create-panel > summary {
+        cursor: pointer;
+        color: var(--text-strong);
+        font-weight: 700;
+      }
+      .wallet-create-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+        margin-top: 12px;
+      }
+      .wallet-create-actions {
+        align-items: center;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        grid-column: 1 / -1;
+      }
       @media (max-width: 720px) {
+        .wallet-create-grid {
+          grid-template-columns: 1fr;
+        }
         .wallet-spend-limit-row {
           grid-template-columns: 1fr;
         }
@@ -4254,722 +3994,9 @@ export function renderWallet(props: WalletViewProps) {
         .wallet-meta-row {
           grid-template-columns: minmax(54px, auto) minmax(0, 1fr) auto;
         }
-        .wallet-custody-fields {
-          grid-template-columns: 1fr;
-        }
       }
     </style>
     <section id="wallet-dashboard" class="wallet-dashboard">
-    ${
-      showLegacyWalletSecurityPanel
-        ? html`<div id="wallet-security" class="card wallet-panel">
-      <div class="wallet-panel__head">
-        <div>
-          <div class="wallet-top-card__title-row">
-            <div class="card-title">Selected Wallet Security</div>
-            ${renderInfoButton(
-              "Wallet Security",
-              "Mining shows sweep controls. Agent and vault wallets show split-key controls when the selected wallet has a signer key.",
-            )}
-          </div>
-        </div>
-        <div class="wallet-chip-row">
-          ${
-            custody
-              ? html`
-                  <span
-                    class="wallet-status-chip"
-                    data-tone=${walletTone(custodyStateTone)}
-                  >
-                    ${custodyStateLabel}
-                  </span>
-                `
-              : nothing
-          }
-        </div>
-      </div>
-      ${
-        selectedWallet && custody && custodyIsSelectedWallet
-          ? html`
-              ${
-                focusedSecuritySetupRole
-                  ? html`
-                      <div class="callout">
-                        <strong>${focusedSecuritySetupRole === "agent" ? "Agent" : "Vault"} setup</strong>
-                        <div style="margin-top: 6px;">
-                          Use the checklist below in order. Split-key setup, unlock, recovery, and device changes require passkey approval.
-                        </div>
-                      </div>
-                    `
-                  : nothing
-              }
-              <div class="wallet-custody-grid">
-                <div class="wallet-custody-fields">
-                  <div class="field">
-                    <span>Wallet</span>
-                    <div class="mono">${selectedWallet.name} (${selectedWallet.id})</div>
-                  </div>
-                  <div class="field">
-                    <span>Current state</span>
-                    <div class="mono">${custodyStateDetail}</div>
-                  </div>
-                  ${
-                    displayedSelectedRole !== "mining"
-                      ? html`
-                          <div class="field">
-                            <span>Approval</span>
-                            <div class="wallet-custody-note">
-                              Wallet Control Passkey authorizes setup, unlock, recovery, and device changes. Split-key unlock
-                              controls whether this wallet can decrypt and sign.
-                            </div>
-                          </div>
-                        `
-                      : nothing
-                  }
-                </div>
-                ${
-                  displayedSelectedRole !== "mining" && !passkeyApprovalReady
-                    ? html`
-                        <div class="callout warn">
-                          Set up Wallet Control Passkey first. Split-key setup, unlock, recovery, and device changes are
-                          blocked until a passkey is enrolled.
-                        </div>
-                      `
-                    : nothing
-                }
-                ${
-                  displayedSelectedRole === "mining"
-                    ? html`
-	                        <div class="field">
-	                          <div class="wallet-inline-grid">
-	                            <label class="field">
-	                              <span>Sweep claimed SAT</span>
-                              <select
-                                ?disabled=${props.settingsBusy || !props.onMiningSatSweepChange}
-                                @change=${(event: Event) =>
-                                  props.onMiningSatSweepChange?.({
-                                    enabled:
-                                      (event.currentTarget as HTMLSelectElement).value ===
-                                      "enabled",
-                                  })}
-                              >
-                                <option value="disabled" ?selected=${!miningSatSweep.enabled}>
-                                  Off
-                                </option>
-                                <option value="enabled" ?selected=${miningSatSweep.enabled}>
-                                  On
-                                </option>
-                              </select>
-                            </label>
-                            <label class="field">
-                              <span>Destination</span>
-                              <select
-                                ?disabled=${
-                                  props.settingsBusy ||
-                                  !miningSatSweep.enabled ||
-                                  !props.onMiningSatSweepChange
-                                }
-                                @change=${(event: Event) => {
-                                  const value = (event.currentTarget as HTMLSelectElement).value;
-                                  props.onMiningSatSweepChange?.(
-                                    value === "__external__"
-                                      ? {
-                                          destinationWalletId: undefined,
-                                          destinationAddress:
-                                            miningSatSweep.destinationAddress ?? "",
-                                        }
-                                      : {
-                                          destinationWalletId: value || undefined,
-                                          destinationAddress: undefined,
-                                        },
-                                  );
-                                }}
-                              >
-                                <option
-                                  value="__external__"
-                                  ?selected=${miningSweepDestinationMode === "external"}
-                                >
-                                  External address
-                                </option>
-                                ${miningSweepDestinationWalletOptions.map(
-                                  (wallet) => html`
-                                    <option
-                                      value=${wallet.id}
-                                      ?selected=${miningSatSweep.destinationWalletId === wallet.id}
-                                    >
-                                      ${wallet.name}
-                                    </option>
-                                  `,
-                                )}
-                              </select>
-                            </label>
-                            ${
-                              miningSweepDestinationMode === "external"
-                                ? html`
-                                    <label class="field">
-                                      <span>External address</span>
-                                      <input
-                                        type="text"
-                                        .value=${miningSatSweep.destinationAddress ?? ""}
-                                        ?disabled=${
-                                          props.settingsBusy ||
-                                          !miningSatSweep.enabled ||
-                                          !props.onMiningSatSweepChange
-                                        }
-                                        @change=${(event: Event) =>
-                                          props.onMiningSatSweepChange?.({
-                                            destinationAddress:
-                                              (
-                                                event.currentTarget as HTMLInputElement
-                                              ).value.trim() || undefined,
-                                            destinationWalletId: undefined,
-                                          })}
-                                        placeholder="Solana destination address"
-                                      />
-                                    </label>
-                                  `
-                                : nothing
-                            }
-                            <label class="field">
-                              <span>Sweep amount</span>
-                              <select
-                                ?disabled=${
-                                  props.settingsBusy ||
-                                  !miningSatSweep.enabled ||
-                                  !props.onMiningSatSweepChange
-                                }
-                                @change=${(event: Event) =>
-                                  props.onMiningSatSweepChange?.({
-                                    mode:
-                                      (event.currentTarget as HTMLSelectElement).value ===
-                                      "percentage"
-                                        ? "percentage"
-                                        : "all",
-                                  })}
-                              >
-                                <option value="all" ?selected=${miningSatSweep.mode !== "percentage"}>
-                                  All claimed SAT
-                                </option>
-                                <option
-                                  value="percentage"
-                                  ?selected=${miningSatSweep.mode === "percentage"}
-                                >
-                                  Percentage of spendable balance
-                                </option>
-                              </select>
-                            </label>
-                            ${
-                              miningSatSweep.mode === "percentage"
-                                ? html`
-                                    <label class="field">
-                                      <span>Percentage</span>
-                                      <input
-                                        type="number"
-                                        min="1"
-                                        max="100"
-                                        step="1"
-                                        .value=${String(miningSatSweep.percentage ?? 100)}
-                                        ?disabled=${
-                                          props.settingsBusy ||
-                                          !miningSatSweep.enabled ||
-                                          !props.onMiningSatSweepChange
-                                        }
-                                        @change=${(event: Event) =>
-                                          props.onMiningSatSweepChange?.({
-                                            percentage: Math.max(
-                                              1,
-                                              Math.min(
-                                                100,
-                                                Number(
-                                                  (event.currentTarget as HTMLInputElement).value,
-                                                ) || 100,
-                                              ),
-                                            ),
-                                          })}
-                                      />
-                                    </label>
-                                  `
-                                : nothing
-                            }
-                            <label class="field">
-                              <span>Minimum sweep (SAT)</span>
-                              <input
-                                type="text"
-                                inputmode="decimal"
-                                .value=${formatSatInputValue(miningSatSweep.minRaw ?? "1")}
-                                ?disabled=${
-                                  props.settingsBusy ||
-                                  !miningSatSweep.enabled ||
-                                  !props.onMiningSatSweepChange
-                                }
-                                @change=${(event: Event) =>
-                                  props.onMiningSatSweepChange?.({
-                                    minRaw: parseSatInputToRaw(
-                                      (event.currentTarget as HTMLInputElement).value,
-                                    ),
-                                  })}
-                                placeholder="1"
-                              />
-                            </label>
-                            <label class="field">
-                              <span>Keep after sweep (SAT)</span>
-                              <input
-                                type="text"
-                                inputmode="decimal"
-                                .value=${formatSatInputValue(miningSatSweep.keepRaw ?? "0")}
-                                ?disabled=${
-                                  props.settingsBusy ||
-                                  !miningSatSweep.enabled ||
-                                  !props.onMiningSatSweepChange
-                                }
-                                @change=${(event: Event) =>
-                                  props.onMiningSatSweepChange?.({
-                                    keepRaw: parseSatInputToRaw(
-                                      (event.currentTarget as HTMLInputElement).value,
-                                    ),
-                                  })}
-                                placeholder="0"
-                              />
-                            </label>
-                          </div>
-                        </div>
-                      `
-                    : nothing
-                }
-                ${
-                  settings && displayedSelectedRole === "agent"
-                    ? html`
-                        <details class="wallet-advanced-box">
-                          <summary>Agent spend limits</summary>
-                          <div class="wallet-custody-note" style="margin-bottom: 12px;">
-                            Optional limits for reviewed and automated Agent wallet sends.
-                          </div>
-                          <div class="wallet-inline-grid">
-                            ${
-                              selectedWalletCanSpendSolana
-                                ? html`
-                                    <label class="field">
-                                      <span>SOL max</span>
-                                      <input
-                                        placeholder="1.0"
-                                        .value=${
-                                          props.policySolMaxPerTx ||
-                                          policyDisplay?.solana.maxPerTx.human.split(" ")[0] ||
-                                          toHumanAmount(settings.policy.solana.maxPerTx, "solana", {
-                                            hideUnit: true,
-                                          })
-                                        }
-                                        ?disabled=${props.settingsBusy || !canEditPolicy}
-                                        @input=${(event: Event) =>
-                                          props.onPolicyDraftChange({
-                                            solMaxPerTx: (event.target as HTMLInputElement).value,
-                                          })}
-                                      />
-                                    </label>
-                                    <label class="field">
-                                      <span>SOL daily</span>
-                                      <input
-                                        placeholder="5.0"
-                                        .value=${
-                                          props.policySolMaxDaily ||
-                                          policyDisplay?.solana.maxDaily.human.split(" ")[0] ||
-                                          toHumanAmount(settings.policy.solana.maxDaily, "solana", {
-                                            hideUnit: true,
-                                          })
-                                        }
-                                        ?disabled=${props.settingsBusy || !canEditPolicy}
-                                        @input=${(event: Event) =>
-                                          props.onPolicyDraftChange({
-                                            solMaxDaily: (event.target as HTMLInputElement).value,
-                                          })}
-                                      />
-                                    </label>
-                                  `
-                                : nothing
-                            }
-                            <button
-                              class="btn"
-                              ?disabled=${props.settingsBusy || !canEditPolicy}
-                              @click=${props.onSavePolicy}
-                            >
-                              ${props.settingsBusy ? "Saving..." : "Save"}
-                            </button>
-                          </div>
-                        </details>
-                      `
-                    : nothing
-                }
-                ${
-                  setupSteps.length > 0
-                    ? html`
-                        <div class="field">
-                          <span>${focusedSecuritySetupRole === "agent" ? "Agent" : "Vault"} setup checklist</span>
-                          <div class="wallet-setup-list">
-                            ${setupSteps.map(
-                              (step) => html`
-                                <div class="wallet-setup-row">
-                                  <div class="wallet-setup-row__label">${step.label}</div>
-                                  <div class="wallet-setup-row__state">${step.state}</div>
-                                  <div class="wallet-setup-row__detail">${step.detail}</div>
-                                </div>
-                              `,
-                            )}
-                          </div>
-                        </div>
-                      `
-                    : nothing
-                }
-                ${
-                  displayedSelectedRole !== "mining"
-                    ? html`
-                        <div class="field">
-                          <span>Browser storage</span>
-                          <div>${clientStorageSummary.label}</div>
-                          <div class="wallet-custody-note">${clientStorageSummary.detail}</div>
-                        </div>
-                      `
-                    : nothing
-                }
-                ${
-                  displayedSelectedRole !== "mining" && props.custodyRecoveryShare?.trim()
-                    ? html`
-                        <div class="field">
-                          <span>New recovery share</span>
-                          <div class="mono wallet-custody-note">
-                            Show once after init or recovery. Store this offline and separate from the device share.
-                          </div>
-                          <textarea readonly rows="3">${props.custodyRecoveryShare}</textarea>
-                          <div class="wallet-custody-actions" style="margin-top: 10px;">
-                            <button
-                              class="btn"
-                              ?disabled=${(props.actionBusy ?? false) || !props.onDownloadRecoveryKit}
-                              @click=${() => props.onDownloadRecoveryKit?.()}
-                            >
-                              Download recovery kit
-                            </button>
-                            <button
-                              class="btn"
-                              ?disabled=${(props.actionBusy ?? false) || !props.onPrintRecoveryKit}
-                              @click=${() => props.onPrintRecoveryKit?.()}
-                            >
-                              Print recovery sheet
-                            </button>
-                          </div>
-                          <div class="wallet-custody-note">
-                            ${describeWalletRecoveryGuidance(props.clientSecuritySupport)}
-                          </div>
-                        </div>
-                      `
-                    : nothing
-                }
-                ${
-                  displayedSelectedRole !== "mining" && props.custodyEnrolledDeviceShare?.trim()
-                    ? html`
-                        <div class="field">
-                          <span>New device share</span>
-                          <div class="mono wallet-custody-note">
-                            Export once and move this to the second device. It is not the same as this browser's current device share.
-                          </div>
-                          <textarea readonly rows="3">${props.custodyEnrolledDeviceShare}</textarea>
-                          <div class="wallet-custody-actions" style="margin-top: 10px;">
-                            <button
-                              class="btn"
-                              ?disabled=${(props.actionBusy ?? false) || !props.onDownloadEnrolledDeviceShare}
-                              @click=${() => props.onDownloadEnrolledDeviceShare?.()}
-                            >
-                              Download device handoff
-                            </button>
-                            <button
-                              class="btn"
-                              ?disabled=${(props.actionBusy ?? false) || !props.onPrintEnrolledDeviceShare}
-                              @click=${() => props.onPrintEnrolledDeviceShare?.()}
-                            >
-                              Print device handoff
-                            </button>
-                          </div>
-                          <div class="wallet-custody-note">
-                            Move this share to the second device, confirm it can unlock, then revoke any device you no longer trust.
-                          </div>
-                        </div>
-                      `
-                    : nothing
-                }
-                ${
-                  displayedSelectedRole !== "mining" && enrolledDevices.length > 0
-                    ? html`
-                        <div class="field">
-                          <span>Enrolled devices</span>
-                          <div class="wallet-custody-note" style="margin-bottom: 10px;">
-                            Keep at least one trusted device enrolled. Revoke devices that are lost, stale, or no longer operator-controlled.
-                          </div>
-                          <div class="wallet-custody-device-list">
-                            ${enrolledDevices.map(
-                              (device) => html`
-                                <div class="wallet-custody-device-row">
-                                  <div>
-                                    <div>${device.label || device.id}</div>
-                                    <div class="wallet-custody-note mono">
-                                      ${device.id} · added ${new Date(device.createdAt).toLocaleString()}
-                                    </div>
-                                  </div>
-                                  <button
-                                    class="btn small"
-                                    ?disabled=${(props.actionBusy ?? false) || enrolledDevices.length <= 1 || !props.onRevokeCustodyDevice}
-                                    @click=${() => props.onRevokeCustodyDevice?.(device.id)}
-                                  >
-                                    Revoke
-                                  </button>
-                                </div>
-                              `,
-                            )}
-                          </div>
-                        </div>
-                      `
-                    : nothing
-                }
-                ${
-                  displayedSelectedRole !== "mining"
-                    ? html`
-                        <div class="wallet-custody-actions">
-                          <span class="wallet-custody-stored">
-                            ${
-                              props.custodyDeviceShareStored
-                                ? browserWalletCustodyStoragePreferred(props.clientSecuritySupport)
-                                  ? "Device share stored in this browser"
-                                  : props.clientSecuritySupport?.nativeHelper.status === "available"
-                                    ? "Device share stored on this device"
-                                    : "Device share stored"
-                                : browserWalletCustodyStoragePreferred(props.clientSecuritySupport)
-                                  ? "Device share will be stored in this browser after setup/unlock"
-                                  : "Device share storage needs manual recovery or another compatible browser"
-                            }
-                          </span>
-                        </div>
-                      `
-                    : nothing
-                }
-                ${
-                  displayedSelectedRole !== "mining" && selectedWalletNeedsKeyBeforeSplitKey
-                    ? html`
-                        <div class="callout warn">
-                          This wallet has no local signer key yet. Create or import the wallet key before enabling
-                          split-key.
-                        </div>
-                      `
-                    : nothing
-                }
-                ${
-                  displayedSelectedRole !== "mining"
-                    ? html`
-                        <div class="wallet-custody-actions">
-                          ${
-                            custody.mode === "single-key"
-                              ? html`
-                                  <button
-                                    class="btn primary"
-                                    ?disabled=${
-                                      (props.actionBusy ?? false) ||
-                                      !props.onInitializeCustody ||
-                                      selectedWalletNeedsKeyBeforeSplitKey ||
-                                      !passkeyApprovalReady
-                                    }
-                                    @click=${() => props.onInitializeCustody?.()}
-                                  >
-                                    ${
-                                      props.actionBusy
-                                        ? "Working..."
-                                        : `Enable split-key for ${selectedWallet.name}`
-                                    }
-                                  </button>
-                                `
-                              : html`
-                                  <button
-                                    class="btn"
-                                    ?disabled=${
-                                      (props.actionBusy ?? false) ||
-                                      !props.onEnrollCustodyDevice ||
-                                      !passkeyApprovalReady
-                                    }
-                                    @click=${() => props.onEnrollCustodyDevice?.()}
-                                  >
-                                    ${props.actionBusy ? "Working..." : "Add second device"}
-                                  </button>
-                                  <label class="field" style="max-width: 140px; margin: 0;">
-                                    <span>Unlock</span>
-                                    <select
-                                      .value=${props.custodyUnlockMinutes ?? "manual"}
-                                      ?disabled=${props.actionBusy ?? false}
-                                      @change=${(event: Event) =>
-                                        props.onCustodyUnlockMinutesChange?.(
-                                          (event.currentTarget as HTMLSelectElement).value,
-                                        )}
-                                    >
-                                      <option value="manual">Until lock</option>
-                                      <option value="15">15 min</option>
-                                      <option value="60">60 min</option>
-                                    </select>
-                                  </label>
-                                  <button
-                                    class="btn primary"
-                                    ?disabled=${
-                                      (props.actionBusy ?? false) ||
-                                      !props.onUnlockCustody ||
-                                      !passkeyApprovalReady
-                                    }
-                                    @click=${() => props.onUnlockCustody?.()}
-                                  >
-                                    ${
-                                      props.actionBusy
-                                        ? "Working..."
-                                        : custodyUnlockActive
-                                          ? `Extend ${selectedWallet.name}`
-                                          : `Unlock ${selectedWallet.name}`
-                                    }
-                                  </button>
-                                  <button
-                                    class="btn"
-                                    ?disabled=${
-                                      (props.actionBusy ?? false) ||
-                                      !custodyUnlockActive ||
-                                      !props.onLockCustody
-                                    }
-                                    @click=${() => props.onLockCustody?.()}
-                                  >
-                                    Lock ${selectedWallet.name}
-                                  </button>
-                                `
-                          }
-                        </div>
-                        <div class="wallet-custody-note">
-                          ${custodyUnlockWindowDetail}
-                        </div>
-                        <div class="wallet-custody-note">
-                          ${describeWalletCustodyRememberNote(props.clientSecuritySupport)}
-                        </div>
-                      `
-                    : nothing
-                }
-                ${
-                  displayedSelectedRole !== "mining" && custody.mode !== "single-key"
-                    ? html`<details class="wallet-advanced-box">
-                  <summary>Recovery and device transfer (advanced)</summary>
-                  <div class="wallet-custody-note" style="margin-bottom: 12px;">
-                    Use this only if this browser/device was lost, you are moving wallet access to another device, or browser storage fails.
-                  </div>
-                  <label class="field">
-                    <span>Temporary device share</span>
-                    <input
-                      .value=${props.custodyDeviceShare ?? ""}
-                      @input=${(event: Event) =>
-                        props.onCustodyDeviceShareChange?.(
-                          (event.target as HTMLInputElement).value,
-                        )}
-                      placeholder="Paste only for recovery, device transfer, or unlock troubleshooting"
-                    />
-                  </label>
-                  ${html`
-                          <label class="field">
-                            <span>Recover on this device</span>
-                            <input
-                              .value=${props.custodyRecoveryInput ?? ""}
-                              @input=${(event: Event) =>
-                                props.onCustodyRecoveryInputChange?.(
-                                  (event.target as HTMLInputElement).value,
-                                )}
-                              placeholder="Paste the offline recovery share to rotate a lost device"
-                            />
-                            <div class="wallet-custody-note">
-                              Use recovery only if this device is lost or compromised. Recovery rotates this wallet onto a brand-new device share and recovery share.
-                            </div>
-                          </label>
-                          <label class="field">
-                            <span>Second-device label</span>
-                            <input
-                              .value=${props.custodyEnrollLabel ?? ""}
-                              @input=${(event: Event) =>
-                                props.onCustodyEnrollLabelChange?.(
-                                  (event.target as HTMLInputElement).value,
-                                )}
-                              placeholder="Optional label for the second device"
-                            />
-                            <div class="wallet-custody-note">
-                              ${describeWalletSecondDeviceGuidance(props.clientSecuritySupport)}
-                            </div>
-                          </label>
-                          <div class="wallet-custody-actions" style="margin-top: 10px;">
-                            <button
-                              class="btn"
-                              ?disabled=${(props.actionBusy ?? false) || !props.onRecoverCustody}
-                              @click=${() => props.onRecoverCustody?.()}
-                            >
-                              ${props.actionBusy ? "Working..." : `Recover ${selectedWallet.name} here`}
-                            </button>
-                            <button
-                              class="btn"
-                              ?disabled=${(props.actionBusy ?? false) || !props.custodyDeviceShareStored || !props.onForgetCustodyDeviceShare}
-                              @click=${() => props.onForgetCustodyDeviceShare?.()}
-                            >
-                              Forget stored device share
-                            </button>
-                            <button
-                              class="btn"
-                              ?disabled=${(props.actionBusy ?? false) || !props.custodyDeviceShare?.trim() || !props.onDownloadDeviceShare}
-                              @click=${() => props.onDownloadDeviceShare?.()}
-                            >
-                              Download device share
-                            </button>
-                          </div>
-                        `}
-                  <div class="wallet-custody-note" style="margin-top: 12px;">
-                    ${selectedRoleSummary.security}
-                  </div>
-                  ${
-                    primaryClientNotes.length
-                      ? html`
-                          <div class="wallet-custody-note" style="margin-top: 12px;">
-                            ${primaryClientNotes.map((note) => html`<div>${note}</div>`)}
-                          </div>
-                        `
-                      : nothing
-                  }
-                  <div class="wallet-compat-list" style="margin-top: 12px;">
-                    ${buildWalletCompatibilityRows(props.clientSecuritySupport).map(
-                      (row) => html`
-                        <div class="wallet-compat-row">
-                          <div class="wallet-compat-row__label">${row.label}</div>
-                          <div class="wallet-compat-row__state">${row.state}</div>
-                          <div class="wallet-compat-row__detail">${row.detail}</div>
-                        </div>
-                      `,
-                    )}
-                  </div>
-                  ${
-                    props.clientSecuritySupportError
-                      ? html`
-                          <div class="wallet-custody-note" style="margin-top: 12px;">
-                            ${
-                              props.clientSecuritySupportError
-                                ? html`<div>${props.clientSecuritySupportError}</div>`
-                                : nothing
-                            }
-                          </div>
-                        `
-                      : nothing
-                  }
-                </details>`
-                    : nothing
-                }
-              </div>
-            `
-          : html`
-              <div class="wallet-custody-note">
-                Select a wallet card to manage its security and split-key state.
-              </div>
-            `
-      }
-    </div>`
-        : nothing
-    }
     ${
       hasWalletMessages
         ? html`
@@ -5027,6 +4054,14 @@ export function renderWallet(props: WalletViewProps) {
                   <span class="wallet-main-tabs__spacer"></span>
                   <button
                     class="btn small"
+                    ?disabled=${props.settingsBusy}
+                    @click=${props.onAttachWalletStandardVault}
+                    title="Attach a Solana Wallet Standard account. Wallet discovery cannot prove hardware backing; verify a reserve account on its device."
+                  >
+                    Attach Wallet Standard Vault
+                  </button>
+                  <button
+                    class="btn small"
                     ?disabled=${props.loading || props.balancesLoading}
                     @click=${props.onRefresh}
                   >
@@ -5042,6 +4077,94 @@ export function renderWallet(props: WalletViewProps) {
             : activeMainPanel === "access"
               ? renderWalletAccessPanel(props)
               : html`<div id="wallet-wallets" class="wallet-wallets-section">
+          <details class="wallet-create-panel">
+            <summary>Create a signer-owned wallet</summary>
+            <div class="wallet-create-grid">
+              <label class="field">
+                <span>Name</span>
+                <input
+                  .value=${props.createName ?? ""}
+                  placeholder="Primary Agent wallet"
+                  autocomplete="off"
+                  @input=${(event: Event) =>
+                    props.onCreateNameChange?.((event.target as HTMLInputElement).value)}
+                />
+              </label>
+              <label class="field">
+                <span>Permanent wallet ID</span>
+                <input
+                  .value=${props.createId ?? ""}
+                  placeholder=${
+                    createProviderId === "local-socket-signer"
+                      ? "agent-primary (required)"
+                      : "optional local label"
+                  }
+                  autocomplete="off"
+                  @input=${(event: Event) =>
+                    props.onCreateIdChange?.((event.target as HTMLInputElement).value)}
+                />
+              </label>
+              <label class="field">
+                <span>Custody provider</span>
+                <select
+                  .value=${createProviderId}
+                  @change=${(event: Event) =>
+                    props.onCreateProviderChange?.(
+                      (event.target as HTMLSelectElement).value as WalletProviderInfo["id"],
+                    )}
+                >
+                  ${createProviders.map(
+                    (provider) => html`
+                      <option value=${provider.id}>
+                        ${
+                          provider.label ||
+                          (provider.id === "local-socket-signer" ? "Native Go signer" : "Turnkey")
+                        }
+                      </option>
+                    `,
+                  )}
+                </select>
+              </label>
+              <label class="field">
+                <span>Wallet role</span>
+                <select
+                  .value=${props.createRole ?? "agent"}
+                  @change=${(event: Event) =>
+                    props.onCreateRoleChange?.(
+                      (event.target as HTMLSelectElement).value as "agent" | "vault",
+                    )}
+                >
+                  <option value="agent">Agent — capped automation</option>
+                  <option value="vault">Vault — reviewed operations only</option>
+                </select>
+              </label>
+              <div class="wallet-create-actions">
+                <button
+                  class="btn primary"
+                  ?disabled=${props.settingsBusy || !createProviderReady}
+                  @click=${props.onCreateWallet}
+                >
+                  ${props.settingsBusy ? "Creating..." : "Create wallet"}
+                </button>
+                <span class="muted">
+                  ${
+                    !createProvider
+                      ? "No production wallet-creation provider is available."
+                      : !createProvider.enabled
+                        ? "Enable this provider in Wallet Access first."
+                        : !createProvider.health.ok
+                          ? createProvider.health.details || "Provider health check failed."
+                          : createProvider.capabilities.requiresCredentials &&
+                              !createProvider.credentialsConfigured
+                            ? "Configure restricted provider credentials before creating a wallet."
+                            : createProviderId === "local-socket-signer"
+                              ? "The Go signer generates the key; Node receives only the public address."
+                              : "Turnkey creates the account under the configured restrictive policy."
+                  }
+                </span>
+              </div>
+            </div>
+          </details>
           ${
             props.balancesError
               ? html`<div class="callout danger">${props.balancesError}</div>`
@@ -5073,27 +4196,15 @@ export function renderWallet(props: WalletViewProps) {
               const nativeLabel = "SOL" as const;
               const nativeValue = solBalanceDisplay;
               const cardRole = resolveDisplayedWalletRole(wallet.id, props);
-              const cardCustody = resolveWalletCustodyStatus(wallet.id, props);
               const cardAutomationEnabled =
                 cardRole === "agent" && wallet.id === props.walletDetailsWalletId && settings
                   ? settings.policy.directSigning
                   : undefined;
-              const cardCustodyUnlockActive = cardCustody?.unlock?.active ?? false;
-              const cardAgentAutomationLocked =
-                cardRole === "agent" &&
-                cardAutomationEnabled === true &&
-                cardCustody?.mode === "split-key-active" &&
-                !cardCustodyUnlockActive;
-              const cardCustodyUnlockExpiresAt = cardCustody?.unlock?.expiresAt;
-              const cardCustodyUnlockWindowDetail =
-                cardCustody?.mode === "single-key"
-                  ? "No wallet security lock is active for this wallet."
-                  : cardCustodyUnlockActive
-                    ? `Signing window is active until ${formatCustodyExpiry(cardCustodyUnlockExpiresAt)}.`
-                    : "Signing window is locked. Unlock this wallet before it can sign.";
-              const cardSelectedWalletNeedsKeyBeforeSecurity =
-                Boolean(cardCustody?.mode === "single-key") && !wallet.readiness?.keystore;
-              const cardEnrolledDevices = cardCustody?.ceremony?.devices ?? [];
+              const cardSignerPolicy =
+                wallet.id === props.walletDetailsWalletId ? settings?.signerPolicy : undefined;
+              const cardWalletReady =
+                wallet.providerId !== "local-socket-signer" ||
+                cardSignerPolicy?.state === "acknowledged";
               const cardWalletChains = allowedWalletSendChains(wallet);
               const cardWalletCanSpendSolana = cardWalletChains.includes("solana");
               const policyTabs: Array<{ id: WalletPolicyPanel; label: string; title: string }> =
@@ -5138,11 +4249,6 @@ export function renderWallet(props: WalletViewProps) {
                           label: "Caps",
                           title: "Vault guardrails for reviewed Wallet UI sends only.",
                         },
-                        {
-                          id: "custody",
-                          label: "Security",
-                          title: "Vault custody, unlock, recovery, and device controls.",
-                        },
                       ];
               const activePolicyPanel =
                 props.policyPanel && policyTabs.some((tab) => tab.id === props.policyPanel)
@@ -5173,14 +4279,12 @@ export function renderWallet(props: WalletViewProps) {
 	                        <div class="wallet-card__title">${wallet.name}</div>
 	                        ${renderWalletBondIcon(wallet.id, props.federationBond, props.onNavigate)}
 	                        ${cardRole === "mining" ? renderWalletSweepChip(props.miningProfile) : nothing}
-	                        ${renderWalletActivePolicyIcons({
-                            walletId: wallet.id,
-                            role: cardRole,
-                            custody: cardCustody,
-                            props,
-                          })}
+		                        ${renderWalletActivePolicyIcons({
+                              walletId: wallet.id,
+                              role: cardRole,
+                              props,
+                            })}
                         ${renderWalletRuntimeStatusIcons({
-                          custody: cardCustody,
                           role: cardRole,
                           automationEnabled: cardAutomationEnabled,
                         })}
@@ -5264,7 +4368,12 @@ export function renderWallet(props: WalletViewProps) {
                       })}
                       <button
                         class="btn small primary wallet-card__send-btn"
-                        ?disabled=${!canSend}
+                        ?disabled=${!canSend || !cardWalletReady}
+                        title=${
+                          cardWalletReady
+                            ? "Send from this wallet"
+                            : "Receive-only: open Policy and complete signer activation first"
+                        }
                         @click=${() => props.onSendModalOpen(wallet.id)}
                       >
                         Send
@@ -5300,7 +4409,7 @@ export function renderWallet(props: WalletViewProps) {
                                       <button
                                         class="btn small"
                                         style="display: inline-flex; gap: 8px; align-items: center;"
-                                        ?disabled=${!canSend}
+                                        ?disabled=${!canSend || !cardWalletReady}
                                         @click=${() => props.onSendModalOpen(wallet.id, asset.id)}
                                       >
                                         ${renderWalletAssetLogo(asset, 20)}
@@ -5335,7 +4444,7 @@ export function renderWallet(props: WalletViewProps) {
                     }
                   </div>
                   ${
-                    securitySelected && cardCustody
+                    securitySelected
                       ? html`
                           <div id="wallet-security-card" class="wallet-card-security">
                             <div class="wallet-policy-tabs" role="tablist" aria-label="Wallet policy sections">
@@ -5356,25 +4465,37 @@ export function renderWallet(props: WalletViewProps) {
                               )}
                             </div>
                             ${
-                              cardAgentAutomationLocked
+                              cardSignerPolicy
                                 ? html`
-                                    <div class="callout warn" style="margin-top: 10px">
-                                      This Agent wallet is automated but still has stale split-key security attached. Marketplace Pay
-                                      cannot sign until that stale security is disabled or this Agent role is moved to a normal Agent wallet.
-                                      <div class="wallet-card-security__actions" style="margin-top: 10px;">
-                                        <button
-                                          class="btn danger"
-                                          title="Requires Wallet Control Passkey plus this wallet's stored device share, pasted device share, or recovery share."
-                                          ?disabled=${
-                                            (props.actionBusy ?? false) ||
-                                            !props.onDisableCustody ||
-                                            !passkeyApprovalReady
-                                          }
-                                          @click=${() => props.onDisableCustody?.(wallet.id)}
-                                        >
-                                          Disable stale security
-                                        </button>
-                                      </div>
+                                    <div
+                                      class="callout ${cardSignerPolicy.state === "acknowledged" ? "success" : "warn"}"
+                                      style="margin-top: 10px"
+                                      data-testid="wallet-signer-policy-status"
+                                    >
+                                      <strong>Native signer policy: ${cardSignerPolicy.state}</strong>
+                                      ${
+                                        cardSignerPolicy.state === "locked"
+                                          ? html`
+                                              <div>
+                                                This wallet cannot send, swap, mine, bond, or execute wallet-capable skills until a host
+                                                administrator installs an owner-reviewed policy and the signer acknowledges its exact hash.
+                                              </div>
+                                            `
+                                          : nothing
+                                      }
+                                      ${
+                                        cardSignerPolicy.version && cardSignerPolicy.hash
+                                          ? html`
+                                              <div>
+                                                Version ${cardSignerPolicy.version} ·
+                                                <span class="mono" style="overflow-wrap: anywhere"
+                                                  >${cardSignerPolicy.hash}</span
+                                                >
+                                              </div>
+                                            `
+                                          : nothing
+                                      }
+                                      ${cardSignerPolicy.guidance ? html`<div>${cardSignerPolicy.guidance}</div>` : nothing}
                                     </div>
                                   `
                                 : nothing
@@ -5601,24 +4722,6 @@ export function renderWallet(props: WalletViewProps) {
                                   `
                                   : nothing
                                 : html`
-                                    ${
-                                      activePolicyPanel === "custody" &&
-                                      cardRole === "vault" &&
-                                      !passkeyApprovalReady
-                                        ? html`
-                                            <div class="callout warn">Enable Wallet Control Passkey first to turn on wallet security.</div>
-                                          `
-                                        : nothing
-                                    }
-                                    ${
-                                      activePolicyPanel === "custody" &&
-                                      cardRole === "vault" &&
-                                      cardSelectedWalletNeedsKeyBeforeSecurity
-                                        ? html`
-                                            <div class="callout warn">This wallet has no local signer key yet.</div>
-                                          `
-                                        : nothing
-                                    }
                                     ${
                                       settings && activePolicyPanel === "caps"
                                         ? renderWalletCapsPanel({
@@ -5884,7 +4987,7 @@ export function renderWallet(props: WalletViewProps) {
                                               ${
                                                 recurringSchedule.custom
                                                   ? html`
-                                                      <div class="wallet-custody-note" style="margin-top: 8px">
+                                                      <div class="wallet-security-note" style="margin-top: 8px">
                                                         Existing custom schedule is preserved until you edit Every, Unit, or At.
                                                       </div>
                                                     `
@@ -5988,284 +5091,6 @@ export function renderWallet(props: WalletViewProps) {
                                           `
                                         : nothing
                                     }
-                                    ${
-                                      cardRole === "vault" && activePolicyPanel === "custody"
-                                        ? html`
-                                    <div class="wallet-card-security__actions">
-                                      ${
-                                        cardCustody.mode === "single-key"
-                                          ? html`
-                                              <button
-                                                class="btn primary"
-                                                ?disabled=${
-                                                  (props.actionBusy ?? false) ||
-                                                  !props.onInitializeCustody ||
-                                                  cardSelectedWalletNeedsKeyBeforeSecurity ||
-                                                  !passkeyApprovalReady
-                                                }
-                                                @click=${() => props.onInitializeCustody?.()}
-                                              >
-                                                ${
-                                                  props.actionBusy
-                                                    ? "Working..."
-                                                    : "Enable security"
-                                                }
-                                              </button>
-                                              ${
-                                                !passkeyApprovalReady
-                                                  ? html`
-                                                      <span class="wallet-card-security__note"> Wallet Control Passkey required first. </span>
-                                                    `
-                                                  : nothing
-                                              }
-                                            `
-                                          : html`
-                                              <label
-                                                class="field"
-                                                style="max-width: 140px; margin: 0;"
-                                              >
-                                                <span>Unlock</span>
-                                                <select
-                                                  .value=${props.custodyUnlockMinutes ?? "manual"}
-                                                  ?disabled=${props.actionBusy ?? false}
-                                                  @change=${(event: Event) =>
-                                                    props.onCustodyUnlockMinutesChange?.(
-                                                      (event.currentTarget as HTMLSelectElement)
-                                                        .value,
-                                                    )}
-                                                >
-                                                  <option value="manual">Until lock</option>
-                                                  <option value="15">15 min</option>
-                                                  <option value="60">60 min</option>
-                                                </select>
-                                              </label>
-                                              <button
-                                                class="btn primary"
-                                                ?disabled=${
-                                                  (props.actionBusy ?? false) ||
-                                                  !props.onUnlockCustody ||
-                                                  !passkeyApprovalReady
-                                                }
-                                                @click=${() => props.onUnlockCustody?.()}
-                                              >
-                                                ${cardCustodyUnlockActive ? "Extend" : "Unlock"}
-                                              </button>
-                                              <button
-                                                class="btn"
-                                                ?disabled=${
-                                                  (props.actionBusy ?? false) ||
-                                                  !cardCustodyUnlockActive ||
-                                                  !props.onLockCustody
-                                                }
-                                                @click=${() => props.onLockCustody?.()}
-                                              >
-                                                Lock
-                                              </button>
-                                              <button
-                                                class="btn"
-                                                ?disabled=${
-                                                  (props.actionBusy ?? false) ||
-                                                  !props.onEnrollCustodyDevice ||
-                                                  !passkeyApprovalReady
-                                                }
-                                                @click=${() => props.onEnrollCustodyDevice?.()}
-                                              >
-                                                Add device
-                                              </button>
-                                            `
-                                      }
-                                    </div>
-                                    ${
-                                      cardCustody.mode !== "single-key"
-                                        ? html`
-                                            <div class="wallet-card-security__note">
-                                              ${cardCustodyUnlockWindowDetail}
-                                            </div>
-                                            <div class="wallet-card-security__actions">
-                                              <button
-                                                class="btn danger"
-                                                title="Turns this wallet back to normal local-signer mode. Requires Wallet Control Passkey plus this wallet's device share or recovery share."
-                                                ?disabled=${
-                                                  (props.actionBusy ?? false) ||
-                                                  !props.onDisableCustody ||
-                                                  !passkeyApprovalReady
-                                                }
-                                                @click=${() => props.onDisableCustody?.(wallet.id)}
-                                              >
-                                                Disable security
-                                              </button>
-                                            </div>
-                                          `
-                                        : nothing
-                                    }
-                                    ${
-                                      props.custodyRecoveryShare?.trim()
-                                        ? html`
-                                            <div class="field">
-                                              <span>New recovery share</span>
-                                              <textarea readonly rows="3"
-                                                >${props.custodyRecoveryShare}</textarea
-                                              >
-                                              <div class="wallet-card-security__actions">
-                                                <button
-                                                  class="btn"
-                                                  ?disabled=${
-                                                    (props.actionBusy ?? false) ||
-                                                    !props.onDownloadRecoveryKit
-                                                  }
-                                                  @click=${() => props.onDownloadRecoveryKit?.()}
-                                                >
-                                                  Download recovery kit
-                                                </button>
-                                                <button
-                                                  class="btn"
-                                                  ?disabled=${
-                                                    (props.actionBusy ?? false) ||
-                                                    !props.onPrintRecoveryKit
-                                                  }
-                                                  @click=${() => props.onPrintRecoveryKit?.()}
-                                                >
-                                                  Print
-                                                </button>
-                                              </div>
-                                            </div>
-                                          `
-                                        : nothing
-                                    }
-                                    ${
-                                      props.custodyEnrolledDeviceShare?.trim()
-                                        ? html`
-                                            <div class="field">
-                                              <span>New device share</span>
-                                              <textarea readonly rows="3"
-                                                >${props.custodyEnrolledDeviceShare}</textarea
-                                              >
-                                              <div class="wallet-card-security__actions">
-                                                <button
-                                                  class="btn"
-                                                  ?disabled=${
-                                                    (props.actionBusy ?? false) ||
-                                                    !props.onDownloadEnrolledDeviceShare
-                                                  }
-                                                  @click=${() =>
-                                                    props.onDownloadEnrolledDeviceShare?.()}
-                                                >
-                                                  Download device share
-                                                </button>
-                                              </div>
-                                            </div>
-                                          `
-                                        : nothing
-                                    }
-                                    ${
-                                      cardEnrolledDevices.length > 0
-                                        ? html`
-                                            <div class="field">
-                                              <span>Enrolled devices</span>
-                                              <div class="wallet-custody-device-list">
-                                                ${cardEnrolledDevices.map(
-                                                  (device) => html`
-                                                    <div class="wallet-custody-device-row">
-                                                      <div>
-                                                        <div>${device.label || device.id}</div>
-                                                        <div class="wallet-card-security__note mono">
-                                                          ${shortenMiddle(device.id)} ·
-                                                          ${new Date(
-                                                            device.createdAt,
-                                                          ).toLocaleString()}
-                                                        </div>
-                                                      </div>
-                                                      <button
-                                                        class="btn small"
-                                                        ?disabled=${
-                                                          (props.actionBusy ?? false) ||
-                                                          cardEnrolledDevices.length <= 1 ||
-                                                          !props.onRevokeCustodyDevice
-                                                        }
-                                                        @click=${() =>
-                                                          props.onRevokeCustodyDevice?.(device.id)}
-                                                      >
-                                                        Revoke
-                                                      </button>
-                                                    </div>
-                                                  `,
-                                                )}
-                                              </div>
-                                            </div>
-                                          `
-                                        : nothing
-                                    }
-                                    ${
-                                      cardCustody.mode !== "single-key"
-                                        ? html`
-                                            <details class="wallet-advanced-box">
-                                              <summary>Recovery and device transfer</summary>
-                                              <div class="wallet-recovery-grid">
-                                                <label class="field">
-                                                  <span>Temporary device share</span>
-                                                  <input
-                                                    .value=${props.custodyDeviceShare ?? ""}
-                                                    @input=${(event: Event) =>
-                                                      props.onCustodyDeviceShareChange?.(
-                                                        (event.target as HTMLInputElement).value,
-                                                      )}
-                                                    placeholder="Paste only for recovery or moving devices"
-                                                  />
-                                                </label>
-                                                <label class="field">
-                                                  <span>Recovery share</span>
-                                                  <input
-                                                    .value=${props.custodyRecoveryInput ?? ""}
-                                                    @input=${(event: Event) =>
-                                                      props.onCustodyRecoveryInputChange?.(
-                                                        (event.target as HTMLInputElement).value,
-                                                      )}
-                                                    placeholder="Paste offline recovery share"
-                                                  />
-                                                </label>
-                                              </div>
-                                              <div class="wallet-card-security__actions">
-                                                <button
-                                                  class="btn"
-                                                  ?disabled=${
-                                                    (props.actionBusy ?? false) ||
-                                                    !props.onRecoverCustody
-                                                  }
-                                                  @click=${() => props.onRecoverCustody?.()}
-                                                >
-                                                  ${props.actionBusy ? "Working..." : "Recover here"}
-                                                </button>
-                                                <button
-                                                  class="btn"
-                                                  ?disabled=${
-                                                    (props.actionBusy ?? false) ||
-                                                    !props.custodyDeviceShareStored ||
-                                                    !props.onForgetCustodyDeviceShare
-                                                  }
-                                                  @click=${() =>
-                                                    props.onForgetCustodyDeviceShare?.()}
-                                                >
-                                                  Forget stored share
-                                                </button>
-                                                <button
-                                                  class="btn"
-                                                  ?disabled=${
-                                                    (props.actionBusy ?? false) ||
-                                                    !props.custodyDeviceShare?.trim() ||
-                                                    !props.onDownloadDeviceShare
-                                                  }
-                                                  @click=${() => props.onDownloadDeviceShare?.()}
-                                                >
-                                                  Download device share
-                                                </button>
-                                              </div>
-                                            </details>
-                                          `
-                                        : nothing
-                                    }
-                                          `
-                                        : nothing
-                                    }
                                   `
                             }
                           </div>
@@ -6291,10 +5116,10 @@ export function renderWallet(props: WalletViewProps) {
               <div class="card-title wallet-title-with-help">
                 <span>Wallet Approvals</span>
                 ${renderWalletHelp(
-                  "Direct user Send creates a pending approval request here, and Approve is the step that triggers passkey and broadcast when passkey approval is enabled.",
+                  "Reviewed sends, Vault actions, and federation signatures appear here. Approve triggers the signer-owned passkey ceremony and executes only the exact prepared operation.",
                 )}
               </div>
-              <div class="card-sub">Pending and recent send requests.</div>
+			  <div class="card-sub">Pending and recent reviewed wallet operations.</div>
             </div>
             <div class="row" style="gap: 8px; flex-wrap: wrap;">
               ${(
@@ -6364,6 +5189,7 @@ export function renderWallet(props: WalletViewProps) {
                             display: approvalDisplay,
                             endpoints: approvalEndpoints,
                           })}
+                          ${renderWalletSignerSemanticIntent(request)}
                         </div>
                         <div>
                           <div class="row" style="gap: 8px; align-items: center;">
@@ -6585,7 +5411,7 @@ export function renderWallet(props: WalletViewProps) {
                   const reasonTxt = toDisplayText(details.reason, "");
                   const orderIdTxt = toDisplayText(details.orderId, "");
                   const vaultTxt = toDisplayText(details.vaultPubkey, "");
-                  const externalVaultTxt = toDisplayText(details.externalVault, "");
+                  const executionProviderTxt = toDisplayText(details.executionProvider, "");
                   const activityTone = walletActivityTone(entry.action);
                   return html`
                     <div class="wallet-activity-item" data-tone=${activityTone}>
@@ -6616,8 +5442,8 @@ export function renderWallet(props: WalletViewProps) {
                         }
                         <span class="wallet-status-chip">${amountTxt}</span>
                         ${
-                          externalVaultTxt
-                            ? html`<span class="wallet-status-chip">${externalVaultTxt}</span>`
+                          executionProviderTxt
+                            ? html`<span class="wallet-status-chip">${executionProviderTxt}</span>`
                             : nothing
                         }
                       </div>
@@ -6725,14 +5551,6 @@ function renderSendModal(props: WalletViewProps) {
   const sourceWalletLabel = selectedWallet
     ? `${selectedWallet.name} (@wallet:${selectedWallet.id})`
     : "Default wallet";
-  const selectedSendWalletCustody = selectedWallet
-    ? resolveWalletCustodyStatus(selectedWallet.id, props)
-    : null;
-  const selectedSendWalletLocked = Boolean(
-    selectedWallet?.id &&
-    selectedSendWalletCustody?.mode === "split-key-active" &&
-    !selectedSendWalletCustody.unlock?.active,
-  );
 
   return html`
     <div class="modal-overlay" @click=${props.onSendModalClose}>
@@ -6753,17 +5571,6 @@ function renderSendModal(props: WalletViewProps) {
           </div>
           <button class="btn small" @click=${props.onSendModalClose}>Close</button>
         </div>
-
-        ${
-          selectedSendWalletLocked
-            ? html`
-                <div class="callout warn" style="margin-bottom: 16px">
-                  This wallet is locked. You can create the approval request now, but it must be unlocked with
-                  passkey before approval can sign and broadcast.
-                </div>
-              `
-            : nothing
-        }
 
           <div class="wallet-send-form-grid">
             <div class="wallet-send-column">

@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -162,6 +162,20 @@ describe("wallet inbound events", () => {
       const events = listWalletInboundEvents({ env, providerId: "alchemy", limit: 10 });
       expect(events[0]?.status).toBe("reconciled");
       expect(events[0]?.reconciledTo?.requestId).toBe("req-1");
+    });
+  });
+
+  test("fails closed without replacing corrupt inbound event history", async () => {
+    await withTempState(async (env) => {
+      const walletRoot = path.join(String(env.FASED_STATE_DIR), "wallet");
+      const ledgerPath = path.join(walletRoot, "wallet-inbound-events.v1.json");
+      await mkdir(walletRoot, { recursive: true });
+      await writeFile(ledgerPath, "{not-json\n", "utf8");
+
+      expect(() => listWalletInboundEvents({ env, limit: 10 })).toThrow(
+        "refusing to reset event history",
+      );
+      await expect(readFile(ledgerPath, "utf8")).resolves.toBe("{not-json\n");
     });
   });
 });

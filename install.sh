@@ -1,10 +1,65 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ -z "${BASH_SOURCE[0]:-}" || "${BASH_SOURCE[0]:-}" == "bash" || "${BASH_SOURCE[0]:-}" == "-" || "${BASH_SOURCE[0]:-}" == "/dev/stdin" ]]; then
+install_entry_source="${BASH_SOURCE[0]:-}"
+install_entry_is_stream=0
+case "$install_entry_source" in
+  ""|bash|-|/dev/stdin) install_entry_is_stream=1 ;;
+esac
+install_entry_hosting=0
+install_entry_verified_bundle=""
+install_entry_legacy_ts_authkey=0
+install_entry_args=("$@")
+for ((install_entry_index = 0; install_entry_index < ${#install_entry_args[@]}; install_entry_index++)); do
+  case "${install_entry_args[$install_entry_index]}" in
+    --hosting|--repair-hosting)
+      install_entry_hosting=1
+      ;;
+    --host-profile)
+      if [[ "${install_entry_args[$((install_entry_index + 1))]:-}" == "hosting" ]]; then
+        install_entry_hosting=1
+      fi
+      ;;
+    --verified-hosting-bundle)
+      install_entry_verified_bundle="${install_entry_args[$((install_entry_index + 1))]:-}"
+      ;;
+    --ts-authkey)
+      install_entry_legacy_ts_authkey=1
+      ;;
+  esac
+done
+
+if [[ "$install_entry_legacy_ts_authkey" -eq 1 ]]; then
+  echo "Refusing --ts-authkey because command arguments can expose the Tailscale secret." >&2
+  echo "Place it in a root-only 0600 file and pass --ts-authkey-file /root/path instead." >&2
+  exit 1
+fi
+
+if [[ "$install_entry_is_stream" -eq 1 && "$install_entry_hosting" -eq 1 ]]; then
+  cat >&2 <<'EOF_STREAMED_HOSTING'
+Refusing streamed VPS Hosting execution before any privileged host mutation.
+Download the exact tagged install.sh and install.sh.attestation.json release assets,
+verify install.sh with `gh attestation verify --bundle ... --source-ref refs/tags/vX.Y.Z
+--signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml
+--deny-self-hosted-runners`, then run the verified standalone file from the provider
+root console with: bash ./install.sh --hosting --release vX.Y.Z
+See: https://docs.fased.ai/install/vps#3-install-fased-and-connect-through-tailscale
+EOF_STREAMED_HOSTING
+  exit 1
+fi
+
+# A Hosting request always enters the attest-and-extract bootstrap unless it is
+# the exact inner invocation carrying the root-owned verified bundle marker.
+# This applies equally to stdin and to a standalone install.sh that the
+# operator downloaded and verified before execution.
+if [[ "$install_entry_is_stream" -eq 1 || \
+  ( "$install_entry_hosting" -eq 1 && -z "$install_entry_verified_bundle" ) ]]; then
   install_repo_url="${FASED_INSTALL_REPO:-https://github.com/fased-ai/fased.git}"
   install_base_dir="${FASED_INSTALL_DIR:-$HOME/fased}"
   auto_install=1
+  hosting_bootstrap=0
+  hosting_release=""
+  verified_hosting_bundle=""
   args=("$@")
 
   for ((i = 0; i < ${#args[@]}; i++)); do
@@ -19,8 +74,340 @@ if [[ -z "${BASH_SOURCE[0]:-}" || "${BASH_SOURCE[0]:-}" == "bash" || "${BASH_SOU
       --no-auto-install)
         auto_install=0
         ;;
+      --hosting|--repair-hosting)
+        hosting_bootstrap=1
+        ;;
+      --host-profile)
+        if (( i + 1 < ${#args[@]} )) && [[ "${args[$((i + 1))]}" == "hosting" ]]; then
+          hosting_bootstrap=1
+        fi
+        ;;
+      --release)
+        if (( i + 1 >= ${#args[@]} )); then
+          echo "Missing value for --release" >&2
+          exit 1
+        fi
+        hosting_release="${args[$((i + 1))]}"
+        ;;
+      --verified-hosting-bundle)
+        if (( i + 1 >= ${#args[@]} )); then
+          echo "Missing value for --verified-hosting-bundle" >&2
+          exit 1
+        fi
+        verified_hosting_bundle="${args[$((i + 1))]}"
+        ;;
     esac
   done
+
+  bootstrap_as_root() {
+    if [[ "$(id -u)" -eq 0 ]]; then
+      "$@"
+      return
+    fi
+    if command -v sudo >/dev/null 2>&1; then
+      sudo "$@"
+      return
+    fi
+    echo "Administrator access is required to install bootstrap dependencies." >&2
+    return 1
+  }
+
+  install_current_github_cli_bootstrap() {
+    if command -v gh >/dev/null 2>&1 && gh attestation verify --help >/dev/null 2>&1; then
+      return 0
+    fi
+    [[ "$auto_install" -eq 1 ]] || return 1
+    if command -v apt-get >/dev/null 2>&1; then
+      bootstrap_as_root apt-get update
+      bootstrap_as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y curl ca-certificates
+      local keyring_tmp=""
+      local source_tmp=""
+      keyring_tmp="$(mktemp)"
+      source_tmp="$(mktemp)"
+      curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o "$keyring_tmp"
+      printf 'deb [arch=%s signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main\n' "$(dpkg --print-architecture)" >"$source_tmp"
+      bootstrap_as_root install -d -m 0755 /etc/apt/keyrings
+      bootstrap_as_root install -m 0644 "$keyring_tmp" /etc/apt/keyrings/githubcli-archive-keyring.gpg
+      bootstrap_as_root install -m 0644 "$source_tmp" /etc/apt/sources.list.d/github-cli.list
+      rm -f -- "$keyring_tmp" "$source_tmp"
+      bootstrap_as_root apt-get update
+      bootstrap_as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y gh
+    elif command -v dnf >/dev/null 2>&1 || command -v dnf5 >/dev/null 2>&1; then
+      local dnf_cmd="dnf"
+      command -v dnf >/dev/null 2>&1 || dnf_cmd="dnf5"
+      bootstrap_as_root "$dnf_cmd" install -y 'dnf-command(config-manager)' >/dev/null 2>&1 || true
+      bootstrap_as_root "$dnf_cmd" config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo >/dev/null 2>&1 || true
+      bootstrap_as_root "$dnf_cmd" install -y gh
+    elif command -v yum >/dev/null 2>&1; then
+      bootstrap_as_root yum install -y yum-utils >/dev/null 2>&1 || true
+      bootstrap_as_root yum-config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo >/dev/null 2>&1 || true
+      bootstrap_as_root yum install -y gh
+    elif command -v zypper >/dev/null 2>&1; then
+      bootstrap_as_root zypper --non-interactive install gh
+    elif command -v apk >/dev/null 2>&1; then
+      bootstrap_as_root apk add --no-cache github-cli
+    elif command -v pacman >/dev/null 2>&1; then
+      bootstrap_as_root pacman -Sy --needed --noconfirm github-cli
+    elif command -v brew >/dev/null 2>&1; then
+      brew install gh || brew upgrade gh
+    else
+      return 1
+    fi
+    hash -r 2>/dev/null || true
+    command -v gh >/dev/null 2>&1 && gh attestation verify --help >/dev/null 2>&1
+  }
+
+  resolve_public_latest_release_tag() {
+    curl -fsSL --proto '=https' --tlsv1.2 \
+      -H 'Accept: application/vnd.github+json' \
+      -H 'X-GitHub-Api-Version: 2022-11-28' \
+      -H 'User-Agent: fased-installer' \
+      https://api.github.com/repos/fased-ai/fased/releases/latest \
+      | jq -er '.tag_name | select(test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))'
+  }
+
+  bootstrap_hosting_attested_bundle() {
+    if [[ "$(id -u)" -ne 0 ]]; then
+      echo "VPS Hosting bootstrap must start in the provider's root console." >&2
+      echo "Do not grant the Fased app account sudo access." >&2
+      exit 1
+    fi
+    if [[ -n "$verified_hosting_bundle" ]]; then
+      echo "Refusing a caller-supplied verified bundle marker." >&2
+      exit 1
+    fi
+    if [[ -z "$hosting_release" ]]; then
+      echo "VPS Hosting requires an explicit tagged release." >&2
+      echo "Pass --release vX.Y.Z (recommended) or --release latest." >&2
+      exit 1
+    fi
+
+    install_hosting_bootstrap_tools() {
+      [[ "$auto_install" -eq 1 ]] || return 0
+      if command -v apt-get >/dev/null 2>&1; then
+        apt-get update
+        env DEBIAN_FRONTEND=noninteractive apt-get install -y curl ca-certificates tar coreutils findutils gawk jq util-linux
+      elif command -v dnf >/dev/null 2>&1; then
+        dnf install -y curl ca-certificates tar coreutils findutils gawk jq util-linux
+      elif command -v dnf5 >/dev/null 2>&1; then
+        dnf5 install -y curl ca-certificates tar coreutils findutils gawk jq util-linux
+      elif command -v yum >/dev/null 2>&1; then
+        yum install -y curl ca-certificates tar coreutils findutils gawk jq util-linux
+      elif command -v zypper >/dev/null 2>&1; then
+        zypper --non-interactive install curl ca-certificates tar coreutils findutils gawk jq util-linux
+      fi
+    }
+    if ! command -v gh >/dev/null 2>&1 || ! gh attestation verify --help >/dev/null 2>&1; then
+      install_hosting_bootstrap_tools
+      install_current_github_cli_bootstrap
+    fi
+    for command in curl tar sha256sum awk jq stat find grep flock; do
+      if ! command -v "$command" >/dev/null 2>&1; then
+        echo "Missing required Hosting bootstrap command: $command" >&2
+        echo "Install curl, jq, tar, coreutils, and findutils from the provider console, then retry." >&2
+        exit 1
+      fi
+    done
+    if ! command -v gh >/dev/null 2>&1 || ! gh attestation verify --help >/dev/null 2>&1; then
+      echo "GitHub CLI with 'gh attestation verify' is required before privileged Hosting setup." >&2
+      echo "Install GitHub CLI from the provider console, then retry the exact release command." >&2
+      exit 1
+    fi
+
+    local release_version="${hosting_release#v}"
+    if [[ "$hosting_release" == "latest" ]]; then
+      local latest_tag=""
+      latest_tag="$(resolve_public_latest_release_tag 2>/dev/null || true)"
+      release_version="${latest_tag#v}"
+    fi
+    if [[ ! "$release_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      echo "Hosting release must resolve to a stable vX.Y.Z GitHub release." >&2
+      exit 1
+    fi
+
+    local architecture=""
+    case "$(uname -m)" in
+      x86_64|amd64) architecture="x64" ;;
+      aarch64|arm64) architecture="arm64" ;;
+      *)
+        echo "Unsupported Hosting architecture: $(uname -m)" >&2
+        exit 1
+        ;;
+    esac
+    local asset="fased-hosted-app-linux-${architecture}-v${release_version}.tar.gz"
+    local release_url="https://github.com/fased-ai/fased/releases/download/v${release_version}"
+    local release_parent="/var/lib/fased-installer/releases/v${release_version}"
+    local staging="${release_parent}/.staging.$$"
+    local preflight=""
+    preflight="$(mktemp -d "${TMPDIR:-/tmp}/fased-hosting-bootstrap.XXXXXX")"
+    local archive="${preflight}/${asset}"
+    local release_manifest="${preflight}/fased-hosted-release-v2.json"
+    local expected=""
+    local actual=""
+    local manifest_digest=""
+    local manifest_commit=""
+    local manifest_signer_commit=""
+
+    umask 077
+    trap 'rm -rf -- "${preflight:-}" "${staging:-}"' EXIT
+    curl -fL --proto '=https' --tlsv1.2 "$release_url/fased-hosted-release-v2.json" -o "$release_manifest"
+    GH_PROMPT_DISABLED=1 gh attestation verify "$release_manifest" \
+      --repo fased-ai/fased \
+      --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
+      --source-ref "refs/tags/v${release_version}" \
+      --deny-self-hosted-runners >/dev/null
+    local manifest_selection=""
+    manifest_selection="$(jq -er --arg version "$release_version" --arg architecture "$architecture" '
+      if .schemaVersion == 2 and
+        (.release.version == $version) and (.release.tag == ("v" + $version)) and
+        (.release.commit | test("^[a-f0-9]{40}$")) and
+        (.signer.release.version == $version) and
+        (.signer.release.commit == .release.commit) and
+        (.signer.release.development == false) and
+        (.signer.release.buildInputDigest | test("^sha256:[a-f0-9]{64}$")) and
+        (.application.linux[$architecture].artifact.asset | test("^[A-Za-z0-9][A-Za-z0-9._-]+$")) and
+        (.application.linux[$architecture].artifact.sha256 | test("^[a-f0-9]{64}$"))
+      then [
+        .release.commit,
+        .signer.release.commit,
+        .application.linux[$architecture].artifact.asset,
+        .application.linux[$architecture].artifact.sha256
+      ] | @tsv
+      else error("invalid hosted release manifest") end
+    ' "$release_manifest")" || {
+      echo "Hosted release manifest does not bind this exact app and signer release." >&2
+      exit 1
+    }
+    IFS=$'\t' read -r manifest_commit manifest_signer_commit asset expected <<<"$manifest_selection"
+    [[ "$manifest_commit" == "$manifest_signer_commit" && "$asset" == "fased-hosted-app-linux-${architecture}-v${release_version}.tar.gz" ]] || {
+      echo "Hosted release manifest selects a mixed commit or unexpected app artifact." >&2
+      exit 1
+    }
+    archive="${preflight}/${asset}"
+    curl -fL --proto '=https' --tlsv1.2 "$release_url/$asset" -o "$archive"
+    actual="$(sha256sum "$archive" | awk '{print tolower($1)}')"
+    manifest_digest="$(sha256sum "$release_manifest" | awk '{print tolower($1)}')"
+    if [[ ! "$expected" =~ ^[a-f0-9]{64}$ || "$actual" != "$expected" ]]; then
+      echo "Hosted release checksum verification failed." >&2
+      exit 1
+    fi
+    GH_PROMPT_DISABLED=1 gh attestation verify "$archive" \
+      --repo fased-ai/fased \
+      --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
+      --source-ref "refs/tags/v${release_version}" \
+      --deny-self-hosted-runners >/dev/null
+    # Only after the exact unified manifest and selected app artifact are both
+    # attested and digest-bound may the bootstrap create persistent root state.
+    install -d -m 0700 -o root -g root /var/lib/fased-installer /var/lib/fased-installer/releases "$release_parent"
+    exec 9>/var/lib/fased-installer/install.lock
+    chmod 0600 /var/lib/fased-installer/install.lock
+    flock -x 9
+    rm -rf -- "$staging"
+    install -d -m 0700 -o root -g root "$staging"
+    local root_store="${release_parent}/${actual}"
+    local existing_root="${root_store}/extract/package"
+    local existing_commit=""
+    if [[ -f "$existing_root/dist/build-info.json" && ! -L "$existing_root/dist/build-info.json" ]]; then
+      existing_commit="$(awk -F'"' '/^[[:space:]]*"commit"[[:space:]]*:/ { print $4; exit }' "$existing_root/dist/build-info.json")"
+    fi
+    if [[ -f "$existing_root/.fased-hosting-bundle-verified" && \
+      ! -L "$existing_root/.fased-hosting-bundle-verified" ]] && \
+      grep -Fxq "version=${release_version}" "$existing_root/.fased-hosting-bundle-verified" && \
+      grep -Fxq "sha256=${actual}" "$existing_root/.fased-hosting-bundle-verified" && \
+      grep -Fxq "release_manifest_sha256=${manifest_digest}" "$existing_root/.fased-hosting-bundle-verified" && \
+      [[ "$existing_commit" =~ ^[a-f0-9]{40}$ ]] && \
+      grep -Fxq "commit=${existing_commit}" "$existing_root/.fased-hosting-bundle-verified" && \
+      ! find "$root_store" -xdev \( ! -user root -o -perm /022 \) -print -quit | grep -q . && \
+      ! find "$existing_root" -xdev ! -type f ! -type d -print -quit | grep -q . && \
+      ! find "$existing_root" -xdev -type f -links +1 -print -quit | grep -q .; then
+      rm -rf -- "$staging"
+      rm -rf -- "$preflight"
+      trap - EXIT
+      flock -u 9
+      exec 9>&-
+      echo "Reusing verified tagged Hosting bundle v${release_version} (${actual})."
+      exec bash "$existing_root/install.sh" "$@" \
+        --release "$release_version" \
+        --verified-hosting-bundle "$existing_root"
+    fi
+    if [[ -e "$root_store" ]]; then
+      echo "An existing Hosting bundle at ${root_store} failed immutable verification; refusing to replace it." >&2
+      echo "Inspect or quarantine it from the provider root console, then retry." >&2
+      exit 1
+    fi
+
+    local entry=""
+    while IFS= read -r entry; do
+      entry="${entry%/}"
+      if [[ -z "$entry" || "$entry" == /* || "$entry" == *\\* || \
+        ( "$entry" != "package" && "$entry" != package/* ) || \
+        "$entry" == *"/../"* || "$entry" == ../* || "$entry" == */.. || \
+        "$entry" == *"/./"* || "$entry" == ./* || "$entry" == */. ]]; then
+        echo "Hosted release archive contains an unsafe path: $entry" >&2
+        exit 1
+      fi
+    done < <(tar -tzf "$archive")
+
+    install -d -m 0700 -o root -g root "$staging/extract"
+    tar -xzf "$archive" -C "$staging/extract" --no-same-owner --no-same-permissions
+    local package_root="$staging/extract/package"
+    [[ -f "$package_root/install.sh" && -f "$package_root/package.json" && ! -L "$package_root/install.sh" ]] || {
+      echo "Attested Hosting bundle is incomplete." >&2
+      exit 1
+    }
+    local packaged_version=""
+    packaged_version="$(awk -F'"' '/^[[:space:]]*"version"[[:space:]]*:/ { print $4; exit }' "$package_root/package.json")"
+    [[ "$packaged_version" == "$release_version" ]] || {
+      echo "Attested Hosting bundle version does not match v${release_version}." >&2
+      exit 1
+    }
+    [[ -f "$package_root/dist/build-info.json" && ! -L "$package_root/dist/build-info.json" ]] || {
+      echo "Attested Hosting bundle is missing immutable build identity." >&2
+      exit 1
+    }
+    local packaged_commit=""
+    local build_info_version=""
+    packaged_commit="$(awk -F'"' '/^[[:space:]]*"commit"[[:space:]]*:/ { print $4; exit }' "$package_root/dist/build-info.json")"
+    build_info_version="$(awk -F'"' '/^[[:space:]]*"version"[[:space:]]*:/ { print $4; exit }' "$package_root/dist/build-info.json")"
+    [[ "$packaged_commit" =~ ^[a-f0-9]{40}$ && "$build_info_version" == "$release_version" ]] || {
+      echo "Attested Hosting bundle build identity is invalid or does not match v${release_version}." >&2
+      exit 1
+    }
+    [[ "$packaged_commit" == "$manifest_commit" ]] || {
+      echo "Attested Hosting application commit does not match the unified release manifest." >&2
+      exit 1
+    }
+    if find "$package_root" -xdev ! -type f ! -type d -print -quit | grep -q . || \
+      find "$package_root" -xdev -type f -links +1 -print -quit | grep -q .; then
+      echo "Attested Hosting bundle contains a symlink, special file, or hardlinked regular file." >&2
+      exit 1
+    fi
+    chown -R root:root "$staging"
+    chmod -R go-w "$staging"
+    if find "$staging" -xdev \( ! -user root -o -perm /022 \) -print -quit | grep -q .; then
+      echo "Could not secure the verified Hosting bundle as root-owned and non-writable." >&2
+      exit 1
+    fi
+    printf 'version=%s\nsha256=%s\nrelease_manifest_sha256=%s\ncommit=%s\n' \
+      "$release_version" "$actual" "$manifest_digest" "$packaged_commit" >"$package_root/.fased-hosting-bundle-verified"
+    chmod 0600 "$package_root/.fased-hosting-bundle-verified"
+    sync -f "$package_root/.fased-hosting-bundle-verified" "$package_root" "$staging/extract" 2>/dev/null || true
+    mv "$staging" "$root_store"
+    rm -rf -- "$preflight"
+    trap - EXIT
+    flock -u 9
+    exec 9>&-
+
+    local final_root="$root_store/extract/package"
+    echo "Verified tagged Hosting bundle v${release_version}; entering the root-owned installer."
+    exec bash "$final_root/install.sh" "$@" \
+      --release "$release_version" \
+      --verified-hosting-bundle "$final_root"
+  }
+
+  if [[ "$hosting_bootstrap" -eq 1 ]]; then
+    bootstrap_hosting_attested_bundle "$@"
+  fi
 
   run_as_root() {
     if [[ "$(id -u)" -eq 0 ]]; then
@@ -60,6 +447,79 @@ if [[ -z "${BASH_SOURCE[0]:-}" || "${BASH_SOURCE[0]:-}" == "bash" || "${BASH_SOU
     fi
   }
 
+  install_local_release_verification_tools() {
+    if command -v gh >/dev/null 2>&1 && gh attestation verify --help >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+      return 0
+    fi
+    if [[ "$auto_install" -ne 1 ]]; then
+      return 1
+    fi
+    if command -v apt-get >/dev/null 2>&1; then
+      bootstrap_as_root apt-get update
+      bootstrap_as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y jq curl ca-certificates
+    elif command -v dnf >/dev/null 2>&1; then
+      bootstrap_as_root dnf install -y jq curl ca-certificates
+    elif command -v dnf5 >/dev/null 2>&1; then
+      bootstrap_as_root dnf5 install -y jq curl ca-certificates
+    elif command -v yum >/dev/null 2>&1; then
+      bootstrap_as_root yum install -y jq curl ca-certificates
+    elif command -v zypper >/dev/null 2>&1; then
+      bootstrap_as_root zypper --non-interactive install jq curl ca-certificates
+    elif command -v apk >/dev/null 2>&1; then
+      bootstrap_as_root apk add --no-cache jq curl ca-certificates
+    elif command -v pacman >/dev/null 2>&1; then
+      bootstrap_as_root pacman -Sy --needed --noconfirm jq curl ca-certificates
+    elif command -v brew >/dev/null 2>&1; then
+      brew install jq || brew upgrade jq
+    else
+      return 1
+    fi
+    install_current_github_cli_bootstrap || return 1
+    hash -r 2>/dev/null || true
+    command -v gh >/dev/null 2>&1 && gh attestation verify --help >/dev/null 2>&1 && command -v jq >/dev/null 2>&1
+  }
+
+  resolve_attested_local_release_commit() {
+    local release_version="$1"
+    install_local_release_verification_tools || {
+      echo "Exact Local repair requires GitHub CLI with attestation support and jq." >&2
+      echo "Install current gh and jq, then rerun the exact release command." >&2
+      return 1
+    }
+    local release_url="https://github.com/fased-ai/fased/releases/download/v${release_version}"
+    local verification_dir=""
+    verification_dir="$(mktemp -d "${TMPDIR:-/tmp}/fased-local-release.XXXXXX")"
+    chmod 0700 "$verification_dir"
+    local manifest="$verification_dir/fased-hosted-release-v2.json"
+    local bundle="$verification_dir/fased-hosted-release-v2.json.attestation.json"
+    curl -fL --proto '=https' --tlsv1.2 "$release_url/fased-hosted-release-v2.json" -o "$manifest"
+    curl -fL --proto '=https' --tlsv1.2 "$release_url/fased-hosted-release-v2.json.attestation.json" -o "$bundle"
+    GH_PROMPT_DISABLED=1 gh attestation verify "$manifest" \
+      --repo fased-ai/fased \
+      --bundle "$bundle" \
+      --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
+      --source-ref "refs/tags/v${release_version}" \
+      --deny-self-hosted-runners >/dev/null
+    local release_commit=""
+    release_commit="$(jq -er --arg version "$release_version" '
+      if .schemaVersion == 2 and
+        .release.version == $version and
+        .release.tag == ("v" + $version) and
+        (.release.commit | test("^[a-f0-9]{40}$")) and
+        .signer.release.version == $version and
+        .signer.release.commit == .release.commit and
+        .signer.release.development == false
+      then .release.commit
+      else error("invalid unified release manifest") end
+    ' "$manifest")" || {
+      rm -rf -- "$verification_dir"
+      echo "Attested release manifest does not bind one exact Local source commit." >&2
+      return 1
+    }
+    rm -rf -- "$verification_dir"
+    printf '%s\n' "$release_commit"
+  }
+
   if ! command -v git >/dev/null 2>&1; then
     echo "git is missing; installing bootstrap dependencies first."
     install_bootstrap_git || {
@@ -69,15 +529,65 @@ if [[ -z "${BASH_SOURCE[0]:-}" || "${BASH_SOURCE[0]:-}" == "bash" || "${BASH_SOU
     hash -r 2>/dev/null || true
   fi
 
+  local_bootstrap_release=""
+  local_bootstrap_commit=""
+  if [[ "$hosting_bootstrap" -eq 0 && -z "$hosting_release" ]]; then
+    install_local_release_verification_tools || {
+      echo "Local install requires GitHub CLI with attestation support and jq." >&2
+      echo "Install current gh and jq, then rerun the installer." >&2
+      exit 1
+    }
+    latest_local_tag="$(resolve_public_latest_release_tag 2>/dev/null || true)"
+    if [[ ! "$latest_local_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      echo "Could not resolve one stable tagged Local release." >&2
+      exit 1
+    fi
+    hosting_release="$latest_local_tag"
+  fi
+  if [[ "$hosting_bootstrap" -eq 0 && -n "$hosting_release" ]]; then
+    local_bootstrap_release="${hosting_release#v}"
+    if [[ ! "$local_bootstrap_release" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      echo "Local --release requires one exact stable vX.Y.Z version." >&2
+      exit 1
+    fi
+    local_bootstrap_commit="$(resolve_attested_local_release_commit "$local_bootstrap_release")"
+    if [[ ! "$local_bootstrap_commit" =~ ^[a-f0-9]{40}$ ]]; then
+      echo "Could not resolve the attested Local release commit." >&2
+      exit 1
+    fi
+  fi
+
   if [[ ! -e "$install_base_dir" ]]; then
     mkdir -p "$(dirname "$install_base_dir")"
-    git clone "$install_repo_url" "$install_base_dir"
+    if [[ -n "$local_bootstrap_release" ]]; then
+      git clone --no-checkout "$install_repo_url" "$install_base_dir"
+    else
+      git clone "$install_repo_url" "$install_base_dir"
+    fi
   elif [[ -d "$install_base_dir/.git" ]]; then
-    git -C "$install_base_dir" pull --ff-only origin main
+    if [[ -z "$local_bootstrap_release" ]]; then
+      git -C "$install_base_dir" pull --ff-only origin main
+    fi
   else
     echo "Refusing to overwrite existing path: $install_base_dir" >&2
     echo "Set --install-dir to a new directory or clean the existing one, then rerun." >&2
     exit 1
+  fi
+
+  if [[ -n "$local_bootstrap_release" ]]; then
+    git -C "$install_base_dir" fetch --force origin \
+      "refs/tags/v${local_bootstrap_release}:refs/fased-installer/v${local_bootstrap_release}"
+    local fetched_release_commit=""
+    fetched_release_commit="$(git -C "$install_base_dir" rev-parse "refs/fased-installer/v${local_bootstrap_release}^{commit}")"
+    if [[ "$fetched_release_commit" != "$local_bootstrap_commit" ]]; then
+      echo "Release tag commit does not match the attested unified release manifest." >&2
+      exit 1
+    fi
+    git -C "$install_base_dir" checkout --detach "$local_bootstrap_commit"
+    if [[ "$(git -C "$install_base_dir" rev-parse HEAD)" != "$local_bootstrap_commit" ]]; then
+      echo "Local release checkout did not land on the attested commit." >&2
+      exit 1
+    fi
   fi
 
   if ( : < /dev/tty ) 2>/dev/null; then
@@ -88,6 +598,40 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FASED_DIR="$SCRIPT_DIR"
+EARLY_HOSTING_REQUESTED=0
+EARLY_HOSTING_RELEASE=""
+EARLY_VERIFIED_HOSTING_BUNDLE=""
+EARLY_ARGS=("$@")
+for ((early_index = 0; early_index < ${#EARLY_ARGS[@]}; early_index++)); do
+  case "${EARLY_ARGS[$early_index]}" in
+    --hosting|--repair-hosting) EARLY_HOSTING_REQUESTED=1 ;;
+    --host-profile)
+      [[ "${EARLY_ARGS[$((early_index + 1))]:-}" == "hosting" ]] && EARLY_HOSTING_REQUESTED=1
+      ;;
+    --release) EARLY_HOSTING_RELEASE="${EARLY_ARGS[$((early_index + 1))]:-}" ;;
+    --verified-hosting-bundle)
+      EARLY_VERIFIED_HOSTING_BUNDLE="${EARLY_ARGS[$((early_index + 1))]:-}"
+      ;;
+  esac
+done
+if [[ "$(id -u)" -eq 0 && "$EARLY_HOSTING_REQUESTED" -eq 1 ]]; then
+  EARLY_HOSTING_RELEASE="${EARLY_HOSTING_RELEASE#v}"
+  early_source="$(readlink -f "$FASED_DIR" 2>/dev/null || true)"
+  early_bundle="$(readlink -f "$EARLY_VERIFIED_HOSTING_BUNDLE" 2>/dev/null || true)"
+  if [[ ! "$EARLY_HOSTING_RELEASE" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ || \
+    -z "$early_source" || "$early_source" != "$early_bundle" || \
+    ! "$early_source" =~ ^/var/lib/fased-installer/releases/v${EARLY_HOSTING_RELEASE}/[a-f0-9]{64}/extract/package$ || \
+    -e "$early_source/.git" || ! -f "$early_source/.fased-hosting-bundle-verified" || \
+    -L "$early_source/.fased-hosting-bundle-verified" || \
+    "$(stat -c '%u:%a:%h' "$early_source/.fased-hosting-bundle-verified" 2>/dev/null || true)" != "0:600:1" ]] || \
+    find "$early_source" -xdev \( ! -user root -o -perm /022 \) -print -quit | grep -q . || \
+    find "$early_source" -xdev ! -type f ! -type d -print -quit | grep -q . || \
+    find "$early_source" -xdev -type f -links +1 -print -quit | grep -q .; then
+    echo "Refusing to load privileged Hosting assets from an app-owned, Git, dirty, writable, or unverified source tree." >&2
+    echo "Start from the provider root console with the exact tagged, attested Hosting bootstrap." >&2
+    exit 1
+  fi
+fi
 # shellcheck source=scripts/install-runtime-profile.sh
 . "$FASED_DIR/scripts/install-runtime-profile.sh"
 SAT_RUNTIME_ENV_FILE="${FASED_SAT_RUNTIME_ENV_FILE:-$FASED_DIR/config/sat-runtime.env}"
@@ -109,14 +653,56 @@ HOSTING_REQUESTED=0
 HOSTING_REPAIR_REQUESTED=0
 LOCAL_REPAIR_REQUESTED=0
 SOURCE_INSTALL_REQUESTED=0
+HOSTING_RELEASE=""
+VERIFIED_HOSTING_BUNDLE=""
+TAILSCALE_AUTHKEY_FILE=""
 REQUESTED_SWAP_GB=""
-TEMP_SUDOERS=""
 FASED_CLI_PATH=""
 PREBUILT_RUNTIME_INSTALLED=0
 GATEWAY_SERVICE_REFRESHED=0
+GATEWAY_RUNTIME_HEALTH_VERIFIED=0
+LOCAL_SIGNER_INSTALL_TRANSACTION_OPEN=0
+HOST_SIGNER_TRANSACTION_ACTIVE=0
+HOST_SIGNER_DURABLE_COMMIT_DECISION=0
+HOST_SIGNER_TRANSACTION_ID=""
+HOST_SIGNER_TRANSACTION_VERSION=""
 LOW_MEMORY_SWAP_THRESHOLD_MB=2304
 LOW_MEMORY_SWAP_GB=4
 HOSTING_SWAP_GB=2
+
+rollback_pending_host_signer_transaction_on_exit() {
+  local captured_status=$?
+  local status="${1:-$captured_status}"
+  trap - EXIT
+  if [[ "$HOST_SIGNER_TRANSACTION_ACTIVE" -eq 1 && -n "$HOST_SIGNER_TRANSACTION_VERSION" ]]; then
+    if [[ "$HOST_SIGNER_DURABLE_COMMIT_DECISION" -eq 1 ]]; then
+      echo "Hosted health passed; completing the durable signer commit decision..." >&2
+      if node /usr/local/libexec/fased-host-updaterctl.mjs \
+        "$HOST_SIGNER_TRANSACTION_VERSION" --commit-only >/dev/null; then
+        HOST_SIGNER_TRANSACTION_ACTIVE=0
+      else
+        echo "Signer commit cleanup remains pending. Rerun the exact tagged repair from the provider root console; never run an app-owned checkout as root." >&2
+        status=1
+      fi
+    else
+      echo "Hosted install did not commit; restoring the previous signer transaction..." >&2
+      if ! node /usr/local/libexec/fased-host-updaterctl.mjs \
+        "$HOST_SIGNER_TRANSACTION_VERSION" --rollback-only >/dev/null; then
+        echo "Signer rollback remains pending. Rerun the exact tagged repair from the provider root console; never run an app-owned checkout as root." >&2
+        status=1
+      fi
+      local target_user="${FASED_INSTALL_USER:-app}"
+      local target_home
+      target_home="$(getent passwd "$target_user" 2>/dev/null | cut -d: -f6)"
+      [[ -n "$target_home" ]] || target_home="/home/$target_user"
+      if [[ ! -f "$target_home/.fased/hosted-update-transaction.json" ]] && \
+        systemctl list-unit-files fased-gateway.service --no-legend 2>/dev/null | grep -q '^fased-gateway.service'; then
+        systemctl start fased-gateway.service >/dev/null 2>&1 || status=1
+      fi
+    fi
+  fi
+  exit "$status"
+}
 
 ORIGINAL_INSTALL_ARGS=("$@")
 pass_args=()
@@ -284,6 +870,10 @@ Options:
                   onboarding defaults and may change SSH/firewall behavior.
   --repair-hosting  Repair an existing VPS runtime and root-managed gateway service
                   without rerunning onboarding or changing persistent user state.
+  --release <vX.Y.Z|latest>  Pin a Local repair to vX.Y.Z. Required for VPS Hosting;
+                  its root phase runs only from the exact attested tagged bundle.
+  --ts-authkey-file <path>  Read a Tailscale auth key from a root-owned mode-0600
+                  file. The secret is copied to a one-use /run file, never argv.
   --repair-local  Repair an existing Linux Local or WSL runtime and user Gateway
                   service without rerunning onboarding or changing user state.
   --local         Laptop/desktop profile. Tailscale is optional; on a VPS this does
@@ -341,6 +931,35 @@ while [[ $# -gt 0 ]]; do
     --source-install)
       SOURCE_INSTALL_REQUESTED=1
       ;;
+    --release)
+      shift
+      if [[ $# -eq 0 ]]; then
+        echo "Missing value for --release" >&2
+        exit 1
+      fi
+      HOSTING_RELEASE="${1#v}"
+      ;;
+    --verified-hosting-bundle)
+      shift
+      if [[ $# -eq 0 ]]; then
+        echo "Missing value for --verified-hosting-bundle" >&2
+        exit 1
+      fi
+      VERIFIED_HOSTING_BUNDLE="$1"
+      ;;
+    --ts-authkey)
+      echo "Refusing a Tailscale auth key in process arguments." >&2
+      echo "Store the key in a root-owned mode-0600 file and pass --ts-authkey-file /root/path." >&2
+      exit 1
+      ;;
+    --ts-authkey-file)
+      shift
+      if [[ $# -eq 0 ]]; then
+        echo "Missing value for --ts-authkey-file" >&2
+        exit 1
+      fi
+      TAILSCALE_AUTHKEY_FILE="$1"
+      ;;
     --swap-gb)
       shift
       if [[ $# -eq 0 ]]; then
@@ -387,6 +1006,82 @@ for ((i = 0; i < ${#pass_args[@]}; i++)); do
     break
   fi
 done
+
+is_windows_posix_shell() {
+  case "$(uname -s 2>/dev/null || true)" in
+    MINGW*|MSYS*|CYGWIN*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+is_wsl_environment() {
+  [[ "$(uname -s 2>/dev/null || true)" == "Linux" ]] || return 1
+  grep -Eqi '(microsoft|wsl)' /proc/sys/kernel/osrelease /proc/version 2>/dev/null
+}
+
+is_wsl2_environment() {
+  is_wsl_environment || return 1
+  uname -r 2>/dev/null | grep -Eqi '(microsoft-standard|wsl2)'
+}
+
+systemd_is_pid_one() {
+  [[ "$(ps -p 1 -o comm= 2>/dev/null | tr -d '[:space:]')" == "systemd" ]] &&
+    command -v systemctl >/dev/null 2>&1
+}
+
+validate_install_platform() {
+  if is_windows_posix_shell; then
+    cat >&2 <<'EOF_NATIVE_WINDOWS'
+Native Windows Node.js, PowerShell, Git Bash, MSYS2, and Cygwin installs are not supported.
+Fased and fased-signerd use Unix sockets. Install Ubuntu in WSL2, enable systemd,
+open the Ubuntu terminal, and run the Fased installer there.
+See: docs/platforms/windows.md
+EOF_NATIVE_WINDOWS
+    exit 1
+  fi
+
+  if [[ "$HOSTING_REQUESTED" -eq 1 ]]; then
+    if [[ "$(uname -s 2>/dev/null || true)" != "Linux" ]]; then
+      echo "--hosting requires a supported Linux VPS with systemd." >&2
+      exit 1
+    fi
+    if is_wsl_environment; then
+      echo "--hosting is for a Linux VPS, not WSL. Use --local inside WSL2." >&2
+      exit 1
+    fi
+    if [[ "$(id -u)" -ne 0 ]]; then
+      echo "--hosting must run as root so the isolated signer and Gateway services can be installed." >&2
+      echo "Open the VPS provider's root console and follow the verified release-asset bootstrap:" >&2
+      echo "  https://docs.fased.ai/install/vps#3-install-fased-and-connect-through-tailscale" >&2
+      echo "Download the tagged install.sh plus its attestation bundle, verify it with 'gh attestation verify', then run the verified file with --hosting --release vX.Y.Z." >&2
+      echo "Never run the app-owned checkout with sudo or grant the app account sudo access." >&2
+      exit 1
+    fi
+    if ! systemd_is_pid_one; then
+      echo "--hosting requires systemd as PID 1; no host changes were started." >&2
+      echo "Use a supported VPS image with systemd, then rerun the installer." >&2
+      exit 1
+    fi
+  elif is_wsl_environment; then
+    if ! is_wsl2_environment; then
+      echo "WSL1 is not supported. Convert this distribution to WSL2, then rerun inside Ubuntu." >&2
+      echo "From PowerShell: wsl --set-version <DistributionName> 2" >&2
+      exit 1
+    fi
+    if ! systemd_is_pid_one; then
+      cat >&2 <<'EOF_WSL_SYSTEMD'
+Fased on WSL2 requires systemd for reliable Gateway and signer startup.
+Inside Ubuntu, add this to /etc/wsl.conf:
+  [boot]
+  systemd=true
+Then run `wsl --shutdown` from PowerShell, reopen Ubuntu, and rerun the installer.
+EOF_WSL_SYSTEMD
+      exit 1
+    fi
+  fi
+}
+
+validate_install_platform
 
 set_installer_state_dir() {
   local state_dir="$1"
@@ -801,6 +1496,70 @@ install_linux_system_dependencies() {
   fi
 }
 
+github_cli_supports_attestations() {
+  need_cmd gh && gh attestation verify --help >/dev/null 2>&1
+}
+
+install_github_cli_for_attestations() {
+  if github_cli_supports_attestations; then
+    return 0
+  fi
+  if [[ "$AUTO_INSTALL" -ne 1 ]]; then
+    echo "GitHub CLI with 'gh attestation verify' is required for official release assets." >&2
+    echo "Install a current GitHub CLI, then rerun the installer." >&2
+    return 1
+  fi
+
+  echo "Installing GitHub CLI for release attestation verification..."
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    if ! need_cmd brew; then
+      echo "Automatic GitHub CLI installation on macOS requires Homebrew." >&2
+      echo "Install Homebrew from https://brew.sh, then rerun the installer." >&2
+      return 1
+    fi
+    brew install gh || brew upgrade gh
+  elif [[ "$(uname -s)" != "Linux" ]]; then
+    echo "Automatic GitHub CLI installation is unavailable on $(uname -s)." >&2
+    echo "Install a current GitHub CLI, then rerun the installer." >&2
+    return 1
+  elif need_cmd apt-get; then
+    local keyring_tmp
+    keyring_tmp="$(mktemp)"
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o "$keyring_tmp"
+    run_as_root install -d -m 0755 /etc/apt/keyrings
+    run_as_root install -m 0644 "$keyring_tmp" /etc/apt/keyrings/githubcli-archive-keyring.gpg
+    rm -f "$keyring_tmp"
+    printf 'deb [arch=%s signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main\n' "$(dpkg --print-architecture)" \
+      | run_as_root tee /etc/apt/sources.list.d/github-cli.list >/dev/null
+    run_as_root apt-get update
+    run_as_root apt-get install -y gh
+  elif need_cmd dnf || need_cmd dnf5; then
+    local dnf_cmd="dnf"
+    need_cmd dnf || dnf_cmd="dnf5"
+    run_as_root "$dnf_cmd" install -y 'dnf-command(config-manager)' >/dev/null 2>&1 || true
+    run_as_root "$dnf_cmd" config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo >/dev/null 2>&1 || true
+    run_as_root "$dnf_cmd" install -y gh
+  elif need_cmd yum; then
+    run_as_root yum install -y yum-utils >/dev/null 2>&1 || true
+    run_as_root yum-config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo >/dev/null 2>&1 || true
+    run_as_root yum install -y gh
+  elif need_cmd pacman; then
+    run_as_root pacman -Sy --needed --noconfirm github-cli
+  elif need_cmd apk; then
+    run_as_root apk add --no-cache github-cli
+  elif need_cmd zypper; then
+    run_as_root zypper --non-interactive install --no-recommends gh
+  else
+    echo "Automatic GitHub CLI installation is unavailable on this distribution." >&2
+    return 1
+  fi
+  hash -r 2>/dev/null || true
+  github_cli_supports_attestations || {
+    echo "Installed GitHub CLI does not support attestation verification." >&2
+    return 1
+  }
+}
+
 install_freebsd_system_dependencies() {
   if [[ "$(uname -s)" != "FreeBSD" ]]; then
     return 1
@@ -1130,7 +1889,19 @@ use_prebuilt_release_runtime() {
 }
 
 install_prebuilt_release_runtime() {
+  local runtime_profile
+  runtime_profile="$(resolved_host_profile)"
   local package_spec="${RELEASE_NPM_PACKAGE:-@fased/fased@latest}"
+  if [[ -n "$HOSTING_RELEASE" ]]; then
+    if [[ ! "$HOSTING_RELEASE" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      echo "Managed release installation requires one exact stable --release vX.Y.Z." >&2
+      return 1
+    fi
+    package_spec="@fased/fased@${HOSTING_RELEASE}"
+  elif [[ "$runtime_profile" == "hosting" ]]; then
+    echo "Maintained Hosting requires one exact stable --release vX.Y.Z." >&2
+    return 1
+  fi
   local npm_prefix="${FASED_NPM_GLOBAL_PREFIX:-$INSTALL_CACHE_DIR/npm-global}"
   local bin_dir="$npm_prefix/bin"
   local target="$bin_dir/fased"
@@ -1145,12 +1916,18 @@ install_prebuilt_release_runtime() {
     --prefix "$npm_prefix" \
     --cache "$INSTALL_CACHE_DIR" \
     --state-dir "$FASED_CONFIG_DIR" \
-    --profile "$(resolved_host_profile)" || artifact_result=$?
+    --profile "$runtime_profile" || artifact_result=$?
   if [[ "$artifact_result" -eq 20 ]]; then
     spinner_failed "Install prebuilt runtime"
     return 1
   fi
   if [[ "$artifact_result" -ne 0 ]]; then
+    if [[ "$runtime_profile" == "hosting" ]]; then
+      spinner_failed "Install prebuilt runtime"
+      echo "Exact attested Hosting app/dependency assets for ${package_spec} are unavailable; the current installation was not changed." >&2
+      echo "Maintained Hosting never falls back to npm." >&2
+      return 1
+    fi
     if [[ "$INSTALL_VERBOSE" == "1" ]]; then
       echo "Release runtime artifact unavailable; using npm fallback."
       npm_config_prefix="$npm_prefix" npm_config_cache="$npm_config_cache" \
@@ -1169,15 +1946,26 @@ install_prebuilt_release_runtime() {
   fi
 
   local installed_package_root="$npm_prefix/lib/node_modules/@fased/fased"
-  node "$installed_package_root/scripts/install-managed-runtime.mjs" \
-    --package-root "$installed_package_root" \
-    --state-dir "$FASED_CONFIG_DIR" \
-    --prefix "$npm_prefix" \
-    --profile "$(resolved_host_profile)" || {
-      spinner_failed "Install prebuilt runtime"
-      echo "Failed to install the stable Fased updater layout." >&2
-      return 1
-    }
+  if [[ "$artifact_result" -ne 0 ]]; then
+    local -a managed_install_args=(
+      --package-root "$installed_package_root"
+      --state-dir "$FASED_CONFIG_DIR"
+      --prefix "$npm_prefix"
+      --profile "$(resolved_host_profile)"
+    )
+    if [[ -n "${FASED_HOST_UPDATE_TRANSACTION_ID:-}" ]]; then
+      managed_install_args+=(
+        --host-transaction-id "$FASED_HOST_UPDATE_TRANSACTION_ID"
+        --host-transaction-version "${FASED_HOST_UPDATE_TRANSACTION_VERSION:-}"
+      )
+    fi
+    node "$installed_package_root/scripts/install-managed-runtime.mjs" \
+      "${managed_install_args[@]}" || {
+        spinner_failed "Install prebuilt runtime"
+        echo "Failed to install the stable Fased updater layout." >&2
+        return 1
+      }
+  fi
 
   export PATH="$bin_dir:$PATH"
   hash -r 2>/dev/null || true
@@ -1438,15 +2226,7 @@ restart_existing_gateway_service_after_install() {
   profile="$(resolved_host_profile)"
 
   if [[ "$profile" == "hosting" ]]; then
-    if has_system_gateway_service; then
-      sudo -n systemctl daemon-reload >/dev/null 2>&1 || true
-      if sudo -n systemctl restart --no-block fased-gateway.service >/dev/null 2>&1; then
-        return 0
-      fi
-      if sudo -n systemctl start --no-block fased-gateway.service >/dev/null 2>&1; then
-        return 0
-      fi
-    fi
+    echo "Hosted systemd lifecycle is owned by the provider-console root installer coordinator." >&2
     return 1
   fi
 
@@ -1477,7 +2257,7 @@ refresh_existing_local_gateway_service_after_install() {
   local profile
   profile="$(resolved_host_profile)"
 
-  if [[ "$profile" == "hosting" || "$PREBUILT_RUNTIME_INSTALLED" -ne 1 ]]; then
+  if [[ "$profile" == "hosting" ]]; then
     return 0
   fi
   if ! has_user_gateway_service && ! has_system_gateway_service; then
@@ -1506,9 +2286,129 @@ verify_gateway_runtime_identity_after_install() {
     --config "${FASED_CONFIG_PATH:-$FASED_CONFIG_DIR/fased.json}"
 }
 
+local_signer_transaction_script() {
+  local current_root=""
+  current_root="$(readlink -f "$FASED_CONFIG_DIR/runtime/current" 2>/dev/null || true)"
+  if [[ -n "$current_root" && -x "$current_root/scripts/install-fased-signerd.sh" ]]; then
+    printf '%s\n' "$current_root/scripts/install-fased-signerd.sh"
+    return 0
+  fi
+  if [[ -x "$FASED_DIR/scripts/install-fased-signerd.sh" ]]; then
+    printf '%s\n' "$FASED_DIR/scripts/install-fased-signerd.sh"
+    return 0
+  fi
+  return 1
+}
+
+local_signer_is_installed_or_configured() {
+  [[ -f "$FASED_CONFIG_DIR/bin/fased-signerd" ]] && return 0
+  [[ -f "$FASED_CONFIG_DIR/wallet/signerd-v2.db" ]] && return 0
+  local registry="$FASED_CONFIG_DIR/wallet/provider-registry.v1.json"
+  [[ -f "$registry" ]] || return 1
+  node -e '
+    const fs = require("node:fs");
+    const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+    process.exit((value.wallets || []).some((wallet) => wallet?.providerId === "local-socket-signer") ? 0 : 1);
+  ' "$registry" >/dev/null 2>&1
+}
+
+local_legacy_signer_material_detected() {
+  [[ -f "$FASED_CONFIG_DIR/wallet/signerd-v2.db" ]] && return 1
+  [[ -f "$FASED_CONFIG_DIR/wallet/wallet-keys.json" ]] && return 0
+  local candidate=""
+  shopt -s nullglob
+  for candidate in \
+    "$FASED_CONFIG_DIR/wallet"/keystore-solana*.v1.enc \
+    "$FASED_CONFIG_DIR/wallet"/keystore-evm*.v1.enc; do
+    if [[ -f "$candidate" && ! -L "$candidate" ]]; then
+      shopt -u nullglob
+      return 0
+    fi
+  done
+  shopt -u nullglob
+  return 1
+}
+
+prepare_existing_local_signer_after_runtime_install() {
+  local profile=""
+  local script=""
+  local version=""
+  profile="$(resolved_host_profile)"
+  if [[ "$profile" == "hosting" || "$PREBUILT_RUNTIME_INSTALLED" -ne 1 ]]; then
+    return 0
+  fi
+  if local_legacy_signer_material_detected; then
+    echo "Pre-v2 Local wallet detected. Runtime repair will install the new CLI without touching wallet material."
+    echo "After repair, run: fased wallet setup --mode local-signer-import --wallet-id <wallet-id> --role <agent|mining|vault>"
+    return 0
+  fi
+  if ! local_signer_is_installed_or_configured; then
+    return 0
+  fi
+  script="$(local_signer_transaction_script || true)"
+  if [[ -z "$script" ]]; then
+    echo "The managed runtime is missing its transactional Local signer installer." >&2
+    return 1
+  fi
+  version="$("$FASED_CLI_PATH" --version 2>/dev/null | head -n 1 | tr -d '\r')"
+  if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]; then
+    echo "Could not resolve the exact installed Fased version for signer pairing." >&2
+    return 1
+  fi
+  echo "Preparing the exact matching Local signer and offline rollback snapshot..."
+  if ! bash "$script" --version "$version" --defer-commit; then
+    echo "The Local signer transaction failed; the new runtime will be rolled back." >&2
+    return 1
+  fi
+  LOCAL_SIGNER_INSTALL_TRANSACTION_OPEN=1
+}
+
+commit_local_signer_after_runtime_install() {
+  [[ "$LOCAL_SIGNER_INSTALL_TRANSACTION_OPEN" -eq 1 ]] || return 0
+  local script=""
+  script="$(local_signer_transaction_script || true)"
+  [[ -n "$script" ]] || return 1
+  bash "$script" --commit
+  LOCAL_SIGNER_INSTALL_TRANSACTION_OPEN=0
+}
+
+verify_local_signer_after_runtime_install() {
+  [[ "$LOCAL_SIGNER_INSTALL_TRANSACTION_OPEN" -eq 1 ]] || return 0
+  local script=""
+  local version=""
+  script="$(local_signer_transaction_script || true)"
+  [[ -n "$script" ]] || return 1
+  version="$("$FASED_CLI_PATH" --version 2>/dev/null | head -n 1 | tr -d '\r')"
+  [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]] || return 1
+  bash "$script" --verify --version "$version"
+}
+
+rollback_local_signer_after_runtime_install() {
+  local script=""
+  script="$(local_signer_transaction_script || true)"
+  [[ -n "$script" ]] || return 1
+  if bash "$script" --status 2>/dev/null | grep -q '"journal":null'; then
+    LOCAL_SIGNER_INSTALL_TRANSACTION_OPEN=0
+    return 0
+  fi
+  bash "$script" --rollback
+  LOCAL_SIGNER_INSTALL_TRANSACTION_OPEN=0
+}
+
 rollback_managed_runtime_after_failed_install() {
   local current_root
   local rollback_script
+  local paired_updater="$FASED_CONFIG_DIR/updater/fased-managed-updater.mjs"
+  if [[ "$(resolved_host_profile)" == "hosting" && \
+    -f "$FASED_CONFIG_DIR/hosted-update-transaction.json" && \
+    -f "$paired_updater" ]]; then
+    echo "Hosted runtime verification failed; restoring the paired app and signer transaction..." >&2
+    node "$paired_updater" hosted-transaction rollback
+    return $?
+  fi
+  if [[ "$(resolved_host_profile)" != "hosting" ]]; then
+    rollback_local_signer_after_runtime_install || true
+  fi
   current_root="$(readlink -f "$FASED_CONFIG_DIR/runtime/current" 2>/dev/null || true)"
   rollback_script="$current_root/scripts/install-managed-runtime.mjs"
   if [[ -z "$current_root" || ! -f "$rollback_script" || ! -e "$FASED_CONFIG_DIR/runtime/previous" ]]; then
@@ -1522,12 +2422,10 @@ rollback_managed_runtime_after_failed_install() {
     return 1
   fi
   FASED_CLI_PATH="$FASED_CONFIG_DIR/bin/fased"
-  if [[ "$(resolved_host_profile)" == "hosting" ]]; then
-    "$FASED_CLI_PATH" gateway install --force --system >/dev/null 2>&1 || true
-  else
+  if [[ "$(resolved_host_profile)" != "hosting" ]]; then
     "$FASED_CLI_PATH" gateway install --force >/dev/null 2>&1 || true
+    restart_existing_gateway_service_after_install >/dev/null 2>&1 || true
   fi
-  restart_existing_gateway_service_after_install >/dev/null 2>&1 || true
   return 0
 }
 
@@ -1980,6 +2878,54 @@ print_hosted_handoff_block() {
   block_bottom
 }
 
+restart_root_managed_hosted_gateway() {
+  [[ "$(id -u)" -eq 0 ]] || {
+    echo "The hosted Gateway service may only be restarted by the root installer coordinator." >&2
+    return 1
+  }
+  systemctl daemon-reload
+  systemctl restart fased-gateway.service
+
+  local attempt=""
+  local main_pid=""
+  for attempt in {1..30}; do
+    main_pid="$(systemctl show fased-gateway.service --property=MainPID --value 2>/dev/null || true)"
+    if systemctl is-active --quiet fased-gateway.service && \
+      [[ "$main_pid" =~ ^[0-9]+$ && "$main_pid" -gt 1 ]]; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "The root-managed fased-gateway.service did not enter an active process state." >&2
+  journalctl -u fased-gateway.service -n 40 --no-pager >&2 || true
+  return 1
+}
+
+verify_root_coordinated_hosted_gateway() {
+  local target_user="$1"
+  local target_home="$2"
+  local app_state_dir="$target_home/.fased"
+  local app_cli="$app_state_dir/bin/fased"
+  [[ "$(id -u)" -eq 0 && -x "$app_cli" ]] || return 1
+
+  local attempt=""
+  for attempt in {1..60}; do
+    if systemctl is-active --quiet fased-gateway.service && \
+      runuser -u "$target_user" -- env \
+        HOME="$target_home" \
+        FASED_STATE_DIR="$app_state_dir" \
+        FASED_CONFIG_PATH="$app_state_dir/fased.json" \
+        FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/app.sock \
+        "$app_cli" health --json --timeout 3000 >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "The root-managed hosted Gateway did not pass its post-restart health check." >&2
+  journalctl -u fased-gateway.service -n 40 --no-pager >&2 || true
+  return 1
+}
+
 runtime_assets_ready() {
   [[ -f "$FASED_DIR/src/canvas-host/a2ui/a2ui.bundle.js" ]] || return 1
   [[ -f "$FASED_DIR/dist/canvas-host/a2ui/a2ui.bundle.js" ]] || return 1
@@ -2000,16 +2946,12 @@ reexec_as_app_user() {
     else
       adduser --disabled-password --gecos "" --shell /bin/bash "$target_user"
     fi
-    usermod -aG sudo "$target_user" 2>/dev/null || true
   fi
   usermod -s /bin/bash "$target_user" 2>/dev/null || true
 
   target_home="$(getent passwd "$target_user" | cut -d: -f6)"
   if [[ -z "$target_home" ]]; then
     target_home="/home/$target_user"
-  fi
-  if [[ "$HOSTING_REQUESTED" -eq 1 ]]; then
-    ensure_host_signer_isolation_user "$target_user"
   fi
   local target_install_dir="${FASED_INSTALL_DIR:-$INSTALL_BASE_DIR}"
   if [[ -z "${FASED_INSTALL_DIR:-}" && "$target_install_dir" == "$HOME/fased" && "$target_home" != "$HOME" ]]; then
@@ -2028,11 +2970,32 @@ reexec_as_app_user() {
   fi
   configure_target_user_fased_shell_dir "$target_user" "$target_home" "$target_repo_dir"
   copy_bootstrap_ssh_keys_for_target_user "$target_user" "$target_home"
+  if [[ "$HOSTING_REQUESTED" -eq 1 ]]; then
+    prepare_hosting_root_prerequisites "$target_user" "$target_repo_dir"
+    install_fixed_host_gateway_service "$target_repo_dir"
+  fi
 
-  local cmd="cd $(shell_quote "$target_repo_dir") && ./install.sh"
+  local cmd="cd $(shell_quote "$target_repo_dir") && "
+  if [[ "$HOSTING_REQUESTED" -eq 1 ]]; then
+    cmd+="env FASED_HOST_PROFILE=hosting FASED_HOST_ROOT_PREPARED=1 FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/app.sock "
+    if [[ -n "$HOST_SIGNER_TRANSACTION_ID" ]]; then
+      cmd+="FASED_HOST_UPDATE_TRANSACTION_ID=$(shell_quote "$HOST_SIGNER_TRANSACTION_ID") FASED_HOST_UPDATE_TRANSACTION_VERSION=$(shell_quote "$HOST_SIGNER_TRANSACTION_VERSION") "
+    fi
+  fi
+  cmd+="./install.sh"
   cmd+=" --host-security-capable"
-  for arg in "${pass_args[@]}"; do
+  if [[ "$HOSTING_REQUESTED" -eq 1 ]]; then
+    cmd+=" --release $(shell_quote "$HOSTING_RELEASE")"
+  fi
+  local pass_index=0
+  while ((pass_index < ${#pass_args[@]})); do
+    local arg="${pass_args[$pass_index]}"
+    if [[ "$arg" == "--ts-authkey" || "$arg" == "--ts-authkey-file" ]]; then
+      pass_index=$((pass_index + 2))
+      continue
+    fi
     cmd+=" $(shell_quote "$arg")"
+    pass_index=$((pass_index + 1))
   done
   if [[ "$HOSTING_REPAIR_REQUESTED" -eq 1 ]]; then
     cmd+=" --repair-hosting"
@@ -2040,19 +3003,11 @@ reexec_as_app_user() {
     cmd+=" --repair-local"
   fi
 
-  if [[ "$RUN_ONBOARD" -eq 1 ]]; then
-    TEMP_SUDOERS="/etc/sudoers.d/fased-install-${target_user}"
-    echo "== Root bootstrap: granting temporary passwordless sudo to '$target_user' for onboarding =="
-    printf '%s ALL=(ALL) NOPASSWD:ALL\n' "$target_user" >"$TEMP_SUDOERS"
-    chmod 440 "$TEMP_SUDOERS"
-  fi
-
-  cleanup_temp_sudoers() {
-    if [[ -n "${TEMP_SUDOERS:-}" && -f "$TEMP_SUDOERS" ]]; then
-      rm -f "$TEMP_SUDOERS"
-    fi
+  cleanup_root_transaction() {
+    local status=$?
+    rollback_pending_host_signer_transaction_on_exit "$status"
   }
-  trap cleanup_temp_sudoers EXIT
+  trap cleanup_root_transaction EXIT
 
   echo "== Root bootstrap: re-executing installer as '$target_user' =="
   local child_status=0
@@ -2067,6 +3022,101 @@ reexec_as_app_user() {
       child_status=0
     else
       child_status=$?
+    fi
+  fi
+
+  if [[ "$HOSTING_REQUESTED" -eq 1 && "$HOST_SIGNER_TRANSACTION_ACTIVE" -eq 1 ]]; then
+    local app_state_dir="$target_home/.fased"
+    local app_transaction_updater="$app_state_dir/updater/fased-managed-updater.mjs"
+    if [[ "$child_status" -eq 0 && ! -f "$app_transaction_updater" ]]; then
+      echo "Hosted transaction cannot verify a managed application runtime; refusing signer commit." >&2
+      child_status=1
+    fi
+    if [[ "$child_status" -eq 0 ]]; then
+      echo "Root coordinator: restarting the fixed hosted Gateway service..."
+      if ! restart_root_managed_hosted_gateway; then
+        child_status=1
+      fi
+    fi
+    if [[ "$child_status" -eq 0 ]]; then
+      echo "Verifying and finalizing the paired hosted app/signer transaction..."
+      if runuser -u "$target_user" -- env \
+        HOME="$target_home" \
+        FASED_STATE_DIR="$app_state_dir" \
+        FASED_CONFIG_PATH="$app_state_dir/fased.json" \
+        FASED_HOST_UPDATER_SOCKET=/run/fased-host-updater/request.sock \
+        FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/app.sock \
+        node "$app_transaction_updater" hosted-transaction finalize --root-restarted; then
+        HOST_SIGNER_DURABLE_COMMIT_DECISION=1
+      else
+        child_status=1
+      fi
+    fi
+    if [[ "$child_status" -eq 0 ]] && \
+      ! verify_root_coordinated_hosted_gateway "$target_user" "$target_home"; then
+      child_status=1
+    fi
+    if [[ "$child_status" -ne 0 && -f "$app_state_dir/hosted-update-transaction.json" ]]; then
+      local app_transaction_phase
+      app_transaction_phase="$(node -e '
+        const fs = require("node:fs");
+        try {
+          const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+          process.stdout.write(String(value.phase || ""));
+        } catch {}
+      ' "$app_state_dir/hosted-update-transaction.json")"
+      if [[ "$app_transaction_phase" == "gateway-verified" ]]; then
+        HOST_SIGNER_DURABLE_COMMIT_DECISION=1
+        echo "A durable hosted health decision is pending commit cleanup; resuming forward..." >&2
+        if runuser -u "$target_user" -- env \
+          HOME="$target_home" \
+          FASED_STATE_DIR="$app_state_dir" \
+          FASED_CONFIG_PATH="$app_state_dir/fased.json" \
+          FASED_HOST_UPDATER_SOCKET=/run/fased-host-updater/request.sock \
+          FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/app.sock \
+          node "$app_transaction_updater" hosted-transaction finalize --root-restarted; then
+          child_status=0
+        fi
+      fi
+    fi
+    if [[ "$child_status" -eq 0 ]]; then
+      if node /usr/local/libexec/fased-host-updaterctl.mjs \
+        "$HOST_SIGNER_TRANSACTION_VERSION" --commit-only >/dev/null; then
+        HOST_SIGNER_TRANSACTION_ACTIVE=0
+        if ! finalize_legacy_hosted_signer_migration; then
+          echo "Hosted release committed, but legacy custody cleanup is incomplete; rerun the exact tagged repair from the provider root console." >&2
+          child_status=1
+        fi
+      else
+        echo "Hosted health passed, but the root signer commit is pending; rerun the exact tagged repair from the provider root console." >&2
+        child_status=1
+      fi
+    elif [[ "$HOST_SIGNER_DURABLE_COMMIT_DECISION" -eq 0 ]]; then
+      if [[ -f "$app_transaction_updater" ]]; then
+        runuser -u "$target_user" -- env \
+          HOME="$target_home" \
+          FASED_STATE_DIR="$app_state_dir" \
+          FASED_CONFIG_PATH="$app_state_dir/fased.json" \
+          FASED_HOST_UPDATER_SOCKET=/run/fased-host-updater/request.sock \
+          FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/app.sock \
+          node "$app_transaction_updater" hosted-transaction rollback >/dev/null 2>&1 || true
+      fi
+      if node /usr/local/libexec/fased-host-updaterctl.mjs \
+        "$HOST_SIGNER_TRANSACTION_VERSION" --rollback-only >/dev/null; then
+        HOST_SIGNER_TRANSACTION_ACTIVE=0
+      fi
+    else
+      echo "Hosted health passed; leaving the target app and signer active for forward recovery." >&2
+    fi
+  fi
+
+  if [[ "$child_status" -eq 0 && "$HOSTING_REQUESTED" -eq 1 ]]; then
+    systemctl is-active --quiet fased-signerd.service || child_status=1
+    systemctl is-active --quiet fased-host-updater.service || child_status=1
+    systemctl is-active --quiet fased-gateway.service || child_status=1
+    if need_cmd sudo && runuser -u "$target_user" -- sudo -n true >/dev/null 2>&1; then
+      echo "Hosted repair left passwordless sudo available to $target_user; refusing completion." >&2
+      child_status=1
     fi
   fi
 
@@ -2383,25 +3433,68 @@ install_missing_deps_as_root_if_needed() {
     missing+=("node")
   fi
 
-  if [[ ${#missing[@]} -eq 0 ]] && node_runtime_ok; then
-    return 0
+  if [[ ${#missing[@]} -gt 0 ]] || ! node_runtime_ok; then
+    echo "== Root bootstrap: installing missing system dependencies =="
+    if [[ ${#missing[@]} -gt 0 ]]; then
+      echo "Installing missing dependencies: ${missing[*]}"
+    fi
+    if ! node_runtime_ok; then
+      echo "Installing or selecting compatible Node runtime: $(node_runtime_issue)"
+    fi
+    install_linux_system_dependencies 0
   fi
-
-  echo "== Root bootstrap: installing missing system dependencies =="
-  if [[ ${#missing[@]} -gt 0 ]]; then
-    echo "Installing missing dependencies: ${missing[*]}"
+  if [[ "$HOSTING_REQUESTED" -eq 1 ]]; then
+    install_github_cli_for_attestations
   fi
-  if ! node_runtime_ok; then
-    echo "Installing or selecting compatible Node runtime: $(node_runtime_issue)"
-  fi
-
-  install_linux_system_dependencies 0
 }
 
 bootstrap_repo_for_target_user() {
   local target_user="$1"
   local target_install_dir="$2"
   local source_repo=""
+
+  if [[ "$HOSTING_REQUESTED" -eq 1 && "$(id -u)" -eq 0 ]]; then
+    local target_parent=""
+    local tagged_staging=""
+    local prior_checkout=""
+    local attested_commit=""
+    target_parent="$(dirname "$target_install_dir")"
+    tagged_staging="${target_install_dir}.tagged-staging.$$"
+    prior_checkout="${target_install_dir}.previous.$(date +%Y%m%d%H%M%S)"
+    attested_commit="$(awk -F'"' '/^[[:space:]]*"commit"[[:space:]]*:/ { print $4; exit }' "$FASED_DIR/dist/build-info.json")"
+    [[ "$attested_commit" =~ ^[a-f0-9]{40}$ ]] || {
+      echo "Attested Hosting bundle does not contain a valid source commit identity." >&2
+      exit 1
+    }
+    install -d -m 0755 -o "$target_user" -g "$target_user" "$target_parent"
+    runuser -u "$target_user" -- rm -rf -- "$tagged_staging"
+    echo "== Root bootstrap: preparing exact app checkout v${HOSTING_RELEASE} as $target_user =="
+    runuser -u "$target_user" -- git clone \
+      --branch "v${HOSTING_RELEASE}" \
+      --depth 1 \
+      --config core.hooksPath=/dev/null \
+      https://github.com/fased-ai/fased.git \
+      "$tagged_staging"
+    local tagged_head=""
+    tagged_head="$(runuser -u "$target_user" -- git -C "$tagged_staging" rev-parse HEAD)"
+    local tagged_package_version=""
+    tagged_package_version="$(awk -F'"' '/^[[:space:]]*"version"[[:space:]]*:/ { print $4; exit }' "$tagged_staging/package.json")"
+    [[ "$tagged_head" == "$attested_commit" && "$tagged_package_version" == "$HOSTING_RELEASE" ]] || {
+      runuser -u "$target_user" -- rm -rf -- "$tagged_staging"
+      echo "Exact tagged app checkout does not match the attested bundle commit/version." >&2
+      exit 1
+    }
+    if [[ -e "$target_install_dir" || -L "$target_install_dir" ]]; then
+      runuser -u "$target_user" -- mv -- "$target_install_dir" "$prior_checkout" || {
+        runuser -u "$target_user" -- rm -rf -- "$tagged_staging"
+        echo "Could not preserve the prior app checkout as $prior_checkout." >&2
+        exit 1
+      }
+      echo "Preserved the previous unprivileged app checkout at: $prior_checkout"
+    fi
+    runuser -u "$target_user" -- mv -- "$tagged_staging" "$target_install_dir"
+    return 0
+  fi
 
   if is_fased_repo_dir "$FASED_DIR"; then
     source_repo="$(cd "$FASED_DIR" && pwd)"
@@ -2455,105 +3548,19 @@ bootstrap_repo_for_target_user() {
   chown -R "$target_user:$target_user" "$target_install_dir" 2>/dev/null || true
 }
 
-install_host_maintenance_sudoers() {
-  local target_user="$1"
-  local signer_user="${FASED_SIGNER_USER:-fased-signer}"
-  local sudoers_path="/etc/sudoers.d/fased-host-maintenance-${target_user}"
-  cat >"$sudoers_path" <<EOF
-${target_user} ALL=(root) NOPASSWD: /usr/bin/timedatectl set-ntp true
-${target_user} ALL=(root) NOPASSWD: /usr/bin/timedatectl status
-${target_user} ALL=(root) NOPASSWD: /usr/bin/timedatectl timesync-status
-${target_user} ALL=(root) NOPASSWD: /usr/bin/chronyc -a makestep
-${target_user} ALL=(root) NOPASSWD: /usr/bin/apt-get update
-${target_user} ALL=(root) NOPASSWD: /usr/bin/apt-get install -y jq
-${target_user} ALL=(root) NOPASSWD: /usr/bin/apt-get install -y ufw
-${target_user} ALL=(root) NOPASSWD: /usr/bin/apt-get install -y fail2ban
-${target_user} ALL=(root) NOPASSWD: /usr/bin/apt-get install -y chrony
-${target_user} ALL=(root) NOPASSWD: /usr/bin/apt-get install -y unattended-upgrades
-${target_user} ALL=(root) NOPASSWD: /usr/bin/dnf install -y jq
-${target_user} ALL=(root) NOPASSWD: /usr/bin/dnf install -y firewalld
-${target_user} ALL=(root) NOPASSWD: /usr/bin/dnf install -y fail2ban
-${target_user} ALL=(root) NOPASSWD: /usr/bin/dnf install -y chrony
-${target_user} ALL=(root) NOPASSWD: /usr/bin/dnf install -y dnf5-plugin-automatic
-${target_user} ALL=(root) NOPASSWD: /usr/bin/dnf install -y dnf-automatic
-${target_user} ALL=(root) NOPASSWD: /usr/bin/dnf5 install -y jq
-${target_user} ALL=(root) NOPASSWD: /usr/bin/dnf5 install -y firewalld
-${target_user} ALL=(root) NOPASSWD: /usr/bin/dnf5 install -y fail2ban
-${target_user} ALL=(root) NOPASSWD: /usr/bin/dnf5 install -y chrony
-${target_user} ALL=(root) NOPASSWD: /usr/bin/dnf5 install -y dnf5-plugin-automatic
-${target_user} ALL=(root) NOPASSWD: /usr/bin/dnf5 install -y dnf-automatic
-${target_user} ALL=(root) NOPASSWD: /usr/bin/yum install -y jq
-${target_user} ALL=(root) NOPASSWD: /usr/bin/yum install -y firewalld
-${target_user} ALL=(root) NOPASSWD: /usr/bin/yum install -y fail2ban
-${target_user} ALL=(root) NOPASSWD: /usr/bin/yum install -y chrony
-${target_user} ALL=(root) NOPASSWD: /usr/bin/yum install -y dnf-automatic
-${target_user} ALL=(root) NOPASSWD: /usr/bin/yum install -y yum-cron
-${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl daemon-reload
-${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl is-active --quiet ssh
-${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl is-active --quiet sshd
-${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl is-active --quiet firewalld
-${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now systemd-timesyncd
-${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl restart systemd-timesyncd
-${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now chrony
-${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now chronyd
-${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl restart chrony
-${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl restart chronyd
-${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now firewalld
-${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now fail2ban
-${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now unattended-upgrades
-${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now apt-daily.timer apt-daily-upgrade.timer
-${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now dnf5-automatic.timer
-${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now dnf-automatic.timer
-${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now yum-cron
-${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl restart ssh
-${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl restart sshd
-${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl restart fased-gateway.service
-${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl restart --no-block fased-gateway.service
-${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl start --no-block fased-gateway.service
-${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now fased-gateway.service
-${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl list-unit-files fased-gateway.service --no-legend
-${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl status fased-gateway.service
-${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl status fased-gateway.service --no-pager
-${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl is-active fased-gateway.service
-${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl is-active fased-gateway
-${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl show fased-gateway.service -p ActiveState --value
-${target_user} ALL=(root) NOPASSWD: /usr/bin/systemctl cat fased-gateway.service
-${target_user} ALL=(root) NOPASSWD: /usr/bin/journalctl -u fased-gateway.service -n 50 --no-pager
-${target_user} ALL=(root) NOPASSWD: /usr/bin/journalctl -u fased-gateway.service -n 120 --no-pager
-${target_user} ALL=(root) NOPASSWD: /usr/bin/journalctl -u fased-gateway -n 50 --no-pager
-${target_user} ALL=(root) NOPASSWD: /usr/bin/journalctl -u fased-gateway -n 120 --no-pager
-${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-install-gateway-service fased-gateway ${target_user}
-${target_user} ALL=(root) NOPASSWD:SETENV: /usr/local/sbin/fased-signer-maintenance
-${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance harden-ssh
-${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance enable-dnf-automatic
-${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance tailscale-status
-${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance tailscale-status-json
-${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance tailscale-ip4
-${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance tailscale-logout
-${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance tailscale-up-ssh
-${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance tailscale-up-reset-ssh
-${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance tailscale-up-authkey-ssh
-${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance tailscale-up-reset-authkey-ssh
-${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance tailscale-serve
-${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance tailscale-serve-status
-${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance tailscale-install-start
-${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance tailscale-set-operator-self
-${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance tailnet-ssh-ingress
-${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance firewall-baseline
-${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance fail2ban-enable
-${target_user} ALL=(root) NOPASSWD: /usr/local/sbin/fased-host-maintenance automatic-updates
-EOF
-  chmod 440 "$sudoers_path"
-  if need_cmd visudo; then
-    visudo -cf "$sudoers_path" >/dev/null
-  fi
-}
-
 install_host_maintenance_helper() {
   local helper_path="/usr/local/sbin/fased-host-maintenance"
   cat >"$helper_path" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+
+if [[ "${EUID}" != "0" ]]; then
+  echo "Fased Hosting prerequisite maintenance must run from a root provider-console session." >&2
+  exit 1
+fi
+
+PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+export PATH
 
 command_name="${1:-}"
 
@@ -2571,24 +3578,211 @@ read_valid_port() {
   printf '%s\n' "$port"
 }
 
+read_tailscale_authkey_file() {
+  local authkey_file=""
+  IFS= read -r authkey_file || true
+  [[ "$authkey_file" =~ ^/run/fased-tailscale-authkey\.[A-Za-z0-9]+$ ]] || {
+    echo "invalid ephemeral Tailscale auth-key file" >&2
+    exit 2
+  }
+  [[ -f "$authkey_file" && ! -L "$authkey_file" ]] || {
+    echo "unsafe ephemeral Tailscale auth-key file" >&2
+    exit 2
+  }
+  local owner="" mode="" links="" size=""
+  read -r owner mode links size <<<"$(stat -c '%u %a %h %s' "$authkey_file" 2>/dev/null || true)"
+  [[ "$owner" == "0" && "$mode" == "600" && "$links" == "1" && \
+    "$size" =~ ^[0-9]+$ && "$size" -gt 0 && "$size" -le 4096 ]] || {
+    echo "unsafe ephemeral Tailscale auth-key ownership, mode, or size" >&2
+    exit 2
+  }
+  awk 'NR == 1 && $0 ~ /^tskey-auth-[A-Za-z0-9_-]+$/ { valid=1; next } { valid=0 } END { exit valid ? 0 : 1 }' \
+    "$authkey_file" || {
+    echo "invalid Tailscale auth key" >&2
+    exit 2
+  }
+  printf '%s\n' "$authkey_file"
+}
+
 install_tailscale_if_needed() {
   if command -v tailscale >/dev/null 2>&1; then
     return 0
   fi
+
+  tailscale_manual_install_guidance() {
+    echo "Install Tailscale from its signed distribution package repository, then rerun Hosting setup:" >&2
+    echo "  https://pkgs.tailscale.com/stable/" >&2
+  }
+
+  install_tailscale_from_apt_repository() (
+    set -euo pipefail
+
+    [[ -r /etc/os-release ]] || {
+      echo "Cannot identify this apt host: /etc/os-release is unavailable." >&2
+      tailscale_manual_install_guidance
+      return 1
+    }
+
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    local distro="${ID:-}"
+    local codename="${VERSION_CODENAME:-${UBUNTU_CODENAME:-}}"
+    case "$distro" in
+      ubuntu|debian) ;;
+      *)
+        echo "Automatic signed Tailscale apt setup supports Ubuntu and Debian only (found ${distro:-unknown})." >&2
+        tailscale_manual_install_guidance
+        return 1
+        ;;
+    esac
+    [[ "$codename" =~ ^[a-z0-9][a-z0-9.-]*$ ]] || {
+      echo "Cannot determine a safe Ubuntu/Debian codename for the Tailscale repository." >&2
+      tailscale_manual_install_guidance
+      return 1
+    }
+
+    local repository_base="https://pkgs.tailscale.com/stable/${distro}/${codename}"
+    local keyring_path="/usr/share/keyrings/tailscale-archive-keyring.gpg"
+    local list_path="/etc/apt/sources.list.d/tailscale.list"
+    local expected_source="deb [signed-by=${keyring_path}] https://pkgs.tailscale.com/stable/${distro} ${codename} main"
+    local temp_dir=""
+    temp_dir="$(mktemp -d)"
+    trap 'rm -rf -- "$temp_dir"' EXIT
+
+    curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+      --output "$temp_dir/tailscale-archive-keyring.gpg" \
+      "${repository_base}.noarmor.gpg"
+    curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+      --output "$temp_dir/tailscale.list" \
+      "${repository_base}.tailscale-keyring.list"
+
+    [[ -s "$temp_dir/tailscale-archive-keyring.gpg" ]] || {
+      echo "The Tailscale apt signing key download was empty." >&2
+      return 1
+    }
+    [[ "$(wc -c <"$temp_dir/tailscale-archive-keyring.gpg")" -le 1048576 ]] || {
+      echo "The Tailscale apt signing key exceeded the expected size limit." >&2
+      return 1
+    }
+    local actual_source=""
+    actual_source="$(sed -e 's/[[:space:]]*#.*$//' -e '/^[[:space:]]*$/d' "$temp_dir/tailscale.list")"
+    [[ "$actual_source" == "$expected_source" ]] || {
+      echo "Refusing an unexpected Tailscale apt repository definition." >&2
+      return 1
+    }
+
+    install -d -m 0755 /usr/share/keyrings /etc/apt/sources.list.d
+    install -m 0644 "$temp_dir/tailscale-archive-keyring.gpg" "$keyring_path"
+    install -m 0644 "$temp_dir/tailscale.list" "$list_path"
+
+    apt-get \
+      -o "Dir::Etc::sourcelist=${list_path}" \
+      -o 'Dir::Etc::sourceparts=-' \
+      -o 'Acquire::AllowInsecureRepositories=false' \
+      -o 'Acquire::AllowDowngradeToInsecureRepositories=false' \
+      -o 'APT::Get::AllowUnauthenticated=false' \
+      update
+    env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get \
+      -o 'APT::Get::AllowUnauthenticated=false' \
+      install -y --no-install-recommends tailscale
+    command -v tailscale >/dev/null 2>&1
+  )
+
+  install_tailscale_from_rpm_repository() (
+    set -euo pipefail
+
+    [[ -r /etc/os-release ]] || {
+      echo "Cannot identify this RPM host: /etc/os-release is unavailable." >&2
+      tailscale_manual_install_guidance
+      return 1
+    }
+
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    local distro="${ID:-}"
+    local version_id="${VERSION_ID:-}"
+    local major="${version_id%%.*}"
+    local repository_path=""
+    case "$distro" in
+      fedora)
+        repository_path="fedora"
+        ;;
+      centos)
+        [[ "$major" =~ ^[0-9]+$ ]] || {
+          echo "Cannot determine the CentOS major version for the Tailscale repository." >&2
+          tailscale_manual_install_guidance
+          return 1
+        }
+        repository_path="centos/${major}"
+        ;;
+      rhel|rocky|almalinux|ol|cloudlinux)
+        [[ "$major" =~ ^[0-9]+$ ]] || {
+          echo "Cannot determine the RHEL-family major version for the Tailscale repository." >&2
+          tailscale_manual_install_guidance
+          return 1
+        }
+        repository_path="rhel/${major}"
+        ;;
+      *)
+        echo "Automatic signed Tailscale RPM setup supports Fedora and RHEL-family hosts only (found ${distro:-unknown})." >&2
+        tailscale_manual_install_guidance
+        return 1
+        ;;
+    esac
+
+    local repository_url="https://pkgs.tailscale.com/stable/${repository_path}/tailscale.repo"
+    local repository_file="/etc/yum.repos.d/tailscale.repo"
+    local temp_dir=""
+    temp_dir="$(mktemp -d)"
+    trap 'rm -rf -- "$temp_dir"' EXIT
+
+    curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+      --output "$temp_dir/tailscale.repo" "$repository_url"
+    cat >"$temp_dir/expected.repo" <<RPM_REPOSITORY
+[tailscale-stable]
+name=Tailscale stable
+baseurl=https://pkgs.tailscale.com/stable/${repository_path}/\$basearch
+enabled=1
+type=rpm
+repo_gpgcheck=1
+gpgcheck=1
+gpgkey=https://pkgs.tailscale.com/stable/${repository_path}/repo.gpg
+RPM_REPOSITORY
+    cmp -s "$temp_dir/tailscale.repo" "$temp_dir/expected.repo" || {
+      echo "Refusing an unexpected or signature-disabled Tailscale RPM repository definition." >&2
+      return 1
+    }
+
+    install -d -m 0755 /etc/yum.repos.d
+    install -m 0644 "$temp_dir/tailscale.repo" "$repository_file"
+
+    local package_manager=""
+    if command -v dnf5 >/dev/null 2>&1; then
+      package_manager="dnf5"
+    elif command -v dnf >/dev/null 2>&1; then
+      package_manager="dnf"
+    elif command -v yum >/dev/null 2>&1; then
+      package_manager="yum"
+    else
+      echo "No supported RPM package manager is available for Tailscale." >&2
+      tailscale_manual_install_guidance
+      return 1
+    fi
+    "$package_manager" install -y \
+      --setopt=tailscale-stable.gpgcheck=1 \
+      --setopt=tailscale-stable.repo_gpgcheck=1 \
+      tailscale
+    command -v tailscale >/dev/null 2>&1
+  )
+
   if command -v apt-get >/dev/null 2>&1; then
-    curl -fsSL https://tailscale.com/install.sh | env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a sh
-  elif command -v dnf >/dev/null 2>&1; then
-    dnf install -y tailscale || curl -fsSL https://tailscale.com/install.sh | sh
-  elif command -v dnf5 >/dev/null 2>&1; then
-    dnf5 install -y tailscale || curl -fsSL https://tailscale.com/install.sh | sh
-  elif command -v yum >/dev/null 2>&1; then
-    yum install -y tailscale || curl -fsSL https://tailscale.com/install.sh | sh
-  elif command -v pacman >/dev/null 2>&1; then
-    pacman -Sy --needed --noconfirm tailscale
-  elif command -v apk >/dev/null 2>&1; then
-    apk add --no-cache tailscale
+    install_tailscale_from_apt_repository
+  elif command -v dnf5 >/dev/null 2>&1 || command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; then
+    install_tailscale_from_rpm_repository
   else
-    curl -fsSL https://tailscale.com/install.sh | sh
+    echo "Fased will not execute a remote Tailscale install script as root." >&2
+    tailscale_manual_install_guidance
+    return 1
   fi
 }
 
@@ -2717,21 +3911,15 @@ SSHD_CONF
     tailscale up --ssh --accept-routes --reset
     ;;
   tailscale-up-authkey-ssh)
-    read -r authkey
-    [[ "$authkey" == tskey-auth-* ]] || {
-      echo "invalid Tailscale auth key" >&2
-      exit 2
-    }
-    tailscale up --authkey "$authkey" --ssh
+    authkey_file="$(read_tailscale_authkey_file)"
+    tailscale up --auth-key="file:${authkey_file}" --ssh
+    unset authkey_file
     ;;
   tailscale-up-reset-authkey-ssh)
-    read -r authkey
-    [[ "$authkey" == tskey-auth-* ]] || {
-      echo "invalid Tailscale auth key" >&2
-      exit 2
-    }
+    authkey_file="$(read_tailscale_authkey_file)"
     tailscale logout >/dev/null 2>&1 || true
-    tailscale up --ssh --accept-routes --reset --authkey "$authkey"
+    tailscale up --ssh --accept-routes --reset --auth-key="file:${authkey_file}"
+    unset authkey_file
     ;;
   tailscale-serve)
     serve_port="$(read_valid_port)"
@@ -2744,11 +3932,6 @@ SSHD_CONF
     install_tailscale_if_needed
     enable_tailscaled_if_present
     command -v tailscale >/dev/null 2>&1
-    ;;
-  tailscale-set-operator-self)
-    operator_user="${SUDO_USER:-}"
-    [[ -n "$operator_user" && "$operator_user" != "root" && "$operator_user" =~ ^[A-Za-z0-9_.@-]+$ ]] || exit 0
-    tailscale set --operator="$operator_user"
     ;;
   tailnet-ssh-ingress)
     tailnet_ssh_ingress
@@ -2772,456 +3955,705 @@ EOF
   chmod 755 "$helper_path"
 }
 
-install_host_signer_isolation_helper() {
-  local helper_path="/usr/local/sbin/fased-signer-isolation"
-  cat >"$helper_path" <<'EOF'
+install_fixed_host_gateway_service() {
+  local target_user="${FASED_INSTALL_USER:-app}"
+  local target_home
+  target_home="$(getent passwd "$target_user" | cut -d: -f6)"
+  [[ -n "$target_home" ]] || target_home="/home/$target_user"
+  local target_repo_dir="${1:-$target_home/fased}"
+  [[ "$target_user" != "root" && "$target_user" =~ ^[A-Za-z0-9_.@-]+$ ]] || {
+    echo "Invalid hosted Gateway app account." >&2
+    exit 1
+  }
+  [[ "$target_repo_dir" == "$target_home/"* && "$target_repo_dir" =~ ^/[A-Za-z0-9_./@-]+$ ]] || {
+    echo "Hosted Gateway checkout must remain below the app account home." >&2
+    exit 1
+  }
+
+  install -d -m 0755 -o root -g root /usr/local/libexec
+  cat >/usr/local/libexec/fased-gateway-launch <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
+while [[ ! -s "${target_home}/.fased/fased.json" ]]; do
+  sleep 1
+done
+exec /bin/bash "${target_repo_dir}/scripts/start-managed.sh"
+EOF
+  chown root:root /usr/local/libexec/fased-gateway-launch
+  chmod 0755 /usr/local/libexec/fased-gateway-launch
 
-app_user="${1:-}"
-signer_user="${2:-}"
-command_name="${3:-}"
-if [[ $# -lt 3 ]]; then
-  echo "usage: fased-signer-isolation <app-user> <signer-user> <command> [args...]" >&2
-  exit 2
-fi
-shift 3
+  # The root-owned unit has fixed inputs. It may execute app-owned application code only as
+  # the app account; no app-supplied unit text or privileged lifecycle hook is accepted.
+  cat >/etc/systemd/system/fased-gateway.service <<EOF
+[Unit]
+Description=Fased Gateway (managed)
+After=fased-signerd.service network-online.target
+Wants=fased-signerd.service network-online.target
 
-valid_user_name() {
-  [[ -n "$1" && "$1" != "root" && "$1" =~ ^[A-Za-z0-9_.@-]+$ ]]
+[Service]
+Type=simple
+User=${target_user}
+Group=${target_user}
+WorkingDirectory=${target_repo_dir}
+Environment=HOME=${target_home}
+Environment=FASED_GATEWAY_MODE=managed
+Environment=FASED_MANAGED_INTERNAL=1
+Environment=FASED_GATEWAY_PORT=18789
+Environment=FASED_HOST_PROFILE=hosting
+Environment=FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/app.sock
+ExecStart=/usr/local/libexec/fased-gateway-launch
+Restart=always
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=${target_home}/.fased
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  chown root:root /etc/systemd/system/fased-gateway.service
+  chmod 0644 /etc/systemd/system/fased-gateway.service
+  rm -f /usr/local/sbin/fased-install-gateway-service
+  sync -f /usr/local/libexec/fased-gateway-launch /usr/local/libexec /etc/systemd/system/fased-gateway.service /etc/systemd/system 2>/dev/null || true
+  systemctl daemon-reload
+  systemctl enable fased-gateway.service >/dev/null
+  systemctl restart fased-gateway.service
 }
 
-require_app_user() {
-  valid_user_name "$app_user" || {
-    echo "invalid app user: $app_user" >&2
-    exit 2
+run_tailscale_auth_from_private_file() (
+  set -euo pipefail
+  local source_file="$1"
+  local helper="$2"
+  local helper_command="$3"
+  local canonical_source=""
+  local source_owner="" source_mode="" source_links="" source_size=""
+  local ephemeral_file=""
+
+  [[ -n "$source_file" && -f "$source_file" && ! -L "$source_file" ]] || {
+    echo "--ts-authkey-file must name a regular, non-symlink file." >&2
+    exit 1
   }
-  id -u "$app_user" >/dev/null 2>&1 || {
-    echo "app user does not exist: $app_user" >&2
-    exit 2
+  canonical_source="$(readlink -f -- "$source_file" 2>/dev/null || true)"
+  [[ -n "$canonical_source" && -f "$canonical_source" && ! -L "$canonical_source" ]] || {
+    echo "Could not resolve a safe --ts-authkey-file." >&2
+    exit 1
   }
-}
-
-ensure_signer_user() {
-  valid_user_name "$signer_user" || {
-    echo "invalid signer user: $signer_user" >&2
-    exit 2
+  read -r source_owner source_mode source_links source_size \
+    <<<"$(stat -c '%u %a %h %s' "$canonical_source" 2>/dev/null || true)"
+  [[ "$source_mode" =~ ^[0-7]{3,4}$ ]] || {
+    echo "--ts-authkey-file has an invalid mode." >&2
+    exit 1
   }
-  case "$signer_user" in
-    fased-signer|fased-signer-*) ;;
-    *)
-      echo "unsupported signer user: $signer_user" >&2
-      exit 2
-      ;;
-  esac
-  if ! id -u "$signer_user" >/dev/null 2>&1; then
-    if command -v useradd >/dev/null 2>&1; then
-      useradd --system --create-home --home-dir "/home/${signer_user}" --shell /usr/sbin/nologin "$signer_user"
-    else
-      adduser --system --home "/home/${signer_user}" --shell /usr/sbin/nologin "$signer_user"
-    fi
-  fi
-  passwd -l "$signer_user" >/dev/null 2>&1 || true
-}
+  local source_mode_value=$((8#$source_mode))
+  [[ "$source_owner" == "0" && \
+    $((source_mode_value & 8#077)) -eq 0 && $((source_mode_value & 8#400)) -ne 0 && \
+    "$source_links" == "1" && "$source_size" =~ ^[0-9]+$ && \
+    "$source_size" -gt 0 && "$source_size" -le 4096 ]] || {
+    echo "--ts-authkey-file must be root-owned, owner-readable, mode 0600/0400, one link, and at most 4096 bytes." >&2
+    exit 1
+  }
+  awk 'NR == 1 && $0 ~ /^tskey-auth-[A-Za-z0-9_-]+$/ { valid=1; next } { valid=0 } END { exit valid ? 0 : 1 }' \
+    "$canonical_source" || {
+    echo "--ts-authkey-file does not contain exactly one valid Tailscale auth key." >&2
+    exit 1
+  }
 
-home_dir_for_user() {
-  local user="$1"
-  getent passwd "$user" | cut -d: -f6
-}
+  umask 077
+  ephemeral_file="$(mktemp /run/fased-tailscale-authkey.XXXXXXXX)"
+  trap 'rm -f -- "${ephemeral_file:-}"' EXIT HUP INT TERM
+  install -m 0600 -o root -g root "$canonical_source" "$ephemeral_file"
+  sync -f "$ephemeral_file" 2>/dev/null || true
+  printf '%s\n' "$ephemeral_file" | "$helper" "$helper_command"
+)
 
-canonical_path() {
-  realpath -m "$1"
-}
-
-is_under() {
-  local child root
-  child="$(canonical_path "$1")"
-  root="$(canonical_path "$2")"
-  [[ "$child" == "$root" || "$child" == "$root"/* ]]
-}
-
-require_under() {
-  local path_value="$1"
-  local root_value="$2"
-  local label="$3"
-  if ! is_under "$path_value" "$root_value"; then
-    echo "$label must be under $root_value: $path_value" >&2
-    exit 3
-  fi
-}
-
-require_process_owned_by_signer() {
-  local pid="$1"
-  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
-  local proc_user proc_cmd
-  proc_user="$(ps -o user= -p "$pid" 2>/dev/null | awk '{print $1}' || true)"
-  proc_cmd="$(ps -o command= -p "$pid" 2>/dev/null || true)"
-  [[ "$proc_user" == "$signer_user" ]] || return 1
-  case "$proc_cmd" in
-    *fased-signerd*|*"wallet signer broker"*) return 0 ;;
+hosting_tailnet_confirmation_is_explicit() {
+  case "${FASED_HOSTING_TAILNET_SSH_CONFIRMED:-}" in
+    1|true|TRUE|yes|YES) return 0 ;;
     *) return 1 ;;
   esac
 }
 
-prepare_common() {
-  require_app_user
-  ensure_signer_user
-  local app_home signer_home app_group
-  app_home="$(home_dir_for_user "$app_user")"
-  signer_home="$(home_dir_for_user "$signer_user")"
-  app_group="$app_user"
-  [[ -n "$app_home" && -n "$signer_home" ]] || {
-    echo "could not resolve app/signer home" >&2
-    exit 2
+prepare_hosting_root_prerequisites() {
+  local target_user="$1"
+  local target_repo_dir="$2"
+  local helper="/usr/local/sbin/fased-host-maintenance"
+  local marker="/etc/fased/hosting-prerequisites"
+  local tailscale_dns=""
+  local tailscale_ip=""
+  local previously_confirmed=0
+
+  [[ "$(id -u)" -eq 0 ]] || {
+    echo "Hosted prerequisites must run in the provider root console." >&2
+    exit 1
   }
-  usermod -aG "$app_group" "$signer_user" >/dev/null 2>&1 || true
-  install -d -m 0750 -o "$app_user" -g "$app_group" "${app_home}/.fased"
-  install -d -m 0710 -o "$signer_user" -g "$app_group" "$signer_home"
-  install -d -m 0710 -o "$signer_user" -g "$app_group" "${signer_home}/.fased"
-}
+  [[ -x "$helper" && -f "$helper" && ! -L "$helper" ]] || {
+    echo "Root-owned Hosting prerequisite helper is unavailable." >&2
+    exit 1
+  }
+  local helper_owner="" helper_mode=""
+  read -r helper_owner helper_mode <<<"$(stat -c '%u %a' "$helper")"
+  [[ "$helper_owner" == "0" && $((8#$helper_mode & 8#22)) -eq 0 ]] || {
+    echo "Hosting prerequisite helper ownership or mode is unsafe." >&2
+    exit 1
+  }
 
-collect_signer_env_args() {
-  local key value
-  while IFS='=' read -r -d '' key value; do
-    [[ "$key" == FASED_WALLET_* ]] || continue
-    printf '%s=%s\0' "$key" "$value"
-  done < <(env -0)
-}
-
-prepare_paths() {
-  local material_dir="${1:-}"
-  local backend_socket="${2:-}"
-  local app_socket="${3:-}"
-  local bin_path="${4:-}"
-  prepare_common
-  local app_home signer_home app_group
-  app_home="$(home_dir_for_user "$app_user")"
-  signer_home="$(home_dir_for_user "$signer_user")"
-  app_group="$app_user"
-  require_under "$material_dir" "${signer_home}/.fased/wallet" "signer material directory"
-  require_under "$(dirname "$backend_socket")" "${signer_home}/.fased/wallet" "signer backend socket directory"
-  require_under "$(dirname "$app_socket")" "${app_home}/.fased/wallet" "app signer socket directory"
-  install -d -m 0700 -o "$signer_user" -g "$signer_user" "$material_dir"
-  install -d -m 0700 -o "$signer_user" -g "$signer_user" "$(dirname "$backend_socket")"
-  install -d -m 2770 -o "$signer_user" -g "$app_group" "$(dirname "$app_socket")"
-  if [[ -n "$bin_path" ]]; then
-    require_under "$bin_path" "${signer_home}/.fased/bin" "signer binary"
-    install -d -m 0755 -o "$signer_user" -g "$signer_user" "$(dirname "$bin_path")"
-  fi
-}
-
-ensure_passphrase() {
-  local material_dir="${1:-}"
-  prepare_common
-  local signer_home passphrase_path tmp
-  signer_home="$(home_dir_for_user "$signer_user")"
-  require_under "$material_dir" "${signer_home}/.fased/wallet" "signer material directory"
-  install -d -m 0700 -o "$signer_user" -g "$signer_user" "$material_dir"
-  passphrase_path="${material_dir}/passphrase"
-  if [[ ! -s "$passphrase_path" ]]; then
-    tmp="$(mktemp)"
-    if command -v openssl >/dev/null 2>&1; then
-      openssl rand -base64 32 >"$tmp"
+  "$helper" tailscale-install-start
+  if ! tailscale ip -4 >/dev/null 2>&1; then
+    if [[ -n "$TAILSCALE_AUTHKEY_FILE" ]]; then
+      run_tailscale_auth_from_private_file \
+        "$TAILSCALE_AUTHKEY_FILE" "$helper" tailscale-up-authkey-ssh
+    elif [[ -t 0 || -r /dev/tty ]]; then
+      echo "Tailscale needs authentication. Complete the browser URL printed below."
+      "$helper" tailscale-up-ssh </dev/tty
     else
-      head -c 32 /dev/urandom | base64 >"$tmp"
+      echo "Non-interactive Hosting setup requires --ts-authkey-file with a root-owned mode-0600 key file." >&2
+      exit 1
     fi
-    install -m 0600 -o "$signer_user" -g "$signer_user" "$tmp" "$passphrase_path"
-    rm -f "$tmp"
   fi
-  printf '%s\n' "$passphrase_path"
-}
-
-install_binary() {
-  local source_path="${1:-}"
-  local target_path="${2:-}"
-  prepare_common
-  local app_home signer_home
-  app_home="$(home_dir_for_user "$app_user")"
-  signer_home="$(home_dir_for_user "$signer_user")"
-  require_under "$source_path" "$app_home" "signer binary source"
-  require_under "$target_path" "${signer_home}/.fased/bin" "signer binary target"
-  [[ -f "$source_path" ]] || {
-    echo "signer binary source not found: $source_path" >&2
-    exit 4
+  tailscale_ip="$(tailscale ip -4 2>/dev/null | head -n 1 | tr -d '[:space:]')"
+  tailscale_dns="$(tailscale status --json 2>/dev/null | node -e '
+    let raw="";
+    process.stdin.on("data", (chunk) => (raw += chunk));
+    process.stdin.on("end", () => {
+      try {
+        const value = JSON.parse(raw);
+        process.stdout.write(String(value?.Self?.DNSName || "").replace(/\.$/, ""));
+      } catch {}
+    });
+  ' 2>/dev/null || true)"
+  [[ "$tailscale_ip" =~ ^100\.[0-9]+\.[0-9]+\.[0-9]+$ && -n "$tailscale_dns" ]] || {
+    echo "Tailscale did not return a tailnet IPv4 address and DNS identity." >&2
+    exit 1
   }
-  install -d -m 0755 -o "$signer_user" -g "$signer_user" "$(dirname "$target_path")"
-  install -m 0755 -o "$signer_user" -g "$signer_user" "$source_path" "$target_path"
-}
 
-install_passphrase() {
-  local source_path="${1:-}"
-  local material_dir="${2:-}"
-  prepare_common
-  local app_home signer_home target_path
-  app_home="$(home_dir_for_user "$app_user")"
-  signer_home="$(home_dir_for_user "$signer_user")"
-  target_path="${material_dir}/passphrase"
-  require_under "$source_path" "$app_home" "passphrase source"
-  require_under "$material_dir" "${signer_home}/.fased/wallet" "signer material directory"
-  [[ -f "$source_path" ]] || {
-    echo "passphrase source not found: $source_path" >&2
-    exit 4
-  }
-  if [[ -e "$target_path" ]]; then
-    echo "passphrase already exists: $target_path" >&2
-    exit 5
+  if [[ -f "$marker" && ! -L "$marker" ]] && \
+    grep -Fxq "tailnetSshConfirmed=true" "$marker" 2>/dev/null; then
+    previously_confirmed=1
   fi
-  install -d -m 0700 -o "$signer_user" -g "$signer_user" "$material_dir"
-  install -m 0600 -o "$signer_user" -g "$signer_user" "$source_path" "$target_path"
-  rm -f "$source_path"
-  printf '%s\n' "$target_path"
-}
+  if [[ "$previously_confirmed" -ne 1 ]] && ! hosting_tailnet_confirmation_is_explicit; then
+    cat <<EOF
 
-copy_keystore() {
-  local source_path="${1:-}"
-  local target_path="${2:-}"
-  prepare_common
-  local app_home signer_home
-  app_home="$(home_dir_for_user "$app_user")"
-  signer_home="$(home_dir_for_user "$signer_user")"
-  require_under "$source_path" "$app_home" "keystore source"
-  require_under "$target_path" "${signer_home}/.fased/wallet" "keystore target"
-  case "$(basename "$target_path")" in
-    keystore-solana*.v1.enc|keystore-evm*.v1.enc) ;;
-    *)
-      echo "unsupported keystore target: $target_path" >&2
-      exit 3
-      ;;
-  esac
-  [[ -f "$source_path" ]] || {
-    echo "keystore source not found: $source_path" >&2
-    exit 4
-  }
-  install -D -m 0600 -o "$signer_user" -g "$signer_user" "$source_path" "$target_path"
-  rm -f "$source_path"
-}
+Before public SSH is disabled, verify access from your own Tailscale-connected computer:
+  tailscale ping ${tailscale_dns}
+  tailscale ssh ${target_user}@${tailscale_dns}
 
-stop_sidecar() {
-  local socket_path="${1:-}"
-  local pid_path="${2:-}"
-  prepare_common
-  local app_home signer_home
-  app_home="$(home_dir_for_user "$app_user")"
-  signer_home="$(home_dir_for_user "$signer_user")"
-  if ! is_under "$socket_path" "$app_home" && ! is_under "$socket_path" "$signer_home"; then
-    echo "socket path outside allowed homes: $socket_path" >&2
-    exit 3
-  fi
-  if ! is_under "$pid_path" "$app_home" && ! is_under "$pid_path" "$signer_home"; then
-    echo "pid path outside allowed homes: $pid_path" >&2
-    exit 3
-  fi
-  local pid=""
-  if [[ -f "$pid_path" ]]; then
-    pid="$(cat "$pid_path" 2>/dev/null || true)"
-  fi
-  if require_process_owned_by_signer "$pid"; then
-    kill "$pid" >/dev/null 2>&1 || true
-    sleep 0.5
-    kill -9 "$pid" >/dev/null 2>&1 || true
-  fi
-  rm -f "$socket_path" "$pid_path"
-}
-
-start_signerd() {
-  local bin_path="${1:-}"
-  local socket_path="${2:-}"
-  local pid_path="${3:-}"
-  local audit_path="${4:-}"
-  prepare_common
-  local signer_home
-  signer_home="$(home_dir_for_user "$signer_user")"
-  require_under "$bin_path" "${signer_home}/.fased/bin" "signer binary"
-  require_under "$socket_path" "${signer_home}/.fased/wallet" "signer socket"
-  require_under "$pid_path" "${signer_home}/.fased/wallet" "signer pid file"
-  require_under "$audit_path" "${signer_home}/.fased/wallet" "signer audit log"
-  [[ -x "$bin_path" ]] || {
-    echo "signer binary is not executable: $bin_path" >&2
-    exit 4
-  }
-  local env_args=()
-  while IFS= read -r -d '' env_arg; do
-    env_args+=("$env_arg")
-  done < <(collect_signer_env_args)
-  exec runuser -u "$signer_user" -- env -i \
-    HOME="$signer_home" \
-    PATH="/usr/bin:/bin:/usr/local/bin" \
-    "${env_args[@]}" \
-    "$bin_path" -socket "$socket_path" -pid-file "$pid_path" -audit-log "$audit_path"
-}
-
-start_broker() {
-  local node_bin="${1:-}"
-  local gateway_entry="${2:-}"
-  local app_socket="${3:-}"
-  local backend_socket="${4:-}"
-  local pid_path="${5:-}"
-  local audit_path="${6:-}"
-  prepare_common
-  local app_home signer_home
-  app_home="$(home_dir_for_user "$app_user")"
-  signer_home="$(home_dir_for_user "$signer_user")"
-  if ! is_under "$node_bin" "/usr" && ! is_under "$node_bin" "/bin" && ! is_under "$node_bin" "$app_home"; then
-    echo "node binary outside allowed paths: $node_bin" >&2
-    exit 3
-  fi
-  require_under "$gateway_entry" "$app_home" "broker CLI"
-  require_under "$app_socket" "${app_home}/.fased/wallet" "app signer socket"
-  require_under "$backend_socket" "${signer_home}/.fased/wallet" "signer backend socket"
-  require_under "$pid_path" "${app_home}/.fased/wallet" "broker pid file"
-  require_under "$audit_path" "${app_home}/.fased/wallet" "broker audit log"
-  local env_args=()
-  while IFS= read -r -d '' env_arg; do
-    env_args+=("$env_arg")
-  done < <(collect_signer_env_args)
-  exec runuser -u "$signer_user" -- env -i \
-    HOME="$signer_home" \
-    PATH="/usr/bin:/bin:/usr/local/bin" \
-    "${env_args[@]}" \
-    "$node_bin" "$gateway_entry" wallet signer broker \
-      --socket "$app_socket" \
-      --backend-socket "$backend_socket" \
-      --pid-file "$pid_path" \
-      --audit-log "$audit_path"
-}
-
-case "$command_name" in
-  prepare) prepare_paths "$@" ;;
-  ensure-passphrase) ensure_passphrase "$@" ;;
-  install-passphrase) install_passphrase "$@" ;;
-  install-binary) install_binary "$@" ;;
-  copy-keystore) copy_keystore "$@" ;;
-  stop) stop_sidecar "$@" ;;
-  start-signerd) start_signerd "$@" ;;
-  start-broker) start_broker "$@" ;;
-  *)
-    echo "unsupported command: $command_name" >&2
-    exit 2
-    ;;
-esac
+The login must open ${target_repo_dir}. Keep this provider root console open.
 EOF
-  chmod 755 "$helper_path"
+    if [[ -r /dev/tty ]]; then
+      local confirmation=""
+      read -r -p "Type the Tailscale DNS name to confirm the test succeeded: " confirmation </dev/tty
+      [[ "$confirmation" == "$tailscale_dns" ]] || {
+        echo "Tailnet SSH confirmation did not match; host lock-down was not applied." >&2
+        exit 1
+      }
+    else
+      echo "Set FASED_HOSTING_TAILNET_SSH_CONFIRMED=1 only after an out-of-band SSH test." >&2
+      exit 1
+    fi
+  fi
+
+  printf '18789\n' | "$helper" tailscale-serve
+  tailscale serve status 2>/dev/null | grep -Fq '127.0.0.1:18789' || {
+    echo "Tailscale Serve did not acknowledge the fixed loopback Gateway route." >&2
+    exit 1
+  }
+  "$helper" tailnet-ssh-ingress
+  "$helper" firewall-baseline
+  "$helper" harden-ssh
+  "$helper" fail2ban-enable
+  "$helper" automatic-updates
+
+  install -d -m 0755 -o root -g root /etc/fased
+  cat >/etc/fased/signerd-webauthn.env <<EOF
+FASED_WALLET_WEBAUTHN_RP_ID=${tailscale_dns}
+FASED_WALLET_WEBAUTHN_ORIGINS=https://${tailscale_dns}
+EOF
+  chown root:root /etc/fased/signerd-webauthn.env
+  chmod 0644 /etc/fased/signerd-webauthn.env
+  systemctl restart fased-signerd.service
+  systemctl is-active --quiet fased-signerd.service || {
+    echo "Signer did not restart with the root-persisted Tailscale WebAuthn identity." >&2
+    exit 1
+  }
+
+  cat >"$marker" <<EOF
+schemaVersion=2
+release=${HOSTING_RELEASE}
+gatewayPort=18789
+tailscaleDns=${tailscale_dns}
+tailnetSshConfirmed=true
+tailscaleServeReady=true
+firewallReady=true
+sshHardened=true
+fail2banReady=true
+automaticUpdatesReady=true
+signerReady=true
+appSudoDisabled=true
+preparedBy=root
+EOF
+  chown root:root "$marker"
+  chmod 0644 "$marker"
+  sync -f "$marker" /etc/fased 2>/dev/null || true
 }
 
-install_host_signer_maintenance_wrapper() {
-  local target_user="$1"
+ensure_host_boundary_accounts() {
+  local target_user="${FASED_INSTALL_USER:-app}"
   local signer_user="${FASED_SIGNER_USER:-fased-signer}"
-  local helper_path="/usr/local/sbin/fased-signer-maintenance"
-  [[ -n "$target_user" && "$target_user" != "root" && "$target_user" =~ ^[A-Za-z0-9_.@-]+$ ]] || {
-    echo "invalid app user for signer maintenance wrapper: $target_user" >&2
-    exit 2
-  }
-  [[ -n "$signer_user" && "$signer_user" != "root" && "$signer_user" =~ ^[A-Za-z0-9_.@-]+$ ]] || {
-    echo "invalid signer user for signer maintenance wrapper: $signer_user" >&2
-    exit 2
-  }
-  cat >"$helper_path" <<EOF
-#!/usr/bin/env bash
-set -euo pipefail
-exec /usr/local/sbin/fased-signer-isolation "$target_user" "$signer_user" "\$@"
-EOF
-  chmod 755 "$helper_path"
+  local gateway_group="${FASED_GATEWAY_GROUP:-fased-gateway}"
+  if ! id -u "$target_user" >/dev/null 2>&1; then
+    if need_cmd useradd; then
+      useradd -m -s /bin/bash "$target_user"
+    else
+      adduser --disabled-password --gecos "" --shell /bin/bash "$target_user"
+    fi
+  fi
+  getent group "$gateway_group" >/dev/null 2>&1 || groupadd --system "$gateway_group"
+  if ! id -u "$signer_user" >/dev/null 2>&1; then
+    if need_cmd useradd; then
+      useradd --system --home-dir /var/lib/fased-signerd --shell /usr/sbin/nologin "$signer_user"
+    else
+      adduser --system --home /var/lib/fased-signerd --shell /usr/sbin/nologin "$signer_user"
+    fi
+  fi
+  passwd -l "$signer_user" >/dev/null 2>&1 || true
+  usermod -aG "$gateway_group" "$target_user"
+  for admin_group in sudo wheel; do
+    if getent group "$admin_group" >/dev/null 2>&1; then
+      gpasswd -d "$target_user" "$admin_group" >/dev/null 2>&1 || true
+    fi
+  done
+  rm -f \
+    "/etc/sudoers.d/fased-install-${target_user}" \
+    "/etc/sudoers.d/fased-host-maintenance-${target_user}" \
+    "/etc/sudoers.d/fased-gateway-${target_user}-maintenance"
+  if need_cmd sudo && runuser -u "$target_user" -- sudo -n true >/dev/null 2>&1; then
+    echo "Hosting security boundary cannot use an app account with passwordless sudo: $target_user" >&2
+    echo "Remove custom sudoers access for this dedicated account, then rerun the exact tagged repair from the provider root console." >&2
+    exit 1
+  fi
 }
 
-ensure_host_signer_isolation_user() {
-  local target_user="$1"
+install_host_signer_and_updater_services() {
+  local target_user="${FASED_INSTALL_USER:-app}"
+  local signer_user="${FASED_SIGNER_USER:-fased-signer}"
+  local gateway_group="${FASED_GATEWAY_GROUP:-fased-gateway}"
+  local gateway_gid
+  local version
+  gateway_gid="$(getent group "$gateway_group" | cut -d: -f3)"
+  version="$(node -p "require(process.argv[1]).version" "$FASED_DIR/package.json" 2>/dev/null || true)"
+  [[ "$gateway_gid" =~ ^[0-9]+$ && "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || {
+    echo "Could not resolve hosted signer group or release version." >&2
+    exit 1
+  }
+  if [[ -n "${FASED_HOST_SIGNER_BINARY:-}" ]]; then
+    echo "FASED_HOST_SIGNER_BINARY is no longer accepted for hosted custody." >&2
+    echo "The root updater must fetch and attest the exact tagged signer artifact." >&2
+    exit 1
+  fi
+  local existing_signer_dropins
+  existing_signer_dropins="$(systemctl show fased-signerd.service --property=DropInPaths --value 2>/dev/null || true)"
+  if [[ -n "$existing_signer_dropins" ]]; then
+    echo "Custom fased-signerd systemd drop-ins prevent an exact transactional rollback:" >&2
+    echo "  $existing_signer_dropins" >&2
+    echo "Consolidate the prior signer launch policy into its main unit, then rerun the exact tagged repair from the provider root console." >&2
+    exit 1
+  fi
+
+  install -d -m 0755 -o root -g root /usr/local/libexec
+  install -d -m 0755 -o root -g root /usr/local/sbin
+  install -d -m 0755 -o root -g root /usr/local/share/fased/signer-policies
+  install -d -m 0755 -o root -g root /opt/fased/signer
+  install -m 0755 -o root -g root "$FASED_DIR/scripts/fased-host-updater.mjs" /usr/local/libexec/fased-host-updater.mjs
+  install -m 0755 -o root -g root "$FASED_DIR/scripts/fased-host-updaterctl.mjs" /usr/local/libexec/fased-host-updaterctl.mjs
+  rm -f /usr/local/libexec/fased-host-bootstrapd.mjs /usr/local/libexec/fased-host-bootstrapctl.mjs
+  rm -rf /run/fased-host-bootstrap
+  rm -f /var/log/fased-host-bootstrap.log
+  install -m 0755 -o root -g root "$FASED_DIR/scripts/migrate-hosted-signer-v2.mjs" /usr/local/libexec/migrate-hosted-signer-v2.mjs
+  install -m 0700 -o root -g root "$FASED_DIR/scripts/fased-signer-owner-policy.mjs" /usr/local/libexec/fased-signer-owner-policy.mjs
+  install -m 0755 -o root -g root "$FASED_DIR/scripts/fased-signer-enroll-hosting.sh" /usr/local/sbin/fased-signer-enroll
+  install -m 0755 -o root -g root "$FASED_DIR/scripts/fased-signer-policy-hosting.sh" /usr/local/sbin/fased-signer-policy
+  install -m 0755 -o root -g root "$FASED_DIR/scripts/fased-signer-network-hosting.sh" /usr/local/sbin/fased-signer-network
+  install -m 0644 -o root -g root "$FASED_DIR/config/signer-policies/README.md" /usr/local/share/fased/signer-policies/README.md
+  install -m 0644 -o root -g root "$FASED_DIR/config/signer-policies/agent.json.template" /usr/local/share/fased/signer-policies/agent.json.template
+  install -m 0644 -o root -g root "$FASED_DIR/config/signer-policies/mining.json.template" /usr/local/share/fased/signer-policies/mining.json.template
+  install -m 0644 -o root -g root "$FASED_DIR/config/signer-policies/vault.json.template" /usr/local/share/fased/signer-policies/vault.json.template
+  install -m 0644 -o root -g root "$FASED_DIR/config/signer-policies/network.json.template" /usr/local/share/fased/signer-policies/network.json.template
+  install -d -m 0700 -o root -g root /var/lib/fased-host-updater
+  install -d -m 0755 -o root -g root /var/lib/fased-signer-update-gate
+  install -d -m 0700 -o "$signer_user" -g "$signer_user" /var/lib/fased-signerd
+  install -d -m 0755 -o root -g root /etc/fased
+  if [[ ! -f /etc/fased/signerd-webauthn.env ]]; then
+    install -m 0644 -o root -g root /dev/null /etc/fased/signerd-webauthn.env
+  fi
+  install -d -m 0755 -o root -g root /etc/systemd/system/fased-gateway.service.d
+  cat >/etc/systemd/system/fased-gateway.service.d/20-fased-update-gate.conf <<'EOF'
+[Unit]
+After=fased-host-updater.service
+Wants=fased-host-updater.service
+ConditionPathExists=!/var/lib/fased-host-updater/gateway-update-gate
+EOF
+  chmod 0644 /etc/systemd/system/fased-gateway.service.d/20-fased-update-gate.conf
+  sync -f /etc/systemd/system/fased-gateway.service.d/20-fased-update-gate.conf
+  sync -f /etc/systemd/system/fased-gateway.service.d
+  if [[ ! -f /etc/fased/host-updater-channel ]]; then
+    printf 'stable\n' >/etc/fased/host-updater-channel
+    chmod 0644 /etc/fased/host-updater-channel
+  fi
+
+  cat >/etc/systemd/system/fased-host-updater.service <<EOF
+[Unit]
+Description=Fased verified native signer updater
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+RuntimeDirectory=fased-host-updater
+RuntimeDirectoryMode=0755
+StateDirectory=fased-host-updater
+StateDirectoryMode=0700
+UMask=0117
+Environment=HOME=/var/lib/fased-host-updater
+ExecStart=$(command -v node) /usr/local/libexec/fased-host-updater.mjs --socket-gid ${gateway_gid}
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/fased/signer /var/lib/fased-host-updater /var/lib/fased-signer-update-gate /var/lib/fased-signerd /run/fased-host-updater /etc/systemd/system
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  chmod 0644 /etc/systemd/system/fased-host-updater.service
+  sync -f /usr/local/libexec/fased-host-updater.mjs
+  sync -f /usr/local/libexec/fased-host-updaterctl.mjs
+  sync -f /usr/local/libexec/fased-signer-owner-policy.mjs
+  sync -f /usr/local/sbin/fased-signer-enroll
+  sync -f /usr/local/sbin/fased-signer-policy
+  sync -f /usr/local/sbin/fased-signer-network
+  sync -f /usr/local/share/fased/signer-policies/README.md
+  sync -f /usr/local/share/fased/signer-policies/agent.json.template
+  sync -f /usr/local/share/fased/signer-policies/mining.json.template
+  sync -f /usr/local/share/fased/signer-policies/vault.json.template
+  sync -f /usr/local/share/fased/signer-policies/network.json.template
+  sync -f /etc/systemd/system/fased-host-updater.service
+  sync -f /usr/local/libexec /usr/local/sbin /usr/local/share/fased/signer-policies /etc/systemd/system
+  systemctl daemon-reload
+  systemctl enable fased-host-updater.service >/dev/null
+  systemctl restart fased-host-updater.service
+
+  local prepare_result
+  prepare_result="$(node /usr/local/libexec/fased-host-updaterctl.mjs "$version" --prepare-only)"
+  HOST_SIGNER_TRANSACTION_ID="$(node -e 'const value=JSON.parse(process.argv[1]);process.stdout.write(String(value.transactionId||""))' "$prepare_result")"
+  [[ "$HOST_SIGNER_TRANSACTION_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || {
+    echo "Root signer updater did not return a transaction ID." >&2
+    exit 1
+  }
+  HOST_SIGNER_TRANSACTION_VERSION="$version"
+  HOST_SIGNER_TRANSACTION_ACTIVE=1
+  trap rollback_pending_host_signer_transaction_on_exit EXIT
+
+  cat >/etc/systemd/system/fased-signerd.service <<EOF
+[Unit]
+Description=Fased native wallet signer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=${signer_user}
+Group=${signer_user}
+SupplementaryGroups=${gateway_group}
+RuntimeDirectory=fased-signerd
+RuntimeDirectoryMode=0755
+StateDirectory=fased-signerd
+StateDirectoryMode=0700
+UMask=0077
+Environment=HOME=/var/lib/fased-signerd
+EnvironmentFile=-/etc/fased/signerd-webauthn.env
+ExecStart=/opt/fased/signer/fased-signerd -socket /run/fased-signerd/app.sock -control-socket /run/fased-signerd/control.sock -socket-mode 0660 -socket-group ${gateway_group} -state-db /var/lib/fased-signerd/state.db -master-key /var/lib/fased-signerd/master.key -update-gate /var/lib/fased-signer-update-gate/active -pid-file /run/fased-signerd/fased-signerd.pid -audit-log /var/lib/fased-signerd/audit.jsonl
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  chmod 0644 /etc/systemd/system/fased-signerd.service
+  sync -f /etc/systemd/system/fased-signerd.service
+  sync -f /etc/systemd/system
+  systemctl daemon-reload
+  systemctl enable fased-signerd.service >/dev/null
+
+  if systemctl list-unit-files fased-gateway.service --no-legend 2>/dev/null | grep -q '^fased-gateway.service'; then
+    systemctl stop fased-gateway.service
+  fi
+
+  node /usr/local/libexec/fased-host-updaterctl.mjs "$version" --activate-only >/dev/null
+  systemctl is-active --quiet fased-signerd.service || {
+    echo "Root-managed fased-signerd did not become active." >&2
+    journalctl -u fased-signerd.service -n 40 --no-pager >&2 || true
+    exit 1
+  }
+  node --input-type=module --eval \
+    'const { probeSignerV2 } = await import("file:///usr/local/libexec/fased-host-updater.mjs"); await probeSignerV2();' || {
+    echo "Root-managed fased-signerd did not acknowledge protocol v2 and signer-owned custody." >&2
+    journalctl -u fased-signerd.service -n 40 --no-pager >&2 || true
+    exit 1
+  }
+  cat <<'EOF'
+Hosted signer owner handoff
+---------------------------
+Fresh signer-owned wallets remain deny-all. Enrollment and policy activation are
+separate host-administrator actions; neither the Gateway nor the app account can run them.
+
+After onboarding creates a signer-owned wallet, use a root SSH/provider-console session:
+  1. Copy /usr/local/share/fased/signer-policies/network.json.template to a
+     root-owned mode-0600 file, set the exact RPC endpoints, then run:
+       /usr/local/sbin/fased-signer-network --wallet-id <native-id> --network-file /root/fased-network.json
+  2. /usr/local/sbin/fased-signer-enroll [authenticator-label]
+  3. cp /usr/local/share/fased/signer-policies/<role>.json.template /root/fased-<role>-policy.json
+  4. Set walletId to the canonical native signer ID (lowercase, separators become
+     underscores; do not use a different friendly registry ID), replace every
+     REPLACE_WITH_ value, review the exact destinations/caps, then run:
+       chmod 0600 /root/fased-<role>-policy.json
+       /usr/local/sbin/fased-signer-policy --initial-install --policy-file /root/fased-<role>-policy.json
+
+Copying a template or enrolling a passkey does not enable signing.
+EOF
+}
+
+migrate_legacy_hosted_signer_if_needed() {
+  local target_user="${FASED_INSTALL_USER:-app}"
   local signer_user="${FASED_SIGNER_USER:-fased-signer}"
   local target_home
-  if [[ "$(id -u)" -ne 0 || "$HOSTING_REQUESTED" -ne 1 ]]; then
-    return 0
-  fi
+  local signer_home="/home/${signer_user}"
+  local policy_file="/etc/fased/signer-migration-policies.json"
+  local marker_file="/var/lib/fased-host-updater/signer-v1-migration.pending"
+  local -a legacy_keystores=()
   target_home="$(getent passwd "$target_user" | cut -d: -f6)"
-  if [[ -z "$target_home" ]]; then
-    target_home="/home/$target_user"
+  [[ -n "$target_home" ]] || target_home="/home/${target_user}"
+
+  shopt -s nullglob
+  legacy_keystores+=("${target_home}/.fased/wallet"/keystore-*.enc)
+  legacy_keystores+=("${signer_home}/.fased/wallet"/keystore-*.enc)
+  shopt -u nullglob
+  if [[ "${#legacy_keystores[@]}" -gt 0 || -f "$marker_file" ]]; then
+    if [[ ! -f "$policy_file" ]]; then
+      echo "A previous hosted wallet requires a fail-closed signer-v2 migration." >&2
+      echo "Create root-owned ${policy_file} (mode 0600) with each expected wallet address and explicit policy, then rerun:" >&2
+      echo "Use the verified release-asset repair procedure at:" >&2
+      echo "  https://docs.fased.ai/install/vps#3-install-fased-and-connect-through-tailscale" >&2
+      echo "After verifying the tagged install.sh attestation, run the verified file with --repair-hosting --release v${HOSTING_RELEASE}." >&2
+      echo "Legacy key files were not changed." >&2
+      exit 1
+    fi
+    /opt/fased/signer/fased-signerd admin migration hosted-v1 \
+      --phase prepare \
+      --control-socket /run/fased-signerd/control.sock \
+      --policy-file "$policy_file" \
+      --app-home "$target_home" \
+      --legacy-signer-home "$signer_home" \
+      --state-dir /var/lib/fased-signerd \
+      --marker-file "$marker_file"
   fi
-  /usr/local/sbin/fased-signer-isolation "$target_user" "$signer_user" prepare \
-    "/home/${signer_user}/.fased/wallet" \
-    "/home/${signer_user}/.fased/wallet/local-signer.sock" \
+}
+
+finalize_legacy_hosted_signer_migration() {
+  local target_user="${FASED_INSTALL_USER:-app}"
+  local signer_user="${FASED_SIGNER_USER:-fased-signer}"
+  local target_home
+  local signer_home="/home/${signer_user}"
+  local policy_file="/etc/fased/signer-migration-policies.json"
+  local marker_file="/var/lib/fased-host-updater/signer-v1-migration.pending"
+  local -a legacy_keystores=()
+  target_home="$(getent passwd "$target_user" | cut -d: -f6)"
+  [[ -n "$target_home" ]] || target_home="/home/${target_user}"
+
+  shopt -s nullglob
+  legacy_keystores+=("${target_home}/.fased/wallet"/keystore-*.enc)
+  legacy_keystores+=("${signer_home}/.fased/wallet"/keystore-*.enc)
+  shopt -u nullglob
+  if [[ "${#legacy_keystores[@]}" -gt 0 || -f "$marker_file" ]]; then
+    [[ -f "$policy_file" ]] || {
+      echo "Signer migration policy disappeared before commit; refusing cleanup." >&2
+      return 1
+    }
+    /opt/fased/signer/fased-signerd admin migration hosted-v1 \
+      --phase commit \
+      --control-socket /run/fased-signerd/control.sock \
+      --policy-file "$policy_file" \
+      --app-home "$target_home" \
+      --legacy-signer-home "$signer_home" \
+      --state-dir /var/lib/fased-signerd \
+      --marker-file "$marker_file"
+  fi
+
+  if need_cmd pkill; then
+    pkill -u "$signer_user" -f "${signer_home}/.fased/bin/fased-signerd" >/dev/null 2>&1 || true
+  fi
+  rm -f \
     "${target_home}/.fased/wallet/local-signer.sock" \
-    "/home/${signer_user}/.fased/bin/fased-signerd" >/dev/null
+    "${signer_home}/.fased/wallet/local-signer.sock" \
+    /usr/local/sbin/fased-signer-maintenance \
+    /usr/local/sbin/fased-signer-isolation
 }
 
-install_host_gateway_service_helper() {
-  local helper_path="/usr/local/sbin/fased-install-gateway-service"
-  cat >"$helper_path" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-
-service_name="${1:-}"
-run_as_user="${2:-}"
-
-if [[ "$service_name" != "fased-gateway" ]]; then
-  echo "unsupported service: $service_name" >&2
-  exit 2
-fi
-if [[ -z "$run_as_user" || "$run_as_user" == "root" || ! "$run_as_user" =~ ^[A-Za-z0-9_.@-]+$ ]]; then
-  echo "invalid run-as user: $run_as_user" >&2
-  exit 2
-fi
-
-unit_path="/etc/systemd/system/${service_name}.service"
-tmp="$(mktemp)"
-cleanup() {
-  rm -f "$tmp"
-}
-trap cleanup EXIT
-cat >"$tmp"
-
-require_line() {
-  local pattern="$1"
-  local label="$2"
-  if ! grep -Eq "$pattern" "$tmp"; then
-    echo "invalid gateway unit: missing $label" >&2
-    exit 3
+assert_verified_hosting_root_source() {
+  [[ "$HOSTING_REQUESTED" -eq 1 && "$(id -u)" -eq 0 ]] || return 0
+  if [[ "$SOURCE_INSTALL_REQUESTED" -eq 1 || "${FASED_SOURCE_INSTALL:-0}" == "1" || "${FASED_HOSTING_SOURCE_INSTALL:-0}" == "1" ]]; then
+    echo "VPS Hosting root setup cannot install privileged assets from a source checkout." >&2
+    echo "Use the exact tagged, attested release bootstrap from the provider root console." >&2
+    exit 1
   fi
-}
-
-reject_line() {
-  local pattern="$1"
-  local label="$2"
-  if grep -Eq "$pattern" "$tmp"; then
-    echo "invalid gateway unit: forbidden $label" >&2
-    exit 3
+  [[ "$HOSTING_RELEASE" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+    echo "VPS Hosting root setup requires an exact stable release identity." >&2
+    echo "Start again with --release vX.Y.Z or --release latest from the provider root console." >&2
+    exit 1
+  }
+  local canonical_source=""
+  local canonical_marker=""
+  canonical_source="$(readlink -f "$FASED_DIR" 2>/dev/null || true)"
+  canonical_marker="$(readlink -f "$VERIFIED_HOSTING_BUNDLE" 2>/dev/null || true)"
+  local expected_prefix="/var/lib/fased-installer/releases/v${HOSTING_RELEASE}/"
+  if [[ -z "$canonical_source" || "$canonical_source" != "$canonical_marker" || \
+    ! "$canonical_source" =~ ^${expected_prefix}[a-f0-9]{64}/extract/package$ ]]; then
+    echo "Refusing privileged Hosting setup from an unverified or caller-owned source tree:" >&2
+    echo "  ${canonical_source:-unknown}" >&2
+    echo "Start at the provider root console with the exact tagged release bootstrap." >&2
+    exit 1
   fi
-}
-
-require_line '^\[Unit\]$' "[Unit]"
-require_line '^\[Service\]$' "[Service]"
-require_line '^\[Install\]$' "[Install]"
-require_line "^User=${run_as_user}$" "User=${run_as_user}"
-require_line "^Group=${run_as_user}$" "Group=${run_as_user}"
-require_line "^ExecStart=/bin/bash (/home/${run_as_user}/\\.fased/bin/fased-service managed|/home/${run_as_user}/fased/scripts/start-managed\\.sh|/home/${run_as_user}/\\.fased/install-cache/npm-global/lib/node_modules/@fased/fased/scripts/start-managed\\.sh)$" "managed ExecStart"
-require_line "^WorkingDirectory=(/home/${run_as_user}/\\.fased/runtime/current|/home/${run_as_user}/fased|/home/${run_as_user}/\\.fased/install-cache/npm-global/lib/node_modules/@fased/fased)$" "hosted WorkingDirectory"
-require_line '^Environment=FASED_GATEWAY_MODE=managed$' "managed mode"
-require_line '^Environment=FASED_MANAGED_INTERNAL=1$' "managed internal flag"
-require_line '^Environment=FASED_GATEWAY_PORT=18789$' "loopback gateway port"
-require_line '^NoNewPrivileges=true$' "NoNewPrivileges"
-require_line '^PrivateTmp=true$' "PrivateTmp"
-require_line '^WantedBy=multi-user\.target$' "multi-user target"
-
-reject_line '^User=root$' "root user"
-reject_line '^Group=root$' "root group"
-reject_line '^Exec(Start|Stop|Reload)(Pre|Post)=' "extra privileged lifecycle command"
-reject_line '^PermissionsStartOnly=' "PermissionsStartOnly"
-reject_line '^AmbientCapabilities=' "AmbientCapabilities"
-reject_line '^CapabilityBoundingSet=' "CapabilityBoundingSet"
-
-install -o root -g root -m 0644 "$tmp" "$unit_path"
-systemctl daemon-reload
-systemctl enable --now "${service_name}.service"
-EOF
-  chmod 755 "$helper_path"
+  [[ ! -e "$canonical_source/.git" ]] || {
+    echo "Refusing privileged Hosting setup from a Git checkout, even when it appears clean." >&2
+    exit 1
+  }
+  local marker="$canonical_source/.fased-hosting-bundle-verified"
+  [[ -f "$marker" && ! -L "$marker" ]] || {
+    echo "Verified Hosting bundle marker is missing or unsafe." >&2
+    exit 1
+  }
+  local marker_owner="" marker_mode="" marker_links=""
+  read -r marker_owner marker_mode marker_links <<<"$(stat -c '%u %a %h' "$marker")"
+  [[ "$marker_owner" == "0" && "$marker_mode" == "600" && "$marker_links" == "1" ]] || {
+    echo "Verified Hosting bundle marker ownership or mode is unsafe." >&2
+    exit 1
+  }
+  grep -Fxq "version=${HOSTING_RELEASE}" "$marker" || {
+    echo "Verified Hosting bundle release identity is inconsistent." >&2
+    exit 1
+  }
+  grep -Eq '^sha256=[a-f0-9]{64}$' "$marker" || {
+    echo "Verified Hosting bundle digest marker is invalid." >&2
+    exit 1
+  }
+  grep -Eq '^commit=[a-f0-9]{40}$' "$marker" || {
+    echo "Verified Hosting bundle commit marker is invalid." >&2
+    exit 1
+  }
+  local marker_digest=""
+  marker_digest="$(sed -n 's/^sha256=//p' "$marker")"
+  [[ "$canonical_source" == "${expected_prefix}${marker_digest}/extract/package" ]] || {
+    echo "Verified Hosting bundle path does not match its attested digest." >&2
+    exit 1
+  }
+  local marker_commit=""
+  local build_commit=""
+  local build_version=""
+  marker_commit="$(sed -n 's/^commit=//p' "$marker")"
+  [[ -f "$canonical_source/dist/build-info.json" && ! -L "$canonical_source/dist/build-info.json" ]] || {
+    echo "Verified Hosting bundle build identity is missing or unsafe." >&2
+    exit 1
+  }
+  build_commit="$(awk -F'"' '/^[[:space:]]*"commit"[[:space:]]*:/ { print $4; exit }' "$canonical_source/dist/build-info.json")"
+  build_version="$(awk -F'"' '/^[[:space:]]*"version"[[:space:]]*:/ { print $4; exit }' "$canonical_source/dist/build-info.json")"
+  [[ "$build_commit" == "$marker_commit" && "$build_commit" =~ ^[a-f0-9]{40}$ && "$build_version" == "$HOSTING_RELEASE" ]] || {
+    echo "Verified Hosting bundle build commit/version does not match its root marker." >&2
+    exit 1
+  }
+  local package_version=""
+  package_version="$(awk -F'"' '/^[[:space:]]*"version"[[:space:]]*:/ { print $4; exit }' "$canonical_source/package.json")"
+  [[ "$package_version" == "$HOSTING_RELEASE" ]] || {
+    echo "Verified Hosting bundle package version does not match v${HOSTING_RELEASE}." >&2
+    exit 1
+  }
+  if find "$canonical_source" -xdev \( ! -user root -o -perm /022 \) -print -quit | grep -q .; then
+    echo "Verified Hosting bundle contains files not owned by root or writable by group/other." >&2
+    exit 1
+  fi
+  if find "$canonical_source" -xdev ! -type f ! -type d -print -quit | grep -q . || \
+    find "$canonical_source" -xdev -type f -links +1 -print -quit | grep -q .; then
+    echo "Verified Hosting bundle contains a symlink, special file, or hardlinked regular file." >&2
+    exit 1
+  fi
+  local privileged_asset=""
+  for privileged_asset in \
+    install.sh \
+    scripts/fased-host-updater.mjs \
+    scripts/fased-host-updaterctl.mjs \
+    scripts/fased-signer-enroll-hosting.sh \
+    scripts/fased-signer-network-hosting.sh \
+    scripts/fased-signer-policy-hosting.sh; do
+    local asset_path="$canonical_source/$privileged_asset"
+    [[ -f "$asset_path" && ! -L "$asset_path" ]] || {
+      echo "Verified Hosting bundle is missing a safe privileged asset: $privileged_asset" >&2
+      exit 1
+    }
+  done
 }
 
 if [[ "$(id -u)" -eq 0 ]]; then
-  install_host_gateway_service_helper
-  install_host_maintenance_helper
-  install_host_signer_isolation_helper
-  install_host_signer_maintenance_wrapper "${FASED_INSTALL_USER:-app}"
-  install_host_maintenance_sudoers "${FASED_INSTALL_USER:-app}"
+  assert_verified_hosting_root_source
+  if [[ "$HOSTING_REQUESTED" -eq 1 ]]; then
+    ensure_host_boundary_accounts
+    install_host_maintenance_helper
+  fi
   ensure_early_swap_for_hosting
   install_missing_deps_as_root_if_needed
   best_effort_enable_root_host_time_sync
+  if [[ "$HOSTING_REQUESTED" -eq 1 ]]; then
+    install_host_signer_and_updater_services
+    migrate_legacy_hosted_signer_if_needed
+  fi
   reexec_as_app_user
 fi
 
@@ -3338,6 +4770,9 @@ if ! node_runtime_ok; then
   print_node_runtime_help
   exit 1
 fi
+if use_prebuilt_release_runtime || [[ "$(uname -s)" == "Darwin" ]]; then
+  install_github_cli_for_attestations
+fi
 
 FASED_INSTALL_VERSION="$(node -e 'const fs=require("fs");try{const p=process.argv[1];const o=JSON.parse(fs.readFileSync(p,"utf8"));process.stdout.write(o.version||"0.0.0")}catch{process.stdout.write("0.0.0")}' "$FASED_DIR/package.json" 2>/dev/null || printf '0.0.0')"
 print_installer_banner "$FASED_INSTALL_VERSION"
@@ -3413,20 +4848,22 @@ fi
 if [[ "$RUN_ONBOARD" -eq 0 ]]; then
   status_frame_end
   if [[ "$HOSTING_REPAIR_REQUESTED" -eq 1 ]]; then
-    echo "Repairing the root-managed hosted gateway service..."
-    if [[ ! -x "/usr/local/sbin/fased-install-gateway-service" ]]; then
-      echo "Hosted service helper is missing." >&2
-      echo "Rerun this repair as root so installer-managed helpers and sudoers are restored." >&2
-      exit 1
+    repair_tailscale_serve_gateway_config
+    marker_onboarding_completed="$(read_marker_onboarding_completed || true)"
+    if [[ "$marker_onboarding_completed" == "true" || \
+      -s "${FASED_CONFIG_PATH:-$FASED_CONFIG_DIR/fased.json}" ]]; then
+      write_install_marker "$REPO_ROOT" "true"
+    else
+      write_install_marker "$REPO_ROOT" "false"
     fi
-    if ! "$FASED_CLI_PATH" gateway install --force --system; then
-      echo "Hosted gateway service repair failed." >&2
-      echo "Persistent state under $FASED_CONFIG_DIR was not removed." >&2
-      rollback_managed_runtime_after_failed_install || true
-      exit 1
-    fi
-    GATEWAY_SERVICE_REFRESHED=1
-  elif ! refresh_existing_local_gateway_service_after_install; then
+    echo "Hosted application runtime repair staged. The root installer coordinator will restart and verify the fixed systemd service."
+    exit 0
+  fi
+  if ! prepare_existing_local_signer_after_runtime_install; then
+    rollback_managed_runtime_after_failed_install || true
+    exit 1
+  fi
+  if ! refresh_existing_local_gateway_service_after_install; then
     rollback_managed_runtime_after_failed_install || true
     exit 1
   fi
@@ -3447,6 +4884,7 @@ if [[ "$RUN_ONBOARD" -eq 0 ]]; then
         rollback_managed_runtime_after_failed_install || true
         exit 1
       fi
+      GATEWAY_RUNTIME_HEALTH_VERIFIED=1
       step_done "Gateway online"
     else
       if [[ "$GATEWAY_SERVICE_REFRESHED" -eq 1 ]]; then
@@ -3466,9 +4904,24 @@ if [[ "$RUN_ONBOARD" -eq 0 ]]; then
       echo "No existing Gateway service was found to restart."
     fi
   fi
-  if [[ "$HOSTING_REPAIR_REQUESTED" -eq 1 ]]; then
-    echo "Hosted runtime and gateway service repair complete. Onboarding was not rerun."
-  elif [[ "$LOCAL_REPAIR_REQUESTED" -eq 1 ]]; then
+  if [[ "$LOCAL_SIGNER_INSTALL_TRANSACTION_OPEN" -eq 1 ]]; then
+    if [[ "$GATEWAY_RUNTIME_HEALTH_VERIFIED" -ne 1 ]]; then
+      echo "The matching Local signer remains read-only because exact Gateway health was not verified." >&2
+      rollback_managed_runtime_after_failed_install || true
+      exit 1
+    fi
+    if ! verify_local_signer_after_runtime_install; then
+      echo "The matching Local signer failed its final read-only protocol-v2 health check." >&2
+      rollback_managed_runtime_after_failed_install || true
+      exit 1
+    fi
+  fi
+  if ! commit_local_signer_after_runtime_install; then
+    echo "The Local Gateway passed installation, but signer commit cleanup is pending." >&2
+    echo "Run fased update to recover the paired transaction; do not replace the signer manually." >&2
+    exit 1
+  fi
+  if [[ "$LOCAL_REPAIR_REQUESTED" -eq 1 ]]; then
     echo "Local runtime and gateway service repair complete. Onboarding was not rerun."
   else
     echo "Onboarding skipped (--no-onboard)."

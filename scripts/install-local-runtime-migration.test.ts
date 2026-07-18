@@ -20,7 +20,7 @@ describe("Local and WSL managed runtime migration", () => {
   it("reinstalls an existing Local service before requesting its restart", () => {
     const branchStart = installer.lastIndexOf('if [[ "$RUN_ONBOARD" -eq 0 ]]');
     const refresh = installer.indexOf(
-      "elif ! refresh_existing_local_gateway_service_after_install",
+      "if ! refresh_existing_local_gateway_service_after_install",
       branchStart,
     );
     const restart = installer.indexOf(
@@ -39,5 +39,13 @@ describe("Local and WSL managed runtime migration", () => {
     expect(installer).toContain("Gateway restarted, but runtime identity verification failed.");
     expect(installer).toContain("rollback_managed_runtime_after_failed_install");
     expect(installer).toContain("--rollback");
+  });
+
+  it("installs the repaired CLI without touching a pre-v2 wallet so native migration can run", () => {
+    expect(installer).toContain("local_legacy_signer_material_detected");
+    expect(installer).toContain("Pre-v2 Local wallet detected");
+    expect(installer).toContain(
+      "fased wallet setup --mode local-signer-import --wallet-id <wallet-id>",
+    );
   });
 });

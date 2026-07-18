@@ -130,4 +130,13 @@ describe("wallet approval auth", () => {
       code: "approval_token_required",
     });
   });
+
+  it("fails closed without replacing corrupt credential state", () => {
+    const { env, walletDir } = createAuthEnv("webauthn");
+    const statePath = path.join(walletDir, "wallet-approval-auth.json");
+    fs.writeFileSync(statePath, "{not-json\n", "utf8");
+
+    expect(() => readWalletApprovalAuthSnapshot(env)).toThrow("refusing to reset credentials");
+    expect(fs.readFileSync(statePath, "utf8")).toBe("{not-json\n");
+  });
 });

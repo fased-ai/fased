@@ -59,9 +59,10 @@ For hosted deployments, run the standard hosting installer on the VPS itself.
 It installs missing tools, starts Tailscale when needed, prints the Tailscale
 login URL, and applies the hosted profile.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
-```
+Run the [pre-execution verified tagged bootstrap](/install/vps#3-install-fased-and-connect-through-tailscale)
+from the provider's root console. It verifies the standalone installer's exact
+repository, tag, workflow, and GitHub-hosted runner provenance before executing
+it. Do not run an app-owned checkout with sudo.
 
 The hosting installer runs onboarding and walks you through:
 
@@ -77,16 +78,21 @@ selected Agent: **Agent > Models**, **Agent > Channels**, **Agent > Services**,
 
 ## 4) Verify the Gateway
 
+Leave the root bootstrap shell and reconnect over Tailscale as the application
+account. Replace the host below with the Droplet's MagicDNS name or `100.x`
+Tailscale address:
+
 ```bash
-# Check status
+exit
+ssh app@YOUR_DROPLET_TAILSCALE_NAME
+fased health
 fased status
-
-# Check service
-sudo -n systemctl status fased-gateway.service --no-pager
-
-# View logs
-sudo -n journalctl -u fased-gateway.service -n 120 --no-pager
+fased wallet signer doctor --json
 ```
+
+The `app` account intentionally has no sudo access. For root-owned systemd
+status or journals, use the DigitalOcean console as the host administrator;
+never add an `app` sudo rule to reach the signer or updater.
 
 ## 5) Access the Control UI
 
@@ -105,7 +111,7 @@ fased dashboard
 
 ```bash
 # From your local machine
-ssh -L 18789:localhost:18789 root@YOUR_DROPLET_IP
+ssh -L 18789:localhost:18789 app@YOUR_DROPLET_TAILSCALE_NAME
 
 # Then open: http://localhost:18789
 ```
@@ -180,18 +186,20 @@ htop
 
 ---
 
-## Persistence
+## Persistence and backups
 
-All state lives in:
+Gateway state lives under `/home/app/.fased`. Native signer keys, policy,
+WebAuthn credentials, durable caps, and request records live separately in
+signer-owned `/var/lib/fased-signerd`.
 
-- `~/.fased/` — config, credentials, session data
-- `~/.fased/workspace/` — workspace memory, notes, and generated files
+- `/home/app/.fased/` — Gateway config, credentials, sessions, and workspace
+- `/var/lib/fased-signerd/` — signer-owned encrypted state and audit data
 
-These survive reboots. Back them up periodically:
-
-```bash
-tar -czvf fased-backup.tar.gz ~/.fased ~/.fased/workspace
-```
+Both survive reboots and normal managed updates. Do not copy a live signer DB,
+change its ownership, or treat only the public Gateway registry as a wallet
+backup. Use a host-administrator maintenance window and the documented
+signer-state backup/recovery procedure, then test recovery by comparing public
+wallet addresses before funding the restored signer.
 
 ---
 
@@ -234,7 +242,7 @@ free -h
 
 ## See Also
 
-- [Hetzner guide](/install/hetzner) — Docker-based VPS path
-- [Docker install](/install/docker) — containerized setup
+- [Hetzner guide](/install/hetzner) — same maintained Hosting installer
+- [Local Docker install](/install/docker) — local computers only, not VPS hosting
 - [Tailscale](/gateway/tailscale) — private remote access
 - [Configuration](/gateway/configuration) — full config reference

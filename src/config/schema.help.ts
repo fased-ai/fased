@@ -298,6 +298,8 @@ const FIELD_HELP_BASE: Record<string, string> = {
   "agents.defaults.memorySearch.remote.apiKey": "Custom API key for the remote embedding provider.",
   "agents.defaults.memorySearch.remote.headers":
     "Extra headers for remote embeddings (merged; remote overrides OpenAI headers).",
+  "agents.defaults.memorySearch.remote.allowSessionContent":
+    "Explicitly allow sanitized session transcript text to leave this host for remote embedding. Default: false.",
   "agents.defaults.memorySearch.remote.batch.enabled":
     "Enable batch API for memory embeddings (OpenAI/Gemini; default: true).",
   "agents.defaults.memorySearch.remote.batch.wait":
@@ -367,7 +369,7 @@ const FIELD_HELP_BASE: Record<string, string> = {
     "Session/channel scope for QMD recall (same syntax as session.sendPolicy; default: direct-only). Use match.rawKeyPrefix to match full agent-prefixed session keys.",
   wallet: "Wallet subsystem configuration.",
   "wallet.provider.id":
-    'Wallet backend provider id for the current self-hosted runtime ("local-socket-signer" preferred; "embedded-keystore" legacy). Hosted provider ids are CLI/admin-only compatibility plumbing.',
+    'Wallet backend provider id. Local, WSL2, macOS, and Hosting use "local-socket-signer"; Wallet Standard and Turnkey remain supported. Legacy "embedded-keystore" values are migration-only and fail closed.',
   "wallet.execution.mode":
     'Wallet send execution mode ("manual" queues approvals; "autonomous" executes immediately when policy allows).',
   "wallet.approvalAuth.mode":
@@ -376,12 +378,12 @@ const FIELD_HELP_BASE: Record<string, string> = {
     "Wallet WebAuthn challenge TTL in seconds (default: 300).",
   "wallet.approvalAuth.grantTtlSeconds": "Wallet approval grant TTL in seconds (default: 120).",
   "wallet.keystore.enabled":
-    "Enable embedded encrypted keystore provider for local self-hosted signing.",
+    "Retired legacy field. Embedded keystores are migration-only and fail closed.",
   "wallet.keystore.path":
-    "Path to encrypted embedded keystore file (defaults under wallet state dir).",
+    "Retired legacy path retained only so the native signer migration can be performed explicitly.",
   "wallet.keystore.chainSupport":
-    "Enabled chains for embedded keystore. Normal Fased wallet setup is Solana-first.",
-  "wallet.keystore.autoLockSeconds": "Optional idle auto-lock timeout for embedded keystore.",
+    "Retired legacy field; production wallet keys are signer/provider-owned.",
+  "wallet.keystore.autoLockSeconds": "Retired legacy embedded-keystore field.",
   "wallet.runtime.enabled":
     "Enable wallet runtime compatibility settings (provider-agnostic replacement for legacy wallet runtime config).",
   "wallet.runtime.mode": 'Wallet runtime mode ("managed" or "external").',
@@ -402,9 +404,9 @@ const FIELD_HELP_BASE: Record<string, string> = {
   "wallet.runtime.policy.directSigning":
     "Allow background/agent wallet execution from wallet tooling (must be paired with caps/allowlists). Manual reviewed sends are separate.",
   "wallet.runtime.policy.capsEnabled":
-    "Enable wallet spend cap enforcement. When false, role, custody, signer, allowlist, and audit gates still apply, but SOL/token cap comparisons are skipped.",
+    "Enable wallet spend cap enforcement. When false, role, signer policy, allowlist, and audit gates still apply, but SOL/token cap comparisons are skipped.",
   "wallet.runtime.policy.solana.allowPrograms":
-    "Optional Solana program allowlist. For Agent market swaps this restricts inspected Jupiter DEX route programs; empty allows inspected routes.",
+    "Explicit Solana program/token allowlist. Empty denies program and token execution; Agent market swaps also require every inspected Jupiter route program.",
   "wallet.runtime.policy.solana.tokenCaps":
     "Per-mint SPL token caps for token sends, token-input swaps, and token-input limit orders. Keys are mint addresses; values are base-unit maxPerTx/maxDaily strings.",
   "wallet.runtime.policy.solana.maxPerTx":

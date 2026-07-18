@@ -1,5 +1,5 @@
 ---
-summary: "VPS hosting hub for Fased (Oracle/Fly/Hetzner/GCP and general VPS guidance)"
+summary: "Maintained non-Docker VPS hosting for Fased"
 read_when:
   - You want to run the Gateway in the cloud
   - You need a quick map of VPS/hosting guides
@@ -10,6 +10,12 @@ title: "VPS Hosting"
 
 This hub links to the supported VPS/hosting guides and explains the current
 hosted Fased posture at a high level.
+
+<Warning>
+The supported VPS path is the host-managed `install.sh --hosting` profile. The
+full Docker Gateway is Local only; there is no `--hosting-docker` mode. Fly.io
+and Render container manifests are archived and unsupported.
+</Warning>
 
 ## Local vs VPS security
 
@@ -145,11 +151,49 @@ ssh root@YOUR_PUBLIC_VPS_IP
 
 ## 3. Install Fased and connect through Tailscale
 
-Use the same hosted command on supported VPS systems:
+For the strongest bootstrap boundary, install the GitHub CLI from your VPS
+distribution's trusted package source, confirm `gh version`, then verify the
+release asset **before** running it:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
+(
+set -euo pipefail
+RELEASE=vX.Y.Z # replace with the stable release you intend to install
+BOOTSTRAP_DIR="$(mktemp -d)"
+trap 'rm -rf "$BOOTSTRAP_DIR"' EXIT
+chmod 0700 "$BOOTSTRAP_DIR"
+curl -fsSLo "$BOOTSTRAP_DIR/install.sh" \
+  "https://github.com/fased-ai/fased/releases/download/${RELEASE}/install.sh"
+curl -fsSLo "$BOOTSTRAP_DIR/install.sh.attestation.json" \
+  "https://github.com/fased-ai/fased/releases/download/${RELEASE}/install.sh.attestation.json"
+GH_PROMPT_DISABLED=1 gh attestation verify "$BOOTSTRAP_DIR/install.sh" \
+  --repo fased-ai/fased \
+  --bundle "$BOOTSTRAP_DIR/install.sh.attestation.json" \
+  --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
+  --source-ref "refs/tags/${RELEASE}" \
+  --deny-self-hosted-runners
+chmod 0500 "$BOOTSTRAP_DIR/install.sh"
+bash "$BOOTSTRAP_DIR/install.sh" --hosting --release "$RELEASE"
+)
 ```
+
+This checks the bootstrap digest, the `fased-ai/fased` repository identity, the
+exact tagged source ref, the exact release workflow, and GitHub-hosted runner
+provenance. The attestation bundle is public; this check does not require write
+access to the repository. Stop if either download or verification fails.
+
+The shorter tagged raw command used elsewhere in the docs is a convenience
+path. It relies on HTTPS, GitHub, and repository/tag integrity for the first
+shell process; only after it starts can it attest the downloaded Hosting
+bundle. Use the pre-execution verification block above when the initial root
+bootstrap is part of your threat model.
+
+After the verified bootstrap begins, the root phase downloads the matching
+architecture-specific hosted app bundle, verifies its checksum and
+GitHub/Sigstore attestation for that exact tag, stores it under a root-owned
+immutable digest path, and only then installs privileged assets. `--release
+latest` is accepted for interactive convenience, but an explicit stable tag is
+easier to audit and reproduce.
 
 The hosted installer installs/starts Tailscale when needed. When Fased prints a
 Tailscale login URL, open that URL in your local PC browser, sign in, and
@@ -233,15 +277,12 @@ onboarding will be slow. For a smoother first install, use at least:
 Use a 25 GB disk or larger. Keep the raw Gateway port private; use Tailscale for
 operator access.
 
-Current installers try a clean fast-forward update from Git before building. If
-you already started from an older installer and it stopped before creating the
-`app` runtime, update the bootstrap checkout once and rerun:
-
-```bash
-cd ~/fased
-git pull --ff-only origin main
-./install.sh --hosting
-```
+If an older install stopped before creating the `app` runtime, do not run its
+checkout with sudo. Return to the provider root console and repeat the
+[pre-execution verified bootstrap](#3-install-fased-and-connect-through-tailscale)
+for the exact tagged release. Use `--repair-hosting` instead of `--hosting` only
+when an existing Hosting installation is being repaired. Do not recover a root
+installation by piping an unverified script directly into a shell.
 
 If you SSH into a fresh VPS as `root`, the installer creates a non-root `app`
 user, prepares `/home/app/fased`, and re-runs the installer as `app`. That is
@@ -328,11 +369,22 @@ The `app` shell is a full Linux shell on the VPS and is configured to start in
 
 Use `fased health` as the single pass/fail check after hosting install. It
 should start with `Gateway: online`. Use `fased health --verbose` only when you
-want optional channel details. If health fails, inspect the service:
+want optional channel details. The `app` account intentionally has no `sudo`
+access to the Gateway, signer, or root updater. It can run application-level
+diagnostics:
 
 ```bash
-sudo systemctl status fased-gateway --no-pager
-sudo journalctl -u fased-gateway -n 120 --no-pager
+fased gateway status
+fased wallet signer doctor --json
+```
+
+If root-owned service state or journals are required, use the VPS provider's
+authenticated console or an authorized host-administrator session, not an
+`app` sudo rule:
+
+```bash
+systemctl status fased-gateway fased-signerd --no-pager
+journalctl -u fased-gateway -u fased-signerd -n 120 --no-pager
 ```
 
 If the hosted dashboard or SSH works immediately after setup but fails after you
@@ -369,8 +421,8 @@ the hosted default no longer builds the full source tree.
 Hosted VPS setup uses the root-managed `fased-gateway.service`, and that
 service runs as the non-root `app` user. It should not ask for the `app`
 password to run `sudo loginctl enable-linger app`. If an older checkout shows
-that prompt or previously failed with `JavaScript heap out of memory`, update
-the checkout and rerun `./install.sh --hosting`.
+that prompt or previously failed with `JavaScript heap out of memory`, rerun
+the exact tagged, attested command from the provider root console.
 </Note>
 
 <Note>
@@ -395,7 +447,8 @@ If it does not, fix the hosted login/shell setup before updating.
 
 The browser Control UI reports version and update availability under
 **Advanced > Debug > Update Status**. Run the actual update from the CLI.
-Rerun `./install.sh --hosting` only for repair/reinstall behavior.
+For repair/reinstall behavior, rerun the exact tagged command from the provider
+root console. Never run `/home/app/fased/install.sh` with sudo or as root.
 `fased update` uses the configured channel; stable is the default end-user
 channel and resolves to the latest stable release tag. It does not pull every
 new commit from `main`.
@@ -411,19 +464,18 @@ hosted installer is recommended because it sets the `app` runtime, Tailscale
 access, and closed public admin posture. Manual npm installs are for advanced
 local/dev or self-managed hosts.
 
-Use `fased update --channel dev` only when intentionally tracking latest
-development commits. For development/testing from the hosted repo checkout, the
-direct app-user flow is:
+Use `fased update --channel dev` only when intentionally tracking the
+development channel:
 
 ```bash
 ssh app@YOUR_VPS_TAILSCALE_NAME
-git checkout main
-git pull --ff-only origin main
-./install.sh --hosting
+fased update --channel dev
 ```
 
-Do not use the root bootstrap checkout for normal updates after hosted
-onboarding has completed.
+Do not run `./install.sh --hosting` from the `app` shell or grant `app` sudo.
+The bootstrap installer is a provider-console host-administrator operation;
+normal `app` updates use the verified managed Gateway and root signer updater.
+There is no app-visible root bootstrap socket or general maintenance daemon.
 
 <Note>
 You do not need a Tailscale API key for the normal manual VPS flow. The
@@ -439,17 +491,19 @@ before it closes public management paths.
 
 ## Pick a provider
 
-- **Oracle Cloud (Always Free)**: [Oracle](/platforms/oracle) — $0/month (Always Free, ARM; capacity/signup can be finicky)
-- **Fly.io**: [Fly.io](/install/fly)
-- **Hetzner (Docker)**: [Hetzner](/install/hetzner)
-- **GCP (Compute Engine)**: [GCP](/install/gcp)
+- **Oracle Cloud**: [Oracle](/platforms/oracle)
+- **Hetzner**: [Hetzner](/install/hetzner) — maintained non-Docker Hosting installer
+- **GCP (Compute Engine)**: [GCP](/install/gcp) — maintained non-Docker Hosting installer
+- **DigitalOcean**: [DigitalOcean](/platforms/digitalocean)
 - **Other VPS providers**: a clean Ubuntu LTS box usually works fine if you follow
   the same hosting/onboarding and Tailscale guidance.
 
-Fased docs only list hosted install methods backed by files in this repository,
-for example `deploy/hosting/fly.toml`, `deploy/hosting/render.yaml`, Docker, or the repo installer. External
-hosted presets are intentionally not listed because we cannot verify or maintain
-them from this repo.
+Use the same `install.sh --hosting` command on each supported provider. Provider
+guides cover VM creation and access; they do not replace the Fased installer.
+
+Fly.io and Render are not supported hosting targets. Their repo manifests and
+docs remain only as [Fly migration guidance](/install/fly) and
+[Render migration guidance](/install/render) for existing users.
 
 ## How cloud setups work
 

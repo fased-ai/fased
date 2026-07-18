@@ -4,4 +4,3 @@ package main
 
 func applyProcessDumpHardening() {
 }
-

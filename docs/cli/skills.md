@@ -123,10 +123,26 @@ fased skills marketplace list --json
 ClawHub installs do not grant wallet access by themselves. Updates that add or
 change risky wallet permissions, requested tool access, install metadata, or
 new archive scan warnings are blocked until the operator explicitly approves
-the permission change. Marketplace installs also record archive scan results:
+the permission change. Fresh installs use the same approval gate. The selected
+registry version must publish a SHA-256/SRI archive digest; Fased refuses an
+install whose digest is absent or whose downloaded bytes do not match.
+Marketplace installs also record archive scan results:
 sensitive files, native binaries, installer scripts, package lifecycle scripts,
 dependency blocks, and dangerous source-code patterns are rejected; dependency
 manifests and helper scripts are kept as review warnings.
+
+Installed Marketplace instructions are untrusted runtime input. Fased excludes
+their configured environment/API-key overrides, disables bundle MCP tools and
+browser control, and forces a per-session sandbox with no network, no writable
+workspace, a read-only root, and all Linux capabilities dropped. Normal mixed
+skill turns expose only the `read` tool because a model tool call cannot prove
+which Marketplace package requested it. An explicitly invoked tool-dispatch
+command is still checked against that skill's recorded tool permission.
+
+This boundary requires a working configured sandbox backend (Docker by
+default). If it is unavailable, Marketplace-assisted turns fail closed instead
+of running on the host. Locally authored, bundled, and managed skills retain
+their configured trust and sandbox policy.
 
 For local/bundled skills with dependency installers, Fased scans the skill
 directory before running the installer. Critical dangerous-code findings block

@@ -39,6 +39,8 @@ import { logConfigUpdated } from "../config/logging.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { defaultRuntime } from "../runtime.js";
 import { resolveUserPath } from "../utils.js";
+import { lockSignerOwnedWalletForArchive } from "../wallet/local-socket-signer-archive.js";
+import { configureSignerOwnedWalletNetwork } from "../wallet/signer-network-admin.js";
 import type { WalletNamedWallet } from "../wallet/wallet-provider-registry.js";
 import { readWalletProviderRegistry } from "../wallet/wallet-provider-registry.js";
 import {
@@ -51,9 +53,8 @@ import {
 } from "../wallet/wallet-provider-registry.js";
 import {
   ensureWalletStateDir,
-  resolveLocalSignerBackendSocketPath,
+  resolveLocalSignerControlSocketPath,
   resolveLocalSignerMaterialRootDir,
-  resolveLocalSignerRunAsUser,
   resolveLocalSignerSocketPath,
 } from "../wallet/wallet-runtime-config.js";
 import { isHostedSecurityCapableSession } from "./host-security-capability.js";
@@ -78,7 +79,6 @@ import type {
 import {
   configureWalletForOnboarding,
   installSignerdBinary,
-  migrateLocalSignerKeystoreToMaterialDir,
   restartLocalSocketSigner,
   resolveSignerdBinaryPath,
 } from "./onboarding.wallet.js";
@@ -178,24 +178,11 @@ export async function runOnboardingWizard(
     }
     return "FASED_WALLET_SOLANA_RPC_URL";
   };
-  const keystoreEnvKeyFor = (_chain: "solana", walletId?: string): string => {
+  const fallbackRpcEnvKeyFor = (walletId?: string): string => {
     const suffix = walletIdEnvSuffix(walletId);
-    if (suffix) {
-      return `FASED_WALLET_SOLANA_KEYSTORE_PATH__${suffix}`;
-    }
-    return "FASED_WALLET_SOLANA_KEYSTORE_PATH";
-  };
-  const defaultKeystorePathFor = (_chain: "solana", walletId?: string): string => {
-    const normalized = String(walletId ?? "")
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9_-]+/g, "-")
-      .replace(/^-+|-+$/g, "");
-    const walletDir = ensureWalletStateDir(process.env).rootDir;
-    if (!normalized || normalized === "default") {
-      return path.join(walletDir, "keystore-solana.v1.enc");
-    }
-    return path.join(walletDir, `keystore-solana-${normalized}.v1.enc`);
+    return suffix
+      ? `FASED_WALLET_SOLANA_WRITE_RPC_FALLBACK_URL__${suffix}`
+      : "FASED_WALLET_SOLANA_WRITE_RPC_FALLBACK_URL";
   };
   const setConfigEnvVar = (
     cfg: FasedAgentConfig,
@@ -217,29 +204,26 @@ export async function runOnboardingWizard(
     };
   };
   const applyHostedLocalSignerDefaults = (cfg: FasedAgentConfig): FasedAgentConfig => {
-    const signerUser = String(process.env.FASED_SIGNER_USER ?? "fased-signer").trim();
-    if (!signerUser) {
-      return cfg;
-    }
-    const appHome = String(process.env.HOME ?? "/home/app").trim() || "/home/app";
-    const signerHome = `/home/${signerUser}`;
-    const defaults: Record<string, string> = {
-      FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER: signerUser,
-      FASED_WALLET_SIGNER_STATE_DIR: `${signerHome}/.fased/wallet`,
-      FASED_WALLET_LOCAL_SIGNER_SOCKET: `${appHome}/.fased/wallet/local-signer.sock`,
-      FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET: `${signerHome}/.fased/wallet/local-signer.sock`,
-      FASED_WALLET_LOCAL_SIGNER_BIN: `${signerHome}/.fased/bin/fased-signerd`,
-    };
+    const appSocket = "/run/fased-signerd/app.sock";
+    const signerOwnedKeys = [
+      "FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET",
+      "FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET",
+      "FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER",
+      "FASED_WALLET_LOCAL_SIGNER_BIN",
+      "FASED_WALLET_SIGNER_STATE_DIR",
+      "FASED_WALLET_LOCAL_SIGNER_STATE_DB",
+      "FASED_WALLET_LOCAL_SIGNER_MASTER_KEY",
+      "FASED_WALLET_PASSPHRASE_FILE",
+      "FASED_WALLET_WEBAUTHN_RP_ID",
+      "FASED_WALLET_WEBAUTHN_ORIGINS",
+    ] as const;
     let next = cfg;
-    for (const [key, value] of Object.entries(defaults)) {
-      const existing = String(process.env[key] ?? cfg.env?.vars?.[key] ?? "").trim();
-      if (existing) {
-        process.env[key] = existing;
-        continue;
-      }
-      process.env[key] = value;
-      next = setConfigEnvVar(next, key, value);
+    for (const key of signerOwnedKeys) {
+      delete process.env[key];
+      next = setConfigEnvVar(next, key, undefined);
     }
+    process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET = appSocket;
+    next = setConfigEnvVar(next, "FASED_WALLET_LOCAL_SIGNER_SOCKET", appSocket);
     return next;
   };
   const syncLocalSignerRuntimeEnvIntoConfig = (cfg: FasedAgentConfig): FasedAgentConfig => {
@@ -252,14 +236,8 @@ export async function runOnboardingWizard(
     const signerSocketPath = resolveLocalSignerSocketPath(process.env);
     process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET = signerSocketPath;
     next = setConfigEnvVar(next, "FASED_WALLET_LOCAL_SIGNER_SOCKET", signerSocketPath);
-    const backendSocketPath = resolveLocalSignerBackendSocketPath(process.env);
-    if (backendSocketPath !== signerSocketPath) {
-      process.env.FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET = backendSocketPath;
-      next = setConfigEnvVar(next, "FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET", backendSocketPath);
-    } else {
-      delete process.env.FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET;
-      next = setConfigEnvVar(next, "FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET", undefined);
-    }
+    delete process.env.FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET;
+    next = setConfigEnvVar(next, "FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET", undefined);
     const signerStateDir = resolveLocalSignerMaterialRootDir(process.env);
     if (signerStateDir !== ensureWalletStateDir(process.env).rootDir) {
       process.env.FASED_WALLET_SIGNER_STATE_DIR = signerStateDir;
@@ -268,14 +246,8 @@ export async function runOnboardingWizard(
       delete process.env.FASED_WALLET_SIGNER_STATE_DIR;
       next = setConfigEnvVar(next, "FASED_WALLET_SIGNER_STATE_DIR", undefined);
     }
-    const signerRunAsUser = resolveLocalSignerRunAsUser(process.env);
-    if (signerRunAsUser) {
-      process.env.FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER = signerRunAsUser;
-      next = setConfigEnvVar(next, "FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER", signerRunAsUser);
-    } else {
-      delete process.env.FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER;
-      next = setConfigEnvVar(next, "FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER", undefined);
-    }
+    delete process.env.FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER;
+    next = setConfigEnvVar(next, "FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER", undefined);
     const signerBinPath = String(process.env.FASED_WALLET_LOCAL_SIGNER_BIN ?? "").trim();
     if (signerBinPath) {
       next = setConfigEnvVar(next, "FASED_WALLET_LOCAL_SIGNER_BIN", signerBinPath);
@@ -286,8 +258,8 @@ export async function runOnboardingWizard(
     return next;
   };
   const jupiterApiKeyEnvKey = "FASED_JUPITER_API_KEY";
-  const jupiterTriggerApiBaseUrlEnvKey = "FASED_JUPITER_TRIGGER_API_BASE_URL";
-  const readJupiterLimitOrderApiKey = (): string =>
+  const legacyJupiterTriggerApiBaseUrlEnvKey = "FASED_JUPITER_TRIGGER_API_BASE_URL";
+  const readJupiterSwapApiKey = (): string =>
     String(
       process.env[jupiterApiKeyEnvKey] ??
         nextConfig.env?.vars?.[jupiterApiKeyEnvKey] ??
@@ -295,32 +267,26 @@ export async function runOnboardingWizard(
         nextConfig.env?.vars?.JUPITER_API_KEY ??
         "",
     ).trim();
-  const readJupiterTriggerApiBaseUrl = (): string =>
-    String(
-      process.env[jupiterTriggerApiBaseUrlEnvKey] ??
-        nextConfig.env?.vars?.[jupiterTriggerApiBaseUrlEnvKey] ??
-        "",
-    ).trim();
-  const promptAndStoreJupiterLimitOrders = async (): Promise<boolean> => {
-    const existingKey = readJupiterLimitOrderApiKey();
+  const promptAndStoreJupiterSwapApi = async (): Promise<boolean> => {
+    const existingKey = readJupiterSwapApiKey();
     const enable = await prompter.confirm({
       message: existingKey
-        ? "Keep Jupiter wallet-action support enabled?"
-        : "Enable Jupiter support for policy-gated Agent wallet actions?",
+        ? "Keep Gateway Jupiter Swap API access enabled?"
+        : "Enable Gateway Jupiter Swap API access? Trigger credentials remain signer-owned.",
       initialValue: Boolean(existingKey),
     });
     if (!enable) {
       nextConfig = setConfigEnvVar(nextConfig, jupiterApiKeyEnvKey, undefined);
-      nextConfig = setConfigEnvVar(nextConfig, jupiterTriggerApiBaseUrlEnvKey, undefined);
       delete process.env[jupiterApiKeyEnvKey];
-      delete process.env[jupiterTriggerApiBaseUrlEnvKey];
       await prompter.note(
-        "Jupiter wallet-action support disabled. Other approved wallet actions still use the normal wallet flow.",
-        "Wallet actions",
+        "Gateway Jupiter Swap API access disabled. Native signer Trigger configuration is unchanged.",
+        "Jupiter swaps",
       );
       return false;
     }
-    const keyPrompt = existingKey ? "Jupiter API key (blank keeps current)" : "Jupiter API key";
+    const keyPrompt = existingKey
+      ? "Jupiter Swap API key (blank keeps current)"
+      : "Jupiter Swap API key";
     const keyInput = (
       typeof prompter.secret === "function"
         ? await prompter.secret({
@@ -336,30 +302,18 @@ export async function runOnboardingWizard(
     ).trim();
     const effectiveKey = keyInput || existingKey;
     if (!effectiveKey) {
-      throw new Error("Jupiter API key is required to enable Jupiter wallet-action support.");
+      throw new Error("Jupiter API key is required to enable Gateway swap crafting.");
     }
     nextConfig = setConfigEnvVar(nextConfig, jupiterApiKeyEnvKey, effectiveKey);
     process.env[jupiterApiKeyEnvKey] = effectiveKey;
 
-    const existingBaseUrl = readJupiterTriggerApiBaseUrl();
-    if (existingBaseUrl) {
-      const baseUrlInput = (
-        await prompter.text({
-          message: "Jupiter Trigger API base URL (blank keeps current)",
-          initialValue: existingBaseUrl,
-        })
-      ).trim();
-      const effectiveBaseUrl = baseUrlInput || existingBaseUrl;
-      nextConfig = setConfigEnvVar(nextConfig, jupiterTriggerApiBaseUrlEnvKey, effectiveBaseUrl);
-      process.env[jupiterTriggerApiBaseUrlEnvKey] = effectiveBaseUrl;
-    }
-
     await prompter.note(
       [
-        "Jupiter wallet-action support enabled for Agent wallet actions.",
-        `${jupiterApiKeyEnvKey} is stored in local config env vars and is never printed in chat.`,
+        "Gateway Jupiter Swap API access enabled for Agent wallet swap crafting.",
+        `${jupiterApiKeyEnvKey} is stored in Gateway config for swaps only and is never printed in chat.`,
+        "Jupiter Trigger credentials and production routing stay inside fased-signerd.",
       ].join("\n"),
-      "Wallet actions",
+      "Jupiter swaps",
     );
     return true;
   };
@@ -886,8 +840,18 @@ export async function runOnboardingWizard(
   const explicitHostProfileRequested = requestedHostProfile !== undefined;
   const hostedProfileUnavailableNote = [
     "This session cannot run hosting security setup.",
-    `Rerun ${formatCliCommand("./install.sh")} from root on the VPS and choose a hosting profile there.`,
+    "Start from the provider root console with the exact tagged, attested Hosting command and --release vX.Y.Z.",
+    "Never run the app-owned checkout with sudo or as root.",
   ].join("\n");
+  if (opts.mode !== "remote" && !requestedHostProfile) {
+    await prompter.note(
+      [
+        "Local runs under your current OS account and does no VPS SSH/firewall hardening.",
+        "Hosting uses the verified root bootstrap for an independent signer service, private Tailscale access and hosted SSH/firewall hardening.",
+      ].join("\n"),
+      "Setup map",
+    );
+  }
   const hostProfile: HostSetupProfile =
     opts.mode === "remote"
       ? "local"
@@ -900,10 +864,12 @@ export async function runOnboardingWizard(
                 {
                   value: "local",
                   label: "Local",
+                  hint: "Current machine and account; no VPS hardening.",
                 },
                 {
                   value: "hosting",
                   label: "Hosting",
+                  hint: "Verified root bootstrap; Tailscale required.",
                 },
               ],
               initialValue: interactiveHostProfileInitialValue,
@@ -1100,6 +1066,8 @@ export async function runOnboardingWizard(
   const workspaceDir = resolveUserPath(workspaceInput.trim() || DEFAULT_WORKSPACE);
 
   let nextConfig: FasedAgentConfig = applyOnboardingLocalWorkspaceConfig(baseConfig, workspaceDir);
+  nextConfig = setConfigEnvVar(nextConfig, legacyJupiterTriggerApiBaseUrlEnvKey, undefined);
+  delete process.env[legacyJupiterTriggerApiBaseUrlEnvKey];
   nextConfig = normalizeHostedWalletPaths(nextConfig, process.env);
 
   const authChoice = opts.authChoice;
@@ -1184,6 +1152,12 @@ export async function runOnboardingWizard(
   const hostingMode = hostProfile === "hosting";
   if (hostingMode) {
     nextConfig = applyHostedLocalSignerDefaults(nextConfig);
+  } else if (
+    !String(process.env.FASED_WALLET_WEBAUTHN_RP_ID ?? "").trim() &&
+    !String(process.env.FASED_WALLET_WEBAUTHN_ORIGINS ?? "").trim()
+  ) {
+    process.env.FASED_WALLET_WEBAUTHN_RP_ID = "localhost";
+    process.env.FASED_WALLET_WEBAUTHN_ORIGINS = `http://localhost:${settings.port}`;
   }
   const buildNativeSignerFromSource =
     String(process.env.FASED_BUILD_NATIVE_SIGNER_FROM_SOURCE ?? "").trim() === "1";
@@ -1228,11 +1202,13 @@ export async function runOnboardingWizard(
     nextConfig,
     prompter,
   });
-  nextConfig = syncLocalSignerRuntimeEnvIntoConfig(nextConfig);
+  nextConfig = hostingMode
+    ? applyHostedLocalSignerDefaults(nextConfig)
+    : syncLocalSignerRuntimeEnvIntoConfig(nextConfig);
 
   let onboardingWalletSecurityFocus: {
     walletId: string;
-    role: "agent" | "vault";
+    role: "agent" | "mining" | "vault";
   } | null = null;
 
   const offerHostedWalletSetup =
@@ -1256,18 +1232,18 @@ export async function runOnboardingWizard(
       let addAnotherWallet = true;
       while (addAnotherWallet) {
         const setupMode = await prompter.select<
-          "self-hosted" | "manage-self-hosted" | "limit-orders" | "skip"
+          "self-hosted" | "manage-self-hosted" | "jupiter-swaps" | "skip"
         >({
           message: "Wallet setup action",
           options: [
             { value: "self-hosted", label: "Create wallet" },
             { value: "manage-self-hosted", label: "Manage wallet" },
             {
-              value: "limit-orders",
-              label: "Limit orders",
-              hint: readJupiterLimitOrderApiKey()
-                ? "Jupiter key configured"
-                : "Enable Jupiter Trigger limit orders for Agent wallets",
+              value: "jupiter-swaps",
+              label: "Jupiter swaps",
+              hint: readJupiterSwapApiKey()
+                ? "Gateway swap key configured"
+                : "Optional API key for Gateway swap crafting; Trigger is signer-owned",
             },
             {
               value: "skip",
@@ -1281,8 +1257,8 @@ export async function runOnboardingWizard(
           break;
         }
 
-        if (setupMode === "limit-orders") {
-          await promptAndStoreJupiterLimitOrders();
+        if (setupMode === "jupiter-swaps") {
+          await promptAndStoreJupiterSwapApi();
           addAnotherWallet = await prompter.confirm({
             message: "Run another wallet setup action?",
             initialValue: false,
@@ -1295,8 +1271,7 @@ export async function runOnboardingWizard(
           const managedWallets = registry.wallets.filter(
             (wallet) =>
               wallet.providerId === "local-socket-signer" ||
-              wallet.providerId === "embedded-keystore" ||
-              wallet.metadata?.selfHosted === true,
+              (wallet.metadata?.selfHosted === true && wallet.providerId !== "embedded-keystore"),
           );
           if (managedWallets.length === 0) {
             await prompter.note(
@@ -1333,18 +1308,15 @@ export async function runOnboardingWizard(
           const configuredSolanaRpcUrl =
             (nextConfig.env?.vars?.[rpcEnvKeyFor("solana", walletId)] ?? "").trim() ||
             String(process.env[rpcEnvKeyFor("solana", walletId)] ?? "").trim();
-          const configuredSolanaKeystore =
-            (nextConfig.env?.vars?.[keystoreEnvKeyFor("solana", walletId)] ?? "").trim() ||
-            String(process.env[keystoreEnvKeyFor("solana", walletId)] ?? "").trim();
           const supportsSolanaWallet = Boolean(
-            targetWallet.addresses?.solana || configuredSolanaKeystore,
+            targetWallet.addresses?.solana || targetWallet.providerId === "local-socket-signer",
           );
           const targetWalletPurpose = resolveWalletUserRole(targetWallet);
           const manageAction = await prompter.select<
             | "attach-federation-bond"
             | "detach-federation-bond"
             | "configure-solana-rpc"
-            | "delete"
+            | "archive"
             | "cancel"
           >({
             message: "Wallet action",
@@ -1355,7 +1327,7 @@ export async function runOnboardingWizard(
                       value: "configure-solana-rpc" as const,
                       label: configuredSolanaRpcUrl ? "Update Solana RPC" : "Add Solana RPC",
                       hint: configuredSolanaRpcUrl
-                        ? configuredSolanaRpcUrl
+                        ? "Signer-owned RPC is configured; replace it without displaying credentials."
                         : "Restore the per-wallet Solana RPC used for balances, readiness, and SAT mining.",
                     },
                   ]
@@ -1384,9 +1356,9 @@ export async function runOnboardingWizard(
                     ]
                   : []),
               {
-                value: "delete",
-                label: "Delete wallet",
-                hint: "Remove this wallet registration and local keystore mapping.",
+                value: "archive",
+                label: "Archive/remove from Fased",
+                hint: "Disable signer use first, then remove this wallet registration.",
               },
               {
                 value: "cancel",
@@ -1413,9 +1385,38 @@ export async function runOnboardingWizard(
               walletName: targetWallet.name,
               currentValue: configuredSolanaRpcUrl,
             });
-            await restartLocalSocketSigner(ensureWalletStateDir(process.env).rootDir);
+            let signerNetworkVersion: number | undefined;
+            let signerNetworkRootCommand: string | undefined;
+            if (targetWallet.providerId === "local-socket-signer") {
+              const effectiveEnv = {
+                ...process.env,
+                ...nextConfig.env?.vars,
+                FASED_HOST_PROFILE: hostProfile,
+              } as NodeJS.ProcessEnv;
+              const network = configureSignerOwnedWalletNetwork({
+                walletId,
+                primaryRpcUrl: effectiveSolanaRpcUrl,
+                fallbackRpcUrl:
+                  String(effectiveEnv[fallbackRpcEnvKeyFor(walletId)] ?? "").trim() || undefined,
+                env: effectiveEnv,
+                signerBinPath:
+                  hostProfile === "hosting" ? undefined : resolveSignerdBinaryPath(effectiveEnv),
+              });
+              signerNetworkVersion = network.version;
+              signerNetworkRootCommand = network.rootCommand;
+            } else {
+              await restartLocalSocketSigner(ensureWalletStateDir(process.env).rootDir);
+            }
             await prompter.note(
-              `Updated Solana RPC for ${targetWallet.name} (${walletId}): ${effectiveSolanaRpcUrl}`,
+              [
+                `Updated the app-side Solana RPC setting for ${targetWallet.name} (${walletId})${signerNetworkVersion ? `; signer network version ${signerNetworkVersion} is ready` : "."}`,
+                ...(signerNetworkRootCommand
+                  ? [
+                      "The hosted signer was not changed because the app has no root channel. Activate the RPC from a root-owned file:",
+                      signerNetworkRootCommand,
+                    ]
+                  : []),
+              ].join("\n"),
               "Wallet setup",
             );
             addAnotherWallet = await prompter.confirm({
@@ -1487,63 +1488,75 @@ export async function runOnboardingWizard(
             });
             continue;
           }
+          const archiveEnv = {
+            ...process.env,
+            ...nextConfig.env?.vars,
+            FASED_HOST_PROFILE: hostProfile,
+          } as NodeJS.ProcessEnv;
           const deletionSafety = checkNamedWalletDeletionSafety({
             walletId: targetWallet.id,
-            env: process.env,
+            env: archiveEnv,
           });
           if (!deletionSafety.ok) {
-            await prompter.note(deletionSafety.message, "Delete blocked");
+            await prompter.note(deletionSafety.message, "Archive blocked");
             addAnotherWallet = await prompter.confirm({
               message: "Run another wallet setup action?",
               initialValue: false,
             });
             continue;
           }
-          const deleteWarnings = [
-            `This deletes the local wallet registration and local keystore files for ${targetWallet.name} (${targetWallet.id}).`,
-            "It does not transfer funds and it cannot recover funds if you did not save the seed/private key first.",
-            "Move funds out, save recovery material, and clear active Mining/Fased Network use before deleting.",
+          const signerOwned = targetWallet.providerId === "local-socket-signer";
+          const archiveWarnings = [
+            `This removes the Fased registration for ${targetWallet.name} (${targetWallet.id}); it does not transfer funds or erase provider custody.`,
+            signerOwned
+              ? "Before removal, Fased must durably replace the native signer policy with deny-all. The encrypted signer-owned key remains archived in signer storage for host-administrator recovery."
+              : "The external provider or hardware wallet keeps its key; remove it there separately only if you intend to destroy that custody relationship.",
+            "Move funds out or verify your recovery procedure, and clear active Mining/Fased Network use before archiving.",
           ];
           if (currentMiningWalletId === targetWallet.id || targetWalletPurpose === "mining") {
-            deleteWarnings.push(
-              "For @wallet:mining, stop mining first; move SAT/SOL out; save recovery material; then delete and recreate the singleton Mining wallet.",
+            archiveWarnings.push(
+              "For @wallet:mining, stop mining first; move SAT/SOL out or verify recovery; then archive and re-register the singleton Mining wallet if needed.",
             );
           }
-          deleteWarnings.push(
+          archiveWarnings.push(
             "If balances cannot be checked from this terminal, treat the balance as unknown and verify it from the Wallet or Mining page first.",
-            "Use repair for auth/session recovery only; wallet deletion is always per-wallet.",
+            "Use repair for auth/session recovery only; wallet archive is always per-wallet.",
           );
-          await prompter.note(deleteWarnings.join("\n"), "Delete wallet");
+          await prompter.note(archiveWarnings.join("\n"), "Archive wallet");
           const typedWalletId = await prompter.text({
-            message: `Type wallet id "${targetWallet.id}" to delete this wallet`,
+            message: `Type wallet id "${targetWallet.id}" to archive/remove this wallet from Fased`,
             validate: (value) =>
               value.trim() === targetWallet.id ? undefined : `Type ${targetWallet.id}`,
           });
           if (typedWalletId.trim() === targetWallet.id) {
             const walletId = targetWallet.id;
-            const keystoreKeys = [keystoreEnvKeyFor("solana", walletId)];
-            const defaultKeystorePaths = [defaultKeystorePathFor("solana", walletId)];
-            const configuredPaths = keystoreKeys
-              .map(
-                (key) =>
-                  (nextConfig.env?.vars?.[key] ?? "").trim() ||
-                  String(process.env[key] ?? "").trim(),
-              )
-              .filter(Boolean);
-            for (const file of new Set([...configuredPaths, ...defaultKeystorePaths])) {
+            let archivedSignerPolicy:
+              | Awaited<ReturnType<typeof lockSignerOwnedWalletForArchive>>
+              | undefined;
+            if (signerOwned) {
               try {
-                if (file && fs.existsSync(file)) {
-                  fs.rmSync(file, { force: true });
-                }
-              } catch {}
-            }
-            for (const key of keystoreKeys) {
-              nextConfig = setConfigEnvVar(nextConfig, key, undefined);
-              delete process.env[key];
+                archivedSignerPolicy = await lockSignerOwnedWalletForArchive({
+                  wallet: targetWallet,
+                  socketPath: resolveLocalSignerSocketPath(archiveEnv),
+                });
+              } catch (error) {
+                await prompter.note(
+                  [
+                    "The native signer did not durably acknowledge deny-all, so no Fased registration or attachment was removed.",
+                    `Detail: ${error instanceof Error ? error.message : String(error)}`,
+                    "Repair the signer and retry the archive operation.",
+                  ].join("\n"),
+                  "Archive blocked",
+                );
+                addAnotherWallet = await prompter.confirm({
+                  message: "Run another wallet setup action?",
+                  initialValue: false,
+                });
+                continue;
+              }
             }
             for (const key of [rpcEnvKeyFor("solana", walletId)]) {
               nextConfig = setConfigEnvVar(nextConfig, key, undefined);
-              delete process.env[key];
             }
             if (satMiningAttachment.walletId === walletId) {
               satMiningAttachment = {};
@@ -1553,14 +1566,17 @@ export async function runOnboardingWizard(
               federationBondWalletId = undefined;
               nextConfig = clearFederationBondWallet(nextConfig);
             }
-            deleteNamedWallet({ walletId, env: process.env });
-            await restartLocalSocketSigner(ensureWalletStateDir(process.env).rootDir);
+            await writeConfigFile(nextConfig);
+            deleteNamedWallet({ walletId, env: archiveEnv });
+            delete process.env[rpcEnvKeyFor("solana", walletId)];
             await prompter.note(
-              `Deleted wallet ${targetWallet.name} (${walletId}) from onboarding-safe management.`,
+              archivedSignerPolicy
+                ? `Archived ${targetWallet.name} (${walletId}) from Fased. Native signer wallet ${archivedSignerPolicy.walletId} remains encrypted and locked by deny-all policy version ${archivedSignerPolicy.version}.`
+                : `Removed ${targetWallet.name} (${walletId}) from Fased. Its external custody was not erased.`,
               "Wallet setup",
             );
           } else {
-            await prompter.note("Wallet deletion cancelled.", "Wallet setup");
+            await prompter.note("Wallet archive cancelled.", "Wallet setup");
           }
           addAnotherWallet = await prompter.confirm({
             message: "Run another wallet setup action?",
@@ -1625,30 +1641,50 @@ export async function runOnboardingWizard(
             continue;
           }
         }
-        const mode = selfHostedAction === "create" ? "local-signer-create" : "local-signer-import";
+        const mode = "local-signer-create" as const;
         const walletIdentity = await resolveWalletIdentityForOnboarding({
           flow,
           purpose: walletPurpose,
         });
         const walletName = walletIdentity.walletName;
         const walletId: string | undefined = walletIdentity.walletId || undefined;
-        const keystoreKey = keystoreEnvKeyFor(chain, walletId);
-        const currentKeystoreValue =
-          (nextConfig.env?.vars?.[keystoreKey] ?? "").trim() ||
-          String(process.env[keystoreKey] ?? "").trim();
-        const isolatedSignerRunAsUser = resolveLocalSignerRunAsUser(process.env);
-        const stagingKeystorePath = defaultKeystorePathFor(chain, walletId);
-        const effectiveKeystorePath = isolatedSignerRunAsUser
-          ? stagingKeystorePath
-          : currentKeystoreValue || stagingKeystorePath;
-        const isolatedTargetKeystorePath = isolatedSignerRunAsUser
-          ? path.join(
-              resolveLocalSignerMaterialRootDir(process.env),
-              path.basename(stagingKeystorePath),
-            )
-          : undefined;
-        nextConfig = setConfigEnvVar(nextConfig, keystoreKey, effectiveKeystorePath);
-        process.env[keystoreKey] = effectiveKeystorePath;
+        if (selfHostedAction === "import") {
+          const effectiveWalletId = walletId ?? walletPurpose;
+          const hosting = hostProfile === "hosting";
+          const signerBin = hosting
+            ? "/opt/fased/signer/fased-signerd"
+            : resolveSignerdBinaryPath();
+          const controlSocket = hosting
+            ? "/run/fased-signerd/control.sock"
+            : resolveLocalSignerControlSocketPath(process.env);
+          const signerImportCommand = [
+            shellQuote(signerBin),
+            "admin wallet import",
+            `--control-socket ${shellQuote(controlSocket)}`,
+            `--wallet-id ${shellQuote(effectiveWalletId)}`,
+            `--locked-role ${shellQuote(walletPurpose)}`,
+            `< ${shellQuote("/absolute/path/to/solana-keypair.json")}`,
+          ].join(" ");
+          const command = hosting
+            ? `/usr/sbin/runuser -u fased-signer -- /usr/bin/env HOME=/var/lib/fased-signerd ${signerImportCommand}`
+            : signerImportCommand;
+          await prompter.note(
+            [
+              "The normal Gateway and Node wizard paths do not accept plaintext wallet keys. Local same-user isolation is not a hard compromise boundary; Hosting isolates the signer account.",
+              hosting
+                ? "Open the VPS provider root console and run this root-administrator command. Do not run it from the app shell and do not grant app sudo:"
+                : "Run this from an authenticated terminal on the signer host:",
+              command,
+              "Then rerun wallet setup and choose Manage wallet to register/verify the returned public address.",
+            ].join("\n"),
+            "Native signer import",
+          );
+          addAnotherWallet = await prompter.confirm({
+            message: "Run another wallet setup action?",
+            initialValue: false,
+          });
+          continue;
+        }
         const rpcKey = rpcEnvKeyFor(chain, walletId);
         const currentRpcValue =
           (nextConfig.env?.vars?.[rpcKey] ?? "").trim() || String(process.env[rpcKey] ?? "").trim();
@@ -1669,37 +1705,18 @@ export async function runOnboardingWizard(
         nextConfig = setConfigEnvVar(nextConfig, rpcKey, effectiveRpcUrl);
         process.env[rpcKey] = effectiveRpcUrl;
         try {
-          let moveToSignerDir = false;
-          if (isolatedTargetKeystorePath && fs.existsSync(isolatedTargetKeystorePath)) {
-            moveToSignerDir = await prompter.confirm({
-              message: "Signer keystore already exists. Overwrite it?",
-              initialValue: false,
-            });
-            if (!moveToSignerDir) {
-              throw new Error(`Keystore already exists: ${isolatedTargetKeystorePath}`);
-            }
-          }
-          const prevSignerStateDir = process.env.FASED_WALLET_SIGNER_STATE_DIR;
-          const prevPassphraseFile = process.env.FASED_WALLET_PASSPHRASE_FILE;
           if (mode === "local-signer-create") {
-            const showPrivateKeyOnce = await prompter.confirm({
-              message: "Show generated private key once for offline backup?",
-              initialValue: false,
-            });
-            const confirmPrivateKeyPrint = showPrivateKeyOnce ? "SHOW PRIVATE KEY" : undefined;
             try {
-              if (isolatedSignerRunAsUser) {
-                delete process.env.FASED_WALLET_SIGNER_STATE_DIR;
-                delete process.env.FASED_WALLET_PASSPHRASE_FILE;
-              }
               await walletSetupCommand(runtime, {
                 mode,
                 chain,
                 walletId,
                 walletName,
                 rpcUrl: effectiveRpcUrl,
-                showPrivateKeyOnce,
-                confirmPrivateKeyPrint,
+                // Onboarding is repairable after a signer wallet was durably created but a
+                // later network/bootstrap step failed. The signer permits reuse only when the
+                // existing wallet has the exact requested role; it never overwrites the key.
+                force: true,
                 noDoctor: true,
                 noSignerHints: true,
                 nonInteractive: true,
@@ -1714,15 +1731,12 @@ export async function runOnboardingWizard(
                 if (!overwrite) {
                   throw err;
                 }
-                moveToSignerDir = true;
                 await walletSetupCommand(runtime, {
                   mode,
                   chain,
                   walletId,
                   walletName,
                   rpcUrl: effectiveRpcUrl,
-                  showPrivateKeyOnce,
-                  confirmPrivateKeyPrint,
                   force: true,
                   noDoctor: true,
                   noSignerHints: true,
@@ -1731,70 +1745,24 @@ export async function runOnboardingWizard(
               } else {
                 throw err;
               }
-            } finally {
-              if (isolatedSignerRunAsUser) {
-                if (prevSignerStateDir == null) {
-                  delete process.env.FASED_WALLET_SIGNER_STATE_DIR;
-                } else {
-                  process.env.FASED_WALLET_SIGNER_STATE_DIR = prevSignerStateDir;
-                }
-                if (prevPassphraseFile == null) {
-                  delete process.env.FASED_WALLET_PASSPHRASE_FILE;
-                } else {
-                  process.env.FASED_WALLET_PASSPHRASE_FILE = prevPassphraseFile;
-                }
-              }
             }
-          } else {
-            const keyInput =
-              typeof prompter.secret === "function"
-                ? await prompter.secret({
-                    message: "Solana private key (base58/json/base64/hex)",
-                    validate: (value) => (value.trim() ? undefined : "Required"),
-                  })
-                : await prompter.text({
-                    message: "Solana private key (base58/json/base64/hex)",
-                    validate: (value) => (value.trim() ? undefined : "Required"),
-                  });
-            try {
-              if (isolatedSignerRunAsUser) {
-                delete process.env.FASED_WALLET_SIGNER_STATE_DIR;
-                delete process.env.FASED_WALLET_PASSPHRASE_FILE;
-              }
-              await walletSetupCommand(runtime, {
-                mode: "local-signer-import",
-                chain,
-                walletId,
-                walletName,
-                privateKey: keyInput.trim(),
-                rpcUrl: effectiveRpcUrl,
-                noDoctor: true,
-                noSignerHints: true,
-                nonInteractive: true,
-              });
-            } finally {
-              if (isolatedSignerRunAsUser) {
-                if (prevSignerStateDir == null) {
-                  delete process.env.FASED_WALLET_SIGNER_STATE_DIR;
-                } else {
-                  process.env.FASED_WALLET_SIGNER_STATE_DIR = prevSignerStateDir;
-                }
-                if (prevPassphraseFile == null) {
-                  delete process.env.FASED_WALLET_PASSPHRASE_FILE;
-                } else {
-                  process.env.FASED_WALLET_PASSPHRASE_FILE = prevPassphraseFile;
-                }
-              }
+            if (hostProfile === "hosting") {
+              const nativeWalletId = (walletId ?? walletPurpose)
+                .trim()
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, "_")
+                .replace(/^_+|_+$/g, "");
+              await prompter.note(
+                [
+                  "The wallet key was created inside the root-managed signer with deny-all policy.",
+                  "The Gateway has no sudo or root control socket, so RPC activation is a separate host-administrator step.",
+                  "From a provider/root console, copy the installed network template to a root-owned mode-0600 file, set the exact RPC URLs, then run:",
+                  `/usr/local/sbin/fased-signer-network --wallet-id ${nativeWalletId} --network-file /root/fased-network.json`,
+                  "Signing stays disabled until network activation, owner enrollment, and an explicit positive-cap policy all succeed.",
+                ].join("\n"),
+                "Hosted wallet owner handoff",
+              );
             }
-          }
-          let configuredKeystorePath = effectiveKeystorePath;
-          if (isolatedSignerRunAsUser) {
-            configuredKeystorePath = migrateLocalSignerKeystoreToMaterialDir({
-              keystorePath: effectiveKeystorePath,
-              force: moveToSignerDir,
-            });
-            nextConfig = setConfigEnvVar(nextConfig, keystoreKey, configuredKeystorePath);
-            process.env[keystoreKey] = configuredKeystorePath;
           }
           walletCeremonyEvents.push({
             mode,
@@ -1850,13 +1818,10 @@ export async function runOnboardingWizard(
             });
           }
           if (walletId) {
-            onboardingWalletSecurityFocus =
-              walletPurpose === "mining"
-                ? null
-                : {
-                    walletId,
-                    role: isAgentWallet ? "agent" : "vault",
-                  };
+            onboardingWalletSecurityFocus = {
+              walletId,
+              role: walletPurpose,
+            };
           }
           if (chain === "solana" && walletId) {
             const currentMiningWalletId = satMiningAttachment.walletId ?? "";
@@ -1888,7 +1853,12 @@ export async function runOnboardingWizard(
                   [
                     noteHeading("Mining wallet"),
                     noteBullet(`${walletName} (${walletId})`),
-                    noteBullet("Open Mining after onboarding to fund and start workers."),
+                    noteBullet(
+                      "Receive-only until the signer network and an owner-reviewed Mining policy are acknowledged.",
+                    ),
+                    noteBullet(
+                      "Open Wallet > Policy after onboarding; fund and start workers only after it reports acknowledged.",
+                    ),
                   ].join("\n"),
                   "Mining",
                 );
@@ -1967,7 +1937,7 @@ export async function runOnboardingWizard(
             }`,
           ),
           noteBullet(
-            `Jupiter wallet actions: ${readJupiterLimitOrderApiKey() ? "configured" : "not configured"}`,
+            `Gateway Jupiter swaps: ${readJupiterSwapApiKey() ? "configured" : "not configured"}; Trigger: signer-owned configuration`,
           ),
         ];
         const rpcKeys = Array.from(

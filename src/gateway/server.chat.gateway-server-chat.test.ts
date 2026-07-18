@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, test, vi } from "vitest";
 import { WebSocket } from "ws";
+import type { FasedAgentConfig } from "../config/config.js";
 import { emitAgentEvent, registerAgentRunContext } from "../infra/agent-events.js";
 import { GATEWAY_CLIENT_MODES, GATEWAY_CLIENT_NAMES } from "../utils/message-channel.js";
 import {
@@ -40,6 +41,50 @@ async function waitFor(condition: () => boolean, timeoutMs = 250) {
   throw new Error("timeout waiting for condition");
 }
 
+async function createLiveConfigFixture() {
+  // Resolve these after the shared Gateway test mocks are installed. Static
+  // imports here would bind the production config writer before the mock graph
+  // is ready and would merge runtime-only defaults into this fixture's file.
+  const { readConfigFileSnapshot, writeConfigFile } = await import("../config/config.js");
+  const { getActiveSecretsRuntimeSnapshot } = await import("../secrets/runtime.js");
+  const diskBaseline = await readConfigFileSnapshot();
+  if (!diskBaseline.valid) {
+    throw new Error("gateway chat fixture requires a valid baseline config");
+  }
+  const runtimeBaseline = getActiveSecretsRuntimeSnapshot();
+  if (!runtimeBaseline) {
+    throw new Error("gateway chat fixture requires an active secrets runtime snapshot");
+  }
+
+  const reload = async () => {
+    const response = await rpcReq(ws, "secrets.reload", {});
+    if (!response.ok) {
+      throw new Error(
+        `failed to reload gateway chat fixture config: ${response.error?.message ?? "unknown error"}`,
+      );
+    }
+  };
+
+  return {
+    apply: async (override: Partial<FasedAgentConfig>) => {
+      await writeConfigFile({ ...structuredClone(runtimeBaseline.sourceConfig), ...override });
+      await reload();
+    },
+    restore: async () => {
+      // Restore the controller's exact source revision before putting the
+      // suite's disk bytes back. The two can legitimately differ while the
+      // config watcher is between revisions.
+      await writeConfigFile(structuredClone(runtimeBaseline.sourceConfig));
+      await reload();
+      if (!diskBaseline.exists || diskBaseline.raw === null) {
+        await fs.rm(diskBaseline.path, { force: true });
+      } else {
+        await fs.writeFile(diskBaseline.path, diskBaseline.raw, "utf-8");
+      }
+    },
+  };
+}
+
 describe("gateway server chat", () => {
   test("sanitizes inbound chat.send message text and rejects null bytes", async () => {
     const nullByteRes = await rpcReq(ws, "chat.send", {
@@ -75,6 +120,7 @@ describe("gateway server chat", () => {
   test("handles chat send and history flows", async () => {
     const tempDirs: string[] = [];
     let webchatWs: WebSocket | undefined;
+    const liveConfig = await createLiveConfigFixture();
 
     try {
       webchatWs = new WebSocket(`ws://127.0.0.1:${port}`, {
@@ -129,17 +175,20 @@ describe("gateway server chat", () => {
       const sendPolicyDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-gw-"));
       tempDirs.push(sendPolicyDir);
       testState.sessionStorePath = path.join(sendPolicyDir, "sessions.json");
-      testState.sessionConfig = {
-        sendPolicy: {
-          default: "allow",
-          rules: [
-            {
-              action: "deny",
-              match: { channel: "discord", chatType: "group" },
-            },
-          ],
+      await liveConfig.apply({
+        session: {
+          store: testState.sessionStorePath,
+          sendPolicy: {
+            default: "allow",
+            rules: [
+              {
+                action: "deny",
+                match: { channel: "discord", chatType: "group" },
+              },
+            ],
+          },
         },
-      };
+      });
 
       await writeSessionStore({
         entries: {
@@ -163,17 +212,19 @@ describe("gateway server chat", () => {
       );
 
       testState.sessionStorePath = undefined;
-      testState.sessionConfig = undefined;
 
       const agentBlockedDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-gw-"));
       tempDirs.push(agentBlockedDir);
       testState.sessionStorePath = path.join(agentBlockedDir, "sessions.json");
-      testState.sessionConfig = {
-        sendPolicy: {
-          default: "allow",
-          rules: [{ action: "deny", match: { keyPrefix: "cron:" } }],
+      await liveConfig.apply({
+        session: {
+          store: testState.sessionStorePath,
+          sendPolicy: {
+            default: "allow",
+            rules: [{ action: "deny", match: { keyPrefix: "cron:" } }],
+          },
         },
-      };
+      });
 
       await writeSessionStore({
         entries: {
@@ -195,7 +246,6 @@ describe("gateway server chat", () => {
       );
 
       testState.sessionStorePath = undefined;
-      testState.sessionConfig = undefined;
 
       const pngB64 =
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/woAAn8B9FD5fHAAAAAASUVORK5CYII=";
@@ -262,6 +312,7 @@ describe("gateway server chat", () => {
       const historyDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-gw-"));
       tempDirs.push(historyDir);
       testState.sessionStorePath = path.join(historyDir, "sessions.json");
+      await liveConfig.apply({ session: { store: testState.sessionStorePath } });
       await writeSessionStore({
         entries: {
           main: {
@@ -373,10 +424,14 @@ describe("gateway server chat", () => {
       testState.agentConfig = undefined;
       testState.sessionStorePath = undefined;
       testState.sessionConfig = undefined;
-      if (webchatWs) {
-        webchatWs.close();
+      try {
+        await liveConfig.restore();
+      } finally {
+        if (webchatWs) {
+          webchatWs.close();
+        }
+        await Promise.all(tempDirs.map((dir) => fs.rm(dir, { recursive: true, force: true })));
       }
-      await Promise.all(tempDirs.map((dir) => fs.rm(dir, { recursive: true, force: true })));
     }
   });
 

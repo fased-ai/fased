@@ -151,7 +151,6 @@ import type {
   WalletSettingsValidateResponse,
   WalletStatus,
 } from "./wallet-api.ts";
-import type { WalletCustodyClientCompatibility } from "./wallet-passkey.ts";
 
 export type AppViewState = {
   requestUpdate: () => void;
@@ -646,7 +645,6 @@ export type AppViewState = {
   walletLoading: boolean;
   walletError: string | null;
   walletStatus: WalletStatus | null;
-  walletCustodyByWalletId: Record<string, WalletStatus["custody"]>;
   walletProvidersLoading: boolean;
   walletProviders: WalletProviderInfo[];
   walletNamedWallets: WalletNamedWallet[];
@@ -659,10 +657,11 @@ export type AppViewState = {
   walletBalanceWalletId: string;
   walletExpandedPanelWalletId: string;
   walletExpandedPanel: "balance" | "security" | "";
-  walletPolicyPanel: "caps" | "schedule" | "automation" | "skills" | "custody" | "sweep";
+  walletPolicyPanel: "caps" | "schedule" | "automation" | "skills" | "sweep";
   walletCreateName: string;
   walletCreateId: string;
   walletCreateProvider: WalletProviderInfo["id"];
+  walletCreateRole: "agent" | "vault";
   walletAssignAgentId: string;
   walletAssignWalletId: string;
   walletSettingsLoading: boolean;
@@ -739,16 +738,6 @@ export type AppViewState = {
   walletPasskeyBusy: boolean;
   walletPasskeyError: string | null;
   walletPasskeyLabel: string;
-  walletCustodyClientCompatibility: WalletCustodyClientCompatibility | null;
-  walletCustodyClientCompatibilityError: string | null;
-  walletCustodyDeviceShare: string;
-  walletCustodyRecoveryShare: string;
-  walletCustodyRecoveryInput: string;
-  walletCustodyEnrollLabel: string;
-  walletCustodyEnrolledDeviceShare: string;
-  walletCustodyRememberDeviceShare: boolean;
-  walletCustodyDeviceShareStored: boolean;
-  walletCustodyUnlockMinutes: string;
   walletBalancesLoading: boolean;
   walletBalancesError: string | null;
   walletBalances: WalletBalancesResponse | null;
@@ -1126,18 +1115,16 @@ export type AppViewState = {
   handleWalletRotateKeys: () => Promise<void>;
   handleWalletResetKeys: () => Promise<void>;
   handleWalletSetApprovalsFilter: (filter: WalletApprovalFilter) => Promise<void>;
+  handleWalletAttachStandardVault: () => Promise<void>;
   handleWalletApproveRequest: (requestId: string) => Promise<void>;
   handleWalletRejectRequest: (requestId: string) => Promise<void>;
   handleWalletSendCreatePatch: (patch: Partial<WalletSendCreateInput>) => void;
-  handleWalletCustodyUnlockMinutesChange: (next: string) => void;
   handleWalletOpenSendModal: (walletId: string, assetId?: string) => void;
   handleWalletCloseSendModal: () => void;
   handleWalletCreateSendRequest: () => Promise<void>;
   handleWalletSelectDetailsWallet: (walletId: string) => Promise<void>;
   handleWalletEnablePasskeyApproval: () => Promise<void>;
   handleWalletDeletePasskey: (credentialId: string) => Promise<void>;
-  handleWalletDisableCustody: (walletIdOverride?: string) => Promise<void>;
-  handleWalletPrintCustodyRecoveryKit: () => void;
   handleWalletPrintEnrolledDeviceShare: () => void;
   handleWalletTokenSearchQueryChange: (next: string) => void;
   handleWalletTokenSearch: () => Promise<void>;
@@ -1202,8 +1189,6 @@ export type AppViewState = {
     dedupeKey?: string;
   }) => void;
   dismissAppNotification?: (id: string) => void;
-  handleWalletUnlockCustody: () => Promise<void>;
-  handleWalletRecoverCustody: () => Promise<void>;
   handleWalletEnrollPasskey: () => Promise<void>;
   handleWalletPatchSettings: (
     patch: WalletSettingsPatch,
@@ -1245,7 +1230,7 @@ export type AppViewState = {
   handleWalletDetailsWalletChange: (walletId: string) => Promise<void>;
   handleWalletBalanceWalletChange: (walletId: string) => Promise<void>;
   handleWalletPolicyPanelChange: (
-    panel: "caps" | "schedule" | "automation" | "skills" | "custody" | "sweep",
+    panel: "caps" | "schedule" | "automation" | "skills" | "sweep",
   ) => void;
   handleWalletSetProviderEnabled: (
     providerId: WalletProviderInfo["id"],
@@ -1256,18 +1241,7 @@ export type AppViewState = {
   handleWalletSetDefaultWallet: (walletId: string | null) => Promise<void>;
   handleWalletAssignAgentWallet: () => Promise<void>;
   handleWalletDeleteAgentAssignment: (agentId: string) => Promise<void>;
-  handleWalletCustodyDeviceShareChange: (next: string) => void;
-  handleWalletCustodyRecoveryInputChange: (next: string) => void;
-  handleWalletCustodyEnrollLabelChange: (next: string) => void;
-  handleWalletCustodyRememberToggle: (next: boolean) => void;
-  handleWalletForgetCustodyDeviceShare: () => void;
-  handleWalletInitializeCustody: () => Promise<void>;
-  handleWalletEnrollCustodyDevice: () => Promise<void>;
-  handleWalletRevokeCustodyDevice: (deviceId: string) => Promise<void>;
-  handleWalletLockCustody: () => Promise<void>;
-  handleWalletDownloadCustodyDeviceShare: () => void;
   handleWalletDownloadEnrolledDeviceShare: () => void;
-  handleWalletDownloadCustodyRecoveryKit: () => void;
   handleWalletApplyRecommendedPolicy: () => Promise<void>;
   handleOperatorReadinessOpenAdminControl: () => void;
   handleOperatorReadinessOpenTaskPayment: () => void;

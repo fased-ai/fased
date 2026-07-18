@@ -62,6 +62,33 @@ Do not run the Fased installer, CLI, Gateway, wallet, or signer in native
 PowerShell, Command Prompt, Git Bash, or native Windows Node.js. The wallet
 signer requires Unix sockets. See the complete [Windows (WSL2)
 guide](/platforms/windows).
+
+Run these commands only in **Administrator PowerShell** to install and verify
+WSL2. Restart Windows if `wsl --install` requests it:
+
+```powershell
+wsl --install -d Ubuntu
+wsl --update
+wsl --version
+wsl --list --verbose
+```
+
+The `Ubuntu` row must say `VERSION 2`. Then open the **Ubuntu** application.
+The prompt changes to a Linux prompt such as `name@computer:~$`. Run the Fased
+install only there:
+
+```bash
+uname -s
+systemctl is-system-running || true
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
+```
+
+`uname -s` must print `Linux`. If systemd is unavailable, follow Microsoft's
+[systemd in WSL](https://learn.microsoft.com/windows/wsl/systemd) instructions,
+run `wsl --shutdown` in PowerShell once, reopen Ubuntu, and retry. Do not paste
+the Bash block into PowerShell. For a wallet-bearing production installation,
+run the [verified stable Local install](/install/installer#verified-stable-local-install)
+in this same Ubuntu shell instead of the shorter convenience command.
 </Warning>
 
 ## Pick local or VPS hosting
@@ -97,13 +124,24 @@ recovery options and VPS provider console access working.
     Use this on your own machine. Most local users fit one of these paths:
 
     - **macOS:** run the command in Terminal.
-    - **Windows:** install WSL2 with Ubuntu, then run the command inside the
-      Ubuntu shell. PowerShell is not the Fased runtime shell.
+    - **Windows:** first complete [Windows (WSL2)](/platforms/windows), then run
+      the command inside the Ubuntu shell. Use Windows 11 or Windows 10 version
+      2004/build 19041 or newer, verify the distribution is WSL version 2, and
+      enable systemd. PowerShell, Command Prompt, Git Bash, WSL1, and native
+      Windows Node.js are not Fased runtime environments.
     - **Linux:** run the command in your distro terminal.
+
+    Convenience command:
 
     ```bash
     curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
     ```
+
+    This command resolves and verifies the latest stable unified release after
+    the first script starts. For pre-execution verification—recommended before
+    storing wallet credentials—use the
+    [verified stable Local install](/install/installer#verified-stable-local-install)
+    with one exact release tag.
 
     Local setup keeps the Gateway on this machine and does not apply VPS SSH or
     firewall hardening. Tailscale is optional for Local.
@@ -240,11 +278,12 @@ recovery options and VPS provider console access working.
 
     ### 3. Install Fased and connect through Tailscale
 
-    Use the same hosted command on supported VPS systems:
-
-    ```bash
-    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
-    ```
+    Do not pipe a raw repository URL into a privileged shell. Download the
+    standalone `install.sh` release asset and its attestation, verify the exact
+    repository, tag, release workflow, and GitHub-hosted runner **before**
+    executing it, then run the verified file with `--hosting`. Use the complete
+    [pre-execution verified Hosting bootstrap](/install/vps#3-install-fased-and-connect-through-tailscale)
+    from the VPS provider's root console.
 
     The hosted installer installs/starts Tailscale when needed. When Fased
     prints a Tailscale login URL, open that URL in your local PC browser, sign
@@ -309,19 +348,18 @@ recovery options and VPS provider console access working.
       </Tabs>
     </Accordion>
 
-    Hosted setup keeps `/home/app/fased` as the app checkout for updates and
-    repair commands. The installer may use the published runtime package behind
-    the scenes so the full source tree does not need to build on small VPS
-    hosts.
+    Hosted setup keeps `/home/app/fased` as the app checkout for normal
+    unprivileged updates. Privileged repair never runs that app-owned checkout;
+    it starts again from the provider root console with an exact tagged,
+    attested release bundle.
 
-    Current installers try a clean fast-forward update from Git before setup.
-    If you already started from an older installer and it stopped, run
-    `git pull --ff-only origin main` once in the checkout and rerun
-    `./install.sh --hosting`.
+    If an older installer stopped, do not run its checkout with sudo. Rerun the
+    verified release-asset procedure above from the provider root console.
 
     If you start as `root`, the installer creates a non-root `app` user,
-    prepares `/home/app/fased`, re-runs itself there, and removes the temporary
-    root checkout after successful hosted onboarding.
+    prepares `/home/app/fased`, then continues the unprivileged application
+    phase as `app`. The verified root bundle remains immutable under
+    `/var/lib/fased-installer/releases/` for audit/reuse.
 
     The installer adds the VPS to the same Tailscale tailnet before setup can
     finish. The hosted profile keeps the raw Gateway port closed.
@@ -459,9 +497,9 @@ git pull --ff-only origin main
 ./install.sh --source-install
 ```
 
-Use `./install.sh --hosting` for that same development checkout flow on a
-hosted VPS by adding `--source-install`, and run it as `app` from
-`/home/app/fased`.
+VPS Hosting does not accept `--source-install` for privileged setup. Test a
+development checkout only on a disposable self-managed host without claiming
+the maintained Hosting security boundary.
 
 The installer is repo-backed from `fased-ai/fased`.
 
@@ -541,14 +579,20 @@ For a hosted or VPS install:
 
 1. start from a clean Linux VPS
 2. create/sign into Tailscale and join the VPS using the OS-specific hosted steps above
-3. run `./install.sh --hosting` or choose **Hosting** during onboarding
+3. run the [pre-execution verified standalone Hosting bootstrap](/install/vps#3-install-fased-and-connect-through-tailscale)
+   for the exact tagged release from the provider root console
 4. after onboarding, reconnect as `app` over the Tailscale network
 5. avoid exposing the raw Gateway port publicly
 
 Normal manual setup does **not** need a Tailscale API key. If the VPS is not
 logged in, Tailscale prints a login URL in the SSH terminal. Open that URL in
-your local computer's browser, then return to the SSH session. Use
-`--ts-authkey` only for non-interactive provisioning.
+your local computer's browser, then return to the SSH session. For unattended
+provisioning, put the key in a root-owned mode-`0600` file and append
+`--ts-authkey-file /root/fased-tailscale-authkey` to the verified standalone
+Hosting installer command. The installer copies it to a one-use private file,
+passes only that file path to Tailscale, and removes the copy. Delete the source
+file after the install. Raw `--ts-authkey <key>` arguments are rejected because
+process arguments can expose secrets.
 
 If Tailscale is missing or not logged in, Hosting onboarding tries to install or
 start it. If it cannot get a valid tailnet IP, it refuses to apply the SSH/UFW
@@ -567,8 +611,8 @@ choice is clear.
 | ------------------------ | ------------------------- | ------------------------------------------------------------- |
 | Repo-backed `install.sh` | Main bootstrap            | You are using either Local or VPS Hosting                     |
 | Source checkout          | Contributor path          | You want to build, test, or patch the repo directly           |
-| Docker                   | Advanced reference        | You want a containerized Gateway or sandbox validation        |
-| Podman                   | Advanced reference        | You want rootless containers on Linux                         |
+| Docker                   | Supported Local container | You want a containerized Gateway on your own computer         |
+| Podman                   | Experimental Gateway-only | You want a local rootless Gateway without wallet/mining       |
 | Nix                      | Advanced/declarative path | You already manage systems with Nix/Home Manager              |
 | Bun                      | Experimental dev path     | You want local TypeScript iteration; use Node for the Gateway |
 | Remote client mode       | Client mode               | This machine should connect to an existing Gateway            |
@@ -576,10 +620,10 @@ choice is clear.
 
 <CardGroup cols={2}>
   <Card title="Docker" href="/install/docker" icon="container">
-    Containerized Gateway and sandbox reference.
+    Supported Local containerized Gateway and sandbox reference. Not for VPS hosting.
   </Card>
   <Card title="Podman" href="/install/podman" icon="container">
-    Rootless container reference for Linux.
+    Experimental local Gateway-only container. Wallet and mining are unsupported.
   </Card>
   <Card title="Nix" href="/install/nix" icon="snowflake">
     Declarative install path for Nix users.
@@ -608,7 +652,8 @@ activates `pnpm` only when a source build is needed. Do not run plain
 - Hosted/VPS hardening: Ubuntu/Fedora/RHEL-family Linux with systemd. Alpine,
   Arch, macOS, and FreeBSD are local/dev install targets until their hosted
   hardening paths are validated separately.
-- Containers: Docker and Podman paths are separate from host package managers.
+- Containers: the full Docker Gateway is Local only. Podman is experimental,
+  Gateway-only, and does not support wallet or mining. VPS Hosting is host-managed.
 - Native Windows: use WSL2 for the Gateway. The native Windows app/runtime path
   is not the public install path.
 

@@ -5,6 +5,8 @@ import type {
   FederationMarketplaceOrderConfig,
   FederationMarketplaceSubscriptionConfig,
 } from "../config/types.federation.js";
+import { fetchWithSsrFGuard } from "../infra/net/fetch-guard.js";
+import type { LookupFn } from "../infra/net/ssrf.js";
 import { isMarketplaceAutomatedAdapterServiceKind } from "./marketplace-service-kinds.js";
 import {
   listLocalMarketplaceDeliveryTargets,
@@ -37,6 +39,7 @@ export type MarketplaceCapabilityAdapterRunResult =
 
 export type MarketplaceCapabilityAdapterDeps = {
   fetchImpl: typeof fetch;
+  ssrfLookupFn?: LookupFn;
   now: () => Date;
 };
 
@@ -283,6 +286,7 @@ function buildCapabilityResult(params: {
 
 async function postWebhookDelivery(params: {
   fetchImpl: typeof fetch;
+  ssrfLookupFn?: LookupFn;
   target: FederationMarketplaceDeliveryTargetConfig;
   payload: Record<string, unknown>;
 }): Promise<{ ok: true } | { ok: false; reason: string }> {
@@ -291,20 +295,38 @@ async function postWebhookDelivery(params: {
     return { ok: false, reason: "webhook delivery target is missing URL" };
   }
   try {
-    const response = await params.fetchImpl(url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-fased-marketplace-delivery": "capability",
+    if (new URL(url).protocol !== "https:") {
+      return { ok: false, reason: "webhook delivery requires HTTPS" };
+    }
+  } catch {
+    return { ok: false, reason: "webhook delivery target has an invalid URL" };
+  }
+  let guarded: Awaited<ReturnType<typeof fetchWithSsrFGuard>> | undefined;
+  try {
+    guarded = await fetchWithSsrFGuard({
+      url,
+      fetchImpl: params.fetchImpl,
+      lookupFn: params.ssrfLookupFn,
+      timeoutMs: 10_000,
+      auditContext: "marketplace-capability-webhook",
+      init: {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-fased-marketplace-delivery": "capability",
+        },
+        body: JSON.stringify(params.payload),
       },
-      body: JSON.stringify(params.payload),
     });
+    const response = guarded.response;
     if (!response.ok) {
       return { ok: false, reason: `webhook returned ${response.status}` };
     }
     return { ok: true };
   } catch (error) {
     return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+  } finally {
+    await guarded?.release();
   }
 }
 
@@ -409,6 +431,7 @@ export async function runMarketplaceCapabilityAdapter(params: {
   } else if (targetKind === "webhook") {
     const webhookResult = await postWebhookDelivery({
       fetchImpl: deps.fetchImpl,
+      ssrfLookupFn: deps.ssrfLookupFn,
       target,
       payload: deliveryPayload,
     });

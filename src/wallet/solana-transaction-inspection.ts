@@ -5,6 +5,8 @@ import { walletDiagnosticErrorString } from "./wallet-redaction.js";
 const SOLANA_SYSTEM_PROGRAM_ID = "11111111111111111111111111111111";
 const SOLANA_ASSOCIATED_TOKEN_PROGRAM_ID = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
 const SOLANA_COMPUTE_BUDGET_PROGRAM_ID = "ComputeBudget111111111111111111111111111111";
+const SOLANA_ADDRESS_LOOKUP_TABLE_PROGRAM_ID = "AddressLookupTab1e1111111111111111111111111";
+const SOLANA_ACTIVE_LOOKUP_TABLE_SLOT = 18_446_744_073_709_551_615n;
 const SOLANA_MEMO_PROGRAM_IDS = new Set([
   "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr",
   "Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo",
@@ -28,6 +30,7 @@ export type SolanaTransactionInspectionResult =
       signer: string;
       programIds: string[];
       routeProgramIds: string[];
+      writableAccounts: string[];
       usesAddressLookupTables: boolean;
     }
   | { ok: false; code: string; message: string };
@@ -51,7 +54,11 @@ async function fetchAddressLookupTables(params: {
     return [];
   }
   const result = await fetchSolanaRpc<{
-    value?: Array<{ data?: [string, string] | string } | null>;
+    value?: Array<{
+      data?: [string, string] | string;
+      owner?: string;
+      executable?: boolean;
+    } | null>;
   }>(params.rpcUrl, "getMultipleAccounts", [
     params.keys.map((key) => key.toBase58()),
     { encoding: "base64" },
@@ -63,8 +70,48 @@ async function fetchAddressLookupTables(params: {
     if (!encoded) {
       throw new Error(`address lookup table unavailable: ${key.toBase58()}`);
     }
-    return decodeAddressLookupTable(encoded, key);
+    if (
+      rows[index]?.owner !== SOLANA_ADDRESS_LOOKUP_TABLE_PROGRAM_ID ||
+      rows[index]?.executable === true
+    ) {
+      throw new Error(`address lookup table has invalid owner/state: ${key.toBase58()}`);
+    }
+    const table = decodeAddressLookupTable(encoded, key);
+    if (table.state.deactivationSlot !== SOLANA_ACTIVE_LOOKUP_TABLE_SLOT) {
+      throw new Error(`address lookup table is deactivated: ${key.toBase58()}`);
+    }
+    return table;
   });
+}
+
+async function fetchTransactionAccountMetadata(params: {
+  rpcUrl: string;
+  keys: PublicKey[];
+}): Promise<Array<{ owner?: string; executable: boolean } | null>> {
+  if (params.keys.length === 0) {
+    return [];
+  }
+  if (params.keys.length > 100) {
+    throw new Error("transaction uses more than 100 accounts");
+  }
+  const result = await fetchSolanaRpc<{
+    value?: Array<{ owner?: string; executable?: boolean } | null>;
+  }>(params.rpcUrl, "getMultipleAccounts", [
+    params.keys.map((key) => key.toBase58()),
+    { encoding: "base64", dataSlice: { offset: 0, length: 0 } },
+  ]);
+  const rows = Array.isArray(result?.value) ? result.value : [];
+  if (rows.length !== params.keys.length) {
+    throw new Error("transaction account metadata response length mismatch");
+  }
+  return rows.map((row) =>
+    row
+      ? {
+          owner: typeof row.owner === "string" ? row.owner : undefined,
+          executable: true === row.executable,
+        }
+      : null,
+  );
 }
 
 function isCommonProgram(programId: string): boolean {
@@ -82,11 +129,16 @@ function isCommonProgram(programId: string): boolean {
 export async function inspectSerializedSolanaSwapTransaction(params: {
   serializedTxBase64: string;
   expectedSigner: string;
+  expectedAdditionalSigners?: string[];
   rpcUrl?: string;
 }): Promise<SolanaTransactionInspectionResult> {
   let tx: VersionedTransaction;
   try {
-    tx = VersionedTransaction.deserialize(Buffer.from(params.serializedTxBase64, "base64"));
+    const raw = Buffer.from(params.serializedTxBase64, "base64");
+    if (raw.length === 0 || raw.length > 1_232) {
+      throw new Error("serialized transaction is empty or exceeds Solana's 1232-byte limit");
+    }
+    tx = VersionedTransaction.deserialize(raw);
   } catch (err) {
     return {
       ok: false,
@@ -105,14 +157,50 @@ export async function inspectSerializedSolanaSwapTransaction(params: {
     };
   }
 
+  let expectedAdditionalSigners: string[];
+  try {
+    expectedAdditionalSigners = unique(
+      (params.expectedAdditionalSigners ?? []).map((value) => new PublicKey(value).toBase58()),
+    );
+  } catch {
+    return {
+      ok: false,
+      code: "wallet_swap_signer_invalid",
+      message: "an expected additional signer is not a valid Solana address",
+    };
+  }
+  if (expectedAdditionalSigners.includes(expectedSigner)) {
+    return {
+      ok: false,
+      code: "wallet_swap_signer_invalid",
+      message: "the wallet signer cannot also be an additional signer",
+    };
+  }
+
   const signerKeys = tx.message.staticAccountKeys
     .slice(0, tx.message.header.numRequiredSignatures)
     .map((key) => key.toBase58());
-  if (signerKeys.length !== 1 || signerKeys[0] !== expectedSigner) {
+  const exactSignerSet = new Set([expectedSigner, ...expectedAdditionalSigners]);
+  if (
+    signerKeys.length !== exactSignerSet.size ||
+    !signerKeys.includes(expectedSigner) ||
+    signerKeys.some((key) => !exactSignerSet.has(key)) ||
+    expectedAdditionalSigners.some((key) => !signerKeys.includes(key))
+  ) {
     return {
       ok: false,
       code: "wallet_swap_unexpected_signer",
-      message: "swap transaction requires an unexpected signer",
+      message: "transaction required signers do not exactly match the reviewed signer set",
+    };
+  }
+  if (
+    tx.signatures.length !== signerKeys.length ||
+    tx.signatures.some((signature) => signature.some((byte) => byte !== 0))
+  ) {
+    return {
+      ok: false,
+      code: "wallet_swap_transaction_already_signed",
+      message: "transaction must contain only empty signatures before signer review",
     };
   }
 
@@ -144,8 +232,44 @@ export async function inspectSerializedSolanaSwapTransaction(params: {
   const accountKeys = tx.message.getAccountKeys({
     addressLookupTableAccounts: lookupTables,
   });
+  const allAccountKeys = Array.from({ length: accountKeys.length }, (_, index) =>
+    accountKeys.get(index),
+  );
+  if (allAccountKeys.some((key) => !key)) {
+    return {
+      ok: false,
+      code: "wallet_swap_account_unresolved",
+      message: "swap transaction contains an unresolved account",
+    };
+  }
+  const resolvedAccountKeys = allAccountKeys as PublicKey[];
+  let accountMetadata: Array<{ owner?: string; executable: boolean } | null> = [];
+  if (!params.rpcUrl?.trim()) {
+    return {
+      ok: false,
+      code: "wallet_swap_rpc_required",
+      message: "Solana RPC is required for signer-owned transaction account validation",
+    };
+  }
+  try {
+    accountMetadata = await fetchTransactionAccountMetadata({
+      rpcUrl: params.rpcUrl,
+      keys: resolvedAccountKeys,
+    });
+  } catch (err) {
+    return {
+      ok: false,
+      code: "wallet_swap_account_metadata_unavailable",
+      message: walletDiagnosticErrorString(err),
+    };
+  }
   const programIds: string[] = [];
+  const referencedIndexes = new Set<number>();
   for (const ix of tx.message.compiledInstructions) {
+    referencedIndexes.add(ix.programIdIndex);
+    for (const accountIndex of ix.accountKeyIndexes) {
+      referencedIndexes.add(accountIndex);
+    }
     const programId = accountKeys.get(ix.programIdIndex)?.toBase58();
     if (!programId) {
       return {
@@ -163,12 +287,22 @@ export async function inspectSerializedSolanaSwapTransaction(params: {
     }
     programIds.push(programId);
   }
+  for (const index of referencedIndexes) {
+    if (accountMetadata[index]?.executable) {
+      programIds.push(resolvedAccountKeys[index]?.toBase58() ?? "");
+    }
+  }
   const uniqueProgramIds = unique(programIds);
+  const writableAccounts = resolvedAccountKeys
+    .map((key, index) => (tx.message.isAccountWritable(index) ? key.toBase58() : ""))
+    .filter(Boolean)
+    .toSorted();
   return {
     ok: true,
     signer: expectedSigner,
     programIds: uniqueProgramIds,
     routeProgramIds: uniqueProgramIds.filter((programId) => !isCommonProgram(programId)),
+    writableAccounts,
     usesAddressLookupTables: lookupKeys.length > 0,
   };
 }

@@ -120,7 +120,6 @@ export function registerOnboardCommand(program: Command) {
       "--host-maintenance-session",
       "Internal: post-bootstrap hosted rerun from the app user over Tailscale",
     )
-    .option("--ts-authkey <key>", "Tailscale auth key for hosting setup")
     .option("--allow-insecure", "Allow continuing when hosting security setup fails")
     .option("--swap-gb <n>", "Override automatic swap size in GB for hosting setup")
     .option("--auth-choice <choice>", `Auth: ${AUTH_CHOICE_HELP}`)
@@ -165,11 +164,11 @@ export function registerOnboardCommand(program: Command) {
     .option("--wallet-runtime <runtime>", "Wallet runtime: external-docker|external-custom")
     .option(
       "--wallet-providers <ids>",
-      "Enabled wallet providers CSV (embedded-keystore,local-socket-signer,alchemy,turnkey,privy)",
+      "Enabled wallet providers CSV (local-socket-signer,alchemy,turnkey,wallet-standard)",
     )
     .option(
       "--wallet-default-provider <id>",
-      "Default wallet provider id (embedded-keystore|local-socket-signer|alchemy|turnkey|privy)",
+      "Default wallet provider id (local-socket-signer|alchemy|turnkey|wallet-standard)",
     )
     .option("--wallet-chains <chains>", "Wallet chains CSV (solana)")
     .option("--wallet-host <host>", "External self-hosted signer host (advanced/deprecated)")
@@ -251,7 +250,6 @@ export function registerOnboardCommand(program: Command) {
           hostProfile: opts.hostProfile as "local" | "hosting" | undefined,
           hostSecurityCapable: Boolean(opts.hostSecurityCapable),
           hostMaintenanceSession: Boolean(opts.hostMaintenanceSession),
-          tsAuthkey: opts.tsAuthkey as string | undefined,
           allowInsecure: Boolean(opts.allowInsecure),
           swapGb:
             typeof swapGbRaw === "number" && Number.isFinite(swapGbRaw) ? swapGbRaw : undefined,

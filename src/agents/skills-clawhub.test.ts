@@ -79,11 +79,14 @@ describe("skills-clawhub", () => {
       latestVersion: {
         version: "1.0.0",
         createdAt: 3,
+        sha256: "a".repeat(64),
       },
     });
     downloadClawHubSkillArchiveMock.mockResolvedValue({
       archivePath: "/tmp/agentreceipt.zip",
       integrity: "sha256-test",
+      sha256: "a".repeat(64),
+      integrityVerified: true,
       cleanup: archiveCleanupMock,
     });
     archiveCleanupMock.mockResolvedValue(undefined);
@@ -108,6 +111,8 @@ describe("skills-clawhub", () => {
       slug: "agentreceipt",
       version: "1.0.0",
       baseUrl: undefined,
+      expectedIntegrity: undefined,
+      expectedSha256: "a".repeat(64),
     });
     expect(installPackageDirMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -135,12 +140,19 @@ describe("skills-clawhub", () => {
       const result = await installSkillFromClawHub({
         workspaceDir,
         slug: "agentreceipt",
+        allowPermissionChanges: true,
       });
 
       expect(result).toMatchObject({ ok: true });
       await expect(
         fs.readFile(path.join(targetDir, ".clawhub", "origin.json"), "utf8"),
       ).resolves.toContain('"registry": "https://clawhub.com"');
+      await expect(
+        fs.readFile(path.join(targetDir, ".clawhub", "origin.json"), "utf8"),
+      ).resolves.toContain(`"archiveSha256": "${"a".repeat(64)}"`);
+      await expect(
+        fs.readFile(path.join(targetDir, ".clawhub", "origin.json"), "utf8"),
+      ).resolves.toMatch(/"contentSha256": "[a-f0-9]{64}"/u);
       await expect(
         fs.readFile(path.join(workspaceDir, ".clawhub", "lock.json"), "utf8"),
       ).resolves.toContain('"agentreceipt"');
@@ -181,6 +193,7 @@ describe("skills-clawhub", () => {
       const result = await installSkillFromClawHub({
         workspaceDir,
         slug: "agentreceipt",
+        allowPermissionChanges: true,
       });
 
       expect(result).toMatchObject({
@@ -213,6 +226,23 @@ describe("skills-clawhub", () => {
     } finally {
       await fs.rm(workspaceDir, { recursive: true, force: true });
     }
+  });
+
+  it("requires explicit review for risky permissions on a fresh install", async () => {
+    await writeExtractedSkill(
+      '{"fased":{"permissions":{"walletActions":{"actions":["swap"],"roles":["agent"],"chains":["solana"],"autonomous":true}}}}',
+    );
+
+    const result = await installSkillFromClawHub({
+      workspaceDir: "/tmp/workspace",
+      slug: "agentreceipt",
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("requires permission review"),
+    });
+    expect(installPackageDirMock).not.toHaveBeenCalled();
   });
 
   it("rejects marketplace skills that request mining wallet roles", async () => {
@@ -329,6 +359,7 @@ describe("skills-clawhub", () => {
       const result = await installSkillFromClawHub({
         workspaceDir,
         slug: "agentreceipt",
+        allowPermissionChanges: true,
       });
 
       expect(result).toMatchObject({
@@ -414,6 +445,8 @@ describe("skills-clawhub", () => {
           slug,
           version: "1.0.0",
           baseUrl: "https://legacy.clawhub.com",
+          expectedIntegrity: undefined,
+          expectedSha256: "a".repeat(64),
         });
         expect(results).toMatchObject([
           {

@@ -3,8 +3,12 @@ import type { FasedAgentConfig } from "../../config/config.js";
 import type { ResolvedWalletRuntimeConfig } from "../../wallet/wallet-runtime-config.js";
 import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../agent-scope.js";
 import { readClawHubSkillOrigin } from "../skills-clawhub.js";
+import {
+  isMarketplaceSkillDir,
+  marketplaceSkillProvenanceMatchesContent,
+} from "../skills/trust.js";
 
-const DEFAULT_WALLET_ACTION_REGISTRIES = ["https://clawhub.com"];
+const LOCAL_WALLET_ACTION_SOURCE = "local";
 
 export type WalletSkillActionName =
   | "prepare"
@@ -57,16 +61,12 @@ function normalizeRegistryUrl(value: string | undefined): string | null {
 }
 
 function normalizeRegistryList(values: unknown): string[] {
-  const rawList = Array.isArray(values) ? values : DEFAULT_WALLET_ACTION_REGISTRIES;
-  const registries = rawList
+  if (!Array.isArray(values)) {
+    return [];
+  }
+  return values
     .map((entry) => normalizeRegistryUrl(String(entry)))
     .filter((entry): entry is string => Boolean(entry));
-  return registries.length > 0 ? registries : DEFAULT_WALLET_ACTION_REGISTRIES;
-}
-
-function readSkillsMarketplaceAllowRegistries(cfg: FasedAgentConfig | undefined): string[] {
-  const raw = cfg?.skills?.marketplace?.allowRegistries;
-  return normalizeRegistryList(raw);
 }
 
 function normalizeSkillPathId(skillId: string): string | null {
@@ -96,7 +96,11 @@ async function readRequesterSkillOrigin(params: {
     ...new Set(agentIds.map((agentId) => resolveAgentWorkspaceDir(cfg, agentId))),
   ];
   for (const workspaceDir of workspaces) {
-    const origin = await readClawHubSkillOrigin(path.join(workspaceDir, "skills", skillPathId));
+    const skillDir = path.join(workspaceDir, "skills", skillPathId);
+    if (isMarketplaceSkillDir(skillDir) && !marketplaceSkillProvenanceMatchesContent(skillDir)) {
+      throw new Error("wallet_action_skill_marketplace_content_integrity_failed");
+    }
+    const origin = await readClawHubSkillOrigin(skillDir);
     if (origin) {
       return {
         registry: origin.registry,
@@ -184,11 +188,19 @@ export async function enforceWalletSkillPolicy(params: {
     }
     return;
   }
-  if (permissions.actions?.length && !permissions.actions.includes(params.action)) {
+  if (!permissions.actions?.length) {
+    throw new Error("wallet_action_skill_actions_required");
+  }
+  if (!permissions.actions.includes(params.action)) {
     throw new Error("wallet_action_skill_action_not_allowed");
   }
-  if (params.role && permissions.roles?.length && !permissions.roles.includes(params.role)) {
-    throw new Error("wallet_action_skill_role_not_allowed");
+  if (params.role) {
+    if (!permissions.roles?.length) {
+      throw new Error("wallet_action_skill_roles_required");
+    }
+    if (!permissions.roles.includes(params.role)) {
+      throw new Error("wallet_action_skill_role_not_allowed");
+    }
   }
   if (!permissions.walletIds?.length) {
     throw new Error("wallet_action_skill_wallet_required");
@@ -196,41 +208,54 @@ export async function enforceWalletSkillPolicy(params: {
   if (!params.walletId || !permissions.walletIds.includes(params.walletId)) {
     throw new Error("wallet_action_skill_wallet_not_allowed");
   }
-  if (params.chain && permissions.chains?.length && !permissions.chains.includes(params.chain)) {
-    throw new Error("wallet_action_skill_chain_not_allowed");
+  if (params.chain) {
+    if (!permissions.chains?.length) {
+      throw new Error("wallet_action_skill_chains_required");
+    }
+    if (!permissions.chains.includes(params.chain)) {
+      throw new Error("wallet_action_skill_chain_not_allowed");
+    }
   }
-  if (
-    params.inputMint &&
-    permissions.inputMints?.length &&
-    !permissions.inputMints.includes(params.inputMint)
-  ) {
-    throw new Error("wallet_action_skill_input_mint_not_allowed");
+  if (params.inputMint) {
+    if (!permissions.inputMints?.length) {
+      throw new Error("wallet_action_skill_input_mints_required");
+    }
+    if (!permissions.inputMints.includes(params.inputMint)) {
+      throw new Error("wallet_action_skill_input_mint_not_allowed");
+    }
   }
-  if (
-    params.outputMint &&
-    permissions.outputMints?.length &&
-    !permissions.outputMints.includes(params.outputMint)
-  ) {
-    throw new Error("wallet_action_skill_output_mint_not_allowed");
+  if (params.outputMint) {
+    if (!permissions.outputMints?.length) {
+      throw new Error("wallet_action_skill_output_mints_required");
+    }
+    if (!permissions.outputMints.includes(params.outputMint)) {
+      throw new Error("wallet_action_skill_output_mint_not_allowed");
+    }
   }
-  if (
-    permissions.maxAmount &&
-    params.amount &&
-    BigInt(params.amount) > BigInt(permissions.maxAmount)
-  ) {
-    throw new Error("wallet_action_skill_amount_cap_exceeded");
+  if (params.amount) {
+    if (!permissions.maxAmount) {
+      throw new Error("wallet_action_skill_amount_cap_required");
+    }
+    if (BigInt(params.amount) > BigInt(permissions.maxAmount)) {
+      throw new Error("wallet_action_skill_amount_cap_exceeded");
+    }
   }
-  if (
-    permissions.maxSlippageBps !== undefined &&
-    (params.slippageBps ?? 0) > permissions.maxSlippageBps
-  ) {
-    throw new Error("wallet_action_skill_slippage_cap_exceeded");
+  if (params.slippageBps !== undefined) {
+    if (permissions.maxSlippageBps === undefined) {
+      throw new Error("wallet_action_skill_slippage_cap_required");
+    }
+    if (params.slippageBps > permissions.maxSlippageBps) {
+      throw new Error("wallet_action_skill_slippage_cap_exceeded");
+    }
   }
   if (params.autonomous && permissions.autonomous !== true) {
     throw new Error("wallet_action_skill_autonomous_not_allowed");
   }
   if (params.scheduled && permissions.cron !== true) {
     throw new Error("wallet_action_skill_cron_not_allowed");
+  }
+  if (!permissions.registries?.length) {
+    throw new Error("wallet_action_skill_registries_required");
   }
 
   const origin = await readRequesterSkillOrigin({
@@ -240,11 +265,13 @@ export async function enforceWalletSkillPolicy(params: {
     env: params.env,
   });
   if (!origin) {
+    const allowedSources = normalizeRegistryList(permissions.registries);
+    if (!allowedSources.includes(LOCAL_WALLET_ACTION_SOURCE)) {
+      throw new Error("wallet_action_skill_local_source_not_allowed");
+    }
     return;
   }
-  const allowedRegistries = normalizeRegistryList(
-    permissions.registries ?? readSkillsMarketplaceAllowRegistries(params.cfg),
-  );
+  const allowedRegistries = normalizeRegistryList(permissions.registries);
   const registry = normalizeRegistryUrl(origin.registry);
   if (!registry || !allowedRegistries.includes(registry)) {
     throw new Error("wallet_action_skill_registry_not_allowlisted");

@@ -9,6 +9,7 @@ export {
   readConfigFileSnapshotForWrite,
   resolveConfigSnapshotHash,
   setRuntimeConfigSnapshot,
+  updateConfigFile,
   writeConfigFile,
 } from "./io.js";
 export { migrateLegacyConfig } from "./legacy-migrate.js";

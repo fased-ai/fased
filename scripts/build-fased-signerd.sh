@@ -35,8 +35,14 @@ mkdir -p "${OUT_DIR}"
 mkdir -p "${GOTMPDIR:-$GOTMPDIR_DEFAULT}" "${GOCACHE:-$GOCACHE_DEFAULT}"
 export GOTMPDIR="${GOTMPDIR:-$GOTMPDIR_DEFAULT}"
 export GOCACHE="${GOCACHE:-$GOCACHE_DEFAULT}"
+IDENTITY_LDFLAGS="$(
+  FASED_SIGNER_BUILD_DEVELOPMENT=true \
+    node "${ROOT}/scripts/fased-signerd-build-identity.mjs" --ldflags
+)"
 cd "${ROOT}/tools/fased-signerd"
 
-CGO_ENABLED=0 "$GO_BIN" build -buildvcs=false -o "${BIN}" .
+CGO_ENABLED=0 "$GO_BIN" build -buildvcs=false -trimpath \
+  -ldflags="-buildid= ${IDENTITY_LDFLAGS}" -o "${BIN}" .
 chmod +x "${BIN}"
+"${BIN}" --version
 echo "Built ${BIN}"

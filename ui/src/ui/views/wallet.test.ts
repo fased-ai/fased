@@ -200,6 +200,36 @@ function renderWalletForTest(overrides: Partial<WalletViewProps>) {
   });
 }
 
+describe("wallet creation", () => {
+  it("shows only an implemented signer-owned creation path", () => {
+    const rendered = renderWalletForTest({
+      providers: [
+        {
+          id: "local-socket-signer",
+          enabled: true,
+          operationsImplemented: true,
+          credentialsConfigured: true,
+          health: { ok: true },
+          capabilities: {
+            operations: { createWallet: true },
+            requiresCredentials: false,
+          },
+        } as never,
+      ],
+      createProvider: "local-socket-signer",
+      createRole: "vault",
+    });
+    const text = flattenTemplateText(rendered);
+    expect(text).toContain("Create a signer-owned wallet");
+    expect(text).toContain("Native Go signer");
+    expect(text).toContain(
+      "The Go signer generates the key; Node receives only the public address.",
+    );
+    expect(text).not.toContain("Embedded keystore");
+    expect(text).not.toContain("Privy");
+  });
+});
+
 describe("resolveOperatorWalletRoles", () => {
   it("separates admin, Agent, and mining roles when distinct wallets are configured", () => {
     const roles = resolveOperatorWalletRoles({
@@ -376,7 +406,7 @@ describe("describeAdminControlShortcut", () => {
       }),
     ).toMatchObject({
       summary: "Not ready",
-      detail: expect.stringContaining("wallet security setup"),
+      detail: expect.stringContaining("policy changes"),
       enableVisible: true,
       enableLabel: "Enable passkey approval",
       enrollVisible: false,
@@ -401,7 +431,7 @@ describe("describeAdminControlShortcut", () => {
       }),
     ).toMatchObject({
       summary: "Not ready",
-      detail: expect.stringContaining("wallet security setup"),
+      detail: expect.stringContaining("policy changes"),
       enableVisible: false,
       enrollVisible: true,
       enrollLabel: "Enroll passkey",
@@ -426,7 +456,7 @@ describe("describeAdminControlShortcut", () => {
       }),
     ).toMatchObject({
       summary: "Ready",
-      detail: expect.stringContaining("wallet security setup"),
+      detail: expect.stringContaining("policy changes"),
       enableVisible: false,
       enrollVisible: false,
     });
@@ -439,7 +469,6 @@ describe("describeWalletSendFlow", () => {
       describeWalletSendFlow({
         policy: { executionMode: "manual" },
         approvalAuth: { passkeyCount: 1 },
-        custody: { mode: "single-key" },
       } as never),
     ).toMatchObject({
       mode: "manual",
@@ -452,7 +481,6 @@ describe("describeWalletSendFlow", () => {
       describeWalletSendFlow({
         policy: { executionMode: "autonomous" },
         approvalAuth: { passkeyCount: 1 },
-        custody: { mode: "single-key" },
       } as never),
     ).toMatchObject({
       mode: "manual",
@@ -523,23 +551,6 @@ describe("renderWallet", () => {
             notes: [],
             passkeys: [],
             statePath: "/tmp/passkeys.json",
-          },
-          custody: {
-            mode: "single-key",
-            target: {
-              walletId: "wallet-mining",
-              role: "mining",
-            },
-            unlock: {
-              active: false,
-            },
-            phase2: {
-              complete: true,
-              splitKeyEnabled: false,
-              passkeyCeremonyEnabled: true,
-              ephemeralReconstructionEnabled: true,
-              notes: [],
-            },
           },
         } as never,
         namedWallets,
@@ -729,23 +740,6 @@ describe("renderWallet", () => {
             passkeys: [],
             statePath: "/tmp/passkeys.json",
           },
-          custody: {
-            mode: "single-key",
-            target: {
-              walletId: "wallet-mining",
-              role: "mining",
-            },
-            unlock: {
-              active: false,
-            },
-            phase2: {
-              complete: true,
-              splitKeyEnabled: false,
-              passkeyCeremonyEnabled: true,
-              ephemeralReconstructionEnabled: true,
-              notes: [],
-            },
-          },
         } as never,
         namedWallets,
         balancesLoading: false,
@@ -763,20 +757,6 @@ describe("renderWallet", () => {
         passkeyBusy: false,
         passkeyError: null,
         passkeyLabel: "",
-        clientSecuritySupport: {
-          secureContext: true,
-          webauthn: true,
-          webCrypto: true,
-          localStorage: true,
-          platformAuthenticator: "supported",
-          conditionalMediation: "supported",
-          prf: "supported",
-          storageMode: "encrypted-browser-storage",
-          nativeHelper: {
-            status: "unreachable",
-          },
-          notes: [],
-        },
         auditEntries: [],
         activityPage: 1,
         sendModalVisible: false,
@@ -893,7 +873,7 @@ describe("renderWallet", () => {
     expect(text).toContain("quote, swap");
   });
 
-  it("renders wallet security onboarding guidance and role-template policy help", () => {
+  it("renders Agent policy without legacy custody controls", () => {
     const text = flattenTemplateText(
       renderWalletForTest({
         loading: false,
@@ -919,21 +899,6 @@ describe("renderWallet", () => {
             passkeys: [],
             statePath: "/tmp/passkeys.json",
           },
-          custody: {
-            mode: "single-key",
-            target: {
-              walletId: "wallet-agent",
-              role: "agent",
-            },
-            unlock: { active: false },
-            phase2: {
-              complete: true,
-              splitKeyEnabled: false,
-              passkeyCeremonyEnabled: true,
-              ephemeralReconstructionEnabled: true,
-              notes: [],
-            },
-          },
         } as never,
         namedWallets,
         balancesLoading: false,
@@ -950,6 +915,17 @@ describe("renderWallet", () => {
           policy: {
             directSigning: true,
             solana: { allowPrograms: [], maxPerTx: "1000000000", maxDaily: "5000000000" },
+          },
+          signerPolicy: {
+            state: "locked",
+            walletId: "wallet-agent",
+            role: "agent",
+            version: 3,
+            hash: `sha256:${"e".repeat(64)}`,
+            operations: [],
+            programs: [],
+            assets: [],
+            guidance: "Install an owner-reviewed policy through the native signer control socket.",
           },
           toolAccess: { mode: "owner-only", allowAgents: [] },
           providerCredentials: {
@@ -972,31 +948,6 @@ describe("renderWallet", () => {
         policySolMaxPerTx: "1",
         policySolMaxDaily: "5",
         policySolanaAllowPrograms: "",
-        securitySetupWalletId: "wallet-agent",
-        securitySetupRole: "agent",
-        actionMessage: null,
-        passkeyBusy: false,
-        passkeyError: null,
-        passkeyLabel: "",
-        clientSecuritySupport: {
-          secureContext: true,
-          webauthn: true,
-          webCrypto: true,
-          localStorage: true,
-          platformAuthenticator: "supported",
-          conditionalMediation: "supported",
-          prf: "supported",
-          storageMode: "encrypted-browser-storage",
-          nativeHelper: { status: "unreachable" },
-          notes: [],
-        },
-        custodyDeviceShare: "",
-        custodyRecoveryShare: "",
-        custodyRecoveryInput: "",
-        custodyEnrollLabel: "",
-        custodyEnrolledDeviceShare: "",
-        custodyRememberDeviceShare: false,
-        custodyDeviceShareStored: false,
         auditEntries: [],
         activityPage: 1,
         sendModalVisible: false,
@@ -1029,22 +980,6 @@ describe("renderWallet", () => {
         onPasskeyLabelChange: () => undefined,
         onEnablePasskeyApproval: () => undefined,
         onEnrollPasskey: () => undefined,
-        onCustodyDeviceShareChange: () => undefined,
-        onCustodyRecoveryInputChange: () => undefined,
-        onCustodyEnrollLabelChange: () => undefined,
-        onCustodyRememberChange: () => undefined,
-        onInitializeCustody: () => undefined,
-        onEnrollCustodyDevice: () => undefined,
-        onRevokeCustodyDevice: () => undefined,
-        onRecoverCustody: () => undefined,
-        onUnlockCustody: () => undefined,
-        onLockCustody: () => undefined,
-        onForgetCustodyDeviceShare: () => undefined,
-        onDownloadDeviceShare: () => undefined,
-        onDownloadEnrolledDeviceShare: () => undefined,
-        onDownloadRecoveryKit: () => undefined,
-        onPrintRecoveryKit: () => undefined,
-        onPrintEnrolledDeviceShare: () => undefined,
         onApplyRecommendedPolicy: () => undefined,
         onPatchSettings: () => undefined,
         onActivityPageChange: () => undefined,
@@ -1071,6 +1006,15 @@ describe("renderWallet", () => {
     expect(text).not.toContain("Enable security");
     expect(text).toContain("Tx");
     expect(text).toContain("Small Agent spend");
+    expect(text).toContain("Native signer policy: locked");
+    expect(text).toContain(
+      "This wallet cannot send, swap, mine, bond, or execute wallet-capable skills until a host administrator installs an owner-reviewed policy and the signer acknowledges its exact hash.",
+    );
+    expect(text).toContain("Version 3");
+    expect(text).toContain(`sha256:${"e".repeat(64)}`);
+    expect(text).toContain(
+      "Install an owner-reviewed policy through the native signer control socket.",
+    );
     expect(text).not.toContain("Selected Wallet Policy");
     expect(text).not.toContain("Advanced spend caps");
     expect(text).not.toContain("Apply recommended Agent template");
@@ -1099,7 +1043,6 @@ describe("renderWallet", () => {
             passkeys: [],
             statePath: "/tmp/passkeys.json",
           },
-          custody: { mode: "single-key" },
         } as never,
         namedWallets,
         balancesLoading: false,
@@ -1221,7 +1164,6 @@ describe("renderWallet", () => {
             passkeys: [],
             statePath: "/tmp/passkeys.json",
           },
-          custody: { mode: "single-key" },
         } as never,
         namedWallets,
         balancesLoading: false,
@@ -1370,7 +1312,6 @@ describe("renderWallet", () => {
             passkeys: [],
             statePath: "/tmp/passkeys.json",
           },
-          custody: { mode: "single-key" },
         } as never,
         namedWallets,
         balancesLoading: false,
@@ -1457,7 +1398,6 @@ describe("renderWallet", () => {
             passkeys: [],
             statePath: "/tmp/passkeys.json",
           },
-          custody: { mode: "single-key" },
         } as never,
         namedWallets,
         balancesLoading: false,
@@ -1580,6 +1520,84 @@ describe("renderWallet", () => {
     expect(text).toContain("1.2");
   });
 
+  it("renders exact signer-bound Trigger and Vault semantics in approval cards", () => {
+    const text = flattenTemplateText(
+      renderWalletForTest({
+        approvals: [
+          {
+            id: "trigger-review-1",
+            createdAt: "2026-07-17T10:00:00.000Z",
+            expiresAt: "2026-07-17T10:15:00.000Z",
+            status: "pending",
+            requestedBy: "control-ui",
+            payload: {
+              chain: "solana",
+              actionKind: "signer_review",
+              signerSemanticIntent: {
+                type: "solana.jupiter.trigger.create",
+                jupiter: {
+                  owner: "Owner1111111111111111111111111111111111111",
+                  inputMint: "InputMint111111111111111111111111111111111",
+                  outputMint: "OutputMint11111111111111111111111111111111",
+                  inputAmount: "2500000",
+                  maxInputAmount: "2500000",
+                  minimumOutputAmount: "0",
+                  maxFeeLamports: "5000",
+                  programs: ["TriggerProgram111111111111111111111111111111"],
+                  trigger: {
+                    operation: "create",
+                    program: "TriggerProgram111111111111111111111111111111",
+                    triggerMint: "TriggerMint1111111111111111111111111111111",
+                    condition: "below",
+                    targetPriceUsd: "123.45",
+                    slippageBps: 75,
+                    expiresAt: "2026-07-18T10:00:00.000Z",
+                    expectedOrderState: "new",
+                  },
+                },
+              },
+            },
+          },
+          {
+            id: "vault-review-1",
+            createdAt: "2026-07-17T10:00:00.000Z",
+            expiresAt: "2026-07-17T10:15:00.000Z",
+            status: "pending",
+            requestedBy: "control-ui",
+            payload: {
+              chain: "solana",
+              actionKind: "signer_review",
+              signerSemanticIntent: {
+                type: "solana.vaultBondAction",
+                cluster: "mainnet-beta",
+                action: "bond.release",
+                programId: "BondProgram11111111111111111111111111111111",
+                dataBase64: "AA==",
+                keys: [],
+                context: {
+                  targetAuthority: "Target111111111111111111111111111111111111",
+                  intervalStartCycleId: "cycle-42",
+                },
+              },
+            },
+          },
+        ],
+      }),
+    );
+
+    expect(text).toContain("Signer intent solana.jupiter.trigger.create");
+    expect(text).toContain("Input mint : InputMint111111111111111111111111111111111");
+    expect(text).toContain("Condition : below");
+    expect(text).toContain("Target price (USD) : 123.45");
+    expect(text).toContain("Slippage (bps) : 75");
+    expect(text).toContain("Order expiry : 2026-07-18T10:00:00.000Z");
+    expect(text).toContain("Trigger mint : TriggerMint1111111111111111111111111111111");
+    expect(text).toContain("Signer intent solana.vaultBondAction");
+    expect(text).toContain("Vault action : bond.release");
+    expect(text).toContain("Target authority : Target111111111111111111111111111111111111");
+    expect(text).not.toContain("Do not approve this Trigger review");
+  });
+
   it("collapses fallback mint-derived token identity in the send summary", () => {
     const text = flattenTemplateText(
       renderWalletForTest({
@@ -1596,7 +1614,6 @@ describe("renderWallet", () => {
             passkeys: [],
             statePath: "/tmp/passkeys.json",
           },
-          custody: { mode: "single-key" },
         } as never,
         namedWallets,
         balancesLoading: false,

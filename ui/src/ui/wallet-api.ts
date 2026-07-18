@@ -3,6 +3,7 @@ export type WalletProviderId =
   | "local-socket-signer"
   | "alchemy"
   | "turnkey"
+  | "wallet-standard"
   | "privy";
 
 export type WalletStatus = {
@@ -91,47 +92,6 @@ export type WalletStatus = {
     }>;
     statePath: string;
   };
-  custody: {
-    mode: "single-key" | "split-key-scaffold" | "split-key-active";
-    target: {
-      walletId: string;
-      role: "mining" | "agent" | "vault";
-    };
-    scope: {
-      chains: Array<"solana">;
-      allowPrograms: string[];
-      solana: {
-        maxPerTx: string;
-        maxDaily: string;
-      };
-    };
-    unlock: {
-      active: boolean;
-      sessionId?: string;
-      host?: string;
-      expiresAt?: string;
-    };
-    phase2: {
-      complete: boolean;
-      splitKeyEnabled: boolean;
-      passkeyCeremonyEnabled: boolean;
-      ephemeralReconstructionEnabled: boolean;
-      notes: string[];
-    };
-    ceremony?: {
-      initialized: boolean;
-      scheme?: string;
-      secretBytes?: number;
-      devices?: Array<{
-        id: string;
-        label?: string;
-        createdAt: string;
-        revokedAt?: string;
-      }>;
-      path: string;
-      updatedAt?: string;
-    };
-  };
   addresses?: {
     solana?: string;
   };
@@ -188,7 +148,15 @@ export type WalletSendApprovalRequest = {
   taskLedgerId?: string;
   createdAt: string;
   expiresAt: string;
-  status: "pending" | "approved" | "rejected" | "executed" | "failed" | "expired";
+  status:
+    | "pending"
+    | "executing"
+    | "approved"
+    | "unknown"
+    | "rejected"
+    | "executed"
+    | "failed"
+    | "expired";
   requestedBy: string;
   approvedBy?: string;
   rejectedBy?: string;
@@ -196,13 +164,14 @@ export type WalletSendApprovalRequest = {
   reason?: string;
   payload: {
     chain: "solana";
-    actionKind?: "send" | "solana_swap";
+    actionKind?: "send" | "solana_swap" | "signer_review";
     assetId?: string;
     assetSymbol?: string;
     assetName?: string;
     assetDecimals?: number;
     amountDisplay?: string;
     walletHandle?: string;
+    providerId?: WalletProviderId;
     walletId?: string;
     walletName?: string;
     to?: string;
@@ -230,6 +199,30 @@ export type WalletSendApprovalRequest = {
     routeProgramIds?: string[];
     usesAddressLookupTables?: boolean;
     jupiterRequestId?: string;
+    signerReviewId?: string;
+    signerWalletId?: string;
+    signerWalletPublicKey?: string;
+    signerIntentType?: string;
+    signerPolicyHash?: string;
+    signerIntentDigest?: string;
+    signerSemanticIntent?: unknown;
+    signerArtifactKind?:
+      | "solana-transaction"
+      | "domain-separated-message"
+      | "jupiter-trigger-state";
+    signerArtifactDigest?: string;
+    signerTransactionDigest?: string;
+    signerStateDigest?: string;
+    signerStateSlot?: number;
+    signerAsset?: string;
+    signerAmount?: string;
+    signerDestination?: string;
+    signerPolicyOperation?: string;
+    signerRequiredPrograms?: string[];
+    signerRequiredRole?: "agent" | "mining" | "vault";
+    signerNonce?: string;
+    signerIssuedAt?: string;
+    signerReviewExpiresAt?: string;
   };
   simulation?: WalletPolicySimulation;
   approvalDiff?: WalletApprovalDiff;
@@ -385,6 +378,22 @@ export type WalletSettings = {
       updatedAt: string;
     } | null;
   };
+  signerPolicy?: {
+    state: "locked" | "acknowledged" | "unavailable";
+    walletId: string;
+    role?: "agent" | "mining" | "vault";
+    version?: number;
+    hash?: string;
+    operations?: string[];
+    programs?: string[];
+    assets?: Array<{
+      asset: string;
+      destinations: string[];
+      maxPerTx: string;
+      maxDaily: string;
+    }>;
+    guidance?: string;
+  };
   toolAccess: {
     mode: "owner-only" | "allowlist" | "all";
     allowAgents: string[];
@@ -438,6 +447,12 @@ export type WalletProviderCapabilities = {
   providerId: WalletProviderId;
   supportedChains: Array<"solana">;
   integrationMode: "native" | "bridge";
+  signingLocation: "server" | "browser" | "unavailable";
+  signing: {
+    transaction: boolean;
+    message: boolean;
+    interactiveSend: boolean;
+  };
   operations: {
     createWallet: boolean;
     receiveAddress: boolean;
@@ -775,72 +790,6 @@ export type WalletPasskeyAssertionFinishResponse = {
   requestId?: string;
 };
 
-export type WalletCustodyUnlockResponse = {
-  ok: true;
-  session: {
-    id: string;
-    host: string;
-    expiresAt: string;
-  };
-  custody: WalletStatus["custody"];
-};
-
-export type WalletCustodyInitResponse = {
-  ok: true;
-  walletId: string;
-  role: WalletStatus["custody"]["target"]["role"];
-  deviceShare: string;
-  recoveryShare: string;
-  signerRestarted?: boolean;
-  signerRestartError?: string;
-  custody: WalletStatus["custody"];
-};
-
-export type WalletCustodyRecoverResponse = {
-  ok: true;
-  walletId: string;
-  role: WalletStatus["custody"]["target"]["role"];
-  deviceShare: string;
-  recoveryShare: string;
-  custody: WalletStatus["custody"];
-};
-
-export type WalletCustodyLockResponse = {
-  ok: true;
-  removed: number;
-  remaining: number;
-  custody: WalletStatus["custody"];
-};
-
-export type WalletCustodyEnrollDeviceResponse = {
-  ok: true;
-  walletId: string;
-  role: WalletStatus["custody"]["target"]["role"];
-  deviceId: string;
-  label?: string;
-  deviceShare: string;
-  custody: WalletStatus["custody"];
-};
-
-export type WalletCustodyRevokeDeviceResponse = {
-  ok: true;
-  walletId: string;
-  role: WalletStatus["custody"]["target"]["role"];
-  removedDeviceId: string;
-  removedDeviceLabel?: string;
-  custody: WalletStatus["custody"];
-};
-
-export type WalletCustodyDisableResponse = {
-  ok: true;
-  walletId: string;
-  migratedKeystores: Array<{ chain: string; walletId?: string; path: string }>;
-  remainingCustodyWallets: string;
-  signerRestarted?: boolean;
-  signerRestartError?: string;
-  custody: WalletStatus["custody"];
-};
-
 async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(url, options);
   if (!res.ok) {
@@ -1052,194 +1001,6 @@ export async function simulateWalletPolicy(
       body: JSON.stringify(input),
     },
   );
-}
-
-export async function unlockWalletCustody(
-  approvalToken: string,
-  deviceShare?: string,
-  walletId?: string,
-  ttlSeconds?: number,
-): Promise<WalletCustodyUnlockResponse> {
-  const normalizedDeviceShare = deviceShare?.trim() || "";
-  const normalizedWalletId = walletId?.trim() || "";
-  const normalizedTtlSeconds =
-    typeof ttlSeconds === "number" && Number.isFinite(ttlSeconds) && ttlSeconds >= 0
-      ? Math.floor(ttlSeconds)
-      : undefined;
-  return await fetchJson<WalletCustodyUnlockResponse>("/api/wallet/custody/unlock", {
-    method: "POST",
-    cache: "no-store",
-    credentials: "include",
-    headers: {
-      "content-type": "application/json",
-      "x-wallet-approval-token": approvalToken.trim(),
-      ...(normalizedDeviceShare ? { "x-wallet-device-share": normalizedDeviceShare } : {}),
-    },
-    body: JSON.stringify({
-      ...(normalizedDeviceShare
-        ? {
-            deviceShare: normalizedDeviceShare,
-          }
-        : {}),
-      ...(normalizedWalletId ? { walletId: normalizedWalletId } : {}),
-      ...(normalizedTtlSeconds !== undefined ? { ttlSeconds: normalizedTtlSeconds } : {}),
-    }),
-  });
-}
-
-export async function initializeWalletCustody(
-  approvalToken: string,
-  walletId?: string,
-): Promise<WalletCustodyInitResponse> {
-  const normalizedWalletId = walletId?.trim() || "";
-  return await fetchJson<WalletCustodyInitResponse>("/api/wallet/custody/init", {
-    method: "POST",
-    cache: "no-store",
-    credentials: "include",
-    headers: {
-      "content-type": "application/json",
-      "x-wallet-approval-token": approvalToken.trim(),
-    },
-    body: JSON.stringify(normalizedWalletId ? { walletId: normalizedWalletId } : {}),
-  });
-}
-
-export async function recoverWalletCustody(
-  approvalToken: string,
-  recoveryShare: string,
-  walletId?: string,
-): Promise<WalletCustodyRecoverResponse> {
-  const normalizedWalletId = walletId?.trim() || "";
-  return await fetchJson<WalletCustodyRecoverResponse>("/api/wallet/custody/recover", {
-    method: "POST",
-    cache: "no-store",
-    credentials: "include",
-    headers: {
-      "content-type": "application/json",
-      "x-wallet-approval-token": approvalToken.trim(),
-    },
-    body: JSON.stringify({
-      recoveryShare: recoveryShare.trim(),
-      ...(normalizedWalletId ? { walletId: normalizedWalletId } : {}),
-    }),
-  });
-}
-
-export async function refreshWalletCustody(
-  deviceShare?: string,
-  walletId?: string,
-  ttlSeconds?: number,
-): Promise<WalletCustodyUnlockResponse> {
-  const normalizedDeviceShare = deviceShare?.trim() || "";
-  const normalizedWalletId = walletId?.trim() || "";
-  const normalizedTtlSeconds =
-    typeof ttlSeconds === "number" && Number.isFinite(ttlSeconds) && ttlSeconds >= 0
-      ? Math.floor(ttlSeconds)
-      : undefined;
-  return await fetchJson<WalletCustodyUnlockResponse>("/api/wallet/custody/refresh", {
-    method: "POST",
-    cache: "no-store",
-    credentials: "include",
-    headers: {
-      "content-type": "application/json",
-      ...(normalizedDeviceShare ? { "x-wallet-device-share": normalizedDeviceShare } : {}),
-    },
-    body: JSON.stringify({
-      ...(normalizedDeviceShare ? { deviceShare: normalizedDeviceShare } : {}),
-      ...(normalizedWalletId ? { walletId: normalizedWalletId } : {}),
-      ...(normalizedTtlSeconds !== undefined ? { ttlSeconds: normalizedTtlSeconds } : {}),
-    }),
-  });
-}
-
-export async function lockWalletCustody(walletId?: string): Promise<WalletCustodyLockResponse> {
-  const normalizedWalletId = walletId?.trim() || "";
-  return await fetchJson<WalletCustodyLockResponse>("/api/wallet/custody/lock", {
-    method: "POST",
-    cache: "no-store",
-    credentials: "include",
-    headers: {
-      "content-type": "application/json",
-    },
-    body: JSON.stringify(normalizedWalletId ? { walletId: normalizedWalletId } : {}),
-  });
-}
-
-export async function enrollWalletCustodyDevice(params: {
-  approvalToken: string;
-  walletId?: string;
-  deviceShare?: string;
-  label?: string;
-}): Promise<WalletCustodyEnrollDeviceResponse> {
-  const normalizedWalletId = params.walletId?.trim() || "";
-  const normalizedDeviceShare = params.deviceShare?.trim() || "";
-  const normalizedLabel = params.label?.trim() || "";
-  return await fetchJson<WalletCustodyEnrollDeviceResponse>("/api/wallet/custody/enroll-device", {
-    method: "POST",
-    cache: "no-store",
-    credentials: "include",
-    headers: {
-      "content-type": "application/json",
-      "x-wallet-approval-token": params.approvalToken.trim(),
-      ...(normalizedDeviceShare ? { "x-wallet-device-share": normalizedDeviceShare } : {}),
-    },
-    body: JSON.stringify({
-      ...(normalizedWalletId ? { walletId: normalizedWalletId } : {}),
-      ...(normalizedDeviceShare ? { deviceShare: normalizedDeviceShare } : {}),
-      ...(normalizedLabel ? { label: normalizedLabel } : {}),
-    }),
-  });
-}
-
-export async function revokeWalletCustodyDevice(params: {
-  approvalToken: string;
-  walletId?: string;
-  deviceId: string;
-  deviceShare?: string;
-}): Promise<WalletCustodyRevokeDeviceResponse> {
-  const normalizedWalletId = params.walletId?.trim() || "";
-  const normalizedDeviceShare = params.deviceShare?.trim() || "";
-  return await fetchJson<WalletCustodyRevokeDeviceResponse>("/api/wallet/custody/revoke-device", {
-    method: "POST",
-    cache: "no-store",
-    credentials: "include",
-    headers: {
-      "content-type": "application/json",
-      "x-wallet-approval-token": params.approvalToken.trim(),
-      ...(normalizedDeviceShare ? { "x-wallet-device-share": normalizedDeviceShare } : {}),
-    },
-    body: JSON.stringify({
-      deviceId: params.deviceId.trim(),
-      ...(normalizedWalletId ? { walletId: normalizedWalletId } : {}),
-      ...(normalizedDeviceShare ? { deviceShare: normalizedDeviceShare } : {}),
-    }),
-  });
-}
-
-export async function disableWalletCustody(params: {
-  approvalToken: string;
-  walletId?: string;
-  deviceShare?: string;
-  recoveryShare?: string;
-}): Promise<WalletCustodyDisableResponse> {
-  const normalizedWalletId = params.walletId?.trim() || "";
-  const normalizedDeviceShare = params.deviceShare?.trim() || "";
-  const normalizedRecoveryShare = params.recoveryShare?.trim() || "";
-  return await fetchJson<WalletCustodyDisableResponse>("/api/wallet/custody/disable", {
-    method: "POST",
-    cache: "no-store",
-    credentials: "include",
-    headers: {
-      "content-type": "application/json",
-      "x-wallet-approval-token": params.approvalToken.trim(),
-      ...(normalizedDeviceShare ? { "x-wallet-device-share": normalizedDeviceShare } : {}),
-    },
-    body: JSON.stringify({
-      ...(normalizedWalletId ? { walletId: normalizedWalletId } : {}),
-      ...(normalizedDeviceShare ? { deviceShare: normalizedDeviceShare } : {}),
-      ...(normalizedRecoveryShare ? { recoveryShare: normalizedRecoveryShare } : {}),
-    }),
-  });
 }
 
 export async function getWalletSettings(walletId?: string): Promise<WalletSettingsResponse> {
@@ -1478,6 +1239,8 @@ export async function createWalletNamedWallet(input: {
   walletId?: string;
   providerId?: WalletProviderId;
   role?: "agent" | "vault";
+  chain?: "solana";
+  address?: string;
 }): Promise<{ ok: true; wallet: WalletNamedWallet }> {
   return await fetchJson<{ ok: true; wallet: WalletNamedWallet }>("/api/wallet/wallets", {
     method: "POST",
@@ -1691,54 +1454,149 @@ export async function finishWalletPasskeyAssertion(input: {
 }
 
 export async function rotateWalletKeys(
-  approvalToken?: string,
-  providerId?: WalletProviderId,
+  _approvalToken?: string,
+  _providerId?: WalletProviderId,
 ): Promise<{ ok: true; result: unknown }> {
-  const search = new URLSearchParams();
-  if (providerId) {
-    search.set("providerId", providerId);
-  }
-  const path = search.size > 0 ? `/api/wallet/rotate?${search.toString()}` : "/api/wallet/rotate";
-  return await fetchJson<{ ok: true; result: unknown }>(path, {
-    method: "POST",
-    credentials: "include",
-    cache: "no-store",
-    headers:
-      approvalToken && approvalToken.trim()
-        ? { "x-wallet-approval-token": approvalToken.trim() }
-        : undefined,
-  });
+  throw new Error("Wallet key rotation is unavailable through the Gateway UI.");
 }
 
 export async function resetWalletKeys(
-  confirmText: string,
-  approvalToken?: string,
-  providerId?: WalletProviderId,
+  _confirmText: string,
+  _approvalToken?: string,
+  _providerId?: WalletProviderId,
 ): Promise<{ ok: true; result: unknown }> {
-  const search = new URLSearchParams();
-  if (providerId) {
-    search.set("providerId", providerId);
+  throw new Error("Wallet reset is unavailable through the Gateway UI.");
+}
+
+export type WalletStandardBrowserReview = {
+  requestId: string;
+  preparedId: string;
+  signer: string;
+  unsignedTxBase64: string;
+  messageBase64: string;
+  intentDigest: string;
+  expiresAt: string;
+  chain: "solana:mainnet" | "solana:devnet";
+  simulation: { ok: true; unitsConsumed?: number };
+};
+
+export type WalletApproveSendResponse = {
+  ok: true;
+  mode?: "browser" | "signer-webauthn";
+  request: WalletSendApprovalRequest;
+  browserReview?: WalletStandardBrowserReview;
+  signerAuthorization?: WalletSignerReviewAuthorizationBegin;
+  tx?: {
+    ok: boolean;
+    chain: "solana";
+    txHash: string;
+    signer?: string;
+    idempotent?: boolean;
+  };
+};
+
+export type WalletSignerReviewAuthorizationBegin = {
+  challengeId: string;
+  expiresAt: string;
+  binding: {
+    requestId: string;
+    walletId: string;
+    role: "agent" | "mining" | "vault";
+    walletPublicKey?: string;
+    intentType: string;
+    intentDigest: string;
+    semanticIntent: unknown;
+    artifactKind: "solana-transaction" | "domain-separated-message" | "jupiter-trigger-state";
+    artifactDigest: string;
+    transactionDigest?: string;
+    stateDigest?: string;
+    stateSlot?: number;
+    asset: string;
+    amount: string;
+    destination: string;
+    policyOperation: string;
+    requiredPrograms: string[];
+    policyHash: string;
+    nonce: string;
+    issuedAt: string;
+    expiresAt: string;
+  };
+  options: unknown;
+};
+
+function canonicalSignerSemanticIntent(value: unknown): string {
+  if (value === null || typeof value === "string" || typeof value === "boolean") {
+    return JSON.stringify(value);
   }
-  const path = search.size > 0 ? `/api/wallet/reset?${search.toString()}` : "/api/wallet/reset";
-  return await fetchJson<{ ok: true; result: unknown }>(path, {
-    method: "POST",
-    credentials: "include",
-    cache: "no-store",
-    headers: {
-      "content-type": "application/json",
-      ...(approvalToken && approvalToken.trim()
-        ? { "x-wallet-approval-token": approvalToken.trim() }
-        : {}),
-    },
-    body: JSON.stringify({ confirmText }),
-  });
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      throw new Error("signer semantic intent contains a non-finite number");
+    }
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => canonicalSignerSemanticIntent(entry)).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .filter((key) => record[key] !== undefined)
+      .toSorted()
+      .map((key) => `${JSON.stringify(key)}:${canonicalSignerSemanticIntent(record[key])}`)
+      .join(",")}}`;
+  }
+  throw new Error("signer semantic intent is missing or unsupported");
+}
+
+function signerSemanticIntentsMatch(left: unknown, right: unknown): boolean {
+  try {
+    return canonicalSignerSemanticIntent(left) === canonicalSignerSemanticIntent(right);
+  } catch {
+    return false;
+  }
+}
+
+export function signerAuthorizationMatchesWalletApproval(
+  authorization: WalletSignerReviewAuthorizationBegin,
+  request: WalletSendApprovalRequest,
+): boolean {
+  const binding = authorization.binding;
+  const payload = request.payload;
+  const sameOptional = (left: string | undefined, right: string | undefined) =>
+    (left?.trim() || undefined) === (right?.trim() || undefined);
+  const requiredPrograms = payload.signerRequiredPrograms;
+  return (
+    binding.requestId === payload.signerReviewId?.trim() &&
+    binding.walletId === payload.signerWalletId?.trim() &&
+    sameOptional(binding.walletPublicKey, payload.signerWalletPublicKey) &&
+    binding.role === payload.signerRequiredRole &&
+    binding.intentType === payload.signerIntentType?.trim() &&
+    binding.policyHash === payload.signerPolicyHash?.trim() &&
+    binding.intentDigest === payload.signerIntentDigest?.trim() &&
+    signerSemanticIntentsMatch(binding.semanticIntent, payload.signerSemanticIntent) &&
+    binding.artifactKind === payload.signerArtifactKind &&
+    binding.artifactDigest === payload.signerArtifactDigest?.trim() &&
+    sameOptional(binding.transactionDigest, payload.signerTransactionDigest) &&
+    sameOptional(binding.stateDigest, payload.signerStateDigest) &&
+    (binding.stateSlot ?? undefined) === payload.signerStateSlot &&
+    binding.asset === payload.signerAsset?.trim() &&
+    binding.amount === payload.signerAmount?.trim() &&
+    binding.destination === payload.signerDestination?.trim() &&
+    binding.policyOperation === payload.signerPolicyOperation?.trim() &&
+    Boolean(requiredPrograms) &&
+    requiredPrograms?.length === binding.requiredPrograms.length &&
+    requiredPrograms.every((program, index) => program === binding.requiredPrograms[index]) &&
+    binding.nonce === payload.signerNonce?.trim() &&
+    binding.issuedAt === payload.signerIssuedAt?.trim() &&
+    binding.expiresAt === payload.signerReviewExpiresAt?.trim()
+  );
 }
 
 export async function approveWalletSend(
   requestId: string,
   approvalToken?: string,
-): Promise<{ ok: true; request: unknown; tx?: unknown }> {
-  return await fetchJson<{ ok: true; request: unknown; tx?: unknown }>(
+): Promise<WalletApproveSendResponse> {
+  return await fetchJson<WalletApproveSendResponse>(
     `/api/wallet/approvals/${encodeURIComponent(requestId)}/approve`,
     {
       method: "POST",
@@ -1751,6 +1609,50 @@ export async function approveWalletSend(
           : {}),
       },
       body: "{}",
+    },
+  );
+}
+
+export async function finishWalletSignerReviewApproval(input: {
+  requestId: string;
+  challengeId: string;
+  credential: unknown;
+}): Promise<WalletApproveSendResponse> {
+  return await fetchJson<WalletApproveSendResponse>(
+    `/api/wallet/approvals/${encodeURIComponent(input.requestId)}/approve`,
+    {
+      method: "POST",
+      credentials: "include",
+      cache: "no-store",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        signerAuthorization: {
+          challengeId: input.challengeId,
+          credential: input.credential,
+        },
+      }),
+    },
+  );
+}
+
+export async function executeWalletStandardSend(input: {
+  requestId: string;
+  preparedId: string;
+  intentDigest: string;
+  signedTxBase64: string;
+}): Promise<WalletApproveSendResponse> {
+  return await fetchJson<WalletApproveSendResponse>(
+    `/api/wallet/approvals/${encodeURIComponent(input.requestId)}/execute`,
+    {
+      method: "POST",
+      credentials: "include",
+      cache: "no-store",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        preparedId: input.preparedId,
+        intentDigest: input.intentDigest,
+        signedTxBase64: input.signedTxBase64,
+      }),
     },
   );
 }

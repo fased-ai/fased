@@ -688,6 +688,10 @@ const FederationMarketplaceOrderSchema = z
     sellerSyncError: z.string().optional(),
     sellerSyncedAt: z.string().optional(),
     sellerAcceptedAt: z.string().optional(),
+    peerNodeId: z.string().optional(),
+    peerRemoteOrderId: z.string().optional(),
+    peerRequestDigest: z.string().optional(),
+    peerDeliveryDigest: z.string().optional(),
     serviceKind: z.string().optional(),
     title: z.string().optional(),
     pricing: FederationOfferPricingSchema,
@@ -737,6 +741,7 @@ const WalletSchema = z
             z.literal("local-socket-signer"),
             z.literal("alchemy"),
             z.literal("turnkey"),
+            z.literal("wallet-standard"),
             z.literal("privy"),
           ])
           .optional(),

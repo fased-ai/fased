@@ -166,4 +166,56 @@ describe("canonical model catalog snapshot", () => {
       ]),
     );
   });
+
+  it("fails closed when an explicit allowlist has no available models", async () => {
+    const available = {
+      provider: "openai",
+      id: "gpt-available",
+      name: "GPT Available",
+      metadata: metadata({
+        route: "openai",
+        providerId: "openai",
+        providerLabel: "OpenAI",
+        model: "gpt-available",
+        credentialId: "openai-api-key",
+        credentialLabel: "OpenAI API key",
+      }),
+    };
+    resolveAuthenticatedModelCatalog.mockResolvedValue({
+      usableProviders: new Set(["openai"]),
+      usableCatalog: [available],
+      allowedCatalog: [],
+      allowedKeys: new Set(),
+      allowAny: false,
+    });
+
+    const snapshot = await resolveCanonicalModelCatalogSnapshot({
+      cfg: {
+        agents: {
+          defaults: {
+            model: { primary: "openai/not-in-catalog" },
+            models: { "openai/not-in-catalog": {} },
+          },
+        },
+      },
+      store: { version: 1, profiles: {} },
+      catalog: [],
+      defaultProvider: "openai",
+      agentId: "main",
+    });
+
+    expect(snapshot.models).toEqual([
+      expect.objectContaining({
+        provider: "openai",
+        id: "gpt-available",
+        available: true,
+        runnable: false,
+      }),
+    ]);
+    expect(snapshot.assignments).toContainEqual({
+      role: "primary",
+      ref: "openai/not-in-catalog",
+      available: false,
+    });
+  });
 });

@@ -138,28 +138,23 @@ First SSH into the fresh VPS using the login your VPS provider gives you, often
 ssh root@YOUR_PUBLIC_VPS_IP
 ```
 
-Then run this on the VPS:
+Then follow the [pre-execution verified VPS bootstrap](https://docs.fased.ai/install/vps#3-install-fased-and-connect-through-tailscale).
+It downloads the exact tagged `install.sh` release asset and its attestation
+bundle, verifies repository/tag/workflow/GitHub-runner provenance with
+`gh attestation verify`, and only then runs the script as root. Do not pipe a
+moving or unverified script directly into a root shell.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
-```
-
-The Fased installer bootstraps the repository itself. A fresh VPS does not need
-`git clone` first; the installer installs missing system tools, Node, and Git
-when the OS package manager supports auto-install. Hosted installs may use the
-published runtime package internally and skip the slow source build.
+The Fased installer bootstraps the attested hosted runtime itself. A fresh VPS
+does not need `git clone`; the installer installs the supported system tools and
+Node when the OS package manager supports auto-install, then activates the
+exact tagged runtime instead of building an app-owned source checkout.
 If a minimal VPS image does not have `curl`, use the OS tab in the install docs
 to install only the downloader first, then rerun the same hosted command.
 
-Current installers try a clean fast-forward update from Git before building. If
-you already started from an older installer and it stopped before creating the
-`app` runtime, update the bootstrap checkout once and rerun:
-
-```bash
-cd ~/fased
-git pull --ff-only origin main
-./install.sh --hosting
-```
+If an earlier install stopped before creating the `app` runtime, repeat the
+same verified tagged bootstrap from the provider root console. Use the
+documented `--repair-hosting` path for an existing installation; do not repair
+Hosting from a moving `main` checkout.
 
 If you SSH into a fresh VPS as `root`, the installer creates a non-root `app`
 user, copies/clones the repo to `/home/app/fased`, and continues there. The
@@ -325,11 +320,11 @@ model servers and model weights are not bundled. See
 [Core And Optional Components](./docs/install/components.md).
 
 Fresh dashboard, Gateway, and Fased Network setup do not require the native
-wallet signer. If you later choose the local signer wallet path, Fased builds
-`fased-signerd` locally when Go is available. Otherwise provide an explicit
-signer binary with `FASED_WALLET_LOCAL_SIGNER_BIN`, or an explicit signer asset
-source with `FASED_LOCAL_SIGNER_VERSION` / `FASED_LOCAL_SIGNER_BASE_URL`.
-Generated signer binaries are never committed to Git.
+wallet signer. When you create the first signer-owned wallet, Fased downloads
+the version-matched `fased-signerd` asset and verifies both its SHA-256 checksum
+and GitHub release attestation. Normal users do not need Go. A source build is a
+developer-only opt-in with `FASED_BUILD_NATIVE_SIGNER_FROM_SOURCE=1`; Fased does
+not silently replace a failed release verification with a local build.
 
 After install, open the dashboard, configure **Agent > Models**, send a first
 browser chat, then add channels, skills, services, wallets, mining, and tasks
@@ -468,11 +463,9 @@ your own machine:
 curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
 ```
 
-Use the VPS Hosting profile only on the server that will run Fased all the time:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
-```
+Use the VPS Hosting profile only on the server that will run Fased all the time,
+and use the [pre-execution verified tagged bootstrap](https://docs.fased.ai/install/vps#3-install-fased-and-connect-through-tailscale)
+before executing root code.
 
 The commands below are for contributors working from the source checkout. Do
 not use plain `npm install` to install Fased from source.
@@ -521,8 +514,10 @@ The root intentionally contains both product code and build/deploy control files
 - `test/`: test fixtures and integration helpers
 - `token/`: SAT/token technical materials
 - `Dockerfile`, `docker-compose.yml`, `docker-setup.sh`, and
-  `setup-podman.sh`: primary container entrypoints
-- `deploy/`: secondary container, Fly, Render, and hosting configuration files
+  `setup-podman.sh`: Local Docker entrypoints plus an experimental Gateway-only
+  Podman helper
+- `deploy/`: sandbox/container assets and archived Fly/Render reference
+  manifests; VPS Hosting uses `install.sh --hosting`, not those manifests
 
 Root config files should stay at repository root unless the owning toolchain,
 docs publisher, installer, and CI path are updated together.

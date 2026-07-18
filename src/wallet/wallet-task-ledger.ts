@@ -49,8 +49,11 @@ function approvalStatusToTaskStatus(request: WalletSendApprovalRequest): TaskSta
   switch (request.status) {
     case "pending":
       return "blocked";
+    case "executing":
     case "approved":
       return "running";
+    case "unknown":
+      return "blocked";
     case "executed":
       return "succeeded";
     case "failed":
@@ -72,8 +75,15 @@ function approvalStatusToSummary(request: WalletSendApprovalRequest): {
   switch (request.status) {
     case "pending":
       return { progressSummary: "Waiting for wallet approval." };
+    case "executing":
+      return { progressSummary: "Wallet approval claimed; execution is in progress." };
     case "approved":
       return { progressSummary: "Wallet approval accepted; broadcast is in progress." };
+    case "unknown":
+      return {
+        progressSummary:
+          request.reason ?? "Wallet execution is unknown; reconcile it before any retry.",
+      };
     case "executed":
       return {
         terminalSummary: request.result?.txHash
@@ -95,6 +105,9 @@ function approvalStatusToSummary(request: WalletSendApprovalRequest): {
 }
 
 function policyStepStatus(request: WalletSendApprovalRequest): TaskRegistryStepStatus {
+  if (request.payload.actionKind === "signer_review" && request.payload.signerPolicyHash) {
+    return "succeeded";
+  }
   if (!request.simulation) {
     return "queued";
   }
@@ -105,7 +118,9 @@ function approvalStepStatus(request: WalletSendApprovalRequest): TaskRegistrySte
   switch (request.status) {
     case "pending":
       return "blocked";
+    case "executing":
     case "approved":
+    case "unknown":
     case "executed":
       return "succeeded";
     case "rejected":
@@ -123,8 +138,11 @@ function broadcastStepStatus(request: WalletSendApprovalRequest): TaskRegistrySt
   switch (request.status) {
     case "pending":
       return "queued";
+    case "executing":
     case "approved":
       return "running";
+    case "unknown":
+      return "blocked";
     case "executed":
       return "succeeded";
     case "failed":
@@ -142,7 +160,10 @@ function buildApprovalSteps(request: WalletSendApprovalRequest): TaskRegistrySte
   return [
     {
       id: "policy",
-      label: "Policy simulation",
+      label:
+        request.payload.actionKind === "signer_review"
+          ? "Signer policy binding"
+          : "Policy simulation",
       status: policyStepStatus(request),
       updatedAt: request.simulation ? parseTime(request.createdAt) : undefined,
       error: request.simulation?.checks.find((check) => check.status === "fail")?.detail,
@@ -157,7 +178,10 @@ function buildApprovalSteps(request: WalletSendApprovalRequest): TaskRegistrySte
     },
     {
       id: "broadcast",
-      label: "Broadcast transaction",
+      label:
+        request.payload.signerArtifactKind === "domain-separated-message"
+          ? "Complete reviewed signature"
+          : "Broadcast transaction",
       status: broadcastStepStatus(request),
       updatedAt:
         request.status === "executed" || request.status === "failed" ? decisionAt : undefined,
@@ -167,6 +191,9 @@ function buildApprovalSteps(request: WalletSendApprovalRequest): TaskRegistrySte
 }
 
 function formatApprovalTaskTitle(request: WalletSendApprovalRequest): string {
+  if (request.payload.actionKind === "signer_review" && request.payload.memo?.trim()) {
+    return `Wallet approval: ${request.payload.memo.trim()}`;
+  }
   const diff = request.approvalDiff ?? request.simulation?.diff;
   const amount =
     diff?.amountDisplay ||

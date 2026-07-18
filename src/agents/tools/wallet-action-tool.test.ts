@@ -13,6 +13,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FasedAgentConfig } from "../../config/config.js";
 import { SOLANA_NATIVE_MINT } from "../../wallet/solana-swap.js";
 import { resolveWalletRecurringTransferPolicy } from "../../wallet/wallet-policy.js";
+import type {
+  WalletProviderJupiterIntentV2,
+  WalletProviderSignerTransactionEnvelopeV2,
+} from "../../wallet/wallet-provider-adapter.js";
 import { setDefaultWallet, upsertNamedWallet } from "../../wallet/wallet-provider-registry.js";
 import { listWalletSendApprovalRequests } from "../../wallet/wallet-send-approvals.js";
 import { createWalletActionTool } from "./wallet-action-tool.js";
@@ -22,6 +26,14 @@ const mocks = vi.hoisted(() => ({
     getAddresses: vi.fn(),
     signTx: vi.fn(),
     sendTx: vi.fn(),
+    prepareJupiterReview: vi.fn(),
+    prepareSignerReview: vi.fn(),
+    executeJupiterReview: vi.fn(),
+    executeSignerIntent: vi.fn(),
+    listJupiterTriggerOrders: vi.fn(),
+    getSignerReview: vi.fn(),
+    getSignerOperation: vi.fn(),
+    reconcileSignerOperation: vi.fn(),
   },
   createWalletProviderAdapter: vi.fn(),
 }));
@@ -36,6 +48,18 @@ const TOKEN_A_MINT = Keypair.generate().publicKey.toBase58();
 const ROUTE_PROGRAM_ID = Keypair.generate().publicKey.toBase58();
 const AGENT_PUBLIC_KEY = Keypair.generate().publicKey;
 const AGENT_ADDRESS = AGENT_PUBLIC_KEY.toBase58();
+const TRIGGER_VAULT_PUBLIC_KEY = Keypair.generate().publicKey;
+const TRIGGER_VAULT_ADDRESS = TRIGGER_VAULT_PUBLIC_KEY.toBase58();
+const MEMO_PROGRAM_ID = new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
+const preparedSignerReviews = new Map<
+  string,
+  {
+    walletId: string;
+    mode: "autonomous" | "reviewed";
+    intent: WalletProviderJupiterIntentV2;
+    transaction?: WalletProviderSignerTransactionEnvelopeV2;
+  }
+>();
 
 function serializedTestSwapTx(routeProgramId?: string): string {
   const message = new TransactionMessage({
@@ -61,6 +85,54 @@ function serializedTestSwapTx(routeProgramId?: string): string {
   return Buffer.from(new VersionedTransaction(message).serialize()).toString("base64");
 }
 
+function serializedTriggerAuthTx(): string {
+  const message = new TransactionMessage({
+    payerKey: AGENT_PUBLIC_KEY,
+    recentBlockhash: "11111111111111111111111111111111",
+    instructions: [
+      new TransactionInstruction({
+        keys: [{ pubkey: AGENT_PUBLIC_KEY, isSigner: true, isWritable: false }],
+        programId: MEMO_PROGRAM_ID,
+        data: Buffer.from(
+          "Sign this message to authenticate with Jupiter Trigger Order API: test",
+          "utf8",
+        ),
+      }),
+    ],
+  }).compileToV0Message();
+  return Buffer.from(new VersionedTransaction(message).serialize()).toString("base64");
+}
+
+function serializedTriggerDepositTx(amount: string): string {
+  const message = new TransactionMessage({
+    payerKey: AGENT_PUBLIC_KEY,
+    recentBlockhash: "11111111111111111111111111111111",
+    instructions: [
+      SystemProgram.transfer({
+        fromPubkey: AGENT_PUBLIC_KEY,
+        toPubkey: TRIGGER_VAULT_PUBLIC_KEY,
+        lamports: BigInt(amount),
+      }),
+    ],
+  }).compileToV0Message();
+  return Buffer.from(new VersionedTransaction(message).serialize()).toString("base64");
+}
+
+function serializedTriggerCancelTx(amount: string): string {
+  const message = new TransactionMessage({
+    payerKey: AGENT_PUBLIC_KEY,
+    recentBlockhash: "11111111111111111111111111111111",
+    instructions: [
+      SystemProgram.transfer({
+        fromPubkey: TRIGGER_VAULT_PUBLIC_KEY,
+        toPubkey: AGENT_PUBLIC_KEY,
+        lamports: BigInt(amount),
+      }),
+    ],
+  }).compileToV0Message();
+  return Buffer.from(new VersionedTransaction(message).serialize()).toString("base64");
+}
+
 function walletActionConfig(extra?: Partial<FasedAgentConfig>): FasedAgentConfig {
   return {
     agents: {
@@ -74,6 +146,9 @@ function walletActionConfig(extra?: Partial<FasedAgentConfig>): FasedAgentConfig
         policy: {
           directSigning: true,
           skillsEnabled: true,
+          solana: {
+            allowPrograms: [SystemProgram.programId.toBase58()],
+          },
         },
         toolAccess: {
           mode: "owner-only",
@@ -133,15 +208,27 @@ async function writeClawHubSkillOrigin(params: {
   );
 }
 
-function stubJupiterOrder(opts?: { routeProgramId?: string }) {
+function stubJupiterOrder(opts?: {
+  routeProgramId?: string;
+  failOnceWhen?: (url: string, method: string) => boolean;
+}) {
+  let failedRequestedCall = false;
   vi.stubEnv("FASED_WALLET_SOLANA_RPC_URL", "https://rpc.example.test");
   vi.stubEnv("FASED_JUPITER_API_KEY", "test-jupiter-key");
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input, init) => {
       const url = String(input);
+      const method = String(init?.method ?? "GET").toUpperCase();
+      if (!failedRequestedCall && opts?.failOnceWhen?.(url, method)) {
+        failedRequestedCall = true;
+        throw new Error("simulated response timeout");
+      }
       if (init && String(init.method ?? "GET").toUpperCase() === "POST") {
-        const body = JSON.parse(String(init.body ?? "{}")) as { method?: string };
+        const body = JSON.parse(String(init.body ?? "{}")) as {
+          method?: string;
+          params?: unknown[];
+        };
         if (body.method === "getBalance") {
           return {
             ok: true,
@@ -192,11 +279,35 @@ function stubJupiterOrder(opts?: { routeProgramId?: string }) {
           };
         }
         if (body.method === "getMultipleAccounts") {
+          const keys = Array.isArray(body.params?.[0])
+            ? body.params[0].filter((value): value is string => typeof value === "string")
+            : [];
+          const options =
+            body.params?.[1] && typeof body.params[1] === "object" && !Array.isArray(body.params[1])
+              ? (body.params[1] as Record<string, unknown>)
+              : {};
+          const jsonParsed = options.encoding === "jsonParsed";
           return {
             ok: true,
             status: 200,
             statusText: "OK",
-            json: async () => ({ result: { value: [] } }),
+            json: async () => ({
+              result: {
+                value: keys.map(() =>
+                  jsonParsed
+                    ? {
+                        owner: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                        executable: false,
+                        data: { parsed: { info: { decimals: 6, extensions: [] } } },
+                      }
+                    : {
+                        owner: SystemProgram.programId.toBase58(),
+                        executable: false,
+                        data: ["", "base64"],
+                      },
+                ),
+              },
+            }),
           };
         }
       }
@@ -232,7 +343,7 @@ function stubJupiterOrder(opts?: { routeProgramId?: string }) {
           statusText: "OK",
           json: async () => ({
             type: "transaction",
-            transaction: serializedTestSwapTx(),
+            transaction: serializedTriggerAuthTx(),
           }),
         };
       }
@@ -251,7 +362,7 @@ function stubJupiterOrder(opts?: { routeProgramId?: string }) {
           statusText: "OK",
           json: async () => ({
             userPubkey: AGENT_ADDRESS,
-            vaultPubkey: Keypair.generate().publicKey.toBase58(),
+            vaultPubkey: TRIGGER_VAULT_ADDRESS,
             privyVaultId: "vault-1",
           }),
         };
@@ -263,12 +374,13 @@ function stubJupiterOrder(opts?: { routeProgramId?: string }) {
           status: 200,
           statusText: "OK",
           json: async () => ({
-            transaction: serializedTestSwapTx(),
+            transaction: serializedTriggerDepositTx(body.amount ?? "100000000"),
             requestId: "deposit-req-1",
-            receiverAddress: Keypair.generate().publicKey.toBase58(),
+            receiverAddress: TRIGGER_VAULT_ADDRESS,
             mint: SOLANA_NATIVE_MINT,
             amount: body.amount ?? "100000000",
             tokenDecimals: 9,
+            inputTokenAccount: AGENT_ADDRESS,
           }),
         };
       }
@@ -287,7 +399,7 @@ function stubJupiterOrder(opts?: { routeProgramId?: string }) {
           statusText: "OK",
           json: async () => ({
             id: "order-1",
-            transaction: serializedTestSwapTx(),
+            transaction: serializedTriggerCancelTx("100000000"),
             requestId: "cancel-req-1",
           }),
         };
@@ -298,7 +410,16 @@ function stubJupiterOrder(opts?: { routeProgramId?: string }) {
           status: 200,
           statusText: "OK",
           json: async () => ({
-            orders: [{ id: "order-1", orderState: "open", inputMint: SOLANA_NATIVE_MINT }],
+            orders: [
+              {
+                id: "order-1",
+                orderState: "open",
+                userPubkey: AGENT_ADDRESS,
+                privyWalletPubkey: TRIGGER_VAULT_ADDRESS,
+                inputMint: SOLANA_NATIVE_MINT,
+                remainingInputAmount: "100000000",
+              },
+            ],
             pagination: { total: 1, limit: 20, offset: 0 },
           }),
         };
@@ -311,6 +432,7 @@ function stubJupiterOrder(opts?: { routeProgramId?: string }) {
           json: async () => ({ id: "order-1", txSignature: "deposit-tx-1" }),
         };
       }
+      const requestedAmount = new URL(url).searchParams.get("amount") ?? "100000000";
       return {
         ok: true,
         status: 200,
@@ -318,7 +440,7 @@ function stubJupiterOrder(opts?: { routeProgramId?: string }) {
         json: async () => ({
           requestId: "jup-req-1",
           transaction: serializedTestSwapTx(opts?.routeProgramId),
-          inAmount: "100000000",
+          inAmount: requestedAmount,
           outAmount: "25000000",
           otherAmountThreshold: "24750000",
           slippageBps: 50,
@@ -328,6 +450,17 @@ function stubJupiterOrder(opts?: { routeProgramId?: string }) {
       };
     }),
   );
+}
+
+function fetchCallCount(predicate: (url: string, method: string) => boolean): number {
+  return vi
+    .mocked(fetch)
+    .mock.calls.filter(([input, init]) =>
+      predicate(
+        typeof input === "string" ? input : input instanceof URL ? input.href : input.url,
+        String(init?.method ?? "GET").toUpperCase(),
+      ),
+    ).length;
 }
 
 describe("wallet-action-tool", () => {
@@ -346,15 +479,225 @@ describe("wallet-action-tool", () => {
       chain: "solana",
       status: "submitted",
     });
+    mocks.provider.prepareJupiterReview.mockImplementation(
+      async (request: {
+        walletId: string;
+        requestId: string;
+        mode: "autonomous" | "reviewed";
+        intent: WalletProviderJupiterIntentV2;
+        transaction: WalletProviderSignerTransactionEnvelopeV2;
+      }) => {
+        preparedSignerReviews.set(request.requestId, request);
+        return {
+          requestId: request.requestId,
+          walletId: request.walletId,
+          walletPublicKey: AGENT_ADDRESS,
+          intentType: request.intent.type,
+          intentDigest: `sha256:${"a".repeat(64)}`,
+          policyHash: `sha256:${"b".repeat(64)}`,
+          mode: request.mode,
+          nonce: "c".repeat(64),
+          semanticIntent: request.intent,
+          artifactKind: "solana-transaction" as const,
+          artifactDigest: `sha256:${"d".repeat(64)}`,
+          transaction: request.transaction,
+          asset:
+            request.intent.jupiter.inputMint === SOLANA_NATIVE_MINT
+              ? "solana:native"
+              : `solana:spl:${request.intent.jupiter.inputMint}`,
+          amount:
+            request.intent.jupiter.maxInputAmount ?? request.intent.jupiter.inputAmount ?? "0",
+          destination: request.intent.jupiter.owner,
+          policyOperation: request.intent.type,
+          requiredPrograms: [...request.transaction.programs].toSorted(),
+          requiredRole: "agent" as const,
+          issuedAt: "2026-07-16T00:00:00.000Z",
+          state: "prepared" as const,
+          preparedAt: "2026-07-16T00:00:00.000Z",
+          expiresAt: "2099-07-16T00:05:00.000Z",
+          updatedAt: "2026-07-16T00:00:00.000Z",
+          transactionDigest: `sha256:${"d".repeat(64)}`,
+        };
+      },
+    );
+    mocks.provider.prepareSignerReview.mockImplementation(
+      async (request: {
+        walletId: string;
+        requestId: string;
+        mode: "autonomous" | "reviewed";
+        intent: WalletProviderJupiterIntentV2;
+        transaction?: WalletProviderSignerTransactionEnvelopeV2;
+      }) => {
+        preparedSignerReviews.set(request.requestId, request);
+        return {
+          requestId: request.requestId,
+          walletId: request.walletId,
+          walletPublicKey: AGENT_ADDRESS,
+          intentType: request.intent.type,
+          intentDigest: `sha256:${"a".repeat(64)}`,
+          policyHash: `sha256:${"b".repeat(64)}`,
+          mode: request.mode,
+          nonce: "c".repeat(64),
+          semanticIntent: request.intent,
+          artifactKind: "jupiter-trigger-state" as const,
+          artifactDigest: `sha256:${"d".repeat(64)}`,
+          stateDigest: `sha256:${"e".repeat(64)}`,
+          asset:
+            request.intent.jupiter.inputMint === SOLANA_NATIVE_MINT
+              ? "solana:native"
+              : `solana:spl:${request.intent.jupiter.inputMint}`,
+          amount:
+            request.intent.jupiter.maxInputAmount ??
+            request.intent.jupiter.minimumOutputAmount ??
+            "0",
+          destination: request.intent.jupiter.owner,
+          policyOperation: request.intent.type,
+          requiredPrograms: [...request.intent.jupiter.programs].toSorted(),
+          requiredRole: "agent" as const,
+          issuedAt: "2026-07-16T00:00:00.000Z",
+          state: "prepared" as const,
+          preparedAt: "2026-07-16T00:00:00.000Z",
+          expiresAt: "2099-07-16T00:05:00.000Z",
+          updatedAt: "2026-07-16T00:00:00.000Z",
+        };
+      },
+    );
+    mocks.provider.executeJupiterReview.mockImplementation(
+      async (request: { walletId: string; requestId: string }) => {
+        const prepared = preparedSignerReviews.get(request.requestId);
+        if (!prepared || prepared.walletId !== request.walletId) {
+          throw new Error("missing exact prepared signer review");
+        }
+        if (!prepared.transaction) {
+          throw new Error("swap review is missing its exact transaction");
+        }
+        const signature = "swap-tx-1";
+        return {
+          review: {
+            requestId: request.requestId,
+            walletId: request.walletId,
+            walletPublicKey: AGENT_ADDRESS,
+            intentType: prepared.intent.type,
+            intentDigest: `sha256:${"a".repeat(64)}`,
+            policyHash: `sha256:${"b".repeat(64)}`,
+            mode: prepared.mode,
+            nonce: "c".repeat(64),
+            semanticIntent: prepared.intent,
+            artifactKind: "solana-transaction" as const,
+            artifactDigest: `sha256:${"d".repeat(64)}`,
+            transaction: prepared.transaction,
+            asset:
+              prepared.intent.jupiter.inputMint === SOLANA_NATIVE_MINT
+                ? "solana:native"
+                : `solana:spl:${prepared.intent.jupiter.inputMint}`,
+            amount:
+              prepared.intent.jupiter.maxInputAmount ?? prepared.intent.jupiter.inputAmount ?? "0",
+            destination: prepared.intent.jupiter.owner,
+            policyOperation: prepared.intent.type,
+            requiredPrograms: [...prepared.transaction.programs].toSorted(),
+            requiredRole: "agent" as const,
+            issuedAt: "2026-07-16T00:00:00.000Z",
+            state: "signed" as const,
+            preparedAt: "2026-07-16T00:00:00.000Z",
+            expiresAt: "2099-07-16T00:05:00.000Z",
+            updatedAt: "2026-07-16T00:00:01.000Z",
+            transactionDigest: `sha256:${"d".repeat(64)}`,
+            signature,
+          },
+          operation: {
+            requestId: request.requestId,
+            walletId: request.walletId,
+            intentType: prepared.intent.type,
+            intentDigest: `sha256:${"a".repeat(64)}`,
+            transactionDigest: `sha256:${"d".repeat(64)}`,
+            policyHash: `sha256:${"b".repeat(64)}`,
+            asset: prepared.intent.jupiter.inputMint ?? SOLANA_NATIVE_MINT,
+            amount: prepared.intent.jupiter.inputAmount ?? "0",
+            state: "confirmed" as const,
+            signature,
+          },
+          signer: AGENT_ADDRESS,
+        };
+      },
+    );
+    mocks.provider.executeSignerIntent.mockImplementation(
+      async (request: {
+        walletId: string;
+        requestId: string;
+        intent: WalletProviderJupiterIntentV2;
+      }) => {
+        const action = request.intent.type.endsWith(".cancel") ? "cancel" : "create";
+        return {
+          requestId: request.requestId,
+          walletId: request.walletId,
+          intentType: request.intent.type,
+          intentDigest: `sha256:${"a".repeat(64)}`,
+          policyHash: `sha256:${"b".repeat(64)}`,
+          asset: request.intent.jupiter.inputMint ?? "solana:native",
+          amount:
+            request.intent.jupiter.maxInputAmount ??
+            request.intent.jupiter.minimumOutputAmount ??
+            "0",
+          state: "confirmed" as const,
+          signature: action === "create" ? "deposit-tx-1" : "cancel-tx-1",
+          externalResult: {
+            provider: "jupiter-trigger-v2" as const,
+            action,
+            orderId: "order-1",
+            orderState: action === "create" ? ("open" as const) : ("cancelled" as const),
+          },
+        };
+      },
+    );
+    mocks.provider.listJupiterTriggerOrders.mockResolvedValue({
+      orders: [
+        {
+          orderId: "order-1",
+          orderState: "open",
+          orderType: "single",
+          inputMint: SOLANA_NATIVE_MINT,
+          initialInputAmount: "100000000",
+          remainingInputAmount: "100000000",
+          outputMint: USDC_MINT,
+          triggerMint: SOLANA_NATIVE_MINT,
+          condition: "below",
+          targetPriceUsd: "120",
+          slippageBps: 100,
+          expiresAt: "2099-07-20T00:00:00.000Z",
+          cancel: {
+            expectedOrderState: "open",
+            refundMint: SOLANA_NATIVE_MINT,
+            refundAmount: "100000000",
+            destinationTokenAccount: AGENT_ADDRESS,
+            program: SystemProgram.programId.toBase58(),
+          },
+        },
+      ],
+    });
+    mocks.provider.getSignerReview.mockRejectedValue(new Error("signer review not found"));
+    mocks.provider.getSignerOperation.mockRejectedValue(new Error("signer operation not found"));
+    mocks.provider.reconcileSignerOperation.mockRejectedValue(
+      new Error("signer operation is not yet reconcilable"),
+    );
     mocks.createWalletProviderAdapter.mockReturnValue(mocks.provider);
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
     mocks.provider.getAddresses.mockReset();
     mocks.provider.signTx.mockReset();
     mocks.provider.sendTx.mockReset();
+    mocks.provider.prepareJupiterReview.mockReset();
+    mocks.provider.prepareSignerReview.mockReset();
+    mocks.provider.executeJupiterReview.mockReset();
+    mocks.provider.executeSignerIntent.mockReset();
+    mocks.provider.listJupiterTriggerOrders.mockReset();
+    mocks.provider.getSignerReview.mockReset();
+    mocks.provider.getSignerOperation.mockReset();
+    mocks.provider.reconcileSignerOperation.mockReset();
+    preparedSignerReviews.clear();
     mocks.createWalletProviderAdapter.mockReset();
   });
 
@@ -674,6 +1017,8 @@ describe("wallet-action-tool", () => {
       expect(details.approvalRequired).toBe(true);
       expect(details.code).toBe("wallet_swap_approval_required");
       expect(mocks.provider.sendTx).not.toHaveBeenCalled();
+      expect(mocks.provider.prepareJupiterReview).toHaveBeenCalledTimes(1);
+      expect(mocks.provider.executeJupiterReview).not.toHaveBeenCalled();
 
       const requests = listWalletSendApprovalRequests({
         env: process.env,
@@ -683,6 +1028,27 @@ describe("wallet-action-tool", () => {
       expect(requests[0]?.payload.actionKind).toBe("solana_swap");
       expect(requests[0]?.payload.walletHandle).toBe("@wallet:agent");
       expect(requests[0]?.payload.outputMint).toBe(USDC_MINT);
+      expect(requests[0]?.expiresAt).toBe("2099-07-16T00:05:00.000Z");
+      expect(requests[0]?.payload).toMatchObject({
+        providerId: "local-socket-signer",
+        signerWalletId: "agent",
+        signerWalletPublicKey: AGENT_ADDRESS,
+        signerIntentType: "solana.jupiter.swap",
+        signerPolicyHash: `sha256:${"b".repeat(64)}`,
+        signerIntentDigest: `sha256:${"a".repeat(64)}`,
+        signerArtifactKind: "solana-transaction",
+        signerArtifactDigest: `sha256:${"d".repeat(64)}`,
+        signerTransactionDigest: `sha256:${"d".repeat(64)}`,
+        signerAsset: "solana:native",
+        signerAmount: "100000000",
+        signerDestination: AGENT_ADDRESS,
+        signerPolicyOperation: "solana.jupiter.swap",
+        signerRequiredPrograms: [SystemProgram.programId.toBase58()],
+        signerRequiredRole: "agent",
+        signerNonce: "c".repeat(64),
+        signerIssuedAt: "2026-07-16T00:00:00.000Z",
+        signerReviewExpiresAt: "2099-07-16T00:05:00.000Z",
+      });
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true });
     }
@@ -711,7 +1077,123 @@ describe("wallet-action-tool", () => {
       const details = result.details as Record<string, unknown>;
       expect(details.ok).toBe(true);
       expect(details.executed).toBe(true);
-      expect(mocks.provider.sendTx).toHaveBeenCalled();
+      expect(mocks.provider.prepareJupiterReview).toHaveBeenCalledWith(
+        expect.objectContaining({
+          walletId: "agent",
+          mode: "autonomous",
+          transaction: expect.objectContaining({ submission: "rpc" }),
+        }),
+      );
+      expect(mocks.provider.executeJupiterReview).toHaveBeenCalledWith({
+        walletId: "agent",
+        requestId: expect.any(String),
+      });
+      expect(mocks.provider.sendTx).not.toHaveBeenCalled();
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("restarts an ambiguous autonomous swap without fetching or signing a replacement", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-action-swap-retry-"));
+    vi.stubEnv("FASED_STATE_DIR", tempDir);
+    stubJupiterOrder();
+    mocks.provider.executeJupiterReview.mockRejectedValueOnce(
+      new Error("simulated signer response timeout"),
+    );
+    const args = {
+      action: "swap",
+      walletHandle: "@wallet:agent",
+      outputMint: USDC_MINT,
+      amount: "100000000",
+    };
+    try {
+      setupWallets();
+      const firstTool = createWalletActionTool({
+        config: walletActionConfig(),
+        agentSessionKey: "agent:owner:main",
+      });
+      if (!firstTool) {
+        throw new Error("missing wallet_action tool");
+      }
+      await expect(firstTool.execute("stable-swap-call", args)).rejects.toThrow(/ambiguous/);
+
+      const restartedTool = createWalletActionTool({
+        config: walletActionConfig(),
+        agentSessionKey: "agent:owner:main",
+      });
+      if (!restartedTool) {
+        throw new Error("missing restarted wallet_action tool");
+      }
+      await expect(restartedTool.execute("stable-swap-call", args)).rejects.toThrow(/unresolved/);
+
+      expect(mocks.provider.prepareJupiterReview).toHaveBeenCalledTimes(1);
+      expect(mocks.provider.executeJupiterReview).toHaveBeenCalledTimes(1);
+      expect(
+        fetchCallCount(
+          (url, method) =>
+            method === "GET" && url.includes("/order?") && !url.includes("/trigger/"),
+        ),
+      ).toBe(1);
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("reconciles the exact signer operation for an ambiguous autonomous swap", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-action-swap-reconcile-"));
+    vi.stubEnv("FASED_STATE_DIR", tempDir);
+    stubJupiterOrder();
+    mocks.provider.executeJupiterReview.mockRejectedValueOnce(
+      new Error("simulated signer response timeout"),
+    );
+    const args = {
+      action: "swap",
+      walletHandle: "@wallet:agent",
+      outputMint: USDC_MINT,
+      amount: "100000000",
+    };
+    try {
+      setupWallets();
+      const tool = createWalletActionTool({
+        config: walletActionConfig(),
+        agentSessionKey: "agent:owner:main",
+      });
+      if (!tool) {
+        throw new Error("missing wallet_action tool");
+      }
+      await expect(tool.execute("stable-reconcile-call", args)).rejects.toThrow(/ambiguous/);
+      const preparedRequest = mocks.provider.prepareJupiterReview.mock.calls[0]?.[0];
+      if (!preparedRequest) {
+        throw new Error("missing prepared signer review");
+      }
+      mocks.provider.reconcileSignerOperation.mockResolvedValueOnce({
+        requestId: preparedRequest.requestId,
+        walletId: "agent",
+        intentType: "solana.jupiter.swap",
+        intentDigest: `sha256:${"a".repeat(64)}`,
+        transactionDigest: `sha256:${"d".repeat(64)}`,
+        policyHash: `sha256:${"b".repeat(64)}`,
+        asset: SOLANA_NATIVE_MINT,
+        amount: "100000000",
+        state: "confirmed",
+        signature: "swap-tx-1",
+      });
+
+      const reconciled = await tool.execute("stable-reconcile-call", args);
+      expect(reconciled.details).toMatchObject({ ok: true, executed: true });
+      expect(mocks.provider.prepareJupiterReview).toHaveBeenCalledTimes(1);
+      expect(mocks.provider.executeJupiterReview).toHaveBeenCalledTimes(1);
+      expect(mocks.provider.reconcileSignerOperation).toHaveBeenCalledWith({
+        walletId: "agent",
+        requestId: preparedRequest.requestId,
+      });
+      expect(
+        fetchCallCount(
+          (url, method) =>
+            method === "GET" && url.includes("/order?") && !url.includes("/trigger/"),
+        ),
+      ).toBe(1);
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true });
     }
@@ -747,9 +1229,151 @@ describe("wallet-action-tool", () => {
       expect(details.live).toBe(true);
       expect(order.id).toBe("order-1");
       expect(order.raw).toBeUndefined();
-      expect((details.vault as Record<string, unknown>).privyVaultId).toBeUndefined();
-      expect(mocks.provider.signTx).toHaveBeenCalledTimes(2);
+      expect(details.vault).toBeUndefined();
+      expect(mocks.provider.executeSignerIntent).toHaveBeenCalledOnce();
+      expect(mocks.provider.prepareSignerReview).not.toHaveBeenCalled();
+      expect(fetchCallCount((url) => url.includes("/trigger/"))).toBe(0);
+      expect(mocks.provider.signTx).not.toHaveBeenCalled();
       expect(mocks.provider.sendTx).not.toHaveBeenCalled();
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("reads Trigger history only through the signer and never runs Gateway authentication", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-action-auth-retry-"));
+    vi.stubEnv("FASED_STATE_DIR", tempDir);
+    stubJupiterOrder({
+      failOnceWhen: (url, method) => method === "POST" && url.endsWith("/trigger/v2/auth/verify"),
+    });
+    const args = {
+      action: "limit_history",
+      walletHandle: "@wallet:agent",
+      state: "active",
+    };
+    try {
+      setupWallets();
+      const tool = createWalletActionTool({
+        config: walletActionConfig(),
+        agentSessionKey: "agent:owner:main",
+      });
+      if (!tool) {
+        throw new Error("missing wallet_action tool");
+      }
+      await expect(tool.execute("stable-auth-call", args)).resolves.toBeDefined();
+      await expect(tool.execute("stable-auth-call", args)).resolves.toBeDefined();
+
+      expect(mocks.provider.listJupiterTriggerOrders).toHaveBeenCalledTimes(2);
+      expect(mocks.provider.prepareJupiterReview).not.toHaveBeenCalled();
+      expect(mocks.provider.executeJupiterReview).not.toHaveBeenCalled();
+      expect(fetchCallCount((url) => url.includes("/trigger/"))).toBe(0);
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not create Gateway Trigger auth generations when history is refreshed", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-action-auth-renew-"));
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-16T12:00:00.000Z"));
+    vi.stubEnv("FASED_STATE_DIR", tempDir);
+    stubJupiterOrder();
+    const args = {
+      action: "limit_history",
+      walletHandle: "@wallet:agent",
+      state: "active",
+    };
+    try {
+      setupWallets();
+      const tool = createWalletActionTool({
+        config: walletActionConfig(),
+        agentSessionKey: "agent:owner:main",
+      });
+      if (!tool) {
+        throw new Error("missing wallet_action tool");
+      }
+      await tool.execute("auth-generation-one", args);
+      vi.setSystemTime(new Date("2026-07-16T12:06:00.000Z"));
+      await tool.execute("auth-generation-two", args);
+
+      expect(mocks.provider.listJupiterTriggerOrders).toHaveBeenCalledTimes(2);
+      expect(mocks.provider.prepareJupiterReview).not.toHaveBeenCalled();
+      expect(fetchCallCount((url) => url.includes("/trigger/"))).toBe(0);
+    } finally {
+      vi.useRealTimers();
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("never crafts a Trigger deposit in Gateway and reuses the signer result", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-action-craft-retry-"));
+    vi.stubEnv("FASED_STATE_DIR", tempDir);
+    stubJupiterOrder({
+      failOnceWhen: (url, method) => method === "POST" && url.endsWith("/trigger/v2/deposit/craft"),
+    });
+    const args = {
+      action: "limit_order",
+      walletHandle: "@wallet:agent",
+      outputMint: USDC_MINT,
+      amount: "0.1",
+      amountFormat: "human",
+      triggerCondition: "below",
+      triggerPriceUsd: 120,
+      expirySeconds: 3600,
+      slippageBps: 100,
+    };
+    try {
+      setupWallets();
+      const tool = createWalletActionTool({
+        config: walletActionConfig(),
+        agentSessionKey: "agent:owner:main",
+      });
+      if (!tool) {
+        throw new Error("missing wallet_action tool");
+      }
+      await expect(tool.execute("stable-craft-call", args)).resolves.toBeDefined();
+      await expect(tool.execute("stable-craft-call", args)).resolves.toBeDefined();
+
+      expect(fetchCallCount((url) => url.includes("/trigger/"))).toBe(0);
+      expect(mocks.provider.executeSignerIntent).toHaveBeenCalledTimes(1);
+      expect(mocks.provider.prepareJupiterReview).not.toHaveBeenCalled();
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("never submits a Trigger create response in Gateway and reuses the signer result", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-action-create-retry-"));
+    vi.stubEnv("FASED_STATE_DIR", tempDir);
+    stubJupiterOrder({
+      failOnceWhen: (url, method) => method === "POST" && url.endsWith("/trigger/v2/orders/price"),
+    });
+    const args = {
+      action: "limit_order",
+      walletHandle: "@wallet:agent",
+      outputMint: USDC_MINT,
+      amount: "0.1",
+      amountFormat: "human",
+      triggerCondition: "below",
+      triggerPriceUsd: 120,
+      expirySeconds: 3600,
+      slippageBps: 100,
+    };
+    try {
+      setupWallets();
+      const tool = createWalletActionTool({
+        config: walletActionConfig(),
+        agentSessionKey: "agent:owner:main",
+      });
+      if (!tool) {
+        throw new Error("missing wallet_action tool");
+      }
+      await expect(tool.execute("stable-create-call", args)).resolves.toBeDefined();
+      await expect(tool.execute("stable-create-call", args)).resolves.toBeDefined();
+
+      expect(fetchCallCount((url) => url.includes("/trigger/"))).toBe(0);
+      expect(mocks.provider.executeSignerIntent).toHaveBeenCalledTimes(1);
+      expect(mocks.provider.prepareJupiterReview).not.toHaveBeenCalled();
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true });
     }
@@ -781,10 +1405,14 @@ describe("wallet-action-tool", () => {
       });
       const details = result.details as Record<string, unknown>;
       const plan = details.plan as Record<string, unknown>;
-      expect(details.live).toBe(false);
+      expect(details.approvalRequired).toBe(true);
+      expect(details.code).toBe("wallet_trigger_approval_required");
       expect(plan.kind).toBe("solana_limit_order");
-      expect(plan.externalVault).toBe("jupiter-trigger-v2");
+      expect(plan.executionProvider).toBe("jupiter-trigger-v2");
+      expect(mocks.provider.prepareSignerReview).toHaveBeenCalledOnce();
+      expect(mocks.provider.executeSignerIntent).not.toHaveBeenCalled();
       expect(mocks.provider.signTx).not.toHaveBeenCalled();
+      expect(mocks.provider.executeJupiterReview).not.toHaveBeenCalled();
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true });
     }
@@ -823,7 +1451,75 @@ describe("wallet-action-tool", () => {
       expect(cancelDetails.cancelled).toBe(true);
       expect((cancelDetails.tx as Record<string, unknown>).txHash).toBe("cancel-tx-1");
       expect(cancelDetails.raw).toBeUndefined();
-      expect(mocks.provider.signTx).toHaveBeenCalled();
+      expect(mocks.provider.executeSignerIntent).toHaveBeenCalledOnce();
+      expect(mocks.provider.executeJupiterReview).not.toHaveBeenCalled();
+      expect(mocks.provider.signTx).not.toHaveBeenCalled();
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("never initiates Trigger cancellation in Gateway and reuses the signer result", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-action-cancel-init-"));
+    vi.stubEnv("FASED_STATE_DIR", tempDir);
+    stubJupiterOrder({
+      failOnceWhen: (url, method) =>
+        method === "POST" &&
+        url.includes("/trigger/v2/orders/price/cancel/") &&
+        !url.includes("/confirm-cancel/"),
+    });
+    const args = {
+      action: "limit_cancel",
+      walletHandle: "@wallet:agent",
+      orderId: "order-1",
+    };
+    try {
+      setupWallets();
+      const tool = createWalletActionTool({
+        config: walletActionConfig(),
+        agentSessionKey: "agent:owner:main",
+      });
+      if (!tool) {
+        throw new Error("missing wallet_action tool");
+      }
+      await expect(tool.execute("stable-cancel-init", args)).resolves.toBeDefined();
+      await expect(tool.execute("stable-cancel-init", args)).resolves.toBeDefined();
+
+      expect(fetchCallCount((url) => url.includes("/trigger/"))).toBe(0);
+      expect(mocks.provider.executeSignerIntent).toHaveBeenCalledTimes(1);
+      expect(mocks.provider.executeJupiterReview).not.toHaveBeenCalled();
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("never confirms a Trigger withdrawal in Gateway and reuses the signer result", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-action-cancel-confirm-"));
+    vi.stubEnv("FASED_STATE_DIR", tempDir);
+    stubJupiterOrder({
+      failOnceWhen: (url, method) =>
+        method === "POST" && url.includes("/trigger/v2/orders/price/confirm-cancel/"),
+    });
+    const args = {
+      action: "limit_cancel",
+      walletHandle: "@wallet:agent",
+      orderId: "order-1",
+    };
+    try {
+      setupWallets();
+      const tool = createWalletActionTool({
+        config: walletActionConfig(),
+        agentSessionKey: "agent:owner:main",
+      });
+      if (!tool) {
+        throw new Error("missing wallet_action tool");
+      }
+      await expect(tool.execute("stable-cancel-confirm", args)).resolves.toBeDefined();
+      await expect(tool.execute("stable-cancel-confirm", args)).resolves.toBeDefined();
+
+      expect(fetchCallCount((url) => url.includes("/trigger/"))).toBe(0);
+      expect(mocks.provider.executeSignerIntent).toHaveBeenCalledTimes(1);
+      expect(mocks.provider.executeJupiterReview).not.toHaveBeenCalled();
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true });
     }
@@ -917,6 +1613,7 @@ describe("wallet-action-tool", () => {
               policy: {
                 directSigning: true,
                 solana: {
+                  allowPrograms: [SystemProgram.programId.toBase58()],
                   tokenCaps: {
                     [TOKEN_A_MINT]: { maxPerTx: "2000000", maxDaily: "5000000" },
                   },
@@ -951,13 +1648,16 @@ describe("wallet-action-tool", () => {
         amount: "1000000",
       });
       expect((tokenToToken.details as Record<string, unknown>).executed).toBe(true);
-      expect(mocks.provider.sendTx).toHaveBeenCalledWith(
+      expect(mocks.provider.prepareJupiterReview).toHaveBeenCalledWith(
         expect.objectContaining({
-          chain: "solana",
           walletId: "agent",
-          amount: "1000000",
+          intent: expect.objectContaining({
+            jupiter: expect.objectContaining({ inputAmount: "1000000" }),
+          }),
+          transaction: expect.objectContaining({ submission: "rpc" }),
         }),
       );
+      expect(mocks.provider.sendTx).not.toHaveBeenCalled();
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true });
     }
@@ -1020,6 +1720,7 @@ describe("wallet-action-tool", () => {
                     roles: ["agent"],
                     walletIds: ["agent"],
                     chains: ["solana"],
+                    registries: ["https://clawhub.com"],
                     inputMints: [SOLANA_NATIVE_MINT],
                     outputMints: [USDC_MINT],
                     maxAmount: "1000000000",
@@ -1064,7 +1765,10 @@ describe("wallet-action-tool", () => {
               config: {
                 walletActions: {
                   actions: ["swap", "quote", "schedule_plan"],
+                  roles: ["agent"],
                   walletIds: ["agent"],
+                  chains: ["solana"],
+                  registries: ["local"],
                   inputMints: [SOLANA_NATIVE_MINT],
                   outputMints: [USDC_MINT],
                   maxAmount: "1000000000",
@@ -1097,14 +1801,20 @@ describe("wallet-action-tool", () => {
       const details = result.details as Record<string, unknown>;
       expect(details.ok).toBe(true);
       expect(details.executed).toBe(true);
-      expect(mocks.provider.sendTx).toHaveBeenCalledWith(
+      expect(mocks.provider.prepareJupiterReview).toHaveBeenCalledWith(
         expect.objectContaining({
-          chain: "solana",
           walletId: "agent",
-          serializedTxBase64: expect.any(String),
-          amount: "100000000",
+          mode: "autonomous",
+          intent: expect.objectContaining({
+            jupiter: expect.objectContaining({ inputAmount: "100000000" }),
+          }),
+          transaction: expect.objectContaining({
+            serializedTxBase64: expect.any(String),
+            submission: "rpc",
+          }),
         }),
       );
+      expect(mocks.provider.sendTx).not.toHaveBeenCalled();
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true });
     }

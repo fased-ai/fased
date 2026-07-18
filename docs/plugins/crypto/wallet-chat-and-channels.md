@@ -80,7 +80,7 @@ Every send still checks:
 - SOL caps or exact SPL mint caps
 - destination allowlists when configured
 - Auto/direct-signing setting
-- passkey or split-key custody state
+- signer policy/WebAuthn state and exact reviewed-authorization requirements
 - signer health
 - audit logging
 

@@ -12,6 +12,7 @@ import type {
   ConfigSnapshot,
   StatusSummary,
 } from "../types.ts";
+import { generateUUID } from "../uuid.ts";
 
 export type DebugState = {
   client: GatewayBrowserClient | null;
@@ -116,6 +117,7 @@ export type DebugAcpxPushTestAuditHistoryPayload = {
 };
 
 const ACPX_PUSH_TEST_TOOL_NAME = "fased_push_test_request";
+const SAT_MAINTENANCE_IDEMPOTENCY_KEY = "fased.sat.maintenance.pending-idempotency.v1";
 
 const UNSAFE_MEMORY_DOCTOR_FIELD_KEYS = new Set([
   "apply",
@@ -156,6 +158,35 @@ function stripUnsafeMemoryDoctorFields(value: unknown): unknown {
       .filter(([key]) => !UNSAFE_MEMORY_DOCTOR_FIELD_KEYS.has(key))
       .map(([key, entry]) => [key, stripUnsafeMemoryDoctorFields(entry)]),
   );
+}
+
+function claimSatMaintenanceIdempotencyKey(): string {
+  let storage: Storage;
+  try {
+    storage = globalThis.localStorage;
+  } catch {
+    throw new Error("Durable browser storage is required before SAT maintenance can run");
+  }
+  if (!storage) {
+    throw new Error("Durable browser storage is required before SAT maintenance can run");
+  }
+  const existing = storage.getItem(SAT_MAINTENANCE_IDEMPOTENCY_KEY)?.trim();
+  if (existing) {
+    if (existing.length > 160 || /[^\x20-\x7e]/u.test(existing)) {
+      throw new Error("Stored SAT maintenance idempotency key is invalid");
+    }
+    return existing;
+  }
+  const idempotencyKey = `sat-maintain-ui-${generateUUID()}`;
+  storage.setItem(SAT_MAINTENANCE_IDEMPOTENCY_KEY, idempotencyKey);
+  return idempotencyKey;
+}
+
+function completeSatMaintenanceIdempotencyKey(idempotencyKey: string): void {
+  const storage = globalThis.localStorage;
+  if (storage?.getItem(SAT_MAINTENANCE_IDEMPOTENCY_KEY) === idempotencyKey) {
+    storage.removeItem(SAT_MAINTENANCE_IDEMPOTENCY_KEY);
+  }
 }
 
 export async function loadDebug(state: DebugState) {
@@ -307,7 +338,9 @@ export async function callDebugSatProtocolMaintenance(state: DebugState) {
   state.debugSatProtocolMaintenanceError = null;
   state.debugSatProtocolMaintenanceResult = null;
   try {
-    const res = await state.client.request("sat.runProtocolMaintenanceOnce", {});
+    const idempotencyKey = claimSatMaintenanceIdempotencyKey();
+    const res = await state.client.request("sat.runProtocolMaintenanceOnce", { idempotencyKey });
+    completeSatMaintenanceIdempotencyKey(idempotencyKey);
     state.debugSatProtocolMaintenanceResult = JSON.stringify(res, null, 2);
   } catch (err) {
     state.debugSatProtocolMaintenanceError = String(err);

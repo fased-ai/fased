@@ -11,6 +11,7 @@ export type WalletProviderId =
   | "local-socket-signer"
   | "alchemy"
   | "turnkey"
+  | "wallet-standard"
   | "privy";
 
 export type WalletConfig = {

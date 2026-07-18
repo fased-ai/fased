@@ -244,7 +244,7 @@ const TASK_TEMPLATE_PATCHES: Record<TaskTemplatePreset, TaskTemplatePatchDefinit
       "Report each wallet's SOL/SAT balances, reserve status, and any action needed; do not create transactions.",
     allowedSkills: "wallet,mining",
     prompt:
-      "Read wallet and mining balances only. Check Agent, Vault, and Mining wallets for SOL fee reserve and relevant SAT balances. Do not create approvals, sends, swaps, funding, withdrawals, claims, bond actions, custody changes, or mining control actions. Report low-reserve wallets and suggested manual top-up amount.",
+      "Read wallet and mining balances only. Check Agent, Vault, and Mining wallets for SOL fee reserve and relevant SAT balances. Do not create approvals, sends, swaps, funding, withdrawals, claims, bond actions, key-management changes, or mining control actions. Report low-reserve wallets and suggested manual top-up amount.",
     budgetMaxRunsPerHour: "4",
   },
   "staking-rewards-watch": {

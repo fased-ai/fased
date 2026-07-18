@@ -1,6 +1,7 @@
 import type { FasedAgentPluginApi } from "fased/plugin-sdk";
 import { callGatewayScoped, resolveGatewayPort } from "fased/plugin-sdk/sat-runtime";
 import { consumeSatGatewayMethodChaosOnce } from "./live-chaos.js";
+import { digestSatSubmissionIntent } from "./submission-ledger.js";
 
 function chaosError(envName: string, fallback: string): Error {
   return new Error(process.env[envName]?.trim() || fallback);
@@ -10,6 +11,7 @@ export async function runSatGatewayMethod<T = Record<string, unknown>>(params: {
   api: FasedAgentPluginApi;
   method: string;
   payload: unknown;
+  workflowId?: string;
 }): Promise<T> {
   if (
     consumeSatGatewayMethodChaosOnce({
@@ -30,12 +32,30 @@ export async function runSatGatewayMethod<T = Record<string, unknown>>(params: {
       ? currentConfig.gateway.auth.token.trim() || undefined
       : undefined;
   const url = `ws://127.0.0.1:${resolveGatewayPort(currentConfig, process.env)}`;
+  const payloadRecord =
+    params.payload && typeof params.payload === "object" && !Array.isArray(params.payload)
+      ? (params.payload as Record<string, unknown>)
+      : null;
+  const idempotencyKey =
+    params.workflowId?.trim() ||
+    `worker:${params.method}:${digestSatSubmissionIntent(params.payload)}`;
+  const mutationMethod = !/^sat\.(?:get|list|status)/u.test(params.method);
+  const gatewayParams =
+    mutationMethod && payloadRecord
+      ? {
+          ...payloadRecord,
+          idempotencyKey:
+            typeof payloadRecord.idempotencyKey === "string" && payloadRecord.idempotencyKey.trim()
+              ? payloadRecord.idempotencyKey.trim()
+              : idempotencyKey,
+        }
+      : params.payload;
   const result = await callGatewayScoped<T>({
     url,
     token,
     config: currentConfig,
     method: params.method,
-    params: params.payload,
+    params: gatewayParams,
     scopes: ["operator.admin"],
     timeoutMs: 15_000,
   });

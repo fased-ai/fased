@@ -105,6 +105,7 @@ if [[ "${FASED_MANAGED_INTERNAL:-0}" != "1" ]]; then
 fi
 
 set -euo pipefail
+umask 077
 
 NODE_BIN="$(resolve_node_bin || true)"
 if [[ -z "$NODE_BIN" ]]; then
@@ -183,29 +184,55 @@ resolve_gateway_cli_entry() {
   return 1
 }
 
-resolve_wallet_broker_cli_entry() {
-  local candidates=(
-    "$FASED_RUNTIME_ROOT/dist/entry.js"
-    "$FASED_RUNTIME_ROOT/dist/entry.mjs"
-  )
-  local candidate
-  for candidate in "${candidates[@]}"; do
-    if [[ -f "$candidate" ]]; then
-      printf "%s" "$candidate"
-      return 0
-    fi
-  done
-  return 1
-}
-
 mask_secret() {
   local raw="$1"
   local n=${#raw}
   if [[ $n -le 10 ]]; then
-    printf "%s" "$raw"
+    printf "%s" "[redacted]"
     return
   fi
   printf "%s...%s" "${raw:0:6}" "${raw: -4}"
+}
+
+read_private_zrok_reservation() {
+  local file="$1"
+  local owner="" mode="" links="" size=""
+  [[ -f "$file" && ! -L "$file" ]] || return 1
+  read -r owner mode links size <<<"$(stat -c '%u %a %h %s' "$file" 2>/dev/null || true)"
+  [[ "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
+  [[ "$owner" == "$(id -u)" && "$links" == "1" && "$size" =~ ^[0-9]+$ && \
+    "$size" -gt 0 && "$size" -le 4096 ]] || return 1
+  chmod 0600 "$file"
+  local token=""
+  IFS= read -r token <"$file" || true
+  [[ -n "$token" ]] || return 1
+  printf '%s' "$token"
+}
+
+write_private_zrok_reservation() {
+  local file="$1"
+  local token="$2"
+  local temp_file=""
+  [[ -n "$token" ]] || return 1
+  mkdir -p "$(dirname "$file")"
+  chmod 0700 "$(dirname "$file")" 2>/dev/null || true
+  temp_file="$(mktemp "${file}.tmp.XXXXXXXX")"
+  trap 'rm -f -- "${temp_file:-}"' RETURN
+  printf '%s\n' "$token" >"$temp_file"
+  chmod 0600 "$temp_file"
+  mv -f -- "$temp_file" "$file"
+  temp_file=""
+  chmod 0600 "$file"
+  trap - RETURN
+}
+
+filter_zrok_runtime_output() {
+  local line=""
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" == *"issuedAt of token is in the future"* ]]; then
+      printf '%s\n' '[zrok] clock-skew-auth-failure'
+    fi
+  done
 }
 
 is_gateway_listener_ready() {
@@ -219,21 +246,6 @@ abs_int() {
     value="0"
   fi
   printf '%s\n' "$value"
-}
-
-can_run_privileged_time_sync_command() {
-  if [[ "$(id -u)" -eq 0 ]]; then
-    return 0
-  fi
-  command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1
-}
-
-run_privileged_time_sync_command() {
-  if [[ "$(id -u)" -eq 0 ]]; then
-    "$@"
-    return $?
-  fi
-  sudo -n "$@"
 }
 
 fetch_remote_epoch_from_http_date() {
@@ -276,21 +288,13 @@ measure_managed_clock_skew_seconds() {
 }
 
 zrok_log_indicates_clock_skew() {
-  tail -n 80 "$ZROK_RUNTIME_LOG" 2>/dev/null | grep -Fqi "issuedAt of token is in the future"
+  tail -n 80 "$ZROK_RUNTIME_LOG" 2>/dev/null | grep -Fqi "[zrok] clock-skew-auth-failure"
 }
 
 attempt_managed_clock_sync_repair() {
-  if ! can_run_privileged_time_sync_command; then
-    return 1
-  fi
-  echo "[tunnel] Attempting automatic host clock sync repair..."
-  run_privileged_time_sync_command timedatectl set-ntp true >/dev/null 2>&1 || true
-  run_privileged_time_sync_command systemctl restart systemd-timesyncd >/dev/null 2>&1 || \
-    run_privileged_time_sync_command systemctl restart chronyd >/dev/null 2>&1 || true
-  if command -v chronyc >/dev/null 2>&1; then
-    run_privileged_time_sync_command chronyc -a makestep >/dev/null 2>&1 || true
-  fi
-  sleep 2
+  # Host time synchronization is installed during root bootstrap. The running
+  # Gateway intentionally has no privilege path for changing the host clock.
+  return 1
 }
 
 ensure_managed_clock_sync() {
@@ -308,7 +312,7 @@ ensure_managed_clock_sync() {
 
   echo "[tunnel] WARNING: Host clock skew detected (${skew_seconds}s versus public control plane)."
   if ! attempt_managed_clock_sync_repair; then
-    echo "[tunnel] WARNING: Automatic host clock repair requires root or passwordless sudo."
+    echo "[tunnel] WARNING: Repair only from the provider root console using the exact tagged, attested Hosting release; never run the app checkout with sudo."
     return 1
   fi
 
@@ -330,7 +334,8 @@ start_initial_zrok_share() {
 
   while (( attempt <= attempts )); do
     echo "[tunnel] Starting tunnel for ${slug} (attempt ${attempt}/${attempts})..."
-    "$ZROK_BIN" share reserved "$RES_TOKEN" --headless >>"$ZROK_RUNTIME_LOG" 2>&1 &
+    "$ZROK_BIN" share reserved "$RES_TOKEN" --headless 2>&1 \
+      | filter_zrok_runtime_output >>"$ZROK_RUNTIME_LOG" &
     ZROK_PID=$!
     echo "$ZROK_PID" > "$FASED_CONFIG_DIR/.zrok-pid"
     sleep 5
@@ -364,8 +369,7 @@ start_initial_zrok_share() {
 
     echo "[tunnel] WARNING: zrok share died during startup."
     if [[ "$VERBOSE_STARTUP" != "1" ]]; then
-      echo "[debug] Last zrok startup logs:"
-      tail -n 40 "$ZROK_RUNTIME_LOG" || true
+      echo "[debug] zrok output was reduced to non-secret diagnostics in $ZROK_RUNTIME_LOG"
     fi
     if zrok_log_indicates_clock_skew; then
       echo "[tunnel] Detected zrok auth failure caused by host clock skew."
@@ -469,6 +473,7 @@ mkdir -p "$FASED_CONFIG_DIR"
 mkdir -p "$LOG_DIR"
 : > "$ZROK_RUNTIME_LOG"
 : > "$WALLET_SETUP_LOG"
+chmod 0600 "$ZROK_RUNTIME_LOG" "$WALLET_SETUP_LOG"
 SERVICE_GATEWAY_TOKEN="${FASED_GATEWAY_TOKEN:-}"
 if [ ! -f "$GW_TOKEN_PATH" ]; then
   if [[ -n "$SERVICE_GATEWAY_TOKEN" ]]; then
@@ -495,15 +500,11 @@ start_gateway_if_needed
 # 0a. Start local key signer daemon (fased-signerd) if available
 SIGNERD_BIN="${FASED_CONFIG_DIR}/bin/fased-signerd"
 SIGNERD_SOCKET="${FASED_CONFIG_DIR}/wallet/local-signer.sock"
-SIGNERD_BACKEND_SOCKET="$SIGNERD_SOCKET"
 SIGNERD_MATERIAL_DIR="${FASED_CONFIG_DIR}/wallet"
-SIGNERD_PASSPHRASE_FILE="$SIGNERD_MATERIAL_DIR/passphrase"
-SIGNERD_EVM_KEYSTORE="$SIGNERD_MATERIAL_DIR/keystore-evm.v1.enc"
-SIGNERD_SOL_KEYSTORE="$SIGNERD_MATERIAL_DIR/keystore-solana.v1.enc"
+SIGNERD_CONTROL_SOCKET="${SIGNERD_MATERIAL_DIR}/local-signer-control.sock"
+SIGNERD_STATE_DB="${SIGNERD_MATERIAL_DIR}/signerd-v2.db"
+SIGNERD_MASTER_KEY="${SIGNERD_MATERIAL_DIR}/signerd-v2.master.key"
 SIGNERD_LOG="${LOG_DIR}/fased-signerd.log"
-SIGNERD_BROKER_LOG="${LOG_DIR}/local-signer-broker.log"
-SIGNER_MAINTENANCE_HELPER="/usr/local/sbin/fased-signer-maintenance"
-SIGNER_ISOLATION_HELPER="/usr/local/sbin/fased-signer-isolation"
 CONFIG_JSON="${FASED_CONFIG_DIR}/fased.json"
 SIGNERD_ENV_FILE="${FASED_CONFIG_DIR}/wallet/signer.env"
 WALLET_REGISTRY_JSON="${FASED_CONFIG_DIR}/wallet/provider-registry.v1.json"
@@ -528,13 +529,13 @@ load_wallet_signer_env_from_config() {
     [[ "$line" == *=* ]] || continue
     local key="${line%%=*}"
     local value="${line#*=}"
-    if [[ "$key" =~ ^FASED_WALLET_(EVM|SOLANA)_(RPC_URL|KEYSTORE_PATH)(__[A-Za-z0-9_-]+)?$ ]] \
+    if [[ "$key" =~ ^FASED_WALLET_SOLANA_RPC_URL(__[A-Za-z0-9_-]+)?$ ]] \
       || [[ "$key" == "FASED_WALLET_CHAINS" ]] \
-      || [[ "$key" == "FASED_WALLET_PASSPHRASE_FILE" ]] \
       || [[ "$key" == "FASED_WALLET_LOCAL_SIGNER_SOCKET" ]] \
-      || [[ "$key" == "FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET" ]] \
+      || [[ "$key" == "FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET" ]] \
+      || [[ "$key" == "FASED_WALLET_LOCAL_SIGNER_STATE_DB" ]] \
+      || [[ "$key" == "FASED_WALLET_LOCAL_SIGNER_MASTER_KEY" ]] \
       || [[ "$key" == "FASED_WALLET_SIGNER_STATE_DIR" ]] \
-      || [[ "$key" == "FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER" ]] \
       || [[ "$key" == "FASED_WALLET_LOCAL_SIGNER_BIN" ]] \
       || [[ "$key" =~ ^FASED_WALLET_LOCAL_SIGNER_(ROLE|DIRECT_SIGNING|CAPS_ENABLED|SOLANA_MAX_PER_TX|SOLANA_MAX_DAILY|SOLANA_ALLOW_PROGRAMS)(__[A-Za-z0-9_-]+)?$ ]]; then
       export "$key=$value"
@@ -545,13 +546,13 @@ load_wallet_signer_env_from_config() {
       | to_entries[]
       | select(
           .key
-          | test("^FASED_WALLET_(EVM|SOLANA)_(RPC_URL|KEYSTORE_PATH)(__[A-Za-z0-9_-]+)?$")
+          | test("^FASED_WALLET_SOLANA_RPC_URL(__[A-Za-z0-9_-]+)?$")
             or . == "FASED_WALLET_CHAINS"
-            or . == "FASED_WALLET_PASSPHRASE_FILE"
             or . == "FASED_WALLET_LOCAL_SIGNER_SOCKET"
-            or . == "FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET"
+            or . == "FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET"
+            or . == "FASED_WALLET_LOCAL_SIGNER_STATE_DB"
+            or . == "FASED_WALLET_LOCAL_SIGNER_MASTER_KEY"
             or . == "FASED_WALLET_SIGNER_STATE_DIR"
-            or . == "FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER"
             or . == "FASED_WALLET_LOCAL_SIGNER_BIN"
             or test("^FASED_WALLET_LOCAL_SIGNER_(ROLE|DIRECT_SIGNING|CAPS_ENABLED|SOLANA_MAX_PER_TX|SOLANA_MAX_DAILY|SOLANA_ALLOW_PROGRAMS)(__[A-Za-z0-9_-]+)?$")
         )
@@ -566,100 +567,32 @@ load_wallet_signer_env_file() {
   fi
 
   set -a
-  # signer.env is generated by onboarding.wallet.ts; only import export lines, not the launch command.
-  source <(grep -E '^export FASED_WALLET_' "$SIGNERD_ENV_FILE" || true)
+  # Older signer.env files may contain Node-era key/passphrase variables. Import only
+  # the non-custody settings required by the native signer, never every wallet variable.
+  source <(
+    grep -E '^export FASED_WALLET_(SOLANA_RPC_URL(__[A-Za-z0-9_-]+)?|CHAINS|SIGNER_STATE_DIR|WEBAUTHN_(RP_ID|ORIGINS)|LOCAL_SIGNER_(SOCKET|CONTROL_SOCKET|STATE_DB|MASTER_KEY|BIN|ROLE|DIRECT_SIGNING|CAPS_ENABLED|SOLANA_MAX_PER_TX|SOLANA_MAX_DAILY|SOLANA_ALLOW_PROGRAMS)(__[A-Za-z0-9_-]+)?)=' "$SIGNERD_ENV_FILE" || true
+  )
   set +a
 }
 
-has_scoped_wallet_env_value() {
-  local prefix="$1"
-  local name=""
-  while IFS= read -r name; do
-    [[ -n "$name" ]] || continue
-    if [[ -n "${!name:-}" ]]; then
-      return 0
-    fi
-  done < <(compgen -A variable "${prefix}__" || true)
-  return 1
-}
-
-normalize_wallet_env_suffix() {
-  local raw="${1:-}"
-  printf '%s' "$raw" \
-    | tr '[:upper:]' '[:lower:]' \
-    | sed -E 's/[^a-z0-9]+/_/g; s/^_+//; s/_+$//'
-}
-
-normalize_wallet_filename_id() {
-  local raw="${1:-}"
-  printf '%s' "$raw" \
-    | tr '[:upper:]' '[:lower:]' \
-    | sed -E 's/[^a-z0-9_-]+/-/g; s/^-+//; s/-+$//'
-}
-
-hydrate_scoped_wallet_keystore_env_from_registry() {
-  local material_dir="$1"
-  if [[ ! -f "$WALLET_REGISTRY_JSON" ]] || ! command -v jq >/dev/null 2>&1; then
-    return 0
-  fi
-
-  while IFS=$'\t' read -r wallet_id provider_id; do
-    [[ -n "$wallet_id" ]] || continue
-    if [[ "$provider_id" != "local-socket-signer" && "$provider_id" != "embedded-keystore" ]]; then
-      continue
-    fi
-    local env_suffix
-    local file_suffix
-    env_suffix="$(normalize_wallet_env_suffix "$wallet_id")"
-    file_suffix="$(normalize_wallet_filename_id "$wallet_id")"
-    [[ -n "$env_suffix" && -n "$file_suffix" ]] || continue
-
-    local sol_key="FASED_WALLET_SOLANA_KEYSTORE_PATH__${env_suffix^^}"
-    if [[ -z "${!sol_key:-}" ]]; then
-      local sol_candidate="${material_dir}/keystore-solana-${file_suffix}.v1.enc"
-      if [[ -f "$sol_candidate" ]]; then
-        export "$sol_key=$sol_candidate"
-      fi
-    fi
-
-    local evm_key="FASED_WALLET_EVM_KEYSTORE_PATH__${env_suffix^^}"
-    if [[ -z "${!evm_key:-}" ]]; then
-      local evm_candidate="${material_dir}/keystore-evm-${file_suffix}.v1.enc"
-      if [[ -f "$evm_candidate" ]]; then
-        export "$evm_key=$evm_candidate"
-      fi
-    fi
-  done < <(
-    jq -r '
-      (.wallets // [])
-      | .[]
-      | select(.id != null and .providerId != null)
-      | "\(.id|tostring)\t\(.providerId|tostring)"
-    ' "$WALLET_REGISTRY_JSON" 2>/dev/null || true
-  )
-}
-
-resolve_signerd_keystore_export() {
-  local explicit_value="$1"
-  local scoped_prefix="$2"
-  local default_path="$3"
-
-  if has_scoped_wallet_env_value "$scoped_prefix"; then
-    printf '\n'
-    return 0
-  fi
-
-  if [[ -n "$explicit_value" && "$explicit_value" != "$default_path" ]]; then
-    printf '%s\n' "$explicit_value"
-    return 0
-  fi
-
-  if [[ -n "$explicit_value" ]]; then
-    printf '%s\n' "$explicit_value"
-    return 0
-  fi
-
-  printf '%s\n' "$default_path"
+clear_legacy_wallet_key_env() {
+  local key
+  while IFS= read -r key; do
+    case "$key" in
+      FASED_WALLET_KEYSTORE_PATH|FASED_WALLET_KEYSTORE_PATH__*|\
+      FASED_WALLET_SOLANA_KEYSTORE_PATH|FASED_WALLET_SOLANA_KEYSTORE_PATH__*|\
+      FASED_WALLET_EVM_KEYSTORE_PATH|FASED_WALLET_EVM_KEYSTORE_PATH__*|\
+      FASED_WALLET_PASSPHRASE|FASED_WALLET_PASSPHRASE__*|\
+      FASED_WALLET_PASSPHRASE_FILE|FASED_WALLET_PASSPHRASE_FILE__*|\
+      FASED_WALLET_PRIVATE_KEY|FASED_WALLET_PRIVATE_KEY__*|\
+      FASED_WALLET_SECRET_KEY|FASED_WALLET_SECRET_KEY__*|\
+      FASED_WALLET_KEYPAIR|FASED_WALLET_KEYPAIR__*|\
+      FASED_WALLET_MNEMONIC|FASED_WALLET_MNEMONIC__*|\
+      FASED_WALLET_SEED|FASED_WALLET_SEED__*)
+        unset "$key"
+        ;;
+    esac
+  done < <(compgen -A variable | grep -E '^FASED_WALLET_' || true)
 }
 
 resolve_wallet_chains_from_config() {
@@ -708,34 +641,18 @@ registry_has_local_signer_wallet() {
   ' "$WALLET_REGISTRY_JSON" >/dev/null 2>&1
 }
 
-has_local_signer_keystore_material() {
-  if [[ -n "${FASED_WALLET_SOLANA_KEYSTORE_PATH:-}" ]] || has_scoped_wallet_env_value "FASED_WALLET_SOLANA_KEYSTORE_PATH"; then
-    return 0
-  fi
-  local candidate
-  for candidate in "$SIGNERD_MATERIAL_DIR"/keystore-solana*.v1.enc "$SIGNERD_MATERIAL_DIR"/keystore-evm*.v1.enc; do
-    [[ -f "$candidate" ]] && return 0
-  done
-  return 1
-}
-
 should_start_signerd() {
-  registry_has_local_signer_wallet || has_local_signer_keystore_material
+  registry_has_local_signer_wallet
 }
 
 collect_existing_signerd_pids() {
-  local pid_file app_pid_file
-  pid_file="$(resolve_local_signer_sidecar_path "$SIGNERD_BACKEND_SOCKET" "pid")"
-  app_pid_file="$(resolve_local_signer_sidecar_path "$SIGNERD_SOCKET" "pid")"
+  local pid_file
+  pid_file="$(resolve_local_signer_sidecar_path "$SIGNERD_SOCKET" "pid")"
   {
     if [[ -f "$pid_file" ]]; then
       cat "$pid_file" 2>/dev/null || true
     fi
-    if [[ "$app_pid_file" != "$pid_file" && -f "$app_pid_file" ]]; then
-      cat "$app_pid_file" 2>/dev/null || true
-    fi
     pgrep -f "$SIGNERD_BIN" 2>/dev/null || true
-    pgrep -f "wallet signer broker" 2>/dev/null || true
   } | awk '/^[0-9]+$/ { if (!seen[$1]++) print $1 }'
 }
 
@@ -752,16 +669,8 @@ dump_existing_signerd_processes() {
 }
 
 stop_existing_signerd() {
-  local pid_file app_pid_file
-  pid_file="$(resolve_local_signer_sidecar_path "$SIGNERD_BACKEND_SOCKET" "pid")"
-  app_pid_file="$(resolve_local_signer_sidecar_path "$SIGNERD_SOCKET" "pid")"
-  if signer_isolation_helper_available; then
-    run_signer_isolation_helper stop "$SIGNERD_BACKEND_SOCKET" "$pid_file" >/dev/null 2>&1 || true
-    if [[ "$SIGNERD_SOCKET" != "$SIGNERD_BACKEND_SOCKET" ]]; then
-      run_signer_isolation_helper stop "$SIGNERD_SOCKET" "$app_pid_file" >/dev/null 2>&1 || true
-    fi
-    return 0
-  fi
+  local pid_file
+  pid_file="$(resolve_local_signer_sidecar_path "$SIGNERD_SOCKET" "pid")"
   local pid=""
   while IFS= read -r pid; do
     [[ "$pid" =~ ^[0-9]+$ ]] || continue
@@ -772,7 +681,7 @@ stop_existing_signerd() {
     [[ "$pid" =~ ^[0-9]+$ ]] || continue
     kill -9 "$pid" >/dev/null 2>&1 || true
   done < <(collect_existing_signerd_pids)
-  rm -f "$SIGNERD_SOCKET" "$SIGNERD_BACKEND_SOCKET" "$pid_file" "$app_pid_file"
+  rm -f "$SIGNERD_SOCKET" "$SIGNERD_CONTROL_SOCKET" "$pid_file"
 }
 
 wait_for_signerd_ready() {
@@ -781,7 +690,7 @@ wait_for_signerd_ready() {
   while true; do
     local active_count
     active_count="$(count_existing_signerd_pids)"
-    if [[ "$active_count" == "1" && -S "$SIGNERD_BACKEND_SOCKET" ]]; then
+    if [[ "$active_count" == "1" && -S "$SIGNERD_SOCKET" && -S "$SIGNERD_CONTROL_SOCKET" ]]; then
       return 0
     fi
     if [[ "$active_count" -gt 1 ]]; then
@@ -800,194 +709,70 @@ wait_for_signerd_ready() {
   done
 }
 
-wait_for_signer_broker_ready() {
-  local retries="$1"
-  local count=0
-  while true; do
-    if [[ -S "$SIGNERD_SOCKET" ]]; then
-      return 0
-    fi
-    sleep 1
-    count=$((count + 1))
-    if [[ $count -ge $retries ]]; then
-      echo "[signerd] ERROR: signer broker did not create app socket within ${retries}s."
-      tail -n 40 "$SIGNERD_BROKER_LOG" 2>/dev/null || true
-      return 1
-    fi
-  done
-}
-
-collect_wallet_env_args() {
-  local key value
-  while IFS='=' read -r key value; do
-    [[ "$key" == FASED_WALLET_* ]] || continue
-    printf '%s=%s\0' "$key" "$value"
-  done < <(env)
-}
-
-current_app_user() {
-  id -un 2>/dev/null || printf '%s\n' "${USER:-app}"
-}
-
-signer_isolation_helper_available() {
-  [[ -n "${FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER:-}" ]] || return 1
-  [[ -x "$SIGNER_MAINTENANCE_HELPER" || -x "$SIGNER_ISOLATION_HELPER" ]] || return 1
-  command -v sudo >/dev/null 2>&1 || return 1
-}
-
-run_signer_isolation_helper() {
-  if [[ -x "$SIGNER_MAINTENANCE_HELPER" ]]; then
-    sudo -n -E "$SIGNER_MAINTENANCE_HELPER" "$@"
-  else
-    local app_user
-    app_user="$(current_app_user)"
-    sudo -n -E "$SIGNER_ISOLATION_HELPER" "$app_user" "$FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER" "$@"
-  fi
-}
-
 start_signerd_process() {
   local pid_file audit_log
-  pid_file="$(resolve_local_signer_sidecar_path "$SIGNERD_BACKEND_SOCKET" "pid")"
-  audit_log="$(resolve_local_signer_sidecar_path "$SIGNERD_BACKEND_SOCKET" "audit")"
-  if [[ -n "${FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER:-}" ]]; then
-    if signer_isolation_helper_available; then
-      run_signer_isolation_helper start-signerd \
-        "$SIGNERD_BIN" \
-        "$SIGNERD_BACKEND_SOCKET" \
-        "$pid_file" \
-        "$audit_log" \
-        >>"$SIGNERD_LOG" 2>&1 &
-      return 0
-    fi
-    if ! command -v sudo >/dev/null 2>&1; then
-      return 1
-    fi
-    local env_args=()
-    while IFS= read -r -d '' env_arg; do
-      env_args+=("$env_arg")
-    done < <(collect_wallet_env_args)
-    sudo -n -u "$FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER" -H env "${env_args[@]}" \
-      "$SIGNERD_BIN" \
-        -socket "$SIGNERD_BACKEND_SOCKET" \
-        -pid-file "$pid_file" \
-        -audit-log "$audit_log" \
-        >>"$SIGNERD_LOG" 2>&1 &
-    return 0
-  fi
+  pid_file="$(resolve_local_signer_sidecar_path "$SIGNERD_SOCKET" "pid")"
+  audit_log="$(resolve_local_signer_sidecar_path "$SIGNERD_SOCKET" "audit")"
   "$SIGNERD_BIN" \
-    -socket "$SIGNERD_BACKEND_SOCKET" \
+    -socket "$SIGNERD_SOCKET" \
+    -control-socket "$SIGNERD_CONTROL_SOCKET" \
+    -state-db "$SIGNERD_STATE_DB" \
+    -master-key "$SIGNERD_MASTER_KEY" \
     -pid-file "$pid_file" \
     -audit-log "$audit_log" \
     >>"$SIGNERD_LOG" 2>&1 &
 }
 
-start_signer_broker_process() {
-  if [[ "$SIGNERD_SOCKET" == "$SIGNERD_BACKEND_SOCKET" ]]; then
-    return 0
-  fi
-  local gateway_entry
-  gateway_entry="$(resolve_wallet_broker_cli_entry || true)"
-  if [[ -z "$gateway_entry" ]]; then
-    echo "[signerd] ERROR: signer broker CLI entry unavailable under $FASED_ROOT/dist"
-    return 1
-  fi
-  if [[ -n "${FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER:-}" ]]; then
-    if signer_isolation_helper_available; then
-      run_signer_isolation_helper start-broker \
-        "$NODE_BIN" \
-        "$gateway_entry" \
-        "$SIGNERD_SOCKET" \
-        "$SIGNERD_BACKEND_SOCKET" \
-        "$(resolve_local_signer_sidecar_path "$SIGNERD_SOCKET" "pid")" \
-        "$(resolve_local_signer_sidecar_path "$SIGNERD_SOCKET" "audit")" \
-        >>"$SIGNERD_BROKER_LOG" 2>&1 &
-      return 0
-    fi
-    if ! command -v sudo >/dev/null 2>&1; then
-      return 1
-    fi
-    local env_args=()
-    while IFS= read -r -d '' env_arg; do
-      env_args+=("$env_arg")
-    done < <(collect_wallet_env_args)
-    sudo -n -u "$FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER" -H env "${env_args[@]}" \
-      "$NODE_BIN" "$gateway_entry" wallet signer broker \
-        --socket "$SIGNERD_SOCKET" \
-        --backend-socket "$SIGNERD_BACKEND_SOCKET" \
-        --pid-file "$(resolve_local_signer_sidecar_path "$SIGNERD_SOCKET" "pid")" \
-        --audit-log "$(resolve_local_signer_sidecar_path "$SIGNERD_SOCKET" "audit")" \
-        >>"$SIGNERD_BROKER_LOG" 2>&1 &
-    return 0
-  fi
-  "$NODE_BIN" "$gateway_entry" wallet signer broker \
-    --socket "$SIGNERD_SOCKET" \
-    --backend-socket "$SIGNERD_BACKEND_SOCKET" \
-    --pid-file "$(resolve_local_signer_sidecar_path "$SIGNERD_SOCKET" "pid")" \
-    --audit-log "$(resolve_local_signer_sidecar_path "$SIGNERD_SOCKET" "audit")" \
-    >>"$SIGNERD_BROKER_LOG" 2>&1 &
-}
-
 load_wallet_signer_env_from_config
 load_wallet_signer_env_file
+clear_legacy_wallet_key_env
 SIGNERD_BIN="${FASED_WALLET_LOCAL_SIGNER_BIN:-$SIGNERD_BIN}"
 SIGNERD_MATERIAL_DIR="${FASED_WALLET_SIGNER_STATE_DIR:-$SIGNERD_MATERIAL_DIR}"
-if [[ -n "${FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER:-}" ]]; then
-  SIGNERD_BROKER_LOG="$(dirname "${FASED_WALLET_LOCAL_SIGNER_SOCKET:-$SIGNERD_SOCKET}")/local-signer-broker.log"
-fi
-hydrate_scoped_wallet_keystore_env_from_registry "$SIGNERD_MATERIAL_DIR"
-if should_start_signerd; then
+SIGNERD_CONTROL_SOCKET="${FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET:-$SIGNERD_MATERIAL_DIR/local-signer-control.sock}"
+SIGNERD_STATE_DB="${FASED_WALLET_LOCAL_SIGNER_STATE_DB:-$SIGNERD_MATERIAL_DIR/signerd-v2.db}"
+SIGNERD_MASTER_KEY="${FASED_WALLET_LOCAL_SIGNER_MASTER_KEY:-$SIGNERD_MATERIAL_DIR/signerd-v2.master.key}"
+HOSTED_ROOT_SIGNER=0
+if [[ "${FASED_HOST_PROFILE:-}" == "hosting" ]]; then
+  HOSTED_ROOT_SIGNER=1
+  SIGNERD_SOCKET="/run/fased-signerd/app.sock"
+  export FASED_WALLET_LOCAL_SIGNER_SOCKET="$SIGNERD_SOCKET"
+  unset FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET
+  unset FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER
+  if [[ -S "$SIGNERD_SOCKET" ]]; then
+    SIGNERD_STARTUP_MODE="external"
+    echo "==> Using root-managed fased-signerd service (socket: $SIGNERD_SOCKET)"
+  else
+    mark_signerd_degraded "root-managed fased-signerd socket is unavailable. Repair only from the provider root console using the exact tagged, attested Hosting release; never run the app checkout with sudo."
+  fi
+elif should_start_signerd; then
   SIGNERD_STARTUP_MODE="healthy"
   SIGNERD_SOCKET="${FASED_WALLET_LOCAL_SIGNER_SOCKET:-$SIGNERD_SOCKET}"
-  SIGNERD_BACKEND_SOCKET="${FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET:-$SIGNERD_SOCKET}"
-  SIGNERD_EVM_KEYSTORE="$(resolve_signerd_keystore_export "${FASED_WALLET_EVM_KEYSTORE_PATH:-}" "FASED_WALLET_EVM_KEYSTORE_PATH" "$SIGNERD_MATERIAL_DIR/keystore-evm.v1.enc")"
-  SIGNERD_SOL_KEYSTORE="$(resolve_signerd_keystore_export "${FASED_WALLET_SOLANA_KEYSTORE_PATH:-}" "FASED_WALLET_SOLANA_KEYSTORE_PATH" "$SIGNERD_MATERIAL_DIR/keystore-solana.v1.enc")"
-  SIGNERD_PASSPHRASE="${FASED_WALLET_PASSPHRASE:-}"
-  SIGNERD_PASSPHRASE_FILE="${FASED_WALLET_PASSPHRASE_FILE:-}"
+  unset FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET
+  unset FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER
   SIGNERD_CHAINS="${FASED_WALLET_CHAINS:-$(resolve_wallet_chains_from_config)}"
   export FASED_WALLET_LOCAL_SIGNER_SOCKET="$SIGNERD_SOCKET"
-  export FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET="$SIGNERD_BACKEND_SOCKET"
   export FASED_WALLET_SIGNER_STATE_DIR="$SIGNERD_MATERIAL_DIR"
   export FASED_WALLET_CHAINS="${SIGNERD_CHAINS:-evm,solana}"
-  if [[ -n "$SIGNERD_EVM_KEYSTORE" ]]; then
-    export FASED_WALLET_EVM_KEYSTORE_PATH="$SIGNERD_EVM_KEYSTORE"
-  else
-    unset FASED_WALLET_EVM_KEYSTORE_PATH
-  fi
-  if [[ -n "$SIGNERD_SOL_KEYSTORE" ]]; then
-    export FASED_WALLET_SOLANA_KEYSTORE_PATH="$SIGNERD_SOL_KEYSTORE"
-  else
-    unset FASED_WALLET_SOLANA_KEYSTORE_PATH
-  fi
-  if [[ -n "$SIGNERD_PASSPHRASE" ]]; then
-    export FASED_WALLET_PASSPHRASE="$SIGNERD_PASSPHRASE"
-    unset FASED_WALLET_PASSPHRASE_FILE
-  else
-    SIGNERD_PASSPHRASE_FILE="${SIGNERD_PASSPHRASE_FILE:-$SIGNERD_MATERIAL_DIR/passphrase}"
-    export FASED_WALLET_PASSPHRASE_FILE="$SIGNERD_PASSPHRASE_FILE"
-    unset FASED_WALLET_PASSPHRASE
-  fi
+  unset FASED_WALLET_SOLANA_KEYSTORE_PATH
+  unset FASED_WALLET_EVM_KEYSTORE_PATH
+  unset FASED_WALLET_PASSPHRASE
+  unset FASED_WALLET_PASSPHRASE_FILE
   if [[ -f "$SIGNERD_BIN" ]]; then
-    if [[ -S "$SIGNERD_SOCKET" ]] || [[ -S "$SIGNERD_BACKEND_SOCKET" ]] || [[ -f "$(resolve_local_signer_sidecar_path "$SIGNERD_BACKEND_SOCKET" "pid")" ]] || [[ "$(count_existing_signerd_pids)" -gt 0 ]]; then
+    if [[ -S "$SIGNERD_SOCKET" ]] || [[ -f "$(resolve_local_signer_sidecar_path "$SIGNERD_SOCKET" "pid")" ]] || [[ "$(count_existing_signerd_pids)" -gt 0 ]]; then
       echo "==> Restarting fased-signerd to apply current wallet chain/runtime config..."
       stop_existing_signerd
     fi
     echo "==> Starting fased-signerd (Go key signer)..."
     mkdir -p "$LOG_DIR"
-    mkdir -p "$(dirname "$SIGNERD_LOG")" "$(dirname "$SIGNERD_BROKER_LOG")" 2>/dev/null || true
+    mkdir -p "$(dirname "$SIGNERD_LOG")" 2>/dev/null || true
     if start_signerd_process; then
       SIGNERD_PID=$!
     else
-      mark_signerd_degraded "failed to start isolated fased-signerd as ${FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER:-current user}. Check sudoers and $SIGNERD_LOG"
+      mark_signerd_degraded "failed to start fased-signerd as the current Local user. Check $SIGNERD_LOG"
       SIGNERD_PID=""
     fi
     if [[ -n "$SIGNERD_PID" ]] && wait_for_signerd_ready "$SIGNERD_READY_TIMEOUT_SECONDS"; then
-      if ! start_signer_broker_process; then
-        mark_signerd_degraded "fased-signerd started but signer broker failed. Check $SIGNERD_BROKER_LOG"
-      elif wait_for_signer_broker_ready "$SIGNERD_READY_TIMEOUT_SECONDS"; then
-        echo "==> fased-signerd started (PID=$SIGNERD_PID, socket: $SIGNERD_BACKEND_SOCKET)"
-      else
-        mark_signerd_degraded "fased-signerd broker did not become ready. Check $SIGNERD_BROKER_LOG"
-      fi
+      echo "==> fased-signerd started (PID=$SIGNERD_PID, socket: $SIGNERD_SOCKET)"
     else
       mark_signerd_degraded "fased-signerd did not create socket. Check $SIGNERD_LOG"
     fi
@@ -1039,9 +824,11 @@ start_health_monitor() {
       ensure_managed_clock_sync || true
     fi
     if [[ -n "$RES_TOKEN" ]]; then
-      "$ZROK_BIN" share reserved "$RES_TOKEN" --headless >>"$ZROK_RUNTIME_LOG" 2>&1 &
+      "$ZROK_BIN" share reserved "$RES_TOKEN" --headless 2>&1 \
+        | filter_zrok_runtime_output >>"$ZROK_RUNTIME_LOG" &
     else
-      "$ZROK_BIN" share public "http://127.0.0.1:${FASED_GATEWAY_PORT}" --unique-name "$SLUG" >>"$ZROK_RUNTIME_LOG" 2>&1 &
+      "$ZROK_BIN" share public "http://127.0.0.1:${FASED_GATEWAY_PORT}" --unique-name "$SLUG" 2>&1 \
+        | filter_zrok_runtime_output >>"$ZROK_RUNTIME_LOG" &
     fi
     pid=$!
     echo "$pid" > "$FASED_CONFIG_DIR/.zrok-pid"
@@ -1232,8 +1019,12 @@ echo "[tunnel] Target Slug: $SLUG"
 RES_FILE="$FASED_CONFIG_DIR/${SLUG}.zrok-reservation"
 RES_TOKEN=""
 if [[ -f "$RES_FILE" ]]; then
-   RES_TOKEN=$(cat "$RES_FILE")
-   echo "[tunnel] Found cached reservation: $RES_TOKEN"
+   RES_TOKEN="$(read_private_zrok_reservation "$RES_FILE" || true)"
+   if [[ -n "$RES_TOKEN" ]]; then
+     echo "[tunnel] Found a private cached reservation (token hidden)."
+   else
+     echo "[tunnel] Ignoring an unsafe or unreadable cached reservation file."
+   fi
 fi
 
 # Recovery when exact slug file is missing: use the only reservation token in config dir.
@@ -1241,14 +1032,16 @@ if [[ -z "$RES_TOKEN" ]]; then
   mapfile -t RES_FILES < <(ls "$FASED_CONFIG_DIR"/*.zrok-reservation 2>/dev/null || true)
   if [[ ${#RES_FILES[@]} -eq 1 ]]; then
     RES_FILE="${RES_FILES[0]}"
-    RES_TOKEN=$(cat "$RES_FILE")
+    RES_TOKEN="$(read_private_zrok_reservation "$RES_FILE" || true)"
     RECOVERED_BASENAME=$(basename "$RES_FILE")
     RECOVERED_SLUG="${RECOVERED_BASENAME%.zrok-reservation}"
     if [[ -n "$RECOVERED_SLUG" ]]; then
       SLUG="$RECOVERED_SLUG"
       echo "[tunnel] Recovered slug from cached reservation filename: $SLUG"
     fi
-    echo "[tunnel] Recovered cached reservation: $RES_TOKEN"
+    if [[ -n "$RES_TOKEN" ]]; then
+      echo "[tunnel] Recovered a private cached reservation (token hidden)."
+    fi
   fi
 fi
 
@@ -1289,7 +1082,7 @@ if [[ "$MANAGED_TUNNEL_DISABLED" != "1" && "$ZROK_TOKEN" != "null" && -n "$ZROK_
   # zrok enable (idempotent-ish, or just try)
   # Remove --force as it's not supported in v1.1+
   # We ignore error if already enabled, but capture output to be safe
-  "$ZROK_BIN" enable "$ZROK_TOKEN" --description "fased-agent" 2>/dev/null || true
+  "$ZROK_BIN" enable "$ZROK_TOKEN" --description "fased-agent" >/dev/null 2>&1 || true
   
   # If no token, check if we already reserved it (recovery from lost file)
   if [[ -z "$RES_TOKEN" ]]; then
@@ -1298,9 +1091,10 @@ if [[ "$MANAGED_TUNNEL_DISABLED" != "1" && "$ZROK_TOKEN" != "null" && -n "$ZROK_
       EXISTING_TOKEN=$(echo "$OVERVIEW_JSON" | jq -r --arg SLUG "$SLUG" '(.shares // [])[] | select(.frontendEndpoints[] | contains($SLUG)) | .token' 2>/dev/null | head -n 1 || true)
       
       if [[ -n "$EXISTING_TOKEN" ]]; then
-          echo "[tunnel] Recovered existing token: $EXISTING_TOKEN"
+          echo "[tunnel] Recovered an existing reservation (token hidden)."
           RES_TOKEN="$EXISTING_TOKEN"
-          echo "$RES_TOKEN" > "$RES_FILE"
+          write_private_zrok_reservation "$RES_FILE" "$RES_TOKEN"
+          unset EXISTING_TOKEN OVERVIEW_JSON
       fi
   fi
 
@@ -1308,25 +1102,27 @@ if [[ "$MANAGED_TUNNEL_DISABLED" != "1" && "$ZROK_TOKEN" != "null" && -n "$ZROK_
   if [[ -z "$RES_TOKEN" ]]; then
       echo "[tunnel] Reserving public share..."
       # Use --json-output to parse output reliably; separate stderr
-      PARAMS="--unique-name $SLUG --backend-mode proxy --json-output"
+      ZROK_RESERVE_ARGS=(--unique-name "$SLUG" --backend-mode proxy --json-output)
       
       # Capture logic: stdout to variable, stderr to temp file
-      ZROK_LOG="/tmp/zrok-reserve.log"
-      rm -f "$ZROK_LOG"
+      ZROK_LOG="$(mktemp "$FASED_CONFIG_DIR/.zrok-reserve.XXXXXXXX")"
+      chmod 0600 "$ZROK_LOG"
+      OUT=""
       
-      if OUT=$("$ZROK_BIN" reserve public "http://127.0.0.1:${FASED_GATEWAY_PORT}" $PARAMS 2> "$ZROK_LOG"); then
+      if OUT=$("$ZROK_BIN" reserve public "http://127.0.0.1:${FASED_GATEWAY_PORT}" "${ZROK_RESERVE_ARGS[@]}" 2> "$ZROK_LOG"); then
           RES_TOKEN=$(echo "$OUT" | jq -r '.token // empty')
       else
-          echo "[tunnel] Reserve failed. Log:"
-          cat "$ZROK_LOG"
+          echo "[tunnel] Reservation request failed; provider output was suppressed because it may contain credentials."
       fi
+      rm -f -- "$ZROK_LOG"
+      unset ZROK_LOG ZROK_RESERVE_ARGS OUT
       
       if [[ -z "$RES_TOKEN" ]]; then
-          echo "[tunnel] Reservation failed or already reserved. Output: $OUT"
+          echo "[tunnel] Reservation failed or was already reserved; secret-bearing output was not logged."
           disable_managed_tunnel "Could not establish reserved tunnel for '$SLUG'."
       else
-          echo "$RES_TOKEN" > "$RES_FILE"
-          echo "[tunnel] Reserved: $RES_TOKEN"
+          write_private_zrok_reservation "$RES_FILE" "$RES_TOKEN"
+          echo "[tunnel] Reserved a private share (token hidden)."
       fi
   fi
   
@@ -1454,13 +1250,11 @@ TAILSCALE_ADMIN_URL="N/A"
 TAILSCALE_SSH_CMD="N/A"
 TAILSCALE_SERVE_READY=0
 if command -v tailscale >/dev/null 2>&1; then
-  if [[ "${FASED_TAILSCALE_AUTO_SERVE:-1}" == "1" ]]; then
+  if [[ "${FASED_TAILSCALE_AUTO_SERVE:-1}" == "1" && "${FASED_HOST_PROFILE:-}" != "hosting" ]]; then
     tailscale serve --bg "http://127.0.0.1:${FASED_GATEWAY_PORT}" >/dev/null 2>&1 || \
-      printf '%s\n' "${FASED_GATEWAY_PORT}" | sudo -n /usr/local/sbin/fased-host-maintenance tailscale-serve >/dev/null 2>&1 || \
       tailscale serve https / "http://127.0.0.1:${FASED_GATEWAY_PORT}" >/dev/null 2>&1 || true
   fi
-  if tailscale serve status 2>/dev/null | grep -q "127.0.0.1:${FASED_GATEWAY_PORT}" || \
-     sudo -n /usr/local/sbin/fased-host-maintenance tailscale-serve-status 2>/dev/null | grep -q "127.0.0.1:${FASED_GATEWAY_PORT}"; then
+  if tailscale serve status 2>/dev/null | grep -q "127.0.0.1:${FASED_GATEWAY_PORT}"; then
     TAILSCALE_SERVE_READY=1
   fi
   if command -v jq >/dev/null 2>&1; then
@@ -1480,22 +1274,20 @@ FED_TOKEN_ID="N/A"
 FED_EXPIRES_AT="N/A"
 FED_AGENT_SLUG="N/A"
 FED_PUBLIC_URL="N/A"
-FED_ZROK_TOKEN=""
+FED_ZROK_CREDENTIAL_STATE="not present"
 if command -v jq >/dev/null 2>&1; then
   FED_HANDLE=$(jq -r '.handle // "N/A"' "$TOKEN_PATH" 2>/dev/null || echo "N/A")
   FED_TOKEN_ID=$(jq -r '.tokenId // "N/A"' "$TOKEN_PATH" 2>/dev/null || echo "N/A")
   FED_EXPIRES_AT=$(jq -r '.expiresAt // "N/A"' "$TOKEN_PATH" 2>/dev/null || echo "N/A")
   FED_AGENT_SLUG=$(jq -r '.agentSlug // "N/A"' "$TOKEN_PATH" 2>/dev/null || echo "N/A")
   FED_PUBLIC_URL=$(jq -r '.publicUrl // "N/A"' "$TOKEN_PATH" 2>/dev/null || echo "N/A")
-  FED_ZROK_TOKEN=$(jq -r '.zrokToken // empty' "$TOKEN_PATH" 2>/dev/null || true)
+  if jq -e '.zrokToken | type == "string" and length > 0' "$TOKEN_PATH" >/dev/null 2>&1; then
+    FED_ZROK_CREDENTIAL_STATE="present (hidden)"
+  fi
 fi
-FED_ZROK_TOKEN_MASKED="N/A"
-if [[ -n "$FED_ZROK_TOKEN" ]]; then
-  FED_ZROK_TOKEN_MASKED=$(mask_secret "$FED_ZROK_TOKEN")
-fi
-RES_TOKEN_MASKED="N/A"
+RES_TOKEN_STATE="not present"
 if [[ -n "${RES_TOKEN:-}" ]]; then
-  RES_TOKEN_MASKED=$(mask_secret "$RES_TOKEN")
+  RES_TOKEN_STATE="present (hidden)"
 fi
 GATEWAY_TOKEN_MASKED=$(mask_secret "$(tr -d '\n' < "$GW_TOKEN_PATH")")
 
@@ -1512,11 +1304,11 @@ echo "  Token ID:            $FED_TOKEN_ID"
 echo "  Expires At:          $FED_EXPIRES_AT"
 echo "  Agent Slug:          $FED_AGENT_SLUG"
 echo "  Public URL (token):  $FED_PUBLIC_URL"
-echo "  zrokToken:           $FED_ZROK_TOKEN_MASKED"
+echo "  zrok credential:     $FED_ZROK_CREDENTIAL_STATE"
 echo "Federation/A2A Tunnel (zrok)"
 echo "  PID:                 ${ZROK_PID:-N/A}"
 echo "  Slug:                ${SLUG:-N/A}"
-echo "  Reservation token:   $RES_TOKEN_MASKED"
+echo "  Reservation:         $RES_TOKEN_STATE"
 echo "  Public URL (A2A):    $FINAL_URL"
 echo "  Runtime log:         $ZROK_RUNTIME_LOG"
 if [[ "$MANAGED_TUNNEL_DISABLED" == "1" ]]; then
@@ -1598,7 +1390,9 @@ cleanup_managed_runtime() {
     kill "$ZROK_MONITOR_PID" 2>/dev/null || true
   fi
   rm -f "$FASED_CONFIG_DIR/.zrok-pid" "$ZROK_MONITOR_PID_FILE" 2>/dev/null || true
-  stop_existing_signerd >/dev/null 2>&1 || true
+  if [[ "${HOSTED_ROOT_SIGNER:-0}" != "1" ]]; then
+    stop_existing_signerd >/dev/null 2>&1 || true
+  fi
   force_stop_local_gateway
 }
 

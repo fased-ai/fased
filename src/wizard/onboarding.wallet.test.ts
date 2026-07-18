@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -8,6 +9,8 @@ import {
   configureWalletForOnboarding,
   installSignerdBinary,
   renderLocalSignerEnvFile,
+  restartLocalSocketSigner,
+  resolveLocalSignerWebAuthnConfig,
   shouldSyncLocalSocketSignerFromConfig,
   syncLocalSocketSignerFromConfig,
   writeLocalSignerEnvFile,
@@ -15,6 +18,18 @@ import {
 import type { WizardPrompter } from "./prompts.js";
 
 const tempDirs: string[] = [];
+const onboardingWalletSource = fs.readFileSync(
+  new URL("./onboarding.wallet.ts", import.meta.url),
+  "utf8",
+);
+const signerInstallerSource = fs.readFileSync(
+  new URL("../../scripts/install-fased-signerd.sh", import.meta.url),
+  "utf8",
+);
+const signerUpdaterSource = fs.readFileSync(
+  new URL("../../scripts/fased-managed-updater.mjs", import.meta.url),
+  "utf8",
+);
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -50,17 +65,126 @@ function createSignerReleaseFixture(root: string): {
   const platform = process.platform === "darwin" ? "darwin" : "linux";
   const arch = process.arch === "arm64" ? "arm64" : "amd64";
   const assetName = `fased-signerd-${platform}-${arch}`;
-  const assetBody = "fixture signer binary\n";
+  const identity = {
+    version: "0.1.63",
+    commit: "a".repeat(40),
+    buildInputDigest: `sha256:${"b".repeat(64)}`,
+    development: false,
+  };
+  const assetBody = `#!/usr/bin/env node
+const fs = require("node:fs");
+const net = require("node:net");
+const path = require("node:path");
+const identity = ${JSON.stringify(identity)};
+if (process.argv[2] === "--version") {
+  process.stdout.write(\`fased-signerd \${identity.version} commit=\${identity.commit} buildInputDigest=\${identity.buildInputDigest} development=false\\n\`);
+  process.exit(0);
+}
+const args = process.argv.slice(2);
+const value = (name) => args[args.indexOf(name) + 1];
+const readOnly = args.includes("-read-only");
+const socketPath = value("-socket");
+const controlPath = value("-control-socket");
+const statePath = value("-state-db");
+const masterPath = value("-master-key");
+const pidPath = value("-pid-file");
+const auditPath = value("-audit-log");
+for (const file of [statePath, masterPath, pidPath, auditPath]) fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+if (!fs.existsSync(statePath)) fs.writeFileSync(statePath, "state\\n", { mode: 0o600 });
+if (!fs.existsSync(masterPath)) fs.writeFileSync(masterPath, "master\\n", { mode: 0o600 });
+fs.writeFileSync(pidPath, \`\${process.pid}\\n\`, { mode: 0o600 });
+const health = { ok: true, result: { ready: true, readOnly, keystoreType: "signer-owned-v2", release: identity, schema: { version: 3, supported: 3, ready: true }, capabilities: { protocol: { current: 2, min: 2, max: 2 }, nativeFeeReservationLamports: 5000000, features: ${JSON.stringify(
+    [
+      "failClosedPolicies",
+      "policyHashes",
+      "durableCaps",
+      "atomicIdempotency",
+      "ambiguousBroadcastReconciliation",
+      "signerOwnedKeys",
+      "typedSolanaTransactions",
+      "atomicMultiAssetCaps",
+      "signerControlledNativeFeeCaps",
+    ],
+  )} }, policies: [] } };
+const app = net.createServer((socket) => socket.once("data", () => socket.end(JSON.stringify(health) + "\\n")));
+const control = net.createServer((socket) => socket.destroy());
+const cleanup = () => { app.close(); control.close(); for (const file of [socketPath, controlPath, pidPath]) { try { fs.rmSync(file, { force: true }); } catch {} } process.exit(0); };
+process.on("SIGTERM", cleanup);
+app.listen(socketPath, () => fs.chmodSync(socketPath, 0o600));
+control.listen(controlPath, () => fs.chmodSync(controlPath, 0o600));
+`;
   fs.writeFileSync(path.join(releaseDir, assetName), assetBody, { mode: 0o755 });
   const checksum = createHash("sha256").update(assetBody).digest("hex");
+  const manifestBody = `${JSON.stringify({ schemaVersion: 1, ...identity }, null, 2)}\n`;
+  fs.writeFileSync(path.join(releaseDir, "fased-signerd-release.json"), manifestBody);
+  const manifestChecksum = createHash("sha256").update(manifestBody).digest("hex");
   fs.writeFileSync(
     path.join(releaseDir, "fased-signerd-checksums.txt"),
-    `${checksum}  ${assetName}\n`,
+    `${checksum}  ${assetName}\n${manifestChecksum}  fased-signerd-release.json\n`,
   );
   return { assetBody, assetName, releaseDir };
 }
 
 describe("local signer env file helpers", () => {
+  it("states the Local same-user boundary precisely and keeps official installs version-attested", () => {
+    expect(onboardingWalletSource).toContain(
+      "Local shares one OS account and is not a hard compromise boundary; Hosting isolates the signer account.",
+    );
+    expect(onboardingWalletSource).not.toContain(
+      "Keys are isolated in Go signer process — not accessible to Node agent",
+    );
+    expect(onboardingWalletSource).toContain(
+      "env.FASED_LOCAL_SIGNER_VERSION = `v${normalizedVersion}`",
+    );
+    expect(onboardingWalletSource).toContain("Go is not required for the official prebuilt signer");
+    expect(signerInstallerSource).toContain("gh attestation verify");
+    expect(signerUpdaterSource).toContain("`refs/tags/v${version}`");
+    expect(signerUpdaterSource).toContain("--deny-self-hosted-runners");
+  });
+
+  it("uses the same localhost WebAuthn identity on Linux, WSL2, and native macOS", () => {
+    const cfg = { gateway: { port: 19876 } } as FasedAgentConfig;
+    for (const env of [
+      { HOME: "/home/linux" },
+      { HOME: "/home/wsl", WSL_DISTRO_NAME: "Ubuntu" },
+      { HOME: "/Users/macos" },
+    ]) {
+      expect(resolveLocalSignerWebAuthnConfig(cfg, env)).toEqual({
+        rpId: "localhost",
+        origins: "http://localhost:18791,http://localhost:19876",
+      });
+    }
+  });
+
+  it("rejects partial, cross-origin, and shell-active local WebAuthn configuration", () => {
+    expect(() =>
+      resolveLocalSignerWebAuthnConfig(
+        {},
+        {
+          FASED_WALLET_WEBAUTHN_RP_ID: "localhost",
+        },
+      ),
+    ).toThrow(/requires both/);
+    expect(() =>
+      resolveLocalSignerWebAuthnConfig(
+        {},
+        {
+          FASED_WALLET_WEBAUTHN_RP_ID: "localhost",
+          FASED_WALLET_WEBAUTHN_ORIGINS: "https://attacker.example",
+        },
+      ),
+    ).toThrow(/exactly match/);
+    expect(() =>
+      resolveLocalSignerWebAuthnConfig(
+        {},
+        {
+          FASED_WALLET_WEBAUTHN_RP_ID: "localhost$(touch /tmp/unsafe)",
+          FASED_WALLET_WEBAUTHN_ORIGINS: "http://localhost:18789",
+        },
+      ),
+    ).toThrow(/valid exact hostname/);
+  });
+
   it("keeps fresh quickstart wallet disabled so installer does not require signerd assets", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-onboarding-wallet-fresh-"));
     tempDirs.push(root);
@@ -121,6 +245,8 @@ describe("local signer env file helpers", () => {
       vi.stubEnv("FASED_LOCAL_SIGNER_BASE_URL", `file://${releaseDir}`);
       vi.stubEnv("FASED_LOCAL_SIGNER_VERSION", "");
       vi.stubEnv("FASED_LOCAL_SIGNER_LATEST_TAG", "");
+      vi.stubEnv("FASED_LOCAL_SIGNER_ALLOW_UNATTESTED", "1");
+      vi.stubEnv("FASED_LOCAL_SIGNER_FLAT_RELEASE", "1");
 
       const originalCwd = process.cwd();
       process.chdir(root);
@@ -152,6 +278,8 @@ describe("local signer env file helpers", () => {
       vi.stubEnv("FASED_LOCAL_SIGNER_BASE_URL", `file://${releaseDir}`);
       vi.stubEnv("FASED_LOCAL_SIGNER_VERSION", "");
       vi.stubEnv("FASED_LOCAL_SIGNER_LATEST_TAG", "");
+      vi.stubEnv("FASED_LOCAL_SIGNER_ALLOW_UNATTESTED", "1");
+      vi.stubEnv("FASED_LOCAL_SIGNER_FLAT_RELEASE", "1");
 
       expect(() => installSignerdBinary(binPath)).toThrow(/Checksum mismatch/);
       expect(fs.existsSync(binPath)).toBe(false);
@@ -177,7 +305,6 @@ describe("local signer env file helpers", () => {
       env: {
         vars: {
           FASED_WALLET_LOCAL_SIGNER_SOCKET: socketPath,
-          FASED_WALLET_PASSPHRASE: "test-passphrase",
         },
       },
       wallet: {
@@ -196,19 +323,93 @@ describe("local signer env file helpers", () => {
     expect(fs.existsSync(binPath)).toBe(false);
   });
 
-  it("shows automatic signer progress in Hosting QuickStart without a backend prompt", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-onboarding-wallet-prepare-"));
+  it("never launches a replacement process for an externally managed Docker signer", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-onboarding-wallet-external-"));
     tempDirs.push(root);
-    const binPath = path.join(root, "bin", "fased-signerd");
-    vi.stubEnv("HOME", root);
-    vi.stubEnv("FASED_STATE_DIR", root);
-    vi.stubEnv("FASED_CONFIG_DIR", root);
-    vi.stubEnv("FASED_WALLET_LOCAL_SIGNER_BIN", binPath);
-    vi.stubEnv("FASED_WALLET_LOCAL_SIGNER_SOCKET", path.join(root, "wallet", "local-signer.sock"));
-    vi.stubEnv("FASED_SKIP_NATIVE_SIGNER_BUILD", "1");
-    const prepareLocalSigner = vi.fn(async () => {
-      throw new Error("preparation hook sentinel");
+    const binPath = path.join(root, "fased-signerd");
+    const markerPath = path.join(root, "unexpected-start");
+    const socketPath = path.join(root, "missing.sock");
+    fs.writeFileSync(binPath, `#!/bin/sh\ntouch ${markerPath}\n`, { mode: 0o755 });
+
+    await expect(
+      restartLocalSocketSigner(undefined, {
+        HOME: root,
+        FASED_WALLET_LOCAL_SIGNER_LIFECYCLE: "external",
+        FASED_WALLET_LOCAL_SIGNER_BIN: binPath,
+        FASED_WALLET_LOCAL_SIGNER_SOCKET: socketPath,
+      }),
+    ).rejects.toThrow(/externally managed fased-signerd is unavailable/);
+    expect(fs.existsSync(markerPath)).toBe(false);
+  }, 12_000);
+
+  it("accepts a healthy externally managed signer without replacing it", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-onboarding-wallet-external-ok-"));
+    tempDirs.push(root);
+    const binPath = path.join(root, "fased-signerd");
+    const markerPath = path.join(root, "unexpected-start");
+    const socketPath = path.join(root, "app.sock");
+    fs.writeFileSync(binPath, `#!/bin/sh\ntouch ${markerPath}\n`, { mode: 0o755 });
+    const sockets = new Set<net.Socket>();
+    const server = net.createServer((socket) => {
+      sockets.add(socket);
+      socket.once("close", () => sockets.delete(socket));
+      socket.setEncoding("utf8");
+      socket.once("data", () => {
+        socket.end(
+          `${JSON.stringify({
+            ok: true,
+            result: {
+              details: "fased-signerd protocol-v2 ready",
+              readOnly: false,
+              keystoreType: "signer-owned-v2",
+              chains: ["solana"],
+              ready: true,
+              release: {
+                version: "0.1.63",
+                commit: "a".repeat(40),
+                buildInputDigest: `sha256:${"b".repeat(64)}`,
+                development: false,
+              },
+              capabilities: {
+                protocol: { current: 2, min: 2, max: 2 },
+                nativeFeeReservationLamports: 5_000_000,
+                intentTypes: ["solana.nativeTransfer"],
+                operationStates: ["reserved", "broadcast", "confirmed", "failed", "unknown"],
+                features: ["failClosedPolicies", "policyHashes", "signerOwnedKeys"],
+              },
+              policies: [],
+            },
+          })}\n`,
+        );
+      });
     });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(socketPath, resolve);
+    });
+
+    try {
+      await expect(
+        restartLocalSocketSigner(undefined, {
+          HOME: root,
+          FASED_WALLET_LOCAL_SIGNER_LIFECYCLE: "external",
+          FASED_WALLET_LOCAL_SIGNER_BIN: binPath,
+          FASED_WALLET_LOCAL_SIGNER_SOCKET: socketPath,
+        }),
+      ).resolves.toBeUndefined();
+      expect(fs.existsSync(markerPath)).toBe(false);
+    } finally {
+      for (const socket of sockets) {
+        socket.destroy();
+      }
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("never installs or brokers a signer from Hosting QuickStart", async () => {
+    vi.stubEnv("FASED_WALLET_LOCAL_SIGNER_SOCKET", "/run/fased-signerd/app.sock");
+    vi.stubEnv("FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET", "/run/fased-signerd/app.sock");
+    const prepareLocalSigner = vi.fn();
     const signerProgressStop = vi.fn();
     const prompter = createPrompterStub();
     vi.mocked(prompter.progress).mockReturnValue({
@@ -225,16 +426,18 @@ describe("local signer env file helpers", () => {
         prepareLocalSigner,
         prompter,
       }),
-    ).rejects.toThrow(/preparation hook sentinel/);
+    ).rejects.toThrow(
+      /root-managed hosted wallet signer is unavailable|root-managed hosted signer/i,
+    );
 
-    expect(prepareLocalSigner).toHaveBeenCalledWith({ binPath });
+    expect(prepareLocalSigner).not.toHaveBeenCalled();
     expect(prompter.multiselect).not.toHaveBeenCalled();
     expect(prompter.note).not.toHaveBeenCalled();
-    expect(prompter.progress).toHaveBeenCalledWith("Installing local wallet signer…");
-    expect(signerProgressStop).toHaveBeenCalledWith("Local wallet signer installation failed.");
+    expect(prompter.progress).not.toHaveBeenCalled();
+    expect(signerProgressStop).not.toHaveBeenCalled();
   });
 
-  it("renders named-wallet signer env from config state", () => {
+  it("renders signer-v2 runtime env without legacy key or custody state", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-onboarding-wallet-env-"));
     tempDirs.push(root);
     const cfg: FasedAgentConfig = {
@@ -287,20 +490,16 @@ describe("local signer env file helpers", () => {
       `export FASED_WALLET_LOCAL_SIGNER_SOCKET="${path.join(root, "wallet", "local-signer.sock")}"`,
     );
     expect(content).toContain('export FASED_WALLET_CHAINS="solana"');
-    expect(content).toContain('export FASED_WALLET_PASSPHRASE="test-passphrase"');
+    expect(content).not.toMatch(/FASED_WALLET_PASSPHRASE/);
+    expect(content).not.toMatch(/FASED_WALLET_SOLANA_KEYSTORE_PATH/);
+    expect(content).not.toContain("https://rpc.example/solana");
+    expect(content).not.toContain("https://rpc-backup.example/solana");
+    expect(content).toContain('export FASED_WALLET_WEBAUTHN_RP_ID="localhost"');
     expect(content).toContain(
-      `export FASED_WALLET_SOLANA_KEYSTORE_PATH__WALLET_1="${path.join(root, "wallet", "keystore-solana-wallet-1.v1.enc")}"`,
+      'export FASED_WALLET_WEBAUTHN_ORIGINS="http://localhost:18789,http://localhost:18791"',
     );
-    expect(content).not.toContain("export FASED_WALLET_SOLANA_KEYSTORE_PATH=");
-    expect(content).toContain(
-      'export FASED_WALLET_SOLANA_RPC_URL__WALLET_1="https://rpc.example/solana"',
-    );
-    expect(content).toContain(
-      'export FASED_WALLET_SOLANA_WRITE_RPC_FALLBACK_URL__WALLET_1="https://rpc-backup.example/solana"',
-    );
-    expect(content).toContain('export FASED_WALLET_CUSTODY_MODE="split-key"');
-    expect(content).toContain('export FASED_WALLET_CUSTODY_WALLETS="wallet_1"');
-    expect(content).toContain('export FASED_WALLET_CUSTODY_PASSKEY_CEREMONY="1"');
+    expect(content).not.toMatch(/FASED_WALLET_CUSTODY_/);
+    expect(content).not.toMatch(/FASED_WALLET_LOCAL_SIGNER_DIRECT_SIGNING/);
   });
 
   it("writes signer.env with restrictive permissions", () => {
@@ -341,13 +540,19 @@ describe("local signer env file helpers", () => {
     });
     const stat = fs.statSync(signerEnvPath);
     expect(stat.mode & 0o777).toBe(0o600);
-    expect(fs.readFileSync(signerEnvPath, "utf8")).toContain('export FASED_WALLET_CHAINS="solana"');
-    expect(fs.readFileSync(signerEnvPath, "utf8")).toContain(
-      'export FASED_WALLET_PASSPHRASE="test-passphrase"',
+    const signerEnv = fs.readFileSync(signerEnvPath, "utf8");
+    expect(signerEnv).toContain('export FASED_WALLET_CHAINS="solana"');
+    expect(signerEnv).toContain("FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET");
+    expect(signerEnv).toContain("FASED_WALLET_LOCAL_SIGNER_STATE_DB");
+    expect(signerEnv).toContain("FASED_WALLET_LOCAL_SIGNER_MASTER_KEY");
+    expect(signerEnv).toContain('FASED_WALLET_WEBAUTHN_RP_ID="localhost"');
+    expect(signerEnv).toContain(
+      'FASED_WALLET_WEBAUTHN_ORIGINS="http://localhost:18789,http://localhost:18791"',
     );
+    expect(signerEnv).not.toMatch(/FASED_WALLET_PASSPHRASE|KEYSTORE/);
   });
 
-  it("writes signer.env with the managed passphrase file when one exists", () => {
+  it("does not leak an existing managed passphrase into signer-v2 env", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-onboarding-wallet-passphrase-file-"));
     tempDirs.push(root);
     const walletDir = path.join(root, "wallet");
@@ -384,11 +589,12 @@ describe("local signer env file helpers", () => {
       } as NodeJS.ProcessEnv,
     });
     const signerEnv = fs.readFileSync(signerEnvPath, "utf8");
-    expect(signerEnv).toContain(`export FASED_WALLET_PASSPHRASE_FILE="${passphraseFile}"`);
+    expect(signerEnv).not.toContain(passphraseFile);
+    expect(signerEnv).not.toMatch(/FASED_WALLET_PASSPHRASE/);
     expect(signerEnv).not.toContain("stale-env-passphrase");
   });
 
-  it("still syncs signer env when provider config is stale but self-hosted signer env exists", () => {
+  it("requires migration when provider config and keystore env are stale", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-onboarding-wallet-sync-"));
     tempDirs.push(root);
     const cfg: FasedAgentConfig = {
@@ -407,15 +613,15 @@ describe("local signer env file helpers", () => {
       },
     };
 
-    expect(
+    expect(() =>
       shouldSyncLocalSocketSignerFromConfig({
         config: cfg,
         env: { HOME: root, FASED_STATE_DIR: root } as NodeJS.ProcessEnv,
       }),
-    ).toBe(true);
+    ).toThrow(/embedded-keystore was retired/i);
   });
 
-  it("ignores stale generic keystore env when named-wallet scoped signer material exists", () => {
+  it("ignores all stale Node keystore env for signer-v2", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-onboarding-wallet-scoped-"));
     tempDirs.push(root);
     const cfg: FasedAgentConfig = {
@@ -440,16 +646,10 @@ describe("local signer env file helpers", () => {
       env: { HOME: root, FASED_STATE_DIR: root } as NodeJS.ProcessEnv,
     });
 
-    expect(content).toContain(
-      `export FASED_WALLET_SOLANA_KEYSTORE_PATH__WALLET_1="${path.join(root, "wallet", "keystore-solana-wallet-1.v1.enc")}"`,
-    );
-    expect(content).not.toContain(
-      `export FASED_WALLET_SOLANA_KEYSTORE_PATH="${path.join(root, "wallet", "keystore-solana.v1.enc")}"`,
-    );
-    expect(content).not.toContain("export FASED_WALLET_SOLANA_KEYSTORE_PATH=");
+    expect(content).not.toMatch(/FASED_WALLET_SOLANA_KEYSTORE_PATH/);
   });
 
-  it("reconstructs scoped signer env from registry and named keystore files", () => {
+  it("does not reconstruct legacy keys or policies from registry files", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-onboarding-wallet-registry-"));
     tempDirs.push(root);
     const walletDir = path.join(root, "wallet");
@@ -501,19 +701,7 @@ describe("local signer env file helpers", () => {
       env: { HOME: root, FASED_STATE_DIR: root } as NodeJS.ProcessEnv,
     });
 
-    expect(content).toContain(
-      `export FASED_WALLET_SOLANA_KEYSTORE_PATH__WALLET_1="${path.join(walletDir, "keystore-solana-wallet-1.v1.enc")}"`,
-    );
-    expect(content).not.toContain(
-      `export FASED_WALLET_SOLANA_KEYSTORE_PATH="${path.join(walletDir, "keystore-solana.v1.enc")}"`,
-    );
-    expect(content).toContain('export FASED_WALLET_LOCAL_SIGNER_ROLE="agent"');
-    expect(content).toContain('export FASED_WALLET_LOCAL_SIGNER_DIRECT_SIGNING="1"');
-    expect(content).toContain('export FASED_WALLET_LOCAL_SIGNER_CAPS_ENABLED="0"');
-    expect(content).toContain('export FASED_WALLET_LOCAL_SIGNER_ROLE__WALLET_1="agent"');
-    expect(content).toContain('export FASED_WALLET_LOCAL_SIGNER_DIRECT_SIGNING__WALLET_1="1"');
-    expect(content).toContain('export FASED_WALLET_LOCAL_SIGNER_CAPS_ENABLED__WALLET_1="0"');
-    expect(content).toMatch(/FASED_WALLET_LOCAL_SIGNER_SOLANA_MAX_PER_TX__WALLET_1="[0-9]+"/);
-    expect(content).toMatch(/FASED_WALLET_LOCAL_SIGNER_SOLANA_MAX_DAILY__WALLET_1="[0-9]+"/);
+    expect(content).not.toMatch(/FASED_WALLET_SOLANA_KEYSTORE_PATH/);
+    expect(content).not.toMatch(/FASED_WALLET_LOCAL_SIGNER_(ROLE|DIRECT_SIGNING|CAPS_ENABLED)/);
   });
 });

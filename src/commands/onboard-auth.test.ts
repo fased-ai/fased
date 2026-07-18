@@ -157,6 +157,50 @@ describe("writeOAuthCredentials", () => {
     ).rejects.toThrow();
   });
 
+  it("keeps caller-selected OAuth type and provider canonical", async () => {
+    const env = await setupAuthTestEnv("fased-oauth-canonical-");
+    lifecycle.setStateDir(env.stateDir);
+
+    const creds = {
+      refresh: "refresh-token",
+      access: "access-token",
+      expires: Date.now() + 60_000,
+      email: "operator@example.com",
+      type: "api_key",
+      provider: "attacker-controlled",
+    } satisfies OAuthCredentials;
+
+    const profileId = await writeOAuthCredentials("openai-codex", creds);
+    expect(profileId).toBe("openai-codex:operator@example.com");
+
+    const parsed = await readAuthProfilesForAgent<{
+      profiles?: Record<string, OAuthCredentials & { provider?: string; type?: string }>;
+    }>(env.agentDir);
+    expect(parsed.profiles?.[profileId]).toMatchObject({
+      access: "access-token",
+      provider: "openai-codex",
+      type: "oauth",
+    });
+  });
+
+  it("rejects malformed OAuth material before writing an auth profile", async () => {
+    const env = await setupAuthTestEnv("fased-oauth-invalid-");
+    lifecycle.setStateDir(env.stateDir);
+    const invalidCredentials = [
+      { access: "", refresh: "refresh", expires: Date.now() + 60_000 },
+      { access: "access", refresh: "", expires: Date.now() + 60_000 },
+      { access: "access", refresh: "refresh", expires: Number.POSITIVE_INFINITY },
+      { access: "access", refresh: "refresh", expires: Date.now() + 60_000, email: 42 },
+    ] as unknown as OAuthCredentials[];
+
+    for (const creds of invalidCredentials) {
+      await expect(writeOAuthCredentials("openai-codex", creds)).rejects.toThrow(
+        /OAuth credential/,
+      );
+    }
+    await expect(fs.readFile(authProfilePathFor(env.agentDir), "utf8")).rejects.toThrow();
+  });
+
   it("writes OAuth credentials to all sibling agent dirs when syncSiblingAgents=true", async () => {
     tempStateDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-oauth-sync-"));
     process.env.FASED_STATE_DIR = tempStateDir;

@@ -36,6 +36,7 @@ type ModelCatalog = Awaited<ReturnType<typeof loadModelCatalog>>;
 type ModelSelectionState = {
   provider: string;
   model: string;
+  allowAnyModel: boolean;
   allowedModelKeys: Set<string>;
   allowedModelCatalog: ModelCatalog;
   resetModelOverride: boolean;
@@ -313,6 +314,7 @@ export async function createModelSelectionState(params: {
 
   let allowedModelKeys = new Set<string>();
   let allowedModelCatalog: ModelCatalog = [];
+  let allowAnyModel = true;
   let modelCatalog: ModelCatalog | null = null;
   let resetModelOverride = false;
 
@@ -342,6 +344,7 @@ export async function createModelSelectionState(params: {
         });
     allowedModelCatalog = allowed.allowedCatalog;
     allowedModelKeys = allowed.allowedKeys;
+    allowAnyModel = allowed.allowAny;
   }
 
   if (sessionEntry && sessionStore && sessionKey && hasStoredOverride) {
@@ -349,7 +352,7 @@ export async function createModelSelectionState(params: {
     const overrideModel = sessionEntry.modelOverride?.trim();
     if (overrideModel) {
       const key = modelKey(overrideProvider, overrideModel);
-      if (allowedModelKeys.size > 0 && !allowedModelKeys.has(key)) {
+      if (!allowAnyModel && !allowedModelKeys.has(key)) {
         const { updated } = applyModelOverrideToSessionEntry({
           entry: sessionEntry,
           selection: { provider: defaultProvider, model: defaultModel, isDefault: true },
@@ -380,7 +383,7 @@ export async function createModelSelectionState(params: {
   if (storedOverride?.model && !skipStoredOverride) {
     const candidateProvider = storedOverride.provider || defaultProvider;
     const key = modelKey(candidateProvider, storedOverride.model);
-    if (allowedModelKeys.size === 0 || allowedModelKeys.has(key)) {
+    if (allowAnyModel || allowedModelKeys.has(key)) {
       provider = candidateProvider;
       model = storedOverride.model;
     }
@@ -439,6 +442,7 @@ export async function createModelSelectionState(params: {
   return {
     provider,
     model,
+    allowAnyModel,
     allowedModelKeys,
     allowedModelCatalog,
     resetModelOverride,
@@ -453,9 +457,11 @@ export function resolveModelDirectiveSelection(params: {
   defaultProvider: string;
   defaultModel: string;
   aliasIndex: ModelAliasIndex;
+  allowAnyModel: boolean;
   allowedModelKeys: Set<string>;
 }): { selection?: ModelDirectiveSelection; error?: string } {
-  const { raw, defaultProvider, defaultModel, aliasIndex, allowedModelKeys } = params;
+  const { raw, defaultProvider, defaultModel, aliasIndex, allowAnyModel, allowedModelKeys } =
+    params;
 
   const rawTrimmed = raw.trim();
   const rawLower = rawTrimmed.toLowerCase();
@@ -587,7 +593,7 @@ export function resolveModelDirectiveSelection(params: {
   }
 
   const resolvedKey = modelKey(resolved.ref.provider, resolved.ref.model);
-  if (allowedModelKeys.size === 0 || allowedModelKeys.has(resolvedKey)) {
+  if (allowAnyModel || allowedModelKeys.has(resolvedKey)) {
     return {
       selection: {
         provider: resolved.ref.provider,

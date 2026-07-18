@@ -154,12 +154,10 @@ one place.
     Use this on the VPS that will run Fased all the time. Ubuntu LTS is the
     recommended default for a first hosted setup.
 
-    ```bash
-    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
-    ```
-
-    Run that command on the VPS itself. Fased installs/starts Tailscale when
-    needed and prints the VPS login URL. Open that URL from your local
+    Follow the [pre-execution verified tagged bootstrap](/install/vps#3-install-fased-and-connect-through-tailscale)
+    from the VPS provider's root console. It verifies the installer release
+    asset and attestation bundle before root execution. Fased installs/starts
+    Tailscale when needed and prints the VPS login URL. Open that URL from your local
     computer's browser. Before running hosted setup, shut down local VPNs such
     as Mullvad and confirm your local computer is already signed into
     Tailscale. Before SSH/firewall lock-down, confirm that

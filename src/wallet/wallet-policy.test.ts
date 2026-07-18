@@ -7,6 +7,7 @@ import {
   enforceWalletDailyCap,
   resolveWalletPolicyConfig,
   resolveWalletRecurringTransferPolicy,
+  resolveWalletRoleForId,
   resolveWalletRolePolicyProfile,
   upsertWalletPolicyConfig,
   validateWalletTxPolicy,
@@ -22,7 +23,7 @@ const runtimeConfig = {
     directSigning: true,
     skillsEnabled: false,
     solana: {
-      allowPrograms: [],
+      allowPrograms: ["2qwAVnGmFakeMint111111111111111111kg1jVfP7"],
       caps: { maxPerTx: 1_000_000_000n, maxDaily: 2_000_000_000n },
     },
   },
@@ -40,7 +41,7 @@ describe("wallet-policy", () => {
 
   async function writeProviderRegistry(input: {
     defaultWalletId?: string;
-    wallets: Array<{ id: string; name: string }>;
+    wallets: Array<{ id: string; name: string; role?: "agent" | "mining" | "vault" }>;
   }) {
     const walletRoot = path.join(tempDir, "wallet");
     await fs.mkdir(walletRoot, { recursive: true });
@@ -61,6 +62,7 @@ describe("wallet-policy", () => {
             name: wallet.name,
             providerId: "local-socket-signer",
             addresses: { solana: `${wallet.id}-solana` },
+            ...(wallet.role ? { metadata: { role: wallet.role } } : {}),
             createdAt: "2026-04-14T00:00:00.000Z",
             updatedAt: "2026-04-14T00:00:00.000Z",
           })),
@@ -100,6 +102,27 @@ describe("wallet-policy", () => {
     expect(result).toMatchObject({
       ok: false,
       code: "wallet_cap_per_tx_exceeded",
+    });
+  });
+
+  it("denies program and token execution when the allowlist is empty", () => {
+    const result = validateWalletTxPolicy({
+      config: {
+        ...runtimeConfig,
+        policy: {
+          ...runtimeConfig.policy,
+          solana: { ...runtimeConfig.policy.solana, allowPrograms: [] },
+        },
+      } as never,
+      action: "send",
+      chain: "solana",
+      amount: "1",
+      program: "2qwAVnGmFakeMint111111111111111111kg1jVfP7",
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      code: "wallet_program_allowlist_required",
     });
   });
 
@@ -260,7 +283,7 @@ describe("wallet-policy", () => {
     expect(agentDefault.policy.skillsEnabled).toBe(false);
     expect(agentDefault.policy.solana.caps.maxPerTx).toBe(2500000000n);
     expect(vaultDefault.policy.directSigning).toBe(false);
-    expect(vaultDefault.policy.capsEnabled).toBe(false);
+    expect(vaultDefault.policy.capsEnabled).toBe(true);
     expect(vaultDefault.policy.skillsEnabled).toBe(false);
     expect(vaultDefault.policy.solana.caps.maxPerTx).toBe(1000000000n);
 
@@ -289,7 +312,15 @@ describe("wallet-policy", () => {
     expect(overriddenVault.policy.solana.caps.maxPerTx).toBe(4200000000n);
   });
 
-  it("defaults fresh Agent caps off while keeping Agent automation on", async () => {
+  it("keeps an explicitly designated Vault role when that wallet is also the default", async () => {
+    await writeProviderRegistry({
+      defaultWalletId: "wallet-vault",
+      wallets: [{ id: "wallet-vault", name: "Vault", role: "vault" }],
+    });
+    expect(resolveWalletRoleForId({ walletId: "wallet-vault", env: process.env })).toBe("vault");
+  });
+
+  it("defaults fresh Agent and Vault wallets to manual capped execution", async () => {
     await writeProviderRegistry({
       defaultWalletId: "wallet-agent",
       wallets: [
@@ -308,11 +339,11 @@ describe("wallet-policy", () => {
     const agentDefault = resolveWalletPolicyConfig(cfg, process.env, "wallet-agent");
     const vaultDefault = resolveWalletPolicyConfig(cfg, process.env, "wallet-vault");
 
-    expect(agentDefault.policy.directSigning).toBe(true);
-    expect(agentDefault.policy.capsEnabled).toBe(false);
+    expect(agentDefault.policy.directSigning).toBe(false);
+    expect(agentDefault.policy.capsEnabled).toBe(true);
     expect(agentDefault.policy.skillsEnabled).toBe(false);
     expect(vaultDefault.policy.directSigning).toBe(false);
-    expect(vaultDefault.policy.capsEnabled).toBe(false);
+    expect(vaultDefault.policy.capsEnabled).toBe(true);
     expect(vaultDefault.policy.skillsEnabled).toBe(false);
   });
 
@@ -481,5 +512,38 @@ describe("wallet-policy", () => {
 
     expect(miningProfile.defaults.solana.allowPrograms).not.toContain(bondProgramId);
     expect(vaultProfile.defaults.solana.allowPrograms).not.toContain(bondProgramId);
+  });
+
+  it("fails closed without replacing a corrupt daily spend ledger", async () => {
+    const walletRoot = path.join(tempDir, "wallet");
+    const usagePath = path.join(walletRoot, "policy-usage.json");
+    await fs.mkdir(walletRoot, { recursive: true });
+    await fs.writeFile(usagePath, "{not-json\n", "utf8");
+
+    expect(() =>
+      enforceWalletDailyCap({
+        config: runtimeConfig as never,
+        chain: "solana",
+        amount: "1",
+        walletId: "wallet-agent",
+        env: process.env,
+      }),
+    ).toThrow("refusing to reset spend counters");
+    await expect(fs.readFile(usagePath, "utf8")).resolves.toBe("{not-json\n");
+  });
+
+  it("fails closed without replacing corrupt persisted policy", async () => {
+    await writeProviderRegistry({
+      defaultWalletId: "wallet-agent",
+      wallets: [{ id: "wallet-agent", name: "Agent" }],
+    });
+    const policyPath = path.join(tempDir, "wallet", "wallet-policy-state.v1.json");
+    await fs.writeFile(policyPath, '{"version":999,"wallets":{}}\n', "utf8");
+    const cfg = { wallet: { runtime: { chains: ["solana"] } } } as never;
+
+    expect(() => resolveWalletPolicyConfig(cfg, process.env, "wallet-agent")).toThrow(
+      "refusing to replace persisted policy",
+    );
+    await expect(fs.readFile(policyPath, "utf8")).resolves.toBe('{"version":999,"wallets":{}}\n');
   });
 });

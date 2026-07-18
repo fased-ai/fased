@@ -170,8 +170,10 @@ import {
   submitSatWithdrawMinerCapital,
   resolveSatValidatorAuthority,
   submitSatValidatorAttestation,
+  runWithSatSubmissionWorkflow,
 } from "./src/solana-submit.js";
 import { computeMiningStrategy } from "./src/strategy-engine.js";
+import { digestSatSubmissionIntent } from "./src/submission-ledger.js";
 import {
   buildSatValidatorArtifact,
   findSatValidatorArtifact,
@@ -501,8 +503,7 @@ function resolveWalletSolanaRpcUrl(env: NodeJS.ProcessEnv, walletId?: string): s
   const perWalletKey = suffix ? `FASED_WALLET_SOLANA_RPC_URL__${suffix}` : "";
   const value =
     (perWalletKey ? String(env[perWalletKey] ?? "").trim() : "") ||
-    String(env.FASED_WALLET_SOLANA_RPC_URL ?? "").trim() ||
-    String(env.FASED_WALLET_EMBEDDED_KEYSTORE_RPC_URL ?? "").trim();
+    String(env.FASED_WALLET_SOLANA_RPC_URL ?? "").trim();
   return value || undefined;
 }
 
@@ -1209,9 +1210,9 @@ const satMiningPlugin = {
       disputes:
         "usage: /satdisputesonchain <validator-authority> <epoch-id> <round-id> [reasonCode=..] [requireNonzeroSlashPenalty=true] [sortBy=targetAuthority|reasonCode|slashPenaltyOwed|openedAt] [sortOrder=asc|desc]",
       resolve:
-        "usage: /satresolvedispute <dispute-authority> <target-authority> <epoch-id> <round-id> <dismissed|upheld>",
+        "usage: /satresolvedispute <dispute-authority> <target-authority> <epoch-id> <round-id> <dismissed|upheld> [idempotencyKey=<key>]",
       republish:
-        "usage: /satrepublishroots <epoch-id> <bucket-root> <score-root> <coordination-root>  # returns preflight rejection reasons instead of submitting when invalid",
+        "usage: /satrepublishroots <epoch-id> <bucket-root> <score-root> <coordination-root> [idempotencyKey=<key>]  # returns preflight rejection reasons instead of submitting when invalid",
       recovery: "usage: /satrecoverysummary <validator-authority> <epoch-id> <round-id>",
     };
     const satUsageWithCheatsheet = (usage: string) =>
@@ -1444,11 +1445,14 @@ const satMiningPlugin = {
       description: "Resolve a SAT dispute as dismissed or upheld.",
       acceptsArgs: true,
       handler: async (ctx) => {
-        const [disputeAuthority, targetAuthority, epochRaw, microRoundRaw, statusRaw] = (
-          ctx.args ?? ""
-        )
-          .split(/\s+/)
-          .filter(Boolean);
+        const [
+          disputeAuthority,
+          targetAuthority,
+          epochRaw,
+          microRoundRaw,
+          statusRaw,
+          ...optionParts
+        ] = (ctx.args ?? "").split(/\s+/).filter(Boolean);
         if (!disputeAuthority || !targetAuthority || !epochRaw || !microRoundRaw || !statusRaw) {
           return { text: satUsageWithCheatsheet(satUsageText.resolve) };
         }
@@ -1458,6 +1462,13 @@ const satMiningPlugin = {
         if (!Number.isFinite(statusFlag)) {
           return { text: satUsageWithCheatsheet(satUsageText.resolve) };
         }
+        const idempotencyMatch =
+          optionParts.length === 1
+            ? optionParts[0]?.match(/^idempotency(?:Key|-key)=(.+)$/u)
+            : null;
+        if (optionParts.length > 0 && !idempotencyMatch) {
+          return { text: satUsageWithCheatsheet(satUsageText.resolve) };
+        }
         const request = state.client.buildResolveDisputeRequest({
           disputeAuthority,
           targetAuthority,
@@ -1465,7 +1476,10 @@ const satMiningPlugin = {
           microRoundId: Number(microRoundRaw),
           statusFlag,
         });
-        const submitted = await submitSatResolveDispute(state.activeConfig, request.params);
+        const submitted = await runWithSatSubmissionWorkflow(
+          `command:satresolvedispute:${idempotencyMatch?.[1] ?? digestSatSubmissionIntent(request.params)}`,
+          async () => await submitSatResolveDispute(state.activeConfig, request.params),
+        );
         return { text: JSON.stringify({ request, submitted }, null, 2) };
       },
     });
@@ -1474,10 +1488,17 @@ const satMiningPlugin = {
       description: "Republish corrected SAT epoch roots after upheld dispute review.",
       acceptsArgs: true,
       handler: async (ctx) => {
-        const [epochRaw, bucketRoot, scoreRoot, coordinationRoot] = (ctx.args ?? "")
+        const [epochRaw, bucketRoot, scoreRoot, coordinationRoot, ...optionParts] = (ctx.args ?? "")
           .split(/\s+/)
           .filter(Boolean);
         if (!epochRaw || !bucketRoot || !scoreRoot || !coordinationRoot) {
+          return { text: satUsageWithCheatsheet(satUsageText.republish) };
+        }
+        const idempotencyMatch =
+          optionParts.length === 1
+            ? optionParts[0]?.match(/^idempotency(?:Key|-key)=(.+)$/u)
+            : null;
+        if (optionParts.length > 0 && !idempotencyMatch) {
           return { text: satUsageWithCheatsheet(satUsageText.republish) };
         }
         const request = state.client.buildRepublishEpochRootsRequest({
@@ -1493,7 +1514,10 @@ const satMiningPlugin = {
         if (!preflight.canRepublish) {
           return { text: JSON.stringify({ request, preflight }, null, 2) };
         }
-        const submitted = await submitSatRepublishEpochRoots(state.activeConfig, request.params);
+        const submitted = await runWithSatSubmissionWorkflow(
+          `command:satrepublishroots:${idempotencyMatch?.[1] ?? digestSatSubmissionIntent(request.params)}`,
+          async () => await submitSatRepublishEpochRoots(state.activeConfig, request.params),
+        );
         return { text: JSON.stringify({ request, preflight, submitted }, null, 2) };
       },
     });
@@ -1914,7 +1938,10 @@ const satMiningPlugin = {
       parameters: SatResolveDisputeToolSchema,
       async execute(_toolCallId, params) {
         const request = state.client.buildResolveDisputeRequest(params);
-        const submitted = await submitSatResolveDispute(state.activeConfig, request.params);
+        const submitted = await runWithSatSubmissionWorkflow(
+          `tool:sat_resolve_dispute:${_toolCallId}`,
+          async () => await submitSatResolveDispute(state.activeConfig, request.params),
+        );
         return {
           content: [
             { type: "text" as const, text: JSON.stringify({ request, submitted }, null, 2) },
@@ -1942,7 +1969,10 @@ const satMiningPlugin = {
             details: { request, preflight },
           };
         }
-        const submitted = await submitSatRepublishEpochRoots(state.activeConfig, request.params);
+        const submitted = await runWithSatSubmissionWorkflow(
+          `tool:sat_republish_epoch_roots:${_toolCallId}`,
+          async () => await submitSatRepublishEpochRoots(state.activeConfig, request.params),
+        );
         return {
           content: [
             {
@@ -1961,7 +1991,10 @@ const satMiningPlugin = {
       parameters: SatValidatorToolSchema,
       async execute(_toolCallId, params) {
         const request = state.client.buildSubmitValidatorAttestationRequest(params);
-        const submitted = await submitSatValidatorAttestation(state.activeConfig, request.params);
+        const submitted = await runWithSatSubmissionWorkflow(
+          `tool:sat_submit_validator_attestation:${_toolCallId}`,
+          async () => await submitSatValidatorAttestation(state.activeConfig, request.params),
+        );
         const response = await buildValidatorSubmissionSummary({
           epochId: request.params.epochId,
           microRoundId: request.params.microRoundId,
@@ -1982,7 +2015,10 @@ const satMiningPlugin = {
       parameters: SatDisputeToolSchema,
       async execute(_toolCallId, params) {
         const request = state.client.buildOpenDisputeRequest(params);
-        const submitted = await submitSatOpenDispute(state.activeConfig, request.params);
+        const submitted = await runWithSatSubmissionWorkflow(
+          `tool:sat_open_dispute:${_toolCallId}`,
+          async () => await submitSatOpenDispute(state.activeConfig, request.params),
+        );
         const response = await buildValidatorSubmissionSummary({
           epochId: request.params.epochId,
           microRoundId: request.params.microRoundId,
@@ -3735,8 +3771,7 @@ const satMiningPlugin = {
       const perWalletKey = suffix ? `FASED_WALLET_SOLANA_RPC_URL__${suffix.toUpperCase()}` : "";
       return Boolean(
         (perWalletKey ? String(effectiveEnv[perWalletKey] ?? "").trim() : "") ||
-        String(effectiveEnv.FASED_WALLET_SOLANA_RPC_URL ?? "").trim() ||
-        String(effectiveEnv.FASED_WALLET_EMBEDDED_KEYSTORE_RPC_URL ?? "").trim(),
+        String(effectiveEnv.FASED_WALLET_SOLANA_RPC_URL ?? "").trim(),
       );
     };
     const normalizeAddressValue = (value?: string) => {
@@ -4276,7 +4311,7 @@ const satMiningPlugin = {
           remediation:
             wallet?.signerCapability === "background-ready"
               ? undefined
-              : "Use the built-in local signer or embedded keystore for unattended mining automation.",
+              : "Use the local native signer for unattended Mining. Wallet Standard and Turnkey are reviewed/manual wallet paths, not background Mining signers.",
         },
         {
           key: "rpcReady",
@@ -6802,7 +6837,30 @@ const satMiningPlugin = {
       return generated;
     };
 
-    api.registerGatewayMethod("sat.openCycle", async ({ params, respond }) => {
+    type SatGatewayHandler = Parameters<typeof api.registerGatewayMethod>[1];
+    const registerSatSubmissionMethod = (method: string, handler: SatGatewayHandler) => {
+      api.registerGatewayMethod(method, async (context) => {
+        const source =
+          context.params && typeof context.params === "object" && !Array.isArray(context.params)
+            ? (context.params as Record<string, unknown>)
+            : {};
+        const { idempotencyKey: rawIdempotencyKey, ...intentParams } = source;
+        const idempotencyKey =
+          typeof rawIdempotencyKey === "string" && rawIdempotencyKey.trim()
+            ? rawIdempotencyKey.trim()
+            : `derived:${digestSatSubmissionIntent(intentParams)}`;
+        try {
+          await runWithSatSubmissionWorkflow(
+            `gateway:${method}:${idempotencyKey}`,
+            async () => await handler(context),
+          );
+        } catch (error) {
+          respondGatewayError(context.respond, error);
+        }
+      });
+    };
+
+    registerSatSubmissionMethod("sat.openCycle", async ({ params, respond }) => {
       const cycleId = Number((params as { cycleId?: number })?.cycleId ?? 0);
       try {
         const request = state.client.buildOpenCycleRequest({ cycleId });
@@ -6820,7 +6878,7 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.topUpRegistryReserve", async ({ params, respond }) => {
+    registerSatSubmissionMethod("sat.topUpRegistryReserve", async ({ params, respond }) => {
       try {
         const targetBalanceLamports = Number(
           (params as { targetBalanceLamports?: number })?.targetBalanceLamports ?? 0,
@@ -6836,7 +6894,7 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.claimProtocolTreasury", async ({ params, respond }) => {
+    registerSatSubmissionMethod("sat.claimProtocolTreasury", async ({ params, respond }) => {
       try {
         const recipientOwner =
           typeof (params as { recipientOwner?: string })?.recipientOwner === "string"
@@ -6853,7 +6911,7 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.claimProtocolDistributorSat", async ({ params, respond }) => {
+    registerSatSubmissionMethod("sat.claimProtocolDistributorSat", async ({ params, respond }) => {
       try {
         const recipientOwner =
           typeof (params as { recipientOwner?: string })?.recipientOwner === "string"
@@ -6870,7 +6928,7 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod(
+    registerSatSubmissionMethod(
       "sat.refillRegistryReserveFromTreasury",
       async ({ params, respond }) => {
         try {
@@ -6928,7 +6986,7 @@ const satMiningPlugin = {
         .slice(0, Math.max(0, Math.min(limit, SAT_MAINTENANCE_RECENT_CLEANUP_CYCLE_LIMIT)));
     };
 
-    api.registerGatewayMethod("sat.runProtocolMaintenanceOnce", async ({ params, respond }) => {
+    registerSatSubmissionMethod("sat.runProtocolMaintenanceOnce", async ({ params, respond }) => {
       const submitted: Array<{
         lane: SatMaintenanceLane;
         action: string;
@@ -7350,7 +7408,7 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.initMinerCapital", async ({ params, respond }) => {
+    registerSatSubmissionMethod("sat.initMinerCapital", async ({ params, respond }) => {
       try {
         await ensureSatCapitalActionSignerReady();
         const authority =
@@ -7366,7 +7424,7 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.depositMinerCapital", async ({ params, respond }) => {
+    registerSatSubmissionMethod("sat.depositMinerCapital", async ({ params, respond }) => {
       try {
         await ensureSatCapitalActionSignerReady();
         const lamports = Number((params as { lamports?: number })?.lamports ?? 0);
@@ -7383,7 +7441,7 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.withdrawMinerCapital", async ({ params, respond }) => {
+    registerSatSubmissionMethod("sat.withdrawMinerCapital", async ({ params, respond }) => {
       try {
         await ensureSatCapitalActionSignerReady();
         const lamports = Number((params as { lamports?: number })?.lamports ?? 0);
@@ -7398,7 +7456,7 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.setActiveCommit", async ({ params, respond }) => {
+    registerSatSubmissionMethod("sat.setActiveCommit", async ({ params, respond }) => {
       try {
         await ensureSatCapitalActionSignerReady();
         const lamports = Number((params as { lamports?: number })?.lamports ?? 0);
@@ -7423,7 +7481,7 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.commitCycle", async ({ params, respond }) => {
+    registerSatSubmissionMethod("sat.commitCycle", async ({ params, respond }) => {
       const cycleId = Number((params as { cycleId?: number })?.cycleId ?? 0);
       try {
         const commitmentHex = String(
@@ -7453,7 +7511,7 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.closeCommitPhase", async ({ params, respond }) => {
+    registerSatSubmissionMethod("sat.closeCommitPhase", async ({ params, respond }) => {
       const cycleId = Number((params as { cycleId?: number })?.cycleId ?? 0);
       try {
         const submitted = await submitSatCloseCommitPhase(state.activeConfig, { cycleId });
@@ -7468,7 +7526,7 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.sealCycleEntropy", async ({ params, respond }) => {
+    registerSatSubmissionMethod("sat.sealCycleEntropy", async ({ params, respond }) => {
       const cycleId = Number((params as { cycleId?: number })?.cycleId ?? 0);
       try {
         const cycle = await inspectSatCycle(state.activeConfig, { cycleId });
@@ -7489,7 +7547,7 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.revealCycle", async ({ params, respond }) => {
+    registerSatSubmissionMethod("sat.revealCycle", async ({ params, respond }) => {
       const cycleId = Number((params as { cycleId?: number })?.cycleId ?? 0);
       try {
         const nonceBase64 = String((params as { nonceBase64?: string })?.nonceBase64 ?? "").trim();
@@ -7522,7 +7580,7 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.releaseUnrevealedCommit", async ({ params, respond }) => {
+    registerSatSubmissionMethod("sat.releaseUnrevealedCommit", async ({ params, respond }) => {
       const cycleId = Number((params as { cycleId?: number })?.cycleId ?? 0);
       try {
         const minerAuthority = String(
@@ -7542,7 +7600,7 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.abortEmptyCycle", async ({ params, respond }) => {
+    registerSatSubmissionMethod("sat.abortEmptyCycle", async ({ params, respond }) => {
       const cycleId = Number((params as { cycleId?: number })?.cycleId ?? 0);
       try {
         const submitted = await submitSatAbortEmptyCycle(state.activeConfig, { cycleId });
@@ -7556,14 +7614,14 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.submitCycle", async ({ respond }) => {
+    registerSatSubmissionMethod("sat.submitCycle", async ({ respond }) => {
       respondGatewayError(
         respond,
         new Error("public allocation submission is retired; update Fased to use commit/reveal"),
       );
     });
 
-    api.registerGatewayMethod("sat.settleCyclePage", async ({ params, respond }) => {
+    registerSatSubmissionMethod("sat.settleCyclePage", async ({ params, respond }) => {
       const cycleId = Number((params as { cycleId?: number })?.cycleId ?? 0);
       try {
         const pageIndex = Number((params as { pageIndex?: number })?.pageIndex ?? 0);
@@ -7598,7 +7656,7 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.finalizeCycleSettlement", async ({ params, respond }) => {
+    registerSatSubmissionMethod("sat.finalizeCycleSettlement", async ({ params, respond }) => {
       const cycleId = Number((params as { cycleId?: number })?.cycleId ?? 0);
       try {
         const pageCount = Number((params as { pageCount?: number })?.pageCount ?? 1);
@@ -7618,7 +7676,7 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.scoreCyclePage", async ({ params, respond }) => {
+    registerSatSubmissionMethod("sat.scoreCyclePage", async ({ params, respond }) => {
       const cycleId = Number((params as { cycleId?: number })?.cycleId ?? 0);
       try {
         const pageIndex = Number((params as { pageIndex?: number })?.pageIndex ?? 0);
@@ -7649,7 +7707,7 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.distributeCyclePage", async ({ params, respond }) => {
+    registerSatSubmissionMethod("sat.distributeCyclePage", async ({ params, respond }) => {
       const cycleId = Number((params as { cycleId?: number })?.cycleId ?? 0);
       try {
         const pageIndex = Number((params as { pageIndex?: number })?.pageIndex ?? 0);
@@ -7685,7 +7743,7 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.claimCycleRewards", async ({ params, respond }) => {
+    registerSatSubmissionMethod("sat.claimCycleRewards", async ({ params, respond }) => {
       const cycleId = Number((params as { cycleId?: number })?.cycleId ?? 0);
       try {
         const request = state.client.buildClaimCycleRewardsRequest({ cycleId });
@@ -7707,7 +7765,7 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.claimCycleRewardsBatch", async ({ params, respond }) => {
+    registerSatSubmissionMethod("sat.claimCycleRewardsBatch", async ({ params, respond }) => {
       const cycleIds = Array.isArray((params as { cycleIds?: number[] })?.cycleIds)
         ? ((params as { cycleIds?: number[] }).cycleIds ?? [])
             .map((value) => Number(value))
@@ -7773,7 +7831,7 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.claimBacklog", async ({ respond }) => {
+    registerSatSubmissionMethod("sat.claimBacklog", async ({ respond }) => {
       const batchCycles = resolveSatClaimBatchCycles(state.activeConfig);
       const cycleIds = collectReadySatClaimBacklogCycleIds(state, batchCycles);
       const request = state.client.buildClaimCycleRewardsBatchRequest({ cycleIds });
@@ -7818,7 +7876,7 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.retargetUnlock", async ({ params, respond }) => {
+    registerSatSubmissionMethod("sat.retargetUnlock", async ({ params, respond }) => {
       const cycleId = Number((params as { cycleId?: number })?.cycleId ?? 0);
       try {
         const request = state.client.buildRetargetUnlockRequest({ cycleId });
@@ -7831,7 +7889,7 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.closeResolvedCycleAccounts", async ({ params, respond }) => {
+    registerSatSubmissionMethod("sat.closeResolvedCycleAccounts", async ({ params, respond }) => {
       const cycleId = Number((params as { cycleId?: number })?.cycleId ?? 0);
       try {
         const result = await closeResolvedExactCycleAccounts(cycleId);
@@ -7863,7 +7921,7 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.compactPendingCycleRange", async ({ params, respond }) => {
+    registerSatSubmissionMethod("sat.compactPendingCycleRange", async ({ params, respond }) => {
       try {
         const maxFrontCycles =
           typeof (params as { maxFrontCycles?: number })?.maxFrontCycles === "number"
@@ -7978,7 +8036,7 @@ const satMiningPlugin = {
       respond(true, jsonOk(await Promise.resolve(readProfile())));
     });
 
-    api.registerGatewayMethod("sat.setMinerProfile", async ({ params, respond }) => {
+    registerSatSubmissionMethod("sat.setMinerProfile", async ({ params, respond }) => {
       try {
         const request =
           params && typeof params === "object" && !Array.isArray(params)
@@ -8248,10 +8306,14 @@ const satMiningPlugin = {
       ) {
         return;
       }
-      const compacted = await compactPendingCycleRange({
-        maxFrontCycles: SAT_PENDING_RANGE_COMPACT_CHUNK_CYCLES,
-        maxBackCycles: SAT_PENDING_RANGE_COMPACT_CHUNK_CYCLES,
-      }).catch(() => null);
+      const compacted = await runWithSatSubmissionWorkflow(
+        `startup:compact-pending:${authority}:${firstPendingCycleId}:${lastPendingCycleId}`,
+        async () =>
+          await compactPendingCycleRange({
+            maxFrontCycles: SAT_PENDING_RANGE_COMPACT_CHUNK_CYCLES,
+            maxBackCycles: SAT_PENDING_RANGE_COMPACT_CHUNK_CYCLES,
+          }),
+      ).catch(() => null);
       if (compacted?.compacted) {
         api.logger.info(
           `[sat-mining] compacted stale pending range during startup for wallet ${authority}`,
@@ -8364,7 +8426,7 @@ const satMiningPlugin = {
       }, 10_000);
     };
 
-    api.registerGatewayMethod("sat.startMining", async ({ params, respond }) => {
+    registerSatSubmissionMethod("sat.startMining", async ({ params, respond }) => {
       try {
         if (state.activeConfig.network === "mainnet-beta") {
           const syncStatus = await getSatMainnetSyncStatus();
@@ -8493,7 +8555,7 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.stopMining", async ({ respond }) => {
+    registerSatSubmissionMethod("sat.stopMining", async ({ params: _params, respond }) => {
       try {
         const authority = await resolveSatCapitalActionAuthority().catch(
           () => state.activeWalletAddress ?? "",
@@ -8627,7 +8689,7 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.resolveDispute", async ({ params, respond }) => {
+    registerSatSubmissionMethod("sat.resolveDispute", async ({ params, respond }) => {
       try {
         const request = state.client.buildResolveDisputeRequest({
           disputeAuthority: String(
@@ -8647,7 +8709,7 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.republishEpochRoots", async ({ params, respond }) => {
+    registerSatSubmissionMethod("sat.republishEpochRoots", async ({ params, respond }) => {
       try {
         const request = state.client.buildRepublishEpochRootsRequest({
           epochId: Number((params as { epochId?: number })?.epochId ?? 0),
@@ -8766,7 +8828,7 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.submitValidatorAttestation", async ({ params, respond }) => {
+    registerSatSubmissionMethod("sat.submitValidatorAttestation", async ({ params, respond }) => {
       try {
         const request = state.client.buildSubmitValidatorAttestationRequest({
           targetAuthority: String((params as { targetAuthority?: string })?.targetAuthority ?? ""),
@@ -8799,7 +8861,7 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.openDispute", async ({ params, respond }) => {
+    registerSatSubmissionMethod("sat.openDispute", async ({ params, respond }) => {
       try {
         const request = state.client.buildOpenDisputeRequest({
           targetAuthority: String((params as { targetAuthority?: string })?.targetAuthority ?? ""),

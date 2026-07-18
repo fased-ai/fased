@@ -2,7 +2,7 @@ import chokidar from "chokidar";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { listChannelPlugins } from "../channels/plugins/index.js";
 import type { ChannelPlugin } from "../channels/plugins/types.js";
-import type { ConfigFileSnapshot } from "../config/config.js";
+import type { ConfigFileSnapshot, FasedAgentConfig } from "../config/config.js";
 import { setActivePluginRegistry } from "../plugins/runtime.js";
 import { createTestRegistry } from "../test-utils/channel-plugins.js";
 import {
@@ -10,6 +10,7 @@ import {
   diffConfigPaths,
   resolveGatewayReloadSettings,
   startGatewayConfigReloader,
+  type GatewayReloadPlan,
 } from "./config-reload.js";
 
 describe("diffConfigPaths", () => {
@@ -219,8 +220,16 @@ function makeSnapshot(partial: Partial<ConfigFileSnapshot> = {}): ConfigFileSnap
 function createReloaderHarness(readSnapshot: () => Promise<ConfigFileSnapshot>) {
   const watcher = createWatcherMock();
   vi.spyOn(chokidar, "watch").mockReturnValue(watcher as unknown as never);
-  const onHotReload = vi.fn(async () => {});
+  const onHotReload = vi.fn<
+    (
+      plan: GatewayReloadPlan,
+      nextConfig: FasedAgentConfig,
+      snapshot: ConfigFileSnapshot,
+    ) => Promise<void>
+  >(async () => {});
   const onRestart = vi.fn();
+  const onSourceRevision = vi.fn();
+  const onStop = vi.fn();
   const log = {
     info: vi.fn(),
     warn: vi.fn(),
@@ -231,10 +240,12 @@ function createReloaderHarness(readSnapshot: () => Promise<ConfigFileSnapshot>) 
     readSnapshot,
     onHotReload,
     onRestart,
+    onSourceRevision,
+    onStop,
     log,
     watchPath: "/tmp/fased.json",
   });
-  return { watcher, onHotReload, onRestart, log, reloader };
+  return { watcher, onHotReload, onRestart, onSourceRevision, onStop, log, reloader };
 }
 
 describe("startGatewayConfigReloader", () => {
@@ -292,25 +303,71 @@ describe("startGatewayConfigReloader", () => {
     await reloader.stop();
   });
 
-  it("contains restart callback failures and retries on subsequent changes", async () => {
+  it.each([
+    {
+      name: "missing",
+      snapshot: makeSnapshot({ exists: false, raw: null, hash: "missing-revision" }),
+    },
+    {
+      name: "invalid",
+      snapshot: makeSnapshot({
+        valid: false,
+        issues: [{ path: "gateway.port", message: "invalid" }],
+        hash: "invalid-revision",
+      }),
+    },
+    {
+      name: "no-diff revert",
+      snapshot: makeSnapshot({
+        config: { gateway: { reload: { debounceMs: 0 } } },
+        hash: "active-revision",
+      }),
+    },
+    {
+      name: "reload mode off",
+      snapshot: makeSnapshot({
+        config: {
+          gateway: { reload: { debounceMs: 0, mode: "off" } },
+          hooks: { enabled: true },
+        },
+        hash: "off-revision",
+      }),
+    },
+    {
+      name: "hot mode ignoring restart",
+      snapshot: makeSnapshot({
+        config: {
+          gateway: { reload: { debounceMs: 0, mode: "hot" }, port: 18790 },
+        },
+        hash: "ignored-restart-revision",
+      }),
+    },
+  ])("announces a $name source before reload routing", async ({ snapshot }) => {
+    const readSnapshot = vi.fn<() => Promise<ConfigFileSnapshot>>().mockResolvedValue(snapshot);
+    const { watcher, onHotReload, onRestart, onSourceRevision, reloader } =
+      createReloaderHarness(readSnapshot);
+
+    watcher.emit("change");
+    await vi.runOnlyPendingTimersAsync();
+
+    expect(onSourceRevision).toHaveBeenCalledTimes(1);
+    expect(onSourceRevision).toHaveBeenCalledWith(snapshot);
+    expect(onHotReload).not.toHaveBeenCalled();
+    expect(onRestart).not.toHaveBeenCalled();
+
+    await reloader.stop();
+  });
+
+  it("contains restart validation failures and retries the unchanged source revision", async () => {
+    const restartCandidate = makeSnapshot({
+      config: {
+        gateway: { reload: { debounceMs: 0 }, port: 18790 },
+      },
+      hash: "restart-candidate",
+    });
     const readSnapshot = vi
       .fn<() => Promise<ConfigFileSnapshot>>()
-      .mockResolvedValueOnce(
-        makeSnapshot({
-          config: {
-            gateway: { reload: { debounceMs: 0 }, port: 18790 },
-          },
-          hash: "restart-1",
-        }),
-      )
-      .mockResolvedValueOnce(
-        makeSnapshot({
-          config: {
-            gateway: { reload: { debounceMs: 0 }, port: 18791 },
-          },
-          hash: "restart-2",
-        }),
-      );
+      .mockResolvedValue(restartCandidate);
     const { watcher, onHotReload, onRestart, log, reloader } = createReloaderHarness(readSnapshot);
     onRestart.mockRejectedValueOnce(new Error("restart-check failed"));
     onRestart.mockResolvedValueOnce(undefined);
@@ -327,7 +384,10 @@ describe("startGatewayConfigReloader", () => {
 
       expect(onHotReload).not.toHaveBeenCalled();
       expect(onRestart).toHaveBeenCalledTimes(1);
-      expect(log.error).toHaveBeenCalledWith("config restart failed: Error: restart-check failed");
+      expect(log.error).toHaveBeenCalledWith(
+        "config restart validation failed; restart was not scheduled",
+      );
+      expect(log.error.mock.calls.flat().join("\n")).not.toContain("restart-check failed");
       expect(unhandled).toEqual([]);
 
       watcher.emit("change");
@@ -340,5 +400,161 @@ describe("startGatewayConfigReloader", () => {
       process.off("unhandledRejection", onUnhandled);
       await reloader.stop();
     }
+  });
+
+  it("keeps the previous diff baseline when hot activation fails and retries unchanged source", async () => {
+    const candidate = makeSnapshot({
+      config: {
+        gateway: { reload: { debounceMs: 0 } },
+        hooks: { enabled: true },
+      },
+      hash: "hot-candidate",
+    });
+    const readSnapshot = vi
+      .fn<() => Promise<ConfigFileSnapshot>>()
+      .mockResolvedValueOnce(candidate)
+      .mockResolvedValueOnce(candidate);
+    const { watcher, onHotReload, log, reloader } = createReloaderHarness(readSnapshot);
+    onHotReload
+      .mockRejectedValueOnce(new Error("SENTINEL_HOT_RELOAD_FAILURE"))
+      .mockResolvedValueOnce(undefined);
+
+    watcher.emit("change");
+    await vi.runOnlyPendingTimersAsync();
+    expect(onHotReload).toHaveBeenCalledTimes(1);
+    expect(log.error).toHaveBeenCalledWith(
+      "config reload failed; keeping last-known-good configuration",
+    );
+    expect(log.error.mock.calls.flat().join("\n")).not.toContain("SENTINEL_HOT_RELOAD_FAILURE");
+
+    watcher.emit("change");
+    await vi.runOnlyPendingTimersAsync();
+    expect(onHotReload).toHaveBeenCalledTimes(2);
+    expect(onHotReload.mock.calls[1]?.[0].changedPaths).toContain("hooks");
+
+    await reloader.stop();
+  });
+
+  it("revalidates every config revision while a Gateway restart is pending", async () => {
+    const first = makeSnapshot({
+      config: {
+        gateway: { reload: { debounceMs: 0 }, port: 18790 },
+      },
+      hash: "restart-first",
+    });
+    const second = makeSnapshot({
+      config: {
+        gateway: { reload: { debounceMs: 0 }, port: 18791 },
+      },
+      hash: "restart-second",
+    });
+    const readSnapshot = vi
+      .fn<() => Promise<ConfigFileSnapshot>>()
+      .mockResolvedValueOnce(first)
+      .mockResolvedValueOnce(second);
+    const { watcher, onRestart, onSourceRevision, log, reloader } =
+      createReloaderHarness(readSnapshot);
+    onRestart.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("invalid secret"));
+
+    watcher.emit("change");
+    await vi.runOnlyPendingTimersAsync();
+    watcher.emit("change");
+    await vi.runOnlyPendingTimersAsync();
+
+    expect(onRestart).toHaveBeenCalledTimes(2);
+    expect(onSourceRevision).toHaveBeenCalledTimes(2);
+    expect(onSourceRevision.mock.invocationCallOrder[1]).toBeLessThan(
+      onRestart.mock.invocationCallOrder[1] ?? Number.POSITIVE_INFINITY,
+    );
+    expect(onRestart.mock.calls[1]?.[0].changedPaths).toContain("gateway.port");
+    expect(log.error).toHaveBeenCalledWith(
+      "config restart validation failed; restart was not scheduled",
+    );
+
+    await reloader.stop();
+  });
+
+  it("does not hot-activate restart-only changes that hot mode ignored", async () => {
+    const ignored = makeSnapshot({
+      config: {
+        gateway: { reload: { debounceMs: 0, mode: "hot" }, port: 18790 },
+      },
+      hash: "hot-ignored-restart",
+    });
+    const laterHotChange = makeSnapshot({
+      config: {
+        gateway: { reload: { debounceMs: 0, mode: "hot" }, port: 18790 },
+        hooks: { enabled: true },
+      },
+      hash: "hot-after-ignored-restart",
+    });
+    const readSnapshot = vi
+      .fn<() => Promise<ConfigFileSnapshot>>()
+      .mockResolvedValueOnce(ignored)
+      .mockResolvedValueOnce(laterHotChange);
+    const { watcher, onHotReload, onRestart, log, reloader } = createReloaderHarness(readSnapshot);
+
+    watcher.emit("change");
+    await vi.runOnlyPendingTimersAsync();
+    watcher.emit("change");
+    await vi.runOnlyPendingTimersAsync();
+
+    expect(onHotReload).not.toHaveBeenCalled();
+    expect(onRestart).not.toHaveBeenCalled();
+    expect(
+      log.warn.mock.calls.filter(([message]) =>
+        String(message).includes("config reload requires gateway restart"),
+      ),
+    ).toHaveLength(2);
+
+    await reloader.stop();
+  });
+
+  it("applies changes accumulated while reload mode was off when it is re-enabled", async () => {
+    const disabled = makeSnapshot({
+      config: {
+        gateway: { reload: { debounceMs: 0, mode: "off" } },
+        hooks: { enabled: true },
+      },
+      hash: "reload-disabled",
+    });
+    const enabled = makeSnapshot({
+      config: {
+        gateway: { reload: { debounceMs: 0, mode: "hybrid" } },
+        hooks: { enabled: true },
+      },
+      hash: "reload-enabled",
+    });
+    const readSnapshot = vi
+      .fn<() => Promise<ConfigFileSnapshot>>()
+      .mockResolvedValueOnce(disabled)
+      .mockResolvedValueOnce(enabled);
+    const { watcher, onHotReload, reloader } = createReloaderHarness(readSnapshot);
+
+    watcher.emit("change");
+    await vi.runOnlyPendingTimersAsync();
+    expect(onHotReload).not.toHaveBeenCalled();
+
+    watcher.emit("change");
+    await vi.runOnlyPendingTimersAsync();
+    expect(onHotReload).toHaveBeenCalledTimes(1);
+    expect(onHotReload.mock.calls[0]?.[0].changedPaths).toContain("hooks");
+
+    await reloader.stop();
+  });
+
+  it("runs restart cancellation cleanup when the reloader stops", async () => {
+    const readSnapshot = vi
+      .fn<() => Promise<ConfigFileSnapshot>>()
+      .mockResolvedValue(makeSnapshot());
+    const { watcher, onStop, reloader } = createReloaderHarness(readSnapshot);
+
+    const first = reloader.stop();
+    const second = reloader.stop();
+    await Promise.all([first, second]);
+
+    expect(first).toBe(second);
+    expect(onStop).toHaveBeenCalledTimes(1);
+    expect(watcher.close).toHaveBeenCalledTimes(1);
   });
 });

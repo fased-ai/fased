@@ -1,8 +1,11 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
+import { isDeepStrictEqual } from "node:util";
 import {
   callLocalSocketSigner,
-  enforceWalletCustodyForAutonomousSend,
+  createSignerReviewApprovalRequest,
+  LEGACY_EMBEDDED_KEYSTORE_MIGRATION_MESSAGE,
   loadConfig,
   readWalletProviderRegistry,
   requireLocalSocketSignerPath,
@@ -13,6 +16,7 @@ import {
   resolveWalletProviderId,
   resolveWalletRuntimeConfig,
   type FasedAgentConfig,
+  type WalletProviderJupiterReviewV2,
 } from "fased/plugin-sdk/sat-runtime";
 import type { SatMiningConfig } from "./config.js";
 import { decodeHash32 } from "./hash-spec.js";
@@ -27,6 +31,15 @@ import {
   inspectSatCycleRegistryMeta,
   inspectSatMinerCyclesByAddress,
 } from "./rpc-read.js";
+import { resolveSatSignerCodec, type SatSignerAction } from "./signer-codec-manifest.js";
+import {
+  buildSatSubmissionOperationKey,
+  claimSatSubmission,
+  digestSatSubmissionIntent,
+  updateSatSubmission,
+  waitForSatSubmissionLease,
+  type SatSubmissionSignerState,
+} from "./submission-ledger.js";
 
 const require = createRequire(import.meta.url);
 
@@ -66,6 +79,32 @@ const IX = SAT_INSTRUCTION_DISCRIMINATORS;
 
 const BOND_IX = SAT_BOND_INSTRUCTION_DISCRIMINATORS;
 
+const VAULT_BOND_ACTIONS = new Set<SatSignerAction>([
+  "updateBondTierPolicy",
+  "openBondPosition",
+  "increaseBondPosition",
+  "requestBondUnlock",
+  "cancelBondUnlock",
+  "finalizeBondUnlock",
+  "syncBondStakingRewards",
+  "syncBondStakingPosition",
+  "claimBondStakingRewards",
+  "claimUnallocatedStakingRewards",
+]);
+
+const satSubmissionWorkflowStorage = new AsyncLocalStorage<string>();
+
+export async function runWithSatSubmissionWorkflow<T>(
+  workflowId: string,
+  task: () => Promise<T>,
+): Promise<T> {
+  const normalized = workflowId.trim();
+  if (!normalized || normalized.length > 240 || /[\u0000-\u001f\u007f]/u.test(normalized)) {
+    throw new Error("SAT submission idempotency key must contain 1-240 printable characters");
+  }
+  return await satSubmissionWorkflowStorage.run(normalized, task);
+}
+
 function satSubmitDebug(message: string) {
   if (String(process.env.FASED_SAT_SUBMIT_DEBUG ?? "").trim() === "1") {
     console.error(message);
@@ -78,6 +117,21 @@ type SolanaAccountMeta = {
   pubkey: import("@solana/web3.js").PublicKey;
   isSigner: boolean;
   isWritable: boolean;
+};
+
+type SatSignerSemanticContext = {
+  targetAuthority?: string;
+  disputeAuthority?: string;
+  intervalStartCycleId?: string;
+  registryPageIndex?: string;
+  minerAuthorities?: string[];
+  frontCycleIds?: string[];
+  backCycleIds?: string[];
+};
+
+type SatResolvedInstruction = {
+  keys: SolanaAccountMeta[];
+  context?: SatSignerSemanticContext;
 };
 
 let solanaModulePromise: Promise<SolanaModuleLike> | null = null;
@@ -124,6 +178,11 @@ function resolveSatWalletId(cfg: FasedAgentConfig): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
+function resolveSatCluster(cfg: FasedAgentConfig): "local" | "devnet" | "mainnet-beta" {
+  const value = cfg.plugins?.entries?.["sat-mining"]?.config?.network;
+  return value === "local" || value === "mainnet-beta" || value === "devnet" ? value : "devnet";
+}
+
 function resolveSatEffectiveEnv(cfg: FasedAgentConfig, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return {
     ...env,
@@ -134,91 +193,57 @@ function resolveSatEffectiveEnv(cfg: FasedAgentConfig, env: NodeJS.ProcessEnv): 
 function resolveSatProviderId(cfg: FasedAgentConfig, env: NodeJS.ProcessEnv): string {
   const effectiveEnv = resolveSatEffectiveEnv(cfg, env);
   const walletId = resolveSatWalletId(cfg);
+  const signerSocket = String(effectiveEnv.FASED_WALLET_LOCAL_SIGNER_SOCKET ?? "").trim();
   if (walletId) {
-    const hasSelfHostedSignerMaterial =
-      String(effectiveEnv.FASED_WALLET_LOCAL_SIGNER_SOCKET ?? "").trim() ||
-      String(effectiveEnv.FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET ?? "").trim() ||
-      String(
-        walletEnvValue(effectiveEnv, "FASED_WALLET_SOLANA_KEYSTORE_PATH", walletId) ?? "",
-      ).trim();
-    try {
-      const wallet = readWalletProviderRegistry(effectiveEnv).wallets.find(
-        (entry) => entry.id === walletId,
+    const wallet = readWalletProviderRegistry(effectiveEnv).wallets.find(
+      (entry) => entry.id === walletId,
+    );
+    if (wallet?.providerId === "embedded-keystore") {
+      throw new Error(LEGACY_EMBEDDED_KEYSTORE_MIGRATION_MESSAGE);
+    }
+    if (wallet?.providerId && wallet.providerId !== "local-socket-signer") {
+      return wallet.providerId;
+    }
+    if (wallet?.providerId === "local-socket-signer" && !signerSocket) {
+      throw new Error(
+        "SAT mining requires the actual protocol-v2 fased-signerd application socket; legacy keystore paths and backend sockets are not signer capability.",
       );
-      if (wallet?.providerId === "local-socket-signer") {
-        return wallet.providerId;
-      }
-      if (hasSelfHostedSignerMaterial) {
-        return "local-socket-signer";
-      }
-      if (wallet?.providerId) {
-        return wallet.providerId;
-      }
-    } catch {}
-    if (hasSelfHostedSignerMaterial) {
-      return "local-socket-signer";
+    }
+    if (wallet?.providerId === "local-socket-signer") {
+      return wallet.providerId;
     }
   }
-  return resolveWalletProviderId(cfg, effectiveEnv);
-}
-
-async function enforceSatCustodyAutonomousSigning(
-  cfg: FasedAgentConfig,
-  env: NodeJS.ProcessEnv,
-): Promise<void> {
-  const effectiveEnv = resolveSatEffectiveEnv(cfg, env);
-  const walletCfg = resolveWalletRuntimeConfig(cfg, effectiveEnv);
-  const walletId = resolveSatWalletId(cfg);
-  if (walletCfg.execution.mode !== "autonomous") {
-    return;
+  const providerId = resolveWalletProviderId(cfg, effectiveEnv);
+  if (providerId === "local-socket-signer" && !signerSocket) {
+    throw new Error(
+      "SAT mining requires the actual protocol-v2 fased-signerd application socket; configure FASED_WALLET_LOCAL_SIGNER_SOCKET.",
+    );
   }
-  const custodyGate = await enforceWalletCustodyForAutonomousSend({
-    wallet: walletCfg,
-    env: effectiveEnv,
-    cfg,
-    walletId,
-    approvalHost: String(
-      effectiveEnv.FASED_WALLET_CUSTODY_ACTIVE_HOST ?? effectiveEnv.FASED_A2A_ORIGIN ?? "127.0.0.1",
-    ),
-  });
-  if (!custodyGate.ok) {
-    throw new Error(custodyGate.message);
-  }
-}
-
-function resolveSatRegistrySolanaAddress(cfg: FasedAgentConfig, env: NodeJS.ProcessEnv): string {
-  const effectiveEnv = resolveSatEffectiveEnv(cfg, env);
-  const walletId = resolveSatWalletId(cfg);
-  if (!walletId) {
-    return "";
-  }
-  const wallet = readWalletProviderRegistry(effectiveEnv).wallets.find(
-    (entry) => entry.id === walletId,
-  );
-  return typeof wallet?.addresses?.solana === "string" ? wallet.addresses.solana.trim() : "";
+  return providerId;
 }
 
 async function resolveSatLocalSignerAddress(
   cfg: FasedAgentConfig,
   env: NodeJS.ProcessEnv,
   errorMessage: string,
+  verifyCapabilities = true,
 ): Promise<string> {
   const effectiveEnv = resolveSatEffectiveEnv(cfg, env);
   const walletId = resolveSatWalletId(cfg);
-  const result = await callLocalSocketSigner<{ solana?: string }>(
-    requireLocalSocketSignerPath(effectiveEnv),
-    {
-      op: "getAddresses",
-      ...(walletId ? { walletId } : {}),
-    },
-  );
-  const signer = String(result.solana ?? "").trim();
+  if (!walletId) {
+    throw new Error("SAT mining local signer address lookup requires an attached walletId");
+  }
+  const socketPath = requireLocalSocketSignerPath(effectiveEnv);
+  if (verifyCapabilities) {
+    await requireTypedSatSignerCapabilities(socketPath, "solana.satAction");
+  }
+  const result = await callLocalSocketSigner<{ publicKey?: string }>(socketPath, {
+    op: "v2.wallet.get",
+    walletId,
+  });
+  const signer = String(result.publicKey ?? "").trim();
   if (signer) {
     return signer;
-  }
-  const fallback = resolveSatRegistrySolanaAddress(cfg, env);
-  if (fallback) {
-    return fallback;
   }
   throw new Error(errorMessage);
 }
@@ -284,7 +309,6 @@ function assertDedicatedBondProgram(env: NodeJS.ProcessEnv): void {
 export async function resolveSatValidatorAuthority(_config: SatMiningConfig) {
   const cfg = loadConfigForSatRuntime(_config);
   const effectiveEnv = resolveSatEffectiveEnv(cfg, process.env);
-  await enforceSatCustodyAutonomousSigning(cfg, effectiveEnv);
   if (resolveSatProviderId(cfg, effectiveEnv) !== "local-socket-signer") {
     throw new Error(
       "SAT mining unattended signing currently requires local-socket-signer for validator authority resolution",
@@ -303,7 +327,7 @@ type SatInstructionSubmitSpec = {
   accountResolver: (
     solana: SolanaModuleLike,
     signer: import("@solana/web3.js").PublicKey,
-  ) => Promise<SolanaAccountMeta[]>;
+  ) => Promise<SolanaAccountMeta[] | SatResolvedInstruction>;
 };
 
 async function prepareLocalSignerSubmitContext(cfg: FasedAgentConfig, env: NodeJS.ProcessEnv) {
@@ -315,6 +339,7 @@ async function prepareLocalSignerSubmitContext(cfg: FasedAgentConfig, env: NodeJ
     cfg,
     effectiveEnv,
     "local-socket-signer returned no Solana address for SAT mining wallet",
+    false,
   );
   const signer = new solana.PublicKey(signerAddress);
   return { effectiveEnv, solana, walletId, socketPath, signerAddress, signer };
@@ -323,23 +348,510 @@ async function prepareLocalSignerSubmitContext(cfg: FasedAgentConfig, env: NodeJ
 async function buildLocalSignerInstructionRequest(params: {
   solana: SolanaModuleLike;
   signer: import("@solana/web3.js").PublicKey;
-  walletId?: string;
+  env: NodeJS.ProcessEnv;
   spec: SatInstructionSubmitSpec;
 }) {
-  const keys = await params.spec.accountResolver(params.solana, params.signer);
+  const resolved = await params.spec.accountResolver(params.solana, params.signer);
+  const keys = Array.isArray(resolved) ? resolved : resolved.keys;
+  const context = Array.isArray(resolved) ? undefined : resolved.context;
+  const programId = params.spec.programId ?? resolveSatProgramIdFromEnv(params.env);
+  const mainProgramId = resolveSatProgramIdFromEnv(params.env);
+  const bondProgramId = resolveSatBondProgramIdFromEnv(params.env).trim() || undefined;
+  const codec = resolveSatSignerCodec({
+    programId,
+    mainProgramId,
+    bondProgramId,
+    data: params.spec.data,
+  });
   satSubmitDebug(
-    `[sat-submit-debug] data_len=${params.spec.data.length} disc=${params.spec.data[0] ?? -1} keys=${keys.length}`,
+    `[sat-submit-debug] action=${codec.action} data_len=${params.spec.data.length} disc=${params.spec.data[0] ?? -1} keys=${keys.length}`,
   );
   return {
-    ...(params.walletId ? { walletId: params.walletId } : {}),
-    programId: params.spec.programId ?? SAT_PROGRAM_ID(),
+    action: codec.action,
+    programId,
     dataBase64: params.spec.data.toString("base64"),
     keys: keys.map((key) => ({
       pubkey: key.pubkey.toBase58(),
       isSigner: key.isSigner,
       isWritable: key.isWritable,
     })),
+    ...(context ? { context } : {}),
   };
+}
+
+type SatSignerOperation = {
+  requestId: string;
+  state: "reserved" | "broadcast" | "confirmed" | "failed" | "unknown";
+  signature?: string;
+  error?: string;
+};
+
+const REQUIRED_SAT_SIGNER_FEATURES = [
+  "failClosedPolicies",
+  "policyHashes",
+  "durableCaps",
+  "atomicIdempotency",
+  "ambiguousBroadcastReconciliation",
+  "signerOwnedKeys",
+  "typedSolanaTransactions",
+  "typedSATActions",
+] as const;
+
+async function requireTypedSatSignerCapabilities(
+  socketPath: string,
+  intentType: "solana.satAction" | "solana.vaultBondAction",
+) {
+  const result = await callLocalSocketSigner<{
+    ready?: boolean;
+    capabilities?: {
+      protocol?: { current?: number; min?: number; max?: number };
+      intentTypes?: string[];
+      operationStates?: string[];
+      features?: string[];
+    };
+  }>(socketPath, { op: "v2.capabilities" });
+  const capabilities = result.capabilities;
+  const protocol = capabilities?.protocol;
+  const features = new Set(capabilities?.features ?? []);
+  const states = new Set(capabilities?.operationStates ?? []);
+  const missingFeatures = REQUIRED_SAT_SIGNER_FEATURES.filter((feature) => !features.has(feature));
+  const missingStates = ["reserved", "broadcast", "confirmed", "failed", "unknown"].filter(
+    (state) => !states.has(state),
+  );
+  const missingVaultReviewFeatures =
+    intentType === "solana.vaultBondAction"
+      ? [
+          "signerOwnedReviewPrepareExecute",
+          "exactPreparedTransactions",
+          "reviewedVaultBondActions",
+          "signerOwnedStateRecheck",
+          "durableReviewAuthorization",
+        ].filter((feature) => !features.has(feature))
+      : [];
+  if (
+    result.ready !== true ||
+    protocol?.current !== 2 ||
+    typeof protocol.min !== "number" ||
+    protocol.min > 2 ||
+    typeof protocol.max !== "number" ||
+    protocol.max < 2 ||
+    !capabilities?.intentTypes?.includes(intentType) ||
+    missingFeatures.length > 0 ||
+    (intentType === "solana.vaultBondAction" && !features.has("typedVaultBondActions")) ||
+    missingVaultReviewFeatures.length > 0 ||
+    missingStates.length > 0
+  ) {
+    throw new Error(
+      `local-socket-signer does not support the required typed SAT protocol-v2 contract${
+        missingFeatures.length > 0 ? `; missing features: ${missingFeatures.join(", ")}` : ""
+      }${missingVaultReviewFeatures.length > 0 ? `; missing reviewed Vault features: ${missingVaultReviewFeatures.join(", ")}` : ""}${
+        missingStates.length > 0 ? `; missing states: ${missingStates.join(", ")}` : ""
+      }`,
+    );
+  }
+}
+
+async function reconcileTypedSatOperation(params: {
+  socketPath: string;
+  walletId: string;
+  requestId: string;
+  operation?: SatSignerOperation;
+}) {
+  let operation =
+    params.operation ??
+    (await callLocalSocketSigner<SatSignerOperation>(params.socketPath, {
+      op: "v2.operation.get",
+      walletId: params.walletId,
+      request: { requestId: params.requestId },
+    }));
+  if (operation.state === "broadcast" || operation.state === "unknown") {
+    try {
+      operation = await callLocalSocketSigner<SatSignerOperation>(params.socketPath, {
+        op: "v2.operation.reconcile",
+        walletId: params.walletId,
+        request: { requestId: params.requestId },
+      });
+    } catch {
+      // The durable signature and ambiguous state remain authoritative. Never
+      // replace this with a second request ID or another broadcast attempt.
+    }
+  }
+  return operation;
+}
+
+function assertSatSignerOperationIdentity(
+  operation: SatSignerOperation,
+  requestId: string,
+): SatSignerOperation {
+  if (operation.requestId !== requestId) {
+    throw new Error(
+      `SAT signer returned request ${operation.requestId || "<empty>"} while reconciling ${requestId}`,
+    );
+  }
+  return operation;
+}
+
+function signerStateForLedger(state: SatSignerOperation["state"]): SatSubmissionSignerState {
+  return state;
+}
+
+class SatSubmissionUnresolvedError extends Error {
+  readonly requestId: string;
+  readonly signature?: string;
+
+  constructor(params: { requestId: string; state: string; signature?: string; detail?: string }) {
+    super(
+      `SAT signer operation ${params.requestId} remains ${params.state}${
+        params.signature ? ` with signature ${params.signature}` : ""
+      }; it is unresolved and must be reconciled with the same idempotency key before any new submission${
+        params.detail ? ` (${params.detail})` : ""
+      }`,
+    );
+    this.name = "SatSubmissionUnresolvedError";
+    this.requestId = params.requestId;
+    this.signature = params.signature;
+  }
+}
+
+async function executeTypedSatIntent(params: {
+  socketPath: string;
+  walletId: string;
+  action: SatSignerAction | "cleanupBatch";
+  instruction?: Awaited<ReturnType<typeof buildLocalSignerInstructionRequest>>;
+  instructions?: Array<Awaited<ReturnType<typeof buildLocalSignerInstructionRequest>>>;
+  cluster: "local" | "devnet" | "mainnet-beta";
+  env: NodeJS.ProcessEnv;
+}) {
+  const isVaultBond = params.action !== "cleanupBatch" && VAULT_BOND_ACTIONS.has(params.action);
+  const intentType = isVaultBond ? "solana.vaultBondAction" : "solana.satAction";
+  await requireTypedSatSignerCapabilities(params.socketPath, intentType);
+  const intent = isVaultBond
+    ? (() => {
+        if (!params.instruction || params.instructions) {
+          throw new Error("typed Vault bond execution requires exactly one semantic instruction");
+        }
+        return {
+          type: "solana.vaultBondAction" as const,
+          cluster: params.cluster,
+          ...params.instruction,
+        };
+      })()
+    : {
+        type: "solana.satAction" as const,
+        action: params.action,
+        ...(params.instruction ?? {}),
+        ...(params.instructions ? { instructions: params.instructions } : {}),
+      };
+  const policy = await callLocalSocketSigner<{ hash: string }>(params.socketPath, {
+    op: "v2.policy.get",
+    walletId: params.walletId,
+  });
+  const intentDigest = digestSatSubmissionIntent({
+    walletId: params.walletId,
+    policyHash: policy.hash,
+    intent,
+  });
+  const operationKey = buildSatSubmissionOperationKey(intent);
+  const workflowId =
+    satSubmissionWorkflowStorage.getStore() ?? `derived:${operationKey}:${intentDigest}`;
+  let claim = await claimSatSubmission({
+    walletId: params.walletId,
+    workflowId,
+    operationKey,
+    intentDigest,
+    action: params.action,
+    env: params.env,
+  });
+  if (!claim.claimed) {
+    await waitForSatSubmissionLease({
+      walletId: params.walletId,
+      requestId: claim.record.requestId,
+      env: params.env,
+    });
+    claim = await claimSatSubmission({
+      walletId: params.walletId,
+      workflowId,
+      operationKey,
+      intentDigest,
+      action: params.action,
+      env: params.env,
+      owner: claim.owner,
+    });
+    if (!claim.claimed) {
+      throw new Error(
+        `SAT submission ${claim.record.requestId} could not acquire its durable execution lease`,
+      );
+    }
+  }
+  const requestId = claim.record.requestId;
+  let resumedReviewedOperation: SatSignerOperation | undefined;
+  if (intent.type === "solana.vaultBondAction") {
+    let reviewWasSigned = false;
+    try {
+      let review: WalletProviderJupiterReviewV2;
+      try {
+        review = await callLocalSocketSigner<WalletProviderJupiterReviewV2>(params.socketPath, {
+          op: "v2.review.get",
+          walletId: params.walletId,
+          request: { requestId },
+        });
+      } catch (lookupError) {
+        if (!String(lookupError).includes("signer review not found")) {
+          throw lookupError;
+        }
+        review = await callLocalSocketSigner<WalletProviderJupiterReviewV2>(params.socketPath, {
+          op: "v2.review.prepare",
+          walletId: params.walletId,
+          request: {
+            requestId,
+            policyHash: policy.hash,
+            mode: "reviewed",
+            intent,
+          },
+        });
+      }
+      if (
+        review.requestId !== requestId ||
+        review.policyHash !== policy.hash ||
+        review.mode !== "reviewed" ||
+        review.intentType !== intent.type ||
+        !isDeepStrictEqual(review.semanticIntent, intent)
+      ) {
+        throw new Error(`Vault bond review ${requestId} does not match the exact SAT intent`);
+      }
+      if (review.state === "prepared") {
+        const approval = createSignerReviewApprovalRequest({
+          review,
+          role: "vault",
+          walletId: params.walletId,
+          requestedBy: "sat-mining-vault",
+          assetSymbol: "SAT",
+          assetName: "SAT bond",
+          memo: `Reviewed Vault bond action: ${intent.action}`,
+          env: params.env,
+        });
+        await updateSatSubmission({
+          walletId: params.walletId,
+          requestId,
+          intentDigest,
+          state: "reserved",
+          error: `review ${approval.id} pending`,
+          owner: claim.owner,
+          releaseLease: true,
+          env: params.env,
+        });
+        throw new Error(
+          `Vault bond review ${approval.id} is pending in Wallet Approvals for ${intent.action}; approve it there with the signer-owned passkey`,
+        );
+      }
+      reviewWasSigned = true;
+      resumedReviewedOperation = assertSatSignerOperationIdentity(
+        await reconcileTypedSatOperation({
+          socketPath: params.socketPath,
+          walletId: params.walletId,
+          requestId,
+        }),
+        requestId,
+      );
+    } catch (error) {
+      await updateSatSubmission({
+        walletId: params.walletId,
+        requestId,
+        intentDigest,
+        state: reviewWasSigned ? "unknown" : "reserved",
+        error: error instanceof Error ? error.message : String(error),
+        owner: claim.owner,
+        releaseLease: true,
+        env: params.env,
+      }).catch(() => undefined);
+      throw error;
+    }
+  }
+  const executeExactOrRecover = async (): Promise<SatSignerOperation> => {
+    try {
+      return await callLocalSocketSigner<SatSignerOperation>(params.socketPath, {
+        op: "v2.execute",
+        walletId: params.walletId,
+        request: {
+          requestId,
+          policyHash: policy.hash,
+          intent,
+        },
+      });
+    } catch (executeError) {
+      try {
+        return await callLocalSocketSigner<SatSignerOperation>(params.socketPath, {
+          op: "v2.operation.get",
+          walletId: params.walletId,
+          request: { requestId },
+        });
+      } catch (lookupError) {
+        const detail = `${executeError instanceof Error ? executeError.message : String(executeError)}; ${
+          lookupError instanceof Error ? lookupError.message : String(lookupError)
+        }`;
+        await updateSatSubmission({
+          walletId: params.walletId,
+          requestId,
+          intentDigest,
+          state:
+            claim.record.state === "confirmed" || claim.record.state === "failed"
+              ? claim.record.state
+              : "unknown",
+          ...(claim.record.signature ? { signature: claim.record.signature } : {}),
+          error: detail,
+          owner: claim.owner,
+          releaseLease: true,
+          env: params.env,
+        });
+        throw new SatSubmissionUnresolvedError({ requestId, state: "unknown", detail });
+      }
+    }
+  };
+  let operation: SatSignerOperation;
+  if (resumedReviewedOperation) {
+    operation = resumedReviewedOperation;
+  } else if (!claim.created) {
+    const callerStateWasAmbiguous =
+      claim.record.state === "broadcast" || claim.record.state === "unknown";
+    try {
+      operation = assertSatSignerOperationIdentity(
+        await callLocalSocketSigner<SatSignerOperation>(params.socketPath, {
+          op: "v2.operation.get",
+          walletId: params.walletId,
+          request: { requestId },
+        }),
+        requestId,
+      );
+      operation = assertSatSignerOperationIdentity(
+        await reconcileTypedSatOperation({
+          socketPath: params.socketPath,
+          walletId: params.walletId,
+          requestId,
+          operation,
+        }),
+        requestId,
+      );
+    } catch (lookupError) {
+      if (claim.record.signature) {
+        await updateSatSubmission({
+          walletId: params.walletId,
+          requestId,
+          intentDigest,
+          state: claim.record.state === "confirmed" ? "confirmed" : "unknown",
+          signature: claim.record.signature,
+          error: lookupError instanceof Error ? lookupError.message : String(lookupError),
+          owner: claim.owner,
+          releaseLease: true,
+          env: params.env,
+        });
+        throw new SatSubmissionUnresolvedError({
+          requestId,
+          state: claim.record.state === "confirmed" ? "confirmed-but-unverified" : "unknown",
+          signature: claim.record.signature,
+          detail: lookupError instanceof Error ? lookupError.message : String(lookupError),
+        });
+      }
+      if (claim.record.state === "failed" || claim.record.state === "confirmed") {
+        const detail = lookupError instanceof Error ? lookupError.message : String(lookupError);
+        await updateSatSubmission({
+          walletId: params.walletId,
+          requestId,
+          intentDigest,
+          state: claim.record.state,
+          error: detail,
+          owner: claim.owner,
+          releaseLease: true,
+          env: params.env,
+        });
+        if (claim.record.state === "failed") {
+          throw new Error(claim.record.error || `SAT signer operation ${requestId} failed`);
+        }
+        throw new SatSubmissionUnresolvedError({
+          requestId,
+          state: "confirmed-without-signature",
+          detail,
+        });
+      }
+      operation = await executeExactOrRecover();
+    }
+    if (operation.state === "reserved" && !operation.signature) {
+      if (callerStateWasAmbiguous) {
+        const detail = `signer regressed to reserved after caller persisted ${claim.record.state}`;
+        await updateSatSubmission({
+          walletId: params.walletId,
+          requestId,
+          intentDigest,
+          state: "unknown",
+          ...(claim.record.signature ? { signature: claim.record.signature } : {}),
+          error: detail,
+          owner: claim.owner,
+          releaseLease: true,
+          env: params.env,
+        });
+        throw new SatSubmissionUnresolvedError({
+          requestId,
+          state: "unknown",
+          signature: claim.record.signature,
+          detail,
+        });
+      }
+      operation = await executeExactOrRecover();
+    }
+  } else {
+    operation = await executeExactOrRecover();
+  }
+  try {
+    operation = assertSatSignerOperationIdentity(operation, requestId);
+    operation = assertSatSignerOperationIdentity(
+      await reconcileTypedSatOperation({
+        socketPath: params.socketPath,
+        walletId: params.walletId,
+        requestId,
+        operation,
+      }),
+      requestId,
+    );
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    await updateSatSubmission({
+      walletId: params.walletId,
+      requestId,
+      intentDigest,
+      state:
+        claim.record.state === "confirmed" || claim.record.state === "failed"
+          ? claim.record.state
+          : "unknown",
+      ...(claim.record.signature ? { signature: claim.record.signature } : {}),
+      error: detail,
+      owner: claim.owner,
+      releaseLease: true,
+      env: params.env,
+    });
+    throw new SatSubmissionUnresolvedError({ requestId, state: "unknown", detail });
+  }
+  await updateSatSubmission({
+    walletId: params.walletId,
+    requestId,
+    intentDigest,
+    state: signerStateForLedger(operation.state),
+    ...(operation.signature ? { signature: operation.signature } : {}),
+    ...(operation.error ? { error: operation.error } : {}),
+    owner: claim.owner,
+    releaseLease: true,
+    env: params.env,
+  });
+  if (operation.state === "failed") {
+    throw new Error(operation.error || `SAT signer operation ${requestId} failed`);
+  }
+  if (operation.state !== "confirmed" || !operation.signature) {
+    throw new SatSubmissionUnresolvedError({
+      requestId,
+      state: operation.state,
+      signature: operation.signature,
+      detail: operation.error,
+    });
+  }
+  return { ...operation, signature: operation.signature };
 }
 
 async function submitInstructionViaLocalSigner(
@@ -352,34 +864,35 @@ async function submitInstructionViaLocalSigner(
   const request = await buildLocalSignerInstructionRequest({
     solana: context.solana,
     signer: context.signer,
-    walletId: context.walletId,
+    env: context.effectiveEnv,
     spec: params,
   });
-  const submitted = await callLocalSocketSigner<{ txHash: string; signer?: string }>(
-    context.socketPath,
-    {
-      op: "sendSolanaInstruction",
-      request,
-    },
-  );
+  if (!context.walletId) {
+    throw new Error("typed SAT signing requires an explicit mining walletId");
+  }
+  const submitted = await executeTypedSatIntent({
+    socketPath: context.socketPath,
+    walletId: context.walletId,
+    action: request.action,
+    instruction: request,
+    cluster: resolveSatCluster(params.cfg),
+    env: context.effectiveEnv,
+  });
   return {
-    txHash: submitted.txHash,
-    signer: submitted.signer ?? context.signerAddress,
+    txHash: submitted.signature,
+    signer: context.signerAddress,
+    signerState: submitted.state,
+    requestId: submitted.requestId,
   };
 }
 
-async function submitInstruction(params: {
-  cfg: FasedAgentConfig;
-  env: NodeJS.ProcessEnv;
-  data: Buffer;
-  programId?: string;
-  accountResolver: (
-    solana: SolanaModuleLike,
-    signer: import("@solana/web3.js").PublicKey,
-  ) => Promise<import("@solana/web3.js").AccountMeta[]>;
-}) {
+async function submitInstruction(
+  params: {
+    cfg: FasedAgentConfig;
+    env: NodeJS.ProcessEnv;
+  } & SatInstructionSubmitSpec,
+) {
   const effectiveEnv = resolveSatEffectiveEnv(params.cfg, params.env);
-  await enforceSatCustodyAutonomousSigning(params.cfg, effectiveEnv);
   if (resolveSatProviderId(params.cfg, effectiveEnv) !== "local-socket-signer") {
     throw new Error("SAT mining unattended submission currently requires local-socket-signer");
   }
@@ -405,7 +918,6 @@ async function submitInstructionBatch(params: {
     throw new Error("SAT cleanup batch exceeds signer limit");
   }
   const effectiveEnv = resolveSatEffectiveEnv(params.cfg, params.env);
-  await enforceSatCustodyAutonomousSigning(params.cfg, effectiveEnv);
   if (resolveSatProviderId(params.cfg, effectiveEnv) !== "local-socket-signer") {
     throw new Error(
       "SAT mining unattended batch submission currently requires local-socket-signer",
@@ -418,26 +930,27 @@ async function submitInstructionBatch(params: {
       await buildLocalSignerInstructionRequest({
         solana: context.solana,
         signer: context.signer,
-        walletId: context.walletId,
+        env: context.effectiveEnv,
         spec,
       }),
     );
   }
-  const submitted = await callLocalSocketSigner<{
-    txHash: string;
-    signer?: string;
-    metadata?: Record<string, unknown>;
-  }>(context.socketPath, {
-    op: "sendSolanaInstructions",
-    request: {
-      ...(context.walletId ? { walletId: context.walletId } : {}),
-      purpose: params.purpose,
-      instructions,
-    },
+  if (!context.walletId) {
+    throw new Error("typed SAT cleanup signing requires an explicit mining walletId");
+  }
+  const submitted = await executeTypedSatIntent({
+    socketPath: context.socketPath,
+    walletId: context.walletId,
+    action: "cleanupBatch",
+    instructions,
+    cluster: resolveSatCluster(params.cfg),
+    env: context.effectiveEnv,
   });
   return {
-    txHash: submitted.txHash,
-    signer: submitted.signer ?? context.signerAddress,
+    txHash: submitted.signature,
+    signer: context.signerAddress,
+    signerState: submitted.state,
+    requestId: submitted.requestId,
     instructionCount: instructions.length,
   };
 }
@@ -962,13 +1475,16 @@ export async function submitSatValidatorAttestation(
         [Buffer.from(MINING_STAKE_SEED), targetAuthority.toBuffer()],
         programId,
       );
-      return [
-        { pubkey: signer, isSigner: true, isWritable: true },
-        { pubkey: satEpoch, isSigner: false, isWritable: true },
-        { pubkey: satValidatorAttestation, isSigner: false, isWritable: true },
-        { pubkey: miningStake, isSigner: false, isWritable: true },
-        { pubkey: solana.SystemProgram.programId, isSigner: false, isWritable: false },
-      ];
+      return {
+        keys: [
+          { pubkey: signer, isSigner: true, isWritable: true },
+          { pubkey: satEpoch, isSigner: false, isWritable: true },
+          { pubkey: satValidatorAttestation, isSigner: false, isWritable: true },
+          { pubkey: miningStake, isSigner: false, isWritable: true },
+          { pubkey: solana.SystemProgram.programId, isSigner: false, isWritable: false },
+        ],
+        context: { targetAuthority: targetAuthority.toBase58() },
+      };
     },
   });
 }
@@ -1005,13 +1521,16 @@ export async function submitSatOpenDispute(
         [Buffer.from(MINING_STAKE_SEED), targetAuthority.toBuffer()],
         programId,
       );
-      return [
-        { pubkey: signer, isSigner: true, isWritable: true },
-        { pubkey: satEpoch, isSigner: false, isWritable: true },
-        { pubkey: satDispute, isSigner: false, isWritable: true },
-        { pubkey: miningStake, isSigner: false, isWritable: true },
-        { pubkey: solana.SystemProgram.programId, isSigner: false, isWritable: false },
-      ];
+      return {
+        keys: [
+          { pubkey: signer, isSigner: true, isWritable: true },
+          { pubkey: satEpoch, isSigner: false, isWritable: true },
+          { pubkey: satDispute, isSigner: false, isWritable: true },
+          { pubkey: miningStake, isSigner: false, isWritable: true },
+          { pubkey: solana.SystemProgram.programId, isSigner: false, isWritable: false },
+        ],
+        context: { targetAuthority: targetAuthority.toBase58() },
+      };
     },
   });
 }
@@ -1047,12 +1566,15 @@ export async function submitSatResolveDispute(
         ],
         programId,
       );
-      return [
-        { pubkey: signer, isSigner: true, isWritable: true },
-        { pubkey: miningPool, isSigner: false, isWritable: false },
-        { pubkey: satEpoch, isSigner: false, isWritable: true },
-        { pubkey: satDispute, isSigner: false, isWritable: true },
-      ];
+      return {
+        keys: [
+          { pubkey: signer, isSigner: true, isWritable: true },
+          { pubkey: miningPool, isSigner: false, isWritable: false },
+          { pubkey: satEpoch, isSigner: false, isWritable: true },
+          { pubkey: satDispute, isSigner: false, isWritable: true },
+        ],
+        context: { disputeAuthority: disputeAuthority.toBase58() },
+      };
     },
   });
 }
@@ -1172,15 +1694,23 @@ export async function submitSatInitMinerCapital(
   params: { authority?: string },
 ) {
   const cfg = loadConfigForSatRuntime(_config);
+  const effectiveEnv = resolveSatEffectiveEnv(cfg, process.env);
+  const authority =
+    params.authority?.trim() ||
+    (await resolveSatLocalSignerAddress(
+      cfg,
+      effectiveEnv,
+      "local-socket-signer returned no Solana address for SAT miner capital authority",
+    ));
   return submitInstruction({
     cfg,
-    env: process.env,
-    data: buildInitMinerCapitalData({ authority: params.authority ?? "" }),
+    env: effectiveEnv,
+    data: buildInitMinerCapitalData({ authority }),
     accountResolver: async (solana, signer) => {
       const programId = new solana.PublicKey(SAT_PROGRAM_ID());
-      const authority = params.authority?.trim() ? new solana.PublicKey(params.authority) : signer;
+      const authorityKey = new solana.PublicKey(authority);
       const [satMinerCapitalState] = solana.PublicKey.findProgramAddressSync(
-        [Buffer.from(SAT_MINER_CAPITAL_STATE_SEED), authority.toBuffer()],
+        [Buffer.from(SAT_MINER_CAPITAL_STATE_SEED), authorityKey.toBuffer()],
         programId,
       );
       return [
@@ -1318,13 +1848,11 @@ export async function submitSatUpdateBondTierPolicy(
   if (!hasDedicatedBondProgram(effectiveEnv)) {
     throw new Error("SAT bond tier policy update requires FASED_SAT_BOND_PROGRAM_ID");
   }
-  const defaultUpdateAuthority =
-    resolveSatRegistrySolanaAddress(cfg, effectiveEnv) ||
-    (await resolveSatLocalSignerAddress(
-      cfg,
-      effectiveEnv,
-      "local-socket-signer returned no Solana address for SAT bond policy authority",
-    ));
+  const defaultUpdateAuthority = await resolveSatLocalSignerAddress(
+    cfg,
+    effectiveEnv,
+    "local-socket-signer returned no Solana address for SAT bond policy authority",
+  );
   return submitInstruction({
     cfg,
     env: effectiveEnv,
@@ -1696,6 +2224,7 @@ async function submitSatCyclePhaseInstruction(
         { pubkey: signer, isSigner: true, isWritable: false },
         { pubkey: satCycleState, isSigner: false, isWritable: true },
       ];
+      let intervalStartCycleIdForSigner: number | undefined;
       if (params.phase === "seal") {
         const cycle =
           params.intervalStartCycleId == null
@@ -1706,6 +2235,7 @@ async function submitSatCyclePhaseInstruction(
         if (intervalStartCycleId == null || !Number.isSafeInteger(intervalStartCycleId)) {
           throw new Error(`SAT cycle ${params.cycleId} does not expose its unlock interval start`);
         }
+        intervalStartCycleIdForSigner = intervalStartCycleId;
         const [satUnlockIntervalState] = solana.PublicKey.findProgramAddressSync(
           [Buffer.from(SAT_UNLOCK_INTERVAL_STATE_SEED), encodeU64(intervalStartCycleId)],
           programId,
@@ -1721,7 +2251,12 @@ async function submitSatCyclePhaseInstruction(
           isWritable: false,
         });
       }
-      return accounts;
+      return {
+        keys: accounts,
+        ...(intervalStartCycleIdForSigner == null
+          ? {}
+          : { context: { intervalStartCycleId: String(intervalStartCycleIdForSigner) } }),
+      };
     },
   });
 }
@@ -1878,18 +2413,24 @@ export async function submitSatRevealCycle(
         [Buffer.from(SAT_REGISTRY_RESERVE_SEED)],
         programId,
       );
-      return [
-        { pubkey: signer, isSigner: true, isWritable: true },
-        { pubkey: satCycleState, isSigner: false, isWritable: true },
-        { pubkey: satCycleRegistryMeta, isSigner: false, isWritable: true },
-        { pubkey: satCycleRegistryPage, isSigner: false, isWritable: true },
-        { pubkey: satCycleSettlementProgress, isSigner: false, isWritable: true },
-        { pubkey: satMinerCycleState, isSigner: false, isWritable: true },
-        { pubkey: satMinerCapitalState, isSigner: false, isWritable: true },
-        { pubkey: satUnlockIntervalState, isSigner: false, isWritable: true },
-        { pubkey: satRegistryReserve, isSigner: false, isWritable: true },
-        { pubkey: solana.SystemProgram.programId, isSigner: false, isWritable: false },
-      ];
+      return {
+        keys: [
+          { pubkey: signer, isSigner: true, isWritable: true },
+          { pubkey: satCycleState, isSigner: false, isWritable: true },
+          { pubkey: satCycleRegistryMeta, isSigner: false, isWritable: true },
+          { pubkey: satCycleRegistryPage, isSigner: false, isWritable: true },
+          { pubkey: satCycleSettlementProgress, isSigner: false, isWritable: true },
+          { pubkey: satMinerCycleState, isSigner: false, isWritable: true },
+          { pubkey: satMinerCapitalState, isSigner: false, isWritable: true },
+          { pubkey: satUnlockIntervalState, isSigner: false, isWritable: true },
+          { pubkey: satRegistryReserve, isSigner: false, isWritable: true },
+          { pubkey: solana.SystemProgram.programId, isSigner: false, isWritable: false },
+        ],
+        context: {
+          intervalStartCycleId: String(intervalStartCycleId),
+          registryPageIndex: String(pageIndex),
+        },
+      };
     },
   });
 }
@@ -1970,7 +2511,29 @@ export async function submitSatSettleCyclePage(
           isWritable: true,
         });
       }
-      return accounts;
+      const minerCycleAddresses = params.minerCycleAccounts ?? [];
+      const minerCycles =
+        minerCycleAddresses.length > 0
+          ? await inspectSatMinerCyclesByAddress(_config, {
+              addresses: minerCycleAddresses,
+            })
+          : [];
+      const minerAuthorities = minerCycles.map((entry, index) => {
+        const authority = String(entry?.authority ?? "").trim();
+        if (!authority) {
+          throw new Error(
+            `SAT settleCyclePage could not resolve miner authority for ${minerCycleAddresses[index]}`,
+          );
+        }
+        return authority;
+      });
+      if (minerAuthorities.length !== minerCycleAddresses.length) {
+        throw new Error("SAT settleCyclePage miner authority count mismatch");
+      }
+      return {
+        keys: accounts,
+        ...(minerAuthorities.length > 0 ? { context: { minerAuthorities } } : {}),
+      };
     },
   });
 }
@@ -2110,7 +2673,29 @@ export async function submitSatScoreCyclePage(
           isWritable: true,
         });
       }
-      return accounts;
+      const minerCycleAddresses = params.minerCycleAccounts ?? [];
+      const minerCycles =
+        minerCycleAddresses.length > 0
+          ? await inspectSatMinerCyclesByAddress(_config, {
+              addresses: minerCycleAddresses,
+            })
+          : [];
+      const minerAuthorities = minerCycles.map((entry, index) => {
+        const authority = String(entry?.authority ?? "").trim();
+        if (!authority) {
+          throw new Error(
+            `SAT scoreCyclePage could not resolve miner authority for ${minerCycleAddresses[index]}`,
+          );
+        }
+        return authority;
+      });
+      if (minerAuthorities.length !== minerCycleAddresses.length) {
+        throw new Error("SAT scoreCyclePage miner authority count mismatch");
+      }
+      return {
+        keys: accounts,
+        ...(minerAuthorities.length > 0 ? { context: { minerAuthorities } } : {}),
+      };
     },
   });
 }
@@ -2185,6 +2770,7 @@ export async function submitSatDistributeCyclePage(
               addresses: minerCycleAccounts,
             }).catch(() => [])
           : [];
+      const minerAuthorities: string[] = [];
       for (const [index, minerCycleAccount] of minerCycleAccounts.entries()) {
         const satMinerCycleState = new solana.PublicKey(minerCycleAccount);
         const minerCycle = minerCycles[index] ?? null;
@@ -2196,6 +2782,7 @@ export async function submitSatDistributeCyclePage(
             `SAT distributeCyclePage could not resolve miner authority for ${minerCycleAccount}`,
           );
         }
+        minerAuthorities.push(authorityKey.toBase58());
         const [satMinerCapitalState] = solana.PublicKey.findProgramAddressSync(
           [Buffer.from(SAT_MINER_CAPITAL_STATE_SEED), authorityKey.toBuffer()],
           programId,
@@ -2203,7 +2790,10 @@ export async function submitSatDistributeCyclePage(
         accounts.push({ pubkey: satMinerCycleState, isSigner: false, isWritable: true });
         accounts.push({ pubkey: satMinerCapitalState, isSigner: false, isWritable: true });
       }
-      return accounts;
+      return {
+        keys: accounts,
+        ...(minerAuthorities.length > 0 ? { context: { minerAuthorities } } : {}),
+      };
     },
   });
 }
@@ -2799,7 +3389,13 @@ export async function submitSatCompactPendingCycleRange(
           isWritable: false,
         });
       }
-      return accounts;
+      return {
+        keys: accounts,
+        context: {
+          frontCycleIds: params.frontCycleIds.map(String),
+          backCycleIds: params.backCycleIds.map(String),
+        },
+      };
     },
   });
 }

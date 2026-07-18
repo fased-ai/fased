@@ -76,6 +76,10 @@ import {
   loadWorkspaceSkillEntries,
   resolveSkillsPromptForRun,
 } from "../../skills.js";
+import {
+  marketplaceSkillIdsFromEntries,
+  marketplaceSkillIdsFromSnapshot,
+} from "../../skills/trust.js";
 import { buildSystemPromptParams } from "../../system-prompt-params.js";
 import { buildSystemPromptReport } from "../../system-prompt-report.js";
 import { sanitizeToolCallIdsForCloudCodeAssist } from "../../tool-call-id.js";
@@ -351,10 +355,21 @@ export async function runEmbeddedAttempt(
   await fs.mkdir(resolvedWorkspace, { recursive: true });
 
   const sandboxSessionKey = params.sessionKey?.trim() || params.sessionId;
+  const sourceSkillEntries = params.skillsSnapshot
+    ? []
+    : loadWorkspaceSkillEntries(resolvedWorkspace, {
+        config: params.config,
+        agentId: params.agentId,
+      });
+  const marketplaceSkillIds = params.skillsSnapshot
+    ? marketplaceSkillIdsFromSnapshot(params.skillsSnapshot)
+    : marketplaceSkillIdsFromEntries(sourceSkillEntries);
+  const hasUntrustedSkillContent = marketplaceSkillIds.length > 0;
   const sandbox = await resolveSandboxContext({
     config: params.config,
     sessionKey: sandboxSessionKey,
     workspaceDir: resolvedWorkspace,
+    forceUntrustedIsolation: hasUntrustedSkillContent,
   });
   const effectiveWorkspace = sandbox?.enabled
     ? sandbox.workspaceAccess === "rw"
@@ -375,10 +390,12 @@ export async function runEmbeddedAttempt(
       ? applySkillEnvOverridesFromSnapshot({
           snapshot: params.skillsSnapshot,
           config: params.config,
+          excludeMarketplace: true,
         })
       : applySkillEnvOverrides({
           skills: skillEntries ?? [],
           config: params.config,
+          excludeMarketplace: true,
         });
 
     const skillsPrompt = resolveSkillsPromptForRun({
@@ -461,8 +478,9 @@ export async function runEmbeddedAttempt(
             params.requireExplicitMessageTarget ?? isSubagentSessionKey(params.sessionKey),
           disableMessageTool: params.disableMessageTool,
           disabledToolNames: params.disabledToolNames,
+          untrustedSkillContent: hasUntrustedSkillContent,
         });
-    if (!toolsDisabled) {
+    if (!toolsDisabled && !hasUntrustedSkillContent) {
       bundleMcpRuntime = await createBundleMcpToolRuntime({
         workspaceDir: effectiveWorkspace,
         cfg: params.config,
@@ -709,11 +727,6 @@ export async function runEmbeddedAttempt(
       // Get hook runner early so it's available when creating tools
       const hookRunner = getGlobalHookRunner();
 
-      const { builtInTools, customTools } = splitSdkTools({
-        tools,
-        sandboxEnabled: !!sandbox?.enabled,
-      });
-
       // Add client tools (OpenResponses hosted tools) to customTools
       let clientToolCallDetected: { name: string; params: Record<string, unknown> } | null = null;
       const clientToolLoopDetection = resolveToolLoopDetectionConfig({
@@ -734,7 +747,11 @@ export async function runEmbeddedAttempt(
           )
         : [];
 
-      const allCustomTools = [...customTools, ...clientToolDefs];
+      const { activeToolNames, customTools } = splitSdkTools({
+        tools,
+        clientTools: clientToolDefs,
+        sandboxEnabled: !!sandbox?.enabled,
+      });
 
       if (params.model.api === "ollama") {
         registerProviderStreamForModel({
@@ -752,8 +769,8 @@ export async function runEmbeddedAttempt(
         modelRegistry: params.modelRegistry,
         model: params.model,
         thinkingLevel: mapThinkingLevel(params.thinkLevel),
-        tools: builtInTools,
-        customTools: allCustomTools,
+        tools: activeToolNames,
+        customTools,
         sessionManager,
         settingsManager,
         resourceLoader,

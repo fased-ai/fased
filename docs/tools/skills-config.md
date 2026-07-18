@@ -159,6 +159,12 @@ Rules:
   `node_modules`, oversized files, package lifecycle scripts, and package
   dependency blocks are rejected. Dependency manifests and helper scripts are
   recorded as review warnings.
+- Every Marketplace version must publish a SHA-256/SRI archive digest. Missing
+  or mismatched integrity refuses installation before extraction.
+- Marketplace skill environment/API-key overrides are never injected. Their
+  instructions force a per-session, no-network, no-writable-workspace,
+  read-only-root sandbox and normal mixed-skill turns receive only `read`.
+  Configure a working sandbox backend (Docker by default); absence fails closed.
 
 Inspect installed marketplace sources and grant state:
 
@@ -178,6 +184,13 @@ fased skills permissions <skill-id>
 
 When a session is **sandboxed**, skill processes run inside Docker. The sandbox
 does **not** inherit the host `process.env`.
+
+Marketplace skills are always forced into a session-scoped sandbox even when
+the Agent's normal sandbox mode is `off`. They do not receive per-skill `env` or
+`apiKey` values. The forced profile disables network and browser access, removes
+writable workspace mounts and custom binds, uses a read-only root, drops all
+Linux capabilities, and exposes only `read` during normal mixed-skill model
+turns. This is intentionally fail closed when the sandbox backend is missing.
 
 Use one of:
 

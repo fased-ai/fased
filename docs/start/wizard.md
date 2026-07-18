@@ -120,11 +120,13 @@ The wizard starts with **QuickStart** (defaults) vs **Advanced** (full control).
 
 For Hosting, the wizard checks Tailscale before it applies SSH/firewall
 hardening. If Tailscale is missing, it tries to install it. If the host is not
-logged in, it can use `--ts-authkey` for unattended setup or show a login URL
-in SSH for normal manual setup. Open that URL in your local computer's browser,
-then return to the SSH session. If Tailscale cannot provide a tailnet IP,
-Hosting refuses to continue because the remote dashboard and admin path depend
-on Tailscale.
+logged in, the root installer shows a login URL in SSH for normal manual setup.
+Open that URL in your local computer's browser, then return to the SSH session.
+For unattended provisioning, append `--ts-authkey-file <root-owned-mode-0600-file>`
+to the verified standalone Hosting installer command; raw key arguments are
+rejected. `fased onboard` never accepts or handles the auth key. If Tailscale
+cannot provide a tailnet IP, Hosting refuses to continue because the remote
+dashboard and admin path depend on Tailscale.
 
 Hosted setup uses two machines:
 
@@ -333,14 +335,16 @@ extra Agent or Vault wallets, but you must pass the intended `--wallet-id`
 yourself.
 
 Mining is one active configured wallet, normally `@wallet:mining`. To replace
-it, stop mining, clear pending work and funds, delete the old Mining wallet
-through guarded wallet management if needed, then create the new one.
+it, stop mining, clear pending work and funds, then use the guarded
+**Archive/remove from Fased** action before creating the new one.
 
-Wallets are persistent machine state. Wizard repair never deletes them. Delete a
-wallet only from wallet management, one wallet at a time, after saving recovery
-material and typing the exact wallet id. Tailscale is also persistent machine
-access; repair does not remove it, so log out or remove the device in Tailscale
-only when you intentionally want to cut access.
+Wallets are persistent machine state. Wizard repair never deletes them. Archive
+one wallet at a time after saving recovery material and typing the exact id.
+Fased first durably tightens a native signer policy to deny-all, then detaches
+and unregisters the wallet. If locking fails, removal stops. The encrypted
+signer key remains recoverable; archive is not secure erasure. Tailscale is also
+persistent machine access; repair does not remove it, so log out or remove the
+device in Tailscale only when you intentionally want to cut access.
 
 Important distinction:
 

@@ -41,6 +41,12 @@ repository is published or redistributed.
    - Included subproject with its own license file:
      - [Swabble/LICENSE](./Swabble/LICENSE)
 
+6. `github.com/go-webauthn/webauthn`
+   - Compiled into `fased-signerd` for WebAuthn relying-party verification
+   - License: BSD 3-Clause
+   - License file:
+     [tools/fased-signerd/THIRD_PARTY_LICENSES/go-webauthn-BSD-3-Clause.txt](./tools/fased-signerd/THIRD_PARTY_LICENSES/go-webauthn-BSD-3-Clause.txt)
+
 ## Notes
 
 - This file covers bundled third-party material checked into the repository itself.

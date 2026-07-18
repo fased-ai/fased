@@ -1,0 +1,70 @@
+{
+  "walletId": "vault",
+  "role": "vault",
+  "operations": [
+    "federation.bondChallenge",
+    "solana.nativeTransfer",
+    "solana.splTransferChecked",
+    "vaultBond.cancelBondUnlock@REPLACE_WITH_SAT_BOND_PROGRAM_ID",
+    "vaultBond.claimBondStakingRewards@REPLACE_WITH_SAT_BOND_PROGRAM_ID",
+    "vaultBond.claimUnallocatedStakingRewards@REPLACE_WITH_SAT_BOND_PROGRAM_ID",
+    "vaultBond.finalizeBondUnlock@REPLACE_WITH_SAT_BOND_PROGRAM_ID",
+    "vaultBond.increaseBondPosition@REPLACE_WITH_SAT_BOND_PROGRAM_ID",
+    "vaultBond.openBondPosition@REPLACE_WITH_SAT_BOND_PROGRAM_ID",
+    "vaultBond.requestBondUnlock@REPLACE_WITH_SAT_BOND_PROGRAM_ID",
+    "vaultBond.syncBondStakingPosition@REPLACE_WITH_SAT_BOND_PROGRAM_ID",
+    "vaultBond.syncBondStakingRewards@REPLACE_WITH_SAT_BOND_PROGRAM_ID"
+  ],
+  "programs": [
+    "11111111111111111111111111111111",
+    "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+    "REPLACE_WITH_SAT_BOND_PROGRAM_ID",
+    "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "domain:fased:federation-bond-challenge-v1"
+  ],
+  "assets": [
+    {
+      "asset": "federation:bond-challenge",
+      "destinations": [
+        "REPLACE_WITH_VAULT_WALLET_PUBLIC_KEY"
+      ],
+      "maxPerTx": "1",
+      "maxDaily": "REPLACE_WITH_POSITIVE_FEDERATION_CHALLENGES_PER_UTC_DAY"
+    },
+    {
+      "asset": "sat:action",
+      "destinations": [
+        "REPLACE_WITH_SAT_BOND_PROGRAM_ID"
+      ],
+      "maxPerTx": "REPLACE_WITH_POSITIVE_REVIEWED_BOND_ACTIONS_PER_TX",
+      "maxDaily": "REPLACE_WITH_POSITIVE_REVIEWED_BOND_ACTIONS_PER_UTC_DAY"
+    },
+    {
+      "asset": "sat:mint:REPLACE_WITH_SAT_MINT",
+      "destinations": [
+        "REPLACE_WITH_VAULT_WALLET_PUBLIC_KEY",
+        "REPLACE_WITH_APPROVED_REVIEWED_SAT_RECIPIENT_OWNER",
+        "REPLACE_WITH_SAT_BOND_PROGRAM_ID"
+      ],
+      "maxPerTx": "REPLACE_WITH_POSITIVE_REWARD_ACTIONS_PER_TX",
+      "maxDaily": "REPLACE_WITH_POSITIVE_REWARD_ACTIONS_PER_UTC_DAY"
+    },
+    {
+      "asset": "solana:native",
+      "destinations": [
+        "REPLACE_WITH_APPROVED_REVIEWED_SOL_RECIPIENT"
+      ],
+      "maxPerTx": "REPLACE_WITH_POSITIVE_LAMPORTS_PER_TX",
+      "maxDaily": "REPLACE_WITH_POSITIVE_LAMPORTS_PER_UTC_DAY"
+    },
+    {
+      "asset": "solana:spl:REPLACE_WITH_SAT_MINT",
+      "destinations": [
+        "REPLACE_WITH_APPROVED_REVIEWED_SAT_RECIPIENT_OWNER",
+        "REPLACE_WITH_BOND_POSITION_PDA"
+      ],
+      "maxPerTx": "REPLACE_WITH_POSITIVE_SAT_RAW_UNITS_PER_TX",
+      "maxDaily": "REPLACE_WITH_POSITIVE_SAT_RAW_UNITS_PER_UTC_DAY"
+    }
+  ]
+}

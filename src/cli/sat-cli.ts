@@ -1,10 +1,17 @@
+import { createHash, randomUUID } from "node:crypto";
 import { appendFile, mkdir, open, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { Command } from "commander";
+import { resolveStateDir } from "../config/paths.js";
+import { withFileLock, type FileLockOptions } from "../plugin-sdk/file-lock.js";
 import { defaultRuntime } from "../runtime.js";
 import { theme } from "../terminal/theme.js";
+import {
+  serializeWalletState,
+  writeWalletStateFileAtomically,
+} from "../wallet/wallet-atomic-state.js";
 import { runCommandWithRuntime } from "./cli-utils.js";
 import { formatCliCommand } from "./command-format.js";
 import type { GatewayRpcOpts } from "./gateway-rpc.js";
@@ -34,12 +41,36 @@ type SatGatewayOpts = GatewayRpcOpts & {
   lockFile?: string;
   staleLockSeconds?: string;
   manifestUrl?: string;
+  idempotencyKey?: string;
 };
 
 const LAMPORTS_PER_SOL = 1_000_000_000n;
 const DEFAULT_MAINTAIN_INTERVAL_SECONDS = 300;
 const DEFAULT_MAINTAIN_JITTER_SECONDS = 30;
 const DEFAULT_STALE_LOCK_SECONDS = 900;
+const SAT_MAINTENANCE_IDEMPOTENCY_VERSION = 1;
+const SAT_MAINTENANCE_IDEMPOTENCY_LIMIT = 64;
+const SAT_MAINTENANCE_IDEMPOTENCY_LOCK_OPTIONS: FileLockOptions = {
+  retries: {
+    retries: 120,
+    factor: 1.15,
+    minTimeout: 10,
+    maxTimeout: 100,
+    randomize: true,
+  },
+  stale: 120_000,
+};
+
+type SatMaintenancePendingIdempotency = {
+  idempotencyKey: string;
+  paramsDigest: string;
+  createdAt: string;
+};
+
+type SatMaintenanceIdempotencyFile = {
+  version: typeof SAT_MAINTENANCE_IDEMPOTENCY_VERSION;
+  pending: Record<string, SatMaintenancePendingIdempotency>;
+};
 
 function runSatCommand(action: () => Promise<void>, label?: string) {
   return runCommandWithRuntime(defaultRuntime, action, (err) => {
@@ -148,6 +179,132 @@ function parseOptionalPositiveInteger(raw: string | undefined, label: string): n
     throw new Error(`${label} must be a positive safe integer`);
   }
   return value;
+}
+
+function normalizeMaintenanceIdempotencyKey(raw: string): string {
+  const value = raw.trim();
+  if (!value || value.length > 160 || /[^\x20-\x7e]/u.test(value)) {
+    throw new Error("--idempotency-key must contain 1-160 printable characters");
+  }
+  return value;
+}
+
+function maintenanceParamsDigest(params: Record<string, string>): string {
+  const canonical = Object.fromEntries(
+    Object.entries(params).toSorted(([left], [right]) => left.localeCompare(right)),
+  );
+  return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
+}
+
+function maintenanceIdempotencyPath(): string {
+  return join(resolveStateDir(process.env), "sat-mining", "maintenance-cli-idempotency.json");
+}
+
+async function readMaintenanceIdempotencyFile(
+  filePath: string,
+): Promise<SatMaintenanceIdempotencyFile> {
+  try {
+    const parsed = JSON.parse(
+      await readFile(filePath, "utf8"),
+    ) as Partial<SatMaintenanceIdempotencyFile>;
+    if (
+      parsed.version !== SAT_MAINTENANCE_IDEMPOTENCY_VERSION ||
+      !parsed.pending ||
+      typeof parsed.pending !== "object" ||
+      Array.isArray(parsed.pending)
+    ) {
+      throw new Error(`invalid SAT maintenance idempotency state at ${filePath}`);
+    }
+    const pending: Record<string, SatMaintenancePendingIdempotency> = {};
+    for (const [digest, value] of Object.entries(parsed.pending)) {
+      if (
+        !/^[0-9a-f]{64}$/u.test(digest) ||
+        !value ||
+        typeof value.idempotencyKey !== "string" ||
+        value.paramsDigest !== digest ||
+        typeof value.createdAt !== "string"
+      ) {
+        throw new Error(`invalid SAT maintenance idempotency record ${digest}`);
+      }
+      pending[digest] = {
+        idempotencyKey: normalizeMaintenanceIdempotencyKey(value.idempotencyKey),
+        paramsDigest: digest,
+        createdAt: value.createdAt,
+      };
+    }
+    return { version: SAT_MAINTENANCE_IDEMPOTENCY_VERSION, pending };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { version: SAT_MAINTENANCE_IDEMPOTENCY_VERSION, pending: {} };
+    }
+    throw error;
+  }
+}
+
+function trimMaintenanceIdempotencyEntries(
+  pending: Record<string, SatMaintenancePendingIdempotency>,
+): Record<string, SatMaintenancePendingIdempotency> {
+  return Object.fromEntries(
+    Object.entries(pending)
+      .toSorted(([, left], [, right]) => left.createdAt.localeCompare(right.createdAt))
+      .slice(-SAT_MAINTENANCE_IDEMPOTENCY_LIMIT),
+  );
+}
+
+async function claimMaintenanceIdempotency(
+  params: Record<string, string>,
+  explicitKey?: string,
+): Promise<{ idempotencyKey: string; paramsDigest: string; managed: boolean }> {
+  const paramsDigest = maintenanceParamsDigest(params);
+  if (explicitKey?.trim()) {
+    return {
+      idempotencyKey: normalizeMaintenanceIdempotencyKey(explicitKey),
+      paramsDigest,
+      managed: false,
+    };
+  }
+  const filePath = maintenanceIdempotencyPath();
+  return await withFileLock(filePath, SAT_MAINTENANCE_IDEMPOTENCY_LOCK_OPTIONS, async () => {
+    const state = await readMaintenanceIdempotencyFile(filePath);
+    const existing = state.pending[paramsDigest];
+    if (existing) {
+      return { ...existing, managed: true };
+    }
+    const pending: SatMaintenancePendingIdempotency = {
+      idempotencyKey: `sat-maintain-${randomUUID()}`,
+      paramsDigest,
+      createdAt: new Date().toISOString(),
+    };
+    state.pending[paramsDigest] = pending;
+    await mkdir(dirname(filePath), { recursive: true, mode: 0o700 });
+    writeWalletStateFileAtomically(
+      filePath,
+      serializeWalletState({
+        version: SAT_MAINTENANCE_IDEMPOTENCY_VERSION,
+        pending: trimMaintenanceIdempotencyEntries(state.pending),
+      }),
+    );
+    return { ...pending, managed: true };
+  });
+}
+
+async function completeMaintenanceIdempotency(claim: {
+  idempotencyKey: string;
+  paramsDigest: string;
+  managed: boolean;
+}): Promise<void> {
+  if (!claim.managed) {
+    return;
+  }
+  const filePath = maintenanceIdempotencyPath();
+  await withFileLock(filePath, SAT_MAINTENANCE_IDEMPOTENCY_LOCK_OPTIONS, async () => {
+    const state = await readMaintenanceIdempotencyFile(filePath);
+    if (state.pending[claim.paramsDigest]?.idempotencyKey !== claim.idempotencyKey) {
+      return;
+    }
+    delete state.pending[claim.paramsDigest];
+    writeWalletStateFileAtomically(filePath, serializeWalletState(state));
+  });
 }
 
 function renderSatResult(result: unknown, opts: { json?: boolean }, successText?: string): void {
@@ -328,7 +485,14 @@ async function withMaintenanceLock<T>(opts: SatGatewayOpts, action: () => Promis
 }
 
 async function callMaintenancePass(opts: SatGatewayOpts): Promise<unknown> {
-  return callGatewayFromCli("sat.runProtocolMaintenanceOnce", opts, buildMaintenanceParams(opts));
+  const params = buildMaintenanceParams(opts);
+  const claim = await claimMaintenanceIdempotency(params, opts.idempotencyKey);
+  const result = await callGatewayFromCli("sat.runProtocolMaintenanceOnce", opts, {
+    ...params,
+    idempotencyKey: claim.idempotencyKey,
+  });
+  await completeMaintenanceIdempotency(claim);
+  return result;
 }
 
 function summarizeMaintenanceResult(result: unknown): unknown {
@@ -377,6 +541,11 @@ function maintenanceDelayMs(intervalSeconds: number, jitterSeconds: number): num
 }
 
 async function runMaintenanceLoop(opts: SatGatewayOpts): Promise<void> {
+  if (opts.idempotencyKey?.trim()) {
+    throw new Error(
+      "--idempotency-key is for one maintenance pass; loop mode manages a durable key per pass",
+    );
+  }
   const intervalSeconds = parseNonNegativeIntegerNumber(
     opts.intervalSeconds,
     "--interval-seconds",
@@ -522,6 +691,10 @@ export function registerSatCli(program: Command) {
       )
       .option("--cleanup-scan-mode <mode>", "Cleanup discovery mode: recent, scan, or auto")
       .option("--status-mode <mode>", "Response status mode: compact, ui, debug, or none")
+      .option(
+        "--idempotency-key <key>",
+        "Retry key for one pass; reuse the same key after an ambiguous result",
+      )
       .option("--log-file <path>", "Append JSONL audit records")
       .option("--lock-file <path>", "Local lock file for the loop")
       .option(

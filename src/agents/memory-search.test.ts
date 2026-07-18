@@ -127,6 +127,7 @@ describe("memory search config", () => {
     expect(resolved?.remote).toEqual({
       baseUrl: "https://agent.example/v1",
       apiKey,
+      allowSessionContent: false,
       headers: { "X-Default": "on" },
       batch: {
         enabled: false,
@@ -461,7 +462,7 @@ describe("memory search config", () => {
     expect(resolved?.sources).toEqual(["memory"]);
   });
 
-  it("allows session sources when experimental flag is enabled", () => {
+  it("keeps remote session embeddings off until content egress is explicitly approved", () => {
     const cfg = asConfig({
       agents: {
         defaults: {
@@ -469,6 +470,23 @@ describe("memory search config", () => {
             provider: "openai",
             sources: ["memory", "sessions"],
             experimental: { sessionMemory: true },
+          },
+        },
+      },
+    });
+    const resolved = resolveMemorySearchConfig(cfg, "main");
+    expect(resolved?.sources).toEqual(["memory"]);
+  });
+
+  it("allows sanitized session content for remote embeddings only with explicit approval", () => {
+    const cfg = asConfig({
+      agents: {
+        defaults: {
+          memorySearch: {
+            provider: "openai",
+            sources: ["memory", "sessions"],
+            experimental: { sessionMemory: true },
+            remote: { allowSessionContent: true },
           },
         },
       },

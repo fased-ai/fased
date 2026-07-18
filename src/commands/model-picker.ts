@@ -452,8 +452,8 @@ export async function promptDefaultModel(
           store: ensureAuthProfileStore(agentDir, { allowKeychainPrompt: false }),
         })
       : null;
-    if (scoped && (scoped.allowedCatalog.length > 0 || scoped.usableCatalog.length > 0)) {
-      models = scoped.allowedCatalog.length > 0 ? scoped.allowedCatalog : scoped.usableCatalog;
+    if (scoped) {
+      models = scoped.allowAny ? scoped.usableCatalog : scoped.allowedCatalog;
     } else {
       const { allowedCatalog } = buildAllowedModelSet({
         cfg,

@@ -1930,17 +1930,11 @@ function resolveReadRpcConfig(cfg: FasedAgentConfig, env: NodeJS.ProcessEnv): Sa
     ? readWalletProviderRegistry(env).wallets.find((wallet) => wallet.id === walletId)?.providerId
     : undefined;
   const providerId = registryProviderId || resolveWalletProviderId(cfg, env);
-  const walletReadRpcUrl =
-    walletEnvValue(env, "FASED_WALLET_SOLANA_READ_RPC_URL", walletId) ||
-    walletEnvValue(env, "FASED_WALLET_EMBEDDED_KEYSTORE_READ_RPC_URL", walletId);
-  const walletRpcUrl =
-    walletEnvValue(env, "FASED_WALLET_SOLANA_RPC_URL", walletId) ||
-    walletEnvValue(env, "FASED_WALLET_EMBEDDED_KEYSTORE_RPC_URL", walletId);
+  const walletReadRpcUrl = walletEnvValue(env, "FASED_WALLET_SOLANA_READ_RPC_URL", walletId);
+  const walletRpcUrl = walletEnvValue(env, "FASED_WALLET_SOLANA_RPC_URL", walletId);
   const walletReadRpcFallbackUrl =
     walletEnvValue(env, "FASED_WALLET_SOLANA_READ_RPC_FALLBACK_URL", walletId) ||
-    walletEnvValue(env, "FASED_WALLET_SOLANA_RPC_FALLBACK_URL", walletId) ||
-    walletEnvValue(env, "FASED_WALLET_EMBEDDED_KEYSTORE_READ_RPC_FALLBACK_URL", walletId) ||
-    walletEnvValue(env, "FASED_WALLET_EMBEDDED_KEYSTORE_RPC_FALLBACK_URL", walletId);
+    walletEnvValue(env, "FASED_WALLET_SOLANA_RPC_FALLBACK_URL", walletId);
   if (providerId === "local-socket-signer") {
     const primaryUrl = firstNonEmpty(walletReadRpcUrl, walletRpcUrl);
     if (!primaryUrl) {

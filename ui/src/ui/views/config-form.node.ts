@@ -11,6 +11,7 @@ import {
 
 const META_KEYS = new Set(["title", "description", "default", "nullable", "tags", "x-tags"]);
 const CONFIG_HIDDEN_PATHS = new Set([
+  "wallet.keystore",
   "wallet.runtime.auth",
   "wallet.runtime.external",
   "wallet.runtime.install",
@@ -19,7 +20,7 @@ const CONFIG_HIDDEN_PATHS = new Set([
   "wallet.runtime.source",
   "wallet.runtime.toolAccess",
 ]);
-const SELF_HOSTED_WALLET_PROVIDER_OPTIONS = new Set(["embedded-keystore", "local-socket-signer"]);
+const SELF_HOSTED_WALLET_PROVIDER_OPTIONS = new Set(["local-socket-signer"]);
 const SOLANA_ONLY_WALLET_CHAIN_OPTIONS = new Set(["solana"]);
 
 function isAnySchema(schema: JsonSchema): boolean {

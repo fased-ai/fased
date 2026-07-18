@@ -1,0 +1,374 @@
+{
+  "version": 1,
+  "codecs": [
+    {
+      "action": "initializeCycle",
+      "family": "main",
+      "contractKey": "initializeCycle",
+      "discriminator": 38,
+      "dataLength": 105,
+      "accountShape": "SW,-W,-W,--",
+      "variable": ""
+    },
+    {
+      "action": "validatorAttestation",
+      "family": "main",
+      "contractKey": "submitValidatorAttestation",
+      "discriminator": 45,
+      "dataLength": 161,
+      "accountShape": "SW,-W,-W,-W,--",
+      "variable": ""
+    },
+    {
+      "action": "openDispute",
+      "family": "main",
+      "contractKey": "openDispute",
+      "discriminator": 46,
+      "dataLength": 89,
+      "accountShape": "SW,-W,-W,-W,--",
+      "variable": ""
+    },
+    {
+      "action": "resolveDispute",
+      "family": "main",
+      "contractKey": "resolveDispute",
+      "discriminator": 48,
+      "dataLength": 57,
+      "accountShape": "SW,--,-W,-W",
+      "variable": ""
+    },
+    {
+      "action": "republishEpochRoots",
+      "family": "main",
+      "contractKey": "republishEpochRoots",
+      "discriminator": 49,
+      "dataLength": 105,
+      "accountShape": "SW,--,-W",
+      "variable": ""
+    },
+    {
+      "action": "topUpRegistryReserve",
+      "family": "main",
+      "contractKey": "topUpRegistryReserve",
+      "discriminator": 84,
+      "dataLength": 9,
+      "accountShape": "SW,-W,--",
+      "variable": ""
+    },
+    {
+      "action": "openCycle",
+      "family": "main",
+      "contractKey": "openCycle",
+      "discriminator": 56,
+      "dataLength": 9,
+      "accountShape": "SW,-W,-W,-W,-W,-W,--,-W",
+      "variable": ""
+    },
+    {
+      "action": "initMinerCapital",
+      "family": "main",
+      "contractKey": "initMinerCapital",
+      "discriminator": 36,
+      "dataLength": 33,
+      "accountShape": "SW,-W,--",
+      "variable": ""
+    },
+    {
+      "action": "depositMinerCapital",
+      "family": "main",
+      "contractKey": "depositMinerCapital",
+      "discriminator": 37,
+      "dataLength": 9,
+      "accountShape": "SW,-W,--",
+      "variable": ""
+    },
+    {
+      "action": "withdrawMinerCapital",
+      "family": "main",
+      "contractKey": "withdrawMinerCapital",
+      "discriminator": 67,
+      "dataLength": 9,
+      "accountShape": "SW,-W,--",
+      "variable": ""
+    },
+    {
+      "action": "setActiveCommit",
+      "family": "main",
+      "contractKey": "setActiveCommit",
+      "discriminator": 68,
+      "dataLength": 9,
+      "accountShape": "SW,-W",
+      "variable": ""
+    },
+    {
+      "action": "commitCycle",
+      "family": "main",
+      "contractKey": "commitCycle",
+      "discriminator": 89,
+      "dataLength": 41,
+      "accountShape": "SW,-W,-W,-W,--",
+      "variable": ""
+    },
+    {
+      "action": "closeCommitPhase",
+      "family": "main",
+      "contractKey": "closeCommitPhase",
+      "discriminator": 90,
+      "dataLength": 9,
+      "accountShape": "S-,-W",
+      "variable": ""
+    },
+    {
+      "action": "sealCycleEntropy",
+      "family": "main",
+      "contractKey": "sealCycleEntropy",
+      "discriminator": 91,
+      "dataLength": 9,
+      "accountShape": "S-,-W,-W,--",
+      "variable": ""
+    },
+    {
+      "action": "releaseUnrevealedCommit",
+      "family": "main",
+      "contractKey": "releaseUnrevealedCommit",
+      "discriminator": 93,
+      "dataLength": 41,
+      "accountShape": "S-,-W,-W,-W,-W,-W",
+      "variable": ""
+    },
+    {
+      "action": "abortEmptyCycle",
+      "family": "main",
+      "contractKey": "abortEmptyCycle",
+      "discriminator": 94,
+      "dataLength": 9,
+      "accountShape": "S-,-W,-W",
+      "variable": ""
+    },
+    {
+      "action": "revealCycle",
+      "family": "main",
+      "contractKey": "revealCycle",
+      "discriminator": 92,
+      "dataLength": 145,
+      "accountShape": "SW,-W,-W,-W,-W,-W,-W,-W,-W,--",
+      "variable": ""
+    },
+    {
+      "action": "settleCyclePage",
+      "family": "main",
+      "contractKey": "settleCyclePage",
+      "discriminator": 63,
+      "dataLength": 25,
+      "accountShape": "SW,--,-W,--,--,-W,-W,-W,--,--,-W,-W",
+      "variable": "minerCycles"
+    },
+    {
+      "action": "finalizeCycleSettlement",
+      "family": "main",
+      "contractKey": "finalizeCycleSettlement",
+      "discriminator": 64,
+      "dataLength": 9,
+      "accountShape": "SW,-W,-W,-W,-W,-W,--,-W,-W",
+      "variable": "registryPages"
+    },
+    {
+      "action": "scoreCyclePage",
+      "family": "main",
+      "contractKey": "scoreCyclePage",
+      "discriminator": 65,
+      "dataLength": 25,
+      "accountShape": "SW,--,--,--,-W,-W,--,-W,-W",
+      "variable": "minerCycles"
+    },
+    {
+      "action": "distributeCyclePage",
+      "family": "main",
+      "contractKey": "distributeCyclePage",
+      "discriminator": 66,
+      "dataLength": 25,
+      "accountShape": "SW,-W,--,-W,--,-W,--,-W,-W,-W",
+      "variable": "minerCyclePairs"
+    },
+    {
+      "action": "claimCycleRewards",
+      "family": "main",
+      "contractKey": "claimCycleRewards",
+      "discriminator": 59,
+      "dataLength": 9,
+      "accountShape": "SW,-W,-W,-W,-W,-W,-W,-W,-W,-W,--,--,--,--,-W",
+      "variable": ""
+    },
+    {
+      "action": "claimCycleRewardsBatch",
+      "family": "main",
+      "contractKey": "claimCycleRewardsBatch",
+      "discriminator": 62,
+      "dataLength": -1,
+      "accountShape": "SW,--,-W,-W,-W,-W,-W,-W",
+      "variable": "claimBatch"
+    },
+    {
+      "action": "claimProtocolTreasury",
+      "family": "main",
+      "contractKey": "claimProtocolTreasury",
+      "discriminator": 77,
+      "dataLength": 1,
+      "accountShape": "SW,--,-W,-W,-W,-W,-W,-W,-W,-W,--,--,--,--",
+      "variable": ""
+    },
+    {
+      "action": "refillRegistryReserveFromTreasury",
+      "family": "main",
+      "contractKey": "refillRegistryReserveFromTreasury",
+      "discriminator": 88,
+      "dataLength": 9,
+      "accountShape": "SW,-W,-W,-W,--",
+      "variable": ""
+    },
+    {
+      "action": "claimProtocolDistributorSat",
+      "family": "main",
+      "contractKey": "claimProtocolDistributorSat",
+      "discriminator": 85,
+      "dataLength": 1,
+      "accountShape": "SW,--,-W,-W,-W,-W,-W,-W,--,--,--,--,--",
+      "variable": ""
+    },
+    {
+      "action": "retargetUnlock",
+      "family": "main",
+      "contractKey": "retargetUnlock",
+      "discriminator": 60,
+      "dataLength": 9,
+      "accountShape": "SW,-W,--,-W",
+      "variable": ""
+    },
+    {
+      "action": "closeResolvedMinerCycleState",
+      "family": "main",
+      "contractKey": "closeResolvedMinerCycleState",
+      "discriminator": 69,
+      "dataLength": 9,
+      "accountShape": "SW,--,-W,-W,-W,-W",
+      "variable": ""
+    },
+    {
+      "action": "closeResolvedCycleRegistryPage",
+      "family": "main",
+      "contractKey": "closeResolvedCycleRegistryPage",
+      "discriminator": 70,
+      "dataLength": 17,
+      "accountShape": "SW,--,-W,-W,-W",
+      "variable": ""
+    },
+    {
+      "action": "closeResolvedCycleArtifacts",
+      "family": "main",
+      "contractKey": "closeResolvedCycleArtifacts",
+      "discriminator": 71,
+      "dataLength": 9,
+      "accountShape": "SW,-W,-W,-W,-W",
+      "variable": ""
+    },
+    {
+      "action": "compactPendingCycleRange",
+      "family": "main",
+      "contractKey": "compactPendingCycleRange",
+      "discriminator": 75,
+      "dataLength": 25,
+      "accountShape": "SW,-W",
+      "variable": "compactCycles"
+    },
+    {
+      "action": "updateBondTierPolicy",
+      "family": "bond",
+      "contractKey": "updateTierPolicy",
+      "discriminator": 1,
+      "dataLength": 65,
+      "accountShape": "SW,-W",
+      "variable": ""
+    },
+    {
+      "action": "openBondPosition",
+      "family": "bond",
+      "contractKey": "openBondPosition",
+      "discriminator": 2,
+      "dataLength": 9,
+      "accountShape": "SW,--,-W,-W,-W,-W,--,--,--",
+      "variable": ""
+    },
+    {
+      "action": "increaseBondPosition",
+      "family": "bond",
+      "contractKey": "increaseBondPosition",
+      "discriminator": 3,
+      "dataLength": 9,
+      "accountShape": "SW,--,-W,-W,-W,-W,--,--,--",
+      "variable": ""
+    },
+    {
+      "action": "requestBondUnlock",
+      "family": "bond",
+      "contractKey": "requestBondUnlock",
+      "discriminator": 4,
+      "dataLength": 1,
+      "accountShape": "SW,--,-W,-W,-W",
+      "variable": ""
+    },
+    {
+      "action": "cancelBondUnlock",
+      "family": "bond",
+      "contractKey": "cancelBondUnlock",
+      "discriminator": 5,
+      "dataLength": 1,
+      "accountShape": "SW,--,-W,-W,-W",
+      "variable": ""
+    },
+    {
+      "action": "finalizeBondUnlock",
+      "family": "bond",
+      "contractKey": "finalizeBondUnlock",
+      "discriminator": 6,
+      "dataLength": 1,
+      "accountShape": "SW,--,-W,-W,-W,-W,-W,-W,--,--,--",
+      "variable": ""
+    },
+    {
+      "action": "syncBondStakingRewards",
+      "family": "bond",
+      "contractKey": "syncStakingRewards",
+      "discriminator": 8,
+      "dataLength": 1,
+      "accountShape": "-W,--,--",
+      "variable": ""
+    },
+    {
+      "action": "syncBondStakingPosition",
+      "family": "bond",
+      "contractKey": "syncStakingPosition",
+      "discriminator": 9,
+      "dataLength": 1,
+      "accountShape": "SW,--,-W,-W,--,--",
+      "variable": ""
+    },
+    {
+      "action": "claimBondStakingRewards",
+      "family": "bond",
+      "contractKey": "claimStakingRewards",
+      "discriminator": 10,
+      "dataLength": 1,
+      "accountShape": "SW,--,-W,-W,--,-W,-W,-W,--,--,--",
+      "variable": ""
+    },
+    {
+      "action": "claimUnallocatedStakingRewards",
+      "family": "bond",
+      "contractKey": "claimUnallocatedStakingRewards",
+      "discriminator": 11,
+      "dataLength": 1,
+      "accountShape": "SW,-W,-W,-W,--,-W,--,--,--",
+      "variable": ""
+    }
+  ]
+}

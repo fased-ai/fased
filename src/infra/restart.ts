@@ -185,6 +185,11 @@ export type RestartDeferralHooks = {
   onCheckError?: (err: unknown) => void;
 };
 
+export type GatewayRestartDeferral = {
+  cancel: () => boolean;
+  isPending: () => boolean;
+};
+
 /**
  * Poll pending work until it drains (or times out), then emit one restart signal.
  * Shared by both the direct RPC restart path and the config watcher path.
@@ -194,51 +199,83 @@ export function deferGatewayRestartUntilIdle(opts: {
   hooks?: RestartDeferralHooks;
   pollMs?: number;
   maxWaitMs?: number;
-}): void {
+}): GatewayRestartDeferral {
   const pollMsRaw = opts.pollMs ?? DEFAULT_DEFERRAL_POLL_MS;
   const pollMs = Math.max(10, Math.floor(pollMsRaw));
   const maxWaitMsRaw = opts.maxWaitMs ?? DEFAULT_DEFERRAL_MAX_WAIT_MS;
   const maxWaitMs = Math.max(pollMs, Math.floor(maxWaitMsRaw));
 
-  let pending: number;
+  let pendingPoll: ReturnType<typeof setInterval> | null = null;
+  let pending = false;
+  const handle: GatewayRestartDeferral = {
+    cancel: () => {
+      if (!pending || !pendingPoll) {
+        return false;
+      }
+      clearInterval(pendingPoll);
+      pendingPoll = null;
+      pending = false;
+      return true;
+    },
+    isPending: () => pending,
+  };
+
+  let pendingCount: number;
   try {
-    pending = opts.getPendingCount();
+    pendingCount = opts.getPendingCount();
   } catch (err) {
     opts.hooks?.onCheckError?.(err);
     emitGatewayRestart();
-    return;
+    return handle;
   }
-  if (pending <= 0) {
+  if (pendingCount <= 0) {
     opts.hooks?.onReady?.();
     emitGatewayRestart();
-    return;
+    return handle;
   }
 
-  opts.hooks?.onDeferring?.(pending);
+  opts.hooks?.onDeferring?.(pendingCount);
   const startedAt = Date.now();
-  const poll = setInterval(() => {
+  pending = true;
+  pendingPoll = setInterval(() => {
     let current: number;
     try {
       current = opts.getPendingCount();
     } catch (err) {
-      clearInterval(poll);
+      if (!pending) {
+        return;
+      }
+      pending = false;
+      if (pendingPoll) {
+        clearInterval(pendingPoll);
+        pendingPoll = null;
+      }
       opts.hooks?.onCheckError?.(err);
       emitGatewayRestart();
       return;
     }
     if (current <= 0) {
-      clearInterval(poll);
+      pending = false;
+      if (pendingPoll) {
+        clearInterval(pendingPoll);
+        pendingPoll = null;
+      }
       opts.hooks?.onReady?.();
       emitGatewayRestart();
       return;
     }
     const elapsedMs = Date.now() - startedAt;
     if (elapsedMs >= maxWaitMs) {
-      clearInterval(poll);
+      pending = false;
+      if (pendingPoll) {
+        clearInterval(pendingPoll);
+        pendingPoll = null;
+      }
       opts.hooks?.onTimeout?.(current, elapsedMs);
       emitGatewayRestart();
     }
   }, pollMs);
+  return handle;
 }
 
 function formatSpawnDetail(result: {

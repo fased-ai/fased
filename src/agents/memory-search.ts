@@ -15,6 +15,7 @@ export type ResolvedMemorySearchConfig = {
     baseUrl?: string;
     apiKey?: string;
     headers?: Record<string, string>;
+    allowSessionContent: boolean;
     batch?: {
       enabled: boolean;
       wait: boolean;
@@ -264,6 +265,8 @@ function mergeConfig(
         baseUrl: overrideRemote?.baseUrl ?? defaultRemote?.baseUrl,
         apiKey: overrideRemote?.apiKey ?? defaultRemote?.apiKey,
         headers: overrideRemote?.headers ?? defaultRemote?.headers,
+        allowSessionContent:
+          overrideRemote?.allowSessionContent ?? defaultRemote?.allowSessionContent ?? false,
         batch,
       }
     : undefined;
@@ -274,7 +277,15 @@ function mergeConfig(
     modelPath: overrides?.local?.modelPath ?? defaults?.local?.modelPath,
     modelCacheDir: overrides?.local?.modelCacheDir ?? defaults?.local?.modelCacheDir,
   };
-  const sources = normalizeSources(overrides?.sources ?? defaults?.sources, sessionMemory);
+  const requestedSources = normalizeSources(overrides?.sources ?? defaults?.sources, sessionMemory);
+  const usesRemoteEmbedding = provider !== "local" && provider !== "ollama";
+  const sources =
+    usesRemoteEmbedding && !remote?.allowSessionContent
+      ? requestedSources.filter((source) => source !== "sessions")
+      : requestedSources;
+  if (sources.length === 0) {
+    sources.push("memory");
+  }
   const rawPaths = [...(defaults?.extraPaths ?? []), ...(overrides?.extraPaths ?? [])]
     .map((value) => value.trim())
     .filter(Boolean);

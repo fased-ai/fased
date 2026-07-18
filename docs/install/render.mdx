@@ -1,181 +1,48 @@
 ---
-title: Deploy on Render
+title: Render (unsupported archive)
+summary: "Unsupported archived Render container deployment"
 ---
 
-Deploy Fased on Render using Infrastructure as Code. The included `deploy/hosting/render.yaml`
-Blueprint defines the service, disk, and environment variables from files in
-this repository, so the hosted deployment can be reviewed and versioned with the
-same code you run locally.
+# Render (unsupported archive)
 
-<Note>
-  Render is listed because this repository includes `deploy/hosting/render.yaml`. Fased does not
-  document hosted presets that live outside this repo because they cannot be verified or maintained
-  from the codebase. For the default hosted security posture, a clean VPS with Tailscale private
-  access is still preferred.
-</Note>
+Fased does not currently support running the full Gateway on Render. The
+`deploy/hosting/render.yaml` Blueprint is retained as historical reference and
+is not a maintained, release-tested installation path.
 
-## Prerequisites
+<Warning>
+  Do not create a new Fased service from the archived Blueprint. It does not provide the
+  root-managed native signer/updater, separate signer application and control sockets,
+  Tailscale-first host hardening, coordinated rollback, or cold-reboot validation required by the
+  supported Hosting profile. Wallet, Vault, and SAT mining must not be enabled on this path.
+</Warning>
 
-- A [Render account](https://render.com) (free tier available)
-- Any model-provider credential you plan to add later in **Agent > Models**
+## Supported alternatives
 
-## Deploy with a Render Blueprint
+- For an always-on server, provision a normal Linux VPS and run the maintained
+  [VPS Hosting installer](/install/vps):
 
-Use `deploy/hosting/render.yaml` as the reviewed Blueprint for this repository.
-If your Render workflow expects a root `render.yaml`, copy this file to the root
-of your fork before creating the Blueprint.
+  Follow the [pre-execution verified tagged VPS bootstrap](/install/vps#3-install-fased-and-connect-through-tailscale)
+  from the provider root console.
 
-The Blueprint will:
+- For a containerized Gateway on your own computer, use the supported
+  [Local Docker](/install/docker) guide.
 
-1. Create a new Render service from the reviewed `deploy/hosting/render.yaml`.
-2. Generate a gateway token for the Control UI
-3. Build the Docker image and deploy
+There is no `install.sh --hosting-docker` mode. A Render private service or
+persistent disk does not make the archived deployment equivalent to the
+Hosting security and update lifecycle.
 
-Once deployed, your service URL follows the pattern `https://<service-name>.onrender.com`.
+## Migrating an existing Render deployment
 
-## Understanding the Blueprint
+1. Stop changes to the existing service.
+2. Export the configured Fased state directory and every Agent workspace.
+3. Treat the export as sensitive because it can contain provider, channel, and
+   session credentials. Do not copy signer or wallet material through an
+   unreviewed migration script.
+4. Install Fased on a clean VPS with `install.sh --hosting`.
+5. Restore only reviewed, compatible non-custody configuration and workspace
+   data, then re-enroll wallet custody through the native signer workflow.
+6. Verify `fased health`, Gateway status, plugins, signer health, and each
+   channel before deleting the old Render disk or secrets.
 
-Render Blueprints are YAML files that define your infrastructure. The `deploy/hosting/render.yaml` in this
-repository configures everything needed to run Fased:
-
-```yaml
-services:
-  - type: web
-    name: fased
-    runtime: docker
-    plan: starter
-    healthCheckPath: /health
-    envVars:
-      - key: PORT
-        value: "8080"
-      - key: FASED_STATE_DIR
-        value: /data/.fased
-      - key: FASED_GATEWAY_TOKEN
-        generateValue: true # auto-generates a secure token
-    disk:
-      name: fased-data
-      mountPath: /data
-      sizeGB: 1
-```
-
-Key Blueprint features used:
-
-| Feature               | Purpose                                                    |
-| --------------------- | ---------------------------------------------------------- |
-| `runtime: docker`     | Builds from the repo's Dockerfile                          |
-| `healthCheckPath`     | Render monitors `/health` and restarts unhealthy instances |
-| `generateValue: true` | Auto-generates a cryptographically secure value            |
-| `disk`                | Persistent storage that survives redeploys                 |
-
-`FASED_STATE_DIR` controls the config/state path. Agent workspace files are
-controlled by `agents.defaults.workspace` or each Agent's `workspace` setting.
-`FASED_WORKSPACE_DIR` is only consumed by Docker/Podman helper scripts, so do
-not rely on it for a plain hosted runtime. Set the default Agent workspace to
-`/data/workspace` in Agent setup or from a shell:
-
-```bash
-node dist/index.js config set agents.defaults.workspace /data/workspace
-```
-
-Restart the service after changing config.
-
-## Choosing a plan
-
-| Plan      | Spin-down         | Disk          | Best for                     |
-| --------- | ----------------- | ------------- | ---------------------------- |
-| Free      | After 15 min idle | Not available | Testing, demos               |
-| Starter   | Never             | 1GB+          | Personal use, small teams    |
-| Standard+ | Never             | 1GB+          | Always-on, multiple channels |
-
-The Blueprint defaults to `starter`. To use free tier, change `plan: free` in your fork's
-`deploy/hosting/render.yaml` (but note: no persistent disk means config resets on each deploy).
-
-## After deployment
-
-### Complete setup
-
-1. Navigate to `https://<your-service>.onrender.com/`
-2. Enter the gateway token if prompted
-3. Use **Agent > Models** to configure model auth and model roles
-4. Test one message in **Chat**
-5. Add **Agent > Channels**, **Services**, **Skills**, **Memory**, and **Tasks**
-   only as needed
-
-### Access the Control UI
-
-The web dashboard is available at `https://<your-service>.onrender.com/`.
-
-## Render Dashboard features
-
-### Logs
-
-View real-time logs in **Dashboard → your service → Logs**. Filter by:
-
-- Build logs (Docker image creation)
-- Deploy logs (service startup)
-- Runtime logs (application output)
-
-### Shell access
-
-For debugging, open a shell session via **Dashboard → your service → Shell**. The persistent disk is mounted at `/data`.
-
-### Environment variables
-
-Modify variables in **Dashboard → your service → Environment**. Changes trigger an automatic redeploy.
-
-### Auto-deploy
-
-If you use the main Fased repository, Render will not auto-deploy your Fased
-runtime. To update it, run a manual Blueprint sync from the dashboard.
-
-## Custom domain
-
-1. Go to **Dashboard → your service → Settings → Custom Domains**
-2. Add your domain
-3. Configure DNS as instructed (CNAME to `*.onrender.com`)
-4. Render provisions a TLS certificate automatically
-
-## Scaling
-
-Render supports horizontal and vertical scaling:
-
-- **Vertical**: Change the plan to get more CPU/RAM
-- **Horizontal**: Increase instance count (Standard plan and above)
-
-For Fased, vertical scaling is usually sufficient. Horizontal scaling requires sticky sessions or external state management.
-
-## Backups and migration
-
-Back up the Render persistent disk or copy the configured state directory plus
-the configured Agent workspace before moving hosts. Treat `FASED_GATEWAY_TOKEN`,
-model auth, channel credentials, and wallet files as secrets.
-
-## Troubleshooting
-
-### Service won't start
-
-Check the deploy logs in the Render Dashboard. Common issues:
-
-- Stale Blueprint prompts — if Render asks for variables that are not shown in
-  the current `deploy/hosting/render.yaml`, sync your fork before deploying
-- Port mismatch — ensure `PORT=8080` matches the Dockerfile's exposed port
-
-### Slow cold starts
-
-Some Render plans spin down after inactivity. The first request after spin-down
-takes a few seconds while the container starts. Use an always-on plan when you
-need continuous access.
-
-### Data loss after redeploy
-
-This happens on plans without persistent disk support. Use persistent storage,
-or regularly back up the configured state directory plus the configured Agent
-workspace.
-
-### Health check failures
-
-Render expects a 200 response from `/health` within 30 seconds. If builds
-succeed but deploys fail, the service may be taking too long to start. Check:
-
-- Build logs for errors
-- Whether the container runs locally with `docker build && docker run`
+Remove the legacy service, public endpoint, disk, and secrets only after the new
+VPS is verified and backed up.

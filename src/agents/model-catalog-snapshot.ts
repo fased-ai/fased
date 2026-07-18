@@ -171,7 +171,7 @@ export async function resolveCanonicalModelCatalogSnapshot(params: {
         ...model,
         metadata,
         available: true,
-        runnable: runnableRefs.size === 0 || runnableRefs.has(modelRef(model)),
+        runnable: authenticated.allowAny || runnableRefs.has(modelRef(model)),
         recommended: metadata.recommended === true,
         assignedRoles: assignmentsByRef.get(modelRef(model)) ?? [],
       };

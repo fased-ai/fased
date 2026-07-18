@@ -12,6 +12,20 @@ vi.mock("../../agents/model-catalog.js", () => ({
   ]),
 }));
 
+vi.mock("../../agents/auth-profiles.js", () => ({
+  ensureAuthProfileStore: vi.fn(() => ({
+    version: 1,
+    profiles: {
+      "anthropic:default": {
+        type: "api_key",
+        provider: "anthropic",
+        key: "test-anthropic-key",
+      },
+    },
+  })),
+  listProvidersWithStoredCredentials: vi.fn(() => ["anthropic"]),
+}));
+
 const makeEntry = (overrides: Record<string, unknown> = {}) => ({
   sessionId: "session-id",
   updatedAt: Date.now(),
@@ -178,6 +192,46 @@ describe("createModelSelectionState parent inheritance", () => {
 
     expect(state.provider).toBe(defaultProvider);
     expect(state.model).toBe(defaultModel);
+  });
+
+  it("rejects an authenticated override when every explicitly allowed model is unavailable", async () => {
+    const cfg = {
+      agents: {
+        defaults: {
+          model: { primary: "openai/gpt-4o-mini" },
+          models: {
+            "openai/gpt-4o-mini": {},
+          },
+        },
+      },
+    } as FasedAgentConfig;
+    const sessionKey = "agent:main:discord:channel:strict";
+    const sessionEntry = makeEntry({
+      providerOverride: "anthropic",
+      modelOverride: "claude-opus-4-5",
+    });
+    const sessionStore = { [sessionKey]: sessionEntry };
+
+    const state = await createModelSelectionState({
+      cfg,
+      agentCfg: cfg.agents?.defaults,
+      sessionEntry,
+      sessionStore,
+      sessionKey,
+      defaultProvider,
+      defaultModel,
+      provider: defaultProvider,
+      model: defaultModel,
+      hasModelDirective: false,
+      credentialScoped: true,
+    });
+
+    expect(state.allowAnyModel).toBe(false);
+    expect(state.allowedModelKeys).toEqual(new Set());
+    expect(state.provider).toBe(defaultProvider);
+    expect(state.model).toBe(defaultModel);
+    expect(sessionEntry).not.toHaveProperty("providerOverride");
+    expect(sessionEntry).not.toHaveProperty("modelOverride");
   });
 
   it("applies stored override when heartbeat override was not resolved", async () => {

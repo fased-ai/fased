@@ -325,6 +325,17 @@ describe("marketplace_offer_draft tool", () => {
                 txRef: "tx-summary-1",
                 paymentIntent: { status: "verified" },
               },
+              {
+                id: "summary-peer-reported-1",
+                status: "delivered",
+                title: "Content Summary peer evidence",
+                serviceKind: "content.summarize",
+                invoiceId: "invoice-peer-1",
+                receiptId: "receipt-peer-1",
+                txRef: "tx-peer-1",
+                paymentIntent: { status: "submitted" },
+                settlement: { status: "submitted" },
+              },
             ],
           },
         },
@@ -358,6 +369,7 @@ describe("marketplace_offer_draft tool", () => {
         }),
       ],
     });
+    expect((invoices.details as { orders?: unknown[] }).orders).toHaveLength(1);
   });
 });
 

@@ -1,18 +1,42 @@
-import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const { resolveFederationBondWallet, signFederationBondChallenge } = vi.hoisted(() => ({
+  resolveFederationBondWallet: vi.fn(),
+  signFederationBondChallenge: vi.fn(),
+}));
+
+vi.mock("../wallet/solana-bond-signing.js", () => ({
+  FEDERATION_BOND_SIGNATURE_DOMAIN: "fased:federation-bond-challenge-signature:v2",
+  federationBondSigningMessageBase64: (params: {
+    challengeId: string;
+    federationOrigin: string;
+    payloadBase64: string;
+  }) =>
+    Buffer.from(
+      JSON.stringify({
+        domain: "fased:federation-bond-challenge-signature:v2",
+        challengeId: params.challengeId,
+        federationOrigin: new URL(params.federationOrigin).origin,
+        payloadBase64: params.payloadBase64,
+      }),
+      "utf8",
+    ).toString("base64"),
+  resolveFederationBondWallet,
+  signFederationBondChallenge,
+}));
 import {
   createAndSubmitFederationBondProof,
   createFederationBondProof,
+  loadPersistedFederationBondProof,
+  persistFederationBondProofFromSignerReview,
   runFederationAutoConnectOnce,
   startFederationAutoConnect,
 } from "./auto-connect.js";
 
-function base64url(bytes: Uint8Array): string {
-  return Buffer.from(bytes).toString("base64url");
-}
+const BOND_WALLET_ADDRESS = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
 
 async function writeFederationTokenFile(stateDir: string, token: Record<string, unknown>) {
   const tokenPath = path.join(stateDir, "federation", "access-token.json");
@@ -20,48 +44,128 @@ async function writeFederationTokenFile(stateDir: string, token: Record<string, 
   await fs.writeFile(tokenPath, `${JSON.stringify(token, null, 2)}\n`, "utf-8");
 }
 
-async function writeSolanaBondKeystore(params: {
-  keystorePath: string;
-  passphrase: string;
-}): Promise<{ publicKeyBase58: string; publicKeyBytes: Uint8Array }> {
-  const solanaWeb3 = await import("@solana/web3.js");
-  const keypair = solanaWeb3.Keypair.generate();
-  const salt = crypto.randomBytes(16);
-  const iv = crypto.randomBytes(12);
-  const key = crypto.scryptSync(params.passphrase, salt, 32);
-  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
-  const ciphertext = Buffer.concat([cipher.update(Buffer.from(keypair.secretKey)), cipher.final()]);
-  const authTag = cipher.getAuthTag();
-  await fs.writeFile(
-    params.keystorePath,
-    JSON.stringify(
-      {
-        kind: "fased-solana-keypair",
-        version: 1,
-        kdf: "scrypt",
-        cipher: "aes-256-gcm",
-        salt: salt.toString("base64url"),
-        iv: iv.toString("base64url"),
-        authTag: authTag.toString("base64url"),
-        ciphertext: ciphertext.toString("base64url"),
-        publicKey: keypair.publicKey.toBase58(),
-      },
-      null,
-      2,
-    ),
-    "utf-8",
-  );
-  return {
-    publicKeyBase58: keypair.publicKey.toBase58(),
-    publicKeyBytes: keypair.publicKey.toBytes(),
-  };
-}
-
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
+beforeEach(() => {
+  resolveFederationBondWallet.mockImplementation(async (params?: { walletId?: string }) => ({
+    walletId: params?.walletId ?? "bond-wallet",
+    walletAddress: BOND_WALLET_ADDRESS,
+    providerId: "local-socket-signer",
+    socketPath: "/tmp/fased-bond-signer.sock",
+  }));
+  signFederationBondChallenge.mockImplementation(async (params: { walletId?: string }) => ({
+    walletId: params.walletId ?? "bond-wallet",
+    walletAddress: BOND_WALLET_ADDRESS,
+    providerId: "local-socket-signer",
+    socketPath: "/tmp/fased-bond-signer.sock",
+    requestId: "federation-bond:test",
+    signatureBase64: Buffer.alloc(64, 7).toString("base64"),
+  }));
+});
+
 describe("federation auto-connect", () => {
+  it("persists only the exact signer-owned reviewed federation signature", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-reviewed-bond-proof-"));
+    const now = new Date().toISOString();
+    const challengeExpiresAt = new Date(Date.now() + 5 * 60_000).toISOString();
+    const payload = JSON.stringify({ schema: "fased-bond-v1", challenge: "reviewed" });
+    const payloadBase64 = Buffer.from(payload, "utf8").toString("base64");
+    const signedMessageBase64 = Buffer.from(
+      JSON.stringify({
+        domain: "fased:federation-bond-challenge-signature:v2",
+        challengeId: "challenge-reviewed",
+        federationOrigin: "https://ff1.fased.app",
+        payloadBase64,
+      }),
+      "utf8",
+    ).toString("base64");
+    const signatureBase64 = Buffer.alloc(64, 7).toString("base64");
+    const env = {
+      FASED_STATE_DIR: stateDir,
+      FASED_FEDERATION_BASE_URL: "https://ff1.fased.app",
+    };
+    await writeFederationTokenFile(stateDir, {
+      tokenId: "bond-token-reviewed",
+      nodeId: "node-reviewed",
+      handle: "@reviewed@ff1.fased.app",
+      issuedAt: now,
+      expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
+      scopes: ["federation.read"],
+      signature: "token-signature",
+    });
+    const review = {
+      requestId: "federation-bond:reviewed",
+      walletId: "bond_wallet",
+      walletPublicKey: BOND_WALLET_ADDRESS,
+      intentType: "federation.bondChallenge" as const,
+      intentDigest: `sha256:${"a".repeat(64)}`,
+      policyHash: `sha256:${"b".repeat(64)}`,
+      mode: "reviewed" as const,
+      nonce: "c".repeat(64),
+      semanticIntent: {
+        type: "federation.bondChallenge" as const,
+        federation: {
+          challengeId: "challenge-reviewed",
+          federationOrigin: "https://ff1.fased.app",
+          handle: "@reviewed@ff1.fased.app",
+          nodeId: "node-reviewed",
+          tokenId: "bond-token-reviewed",
+          bondId: "bond-reviewed",
+          tier: "basic-bond" as const,
+          amountRaw: "100",
+          expiresAt: challengeExpiresAt,
+          payloadBase64,
+        },
+      },
+      artifactKind: "domain-separated-message" as const,
+      artifactDigest: `sha256:${"d".repeat(64)}`,
+      messageBase64: signedMessageBase64,
+      asset: "federation:bond-challenge",
+      amount: "1",
+      destination: BOND_WALLET_ADDRESS,
+      policyOperation: "federation.bondChallenge",
+      requiredPrograms: ["domain:fased:federation-bond-challenge-v1"],
+      requiredRole: "vault" as const,
+      issuedAt: now,
+      state: "signed" as const,
+      preparedAt: now,
+      expiresAt: challengeExpiresAt,
+      updatedAt: now,
+      signature: signatureBase64,
+    };
+    try {
+      const proof = await persistFederationBondProofFromSignerReview({
+        review,
+        signatureBase64,
+        walletId: "bond-wallet",
+        env,
+      });
+      expect(proof).toMatchObject({
+        challengeId: "challenge-reviewed",
+        bondId: "bond-reviewed",
+        walletId: "bond-wallet",
+        walletAddress: BOND_WALLET_ADDRESS,
+        payload,
+        signatureDomain: "fased:federation-bond-challenge-signature:v2",
+        signedMessageBase64,
+        signatureBase64,
+      });
+      expect(await loadPersistedFederationBondProof(env)).toEqual(proof);
+      await expect(
+        persistFederationBondProofFromSignerReview({
+          review: { ...review, destination: "tampered-destination" },
+          signatureBase64,
+          walletId: "bond-wallet",
+          env,
+        }),
+      ).rejects.toThrow(/does not match its wallet or payload/);
+    } finally {
+      await fs.rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
   it("uses configured api token for register + attest", async () => {
     const calls: Array<{ url: string; auth: string; body: unknown }> = [];
     const fetchMock = vi.fn(async (input: URL | RequestInfo, init?: RequestInit) => {
@@ -487,14 +591,7 @@ describe("federation auto-connect", () => {
 
   it("creates and persists a federation bond proof using the configured bond Vault", async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-bond-proof-"));
-    const walletDir = path.join(stateDir, "wallet");
-    await fs.mkdir(walletDir, { recursive: true });
-    const keystorePath = path.join(walletDir, "keystore-solana-bond-wallet.v1.enc");
-    const passphrase = "bond-wallet-passphrase";
-    const { publicKeyBase58, publicKeyBytes } = await writeSolanaBondKeystore({
-      keystorePath,
-      passphrase,
-    });
+    const publicKeyBase58 = BOND_WALLET_ADDRESS;
     await writeFederationTokenFile(stateDir, {
       tokenId: "bond-token-1",
       nodeId: "node-bond-1",
@@ -561,8 +658,6 @@ describe("federation auto-connect", () => {
         FASED_STATE_DIR: stateDir,
         FASED_FEDERATION_BASE_URL: "https://ff1.fased.app",
         FASED_FEDERATION_BOND_WALLET_ID: "bond-wallet",
-        FASED_WALLET_SOLANA_KEYSTORE_PATH__BOND_WALLET: keystorePath,
-        FASED_WALLET_PASSPHRASE: passphrase,
       },
       bondId: "bond-pos-1",
       tier: "basic-bond",
@@ -571,23 +666,20 @@ describe("federation auto-connect", () => {
     expect(proof.challengeId).toBe("bond-challenge-1");
     expect(proof.walletId).toBe("bond-wallet");
     expect(proof.walletAddress).toBe(publicKeyBase58);
+    expect(proof.bondTier).toBe("basic-bond");
     expect(proof.signatureBase64.length).toBeGreaterThan(10);
-
-    const verifyKey = crypto.createPublicKey({
-      key: {
-        kty: "OKP",
-        crv: "Ed25519",
-        x: base64url(publicKeyBytes),
-      },
-      format: "jwk",
-    });
-    const verified = crypto.verify(
-      null,
-      Buffer.from(proof.payload, "utf-8"),
-      verifyKey,
-      Buffer.from(proof.signatureBase64, "base64"),
+    expect(signFederationBondChallenge).toHaveBeenCalledWith(
+      expect.objectContaining({
+        challengeId: "bond-challenge-1",
+        federationOrigin: "https://ff1.fased.app",
+        payloadBase64: Buffer.from(payload, "utf-8").toString("base64"),
+        handle: "@bonded@ff1.fased.app",
+        nodeId: "node-bond-1",
+        tokenId: "bond-token-1",
+        bondId: "bond-pos-1",
+        tier: "basic-bond",
+      }),
     );
-    expect(verified).toBe(true);
 
     const persisted = JSON.parse(
       await fs.readFile(path.join(stateDir, "federation", "bond-proof.json"), "utf-8"),
@@ -599,14 +691,7 @@ describe("federation auto-connect", () => {
 
   it("submits a federation bond proof and persists the verified token state", async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-bond-submit-"));
-    const walletDir = path.join(stateDir, "wallet");
-    await fs.mkdir(walletDir, { recursive: true });
-    const keystorePath = path.join(walletDir, "keystore-solana-bond-wallet.v1.enc");
-    const passphrase = "bond-wallet-passphrase";
-    const { publicKeyBase58 } = await writeSolanaBondKeystore({
-      keystorePath,
-      passphrase,
-    });
+    const publicKeyBase58 = BOND_WALLET_ADDRESS;
     await writeFederationTokenFile(stateDir, {
       tokenId: "bond-token-2",
       nodeId: "node-bond-2",
@@ -658,11 +743,15 @@ describe("federation auto-connect", () => {
           ? (JSON.parse(init.body as string) as {
               challengeId?: string;
               payloadBase64?: string;
+              signatureDomain?: string;
+              signedMessageBase64?: string;
               signatureBase64?: string;
             })
           : null;
         expect(body?.challengeId).toBe("bond-challenge-2");
         expect(body?.payloadBase64).toBe(Buffer.from(payload, "utf-8").toString("base64"));
+        expect(body?.signatureDomain).toBe("fased:federation-bond-challenge-signature:v2");
+        expect(typeof body?.signedMessageBase64).toBe("string");
         expect(typeof body?.signatureBase64).toBe("string");
         expect((body?.signatureBase64?.length ?? 0) > 10).toBe(true);
         return new Response(
@@ -711,8 +800,6 @@ describe("federation auto-connect", () => {
         FASED_STATE_DIR: stateDir,
         FASED_FEDERATION_BASE_URL: "https://ff1.fased.app",
         FASED_FEDERATION_BOND_WALLET_ID: "bond-wallet",
-        FASED_WALLET_SOLANA_KEYSTORE_PATH__BOND_WALLET: keystorePath,
-        FASED_WALLET_PASSPHRASE: passphrase,
       },
       bondId: "bond-pos-2",
       tier: "basic-bond",

@@ -9,6 +9,10 @@ import type {
 } from "../../../config/types.wallet.js";
 import type { RuntimeEnv } from "../../../runtime.js";
 import {
+  hasLegacyEmbeddedKeystoreMaterialHint,
+  LEGACY_EMBEDDED_KEYSTORE_MIGRATION_MESSAGE,
+} from "../../../wallet/legacy-embedded-keystore.js";
+import {
   WALLET_PROVIDER_IDS,
   readWalletProviderRegistry,
   setWalletProvidersEnabled,
@@ -106,11 +110,10 @@ function parseWalletRuntime(raw: string | undefined): WalletRuntimeKind | null {
 
 function parseWalletProviderId(raw: string | undefined): WalletProviderId | null {
   switch ((raw ?? "").trim()) {
-    case "embedded-keystore":
     case "local-socket-signer":
     case "alchemy":
     case "turnkey":
-    case "privy":
+    case "wallet-standard":
       return raw as WalletProviderId;
     default:
       return null;
@@ -135,7 +138,10 @@ function hasConfiguredWalletMaterial(registry: ReturnType<typeof readWalletProvi
 const LOCAL_SIGNER_ENV_KEYS = [
   "FASED_WALLET_LOCAL_SIGNER_SOCKET",
   "FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET",
+  "FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET",
   "FASED_WALLET_SIGNER_STATE_DIR",
+  "FASED_WALLET_LOCAL_SIGNER_STATE_DB",
+  "FASED_WALLET_LOCAL_SIGNER_MASTER_KEY",
   "FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER",
   "FASED_WALLET_LOCAL_SIGNER_BIN",
   "FASED_WALLET_PASSPHRASE_FILE",
@@ -179,31 +185,14 @@ function setConfigEnvVar(
 }
 
 function applyHostedLocalSignerDefaults(base: FasedAgentConfig): FasedAgentConfig {
-  const signerUser = String(process.env.FASED_SIGNER_USER ?? "fased-signer").trim();
-  if (!signerUser) {
-    return base;
-  }
-  const appHome = String(process.env.HOME ?? "/home/app").trim() || "/home/app";
-  const signerHome = `/home/${signerUser}`;
-  const defaults: Record<(typeof LOCAL_SIGNER_ENV_KEYS)[number], string> = {
-    FASED_WALLET_LOCAL_SIGNER_SOCKET: `${appHome}/.fased/wallet/local-signer.sock`,
-    FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET: `${signerHome}/.fased/wallet/local-signer.sock`,
-    FASED_WALLET_SIGNER_STATE_DIR: `${signerHome}/.fased/wallet`,
-    FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER: signerUser,
-    FASED_WALLET_LOCAL_SIGNER_BIN: `${signerHome}/.fased/bin/fased-signerd`,
-    FASED_WALLET_PASSPHRASE_FILE: `${signerHome}/.fased/wallet/passphrase`,
-  };
+  const appSocket = "/run/fased-signerd/app.sock";
   let next = base;
-  for (const [key, value] of Object.entries(defaults)) {
-    const existing = String(process.env[key] ?? base.env?.vars?.[key] ?? "").trim();
-    if (existing) {
-      process.env[key] = existing;
-      next = setConfigEnvVar(next, key, existing);
-      continue;
-    }
-    process.env[key] = value;
-    next = setConfigEnvVar(next, key, value);
+  for (const key of LOCAL_SIGNER_ENV_KEYS) {
+    delete process.env[key];
+    next = setConfigEnvVar(next, key, undefined);
   }
+  process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET = appSocket;
+  next = setConfigEnvVar(next, "FASED_WALLET_LOCAL_SIGNER_SOCKET", appSocket);
   return next;
 }
 
@@ -216,6 +205,36 @@ export function applyNonInteractiveWalletConfig(params: {
   const current = nextConfig.wallet?.runtime;
   const managedMode = isManagedGatewayMode(opts);
   const registry = readWalletProviderRegistry(process.env);
+  const requestedLegacyProvider =
+    String(opts.walletDefaultProvider ?? "").trim() === "embedded-keystore" ||
+    (typeof opts.walletProviders === "string" &&
+      opts.walletProviders.split(",").some((entry) => entry.trim() === "embedded-keystore"));
+  if (
+    requestedLegacyProvider ||
+    nextConfig.wallet?.provider?.id === "embedded-keystore" ||
+    registry.providers["embedded-keystore"]?.enabled ||
+    registry.wallets.some((wallet) => wallet.providerId === "embedded-keystore") ||
+    hasLegacyEmbeddedKeystoreMaterialHint({ ...process.env, ...nextConfig.env?.vars })
+  ) {
+    runtime.error(LEGACY_EMBEDDED_KEYSTORE_MIGRATION_MESSAGE);
+    runtime.exit(1);
+    return nextConfig;
+  }
+  const requestedPrivyProvider =
+    String(opts.walletDefaultProvider ?? "").trim() === "privy" ||
+    (typeof opts.walletProviders === "string" &&
+      opts.walletProviders.split(",").some((entry) => entry.trim() === "privy"));
+  if (
+    requestedPrivyProvider ||
+    nextConfig.wallet?.provider?.id === "privy" ||
+    registry.wallets.some((wallet) => wallet.providerId === "privy")
+  ) {
+    runtime.error(
+      "Privy wallet creation and signing are unavailable; use the Go signer, Turnkey, or Wallet Standard.",
+    );
+    runtime.exit(1);
+    return nextConfig;
+  }
   const configuredWalletMaterial = hasConfiguredWalletMaterial(registry);
   const enabled =
     opts.walletEnabled ??
@@ -262,9 +281,7 @@ export function applyNonInteractiveWalletConfig(params: {
   const defaultProviderFromConfig = parseWalletProviderId(nextConfig.wallet?.provider?.id);
   const defaultProvider =
     defaultProviderFromOption ??
-    (defaultProviderFromConfig === "embedded-keystore"
-      ? "local-socket-signer"
-      : defaultProviderFromConfig) ??
+    defaultProviderFromConfig ??
     providersFromOption?.[0] ??
     "local-socket-signer";
   const enabledProviders = providersFromOption
@@ -337,7 +354,11 @@ export function applyNonInteractiveWalletConfig(params: {
         : "static-token-compat";
   const authBootstrapUrl = current?.auth?.bootstrapUrl?.trim() || undefined;
   const sourceRef = current?.source?.ref?.trim() || undefined;
-  const directSigning = opts.walletDirectSigning ?? current?.policy?.directSigning ?? managedMode;
+  // A managed runtime is an installation/lifecycle choice, not authorization to
+  // spend. Keep automated execution off unless an existing configuration or an
+  // explicit non-interactive flag enables it. The native signer still enforces
+  // its own independent, fail-closed policy after this Gateway-side choice.
+  const directSigning = opts.walletDirectSigning ?? current?.policy?.directSigning ?? false;
 
   const toolAccessMode =
     parseToolAccessMode(opts.walletToolAccessMode) ?? current?.toolAccess?.mode ?? "owner-only";

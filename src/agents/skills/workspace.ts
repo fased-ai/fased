@@ -22,6 +22,7 @@ import {
 } from "./frontmatter.js";
 import { resolvePluginSkillDirs } from "./plugin-skills.js";
 import { serializeByKey } from "./serialize.js";
+import { isMarketplaceSkillDir, marketplaceSkillIdsFromEntries } from "./trust.js";
 import type {
   ParsedSkillFrontmatter,
   SkillEligibilityContext,
@@ -33,6 +34,7 @@ import type {
 const fsp = fs.promises;
 const skillsLogger = createSubsystemLogger("skills");
 const skillCommandDebugOnce = new Set<string>();
+const CLAUDE_BUNDLE_MANIFEST_MAX_BYTES = 64 * 1024;
 
 /**
  * Replace the user's home directory prefix with `~` in skill file paths
@@ -510,6 +512,7 @@ export function buildWorkspaceSkillSnapshot(
     })),
     ...(skillFilter === undefined ? {} : { skillFilter }),
     resolvedSkills,
+    marketplaceSkillIds: marketplaceSkillIdsFromEntries(eligible),
     version: opts?.snapshotVersion,
   };
 }
@@ -542,6 +545,144 @@ function resolveEffectiveSkillFilter(
     return resolveEffectiveAgentSkillFilter(opts.config, opts.agentId);
   }
   return undefined;
+}
+
+function isExplicitlyEnabledClaudeBundle(pluginId: string, config?: FasedAgentConfig): boolean {
+  const plugins = config?.plugins;
+  if (plugins?.enabled === false || plugins?.deny?.includes(pluginId)) {
+    return false;
+  }
+  if (plugins?.allow?.length && !plugins.allow.includes(pluginId)) {
+    return false;
+  }
+  return plugins?.entries?.[pluginId]?.enabled === true;
+}
+
+function stripMarkdownFrontmatter(content: string): string {
+  const normalized = content.replace(/\r\n?/gu, "\n");
+  if (!normalized.startsWith("---\n")) {
+    return normalized.trim();
+  }
+  const end = normalized.indexOf("\n---", 4);
+  if (end < 0) {
+    return "";
+  }
+  return normalized
+    .slice(end + 4)
+    .replace(/^\n/u, "")
+    .trim();
+}
+
+function listImmediateDirectories(root: string): string[] {
+  try {
+    return fs
+      .readdirSync(root, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && !entry.isSymbolicLink())
+      .map((entry) => path.join(root, entry.name));
+  } catch {
+    return [];
+  }
+}
+
+function loadClaudeBundleCommandSpecs(params: {
+  workspaceDir: string;
+  config?: FasedAgentConfig;
+  maxCandidates: number;
+  maxFileBytes: number;
+}): SkillCommandSpec[] {
+  const roots = [
+    ...listImmediateDirectories(path.join(CONFIG_DIR, "extensions")),
+    ...listImmediateDirectories(path.join(params.workspaceDir, ".fased", "extensions")),
+    ...(params.config?.plugins?.load?.paths ?? []).map((entry) => resolveUserPath(entry)),
+  ];
+  const seen = new Set<string>();
+  const specs: SkillCommandSpec[] = [];
+  for (const unresolvedRoot of roots) {
+    let root: string;
+    try {
+      const stat = fs.lstatSync(unresolvedRoot);
+      if (!stat.isDirectory() || stat.isSymbolicLink()) {
+        continue;
+      }
+      root = fs.realpathSync(unresolvedRoot);
+    } catch {
+      continue;
+    }
+    if (seen.has(root) || isMarketplaceSkillDir(root)) {
+      continue;
+    }
+    seen.add(root);
+
+    const manifestPath = path.join(root, ".claude-plugin", "plugin.json");
+    let pluginId = "";
+    try {
+      const stat = fs.lstatSync(manifestPath);
+      if (
+        !stat.isFile() ||
+        stat.isSymbolicLink() ||
+        stat.size <= 0 ||
+        stat.size > CLAUDE_BUNDLE_MANIFEST_MAX_BYTES
+      ) {
+        continue;
+      }
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as { name?: unknown };
+      pluginId = typeof manifest.name === "string" ? manifest.name.trim() : "";
+    } catch {
+      continue;
+    }
+    if (!pluginId || !isExplicitlyEnabledClaudeBundle(pluginId, params.config)) {
+      continue;
+    }
+
+    const commandsDir = path.join(root, "commands");
+    let entries: fs.Dirent[];
+    try {
+      const stat = fs.lstatSync(commandsDir);
+      if (!stat.isDirectory() || stat.isSymbolicLink()) {
+        continue;
+      }
+      entries = fs.readdirSync(commandsDir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries
+      .filter((candidate) => candidate.isFile() && !candidate.isSymbolicLink())
+      .toSorted((left, right) => left.name.localeCompare(right.name))
+      .slice(0, params.maxCandidates)) {
+      if (path.extname(entry.name).toLowerCase() !== ".md") {
+        continue;
+      }
+      const filePath = path.join(commandsDir, entry.name);
+      let content: string;
+      try {
+        const stat = fs.lstatSync(filePath);
+        if (stat.size <= 0 || stat.size > params.maxFileBytes) {
+          continue;
+        }
+        content = fs.readFileSync(filePath, "utf8");
+      } catch {
+        continue;
+      }
+      const frontmatter = parseFrontmatter(content);
+      const skillName = frontmatter.name?.trim();
+      const description = frontmatter.description?.trim();
+      const promptTemplate = stripMarkdownFrontmatter(content);
+      if (!skillName || !description || !promptTemplate) {
+        continue;
+      }
+      specs.push({
+        name: sanitizeSkillCommandName(skillName),
+        skillName,
+        description:
+          description.length > SKILL_COMMAND_DESCRIPTION_MAX_LENGTH
+            ? `${description.slice(0, SKILL_COMMAND_DESCRIPTION_MAX_LENGTH - 1)}…`
+            : description,
+        promptTemplate,
+        sourceFilePath: filePath,
+      });
+    }
+  }
+  return specs;
 }
 
 function resolveWorkspaceSkillPromptState(
@@ -836,8 +977,20 @@ export function buildWorkspaceSkillCommandSpecs(
       name: unique,
       skillName: rawName,
       description,
+      sourceFilePath: entry.skill.filePath,
       ...(dispatch ? { dispatch } : {}),
     });
+  }
+  const limits = resolveSkillsLimits(opts?.config);
+  for (const bundleCommand of loadClaudeBundleCommandSpecs({
+    workspaceDir,
+    config: opts?.config,
+    maxCandidates: limits.maxCandidatesPerRoot,
+    maxFileBytes: limits.maxSkillFileBytes,
+  })) {
+    const unique = resolveUniqueSkillCommandName(bundleCommand.name, used);
+    used.add(unique.toLowerCase());
+    specs.push({ ...bundleCommand, name: unique });
   }
   return specs;
 }

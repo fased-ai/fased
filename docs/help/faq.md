@@ -117,8 +117,8 @@ fased logs --follow
 If this is a source checkout, use the Install docs for your platform:
 
 - [Install](/install/index)
-- [Docker](/install/docker)
-- [Podman](/install/podman)
+- [Docker (Local only)](/install/docker)
+- [Podman (experimental Gateway only)](/install/podman)
 - [Nix](/install/nix)
 - [macOS App](/start/onboarding)
 

@@ -44,19 +44,52 @@ x-i18n:
 - 可选网页搜索：在 Control UI 中打开 **Agent > Services**，配置 web/search 提供商和 API key。CLI 也支持 `fased configure --section web`。
 
 macOS：如果你计划构建应用，安装 Xcode / CLT。仅用于 CLI + Gateway 网关的话，Node 就足够了。
-Windows：Fased 必须在 **WSL2 Ubuntu 内**运行。支持 Windows 11，或 Windows 10 版本 2004/build 19041 及以上版本。在管理员 PowerShell 中运行 `wsl --install -d Ubuntu`，重新启动（如果系统要求），然后从开始菜单打开 Ubuntu。安装程序和所有 `fased` 命令都要在 Ubuntu 内运行；不要使用 PowerShell、命令提示符、Git Bash 或原生 Windows Node.js。钱包签名器需要 Unix socket。参见 [Windows (WSL2)](/platforms/windows)。
+Windows：Fased 必须在 **WSL2 Ubuntu 内**运行。支持 Windows 11，或 Windows
+10 版本 2004/build 19041 及以上版本。在管理员 PowerShell 中运行
+`wsl --install -d Ubuntu`，按提示重启，然后运行 `wsl --update`、
+`wsl --version` 和 `wsl --list --verbose`。WSL 必须为 0.67.6 或更新版本，
+Ubuntu 必须显示版本 2。随后打开 Ubuntu 应用，并在 Ubuntu shell 中运行
+安装器以及所有 `fased` 命令。不要使用 PowerShell、命令提示符、Git Bash、
+WSL1 或原生 Windows Node.js；钱包 signer 使用 Unix socket。参见
+[Windows (WSL2)](/platforms/windows)。
 
-## 1) 安装 CLI（推荐）
+## 1) 安装 Fased（推荐）
 
-```bash
-git clone https://github.com/fased-ai/fased.git fased
-cd fased
-./install.sh
-```
+<Tabs>
+  <Tab title="Local">
+    在自己的 macOS、Linux 或 WSL2 Ubuntu 电脑上运行：
 
-安装程序选项（安装方法、非交互式、从 GitHub）：[安装](/install)。
+    ```bash
+    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
+    ```
 
-Windows：先使用 [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install)，然后在 Ubuntu 提示符中运行安装命令。不要在 PowerShell 中运行 Fased 安装程序。
+    macOS 使用 Terminal；Windows 先完成上面的 WSL2 步骤，再在 Ubuntu
+    shell 中运行。不要在 PowerShell 中运行 Fased 安装器。
+
+  </Tab>
+  <Tab title="VPS Hosting">
+    在常驻 Linux VPS 本身运行 Hosting 安装。首次建议 Ubuntu LTS。从 VPS
+    provider 的 root console 使用 [执行前验证的 tagged
+    bootstrap](/install/vps#3-install-fased-and-connect-through-tailscale)：先下载
+    独立 `install.sh` 和 attestation，验证精确 repository、tag、release
+    workflow 和 GitHub-hosted runner，只有成功后才执行已验证文件。
+
+    不要把 raw Hosting URL pipe 到 root shell。Hosting 是主机管理的非 Docker
+    部署；不存在 `--hosting-docker`。安装完成后，退出 root bootstrap，并通过
+    Tailscale 以 `app` 用户进行日常操作：
+
+    ```bash
+    ssh app@YOUR_VPS_TAILSCALE_NAME
+    ```
+
+    `app` 用户没有 sudo。Gateway 和 signer/updater 由独立的 root-managed
+    services 管理。
+
+  </Tab>
+</Tabs>
+
+安装方式和自动化细节见 [安装](/install) 和 [Installer
+Reference](/install/installer)。
 
 ## 2) 运行新手引导向导（并安装服务）
 
@@ -69,7 +102,8 @@ fased onboard --install-daemon
 
 你将选择：
 
-- **本地 vs 托管** Gateway
+- **Local Gateway 配置**；VPS 必须先使用上面的 Hosting bootstrap，不能从
+  普通本地 onboarding 会话补做主机加固
 - **认证**：OpenAI/OpenAI Codex、Anthropic 或其他模型提供商；可以用 OAuth 或 API key。
 - **钱包**（可选）：Agent、Mining、Vault 角色分离；Fased Network bond 使用 Vault 钱包。
 - **渠道**（可选）：Telegram、Discord、WhatsApp 等可以在向导或稍后在 **Agent > Channels** 完成。
@@ -175,6 +209,19 @@ fased pairing approve whatsapp <code>
 
 配对文档：[配对](/channels/pairing)
 
+## 以后更新
+
+正常更新使用 stable release channel：
+
+```bash
+fased update status
+fased update
+```
+
+Hosting 通过 Tailscale 以 `app` 用户运行相同命令。不要用 `git pull` 加重新
+运行通用 installer 代替 stable 更新。完整的 Gateway + signer 配对事务和修复
+流程见 [更新](/install/updating)。
+
 ## 从源代码（开发）
 
 如果你正在开发 Fased 本身，从源代码运行：
@@ -184,11 +231,13 @@ git clone https://github.com/fased-ai/fased.git fased
 cd fased
 pnpm install
 pnpm build:app # 构建运行时和 Control UI
-./install.sh --no-onboard
+./install.sh --source-install --no-onboard
 fased onboard --install-daemon
 ```
 
-如果 `fased` 命令缺失，请先在仓库目录运行 `./install.sh --no-onboard`。`pnpm build:app` 也会打包 A2UI 资源；如果你只需要运行那个步骤，使用 `pnpm canvas:a2ui:bundle`。
+如果 `fased` 命令缺失，请先在仓库目录运行
+`./install.sh --source-install --no-onboard`。`pnpm build:app` 也会打包 A2UI
+资源；如果你只需要运行那个步骤，使用 `pnpm canvas:a2ui:bundle`。
 
 Gateway 网关（从此仓库）：
 

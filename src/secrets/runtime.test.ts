@@ -85,6 +85,38 @@ describe("secrets runtime snapshot", () => {
     });
   });
 
+  it("resolves previous-release auth refs through the active default provider", async () => {
+    const snapshot = await prepareSecretsRuntimeSnapshot({
+      config: {
+        secrets: {
+          providers: {
+            "runtime-env": { source: "env" },
+          },
+          defaults: {
+            env: "runtime-env",
+          },
+        },
+      },
+      env: { OPENAI_API_KEY: "sk-from-legacy-ref" },
+      agentDirs: ["/tmp/fased-agent-main"],
+      loadAuthStore: () => ({
+        version: 1,
+        profiles: {
+          "openai:legacy": {
+            type: "api_key",
+            provider: "openai",
+            keyRef: { source: "env", id: "OPENAI_API_KEY" } as never,
+          },
+        },
+      }),
+    });
+
+    expect(snapshot.authStores[0]?.store.profiles["openai:legacy"]).toMatchObject({
+      type: "api_key",
+      key: "sk-from-legacy-ref",
+    });
+  });
+
   it("resolves file refs via configured file provider", async () => {
     if (process.platform === "win32") {
       return;

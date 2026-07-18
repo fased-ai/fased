@@ -1,8 +1,10 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  downloadFasedHubSkillArchive,
   resolveFasedHubAuthToken,
   resolveFasedHubBaseUrl,
   resolveFasedHubConfigPaths,
@@ -113,5 +115,44 @@ describe("fasedhub registry client", () => {
     await expect(searchFasedHubSkills({ query: "calendar", limit: 5, fetchImpl })).resolves.toEqual(
       [],
     );
+  });
+
+  it("verifies the registry-provided archive digest before writing an install artifact", async () => {
+    const bytes = Buffer.from("signed-skill-archive");
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const result = await downloadFasedHubSkillArchive({
+      slug: "safe-skill",
+      version: "1.0.0",
+      expectedSha256: sha256,
+      fetchImpl: async () => new Response(bytes, { status: 200 }),
+    });
+    try {
+      expect(result.sha256).toBe(sha256);
+      expect(result.integrityVerified).toBe(true);
+      await expect(fs.readFile(result.archivePath)).resolves.toEqual(bytes);
+    } finally {
+      await result.cleanup();
+    }
+  });
+
+  it("rejects mismatched and oversized skill archives before installation", async () => {
+    await expect(
+      downloadFasedHubSkillArchive({
+        slug: "tampered-skill",
+        expectedSha256: "0".repeat(64),
+        fetchImpl: async () => new Response("tampered", { status: 200 }),
+      }),
+    ).rejects.toThrow("digest mismatch");
+
+    await expect(
+      downloadFasedHubSkillArchive({
+        slug: "oversized-skill",
+        fetchImpl: async () =>
+          new Response("small", {
+            status: 200,
+            headers: { "content-length": String(25 * 1024 * 1024 + 1) },
+          }),
+      }),
+    ).rejects.toThrow("download limit");
   });
 });

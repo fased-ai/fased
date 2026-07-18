@@ -137,9 +137,9 @@ issues.
 For normal server-style/headless setup, use the hosted installer and let it
 handle Tailscale login and private access checks:
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
-```
+Run the [pre-execution verified tagged bootstrap](/install/vps#3-install-fased-and-connect-through-tailscale)
+from the host's root console. It verifies the standalone installer before root
+execution. Do not run an app-owned checkout with sudo.
 
 For this hackable source path, you can still put the device on your tailnet
 manually before onboarding:
@@ -377,6 +377,6 @@ only for Fased.
 
 - [Linux guide](/platforms/linux) — general Linux setup
 - [DigitalOcean guide](/platforms/digitalocean) — cloud alternative
-- [Hetzner guide](/install/hetzner) — Docker setup
+- [Hetzner guide](/install/hetzner) — maintained non-Docker VPS Hosting setup
 - [Tailscale](/gateway/tailscale) — remote access
 - [Nodes](/nodes) — operator docs for pairing laptop/phone nodes with the Pi gateway

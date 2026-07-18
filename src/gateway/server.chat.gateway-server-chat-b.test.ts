@@ -1,8 +1,8 @@
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { describe, expect, test, vi } from "vitest";
 import type { GetReplyOptions } from "../auto-reply/types.js";
+import { resolveStorePath } from "../config/sessions.js";
 import { __setMaxChatHistoryMessagesBytesForTest } from "./server-constants.js";
 import {
   connectOk,
@@ -43,9 +43,12 @@ async function withGatewayChatHarness(
   const tempDirs: string[] = [];
   const { server, ws } = await startServerWithClient();
   const createSessionDir = async () => {
-    const sessionDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-gw-"));
+    const sessionStorePath = resolveStorePath(undefined, { agentId: "main" });
+    const sessionDir = path.dirname(sessionStorePath);
+    await fs.rm(sessionDir, { recursive: true, force: true });
+    await fs.mkdir(sessionDir, { recursive: true });
     tempDirs.push(sessionDir);
-    testState.sessionStorePath = path.join(sessionDir, "sessions.json");
+    testState.sessionStorePath = sessionStorePath;
     return sessionDir;
   };
 

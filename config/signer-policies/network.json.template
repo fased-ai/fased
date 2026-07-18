@@ -1,0 +1,5 @@
+{
+  "schemaVersion": 1,
+  "primaryRpcUrl": "https://REPLACE_WITH_PRIMARY_SOLANA_RPC",
+  "fallbackRpcUrl": "https://REPLACE_WITH_INDEPENDENT_FALLBACK_RPC"
+}

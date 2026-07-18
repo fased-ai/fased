@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { resolveStateDir } from "../config/paths.js";
 import type { WalletProviderId } from "../config/types.wallet.js";
+import { throwLegacyEmbeddedKeystoreMigrationRequired } from "./legacy-embedded-keystore.js";
 
 const SECRETS_DIR_MODE = 0o700;
 const SECRET_FILE_MODE = 0o600;
@@ -206,6 +207,7 @@ function decryptProviderPayload(
         case "local-socket-signer":
         case "alchemy":
         case "turnkey":
+        case "wallet-standard":
         case "privy":
           return parsed.providerId as WalletProviderId;
         default:
@@ -315,6 +317,14 @@ export function saveWalletProviderSecret(
   env: NodeJS.ProcessEnv = process.env,
 ): WalletProviderSecretRecord {
   const providerId = input.providerId;
+  if (providerId === "embedded-keystore") {
+    throwLegacyEmbeddedKeystoreMigrationRequired("legacy wallet secret storage is unavailable");
+  }
+  if (providerId !== "alchemy" && providerId !== "turnkey") {
+    throw new Error(
+      `${providerId} does not accept Gateway-held provider credentials; use its signer or wallet authority surface.`,
+    );
+  }
   const credentials: Record<string, string> = {};
   for (const [keyName, value] of Object.entries(input.credentials ?? {})) {
     const normalizedKey = keyName.trim();
@@ -377,6 +387,12 @@ export function loadWalletProviderSecret(
   providerId: WalletProviderId,
   env: NodeJS.ProcessEnv = process.env,
 ): WalletProviderSecretRecord | null {
+  if (providerId === "embedded-keystore") {
+    throwLegacyEmbeddedKeystoreMigrationRequired("legacy wallet secret loading is unavailable");
+  }
+  if (providerId !== "alchemy" && providerId !== "turnkey") {
+    return null;
+  }
   const secretPath = resolveWalletProviderSecretPath(providerId, env);
   if (!fs.existsSync(secretPath)) {
     return null;
@@ -476,6 +492,14 @@ export function readWalletProviderSecretStatus(
   env: NodeJS.ProcessEnv = process.env,
 ): WalletProviderSecretStatus {
   const secretPath = resolveWalletProviderSecretPath(providerId, env);
+  if (providerId === "embedded-keystore") {
+    return {
+      configured: false,
+      providerId,
+      fields: [],
+      path: secretPath,
+    };
+  }
   const secret = loadWalletProviderSecret(providerId, env);
   if (!secret) {
     return {

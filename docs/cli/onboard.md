@@ -75,8 +75,10 @@ Host and Gateway:
 - `--gateway-token <token>` / `--gateway-password <password>`: explicit
   Gateway credential.
 - `--tailscale <off|serve|funnel>`: Tailscale exposure mode.
-- `--ts-authkey <key>`: Tailscale auth key for hosting setup when you do not
-  want to complete browser login manually.
+- Tailscale authentication is a root Hosting-installer responsibility, not an
+  `fased onboard` option. Normal installs use the browser login URL. For
+  unattended provisioning, the verified standalone installer accepts only
+  `--ts-authkey-file <root-owned-mode-0600-file>` and rejects raw key arguments.
 - `--install-daemon`, `--no-install-daemon`, `--skip-daemon`: service install
   choice.
 - `--daemon-runtime <node|bun>`: service runtime.

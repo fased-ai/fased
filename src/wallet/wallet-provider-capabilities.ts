@@ -12,6 +12,12 @@ export type WalletProviderCapabilityMatrix = {
   providerId: WalletProviderId;
   supportedChains: WalletChain[];
   integrationMode: "native" | "bridge";
+  signingLocation: "server" | "browser" | "unavailable";
+  signing: {
+    transaction: boolean;
+    message: boolean;
+    interactiveSend: boolean;
+  };
   operations: {
     createWallet: boolean;
     receiveAddress: boolean;
@@ -50,7 +56,7 @@ const FULL_CHAIN_OPS: WalletProviderChainOps = {
 
 const PROVIDER_CHAIN_OPERATION_PROFILES: Record<WalletProviderId, ProviderChainOperationProfile> = {
   "embedded-keystore": {
-    solana: { ...FULL_CHAIN_OPS },
+    solana: { receiveAddress: false, getBalance: false, prepare: false, send: false },
   },
   "local-socket-signer": {
     solana: { ...FULL_CHAIN_OPS },
@@ -67,7 +73,20 @@ const PROVIDER_CHAIN_OPERATION_PROFILES: Record<WalletProviderId, ProviderChainO
     solana: { ...FULL_CHAIN_OPS },
   },
   privy: {
-    solana: { ...FULL_CHAIN_OPS },
+    solana: {
+      receiveAddress: true,
+      getBalance: false,
+      prepare: false,
+      send: false,
+    },
+  },
+  "wallet-standard": {
+    solana: {
+      receiveAddress: true,
+      getBalance: true,
+      prepare: false,
+      send: false,
+    },
   },
 };
 
@@ -117,6 +136,7 @@ function resolveIntegrationMode(providerId: WalletProviderId): "native" | "bridg
     case "local-socket-signer":
     case "alchemy":
     case "turnkey":
+    case "wallet-standard":
     case "privy":
       return "native";
   }
@@ -125,6 +145,7 @@ function resolveIntegrationMode(providerId: WalletProviderId): "native" | "bridg
 export function buildWalletProviderCapabilityMatrix(
   adapter: WalletProviderAdapter,
 ): WalletProviderCapabilityMatrix {
+  const signingLocation = adapter.capabilities.signingLocation ?? "unavailable";
   const chains = {
     solana: emptyChainOps(),
   };
@@ -157,8 +178,18 @@ export function buildWalletProviderCapabilityMatrix(
     providerId: adapter.id,
     supportedChains: [...adapter.capabilities.supportedChains],
     integrationMode: resolveIntegrationMode(adapter.id),
+    signingLocation,
+    signing: {
+      transaction: adapter.capabilities.supportsSignTransaction === true,
+      message: adapter.capabilities.supportsSignMessage === true,
+      interactiveSend:
+        signingLocation === "browser" && adapter.capabilities.supportsSignTransaction === true,
+    },
     operations: {
-      createWallet: adapter.capabilities.supportsCreateWallet,
+      // The local signer creates wallets through the privileged Gateway setup
+      // coordinator, not through the application-socket adapter method.
+      createWallet:
+        adapter.capabilities.supportsCreateWallet || adapter.id === "local-socket-signer",
       receiveAddress: receiveAny,
       getBalance: balanceAny,
       prepare: prepareAny,
@@ -171,7 +202,7 @@ export function buildWalletProviderCapabilityMatrix(
       resetKeys: adapter.capabilities.supportsResetKeys,
     },
     chains,
-    requiresCredentials: adapter.id !== "embedded-keystore" && adapter.id !== "local-socket-signer",
+    requiresCredentials: adapter.id !== "local-socket-signer" && adapter.id !== "wallet-standard",
     requiresRpcSecret: false,
   };
 }

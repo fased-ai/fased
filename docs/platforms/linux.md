@@ -40,8 +40,8 @@ Step-by-step VPS guide: [Hetzner](/install/hetzner) or the general
 
 - [Getting Started](/start/getting-started)
 - [Install & updates](/install/updating)
-- Optional flows: [Bun (experimental)](/install/bun), [Nix](/install/nix),
-  [Docker](/install/docker)
+- Optional local flows: [Bun (experimental)](/install/bun), [Nix](/install/nix),
+  [Docker (Local only)](/install/docker)
 
 ## Gateway
 

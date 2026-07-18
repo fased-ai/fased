@@ -73,7 +73,6 @@ export function buildCredentialScopedAllowedModelSet(params: {
     catalog: usableCatalog,
     defaultProvider: params.defaultProvider,
     defaultModel: params.defaultModel,
-    additionalAllowedProviders: usableProviders,
   });
   const allowedCatalog = filterModelCatalogByProviders(allowed.allowedCatalog, usableProviders);
   const allowedKeys = new Set(allowedCatalog.map((entry) => modelKey(entry.provider, entry.id)));

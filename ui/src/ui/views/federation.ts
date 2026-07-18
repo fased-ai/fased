@@ -326,11 +326,16 @@ export type FederationProps = {
   disputeNotaryError?: string | null;
   disputeNotaryMessage?: string | null;
   walletStatus: WalletStatus | null;
-  walletCustodyByWalletId?: Record<string, WalletStatus["custody"]>;
   walletNamedWallets: Array<{
     id: string;
     name: string;
-    providerId: "embedded-keystore" | "local-socket-signer" | "alchemy" | "turnkey" | "privy";
+    providerId:
+      | "embedded-keystore"
+      | "local-socket-signer"
+      | "alchemy"
+      | "turnkey"
+      | "wallet-standard"
+      | "privy";
     addresses?: { solana?: string };
     balances?: { solana?: string };
     metadata?: Record<string, unknown>;
@@ -1665,7 +1670,6 @@ function renderMarketplaceOrderReview(params: {
   operatorDisputes?: FederationDisputeRecord[];
   disputeNotaryRecords?: FederationDisputeNotaryRecord[];
   paymentWallet: FederationProps["walletNamedWallets"][number] | null;
-  paymentWalletCustodyBlock?: string;
   offerFeedbackBusy: boolean;
   offerFeedbackError?: string | null;
   offerFeedbackMessage?: string | null;
@@ -1769,7 +1773,6 @@ function renderMarketplaceOrderReview(params: {
     `;
   }
   const order = orderEntry.order;
-  const paymentWalletCustodyBlock = params.paymentWalletCustodyBlock ?? "";
   const payment = order.paymentIntent ?? {};
   const settlement = order.settlement ?? {};
   const escrow = settlement.escrow ?? {};
@@ -1942,11 +1945,9 @@ function renderMarketplaceOrderReview(params: {
       ? sellerIntakeBlock
       : !paymentWallet
         ? "Create an Agent wallet before running paid Marketplace orders."
-        : paymentWalletCustodyBlock
-          ? paymentWalletCustodyBlock
-          : !params.summarizeSourceText.trim()
-            ? "Paste the text to summarize before paying and running."
-            : "";
+        : !params.summarizeSourceText.trim()
+          ? "Paste the text to summarize before paying and running."
+          : "";
   const manualPayDisabledReason = !canPayManualOrder
     ? manualOrderPaid
       ? "This order is already paid."
@@ -1959,9 +1960,7 @@ function renderMarketplaceOrderReview(params: {
       ? sellerIntakeBlock
       : !paymentWallet
         ? "Create an Agent wallet before paying Marketplace orders."
-        : paymentWalletCustodyBlock
-          ? paymentWalletCustodyBlock
-          : "";
+        : "";
   const capabilityInputRequired =
     order.serviceKind === "data.lookup" || order.serviceKind === "data.extract";
   const capabilityRunDisabledReason = !canRunCapabilityOrder
@@ -1974,11 +1973,9 @@ function renderMarketplaceOrderReview(params: {
       ? sellerIntakeBlock
       : !manualOrderPaid && !paymentWallet
         ? "Create an Agent wallet before paying Marketplace orders."
-        : !manualOrderPaid && paymentWalletCustodyBlock
-          ? paymentWalletCustodyBlock
-          : capabilityInputRequired && !params.summarizeSourceText.trim()
-            ? "Enter buyer input before running this adapter."
-            : "";
+        : capabilityInputRequired && !params.summarizeSourceText.trim()
+          ? "Enter buyer input before running this adapter."
+          : "";
   const canUseOrderFeedbackEvidence =
     entry.kind === "offer" &&
     Boolean(order.offerId?.trim() || entry.item.id.trim()) &&
@@ -2021,19 +2018,6 @@ function renderMarketplaceOrderReview(params: {
                     </div>
                   </div>
                   <div class="row" style="gap: 8px; justify-content: flex-end;">
-                    ${
-                      paymentWalletCustodyBlock
-                        ? html`
-                            <button
-                              class="btn secondary"
-                              title="Open Wallet to unlock the Agent wallet signing window"
-                              @click=${() => params.onOpenTaskPayment?.()}
-                            >
-                              Open Wallet
-                            </button>
-                          `
-                        : nothing
-                    }
                     <button
                       class="btn primary"
                       ?disabled=${params.paidSummarizeBusy || Boolean(paidRunDisabledReason)}
@@ -2044,15 +2028,6 @@ function renderMarketplaceOrderReview(params: {
                     </button>
                   </div>
                 </div>
-                ${
-                  paymentWalletCustodyBlock
-                    ? html`
-                        <div class="callout warn" style="margin-top: 10px;">
-                          ${paymentWalletCustodyBlock} No payment will run until the signing window is unlocked.
-                        </div>
-                      `
-                    : nothing
-                }
                 ${renderMarketplaceOrderDeliveryTargetEditor({
                   orderEntry,
                   draftKind: deliveryDraftKind,
@@ -2137,19 +2112,6 @@ function renderMarketplaceOrderReview(params: {
                     </div>
                   </div>
                   <div class="row" style="gap: 8px; justify-content: flex-end;">
-                    ${
-                      !manualOrderPaid && paymentWalletCustodyBlock
-                        ? html`
-                            <button
-                              class="btn secondary"
-                              title="Open Wallet to unlock the Agent wallet signing window"
-                              @click=${() => params.onOpenTaskPayment?.()}
-                            >
-                              Open Wallet
-                            </button>
-                          `
-                        : nothing
-                    }
                     <button
                       class="btn primary"
                       ?disabled=${capabilityOrderBusy || Boolean(capabilityRunDisabledReason)}
@@ -2163,15 +2125,6 @@ function renderMarketplaceOrderReview(params: {
                     </button>
                   </div>
                 </div>
-                ${
-                  !manualOrderPaid && paymentWalletCustodyBlock
-                    ? html`
-                        <div class="callout warn" style="margin-top: 10px;">
-                          ${paymentWalletCustodyBlock} No payment will run until the signing window is unlocked.
-                        </div>
-                      `
-                    : nothing
-                }
                 ${renderMarketplaceOrderDeliveryTargetEditor({
                   orderEntry,
                   draftKind: deliveryDraftKind,
@@ -2226,19 +2179,6 @@ function renderMarketplaceOrderReview(params: {
                     </div>
                   </div>
                   <div class="row" style="gap: 8px; justify-content: flex-end;">
-                    ${
-                      paymentWalletCustodyBlock
-                        ? html`
-                            <button
-                              class="btn secondary"
-                              title="Open Wallet to unlock the Agent wallet signing window"
-                              @click=${() => params.onOpenTaskPayment?.()}
-                            >
-                              Open Wallet
-                            </button>
-                          `
-                        : nothing
-                    }
                     <button
                       class="btn primary"
                       ?disabled=${manualOrderBusy || Boolean(manualPayDisabledReason)}
@@ -2249,15 +2189,6 @@ function renderMarketplaceOrderReview(params: {
                     </button>
                   </div>
                 </div>
-                ${
-                  paymentWalletCustodyBlock
-                    ? html`
-                        <div class="callout warn" style="margin-top: 10px;">
-                          ${paymentWalletCustodyBlock} No payment will run until the signing window is unlocked.
-                        </div>
-                      `
-                    : nothing
-                }
                 ${
                   manualOrderBusy
                     ? html`
@@ -3943,10 +3874,7 @@ function resolveSummaryResultText(result: FederationContentSummarizeRunResult | 
 }
 
 function resolvePaymentWallet(
-  props: Pick<
-    FederationProps,
-    "walletNamedWallets" | "defaultWalletId" | "walletCustodyByWalletId" | "walletStatus"
-  >,
+  props: Pick<FederationProps, "walletNamedWallets" | "defaultWalletId">,
 ): {
   wallet: FederationProps["walletNamedWallets"][number] | null;
   implicit: boolean;
@@ -3957,19 +3885,6 @@ function resolvePaymentWallet(
       (entry.id === props.defaultWalletId && !resolveFederationWalletPurpose(entry)),
   );
   const primaryAgentWallet = agentWallets.find((entry) => entry.id === props.defaultWalletId);
-  const unlockedPrimary =
-    primaryAgentWallet && !resolvePaymentWalletCustodyBlock(props, primaryAgentWallet)
-      ? primaryAgentWallet
-      : null;
-  if (unlockedPrimary) {
-    return { wallet: unlockedPrimary, implicit: false };
-  }
-  const unlockedAgentWallet = agentWallets.find(
-    (entry) => !resolvePaymentWalletCustodyBlock(props, entry),
-  );
-  if (unlockedAgentWallet) {
-    return { wallet: unlockedAgentWallet, implicit: false };
-  }
   if (primaryAgentWallet) {
     return { wallet: primaryAgentWallet, implicit: false };
   }
@@ -3977,25 +3892,6 @@ function resolvePaymentWallet(
     wallet: agentWallets[0] ?? null,
     implicit: false,
   };
-}
-
-function resolvePaymentWalletCustodyBlock(
-  props: Pick<FederationProps, "walletStatus" | "walletCustodyByWalletId">,
-  paymentWallet: FederationProps["walletNamedWallets"][number] | null,
-): string {
-  const custody =
-    (paymentWallet ? props.walletCustodyByWalletId?.[paymentWallet.id] : undefined) ??
-    props.walletStatus?.custody;
-  if (!paymentWallet || !custody) {
-    return "";
-  }
-  if (custody.target?.walletId !== paymentWallet.id) {
-    return "";
-  }
-  if (custody.mode === "split-key-active" && !custody.unlock?.active) {
-    return "Unlock the Agent wallet in Wallet before paying. This wallet is protected by split-key custody.";
-  }
-  return "";
 }
 
 function resolveFederationWalletPurpose(
@@ -4213,7 +4109,6 @@ export function renderFederation(props: FederationProps) {
       : null;
   const paymentWalletState = resolvePaymentWallet(props);
   const paymentWallet = paymentWalletState.wallet;
-  const paymentWalletCustodyBlock = resolvePaymentWalletCustodyBlock(props, paymentWallet);
   const hasAgentWallet = Boolean(paymentWallet);
   const settlementLabel = selectedOffer ? resolveOfferSettlementLabel(selectedOffer) : null;
   const offerPublishesSettlementDefaults = Boolean(selectedOffer?.offer.paymentDefaults);
@@ -7497,7 +7392,6 @@ export function renderFederation(props: FederationProps) {
                       operatorDisputes: props.operatorDisputes,
                       disputeNotaryRecords: props.disputeNotaryRecords,
                       paymentWallet,
-                      paymentWalletCustodyBlock,
                       offerFeedbackBusy: props.offerFeedbackBusy,
                       offerFeedbackError: props.offerFeedbackError,
                       offerFeedbackMessage: props.offerFeedbackMessage,
@@ -8293,28 +8187,14 @@ export function renderFederation(props: FederationProps) {
                             </div>
                           </details>
                           <div class="row" style="margin-top: 12px; flex-wrap: wrap;">
-                            ${
-                              paymentWalletCustodyBlock
-                                ? html`
-                                    <button
-                                      class="btn secondary"
-                                      title="Open Wallet to unlock the Agent wallet signing window"
-                                      @click=${props.onOpenTaskPayment}
-                                    >
-                                      Open Wallet
-                                    </button>
-                                  `
-                                : nothing
-                            }
                             <button
                               class="btn primary"
                               ?disabled=${
                                 props.paidSummarizeBusy ||
                                 !props.summarizeSourceText.trim() ||
-                                !paymentWallet ||
-                                Boolean(paymentWalletCustodyBlock)
+                                !paymentWallet
                               }
-                              title=${paymentWalletCustodyBlock || "Pay from Agent wallet and run content summary"}
+                              title="Pay from Agent wallet and run content summary"
                               @click=${props.onRunPaidContentSummarize}
                             >
                               ${props.paidSummarizeBusy ? "Paying…" : "Pay content summary"}

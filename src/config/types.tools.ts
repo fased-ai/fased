@@ -320,6 +320,8 @@ export type MemorySearchConfig = {
     baseUrl?: string;
     apiKey?: string;
     headers?: Record<string, string>;
+    /** Explicitly allow sanitized session transcripts to leave the host for embeddings. */
+    allowSessionContent?: boolean;
     batch?: {
       /** Enable batch API for embedding indexing (OpenAI/Gemini; default: true). */
       enabled?: boolean;

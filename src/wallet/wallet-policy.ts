@@ -3,6 +3,7 @@ import path from "node:path";
 import type { FasedAgentConfig } from "../config/config.js";
 import { tryResolveSatRuntimeIds } from "../config/sat-runtime-ids.js";
 import { assertValidSolanaAddress } from "./solana-address.js";
+import { serializeWalletState, writeWalletStateFileAtomically } from "./wallet-atomic-state.js";
 import { readWalletProviderRegistry, resolveWalletUserRole } from "./wallet-provider-registry.js";
 import {
   ensureWalletStateDir,
@@ -162,17 +163,31 @@ function normalizeWalletUsageBucket(raw: unknown): WalletUsageBucket | null {
     return null;
   }
   const value = raw as Record<string, unknown>;
-  return {
-    solanaSpent: typeof value.solanaSpent === "string" ? value.solanaSpent : "0",
-    solanaTokenSpent:
-      value.solanaTokenSpent && typeof value.solanaTokenSpent === "object"
-        ? Object.fromEntries(
-            Object.entries(value.solanaTokenSpent as Record<string, unknown>)
-              .map(([mint, spent]) => [mint.trim(), typeof spent === "string" ? spent : "0"])
-              .filter(([mint]) => Boolean(mint)),
-          )
-        : {},
-  };
+  if (!isNonNegativeIntegerString(value.solanaSpent)) {
+    return null;
+  }
+  if (
+    !value.solanaTokenSpent ||
+    typeof value.solanaTokenSpent !== "object" ||
+    Array.isArray(value.solanaTokenSpent)
+  ) {
+    return null;
+  }
+  const solanaTokenSpent: Record<string, string> = {};
+  for (const [mintRaw, spent] of Object.entries(
+    value.solanaTokenSpent as Record<string, unknown>,
+  )) {
+    const mint = mintRaw.trim();
+    if (!mint || !isNonNegativeIntegerString(spent)) {
+      return null;
+    }
+    solanaTokenSpent[mint] = spent;
+  }
+  return { solanaSpent: value.solanaSpent, solanaTokenSpent };
+}
+
+function isNonNegativeIntegerString(value: unknown): value is string {
+  return typeof value === "string" && /^\d+$/.test(value);
 }
 
 function loadLedger(paths: ReturnType<typeof ensureWalletStateDir>): WalletUsageLedger {
@@ -184,15 +199,15 @@ function loadLedger(paths: ReturnType<typeof ensureWalletStateDir>): WalletUsage
     const raw = fs.readFileSync(paths.dailyUsagePath, "utf8");
     const parsed = JSON.parse(raw) as Partial<WalletUsageLedger | WalletUsageLedgerV1>;
     if (parsed && parsed.version === 2 && typeof parsed.date === "string") {
-      const walletsRaw =
-        parsed.wallets && typeof parsed.wallets === "object" && !Array.isArray(parsed.wallets)
-          ? (parsed.wallets as Record<string, unknown>)
-          : {};
+      if (!parsed.wallets || typeof parsed.wallets !== "object" || Array.isArray(parsed.wallets)) {
+        throw new Error("wallet usage ledger wallets must be an object");
+      }
+      const walletsRaw = parsed.wallets as Record<string, unknown>;
       const wallets: Record<string, WalletUsageBucket> = {};
       for (const [walletId, bucketRaw] of Object.entries(walletsRaw)) {
         const bucket = normalizeWalletUsageBucket(bucketRaw);
         if (!walletId.trim() || !bucket) {
-          continue;
+          throw new Error(`wallet usage ledger contains an invalid bucket for ${walletId || "?"}`);
         }
         wallets[walletId.trim()] = bucket;
       }
@@ -202,34 +217,36 @@ function loadLedger(paths: ReturnType<typeof ensureWalletStateDir>): WalletUsage
         wallets,
       };
     }
-    if (parsed && parsed.version === 1) {
+    if (
+      parsed &&
+      parsed.version === 1 &&
+      typeof parsed.date === "string" &&
+      isNonNegativeIntegerString(parsed.solanaSpent)
+    ) {
       return {
         version: 2,
-        date: typeof parsed.date === "string" ? parsed.date : fallback.date,
+        date: parsed.date,
         wallets: {
           [LEDGER_LEGACY_GLOBAL_BUCKET_ID]: {
-            solanaSpent: typeof parsed.solanaSpent === "string" ? parsed.solanaSpent : "0",
+            solanaSpent: parsed.solanaSpent,
             solanaTokenSpent: {},
           },
         },
       };
     }
-  } catch {
-    // ignore parse issues and reset ledger
+    throw new Error("wallet usage ledger has an unsupported shape");
+  } catch (error) {
+    throw new Error("wallet usage ledger is unreadable; refusing to reset spend counters", {
+      cause: error,
+    });
   }
-  return fallback;
 }
 
 function writeLedger(
   paths: ReturnType<typeof ensureWalletStateDir>,
   ledger: WalletUsageLedger,
 ): void {
-  fs.writeFileSync(paths.dailyUsagePath, `${JSON.stringify(ledger, null, 2)}\n`, { mode: 0o600 });
-  try {
-    fs.chmodSync(paths.dailyUsagePath, 0o600);
-  } catch {
-    // best effort
-  }
+  writeWalletStateFileAtomically(paths.dailyUsagePath, serializeWalletState(ledger));
 }
 
 function resolveWalletUsageBucket(
@@ -513,11 +530,13 @@ export function resolveWalletRoleForId(params: {
   if (walletId && storedPurpose === "mining") {
     return "mining";
   }
-  if (
-    walletId &&
-    ((registry.defaultWalletId && walletId === registry.defaultWalletId) ||
-      storedPurpose === "agent")
-  ) {
+  if (walletId && storedPurpose === "vault") {
+    return "vault";
+  }
+  if (walletId && storedPurpose === "agent") {
+    return "agent";
+  }
+  if (walletId && registry.defaultWalletId && walletId === registry.defaultWalletId) {
     return "agent";
   }
   return "vault";
@@ -604,17 +623,17 @@ function readWalletPolicyState(env: NodeJS.ProcessEnv = process.env): WalletPoli
     const raw = fs.readFileSync(statePath, "utf8");
     const parsed = JSON.parse(raw) as Partial<WalletPolicyState>;
     if (parsed.version !== 1) {
-      return fallback;
+      throw new Error("wallet policy state version is unsupported");
     }
-    const walletsRaw =
-      parsed.wallets && typeof parsed.wallets === "object" && !Array.isArray(parsed.wallets)
-        ? (parsed.wallets as Record<string, unknown>)
-        : {};
+    if (!parsed.wallets || typeof parsed.wallets !== "object" || Array.isArray(parsed.wallets)) {
+      throw new Error("wallet policy wallets must be an object");
+    }
+    const walletsRaw = parsed.wallets as Record<string, unknown>;
     const wallets: Record<string, StoredWalletPolicyRecord> = {};
     for (const [walletId, recordRaw] of Object.entries(walletsRaw)) {
       const record = normalizeStoredWalletPolicyRecord(recordRaw);
-      if (!walletId.trim() || !record) {
-        continue;
+      if (!walletId.trim() || !record || record.walletId !== walletId.trim()) {
+        throw new Error(`wallet policy contains an invalid record for ${walletId || "?"}`);
       }
       wallets[walletId.trim()] = record;
     }
@@ -623,8 +642,10 @@ function readWalletPolicyState(env: NodeJS.ProcessEnv = process.env): WalletPoli
       updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : fallback.updatedAt,
       wallets,
     };
-  } catch {
-    return fallback;
+  } catch (error) {
+    throw new Error("wallet policy state is unreadable; refusing to replace persisted policy", {
+      cause: error,
+    });
   }
 }
 
@@ -634,12 +655,7 @@ function writeWalletPolicyState(
 ): void {
   const paths = ensureWalletStateDir(env);
   const statePath = resolveWalletPolicyStatePath(paths);
-  fs.writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
-  try {
-    fs.chmodSync(statePath, 0o600);
-  } catch {
-    // best effort
-  }
+  writeWalletStateFileAtomically(statePath, serializeWalletState(state));
 }
 
 function buildResolvedPolicyFromDefaults(
@@ -886,16 +902,21 @@ export function applyWalletPolicyConfig(params: {
   );
 }
 
-export function upsertWalletPolicyConfig(params: {
+export type PreparedWalletPolicyConfigUpdate = {
+  walletId: string;
+  role: "mining" | "agent" | "vault";
+  config: ResolvedWalletRuntimeConfig;
+  expectedRecordJson: string;
+  nextRecord: StoredWalletPolicyRecord;
+  preparedAt: string;
+};
+
+export function prepareWalletPolicyConfigUpdate(params: {
   cfg: FasedAgentConfig;
   env?: NodeJS.ProcessEnv;
   walletId: string;
   patch: WalletScopedPolicyPatch;
-}): {
-  walletId: string;
-  role: "mining" | "agent" | "vault";
-  config: ResolvedWalletRuntimeConfig;
-} {
+}): PreparedWalletPolicyConfigUpdate {
   const env = params.env ?? process.env;
   const walletId = params.walletId.trim();
   if (!walletId) {
@@ -971,19 +992,58 @@ export function upsertWalletPolicyConfig(params: {
             role,
           })
         : existingRecord?.recurringTransfer;
-  state.wallets[walletId] = buildStoredPolicyRecord({
+  const preparedAt = nowIso();
+  const nextRecord = buildStoredPolicyRecord({
     walletId,
     role,
     policy: nextPolicy,
     recurringTransfer,
+    updatedAt: preparedAt,
   });
-  state.updatedAt = nowIso();
-  writeWalletPolicyState(state, env);
   return {
     walletId,
     role,
     config: cloneWalletConfigWithPolicy(base, nextPolicy),
+    expectedRecordJson: JSON.stringify(existingRecord ?? null),
+    nextRecord,
+    preparedAt,
   };
+}
+
+export function commitWalletPolicyConfigUpdate(
+  prepared: PreparedWalletPolicyConfigUpdate,
+  env: NodeJS.ProcessEnv = process.env,
+): {
+  walletId: string;
+  role: "mining" | "agent" | "vault";
+  config: ResolvedWalletRuntimeConfig;
+} {
+  const state = readWalletPolicyState(env);
+  if (JSON.stringify(state.wallets[prepared.walletId] ?? null) !== prepared.expectedRecordJson) {
+    throw new Error("wallet policy changed concurrently; reload the acknowledged signer policy");
+  }
+  state.wallets[prepared.walletId] = prepared.nextRecord;
+  state.updatedAt = prepared.preparedAt;
+  writeWalletPolicyState(state, env);
+  return {
+    walletId: prepared.walletId,
+    role: prepared.role,
+    config: prepared.config,
+  };
+}
+
+export function upsertWalletPolicyConfig(params: {
+  cfg: FasedAgentConfig;
+  env?: NodeJS.ProcessEnv;
+  walletId: string;
+  patch: WalletScopedPolicyPatch;
+}): {
+  walletId: string;
+  role: "mining" | "agent" | "vault";
+  config: ResolvedWalletRuntimeConfig;
+} {
+  const env = params.env ?? process.env;
+  return commitWalletPolicyConfigUpdate(prepareWalletPolicyConfigUpdate(params), env);
 }
 
 export function resolveWalletRolePolicyProfile(
@@ -1015,8 +1075,8 @@ export function resolveWalletRolePolicyProfile(
         summary:
           "Hot Agent wallet for reviewed payments, Fased Network payment evidence, and approved skill actions. Keep explicit caps and narrow token / contract routes.",
         defaults: {
-          capsEnabled: false,
-          directSigning: true,
+          capsEnabled: true,
+          directSigning: false,
           skillsEnabled: false,
           solana: {
             maxPerTx: DEFAULT_POLICY_CAPS.solana.maxPerTx,
@@ -1031,9 +1091,9 @@ export function resolveWalletRolePolicyProfile(
         role: "vault",
         label: "Vault",
         summary:
-          "Manual-first Vault wallet for storage and federation bond assignment. No background agent execution by default; use split-key/passkey lock for custody.",
+          "Manual-first Vault wallet for storage and federation bond assignment. No background agent execution by default; reviewed sends require signer-owned WebAuthn authorization.",
         defaults: {
-          capsEnabled: false,
+          capsEnabled: true,
           directSigning: false,
           skillsEnabled: false,
           solana: {
@@ -1129,7 +1189,14 @@ export function validateWalletTxPolicy(params: {
   const capsEnabled = params.config.policy.capsEnabled;
 
   const allowPrograms = params.config.policy.solana.allowPrograms;
-  if (params.program && allowPrograms.length > 0) {
+  if (params.program) {
+    if (allowPrograms.length === 0) {
+      return {
+        ok: false,
+        code: "wallet_program_allowlist_required",
+        message: "program execution requires an explicit non-empty allowlist",
+      };
+    }
     const normalized = params.program.trim();
     const allowed = allowPrograms.includes(normalized);
     if (!allowed) {

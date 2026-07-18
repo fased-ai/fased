@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { Readable } from "node:stream";
 import { describe, expect, test, vi } from "vitest";
 import type { createSubsystemLogger } from "../logging/subsystem.js";
 import type { ResolvedGatewayAuth } from "./auth.js";
@@ -10,20 +11,28 @@ import { withTempConfig } from "./test-temp-config.js";
 function createRequest(params: {
   path: string;
   authorization?: string;
+  headers?: Record<string, string>;
   method?: string;
+  remoteAddress?: string;
+  body?: unknown;
 }): IncomingMessage {
   const headers: Record<string, string> = {
     host: "localhost:18789",
+    ...params.headers,
   };
   if (params.authorization) {
     headers.authorization = params.authorization;
   }
-  return {
+  const req =
+    params.body === undefined
+      ? new Readable({ read() {} })
+      : Readable.from([Buffer.from(JSON.stringify(params.body), "utf8")]);
+  return Object.assign(req, {
     method: params.method ?? "GET",
     url: params.path,
     headers,
-    socket: { remoteAddress: "127.0.0.1" },
-  } as IncomingMessage;
+    socket: { remoteAddress: params.remoteAddress ?? "127.0.0.1" },
+  }) as IncomingMessage;
 }
 
 function createResponse(): {
@@ -65,7 +74,14 @@ async function dispatchRequest(
   res: ServerResponse,
 ): Promise<void> {
   server.emit("request", req, res);
-  await new Promise((resolve) => setImmediate(resolve));
+  const end = Reflect.get(res, "end") as { mock?: { calls: unknown[][] } };
+  for (let attempt = 0; attempt < 500; attempt += 1) {
+    if ((end.mock?.calls.length ?? 0) > 0) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("gateway test response did not finish");
 }
 
 function createHooksConfig(): HooksConfigResolved {
@@ -332,6 +348,277 @@ describe("gateway plugin HTTP auth boundary", () => {
         expect(unauthenticatedPublic.getBody()).toContain('"route":"public"');
 
         expect(handlePluginRequest).toHaveBeenCalledTimes(2);
+      },
+    });
+  });
+
+  test("allows auth-none plugin channels only from direct loopback", async () => {
+    const resolvedAuth: ResolvedGatewayAuth = {
+      mode: "none",
+      allowTailscale: false,
+    };
+
+    await withTempConfig({
+      cfg: { gateway: { trustedProxies: ["10.0.0.0/8"] } },
+      prefix: "fased-plugin-http-auth-none-test-",
+      run: async () => {
+        const handlePluginRequest = vi.fn(async (_req: IncomingMessage, res: ServerResponse) => {
+          res.statusCode = 200;
+          res.end(JSON.stringify({ ok: true, route: "channel" }));
+          return true;
+        });
+        const server = createGatewayHttpServer({
+          canvasHost: null,
+          clients: new Set(),
+          controlUiEnabled: false,
+          controlUiBasePath: "/__control__",
+          openAiChatCompletionsEnabled: false,
+          openResponsesEnabled: false,
+          handleHooksRequest: async () => false,
+          handlePluginRequest,
+          resolvedAuth,
+        });
+
+        const direct = createResponse();
+        await dispatchRequest(
+          server,
+          createRequest({ path: "/api/channels/nostr/default/profile" }),
+          direct.res,
+        );
+        expect(direct.res.statusCode).toBe(200);
+
+        const forwarded = createResponse();
+        await dispatchRequest(
+          server,
+          createRequest({
+            path: "/api/channels/nostr/default/profile",
+            headers: { "x-forwarded-for": "203.0.113.10" },
+          }),
+          forwarded.res,
+        );
+        expect(forwarded.res.statusCode).toBe(401);
+
+        const emptyForwarded = createResponse();
+        await dispatchRequest(
+          server,
+          createRequest({
+            path: "/api/channels/nostr/default/profile",
+            headers: { "x-forwarded-for": "" },
+          }),
+          emptyForwarded.res,
+        );
+        expect(emptyForwarded.res.statusCode).toBe(401);
+
+        const viaProxy = createResponse();
+        await dispatchRequest(
+          server,
+          createRequest({
+            path: "/api/channels/nostr/default/profile",
+            headers: { via: "1.1 local-proxy" },
+          }),
+          viaProxy.res,
+        );
+        expect(viaProxy.res.statusCode).toBe(401);
+
+        const trustedProxyPeer = createResponse();
+        await dispatchRequest(
+          server,
+          createRequest({
+            path: "/api/channels/nostr/default/profile",
+            remoteAddress: "10.20.30.40",
+          }),
+          trustedProxyPeer.res,
+        );
+        expect(trustedProxyPeer.res.statusCode).toBe(401);
+        expect(handlePluginRequest).toHaveBeenCalledTimes(1);
+      },
+    });
+  });
+
+  test("does not trust a spoofed local Host header for sensitive built-in APIs", async () => {
+    const resolvedAuth: ResolvedGatewayAuth = {
+      mode: "token",
+      token: "test-token",
+      allowTailscale: false,
+    };
+
+    await withTempConfig({
+      cfg: { gateway: { trustedProxies: [] } },
+      prefix: "fased-sensitive-http-host-spoof-test-",
+      run: async () => {
+        const server = createGatewayHttpServer({
+          canvasHost: null,
+          clients: new Set(),
+          controlUiEnabled: false,
+          controlUiBasePath: "/__control__",
+          openAiChatCompletionsEnabled: false,
+          openResponsesEnabled: false,
+          handleHooksRequest: async () => false,
+          resolvedAuth,
+        });
+
+        for (const path of ["/api/federation/status", "/api/federation/bond/wallet"]) {
+          const response = createResponse();
+          await dispatchRequest(
+            server,
+            createRequest({
+              path,
+              headers: { host: "localhost:18789" },
+              remoteAddress: "203.0.113.10",
+            }),
+            response.res,
+          );
+          expect(response.res.statusCode, path).toBe(401);
+          expect(response.getBody(), path).toContain("authentication required");
+        }
+      },
+    });
+  });
+
+  test("protects federation control and credential routes from remote Host spoofing", async () => {
+    const resolvedAuth: ResolvedGatewayAuth = {
+      mode: "token",
+      token: "test-token",
+      allowTailscale: false,
+    };
+
+    await withTempConfig({
+      cfg: { gateway: { trustedProxies: [] } },
+      prefix: "fased-local-federation-http-auth-test-",
+      run: async () => {
+        const server = createGatewayHttpServer({
+          canvasHost: null,
+          clients: new Set(),
+          controlUiEnabled: false,
+          controlUiBasePath: "/__control__",
+          openAiChatCompletionsEnabled: false,
+          openResponsesEnabled: false,
+          handleHooksRequest: async () => false,
+          resolvedAuth,
+        });
+
+        const protectedRoutes = [
+          { method: "GET", path: "/api/federation/local/offers" },
+          { method: "GET", path: "/api/federation/offers" },
+          { method: "GET", path: "/api/federation/directory/@seller@example.test" },
+          { method: "POST", path: "/api/federation/admission/attest" },
+          { method: "POST", path: "/api/federation/admission/revoke" },
+          { method: "POST", path: "/api/federation/registry/handles" },
+          { method: "POST", path: "/api/federation/local/orders/order-1/pay-direct" },
+          { method: "POST", path: "/api/federation/local/orders/order-1/escrow/fund" },
+          { method: "POST", path: "/api/federation/local/orders/order-1/escrow/release" },
+          { method: "POST", path: "/api/federation/local/orders/order-1/escrow/refund" },
+          { method: "POST", path: "/api/federation//local/orders/order-1/pay-direct" },
+          { method: "POST", path: "/api/federation//marketplace/orders" },
+          { method: "POST", path: "/API/federation/marketplace/deliveries" },
+          { method: "POST", path: "/api/federation/foo/../marketplace/orders" },
+          { method: "POST", path: "/api/federation/marketplace/orders?source=variant" },
+        ];
+        for (const route of protectedRoutes) {
+          const response = createResponse();
+          await dispatchRequest(
+            server,
+            createRequest({
+              path: route.path,
+              method: route.method,
+              headers: { host: "localhost:18789" },
+              remoteAddress: "203.0.113.10",
+            }),
+            response.res,
+          );
+          expect(response.res.statusCode, `${route.method} ${route.path}`).toBe(401);
+          expect(response.getBody(), `${route.method} ${route.path}`).toContain(
+            "authentication required",
+          );
+        }
+
+        const directLocal = createResponse();
+        await dispatchRequest(
+          server,
+          createRequest({ path: "/api/federation/local/offers" }),
+          directLocal.res,
+        );
+        expect(directLocal.res.statusCode).toBe(200);
+        expect(directLocal.getBody()).toContain('"offers"');
+
+        const authenticatedRemote = createResponse();
+        await dispatchRequest(
+          server,
+          createRequest({
+            path: "/api/federation/local/offers",
+            authorization: "Bearer test-token",
+            remoteAddress: "203.0.113.10",
+          }),
+          authenticatedRemote.res,
+        );
+        expect(authenticatedRemote.res.statusCode).toBe(200);
+        expect(authenticatedRemote.getBody()).toContain('"offers"');
+
+        for (const path of [
+          "/api/federation/marketplace/orders",
+          "/api/federation/marketplace/deliveries",
+        ]) {
+          const unsignedInbound = createResponse();
+          await dispatchRequest(
+            server,
+            createRequest({
+              path,
+              method: "POST",
+              remoteAddress: "203.0.113.10",
+              body: {},
+            }),
+            unsignedInbound.res,
+          );
+          expect(unsignedInbound.res.statusCode, path).toBe(401);
+          expect(unsignedInbound.getBody(), path).toContain('"code":"peer_auth_invalid"');
+          expect(unsignedInbound.getBody(), path).toContain(
+            "signed federation peer protocol v2 is required",
+          );
+        }
+      },
+    });
+  });
+
+  test("does not exempt direct loopback when Tailscale auth is explicitly enabled", async () => {
+    const resolvedAuth: ResolvedGatewayAuth = {
+      mode: "token",
+      token: "test-token",
+      allowTailscale: true,
+    };
+
+    await withTempConfig({
+      cfg: { gateway: { tailscale: { mode: "off" }, trustedProxies: [] } },
+      prefix: "fased-local-federation-tailscale-ambiguity-test-",
+      run: async () => {
+        const server = createGatewayHttpServer({
+          canvasHost: null,
+          clients: new Set(),
+          controlUiEnabled: false,
+          controlUiBasePath: "/__control__",
+          openAiChatCompletionsEnabled: false,
+          openResponsesEnabled: false,
+          handleHooksRequest: async () => false,
+          resolvedAuth,
+        });
+
+        const unauthenticated = createResponse();
+        await dispatchRequest(
+          server,
+          createRequest({ path: "/api/federation/local/offers" }),
+          unauthenticated.res,
+        );
+        expect(unauthenticated.res.statusCode).toBe(401);
+
+        const authenticated = createResponse();
+        await dispatchRequest(
+          server,
+          createRequest({
+            path: "/api/federation/local/offers",
+            authorization: "Bearer test-token",
+          }),
+          authenticated.res,
+        );
+        expect(authenticated.res.statusCode).toBe(200);
       },
     });
   });

@@ -153,9 +153,9 @@ describe("marketplace direct payment adapter", () => {
           to: SELLER_ADDRESS,
           amount: "100000000",
           walletId: "agent-wallet",
-          memo: "invoice-1",
         }),
         requestedBy: "marketplace-manual-order",
+        executionIntentId: "marketplace-order:order-1:direct-payment",
         sendPath: "automation",
         settlementContext: expect.objectContaining({
           taskId: "order-1",
@@ -181,6 +181,50 @@ describe("marketplace direct payment adapter", () => {
     expect(result.evidenceRef).toBe("fased://marketplace/settlements/evidence-1");
   });
 
+  it("resumes settlement evidence after a crash without paying the order twice", async () => {
+    const mocked = deps({
+      ok: true,
+      mode: "autonomous",
+      tx: { ok: true, chain: "solana", txHash: "durable-payment-tx-1", signer: AGENT_ADDRESS },
+      payload: { chain: "solana", to: SELLER_ADDRESS, amount: "100000000" },
+      requestId: "durable-wallet-send-1",
+    });
+    const publish = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false as const, message: "evidence service unavailable" })
+      .mockResolvedValueOnce({
+        ok: true as const,
+        entry: { evidenceRef: "fased://marketplace/settlements/durable-evidence-1" },
+      }) as MarketplaceDirectPaymentDeps["publishFederationSettlementEvidence"];
+    mocked.publishFederationSettlementEvidence = publish;
+    const originalConfig = config();
+
+    const first = await payMarketplaceOrderDirect({
+      config: originalConfig,
+      orderId: "order-1",
+      deps: mocked,
+    });
+    const resumed = await payMarketplaceOrderDirect({
+      config: originalConfig,
+      orderId: "order-1",
+      deps: mocked,
+    });
+
+    expect(first).toMatchObject({
+      ok: false,
+      code: "settlement_evidence_failed",
+      state: "evidence_pending",
+      txRef: "durable-payment-tx-1",
+    });
+    expect(resumed.ok).toBe(true);
+    expect(mocked.createOrExecuteWalletSend).toHaveBeenCalledTimes(1);
+    expect(publish).toHaveBeenCalledTimes(2);
+    if (resumed.ok) {
+      expect(resumed.txRef).toBe("durable-payment-tx-1");
+      expect(resumed.evidenceRef).toBe("fased://marketplace/settlements/durable-evidence-1");
+    }
+  });
+
   it("keeps content summary orders on the paid content adapter", async () => {
     const mocked = deps({
       ok: true,
@@ -198,25 +242,5 @@ describe("marketplace direct payment adapter", () => {
     expect(result.ok).toBe(false);
     expect(result).toMatchObject({ ok: false, code: "content_summary_adapter_required" });
     expect(mocked.createOrExecuteWalletSend).not.toHaveBeenCalled();
-  });
-
-  it("returns an explicit custody unlock message when the Agent wallet signer is locked", async () => {
-    const mocked = deps({
-      ok: false,
-      code: "custody_unlock_required",
-      message:
-        "split-key custody requires an active unlock session; provide a passkey approval token",
-    });
-
-    const result = await payMarketplaceOrderDirect({
-      config: config(),
-      orderId: "order-1",
-      deps: mocked,
-    });
-
-    expect(result.ok).toBe(false);
-    expect(result).toMatchObject({ ok: false, code: "wallet_payment_failed" });
-    expect(result.message).toContain("Buyer Agent wallet is locked by split-key custody.");
-    expect(mocked.publishFederationSettlementEvidence).not.toHaveBeenCalled();
   });
 });

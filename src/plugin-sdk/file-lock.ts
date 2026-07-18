@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { isPidAlive } from "../shared/pid-alive.js";
@@ -17,6 +18,8 @@ export type FileLockOptions = {
 type LockFilePayload = {
   pid: number;
   createdAt: string;
+  /** Linux /proc start-time ticks, used to detect PID reuse. */
+  startTime?: number;
 };
 
 type HeldLock = {
@@ -44,7 +47,32 @@ async function readLockPayload(lockPath: string): Promise<LockFilePayload | null
     if (typeof parsed.pid !== "number" || typeof parsed.createdAt !== "string") {
       return null;
     }
-    return { pid: parsed.pid, createdAt: parsed.createdAt };
+    const startTime =
+      typeof parsed.startTime === "number" && Number.isSafeInteger(parsed.startTime)
+        ? parsed.startTime
+        : undefined;
+    return { pid: parsed.pid, createdAt: parsed.createdAt, startTime };
+  } catch {
+    return null;
+  }
+}
+
+function readLinuxProcessStartTime(pid: number): number | null {
+  if (process.platform !== "linux") {
+    return null;
+  }
+  try {
+    const raw = fsSync.readFileSync(`/proc/${pid}/stat`, "utf8").trim();
+    const closeParen = raw.lastIndexOf(")");
+    if (closeParen < 0) {
+      return null;
+    }
+    const fields = raw
+      .slice(closeParen + 1)
+      .trim()
+      .split(/\s+/u);
+    const startTime = Number.parseInt(fields[19] ?? "", 10);
+    return Number.isSafeInteger(startTime) ? startTime : null;
   } catch {
     return null;
   }
@@ -64,8 +92,19 @@ async function resolveNormalizedFilePath(filePath: string): Promise<string> {
 
 async function isStaleLock(lockPath: string, staleMs: number): Promise<boolean> {
   const payload = await readLockPayload(lockPath);
-  if (payload?.pid && !isPidAlive(payload.pid)) {
-    return true;
+  if (payload?.pid) {
+    if (!isPidAlive(payload.pid)) {
+      return true;
+    }
+    if (payload.startTime !== undefined) {
+      const currentStartTime = readLinuxProcessStartTime(payload.pid);
+      if (currentStartTime !== null) {
+        return currentStartTime !== payload.startTime;
+      }
+    }
+    // A live owner is authoritative regardless of lock age. Age-evicting a
+    // live process permits overlapping critical sections under slow I/O.
+    return false;
   }
   if (payload?.createdAt) {
     const createdAt = Date.parse(payload.createdAt);
@@ -119,8 +158,17 @@ export async function acquireFileLock(
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
       const handle = await fs.open(lockPath, "wx");
+      const startTime = readLinuxProcessStartTime(process.pid);
       await handle.writeFile(
-        JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }, null, 2),
+        JSON.stringify(
+          {
+            pid: process.pid,
+            createdAt: new Date().toISOString(),
+            ...(startTime !== null ? { startTime } : {}),
+          },
+          null,
+          2,
+        ),
         "utf8",
       );
       HELD_LOCKS.set(normalizedFile, { count: 1, handle, lockPath });

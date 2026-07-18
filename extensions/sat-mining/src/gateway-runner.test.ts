@@ -86,6 +86,31 @@ describe("runSatGatewayMethod", () => {
     );
   });
 
+  it("attaches the same caller-owned workflow key to every exact worker retry", async () => {
+    const { runSatGatewayMethod } = await import("./gateway-runner.js");
+    const request = {
+      api: {
+        runtime: {
+          config: {
+            loadConfig: () => ({ gateway: { auth: { mode: "token", token: "secret" } } }),
+          },
+        },
+      } as never,
+      method: "sat.commitCycle",
+      payload: { cycleId: 44, commitmentHex: "aa".repeat(32) },
+      workflowId: "round-watcher:cycle:44:commit",
+    };
+
+    await runSatGatewayMethod(request);
+    await runSatGatewayMethod(request);
+
+    const sentParams = callGatewayScoped.mock.calls.map((call) => call[0]?.params);
+    expect(sentParams).toEqual([
+      expect.objectContaining({ idempotencyKey: "round-watcher:cycle:44:commit" }),
+      expect.objectContaining({ idempotencyKey: "round-watcher:cycle:44:commit" }),
+    ]);
+  });
+
   it("injects an opt-in before-call live chaos failure only once", async () => {
     const { runSatGatewayMethod } = await import("./gateway-runner.js");
     process.env.FASED_SAT_LIVE_CHAOS = "1";

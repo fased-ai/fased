@@ -191,6 +191,10 @@ export type FederationMarketplaceOrderUpsertInput = {
   sellerSyncError?: string;
   sellerSyncedAt?: string;
   sellerAcceptedAt?: string;
+  peerNodeId?: string;
+  peerRemoteOrderId?: string;
+  peerRequestDigest?: string;
+  peerDeliveryDigest?: string;
   serviceKind?: string;
   title?: string;
   pricing?: FederationOfferPricingConfig;
@@ -940,13 +944,7 @@ function defaultDeliveryTargetMasked(
 function isAllowedDeliveryUrl(value: string, opts: { allowWebSocket?: boolean } = {}): boolean {
   try {
     const url = new URL(value);
-    if (url.protocol === "https:" || (opts.allowWebSocket && url.protocol === "wss:")) {
-      return true;
-    }
-    if (url.protocol !== "http:") {
-      return false;
-    }
-    return url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "::1";
+    return url.protocol === "https:" || Boolean(opts.allowWebSocket && url.protocol === "wss:");
   } catch {
     return false;
   }
@@ -1595,6 +1593,16 @@ function normalizeMarketplaceOrder(
       : {}),
     ...(trimString(input.sellerAcceptedAt)
       ? { sellerAcceptedAt: trimString(input.sellerAcceptedAt) }
+      : {}),
+    ...(trimString(input.peerNodeId) ? { peerNodeId: trimString(input.peerNodeId) } : {}),
+    ...(trimString(input.peerRemoteOrderId)
+      ? { peerRemoteOrderId: trimString(input.peerRemoteOrderId) }
+      : {}),
+    ...(trimString(input.peerRequestDigest)
+      ? { peerRequestDigest: trimString(input.peerRequestDigest) }
+      : {}),
+    ...(trimString(input.peerDeliveryDigest)
+      ? { peerDeliveryDigest: trimString(input.peerDeliveryDigest) }
       : {}),
     serviceKind,
     title,
@@ -2354,6 +2362,10 @@ export function upsertMarketplaceOrderConfig(params: {
       sellerSyncError: params.input.sellerSyncError,
       sellerSyncedAt: params.input.sellerSyncedAt ?? existingOrder?.sellerSyncedAt,
       sellerAcceptedAt: params.input.sellerAcceptedAt ?? existingOrder?.sellerAcceptedAt,
+      peerNodeId: params.input.peerNodeId ?? existingOrder?.peerNodeId,
+      peerRemoteOrderId: params.input.peerRemoteOrderId ?? existingOrder?.peerRemoteOrderId,
+      peerRequestDigest: params.input.peerRequestDigest ?? existingOrder?.peerRequestDigest,
+      peerDeliveryDigest: params.input.peerDeliveryDigest ?? existingOrder?.peerDeliveryDigest,
       serviceKind: params.input.serviceKind,
       title: params.input.title,
       pricing: params.input.pricing,

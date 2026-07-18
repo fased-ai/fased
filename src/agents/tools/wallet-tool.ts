@@ -55,13 +55,7 @@ const WALLET_ACTIONS = [
 ] as const;
 const WALLET_CHAINS = ["solana"] as const;
 const WALLET_AMOUNT_FORMATS = ["base", "human"] as const;
-const WALLET_PROVIDERS = [
-  "embedded-keystore",
-  "local-socket-signer",
-  "alchemy",
-  "turnkey",
-  "privy",
-] as const;
+const WALLET_PROVIDERS = ["local-socket-signer", "alchemy", "turnkey", "wallet-standard"] as const;
 
 const WalletToolSchema = Type.Object({
   action: stringEnum(WALLET_ACTIONS),
@@ -77,8 +71,6 @@ const WalletToolSchema = Type.Object({
   walletHandle: Type.Optional(Type.String()),
   walletId: Type.Optional(Type.String()),
   walletName: Type.Optional(Type.String()),
-  approvalToken: Type.Optional(Type.String()),
-  approvalHost: Type.Optional(Type.String()),
 });
 
 type WalletSendPayload = {
@@ -98,12 +90,11 @@ function resolveCreateOrExecuteWalletSend():
   | ((params: {
       payload: WalletSendPayload;
       requestedBy?: string;
+      executionIntentId?: string;
       config: ReturnType<typeof resolveWalletRuntimeConfig>;
       runtimeConfig?: FasedAgentConfig;
       sendPath?: "policy" | "reviewed" | "automation";
       providerIdOverride?: string;
-      approvalToken?: string;
-      approvalHost?: string;
       env?: NodeJS.ProcessEnv;
     }) => Promise<WalletCreateSendResult>)
   | null {
@@ -113,12 +104,11 @@ function resolveCreateOrExecuteWalletSend():
     ? (fn as (params: {
         payload: WalletSendPayload;
         requestedBy?: string;
+        executionIntentId?: string;
         config: ReturnType<typeof resolveWalletRuntimeConfig>;
         runtimeConfig?: FasedAgentConfig;
         sendPath?: "policy" | "reviewed" | "automation";
         providerIdOverride?: string;
-        approvalToken?: string;
-        approvalHost?: string;
         env?: NodeJS.ProcessEnv;
       }) => Promise<WalletCreateSendResult>)
     : null;
@@ -146,11 +136,10 @@ function resolveRequesterAgentId(params: {
 
 function parseWalletProviderId(value: string | undefined): WalletProviderId | undefined {
   switch (value) {
-    case "embedded-keystore":
     case "local-socket-signer":
     case "alchemy":
     case "turnkey":
-    case "privy":
+    case "wallet-standard":
       return value;
     default:
       return undefined;
@@ -809,8 +798,6 @@ export function createWalletTool(opts?: {
       if (chain === "solana" && payload.program) {
         assertValidSolanaAddress(payload.program, "SPL mint address");
       }
-      const approvalToken = readStringParam(params, "approvalToken");
-      const approvalHost = readStringParam(params, "approvalHost");
       const requesterSkillId = opts?.requesterSkillId?.trim() || null;
       const permissions = readSkillWalletActionPermissions(cfg, requesterSkillId);
       await enforceWalletSkillPolicy({
@@ -854,6 +841,9 @@ export function createWalletTool(opts?: {
       }
 
       if (action === "prepare") {
+        if (!provider.prepareTx) {
+          throw new Error(`wallet provider ${provider.id} does not support prepare`);
+        }
         const result = await provider.prepareTx(payload);
         return jsonResult({ ok: true, result });
       }
@@ -868,12 +858,11 @@ export function createWalletTool(opts?: {
       const result = await createOrExecute({
         payload,
         requestedBy: requesterAgentId ?? ownerAgentId,
+        executionIntentId: `agent-wallet-tool:${_toolCallId}`,
         sendPath: "automation",
         config: effectiveWallet,
         runtimeConfig: cfg,
         providerIdOverride: walletSelection.providerId,
-        approvalToken,
-        approvalHost,
         env: process.env,
       });
       if (!result.ok) {

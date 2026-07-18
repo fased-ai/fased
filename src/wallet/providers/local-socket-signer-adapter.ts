@@ -3,27 +3,36 @@ import net from "node:net";
 import path from "node:path";
 import type { WalletChain } from "../../config/types.wallet.js";
 import {
+  LOCAL_SIGNER_NATIVE_FEE_RESERVATION_LAMPORTS_V2,
+  parseLocalSocketSignerRequest,
   parseLocalSocketSignerResponseEnvelope,
   validateLocalSocketSignerResult,
+  type LocalSocketSignerBalanceResult,
+  type LocalSocketSignerJupiterTriggerHistoryV2,
   type LocalSocketSignerRequest,
+  type LocalSocketSignerOperationV2,
+  type LocalSocketSignerPolicyV2,
 } from "../local-socket-signer-protocol.js";
-import { fetchSolanaMintInfoViaRpc } from "../solana-assets.js";
-import {
-  buildCreateAssociatedTokenAccountIdempotentInstruction,
-  buildTransferCheckedInstruction,
-  deriveAssociatedTokenAddress,
-} from "../solana-spl-transfer.js";
+import { SIGNER_PROTOCOL_V2_REQUIRED_CLIENT_FEATURES } from "../signer-protocol-v2.generated.js";
 import {
   type WalletProviderAdapter,
   type WalletProviderAddressMap,
   type WalletProviderBalanceResult,
   type WalletProviderCapabilities,
   type WalletProviderHealth,
-  type WalletProviderPrepareTxRequest,
-  type WalletProviderPrepareTxResult,
+  type WalletProviderJupiterExecutionV2,
+  type WalletProviderJupiterIntentV2,
+  type WalletProviderJupiterTriggerHistoryV2,
+  type WalletProviderJupiterReviewV2,
+  type WalletProviderSignerReviewAuthorizationBeginV2,
+  type WalletProviderSignerReviewAuthorizationFinishV2,
+  type WalletProviderSignerOperationV2,
+  type WalletProviderSignerReviewAuthorizationV2,
+  type WalletProviderSignerIntentV2,
+  type WalletProviderSignerTransactionEnvelopeV2,
+  type WalletProviderTypedTransferIntentV2,
   type WalletProviderSendTxRequest,
   type WalletProviderSendTxResult,
-  type WalletProviderSignTxResult,
   WalletProviderError,
 } from "../wallet-provider-adapter.js";
 import {
@@ -33,28 +42,107 @@ import {
 } from "../wallet-redaction.js";
 import { ensureWalletStateDir } from "../wallet-runtime-config.js";
 
+const SOLANA_TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+
 export type LocalSocketSignerHealthProbe = {
   ok: boolean;
   details?: string;
   readOnly?: boolean;
   keystoreType?: string;
   chains?: WalletChain[];
+  ready?: boolean;
+  release?: {
+    version: string;
+    commit: string;
+    buildInputDigest: string;
+    development: boolean;
+  };
+  schema?: {
+    version: number;
+    supported: number;
+    ready: boolean;
+  };
+  network?: {
+    ready: boolean;
+    wallets: Array<{
+      walletId: string;
+      configured: boolean;
+      version: number;
+      hash?: string;
+      ready: boolean;
+    }>;
+  };
+  capabilities?: {
+    protocol: { current: 2; min: number; max: number };
+    nativeFeeReservationLamports: typeof LOCAL_SIGNER_NATIVE_FEE_RESERVATION_LAMPORTS_V2;
+    intentTypes: string[];
+    operationStates: string[];
+    features: string[];
+  };
+  policies?: Array<{
+    walletId: string;
+    role: "agent" | "mining" | "vault";
+    version: number;
+    hash: string;
+  }>;
+  webAuthn?: {
+    configured: boolean;
+    rpId?: string;
+    origins?: string[];
+    credentialCount: number;
+    credentialVersion: number;
+    ready: boolean;
+  };
+  jupiter?: {
+    triggerConfigured: boolean;
+    liveEnabled?: boolean;
+  };
+  audit?: {
+    configured: boolean;
+    healthy: boolean;
+    lastError?: string;
+  };
+  state?: {
+    databaseBytes: number;
+    wallets: number;
+    operations: number;
+    operationReplayArchive?: number;
+    reviews: number;
+    triggerWorkflows: number;
+    dailyUsageBuckets: number;
+    capacities?: Record<
+      string,
+      { used: number; maximum: number; warnAt: number; warning: boolean }
+    >;
+    capacityWarnings?: string[];
+  };
 };
 
 const MAX_SIGNER_RESPONSE_BYTES = 1 << 20;
+const REQUIRED_PROTOCOL_V2_FEATURES = SIGNER_PROTOCOL_V2_REQUIRED_CLIENT_FEATURES;
 
 const SIGNER_SOCKET_TIMEOUT_MS: Record<LocalSocketSignerRequest["op"], number> = {
   health: 2_000,
+  "v2.capabilities": 2_000,
+  "v2.jupiter.trigger.history": 30_000,
+  "v2.policy.get": 5_000,
+  "v2.policy.put": 5_000,
+  "v2.policy.tighten": 5_000,
+  "v2.wallet.get": 5_000,
+  "v2.wallet.create": 10_000,
+  "v2.wallet.import": 20_000,
+  "v2.wallet.importLegacy": 30_000,
+  "v2.wallet.reencrypt": 10_000,
+  "v2.execute": 120_000,
+  "v2.review.get": 5_000,
+  "v2.review.prepare": 15_000,
+  "v2.review.execute": 120_000,
+  "v2.review.authorization.begin": 15_000,
+  "v2.review.authorization.finish": 30_000,
+  "v2.operation.get": 5_000,
+  "v2.operation.reconcile": 20_000,
   getAddresses: 10_000,
   getBalance: 15_000,
-  prepareTx: 15_000,
-  signTx: 20_000,
-  sendTx: 120_000,
-  sendSolanaInstruction: 120_000,
-  sendSolanaInstructions: 120_000,
-  custodyStatus: 5_000,
-  unlockCustody: 10_000,
-  lockCustody: 10_000,
 };
 
 export type LocalSocketSignerCallOptions = {
@@ -117,12 +205,13 @@ async function callSocket<T>(
   payload: LocalSocketSignerRequest,
   options?: LocalSocketSignerCallOptions,
 ): Promise<T> {
+  const checkedPayload = parseLocalSocketSignerRequest(payload);
   return await new Promise<T>((resolve, reject) => {
     const socket = net.createConnection(socketPath);
     let buf = "";
     let settled = false;
     const maxResponseBytes = options?.maxResponseBytes ?? MAX_SIGNER_RESPONSE_BYTES;
-    const timeoutMs = options?.timeoutMs ?? signerTimeoutFor(payload);
+    const timeoutMs = options?.timeoutMs ?? signerTimeoutFor(checkedPayload);
     const finish = (err?: unknown, value?: T) => {
       if (settled) {
         return;
@@ -141,11 +230,13 @@ async function callSocket<T>(
     };
     const timer = setTimeout(() => {
       socket.destroy();
-      finish(new Error(`local socket signer timeout after ${timeoutMs}ms for op=${payload.op}`));
+      finish(
+        new Error(`local socket signer timeout after ${timeoutMs}ms for op=${checkedPayload.op}`),
+      );
     }, timeoutMs);
     socket.setEncoding("utf8");
     socket.on("connect", () => {
-      socket.write(`${JSON.stringify(payload)}\n`);
+      socket.write(`${JSON.stringify(checkedPayload)}\n`);
     });
     socket.on("data", (chunk: string) => {
       buf += chunk;
@@ -165,8 +256,8 @@ async function callSocket<T>(
           finish(new Error(parsed.error || "local socket signer error"));
           return;
         }
-        if (!validateLocalSocketSignerResult(payload.op, parsed.result)) {
-          finish(new Error(`invalid local socket signer result for op=${payload.op}`));
+        if (!validateLocalSocketSignerResult(checkedPayload.op, parsed.result)) {
+          finish(new Error(`invalid local socket signer result for op=${checkedPayload.op}`));
           return;
         }
         finish(undefined, parsed.result as T);
@@ -195,6 +286,16 @@ export async function probeLocalSocketSignerHealth(
       readOnly?: boolean;
       keystoreType?: string;
       chains?: WalletChain[];
+      ready?: boolean;
+      release?: LocalSocketSignerHealthProbe["release"];
+      schema?: LocalSocketSignerHealthProbe["schema"];
+      network?: LocalSocketSignerHealthProbe["network"];
+      capabilities?: LocalSocketSignerHealthProbe["capabilities"];
+      policies?: LocalSocketSignerHealthProbe["policies"];
+      webAuthn?: LocalSocketSignerHealthProbe["webAuthn"];
+      jupiter?: LocalSocketSignerHealthProbe["jupiter"];
+      audit?: LocalSocketSignerHealthProbe["audit"];
+      state?: LocalSocketSignerHealthProbe["state"];
     }>(socketPath, { op: "health" });
     return {
       ok: true,
@@ -202,6 +303,16 @@ export async function probeLocalSocketSignerHealth(
       readOnly: result?.readOnly,
       keystoreType: result?.keystoreType,
       chains: Array.isArray(result?.chains) ? result.chains : undefined,
+      ready: result?.ready,
+      release: result?.release,
+      schema: result?.schema,
+      network: result?.network,
+      capabilities: result?.capabilities,
+      policies: result?.policies,
+      webAuthn: result?.webAuthn,
+      jupiter: result?.jupiter,
+      audit: result?.audit,
+      state: result?.state,
     };
   } catch (err) {
     return {
@@ -211,17 +322,60 @@ export async function probeLocalSocketSignerHealth(
   }
 }
 
+export async function requireLocalSocketSignerProtocolV2(
+  socketPath: string,
+  intentType?: string,
+): Promise<void> {
+  const result = await callSocket<{
+    ready?: boolean;
+    capabilities?: LocalSocketSignerHealthProbe["capabilities"];
+  }>(socketPath, { op: "v2.capabilities" });
+  const capabilities = result.capabilities;
+  const protocol = capabilities?.protocol;
+  const missingFeatures = REQUIRED_PROTOCOL_V2_FEATURES.filter(
+    (feature) => !capabilities?.features.includes(feature),
+  );
+  const intentReviewFeatures =
+    intentType === "solana.vaultBondAction"
+      ? ["reviewedVaultBondActions", "signerOwnedStateRecheck", "durableReviewAuthorization"]
+      : intentType === "federation.bondChallenge"
+        ? ["reviewedFederationBondChallenges", "durableReviewAuthorization"]
+        : [];
+  const missingIntentFeatures = intentReviewFeatures.filter(
+    (feature) => !capabilities?.features.includes(feature),
+  );
+  if (
+    result.ready !== true ||
+    !protocol ||
+    protocol.current !== 2 ||
+    protocol.min > 2 ||
+    protocol.max < 2 ||
+    capabilities.nativeFeeReservationLamports !== LOCAL_SIGNER_NATIVE_FEE_RESERVATION_LAMPORTS_V2 ||
+    missingFeatures.length > 0 ||
+    missingIntentFeatures.length > 0 ||
+    (intentType && !capabilities?.intentTypes.includes(intentType))
+  ) {
+    throw new WalletProviderError({
+      code: "wallet_provider_unavailable",
+      message: `local-socket-signer protocol-v2 capability negotiation failed${missingFeatures.length > 0 ? `; missing ${missingFeatures.join(",")}` : ""}${missingIntentFeatures.length > 0 ? `; missing intent features ${missingIntentFeatures.join(",")}` : ""}${intentType && !capabilities?.intentTypes.includes(intentType) ? `; unsupported intent ${intentType}` : ""}`,
+    });
+  }
+}
+
 export class LocalSocketSignerAdapter implements WalletProviderAdapter {
   readonly id = "local-socket-signer" as const;
   readonly displayName = "Local Socket Signer";
   readonly capabilities: WalletProviderCapabilities = {
     custodyModel: "self-hosted",
     supportsCreateWallet: false,
-    supportsPrepare: true,
+    supportsPrepare: false,
     supportsSend: true,
     supportsRotateKeys: false,
     supportsResetKeys: false,
     supportsPasskeyGate: false,
+    signingLocation: "server",
+    supportsSignTransaction: false,
+    supportsSignMessage: false,
     supportedExecutionModes: ["manual", "autonomous"],
     supportedChains: ["solana"],
   };
@@ -229,7 +383,6 @@ export class LocalSocketSignerAdapter implements WalletProviderAdapter {
   constructor(
     private readonly socketPath: string,
     private readonly options?: {
-      backendSocketPath?: string;
       rpcUrl?: string;
       scopedWalletId?: string;
     },
@@ -237,6 +390,10 @@ export class LocalSocketSignerAdapter implements WalletProviderAdapter {
 
   supportsChain(chain: WalletChain): boolean {
     return this.capabilities.supportedChains.includes(chain);
+  }
+
+  private async requireProtocolV2(intentType?: string): Promise<void> {
+    await requireLocalSocketSignerProtocolV2(this.socketPath, intentType);
   }
 
   async health(): Promise<WalletProviderHealth> {
@@ -250,15 +407,22 @@ export class LocalSocketSignerAdapter implements WalletProviderAdapter {
         provider: this.id,
         configured: true,
         checkedAt: new Date().toISOString(),
-        details:
-          details?.details ??
-          [
-            details?.readOnly ? "read-only" : "read-write",
-            details?.keystoreType ? `keystore=${details.keystoreType}` : "",
-            Array.isArray(details?.chains) ? `chains=${details.chains.join(",")}` : "",
-          ]
-            .filter(Boolean)
-            .join(" "),
+        details: [
+          details?.details ?? "",
+          ...(!details?.details
+            ? [
+                details?.readOnly ? "read-only" : "read-write",
+                details?.keystoreType ? `keystore=${details.keystoreType}` : "",
+                Array.isArray(details?.chains) ? `chains=${details.chains.join(",")}` : "",
+              ]
+            : []),
+          details?.jupiter
+            ? `jupiter-trigger=${details.jupiter.triggerConfigured ? "configured" : "not-configured"} jupiter-live=${details.jupiter.liveEnabled === true ? "enabled" : "preview-only"}`
+            : "",
+          ...(details?.state?.capacityWarnings ?? []),
+        ]
+          .filter(Boolean)
+          .join(" "),
       };
     } catch (err) {
       return {
@@ -273,133 +437,451 @@ export class LocalSocketSignerAdapter implements WalletProviderAdapter {
 
   async getAddresses(options?: { walletId?: string }): Promise<WalletProviderAddressMap> {
     const walletId = options?.walletId?.trim() || this.options?.scopedWalletId?.trim();
-    return await callSocket<WalletProviderAddressMap>(this.socketPath, {
-      op: "getAddresses",
-      ...(walletId ? { walletId } : {}),
+    if (!walletId) {
+      throw new WalletProviderError({
+        code: "wallet_provider_invalid_config",
+        message: "local-socket-signer requires an explicit walletId",
+      });
+    }
+    await this.requireProtocolV2();
+    const wallet = await callSocket<{ publicKey: string }>(this.socketPath, {
+      op: "v2.wallet.get",
+      walletId,
     });
+    return { solana: wallet.publicKey };
+  }
+
+  async getSignerPolicy(walletIdRaw: string): Promise<LocalSocketSignerPolicyV2> {
+    const walletId = walletIdRaw.trim();
+    if (!walletId) {
+      throw new WalletProviderError({
+        code: "wallet_provider_invalid_config",
+        message: "local-socket-signer policy lookup requires an explicit walletId",
+      });
+    }
+    assertSecureLocalSignerSocket(this.socketPath);
+    await this.requireProtocolV2();
+    return await callSocket<LocalSocketSignerPolicyV2>(this.socketPath, {
+      op: "v2.policy.get",
+      walletId,
+    });
+  }
+
+  async tightenSignerPolicy(params: {
+    walletId: string;
+    expectedVersion: number;
+    policy: Omit<LocalSocketSignerPolicyV2, "version" | "hash"> & {
+      version?: number;
+      hash?: string;
+    };
+  }): Promise<LocalSocketSignerPolicyV2> {
+    const walletId = params.walletId.trim();
+    if (!walletId || !Number.isSafeInteger(params.expectedVersion) || params.expectedVersion < 1) {
+      throw new WalletProviderError({
+        code: "wallet_provider_invalid_config",
+        message:
+          "local-socket-signer policy tightening requires a walletId and positive expected version",
+      });
+    }
+    assertSecureLocalSignerSocket(this.socketPath);
+    await this.requireProtocolV2();
+    const acknowledged = await callSocket<LocalSocketSignerPolicyV2>(this.socketPath, {
+      op: "v2.policy.tighten",
+      walletId,
+      request: {
+        expectedVersion: params.expectedVersion,
+        policy: params.policy,
+      },
+    });
+    if (
+      acknowledged.walletId !== walletId ||
+      acknowledged.role !== params.policy.role ||
+      acknowledged.version !== params.expectedVersion + 1
+    ) {
+      throw new WalletProviderError({
+        code: "wallet_provider_unavailable",
+        message:
+          "local-socket-signer did not acknowledge the exact next policy version and wallet role",
+        retryable: false,
+      });
+    }
+    const durable = await callSocket<LocalSocketSignerPolicyV2>(this.socketPath, {
+      op: "v2.policy.get",
+      walletId,
+    });
+    if (JSON.stringify(durable) !== JSON.stringify(acknowledged)) {
+      throw new WalletProviderError({
+        code: "wallet_provider_unavailable",
+        message: "local-socket-signer policy acknowledgement does not match durable signer state",
+        retryable: false,
+      });
+    }
+    return acknowledged;
   }
 
   async getBalance(
     chain: WalletChain,
     options?: { walletId?: string },
   ): Promise<WalletProviderBalanceResult> {
+    if (chain !== "solana") {
+      throw new WalletProviderError({
+        code: "wallet_provider_unsupported_chain",
+        message: "local-socket-signer supports Solana only",
+      });
+    }
     const walletId = options?.walletId?.trim() || this.options?.scopedWalletId?.trim();
-    return await callSocket<WalletProviderBalanceResult>(this.socketPath, {
+    if (!walletId) {
+      throw new WalletProviderError({
+        code: "wallet_provider_invalid_config",
+        message: "local-socket-signer balance lookup requires an explicit walletId",
+      });
+    }
+    assertSecureLocalSignerSocket(this.socketPath);
+    await this.requireProtocolV2();
+    return await callSocket<LocalSocketSignerBalanceResult>(this.socketPath, {
       op: "getBalance",
       chain,
-      ...(walletId ? { walletId } : {}),
-    });
-  }
-
-  async prepareTx(request: WalletProviderPrepareTxRequest): Promise<WalletProviderPrepareTxResult> {
-    return await callSocket<WalletProviderPrepareTxResult>(this.socketPath, {
-      op: "prepareTx",
-      request,
+      walletId,
     });
   }
 
   async sendTx(request: WalletProviderSendTxRequest): Promise<WalletProviderSendTxResult> {
     assertSecureLocalSignerSocket(this.socketPath);
-    if (request.chain === "solana" && request.program?.trim()) {
-      return await this.sendSplTokenTx(request);
+    if (request.chain !== "solana") {
+      throw new WalletProviderError({
+        code: "wallet_provider_unsupported_chain",
+        message: "local-socket-signer supports Solana only",
+      });
     }
-    return await callSocket<WalletProviderSendTxResult>(this.socketPath, { op: "sendTx", request });
+    const untypedSerializedTransaction = (
+      request as WalletProviderSendTxRequest & { serializedTxBase64?: unknown }
+    ).serializedTxBase64;
+    if (typeof untypedSerializedTransaction === "string" && untypedSerializedTransaction.trim()) {
+      throw new WalletProviderError({
+        code: "wallet_provider_invalid_config",
+        message: "local-socket-signer accepts typed SOL/SPL intents, not serialized transactions",
+      });
+    }
+    const memo = request.memo?.trim();
+    if (memo && !/^fased:a2a-(?:payment|refund):v1:[0-9a-f]{64}$/u.test(memo)) {
+      throw new WalletProviderError({
+        code: "wallet_provider_invalid_config",
+        message: "local-socket-signer accepts only typed Fased A2A payment or refund memos",
+      });
+    }
+    return await this.executeTypedTransfer(request);
   }
 
-  async signTx(request: WalletProviderSendTxRequest): Promise<WalletProviderSignTxResult> {
+  async prepareJupiterReview(request: {
+    walletId: string;
+    requestId: string;
+    mode: "autonomous" | "reviewed";
+    intent: WalletProviderJupiterIntentV2;
+    transaction?: WalletProviderSignerTransactionEnvelopeV2;
+  }): Promise<WalletProviderJupiterReviewV2> {
+    return await this.prepareSignerReview(request);
+  }
+
+  async getSignerReview(request: {
+    walletId: string;
+    requestId: string;
+  }): Promise<WalletProviderJupiterReviewV2> {
     assertSecureLocalSignerSocket(this.socketPath);
-    return await callSocket<WalletProviderSignTxResult>(this.socketPath, { op: "signTx", request });
+    await this.requireProtocolV2();
+    return await callSocket<WalletProviderJupiterReviewV2>(this.socketPath, {
+      op: "v2.review.get",
+      walletId: request.walletId,
+      request: { requestId: request.requestId },
+    });
   }
 
-  private async sendSplTokenTx(
+  async prepareSignerReview(request: {
+    walletId: string;
+    requestId: string;
+    mode: "autonomous" | "reviewed";
+    intent: WalletProviderSignerIntentV2;
+    transaction?: WalletProviderSignerTransactionEnvelopeV2;
+  }): Promise<WalletProviderJupiterReviewV2> {
+    assertSecureLocalSignerSocket(this.socketPath);
+    await this.requireProtocolV2(request.intent.type);
+    const policy = await callSocket<LocalSocketSignerPolicyV2>(this.socketPath, {
+      op: "v2.policy.get",
+      walletId: request.walletId,
+    });
+    return await callSocket<WalletProviderJupiterReviewV2>(this.socketPath, {
+      op: "v2.review.prepare",
+      walletId: request.walletId,
+      request: {
+        requestId: request.requestId,
+        policyHash: policy.hash,
+        mode: request.mode,
+        intent: request.intent,
+        ...(request.transaction ? { transaction: request.transaction } : {}),
+      },
+    });
+  }
+
+  async executeJupiterReview(request: {
+    walletId: string;
+    requestId: string;
+    authorization?: WalletProviderSignerReviewAuthorizationV2;
+  }): Promise<WalletProviderJupiterExecutionV2> {
+    return await this.executeSignerReview(request);
+  }
+
+  async executeSignerIntent(request: {
+    walletId: string;
+    requestId: string;
+    intent: WalletProviderSignerIntentV2;
+  }): Promise<WalletProviderSignerOperationV2> {
+    assertSecureLocalSignerSocket(this.socketPath);
+    await this.requireProtocolV2(request.intent.type);
+    const policy = await callSocket<LocalSocketSignerPolicyV2>(this.socketPath, {
+      op: "v2.policy.get",
+      walletId: request.walletId,
+    });
+    return await callSocket<WalletProviderSignerOperationV2>(this.socketPath, {
+      op: "v2.execute",
+      walletId: request.walletId,
+      request: {
+        requestId: request.requestId,
+        policyHash: policy.hash,
+        intent: request.intent,
+      },
+    });
+  }
+
+  async listJupiterTriggerOrders(request: {
+    walletId: string;
+    state?: "active" | "past";
+  }): Promise<WalletProviderJupiterTriggerHistoryV2> {
+    assertSecureLocalSignerSocket(this.socketPath);
+    await this.requireProtocolV2();
+    const history = await callSocket<LocalSocketSignerJupiterTriggerHistoryV2>(this.socketPath, {
+      op: "v2.jupiter.trigger.history",
+      walletId: request.walletId,
+    });
+    const orders = request.state
+      ? history.orders.filter((order) =>
+          request.state === "active" ? order.orderState === "open" : order.orderState !== "open",
+        )
+      : history.orders;
+    return { orders };
+  }
+
+  async prepareTypedTransferReview(request: {
+    walletId: string;
+    requestId: string;
+    destination: string;
+    amount: string;
+    mint?: string;
+    tokenProgram?: string;
+    memo?: string;
+  }): Promise<WalletProviderJupiterReviewV2> {
+    assertSecureLocalSignerSocket(this.socketPath);
+    const mint = request.mint?.trim();
+    const memo = request.memo?.trim();
+    if (memo && !/^fased:a2a-(?:payment|refund):v1:[0-9a-f]{64}$/u.test(memo)) {
+      throw new WalletProviderError({
+        code: "wallet_provider_invalid_config",
+        message: "local-socket-signer accepts only typed Fased A2A payment or refund memos",
+      });
+    }
+    let intent: WalletProviderTypedTransferIntentV2;
+    if (mint) {
+      intent = {
+        type: "solana.splTransferChecked",
+        tokenProgram: request.tokenProgram?.trim() || SOLANA_TOKEN_PROGRAM_ID,
+        mint,
+        destination: request.destination,
+        amount: request.amount,
+        ...(memo ? { memo } : {}),
+      };
+    } else {
+      intent = {
+        type: "solana.nativeTransfer",
+        destination: request.destination,
+        lamports: request.amount,
+        ...(memo ? { memo } : {}),
+      };
+    }
+    await this.requireProtocolV2(intent.type);
+    const policy = await callSocket<LocalSocketSignerPolicyV2>(this.socketPath, {
+      op: "v2.policy.get",
+      walletId: request.walletId,
+    });
+    return await callSocket<WalletProviderJupiterReviewV2>(this.socketPath, {
+      op: "v2.review.prepare",
+      walletId: request.walletId,
+      request: {
+        requestId: request.requestId,
+        policyHash: policy.hash,
+        mode: "reviewed",
+        intent,
+      },
+    });
+  }
+
+  async executeSignerReview(request: {
+    walletId: string;
+    requestId: string;
+    authorization?: WalletProviderSignerReviewAuthorizationV2;
+  }): Promise<WalletProviderJupiterExecutionV2> {
+    assertSecureLocalSignerSocket(this.socketPath);
+    await this.requireProtocolV2();
+    return await callSocket<WalletProviderJupiterExecutionV2>(this.socketPath, {
+      op: "v2.review.execute",
+      walletId: request.walletId,
+      request: {
+        requestId: request.requestId,
+        ...(request.authorization ? { authorization: request.authorization } : {}),
+      },
+    });
+  }
+
+  async beginJupiterReviewAuthorization(request: {
+    walletId: string;
+    requestId: string;
+  }): Promise<WalletProviderSignerReviewAuthorizationBeginV2> {
+    return await this.beginSignerReviewAuthorization(request);
+  }
+
+  async beginSignerReviewAuthorization(request: {
+    walletId: string;
+    requestId: string;
+  }): Promise<WalletProviderSignerReviewAuthorizationBeginV2> {
+    assertSecureLocalSignerSocket(this.socketPath);
+    await this.requireProtocolV2();
+    return await callSocket<WalletProviderSignerReviewAuthorizationBeginV2>(this.socketPath, {
+      op: "v2.review.authorization.begin",
+      walletId: request.walletId,
+      request: { requestId: request.requestId },
+    });
+  }
+
+  async finishJupiterReviewAuthorization(request: {
+    walletId: string;
+    challengeId: string;
+    credential: unknown;
+  }): Promise<WalletProviderSignerReviewAuthorizationFinishV2> {
+    return await this.finishSignerReviewAuthorization(request);
+  }
+
+  async getSignerOperation(request: {
+    walletId: string;
+    requestId: string;
+  }): Promise<WalletProviderSignerOperationV2> {
+    assertSecureLocalSignerSocket(this.socketPath);
+    await this.requireProtocolV2();
+    return await callSocket<WalletProviderSignerOperationV2>(this.socketPath, {
+      op: "v2.operation.get",
+      walletId: request.walletId,
+      request: { requestId: request.requestId },
+    });
+  }
+
+  async reconcileSignerOperation(request: {
+    walletId: string;
+    requestId: string;
+  }): Promise<WalletProviderSignerOperationV2> {
+    assertSecureLocalSignerSocket(this.socketPath);
+    await this.requireProtocolV2();
+    return await callSocket<WalletProviderSignerOperationV2>(this.socketPath, {
+      op: "v2.operation.reconcile",
+      walletId: request.walletId,
+      request: { requestId: request.requestId },
+    });
+  }
+
+  async finishSignerReviewAuthorization(request: {
+    walletId: string;
+    challengeId: string;
+    credential: unknown;
+  }): Promise<WalletProviderSignerReviewAuthorizationFinishV2> {
+    assertSecureLocalSignerSocket(this.socketPath);
+    await this.requireProtocolV2();
+    return await callSocket<WalletProviderSignerReviewAuthorizationFinishV2>(this.socketPath, {
+      op: "v2.review.authorization.finish",
+      walletId: request.walletId,
+      request: { challengeId: request.challengeId, credential: request.credential },
+    });
+  }
+
+  private async executeTypedTransfer(
     request: WalletProviderSendTxRequest,
   ): Promise<WalletProviderSendTxResult> {
+    const walletId = request.walletId?.trim() || this.options?.scopedWalletId?.trim();
+    const requestId = request.requestId?.trim();
+    const destination = request.to?.trim();
+    const amount = request.amount?.trim();
+    if (!walletId || !requestId || !destination || !amount) {
+      throw new WalletProviderError({
+        code: "wallet_provider_invalid_config",
+        message:
+          "local-socket-signer typed send requires walletId, stable requestId, destination, and raw-unit amount",
+      });
+    }
+    const intentType = request.program?.trim()
+      ? "solana.splTransferChecked"
+      : "solana.nativeTransfer";
+    await this.requireProtocolV2(intentType);
+    // Resolve every dependency before execution. No fallible signer/RPC call may run after a
+    // confirmed broadcast, because turning success into an error could induce a duplicate send.
+    const wallet = await callSocket<{ publicKey: string }>(this.socketPath, {
+      op: "v2.wallet.get",
+      walletId,
+    });
+    const policy = await callSocket<LocalSocketSignerPolicyV2>(this.socketPath, {
+      op: "v2.policy.get",
+      walletId,
+    });
     const mint = request.program?.trim();
-    const destinationOwner = request.to?.trim();
-    const amountRaw = request.amount?.trim();
-    if (!mint || !destinationOwner || !amountRaw) {
-      throw new WalletProviderError({
-        code: "wallet_provider_invalid_config",
-        message: "local-socket-signer SPL send requires mint, destination, and amount",
-      });
+    let intent: Extract<LocalSocketSignerRequest, { op: "v2.execute" }>["request"]["intent"];
+    if (mint) {
+      intent = {
+        type: "solana.splTransferChecked",
+        destination,
+        mint,
+        amount,
+        ...(request.memo?.trim() ? { memo: request.memo.trim() } : {}),
+      };
+    } else {
+      intent = {
+        type: "solana.nativeTransfer",
+        destination,
+        lamports: amount,
+        ...(request.memo?.trim() ? { memo: request.memo.trim() } : {}),
+      };
     }
-    const rpcUrl = this.options?.rpcUrl?.trim();
-    if (!rpcUrl) {
-      throw new WalletProviderError({
-        code: "wallet_provider_invalid_config",
-        message: "local-socket-signer SPL send requires a Solana RPC URL",
-      });
-    }
-    const walletId = this.options?.scopedWalletId?.trim();
-    const addresses = await this.getAddresses(walletId ? { walletId } : undefined);
-    const authority = addresses.solana?.trim();
-    if (!authority) {
-      throw new WalletProviderError({
-        code: "wallet_provider_unavailable",
-        message: "local-socket-signer wallet has no Solana address",
-      });
-    }
-    const mintInfo = await fetchSolanaMintInfoViaRpc({ rpcUrl, mint });
-    if (!mintInfo) {
-      throw new WalletProviderError({
-        code: "wallet_provider_unavailable",
-        message: "failed to resolve SPL mint metadata from Solana RPC",
-      });
-    }
-    const sourceTokenAccount = await deriveAssociatedTokenAddress({
-      owner: authority,
-      mint,
-      tokenProgramId: mintInfo.tokenProgramId,
-    });
-    const destinationTokenAccount = await deriveAssociatedTokenAddress({
-      owner: destinationOwner,
-      mint,
-      tokenProgramId: mintInfo.tokenProgramId,
-    });
-    const createAta = await buildCreateAssociatedTokenAccountIdempotentInstruction({
-      payer: authority,
-      owner: destinationOwner,
-      mint,
-      tokenProgramId: mintInfo.tokenProgramId,
-    });
-    const transfer = buildTransferCheckedInstruction({
-      sourceTokenAccount,
-      mint,
-      destinationTokenAccount,
-      authority,
-      amountRaw,
-      decimals: mintInfo.decimals,
-      tokenProgramId: mintInfo.tokenProgramId,
-    });
-    const preTx = await this.sendSolanaInstruction({
+    const operation = await callSocket<LocalSocketSignerOperationV2>(this.socketPath, {
+      op: "v2.execute",
       walletId,
-      ...createAta,
+      request: { requestId, policyHash: policy.hash, intent },
     });
-    const sent = await this.sendSolanaInstruction({
-      walletId,
-      ...transfer,
-    });
+    if (operation.state !== "confirmed" || !operation.signature) {
+      const ambiguous = operation.state === "broadcast" || operation.state === "unknown";
+      throw new WalletProviderError({
+        code: ambiguous ? "wallet_provider_ambiguous" : "wallet_provider_unavailable",
+        message: ambiguous
+          ? `signer operation ${requestId} has an ambiguous ${operation.state} result; reconcile it before any new attempt`
+          : `signer operation ${requestId} ended in state=${operation.state}${operation.error ? `: ${operation.error}` : ""}`,
+        retryable: false,
+      });
+    }
     return {
-      ...sent,
+      ok: true,
+      chain: "solana",
+      txHash: operation.signature,
+      signer: wallet.publicKey,
       metadata: {
-        ...sent.metadata,
         provider: this.id,
-        associatedTokenTxHash: preTx.txHash,
+        requestId: operation.requestId,
+        intentDigest: operation.intentDigest,
+        transactionDigest: operation.transactionDigest,
+        policyHash: operation.policyHash,
+        operationState: operation.state,
       },
     };
-  }
-
-  private async sendSolanaInstruction(request: {
-    walletId?: string;
-    programId: string;
-    dataBase64: string;
-    keys: Array<{ pubkey: string; isSigner: boolean; isWritable: boolean }>;
-  }): Promise<WalletProviderSendTxResult> {
-    assertSecureLocalSignerSocket(this.socketPath);
-    return await callSocket<WalletProviderSendTxResult>(this.socketPath, {
-      op: "sendSolanaInstruction",
-      request,
-    });
   }
 }
 

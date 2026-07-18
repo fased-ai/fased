@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import os from "node:os";
@@ -6,6 +7,7 @@ import {
   type FasedAgentConfig,
   loadConfig,
   readConfigFileSnapshotForWrite,
+  updateConfigFile,
   writeConfigFile,
 } from "../config/config.js";
 import {
@@ -40,18 +42,47 @@ import {
   validateMarketplaceDeliveryTargetConfig,
 } from "../federation/offers.js";
 import {
+  authorizeFederationPeerRequestV2,
+  buildSignedFederationPeerRequest,
+  checkFederationPeerIngressBudget,
+  FEDERATION_MARKETPLACE_DELIVERY_PATH,
+  FEDERATION_MARKETPLACE_ORDER_PATH,
+  isTrustedFederationPeerUrl,
+  reserveAuthorizedFederationPeerRequest,
+  type FederationPeerAuthorizedRequest,
+  type FederationPeerVerifyDeps,
+} from "../federation/peer-auth-v2.js";
+import {
   resolveAgentPublicOrigin,
   resolveFederationBaseUrl,
   resolveFederationHandle,
 } from "../federation/runtime.js";
+import type { LookupFn } from "../infra/net/ssrf.js";
+import { readResponseWithLimit } from "../media/read-response-with-limit.js";
 
 export type FederationProxyOptions = {
   baseUrl?: string;
   apiToken?: string;
   maxBodyBytes?: number;
+  peerAuthClientIp?: string;
+  peerAuthDeps?: FederationPeerVerifyDeps;
+  marketplaceDeliverySsrfLookupFn?: LookupFn;
 };
 
 type JsonObject = Record<string, unknown>;
+type LocalMarketplaceOrder = ReturnType<typeof listLocalMarketplaceOrders>[number];
+type FederationReplayRejection = Extract<
+  Awaited<ReturnType<typeof reserveAuthorizedFederationPeerRequest>>,
+  { ok: false }
+>;
+type MarketplaceOrderTransactionResult =
+  | { kind: "rejected"; status: number; reason: string }
+  | { kind: "auth-rejected"; rejection: FederationReplayRejection }
+  | { kind: "accepted"; created: boolean; order: LocalMarketplaceOrder | undefined };
+type MarketplaceDeliveryTransactionResult =
+  | { kind: "rejected"; status: number; reason: string }
+  | { kind: "auth-rejected"; rejection: FederationReplayRejection }
+  | { kind: "accepted"; delivery: LocalMarketplaceOrder | undefined };
 
 const OPERATOR_ECONOMY_FEE_LANES = [
   "marketplace",
@@ -62,6 +93,8 @@ const OPERATOR_ECONOMY_FEE_LANES = [
 
 const DEFAULT_OPERATOR_ECONOMY_DISABLED_REASON =
   "fee collection is disabled until the multi-day measurement history threshold is met";
+const FEDERATION_PEER_RESPONSE_MAX_BYTES = 512 * 1024;
+const FEDERATION_PEER_REQUEST_TIMEOUT_MS = 10_000;
 
 function pathLooksSimulated(candidate: string | undefined): boolean {
   return typeof candidate === "string" && /operator-economy-simulated|simulated/u.test(candidate);
@@ -145,6 +178,20 @@ function sendJson(res: ServerResponse, status: number, body: unknown) {
   res.statusCode = status;
   res.setHeader("Content-Type", "application/json; charset=utf-8");
   res.end(JSON.stringify(body));
+}
+
+function sendPeerAuthRejection(
+  res: ServerResponse,
+  result: Exclude<Awaited<ReturnType<typeof authorizeFederationPeerRequestV2>>, { ok: true }>,
+): void {
+  if (result.retryAfterMs && result.retryAfterMs > 0) {
+    res.setHeader("Retry-After", String(Math.max(1, Math.ceil(result.retryAfterMs / 1000))));
+  }
+  sendJson(res, result.statusCode, {
+    status: "rejected",
+    code: result.code,
+    reason: result.reason,
+  });
 }
 
 function asObject(value: unknown): JsonObject | null {
@@ -269,6 +316,23 @@ function safeMarketplaceOrderIdSegment(value: string): string {
     .replace(/[._:]+/gu, "-")
     .replace(/^-+|-+$/gu, "")
     .slice(0, 96);
+}
+
+function collisionResistantInboundOrderId(params: {
+  kind: "order" | "delivery";
+  senderHandle: string;
+  remoteOrderId: string;
+}): string {
+  const senderHandle = normalizeComparableValue(params.senderHandle);
+  const remoteOrderId = params.remoteOrderId.trim();
+  const senderSegment = safeMarketplaceOrderIdSegment(senderHandle).slice(0, 40) || "federation";
+  const orderSegment = safeMarketplaceOrderIdSegment(remoteOrderId).slice(0, 40) || "order";
+  const digest = crypto
+    .createHash("sha256")
+    .update(JSON.stringify([params.kind, senderHandle, remoteOrderId]), "utf8")
+    .digest("hex")
+    .slice(0, 32);
+  return `inbound-${params.kind}-${senderSegment}-${orderSegment}-${digest}`;
 }
 
 function toPositiveInteger(value: unknown): number {
@@ -662,16 +726,12 @@ async function readJsonBody(
   });
 }
 
-function resolveForwardedAuthorization(
-  req: IncomingMessage,
-  apiToken?: string,
-): string | undefined {
-  const rawHeader =
-    typeof req.headers.authorization === "string" ? req.headers.authorization.trim() : "";
-  if (rawHeader) {
-    return rawHeader;
+function resolveFederationAuthorization(apiToken?: string): string | undefined {
+  const token = apiToken?.trim() ?? "";
+  if (!token) {
+    return undefined;
   }
-  return apiToken?.trim() ? `Bearer ${apiToken.trim()}` : undefined;
+  return token.toLowerCase().startsWith("bearer ") ? token : `Bearer ${token}`;
 }
 
 function resolveLocalOffersOrigin(req: IncomingMessage): string {
@@ -1087,6 +1147,26 @@ function normalizeComparableValue(value: string | undefined): string {
     .toLowerCase();
 }
 
+function findCorrelatedMarketplaceBuyerOrder(params: {
+  config: FasedAgentConfig;
+  sellerHandle: string;
+  sellerOrderId: string;
+  serviceKind: string;
+}) {
+  const sellerHandle = normalizeComparableValue(params.sellerHandle);
+  const sellerOrderId = params.sellerOrderId.trim();
+  const serviceKind = normalizeComparableValue(params.serviceKind);
+  return (
+    listLocalMarketplaceOrders(params.config).find(
+      (entry) =>
+        entry.source === "local" &&
+        normalizeComparableValue(entry.order.sellerHandle) === sellerHandle &&
+        entry.order.sellerOrderId?.trim() === sellerOrderId &&
+        normalizeComparableValue(entry.order.serviceKind) === serviceKind,
+    ) ?? null
+  );
+}
+
 function pricingMatches(
   expected: MarketplaceOrderInput["pricing"],
   actual: MarketplaceOrderInput["pricing"],
@@ -1167,6 +1247,7 @@ function validateSellerMarketplaceOrderIntake(params: {
   origin: string;
   localHandle: string;
   senderHandle: string;
+  peerBondTier?: FederationPeerAuthorizedRequest["bondTier"];
   order: MarketplaceOrderInput;
 }):
   | { ok: true; value: { offer: ReturnType<typeof listLocalFederationOffers>[number] } }
@@ -1181,6 +1262,13 @@ function validateSellerMarketplaceOrderIntake(params: {
   }
   if (normalizeComparableValue(buyerHandle) === normalizeComparableValue(params.localHandle)) {
     return { ok: false, status: 409, reason: "seller cannot intake an order from itself" };
+  }
+  const requestedBuyer = params.order.buyerHandle?.trim() || "";
+  if (
+    requestedBuyer &&
+    normalizeComparableValue(requestedBuyer) !== normalizeComparableValue(params.senderHandle)
+  ) {
+    return { ok: false, status: 409, reason: "order buyerHandle does not match signed sender" };
   }
   const requestedSeller = params.order.sellerHandle?.trim() || "";
   if (
@@ -1201,6 +1289,51 @@ function validateSellerMarketplaceOrderIntake(params: {
   });
   if (!localOffer) {
     return { ok: false, status: 404, reason: "local seller offer not found" };
+  }
+  const requiredTier = normalizeComparableValue(
+    localOffer.offer.requiredTrustOrBondTier || "verified",
+  );
+  const peerTier = params.peerBondTier ?? "none";
+  const peerTierRank = peerTier === "operator-bond" ? 2 : peerTier === "basic-bond" ? 1 : 0;
+  const requiredTierRank =
+    requiredTier === "verified" || requiredTier === "none"
+      ? 0
+      : requiredTier === "basic-bond"
+        ? 1
+        : requiredTier === "operator-bond"
+          ? 2
+          : -1;
+  if (requiredTierRank < 0) {
+    return {
+      ok: false,
+      status: 409,
+      reason: `local seller offer requires unsupported trust tier ${localOffer.offer.requiredTrustOrBondTier}`,
+    };
+  }
+  if (peerTierRank < requiredTierRank) {
+    return {
+      ok: false,
+      status: 403,
+      reason: `seller offer requires ${requiredTier}; verified peer has ${peerTier}`,
+    };
+  }
+  if (
+    localOffer.offer.automation?.allowed === true &&
+    localOffer.offer.automation.humanApprovalRequired !== true
+  ) {
+    return {
+      ok: false,
+      status: 409,
+      reason:
+        "seller offer requests unreviewed automation, which is unavailable until its policy is enforced",
+    };
+  }
+  if (!localOffer.offer.paymentDefaults?.payee.address.trim()) {
+    return {
+      ok: false,
+      status: 409,
+      reason: "local seller offer has no wallet-backed payment destination",
+    };
   }
   if (normalizeComparableValue(localOffer.offer.visibility) === "private") {
     return { ok: false, status: 403, reason: "local seller offer is private" };
@@ -1239,83 +1372,97 @@ function buildSellerMarketplaceOrderInput(params: {
   localHandle: string;
   buyerHandle: string;
   inboundOrderId: string;
+  peerNodeId: string;
+  peerRemoteOrderId: string;
+  peerRequestDigest: string;
   offer: ReturnType<typeof listLocalFederationOffers>[number];
 }): MarketplaceOrderInput {
   const now = new Date().toISOString();
-  const delivery = { ...params.order.delivery };
-  delete delivery.target;
-  const pricing = params.offer.offer.pricing ?? params.order.pricing;
-  const currency = pricing?.currency || params.order.paymentIntent?.currency || "USDC";
+  const pricing = params.offer.offer.pricing;
+  const paymentDefaults = params.offer.offer.paymentDefaults;
+  const currency = pricing.currency || paymentDefaults?.currency || "USDC";
+  const paymentChain = paymentDefaults?.chain ?? paymentDefaults?.payee?.chain;
   return {
-    ...params.order,
     id: params.inboundOrderId,
     source: "federation",
-    status:
-      params.order.status === "delivered"
-        ? "delivered"
-        : params.order.paymentIntent?.status === "verified" ||
-            params.order.settlement?.status === "settled" ||
-            params.order.settlement?.status === "verified"
-          ? "running"
-          : "accepted",
+    // A verified peer identity authenticates who made the assertion; it does
+    // not verify payment or delivery. Only local chain verification may move
+    // this seller-side order beyond accepted/requires_payment.
+    status: "accepted",
     offerId: params.offer.offer.id,
+    ...(params.order.requestId?.trim() ? { requestId: params.order.requestId.trim() } : {}),
     buyerHandle: params.buyerHandle,
     sellerHandle: params.localHandle,
+    peerNodeId: params.peerNodeId,
+    peerRemoteOrderId: params.peerRemoteOrderId,
+    peerRequestDigest: params.peerRequestDigest,
     sellerOrderId: params.inboundOrderId,
     sellerSyncStatus: "accepted",
     sellerSyncedAt: now,
-    sellerAcceptedAt: params.order.sellerAcceptedAt ?? now,
+    sellerAcceptedAt: now,
     serviceKind: params.offer.offer.serviceKind,
     title: params.offer.offer.title,
     pricing,
-    fulfillmentMode: params.offer.offer.fulfillmentMode ?? params.order.fulfillmentMode,
-    receiptRules: params.offer.offer.receiptRules ?? params.order.receiptRules,
+    fulfillmentMode: params.offer.offer.fulfillmentMode === "human" ? "human" : "agent-approval",
+    receiptRules: params.offer.offer.receiptRules,
     paymentIntent: {
-      ...params.order.paymentIntent,
-      status:
-        params.order.paymentIntent?.status === "verified" ||
-        params.order.paymentIntent?.status === "submitted"
-          ? params.order.paymentIntent.status
-          : "requires_payment",
-      amount: pricing?.amount ?? params.order.paymentIntent?.amount,
+      status: "requires_payment",
+      amount: pricing.amount,
       currency,
-      unit: pricing?.unit ?? params.order.paymentIntent?.unit,
-      method: params.order.paymentIntent?.method ?? "agent-wallet",
-      acceptedAssets: params.order.paymentIntent?.acceptedAssets ??
-        params.offer.offer.acceptedAssets ??
+      unit: pricing.unit,
+      method: "agent-wallet",
+      chain: paymentChain,
+      assetKind: paymentDefaults?.asset?.kind,
+      assetAddress: paymentDefaults?.asset?.address,
+      assetDecimals: paymentDefaults?.assetDecimals,
+      acceptedAssets: params.offer.offer.acceptedAssets ??
         params.offer.offer.paymentRails ?? [currency],
       payeeHandle: params.localHandle,
-      payeeAddress:
-        params.order.paymentIntent?.payeeAddress ??
-        params.offer.offer.paymentDefaults?.payee?.address,
+      payeeAddress: paymentDefaults?.payee.address,
     },
     settlement: {
-      ...params.order.settlement,
-      status:
-        params.order.settlement?.status === "verified" ||
-        params.order.settlement?.status === "submitted" ||
-        params.order.settlement?.status === "settled"
-          ? params.order.settlement.status
-          : "requires_payment",
-      amount: pricing?.amount ?? params.order.settlement?.amount,
+      mode: "direct",
+      status: "requires_payment",
+      amount: pricing.amount,
       currency,
-      payeeAddress:
-        params.order.settlement?.payeeAddress ?? params.offer.offer.paymentDefaults?.payee?.address,
-      notes: "Seller intake accepted from remote buyer checkout.",
+      chain: paymentChain,
+      assetKind: paymentDefaults?.asset?.kind,
+      assetAddress: paymentDefaults?.asset?.address,
+      assetDecimals: paymentDefaults?.assetDecimals,
+      payeeAddress: paymentDefaults?.payee.address,
+      escrow: {
+        status: "not_applicable",
+        holdPolicy: "none",
+        releaseRequired: false,
+        updatedAt: now,
+      },
+      notes: "Peer-reported payment evidence awaits independent local chain verification.",
     },
     delivery: {
-      ...delivery,
-      status: delivery.status ?? "pending",
-      targetKind: delivery.targetKind ?? "federation",
-      targetStatus: delivery.targetStatus ?? "ready",
-      targetLabel: delivery.targetLabel ?? "Buyer delivery target",
-      targetMasked: delivery.targetMasked ?? params.buyerHandle,
+      status: "pending",
+      fulfillmentMode: params.offer.offer.fulfillmentMode === "human" ? "human" : "agent-approval",
+      inputShape: params.offer.offer.inputShape,
+      deliveryShape: params.offer.offer.deliveryShape,
+      target: {
+        targetId: `${params.inboundOrderId}-buyer-federation`,
+        source: "order",
+        owner: "buyer",
+        kind: "federation",
+        status: "ready",
+        label: "Buyer federation node",
+        descriptor: params.buyerHandle,
+        maskedTarget: params.buyerHandle,
+        scope: {
+          orderId: params.inboundOrderId,
+          serviceKind: params.offer.offer.serviceKind,
+        },
+        federation: { handle: params.buyerHandle },
+      },
       updatedAt: now,
     },
     receipt: {
-      ...params.order.receipt,
-      status: params.order.receipt?.status ?? "pending",
-      notes: params.order.receipt?.notes ?? "Awaiting payment proof and delivery evidence.",
+      status: "pending",
+      notes: "Awaiting independently verified payment proof and delivery evidence.",
     },
   };
 }
@@ -1326,7 +1473,8 @@ function buildSellerMarketplaceOrderEndpoint(endpoint: string): URL | null {
     return null;
   }
   try {
-    return new URL("/api/federation/marketplace/orders", raw);
+    const url = new URL("/api/federation/marketplace/orders", raw);
+    return isTrustedFederationPeerUrl(url) ? url : null;
   } catch {
     return null;
   }
@@ -1367,15 +1515,17 @@ async function forwardRequest(params: {
   const url = new URL(req.url ?? "/", "http://localhost");
   const targetPath = overridePath ?? url.pathname + url.search;
   const target = new URL(targetPath, baseUrl);
+  if (!isTrustedFederationPeerUrl(target)) {
+    throw new Error("federation upstream must use HTTPS or an explicit loopback HTTP URL");
+  }
   const headers = new Headers();
   const authorization =
-    resolveForwardedAuthorization(req, apiToken) ||
-    (fallbackFederationToken ? await loadFederationBearerToken(process.env) : "");
+    resolveFederationAuthorization(apiToken) ||
+    (fallbackFederationToken
+      ? resolveFederationAuthorization(await loadFederationBearerToken(process.env))
+      : undefined);
   if (authorization) {
-    headers.set(
-      "Authorization",
-      authorization.toLowerCase().startsWith("bearer ") ? authorization : `Bearer ${authorization}`,
-    );
+    headers.set("Authorization", authorization);
   }
   let bodyPayload: string | undefined;
   if (body !== undefined) {
@@ -1386,8 +1536,14 @@ async function forwardRequest(params: {
     method: req.method,
     headers,
     body: bodyPayload,
+    redirect: "error",
+    signal: AbortSignal.timeout(FEDERATION_PEER_REQUEST_TIMEOUT_MS),
   });
-  const text = await upstream.text();
+  const text = (
+    await readResponseWithLimit(upstream, FEDERATION_PEER_RESPONSE_MAX_BYTES, {
+      onOverflow: () => new Error("federation upstream response exceeded the size limit"),
+    })
+  ).toString("utf8");
   if (upstream.ok && persistFederationToken) {
     await persistFederationTokenResponse(text);
   }
@@ -1409,25 +1565,33 @@ async function forwardOperatorEconomyFeeRequest(params: {
   const { req, res, baseUrl, apiToken, fallbackFederationToken } = params;
   const url = new URL(req.url ?? "/", "http://localhost");
   const target = new URL(url.pathname + url.search, baseUrl);
+  if (!isTrustedFederationPeerUrl(target)) {
+    throw new Error("federation upstream must use HTTPS or an explicit loopback HTTP URL");
+  }
   const headers = new Headers();
   const authorization =
-    resolveForwardedAuthorization(req, apiToken) ||
-    (fallbackFederationToken ? await loadFederationBearerToken(process.env) : "");
+    resolveFederationAuthorization(apiToken) ||
+    (fallbackFederationToken
+      ? resolveFederationAuthorization(await loadFederationBearerToken(process.env))
+      : undefined);
   if (authorization) {
-    headers.set(
-      "Authorization",
-      authorization.toLowerCase().startsWith("bearer ") ? authorization : `Bearer ${authorization}`,
-    );
+    headers.set("Authorization", authorization);
   }
   try {
     const upstream = await fetch(target, {
       method: req.method,
       headers,
+      redirect: "error",
+      signal: AbortSignal.timeout(FEDERATION_PEER_REQUEST_TIMEOUT_MS),
     });
     if (upstream.status === 404 && (await tryServeLocalOperatorEconomyFeeFallback(req, res))) {
       return;
     }
-    const text = await upstream.text();
+    const text = (
+      await readResponseWithLimit(upstream, FEDERATION_PEER_RESPONSE_MAX_BYTES, {
+        onOverflow: () => new Error("federation upstream response exceeded the size limit"),
+      })
+    ).toString("utf8");
     res.statusCode = upstream.status;
     const contentType = upstream.headers.get("content-type");
     if (contentType) {
@@ -1890,7 +2054,8 @@ export async function handleFederationHttpRequest(
       if (!endpoint) {
         sendJson(res, 400, {
           status: "rejected",
-          reason: "seller endpoint is required for marketplace order intake",
+          reason:
+            "seller endpoint must use HTTPS (plain HTTP is allowed only for an explicit loopback URL)",
         });
         return true;
       }
@@ -1899,6 +2064,14 @@ export async function handleFederationHttpRequest(
         env: process.env,
         fallbackDomain: federationBase ? new URL(federationBase).hostname : "localhost",
       });
+      const sellerHandle = currentOrder.order.sellerHandle?.trim() || "";
+      if (!sellerHandle) {
+        sendJson(res, 409, {
+          status: "rejected",
+          reason: "seller handle is required for signed marketplace order intake",
+        });
+        return true;
+      }
       const orderPayload = {
         ...currentOrder.order,
         delivery: {
@@ -1907,15 +2080,28 @@ export async function handleFederationHttpRequest(
         },
       };
       try {
+        const signedRequest = buildSignedFederationPeerRequest({
+          senderHandle: localHandle,
+          recipientHandle: sellerHandle,
+          path: FEDERATION_MARKETPLACE_ORDER_PATH,
+          body: orderPayload,
+          env: process.env,
+        });
         const upstream = await fetch(endpoint, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "x-fased-sender-handle": localHandle,
+            ...signedRequest.headers,
           },
-          body: JSON.stringify(orderPayload),
+          body: signedRequest.body,
+          redirect: "error",
+          signal: AbortSignal.timeout(FEDERATION_PEER_REQUEST_TIMEOUT_MS),
         });
-        const text = await upstream.text();
+        const text = (
+          await readResponseWithLimit(upstream, FEDERATION_PEER_RESPONSE_MAX_BYTES, {
+            onOverflow: () => new Error("seller intake response exceeded the size limit"),
+          })
+        ).toString("utf8");
         let upstreamBody: unknown = text;
         if (text.trim()) {
           try {
@@ -2152,6 +2338,9 @@ export async function handleFederationHttpRequest(
         config: snapshot.config,
         orderId,
         result: resultPayload as MarketplaceContentSummarizeDeliveryResult,
+        deps: opts.marketplaceDeliverySsrfLookupFn
+          ? { ssrfLookupFn: opts.marketplaceDeliverySsrfLookupFn }
+          : undefined,
       });
       if ("error" in delivered) {
         sendJson(res, delivered.statusCode, { status: "rejected", reason: delivered.error });
@@ -2202,14 +2391,17 @@ export async function handleFederationHttpRequest(
       res.end("Method Not Allowed");
       return true;
     }
+    const ingressBudget = checkFederationPeerIngressBudget({
+      clientIp: opts.peerAuthClientIp ?? req.socket?.remoteAddress,
+      rateLimiter: opts.peerAuthDeps?.rateLimiter,
+    });
+    if (!ingressBudget.ok) {
+      sendPeerAuthRejection(res, ingressBudget);
+      return true;
+    }
     const body = await readJsonBody(req, maxBodyBytes);
     if (!body.ok) {
       sendJson(res, 400, { status: "rejected", reason: body.error });
-      return true;
-    }
-    const parsed = validateMarketplaceOrderBody(body.value);
-    if (!parsed.ok) {
-      sendJson(res, 400, { status: "rejected", reason: parsed.reason });
       return true;
     }
     const federationBase = resolveFederationBaseUrl(process.env);
@@ -2217,50 +2409,169 @@ export async function handleFederationHttpRequest(
       env: process.env,
       fallbackDomain: federationBase ? new URL(federationBase).hostname : "localhost",
     });
-    const origin = resolveLocalOffersOrigin(req);
-    const senderHandle =
-      (typeof req.headers["x-fased-sender-handle"] === "string"
-        ? req.headers["x-fased-sender-handle"].trim()
-        : "") ||
-      (typeof req.headers["x-fased-federation-sender"] === "string"
-        ? req.headers["x-fased-federation-sender"].trim()
-        : "");
-    const { snapshot, writeOptions } = await readConfigFileSnapshotForWrite();
-    const validation = validateSellerMarketplaceOrderIntake({
-      config: snapshot.config,
-      origin,
-      localHandle,
-      senderHandle,
-      order: parsed.value,
+    const peerAuth = await authorizeFederationPeerRequestV2({
+      req,
+      body: body.value,
+      recipientHandle: localHandle,
+      expectedPath: FEDERATION_MARKETPLACE_ORDER_PATH,
+      directoryBaseUrl: federationBase,
+      directoryApiToken: apiToken,
+      clientIp: opts.peerAuthClientIp,
+      env: process.env,
+      deps: opts.peerAuthDeps,
+      ingressBudgetApplied: true,
+      deferReplayReservation: true,
     });
-    if (!validation.ok) {
-      sendJson(res, validation.status, { status: "rejected", reason: validation.reason });
+    if (!peerAuth.ok) {
+      sendPeerAuthRejection(res, peerAuth);
       return true;
     }
+    const parsed = validateMarketplaceOrderBody(body.value);
+    if (!parsed.ok) {
+      sendJson(res, 400, { status: "rejected", reason: parsed.reason });
+      return true;
+    }
+    const origin = resolveLocalOffersOrigin(req);
+    const senderHandle = peerAuth.senderHandle;
     const buyerHandle = senderHandle || parsed.value.buyerHandle?.trim() || "";
-    const senderSegment = safeMarketplaceOrderIdSegment(buyerHandle || "buyer");
-    const orderSegment = safeMarketplaceOrderIdSegment(
-      parsed.value.id || parsed.value.offerId || parsed.value.title || "order",
-    );
-    const inboundOrderId = `inbound-${senderSegment || "buyer"}-${orderSegment || "order"}`;
-    const result = upsertMarketplaceOrderConfig({
-      config: snapshot.config,
-      input: buildSellerMarketplaceOrderInput({
-        order: parsed.value,
-        localHandle,
-        buyerHandle,
-        inboundOrderId,
-        offer: validation.value.offer,
-      }),
+    const remoteOrderId = parsed.value.id || parsed.value.offerId || parsed.value.title || "order";
+    const inboundOrderId = collisionResistantInboundOrderId({
+      kind: "order",
+      senderHandle: buyerHandle,
+      remoteOrderId,
     });
-    await writeConfigFile(result.config, writeOptions);
+    // oxfmt-ignore
+    const transaction = await updateConfigFile<MarketplaceOrderTransactionResult>(async (currentConfig) => {
+      const validation = validateSellerMarketplaceOrderIntake({
+        config: currentConfig,
+        origin,
+        localHandle,
+        senderHandle,
+        peerBondTier: peerAuth.bondTier,
+        order: parsed.value,
+      });
+      if (!validation.ok) {
+        return {
+          config: currentConfig,
+          result: {
+            kind: "rejected" as const,
+            status: validation.status,
+            reason: validation.reason,
+          },
+          write: false,
+        };
+      }
+      const existingInboundOrder = listLocalMarketplaceOrders(currentConfig).find(
+        (entry) => entry.configId === inboundOrderId,
+      );
+      if (existingInboundOrder) {
+        const ownershipMatches =
+          existingInboundOrder.source === "federation" &&
+          normalizeComparableValue(existingInboundOrder.order.buyerHandle) ===
+            normalizeComparableValue(buyerHandle) &&
+          normalizeComparableValue(existingInboundOrder.order.sellerHandle) ===
+            normalizeComparableValue(localHandle) &&
+          normalizeComparableValue(existingInboundOrder.order.offerId) ===
+            normalizeComparableValue(validation.value.offer.offer.id) &&
+          existingInboundOrder.order.peerNodeId?.trim().toLowerCase() ===
+            peerAuth.nodeId.toLowerCase() &&
+          existingInboundOrder.order.peerRemoteOrderId === remoteOrderId;
+        if (!ownershipMatches) {
+          return {
+            config: currentConfig,
+            result: {
+              kind: "rejected" as const,
+              status: 409,
+              reason: "federation order identity conflicts with an existing local order",
+            },
+            write: false,
+          };
+        }
+        if (existingInboundOrder.order.peerRequestDigest !== peerAuth.bodySha256) {
+          return {
+            config: currentConfig,
+            result: {
+              kind: "rejected" as const,
+              status: 409,
+              reason: "federation order is immutable after its first accepted request",
+            },
+            write: false,
+          };
+        }
+        const replay = await reserveAuthorizedFederationPeerRequest({
+          authorization: peerAuth,
+          env: process.env,
+          deps: opts.peerAuthDeps,
+        });
+        if (!replay.ok) {
+          return {
+            config: currentConfig,
+            result: { kind: "auth-rejected" as const, rejection: replay },
+            write: false,
+          };
+        }
+        return {
+          config: currentConfig,
+          result: {
+            kind: "accepted" as const,
+            created: false,
+            order: existingInboundOrder,
+          },
+          write: false,
+        };
+      }
+      const replay = await reserveAuthorizedFederationPeerRequest({
+        authorization: peerAuth,
+        env: process.env,
+        deps: opts.peerAuthDeps,
+      });
+      if (!replay.ok) {
+        return {
+          config: currentConfig,
+          result: { kind: "auth-rejected" as const, rejection: replay },
+          write: false,
+        };
+      }
+      const upserted = upsertMarketplaceOrderConfig({
+        config: currentConfig,
+        input: buildSellerMarketplaceOrderInput({
+          order: parsed.value,
+          localHandle,
+          buyerHandle,
+          inboundOrderId,
+          peerNodeId: peerAuth.nodeId,
+          peerRemoteOrderId: remoteOrderId,
+          peerRequestDigest: peerAuth.bodySha256,
+          offer: validation.value.offer,
+        }),
+      });
+      return {
+        config: upserted.config,
+        result: {
+          kind: "accepted" as const,
+          created: upserted.created,
+          order: listLocalMarketplaceOrders(upserted.config).find(
+            (entry) => entry.configId === upserted.order.id,
+          ),
+        },
+      };
+    });
+    if (transaction.result.kind === "rejected") {
+      sendJson(res, transaction.result.status, {
+        status: "rejected",
+        reason: transaction.result.reason,
+      });
+      return true;
+    }
+    if (transaction.result.kind === "auth-rejected") {
+      sendPeerAuthRejection(res, transaction.result.rejection);
+      return true;
+    }
     sendJson(res, 200, {
       ok: true,
       accepted: true,
-      created: result.created,
-      order: listLocalMarketplaceOrders(result.config).find(
-        (entry) => entry.configId === result.order.id,
-      ),
+      created: transaction.result.created,
+      order: transaction.result.order,
     });
     return true;
   }
@@ -2273,14 +2584,17 @@ export async function handleFederationHttpRequest(
       res.end("Method Not Allowed");
       return true;
     }
+    const ingressBudget = checkFederationPeerIngressBudget({
+      clientIp: opts.peerAuthClientIp ?? req.socket?.remoteAddress,
+      rateLimiter: opts.peerAuthDeps?.rateLimiter,
+    });
+    if (!ingressBudget.ok) {
+      sendPeerAuthRejection(res, ingressBudget);
+      return true;
+    }
     const body = await readJsonBody(req, maxBodyBytes);
     if (!body.ok) {
       sendJson(res, 400, { status: "rejected", reason: body.error });
-      return true;
-    }
-    const parsed = validateMarketplaceDeliveryInboxBody(body.value);
-    if (!parsed.ok) {
-      sendJson(res, 400, { status: "rejected", reason: parsed.reason });
       return true;
     }
     const federationBase = resolveFederationBaseUrl(process.env);
@@ -2288,70 +2602,218 @@ export async function handleFederationHttpRequest(
       env: process.env,
       fallbackDomain: federationBase ? new URL(federationBase).hostname : "localhost",
     });
-    const senderHandle =
-      (typeof req.headers["x-fased-sender-handle"] === "string"
-        ? req.headers["x-fased-sender-handle"].trim()
-        : "") ||
-      (typeof req.headers["x-fased-federation-sender"] === "string"
-        ? req.headers["x-fased-federation-sender"].trim()
-        : "");
-    const senderSegment = safeMarketplaceOrderIdSegment(senderHandle || "federation");
-    const orderSegment = safeMarketplaceOrderIdSegment(parsed.value.orderId);
-    const inboundOrderId = `inbound-${senderSegment || "federation"}-${orderSegment || "order"}`;
+    const peerAuth = await authorizeFederationPeerRequestV2({
+      req,
+      body: body.value,
+      recipientHandle: localHandle,
+      expectedPath: FEDERATION_MARKETPLACE_DELIVERY_PATH,
+      directoryBaseUrl: federationBase,
+      directoryApiToken: apiToken,
+      clientIp: opts.peerAuthClientIp,
+      env: process.env,
+      deps: opts.peerAuthDeps,
+      ingressBudgetApplied: true,
+      deferReplayReservation: true,
+    });
+    if (!peerAuth.ok) {
+      sendPeerAuthRejection(res, peerAuth);
+      return true;
+    }
+    const parsed = validateMarketplaceDeliveryInboxBody(body.value);
+    if (!parsed.ok) {
+      sendJson(res, 400, { status: "rejected", reason: parsed.reason });
+      return true;
+    }
+    const senderHandle = peerAuth.senderHandle;
+    const inboundOrderId = collisionResistantInboundOrderId({
+      kind: "delivery",
+      senderHandle,
+      remoteOrderId: parsed.value.orderId,
+    });
     const deliveredAt = parsed.value.deliveredAt || new Date().toISOString();
     const payment = parsed.value.payment;
-    const { snapshot, writeOptions } = await readConfigFileSnapshotForWrite();
-    const result = upsertMarketplaceOrderConfig({
-      config: snapshot.config,
-      input: {
-        id: inboundOrderId,
-        source: "federation",
-        status: "delivered",
-        offerId: parsed.value.offerId,
-        buyerHandle: localHandle,
-        ...(senderHandle ? { sellerHandle: senderHandle } : {}),
-        title: "Federated content summary",
-        serviceKind: "content.summarize",
-        paymentIntent: {
-          status: payment?.status === "verified" ? "verified" : "submitted",
-          ...(payment?.txRef ? { txRef: payment.txRef } : {}),
-        },
-        delivery: {
+    // oxfmt-ignore
+    const transaction = await updateConfigFile<MarketplaceDeliveryTransactionResult>(async (currentConfig) => {
+      const buyerOrder = findCorrelatedMarketplaceBuyerOrder({
+        config: currentConfig,
+        sellerHandle: senderHandle,
+        sellerOrderId: parsed.value.orderId,
+        serviceKind: parsed.value.serviceKind,
+      });
+      if (!buyerOrder) {
+        return {
+          config: currentConfig,
+          result: {
+            kind: "rejected" as const,
+            status: 409,
+            reason: "federation delivery does not match an existing local buyer order",
+          },
+          write: false,
+        };
+      }
+      if (
+        buyerOrder.order.offerId?.trim() &&
+        parsed.value.offerId.trim() &&
+        buyerOrder.order.offerId.trim() !== parsed.value.offerId.trim()
+      ) {
+        return {
+          config: currentConfig,
+          result: {
+            kind: "rejected" as const,
+            status: 409,
+            reason: "federation delivery offer does not match the local buyer order",
+          },
+          write: false,
+        };
+      }
+      const existingInboundDelivery = listLocalMarketplaceOrders(currentConfig).find(
+        (entry) => entry.configId === inboundOrderId,
+      );
+      if (existingInboundDelivery) {
+        const ownershipMatches =
+          existingInboundDelivery.source === "federation" &&
+          normalizeComparableValue(existingInboundDelivery.order.sellerHandle) ===
+            normalizeComparableValue(senderHandle) &&
+          existingInboundDelivery.order.sellerOrderId?.trim() === parsed.value.orderId &&
+          normalizeComparableValue(existingInboundDelivery.order.buyerHandle) ===
+            normalizeComparableValue(localHandle) &&
+          existingInboundDelivery.order.peerNodeId?.trim().toLowerCase() ===
+            peerAuth.nodeId.toLowerCase() &&
+          existingInboundDelivery.order.peerRemoteOrderId === parsed.value.orderId;
+        if (!ownershipMatches) {
+          return {
+            config: currentConfig,
+            result: {
+              kind: "rejected" as const,
+              status: 409,
+              reason: "federation delivery identity conflicts with an existing local order",
+            },
+            write: false,
+          };
+        }
+        if (existingInboundDelivery.order.peerDeliveryDigest !== peerAuth.bodySha256) {
+          return {
+            config: currentConfig,
+            result: {
+              kind: "rejected" as const,
+              status: 409,
+              reason: "federation delivery is immutable after its first accepted request",
+            },
+            write: false,
+          };
+        }
+        const replay = await reserveAuthorizedFederationPeerRequest({
+          authorization: peerAuth,
+          env: process.env,
+          deps: opts.peerAuthDeps,
+        });
+        if (!replay.ok) {
+          return {
+            config: currentConfig,
+            result: { kind: "auth-rejected" as const, rejection: replay },
+            write: false,
+          };
+        }
+        return {
+          config: currentConfig,
+          result: {
+            kind: "accepted" as const,
+            delivery: existingInboundDelivery,
+          },
+          write: false,
+        };
+      }
+      const replay = await reserveAuthorizedFederationPeerRequest({
+        authorization: peerAuth,
+        env: process.env,
+        deps: opts.peerAuthDeps,
+      });
+      if (!replay.ok) {
+        return {
+          config: currentConfig,
+          result: { kind: "auth-rejected" as const, rejection: replay },
+          write: false,
+        };
+      }
+      const upserted = upsertMarketplaceOrderConfig({
+        config: currentConfig,
+        input: {
+          id: inboundOrderId,
+          source: "federation",
           status: "delivered",
-          fulfillmentMode: "agent",
-          deliveryShape: "summary-v0",
-          targetKind: "federation",
-          targetStatus: "ready",
-          targetLabel: senderHandle ? "Federation sender" : "Federation",
-          targetMasked: senderHandle || "federation",
+          offerId: parsed.value.offerId,
+          buyerHandle: localHandle,
+          ...(senderHandle ? { sellerHandle: senderHandle } : {}),
+          sellerOrderId: parsed.value.orderId,
+          peerNodeId: peerAuth.nodeId,
+          peerRemoteOrderId: parsed.value.orderId,
+          peerDeliveryDigest: peerAuth.bodySha256,
+          title: "Federated content summary",
+          serviceKind: "content.summarize",
+          paymentIntent: {
+            // This is seller-reported evidence. Preserve its reference for
+            // review, but never treat it as locally verified payment.
+            status: "submitted",
+            ...(payment?.txRef ? { txRef: payment.txRef } : {}),
+          },
+          settlement: {
+            mode: "direct",
+            status: "submitted",
+            ...(payment?.invoiceId ? { invoiceId: payment.invoiceId } : {}),
+            ...(payment?.receiptId ? { receiptId: payment.receiptId } : {}),
+            ...(payment?.txRef ? { txRef: payment.txRef } : {}),
+            notes: "Peer-reported payment evidence has not been locally chain-verified.",
+            updatedAt: deliveredAt,
+          },
+          delivery: {
+            status: "delivered",
+            fulfillmentMode: "agent",
+            deliveryShape: "summary-v0",
+            targetKind: "federation",
+            targetStatus: "ready",
+            targetLabel: senderHandle ? "Federation sender" : "Federation",
+            targetMasked: senderHandle || "federation",
+            resultRef: parsed.value.resultRef,
+            ...(parsed.value.artifactRef ? { artifactRef: parsed.value.artifactRef } : {}),
+            notes: `Received content.summarize result over federation: ${parsed.value.resultSummary}`,
+            deliveredAt,
+            updatedAt: deliveredAt,
+          },
+          receipt: {
+            status: "pending",
+            resultRef: parsed.value.resultRef,
+            notes:
+              "Federation delivery stored as a read-only Marketplace inbox item; no local receipt has been issued and peer payment evidence remains unverified.",
+          },
           resultRef: parsed.value.resultRef,
-          ...(parsed.value.artifactRef ? { artifactRef: parsed.value.artifactRef } : {}),
-          notes: `Received content.summarize result over federation: ${parsed.value.resultSummary}`,
-          deliveredAt,
-          updatedAt: deliveredAt,
         },
-        receipt: {
-          status: "issued",
-          ...(payment?.invoiceId ? { invoiceId: payment.invoiceId } : {}),
-          ...(payment?.receiptId ? { receiptId: payment.receiptId } : {}),
-          ...(payment?.txRef ? { txRef: payment.txRef } : {}),
-          resultRef: parsed.value.resultRef,
-          notes: "Federation delivery stored as a read-only Marketplace inbox item.",
+        now: deliveredAt,
+      });
+      return {
+        config: upserted.config,
+        result: {
+          kind: "accepted" as const,
+          delivery: listLocalMarketplaceOrders(upserted.config).find(
+            (entry) => entry.configId === upserted.order.id,
+          ),
         },
-        ...(payment?.invoiceId ? { invoiceId: payment.invoiceId } : {}),
-        ...(payment?.receiptId ? { receiptId: payment.receiptId } : {}),
-        ...(payment?.txRef ? { txRef: payment.txRef } : {}),
-        resultRef: parsed.value.resultRef,
-      },
-      now: deliveredAt,
+      };
     });
-    await writeConfigFile(result.config, writeOptions);
+    if (transaction.result.kind === "rejected") {
+      sendJson(res, transaction.result.status, {
+        status: "rejected",
+        reason: transaction.result.reason,
+      });
+      return true;
+    }
+    if (transaction.result.kind === "auth-rejected") {
+      sendPeerAuthRejection(res, transaction.result.rejection);
+      return true;
+    }
     sendJson(res, 200, {
       ok: true,
       accepted: true,
-      delivery: listLocalMarketplaceOrders(result.config).find(
-        (entry) => entry.configId === result.order.id,
-      ),
+      delivery: transaction.result.delivery,
     });
     return true;
   }
@@ -2362,6 +2824,18 @@ export async function handleFederationHttpRequest(
     resolveFederationBaseUrl(process.env);
   if (!baseUrl) {
     sendJson(res, 503, { status: "unavailable", reason: "federation base URL not configured" });
+    return true;
+  }
+  try {
+    if (!isTrustedFederationPeerUrl(new URL("/", baseUrl))) {
+      throw new Error("untrusted transport");
+    }
+  } catch {
+    sendJson(res, 503, {
+      status: "unavailable",
+      reason:
+        "federation base URL must use HTTPS (plain HTTP is allowed only for an explicit loopback URL)",
+    });
     return true;
   }
 

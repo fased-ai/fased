@@ -70,6 +70,25 @@ const SUSPICIOUS_SCRIPT_EXTENSIONS = new Set([
   ".sh",
   ".zsh",
 ]);
+const REVIEWABLE_CODE_EXTENSIONS = new Set([
+  ".cjs",
+  ".go",
+  ".js",
+  ".jsx",
+  ".mjs",
+  ".py",
+  ".rb",
+  ".rs",
+  ".ts",
+  ".tsx",
+]);
+const MARKDOWN_EXTENSIONS = new Set([".md", ".mdx"]);
+const MARKDOWN_INSTRUCTION_RISKS = [
+  /ignore\s+(?:all\s+)?(?:previous|prior|system|developer)\s+instructions?/iu,
+  /(?:upload|send|exfiltrat|leak)[^\n]{0,80}(?:secret|credential|token|private\s+key|seed\s+phrase)/iu,
+  /(?:\.ssh|\.aws|\.gnupg|\.env|process\.env|private\s+key|seed\s+phrase)/iu,
+  /curl\s+[^\n|]{0,160}\|\s*(?:ba)?sh/iu,
+];
 const DEPENDENCY_MANIFEST_FILE_NAMES = new Set(
   [
     "Cargo.toml",
@@ -158,6 +177,13 @@ function inspectMarketplaceFilePath(params: {
       path: params.path,
       message: `skill archive contains script file "${basename}"`,
     });
+  } else if (REVIEWABLE_CODE_EXTENSIONS.has(ext)) {
+    addFinding(params.findings, {
+      severity: "warn",
+      code: "executable_source_file",
+      path: params.path,
+      message: `skill archive contains executable source file "${basename}"; review it before granting tools`,
+    });
   }
 
   if (DEPENDENCY_MANIFEST_FILE_NAMES.has(basename)) {
@@ -167,6 +193,28 @@ function inspectMarketplaceFilePath(params: {
       path: params.path,
       message:
         "skill archive contains a dependency manifest; marketplace installs do not run dependency install steps automatically",
+    });
+  }
+}
+
+async function inspectMarketplaceMarkdown(params: {
+  rootDir: string;
+  relativePath: string;
+  findings: SkillMarketplaceArchiveFinding[];
+}): Promise<void> {
+  const fullPath = path.join(params.rootDir, params.relativePath);
+  const stat = await fs.stat(fullPath);
+  if (stat.size > MAX_FILE_BYTES) {
+    return;
+  }
+  const content = await fs.readFile(fullPath, "utf8");
+  if (MARKDOWN_INSTRUCTION_RISKS.some((pattern) => pattern.test(content))) {
+    addFinding(params.findings, {
+      severity: "warn",
+      code: "instruction_risk",
+      path: toPosix(params.relativePath),
+      message:
+        "skill instructions reference prompt overrides, secrets, sensitive paths, or shell-pipe execution; manual review is required",
     });
   }
 }
@@ -329,6 +377,9 @@ export async function scanSkillMarketplaceArchive(
         await inspectPackageJson({ rootDir, relativePath, findings });
       }
       inspectMarketplaceFilePath({ path: posixPath, findings });
+      if (MARKDOWN_EXTENSIONS.has(path.posix.extname(entry.name.toLowerCase()))) {
+        await inspectMarketplaceMarkdown({ rootDir, relativePath, findings });
+      }
     }
   }
 

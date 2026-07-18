@@ -21,13 +21,25 @@ It is written for the public Fased wallet model:
 ## Prerequisites
 
 - Fased is already installed on the VPS
-- self-hosted wallet material already created or imported through onboarding or CLI
-- chain RPC configured for the wallet role you are validating
+- self-hosted wallet created inside the signer, or imported through the native
+  signer-admin control socket
+- signer execution RPC and Gateway read RPC configured for the wallet role
+- owner-reviewed role policy activated and acknowledged
+- signer WebAuthn enrolled before manual native reviewed operations
 
-Fased installs the version-matched, checksum-verified native signer
-automatically when the first wallet is created or imported. The Hosting
-QuickStart does not show a signer backend question because the isolated local
-socket signer is the maintained backend.
+Fased installs the version-matched native signer during Hosting bootstrap and
+verifies both its checksum and GitHub release attestation. Hosting runs it as an
+independent root-managed systemd service under `fased-signer`; the Gateway gets
+only the group-authorized app socket and has neither the control socket nor
+sudo. QuickStart therefore probes the existing service and never installs,
+starts, or brokers a second signer.
+
+A healthy signer service is only the first readiness layer. A new wallet is
+created inside Go with a locked deny-all policy. It becomes send-ready only
+after owner-policy activation and per-wallet signer RPC configuration have been
+acknowledged. Gateway read RPC is a separate readiness plane. Import is an
+explicit signer-admin operation; do not paste a private key into the Gateway or
+dashboard.
 
 For Solana RPC setup, use [Solana RPC setup](/plugins/crypto/wallet-rpc-setup).
 
@@ -37,7 +49,8 @@ For unattended self-hosted operation, the wallet path should look like:
 
 - wallet entry exists in the runtime registry
 - `local-socket-signer` is healthy
-- RPC is configured for the relevant chain
+- signer execution RPC and Gateway read RPC are configured
+- exact signer policy version/hash is acknowledged
 - wallet appears in the Wallets page and status outputs
 
 ## Validation flow
@@ -57,15 +70,16 @@ Open the Wallets page or inspect runtime status to confirm:
 - visible balances
 - signer-ready state
 
-### 3. Confirm chain RPC wiring
+### 3. Confirm both RPC planes and policy acknowledgement
 
-The wallet path is ready for unattended use only after chain RPC is set and
-responsive.
+The wallet path is ready only after signer execution RPC, Gateway reads, and
+the exact owner-reviewed policy are responsive and acknowledged.
 
 Use the runtime and wallet status surfaces to confirm:
 
-- Solana readiness
-- the configured RPC is responsive
+- signer network version/hash and readiness
+- Gateway dashboard/readiness queries
+- signer policy version/hash
 
 ### 4. Confirm Satcoin-mining-specific expectations when relevant
 

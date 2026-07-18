@@ -8,6 +8,7 @@ import {
   maybeHandleModelDirectiveInfo,
   resolveModelSelectionFromDirective,
 } from "./directive-handling.model.js";
+import { persistInlineDirectives } from "./directive-handling.persist.js";
 
 // Mock dependencies for directive handling persistence.
 vi.mock("../../agents/agent-scope.js", () => ({
@@ -41,6 +42,7 @@ function baseConfig(): FasedAgentConfig {
 
 function resolveModelSelectionForCommand(params: {
   command: string;
+  allowAnyModel?: boolean;
   allowedModelKeys: Set<string>;
   allowedModelCatalog: Array<{ provider: string; id: string }>;
 }) {
@@ -51,6 +53,7 @@ function resolveModelSelectionForCommand(params: {
     defaultProvider: "anthropic",
     defaultModel: "claude-opus-4-5",
     aliasIndex: baseAliasIndex(),
+    allowAnyModel: params.allowAnyModel ?? false,
     allowedModelKeys: params.allowedModelKeys,
     allowedModelCatalog: params.allowedModelCatalog,
     provider: "anthropic",
@@ -118,6 +121,7 @@ describe("/model chat UX", () => {
       defaultProvider: "anthropic",
       defaultModel: "claude-opus-4-5",
       aliasIndex: baseAliasIndex(),
+      allowAnyModel: false,
       allowedModelKeys: new Set(["anthropic/claude-opus-4-5"]),
       allowedModelCatalog: [{ provider: "anthropic", id: "claude-opus-4-5" }],
       provider: "anthropic",
@@ -129,6 +133,18 @@ describe("/model chat UX", () => {
       isDefault: true,
     });
     expect(resolved.errorText).toBeUndefined();
+  });
+
+  it("does not treat an empty deny-list result as allow-any", () => {
+    const resolved = resolveModelSelectionForCommand({
+      command: "/model anthropic/claude-opus-4-5",
+      allowAnyModel: false,
+      allowedModelKeys: new Set(),
+      allowedModelCatalog: [],
+    });
+
+    expect(resolved.modelSelection).toBeUndefined();
+    expect(resolved.errorText).toContain('Model "anthropic/claude-opus-4-5" is not allowed.');
   });
 
   it("rejects numeric /model selections with a guided error", () => {
@@ -225,6 +241,7 @@ describe("handleDirectiveOnly model persist behavior (fixes #1435)", () => {
       defaultProvider: "anthropic",
       defaultModel: "claude-opus-4-5",
       aliasIndex: baseAliasIndex(),
+      allowAnyModel: false,
       allowedModelKeys,
       allowedModelCatalog,
       resetModelOverride: false,
@@ -265,6 +282,39 @@ describe("handleDirectiveOnly model persist behavior (fixes #1435)", () => {
 
     expect(result?.text ?? "").not.toContain("Model set to");
     expect(result?.text ?? "").not.toContain("failed");
+  });
+
+  it("does not persist an outside model when explicit policy resolves to no available keys", async () => {
+    const directives = parseInlineDirectives("/model anthropic/claude-opus-4-5");
+    const sessionEntry = createSessionEntry();
+    const sessionStore = { [sessionKey]: sessionEntry };
+
+    const result = await persistInlineDirectives({
+      directives,
+      effectiveModelDirective: "anthropic/claude-opus-4-5",
+      cfg: baseConfig(),
+      agentDir: "/tmp/agent",
+      sessionEntry,
+      sessionStore,
+      sessionKey,
+      storePath,
+      elevatedEnabled: false,
+      elevatedAllowed: false,
+      defaultProvider: "openai",
+      defaultModel: "gpt-4o-mini",
+      aliasIndex: baseAliasIndex(),
+      allowAnyModel: false,
+      allowedModelKeys: new Set(),
+      provider: "openai",
+      model: "gpt-4o-mini",
+      initialModelLabel: "openai/gpt-4o-mini",
+      formatModelSwitchEvent: (label) => `Switched to ${label}`,
+      agentCfg: undefined,
+    });
+
+    expect(result).toMatchObject({ provider: "openai", model: "gpt-4o-mini" });
+    expect(sessionEntry).not.toHaveProperty("providerOverride");
+    expect(sessionEntry).not.toHaveProperty("modelOverride");
   });
 
   it("persists thinkingLevel=off (does not clear)", async () => {

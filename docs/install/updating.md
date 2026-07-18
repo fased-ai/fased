@@ -50,11 +50,12 @@ fased update
 After hosted onboarding, SSH as `app` should open directly in `/home/app/fased`.
 If it does not, fix the hosted login/shell setup before updating.
 
-For hosted VPS installs, the recommended setup path is the hosted installer:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
-```
+For a fresh hosted VPS, use the
+[pre-execution verified Hosting bootstrap](/install/vps#3-install-fased-and-connect-through-tailscale).
+It downloads the standalone installer and attestation for an exact release,
+verifies the repository, tag, release workflow, and GitHub-hosted runner, and
+only then runs the verified file. Raw tagged `curl | bash` is not a supported
+Hosting bootstrap.
 
 Run the first Hosting install from the VPS provider's root shell. That path
 creates the non-root `app` runtime, private Tailscale access, and the hosted
@@ -116,8 +117,9 @@ git pull --ff-only origin main
 ./install.sh --source-install
 ```
 
-On a hosted VPS, run the development checkout flow as `app` from
-`/home/app/fased` and use `./install.sh --hosting`.
+Privileged VPS Hosting refuses source checkouts. Test development Hosting work
+on a disposable self-managed machine; do not run `/home/app/fased/install.sh`
+with sudo or describe that setup as the maintained Hosting boundary.
 
 ## Native signer artifacts
 
@@ -127,9 +129,30 @@ signer wallet path.
 
 When that path is enabled, Fased downloads the signer asset from the matching
 versioned GitHub Release and verifies it against
-`fased-signerd-checksums.txt`. Normal Local, WSL, macOS, and Hosting users do not
-need Go. WSL uses the Linux asset; the Unix-socket signer is not supported by a
-native Windows Node.js install.
+`fased-signerd-checksums.txt` and the release's GitHub/Sigstore attestation.
+The release also includes an attested `fased-signerd-release.json`. Hosting
+accepts only a production identity whose exact version, commit, and build-input
+digest match both that manifest and the running signer's health response;
+development, missing, or mismatched identities fail closed.
+Normal Local, WSL, macOS, and Hosting users do not need Go. WSL uses the Linux
+asset; the Unix-socket signer is not supported by a native Windows Node.js
+install. Verification failure stops the install instead of falling back to an
+implicit source build.
+
+When a Local install already has a native signer, `fased update` treats the
+Gateway and signer as one transaction. It snapshots the current application
+and signer state, stages the exact version-matched signer read-only, activates
+the application, and requires exact Gateway and signer health before committing
+the signer read-write. Before that durable health decision, a failure restores
+both sides. After the decision, recovery completes forward so a signer database
+that may have recorded a request is never replaced by an older snapshot.
+
+This pairing also applies to tagged macOS and explicit source installs. A
+source checkout with a configured signer must be clean, resolve to a production
+release tag, allow the required restart, and pass the same exact health checks.
+Signer-paired source updates reject an untagged development commit,
+`--no-restart`, or an install-mode switch. Interrupted updates recover from the
+owner-only transaction journal before the Gateway starts.
 
 Each tagged release must publish signer assets for Linux and macOS on `amd64`
 and `arm64` before wallet setup for that version is considered releasable. A
@@ -163,25 +186,22 @@ restart remain terminal operations.
 
 ## Installer rerun
 
-Rerun `./install.sh` when you want repair/reinstall behavior. Current installers
-refresh a clean checkout first. Supported Linux Local and VPS Hosting profiles
-then prefer the verified prebuilt runtime artifact. macOS and explicit
-`--source-install` runs refresh dependencies and build. If the installer itself
-changes, it restarts once and continues with the updated script.
+Rerun `./install.sh` only for a Local/source checkout repair or contributor
+workflow. Current installers refresh a clean checkout first. Supported Linux
+Local profiles then prefer the verified prebuilt runtime artifact. macOS and
+explicit `--source-install` runs refresh dependencies and build. If the
+installer itself changes, it restarts once and continues with the updated
+script.
 
 ```bash
 cd ~/fased
 ./install.sh --no-onboard
 ```
 
-On hosted installs that live under `/home/app/fased`, run it as the app user:
-
-```bash
-ssh app@YOUR_VPS_TAILSCALE_NAME
-./install.sh --no-onboard
-```
-
-The `app` shell starts in `/home/app/fased`.
+Do not rerun `/home/app/fased/install.sh` on Hosting, with or without `sudo`.
+Use `fased update` from the `app` shell for normal Hosting updates. Use the
+exact tagged, attested `--repair-hosting` procedure from the VPS provider root
+console only when the managed updater or root-owned service is broken.
 
 Use `./install.sh --no-git-update` only when testing local changes.
 
@@ -247,21 +267,29 @@ replacement. A typical symptom is an update that reports success while
 inside that already-installed old binary.
 
 This is not a normal update and is not a follow-up step after a successful fresh
-install. First log in as `app` over Tailscale and try `fased update`. Use this
-repair only when that command cannot start, fails, or leaves the old version in
-place.
+install. If the install is known to predate the external managed updater, or
+`fased update` already failed or left the version unchanged, do not repeatedly
+run the old updater. Go directly to the exact tagged root repair below.
 
 The repair must restore root-owned service helpers and the system service. Open
 the VPS provider's web/recovery console as `root` (or use root SSH only when the
-provider still permits it), then run:
+provider still permits it). Follow the exact
+[pre-execution verified release-asset procedure](/install/vps#3-install-fased-and-connect-through-tailscale),
+but replace the final invocation of the already-verified standalone installer
+with:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --repair-hosting
+bash "$BOOTSTRAP_DIR/install.sh" --repair-hosting --release "$RELEASE"
 ```
 
-Do not run this command from the normal `app` Tailscale shell. The restricted
-`app` account intentionally cannot replace arbitrary root-owned installer
-helpers.
+Do not run this command unless the preceding `gh attestation verify` step
+completed successfully for the same exact release. Remove `BOOTSTRAP_DIR` only
+after the repair succeeds.
+
+Do not run this command from the normal `app` Tailscale shell, and never run
+`/home/app/fased/install.sh` with sudo. The restricted `app` account has no
+sudo and no root bootstrap socket. The provider-console bootstrap verifies the
+exact tagged app bundle attestation before loading any privileged assets.
 
 The repair keeps the existing `/home/app/fased` checkout and persistent
 `/home/app/.fased` state. It refreshes the managed runtime, replaces a legacy
@@ -291,6 +319,53 @@ Local users must not run `--repair-hosting`. If their historical Local/WSL
 binary cannot complete `fased update`, use the Local repair command in the
 support contract below.
 
+### One-time pre-v2 Local wallet migration
+
+If `fased update` reports a pre-v2 Local wallet, it stops **before** stopping a
+process or replacing a file. This is intentional: the updater and Gateway must
+not read an old wallet passphrase. First make an offline backup and record the
+public address. If the old CLI does not recognize `local-signer-import`, run the
+exact tagged Local repair later on this page; that installs the new CLI while
+leaving legacy wallet material untouched. Then print the native signer-only
+commands:
+
+```bash
+fased wallet setup --mode local-signer-import --wallet-id agent --role agent
+```
+
+Use `--role mining` only for a Mining wallet and `--role vault` only for a
+Vault. Put the old passphrase in a separate owner-only file, run the printed
+`fased-signerd admin wallet import-legacy` command, and compare the returned
+public address with the address recorded before migration. Then finalize the
+non-secret config/registry conversion:
+
+```bash
+fased wallet finalize-legacy-migration --wallet-id agent
+fased wallet signer doctor --json
+fased update
+```
+
+The native signer reads and consumes the encrypted keystore/passphrase paths.
+Do not put the passphrase in `FASED_WALLET_PASSPHRASE`, command arguments,
+PowerShell, the dashboard, chat, or a skill. WSL2 users run all three Bash
+blocks in the Ubuntu shell, not PowerShell. Existing signer-v2 updates remain
+automatic and transactional.
+
+### Monitor signer ledger capacity
+
+After install/update and from monitoring, run:
+
+```bash
+fased wallet signer doctor --json
+```
+
+Alert on any failed `state.capacity.*` check. Warnings begin at 80% of the hard
+fail-closed limits. Terminal operation details are automatically compacted
+after 90 days into permanent SHA-256 request-ID replay tombstones; reserved,
+broadcast, and unknown records are never pruned. Do not delete signer database
+buckets or restore an older snapshot to make room. Follow the complete
+snapshot and stale-restore rules in [Self-hosted Wallet](/plugins/crypto/wallet-self-hosted#typed-operations-and-durable-limits).
+
 ## Update support contract
 
 Use this order for every existing installation:
@@ -307,11 +382,27 @@ The bootstrap replaces application/runtime files, not user state. Do not delete
 `~/.fased` or `/home/app/.fased`, and do not run fresh onboarding merely to fix
 an old updater.
 
-Local or WSL bootstrap:
+Local, WSL, or macOS exact-version repair (replace `vX.Y.Z`):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
-  | bash -s -- --repair-local
+(
+set -euo pipefail
+RELEASE=vX.Y.Z
+BOOTSTRAP_DIR="$(mktemp -d)"
+trap 'rm -rf "$BOOTSTRAP_DIR"' EXIT
+chmod 0700 "$BOOTSTRAP_DIR"
+curl -fsSLo "$BOOTSTRAP_DIR/install.sh" \
+  "https://github.com/fased-ai/fased/releases/download/${RELEASE}/install.sh"
+curl -fsSLo "$BOOTSTRAP_DIR/install.sh.attestation.json" \
+  "https://github.com/fased-ai/fased/releases/download/${RELEASE}/install.sh.attestation.json"
+GH_PROMPT_DISABLED=1 gh attestation verify "$BOOTSTRAP_DIR/install.sh" \
+  --repo fased-ai/fased \
+  --bundle "$BOOTSTRAP_DIR/install.sh.attestation.json" \
+  --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
+  --source-ref "refs/tags/${RELEASE}" \
+  --deny-self-hosted-runners
+bash -s -- --repair-local --release "$RELEASE" < "$BOOTSTRAP_DIR/install.sh"
+)
 
 hash -r
 fased update status
@@ -323,18 +414,18 @@ fased gateway status
 fased plugins doctor
 ```
 
-The Local/WSL bootstrap installs the current managed runtime, replaces only a
-recognized installer-owned `fased` launcher, installs or refreshes the user
-service, and verifies that the running Gateway reports the same version. It
-does not overwrite an unrelated user-managed command and does not rerun
-onboarding.
+The repair checks out the exact requested tag and pins the managed runtime to
+that same version. It replaces only a recognized installer-owned `fased`
+launcher, installs or refreshes the user service, and verifies that the running
+Gateway reports the same version. It does not overwrite an unrelated
+user-managed command or rerun onboarding. On macOS the exact tagged source is
+built because no managed Linux runtime artifact is used.
 
-VPS Hosting bootstrap, run from the provider's root console:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
-  | bash -s -- --repair-hosting
-```
+VPS Hosting bootstrap must run from the provider's root console. Follow the
+[pre-execution verified release-asset procedure](/install/vps#3-install-fased-and-connect-through-tailscale)
+for the exact release, then use `--repair-hosting` instead of `--hosting` only
+in the final invocation of that already-verified standalone installer. Never
+recover Hosting by piping a raw repository URL into a shell.
 
 An immutable old binary cannot execute updater logic that was introduced in a
 newer release. That one-time bootstrap is therefore unavoidable for a small set
@@ -387,12 +478,12 @@ check because it verifies the live official manifest.
 
 ## Rollback
 
-If a new checkout is bad, roll back to an earlier commit or tag, then rerun the
-installer:
+If a source checkout is bad, roll back to an earlier release tag, then rerun
+the source installer:
 
 ```bash
-git checkout <tag-or-commit>
-./install.sh --no-onboard
+git checkout --detach vX.Y.Z
+./install.sh --source-install --no-onboard --release vX.Y.Z
 ```
 
 Then verify:

@@ -122,7 +122,7 @@ describe("buildGatewayServiceRestartAttempts", () => {
     );
 
     expect(labels.slice(0, 2)).toEqual(["user restart", "user start"]);
-    expect(labels).toContain("root restart");
+    expect(labels).toContain("signal app-owned hosted Gateway");
   });
 
   it("uses root-managed service first for hosting profile restarts", () => {
@@ -130,7 +130,7 @@ describe("buildGatewayServiceRestartAttempts", () => {
       (attempt) => attempt.label,
     );
 
-    expect(labels).toEqual(["root restart", "root start", "root enable+start"]);
+    expect(labels).toEqual(["signal app-owned hosted Gateway"]);
     expect(labels).not.toContain("user restart");
   });
 });
@@ -178,7 +178,8 @@ describe("formatHostedRootServiceRequiredFailure", () => {
     expect(text).toContain("root-managed fased-gateway.service running as User=app");
     expect(text).toContain("will not fall back to an app-managed user service");
     expect(text).toContain("Root service repair failed: sudo denied");
-    expect(text).toContain("./install.sh --hosting");
+    expect(text).toContain("exact tagged, attested Hosting release");
+    expect(text).toContain("never run the app checkout with sudo");
     expect(text).toContain("sudo systemctl status fased-gateway");
   });
 });

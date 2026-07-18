@@ -1,5 +1,6 @@
 export type { FasedAgentConfig } from "../config/config.js";
 export { loadConfig, resolveGatewayPort } from "../config/config.js";
+export { resolveStateDir } from "../config/paths.js";
 export {
   SAT_RUNTIME_DEFAULTS,
   resolveSatBondProgramIdFromEnv,
@@ -40,13 +41,14 @@ export {
 } from "../infra/device-identity.js";
 export { createSubsystemLogger } from "../logging/subsystem.js";
 export { resolvePreferredFasedAgentTmpDir } from "../infra/tmp-fased-dir.js";
+export { withFileLock } from "./file-lock.js";
+export type { FileLockOptions } from "./file-lock.js";
 export { fetchSolanaWalletAssetsViaRpc } from "../wallet/solana-assets.js";
 export {
   callLocalSocketSigner,
   probeLocalSocketSignerHealth,
   requireLocalSocketSignerPath,
 } from "../wallet/providers/local-socket-signer-adapter.js";
-export { enforceWalletCustodyForAutonomousSend } from "../wallet/wallet-custody.js";
 export {
   readWalletProviderRegistry,
   resolveWalletUserRole,
@@ -61,6 +63,7 @@ export {
   createWalletProviderAdapter,
   resolveWalletProviderId,
 } from "../wallet/wallet-provider-resolver.js";
+export { LEGACY_EMBEDDED_KEYSTORE_MIGRATION_MESSAGE } from "../wallet/legacy-embedded-keystore.js";
 export {
   resolveLocalSignerSocketPath,
   resolveWalletRuntimeConfig,
@@ -70,7 +73,11 @@ export {
   resolveWalletPolicyConfig,
   resolveWalletRolePolicyProfile,
 } from "../wallet/wallet-policy.js";
-export { createOrExecuteWalletSend } from "../wallet/wallet-send-approvals.js";
+export {
+  createOrExecuteWalletSend,
+  createSignerReviewApprovalRequest,
+} from "../wallet/wallet-send-approvals.js";
+export type { WalletProviderJupiterReviewV2 } from "../wallet/wallet-provider-adapter.js";
 export { readWalletStatusSnapshot } from "../wallet/wallet-status.js";
 
 export async function fetchWithSsrFGuard(

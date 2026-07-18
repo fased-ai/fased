@@ -17,8 +17,8 @@ Use it to:
 - copy addresses and fund the right wallet
 - confirm which wallets are Agent, mining, vault, or bond-adjacent
 - create and approve sends
-- turn on Wallet Control Passkey
-- review split-key and lock state
+- manage Gateway Wallet Control Passkeys and inspect native review readiness
+- review signer policy version/hash and RPC readiness
 - inspect wallet controls and recent activity
 
 Use the matching page for each workflow:
@@ -48,8 +48,9 @@ Use the matching page for each workflow:
 
 ```mermaid
 flowchart TD
-    Setup["Onboarding<br/>or CLI setup"] --> Wallets["Wallets"]
-    Wallets --> Funding["Fund and secure<br/>wallets"]
+    Setup["Signer-owned creation<br/>or native admin import"] --> Activate["Configure both RPC planes<br/>activate owner-reviewed policy"]
+    Activate --> Wallets["Wallets"]
+    Wallets --> Funding["Fund deliberately<br/>small balances"]
     Funding --> Mining["Mining<br/>SAT operations"]
     Funding --> Network["Fased Network"]
     Network --> Bond["Bond operator lane"]
@@ -58,7 +59,8 @@ flowchart TD
 
 Read it like this:
 
-- onboarding creates or imports the wallet and registers it
+- onboarding creates the wallet inside Go and registers its public address;
+  existing-key import uses the separate native signer-admin command
 - The Wallets page is where you inspect, fund, secure, and approve wallet actions
 - Mining uses a dedicated mining wallet
 - Fased Network uses the wallet map to show Agent wallet and bond posture
@@ -68,18 +70,21 @@ Read it like this:
 
 For a first public setup, use this order:
 
-1. Run onboarding or `fased wallet setup --chain solana` to create or import wallets.
-2. Create or import one **Agent** wallet for normal sends, Marketplace order actions,
+1. Run onboarding or `fased wallet setup --chain solana` to create signer-owned wallets.
+2. Create one **Agent** wallet for normal sends, Marketplace order actions,
    reviewed wallet actions, scheduled wallet work, and skill wallet actions.
-3. Create or import one **Mining** wallet only if you plan to run Satcoin mining.
-4. Create or import one **Vault** wallet if you need protected storage or Fased
+3. Create one **Mining** wallet only if you plan to run Satcoin mining.
+4. Create one **Vault** wallet if you need protected storage or Fased
    Network bond authority.
-5. Open **Wallets**, copy the address from the wallet card, and fund the wallet from an external
-   wallet or exchange.
-6. Refresh balances and confirm the SOL arrived before sending, mining, or
+5. Configure the signer execution RPC and Gateway read RPC for each wallet.
+6. Copy and review the installed role policy template, activate it with the
+   owner helper, and verify the exact signer policy version/hash and RPC
+   readiness.
+7. Enroll signer WebAuthn with the native launcher before any manual native
+   Agent, Mining, or Vault review. The Wallets **Access** passkey is separate.
+8. Only then copy the address and fund it with a deliberately small amount.
+9. Refresh balances and confirm the funds arrived before sending, mining, or
    scheduling wallet work.
-7. Open **Access** and enable Wallet Control Passkey before relying on approvals
-   or split-key security.
 
 Keep the roles separate. Agent wallets do normal agent work. The Mining wallet
 does Satcoin mining only. Vault wallets are manual-first reserve/bond wallets.
@@ -90,17 +95,18 @@ The Wallets page is intentionally compact. The main sections are:
 
 ### 1. Access
 
-The **Access** tab contains Wallet Control Passkey, the approval and ceremony
-shortcut for wallet-sensitive actions.
+The **Access** tab manages the Gateway-owned **Wallet Control Passkey**. It
+authenticates Gateway approval requests and settings changes; it is not the
+credential that `fased-signerd` verifies for an exact native review.
 
 Use it for:
 
-- send approvals
-- wallet-control changes
-- wallet security setup
-- lock and unlock
-- recovery
-- device-share and second-device changes
+- Gateway send approvals and wallet settings
+- Gateway passkey enrollment/list/removal
+- review-readiness guidance
+
+Signer WebAuthn is a separate Go-owned credential set. Enroll it only through
+`fased-signer-enroll`; the Access UI cannot enroll or remove signer credentials.
 
 ### 2. Wallet inventory cards
 
@@ -126,8 +132,10 @@ The real flow is:
 3. click `Create Approval Request`
 4. review the pending request, wallet-control simulation, and approval diff
 5. click `Approve`
-6. complete passkey approval if enabled
-7. let Fased execute and log the send
+6. complete Gateway Wallet Control Passkey approval if enabled
+7. for a manual native wallet, complete signer WebAuthn for the exact immutable
+   review
+8. let Fased execute and log the send
 
 That is why the Wallets page is an approval surface, not just a raw signer surface.
 
@@ -143,15 +151,20 @@ This section changes by role.
 
 This is where you review or save wallet controls:
 
-- Preset: one-click starting point for the selected wallet role
-- Caps: optional per-wallet spend limits, Off by default on fresh wallets
+- Preset: a requested starting point that is not active until the signer
+  acknowledges its exact version/hash
+- Caps: signer-owned positive per-transaction and daily limits for every
+  executable asset policy
 - Send: one Agent-wallet recurring send setting shared by chat and the Wallets UI
-- Auto: Agent background execution, On by default for Agent wallets
-- Security: Vault split-key/passkey custody
+- Auto: Agent background execution, denied until an explicit signer policy
+  grants the exact typed operations
+- Security: Gateway passkey status plus signer WebAuthn, hardware Wallet
+  Standard, or Turnkey custody guidance
 - Sweep: Mining-only SAT movement after successful claims
 
 Automated execution means the Agent wallet may execute approved background
-actions when role controls, enabled caps, allowlists, and custody state allow it.
+actions when role controls and the signer's operations, programs, assets,
+destinations, positive caps, and durable request checks allow it.
 Wallets UI manual Send still creates a reviewed request first, then approval
 executes the request.
 
@@ -160,10 +173,9 @@ sweep. It does not allow generic chat, skill, wallet-action, or bond actions fro
 mining wallet. For Agent, automation is the working-wallet path for approved
 agent tasks. Vault stays manual-only and uses reviewed Wallets page approval.
 
-Caps Off skips only cap comparisons. It does not bypass custody, signer state,
-role checks, allowlists, audit, manual approval, or transaction inspection. Caps
-On enforces the SOL row and every configured SPL token row. Existing wallets with
-non-zero saved caps are treated as Caps On until the operator switches them Off.
+Gateway preview controls cannot disable signer caps. An executable native
+policy always requires positive per-transaction and daily caps for each asset.
+Missing or zero caps deny signing.
 
 Pending approvals include a compact diff showing what will spend, from which
 wallet role, to which destination, and what source triggered it. Fased also
@@ -236,10 +248,10 @@ wallet action with the exact `@wallet:<walletId>` handle or a structured
 tool/API `walletId`.
 
 Agent wallet actions from owner chat or allowed channels can execute
-automatically when Auto is On and wallet controls allow the action. Manual Send
-is the Wallets page request flow. Agent wallet chat actions still use enabled
-caps, allowlists, balance checks, transaction inspection, custody state, and
-audit logs before signing.
+automatically when Auto is On and signer policy allows the action. Manual Send
+is the Wallets page request flow. Agent wallet chat actions still use
+signer-owned caps, allowlists, balance checks, semantic transaction inspection,
+durable request state, and audit logs before signing.
 
 The same Agent wallet controls also gate advanced `wallet_action` chat flows and
 scheduled wallet work. Those flows must name the Agent wallet handle or resolve
@@ -268,7 +280,8 @@ Caps are edited in one table:
 - open the Agent wallet
 - open `Policy`
 - open `Caps`
-- switch Caps On only when you want limit enforcement
+- keep Caps enabled and set positive limits; Off, missing, or zero means deny,
+  never unlimited
 - set the `SOL` row for native SOL
 - search or paste a token mint to add USDC, SAT, FCOD, or another SPL asset row
 - set `Daily` and `Per tx` for that asset, then click `Save`
@@ -305,8 +318,10 @@ Fased treats the active mining wallet as protected operational state. Keep it
 in place while mining is active.
 
 To stop using a mining wallet: stop mining, let pending cycles clear, claim,
-withdraw or sweep what you need, then delete that wallet through the guarded
-wallet-management path if you no longer want it. Create a new Agent or Vault
+withdraw or sweep what you need, then use **Archive/remove from Fased**. Fased
+first tightens the signer policy to deny-all and verifies the acknowledgement;
+only then does it detach and unregister the wallet. The encrypted signer-owned
+key remains recoverable and is not securely erased. Create a new Agent or Vault
 wallet for other purposes.
 
 ### Vault wallet
@@ -337,24 +352,35 @@ That matters more than inventing extra Fased wallet labels.
 The normal public path is:
 
 1. run onboarding or `fased wallet setup`
-2. create or import a wallet
+2. create a wallet inside the native signer
 3. choose a permanent purpose and display label
-4. configure RPC for the chain
-5. let Fased register the wallet
-6. confirm the wallet appears in Wallet
+4. record the operator-facing registry id and canonical signer id
+5. configure signer execution RPC and Gateway read RPC
+6. let Fased register the public address
+7. activate an owner-reviewed role policy and verify its exact version/hash
+8. enroll signer WebAuthn before manual native reviews
+9. confirm the wallet appears in Wallet and only then fund it
 
 Role defaults:
 
 - onboarding asks for wallet purpose: Agent, Mining, or Vault
 - onboarding lets you edit the wallet name once during creation; this is a display label only
 - the permanent `walletId` and handle are generated from wallet purpose, not from the display name
-- CLI creation/import marks a wallet Agent or Vault when you pass `--role agent` or `--role vault`
-- one singleton Mining wallet is created or imported as `@wallet:mining`
+- native creation records the permanent Agent, Mining, or Vault role in signer state
+- one singleton Mining wallet is created as `@wallet:mining`
 - wallets with no Agent role behave like Vault/manual-first wallets for risky chat and skill actions
 - existing wallet purpose is treated as permanent; create a new wallet for a different purpose
-- onboarding reset does not delete wallet keystores or registry state under `~/.fased/wallet`
-- wallet deletion is separate and per-wallet; save recovery material, move funds
-  if needed, then type the exact wallet id
+- onboarding reset does not delete signer-owned key state or the wallet registry
+- archive/removal is separate and per-wallet; save recovery material, move funds
+  if needed, then type the exact wallet id. It locks signing and unregisters the
+  wallet, but does not erase the encrypted native key
+
+Existing-key import is deliberately outside the dashboard and normal setup
+wizard. Pass one Solana CLI 64-byte JSON keypair array on stdin to
+`fased-signerd admin wallet import` through the signer-only control socket. Do
+not use a seed phrase, base58, hex, base64, environment variable, command
+argument, or chat. See [Self-hosted wallet
+signer](/plugins/crypto/wallet-self-hosted).
 
 For production, use role/purpose ids without chain suffixes:
 
@@ -366,6 +392,11 @@ Only Agent and Vault are multi-wallet purposes. Duplicates get numeric ids:
 
 - `Agent 2` / `agent-2`
 - `Vault 2` / `vault-2`
+
+The operator registry handle can contain a hyphen, while the native signer uses
+its canonical underscore form. For example, `@wallet:agent-2` maps to signer
+wallet id `agent_2`. Policy and native admin JSON must use the canonical signer
+id reported by setup, not a guessed display handle.
 
 Display names can still be user-friendly:
 
@@ -400,7 +431,9 @@ and audit logging.
 
 ## How to fund a wallet
 
-The basic funding path is simple:
+Fund only after both RPC planes are configured, the owner-reviewed signer
+policy is acknowledged, and signer WebAuthn is ready for manual native work.
+Then:
 
 1. open **Wallets**
 2. copy the correct address from the wallet card
@@ -424,8 +457,9 @@ The public self-hosted path is:
 - local wallet registry
 - provider id `local-socket-signer`
 - native signer `fased-signerd`
-- explicit chain RPC
-- optional Wallet Control Passkey and split-key custody
+- signer-owned versioned RPC
+- fail-closed typed policy and durable cap/request state
+- signer-owned WebAuthn for every manual native Agent, Mining, or Vault review
 
 The important distinction is:
 
@@ -436,21 +470,20 @@ The important distinction is:
 
 For the full architecture, storage paths, and security model, see [Self-hosted wallet signer](/plugins/crypto/wallet-self-hosted).
 
-## Lock, unlock, and passkey
+## Manual authorization and passkey
 
 The conservative operator order is:
 
-1. enable Wallet Control Passkey
-2. enroll at least one passkey
-3. use Agent `Stop` when you need to pause chat, skill, plugin, or scheduled wallet execution
-4. turn on split-key security for Vault wallets that should require manual custody unlock
-5. keep secured Vault wallets locked when idle, or unlock them until you manually lock them again
+1. verify the wallet id, permanent role, public address, RPC, and signer policy hash
+2. enroll signer-owned WebAuthn through the Local or Hosting admin launcher
+3. use exact immutable reviews for manual native Agent, Mining, and Vault work
+4. use Agent `Stop` when you need to pause new chat, skill, plugin, or scheduled requests
+5. reconcile any existing reserved/broadcast/unknown request and tighten signer policy when authority should be removed
 
-Passkey and split-key are not the same thing:
-
-- passkey is the approval and ceremony layer
-- split-key is the locked-wallet custody layer
-- Agent `Stop` is an automation stop, not a split-key custody lock
+The Access-tab Wallet Control Passkey authenticates Gateway actions. Signer
+WebAuthn separately authorizes one exact native review. Agent `Stop` pauses new
+Gateway automation but does not erase a key, reset caps, or cancel a broadcast.
+The legacy split-key/passphrase unlock model is not production custody.
 
 For the step-by-step flows, see:
 
@@ -470,7 +503,7 @@ Wallet stays focused on:
 
 Use the clean split:
 
-- onboarding creates or imports wallets
+- onboarding creates signer-owned wallets; native admin handles import
 - Wallet handles inventory, funding, approval, controls, and security
 - Mining handles Satcoin mining operations
 - Fased Network handles bond posture and public network state
@@ -481,8 +514,8 @@ Use the clean split:
 fased wallet setup
 fased wallet status --json
 fased wallet signer doctor --json
-fased wallet policy profile manual-owner
-fased wallet custody-lock
+"$HOME/.fased/bin/fased-signer-policy" --help
+"$HOME/.fased/bin/fased-signer-enroll" --help
 ```
 
 ## Related docs

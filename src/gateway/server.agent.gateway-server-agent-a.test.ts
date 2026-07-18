@@ -1,8 +1,8 @@
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import type { ChannelPlugin } from "../channels/plugins/types.js";
+import { resolveStorePath } from "../config/sessions.js";
 import { createChannelTestPluginBase } from "../test-utils/channel-plugins.js";
 import { setRegistry } from "./server.agent.gateway-server-agent.mocks.js";
 import { createRegistry } from "./server.e2e-registry-helpers.js";
@@ -28,8 +28,9 @@ beforeAll(async () => {
   server = started.server;
   ws = started.ws;
   await connectOk(ws);
-  sharedSessionStoreDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-gw-session-"));
-  sharedSessionStorePath = path.join(sharedSessionStoreDir, "sessions.json");
+  sharedSessionStorePath = resolveStorePath(undefined, { agentId: "main" });
+  sharedSessionStoreDir = path.dirname(sharedSessionStorePath);
+  await fs.mkdir(sharedSessionStoreDir, { recursive: true });
 });
 
 afterAll(async () => {
@@ -54,8 +55,9 @@ async function setTestSessionStore(params: {
   entries: Record<string, Record<string, unknown>>;
   agentId?: string;
 }) {
-  testState.sessionStorePath = sharedSessionStorePath;
+  const storePath = resolveStorePath(undefined, { agentId: params.agentId ?? "main" });
   await writeSessionStore({
+    storePath,
     entries: params.entries,
     agentId: params.agentId,
   });
@@ -88,7 +90,7 @@ async function runMainAgentDeliveryWithSession(params: {
       deliver: true,
       ...params.request,
     });
-    expect(res.ok).toBe(true);
+    expect(res.ok, JSON.stringify(res)).toBe(true);
     return latestAgentCall();
   } finally {
     testState.allowFrom = undefined;
@@ -180,7 +182,7 @@ describe("gateway server agent", () => {
       deliver: true,
       idempotencyKey: "idem-agent-last-stale",
     });
-    expect(res.ok).toBe(true);
+    expect(res.ok, JSON.stringify(res)).toBe(true);
 
     const call = latestAgentCall();
     expectChannels(call, "whatsapp");
@@ -205,7 +207,7 @@ describe("gateway server agent", () => {
       sessionKey: "agent:main:subagent:abc",
       idempotencyKey: "idem-agent-subkey",
     });
-    expect(res.ok).toBe(true);
+    expect(res.ok, JSON.stringify(res)).toBe(true);
 
     const call = latestAgentCall();
     expect(call.sessionKey).toBe("agent:main:subagent:abc");

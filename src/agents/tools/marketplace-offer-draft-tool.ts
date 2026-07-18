@@ -491,7 +491,7 @@ function createMarketplaceSearchTool(params: {
             return (
               paymentStatus === "verified" ||
               settlementStatus === "settled" ||
-              Boolean(entry.order.invoiceId || entry.order.receiptId || entry.order.txRef)
+              settlementStatus === "verified"
             );
           }),
         });
