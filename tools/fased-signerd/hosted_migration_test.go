@@ -296,6 +296,9 @@ func TestEnsureHostedMigrationImportDirectoryV1RejectsSymlinkBeforeMutation(t *t
 }
 
 func TestQuarantineHostedMigrationFileV1IsLockedDurableAndResumable(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("descriptor-based hosted migration quarantine is Linux-only")
+	}
 	root := filepath.Join(hostedMigrationCanonicalTempDirV1(t), "home", "app", ".fased", "wallet")
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		t.Fatal(err)

@@ -11,7 +11,13 @@ const require = createRequire(import.meta.url);
 const TYPESCRIPT_VERSION = require("typescript/package.json").version;
 
 function normalizeMessage(message) {
-  const compact = message.replace(/\s+/g, " ").trim();
+  const compact = message
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(
+      /(?:[A-Za-z]:)?(?:[\\/][^\\/"'<>]+)+?[\\/]node_modules[\\/]\.pnpm[\\/]/g,
+      "<repo>/node_modules/.pnpm/",
+    );
   return compact
     .split(process.cwd())
     .join("<repo>")
