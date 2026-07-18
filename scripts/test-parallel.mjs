@@ -201,6 +201,14 @@ const testProfile =
 const overrideWorkers = Number.parseInt(process.env.FASED_TEST_WORKERS ?? "", 10);
 const resolvedOverride =
   Number.isFinite(overrideWorkers) && overrideWorkers > 0 ? overrideWorkers : null;
+const extensionOverrideWorkers = Number.parseInt(
+  process.env.FASED_TEST_EXTENSIONS_WORKERS ?? "",
+  10,
+);
+const resolvedExtensionOverride =
+  Number.isFinite(extensionOverrideWorkers) && extensionOverrideWorkers > 0
+    ? extensionOverrideWorkers
+    : null;
 const parallelGatewayEnabled =
   process.env.FASED_TEST_PARALLEL_GATEWAY === "1" || (!isCI && highMemLocalHost);
 // Keep gateway serial by default except when explicitly requested or on high-memory local hosts.
@@ -283,6 +291,9 @@ const defaultWorkerBudget =
 // Keep worker counts predictable for local runs; trim macOS CI workers to avoid worker crashes/OOM.
 // In CI on linux/windows, prefer Vitest defaults to avoid cross-test interference from lower worker counts.
 const maxWorkersForRun = (name) => {
+  if (name === "extensions" && resolvedExtensionOverride) {
+    return resolvedExtensionOverride;
+  }
   if (resolvedOverride) {
     return resolvedOverride;
   }

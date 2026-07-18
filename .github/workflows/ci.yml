@@ -273,11 +273,13 @@ jobs:
           # `pnpm test` runs `scripts/test-parallel.mjs`, which spawns multiple Node processes.
           # Default heap limits have been too low on Linux CI (V8 OOM near 4GB),
           # while concurrent 6GB suite groups can overcommit the hosted runner.
-          # Serialize suite groups and use one worker per group. For extensions,
-          # the runner script then selects process forks instead of vmForks so
-          # heap state and background timers cannot accumulate across files.
+          # Serialize suite groups and retain two workers for unit/Gateway
+          # isolation. Use one extensions worker so the runner script selects
+          # process forks instead of vmForks and heap state/background timers
+          # cannot accumulate across files.
           echo "FASED_TEST_PROFILE=serial" >> "$GITHUB_ENV"
-          echo "FASED_TEST_WORKERS=1" >> "$GITHUB_ENV"
+          echo "FASED_TEST_WORKERS=2" >> "$GITHUB_ENV"
+          echo "FASED_TEST_EXTENSIONS_WORKERS=1" >> "$GITHUB_ENV"
           echo "FASED_TEST_MAX_OLD_SPACE_SIZE_MB=6144" >> "$GITHUB_ENV"
 
       - name: Run ${{ matrix.task }} (${{ matrix.runtime }})
