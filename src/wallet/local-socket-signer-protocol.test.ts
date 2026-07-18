@@ -307,6 +307,35 @@ describe("local socket signer protocol", () => {
     ).toThrow("invalid signer request");
   });
 
+  it("accepts only semantic SAT lookup-table operations", () => {
+    const request = {
+      op: "v2.execute" as const,
+      walletId: "mining",
+      request: {
+        requestId: "sat-lookup-request-123",
+        policyHash: `sha256:${"d".repeat(64)}`,
+        intent: {
+          type: "solana.satLookupTable" as const,
+          action: "extend" as const,
+          lookupTable: {
+            address: "4c8wadNoNVAJMpJtQnUAYbJgdE1YyfTpwBCNak1hBuPB",
+            addresses: ["So11111111111111111111111111111111111111112"],
+          },
+        },
+      },
+    };
+    expect(parseLocalSocketSignerRequest(request)).toEqual(request);
+    expect(() =>
+      parseLocalSocketSignerRequest({
+        ...request,
+        request: {
+          ...request.request,
+          intent: { ...request.request.intent, rawTransactionBase64: "forbidden" },
+        },
+      }),
+    ).toThrow("invalid signer request");
+  });
+
   it("accepts only narrow Vault bond and federation challenge intents", () => {
     const policyHash = `sha256:${"e".repeat(64)}`;
     const bondIntent = {

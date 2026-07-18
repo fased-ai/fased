@@ -336,6 +336,19 @@ type SatInstructionSubmitSpec = {
   ) => Promise<SolanaAccountMeta[] | SatResolvedInstruction>;
 };
 
+type SatInstructionSubmitResult = {
+  txHash: string;
+  signer: string;
+  signerState: SatSignerOperation["state"];
+  requestId: string;
+  transactionVersion: "legacy" | "v0";
+  lookupTableAddress?: string;
+  lookupTableCreated?: boolean;
+  lookupTableExtended?: boolean;
+  lookupTableAddressCount?: number;
+  lookupTableTransactionHashes?: string[];
+};
+
 async function prepareLocalSignerSubmitContext(cfg: FasedAgentConfig, env: NodeJS.ProcessEnv) {
   const effectiveEnv = resolveSatEffectiveEnv(cfg, env);
   const solana = await loadSolanaWeb3();
@@ -511,6 +524,14 @@ function signerStateForLedger(state: SatSignerOperation["state"]): SatSubmission
   return state;
 }
 
+type SatLookupTableAction = "create" | "extend" | "deactivate" | "close";
+
+function assertSatLookupTableAction(value: string): asserts value is SatLookupTableAction {
+  if (value !== "create" && value !== "extend" && value !== "deactivate" && value !== "close") {
+    throw new Error(`unsupported SAT lookup-table action ${value}`);
+  }
+}
+
 class SatSubmissionUnresolvedError extends Error {
   readonly requestId: string;
   readonly signature?: string;
@@ -555,9 +576,11 @@ async function executeTypedSatIntent(params: {
         if (params.instruction || params.instructions || !params.lookupTable) {
           throw new Error("typed SAT lookup-table execution accepts only semantic lookup details");
         }
+        const action = params.action;
+        assertSatLookupTableAction(action);
         return {
           type: "solana.satLookupTable" as const,
-          action: params.action,
+          action,
           lookupTable: params.lookupTable,
         };
       })()
@@ -1099,7 +1122,7 @@ async function submitInstructionViaLocalSigner(
     cfg: FasedAgentConfig;
     env: NodeJS.ProcessEnv;
   } & SatInstructionSubmitSpec,
-) {
+): Promise<SatInstructionSubmitResult> {
   const context = await prepareLocalSignerSubmitContext(params.cfg, params.env);
   const baseRequest = await buildLocalSignerInstructionRequest({
     solana: context.solana,
