@@ -161,6 +161,15 @@ const SignerSatInstructionV2Schema = Type.Object(
   { additionalProperties: false },
 );
 
+const SignerSatLookupTableV2Schema = Type.Object(
+  {
+    address: Type.String(),
+    recentSlot: Type.Optional(Type.String({ pattern: "^(0|[1-9][0-9]*)$" })),
+    addresses: Type.Optional(Type.Array(Type.String(), { minItems: 1, maxItems: 20 })),
+  },
+  { additionalProperties: false },
+);
+
 const SignerFederationBondChallengeV2Schema = Type.Object(
   {
     challengeId: Type.String({ minLength: 1, maxLength: 256 }),
@@ -217,6 +226,19 @@ export const SignerIntentV2Schema = Type.Union([
       instructions: Type.Optional(
         Type.Array(SignerSatInstructionV2Schema, { minItems: 1, maxItems: 6 }),
       ),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      type: Type.Literal("solana.satLookupTable"),
+      action: Type.Union([
+        Type.Literal("create"),
+        Type.Literal("extend"),
+        Type.Literal("deactivate"),
+        Type.Literal("close"),
+      ]),
+      lookupTable: SignerSatLookupTableV2Schema,
     },
     { additionalProperties: false },
   ),

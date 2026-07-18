@@ -806,7 +806,7 @@ describe("sat audit store", () => {
     ]);
   });
 
-  it("persists settlement page participant cache across runtime summary reloads", async () => {
+  it("persists settlement page participant and lookup-table caches across reloads", async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "sat-runtime-settlement-cache-"));
     tempDirs.push(tempDir);
     const filePath = resolveSatRuntimeStorePath(tempDir);
@@ -821,6 +821,12 @@ describe("sat audit store", () => {
           ],
         },
       ],
+      settlementPageLookupTables: [
+        {
+          cacheKey: "9862959:0",
+          lookupTableAddress: "9xQeWvG816bUx9EPfEZ9arFRr1CtwkLrM7d4mNQyRr7u",
+        },
+      ],
     });
 
     const loaded = await readSatRuntimeSummary(filePath);
@@ -832,6 +838,12 @@ describe("sat audit store", () => {
           "AJweQ2hieUY1wvyRvdyqCdrQEjqd3WbuxwYoeRSG9em6",
           "3CiND9t4YyDi3rHEKAfBETzxmZesyA81ACYFAqYiUwq1",
         ],
+      },
+    ]);
+    expect(loaded.settlementPageLookupTables).toEqual([
+      {
+        cacheKey: "9862959:0",
+        lookupTableAddress: "9xQeWvG816bUx9EPfEZ9arFRr1CtwkLrM7d4mNQyRr7u",
       },
     ]);
   });

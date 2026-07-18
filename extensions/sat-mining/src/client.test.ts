@@ -42,4 +42,17 @@ describe("SatMiningClient chunked settlement builders", () => {
       params: { cycleId: 42, pageIndex: 1, chunkIndex: 0 },
     });
   });
+
+  it("builds distribution lookup-table cleanup request", () => {
+    expect(
+      client.buildCleanupDistributionLookupTableRequest({
+        cycleId: 42,
+        pageIndex: 1,
+        action: "deactivate",
+      }),
+    ).toEqual({
+      method: "sat.cleanupDistributionLookupTable",
+      params: { cycleId: 42, pageIndex: 1, action: "deactivate" },
+    });
+  });
 });

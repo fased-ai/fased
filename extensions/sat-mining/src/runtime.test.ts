@@ -93,6 +93,8 @@ describe("sat mining runtime helpers", () => {
       },
     };
     state.lastRoundWatchAt = new Date(0).toISOString();
+    state.settlementPageParticipants.set("7:0", ["participant"]);
+    state.settlementPageLookupTables.set("7:0", "lookup-table");
 
     resetSatRoundRuntimeState(state);
 
@@ -100,6 +102,8 @@ describe("sat mining runtime helpers", () => {
     expect(state.roundContexts.size).toBe(0);
     expect(state.roundPlans.size).toBe(0);
     expect(state.roundExecution.size).toBe(0);
+    expect(state.settlementPageParticipants.size).toBe(0);
+    expect(state.settlementPageLookupTables.get("7:0")).toBe("lookup-table");
     expect(state.lastPlannerDecision).toBeNull();
     expect(state.lastStrategyDecision).toBeNull();
     expect(state.lastRoundWatchAt).toBeNull();

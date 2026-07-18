@@ -36,7 +36,16 @@ with `fased-signer-policy`; installation and update never widen it automatically
   forces generic SOL/SAT transfers through reviewed authorization for a Mining
   wallet; it never treats them as autonomous mining actions. Exact SAT codecs
   that genuinely use associated-token-account instructions retain that program
-  grant.
+  grant. The starter deliberately omits the four typed `satLookup` lifecycle
+  operations for large distribution pages. Opting in requires both
+  `FASED_SAT_ENABLE_ALT_V0=1` and owner-approved exact create, extend,
+  deactivate, and close grants for the Address Lookup Table program. Create and
+  extend each reserve `25000000` lamports, so the native SOL per-transaction cap
+  must be at least that amount and the daily cap must cover every create/extend
+  chunk the operator intends to run. The signer network must also contain
+  reachable primary and fallback RPC URLs on two distinct origins. ALT account
+  bytes must agree exactly across both origins; one origin, duplicate origins,
+  or any disagreement fails closed.
 - Vault operations always require signer-owned reviewed authorization. The
   starter omits Jupiter and Trigger permissions. Treat both as preview in this
   release: do not add them to a production policy until an exact generated

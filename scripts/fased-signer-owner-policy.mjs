@@ -17,6 +17,7 @@ const SYSTEM_PROGRAM = "11111111111111111111111111111111";
 const TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const TOKEN_2022_PROGRAM = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
 const ASSOCIATED_TOKEN_PROGRAM = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
+const ADDRESS_LOOKUP_TABLE_PROGRAM = "AddressLookupTab1e1111111111111111111111111";
 const NATIVE_FEE_RESERVATION_LAMPORTS = 5_000_000n;
 const UINT64_MAX = 18_446_744_073_709_551_615n;
 const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
@@ -73,6 +74,7 @@ const SAT_MINING_ACTIONS = new Set([
   "validatorAttestation",
   "withdrawMinerCapital",
 ]);
+const SAT_LOOKUP_TABLE_ACTIONS = new Set(["create", "extend", "deactivate", "close"]);
 const VAULT_BOND_ACTIONS = new Set([
   "cancelBondUnlock",
   "claimBondStakingRewards",
@@ -441,7 +443,7 @@ function normalizePolicyOperation(value, role, field) {
   if (POLICY_OPERATIONS.has(value)) {
     return value;
   }
-  const match = /^(sat|vaultBond)\.([A-Za-z][A-Za-z0-9]*)@(.+)$/u.exec(value);
+  const match = /^(sat|satLookup|vaultBond)\.([A-Za-z][A-Za-z0-9]*)@(.+)$/u.exec(value);
   if (!match) {
     if (value === "solana.satAction" || value === "solana.vaultBondAction") {
       throw new Error(`${field} must name an exact action bound to its SAT program`);
@@ -453,6 +455,14 @@ function normalizePolicyOperation(value, role, field) {
   if (family === "sat") {
     if (role !== "mining" || !SAT_MINING_ACTIONS.has(action)) {
       throw new Error(`${field} is not an allowed program-bound Mining action`);
+    }
+  } else if (family === "satLookup") {
+    if (
+      role !== "mining" ||
+      !SAT_LOOKUP_TABLE_ACTIONS.has(action) ||
+      program !== ADDRESS_LOOKUP_TABLE_PROGRAM
+    ) {
+      throw new Error(`${field} is not an allowed typed Mining lookup-table action`);
     }
   } else if (role !== "vault" || !VAULT_BOND_ACTIONS.has(action)) {
     throw new Error(`${field} is not an allowed program-bound Vault bond action`);
@@ -1408,6 +1418,7 @@ if (isMain) {
 }
 
 export const __testing = Object.freeze({
+  ADDRESS_LOOKUP_TABLE_PROGRAM,
   ASSOCIATED_TOKEN_PROGRAM,
   ASSOCIATED_TOKEN_PROGRAM_ACTIONS,
   FEDERATION_POLICY_DOMAIN,
@@ -1417,6 +1428,7 @@ export const __testing = Object.freeze({
   TOKEN_2022_PROGRAM,
   TOKEN_PROGRAM,
   SAT_MINING_ACTIONS,
+  SAT_LOOKUP_TABLE_ACTIONS,
   VAULT_BOND_ACTIONS,
   assertSafeExecutable,
   encodeBase58,

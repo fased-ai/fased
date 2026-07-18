@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  buildSatSubmissionOperationKey,
   buildSatSubmissionRequestId,
   claimSatSubmission,
   readSatSubmission,
@@ -28,6 +29,24 @@ describe("SAT durable submission ledger", () => {
 
   afterEach(async () => {
     await fs.rm(stateDir, { recursive: true, force: true });
+  });
+
+  it("binds lookup-table extension chunks to their exact semantic addresses", () => {
+    const first = buildSatSubmissionOperationKey({
+      action: "extend",
+      lookupTable: { address: "table", addresses: ["a", "b"] },
+    });
+    const second = buildSatSubmissionOperationKey({
+      action: "extend",
+      lookupTable: { address: "table", addresses: ["c"] },
+    });
+    expect(first).not.toBe(second);
+    expect(first).toBe(
+      buildSatSubmissionOperationKey({
+        action: "extend",
+        lookupTable: { address: "table", addresses: ["a", "b"] },
+      }),
+    );
   });
 
   it("serializes concurrent workers and lets the waiter claim after the exact owner releases", async () => {

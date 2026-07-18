@@ -82,6 +82,8 @@ describe("packaged native signer policy templates", () => {
     );
     expect(mining.operations).toContain("solana.nativeTransfer");
     expect(mining.operations).toContain("solana.splTransferChecked");
+    expect(mining.operations.some((operation) => operation.startsWith("satLookup."))).toBe(false);
+    expect(mining.programs).not.toContain(__testing.ADDRESS_LOOKUP_TABLE_PROGRAM);
     expect(vault.operations).toContain("federation.bondChallenge");
     expect(vault.operations.some((operation) => operation.startsWith("vaultBond."))).toBe(true);
     expect(mining.programs).toContain(__testing.ASSOCIATED_TOKEN_PROGRAM);

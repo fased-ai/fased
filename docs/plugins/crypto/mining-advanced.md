@@ -384,6 +384,25 @@ Watch:
 If claim fails with an already-closed or invalid-owner style error, the runtime
 may record it as a no-op when the cycle was already claimed and closed.
 
+<Accordion title="Large distribution pages and lookup tables">
+  A distribution chunk with 16 or more miners needs a v0 transaction. This path
+  is fail-closed and runs only with `FASED_SAT_ENABLE_ALT_V0=1` plus the exact
+  native Mining policy grants documented in [Self-hosted wallet
+  signer](/plugins/crypto/wallet-self-hosted#policy-is-signer-owned-and-fail-closed).
+  The default Mining template omits those grants.
+
+Fased creates or extends one signer-owned lookup table per cycle/page through
+separate durable signer operations, waits until the table is active in a
+later slot, and then submits the exact typed `distributeCyclePage` intent. The
+table address survives Gateway restarts. Use
+`sat.cleanupDistributionLookupTable` to deactivate it; close is allowed only
+after Solana's cooldown. Ambiguous broadcasts keep the same request id and
+are never blindly retried. The native signer requires two reachable execution
+RPC URLs on distinct origins and compares the complete lookup-table account
+bytes before compiling numeric indexes. A missing provider, duplicate origin,
+or any account disagreement blocks the operation.
+</Accordion>
+
 ## Keeper economics
 
 Submitted miners can be selected for shared settlement work. The signer pays the
@@ -402,6 +421,8 @@ Scale hardening should focus on better visibility and headless operation:
 - oldest pending claim
 - RPC timeout and rate-limit counters
 - resolved account cleanup queue
+- `currentKeeperBountyPaidLamports`
+- `currentKeeperBountyUnpaidLamports`
 
 Those metrics are what tell an operator whether the runtime is healthy before
 they increase commit.

@@ -113,6 +113,7 @@ export function buildSatSubmissionOperationKey(intent: {
   action?: unknown;
   keys?: unknown;
   instructions?: unknown;
+  lookupTable?: unknown;
 }): string {
   const action =
     typeof intent.action === "string" && intent.action.trim() ? intent.action.trim() : "sat";
@@ -121,7 +122,7 @@ export function buildSatSubmissionOperationKey(intent: {
         const candidate = instruction as { action?: unknown; keys?: unknown };
         return { action: candidate.action, keys: candidate.keys };
       })
-    : intent.keys;
+    : (intent.keys ?? intent.lookupTable);
   return `${action}:${sha256(JSON.stringify(canonicalize(accountShape))).slice(0, 24)}`;
 }
 

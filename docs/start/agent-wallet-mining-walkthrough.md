@@ -388,6 +388,15 @@ Only after policy activation, both RPC checks, and signer WebAuthn enrollment,
 fund the Mining wallet with enough SOL for fees, reserve, and the deliberately
 small capital you plan to deposit.
 
+<Note>
+Large settlement pages use typed v0/address-lookup-table operations only after
+an operator explicitly enables `FASED_SAT_ENABLE_ALT_V0=1` and activates the
+matching Mining policy. That advanced path also requires primary and fallback
+signer execution RPC URLs on two distinct origins. Normal setup keeps it
+disabled. See
+[Mining advanced](/plugins/crypto/mining-advanced#large-distribution-pages-and-lookup-tables).
+</Note>
+
 From **Wallets**:
 
 1. Open the Mining wallet card.

@@ -50,13 +50,13 @@ type normalizedSATInstructionV2 struct {
 }
 
 func normalizeSATIntentV2(input signerIntentV2, wallet solana.PublicKey) (normalizedIntentV2, error) {
-	if input.Destination != "" || input.Lamports != "" || input.TokenProgram != "" || input.Mint != "" || input.Amount != "" || input.Jupiter != nil || input.Federation != nil {
+	if input.Destination != "" || input.Lamports != "" || input.TokenProgram != "" || input.Mint != "" || input.Amount != "" || input.Jupiter != nil || input.Federation != nil || input.LookupTable != nil {
 		return normalizedIntentV2{}, errors.New("typed SAT intent rejects transfer, Jupiter, and federation fields")
 	}
 	isVaultBond := input.Type == intentSolanaVaultBondAction
 	cluster := ""
+	var err error
 	if isVaultBond {
-		var err error
 		cluster, err = normalizeSolanaClusterV2(input.Cluster)
 		if err != nil {
 			return normalizedIntentV2{}, err
@@ -67,6 +67,18 @@ func normalizeSATIntentV2(input signerIntentV2, wallet solana.PublicKey) (normal
 	action := strings.TrimSpace(input.Action)
 	if action == "" {
 		return normalizedIntentV2{}, errors.New("typed SAT action is required")
+	}
+	addressLookupTables := []string(nil)
+	if len(input.AddressLookupTables) > 0 {
+		if action != "distributeCyclePage" || isVaultBond || len(input.AddressLookupTables) != 1 {
+			return normalizedIntentV2{}, errors.New("one address lookup table is allowed only for typed SAT distributeCyclePage")
+		}
+		addressLookupTables, err = normalizeSortedStringsV2(input.AddressLookupTables, func(raw string) (string, error) {
+			return normalizePublicKeyV2(raw, "SAT distribution address lookup table")
+		})
+		if err != nil {
+			return normalizedIntentV2{}, err
+		}
 	}
 
 	var rawInstructions []signerSATInstructionV2
@@ -120,7 +132,7 @@ func normalizeSATIntentV2(input signerIntentV2, wallet solana.PublicKey) (normal
 		return normalizedIntentV2{}, errors.New("SAT cleanupBatch instructions must use one program")
 	}
 
-	canonical := signerIntentV2{Type: input.Type, Action: action, Cluster: cluster}
+	canonical := signerIntentV2{Type: input.Type, Action: action, Cluster: cluster, AddressLookupTables: addressLookupTables}
 	if action == "cleanupBatch" {
 		canonical.Instructions = make([]signerSATInstructionV2, 0, len(normalized))
 		for _, instruction := range normalized {
@@ -187,6 +199,9 @@ func normalizeSATIntentV2(input signerIntentV2, wallet solana.PublicKey) (normal
 	for _, instruction := range normalized {
 		requiredPrograms = append(requiredPrograms, additionalSATProgramsV2(instruction)...)
 	}
+	if len(addressLookupTables) > 0 {
+		requiredPrograms = append(requiredPrograms, satAddressLookupTableProgramIDV2.String())
+	}
 	requiredPrograms, err = normalizeSortedStringsV2(requiredPrograms, func(raw string) (string, error) {
 		return normalizePublicKeyV2(raw, "SAT required program")
 	})
@@ -200,8 +215,20 @@ func normalizeSATIntentV2(input signerIntentV2, wallet solana.PublicKey) (normal
 	return normalizedIntentV2{
 		Intent: canonical, Digest: "sha256:" + hex.EncodeToString(digest[:]), Asset: asset,
 		Amount: amount, RequiredPrograms: requiredPrograms, Destination: destination,
-		Instructions: goInstructions, PolicyOperation: policyOperation, RequiredRole: requiredRole,
+		Instructions: goInstructions, AddressLookupTables: publicKeysFromStringsV2(addressLookupTables),
+		PolicyOperation: policyOperation, RequiredRole: requiredRole,
 	}, nil
+}
+
+func publicKeysFromStringsV2(values []string) []solana.PublicKey {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]solana.PublicKey, 0, len(values))
+	for _, value := range values {
+		out = append(out, solana.MustPublicKeyFromBase58(value))
+	}
+	return out
 }
 
 func satDestinationForActionV2(instruction normalizedSATInstructionV2, wallet solana.PublicKey) (solana.PublicKey, bool) {
