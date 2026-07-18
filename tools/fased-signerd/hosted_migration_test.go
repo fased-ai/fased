@@ -5,9 +5,19 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
+
+func hostedMigrationCanonicalTempDirV1(t *testing.T) string {
+	t.Helper()
+	directory, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("resolve hosted migration test directory: %v", err)
+	}
+	return directory
+}
 
 func validHostedMigrationPolicyV1(t *testing.T) []byte {
 	t.Helper()
@@ -111,7 +121,7 @@ func TestParseHostedMigrationPolicyV1RejectsUnknownFieldsAndNonCanonicalWalletID
 }
 
 func TestOpenHostedMigrationSourceV1RejectsLinksAndLoosePermissions(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "home", "app", ".fased", "wallet")
+	root := filepath.Join(hostedMigrationCanonicalTempDirV1(t), "home", "app", ".fased", "wallet")
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +166,7 @@ func TestOpenHostedMigrationSourceV1RejectsLinksAndLoosePermissions(t *testing.T
 }
 
 func TestHostedMigrationRequiresEveryLegacyKeystoreInExplicitPolicy(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "wallet")
+	root := filepath.Join(hostedMigrationCanonicalTempDirV1(t), "wallet")
 	if err := os.Mkdir(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +188,7 @@ func TestHostedMigrationRequiresEveryLegacyKeystoreInExplicitPolicy(t *testing.T
 }
 
 func TestStageHostedMigrationSourceV1CopiesVerifiedDescriptorIntoSignerOwnedFile(t *testing.T) {
-	base := t.TempDir()
+	base := hostedMigrationCanonicalTempDirV1(t)
 	root := filepath.Join(base, "home", "app", ".fased", "wallet")
 	state := filepath.Join(base, "state")
 	if err := os.MkdirAll(root, 0o700); err != nil {
@@ -230,7 +240,10 @@ func TestStageHostedMigrationSourceV1CopiesVerifiedDescriptorIntoSignerOwnedFile
 }
 
 func TestLinkHostedMigrationDescriptorV1IgnoresSourcePathReplacement(t *testing.T) {
-	root := t.TempDir()
+	if runtime.GOOS != "linux" {
+		t.Skip("descriptor-based hosted migration linking is Linux-only")
+	}
+	root := hostedMigrationCanonicalTempDirV1(t)
 	source := filepath.Join(root, "legacy")
 	moved := filepath.Join(root, "legacy-original")
 	destination := filepath.Join(root, "quarantine")
@@ -261,8 +274,8 @@ func TestLinkHostedMigrationDescriptorV1IgnoresSourcePathReplacement(t *testing.
 }
 
 func TestEnsureHostedMigrationImportDirectoryV1RejectsSymlinkBeforeMutation(t *testing.T) {
-	state := t.TempDir()
-	target := filepath.Join(t.TempDir(), "target")
+	state := hostedMigrationCanonicalTempDirV1(t)
+	target := filepath.Join(hostedMigrationCanonicalTempDirV1(t), "target")
 	if err := os.Mkdir(target, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +296,7 @@ func TestEnsureHostedMigrationImportDirectoryV1RejectsSymlinkBeforeMutation(t *t
 }
 
 func TestQuarantineHostedMigrationFileV1IsLockedDurableAndResumable(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "home", "app", ".fased", "wallet")
+	root := filepath.Join(hostedMigrationCanonicalTempDirV1(t), "home", "app", ".fased", "wallet")
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -313,7 +326,7 @@ func TestQuarantineHostedMigrationFileV1IsLockedDurableAndResumable(t *testing.T
 }
 
 func TestQuarantineHostedMigrationFileV1CompletesInterruptedTwoLinkState(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "wallet")
+	root := filepath.Join(hostedMigrationCanonicalTempDirV1(t), "wallet")
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +359,7 @@ func TestQuarantineHostedMigrationFileV1CompletesInterruptedTwoLinkState(t *test
 }
 
 func TestHostedMigrationMarkerIsAtomicStrictAndOwnerChecked(t *testing.T) {
-	parent := t.TempDir()
+	parent := hostedMigrationCanonicalTempDirV1(t)
 	path := filepath.Join(parent, "signer-v1-migration.pending")
 	owner := currentHostedMigrationOwnerV1(t, parent)
 	marker := hostedMigrationMarkerV1{

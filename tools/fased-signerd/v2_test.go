@@ -821,7 +821,7 @@ func TestSignerV2SocketModeRejectsWorldAccess(t *testing.T) {
 }
 
 func TestSignerV2CreatesPrivateApplicationSocket(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "app.sock")
+	socketPath := filepath.Join(signerAdminShortTempDir(t), "app.sock")
 	listener, err := listenUnixSocketV2(socketPath, 0o600, "")
 	if err != nil {
 		t.Fatalf("listen on signer application socket: %v", err)
