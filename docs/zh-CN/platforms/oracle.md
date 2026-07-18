@@ -26,15 +26,10 @@ sudo -i
 
 后续安装命令都在这个 root shell 中运行。不要先手动安装 Node、Go、Docker 或全局 Fased。
 
-## 3. 执行受验证的 Hosting 安装
+## 3. 执行 Hosting 安装
 
-按照 [VPS 的预执行验证稳定版流程](/install/vps#3-安装-fased-并通过-tailscale-连接)
-下载独立 `install.sh` 和 attestation bundle，使用 `gh attestation verify` 约束仓库、
-精确 tag、workflow 和 GitHub-hosted runner，然后才执行：
-
-```bash
-bash "$BOOTSTRAP_DIR/install.sh" --hosting --release "$RELEASE"
-```
+在 provider root console 运行 [VPS Hosting 一条命令流程](/install/vps)。安装器
+会在特权 Fased 安装前验证 tagged Hosting release。
 
 安装器会建立独立 `app` 与 signer 账户、root 更新器/systemd 服务、Tailscale 私有访问、
 SSH/防火墙加固和事务回滚。不要给 `app` 添加 sudo。

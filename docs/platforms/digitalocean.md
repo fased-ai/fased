@@ -59,10 +59,9 @@ For hosted deployments, run the standard hosting installer on the VPS itself.
 It installs missing tools, starts Tailscale when needed, prints the Tailscale
 login URL, and applies the hosted profile.
 
-Run the [pre-execution verified tagged bootstrap](/install/vps#3-install-fased-and-connect-through-tailscale)
-from the provider's root console. It verifies the standalone installer's exact
-repository, tag, workflow, and GitHub-hosted runner provenance before executing
-it. Do not run an app-owned checkout with sudo.
+Run the [one-command Hosting installer](/install/vps) from the provider's root
+console. It verifies the tagged Hosting release before privileged Fased
+installation. Do not run an app-owned checkout with sudo.
 
 The hosting installer runs onboarding and walks you through:
 

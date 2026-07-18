@@ -74,7 +74,7 @@ const LOCAL_SIGNER_REQUIRED_FEATURES = [
 export const PRE_V2_HOSTING_MIGRATION_MESSAGE = [
   "This hosted installation needs the one-time signer-v2 security migration before it can update.",
   "From a VPS provider console or a root SSH session, run:",
-  "Follow the verified release-asset and GitHub attestation procedure at https://docs.fased.ai/install/vps#3-install-fased-and-connect-through-tailscale, then run the verified tagged install.sh with --repair-hosting --release vX.Y.Z.",
+  "Follow the manual release-asset and GitHub attestation procedure at https://docs.fased.ai/install/vps#advanced-verify-the-bootstrap-first, then run the verified tagged install.sh with --repair-hosting --release vX.Y.Z.",
   "Never run /home/app/fased/install.sh with sudo or as root.",
   "The current Gateway, signer, wallets, and persistent state were left unchanged.",
 ].join(" ");

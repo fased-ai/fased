@@ -35,19 +35,6 @@ if [[ "$install_entry_legacy_ts_authkey" -eq 1 ]]; then
   exit 1
 fi
 
-if [[ "$install_entry_is_stream" -eq 1 && "$install_entry_hosting" -eq 1 ]]; then
-  cat >&2 <<'EOF_STREAMED_HOSTING'
-Refusing streamed VPS Hosting execution before any privileged host mutation.
-Download the exact tagged install.sh and install.sh.attestation.json release assets,
-verify install.sh with `gh attestation verify --bundle ... --source-ref refs/tags/vX.Y.Z
---signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml
---deny-self-hosted-runners`, then run the verified standalone file from the provider
-root console with: bash ./install.sh --hosting --release vX.Y.Z
-See: https://docs.fased.ai/install/vps#3-install-fased-and-connect-through-tailscale
-EOF_STREAMED_HOSTING
-  exit 1
-fi
-
 # A Hosting request always enters the attest-and-extract bootstrap unless it is
 # the exact inner invocation carrying the root-owned verified bundle marker.
 # This applies equally to stdin and to a standalone install.sh that the
@@ -58,6 +45,7 @@ if [[ "$install_entry_is_stream" -eq 1 || \
   install_base_dir="${FASED_INSTALL_DIR:-$HOME/fased}"
   auto_install=1
   hosting_bootstrap=0
+  hosting_repair_bootstrap=0
   hosting_release=""
   verified_hosting_bundle=""
   args=("$@")
@@ -74,8 +62,12 @@ if [[ "$install_entry_is_stream" -eq 1 || \
       --no-auto-install)
         auto_install=0
         ;;
-      --hosting|--repair-hosting)
+      --hosting)
         hosting_bootstrap=1
+        ;;
+      --repair-hosting)
+        hosting_bootstrap=1
+        hosting_repair_bootstrap=1
         ;;
       --host-profile)
         if (( i + 1 < ${#args[@]} )) && [[ "${args[$((i + 1))]}" == "hosting" ]]; then
@@ -98,6 +90,10 @@ if [[ "$install_entry_is_stream" -eq 1 || \
         ;;
     esac
   done
+
+  if [[ "$install_entry_is_stream" -eq 1 && "$hosting_bootstrap" -eq 1 && "$hosting_repair_bootstrap" -eq 0 && -z "$hosting_release" ]]; then
+    hosting_release="latest"
+  fi
 
   bootstrap_as_root() {
     if [[ "$(id -u)" -eq 0 ]]; then
@@ -1051,9 +1047,9 @@ EOF_NATIVE_WINDOWS
     fi
     if [[ "$(id -u)" -ne 0 ]]; then
       echo "--hosting must run as root so the isolated signer and Gateway services can be installed." >&2
-      echo "Open the VPS provider's root console and follow the verified release-asset bootstrap:" >&2
-      echo "  https://docs.fased.ai/install/vps#3-install-fased-and-connect-through-tailscale" >&2
-      echo "Download the tagged install.sh plus its attestation bundle, verify it with 'gh attestation verify', then run the verified file with --hosting --release vX.Y.Z." >&2
+      echo "Open the VPS provider's root console and follow the one-command Hosting guide:" >&2
+      echo "  https://docs.fased.ai/install/vps" >&2
+      echo "The Hosting bootstrap selects and verifies the tagged release before privileged Fased installation." >&2
       echo "Never run the app-owned checkout with sudo or grant the app account sudo access." >&2
       exit 1
     fi
@@ -4483,7 +4479,7 @@ migrate_legacy_hosted_signer_if_needed() {
       echo "A previous hosted wallet requires a fail-closed signer-v2 migration." >&2
       echo "Create root-owned ${policy_file} (mode 0600) with each expected wallet address and explicit policy, then rerun:" >&2
       echo "Use the verified release-asset repair procedure at:" >&2
-      echo "  https://docs.fased.ai/install/vps#3-install-fased-and-connect-through-tailscale" >&2
+      echo "  https://docs.fased.ai/install/vps#advanced-verify-the-bootstrap-first" >&2
       echo "After verifying the tagged install.sh attestation, run the verified file with --repair-hosting --release v${HOSTING_RELEASE}." >&2
       echo "Legacy key files were not changed." >&2
       exit 1

@@ -50,12 +50,17 @@ fased update
 After hosted onboarding, SSH as `app` should open directly in `/home/app/fased`.
 If it does not, fix the hosted login/shell setup before updating.
 
-For a fresh hosted VPS, use the
-[pre-execution verified Hosting bootstrap](/install/vps#3-install-fased-and-connect-through-tailscale).
-It downloads the standalone installer and attestation for an exact release,
-verifies the repository, tag, release workflow, and GitHub-hosted runner, and
-only then runs the verified file. Raw tagged `curl | bash` is not a supported
-Hosting bootstrap.
+For a fresh hosted VPS, run this in the VPS provider root shell:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+  | bash -s -- --hosting
+```
+
+The first script resolves the stable release and verifies the tagged Hosting
+artifacts before privileged Fased installation. Users who require verification
+before the first script runs can use the expandable advanced procedure in
+[VPS Hosting](/install/vps#advanced-verify-the-bootstrap-first).
 
 Run the first Hosting install from the VPS provider's root shell. That path
 creates the non-root `app` runtime, private Tailscale access, and the hosted
@@ -274,7 +279,7 @@ run the old updater. Go directly to the exact tagged root repair below.
 The repair must restore root-owned service helpers and the system service. Open
 the VPS provider's web/recovery console as `root` (or use root SSH only when the
 provider still permits it). Follow the exact
-[pre-execution verified release-asset procedure](/install/vps#3-install-fased-and-connect-through-tailscale),
+[manual pre-execution verification procedure](/install/vps#advanced-verify-the-bootstrap-first),
 but replace the final invocation of the already-verified standalone installer
 with:
 
@@ -422,7 +427,7 @@ user-managed command or rerun onboarding. On macOS the exact tagged source is
 built because no managed Linux runtime artifact is used.
 
 VPS Hosting bootstrap must run from the provider's root console. Follow the
-[pre-execution verified release-asset procedure](/install/vps#3-install-fased-and-connect-through-tailscale)
+[manual pre-execution verification procedure](/install/vps#advanced-verify-the-bootstrap-first)
 for the exact release, then use `--repair-hosting` instead of `--hosting` only
 in the final invocation of that already-verified standalone installer. Never
 recover Hosting by piping a raw repository URL into a shell.

@@ -67,9 +67,9 @@ Root is only for first bootstrap or emergency repair after hosted hardening.
 For normal VPS hosting, install with the hosted installer, not a direct global
 npm install:
 
-Use the [pre-execution verified tagged bootstrap](/install/vps#3-install-fased-and-connect-through-tailscale)
-from the provider root console. For an existing installation, run the verified
-local asset with `--repair-hosting` instead of `--hosting`.
+Use the [one-command Hosting installer](/install/vps) from the provider root
+console. For an existing broken installation, use the exact-tag manual
+attestation procedure and run the verified local asset with `--repair-hosting`.
 
 Manual `npm install -g @fased/fased` is an advanced local/dev or self-managed
 host path for users who already know how to secure the service user, firewall,

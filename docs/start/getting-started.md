@@ -52,16 +52,11 @@ If you manage Node yourself, use Node 24, or Node 22.14+ with the built-in
 `node:sqlite` module.
 </Tip>
 
-<Warning>
-Windows users need Windows 11 or Windows 10 version 2004/build 19041 or newer.
-Run `wsl --install -d Ubuntu` once in Administrator PowerShell, restart if
-requested, then run `wsl --update`, `wsl --version`, and
-`wsl --list --verbose`. WSL must be `0.67.6` or newer and the exact installed
-distribution must show version 2. Then open Ubuntu. Run the Fased installer and
-all later `fased` commands inside the Ubuntu shell—not PowerShell, Command
-Prompt, Git Bash, or native Windows Node.js. See [Windows
-(WSL2)](/platforms/windows).
-</Warning>
+<Note>
+Windows Local installs run inside WSL2 Ubuntu. Administrator PowerShell is used
+only to create WSL2; Fased commands run in the Ubuntu shell. See
+[Windows (WSL2)](/platforms/windows).
+</Note>
 
 ## Which install do I need?
 
@@ -102,18 +97,16 @@ The macOS app is a Local setup surface, not a separate hosting profile.
 
       </Tab>
       <Tab title="VPS Hosting">
-        Run this **on the VPS itself**. Ubuntu LTS is the recommended first VPS
-        target. Fedora/RHEL-family systems are also hosted targets; Alpine,
-        Arch, macOS, and FreeBSD are local/dev targets until their hosted
-        hardening paths are validated separately.
+        Install/sign into Tailscale on your own computer, SSH into the VPS as
+        root, then run this **inside the VPS SSH session**:
 
-        Use the [pre-execution verified tagged bootstrap](/install/vps#3-install-fased-and-connect-through-tailscale)
-        from the provider root console. It verifies the standalone installer
-        asset and attestation bundle before executing Fased shell code as root.
+        ```bash
+        curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+          | bash -s -- --hosting
+        ```
 
-        If the VPS image is so small that `curl` is missing, use the OS tabs in
-        [Install](/install#vps-hosting-install) to install only the downloader,
-        then rerun the verified hosted bootstrap.
+        The installer verifies the tagged Hosting release, installs or starts
+        Tailscale on the VPS, and creates the non-root `app` runtime.
 
         During hosted setup, Fased bootstraps into `/home/app/fased` and
         continues as the `app` user when you start as `root`. Before
@@ -129,7 +122,9 @@ The macOS app is a Local setup surface, not a separate hosting profile.
         in your local browser and save the gateway token in case the browser
         asks for it.
 
-        The `app` shell starts in `/home/app/fased`.
+        The `app` shell starts in `/home/app/fased`. See
+        [VPS Hosting](/install/vps) for the full three-step guide and optional
+        manual pre-execution attestation verification.
       </Tab>
     </Tabs>
 

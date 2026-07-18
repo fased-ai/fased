@@ -77,39 +77,14 @@ Choose the setup profile first.
     Use this on your own computer. On macOS, use Terminal. On Windows, use WSL2
     with Ubuntu. On Linux, use your distro terminal.
 
-    <Warning>
-    On Windows 11 or Windows 10 version 2004/build 19041 or newer, first run
-    this block in **Administrator PowerShell** and restart if requested:
-
-    ```powershell
-    wsl --install -d Ubuntu
-    wsl --update
-    wsl --version
-    wsl --list --verbose
-    ```
-
-    WSL must be `0.67.6` or newer and the installed distribution must show
-    version 2. Then open the Ubuntu application. Run this separate block only
-    in the **Ubuntu/WSL Bash shell**:
-
     ```bash
-    uname -s
-    systemctl is-system-running || true
     curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
     ```
 
-    `uname -s` must print `Linux`. Do not run the Bash block in PowerShell,
-    Command Prompt, Git Bash, or
-    native Windows Node.js. Wallet signing uses Unix sockets, so first-wallet
-    setup must run inside WSL2; Fased automatically installs the verified Linux
-    signer asset and does not require Go. Before storing wallet credentials,
-    prefer the [verified stable Local install](/install/installer#verified-stable-local-install)
-    in the same Ubuntu shell; the PowerShell block is only for creating and
-    checking WSL2.
-    </Warning>
-
-    macOS and native Linux users run the same `curl ... --local` Bash command in
-    Terminal or their Linux terminal.
+    On Windows, first follow [Windows Local setup](/platforms/windows). Run the
+    command above in the Ubuntu WSL2 shell—not PowerShell, Command Prompt, Git
+    Bash, or native Windows Node.js. Wallet signing uses Unix sockets, and the
+    verified Linux signer is installed automatically; users do not install Go.
 
     This selects the **Local** profile and keeps VPS SSH/firewall hardening off.
 
@@ -142,10 +117,7 @@ Choose the setup profile first.
 
   </Tab>
   <Tab title="VPS Hosting install">
-    Use this only on the VPS or always-on server. Ubuntu LTS is the recommended
-    default for a first hosted setup. Fedora/RHEL-family systems need their own
-    Tailscale/package steps, so use the OS tabs in
-    [Install](/install#vps-hosting-install).
+    Use this only on the VPS or always-on server. Ubuntu LTS is recommended.
 
     On your own computer, install and sign into Tailscale first. Then SSH into
     the VPS:
@@ -156,8 +128,14 @@ Choose the setup profile first.
 
     Run the hosted installer **inside the VPS SSH session**:
 
-    Follow the [pre-execution verified tagged bootstrap](/install/vps#3-install-fased-and-connect-through-tailscale)
-    from the VPS provider root console.
+    ```bash
+    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+      | bash -s -- --hosting
+    ```
+
+    It verifies the tagged Hosting release and installs/starts Tailscale on the
+    VPS automatically. See [VPS Hosting](/install/vps) for access checks and
+    the optional manual attestation procedure.
 
     Do not paste the hosted command into local PowerShell or Terminal unless
     that shell is already connected to the VPS.
@@ -183,15 +161,12 @@ Choose the setup profile first.
 
 Simple command recap:
 
-For Hosting, first use the
-[pre-execution verified tagged VPS bootstrap](/install/vps#3-install-fased-and-connect-through-tailscale)
-from the provider root console. Do not substitute the Local command below on a
-VPS.
-
 ```bash
-# Local convenience path on this computer; for wallet-bearing production use
-# /install/installer#verified-stable-local-install with an exact release tag.
+# Local: run on this computer (inside Ubuntu WSL2 on Windows)
 curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
+
+# VPS Hosting: run inside the VPS provider root SSH session
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
 
 # Continue setup if interrupted
 fased onboard --install-daemon

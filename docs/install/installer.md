@@ -14,21 +14,23 @@ This docs set only documents the installer that exists in this repo:
 
 - [`install.sh`](https://github.com/fased-ai/fased/blob/main/install.sh)
 
-If you are starting from zero on your own computer, use the
-[verified stable Local install](#verified-stable-local-install). The shorter
-command below is an interactive convenience path: after it starts, the
-installer resolves the latest stable release, verifies the unified release
-attestation, and checks out that exact commit. It does not provide
-pre-execution verification of the first script downloaded from `main`.
+For a normal Local install, run:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
 ```
 
-If you are starting from zero on a VPS, use the
-[pre-execution verified Hosting bootstrap](/install/vps#3-install-fased-and-connect-through-tailscale).
-Ubuntu LTS is the recommended first VPS target. Never pipe an unverified
-Hosting installer directly into a privileged shell.
+For a normal fresh VPS Hosting install, run this inside the VPS provider root
+SSH session:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+  | bash -s -- --hosting
+```
+
+Both commands resolve one stable tag and verify the tagged release artifacts
+after the first script starts. Hosting completes those checks before installing
+privileged Fased assets.
 
 <Warning>
 On Windows 11 or Windows 10 version 2004/build 19041 or newer, open
@@ -57,14 +59,14 @@ PowerShell, Command Prompt, Git Bash, or native Windows Node.js. The complete pr
 (WSL2)](/platforms/windows).
 </Warning>
 
-## Verified stable Local install
+## Advanced pre-execution verification
 
-Use this path for a production Local, WSL2, or macOS installation that will
-hold wallet credentials. Install GitHub CLI from the operating system's trusted
-package source and confirm `gh version`. Choose an exact stable release from
-[GitHub Releases](https://github.com/fased-ai/fased/releases), replace
-`vX.Y.Z`, and run the block in macOS Terminal, a Linux terminal, or the Ubuntu
-WSL2 Bash shell—not PowerShell:
+<Accordion title="Verify install.sh before it runs">
+Choose an exact stable release from
+[GitHub Releases](https://github.com/fased-ai/fased/releases), install GitHub
+CLI from the OS package source, and replace `vX.Y.Z` below. Run this in macOS
+Terminal, a Linux terminal, an Ubuntu WSL2 shell, or the VPS provider root
+shell—not local PowerShell:
 
 ```bash
 (
@@ -88,10 +90,17 @@ bash "$BOOTSTRAP_DIR/install.sh" --local --release "$RELEASE"
 )
 ```
 
-Stop if any download or attestation check fails. The verified installer then
-requires the source tag, checked-out commit, package version, native signer
-identity, and signer attestation to agree. Neither the normal Local path nor
-first-wallet setup requires Go.
+For VPS Hosting, change only the last line to:
+
+```bash
+bash "$BOOTSTRAP_DIR/install.sh" --hosting --release "$RELEASE"
+```
+
+Stop if any verification fails. This checks the initial script before it runs;
+the normal one-command paths instead trust the first HTTPS download and perform
+the same tagged artifact checks immediately afterward. Neither path requires
+users to install Go.
+</Accordion>
 
 ## What `install.sh` does
 
@@ -225,18 +234,21 @@ can load `node:sqlite` before continuing.
 If a provider image ships an old or custom Node build, the installer stops with
 the exact Node problem instead of continuing with a broken runtime.
 
-Fresh machine convenience path (not pre-execution verified):
+Fresh Local path:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
 ```
 
-Fresh VPS Hosting uses the
-[pre-execution verified release-asset bootstrap](/install/vps#3-install-fased-and-connect-through-tailscale).
-That procedure downloads the standalone installer and its attestation, verifies
-the exact repository, tag, release workflow, and GitHub-hosted runner before
-execution, and only then invokes the verified file with `--hosting`. Do not use
-a raw tagged `curl | bash` command for Hosting. The installer installs/starts
+Fresh VPS Hosting uses the one-command bootstrap:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+  | bash -s -- --hosting
+```
+
+It resolves the stable release and verifies the tagged Hosting artifacts before
+privileged Fased installation. The installer installs/starts
 Tailscale when needed and runs the browser login with timeout/readiness checks.
 Automatic Hosting setup uses Tailscale's signed apt repository on Ubuntu/Debian
 or its signature-enforcing RPM repository on Fedora/RHEL-family systems; it
@@ -245,7 +257,7 @@ must install the official signed package first.
 
 Hosting note:
 
-- follow the OS-specific hosted setup in [Install](/install#vps-hosting-install)
+- follow the [VPS Hosting guide](/install/vps)
 - when Tailscale prints a login URL in SSH, open it in your local browser
 - use an auth key only for unattended automation
 - use the **hosting** profile in the wizard
@@ -316,14 +328,20 @@ Native signer note:
     ```
   </Tab>
   <Tab title="Hosting profile">
-    Follow the exact
-    [pre-execution verified Hosting bootstrap](/install/vps#3-install-fased-and-connect-through-tailscale)
-    from the VPS provider's root console. Execute the downloaded standalone
-    installer with `--hosting` only after its release attestation succeeds.
+    From the VPS provider root console:
+
+    ```bash
+    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+      | bash -s -- --hosting
+    ```
+
+    See [VPS Hosting](/install/vps) for the Tailscale access check and optional
+    manual pre-execution verification.
+
   </Tab>
   <Tab title="Repair hosting">
     Follow the same
-    [pre-execution verified release-asset procedure](/install/vps#3-install-fased-and-connect-through-tailscale),
+    [manual pre-execution verification procedure](/install/vps#advanced-verify-the-bootstrap-first),
     but use `--repair-hosting` in the final invocation of the already-verified
     standalone installer. Never use raw `curl | bash` for this root repair.
 
@@ -361,7 +379,7 @@ These are the flags that matter for the current public repo-backed flow.
 | `--auto-install`             | Install missing macOS/Linux dependencies where supported.                       |
 | `--no-auto-install`          | Do not install missing dependencies automatically.                              |
 | `--install-dir <path>`       | Bootstrap or resolve the checkout under a specific directory.                   |
-| `--hosting`                  | Use hosted/VPS onboarding defaults; root bootstrap also requires `--release`.   |
+| `--hosting`                  | Use VPS Hosting defaults; a streamed fresh install selects the stable release.  |
 | `--repair-hosting`           | Repair hosted runtime/service state from the tagged provider-console bootstrap. |
 | `--release <vX.Y.Z\|latest>` | Select and attest the exact Hosting release before privileged setup.            |
 | `--repair-local`             | Repair Local/WSL runtime and user service without onboarding.                   |
@@ -417,9 +435,9 @@ Local headless install without onboarding:
 curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --no-onboard
 ```
 
-This raw bootstrap is Local only. If you automate a hosted install, begin with
-the attested standalone release asset in the
-[verified Hosting procedure](/install/vps#3-install-fased-and-connect-through-tailscale)
+This raw bootstrap is Local because it does not select the Hosting profile. For
+unattended Hosting, begin with the attested standalone release asset in the
+[manual verification procedure](/install/vps#advanced-verify-the-bootstrap-first)
 and keep the same security order:
 
 1. provision the host

@@ -25,7 +25,7 @@ title: "Hetzner"
    ssh root@YOUR_PUBLIC_VPS_IP
    ```
 
-4. 在该 root 会话中执行 [VPS 的预执行验证稳定版安装流程](/install/vps#3-安装-fased-并通过-tailscale-连接)。
+4. 在该 root 会话中执行 [VPS Hosting 一条命令流程](/install/vps)。
    不要先自行安装 Docker、Node、Go 或全局 Fased。
 5. Tailscale 显示登录 URL 时，在自己的电脑上完成授权；在私有连接验证成功前不要关闭
    初始 provider 会话。

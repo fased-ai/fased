@@ -24,9 +24,15 @@ x-i18n:
 curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
 ```
 
-VPS 从零开始时，使用 [执行前验证的 Hosting
-bootstrap](/install/vps#3-install-fased-and-connect-through-tailscale)。首次 VPS
-推荐 Ubuntu LTS。不要把未经验证的 Hosting 安装器直接 pipe 到特权 shell。
+VPS 从零开始时，在 provider root SSH 会话中运行：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+  | bash -s -- --hosting
+```
+
+安装器自动固定 stable tag，并在特权 Fased 安装前验证 tagged Hosting artifacts。
+需要在首个脚本运行前验证的高级流程见 [VPS Hosting](/install/vps)。
 
 <Warning>
 Windows 只支持 WSL2 Ubuntu。需要 Windows 11，或 Windows 10 版本
@@ -101,10 +107,9 @@ Ubuntu 必须显示版本 2。打开 Ubuntu 应用，在 Ubuntu shell 中运行 
 
   </Tab>
   <Tab title="VPS Hosting">
-    从 VPS 提供商的 root console 使用 [执行前验证的 Hosting
-    bootstrap](/install/vps#3-install-fased-and-connect-through-tailscale)。先验证
-    独立 installer asset 和 attestation，再对已下载文件使用 `--hosting` 和
-    精确 `--release`。
+    从 VPS provider root console 运行上面的一条 Hosting 命令。安装器选择并
+    验证 stable tagged release。高级用户可在 [VPS Hosting](/install/vps) 中
+    手动验证初始 installer。
   </Tab>
   <Tab title="修复 Hosting">
     使用同一个执行前验证流程，只在最后执行已经验证的独立 installer 时改用
@@ -125,21 +130,21 @@ Ubuntu 必须显示版本 2。打开 Ubuntu 应用，在 Ubuntu shell 中运行 
 
 ## 主要公开参数
 
-| 参数                         | 说明                                                       |
-| ---------------------------- | ---------------------------------------------------------- |
-| `--auto-install`             | 在支持的 macOS/Linux 主机上安装缺失依赖                    |
-| `--no-auto-install`          | 不自动安装缺失依赖                                         |
-| `--install-dir <path>`       | 指定 bootstrap/checkout 目录                               |
-| `--local`                    | 使用本地电脑 onboarding 默认值                             |
-| `--repair-local`             | 修复 Local/WSL runtime 和 user service，不运行 onboarding  |
-| `--hosting`                  | 使用 VPS Hosting 默认值；root bootstrap 还要求 `--release` |
-| `--repair-hosting`           | 从已验证的 tagged provider-console bootstrap 修复 Hosting  |
-| `--release <vX.Y.Z\|latest>` | 为特权 Hosting 选择并验证精确 release                      |
-| `--source-install`           | Local 从源码构建；特权 VPS Hosting 拒绝此选项              |
-| `--swap-gb <n>`              | 覆盖小内存 Linux 主机的安装时 swap 大小                    |
-| `--no-onboard`               | 安装后跳过 onboarding                                      |
-| `--verbose`                  | 显示安装命令输出                                           |
-| `--help`                     | 显示当前完整参数                                           |
+| 参数                         | 说明                                                                    |
+| ---------------------------- | ----------------------------------------------------------------------- |
+| `--auto-install`             | 在支持的 macOS/Linux 主机上安装缺失依赖                                 |
+| `--no-auto-install`          | 不自动安装缺失依赖                                                      |
+| `--install-dir <path>`       | 指定 bootstrap/checkout 目录                                            |
+| `--local`                    | 使用本地电脑 onboarding 默认值                                          |
+| `--repair-local`             | 修复 Local/WSL runtime 和 user service，不运行 onboarding               |
+| `--hosting`                  | 使用 VPS Hosting 默认值；streamed fresh install 自动选择 stable release |
+| `--repair-hosting`           | 从已验证的 tagged provider-console bootstrap 修复 Hosting               |
+| `--release <vX.Y.Z\|latest>` | 为特权 Hosting 选择并验证精确 release                                   |
+| `--source-install`           | Local 从源码构建；特权 VPS Hosting 拒绝此选项                           |
+| `--swap-gb <n>`              | 覆盖小内存 Linux 主机的安装时 swap 大小                                 |
+| `--no-onboard`               | 安装后跳过 onboarding                                                   |
+| `--verbose`                  | 显示安装命令输出                                                        |
+| `--help`                     | 显示当前完整参数                                                        |
 
 `--` 后面的额外参数会转发给 `fased onboard --install-daemon`。
 

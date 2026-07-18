@@ -68,15 +68,17 @@ WSL1 或原生 Windows Node.js；钱包 signer 使用 Unix socket。参见
 
   </Tab>
   <Tab title="VPS Hosting">
-    在常驻 Linux VPS 本身运行 Hosting 安装。首次建议 Ubuntu LTS。从 VPS
-    provider 的 root console 使用 [执行前验证的 tagged
-    bootstrap](/install/vps#3-install-fased-and-connect-through-tailscale)：先下载
-    独立 `install.sh` 和 attestation，验证精确 repository、tag、release
-    workflow 和 GitHub-hosted runner，只有成功后才执行已验证文件。
+    在自己的电脑登录 Tailscale，SSH 进入常驻 Linux VPS，然后在 VPS root
+    会话中运行：
 
-    不要把 raw Hosting URL pipe 到 root shell。Hosting 是主机管理的非 Docker
-    部署；不存在 `--hosting-docker`。安装完成后，退出 root bootstrap，并通过
-    Tailscale 以 `app` 用户进行日常操作：
+    ```bash
+    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+      | bash -s -- --hosting
+    ```
+
+    安装器在特权 Fased 安装前验证 tagged Hosting release，并自动安装/启动 VPS
+    的 Tailscale。完整步骤和可选手动执行前验证见 [VPS Hosting](/install/vps)。
+    安装完成后，通过 Tailscale 以 `app` 用户进行日常操作：
 
     ```bash
     ssh app@YOUR_VPS_TAILSCALE_NAME
