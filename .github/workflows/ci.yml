@@ -271,7 +271,10 @@ jobs:
         if: (github.event_name != 'push' || matrix.runtime != 'bun') && matrix.task == 'test' && matrix.runtime == 'node'
         run: |
           # `pnpm test` runs `scripts/test-parallel.mjs`, which spawns multiple Node processes.
-          # Default heap limits have been too low on Linux CI (V8 OOM near 4GB).
+          # Default heap limits have been too low on Linux CI (V8 OOM near 4GB),
+          # while concurrent 6GB suite groups can overcommit the hosted runner.
+          # Serialize suite groups but retain two workers inside each group.
+          echo "FASED_TEST_PROFILE=serial" >> "$GITHUB_ENV"
           echo "FASED_TEST_WORKERS=2" >> "$GITHUB_ENV"
           echo "FASED_TEST_MAX_OLD_SPACE_SIZE_MB=6144" >> "$GITHUB_ENV"
 

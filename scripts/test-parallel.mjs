@@ -209,8 +209,21 @@ const keepGatewaySerial =
   process.env.FASED_TEST_SERIAL_GATEWAY === "1" ||
   testProfile === "serial" ||
   !parallelGatewayEnabled;
-const parallelRuns = keepGatewaySerial ? runs.filter((entry) => entry.name !== "gateway") : runs;
-const serialRuns = keepGatewaySerial ? runs.filter((entry) => entry.name === "gateway") : [];
+// Serial means every suite group runs one at a time. This is intentionally
+// stronger than serializing only Gateway: CI assigns a heap budget to each
+// child process, so running unit, isolated, and extension groups concurrently
+// can overcommit a hosted runner even with conservative Vitest worker counts.
+const serializeAllRuns = testProfile === "serial";
+const parallelRuns = serializeAllRuns
+  ? []
+  : keepGatewaySerial
+    ? runs.filter((entry) => entry.name !== "gateway")
+    : runs;
+const serialRuns = serializeAllRuns
+  ? runs
+  : keepGatewaySerial
+    ? runs.filter((entry) => entry.name === "gateway")
+    : [];
 const baseLocalWorkers = Math.max(4, Math.min(16, hostCpuCount));
 const loadAwareDisabledRaw = process.env.FASED_TEST_LOAD_AWARE?.trim().toLowerCase();
 const loadAwareDisabled = loadAwareDisabledRaw === "0" || loadAwareDisabledRaw === "false";
