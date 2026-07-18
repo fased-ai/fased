@@ -104,6 +104,28 @@ Gateway 网关继续在 WSL2 内运行，但可以使用普通 Windows 浏览器
 - 官方 WSL2 指南（Microsoft）：https://learn.microsoft.com/windows/wsl/install
 - 官方 systemd 指南（Microsoft）：https://learn.microsoft.com/windows/wsl/systemd
 
+## 从 Windows 管理远程 VPS
+
+这与 Local WSL2 安装不同：Fased 在远程 Linux VPS 上运行，Windows 只负责
+Tailscale、SSH 和浏览器，不需要在 WSL 中安装 Fased。
+
+1. 安装并登录原生 [Tailscale Windows app](https://tailscale.com/download)。
+2. 在 PowerShell 或 Windows Terminal 中连接 VPS：
+
+```powershell
+ssh root@YOUR_PUBLIC_VPS_IP
+```
+
+3. 提示符变成远程 Linux VPS 后，在该 SSH 会话内运行：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+  | bash -s -- --hosting
+```
+
+完整说明见 [VPS Hosting](/install/vps)。不要把 Bash Hosting 命令直接粘贴到
+未连接 VPS 的 PowerShell 中。
+
 ## Gateway 网关
 
 - [Gateway 网关操作手册](/gateway)

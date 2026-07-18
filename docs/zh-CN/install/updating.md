@@ -198,8 +198,8 @@ fased plugins doctor
 
 ### VPS Hosting 修复
 
-从 VPS provider 的 root/recovery console 使用 [执行前验证的 release-asset
-流程](/install/vps#3-install-fased-and-connect-through-tailscale)。下载精确 release
+从 VPS provider 的 root/recovery console 使用 [手动执行前验证
+流程](/install/vps#advanced-verify-the-bootstrap-first)。下载精确 release
 的独立 `install.sh` 和 attestation bundle，验证 repository、tag、release
 workflow 和 GitHub-hosted runner。只有验证成功后，才在最后执行已验证文件时
 使用 `--repair-hosting`。

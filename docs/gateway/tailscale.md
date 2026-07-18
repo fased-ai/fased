@@ -73,11 +73,9 @@ References:
 
 ## First-time setup
 
-For a hosted VPS, use the
-[pre-execution verified tagged installer](/install/vps#3-install-fased-and-connect-through-tailscale)
-from the provider root console. It starts Tailscale when needed and prints the
-browser login URL. Do not pipe an unverified installer directly into a root
-shell.
+For a hosted VPS, use the [one-command Hosting installer](/install/vps) from
+the provider root console. It verifies the tagged Hosting release, starts
+Tailscale when needed, and prints the browser login URL.
 
 For a manual laptop or desktop setup:
 

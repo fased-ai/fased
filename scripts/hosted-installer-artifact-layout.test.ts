@@ -92,6 +92,32 @@ describe("attested Hosting installer artifact layout", () => {
     }
   });
 
+  it("dispatches streamed fresh Hosting through the automatic attested bundle bootstrap", () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "fased-hosting-stream-dispatch-"));
+    try {
+      const fakeBin = path.join(tempRoot, "bin");
+      fs.mkdirSync(fakeBin);
+      fs.writeFileSync(path.join(fakeBin, "id"), "#!/bin/sh\nprintf '1000\\n'\n", {
+        mode: 0o700,
+      });
+
+      const result = spawnSync("bash", ["-s", "--", "--hosting", "--no-auto-install"], {
+        encoding: "utf8",
+        env: { ...process.env, PATH: `${fakeBin}:/usr/bin:/bin` },
+        input: fs.readFileSync(path.join(root, "install.sh"), "utf8"),
+      });
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(
+        "VPS Hosting bootstrap must start in the provider's root console",
+      );
+      expect(result.stderr).not.toContain("Refusing streamed VPS Hosting execution");
+      expect(result.stderr).not.toContain("VPS Hosting requires an explicit tagged release");
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("installs Tailscale through signature-enforcing package repositories", () => {
     const installer = fs.readFileSync(path.join(root, "install.sh"), "utf8");
     expect(installer).not.toMatch(/tailscale\.com\/install\.sh[^\n]*\|/);
@@ -124,14 +150,15 @@ describe("attested Hosting installer artifact layout", () => {
     }
   });
 
-  it("does not document a raw-pipe Hosting or Hosting-repair bootstrap", () => {
+  it("documents the automatic fresh Hosting bootstrap but never streams Hosting repair", () => {
     const activeInstallDocs = [
       "docs/install/index.md",
       "docs/install/installer.md",
       "docs/install/updating.md",
       "docs/install/vps.md",
     ];
-    const offenders: string[] = [];
+    const streamedFreshHostingDocs: string[] = [];
+    const streamedRepairOffenders: string[] = [];
     for (const relativePath of activeInstallDocs) {
       const contents = fs.readFileSync(path.join(root, relativePath), "utf8");
       const codeBlocks =
@@ -139,12 +166,19 @@ describe("attested Hosting installer artifact layout", () => {
       for (const block of codeBlocks) {
         if (
           block.includes("raw.githubusercontent.com/fased-ai/fased") &&
-          /--(?:repair-)?hosting\b/.test(block)
+          /--hosting\b/.test(block)
         ) {
-          offenders.push(`${relativePath}: ${block}`);
+          streamedFreshHostingDocs.push(relativePath);
+        }
+        if (
+          block.includes("raw.githubusercontent.com/fased-ai/fased") &&
+          /--repair-hosting\b/.test(block)
+        ) {
+          streamedRepairOffenders.push(`${relativePath}: ${block}`);
         }
       }
     }
-    expect(offenders).toEqual([]);
+    expect(new Set(streamedFreshHostingDocs)).toEqual(new Set(activeInstallDocs));
+    expect(streamedRepairOffenders).toEqual([]);
   });
 });

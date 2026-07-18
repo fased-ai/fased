@@ -119,8 +119,8 @@ Before you start the VPS installer, shut down local VPNs such as Mullvad,
 Proton VPN, NordVPN, corporate VPN clients, and browser/device VPN apps. Other
 VPNs can override Tailscale DNS, firewall rules, or `100.x` routing. Re-enable
 them only after Tailscale SSH and the dashboard work.
-The full OS-specific commands are kept in the tabbed
-[VPS Hosting install docs](https://docs.fased.ai/install#vps-hosting-install).
+The full access and recovery steps are in the
+[VPS Hosting guide](https://docs.fased.ai/install/vps).
 
 Other private-access systems are custom deployments. The standard hosted
 installer does not configure or verify WireGuard, Headscale, ZeroTier, bastion
@@ -138,11 +138,17 @@ First SSH into the fresh VPS using the login your VPS provider gives you, often
 ssh root@YOUR_PUBLIC_VPS_IP
 ```
 
-Then follow the [pre-execution verified VPS bootstrap](https://docs.fased.ai/install/vps#3-install-fased-and-connect-through-tailscale).
-It downloads the exact tagged `install.sh` release asset and its attestation
-bundle, verifies repository/tag/workflow/GitHub-runner provenance with
-`gh attestation verify`, and only then runs the script as root. Do not pipe a
-moving or unverified script directly into a root shell.
+Then run the one-command Hosting bootstrap:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+  | bash -s -- --hosting
+```
+
+It selects the stable release and verifies the tagged Hosting artifacts before
+privileged Fased installation. The
+[VPS Hosting guide](https://docs.fased.ai/install/vps#advanced-verify-the-bootstrap-first)
+also keeps an advanced procedure for verifying `install.sh` before it runs.
 
 The Fased installer bootstraps the attested hosted runtime itself. A fresh VPS
 does not need `git clone`; the installer installs the supported system tools and
@@ -464,8 +470,9 @@ curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | ba
 ```
 
 Use the VPS Hosting profile only on the server that will run Fased all the time,
-and use the [pre-execution verified tagged bootstrap](https://docs.fased.ai/install/vps#3-install-fased-and-connect-through-tailscale)
-before executing root code.
+using the one-command bootstrap in the
+[VPS Hosting guide](https://docs.fased.ai/install/vps). Manual pre-execution
+attestation verification remains available there for advanced operators.
 
 The commands below are for contributors working from the source checkout. Do
 not use plain `npm install` to install Fased from source.

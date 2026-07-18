@@ -27,13 +27,11 @@ daemon 步骤，也不要公开端口 `18789`。
 ssh root@YOUR_DROPLET_IP
 ```
 
-## 2. 执行受验证的 Hosting 安装
+## 2. 执行 Hosting 安装
 
-在 provider root console 中按照
-[VPS 的预执行验证稳定版流程](/install/vps#3-安装-fased-并通过-tailscale-连接)，先
-验证独立 `install.sh` 的仓库、精确 tag、workflow 和 GitHub-hosted runner provenance，
-再执行 `--hosting --release "$RELEASE"`。不要先安装 Docker、Node、Go 或全局 Fased，
-也不要给安装器创建的 `app` 账户添加 sudo。
+在 provider root console 中运行 [VPS Hosting 一条命令流程](/install/vps)。安装器
+会在特权 Fased 安装前验证 tagged Hosting release。不要先安装 Docker、Node、Go
+或全局 Fased，也不要给安装器创建的 `app` 账户添加 sudo。
 
 ## 3. 验证私有访问和服务
 

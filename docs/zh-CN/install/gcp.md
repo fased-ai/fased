@@ -27,7 +27,7 @@ title: "GCP"
    sudo -i
    ```
 
-3. 在该 root shell 中执行 [VPS 的预执行验证稳定版安装流程](/install/vps#3-安装-fased-并通过-tailscale-连接)。
+3. 在该 root shell 中执行 [VPS Hosting 一条命令流程](/install/vps)。
    不要先自行安装 Docker、Node、Go 或全局 Fased。
 4. 在自己的电脑上授权 Tailscale，并在关闭初始 Cloud Console/SSH 会话前验证：
 

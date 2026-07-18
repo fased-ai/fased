@@ -1,259 +1,158 @@
 ---
-summary: "Windows (WSL2) support + companion app status"
+summary: "Run Fased locally in WSL2 Ubuntu, or manage a remote VPS from Windows."
 read_when:
   - Installing Fased on Windows
-  - Looking for Windows companion app status
+  - Accessing a Fased VPS from Windows
 title: "Windows (WSL2)"
 ---
 
-# Windows (WSL2)
+# Windows
 
-Fased on Windows runs **inside WSL2 Ubuntu**. The CLI, Gateway, wallet signer,
-updates, and service all run inside Linux. Native Windows PowerShell, Command
-Prompt, Git Bash, and native Windows Node.js are not supported Fased runtime
-shells. Wallet signing specifically requires Unix sockets.
+There are two different Windows workflows:
 
-Native Windows companion apps are planned.
+- **Fased runs on this Windows PC:** install and run it inside WSL2 Ubuntu.
+- **Fased runs on a VPS:** use native Windows Tailscale and SSH; Fased runs on
+  the remote Linux VPS, not in Windows or WSL.
 
-<Warning>
-Use Administrator PowerShell only for the `wsl` management commands in steps 1
-and 2. After Ubuntu opens, switch to the Ubuntu shell and run every Fased
-command there. A prompt beginning with `PS C:\` is PowerShell and is the wrong
-place to run `install.sh`.
-</Warning>
+<Tabs>
+  <Tab title="Local Fased in WSL2">
+    Fased Local requires Windows 11 or Windows 10 version 2004/build 19041 or
+    newer. The wallet signer uses Unix sockets, so native Windows Node.js,
+    PowerShell, Command Prompt, Git Bash, and WSL1 are not supported runtimes.
 
-## Supported Windows versions
+    ### 1. Administrator PowerShell
 
-The one-command WSL installation requires one of:
+    Open PowerShell with **Run as administrator** and run only these Windows
+    setup commands:
 
-- Windows 11
-- Windows 10 version 2004 or newer, build 19041 or newer
+    ```powershell
+    wsl --install -d Ubuntu
+    wsl --update
+    wsl --version
+    wsl --list --verbose
+    ```
 
-Press `Windows + R`, run `winver`, and check the version and build. Older
-Windows releases must follow Microsoft's manual WSL installation instructions
-or update Windows before installing Fased.
+    Restart Windows if requested. WSL must be `0.67.6` or newer and the Ubuntu
+    row must show `VERSION 2`.
 
-## Install WSL2 Ubuntu and Fased
+    ### 2. Ubuntu WSL2 shell
 
-### 1. Install WSL2 and Ubuntu in Administrator PowerShell
+    Open **Ubuntu** from the Start menu and create its Linux username/password
+    if prompted. Then run this separate block inside Ubuntu:
 
-Open PowerShell with **Run as administrator** and run:
+    ```bash
+    uname -s
+    ps -p 1 -o comm=
+    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+      | bash -s -- --local
+    ```
 
-```powershell
-wsl --install -d Ubuntu
-wsl --update
-wsl --version
-```
+    `uname -s` must print `Linux`; PID 1 must be `systemd`. Keep every later
+    `fased` command in Ubuntu:
 
-Restart Windows if requested. If WSL is already installed but Ubuntu is not,
-list the available distributions and install Ubuntu explicitly:
+    ```bash
+    fased health
+    fased dashboard
+    ```
 
-```powershell
-wsl --list --online
-wsl --install -d Ubuntu
-```
+    The dashboard opens in the normal Windows browser through WSL localhost
+    forwarding.
 
-`wsl --version` must report WSL `0.67.6` or newer for systemd support. If the
-command is unavailable or the version is older, finish `wsl --update` (or the
-Microsoft Store WSL update), restart when requested, and check again.
+  </Tab>
 
-### 2. Confirm that the installed distribution uses WSL2
+  <Tab title="Access a VPS from Windows">
+    WSL2 is not required when Fased runs on a remote VPS.
 
-In PowerShell:
+    1. Install the native [Tailscale Windows app](https://tailscale.com/download)
+       and sign in.
+    2. In PowerShell or Windows Terminal, connect to the VPS:
 
-```powershell
-wsl --list --verbose
-```
+       ```powershell
+       ssh root@YOUR_PUBLIC_VPS_IP
+       ```
 
-Copy the exact distribution name from the `NAME` column. Its row must show
-`VERSION 2`. If it shows version 1, convert that exact name; do not guess
-`Ubuntu` when the installed name is something such as `Ubuntu-24.04`:
+    3. After the prompt changes to the remote Linux VPS, run:
 
-```powershell
-wsl --set-version "<EXACT DISTRO NAME>" 2
-```
+       ```bash
+       curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+         | bash -s -- --hosting
+       ```
 
-### 3. Open the Ubuntu application
+    The Bash command runs on the VPS through SSH. The installer installs or
+    starts Tailscale on the VPS and prints the login URL to open in Windows.
+    After setup, reconnect privately:
 
-Open **Ubuntu** from the Windows Start menu. The first launch asks you to create
-a Linux username and password. This account is separate from the Windows
-account.
+    ```powershell
+    ssh app@YOUR_VPS_TAILSCALE_NAME
+    ```
 
-Confirm that the shell is Linux:
+    Continue with [VPS Hosting](/install/vps).
 
-```bash
-uname -s
-```
+  </Tab>
+</Tabs>
 
-The result must be `Linux`. Run `pwd` if needed; a normal home directory looks
-like `/home/YOUR_LINUX_USER`, not `C:\...` or `/mnt/c/Windows/System32`.
+<AccordionGroup>
+  <Accordion title="If Ubuntu is WSL1">
+    In Administrator PowerShell, copy the exact distribution name shown by
+    `wsl --list --verbose`, then convert it:
 
-Current Ubuntu distributions installed by `wsl --install` use systemd by
-default when WSL is current. Verify it before installing the Gateway service:
+    ```powershell
+    wsl --set-version "<EXACT DISTRO NAME>" 2
+    ```
 
-```bash
-ps -p 1 -o comm=
-```
+  </Accordion>
 
-The result must be `systemd`. If it is not, create or edit `/etc/wsl.conf`
-inside Ubuntu:
+  <Accordion title="If systemd is not running">
+    Inside Ubuntu, create or edit `/etc/wsl.conf`:
 
-```ini
-[boot]
-systemd=true
-```
-
-Then close Ubuntu, run this once in PowerShell, and reopen Ubuntu:
-
-```powershell
-wsl --shutdown
-```
-
-Verify `ps -p 1 -o comm=` again before continuing. The installer stops before
-creating wallet state on WSL1 or WSL2 without systemd.
-
-Microsoft's systemd procedure is
-[Use systemd to manage Linux services with
-WSL](https://learn.microsoft.com/windows/wsl/systemd).
-
-### 4. Install Fased inside the Ubuntu shell
-
-Run this in Ubuntu, not PowerShell:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
-  | bash -s -- --local
-```
-
-The installer prepares the Linux runtime and starts Local onboarding. Keep all
-later Fased commands inside Ubuntu:
-
-```bash
-fased --version
-fased doctor
-fased dashboard
-```
-
-When the first wallet is created, Fased downloads the Linux signer asset
-matching the installed Fased version, verifies its SHA-256 checksum and GitHub
-release attestation, and installs it automatically. Normal users do not install
-Go. Existing-key import is an explicit signer-admin operation so the Gateway
-process never receives the private key.
-
-This is still a Local same-Linux-user install: the Gateway and signer run under
-your WSL Ubuntu account. Go owns key lifecycle, but this is not a hard boundary
-against code that fully compromises that same account. Keep Local wallet
-balances limited; use VPS Hosting's separate signer account, a hardware-backed
-Wallet Standard Vault, or a reviewed provider policy when stronger compromise
-isolation is required.
-
-### 5. Open the dashboard from Windows
-
-The Gateway remains inside WSL2, but the dashboard URL can be opened in the
-normal Windows browser. Keep the Ubuntu shell and WSL2 Gateway available while
-using Fased.
-
-The native signer enrollment launcher also runs inside Ubuntu:
-
-```bash
-"$HOME/.fased/bin/fased-signer-enroll" "Primary security key"
-```
-
-Open the exact short-lived `http://localhost:18791/...` URL it prints in the
-normal Windows browser. WSL localhost forwarding handles this. Never add a
-Windows `portproxy`, firewall rule, LAN bind, or public tunnel for signer
-enrollment port `18791`.
-
-Related documentation:
-
-- [Getting Started](/start/getting-started)
-- [Install & updates](/install/updating)
-- [Installer reference](/install/installer)
-- Official WSL installation guide (Microsoft):
-  [https://learn.microsoft.com/windows/wsl/install](https://learn.microsoft.com/windows/wsl/install)
-
-## Gateway
-
-- [Gateway runbook](/gateway)
-- [Configuration](/gateway/configuration)
-
-## Gateway service install (CLI)
-
-Inside WSL2:
-
-```
-fased onboard --install-daemon
-```
-
-Or:
-
-```
-fased gateway install
-```
-
-Or:
-
-```
-fased configure
-```
-
-Select **Gateway service** when prompted.
-
-Repair/migrate:
-
-```
-fased doctor
-```
-
-## Advanced: expose WSL services over LAN (portproxy)
-
-WSL has its own virtual network. If another machine needs to reach a service
-running **inside WSL** (SSH, a local TTS server, or the Gateway), expose it
-deliberately through Windows port forwarding. The WSL IP changes after restarts,
-so you may need to refresh the forwarding rule.
-
-Example (PowerShell **as Administrator**):
-
-```powershell
-$Distro = "<EXACT NAME FROM: wsl --list --verbose>"
-$ListenPort = 2222
-$TargetPort = 22
-
-$WslIp = (wsl -d $Distro -- hostname -I).Trim().Split(" ")[0]
-if (-not $WslIp) { throw "WSL IP not found." }
-
-netsh interface portproxy add v4tov4 listenaddress=0.0.0.0 listenport=$ListenPort `
-  connectaddress=$WslIp connectport=$TargetPort
-```
-
-Allow the port through Windows Firewall (one-time):
-
-```powershell
-New-NetFirewallRule -DisplayName "WSL SSH $ListenPort" -Direction Inbound `
-  -Protocol TCP -LocalPort $ListenPort -Action Allow
-```
-
-Refresh the portproxy after WSL restarts:
-
-```powershell
-netsh interface portproxy delete v4tov4 listenport=$ListenPort listenaddress=0.0.0.0 | Out-Null
-netsh interface portproxy add v4tov4 listenport=$ListenPort listenaddress=0.0.0.0 `
-  connectaddress=$WslIp connectport=$TargetPort | Out-Null
-```
-
-Notes:
-
-- SSH from another machine targets the **Windows host IP** (example: `ssh user@windows-host -p 2222`).
-- Remote nodes must point at a **reachable** Gateway URL (not `127.0.0.1`); use
-  `fased status --all` to confirm.
-- Use `listenaddress=0.0.0.0` only for intended LAN access; `127.0.0.1` keeps it
-  local only. If the Gateway is reachable from other devices, require
-  token/password auth.
-- Never use this procedure for signer enrollment port `18791`; enrollment must
-  remain loopback-only.
-- If you want this automatic, register a Scheduled Task to run the refresh
-  step at login.
-
-## Windows companion app
-
-We do not have a Windows companion app yet. Contributions are welcome if you want to help build one.
+    ```ini
+    [boot]
+    systemd=true
+    ```
+
+    Close Ubuntu, run `wsl --shutdown` once in PowerShell, reopen Ubuntu, and
+    check `ps -p 1 -o comm=` again. See Microsoft's
+    [WSL systemd guide](https://learn.microsoft.com/windows/wsl/systemd).
+
+  </Accordion>
+
+  <Accordion title="Wallet signer behavior on WSL2">
+    First-wallet setup downloads the version-matched Linux signer, verifies its
+    checksum and release attestation, and installs it automatically. Users do
+    not install Go.
+
+    Local WSL2 runs Gateway and signer under the same Linux account. Keep Local
+    wallet balances limited. VPS Hosting uses an independent signer account;
+    hardware-backed Wallet Standard or a reviewed custody provider offers a
+    stronger boundary for reserve funds.
+
+  </Accordion>
+
+  <Accordion title="Signer security-key enrollment">
+    Run the enrollment launcher inside Ubuntu:
+
+    ```bash
+    "$HOME/.fased/bin/fased-signer-enroll" "Primary security key"
+    ```
+
+    Open its short-lived `http://localhost:18791/...` URL in the Windows
+    browser. Do not create a Windows `portproxy`, LAN bind, firewall exposure,
+    or public tunnel for the enrollment port.
+
+  </Accordion>
+</AccordionGroup>
+
+<CardGroup cols={2}>
+  <Card title="Install" href="/install" icon="download">
+    Local and VPS quick commands.
+  </Card>
+  <Card title="VPS Hosting" href="/install/vps" icon="server">
+    Private access and recovery.
+  </Card>
+  <Card title="Updating" href="/install/updating" icon="refresh-cw">
+    Update Local WSL2 or a VPS runtime.
+  </Card>
+  <Card title="Microsoft WSL guide" href="https://learn.microsoft.com/windows/wsl/install" icon="windows">
+    Official Windows setup documentation.
+  </Card>
+</CardGroup>

@@ -12,11 +12,10 @@ Docker is **optional** and the full Docker Gateway is supported only on a local
 computer. Fased does not currently support a Docker-hosted Gateway on a VPS or
 cloud server, and there is no `install.sh --hosting-docker` mode.
 
-For a maintained VPS deployment, use the non-Docker hosted installer through
-the [pre-execution verified tagged bootstrap](/install/vps#3-install-fased-and-connect-through-tailscale)
-from the provider root console with the exact stable release tag. It verifies
-the standalone installer before root execution; the hosted installer then
-verifies the tagged runtime bundle and manages the `app` account, Tailscale,
+For a maintained VPS deployment, use the non-Docker
+[one-command Hosting installer](/install/vps) from the provider root console.
+It verifies the tagged Hosting release before privileged Fased installation
+and manages the `app` account, Tailscale,
 firewall and SSH hardening, systemd service, updates, and
 rollback. The local Docker setup does not provide those hosting controls and
 must not be substituted for it.

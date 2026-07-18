@@ -36,13 +36,11 @@ sudo -i
 The remaining installation commands run inside that root shell. Do not install
 Node, Go, Docker, or Fased globally first.
 
-## 3. Run the verified Hosting installer
+## 3. Run the Hosting installer
 
-Follow the
-[pre-execution verified tagged bootstrap](/install/vps#3-install-fased-and-connect-through-tailscale)
-from the provider root console. It verifies the standalone `install.sh`
-repository, exact tag, release workflow, and GitHub-hosted runner provenance
-before any Fased shell code executes as root.
+From the provider root console, follow the
+[one-command VPS Hosting guide](/install/vps). It verifies the tagged Hosting
+release before privileged Fased installation.
 
 The Hosting installer creates separate `app` and signer accounts, installs the
 root-owned signer/updater systemd services, configures Tailscale and host
