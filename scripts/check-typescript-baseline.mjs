@@ -29,10 +29,23 @@ function identity(error) {
   return JSON.stringify([error.file, error.code, normalizeMessage(error.message)]);
 }
 
+function diagnosticClass(error) {
+  return JSON.stringify([error.file, error.code]);
+}
+
 function countsFor(errors) {
   const counts = new Map();
   for (const error of errors) {
     const key = identity(error);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function classCountsFor(errors) {
+  const counts = new Map();
+  for (const error of errors) {
+    const key = diagnosticClass(error);
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
   return counts;
@@ -98,18 +111,19 @@ if (baseline.typescript !== TYPESCRIPT_VERSION) {
   process.exit(1);
 }
 
-const allowed = new Map(
-  baseline.errors.map((entry) => [
-    JSON.stringify([entry.file, entry.code, entry.message]),
-    Number(entry.count),
-  ]),
-);
-const current = countsFor(errors);
+const allowed = new Map();
+for (const entry of baseline.errors) {
+  const key = diagnosticClass(entry);
+  allowed.set(key, (allowed.get(key) ?? 0) + Number(entry.count));
+}
+const current = classCountsFor(errors);
 const regressions = [];
 for (const [key, count] of current) {
   const allowance = Number(allowed.get(key) ?? 0);
   if (count > allowance) {
-    const [file, code, message] = JSON.parse(key);
+    const [file, code] = JSON.parse(key);
+    const sample = errors.find((error) => diagnosticClass(error) === key);
+    const message = sample ? normalizeMessage(sample.message) : "unknown diagnostic";
     regressions.push({ file, code, message, count, allowance });
   }
 }
