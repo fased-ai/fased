@@ -4,6 +4,26 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.64
+
+- Make protocol-v2 `fased-signerd` authoritative for native key creation,
+  import, rotation, encrypted state, fail-closed wallet policy, durable caps,
+  idempotency, and ambiguous-broadcast reconciliation.
+- Replace the maintained Hosting broker and Gateway sudo path with an
+  independent root-managed signer service, separate application/control
+  sockets, verified release identity, and transactional update/rollback.
+- Add typed SOL, SPL, SAT Mining, Vault bond, and federation operations with
+  signer-owned semantic validation; Jupiter swaps and Trigger mutations remain
+  preview-only pending live qualification.
+- Move reviewed WebAuthn challenges into the signer, add Wallet Standard
+  hardware and Turnkey provider flows, and keep new native wallets receive-only
+  until an exact positive policy hash is acknowledged.
+- Add bounded signer, A2A, Marketplace, skill, and memory state with capacity
+  warnings, replay-safe retention, and complete-state archive/restore guidance.
+- Document clean Linux/macOS installs, Windows 10/11 through WSL2 Ubuntu,
+  independent VPS Hosting custody, Local-only Docker, wallet activation,
+  Mining, Vault, updates, and recovery.
+
 ## 0.1.63
 
 - Fix maintained Hosting first-wallet setup by launching the packaged signer
