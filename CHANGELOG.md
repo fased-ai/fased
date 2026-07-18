@@ -4,6 +4,22 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.65
+
+- Add rent-aware SAT settlement accounting, durable submission serialization
+  and reconciliation, keeper-bounty debt visibility, and operator status in the
+  Mining UI and CLI surfaces.
+- Add signer-owned typed address lookup-table create, extend, deactivate, close,
+  and lookup-backed distribution operations with Mining-role, program, action,
+  and rent policy gates; all lookup-table operations remain disabled by default.
+- Require byte-identical lookup-table account state from at least two distinct
+  configured RPC origins before compiling numeric v0 indexes, and fail closed
+  for one provider, duplicate origins, or disagreement.
+- Use independent lifecycle slot reads and the conservative lower slot for
+  lookup-table activation, deactivation, and close checks.
+- Preserve explicit lookup-table enablement through managed updates and document
+  policy activation, rent recovery, keeper reconciliation, and rollback.
+
 ## 0.1.64
 
 - Make protocol-v2 `fased-signerd` authoritative for native key creation,
