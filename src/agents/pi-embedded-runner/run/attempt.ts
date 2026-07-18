@@ -76,6 +76,10 @@ import {
   loadWorkspaceSkillEntries,
   resolveSkillsPromptForRun,
 } from "../../skills.js";
+import {
+  marketplaceSkillIdsFromEntries,
+  marketplaceSkillIdsFromSnapshot,
+} from "../../skills/trust.js";
 import { buildSystemPromptParams } from "../../system-prompt-params.js";
 import { buildSystemPromptReport } from "../../system-prompt-report.js";
 import { sanitizeToolCallIdsForCloudCodeAssist } from "../../tool-call-id.js";
@@ -351,10 +355,21 @@ export async function runEmbeddedAttempt(
   await fs.mkdir(resolvedWorkspace, { recursive: true });
 
   const sandboxSessionKey = params.sessionKey?.trim() || params.sessionId;
+  const sourceSkillEntries = params.skillsSnapshot
+    ? []
+    : loadWorkspaceSkillEntries(resolvedWorkspace, {
+        config: params.config,
+        agentId: params.agentId,
+      });
+  const marketplaceSkillIds = params.skillsSnapshot
+    ? marketplaceSkillIdsFromSnapshot(params.skillsSnapshot)
+    : marketplaceSkillIdsFromEntries(sourceSkillEntries);
+  const hasUntrustedSkillContent = marketplaceSkillIds.length > 0;
   const sandbox = await resolveSandboxContext({
     config: params.config,
     sessionKey: sandboxSessionKey,
     workspaceDir: resolvedWorkspace,
+    forceUntrustedIsolation: hasUntrustedSkillContent,
   });
   const effectiveWorkspace = sandbox?.enabled
     ? sandbox.workspaceAccess === "rw"
@@ -375,10 +390,12 @@ export async function runEmbeddedAttempt(
       ? applySkillEnvOverridesFromSnapshot({
           snapshot: params.skillsSnapshot,
           config: params.config,
+          excludeMarketplace: true,
         })
       : applySkillEnvOverrides({
           skills: skillEntries ?? [],
           config: params.config,
+          excludeMarketplace: true,
         });
 
     const skillsPrompt = resolveSkillsPromptForRun({
@@ -461,8 +478,9 @@ export async function runEmbeddedAttempt(
             params.requireExplicitMessageTarget ?? isSubagentSessionKey(params.sessionKey),
           disableMessageTool: params.disableMessageTool,
           disabledToolNames: params.disabledToolNames,
+          untrustedSkillContent: hasUntrustedSkillContent,
         });
-    if (!toolsDisabled) {
+    if (!toolsDisabled && !hasUntrustedSkillContent) {
       bundleMcpRuntime = await createBundleMcpToolRuntime({
         workspaceDir: effectiveWorkspace,
         cfg: params.config,

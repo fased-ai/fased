@@ -54,9 +54,6 @@ func resolveVaultBondReviewStateV2(
 	wallet solana.PublicKey,
 	intent normalizedIntentV2,
 ) (normalizedIntentV2, signerOwnedAccountSnapshotV2, []string, error) {
-	if err := requireExactVaultBondClaimEffectV2(intent.Intent.Action); err != nil {
-		return normalizedIntentV2{}, signerOwnedAccountSnapshotV2{}, nil, err
-	}
 	verifiedRPCs, err := solanaRPCURLsForClusterV2(rpcURLs, intent.Intent.Cluster)
 	if err != nil {
 		return normalizedIntentV2{}, signerOwnedAccountSnapshotV2{}, nil, err
@@ -75,6 +72,14 @@ func resolveVaultBondReviewStateV2(
 	}
 	if instruction.Codec.Action == "finalizeBondUnlock" {
 		effect, effectErr := resolveVaultBondFinalizeEffectV2(instruction, wallet, snapshot)
+		if effectErr != nil {
+			return normalizedIntentV2{}, signerOwnedAccountSnapshotV2{}, nil, effectErr
+		}
+		intent.Asset = effect.Asset
+		intent.Amount = effect.Amount
+		intent.Destination = effect.Destination
+	} else if instruction.Codec.Action == "claimBondStakingRewards" || instruction.Codec.Action == "claimUnallocatedStakingRewards" {
+		effect, effectErr := resolveVaultBondClaimEffectV2(instruction, wallet, snapshot)
 		if effectErr != nil {
 			return normalizedIntentV2{}, signerOwnedAccountSnapshotV2{}, nil, effectErr
 		}

@@ -79,19 +79,37 @@ Choose the setup profile first.
 
     <Warning>
     On Windows 11 or Windows 10 version 2004/build 19041 or newer, first run
-    `wsl --install -d Ubuntu`, `wsl --update`, `wsl --version`, and
-    `wsl --list --verbose` in Administrator PowerShell and restart if requested.
+    this block in **Administrator PowerShell** and restart if requested:
+
+    ```powershell
+    wsl --install -d Ubuntu
+    wsl --update
+    wsl --version
+    wsl --list --verbose
+    ```
+
     WSL must be `0.67.6` or newer and the installed distribution must show
-    version 2. Then open the Ubuntu application and run the command below in the
-    Ubuntu shell. Do not run it in PowerShell, Command Prompt, Git Bash, or
-    native Windows Node.js. Wallet signing uses Unix sockets, so first-wallet
-    setup must run inside WSL2; Fased automatically installs the verified Linux
-    signer asset and does not require Go.
-    </Warning>
+    version 2. Then open the Ubuntu application. Run this separate block only
+    in the **Ubuntu/WSL Bash shell**:
 
     ```bash
+    uname -s
+    systemctl is-system-running || true
     curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
     ```
+
+    `uname -s` must print `Linux`. Do not run the Bash block in PowerShell,
+    Command Prompt, Git Bash, or
+    native Windows Node.js. Wallet signing uses Unix sockets, so first-wallet
+    setup must run inside WSL2; Fased automatically installs the verified Linux
+    signer asset and does not require Go. Before storing wallet credentials,
+    prefer the [verified stable Local install](/install/installer#verified-stable-local-install)
+    in the same Ubuntu shell; the PowerShell block is only for creating and
+    checking WSL2.
+    </Warning>
+
+    macOS and native Linux users run the same `curl ... --local` Bash command in
+    Terminal or their Linux terminal.
 
     This selects the **Local** profile and keeps VPS SSH/firewall hardening off.
 
@@ -171,7 +189,8 @@ from the provider root console. Do not substitute the Local command below on a
 VPS.
 
 ```bash
-# Local on this computer
+# Local convenience path on this computer; for wallet-bearing production use
+# /install/installer#verified-stable-local-install with an exact release tag.
 curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
 
 # Continue setup if interrupted

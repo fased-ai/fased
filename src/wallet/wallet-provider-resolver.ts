@@ -273,6 +273,25 @@ export function createWalletProviderAdapter(params: {
       typeof registeredWallet?.metadata?.turnkeyWalletId === "string"
         ? registeredWallet.metadata.turnkeyWalletId.trim()
         : "";
+    const registeredSolanaAddress = registeredWallet?.addresses?.solana?.trim() ?? "";
+    const configuredSolanaAddress =
+      pickCredentialValue(secretCredentials, ["defaultSolanaAddress", "solanaAddress"]) ||
+      String(env.FASED_WALLET_TURNKEY_DEFAULT_SOLANA_ADDRESS ?? "").trim();
+    const configuredProviderWalletId =
+      pickCredentialValue(secretCredentials, ["providerWalletId", "turnkeyWalletId"]) || "";
+    if (
+      registeredWallet &&
+      ((registeredSolanaAddress &&
+        configuredSolanaAddress &&
+        registeredSolanaAddress !== configuredSolanaAddress) ||
+        (registeredProviderWalletId &&
+          configuredProviderWalletId &&
+          registeredProviderWalletId !== configuredProviderWalletId))
+    ) {
+      throw new Error(
+        `Turnkey wallet ${registeredWallet.name} does not match the configured provider wallet identity`,
+      );
+    }
     return new TurnkeyAdapter({
       chains: params.wallet.chains,
       service: params.wallet.service,
@@ -308,15 +327,8 @@ export function createWalletProviderAdapter(params: {
             walletId: params.walletId,
           }) ||
           undefined,
-        defaultSolanaAddress:
-          pickCredentialValue(secretCredentials, ["defaultSolanaAddress", "solanaAddress"]) ||
-          registeredWallet?.addresses?.solana?.trim() ||
-          String(env.FASED_WALLET_TURNKEY_DEFAULT_SOLANA_ADDRESS ?? "").trim() ||
-          undefined,
-        providerWalletId:
-          pickCredentialValue(secretCredentials, ["providerWalletId", "turnkeyWalletId"]) ||
-          registeredProviderWalletId ||
-          undefined,
+        defaultSolanaAddress: registeredSolanaAddress || configuredSolanaAddress || undefined,
+        providerWalletId: registeredProviderWalletId || configuredProviderWalletId || undefined,
       },
     });
   }

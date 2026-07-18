@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
+import { SIGNER_PROTOCOL_V2 } from "../src/wallet/signer-protocol-v2.generated.js";
 import { installManagedRuntime } from "./install-managed-runtime.mjs";
 import {
   readManagedInstallManifest,
@@ -98,6 +99,7 @@ const fs = require("node:fs");
 const net = require("node:net");
 const path = require("node:path");
 const release = ${JSON.stringify(releaseIdentity)};
+const protocol = ${JSON.stringify(SIGNER_PROTOCOL_V2)};
 if (process.argv[2] === "--version") { process.stdout.write(\`fased-signerd \${release.version} commit=\${release.commit} buildInputDigest=\${release.buildInputDigest} development=false\\n\`); process.exit(0); }
 const args = process.argv.slice(2); const value = (name) => args[args.indexOf(name) + 1]; const readOnly = args.includes("-read-only");
 const socketPath = value("-socket"), controlPath = value("-control-socket"), statePath = value("-state-db"), masterPath = value("-master-key"), pidPath = value("-pid-file"), auditPath = value("-audit-log");
@@ -106,7 +108,7 @@ for (const file of [statePath, masterPath, pidPath, auditPath]) fs.mkdirSync(pat
 if (!fs.existsSync(statePath)) fs.writeFileSync(statePath, "paired-state\\n", { mode: 0o600 });
 if (!fs.existsSync(masterPath)) fs.writeFileSync(masterPath, "paired-master\\n", { mode: 0o600 });
 fs.writeFileSync(pidPath, \`\${process.pid}\\n\`, { mode: 0o600 });
-const response = { ok: true, result: { ready: true, readOnly, keystoreType: "signer-owned-v2", release, schema: { version: 3, supported: 3, ready: true }, capabilities: { protocol: { current: 2, min: 2, max: 2 }, nativeFeeReservationLamports: 5000000, features: ["failClosedPolicies","policyHashes","durableCaps","atomicIdempotency","ambiguousBroadcastReconciliation","signerOwnedKeys","typedSolanaTransactions","atomicMultiAssetCaps","signerControlledNativeFeeCaps"] }, policies: [] } };
+const response = { ok: true, result: { ready: true, readOnly, keystoreType: "signer-owned-v2", release, schema: { version: 3, supported: 3, ready: true }, capabilities: protocol, policies: [], network: { ready: true, wallets: [] } } };
 const app = net.createServer((socket) => socket.once("data", () => socket.end(JSON.stringify(response) + "\\n")));
 const control = net.createServer((socket) => socket.destroy());
 const cleanup = () => { app.close(); control.close(); for (const file of [socketPath, controlPath, pidPath]) { try { fs.rmSync(file, { force: true }); } catch {} } process.exit(0); };

@@ -3,6 +3,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { SIGNER_PROTOCOL_V2 } from "../signer-protocol-v2.generated.js";
 import {
   assertSecureLocalSignerSocket,
   callLocalSocketSigner,
@@ -105,7 +106,16 @@ describe("callLocalSocketSigner", () => {
           credentialVersion: 7,
           ready: true,
         },
-        jupiter: { triggerConfigured: true },
+        jupiter: { triggerConfigured: true, liveEnabled: false },
+        state: {
+          databaseBytes: 4096,
+          wallets: 1,
+          operations: 80_000,
+          reviews: 0,
+          triggerWorkflows: 0,
+          dailyUsageBuckets: 1,
+          capacityWarnings: ["operations signer state is at 80000/100000 records"],
+        },
       }),
     });
     try {
@@ -113,12 +123,14 @@ describe("callLocalSocketSigner", () => {
       expect(health).toMatchObject({
         ok: true,
         webAuthn: { credentialCount: 2, credentialVersion: 7, ready: true },
-        jupiter: { triggerConfigured: true },
+        jupiter: { triggerConfigured: true, liveEnabled: false },
       });
       expect(JSON.stringify(health)).not.toMatch(/api.?key|jwt|secret|\.key/iu);
 
       const providerHealth = await new LocalSocketSignerAdapter(signer.socketPath).health();
       expect(providerHealth.details).toContain("jupiter-trigger=configured");
+      expect(providerHealth.details).toContain("jupiter-live=preview-only");
+      expect(providerHealth.details).toContain("80000/100000");
     } finally {
       await signer.close();
     }
@@ -198,31 +210,11 @@ describe("LocalSocketSignerAdapter protocol-v2 sends", () => {
       development: true,
     },
     capabilities: {
-      protocol: { current: 2 as const, min: 2, max: 2 },
-      nativeFeeReservationLamports: 5_000_000 as const,
-      intentTypes: ["solana.nativeTransfer", "solana.splTransferChecked"],
-      operationStates: ["reserved", "broadcast", "confirmed", "failed", "unknown"],
-      features: [
-        "failClosedPolicies",
-        "policyHashes",
-        "applicationPolicyTightening",
-        "durableCaps",
-        "atomicMultiAssetCaps",
-        "signerControlledNativeFeeCaps",
-        "atomicIdempotency",
-        "ambiguousBroadcastReconciliation",
-        "signerOwnedKeys",
-        "signerOwnedRPC",
-        "typedSolanaTransactions",
-        "signerOwnedWebAuthn",
-        "singleUseReviewedAuthorization",
-        "typedJupiterSemantics",
-        "signerOwnedJupiterTriggerV2",
-        "signerOwnedJupiterTriggerHistory",
-        "signerOwnedReviewPrepareExecute",
-        "exactPreparedTransactions",
-        "legacyOnlyJupiterTransactions",
-      ],
+      protocol: SIGNER_PROTOCOL_V2.protocol,
+      nativeFeeReservationLamports: SIGNER_PROTOCOL_V2.nativeFeeReservationLamports,
+      intentTypes: [...SIGNER_PROTOCOL_V2.intentTypes],
+      operationStates: [...SIGNER_PROTOCOL_V2.operationStates],
+      features: [...SIGNER_PROTOCOL_V2.features],
     },
     policies: [],
   };
@@ -783,6 +775,7 @@ describe("LocalSocketSignerAdapter protocol-v2 sends", () => {
         requestId,
         destination,
         amount: "900",
+        memo: `fased:a2a-refund:v1:${"a".repeat(64)}`,
       });
       await adapter.getSignerReview({ walletId: "agent-wallet", requestId });
       await adapter.executeSignerReview({
@@ -805,6 +798,7 @@ describe("LocalSocketSignerAdapter protocol-v2 sends", () => {
               type: "solana.nativeTransfer",
               destination,
               lamports: "900",
+              memo: `fased:a2a-refund:v1:${"a".repeat(64)}`,
             },
           },
         },

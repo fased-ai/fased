@@ -208,8 +208,10 @@ Required behavior:
 - every executable asset has positive per-transaction and daily caps
 - every manual native Agent, Mining, or Vault review requires signer WebAuthn
   bound to the exact digest, decoded intent, policy hash, nonce, and expiry
-- native signer credential registration/listing works through the signer-only
-  launcher/control socket; native credential removal is not currently supported
+- native signer credential registration, listing, and fenced atomic revocation
+  work through the signer-only launcher/control socket; revocation invalidates
+  pending proof authority and refuses removal of the last credential unless the
+  host administrator gives the explicit last-credential confirmation
 - request ids, cap reservations, daily totals, signed bytes, and
   reserved/broadcast/confirmed/failed/unknown states survive restart
 - an ambiguous result reconciles the exact existing signature and is never

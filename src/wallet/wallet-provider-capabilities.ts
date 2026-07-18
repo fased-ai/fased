@@ -186,7 +186,10 @@ export function buildWalletProviderCapabilityMatrix(
         signingLocation === "browser" && adapter.capabilities.supportsSignTransaction === true,
     },
     operations: {
-      createWallet: adapter.capabilities.supportsCreateWallet,
+      // The local signer creates wallets through the privileged Gateway setup
+      // coordinator, not through the application-socket adapter method.
+      createWallet:
+        adapter.capabilities.supportsCreateWallet || adapter.id === "local-socket-signer",
       receiveAddress: receiveAny,
       getBalance: balanceAny,
       prepare: prepareAny,

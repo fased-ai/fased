@@ -49,29 +49,11 @@ func decodeJupiterRouteV2(data []byte) (decodedJupiterRouteV2, error) {
 	}
 	switch discriminator {
 	case jupiterRouteDiscriminatorV2, jupiterSharedRouteDiscriminatorV2:
-		// Legacy exact-in layouts end in fixed fields after a variable Borsh
-		// route plan: in_amount, quoted_out_amount, slippage_bps, fee_bps.
-		const fixedTail = 8 + 8 + 2 + 1
-		vectorOffset := 8
-		shared := discriminator == jupiterSharedRouteDiscriminatorV2
-		if shared {
-			vectorOffset++ // shared-account route id
-		}
-		if len(data) < vectorOffset+4+fixedTail {
-			return decodedJupiterRouteV2{}, errors.New("legacy Jupiter route data is truncated")
-		}
-		steps := binary.LittleEndian.Uint32(data[vectorOffset : vectorOffset+4])
-		if steps == 0 || steps > 64 || len(data)-fixedTail < vectorOffset+4+int(steps)*4 {
-			return decodedJupiterRouteV2{}, errors.New("legacy Jupiter route plan is empty or malformed")
-		}
-		tail := data[len(data)-fixedTail:]
-		return decodedJupiterRouteV2{
-			Shared:             shared,
-			InputAmount:        binary.LittleEndian.Uint64(tail[:8]),
-			QuotedOutputAmount: binary.LittleEndian.Uint64(tail[8:16]),
-			SlippageBPS:        binary.LittleEndian.Uint16(tail[16:18]),
-			PlatformFeeBPS:     uint16(tail[18]),
-		}, nil
+		// Legacy Route places reviewed semantic fields after a variable-size
+		// Swap enum. A tail parser can bind attacker-controlled bytes instead of
+		// the fields consumed on-chain, so legacy Route is denied. RouteV2 places
+		// all reviewed semantic fields before the opaque route plan.
+		return decodedJupiterRouteV2{}, errors.New("legacy Jupiter Route is denied; require RouteV2")
 	case jupiterRouteV2DiscriminatorV2, jupiterSharedRouteV2DiscriminatorV2:
 		// RouteV2 moves the fixed semantic fields in front of the route plan.
 		offset := 8

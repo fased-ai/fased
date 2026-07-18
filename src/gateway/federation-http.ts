@@ -57,6 +57,7 @@ import {
   resolveFederationBaseUrl,
   resolveFederationHandle,
 } from "../federation/runtime.js";
+import type { LookupFn } from "../infra/net/ssrf.js";
 import { readResponseWithLimit } from "../media/read-response-with-limit.js";
 
 export type FederationProxyOptions = {
@@ -65,9 +66,23 @@ export type FederationProxyOptions = {
   maxBodyBytes?: number;
   peerAuthClientIp?: string;
   peerAuthDeps?: FederationPeerVerifyDeps;
+  marketplaceDeliverySsrfLookupFn?: LookupFn;
 };
 
 type JsonObject = Record<string, unknown>;
+type LocalMarketplaceOrder = ReturnType<typeof listLocalMarketplaceOrders>[number];
+type FederationReplayRejection = Extract<
+  Awaited<ReturnType<typeof reserveAuthorizedFederationPeerRequest>>,
+  { ok: false }
+>;
+type MarketplaceOrderTransactionResult =
+  | { kind: "rejected"; status: number; reason: string }
+  | { kind: "auth-rejected"; rejection: FederationReplayRejection }
+  | { kind: "accepted"; created: boolean; order: LocalMarketplaceOrder | undefined };
+type MarketplaceDeliveryTransactionResult =
+  | { kind: "rejected"; status: number; reason: string }
+  | { kind: "auth-rejected"; rejection: FederationReplayRejection }
+  | { kind: "accepted"; delivery: LocalMarketplaceOrder | undefined };
 
 const OPERATOR_ECONOMY_FEE_LANES = [
   "marketplace",
@@ -2323,6 +2338,9 @@ export async function handleFederationHttpRequest(
         config: snapshot.config,
         orderId,
         result: resultPayload as MarketplaceContentSummarizeDeliveryResult,
+        deps: opts.marketplaceDeliverySsrfLookupFn
+          ? { ssrfLookupFn: opts.marketplaceDeliverySsrfLookupFn }
+          : undefined,
       });
       if ("error" in delivered) {
         sendJson(res, delivered.statusCode, { status: "rejected", reason: delivered.error });
@@ -2422,7 +2440,8 @@ export async function handleFederationHttpRequest(
       senderHandle: buyerHandle,
       remoteOrderId,
     });
-    const transaction = await updateConfigFile(async (currentConfig) => {
+    // oxfmt-ignore
+    const transaction = await updateConfigFile<MarketplaceOrderTransactionResult>(async (currentConfig) => {
       const validation = validateSellerMarketplaceOrderIntake({
         config: currentConfig,
         origin,
@@ -2613,7 +2632,8 @@ export async function handleFederationHttpRequest(
     });
     const deliveredAt = parsed.value.deliveredAt || new Date().toISOString();
     const payment = parsed.value.payment;
-    const transaction = await updateConfigFile(async (currentConfig) => {
+    // oxfmt-ignore
+    const transaction = await updateConfigFile<MarketplaceDeliveryTransactionResult>(async (currentConfig) => {
       const buyerOrder = findCorrelatedMarketplaceBuyerOrder({
         config: currentConfig,
         sellerHandle: senderHandle,

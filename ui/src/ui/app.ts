@@ -1693,6 +1693,7 @@ export class FasedAgentApp extends LitElement {
   @state() walletCreateName = "";
   @state() walletCreateId = "";
   @state() walletCreateProvider: WalletProviderInfo["id"] = "local-socket-signer";
+  @state() walletCreateRole: "agent" | "vault" = "agent";
   @state() walletAssignAgentId = "";
   @state() walletAssignWalletId = "";
   @state() walletRpcChain = "solana" as const;
@@ -5429,10 +5430,17 @@ export class FasedAgentApp extends LitElement {
         );
       }
       const walletId = this.walletCreateId.trim() || undefined;
+      if (providerId === "local-socket-signer" && !walletId) {
+        throw new Error(
+          "Wallet ID is required for a native signer wallet (for example agent-primary or vault-reserve).",
+        );
+      }
       const created = await createWalletNamedWallet({
         name,
         walletId,
         providerId,
+        role: this.walletCreateRole,
+        chain: "solana",
       });
       this.walletProviderTab = providerId;
       this.walletCreateName = "";
@@ -5441,7 +5449,13 @@ export class FasedAgentApp extends LitElement {
         ...this.walletSendCreateForm,
         walletId: created.wallet.id,
       };
-      this.walletSettingsMessage = `Wallet created: ${created.wallet.name}.`;
+      this.walletDetailsWalletId = created.wallet.id;
+      this.walletExpandedPanelWalletId = created.wallet.id;
+      this.walletExpandedPanel = "security";
+      this.walletSettingsMessage =
+        providerId === "local-socket-signer"
+          ? `Wallet created: ${created.wallet.name}. It is receive-only until signer-owned network setup, owner enrollment, and an explicit policy are acknowledged. Open Policy for the exact status.`
+          : `Wallet created: ${created.wallet.name}. Verify provider policy and review readiness before funding it.`;
       await this.handleWalletLoad();
     } catch (err) {
       this.walletSettingsError = `Creating wallet failed: ${String(err)}`;

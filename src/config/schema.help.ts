@@ -298,6 +298,8 @@ const FIELD_HELP_BASE: Record<string, string> = {
   "agents.defaults.memorySearch.remote.apiKey": "Custom API key for the remote embedding provider.",
   "agents.defaults.memorySearch.remote.headers":
     "Extra headers for remote embeddings (merged; remote overrides OpenAI headers).",
+  "agents.defaults.memorySearch.remote.allowSessionContent":
+    "Explicitly allow sanitized session transcript text to leave this host for remote embedding. Default: false.",
   "agents.defaults.memorySearch.remote.batch.enabled":
     "Enable batch API for memory embeddings (OpenAI/Gemini; default: true).",
   "agents.defaults.memorySearch.remote.batch.wait":

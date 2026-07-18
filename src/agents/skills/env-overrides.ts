@@ -1,16 +1,17 @@
-import type { FasedAgentConfig } from "../../config/config.js";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { getRuntimeConfigSnapshot, type FasedAgentConfig } from "../../config/config.js";
 import { isDangerousHostEnvVarName } from "../../infra/host-env-security.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { sanitizeEnvVars, validateEnvVarValue } from "../sandbox/sanitize-env-vars.js";
 import { resolveSkillConfig } from "./config.js";
 import { resolveSkillKey } from "./frontmatter.js";
+import { isMarketplaceSkillDir } from "./trust.js";
 import type { SkillEntry, SkillSnapshot } from "./types.js";
 
 const log = createSubsystemLogger("env-overrides");
 
-type EnvUpdate = { key: string; prev: string | undefined };
 type SkillConfig = NonNullable<ReturnType<typeof resolveSkillConfig>>;
-const activeSkillEnvKeys = new Set<string>();
+const skillEnvStorage = new AsyncLocalStorage<Readonly<Record<string, string>>>();
 
 type SanitizedSkillEnvOverrides = {
   allowed: Record<string, string>;
@@ -19,7 +20,12 @@ type SanitizedSkillEnvOverrides = {
 };
 
 export function getActiveSkillEnvKeys(): ReadonlySet<string> {
-  return activeSkillEnvKeys;
+  return new Set(Object.keys(skillEnvStorage.getStore() ?? {}));
+}
+
+/** Trusted, invocation-scoped env consumed by exec without mutating process.env. */
+export function getActiveSkillEnvOverrides(): Readonly<Record<string, string>> {
+  return skillEnvStorage.getStore() ?? {};
 }
 
 // Always block skill env overrides that can alter runtime loading or host execution behavior.
@@ -80,13 +86,13 @@ function sanitizeSkillEnvOverrides(params: {
 }
 
 function applySkillConfigEnvOverrides(params: {
-  updates: EnvUpdate[];
+  overrides: Record<string, string>;
   skillConfig: SkillConfig;
   primaryEnv?: string | null;
   requiredEnv?: string[] | null;
   skillKey: string;
 }) {
-  const { updates, skillConfig, primaryEnv, requiredEnv, skillKey } = params;
+  const { overrides, skillConfig, primaryEnv, requiredEnv, skillKey } = params;
   const allowedSensitiveKeys = new Set<string>();
   const normalizedPrimaryEnv = primaryEnv?.trim();
   if (normalizedPrimaryEnv) {
@@ -133,33 +139,31 @@ function applySkillConfigEnvOverrides(params: {
     if (process.env[envKey]) {
       continue;
     }
-    updates.push({ key: envKey, prev: process.env[envKey] });
-    process.env[envKey] = envValue;
-    activeSkillEnvKeys.add(envKey);
+    overrides[envKey] = envValue;
   }
 }
 
-function createEnvReverter(updates: EnvUpdate[]) {
+function activateSkillEnv(overrides: Record<string, string>) {
+  const previous = skillEnvStorage.getStore();
+  skillEnvStorage.enterWith(Object.freeze({ ...(previous ?? {}), ...overrides }));
   return () => {
-    for (const update of updates) {
-      if (update.prev === undefined) {
-        delete process.env[update.key];
-      } else {
-        process.env[update.key] = update.prev;
-      }
-      activeSkillEnvKeys.delete(update.key);
-    }
+    skillEnvStorage.enterWith(previous ?? Object.freeze({}));
   };
 }
 
 export function applySkillEnvOverrides(params: {
   skills: SkillEntry[];
   config?: FasedAgentConfig;
+  excludeMarketplace?: boolean;
 }) {
-  const { skills, config } = params;
-  const updates: EnvUpdate[] = [];
+  const skills = params.skills;
+  const config = getRuntimeConfigSnapshot() ?? params.config;
+  const overrides: Record<string, string> = {};
 
   for (const entry of skills) {
+    if (params.excludeMarketplace !== false && isMarketplaceSkillDir(entry.skill.baseDir)) {
+      continue;
+    }
     const skillKey = resolveSkillKey(entry.skill, entry);
     const skillConfig = resolveSkillConfig(config, skillKey);
     if (!skillConfig) {
@@ -167,7 +171,7 @@ export function applySkillEnvOverrides(params: {
     }
 
     applySkillConfigEnvOverrides({
-      updates,
+      overrides,
       skillConfig,
       primaryEnv: entry.metadata?.primaryEnv,
       requiredEnv: entry.metadata?.requires?.env,
@@ -175,27 +179,35 @@ export function applySkillEnvOverrides(params: {
     });
   }
 
-  return createEnvReverter(updates);
+  return activateSkillEnv(overrides);
 }
 
 export function applySkillEnvOverridesFromSnapshot(params: {
   snapshot?: SkillSnapshot;
   config?: FasedAgentConfig;
+  excludeMarketplace?: boolean;
 }) {
-  const { snapshot, config } = params;
+  const snapshot = params.snapshot;
+  const config = getRuntimeConfigSnapshot() ?? params.config;
   if (!snapshot) {
     return () => {};
   }
-  const updates: EnvUpdate[] = [];
+  const overrides: Record<string, string> = {};
+  const marketplaceSkills = new Set(
+    params.excludeMarketplace === false ? [] : (snapshot.marketplaceSkillIds ?? []),
+  );
 
   for (const skill of snapshot.skills) {
+    if (marketplaceSkills.has(skill.name)) {
+      continue;
+    }
     const skillConfig = resolveSkillConfig(config, skill.name);
     if (!skillConfig) {
       continue;
     }
 
     applySkillConfigEnvOverrides({
-      updates,
+      overrides,
       skillConfig,
       primaryEnv: skill.primaryEnv,
       requiredEnv: skill.requiredEnv,
@@ -203,5 +215,5 @@ export function applySkillEnvOverridesFromSnapshot(params: {
     });
   }
 
-  return createEnvReverter(updates);
+  return activateSkillEnv(overrides);
 }

@@ -62,6 +62,33 @@ Do not run the Fased installer, CLI, Gateway, wallet, or signer in native
 PowerShell, Command Prompt, Git Bash, or native Windows Node.js. The wallet
 signer requires Unix sockets. See the complete [Windows (WSL2)
 guide](/platforms/windows).
+
+Run these commands only in **Administrator PowerShell** to install and verify
+WSL2. Restart Windows if `wsl --install` requests it:
+
+```powershell
+wsl --install -d Ubuntu
+wsl --update
+wsl --version
+wsl --list --verbose
+```
+
+The `Ubuntu` row must say `VERSION 2`. Then open the **Ubuntu** application.
+The prompt changes to a Linux prompt such as `name@computer:~$`. Run the Fased
+install only there:
+
+```bash
+uname -s
+systemctl is-system-running || true
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
+```
+
+`uname -s` must print `Linux`. If systemd is unavailable, follow Microsoft's
+[systemd in WSL](https://learn.microsoft.com/windows/wsl/systemd) instructions,
+run `wsl --shutdown` in PowerShell once, reopen Ubuntu, and retry. Do not paste
+the Bash block into PowerShell. For a wallet-bearing production installation,
+run the [verified stable Local install](/install/installer#verified-stable-local-install)
+in this same Ubuntu shell instead of the shorter convenience command.
 </Warning>
 
 ## Pick local or VPS hosting
@@ -104,9 +131,17 @@ recovery options and VPS provider console access working.
       Windows Node.js are not Fased runtime environments.
     - **Linux:** run the command in your distro terminal.
 
+    Convenience command:
+
     ```bash
     curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
     ```
+
+    This command resolves and verifies the latest stable unified release after
+    the first script starts. For pre-execution verification—recommended before
+    storing wallet credentials—use the
+    [verified stable Local install](/install/installer#verified-stable-local-install)
+    with one exact release tag.
 
     Local setup keeps the Gateway on this machine and does not apply VPS SSH or
     firewall hardening. Tailscale is optional for Local.

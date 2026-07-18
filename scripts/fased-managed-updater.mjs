@@ -2361,6 +2361,20 @@ async function probeLocalSignerHealth(
             policy.version > 0 &&
             /^sha256:[a-f0-9]{64}$/.test(policy.hash || ""),
         );
+      const networks = result?.network?.wallets;
+      const networkValid =
+        typeof result?.network?.ready === "boolean" &&
+        Array.isArray(networks) &&
+        networks.every(
+          (network) =>
+            typeof network?.walletId === "string" &&
+            network.walletId.length > 0 &&
+            typeof network.configured === "boolean" &&
+            Number.isSafeInteger(network.version) &&
+            network.version >= 0 &&
+            typeof network.ready === "boolean" &&
+            (!network.configured || /^sha256:[a-f0-9]{64}$/.test(network.hash || "")),
+        );
       if (
         response?.ok !== true ||
         result?.ready !== true ||
@@ -2373,6 +2387,7 @@ async function probeLocalSignerHealth(
         (expectedReadOnly !== undefined && result?.readOnly !== expectedReadOnly) ||
         missing.length > 0 ||
         !policiesValid ||
+        !networkValid ||
         !signerIdentitiesEqual(release, expectedIdentity)
       ) {
         throw new Error(
@@ -2388,6 +2403,20 @@ async function probeLocalSignerHealth(
   throw new Error(
     `Local signer did not become exactly healthy: ${lastError?.message || "timeout"}`,
   );
+}
+
+function localSignerStateInvariant(health) {
+  return JSON.stringify({
+    policies: [...(health?.policies || [])].toSorted((left, right) =>
+      left.walletId.localeCompare(right.walletId),
+    ),
+    network: {
+      ready: health?.network?.ready,
+      wallets: [...(health?.network?.wallets || [])].toSorted((left, right) =>
+        left.walletId.localeCompare(right.walletId),
+      ),
+    },
+  });
 }
 
 async function startSignerProcess(paths, binaryPath = paths.binaryPath, readOnly = false) {
@@ -2535,8 +2564,27 @@ async function removeLocalSignerJournal(paths) {
   await fsyncManagedPath(paths.updateRoot);
 }
 
+async function hasLegacyLocalSignerMaterial(paths) {
+  const stateDbExists = await fsp
+    .lstat(paths.stateDbPath)
+    .then((stat) => stat.isFile() && !stat.isSymbolicLink())
+    .catch(() => false);
+  if (stateDbExists) {
+    return false;
+  }
+  const entries = await fsp.readdir(paths.materialDir, { withFileTypes: true }).catch(() => []);
+  return entries.some(
+    (entry) =>
+      entry.isFile() &&
+      !entry.isSymbolicLink() &&
+      (entry.name === "wallet-keys.json" ||
+        /^keystore-(?:solana|evm)(?:-[A-Za-z0-9_-]+)?\.v1\.enc$/u.test(entry.name)),
+  );
+}
+
 async function prepareLocalSignerTransaction({
   targetVersion,
+  expectedCommit,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   deferCommit = false,
   confirmDowngrade,
@@ -2549,6 +2597,16 @@ async function prepareLocalSignerTransaction({
     );
   }
   await fsp.mkdir(paths.transactionsDir, { recursive: true, mode: 0o700 });
+  if (await hasLegacyLocalSignerMaterial(paths)) {
+    throw new Error(
+      [
+        "A pre-v2 Local wallet must complete the one-time native signer migration before Fased can update.",
+        "No process was stopped and no installed file or wallet state was changed.",
+        "Run `fased wallet setup --mode local-signer-import` for the signer-only import command, then `fased wallet finalize-legacy-migration --wallet-id <wallet-id>` after verifying the exact public address.",
+        "The passphrase must remain in an owner-only file read by fased-signerd; never put it in the Gateway, UI, argv, or an environment variable.",
+      ].join(" "),
+    );
+  }
   const transactionId = randomUUID();
   const transactionDir = path.join(paths.transactionsDir, transactionId);
   await fsp.mkdir(transactionDir, { recursive: true, mode: 0o700 });
@@ -2557,6 +2615,11 @@ async function prepareLocalSignerTransaction({
     timeoutMs,
     transactionDir,
   });
+  if (expectedCommit && release.identity.commit !== expectedCommit) {
+    throw new Error(
+      "Local signer release commit does not match the exact application release commit",
+    );
+  }
   let previousIdentity = null;
   try {
     previousIdentity = await readSignerBinaryIdentity(paths.binaryPath);
@@ -2573,27 +2636,6 @@ async function prepareLocalSignerTransaction({
     }
   }
   const runningPid = await resolveRunningSignerPid(paths);
-  const stateDbExists = await fsp
-    .lstat(paths.stateDbPath)
-    .then((stat) => stat.isFile() && !stat.isSymbolicLink())
-    .catch(() => false);
-  const legacyMaterialDetected =
-    !stateDbExists &&
-    (
-      await Promise.all(
-        [
-          path.join(paths.materialDir, "wallet-keys.json"),
-          path.join(paths.materialDir, "keystore-solana.v1.enc"),
-          path.join(paths.materialDir, "keystore-evm.v1.enc"),
-        ].map(
-          async (candidate) =>
-            await fsp
-              .lstat(candidate)
-              .then((stat) => stat.isFile() && !stat.isSymbolicLink())
-              .catch(() => false),
-        ),
-      )
-    ).some(Boolean);
   let previousHealth = null;
   if (runningPid !== null) {
     if (!previousIdentity) {
@@ -2609,8 +2651,9 @@ async function prepareLocalSignerTransaction({
     targetIdentity: release.identity,
     previousIdentity,
     previousHealthPolicies: previousHealth?.policies || null,
+    previousHealthInvariant: previousHealth ? localSignerStateInvariant(previousHealth) : null,
     previousWasRunning: runningPid !== null,
-    legacyMigrationRequired: legacyMaterialDetected,
+    legacyMigrationRequired: false,
     deferCommit: deferCommit,
     phase: "staging",
     createdAt: new Date().toISOString(),
@@ -2700,10 +2743,12 @@ async function prepareLocalSignerTransaction({
       true,
     );
     if (
-      journal.previousHealthPolicies &&
-      JSON.stringify(candidateHealth.policies) !== JSON.stringify(journal.previousHealthPolicies)
+      journal.previousHealthInvariant &&
+      localSignerStateInvariant(candidateHealth) !== journal.previousHealthInvariant
     ) {
-      throw new Error("Candidate signer preflight did not preserve exact wallet policy hashes");
+      throw new Error(
+        "Candidate signer preflight did not preserve exact wallet, policy, and network hashes",
+      );
     }
   } finally {
     await stopExactSigner(preflightPaths, preflightPid).catch(() => undefined);
@@ -2738,10 +2783,12 @@ async function activateLocalSignerTransaction(paths = resolveLocalSignerPaths())
         true,
       );
       if (
-        journal.previousHealthPolicies &&
-        JSON.stringify(health.policies) !== JSON.stringify(journal.previousHealthPolicies)
+        journal.previousHealthInvariant &&
+        localSignerStateInvariant(health) !== journal.previousHealthInvariant
       ) {
-        throw new Error("Activated signer did not preserve exact wallet IDs and policy hashes");
+        throw new Error(
+          "Activated signer did not preserve exact wallet, policy, and network hashes",
+        );
       }
     } catch (error) {
       await stopExactSigner(paths, pid).catch(() => undefined);
@@ -2778,10 +2825,10 @@ async function commitLocalSignerTransaction(paths = resolveLocalSignerPaths()) {
     await startSignerProcess(paths);
     const health = await probeLocalSignerHealth(paths.socketPath, exact, 15_000, false);
     if (
-      journal.previousHealthPolicies &&
-      JSON.stringify(health.policies) !== JSON.stringify(journal.previousHealthPolicies)
+      journal.previousHealthInvariant &&
+      localSignerStateInvariant(health) !== journal.previousHealthInvariant
     ) {
-      throw new Error("Committed signer did not preserve exact wallet IDs and policy hashes");
+      throw new Error("Committed signer did not preserve exact wallet, policy, and network hashes");
     }
   }
   const committedMarker = path.join(journal.transactionDir, "committed.json");
@@ -2896,6 +2943,11 @@ async function runLocalSignerTransaction(options, pathOverrides = {}) {
         paths.binaryPath,
         options.targetVersion || undefined,
       );
+      if (options.expectedCommit && identity.commit !== options.expectedCommit) {
+        throw new Error(
+          "Running Local signer commit does not match the exact application release commit",
+        );
+      }
       await probeLocalSignerHealth(
         paths.socketPath,
         identity,
@@ -2962,6 +3014,7 @@ function parseLocalSignerTransactionArgs(argv) {
   const options = {
     action,
     targetVersion: null,
+    expectedCommit: null,
     timeoutMs: DEFAULT_TIMEOUT_MS,
     deferCommit: false,
     confirmDowngrade: null,
@@ -2970,6 +3023,10 @@ function parseLocalSignerTransactionArgs(argv) {
     const token = argv[index];
     if (token === "--version") {
       options.targetVersion = String(argv[++index] || "").replace(/^v/, "");
+    } else if (token === "--expected-commit") {
+      options.expectedCommit = String(argv[++index] || "")
+        .trim()
+        .toLowerCase();
     } else if (token === "--timeout") {
       options.timeoutMs = Number.parseInt(argv[++index] || "", 10) * 1000;
     } else if (token === "--defer-commit") {
@@ -2985,6 +3042,9 @@ function parseLocalSignerTransactionArgs(argv) {
     !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/.test(options.targetVersion || "")
   ) {
     throw new Error(`local-signer ${action} requires --version X.Y.Z`);
+  }
+  if (options.expectedCommit !== null && !/^[a-f0-9]{40}$/.test(options.expectedCommit)) {
+    throw new Error("--expected-commit must be one exact 40-character Git commit");
   }
   if (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs <= 0) {
     throw new Error("--timeout must be a positive integer (seconds)");
@@ -3065,6 +3125,9 @@ async function localSignerIsInstalledOrConfigured(signerPaths) {
     ) {
       return true;
     }
+  }
+  if (await hasLegacyLocalSignerMaterial(signerPaths)) {
+    return true;
   }
   const registryPath = path.join(signerPaths.materialDir, "provider-registry.v1.json");
   try {

@@ -41,6 +41,12 @@ jobs:
           node-version: 24.x
           check-latest: true
 
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: tools/fased-signerd/go.mod
+          cache-dependency-path: tools/fased-signerd/go.sum
+
       - name: Setup pnpm + cache store
         uses: ./.github/actions/setup-pnpm-store-cache
         with:

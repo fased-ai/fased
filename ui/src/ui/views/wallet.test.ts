@@ -200,6 +200,36 @@ function renderWalletForTest(overrides: Partial<WalletViewProps>) {
   });
 }
 
+describe("wallet creation", () => {
+  it("shows only an implemented signer-owned creation path", () => {
+    const rendered = renderWalletForTest({
+      providers: [
+        {
+          id: "local-socket-signer",
+          enabled: true,
+          operationsImplemented: true,
+          credentialsConfigured: true,
+          health: { ok: true },
+          capabilities: {
+            operations: { createWallet: true },
+            requiresCredentials: false,
+          },
+        } as never,
+      ],
+      createProvider: "local-socket-signer",
+      createRole: "vault",
+    });
+    const text = flattenTemplateText(rendered);
+    expect(text).toContain("Create a signer-owned wallet");
+    expect(text).toContain("Native Go signer");
+    expect(text).toContain(
+      "The Go signer generates the key; Node receives only the public address.",
+    );
+    expect(text).not.toContain("Embedded keystore");
+    expect(text).not.toContain("Privy");
+  });
+});
+
 describe("resolveOperatorWalletRoles", () => {
   it("separates admin, Agent, and mining roles when distinct wallets are configured", () => {
     const roles = resolveOperatorWalletRoles({
@@ -977,6 +1007,9 @@ describe("renderWallet", () => {
     expect(text).toContain("Tx");
     expect(text).toContain("Small Agent spend");
     expect(text).toContain("Native signer policy: locked");
+    expect(text).toContain(
+      "This wallet cannot send, swap, mine, bond, or execute wallet-capable skills until a host administrator installs an owner-reviewed policy and the signer acknowledges its exact hash.",
+    );
     expect(text).toContain("Version 3");
     expect(text).toContain(`sha256:${"e".repeat(64)}`);
     expect(text).toContain(

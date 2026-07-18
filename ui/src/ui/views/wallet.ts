@@ -17,6 +17,7 @@ import type {
   WalletSendCreateInput,
   WalletSettings,
   WalletSettingsPatch,
+  WalletProviderInfo,
   WalletSolanaTokenSearchResult,
   WalletStatus,
 } from "../wallet-api.ts";
@@ -56,6 +57,11 @@ export type WalletViewProps = {
   balancesError: string | null;
   balances: WalletBalancesResponse | null;
   defaultWalletId: string | null;
+  providers?: WalletProviderInfo[];
+  createName?: string;
+  createId?: string;
+  createProvider?: WalletProviderInfo["id"];
+  createRole?: "agent" | "vault";
   settingsBusy: boolean;
   settingsError: string | null;
   settingsMessage: string | null;
@@ -126,6 +132,11 @@ export type WalletViewProps = {
   onPolicyPanelChange?: (panel: WalletPolicyPanel) => void;
   onApprovalsFilterChange: (filter: WalletApprovalFilter) => void;
   onAttachWalletStandardVault?: () => void;
+  onCreateNameChange?: (next: string) => void;
+  onCreateIdChange?: (next: string) => void;
+  onCreateProviderChange?: (next: WalletProviderInfo["id"]) => void;
+  onCreateRoleChange?: (next: "agent" | "vault") => void;
+  onCreateWallet?: () => void;
   onApproveRequest: (requestId: string) => void;
   onRejectRequest: (requestId: string) => void;
   onSetDefaultWallet: (walletId: string | null) => void;
@@ -2697,7 +2708,9 @@ function renderWalletAccessPanel(props: WalletViewProps) {
           }
         </div>
         <div class="wallet-security-note" style="margin-top: 10px;">
-          Required before policy changes and approving reviewed sends.
+          Protects Gateway policy and administration changes. Native signer
+          wallets use a separate signer-owned WebAuthn credential for each exact
+          reviewed send.
         </div>
         ${
           !adminControlShortcut.enableVisible && !adminControlShortcut.enrollVisible
@@ -2818,6 +2831,19 @@ export function renderWallet(props: WalletViewProps) {
         ? "access"
         : null;
   const activeMainPanel = hashPanel ?? props.mainPanel ?? "wallets";
+  const createProviders = (props.providers ?? []).filter(
+    (provider) =>
+      (provider.id === "local-socket-signer" || provider.id === "turnkey") &&
+      provider.operationsImplemented &&
+      provider.capabilities.operations.createWallet,
+  );
+  const createProviderId = props.createProvider ?? createProviders[0]?.id ?? "local-socket-signer";
+  const createProvider = createProviders.find((provider) => provider.id === createProviderId);
+  const createProviderReady = Boolean(
+    createProvider?.enabled &&
+    createProvider.health.ok &&
+    (!createProvider.capabilities.requiresCredentials || createProvider.credentialsConfigured),
+  );
   const setMainPanel = (panel: "wallets" | "access" | "skill-grants") => {
     props.onMainPanelChange?.(panel);
     if (typeof window === "undefined") {
@@ -3794,7 +3820,34 @@ export function renderWallet(props: WalletViewProps) {
         font-size: 12px;
         line-height: 1.45;
       }
+      .wallet-create-panel {
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: var(--surface-muted);
+        padding: 10px 12px;
+      }
+      .wallet-create-panel > summary {
+        cursor: pointer;
+        color: var(--text-strong);
+        font-weight: 700;
+      }
+      .wallet-create-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+        margin-top: 12px;
+      }
+      .wallet-create-actions {
+        align-items: center;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        grid-column: 1 / -1;
+      }
       @media (max-width: 720px) {
+        .wallet-create-grid {
+          grid-template-columns: 1fr;
+        }
         .wallet-spend-limit-row {
           grid-template-columns: 1fr;
         }
@@ -4024,6 +4077,94 @@ export function renderWallet(props: WalletViewProps) {
             : activeMainPanel === "access"
               ? renderWalletAccessPanel(props)
               : html`<div id="wallet-wallets" class="wallet-wallets-section">
+          <details class="wallet-create-panel">
+            <summary>Create a signer-owned wallet</summary>
+            <div class="wallet-create-grid">
+              <label class="field">
+                <span>Name</span>
+                <input
+                  .value=${props.createName ?? ""}
+                  placeholder="Primary Agent wallet"
+                  autocomplete="off"
+                  @input=${(event: Event) =>
+                    props.onCreateNameChange?.((event.target as HTMLInputElement).value)}
+                />
+              </label>
+              <label class="field">
+                <span>Permanent wallet ID</span>
+                <input
+                  .value=${props.createId ?? ""}
+                  placeholder=${
+                    createProviderId === "local-socket-signer"
+                      ? "agent-primary (required)"
+                      : "optional local label"
+                  }
+                  autocomplete="off"
+                  @input=${(event: Event) =>
+                    props.onCreateIdChange?.((event.target as HTMLInputElement).value)}
+                />
+              </label>
+              <label class="field">
+                <span>Custody provider</span>
+                <select
+                  .value=${createProviderId}
+                  @change=${(event: Event) =>
+                    props.onCreateProviderChange?.(
+                      (event.target as HTMLSelectElement).value as WalletProviderInfo["id"],
+                    )}
+                >
+                  ${createProviders.map(
+                    (provider) => html`
+                      <option value=${provider.id}>
+                        ${
+                          provider.label ||
+                          (provider.id === "local-socket-signer" ? "Native Go signer" : "Turnkey")
+                        }
+                      </option>
+                    `,
+                  )}
+                </select>
+              </label>
+              <label class="field">
+                <span>Wallet role</span>
+                <select
+                  .value=${props.createRole ?? "agent"}
+                  @change=${(event: Event) =>
+                    props.onCreateRoleChange?.(
+                      (event.target as HTMLSelectElement).value as "agent" | "vault",
+                    )}
+                >
+                  <option value="agent">Agent — capped automation</option>
+                  <option value="vault">Vault — reviewed operations only</option>
+                </select>
+              </label>
+              <div class="wallet-create-actions">
+                <button
+                  class="btn primary"
+                  ?disabled=${props.settingsBusy || !createProviderReady}
+                  @click=${props.onCreateWallet}
+                >
+                  ${props.settingsBusy ? "Creating..." : "Create wallet"}
+                </button>
+                <span class="muted">
+                  ${
+                    !createProvider
+                      ? "No production wallet-creation provider is available."
+                      : !createProvider.enabled
+                        ? "Enable this provider in Wallet Access first."
+                        : !createProvider.health.ok
+                          ? createProvider.health.details || "Provider health check failed."
+                          : createProvider.capabilities.requiresCredentials &&
+                              !createProvider.credentialsConfigured
+                            ? "Configure restricted provider credentials before creating a wallet."
+                            : createProviderId === "local-socket-signer"
+                              ? "The Go signer generates the key; Node receives only the public address."
+                              : "Turnkey creates the account under the configured restrictive policy."
+                  }
+                </span>
+              </div>
+            </div>
+          </details>
           ${
             props.balancesError
               ? html`<div class="callout danger">${props.balancesError}</div>`
@@ -4061,6 +4202,9 @@ export function renderWallet(props: WalletViewProps) {
                   : undefined;
               const cardSignerPolicy =
                 wallet.id === props.walletDetailsWalletId ? settings?.signerPolicy : undefined;
+              const cardWalletReady =
+                wallet.providerId !== "local-socket-signer" ||
+                cardSignerPolicy?.state === "acknowledged";
               const cardWalletChains = allowedWalletSendChains(wallet);
               const cardWalletCanSpendSolana = cardWalletChains.includes("solana");
               const policyTabs: Array<{ id: WalletPolicyPanel; label: string; title: string }> =
@@ -4224,7 +4368,12 @@ export function renderWallet(props: WalletViewProps) {
                       })}
                       <button
                         class="btn small primary wallet-card__send-btn"
-                        ?disabled=${!canSend}
+                        ?disabled=${!canSend || !cardWalletReady}
+                        title=${
+                          cardWalletReady
+                            ? "Send from this wallet"
+                            : "Receive-only: open Policy and complete signer activation first"
+                        }
                         @click=${() => props.onSendModalOpen(wallet.id)}
                       >
                         Send
@@ -4260,7 +4409,7 @@ export function renderWallet(props: WalletViewProps) {
                                       <button
                                         class="btn small"
                                         style="display: inline-flex; gap: 8px; align-items: center;"
-                                        ?disabled=${!canSend}
+                                        ?disabled=${!canSend || !cardWalletReady}
                                         @click=${() => props.onSendModalOpen(wallet.id, asset.id)}
                                       >
                                         ${renderWalletAssetLogo(asset, 20)}
@@ -4324,6 +4473,16 @@ export function renderWallet(props: WalletViewProps) {
                                       data-testid="wallet-signer-policy-status"
                                     >
                                       <strong>Native signer policy: ${cardSignerPolicy.state}</strong>
+                                      ${
+                                        cardSignerPolicy.state === "locked"
+                                          ? html`
+                                              <div>
+                                                This wallet cannot send, swap, mine, bond, or execute wallet-capable skills until a host
+                                                administrator installs an owner-reviewed policy and the signer acknowledges its exact hash.
+                                              </div>
+                                            `
+                                          : nothing
+                                      }
                                       ${
                                         cardSignerPolicy.version && cardSignerPolicy.hash
                                           ? html`

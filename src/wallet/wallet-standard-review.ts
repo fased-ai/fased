@@ -17,6 +17,9 @@ import type { WalletSendApprovalPayload } from "./wallet-send-approvals.js";
 const REVIEW_FILE_NAME = "wallet-standard-reviews.v1.json";
 const REVIEW_TTL_MS = 2 * 60 * 1000;
 const REVIEW_FILE_MODE = 0o600;
+const MAX_REVIEW_RECORDS = 10_000;
+const MAX_RETAINED_TERMINAL_REVIEWS = 5_000;
+const TERMINAL_REVIEW_RETENTION_MS = 30 * 24 * 60 * 60_000;
 const REVIEW_LOCK_OPTIONS = {
   retries: {
     retries: 80,
@@ -135,6 +138,36 @@ function saveFile(file: WalletStandardReviewFile, env: NodeJS.ProcessEnv): void 
   }
 }
 
+function compactReviewState(
+  file: WalletStandardReviewFile,
+  nowMs = Date.now(),
+): WalletStandardReviewFile {
+  const terminal = file.reviews
+    .filter((review) => review.status === "broadcast" || review.status === "failed")
+    .toSorted((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt));
+  const removable = new Set(
+    terminal
+      .filter(
+        (review, index) =>
+          nowMs - Date.parse(review.createdAt) > TERMINAL_REVIEW_RETENTION_MS ||
+          terminal.length - index > MAX_RETAINED_TERMINAL_REVIEWS,
+      )
+      .map((review) => review.requestId),
+  );
+  return { version: 1, reviews: file.reviews.filter((review) => !removable.has(review.requestId)) };
+}
+
+function requireReviewCapacity(file: WalletStandardReviewFile): void {
+  if (file.reviews.length >= MAX_REVIEW_RECORDS) {
+    throw new WalletProviderError({
+      code: "wallet_provider_unavailable",
+      message:
+        "Wallet Standard review state reached its durable safety limit; reconcile unresolved reviews",
+      retryable: false,
+    });
+  }
+}
+
 function secureEqual(left: string, right: string): boolean {
   const leftBytes = Buffer.from(left, "utf8");
   const rightBytes = Buffer.from(right, "utf8");
@@ -226,7 +259,7 @@ export async function prepareWalletStandardReview(params: {
       signer: params.signerAddress.trim(),
     });
     const expectedRpcUrlDigest = rpcUrlDigest(params.rpcUrl);
-    const file = readFile(env);
+    const file = compactReviewState(readFile(env));
     const existing = file.reviews.find((review) => review.requestId === requestId);
     if (existing) {
       const sameRequest =
@@ -251,6 +284,7 @@ export async function prepareWalletStandardReview(params: {
         retryable: false,
       });
     }
+    requireReviewCapacity(file);
     const chain = await resolveWalletStandardChain(params.rpcUrl);
     const prepared = await buildReviewedSolanaTransaction({
       request: params.payload,

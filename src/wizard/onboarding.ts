@@ -843,6 +843,15 @@ export async function runOnboardingWizard(
     "Start from the provider root console with the exact tagged, attested Hosting command and --release vX.Y.Z.",
     "Never run the app-owned checkout with sudo or as root.",
   ].join("\n");
+  if (opts.mode !== "remote" && !requestedHostProfile) {
+    await prompter.note(
+      [
+        "Local runs under your current OS account and does no VPS SSH/firewall hardening.",
+        "Hosting uses the verified root bootstrap for an independent signer service, private Tailscale access and hosted SSH/firewall hardening.",
+      ].join("\n"),
+      "Setup map",
+    );
+  }
   const hostProfile: HostSetupProfile =
     opts.mode === "remote"
       ? "local"
@@ -855,10 +864,12 @@ export async function runOnboardingWizard(
                 {
                   value: "local",
                   label: "Local",
+                  hint: "Current machine and account; no VPS hardening.",
                 },
                 {
                   value: "hosting",
                   label: "Hosting",
+                  hint: "Verified root bootstrap; Tailscale required.",
                 },
               ],
               initialValue: interactiveHostProfileInitialValue,
@@ -1197,7 +1208,7 @@ export async function runOnboardingWizard(
 
   let onboardingWalletSecurityFocus: {
     walletId: string;
-    role: "agent" | "vault";
+    role: "agent" | "mining" | "vault";
   } | null = null;
 
   const offerHostedWalletSetup =
@@ -1655,12 +1666,14 @@ export async function runOnboardingWizard(
             `< ${shellQuote("/absolute/path/to/solana-keypair.json")}`,
           ].join(" ");
           const command = hosting
-            ? `sudo /bin/sh -c ${shellQuote(`exec sudo -u fased-signer -- ${signerImportCommand}`)}`
+            ? `/usr/sbin/runuser -u fased-signer -- /usr/bin/env HOME=/var/lib/fased-signerd ${signerImportCommand}`
             : signerImportCommand;
           await prompter.note(
             [
               "The normal Gateway and Node wizard paths do not accept plaintext wallet keys. Local same-user isolation is not a hard compromise boundary; Hosting isolates the signer account.",
-              "Run this from an authenticated terminal on the signer host:",
+              hosting
+                ? "Open the VPS provider root console and run this root-administrator command. Do not run it from the app shell and do not grant app sudo:"
+                : "Run this from an authenticated terminal on the signer host:",
               command,
               "Then rerun wallet setup and choose Manage wallet to register/verify the returned public address.",
             ].join("\n"),
@@ -1805,13 +1818,10 @@ export async function runOnboardingWizard(
             });
           }
           if (walletId) {
-            onboardingWalletSecurityFocus =
-              walletPurpose === "mining"
-                ? null
-                : {
-                    walletId,
-                    role: isAgentWallet ? "agent" : "vault",
-                  };
+            onboardingWalletSecurityFocus = {
+              walletId,
+              role: walletPurpose,
+            };
           }
           if (chain === "solana" && walletId) {
             const currentMiningWalletId = satMiningAttachment.walletId ?? "";
@@ -1843,7 +1853,12 @@ export async function runOnboardingWizard(
                   [
                     noteHeading("Mining wallet"),
                     noteBullet(`${walletName} (${walletId})`),
-                    noteBullet("Open Mining after onboarding to fund and start workers."),
+                    noteBullet(
+                      "Receive-only until the signer network and an owner-reviewed Mining policy are acknowledged.",
+                    ),
+                    noteBullet(
+                      "Open Wallet > Policy after onboarding; fund and start workers only after it reports acknowledged.",
+                    ),
                   ].join("\n"),
                   "Mining",
                 );

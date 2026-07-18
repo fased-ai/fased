@@ -4,61 +4,13 @@ import { createHash } from "node:crypto";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { SIGNER_PROTOCOL_V2 } from "./signer-protocol-v2.generated.mjs";
 
 const VERSION_PATTERN = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/u;
 const COMMIT_PATTERN = /^[a-f0-9]{40}$/u;
 const DIGEST_PATTERN = /^[a-f0-9]{64}$/u;
 
-export const HOSTED_SIGNER_CAPABILITIES_V2 = Object.freeze({
-  protocol: Object.freeze({ current: 2, min: 2, max: 2 }),
-  nativeFeeReservationLamports: 5_000_000,
-  intentTypes: Object.freeze([
-    "solana.nativeTransfer",
-    "solana.splTransferChecked",
-    "solana.satAction",
-    "solana.vaultBondAction",
-    "federation.bondChallenge",
-    "solana.jupiter.swap",
-    "solana.jupiter.trigger.create",
-    "solana.jupiter.trigger.cancel",
-  ]),
-  operationStates: Object.freeze(["reserved", "broadcast", "confirmed", "failed", "unknown"]),
-  features: Object.freeze([
-    "failClosedPolicies",
-    "policyHashes",
-    "applicationPolicyTightening",
-    "vaultReviewedOnly",
-    "durableCaps",
-    "atomicMultiAssetCaps",
-    "signerControlledNativeFeeCaps",
-    "atomicIdempotency",
-    "ambiguousBroadcastReconciliation",
-    "signerOwnedKeys",
-    "signerOwnedSuccessorRotation",
-    "permanentRetiredWalletPolicies",
-    "signerOwnedRPC",
-    "typedSolanaTransactions",
-    "idempotentAssociatedTokenCreation",
-    "typedSATActions",
-    "typedVaultBondActions",
-    "domainSeparatedFederationBondChallenges",
-    "federationBondChallengeWrapperV2",
-    "signerOwnedWebAuthn",
-    "signerOwnedWebAuthnCredentialRevocation",
-    "singleUseReviewedAuthorization",
-    "typedJupiterSemantics",
-    "signerOwnedReviewPrepareExecute",
-    "exactPreparedTransactions",
-    "reviewedVaultBondActions",
-    "reviewedFederationBondChallenges",
-    "signerOwnedStateRecheck",
-    "durableReviewAuthorization",
-    "signerOwnedJupiterTriggerV2",
-    "signerOwnedJupiterTriggerHistory",
-    "jupiterTriggerSecretsNeverCrossSocket",
-    "jupiterTriggerDurablePhases",
-  ]),
-});
+export const HOSTED_SIGNER_CAPABILITIES_V2 = SIGNER_PROTOCOL_V2;
 
 function canonicalJSON(value) {
   if (Array.isArray(value)) {

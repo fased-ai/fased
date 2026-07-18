@@ -355,15 +355,18 @@ describe("walletSetupCommand native signer boundary", () => {
     clearConfigCache();
 
     try {
-      await expect(
-        walletSetupCommand({ log: vi.fn() } as never, {
-          mode: "local-signer-import",
-          chain: "solana",
-          walletId: "agent",
-          nonInteractive: true,
-          noDoctor: true,
-        }),
-      ).rejects.toThrow(/fased-signerd admin wallet import --control-socket/i);
+      const log = vi.fn();
+      await walletSetupCommand({ log } as never, {
+        mode: "local-signer-import",
+        chain: "solana",
+        walletId: "mining",
+        nonInteractive: true,
+        noDoctor: true,
+      });
+      expect(log.mock.calls.flat().join("\n")).toMatch(/admin wallet import --control-socket/i);
+      expect(log.mock.calls.flat().join("\n")).toMatch(/import-legacy/iu);
+      expect(log.mock.calls.flat().join("\n")).toMatch(/--wallet-id mining --locked-role mining/iu);
+      expect(log.mock.calls.flat().join("\n")).toMatch(/finalize-legacy-migration/iu);
       await expect(fs.readFile(configPath, "utf8")).resolves.toBe("{}\n");
       expect(signerMocks.create).not.toHaveBeenCalled();
     } finally {

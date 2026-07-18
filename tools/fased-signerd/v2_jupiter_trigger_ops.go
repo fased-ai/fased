@@ -106,9 +106,8 @@ func resolveJupiterTriggerTransferProgramV2(rpcURLs []string, mint string) (stri
 		if !program.Equals(solana.TokenProgramID) && !program.Equals(solana.Token2022ProgramID) {
 			return "", errors.New("Jupiter Trigger refund mint is not owned by an allowed token program")
 		}
-		data := result.GetBinary()
-		if len(data) < 82 || data[45] == 0 {
-			return "", errors.New("Jupiter Trigger refund mint is not initialized")
+		if _, validationErr := validatePlainSPLMintAccountV2(result.Value, program); validationErr != nil {
+			return "", fmt.Errorf("Jupiter Trigger refund mint is invalid: %w", validationErr)
 		}
 		return program.String(), nil
 	}
@@ -473,7 +472,11 @@ func (s *signerServiceV2) executeAutonomousJupiterTriggerV2(
 		}
 	}
 	if _, err := s.store.ensureJupiterTriggerWorkflowV2(req, intent, stateDigest); err != nil {
-		return signerOperationV2{}, err
+		failed, persistErr := s.store.markFailedClaim(req.RequestID, 0, err)
+		if persistErr != nil {
+			return signerOperationV2{}, fmt.Errorf("%v; release Trigger reservation: %w", err, persistErr)
+		}
+		return failed, err
 	}
 	operation, attempt, claimed, err := s.store.claimReservedOperation(req.RequestID)
 	if err != nil || !claimed {
@@ -517,12 +520,12 @@ func (s *signerServiceV2) continueJupiterTriggerWorkflowV2(
 	operation signerOperationV2,
 	attempt uint64,
 ) (signerOperationV2, error) {
+	if operation.State == operationConfirmed || operation.State == operationFailed {
+		return operation, nil
+	}
 	workflow, err := s.store.getJupiterTriggerWorkflowV2(req.RequestID)
 	if err != nil {
 		return signerOperationV2{}, err
-	}
-	if operation.State == operationConfirmed || operation.State == operationFailed {
-		return operation, nil
 	}
 	if workflow.Phase == triggerPhaseSubmittingV2 || workflow.Phase == triggerPhaseUnknownV2 || operation.State == operationUnknown {
 		return s.reconcileJupiterTriggerWorkflowV2(req, intent, wallet, privateKey, operation, workflow)

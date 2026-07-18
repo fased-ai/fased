@@ -19,6 +19,25 @@ export function runTsgo() {
   };
 }
 
+export function runTsc() {
+  const command = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+  const result = spawnSync(command, ["exec", "tsc", "--noEmit", "--pretty", "false"], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    maxBuffer: 100 * 1024 * 1024,
+    env: {
+      ...process.env,
+      NODE_OPTIONS: "--max-old-space-size=6144",
+    },
+  });
+  return {
+    status: result.status ?? 1,
+    signal: result.signal ?? null,
+    error: result.error ?? null,
+    output: `${result.stdout ?? ""}${result.stderr ?? ""}`,
+  };
+}
+
 export function ensureStrictArtifactDir() {
   fs.mkdirSync(STRICT_ARTIFACT_DIR, { recursive: true });
 }

@@ -71,7 +71,7 @@ export function resolveSandboxScope(params: {
   if (typeof params.perSession === "boolean") {
     return params.perSession ? "session" : "shared";
   }
-  return "agent";
+  return "session";
 }
 
 export function resolveSandboxDockerConfig(params: {

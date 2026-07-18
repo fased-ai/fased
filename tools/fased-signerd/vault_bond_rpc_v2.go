@@ -430,11 +430,105 @@ func resolveVaultBondFinalizeEffectV2(instruction normalizedSATInstructionV2, wa
 	}, nil
 }
 
-func requireExactVaultBondClaimEffectV2(action string) error {
-	switch strings.TrimSpace(action) {
-	case "claimBondStakingRewards", "claimUnallocatedStakingRewards":
-		return errors.New("Vault bond reward claim is unavailable until the instruction binds an exact signer-reviewed amount and authoritative state version")
-	default:
+func validateOptionalVaultBondRecipientV2(account *rpc.Account, address, mint, owner solana.PublicKey, label string) error {
+	expected, err := findAssociatedTokenAddressV2(owner, mint, solana.TokenProgramID)
+	if err != nil || !address.Equals(expected) {
+		return fmt.Errorf("%s is not the canonical associated token account", label)
+	}
+	if account == nil {
 		return nil
+	}
+	_, err = decodeSPLTokenAccountStateV2(account, address, mint, owner, label)
+	return err
+}
+
+// resolveVaultBondClaimEffectV2 derives claim amounts exclusively from the
+// confirmed signer-owned account snapshot. Caller-provided amounts do not
+// exist for these instructions, and execute must re-fetch the identical state.
+func resolveVaultBondClaimEffectV2(instruction normalizedSATInstructionV2, wallet solana.PublicKey, snapshot signerOwnedAccountSnapshotV2) (vaultBondResolvedEffectV2, error) {
+	if instruction.Codec.Family != satFamilyBond || snapshot.Digest == "" || !strings.HasPrefix(snapshot.Digest, "sha256:") {
+		return vaultBondResolvedEffectV2{}, errors.New("exact Vault bond claim requires a signer-owned account snapshot")
+	}
+	accounts := vaultBondSnapshotMapV2(snapshot)
+	accountAt := func(index int) *rpc.Account { return accounts[instruction.Accounts[index].PublicKey.String()] }
+	program := instruction.Program
+	switch instruction.Codec.Action {
+	case "claimBondStakingRewards":
+		if len(instruction.Accounts) != 11 {
+			return vaultBondResolvedEffectV2{}, errors.New("exact Vault bond staking claim requires the typed claimBondStakingRewards codec")
+		}
+		policy, err := decodeVaultBondTierPolicyStateV2(accountAt(1), instruction.Accounts[1].PublicKey, program)
+		if err != nil {
+			return vaultBondResolvedEffectV2{}, err
+		}
+		distributor, err := decodeVaultBondStakingDistributorStateV2(accountAt(2), instruction.Accounts[2].PublicKey, program)
+		if err != nil {
+			return vaultBondResolvedEffectV2{}, err
+		}
+		position, err := decodeVaultBondPositionStateV2(accountAt(4), instruction.Accounts[4].PublicKey, program, wallet)
+		if err != nil {
+			return vaultBondResolvedEffectV2{}, err
+		}
+		staking, err := decodeVaultBondStakingPositionStateV2(accountAt(3), instruction.Accounts[3].PublicKey, program, wallet, instruction.Accounts[4].PublicKey)
+		if err != nil {
+			return vaultBondResolvedEffectV2{}, err
+		}
+		mint := instruction.Accounts[7].PublicKey
+		if distributor.Status != 1 || staking.Status != 1 ||
+			!position.BondMint.Equals(mint) || !distributor.RewardMint.Equals(mint) ||
+			position.PolicyVersion != uint32(policy.PolicyVersion) || staking.PolicyVersion != policy.PolicyVersion || distributor.PolicyVersion != policy.PolicyVersion {
+			return vaultBondResolvedEffectV2{}, errors.New("Vault bond staking claim account policy, status, or mint does not agree")
+		}
+		if err := validateVaultBondMintAccountV2(accountAt(7), mint); err != nil {
+			return vaultBondResolvedEffectV2{}, err
+		}
+		rewardVault, err := decodeSPLTokenAccountStateV2(accountAt(5), instruction.Accounts[5].PublicKey, mint, instruction.Accounts[2].PublicKey, "Vault bond reward vault")
+		if err != nil {
+			return vaultBondResolvedEffectV2{}, err
+		}
+		if !distributor.RewardVault.Equals(instruction.Accounts[5].PublicKey) || staking.ClaimableRewardRaw == 0 || rewardVault.Amount < staking.ClaimableRewardRaw {
+			return vaultBondResolvedEffectV2{}, errors.New("Vault bond staking reward is not claimable for the exact reviewed amount")
+		}
+		if err := validateOptionalVaultBondRecipientV2(accountAt(6), instruction.Accounts[6].PublicKey, mint, wallet, "Vault bond reward recipient"); err != nil {
+			return vaultBondResolvedEffectV2{}, err
+		}
+		return vaultBondResolvedEffectV2{
+			Action: instruction.Codec.Action, Asset: "sat:mint:" + mint.String(),
+			Amount: new(big.Int).SetUint64(staking.ClaimableRewardRaw), Destination: wallet.String(),
+			StateDigest: snapshot.Digest, StateSlot: snapshot.Slot, RequiresStateRecheck: true,
+		}, nil
+	case "claimUnallocatedStakingRewards":
+		if len(instruction.Accounts) != 9 {
+			return vaultBondResolvedEffectV2{}, errors.New("exact unallocated staking claim requires the typed claimUnallocatedStakingRewards codec")
+		}
+		distributor, err := decodeVaultBondStakingDistributorStateV2(accountAt(1), instruction.Accounts[1].PublicKey, program)
+		if err != nil {
+			return vaultBondResolvedEffectV2{}, err
+		}
+		mint := instruction.Accounts[5].PublicKey
+		if distributor.Status != 1 || !distributor.UpdateAuthority.Equals(wallet) || !distributor.RewardMint.Equals(mint) {
+			return vaultBondResolvedEffectV2{}, errors.New("unallocated staking claim authority, status, or mint does not agree")
+		}
+		if err := validateVaultBondMintAccountV2(accountAt(5), mint); err != nil {
+			return vaultBondResolvedEffectV2{}, err
+		}
+		rewardVault, err := decodeSPLTokenAccountStateV2(accountAt(2), instruction.Accounts[2].PublicKey, mint, instruction.Accounts[1].PublicKey, "Vault unallocated reward vault")
+		if err != nil {
+			return vaultBondResolvedEffectV2{}, err
+		}
+		if !distributor.RewardVault.Equals(instruction.Accounts[2].PublicKey) || distributor.UnallocatedRewardRaw == 0 || rewardVault.Amount < distributor.UnallocatedRewardRaw {
+			return vaultBondResolvedEffectV2{}, errors.New("unallocated staking reward is not claimable for the exact reviewed amount")
+		}
+		recipientOwner := instruction.Accounts[4].PublicKey
+		if err := validateOptionalVaultBondRecipientV2(accountAt(3), instruction.Accounts[3].PublicKey, mint, recipientOwner, "Vault unallocated reward recipient"); err != nil {
+			return vaultBondResolvedEffectV2{}, err
+		}
+		return vaultBondResolvedEffectV2{
+			Action: instruction.Codec.Action, Asset: "sat:mint:" + mint.String(),
+			Amount: new(big.Int).SetUint64(distributor.UnallocatedRewardRaw), Destination: recipientOwner.String(),
+			StateDigest: snapshot.Digest, StateSlot: snapshot.Slot, RequiresStateRecheck: true,
+		}, nil
+	default:
+		return vaultBondResolvedEffectV2{}, fmt.Errorf("Vault bond action %s is not an exact reward claim", instruction.Codec.Action)
 	}
 }

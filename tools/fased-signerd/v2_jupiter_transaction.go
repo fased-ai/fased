@@ -588,6 +588,9 @@ func validateJupiterTokenInstructionV2(
 	}
 	switch data[0] {
 	case 3: // Transfer
+		if program.Equals(solana.Token2022ProgramID) {
+			return false, errors.New("unchecked Token-2022 Transfer is denied; TransferChecked is required")
+		}
 		if len(data) != 9 || len(metas) != 3 || !metas[0].IsWritable || !metas[1].IsWritable || !metas[2].IsSigner {
 			return false, errors.New("invalid typed Trigger token Transfer")
 		}
@@ -616,8 +619,12 @@ func validateJupiterTokenInstructionV2(
 		if metas[0].PublicKey.String() != intent.SourceTokenAccount || metas[2].PublicKey.String() != intent.DestinationTokenAccount || metas[1].PublicKey.String() != mint {
 			return false, errors.New("Trigger TransferChecked mint/accounts do not match reviewed semantics")
 		}
-		if mintAccount := accounts[metas[1].PublicKey.String()]; mintAccount == nil || !mintAccount.Owner.Equals(program) || mintAccount.Executable {
-			return false, errors.New("Trigger TransferChecked mint is not owned by the reviewed token program")
+		decimals, err := validatePlainSPLMintAccountV2(accounts[metas[1].PublicKey.String()], program)
+		if err != nil {
+			return false, fmt.Errorf("Trigger TransferChecked mint is invalid: %w", err)
+		}
+		if data[9] != decimals {
+			return false, errors.New("Trigger TransferChecked decimals do not match the reviewed mint")
 		}
 		if err := validateDirectTriggerTokenTransferV2(
 			binary.LittleEndian.Uint64(data[1:9]),
@@ -793,7 +800,10 @@ func parseJupiterTokenAccountV2(account *rpc.Account) (jupiterTokenAccountV2, bo
 		return jupiterTokenAccountV2{}, false
 	}
 	data := account.Data.GetBinary()
-	if len(data) < 165 || data[108] == 0 {
+	if len(data) != 165 || data[108] == 0 {
+		// Token-2022 extensions may add transfer hooks, fees, delegates, or
+		// confidential state. Classic token accounts also have an exact fixed
+		// layout. Never accept trailing data as an unreviewed extension.
 		return jupiterTokenAccountV2{}, false
 	}
 	var mint, owner solana.PublicKey
@@ -836,7 +846,7 @@ func validateJupiterBalanceSemanticsV2(wallet solana.PublicKey, intent normalize
 	if jupiter.OutputMint == solanaNativeMintV2 && minimumOutput.Sign() > 0 {
 		walletGain := new(big.Int).Sub(postLamports, preLamports)
 		minimumAfterFee := new(big.Int).Sub(new(big.Int).Set(minimumOutput), maxFee)
-		if walletGain.Cmp(minimumAfterFee) < 0 || walletGain.Cmp(minimumOutput) > 0 {
+		if walletGain.Cmp(minimumAfterFee) < 0 {
 			return errors.New("simulated native output is below the reviewed minimum")
 		}
 	}

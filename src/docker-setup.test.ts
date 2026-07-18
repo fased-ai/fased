@@ -49,6 +49,14 @@ if [[ "\${1:-}" == "build" ]]; then
   echo "build $*" >>"$log"
   exit 0
 fi
+if [[ "\${1:-}" == "pull" ]]; then
+  echo "pull $*" >>"$log"
+  exit 0
+fi
+if [[ "\${1:-}" == "run" && "$*" == *"/usr/local/bin/fased-signerd"*"--version"* ]]; then
+  printf '%s\n' "\${DOCKER_STUB_SIGNER_IDENTITY:-}"
+  exit 0
+fi
 if [[ "\${1:-}" == "compose" ]]; then
   echo "compose $*" >>"$log"
   if [[ "\${DOCKER_STUB_EXISTING_SIGNER:-}" == "1" && "$*" == *"ps -a -q fased-signerd"* ]]; then
@@ -360,6 +368,57 @@ describe("docker-setup.sh", () => {
     expect(log).toContain("ps -a -q fased-signerd");
     expect(log).not.toContain("build --build-arg");
     expect(log).not.toContain("up -d --force-recreate --wait --wait-timeout 60 fased-signerd");
+  });
+
+  it("binds published image setup files to the image release commit", async () => {
+    const activeSandbox = requireSandbox(sandbox);
+    const gitEnv = {
+      ...process.env,
+      GIT_AUTHOR_NAME: "Fased Test",
+      GIT_AUTHOR_EMAIL: "test@fased.invalid",
+      GIT_COMMITTER_NAME: "Fased Test",
+      GIT_COMMITTER_EMAIL: "test@fased.invalid",
+    };
+    expect(spawnSync("git", ["init", activeSandbox.rootDir], { env: gitEnv }).status).toBe(0);
+    expect(
+      spawnSync("git", ["-C", activeSandbox.rootDir, "add", "."], { env: gitEnv }).status,
+    ).toBe(0);
+    expect(
+      spawnSync("git", ["-C", activeSandbox.rootDir, "commit", "-m", "fixture"], {
+        env: gitEnv,
+      }).status,
+    ).toBe(0);
+    const commit = spawnSync("git", ["-C", activeSandbox.rootDir, "rev-parse", "HEAD"], {
+      env: gitEnv,
+      encoding: "utf8",
+    }).stdout.trim();
+    await writeFile(join(activeSandbox.rootDir, "package.json"), '{"version":"1.2.3"}\n');
+    spawnSync("git", ["-C", activeSandbox.rootDir, "add", "package.json"], { env: gitEnv });
+    spawnSync("git", ["-C", activeSandbox.rootDir, "commit", "-m", "package identity"], {
+      env: gitEnv,
+    });
+    const releaseCommit = spawnSync("git", ["-C", activeSandbox.rootDir, "rev-parse", "HEAD"], {
+      env: gitEnv,
+      encoding: "utf8",
+    }).stdout.trim();
+
+    const result = runDockerSetup(activeSandbox, {
+      FASED_IMAGE: "ghcr.io/fased-ai/fased@sha256:" + "a".repeat(64),
+      DOCKER_STUB_SIGNER_IDENTITY: `fased-signerd 1.2.3 commit=${releaseCommit} buildInputDigest=sha256:${"b".repeat(64)} development=false`,
+      FASED_CONFIG_DIR: join(activeSandbox.rootDir, "config-bound"),
+      FASED_WORKSPACE_DIR: join(activeSandbox.rootDir, "workspace-bound"),
+    });
+    expect(commit).toMatch(/^[a-f0-9]{40}$/u);
+    expect(result.status).toBe(0);
+
+    const mismatch = runDockerSetup(activeSandbox, {
+      FASED_IMAGE: "ghcr.io/fased-ai/fased@sha256:" + "c".repeat(64),
+      DOCKER_STUB_SIGNER_IDENTITY: `fased-signerd 1.2.3 commit=${"d".repeat(40)} buildInputDigest=sha256:${"e".repeat(64)} development=false`,
+      FASED_CONFIG_DIR: join(activeSandbox.rootDir, "config-mismatch"),
+      FASED_WORKSPACE_DIR: join(activeSandbox.rootDir, "workspace-mismatch"),
+    });
+    expect(mismatch.status).not.toBe(0);
+    expect(mismatch.stderr).toContain("does not match the selected image release commit");
   });
 
   it("stops before wallet onboarding when the native signer is missing or unhealthy", async () => {

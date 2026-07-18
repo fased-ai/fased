@@ -41,6 +41,7 @@ jobs:
       run_node: ${{ steps.scope.outputs.run_node }}
       run_macos: ${{ steps.scope.outputs.run_macos }}
       run_android: ${{ steps.scope.outputs.run_android }}
+      run_signer: ${{ steps.scope.outputs.run_signer }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -66,12 +67,14 @@ jobs:
             echo "run_node=true" >> "$GITHUB_OUTPUT"
             echo "run_macos=true" >> "$GITHUB_OUTPUT"
             echo "run_android=true" >> "$GITHUB_OUTPUT"
+            echo "run_signer=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           run_node=false
           run_macos=false
           run_android=false
+          run_signer=false
           has_non_docs=false
           has_non_native_non_docs=false
 
@@ -103,6 +106,12 @@ jobs:
             esac
 
             case "$path" in
+              tools/fased-signerd/*|config/signer-protocol-v2.json|scripts/release-fased-signerd.sh|scripts/install-fased-signerd.sh|scripts/generate-signer-protocol-v2.mjs|scripts/signer-protocol-v2.generated.mjs|src/wallet/signer-protocol-v2.generated.ts)
+                run_signer=true
+                ;;
+            esac
+
+            case "$path" in
               src/*|test/*|extensions/*|packages/*|scripts/*|ui/*|.github/*|fased.mjs|package.json|pnpm-lock.yaml|pnpm-workspace.yaml|tsconfig*.json|vitest*.ts|tsdown.config.ts|.oxlintrc.json|.oxfmtrc.jsonc)
                 run_node=true
                 ;;
@@ -125,6 +134,7 @@ jobs:
           echo "run_node=${run_node}" >> "$GITHUB_OUTPUT"
           echo "run_macos=${run_macos}" >> "$GITHUB_OUTPUT"
           echo "run_android=${run_android}" >> "$GITHUB_OUTPUT"
+          echo "run_signer=${run_signer}" >> "$GITHUB_OUTPUT"
 
   # Build dist once for Node-relevant changes and share it with downstream jobs.
   build-artifacts:
@@ -152,10 +162,10 @@ jobs:
           path: dist/
           retention-days: 1
 
-  # Validate npm pack contents after build (only on push to main, not PRs).
+  # Validate npm pack contents after build before merge and again on main.
   release-check:
-    needs: [docs-scope, build-artifacts]
-    if: github.event_name == 'push' && needs.docs-scope.outputs.docs_only != 'true'
+    needs: [docs-scope, changed-scope, build-artifacts]
+    if: needs.docs-scope.outputs.docs_only != 'true' && (github.event_name == 'push' || needs.changed-scope.outputs.run_node == 'true')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -168,6 +178,12 @@ jobs:
         with:
           install-bun: "false"
 
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: tools/fased-signerd/go.mod
+          cache-dependency-path: tools/fased-signerd/go.sum
+
       - name: Download dist artifact
         uses: actions/download-artifact@v4
         with:
@@ -177,9 +193,45 @@ jobs:
       - name: Check release contents
         run: pnpm release:check
 
-  checks:
+  signer-platform:
+    name: Native signer (${{ matrix.name }})
     needs: [docs-scope, changed-scope, check]
-    if: vars.FASED_FULL_CI_ENABLED == '1' && needs.docs-scope.outputs.docs_only != 'true' && (github.event_name == 'push' || needs.changed-scope.outputs.run_node == 'true')
+    if: needs.docs-scope.outputs.docs_only != 'true' && (github.event_name == 'push' || needs.changed-scope.outputs.run_signer == 'true')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x64
+            os: ubuntu-24.04
+          - name: macOS Apple Silicon
+            os: macos-15
+          - name: macOS Intel
+            os: macos-15-intel
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: false
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: tools/fased-signerd/go.mod
+          cache-dependency-path: tools/fased-signerd/go.sum
+
+      - name: Test native signer
+        working-directory: tools/fased-signerd
+        run: go test ./...
+
+      - name: Build native signer for the runner
+        working-directory: tools/fased-signerd
+        run: go build -buildvcs=false -trimpath -o "${RUNNER_TEMP}/fased-signerd" .
+
+  checks:
+    name: "test (${{ matrix.runtime }}, ${{ matrix.task }})"
+    needs: [docs-scope, changed-scope, check]
+    if: needs.docs-scope.outputs.docs_only != 'true' && (github.event_name == 'push' || needs.changed-scope.outputs.run_node == 'true')
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -242,8 +294,8 @@ jobs:
             ${{ env.FASED_VITEST_REPORT_DIR }}
             ${{ runner.temp }}/vitest-slowest.md
 
-  # Public gate: format, lint, and policy checks. Strict TypeScript is tracked
-  # separately as a non-blocking backlog job until the inherited errors are retired.
+  # Public gate: format, lint, and policy checks. Repository-wide TypeScript debt
+  # is enforced separately as a blocking no-new-errors baseline.
   check:
     name: "check"
     needs: [docs-scope]
@@ -269,11 +321,10 @@ jobs:
       - name: Enforce safe external URL opening policy
         run: pnpm lint:ui:no-raw-window-open
 
-  strict-types-backlog:
-    name: "strict types backlog"
+  strict-types-baseline:
+    name: "strict types baseline"
     needs: [docs-scope, changed-scope]
-    if: vars.FASED_STRICT_TYPES_BACKLOG_ENABLED == '1' && needs.docs-scope.outputs.docs_only != 'true' && (github.event_name == 'push' || needs.changed-scope.outputs.run_node == 'true')
-    continue-on-error: true
+    if: needs.docs-scope.outputs.docs_only != 'true' && (github.event_name == 'push' || needs.changed-scope.outputs.run_node == 'true')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -286,13 +337,13 @@ jobs:
         with:
           install-bun: "false"
 
-      - name: Run strict TypeScript backlog check
-        run: pnpm check:strict
+      - name: Reject new repository-wide TypeScript errors
+        run: pnpm check:typescript:baseline
 
   ui-mining:
     name: "ui-mining"
     needs: [docs-scope]
-    if: vars.FASED_FULL_CI_ENABLED == '1' && needs.docs-scope.outputs.docs_only != 'true'
+    if: needs.docs-scope.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -486,7 +537,6 @@ jobs:
           pre-commit run zizmor --files "${workflow_files[@]}"
 
       - name: Audit production dependencies
-        if: vars.FASED_PROD_AUDIT_ENABLED == '1'
         run: pre-commit run --all-files pnpm-audit-prod
 
   checks-windows:
@@ -907,3 +957,61 @@ jobs:
       - name: Run Android ${{ matrix.task }}
         working-directory: apps/android
         run: ${{ matrix.command }}
+
+  required-checks:
+    name: "checks"
+    if: always()
+    needs:
+      - docs-scope
+      - changed-scope
+      - check
+      - strict-types-baseline
+      - checks
+      - build-artifacts
+      - release-check
+      - signer-platform
+      - ui-mining
+      - check-docs
+      - skills-python
+      - secrets
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every applicable release gate
+        env:
+          DOCS_ONLY: ${{ needs.docs-scope.outputs.docs_only }}
+          DOCS_CHANGED: ${{ needs.docs-scope.outputs.docs_changed }}
+          EVENT_NAME: ${{ github.event_name }}
+          RUN_NODE: ${{ needs.changed-scope.outputs.run_node }}
+          RUN_SIGNER: ${{ needs.changed-scope.outputs.run_signer }}
+          DOCS_SCOPE: ${{ needs.docs-scope.result }}
+          CHANGED_SCOPE: ${{ needs.changed-scope.result }}
+          CHECK: ${{ needs.check.result }}
+          STRICT_TYPES: ${{ needs.strict-types-baseline.result }}
+          TESTS: ${{ needs.checks.result }}
+          BUILD: ${{ needs.build-artifacts.result }}
+          RELEASE: ${{ needs.release-check.result }}
+          SIGNER: ${{ needs.signer-platform.result }}
+          UI_MINING: ${{ needs.ui-mining.result }}
+          DOCS: ${{ needs.check-docs.result }}
+          SKILLS: ${{ needs.skills-python.result }}
+          SECRETS: ${{ needs.secrets.result }}
+        run: |
+          set -euo pipefail
+          test "$DOCS_SCOPE" = "success"
+          test "$SECRETS" = "success"
+          if [[ "$DOCS_CHANGED" = "true" ]]; then
+            test "$DOCS" = "success"
+          fi
+          if [[ "$DOCS_ONLY" != "true" ]]; then
+            for result in "$CHANGED_SCOPE" "$CHECK" "$UI_MINING"; do
+              test "$result" = "success"
+            done
+            if [[ "$EVENT_NAME" = "push" || "$RUN_NODE" = "true" ]]; then
+              for result in "$STRICT_TYPES" "$TESTS" "$BUILD" "$RELEASE" "$SKILLS"; do
+                test "$result" = "success"
+              done
+            fi
+            if [[ "$EVENT_NAME" = "push" || "$RUN_SIGNER" = "true" ]]; then
+              test "$SIGNER" = "success"
+            fi
+          fi

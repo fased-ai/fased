@@ -18,6 +18,9 @@ import { ensureWalletStateDir } from "./wallet-runtime-config.js";
 const STATE_FILE_NAME = "turnkey-reviews.v1.json";
 const REVIEW_TTL_MS = 2 * 60 * 1000;
 const STATE_FILE_MODE = 0o600;
+const MAX_REVIEW_RECORDS = 10_000;
+const MAX_RETAINED_TERMINAL_REVIEWS = 5_000;
+const TERMINAL_REVIEW_RETENTION_MS = 30 * 24 * 60 * 60_000;
 const REVIEW_LOCK_OPTIONS = {
   retries: {
     retries: 80,
@@ -140,6 +143,36 @@ function secureEqual(left: string, right: string): boolean {
   return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes);
 }
 
+function compactReviewState(file: TurnkeyReviewFile, nowMs = Date.now()): TurnkeyReviewFile {
+  const terminal = file.reviews
+    .filter((review) => review.status === "broadcast" || review.status === "failed")
+    .toSorted((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt));
+  const removable = new Set(
+    terminal
+      .filter(
+        (review, index) =>
+          nowMs - Date.parse(review.createdAt) > TERMINAL_REVIEW_RETENTION_MS ||
+          terminal.length - index > MAX_RETAINED_TERMINAL_REVIEWS,
+      )
+      .map((review) => review.preparedId),
+  );
+  return {
+    version: 1,
+    reviews: file.reviews.filter((review) => !removable.has(review.preparedId)),
+  };
+}
+
+function requireReviewCapacity(file: TurnkeyReviewFile): void {
+  if (file.reviews.length >= MAX_REVIEW_RECORDS) {
+    throw new WalletProviderError({
+      code: "wallet_provider_unavailable",
+      message:
+        "Turnkey review state reached its durable safety limit; reconcile unresolved reviews",
+      retryable: false,
+    });
+  }
+}
+
 function digest(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("base64url");
 }
@@ -237,7 +270,7 @@ export async function prepareTurnkeyReviewedTransaction(params: {
     authorizationContextDigest: expectedAuthorizationContextDigest,
   });
   return await withReviewLock(env, async () => {
-    const file = readFile(env);
+    const file = compactReviewState(readFile(env));
     const existing = file.reviews.find(
       (review) =>
         review.approvalRequestId === approvalRequestId || review.preparedId === preparedId,
@@ -274,6 +307,8 @@ export async function prepareTurnkeyReviewedTransaction(params: {
       }
       return toPrepareResult(existing);
     }
+
+    requireReviewCapacity(file);
 
     const prepared = await buildReviewedSolanaTransaction({
       request: params.request,

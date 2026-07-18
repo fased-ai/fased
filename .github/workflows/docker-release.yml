@@ -10,6 +10,8 @@ on:
       - "scripts/docker-signer-enroll.mjs"
       - "scripts/docker-signer-health.mjs"
       - "scripts/docker-signer-policy.sh"
+      - "scripts/docker-signer-update.sh"
+      - "scripts/docker-signer-update.backup.test.ts"
       - "scripts/fased-signerd-build-identity.mjs"
       - "scripts/scan-docker-image.sh"
       - "src/docker-image-digests.test.ts"
@@ -46,6 +48,14 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+
+      - name: Setup Node test environment
+        uses: ./.github/actions/setup-node-env
+        with:
+          install-bun: "false"
+
+      - name: Test Docker setup and coordinated backup/rollback
+        run: pnpm exec vitest run src/docker-setup.test.ts scripts/docker-signer-update.backup.test.ts
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -96,7 +106,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          test "${GITHUB_REF_TYPE}" = "tag"
           version="${GITHUB_REF#refs/tags/v}"
+          package_version="$(node -p "require('./package.json').version")"
+          test "${GITHUB_REF}" = "refs/tags/v${package_version}"
+          test "$version" = "$package_version"
+          git diff --exit-code -- . ':!dist/control-ui/'
           release_commit="$(git rev-parse HEAD)"
           FASED_SIGNER_BUILD_VERSION="$version" \
           FASED_SIGNER_BUILD_COMMIT="$release_commit" \
@@ -163,7 +178,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          test "${GITHUB_REF_TYPE}" = "tag"
           version="${GITHUB_REF#refs/tags/v}"
+          package_version="$(node -p "require('./package.json').version")"
+          test "${GITHUB_REF}" = "refs/tags/v${package_version}"
+          test "$version" = "$package_version"
+          git diff --exit-code -- . ':!dist/control-ui/'
           release_commit="$(git rev-parse HEAD)"
           FASED_SIGNER_BUILD_VERSION="$version" \
           FASED_SIGNER_BUILD_COMMIT="$release_commit" \

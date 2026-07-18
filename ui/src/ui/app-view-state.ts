@@ -661,6 +661,7 @@ export type AppViewState = {
   walletCreateName: string;
   walletCreateId: string;
   walletCreateProvider: WalletProviderInfo["id"];
+  walletCreateRole: "agent" | "vault";
   walletAssignAgentId: string;
   walletAssignWalletId: string;
   walletSettingsLoading: boolean;

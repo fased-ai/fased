@@ -12,12 +12,13 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
-const signerStateSchemaVersionV2 uint64 = 5
+const signerStateSchemaVersionV2 uint64 = 6
 
 var signerStateBucketsV2 = [][]byte{
 	bucketSignerMetaV2,
 	bucketSignerPoliciesV2,
 	bucketSignerOperationsV2,
+	bucketSignerOperationArchiveV2,
 	bucketSignerUsageV2,
 	bucketSignerWalletsV2,
 	bucketSignerNetworksV2,
@@ -104,7 +105,7 @@ func migrateSignerStateV2(db *bolt.DB, fromVersion uint64) error {
 	if fromVersion == signerStateSchemaVersionV2 {
 		return validateSignerSchemaBucketsV2(db)
 	}
-	if fromVersion != 0 && fromVersion != 1 && fromVersion != 2 && fromVersion != 3 && fromVersion != 4 {
+	if fromVersion != 0 && fromVersion != 1 && fromVersion != 2 && fromVersion != 3 && fromVersion != 4 && fromVersion != 5 {
 		return fmt.Errorf("unsupported signer state migration from schema %d", fromVersion)
 	}
 	capabilities, err := json.Marshal(signerV2Capabilities)

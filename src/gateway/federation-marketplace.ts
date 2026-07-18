@@ -1,7 +1,11 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { loadConfig } from "../config/config.js";
 import { loadPersistedFederationToken } from "../federation/access-token.js";
+import {
+  buildSignedFederationPeerRequest,
+  FEDERATION_A2A_RPC_PATH,
+} from "../federation/peer-auth-v2.js";
 import { resolveFederationBaseUrl } from "../federation/runtime.js";
 import { publishFederationSettlementEvidence } from "../federation/settlement-evidence.js";
 import {
@@ -11,6 +15,12 @@ import {
 } from "../wallet/wallet-provider-registry.js";
 import { resolveWalletRuntimeConfig } from "../wallet/wallet-runtime-config.js";
 import { createOrExecuteWalletSend } from "../wallet/wallet-send-approvals.js";
+import {
+  createMarketplaceTaskAccessToken,
+  type DurableMarketplacePreparedRun,
+  type DurableMarketplaceRunContext,
+  withDurableMarketplaceRun,
+} from "./federation-marketplace-run-store.js";
 
 export type MarketplaceAssetKind = "native" | "spl-token";
 export type MarketplaceChain = "solana";
@@ -96,6 +106,10 @@ type FederationOfferDirectoryEntry = {
   offer: {
     id: string;
     serviceKind?: string;
+    pricing?: {
+      amount?: number;
+      currency?: string;
+    };
     paymentDefaults?: {
       currency?: string;
       chain?: string;
@@ -126,6 +140,7 @@ type RpcResponse = {
 };
 
 type RunDeps = {
+  env?: NodeJS.ProcessEnv;
   fetchImpl?: typeof fetch;
   loadConfig?: typeof loadConfig;
   readWalletProviderRegistry?: typeof readWalletProviderRegistry;
@@ -206,10 +221,7 @@ function resolvePaymentWallet(
   const requestedWalletId = trimString(walletId);
   if (requestedWalletId) {
     const requested = registry.wallets.find((wallet) => wallet.id === requestedWalletId);
-    if (!requested) {
-      return null;
-    }
-    if (resolveWalletUserRole(requested) !== "agent" && requested.id !== registry.defaultWalletId) {
+    if (!requested || resolveWalletUserRole(requested) !== "agent") {
       return null;
     }
     return requested;
@@ -217,7 +229,7 @@ function resolvePaymentWallet(
   const defaultWalletId = trimString(registry.defaultWalletId);
   if (defaultWalletId) {
     const fallback = registry.wallets.find((wallet) => wallet.id === defaultWalletId);
-    if (fallback && resolveWalletUserRole(fallback) !== "mining") {
+    if (fallback && resolveWalletUserRole(fallback) === "agent") {
       return fallback;
     }
   }
@@ -225,7 +237,7 @@ function resolvePaymentWallet(
   if (agentWallet) {
     return agentWallet;
   }
-  return registry.wallets.length === 1 ? (registry.wallets[0] ?? null) : null;
+  return null;
 }
 
 function parseHumanAmountToOnChainInteger(amountInput: string, decimals: number): bigint {
@@ -305,19 +317,35 @@ async function rpcCall(params: {
   method: string;
   rpcParams: Record<string, unknown>;
   headers: Record<string, string>;
+  peerAuth?: {
+    senderHandle: string;
+    recipientHandle: string;
+    env?: NodeJS.ProcessEnv;
+  };
 }): Promise<RpcResponse> {
+  const body = {
+    jsonrpc: "2.0",
+    id: "marketplace-ui",
+    method: params.method,
+    params: params.rpcParams,
+  };
+  const signed = params.peerAuth
+    ? buildSignedFederationPeerRequest({
+        senderHandle: params.peerAuth.senderHandle,
+        recipientHandle: params.peerAuth.recipientHandle,
+        path: FEDERATION_A2A_RPC_PATH,
+        body,
+        env: params.peerAuth.env,
+      })
+    : undefined;
   return await fetchJson<RpcResponse>(params.fetchImpl, new URL("/a2a", params.origin), {
     method: "POST",
     headers: {
       "content-type": "application/json",
       ...params.headers,
+      ...signed?.headers,
     },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: "marketplace-ui",
-      method: params.method,
-      params: params.rpcParams,
-    }),
+    body: signed?.body ?? JSON.stringify(body),
   });
 }
 
@@ -408,6 +436,7 @@ async function waitForTaskCompletion(params: {
   federationOrigin: string;
   taskId: string;
   headers: Record<string, string>;
+  taskAccessToken: string;
   sleep: (ms: number) => Promise<void>;
 }): Promise<FederationPaidContentSummarizeRunResult["snapshot"]> {
   const deadline = Date.now() + 45_000;
@@ -416,7 +445,7 @@ async function waitForTaskCompletion(params: {
       fetchImpl: params.fetchImpl,
       origin: params.federationOrigin,
       method: "tasks.get",
-      rpcParams: { taskId: params.taskId },
+      rpcParams: { taskId: params.taskId, taskAccessToken: params.taskAccessToken },
       headers: params.headers,
     });
     if (response.error) {
@@ -437,10 +466,14 @@ async function waitForTaskCompletion(params: {
   throw new Error("timed out waiting for paid summarize result");
 }
 
-export async function runPaidFederatedContentSummarize(
-  request: FederationPaidContentSummarizeRunRequest,
-  deps: RunDeps = {},
-): Promise<FederationPaidContentSummarizeRunResult> {
+async function runPaidFederatedContentSummarizeLocked(params: {
+  request: FederationPaidContentSummarizeRunRequest;
+  deps: RunDeps;
+  executionIntentId: string;
+  durable: DurableMarketplaceRunContext;
+}): Promise<FederationPaidContentSummarizeRunResult> {
+  const { request, deps, executionIntentId, durable } = params;
+  const env = deps.env ?? process.env;
   const fetchImpl = deps.fetchImpl ?? fetch;
   const sleep = deps.sleep ?? (async (ms: number) => await delay(ms));
   const now = deps.now ?? (() => new Date());
@@ -454,6 +487,28 @@ export async function runPaidFederatedContentSummarize(
   const createOrExecuteWalletSendImpl = deps.createOrExecuteWalletSend ?? createOrExecuteWalletSend;
   const publishFederationSettlementEvidenceImpl =
     deps.publishFederationSettlementEvidence ?? publishFederationSettlementEvidence;
+
+  if (durable.record.status === "completed") {
+    return durable.record.result as FederationPaidContentSummarizeRunResult;
+  }
+  if (durable.record.status === "failed" || durable.record.status === "refund_required") {
+    return {
+      status: "rejected",
+      reason:
+        durable.record.reason ??
+        (durable.record.status === "refund_required"
+          ? "Marketplace payment requires a refund or operator review"
+          : "Marketplace run failed"),
+      handle: durable.record.prepared?.handle,
+      endpoint: durable.record.prepared?.endpoint,
+      offerId: durable.record.prepared?.offerId,
+      taskId: durable.record.prepared?.taskId,
+      invoiceId: durable.record.prepared?.invoiceId,
+      receiptId: durable.record.prepared?.receiptId,
+      txRef: durable.record.txRef,
+      payerAddress: durable.record.payerAddress,
+    };
+  }
 
   const handle = trimString(request.handle);
   const offerId = trimString(request.offerId);
@@ -477,17 +532,11 @@ export async function runPaidFederatedContentSummarize(
 
   const quote = asRecord(request.quote);
   const amountInput = trimString(quote?.amountInput);
-  const expiresInMinutesRaw = Number(quote?.expiresInMinutes ?? 5);
-  const expiresInMinutes =
-    Number.isFinite(expiresInMinutesRaw) && expiresInMinutesRaw >= 1 && expiresInMinutesRaw <= 60
-      ? Math.trunc(expiresInMinutesRaw)
-      : 5;
-
-  const federationOrigin = resolveFederationBaseUrl(process.env);
+  const federationOrigin = resolveFederationBaseUrl(env);
   if (!federationOrigin) {
     return { status: "rejected", reason: "federation base URL not configured" };
   }
-  const token = await loadPersistedFederationTokenImpl(process.env);
+  const token = await loadPersistedFederationTokenImpl(env);
   if (!token?.tokenId || !token.handle) {
     return { status: "rejected", reason: "federation access token missing" };
   }
@@ -502,169 +551,318 @@ export async function runPaidFederatedContentSummarize(
     };
   }
 
+  let prepared = durable.record.prepared;
   let selectedEntry: FederationOfferDirectoryEntry | null = null;
-  try {
-    selectedEntry =
-      (await fetchContentSummarizeOfferFromDirectory({
-        fetchImpl,
-        federationOrigin,
-        handle,
-        offerId,
-      })) ??
-      (await fetchContentSummarizeOfferFromMarketplaceIndex({
-        fetchImpl,
-        federationOrigin,
-        handle,
-        offerId,
-      }));
-  } catch (error) {
-    return {
-      status: "rejected",
-      reason: `offer lookup failed: ${error instanceof Error ? error.message : String(error)}`,
-    };
-  }
-  if (!selectedEntry?.endpoint) {
-    return {
-      status: "rejected",
-      reason:
-        "content.summarize offer not found for verified handle in live offers or Marketplace index",
-    };
-  }
-
-  const offerPaymentDefaults = asRecord(selectedEntry.offer.paymentDefaults);
-  const offerPaymentAsset = asRecord(offerPaymentDefaults?.asset);
-  const offerPaymentPayee = asRecord(offerPaymentDefaults?.payee);
-  const currency = trimString(quote?.currency) || trimString(offerPaymentDefaults?.currency);
-  const chain = "solana";
-  const assetKindRaw = trimString(quote?.assetKind) || trimString(offerPaymentAsset?.kind);
-  const assetKind: MarketplaceAssetKind = assetKindRaw === "spl-token" ? "spl-token" : "native";
-  const payeeAddress = trimString(quote?.payeeAddress) || trimString(offerPaymentPayee?.address);
-  const assetDecimals = parseAssetDecimals(
-    Number(quote?.assetDecimals ?? offerPaymentDefaults?.assetDecimals),
-  );
-
-  if (!currency) {
-    return { status: "rejected", reason: "missing quote currency" };
-  }
-  if (!payeeAddress) {
-    return { status: "rejected", reason: "missing quote payee address" };
-  }
-  if (assetDecimals === null) {
-    return { status: "rejected", reason: "asset decimals must be between 0 and 18" };
-  }
-
-  let amountBaseUnits: bigint;
-  try {
-    amountBaseUnits = parseHumanAmountToOnChainInteger(amountInput, assetDecimals);
-  } catch (error) {
-    return { status: "rejected", reason: error instanceof Error ? error.message : String(error) };
-  }
-  if (amountBaseUnits > MAX_SAFE_ON_CHAIN_INTEGER) {
-    return {
-      status: "rejected",
-      reason: "quote amount is too large for Invoice v0 / Receipt v0 numeric fields",
-    };
-  }
-  const canonicalOfferId = trimString(selectedEntry.offer.id) || offerId;
-
-  let asset: { kind: MarketplaceAssetKind; address?: string };
-  try {
-    asset = toMarketplaceAsset(
-      assetKind,
-      trimString(quote?.assetAddress) || trimString(offerPaymentAsset?.address),
-    );
-  } catch (error) {
-    return { status: "rejected", reason: error instanceof Error ? error.message : String(error) };
-  }
-
-  const registry = readWalletProviderRegistryImpl(process.env);
-  const defaultWallet = resolvePaymentWallet(registry, request.walletId);
-  if (!defaultWallet) {
-    return { status: "rejected", reason: "Agent wallet is not configured" };
-  }
-
-  const cfg = loadConfigImpl();
-  const walletConfig = resolveWalletRuntimeConfigImpl(cfg, process.env);
-  if (!walletConfig.enabled) {
-    return { status: "rejected", reason: "wallet runtime is disabled" };
-  }
-
-  const executionIntentId =
-    trimString(request.executionIntentId) ||
-    `marketplace-paid-summary:${createHash("sha256")
-      .update(
-        JSON.stringify({
+  if (!prepared) {
+    try {
+      selectedEntry =
+        (await fetchContentSummarizeOfferFromDirectory({
+          fetchImpl,
+          federationOrigin,
           handle,
-          offerId: canonicalOfferId,
-          walletId: defaultWallet.id,
-          sourceText,
-          requestedOutput,
-          summaryStyle,
-          maxSentences,
-          amount: amountBaseUnits.toString(),
-          currency,
-          asset,
-          payeeAddress,
-        }),
-      )
-      .digest("hex")}`;
-  const taskId = stableMarketplaceRunId("market-summary", executionIntentId);
-  const invoiceId = stableMarketplaceRunId("invoice", executionIntentId);
-  const receiptId = stableMarketplaceRunId("receipt", executionIntentId);
+          offerId,
+        })) ??
+        (await fetchContentSummarizeOfferFromMarketplaceIndex({
+          fetchImpl,
+          federationOrigin,
+          handle,
+          offerId,
+        }));
+    } catch (error) {
+      return {
+        status: "rejected",
+        reason: `offer lookup failed: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+    if (!selectedEntry?.endpoint) {
+      return {
+        status: "rejected",
+        reason:
+          "content.summarize offer not found for verified handle in live offers or Marketplace index",
+      };
+    }
 
-  const send = await createOrExecuteWalletSendImpl({
-    payload: {
-      chain,
-      to: payeeAddress,
-      amount: amountBaseUnits.toString(),
-      ...(asset.kind === "spl-token" ? { program: asset.address } : {}),
-      walletId: defaultWallet.id,
-      walletName: defaultWallet.name,
-      providerId: defaultWallet.providerId,
-    },
-    requestedBy: "marketplace-runner",
-    executionIntentId,
-    sendPath: "automation",
-    settlementContext: {
-      taskId,
-      invoiceId,
+    const offerPaymentDefaults = asRecord(selectedEntry.offer.paymentDefaults);
+    const offerPaymentAsset = asRecord(offerPaymentDefaults?.asset);
+    const offerPaymentPayee = asRecord(offerPaymentDefaults?.payee);
+    const currency = trimString(offerPaymentDefaults?.currency);
+    const offeredChain = trimString(offerPaymentDefaults?.chain).toLowerCase();
+    const offeredPayeeChain = trimString(offerPaymentPayee?.chain).toLowerCase();
+    const assetKindRaw = trimString(offerPaymentAsset?.kind);
+    const assetKind: MarketplaceAssetKind = assetKindRaw === "spl-token" ? "spl-token" : "native";
+    const payeeAddress = trimString(offerPaymentPayee?.address);
+    const offeredAssetAddress = trimString(offerPaymentAsset?.address);
+    const offeredDecimals = Number(offerPaymentDefaults?.assetDecimals);
+    const assetDecimals = parseAssetDecimals(offeredDecimals);
+
+    if (!currency || offeredChain !== "solana" || offeredPayeeChain !== "solana") {
+      return { status: "rejected", reason: "offer is missing canonical Solana payment defaults" };
+    }
+    if (!payeeAddress) {
+      return { status: "rejected", reason: "offer is missing a canonical payee address" };
+    }
+    if (assetDecimals === null) {
+      return { status: "rejected", reason: "offer asset decimals must be between 0 and 18" };
+    }
+    if (trimString(quote?.currency) && trimString(quote?.currency) !== currency) {
+      return { status: "rejected", reason: "quote currency does not match the selected offer" };
+    }
+    if (trimString(quote?.payeeAddress) && trimString(quote?.payeeAddress) !== payeeAddress) {
+      return { status: "rejected", reason: "quote payee does not match the selected offer" };
+    }
+    if (trimString(quote?.assetKind) && trimString(quote?.assetKind) !== assetKind) {
+      return { status: "rejected", reason: "quote asset kind does not match the selected offer" };
+    }
+    if (
+      trimString(quote?.assetAddress) &&
+      trimString(quote?.assetAddress) !== offeredAssetAddress
+    ) {
+      return {
+        status: "rejected",
+        reason: "quote asset address does not match the selected offer",
+      };
+    }
+    const requestedDecimals = Number(quote?.assetDecimals);
+    if (Number.isFinite(requestedDecimals) && requestedDecimals !== offeredDecimals) {
+      return { status: "rejected", reason: "quote asset decimals do not match the selected offer" };
+    }
+
+    let amountBaseUnits: bigint;
+    try {
+      amountBaseUnits = parseHumanAmountToOnChainInteger(amountInput, assetDecimals);
+    } catch (error) {
+      return { status: "rejected", reason: error instanceof Error ? error.message : String(error) };
+    }
+    const offeredAmount = selectedEntry.offer.pricing?.amount;
+    if (typeof offeredAmount === "number" && Number.isFinite(offeredAmount)) {
+      let offeredBaseUnits: bigint;
+      try {
+        offeredBaseUnits = parseHumanAmountToOnChainInteger(String(offeredAmount), assetDecimals);
+      } catch {
+        return { status: "rejected", reason: "selected offer has an invalid canonical price" };
+      }
+      if (amountBaseUnits !== offeredBaseUnits) {
+        return { status: "rejected", reason: "quote amount does not match the selected offer" };
+      }
+    }
+    if (amountBaseUnits > MAX_SAFE_ON_CHAIN_INTEGER) {
+      return {
+        status: "rejected",
+        reason: "quote amount is too large for Invoice v0 / Receipt v0 numeric fields",
+      };
+    }
+    let asset: { kind: MarketplaceAssetKind; address?: string };
+    try {
+      asset = toMarketplaceAsset(assetKind, offeredAssetAddress);
+    } catch (error) {
+      return { status: "rejected", reason: error instanceof Error ? error.message : String(error) };
+    }
+    const registry = readWalletProviderRegistryImpl(env);
+    const paymentWallet = resolvePaymentWallet(registry, request.walletId);
+    if (!paymentWallet) {
+      return { status: "rejected", reason: "Agent wallet is not configured" };
+    }
+    let walletAddress: string;
+    try {
+      walletAddress = resolveWalletAddress({ wallet: paymentWallet, chain: "solana" });
+    } catch (error) {
+      return { status: "rejected", reason: error instanceof Error ? error.message : String(error) };
+    }
+    const issuedAt = now();
+    const taskId = stableMarketplaceRunId("market-summary", executionIntentId);
+    const challengeResponse = await rpcCall({
+      fetchImpl,
+      origin: federationOrigin,
+      method: "payments.prepare",
+      headers: { authorization: `Bearer ${token.tokenId}` },
+      peerAuth: {
+        senderHandle: token.handle,
+        recipientHandle: handle,
+        env,
+      },
+      rpcParams: {
+        targetHandle: handle,
+        taskId,
+        offerId: trimString(selectedEntry.offer.id) || offerId,
+        payerAddress: walletAddress,
+      },
+    });
+    if (challengeResponse.error) {
+      return {
+        status: "rejected",
+        reason: `payment challenge failed: ${formatRpcRejectionDetail(challengeResponse.error)}`,
+      };
+    }
+    const challenge = asRecord(challengeResponse.result);
+    const challengeId = trimString(challenge?.challengeId);
+    const paymentMemo = trimString(challenge?.paymentMemo);
+    const challengeInvoiceId = trimString(challenge?.invoiceId);
+    const challengeReceiptId = trimString(challenge?.receiptId);
+    const challengeIssuedAt = trimString(challenge?.issuedAt);
+    const challengeExpiresAt = trimString(challenge?.expiresAt);
+    const challengeAsset = asRecord(challenge?.asset);
+    if (
+      !/^[0-9a-f]{64}$/u.test(challengeId) ||
+      paymentMemo !== `fased:a2a-payment:v1:${challengeId}` ||
+      !challengeInvoiceId ||
+      !challengeReceiptId ||
+      trimString(challenge?.taskId) !== taskId ||
+      !offerIdsMatch(
+        trimString(challenge?.offerId),
+        trimString(selectedEntry.offer.id) || offerId,
+      ) ||
+      trimString(challenge?.senderHandle).toLowerCase() !== token.handle.trim().toLowerCase() ||
+      trimString(challenge?.payerAddress) !== walletAddress ||
+      trimString(challenge?.payeeAddress) !== payeeAddress ||
+      Number(challenge?.amount) !== Number(amountBaseUnits) ||
+      trimString(challenge?.currency).toUpperCase() !== currency.toUpperCase() ||
+      trimString(challengeAsset?.kind) !== asset.kind ||
+      trimString(challengeAsset?.address) !== trimString(asset.address) ||
+      !Number.isFinite(Date.parse(challengeIssuedAt)) ||
+      !Number.isFinite(Date.parse(challengeExpiresAt)) ||
+      Date.parse(challengeIssuedAt) > issuedAt.getTime() + 60_000 ||
+      Date.parse(challengeExpiresAt) <= issuedAt.getTime()
+    ) {
+      return { status: "rejected", reason: "seller returned an invalid payment challenge" };
+    }
+    prepared = {
+      handle,
+      endpoint: selectedEntry.endpoint,
+      offerId: trimString(selectedEntry.offer.id) || offerId,
+      walletId: paymentWallet.id,
+      walletName: paymentWallet.name,
+      providerId: paymentWallet.providerId,
+      walletAddress,
       senderHandle: token.handle,
-    },
-    config: walletConfig,
-    runtimeConfig: cfg,
-    providerIdOverride: defaultWallet.providerId,
-    env: process.env,
-  });
-  if (!send.ok) {
-    return { status: "rejected", reason: normalizeMarketplacePaymentFailure(send.message) };
+      taskId,
+      challengeId,
+      paymentMemo,
+      invoiceId: challengeInvoiceId,
+      receiptId: challengeReceiptId,
+      taskAccessToken: createMarketplaceTaskAccessToken(),
+      sourceText,
+      requestedOutput,
+      summaryStyle,
+      maxSentences,
+      amount: amountBaseUnits.toString(),
+      currency,
+      asset,
+      payeeAddress,
+      issuedAt: challengeIssuedAt,
+      expiresAt: challengeExpiresAt,
+      settledAt: challengeIssuedAt,
+    } satisfies DurableMarketplacePreparedRun;
+    durable.update({ status: "payment_pending", patch: { prepared } });
   }
-  if (send.mode !== "autonomous") {
+
+  if (durable.record.status === "reserved") {
+    durable.update({ status: "payment_pending", patch: { prepared } });
+  }
+
+  if (!prepared) {
     return {
       status: "rejected",
-      reason: "paid marketplace run requires Payment automation to be enabled",
+      reason: "durable Marketplace payment state is incomplete; refusing execution",
     };
   }
 
-  const txRef = trimString(send.tx.txHash);
-  const payerAddress = resolveWalletAddress({
-    wallet: defaultWallet,
-    chain,
-    txSigner: typeof send.tx.signer === "string" ? send.tx.signer : undefined,
-  });
+  if (durable.record.status === "payment_pending" || durable.record.status === "unknown") {
+    const registry = readWalletProviderRegistryImpl(env);
+    const preparedWalletId = prepared.walletId;
+    const paymentWallet = registry.wallets.find((wallet) => wallet.id === preparedWalletId);
+    if (
+      !paymentWallet ||
+      resolveWalletUserRole(paymentWallet) !== "agent" ||
+      paymentWallet.providerId !== prepared.providerId ||
+      paymentWallet.name !== prepared.walletName
+    ) {
+      return {
+        status: "rejected",
+        reason: "the prepared Marketplace Agent wallet is no longer available for reconciliation",
+      };
+    }
+    const cfg = loadConfigImpl();
+    const walletConfig = resolveWalletRuntimeConfigImpl(cfg, env);
+    if (!walletConfig.enabled) {
+      return { status: "rejected", reason: "wallet runtime is disabled" };
+    }
+    const send = await createOrExecuteWalletSendImpl({
+      payload: {
+        chain: "solana",
+        to: prepared.payeeAddress,
+        amount: prepared.amount,
+        ...(prepared.asset.kind === "spl-token" ? { program: prepared.asset.address } : {}),
+        walletId: prepared.walletId,
+        walletName: prepared.walletName,
+        providerId: prepared.providerId,
+        memo: prepared.paymentMemo,
+      },
+      requestedBy: "marketplace-runner",
+      executionIntentId,
+      sendPath: "automation",
+      settlementContext: {
+        taskId: prepared.taskId,
+        invoiceId: prepared.invoiceId,
+        senderHandle: prepared.senderHandle,
+      },
+      config: walletConfig,
+      runtimeConfig: cfg,
+      providerIdOverride: prepared.providerId,
+      env,
+    });
+    if (!send.ok) {
+      const ambiguous =
+        send.code === "wallet_provider_ambiguous" || send.code === "wallet_send_in_progress";
+      durable.update({
+        status: ambiguous ? "unknown" : "failed",
+        patch: { reason: normalizeMarketplacePaymentFailure(send.message) },
+      });
+      return { status: "rejected", reason: normalizeMarketplacePaymentFailure(send.message) };
+    }
+    if (send.mode !== "autonomous") {
+      const reason = "paid marketplace run requires Payment automation to be enabled";
+      durable.update({ status: "failed", patch: { reason } });
+      return { status: "rejected", reason };
+    }
+    const txRef = trimString(send.tx.txHash);
+    const payerAddress = resolveWalletAddress({
+      wallet: paymentWallet,
+      chain: "solana",
+      txSigner: typeof send.tx.signer === "string" ? send.tx.signer : undefined,
+    });
+    prepared = { ...prepared, settledAt: now().toISOString() };
+    durable.update({
+      status: "paid",
+      patch: { txRef, payerAddress, prepared, reason: undefined },
+    });
+  }
+
+  const txRef = trimString(durable.record.txRef);
+  const payerAddress = trimString(durable.record.payerAddress);
+  if (!txRef || !payerAddress) {
+    durable.update({
+      status: "unknown",
+      patch: { reason: "Marketplace payment state is incomplete and requires reconciliation" },
+    });
+    return {
+      status: "rejected",
+      reason: "Marketplace payment state is incomplete and requires reconciliation",
+    };
+  }
 
   const publishSettlement = await publishFederationSettlementEvidenceImpl({
-    taskId,
-    invoiceId,
-    senderHandle: token.handle,
+    taskId: prepared.taskId,
+    invoiceId: prepared.invoiceId,
+    senderHandle: prepared.senderHandle,
     txRef,
-    chain,
-    asset,
-    amount: amountBaseUnits.toString(),
-    payeeAddress,
-    providerId: defaultWallet.providerId,
-    walletId: defaultWallet.id,
-    walletName: defaultWallet.name,
-    env: process.env,
+    chain: "solana",
+    asset: prepared.asset,
+    amount: prepared.amount,
+    payeeAddress: prepared.payeeAddress,
+    providerId: prepared.providerId,
+    walletId: prepared.walletId,
+    walletName: prepared.walletName,
+    env,
   });
   if (!publishSettlement.ok) {
     return {
@@ -673,96 +871,109 @@ export async function runPaidFederatedContentSummarize(
     };
   }
 
-  const issuedAt = now();
-  const expiresAt = new Date(issuedAt.getTime() + expiresInMinutes * 60_000);
-  const settledAt = now().toISOString();
-  const headers = {
-    authorization: `Bearer ${token.tokenId}`,
-    "x-fased-sender-handle": token.handle,
-    "x-fased-request-nonce": randomUUID(),
-    "x-fased-request-ts": String(Date.now()),
-  };
-
-  let createdTaskId = taskId;
-  try {
+  const headers = { authorization: `Bearer ${token.tokenId}` };
+  if (durable.record.status === "paid") {
     const createResponse = await rpcCall({
       fetchImpl,
       origin: federationOrigin,
       method: "tasks.create",
       headers,
+      peerAuth: {
+        senderHandle: token.handle,
+        recipientHandle: handle,
+        env,
+      },
       rpcParams: {
-        targetHandle: handle,
+        targetHandle: prepared.handle,
+        taskAccessToken: prepared.taskAccessToken,
         task: {
           schema: TASK_SCHEMA,
-          taskId,
-          from: token.handle,
-          to: handle,
-          offerId: canonicalOfferId,
+          taskId: prepared.taskId,
+          from: prepared.senderHandle,
+          to: prepared.handle,
+          offerId: prepared.offerId,
           serviceKind: "content.summarize",
-          prompt: sourceText,
-          requestedOutput,
+          prompt: prepared.sourceText,
+          requestedOutput: prepared.requestedOutput,
           serviceParams: {
-            summaryStyle,
-            maxSentences,
+            summaryStyle: prepared.summaryStyle,
+            maxSentences: prepared.maxSentences,
           },
-          invoice: invoiceId,
-          receipt: receiptId,
-          issuedAt: issuedAt.toISOString(),
+          invoice: prepared.invoiceId,
+          receipt: prepared.receiptId,
+          issuedAt: prepared.issuedAt,
+          challengeId: prepared.challengeId,
         },
         invoice: {
           schema: INVOICE_SCHEMA,
-          invoiceId,
-          taskId,
-          offerId: canonicalOfferId,
-          amount: Number(amountBaseUnits),
-          currency,
-          chain,
-          asset,
+          invoiceId: prepared.invoiceId,
+          challengeId: prepared.challengeId,
+          paymentMemo: prepared.paymentMemo,
+          taskId: prepared.taskId,
+          offerId: prepared.offerId,
+          amount: Number(prepared.amount),
+          currency: prepared.currency,
+          chain: "solana",
+          asset: prepared.asset,
           payee: {
-            chain,
-            address: payeeAddress,
+            chain: "solana",
+            address: prepared.payeeAddress,
           },
-          issuedAt: issuedAt.toISOString(),
-          expiresAt: expiresAt.toISOString(),
+          issuedAt: prepared.issuedAt,
+          expiresAt: prepared.expiresAt,
         },
         receipt: {
           schema: RECEIPT_SCHEMA,
-          receiptId,
-          invoiceId,
-          taskId,
-          offerId: canonicalOfferId,
-          amount: Number(amountBaseUnits),
-          currency,
-          chain,
-          asset,
+          receiptId: prepared.receiptId,
+          challengeId: prepared.challengeId,
+          paymentMemo: prepared.paymentMemo,
+          invoiceId: prepared.invoiceId,
+          taskId: prepared.taskId,
+          offerId: prepared.offerId,
+          amount: Number(prepared.amount),
+          currency: prepared.currency,
+          chain: "solana",
+          asset: prepared.asset,
           payer: {
-            chain,
+            chain: "solana",
             address: payerAddress,
           },
           payee: {
-            chain,
-            address: payeeAddress,
+            chain: "solana",
+            address: prepared.payeeAddress,
           },
           txRef,
-          settledAt,
+          settledAt: prepared.settledAt,
         },
       },
     });
     if (createResponse.error) {
+      const reason = `tasks.create failed after payment: ${formatRpcRejectionDetail(createResponse.error)}`;
+      durable.update({ status: "refund_required", patch: { reason } });
       return {
         status: "rejected",
-        reason: `tasks.create failed: ${formatRpcRejectionDetail(createResponse.error)}`,
+        reason,
       };
     }
-    createdTaskId = trimString(createResponse.result?.taskId) || taskId;
+    const createdTaskId = trimString(createResponse.result?.taskId) || prepared.taskId;
+    if (createdTaskId !== prepared.taskId) {
+      const reason = "tasks.create returned a different task identity after payment";
+      durable.update({ status: "refund_required", patch: { reason } });
+      return { status: "rejected", reason };
+    }
+    durable.update({ status: "task_created", patch: { taskCreatedAt: now().toISOString() } });
+  }
+
+  try {
     const snapshot = await waitForTaskCompletion({
       fetchImpl,
       federationOrigin,
-      taskId: createdTaskId,
+      taskId: prepared.taskId,
       headers: {
         authorization: `Bearer ${token.tokenId}`,
-        "x-fased-sender-handle": token.handle,
+        "x-fased-task-token": prepared.taskAccessToken,
       },
+      taskAccessToken: prepared.taskAccessToken,
       sleep,
     });
     const output = asRecord(snapshot?.output) ?? {};
@@ -772,16 +983,14 @@ export async function runPaidFederatedContentSummarize(
     const resultKind = trimString(result.kind);
     const paymentStatus = trimString(payment.status) || trimString(paymentProof.status);
     if (resultKind !== CONTENT_SUMMARIZE_RESULT_KIND) {
-      return {
-        status: "rejected",
-        reason: `unexpected result kind: ${resultKind || "missing"}`,
-      };
+      const reason = `unexpected result kind: ${resultKind || "missing"}`;
+      durable.update({ status: "refund_required", patch: { reason } });
+      return { status: "rejected", reason };
     }
     if (paymentStatus !== "verified") {
-      return {
-        status: "rejected",
-        reason: `paid summarize completed without verified payment: ${paymentStatus || "missing"}`,
-      };
+      const reason = `paid summarize completed without verified payment: ${paymentStatus || "missing"}`;
+      durable.update({ status: "refund_required", patch: { reason } });
+      return { status: "rejected", reason };
     }
     const paymentLinkage = {
       offerId: trimString(payment.offerId),
@@ -793,44 +1002,77 @@ export async function runPaidFederatedContentSummarize(
       proofTxRef: trimString(paymentProof.txRef),
     };
     if (
-      !offerIdsMatch(paymentLinkage.offerId, canonicalOfferId) ||
-      paymentLinkage.invoiceId !== invoiceId ||
-      paymentLinkage.receiptId !== receiptId ||
+      !offerIdsMatch(paymentLinkage.offerId, prepared.offerId) ||
+      paymentLinkage.invoiceId !== prepared.invoiceId ||
+      paymentLinkage.receiptId !== prepared.receiptId ||
       paymentLinkage.txRef !== txRef ||
-      paymentLinkage.proofInvoiceId !== invoiceId ||
-      paymentLinkage.proofReceiptId !== receiptId ||
+      paymentLinkage.proofInvoiceId !== prepared.invoiceId ||
+      paymentLinkage.proofReceiptId !== prepared.receiptId ||
       paymentLinkage.proofTxRef !== txRef
     ) {
-      return {
-        status: "rejected",
-        reason:
-          "paid summarize completion did not match the exact offer, invoice, receipt, and transaction",
-      };
+      const reason =
+        "paid summarize completion did not match the exact offer, invoice, receipt, and transaction";
+      durable.update({ status: "refund_required", patch: { reason } });
+      return { status: "rejected", reason };
     }
-    return {
+    const accepted: FederationPaidContentSummarizeRunResult = {
       status: "accepted",
-      handle,
-      endpoint: selectedEntry.endpoint,
-      offerId: canonicalOfferId,
-      taskId: createdTaskId,
-      invoiceId,
-      receiptId,
+      handle: prepared.handle,
+      endpoint: prepared.endpoint,
+      offerId: prepared.offerId,
+      taskId: prepared.taskId,
+      invoiceId: prepared.invoiceId,
+      receiptId: prepared.receiptId,
       txRef,
       payerAddress,
       snapshot,
     };
+    durable.update({ status: "completed", patch: { result: accepted, reason: undefined } });
+    return accepted;
   } catch (error) {
     return {
       status: "rejected",
       reason: error instanceof Error ? error.message : String(error),
-      handle,
-      endpoint: selectedEntry.endpoint,
-      offerId: canonicalOfferId,
-      taskId: createdTaskId,
-      invoiceId,
-      receiptId,
+      handle: prepared.handle,
+      endpoint: prepared.endpoint,
+      offerId: prepared.offerId,
+      taskId: prepared.taskId,
+      invoiceId: prepared.invoiceId,
+      receiptId: prepared.receiptId,
       txRef,
       payerAddress,
+    };
+  }
+}
+
+export async function runPaidFederatedContentSummarize(
+  request: FederationPaidContentSummarizeRunRequest,
+  deps: RunDeps = {},
+): Promise<FederationPaidContentSummarizeRunResult> {
+  const executionIntentId = trimString(request.executionIntentId);
+  if (!executionIntentId) {
+    return {
+      status: "rejected",
+      reason: "paid marketplace run requires a stable executionIntentId",
+    };
+  }
+  try {
+    return await withDurableMarketplaceRun({
+      executionIntentId,
+      intent: { version: 1, request },
+      env: deps.env,
+      run: async (durable) =>
+        await runPaidFederatedContentSummarizeLocked({
+          request,
+          deps,
+          executionIntentId,
+          durable,
+        }),
+    });
+  } catch (error) {
+    return {
+      status: "rejected",
+      reason: error instanceof Error ? error.message : String(error),
     };
   }
 }

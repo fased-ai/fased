@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -43,63 +44,6 @@ const (
 	operationUnknown   = "unknown"
 )
 
-var signerV2Capabilities = signerCapabilitiesV2{
-	Protocol:                     signerProtocolRangeV2{Current: signerProtocolVersion, Min: signerProtocolVersion, Max: signerProtocolVersion},
-	NativeFeeReservationLamports: signerNativeFeeReservationV2,
-	IntentTypes: []string{
-		intentSolanaNativeTransfer,
-		intentSolanaSPLTransferChecked,
-		intentSolanaSATAction,
-		intentSolanaVaultBondAction,
-		intentFederationBondChallenge,
-		intentSolanaJupiterSwap,
-		intentSolanaTriggerCreate,
-		intentSolanaTriggerCancel,
-	},
-	OperationStates: []string{
-		operationReserved,
-		operationBroadcast,
-		operationConfirmed,
-		operationFailed,
-		operationUnknown,
-	},
-	Features: []string{
-		"failClosedPolicies",
-		"policyHashes",
-		"applicationPolicyTightening",
-		"vaultReviewedOnly",
-		"durableCaps",
-		"atomicMultiAssetCaps",
-		"signerControlledNativeFeeCaps",
-		"atomicIdempotency",
-		"ambiguousBroadcastReconciliation",
-		"signerOwnedKeys",
-		"signerOwnedSuccessorRotation",
-		"permanentRetiredWalletPolicies",
-		"signerOwnedRPC",
-		"typedSolanaTransactions",
-		"idempotentAssociatedTokenCreation",
-		"typedSATActions",
-		"typedVaultBondActions",
-		"domainSeparatedFederationBondChallenges",
-		"federationBondChallengeWrapperV2",
-		"signerOwnedWebAuthn",
-		"signerOwnedWebAuthnCredentialRevocation",
-		"singleUseReviewedAuthorization",
-		"typedJupiterSemantics",
-		"signerOwnedReviewPrepareExecute",
-		"exactPreparedTransactions",
-		"reviewedVaultBondActions",
-		"reviewedFederationBondChallenges",
-		"signerOwnedStateRecheck",
-		"durableReviewAuthorization",
-		"signerOwnedJupiterTriggerV2",
-		"signerOwnedJupiterTriggerHistory",
-		"jupiterTriggerSecretsNeverCrossSocket",
-		"jupiterTriggerDurablePhases",
-	},
-}
-
 type signerProtocolRangeV2 struct {
 	Current int `json:"current"`
 	Min     int `json:"min"`
@@ -121,6 +65,7 @@ type signerIntentV2 struct {
 	TokenProgram string                                 `json:"tokenProgram,omitempty"`
 	Mint         string                                 `json:"mint,omitempty"`
 	Amount       string                                 `json:"amount,omitempty"`
+	Memo         string                                 `json:"memo,omitempty"`
 	Action       string                                 `json:"action,omitempty"`
 	ProgramID    string                                 `json:"programId,omitempty"`
 	DataBase64   string                                 `json:"dataBase64,omitempty"`
@@ -329,6 +274,9 @@ func normalizeSignerIntentForWalletV2(input signerIntentV2, wallet *solana.Publi
 		asset = "solana:native"
 		destination = intent.Destination
 	case intentSolanaSPLTransferChecked:
+		if strings.TrimSpace(input.TokenProgram) == "" {
+			return normalizedIntentV2{}, errors.New("signer-owned SPL token program resolution is required")
+		}
 		intent.TokenProgram, err = normalizePublicKeyV2(input.TokenProgram, "tokenProgram")
 		if err != nil {
 			return normalizedIntentV2{}, err
@@ -370,6 +318,12 @@ func normalizeSignerIntentForWalletV2(input signerIntentV2, wallet *solana.Publi
 	default:
 		return normalizedIntentV2{}, fmt.Errorf("unsupported signer-v2 intent type %q", intent.Type)
 	}
+	if input.Memo != "" {
+		intent.Memo = strings.TrimSpace(input.Memo)
+		if !regexp.MustCompile(`^fased:a2a-(?:payment|refund):v1:[0-9a-f]{64}$`).MatchString(intent.Memo) {
+			return normalizedIntentV2{}, errors.New("typed transfer memo must be a Fased A2A payment or refund challenge")
+		}
+	}
 
 	canonical, err := json.Marshal(intent)
 	if err != nil {
@@ -381,13 +335,13 @@ func normalizeSignerIntentForWalletV2(input signerIntentV2, wallet *solana.Publi
 		Digest:           "sha256:" + hex.EncodeToString(digest[:]),
 		Asset:            asset,
 		Amount:           amount,
-		RequiredPrograms: requiredProgramsForIntentV2(intent.Type, program),
+		RequiredPrograms: requiredProgramsForIntentV2(intent.Type, program, intent.Memo != ""),
 		Destination:      destination,
 		PolicyOperation:  intent.Type,
 	}, nil
 }
 
-func requiredProgramsForIntentV2(intentType string, primaryProgram string) []string {
+func requiredProgramsForIntentV2(intentType string, primaryProgram string, hasMemo bool) []string {
 	programs := []string{primaryProgram}
 	if intentType == intentSolanaSPLTransferChecked {
 		programs = append(
@@ -395,6 +349,9 @@ func requiredProgramsForIntentV2(intentType string, primaryProgram string) []str
 			solana.SystemProgramID.String(),
 			solana.SPLAssociatedTokenAccountProgramID.String(),
 		)
+	}
+	if hasMemo {
+		programs = append(programs, memoProgramV2V2.String())
 	}
 	programs, _ = normalizeSortedStringsV2(programs, func(raw string) (string, error) {
 		return normalizePublicKeyV2(raw, "required program")

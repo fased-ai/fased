@@ -89,7 +89,7 @@ async function createFixture() {
       events.push("start-v2");
       expect(expectedRelease).toEqual(signerRelease(expectedRelease.version));
       await fsp.writeFile(signerStateDBPath, "new-db\n", { mode: 0o600 });
-      return expectedRelease;
+      return { release: expectedRelease, invariant: "preserved-signer-state" };
     },
     startPreviousSigner: async () => {
       events.push("start-previous");
@@ -101,6 +101,10 @@ async function createFixture() {
       events.push("start-gateway");
     },
     probeSigner: async () => signerRelease("1.2.2"),
+    probeSignerState: async () => ({
+      release: signerRelease("1.2.2"),
+      invariant: "preserved-signer-state",
+    }),
   });
   return { context, events, paths };
 }
@@ -286,6 +290,35 @@ describe("root-owned hosted updater protocol", () => {
     await expect(
       __testing.prepareSignerRelease(request("prepareRelease", TRANSACTION_ONE, "1.2.5"), context),
     ).rejects.toThrow("rollback floor is invalid");
+  });
+
+  it("rolls back when activation changes any signer-owned policy, network, or WebAuthn state", async () => {
+    const { context, events, paths } = await createFixture();
+    await __testing.prepareSignerRelease(
+      request("prepareRelease", TRANSACTION_ONE, "1.2.3"),
+      context,
+    );
+    context.startSignerV2 = async () => {
+      events.push("start-v2-mismatched-state");
+      await fsp.writeFile(paths.signerStateDBPath, "mutated-db\n", { mode: 0o600 });
+      return {
+        release: signerRelease("1.2.3"),
+        invariant: "changed-signer-state",
+      };
+    };
+
+    await expect(
+      __testing.activateSignerRelease(
+        request("activateRelease", TRANSACTION_ONE, "1.2.3"),
+        context,
+      ),
+    ).rejects.toThrow("did not preserve exact wallet, policy, network, and WebAuthn state");
+    expect(await fsp.readFile(paths.signerPath, "utf8")).toBe("old-signer\n");
+    expect(await fsp.readFile(paths.signerStateDBPath, "utf8")).toBe("old-db\n");
+    expect(await fsp.readFile(paths.versionPath, "utf8")).toBe("1.2.2\n");
+    expect(fs.existsSync(paths.journalPath)).toBe(false);
+    expect(fs.existsSync(paths.gatewayGatePath)).toBe(true);
+    expect(fs.existsSync(paths.signerGatePath)).toBe(true);
   });
 
   it("recovers interrupted prepare conservatively without stopping the live signer", async () => {
@@ -504,6 +537,13 @@ describe("root-owned hosted updater protocol", () => {
         release: signerRelease("1.2.3"),
         capabilities: { protocol: { current: 2, min: 2, max: 2 } },
         policies: [],
+        network: { ready: true, wallets: [] },
+        webAuthn: {
+          configured: false,
+          credentialCount: 0,
+          credentialVersion: 0,
+          ready: true,
+        },
       },
     };
     expect(() => __testing.assertSignerV2Health(health, signerRelease("1.2.3"))).not.toThrow();

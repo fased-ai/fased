@@ -1239,6 +1239,7 @@ export async function createWalletNamedWallet(input: {
   walletId?: string;
   providerId?: WalletProviderId;
   role?: "agent" | "vault";
+  chain?: "solana";
   address?: string;
 }): Promise<{ ok: true; wallet: WalletNamedWallet }> {
   return await fetchJson<{ ok: true; wallet: WalletNamedWallet }>("/api/wallet/wallets", {

@@ -34,13 +34,37 @@ describe("local socket signer protocol", () => {
         credentialVersion: 4,
         ready: false,
       },
-      jupiter: { triggerConfigured: true },
+      jupiter: { triggerConfigured: true, liveEnabled: false },
+      state: {
+        databaseBytes: 4096,
+        wallets: 1,
+        operations: 80_000,
+        operationReplayArchive: 1,
+        reviews: 0,
+        triggerWorkflows: 0,
+        dailyUsageBuckets: 1,
+        capacities: {
+          operations: { used: 80_000, maximum: 100_000, warnAt: 80_000, warning: true },
+        },
+        capacityWarnings: ["operations signer state is at 80000/100000 records"],
+      },
     };
     expect(validateLocalSocketSignerResult("v2.capabilities", health)).toBe(true);
     expect(
       validateLocalSocketSignerResult("v2.capabilities", {
         ...health,
         webAuthn: { ...health.webAuthn, credentialVersion: -1 },
+      }),
+    ).toBe(false);
+    expect(
+      validateLocalSocketSignerResult("v2.capabilities", {
+        ...health,
+        state: {
+          ...health.state,
+          capacities: {
+            operations: { ...health.state.capacities.operations, maximum: 0 },
+          },
+        },
       }),
     ).toBe(false);
     expect(

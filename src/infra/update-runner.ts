@@ -203,6 +203,103 @@ const DEFAULT_PACKAGE_NAME = "@fased/fased";
 const LEGACY_PACKAGE_NAME = "fased";
 const CORE_PACKAGE_NAMES = new Set([LEGACY_PACKAGE_NAME, DEFAULT_PACKAGE_NAME]);
 const DEV_PREFLIGHT_LINT_OPT_IN_ENV = "FASED_UPDATE_PREFLIGHT_LINT";
+const SOURCE_RELEASE_REPOSITORY = "fased-ai/fased";
+const SOURCE_RELEASE_WORKFLOW = "fased-ai/fased/.github/workflows/hosted-runtime-release.yml";
+
+async function verifyAttestedSourceRelease(params: {
+  tag: string;
+  tagCommit: string;
+  timeoutMs: number;
+  runCommand: CommandRunner;
+  fetchImpl: typeof fetch;
+  baseUrl?: string;
+}): Promise<UpdateStepResult> {
+  const startedAt = Date.now();
+  const version = params.tag.replace(/^v/u, "");
+  const command = `verify attested source ${params.tag} at ${params.tagCommit}`;
+  const cwd = process.cwd();
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "fased-source-attestation-"));
+  try {
+    const base =
+      (params.baseUrl?.trim().replace(/\/+$/u, "") ||
+        "https://github.com/fased-ai/fased/releases/download") + `/${params.tag}`;
+    const manifestPath = path.join(tempRoot, "fased-hosted-release-v2.json");
+    const bundlePath = `${manifestPath}.attestation.json`;
+    for (const [name, destination] of [
+      ["fased-hosted-release-v2.json", manifestPath],
+      ["fased-hosted-release-v2.json.attestation.json", bundlePath],
+    ] as const) {
+      const response = await params.fetchImpl(`${base}/${name}`, { redirect: "follow" });
+      if (!response.ok) {
+        throw new Error(`release identity asset ${name} is unavailable (${response.status})`);
+      }
+      await fs.writeFile(destination, new Uint8Array(await response.arrayBuffer()), {
+        mode: 0o600,
+      });
+    }
+    const verification = await params.runCommand(
+      [
+        "gh",
+        "attestation",
+        "verify",
+        manifestPath,
+        "--repo",
+        SOURCE_RELEASE_REPOSITORY,
+        "--bundle",
+        bundlePath,
+        "--signer-workflow",
+        SOURCE_RELEASE_WORKFLOW,
+        "--source-ref",
+        `refs/tags/${params.tag}`,
+        "--deny-self-hosted-runners",
+      ],
+      {
+        cwd: tempRoot,
+        timeoutMs: params.timeoutMs,
+        env: { ...process.env, GH_PROMPT_DISABLED: "1" },
+      },
+    );
+    if (verification.code !== 0) {
+      throw new Error(verification.stderr.trim() || "GitHub attestation verification failed");
+    }
+    const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8")) as {
+      schemaVersion?: unknown;
+      release?: { version?: unknown; tag?: unknown; commit?: unknown };
+      signer?: { release?: { version?: unknown; commit?: unknown; development?: unknown } };
+    };
+    if (
+      manifest.schemaVersion !== 2 ||
+      manifest.release?.version !== version ||
+      manifest.release?.tag !== params.tag ||
+      manifest.release?.commit !== params.tagCommit ||
+      !/^[a-f0-9]{40}$/u.test(String(manifest.release?.commit ?? "")) ||
+      manifest.signer?.release?.version !== version ||
+      manifest.signer?.release?.commit !== params.tagCommit ||
+      manifest.signer?.release?.development !== false
+    ) {
+      throw new Error("attested release does not bind the exact source tag, commit, and signer");
+    }
+    return {
+      name: "source release attestation",
+      command,
+      cwd,
+      durationMs: Date.now() - startedAt,
+      exitCode: 0,
+      stdoutTail: `${params.tag} -> ${params.tagCommit}`,
+    };
+  } catch (error) {
+    return {
+      name: "source release attestation",
+      command,
+      cwd,
+      durationMs: Date.now() - startedAt,
+      exitCode: 1,
+      stderrTail: String(error),
+    };
+  } finally {
+    await fs.rm(tempRoot, { recursive: true, force: true });
+  }
+}
 
 function normalizeDir(value?: string | null) {
   if (!value) {
@@ -1646,6 +1743,31 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
           steps,
           durationMs: Date.now() - startedAt,
         };
+      }
+
+      const tagCommitStep = await runStep(
+        step(
+          `git rev-parse ${tag}^{commit}`,
+          ["git", "-C", gitRoot, "rev-parse", `${tag}^{commit}`],
+          gitRoot,
+        ),
+      );
+      steps.push(tagCommitStep);
+      const tagCommit = tagCommitStep.stdoutTail?.trim() ?? "";
+      if (tagCommitStep.exitCode !== 0 || !/^[a-f0-9]{40}$/u.test(tagCommit)) {
+        return buildGitErrorResult("release-tag-identity-failed");
+      }
+      const attestationStep = await verifyAttestedSourceRelease({
+        tag,
+        tagCommit,
+        timeoutMs,
+        runCommand,
+        fetchImpl: opts.hostedReleaseFetch ?? fetch,
+        baseUrl: opts.hostedReleaseBaseUrl,
+      });
+      steps.push(attestationStep);
+      if (attestationStep.exitCode !== 0) {
+        return buildGitErrorResult("source-release-attestation-failed");
       }
 
       const failure = await runGitCheckoutOrFail(`git checkout ${tag}`, [

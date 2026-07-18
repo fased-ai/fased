@@ -158,6 +158,7 @@ describe("marketplace capability adapter", () => {
       input: { inputText: "daily records" },
       deps: {
         fetchImpl,
+        ssrfLookupFn: (async () => [{ address: "93.184.216.34", family: 4 }]) as never,
         now: () => new Date("2026-05-04T01:00:00.000Z"),
       },
     });
@@ -172,6 +173,87 @@ describe("marketplace capability adapter", () => {
     );
     expect(result.order.subscription?.status).toBe("active");
     expect(result.result).toMatchObject({ kind: "data.feed.v0" });
+  });
+
+  it("blocks webhook hostnames that resolve to private or metadata addresses", async () => {
+    const fetchImpl = vi.fn();
+    const cfg = config({
+      serviceKind: "data.feed",
+      delivery: {
+        status: "pending",
+        targetId: "private-webhook",
+        targetKind: "webhook",
+        targetStatus: "ready",
+      },
+    });
+    cfg.federation!.marketplace!.deliveryTargets!.local = [
+      {
+        targetId: "private-webhook",
+        kind: "webhook",
+        status: "ready",
+        webhook: { url: "https://metadata.attacker.example/hook", method: "POST" },
+      },
+    ];
+
+    const result = await runMarketplaceCapabilityAdapter({
+      config: cfg,
+      orderId: "order-1",
+      deps: {
+        fetchImpl,
+        ssrfLookupFn: (async () => [{ address: "169.254.169.254", family: 4 }]) as never,
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.delivered).toBe(false);
+      expect(result.deliveryStatus).toBe("failed");
+      expect(result.order.delivery?.notes).toMatch(/private|internal|blocked/iu);
+    }
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("blocks webhook redirects to private network targets", async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(null, {
+          status: 302,
+          headers: { location: "http://169.254.169.254/latest/meta-data" },
+        }),
+    );
+    const cfg = config({
+      serviceKind: "data.feed",
+      delivery: {
+        status: "pending",
+        targetId: "redirect-webhook",
+        targetKind: "webhook",
+        targetStatus: "ready",
+      },
+    });
+    cfg.federation!.marketplace!.deliveryTargets!.local = [
+      {
+        targetId: "redirect-webhook",
+        kind: "webhook",
+        status: "ready",
+        webhook: { url: "https://public.example/hook", method: "POST" },
+      },
+    ];
+
+    const result = await runMarketplaceCapabilityAdapter({
+      config: cfg,
+      orderId: "order-1",
+      deps: {
+        fetchImpl,
+        ssrfLookupFn: (async () => [{ address: "93.184.216.34", family: 4 }]) as never,
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.delivered).toBe(false);
+      expect(result.order.delivery?.notes).toMatch(/private|internal|blocked/iu);
+    }
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it("rejects automated execution before payment evidence exists", async () => {

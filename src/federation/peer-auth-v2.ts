@@ -24,6 +24,7 @@ export const FEDERATION_PEER_MAX_CLOCK_SKEW_MS = 2 * 60_000;
 
 export const FEDERATION_MARKETPLACE_ORDER_PATH = "/api/federation/marketplace/orders";
 export const FEDERATION_MARKETPLACE_DELIVERY_PATH = "/api/federation/marketplace/deliveries";
+export const FEDERATION_A2A_RPC_PATH = "/a2a";
 
 export const FEDERATION_PEER_HEADERS = {
   protocolVersion: "x-fased-protocol-version",
@@ -194,7 +195,10 @@ function resolveIdentity(env: NodeJS.ProcessEnv, identity?: DeviceIdentity): Dev
 export function buildSignedFederationPeerRequest(params: {
   senderHandle: string;
   recipientHandle: string;
-  path: typeof FEDERATION_MARKETPLACE_ORDER_PATH | typeof FEDERATION_MARKETPLACE_DELIVERY_PATH;
+  path:
+    | typeof FEDERATION_MARKETPLACE_ORDER_PATH
+    | typeof FEDERATION_MARKETPLACE_DELIVERY_PATH
+    | typeof FEDERATION_A2A_RPC_PATH;
   body: unknown;
   method?: "POST";
   nowMs?: number;
@@ -579,7 +583,8 @@ export async function authorizeFederationPeerRequestV2(params: {
   recipientHandle: string;
   expectedPath:
     | typeof FEDERATION_MARKETPLACE_ORDER_PATH
-    | typeof FEDERATION_MARKETPLACE_DELIVERY_PATH;
+    | typeof FEDERATION_MARKETPLACE_DELIVERY_PATH
+    | typeof FEDERATION_A2A_RPC_PATH;
   directoryBaseUrl: string;
   directoryApiToken?: string;
   clientIp?: string;

@@ -187,6 +187,9 @@ func (s *signerStoreV2) prepareArtifactReviewV2(
 			}
 			return nil
 		}
+		if err := requireBucketCapacityV2(reviews, maxSignerReviewsV2, "signer review store"); err != nil {
+			return err
+		}
 
 		rawPolicy := tx.Bucket(bucketSignerPoliciesV2).Get([]byte(walletID))
 		if rawPolicy == nil {

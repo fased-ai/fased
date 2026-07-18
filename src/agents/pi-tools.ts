@@ -253,6 +253,8 @@ export function createFasedAgentCodingTools(options?: {
   disabledToolNames?: string[];
   /** Whether the sender is an owner (required for owner-only tools). */
   senderIsOwner?: boolean;
+  /** Marketplace instructions are present without an immutable per-call skill identity. */
+  untrustedSkillContent?: boolean;
 }): AnyAgentTool[] {
   const execToolName = "exec";
   const sandbox = options?.sandbox?.enabled ? options.sandbox : undefined;
@@ -512,7 +514,17 @@ export function createFasedAgentCodingTools(options?: {
       senderIsOwner: options?.senderIsOwner,
     }),
   ];
-  const toolsForMessageProvider = applyMessageProviderToolPolicy(tools, options?.messageProvider);
+  // A normal model turn can contain instructions from several skills, so it
+  // cannot truthfully attribute a selected tool call to one marketplace
+  // package. Keep such turns read-only; user-invoked skill commands receive a
+  // trusted skill identity and are checked against their manifest separately.
+  const provenanceSafeTools = options?.untrustedSkillContent
+    ? tools.filter((tool) => tool.name === "read")
+    : tools;
+  const toolsForMessageProvider = applyMessageProviderToolPolicy(
+    provenanceSafeTools,
+    options?.messageProvider,
+  );
   // Security: treat unknown/undefined as unauthorized (opt-in, not opt-out)
   const senderIsOwner = options?.senderIsOwner === true;
   const toolsByAuthorization = applyOwnerOnlyToolPolicy(toolsForMessageProvider, senderIsOwner);

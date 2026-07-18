@@ -20,6 +20,7 @@ import {
 } from "../federation/peer-auth-v2.js";
 import { resolveFederationHandle } from "../federation/runtime.js";
 import { loadOrCreateDeviceIdentity } from "../infra/device-identity.js";
+import type { LookupFn } from "../infra/net/ssrf.js";
 import { handleFederationHttpRequest } from "./federation-http.js";
 
 class MockResponse extends PassThrough {
@@ -75,6 +76,7 @@ async function invoke(opts: {
   headers?: Record<string, string>;
   signPeerRequest?: boolean;
   baseUrl?: string;
+  marketplaceDeliverySsrfLookupFn?: LookupFn;
 }) {
   const parsedUrl = new URL(opts.url, "http://localhost");
   const peerPath =
@@ -126,6 +128,7 @@ async function invoke(opts: {
         recordFailure: () => undefined,
       },
     },
+    marketplaceDeliverySsrfLookupFn: opts.marketplaceDeliverySsrfLookupFn,
   });
   await waitForFinish(res);
   return {
@@ -1339,6 +1342,9 @@ describe("federation HTTP proxy", () => {
           },
         },
       }),
+      marketplaceDeliverySsrfLookupFn: (async () => [
+        { address: "93.184.216.34", family: 4 },
+      ]) as unknown as LookupFn,
     });
 
     expect(delivered.handled).toBe(true);

@@ -9,6 +9,9 @@ EXTRA_COMPOSE_FILE="$ROOT_DIR/docker-compose.extra.yml"
 ENV_FILE="$ROOT_DIR/.env"
 LOCK_DIR="$ROOT_DIR/.docker-signer-update.lock"
 ARCHIVE_NAME="signer-state.tar"
+SECRETS_ARCHIVE_NAME="signer-secrets.tar"
+CONFIG_ARCHIVE_NAME="gateway-config.tar"
+WORKSPACE_ARCHIVE_NAME="gateway-workspace.tar"
 MANIFEST_NAME="snapshot.manifest"
 
 usage() {
@@ -20,10 +23,11 @@ Usage:
   scripts/docker-signer-update.sh --rollback </absolute/snapshot/directory>
 
 The update transaction stops Gateway and fased-signerd, creates and verifies an
-offline signer-state snapshot, preserves the exact old image ID, and only then
+offline recovery set for signer state, signer secrets, Gateway configuration,
+and the Agent workspace, preserves the exact old image ID, and only then
 installs the Compose definition embedded in the exact target image and starts
-the new signer. A failed signer or Gateway health check restores the snapshot,
-deployment definition, and exact old image automatically.
+the new signer. A failed signer or Gateway health check restores the complete
+recovery set, deployment definition, and exact old image automatically.
 
 The target must be an immutable digest or a unique version tag. `latest` and
 the overwriteable `fased:local` tag are rejected. When using signed container
@@ -57,6 +61,8 @@ validate_absolute_path() {
   [[ "$value" == /* ]] || fail "$label must be an absolute path."
   [[ "$value" != *$'\n'* && "$value" != *$'\r'* && "$value" != *$'\t'* ]] || \
     fail "$label contains unsupported control characters."
+  [[ "$value" != *","* && "$value" != *":"* ]] || \
+    fail "$label contains characters unsupported by a Docker bind mount."
 }
 
 validate_image_reference() {
@@ -345,6 +351,54 @@ restore_state_archive() {
   rm -f "$verification_archive"
 }
 
+snapshot_bind_archive() {
+  local source_dir="$1"
+  local image="$2"
+  local archive="$3"
+  [[ -d "$source_dir" && ! -L "$source_dir" ]] || \
+    fail "Docker state directory is missing or unsafe: $source_dir"
+  assert_project_signer_stopped "$PROJECT_NAME" 0
+  docker run --rm \
+    --network none \
+    --read-only \
+    --cap-drop ALL \
+    --security-opt no-new-privileges:true \
+    --user 1000:1000 \
+    --mount "type=bind,src=${source_dir},dst=/snapshot-source,readonly" \
+    "$image" \
+    sh -ceu \
+    'tar --sort=name --format=posix --pax-option=delete=atime,delete=ctime --mtime=@0 --owner=0 --group=0 --numeric-owner -C /snapshot-source -cf - .' \
+    >"$archive"
+  chmod 600 "$archive"
+  [[ -s "$archive" ]] || fail "Docker state directory snapshot is empty: $source_dir"
+}
+
+restore_bind_archive() {
+  local destination_dir="$1"
+  local image="$2"
+  local archive="$3"
+  local expected="$4"
+  local verification_archive="$5"
+  [[ -d "$destination_dir" && ! -L "$destination_dir" ]] || \
+    fail "Docker restore directory is missing or unsafe: $destination_dir"
+  assert_project_signer_stopped "$PROJECT_NAME" 0
+  verify_archive "$archive" "$expected"
+  docker run --rm -i \
+    --network none \
+    --read-only \
+    --cap-drop ALL \
+    --security-opt no-new-privileges:true \
+    --user 1000:1000 \
+    --mount "type=bind,src=${destination_dir},dst=/snapshot-target" \
+    "$image" \
+    sh -ceu \
+    'find /snapshot-target -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; tar -xf - -C /snapshot-target' \
+    <"$archive"
+  snapshot_bind_archive "$destination_dir" "$image" "$verification_archive"
+  verify_archive "$verification_archive" "$expected"
+  rm -f "$verification_archive"
+}
+
 verify_snapshot_metadata() {
   local snapshot_dir="$1"
   local manifest="$snapshot_dir/$MANIFEST_NAME"
@@ -358,11 +412,14 @@ verify_snapshot_metadata() {
     "$snapshot_dir/.env.target" \
     "$snapshot_dir/docker-compose.before.yml" \
     "$snapshot_dir/docker-compose.target.yml" \
-    "$snapshot_dir/$ARCHIVE_NAME"; do
+    "$snapshot_dir/$ARCHIVE_NAME" \
+    "$snapshot_dir/$SECRETS_ARCHIVE_NAME" \
+    "$snapshot_dir/$CONFIG_ARCHIVE_NAME" \
+    "$snapshot_dir/$WORKSPACE_ARCHIVE_NAME"; do
     [[ -f "$required_file" && ! -L "$required_file" ]] || \
       fail "snapshot file is missing or unsafe: $required_file"
   done
-  [[ "$(manifest_value "$manifest" format)" == "fased-docker-signer-snapshot-v3" ]] || \
+  [[ "$(manifest_value "$manifest" format)" == "fased-docker-signer-snapshot-v4" ]] || \
     fail "unsupported signer snapshot format."
   expected="$(manifest_value "$manifest" env_sha256)"
   verify_archive "$snapshot_dir/.env.before" "$expected"
@@ -382,6 +439,15 @@ verify_snapshot_metadata() {
   verify_archive \
     "$snapshot_dir/$ARCHIVE_NAME" \
     "$(manifest_value "$manifest" archive_sha256)"
+  verify_archive \
+    "$snapshot_dir/$SECRETS_ARCHIVE_NAME" \
+    "$(manifest_value "$manifest" secrets_archive_sha256)"
+  verify_archive \
+    "$snapshot_dir/$CONFIG_ARCHIVE_NAME" \
+    "$(manifest_value "$manifest" config_archive_sha256)"
+  verify_archive \
+    "$snapshot_dir/$WORKSPACE_ARCHIVE_NAME" \
+    "$(manifest_value "$manifest" workspace_archive_sha256)"
 }
 
 install_target_definition() {
@@ -409,9 +475,11 @@ restore_snapshot_definition() {
 assert_target_container_binding() {
   local expected_image_id="$1"
   local expected_state_volume="$2"
+  local expected_secrets_volume="$3"
   local container_id
   local actual_image_id
   local actual_state_volume
+  local actual_secrets_volume
   compose_current create --force-recreate fased-signerd >/dev/null
   container_id="$(compose_current ps -a -q fased-signerd)"
   [[ -n "$container_id" && "$container_id" != *$'\n'* ]] || \
@@ -422,6 +490,9 @@ assert_target_container_binding() {
   actual_state_volume="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination \"/var/lib/fased-signerd\"}}{{.Name}}{{end}}{{end}}' "$container_id")"
   [[ "$actual_state_volume" == "$expected_state_volume" ]] || \
     fail "target Compose definition changed the signer-state volume; refusing migration."
+  actual_secrets_volume="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination \"/var/lib/fased-signerd-secrets\"}}{{.Name}}{{end}}{{end}}' "$container_id")"
+  [[ "$actual_secrets_volume" == "$expected_secrets_volume" ]] || \
+    fail "target Compose definition changed the signer-secrets volume; refusing migration."
 }
 
 activate_current_runtime() {
@@ -458,6 +529,9 @@ rollback_snapshot() {
   local snapshot_dir="$1"
   local manifest="$snapshot_dir/$MANIFEST_NAME"
   local volume
+  local secrets_volume
+  local config_dir
+  local workspace_dir
   local rollback_image
   local old_image_id
   local old_version
@@ -467,12 +541,18 @@ rollback_snapshot() {
   local old_signer_development
   local old_require_production
   local archive_sha
+  local secrets_archive_sha
+  local config_archive_sha
+  local workspace_archive_sha
   local rollback_id
   local verification_archive
 
   verify_snapshot_metadata "$snapshot_dir"
   PROJECT_NAME="$(manifest_value "$manifest" compose_project)"
   volume="$(manifest_value "$manifest" state_volume)"
+  secrets_volume="$(manifest_value "$manifest" secrets_volume)"
+  config_dir="$(manifest_value "$manifest" config_dir)"
+  workspace_dir="$(manifest_value "$manifest" workspace_dir)"
   rollback_image="$(manifest_value "$manifest" rollback_image_ref)"
   old_image_id="$(manifest_value "$manifest" old_image_id)"
   old_version="$(manifest_value "$manifest" old_version)"
@@ -481,8 +561,15 @@ rollback_snapshot() {
   old_signer_digest="$(manifest_value "$manifest" old_signer_build_input_digest)"
   old_signer_development="$(manifest_value "$manifest" old_signer_development)"
   archive_sha="$(manifest_value "$manifest" archive_sha256)"
+  secrets_archive_sha="$(manifest_value "$manifest" secrets_archive_sha256)"
+  config_archive_sha="$(manifest_value "$manifest" config_archive_sha256)"
+  workspace_archive_sha="$(manifest_value "$manifest" workspace_archive_sha256)"
   [[ "$PROJECT_NAME" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || fail "snapshot Compose project is invalid."
   [[ "$volume" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || fail "snapshot state volume is invalid."
+  [[ "$secrets_volume" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || \
+    fail "snapshot secrets volume is invalid."
+  validate_absolute_path "snapshot config directory" "$config_dir"
+  validate_absolute_path "snapshot workspace directory" "$workspace_dir"
   validate_image_reference "$rollback_image"
   [[ "$old_image_id" =~ ^sha256:[a-f0-9]{64}$ ]] || fail "snapshot old image ID is invalid."
   [[ "$old_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || \
@@ -501,6 +588,7 @@ rollback_snapshot() {
   [[ "$rollback_id" == "$old_image_id" ]] || \
     fail "the exact rollback image is unavailable; signer state was not modified."
   docker volume inspect "$volume" >/dev/null
+  docker volume inspect "$secrets_volume" >/dev/null
 
   stop_runtime_for_rollback
   verification_archive="$(mktemp "$snapshot_dir/.restore-verification.XXXXXX.tar")"
@@ -510,6 +598,27 @@ rollback_snapshot() {
     "$snapshot_dir/$ARCHIVE_NAME" \
     "$archive_sha" \
     "$verification_archive"
+  verification_archive="$(mktemp "$snapshot_dir/.restore-secrets-verification.XXXXXX.tar")"
+  restore_state_archive \
+    "$secrets_volume" \
+    "$rollback_image" \
+    "$snapshot_dir/$SECRETS_ARCHIVE_NAME" \
+    "$secrets_archive_sha" \
+    "$verification_archive"
+  verification_archive="$(mktemp "$snapshot_dir/.restore-config-verification.XXXXXX.tar")"
+  restore_bind_archive \
+    "$config_dir" \
+    "$rollback_image" \
+    "$snapshot_dir/$CONFIG_ARCHIVE_NAME" \
+    "$config_archive_sha" \
+    "$verification_archive"
+  verification_archive="$(mktemp "$snapshot_dir/.restore-workspace-verification.XXXXXX.tar")"
+  restore_bind_archive \
+    "$workspace_dir" \
+    "$rollback_image" \
+    "$snapshot_dir/$WORKSPACE_ARCHIVE_NAME" \
+    "$workspace_archive_sha" \
+    "$verification_archive"
   restore_snapshot_definition "$snapshot_dir" "$rollback_image"
   activate_current_runtime \
     "$old_version" \
@@ -518,7 +627,7 @@ rollback_snapshot() {
     "$old_signer_digest" \
     "$old_signer_development" \
     "$old_require_production"
-  echo "Rollback complete: exact image $old_image_id and verified offline signer snapshot restored."
+  echo "Rollback complete: exact image $old_image_id and verified offline recovery set restored."
 }
 
 target_image=""
@@ -632,6 +741,16 @@ IFS=$'\t' read -r old_signer_version old_signer_commit old_signer_digest old_sig
   < <(image_signer_release_identity "$old_image_id")
 state_volume="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/var/lib/fased-signerd"}}{{.Name}}{{end}}{{end}}' "$signer_container")"
 [[ "$state_volume" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || fail "could not resolve the signer-state named volume."
+secrets_volume="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/var/lib/fased-signerd-secrets"}}{{.Name}}{{end}}{{end}}' "$signer_container")"
+[[ "$secrets_volume" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || \
+  fail "could not resolve the signer-secrets named volume."
+config_dir="$(read_env_value FASED_CONFIG_DIR || true)"
+workspace_dir="$(read_env_value FASED_WORKSPACE_DIR || true)"
+validate_absolute_path "FASED_CONFIG_DIR" "$config_dir"
+validate_absolute_path "FASED_WORKSPACE_DIR" "$workspace_dir"
+[[ -d "$config_dir" && ! -L "$config_dir" ]] || fail "FASED_CONFIG_DIR is missing or unsafe."
+[[ -d "$workspace_dir" && ! -L "$workspace_dir" ]] || \
+  fail "FASED_WORKSPACE_DIR is missing or unsafe."
 
 if [[ "$target_image" == */* ]]; then
   docker pull "$target_image"
@@ -690,12 +809,30 @@ stop_runtime_for_snapshot
 snapshot_state_archive "$state_volume" "$rollback_image_ref" "$snapshot_dir/$ARCHIVE_NAME"
 archive_sha="$(sha256_file "$snapshot_dir/$ARCHIVE_NAME")"
 verify_archive "$snapshot_dir/$ARCHIVE_NAME" "$archive_sha"
+snapshot_state_archive \
+  "$secrets_volume" \
+  "$rollback_image_ref" \
+  "$snapshot_dir/$SECRETS_ARCHIVE_NAME"
+secrets_archive_sha="$(sha256_file "$snapshot_dir/$SECRETS_ARCHIVE_NAME")"
+verify_archive "$snapshot_dir/$SECRETS_ARCHIVE_NAME" "$secrets_archive_sha"
+snapshot_bind_archive "$config_dir" "$rollback_image_ref" "$snapshot_dir/$CONFIG_ARCHIVE_NAME"
+config_archive_sha="$(sha256_file "$snapshot_dir/$CONFIG_ARCHIVE_NAME")"
+verify_archive "$snapshot_dir/$CONFIG_ARCHIVE_NAME" "$config_archive_sha"
+snapshot_bind_archive \
+  "$workspace_dir" \
+  "$rollback_image_ref" \
+  "$snapshot_dir/$WORKSPACE_ARCHIVE_NAME"
+workspace_archive_sha="$(sha256_file "$snapshot_dir/$WORKSPACE_ARCHIVE_NAME")"
+verify_archive "$snapshot_dir/$WORKSPACE_ARCHIVE_NAME" "$workspace_archive_sha"
 
 manifest_tmp="$snapshot_dir/.snapshot.manifest.tmp"
 {
-  printf 'format=fased-docker-signer-snapshot-v3\n'
+  printf 'format=fased-docker-signer-snapshot-v4\n'
   printf 'compose_project=%s\n' "$PROJECT_NAME"
   printf 'state_volume=%s\n' "$state_volume"
+  printf 'secrets_volume=%s\n' "$secrets_volume"
+  printf 'config_dir=%s\n' "$config_dir"
+  printf 'workspace_dir=%s\n' "$workspace_dir"
   printf 'old_image_ref=%s\n' "$old_image_ref"
   printf 'old_image_id=%s\n' "$old_image_id"
   printf 'old_version=%s\n' "$old_version"
@@ -712,6 +849,9 @@ manifest_tmp="$snapshot_dir/.snapshot.manifest.tmp"
   printf 'target_signer_build_input_digest=%s\n' "$target_signer_digest"
   printf 'target_signer_development=%s\n' "$target_signer_development"
   printf 'archive_sha256=%s\n' "$archive_sha"
+  printf 'secrets_archive_sha256=%s\n' "$secrets_archive_sha"
+  printf 'config_archive_sha256=%s\n' "$config_archive_sha"
+  printf 'workspace_archive_sha256=%s\n' "$workspace_archive_sha"
   printf 'env_sha256=%s\n' "$(sha256_file "$snapshot_dir/.env.before")"
   printf 'compose_sha256=%s\n' "$(sha256_file "$snapshot_dir/docker-compose.before.yml")"
   printf 'target_env_sha256=%s\n' "$(sha256_file "$snapshot_dir/.env.target")"
@@ -727,7 +867,7 @@ assert_project_signer_stopped "$PROJECT_NAME"
 
 AUTO_ROLLBACK_SNAPSHOT="$snapshot_dir"
 install_target_definition "$snapshot_dir"
-assert_target_container_binding "$target_image_id" "$state_volume"
+assert_target_container_binding "$target_image_id" "$state_volume" "$secrets_volume"
 echo "Offline snapshot verified. Starting target signer $target_image_id..."
 if activate_current_runtime \
   "$target_version" \

@@ -252,7 +252,25 @@ describe("collectWalletSignerDoctorReport", () => {
                 credentialVersion: 9,
                 ready: true,
               },
-              jupiter: { triggerConfigured: false },
+              jupiter: { triggerConfigured: false, liveEnabled: false },
+              state: {
+                databaseBytes: 4096,
+                wallets: 1,
+                operations: 80_000,
+                operationReplayArchive: 1,
+                reviews: 0,
+                triggerWorkflows: 0,
+                dailyUsageBuckets: 1,
+                capacities: {
+                  operations: {
+                    used: 80_000,
+                    maximum: 100_000,
+                    warnAt: 80_000,
+                    warning: true,
+                  },
+                },
+                capacityWarnings: ["operations signer state is at 80000/100000 records"],
+              },
             },
           })}\n`,
         );
@@ -298,7 +316,7 @@ describe("collectWalletSignerDoctorReport", () => {
       expect(JSON.stringify(report)).not.toContain("gateway-rpc-must-not-control-readiness");
       expect(JSON.stringify(report)).not.toContain("hmac-sha256");
       expect(report.signer).toEqual({
-        jupiter: { triggerConfigured: false },
+        jupiter: { triggerConfigured: false, liveEnabled: false },
         webAuthn: {
           configured: true,
           credentialCount: 1,
@@ -312,6 +330,12 @@ describe("collectWalletSignerDoctorReport", () => {
         ok: true,
         detail: "not configured (optional; swaps and transfers remain available)",
       });
+      expect(report.checks.find((check) => check.check === "jupiter.execution.mode")).toMatchObject(
+        { ok: true, detail: "preview-only; signer rejects Jupiter and Trigger execution" },
+      );
+      expect(
+        report.checks.find((check) => check.check === "state.capacity.operations"),
+      ).toMatchObject({ ok: false, detail: "80000/100000 records; warning=80000" });
       expect(JSON.stringify(report)).not.toMatch(/api.?key|jwt|secret|jupiter-trigger-api\.key/iu);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));

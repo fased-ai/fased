@@ -187,6 +187,9 @@ export const SignerIntentV2Schema = Type.Union([
       type: Type.Literal("solana.nativeTransfer"),
       destination: Type.String(),
       lamports: Type.String(),
+      memo: Type.Optional(
+        Type.String({ pattern: "^fased:a2a-(?:payment|refund):v1:[0-9a-f]{64}$" }),
+      ),
     },
     { additionalProperties: false },
   ),
@@ -194,9 +197,12 @@ export const SignerIntentV2Schema = Type.Union([
     {
       type: Type.Literal("solana.splTransferChecked"),
       destination: Type.String(),
-      tokenProgram: Type.String(),
+      tokenProgram: Type.Optional(Type.String()),
       mint: Type.String(),
       amount: Type.String(),
+      memo: Type.Optional(
+        Type.String({ pattern: "^fased:a2a-(?:payment|refund):v1:[0-9a-f]{64}$" }),
+      ),
     },
     { additionalProperties: false },
   ),
@@ -598,6 +604,46 @@ export const LocalSocketSignerHealthResultSchema = Type.Object(
       Type.Object(
         {
           triggerConfigured: Type.Boolean(),
+          liveEnabled: Type.Optional(Type.Boolean()),
+        },
+        { additionalProperties: false },
+      ),
+    ),
+    audit: Type.Optional(
+      Type.Object(
+        {
+          configured: Type.Boolean(),
+          healthy: Type.Boolean(),
+          lastError: Type.Optional(Type.String()),
+        },
+        { additionalProperties: false },
+      ),
+    ),
+    state: Type.Optional(
+      Type.Object(
+        {
+          databaseBytes: Type.Integer({ minimum: 0 }),
+          wallets: Type.Integer({ minimum: 0 }),
+          operations: Type.Integer({ minimum: 0 }),
+          operationReplayArchive: Type.Optional(Type.Integer({ minimum: 0 })),
+          reviews: Type.Integer({ minimum: 0 }),
+          triggerWorkflows: Type.Integer({ minimum: 0 }),
+          dailyUsageBuckets: Type.Integer({ minimum: 0 }),
+          capacities: Type.Optional(
+            Type.Record(
+              Type.String(),
+              Type.Object(
+                {
+                  used: Type.Integer({ minimum: 0 }),
+                  maximum: Type.Integer({ minimum: 1 }),
+                  warnAt: Type.Integer({ minimum: 1 }),
+                  warning: Type.Boolean(),
+                },
+                { additionalProperties: false },
+              ),
+            ),
+          ),
+          capacityWarnings: Type.Optional(Type.Array(Type.String())),
         },
         { additionalProperties: false },
       ),

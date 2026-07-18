@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -21,6 +22,7 @@ var (
 	bucketSignerMetaV2                = []byte("meta")
 	bucketSignerPoliciesV2            = []byte("policies")
 	bucketSignerOperationsV2          = []byte("operations")
+	bucketSignerOperationArchiveV2    = []byte("operation-replay-archive")
 	bucketSignerUsageV2               = []byte("daily-usage")
 	bucketSignerWalletsV2             = []byte("wallets")
 	bucketSignerNetworksV2            = []byte("networks")
@@ -40,6 +42,8 @@ type signerStoreV2 struct {
 	db            *bolt.DB
 	now           func() time.Time
 	schemaVersion uint64
+	retentionMu   sync.Mutex
+	lastRetention time.Time
 }
 
 func openSignerStoreV2(path string) (*signerStoreV2, error) {
@@ -106,6 +110,10 @@ func openSignerStoreV2(path string) (*signerStoreV2, error) {
 		return nil, err
 	}
 	store.schemaVersion = version
+	if err := store.maintainStateV2(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("maintain signer state retention: %w", err)
+	}
 	return store, nil
 }
 
@@ -269,6 +277,21 @@ func (s *signerStoreV2) reserveOperation(req signerExecuteRequestV2, intent norm
 	if err != nil {
 		return signerOperationV2{}, false, err
 	}
+	if err := s.maintainStateIfDueV2(); err != nil {
+		return signerOperationV2{}, false, err
+	}
+	var liveLedgerAtCapacity bool
+	if err := s.db.View(func(tx *bolt.Tx) error {
+		liveLedgerAtCapacity = bucketKeyCountV2(tx.Bucket(bucketSignerOperationsV2)) >= maxSignerOperationsV2
+		return nil
+	}); err != nil {
+		return signerOperationV2{}, false, err
+	}
+	if liveLedgerAtCapacity {
+		if err := s.maintainStateV2(); err != nil {
+			return signerOperationV2{}, false, err
+		}
+	}
 	walletID := normalizeWalletID(req.IntentWalletID())
 	var operation signerOperationV2
 	existing := false
@@ -330,7 +353,12 @@ func (s *signerStoreV2) reserveOperation(req signerExecuteRequestV2, intent norm
 			existing = true
 			return nil
 		}
-
+		if tx.Bucket(bucketSignerOperationArchiveV2).Get(operationReplayArchiveKeyV2(requestID)) != nil {
+			return errors.New("requestId is in the durable replay archive and cannot be reused; submit a new requestId")
+		}
+		if err := requireBucketCapacityV2(operations, maxSignerOperationsV2, "signer operation store"); err != nil {
+			return err
+		}
 		policies := tx.Bucket(bucketSignerPoliciesV2)
 		rawPolicy := policies.Get([]byte(walletID))
 		if rawPolicy == nil {
@@ -453,6 +481,18 @@ func (s *signerStoreV2) claimReservedOperation(requestID string) (signerOperatio
 			return nil
 		}
 		now := s.now().UTC()
+		if expired, err := expirePriorDayReservationV2(tx, &operation, now); err != nil {
+			return err
+		} else if expired {
+			encoded, err := json.Marshal(operation)
+			if err != nil {
+				return err
+			}
+			if err := bucket.Put([]byte(requestID), encoded); err != nil {
+				return err
+			}
+			return nil
+		}
 		if operation.ExecutionLeaseUntil != "" {
 			leaseUntil, err := time.Parse(time.RFC3339Nano, operation.ExecutionLeaseUntil)
 			if err != nil {
@@ -534,6 +574,7 @@ func (s *signerStoreV2) markConfirmed(requestID string) (signerOperationV2, erro
 			return fmt.Errorf("cannot confirm signer operation in state %s", operation.State)
 		}
 		operation.State = operationConfirmed
+		operation.SignedTxBase64 = ""
 		operation.Error = ""
 		operation.ConfirmedAt = now
 		operation.UpdatedAt = now
@@ -563,6 +604,7 @@ func (s *signerStoreV2) markCompletedClaim(requestID string, attempt uint64, sig
 			return err
 		}
 		operation.State = operationConfirmed
+		operation.SignedTxBase64 = ""
 		operation.Signature = strings.TrimSpace(signature)
 		operation.TransactionDigest = strings.TrimSpace(artifactDigest)
 		operation.ConfirmedAt = now
@@ -617,6 +659,7 @@ func (s *signerStoreV2) markFailedClaim(requestID string, attempt uint64, cause 
 		}
 		now := timestampV2(s.now())
 		updated.State = operationFailed
+		updated.SignedTxBase64 = ""
 		updated.Error = safeOperationErrorV2(cause)
 		updated.UpdatedAt = now
 		updated.ExecutionLeaseUntil = ""
@@ -766,6 +809,9 @@ func (s *signerStoreV2) putWalletAndPolicy(record signerWalletRecordV2, input si
 		}
 		if policies.Get([]byte(walletID)) != nil {
 			return errors.New("signer wallet policy already exists")
+		}
+		if err := requireBucketCapacityV2(wallets, maxSignerWalletsV2, "signer wallet store"); err != nil {
+			return err
 		}
 		if err := wallets.Put([]byte(walletID), encodedRecord); err != nil {
 			return err

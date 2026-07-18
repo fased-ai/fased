@@ -210,6 +210,15 @@ unsafe metadata IP literals, link-local addresses, multicast addresses, and
 oversized URLs are rejected. Repeat the operation separately for every wallet
 that executes transactions.
 
+Installing the credential still leaves Jupiter swap and Trigger execution
+disabled. This release is preview-only: `review.prepare` may produce an exact
+review, but `v2.execute` and `v2.review.execute` reject Jupiter/Trigger intents
+unless a release-qualification operator deliberately starts the signer with
+`FASED_WALLET_JUPITER_LIVE_ENABLED=1`. Normal Local and Hosting installers do
+not set that variable. Health exposes only `jupiter.liveEnabled`; production
+policy must keep the Jupiter/Trigger operations absent until live qualification
+for the exact release is published.
+
 ## Re-encrypt wallet state
 
 ```bash
@@ -350,6 +359,63 @@ reviewed approvals. Only an authenticated host administrator who has planned
 re-enrollment may repeat the command with `--confirm-last-credential`. The
 credential ID is public metadata; credential public keys and private
 authenticator material are never printed by the revoke command.
+
+## Capacity monitoring and replay-safe archival
+
+Signer health reports `state.capacities` for wallets, live operations, the
+operation replay archive, reviews, and Trigger workflows. Each entry includes
+`used`, `maximum`, `warnAt`, and `warning`. The warning threshold is 80% of the
+hard fail-closed limit. `fased wallet signer doctor --json` turns every active
+capacity warning into a failed `state.capacity.*` check; monitor that command
+and the service logs.
+
+Confirmed and failed operation details remain in the live ledger for 90 days.
+Signer-owned retention then atomically replaces each live record with a
+SHA-256 request-ID tombstone in `operation-replay-archive`. A request ID found
+there is permanently rejected, so compaction recovers live-ledger capacity
+without reopening replay. Broadcast, unknown, and reserved operations are
+never archived. The replay archive itself is capped at 1,000,000 records and
+warns at 800,000. Never delete, rebuild, or omit that bucket to recover space.
+
+For a Hosting evidence snapshot, quiesce both services and archive the complete
+signer directory as one root-only unit:
+
+```bash
+stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+sudo systemctl stop fased-gateway.service
+sudo systemctl stop fased-signerd.service
+sudo install -d -m 0700 /var/backups/fased-signerd
+sudo tar --create --numeric-owner \
+  --file "/var/backups/fased-signerd/state-$stamp.tar" \
+  --directory /var/lib fased-signerd
+sudo sha256sum "/var/backups/fased-signerd/state-$stamp.tar" | \
+  sudo tee "/var/backups/fased-signerd/state-$stamp.tar.sha256" >/dev/null
+sudo chmod 0600 "/var/backups/fased-signerd/state-$stamp.tar" \
+  "/var/backups/fased-signerd/state-$stamp.tar.sha256"
+sudo systemctl start fased-signerd.service
+sudo systemctl start fased-gateway.service
+fased wallet signer doctor --json
+```
+
+The archive contains encrypted keys, the master key, WebAuthn state, policies,
+network credentials, live operations, replay tombstones, and audit records. It
+is a high-sensitivity custody backup: encrypt it with an owner-controlled
+offline key before moving it off host, restrict access, and test checksum plus
+tar readability without extracting into a live state directory.
+
+This procedure does not start a new ledger generation and does not authorize
+deleting live state. A snapshot becomes stale as soon as signing resumes.
+Restoring a snapshot after any newer operation could omit a replay tombstone;
+therefore restore only a provably latest quiesced snapshot. If that cannot be
+proven, do not resume autonomous signing from it: keep the signer isolated,
+install deny-all policies through the control socket, rotate to new wallet
+identities, and recover funds through separately reviewed owner transactions.
+Never merge two bbolt files or restore `state.db` without the matching complete
+signer directory.
+
+For Local Linux, WSL2, or macOS, stop the Gateway and local signer first, then
+archive the complete owner-only `$HOME/.fased/wallet` directory with `umask 077`.
+The same stale-snapshot and no-ledger-reset rules apply.
 
 ## Retry safety
 

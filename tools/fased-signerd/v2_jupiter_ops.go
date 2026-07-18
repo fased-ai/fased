@@ -21,7 +21,11 @@ func (s *signerServiceV2) prepareJupiterReviewV2(walletID string, req signerRevi
 		return signerReviewV2{}, err
 	}
 	walletPublicKey := solana.MustPublicKeyFromBase58(walletKey)
-	intent, err := normalizeSignerIntentForWalletV2(req.Intent, &walletPublicKey)
+	hydratedIntent, err := s.hydrateTypedTransferIntentV2(req.Intent, walletID)
+	if err != nil {
+		return signerReviewV2{}, err
+	}
+	intent, err := normalizeSignerIntentForWalletV2(hydratedIntent, &walletPublicKey)
 	if err != nil {
 		return signerReviewV2{}, err
 	}

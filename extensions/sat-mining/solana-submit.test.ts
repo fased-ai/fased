@@ -125,7 +125,10 @@ const TEST_POLICY_HASH = `sha256:${"ab".repeat(32)}`;
 
 function configureLocalSignerMock(addresses: { solana?: string } = { solana: SIGNER.toBase58() }) {
   callLocalSocketSigner.mockImplementation(
-    async (_socketPath: string, payload: { op?: string; request?: { requestId?: string } }) => {
+    async (
+      _socketPath: string,
+      payload: { op?: string; request?: { requestId?: string; intent?: Record<string, unknown> } },
+    ) => {
       switch (payload.op) {
         case "v2.wallet.get":
           return { walletId: "solana-1", publicKey: addresses.solana };
@@ -162,13 +165,20 @@ function configureLocalSignerMock(addresses: { solana?: string } = { solana: SIG
             state: "confirmed",
             signature: "tx-submit-cycle",
           };
+        case "v2.review.get":
+          throw new Error("signer review not found; review.prepare is required");
         case "v2.review.prepare":
           return {
             requestId: payload.request?.requestId ?? "vault-bond-review",
+            walletId: "solana-1",
+            intentType: payload.request?.intent?.type,
+            semanticIntent: payload.request?.intent,
+            mode: "reviewed",
             artifactKind: "solana-transaction",
             artifactDigest: `sha256:${"cd".repeat(32)}`,
             stateDigest: `sha256:${"ef".repeat(32)}`,
             policyHash: TEST_POLICY_HASH,
+            state: "prepared",
           };
         default:
           throw new Error(`unexpected signer test op ${payload.op}`);
@@ -756,6 +766,7 @@ describe("SAT cycle transaction builders", () => {
         "v2.wallet.get",
         "v2.capabilities",
         "v2.policy.get",
+        "v2.review.get",
         "v2.review.prepare",
       ]);
       expect(callLocalSocketSigner).not.toHaveBeenCalledWith(
@@ -764,6 +775,53 @@ describe("SAT cycle transaction builders", () => {
       );
     },
   );
+
+  it("resumes an approved Vault bond review without preparing or broadcasting it twice", async () => {
+    const healthySignerCall = callLocalSocketSigner.getMockImplementation();
+    let preparedReview: Record<string, unknown> | undefined;
+    let approved = false;
+    callLocalSocketSigner.mockImplementation(async (socketPath: string, payload: any) => {
+      if (payload.op === "v2.review.get") {
+        if (!preparedReview) {
+          throw new Error("signer review not found; review.prepare is required");
+        }
+        return {
+          ...preparedReview,
+          state: approved ? "signed" : "prepared",
+          ...(approved ? { signature: "vault-bond-signature" } : {}),
+        };
+      }
+      if (payload.op === "v2.operation.get") {
+        return {
+          requestId: payload.request.requestId,
+          state: "confirmed",
+          signature: "vault-bond-signature",
+        };
+      }
+      if (!healthySignerCall) {
+        throw new Error("healthy signer mock missing");
+      }
+      const result = await healthySignerCall(socketPath, payload);
+      if (payload.op === "v2.review.prepare") {
+        preparedReview = result as Record<string, unknown>;
+      }
+      return result;
+    });
+
+    const submit = () =>
+      runWithSatSubmissionWorkflow("vault-open-review-resume", () =>
+        submitSatOpenBondPosition({} as never, { amountRaw: 100_000_000_000 }),
+      );
+    await expect(submit()).rejects.toThrow("is pending in Wallet Approvals");
+    approved = true;
+    const resumed = await submit();
+
+    expect(resumed.txHash).toBe("vault-bond-signature");
+    const operations = callLocalSocketSigner.mock.calls.map((call) => call[1].op);
+    expect(operations.filter((op) => op === "v2.review.prepare")).toHaveLength(1);
+    expect(operations.filter((op) => op === "v2.operation.get")).toHaveLength(1);
+    expect(operations).not.toContain("v2.execute");
+  });
 
   it("passes the bond program to the atomic protocol distributor claim", async () => {
     const distributor = findBondPda(Buffer.from("sat_bond_staking_distributor"));

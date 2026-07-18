@@ -4,6 +4,8 @@ import type {
   FederationMarketplaceDeliveryTargetConfig,
   FederationMarketplaceOrderConfig,
 } from "../config/types.federation.js";
+import { fetchWithSsrFGuard } from "../infra/net/fetch-guard.js";
+import type { LookupFn } from "../infra/net/ssrf.js";
 import { deliverOutboundPayloads, type OutboundSendDeps } from "../infra/outbound/deliver.js";
 import {
   claimMarketplaceDelivery,
@@ -68,6 +70,7 @@ export type MarketplaceDeliveryAdapterResult = {
 
 type DeliverDeps = {
   fetchImpl?: typeof fetch;
+  ssrfLookupFn?: LookupFn;
   deliverOutboundPayloadsImpl?: typeof deliverOutboundPayloads;
   outboundSendDeps?: OutboundSendDeps;
   federationBaseUrl?: string;
@@ -164,6 +167,7 @@ function buildDeliveryPayload(params: {
 
 async function postWebhookDelivery(params: {
   fetchImpl: typeof fetch;
+  ssrfLookupFn?: LookupFn;
   target: FederationMarketplaceDeliveryTargetConfig;
   payload: unknown;
   orderId: string;
@@ -173,15 +177,31 @@ async function postWebhookDelivery(params: {
     return { ok: false, reason: "webhook delivery target is missing URL" };
   }
   try {
-    const response = await params.fetchImpl(url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-fased-marketplace-delivery": "content.summarize",
-        "x-fased-marketplace-order": params.orderId,
+    if (new URL(url).protocol !== "https:") {
+      return { ok: false, reason: "webhook delivery requires HTTPS" };
+    }
+  } catch {
+    return { ok: false, reason: "webhook delivery target has an invalid URL" };
+  }
+  let guarded: Awaited<ReturnType<typeof fetchWithSsrFGuard>> | undefined;
+  try {
+    guarded = await fetchWithSsrFGuard({
+      url,
+      fetchImpl: params.fetchImpl,
+      lookupFn: params.ssrfLookupFn,
+      timeoutMs: FEDERATION_DELIVERY_TIMEOUT_MS,
+      auditContext: "marketplace-content-webhook",
+      init: {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-fased-marketplace-delivery": "content.summarize",
+          "x-fased-marketplace-order": params.orderId,
+        },
+        body: JSON.stringify(params.payload),
       },
-      body: JSON.stringify(params.payload),
     });
+    const response = guarded.response;
     if (!response.ok) {
       return {
         ok: false,
@@ -194,11 +214,14 @@ async function postWebhookDelivery(params: {
       ok: false,
       reason: error instanceof Error ? error.message : String(error),
     };
+  } finally {
+    await guarded?.release();
   }
 }
 
 async function postFederationDelivery(params: {
   fetchImpl: typeof fetch;
+  ssrfLookupFn?: LookupFn;
   target: FederationMarketplaceDeliveryTargetConfig;
   payload: unknown;
   orderId: string;
@@ -223,6 +246,7 @@ async function postFederationDelivery(params: {
     };
   }
   let url: URL;
+  let guarded: Awaited<ReturnType<typeof fetchWithSsrFGuard>> | undefined;
   try {
     url = new URL("/api/federation/marketplace/deliveries", endpointResult.endpoint);
   } catch {
@@ -250,19 +274,26 @@ async function postFederationDelivery(params: {
       body: params.payload,
       env: process.env,
     });
-    const response = await params.fetchImpl(url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-fased-marketplace-delivery": "content.summarize",
-        "x-fased-marketplace-order": params.orderId,
-        "x-fased-federation-recipient": handle,
-        ...signedRequest.headers,
+    guarded = await fetchWithSsrFGuard({
+      url: url.toString(),
+      fetchImpl: params.fetchImpl,
+      lookupFn: params.ssrfLookupFn,
+      maxRedirects: 0,
+      timeoutMs: FEDERATION_DELIVERY_TIMEOUT_MS,
+      auditContext: "marketplace-federation-delivery",
+      init: {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-fased-marketplace-delivery": "content.summarize",
+          "x-fased-marketplace-order": params.orderId,
+          "x-fased-federation-recipient": handle,
+          ...signedRequest.headers,
+        },
+        body: signedRequest.body,
       },
-      body: signedRequest.body,
-      redirect: "error",
-      signal: AbortSignal.timeout(FEDERATION_DELIVERY_TIMEOUT_MS),
     });
+    const response = guarded.response;
     if (!response.ok) {
       return {
         ok: false,
@@ -275,6 +306,8 @@ async function postFederationDelivery(params: {
       ok: false,
       reason: error instanceof Error ? error.message : String(error),
     };
+  } finally {
+    await guarded?.release();
   }
 }
 
@@ -541,6 +574,7 @@ export async function deliverMarketplaceContentSummarizeResult(params: {
     } else if (targetKind === "webhook") {
       const webhookResult = await postWebhookDelivery({
         fetchImpl,
+        ssrfLookupFn: params.deps?.ssrfLookupFn,
         target,
         payload: buildDeliveryPayload({
           order,
@@ -606,6 +640,7 @@ export async function deliverMarketplaceContentSummarizeResult(params: {
     } else if (targetKind === "federation") {
       const federationResult = await postFederationDelivery({
         fetchImpl,
+        ssrfLookupFn: params.deps?.ssrfLookupFn,
         target,
         payload: buildDeliveryPayload({
           order,

@@ -388,6 +388,8 @@ async function runSignerController(params: {
     args.push(
       "--version",
       params.journal.target.version,
+      "--expected-commit",
+      params.journal.target.sha,
       "--timeout",
       String(Math.ceil(params.timeoutMs / 1000)),
     );
@@ -415,7 +417,15 @@ export async function activateLocalSourceSigner(params: {
     throw new Error("Updated source checkout is missing its safe Local signer installer");
   }
   await runExact(
-    ["bash", installer, "--version", params.journal.target.version, "--defer-commit"],
+    [
+      "bash",
+      installer,
+      "--version",
+      params.journal.target.version,
+      "--expected-commit",
+      params.journal.target.sha,
+      "--defer-commit",
+    ],
     {
       cwd: params.journal.sourceRoot,
       timeoutMs: params.timeoutMs,

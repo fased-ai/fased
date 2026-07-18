@@ -14,7 +14,12 @@ This docs set only documents the installer that exists in this repo:
 
 - [`install.sh`](https://github.com/fased-ai/fased/blob/main/install.sh)
 
-If you are starting from zero on your own computer, use the Local install:
+If you are starting from zero on your own computer, use the
+[verified stable Local install](#verified-stable-local-install). The shorter
+command below is an interactive convenience path: after it starts, the
+installer resolves the latest stable release, verifies the unified release
+attestation, and checks out that exact commit. It does not provide
+pre-execution verification of the first script downloaded from `main`.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
@@ -27,14 +32,66 @@ Hosting installer directly into a privileged shell.
 
 <Warning>
 On Windows 11 or Windows 10 version 2004/build 19041 or newer, open
-Administrator PowerShell and run `wsl --install -d Ubuntu`. Restart if
-requested, then run `wsl --update`, `wsl --version`, and `wsl --list --verbose`.
+Administrator PowerShell and run this PowerShell block:
+
+```powershell
+wsl --install -d Ubuntu
+wsl --update
+wsl --version
+wsl --list --verbose
+```
+
+Restart if requested.
 WSL must be `0.67.6` or newer with the installed distribution on version 2.
-Open the Ubuntu application and run the bootstrap command inside that Ubuntu
-shell. Do not run `install.sh` in PowerShell, Command Prompt, Git Bash, or native
-Windows Node.js. The complete procedure is in [Windows
+Open the Ubuntu application and run this separate Bash block inside that
+Ubuntu shell:
+
+```bash
+uname -s
+systemctl is-system-running || true
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
+```
+
+`uname -s` must print `Linux`. Do not run the Bash block or `install.sh` in
+PowerShell, Command Prompt, Git Bash, or native Windows Node.js. The complete procedure is in [Windows
 (WSL2)](/platforms/windows).
 </Warning>
+
+## Verified stable Local install
+
+Use this path for a production Local, WSL2, or macOS installation that will
+hold wallet credentials. Install GitHub CLI from the operating system's trusted
+package source and confirm `gh version`. Choose an exact stable release from
+[GitHub Releases](https://github.com/fased-ai/fased/releases), replace
+`vX.Y.Z`, and run the block in macOS Terminal, a Linux terminal, or the Ubuntu
+WSL2 Bash shell—not PowerShell:
+
+```bash
+(
+set -euo pipefail
+RELEASE=vX.Y.Z
+BOOTSTRAP_DIR="$(mktemp -d)"
+trap 'rm -rf "$BOOTSTRAP_DIR"' EXIT
+chmod 0700 "$BOOTSTRAP_DIR"
+curl -fsSLo "$BOOTSTRAP_DIR/install.sh" \
+  "https://github.com/fased-ai/fased/releases/download/${RELEASE}/install.sh"
+curl -fsSLo "$BOOTSTRAP_DIR/install.sh.attestation.json" \
+  "https://github.com/fased-ai/fased/releases/download/${RELEASE}/install.sh.attestation.json"
+GH_PROMPT_DISABLED=1 gh attestation verify "$BOOTSTRAP_DIR/install.sh" \
+  --repo fased-ai/fased \
+  --bundle "$BOOTSTRAP_DIR/install.sh.attestation.json" \
+  --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
+  --source-ref "refs/tags/${RELEASE}" \
+  --deny-self-hosted-runners
+chmod 0500 "$BOOTSTRAP_DIR/install.sh"
+bash "$BOOTSTRAP_DIR/install.sh" --local --release "$RELEASE"
+)
+```
+
+Stop if any download or attestation check fails. The verified installer then
+requires the source tag, checked-out commit, package version, native signer
+identity, and signer attestation to agree. Neither the normal Local path nor
+first-wallet setup requires Go.
 
 ## What `install.sh` does
 
@@ -168,7 +225,7 @@ can load `node:sqlite` before continuing.
 If a provider image ships an old or custom Node build, the installer stops with
 the exact Node problem instead of continuing with a broken runtime.
 
-Fresh machine, one copy-paste block:
+Fresh machine convenience path (not pre-execution verified):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local

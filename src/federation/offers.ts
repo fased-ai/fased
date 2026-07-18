@@ -944,13 +944,7 @@ function defaultDeliveryTargetMasked(
 function isAllowedDeliveryUrl(value: string, opts: { allowWebSocket?: boolean } = {}): boolean {
   try {
     const url = new URL(value);
-    if (url.protocol === "https:" || (opts.allowWebSocket && url.protocol === "wss:")) {
-      return true;
-    }
-    if (url.protocol !== "http:") {
-      return false;
-    }
-    return url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "::1";
+    return url.protocol === "https:" || Boolean(opts.allowWebSocket && url.protocol === "wss:");
   } catch {
     return false;
   }

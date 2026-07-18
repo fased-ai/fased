@@ -6,6 +6,9 @@ import { createSubsystemLogger } from "../logging/subsystem.js";
 import { hashText } from "./internal.js";
 
 const log = createSubsystemLogger("memory");
+const MAX_SESSION_FILES_PER_AGENT = 500;
+const MAX_SESSION_TRANSCRIPT_BYTES = 10 * 1024 * 1024;
+const MAX_INDEXED_SESSION_TEXT_BYTES = 2 * 1024 * 1024;
 
 export type SessionFileEntry = {
   path: string;
@@ -26,6 +29,8 @@ export async function listSessionFilesForAgent(agentId: string): Promise<string[
       .filter((entry) => entry.isFile())
       .map((entry) => entry.name)
       .filter((name) => name.endsWith(".jsonl"))
+      .toSorted()
+      .slice(-MAX_SESSION_FILES_PER_AGENT)
       .map((name) => path.join(dir, name));
   } catch {
     return [];
@@ -74,10 +79,17 @@ export function extractSessionText(content: unknown): string | null {
 export async function buildSessionEntry(absPath: string): Promise<SessionFileEntry | null> {
   try {
     const stat = await fs.stat(absPath);
+    if (!stat.isFile() || stat.size > MAX_SESSION_TRANSCRIPT_BYTES) {
+      log.warn(
+        `Skipping oversized session transcript ${path.basename(absPath)} (${stat.size} bytes)`,
+      );
+      return null;
+    }
     const raw = await fs.readFile(absPath, "utf-8");
     const lines = raw.split("\n");
     const collected: string[] = [];
     const lineMap: number[] = [];
+    let indexedBytes = 0;
     for (let jsonlIdx = 0; jsonlIdx < lines.length; jsonlIdx++) {
       const line = lines[jsonlIdx];
       if (!line.trim()) {
@@ -111,7 +123,13 @@ export async function buildSessionEntry(absPath: string): Promise<SessionFileEnt
       }
       const safe = redactSensitiveText(text, { mode: "tools" });
       const label = message.role === "user" ? "User" : "Assistant";
-      collected.push(`${label}: ${safe}`);
+      const next = `${label}: ${safe}`;
+      const nextBytes = Buffer.byteLength(next, "utf8") + (collected.length > 0 ? 1 : 0);
+      if (indexedBytes + nextBytes > MAX_INDEXED_SESSION_TEXT_BYTES) {
+        break;
+      }
+      collected.push(next);
+      indexedBytes += nextBytes;
       lineMap.push(jsonlIdx + 1);
     }
     const content = collected.join("\n");

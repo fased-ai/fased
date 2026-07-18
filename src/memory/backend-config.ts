@@ -81,6 +81,7 @@ const DEFAULT_QMD_EMBED_INTERVAL = "60m";
 const DEFAULT_QMD_COMMAND_TIMEOUT_MS = 30_000;
 const DEFAULT_QMD_UPDATE_TIMEOUT_MS = 120_000;
 const DEFAULT_QMD_EMBED_TIMEOUT_MS = 120_000;
+const DEFAULT_QMD_SESSION_RETENTION_DAYS = 30;
 const DEFAULT_QMD_LIMITS: ResolvedQmdLimitsConfig = {
   maxResults: 6,
   maxSnippetChars: 700,
@@ -209,7 +210,11 @@ function resolveSessionConfig(
   const exportDirRaw = cfg?.exportDir?.trim();
   const exportDir = exportDirRaw ? resolvePath(exportDirRaw, workspaceDir) : undefined;
   const retentionDays =
-    cfg?.retentionDays && cfg.retentionDays > 0 ? Math.floor(cfg.retentionDays) : undefined;
+    cfg?.retentionDays && cfg.retentionDays > 0
+      ? Math.floor(cfg.retentionDays)
+      : enabled
+        ? DEFAULT_QMD_SESSION_RETENTION_DAYS
+        : undefined;
   return {
     enabled,
     exportDir,

@@ -183,10 +183,14 @@ Agent is the only general automation role. Permit only the exact SOL/SPL mints,
 programs, destinations, per-transaction caps, and daily caps the work needs.
 Wallet-capable skills also require their own explicit Agent-wallet grant.
 
-Autonomous Jupiter/Trigger use is allowed only after its semantic validator and
-signer policy approve the decoded transaction. Prepared, signed, broadcast,
-and unknown states are durable. Never retry an ambiguous result with changed
-parameters.
+Jupiter swap and Trigger mutation are preview capabilities in this release and
+are absent from starter policies. The signer rejects their execution by default;
+normal Local and Hosting installers do not enable the qualification-only live
+switch. Do not enable them for production funds until the exact generated
+RouteV2/Trigger codec and a live Jupiter qualification are published for the
+same release. Prepared, signed, broadcast, and unknown states are durable, but
+storage/idempotency does not replace exact protocol decoding. Never retry an
+ambiguous result with changed parameters.
 
 ### Mining
 
@@ -300,7 +304,9 @@ Before funding or enabling automation, verify all of these:
 8. cold restart preserves wallet, policy, cap, and request state;
 9. a concurrent duplicate is rejected/replayed, not signed twice;
 10. an ambiguous broadcast is reconciled without replacement;
-11. backup/recovery restores the same public address;
+11. an offline, encrypted backup restores the same public address, policy hash,
+    WebAuthn inventory, durable caps, and unresolved request state under the
+    [Migration Guide](/install/migrating);
 12. balances fit the role's intentional loss envelope.
 
 ## Related docs

@@ -113,8 +113,15 @@ describe("attested Hosting installer artifact layout", () => {
     expect(end).toBeGreaterThan(start);
 
     const helper = installer.slice(start + startMarker.length, end);
-    const syntax = spawnSync("bash", ["-n"], { encoding: "utf8", input: helper });
-    expect(syntax.status, syntax.stderr).toBe(0);
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "fased-host-maintenance-syntax-"));
+    try {
+      const helperPath = path.join(tempRoot, "fased-host-maintenance");
+      fs.writeFileSync(helperPath, helper, { mode: 0o700 });
+      const syntax = spawnSync("bash", ["-n", helperPath], { encoding: "utf8" });
+      expect(syntax.status, syntax.stderr).toBe(0);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
   });
 
   it("does not document a raw-pipe Hosting or Hosting-repair bootstrap", () => {

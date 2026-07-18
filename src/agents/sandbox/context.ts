@@ -88,7 +88,11 @@ export async function resolveSandboxDockerUser(params: {
   }
 }
 
-function resolveSandboxSession(params: { config?: FasedAgentConfig; sessionKey?: string }) {
+function resolveSandboxSession(params: {
+  config?: FasedAgentConfig;
+  sessionKey?: string;
+  forceUntrustedIsolation?: boolean;
+}) {
   const rawSessionKey = params.sessionKey?.trim();
   if (!rawSessionKey) {
     return null;
@@ -98,11 +102,31 @@ function resolveSandboxSession(params: { config?: FasedAgentConfig; sessionKey?:
     cfg: params.config,
     sessionKey: rawSessionKey,
   });
-  if (!runtime.sandboxed) {
+  if (!runtime.sandboxed && !params.forceUntrustedIsolation) {
     return null;
   }
 
-  const cfg = resolveSandboxConfigForAgent(params.config, runtime.agentId);
+  const resolvedConfig = resolveSandboxConfigForAgent(params.config, runtime.agentId);
+  const cfg = params.forceUntrustedIsolation
+    ? {
+        ...resolvedConfig,
+        mode: "all" as const,
+        scope: "session" as const,
+        workspaceAccess: "none" as const,
+        docker: {
+          ...resolvedConfig.docker,
+          readOnlyRoot: true,
+          network: "none",
+          capDrop: ["ALL"],
+          binds: undefined,
+          dangerouslyAllowReservedContainerTargets: false,
+          dangerouslyAllowExternalBindSources: false,
+          dangerouslyAllowContainerNamespaceJoin: false,
+        },
+        browser: { ...resolvedConfig.browser, enabled: false, allowHostControl: false },
+        tools: { allow: ["read"], deny: [] },
+      }
+    : resolvedConfig;
   return { rawSessionKey, runtime, cfg };
 }
 
@@ -110,6 +134,8 @@ export async function resolveSandboxContext(params: {
   config?: FasedAgentConfig;
   sessionKey?: string;
   workspaceDir?: string;
+  /** Force a per-session, no-network sandbox for marketplace skill instructions. */
+  forceUntrustedIsolation?: boolean;
 }): Promise<SandboxContext | null> {
   const resolved = resolveSandboxSession(params);
   if (!resolved) {

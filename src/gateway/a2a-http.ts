@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { loadConfig } from "../config/config.js";
 import {
@@ -6,16 +6,37 @@ import {
   type FederationPublishedOffer as OfferPayload,
 } from "../federation/offers.js";
 import {
+  FEDERATION_A2A_RPC_PATH,
+  FEDERATION_PEER_HEADERS,
+  authorizeFederationPeerRequestV2,
+  type FederationPeerVerifyDeps,
+} from "../federation/peer-auth-v2.js";
+import {
   resolveFederationBaseUrl,
   resolveFederationHandle,
   normalizeHandle as normalizeFederationHandle,
 } from "../federation/runtime.js";
+import {
+  readWalletProviderRegistry,
+  resolveWalletUserRole,
+} from "../wallet/wallet-provider-registry.js";
+import { resolveWalletRuntimeConfig } from "../wallet/wallet-runtime-config.js";
+import {
+  createOrExecuteWalletSend,
+  getWalletSendApprovalRequest,
+} from "../wallet/wallet-send-approvals.js";
 import { orchestrateA2aTaskSettlement, type A2aSettlementResult } from "./a2a-settlement.js";
 import {
+  authorizeDurableA2aTask,
+  claimDurableA2aPaymentChallenge,
   claimDurableA2aTaskExecution,
+  issueDurableA2aPaymentChallenge,
+  readDurableA2aPaymentChallenge,
   readDurableA2aTask,
   reserveDurableA2aTask,
   updateDurableA2aTask,
+  type DurableA2aPaymentRecovery,
+  type DurableA2aPaymentChallenge,
   type DurableA2aTaskRecord,
 } from "./a2a-task-store.js";
 
@@ -35,6 +56,7 @@ type TaskRecord = {
   error?: string;
   marketplacePayment?: MarketplacePaymentSummary;
   settlement?: A2aSettlementResult;
+  paymentRecovery?: DurableA2aPaymentRecovery;
   timers: NodeJS.Timeout[];
   subscribers: Set<ServerResponse>;
   executionRelease?: () => Promise<void>;
@@ -68,6 +90,8 @@ type MarketplacePaymentSummary = {
   };
   txRef?: string;
   settledAt?: string;
+  challengeId?: string;
+  paymentMemo?: string;
 };
 
 const OFFER_SCHEMA_ID = "https://schemas.fased.ai/fased-agent-offer-v0.json";
@@ -156,25 +180,6 @@ async function readJsonBody(
   });
 }
 
-function extractSenderHandle(
-  req: IncomingMessage,
-  params: Record<string, unknown> | undefined,
-  domain: string,
-): string {
-  const fromHeader =
-    typeof req.headers["x-fased-sender-handle"] === "string"
-      ? req.headers["x-fased-sender-handle"]
-      : "";
-  const fromParams =
-    typeof params?.senderHandle === "string"
-      ? params.senderHandle
-      : isRecord(params?.sender) && typeof params.sender.handle === "string"
-        ? params.sender.handle
-        : "";
-  const handle = fromHeader || fromParams;
-  return normalizeFederationHandle(handle, domain);
-}
-
 function taskHasPaidReferences(task: unknown): boolean {
   if (!isRecord(task)) {
     return false;
@@ -184,6 +189,15 @@ function taskHasPaidReferences(task: unknown): boolean {
     task.invoiceRef !== undefined ||
     task.receipt !== undefined ||
     task.receiptRef !== undefined
+  );
+}
+
+function requestHasPaidReferences(
+  task: unknown,
+  params: Record<string, unknown> | undefined,
+): boolean {
+  return (
+    taskHasPaidReferences(task) || params?.invoice !== undefined || params?.receipt !== undefined
   );
 }
 
@@ -493,7 +507,32 @@ function extractMarketplacePaymentSummary(
     ...(typeof receipt?.settledAt === "string" && receipt.settledAt.trim()
       ? { settledAt: receipt.settledAt.trim() }
       : {}),
+    ...(typeof receipt?.challengeId === "string" && receipt.challengeId.trim()
+      ? { challengeId: receipt.challengeId.trim() }
+      : {}),
+    ...(typeof receipt?.paymentMemo === "string" && receipt.paymentMemo.trim()
+      ? { paymentMemo: receipt.paymentMemo.trim() }
+      : {}),
   };
+}
+
+function fixedOfferAmountBaseUnits(offer: OfferPayload): number | null {
+  const amount = offer.pricing.amount;
+  const decimals = offer.paymentDefaults?.assetDecimals;
+  if (
+    typeof amount !== "number" ||
+    !Number.isFinite(amount) ||
+    amount <= 0 ||
+    typeof decimals !== "number" ||
+    !Number.isInteger(decimals) ||
+    decimals < 0 ||
+    decimals > 18
+  ) {
+    return null;
+  }
+  const scaled = amount * 10 ** decimals;
+  const rounded = Math.round(scaled);
+  return Number.isSafeInteger(rounded) && Math.abs(scaled - rounded) < 1e-6 ? rounded : null;
 }
 
 function buildCanonicalResultPayload(task: TaskRecord, actor: string) {
@@ -556,19 +595,13 @@ function toTaskSnapshot(task: TaskRecord) {
     output: task.output,
     error: task.error,
     settlement: task.settlement,
+    paymentRecovery: task.paymentRecovery,
   };
 }
 
 function writeSseEvent(res: ServerResponse, event: string, data: unknown) {
   res.write(`event: ${event}\n`);
   res.write(`data: ${JSON.stringify(data)}\n\n`);
-}
-
-function buildAuthHeaders(apiToken?: string): Record<string, string> {
-  if (!apiToken) {
-    return {};
-  }
-  return { Authorization: `Bearer ${apiToken}` };
 }
 
 function headerValue(value: string | string[] | undefined): string {
@@ -655,11 +688,16 @@ export function createA2aHandler(opts: {
   maxBodyBytes?: number;
   federationBaseUrl?: string;
   federationApiToken?: string;
-  tierCacheTtlMs?: number;
   includeApBridgeMetadata?: boolean;
+  peerAuthClientIp?: string;
+  peerAuthDeps?: FederationPeerVerifyDeps;
   settlementOrchestrator?: (params: {
     taskId: string;
     taskInput: unknown;
+    invoice: unknown;
+    receipt: unknown;
+    offer: OfferPayload | null;
+    challenge: DurableA2aPaymentChallenge | null;
     senderHandle: string;
     senderTier: SenderTier;
     env?: NodeJS.ProcessEnv;
@@ -669,7 +707,6 @@ export function createA2aHandler(opts: {
   const profileVersion = opts.profileVersion ?? "v0.2";
   const rpcPath = opts.rpcPath ?? "/a2a";
   const streamPath = opts.streamPath ?? "/a2a/stream";
-  const tierCacheTtlMs = opts.tierCacheTtlMs ?? 30_000;
   const url = new URL(opts.origin);
   const domain = url.hostname;
   const federationBaseUrl = resolveFederationBaseUrl(process.env);
@@ -683,7 +720,6 @@ export function createA2aHandler(opts: {
       });
   const agentId = opts.agentId?.trim() || process.env.FASED_A2A_AGENT_ID?.trim() || handle;
   const tasks = new Map<string, TaskRecord>();
-  const tierCache = new Map<string, { tier: SenderTier; expiresAt: number }>();
 
   const federationBaseUrlResolved =
     opts.federationBaseUrl?.trim() ||
@@ -696,6 +732,10 @@ export function createA2aHandler(opts: {
     (async (params: {
       taskId: string;
       taskInput: unknown;
+      invoice: unknown;
+      receipt: unknown;
+      offer: OfferPayload | null;
+      challenge: DurableA2aPaymentChallenge | null;
       senderHandle: string;
       senderTier: SenderTier;
       env?: NodeJS.ProcessEnv;
@@ -703,9 +743,129 @@ export function createA2aHandler(opts: {
       await orchestrateA2aTaskSettlement({
         taskId: params.taskId,
         taskInput: params.taskInput,
+        invoice: params.invoice,
+        receipt: params.receipt,
+        offer: params.offer,
+        challenge: params.challenge,
         senderHandle: params.senderHandle,
         env: params.env,
       }));
+
+  async function ensureReviewedRefundApproval(
+    task: TaskRecord,
+    recovery: DurableA2aPaymentRecovery,
+  ): Promise<DurableA2aPaymentRecovery> {
+    if (recovery.status !== "refund-required" || recovery.approvalRequestId) {
+      return recovery;
+    }
+    const challenge = readDurableA2aPaymentChallenge({ taskId: task.taskId, env: process.env });
+    if (!challenge || challenge.status !== "claimed") {
+      return {
+        ...recovery,
+        reason: `${recovery.reason}; reviewed refund preparation is blocked because the claimed seller challenge is unavailable`,
+        updatedAt: new Date().toISOString(),
+      };
+    }
+    const registry = readWalletProviderRegistry(process.env);
+    const candidates = registry.wallets.filter(
+      (wallet) =>
+        resolveWalletUserRole(wallet) === "agent" &&
+        wallet.addresses?.solana?.trim() === challenge.payeeAddress,
+    );
+    if (candidates.length !== 1) {
+      return {
+        ...recovery,
+        reason: `${recovery.reason}; reviewed refund preparation requires exactly one Agent wallet matching the paid seller address`,
+        updatedAt: new Date().toISOString(),
+      };
+    }
+    const wallet = candidates[0];
+    const cfg = loadConfig();
+    const created = await createOrExecuteWalletSend({
+      payload: {
+        actionKind: "send",
+        chain: "solana",
+        to: challenge.payerAddress,
+        amount: String(challenge.amount),
+        ...(challenge.asset.kind === "spl-token" ? { program: challenge.asset.address } : {}),
+        memo: `fased:a2a-refund:v1:${challenge.challengeId}`,
+        walletId: wallet.id,
+        walletName: wallet.name,
+        providerId: wallet.providerId,
+      },
+      requestedBy: "a2a-refund",
+      executionIntentId: `a2a-refund:${challenge.challengeId}`,
+      sendPath: "reviewed",
+      settlementContext: {
+        taskId: task.taskId,
+        invoiceId: challenge.invoiceId,
+        senderHandle: challenge.senderHandle,
+      },
+      config: resolveWalletRuntimeConfig(cfg, process.env),
+      runtimeConfig: cfg,
+      providerIdOverride: wallet.providerId,
+      env: process.env,
+    });
+    if (!created.ok) {
+      return {
+        ...recovery,
+        reason: `${recovery.reason}; reviewed refund preparation failed: ${created.message ?? created.code ?? "unknown error"}`,
+        updatedAt: new Date().toISOString(),
+      };
+    }
+    if (created.mode !== "manual") {
+      return {
+        ...recovery,
+        reason: `${recovery.reason}; reviewed refund preparation failed closed because the reviewed path did not return a manual approval`,
+        updatedAt: new Date().toISOString(),
+      };
+    }
+    return {
+      ...recovery,
+      approvalRequestId: created.request.id,
+      reason: `${recovery.reason}; reviewed refund approval ${created.request.id} is pending operator and signer-owned WebAuthn authorization`,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  async function reconcileReviewedRefund(task: TaskRecord): Promise<void> {
+    const recovery = task.paymentRecovery;
+    if (recovery?.status !== "refund-required" || !recovery.approvalRequestId) {
+      return;
+    }
+    const challenge = readDurableA2aPaymentChallenge({ taskId: task.taskId, env: process.env });
+    const approval = getWalletSendApprovalRequest({
+      requestId: recovery.approvalRequestId,
+      env: process.env,
+    });
+    if (
+      !challenge ||
+      approval?.status !== "executed" ||
+      !approval.result?.txHash ||
+      approval.payload.to !== challenge.payerAddress ||
+      approval.payload.amount !== String(challenge.amount) ||
+      approval.payload.memo !== `fased:a2a-refund:v1:${challenge.challengeId}` ||
+      (challenge.asset.kind === "spl-token"
+        ? approval.payload.program !== challenge.asset.address
+        : Boolean(approval.payload.program))
+    ) {
+      return;
+    }
+    const refunded: DurableA2aPaymentRecovery = {
+      ...recovery,
+      status: "refunded",
+      refundTxRef: approval.result.txHash,
+      reason: `reviewed refund ${approval.result.txHash} executed through signer-owned authorization`,
+      updatedAt: new Date().toISOString(),
+    };
+    const durable = await updateDurableA2aTask({
+      taskId: task.taskId,
+      paymentRecovery: refunded,
+      env: process.env,
+    });
+    task.paymentRecovery = durable.paymentRecovery;
+    task.updatedAt = durable.updatedAt;
+  }
 
   function taskFromDurable(record: DurableA2aTaskRecord): TaskRecord {
     return {
@@ -718,6 +878,7 @@ export function createA2aHandler(opts: {
       error: record.error,
       marketplacePayment: record.marketplacePayment as MarketplacePaymentSummary | undefined,
       settlement: record.settlement,
+      paymentRecovery: record.paymentRecovery,
       timers: [],
       subscribers: new Set<ServerResponse>(),
     };
@@ -739,20 +900,53 @@ export function createA2aHandler(opts: {
 
   async function updateTask(
     task: TaskRecord,
-    patch: Partial<Pick<TaskRecord, "status" | "output" | "error" | "settlement">>,
+    patch: Partial<
+      Pick<TaskRecord, "status" | "output" | "error" | "settlement" | "paymentRecovery">
+    >,
   ) {
+    const paymentRecovery =
+      patch.paymentRecovery ??
+      ((patch.status === "failed" || patch.status === "canceled") &&
+      task.settlement?.status === "executed" &&
+      task.settlement.txHash
+        ? {
+            status: "refund-required" as const,
+            paymentTxRef: task.settlement.txHash,
+            reason:
+              patch.error ??
+              `paid task entered terminal state ${patch.status}; seller must refund or resolve the dispute`,
+            updatedAt: new Date().toISOString(),
+          }
+        : undefined);
     const durable = await updateDurableA2aTask({
       taskId: task.taskId,
       ...(patch.status ? { status: patch.status } : {}),
       ...(patch.output !== undefined ? { output: patch.output } : {}),
       ...(patch.error !== undefined ? { error: patch.error } : {}),
       ...(patch.settlement !== undefined ? { settlement: patch.settlement } : {}),
+      ...(paymentRecovery !== undefined ? { paymentRecovery } : {}),
       env: process.env,
     });
+    if (
+      durable.paymentRecovery?.status === "refund-required" &&
+      !durable.paymentRecovery.approvalRequestId
+    ) {
+      const reviewedRecovery = await ensureReviewedRefundApproval(task, durable.paymentRecovery);
+      if (reviewedRecovery !== durable.paymentRecovery) {
+        const refreshed = await updateDurableA2aTask({
+          taskId: task.taskId,
+          paymentRecovery: reviewedRecovery,
+          env: process.env,
+        });
+        durable.paymentRecovery = refreshed.paymentRecovery;
+        durable.updatedAt = refreshed.updatedAt;
+      }
+    }
     task.status = durable.status;
     task.output = durable.output;
     task.error = durable.error;
     task.settlement = durable.settlement;
+    task.paymentRecovery = durable.paymentRecovery;
     task.updatedAt = durable.updatedAt;
 
     const snapshot = toTaskSnapshot(task);
@@ -782,60 +976,12 @@ export function createA2aHandler(opts: {
     await release?.();
   }
 
-  async function resolveSenderTier(senderHandle: string): Promise<SenderTier> {
-    if (!senderHandle) {
-      return "unverified";
-    }
-
-    const cached = tierCache.get(senderHandle);
-    if (cached && cached.expiresAt > Date.now()) {
-      return cached.tier;
-    }
-
-    if (!federationBaseUrlResolved) {
-      return "unverified";
-    }
-
-    const endpoint = new URL(
-      `/api/federation/directory/${encodeURIComponent(senderHandle)}`,
-      federationBaseUrlResolved,
-    );
-
-    try {
-      const res = await fetch(endpoint, {
-        headers: {
-          ...buildAuthHeaders(federationApiToken),
-          accept: "application/json",
-        },
-      });
-      let tier: SenderTier = "unverified";
-      if (res.ok) {
-        const body = (await res.json()) as unknown;
-        if (isRecord(body)) {
-          const status = typeof body.status === "string" ? body.status : "";
-          if (status === "verified") {
-            tier = "verified";
-          } else if (status === "revoked") {
-            tier = "blocked";
-          } else {
-            tier = "unverified";
-          }
-        }
-      } else if (res.status === 404) {
-        tier = "unverified";
-      }
-      tierCache.set(senderHandle, { tier, expiresAt: Date.now() + tierCacheTtlMs });
-      return tier;
-    } catch {
-      return "unverified";
-    }
-  }
-
   async function createTask(params: {
     input: unknown;
     marketplacePayment?: MarketplacePaymentSummary;
     senderHandle: string;
-  }): Promise<{ task: TaskRecord; created: boolean }> {
+    accessToken?: string;
+  }): Promise<{ task: TaskRecord; created: boolean; accessToken?: string }> {
     const requestedTaskId =
       isRecord(params.input) && typeof params.input.taskId === "string"
         ? params.input.taskId.trim()
@@ -846,6 +992,7 @@ export function createA2aHandler(opts: {
       senderHandle: params.senderHandle,
       input: params.input,
       marketplacePayment: params.marketplacePayment,
+      accessToken: params.accessToken,
       env: process.env,
     });
     const existing = tasks.get(taskId);
@@ -853,7 +1000,19 @@ export function createA2aHandler(opts: {
     if (!existing) {
       tasks.set(task.taskId, task);
     }
-    return { task, created: reserved.created };
+    return { task, created: reserved.created, accessToken: reserved.accessToken };
+  }
+
+  function requestTaskAccessToken(req: IncomingMessage, params?: Record<string, unknown>): string {
+    const header = headerValue(req.headers["x-fased-task-token"]).trim();
+    const param = typeof params?.taskAccessToken === "string" ? params.taskAccessToken.trim() : "";
+    return header || param;
+  }
+
+  function anonymousSenderKey(req: IncomingMessage): string {
+    const client = opts.peerAuthClientIp ?? req.socket?.remoteAddress ?? "unknown";
+    const digest = createHash("sha256").update(client, "utf8").digest("hex").slice(0, 24);
+    return `anonymous:${digest}`;
   }
 
   function scheduleTaskExecution(task: TaskRecord): void {
@@ -914,7 +1073,9 @@ export function createA2aHandler(opts: {
       },
       capabilities: ["chat", "task-execution", "artifacts", "payments", "service-offers"],
       auth: {
-        type: "none",
+        type: "task-capability-and-federation-peer-v2",
+        paidTasks: "signed-federation-peer-v2-required",
+        taskAccess: "x-fased-task-token-header-or-json-rpc-taskAccessToken-required",
       },
       metadata: {
         apBridgeEnabled: opts.includeApBridgeMetadata ?? true,
@@ -935,6 +1096,12 @@ export function createA2aHandler(opts: {
         sendJson(res, 400, { status: "rejected", reason: "missing taskId" });
         return true;
       }
+      const accessToken = requestTaskAccessToken(req);
+      const authorized = authorizeDurableA2aTask({ taskId, accessToken, env: process.env });
+      if (!authorized) {
+        sendJson(res, 404, { status: "not_found", reason: "task not found" });
+        return true;
+      }
       const task = resolveTask(taskId);
       if (!task) {
         sendJson(res, 404, { status: "not_found", reason: "task not found" });
@@ -946,6 +1113,7 @@ export function createA2aHandler(opts: {
       res.setHeader("Cache-Control", "no-cache, no-transform");
       res.setHeader("Connection", "keep-alive");
       res.setHeader("X-Accel-Buffering", "no");
+      res.setHeader("Referrer-Policy", "no-referrer");
 
       writeSseEvent(res, "task.snapshot", toTaskSnapshot(task));
       if (isTerminal(task.status)) {
@@ -987,12 +1155,33 @@ export function createA2aHandler(opts: {
     }
 
     const params = isRecord(rpc.params) ? rpc.params : undefined;
-    const senderHandle = extractSenderHandle(req, params, domain);
-    const senderTier = await resolveSenderTier(senderHandle);
-
-    if (senderTier === "blocked") {
-      sendRpcError(res, id, -32040, "blocked sender");
-      return true;
+    let senderHandle = anonymousSenderKey(req);
+    let senderTier: SenderTier = "unverified";
+    const signedProtocolHeader = headerValue(req.headers[FEDERATION_PEER_HEADERS.protocolVersion]);
+    if (signedProtocolHeader) {
+      if (rpcPath !== FEDERATION_A2A_RPC_PATH) {
+        sendRpcError(res, id, -32040, "signed A2A requires the canonical /a2a endpoint");
+        return true;
+      }
+      const peerAuth = await authorizeFederationPeerRequestV2({
+        req,
+        body: body.value,
+        recipientHandle: handle,
+        expectedPath: FEDERATION_A2A_RPC_PATH,
+        directoryBaseUrl: federationBaseUrlResolved,
+        directoryApiToken: federationApiToken,
+        clientIp: opts.peerAuthClientIp,
+        env: process.env,
+        deps: opts.peerAuthDeps,
+      });
+      if (!peerAuth.ok) {
+        sendRpcError(res, id, -32040, peerAuth.reason, peerAuth.statusCode, {
+          code: peerAuth.code,
+        });
+        return true;
+      }
+      senderHandle = peerAuth.senderHandle;
+      senderTier = "verified";
     }
 
     if (rpc.method === "a2a.ping" || rpc.method === "ping") {
@@ -1029,12 +1218,54 @@ export function createA2aHandler(opts: {
     }
 
     if (
+      rpc.method === "payments.prepare" ||
+      rpc.method === "payment.prepare" ||
+      rpc.method === "payments/prepare"
+    ) {
+      if (senderTier !== "verified") {
+        sendRpcError(res, id, -32041, "payment challenge requires verified sender");
+        return true;
+      }
+      const taskId = typeof params?.taskId === "string" ? params.taskId.trim() : "";
+      const offerId = typeof params?.offerId === "string" ? params.offerId.trim() : "";
+      const payerAddress =
+        typeof params?.payerAddress === "string" ? params.payerAddress.trim() : "";
+      const offer = findOfferById(offerId, offers);
+      const payment = offer?.paymentDefaults;
+      const amount = offer ? fixedOfferAmountBaseUnits(offer) : null;
+      const payer = normalizeAddressForChain("solana", payerAddress);
+      const payee = normalizeAddressForChain("solana", payment?.payee.address);
+      const asset = payment ? extractCanonicalAsset(payment.asset, "solana") : null;
+      if (!taskId || !offer || !payment || !amount || !payer || !payee || !asset) {
+        sendRpcError(res, id, -32602, "invalid fixed-price Solana payment challenge request");
+        return true;
+      }
+      try {
+        const challenge = await issueDurableA2aPaymentChallenge({
+          taskId,
+          senderHandle,
+          offerId: offer.id,
+          payerAddress: payer,
+          payeeAddress: payee,
+          amount,
+          currency: payment.currency,
+          asset,
+          env: process.env,
+        });
+        sendRpcResult(res, id, challenge);
+      } catch (error) {
+        sendRpcError(res, id, -32055, error instanceof Error ? error.message : String(error));
+      }
+      return true;
+    }
+
+    if (
       rpc.method === "tasks.create" ||
       rpc.method === "task.create" ||
       rpc.method === "tasks/create"
     ) {
       const taskInput = params && "task" in params ? params.task : params;
-      const hasPaidReferences = taskHasPaidReferences(taskInput);
+      const hasPaidReferences = requestHasPaidReferences(taskInput, params);
       const offerIssue = validateOfferReference(taskInput, params, offers);
       if (offerIssue) {
         sendRpcError(res, id, offerIssue.code, offerIssue.message, 200, offerIssue.data);
@@ -1061,6 +1292,7 @@ export function createA2aHandler(opts: {
           input: taskInput,
           marketplacePayment: extractMarketplacePaymentSummary(taskInput, params),
           senderHandle,
+          accessToken: requestTaskAccessToken(req, params),
         });
       } catch (error) {
         sendRpcError(res, id, -32054, error instanceof Error ? error.message : String(error));
@@ -1074,11 +1306,22 @@ export function createA2aHandler(opts: {
       if (executionRelease) {
         task.executionRelease = executionRelease;
       }
-      if (hasPaidReferences && executionRelease && !task.settlement) {
+      if (
+        hasPaidReferences &&
+        executionRelease &&
+        (!task.settlement || task.settlement.status !== "executed")
+      ) {
         try {
           settlement = await settlementOrchestrator({
             taskId: task.taskId,
             taskInput,
+            invoice: params?.invoice,
+            receipt: params?.receipt,
+            offer: findOfferById(extractOfferId(taskInput, params), offers),
+            challenge: readDurableA2aPaymentChallenge({
+              taskId: task.taskId,
+              env: process.env,
+            }),
             senderHandle,
             senderTier,
             env: process.env,
@@ -1089,16 +1332,38 @@ export function createA2aHandler(opts: {
             reason: `settlement orchestration error: ${String(err)}`,
           };
         }
+        if (settlement.status === "executed") {
+          try {
+            await claimDurableA2aPaymentChallenge({
+              taskId: task.taskId,
+              challengeId: settlement.challengeId ?? "",
+              senderHandle,
+              payerAddress: settlement.payerAddress ?? "",
+              txRef: settlement.txHash ?? "",
+              env: process.env,
+            });
+          } catch (error) {
+            settlement = {
+              status: "failed",
+              reason: error instanceof Error ? error.message : String(error),
+            };
+          }
+        }
         await updateTask(task, { settlement });
       } else {
         settlement = task.settlement;
       }
-      if (executionRelease) {
+      const settlementAllowsExecution =
+        !hasPaidReferences || task.settlement?.status === "executed";
+      if (executionRelease && settlementAllowsExecution) {
         scheduleTaskExecution(task);
+      } else if (executionRelease) {
+        await releaseTaskExecution(task);
       }
       sendRpcResult(res, id, {
         taskId: task.taskId,
         status: task.status,
+        ...(taskResult.accessToken ? { taskAccessToken: taskResult.accessToken } : {}),
         streamUrl: `${new URL(streamPath, visibleOrigin).toString()}?taskId=${encodeURIComponent(task.taskId)}`,
         ...(settlement ? { settlement } : {}),
       });
@@ -1111,11 +1376,51 @@ export function createA2aHandler(opts: {
         sendRpcError(res, id, -32602, "missing taskId");
         return true;
       }
-      const task = resolveTask(taskId);
+      const authorized = authorizeDurableA2aTask({
+        taskId,
+        accessToken: requestTaskAccessToken(req, params),
+        env: process.env,
+      });
+      const task = authorized ? resolveTask(taskId) : undefined;
       if (!task) {
         sendRpcError(res, id, -32044, "task not found");
         return true;
       }
+      await reconcileReviewedRefund(task);
+      sendRpcResult(res, id, toTaskSnapshot(task));
+      return true;
+    }
+
+    if (
+      rpc.method === "tasks.refund.prepare" ||
+      rpc.method === "task.refund.prepare" ||
+      rpc.method === "tasks/refund/prepare"
+    ) {
+      if (senderTier !== "verified") {
+        sendRpcError(res, id, -32041, "refund preparation requires the verified paying peer");
+        return true;
+      }
+      const taskId = typeof params?.taskId === "string" ? params.taskId.trim() : "";
+      const authorized = taskId
+        ? authorizeDurableA2aTask({
+            taskId,
+            accessToken: requestTaskAccessToken(req, params),
+            env: process.env,
+          })
+        : false;
+      const task = authorized ? resolveTask(taskId) : undefined;
+      if (!task?.paymentRecovery || task.paymentRecovery.status !== "refund-required") {
+        sendRpcError(res, id, -32044, "refund-required task not found");
+        return true;
+      }
+      const recovery = await ensureReviewedRefundApproval(task, task.paymentRecovery);
+      const durable = await updateDurableA2aTask({
+        taskId,
+        paymentRecovery: recovery,
+        env: process.env,
+      });
+      task.paymentRecovery = durable.paymentRecovery;
+      task.updatedAt = durable.updatedAt;
       sendRpcResult(res, id, toTaskSnapshot(task));
       return true;
     }
@@ -1130,7 +1435,12 @@ export function createA2aHandler(opts: {
         sendRpcError(res, id, -32602, "missing taskId");
         return true;
       }
-      const task = resolveTask(taskId);
+      const authorized = authorizeDurableA2aTask({
+        taskId,
+        accessToken: requestTaskAccessToken(req, params),
+        env: process.env,
+      });
+      const task = authorized ? resolveTask(taskId) : undefined;
       if (!task) {
         sendRpcError(res, id, -32044, "task not found");
         return true;

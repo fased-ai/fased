@@ -166,6 +166,8 @@ function verifiedDirectoryEntry(overrides?: Record<string, unknown>): Record<str
   };
 }
 
+const publicLookup = (async () => [{ address: "93.184.216.34", family: 4 }]) as never;
+
 describe("deliverMarketplaceContentSummarizeResult", () => {
   it("delivers paid content summaries to Telegram channel targets without queueing raw target secrets", async () => {
     const deliverOutboundPayloadsImpl = vi.fn(async () => [
@@ -418,6 +420,7 @@ describe("deliverMarketplaceContentSummarizeResult", () => {
       result: acceptedSummaryResult,
       deps: {
         fetchImpl,
+        ssrfLookupFn: publicLookup,
         federationBaseUrl: "https://directory.fased.test",
         federationApiToken: "directory-secret",
         now: () => new Date("2026-05-02T12:00:00.000Z"),
@@ -460,7 +463,7 @@ describe("deliverMarketplaceContentSummarizeResult", () => {
       "x-fased-protocol-version": "2",
       "x-fased-recipient-handle": "@buyer@fased.test",
     });
-    expect(init?.redirect).toBe("error");
+    expect(init?.redirect).toBe("manual");
     const signedHeaders = new Headers(init?.headers);
     expect(signedHeaders.get("authorization")).toBeNull();
     expect(signedHeaders.get("x-fased-sender-handle")).toMatch(/^@.+@.+$/u);
@@ -529,6 +532,7 @@ describe("deliverMarketplaceContentSummarizeResult", () => {
       result: acceptedSummaryResult,
       deps: {
         fetchImpl,
+        ssrfLookupFn: publicLookup,
         federationBaseUrl: "https://directory.fased.test",
         federationApiToken: "directory-secret",
         now: () => new Date("2026-05-02T12:00:00.000Z"),
@@ -564,6 +568,40 @@ describe("deliverMarketplaceContentSummarizeResult", () => {
       target?: { maskedTarget?: string };
     };
     expect(body.target?.maskedTarget).toBe("@buyer@fased.test");
+  });
+
+  it("blocks verified federation endpoints whose DNS resolves to a private address", async () => {
+    const fetchImpl = vi.fn(async (input: URL | RequestInfo) => {
+      const url = new URL(requestUrl(input));
+      if (url.pathname === "/api/federation/directory/%40buyer%40fased.test") {
+        return new Response(
+          JSON.stringify(
+            verifiedDirectoryEntry({ nodeEndpoint: "https://private-node.example/registered" }),
+          ),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response(JSON.stringify({ error: "delivery must not run" }), { status: 500 });
+    });
+
+    const result = await deliverMarketplaceContentSummarizeResult({
+      config: buildFederationOrderConfig(),
+      orderId: "order-federation-1",
+      result: acceptedSummaryResult,
+      deps: {
+        fetchImpl,
+        ssrfLookupFn: (async () => [{ address: "10.0.0.7", family: 4 }]) as never,
+        federationBaseUrl: "https://directory.fased.test",
+        now: () => new Date("2026-05-02T12:00:00.000Z"),
+      },
+    });
+
+    expect("error" in result ? result.error : undefined).toBeUndefined();
+    if (!("error" in result)) {
+      expect(result.delivered).toBe(false);
+      expect(result.order.delivery?.notes).toMatch(/private|internal|blocked/iu);
+    }
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it("blocks handle-only federation delivery when the directory entry is revoked", async () => {

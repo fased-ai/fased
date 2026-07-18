@@ -310,6 +310,7 @@ describe("wallet-tool", () => {
                 roles: ["agent"],
                 walletIds: ["agent"],
                 chains: ["solana"],
+                registries: ["https://clawhub.com"],
                 maxAmount: "10",
                 autonomous: true,
               },

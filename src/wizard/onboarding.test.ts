@@ -43,7 +43,9 @@ const configureFederationForOnboarding = vi.hoisted(() =>
 const applyHostingSecurity = vi.hoisted(() =>
   vi.fn(async ({ opts }) => ({ profile: opts.hostProfile ?? "local", checks: [] })),
 );
-const walletSetupCommand = vi.hoisted(() => vi.fn(async () => {}));
+const walletSetupCommand = vi.hoisted(() =>
+  vi.fn(async (_runtime: unknown, _options: unknown) => {}),
+);
 const collectWalletSignerDoctorReport = vi.hoisted(() =>
   vi.fn(async () => ({
     checks: [
@@ -862,7 +864,7 @@ describe("runOnboardingWizard", () => {
       expect.anything(),
       expect.objectContaining({ mode: "local-signer-create" }),
     );
-    const setupOptions = walletSetupCommand.mock.calls[0]?.[1] as Record<string, unknown>;
+    const setupOptions = walletSetupCommand.mock.calls[0]?.[1];
     expect(setupOptions).not.toHaveProperty("showPrivateKeyOnce");
     expect(setupOptions).not.toHaveProperty("confirmPrivateKeyPrint");
   });
@@ -2104,7 +2106,7 @@ describe("runOnboardingWizard", () => {
     }
   });
 
-  it("opens hosted signer import input in a privileged shell before dropping privileges", async () => {
+  it("routes hosted signer import through the provider root console without app sudo", async () => {
     const tempHome = await fs.mkdtemp(path.join(os.tmpdir(), "fased-hosted-wallet-import-"));
     vi.stubEnv("USER", "app");
     vi.stubEnv("HOME", tempHome);
@@ -2130,7 +2132,7 @@ describe("runOnboardingWizard", () => {
       }
       return false;
     }) as unknown as WizardPrompter["confirm"];
-    const note = vi.fn(async () => {});
+    const note = vi.fn(async (_message: string, _title?: string) => {});
     const prompter = createWizardPrompter({ select, confirm, note });
     writeConfigFile.mockImplementationOnce(async () => {
       throw new Error("write-reached");
@@ -2156,8 +2158,11 @@ describe("runOnboardingWizard", () => {
       ).rejects.toThrow("write-reached");
 
       const importNote = note.mock.calls.find(([, title]) => title === "Native signer import");
-      expect(importNote?.[0]).toContain("sudo /bin/sh -c");
-      expect(importNote?.[0]).toContain("exec sudo -u fased-signer --");
+      expect(importNote?.[0]).toContain("VPS provider root console");
+      expect(importNote?.[0]).toContain("Do not run it from the app shell");
+      expect(importNote?.[0]).toContain("/usr/sbin/runuser -u fased-signer --");
+      expect(importNote?.[0]).toContain("HOME=/var/lib/fased-signerd");
+      expect(importNote?.[0]).not.toContain("sudo /bin/sh");
       expect(importNote?.[0]).toContain("/opt/fased/signer/fased-signerd");
       expect(importNote?.[0]).toContain("<");
       expect(importNote?.[0]).toContain("/absolute/path/to/solana-keypair.json");

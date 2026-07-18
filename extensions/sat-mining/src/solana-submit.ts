@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
+import { isDeepStrictEqual } from "node:util";
 import {
   callLocalSocketSigner,
   createSignerReviewApprovalRequest,
@@ -583,47 +584,81 @@ async function executeTypedSatIntent(params: {
     }
   }
   const requestId = claim.record.requestId;
+  let resumedReviewedOperation: SatSignerOperation | undefined;
   if (intent.type === "solana.vaultBondAction") {
+    let reviewWasSigned = false;
     try {
-      const review = await callLocalSocketSigner<WalletProviderJupiterReviewV2>(params.socketPath, {
-        op: "v2.review.prepare",
-        walletId: params.walletId,
-        request: {
+      let review: WalletProviderJupiterReviewV2;
+      try {
+        review = await callLocalSocketSigner<WalletProviderJupiterReviewV2>(params.socketPath, {
+          op: "v2.review.get",
+          walletId: params.walletId,
+          request: { requestId },
+        });
+      } catch (lookupError) {
+        if (!String(lookupError).includes("signer review not found")) {
+          throw lookupError;
+        }
+        review = await callLocalSocketSigner<WalletProviderJupiterReviewV2>(params.socketPath, {
+          op: "v2.review.prepare",
+          walletId: params.walletId,
+          request: {
+            requestId,
+            policyHash: policy.hash,
+            mode: "reviewed",
+            intent,
+          },
+        });
+      }
+      if (
+        review.requestId !== requestId ||
+        review.policyHash !== policy.hash ||
+        review.mode !== "reviewed" ||
+        review.intentType !== intent.type ||
+        !isDeepStrictEqual(review.semanticIntent, intent)
+      ) {
+        throw new Error(`Vault bond review ${requestId} does not match the exact SAT intent`);
+      }
+      if (review.state === "prepared") {
+        const approval = createSignerReviewApprovalRequest({
+          review,
+          role: "vault",
+          walletId: params.walletId,
+          requestedBy: "sat-mining-vault",
+          assetSymbol: "SAT",
+          assetName: "SAT bond",
+          memo: `Reviewed Vault bond action: ${intent.action}`,
+          env: params.env,
+        });
+        await updateSatSubmission({
+          walletId: params.walletId,
           requestId,
-          policyHash: policy.hash,
-          mode: "reviewed",
-          intent,
-        },
-      });
-      const approval = createSignerReviewApprovalRequest({
-        review,
-        role: "vault",
-        walletId: params.walletId,
-        requestedBy: "sat-mining-vault",
-        assetSymbol: "SAT",
-        assetName: "SAT bond",
-        memo: `Reviewed Vault bond action: ${intent.action}`,
-        env: params.env,
-      });
-      await updateSatSubmission({
-        walletId: params.walletId,
+          intentDigest,
+          state: "reserved",
+          error: `review ${approval.id} pending`,
+          owner: claim.owner,
+          releaseLease: true,
+          env: params.env,
+        });
+        throw new Error(
+          `Vault bond review ${approval.id} is pending in Wallet Approvals for ${intent.action}; approve it there with the signer-owned passkey`,
+        );
+      }
+      reviewWasSigned = true;
+      resumedReviewedOperation = assertSatSignerOperationIdentity(
+        await reconcileTypedSatOperation({
+          socketPath: params.socketPath,
+          walletId: params.walletId,
+          requestId,
+        }),
         requestId,
-        intentDigest,
-        state: "reserved",
-        error: `review ${approval.id} pending`,
-        owner: claim.owner,
-        releaseLease: true,
-        env: params.env,
-      });
-      throw new Error(
-        `Vault bond review ${approval.id} is pending in Wallet Approvals for ${intent.action}; approve it there with the signer-owned passkey`,
       );
     } catch (error) {
       await updateSatSubmission({
         walletId: params.walletId,
         requestId,
         intentDigest,
-        state: "reserved",
+        state: reviewWasSigned ? "unknown" : "reserved",
         error: error instanceof Error ? error.message : String(error),
         owner: claim.owner,
         releaseLease: true,
@@ -673,7 +708,9 @@ async function executeTypedSatIntent(params: {
     }
   };
   let operation: SatSignerOperation;
-  if (!claim.created) {
+  if (resumedReviewedOperation) {
+    operation = resumedReviewedOperation;
+  } else if (!claim.created) {
     const callerStateWasAmbiguous =
       claim.record.state === "broadcast" || claim.record.state === "unknown";
     try {

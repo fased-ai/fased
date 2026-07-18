@@ -7,6 +7,10 @@ import path from "node:path";
 import { PassThrough } from "node:stream";
 import { describe, expect, test, vi } from "vitest";
 import {
+  SIGNER_PROTOCOL_V2,
+  SIGNER_PROTOCOL_V2_REQUIRED_CLIENT_FEATURES,
+} from "../wallet/signer-protocol-v2.generated.js";
+import {
   readWalletProviderRegistry,
   upsertNamedWallet,
 } from "../wallet/wallet-provider-registry.js";
@@ -151,6 +155,24 @@ async function dispatch(
   }
 }
 
+async function availableLoopbackPort(): Promise<number> {
+  const probe = createHttpServer();
+  await new Promise<void>((resolve, reject) => {
+    probe.once("error", reject);
+    probe.listen(0, "127.0.0.1", resolve);
+  });
+  const address = probe.address();
+  if (!address || typeof address === "string") {
+    await new Promise<void>((resolve) => probe.close(() => resolve()));
+    throw new Error("could not allocate a loopback test port");
+  }
+  const port = address.port;
+  await new Promise<void>((resolve, reject) =>
+    probe.close((error) => (error ? reject(error) : resolve())),
+  );
+  return port;
+}
+
 const resolvedAuth: ResolvedGatewayAuth = {
   mode: "token",
   token: "root-token",
@@ -172,29 +194,9 @@ const signerV2Capabilities = {
   capabilities: {
     protocol: { current: 2 as const, min: 2, max: 2 },
     nativeFeeReservationLamports: 5_000_000 as const,
-    intentTypes: ["solana.nativeTransfer", "solana.splTransferChecked"],
+    intentTypes: [...SIGNER_PROTOCOL_V2.intentTypes],
     operationStates: ["reserved", "broadcast", "confirmed", "failed", "unknown"],
-    features: [
-      "failClosedPolicies",
-      "policyHashes",
-      "applicationPolicyTightening",
-      "durableCaps",
-      "atomicMultiAssetCaps",
-      "signerControlledNativeFeeCaps",
-      "atomicIdempotency",
-      "ambiguousBroadcastReconciliation",
-      "signerOwnedKeys",
-      "signerOwnedRPC",
-      "typedSolanaTransactions",
-      "signerOwnedWebAuthn",
-      "singleUseReviewedAuthorization",
-      "typedJupiterSemantics",
-      "signerOwnedJupiterTriggerV2",
-      "signerOwnedJupiterTriggerHistory",
-      "signerOwnedReviewPrepareExecute",
-      "exactPreparedTransactions",
-      "legacyOnlyJupiterTransactions",
-    ],
+    features: [...SIGNER_PROTOCOL_V2_REQUIRED_CLIENT_FEATURES],
   },
   policies: [],
 };
@@ -1244,7 +1246,7 @@ describe("wallet providers HTTP", () => {
   });
 
   test("uses config-scoped Solana RPC with the signer-owned v2 wallet address", async () => {
-    const rpcPort = 18999;
+    const rpcPort = await availableLoopbackPort();
     const rpcUrl = `http://127.0.0.1:${rpcPort}`;
     await withTempConfig({
       cfg: {

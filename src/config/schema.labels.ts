@@ -195,6 +195,8 @@ const FIELD_LABELS_BASE: Record<string, string> = {
   "agents.defaults.memorySearch.remote.baseUrl": "Remote Embedding Base URL",
   "agents.defaults.memorySearch.remote.apiKey": "Remote Embedding API Key",
   "agents.defaults.memorySearch.remote.headers": "Remote Embedding Headers",
+  "agents.defaults.memorySearch.remote.allowSessionContent":
+    "Allow Session Content in Remote Embeddings",
   "models.providers.*.request.allowPrivateNetwork": "Allow Private Model Network",
   "agents.defaults.memorySearch.remote.batch.concurrency": "Remote Batch Concurrency",
   "agents.defaults.memorySearch.model": "Memory Search Model",

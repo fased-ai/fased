@@ -1,6 +1,12 @@
+import path from "node:path";
 import { collectTextContentBlocks } from "../../agents/content-blocks.js";
 import { createFasedAgentTools } from "../../agents/fased-tools.js";
+import { readClawHubSkillOrigin } from "../../agents/skills-clawhub.js";
 import type { SkillCommandSpec } from "../../agents/skills.js";
+import {
+  isMarketplaceSkillDir,
+  marketplaceSkillProvenanceMatchesContent,
+} from "../../agents/skills/trust.js";
 import { applyOwnerOnlyToolPolicy } from "../../agents/tool-policy.js";
 import { getChannelDock } from "../../channels/dock.js";
 import type { FasedAgentConfig } from "../../config/config.js";
@@ -193,6 +199,34 @@ export async function handleInlineActions(params: {
 
     const dispatch = skillInvocation.command.dispatch;
     if (dispatch?.kind === "tool") {
+      const sourceFile = skillInvocation.command.sourceFilePath?.trim();
+      const skillDir = sourceFile ? path.dirname(sourceFile) : "";
+      const marketplaceSkill = Boolean(skillDir && isMarketplaceSkillDir(skillDir));
+      const marketplaceOrigin = skillDir ? await readClawHubSkillOrigin(skillDir) : null;
+      if (
+        marketplaceSkill &&
+        (!marketplaceOrigin || !marketplaceSkillProvenanceMatchesContent(skillDir))
+      ) {
+        typing.cleanup();
+        return {
+          kind: "reply",
+          reply: {
+            text: `❌ Marketplace skill ${skillInvocation.command.skillName} failed its installed-content integrity check. Reinstall the reviewed archive before using direct tool commands.`,
+          },
+        };
+      }
+      if (
+        marketplaceOrigin &&
+        !(marketplaceOrigin.permissions?.toolAccess ?? []).includes(dispatch.toolName)
+      ) {
+        typing.cleanup();
+        return {
+          kind: "reply",
+          reply: {
+            text: `❌ Marketplace skill ${marketplaceOrigin.slug} is not authorized for tool ${dispatch.toolName}. Reinstall a reviewed version whose manifest explicitly requests that tool.`,
+          },
+        };
+      }
       const rawArgs = (skillInvocation.args ?? "").trim();
       const channel =
         resolveGatewayMessageChannel(ctx.Surface) ??
@@ -237,9 +271,18 @@ export async function handleInlineActions(params: {
       }
     }
 
+    const commandTemplate = skillInvocation.command.promptTemplate?.trim();
+    const commandArgs = skillInvocation.args?.trim();
+    const renderedTemplate = commandTemplate
+      ? commandTemplate.includes("$ARGUMENTS")
+        ? commandTemplate.replaceAll("$ARGUMENTS", commandArgs ?? "")
+        : commandTemplate
+      : null;
     const promptParts = [
-      `Use the "${skillInvocation.command.skillName}" skill for this request.`,
-      skillInvocation.args ? `User input:\n${skillInvocation.args}` : null,
+      renderedTemplate ?? `Use the "${skillInvocation.command.skillName}" skill for this request.`,
+      commandArgs && (!renderedTemplate || !commandTemplate?.includes("$ARGUMENTS"))
+        ? `User input:\n${commandArgs}`
+        : null,
     ].filter((entry): entry is string => Boolean(entry));
     const rewrittenBody = promptParts.join("\n\n");
     ctx.Body = rewrittenBody;

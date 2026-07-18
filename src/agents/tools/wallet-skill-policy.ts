@@ -3,6 +3,10 @@ import type { FasedAgentConfig } from "../../config/config.js";
 import type { ResolvedWalletRuntimeConfig } from "../../wallet/wallet-runtime-config.js";
 import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../agent-scope.js";
 import { readClawHubSkillOrigin } from "../skills-clawhub.js";
+import {
+  isMarketplaceSkillDir,
+  marketplaceSkillProvenanceMatchesContent,
+} from "../skills/trust.js";
 
 const LOCAL_WALLET_ACTION_SOURCE = "local";
 
@@ -92,7 +96,11 @@ async function readRequesterSkillOrigin(params: {
     ...new Set(agentIds.map((agentId) => resolveAgentWorkspaceDir(cfg, agentId))),
   ];
   for (const workspaceDir of workspaces) {
-    const origin = await readClawHubSkillOrigin(path.join(workspaceDir, "skills", skillPathId));
+    const skillDir = path.join(workspaceDir, "skills", skillPathId);
+    if (isMarketplaceSkillDir(skillDir) && !marketplaceSkillProvenanceMatchesContent(skillDir)) {
+      throw new Error("wallet_action_skill_marketplace_content_integrity_failed");
+    }
+    const origin = await readClawHubSkillOrigin(skillDir);
     if (origin) {
       return {
         registry: origin.registry,

@@ -58,6 +58,10 @@ import {
   resolveSkillsPromptForRun,
   type SkillSnapshot,
 } from "../skills.js";
+import {
+  marketplaceSkillIdsFromEntries,
+  marketplaceSkillIdsFromSnapshot,
+} from "../skills/trust.js";
 import { resolveTranscriptPolicy } from "../transcript-policy.js";
 import { replaceAgentMessages } from "./agent-messages.js";
 import {
@@ -315,10 +319,18 @@ export async function compactEmbeddedPiSessionDirect(
 
   await fs.mkdir(resolvedWorkspace, { recursive: true });
   const sandboxSessionKey = params.sessionKey?.trim() || params.sessionId;
+  const sourceSkillEntries = params.skillsSnapshot
+    ? []
+    : loadWorkspaceSkillEntries(resolvedWorkspace, { config: params.config });
+  const marketplaceSkillIds = params.skillsSnapshot
+    ? marketplaceSkillIdsFromSnapshot(params.skillsSnapshot)
+    : marketplaceSkillIdsFromEntries(sourceSkillEntries);
+  const hasUntrustedSkillContent = marketplaceSkillIds.length > 0;
   const sandbox = await resolveSandboxContext({
     config: params.config,
     sessionKey: sandboxSessionKey,
     workspaceDir: resolvedWorkspace,
+    forceUntrustedIsolation: hasUntrustedSkillContent,
   });
   const effectiveWorkspace = sandbox?.enabled
     ? sandbox.workspaceAccess === "rw"
@@ -343,10 +355,12 @@ export async function compactEmbeddedPiSessionDirect(
       ? applySkillEnvOverridesFromSnapshot({
           snapshot: params.skillsSnapshot,
           config: params.config,
+          excludeMarketplace: true,
         })
       : applySkillEnvOverrides({
           skills: skillEntries ?? [],
           config: params.config,
+          excludeMarketplace: true,
         });
     const skillsPrompt = resolveSkillsPromptForRun({
       skillsSnapshot: params.skillsSnapshot,
@@ -385,6 +399,7 @@ export async function compactEmbeddedPiSessionDirect(
       modelId,
       modelContextWindowTokens: model.contextWindow,
       modelAuthMode: resolveModelAuthMode(model.provider, params.config),
+      untrustedSkillContent: hasUntrustedSkillContent,
     });
     const tools = sanitizeToolsForGoogle({ tools: toolsRaw, provider });
     const allowedToolNames = collectAllowedToolNames({ tools });

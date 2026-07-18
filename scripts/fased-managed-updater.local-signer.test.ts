@@ -85,7 +85,8 @@ const health = { ok: true, result: {
     nativeFeeReservationLamports: 5000000,
     features: ${JSON.stringify(features)}
   },
-  policies: []
+  policies: [],
+  network: { ready: true, wallets: [] }
 }};
 const app = net.createServer((socket) => socket.once("data", () => socket.end(JSON.stringify(health) + "\\n")));
 const control = net.createServer((socket) => socket.destroy());
@@ -315,6 +316,30 @@ describe.sequential("transactional Local native signer updater", () => {
       });
       expect(restored.stdout).toContain("fased-signerd 1.1.0");
     });
+  });
+
+  it("leaves a pre-v2 Local wallet untouched until the native one-time migration completes", async () => {
+    const fixture = makeFixture();
+    writeFakeRelease(fixture.releaseRoot, "1.0.0", "a");
+    fs.mkdirSync(fixture.paths.materialDir, { recursive: true, mode: 0o700 });
+    const legacyKeystore = path.join(
+      fixture.paths.materialDir,
+      "keystore-solana-agent-primary.v1.enc",
+    );
+    fs.writeFileSync(legacyKeystore, '{"version":1}\n', { mode: 0o600 });
+
+    await withEnv(fixture.env, async () => {
+      await expect(
+        __testing.runLocalSignerTransaction(
+          { action: "install", targetVersion: "1.0.0", timeoutMs: 10_000 },
+          { stateDir: fixture.stateDir },
+        ),
+      ).rejects.toThrow(/one-time native signer migration/iu);
+    });
+
+    expect(fs.readFileSync(legacyKeystore, "utf8")).toBe('{"version":1}\n');
+    expect(fs.existsSync(fixture.paths.binaryPath)).toBe(false);
+    expect(fs.existsSync(fixture.paths.journalPath)).toBe(false);
   });
 
   it("rejects tampered assets, manifest mismatch, and unconfirmed downgrade", async () => {

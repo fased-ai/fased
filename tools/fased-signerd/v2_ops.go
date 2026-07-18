@@ -23,6 +23,7 @@ type signerServiceV2 struct {
 	keys     *signerKeyManagerV2
 	webauthn *signerWebAuthnServiceV2
 	trigger  *signerJupiterTriggerClientV2
+	audit    *auditWriter
 }
 
 type signerWalletPolicyResultV2 struct {
@@ -50,10 +51,20 @@ type signerHealthResultV2 struct {
 	Policies     []signerPolicySummaryV2 `json:"policies"`
 	WebAuthn     signerWebAuthnHealthV2  `json:"webAuthn"`
 	Jupiter      signerJupiterHealthV2   `json:"jupiter"`
+	Audit        signerAuditHealthV2     `json:"audit"`
+	State        signerStateHealthV2     `json:"state"`
 }
 
 type signerJupiterHealthV2 struct {
 	TriggerConfigured bool `json:"triggerConfigured"`
+	LiveEnabled       bool `json:"liveEnabled"`
+}
+
+func requireJupiterLiveExecutionV2(enabled bool, intentType string) error {
+	if isJupiterIntentTypeV2(strings.TrimSpace(intentType)) && !enabled {
+		return errors.New("Jupiter and Trigger execution is preview-only until live qualification; signer execution is disabled")
+	}
+	return nil
 }
 
 func marshalSignerResultV2(result any) ([]byte, error) {
@@ -99,6 +110,10 @@ func (s *signerServiceV2) health(cfg signerConfig) (signerHealthResultV2, error)
 		return signerHealthResultV2{}, err
 	}
 	schemaHealth := s.store.schemaHealth()
+	stateHealth, err := s.store.stateHealthV2()
+	if err != nil {
+		return signerHealthResultV2{}, err
+	}
 	return signerHealthResultV2{
 		Details:      "fased-signerd protocol-v2 ready",
 		ReadOnly:     cfg.readOnly,
@@ -111,7 +126,9 @@ func (s *signerServiceV2) health(cfg signerConfig) (signerHealthResultV2, error)
 		Capabilities: signerV2Capabilities,
 		Policies:     summaries,
 		WebAuthn:     webauthnHealth,
-		Jupiter:      signerJupiterHealthV2{TriggerConfigured: s.trigger != nil},
+		Jupiter:      signerJupiterHealthV2{TriggerConfigured: s.trigger != nil, LiveEnabled: cfg.jupiterLive},
+		Audit:        s.audit.health(),
+		State:        stateHealth,
 	}, nil
 }
 
@@ -445,6 +462,9 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
 			return nil, err
 		}
+		if err := requireJupiterLiveExecutionV2(cfg.jupiterLive, body.Intent.Type); err != nil {
+			return nil, err
+		}
 		body.intentWalletID = req.WalletID
 		operation, err := s.execute(body)
 		if err != nil {
@@ -481,6 +501,15 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 		var body signerReviewExecuteRequestV2
 		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
 			return nil, err
+		}
+		if !cfg.jupiterLive {
+			_, intent, reviewErr := s.store.getReviewV2(req.WalletID, body.RequestID)
+			if reviewErr != nil {
+				return nil, reviewErr
+			}
+			if err := requireJupiterLiveExecutionV2(false, intent.Intent.Type); err != nil {
+				return nil, err
+			}
 		}
 		result, err := s.executeJupiterReviewV2(req.WalletID, body)
 		if err != nil {
@@ -528,7 +557,11 @@ func (s *signerServiceV2) execute(req signerExecuteRequestV2) (signerOperationV2
 	if err != nil {
 		return signerOperationV2{}, errors.New("signer-owned wallet record has an invalid public key")
 	}
-	intent, err := normalizeSignerIntentForWalletV2(req.Intent, &walletPublicKey)
+	hydratedIntent, err := s.hydrateTypedTransferIntentV2(req.Intent, req.IntentWalletID())
+	if err != nil {
+		return signerOperationV2{}, err
+	}
+	intent, err := normalizeSignerIntentForWalletV2(hydratedIntent, &walletPublicKey)
 	if err != nil {
 		return signerOperationV2{}, err
 	}
@@ -663,6 +696,26 @@ func (s *signerServiceV2) execute(req signerExecuteRequestV2) (signerOperationV2
 	return s.store.markConfirmed(operation.RequestID)
 }
 
+func (s *signerServiceV2) hydrateTypedTransferIntentV2(input signerIntentV2, walletID string) (signerIntentV2, error) {
+	if strings.TrimSpace(input.Type) != intentSolanaSPLTransferChecked || strings.TrimSpace(input.TokenProgram) != "" {
+		return input, nil
+	}
+	mint, err := solana.PublicKeyFromBase58(strings.TrimSpace(input.Mint))
+	if err != nil {
+		return signerIntentV2{}, errors.New("invalid SPL mint")
+	}
+	rpcURLs, err := s.keys.SolanaRPCURLsV2(walletID)
+	if err != nil {
+		return signerIntentV2{}, errSignerNetworkPendingV2
+	}
+	tokenProgram, err := resolveMintTokenProgramV2(rpcURLs, mint)
+	if err != nil {
+		return signerIntentV2{}, err
+	}
+	input.TokenProgram = tokenProgram.String()
+	return input, nil
+}
+
 func buildTypedTransactionV2(
 	rpcURLs []string,
 	privateKey solana.PrivateKey,
@@ -719,6 +772,16 @@ func buildTypedInstructionsV2(
 	intent normalizedIntentV2,
 	decimals *uint8,
 ) ([]solana.Instruction, error) {
+	appendMemo := func(instructions []solana.Instruction) []solana.Instruction {
+		if intent.Intent.Memo == "" {
+			return instructions
+		}
+		return append(instructions, solana.NewInstruction(
+			memoProgramV2V2,
+			solana.AccountMetaSlice{&solana.AccountMeta{PublicKey: from, IsSigner: true}},
+			[]byte(intent.Intent.Memo),
+		))
+	}
 	switch intent.Intent.Type {
 	case intentSolanaNativeTransfer:
 		to := solana.MustPublicKeyFromBase58(intent.Intent.Destination)
@@ -729,14 +792,14 @@ func buildTypedInstructionsV2(
 		data := make([]byte, 12)
 		binary.LittleEndian.PutUint32(data[:4], 2)
 		binary.LittleEndian.PutUint64(data[4:], amount)
-		return []solana.Instruction{solana.NewInstruction(
+		return appendMemo([]solana.Instruction{solana.NewInstruction(
 			solana.SystemProgramID,
 			solana.AccountMetaSlice{
 				&solana.AccountMeta{PublicKey: from, IsSigner: true, IsWritable: true},
 				&solana.AccountMeta{PublicKey: to, IsWritable: true},
 			},
 			data,
-		)}, nil
+		)}), nil
 	case intentSolanaSPLTransferChecked:
 		if decimals == nil {
 			return nil, errors.New("SPL mint decimals are required")
@@ -782,7 +845,7 @@ func buildTypedInstructionsV2(
 			},
 			transferData,
 		)
-		return []solana.Instruction{createDestinationATA, transfer}, nil
+		return appendMemo([]solana.Instruction{createDestinationATA, transfer}), nil
 	case intentSolanaSATAction, intentSolanaVaultBondAction:
 		if len(intent.Instructions) == 0 || len(intent.Instructions) > 6 {
 			return nil, errors.New("typed SAT action has an invalid instruction count")
@@ -895,16 +958,59 @@ func resolveMintDecimalsV2(rpcURLs []string, mint, tokenProgram solana.PublicKey
 			continue
 		}
 		markSolanaWriteRPCSuccess(rpcURL)
-		if result.Value == nil || !result.Value.Owner.Equals(tokenProgram) {
-			return 0, errors.New("SPL mint account owner does not match the typed token program")
-		}
-		data := result.GetBinary()
-		if len(data) < 82 || data[45] == 0 {
-			return 0, errors.New("SPL mint account is invalid or uninitialized")
-		}
-		return data[44], nil
+		return validatePlainSPLMintAccountV2(result.Value, tokenProgram)
 	}
 	return 0, fmt.Errorf("resolve SPL mint metadata failed: %s", strings.Join(failures, "; "))
+}
+
+func resolveMintTokenProgramV2(rpcURLs []string, mint solana.PublicKey) (solana.PublicKey, error) {
+	active, err := activeSolanaWriteRPCURLs(rpcURLs)
+	if err != nil {
+		return solana.PublicKey{}, err
+	}
+	for _, rpcURL := range active {
+		client := newSignerOwnedSolanaRPCClientV2(rpcURL)
+		ctx, cancel := context.WithTimeout(context.Background(), solanaWriteRPCRequestTimeout())
+		result, requestErr := client.GetAccountInfo(ctx, mint)
+		cancel()
+		if requestErr != nil || result == nil || result.Value == nil {
+			if requestErr == nil {
+				requestErr = errors.New("SPL mint account is unavailable")
+			}
+			markSolanaWriteRPCFailure(rpcURL, requestErr)
+			continue
+		}
+		owner := result.Value.Owner
+		if !owner.Equals(solana.TokenProgramID) && !owner.Equals(solana.Token2022ProgramID) {
+			return solana.PublicKey{}, errors.New("SPL mint uses an unsupported token program")
+		}
+		if _, err := validatePlainSPLMintAccountV2(result.Value, owner); err != nil {
+			return solana.PublicKey{}, err
+		}
+		markSolanaWriteRPCSuccess(rpcURL)
+		return owner, nil
+	}
+	return solana.PublicKey{}, errors.New("signer-owned Solana RPC could not resolve SPL mint metadata")
+}
+
+func validatePlainSPLMintAccountV2(account *rpc.Account, tokenProgram solana.PublicKey) (uint8, error) {
+	if !tokenProgram.Equals(solana.TokenProgramID) && !tokenProgram.Equals(solana.Token2022ProgramID) {
+		return 0, errors.New("SPL mint uses an unsupported token program")
+	}
+	if account == nil || account.Executable || account.Data == nil || !account.Owner.Equals(tokenProgram) {
+		return 0, errors.New("SPL mint account owner does not match the typed token program")
+	}
+	data := account.Data.GetBinary()
+	if len(data) != 82 {
+		if tokenProgram.Equals(solana.Token2022ProgramID) {
+			return 0, errors.New("Token-2022 mint extensions are not supported by typed transfers")
+		}
+		return 0, errors.New("SPL mint account has an unsupported data layout")
+	}
+	if data[45] == 0 {
+		return 0, errors.New("SPL mint account is invalid or uninitialized")
+	}
+	return data[44], nil
 }
 
 func signerOwnedSolanaBalanceV2(rpcURLs []string, address solana.PublicKey) (uint64, error) {

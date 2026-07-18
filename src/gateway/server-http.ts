@@ -1903,6 +1903,7 @@ async function buildWalletProviderPayload(params: {
         });
         capabilities = buildWalletProviderCapabilityMatrix(adapter);
         operationsImplemented =
+          providerId === "local-socket-signer" ||
           (adapter.capabilities.supportsPrepare && adapter.capabilities.supportsSend) ||
           capabilities.signing.interactiveSend;
         const healthResult = await withWalletProbeTimeout(

@@ -1835,6 +1835,7 @@ export async function createOrExecuteWalletSend(params: {
             destination,
             amount,
             ...(reviewedPayload.program?.trim() ? { mint: reviewedPayload.program.trim() } : {}),
+            ...(reviewedPayload.memo?.trim() ? { memo: reviewedPayload.memo.trim() } : {}),
           });
           reviewedPayload = bindSignerReviewToWalletApprovalPayload({
             payload: reviewedPayload,

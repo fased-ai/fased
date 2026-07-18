@@ -24,18 +24,25 @@ the signer-v2 upgrade. Review the new limit and install a new version explicitly
 with `fased-signer-policy`; installation and update never widen it automatically.
 
 - Agent permits only typed native SOL and exact-mint SPL transfers to listed
-  destinations. Direct SPL transfer requires pre-existing canonical source and
-  destination token accounts; it cannot spend SOL to create an associated token
-  account and therefore does not grant the Associated Token program by default.
+  destination owners. The signer derives the canonical source and destination
+  token accounts. When the destination account is absent, it may add exactly
+  one idempotent Associated Token Account instruction and charges the fixed
+  signer-controlled native fee/rent reservation against the same atomic policy
+  decision. The policy must therefore grant the Associated Token program, the
+  exact token program, the mint, destination owner, positive token caps, and a
+  positive `solana:native` cap. No caller-selected token account or arbitrary
+  account-creation instruction is accepted.
 - Mining permits program-bound typed SAT mining actions. The native signer
   forces generic SOL/SAT transfers through reviewed authorization for a Mining
   wallet; it never treats them as autonomous mining actions. Exact SAT codecs
   that genuinely use associated-token-account instructions retain that program
   grant.
 - Vault operations always require signer-owned reviewed authorization. The
-  starter omits Jupiter and Trigger permissions; add them only after separately
-  reviewing their exact semantic policy programs, assets, destinations, and
-  caps.
+  starter omits Jupiter and Trigger permissions. Treat both as preview in this
+  release: do not add them to a production policy until an exact generated
+  RouteV2/Trigger codec and a live Jupiter qualification are published for the
+  same release. The signer also rejects their execution by default; normal
+  installers never enable the qualification-only live switch.
 
 Receiving SOL or SAT does not require a signing permission. Do not add a
 receive-only address as a destination unless the signer should also be allowed

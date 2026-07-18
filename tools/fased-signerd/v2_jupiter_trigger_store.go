@@ -38,7 +38,7 @@ type signerJupiterTriggerWorkflowV2 struct {
 	IntentDigest            string          `json:"intentDigest"`
 	PolicyHash              string          `json:"policyHash"`
 	Action                  string          `json:"action"`
-	SemanticIntent          json.RawMessage `json:"semanticIntent"`
+	SemanticIntent          json.RawMessage `json:"semanticIntent,omitempty"`
 	Phase                   string          `json:"phase"`
 	StateDigest             string          `json:"stateDigest"`
 	Vault                   string          `json:"vault,omitempty"`
@@ -79,6 +79,9 @@ func (s *signerStoreV2) ensureJupiterTriggerWorkflowV2(
 	if s == nil || s.db == nil {
 		return signerJupiterTriggerWorkflowV2{}, errors.New("signer state database is unavailable")
 	}
+	if err := s.maintainStateV2(); err != nil {
+		return signerJupiterTriggerWorkflowV2{}, err
+	}
 	requestID, err := validateRequestIDV2(req.RequestID)
 	if err != nil {
 		return signerJupiterTriggerWorkflowV2{}, err
@@ -111,6 +114,9 @@ func (s *signerStoreV2) ensureJupiterTriggerWorkflowV2(
 				return errors.New("requestId is already bound to a different immutable Jupiter Trigger workflow")
 			}
 			return nil
+		}
+		if err := requireBucketCapacityV2(bucket, maxSignerTriggerWorkflowsV2, "Jupiter Trigger workflow store"); err != nil {
+			return err
 		}
 		now := timestampV2(s.now())
 		workflow = signerJupiterTriggerWorkflowV2{
@@ -384,6 +390,8 @@ func (s *signerStoreV2) markJupiterTriggerConfirmedV2(
 		}
 		now := timestampV2(s.now())
 		operation.State = operationConfirmed
+		operation.SignedTxBase64 = ""
+		operation.AuthorizationProof = ""
 		operation.Error = ""
 		operation.ConfirmedAt = now
 		operation.UpdatedAt = now
@@ -395,6 +403,8 @@ func (s *signerStoreV2) markJupiterTriggerConfirmedV2(
 		workflow.OrderID = orderID
 		workflow.OrderState = orderState
 		workflow.Error = ""
+		workflow.UnsignedTxBase64 = ""
+		workflow.SemanticIntent = nil
 		workflow.UpdatedAt = now
 		encodedOperation, err := json.Marshal(operation)
 		if err != nil {

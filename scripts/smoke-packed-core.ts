@@ -9,19 +9,15 @@ import {
   mkdtempSync,
   openSync,
   readFileSync,
-  realpathSync,
   readdirSync,
-  renameSync,
   rmSync,
   statSync,
-  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import * as tar from "tar";
 
 type PackageJson = {
   version?: string;
@@ -370,9 +366,34 @@ async function main() {
       throw new Error("npm pack did not return an archive filename");
     }
 
-    await tar.x({ file: path.join(tempRoot, archiveName), cwd: tempRoot });
-    const coreRoot = path.join(tempRoot, "core");
-    renameSync(path.join(tempRoot, "package"), coreRoot);
+    const archivePath = path.join(tempRoot, archiveName);
+    const installRoot = path.join(tempRoot, "clean-install");
+    mkdirSync(installRoot, { recursive: true });
+    writeFileSync(
+      path.join(installRoot, "package.json"),
+      `${JSON.stringify({ name: "fased-packed-smoke", private: true }, null, 2)}\n`,
+      "utf8",
+    );
+    execFileSync(
+      "npm",
+      [
+        "install",
+        "--no-audit",
+        "--no-fund",
+        "--no-package-lock",
+        "--install-strategy=hoisted",
+        archivePath,
+      ],
+      {
+        cwd: installRoot,
+        env: { ...process.env, NPM_CONFIG_CACHE: npmCache },
+        stdio: ["ignore", "ignore", "pipe"],
+      },
+    );
+    const coreRoot = path.join(installRoot, "node_modules", "@fased", "fased");
+    if (!existsSync(path.join(coreRoot, "package.json"))) {
+      throw new Error("clean npm install did not create the packed @fased/fased package");
+    }
 
     const packageJson = JSON.parse(
       readFileSync(path.join(coreRoot, "package.json"), "utf8"),
@@ -402,18 +423,7 @@ async function main() {
       }
     }
 
-    const coreNodeModules = path.join(coreRoot, "node_modules");
-    mkdirSync(coreNodeModules, { recursive: true });
-    for (const dependency of Object.keys(packageJson.dependencies ?? {})) {
-      const segments = dependency.split("/");
-      const source = path.join(repoRoot, "node_modules", ...segments);
-      if (!existsSync(source)) {
-        throw new Error(`release dependency is not installed locally: ${dependency}`);
-      }
-      const target = path.join(coreNodeModules, ...segments);
-      mkdirSync(path.dirname(target), { recursive: true });
-      symlinkSync(realpathSync(source), target, process.platform === "win32" ? "junction" : "dir");
-    }
+    const coreNodeModules = path.join(installRoot, "node_modules");
 
     const home = path.join(tempRoot, "home");
     stateDir = path.join(tempRoot, "state");

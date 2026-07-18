@@ -156,8 +156,11 @@ distribution's trusted package source, confirm `gh version`, then verify the
 release asset **before** running it:
 
 ```bash
+(
+set -euo pipefail
 RELEASE=vX.Y.Z # replace with the stable release you intend to install
 BOOTSTRAP_DIR="$(mktemp -d)"
+trap 'rm -rf "$BOOTSTRAP_DIR"' EXIT
 chmod 0700 "$BOOTSTRAP_DIR"
 curl -fsSLo "$BOOTSTRAP_DIR/install.sh" \
   "https://github.com/fased-ai/fased/releases/download/${RELEASE}/install.sh"
@@ -171,7 +174,7 @@ GH_PROMPT_DISABLED=1 gh attestation verify "$BOOTSTRAP_DIR/install.sh" \
   --deny-self-hosted-runners
 chmod 0500 "$BOOTSTRAP_DIR/install.sh"
 bash "$BOOTSTRAP_DIR/install.sh" --hosting --release "$RELEASE"
-rm -rf "$BOOTSTRAP_DIR"
+)
 ```
 
 This checks the bootstrap digest, the `fased-ai/fased` repository identity, the

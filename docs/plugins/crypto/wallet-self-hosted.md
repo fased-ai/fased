@@ -244,6 +244,16 @@ returns readiness plus version/hash metadata, not the secret URL.
 
 ## Signer-owned Jupiter Trigger credential
 
+<Warning>
+Jupiter swap and Trigger mutation are preview-only in this release and are not
+present in starter policies. Installing a Trigger credential does not make the
+feature executable or production-qualified: the signer rejects execution by
+default, and normal Local/Hosting installers do not set the qualification-only
+live switch. Keep it disabled for production funds until the same Fased release
+publishes an exact generated RouteV2/Trigger codec and live Jupiter
+qualification.
+</Warning>
+
 Jupiter Trigger authentication belongs to `fased-signerd`, not Gateway. The
 Trigger API key and derived JWT must never be placed in Fased config, a Gateway
 environment variable, a CLI option, or a browser form. This is distinct from
@@ -318,6 +328,18 @@ not reset limits. Concurrent duplicates cannot both reserve the same allowance.
 An ambiguous broadcast consumes its reservation and is reconciled by exact
 signature; Fased never creates a replacement transaction automatically.
 
+Signer health reports record counts and hard capacities. `fased wallet signer
+doctor --json` emits failed `state.capacity.*` checks starting at 80%. A2A and
+Marketplace file-ledger thresholds emit one service-log warning per capacity
+incident and fail closed at their hard limit.
+
+Confirmed and failed operation details remain in the live signer ledger for 90
+days, then the signer atomically replaces them with permanent SHA-256
+request-ID tombstones in a separate replay archive. Reserved, broadcast, and
+unknown operations are never archived. The live operation limit is 100,000;
+the replay archive warns at 800,000 and stops at 1,000,000. Never delete that
+archive, reset the database, or reuse an archived request ID to recover space.
+
 ## Local files
 
 The default Local material directory is `~/.fased/wallet`:
@@ -336,8 +358,23 @@ The default Local material directory is `~/.fased/wallet`:
 - `wallet-audit.jsonl`: Gateway wallet audit trail.
 
 Do not copy only `provider-registry.v1.json` and assume the wallet is backed up.
-Back up signer state and recovery material under an offline procedure, keep
-file ownership/modes intact, and test recovery with public-address checks.
+For Local, stop Gateway and signer and archive the entire
+`$FASED_STATE_DIR/wallet` directory as part of the complete state archive. For
+Hosting, stop Gateway and signer and separately archive the root-owned
+`/var/lib/fased-signerd` directory. Database and master key are one recovery
+unit and must come from the same offline snapshot. Preserve ownership/modes,
+encrypt the archive outside the host, verify its checksum, and test recovery by
+matching every public address and policy hash. See [Migration
+Guide](/install/migrating) for the exact service order and commands.
+
+A backup becomes stale as soon as signing resumes. Restoring an older snapshot
+after newer operations could omit their replay tombstones. Restore only a
+provably latest quiesced snapshot. If that cannot be proven, keep the restored
+signer isolated, apply deny-all policies through its control socket, rotate to
+new wallet identities, and recover funds with separately reviewed owner
+transactions; do not resume autonomous signing from the stale ledger. Never
+merge two bbolt files or restore `state.db` without its matching complete
+signer directory.
 
 ## Role guidance
 
@@ -373,8 +410,11 @@ fased doctor
 
 If signer state is corrupt or has an unsupported version, Fased fails closed
 and preserves the file. Do not delete it to make the error disappear. Restore
-from a verified backup or use the documented signer-admin migration/recovery
-path.
+the database and its matching master key from a verified offline backup. Never
+restore one without the other and never copy either over a running signer. Use
+the exact Fased version recorded with the backup first; validate public
+addresses, policy/network hashes, WebAuthn credentials, caps, and unresolved
+requests before updating or funding.
 
 On Hosting, a cold Gateway restart does not start the signer with Gateway sudo.
 Systemd owns signer lifecycle and starts it independently before the Gateway

@@ -10,6 +10,7 @@ UPDATER="$ROOT/scripts/fased-managed-updater.mjs"
 ACTION="install"
 DEFER_COMMIT=0
 CONFIRM_DOWNGRADE=""
+EXPECTED_COMMIT="${FASED_LOCAL_SIGNER_EXPECTED_COMMIT:-}"
 
 usage() {
   cat <<'EOF'
@@ -20,6 +21,7 @@ native macOS using an offline snapshot and crash-recoverable transaction.
 
 Options:
   --version vX.Y.Z              Exact signer release (defaults to package version)
+  --expected-commit SHA         Require the signer release to match this app commit
   --defer-commit                Leave the verified candidate open for paired app health
   --confirm-downgrade X.Y.Z     Explicitly confirm one exact reviewed downgrade target
   --verify                      Verify the exact running binary, release, and protocol-v2 health
@@ -38,6 +40,10 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --version)
       VERSION="${2:-}"
+      shift 2
+      ;;
+    --expected-commit)
+      EXPECTED_COMMIT="${2:-}"
       shift 2
       ;;
     --defer-commit)
@@ -113,6 +119,11 @@ if [[ "$ACTION" == "install" || "$ACTION" == "verify" ]]; then
   fi
 fi
 
+if [[ -n "$EXPECTED_COMMIT" && ! "$EXPECTED_COMMIT" =~ ^[a-f0-9]{40}$ ]]; then
+  echo "--expected-commit must be one exact 40-character Git commit." >&2
+  exit 1
+fi
+
 mkdir -p "$INSTALL_DIR"
 chmod 700 "$INSTALL_DIR" 2>/dev/null || true
 export FASED_LOCAL_SIGNER_BIN_DIR="$INSTALL_DIR"
@@ -121,6 +132,9 @@ export FASED_WALLET_LOCAL_SIGNER_BIN="$INSTALL_DIR/fased-signerd"
 args=(local-signer "$ACTION")
 if [[ "$ACTION" == "install" || "$ACTION" == "verify" ]]; then
   args+=(--version "$VERSION")
+  if [[ -n "$EXPECTED_COMMIT" ]]; then
+    args+=(--expected-commit "$EXPECTED_COMMIT")
+  fi
 fi
 if [[ "$ACTION" == "install" ]]; then
   # Keep the candidate read-only and the rollback journal open until all

@@ -1,19 +1,84 @@
 import { createHash } from "node:crypto";
-import { describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runPaidFederatedContentSummarize } from "./federation-marketplace.js";
 
 function stableMarketplaceIds(executionIntentId: string): {
+  taskId: string;
   invoiceId: string;
   receiptId: string;
 } {
   const suffix = createHash("sha256").update(executionIntentId).digest("hex").slice(0, 24);
-  return { invoiceId: `invoice-${suffix}`, receiptId: `receipt-${suffix}` };
+  return {
+    taskId: `market-summary-${suffix}`,
+    invoiceId: `invoice-${suffix}`,
+    receiptId: `receipt-${suffix}`,
+  };
 }
+
+function paymentChallengeResponse(params: {
+  rpcParams: Record<string, unknown> | undefined;
+  invoiceId: string;
+  receiptId: string;
+  payeeAddress: string;
+  amount: number;
+  currency: string;
+  asset: { kind: "native" | "spl-token"; address?: string };
+  issuedAt?: string;
+}) {
+  const challengeId = "c".repeat(64);
+  const issuedAt = params.issuedAt ?? "2026-04-09T18:30:00.000Z";
+  return new Response(
+    JSON.stringify({
+      jsonrpc: "2.0",
+      id: "marketplace-ui",
+      result: {
+        version: 1,
+        challengeId,
+        paymentMemo: `fased:a2a-payment:v1:${challengeId}`,
+        taskId: params.rpcParams?.taskId,
+        offerId: params.rpcParams?.offerId,
+        senderHandle: "@buyer@fed.test",
+        payerAddress: params.rpcParams?.payerAddress,
+        payeeAddress: params.payeeAddress,
+        amount: params.amount,
+        currency: params.currency,
+        asset: params.asset,
+        invoiceId: params.invoiceId,
+        receiptId: params.receiptId,
+        issuedAt,
+        expiresAt: new Date(Date.parse(issuedAt) + 5 * 60_000).toISOString(),
+        status: "issued",
+      },
+    }),
+    { status: 200, headers: { "content-type": "application/json" } },
+  );
+}
+
+let previousStateDir: string | undefined;
+let stateDir = "";
+
+beforeEach(() => {
+  previousStateDir = process.env.FASED_STATE_DIR;
+  stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "fased-marketplace-run-"));
+  process.env.FASED_STATE_DIR = stateDir;
+});
+
+afterEach(() => {
+  if (previousStateDir === undefined) {
+    delete process.env.FASED_STATE_DIR;
+  } else {
+    process.env.FASED_STATE_DIR = previousStateDir;
+  }
+  fs.rmSync(stateDir, { recursive: true, force: true });
+});
 
 describe("runPaidFederatedContentSummarize", () => {
   it("runs a paid typed summarize flow with real invoice and receipt linkage", async () => {
     const executionIntentId = "marketplace-test-paid-summary-1";
-    const { invoiceId, receiptId } = stableMarketplaceIds(executionIntentId);
+    const { taskId, invoiceId, receiptId } = stableMarketplaceIds(executionIntentId);
     const fetchImpl = vi.fn(async (input: URL | string, init?: RequestInit) => {
       const url = new URL(String(input));
       if (url.pathname === "/api/federation/offers") {
@@ -26,6 +91,20 @@ describe("runPaidFederatedContentSummarize", () => {
                 offer: {
                   id: "https://seller.example/offers/content-summarize-v0",
                   serviceKind: "content.summarize",
+                  pricing: { amount: 1.25, currency: "USDC" },
+                  paymentDefaults: {
+                    currency: "USDC",
+                    chain: "solana",
+                    assetDecimals: 6,
+                    asset: {
+                      kind: "spl-token",
+                      address: "So11111111111111111111111111111111111111112",
+                    },
+                    payee: {
+                      chain: "solana",
+                      address: "So11111111111111111111111111111111111111112",
+                    },
+                  },
                 },
               },
             ],
@@ -44,6 +123,20 @@ describe("runPaidFederatedContentSummarize", () => {
           method: string;
           params?: Record<string, unknown>;
         };
+        if (payload.method === "payments.prepare") {
+          return paymentChallengeResponse({
+            rpcParams: payload.params,
+            invoiceId,
+            receiptId,
+            payeeAddress: "So11111111111111111111111111111111111111112",
+            amount: 1_250_000,
+            currency: "USDC",
+            asset: {
+              kind: "spl-token",
+              address: "So11111111111111111111111111111111111111112",
+            },
+          });
+        }
         if (payload.method === "tasks.create") {
           const invoice = payload.params?.invoice as Record<string, unknown>;
           const receipt = payload.params?.receipt as Record<string, unknown>;
@@ -56,8 +149,9 @@ describe("runPaidFederatedContentSummarize", () => {
               jsonrpc: "2.0",
               id: "marketplace-ui",
               result: {
-                taskId: "task-paid-1",
+                taskId,
                 status: "queued",
+                taskAccessToken: "task-token-paid-1",
               },
             }),
             { status: 200, headers: { "content-type": "application/json" } },
@@ -69,7 +163,7 @@ describe("runPaidFederatedContentSummarize", () => {
               jsonrpc: "2.0",
               id: "marketplace-ui",
               result: {
-                taskId: "task-paid-1",
+                taskId,
                 status: "succeeded",
                 paymentProof: {
                   status: "verified",
@@ -201,7 +295,7 @@ describe("runPaidFederatedContentSummarize", () => {
     );
 
     expect(result.status).toBe("accepted");
-    expect(result.taskId).toBe("task-paid-1");
+    expect(result.taskId).toBe(taskId);
     expect(result.invoiceId).toBe(invoiceId);
     expect(result.receiptId).toBe(receiptId);
     expect(result.txRef).toBe("0xtx");
@@ -210,7 +304,7 @@ describe("runPaidFederatedContentSummarize", () => {
 
   it("runs paid summarize from a Marketplace-index listing when live offers are stale", async () => {
     const executionIntentId = "marketplace-test-index-summary-1";
-    const { invoiceId, receiptId } = stableMarketplaceIds(executionIntentId);
+    const { taskId, invoiceId, receiptId } = stableMarketplaceIds(executionIntentId);
     const fetchImpl = vi.fn(async (input: URL | string, init?: RequestInit) => {
       const url = new URL(String(input));
       if (url.pathname === "/api/federation/offers") {
@@ -260,6 +354,17 @@ describe("runPaidFederatedContentSummarize", () => {
           method: string;
           params?: Record<string, unknown>;
         };
+        if (payload.method === "payments.prepare") {
+          return paymentChallengeResponse({
+            rpcParams: payload.params,
+            invoiceId,
+            receiptId,
+            payeeAddress: "SellerSolana1111111111111111111111111111111",
+            amount: 100_000_000,
+            currency: "SOL",
+            asset: { kind: "native" },
+          });
+        }
         if (payload.method === "tasks.create") {
           const invoice = payload.params?.invoice as Record<string, unknown>;
           const receipt = payload.params?.receipt as Record<string, unknown>;
@@ -271,8 +376,9 @@ describe("runPaidFederatedContentSummarize", () => {
               jsonrpc: "2.0",
               id: "marketplace-ui",
               result: {
-                taskId: "task-paid-index-1",
+                taskId,
                 status: "queued",
+                taskAccessToken: "task-token-index-1",
               },
             }),
             { status: 200, headers: { "content-type": "application/json" } },
@@ -284,7 +390,7 @@ describe("runPaidFederatedContentSummarize", () => {
               jsonrpc: "2.0",
               id: "marketplace-ui",
               result: {
-                taskId: "task-paid-index-1",
+                taskId,
                 status: "succeeded",
                 paymentProof: {
                   status: "verified",
@@ -361,6 +467,7 @@ describe("runPaidFederatedContentSummarize", () => {
               name: "Payment Wallet",
               providerId: "local-socket-signer",
               addresses: { solana: "BuyerSolana11111111111111111111111111111111" },
+              metadata: { role: "agent" },
               createdAt: "2026-04-09T00:00:00.000Z",
               updatedAt: "2026-04-09T00:00:00.000Z",
             },
@@ -406,7 +513,7 @@ describe("runPaidFederatedContentSummarize", () => {
     );
 
     expect(result.status).toBe("accepted");
-    expect(result.taskId).toBe("task-paid-index-1");
+    expect(result.taskId).toBe(taskId);
     expect(result.offerId).toBe("https://seller.example/offers/content-summarize-v0");
     expect(result.txRef).toBe("soltx");
     expect(result.snapshot?.output?.payment?.status).toBe("verified");
@@ -415,6 +522,7 @@ describe("runPaidFederatedContentSummarize", () => {
   it("rejects quotes that exceed Invoice v0 safe integer limits", async () => {
     const result = await runPaidFederatedContentSummarize(
       {
+        executionIntentId: "marketplace-test-oversized-quote-1",
         handle: "@seller@fed.test",
         offerId: "offer-1",
         sourceText: "hello",
@@ -439,6 +547,19 @@ describe("runPaidFederatedContentSummarize", () => {
                   offer: {
                     id: "offer-1",
                     serviceKind: "content.summarize",
+                    paymentDefaults: {
+                      currency: "USDC",
+                      chain: "solana",
+                      assetDecimals: 6,
+                      asset: {
+                        kind: "spl-token",
+                        address: "So11111111111111111111111111111111111111112",
+                      },
+                      payee: {
+                        chain: "solana",
+                        address: "So11111111111111111111111111111111111111112",
+                      },
+                    },
                   },
                 },
               ],
@@ -476,6 +597,20 @@ describe("runPaidFederatedContentSummarize", () => {
                 offer: {
                   id: "https://seller.example/offers/content-summarize-v0",
                   serviceKind: "content.summarize",
+                  pricing: { amount: 1.25, currency: "USDC" },
+                  paymentDefaults: {
+                    currency: "USDC",
+                    chain: "solana",
+                    assetDecimals: 6,
+                    asset: {
+                      kind: "spl-token",
+                      address: "So11111111111111111111111111111111111111112",
+                    },
+                    payee: {
+                      chain: "solana",
+                      address: "So11111111111111111111111111111111111111112",
+                    },
+                  },
                 },
               },
             ],
@@ -490,7 +625,25 @@ describe("runPaidFederatedContentSummarize", () => {
             : init.body instanceof URLSearchParams
               ? init.body.toString()
               : "";
-        const payload = JSON.parse(bodyText) as { method: string };
+        const payload = JSON.parse(bodyText) as {
+          method: string;
+          params?: Record<string, unknown>;
+        };
+        if (payload.method === "payments.prepare") {
+          return paymentChallengeResponse({
+            rpcParams: payload.params,
+            invoiceId: "invoice-fixed",
+            receiptId: "receipt-fixed",
+            payeeAddress: "So11111111111111111111111111111111111111112",
+            amount: 1_250_000,
+            currency: "USDC",
+            asset: {
+              kind: "spl-token",
+              address: "So11111111111111111111111111111111111111112",
+            },
+            issuedAt: new Date().toISOString(),
+          });
+        }
         if (payload.method === "tasks.create") {
           return new Response(
             JSON.stringify({
@@ -511,6 +664,7 @@ describe("runPaidFederatedContentSummarize", () => {
 
     const result = await runPaidFederatedContentSummarize(
       {
+        executionIntentId: "marketplace-test-create-rejection-1",
         handle: "@seller@fed.test",
         offerId: "https://seller.example/offers/content-summarize-v0",
         sourceText: "hello",
@@ -552,6 +706,7 @@ describe("runPaidFederatedContentSummarize", () => {
               name: "Payment Wallet",
               providerId: "local-socket-signer",
               addresses: { solana: "So11111111111111111111111111111111111111112" },
+              metadata: { role: "agent" },
               createdAt: "2026-04-09T00:00:00.000Z",
               updatedAt: "2026-04-09T00:00:00.000Z",
             },
@@ -596,9 +751,181 @@ describe("runPaidFederatedContentSummarize", () => {
     expect(result.reason).toContain("invoice.offerId must match task.offerId");
   });
 
-  it("uses published offer defaults and the only wallet when no default wallet is pinned", async () => {
+  it("resumes after a lost tasks.create response without paying twice", async () => {
+    const executionIntentId = "marketplace-test-resume-after-create-1";
+    const { taskId, invoiceId, receiptId } = stableMarketplaceIds(executionIntentId);
+    const taskTokens: string[] = [];
+    let createCalls = 0;
+    const fetchImpl = vi.fn(async (input: URL | string, init?: RequestInit) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/api/federation/offers") {
+        return new Response(
+          JSON.stringify({
+            offers: [
+              {
+                handle: "@seller@fed.test",
+                endpoint: "https://seller.example",
+                offer: {
+                  id: "https://seller.example/offers/content-summarize-v0",
+                  serviceKind: "content.summarize",
+                  pricing: { amount: 1, currency: "SOL" },
+                  paymentDefaults: {
+                    currency: "SOL",
+                    chain: "solana",
+                    assetDecimals: 9,
+                    asset: { kind: "native" },
+                    payee: {
+                      chain: "solana",
+                      address: "Seller11111111111111111111111111111111111",
+                    },
+                  },
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.pathname === "/a2a" && init?.method === "POST" && typeof init.body === "string") {
+        const payload = JSON.parse(init.body) as {
+          method: string;
+          params?: Record<string, unknown>;
+        };
+        if (payload.method === "payments.prepare") {
+          return paymentChallengeResponse({
+            rpcParams: payload.params,
+            invoiceId,
+            receiptId,
+            payeeAddress: "Seller11111111111111111111111111111111111",
+            amount: 1_000_000_000,
+            currency: "SOL",
+            asset: { kind: "native" },
+          });
+        }
+        if (payload.method === "tasks.create") {
+          createCalls += 1;
+          const taskAccessToken = payload.params?.taskAccessToken;
+          taskTokens.push(typeof taskAccessToken === "string" ? taskAccessToken : "");
+          if (createCalls === 1) {
+            throw new Error("response lost after remote task creation");
+          }
+          return new Response(
+            JSON.stringify({ jsonrpc: "2.0", id: "marketplace-ui", result: { taskId } }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        if (payload.method === "tasks.get") {
+          return new Response(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: "marketplace-ui",
+              result: {
+                taskId,
+                status: "succeeded",
+                paymentProof: { status: "verified", invoiceId, receiptId, txRef: "resume-tx" },
+                output: {
+                  result: { kind: "content.summarize.v0", summaryText: "resumed" },
+                  payment: {
+                    offerId: "https://seller.example/offers/content-summarize-v0",
+                    invoiceId,
+                    receiptId,
+                    status: "verified",
+                    txRef: "resume-tx",
+                  },
+                },
+              },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+      }
+      throw new Error(`unexpected fetch ${url.pathname}`);
+    });
+    const send = vi.fn(
+      async () =>
+        ({
+          ok: true,
+          mode: "autonomous",
+          tx: {
+            ok: true,
+            chain: "solana",
+            txHash: "resume-tx",
+            signer: "Buyer111111111111111111111111111111111111",
+          },
+          payload: { chain: "solana", amount: "1000000000" },
+          requestId: "resume-request",
+        }) as never,
+    );
+    const request = {
+      executionIntentId,
+      handle: "@seller@fed.test",
+      offerId: "https://seller.example/offers/content-summarize-v0",
+      sourceText: "resume safely",
+      quote: {
+        amountInput: "1",
+        assetDecimals: 9,
+        currency: "SOL",
+        chain: "solana" as const,
+        assetKind: "native" as const,
+        payeeAddress: "Seller11111111111111111111111111111111111",
+      },
+    };
+    const deps = {
+      fetchImpl: fetchImpl as typeof fetch,
+      loadPersistedFederationToken: async () => ({
+        tokenId: "fed-token",
+        nodeId: "node-a",
+        handle: "@buyer@fed.test",
+        issuedAt: "2026-04-09T00:00:00.000Z",
+        expiresAt: "2099-04-09T00:00:00.000Z",
+        scopes: ["federation.read", "federation.write", "payments.receive"],
+        signature: "sig",
+        trustState: "verified" as const,
+        paidFlowEligible: true,
+      }),
+      readWalletProviderRegistry: () =>
+        ({
+          wallets: [
+            {
+              id: "agent-payment",
+              name: "Agent Payment",
+              providerId: "local-socket-signer",
+              addresses: { solana: "Buyer111111111111111111111111111111111111" },
+              metadata: { role: "agent" },
+            },
+          ],
+          defaultWalletId: "agent-payment",
+        }) as never,
+      loadConfig: () => ({}) as never,
+      resolveWalletRuntimeConfig: () =>
+        ({ enabled: true, execution: { mode: "autonomous" }, policy: {} }) as never,
+      createOrExecuteWalletSend: send,
+      publishFederationSettlementEvidence: async () => ({ ok: true as const }),
+      now: () => new Date("2026-04-09T18:30:00.000Z"),
+      sleep: async () => undefined,
+    };
+
+    const first = await runPaidFederatedContentSummarize(request, deps);
+    const second = await runPaidFederatedContentSummarize(request, deps);
+    const fetchCallsBeforeCompletedRetry = fetchImpl.mock.calls.length;
+    const completedRetry = await runPaidFederatedContentSummarize(request, deps);
+
+    expect(first).toMatchObject({
+      status: "rejected",
+      reason: expect.stringContaining("response lost"),
+    });
+    expect(second.status).toBe("accepted");
+    expect(completedRetry).toEqual(second);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(createCalls).toBe(2);
+    expect(taskTokens[0]).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+    expect(taskTokens[1]).toBe(taskTokens[0]);
+    expect(fetchImpl.mock.calls).toHaveLength(fetchCallsBeforeCompletedRetry);
+  });
+
+  it("uses published offer defaults and the only Agent wallet when no default is pinned", async () => {
     const executionIntentId = "marketplace-test-sole-wallet-summary-1";
-    const { invoiceId, receiptId } = stableMarketplaceIds(executionIntentId);
+    const { taskId, invoiceId, receiptId } = stableMarketplaceIds(executionIntentId);
     const fetchImpl = vi.fn(async (input: URL | string, init?: RequestInit) => {
       const url = new URL(String(input));
       if (url.pathname === "/api/federation/offers") {
@@ -636,6 +963,18 @@ describe("runPaidFederatedContentSummarize", () => {
           method: string;
           params?: Record<string, unknown>;
         };
+        if (payload.method === "payments.prepare") {
+          return paymentChallengeResponse({
+            rpcParams: payload.params,
+            invoiceId,
+            receiptId,
+            payeeAddress: "SellerSolana1111111111111111111111111111111",
+            amount: 100_000_000,
+            currency: "SOL",
+            asset: { kind: "native" },
+            issuedAt: new Date().toISOString(),
+          });
+        }
         if (payload.method === "tasks.create") {
           const invoice = payload.params?.invoice as Record<string, unknown>;
           expect(invoice.currency).toBe("SOL");
@@ -647,8 +986,9 @@ describe("runPaidFederatedContentSummarize", () => {
               jsonrpc: "2.0",
               id: "marketplace-ui",
               result: {
-                taskId: "task-paid-sole-wallet",
+                taskId,
                 status: "queued",
+                taskAccessToken: "task-token-sole-wallet",
               },
             }),
             { status: 200, headers: { "content-type": "application/json" } },
@@ -660,7 +1000,7 @@ describe("runPaidFederatedContentSummarize", () => {
               jsonrpc: "2.0",
               id: "marketplace-ui",
               result: {
-                taskId: "task-paid-sole-wallet",
+                taskId,
                 status: "succeeded",
                 paymentProof: {
                   status: "verified",
@@ -736,6 +1076,7 @@ describe("runPaidFederatedContentSummarize", () => {
               name: "Only Wallet",
               providerId: "local-socket-signer",
               addresses: { solana: "BuyerSolana11111111111111111111111111111111" },
+              metadata: { purpose: "agent" },
               createdAt: "2026-04-09T00:00:00.000Z",
               updatedAt: "2026-04-09T00:00:00.000Z",
             },

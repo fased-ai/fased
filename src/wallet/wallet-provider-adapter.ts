@@ -147,6 +147,7 @@ export type WalletProviderTypedTransferIntentV2 =
       type: "solana.nativeTransfer";
       destination: string;
       lamports: string;
+      memo?: string;
     }
   | {
       type: "solana.splTransferChecked";
@@ -154,6 +155,7 @@ export type WalletProviderTypedTransferIntentV2 =
       mint: string;
       destination: string;
       amount: string;
+      memo?: string;
     };
 
 export type WalletProviderVaultBondIntentV2 = {
@@ -384,6 +386,8 @@ export interface WalletProviderAdapter {
     destination: string;
     amount: string;
     mint?: string;
+    tokenProgram?: string;
+    memo?: string;
   }): Promise<WalletProviderJupiterReviewV2>;
   executeSignerReview?(request: {
     walletId: string;

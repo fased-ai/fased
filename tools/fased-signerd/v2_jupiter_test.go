@@ -16,6 +16,24 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
+func TestJupiterLiveExecutionDefaultsFailClosed(t *testing.T) {
+	for _, intentType := range []string{
+		intentSolanaJupiterSwap,
+		intentSolanaTriggerCreate,
+		intentSolanaTriggerCancel,
+	} {
+		if err := requireJupiterLiveExecutionV2(false, intentType); err == nil || !strings.Contains(err.Error(), "preview-only") {
+			t.Fatalf("%s execution was not disabled by default: %v", intentType, err)
+		}
+		if err := requireJupiterLiveExecutionV2(true, intentType); err != nil {
+			t.Fatalf("%s qualification override was rejected: %v", intentType, err)
+		}
+	}
+	if err := requireJupiterLiveExecutionV2(false, intentSolanaNativeTransfer); err != nil {
+		t.Fatalf("non-Jupiter execution was blocked: %v", err)
+	}
+}
+
 func TestJupiterAddressLookupTablesFailClosedWithoutRPCTrust(t *testing.T) {
 	message := solana.Message{AddressTableLookups: solana.MessageAddressTableLookupSlice{{
 		AccountKey: solana.NewWallet().PublicKey(), WritableIndexes: solana.Uint8SliceAsNum{0},
@@ -213,6 +231,12 @@ func TestJupiterCodecRejectsUnknownAndLedgerLikeVariants(t *testing.T) {
 	if _, err := decodeJupiterRouteV2(ledger); err == nil {
 		t.Fatal("token-ledger route was accepted without an exact input semantic")
 	}
+	legacy := append([]byte(nil), jupiterRouteDiscriminatorV2[:]...)
+	legacy = append(legacy, 1, 0, 0, 0, 0, 0, 0, 0, 0)
+	legacy = append(legacy, make([]byte, 19)...)
+	if _, err := decodeJupiterRouteV2(legacy); err == nil || !strings.Contains(err.Error(), "require RouteV2") {
+		t.Fatalf("legacy Jupiter tail layout was accepted: %v", err)
+	}
 }
 
 func TestJupiterAuxiliaryInstructionsAreNarrowlyBound(t *testing.T) {
@@ -279,6 +303,133 @@ func tokenAccountV2(t *testing.T, mint, owner solana.PublicKey, amount uint64) *
 	binary.LittleEndian.PutUint64(data[64:72], amount)
 	data[108] = 1
 	return rpcAccountV2(t, solana.TokenProgramID, 2_039_280, data)
+}
+
+func TestToken2022ExtensionsFailClosedUntilSemanticallySupported(t *testing.T) {
+	wallet := solana.NewWallet().PublicKey()
+	mint := solana.NewWallet().PublicKey()
+	extendedTokenData := make([]byte, 166)
+	copy(extendedTokenData[:32], mint[:])
+	copy(extendedTokenData[32:64], wallet[:])
+	extendedTokenData[108] = 1
+	extendedTokenAccount := rpcAccountV2(t, solana.Token2022ProgramID, 2_039_280, extendedTokenData)
+	if _, ok := parseJupiterTokenAccountV2(extendedTokenAccount); ok {
+		t.Fatal("Token-2022 account extensions were accepted without semantic validation")
+	}
+
+	extendedMintData := make([]byte, 83)
+	extendedMintData[44] = 9
+	extendedMintData[45] = 1
+	extendedMint := rpcAccountV2(t, solana.Token2022ProgramID, 1, extendedMintData)
+	if _, err := validatePlainSPLMintAccountV2(
+		extendedMint,
+		solana.Token2022ProgramID,
+	); err == nil || !strings.Contains(err.Error(), "extensions are not supported") {
+		t.Fatalf("Token-2022 mint extensions were accepted without semantic validation: %v", err)
+	}
+}
+
+func TestTriggerTokenValidationUsesExactMintLayoutAndCheckedToken2022(t *testing.T) {
+	wallet := solana.NewWallet().PublicKey()
+	mint := solana.NewWallet().PublicKey()
+	source := solana.NewWallet().PublicKey()
+	destination := solana.NewWallet().PublicKey()
+	vault := solana.NewWallet().PublicKey()
+	normalized := normalizedIntentV2{Intent: signerIntentV2{
+		Type: intentSolanaTriggerCreate,
+		Jupiter: &signerJupiterIntentV2{
+			InputMint:               mint.String(),
+			InputAmount:             "10",
+			SourceTokenAccount:      source.String(),
+			DestinationTokenAccount: destination.String(),
+			Trigger: &signerJupiterTriggerIntentV2{
+				Program: solana.Token2022ProgramID.String(),
+				Vault:   vault.String(),
+			},
+		},
+	}}
+	transferMetas := []*solana.AccountMeta{
+		{PublicKey: source, IsWritable: true},
+		{PublicKey: destination, IsWritable: true},
+		{PublicKey: wallet, IsSigner: true},
+	}
+	transfer := make([]byte, 9)
+	transfer[0] = 3
+	binary.LittleEndian.PutUint64(transfer[1:], 10)
+	if _, err := validateJupiterTokenInstructionV2(
+		transfer,
+		transferMetas,
+		wallet,
+		normalized,
+		solana.Token2022ProgramID,
+		nil,
+	); err == nil || !strings.Contains(err.Error(), "TransferChecked is required") {
+		t.Fatalf("unchecked Token-2022 Transfer was accepted: %v", err)
+	}
+
+	extendedMintData := make([]byte, 83)
+	extendedMintData[44] = 9
+	extendedMintData[45] = 1
+	checkedMetas := []*solana.AccountMeta{
+		{PublicKey: source, IsWritable: true},
+		{PublicKey: mint},
+		{PublicKey: destination, IsWritable: true},
+		{PublicKey: wallet, IsSigner: true},
+	}
+	checked := make([]byte, 10)
+	checked[0] = 12
+	binary.LittleEndian.PutUint64(checked[1:9], 10)
+	checked[9] = 9
+	accounts := map[string]*rpc.Account{
+		mint.String(): rpcAccountV2(t, solana.Token2022ProgramID, 1, extendedMintData),
+	}
+	if _, err := validateJupiterTokenInstructionV2(
+		checked,
+		checkedMetas,
+		wallet,
+		normalized,
+		solana.Token2022ProgramID,
+		accounts,
+	); err == nil || !strings.Contains(err.Error(), "extensions are not supported") {
+		t.Fatalf("extended Token-2022 mint was accepted by Trigger TransferChecked: %v", err)
+	}
+}
+
+func TestJupiterNativeOutputAllowsFavorableExecution(t *testing.T) {
+	wallet := solana.NewWallet().PublicKey()
+	inputMint := solana.NewWallet().PublicKey()
+	source := solana.NewWallet().PublicKey()
+	intent, err := normalizeSignerIntentV2(signerIntentV2{
+		Type: intentSolanaJupiterSwap,
+		Jupiter: &signerJupiterIntentV2{
+			Owner:                   wallet.String(),
+			InputMint:               inputMint.String(),
+			OutputMint:              solanaNativeMintV2,
+			InputAmount:             "10",
+			MaxInputAmount:          "10",
+			MinimumOutputAmount:     "10000",
+			MaxFeeLamports:          "1000",
+			SourceTokenAccount:      source.String(),
+			DestinationTokenAccount: wallet.String(),
+			Programs:                []string{jupiterAggregatorV6V2},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := jupiterTransactionSnapshotV2{
+		Accounts: map[string]*rpc.Account{
+			wallet.String(): rpcAccountV2(t, solana.SystemProgramID, 1_000_000, nil),
+			source.String(): tokenAccountV2(t, inputMint, wallet, 100),
+		},
+		Post: map[string]*rpc.Account{
+			wallet.String(): rpcAccountV2(t, solana.SystemProgramID, 1_012_000, nil),
+			source.String(): tokenAccountV2(t, inputMint, wallet, 90),
+		},
+	}
+	if err := validateJupiterBalanceSemanticsV2(wallet, intent, snapshot); err != nil {
+		t.Fatalf("favorable native-output execution was rejected: %v", err)
+	}
 }
 
 func TestJupiterSimulationBindsBalancesAndWalletIdentity(t *testing.T) {
@@ -686,8 +837,10 @@ func TestJupiterTriggerTokenTransfersBindDirectionAuthorityAndExactAmount(t *tes
 		t.Fatal(err)
 	}
 	deposit = enrichJupiterTriggerIntentV2(deposit, vault.String(), "deposit-request", source.String(), destination.String())
+	mintData := make([]byte, 82)
+	mintData[45] = 1
 	accounts := map[string]*rpc.Account{
-		mint.String():        rpcAccountV2(t, solana.TokenProgramID, 1, make([]byte, 82)),
+		mint.String():        rpcAccountV2(t, solana.TokenProgramID, 1, mintData),
 		source.String():      tokenAccountV2(t, mint, wallet, 20),
 		destination.String(): tokenAccountV2(t, mint, vault, 0),
 	}

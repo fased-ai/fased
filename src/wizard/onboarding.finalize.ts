@@ -85,7 +85,7 @@ type FinalizeOnboardingOptions = {
   runtime: RuntimeEnv;
   walletSecurityFocus?: {
     walletId: string;
-    role: "agent" | "vault";
+    role: "agent" | "mining" | "vault";
   } | null;
 };
 
@@ -95,7 +95,7 @@ export function buildOnboardingDashboardUrl(params: {
   token?: string;
   walletSecurityFocus?: {
     walletId: string;
-    role: "agent" | "vault";
+    role: "agent" | "mining" | "vault";
   } | null;
 }): string {
   const url = new URL(params.baseUrl);

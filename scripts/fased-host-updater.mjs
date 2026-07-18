@@ -394,6 +394,59 @@ function signerReleaseIdentitiesEqual(left, right) {
   );
 }
 
+function signerStateInvariantFromHealth(result) {
+  const policies = result?.policies;
+  const networks = result?.network?.wallets;
+  const webAuthn = result?.webAuthn;
+  if (
+    !Array.isArray(policies) ||
+    !policies.every(
+      (policy) =>
+        typeof policy?.walletId === "string" &&
+        typeof policy?.role === "string" &&
+        Number.isSafeInteger(policy?.version) &&
+        policy.version > 0 &&
+        /^sha256:[a-f0-9]{64}$/.test(policy?.hash || ""),
+    ) ||
+    typeof result?.network?.ready !== "boolean" ||
+    !Array.isArray(networks) ||
+    !networks.every(
+      (network) =>
+        typeof network?.walletId === "string" &&
+        typeof network?.configured === "boolean" &&
+        Number.isSafeInteger(network?.version) &&
+        network.version >= 0 &&
+        typeof network?.ready === "boolean" &&
+        (!network.configured || /^sha256:[a-f0-9]{64}$/.test(network?.hash || "")),
+    ) ||
+    typeof webAuthn?.configured !== "boolean" ||
+    !Number.isSafeInteger(webAuthn?.credentialCount) ||
+    webAuthn.credentialCount < 0 ||
+    !Number.isSafeInteger(webAuthn?.credentialVersion) ||
+    webAuthn.credentialVersion < 0 ||
+    typeof webAuthn?.ready !== "boolean"
+  ) {
+    throw new Error("signer health state invariants are malformed");
+  }
+  return canonicalJSON({
+    policies: [...policies].toSorted((left, right) => left.walletId.localeCompare(right.walletId)),
+    network: {
+      ready: result.network.ready,
+      wallets: [...networks].toSorted((left, right) => left.walletId.localeCompare(right.walletId)),
+    },
+    webAuthn: {
+      configured: webAuthn.configured,
+      rpId: webAuthn.rpId || "",
+      origins: [...(Array.isArray(webAuthn.origins) ? webAuthn.origins : [])].toSorted(
+        (left, right) => String(left).localeCompare(String(right)),
+      ),
+      credentialCount: webAuthn.credentialCount,
+      credentialVersion: webAuthn.credentialVersion,
+      ready: webAuthn.ready,
+    },
+  });
+}
+
 async function assertReleaseChannelAllowed(version, channelPath) {
   let channel = "stable";
   try {
@@ -433,11 +486,12 @@ function assertSignerV2Health(response, expectedRelease) {
   if (expectedRelease && !signerReleaseIdentitiesEqual(release, expectedRelease)) {
     throw new Error("signer health release identity does not match the attested release manifest");
   }
+  signerStateInvariantFromHealth(response.result);
   return release;
 }
 
-export async function probeSignerV2(expectedRelease) {
-  const response = await new Promise((resolve, reject) => {
+async function readSignerV2Health() {
+  return await new Promise((resolve, reject) => {
     const socket = net.createConnection({ path: "/run/fased-signerd/app.sock" });
     socket.setEncoding("utf8");
     socket.setTimeout(3000);
@@ -459,7 +513,17 @@ export async function probeSignerV2(expectedRelease) {
     socket.once("timeout", () => reject(new Error("signer health probe timed out")));
     socket.once("error", reject);
   });
+}
+
+export async function probeSignerV2(expectedRelease) {
+  const response = await readSignerV2Health();
   return assertSignerV2Health(response, expectedRelease);
+}
+
+async function probeSignerStateV2(expectedRelease) {
+  const response = await readSignerV2Health();
+  const release = assertSignerV2Health(response, expectedRelease);
+  return { release, invariant: signerStateInvariantFromHealth(response.result) };
 }
 
 async function systemctl(...args) {
@@ -483,8 +547,7 @@ async function startSignerService({ requireV2, expectedRelease }) {
   let lastError;
   for (let attempt = 0; attempt < 30; attempt += 1) {
     try {
-      await probeSignerV2(expectedRelease);
-      return;
+      return await probeSignerStateV2(expectedRelease);
     } catch (error) {
       lastError = error;
       await new Promise((resolve) => setTimeout(resolve, 500));
@@ -515,6 +578,14 @@ function validateJournal(value) {
     !TRANSACTION_PHASES.has(value.phase)
   ) {
     throw new Error("host updater transaction journal is invalid");
+  }
+  if (
+    value.previousSignerInvariant != null &&
+    (typeof value.previousSignerInvariant !== "string" ||
+      value.previousSignerInvariant.length === 0 ||
+      value.previousSignerInvariant.length > 64 * 1024)
+  ) {
+    throw new Error("host updater previous signer-state invariant is invalid");
   }
   const version = parseReleaseVersion(value.version);
   const releaseBinding = value.releaseBinding == null ? null : value.releaseBinding;
@@ -657,6 +728,11 @@ function createTransactionContext(overrides = {}) {
     startGateway:
       overrides.startGateway ?? (async () => await systemctl("start", "fased-gateway.service")),
     probeSigner: overrides.probeSigner ?? probeSignerV2,
+    probeSignerState:
+      overrides.probeSignerState ??
+      (overrides.probeSigner
+        ? async () => ({ release: await overrides.probeSigner(), invariant: null })
+        : probeSignerStateV2),
   };
 }
 
@@ -799,10 +875,20 @@ async function prepareSignerRelease(request, context) {
   let changed = true;
   let release = null;
   let releaseBinding = null;
+  let previousSignerInvariant = null;
+  let previousSignerState = null;
+  if (currentVersion) {
+    previousSignerState = await context.probeSignerState();
+    parseSignerReleaseIdentity(previousSignerState.release, currentVersion);
+    previousSignerInvariant = previousSignerState.invariant;
+  }
   if (currentVersion === request.version) {
     try {
       await fsp.access(context.paths.signerPath, fs.constants.X_OK);
-      release = parseSignerReleaseIdentity(await context.probeSigner(), request.version);
+      release = parseSignerReleaseIdentity(
+        previousSignerState?.release ?? (await context.probeSigner()),
+        request.version,
+      );
       changed = false;
     } catch {
       changed = true;
@@ -834,6 +920,7 @@ async function prepareSignerRelease(request, context) {
       previousVersion: currentVersion,
       release,
       releaseBinding,
+      previousSignerInvariant,
       phase: "prepared",
       changed,
       createdAt: new Date().toISOString(),
@@ -1100,7 +1187,15 @@ async function activateSignerRelease(request, context) {
     journal = await writeJournal(context, { ...journal, phase: "activating" });
     await fsp.rename(txPaths.candidatePath, context.paths.signerPath);
     await fsyncDirectory(path.dirname(context.paths.signerPath));
-    await context.startSignerV2({ expectedRelease: journal.release });
+    const activatedState = await context.startSignerV2({ expectedRelease: journal.release });
+    if (
+      journal.previousSignerInvariant &&
+      activatedState?.invariant !== journal.previousSignerInvariant
+    ) {
+      throw new Error(
+        "activated signer did not preserve exact wallet, policy, network, and WebAuthn state",
+      );
+    }
     await atomicWriteFileDurable(context.paths.versionPath, `${journal.version}\n`, 0o600);
     journal = await writeJournal(context, { ...journal, phase: "active" });
     return {

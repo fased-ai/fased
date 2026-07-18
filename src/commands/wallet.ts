@@ -718,16 +718,18 @@ async function createSignerOwnedWalletForSetup(params: {
     throw new Error("fased-signerd protocol v2 currently supports Solana wallet creation only");
   }
   const walletId = params.walletId?.trim() || params.role;
+  const hosted =
+    String(params.env.FASED_HOST_PROFILE ?? "")
+      .trim()
+      .toLowerCase() === "hosting";
   let cfg = ensureLocalSignerProviderConfig(loadConfig(), params.env);
-  cfg = setConfigEnvVar(cfg, rpcEnvKeyFor(params.chain, walletId), params.rpcUrl);
+  if (!hosted) {
+    cfg = setConfigEnvVar(cfg, rpcEnvKeyFor(params.chain, walletId), params.rpcUrl);
+  }
   await writeConfigFile(cfg);
 
   const mergedEnv = { ...params.env, ...cfg.env?.vars } as NodeJS.ProcessEnv;
   const socketPath = resolveLocalSignerSocketPath(mergedEnv);
-  const hosted =
-    String(mergedEnv.FASED_HOST_PROFILE ?? "")
-      .trim()
-      .toLowerCase() === "hosting";
   const expectedSignerWalletId = normalizeNativeSignerWalletId(walletId);
   const existingSignerIdCollision = findNativeSignerWalletIdCollision(
     readWalletProviderRegistry(params.env).wallets,
@@ -787,11 +789,13 @@ async function createSignerOwnedWalletForSetup(params: {
     );
   }
 
-  const fallbackRpcUrl = String(
-    mergedEnv[fallbackRpcEnvKeyFor(walletId)] ??
-      mergedEnv.FASED_WALLET_SOLANA_RPC_FALLBACK_URL ??
-      "",
-  ).trim();
+  const fallbackRpcUrl = hosted
+    ? ""
+    : String(
+        mergedEnv[fallbackRpcEnvKeyFor(walletId)] ??
+          mergedEnv.FASED_WALLET_SOLANA_RPC_FALLBACK_URL ??
+          "",
+      ).trim();
   const network = configureSignerOwnedWalletNetwork({
     walletId: signerWalletId,
     primaryRpcUrl: params.rpcUrl,
@@ -1042,9 +1046,48 @@ export async function walletSetupCommand(
   }
 
   if (mode === "local-signer-import") {
-    throw new Error(
-      "Wallet import is native-signer-only. For a Solana CLI keypair, run `fased-signerd admin wallet import --control-socket <absolute-control.sock> --wallet-id <wallet-id> --locked-role <agent|mining|vault> < /absolute/path/to/solana-keypair.json`. For an old Fased encrypted keystore, use `wallet import-legacy` with owner-only keystore/passphrase file paths. Normal Fased Node, Gateway, and UI paths do not accept wallet private keys or passphrases. Local runs both processes under one OS account and is not a hard compromise boundary; Hosting uses a separate signer account for OS isolation.",
+    const walletId = normalizeNativeSignerWalletId(options.walletId ?? "agent");
+    const role =
+      normalizeWalletUserRole(options.role) ??
+      (walletId === "mining" ? "mining" : walletId === "vault" ? "vault" : "agent");
+    const hosted =
+      String(env.FASED_HOST_PROFILE ?? "")
+        .trim()
+        .toLowerCase() === "hosting";
+    const config = loadConfig();
+    const effectiveEnv = { ...env, ...config.env?.vars } as NodeJS.ProcessEnv;
+    if (!hosted) {
+      writeManagedLocalSignerEnvFile({ config, env: effectiveEnv });
+      const signerBinPath = resolveSignerdBinaryPath(effectiveEnv);
+      if (!fs.existsSync(signerBinPath)) {
+        installSignerdBinary(signerBinPath);
+      }
+      await restartLocalSocketSigner(undefined, effectiveEnv);
+    }
+    const signerBinary = hosted
+      ? "/opt/fased/signer/fased-signerd"
+      : resolveSignerdBinaryPath(effectiveEnv);
+    const controlSocket = hosted
+      ? "/run/fased-signerd/control.sock"
+      : resolveLocalSignerControlSocketPath(effectiveEnv);
+    runtime.log(
+      "Wallet import is native-signer-only; Fased Node will not read the key or passphrase.",
     );
+    runtime.log("Solana CLI keypair import:");
+    runtime.log(
+      `chmod 600 /absolute/path/to/solana-keypair.json && ${signerBinary} admin wallet import --control-socket ${controlSocket} --wallet-id ${walletId} --locked-role ${role} < /absolute/path/to/solana-keypair.json`,
+    );
+    runtime.log("Legacy encrypted Fased keystore migration:");
+    runtime.log(
+      `chmod 600 /absolute/path/to/keystore-solana.v1.enc /absolute/path/to/passphrase && ${signerBinary} admin wallet import-legacy --control-socket ${controlSocket} --wallet-id ${walletId} --locked-role ${role} --keystore-path /absolute/path/to/keystore-solana.v1.enc --passphrase-path /absolute/path/to/passphrase`,
+    );
+    runtime.log(
+      `After verifying the returned public address, run: fased wallet finalize-legacy-migration --wallet-id ${options.walletId ?? walletId}`,
+    );
+    runtime.log(
+      "Never put a private key or passphrase in the dashboard, Gateway, chat, argv, or an environment variable.",
+    );
+    return;
   }
 
   if (mode === "local-signer") {
@@ -1703,6 +1746,24 @@ export async function collectWalletSignerDoctorReport(
         ? "configured in native signer"
         : "not configured (optional; swaps and transfers remain available)",
     );
+    push(
+      "jupiter.execution.mode",
+      localSignerHealth.jupiter.liveEnabled !== true,
+      localSignerHealth.jupiter.liveEnabled === true
+        ? "live execution enabled for qualification only; this release remains preview-only"
+        : "preview-only; signer rejects Jupiter and Trigger execution",
+    );
+  }
+  if (isLocalSigner && localSignerHealth?.ok && localSignerHealth.state?.capacities) {
+    for (const [label, capacity] of Object.entries(localSignerHealth.state.capacities).toSorted(
+      ([left], [right]) => left.localeCompare(right),
+    )) {
+      push(
+        `state.capacity.${label}`,
+        !capacity.warning,
+        `${capacity.used}/${capacity.maximum} records; warning=${capacity.warnAt}`,
+      );
+    }
   }
   for (const walletId of registrySolanaWalletIds) {
     push(

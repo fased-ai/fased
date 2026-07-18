@@ -144,6 +144,54 @@ describe("wallet provider resolver", () => {
     ).toBe("wallet-standard");
   });
 
+  it("never signs with a global Turnkey identity that differs from the selected registry wallet", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-turnkey-binding-"));
+    tempRoots.push(root);
+    await writeRegistry(root, {
+      version: 1,
+      providers: { turnkey: { enabled: true, updatedAt: "2026-07-17T00:00:00.000Z" } },
+      wallets: [
+        {
+          id: "turnkey-one",
+          name: "Turnkey One",
+          providerId: "turnkey",
+          addresses: { solana: "11111111111111111111111111111111" },
+          metadata: { role: "agent", turnkeyWalletId: "provider-one" },
+          createdAt: "2026-07-17T00:00:00.000Z",
+          updatedAt: "2026-07-17T00:00:00.000Z",
+        },
+        {
+          id: "turnkey-two",
+          name: "Turnkey Two",
+          providerId: "turnkey",
+          addresses: { solana: "So11111111111111111111111111111111111111112" },
+          metadata: { role: "agent", turnkeyWalletId: "provider-two" },
+          createdAt: "2026-07-17T00:00:00.000Z",
+          updatedAt: "2026-07-17T00:00:00.000Z",
+        },
+      ],
+      assignments: {},
+      defaultWalletId: "turnkey-one",
+      updatedAt: "2026-07-17T00:00:00.000Z",
+    });
+    const cfg = { wallet: { provider: { id: "turnkey" } } } as FasedAgentConfig;
+    const env = {
+      FASED_STATE_DIR: root,
+      FASED_WALLET_TURNKEY_DEFAULT_SOLANA_ADDRESS: "11111111111111111111111111111111",
+      FASED_WALLET_TURNKEY_PROVIDER_WALLET_ID: "provider-one",
+    } as NodeJS.ProcessEnv;
+
+    expect(() =>
+      createWalletProviderAdapter({
+        cfg,
+        wallet: resolveWalletRuntimeConfig(cfg, env),
+        walletId: "turnkey-two",
+        providerIdOverride: "turnkey",
+        env,
+      }),
+    ).toThrow(/does not match the configured provider wallet identity/i);
+  });
+
   it("rejects Privy config and adapter overrides as unavailable", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-provider-privy-"));
     tempRoots.push(root);

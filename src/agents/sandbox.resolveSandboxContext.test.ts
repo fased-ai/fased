@@ -126,4 +126,63 @@ describe("resolveSandboxContext", () => {
       restore();
     }
   }, 15_000);
+
+  it("forces marketplace instructions into a read-only session sandbox", async () => {
+    const restore = registerSandboxBackend("marketplace-test", async () => ({
+      id: "marketplace-test",
+      runtimeId: "marketplace-runtime",
+      runtimeLabel: "Marketplace Test Runtime",
+      workdir: "/workspace",
+      buildExecSpec: async () => ({
+        argv: ["marketplace-test", "exec"],
+        env: process.env,
+        stdinMode: "pipe-closed",
+      }),
+      runShellCommand: async () => ({
+        stdout: Buffer.alloc(0),
+        stderr: Buffer.alloc(0),
+        code: 0,
+      }),
+    }));
+    try {
+      const result = await resolveSandboxContext({
+        config: {
+          agents: {
+            defaults: {
+              sandbox: {
+                mode: "off",
+                backend: "marketplace-test",
+                workspaceAccess: "rw",
+                docker: { network: "bridge", readOnlyRoot: false },
+                browser: { enabled: true, allowHostControl: true },
+              },
+            },
+          },
+          tools: { sandbox: { tools: { allow: ["*"], deny: [] } } },
+        },
+        sessionKey: "agent:main:main",
+        workspaceDir: "/tmp/fased-marketplace-test",
+        forceUntrustedIsolation: true,
+      });
+
+      expect(result).toMatchObject({
+        enabled: true,
+        backendId: "marketplace-test",
+        workspaceAccess: "none",
+        tools: { allow: ["read"], deny: [] },
+        browserAllowHostControl: false,
+        docker: {
+          readOnlyRoot: true,
+          network: "none",
+          capDrop: ["ALL"],
+          dangerouslyAllowReservedContainerTargets: false,
+          dangerouslyAllowExternalBindSources: false,
+          dangerouslyAllowContainerNamespaceJoin: false,
+        },
+      });
+      expect(result?.docker.binds).toBeUndefined();
+    } finally {
+      restore();
+    }
+  }, 15_000);
 });

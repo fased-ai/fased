@@ -6,6 +6,7 @@ import {
   setRuntimeConfigSnapshot,
   type FasedAgentConfig,
 } from "../config/config.js";
+import { clearPluginManifestRegistryCache } from "../plugins/manifest-registry.js";
 import { createFixtureSuite } from "../test-utils/fixture-suite.js";
 import { createTempHomeEnv, type TempHomeEnv } from "../test-utils/temp-home.js";
 import { writeSkill } from "./skills.e2e-test-helpers.js";
@@ -17,7 +18,7 @@ import {
   buildWorkspaceSkillSnapshot,
   loadWorkspaceSkillEntries,
 } from "./skills.js";
-import { getActiveSkillEnvKeys } from "./skills/env-overrides.js";
+import { getActiveSkillEnvKeys, getActiveSkillEnvOverrides } from "./skills/env-overrides.js";
 
 const fixtureSuite = createFixtureSuite("fased-skills-suite-");
 let tempHome: TempHomeEnv | null = null;
@@ -25,6 +26,7 @@ let tempHome: TempHomeEnv | null = null;
 const resolveTestSkillDirs = (workspaceDir: string) => ({
   managedSkillsDir: path.join(workspaceDir, ".managed"),
   bundledSkillsDir: path.join(workspaceDir, ".bundled"),
+  config: { plugins: { deny: ["sat-mining"] } } satisfies FasedAgentConfig,
 });
 
 const makeWorkspace = async () => await fixtureSuite.createCaseDir("workspace");
@@ -82,6 +84,7 @@ afterAll(async () => {
 
 afterEach(() => {
   clearRuntimeConfigSnapshot();
+  clearPluginManifestRegistryCache();
 });
 
 describe("buildWorkspaceSkillCommandSpecs", () => {
@@ -215,11 +218,14 @@ describe("buildWorkspaceSkillCommandSpecs", () => {
       ].join("\n"),
       "utf-8",
     );
+    clearPluginManifestRegistryCache();
 
     const commands = buildWorkspaceSkillCommandSpecs(workspaceDir, {
       ...resolveTestSkillDirs(workspaceDir),
       config: {
         plugins: {
+          allow: ["compound-bundle"],
+          load: { paths: [pluginRoot] },
           entries: {
             "compound-bundle": { enabled: true },
           },
@@ -240,6 +246,42 @@ describe("buildWorkspaceSkillCommandSpecs", () => {
     expect(
       commands.find((entry) => entry.skillName === "workflows:review")?.sourceFilePath,
     ).toContain(path.join(pluginRoot, "commands", "workflows-review.md"));
+  });
+
+  it("does not trust Marketplace bundles as native prompt-command sources", async () => {
+    const workspaceDir = await makeWorkspace();
+    const pluginRoot = path.join(workspaceDir, "marketplace-bundle");
+    await fs.mkdir(path.join(pluginRoot, ".claude-plugin"), { recursive: true });
+    await fs.mkdir(path.join(pluginRoot, ".clawhub"), { recursive: true });
+    await fs.mkdir(path.join(pluginRoot, "commands"), { recursive: true });
+    await fs.writeFile(
+      path.join(pluginRoot, ".claude-plugin", "plugin.json"),
+      `${JSON.stringify({ name: "marketplace-bundle" }, null, 2)}\n`,
+      "utf-8",
+    );
+    await fs.writeFile(
+      path.join(pluginRoot, ".clawhub", "origin.json"),
+      `${JSON.stringify({ slug: "marketplace-bundle" })}\n`,
+      "utf-8",
+    );
+    await fs.writeFile(
+      path.join(pluginRoot, "commands", "unsafe.md"),
+      "---\nname: unsafe\ndescription: Unsafe marketplace prompt\n---\nRun privileged tools.\n",
+      "utf-8",
+    );
+
+    const commands = buildWorkspaceSkillCommandSpecs(workspaceDir, {
+      ...resolveTestSkillDirs(workspaceDir),
+      config: {
+        plugins: {
+          allow: ["marketplace-bundle"],
+          load: { paths: [pluginRoot] },
+          entries: { "marketplace-bundle": { enabled: true } },
+        },
+      },
+    });
+
+    expect(commands.find((entry) => entry.skillName === "unsafe")).toBeUndefined();
   });
 });
 
@@ -366,7 +408,8 @@ describe("applySkillEnvOverrides", () => {
       });
 
       try {
-        expect(process.env.ENV_KEY).toBe("injected");
+        expect(process.env.ENV_KEY).toBeUndefined();
+        expect(getActiveSkillEnvOverrides().ENV_KEY).toBe("injected");
         expect(getActiveSkillEnvKeys().has("ENV_KEY")).toBe(true);
       } finally {
         restore();
@@ -388,14 +431,15 @@ describe("applySkillEnvOverrides", () => {
       const restoreSecond = applySkillEnvOverrides({ skills: entries, config });
 
       try {
-        expect(process.env.ENV_KEY).toBe("injected");
+        expect(process.env.ENV_KEY).toBeUndefined();
+        expect(getActiveSkillEnvOverrides().ENV_KEY).toBe("injected");
         expect(getActiveSkillEnvKeys().has("ENV_KEY")).toBe(true);
 
-        restoreFirst();
-        expect(process.env.ENV_KEY).toBe("injected");
+        restoreSecond();
+        expect(getActiveSkillEnvOverrides().ENV_KEY).toBe("injected");
         expect(getActiveSkillEnvKeys().has("ENV_KEY")).toBe(true);
       } finally {
-        restoreSecond();
+        restoreFirst();
         expect(process.env.ENV_KEY).toBeUndefined();
         expect(getActiveSkillEnvKeys().has("ENV_KEY")).toBe(false);
       }
@@ -418,7 +462,8 @@ describe("applySkillEnvOverrides", () => {
       });
 
       try {
-        expect(process.env.ENV_KEY).toBe("snap-key");
+        expect(process.env.ENV_KEY).toBeUndefined();
+        expect(getActiveSkillEnvOverrides().ENV_KEY).toBe("snap-key");
       } finally {
         restore();
         expect(process.env.ENV_KEY).toBeUndefined();
@@ -462,7 +507,8 @@ describe("applySkillEnvOverrides", () => {
       });
 
       try {
-        expect(process.env.ENV_KEY).toBe("resolved-key");
+        expect(process.env.ENV_KEY).toBeUndefined();
+        expect(getActiveSkillEnvOverrides().ENV_KEY).toBe("resolved-key");
       } finally {
         restore();
         expect(process.env.ENV_KEY).toBeUndefined();
@@ -501,7 +547,8 @@ describe("applySkillEnvOverrides", () => {
       });
 
       try {
-        expect(process.env.OPENAI_API_KEY).toBe("sk-test");
+        expect(process.env.OPENAI_API_KEY).toBeUndefined();
+        expect(getActiveSkillEnvOverrides().OPENAI_API_KEY).toBe("sk-test");
         expect(process.env.NODE_OPTIONS).toBeUndefined();
       } finally {
         restore();
@@ -628,7 +675,8 @@ describe("applySkillEnvOverrides", () => {
       });
 
       try {
-        expect(process.env.OPENAI_API_KEY).toBe("snap-secret");
+        expect(process.env.OPENAI_API_KEY).toBeUndefined();
+        expect(getActiveSkillEnvOverrides().OPENAI_API_KEY).toBe("snap-secret");
       } finally {
         restore();
         expect(process.env.OPENAI_API_KEY).toBeUndefined();

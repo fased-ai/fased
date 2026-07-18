@@ -81,7 +81,18 @@ systemd=true
 ```
 
 Return to the Ubuntu shell and verify `docker version` and
-`docker compose version` before continuing.
+`docker compose version` before continuing. These are **Ubuntu/WSL Bash**
+commands, not PowerShell commands:
+
+```bash
+uname -s
+systemctl is-system-running || true
+docker version
+docker compose version
+```
+
+`uname -s` must print `Linux`. Keep the later clone, `docker-setup.sh`, update,
+backup, and rollback commands in this same Ubuntu shell.
 
 ## Containerized Gateway (Docker Compose)
 
@@ -337,8 +348,11 @@ that one-shot command runs. Continue with
 The signer state survives normal container recreation and `docker compose down`.
 It does **not** survive `docker compose down -v` or manual removal of the
 project's `fased-signer-state` and `fased-signer-secrets` volumes. Stop both
-Gateway and signer before an offline volume backup; never copy the live bbolt
-database while the signer is running.
+Gateway and signer before an offline backup; never copy the live bbolt database
+while the signer is running. A complete recovery point must include both named
+volumes, the host paths in `FASED_CONFIG_DIR` and `FASED_WORKSPACE_DIR`, `.env`,
+the base and extra Compose files, and the exact immutable image identity. The
+coordinated update helper below captures and checksums that complete set.
 
 Run `docker compose ...` from the repo root. If you enabled
 `FASED_EXTRA_MOUNTS` or `FASED_HOME_VOLUME`, the setup script writes
@@ -561,11 +575,14 @@ system's trusted package source, confirm `gh version`, replace `vX.Y.Z`, and
 run:
 
 ```bash
+(
+set -euo pipefail
 cd /path/to/fased
 mkdir -p "$HOME/.local/state/fased/docker-signer-backups"
 
 RELEASE=vX.Y.Z
 VERIFY_DIR="$(mktemp -d)"
+trap 'rm -rf "$VERIFY_DIR"' EXIT
 chmod 0700 "$VERIFY_DIR"
 curl -fsSLo "$VERIFY_DIR/fased-container-${RELEASE}.json" \
   "https://github.com/fased-ai/fased/releases/download/${RELEASE}/fased-container-${RELEASE}.json"
@@ -603,7 +620,7 @@ scripts/docker-signer-update.sh \
   --expected-release-commit "$RELEASE_COMMIT" \
   --expected-signer-build-input-digest "$SIGNER_BUILD_INPUT_DIGEST" \
   --snapshot-dir "$HOME/.local/state/fased/docker-signer-backups/pre-${RELEASE}"
-rm -rf "$VERIFY_DIR"
+)
 ```
 
 The three downloaded files contain no credentials. The metadata attestation
@@ -626,11 +643,12 @@ The helper, in order:
 2. validates the target Compose definition with the current owner-controlled
    `.env` and optional `docker-compose.extra.yml` before stopping services;
 3. stops Gateway and then `fased-signerd`;
-4. verifies the signer is stopped and creates a deterministic offline archive
-   of the complete `fased-signer-state` volume;
-5. checksums the archive, old and target `.env`/Compose definitions, records
-   both complete signer identities and Gateway versions, and preserves the
-   exact old image ID under a local rollback tag;
+4. verifies the signer is stopped and creates deterministic offline archives
+   of `fased-signer-state`, `fased-signer-secrets`, the Gateway config/state
+   bind mount, and the workspace bind mount;
+5. checksums every archive plus the old and target `.env`/Compose definitions,
+   records both complete signer identities and Gateway versions, and preserves
+   the exact old image ID under a local rollback tag;
 6. atomically installs the target Compose definition and pins `FASED_IMAGE` to
    the resolved target image ID;
 7. creates the target signer without starting it and requires it to use both
@@ -640,18 +658,27 @@ The helper, in order:
    commit, build-input digest, and development marker; only then does it start
    the Gateway and verify its packaged release version.
 
-If target activation fails, the helper stops it, erases the migrated volume
-contents while offline, restores and re-verifies the exact snapshot, restores
-the exact old image, atomically restores the old `.env` and Compose definition,
-and starts that saved deployment. The same rollback runs automatically for any
-error or interruption after the verified offline snapshot is armed. It fails
-closed without starting either signer when the archive, metadata, volume,
+If target activation fails, the helper stops it, erases the migrated signer
+volumes and changed Gateway/workspace bind-mount contents while offline,
+restores and re-verifies every exact snapshot, restores the exact old image,
+atomically restores the old `.env` and Compose definition, and starts that
+saved deployment. The same rollback runs automatically for any error or
+interruption after the verified offline snapshot is armed. It fails closed
+without starting either signer when an archive, metadata, volume, bind path,
 release identity, or exact old image is unavailable.
 
 The snapshot contains the signer master key, wallets, policy database, audit
-state, and the Gateway token from `.env`. The helper creates its directory as
-`0700` and its files as `0600`; keep that directory on owner-only encrypted
-storage and never upload or share it.
+state, signer-side API secrets, Gateway credentials and sessions, memory and
+workspace data, and the Gateway token from `.env`. The helper creates its
+directory as `0700` and its files as `0600`; keep that directory on owner-only
+encrypted storage and never upload or share it.
+
+This is a **same-host transactional rollback snapshot**, not a portable or
+cross-machine disaster-recovery bundle. It depends on the saved local image ID,
+Docker volume identities, and owner-controlled bind paths from this deployment.
+For machine-loss recovery, maintain a separate encrypted backup and test its
+restore on the same OS/architecture and Docker storage layout; do not present
+the updater snapshot as a portable backup.
 
 After success, the deployment directory already contains the target base
 Compose definition extracted from the image. Verify the version and plugins,
@@ -699,9 +726,11 @@ stable rollback target.
 Config and workspace survive while `FASED_CONFIG_DIR` and
 `FASED_WORKSPACE_DIR` keep pointing to the same host directories. Signer keys,
 policies, durable caps, and idempotency state survive in
-`fased-signer-state`. Normal `docker compose down` preserves it; `docker compose
-down -v` destroys it. The transaction snapshot is intentionally outside that
-volume, so it survives a Compose volume rollback.
+`fased-signer-state`; signer-side integration secrets survive in
+`fased-signer-secrets`. Normal `docker compose down` preserves them; `docker
+compose down -v` destroys the volumes. The complete transaction snapshot is
+intentionally outside every live path, so it survives a Compose volume
+rollback.
 
 ### E2E smoke test (Docker)
 

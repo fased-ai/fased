@@ -102,6 +102,9 @@ func TestSignerNetworkConfigurationIsEncryptedAndMetadataOnly(t *testing.T) {
 	if health.Capabilities.NativeFeeReservationLamports != signerNativeFeeReservationV2 {
 		t.Fatalf("health did not expose the signer-owned native fee reserve: %#v", health.Capabilities)
 	}
+	if health.Jupiter.LiveEnabled || health.State.Capacities["operations"].Maximum != maxSignerOperationsV2 || health.State.CapacityWarnings == nil {
+		t.Fatalf("health did not expose fail-closed Jupiter mode and capacity metadata: jupiter=%#v state=%#v", health.Jupiter, health.State)
+	}
 	encodedHealth, err := json.Marshal(health)
 	if err != nil {
 		t.Fatal(err)

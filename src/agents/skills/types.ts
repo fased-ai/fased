@@ -109,5 +109,7 @@ export type SkillSnapshot = {
   /** Normalized agent-level filter used to build this snapshot; undefined means unrestricted. */
   skillFilter?: string[];
   resolvedSkills?: Skill[];
+  /** Marketplace skill identities whose instructions are untrusted runtime input. */
+  marketplaceSkillIds?: string[];
   version?: number;
 };

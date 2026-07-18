@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"encoding/base64"
@@ -50,6 +51,7 @@ type signerConfig struct {
 	webauthnRPID      string
 	webauthnOrigins   string
 	jupiterAPIKeyPath string
+	jupiterLive       bool
 	updateGatePath    string
 	readOnly          bool
 	rateWindow        time.Duration
@@ -106,6 +108,33 @@ type auditWriter struct {
 	path     string
 	maxBytes int64
 	mu       sync.Mutex
+	failed   bool
+	lastErr  string
+}
+
+type signerAuditHealthV2 struct {
+	Configured bool   `json:"configured"`
+	Healthy    bool   `json:"healthy"`
+	LastError  string `json:"lastError,omitempty"`
+}
+
+func (a *auditWriter) health() signerAuditHealthV2 {
+	if a == nil {
+		return signerAuditHealthV2{Healthy: true}
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return signerAuditHealthV2{
+		Configured: a.path != "",
+		Healthy:    !a.failed,
+		LastError:  a.lastErr,
+	}
+}
+
+func (a *auditWriter) recordFailure(err error) {
+	a.failed = true
+	a.lastErr = safeOperationErrorV2(err)
+	log.Printf("fased-signerd audit failure: %s", a.lastErr)
 }
 
 func (a *auditWriter) write(entry map[string]any) {
@@ -116,20 +145,45 @@ func (a *auditWriter) write(entry map[string]any) {
 	}
 	data, err := json.Marshal(entry)
 	if err != nil {
+		a.recordFailure(err)
 		return
 	}
-	_ = os.MkdirAll(filepath.Dir(a.path), 0o700)
+	if err := os.MkdirAll(filepath.Dir(a.path), 0o700); err != nil {
+		a.recordFailure(err)
+		return
+	}
 	if stat, err := os.Stat(a.path); err == nil && stat.Size() >= a.maxBytes && a.maxBytes > 0 {
 		rotated := a.path + ".1"
-		_ = os.Remove(rotated)
-		_ = os.Rename(a.path, rotated)
+		if err := os.Remove(rotated); err != nil && !errors.Is(err, os.ErrNotExist) {
+			a.recordFailure(err)
+			return
+		}
+		if err := os.Rename(a.path, rotated); err != nil {
+			a.recordFailure(err)
+			return
+		}
 	}
 	file, err := os.OpenFile(a.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
+		a.recordFailure(err)
 		return
 	}
-	defer file.Close()
-	_, _ = file.Write(append(data, '\n'))
+	if _, err := file.Write(append(data, '\n')); err != nil {
+		_ = file.Close()
+		a.recordFailure(err)
+		return
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		a.recordFailure(err)
+		return
+	}
+	if err := file.Close(); err != nil {
+		a.recordFailure(err)
+		return
+	}
+	a.failed = false
+	a.lastErr = ""
 }
 
 func getenvInt(name string, fallback int) int {
@@ -302,6 +356,7 @@ func parseArgs() signerConfig {
 		webauthnRPID:      strings.TrimSpace(os.Getenv("FASED_WALLET_WEBAUTHN_RP_ID")),
 		webauthnOrigins:   strings.TrimSpace(os.Getenv("FASED_WALLET_WEBAUTHN_ORIGINS")),
 		jupiterAPIKeyPath: strings.TrimSpace(os.Getenv("FASED_WALLET_JUPITER_API_KEY_FILE")),
+		jupiterLive:       os.Getenv("FASED_WALLET_JUPITER_LIVE_ENABLED") == "1",
 		updateGatePath:    strings.TrimSpace(os.Getenv("FASED_WALLET_LOCAL_SIGNER_UPDATE_GATE")),
 		readOnly:          os.Getenv("FASED_WALLET_LOCAL_SIGNER_READ_ONLY") == "1",
 		rateWindow:        time.Duration(getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WINDOW_MS", 10_000)) * time.Millisecond,
@@ -506,7 +561,8 @@ func run(cfg signerConfig) error {
 	} else if !errors.Is(statErr, os.ErrNotExist) {
 		return errors.New("inspect signer-owned Jupiter API key file")
 	}
-	service := &signerServiceV2{store: store, keys: keys, webauthn: webauthn, trigger: trigger}
+	audit := &auditWriter{path: cfg.auditLog, maxBytes: cfg.auditMax}
+	service := &signerServiceV2{store: store, keys: keys, webauthn: webauthn, trigger: trigger, audit: audit}
 
 	applicationListener, err := listenUnixSocketV2(cfg.socketPath, cfg.socketMode, cfg.socketGroup)
 	if err != nil {
@@ -525,7 +581,6 @@ func run(cfg signerConfig) error {
 	defer os.Remove(cfg.controlSocketPath)
 
 	limiter := newRateLimiter(cfg.rateWindow, cfg.rateLimit)
-	audit := &auditWriter{path: cfg.auditLog, maxBytes: cfg.auditMax}
 	signals := make(chan os.Signal, 2)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
@@ -608,7 +663,11 @@ func handleConn(conn net.Conn, cfg signerConfig, limiter *rateLimiter, audit *au
 			continue
 		}
 		_, _ = conn.Write(append(response, '\n'))
-		audit.write(map[string]any{"ts": time.Now().UTC().Format(time.RFC3339Nano), "op": req.Op, "ok": true, "fp": fingerprint(raw), "mode": "signer-v2"})
+		unknown := bytes.Contains(response, []byte(`"state":"unknown"`))
+		if unknown {
+			log.Printf("fased-signerd operation requires reconciliation: op=%s fp=%s", req.Op, fingerprint(raw))
+		}
+		audit.write(map[string]any{"ts": time.Now().UTC().Format(time.RFC3339Nano), "op": req.Op, "ok": true, "fp": fingerprint(raw), "mode": "signer-v2", "unknown": unknown})
 	}
 }
 
